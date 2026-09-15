@@ -44,7 +44,7 @@ import { scalarFrom32, FIELD, SHARES_NEEDED, SHARES_TOTAL } from '../../protocol
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
-import { assumeSeated } from '../test/seating.js';
+import { assumeAssigned } from '../test/assignment.js';
 import { PAID_IN_PART } from '../src/payout.js';
 import { parseTransaction } from '../../protocol/src/tx.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
@@ -97,8 +97,8 @@ async function main() {
     say(`bitcoind at height ${cli('getblockcount')}, rpc ${P.rpc}, cookie auth`);
 
     // ---- THE COMMITTEE, THE ROUND, AND TWO PLAYERS WHOSE KEYS ARE KEYS. ----
-    const seatSecrets = Array.from({ length: SHARES_TOTAL }, () => rand(32));
-    const seatKeys = seatSecrets.map((s) => schnorr.getPublicKey(s));
+    const signerNodeSecrets = Array.from({ length: SHARES_TOTAL }, () => rand(32));
+    const signerNodeKeys = signerNodeSecrets.map((s) => schnorr.getPublicKey(s));
     const round = new Round(openStore(join(dir, 'node.db')), () => NOW);
     const contract = {
       networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
@@ -111,10 +111,10 @@ async function main() {
       censusRoot: b32(2), stakeMsat: STAKE_MSAT, bondMinSats: 50000n, blockTicks: 9000,
       exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
       timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
-      nodes: seatKeys,
+      nodes: signerNodeKeys,
     };
     const rid = round.open(contract);
-    assumeSeated(round, rid, [round.pubkey, ...seatKeys.slice(1)]);
+    assumeAssigned(round, rid, [round.pubkey, ...signerNodeKeys.slice(1)]);
 
     const winnerSecret = rand(32);
     const loserSecret = rand(32);
@@ -161,12 +161,12 @@ async function main() {
 
     const built = tableFor({ roundId: rid, entries, minScore: contract.minScore });
     for (let i = 1; i < 5; i++)
-      round.putPayoutSignature(rid, seatKeys[i],
-        signPayoutTable({ tableId: built.tableId, secret: seatSecrets[i], pubkey: seatKeys[i] }));
+      round.putPayoutSignature(rid, signerNodeKeys[i],
+        signPayoutTable({ tableId: built.tableId, secret: signerNodeSecrets[i], pubkey: signerNodeKeys[i] }));
     const queued = payouts.queue({ roundId: rid, entries, minScore: contract.minScore, contract });
     say(`\nthe payout table: ${queued.ok ? queued.state : queued.why}`);
     if (!queued.ok || queued.state !== PAYOUT_QUEUED) problems.push('the table was not queued');
-    else say(`  ${queued.agreed} of 5 seats signed it, and it owes ${queued.owedMsat} msat`);
+    else say(`  ${queued.agreed} of 5 signer nodes signed it, and it owes ${queued.owedMsat} msat`);
 
     // ---- AND THE FLOOR, ON THIS NODE'S OWN NUMBER. ----
     //
@@ -273,12 +273,12 @@ async function main() {
       const smallTx = parseTransaction(fromHex(cli('getrawtransaction', small)));
       const smallVout = smallTx.outputs.findIndex((o) => toHex(o.script) === toHex(out.script));
       const rid2 = round.open({ ...contract, configHash: TRUCK_CONFIG_HASH, slashMinimumServed: 21 });
-      assumeSeated(round, rid2, [round.pubkey, ...seatKeys.slice(1)]);
+      assumeAssigned(round, rid2, [round.pubkey, ...signerNodeKeys.slice(1)]);
       const tiny = [{ pubkey: winner, msat: (floor - 1n) * 1000n }];
       const built2 = tableFor({ roundId: rid2, entries, minScore: contract.minScore });
       for (let i = 1; i < 5; i++)
-        round.putPayoutSignature(rid2, seatKeys[i],
-          signPayoutTable({ tableId: built2.tableId, secret: seatSecrets[i], pubkey: seatKeys[i] }));
+        round.putPayoutSignature(rid2, signerNodeKeys[i],
+          signPayoutTable({ tableId: built2.tableId, secret: signerNodeSecrets[i], pubkey: signerNodeKeys[i] }));
       round.putPayout({ roundId: rid2, tableId: built2.tableId, state: 'PAYOUT_QUEUED',
         why: 'a round whose only winner is under the floor' });
       const under = await payouts.pay({

@@ -1,19 +1,19 @@
 // THE DOOR LETTER 29 EXISTS FOR.
 //
 // `shares.js` proves the rule and `handout.js` puts it on the wire. Neither is
-// worth anything until a seat ASKS, which is the fault letter 28 opened with:
+// worth anything until a signer node ASKS, which is the fault letter 28 opened with:
 // a correct class nothing constructed, every test green, and nobody drawn on
 // the page. So this drives the daemon: publish a handout, then join.
 //
 // 23.1 is the order - the shares are published, and the Entry Contract's
 // `vss_shares_ref` points at them. A node that never accepted those shares
-// refuses the entry that names them, because a seat which cannot check a
+// refuses the entry that names them, because a signer node which cannot check a
 // handout has no business letting the round it gates begin.
 //
-// AND THE SHARES ARE SEALED NOW, one per seat. What changed here is who
+// AND THE SHARES ARE SEALED NOW, one per signer node. What changed here is who
 // catches a crooked dealer: a node sees only its own share, so it refuses when
 // IT is the one cheated, and a dealer who cheated somebody else gets past this
-// door and is stopped at that seat's. Both are measured below.
+// door and is stopped at that signer node's. Both are measured below.
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -44,7 +44,7 @@ const FUNDED = { funded: () => true,
 
 const contractFor = (node) => ({
   networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 6,
-  // SEVEN SETTLEMENT SEATS, because the handouts below are dealt 5-of-7 to
+  // SEVEN SETTLEMENT SIGNER NODES, because the handouts below are dealt 5-of-7 to
   // seven: the door now asks the round what its stakes open at (M3.3-26).
   gameVerifySlots: 2, settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH,
   committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
@@ -64,26 +64,26 @@ const entryOn = (roundId, ref, stakePoint = new Uint8Array(33)) => ({
 });
 
 /**
- * A COMMITTEE OF SEVEN WHOSE FIRST SEAT IS THE NODE UNDER TEST, so the handout
+ * A COMMITTEE OF SEVEN WHOSE FIRST SIGNER NODE IS THE NODE UNDER TEST, so the handout
  * is dealt to a key that can actually open it. The other six are strangers to
  * this process, which is the point: their envelopes are unreadable here.
  */
 const others = Array.from({ length: 6 }, () => new Uint8Array(randomBytes(32)));
-const seatsFor = (node, first = 0) => {
+const signerNodesFor = (node, first = 0) => {
   const keys = others.map((k) => schnorr.getPublicKey(k));
   keys.splice(first, 0, node.round.pubkey);
   return keys;
 };
 
 /**
- * Deal one preimage to those seats. `crooked` names the SEAT INDEX whose share
+ * Deal one preimage to those signer nodes. `crooked` names the SIGNER NODE INDEX whose share
  * is taken from a second polynomial - the dealer letter 29 exists to catch,
- * except that now it matters WHICH seat he cheated.
+ * except that now it matters WHICH signer node he cheated.
  */
-async function handoutOf(roundId, preimage, { seats, crooked = null } = {}) {
+async function handoutOf(roundId, preimage, { signerNodes, crooked = null } = {}) {
   const e = new Uint8Array(randomBytes(32));
   const dealt = await dealHandout({
-    preimage, seats, roundId, playerPubkey: b32(5),
+    preimage, signerNodes, roundId, playerPubkey: b32(5),
     ephemeralSecret: e, ephemeralPubkey: schnorr.getPublicKey(e),
     coefficients, curve: feldmanGroup,
   });
@@ -96,8 +96,8 @@ async function handoutOf(roundId, preimage, { seats, crooked = null } = {}) {
   shares[crooked] = {
     ...shares[crooked],
     sealed: await sealShare({
-      value: second.shares[crooked].value, seat: shares[crooked].seat,
-      seatPubkey: shares[crooked].seatPubkey, ephemeralSecret: e, curve: feldmanGroup,
+      value: second.shares[crooked].value, signerNode: shares[crooked].signerNode,
+      signerNodePubkey: shares[crooked].signerNodePubkey, ephemeralSecret: e, curve: feldmanGroup,
     }),
   };
   return { ...dealt.handout, shares };
@@ -124,7 +124,7 @@ test('an honest handout is accepted, and the entry that names it joins', async (
     const contract = contractFor(node);
     const rid = (await post(node.port, '/round', encodeRoundContract(contract))).bytes;
 
-    const handout = await handoutOf(rid, sha256(b32(3)).slice(0, 32), { seats: seatsFor(node) });
+    const handout = await handoutOf(rid, sha256(b32(3)).slice(0, 32), { signerNodes: signerNodesFor(node) });
     const answer = await post(node.port, '/handout', encodeHandout(handout));
     assert.equal(answer.status, 201, answer.text);
     const id = answer.bytes;
@@ -135,7 +135,7 @@ test('an honest handout is accepted, and the entry that names it joins', async (
     assert.equal(joined.status, 201, joined.text);
     assert.equal(toHex(joined.bytes), toHex(entryId(entry)));
 
-    // and it can be fetched back, because a seat that was not asked first
+    // and it can be fetched back, because a signer node that was not asked first
     // still has to be able to look at what it is being asked about
     const back = await fetch(`http://127.0.0.1:${node.port}/handout?id=${toHex(id)}`);
     assert.equal(back.status, 200);
@@ -155,7 +155,7 @@ test('an entry whose stake point is not its handout\'s A0 is refused, and so is 
   try {
     const contract = contractFor(node);
     const rid = (await post(node.port, '/round', encodeRoundContract(contract))).bytes;
-    const handout = await handoutOf(rid, sha256(b32(6)).slice(0, 32), { seats: seatsFor(node) });
+    const handout = await handoutOf(rid, sha256(b32(6)).slice(0, 32), { signerNodes: signerNodesFor(node) });
     const accepted = await post(node.port, '/handout', encodeHandout(handout));
     assert.equal(accepted.status, 201, accepted.text);
 
@@ -177,12 +177,12 @@ test('a two-polynomial dealer is refused at the door, and so is the entry naming
     const contract = contractFor(node);
     const rid = (await post(node.port, '/round', encodeRoundContract(contract))).bytes;
 
-    // CHEATED AT THIS NODE'S OWN SEAT, which is the one it can see.
+    // CHEATED AT THIS NODE'S OWN SIGNER NODE, which is the one it can see.
     const crooked = await handoutOf(rid, sha256(b32(4)).slice(0, 32),
-      { seats: seatsFor(node), crooked: 0 });
+      { signerNodes: signerNodesFor(node), crooked: 0 });
     const refused = await post(node.port, '/handout', encodeHandout(crooked));
     assert.equal(refused.status, 409, refused.text);
-    assert.match(refused.text, /seat 1/);
+    assert.match(refused.text, /signer node 1/);
     assert.match(refused.text, /not on the polynomial the dealer published/);
 
     // AND THE ENTRY GOES NOWHERE. Nothing was stored, so the reference names
@@ -224,7 +224,7 @@ test('a handout published for another round does not let an entry in', async () 
     const ridTwo = (await post(node.port, '/round', encodeRoundContract(two))).bytes;
     assert.notEqual(toHex(ridOne), toHex(ridTwo));
 
-    const handout = await handoutOf(ridTwo, sha256(b32(5)).slice(0, 32), { seats: seatsFor(node) });
+    const handout = await handoutOf(ridTwo, sha256(b32(5)).slice(0, 32), { signerNodes: signerNodesFor(node) });
     const accepted = await post(node.port, '/handout', encodeHandout(handout));
     assert.equal(accepted.status, 201, accepted.text);
     const id = accepted.bytes;

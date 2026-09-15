@@ -4,7 +4,7 @@
 // median-time-past is after committee_time - so every node lands on one value
 // without anybody naming it. But `bitcoin-block-hash` is a SOURCE, not a
 // selection: two honest nodes polling at different moments take different tips
-// and seat different committees. This is the selection.
+// and signer node different committees. This is the selection.
 //
 // The timestamps here are chosen, not mined, which is the point: a fixture
 // with a known clock is the only way to assert WHICH block the rule picks.
@@ -97,7 +97,7 @@ test('two nodes with the same chain view get the same height, hash and seed', ()
     'one chain view gave two committees');
 });
 
-test('a block too shallow to have settled is refused, not seated on', () => {
+test('a block too shallow to have settled is refused, not assigned on', () => {
   const view = chainOf(15);
   // 112 is three deep against a tip of 114. Ask for four.
   const seen = beaconFromChain(contract({ censusConfirmations: 4 }), view);
@@ -232,7 +232,7 @@ test('a late block that is not the first one is refused, not accepted for being 
  * Found on a real regtest and not by reading the code: the answer was
  * window-dependent. A node reading 64 headers to the tip named block 69; a node
  * whose view began at 103 named block 112 - same chain, same round. Two honest
- * nodes would have seated different committees, which is exactly what this rule
+ * nodes would have assigned different committees, which is exactly what this rule
  * exists to prevent.
  */
 test('a view that begins after committee_time says so instead of answering', () => {

@@ -69,33 +69,33 @@ test('a preimage at or above the order is refused, never reduced', () => {
   assert.deepEqual(reconstruct(out.shares.slice(0, 5)), largest);
 });
 
-test('one share per seat, and each seat can check its own without rebuilding P', () => {
+test('one share per signer node, and each signer node can check its own without rebuilding P', () => {
   const { shares } = split();
   assert.equal(shares.length, 7);
-  assert.deepEqual(shares.map((s) => s.seat), [1, 2, 3, 4, 5, 6, 7]);
+  assert.deepEqual(shares.map((s) => s.signerNode), [1, 2, 3, 4, 5, 6, 7]);
 
   for (const s of shares) {
     assert.equal(shareIsConsistent(s, s.commitment), true);
     assert.ok(s.value > 0n && s.value < FIELD);
   }
 
-  // a share altered in transit does not match what was published for its seat
+  // a share altered in transit does not match what was published for its signer node
   const [first] = shares;
   assert.equal(shareIsConsistent({ ...first, value: first.value + 1n }, first.commitment), false);
 
-  // nor does another seat's share, handed over under this seat's name
-  assert.equal(shareIsConsistent({ seat: first.seat, value: shares[1].value }, first.commitment), false);
+  // nor does another signer node's share, handed over under this signer node's name
+  assert.equal(shareIsConsistent({ signerNode: first.signerNode, value: shares[1].value }, first.commitment), false);
 
-  // AND A SHARE IS ONE SEAT'S. Seat 1's own value, presented as seat 2's, does
-  // not match seat 2's commitment - otherwise one member could hand over
+  // AND A SHARE IS ONE SIGNER NODE'S. Signer node 1's own value, presented as signer node 2's, does
+  // not match signer node 2's commitment - otherwise one member could hand over
   // another's share as their own and be counted twice towards the five.
-  assert.equal(shareIsConsistent({ seat: shares[1].seat, value: first.value },
-    shares[1].commitment), false, 'a share was accepted under another seat s name');
-  assert.equal(shareIsConsistent({ seat: shares[1].seat, value: first.value },
+  assert.equal(shareIsConsistent({ signerNode: shares[1].signerNode, value: first.value },
+    shares[1].commitment), false, 'a share was accepted under another signer node s name');
+  assert.equal(shareIsConsistent({ signerNode: shares[1].signerNode, value: first.value },
     first.commitment), false);
 
   // and the commitment says nothing about P: it is the share's, not the secret's
-  assert.notEqual(toHex(first.commitment), toHex(shareCommitment(first.seat, first.value + 1n)));
+  assert.notEqual(toHex(first.commitment), toHex(shareCommitment(first.signerNode, first.value + 1n)));
 });
 
 /**
@@ -112,7 +112,7 @@ test('any four of the seven reconstruct nothing at all', () => {
   for (const four of fours) {
     assert.throws(() => reconstruct(four),
       /4 shares cannot reconstruct anything: 5 are needed/,
-      four.map((s) => s.seat).join(','));
+      four.map((s) => s.signerNode).join(','));
   }
 
   // and if somebody interpolates them anyway, the answer is not P - measured
@@ -120,7 +120,7 @@ test('any four of the seven reconstruct nothing at all', () => {
   for (const four of fours.slice(0, 5)) {
     const wrong = reconstruct(four, { needed: 4 });
     assert.notEqual(toHex(wrong), toHex(preimage),
-      `four shares named P at seats ${four.map((s) => s.seat).join(',')}`);
+      `four shares named P at signer nodes ${four.map((s) => s.signerNode).join(',')}`);
   }
 
   // three and one and none are refused the same way
@@ -142,7 +142,7 @@ test('every five of the seven reconstruct exactly P, and its hash is the commitm
   const stakeCommitment = sha256(preimage);
   for (const five of fives) {
     const back = reconstruct(five);
-    assert.deepEqual(back, preimage, `seats ${five.map((s) => s.seat).join(',')}`);
+    assert.deepEqual(back, preimage, `signer nodes ${five.map((s) => s.signerNode).join(',')}`);
     assert.deepEqual(sha256(back), stakeCommitment,
       'the reconstructed preimage does not hash to what the player signed');
   }
@@ -156,12 +156,12 @@ test('a split is refused rather than guessed when it is not one', () => {
   assert.throws(() => splitSecret(new Uint8Array(31), { coefficients }), /32 bytes/);
   assert.throws(() => splitSecret(preimage, { coefficients: [] }), /needs 4 coefficients/);
   assert.throws(() => splitSecret(preimage, { coefficients, needed: 1 }), /below two is not a threshold/);
-  assert.throws(() => splitSecret(preimage, { coefficients, seats: 3 }), /3 seats cannot carry/);
+  assert.throws(() => splitSecret(preimage, { coefficients, signerNodes: 3 }), /3 signer nodes cannot carry/);
 
-  // one seat answering twice is one share, not two
+  // one signer node answering twice is one share, not two
   const { shares } = split();
   assert.throws(() => reconstruct([shares[0], shares[0], shares[1], shares[2], shares[3]]),
-    /two shares for one seat are one share/);
+    /two shares for one signer node are one share/);
 });
 
 /**
@@ -184,9 +184,9 @@ test('shares differ with the secret and with the randomness', () => {
 /**
  * WHAT A DISHONEST DEALER CAN STILL DO, MEASURED RATHER THAN GUESSED.
  *
- * The contract of this piece is SHARE-TO-SEAT BINDING, not polynomial binding.
- * A dealer who splits with two polynomials and gives some seats the second one
- * hands out shares that EACH pass their own seat commitment, and nothing here
+ * The contract of this piece is SHARE-TO-SIGNER NODE BINDING, not polynomial binding.
+ * A dealer who splits with two polynomials and gives some signer nodes the second one
+ * hands out shares that EACH pass their own signer node commitment, and nothing here
  * catches it at handout. It is caught at reconstruction, and this counts what
  * that costs.
  *
@@ -199,16 +199,16 @@ test('a two-polynomial dealer: how many of the twenty-one five-subsets open P', 
   const second = splitSecret(other, { coefficients: coefficients.map((x) => x + 99n) }).shares;
   const stakeCommitment = sha256(preimage);
 
-  // k seats are given the second polynomial's share instead of their own
+  // k signer nodes are given the second polynomial's share instead of their own
   const counts = [];
   for (let k = 0; k <= 3; k++) {
     const mixed = honest.map((s, i) => (i >= 7 - k ? second[i] : s));
 
-    // EVERY ONE OF THEM STILL PASSES ITS OWN SEAT. That is the whole point:
+    // EVERY ONE OF THEM STILL PASSES ITS OWN SIGNER NODE. That is the whole point:
     // nothing at handout can tell.
     for (let i = 0; i < mixed.length; i++) {
       const published = i >= 7 - k ? second[i].commitment : honest[i].commitment;
-      assert.equal(shareIsConsistent(mixed[i], published), true, `seat ${i + 1} at k=${k}`);
+      assert.equal(shareIsConsistent(mixed[i], published), true, `signer node ${i + 1} at k=${k}`);
     }
 
     const seen = openStake(mixed, { stakeCommitment });
@@ -278,12 +278,12 @@ test('a subset that rebuilds something is not mistaken for one that rebuilt P', 
  * A HANDOUT NOBODY CAN OPEN IS FORFEIT, NOT VOID.
  *
  * VOID is the operator-fault path: nobody acts, the HTLC expires, the stake
- * goes home. A player who deals three of their own seven seats from a second
+ * goes home. A player who deals three of their own seven signer nodes from a second
  * polynomial has broken settlement of their own stake, and calling that VOID
  * would hand a loser their money back for having done it - the same family as
  * escaping by disconnect.
  */
-test('a handout no five seats can open forfeits, and does not refund the dealer', () => {
+test('a handout no five signer nodes can open forfeits, and does not refund the dealer', () => {
   const other = new Uint8Array(randomBytes(32));
   const honest = split().shares;
   const second = splitSecret(other, { coefficients: coefficients.map((x) => x + 99n) }).shares;
@@ -367,7 +367,7 @@ const zn = {
   },
 };
 
-test('a split with a group publishes one commitment per coefficient, and every seat lies on it', () => {
+test('a split with a group publishes one commitment per coefficient, and every signer node lies on it', () => {
   const out = splitSecret(preimage, { coefficients, curve: zn });
   assert.equal(out.commitments.length, SHARES_NEEDED,
     'a threshold of five is a polynomial of five coefficients');
@@ -379,11 +379,11 @@ test('a split with a group publishes one commitment per coefficient, and every s
   }
 
   // AND THE CONSTANT TERM IS THE ONE THE PREIMAGE NAMES: C_0 is g^P, which is
-  // why the check tells a seat nothing it did not already have.
+  // why the check tells a signer node nothing it did not already have.
   assert.deepEqual(out.commitments[0], zn.pointFromScalar(BigInt('0x' + toHex(preimage))));
 });
 
-test('a seat with no polynomial, or no group, refuses rather than approving', () => {
+test('a signer node with no polynomial, or no group, refuses rather than approving', () => {
   const out = splitSecret(preimage, { coefficients, curve: zn });
   const share = out.shares[0];
 
@@ -403,7 +403,7 @@ test('a seat with no polynomial, or no group, refuses rather than approving', ()
   }
   assert.equal(shareOpensTo(share, { commitments: out.commitments, curve: zn }).ok, true);
 
-  // and a handout nobody can check is a handout that is refused, seat by seat
+  // and a handout nobody can check is a handout that is refused, signer node by signer node
   const blind = checkHandout({ shares: out.shares, curve: zn });
   assert.equal(blind.refused, 7, blind.why);
   assert.equal(blind.ok, false);
@@ -412,15 +412,15 @@ test('a seat with no polynomial, or no group, refuses rather than approving', ()
 /**
  * THE FIGURE THIS LETTER MOVES.
  *
- * The same two-polynomial dealer the file already builds: three seats are
+ * The same two-polynomial dealer the file already builds: three signer nodes are
  * handed a share from a second polynomial. Every one of the seven still passes
  * its own hash commitment - that check is about transit, and the dealer wrote
  * both sides of it - and none of the twenty-one five-subsets can open the
  * committed preimage, so the stake could never be settled.
  *
- * With the polynomial published, those three seats refuse the share at
+ * With the polynomial published, those three signer nodes refuse the share at
  * HANDOUT. The 0-of-21 handout stops being something the committee discovers
- * at settlement and becomes something the seats reject before play.
+ * at settlement and becomes something the signer nodes reject before play.
  */
 test('a two-polynomial dealer is refused at handout: 0 of 7 becomes 3 of 7', () => {
   const other = new Uint8Array(randomBytes(32));
@@ -441,12 +441,12 @@ test('a two-polynomial dealer is refused at handout: 0 of 7 becomes 3 of 7', () 
   assert.equal(opened.opens, 0);
   assert.equal(handoutOutcome(opened).outcome, 'FORFEIT');
 
-  // AFTER: the three seats given the second polynomial refuse their share.
+  // AFTER: the three signer nodes given the second polynomial refuse their share.
   const handout = checkHandout({ shares: mixed, published, commitments: honest.commitments, curve: zn });
   assert.equal(handout.refused, 3, handout.why);
   assert.equal(handout.accepted, 4);
   assert.equal(handout.ok, false);
-  assert.deepEqual(handout.seats.filter((s) => !s.ok).map((s) => s.seat), [5, 6, 7]);
+  assert.deepEqual(handout.signerNodes.filter((s) => !s.ok).map((s) => s.signerNode), [5, 6, 7]);
   assert.match(handout.why, /not on the polynomial the dealer published/);
 
   console.log(`  two-polynomial dealer: refused at handout ${transitOnly} of 7 with the hash `
@@ -473,9 +473,9 @@ test('one door answers both questions, and two arguments is still the old one', 
   const refused = mixed.filter((s, i) =>
     !shareIsConsistent(s, published[i], { commitments: honest.commitments, curve: zn }));
   assert.equal(refused.length, 3);
-  assert.deepEqual(refused.map((s) => s.seat), [5, 6, 7]);
+  assert.deepEqual(refused.map((s) => s.signerNode), [5, 6, 7]);
 
-  // an honest seat passes both ways, and a corrupted value fails both
+  // an honest signer node passes both ways, and a corrupted value fails both
   assert.equal(shareIsConsistent(honest.shares[0], honest.shares[0].commitment,
     { commitments: honest.commitments, curve: zn }), true);
   const bent = { ...honest.shares[0], value: honest.shares[0].value + 1n };

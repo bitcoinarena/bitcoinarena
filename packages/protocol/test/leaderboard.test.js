@@ -116,7 +116,7 @@ test('an under-signed or unsigned result is not on the board, and is named', () 
   assert.equal(leaderboard([row(0x21, 900, DELIVERED, 5)], { contract }).rows.length, 1);
 
   // A SIGNATURE FROM OFF THE COMMITTEE IS NOT A SIGNATURE. Five strangers are
-  // not five seats, however many of them there are.
+  // not five signer nodes, however many of them there are.
   const stranger = row(0x24, 600);
   stranger.signedBy = [1, 2, 3, 4, 5].map((n) => ({
     resultId: stranger.signedBy[0].resultId, nodePubkey: b32(0xf0 + n),

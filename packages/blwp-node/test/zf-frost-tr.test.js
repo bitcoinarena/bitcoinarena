@@ -80,14 +80,14 @@ test('DKG: commitments, round-2 shares and final key shares are ZF\'s, under our
   const polys = {};
   for (const i of ids) {
     const P = K.inputs[i];
-    polys[i] = splitSecret(h(P.signing_key), { seats: 3, needed: 2, coefficients: [sc(P.coefficient)], curve });
+    polys[i] = splitSecret(h(P.signing_key), { signerNodes: 3, needed: 2, coefficients: [sc(P.coefficient)], curve });
     polys[i].commitments.forEach((c, k) => assert.equal(toHex(c), P.vss_commitments[k]));
   }
   // ZF keys `signing_shares` by SENDER, as the recipient holds them: participant
   // i's record lists f_j(i).
   for (const i of ids)
     for (const [j, v] of Object.entries(K.inputs[i].signing_shares))
-      assert.equal(s32(polys[j].shares.find((s) => s.seat === Number(i)).value), v, `f_${j}(${i})`);
+      assert.equal(s32(polys[j].shares.find((s) => s.signerNode === Number(i)).value), v, `f_${j}(${i})`);
 
   // ZF's post-DKG step: make the key even (negating every share if not), then
   // add t = TapTweak(P.x) to every share. Ours is groupKeyOf + poolTweak +
@@ -100,7 +100,7 @@ test('DKG: commitments, round-2 shares and final key shares are ZF\'s, under our
   assert.equal(toHex(Q), K.inputs.verifying_key);
   for (const i of ids) {
     let s = 0n;
-    for (const j of ids) s = (s + polys[j].shares.find((q) => q.seat === Number(i)).value) % FIELD;
+    for (const j of ids) s = (s + polys[j].shares.find((q) => q.signerNode === Number(i)).value) % FIELD;
     const share = poolShare({ share: gk.negated ? FIELD - s : s, tweak, negated: false });
     assert.equal(s32(share), K.inputs[i].signing_share);
     assert.equal(toHex(curve.pointFromScalar(share)), K.inputs[i].verifying_share);
@@ -136,7 +136,7 @@ test('one signature share checked alone: each of ZF\'s verifies against its sign
     assert.equal(check(o.identifier, sc(o.sig_share)), true, `participant ${o.identifier}`);
     assert.equal(check(o.identifier, (sc(o.sig_share) + 1n) % FIELD), false, 'a changed share verified');
     const other = ids.find((i) => i !== o.identifier);
-    assert.equal(check(o.identifier, sc(o.sig_share), publicOf(other)), false, 'another seat\'s public share verified it');
+    assert.equal(check(o.identifier, sc(o.sig_share), publicOf(other)), false, 'another signer node\'s public share verified it');
     assert.equal(check(o.identifier, 0n), false, 'a zero share verified');
   }
 });

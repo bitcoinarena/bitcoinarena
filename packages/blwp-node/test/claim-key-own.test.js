@@ -1,14 +1,14 @@
-// THE ROUND'S CLAIM KEY IS MADE BY ITS OWN SEATS - the shipping path, nothing
+// THE ROUND'S CLAIM KEY IS MADE BY ITS OWN SIGNER NODES - the shipping path, nothing
 // injected (v4.6.2 §23.1 step 0; W5 step 1).
 //
-// "Once selected, the settlement seats run a dealerless DKG for this round's
-// threshold key claim_pk and each seat signs (round_id, claim_pk)." Every lock
-// test before this handed the seats a key (`claimKeyFor`) - a harness. This
-// one is the Daily's own 2-of-2 (`standUpRound`: bonded seats, a census, a
+// "Once selected, the settlement signer nodes run a dealerless DKG for this round's
+// threshold key claim_pk and each signer node signs (round_id, claim_pk)." Every lock
+// test before this handed the signer nodes a key (`claimKeyFor`) - a harness. This
+// one is the Daily's own 2-of-2 (`standUpRound`: bonded signer nodes, a census, a
 // published round) with no key handed and no peers wired by hand.
 //
-// MEASURED BEFORE (TASKBOOK, W5 step 1): neither seat held a group key,
-// /claim-key 409 on both ("this seat holds no claim key for that round yet"),
+// MEASURED BEFORE (TASKBOOK, W5 step 1): neither signer node held a group key,
+// /claim-key 409 on both ("this signer node holds no claim key for that round yet"),
 // and a key generation run by hand found no peer.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -21,23 +21,23 @@ import { pageCurve } from '../../blwp-client/src/page-curve.js';
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-test('a Daily 2-of-2 seated from its census makes its own claim key: both seats hold one group key, /claim-key serves it, and the page counts 2 of 2', async () => {
+test('a Daily 2-of-2 assigned from its census makes its own claim key: both signer nodes hold one group key, /claim-key serves it, and the page counts 2 of 2', async () => {
   const round = await standUpRound({ host: '127.0.0.1', portA: 18521, portB: 18522 });
   try {
-    const seats = [round.a, round.b];
+    const signerNodes = [round.a, round.b];
     const nodes = round.contract.nodes;
     const t0 = Date.now();
-    while (Date.now() - t0 < 20000 && !seats.every((d) => d.dkg.seatFor(nodes).ok)) await wait(100);
+    while (Date.now() - t0 < 20000 && !signerNodes.every((d) => d.dkg.signerNodeFor(nodes).ok)) await wait(100);
     const madeMs = Date.now() - t0;
-    const held = seats.map((d) => d.dkg.seatFor(nodes));
+    const held = signerNodes.map((d) => d.dkg.signerNodeFor(nodes));
     const groupKeys = held.map((h) => (h.ok ? toHex(h.pool.groupPublicKey) : null));
     const served = [];
-    for (const d of seats) {
+    for (const d of signerNodes) {
       const r = await fetch(`http://127.0.0.1:${d.port}/claim-key?round=${round.id}`);
       const body = new Uint8Array(await r.arrayBuffer());
       served.push({ status: r.status, key: r.ok ? toHex(decodeClaimKeyAttestation(body.subarray(0, body.length - 64)).claimPk) : null });
     }
-    const page = await attestedClaimKey({ round: { ...round.contract, id: fromHex(round.id) }, seats: nodes,
+    const page = await attestedClaimKey({ round: { ...round.contract, id: fromHex(round.id) }, signerNodes: nodes,
       nodes: round.nodes, curve: pageCurve });
     const facts = {
       bothHoldAKey: groupKeys.every(Boolean), sameGroupKey: groupKeys[0] !== null && groupKeys[0] === groupKeys[1],

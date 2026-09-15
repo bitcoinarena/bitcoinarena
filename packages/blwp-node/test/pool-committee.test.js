@@ -1,9 +1,9 @@
 // SEVEN DAEMONS ON SEVEN PORTS, AND THE POOL IS SPENT BY FIVE OF THEM.
 //
-// `pool-signing.test.js` proves a seat's rules with the seats in one process.
+// `pool-signing.test.js` proves a signer node's rules with the signer nodes in one process.
 // This puts them on sockets, which is the difference between "the arithmetic
 // works" and "a committee did it": the asker holds ONE share, the other four
-// are answers off a wire, and a seat that will not sign says so with a status
+// are answers off a wire, and a signer node that will not sign says so with a status
 // code rather than by being absent from a `map`.
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { test } from 'node:test';
@@ -30,7 +30,7 @@ import { scalarFrom32, FIELD, SHARES_NEEDED, SHARES_TOTAL } from '../../protocol
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
-import { assumeSeated } from './seating.js';
+import { assumeAssigned } from './assignment.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { parseTransaction } from '../../protocol/src/tx.js';
 
@@ -85,7 +85,7 @@ async function committee({ chain = null } = {}) {
   for (let i = 0; i < SHARES_TOTAL; i++) {
     nodes.push(await serve(openStore(':memory:'), {
       port: 0, ...FUNDED, now: () => NOW,
-      poolKey: pool, poolCurve: curve, poolSeat: dealt.shares[i],
+      poolKey: pool, poolCurve: curve, poolSignerNode: dealt.shares[i],
       ...(chain ? { chainSpend: chain } : {}),
     }));
   }
@@ -106,12 +106,12 @@ async function committee({ chain = null } = {}) {
 
   for (const n of nodes) {
     assert.equal((await post(n.port, '/round', encodeRoundContract(contract))).status, 201);
-    assumeSeated(n.round, rid, contract.nodes);
+    assumeAssigned(n.round, rid, contract.nodes);
     for (const e of entries) {
       assert.equal((await post(n.port, '/entry', encodeEntryContract(e.contract))).status, 201);
-      // THE SEAT'S OWN VERDICT. A close would put these here; this file is
+      // THE SIGNER NODE'S OWN VERDICT. A close would put these here; this file is
       // about what happens after one, so they are put here directly and each
-      // is signed under the seat's own key, which is what `entriesFor` reads.
+      // is signed under the signer node's own key, which is what `entriesFor` reads.
       const eid = entryIdOf(e.contract);
       const result = {
         roundId: rid, playerPubkey: e.player.pubkey, outcome: e.outcome, score: e.score,
@@ -123,7 +123,7 @@ async function committee({ chain = null } = {}) {
     }
   }
 
-  // EVERY SEAT SIGNS THE TABLE IT COMPUTED, and then fetches the others'
+  // EVERY SIGNER NODE SIGNS THE TABLE IT COMPUTED, and then fetches the others'
   // through the door that serves them - `gather`, over real HTTP.
   const entriesOf = (n) => new PoolSigning(n.round, {}).entriesFor(rid).entries;
   for (const n of nodes)
@@ -153,15 +153,15 @@ test('five daemons sign one spend of the pool over the wire, and the asker holds
     const others = c.nodes.slice(1, SHARES_NEEDED).map((n) => `http://127.0.0.1:${n.port}`);
     assert.equal(others.length, SHARES_NEEDED - 1, 'the asker is one of the five');
 
-    // The sighash every seat computes for itself, taken BEFORE the payout is
-    // sent: a paid row is not a queued one, and a seat will not rebuild a
+    // The sighash every signer node computes for itself, taken BEFORE the payout is
+    // sent: a paid row is not a queued one, and a signer node will not rebuild a
     // spend for a round it has already paid.
     const mine = asker.signing.spendFor({ roundId: c.rid, utxo: c.utxo, contract: c.contract });
     assert.equal(mine.ok, true, mine.why);
 
     const paid = await asker.payouts.payWithCommittee({
       roundId: c.rid, utxo: c.utxo, contract: c.contract,
-      signing: asker.signing, seats: others,
+      signing: asker.signing, signerNodes: others,
     });
     assert.equal(paid.ok, true, `${paid.why} ${JSON.stringify(paid.refused)}`);
     assert.equal(paid.state, PAID);
@@ -169,7 +169,7 @@ test('five daemons sign one spend of the pool over the wire, and the asker holds
     assert.equal(sent.length, 1, 'the committee sent something other than one transaction');
 
     // AND IT IS A SPEND THE POOL OUTPUT WOULD ACCEPT. The witness is one
-    // BIP-340 signature over the sighash every seat computed for itself.
+    // BIP-340 signature over the sighash every signer node computed for itself.
     const tx = parseTransaction(sent[0]);
     assert.equal(tx.witnesses[0].length, 1, 'that is not a key-path spend');
     assert.equal(tx.witnesses[0][0].length, 64);
@@ -185,7 +185,7 @@ test('five daemons sign one spend of the pool over the wire, and the asker holds
 });
 
 test('four daemons do not spend the pool, and the asker says how many committed', async () => {
-  const chain = { send: async () => { throw new Error('four seats reached the chain'); } };
+  const chain = { send: async () => { throw new Error('four signer nodes reached the chain'); } };
   const c = await committee({ chain });
   try {
     const asker = c.nodes[0];
@@ -193,21 +193,21 @@ test('four daemons do not spend the pool, and the asker says how many committed'
     const others = c.nodes.slice(1, SHARES_NEEDED - 1).map((n) => `http://127.0.0.1:${n.port}`);
     const paid = await asker.payouts.payWithCommittee({
       roundId: c.rid, utxo: c.utxo, contract: c.contract,
-      signing: asker.signing, seats: others,
+      signing: asker.signing, signerNodes: others,
     });
     assert.equal(paid.ok, false);
     assert.equal(paid.committed, SHARES_NEEDED - 1);
-    assert.match(paid.why, /4 of 5 seats committed to this spend/);
+    assert.match(paid.why, /4 of 5 signer nodes committed to this spend/);
     assert.equal(asker.round.payout(c.rid).state, PAYOUT_QUEUED, 'a short committee moved the row');
   } finally { await c.close(); }
 });
 
-test('a seat refuses over the wire to sign an output that is not the pool', async () => {
+test('a signer node refuses over the wire to sign an output that is not the pool', async () => {
   const c = await committee();
   try {
-    const seat = c.nodes[1];
+    const signerNode = c.nodes[1];
     const elsewhere = { ...c.utxo, script: new Uint8Array(34).fill(0x51) };
-    const got = await post(seat.port, `/pool/commit?round=${toHex(c.rid)}`, encodeUtxo(elsewhere));
+    const got = await post(signerNode.port, `/pool/commit?round=${toHex(c.rid)}`, encodeUtxo(elsewhere));
     assert.equal(got.status, 409);
     assert.match((await got.text()).trim(), /not the pool this committee holds/);
   } finally { await c.close(); }
@@ -227,16 +227,16 @@ test('a daemon dealt no share answers the signing doors with a refusal', async (
   } finally { await c.close(); if (shareless) await shareless.close(); }
 });
 
-test('a seat that committed will not sign a second commitment list over the wire', async () => {
+test('a signer node that committed will not sign a second commitment list over the wire', async () => {
   const c = await committee();
   try {
-    const seat = c.nodes[1];
-    const url = `http://127.0.0.1:${seat.port}`;
-    const first = await post(seat.port, `/pool/commit?round=${toHex(c.rid)}`, encodeUtxo(c.utxo));
+    const signerNode = c.nodes[1];
+    const url = `http://127.0.0.1:${signerNode.port}`;
+    const first = await post(signerNode.port, `/pool/commit?round=${toHex(c.rid)}`, encodeUtxo(c.utxo));
     assert.equal(first.status, 200);
     const mine = decodeCommitments(new Uint8Array(await first.arrayBuffer()));
 
-    // Five more seats: four to make a list a real round would carry, and a
+    // Five more signer nodes: four to make a list a real round would carry, and a
     // spare so the second list is a DIFFERENT one rather than a repeat.
     const rest = [];
     for (const n of c.nodes.slice(2, SHARES_NEEDED + 2)) {
@@ -245,13 +245,13 @@ test('a seat that committed will not sign a second commitment list over the wire
       rest.push(decodeCommitments(new Uint8Array(await got.arrayBuffer()))[0]);
     }
     const list = [...mine, ...rest.slice(0, SHARES_NEEDED - 1)];
-    const signed = await post(seat.port, `/pool/share?round=${toHex(c.rid)}`,
+    const signed = await post(signerNode.port, `/pool/share?round=${toHex(c.rid)}`,
       encodeShareRequest(c.utxo, list));
     assert.equal(signed.status, 200);
 
-    assert.equal(rest.length, SHARES_NEEDED, 'the fixture did not gather a spare seat');
+    assert.equal(rest.length, SHARES_NEEDED, 'the fixture did not gather a spare signer node');
     const wider = [...list, rest[SHARES_NEEDED - 1]];
-    const again = await post(seat.port, `/pool/share?round=${toHex(c.rid)}`,
+    const again = await post(signerNode.port, `/pool/share?round=${toHex(c.rid)}`,
       encodeShareRequest(c.utxo, wider));
     assert.equal(again.status, 409);
     assert.match((await again.text()).trim(), /will not sign twice/);

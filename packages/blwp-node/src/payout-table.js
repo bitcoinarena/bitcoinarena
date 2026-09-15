@@ -63,20 +63,20 @@ export function signPayoutTable({ tableId, secret, pubkey }) {
 }
 
 /**
- * COUNT THE SEATS THAT SIGNED THE TABLE THIS NODE COMPUTED.
+ * COUNT THE SIGNER NODES THAT SIGNED THE TABLE THIS NODE COMPUTED.
  *
- * The seated list is the census's, exactly as `verifiedFinal` counts results:
- * a key the chain never seated is a stranger and not a vote, and one seat
+ * The assigned list is the census's, exactly as `verifiedFinal` counts results:
+ * a key the chain never assigned is a stranger and not a vote, and one signer node
  * cannot become two by signing twice.
  */
-export function verifiedTable(records, { contract, seats, tableId }) {
-  if (!Array.isArray(seats) || !seats.length)
-    return { ok: false, why: 'that round has no seated committee to count against' };
+export function verifiedTable(records, { contract, signerNodes, tableId }) {
+  if (!Array.isArray(signerNodes) || !signerNodes.length)
+    return { ok: false, why: 'that round has no assigned committee to count against' };
   let needed;
   try { needed = receiptsNeeded(contract.settlementSlots); }
   catch (err) { return { ok: false, why: err.message }; }
 
-  const seated = new Set(seats.map(toHex));
+  const joined = new Set(signerNodes.map(toHex));
   const seen = new Set();
   let agreed = 0, strangers = 0, doubled = 0, forged = 0, other = 0;
 
@@ -85,7 +85,7 @@ export function verifiedTable(records, { contract, seats, tableId }) {
     let split;
     try { split = splitSignedTable(bytes); } catch { forged++; continue; }
     const who = toHex(split.nodePubkey);
-    if (!seated.has(who)) { strangers++; continue; }
+    if (!joined.has(who)) { strangers++; continue; }
     if (seen.has(who)) { doubled++; continue; }
     seen.add(who);
 
@@ -95,7 +95,7 @@ export function verifiedTable(records, { contract, seats, tableId }) {
     if (!ok) { forged++; continue; }
 
     // A SIGNATURE OVER ANOTHER TABLE IS NOT A VOTE FOR THIS ONE. It is counted
-    // separately rather than dropped, because a round where seats sign two
+    // separately rather than dropped, because a round where signer nodes sign two
     // different tables is a disagreement an operator has to see.
     if (toHex(split.tableId) !== toHex(tableId)) { other++; continue; }
     agreed++;
@@ -106,7 +106,7 @@ export function verifiedTable(records, { contract, seats, tableId }) {
     final: agreed >= needed,
     agreed, needed, strangers, doubled, forged, signedSomethingElse: other,
     why: agreed >= needed
-      ? `${agreed} of ${needed} seats signed this table`
-      : `${agreed} of ${needed} seats signed this table, so nothing is spent`,
+      ? `${agreed} of ${needed} signer nodes signed this table`
+      : `${agreed} of ${needed} signer nodes signed this table, so nothing is spent`,
   };
 }

@@ -61,7 +61,7 @@
     #blwp-deposit { max-width: min(560px, 90vw); text-align: center; font-size: 13px; color: #e8eaed; }
     #blwp-deposit:empty { display: none; }
     /* ...AND OVER THE GAME once the loading screen is gone: PLAY in the lobby
-       takes the seat in the running page (M3.3-34), so a lock round's deposit
+       joins in the running page (M3.3-34), so a lock round's deposit
        is asked for after Unity loaded. */
     body > #blwp-deposit { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 25;
       padding: 12px 14px; border-radius: 6px; background: rgba(13, 16, 20, 0.94); border: 1px solid #3a3f45; }
@@ -308,7 +308,7 @@
        plausible: a round contract is agreed before anyone moves, and inventing
        one in the page would be inventing a lobby. -->
   <script src="blwp-client.js"></script>
-  <!-- Same secp256k1 the daemons use. Without it a named round never takes a seat. -->
+  <!-- Same secp256k1 the daemons use. Without it a named round never joins. -->
   <script src="blwp-curve.js"></script>
 
   <script>
@@ -435,7 +435,7 @@
         // refused. The client proves one node; these are where else to deliver.
         const nodes = discovery.nodes || window.BLWP_NODES;
         // AND THE PLAYER'S STAKE LOCK, if this page made one (W1b): `join`
-        // hands it to every seat once the seat holds the entry.
+        // hands it to every signer node once the signer node holds the entry.
         return at(Object.assign({}, discovery, { nodes: nodes }),
           Object.assign({}, opts, { verify: verify, stakeLock: window.BLWP_STAKE_LOCK || undefined }));
       };
@@ -488,7 +488,7 @@
       window.BLWP_ROUND = named.round;
       // BLWP_CHAIN AND BLWP_ADVERT ARE SET LAST, beside BLWP_ENTRY (M3.3-34): they
       // are what tells Unity there is a session to open (BlwpNetNodeUrl), and a
-      // seat PLAY takes in this page lands while Unity is already running - a
+      // signer node PLAY takes in this page lands while Unity is already running - a
       // session opened before the entry exists fails and cannot be opened again.
       // THE NODES THIS ROUND NAMED, so the bridge can ask all of them what the
       // round's randomness is. The player's own world is seeded from it, and a
@@ -523,7 +523,7 @@
         Object.assign({}, named.round, { id: BLWPCLIENT.fromHex(named.roundIdHex) }),
         { seed, curve: window.BLWP_CURVE });
       // WHAT THIS TAB ALREADY DONATED TO THIS ROUND, FROM ITS NOTES, before any
-      // seat (M3.2 6e): the panel shows it even if the seat is refused later;
+      // signer node (M3.2 6e): the panel shows it even if the signer node is refused later;
       // payDonation's own answer replaces it when it comes.
       if (!window.BLWP_DONATION_PAID) {
         window.BLWP_DONATION_PAID = BLWPCLIENT.donationNotedState(window.sessionStorage,
@@ -559,24 +559,24 @@
 
       // AND THE PAGE DEALS ITS OWN STAKE (23.1 steps 1 and 2).
       //
-      // WHAT THIS FIXES IS A SILENT SEAT. `entryFor` was called with no stake,
-      // so every seat this page ever took carried `random(32)` where
+      // WHAT THIS FIXES IS A SILENT SIGNER NODE. `entryFor` was called with no stake,
+      // so every signer node this page ever took carried `random(32)` where
       // `sha256(P)` belongs and 32 zero bytes where the shares belong -
       // `stakeFor` was compiled into the bundle and had ZERO CALLERS. The
       // daemon accepts those zeros on purpose for M2, so nothing refused and
-      // nothing said anything: a free seat at a paying round that the player
+      // nothing said anything: a free round at a paying round that the player
       // was never told about.
       //
-      // DEALT TO THE SETTLEMENT SEATS AND TO NOBODY ELSE. `named.nodes` is the
-      // contract's flat list, which `Roster.seatsFor` builds as the UNION of
-      // the role committees - measured at nine keys for a seven-seat
-      // settlement committee, two of them seats that could never open a share.
-      // `fetchSettlementSeats` asks every node and refuses disagreement, the
+      // DEALT TO THE SETTLEMENT SIGNER NODES AND TO NOBODY ELSE. `named.nodes` is the
+      // contract's flat list, which `Roster.signerNodesFor` builds as the UNION of
+      // the role committees - measured at nine keys for a seven-signer node
+      // settlement committee, two of them signer nodes that could never open a share.
+      // `fetchSettlementSignerNodes` asks every node and refuses disagreement, the
       // same rule the randomness follows.
       //
       // THE HOLD INVOICE IS NOT THIS PAGE'S JOB YET. Dealing the stake is what
       // makes an entry settleable; paying it is bolt11 and a wallet, which is
-      // M3.2. So the seat is dealt and the player is TOLD it is unpaid.
+      // M3.2. So the signer node is dealt and the player is TOLD it is unpaid.
       // WHETHER THIS ROUND ASKS FOR MONEY, asked of the client rather than
       // read off the contract. The page names no contract field - a page that
       // carried its own could carry its own committee next - and the rule sits
@@ -588,7 +588,7 @@
       // second time. Kept per round in this tab, so a reload over a kept lock
       // writes the same amount. The rule is `chooseDonation`, where node --test
       // drives it; this page only asks and passes the answer on.
-      // THE ROUND'S DONATION SET FIRST (M3.2 6e, §22A): from every seat of the
+      // THE ROUND'S DONATION SET FIRST (M3.2 6e, §22A): from every signer node of the
       // round, checked - the network's Ed25519 donation authority at the round's
       // height, rotations included, and the set the round names - so the prompt
       // lists every recipient before the wallet approves. With no set that
@@ -610,31 +610,31 @@
       let claimKey = null;
       let stakeLock = null;
       if (pays) {
-        let seats = null;
+        let signerNodes = null;
         try {
-          seats = await BLWPCLIENT.fetchSettlementSeats(named.roundIdHex, named.nodes);
+          signerNodes = await BLWPCLIENT.fetchSettlementSignerNodes(named.roundIdHex, named.nodes);
         } catch (e) {
-          // REFUSED BY NAME rather than seated silently. A paying round whose
+          // REFUSED BY NAME rather than joined silently. A paying round whose
           // settlement committee this page cannot learn is a round whose stake
-          // it cannot deal to anybody, and taking the seat anyway is the bug
+          // it cannot deal to anybody, and taking the signer node anyway is the bug
           // this letter closed.
-          window.BLWP_SEAT_REFUSED = 'this round pays and its settlement committee '
+          window.BLWP_JOIN_REFUSED = 'this round pays and its settlement committee '
             + 'could not be learned, so no stake could be dealt: ' + e.message;
-          console.error('[blwp] join refused: ' + window.BLWP_SEAT_REFUSED);
+          console.error('[blwp] join refused: ' + window.BLWP_JOIN_REFUSED);
           return;
         }
         // A ROUND WHOSE STAKE GOES INTO A FEDERATION LOCK NAMES AN ATTESTED
-        // CLAIM KEY (23.1 step 0): the settlement seats' signatures, counted in
-        // `@blwp/client` against the same seats, at the round's threshold. A
-        // key short of it refuses the seat by name - one seat serving its own
+        // CLAIM KEY (23.1 step 0): the settlement signer nodes' signatures, counted in
+        // `@blwp/client` against the same signer nodes, at the round's threshold. A
+        // key short of it refuses the signer node by name - one signer node serving its own
         // key must not be the key a stake is locked to.
         if (BLWPCLIENT.roundLocks(named.round)) {
-          // WAITED FOR, A LITTLE: the seats make the key when they seat the
-          // round, and a link opened at once can find one seat still making it.
+          // WAITED FOR, A LITTLE: the signer nodes make the key when they are assigned to the
+          // round, and a link opened at once can find one signer node still making it.
           const stageNow = document.getElementById('stage');
           const att = await BLWPCLIENT.awaitAttestedClaimKey({
             round: Object.assign({}, named.round, { id: BLWPCLIENT.fromHex(named.roundIdHex) }),
-            seats: seats.seats, nodes: named.nodes, curve: window.BLWP_CURVE,
+            signerNodes: signerNodes.signerNodes, nodes: named.nodes, curve: window.BLWP_CURVE,
           }, {
             onWait: (short) => {
               if (stageNow) stageNow.textContent = 'Waiting for the round\'s signer nodes to make its claim key: '
@@ -642,7 +642,7 @@
             },
           });
           if (!att.ok) {
-            window.BLWP_SEAT_REFUSED = att.why;
+            window.BLWP_JOIN_REFUSED = att.why;
             console.error('[blwp] join refused: ' + att.why);
             return;
           }
@@ -651,48 +651,48 @@
         // `round.id` IS BYTES, and the page holds the hex it was sent. The
         // contract decodes without an id - it is the hash OF the contract -
         // so it is put back on here rather than left for `stakeFor` to guess.
-        // A LOCK THIS TAB ALREADY MADE FOR THIS ROUND, THAT NO SEAT HAS COMMITTED
+        // A LOCK THIS TAB ALREADY MADE FOR THIS ROUND, THAT NO SIGNER NODE HAS COMMITTED
         // (W1b): the same stake and the same lock, not a second deal and a second
-        // deposit - a reload between the lock and the seat taking the entry.
+        // deposit - a reload between the lock and the signer node taking the entry.
         const kept = BLWPCLIENT.roundLocks(named.round)
           ? BLWPCLIENT.savedLock(vault(), { roundId: BLWPCLIENT.fromHex(named.roundIdHex), playerPubkey: player.pubkey })
           : null;
-        // A LOCK A SEAT ALREADY COMMITTED (6d, W4 hole 1): no new stake and no second
+        // A LOCK A SIGNER NODE ALREADY COMMITTED (6d, W4 hole 1): no new stake and no second
         // deposit - measured before, a reload onto the round link set out to fund a second
         // 980000 + 20000 msat. The join stops and says why; the collect runs from the
         // record the first join kept.
         const use = BLWPCLIENT.keptLockUse(kept);
         if (use.use === 'staked') {
-          window.BLWP_SEAT_REFUSED = use.why;
+          window.BLWP_JOIN_REFUSED = use.why;
           console.error('[blwp] join refused: ' + use.why);
           return;
         }
         const reuse = use.use === 'reuse' ? use.kept : null;
         stake = reuse ? reuse.stake : await BLWPCLIENT.stakeFor(
           Object.assign({}, named.round, { id: BLWPCLIENT.fromHex(named.roundIdHex) }), {
-            seats: seats.seats, curve: window.BLWP_CURVE, random, playerPubkey: player.pubkey,
+            signerNodes: signerNodes.signerNodes, curve: window.BLWP_CURVE, random, playerPubkey: player.pubkey,
             needed: BLWPCLIENT.sharesNeededFor(named.round),
           });
-        // A HANDOUT TOO FEW SEATS HOLD IS A STAKE NOBODY CAN OPEN, and the
+        // A HANDOUT TOO FEW SIGNER NODES HOLD IS A STAKE NOBODY CAN OPEN, and the
         // count is a DECISION rather than a number in a log. Reconstruction
         // takes five of seven; measured with three reachable, the node this
-        // page joined seated the player 201 while every other node refused the
+        // page joined joined the player 201 while every other node refused the
         // entry 400, and the stake could never have been settled.
         //
         // The posting and the threshold are in `@blwp/client` for the reason
         // `roundPays` is: this file is the one `node --test` cannot load.
-        // A kept stake's handout was taken by the seats before its lock was made.
-        const put = reuse ? { ok: true, accepted: seats.seats.length, refused: [] }
+        // A kept stake's handout was taken by the signer nodes before its lock was made.
+        const put = reuse ? { ok: true, accepted: signerNodes.signerNodes.length, refused: [] }
           : await BLWPCLIENT.postHandout(stake, named.nodes, { needed: BLWPCLIENT.sharesNeededFor(named.round) });
         if (!put.ok) {
-          window.BLWP_SEAT_REFUSED = put.why;
+          window.BLWP_JOIN_REFUSED = put.why;
           console.error('[blwp] join refused: ' + put.why + ' — ' + put.refused.join('; '));
           return;
         }
         // AND A ROUND WHOSE STAKE GOES INTO A FEDERATION LOCK GETS ITS LOCK
         // NOW, BEFORE THE ENTRY IS BUILT (W1b; 23.1 steps 3-5). The entry names
         // the lock's outpoint, so there is no entry without one - this page used
-        // to write zeros there and every seat could only refuse it. The lock
+        // to write zeros there and every signer node could only refuse it. The lock
         // client is the stock fedimint client built to wasm; what it is asked is
         // decided in `@blwp/client` (`lockStake`), where `node --test` drives it.
         // The deposit invoice is shown here for the player's own wallet to pay.
@@ -738,7 +738,7 @@
                 console.log('[blwp] stake lock deposit: ' + String(d.amountMsat) + ' msat, ' + d.invoice);
               },
             });
-            // AND ITS FEE LOCK, ONLY WHEN THE GATE SAID IT CAN PAY A SEAT (Pick b):
+            // AND ITS FEE LOCK, ONLY WHEN THE GATE SAID IT CAN PAY A SIGNER NODE (Pick b):
             // a 100 sat round makes none, so the player is charged no lock that expires unused.
             stakeLock = { outpoint: made.outpoint, fields: made.fields, feeLock: made.feeLock || null,
               needed: BLWPCLIENT.sharesNeededFor(named.round), onCommitted: committedTo };
@@ -751,8 +751,8 @@
             if (stageEl) stageEl.textContent = BLWPCLIENT.lockLine(stakeLock);
             console.log('[blwp] stake locked at ' + BLWPCLIENT.toHex(made.outpoint.txid) + ':' + String(made.outpoint.outIdx));
           } catch (e) {
-            window.BLWP_SEAT_REFUSED = 'this round\'s stake goes into a federation lock, and it was not made: ' + e.message;
-            console.error('[blwp] join refused: ' + window.BLWP_SEAT_REFUSED);
+            window.BLWP_JOIN_REFUSED = 'this round\'s stake goes into a federation lock, and it was not made: ' + e.message;
+            console.error('[blwp] join refused: ' + window.BLWP_JOIN_REFUSED);
             return;
           }
           // AND WHAT THE COLLECT NEEDS AFTER THE WINDOW, KEPT IN THE TAB (6d): a reload -
@@ -760,18 +760,18 @@
           BLWPCLIENT.saveCollect(vault(), Object.assign({}, window.BLWP_LOCK_JOIN, { round: named.round, stakeLock }));
         }
         window.BLWP_STAKE = {
-          dealt: true, seats: seats.seats.length, agreed: seats.agreed,
+          dealt: true, signerNodes: signerNodes.signerNodes.length, agreed: signerNodes.agreed,
           accepted: put.accepted, refused: put.refused, paid: false,
-          // WHO TO COUNT, once it is paid (23.1 step 5): the settlement seats'
+          // WHO TO COUNT, once it is paid (23.1 step 5): the settlement signer nodes'
           // keys and the node addresses this page holds.
-          seatKeys: seats.seats, nodes: named.nodes,
+          signerNodeKeys: signerNodes.signerNodes, nodes: named.nodes,
         };
         // WHETHER IT IS PAID IS NOT SAID HERE. The node answers `x-hold` when it
         // takes the entry and `Client.join` keeps it; the chip prints that
         // rather than this page's assumption. Dealing is not funding, and a
         // page that printed "not paid" as a constant would be reporting its
         // own guess as the player's balance.
-        console.log('[blwp] stake dealt to ' + seats.seats.length + ' settlement signer node(s), '
+        console.log('[blwp] stake dealt to ' + signerNodes.signerNodes.length + ' settlement signer node(s), '
           + put.accepted + ' accepted the handout. Paying it is M3.2; the chip says '
           + 'what the node holds.');
       } else {
@@ -793,7 +793,7 @@
     // ------------------------------------------------------------ the wallet
     //
     // M3.2 item 6, the player's half. FOUR THINGS AND NOT ONE RULE: paste a
-    // connection, show what this seat owes, show the running total, and call
+    // connection, show what this entry owes, show the running total, and call
     // `payStake`. Everything that DECIDES is in `@blwp/client` where
     // `node --test` drives it - `tabWallet` holds the connection, `spendLog`
     // is what §24A.1 requires a client to show, `spentLine` turns it into a
@@ -811,7 +811,7 @@
     let owed = null;          // the last quote, as the client checked it
     let budget = null;        // what the WALLET said it will still let us spend
     let paying = false;
-    let donationPaying = false;       // the donation is paid once per seat
+    let donationPaying = false;       // the donation is paid once per entry
     let walletWhy = '';
 
     function theClient() {
@@ -821,9 +821,9 @@
     }
 
     /**
-     * WHAT THIS SEAT OWES, asked of the client and never worked out here.
+     * WHAT THIS ENTRY OWES, asked of the client and never worked out here.
      *
-     * `invoice()` refuses an amount, a hash or a seat this entry did not sign,
+     * `invoice()` refuses an amount, a hash or a signer node this entry did not sign,
      * so a quote that reaches this page is one the player's own contract
      * stands behind.
      */
@@ -833,15 +833,15 @@
       // quotes it, and asking would be a question with no answer.
       if (window.BLWP_ROUND && BLWPCLIENT.roundLocks(window.BLWP_ROUND)) return;
       // A FREE ROUND ASKS NOBODY FOR AN INVOICE (M3.3-34): there is no stake,
-      // no wallet and no Lightning in it. Measured before this: two free seats
+      // no wallet and no Lightning in it. Measured before this: two free rounds
       // asked GET /invoice 37 times in 55 s, each refused by the node.
       if (window.BLWP_ROUND && !BLWPCLIENT.roundPays(window.BLWP_ROUND)) return;
-      // THE SEATED ENTRY, which carries its round id and session key. This
+      // THE JOINED ENTRY, which carries its round id and session key. This
       // passed BLWP_ENTRY, which carries neither, so every quote threw
       // "expected 32 bytes, got nothing" in entryId and the button never lit -
       // measured on the page, today's included.
-      if (!client || !client.seatEntry || owed) return;
-      const said = await client.invoice(client.seatEntry);
+      if (!client || !client.joinedEntry || owed) return;
+      const said = await client.invoice(client.joinedEntry);
       if (said.ok) owed = said;
       else if (said.status !== 404) walletWhy = said.why;
       paintWallet();
@@ -868,7 +868,7 @@
 
     async function payTheStake() {
       const client = theClient();
-      if (paying || !client || !client.seatEntry
+      if (paying || !client || !client.joinedEntry
           || (window.BLWP_ROUND && BLWPCLIENT.roundLocks(window.BLWP_ROUND))) return;
       const pasted = document.getElementById('blwp-nwc').value.trim();
       if (pasted) {
@@ -883,19 +883,19 @@
       paying = true;
       walletWhy = 'asking the wallet…';
       paintWallet();
-      const said = await client.payStake(client.seatEntry, {
+      const said = await client.payStake(client.joinedEntry, {
         connection: held, curve: window.BLWP_CURVE, log: spent,
         random: (n) => crypto.getRandomValues(new Uint8Array(n)),
       });
       paying = false;
-      // AND COUNT WHO HAS SEEN IT (23.1 step 5): every settlement seat is asked,
+      // AND COUNT WHO HAS SEEN IT (23.1 step 5): every settlement signer node is asked,
       // lightly, until enough have; the chip prints "seen by N of M". Nothing
       // waits on it - the player is already driving. WHATEVER payStake SAID: a
       // wallet can answer after it gave up and still have paid. The chip also
-      // starts it from the seat; a second start joins the running count.
-      if (client.watchStake && window.BLWP_STAKE && window.BLWP_STAKE.seatKeys) {
+      // starts it from the signer node; a second start joins the running count.
+      if (client.watchStake && window.BLWP_STAKE && window.BLWP_STAKE.signerNodeKeys) {
         client.watchStake({
-          seats: window.BLWP_STAKE.seatKeys, nodes: window.BLWP_STAKE.nodes, contract: window.BLWP_ROUND,
+          signerNodes: window.BLWP_STAKE.signerNodeKeys, nodes: window.BLWP_STAKE.nodes, contract: window.BLWP_ROUND,
         }).catch((e) => console.error('[blwp] stake count: ' + e.message));
       }
       walletWhy = said.ok
@@ -911,29 +911,29 @@
       return paintWallet();
     }
 
-    // WHERE THIS SEAT'S STAKE WENT (M3.2 6e). Measured before: after a round
+    // WHERE THIS ENTRY'S STAKE WENT (M3.2 6e). Measured before: after a round
     // settled the panel still said HELD - the quote is asked once and never
     // again - and nothing on the page said what the pool took. Every settlement
-    // seat is asked, lightly, until the hold has left HELD; the answer is the
-    // seats' own (`settlementBy`), and the line is the client's.
+    // signer node is asked, lightly, until the hold has left HELD; the answer is the
+    // signer nodes' own (`settlementBy`), and the line is the client's.
     let settlementAsking = false;
     async function askTheSettlement() {
       const c = theClient();
-      if (settlementAsking || !c || !c.seatEntry || !c.where || !c.where.entryId) return;
+      if (settlementAsking || !c || !c.joinedEntry || !c.where || !c.where.entryId) return;
       if (!window.BLWP_ROUND || !BLWPCLIENT.roundPays(window.BLWP_ROUND) || BLWPCLIENT.roundLocks(window.BLWP_ROUND)) return;
-      if (!window.BLWP_STAKE || !window.BLWP_STAKE.seatKeys) return;
+      if (!window.BLWP_STAKE || !window.BLWP_STAKE.signerNodeKeys) return;
       const was = window.BLWP_SETTLEMENT;
       if (was && ['SETTLED', 'CANCELLED', 'EXPIRED'].includes(was.hold)) return;
       settlementAsking = true;
       try {
         window.BLWP_SETTLEMENT = await BLWPCLIENT.settlementBy({
-          entryId: c.where.entryId, seats: window.BLWP_STAKE.seatKeys, nodes: window.BLWP_STAKE.nodes,
+          entryId: c.where.entryId, signerNodes: window.BLWP_STAKE.signerNodeKeys, nodes: window.BLWP_STAKE.nodes,
         });
-        // A STAKE THAT CAME BACK IS NOT SPENT (M3.2 6e): a hold the seats say ended
+        // A STAKE THAT CAME BACK IS NOT SPENT (M3.2 6e): a hold the signer nodes say ended
         // CANCELLED or EXPIRED is marked returned in the running total - the rule is
         // the client's; the hash is the hold's (the entry's stake commitment).
-        if (spent && c.seatEntry.stakeCommitment)
-          BLWPCLIENT.noteSettlement(spent, window.BLWP_SETTLEMENT, c.seatEntry.stakeCommitment);
+        if (spent && c.joinedEntry.stakeCommitment)
+          BLWPCLIENT.noteSettlement(spent, window.BLWP_SETTLEMENT, c.joinedEntry.stakeCommitment);
       } catch (e) { console.error('[blwp] settlement: ' + e.message); }
       settlementAsking = false;
       paintWallet();
@@ -942,7 +942,7 @@
     // WHAT THE PLAYER IS OWED, LOOKED AT - NOTHING SPENT (W4 / 6d). Measured before (run 15):
     // this loop collected the payout and redeemed the stake into this tab's wallet every 5 s,
     // and the withdraw waited for the player - a tab closed in between lost it, and the
-    // federation no longer held it. Now it only asks the seats and the federation what is owed
+    // federation no longer held it. Now it only asks the signer nodes and the federation what is owed
     // (`lookOwed`); the collect happens inside the player's Withdraw, in the same action.
     // FROM THE TAB'S KEPT RECORDS, NOT THE JOIN'S GLOBALS (a reload loses the globals); the
     // newest round is the one painted and withdrawn.
@@ -988,9 +988,9 @@
     }
     // A WITHDRAWAL CLAIMED ON ANOTHER DEVICE (spec §24, the owner 2026-09-14): alice plays on her
     // desktop, forgets to withdraw, and plays on her iPhone two hours later with her seed brought
-    // in. The lobby's seats list what they settled in the last 24 h; the rounds whose keys this
+    // in. The lobby's signer nodes list what they settled in the last 24 h; the rounds whose keys this
     // tab's seed derives are kept like the rounds this tab joined, and looked at and withdrawn the
-    // same way. The seats are asked nothing per round.
+    // same way. The signer nodes are asked nothing per round.
     const OWED_LOOKBACK_MS = 24 * 3600 * 1000;
     async function findTheRoundsOwed(named) {
       if (typeof BLWPCLIENT === 'undefined' || !BLWPCLIENT.findOwedRounds || !window.BLWP_CURVE || !named || !named.federation) return;
@@ -1006,7 +1006,7 @@
         return window.BLWP_FOUND_OWED;
       } catch (e) { console.error('[blwp] owed: ' + e.message); return []; }
     }
-    // THE SAME SCAN, ASKED BY THE LIVE HARNESS over its seats (as BLWP_WITHDRAW is the page's own Withdraw).
+    // THE SAME SCAN, ASKED BY THE LIVE HARNESS over its signer nodes (as BLWP_WITHDRAW is the page's own Withdraw).
     window.BLWP_FIND_OWED = (nodes, federation) => findTheRoundsOwed({ nodes, federation });
     // WHAT THE LOBBY HANDS UNITY (the owner 2026-09-14): what the kept round still owes, as the page
     // looked at it - the federation's part and the round wallet's - for the lobby to say so.
@@ -1117,7 +1117,7 @@
       // client's line off the client's state - which on a reload is the tab's
       // notes - painted before the lock branch, so a lock round shows it too.
       document.getElementById('blwp-donation').textContent = BLWPCLIENT.donationPaidLine(window.BLWP_DONATION_PAID);
-      // AND WHERE THE STAKE WENT once the round settled (M3.2 6e): the seats' own
+      // AND WHERE THE STAKE WENT once the round settled (M3.2 6e): the signer nodes' own
       // hold state, the hold's amount and the round's pool - read, not computed.
       document.getElementById('blwp-settled').textContent = BLWPCLIENT.settledLine(window.BLWP_SETTLEMENT);
       // A LOCK ROUND'S STAKE GOES INTO ITS LOCK (W1b), from the deposit on the
@@ -1200,7 +1200,7 @@
       const inst = window.unityInstance;
       const mod = (inst && inst.Module) || (typeof Module !== 'undefined' ? Module : window.Module);
       const net = mod && mod.blwpNet;
-      const seated = !!(window.BLWP_ENTRY);
+      const joined = !!(window.BLWP_ENTRY);
       const others = (net && net.ghosts && typeof net.ghosts.others === 'number') ? net.ghosts.others : 0;
       // WHETHER ANYBODY IS DRAWING THEM. A field filling with pictures nobody
       // takes reads the same as an empty round unless the line says so.
@@ -1218,19 +1218,19 @@
       // loses only every watcher's picture of it - frozen at the last tick that
       // landed. It is the one fault none of the numbers above can show.
       const refused = (net && net.client && net.client.refusedWhy) || null;
-      // WHY THERE IS NO SEAT, AND WHAT THE SEAT COST. Both went to the console
-      // only, so a refused seat read exactly like a round nobody was sent to
-      // and a free seat read exactly like a funded one. The hold state is the
+      // WHY THERE IS NO SIGNER NODE, AND WHAT THE SIGNER NODE COST. Both went to the console
+      // only, so a refused signer node read exactly like a round nobody was sent to
+      // and a free round read exactly like a funded one. The hold state is the
       // NODE's word, kept by `Client.join` from the answer it already gives.
-      const seatRefused = window.BLWP_SEAT_REFUSED || null;
-      // THE COUNT RUNS FROM THE SEAT, not only from this page's own payment: a
+      const joinRefused = window.BLWP_JOIN_REFUSED || null;
+      // THE COUNT RUNS FROM THE SIGNER NODE, not only from this page's own payment: a
       // payment that lands after payStake gave up would otherwise never be
       // counted. Started once; stopped at N >= T, at the run's end, or on close.
       const c = net && net.client;
-      // AND THE DONATION, ONCE THE SEATS HOLD THE STAKE (M3.2 6e, §24A.2, §22A):
-      // measured before, it went as soon as the seats took the entry - before
-      // "Pay the stake" - so a seated player who never paid the stake donated.
-      // `c.stakeCommitted` is the seats' count; the Client refuses before it too.
+      // AND THE DONATION, ONCE THE SIGNER NODES HOLD THE STAKE (M3.2 6e, §24A.2, §22A):
+      // measured before, it went as soon as the signer nodes took the entry - before
+      // "Pay the stake" - so a joined player who never paid the stake donated.
+      // `c.stakeCommitted` is the signer nodes' count; the Client refuses before it too.
       // the player's wallet pays each recipient of the checked set its share,
       // through the player's own Client (\`payDonation\`) - an entry and a set,
       // never an invoice. A failed
@@ -1239,13 +1239,13 @@
       // PLAYER PER ROUND ACROSS A RELOAD: handed the tab's sessionStorage, the
       // Client notes each share before its wallet is asked and never asks a
       // noted one again, so a reload over a kept lock reports and sends nothing.
-      if (c && c.seatEntry && window.BLWP_DONATION_SET && typeof c.seatEntry.donationMsat === 'bigint'
-          && c.seatEntry.donationMsat > 0n && c.stakeCommitted === true && !donationPaying && wallet) {
+      if (c && c.joinedEntry && window.BLWP_DONATION_SET && typeof c.joinedEntry.donationMsat === 'bigint'
+          && c.joinedEntry.donationMsat > 0n && c.stakeCommitted === true && !donationPaying && wallet) {
         const heldWallet = wallet.current();
         if (heldWallet.ok) {
           donationPaying = true;
           window.BLWP_DONATION_PAID = { state: 'paying' };
-          c.payDonation(c.seatEntry, window.BLWP_DONATION_SET, {
+          c.payDonation(c.joinedEntry, window.BLWP_DONATION_SET, {
             round: window.BLWP_ROUND, connection: heldWallet, curve: window.BLWP_CURVE, log: spent, storage: window.sessionStorage,
             random: (n) => crypto.getRandomValues(new Uint8Array(n)),
           }).then((said) => {
@@ -1254,30 +1254,30 @@
           }).catch((e) => { window.BLWP_DONATION_PAID = { state: 'error', why: e.message }; paintWallet(); });
         }
       }
-      if (c && c.watchStake && c.seatEntry && window.BLWP_STAKE && window.BLWP_STAKE.seatKeys
+      if (c && c.watchStake && c.joinedEntry && window.BLWP_STAKE && window.BLWP_STAKE.signerNodeKeys
           && !c.stakeWatch && !c.stakeCommitted && !c.ended && !c.stakeWatchStopped) {
         net.client.watchStake({
-          seats: window.BLWP_STAKE.seatKeys, nodes: window.BLWP_STAKE.nodes, contract: window.BLWP_ROUND,
+          signerNodes: window.BLWP_STAKE.signerNodeKeys, nodes: window.BLWP_STAKE.nodes, contract: window.BLWP_ROUND,
         }).catch((e) => console.error('[blwp] stake count: ' + e.message));
       }
       const stake = window.BLWP_STAKE
         ? Object.assign({}, window.BLWP_STAKE, {
-          hold: (net && net.client && net.client.seatHold) || null,
+          hold: (net && net.client && net.client.joinHold) || null,
           seen: (net && net.client && net.client.stakeCount) || null,
         })
         : null;
       const who = (typeof BLWPCLIENT !== 'undefined' && BLWPCLIENT.playersLine)
-        ? BLWPCLIENT.playersLine({ seated, others, stalled, at, refused, seatRefused, stake, names: window.BLWP_OTHER_NAMES || [] })
-        : (seated ? (others ? (1 + others) + ' players in this round' : '1 player · waiting') : 'round named · not joined');
+        ? BLWPCLIENT.playersLine({ joined, others, stalled, at, refused, joinRefused, stake, names: window.BLWP_OTHER_NAMES || [] })
+        : (joined ? (others ? (1 + others) + ' players in this round' : '1 player · waiting') : 'round named · not joined');
       el.textContent = ab + '\n' + playLine(net) + '\n' + who;
     }
-    // WHO THE OTHER PLAYERS ARE (M3.3-34): this tab hands the round's seats its
-    // name, signed with the round key it is seated under, and asks them for the
+    // WHO THE OTHER PLAYERS ARE (M3.3-34): this tab hands the round's signer nodes its
+    // name, signed with the round key it is joined under, and asks them for the
     // others' - every record checked against its player's key before its name
-    // is drawn. A seat that has not seated this player yet refuses it (409), so
-    // it is handed again until every seat has kept it. The name decides nothing.
-    // Each ask is given 8 s, and one exchange runs at a time: a seat that does
-    // not answer must not hold the others' names back. When no seat answers,
+    // is drawn. A signer node that has not joined this player yet refuses it (409), so
+    // it is handed again until every signer node has kept it. The name decides nothing.
+    // Each ask is given 8 s, and one exchange runs at a time: a signer node that does
+    // not answer must not hold the others' names back. When no signer node answers,
     // `namesOf` says so and the names already drawn stay drawn.
     const namesKept = new Set();
     let namesBusy = false;
@@ -1332,7 +1332,7 @@
         .then((instance) => {
           window.unityInstance = instance;
           show(1);
-          // the deposit box outlives the loading screen: a seat taken later asks there
+          // the deposit box outlives the loading screen: a signer node taken later asks there
           const deposit = document.getElementById('blwp-deposit');
           if (deposit) document.body.appendChild(deposit);
           boot.classList.add('done');
@@ -1346,13 +1346,13 @@
     //
     // "A lobby carries nothing": the named nodes say which rounds they hold,
     // and `fetchLobby` fetches and hashes every one before it is a row - free
-    // or paying and open or pending are the CONTRACT's, and the seat counts are
-    // shown as what each node says. Join is the round's own link, so the seat
+    // or paying and open or pending are the CONTRACT's, and the signer node counts are
+    // shown as what each node says. Join is the round's own link, so the signer node
     // is taken by exactly the path a shared round link takes. Unity DRAWS it:
     // the lobby is the title screen (SplashScreen, DailyLobby.cs).
     //
     // AND AT THE BARE ROOT, THE DAILY'S OWN LOBBY: a visitor who opens the page
-    // with no link at all is shown the rounds the Daily's seats hold, named by
+    // with no link at all is shown the rounds the Daily's signer nodes hold, named by
     // `daily.json` deployed beside this page - the same names a lobby link
     // carries, held to the same rules (`dailyLobbySearch`). Read only when the
     // address carries no query; a missing or broken file leaves the root the
@@ -1389,12 +1389,12 @@
       who();
       let refused = [];
       const leftOf = (line) => { const m = String(line).match(/closes in (\d+):(\d\d)/); return m ? Number(m[1]) * 60 + Number(m[2]) : -1; };
-      const seatedOf = (line) => { const m = String(line).match(/(\d+) seated/); return m ? Number(m[1]) : 0; };
+      const joinedOf = (line) => { const m = String(line).match(/(\d+) joined/); return m ? Number(m[1]) : 0; };
       const paint = async () => {
         let got;
-        // 2 OF 2 (M3.3-34): each seat's listing is its own BIP-340 signature,
+        // 2 OF 2 (M3.3-34): each signer node's listing is its own BIP-340 signature,
         // checked with the curve the daemons sign under; Join is offered only
-        // when the round's threshold of its own seats say open and seated.
+        // when the round's threshold of its own signer nodes say open and assigned.
         try {
           got = await BLWPCLIENT.fetchLobby({ nodes: named.nodes,
             verify: (s, m, k) => !!(window.BLWP_CURVE && window.BLWP_CURVE.verify && window.BLWP_CURVE.verify(s, m, k)) });
@@ -1403,7 +1403,7 @@
         // ONE FREE ROUND AND ONE PAYING ROUND, never two of either (the owner 2026-09-15 16:08), and
         // what the paying one costs.
         window.BLWP_LOBBY = BLWPCLIENT.lobbyOnePerKind(got.rows).map((r) => ({ id: r.id, phase: r.phase, free: r.free, wallet: r.wallet,
-          seatsAgree: r.seatsAgree, needed: r.needed, joinable: r.joinable, stakeSats: BLWPCLIENT.lobbyStakeSats(r),
+          signerNodesAgree: r.signerNodesAgree, needed: r.needed, joinable: r.joinable, stakeSats: BLWPCLIENT.lobbyStakeSats(r),
           line: BLWPCLIENT.lobbyLine(r, now), join: r.joinable ? BLWPCLIENT.lobbyJoinSearch(search, r.id) : null }));
         refused = got.refused || [];
       };
@@ -1413,21 +1413,21 @@
       window.BLWP_LOBBY_VIEW = () => ({ mode: 'lobby', from: window.BLWP_LOBBY_FROM,
         you: me ? { name: me.name, custom: !!me.custom, generated: me.generated || '', fingerprint: me.fingerprint || '' }
           : { name: 'no identity', custom: false, generated: '', fingerprint: '' },
-        rows: (window.BLWP_LOBBY || []).map((r) => ({ id: r.id, line: r.line, free: !!r.free, agree: r.seatsAgree | 0,
-          needed: r.needed | 0, joinable: !!r.join, leftS: leftOf(r.line), seated: seatedOf(r.line), stakeSats: Number(r.stakeSats) || 0 })),
+        rows: (window.BLWP_LOBBY || []).map((r) => ({ id: r.id, line: r.line, free: !!r.free, agree: r.signerNodesAgree | 0,
+          needed: r.needed | 0, joinable: !!r.join, leftS: leftOf(r.line), joined: joinedOf(r.line), stakeSats: Number(r.stakeSats) || 0 })),
         refused: refused.map(String), nodes: named.nodes.length,
         join: window.BLWP_JOIN ? { state: window.BLWP_JOIN.state, why: String(window.BLWP_JOIN.why || ''), stage: String(window.BLWP_JOIN.stage || '') }
           : { state: '', why: '', stage: '' },
         // A WITHDRAWAL AVAILABLE (the owner 2026-09-14), for the lobby to say so.
         withdraw: withdrawAvailable() });
       window.BLWP_LOBBY_ACT = {
-        // PLAY: the round's own link, so the seat is taken by exactly the path a
+        // PLAY: the round's own link, so the round is joined by exactly the path a
         // shared round link takes - IN THIS PAGE (the owner 2026-09-13 07:11: "after
         // PLAY the loading screen must not come again. PLAY starts the round").
         // It used to navigate to the link: the page reloaded, Unity loaded a
         // second time, and the player sat through the loading screen again. Now
         // the address becomes the round's link (with `play=1`, so a reload still
-        // starts the round), the seat is taken by the same code a round link
+        // starts the round), the round is joined by the same code a round link
         // runs, and Unity starts the round when BLWP_JOIN says joined.
         join(id) {
           const r = (window.BLWP_LOBBY || []).find((x) => x.id === id && x.join);
@@ -1436,12 +1436,12 @@
           const back = location.search;
           window.BLWP_LOBBY_BACK = back;         // where the address goes back to once the run is over
           history.replaceState(null, '', location.pathname + r.join + '&play=1');
-          window.BLWP_SEAT_REFUSED = null;
+          window.BLWP_JOIN_REFUSED = null;
           const join = window.BLWP_JOIN = { state: 'joining', why: '', stage: '' };
           const refuse = (why) => {
             join.state = 'refused';
             join.why = String(why);
-            // not seated: the lobby's address back, and no round left named for Unity to open
+            // not joined: the lobby's address back, and no round left named for Unity to open
             window.BLWP_ROUND = undefined;
             window.BLWP_ENTRY = undefined;
             history.replaceState(null, '', location.pathname + back);
@@ -1449,7 +1449,7 @@
           joinTheRoundIfOneWasNamed()
             .then(() => {
               if (window.BLWP_ENTRY) join.state = 'joined';
-              else refuse(window.BLWP_SEAT_REFUSED || 'this page did not join that round');
+              else refuse(window.BLWP_JOIN_REFUSED || 'this page did not join that round');
             })
             .catch((e) => refuse(e && e.message ? e.message : e));
           return true;
@@ -1467,7 +1467,7 @@
         keyBackup() {
           const mine = BLWPCLIENT.toHex(BLWPCLIENT.tabSeed({ storage: window.sessionStorage, random: tabRandom }));
           // AND BACK IN (spec §24, the owner 2026-09-14): on another device the player pastes their own
-          // seed here; the page reloads under it and finds from the seats the rounds it is owed.
+          // seed here; the page reloads under it and finds from the signer nodes the rounds it is owed.
           const typed = window.prompt('Private key backup - this tab\'s seed. Copy it and keep it. '
             + 'On another device, paste your own seed here instead to find what you are owed.', mine);
           if (typed && typed.trim().toLowerCase() !== mine) {

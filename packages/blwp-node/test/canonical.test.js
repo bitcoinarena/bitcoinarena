@@ -14,7 +14,7 @@ import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
 import assert from 'node:assert/strict';
-import { assumeSeated } from './seating.js';
+import { assumeAssigned } from './assignment.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
@@ -77,7 +77,7 @@ function played(carried = []) {
   const round = new Round(openStore(), () => 1234);
   const c = contract([...peerKeys, round.identity.pubkey]);
   const rid = round.open(c);
-  assumeSeated(round, rid, c.nodes);
+  assumeAssigned(round, rid, c.nodes);
   const e = entryFor(rid);
   const eid = round.enter(e);
 

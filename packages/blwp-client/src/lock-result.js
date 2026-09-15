@@ -1,10 +1,10 @@
-// WHAT THE LOCK CLIENT'S ANSWER MEANS FOR THE ENTRY AND THE SEATS (W1a).
+// WHAT THE LOCK CLIENT'S ANSWER MEANS FOR THE ENTRY AND THE SIGNER NODES (W1a).
 //
 // The lock client (lock-client/, the stock fedimint client crates built to
 // wasm) funds one OutgoingContract and answers what the guardians stored at its
 // outpoint beside what it computed. This turns that answer into the two things
 // the round needs: the entry's stake_lock_outpoint (§7), and the contract a
-// seat is handed at POST /lock (§23.1 step 5). An answer whose stored contract
+// signer node is handed at POST /lock (§23.1 step 5). An answer whose stored contract
 // is not the one computed, or whose stored expiry is not the computed one, is
 // refused here - the player would otherwise commit to a lock that is not theirs.
 // Not in the bundle yet: the page drives it in W1b.

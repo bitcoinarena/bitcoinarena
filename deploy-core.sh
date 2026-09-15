@@ -34,24 +34,24 @@ cp "$ROOT/deploy/_headers" "$BUILD/_headers"
 node "$ROOT/unity-proto/tools/fill-template.mjs" "$BUILD"
 node "$ROOT/unity-proto/tools/fill-template.mjs" --check "$BUILD"
 
-# THE LOBBY'S SEATS GO BESIDE THE PAGE ON EVERY DEPLOY (the owner 2026-09-15 12:54: the Daily lobby
+# THE LOBBY'S SIGNER NODES GO BESIDE THE PAGE ON EVERY DEPLOY (the owner 2026-09-15 12:54: the Daily lobby
 # must list rounds). The page's bare root shows the lobby only from daily.json (index.html reads
 # it when the address has no query), and no deploy put it here - measured: every deploy from
 # 0.0.1265 to 0.0.1304 answered /daily.json with the page itself, so the bare root was the
 # offline daily. (A full Unity build does not remove it: the build of 0.0.1311, 13:23-13:25, left
-# a daily.json already in this folder in place. It was never copied in.) The file is the seats'
+# a daily.json already in this folder in place. It was never copied in.) The file is the signer nodes'
 # own launcher's, current on every deploy (tools/run-2of2.mjs writes it
-# with the tunnels it bonded under), and it is checked before it ships: two seats, a bond door,
-# a signed advertisement, and every seat answering /rounds. A missing file or a silent seat
+# with the tunnels it bonded under), and it is checked before it ships: two signer nodes, a bond door,
+# a signed advertisement, and every signer node answering /rounds. A missing file or a silent signer node
 # refuses the deploy by name - a lobby that points at silence is not shipped.
 DAILY_DIR="${BLWP_2OF2_DIR:-/mnt/bitcoin/blwp-2of2}"
 DAILY="$DAILY_DIR/daily.json"
-[ -f "$DAILY" ] || { echo "refusing: no $DAILY - the Daily's seats (packages/blwp-node/tools/run-2of2.mjs) write it; without it the bare root shows no lobby" >&2; exit 3; }
-node - "$DAILY" <<'CHECK' || { echo "refusing: $DAILY does not name live seats" >&2; exit 3; }
+[ -f "$DAILY" ] || { echo "refusing: no $DAILY - the Daily's signerNodes (packages/blwp-node/tools/run-2of2.mjs) write it; without it the bare root shows no lobby" >&2; exit 3; }
+node - "$DAILY" <<'CHECK' || { echo "refusing: $DAILY does not name live signerNodes" >&2; exit 3; }
 const d = JSON.parse(require('fs').readFileSync(process.argv[2], 'utf8'));
 const nodes = Array.isArray(d.node) ? d.node : [];
 const bad = (why) => { console.error(`daily.json: ${why}`); process.exit(1); };
-if (nodes.length < 2 || !nodes.every((n) => /^https:\/\/[^/]+$/.test(n))) bad(`names ${nodes.length} https seats, not two or more`);
+if (nodes.length < 2 || !nodes.every((n) => /^https:\/\/[^/]+$/.test(n))) bad(`names ${nodes.length} https signerNodes, not two or more`);
 if (typeof d.bond !== 'string' || !/^https:\/\//.test(d.bond)) bad('names no bond door');
 if (!/^[0-9a-f]{128}$/.test(String(d.advert))) bad('carries no signed advertisement');
 (async () => {
@@ -60,7 +60,7 @@ if (!/^[0-9a-f]{128}$/.test(String(d.advert))) bad('carries no signed advertisem
     if (r.status !== 200) bad(`${n}/rounds answered ${r.status}`);
     let body; try { body = await r.json(); } catch { bad(`${n}/rounds is not JSON`); }
     if (!Array.isArray(body.rounds)) bad(`${n}/rounds lists no rounds array`);
-    console.log(`daily.json seat ${n}: /rounds 200, ${body.rounds.length} round(s), ${body.rounds.filter((x) => x.phase === 'open').length} open`);
+    console.log(`daily.json signerNode ${n}: /rounds 200, ${body.rounds.length} round(s), ${body.rounds.filter((x) => x.phase === 'open').length} open`);
   }
 })();
 CHECK
@@ -72,7 +72,7 @@ wrangler pages deploy "$BUILD" --project-name "$PROJECT" --branch main --commit-
 
 # AND WHAT WAS DEPLOYED IS KEPT WHERE A REBOOT LEAVES IT (the Daily's keeper, deploy/daily): /tmp is
 # emptied at boot (tmpfiles "D /tmp"), and the keeper redeploys this copy with a new daily.json when
-# the seats' tunnels or bonds change. Only for the Daily's own project.
+# the signer nodes' tunnels or bonds change. Only for the Daily's own project.
 if [ "$PROJECT" = "btc-logistics-core" ]; then
   PAGE="$DAILY_DIR/page"
   mkdir -p "$PAGE"

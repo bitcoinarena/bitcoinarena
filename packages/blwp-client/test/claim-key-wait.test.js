@@ -1,9 +1,9 @@
 // THE PAGE WAITS A LITTLE FOR THE ROUND'S CLAIM KEY, AND ACCEPTS NOTHING SHORT OF ITS THRESHOLD.
 //
-// Measured on a Daily 2-of-2 paying round (TASKBOOK, W5 step 1): the seats make
-// the key when they seat the round - one held it 266 ms after the round was up,
+// Measured on a Daily 2-of-2 paying round (TASKBOOK, W5 step 1): the signer nodes make
+// the key when they are assigned to the round - one held it 266 ms after the round was up,
 // the other at 1582 ms - and the page, opened on the link at once, counted
-// "1 of 2" and refused the seat. `awaitAttestedClaimKey` asks again; the rule
+// "1 of 2" and refused the signer node. `awaitAttestedClaimKey` asks again; the rule
 // `attestedClaimKey` applies is the same one, asked more than once.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -22,10 +22,10 @@ function staged(answers) {
     },
   };
 }
-const SHORT = { ok: false, attested: 1, needed: 2, why: '1 of 2 seats attest this claim key, and this round needs 2' };
+const SHORT = { ok: false, attested: 1, needed: 2, why: '1 of 2 signer nodes attest this claim key, and this round needs 2' };
 const WHOLE = { ok: true, attested: 2, needed: 2, claimPk: new Uint8Array(33).fill(2) };
 
-test('a key the second seat finishes making is accepted once both attest, and each short count is said', async () => {
+test('a key the second signer node finishes making is accepted once both attest, and each short count is said', async () => {
   const s = staged([SHORT, SHORT, WHOLE]);
   const waits = [];
   const got = await awaitAttestedClaimKey({ round: 'r' }, { ...s.opts, onWait: (x) => waits.push(`${x.attested} of ${x.needed}`) });
@@ -38,7 +38,7 @@ test('a key that never reaches the threshold is refused when the wait runs out -
   const s = staged([SHORT]);
   const got = await awaitAttestedClaimKey({ round: 'r' }, { ...s.opts, waitMs: 30000, everyMs: 1000 });
   assert.equal(got.ok, false);
-  assert.match(got.why, /1 of 2 seats attest this claim key, and this round needs 2/);
+  assert.match(got.why, /1 of 2 signer nodes attest this claim key, and this round needs 2/);
   // Asked at t = 0, 1, ... 30 s: 31 asks, and none after the wait.
   assert.equal(s.asked.length, 31, 'asked a different number of times than 30 s at 1 s allows');
 });

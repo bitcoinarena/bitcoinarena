@@ -39,7 +39,7 @@ public class SpawnMark : MonoBehaviour
         var mark = post.BayFor(PostOffice.SoloBay);
         truck.spawnPosition = mark;
 
-        // Only re-seat a truck that has not been let go yet.
+        // Only set down again a truck that has not been let go yet.
         //
         // Being NEAR the bay is not enough, and assuming it was cost three
         // driving tests: the terrain is rebuilt on every mempool poll, so a

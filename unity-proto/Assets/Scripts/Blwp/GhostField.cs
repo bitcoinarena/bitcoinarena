@@ -90,11 +90,11 @@ namespace Blwp
         /// apart on this map at one pose, which is a ghost floating over the
         /// truck it is a picture of.
         /// </summary>
-        public Func<float, float, float, float> Seat;
+        public Func<float, float, float, float> Rest;
 
         public int Shown { get; private set; }
         public int Trucks => trucks.Count;
-        /// <summary>Trucks taken away because their seat was left.</summary>
+        /// <summary>Trucks taken away because their entry was left.</summary>
         public int Retired { get; private set; }
 
         private readonly Dictionary<string, GhostTruck> trucks = new Dictionary<string, GhostTruck>();
@@ -148,13 +148,13 @@ namespace Blwp
         {
             if (string.IsNullOrEmpty(picture.Entry)) return;
 
-            // A RETIRE, NOT A PICTURE. The page sends tick -1 for a seat its
-            // player has left - a reload keeps the key and draws a new seat - so
+            // A RETIRE, NOT A PICTURE. The page sends tick -1 for an entry its
+            // player has left - a reload keeps the key and draws a new entry - so
             // the truck stops standing where that abandoned run stopped.
             // Measured 2026-09-10 on the Daily: a reload handed this field 9 and
-            // 11 seats, 8 and 10 of them abandoned and frozen, and a watched
-            // player's reload left its 105-picture seat frozen beside the new
-            // one. Which seat is left is the page's rule (`ghost-field.js`);
+            // 11 entries, 8 and 10 of them abandoned and frozen, and a watched
+            // player's reload left its 105-picture entry frozen beside the new
+            // one. Which entry is left is the page's rule (`ghost-field.js`);
             // this only takes the truck away.
             if (picture.Tick < 0)
             {
@@ -182,11 +182,11 @@ namespace Blwp
                 body.SetActive(true);
             }
 
-            var seat = Seat != null
-                ? Seat(picture.X / GhostTruck.ONE, picture.Z / GhostTruck.ONE,
+            var resting = Rest != null
+                ? Rest(picture.X / GhostTruck.ONE, picture.Z / GhostTruck.ONE,
                        BlwpCore.Degrees(picture.Heading))
                 : (float?)null;
-            ghost.Show(picture.X, picture.Z, picture.Heading, seat);
+            ghost.Show(picture.X, picture.Z, picture.Heading, resting);
             Shown++;
         }
     }

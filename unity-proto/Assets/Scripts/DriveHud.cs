@@ -455,7 +455,7 @@ public class DriveHud : MonoBehaviour
     /// Which exchanges the liquidations come off, and whether each is talking.
     ///
     /// Named always, not only when broken. A feed that is silent for a whole
-    /// session looks exactly like a quiet market from the driving seat, and
+    /// session looks exactly like a quiet market from behind the wheel, and
     /// that is what happened: Binance futures accepted the connection and never
     /// sent a frame while the price ticked and the HUD said "live".
     /// </summary>

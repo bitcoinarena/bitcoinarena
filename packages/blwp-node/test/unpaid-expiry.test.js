@@ -33,7 +33,7 @@ import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
 import { toHex, sha256 } from '../../protocol/src/hash.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
-import { assumeSeated } from './seating.js';
+import { assumeAssigned } from './assignment.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const READY = { preflight: async () => ({ ready: true, why: 'test port' }) };
@@ -78,20 +78,20 @@ function invoicingPort({ expirySeconds = 1, paid = false } = {}) {
   return port;
 }
 
-/** A paying entry seated on `node` and its hold issued - never played. */
+/** A paying entry taken on `node` and its hold issued - never played. */
 async function issued(node, n = 5) {
   const c = contractFor(node.round.pubkey);
   const rid = roundId(c);
   await fetch(`http://127.0.0.1:${node.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
-  assumeSeated(node.round, rid, c.nodes);
+  assumeAssigned(node.round, rid, c.nodes);
   const entry = {
     roundId: rid, playerPubkey: b32(n), sessionPubkey: ed25519.getPublicKey(session),
     stakeCommitment: sha256(b32(n + 60)), stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE),
     donationMsat: 0n, joinTick: 0, worldSecret: b32(0x16), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
   };
   const eid = entryId(entry);
-  const seated = await fetch(`http://127.0.0.1:${node.port}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
-  assert.equal(seated.status, 201, await seated.text());
+  const joined = await fetch(`http://127.0.0.1:${node.port}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
+  assert.equal(joined.status, 201, await joined.text());
   const quote = await fetch(`http://127.0.0.1:${node.port}/invoice?entry=${toHex(eid)}`);
   assert.equal(quote.status, 200, await quote.text());
   return eid;

@@ -29,7 +29,7 @@ import { scalarFrom32, FIELD, SHARES_NEEDED, SHARES_TOTAL } from '../../protocol
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
-import { assumeSeated } from './seating.js';
+import { assumeAssigned } from './assignment.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { parseTransaction } from '../../protocol/src/tx.js';
 
@@ -38,9 +38,9 @@ const b32 = (n) => new Uint8Array(32).fill(n);
 const curve = { ...feldmanGroup, tweakPoint };
 const NOW = 1788700000000;
 
-/** Seven seats, whose keys this test holds so it can play any of them. */
-const seatSecrets = Array.from({ length: SHARES_TOTAL }, () => rand(32));
-const seatKeys = seatSecrets.map((s) => schnorr.getPublicKey(s));
+/** Seven signer nodes, whose keys this test holds so it can play any of them. */
+const signerNodeSecrets = Array.from({ length: SHARES_TOTAL }, () => rand(32));
+const signerNodeKeys = signerNodeSecrets.map((s) => schnorr.getPublicKey(s));
 
 const contractFor = (stakeMsat) => ({
   networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
@@ -53,7 +53,7 @@ const contractFor = (stakeMsat) => ({
   censusRoot: b32(2), stakeMsat, bondMinSats: 50000n, blockTicks: 9000,
   exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
   timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
-  nodes: seatKeys,
+  nodes: signerNodeKeys,
 });
 
 /** A player who is a real key now, which is what makes them payable. */
@@ -62,23 +62,23 @@ function player(n) {
   return { secret, pubkey: schnorr.getPublicKey(secret), n };
 }
 
-/** A node holding a round, seated with all seven. */
+/** A node holding a round, assigned all seven. */
 function node(stakeMsat = 100000n) {
   const round = new Round(openStore(':memory:'), () => NOW);
   const contract = contractFor(stakeMsat);
   const rid = round.open(contract);
   // THIS NODE IS ONE OF THE SEVEN. Its own signature only counts if the census
-  // seated its key, which is `verifiedTable`'s whole point - so the seated set
+  // assigned its key, which is `verifiedTable`'s whole point - so the assigned set
   // is this daemon plus six others.
-  const seats = [round.pubkey, ...seatKeys.slice(1)];
-  assumeSeated(round, rid, seats);
-  return { round, rid, contract, seats };
+  const signerNodes = [round.pubkey, ...signerNodeKeys.slice(1)];
+  assumeAssigned(round, rid, signerNodes);
+  return { round, rid, contract, signerNodes };
 }
 
 const entriesOf = (stakeMsat, ...spec) => spec.map(([p, outcome, score]) =>
   ({ entryId: b32(p.n), pubkey: p.pubkey, outcome, score, stakeMsat, feeMsat: 0n, donationMsat: 0n }));
 
-test('the table this node signs is the one it computed, and a stranger is not a seat', () => {
+test('the table this node signs is the one it computed, and a stranger is not a signer node', () => {
   const { round, rid, contract } = node();
   const winner = player(1); const loser = player(2);
   const entries = entriesOf(100000n, [winner, DELIVERED, 9], [loser, FORFEIT, 0]);
@@ -87,49 +87,49 @@ test('the table this node signs is the one it computed, and a stranger is not a 
   assert.equal(built.tableId.length, 32);
   assert.equal(built.table.length, 2);
 
-  // Six of the seven seats sign it, plus a stranger who is not seated.
-  const records = seatSecrets.slice(0, 6).map((secret, i) =>
-    signPayoutTable({ tableId: built.tableId, secret, pubkey: seatKeys[i] }));
+  // Six of the seven signer nodes sign it, plus a stranger who is not assigned.
+  const records = signerNodeSecrets.slice(0, 6).map((secret, i) =>
+    signPayoutTable({ tableId: built.tableId, secret, pubkey: signerNodeKeys[i] }));
   const strangerSecret = rand(32);
   records.push(signPayoutTable({
     tableId: built.tableId, secret: strangerSecret, pubkey: schnorr.getPublicKey(strangerSecret),
   }));
   assert.equal(records[0].length, SIGNED_TABLE_BYTES);
 
-  const seen = verifiedTable(records, { contract, seats: seatKeys, tableId: built.tableId });
+  const seen = verifiedTable(records, { contract, signerNodes: signerNodeKeys, tableId: built.tableId });
   assert.equal(seen.ok, true, seen.why);
   assert.equal(seen.agreed, 6);
   assert.equal(seen.needed, 5);
-  assert.equal(seen.strangers, 1, 'a key the census never seated was counted');
+  assert.equal(seen.strangers, 1, 'a key the census never assigned was counted');
   assert.equal(seen.final, true);
 });
 
-test('four of seven is not a final table, and a seat signing another one is named', () => {
+test('four of seven is not a final table, and a signer node signing another one is named', () => {
   const { rid, contract } = node();
   const winner = player(1); const loser = player(2);
   const entries = entriesOf(100000n, [winner, DELIVERED, 9], [loser, FORFEIT, 0]);
   const built = tableFor({ roundId: rid, entries, minScore: 1 });
 
-  const four = seatSecrets.slice(0, 4).map((secret, i) =>
-    signPayoutTable({ tableId: built.tableId, secret, pubkey: seatKeys[i] }));
-  const short = verifiedTable(four, { contract, seats: seatKeys, tableId: built.tableId });
+  const four = signerNodeSecrets.slice(0, 4).map((secret, i) =>
+    signPayoutTable({ tableId: built.tableId, secret, pubkey: signerNodeKeys[i] }));
+  const short = verifiedTable(four, { contract, signerNodes: signerNodeKeys, tableId: built.tableId });
   assert.equal(short.final, false);
-  assert.match(short.why, /4 of 5 seats signed this table, so nothing is spent/);
+  assert.match(short.why, /4 of 5 signer nodes signed this table, so nothing is spent/);
 
-  // A SEAT THAT SIGNED SOMETHING ELSE IS NOT A VOTE FOR THIS TABLE, and it is
+  // A SIGNER NODE THAT SIGNED SOMETHING ELSE IS NOT A VOTE FOR THIS TABLE, and it is
   // counted separately rather than dropped: two tables in one round is a
   // disagreement an operator has to see.
   const other = [...four, signPayoutTable({
-    tableId: b32(0xee), secret: seatSecrets[4], pubkey: seatKeys[4],
+    tableId: b32(0xee), secret: signerNodeSecrets[4], pubkey: signerNodeKeys[4],
   })];
-  const split = verifiedTable(other, { contract, seats: seatKeys, tableId: built.tableId });
+  const split = verifiedTable(other, { contract, signerNodes: signerNodeKeys, tableId: built.tableId });
   assert.equal(split.agreed, 4);
   assert.equal(split.signedSomethingElse, 1);
   assert.equal(split.final, false);
 
-  // And one seat cannot become two by signing twice.
+  // And one signer node cannot become two by signing twice.
   const twice = [...four, four[0]];
-  assert.equal(verifiedTable(twice, { contract, seats: seatKeys, tableId: built.tableId }).doubled, 1);
+  assert.equal(verifiedTable(twice, { contract, signerNodes: signerNodeKeys, tableId: built.tableId }).doubled, 1);
 });
 
 test('the pool owes the winnings, not the stake that came back on its own', () => {
@@ -262,15 +262,15 @@ test('a payout is queued only when the committee agrees, and written down before
   // This node's own signature is one. One of seven is not five.
   const alone = payouts.queue({ roundId: rid, entries, minScore: 1, contract });
   assert.equal(alone.ok, false);
-  assert.match(alone.why, /1 of 5 seats signed this table/,
-    'this node is seated, so its own signature is one');
+  assert.match(alone.why, /1 of 5 signer nodes signed this table/,
+    'this node is joined, so its own signature is one');
   assert.equal(round.payout(rid), null, 'a payout was queued before the committee agreed');
 
-  // Four more seats agree.
+  // Four more signer nodes agree.
   const built = tableFor({ roundId: rid, entries, minScore: 1 });
   for (let i = 1; i < 5; i++)
-    round.putPayoutSignature(rid, seatKeys[i],
-      signPayoutTable({ tableId: built.tableId, secret: seatSecrets[i], pubkey: seatKeys[i] }));
+    round.putPayoutSignature(rid, signerNodeKeys[i],
+      signPayoutTable({ tableId: built.tableId, secret: signerNodeSecrets[i], pubkey: signerNodeKeys[i] }));
 
   const queued = payouts.queue({ roundId: rid, entries, minScore: 1, contract });
   assert.equal(queued.ok, true, queued.why);
@@ -290,8 +290,8 @@ test('a round that owes nobody is not queued, and is not an error either', () =>
 
   const built = tableFor({ roundId: rid, entries, minScore: 1 });
   for (let i = 1; i < 5; i++)
-    round.putPayoutSignature(rid, seatKeys[i],
-      signPayoutTable({ tableId: built.tableId, secret: seatSecrets[i], pubkey: seatKeys[i] }));
+    round.putPayoutSignature(rid, signerNodeKeys[i],
+      signPayoutTable({ tableId: built.tableId, secret: signerNodeSecrets[i], pubkey: signerNodeKeys[i] }));
 
   const seen = payouts.queue({ roundId: rid, entries, minScore: 1, contract });
   assert.equal(seen.ok, true, seen.why);
@@ -332,8 +332,8 @@ test('five of seven pay the winner, and the transaction is on disk before it is 
 
   const built = tableFor({ roundId: rid, entries, minScore: 1 });
   for (let i = 1; i < 5; i++)
-    round.putPayoutSignature(rid, seatKeys[i],
-      signPayoutTable({ tableId: built.tableId, secret: seatSecrets[i], pubkey: seatKeys[i] }));
+    round.putPayoutSignature(rid, signerNodeKeys[i],
+      signPayoutTable({ tableId: built.tableId, secret: signerNodeSecrets[i], pubkey: signerNodeKeys[i] }));
   const queued = payouts.queue({ roundId: rid, entries, minScore: 1, contract });
   assert.equal(queued.state, PAYOUT_QUEUED);
 
@@ -370,8 +370,8 @@ test('four of seven are refused before a byte is built', async () => {
 
   const built = tableFor({ roundId: rid, entries, minScore: 1 });
   for (let i = 1; i < 5; i++)
-    round.putPayoutSignature(rid, seatKeys[i],
-      signPayoutTable({ tableId: built.tableId, secret: seatSecrets[i], pubkey: seatKeys[i] }));
+    round.putPayoutSignature(rid, signerNodeKeys[i],
+      signPayoutTable({ tableId: built.tableId, secret: signerNodeSecrets[i], pubkey: signerNodeKeys[i] }));
   const queued = payouts.queue({ roundId: rid, entries, minScore: 1, contract });
 
   const utxo = { txid: rand(32), vout: 0, value: 1000n };
@@ -394,8 +394,8 @@ test('a node that died mid-send asks the chain rather than building a second spe
 
   const built = tableFor({ roundId: rid, entries, minScore: 1 });
   for (let i = 1; i < 5; i++)
-    round.putPayoutSignature(rid, seatKeys[i],
-      signPayoutTable({ tableId: built.tableId, secret: seatSecrets[i], pubkey: seatKeys[i] }));
+    round.putPayoutSignature(rid, signerNodeKeys[i],
+      signPayoutTable({ tableId: built.tableId, secret: signerNodeSecrets[i], pubkey: signerNodeKeys[i] }));
   const queued = payouts.queue({ roundId: rid, entries, minScore: 1, contract });
 
   // The send reached the network and the answer never came back.
@@ -419,8 +419,8 @@ test('a node that died mid-send asks the chain rather than building a second spe
 });
 
 test('a node that died mid-send on a table it cannot pay in full comes back PAID_IN_PART, debt intact', async () => {
-  // Measured on regtest before this: at every kill point the restarted seat
-  // wrote PAID with 0 owed, while the six seats around it read PAID_IN_PART
+  // Measured on regtest before this: at every kill point the restarted signer node
+  // wrote PAID with 0 owed, while the six signer nodes around it read PAID_IN_PART
   // with 252 sats owed to one player.
   const stake = 300000n;
   const { round, rid, contract } = node(stake);
@@ -434,8 +434,8 @@ test('a node that died mid-send on a table it cannot pay in full comes back PAID
 
   const built = tableFor({ roundId: rid, entries, minScore: 1 });
   for (let i = 1; i < 5; i++)
-    round.putPayoutSignature(rid, seatKeys[i],
-      signPayoutTable({ tableId: built.tableId, secret: seatSecrets[i], pubkey: seatKeys[i] }));
+    round.putPayoutSignature(rid, signerNodeKeys[i],
+      signPayoutTable({ tableId: built.tableId, secret: signerNodeSecrets[i], pubkey: signerNodeKeys[i] }));
   const queued = payouts.queue({ roundId: rid, entries, minScore: 1, contract });
   const sats = queued.rows.map((r) => r.msat / 1000n);
   const under = sats.filter((x) => x < DUST_SATS);
@@ -466,7 +466,7 @@ test('a payout with no chain moves nothing and says so', async () => {
   assert.equal((await payouts.reconcile()).ok, false);
 });
 
-test('a table naming a key the round never seated pays nobody', () => {
+test('a table naming a key the round never assigned pays nobody', () => {
   // The table comes from this node's own computation, but it arrives at
   // `winnings` as an argument, and an argument is where a wrong row gets in.
   const stake = 1000000n;
@@ -477,7 +477,7 @@ test('a table naming a key the round never seated pays nobody', () => {
   const smuggled = [...built.table, { pubkey: stranger.pubkey, amountMsat: stake }];
   const owed = winnings({ table: smuggled, stakes: entries });
   assert.equal(owed.ok, false);
-  assert.match(owed.why, /pays a key this round never seated/);
+  assert.match(owed.why, /pays a key this round never assigned/);
 });
 
 test('a payout cannot spend more than the pool holds', () => {
@@ -497,20 +497,20 @@ test('a payout cannot spend more than the pool holds', () => {
   assert.match(tight.why, /0 sats are left for a fee of 200/);
 });
 
-test('a seat\'s signature is verified, not counted', () => {
+test('a signer node\'s signature is verified, not counted', () => {
   const { rid, contract } = node(1000000n);
   const winner = player(1); const loser = player(2);
   const entries = entriesOf(1000000n, [winner, DELIVERED, 9], [loser, FORFEIT, 0]);
   const built = tableFor({ roundId: rid, entries, minScore: 1 });
 
   const honest = [1, 2, 3, 4].map((i) =>
-    signPayoutTable({ tableId: built.tableId, secret: seatSecrets[i], pubkey: seatKeys[i] }));
-  // A seated key, the right table id, and 64 bytes that are not a signature.
-  const forged = signPayoutTable({ tableId: built.tableId, secret: seatSecrets[5], pubkey: seatKeys[5] });
+    signPayoutTable({ tableId: built.tableId, secret: signerNodeSecrets[i], pubkey: signerNodeKeys[i] }));
+  // A assigned key, the right table id, and 64 bytes that are not a signature.
+  const forged = signPayoutTable({ tableId: built.tableId, secret: signerNodeSecrets[5], pubkey: signerNodeKeys[5] });
   forged[64] ^= 0xff;
 
   const seen = verifiedTable([...honest, forged], {
-    contract, seats: seatKeys, tableId: built.tableId,
+    contract, signerNodes: signerNodeKeys, tableId: built.tableId,
   });
   assert.equal(seen.agreed, 4, 'a forged signature was counted as agreement');
   assert.equal(seen.forged, 1);
@@ -527,8 +527,8 @@ test('a restart asks the chain, and a transaction it never saw stays queued', as
 
   const built = tableFor({ roundId: rid, entries, minScore: 1 });
   for (let i = 1; i < 5; i++)
-    round.putPayoutSignature(rid, seatKeys[i],
-      signPayoutTable({ tableId: built.tableId, secret: seatSecrets[i], pubkey: seatKeys[i] }));
+    round.putPayoutSignature(rid, signerNodeKeys[i],
+      signPayoutTable({ tableId: built.tableId, secret: signerNodeSecrets[i], pubkey: signerNodeKeys[i] }));
   const queued = payouts.queue({ roundId: rid, entries, minScore: 1, contract });
 
   // The send never left, so the chain has never heard of it.
@@ -555,7 +555,7 @@ test('a restart asks the chain, and a transaction it never saw stays queued', as
 test('the score the round set is the score the table is computed at', () => {
   // §20 makes a node that signs a table which is not F(its inputs) slashable,
   // so the floor has to reach the computation. A node that dropped it would
-  // sign a different table from every honest seat and never reach five.
+  // sign a different table from every honest signer node and never reach five.
   const stake = 1000000n;
   const placed = player(1); const cautious = player(2); const loser = player(3);
   const entries = entriesOf(stake,
@@ -576,7 +576,7 @@ test('the score the round set is the score the table is computed at', () => {
 
 test('a node signing at another floor never reaches five', () => {
   // The consequence of the test above, and the reason §20 makes it slashable:
-  // a seat that computes the table at a different floor signs a different id,
+  // a signer node that computes the table at a different floor signs a different id,
   // so it is not disagreement that gets averaged out - it simply never agrees.
   const { round, rid, contract } = node(1000000n);
   const placed = player(1); const cautious = player(2); const loser = player(3);
@@ -586,12 +586,12 @@ test('a node signing at another floor never reaches five', () => {
 
   const wrong = tableFor({ roundId: rid, entries, minScore: 0 });
   for (let i = 1; i < 6; i++)
-    round.putPayoutSignature(rid, seatKeys[i],
-      signPayoutTable({ tableId: wrong.tableId, secret: seatSecrets[i], pubkey: seatKeys[i] }));
+    round.putPayoutSignature(rid, signerNodeKeys[i],
+      signPayoutTable({ tableId: wrong.tableId, secret: signerNodeSecrets[i], pubkey: signerNodeKeys[i] }));
 
   const seen = payouts.queue({ roundId: rid, entries, minScore: 1, contract });
   assert.equal(seen.ok, false);
-  assert.match(seen.why, /1 of 5 seats signed this table/);
+  assert.match(seen.why, /1 of 5 signer nodes signed this table/);
   assert.equal(round.payout(rid), null);
 });
 
@@ -617,8 +617,8 @@ test('a round that still owes somebody is PAID_IN_PART, never PAID', async () =>
 
   const built = tableFor({ roundId: rid, entries, minScore: 1 });
   for (let i = 1; i < 5; i++)
-    round.putPayoutSignature(rid, seatKeys[i],
-      signPayoutTable({ tableId: built.tableId, secret: seatSecrets[i], pubkey: seatKeys[i] }));
+    round.putPayoutSignature(rid, signerNodeKeys[i],
+      signPayoutTable({ tableId: built.tableId, secret: signerNodeSecrets[i], pubkey: signerNodeKeys[i] }));
   const queued = payouts.queue({ roundId: rid, entries, minScore: 1, contract });
   assert.equal(queued.state, PAYOUT_QUEUED);
 
@@ -652,8 +652,8 @@ test('a round where nobody clears the floor sends nothing and records the debt',
 
   const built = tableFor({ roundId: rid, entries, minScore: 1 });
   for (let i = 1; i < 5; i++)
-    round.putPayoutSignature(rid, seatKeys[i],
-      signPayoutTable({ tableId: built.tableId, secret: seatSecrets[i], pubkey: seatKeys[i] }));
+    round.putPayoutSignature(rid, signerNodeKeys[i],
+      signPayoutTable({ tableId: built.tableId, secret: signerNodeSecrets[i], pubkey: signerNodeKeys[i] }));
   const queued = payouts.queue({ roundId: rid, entries, minScore: 1, contract });
 
   const utxo = { txid: rand(32), vout: 0, value: 2000n };
@@ -683,8 +683,8 @@ test('five of seven is still required, and a node with no chain still refuses', 
 
   const built = tableFor({ roundId: rid, entries, minScore: 1 });
   for (let i = 1; i < 5; i++)
-    round.putPayoutSignature(rid, seatKeys[i],
-      signPayoutTable({ tableId: built.tableId, secret: seatSecrets[i], pubkey: seatKeys[i] }));
+    round.putPayoutSignature(rid, signerNodeKeys[i],
+      signPayoutTable({ tableId: built.tableId, secret: signerNodeSecrets[i], pubkey: signerNodeKeys[i] }));
   const queued = payouts.queue({ roundId: rid, entries, minScore: 1, contract });
   const utxo = { txid: rand(32), vout: 0, value: 2000n };
 
@@ -733,8 +733,8 @@ test('a payout row that has moved on is not rewritten when the close runs again 
   const payouts = new Payouts(round, { curve, random: rand, chain, pool: dealt });
   const built = tableFor({ roundId: rid, entries, minScore: 1 });
   for (let i = 1; i < 5; i++)
-    round.putPayoutSignature(rid, seatKeys[i],
-      signPayoutTable({ tableId: built.tableId, secret: seatSecrets[i], pubkey: seatKeys[i] }));
+    round.putPayoutSignature(rid, signerNodeKeys[i],
+      signPayoutTable({ tableId: built.tableId, secret: signerNodeSecrets[i], pubkey: signerNodeKeys[i] }));
   const queued = payouts.queue({ roundId: rid, entries, minScore: 1, contract });
   assert.equal(queued.state, PAYOUT_QUEUED);
 

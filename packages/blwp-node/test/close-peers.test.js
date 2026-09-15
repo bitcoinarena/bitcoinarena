@@ -1,9 +1,9 @@
-// AT A LIVE CLOSE, THE PREIMAGE ASK AND THE PAYOUT GATHER REACH THE OTHER SEATS (M3.3-24).
+// AT A LIVE CLOSE, THE PREIMAGE ASK AND THE PAYOUT GATHER REACH THE OTHER SIGNER NODES (M3.3-24).
 //
 // Measured on the regtest rehearsal through the real daemons, after M3.3-22:
 // the loser's settle on the daemon where its run was final said "1 of 5
 // shares: a stake nobody can open stays in flight" with NO peer in the reason
-// - it had asked nobody - and both daemons' payout gathers said "1 of 2 seats
+// - it had asked nobody - and both daemons' payout gathers said "1 of 2 signer nodes
 // signed this table". `Preimages` and `Payouts` read only the `peers` option,
 // which the real launchers never pass. They now take the round's settlement
 // committee from the census, the same rule the receipt pull uses; a list the
@@ -36,8 +36,8 @@ const FUNDED = { funded: () => true };
 const RID = b32(0x42);
 const EID = b32(0x43);
 
-/** A fetcher that answers every ask the way a seat that is not final does. */
-function refusingSeats() {
+/** A fetcher that answers every ask the way a signer node that is not final does. */
+function refusingSignerNodes() {
   const asked = [];
   const fetcher = async (url) => {
     asked.push(url);
@@ -49,25 +49,25 @@ function refusingSeats() {
 /** A Preimages whose own share and handout are stood in for - what is measured is who it asks. */
 class Asking extends Preimages {
   handoutOf() { return { ok: true, entry: { stakeCommitment: b32(7) }, handout: {} }; }
-  async mine() { return { ok: true, share: { seat: 1, value: 1n } }; }
+  async mine() { return { ok: true, share: { signerNode: 1, value: 1n } }; }
 }
 
-test('the preimage ask reaches the round\'s census peers when none were given, and the refusal carries the seat\'s own words', async () => {
-  const seats = refusingSeats();
+test('the preimage ask reaches the round\'s census peers when none were given, and the refusal carries the signer node\'s own words', async () => {
+  const signerNodes = refusingSignerNodes();
   const round = { pubkey: b32(1) };
-  const p = new Asking(round, { peers: [], fetcher: seats.fetcher,
-    peersFor: (rid) => (toHex(rid) === toHex(RID) ? ['http://seat-b:1'] : []) });
+  const p = new Asking(round, { peers: [], fetcher: signerNodes.fetcher,
+    peersFor: (rid) => (toHex(rid) === toHex(RID) ? ['http://signer-node-b:1'] : []) });
   assert.equal(typeof p.peersOf, 'function', 'the preimage opening has no per-round peer list');
   const opened = await p.open({ roundId: RID, entryId: EID, needed: 2 });
   assert.equal(opened.ok, false);
-  assert.equal(seats.asked.length, 1, 'the other seat was never asked for its share');
-  assert.match(seats.asked[0], /^http:\/\/seat-b:1\/share\?round=/);
-  assert.match(opened.why, /http:\/\/seat-b:1: no share is handed out before the result is final/,
-    'the refusal is not the other seat\'s own words');
+  assert.equal(signerNodes.asked.length, 1, 'the other signer node was never asked for its share');
+  assert.match(signerNodes.asked[0], /^http:\/\/signer-node-b:1\/share\?round=/);
+  assert.match(opened.why, /http:\/\/signer-node-b:1: no share is handed out before the result is final/,
+    'the refusal is not the other signer node\'s own words');
 
   // A LIST THE OPERATOR GAVE STILL WINS.
-  const given = refusingSeats();
-  const q = new Asking(round, { peers: ['http://operator:2'], fetcher: given.fetcher, peersFor: () => ['http://seat-b:1'] });
+  const given = refusingSignerNodes();
+  const q = new Asking(round, { peers: ['http://operator:2'], fetcher: given.fetcher, peersFor: () => ['http://signer-node-b:1'] });
   await q.open({ roundId: RID, entryId: EID, needed: 2 });
   assert.ok(given.asked.every((u) => u.startsWith('http://operator:2/')), `asked ${given.asked}`);
 });
@@ -76,20 +76,20 @@ test('the payout gather asks the round\'s census peers for the table signatures 
   const asked = [];
   const round = { putPayoutSignature() {} };
   const pay = new Payouts(round, { peers: [], fetcher: async (url) => { asked.push(url); return new Response('', { status: 404 }); },
-    peersFor: (rid) => (toHex(rid) === toHex(RID) ? ['http://seat-b:1'] : []) });
+    peersFor: (rid) => (toHex(rid) === toHex(RID) ? ['http://signer-node-b:1'] : []) });
   assert.equal(typeof pay.peersOf, 'function', 'the payout path has no per-round peer list');
   const got = await pay.gather({ roundId: RID });
-  assert.deepEqual(asked, [`http://seat-b:1/payout?round=${toHex(RID)}`], 'the other seat was not asked for its signature');
+  assert.deepEqual(asked, [`http://signer-node-b:1/payout?round=${toHex(RID)}`], 'the other signer node was not asked for its signature');
   assert.equal(got.refused, 1);
 
   const given = [];
   const q = new Payouts(round, { peers: ['http://operator:2'], fetcher: async (u) => { given.push(u); return new Response('', { status: 404 }); },
-    peersFor: () => ['http://seat-b:1'] });
+    peersFor: () => ['http://signer-node-b:1'] });
   await q.gather({ roundId: RID });
   assert.deepEqual(given, [`http://operator:2/payout?round=${toHex(RID)}`], 'a given peers list was replaced');
 });
 
-// THE DAEMON'S OWN WIRING: a daemon seated from a census, given no peers.
+// THE DAEMON'S OWN WIRING: a daemon assigned from a census, given no peers.
 const HEIGHT = 900000;
 const TIP = HEIGHT + 10;
 const FROM = HEIGHT - 20;
@@ -107,7 +107,7 @@ const chainWith = (bonds, contract) => {
   const blocks = [];
   for (let h = FROM; h <= TIP; h++) blocks.push({ transactions: h === FROM ? bonds : [] });
   // AND THE ROUND'S PUBLICATION, well below any beacon (5A.5, v4.6.2): a node
-  // seats only a round its own chain shows published before the beacon block.
+  // signer nodes only a round its own chain shows published before the beacon block.
   if (contract) blocks[1] = { transactions: [publicationOf(contract)] };
   return chainOf(blocks, FROM);
 };
@@ -123,7 +123,7 @@ const contractFor = (nodes, censusRoot) => ({
   spawnFreeRadius: 20, timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4, nodes,
 });
 
-test('a daemon given no peers asks the other settlement seat, off the census, for its share and its table signature', async () => {
+test('a daemon given no peers asks the other settlement signer node, off the census, for its share and its table signature', async () => {
   const a = await serve(openStore(':memory:'), { port: 0, ...FUNDED });
   const b = await serve(openStore(':memory:'), { port: 0, ...FUNDED });
   try {
@@ -147,11 +147,11 @@ test('a daemon given no peers asks the other settlement seat, off the census, fo
     const again = await serve(storeA, { port: a.port, ...FUNDED, chainFor: () => published, randomnessFor: () => beacon });
     try {
       const rid = again.round.open(c);
-      const seated = new Roster(again.round, { chainFor: () => published, randomnessFor: () => beacon }).seatRound(rid);
-      assert.equal(seated.ok, true, seated.why);
+      const joined = new Roster(again.round, { chainFor: () => published, randomnessFor: () => beacon }).assignSignerNodes(rid);
+      assert.equal(joined.ok, true, joined.why);
       const other = [`http://127.0.0.1:${b.port}`];
-      assert.deepEqual(again.preimages.peersOf(rid), other, 'the preimage ask does not reach the other settlement seat');
-      assert.deepEqual(again.payouts.peersOf(rid), other, 'the payout gather does not reach the other settlement seat');
+      assert.deepEqual(again.preimages.peersOf(rid), other, 'the preimage ask does not reach the other settlement signer node');
+      assert.deepEqual(again.payouts.peersOf(rid), other, 'the payout gather does not reach the other settlement signer node');
     } finally { await again.close(); }
   } finally { await b.close(); }
 });

@@ -3,14 +3,14 @@
 // "STAKE_COMMITTED is recorded once >=5 settlement nodes have seen the held
 // HTLC." Each node already refuses play until ITS Lightning shows the stake held
 // and answers `GET /stake`; the page asked only the node it joined, and printed
-// the node's seat-time `x-hold` word - which says HELD for an invoice nobody has
+// the node's join-time `x-hold` word - which says HELD for an invoice nobody has
 // paid, because lnd's OPEN and ACCEPTED both read as held.
 //
-// So the page counts: every settlement seat is asked, and the line is
-// "stake seen by N of M nodes (T needed)". M is the round's settlement seats
-// (keys, from `fetchSettlementSeats`), found at the node addresses the page
+// So the page counts: every settlement signer node is asked, and the line is
+// "stake seen by N of M nodes (T needed)". M is the round's settlement signer nodes
+// (keys, from `fetchSettlementSignerNodes`), found at the node addresses the page
 // holds through each node's own `GET /identity`. T is 2 on a two-slot round and
-// 5 otherwise - the shape `receiptsForLive` already has. A seat with no address
+// 5 otherwise - the shape `receiptsForLive` already has. A signer node with no address
 // that answers is counted as not seen, and the line says how many did not
 // answer. COMMITTED is a label, true only at N >= T. It does not gate driving:
 // the late-payer path stays, and each node still refuses its own receipt.
@@ -26,7 +26,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { openStore } from '../../blwp-node/src/store.js';
 import { serve } from '../../blwp-node/src/server.js';
 import { HELD } from '../../blwp-node/src/custody.js';
-import { assumeSeated } from '../../blwp-node/test/seating.js';
+import { assumeAssigned } from '../../blwp-node/test/assignment.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { encodeRoundContract, encodeEntryContract, roundId, entryId } from '../../protocol/src/contracts.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
@@ -57,7 +57,7 @@ function payablePort() {
   return port;
 }
 
-/** `n` daemons, each with its own Lightning port, one round, one seated entry. */
+/** `n` daemons, each with its own Lightning port, one round, one joined entry. */
 async function committee(n) {
   const ports = Array.from({ length: n }, payablePort);
   const nodes = [];
@@ -83,9 +83,9 @@ async function committee(n) {
   for (const d of nodes) {
     const base = `http://127.0.0.1:${d.port}`;
     await fetch(`${base}/round`, { method: 'POST', body: encodeRoundContract(contract) });
-    assumeSeated(d.round, rid, keys);
-    const seated = await fetch(`${base}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
-    assert.equal(seated.status, 201, await seated.text());
+    assumeAssigned(d.round, rid, keys);
+    const joined = await fetch(`${base}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
+    assert.equal(joined.status, 201, await joined.text());
   }
   const bases = nodes.map((d) => `http://127.0.0.1:${d.port}`);
   return {
@@ -95,69 +95,69 @@ async function committee(n) {
   };
 }
 
-test('at seat time the page printed "held" for a stake nobody has paid; now it says it is not yet counted', async () => {
+test('at join time the page printed "held" for a stake nobody has paid; now it says it is not yet counted', async () => {
   const c = await committee(2);
   const client = new Client({ base: c.bases[0], core, sign, verify });
   try {
     await client.join(c.entry);
-    // THE NODE'S SEAT-TIME WORD, measured: lnd's OPEN reads as held.
-    assert.equal(client.seatHold.state, HELD, `the node answered x-hold ${client.seatHold.state}`);
-    const line = stakeLine({ dealt: true, hold: client.seatHold });
+    // THE NODE'S JOIN-TIME WORD, measured: lnd's OPEN reads as held.
+    assert.equal(client.joinHold.state, HELD, `the node answered x-hold ${client.joinHold.state}`);
+    const line = stakeLine({ dealt: true, hold: client.joinHold });
     assert.ok(!/held/.test(line), `the page tells a player an unpaid stake is held: "${line}"`);
     assert.equal(line, ' · stake dealt, not yet counted');
   } finally { await c.close(); }
 });
 
-test('seven settlement seats: seen by 4 of 7 is not committed, 5 of 7 is, and a seat that does not answer is named', async () => {
+test('seven settlement signer nodes: seen by 4 of 7 is not committed, 5 of 7 is, and a signer node that does not answer is named', async () => {
   const c = await committee(7);
-  // THE SEVENTH SEAT'S ADDRESS IS DOWN: its key is a seat, its node is gone.
+  // THE SEVENTH SIGNER NODE'S ADDRESS IS DOWN: its key is a signer node, its node is gone.
   await c.nodes[6].close();
   try {
     assert.equal(typeof join.stakeSeenBy, 'function', 'there is no count of the nodes that have seen a stake');
     assert.equal(join.stakeSeenNeeded(c.contract), 5);
 
     c.pay(4);
-    const four = await join.stakeSeenBy({ entryId: c.eid, seats: c.keys, nodes: c.bases, contract: c.contract });
+    const four = await join.stakeSeenBy({ entryId: c.eid, signerNodes: c.keys, nodes: c.bases, contract: c.contract });
     assert.deepEqual([four.seen, four.of, four.needed, four.unanswered, four.committed], [4, 7, 5, 1, false]);
     assert.equal(stakeLine({ dealt: true, seen: four }),
       ' · stake seen by 4 of 7 nodes (5 needed), 1 did not answer');
 
     c.pay(5);
-    const five = await join.stakeSeenBy({ entryId: c.eid, seats: c.keys, nodes: c.bases, contract: c.contract });
+    const five = await join.stakeSeenBy({ entryId: c.eid, signerNodes: c.keys, nodes: c.bases, contract: c.contract });
     assert.deepEqual([five.seen, five.of, five.needed, five.unanswered, five.committed], [5, 7, 5, 1, true]);
     assert.equal(stakeLine({ dealt: true, seen: five }),
       ' · stake seen by 5 of 7 nodes (5 needed), 1 did not answer · committed');
-    console.log(`  7 seats: 4 paid -> ${four.seen}/${four.of} (${four.needed} needed) committed=${four.committed}; `
+    console.log(`  7 signer nodes: 4 paid -> ${four.seen}/${four.of} (${four.needed} needed) committed=${four.committed}; `
       + `5 paid -> ${five.seen}/${five.of} committed=${five.committed}; unanswered ${five.unanswered}`);
   } finally { await c.close(); }
 });
 
-test('two settlement seats: T is 2, not a hard 5 - 1 of 2 is not committed, 2 of 2 is', async () => {
+test('two settlement signer nodes: T is 2, not a hard 5 - 1 of 2 is not committed, 2 of 2 is', async () => {
   const c = await committee(2);
   try {
     assert.equal(join.stakeSeenNeeded(c.contract), 2, 'a 2-of-2 round would wait for 5 nodes it does not have');
-    const none = await join.stakeSeenBy({ entryId: c.eid, seats: c.keys, nodes: c.bases, contract: c.contract });
+    const none = await join.stakeSeenBy({ entryId: c.eid, signerNodes: c.keys, nodes: c.bases, contract: c.contract });
     assert.deepEqual([none.seen, none.of, none.needed, none.committed], [0, 2, 2, false]);
     c.pay(1);
-    const one = await join.stakeSeenBy({ entryId: c.eid, seats: c.keys, nodes: c.bases, contract: c.contract });
+    const one = await join.stakeSeenBy({ entryId: c.eid, signerNodes: c.keys, nodes: c.bases, contract: c.contract });
     assert.deepEqual([one.seen, one.of, one.needed, one.committed], [1, 2, 2, false]);
     c.pay(2);
-    const two = await join.stakeSeenBy({ entryId: c.eid, seats: c.keys, nodes: c.bases, contract: c.contract });
+    const two = await join.stakeSeenBy({ entryId: c.eid, signerNodes: c.keys, nodes: c.bases, contract: c.contract });
     assert.deepEqual([two.seen, two.of, two.needed, two.committed], [2, 2, 2, true]);
     assert.equal(stakeLine({ dealt: true, seen: two }), ' · stake seen by 2 of 2 nodes (2 needed) · committed');
   } finally { await c.close(); }
 });
 
-test('counted from the seat: a watch started before anybody paid reaches committed when the stake lands, and a second start is the same watch', async () => {
+test('counted from the signer node: a watch started before anybody paid reaches committed when the stake lands, and a second start is the same watch', async () => {
   // A WALLET CAN ANSWER AFTER payStake HAS GIVEN UP (wallet-nwc.test.js: "did
   // not answer in 400 ms") and still pay. A count started only on payStake's ok
   // would never start, and the line would say "not yet counted" while the
-  // committee held the stake. So the count runs from the seat.
+  // committee held the stake. So the count runs from the signer node.
   const c = await committee(2);
   const client = new Client({ base: c.bases[0], core, sign, verify });
   try {
     await client.join(c.entry);
-    const args = { seats: c.keys, nodes: c.bases, contract: c.contract, everyMs: 50 };
+    const args = { signerNodes: c.keys, nodes: c.bases, contract: c.contract, everyMs: 50 };
     const first = client.watchStake(args);
     const again = client.watchStake(args);
     assert.equal(again, first, 'a second start is a second watch, polling twice');
@@ -169,8 +169,8 @@ test('counted from the seat: a watch started before anybody paid reaches committ
   } finally { client.close(); await c.close(); }
 });
 
-test('a seat the node issued no hold for keeps the node\'s reason while nobody has seen it', () => {
-  // The count starts from the seat whatever the node answered. A node with no
+test('a signer node the node issued no hold for keeps the node\'s reason while nobody has seen it', () => {
+  // The count starts from the signer node whatever the node answered. A node with no
   // Lightning answers `x-hold: none` and says why - letter 15 put that reason on
   // the chip so a stake that can never be held does not read like one waiting.
   // A count of "0 of 2" in its place would hide it.
@@ -179,16 +179,16 @@ test('a seat the node issued no hold for keeps the node\'s reason while nobody h
   assert.equal(stakeLine({ dealt: true, hold: none, seen: zero }),
     ' · stake dealt, unpaid (this node reaches no Lightning, so it holds no stakes)',
     'the node\'s reason there is no hold was replaced by a count of nothing');
-  // ONCE A SEAT HAS SEEN IT, the count is the truth (a hold issued later).
+  // ONCE A SIGNER NODE HAS SEEN IT, the count is the truth (a hold issued later).
   assert.equal(stakeLine({ dealt: true, hold: none, seen: { ...zero, seen: 1 } }),
     ' · stake seen by 1 of 2 nodes (2 needed)');
-  // AND A HELD SEAT'S ZERO IS A COUNT, not a reason.
+  // AND A HELD SIGNER NODE'S ZERO IS A COUNT, not a reason.
   assert.equal(stakeLine({ dealt: true, hold: { state: HELD }, seen: zero }),
     ' · stake seen by 0 of 2 nodes (2 needed)');
 });
 
 test('a count that is over is not started again: committed, ended or closed, watchStake asks nobody', async () => {
-  // The chip paints every 500 ms and starts the count from the seat. What
+  // The chip paints every 500 ms and starts the count from the signer node. What
   // stops it restarting a finished count is a rule, and a rule in index.html is
   // one node --test cannot run - so it lives here, where the suite does.
   const c = await committee(2);
@@ -198,7 +198,7 @@ test('a count that is over is not started again: committed, ended or closed, wat
   try {
     await client.join(c.entry);
     c.pay(2);
-    const args = { seats: c.keys, nodes: c.bases, contract: c.contract, everyMs: 20, fetcher: counting };
+    const args = { signerNodes: c.keys, nodes: c.bases, contract: c.contract, everyMs: 20, fetcher: counting };
     const done = await client.watchStake(args);
     assert.equal(done.committed, true);
     const polls = client.stakePolls;
@@ -217,11 +217,11 @@ test('a count that is over is not started again: committed, ended or closed, wat
   } finally { client.close(); await c.close(); }
 });
 
-test('the page counts from the seat, whatever payStake answered, and hands the count to the chip', async () => {
+test('the page counts from the signer node, whatever payStake answered, and hands the count to the chip', async () => {
   const { readFileSync } = await import('node:fs');
   const page = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url), 'utf8');
   assert.ok(!/said\.ok && client\.watchStake/.test(page), 'the count still starts only when payStake said ok');
-  assert.match(page, /net\.client\.watchStake\(\{/, 'the chip never starts the count from the seat');
+  assert.match(page, /net\.client\.watchStake\(\{/, 'the chip never starts the count from the signer node');
 });
 
 test('the page counts after paying and hands the count to the chip', async () => {
@@ -229,8 +229,8 @@ test('the page counts after paying and hands the count to the chip', async () =>
   // that it calls the counted rule rather than printing a word of its own.
   const { readFileSync } = await import('node:fs');
   const page = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url), 'utf8');
-  assert.match(page, /client\.watchStake\(\{/, 'the page never asks the settlement seats');
-  assert.match(page, /seatKeys: seats\.seats, nodes: named\.nodes/, 'the page does not keep who to count');
+  assert.match(page, /client\.watchStake\(\{/, 'the page never asks the settlement signer nodes');
+  assert.match(page, /signerNodeKeys: signerNodes\.signerNodes, nodes: named\.nodes/, 'the page does not keep who to count');
   assert.match(page, /seen: \(net && net\.client && net\.client\.stakeCount\)/, 'the chip is not handed the count');
 });
 
@@ -244,12 +244,12 @@ test('the client polls until the stake is committed and then stops; driving is n
     // THE NODE THE PAGE JOINED HAS SEEN IT; THE OTHER HAS NOT. 1 of 2.
     c.ports[0].paid = true;
     assert.equal(typeof client.watchStake, 'function', 'the client cannot watch a stake being seen');
-    const watching = client.watchStake({ seats: c.keys, nodes: c.bases, contract: c.contract, everyMs: 50 });
+    const watching = client.watchStake({ signerNodes: c.keys, nodes: c.bases, contract: c.contract, everyMs: 50 });
     await wait(200);
     assert.equal(client.stakeCommitted, false, 'committed below T');
     assert.equal(client.stakeCount.seen, 1);
 
-    // DRIVING IS NOT GATED: the joined node takes the ticks at 1 of 2.
+    // DRIVING IS NOT GATED: the node the player joined takes the ticks at 1 of 2.
     for (let i = 0; i < 20; i++) client.record([45875, 22000, 0, 0, 0]);
     for (let i = 0; i < 20 && client.hold.length; i++) { const p = client.drain(); if (p) { try { await p; } catch { /* measured below */ } } await wait(2); }
     assert.equal(client.ended, false);

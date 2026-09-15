@@ -161,9 +161,9 @@ public class LobbyScreenTests
 
     const string Sample ="{\"mode\":\"lobby\",\"from\":\"daily.json\",\"you\":{\"name\":\"azure-elk-1364\",\"custom\":false,"
         + "\"generated\":\"azure-elk-1364\",\"fingerprint\":\"1a2b3c4d\"},\"rows\":["
-        + "{\"id\":\"aaaa1111\",\"free\":true,\"agree\":2,\"needed\":2,\"joinable\":true,\"leftS\":40,\"seated\":0},"
-        + "{\"id\":\"bbbb2222\",\"free\":true,\"agree\":1,\"needed\":2,\"joinable\":false,\"leftS\":170,\"seated\":0},"
-        + "{\"id\":\"cccc3333\",\"free\":true,\"agree\":2,\"needed\":2,\"joinable\":true,\"leftS\":150,\"seated\":1}],"
+        + "{\"id\":\"aaaa1111\",\"free\":true,\"agree\":2,\"needed\":2,\"joinable\":true,\"leftS\":40,\"joined\":0},"
+        + "{\"id\":\"bbbb2222\",\"free\":true,\"agree\":1,\"needed\":2,\"joinable\":false,\"leftS\":170,\"joined\":0},"
+        + "{\"id\":\"cccc3333\",\"free\":true,\"agree\":2,\"needed\":2,\"joinable\":true,\"leftS\":150,\"joined\":1}],"
         + "\"refused\":[],\"nodes\":2}";
 
     [Test]
@@ -173,7 +173,7 @@ public class LobbyScreenTests
         Assert.IsNotNull(s);
         Assert.AreEqual("azure-elk-1364", s.you.name);
         Assert.AreEqual(3, s.rows.Length);
-        // the 1-of-2 round has more time left and is still never picked: no Join without both seats
+        // the 1-of-2 round has more time left and is still never picked: no Join without both signer nodes
         Assert.AreEqual(2, DailyLobby.PickDefault(s.rows));
         Assert.AreEqual(0, DailyLobby.Keep(s.rows, "aaaa1111"), "a picked joinable round stays picked");
         Assert.AreEqual(2, DailyLobby.Keep(s.rows, "bbbb2222"), "a round that is not joinable cannot stay picked");
@@ -218,15 +218,15 @@ public class LobbyScreenTests
     /// <summary>
     /// A PAYING ROW SAYS WHAT IT COSTS (the owner 2026-09-15 16:08: "Paid must read like 'PAID ·
     /// 100 sats'"). Measured before: the live Daily's paying round (100000 msat) read
-    /// "PAID · closes ... · 2 of 2 seats" in every form. The stake is in every form the row is
+    /// "PAID · closes ... · 2 of 2 signer nodes" in every form. The stake is in every form the row is
     /// shortened to, from the page's own view row; a free row says FREE and no amount.
     /// </summary>
     [Test]
     public void APaidRowSaysItsStakeInSatsInEveryFormAndAFreeRowSaysFree()
     {
         var s = DailyLobby.Parse("{\"mode\":\"lobby\",\"rows\":["
-            + "{\"id\":\"5a343b8d00\",\"free\":true,\"agree\":2,\"needed\":2,\"joinable\":true,\"leftS\":993,\"seated\":1,\"stakeSats\":0},"
-            + "{\"id\":\"eb1109af00\",\"free\":false,\"agree\":2,\"needed\":2,\"joinable\":true,\"leftS\":1000,\"seated\":0,\"stakeSats\":100}]}");
+            + "{\"id\":\"5a343b8d00\",\"free\":true,\"agree\":2,\"needed\":2,\"joinable\":true,\"leftS\":993,\"joined\":1,\"stakeSats\":0},"
+            + "{\"id\":\"eb1109af00\",\"free\":false,\"agree\":2,\"needed\":2,\"joinable\":true,\"leftS\":1000,\"joined\":0,\"stakeSats\":100}]}");
         Assert.IsNotNull(s, "the page's lobby view was not read");
         foreach (var w in DailyLobby.RowWords(s.rows[1]))
         {
@@ -248,7 +248,7 @@ public class LobbyScreenTests
     /// <summary>
     /// PLAY STARTS THE ROUND, IN THIS PAGE (M3.3-34, the owner 2026-09-13 07:11:
     /// "after PLAY the loading screen must not come again"). The page takes the
-    /// seat without a reload and says so; the round starts once the page says
+    /// signer node without a reload and says so; the round starts once the page says
     /// joined and the session is open - or after the patience without one - and
     /// a refusal comes back to the title screen with the page's reason.
     /// </summary>
@@ -261,7 +261,7 @@ public class LobbyScreenTests
 
         var joining = DailyLobby.Parse(Sample.Replace("\"nodes\":2}", "\"nodes\":2,\"join\":{\"state\":\"joining\",\"why\":\"\",\"stage\":\"stake lock: deposit\"}}"));
         Assert.AreEqual("stake lock: deposit", joining.join.stage);
-        Assert.AreEqual("wait", DailyLobby.AfterJoin(joining, true, 60f), "no round starts before the page has the seat");
+        Assert.AreEqual("wait", DailyLobby.AfterJoin(joining, true, 60f), "no round starts before the page has joined");
 
         var joined = DailyLobby.Parse(Sample.Replace("\"nodes\":2}", "\"nodes\":2,\"join\":{\"state\":\"joined\"}}"));
         Assert.AreEqual("play", DailyLobby.AfterJoin(joined, true, 0f), "joined with the session open: the round starts");
@@ -269,9 +269,9 @@ public class LobbyScreenTests
         Assert.AreEqual("play", DailyLobby.AfterJoin(joined, false, DailyLobby.SessionPatienceS),
             "a session that has not opened does not keep the player on the title screen");
 
-        var refused = DailyLobby.Parse(Sample.Replace("\"nodes\":2}", "\"nodes\":2,\"join\":{\"state\":\"refused\",\"why\":\"no seat\"}}"));
+        var refused = DailyLobby.Parse(Sample.Replace("\"nodes\":2}", "\"nodes\":2,\"join\":{\"state\":\"refused\",\"why\":\"no signer node\"}}"));
         Assert.AreEqual("refused", DailyLobby.AfterJoin(refused, true, 60f));
-        Assert.AreEqual("no seat", refused.join.why);
+        Assert.AreEqual("no signer node", refused.join.why);
         Assert.AreEqual("wait", DailyLobby.AfterJoin(null, true, 60f));
     }
 

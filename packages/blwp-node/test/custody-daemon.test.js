@@ -22,7 +22,7 @@ import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { Round } from '../src/round.js';
 import { HELD, SETTLED } from '../src/custody.js';
-import { assumeSeated } from './seating.js';
+import { assumeAssigned } from './assignment.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import {
   encodeRoundContract, roundId, encodeEntryContract, entryId,
@@ -118,7 +118,7 @@ const getJson = async (port, path) => {
   return { status: r.status, text, body: r.headers.get('content-type') === 'application/json' ? JSON.parse(text) : null };
 };
 
-test('a seated player is quoted the hold invoice their own entry names', async () => {
+test('a joined player is quoted the hold invoice their own entry names', async () => {
   const port = fakePort();
   const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, preflight: async () => ({ ready: true, why: "test port" }), lightning: port });
   try {
@@ -126,11 +126,11 @@ test('a seated player is quoted the hold invoice their own entry names', async (
     const rid = roundId(c);
     await post(node.port, '/round', encodeRoundContract(c));
     const entry = entryFor(rid);
-    const seated = await post(node.port, '/entry', encodeEntryContract(entry));
+    const joined = await post(node.port, '/entry', encodeEntryContract(entry));
 
-    // THE SEAT IS WHERE THE HOLD IS ISSUED. Nothing else had to ask for it.
-    assert.equal(seated.status, 201);
-    assert.equal(seated.headers.get('x-hold'), HELD);
+    // THE SIGNER NODE IS WHERE THE HOLD IS ISSUED. Nothing else had to ask for it.
+    assert.equal(joined.status, 201);
+    assert.equal(joined.headers.get('x-hold'), HELD);
 
     const eid = toHex(entryId(entry));
     const quote = await getJson(node.port, `/invoice?entry=${eid}`);
@@ -150,7 +150,7 @@ test('a seated player is quoted the hold invoice their own entry names', async (
   } finally { await node.close(); }
 });
 
-test('an entry this node never seated gets no invoice', async () => {
+test('an entry this node never took gets no invoice', async () => {
   const port = fakePort();
   const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, preflight: async () => ({ ready: true, why: "test port" }), lightning: port });
   try {
@@ -164,20 +164,20 @@ test('an entry this node never seated gets no invoice', async () => {
   } finally { await node.close(); }
 });
 
-test('a daemon with no Lightning still seats, and says why it quotes nothing', async () => {
+test('a daemon with no Lightning still signer nodes, and says why it quotes nothing', async () => {
   const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED });
   try {
     const c = contractFor(node.round.pubkey);
     const rid = roundId(c);
     await post(node.port, '/round', encodeRoundContract(c));
     const entry = entryFor(rid);
-    const seated = await post(node.port, '/entry', encodeEntryContract(entry));
+    const joined = await post(node.port, '/entry', encodeEntryContract(entry));
 
     // THE ENTRY IS STILL STORED. A Lightning node that is down is the
     // operator's problem, not a reason to throw away a signed contract.
-    assert.equal(seated.status, 201);
-    assert.equal(seated.headers.get('x-hold'), 'none');
-    assert.match(seated.headers.get('x-hold-why'), /reaches no Lightning/);
+    assert.equal(joined.status, 201);
+    assert.equal(joined.headers.get('x-hold'), 'none');
+    assert.match(joined.headers.get('x-hold-why'), /reaches no Lightning/);
 
     const quote = await getJson(node.port, `/invoice?entry=${toHex(entryId(entry))}`);
     assert.equal(quote.status, 503);
@@ -191,7 +191,7 @@ async function roundThrough(node) {
   const c = contractFor(node.round.pubkey);
   const rid = roundId(c);
   await post(node.port, '/round', encodeRoundContract(c));
-  assumeSeated(node.round, rid, c.nodes);
+  assumeAssigned(node.round, rid, c.nodes);
 
   const entry = entryFor(rid);
   const eid = entryId(entry);
@@ -228,7 +228,7 @@ async function roundThrough(node) {
   const receipted = await say(joinSigned(encodeCheckpoint(mark), ed25519.sign(mid, session)));
   assert.equal(receipted.length, SIGNED_RECEIPT_BYTES, 'the node refused the mark');
 
-  // The second seat's receipt, which is what makes the transcript canonical.
+  // The second signer node's receipt, which is what makes the transcript canonical.
   const receipt = { checkpointId: mid, receivedAtMs: 1234n, nodePubkey: schnorr.getPublicKey(peer) };
   assert.equal(await say(joinSignedReceipt(encodeCheckpointReceipt(receipt),
     schnorr.sign(receiptId(receipt), peer))), 'held');
@@ -255,10 +255,10 @@ test('closing a round on the daemon reaches the money path, and moves no stake',
     await node.verifier.settling;
     const money = await node.stakes();
 
-    // ONE SEAT OF TWO IS NOT A FINAL, and the close says so even though the
+    // ONE SIGNER NODE OF TWO IS NOT A FINAL, and the close says so even though the
     // answer would have been "nothing moves" either way.
     assert.equal(money.considered, 1);
-    assert.deepEqual(money.agreed, [], 'one seat of two was counted as an agreement');
+    assert.deepEqual(money.agreed, [], 'one signer node of two was counted as an agreement');
     assert.equal(money.ok, false);
     assert.match(money.why, new RegExp(`a pool of ${netStakeMsat(entryFor(new Uint8Array(32)))} against 0 handed out`),
       'the close never reached the stake table with this round\'s own entries');
@@ -285,7 +285,7 @@ test('the committee agreeing on a round nobody finished still moves no stake', a
     await node.verifier.settling;
     await node.stakes();
 
-    // THE SECOND SEAT AGREES: the same run, signed by the other committee key.
+    // THE SECOND SIGNER NODE AGREES: the same run, signed by the other committee key.
     // Nothing is invented - the body is this node's own result with the signer
     // swapped, which is what a peer that replayed the same transcript produces.
     const mine = node.round.results(rid, eid)[0];
@@ -297,7 +297,7 @@ test('the committee agreeing on a round nobody finished still moves no stake', a
 
     const closed = await node.verifier.settleRound(rid);
     const agreed = closed.gathered.find((g) => toHex(g.entryId) === toHex(eid));
-    assert.equal(agreed.final, true, `the two seats did not agree: ${agreed.why}`);
+    assert.equal(agreed.final, true, `the two signer nodes did not agree: ${agreed.why}`);
 
     // THE WORD IS THE CORE'S, and it reached 23.2's table: the refusal names
     // this player's own stake, which is how we know real entries went in.
@@ -377,7 +377,7 @@ test('closing a round makes the daemon sign what it owes, and serve that signatu
     assert.equal(held.length, 1, 'the close did not reach the payout at all');
     assert.deepEqual(held[0].nodePubkey, node.round.pubkey);
 
-    // AND IT SERVES IT, which is the door `gather` reads on every other seat.
+    // AND IT SERVES IT, which is the door `gather` reads on every other signer node.
     const got = await fetch(`http://127.0.0.1:${node.port}/payout?round=${toHex(rid)}`);
     const bytes = new Uint8Array(await got.arrayBuffer());
     assert.equal(got.status, 200);

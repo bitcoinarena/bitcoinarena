@@ -36,7 +36,7 @@ export const GHOST_SUBSCRIPTIONS = 20;
  *
  * Half the leaders and half the neighbours. Not tuned - it is the smallest
  * split that keeps both halves of "nearest plus leaderboard top" from being
- * squeezed out by the other, and an odd budget gives the extra seat to the
+ * squeezed out by the other, and an odd budget gives the extra signer node to the
  * nearest, because a truck beside you is the one you might otherwise think you
  * could touch.
  */
@@ -161,7 +161,7 @@ const key = (o) => hex(o.entryId);
  *
  * Somebody with no player key has no standing - not a standing looked up under
  * their entry id. That fallback was here and it was measured granting a
- * leaders seat to an object with no player key at all, on a board that
+ * leaders signer node to an object with no player key at all, on a board that
  * happened to rank those bytes. A silent fallback across namespaces is how one
  * identifier quietly becomes another.
  */

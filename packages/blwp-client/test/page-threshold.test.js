@@ -1,8 +1,8 @@
 // THE PAGE DEALS A STAKE AT THE ROUND'S THRESHOLD (M3.3-26, item 23 folded in).
 //
-// The page dealt `needed: settlementSlots` - 7 of 7 on seven seats, which the
+// The page dealt `needed: settlementSlots` - 7 of 7 on seven signer nodes, which the
 // node's door now refuses by name - and posted the handout at the default 5 on
-// a 2-of-2, where only 2 seats exist. The rule is one function, the one the
+// a 2-of-2, where only 2 signer nodes exist. The rule is one function, the one the
 // door and the settle use: 2 of 2, 5 of 7.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,9 +17,9 @@ import { coreHashHex } from '../../core/tools/hash-core.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const CORE = fromHex(coreHashHex());
 const rand = (n) => new Uint8Array(randomBytes(n));
-const seatsOf = (n) => Array.from({ length: n }, () => schnorr.getPublicKey(rand(32)));
-const deal = (round, seats, extra = {}) =>
-  stakeFor(round, { seats, curve: feldmanGroup, random: rand, playerPubkey: b32(5), ...extra });
+const signerNodesOf = (n) => Array.from({ length: n }, () => schnorr.getPublicKey(rand(32)));
+const deal = (round, signerNodes, extra = {}) =>
+  stakeFor(round, { signerNodes, curve: feldmanGroup, random: rand, playerPubkey: b32(5), ...extra });
 
 test('stakeFor deals at the round\'s threshold unless told otherwise, and refuses any other', async () => {
   // ITS DEFAULT WAS A FLAT 5, whatever the round. The page and the harness now
@@ -27,21 +27,21 @@ test('stakeFor deals at the round\'s threshold unless told otherwise, and refuse
   // same player-chosen threshold the node's door refuses, one caller away.
   const two = { id: b32(0x11), stakeMsat: 100000n, settlementSlots: 2, simCoreHash: CORE };
   const seven = { id: b32(0x12), stakeMsat: 100000n, settlementSlots: 7, simCoreHash: CORE };
-  assert.equal((await deal(two, seatsOf(2))).handout.needed, 2);
-  assert.equal((await deal(seven, seatsOf(7))).handout.needed, 5);
-  await assert.rejects(() => deal(two, seatsOf(2), { needed: 5 }), /this round's stakes open at 2 of 2/);
-  await assert.rejects(() => deal(seven, seatsOf(7), { needed: 7 }), /this round's stakes open at 5 of 7/);
-  await assert.rejects(() => deal({ id: b32(0x13), stakeMsat: 100000n, simCoreHash: CORE }, seatsOf(7)),
+  assert.equal((await deal(two, signerNodesOf(2))).handout.needed, 2);
+  assert.equal((await deal(seven, signerNodesOf(7))).handout.needed, 5);
+  await assert.rejects(() => deal(two, signerNodesOf(2), { needed: 5 }), /this round's stakes open at 2 of 2/);
+  await assert.rejects(() => deal(seven, signerNodesOf(7), { needed: 7 }), /this round's stakes open at 5 of 7/);
+  await assert.rejects(() => deal({ id: b32(0x13), stakeMsat: 100000n, simCoreHash: CORE }, signerNodesOf(7)),
     /names no settlement slots/);
 });
 
 test('postHandout counts against the threshold the stake was dealt at, not a flat 5', async () => {
   const two = { id: b32(0x11), stakeMsat: 100000n, settlementSlots: 2, simCoreHash: CORE };
-  const stake = await deal(two, seatsOf(2), { needed: 2 });
+  const stake = await deal(two, signerNodesOf(2), { needed: 2 });
   const took = async () => ({ ok: true, text: async () => '' });
   const put = await postHandout(stake, ['http://a', 'http://b'], { fetcher: took });
   assert.equal(put.needed, 2);
-  assert.equal(put.ok, true, `both seats of a 2-of-2 took the handout and it still says: ${put.why}`);
+  assert.equal(put.ok, true, `both signer nodes of a 2-of-2 took the handout and it still says: ${put.why}`);
 });
 
 test('"committed" counts against the same rule: stakeSeenNeeded is sharesNeededFor', () => {
@@ -52,7 +52,7 @@ test('"committed" counts against the same rule: stakeSeenNeeded is sharesNeededF
 
 test('the round\'s stakes open at 2 of 2 and 5 of 7, and nothing else is a threshold', () => {
   assert.equal(sharesNeededFor({ settlementSlots: 2 }), 2);
-  assert.equal(sharesNeededFor({ settlementSlots: 7 }), 5, 'seven seats are dealt all seven again');
+  assert.equal(sharesNeededFor({ settlementSlots: 7 }), 5, 'seven signer nodes are dealt all seven again');
   assert.throws(() => sharesNeededFor({ settlementSlots: 3 }), /no committee threshold for 3 slots/);
 });
 
@@ -73,7 +73,7 @@ test('the bundle the page loads hands it that rule, and the template carries tha
 
 test('the page deals and posts at that rule, not at its slot count or a default', () => {
   const page = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url), 'utf8');
-  assert.ok(!/needed: named\.round\.settlementSlots/.test(page), 'the page still deals every seat a vote on its own stake');
+  assert.ok(!/needed: named\.round\.settlementSlots/.test(page), 'the page still deals every signer node a vote on its own stake');
   assert.match(page, /needed: BLWPCLIENT\.sharesNeededFor\(named\.round\),/, 'the page does not deal at the round\'s threshold');
   assert.match(page, /postHandout\(stake, named\.nodes, \{ needed: BLWPCLIENT\.sharesNeededFor\(named\.round\) \}\)/,
     'the page posts the handout at a default that is not this round\'s');

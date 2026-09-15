@@ -9,9 +9,9 @@
 //
 // So this harness deliberately does NOT build a utxo. It funds the pool and
 // then calls `settleQueued`, whose only arguments are the round, the contract
-// and the things the node already holds. Everything else - which seat asks,
+// and the things the node already holds. Everything else - which signer node asks,
 // which output to spend, what it is worth - comes from the round id, the
-// seat's own store and `scantxoutset`.
+// signer node's own store and `scantxoutset`.
 //
 //   the pool unfunded    refused by name, the row stays PAYOUT_QUEUED
 //   funded but 0 conf    refused by name, and NOT the empty pool's sentence
@@ -49,7 +49,7 @@ import { scalarFrom32, FIELD, SHARES_NEEDED, SHARES_TOTAL } from '../../protocol
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
-import { assumeSeated } from '../test/seating.js';
+import { assumeAssigned } from '../test/assignment.js';
 import { parseTransaction } from '../../protocol/src/tx.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 
@@ -157,24 +157,24 @@ async function main() {
     for (const n of nodes) await n.dkg.run(committee);
     for (const n of nodes) await n.dkg.run(committee);
 
-    const seatsHeld = nodes.map((n) => n.dkg.seatFor(committee));
-    for (const [i, h] of seatsHeld.entries())
+    const signerNodesHeld = nodes.map((n) => n.dkg.signerNodeFor(committee));
+    for (const [i, h] of signerNodesHeld.entries())
       if (!h.ok) problems.push(`daemon ${i} ended with no share: ${h.why}`);
-    const keys = new Set(seatsHeld.filter((h) => h.ok).map((h) => toHex(h.pool.groupPublicKey)));
+    const keys = new Set(signerNodesHeld.filter((h) => h.ok).map((h) => toHex(h.pool.groupPublicKey)));
     say(`each made its own share; ${keys.size} distinct group key(s) across ${SHARES_TOTAL} daemons`);
     if (keys.size !== 1) problems.push(`the daemons named ${keys.size} different keys`);
-    const shares = new Set(seatsHeld.filter((h) => h.ok).map((h) => String(h.seat.share)));
+    const shares = new Set(signerNodesHeld.filter((h) => h.ok).map((h) => String(h.signerNode.share)));
     say(`  ${shares.size} distinct shares, one each, and this process holds none`);
     if (shares.size !== SHARES_TOTAL) problems.push('two daemons hold the same share');
 
-    const pool = { groupPublicKey: seatsHeld[0].pool.groupPublicKey };
+    const pool = { groupPublicKey: signerNodesHeld[0].pool.groupPublicKey };
     say(`  the committee's key: ${toHex(pool.groupPublicKey).slice(0, 32)}…`);
 
     // AND THE SIGNING HALF IS POINTED AT WHAT THEY MADE. `PoolSigning` takes
-    // `{ id, share }` and a group key, which is exactly the shape `seatFor`
+    // `{ id, share }` and a group key, which is exactly the shape `signerNodeFor`
     // hands back - so nothing about item 17's two rounds changes.
     for (const [i, n] of nodes.entries()) {
-      n.signing.seat = seatsHeld[i].seat;
+      n.signing.signerNode = signerNodesHeld[i].signerNode;
       n.signing.pool = pool;
       n.payouts.pool = pool;
       n.poolWatch.pool = pool;
@@ -213,7 +213,7 @@ async function main() {
     for (const n of nodes) {
       const opened = await post(n.port, '/round', encodeRoundContract(contract));
       if (opened.status !== 201) problems.push(`a node refused the round: ${await opened.text()}`);
-      assumeSeated(n.round, rid, contract.nodes);
+      assumeAssigned(n.round, rid, contract.nodes);
       for (const p of players) {
         const joined = await post(n.port, '/entry', encodeEntryContract(p.contract));
         if (joined.status !== 201) problems.push(`a node refused an entry: ${await joined.text()}`);
@@ -228,7 +228,7 @@ async function main() {
       }
     }
 
-    // ---- EVERY SEAT SIGNS THE TABLE IT COMPUTED, AND FETCHES THE OTHERS'. ----
+    // ---- EVERY SIGNER NODE SIGNS THE TABLE IT COMPUTED, AND FETCHES THE OTHERS'. ----
     const entriesOf = (n) => new PoolSigning(n.round, {}).entriesFor(rid).entries;
     for (const n of nodes)
       n.payouts.sign({ roundId: rid, entries: entriesOf(n), minScore: contract.minScore });
@@ -239,14 +239,14 @@ async function main() {
         roundId: rid, entries: entriesOf(n), minScore: contract.minScore, contract,
       });
       if (!queued.ok || queued.state !== PAYOUT_QUEUED)
-        problems.push(`a seat did not queue the payout: ${queued.why}`);
+        problems.push(`a signer node did not queue the payout: ${queued.why}`);
     }
     say(`\nall seven queued the payout; it owes the winner ${STAKE_MSAT / 1000n} sats`);
 
     // ---- THE CHAIN THIS DAEMON ASKS ABOUT ITS OWN POOL. ----
     //
     // `bitcoindRpc` over the same cookie the CLI uses. Every node gets it, so
-    // the seats that are not the asker are refused by the RULE and not by
+    // the signer nodes that are not the asker are refused by the RULE and not by
     // having no chain to ask.
     const call = bitcoindRpc({ url: `http://127.0.0.1:${P.rpc}/`, cookiePath: cookie });
     for (const n of nodes) n.poolWatch.call = call;
@@ -255,20 +255,20 @@ async function main() {
     const poolAddress = JSON.parse(cli('decodescript', toHex(out.script))).address;
 
     // ---- WHO ASKS, AND IN WHAT ORDER AFTER THAT. ----
-    const ring = askerOrder(rid, nodes[0].round.seats(rid));
+    const ring = askerOrder(rid, nodes[0].round.signerNodes(rid));
     const nodeAt = (k) => nodes.find((n) => toHex(n.round.pubkey) === toHex(ring.order[k]));
     const agree = nodes.filter((n) =>
-      toHex(askerOrder(rid, n.round.seats(rid)).order[0]) === toHex(ring.order[0])).length;
-    say(`\nthe round names seat ${ring.at + 1} of ${ring.of}, and ${agree} of ${SHARES_TOTAL} seats agree`);
-    if (agree !== SHARES_TOTAL) problems.push('the seats disagree about who asks');
+      toHex(askerOrder(rid, n.round.signerNodes(rid)).order[0]) === toHex(ring.order[0])).length;
+    say(`\nthe round names signer node ${ring.at + 1} of ${ring.of}, and ${agree} of ${SHARES_TOTAL} signer nodes agree`);
+    if (agree !== SHARES_TOTAL) problems.push('the signer nodes disagree about who asks');
 
-    // AND NO NODE CAN MOVE ITS OWN PLACE. The store sorts the seats by pubkey,
+    // AND NO NODE CAN MOVE ITS OWN PLACE. The store sorts the signer nodes by pubkey,
     // so a node handed the same seven in another order computes the same ring.
-    const shuffled = [...nodes[0].round.seats(rid)].reverse()
+    const shuffled = [...nodes[0].round.signerNodes(rid)].reverse()
       .sort((a, b) => (toHex(a) < toHex(b) ? -1 : 1));
     const same = askerOrder(rid, shuffled).order.every((k, i) => toHex(k) === toHex(ring.order[i]));
     say(`  the order survives being handed round the other way: ${same}`);
-    if (!same) problems.push('the takeover order depends on how the seats arrive');
+    if (!same) problems.push('the takeover order depends on how the signer nodes arrive');
 
     const settle = (n, extra = {}) => n.payouts.settleQueued({
       roundId: rid, contract, signing: n.signing, watch: n.poolWatch, ...extra,
@@ -309,7 +309,7 @@ async function main() {
 
     // ================= ITEM 19 =================
     //
-    // THE ASKER IS DOWN. It never runs. Everything below is the seats behind
+    // THE ASKER IS DOWN. It never runs. Everything below is the signer nodes behind
     // it, and the only clock any of them reads is the height of this chain.
     say(`\n---- the round's own asker is down; nobody runs it ----`);
     say(`the chain is at ${cli('getblockcount')}, the beacon was ${beacon.height}`);
@@ -317,17 +317,17 @@ async function main() {
     let waited = 0;
     for (let k = 1; k < SHARES_TOTAL; k++) {
       const got = await settle(nodeAt(k));
-      if (got.ok) problems.push(`seat ${k + 1} paid before its turn`);
+      if (got.ok) problems.push(`signer node ${k + 1} paid before its turn`);
       else if (got.waiting) waited++;
-      else problems.push(`seat ${k + 1} refused for the wrong reason: ${got.why}`);
-      if (k === 1) say(`  the next seat: ${got.why}`);
+      else problems.push(`signer node ${k + 1} refused for the wrong reason: ${got.why}`);
+      if (k === 1) say(`  the next signer node: ${got.why}`);
     }
-    say(`  ${waited} of ${SHARES_TOTAL - 1} seats waited; nothing was broadcast`);
-    if (waited !== SHARES_TOTAL - 1) problems.push('a seat took over before its turn');
+    say(`  ${waited} of ${SHARES_TOTAL - 1} signer nodes waited; nothing was broadcast`);
+    if (waited !== SHARES_TOTAL - 1) problems.push('a signer node took over before its turn');
     if (nodeAt(0).round.payout(rid).state !== PAYOUT_QUEUED)
-      problems.push('the winner was paid while every seat was still waiting');
+      problems.push('the winner was paid while every signer node was still waiting');
 
-    // ---- THE CHAIN ADVANCES, AND THE NEXT SEAT PAYS. ----
+    // ---- THE CHAIN ADVANCES, AND THE NEXT SIGNER NODE PAYS. ----
     const need = beacon.height + TAKEOVER_BLOCKS - Number(cli('getblockcount'));
     if (need > 0) mine(need);
     say(`\n---- ${TAKEOVER_BLOCKS} block(s) past the beacon: the chain is at ${cli('getblockcount')} ----`);
@@ -338,20 +338,20 @@ async function main() {
       problems.push(`the takeover was refused: ${took.why}`);
     } else {
       const txid = toHex(new Uint8Array(took.txid).reverse());
-      say(`  seat ${(ring.at + 1) % SHARES_TOTAL + 1} took over: sendrawtransaction -> ${txid}`);
-      say(`  signed by ${took.signed} of ${SHARES_NEEDED} seats`);
+      say(`  signer node ${(ring.at + 1) % SHARES_TOTAL + 1} took over: sendrawtransaction -> ${txid}`);
+      say(`  signed by ${took.signed} of ${SHARES_NEEDED} signer nodes`);
 
-      // ---- AND THE SEAT BEHIND, WHILE THAT SPEND IS STILL IN THE MEMPOOL. ----
+      // ---- AND THE SIGNER NODE BEHIND, WHILE THAT SPEND IS STILL IN THE MEMPOOL. ----
       //
       // THE WINDOW `gettxout` EXISTS FOR, and it is only open right here:
       // nothing has been mined, so the output is still in the UTXO SET and
       // `scantxoutset` would hand it over as spendable. `takeoverBlocks: 1`
-      // brings this seat's turn forward rather than waiting for a block,
+      // brings this signer node's turn forward rather than waiting for a block,
       // because a block would confirm the spend and close the window.
       const inFlight = await settle(nodeAt(2), { takeoverBlocks: 1 });
-      say(`  the seat behind, spend still in the mempool: `
+      say(`  the signer node behind, spend still in the mempool: `
         + `${inFlight.ok ? 'PAID AGAIN' : 'refused: ' + inFlight.why}`);
-      if (inFlight.ok) problems.push('a seat signed a second spend of an output already in a mempool');
+      if (inFlight.ok) problems.push('a signer node signed a second spend of an output already in a mempool');
       if (inFlight.waiting) problems.push('the mempool window was not measured: the clock stopped it');
       if (!inFlight.spending)
         problems.push(`the mempool spend was not what stopped it: ${inFlight.why}`);
@@ -373,21 +373,21 @@ async function main() {
       if (nodeAt(1).round.payout(rid).state !== PAID) problems.push('the takeover did not mark the row PAID');
     }
 
-    // ---- A SPEND ALREADY GONE STOPS THE SEAT BEHIND. ----
+    // ---- A SPEND ALREADY GONE STOPS THE SIGNER NODE BEHIND. ----
     //
     // ITS TURN HAS TO HAVE COME FIRST, or this measures the clock and not the
     // output. Written the other way first and it read as a refusal - "may ask
     // at height 204" - which is a true sentence about the wrong thing. Mined
-    // up to seat three's own turn, so the only thing left to stop it is that
+    // up to signer node three's own turn, so the only thing left to stop it is that
     // the pool output is not there any more.
     const thirdAt = beacon.height + TAKEOVER_BLOCKS * 2;
     const toThird = thirdAt - Number(cli('getblockcount'));
     if (toThird > 0) mine(toThird);
     const behind = await settle(nodeAt(2));
-    say(`\nthe seat behind, at its own turn (height ${cli('getblockcount')}, due ${thirdAt}): `
+    say(`\nthe signer node behind, at its own turn (height ${cli('getblockcount')}, due ${thirdAt}): `
       + `${behind.ok ? 'PAID AGAIN' : 'refused: ' + behind.why}`);
-    if (behind.ok) problems.push('a seat behind the takeover spent the pool a second time');
-    if (behind.waiting) problems.push('the seat behind was stopped by the clock, so the output was not measured');
+    if (behind.ok) problems.push('a signer node behind the takeover spent the pool a second time');
+    if (behind.waiting) problems.push('the signer node behind was stopped by the clock, so the output was not measured');
 
     // ---- AND THE ASKER COMES BACK, AFTER A RESTART. ----
     //
@@ -395,12 +395,12 @@ async function main() {
     // process restart leaves behind. Before letter 19 put the nonce pair on
     // disk, a restarted committee signed the same input with DIFFERENT bytes -
     // the unit suite measures that byte for byte. What is measured HERE is the
-    // outcome that matters on a chain: the seat that was down comes back, its
+    // outcome that matters on a chain: the signer node that was down comes back, its
     // own row still says queued, and it spends nothing, because the pool
     // output it would have spent is gone.
     for (const n of nodes)
       n.signing = new PoolSigning(n.round, {
-        curve, seat: seatsHeld[nodes.indexOf(n)].seat, pool,
+        curve, signerNode: signerNodesHeld[nodes.indexOf(n)].signerNode, pool,
       });
     const back = await settle(nodeAt(0));
     say(`the asker came back after a restart: ${back.ok ? 'PAID AGAIN' : 'refused: ' + back.why}`);

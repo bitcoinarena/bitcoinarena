@@ -1,14 +1,14 @@
-// THE SEAT THAT DID NOT SEND THE PAYOUT STILL ENDS PAID.
+// THE SIGNER NODE THAT DID NOT SEND THE PAYOUT STILL ENDS PAID.
 //
 // Measured on the real-lnd rehearsal with the daemons' own 2-of-2 pool (AB and
 // BA, 1000-sat stakes): the winner's key held 980 sats in a block, paid by
-// one seat - and the OTHER seat's row stayed PAYOUT_QUEUED, "1 of 2 seats
+// one signer node - and the OTHER signer node's row stayed PAYOUT_QUEUED, "1 of 2 signer nodes
 // committed to this spend". Its one ask came before the payer had queued its
 // table, and nothing asked again: the finality watch stops once no run is
 // short, no table is short and no settle is short. The payout's twin of
 // M3.3-29's second closer. `settleQueued` already reads the chain first
 // (`paidOnChain`) and writes PAID when the pool was spent by exactly this
-// seat's table - it was simply never called again.
+// signer node's table - it was simply never called again.
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { PLANTED_FIRST_MARK_DEADLINE } from './planted-marks.js';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -25,7 +25,7 @@ import { HELD, SETTLED, CANCELLED } from '../src/custody.js';
 import { PAID, PAID_IN_PART, PAYOUT_QUEUED } from '../src/payout.js';
 import { txidToRpc } from '../src/pool-watch.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
-import { assumeSeated } from './seating.js';
+import { assumeAssigned } from './assignment.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
 import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
@@ -75,7 +75,7 @@ function paidPort() {
  *
  * The calls `pool-watch.js` makes, in bitcoind's own shapes: the UTXO set
  * (`scantxoutset`, `gettxout`), the tip, and blocks at verbosity 3 with each
- * input's previous output - which is how a seat that did not send the payment
+ * input's previous output - which is how a signer node that did not send the payment
  * can see it was made.
  */
 function fakeChain(poolScript) {
@@ -149,12 +149,12 @@ const say = (port, message) => new Promise((resolve, reject) => {
 
 const secretScalar = () => { let p = rand(32); while (scalarFrom32(p) >= FIELD) p = rand(32); return p; };
 
-async function seatAndPlay(daemons, c, rid, who) {
+async function joinAndPlay(daemons, c, rid, who) {
   const session = ed25519.utils.randomSecretKey();
   const preimage = secretScalar();
   const e = rand(32);
   const dealt = await dealHandout({
-    preimage, seats: c.nodes, roundId: rid, playerPubkey: who.key,
+    preimage, signerNodes: c.nodes, roundId: rid, playerPubkey: who.key,
     ephemeralSecret: e, ephemeralPubkey: feldmanGroup.pointX(e),
     coefficients: [scalarFrom32(rand(32)) % FIELD], needed: 2, curve: feldmanGroup,
   });
@@ -175,8 +175,8 @@ async function seatAndPlay(daemons, c, rid, who) {
   const signedMark = joinSigned(encodeCheckpoint(mark), ed25519.sign(checkpointId(mark), session));
   for (const d of daemons) {
     assert.equal((await fetch(`http://127.0.0.1:${d.port}/handout`, { method: 'POST', body: encodeHandout(dealt.handout) })).status, 201);
-    const seated = await fetch(`http://127.0.0.1:${d.port}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
-    assert.equal(seated.status, 201, await seated.text());
+    const joined = await fetch(`http://127.0.0.1:${d.port}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
+    assert.equal(joined.status, 201, await joined.text());
     assert.equal((await fetch(`http://127.0.0.1:${d.port}/invoice?entry=${toHex(eid)}`)).status, 200);
     assert.equal((await fetch(`http://127.0.0.1:${d.port}/stake?entry=${toHex(eid)}`)).status, 200);
     assert.equal(await say(d.port, encodeInputBatch(input)), String(who.ticks));
@@ -185,14 +185,14 @@ async function seatAndPlay(daemons, c, rid, who) {
   return { eid, entry };
 }
 
-test('the seat whose payout ask came before the other had queued ends PAID once the other has paid - one transaction, 980 sats to the winner', async () => {
+test('the signer node whose payout ask came before the other had queued ends PAID once the other has paid - one transaction, 980 sats to the winner', async () => {
   const dealt = dealThePool();
   const pool = { groupPublicKey: dealt.groupPublicKey };
   const out = poolOutput({ groupPublicKey: pool.groupPublicKey, curve });
   const chain = fakeChain(out.script);
   const opts = (i) => ({ port: 0, funded: () => true, randomnessFor: () => BEACON,
     preflight: async () => ({ ready: true, why: 'test port' }), lightning: paidPort(), finality: { everyMs: 100 },
-    poolKey: pool, poolSeat: dealt.shares[i], poolCurve: curve, poolCall: chain.call, chainSpend: chain.spend });
+    poolKey: pool, poolSignerNode: dealt.shares[i], poolCurve: curve, poolCall: chain.call, chainSpend: chain.spend });
   const a = await serve(openStore(':memory:'), opts(0));
   const b = await serve(openStore(':memory:'), opts(1));
   try {
@@ -204,15 +204,15 @@ test('the seat whose payout ask came before the other had queued ends PAID once 
     const rid = roundId(c);
     for (const d of [a, b]) {
       assert.equal((await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) })).status, 201);
-      assumeSeated(d.round, rid, c.nodes);
+      assumeAssigned(d.round, rid, c.nodes);
     }
-    const winner = await seatAndPlay([a, b], c, rid, WINNER);
-    const loser = await seatAndPlay([a, b], c, rid, LOSER);
+    const winner = await joinAndPlay([a, b], c, rid, WINNER);
+    const loser = await joinAndPlay([a, b], c, rid, LOSER);
 
     // THE REHEARSAL'S ORDER, FORCED (instrumentation, as --hold-before-sit
     // forced M3.3-27's): B signs its table but does not queue it until A has
     // asked once. So A agrees the table, asks, and B - not queued - will not
-    // commit: A's ask ends "1 of 2 seats committed" with nothing else short on
+    // commit: A's ask ends "1 of 2 signer nodes committed" with nothing else short on
     // A. B, whose table is still short, queues on its next tick and pays with
     // A's commit.
     let aAsked = false;
@@ -233,7 +233,7 @@ test('the seat whose payout ask came before the other had queued ends PAID once 
     await wait(800);
     assert.deepEqual(await Promise.all([first, say(b.port, `close ${toHex(rid)}`)]), ['closed', 'closed']);
 
-    // WHAT EACH SEAT'S PAYOUT SAID, in order, until both rows are paid or time is up.
+    // WHAT EACH SIGNER NODE'S PAYOUT SAID, in order, until both rows are paid or time is up.
     const said = { A: [], B: [] };
     const rowOf = (d) => (d.round.payout(rid) || {}).state;
     const done = (s) => s === PAID || s === PAID_IN_PART;

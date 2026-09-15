@@ -1,10 +1,10 @@
-// M3 W7: A SEAT STARTED ON A STORE FROM BEFORE THE RULE DOES NOT FALL OVER.
+// M3 W7: A SIGNER NODE STARTED ON A STORE FROM BEFORE THE RULE DOES NOT FALL OVER.
 //
 // Since W7 a paying FEDERATION round that names no federation is no contract: decoding refuses it.
-// A seat's store written before W7 can hold exactly such a round - the hold-invoice rounds were
+// A signer node's store written before W7 can hold exactly such a round - the hold-invoice rounds were
 // labelled FEDERATION with a zero federation_id. The node decodes stored contracts in some fifty
 // places, several inside timers, and in Node an unhandled rejection ends the process. Measured
-// here: a seat restarted with its timers on, on a store whose one round carries those bytes -
+// here: a signer node restarted with its timers on, on a store whose one round carries those bytes -
 // made by flipping the custody byte of a THRESHOLD_LN round, the exact bytes a build before W7
 // stored for it.
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
@@ -25,7 +25,7 @@ import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
 import { toHex, sha256 } from '../../protocol/src/hash.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
-import { assumeSeated } from './seating.js';
+import { assumeAssigned } from './assignment.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -58,28 +58,28 @@ function holdPort() {
   return port;
 }
 
-test('a seat restarted on a store holding a paying FEDERATION round with no federation - the bytes a build before W7 stored - stays up, answers, and moves no money', async () => {
+test('a signer node restarted on a store holding a paying FEDERATION round with no federation - the bytes a build before W7 stored - stays up, answers, and moves no money', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'legacy-round-'));
   const path = join(dir, 'node.sqlite');
   const port = holdPort();
-  const seatOpts = { port: 0, funded: () => true, preflight: async () => ({ ready: true, why: 'test port' }), lightning: port,
+  const signerNodeOpts = { port: 0, funded: () => true, preflight: async () => ({ ready: true, why: 'test port' }), lightning: port,
     expiry: { everyMs: 50 }, finality: { everyMs: 100 }, closeAtEnd: { everyMs: 100 } };
   const rejections = [];
   const onRejection = (e) => rejections.push(String(e && e.message || e));
   process.on('unhandledRejection', onRejection);
   try {
-    // 1. A HOLD ROUND AND ITS ISSUED HOLD, on a store file - by a seat with no timers. With its
+    // 1. A HOLD ROUND AND ITS ISSUED HOLD, on a store file - by a signer node with no timers. With its
     // close-at-end timer on (every 100 ms, the round's end long past) it closed the round before
     // the entry came in under load: measured 2026-09-15 07:57, /entry 400 "the round is closed".
     // The timers belong to the restart below, which is what this test measures.
-    const { expiry, finality, closeAtEnd, ...setupOpts } = seatOpts;
+    const { expiry, finality, closeAtEnd, ...setupOpts } = signerNodeOpts;
     const first = await serve(openStore(path), setupOpts);
     const c = contractFor(first.round.pubkey);
     const rid = roundId(c);
     let eid;
     try {
       assert.equal((await fetch(`http://127.0.0.1:${first.port}/round`, { method: 'POST', body: encodeRoundContract(c) })).status, 201);
-      assumeSeated(first.round, rid, c.nodes);
+      assumeAssigned(first.round, rid, c.nodes);
       const entry = {
         roundId: rid, playerPubkey: b32(5), sessionPubkey: ed25519.getPublicKey(session),
         stakeCommitment: sha256(b32(65)), stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE),
@@ -88,8 +88,8 @@ test('a seat restarted on a store holding a paying FEDERATION round with no fede
         feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
       };
       eid = entryId(entry);
-      const seated = await fetch(`http://127.0.0.1:${first.port}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
-      assert.equal(seated.status, 201, await seated.text());
+      const joined = await fetch(`http://127.0.0.1:${first.port}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
+      assert.equal(joined.status, 201, await joined.text());
       const quote = await fetch(`http://127.0.0.1:${first.port}/invoice?entry=${toHex(eid)}`);
       assert.equal(quote.status, 200, await quote.text());
       assert.equal(first.round.hold(eid).state, HELD);
@@ -109,7 +109,7 @@ test('a seat restarted on a store holding a paying FEDERATION round with no fede
     db.close();
 
     // 3. STARTED AGAIN ON IT, its timers on.
-    const again = await serve(openStore(path), seatOpts);
+    const again = await serve(openStore(path), signerNodeOpts);
     try {
       await wait(2500);
       const rounds = await fetch(`http://127.0.0.1:${again.port}/rounds`);
@@ -127,7 +127,7 @@ test('a seat restarted on a store holding a paying FEDERATION round with no fede
       // the invoice door answers every failure to quote as 503 with its reason - measured, not guessed
       assert.equal(quote.status, 503, `the invoice door answered ${quote.status} for a round it cannot read`);
       assert.match(quoteText, /names no federation_id/);
-      assert.deepEqual(port.settled, [], 'a hold was settled on a round no seat can read');
+      assert.deepEqual(port.settled, [], 'a hold was settled on a round no signer node can read');
     } finally { await again.close(); }
   } finally {
     process.off('unhandledRejection', onRejection);

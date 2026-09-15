@@ -4,7 +4,7 @@
 // seen the held HTLC. Play begins only after this." §9 step 7 puts the same
 // line between the wallet paying and play. Measured before this file: nothing
 // gated play on payment - an unpaid OPEN invoice reads HELD, `paidMsat` had no
-// caller outside the port, and a seated entry's input batch was taken whether
+// caller outside the port, and a joined entry's input batch was taken whether
 // or not a satoshi had arrived.
 //
 // Each node gates its own doors on what ITS lnd shows, so the >=5 in the spec
@@ -28,7 +28,7 @@ import { encodeInputBatch, decodeInputBatch, batchId } from '../../protocol/src/
 import { toHex, sha256 } from '../../protocol/src/hash.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { netStakeMsat } from '../../protocol/src/payout.js';
-import { assumeSeated } from './seating.js';
+import { assumeAssigned } from './assignment.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const FUNDED = { funded: () => true };
@@ -65,14 +65,14 @@ function payablePort() {
   return port;
 }
 
-async function seatAndPlay(node, stakeMsat) {
+async function joinAndPlay(node, stakeMsat) {
   const c = contractFor(node.round.pubkey, stakeMsat);
   const rid = roundId(c);
   await fetch(`http://127.0.0.1:${node.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
-  assumeSeated(node.round, rid, c.nodes);
+  assumeAssigned(node.round, rid, c.nodes);
   const entry = entryFor(rid, stakeMsat);
-  const seated = await fetch(`http://127.0.0.1:${node.port}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
-  assert.equal(seated.status, 201);
+  const joined = await fetch(`http://127.0.0.1:${node.port}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
+  assert.equal(joined.status, 201);
   const ws = new WebSocket(`ws://127.0.0.1:${node.port}/play`);
   await new Promise((r) => ws.once('open', r));
   const send = (m) => new Promise((resolve) => { ws.once('message', (d) => resolve(d.toString())); ws.send(m); });
@@ -84,7 +84,7 @@ async function seatAndPlay(node, stakeMsat) {
 test('an input batch for a stake nobody paid is refused by name, and taken once lnd shows it held', async () => {
   const port = payablePort();
   const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, ...READY, lightning: port });
-  const p = await seatAndPlay(node, 100000n);
+  const p = await joinAndPlay(node, 100000n);
   try {
     const unpaid = await p.send(p.batch(0));
     assert.match(unpaid, /^error .*not paid/, `play was taken on an unpaid stake: ${unpaid}`);
@@ -108,7 +108,7 @@ test('an input batch for a stake nobody paid is refused by name, and taken once 
 test('GET /stake says whether this node has seen an entry\'s stake held, and asks nobody for a stranger', async () => {
   const port = payablePort();
   const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, ...READY, lightning: port });
-  const p = await seatAndPlay(node, 100000n);
+  const p = await joinAndPlay(node, 100000n);
   const at = (id) => fetch(`http://127.0.0.1:${node.port}/stake?entry=${id}`);
   try {
     const before = await at(toHex(entryId(p.entry)));
@@ -132,12 +132,12 @@ test('GET /stake says whether this node has seen an entry\'s stake held, and ask
 
 test('a free round plays with no Lightning at all, and a paying round on a node with none is refused', async () => {
   const free = await serve(openStore(':memory:'), { port: 0, ...FUNDED });
-  const f = await seatAndPlay(free, 0n);
+  const f = await joinAndPlay(free, 0n);
   try { assert.equal(await f.send(f.batch(0)), '1'); }
   finally { f.ws.close(); await free.close(); }
 
   const bare = await serve(openStore(':memory:'), { port: 0, ...FUNDED });
-  const b = await seatAndPlay(bare, 100000n);
+  const b = await joinAndPlay(bare, 100000n);
   try { assert.match(await b.send(b.batch(0)), /^error .*reaches no Lightning/); }
   finally { b.ws.close(); await bare.close(); }
 });

@@ -1,5 +1,5 @@
-// THE CLOSED-CLAIM TRUST BOUNDARY (§16, §13C), MEASURED: can one seat's word void an
-// entry at the other seat? Two in-process seats of a lock round (deadline 900).
+// THE CLOSED-CLAIM TRUST BOUNDARY (§16, §13C), MEASURED: can one signer node's word void an
+// entry at the other signer node? Two in-process signer nodes of a lock round (deadline 900).
 //   (1a) A's closed claim + A's own receipt, no mark        (1b) an invented first mark,
 //        A's receipt over it, closed; A's side planted     (2) the honest closed-line case
 //   (2') a live run: B up and open, the forward reaches it
@@ -10,7 +10,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
-import { assumeSeated } from '../test/seating.js';
+import { assumeAssigned } from '../test/assignment.js';
 import { lockPort } from '../test/lock-fixture.js';
 import { b32, rand, RANDOMNESS, STAKE, WINDOW_MS, WINNER, GENESIS_HASH, wordsAt, contractFor, say, secretScalar, opts, wait } from '../test/window-fixture.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
@@ -32,7 +32,7 @@ const END = WINNER.ticks;
 const out = (o) => console.log(JSON.stringify(o, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
 const until = async (fn, ms = 8000) => { for (let t = Date.now(); Date.now() - t < ms; await wait(100)) if (fn()) return true; return false; };
 
-async function seats() {
+async function signerNodes() {
   const port = lockPort();
   const mk = (db, p = 0) => serve(db, { port: p, ...opts, stakeLocks: port, poolCurve: curve, finality: { everyMs: 100 } });
   const dbB = openStore(':memory:');
@@ -51,19 +51,19 @@ async function seats() {
   const rid = roundId(c);
   for (const d of [a, b]) {
     await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
-    assumeSeated(d.round, rid, c.nodes);
+    assumeAssigned(d.round, rid, c.nodes);
   }
   for (let pass = 0; pass < 2; pass++) for (const d of [a, b]) await d.dkg.run(c.nodes);
-  return { a, get b() { return b; }, c, rid, port, claimPk: a.dkg.seatFor(c.nodes).pool.groupPublicKey,
+  return { a, get b() { return b; }, c, rid, port, claimPk: a.dkg.signerNodeFor(c.nodes).pool.groupPublicKey,
     async downB() { await b.close(); }, async upB() { b = await mk(dbB, bPort); wire(); },
     async close() { await a.close(); try { await b.close(); } catch { /* down */ } } };
 }
 
-async function seatAndBuild(w) {
+async function joinAndBuild(w) {
   const session = ed25519.utils.randomSecretKey();
   const preimage = secretScalar();
   const e = rand(32);
-  const dealt = await dealHandout({ preimage, seats: w.c.nodes, roundId: w.rid, playerPubkey: WINNER.key,
+  const dealt = await dealHandout({ preimage, signerNodes: w.c.nodes, roundId: w.rid, playerPubkey: WINNER.key,
     ephemeralSecret: e, ephemeralPubkey: feldmanGroup.pointX(e), coefficients: [scalarFrom32(rand(32)) % FIELD], needed: 2, curve: feldmanGroup });
   const outpoint = { txid: rand(32), outIdx: 0n };
   const entry = {
@@ -98,7 +98,7 @@ async function seatAndBuild(w) {
 }
 
 const answer = (s) => (typeof s === 'string' ? (s.length > 30 && !s.startsWith('error') ? 'receipt' : s.replace(/^(error [A-Z_]+).*/, '$1').slice(0, 70)) : 'receipt');
-const seatView = (d, w, run) => {
+const signerNodeView = (d, w, run) => {
   const v = d.round.entryVoid(run.eid);
   return { stored: v ? `ENTRY_VOID (${v.evidenceKind})` : null, holdsFirstMark: d.round.holdsMark(run.firstId),
     receiptsOfFirstMark: d.round.receiptCount(run.firstId),
@@ -117,18 +117,18 @@ const closeAt = (d, w) => say(d.port, `close ${toHex(w.rid)}`);
 
 import { encodeCheckpointReceipt, receiptId, joinSignedReceipt } from '../../protocol/src/receipt.js';
 
-// ---- THE CLOSED-CLAIM TRUST BOUNDARY (§16, §13C): can one seat's word void an
-// entry at the other seat? B is up and open throughout (1a, 1b, 2'); in (2) it
+// ---- THE CLOSED-CLAIM TRUST BOUNDARY (§16, §13C): can one signer node's word void an
+// entry at the other signer node? B is up and open throughout (1a, 1b, 2'); in (2) it
 // was down at the start, as the honest closed-line case measured before.
 
 async function variant(name, body) {
-  const w = await seats();
+  const w = await signerNodes();
   try {
-    const run = await seatAndBuild(w);
+    const run = await joinAndBuild(w);
     out({ case: name, ...(await body(w, run)) });
   } catch (e) { out({ case: name, error: e.message }); } finally { await w.close(); }
 }
-// A SEAT'S OWN SIGNED RECEIPT OVER ANY CHECKPOINT ID - what a lying seat can always make.
+// A SIGNER NODE'S OWN SIGNED RECEIPT OVER ANY CHECKPOINT ID - what a lying signer node can always make.
 const receiptBy = (d, id) => {
   const r = { checkpointId: id, receivedAtMs: BigInt(Date.now()), nodePubkey: d.round.pubkey };
   return joinSignedReceipt(encodeCheckpointReceipt(r), schnorr.sign(receiptId(r), d.round.identity.secret));
@@ -142,7 +142,7 @@ const postFirstMark = async (d, body) => {
 
 await variant('(1a) A sends B only its closed claim and its own receipt - no mark at all', async (w, run) => {
   const said = await postFirstMark(w.b, { receipt: toHex(receiptBy(w.a, run.firstId)), entryVoid: { kind: 'closed', evidence: null } });
-  return { bAnswer: said, b: seatView(w.b, w, run) };
+  return { bAnswer: said, b: signerNodeView(w.b, w, run) };
 });
 
 await variant("(1b) A invents a first mark - not the player's - signs its own receipt over it and claims closed; the player sent nothing", async (w, run) => {
@@ -152,9 +152,9 @@ await variant("(1b) A invents a first mark - not the player's - signs its own re
   const fakeBytes = joinSigned(encodeCheckpoint(fake), ed25519.sign(checkpointId(fake), fakeKey));
   const said = await postFirstMark(w.b, { mark: toHex(fakeBytes), batches: [], receipt: toHex(receiptBy(w.a, checkpointId(fake))),
     entryVoid: { kind: 'closed', evidence: null } });
-  const b = seatView(w.b, w, run);
-  // A LYING SEAT CONTROLS ITS OWN STORE: its side of the Void, planted.
-  w.a.round.putEntryVoid({ entryId: run.eid, roundId: w.rid, firstMark: fakeBytes, evidenceKind: 'closed', evidence: null, why: 'planted by a lying seat' });
+  const b = signerNodeView(w.b, w, run);
+  // A LYING SIGNER NODE CONTROLS ITS OWN STORE: its side of the Void, planted.
+  w.a.round.putEntryVoid({ entryId: run.eid, roundId: w.rid, firstMark: fakeBytes, evidenceKind: 'closed', evidence: null, why: 'planted by a lying signer node' });
   const forfeit = await askForfeit(w, run);
   return { bAnswer: said, b, forfeit, lockExpiryHeight: run.fields.expiration, federationHeight: w.port.height };
 });
@@ -169,10 +169,10 @@ await variant("(2) honest: the player's real on-time first mark reached A only (
   const saidB = [];
   for (const m of run.start) saidB.push(answer(await say(w.b.port, m)));
   const forfeit = await askForfeit(w, run);
-  return { saidB, a: seatView(w.a, w, run), b: seatView(w.b, w, run), forfeit };
+  return { saidB, a: signerNodeView(w.a, w, run), b: signerNodeView(w.b, w, run), forfeit };
 });
 
-await variant("(2') live run: both seats up and open; the player's first mark reaches only A, then the run goes to both", async (w, run) => {
+await variant("(2') live run: both signer nodes up and open; the player's first mark reaches only A, then the run goes to both", async (w, run) => {
   for (const m of run.start) await say(w.a.port, m);
   await until(() => w.b.round.holdsMark(run.firstId));
   for (const m of run.rest) for (const d of [w.a, w.b]) await say(d.port, m);
@@ -181,6 +181,6 @@ await variant("(2') live run: both seats up and open; the player's first mark re
     const f = await fetch(`http://127.0.0.1:${w.a.port}/forfeit?round=${toHex(w.rid)}&entry=${toHex(run.eid)}`);
     if (f.ok || !/before the result is final/.test(await f.text())) break;
   }
-  return { a: seatView(w.a, w, run), b: seatView(w.b, w, run), forfeit: await askForfeit(w, run) };
+  return { a: signerNodeView(w.a, w, run), b: signerNodeView(w.b, w, run), forfeit: await askForfeit(w, run) };
 });
 process.exit(0);

@@ -21,7 +21,7 @@ import { entryFeeMsat } from '../../protocol/src/fee.js';
 export const PLAYABLE = ['testnet4', 'regtest'];
 
 /**
- * THE FEWEST SEATS A ROUND IS OPENED FOR. 27A.7.1's game_config names
+ * THE FEWEST SIGNER NODES A ROUND IS OPENED FOR. 27A.7.1's game_config names
  * `min_players_per_round 2`; nothing in this package named it until a round
  * had to be sized against a node's inbound before anybody had entered.
  */
@@ -88,8 +88,8 @@ export const lndPreflightRegtest = ({ lncli, lnddir, rpc, run }) => async ({ con
 
 /**
  * THE PREFLIGHT A DAEMON IS GIVEN, for the round it is asked to open: the
- * fewest seats a round opens for, each at the round's stake with the fee out
- * of it and no donation - the largest hold a seat can ask for.
+ * fewest players a round opens for, each at the round's stake with the fee out
+ * of it and no donation - the largest hold an entry can ask for.
  */
 export const lndPreflight = ({ lncli, lnddir }) => async ({ contract }) => {
   const stakeMsat = contract.stakeMsat;
@@ -104,8 +104,8 @@ export const lndPreflight = ({ lncli, lnddir }) => async ({ contract }) => {
  * @param {object} o.info          `lncli getinfo`
  * @param {object[]} o.channels    `lncli listchannels`.channels
  * @param {boolean} o.holdInvoices whether this lnd offers `addholdinvoice`
- * @param {number} o.players       seats this node must hold at once
- * @param {object} o.entry         one seat's { stakeMsat, feeMsat, donationMsat }
+ * @param {number} o.players       entries this node must hold at once
+ * @param {object} o.entry         one entry's { stakeMsat, feeMsat, donationMsat }
  */
 export function lightningPreflight({ info, channels = [], holdInvoices = false, players, entry }) {
   const network = (info && info.chains && info.chains[0] && info.chains[0].network) || 'unknown';
@@ -120,16 +120,16 @@ export function lightningPreflight({ info, channels = [], holdInvoices = false, 
     missing.push(`that node is on ${network}, and rounds hold stakes only on ${PLAYABLE.join(' or ')}`);
 
   if (!Number.isInteger(players) || players < 1)
-    throw new Error('a preflight is asked for a positive number of seats');
-  const perSeat = netStakeMsat(entry);
+    throw new Error('a preflight is asked for a positive number of signer nodes');
+  const perSignerNode = netStakeMsat(entry);
 
   // A ROUND THAT ASKS NO STAKE NEEDS NO LIGHTNING AT ALL (M3.3-19). Saying it
   // is not ready because a channel is missing would be the fault that letter
   // closed, arriving from the other side.
-  if (perSeat === 0n && entry.stakeMsat === 0n)
+  if (perSignerNode === 0n && entry.stakeMsat === 0n)
     return {
       ready: !missing.length, network, missing,
-      facts: { heldPerSeatMsat: 0n, neededMsat: 0n },
+      facts: { heldPerSignerNodeMsat: 0n, neededMsat: 0n },
       why: 'a round that asks no stake holds nothing, so it needs no inbound and no channel',
     };
 
@@ -151,9 +151,9 @@ export function lightningPreflight({ info, channels = [], holdInvoices = false, 
     outbound += sat(c.local_balance) * 1000n;
   }
 
-  const needed = perSeat * BigInt(players);
+  const needed = perSignerNode * BigInt(players);
   if (inbound < needed)
-    missing.push(`${players} hold${players === 1 ? '' : 's'} of ${perSeat} msat need ${needed} msat `
+    missing.push(`${players} hold${players === 1 ? '' : 's'} of ${perSignerNode} msat need ${needed} msat `
       + `of inbound, and the channels offer ${inbound}`);
 
   if (!holdInvoices)
@@ -163,8 +163,8 @@ export function lightningPreflight({ info, channels = [], holdInvoices = false, 
     ready: !missing.length, network, missing,
     facts: {
       synced: !!(info && info.synced_to_chain), activeChannels: active.length,
-      inboundMsat: inbound, outboundMsat: outbound, heldPerSeatMsat: perSeat, neededMsat: needed,
+      inboundMsat: inbound, outboundMsat: outbound, heldPerSignerNodeMsat: perSignerNode, neededMsat: needed,
     },
-    why: missing.length ? missing.join('; ') : `${players} seat(s) of ${perSeat} msat can be held`,
+    why: missing.length ? missing.join('; ') : `${players} signer node(s) of ${perSignerNode} msat can be held`,
   };
 }

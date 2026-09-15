@@ -1,7 +1,7 @@
-// THE FEDERATION PORT A SEAT ASKS (23.1 step 5): the arguments it hands
+// THE FEDERATION PORT A SIGNER NODE ASKS (23.1 step 5): the arguments it hands
 // blwp-stake-lock and how it reads the answers. A stand-in tool records its
 // argv and prints what the real one prints; the real tool is measured against
-// a real federation by tools/seat-lock-regtest.
+// a real federation by tools/signer-node-lock-regtest.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, readFileSync, chmodSync, rmSync } from 'node:fs';

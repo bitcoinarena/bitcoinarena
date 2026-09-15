@@ -290,11 +290,11 @@ mergeInto(LibraryManager.library, {
         net.state = 'error';
         net.error = String(e && e.message ? e.message : e);
         console.error('[blwp] session: ' + net.error);
-        // AND ON SCREEN (pick a): a seat that refuses the entry - "this round mints fee
-        // locks: an entry that brings no fee lock is not seated" - is what the chip says,
+        // AND ON SCREEN (pick a): a signer node that refuses the entry - "this round mints fee
+        // locks: an entry that brings no fee lock is not joined" - is what the chip says,
         // not "stake dealt, unpaid" (measured: the reason reached only the console). The
         // page's own earlier refusal, when there is one, is kept.
-        if (typeof window !== 'undefined' && !window.BLWP_SEAT_REFUSED) window.BLWP_SEAT_REFUSED = net.error;
+        if (typeof window !== 'undefined' && !window.BLWP_JOIN_REFUSED) window.BLWP_JOIN_REFUSED = net.error;
       });
 
     // THE THREE THINGS A SESSION DOES, as closures rather than as helpers on
@@ -307,8 +307,8 @@ mergeInto(LibraryManager.library, {
       // built HERE and their ids computed here, so the node is never asked what
       // this round is called.
       var contract = (typeof BLWP_ROUND !== 'undefined') ? BLWP_ROUND : null;
-      var seat = (typeof BLWP_ENTRY !== 'undefined') ? BLWP_ENTRY : null;
-      if (!contract || !seat) throw new Error('the page did not say which round to play');
+      var signerNode = (typeof BLWP_ENTRY !== 'undefined') ? BLWP_ENTRY : null;
+      if (!contract || !signerNode) throw new Error('the page did not say which round to play');
 
       // THE ROUND THE PLAYER WAS GIVEN, off the address bar and not out of the
       // page's own script. Section 25.1 step 1 is "a link, QR, copied round_id"
@@ -321,7 +321,7 @@ mergeInto(LibraryManager.library, {
         var q = new URLSearchParams(window.location.search).get('round');
         if (q) given = BLWPCLIENT.fromHex(q);
       } catch (e) { given = null; }
-      var entry = Object.assign({}, seat, {
+      var entry = Object.assign({}, signerNode, {
         roundId: C.roundId(contract), sessionPubkey: net.sessionPubkey,
       });
       net.where = { roundId: C.roundId(contract), entryId: C.entryId(entry) };
@@ -481,7 +481,7 @@ mergeInto(LibraryManager.library, {
       // THE RUN IS OVER ONCE THE CORE SAID SO: the game may keep stepping, none of it is the run.
       if (net.finishing) return;
       // PAST THE RUN'S LAST TICK THE GAME'S TICKS ARE NOT INPUTS. The game keeps
-      // stepping after a run ends; recorded, they went out in a batch every seat
+      // stepping after a run ends; recorded, they went out in a batch every signer node
       // refused whole, and the run ended VOID (measured live: an idle page to
       // tick 9113 of a run ending at 8999). Counted, not recorded or marked. What
       // is still HELD is drained as before, every sixth tick: all of it is at or
@@ -690,7 +690,7 @@ mergeInto(LibraryManager.library, {
   //
   // C# restarts the core at roll-out - `CoreDrivenTruck.StartRound` - and it
   // restarted with its inspector constant, which would have thrown away the
-  // world this player was seated in and put them back in the harness one. The
+  // world this player was joined in and put them back in the harness one. The
   // daily has no round and keeps the constant, which is what holds the solo
   // apron on bay 13.
   BlwpRoundSeed: function () {
@@ -704,7 +704,7 @@ mergeInto(LibraryManager.library, {
   },
 
   // THE DAILY'S LOBBY, DRAWN BY UNITY (M3.3-34, the owner 2026-09-12). The page
-  // decides it - the seats' signed listings, the 2-of-2 Join, the tab's key and
+  // decides it - the signer nodes' signed listings, the 2-of-2 Join, the tab's key and
   // name (index.html, BLWP_LOBBY_VIEW / BLWP_LOBBY_ACT) - and these only carry
   // it across: the lobby as JSON, and the player's presses back.
   // THE CANVAS'S PIXELS PER CSS PIXEL: a phone draws at 2-3x, and a title

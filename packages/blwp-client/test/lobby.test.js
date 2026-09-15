@@ -1,11 +1,11 @@
 // THE PAGE'S LOBBY (M3.3-34, §25): a link naming nodes and no round lists what
 // they hold, every row is checked against its own contract, and Join is offered
-// only at the round's threshold of its own seats - 2 of 2 here.
+// only at the round's threshold of its own signer nodes - 2 of 2 here.
 //
 // "A lobby carries nothing": a node's listing is a list of names. The page
 // fetches each contract and hashes it (a mismatch gets no row), reads free or
 // paying and open or pending off that contract and its own clock, and counts
-// DISTINCT SEATS OF THE ROUND whose signed listing says open and seated.
+// DISTINCT SIGNER NODES OF THE ROUND whose signed listing says open and joined.
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../blwp-node/src/cores.js';
 import { test } from 'node:test';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
@@ -30,9 +30,9 @@ const ADVERT = 'ab'.repeat(64);
 const LINK = `?node=${A},${B}&bond=${A}/bond&advert=${ADVERT}`;
 const NOW = 1789200000000;
 const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
-// THE ROUND'S TWO SEATS, and a stranger who is no seat of it.
-const seatA = schnorr.utils.randomSecretKey();
-const seatB = schnorr.utils.randomSecretKey();
+// THE ROUND'S TWO SIGNER NODES, and a stranger who is no signer node of it.
+const signerNodeA = schnorr.utils.randomSecretKey();
+const signerNodeB = schnorr.utils.randomSecretKey();
 const stranger = schnorr.utils.randomSecretKey();
 const keyOf = (s) => schnorr.getPublicKey(s);
 
@@ -46,14 +46,14 @@ const contractAt = (committeeTimeMs, extra = {}) => ({
   donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000, censusRoot: b32(2), stakeMsat: 0n, bondMinSats: 50000n,
   blockTicks: 9000, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
   timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
-  nodes: [keyOf(seatA), keyOf(seatB)],
+  nodes: [keyOf(signerNodeA), keyOf(signerNodeB)],
   ...extra,
 });
 
-/** A seat's listing of one round, signed as the node signs it (or tampered after). */
-function listing(secret, id, { phase = 'open', seatedHere = true, seated = 0, playing = 0, free = true, at = NOW, tamper = null } = {}) {
-  const signed = { roundId: fromHex(id), nodePubkey: keyOf(secret), nowMs: BigInt(at), phase, seatedHere, seated, playing };
-  const x = { id, phase, seatedHere, seated, playing, free, sig: toHex(schnorr.sign(lobbyListingId(signed), secret)) };
+/** A signer node's listing of one round, signed as the node signs it (or tampered after). */
+function listing(secret, id, { phase = 'open', assignedHere = true, joined = 0, playing = 0, free = true, at = NOW, tamper = null } = {}) {
+  const signed = { roundId: fromHex(id), nodePubkey: keyOf(secret), nowMs: BigInt(at), phase, assignedHere, joined, playing };
+  const x = { id, phase, assignedHere, joined, playing, free, sig: toHex(schnorr.sign(lobbyListingId(signed), secret)) };
   return tamper ? { ...x, ...tamper } : x;
 }
 
@@ -97,11 +97,11 @@ test('a lobby link names nodes and no round; a round in the link is a join, no n
   assert.equal(join.get('advert'), ADVERT);
 });
 
-test('2 of 2: Join only where both of the round\'s seats signed it open and seated; the contract\'s word for free, open and pending', async () => {
+test('2 of 2: Join only where both of the round\'s signer nodes signed it open and joined; the contract\'s word for free, open and pending', async () => {
   const now = BigInt(NOW);
   const { contracts, id } = roundsOf({
     freeOpen: contractAt(now - 5000n),
-    oneSeat: contractAt(now - 6000n),
+    oneSignerNode: contractAt(now - 6000n),
     freePending: contractAt(now + 90000n),
     freeOver: contractAt(now - 400000n),
     payingOpen: contractAt(now - 8000n, { stakeMsat: 100000n, custody: 'FEDERATION', federationId: TEST_FEDERATION_ID }),
@@ -111,19 +111,19 @@ test('2 of 2: Join only where both of the round\'s seats signed it open and seat
   const net = network({
     contracts,
     nodes: {
-      [A]: { secret: seatA, rounds: [
-        listing(seatA, id.freeOpen, { seated: 2, playing: 1 }),
-        listing(seatA, id.oneSeat, { seated: 1 }),
-        listing(seatA, id.freePending, { phase: 'pending', seatedHere: false }),
-        listing(seatA, id.freeOver, { seated: 3, playing: 3 }),
-        listing(seatA, id.payingOpen, { free: true }),     // it says free; the contract stakes 100 sat
-        listing(seatA, forged, { seated: 9 }),
-        { id: 'not-a-round', seated: 1 },
+      [A]: { secret: signerNodeA, rounds: [
+        listing(signerNodeA, id.freeOpen, { joined: 2, playing: 1 }),
+        listing(signerNodeA, id.oneSignerNode, { joined: 1 }),
+        listing(signerNodeA, id.freePending, { phase: 'pending', assignedHere: false }),
+        listing(signerNodeA, id.freeOver, { joined: 3, playing: 3 }),
+        listing(signerNodeA, id.payingOpen, { free: true }),     // it says free; the contract stakes 100 sat
+        listing(signerNodeA, forged, { joined: 9 }),
+        { id: 'not-a-round', joined: 1 },
       ] },
-      [B]: { secret: seatB, rounds: [
-        listing(seatB, id.freeOpen, { seated: 2, playing: 2 }),
-        listing(seatB, id.payingOpen, { free: false }),
-        listing(seatB, id.freePending, { phase: 'pending', seatedHere: false }),
+      [B]: { secret: signerNodeB, rounds: [
+        listing(signerNodeB, id.freeOpen, { joined: 2, playing: 2 }),
+        listing(signerNodeB, id.payingOpen, { free: false }),
+        listing(signerNodeB, id.freePending, { phase: 'pending', assignedHere: false }),
       ] },
     },
   });
@@ -133,7 +133,7 @@ test('2 of 2: Join only where both of the round\'s seats signed it open and seat
     rows: rows.map(name),
     phases: rows.map((r) => r.phase),
     free: rows.map((r) => r.free),
-    agree: rows.map((r) => `${r.seatsAgree}/${r.needed}`),
+    agree: rows.map((r) => `${r.signerNodesAgree}/${r.needed}`),
     joinable: rows.map((r) => r.joinable),
     disagrees: rows.map((r) => r.disagrees.length),
     refusedForged: refused.some((w) => w.startsWith(forged.slice(0, 16))),
@@ -142,7 +142,7 @@ test('2 of 2: Join only where both of the round\'s seats signed it open and seat
   console.log('  FACTS (page lobby, 2-of-2):', JSON.stringify(facts));
   assert.deepEqual(facts, {
     // open before pending, soonest entry close first; freeOver is past its entry close
-    rows: ['payingOpen', 'oneSeat', 'freeOpen', 'freePending'],
+    rows: ['payingOpen', 'oneSignerNode', 'freeOpen', 'freePending'],
     phases: ['open', 'open', 'open', 'pending'],
     free: [false, true, true, true],
     agree: ['2/2', '1/2', '2/2', '0/2'],
@@ -151,11 +151,11 @@ test('2 of 2: Join only where both of the round\'s seats signed it open and seat
     refusedForged: true, refusedJunk: true,
   });
   const byName = Object.fromEntries(rows.map((r) => [name(r), r]));
-  assert.deepEqual(byName.freeOpen.said.map((c) => `${c.seated}/${c.playing}`), ['2/1', '2/2'], 'both nodes\' counts are carried, each as that node\'s');
+  assert.deepEqual(byName.freeOpen.said.map((c) => `${c.joined}/${c.playing}`), ['2/1', '2/2'], 'both nodes\' counts are carried, each as that node\'s');
   const line = lobbyLine(byName.freeOpen, NOW);
   console.log(`  ${line}`);
   assert.match(line, /^free - no wallet, no Lightning · entry open, closes in 2:55 · 2 of 2 signer nodes agree · /);
-  assert.match(lobbyLine(byName.oneSeat, NOW), /1 of 2 signer nodes agree - waiting for 1 more/);
+  assert.match(lobbyLine(byName.oneSignerNode, NOW), /1 of 2 signer nodes agree - waiting for 1 more/);
   assert.match(lobbyLine(byName.payingOpen, NOW), /stake 100 sat - a federation stake lock .* listed it as free$/);
   assert.match(lobbyLine(byName.freePending, NOW), /committee: pending, entry opens in 1:30/);
 });
@@ -167,26 +167,26 @@ test('what does not count toward 2 of 2: a node down, a stranger\'s key, one key
   const run = async (nodes, extraNodes = []) => (await fetchLobby({ nodes: [A, B, ...extraNodes], fetcher: network({ nodes, contracts }).fetcher, nowMs: NOW, verify }));
   const C = 'http://127.0.0.3:18583';
   const cases = {
-    bothSeats: await run({ [A]: { secret: seatA, rounds: [listing(seatA, rid)] }, [B]: { secret: seatB, rounds: [listing(seatB, rid)] } }),
-    nodeDown: await run({ [A]: { secret: seatA, rounds: [listing(seatA, rid)] } }),
-    stranger: await run({ [A]: { secret: seatA, rounds: [listing(seatA, rid)] }, [B]: { secret: stranger, rounds: [listing(stranger, rid)] } }),
-    oneKeyTwice: await run({ [A]: { secret: seatA, rounds: [listing(seatA, rid)] }, [B]: { secret: seatA, rounds: [listing(seatA, rid)] } }),
-    tampered: await run({ [A]: { secret: seatA, rounds: [listing(seatA, rid)] }, [B]: { secret: seatB, rounds: [listing(seatB, rid, { seatedHere: false, tamper: { seatedHere: true } })] } }),
-    stale: await run({ [A]: { secret: seatA, rounds: [listing(seatA, rid)] }, [B]: { secret: seatB, at: NOW - 120000, rounds: [listing(seatB, rid, { at: NOW - 120000 })] } }),
-    notSeated: await run({ [A]: { secret: seatA, rounds: [listing(seatA, rid)] }, [B]: { secret: seatB, rounds: [listing(seatB, rid, { seatedHere: false })] } }),
-    thirdNodeIsAStranger: await run({ [A]: { secret: seatA, rounds: [listing(seatA, rid)] }, [C]: { secret: stranger, rounds: [listing(stranger, rid)] } }, [C]),
+    bothSignerNodes: await run({ [A]: { secret: signerNodeA, rounds: [listing(signerNodeA, rid)] }, [B]: { secret: signerNodeB, rounds: [listing(signerNodeB, rid)] } }),
+    nodeDown: await run({ [A]: { secret: signerNodeA, rounds: [listing(signerNodeA, rid)] } }),
+    stranger: await run({ [A]: { secret: signerNodeA, rounds: [listing(signerNodeA, rid)] }, [B]: { secret: stranger, rounds: [listing(stranger, rid)] } }),
+    oneKeyTwice: await run({ [A]: { secret: signerNodeA, rounds: [listing(signerNodeA, rid)] }, [B]: { secret: signerNodeA, rounds: [listing(signerNodeA, rid)] } }),
+    tampered: await run({ [A]: { secret: signerNodeA, rounds: [listing(signerNodeA, rid)] }, [B]: { secret: signerNodeB, rounds: [listing(signerNodeB, rid, { assignedHere: false, tamper: { assignedHere: true } })] } }),
+    stale: await run({ [A]: { secret: signerNodeA, rounds: [listing(signerNodeA, rid)] }, [B]: { secret: signerNodeB, at: NOW - 120000, rounds: [listing(signerNodeB, rid, { at: NOW - 120000 })] } }),
+    notAssigned: await run({ [A]: { secret: signerNodeA, rounds: [listing(signerNodeA, rid)] }, [B]: { secret: signerNodeB, rounds: [listing(signerNodeB, rid, { assignedHere: false })] } }),
+    thirdNodeIsAStranger: await run({ [A]: { secret: signerNodeA, rounds: [listing(signerNodeA, rid)] }, [C]: { secret: stranger, rounds: [listing(stranger, rid)] } }, [C]),
   };
-  const facts = Object.fromEntries(Object.entries(cases).map(([k, v]) => [k, v.rows.length ? `${v.rows[0].seatsAgree}/${v.rows[0].needed} ${v.rows[0].joinable ? 'join' : 'no join'}` : 'no row']));
+  const facts = Object.fromEntries(Object.entries(cases).map(([k, v]) => [k, v.rows.length ? `${v.rows[0].signerNodesAgree}/${v.rows[0].needed} ${v.rows[0].joinable ? 'join' : 'no join'}` : 'no row']));
   console.log('  FACTS (what counts):', JSON.stringify(facts));
   assert.deepEqual(facts, {
-    bothSeats: '2/2 join', nodeDown: '1/2 no join', stranger: '1/2 no join', oneKeyTwice: '1/2 no join',
-    tampered: '1/2 no join', stale: '1/2 no join', notSeated: '1/2 no join', thirdNodeIsAStranger: '1/2 no join',
+    bothSignerNodes: '2/2 join', nodeDown: '1/2 no join', stranger: '1/2 no join', oneKeyTwice: '1/2 no join',
+    tampered: '1/2 no join', stale: '1/2 no join', notAssigned: '1/2 no join', thirdNodeIsAStranger: '1/2 no join',
   });
   assert.match(cases.nodeDown.refused.join('; '), new RegExp(`${B.replace(/[.]/g, '\\.')}: answered 503`));
   await assert.rejects(fetchLobby({ nodes: [A, B], fetcher: network({ nodes: {}, contracts }).fetcher, nowMs: NOW }), /no verify was injected/);
 });
 
-test('a row names its seated players by the names they signed; a seat\'s forgery and a record for another round are not shown', async () => {
+test('a row names its joined players by the names they signed; a signer node\'s forgery and a record for another round are not shown', async () => {
   const { contracts, id } = roundsOf({ r: contractAt(BigInt(NOW) - 1000n) });
   const rid = fromHex(id.r);
   const player = schnorr.utils.randomSecretKey();
@@ -197,11 +197,11 @@ test('a row names its seated players by the names they signed; a seat\'s forgery
   };
   const named = signed(player, { playerPubkey: keyOf(player), name: 'Road Owl 42' });
   const plain = signed(other, { playerPubkey: keyOf(other), identityPubkey: b32(8) });
-  const forged = signed(seatB, { playerPubkey: keyOf(player), name: 'Mallory', atMs: 9000n });
+  const forged = signed(signerNodeB, { playerPubkey: keyOf(player), name: 'Mallory', atMs: 9000n });
   const elsewhere = signed(player, { roundId: b32(0x77), playerPubkey: keyOf(player), name: 'Elsewhere', atMs: 9000n });
   const net = network({ contracts, nodes: {
-    [A]: { secret: seatA, rounds: [{ ...listing(seatA, id.r, { seated: 2, playing: 2 }), names: [named, plain] }] },
-    [B]: { secret: seatB, rounds: [{ ...listing(seatB, id.r, { seated: 2, playing: 2 }), names: [forged, elsewhere] }] },
+    [A]: { secret: signerNodeA, rounds: [{ ...listing(signerNodeA, id.r, { joined: 2, playing: 2 }), names: [named, plain] }] },
+    [B]: { secret: signerNodeB, rounds: [{ ...listing(signerNodeB, id.r, { joined: 2, playing: 2 }), names: [forged, elsewhere] }] },
   } });
   const { rows } = await fetchLobby({ nodes: [A, B], fetcher: net.fetcher, nowMs: NOW, verify });
   const line = lobbyLine(rows[0], NOW);
@@ -223,7 +223,7 @@ test('the bare root\'s daily.json becomes exactly a lobby link\'s names, or no l
   assert.equal(new URLSearchParams(lobbyJoinSearch(search, 'cd'.repeat(32)).slice(1)).get('node'), `${A},${B}`);
   // WHAT IS NO LOBBY: the root stays the offline daily.
   const refused = {
-    oneSeat: { ...daily, node: [A] },
+    oneSignerNode: { ...daily, node: [A] },
     notAUrl: { ...daily, node: ['not a url', B] },
     badAdvert: { ...daily, advert: 'ab' },
     noBond: { node: [A, B], advert: ADVERT },
@@ -234,7 +234,7 @@ test('the bare root\'s daily.json becomes exactly a lobby link\'s names, or no l
   for (const [what, d] of Object.entries(refused)) assert.equal(dailyLobbySearch(d), null, what);
 });
 
-// ONE OF EACH (the owner 2026-09-15 16:08): the rows the live Daily's seats held at 16:08 - two free
+// ONE OF EACH (the owner 2026-09-15 16:08): the rows the live Daily's signer nodes held at 16:08 - two free
 // and two paying, one pair a restart's leftover - and the rollover minute's overlap.
 test('the lobby lists one free round and one paying round, never two of either, and the paying one says its stake', () => {
   const T = 1_000_000;

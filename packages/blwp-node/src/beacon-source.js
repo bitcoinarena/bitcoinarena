@@ -1,7 +1,7 @@
 // A NODE'S BEACON, KEPT AS AN ANSWER RATHER THAN FETCHED IN THE MIDDLE OF ONE.
 //
 // `roster.seedFor` and `verify` ask for the beacon SYNCHRONOUSLY - they are in
-// the middle of seating a round or closing one - and reading a chain is not
+// the middle of joining a round or closing one - and reading a chain is not
 // synchronous. So the read happens ahead of the question and this holds what
 // it found.
 //

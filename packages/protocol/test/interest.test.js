@@ -297,12 +297,12 @@ test('a player with no final yet is a neighbour, never a leader', () => {
   const board = boardOf([[1, 900]]);
   assert.equal(board.rows.length, 1, 'the board ranked somebody who has no final');
 
-  // one seat: the leaders half of one is zero, so the nearest wins it - and
+  // one signer node: the leaders half of one is zero, so the nearest wins it - and
   // the nearest is the one standing on the viewer
   const one = interestSet(viewer, [finished, driving], { limit: 1, board });
   assert.equal(one[0].entryId[31], 1);
 
-  // two seats: one leader, one neighbour, and the unranked player is the
+  // two signer nodes: one leader, one neighbour, and the unranked player is the
   // neighbour rather than a second leader
   const two = interestSet(viewer, [finished, driving], { limit: 2, board })
     .map((o) => o.entryId[31]);
@@ -326,14 +326,14 @@ test('a player with no final yet is a neighbour, never a leader', () => {
   const allRefunds = boardOf(refundedFar.map((_, i) => [300 + i, 900 - i]), VOID);
   assert.deepEqual(allRefunds.rows.map((r) => r.rank), [null, null]);
 
-  const seats = interestSet({ entryId: id(800), x: 0, z: 0 },
+  const signerNodes = interestSet({ entryId: id(800), x: 0, z: 0 },
     [...refundedFar, ...stillDriving], { limit: 4, board: allRefunds })
     .map((o) => (o.entryId[30] << 8) | o.entryId[31]);
 
-  assert.equal(seats.some((n) => n >= 300 && n < 302), false,
+  assert.equal(signerNodes.some((n) => n >= 300 && n < 302), false,
     'a refunded run was given a place in the leaders half');
-  assert.deepEqual(seats.sort((a, b) => a - b), [400, 401, 402, 403],
-    'the seats did not all go to the nearest');
+  assert.deepEqual(signerNodes.sort((a, b) => a - b), [400, 401, 402, 403],
+    'the signer nodes did not all go to the nearest');
 });
 
 /**
@@ -345,8 +345,8 @@ test('a player with no final yet is a neighbour, never a leader', () => {
  */
 test('a standing is looked up by the player key, not by the entry id', () => {
   // The board's number one is placed FARTHEST away. A correct lookup gives it
-  // the leaders seat; a lookup on the entry id finds nobody, leaves the leaders
-  // half empty, and the seats go to the nearest - so the top of the board
+  // the leaders signer node; a lookup on the entry id finds nobody, leaves the leaders
+  // half empty, and the signer nodes go to the nearest - so the top of the board
   // disappears. With everyone equidistant the two would agree and the test
   // would measure nothing, which is how that mutant first survived.
   const players = [
@@ -368,8 +368,8 @@ test('a standing is looked up by the player key, not by the entry id', () => {
 
   assert.equal(set.length, 2);
   assert.equal(set.includes(700), true,
-    'the top of the board lost its seat, so the standing was looked up on the wrong key');
-  assert.equal(set.includes(701), true, 'the nearest did not get the other seat');
+    'the top of the board lost its signer node, so the standing was looked up on the wrong key');
+  assert.equal(set.includes(701), true, 'the nearest did not get the other signer node');
 });
 
 const toHexish = (b) => [...b].map((v) => v.toString(16)).join('');
@@ -381,7 +381,7 @@ const toHexish = (b) => [...b].map((v) => v.toString(16)).join('');
  * A board keys by player; a subscription keys by entry. They are different
  * namespaces, and the lookup used to fall back from one to the other. Measured
  * before it was removed: an object with no `playerPubkey` at all took a
- * leaders seat, on a board that ranked those same bytes as a player key.
+ * leaders signer node, on a board that ranked those same bytes as a player key.
  */
 test('an other with no player key is never a leader', () => {
   const far = { entryId: id(5), x: 900 * 65536, z: 0 };              // no player key
@@ -396,15 +396,15 @@ test('an other with no player key is never a leader', () => {
   const set = interestSet(viewer, [far, a, b], { limit: 2, board })
     .map((o) => o.entryId[31]);
   assert.equal(set.includes(5), false,
-    'a truck with no player key took a leaders seat under its entry id');
-  assert.deepEqual(set.sort(), [6, 7], 'the seats did not go to the nearest');
+    'a truck with no player key took a leaders signer node under its entry id');
+  assert.deepEqual(set.sort(), [6, 7], 'the signer nodes did not go to the nearest');
 
   // and the same truck WITH the key is a leader, so this is the key and not
   // the distance doing the work
   const named = { ...far, playerPubkey: id(5) };
   const withKey = interestSet(viewer, [named, a, b], { limit: 2, board })
     .map((o) => o.entryId[31]);
-  assert.equal(withKey.includes(5), true, 'the board\'s leader lost its seat');
+  assert.equal(withKey.includes(5), true, 'the board\'s leader lost its signer node');
 });
 
 /**

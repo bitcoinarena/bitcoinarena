@@ -6,15 +6,15 @@
 // round. The door tests pin what a handout may be dealt at; this pins what the
 // settle opens at. Two shapes, because two mutants: a settle that asks the
 // default 5 is caught on 2 of 2; a settle that asks the SLOT COUNT - item 23's
-// "every seat a vote", moved from the page into the settle - is the same number
-// as the threshold on two seats, and is caught only on seven seats with two of
+// "every signer node a vote", moved from the page into the settle - is the same number
+// as the threshold on two signer nodes, and is caught only on seven signer nodes with two of
 // them down, where 5 shares exist and 7 are asked for.
 //
 // A lone loser moves no stake - the round's money rule refuses a pool with
 // nobody handed anything ("the operator would keep 98000 msat") - so the close
 // never reaches the settle here; the rehearsal, with a winner beside the
 // loser, does. What the settle calls is the custody's `preimageFor`, which is
-// the daemon's `fromTheCommittee`: its own share plus the other seats', asked
+// the daemon's `fromTheCommittee`: its own share plus the other signer nodes', asked
 // for over HTTP once the run is final on them, opened at the round's number.
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { PLANTED_FIRST_MARK_DEADLINE } from './planted-marks.js';
@@ -31,7 +31,7 @@ import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { HELD } from '../src/custody.js';
 import { feldmanGroup } from '../src/curve.js';
-import { assumeSeated, assumeStakeSeen } from './seating.js';
+import { assumeAssigned, assumeStakeSeen } from './assignment.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
 import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
@@ -93,11 +93,11 @@ const say = (port, message) => new Promise((resolve, reject) => {
 const secretScalar = () => { let p = rand(32); while (scalarFrom32(p) >= FIELD) p = rand(32); return p; };
 
 /**
- * A round of `seats` settlement seats of which `up` run a daemon, one stake
+ * A round of `signer nodes` settlement signer nodes of which `up` run a daemon, one stake
  * dealt at the round's threshold to all of them, one run that wrecks played on
  * every daemon, closed on every daemon, and final on every daemon.
  */
-async function lostStake({ seats, up }) {
+async function lostStake({ signerNodes, up }) {
   const opts = { funded: () => true, randomnessFor: () => BEACON,
     preflight: async () => ({ ready: true, why: 'test port' }), finality: { everyMs: 50, windowMs: 10000 } };
   const daemons = [];
@@ -111,15 +111,15 @@ async function lostStake({ seats, up }) {
       d.payouts.peers = others;
       d.preimages.peers = others;
     }
-    const down = Array.from({ length: seats - up }, () => schnorr.getPublicKey(rand(32)));
+    const down = Array.from({ length: signerNodes - up }, () => schnorr.getPublicKey(rand(32)));
     const c = contractFor([...daemons.map((d) => d.round.pubkey), ...down], daemons.map((d) => `http://127.0.0.1:${d.port}`));
     const rid = roundId(c);
-    const needed = receiptsNeeded(seats);
+    const needed = receiptsNeeded(signerNodes);
 
     const preimage = secretScalar();
     const e = rand(32);
     const dealt = await dealHandout({
-      preimage, seats: c.nodes, roundId: rid, playerPubkey: b32(5),
+      preimage, signerNodes: c.nodes, roundId: rid, playerPubkey: b32(5),
       ephemeralSecret: e, ephemeralPubkey: feldmanGroup.pointX(e),
       coefficients: Array.from({ length: needed - 1 }, () => scalarFrom32(rand(32)) % FIELD),
       needed, curve: feldmanGroup,
@@ -143,11 +143,11 @@ async function lostStake({ seats, up }) {
 
     for (const d of daemons) {
       await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
-      assumeSeated(d.round, rid, c.nodes);
+      assumeAssigned(d.round, rid, c.nodes);
       const took = await fetch(`http://127.0.0.1:${d.port}/handout`, { method: 'POST', body: encodeHandout(dealt.handout) });
       assert.equal(took.status, 201, await took.text());
-      const seated = await fetch(`http://127.0.0.1:${d.port}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
-      assert.equal(seated.status, 201, await seated.text());
+      const joined = await fetch(`http://127.0.0.1:${d.port}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
+      assert.equal(joined.status, 201, await joined.text());
       const quote = await fetch(`http://127.0.0.1:${d.port}/invoice?entry=${toHex(eid)}`);
       assert.equal(quote.status, 200, await quote.text());
       assumeStakeSeen(d.round, entry);
@@ -162,13 +162,13 @@ async function lostStake({ seats, up }) {
     const stop = Date.now() + 10000;
     while (Date.now() < stop && !(await Promise.all(daemons.map(final))).every(Boolean)) await wait(50);
     for (const [i, d] of daemons.entries())
-      assert.equal(await final(d), true, `the run never turned final on seat ${i + 1} of the ${up} up`);
+      assert.equal(await final(d), true, `the run never turned final on signer node ${i + 1} of the ${up} up`);
     return { daemons, entry, eid, rid, preimage, needed, close };
   } catch (err) { await close(); throw err; }
 }
 
 test('each daemon\'s settle opens a 2-of-2 stake with its 2 shares - not "2 of 5"', async () => {
-  const w = await lostStake({ seats: 2, up: 2 });
+  const w = await lostStake({ signerNodes: 2, up: 2 });
   try {
     for (const [name, d] of [['A', w.daemons[0]], ['B', w.daemons[1]]]) {
       const got = await d.custody.preimageFor(w.eid, w.entry, w.rid);
@@ -178,8 +178,8 @@ test('each daemon\'s settle opens a 2-of-2 stake with its 2 shares - not "2 of 5
   } finally { await w.close(); }
 });
 
-test('seven seats, two of them down: the settle opens a 5-of-7 stake with the 5 shares that exist - not "5 of 7"', async () => {
-  const w = await lostStake({ seats: 7, up: 5 });
+test('seven signer nodes, two of them down: the settle opens a 5-of-7 stake with the 5 shares that exist - not "5 of 7"', async () => {
+  const w = await lostStake({ signerNodes: 7, up: 5 });
   try {
     assert.equal(w.needed, 5);
     const got = await w.daemons[0].custody.preimageFor(w.eid, w.entry, w.rid);

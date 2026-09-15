@@ -18,7 +18,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { openStore } from '../../blwp-node/src/store.js';
 import { serve } from '../../blwp-node/src/server.js';
 import { Client } from '../src/client.js';
-import { joinQuery, joinFromQuery, fetchRound, tabSeed, playerFor, entryFor, stakeFor, fetchSettlementSeats, roundPays } from '../src/join.js';
+import { joinQuery, joinFromQuery, fetchRound, tabSeed, playerFor, entryFor, stakeFor, fetchSettlementSignerNodes, roundPays } from '../src/join.js';
 import { playerSecretFor, refundFingerprint } from '../../protocol/src/player-key.js';
 import { coreHashHex } from '../../core/tools/hash-core.js';
 import { entryFeeMsat, feeMatchesEntry } from '../../protocol/src/fee.js';
@@ -171,7 +171,7 @@ test('two tabs are two players, and one tab is one player twice', () => {
   const next = playerFor({ id: b32(0x0b) }, { seed: a.seed, curve: feldmanGroup });
   assert.notEqual(toHex(next.pubkey), toHex(a.pubkey), 'one key for two rounds');
 
-  // A TAB CARRYING RUBBISH GETS A NEW SEED rather than a seat nobody can pay.
+  // A TAB CARRYING RUBBISH GETS A NEW SEED rather than an entry nobody can pay.
   const junk = tab(); junk.setItem('blwp.player.seed', 'not-a-seed');
   assert.equal(tabSeed({ storage: junk, random }).length, 32);
 
@@ -180,13 +180,13 @@ test('two tabs are two players, and one tab is one player twice', () => {
 });
 
 /**
- * THE REFUND AND PAYOUT KEY IS THE SEED'S, AND THE PAGE WILL NOT SEAT ANOTHER
+ * THE REFUND AND PAYOUT KEY IS THE SEED'S, AND THE PAGE WILL NOT ENTER ANOTHER
  * (§24, v4.6.2, F2). Before: `entryFor` took any 32 bytes as `playerPubkey` -
  * a key from one random secret per tab, never backed up, the same for every
  * round - and a stake dealt under any key. A payout and a refund go to that
  * key, and the player had nothing to check it against.
  */
-test('a seat carries the seed\'s key for the round, its fingerprint is the player\'s to check, and any other key is refused', async () => {
+test('a signer node carries the seed\'s key for the round, its fingerprint is the player\'s to check, and any other key is refused', async () => {
   const seed = b32(0x5e);
   const round = { id: b32(0x11), stakeMsat: 100000n, settlementSlots: 7, simCoreHash: CORE };
   const random = (n) => new Uint8Array(n).fill(9);
@@ -197,8 +197,8 @@ test('a seat carries the seed\'s key for the round, its fingerprint is the playe
   assert.equal(player.fingerprint, refundFingerprint(player.pubkey));
   assert.match(player.fingerprint, /^[0-9a-f]{4}(-[0-9a-f]{4}){3}$/);
 
-  const seat = entryFor(round, { seed, curve: feldmanGroup, random });
-  assert.deepEqual(seat.playerPubkey, player.pubkey, 'the seat is not the seed\'s key');
+  const signerNode = entryFor(round, { seed, curve: feldmanGroup, random });
+  assert.deepEqual(signerNode.playerPubkey, player.pubkey, 'the signer node is not the seed\'s key');
   assert.deepEqual(entryFor(round, { seed, curve: feldmanGroup, playerPubkey: player.pubkey, random }).playerPubkey,
     player.pubkey);
 
@@ -211,22 +211,22 @@ test('a seat carries the seed\'s key for the round, its fingerprint is the playe
   // AND SO IS A STAKE DEALT UNDER ANOTHER KEY.
   const { randomBytes } = await import('node:crypto');
   const rand = (n) => new Uint8Array(randomBytes(n));
-  const seats = Array.from({ length: 7 }, () => schnorr.getPublicKey(rand(32)));
-  const theirs = await stakeFor(round, { seats, curve: feldmanGroup, random: rand, playerPubkey: otherRound });
+  const signerNodes = Array.from({ length: 7 }, () => schnorr.getPublicKey(rand(32)));
+  const theirs = await stakeFor(round, { signerNodes, curve: feldmanGroup, random: rand, playerPubkey: otherRound });
   assert.throws(() => entryFor(round, { seed, curve: feldmanGroup, random, stake: theirs }),
     /dealt under another player key/);
 
   assert.throws(() => entryFor(round, { curve: feldmanGroup, random }), /32-byte seed/);
 });
 
-test('the seat a page takes carries the round\'s own amounts', () => {
+test('the signer node a page takes carries the round\'s own amounts', () => {
   const round = { id: b32(0x0c), stakeMsat: 100000n, blockTicks: 9000, simCoreHash: CORE };
   let n = 0;
   const random = (len) => new Uint8Array(len).fill(++n);
   const me = { seed: b32(5), curve: feldmanGroup };
-  const seat = entryFor(round, { ...me, random });
+  const signerNode = entryFor(round, { ...me, random });
 
-  assert.equal(seat.stakeMsat, 100000n, 'the page asked for a stake the round does not name');
+  assert.equal(signerNode.stakeMsat, 100000n, 'the page asked for a stake the round does not name');
 
   // THE FEE IS 2% OF THE ROUND'S OWN STAKE, and this line used to read
   // `feeMsat === 0n` with "M2 asks for no money" beside it. That was true of
@@ -238,18 +238,18 @@ test('the seat a page takes carries the round\'s own amounts', () => {
   // M2's rounds are unchanged, and that is asserted rather than argued: 2% of
   // nothing is nothing, so a round that asks no stake still carries no fee and
   // there is no branch here to get wrong.
-  assert.equal(seat.feeMsat, entryFeeMsat(100000n));
-  assert.equal(seat.feeMsat, 2000n, 'a paying round is charged 2% of its stake');
-  assert.equal(feeMatchesEntry(seat).ok, true);
+  assert.equal(signerNode.feeMsat, entryFeeMsat(100000n));
+  assert.equal(signerNode.feeMsat, 2000n, 'a paying round is charged 2% of its stake');
+  assert.equal(feeMatchesEntry(signerNode).ok, true);
   const free = entryFor({ id: b32(0x0d), stakeMsat: 0n, blockTicks: 9000 }, { ...me, random });
   assert.equal(free.feeMsat, 0n, 'a round that asks no money is charged some');
   assert.equal(feeMatchesEntry(free).ok, true);
 
-  assert.equal(seat.donationMsat, 0n);
-  assert.equal(seat.joinTick, 0);
-  assert.equal(seat.stakeCommitment.length, 32);
-  assert.equal(seat.worldSecret.length, 32);
-  assert.notEqual(toHex(seat.stakeCommitment), toHex(seat.worldSecret),
+  assert.equal(signerNode.donationMsat, 0n);
+  assert.equal(signerNode.joinTick, 0);
+  assert.equal(signerNode.stakeCommitment.length, 32);
+  assert.equal(signerNode.worldSecret.length, 32);
+  assert.notEqual(toHex(signerNode.stakeCommitment), toHex(signerNode.worldSecret),
     'the commitment and the world secret are one value, so one leaks the other');
 
   assert.throws(() => entryFor(null, { ...me, random }), /no round/);
@@ -306,38 +306,38 @@ test('the page joins a named round and still invents none', () => {
 
   // AND THE PAGE DEALS ITS OWN STAKE (letter 15).
   //
-  // Measured before this: `entryFor` was called with NO stake, so every seat
+  // Measured before this: `entryFor` was called with NO stake, so every signer node
   // the shipped page took carried `random(32)` where `sha256(P)` belongs and
   // 32 zero bytes where the shares belong - and `stakeFor` was compiled into
   // the bundle with ZERO CALLERS. The daemon accepts those zeros on purpose
   // for M2, so nothing refused and nothing said anything.
   assert.ok(page.includes('BLWPCLIENT.stakeFor('),
-    'the page takes a seat without dealing a stake');
-  assert.ok(page.includes('fetchSettlementSeats'),
+    'the page joins without dealing a stake');
+  assert.ok(page.includes('fetchSettlementSignerNodes'),
     'the page deals a stake without asking who settles the round');
   assert.ok(!/stakeFor\(\s*named\.round\b/.test(page),
     'the page deals to the contract\'s flat node list, which is the union of the committees');
   // THE HANDOUT IS PUBLISHED, AND THE COUNT IS ACTED ON. This pinned the
   // string "/handout" in the page, which only proved a URL was written down.
-  // The posting and the five-seat threshold are `postHandout` now - a handout
-  // three of seven seats hold is a stake nobody can open - so what is pinned
+  // The posting and the five-signer node threshold are `postHandout` now - a handout
+  // three of seven signer nodes hold is a stake nobody can open - so what is pinned
   // is the call and the branch that refuses on it.
   assert.match(page, /BLWPCLIENT\.postHandout\(/,
-    'the page deals a handout and never posts it, so no seat can accept it');
+    'the page deals a handout and never posts it, so no signer node can accept it');
   assert.match(page, /if \(!put\.ok\)/,
-    'the page publishes the handout and ignores how many seats took it');
-  assert.ok(page.includes('BLWP_SEAT_REFUSED'),
-    'a paying round whose committee cannot be learned is still seated silently');
-  // THE SEAT'S FUNDING REACHES THE SCREEN, and this pin was weaker when it was
+    'the page publishes the handout and ignores how many signer nodes took it');
+  assert.ok(page.includes('BLWP_JOIN_REFUSED'),
+    'a paying round whose committee cannot be learned is still joined silently');
+  // THE SIGNER NODE'S FUNDING REACHES THE SCREEN, and this pin was weaker when it was
   // written: it asserted the page contained the words "THE STAKE IS NOT PAID",
   // which is a CONSTANT - the page asserting a funding state it never measured.
   // The node answers `x-hold` when it takes the entry, so what is pinned now is
   // that the page hands the chip the node's word and the refusal, and that
   // `playersLine` is what turns them into a line. Stronger, not looser:
   // `page-stake.test.js` drives the wording itself.
-  assert.match(page, /seatRefused,\s*stake/,
-    'the chip is never told why there is no seat or what it cost');
-  assert.match(page, /net\.client\.seatHold/,
+  assert.match(page, /joinRefused,\s*stake/,
+    'the chip is never told why there is no signer node or what it cost');
+  assert.match(page, /net\.client\.joinHold/,
     'the page invents the funding word instead of reading the node\'s');
   assert.ok(!page.includes('THE STAKE IS NOT PAID'),
     'the page asserts a funding state it did not measure');
@@ -363,12 +363,12 @@ test('whether a round pays is one rule, and it is not in the page', () => {
  * MEASURED on nine bonded nodes with seven game/verify slots and seven
  * settlement slots: the game committee is 7, the settlement committee is 7,
  * and `contract.nodes` - what `joinFromQuery` hands the page - is the UNION at
- * 9, with 5 in both and 2 settlement-only. `Roster.seatsFor` says so itself.
+ * 9, with 5 in both and 2 settlement-only. `Roster.signerNodesFor` says so itself.
  * Dealing to the flat list would seal nine shares for a five-of-seven scheme,
- * two of them to seats that could never open one, and a stake nobody can open
+ * two of them to signer nodes that could never open one, and a stake nobody can open
  * at payout is worse than one never dealt.
  */
-test('the settlement seats are asked of every node, and a disagreement is refused', async () => {
+test('the settlement signer nodes are asked of every node, and a disagreement is refused', async () => {
   const b32 = (n) => new Uint8Array(32).fill(n);
   const committee = (keys) => ({
     ok: true, status: 200,
@@ -379,30 +379,30 @@ test('the settlement seats are asked of every node, and a disagreement is refuse
     },
     text: async () => '',
   });
-  const seats = [b32(1), b32(2), b32(3), b32(4), b32(5), b32(6), b32(7)];
+  const signerNodes = [b32(1), b32(2), b32(3), b32(4), b32(5), b32(6), b32(7)];
 
   // EVERY NODE IS ASKED, and the ORDER they list them in is not a difference:
   // one committee written two ways is one committee.
   const asked = [];
-  const got = await fetchSettlementSeats('ab'.repeat(32), ['http://a', 'http://b/'], {
-    fetcher: async (u) => { asked.push(u); return committee(u.startsWith('http://a') ? seats : [...seats].reverse()); },
+  const got = await fetchSettlementSignerNodes('ab'.repeat(32), ['http://a', 'http://b/'], {
+    fetcher: async (u) => { asked.push(u); return committee(u.startsWith('http://a') ? signerNodes : [...signerNodes].reverse()); },
   });
-  assert.equal(got.seats.length, 7);
+  assert.equal(got.signerNodes.length, 7);
   assert.equal(got.agreed, 2);
   assert.equal(asked.length, 2, 'the page asked one node and took its word');
   for (const u of asked) assert.match(u, /\/committee\?role=settlement&round=/);
 
   // A DISAGREEMENT IS A REFUSAL. One node's answer about who may open a
   // player's stake is one node choosing who may open it.
-  await assert.rejects(() => fetchSettlementSeats('ab'.repeat(32), ['http://a', 'http://b'], {
-    fetcher: async (u) => committee(u.startsWith('http://a') ? seats : [...seats.slice(0, 6), b32(9)]),
+  await assert.rejects(() => fetchSettlementSignerNodes('ab'.repeat(32), ['http://a', 'http://b'], {
+    fetcher: async (u) => committee(u.startsWith('http://a') ? signerNodes : [...signerNodes.slice(0, 6), b32(9)]),
   }), /two different settlement committees/);
 
   // And a round nobody will answer for is a refusal too, with the reasons.
-  await assert.rejects(() => fetchSettlementSeats('ab'.repeat(32), ['http://a'], {
-    fetcher: async () => ({ ok: false, status: 409, text: async () => 'that round is not seated' }),
+  await assert.rejects(() => fetchSettlementSignerNodes('ab'.repeat(32), ['http://a'], {
+    fetcher: async () => ({ ok: false, status: 409, text: async () => 'that round is not assigned' }),
   }), /named no round's settlement committee|no node named this round/);
-  await assert.rejects(() => fetchSettlementSeats('ab'.repeat(32), []), /no node to ask/);
+  await assert.rejects(() => fetchSettlementSignerNodes('ab'.repeat(32), []), /no node to ask/);
 });
 
 /**
@@ -425,12 +425,12 @@ test('a page deals its own stake: the commitment is a hash and the ref is a hand
   const rand = (n) => new Uint8Array(randomBytes(n));
 
   const secrets = Array.from({ length: 7 }, () => rand(32));
-  const seats = secrets.map((s) => schnorr.getPublicKey(s));
+  const signerNodes = secrets.map((s) => schnorr.getPublicKey(s));
   const round = { id: b32(0x11), stakeMsat: 100000n, settlementSlots: 7, simCoreHash: CORE };
 
   const me = { seed: b32(5), curve: feldmanGroup };
   const stake = await stakeFor(round, {
-    seats, curve: feldmanGroup, random: rand, playerPubkey: playerFor(round, me).pubkey,
+    signerNodes, curve: feldmanGroup, random: rand, playerPubkey: playerFor(round, me).pubkey,
   });
 
   // THE COMMITMENT IS A HASH OF SOMETHING, which is what a hold invoice needs
@@ -440,24 +440,24 @@ test('a page deals its own stake: the commitment is a hash and the ref is a hand
   assert.deepEqual(stake.vssSharesRef, handoutId(stake.handout));
   assert.notDeepEqual(stake.vssSharesRef, NO_SHARES);
 
-  // AND EVERY SEAT CAN OPEN ITS OWN, which is what makes the reference worth
-  // naming. A handout no seat accepts is a reference an entry cannot use.
+  // AND EVERY SIGNER NODE CAN OPEN ITS OWN, which is what makes the reference worth
+  // naming. A handout no signer node accepts is a reference an entry cannot use.
   const back = decodeHandout(stake.body);
   assert.equal(back.shares.length, 7);
   let opened = 0;
-  for (let i = 0; i < seats.length; i++) {
+  for (let i = 0; i < signerNodes.length; i++) {
     const mine = await openMyShare(back, {
-      pubkey: seats[i], secret: secrets[i], curve: feldmanGroup,
+      pubkey: signerNodes[i], secret: secrets[i], curve: feldmanGroup,
     });
     if (mine.ok) opened++;
   }
   assert.equal(opened, 7, 'the page dealt shares its own committee cannot open');
 
-  // AND THE ENTRY CARRIES IT. Without a dealt stake the seat is still the M2
+  // AND THE ENTRY CARRIES IT. Without a dealt stake the signer node is still the M2
   // one: a commitment to nothing, and no shares.
-  const seat = entryFor(round, { ...me, random: rand, stake });
-  assert.deepEqual(seat.stakeCommitment, stake.stakeCommitment);
-  assert.deepEqual(seat.vssSharesRef, stake.vssSharesRef);
+  const signerNode = entryFor(round, { ...me, random: rand, stake });
+  assert.deepEqual(signerNode.stakeCommitment, stake.stakeCommitment);
+  assert.deepEqual(signerNode.vssSharesRef, stake.vssSharesRef);
   const plain = entryFor(round, { ...me, random: rand });
   assert.deepEqual(plain.vssSharesRef, NO_SHARES);
 });
@@ -467,15 +467,15 @@ test('a page refuses to deal without a curve, a committee, or a player', async (
   const { randomBytes } = await import('node:crypto');
   const rand = (n) => new Uint8Array(randomBytes(n));
   const { schnorr } = await import('@noble/curves/secp256k1.js');
-  const seats = Array.from({ length: 7 }, () => schnorr.getPublicKey(rand(32)));
+  const signerNodes = Array.from({ length: 7 }, () => schnorr.getPublicKey(rand(32)));
   const round = { id: b32(0x11), stakeMsat: 100000n, settlementSlots: 7, simCoreHash: CORE };
 
-  await assert.rejects(() => stakeFor(round, { seats, random: rand, playerPubkey: b32(5) }),
+  await assert.rejects(() => stakeFor(round, { signerNodes, random: rand, playerPubkey: b32(5) }),
     /needs a curve, and none was injected/);
-  await assert.rejects(() => stakeFor(round, { seats: seats.slice(0, 3), curve: feldmanGroup, random: rand, playerPubkey: b32(5) }),
+  await assert.rejects(() => stakeFor(round, { signerNodes: signerNodes.slice(0, 3), curve: feldmanGroup, random: rand, playerPubkey: b32(5) }),
     /cannot be dealt to 3 signer nodes/);
-  await assert.rejects(() => stakeFor(round, { seats, curve: feldmanGroup, random: rand }),
+  await assert.rejects(() => stakeFor(round, { signerNodes, curve: feldmanGroup, random: rand }),
     /that is 32 bytes of key/);
-  await assert.rejects(() => stakeFor(null, { seats, curve: feldmanGroup, random: rand, playerPubkey: b32(5) }),
+  await assert.rejects(() => stakeFor(null, { signerNodes, curve: feldmanGroup, random: rand, playerPubkey: b32(5) }),
     /that is not one/);
 });

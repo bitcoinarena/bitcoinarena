@@ -23,7 +23,7 @@ const scalar = (bytes) => BigInt('0x' + toHex(bytes));
 const preimage = new Uint8Array(randomBytes(32));
 const coefficients = [1n, 2n, 3n, 4n].map((n) => n * 0x1234567890abcdefn + 7n);
 
-test('every seat of an honest handout lies on the published polynomial', () => {
+test('every signer node of an honest handout lies on the published polynomial', () => {
   const out = splitSecret(preimage, { coefficients, curve: feldmanGroup });
 
   assert.equal(out.commitments.length, SHARES_NEEDED);
@@ -42,9 +42,9 @@ test('every seat of an honest handout lies on the published polynomial', () => {
 test('the first commitment is the preimage\'s own point, and no share is the preimage', () => {
   const out = splitSecret(preimage, { coefficients, curve: feldmanGroup });
   assert.deepEqual(out.commitments[0], pointFromScalar(scalar(preimage)),
-    'C_0 is g^P, which is what lets a seat check without learning P');
+    'C_0 is g^P, which is what lets a signer node check without learning P');
 
-  // WHAT THE CHECK DOES NOT LEAK. A seat holds one point of the polynomial and
+  // WHAT THE CHECK DOES NOT LEAK. A signer node holds one point of the polynomial and
   // g^P; recovering P from either is the discrete log of this curve. What can
   // be asserted here rather than argued is the shape: no share IS P, and no
   // commitment is the preimage's bytes.
@@ -75,30 +75,30 @@ test('a two-polynomial dealer is refused at handout: 0 of 7 becomes 3 of 7', () 
   assert.equal(opened.subsets, 21);
   assert.equal(handoutOutcome(opened).outcome, 'FORFEIT');
 
-  // AFTER: the three seats holding the second polynomial refuse, on the curve.
+  // AFTER: the three signer nodes holding the second polynomial refuse, on the curve.
   const handout = checkHandout({ shares: mixed, published,
     commitments: honest.commitments, curve: feldmanGroup });
   assert.equal(handout.refused, 3, handout.why);
-  assert.deepEqual(handout.seats.filter((s) => !s.ok).map((s) => s.seat), [5, 6, 7]);
+  assert.deepEqual(handout.signerNodes.filter((s) => !s.ok).map((s) => s.signerNode), [5, 6, 7]);
   assert.equal(handout.ok, false);
 
   console.log(`  secp256k1: refused at handout ${blind} of 7 by the hash commitments, `
     + `${handout.refused} of 7 by the polynomial`);
 });
 
-test('the seat number is part of the check, so two shares cannot be swapped', () => {
+test('the signer node number is part of the check, so two shares cannot be swapped', () => {
   const out = splitSecret(preimage, { coefficients, curve: feldmanGroup });
 
-  // A share is a POINT of the polynomial, and which point depends on the seat.
-  // Handing seat 2's value to seat 3 passes nothing, even though both values
+  // A share is a POINT of the polynomial, and which point depends on the signer node.
+  // Handing signer node 2's value to signer node 3 passes nothing, even though both values
   // came from the one honest dealer.
-  const swapped = { seat: 3, value: out.shares[1].value };
+  const swapped = { signerNode: 3, value: out.shares[1].value };
   const seen = shareOpensTo(swapped, { commitments: out.commitments, curve: feldmanGroup });
   assert.equal(seen.ok, false);
-  assert.match(seen.why, /seat 3 was handed a share that is not on the polynomial/);
+  assert.match(seen.why, /signer node 3 was handed a share that is not on the polynomial/);
 
   // and one bit is enough
-  const bumped = { seat: 1, value: out.shares[0].value + 1n };
+  const bumped = { signerNode: 1, value: out.shares[0].value + 1n };
   assert.equal(shareOpensTo(bumped, { commitments: out.commitments, curve: feldmanGroup }).ok, false);
 });
 

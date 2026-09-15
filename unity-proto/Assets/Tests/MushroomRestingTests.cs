@@ -10,7 +10,7 @@ using UnityEngine.TestTools;
 /// This exists because a green suite proved nothing about it twice. The dust
 /// skirt spent four material passes invisible while every test was green -
 /// it was 23 m underground - and once that was fixed the column was found
-/// seated the same way, its foot 26 m below the crater floor, again with a
+/// resting the same way, its foot 26 m below the crater floor, again with a
 /// green suite. Both had one cause: the streamed model's origin is its
 /// MIDDLE, measured y -27.5 .. +23.0 on a model 55.0 m tall, so putting that
 /// origin on the ground buries half the cloud.
@@ -21,12 +21,12 @@ using UnityEngine.TestTools;
 /// ground under its own span, which over a deep bowl is metres above the
 /// floor, and that is a recorded choice - only that neither is buried.
 ///
-/// PlayMode, because the seating runs in `Update` and EditMode never calls
+/// PlayMode, because the resting runs in `Update` and EditMode never calls
 /// it. `RaiseColumn` is driven directly: the editor's core is a stub, so no
 /// liquidation will ever arrive in one, and a test that waited for a real
 /// strike would wait forever.
 /// </summary>
-public class MushroomSeatingTests
+public class MushroomRestingTests
 {
     [TearDown] public void ClearTheWorld() => TestWorld.TearDown();
 
@@ -56,7 +56,7 @@ public class MushroomSeatingTests
     /// <summary>
     /// A stand-in for the streamed GLB, authored with the SAME fault: its
     /// origin is its middle, so half of it hangs below the point it is put
-    /// at. If the seating ever goes back to trusting the pivot, this sinks.
+    /// at. If the resting ever goes back to trusting the pivot, this sinks.
     /// </summary>
     static GameObject Model()
     {
@@ -75,7 +75,7 @@ public class MushroomSeatingTests
 
         // THE SKIRT IS THE LOWEST PART, as it is in the real GLB: there the
         // model runs y -27.5 .. +23.0 and the dust skirt occupies the bottom
-        // of it. That is what makes its own seating necessary - putting the
+        // of it. That is what makes its own resting necessary - putting the
         // COLUMN's foot on the floor leaves the skirt hanging below it - and a
         // stand-in with the skirt tucked up inside the stem cannot show that.
         var skirt = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
@@ -110,8 +110,8 @@ public class MushroomSeatingTests
     {
         _theatre.RaiseColumn(at);
         for (int i = 0; i < 90; i++) { _theatre.StepCloud(1f / 60f); yield return null; }
-        Assert.Greater(_theatre.Seatings, 0,
-                       "the seating never ran, so nothing below is a measurement");
+        Assert.Greater(_theatre.Restings, 0,
+                       "the resting never ran, so nothing below is a measurement");
     }
 
     [UnityTest]
@@ -139,10 +139,10 @@ public class MushroomSeatingTests
     /// <summary>
     /// The burial grew with the cloud - 17.35 m at t=0.3 s, 26.32 m at
     /// t=1.7 s - because the model is scaled about that same middle. So the
-    /// seating is checked while the cloud is still small AND once it is full.
+    /// resting is checked while the cloud is still small AND once it is full.
     /// </summary>
     [UnityTest]
-    public IEnumerator TheSeatingHoldsWhileTheCloudIsStillGrowing()
+    public IEnumerator TheRestingHoldsWhileTheCloudIsStillGrowing()
     {
         yield return Rig();
         _theatre.RaiseColumn(new Vector3(4f, 0f, 4f));
@@ -151,7 +151,7 @@ public class MushroomSeatingTests
         {
             _theatre.StepCloud(1f / 60f);
             yield return null;
-            if (_theatre.Seatings == 0) continue;      // the first frames have no cloud yet
+            if (_theatre.Restings == 0) continue;      // the first frames have no cloud yet
             Assert.AreEqual(_theatre.CloudFloor, _theatre.StemFoot, 0.05f,
                             $"the foot left the floor on frame {i}");
             Assert.GreaterOrEqual(_theatre.SkirtUnderside, _theatre.CloudFloor - 0.05f,
@@ -161,7 +161,7 @@ public class MushroomSeatingTests
         // harness, not of the picture: in the full suite the theatre's own
         // Update advances the same cloud, so it reaches `Gone` in fewer
         // explicit steps and a count assertion goes red for no reason. The
-        // seating checks inside the loop are what this test is for.
-        Assert.Greater(_theatre.Seatings, 0, "the seating never ran");
+        // resting checks inside the loop are what this test is for.
+        Assert.Greater(_theatre.Restings, 0, "the resting never ran");
     }
 }

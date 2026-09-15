@@ -108,10 +108,10 @@ test('the ghost a watcher is shown is the driver\'s own core pose, and the harne
       for (let tries = 0; tries < 200; tries++) {
         const secret = ed25519.utils.randomSecretKey();
         const player = playerFor(named.round, { seed: tabSeed({ storage: storage(), random }), curve: feldmanGroup });
-        const seat = entryFor(named.round, { seed: player.seed, curve: feldmanGroup, random });
-        const entry = { ...seat, roundId: rid0, sessionPubkey: ed25519.getPublicKey(secret) };
+        const signerNode = entryFor(named.round, { seed: player.seed, curve: feldmanGroup, random });
+        const entry = { ...signerNode, roundId: rid0, sessionPubkey: ed25519.getPublicKey(secret) };
         if (spawnBay(seedWordForEntry(entry, beacon.randomness)) !== SOLO_BAY)
-          return { secret, seat };
+          return { secret, signerNode };
       }
       throw new Error('200 identities all parked on the solo bay, which is not chance');
     };
@@ -119,11 +119,11 @@ test('the ghost a watcher is shown is the driver\'s own core pose, and the harne
     for (const which of ['driver', 'watcher']) {
       const drawn = which === 'driver' ? offBay()
         : { secret: ed25519.utils.randomSecretKey(),
-            seat: entryFor(named.round, {
+            signerNode: entryFor(named.round, {
               seed: tabSeed({ storage: storage(), random }), curve: feldmanGroup, random,
             }) };
       const secret = drawn.secret;
-      const seat = drawn.seat;
+      const signerNode = drawn.signerNode;
       const client = await Client.at({
         headers: named.chain.headers, bonds: named.chain.bonds,
         signedAdvert: fromHexHere(named.advert.signedAdvert),
@@ -134,7 +134,7 @@ test('the ghost a watcher is shown is the driver\'s own core pose, and the harne
         verify, contract: named.round, roundIdGiven: fromHexHere(round.id),
       });
       const rid = await client.openRound(named.round);
-      const entry = { ...seat, roundId: rid, sessionPubkey: ed25519.getPublicKey(secret) };
+      const entry = { ...signerNode, roundId: rid, sessionPubkey: ed25519.getPublicKey(secret) };
       const eid = await client.join(entry);
       await client.connect();
       client.setRound({ roundId: rid, entryId: eid, blockTicks: named.round.blockTicks | 0 });

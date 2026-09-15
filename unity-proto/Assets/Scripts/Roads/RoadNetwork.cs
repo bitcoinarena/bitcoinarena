@@ -35,7 +35,7 @@ public class RoadNetwork : MonoBehaviour
     /// Height of the surface anything STANDS on at this point - the road deck
     /// where there is one, the bare ground everywhere else.
     ///
-    /// The deck is laid <see cref="lift"/> above the terrain, so units seated
+    /// The deck is laid <see cref="lift"/> above the terrain, so units resting
     /// straight onto terrain.SampleSurface sank into the road by exactly that
     /// much wherever they drove on it.
     ///
@@ -55,14 +55,14 @@ public class RoadNetwork : MonoBehaviour
         //
         // The mesh lays two vertices per cross-section and spans them flat, so
         // the drawn road is a CHORD between its edges - and things standing on
-        // it were seated on the ground under their own feet instead, which
+        // it were resting on the ground under their own feet instead, which
         // over a crest is above that chord and in a hollow below it. Measured
         // against the ribbon's own vertices in a built world: 0.272 m of float
         // at (59.7, 45.2), the tyre in the air over the road it is on.
         //
         // Wear is the other half. The mesh drops its left edge by
         // `broken * 0.55` and its right by `broken * 0.30`, drawing a worn
-        // stretch as a rut, and the seating knew nothing about it.
+        // stretch as a rut, and the resting knew nothing about it.
         //
         // So the surface is built here the way the mesh builds it, at a point
         // instead of at a vertex: the same `side`, the same edge samples, the
@@ -92,7 +92,7 @@ public class RoadNetwork : MonoBehaviour
     /// `surfaceAt` in sim.js is the one thing that says what the ground is, and
     /// it is the relief LESS the craters. Unity's terrain is the relief alone:
     /// `MempoolTerrain` draws the hills the round started with and has never
-    /// heard of a strike, so everything seated on `SampleSurface` stood on a
+    /// heard of a strike, so everything resting on `SampleSurface` stood on a
     /// lid over the hole. Measured on the running build, at the centre of the
     /// biggest crater the rule can make, the two answers were 4.418 m and
     /// -1.562 m.

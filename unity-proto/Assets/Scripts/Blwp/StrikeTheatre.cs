@@ -383,14 +383,14 @@ namespace Blwp
         GameObject _mushroomModel;
         Vector3 _mushroomFull = Vector3.one;
         Vector3 _mushroomSize;   // the modelled size, measured once at full scale
-        float _saidSeat = -1f;   // so the seating is reported once a strike
+        float _saidRest = -1f;   // so the resting is reported once a strike
         float _cloudFloor, _stemFoot, _skirtUnderside;
-        int _seatings;
+        int _restings;
         bool _countedWreckage;
 
-        /// <summary>How many times the cloud has been seated. Zero means the
-        /// seating never ran, and anything read off it is not a measurement.</summary>
-        public int Seatings => _seatings;
+        /// <summary>How many times the cloud has been resting. Zero means the
+        /// resting never ran, and anything read off it is not a measurement.</summary>
+        public int Restings => _restings;
 
         /// <summary>
         /// One step of the cloud. `Update` runs this, and it is reachable so a
@@ -512,7 +512,7 @@ namespace Blwp
             _countedWreckage = false;
             _cloudAt = at;
             _cloud = 0f;
-            _saidSeat = -1f;
+            _saidRest = -1f;
             _saidHeat = -99f;
 
             // THE MESH IF THERE IS ONE. The primitives - a cylinder, a sphere
@@ -759,7 +759,7 @@ namespace Blwp
                         // ASK THE RENDERERS AGAIN. Reporting `colB.min.y + gap`
                         // is a tautology - it is the floor by construction
                         // whether the transform moved or not - and a test
-                        // built on it passed with the seating deleted.
+                        // built on it passed with the resting deleted.
                         _cloudFloor = floor;
                         var after = new Bounds(_cloudAt, Vector3.zero);
                         bool anyAfter = false;
@@ -770,10 +770,10 @@ namespace Blwp
                             else after.Encapsulate(mr.bounds);
                         }
                         _stemFoot = anyAfter ? after.min.y : float.NaN;
-                        _seatings++;
-                        if (_cloud - _saidSeat > 1.2f || _saidSeat < 0f)
+                        _restings++;
+                        if (_cloud - _saidRest > 1.2f || _saidRest < 0f)
                         {
-                            _saidSeat = _cloud;
+                            _saidRest = _cloud;
                             Debug.Log($"[cloud] stem footing t={_cloud:F1}s: foot was {colB.min.y:F2}, "
                                       + $"crater floor {floor:F2}, "
                                       + $"{(gap > 0f ? "buried" : "floating")} {Mathf.Abs(gap):F2} m "
@@ -833,7 +833,7 @@ namespace Blwp
                         _skirt3.localPosition = _skirtRestPos;
                         var sb = _skirtR.bounds;
 
-                        // THE RIM, NOT THE MIDDLE. Seating the lowest vertex
+                        // THE RIM, NOT THE MIDDLE. Resting the lowest vertex
                         // on Ground() at the centre left the rim under the
                         // hill: measured at t=1.6 s on a 48.3 m disc whose
                         // whole height is 4.47 m -
@@ -844,7 +844,7 @@ namespace Blwp
                         // three sides buried by more than half the mesh's own
                         // height. The ground the disc has to clear is the
                         // HIGHEST ground under it, so that is what it is
-                        // seated on; the low side stands a little proud, which
+                        // resting on; the low side stands a little proud, which
                         // is what thrown-up dust does anyway.
                         float rr = Mathf.Max(sb.extents.x, sb.extents.z);
                         float top = Ground(sb.center.x, sb.center.z);
@@ -971,7 +971,7 @@ namespace Blwp
                                         }
                                     }
                                 // WHERE THE GROUND IS UNDER THE WHOLE DISC,
-                                // not only under its middle. The lift seats
+                                // not only under its middle. The lift rests
                                 // the mesh's lowest vertex on Ground() at the
                                 // centre; the terrain rolls, so the rim can
                                 // still be under it. The mesh's underside is

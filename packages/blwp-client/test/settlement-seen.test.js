@@ -8,9 +8,9 @@
 // and nothing else, whether the round was still inside its window, the stake
 // had been settled, or it had been handed back. The client stopped asking.
 //
-// Each settlement seat now answers `GET /settlement` (the node's half). The
-// client asks every seat, once the stake is committed, until every seat that
-// answers has moved the hold; the chip adds what the seats said.
+// Each settlement signer node now answers `GET /settlement` (the node's half). The
+// client asks every signer node, once the stake is committed, until every signer node that
+// answers has moved the hold; the chip adds what the signer nodes said.
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../blwp-node/src/cores.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -23,7 +23,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { openStore } from '../../blwp-node/src/store.js';
 import { serve } from '../../blwp-node/src/server.js';
 import { HELD, SETTLED, CANCELLED } from '../../blwp-node/src/custody.js';
-import { assumeSeated } from '../../blwp-node/test/seating.js';
+import { assumeAssigned } from '../../blwp-node/test/assignment.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { encodeRoundContract, encodeEntryContract, roundId, entryId } from '../../protocol/src/contracts.js';
 import { encodePlayerResult, resultId, joinSignedResult } from '../../protocol/src/result.js';
@@ -60,7 +60,7 @@ function payablePort() {
   return port;
 }
 
-/** Two daemons, one paying round with the reference window, one seated entry. */
+/** Two daemons, one paying round with the reference window, one joined entry. */
 async function committee() {
   const ports = [payablePort(), payablePort()];
   const nodes = [];
@@ -71,7 +71,7 @@ async function committee() {
     gameVerifySlots: 2, settlementSlots: 2, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n,
     entryCloseMs: 2000n, objectionWindowMs: WINDOW_MS, custody: 'THRESHOLD_LN',
     slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144,
-    // P2: the two seats' own relay doors, where each run's transcript is posted.
+    // P2: the two signer nodes' own relay doors, where each run's transcript is posted.
     publicationRelays: nodes.map((d) => `http://127.0.0.1:${d.port}`), donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
     censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n,
     randomnessRule: 'bitcoin-block-hash', stakeMsat: STAKE, bondMinSats: 50000n,
@@ -88,9 +88,9 @@ async function committee() {
   for (const d of nodes) {
     const base = `http://127.0.0.1:${d.port}`;
     await fetch(`${base}/round`, { method: 'POST', body: encodeRoundContract(contract) });
-    assumeSeated(d.round, rid, keys);
-    const seated = await fetch(`${base}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
-    assert.equal(seated.status, 201, await seated.text());
+    assumeAssigned(d.round, rid, keys);
+    const joined = await fetch(`${base}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
+    assert.equal(joined.status, 201, await joined.text());
   }
   const eid = entryId(entry);
   const bases = nodes.map((d) => `http://127.0.0.1:${d.port}`);
@@ -102,7 +102,7 @@ async function committee() {
       for (const p of ports) p.paid = true;
       for (const base of bases) assert.equal((await fetch(`${base}/stake?entry=${toHex(eid)}`)).status, 200);
     },
-    // THE ROUND CLOSED AND BOTH SEATS SIGNED THE SAME LOST RUN, AND BOTH POSTED
+    // THE ROUND CLOSED AND BOTH SIGNER NODES SIGNED THE SAME LOST RUN, AND BOTH POSTED
     // ITS TRANSCRIPT (v4.6.2 §13A, P2): its result is provisionally final and
     // the objection window is running.
     agree: () => {
@@ -113,12 +113,12 @@ async function committee() {
           const id = resultId(r);
           d.round.putResult(rid, eid, signer.round.pubkey, id,
             joinSignedResult(encodePlayerResult(r), schnorr.sign(id, signer.round.identity.secret)));
-          const p = { roundId: rid, playerPubkey: entry.playerPubkey, transcriptHash: b32(0x11), seatPubkey: signer.round.pubkey };
+          const p = { roundId: rid, playerPubkey: entry.playerPubkey, transcriptHash: b32(0x11), signerNodePubkey: signer.round.pubkey };
           d.round.putPosting(rid, eid, signer.round.pubkey,
             joinSignedPosting(encodeTranscriptPosting(p), schnorr.sign(transcriptPostingId(p), signer.round.identity.secret)));
         }
     },
-    // EVERY SEAT MOVES THE HOLD, as a settle or a cancel writes it.
+    // EVERY SIGNER NODE MOVES THE HOLD, as a settle or a cancel writes it.
     move: (state) => {
       for (const d of nodes) {
         const row = d.round.hold(eid);
@@ -134,13 +134,13 @@ test('after the close the chip names the objection window and the refund height,
   const c = await committee();
   try {
     await c.pay();
-    const two = await join.stakeSeenBy({ entryId: c.eid, seats: c.keys, nodes: c.bases, contract: c.contract });
+    const two = await join.stakeSeenBy({ entryId: c.eid, signerNodes: c.keys, nodes: c.bases, contract: c.contract });
     assert.equal(two.committed, true);
     c.agree();
     const agreedAt = Date.now();
 
     assert.equal(typeof join.settlementBy, 'function', 'the page has no way to ask where a stake stands');
-    const s = await join.settlementBy({ entryId: c.eid, seats: c.keys, nodes: c.bases });
+    const s = await join.settlementBy({ entryId: c.eid, signerNodes: c.keys, nodes: c.bases });
     assert.deepEqual([s.of, s.answered, s.hold, s.finality, s.refundHeight], [2, 2, HELD, 'PROVISIONALLY_FINAL', HTLC_EXPIRY]);
     assert.ok(s.windowClosesAtMs >= agreedAt + Number(WINDOW_MS) - 2000 && s.windowClosesAtMs <= Date.now() + Number(WINDOW_MS),
       `the window's end is ${s.windowClosesAtMs - agreedAt} ms after the agreement, for ${WINDOW_MS} ms`);
@@ -150,7 +150,7 @@ test('after the close the chip names the objection window and the refund height,
       + ' · waiting for the objection window, 2:05 left · refunds at block 500 if nobody acts');
 
     c.move(SETTLED);
-    const after = await join.settlementBy({ entryId: c.eid, seats: c.keys, nodes: c.bases });
+    const after = await join.settlementBy({ entryId: c.eid, signerNodes: c.keys, nodes: c.bases });
     assert.equal(after.hold, SETTLED);
     const settled = stakeLine({ dealt: true, seen: { ...two, settlement: after } });
     console.log(`  after it: "${settled}"`);
@@ -158,13 +158,13 @@ test('after the close the chip names the objection window and the refund height,
   } finally { await c.close(); }
 });
 
-test('the client asks by itself once the stake is committed, and stops once every seat has moved the hold', async () => {
+test('the client asks by itself once the stake is committed, and stops once every signer node has moved the hold', async () => {
   const c = await committee();
   const client = new Client({ base: c.bases[0], core, sign, verify });
   try {
     await client.join(c.entry);
     await c.pay();
-    await client.watchStake({ seats: c.keys, nodes: c.bases, contract: c.contract, everyMs: 50, settlementEveryMs: 50 });
+    await client.watchStake({ signerNodes: c.keys, nodes: c.bases, contract: c.contract, everyMs: 50, settlementEveryMs: 50 });
     assert.equal(client.stakeCommitted, true);
     c.agree();
     const until = async (ok, ms = 5000) => { const stop = Date.now() + ms; while (Date.now() < stop && !ok()) await wait(25); };
@@ -175,7 +175,7 @@ test('the client asks by itself once the stake is committed, and stops once ever
     c.move(CANCELLED);
     await until(() => client.stakeCount.settlement.hold === CANCELLED && !client.settlementWatch);
     assert.equal(client.stakeCount.settlement.hold, CANCELLED);
-    assert.equal(client.settlementWatch, null, 'the client kept asking after every seat had handed the stake back');
+    assert.equal(client.settlementWatch, null, 'the client kept asking after every signer node had handed the stake back');
     const polls = client.settlementPolls;
     await wait(200);
     assert.equal(client.settlementPolls, polls, 'a finished settlement was asked about again');

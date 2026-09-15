@@ -147,7 +147,7 @@ export const keyName = (point) => toHex(xOnly(point)).slice(0, 16);
  * RFC 9591 section 5.4's verify_signature_share, over BIP-340:
  *   z_i.G = s.(D_i + rho_i.E_i) + c.lambda_i.Y_i,  s = +1, or -1 if R is odd,
  * the same sign `signShare340` applies to the nonces. `publicShare` is Y_i, the
- * point of the very share the seat signs with. A payout that does not verify
+ * point of the very share the signer node signs with. A payout that does not verify
  * checks each share with this to NAME the one that broke it (pool-bad-share).
  */
 export function verifyShare340({ id, share, publicShare, groupPublicKey, message, commitments, curve }) {

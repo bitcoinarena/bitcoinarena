@@ -72,7 +72,7 @@ public class PackageYard : MonoBehaviour
     {
         public MempoolFeed.Tx tx;
         public GameObject crate;
-        public Vector3 seat;         // where it floats, in the rig's space
+        public Vector3 resting;         // where it floats, in the rig's space
         public float reach;          // half its diagonal, plus the bob
         public Vector3 axis;         // what it turns about
         public float spin, bob, phase, size;
@@ -388,9 +388,9 @@ public class PackageYard : MonoBehaviour
             float rowTop = areaTopWorld - row * cellWorldH;
             float wy = rowTop - reach - cellWorldH * 0.04f;
 
-            var seat = FromScreen(px, 0f, depth);
-            _yard[i].seat = new Vector3(seat.x, wy, depth);
-            _yard[i].crate.transform.localPosition = _yard[i].seat;
+            var resting = FromScreen(px, 0f, depth);
+            _yard[i].resting = new Vector3(resting.x, wy, depth);
+            _yard[i].crate.transform.localPosition = _yard[i].resting;
 
             // A resting angle, set once, when the crates do not turn.
             //
@@ -660,7 +660,7 @@ public class PackageYard : MonoBehaviour
             if (y.crate == null || !y.crate.activeSelf) continue;
             y.crate.transform.Rotate(y.axis, y.spin * Time.unscaledDeltaTime, Space.Self);
             y.crate.transform.localPosition =
-                y.seat + Vector3.up * (Mathf.Sin(t * 1.6f + y.phase) * y.bob);
+                y.resting + Vector3.up * (Mathf.Sin(t * 1.6f + y.phase) * y.bob);
         }
     }
 

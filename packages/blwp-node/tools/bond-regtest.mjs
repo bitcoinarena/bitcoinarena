@@ -50,10 +50,10 @@ if (Number(cli('getblockcount')) < 101) cli('generatetoaddress', '101', cli('get
 const g = genesisFor('regtest');
 
 /** The arbitration secrets this test network derives, by public key. */
-const seats = new Map();
+const signerNodes = new Map();
 for (let i = 0; i < g.arbitrationM; i++) {
   const secret = taggedHash('BLWP/v1/TestArbitration', new TextEncoder().encode(`bitcoin-regtest:${i}`));
-  seats.set(toHex(schnorr.getPublicKey(secret)), secret);
+  signerNodes.set(toHex(schnorr.getPublicKey(secret)), secret);
 }
 
 function bondFor(nodeSecret) {
@@ -129,14 +129,14 @@ const early = spendOf({
 });
 console.log('recovery, before maturity', JSON.stringify(allowed(early.hex)));
 
-// ---- slash, five of the seven seats
+// ---- slash, five of the seven signer nodes
 const sorted = [...g.arbitrationKeys].sort((a, b) => {
   for (let i = 0; i < 32; i++) if (a[i] !== b[i]) return a[i] - b[i];
   return 0;
 });
 const slashScript = slashLeaf(g.arbitrationKeys, g.arbitrationK);
 const signWith = (count) => (h) => {
-  const items = sorted.map((k, i) => (i < count ? schnorr.sign(h, seats.get(toHex(k))) : new Uint8Array(0)));
+  const items = sorted.map((k, i) => (i < count ? schnorr.sign(h, signerNodes.get(toHex(k))) : new Uint8Array(0)));
   return items.reverse();          // bottom-first: the first key's signature ends on top
 };
 // A WELL-FORMED SLASH commits to the proof that justified it.

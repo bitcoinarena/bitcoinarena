@@ -1,15 +1,15 @@
-// TWO TITLES AND TWO RULE SETS ON THE SAME SEATS, IN THE SAME WINDOW (M3 R1 step C; the owner
+// TWO TITLES AND TWO RULE SETS ON THE SAME SIGNER NODES, IN THE SAME WINDOW (M3 R1 step C; the owner
 // 2026-09-15 08:07: "several games at once, and several rule sets at once. Each round names its
-// core and its rules; seats replay what that round names. Two titles and two configs can run on the
+// core and its rules; signer nodes replay what that round names. Two titles and two configs can run on the
 // same nodes in the same window").
 //
-// Two seats run the truck and a second title beside it - the counter (test/cores/counter.js: a run
+// Two signer nodes run the truck and a second title beside it - the counter (test/cores/counter.js: a run
 // adds its first input word each tick and delivers when the sum reaches its config's target). Three
 // free rounds open on them at once: the truck's, and the counter's under two configs, a low bar and
 // a high one. Each is played with the same words, 120 ticks, marks at 60 and 120 whose state hashes
 // the round's own core computes under the round's own config. Each is replayed by that core under
 // that config: the counter's same run DELIVERS under one config and FAILS under the other, every
-// result names the core that replayed it, and all three go final 2 of 2. A seat that did not
+// result names the core that replayed it, and all three go final 2 of 2. A signer node that did not
 // install the counter refuses its round at the door.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -20,7 +20,7 @@ import { serve } from '../src/server.js';
 import { resultFinality } from '../src/finality.js';
 import { TRUCK, TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { COUNTER, CONFIGS } from './cores/counter.js';
-import { assumeSeated } from './seating.js';
+import { assumeAssigned } from './assignment.js';
 import { rand, WINDOW_MS, WINNER, GENESIS_HASH, wordsAt, contractFor, say, opts, wait, RANDOMNESS } from './window-fixture.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
 import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
@@ -32,7 +32,7 @@ import { toHex, fromHex } from '../../protocol/src/hash.js';
 const COUNTER_CORE_HASH = fromHex(COUNTER.hash);
 const [LOW, HIGH] = CONFIGS;
 
-async function twoSeats() {
+async function twoSignerNodes() {
   const mk = () => serve(openStore(':memory:'), { port: 0, ...opts, finality: { everyMs: 100 }, cores: [COUNTER] });
   const a = await mk();
   const b = await mk();
@@ -43,7 +43,7 @@ async function twoSeats() {
   return { a, b, async close() { await a.close(); await b.close(); } };
 }
 
-/** A free round on both seats, naming the core and config given. */
+/** A free round on both signer nodes, naming the core and config given. */
 // A round shorter than the fixture's start deadline names its own (the protocol: the deadline is below the run length).
 async function open(w, simCoreHash, configHash, blockTicks = 9000, startDeadlineTicks) {
   const c = { ...contractFor([w.a.round.pubkey, w.b.round.pubkey], BigInt(WINDOW_MS), [w.a, w.b].map((d) => `http://127.0.0.1:${d.port}`)),
@@ -52,12 +52,12 @@ async function open(w, simCoreHash, configHash, blockTicks = 9000, startDeadline
   for (const d of [w.a, w.b]) {
     const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
     assert.equal(r.status, 201, await r.text());
-    assumeSeated(d.round, rid, c.nodes);
+    assumeAssigned(d.round, rid, c.nodes);
   }
   return { c, rid };
 }
 
-/** One player on a round: seated at both seats, 120 ticks played by the round's own core, marks at 60 and 120. */
+/** One player on a round: joined at both signer nodes, 120 ticks played by the round's own core, marks at 60 and 120. */
 async function play(w, rid, adapter, config) {
   const session = ed25519.utils.randomSecretKey();
   const entry = { roundId: rid, playerPubkey: WINNER.key, sessionPubkey: ed25519.getPublicKey(session),
@@ -90,8 +90,8 @@ const signedAt = (d, rid, eid) => d.round.results(rid, eid).map((r) => {
   return { outcome: p.outcome, score: p.score, core: toHex(p.simCoreHash) };
 });
 
-test('the truck and a second title, the second under two configs, run on the same two seats in one window - each replayed by its own core under its own config, each result naming it', async () => {
-  const w = await twoSeats();
+test('the truck and a second title, the second under two configs, run on the same two signer nodes in one window - each replayed by its own core under its own config, each result naming it', async () => {
+  const w = await twoSignerNodes();
   try {
     const truck = await open(w, TRUCK_CORE_HASH, TRUCK_CONFIG_HASH);
     const low = await open(w, COUNTER_CORE_HASH, LOW.hash, LOW.config.ticks, 90);
@@ -112,13 +112,13 @@ test('the truck and a second title, the second under two configs, run on the sam
 
     for (const k of ['truck', 'low', 'high']) {
       assert.deepEqual(facts[k].finality, ['FINAL', 'FINAL'], `${k} did not go final 2 of 2`);
-      // EACH SEAT HOLDS BOTH SEATS' SIGNED RESULTS - its own and its peer's, gathered: the 2 of 2 that
+      // EACH SIGNER NODE HOLDS BOTH SIGNER NODES' SIGNED RESULTS - its own and its peer's, gathered: the 2 of 2 that
       // made the run FINAL - and the two say the same thing, under the same core. (First written
-      // as "one result at A": measured, each seat holds two.)
+      // as "one result at A": measured, each signer node holds two.)
       for (const s of ['a', 'b']) {
-        assert.equal(facts[k][s].length, 2, `${k}: seat ${s} holds ${facts[k][s].length} signed results, not the two seats'`);
+        assert.equal(facts[k][s].length, 2, `${k}: signer node ${s} holds ${facts[k][s].length} signed results, not the two signer nodes'`);
         assert.equal(new Set(facts[k][s].map((r) => `${r.core}/${r.outcome}/${r.score}`)).size, 1,
-          `${k}: the two seats signed different results`);
+          `${k}: the two signer nodes signed different results`);
       }
     }
     assert.equal(facts.truck.a[0].core, TRUCK.hash, 'the truck round\'s result names another core');
@@ -131,7 +131,7 @@ test('the truck and a second title, the second under two configs, run on the sam
   } finally { await w.close(); }
 });
 
-test('a seat that did not install the second title refuses its round at the door, and still opens the truck\'s', async () => {
+test('a signer node that did not install the second title refuses its round at the door, and still opens the truck\'s', async () => {
   const d = await serve(openStore(':memory:'), { port: 0, ...opts });
   try {
     const nodes = [d.round.pubkey, rand(32)];
@@ -141,7 +141,7 @@ test('a seat that did not install the second title refuses its round at the door
     const truck = await post({ ...base, simCoreHash: TRUCK_CORE_HASH, configHash: TRUCK_CONFIG_HASH });
     console.log('  FACTS (not installed):', JSON.stringify({ counter: { ...counter, why: counter.why.slice(0, 100) }, truck: truck.status }));
     assert.equal(counter.status, 409);
-    assert.match(counter.why, /this seat holds no core/);
+    assert.match(counter.why, /this signer node holds no core/);
     assert.equal(truck.status, 201, truck.why);
   } finally { await d.close(); }
 });

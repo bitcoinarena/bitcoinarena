@@ -5,8 +5,8 @@
  * "Donations are paid: LNURL per recipient, by share, from the player's wallet
  * directly at entry - never through the federation" (§24A.2). Two halves:
  *
- * `fetchDonationSet` - the set the round names, as EVERY seat of the round
- * serves it (a seat that serves another, or none, is a refusal), signed by the
+ * `fetchDonationSet` - the set the round names, as EVERY signer node of the round
+ * serves it (a signer node that serves another, or none, is a refusal), signed by the
  * network's donation authority at the round's height with rotations included,
  * checked with Ed25519 (the authority's scheme). The page shows every
  * recipient from it before the wallet approves (§22A).
@@ -125,11 +125,11 @@ const SHARE_OF_NOTE = { paid: 'paid', unpaid: 'unpaid', asked: 'unknown' };
 const UNKNOWN_WHY = 'this tab asked its wallet for it before a reload and never heard the answer, so it is not asked again';
 
 /**
- * THE DONATION AS THE TAB'S NOTES HAVE IT - NO SEAT, NO SET (M3.2 6e). Measured
+ * THE DONATION AS THE TAB'S NOTES HAVE IT - NO SIGNER NODE, NO SET (M3.2 6e). Measured
  * before, on the daily page: a reload whose round link failed to fetch showed
  * the loading screen's refusal and nothing else - no wallet panel, no line -
  * while the notes held "paid 1334, unpaid 666". The line was painted only after
- * `payDonation`, which needs a seat. The notes are what the wallet was asked and
+ * `payDonation`, which needs a signer node. The notes are what the wallet was asked and
  * what it answered, so they are enough to say it. Null when the tab has none.
  */
 export function donationNotedState(storage, whose) {
@@ -180,7 +180,7 @@ export function donationRecipientsLine(set) {
 }
 
 /**
- * THE DONATION SET THIS ROUND NAMES, AS ALL OF ITS SEATS SERVE IT, CHECKED.
+ * THE DONATION SET THIS ROUND NAMES, AS ALL OF ITS SIGNER NODES SERVE IT, CHECKED.
  * `verifyEd25519(sig, msg, pub)` may be async (the browser's crypto.subtle);
  * every answer is awaited here before `authorityAt` sees a settled boolean.
  * `keys` overrides the network's donation keys (tests only).
@@ -221,8 +221,8 @@ export async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u)
   if (!named.ok) return { ok: false, why: named.why };
   if (!(set.validFrom <= round.censusHeight)) return { ok: false, why: 'that donation set is not in force at the round\'s height' };
 
-  // EVERY SEAT'S ROTATIONS, EACH CHECKED HERE against the network's recovery
-  // key: a seat that hides a rotation cannot hide it from the other seats.
+  // EVERY SIGNER NODE'S ROTATIONS, EACH CHECKED HERE against the network's recovery
+  // key: a signer node that hides a rotation cannot hide it from the other signer nodes.
   const offered = new Map();
   for (const a of answers) for (const r of a.rotations) {
     try { offered.set(`${r.body}:${r.signature}`, { ...decodeAuthorityRotation(fromHex(String(r.body))), signature: fromHex(String(r.signature)) }); }
@@ -236,6 +236,6 @@ export async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u)
     rotations, height: round.censusHeight, verify: (sig) => signedRotations.has(toHex(sig)) });
   if (await verifyEd25519(set.signature, donationSetBodyId(set), inForce.authority) !== true)
     return { ok: false, why: 'that donation set is not signed by the network\'s donation authority at the round\'s height' };
-  return { ok: true, set, seats: answers.length, rotated: inForce.rotated,
+  return { ok: true, set, signerNodes: answers.length, rotated: inForce.rotated,
     why: `${answers.length} signer node(s) serve the set this round names, signed by its donation authority` };
 }

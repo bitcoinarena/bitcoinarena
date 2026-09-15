@@ -1,14 +1,14 @@
-// THE COMMITTEE IS WHOM THE CHAIN SEATED.
+// THE COMMITTEE IS WHOM THE CHAIN ASSIGNED.
 //
 // A round's `nodes` list is what its author wrote down. Until this it was also
 // what the node TRUSTED: `takeReceipt` checked membership against it and
 // `verifiedFinal` counted against it, so a committee nobody bonded was served
 // as readily as one the census produced.
 //
-// Letter 26's ruling: the seated set is the only list that counts, and
+// Letter 26's ruling: the assigned set is the only list that counts, and
 // `contract.nodes` is checked against it - exactly, both ways. This file is
 // that check, and the 2-of-2 built the honest way: two daemons whose OWN
-// identities are bonded on the chain and seated from the census, which step 1
+// identities are bonded on the chain and assigned from the census, which step 1
 // of this slice made possible by making a node's identity its bond key.
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { test } from 'node:test';
@@ -74,7 +74,7 @@ const chainWith = (bonds, contract) => {
   const blocks = [];
   for (let h = FROM; h <= TIP; h++) blocks.push({ transactions: h === FROM ? bonds : [] });
   // AND THE ROUND'S PUBLICATION, well below any beacon (5A.5, v4.6.2): a node
-  // seats only a round its own chain shows published before the beacon block.
+  // signer nodes only a round its own chain shows published before the beacon block.
   if (contract) blocks[1] = { transactions: [publicationOf(contract)] };
   return chainOf(blocks, FROM);
 };
@@ -105,7 +105,7 @@ function rootFor(bonds, nodes) {
   return census.root;
 }
 
-test('two daemons bond their own identities and are seated from the chain', async () => {
+test('two daemons bond their own identities and are assigned from the chain', async () => {
   const a = await serve(openStore(':memory:'), { port: 0, funded: () => true });
   const b = await serve(openStore(':memory:'), { port: 0, funded: () => true });
   try {
@@ -120,19 +120,19 @@ test('two daemons bond their own identities and are seated from the chain', asyn
       const roster = new Roster(node.round, { chainFor: ({ contract } = {}) => chainWith(bonds, contract), randomnessFor: ({ contract }) => beaconOf(bonds, contract) });
       const c = contractWith(keys, root);
       const rid = node.round.open(c);
-      const seated = roster.seatRound(rid);
-      assert.equal(seated.ok, true, seated.why);
+      const assigned = roster.assignSignerNodes(rid);
+      assert.equal(assigned.ok, true, assigned.why);
 
       // EXACTLY THE TWO, and they are the keys these daemons publish.
-      assert.equal(seated.seats.length, 2);
-      assert.deepEqual(seated.seats.map(toHex).sort(), keys.map(toHex).sort());
-      assert.deepEqual(node.round.seats(rid).map(toHex).sort(), keys.map(toHex).sort(),
-        'the seats were not kept where the trust checks read them');
+      assert.equal(assigned.signerNodes.length, 2);
+      assert.deepEqual(assigned.signerNodes.map(toHex).sort(), keys.map(toHex).sort());
+      assert.deepEqual(node.round.signerNodes(rid).map(toHex).sort(), keys.map(toHex).sort(),
+        'the signer nodes were not kept where the trust checks read them');
     }
   } finally { await a.close(); await b.close(); }
 });
 
-test('a contract that names a stranger, or misses a seated node, is refused by name', async () => {
+test('a contract that names a stranger, or misses a assigned node, is refused by name', async () => {
   const node = await serve(openStore(':memory:'), { port: 0, funded: () => true });
   try {
     const mine = node.round.pubkey;
@@ -142,42 +142,42 @@ test('a contract that names a stranger, or misses a seated node, is refused by n
     const root = rootFor(bonds, keys);
     const roster = new Roster(node.round, { chainFor: ({ contract } = {}) => chainWith(bonds, contract), randomnessFor: ({ contract }) => beaconOf(bonds, contract) });
 
-    const seat = (nodes) => {
+    const signerNode = (nodes) => {
       const c = contractWith(nodes, root);
       const rid = node.round.open(c);
-      return { rid, seated: roster.seatRound(rid) };
+      return { rid, assigned: roster.assignSignerNodes(rid) };
     };
 
-    // EQUAL TO THE SEATED SET: accepted.
-    const good = seat(keys);
-    assert.equal(good.seated.ok, true, good.seated.why);
+    // EQUAL TO THE ASSIGNED SET: accepted.
+    const good = signerNode(keys);
+    assert.equal(good.assigned.ok, true, good.assigned.why);
 
     // A STRANGER: refused, and the refusal names the membership, not a later
     // signature check - the two are different failures and stay apart.
-    const stranger = seat([mine, b32(0xee)]);
-    assert.equal(stranger.seated.ok, false, 'a contract naming a stranger was seated');
-    assert.match(stranger.seated.why, /1 the chain did not seat/);
-    assert.match(stranger.seated.why, /1 seated node it does not name/);
-    assert.equal(node.round.seats(stranger.rid).length, 0, 'a refused round was seated anyway');
+    const stranger = signerNode([mine, b32(0xee)]);
+    assert.equal(stranger.assigned.ok, false, 'a contract naming a stranger was assigned');
+    assert.match(stranger.assigned.why, /1 the chain did not assign/);
+    assert.match(stranger.assigned.why, /1 assigned node it does not name/);
+    assert.equal(node.round.signerNodes(stranger.rid).length, 0, 'a refused round was assigned anyway');
 
-    // A MISSING SEAT: one name against two seats.
-    const short = seat([mine]);
-    assert.equal(short.seated.ok, false, 'a one-name contract was seated against two seats');
-    assert.match(short.seated.why, /names 1 committee key and the census seats 2/);
-    assert.match(short.seated.why, /1 seated node it does not name/);
+    // A MISSING SIGNER NODE: one name against two signer nodes.
+    const short = signerNode([mine]);
+    assert.equal(short.assigned.ok, false, 'a one-name contract was assigned against two signer nodes');
+    assert.match(short.assigned.why, /names 1 committee key and the census assigns 2/);
+    assert.match(short.assigned.why, /1 assigned node it does not name/);
 
     // A DIFFERENT SET ENTIRELY, of the right size: refused, not accepted on
     // cardinality and not rewritten to what the chain says.
-    const swapped = seat([b32(0xe1), b32(0xe2)]);
-    assert.equal(swapped.seated.ok, false);
-    assert.match(swapped.seated.why, /2 the chain did not seat/);
+    const swapped = signerNode([b32(0xe1), b32(0xe2)]);
+    assert.equal(swapped.assigned.ok, false);
+    assert.match(swapped.assigned.why, /2 the chain did not assign/);
 
-    // AND A ROUND THAT WAS REFUSED TRUSTS NOBODY: no seats, so no receipts.
-    assert.equal(node.round.seats(swapped.rid).length, 0);
+    // AND A ROUND THAT WAS REFUSED TRUSTS NOBODY: no signer nodes, so no receipts.
+    assert.equal(node.round.signerNodes(swapped.rid).length, 0);
   } finally { await node.close(); }
 });
 
-test('the round door refuses a chain-unsupported committee, and seats a supported one', async () => {
+test('the round door refuses a chain-unsupported committee, and signer nodes a supported one', async () => {
   const keys = [];
   const first = new Round(openStore(':memory:'), () => AFTER_COMMITTEE);
   const second = new Round(openStore(':memory:'), () => AFTER_COMMITTEE);
@@ -193,22 +193,22 @@ test('the round door refuses a chain-unsupported committee, and seats a supporte
     const ok = await fetch(`http://127.0.0.1:${node.port}/round`,
       { method: 'POST', body: encodeRoundContract(good) });
     assert.equal(ok.status, 201, await ok.text());
-    assert.equal(node.round.seats(roundId(good)).length, 2,
-      'the door stored a round it never seated');
+    assert.equal(node.round.signerNodes(roundId(good)).length, 2,
+      'the door stored a round it was never assigned');
 
     const bad = contractWith([keys[0], b32(0xee)], root);
     const refused = await fetch(`http://127.0.0.1:${node.port}/round`,
       { method: 'POST', body: encodeRoundContract(bad) });
     assert.equal(refused.status, 409, 'a chain-unsupported committee was accepted');
     const why = await refused.text();
-    assert.match(why, /the chain did not seat/);
-    assert.equal(node.round.seats(roundId(bad)).length, 0);
+    assert.match(why, /the chain did not assign/);
+    assert.equal(node.round.signerNodes(roundId(bad)).length, 0);
   } finally { await node.close(); }
 });
 
-test('a seated key with a bad signature and a well-signed stranger fail differently', async () => {
-  // The two refusals, pinned apart. A key the census seated is refused for its
-  // SIGNATURE; a key it did not seat is refused for MEMBERSHIP, however well
+test('a assigned key with a bad signature and a well-signed stranger fail differently', async () => {
+  // The two refusals, pinned apart. A key the census assigned is refused for its
+  // SIGNATURE; a key it did not assign is refused for MEMBERSHIP, however well
   // it signs. Neither refusal stands in for the other.
   const { schnorr } = await import('@noble/curves/secp256k1.js');
   const { encodeCheckpointReceipt, joinSignedReceipt, receiptId } =
@@ -220,7 +220,7 @@ test('a seated key with a bad signature and a well-signed stranger fail differen
   const bonds = [bondOfKey(keys[0], 1), bondOfKey(keys[1], 2)];
   const roster = new Roster(round, { chainFor: ({ contract } = {}) => chainWith(bonds, contract), randomnessFor: ({ contract }) => beaconOf(bonds, contract) });
   const rid = round.open(contractWith(keys, rootFor(bonds, keys)));
-  assert.equal(roster.seatRound(rid).ok, true);
+  assert.equal(roster.assignSignerNodes(rid).ok, true);
 
   const { ed25519 } = await import('@noble/curves/ed25519.js');
   const { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } =
@@ -243,24 +243,24 @@ test('a seated key with a bad signature and a well-signed stranger fail differen
     return { r, good: joinSignedReceipt(encodeCheckpointReceipt(r), schnorr.sign(receiptId(r), secret)) };
   };
 
-  // SEATED, BADLY SIGNED: refused for the signature.
-  const seated = receiptFrom(peer.pubkey, peer.identity.secret);
-  const forged = new Uint8Array(seated.good);
+  // JOINED, BADLY SIGNED: refused for the signature.
+  const joined = receiptFrom(peer.pubkey, peer.identity.secret);
+  const forged = new Uint8Array(joined.good);
   forged[forged.length - 1] ^= 0xff;
   assert.throws(() => round.takeReceipt(forged), /does not verify/);
 
-  // NOT SEATED, WELL SIGNED: refused for membership.
+  // NOT JOINED, WELL SIGNED: refused for membership.
   const outsider = new Round(openStore(':memory:'), () => AFTER_COMMITTEE);
   const away = receiptFrom(outsider.pubkey, outsider.identity.secret);
   assert.throws(() => round.takeReceipt(away.good), /is not on this round's committee/);
 
-  // SEATED AND WELL SIGNED: kept.
-  assert.equal(round.takeReceipt(seated.good), 'held');
+  // JOINED AND WELL SIGNED: kept.
+  assert.equal(round.takeReceipt(joined.good), 'held');
 });
 
-test('a round nobody seated trusts nobody', async () => {
-  // Found by a mutant: letting an unseated round accept receipts broke no
-  // test, because every fixture seats. An unseated round is one this node
+test('a round nobody joined trusts nobody', async () => {
+  // Found by a mutant: letting an unassigned round accept receipts broke no
+  // test, because every fixture assigns. An unassigned round is one this node
   // could not check - no chain view, or a committee the chain refused - and
   // "cannot check" must not mean "accepts anyone".
   const { schnorr } = await import('@noble/curves/secp256k1.js');
@@ -274,9 +274,9 @@ test('a round nobody seated trusts nobody', async () => {
   const round = new Round(openStore(':memory:'), () => AFTER_COMMITTEE);
   const peer = new Round(openStore(':memory:'), () => AFTER_COMMITTEE);
   const keys = [round.pubkey, peer.pubkey];
-  // The contract NAMES both, and this node never seated it.
+  // The contract NAMES both, and this node was never assigned it.
   const rid = round.open(contractWith(keys, b32(2)));
-  assert.equal(round.seats(rid).length, 0);
+  assert.equal(round.signerNodes(rid).length, 0);
 
   const session = ed25519.utils.randomSecretKey();
   const eid = round.enter({
@@ -294,27 +294,27 @@ test('a round nobody seated trusts nobody', async () => {
   const signed = joinSignedReceipt(encodeCheckpointReceipt(r), schnorr.sign(receiptId(r), peer.identity.secret));
 
   // Named by the contract, correctly signed, and refused: this node has no
-  // committee for that round because it never seated one.
-  assert.throws(() => round.takeReceipt(signed), /has not seated that round/,
-    'an unseated round accepted a receipt on the author\'s word');
+  // committee for that round because it was never assigned one.
+  assert.throws(() => round.takeReceipt(signed), /has not been assigned that round/,
+    'an unassigned round accepted a receipt on the author\'s word');
 });
 
-test('a verdict over an unseated round counts nothing, however the contract reads', async () => {
+test('a verdict over an unassigned round counts nothing, however the contract reads', async () => {
   // The same gap on the other path, found the same way: falling back to
-  // `contract.nodes` when there are no seats put the author's list back in
+  // `contract.nodes` when there are no signer nodes put the author's list back in
   // charge of who counts towards a final.
   const { verifiedFinal } = await import('../src/verdict.js');
   const keys = [b32(0x71), b32(0x72)];
   const contract = contractWith(keys, b32(2));
 
-  for (const seats of [undefined, [], null]) {
-    const out = verifiedFinal([], { contract, seats });
-    assert.equal(out.ok, false, `seats=${JSON.stringify(seats)} was counted against the contract`);
-    assert.match(out.why, /no seated committee to count against/);
+  for (const signerNodes of [undefined, [], null]) {
+    const out = verifiedFinal([], { contract, signerNodes });
+    assert.equal(out.ok, false, `signer nodes=${JSON.stringify(signerNodes)} was counted against the contract`);
+    assert.match(out.why, /no assigned committee to count against/);
   }
 
-  // and with seats it gets as far as the threshold, which is the next question
-  const named = verifiedFinal([], { contract, seats: keys });
+  // and with signer nodes it gets as far as the threshold, which is the next question
+  const named = verifiedFinal([], { contract, signerNodes: keys });
   assert.equal(named.ok, true, named.why);
   assert.equal(named.final, false, 'no records is not a final');
 });

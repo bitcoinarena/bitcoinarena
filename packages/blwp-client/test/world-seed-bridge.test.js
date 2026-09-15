@@ -82,11 +82,11 @@ test('nothing on a live round reads the constant seed, and the core is in the ro
 
     // A player whose own world is NOT the harness's, so a core that fell back
     // to the constant would be somewhere this test can see.
-    let player, seat, entry, want;
+    let player, signerNode, entry, want;
     for (let tries = 0; ; tries++) {
       player = playerFor(named.round, { seed: tabSeed({ storage: storage(), random }), curve: feldmanGroup });
-      seat = entryFor(named.round, { seed: player.seed, curve: feldmanGroup, random });
-      entry = { ...seat, roundId: rid };
+      signerNode = entryFor(named.round, { seed: player.seed, curve: feldmanGroup, random });
+      entry = { ...signerNode, roundId: rid };
       want = seedWordForEntry({ ...entry, sessionPubkey: new Uint8Array(32) }, beacon.randomness);
       if (spawnBay(want) !== spawnBay(SOLO_SEED)) break;
       assert.ok(tries < 200, '200 identities all parked on the harness bay, which is not chance');
@@ -122,7 +122,7 @@ test('nothing on a live round reads the constant seed, and the core is in the ro
         BLWPCLIENT: CLIENT,
         BLWP_CURVE: pageCurve,
         BLWP_ROUND: named.round,
-        BLWP_ENTRY: seat,
+        BLWP_ENTRY: signerNode,
         BLWP_NODES: named.nodes,
         BLWP_CHAIN: named.chain,
         BLWP_ADVERT: named.advert,
@@ -224,11 +224,11 @@ test('once a round is joined, a later Init from C# cannot put the core back in t
     const rid = roundId(named.round);
     const beacon = await fetchRandomness(toHex(rid), named.nodes);
 
-    let player, seat, entry, want;
+    let player, signerNode, entry, want;
     for (let tries = 0; ; tries++) {
       player = playerFor(named.round, { seed: tabSeed({ storage: storage(), random }), curve: feldmanGroup });
-      seat = entryFor(named.round, { seed: player.seed, curve: feldmanGroup, random });
-      entry = { ...seat, roundId: rid };
+      signerNode = entryFor(named.round, { seed: player.seed, curve: feldmanGroup, random });
+      entry = { ...signerNode, roundId: rid };
       want = seedWordForEntry({ ...entry, sessionPubkey: new Uint8Array(32) }, beacon.randomness);
       if (spawnBay(want) !== spawnBay(SOLO_SEED)) break;
       assert.ok(tries < 200, '200 identities all parked on the harness bay, which is not chance');
@@ -240,7 +240,7 @@ test('once a round is joined, a later Init from C# cannot put the core back in t
       Module, HEAP32: heap, UTF8ToString: () => named.nodes[0],
       window: { location: { search: new URL(round.url).search } },
       console, crypto, BLWP: core, BLWPCLIENT: CLIENT, BLWP_CURVE: pageCurve,
-      BLWP_ROUND: named.round, BLWP_ENTRY: seat, BLWP_NODES: named.nodes,
+      BLWP_ROUND: named.round, BLWP_ENTRY: signerNode, BLWP_NODES: named.nodes,
       BLWP_CHAIN: named.chain, BLWP_ADVERT: named.advert,
     });
 
@@ -367,7 +367,7 @@ test('a join held open while the game steps publishes from the tick the core is 
   try {
     const named = await joinFromQuery(new URL(round.url).search);
     const player = playerFor(named.round, { seed: tabSeed({ storage: storage(), random }), curve: feldmanGroup });
-    const seat = entryFor(named.round, { seed: player.seed, curve: feldmanGroup, random });
+    const signerNode = entryFor(named.round, { seed: player.seed, curve: feldmanGroup, random });
 
     const heap = new Int32Array(64);
     Module = { HEAPU8: new Uint8Array(heap.buffer), blwpNet: null };
@@ -390,7 +390,7 @@ test('a join held open while the game steps publishes from the tick the core is 
       Module, HEAP32: heap, UTF8ToString: () => named.nodes[0],
       window: { location: { search: new URL(round.url).search } },
       console, crypto, BLWP: core, BLWPCLIENT: CLIENT, BLWP_CURVE: pageCurve,
-      BLWP_ROUND: named.round, BLWP_ENTRY: seat, BLWP_NODES: named.nodes,
+      BLWP_ROUND: named.round, BLWP_ENTRY: signerNode, BLWP_NODES: named.nodes,
       BLWP_CHAIN: named.chain, BLWP_ADVERT: named.advert,
     });
 

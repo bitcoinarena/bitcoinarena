@@ -1,9 +1,9 @@
 #!/bin/bash
 # ENTRY_VOID (§16) ON A REAL FEDERATION: an on-time first mark that missed a
-# down seat is ENTRY_VOID at both seats, and the stake lock is forfeited to the
+# down signer node is ENTRY_VOID at both signer nodes, and the stake lock is forfeited to the
 # player at once (§23.2) - redeemed from the seed before its expiry and
 # withdrawn. Stock fedimintd 0.12.0, 4 guardians, one gateway, regtest; the
-# Daily's 2-of-2 on it, the seats making their own claim key; then outage.mjs.
+# Daily's 2-of-2 on it, the signer nodes making their own claim key; then outage.mjs.
 #
 #   FEDIMINT_BIN=<released v0.12.0> LOCK_BIN=<blwp-stake-lock> bash tools/outage-regtest.sh
 set -uo pipefail

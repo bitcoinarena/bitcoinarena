@@ -1,12 +1,12 @@
 #!/bin/bash
-# W5b ON A REAL FEDERATION: the seats forfeit a qualifier's stake lock after
-# the objection window, a loser's is refused and stays held, one seat's
+# W5b ON A REAL FEDERATION: the signer nodes forfeit a qualifier's stake lock after
+# the objection window, a loser's is refused and stays held, one signer node's
 # signature is refused by the guardians, and the player redeems the forfeit
-# from a later session holding only the seed and withdraws it - on the seats'
+# from a later session holding only the seed and withdraws it - on the signer nodes'
 # own claim key (nothing injected). Rehearsal step 1's setup: stock fedimintd
 # 0.12.0, 4 guardians, 3 of 4, one gateway, regtest; then w5b.mjs.
 #
-#   FEDIMINT_BIN=<released v0.12.0> LOCK_BIN=<blwp-stake-lock, the seats' port>
+#   FEDIMINT_BIN=<released v0.12.0> LOCK_BIN=<blwp-stake-lock, the signer nodes' port>
 #     bash tools/w5b-regtest.sh
 set -uo pipefail
 : "${FEDIMINT_BIN:?}" ; : "${LOCK_BIN:?}"

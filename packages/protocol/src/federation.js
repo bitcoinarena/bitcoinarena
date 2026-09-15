@@ -6,7 +6,7 @@
 // valid for a paying round only if at least its own threshold of guardians are
 // DISTINCT BONDED CENSUS NODES at census_height, each advertising that guardian
 // peer key under guardian_of[] (§5A.1) with a bond at or above the bracket's
-// bond_min_settlement, so a guardian who colludes is slashable like any seat."
+// bond_min_settlement, so a guardian who colludes is slashable like any signer node."
 //
 // This is that count, over the census the client already derived from Bitcoin.
 // The other two conditions are not here: that the config the client fetched

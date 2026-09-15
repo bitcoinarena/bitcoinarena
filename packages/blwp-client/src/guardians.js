@@ -2,29 +2,29 @@
 // 2026-09-15 07:33: "every guardian / node must have its own bond or it may not
 // take part. federationIsBonded stays on").
 //
-// A seat counts them before it seats a paying round (server.js guardiansBonded),
-// and the page used to take that on the seats' word: the seats are the ones a
+// A signer node counts them before it signer nodes a paying round (server.js guardiansBonded),
+// and the page used to take that on the signer nodes' word: the signer nodes are the ones a
 // creator could have chosen. Here the page counts on its own evidence, every
 // piece of it checked rather than handed over:
 //
 //   the guardians   off the config the page's own lock client downloaded from
 //                   the federation it joined (lock client `guardians()`: the
-//                   broadcast keys and fedimint's threshold) - not a seat's list;
+//                   broadcast keys and fedimint's threshold) - not a signer node's list;
 //   the chain       headers the page agreed from independent providers
 //                   (`agreedChain`), each linked and mined;
 //   each bond       a transaction proven into a block of that chain, committing
 //                   to an advertisement signed by the node it names, at least the
 //                   round's census_confirmations deep, worth at least its bond_min.
 //
-// WHERE THE BONDS COME FROM IS A HINT. A seat, a provider, a list on the page -
+// WHERE THE BONDS COME FROM IS A HINT. A signer node, a provider, a list on the page -
 // whoever names candidate guardian nodes can only omit, never forge: an offer
 // that does not prove is set aside with its reason, and the count is only over
 // what proved. Omitting enough to fall under the threshold is a refusal, which
 // is where a lie about the list can take a player: to no round, not to a bad one.
 //
 // NOT CHECKED HERE: whether a proven bond is still unspent. Headers carry no
-// spends, and the seat's census reads them from the chain it indexed. A spent
-// bond counted here is one a seat's own count refuses.
+// spends, and the signer node's census reads them from the chain it indexed. A spent
+// bond counted here is one a signer node's own count refuses.
 import { acceptAdvert, chainWork } from '../../protocol/src/chain.js';
 import { advertId } from '../../protocol/src/advert.js';
 import { federationIsBonded } from '../../protocol/src/federation.js';
@@ -43,8 +43,8 @@ export function guardiansOf(answer) {
 }
 
 /**
- * A seat's /guardian-bonds answer as offers: hex to bytes, nothing believed.
- * The seat names candidates; `bondedGuardians` is what decides.
+ * A signer node's /guardian-bonds answer as offers: hex to bytes, nothing believed.
+ * The signer node names candidates; `bondedGuardians` is what decides.
  */
 export function offersFrom(answer) {
   const a = typeof answer === 'string' ? JSON.parse(answer) : answer;

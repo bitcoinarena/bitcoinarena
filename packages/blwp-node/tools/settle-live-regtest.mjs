@@ -1,9 +1,9 @@
-// THE WHOLE SETTLEMENT ON A REAL FEDERATION (W4): two seats of a lock round, each
+// THE WHOLE SETTLEMENT ON A REAL FEDERATION (W4): two signer nodes of a lock round, each
 // with its own port on the stock fedimint 0.12.0 client (blwp-stake-lock) and its
 // own joined client; a winner and a loser whose stake locks - and fee locks, only
-// where the gate says they pay a seat - are made by the page's wasm lock client;
-// both play to FINAL; the seats' one settlement claims the loser's lock (and the fee
-// locks), pays the winner and the sitting seats, under one committee signature
+// where the gate says they pay a signer node - are made by the page's wasm lock client;
+// both play to FINAL; the signer nodes' one settlement claims the loser's lock (and the fee
+// locks), pays the winner and the sitting signer nodes, under one committee signature
 // after the window. Run twice: a 100 sat round and a 1000 sat round.
 // Driven by settle-live-regtest.sh (the federation, the gateway, the deposit).
 import { execFile, spawn } from 'node:child_process';
@@ -24,7 +24,7 @@ import { replay as replayUnder } from '../src/replay.js';
 import { TRUCK } from '../src/cores.js';
 // THE TRUCK'S RUNS, REPLAYED UNDER THE TRUCK (M3 R1): replay takes the core it runs under; these are truck runs.
 const replay = (t, e, o = {}) => replayUnder(t, e, { core: TRUCK, ...o });
-import { assumeSeated } from '../test/seating.js';
+import { assumeAssigned } from '../test/assignment.js';
 import { rand, b32, RANDOMNESS, WINDOW_MS, GENESIS_HASH, wordsAt, contractFor, say as tell, secretScalar, opts, wait } from '../test/window-fixture.js';
 import { lockFromClient } from '../../blwp-client/src/lock-result.js';
 import { feeLockPays } from '../../protocol/src/lock-settlement.js';
@@ -59,9 +59,9 @@ if (typeof globalThis.window === 'undefined') globalThis.window = globalThis;
 const require = createRequire(import.meta.url);
 const { LockClient } = require(`${env.WASM_PKG}/blwp_lock_client.js`);
 
-// SEAT B'S OWN CLIENT OF THE FEDERATION: two seats settling at once cannot share one database.
+// SIGNER NODE B'S OWN CLIENT OF THE FEDERATION: two signer nodes settling at once cannot share one database.
 const joinedB = await run(`${env.FEDIMINT_BIN}/fedimint-cli`, ['--data-dir', `${P}/client2`, 'join', env.INVITE], { env: { ...env, HOME: env.FEDIMINT_HOME } });
-out({ step: 'seat B joins the federation', ok: !joinedB.err, why: joinedB.err ? joinedB.se.trim().split('\n').pop() : 'joined' });
+out({ step: 'signer node B joins the federation', ok: !joinedB.err, why: joinedB.err ? joinedB.se.trim().split('\n').pop() : 'joined' });
 const ports = [stakeLockPort({ bin: env.LOCK_BIN, dataDir: `${P}/client` }), stakeLockPort({ bin: env.LOCK_BIN, dataDir: `${P}/client2` })];
 
 // THE PLAYERS' LOCK CLIENT (the page's wasm), funded once.
@@ -77,10 +77,10 @@ out({ step: 'the federation\'s fee rule', rule });
 
 // THE GUARDIANS' BLOCK COUNT REACHES THE CHAIN BEFORE ANY LOCK. The setup mines in
 // batches, and the federation's consensus count comes after: a lock made below it is
-// short of what a seat checks it against (measured twice: "expires at 452, before
+// short of what a signer node checks it against (measured twice: "expires at 452, before
 // 315 + 144", then "before 314 + 144" - after three reads 5 s apart had agreed on
 // 302, so the count does not creep, it holds and jumps). Measured here against
-// bitcoind's own height: every 5 s, both seats' counts and the chain's, until the
+// bitcoind's own height: every 5 s, both signer nodes' counts and the chain's, until the
 // guardians' reach the chain (or 300 s).
 const nowhere = { txid: new Uint8Array(32), outIdx: 0n };
 const countsNow = async () => Promise.all(ports.map(async (p) => (await p.status(nowhere)).blockCount));
@@ -100,9 +100,9 @@ const chainHeight = async () => Number((await run(`${env.BITCOIN_BIN}/bitcoin-cl
 }
 
 /**
- * A world secret under which the seats' own replay says `want` for this entry, and the
+ * A world secret under which the signer nodes' own replay says `want` for this entry, and the
  * tick it is reached by - no later than `lastTick`, the round's first-mark deadline:
- * the driver sends one first mark, and past that line a seat refuses it as FORFEIT
+ * the driver sends one first mark, and past that line a signer node refuses it as FORFEIT
  * (measured: a loser world decided at tick 2040, deadline 1400).
  */
 function worldFor(base, want, lastTick) {
@@ -252,7 +252,7 @@ const tabState = (b) => b.evaluate(`JSON.stringify({ lockJoin: !!window.BLWP_LOC
 
 /**
  * A RELOAD BEFORE THE COLLECT (6d leftover 1): the winner's tab is handed its join
- * state before the close, left until its collect has asked (the seats have not
+ * state before the close, left until its collect has asked (the signer nodes have not
  * settled yet), and reloaded - what a player's refresh during the window is. The
  * round is then settled; what the reloaded page does is read after.
  */
@@ -357,7 +357,7 @@ async function collectOnScreen({ p, c, rid, urls, stakeMsat, held, payoutAt }) {
  * A WITHDRAWAL CLAIMED ON ANOTHER DEVICE, AND A WITHDRAW CUT OFF AFTER ITS COLLECT (spec §24,
  * the owner 2026-09-14). alice's desktop looks and is closed with no withdraw; her "iPhone" - another
  * browser profile - holds only her seed (the page's importSeed) and runs the page's own scan over
- * the seats (BLWP_FIND_OWED: /settled, its key matched locally); its Withdraw collects and is cut
+ * the signer nodes (BLWP_FIND_OWED: /settled, its key matched locally); its Withdraw collects and is cut
  * off before the pay-out (the wallet never answers the invoice ask) and the browser is closed; the
  * phone's next start - the same profile - reopens the kept round and its wallet from the browser's
  * storage, and its Withdraw pays alice.
@@ -373,7 +373,7 @@ async function claimOnAnotherDevice({ p, c, rid, urls, stakeMsat, held, payoutAt
     forUnity: window.BLWP_WITHDRAW_AVAILABLE ? window.BLWP_WITHDRAW_AVAILABLE() : null,
     kept: Object.keys(window.localStorage).filter((k) => k.startsWith('blwp.collect.')).length,
     step: window.BLWP_WITHDRAW_STEP || '' }, (k, v) => (typeof v === 'bigint' ? String(v) : v))`).then((x) => JSON.parse(x || '{}'));
-  // THE LOBBY THE PHONE COMES BACK TO: a lobby link of the Daily's form (both seats, the bond at seat
+  // THE LOBBY THE PHONE COMES BACK TO: a lobby link of the Daily's form (both signer nodes, the bond at signer node
   // A, the federation) - the advertisement a placeholder of its form, which the lobby never reads.
   const lobbyUrl = `${url}?node=${urls.join(',')}&bond=${urls[0]}/bond&advert=${'00'.repeat(64)}&federation=${env.INVITE}`;
   const lookIn = async (b, done, ms = 180000) => {
@@ -396,7 +396,7 @@ async function claimOnAnotherDevice({ p, c, rid, urls, stakeMsat, held, payoutAt
   try { await d.b.evaluate(injectFor(p, c, rid, urls)); res.desktop = await lookIn(d.b, owedSome); } finally { await d.b.close(); }
   res.afterDesktop = await federation();
 
-  // 2. THE PHONE: another browser; only the seed brought in; the page's own scan over the seats.
+  // 2. THE PHONE: another browser; only the seed brought in; the page's own scan over the signer nodes.
   const ph = await open(phone);
   if (ph.error) return { ...res, error: ph.error, logs: ph.logs };
   try {
@@ -448,26 +448,26 @@ async function claimOnAnotherDevice({ p, c, rid, urls, stakeMsat, held, payoutAt
   return res;
 }
 
-// W6 LIVE (W6_KILL=1): the seats keep their stores in files, and the process is SIGKILLed the moment
-// the real guardians have answered a signed settlement - before any seat can write that answer down.
-// What a restart needs (the seats' ports, the round, what the settlement moves) is written first,
-// synchronously; settle-live-w6-resume.mjs starts the seats again on the same stores and ports.
+// W6 LIVE (W6_KILL=1): the signer nodes keep their stores in files, and the process is SIGKILLed the moment
+// the real guardians have answered a signed settlement - before any signer node can write that answer down.
+// What a restart needs (the signer nodes' ports, the round, what the settlement moves) is written first,
+// synchronously; settle-live-w6-resume.mjs starts the signer nodes again on the same stores and ports.
 const W6 = { state: {} };
 const dyingAfterAnswer = (p, i) => Object.assign(Object.create(p), {
   async settle(args) {
     const r = await p.settle(args);
     if (!args.signature) return r;
-    const kill = { seat: i, txid: r.txid, accepted: r.accepted, error: r.error || null, ...W6.state,
+    const kill = { signerNode: i, txid: r.txid, accepted: r.accepted, error: r.error || null, ...W6.state,
       claims: args.claims.map((c) => key(c.outpoint)), payouts: args.payouts.length };
     writeFileSync(`${P}/w6-kill.json`, JSON.stringify(kill));
-    writeSync(1, JSON.stringify({ step: 'W6: the real guardians answered the signed settlement; SIGKILL before any seat writes it', ...kill }) + '\n');
+    writeSync(1, JSON.stringify({ step: 'W6: the real guardians answered the signed settlement; SIGKILL before any signer node writes it', ...kill }) + '\n');
     process.kill(process.pid, 'SIGKILL');
     return r;
   },
 });
 async function round(stakeMsat) {
   const w6 = env.W6_KILL === '1';
-  const mk = (i) => serve(openStore(w6 ? `${P}/seat-${i}.sqlite` : ':memory:'),
+  const mk = (i) => serve(openStore(w6 ? `${P}/signer node-${i}.sqlite` : ':memory:'),
     { port: 0, ...opts, stakeLocks: w6 ? dyingAfterAnswer(ports[i], i) : ports[i], poolCurve: curve, finality: { everyMs: 250 } });
   const a = await mk(0); const b = await mk(1);
   W6.state.ports = [a.port, b.port];
@@ -483,10 +483,10 @@ async function round(stakeMsat) {
     for (const d of [a, b]) {
       const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
       if (r.status !== 201) throw new Error(`round: ${r.status} ${await r.text()}`);
-      assumeSeated(d.round, rid, c.nodes);
+      assumeAssigned(d.round, rid, c.nodes);
     }
     for (let pass = 0; pass < 2; pass++) for (const d of [a, b]) await d.dkg.run(c.nodes);
-    const claimPk = a.dkg.seatFor(c.nodes).pool.groupPublicKey;
+    const claimPk = a.dkg.signerNodeFor(c.nodes).pool.groupPublicKey;
     const gate = feeLockPays({ contract: c, fees });
     out({ round: `${stakeMsat / 1000n} sat`, roundId: toHex(rid), gate: { mints: gate.pays, lock: gate.lockMsat, why: gate.why.slice(0, 110) } });
 
@@ -498,7 +498,7 @@ async function round(stakeMsat) {
       const session = ed25519.utils.randomSecretKey();
       const preimage = secretScalar();
       const e = rand(32);
-      const dealt = await dealHandout({ preimage, seats: c.nodes, roundId: rid, playerPubkey, ephemeralSecret: e, ephemeralPubkey: feldmanGroup.pointX(e),
+      const dealt = await dealHandout({ preimage, signerNodes: c.nodes, roundId: rid, playerPubkey, ephemeralSecret: e, ephemeralPubkey: feldmanGroup.pointX(e),
         coefficients: [scalarFrom32(rand(32)) % FIELD], needed: 2, curve: feldmanGroup });
       const base = { roundId: rid, playerPubkey, sessionPubkey: ed25519.getPublicKey(session), stakeCommitment: sha256(preimage), stakeMsat,
         feeMsat: entryFeeMsat(stakeMsat), donationMsat: 0n, joinTick: 0, vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0],
@@ -532,21 +532,21 @@ async function round(stakeMsat) {
         const lk = await fetch(`${base2}/lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(stake.fields)) });
         const fl = fee ? await fetch(`${base2}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(fee.fields)) }) : null;
         handed.push(`lock ${lk.status}${fl ? `, fee-lock ${fl.status}` : ''}`);
-        if (lk.status !== 201) throw new Error(`seat ${d.port} answered the stake lock ${lk.status}: ${await lk.text()}`);
-        if (fl && fl.status !== 201) throw new Error(`seat ${d.port} answered the fee lock ${fl.status}: ${await fl.text()}`);
+        if (lk.status !== 201) throw new Error(`signer node ${d.port} answered the stake lock ${lk.status}: ${await lk.text()}`);
+        if (fl && fl.status !== 201) throw new Error(`signer node ${d.port} answered the fee lock ${fl.status}: ${await fl.text()}`);
         const took = await tell(d.port, encodeInputBatch(input));
-        if (took !== String(world.ticks)) throw new Error(`the batch was not taken by seat ${d.port}: ${took}`);
+        if (took !== String(world.ticks)) throw new Error(`the batch was not taken by signer node ${d.port}: ${took}`);
         const receipt = await tell(d.port, signedMark);
-        if (receipt.length !== SIGNED_RECEIPT_BYTES) throw new Error(`the mark at tick ${world.ticks} was not receipted by seat ${d.port}: ${typeof receipt === 'string' ? receipt : `${receipt.length} bytes`}`);
+        if (receipt.length !== SIGNED_RECEIPT_BYTES) throw new Error(`the mark at tick ${world.ticks} was not receipted by signer node ${d.port}: ${typeof receipt === 'string' ? receipt : `${receipt.length} bytes`}`);
       }
       out({ player: want, expiration: stake.fields.expiration, countsAfterHandOver: await countsNow(), chain: await chainHeight(),
         stakeLock: `${key(stake.outpoint)} ${stake.fields.amountMsat} msat`, feeLock: fee ? `${key(fee.outpoint)} ${fee.fields.amountMsat} msat` : 'none (the gate)',
-        world: `ticks ${world.ticks}`, seats: handed });
+        world: `ticks ${world.ticks}`, signerNodes: handed });
       players.push({ want, seed, playerPubkey, stake, fee, eid });
     }
 
     // PICK (a) (the owner 2026-09-14): A THIRD PLAYER WHO LOCKS A STAKE AND BRINGS NO FEE LOCK. Where
-    // the gate mints, each seat must refuse the entry at the door - not seated, its stake not
+    // the gate mints, each signer node must refuse the entry at the door - not joined, its stake not
     // counted, its lock still its own - and the two who brought theirs settle as before.
     let bare = null;
     // SKIP_REFUSED=1: no third player (its expiry refund mines ~160 blocks - the slow part of a run
@@ -556,7 +556,7 @@ async function round(stakeMsat) {
       const playerPubkey = playerFor({ ...c, id: rid }, { seed, curve: pageCurve }).pubkey;
       const preimage = secretScalar();
       const e = rand(32);
-      const dealt = await dealHandout({ preimage, seats: c.nodes, roundId: rid, playerPubkey, ephemeralSecret: e, ephemeralPubkey: feldmanGroup.pointX(e),
+      const dealt = await dealHandout({ preimage, signerNodes: c.nodes, roundId: rid, playerPubkey, ephemeralSecret: e, ephemeralPubkey: feldmanGroup.pointX(e),
         coefficients: [scalarFrom32(rand(32)) % FIELD], needed: 2, curve: feldmanGroup });
       const entryBase = { roundId: rid, playerPubkey, sessionPubkey: ed25519.getPublicKey(ed25519.utils.randomSecretKey()), stakeCommitment: sha256(preimage), stakeMsat,
         feeMsat: entryFeeMsat(stakeMsat), donationMsat: 0n, joinTick: 0, vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0],
@@ -566,17 +566,17 @@ async function round(stakeMsat) {
       const stake = lockFromClient(await lc.lock(toHex(entryBase.stakePoint), String(net), toHex(claimPk), toHex(refundPk), 150), { point: entryBase.stakePoint, claimPk, refundPk });
       const entry = { ...entryBase, feePreimage: new Uint8Array(32), stakeLockOutpoint: stake.outpoint, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n } };
       const eid = entryId(entry);
-      const seats = [];
+      const signerNodes = [];
       for (const d of [a, b]) {
         const at = `http://127.0.0.1:${d.port}`;
         await fetch(`${at}/handout`, { method: 'POST', body: encodeHandout(dealt.handout) });
         const en = await fetch(`${at}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
-        seats.push({ entry: en.status, why: en.status === 201 ? 'seated' : await en.text(), stored: !!d.round.entry(eid), seen: !!d.round.stakeSeen(eid) });
+        signerNodes.push({ entry: en.status, why: en.status === 201 ? 'joined' : await en.text(), stored: !!d.round.entry(eid), seen: !!d.round.stakeSeen(eid) });
       }
-      bare = { stake, seats, seed, preimage, handout: dealt.handout, playerPubkey };
+      bare = { stake, signerNodes, seed, preimage, handout: dealt.handout, playerPubkey };
       out({ round: `${stakeMsat / 1000n} sat`, check: 'a player with a stake lock and no fee lock, at the door',
-        stakeLock: `${key(stake.outpoint)} ${stake.fields.amountMsat} msat`, seats,
-        seatedSet: [a, b].map((d) => d.round.entriesOf(rid).length) });
+        stakeLock: `${key(stake.outpoint)} ${stake.fields.amountMsat} msat`, signerNodes,
+        joinedSet: [a, b].map((d) => d.round.entriesOf(rid).length) });
     }
 
     // 6d LEFTOVER 1: the winner's tab reloaded while its collect waits (RELOAD_BEFORE_COLLECT, 1000 sat).
@@ -597,14 +597,14 @@ async function round(stakeMsat) {
     if (got && got.moved) for (let i = 0; i < got.moved.payouts.length; i++) payoutsStored.push(await held({ txid: fromHex(got.moved.txid), outIdx: BigInt(i) }));
     const verifies = !!(got && got.signature) && schnorr.verify(fromHex(got.signature), fromHex(got.message), claimPk.subarray(1));
     out({
-      round: `${stakeMsat / 1000n} sat`, settlement: got && got.state, why: got && got.why, seatBHolds: atB.state, txid: got && got.txid,
+      round: `${stakeMsat / 1000n} sat`, settlement: got && got.state, why: got && got.why, signerNodeBHolds: atB.state, txid: got && got.txid,
       oneSignatureVerifiesUnderClaimKey: verifies, madeAfterCloseMs: got && got.madeMs ? got.madeMs - closedAt : null, windowMs: WINDOW_MS,
       moved: got && got.moved,
       federation: {
         loserStakeLockHeld: await held(loser.stake.outpoint), winnerStakeLockHeld: await held(winner.stake.outpoint),
         feeLocksHeld: await Promise.all(players.filter((p) => p.fee).map((p) => held(p.fee.outpoint))), payoutsStored,
       },
-      winnerKey: toHex(refundKeyOf(winner.playerPubkey)).slice(0, 12), seatKeys: c.nodes.map((k) => toHex(refundKeyOf(k)).slice(0, 12)),
+      winnerKey: toHex(refundKeyOf(winner.playerPubkey)).slice(0, 12), signerNodeKeys: c.nodes.map((k) => toHex(refundKeyOf(k)).slice(0, 12)),
     });
 
     if (reloaded) {
@@ -653,7 +653,7 @@ async function round(stakeMsat) {
       out({ round: `${stakeMsat / 1000n} sat`, page: p.want, collected: r.ok, final: r.final, lockClientJoins: joins, outIdx: r.outIdx,
         payoutMsat: r.amountMsat, walletBefore: r.balance_before, walletAfter: r.balance_after,
         payoutStillHeldAfter: at ? await held(at) : null, screen: payoutLine(r) });
-      // AND ITS OWN STAKE BACK BY THE SEATS' FORFEIT, into the same wallet (6d).
+      // AND ITS OWN STAKE BACK BY THE SIGNER NODES' FORFEIT, into the same wallet (6d).
       const joinsBefore = joins;
       const heldBefore = await held(p.stake.outpoint);
       const back = await returnStake({ round: c, roundId: rid, invite: env.INVITE, seed: p.seed, curve: pageCurve, LockClient: Counting,
@@ -681,10 +681,10 @@ async function round(stakeMsat) {
       if (r.client && typeof r.client.free === 'function') r.client.free();
     }
     // W4 / 6d: THE PLAYER THE DOOR REFUSED GETS ITS STAKE BACK BY ITS OWN KEY AFTER EXPIRY - the
-    // page's own refundKept from its seed and tab wallet (no seat ever verified the lock): before
+    // page's own refundKept from its seed and tab wallet (no signer node ever verified the lock): before
     // the expiry it waits and says when; the chain is mined past it; then the refund, then the withdraw.
     // ON SCREEN (PAGE_DIR): THE REFUSED PLAYER'S OWN TAB - handed the two records its join keeps
-    // (saveLock: the stake and its lock; saveCollect: the round, the seats, the seed), then left to
+    // (saveLock: the stake and its lock; saveCollect: the round, the signer nodes, the seed), then left to
     // its own collect loop: before the expiry it must say when; after it, refund by its own key.
     let tab = null;
     if (bare && env.PAGE_DIR) {

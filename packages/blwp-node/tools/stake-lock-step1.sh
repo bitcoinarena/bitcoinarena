@@ -72,7 +72,7 @@ say "DEPOSIT: $DEPOSIT_MSAT msat invoice through the gateway; alice's $PAY; rece
 # ---- 2. KEYS ----
 KEYS=$(node $HERE/stake-lock-keys.mjs $P/keys.json)
 CLAIM=$(echo "$KEYS" | js 'o=>o.claimPk'); REFUND=$(echo "$KEYS" | js 'o=>o.refundPk'); HASH=$(echo "$KEYS" | js 'o=>o.hash')
-say "KEYS: committee (2-of-2, both seats reached it) $CLAIM; player $REFUND; H(P) $HASH"
+say "KEYS: committee (2-of-2, both signer nodes reached it) $CLAIM; player $REFUND; H(P) $HASH"
 
 # ---- 3. LOCK, 4. READ ----
 H0=$(bcn getblockcount)

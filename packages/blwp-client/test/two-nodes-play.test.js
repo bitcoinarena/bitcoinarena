@@ -1,7 +1,7 @@
 // TWO NODES, ONE PAGE, THE OTHER TRUCK.
 //
 // The 2-of-2 already runs: two daemons, two identities, one contract naming
-// both seats. This is what a PLAYER sees of it - the pictures that reach the
+// both signer nodes. This is what a PLAYER sees of it - the pictures that reach the
 // page for the other identity's truck, and whether they are that identity's
 // own run rather than something the page made up.
 //
@@ -36,7 +36,7 @@ import { O_TRUCK, T_X, T_Z, T_HEADING } from '../../core/src/state.js';
 // The node fee is 27A.7's 2% of the stake, and the door checks it now
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
-import { assumeStakeSeen } from '../../blwp-node/test/seating.js';
+import { assumeStakeSeen } from '../../blwp-node/test/assignment.js';
 const require = createRequire(import.meta.url);
 const core = require('../../core/dist/blwp-core.js');
 
@@ -57,7 +57,7 @@ test('two daemons, one page: the other truck arrives where its own transcript pu
   const a = await serve(openStore(':memory:'), { port: 0, ...FUNDED });
   const b = await serve(openStore(':memory:'), { port: 0, ...FUNDED });
   try {
-    // ONE CONTRACT, TWO SEATS - the 2-of-2 that already runs.
+    // ONE CONTRACT, TWO SIGNER NODES - the 2-of-2 that already runs.
     const contract = {
       networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 6,
       gameVerifySlots: 2, settlementSlots: 2, simCoreHash: TRUCK_CORE_HASH,
@@ -82,7 +82,7 @@ test('two daemons, one page: the other truck arrives where its own transcript pu
     };
     const eid = await client.join(mine);
     // Both daemons gate play on having seen the stake (23.1 step 5); each one
-    // that seated this entry is told it did.
+    // that joined this entry is told it did.
     for (const n of [a, b]) if (n.round.entry(entryIdOf(mine))) assumeStakeSeen(n.round, mine);
     await client.connect();
     client.setRound({ roundId: rid, entryId: eid, blockTicks: contract.blockTicks });

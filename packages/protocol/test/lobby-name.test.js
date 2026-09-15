@@ -1,4 +1,4 @@
-// A SEATED PLAYER'S NAME RECORD (M3.3-34): one canonical encoding, every field
+// A JOINED PLAYER'S NAME RECORD (M3.3-34): one canonical encoding, every field
 // in the signed id, a name signed only as it is kept, and nothing else decodes.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

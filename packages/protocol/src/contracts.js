@@ -131,7 +131,7 @@ export function encodeRoundContract(c) {
   // from. Section 6 lists both; this contract carried neither, and in their
   // place it carried a `committee_seed` - thirty-two bytes the AUTHOR wrote,
   // which the lottery read. That is the grinding attack 5A.5 exists to close:
-  // 34 offline tries were enough to seat a chosen pair out of eight bonded
+  // 34 offline tries were enough to assign a chosen pair out of eight bonded
   // nodes. The seed is derived from the beacon now, so the field is gone, and
   // these two say WHICH beacon and WHEN - never its value, which does not
   // exist yet when a round is published.
@@ -141,7 +141,7 @@ export function encodeRoundContract(c) {
   w.str(c.randomnessRule);
 
   // WHERE TRANSCRIPTS, ATTESTATIONS AND OBJECTIONS ARE POSTED, section 6
-  // (v4.6.2) and 13A: a result is FINAL only once >=5 settlement seats have
+  // (v4.6.2) and 13A: a result is FINAL only once >=5 settlement signer nodes have
   // posted its transcript to these. "Data in the contract - any URL, any
   // relay, several - never infrastructure of this protocol." In the author's
   // order, because that order is what they signed.
@@ -154,7 +154,7 @@ export function encodeRoundContract(c) {
     throw new Error('publicationRelays is a list of URLs, and it may be empty');
   w.vec(c.publicationRelays, (s, ww) => ww.str(s));
 
-  // HOW MANY SEATS EACH POOL HAS, section 5A.7: "GAME/VERIFY: 7 slots... 
+  // HOW MANY SIGNER NODES EACH POOL HAS, section 5A.7: "GAME/VERIFY: 7 slots... 
   // SETTLEMENT: 7 slots". Section 6 carries them and says what they mean:
   // "echoed for readability; MUST equal genesis_parameters, which network_id
   // commits to. A contract disagreeing with the network it names is invalid,
@@ -332,14 +332,14 @@ export function encodeEntryContract(e) {
 
   // THE STAKE LOCK'S HALF OF THE ENTRY, section 7 (v4.6.2), §23.1 steps 0-5:
   //
-  //   stake_point                P.G - a POINT, so a seat can check Feldman's
+  //   stake_point                P.G - a POINT, so a signer node can check Feldman's
   //                              A0 against it; with only H(P) a loser could
   //                              deal consistent shares of Q != P and escape
   //                              at expiry (F1)
   //   fee_preimage               F in clear: opens the fee lock once FINAL
   //   stake_lock_outpoint,       where the federation holds the two locks -
   //   fee_lock_outpoint          Fedimint's (txid, out_idx)
-  //   claim_key_attestation_ref  the >=5 seat signatures on (round_id, claim_pk)
+  //   claim_key_attestation_ref  the >=5 signer node signatures on (round_id, claim_pk)
   //
   // `stakeCommitment` = H(P) stays above them while the hold invoice is the
   // path that ships: its payment hash is that hash. Zeros in every one of these
@@ -394,7 +394,7 @@ export const entryId = (e) => taggedHash(TAG.entryContract, encodeEntryContract(
 
 /**
  * DO THE SHARES OPEN TO THE LOCK'S OWN SECRET? §23.1 step 2 (v4.6.2, F1): "Each
- * seat verifies its share against the commitments AND THAT THE CONSTANT
+ * signer node verifies its share against the commitments AND THAT THE CONSTANT
  * COMMITMENT A0 EQUALS stake_point, and refuses the entry otherwise."
  *
  * Byte equality of two compressed points is point equality. An entry naming no
@@ -440,7 +440,7 @@ export function stakePointIsTheHandouts(entry, handout) {
  */
 //
 // AND SINCE M3 R1 R3 (the owner 2026-09-15 08:07: several cores at once) "the core" is the ROUND'S core
-// under the round's config - handed in as `coreTicks` by whoever resolved it (the seat's cores.js) -
+// under the round's config - handed in as `coreTicks` by whoever resolved it (the signer node's cores.js) -
 // and no longer the truck's BLOCK_TICKS read from its rules: the protocol names no game.
 export function runLengthIsTheCores(contract, coreTicks) {
   if (!contract || !Number.isInteger(contract.blockTicks))
@@ -582,7 +582,7 @@ export function federationIsNamed(c) {
 /**
  * CAN THIS ROUND'S TRANSCRIPTS BE POSTED ANYWHERE? Every relay a URL, each
  * once (§13A) - and at least one on a round that takes a stake. Since P2 no
- * result is FINAL until the round's settlement seats have posted its
+ * result is FINAL until the round's settlement signer nodes have posted its
  * transcript to these relays, so a paying round naming none could never settle
  * a stake it took: measured, two daemons opened one, held both players' stakes
  * and were still provisionally final after the window. A free round moves no

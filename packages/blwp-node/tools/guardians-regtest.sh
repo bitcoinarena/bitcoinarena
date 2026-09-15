@@ -63,7 +63,7 @@ RC=$?
 
 # THE PAGE'S OWN READ (WASM_PKG, optional: a wasm-bindgen --target web output of the lock client).
 # The page joins the federation by the invite with the stock client compiled to wasm and reads the
-# guardians off the config it downloaded - it must name what the seat's tool names, key for key.
+# guardians off the config it downloaded - it must name what the signer node's tool names, key for key.
 if [ -n "${WASM_PKG:-}" ] && [ $RC -eq 0 ]; then
   INVITE=$(echo "$UP" | grep -oE 'invite=[^ ]+' | tail -1 | cut -d= -f2-)
   G="$G" INVITE="$INVITE" WASM_PKG="$WASM_PKG" timeout 150 node --input-type=module -e '

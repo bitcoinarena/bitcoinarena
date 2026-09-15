@@ -7,13 +7,13 @@
 // all read off the round, the dealt stake and the attested claim key - and it
 // refuses an answer that is not the lock it asked for (`lockFromClient`).
 //
-// AND IT HANDS THE LOCK TO THE SEATS once they hold the entry: a seat verifies
+// AND IT HANDS THE LOCK TO THE SIGNER NODES once they hold the entry: a signer node verifies
 // it in the federation and only then counts the stake (§23.1 step 5).
 //
 // A RELOAD LOSES NOTHING. The lock client's wallet is kept in the tab
 // (`lockStoreFor`), so a reload between the deposit and the lock reopens the
-// wallet that holds it; and a lock already made, that no seat has committed
-// yet, is kept with its stake (`saveLock`), so a reload before the seat takes
+// wallet that holds it; and a lock already made, that no signer node has committed
+// yet, is kept with its stake (`saveLock`), so a reload before the signer node takes
 // the entry uses that lock instead of dealing and paying again.
 import { taggedHash, toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
 import { TAG } from '../../protocol/src/constants.js';
@@ -27,9 +27,9 @@ import { roundLocks, playerFor } from './join.js';
 import { encodeRoundContract, decodeRoundContract, roundId as roundIdOf, custodyFieldsAreValid } from '../../protocol/src/contracts.js';
 import { decodeBolt11 } from '../../protocol/src/bolt11.js';
 
-// THE BLOCKS OVER stake_expiry_blocks A LOCK IS MADE FOR. The seat requires
+// THE BLOCKS OVER stake_expiry_blocks A LOCK IS MADE FOR. The signer node requires
 // expiration >= its federation height + 144 when it verifies, and the chain
-// moves between the lock and the check; W1a locked with 150 and both seats
+// moves between the lock and the check; W1a locked with 150 and both signer nodes
 // committed. How large this margin must be is a parked ruling (the expiry
 // margin, §23.1 step 4 vs step 5) - it is W1a's number, named, not a choice.
 export const LOCK_EXPIRY_MARGIN_BLOCKS = 6;
@@ -93,9 +93,9 @@ export function lockLine(stakeLock) {
 
 /**
  * The net stake a lock holds: the stake less the node fee and the player's own
- * donation (§22A) - the same net the seat's stake-lock check wants. It assumed
+ * donation (§22A) - the same net the signer node's stake-lock check wants. It assumed
  * 0 before the page could write a donation (M3.2 6e): a 2% donor's lock would
- * have held 98000 msat where the seat wants 96000.
+ * have held 98000 msat where the signer node wants 96000.
  */
 export const lockAmountMsat = (round, donationMsat = 0n) => {
   const stakeMsat = BigInt(round.stakeMsat || 0n);
@@ -139,15 +139,15 @@ export async function lockStake({ round, roundId, invite, seed, stake, claimKey,
   // FUNDED FROM THE PLAYER'S OWN DEPOSIT. The federation's fee for the lock is
   // quoted as a dry run over the notes the client holds, so an empty client
   // cannot be quoted - measured on regtest, the first page rehearsal refused
-  // its seat with "Insufficient funds" before asking for any deposit. So the
+  // its signer node with "Insufficient funds" before asking for any deposit. So the
   // first deposit is the net stake and the stock fee allowance
   // (`LockClient.lockAllowanceMsat`); after it the quote decides, and a quote
   // that still finds the funds short is topped up by the allowance again.
   // THE FEE LOCK'S GATE (Pick b, the owner 2026-09-14): a fee lock is minted only
-  // when claiming it can pay every entitled sitting seat something after the
+  // when claiming it can pay every entitled sitting signer node something after the
   // federation's own fee on every input and output - read from the federation
-  // this client joined, not a seat's word. Under the ruled rule - no base fee,
-  // below - a 100 sat round's 2000 msat fee lock pays its seats and a 1000 sat
+  // this client joined, not a signer node's word. Under the ruled rule - no base fee,
+  // below - a 100 sat round's 2000 msat fee lock pays its signer nodes and a 1000 sat
   // round's 20000 msat lock does; under the old 1000 msat base fee the 100 sat
   // one could not. No fee rule known: no lock.
   let feeRule = null;
@@ -170,7 +170,7 @@ export async function lockStake({ round, roundId, invite, seed, stake, claimKey,
   // (0.0.1236): the page quoted one 1000000 msat lock (1004544), held 1005056, made the 980000
   // stake lock (983552 with its fees), was left 21504 for a 20000 fee lock that costs more,
   // and the 556 msat top-up was refused - "Amount is too small to cover fees" - with the stake
-  // already locked and no seat. Two locks are two transactions, each with its own fees.
+  // already locked and no signer node. Two locks are two transactions, each with its own fees.
   const fund = async (msats) => {
     const total = msats.reduce((t, m) => t + m, 0n);
     const allowance = msats.reduce((t, m) => t + BigInt(LockClient.lockAllowanceMsat(String(m))), 0n);
@@ -245,9 +245,9 @@ const savedLockKey = (roundId, playerPubkey) => `blwp.lock.saved.${toHex(roundId
 
 /**
  * A LOCK THIS TAB MADE, WITH THE STAKE IT LOCKS - kept so a reload before any
- * seat has committed it uses the same stake and the same lock. The stake's
+ * signer node has committed it uses the same stake and the same lock. The stake's
  * preimage is kept where the player's seed already is (the tab's storage), and
- * its handout as the bytes the seats took.
+ * its handout as the bytes the signer nodes took.
  */
 export function saveLock(storage, { roundId, playerPubkey, stake, lock }) {
   storage.setItem(savedLockKey(roundId, playerPubkey), JSON.stringify({
@@ -261,7 +261,7 @@ export function saveLock(storage, { roundId, playerPubkey, stake, lock }) {
   }));
 }
 
-/** The kept lock for this round and player, rebuilt - or null. `committedTo` names the entry a seat committed it to. */
+/** The kept lock for this round and player, rebuilt - or null. `committedTo` names the entry a signer node committed it to. */
 export function savedLock(storage, { roundId, playerPubkey }) {
   let raw = null;
   try { raw = storage && storage.getItem(savedLockKey(roundId, playerPubkey)); } catch { return null; }
@@ -282,11 +282,11 @@ export function savedLock(storage, { roundId, playerPubkey }) {
   };
 }
 
-/** A seat committed the kept lock to `entryId`: from now on it is that seat's stake, not one to reuse. */
+/** A signer node committed the kept lock to `entryId`: from now on it is that entry's stake, not one to reuse. */
 /**
  * WHAT A TAB DOES WITH THE LOCK IT KEPT FOR THIS ROUND, ON A RELOAD (6d, W4 hole 1). None:
- * a new join. One no seat committed: the same stake and lock, no second deposit (W1b).
- * One a seat COMMITTED to an entry: that seat is taken and its stake is locked - measured
+ * a new join. One no signer node committed: the same stake and lock, no second deposit (W1b).
+ * One a signer node COMMITTED to an entry: that signer node is taken and its stake is locked - measured
  * before: the page dealt a new stake and set out to fund "980000 + 20000 msat of lock",
  * a second deposit for a round the player already stakes. The run itself cannot be
  * resumed (its session key lives in the player and is not kept), so the join stops, says
@@ -310,9 +310,9 @@ export function markLockCommitted(storage, { roundId, playerPubkey, entryId }) {
 /**
  * THE PLAYER'S LOCKS IN A ROUND, FOUND BY THEIR REFUND KEY (W5a): what a
  * session holding only the seed can ask - the refund key is derived from it,
- * the outpoint and stake point were random. Each seat answers with the locks it
+ * the outpoint and stake point were random. Each signer node answers with the locks it
  * verified; the lock client then refuses one the guardians do not hold as
- * rebuilt, so a lying seat can point at nothing this key can spend.
+ * rebuilt, so a lying signer node can point at nothing this key can spend.
  */
 export async function findLock({ roundId, playerPubkey, nodes, fetcher = fetch } = {}) {
   const refund = toHex(refundKeyOf(playerPubkey));
@@ -326,7 +326,7 @@ export async function findLock({ roundId, playerPubkey, nodes, fetcher = fetch }
         if (!found.has(l.outpoint))
           found.set(l.outpoint, { outpoint: { txid: fromHex(txid), outIdx: BigInt(outIdx) }, fields: lockFieldsFromJson(l.fields), entryId: l.entryId });
       }
-    } catch { /* a seat that does not answer is one of several */ }
+    } catch { /* a signer node that does not answer is one of several */ }
   }
   return [...found.values()];
 }
@@ -334,7 +334,7 @@ export async function findLock({ roundId, playerPubkey, nodes, fetcher = fetch }
 /**
  * THE PLAYER'S REFUND, FROM THE SEED ALONE (§23.2: the default path - nobody
  * acts, the lock expires, the player's key takes it back). The seed gives the
- * round's player key and the lock client's secret; the seats say where the lock
+ * round's player key and the lock client's secret; the signer nodes say where the lock
  * is; a fresh wallet under the seed's secret spends it with the player's key.
  * The guardians refuse it before the lock's expiration - reported, not thrown.
  */
@@ -360,11 +360,11 @@ export async function refundStake({ round, roundId, invite, seed, curve, LockCli
 }
 
 /**
- * THE COMMITTEE'S FORFEIT OF THIS PLAYER'S LOCK, from the seats (GET /forfeit,
+ * THE COMMITTEE'S FORFEIT OF THIS PLAYER'S LOCK, from the signer nodes (GET /forfeit,
  * W5b): a BIP-340 signature by the round's claim key over the lock's contract
- * id, made only for a qualifier after the window. The first seat that has it
- * answers; a loser's is refused by every seat, with the seats' reasons. The
- * lock client checks it under the contract (and the guardians again) - a seat
+ * id, made only for a qualifier after the window. The first signer node that has it
+ * answers; a loser's is refused by every signer node, with the signer nodes' reasons. The
+ * lock client checks it under the contract (and the guardians again) - a signer node
  * that answers with bytes that are not the forfeit gets nothing through.
  */
 export async function forfeitOf({ roundId, entryId, nodes, fetcher = fetch } = {}) {
@@ -384,7 +384,7 @@ export async function forfeitOf({ roundId, entryId, nodes, fetcher = fetch } = {
 /**
  * THE PLAYER'S REDEEM OF A FORFEITED LOCK, FROM THE SEED ALONE (§23.2 row 1:
  * "the player's own client redeems it, and only the player can"). The seed
- * gives the round's player key and the lock client's secret; the seats say
+ * gives the round's player key and the lock client's secret; the signer nodes say
  * where the lock is and give the committee's forfeit; a fresh wallet under the
  * seed's secret spends the lock with the player's key.
  */
@@ -419,9 +419,9 @@ export async function redeemStake({ round, roundId, invite, seed, curve, LockCli
 }
 
 /**
- * THE ROUND'S SETTLEMENT AS THE SEATS HOLD IT (GET /lock-settlement, W4): the first
- * seat whose settlement the guardians ACCEPTED - its txid and what it moved. The
- * guardians check every payout again when it is spent, so a seat that lies here
+ * THE ROUND'S SETTLEMENT AS THE SIGNER NODES HOLD IT (GET /lock-settlement, W4): the first
+ * signer node whose settlement the guardians ACCEPTED - its txid and what it moved. The
+ * guardians check every payout again when it is spent, so a signer node that lies here
  * points at nothing this key can take.
  */
 export async function settlementOf({ roundId, nodes, fetcher = fetch } = {}) {
@@ -440,7 +440,7 @@ export async function settlementOf({ roundId, nodes, fetcher = fetch } = {}) {
 
 /**
  * THE WINNER COLLECTS ITS PAYOUT (6d, W4): the pre-expired payout contract the
- * seats' one settlement made to this seed's key for this round, spent by Refund
+ * signer nodes' one settlement made to this seed's key for this round, spent by Refund
  * under that key - open at once, and only that key can. A loser, or a player the
  * table pays nothing on top of their own stake, finds no payout and is told so;
  * nothing is asked of the lock client then. The winner's own stake comes back by
@@ -487,13 +487,13 @@ export async function redeemPayout({ round, roundId, invite, seed, curve, LockCl
 const PAYOUT_NOTE = 'blwp.payout.';
 
 /**
- * AND THE PLAYER'S OWN STAKE BACK, AFTER THE WINDOW (6d, §23.2 row 1). The seats
+ * AND THE PLAYER'S OWN STAKE BACK, AFTER THE WINDOW (6d, §23.2 row 1). The signer nodes
  * forfeit a qualifier's lock only once its result is FINAL with the window closed;
- * the page asks only once the seats hold an ACCEPTED settlement, which they make
+ * the page asks only once the signer nodes hold an ACCEPTED settlement, which they make
  * only then. Given, the lock is redeemed into the tab's wallet (`redeemStake`) and
  * kept in the tab; refused because the run did not qualify, it is final - that
  * stake went into the round's pool - and the lock client is asked nothing; refused
- * for anything else (the window, a seat short), asked again.
+ * for anything else (the window, a signer node short), asked again.
  */
 export async function returnStake({ round, roundId, invite, seed, curve, LockClient, storage, nodes, fetcher = fetch,
   client = null, onStep = () => {} } = {}) {
@@ -515,7 +515,7 @@ export async function returnStake({ round, roundId, invite, seed, curve, LockCli
   }
   const rs = got.redeems;
   const ok = rs.length > 0 && rs.every((r) => r.accepted === true);
-  // ALREADY BACK: the seats forfeit only a qualifier's lock, and after that only this seed's
+  // ALREADY BACK: the signer nodes forfeit only a qualifier's lock, and after that only this seed's
   // refund key can spend it (the committee's claim needs P, which only a loser's gives up) -
   // so a lock the guardians no longer hold came back to this key already (another tab, a
   // reload mid-redeem). Final, and said so; measured before: "not back yet - ... No contract
@@ -535,11 +535,11 @@ const STAKE_NOTE = 'blwp.stakeback.';
 
 /**
  * WHAT A TAB STILL HAS TO COLLECT, KEPT IN THE TAB (6d). Measured before: a reload
- * after the seats committed the entry lost the collect's state - the join's lock
+ * after the signer nodes committed the entry lost the collect's state - the join's lock
  * branch is its only setter, and a reload does not pass it - and 60 s after the
  * settlement the federation still held the winner's 978000 msat payout and 980000
  * msat stake. So the join keeps, per round, what the collect needs (the round, the
- * invite, the seats, the tab's seed, the lock), and the page collects from these
+ * invite, the signer nodes, the tab's seed, the lock), and the page collects from these
  * records on every load until both answers are final.
  */
 export function saveCollect(storage, { roundIdHex, round, invite, nodes, seed, stakeLock = null } = {}) {
@@ -547,7 +547,7 @@ export function saveCollect(storage, { roundIdHex, round, invite, nodes, seed, s
     const key = `${COLLECT_NOTE}${roundIdHex}`;
     const was = storage.getItem(key);
     const done = was ? (JSON.parse(was).done || null) : null;
-    // THE LOCK IS FOR THE PANEL'S LINE ONLY - the collect finds the lock through the seats.
+    // THE LOCK IS FOR THE PANEL'S LINE ONLY - the collect finds the lock through the signer nodes.
     // Measured on 0.0.1236: a lock that did not encode threw the whole record away, and
     // with it the collect (978000 + 980000 msat left in the federation). Kept if it encodes.
     let lock = null;
@@ -594,9 +594,9 @@ const COLLECT_NOTE = 'blwp.collect.';
 /**
  * A WITHDRAWAL CLAIMED ON ANOTHER DEVICE (spec §24, the owner 2026-09-14: alice plays on her
  * desktop, forgets to withdraw, and two hours later plays on her iPhone). The iPhone holds only
- * the seed. Each seat lists the rounds it settled since `sinceMs` (/settled), each with the keys
+ * the seed. Each signer node lists the rounds it settled since `sinceMs` (/settled), each with the keys
  * its settlement pays and the refund keys of its verified locks; this seed's key for each round
- * is derived here and matched against them - the device asks nothing per round, so no seat
+ * is derived here and matched against them - the device asks nothing per round, so no signer node
  * learns which rounds it looks for. A matched round's contract is fetched (/round) and must be
  * its id and name a federation. Nothing is spent. Returns the rounds worth keeping - the page
  * keeps them and looks at them as its own.
@@ -631,7 +631,7 @@ export async function findOwedRounds({ seed, curve, nodes = [], fetcher = fetch,
         if (!r.ok) continue;
         const c = decodeRoundContract(new Uint8Array(await r.arrayBuffer()));
         if (toHex(roundIdOf(c)) === id && roundLocks(c)) { round = c; break; }
-      } catch { /* this seat did not answer, or not with the round */ }
+      } catch { /* this signer node did not answer, or not with the round */ }
     }
     if (round) found.push({ roundIdHex: id, round, payout, lock });
   }
@@ -672,10 +672,10 @@ export async function withdrawCollected({ client, invoiceFor, onStep = () => {} 
 }
 
 /**
- * A LOCK NO SEAT WILL SETTLE, BACK BY THE PLAYER'S OWN KEY AFTER ITS EXPIRY (§23.2's default
+ * A LOCK NO SIGNER NODE WILL SETTLE, BACK BY THE PLAYER'S OWN KEY AFTER ITS EXPIRY (§23.2's default
  * path: nobody acts, the lock expires, the player's key takes it back). W4 / 6d: a player the
- * fee-lock door refused, or a round that never settles - no seat verified the lock or will
- * forfeit it, so refundStake (which asks the seats where the lock is) finds nothing. The tab's
+ * fee-lock door refused, or a round that never settles - no signer node verified the lock or will
+ * forfeit it, so refundStake (which asks the signer nodes where the lock is) finds nothing. The tab's
  * own record (saveLock) holds both locks whole. Each is asked where it stands, spending
  * nothing (lockStatus): gone - nothing to do; before its expiry - not final, and when it comes
  * back; expired - refunded into the tab's wallet, from where the withdraw takes it.
@@ -716,8 +716,8 @@ export async function refundKept({ round, roundId, seed, curve, client, storage,
  * collected the payout and redeemed the stake into the TAB's wallet (bearer e-cash in
  * sessionStorage) every 5 s, and withdrawing waited for the player - a tab closed in between
  * lost it, and the federation no longer held it (run 15). So the page only LOOKS until the
- * player withdraws: the settlement (the payout to this key), the seats' /stake-lock and
- * /forfeit (the stake back), and the federation's read-only lockStatus (a lock no seat will
+ * player withdraws: the settlement (the payout to this key), the signer nodes' /stake-lock and
+ * /forfeit (the stake back), and the federation's read-only lockStatus (a lock no signer node will
  * settle, after its expiry). `refund` and `redeem` are never called here.
  */
 export async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = fetch, client = null, storage = null, kept = null } = {}) {
@@ -756,7 +756,7 @@ export async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = f
         else stake = { state: 'waiting', msat, why: f.why };
       }
     } else {
-      // NO SEAT KNOWS THE LOCK (refused at the door) OR NO SETTLEMENT YET: the tab's own record,
+      // NO SIGNER NODE KNOWS THE LOCK (refused at the door) OR NO SETTLEMENT YET: the tab's own record,
       // asked of the federation without spending - owed back by the player's key after expiry.
       const held = kept || savedLock(storage, { roundId, playerPubkey: player.pubkey });
       const ls = held && held.lock ? [held.lock, held.lock.feeLock].filter(Boolean) : [];
@@ -817,7 +817,7 @@ export function owedToLine(o) {
 
 /**
  * COLLECT WHAT IS OWED, INSIDE THE WITHDRAW ONLY (W4 / 6d): the payout redeemed, the stake back
- * by the seats' forfeit or by the player's key after expiry - all into the one wallet the
+ * by the signer nodes' forfeit or by the player's key after expiry - all into the one wallet the
  * withdraw pays from, in the same action. Nothing is collected while the player is not there.
  */
 export async function collectOwed({ look, client, ...ask } = {}) {
@@ -889,7 +889,7 @@ export function stakeBackLine(p) {
   return `Stake: not back yet - ${p.why}`;
 }
 
-/** THE PAYOUT AS THE PLAYER SEES IT (6d): collected, none, or still waiting on the seats. */
+/** THE PAYOUT AS THE PLAYER SEES IT (6d): collected, none, or still waiting on the signer nodes. */
 export function payoutLine(p) {
   if (!p) return '';
   if (p.ok) return `Payout collected: ${String(p.amountMsat)} msat from the round's settlement into this tab's federation wallet`
@@ -900,7 +900,7 @@ export function payoutLine(p) {
 }
 
 /**
- * THE LOCK, HANDED TO EVERY SEAT (POST /lock). A seat that verifies it in the
+ * THE LOCK, HANDED TO EVERY SIGNER NODE (POST /lock). A signer node that verifies it in the
  * federation answers 201 and counts the stake; `ok` is `needed` of them.
  */
 export async function handLock({ entryId, fields, nodes, needed, fetcher = fetch, door = 'lock' } = {}) {

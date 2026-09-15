@@ -1,6 +1,6 @@
 // THE PLAYER'S WALLET, REACHED OVER NOSTR WALLET CONNECT (NIP-47).
 //
-// M3.2 item 6. The client could already ask what a seat owes and refuse a quote
+// M3.2 item 6. The client could already ask what an entry owes and refuse a quote
 // its own entry did not sign; it could not pay. This is the one thing in the
 // whole client that moves a satoshi.
 //
@@ -159,7 +159,7 @@ export function tabWallet({ storage, key = 'blwp.wallet' } = {}) {
  * be showing the player a figure nobody checked.
  *
  * ONE ENTRY PER PAYMENT, and the payment hash is in it: "what it was spent on"
- * means a round and a seat, not a running number. A spend log is a display and
+ * means a round and a signer node, not a running number. A spend log is a display and
  * the authority for what was paid is the chain of invoices, not this.
  *
  * KEPT IN THE TAB WHEN HANDED ITS STORAGE (M3.2 6e). Measured before, on the
@@ -174,7 +174,7 @@ export const SPEND_LOG_KEY = 'blwp.spend.log';
 const RETURNED = ['CANCELLED', 'EXPIRED'];
 
 /**
- * WHAT THE SEATS SAID HAPPENED TO THIS SEAT'S STAKE, WRITTEN INTO THE LOG (M3.2 6e).
+ * WHAT THE SIGNER NODES SAID HAPPENED TO THIS ENTRY'S STAKE, WRITTEN INTO THE LOG (M3.2 6e).
  * Measured before, on the bundle the daily page runs: a winner read "98 sat over 1
  * stake in 1 round" beside "Returned: ... cancelled back to the wallet", and a
  * refunded player the same beside "Expired: ... came back to the wallet". A hold
@@ -284,7 +284,7 @@ export function spentLine(log) {
 }
 
 /**
- * WHAT THIS SEAT COSTS, AS ONE LINE, and it is 22A's Transparency list.
+ * WHAT THIS ENTRY COSTS, AS ONE LINE, and it is 22A's Transparency list.
  *
  * "Before wallet approval the client MUST display: total wallet commitment,
  * the node fee and donation coming OUT of it, the resulting net game stake".
@@ -306,7 +306,7 @@ export function owedLine(entry, quote, settlement = null) {
     + `${sats(entry.donationMsat)} donation out of it, ${sats(net)} staked`;
   // A HOLD THAT HAS ENDED IS NOT HELD (M3.2 6e). The quote is asked once, at
   // payment, so its state stays HELD; measured on the daily page after settlement:
-  // "... · HELD" beside "Settled: ...". When the seats say the hold ended (settled,
+  // "... · HELD" beside "Settled: ...". When the signer nodes say the hold ended (settled,
   // cancelled, expired), that is the state this line reads.
   const ended = settlement && ENDED_HOLDS.includes(settlement.hold) ? settlement.hold : null;
   return quote
@@ -553,7 +553,7 @@ export function budgetLine(budget) {
  * PAY ONE BOLT11, AND THE INVOICE IS AN ARGUMENT BECAUSE THE CALLER CHECKED IT.
  *
  * This file does not decide what to pay. `Client.payStake` takes an ENTRY, asks
- * its own `invoice()` for the quote - which refuses an amount, a hash or a seat
+ * its own `invoice()` for the quote - which refuses an amount, a hash or a signer node
  * the entry did not sign - and hands the one bolt11 that survived down here.
  * There is no path from a caller's arbitrary invoice to this function that does
  * not go through that check.

@@ -1,21 +1,21 @@
-// W5b ON A REAL FEDERATION: THE SEATS' FORFEIT AND THE PLAYER'S REDEEM
+// W5b ON A REAL FEDERATION: THE SIGNER NODES' FORFEIT AND THE PLAYER'S REDEEM
 // (v4.6.2 §23.2 row 1). Run by w5b-regtest.sh after the federation is up.
 //
-// The Daily's own 2-of-2 round naming the federation, the seats making the
+// The Daily's own 2-of-2 round naming the federation, the signer nodes making the
 // round's claim key themselves (nothing injected), a 20 s objection window set
 // through the round's own objectionWindowMs. Two players lock their stakes the
-// way the page does and are committed by both seats; one drives a run the
+// way the page does and are committed by both signer nodes; one drives a run the
 // core delivers, one a run it fails; the round is closed. Then:
-//   the winner's forfeit, once final           - both seats sign; it verifies
+//   the winner's forfeit, once final           - both signer nodes sign; it verifies
 //   the loser's                                - 409, and its lock stays held
-//   a redeem with ONE seat's signature         - refused by the guardians
+//   a redeem with ONE signer node's signature         - refused by the guardians
 //   the redeem, from a later session with only the seed - accepted, lock gone
 //   the withdraw over the listed gateway to the player's lnd
 //
 // HARNESS WORK, SAID SO: each entry's world secret is SEARCHED with the core's
 // own replay against the round's actual randomness until the fixed drive
 // delivers (the winner) or fails (the loser). A player does not search; this
-// only picks two runs whose outcomes are known before the seats replay them.
+// only picks two runs whose outcomes are known before the signer nodes replay them.
 import { readFileSync, copyFileSync, mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -89,13 +89,13 @@ function runOf(entry, randomness, cap = 3000) {
 }
 
 const round = await standUpRound({ host: '127.0.0.1', portA: 18571, portB: 18572, stakeMsat: 1000000n,
-  federationId, invite: env.INVITE, seat: { stakeLocks: port }, objectionWindowMs: 20000n });
+  federationId, invite: env.INVITE, signerNode: { stakeLocks: port }, objectionWindowMs: 20000n });
 const rid = fromHex(round.id);
 const contract = round.contract;
 const withId = { ...contract, id: rid };
 let code = 0;
 try {
-  const claimKey = await awaitAttestedClaimKey({ round: withId, seats: contract.nodes, nodes: round.nodes, curve: pageCurve });
+  const claimKey = await awaitAttestedClaimKey({ round: withId, signerNodes: contract.nodes, nodes: round.nodes, curve: pageCurve });
   say({ step: 'claim key', ok: claimKey.ok, attested: claimKey.attested, needed: claimKey.needed,
     key: claimKey.ok ? toHex(claimKey.claimPk).slice(0, 16) : claimKey.why, objectionWindowMs: contract.objectionWindowMs, minScore: contract.minScore });
   if (!claimKey.ok) throw new Error(claimKey.why);
@@ -105,7 +105,7 @@ try {
   for (const role of ['winner', 'loser']) {
     const seed = random(32);
     const player = playerFor(withId, { seed, curve: pageCurve });
-    const stake = await stakeFor(withId, { seats: contract.nodes, curve: pageCurve, random, playerPubkey: player.pubkey, needed: 2 });
+    const stake = await stakeFor(withId, { signerNodes: contract.nodes, curve: pageCurve, random, playerPubkey: player.pubkey, needed: 2 });
     const put = await postHandout(stake, round.nodes, { needed: 2 });
     let paying = Promise.resolve(null);
     const lock = await lockStake({ round: contract, roundId: rid, invite: env.INVITE, seed, stake, claimKey,
@@ -128,8 +128,8 @@ try {
       if (tries > 20000) throw new Error(`no world secret gave the ${role} its outcome in 20000 tries`);
     }
     const eid = entryId(entry);
-    const seated = [];
-    for (const b of round.nodes) seated.push((await fetch(`${b}/entry`, { method: 'POST', body: encodeEntryContract(entry) })).status);
+    const joined = [];
+    for (const b of round.nodes) joined.push((await fetch(`${b}/entry`, { method: 'POST', body: encodeEntryContract(entry) })).status);
     const handed = await handLock({ entryId: eid, fields: lock.fields, nodes: round.nodes, needed: 2 });
     // THE FIRST MARK WHERE THE PAGE PUTS IT (§16): at tick 60, inside the start
     // deadline the round omits (900) - then the rest of the run and its end mark,
@@ -155,7 +155,7 @@ try {
     }
     players[role] = { seed, player, lock, eid, entry };
     say({ step: 'locked and played', role, outpoint: `${toHex(lock.outpoint.txid)}:${lock.outpoint.outIdx}`,
-      amountMsat: lock.fields.amountMsat, expiration: lock.fields.expiration, handouts: put.accepted, entries: seated,
+      amountMsat: lock.fields.amountMsat, expiration: lock.fields.expiration, handouts: put.accepted, entries: joined,
       locks: handed.said.map((s) => s.status), committed: handed.committed,
       harnessSearch: { tries, coreEnded: run.ended === RUN_DELIVERED ? 'DELIVERED' : 'FAILED', ticks: run.ticks }, played });
   }
@@ -172,28 +172,28 @@ try {
   say({ step: 'winner forfeit', firstAsk: early, ok: forfeit.ok, msAfterClose: Date.now() - closedAt,
     contractId: forfeit.contractId, claimPkIsTheRounds: forfeit.claimPk === toHex(claimKey.claimPk),
     verifies: forfeit.ok && schnorr.verify(fromHex(forfeit.signature), fromHex(forfeit.contractId), claimKey.claimPk.subarray(1)),
-    keptBySeats: kept, why: forfeit.ok ? null : forfeit.why });
+    keptBySignerNodes: kept, why: forfeit.ok ? null : forfeit.why });
 
   // THE LOSER'S: refused, and its lock still held.
   const l = players.loser;
   const lost = await forfeitOf({ roundId: rid, entryId: toHex(l.eid), nodes: round.nodes });
   const lstat = await port.status(l.lock.outpoint);
-  say({ step: 'loser forfeit', ok: lost.ok, refused: lost.refused, keptBySeats: [round.a, round.b].map((d) => !!d.round.forfeit(l.eid)),
+  say({ step: 'loser forfeit', ok: lost.ok, refused: lost.refused, keptBySignerNodes: [round.a, round.b].map((d) => !!d.round.forfeit(l.eid)),
     lockHeld: !!(lstat && lstat.stored) });
 
-  // ONE SEAT'S SIGNATURE (harness: seat A's share read from its own store): the guardians must refuse it.
-  const heldA = round.a.dkg.seatFor(contract.nodes);
+  // ONE SIGNER NODE'S SIGNATURE (harness: signer node A's share read from its own store): the guardians must refuse it.
+  const heldA = round.a.dkg.signerNodeFor(contract.nodes);
   const message = fromHex(forfeit.contractId);
-  const hiding = nonceGenerate340(random(32), heldA.seat.share);
-  const binding = nonceGenerate340(random(32), heldA.seat.share);
-  const commitments = [{ id: heldA.seat.id, hiding: curve.pointFromScalar(hiding), binding: curve.pointFromScalar(binding) }];
-  const share = signShare340({ id: heldA.seat.id, share: heldA.seat.share, groupPublicKey: claimKey.claimPk, nonces: { hiding, binding }, message, commitments, curve });
+  const hiding = nonceGenerate340(random(32), heldA.signerNode.share);
+  const binding = nonceGenerate340(random(32), heldA.signerNode.share);
+  const commitments = [{ id: heldA.signerNode.id, hiding: curve.pointFromScalar(hiding), binding: curve.pointFromScalar(binding) }];
+  const share = signShare340({ id: heldA.signerNode.id, share: heldA.signerNode.share, groupPublicKey: claimKey.claimPk, nonces: { hiding, binding }, message, commitments, curve });
   const alone = aggregate340({ commitments, message, groupPublicKey: claimKey.claimPk, shares: [share], curve }).signature;
   const [wl] = await findLock({ roundId: rid, playerPubkey: w.player.pubkey, nodes: round.nodes });
   const probe = await LockClient.join(env.INVITE, toHex(contract.federationId), toHex(new Uint8Array(randomBytes(32))), { entries: () => '[]', put() {}, remove() {} });
   const lone = JSON.parse(await probe.redeem(toHex(wl.outpoint.txid), Number(wl.outpoint.outIdx), JSON.stringify(lockFieldsToJson(wl.fields)),
     toHex(alone), toHex(w.player.secret)));
-  say({ step: 'redeem with one seat\'s signature', forfeitVerifies: lone.forfeit_verifies, accepted: lone.accepted,
+  say({ step: 'redeem with one signer node\'s signature', forfeitVerifies: lone.forfeit_verifies, accepted: lone.accepted,
     error: lone.error ? String(lone.error).slice(0, 160) : null, lockAfter: lone.stored_after ? 'held' : 'none' });
 
   // THE REDEEM, FROM A LATER SESSION WITH ONLY THE SEED; then the withdraw.

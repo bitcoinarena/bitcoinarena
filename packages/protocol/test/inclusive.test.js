@@ -46,7 +46,7 @@ const contract = {
 
 const STAKE = 100000n;
 const FEE = entryFeeMsat(STAKE);
-const seat = (n, outcome, { score = 0, donationMsat = 0n } = {}) => ({
+const entryOf = (n, outcome, { score = 0, donationMsat = 0n } = {}) => ({
   entryId: b32(n), pubkey: b32(n), outcome, score, stakeMsat: STAKE, feeMsat: FEE, donationMsat,
 });
 
@@ -63,7 +63,7 @@ const seat = (n, outcome, { score = 0, donationMsat = 0n } = {}) => ({
  */
 test("22A's 61-player round: 6,100 committed, 122 fee, 122 donated, 5,856 to the game", () => {
   const entries = Array.from({ length: 61 }, (_, i) =>
-    seat(i + 1, FAILED, { donationMsat: (STAKE * 200n) / 10000n }));
+    entryOf(i + 1, FAILED, { donationMsat: (STAKE * 200n) / 10000n }));
   for (const e of entries) assert.equal(feeMatchesEntry(e).ok, true, feeMatchesEntry(e).why);
 
   const t = nodeFeeTable({ contract, entries, pools, eligible: all });
@@ -114,8 +114,8 @@ test('100 committed, 2 fee, 2 donated: the hold is for 96, and nothing else is',
  * pays the winner exactly what it took in.
  */
 test('a loser settles 96 into the pool, and the winner is paid exactly that', () => {
-  const winner = seat(1, DELIVERED, { score: 500, donationMsat: 2000n });
-  const loser = seat(2, FAILED, { donationMsat: 2000n });
+  const winner = entryOf(1, DELIVERED, { score: 500, donationMsat: 2000n });
+  const loser = entryOf(2, FAILED, { donationMsat: 2000n });
 
   const s = holdSettlement({ roundId: b32(9), minScore: 1, entries: [winner, loser] });
   assert.deepEqual(s.actions.map((a) => a.action), [CANCEL, SETTLE]);
@@ -138,9 +138,9 @@ test('a loser settles 96 into the pool, and the winner is paid exactly that', ()
  * refused and every hold expired - one donor, and the pool got nothing.
  */
 test('qualifiers who staked different nets are paid by rank weight times net stake, the pool spent exactly', () => {
-  const donor = seat(1, DELIVERED, { score: 900, donationMsat: 5000n });   // net 93000
-  const others = [2, 3, 4].map((n) => seat(n, DELIVERED, { score: 500 + n }));
-  const loser = seat(50, FAILED);
+  const donor = entryOf(1, DELIVERED, { score: 900, donationMsat: 5000n });   // net 93000
+  const others = [2, 3, 4].map((n) => entryOf(n, DELIVERED, { score: 500 + n }));
+  const loser = entryOf(50, FAILED);
 
   // ONE PAYING RANK (four qualifiers), THE ACCEPTED LIMIT: the winner takes the
   // whole pool whatever it donated - the donation weighs nothing against itself.
@@ -160,7 +160,7 @@ test('qualifiers who staked different nets are paid by rank weight times net sta
 
   // TWO PAYING RANKS (five qualifiers): rank weights 4 and 3, times the nets
   // 93000 (the donor, first) and 98000 (second) - 372000 and 294000 of 666000.
-  const fifth = seat(5, DELIVERED, { score: 505 });
+  const fifth = entryOf(5, DELIVERED, { score: 505 });
   const two = computePayoutTable({ roundId: b32(9), minScore: 1, entries: [donor, ...others, fifth, loser] });
   assert.equal(two.payingRanks, 2);
   const first = (98000n * 372000n) / 666000n;                    // 54738, floored
@@ -176,7 +176,7 @@ test('qualifiers who staked different nets are paid by rank weight times net sta
   assert.ok(donorShare < 56000n, `the donor's share is scaled down from the unweighted 4/7 of the pool (56000): ${donorShare}`);
 
   // LOSERS MAY DIFFER: they only feed the pool, and each puts in its own net
-  const giving = seat(51, FAILED, { donationMsat: 5000n });
+  const giving = entryOf(51, FAILED, { donationMsat: 5000n });
   const t = computePayoutTable({ roundId: b32(9), minScore: 1, entries: [others[0], loser, giving] });
   assert.equal(t.pool, 98000n + 93000n);
   assert.equal(t.table[0].amountMsat, 98000n + 191000n);
@@ -229,7 +229,7 @@ test('every money path refuses an entry that names only its stake', () => {
  */
 test('the inputs a payout proof binds to carry the fee and the donation', () => {
   const inputs = (over) => payoutInputsId({
-    roundId: b32(9), minScore: 1, entries: [{ ...seat(1, DELIVERED, { score: 5 }), ...over }],
+    roundId: b32(9), minScore: 1, entries: [{ ...entryOf(1, DELIVERED, { score: 5 }), ...over }],
   });
   const base = toHex(inputs({}));
   assert.notEqual(toHex(inputs({ feeMsat: FEE + 1n })), base, 'the fee is outside the hash');

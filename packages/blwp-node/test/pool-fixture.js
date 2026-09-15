@@ -1,8 +1,8 @@
 // THE COMMITTEE FIXTURE, IN ONE PLACE.
 //
-// Seven seats on seven stores, one round each has taken the same two entries
-// and signed its own result for both, every seat's table signature in every
-// seat's store, and a queued payout - which is the state a close leaves behind
+// Seven signer nodes on seven stores, one round each has taken the same two entries
+// and signed its own result for both, every signer node's table signature in every
+// signer node's store, and a queued payout - which is the state a close leaves behind
 // and what every pool test starts from. It was written inside
 // `pool-signing.test.js`; letter 18 needs TWO rounds sharing ONE pool, and a
 // second copy of a hundred lines is a second place for the fixture to drift.
@@ -34,7 +34,7 @@ import { scalarFrom32, FIELD, SHARES_NEEDED, SHARES_TOTAL } from '../../protocol
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
-import { assumeSeated } from './seating.js';
+import { assumeAssigned } from './assignment.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 
@@ -66,7 +66,7 @@ const player = (n) => {
   return { n, secret, pubkey: schnorr.getPublicKey(secret) };
 };
 
-/** The pool's key, split once and handed out one share per seat. */
+/** The pool's key, split once and handed out one share per signer node. */
 export function dealThePool() {
   let secret;
   do { secret = scalarFrom32(rand(32)); } while (secret === 0n || secret >= FIELD);
@@ -79,10 +79,10 @@ export function dealThePool() {
 }
 
 /**
- * A WHOLE COMMITTEE, each seat on its own store.
+ * A WHOLE COMMITTEE, each signer node on its own store.
  *
- * Every seat opens the same round, takes the same two entries, signs its OWN
- * result for each of them, collects the other six seats' table signatures and
+ * Every signer node opens the same round, takes the same two entries, signs its OWN
+ * result for each of them, collects the other six signer nodes' table signatures and
  * queues the payout. That is the state a close leaves behind, built here
  * because this file is about what happens AFTER it.
  */
@@ -108,11 +108,11 @@ export function committee({ minScore = 1, dealt = dealThePool() } = {}) {
 
   for (const r of rounds) {
     if (r !== rounds[0]) assert.deepEqual(r.open(contract), rid);
-    assumeSeated(r, rid, nodes);
+    assumeAssigned(r, rid, nodes);
     for (const e of entries) {
       const eid = r.enter(e.contract);
-      // THE SEAT'S OWN RESULT, signed under its own key. `entriesFor` reads
-      // these and nothing else, so a seat that never replayed a run computes
+      // THE SIGNER NODE'S OWN RESULT, signed under its own key. `entriesFor` reads
+      // these and nothing else, so a signer node that never replayed a run computes
       // no table for it.
       const result = {
         roundId: rid, playerPubkey: e.player.pubkey, outcome: e.outcome, score: e.score,
@@ -125,8 +125,8 @@ export function committee({ minScore = 1, dealt = dealThePool() } = {}) {
     }
   }
 
-  // EVERY SEAT'S TABLE SIGNATURE, IN EVERY SEAT'S STORE. §20's five of seven
-  // is what `spendFor` checks before it will build anything, and a seat that
+  // EVERY SIGNER NODE'S TABLE SIGNATURE, IN EVERY SIGNER NODE'S STORE. §20's five of seven
+  // is what `spendFor` checks before it will build anything, and a signer node that
   // holds only its own signature has agreed with nobody.
   const payouts = rounds.map((r) => new Payouts(r, { curve, random: rand }));
   const built = payouts.map((p, i) => p.sign({
@@ -150,13 +150,13 @@ export function committee({ minScore = 1, dealt = dealThePool() } = {}) {
   assert.equal(out.ok, true, out.why);
   const utxo = { txid: b32(0xab), vout: 0, value: POOL_SATS, script: out.script };
 
-  const seats = rounds.map((r, i) => new PoolSigning(r, {
-    curve, seat: dealt.shares[i], pool: { groupPublicKey: dealt.groupPublicKey },
+  const signerNodes = rounds.map((r, i) => new PoolSigning(r, {
+    curve, signerNode: dealt.shares[i], pool: { groupPublicKey: dealt.groupPublicKey },
   }));
-  return { rounds, seats, rid, contract, utxo, out, dealt, winner, loser, minScore, entries };
+  return { rounds, signerNodes, rid, contract, utxo, out, dealt, winner, loser, minScore, entries };
 }
 
-/** What a seat's own store says the round's entries came to. */
+/** What a signer node's own store says the round's entries came to. */
 export const signingEntries = (round, rid) =>
   new PoolSigning(round, {}).entriesFor(rid).entries;
 

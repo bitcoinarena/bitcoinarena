@@ -49,101 +49,101 @@ export const NOTHING_OWED = 'NOTHING_OWED';
 export const PAID_IN_PART = 'PAID_IN_PART';
 
 /**
- * WHICH SEAT ASKS FOR A ROUND'S PAYOUT, AND IT IS EXACTLY ONE.
+ * WHICH SIGNER NODE ASKS FOR A ROUND'S PAYOUT, AND IT IS EXACTLY ONE.
  *
  * `payWithCommittee` is an asker: it names an output, collects five nonce
- * commitments and five shares, aggregates them and broadcasts. Every seat on
- * the committee closes the round, so if every seat asked, five of them would
+ * commitments and five shares, aggregates them and broadcasts. Every signer node on
+ * the committee closes the round, so if every signer node asked, five of them would
  * run five signing rounds over ONE output. FROST aggregates over the nonces
  * that were committed, so those five are five DIFFERENT transactions spending
  * the same input: one confirms and four are double-spends the chain refuses -
- * and every seat can only hold one live nonce pair per round, so in practice
+ * and every signer node can only hold one live nonce pair per round, so in practice
  * the five askers deadlock each other instead.
  *
  * So the asker is chosen from the round itself, the way everything else here
- * is: the seats in the order the store keeps them - by pubkey, which no seat
+ * is: the signer nodes in the order the store keeps them - by pubkey, which no signer node
  * chooses - indexed by the round id. No message, no election, no clock, and
- * every seat computes the same answer from facts it already holds.
+ * every signer node computes the same answer from facts it already holds.
  *
  * WHAT THIS DOES NOT DO is hand the round to somebody else when the asker is
  * down. That needs a clock and a rule for how long to wait, and inventing one
  * here would be inventing the protocol. The round stays PAYOUT_QUEUED, which
  * is a state an operator can see, and it is its own line on the list.
  */
-export function askerFor(roundId, seats) {
+export function askerFor(roundId, signerNodes) {
   if (!(roundId instanceof Uint8Array) || roundId.length !== 32)
     return { ok: false, why: 'that is not a round id' };
-  if (!Array.isArray(seats) || !seats.length)
-    return { ok: false, why: 'that round seated nobody, so nobody asks for it' };
+  if (!Array.isArray(signerNodes) || !signerNodes.length)
+    return { ok: false, why: 'that round joined nobody, so nobody asks for it' };
   // Four bytes of the round id, big-endian and unsigned. `>>> 0` because a
   // top bit set would otherwise make this negative and the modulo with it.
-  const n = ((roundId[0] << 24 | roundId[1] << 16 | roundId[2] << 8 | roundId[3]) >>> 0) % seats.length;
-  return { ok: true, asker: seats[n], at: n, of: seats.length };
+  const n = ((roundId[0] << 24 | roundId[1] << 16 | roundId[2] << 8 | roundId[3]) >>> 0) % signerNodes.length;
+  return { ok: true, asker: signerNodes[n], at: n, of: signerNodes.length };
 }
 
 /**
- * HOW LONG A SEAT GETS BEFORE THE NEXT ONE MAY TRY, IN BITCOIN BLOCKS.
+ * HOW LONG A SIGNER NODE GETS BEFORE THE NEXT ONE MAY TRY, IN BITCOIN BLOCKS.
  *
  * Small on purpose. A spend broadcast at the front of its window is normally
- * in the next block, and the seat behind re-reads the output through
+ * in the next block, and the signer node behind re-reads the output through
  * `gettxout` - which sees a mempool - before it asks at all, so the wait is
- * not there to let a transaction confirm. It is there so two seats do not
+ * not there to let a transaction confirm. It is there so two signer nodes do not
  * start the same signing round in the same instant on the ordinary path.
  *
- * Blocks and not milliseconds: every seat reads one chain and agrees without
+ * Blocks and not milliseconds: every signer node reads one chain and agrees without
  * talking, where two wall clocks a minute apart both take over.
  */
 export const TAKEOVER_BLOCKS = 2;
 
 /**
- * THE ORDER SEATS TAKE OVER IN, AND NO SEAT CHOOSES ITS OWN PLACE.
+ * THE ORDER SIGNER NODES TAKE OVER IN, AND NO SIGNER NODE CHOOSES ITS OWN PLACE.
  *
  * `askerFor` names the first. The rest follow it around the ring, so the order
- * is a rotation of the seats the store already keeps sorted BY PUBKEY - which
- * no seat picks - starting at an index taken from the round id, which is a
+ * is a rotation of the signer nodes the store already keeps sorted BY PUBKEY - which
+ * no signer node picks - starting at an index taken from the round id, which is a
  * hash of a contract signed before the round ran. There is nothing here a node
  * can grind: to move up the order it would have to change the round id, and
  * that is a different round.
  */
-export function askerOrder(roundId, seats) {
-  const first = askerFor(roundId, seats);
+export function askerOrder(roundId, signerNodes) {
+  const first = askerFor(roundId, signerNodes);
   if (!first.ok) return first;
-  const order = seats.map((_, i) => seats[(first.at + i) % seats.length]);
-  return { ok: true, order, at: first.at, of: seats.length };
+  const order = signerNodes.map((_, i) => signerNodes[(first.at + i) % signerNodes.length]);
+  return { ok: true, order, at: first.at, of: signerNodes.length };
 }
 
 /**
- * WHICH SEATS MAY ASK AT THIS BLOCK HEIGHT, AND WHEN THE NEXT ONE MAY.
+ * WHICH SIGNER NODES MAY ASK AT THIS BLOCK HEIGHT, AND WHEN THE NEXT ONE MAY.
  *
- * ITEM 19. The asker is picked from the round id, so a seat that is offline
+ * ITEM 19. The asker is picked from the round id, so a signer node that is offline
  * when its round closes leaves the payout at PAYOUT_QUEUED with the other six
- * correctly waiting - and a seat that never comes back strands the round for
+ * correctly waiting - and a signer node that never comes back strands the round for
  * ever. Somebody has to be allowed to take over, and the question that decides
  * the shape is what they take over WITH.
  *
  * THE CLOCK IS THE ROUND'S OWN BEACON HEIGHT, which is not a new time source:
  * a round that has no randomness beacon cannot be seeded and cannot be played,
- * so every seat already holds this number and holds the same one. Wall clocks
- * are per-node - two seats a minute apart would both take over - and the
+ * so every signer node already holds this number and holds the same one. Wall clocks
+ * are per-node - two signer nodes a minute apart would both take over - and the
  * pool output's own confirmations are the wrong anchor, because a pool funded
- * long before the round closes is already deep and every seat would be
+ * long before the round closes is already deep and every signer node would be
  * eligible at once.
  *
- * Seat k in the order above may ask once the chain has advanced
+ * Signer node k in the order above may ask once the chain has advanced
  * `k * TAKEOVER_BLOCKS` past the beacon. The round's own asker is k = 0 and is
  * therefore uniquely eligible the moment the round closes.
  *
- * SEVERAL SEATS ELIGIBLE AT ONCE IS NORMAL AND HARMLESS, and it is worth
+ * SEVERAL SIGNER NODES ELIGIBLE AT ONCE IS NORMAL AND HARMLESS, and it is worth
  * saying because it looks like the fault. After a long outage the chain is far
  * past the beacon and most of the ring may ask. They do not compete: every
- * seat's nonce pair is on disk, so a second asker collects the SAME
+ * signer node's nonce pair is on disk, so a second asker collects the SAME
  * commitments and rebuilds the transaction byte for byte. Measured - before
  * the pair was durable, a restarted committee signed the same spend with
  * different signature bytes; now it is identical.
  */
-export function eligibleAsker({ roundId, seats, beaconHeight, tipHeight,
+export function eligibleAsker({ roundId, signerNodes, beaconHeight, tipHeight,
   takeoverBlocks = TAKEOVER_BLOCKS }) {
-  const ring = askerOrder(roundId, seats);
+  const ring = askerOrder(roundId, signerNodes);
   if (!ring.ok) return ring;
   if (!Number.isInteger(beaconHeight) || beaconHeight < 0)
     return { ok: false, why: 'that round names no beacon height to wait from' };
@@ -161,7 +161,7 @@ export function eligibleAsker({ roundId, seats, beaconHeight, tipHeight,
     order: ring.order,
     allowed,
     advanced,
-    // The height at which the next seat in the ring joins in, so a refusal can
+    // The height at which the next signer node in the ring joins in, so a refusal can
     // say when rather than only no.
     nextAt: next === null ? null : beaconHeight + Math.imul(next, takeoverBlocks),
     placeOf: (key) => ring.order.findIndex((k) => toHex(k) === toHex(key)),
@@ -189,8 +189,8 @@ export class Payouts {
     this.pool = pool;
     this.random = random;
     this.peers = peers;
-    // THE ROUND'S OWN SETTLEMENT SEATS at a live close, when no list was given:
-    // measured before, "1 of 2 seats signed this table" on both daemons.
+    // THE ROUND'S OWN SETTLEMENT SIGNER NODES at a live close, when no list was given:
+    // measured before, "1 of 2 signer nodes signed this table" on both daemons.
     this.peersFor = peersFor;
   }
 
@@ -222,7 +222,7 @@ export class Payouts {
     return { ...built, record };
   }
 
-  /** Ask the other seats what they signed, and keep only what verifies. */
+  /** Ask the other signer nodes what they signed, and keep only what verifies. */
   async gather({ roundId }) {
     let fetched = 0, kept = 0, refused = 0;
     for (const peer of this.peersOf(roundId)) {
@@ -247,7 +247,7 @@ export class Payouts {
   /** Injected so a test can answer without a network. */
   chainFetch(url, options) { return (this.fetcher || fetch)(url, options); }
 
-  /** Everything this node holds for a round, for the seat that asks. */
+  /** Everything this node holds for a round, for the signer node that asks. */
   records(roundIdBytes) { return this.round.payoutSignatures(roundIdBytes).map((r) => r.bytes); }
 
   /**
@@ -260,7 +260,7 @@ export class Payouts {
   queue({ roundId, entries, minScore, contract }) {
     const built = this.sign({ roundId, entries, minScore });
     const seen = verifiedTable(this.round.payoutSignatures(roundId), {
-      contract, seats: this.round.seats(roundId), tableId: built.tableId,
+      contract, signerNodes: this.round.signerNodes(roundId), tableId: built.tableId,
     });
     if (!seen.ok) return { ok: false, why: seen.why };
     if (!seen.final)
@@ -288,7 +288,7 @@ export class Payouts {
 
     this.round.putPayout({
       roundId, tableId: built.tableId, state: PAYOUT_QUEUED,
-      why: `${seen.agreed} of ${seen.needed} seats signed this table; ${owed.owedMsat} msat owed`,
+      why: `${seen.agreed} of ${seen.needed} signer nodes signed this table; ${owed.owedMsat} msat owed`,
     });
     return { ok: true, state: PAYOUT_QUEUED, tableId: built.tableId,
       table: built.table, rows: owed.rows, owedMsat: owed.owedMsat, agreed: seen.agreed };
@@ -308,7 +308,7 @@ export class Payouts {
    * silence: this node reaches a chain, this node is the round's asker, and
    * the pool holds exactly one confirmed output that covers what is owed.
    *
-   * THE FIGURE IS THE SEAT'S OWN. `signing.owes` rebuilds it from this node's
+   * THE FIGURE IS THE SIGNER NODE'S OWN. `signing.owes` rebuilds it from this node's
    * results and the committee's signatures - not from the row, which is
    * bookkeeping - so the output this asks for is sized by the same rule that
    * decides the outputs it will later sign.
@@ -325,15 +325,15 @@ export class Payouts {
     if (!watch || !watch.reaches)
       return { ok: false, why: 'this node watches no pool, so it can name no output to spend' };
     if (!signing || typeof signing.owes !== 'function')
-      return { ok: false, why: 'this node holds no seat, so it asks for nothing' };
+      return { ok: false, why: 'this node holds no signer node, so it asks for nothing' };
 
     // WHOSE TURN IT IS, AT THIS BLOCK HEIGHT.
     //
-    // The round's own asker is first and alone; every other seat waits
+    // The round's own asker is first and alone; every other signer node waits
     // `TAKEOVER_BLOCKS` more blocks past the round's beacon than the one in
-    // front of it. That is letter 19: without it a seat that never comes back
+    // front of it. That is letter 19: without it a signer node that never comes back
     // strands the payout at PAYOUT_QUEUED for ever.
-    const seats = this.round.seats(roundId);
+    const signerNodes = this.round.signerNodes(roundId);
     const me = this.round.pubkey;
     const beaconHeight = await this.beaconHeightFor(roundId, contract);
     if (!beaconHeight.ok) return beaconHeight;
@@ -341,22 +341,22 @@ export class Payouts {
     if (!tip.ok) return tip;
 
     // THE POOL MAY ALREADY BE PAID, and that is asked BEFORE whose turn it is:
-    // a seat that is not the asker never sends the payment, so its row stayed
-    // PAYOUT_QUEUED while the chain carried it - measured: 6 of 6 other seats
+    // a signer node that is not the asker never sends the payment, so its row stayed
+    // PAYOUT_QUEUED while the chain carried it - measured: 6 of 6 other signer nodes
     // at every kill point, the returning asker included. If a transaction since
     // the round's beacon spent this pool and pays EXACTLY the outputs this
-    // seat's own table computes for that input, it is recorded. A spend paying
+    // signer node's own table computes for that input, it is recorded. A spend paying
     // anything else is refused by name and changes nothing.
     const onChain = await this.paidOnChain({ roundId, contract, signing, watch, fromHeight: beaconHeight.height });
     if (onChain) return onChain;
 
     const turn = eligibleAsker({
-      roundId, seats, beaconHeight: beaconHeight.height, tipHeight: tip.height, takeoverBlocks,
+      roundId, signerNodes, beaconHeight: beaconHeight.height, tipHeight: tip.height, takeoverBlocks,
     });
     if (!turn.ok) return turn;
     const place = turn.placeOf(me);
     if (place < 0)
-      return { ok: false, why: 'this node is not seated on that round, so it does not ask for it' };
+      return { ok: false, why: 'this node is not assigned to that round, so it does not ask for it' };
     if (place >= turn.allowed.length)
       return {
         ok: false, waiting: true, place, advanced: turn.advanced, nextAt: turn.nextAt,
@@ -374,8 +374,8 @@ export class Payouts {
     if (!found.ok) return found;
 
     // AND IS IT STILL THERE. `forRound` reads `scantxoutset`, which scans the
-    // UTXO SET and does not see a mempool - so a seat taking over would not
-    // notice the spend the seat in front of it broadcast a minute ago, and
+    // UTXO SET and does not see a mempool - so a signer node taking over would not
+    // notice the spend the signer node in front of it broadcast a minute ago, and
     // would start a second signing round over an output that is already going.
     // `outpoint` asks `gettxout`, which does see one. A takeover that finds
     // the output gone stops rather than asking.
@@ -383,19 +383,19 @@ export class Payouts {
     if (!still.ok)
       return { ok: false, spending: true, why: `that output is already going: ${still.why}` };
 
-    // THE ROUND'S OWN SEATS SIGN IT: a given list, else the census's - the same
+    // THE ROUND'S OWN SIGNER NODES SIGN IT: a given list, else the census's - the same
     // `peersOf` the table's gather asks. It was `this.peers`, the operator's
     // list only, so a daemon given none (the rehearsal's, the Daily's,
-    // `main.js` at a live close) stopped at "1 of 2 seats committed".
+    // `main.js` at a live close) stopped at "1 of 2 signer nodes committed".
     return this.payWithCommittee({
-      roundId, utxo: found.utxo, contract, signing, seats: this.peersOf(roundId),
+      roundId, utxo: found.utxo, contract, signing, signerNodes: this.peersOf(roundId),
     });
   }
 
   /**
    * THE ROUND'S OWN BEACON HEIGHT, and it is asked for rather than invented.
    *
-   * `randomnessFor` is the same door the roster seats a committee through and
+   * `randomnessFor` is the same door the roster signer nodes a committee through and
    * the verifier closes a round through - one source, so a node cannot wait on
    * one beacon and seed on another. A node given none does not take over: it
    * says so, which leaves the payout queued rather than letting a node with no
@@ -413,7 +413,7 @@ export class Payouts {
   }
 
   /**
-   * THE PAYMENT, IF THE CHAIN ALREADY CARRIES IT - checked against this seat's
+   * THE PAYMENT, IF THE CHAIN ALREADY CARRIES IT - checked against this signer node's
    * own table, never taken on the payer's word. Answers null when there is
    * nothing to say (no spend found, or a watch that cannot scan), so the sweep
    * carries on exactly as it did.
@@ -427,17 +427,17 @@ export class Payouts {
       const mine = signing.spendFor({ roundId, utxo: s.spent, contract });
       const txid = toHex(Uint8Array.from(s.txid).reverse());
       if (!mine.ok)
-        return { ok: false, why: `the pool was spent by ${txid} and this seat cannot check it: ${mine.why}` };
+        return { ok: false, why: `the pool was spent by ${txid} and this signer node cannot check it: ${mine.why}` };
       const same = mine.outputs.length === s.outputs.length && mine.outputs.every((o, i) =>
         o.value === s.outputs[i].value && toHex(o.script) === toHex(s.outputs[i].script));
       if (!same)
         return { ok: false, spentElsewhere: true,
-          why: `the pool was spent by ${txid} and it does not pay what this seat's table pays` };
+          why: `the pool was spent by ${txid} and it does not pay what this signer node's table pays` };
       const state = mine.owed && mine.owed.length ? PAID_IN_PART : PAID;
       this.round.putPayout({
         roundId, tableId: row.tableId, state, txid: s.txid, raw: s.raw,
         ...(state === PAID_IN_PART ? { owedSats: mine.owedSats, owedCount: mine.owed.length } : {}),
-        why: `the chain carries this round's payment in block ${s.height}, and it pays this seat's table`,
+        why: `the chain carries this round's payment in block ${s.height}, and it pays this signer node's table`,
       });
       return { ok: true, state, txid: s.txid, already: true, onChain: true };
     }
@@ -475,23 +475,23 @@ export class Payouts {
    * `pay` below takes `signers` - five SECRET scalars - and makes every nonce
    * and every share itself. That is the arithmetic of a threshold without the
    * threshold: whoever runs it can sign anything. This asks instead, and what
-   * it asks for is the only two things a seat will put on a wire.
+   * it asks for is the only two things a signer node will put on a wire.
    *
-   * IT IS AN ASKER, NOT AN AUTHORITY. Every seat rebuilds the transaction from
+   * IT IS AN ASKER, NOT AN AUTHORITY. Every signer node rebuilds the transaction from
    * its own store before it commits to anything, so this node cannot talk the
    * committee into a spend of its own devising - the most it can do is name an
    * output and be told no. It does not even build the bytes it broadcasts from
-   * its own opinion: `signing.spendFor` is this node's seat answering the same
+   * its own opinion: `signing.spendFor` is this node's signer node answering the same
    * question the others answered, and a node that disagreed with the committee
    * would produce a signature that does not verify rather than a transaction
    * nobody agreed to.
    *
    * `signing` is handed in rather than imported so this file keeps knowing
-   * nothing about how a seat holds a share.
+   * nothing about how a signer node holds a share.
    */
-  async payWithCommittee({ roundId, utxo, contract, signing, seats = [] }) {
+  async payWithCommittee({ roundId, utxo, contract, signing, signerNodes = [] }) {
     // THE COMMITTEE'S OWN THRESHOLD (M3.3-28), off the round's contract - not a
-    // flat 5, which asked a two-seat committee for five signers.
+    // flat 5, which asked a two-signer node committee for five signers.
     let needed;
     try { needed = receiptsNeeded(contract.settlementSlots); }
     catch (e) { return { ok: false, why: e.message }; }
@@ -504,42 +504,42 @@ export class Payouts {
     if (!this.chain) return { ok: false, why: 'this node reaches no chain, so it spends nothing' };
 
     const mine = signing.spendFor({ roundId, utxo, contract });
-    if (!mine.ok) return { ok: false, why: `this seat will not sign it either: ${mine.why}` };
+    if (!mine.ok) return { ok: false, why: `this signer node will not sign it either: ${mine.why}` };
 
     const body = encodeUtxo(utxo);
     const rid = toHex(roundId);
     const refused = [];
-    // WHO GAVE A SHARE THAT DOES NOT CHECK, by seat id - named, and left out of
+    // WHO GAVE A SHARE THAT DOES NOT CHECK, by signer node id - named, and left out of
     // the next attempt. Measured without this (pool-bad-share.test.js): one
     // garbage share made an invalid spend that was written as queued and sent,
     // nobody was named, and the payout was locked for good.
     const culprits = new Map();
     const named = () => [...culprits.entries()].map(([id, where]) => ({ id, where }));
     const blame = () => (culprits.size
-      ? `; a bad signature share came from ${[...culprits.entries()].map(([id, where]) => `seat ${id} (${where})`).join(', ')}`
+      ? `; a bad signature share came from ${[...culprits.entries()].map(([id, where]) => `signer node ${id} (${where})`).join(', ')}`
       : '');
     let asked = [];
     let shares = [];
     let sig = null;
-    // A CALL AFTER AN EARLIER ONE GOES ON FROM THE ATTEMPT THIS SEAT'S OWN ROW
+    // A CALL AFTER AN EARLIER ONE GOES ON FROM THE ATTEMPT THIS SIGNER NODE'S OWN ROW
     // STANDS AT: the same list there gives back the same shares and the same
-    // bytes (a restart, a takeover); a seat that signed under another list
+    // bytes (a restart, a takeover); a signer node that signed under another list
     // refuses, and that attempt is over.
     const kept = signing.held ? signing.held(roundId) : null;
-    let attempt = kept && !kept.wrongSeat ? kept.attempt : 0;
+    let attempt = kept && !kept.wrongSignerNode ? kept.attempt : 0;
     const OVER = /signed under another commitment list/;
-    for (let tries = 0; tries <= seats.length + 2 && !sig; tries++, attempt++) {
-      // EVERY SEAT IS ASKED, AND THE FIVE ARE CHOSEN BY SEAT ID - so the healthy
+    for (let tries = 0; tries <= signerNodes.length + 2 && !sig; tries++, attempt++) {
+      // EVERY SIGNER NODE IS ASKED, AND THE FIVE ARE CHOSEN BY SIGNER NODE ID - so the healthy
       // committee's five are the same five whoever asks, the commitment list is
       // identical, and a takeover rebuilds the same transaction byte for byte
-      // (letter 19). A seat named for a bad share is not chosen again, and each
-      // attempt is numbered so every seat signs it with a FRESH nonce pair.
+      // (letter 19). A signer node named for a bad share is not chosen again, and each
+      // attempt is numbered so every signer node signs it with a FRESH nonce pair.
       const chosen = [];
       let ahead = -1;
       const own = signing.commit({ roundId, utxo, contract, random: this.random, attempt });
-      if (own.ok && !culprits.has(String(own.commitment.id))) chosen.push({ where: 'this seat', commitment: own.commitment });
-      for (const peer of seats) {
-        const got = await this.askSeat(`${peer}/pool/commit?round=${rid}&attempt=${attempt}`, body);
+      if (own.ok && !culprits.has(String(own.commitment.id))) chosen.push({ where: 'this signer node', commitment: own.commitment });
+      for (const peer of signerNodes) {
+        const got = await this.askSignerNode(`${peer}/pool/commit?round=${rid}&attempt=${attempt}`, body);
         if (!got.ok) {
           refused.push(`${peer}: ${got.why}`);
           const moved = /moved on to signing attempt (\d+)/.exec(got.why || '');
@@ -553,30 +553,30 @@ export class Payouts {
         if (culprits.has(String(one[0].id))) continue;
         chosen.push({ where: peer, commitment: one[0] });
       }
-      // SEATS ALREADY ON A LATER ATTEMPT (another asker got there first): join them.
+      // SIGNER NODES ALREADY ON A LATER ATTEMPT (another asker got there first): join them.
       if (chosen.length < needed && ahead > attempt) { attempt = ahead - 1; continue; }
       if (chosen.length < needed)
         return { ok: false, committed: chosen.length, needed,
-          why: `${chosen.length} of ${needed} seats committed to this spend`
-            + (culprits.size ? ' once the seats that gave a bad share were left out' : '') + blame(),
+          why: `${chosen.length} of ${needed} signer nodes committed to this spend`
+            + (culprits.size ? ' once the signer nodes that gave a bad share were left out' : '') + blame(),
           refused, culprits: named() };
 
       chosen.sort((a, b) => (String(a.commitment.id) < String(b.commitment.id) ? -1
         : String(a.commitment.id) > String(b.commitment.id) ? 1 : 0));
       chosen.length = needed;
       const commitments = chosen.map((a) => a.commitment);
-      // THE SHARES COME FROM THE SEATS IN THE LIST, and this seat only if it is one.
+      // THE SHARES COME FROM THE SIGNER NODES IN THE LIST, and this signer node only if it is one.
       const got = [];
       let over = false;
       for (const a of chosen) {
-        if (a.where === 'this seat') {
+        if (a.where === 'this signer node') {
           const ownShare = signing.signatureShare({ roundId, utxo, contract, commitments, attempt });
           if (!ownShare.ok && OVER.test(ownShare.why)) { over = true; break; }
-          if (!ownShare.ok) return { ok: false, why: `this seat withdrew: ${ownShare.why}${blame()}`, culprits: named() };
+          if (!ownShare.ok) return { ok: false, why: `this signer node withdrew: ${ownShare.why}${blame()}`, culprits: named() };
           got.push(ownShare.share);
           continue;
         }
-        const one = await this.askSeat(`${a.where}/pool/share?round=${rid}&attempt=${attempt}`,
+        const one = await this.askSignerNode(`${a.where}/pool/share?round=${rid}&attempt=${attempt}`,
           encodeShareRequest(utxo, commitments));
         if (!one.ok && OVER.test(one.why || '')) { refused.push(`${a.where}: ${one.why}`); over = true; break; }
         if (!one.ok)
@@ -585,7 +585,7 @@ export class Payouts {
         catch (err) { return { ok: false, why: `${a.where}: ${err.message}${blame()}`, culprits: named() }; }
       }
 
-      // A SEAT ALREADY SPENT THIS ATTEMPT'S PAIR UNDER ANOTHER LIST: every seat
+      // A SIGNER NODE ALREADY SPENT THIS ATTEMPT'S PAIR UNDER ANOTHER LIST: every signer node
       // takes a fresh pair for the next one.
       if (over) continue;
       const tried = aggregate340({
@@ -597,7 +597,7 @@ export class Payouts {
         sig = tried; asked = chosen; shares = got;
         break;
       }
-      // AND WHOSE SHARE BROKE IT: each checked against that seat's public share.
+      // AND WHOSE SHARE BROKE IT: each checked against that signer node's public share.
       let unknown = 0;
       const bad = [];
       chosen.forEach((a, i) => {
@@ -609,7 +609,7 @@ export class Payouts {
       if (!bad.length)
         return { ok: false, culprits: named(),
           why: 'the committee\'s signature does not verify and no share could be shown to be the bad one'
-            + (unknown ? ` (${unknown} seat(s) have no public share here to check against)` : '')
+            + (unknown ? ` (${unknown} signer node(s) have no public share here to check against)` : '')
             + ' - nothing was written or sent' + blame() };
       for (const b of bad) culprits.set(String(b.commitment.id), b.where);
     }
@@ -624,13 +624,13 @@ export class Payouts {
     // on the chain, or still unsent - records the same state this call would
     // have: PAID_IN_PART when the table leaves rows owed under the relay
     // floor. It used to write PAID here whatever the table left owed, while a
-    // seat finding the same spend on the chain wrote PAID_IN_PART.
+    // signer node finding the same spend on the chain wrote PAID_IN_PART.
     const owedCount = (mine.owed || []).length;
     const state = owedCount ? PAID_IN_PART : PAID;
     this.round.putPayout({
       roundId, tableId: row.tableId, state: PAYOUT_QUEUED, raw,
       owedSats: mine.owedSats || 0n, owedCount,
-      why: `${shares.length} of ${needed} seats signed this spend; about to send`,
+      why: `${shares.length} of ${needed} signer nodes signed this spend; about to send`,
     });
     const sent = await this.chain.send(raw);
     if (!sent.ok) return { ok: false, why: sent.why, raw, signed: shares.length };
@@ -638,16 +638,16 @@ export class Payouts {
     this.round.putPayout({
       roundId, tableId: row.tableId, state, txid: sent.txid, raw,
       why: owedCount
-        ? `paid by ${shares.length} of ${needed} seats; ${owedCount} still owed ${mine.owedSats} sats, under the relay floor`
-        : `paid by ${shares.length} of ${needed} seats`,
+        ? `paid by ${shares.length} of ${needed} signer nodes; ${owedCount} still owed ${mine.owedSats} sats, under the relay floor`
+        : `paid by ${shares.length} of ${needed} signer nodes`,
     });
     return { ok: true, state, txid: sent.txid, raw, signed: shares.length,
       owed: mine.owed || [], owedSats: mine.owedSats || 0n,
-      seats: asked.map((a) => a.where), culprits: named() };
+      signerNodes: asked.map((a) => a.where), culprits: named() };
   }
 
-  /** One ask of one seat, and a refusal is an answer rather than a throw. */
-  async askSeat(url, body) {
+  /** One ask of one signer node, and a refusal is an answer rather than a throw. */
+  async askSignerNode(url, body) {
     let got;
     try { got = await this.chainFetch(url, { method: 'POST', body }); }
     catch (err) { return { ok: false, why: err.message }; }
@@ -677,7 +677,7 @@ export class Payouts {
     if (!this.canSpend) return { ok: false, why: 'this node reaches no chain, so it spends nothing' };
 
     // THE PAID ROUND'S OWN THRESHOLD (M3.3-28), read off its contract: two
-    // signers of a two-seat committee were "2 of 5 signers" under a flat 5.
+    // signers of a two-signer node committee were "2 of 5 signers" under a flat 5.
     const heldRound = this.round.get(roundId);
     if (!heldRound)
       return { ok: false, why: 'this node holds no such round, so it cannot say how many signers it needs' };
@@ -788,7 +788,7 @@ export class Payouts {
         asked.push({ roundId: row.roundId, state: done });
         continue;
       }
-      // THIS SEAT'S OWN FULLY SIGNED SPEND, WHICH THE CHAIN HAS NOT HEARD OF: the
+      // THIS SIGNER NODE'S OWN FULLY SIGNED SPEND, WHICH THE CHAIN HAS NOT HEARD OF: the
       // raw is written only once five of seven have signed it, so these are
       // the exact bytes it was about to send - sent now, and nothing is built
       // or signed again. If the chain will not take them, the row stays

@@ -3,17 +3,17 @@
 // "After commitment, before the first financial tick: if fewer than 5
 // game/verify nodes are available, the entry becomes ENTRY_VOID and the stake
 // is refunded by forfeit or by the stake lock's expiry (§23.2)." What does a
-// 2-of-2 record today when an ON-TIME first mark reaches too few seats because
-// a seat is down - and, beside it, the cases that must not move?
+// 2-of-2 record today when an ON-TIME first mark reaches too few signer nodes because
+// a signer node is down - and, beside it, the cases that must not move?
 //
-//   (a)  on-time first mark (60), both seats up
-//   (b)  on-time first mark, seat B down; the player plays on at A; B comes back
+//   (a)  on-time first mark (60), both signer nodes up
+//   (b)  on-time first mark, signer node B down; the player plays on at A; B comes back
 //        and is never sent the mark
 //   (b') the same, and the player catches B up afterwards (the §13C question)
 //   (c)  late first mark (1320 > 900): FORFEIT, never Void
 //   (d)  no mark: neither
 //
-// Two in-process seats of a lock round; the fixture's delivering winner (join
+// Two in-process signer nodes of a lock round; the fixture's delivering winner (join
 // tick 0); the round names no start deadline (900).
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
@@ -22,7 +22,7 @@ import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { resultFinality } from '../src/finality.js';
-import { assumeSeated } from '../test/seating.js';
+import { assumeAssigned } from '../test/assignment.js';
 import { lockPort } from '../test/lock-fixture.js';
 import { b32, rand, RANDOMNESS, STAKE, WINDOW_MS, WINNER, GENESIS_HASH, wordsAt, contractFor, say, secretScalar, opts, wait } from '../test/window-fixture.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
@@ -43,7 +43,7 @@ const curve = { ...feldmanGroup, tweakPoint };
 const END = WINNER.ticks;
 const out = (o) => console.log(JSON.stringify(o, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
 
-async function seats() {
+async function signerNodes() {
   const port = lockPort();
   const mk = (db, p = 0) => serve(db, { port: p, ...opts, stakeLocks: port, poolCurve: curve, finality: { everyMs: 100 } });
   const dbB = openStore(':memory:');
@@ -62,19 +62,19 @@ async function seats() {
   const rid = roundId(c);
   for (const d of [a, b]) {
     await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
-    assumeSeated(d.round, rid, c.nodes);
+    assumeAssigned(d.round, rid, c.nodes);
   }
   for (let pass = 0; pass < 2; pass++) for (const d of [a, b]) await d.dkg.run(c.nodes);
-  return { a, get b() { return b; }, c, rid, port, claimPk: a.dkg.seatFor(c.nodes).pool.groupPublicKey,
+  return { a, get b() { return b; }, c, rid, port, claimPk: a.dkg.signerNodeFor(c.nodes).pool.groupPublicKey,
     async downB() { await b.close(); }, async upB() { b = await mk(dbB, bPort); wire(); },
     async close() { await a.close(); try { await b.close(); } catch { /* down */ } } };
 }
 
-async function seatAndBuild(w, { firstAt = 60 } = {}) {
+async function joinAndBuild(w, { firstAt = 60 } = {}) {
   const session = ed25519.utils.randomSecretKey();
   const preimage = secretScalar();
   const e = rand(32);
-  const dealt = await dealHandout({ preimage, seats: w.c.nodes, roundId: w.rid, playerPubkey: WINNER.key,
+  const dealt = await dealHandout({ preimage, signerNodes: w.c.nodes, roundId: w.rid, playerPubkey: WINNER.key,
     ephemeralSecret: e, ephemeralPubkey: feldmanGroup.pointX(e), coefficients: [scalarFrom32(rand(32)) % FIELD], needed: 2, curve: feldmanGroup });
   const outpoint = { txid: rand(32), outIdx: 0n };
   const entry = {
@@ -142,16 +142,16 @@ async function settle(w, run) {
 const answer = (s) => (typeof s === 'string' ? (s.length > 30 && !s.startsWith('error') ? 'receipt' : s.slice(0, 60)) : 'receipt');
 
 const cases = [
-  ['a  on-time first mark, both seats up', { firstAt: 60, down: false }],
+  ['a  on-time first mark, both signer nodes up', { firstAt: 60, down: false }],
   ['b  on-time first mark, B down at the start, never sent it after', { firstAt: 60, down: true }],
   ["b' on-time first mark, B down at the start, the player catches B up after", { firstAt: 60, down: true, catchUp: true }],
   ['c  late first mark (1320 > 900)', { firstAt: END, down: false }],
   ['d  no mark', { firstAt: 60, down: false, noMark: true }],
 ];
 for (const [name, k] of cases) {
-  const w = await seats();
+  const w = await signerNodes();
   try {
-    const run = await seatAndBuild(w, { firstAt: k.firstAt });
+    const run = await joinAndBuild(w, { firstAt: k.firstAt });
     if (k.down) await w.downB();
     const saidA = [];
     const saidB = [];

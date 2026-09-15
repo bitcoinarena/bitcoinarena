@@ -10,10 +10,10 @@
 #   0. SETUP     tools/stake-lock-step1.sh with STAY_UP=1: stock fedimintd
 #                0.12.0, 4 guardians 3 of 4, one gateway, a deposit and the
 #                lock (step 1; not re-measured here)
-#   1. FORFEIT   both committee seats sign the contract id (the repo's FROST
+#   1. FORFEIT   both committee signer nodes sign the contract id (the repo's FROST
 #                2-of-2, tools/stake-lock-forfeit.mjs); checked locally
-#   2. REFUSED   (a) a forfeit signed by one seat alone, (b) the 2-of-2
-#                forfeit in a transaction signed by a committee seat's key -
+#   2. REFUSED   (a) a forfeit signed by one signer node alone, (b) the 2-of-2
+#                forfeit in a transaction signed by a committee signer node's key -
 #                both submitted while the lock is still there
 #   3. REDEEM    the player's client spends the lock with the 2-of-2 forfeit,
 #                signed by the player's key; the value returns as ecash
@@ -61,15 +61,15 @@ show() { echo "$1" | js 'o=>`accepted ${o.accepted}; forfeit verifies under clai
 F2=$(node $HERE/stake-lock-forfeit.mjs $P/keys.json $CID 1,2); SIG2=$(echo "$F2" | js 'o=>o.signature')
 F1=$(node $HERE/stake-lock-forfeit.mjs $P/keys.json $CID 1); SIG1=$(echo "$F1" | js 'o=>o.signature')
 say "FORFEIT 2 of 2: $SIG2 - verifies under claim_pk $(k claimPk): $(echo "$F2" | js 'o=>o.verifiesUnderClaimPk')"
-say "  one seat alone: $SIG1 - verifies: $(echo "$F1" | js 'o=>o.verifiesUnderClaimPk')"
+say "  one signer node alone: $SIG1 - verifies: $(echo "$F1" | js 'o=>o.verifiesUnderClaimPk')"
 E0=$(ecash)
 
 # ---- 2. REFUSED WHILE THE LOCK IS THERE ----
 RA=$(redeem $SIG1 $(k playerSecret))
 say "(a) 1-of-2 forfeit, signed by the player: $(show "$RA")"
-SEAT=$(node -e "process.stdout.write(require(process.argv[1]).seats[0].identity)" $P/keys.json)
-RB=$(redeem $SIG2 $SEAT)
-say "(b) 2-of-2 forfeit, transaction signed by committee seat 1's key: $(show "$RB")"
+SIGNER_NODE=$(node -e "process.stdout.write(require(process.argv[1]).signerNodes[0].identity)" $P/keys.json)
+RB=$(redeem $SIG2 $SIGNER_NODE)
+say "(b) 2-of-2 forfeit, transaction signed by committee signer node 1's key: $(show "$RB")"
 E1=$(ecash)
 
 # ---- 3. THE PLAYER'S REDEEM ----

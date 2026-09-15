@@ -1,8 +1,8 @@
-// THE CORES THIS SEAT CAN REPLAY (M3; the owner 2026-09-15 08:03: "the truck game is one use of the
+// THE CORES THIS SIGNER NODE CAN REPLAY (M3; the owner 2026-09-15 08:03: "the truck game is one use of the
 // federated consensus network, not the network"; 08:07: "several games at once, and several rule
 // sets at once. Each round names its sim_wasm_hash and its game_config/config_hash").
 //
-// The one door between a seat and any game. Each core is its adapter module (the calls a seat
+// The one door between a signer node and any game. Each core is its adapter module (the calls a signer node
 // replays through, core/src/adapter.js for the truck), its hash - sim_wasm_hash, computed here from
 // its own sources, never typed - and the configs it runs, by config_hash. `replay.js` imports no
 // core: it is handed one of these.
@@ -22,7 +22,7 @@ export const TRUCK = Object.freeze({
 
 /**
  * A CORE'S RUN LENGTH UNDER A CONFIG (M3 R1 R3): its `runTicks(config)` where it has one, else its one
- * RUN_TICKS (the truck's BLOCK_TICKS - one config). A round names it as blockTicks; the seat checks it.
+ * RUN_TICKS (the truck's BLOCK_TICKS - one config). A round names it as blockTicks; the signer node checks it.
  */
 export function runTicksOf(core, config) {
   const a = core && core.adapter;
@@ -35,7 +35,7 @@ export const TRUCK_CORE_HASH = fromHex(TRUCK.hash);
 export const TRUCK_CONFIG_HASH = GENESIS_CONFIG_HASH;
 
 /**
- * THE CORES A SEAT HAS INSTALLED, by hash: the truck always, and every core its operator installs
+ * THE CORES A SIGNER NODE HAS INSTALLED, by hash: the truck always, and every core its operator installs
  * beside it (serve's `cores`) - several at once, each with its own configs (the owner 08:07).
  */
 export function installedCores(extra = []) {
@@ -47,7 +47,7 @@ const INSTALLED = installedCores();
 
 /**
  * THE CORE A ROUND IS REPLAYED BY, AND THE CONFIG IT RUNS: the one its simCoreHash names, running
- * the config its configHash names, among the cores this seat installed. A pair the seat does not
+ * the config its configHash names, among the cores this signer node installed. A pair the signer node does not
  * hold is refused by name - 27A.7.5: not selectable for that round, it serves nothing there, it is
  * not ejected and not slashed. (R1 step B; step A handed every round the truck.)
  */
@@ -56,10 +56,10 @@ export function coreForRound(contract, installed = INSTALLED) {
     return { ok: false, why: 'that round names no 32-byte core' };
   const core = installed.get(toHex(contract.simCoreHash));
   if (!core)
-    return { ok: false, why: `this seat holds no core ${toHex(contract.simCoreHash).slice(0, 16)}: it is not selectable for `
+    return { ok: false, why: `this signer node holds no core ${toHex(contract.simCoreHash).slice(0, 16)}: it is not selectable for `
       + 'that round (27A.7.5) - it serves nothing there, and is not slashed' };
   if (!(contract.configHash instanceof Uint8Array) || !core.configs.has(toHex(contract.configHash)))
-    return { ok: false, why: `this seat runs ${core.name} but not the config `
+    return { ok: false, why: `this signer node runs ${core.name} but not the config `
       + `${contract.configHash instanceof Uint8Array ? toHex(contract.configHash).slice(0, 16) : '(none)'} that round names: `
       + 'not selectable for it (27A.7.5)' };
   return { ok: true, core, config: core.configs.get(toHex(contract.configHash)) };

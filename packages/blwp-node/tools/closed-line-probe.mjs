@@ -1,5 +1,5 @@
 // ENTRY_VOID (§16) WHEN THE PLAYER'S CHAIN NEVER PASSES THE START LINE: the
-// seat holding the on-time first mark can only decide at its round's close
+// signer node holding the on-time first mark can only decide at its round's close
 // ("closed" evidence). Measured beside the come-back case, where the chain
 // passes the line and the evidence is the player's own mark.
 //
@@ -10,8 +10,8 @@
 //   (iii) as (ii), and while B is back and still open the player sends B the
 //         first mark directly; then B closes and the forfeit is asked
 //
-// Two in-process seats of a lock round, deadline omitted (900). Columns: what
-// each seat stores, receipts of the first mark, the forfeit door, whether its
+// Two in-process signer nodes of a lock round, deadline omitted (900). Columns: what
+// each signer node stores, receipts of the first mark, the forfeit door, whether its
 // signature verifies over the lock's id, and the lock's expiry still ahead.
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
@@ -20,7 +20,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
-import { assumeSeated } from '../test/seating.js';
+import { assumeAssigned } from '../test/assignment.js';
 import { lockPort } from '../test/lock-fixture.js';
 import { b32, rand, RANDOMNESS, STAKE, WINDOW_MS, WINNER, GENESIS_HASH, wordsAt, contractFor, say, secretScalar, opts, wait } from '../test/window-fixture.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
@@ -42,7 +42,7 @@ const END = WINNER.ticks;
 const out = (o) => console.log(JSON.stringify(o, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
 const until = async (fn, ms = 8000) => { for (let t = Date.now(); Date.now() - t < ms; await wait(100)) if (fn()) return true; return false; };
 
-async function seats() {
+async function signerNodes() {
   const port = lockPort();
   const mk = (db, p = 0) => serve(db, { port: p, ...opts, stakeLocks: port, poolCurve: curve, finality: { everyMs: 100 } });
   const dbB = openStore(':memory:');
@@ -61,19 +61,19 @@ async function seats() {
   const rid = roundId(c);
   for (const d of [a, b]) {
     await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
-    assumeSeated(d.round, rid, c.nodes);
+    assumeAssigned(d.round, rid, c.nodes);
   }
   for (let pass = 0; pass < 2; pass++) for (const d of [a, b]) await d.dkg.run(c.nodes);
-  return { a, get b() { return b; }, c, rid, port, claimPk: a.dkg.seatFor(c.nodes).pool.groupPublicKey,
+  return { a, get b() { return b; }, c, rid, port, claimPk: a.dkg.signerNodeFor(c.nodes).pool.groupPublicKey,
     async downB() { await b.close(); }, async upB() { b = await mk(dbB, bPort); wire(); },
     async close() { await a.close(); try { await b.close(); } catch { /* down */ } } };
 }
 
-async function seatAndBuild(w) {
+async function joinAndBuild(w) {
   const session = ed25519.utils.randomSecretKey();
   const preimage = secretScalar();
   const e = rand(32);
-  const dealt = await dealHandout({ preimage, seats: w.c.nodes, roundId: w.rid, playerPubkey: WINNER.key,
+  const dealt = await dealHandout({ preimage, signerNodes: w.c.nodes, roundId: w.rid, playerPubkey: WINNER.key,
     ephemeralSecret: e, ephemeralPubkey: feldmanGroup.pointX(e), coefficients: [scalarFrom32(rand(32)) % FIELD], needed: 2, curve: feldmanGroup });
   const outpoint = { txid: rand(32), outIdx: 0n };
   const entry = {
@@ -108,7 +108,7 @@ async function seatAndBuild(w) {
 }
 
 const answer = (s) => (typeof s === 'string' ? (s.length > 30 && !s.startsWith('error') ? 'receipt' : s.replace(/^(error [A-Z_]+).*/, '$1').slice(0, 70)) : 'receipt');
-const seatView = (d, w, run) => {
+const signerNodeView = (d, w, run) => {
   const v = d.round.entryVoid(run.eid);
   return { stored: v ? `ENTRY_VOID (${v.evidenceKind})` : null, holdsFirstMark: d.round.holdsMark(run.firstId),
     receiptsOfFirstMark: d.round.receiptCount(run.firstId),
@@ -126,9 +126,9 @@ async function askForfeit(w, run) {
 const closeAt = (d, w) => say(d.port, `close ${toHex(w.rid)}`);
 
 async function variant(name, body) {
-  const w = await seats();
+  const w = await signerNodes();
   try {
-    const run = await seatAndBuild(w);
+    const run = await joinAndBuild(w);
     await w.downB();
     out({ case: name, ...(await body(w, run)) });
   } catch (e) { out({ case: name, error: e.message }); } finally { await w.close(); }
@@ -137,24 +137,24 @@ async function variant(name, body) {
 await variant('(b) reference: chain passes the line at A (mark 1320)', async (w, run) => {
   for (const m of [...run.start, ...run.rest]) await say(w.a.port, m);
   await until(() => w.a.round.entryVoid(run.eid));
-  const a = seatView(w.a, w, run);
+  const a = signerNodeView(w.a, w, run);
   await w.upB();
   const forfeit = await askForfeit(w, run);
-  return { a, bAfter: seatView(w.b, w, run), forfeit };
+  return { a, bAfter: signerNodeView(w.b, w, run), forfeit };
 });
 
 await variant('(i) chain stops at 60; A closes; B back and closed; forfeit asked', async (w, run) => {
   for (const m of run.start) await say(w.a.port, m);
   await wait(500);
-  const aBeforeClose = seatView(w.a, w, run);
+  const aBeforeClose = signerNodeView(w.a, w, run);
   await closeAt(w.a, w);
   await until(() => w.a.round.entryVoid(run.eid));
-  const aAfterClose = seatView(w.a, w, run);
+  const aAfterClose = signerNodeView(w.a, w, run);
   await w.upB();
   await closeAt(w.b, w);
   await wait(500);
   const forfeit = await askForfeit(w, run);
-  return { aBeforeClose, aAfterClose, bAfter: seatView(w.b, w, run), forfeit };
+  return { aBeforeClose, aAfterClose, bAfter: signerNodeView(w.b, w, run), forfeit };
 });
 
 await variant('(ii) chain stops at 60; A closes; forfeit asked while B is back and open; then B closes', async (w, run) => {
@@ -164,11 +164,11 @@ await variant('(ii) chain stops at 60; A closes; forfeit asked while B is back a
   await until(() => w.a.round.entryVoid(run.eid));
   await w.upB();
   const whileBOpen = await askForfeit(w, run);
-  const bWhileOpen = seatView(w.b, w, run);
+  const bWhileOpen = signerNodeView(w.b, w, run);
   await closeAt(w.b, w);
   await wait(500);
   const afterBCloses = await askForfeit(w, run);
-  return { a: seatView(w.a, w, run), whileBOpen, bWhileOpen, afterBCloses, bAfter: seatView(w.b, w, run) };
+  return { a: signerNodeView(w.a, w, run), whileBOpen, bWhileOpen, afterBCloses, bAfter: signerNodeView(w.b, w, run) };
 });
 
 await variant('(iii) chain stops at 60; A closes; B back and open; the player sends B the first mark; B closes', async (w, run) => {
@@ -180,10 +180,10 @@ await variant('(iii) chain stops at 60; A closes; B back and open; the player se
   const saidB = [];
   for (const m of run.start) saidB.push(answer(await say(w.b.port, m)));
   await wait(500);
-  const bOpen = seatView(w.b, w, run);
+  const bOpen = signerNodeView(w.b, w, run);
   await closeAt(w.b, w);
   await wait(1500);
   const forfeit = await askForfeit(w, run);
-  return { saidB, a: seatView(w.a, w, run), bOpen, bAfterClose: seatView(w.b, w, run), forfeit };
+  return { saidB, a: signerNodeView(w.a, w, run), bOpen, bAfterClose: signerNodeView(w.b, w, run), forfeit };
 });
 process.exit(0);

@@ -119,7 +119,7 @@ test('a batch for a round or an entry the node has not got is refused', () => {
  * exactly like this: one more import, in one more place, for one good reason.
  */
 //
-// AND SINCE M3 R1 (the owner 2026-09-15 08:03/08:07: the seats replay the core a round names; several
+// AND SINCE M3 R1 (the owner 2026-09-15 08:03/08:07: the signer nodes replay the core a round names; several
 // cores at once) THE DOOR HAS TWO HALVES, each still exactly one file: cores.js is the only file that
 // IMPORTS a core - the installed cores, by hash - and replay.js is the only file that STEPS one, the
 // core it is handed. Measured before the split: the one file that did both was replay.js.

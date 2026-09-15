@@ -1,10 +1,10 @@
 // THE CLOSED-CLAIM TRUST BOUNDARY (§16, §13C, §23.2) ON A REAL FEDERATION.
 // Run by outage-regtest.sh with OUTAGE_SCRIPT=closed-claim.mjs.
 //
-// The Daily's own 2-of-2 round naming the federation, the seats making the
+// The Daily's own 2-of-2 round naming the federation, the signer nodes making the
 // round's claim key themselves; the round names no start deadline (900). Two
-// players lock as the page does and both seats commit both locks. Both seats
-// stay up and open throughout. Seat A lies; B is honest.
+// players lock as the page does and both signer nodes commit both locks. Both signer nodes
+// stay up and open throughout. Signer node A lies; B is honest.
 //
 //   (1) FORGED: player X sends nothing. A invents a first mark for X's entry -
 //       signed by a key that is not X's session key - signs its own receipt
@@ -14,13 +14,13 @@
 //       not with one A signed alone, not by refund.
 //   (2) REAL: player Y's own on-time first mark reaches A only; A keeps it from
 //       B, plants its own ENTRY_VOID ("closed") and hands B the same claim with
-//       Y's real mark. B records ENTRY_VOID; the seats forfeit; the forfeit
-//       pays only Y's refund key - a stranger's key and a seat's key are
+//       Y's real mark. B records ENTRY_VOID; the signer nodes forfeit; the forfeit
+//       pays only Y's refund key - a stranger's key and a signer node's key are
 //       refused by the guardians - and Y redeems from the seed before expiry,
 //       withdraws, and the lock is gone.
 //
-// HARNESS WORK, SAID SO: the lying seat is written into A's own store (its
-// Round), not through its server - a lying seat controls its own store and
+// HARNESS WORK, SAID SO: the lying signer node is written into A's own store (its
+// Round), not through its server - a lying signer node controls its own store and
 // its own forwards. B is reached only over HTTP, as any peer reaches it.
 import { readFileSync, copyFileSync, mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
@@ -101,31 +101,31 @@ const lockView = async (lock) => {
 };
 
 const round = await standUpRound({ host: '127.0.0.1', portA: 18597, portB: 18598, stakeMsat: 1000000n,
-  federationId, invite: env.INVITE, seat: { stakeLocks: port } });
+  federationId, invite: env.INVITE, signerNode: { stakeLocks: port } });
 const rid = fromHex(round.id);
 const contract = round.contract;
 const withId = { ...contract, id: rid };
 const A = round.nodes[0];
 const B = round.nodes[1];
-const seatA = round.a.round;
-// SEAT A'S OWN SIGNED RECEIPT OVER ANY CHECKPOINT ID - what a lying seat can always make.
+const signerNodeA = round.a.round;
+// SIGNER NODE A'S OWN SIGNED RECEIPT OVER ANY CHECKPOINT ID - what a lying signer node can always make.
 const receiptByA = (id) => {
-  const r = { checkpointId: id, receivedAtMs: BigInt(Date.now()), nodePubkey: seatA.pubkey };
-  return joinSignedReceipt(encodeCheckpointReceipt(r), schnorr.sign(receiptId(r), seatA.identity.secret));
+  const r = { checkpointId: id, receivedAtMs: BigInt(Date.now()), nodePubkey: signerNodeA.pubkey };
+  return joinSignedReceipt(encodeCheckpointReceipt(r), schnorr.sign(receiptId(r), signerNodeA.identity.secret));
 };
 let code = 0;
 try {
-  const claimKey = await awaitAttestedClaimKey({ round: withId, seats: contract.nodes, nodes: round.nodes, curve: pageCurve });
+  const claimKey = await awaitAttestedClaimKey({ round: withId, signerNodes: contract.nodes, nodes: round.nodes, curve: pageCurve });
   say({ step: 'claim key', ok: claimKey.ok, attested: claimKey.attested, needed: claimKey.needed,
     startDeadlineTicks: contract.startDeadlineTicks === undefined ? 'omitted (900)' : contract.startDeadlineTicks });
   if (!claimKey.ok) throw new Error(claimKey.why);
   const { randomness } = await fetchRandomness(round.id, round.nodes);
 
-  // TWO PLAYERS, EACH LOCKED AS THE PAGE LOCKS AND COMMITTED AT BOTH SEATS.
+  // TWO PLAYERS, EACH LOCKED AS THE PAGE LOCKS AND COMMITTED AT BOTH SIGNER NODES.
   async function joinPlayer(name) {
     const seed = random(32);
     const player = playerFor(withId, { seed, curve: pageCurve });
-    const stake = await stakeFor(withId, { seats: contract.nodes, curve: pageCurve, random, playerPubkey: player.pubkey, needed: 2 });
+    const stake = await stakeFor(withId, { signerNodes: contract.nodes, curve: pageCurve, random, playerPubkey: player.pubkey, needed: 2 });
     const put = await postHandout(stake, round.nodes, { needed: 2 });
     let paying = Promise.resolve(null);
     const lock = await lockStake({ round: contract, roundId: rid, invite: env.INVITE, seed, stake, claimKey,
@@ -135,11 +135,11 @@ try {
     const entry = { roundId: rid, sessionPubkey: ed25519.getPublicKey(session),
       ...entryFor(withId, { seed, curve: pageCurve, random, stake, claimKey, stakeLock: lock }) };
     const eid = entryId(entry);
-    const seated = [];
-    for (const b of round.nodes) seated.push((await fetch(`${b}/entry`, { method: 'POST', body: encodeEntryContract(entry) })).status);
+    const joined = [];
+    for (const b of round.nodes) joined.push((await fetch(`${b}/entry`, { method: 'POST', body: encodeEntryContract(entry) })).status);
     const handed = await handLock({ entryId: eid, fields: lock.fields, nodes: round.nodes, needed: 2 });
     say({ step: `locked ${name}`, outpoint: `${toHex(lock.outpoint.txid)}:${lock.outpoint.outIdx}`, amountMsat: lock.fields.amountMsat,
-      expiration: lock.fields.expiration, handouts: put.accepted, entries: seated, locks: handed.said.map((s) => s.status), committed: handed.committed });
+      expiration: lock.fields.expiration, handouts: put.accepted, entries: joined, locks: handed.said.map((s) => s.status), committed: handed.committed });
     return { seed, player, lock, session, entry, eid };
   }
   const X = await joinPlayer('X (path 1, forged)');
@@ -157,7 +157,7 @@ try {
     const fake = { roundId: rid, entryId: X.eid, tick: FIRST, stateHash: random(32), inputChainHash: GENESIS,
       previousHash: NO_PREVIOUS, sessionPubkey: ed25519.getPublicKey(fakeKey) };
     const fakeBytes = joinSigned(encodeCheckpoint(fake), ed25519.sign(checkpointId(fake), fakeKey));
-    seatA.putEntryVoid({ entryId: X.eid, roundId: rid, firstMark: fakeBytes, evidenceKind: 'closed', evidence: null, why: 'planted by a lying seat' });
+    signerNodeA.putEntryVoid({ entryId: X.eid, roundId: rid, firstMark: fakeBytes, evidenceKind: 'closed', evidence: null, why: 'planted by a lying signer node' });
     const bAnswer = await postFirstMark(B, { mark: toHex(fakeBytes), batches: [], receipt: toHex(receiptByA(checkpointId(fake))),
       entryVoid: { kind: 'closed', evidence: null } });
     await wait(1000);
@@ -169,15 +169,15 @@ try {
 
     const { f, ms } = await askForfeit(X.eid);
     say({ step: '(1) the forfeit of X\'s lock asked', ok: f.ok, msAfterAsked: ms, why: f.ok ? null : f.why.slice(0, 320),
-      keptBySeats: [round.a, round.b].map((d) => !!d.round.forfeit(X.eid)), ...(await lockView(X.lock)) });
+      keptBySignerNodes: [round.a, round.b].map((d) => !!d.round.forfeit(X.eid)), ...(await lockView(X.lock)) });
 
     // X TRIES EVERY WAY OUT BEFORE THE EXPIRY.
-    let viaSeats;
-    try { await redeemStake({ round: contract, roundId: rid, invite: env.INVITE, seed: X.seed, curve: pageCurve, LockClient, storage: tab(), nodes: round.nodes }); viaSeats = 'REDEEMED'; }
-    catch (e) { viaSeats = `refused: ${e.message.slice(0, 200)}`; }
+    let viaSignerNodes;
+    try { await redeemStake({ round: contract, roundId: rid, invite: env.INVITE, seed: X.seed, curve: pageCurve, LockClient, storage: tab(), nodes: round.nodes }); viaSignerNodes = 'REDEEMED'; }
+    catch (e) { viaSignerNodes = `refused: ${e.message.slice(0, 200)}`; }
     // A "forfeit" A signed alone over the lock's contract id, with its node key.
     const cid = await port.contractId(X.lock.fields);
-    const aloneSig = toHex(schnorr.sign(fromHex(cid), seatA.identity.secret));
+    const aloneSig = toHex(schnorr.sign(fromHex(cid), signerNodeA.identity.secret));
     const xSecret = lockSecretFor(X.seed, rid);
     const xClient = await LockClient.join(env.INVITE, toHex(contract.federationId), toHex(xSecret), lockStoreFor(tab(), rid, xSecret));
     let alone;
@@ -188,7 +188,7 @@ try {
         federationBlockCount: alone.block_count, expiration: alone.expiration, lockAfter: alone.stored_after ? 'held' : 'none' };
     } catch (e) { alone = { thrown: String(e.message || e).slice(0, 160) }; }
     const rf = (await refundStake({ round: contract, roundId: rid, invite: env.INVITE, seed: X.seed, curve: pageCurve, LockClient, storage: tab(), nodes: round.nodes })).refunds[0];
-    say({ step: '(1) X tries to redeem before the expiry', viaSeats, withAForfeitAAloneSigned: alone,
+    say({ step: '(1) X tries to redeem before the expiry', viaSignerNodes, withAForfeitAAloneSigned: alone,
       refundBeforeExpiry: { accepted: rf.accepted, error: rf.error ? String(rf.error).slice(0, 160) : null,
         federationBlockCount: rf.block_count, expiration: rf.expiration, lockAfter: rf.stored_after ? 'held' : 'none' },
       ...(await lockView(X.lock)) });
@@ -202,9 +202,9 @@ try {
     const m1 = { roundId: rid, entryId: Y.eid, tick: FIRST, stateHash: hex32(st), inputChainHash: batchId(b1), previousHash: NO_PREVIOUS,
       sessionPubkey: ed25519.getPublicKey(Y.session) };
     const signedM1 = joinSigned(encodeCheckpoint(m1), ed25519.sign(checkpointId(m1), Y.session));
-    seatA.batch(encodeInputBatch(b1));
-    const receiptA = seatA.checkpoint(signedM1);        // A takes Y's mark - and keeps it from B
-    seatA.putEntryVoid({ entryId: Y.eid, roundId: rid, firstMark: signedM1, evidenceKind: 'closed', evidence: null, why: 'A closed early, by its own word' });
+    signerNodeA.batch(encodeInputBatch(b1));
+    const receiptA = signerNodeA.checkpoint(signedM1);        // A takes Y's mark - and keeps it from B
+    signerNodeA.putEntryVoid({ entryId: Y.eid, roundId: rid, firstMark: signedM1, evidenceKind: 'closed', evidence: null, why: 'A closed early, by its own word' });
     const bAnswer = await postFirstMark(B, { mark: toHex(signedM1), batches: [toHex(encodeInputBatch(b1))], receipt: toHex(receiptA),
       entryVoid: { kind: 'closed', evidence: null } });
     await wait(1000);
@@ -216,13 +216,13 @@ try {
     const { f, ms } = await askForfeit(Y.eid);
     say({ step: '(2) the forfeit of Y\'s lock asked', ok: f.ok, msAfterAsked: ms, why: f.ok ? null : f.why.slice(0, 320),
       verifies: f.ok && schnorr.verify(fromHex(f.signature), fromHex(f.contractId), claimKey.claimPk.subarray(1)),
-      keptBySeats: [round.a, round.b].map((d) => !!d.round.forfeit(Y.eid)), ...(await lockView(Y.lock)) });
+      keptBySignerNodes: [round.a, round.b].map((d) => !!d.round.forfeit(Y.eid)), ...(await lockView(Y.lock)) });
     if (!f.ok) throw new Error('no forfeit in path 2');
 
-    // NOBODY ELSE TAKES IT: the real forfeit in hand, a stranger's key and seat A's key, at the guardians.
+    // NOBODY ELSE TAKES IT: the real forfeit in hand, a stranger's key and signer node A's key, at the guardians.
     const stranger = await guardianRedeem(Y.lock, random(32), f.signature);
-    const bySeatA = await guardianRedeem(Y.lock, seatA.identity.secret, f.signature);
-    say({ step: '(2) the real forfeit with a key that is not Y\'s refund key', stranger, bySeatA, ...(await lockView(Y.lock)) });
+    const bySignerNodeA = await guardianRedeem(Y.lock, signerNodeA.identity.secret, f.signature);
+    say({ step: '(2) the real forfeit with a key that is not Y\'s refund key', stranger, bySignerNodeA, ...(await lockView(Y.lock)) });
 
     // Y REDEEMS FROM A LATER SESSION WITH ONLY THE SEED, BEFORE THE EXPIRY.
     const r = await redeemStake({ round: contract, roundId: rid, invite: env.INVITE, seed: Y.seed, curve: pageCurve, LockClient, storage: tab(), nodes: round.nodes });

@@ -134,16 +134,16 @@ public class GhostFieldTests
     }
 
     /// <summary>
-    /// A SEAT ITS PLAYER LEFT IS TAKEN AWAY, AND NOTHING ELSE IS.
+    /// AN ENTRY ITS PLAYER LEFT IS TAKEN AWAY, AND NOTHING ELSE IS.
     ///
-    /// Measured 2026-09-10 on the Daily: this field kept a truck per seat and
+    /// Measured 2026-09-10 on the Daily: this field kept a truck per entry and
     /// never removed one, so after a reload it held 9 and 11 trucks, 8 and 10 of
-    /// them abandoned seats standing frozen, and a watched player's reload left
-    /// its 105-picture seat frozen beside the new one. The page now sends a
-    /// retire - the same twelve words, tick -1 - for a seat that was left.
+    /// them abandoned entries standing frozen, and a watched player's reload left
+    /// its 105-picture entry frozen beside the new one. The page now sends a
+    /// retire - the same twelve words, tick -1 - for an entry that was left.
     /// </summary>
     [UnityTest]
-    public IEnumerator ARetiredSeatLeavesNoTruckBehind()
+    public IEnumerator ARetiredEntryLeavesNoTruckBehind()
     {
         var field = Field(
             new GhostPicture("aaaaaaaa", 3 * ONE, 4 * ONE, 0, 100),
@@ -153,8 +153,8 @@ public class GhostFieldTests
         field.enabled = false;
 
         Assert.AreEqual(4, field.Draw(10), "the field did not take every word it was offered");
-        Assert.AreEqual(1, field.Trucks, "the retired seat's truck is still in the field");
-        Assert.AreEqual(1, field.Retired, "a retire of a seat never drawn counted, or the real one did not");
+        Assert.AreEqual(1, field.Trucks, "the retired entry's truck is still in the field");
+        Assert.AreEqual(1, field.Retired, "a retire of an entry never drawn counted, or the real one did not");
         Assert.AreEqual(2, field.Shown, "a retire was counted as a picture shown");
 
         yield return null;   // Destroy takes effect at the end of the frame

@@ -94,13 +94,13 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
                                      federation = null,
                                      // A ROUND WHOSE STAKE GOES INTO A FEDERATION LOCK (W1b):
                                      // the federation's id on the contract, its invite in the
-                                     // join link, and what each seat needs to verify a lock
+                                     // join link, and what each signer node needs to verify a lock
                                      // (`claimKeyFor`, `stakeLocks`). None by default: every
                                      // existing caller's round names no federation, as before.
-                                     federationId = new Uint8Array(32), invite = null, seat = {},
+                                     federationId = new Uint8Array(32), invite = null, signerNode = {},
                                      // A SECOND KIND OF ROUND KEPT OPEN BESIDE THE FIRST (the owner
                                      // 2026-09-15 12:54, option B): `{ stakeMsat, custody:
-                                     // 'THRESHOLD_LN' }` - a paying round on the same two seats, its
+                                     // 'THRESHOLD_LN' }` - a paying round on the same two signer nodes, its
                                      // stakes held by the committee's Lightning, no federation. None
                                      // by default: one kind of round, as before.
                                      paid = null,
@@ -128,8 +128,8 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // time is after this round's committee_time, read over RPC. Given none, this
   // node HAS no beacon: `randomnessFor` is not passed at all, the daemons'
   // defaults answer nothing, and 27's rule turns that into "this node has no
-  // beacon for that round, so it cannot say who the census seats". A round
-  // still opens and a player still plays; nobody is seated on an invented
+  // beacon for that round, so it cannot say who the census assigns". A round
+  // still opens and a player still plays; nobody is assigned on an invented
   // number.
   // THE WINDOW REACHES BACK BEFORE committee_time OR THE RULE REFUSES IT, and
   // that refusal was earned: measured on a real regtest, a 64-header window to
@@ -157,9 +157,9 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     throw new Error('this needs fixed ports: a bond commits to the address it advertises');
   const idB = nodeIdentity(dbB);
 
-  // ONE BOND EACH, AND THAT IS NOT A DETAIL. `seatRound` compares the seats
+  // ONE BOND EACH, AND THAT IS NOT A DETAIL. `assignSignerNodes` compares the signer nodes
   // the census gives with the keys the contract names and refuses when they
-  // differ - letter 26's ruling that the seated set is the only list that
+  // differ - letter 26's ruling that the assigned set is the only list that
   // counts. A 2-of-2 whose chain bonded one of its two nodes would be refused
   // by its own daemons, which is exactly what should happen and is why both
   // are bonded here.
@@ -170,7 +170,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     const advert = {
       nodePubkey: id.pubkey, operatorId: '2of2', protocolVersions: [1],
       // ALL THREE ROLES, because this network's genesis asks for two nodes in
-      // each and there are only two nodes. A 2-of-2 where one seat is a game
+      // each and there are only two nodes. A 2-of-2 where one signer node is a game
       // node and the other a settlement node is not a 2-of-2, it is two
       // committees of one. Measured: with 'game' and 'verify' alone the census
       // carried 0 settlement nodes where regtest was born needing 2.
@@ -230,7 +230,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // bitcoind beacon that question could never pass, because the fixture has no
   // such block.
   //
-  // WITHOUT a bitcoind, the two-block fixture stays. It seats nobody - there
+  // WITHOUT a bitcoind, the two-block fixture stays. It assigns nobody - there
   // is no beacon either - so nothing is being pretended: `POST /round` refuses
   // by name and the tool says so.
   let censusView;
@@ -294,9 +294,9 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // are TWO daemons and `agreedChain` counts ORIGINS - and that this is a
   // local test round on a fixture chain, not a claim about Bitcoin.
   const bondProof = { hex: toHex(bonded[0].transaction), merkle: [], pos: 0 };
-  // AND THE DAEMONS SEE THE CHAIN, which is what makes `POST /round` seat
-  // anybody at all: `server.js` seats only when it has a view, and this tool
-  // gave none, so the beacon was read and nobody was ever seated on it.
+  // AND THE DAEMONS SEE THE CHAIN, which is what makes `POST /round` signer node
+  // anybody at all: `server.js` assigns only when it has a view, and this tool
+  // gave none, so the beacon was read and nobody was ever assigned on it.
   // THE BEACON READS THE SAME CHAIN THE CENSUS DOES, whichever chain that is.
   // A caller may still hand an `rpc` - the regtest path does - but a header
   // source that is not the chain the bonds are on is the two-chain fault this
@@ -315,14 +315,14 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   const beacon = source ? chainBeacon({ call: source, window: 400 }) : null;
   const randomnessFor = beacon ? beacon.for : undefined;
 
-  // AN OLDER ROUND GETS A VIEW THAT REACHES BACK TO IT (M3.3-34). The seats'
+  // AN OLDER ROUND GETS A VIEW THAT REACHES BACK TO IT (M3.3-34). The signer nodes'
   // view begins 20 below the bonds this start posted, and every start posts
   // them again: measured, a view from 2232 against a round whose beacon is 2139,
-  // so both restarted seats held that round for ever on "this view begins at
-  // height 2232 ... after this round's committee time". Moving the seats' own
+  // so both restarted signer nodes held that round for ever on "this view begins at
+  // height 2232 ... after this round's committee time". Moving the signer nodes' own
   // view back was measured too and is wrong: its census then counted earlier
-  // starts' bonds and the next round was refused ("the census seats 1"). So a
-  // round whose census height is below the seats' view gets its own - from 20
+  // starts' bonds and the next round was refused ("the census assigns 1"). So a
+  // round whose census height is below the signer nodes' view gets its own - from 20
   // below that height to the tip, read once: its bonds and beacon are deep.
   const older = new Map();
   const chainFor = ({ contract } = {}) => {
@@ -331,7 +331,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     if (from >= censusView.firstHeight) return censusView;
     if (!older.has(from)) {
       older.set(from, onChain.blocksFrom(from, onChain.height()));
-      console.log(`[view] a round with census ${contract.censusHeight} reads its own view from ${from}; the seats' begins at ${censusView.firstHeight}`);
+      console.log(`[view] a round with census ${contract.censusHeight} reads its own view from ${from}; the signer nodes' begins at ${censusView.firstHeight}`);
     }
     return older.get(from);
   };
@@ -365,12 +365,12 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   } : {};
   const optsA = { port: portA, host, funded, donationSets: [TEST_DONATION_SET_REGTEST], headerBytes, bondProof, chainFor,
     ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn,
-    ...(federation ? { federation } : {}), ...seat };
+    ...(federation ? { federation } : {}), ...signerNode };
   let a = await serve(dbA, optsA);
   const optsB = { port: portB, host, funded, donationSets: [TEST_DONATION_SET_REGTEST], headerBytes, bondProof, chainFor,
     ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn,
-    ...(federation ? { federation } : {}), ...seat };
-  // B DOWN AT START (`bDownAtStart`, an operator's look at seat A restarted
+    ...(federation ? { federation } : {}), ...signerNode };
+  // B DOWN AT START (`bDownAtStart`, an operator's look at signer node A restarted
   // while it holds a close that needs B): B is served on a port nobody names -
   // the bond, the relays and every peer say `portB` - only so the first round
   // can be posted to it; the caller closes it, and restartB serves it on portB.
@@ -428,7 +428,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     entryCloseMs: committeeTimeMs + MIN_ENTRY_WINDOW_MS + 1_800_000n,
     objectionWindowMs, custody: 'FEDERATION', slashMinimumServed: 20,
     slashRemainder: 'BURN', federationId, stakeExpiryBlocks: 144,
-    // WHERE THE SEATS POST EACH RUN'S TRANSCRIPT (v4.6.2 §13A, P2): the two
+    // WHERE THE SIGNER NODES POST EACH RUN'S TRANSCRIPT (v4.6.2 §13A, P2): the two
     // daemons' own relay doors. A result is final only once both have posted
     // it, and a round naming no relay could never settle a stake.
     publicationRelays: [`http://${host}:${portA}`, `http://${host}:${portB}`],
@@ -440,7 +440,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   };
   // THE CENSUS ROOT IS THE CHAIN'S, NOT A NUMBER THIS TOOL LIKES.
   //
-  // It was 32 bytes of 2, which is why seating could never have run here even
+  // It was 32 bytes of 2, which is why joining could never have run here even
   // with a chain view: `censusFor` refuses a round whose named root is not the
   // one its own blocks derive to. Derived from the SAME contract the round
   // will carry and the same view the daemons are handed, so the two cannot
@@ -480,7 +480,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   contract.censusRoot = censusRootFor(contract);
 
   // AND THE ROUND IS PUBLISHED BELOW ITS BEACON BLOCK (5A.5, v4.6.2): a node
-  // seats only a round its own chain shows published strictly before the
+  // signer nodes only a round its own chain shows published strictly before the
   // beacon. On the local chain the publication goes into block 10 - above the
   // census height (9), far below the beacon - and the chain is mined again.
   // The times do not move, so committee_time and the beacon's index do not;
@@ -517,7 +517,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   if (onChain) await publishOnChain(contract);
 
   // AND THE BEACON IS READ BEFORE THE ROUND IS POSTED, because posting is when
-  // a node seats: `POST /round` calls `seatRound`, seating needs the committee
+  // a node signer nodes: `POST /round` calls `assignSignerNodes`, joining needs the committee
   // seed, and the seed is this beacon. Read after, the daemons refuse the
   // round with "this node has no beacon for that round" - measured, that is
   // exactly what happened the first time this was wired.
@@ -529,7 +529,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // A CHAIN THAT CANNOT BE READ IS NOT A ROUND THAT CANNOT EXIST for the
     // caller of this tool: the refusal is carried out rather than thrown, so
     // an operator reads one line instead of a stack. The daemons will still
-    // refuse to seat, by name, which is the honest end of it.
+    // refuse to signer node, by name, which is the honest end of it.
     try { beaconSeen = await beacon.refresh(contract); }
     catch (e) { beaconSeen = { ok: false, why: e.message }; }
   }
@@ -618,7 +618,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   const held = [contract];
   // `kind` overrides the first round's stake and custody - `paid` for the paying
   // round kept beside the free one; nothing else of the contract changes, so both
-  // kinds name the same core, config and seats.
+  // kinds name the same core, config and signer nodes.
   async function openNext(kind = {}) {
     if (!onChain) throw new Error('a later round needs a bitcoind: the fixture chain\'s clock is fixed, '
       + 'so a round opened on it now would already be past its entry close');
@@ -803,8 +803,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   console.log('bond      ' + round.bond);
   console.log('page      ' + (pageServer ? 'served here from ' + build : page));
   console.log('beacon    ' + (!rpc
-    ? 'NONE - no RT= bitcoind named, so these nodes seat nobody rather than '
-      + 'seating on an invented number'
+    ? 'NONE - no RT= bitcoind named, so these nodes assign nobody rather than '
+      + 'joining on an invented number'
     : round.beacon && round.beacon.ok
       ? `block ${round.beacon.height}, ${round.beacon.depth} deep, `
         + `hash ${toHex(round.beacon.hash)}`

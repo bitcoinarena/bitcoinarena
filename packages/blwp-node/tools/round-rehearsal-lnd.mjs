@@ -13,11 +13,11 @@
 //
 //   two daemons      `standUpRound` - bonded, censused, beacon off this chain -
 //                    both on bob through BLWP_LND_* (the launchers' own parse)
-//   three players    the page's own steps: settlement seats, stakeFor,
+//   three players    the page's own steps: settlement signer nodes, stakeFor,
 //                    postHandout, entryFor, Client.at, join
 //   P1 DELIVERED     a world secret the verifier's own replay says delivers
 //   P2 FAILED        one it says fails
-//   P3 VOID          seated and paid, never plays
+//   P3 VOID          joined and paid, never plays
 //   the close        both daemons close; the committee's own result decides
 //
 //   node packages/blwp-node/tools/round-rehearsal-lnd.mjs [--keep]
@@ -42,7 +42,7 @@ const replay = (t, e, o = {}) => replayUnder(t, e, { core: TRUCK, ...o });
 import { feldmanGroup } from '../src/curve.js';
 import { Client, federationStakeFor } from '../../blwp-client/src/client.js';
 import {
-  joinFromQuery, tabSeed, playerFor, entryFor, fetchSettlementSeats, stakeFor, postHandout,
+  joinFromQuery, tabSeed, playerFor, entryFor, fetchSettlementSignerNodes, stakeFor, postHandout,
   worldSeedFor, stakeSeenBy, sharesNeededFor,
 } from '../../blwp-client/src/join.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
@@ -328,8 +328,8 @@ async function main() {
     sockets.watchServer('A', round.a.http);
     sockets.watchServer('B', round.b.http);
     const named = await joinFromQuery(new URL(round.url).search);
-    const seats = await fetchSettlementSeats(round.id, named.nodes);
-    say(`settlement seats: ${seats.seats.length}, agreed by ${seats.agreed}`);
+    const signerNodes = await fetchSettlementSignerNodes(round.id, named.nodes);
+    say(`settlement signer nodes: ${signerNodes.signerNodes.length}, agreed by ${signerNodes.agreed}`);
 
     // ---- THE COMMITTEE'S POOL ON THIS CHAIN (--pool) ----
     // The two daemons make the pool's key themselves - no dealer, this process
@@ -338,20 +338,20 @@ async function main() {
     // the funding is the daemons' own close.
     let pool = null;
     if (POOL) {
-      const keys = round.a.round.seats(fromHex(round.id));
+      const keys = round.a.round.signerNodes(fromHex(round.id));
       const pair = [round.a, round.b];
       for (const d of pair) d.dkg.peers = pair.filter((o) => o !== d).map((o) => `http://127.0.0.1:${o.port}`);
       for (const d of pair) await d.dkg.run(keys);
       for (const d of pair) await d.dkg.run(keys);
-      const held = pair.map((d) => d.dkg.seatFor(keys));
+      const held = pair.map((d) => d.dkg.signerNodeFor(keys));
       const bad = held.find((h) => !h.ok);
-      if (bad) hole('code', `the pool's key ceremony left a seat with no share: ${bad.why}`);
+      if (bad) hole('code', `the pool's key ceremony left a signer node with no share: ${bad.why}`);
       else {
         const groupKeys = new Set(held.map((h) => toHex(h.pool.groupPublicKey)));
         if (groupKeys.size !== 1) hole('code', `the two daemons made ${groupKeys.size} pool keys`);
         pool = { groupPublicKey: held[0].pool.groupPublicKey };
         pair.forEach((d, i) => {
-          d.signing.seat = held[i].seat; d.signing.pool = pool; d.payouts.pool = pool; d.poolWatch.pool = pool;
+          d.signing.signerNode = held[i].signerNode; d.signing.pool = pool; d.payouts.pool = pool; d.poolWatch.pool = pool;
         });
         const out = poolOutput({ groupPublicKey: pool.groupPublicKey, curve: { ...feldmanGroup, tweakPoint } });
         const address = JSON.parse(cli('decodescript', toHex(out.script))).address;
@@ -378,7 +378,7 @@ async function main() {
         catch (e) { hole('code', `${name}'s federation stake: ${e.message}`); continue; }
       } else {
         stake = await stakeFor({ ...named.round, id: fromHex(round.id) }, {
-          seats: seats.seats, curve: feldmanGroup, random, playerPubkey: player.pubkey,
+          signerNodes: signerNodes.signerNodes, curve: feldmanGroup, random, playerPubkey: player.pubkey,
           needed: sharesNeededFor(named.round),
         });
         const put = await postHandout(stake, named.nodes, { needed: sharesNeededFor(named.round) });
@@ -453,7 +453,7 @@ async function main() {
       p.eid = await p.client.join(p.entry);
       await p.client.connect();
       p.client.setRound({ roundId: rid, entryId: p.eid, blockTicks: named.round.blockTicks | 0 });
-      say(`  ${p.name} seated ${toHex(p.eid).slice(0, 12)}, x-hold ${p.client.seatHold.state}`);
+      say(`  ${p.name} joined ${toHex(p.eid).slice(0, 12)}, x-hold ${p.client.joinHold.state}`);
     }
 
     // ---- ALICE PAYS EVERY HOLD ----
@@ -487,7 +487,7 @@ async function main() {
     for (const p of players) {
       if (!p.hash) continue;
       const count = await until(`${p.name}'s stake seen by the committee`, async () => {
-        const c = await stakeSeenBy({ entryId: p.eid, seats: seats.seats, nodes: named.nodes, contract: named.round });
+        const c = await stakeSeenBy({ entryId: p.eid, signerNodes: signerNodes.signerNodes, nodes: named.nodes, contract: named.round });
         return c.committed ? c : null;
       }, 120000, 1000).catch(() => null);
       p.seen = count;
@@ -660,7 +660,7 @@ async function main() {
       const stop = Date.now() + OBJECTION_WINDOW_MS + 30000;
       let money = await d.stakes();
       // THE RUNS FINAL AND THE TABLE WRITTEN: the table can lag the runs by a
-      // re-gather, and reading it early printed "table none" on a seat that
+      // re-gather, and reading it early printed "table none" on a signer node that
       // was about to have one.
       while (Date.now() < stop && (!played.every((e) => (money.agreed || []).includes(e))
         || !d.round.payout(fromHex(round.id)))) {
@@ -670,7 +670,7 @@ async function main() {
       const row = d.round.payout(fromHex(round.id));
       say(`  ${name} ENDS at +${Date.now() - t0} ms: final ${played.filter((e) => (money.agreed || []).includes(e)).length} of ${played.length} `
         + `(${played.filter((e) => (money.agreed || []).includes(e)).map(who).join(', ') || 'none'}); `
-        + `table ${row ? row.state : 'none'}, ${d.round.payoutSignatures(fromHex(round.id)).length} of 2 seats signed`);
+        + `table ${row ? row.state : 'none'}, ${d.round.payoutSignatures(fromHex(round.id)).length} of 2 signer nodes signed`);
     }
     // EACH DAEMON'S OWN WINDOW, per run: it opens when that daemon held the
     // threshold and closes the contract's length later (M3.3-32).
@@ -718,17 +718,17 @@ async function main() {
     }
 
     // ---- M3.3-24: WHO THE PREIMAGE ASK REACHES, a probe after both closes ----
-    // Only a seat where the run is final asks during its close, so A (P2 not
+    // Only a signer node where the run is final asks during its close, so A (P2 not
     // final there) never asks. The probe is each daemon's own `open`, the one
     // its close calls, run once so both directions are counted.
     const lost = players.find((p) => p.want === 'FAILED' && p.eid);
     if (lost) {
-      // M3.3-26, MEASURED: what the stake was dealt with, and what each seat holds.
+      // M3.3-26, MEASURED: what the stake was dealt with, and what each signer node holds.
       for (const [name, d] of daemons) {
         const h = d.preimages.handoutOf(lost.eid);
         const mine = await d.preimages.mine(lost.eid);
         say(`    ${name} holds ${lost.name}'s handout: ${h.ok ? `dealt ${h.handout.needed}-of-${h.handout.shares.length}` : h.why}; `
-          + `its own share: ${mine.ok ? `seat ${mine.share.seat}` : mine.why}`);
+          + `its own share: ${mine.ok ? `signer node ${mine.share.signerNode}` : mine.why}`);
       }
       probing = true;
       for (const [name, d] of daemons) {
@@ -868,7 +868,7 @@ async function main() {
       const rid = fromHex(round.id);
       const rows = () => daemons.map(([n, d]) => [n, d.round.payout(rid)]);
       const t1 = Date.now();
-      await until('a seat to write the payout PAID', () => rows().some(([, r]) => r && (r.state === PAID || r.state === PAID_IN_PART)), 120000, 1000)
+      await until('a signer node to write the payout PAID', () => rows().some(([, r]) => r && (r.state === PAID || r.state === PAID_IN_PART)), 120000, 1000)
         .catch(() => { /* reported below */ });
       say(`  POOL PAYOUT rows: ${rows().map(([n, r]) => `${n} ${r ? r.state : 'none'}${r && r.why ? ` (${r.why})` : ''}`).join('; ')} (+${Date.now() - t1} ms)`);
       for (const [n, d] of daemons) {
@@ -891,13 +891,13 @@ async function main() {
           + `${tx.blockhash ? 'in a block' : 'NOT in a block'}, ${POOL_SATS} in, outputs [${outs.join(', ')}], fee ${Number(POOL_SATS) - outs.reduce((s, v) => s + v, 0)}`);
         poolPaid = sats > 0;
         if (poolPaid && sats !== owedSats) hole('code', `the winner holds ${sats} sats, not the ${owedSats} the table owes`);
-      } else say(`  THE WINNER'S OWN KEY HOLDS nothing: no seat sent a payout (the table owes ${owedSats} sats)`);
+      } else say(`  THE WINNER'S OWN KEY HOLDS nothing: no signer node sent a payout (the table owes ${owedSats} sats)`);
     }
 
     // ---- THE HOLES, EACH WITH ITS KIND ----
     const p1 = players.find((p) => p.name === 'P1');
     const p2 = players.find((p) => p.name === 'P2');
-    // --two-first: EACH SEAT'S CLOSE OF P2, ITS SHARE, AND EACH SEAT'S PAYOUT TABLE.
+    // --two-first: EACH SIGNER NODE'S CLOSE OF P2, ITS SHARE, AND EACH SIGNER NODE'S PAYOUT TABLE.
     if (p2 && p2.want === 'TWOFIRST' && p2.eid)
       for (const [name, d] of daemons) {
         const nq = d.round.noQuorum(p2.eid);
@@ -919,7 +919,7 @@ async function main() {
     const owed = daemons.map(([name, d]) => `${name}: ${d.money && d.money.owed ? (d.money.owed.ok ? d.money.owed.state : d.money.owed.why) : 'nothing owed'}`);
     const paid = daemons.map(([, d]) => d.money && d.money.paid).filter(Boolean);
     if (!paid.some((x) => x.ok) && !poolPaid) {
-      const short = owed.some((o) => /seats signed this table/.test(o));
+      const short = owed.some((o) => /signer nodes signed this table/.test(o));
       hole(short ? 'code' : 'ruling', `the winner's payout was not paid - ${owed.join('; ')}`
         + `${paid.length ? `; spend: ${paid.map((x) => x.why).join(' | ')}` : ''}`);
     }

@@ -2,11 +2,11 @@
 //
 // The name decides nothing (§0.12): it is in no entry, no mark and no result,
 // and the board still shows the name made from a player's key. But a lobby two
-// players share shows each the other's name, so a tab hands its seats ONE
-// RECORD: this round, the round key it is seated under, the tab's identity key
+// players share shows each the other's name, so a tab hands its signer nodes ONE
+// RECORD: this round, the round key it is joined under, the tab's identity key
 // (its generated name is made from that), the name the player chose - empty
-// for none - and when. The seated player's round key signs it (BIP-340), so a
-// seat that serves it can leave a name out but cannot write one, and a record
+// for none - and when. The joined player's round key signs it (BIP-340), so a
+// signer node that serves it can leave a name out but cannot write one, and a record
 // for one round is no record for another. The newest record of a player wins.
 import { Writer, Reader } from './encode.js';
 import { taggedHash } from './hash.js';
@@ -53,7 +53,7 @@ export function encodeLobbyName({ roundId, playerPubkey, identityPubkey, name = 
   return w.finish();
 }
 
-/** A record as a seat or a page receives it; held to the same rules as one written. */
+/** A record as a signer node or a page receives it; held to the same rules as one written. */
 export function decodeLobbyName(bytes) {
   const r = new Reader(bytes);
   const record = { roundId: r.bytes32(), playerPubkey: r.bytes32(), identityPubkey: r.bytes32(), atMs: r.u64(), name: r.str() };
@@ -62,5 +62,5 @@ export function decodeLobbyName(bytes) {
   return record;
 }
 
-/** What the seated player signs (BIP-340, its round key) for its name in one round. */
+/** What the joined player signs (BIP-340, its round key) for its name in one round. */
 export const lobbyNameId = (record) => taggedHash(TAG.lobbyName, encodeLobbyName(record));

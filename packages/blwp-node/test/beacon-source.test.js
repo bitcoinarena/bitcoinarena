@@ -1,4 +1,4 @@
-// THE SEED A NODE SEATS WITH IS THE CHAIN'S, OR THERE IS NONE.
+// THE SEED A NODE SIGNER NODES WITH IS THE CHAIN'S, OR THERE IS NONE.
 //
 // The 2-of-2 tool used to answer every beacon question with 32 bytes of 0xbe
 // at height 900005. A committee drawn on a constant is a committee its
@@ -68,7 +68,7 @@ test('nothing is held until the chain is read, and nothing is invented if it can
   const dead = chainBeacon({ call: chainNode({ breaks: true }).call });
   await assert.rejects(dead.refresh(contract()), /ECONNREFUSED/);
   assert.equal(dead.for({ contract: contract() }), undefined,
-    'a failed read left something behind to seat on');
+    'a failed read left something behind to assign on');
   assert.throws(() => chainBeacon({}), /needs a way to ask a node/);
   assert.equal(BEACON_WINDOW, 64);
 });
@@ -104,7 +104,7 @@ test('what it holds is the block the chain names, and the seed is that hash', as
   assert.deepEqual(again.hash, seen.hash);
 });
 
-test('a node holding no beacon says who it cannot seat, rather than seating', async () => {
+test('a node holding no beacon says who it cannot signer node, rather than joining', async () => {
   const round = new Round(openStore(':memory:'));
   const c = contract();
 
@@ -126,5 +126,5 @@ test('a node holding no beacon says who it cannot seat, rather than seating', as
   const wanted = committeeSeedFromBeacon(c, {
     roundId: b32(7), randomness: named.hash, height: named.height, timeMs: named.timeMs });
   assert.equal(toHex(seeded.seed), toHex(wanted.seed),
-    'the roster seated on something other than the block the chain names');
+    'the roster assigned on something other than the block the chain names');
 });

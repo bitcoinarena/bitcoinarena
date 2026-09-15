@@ -3,7 +3,7 @@
 // A round names a start deadline in ticks after a player's join tick (or gets
 // START_DEADLINE_TICKS). The first mark - the one that chains to nothing - is
 // where the player commits to a first tick, under the entry's session key; the
-// tick it names is the player's own, and every seat reads the same number.
+// tick it names is the player's own, and every signer node reads the same number.
 //
 // RULED (M3, pick (a)): A FIRST MARK SIGNED AFTER join_tick + THE DEADLINE IS
 // THE PLAYER'S OWN ACT, so it is FORFEIT - player conduct (§15: "the player
@@ -69,8 +69,8 @@ export function firstMarkOutcome({ joinTick, deadlineTicks, firstMark } = {}) {
  *   - a run whose checkpoints stopped before the close ends at its last
  *     receipted checkpoint; one still LIVE there did not deliver: FAILED,
  *     scored at that checkpoint.
- * Neither is VOID (§13C: seats that cannot agree through no fault of the
- * player) or ENTRY_VOID (§16: seats out before the first tick). A run that
+ * Neither is VOID (§13C: signer nodes that cannot agree through no fault of the
+ * player) or ENTRY_VOID (§16: signer nodes out before the first tick). A run that
  * ended on its own is its replay's, and nothing is decided here.
  *
  *   receiptedMarks  marks the committee carried (the canonical prefix)
@@ -90,11 +90,11 @@ export function stoppedOutcome({ receiptedMarks, liveAtLast = false, deadlinePas
 }
 
 /**
- * WHEN A ROUND IS OVER, so its seats close it (M3.3-34, the Daily's close): the
+ * WHEN A ROUND IS OVER, so its signer nodes close it (M3.3-34, the Daily's close): the
  * latest a player can join (entry close), plus the start deadline their first
  * tick may take, a whole run (BLOCK_TICKS - the network's, which every valid
  * contract carries), and the start deadline once more for the last mark to
- * reach the seats: the window the first mark already gets, not a new constant.
+ * reach the signer nodes: the window the first mark already gets, not a new constant.
  * Rounded UP to the millisecond, so no run is cut short by a remainder. By then
  * every run has ended or stopped (§15), and the close decides nothing a player
  * could still change.
@@ -102,7 +102,7 @@ export function stoppedOutcome({ receiptedMarks, liveAtLast = false, deadlinePas
  */
 export function roundEndMs(contract) {
   if (!contract || contract.entryCloseMs === undefined) throw new Error('a round\'s end is counted from its entry close, and it names none');
-  // the round's own run length (M3 R1 R3): its contract's blockTicks, which the seat checked against its core
+  // the round's own run length (M3 R1 R3): its contract's blockTicks, which the signer node checked against its core
   if (!Number.isInteger(contract.blockTicks) || contract.blockTicks < 1) throw new Error('a round\'s end is counted from its run length, and it names none');
   const span = msForTicks(2 * startDeadlineOf(contract) + contract.blockTicks);
   return BigInt(contract.entryCloseMs) + span.ms + (span.exact ? 0n : 1n);

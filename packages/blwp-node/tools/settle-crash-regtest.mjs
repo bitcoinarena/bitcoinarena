@@ -1,29 +1,29 @@
-// KILL A SEAT MID-SETTLEMENT, RESTART IT ON THE SAME STORE, AND COUNT THE SPENDS.
+// KILL A SIGNER NODE MID-SETTLEMENT, RESTART IT ON THE SAME STORE, AND COUNT THE SPENDS.
 //
 // "M3 is done when ... a node killed mid-settlement recovers to the right state
 // on restart." Every restart measured before this was a fresh object over the
 // same store inside one process (`settle-regtest.mjs`, `pool-settle.test.js`,
-// `payout-pay.test.js`). This one is a real process: the seat that settles runs
+// `payout-pay.test.js`). This one is a real process: the signer node that settles runs
 // as a child on its own store file and its own port, is SIGKILLed at a named
 // point, and is started again on that file and that port.
 //
 //   --point=1  after the table is signed and queued, before it settles
 //   --point=2  after the spend is signed and written to disk, before it is sent
 //   --point=3  after the spend is handed to bitcoind, before PAID is written
-//   --point=4  a takeover: the round's asker is down, the next seat settles at
+//   --point=4  a takeover: the round's asker is down, the next signer node settles at
 //              its turn and is killed with its spend on disk; afterwards the
 //              original asker comes back too
 //
-// After each kill, two restarts of the killed seat on the same store and port:
+// After each kill, two restarts of the killed signer node on the same store and port:
 //
 //   (a) the real `src/main.js`, with BLWP_BITCOIND_URL and BLWP_BITCOIND_COOKIE
 //       and nothing else - a real daemon's launch
 //   (b) with the chain it spends on, the RPC its pool watch reads, and the
-//       seat and pool key read back from its OWN store (`Dkg.seatFor`)
+//       signer node and pool key read back from its OWN store (`Dkg.signerNodeFor`)
 //
 // Measured after each: spends of the pool output counted block by block and in
 // the mempool, the winner's key balance against the table's own amount, every
-// seat's payout row against the chain, and whether the spend that lands is the
+// signer node's payout row against the chain, and whether the spend that lands is the
 // one written before the kill, byte for byte (no rival).
 //
 // Own datadir, non-default ports, cookie auth; touches no mainnet and no
@@ -141,12 +141,12 @@ async function child(mode) {
     process.exit(0);
   }
 
-  // The seat and the pool key, read back from this daemon's OWN store.
+  // The signer node and the pool key, read back from this daemon's OWN store.
   const db = openStore(STORE);
   const reader = new Round(db, () => NOW);
   const contract = decodeRoundContract(new Uint8Array(reader.get(rid).contract));
-  const held = new Dkg(reader, { curve, random: rand, peers: [] }).seatFor(contract.nodes);
-  if (!held.ok) { out({ ok: false, why: `no seat in its own store: ${held.why}` }); process.exit(3); }
+  const held = new Dkg(reader, { curve, random: rand, peers: [] }).signerNodeFor(contract.nodes);
+  if (!held.ok) { out({ ok: false, why: `no signer node in its own store: ${held.why}` }); process.exit(3); }
   const cli = cliFor(DIR);
   const chain = chainFor(cli);
 
@@ -154,7 +154,7 @@ async function child(mode) {
     const node = await serve(db, {
       port, host: '127.0.0.1', funded: () => true, now: () => NOW,
       poolCurve: curve, chainSpend: chain, randomnessFor: () => beacon,
-      poolKey: held.pool, poolSeat: held.seat, poolCall: rpcFor(DIR), peers,
+      poolKey: held.pool, poolSignerNode: held.signerNode, poolCall: rpcFor(DIR), peers,
     });
     const r = await node.reconcilingPayouts;
     const row = node.round.payout(rid);
@@ -164,14 +164,14 @@ async function child(mode) {
     process.exit(0);
   }
 
-  // A SEAT THAT SETTLES, started as settle-regtest starts one: the seat, the
+  // A SIGNER NODE THAT SETTLES, started as settle-regtest starts one: the signer node, the
   // key, the pool RPC and the peers handed over after start. It dies at its
   // point.
   const node = await serve(db, {
     port, host: '127.0.0.1', funded: () => true, now: () => NOW,
     poolCurve: curve, chainSpend: chain, randomnessFor: () => beacon,
   });
-  node.signing.seat = held.seat; node.signing.pool = held.pool;
+  node.signing.signerNode = held.signerNode; node.signing.pool = held.pool;
   node.payouts.pool = held.pool; node.poolWatch.pool = held.pool;
   node.poolWatch.call = rpcFor(DIR);
   node.payouts.peers = peers;
@@ -199,7 +199,7 @@ async function child(mode) {
   process.exit(4);
 }
 
-// THE REAL LAUNCHER, on the seat's store and port, with the two settings. It is
+// THE REAL LAUNCHER, on the signer node's store and port, with the two settings. It is
 // stopped once its start-up recovery has said something about this round (or
 // after 25 s); what it printed is kept.
 function runMain(env, ridPrefix) {
@@ -286,18 +286,18 @@ async function main() {
     for (const n of nodes) n.dkg.peers = nodes.filter((o) => o !== n).map((o) => `http://127.0.0.1:${o.port}`);
     for (const n of nodes) await n.dkg.run(committee);
     for (const n of nodes) await n.dkg.run(committee);
-    const seats = nodes.map((n) => n.dkg.seatFor(committee));
-    if (seats.some((h) => !h.ok)) throw new Error('a daemon ended the key ceremony with no share');
-    const pool = { groupPublicKey: seats[0].pool.groupPublicKey };
+    const signerNodes = nodes.map((n) => n.dkg.signerNodeFor(committee));
+    if (signerNodes.some((h) => !h.ok)) throw new Error('a daemon ended the key ceremony with no share');
+    const pool = { groupPublicKey: signerNodes[0].pool.groupPublicKey };
     for (const [i, n] of nodes.entries()) {
-      n.signing.seat = seats[i].seat; n.signing.pool = pool;
+      n.signing.signerNode = signerNodes[i].signerNode; n.signing.pool = pool;
       n.payouts.pool = pool; n.poolWatch.pool = pool;
     }
     say(`seven daemons on ports ${PORT0}..${PORT0 + SHARES_TOTAL - 1}, one share each`);
 
-    // EVERY SEAT BONDED ON THIS CHAIN, its signed advertisement - and so its
+    // EVERY SIGNER NODE BONDED ON THIS CHAIN, its signed advertisement - and so its
     // address - in the bond's witness: the spec's record of where a node
-    // lives, which a restarted daemon reads back the way a first seating does.
+    // lives, which a restarted daemon reads back the way a first assignment does.
     const rt = regtest(cli, { wallet: 'committee' });
     const posted = nodes.map((n, i) => rt.postBond(n.round.identity.secret,
       { endpoint: `ws://127.0.0.1:${PORT0 + i}` }));
@@ -337,7 +337,7 @@ async function main() {
       nodes: committee,
     };
     // THE CENSUS ROOT IS THE CHAIN'S, derived from these blocks the way every
-    // seat will derive it when the round is opened on it.
+    // signer node will derive it when the round is opened on it.
     const byTxid = new Map();
     for (const block of censusView.blocks)
       for (const raw of block.transactions || []) {
@@ -349,7 +349,7 @@ async function main() {
     });
     if (!census.ok) throw new Error(`the harness could not derive its own census: ${census.why}`);
     contract.censusRoot = census.root;
-    say(`the census seats ${census.entries.length}; root ${toHex(census.root).slice(0, 16)}…`);
+    say(`the census assigns ${census.entries.length}; root ${toHex(census.root).slice(0, 16)}…`);
     const rid = roundId(contract);
     const beaconSrc = chainBeacon({ call: rpcFor(dir), window: 400 });
     const seenBeacon = await beaconSrc.refresh(contract);
@@ -381,7 +381,7 @@ async function main() {
     for (const n of nodes) {
       const opened = await post(n.port, '/round', encodeRoundContract(contract));
       if (opened.status !== 201) throw new Error(`a node refused the round: ${opened.status} ${await opened.text()}`);
-      if (n.round.seats(rid).length !== SHARES_TOTAL) problems.push('a node did not seat all seven off the chain');
+      if (n.round.signerNodes(rid).length !== SHARES_TOTAL) problems.push('a node did not assign all seven off the chain');
       for (const p of players) {
         const joined = await post(n.port, '/entry', encodeEntryContract(p.contract));
         if (joined.status !== 201)
@@ -396,8 +396,8 @@ async function main() {
       }
     }
 
-    // WHO SETTLES: the round's asker, or - at point 4 - the seat after it.
-    const ring = askerOrder(rid, nodes[0].round.seats(rid));
+    // WHO SETTLES: the round's asker, or - at point 4 - the signer node after it.
+    const ring = askerOrder(rid, nodes[0].round.signerNodes(rid));
     const indexOf = (k) => nodes.findIndex((n) => toHex(n.round.pubkey) === toHex(ring.order[k]));
     const askerIdx = indexOf(0);
     const victimIdx = POINT === 4 ? indexOf(1) : askerIdx;
@@ -409,18 +409,18 @@ async function main() {
     for (const [i, n] of nodes.entries()) {
       n.payouts.peers = nodes.filter((o) => o !== n).map((o) => `http://127.0.0.1:${o.port}`);
       await n.payouts.gather({ roundId: rid });
-      // At point 1 the seat that settles queues the table ITSELF, and dies right after.
+      // At point 1 the signer node that settles queues the table ITSELF, and dies right after.
       if (POINT === 1 && i === victimIdx) continue;
       const q = n.payouts.queue({ roundId: rid, entries: entriesOf(n), minScore: contract.minScore, contract });
-      if (!q.ok || q.state !== PAYOUT_QUEUED) problems.push(`a seat did not queue: ${q.why}`);
+      if (!q.ok || q.state !== PAYOUT_QUEUED) problems.push(`a signer node did not queue: ${q.why}`);
       if (owedMsat === null) { owedMsat = q.owedMsat; tableRows = q.rows; }
-      else if (q.owedMsat !== owedMsat) problems.push('two seats queued different amounts');
+      else if (q.owedMsat !== owedMsat) problems.push('two signer nodes queued different amounts');
     }
     // THE TABLE'S OWN AMOUNT, read off the queue - not the stake. The winnings
     // are computed on the net stake (6e), so this is what the key must hold.
     const owedSats = Number(BigInt(owedMsat) / 1000n);
     // WHAT THE TABLE MAKES OF THE FLOOR: rows at or over it are an output, rows
-    // under it are owed - and every seat's row must say exactly that.
+    // under it are owed - and every signer node's row must say exactly that.
     const rowSats = tableRows.map((r) => r.msat / 1000n);
     const expectedDebt = rowSats.filter((x) => x < DUST_SATS).reduce((a, x) => a + x, 0n);
     const expectedCount = rowSats.filter((x) => x < DUST_SATS).length;
@@ -495,7 +495,7 @@ async function main() {
       1: 'after the table is signed and queued, before it settles',
       2: 'after the spend is written to disk, before it is sent',
       3: 'after the spend is handed to bitcoind, before PAID is written',
-      4: 'a takeover: the asker is down, the next seat is killed with its spend on disk',
+      4: 'a takeover: the asker is down, the next signer node is killed with its spend on disk',
     }[POINT];
     await nodes[askerIdx].close(); closed.add(askerIdx);
     if (victimIdx !== askerIdx) { await nodes[victimIdx].close(); closed.add(victimIdx); }
@@ -503,16 +503,16 @@ async function main() {
       const need = beacon.height + TAKEOVER_BLOCKS - Number(cli('getblockcount'));
       if (need > 0) mine(need);
       say(`the round's asker (daemon ${askerIdx}) is down; the chain is at ${cli('getblockcount')}, `
-        + `the next seat's turn (beacon + ${TAKEOVER_BLOCKS})`);
+        + `the next signer node's turn (beacon + ${TAKEOVER_BLOCKS})`);
     }
-    say(`\nKILL POINT ${POINT} - ${what}; the seat is daemon ${victimIdx} (port ${PORT0 + victimIdx}), its own process`);
+    say(`\nKILL POINT ${POINT} - ${what}; the signer node is daemon ${victimIdx} (port ${PORT0 + victimIdx}), its own process`);
     const k = await run(killMode, envFor(victimIdx, 'victim'));
     const killed = read('victim-killed.json');
     const afterKill = onChain();
     say(`  the process: ${k.signal || 'exit ' + k.code}; at the kill: ${killed ? JSON.stringify({ ...killed, raw: killed.raw ? `${killed.raw.length / 2} bytes` : undefined, row: killed.row && { state: killed.row.state, raw: !!killed.row.raw, rawIsSent: !!(killed.raw && killed.row.raw === killed.raw) } }) : 'nothing recorded'}`);
     say(`  chain after the kill: ${line(afterKill)}`);
     if (k.signal !== 'SIGKILL') {
-      problems.push(`the seat was not killed at its point: ${k.signal || k.code} ${JSON.stringify(read('victim-' + killMode + '.json'))}`);
+      problems.push(`the signer node was not killed at its point: ${k.signal || k.code} ${JSON.stringify(read('victim-' + killMode + '.json'))}`);
     }
 
     // ---- RESTART (a): as src/main.js starts a daemon. ----
@@ -524,12 +524,12 @@ async function main() {
     for (const l of a.lines) say(`    | ${l}`);
     say(`    its row ${rowA}; chain (a block mined after): ${line(afterA)}`);
 
-    // ---- RESTART (b): chain access, and the seat and key from its own store. ----
+    // ---- RESTART (b): chain access, and the signer node and key from its own store. ----
     const b = await run('restore', envFor(victimIdx, 'victim'));
     const lb = read('victim-restore.json');
     mine(1);
     const afterB = onChain();
-    say(`\n  RESTART (b), chain + RPC + seat and key from its own store: ${b.code === 0 ? 'up and down' : 'exit ' + b.code}`);
+    say(`\n  RESTART (b), chain + RPC + signer node and key from its own store: ${b.code === 0 ? 'up and down' : 'exit ' + b.code}`);
     say(`    canSpend ${lb && lb.canSpend}; reconcile asked ${JSON.stringify(((lb && lb.reconcile.asked) || []).map((x) => x.state))}, `
       + `swept ${JSON.stringify((((lb && lb.reconcile.swept) || {}).settled || []).map((x) => (x.ok ? x.state : x.why)))}`);
     say(`    its row ${lb && lb.row ? lb.row.state : 'none'}; chain (a block mined after): ${line(afterB)}`);
@@ -548,8 +548,8 @@ async function main() {
     const landed = final.inBlocks[0];
     if (landed && killed && killed.raw)
       say(`\n  the spend that landed is the one written before the kill, byte for byte: ${landed.hex === killed.raw}`);
-    // EVERY RUNNING SEAT'S NEXT SWEEP, as a live daemon makes it, now that the
-    // payment is on the chain. The seats that ran as processes (the killed one,
+    // EVERY RUNNING SIGNER NODE'S NEXT SWEEP, as a live daemon makes it, now that the
+    // payment is on the chain. The signer nodes that ran as processes (the killed one,
     // and at point 4 the returning asker) answer from their own store.
     const sweeps = [];
     for (const [i, n] of nodes.entries()) {
@@ -557,7 +557,7 @@ async function main() {
       const r = await n.payouts.settleQueued({ roundId: rid, contract, signing: n.signing, watch: n.poolWatch });
       sweeps.push(`${i}:${r.ok ? r.state : r.why}`);
     }
-    say(`  the other seats' next sweep: ${sweeps.join(' | ')}`);
+    say(`  the other signer nodes' next sweep: ${sweeps.join(' | ')}`);
     const total = final.inBlocks.length + final.inMempool.length;
     if (total !== 1) problems.push(`${total} spends of the pool output, not 1`);
     // EACH ROW: what it was owed, and what its key holds now.
@@ -574,9 +574,9 @@ async function main() {
     }
     if (landed && killed && killed.raw && landed.hex !== killed.raw)
       problems.push('the spend that landed is not the one written before the kill');
-    // EVERY SEATED ROW AGAINST THE TABLE THE CHAIN PAID: the state, and the debt.
+    // EVERY JOINED ROW AGAINST THE TABLE THE CHAIN PAID: the state, and the debt.
     const full = nodes.map((_, i) => rowFull(i));
-    say(`  every seat's row: ${JSON.stringify(full.map((f, i) => `${i === victimIdx ? 'killed:' : i === askerIdx ? 'asker:' : ''}`
+    say(`  every signer node's row: ${JSON.stringify(full.map((f, i) => `${i === victimIdx ? 'killed:' : i === askerIdx ? 'asker:' : ''}`
       + `${f.state}${f.owedCount ? ` owed ${f.owedSats}/${f.owedCount}` : ''}`))}`);
     if (total === 1) {
       const wrong = full.map((f, i) => ({ f, i }))
@@ -589,7 +589,7 @@ async function main() {
     // harness hands it its chain and key.
     const totalA = afterA.inBlocks.length + afterA.inMempool.length;
     if (totalA !== 1 || rowA !== expectedState)
-      problems.push(`restarted as the real src/main.js, the killed seat did not reach ${expectedState}: ${totalA} spend(s), its row ${rowA}`);
+      problems.push(`restarted as the real src/main.js, the killed signer node did not reach ${expectedState}: ${totalA} spend(s), its row ${rowA}`);
   } finally {
     for (const [i, n] of nodes.entries()) if (!closed.has(i)) { try { await n.close(); } catch { /* going down */ } }
     try { sh(join(BITCOIN, 'bitcoin-cli'), [...btcArgsFor(dir), 'stop']); } catch { /* gone */ }

@@ -15,8 +15,8 @@
 #      (audit) and a gateway call (info) are run to show they answer but offer
 #      no spend.
 #   B. A WRONG KEY IS REFUSED (real submissions against one live lock):
-#      1. Cancel, forfeit signed by 1 of 2 committee seats  -> forfeit invalid
-#      2. Cancel, valid 2-of-2 forfeit, tx signed by a committee SEAT's key,
+#      1. Cancel, forfeit signed by 1 of 2 committee signer nodes  -> forfeit invalid
+#      2. Cancel, valid 2-of-2 forfeit, tx signed by a committee SIGNER NODE's key,
 #         not the player -> tx signature invalid (lnd/guardian private keys
 #         cannot be extracted and need not be: the check is against refund_pk,
 #         so any non-player key fails identically; a committee insider's own
@@ -65,7 +65,7 @@ settled_ecash() { local e; e=$(ecash); for i in $(seq 60); do [ "$e" != "$1" ] &
 now() { date +%s%3N; }
 short() { tr -d '\n' | sed 's/  */ /g' | cut -c1-200; }
 k() { node -e "process.stdout.write(String(require(process.argv[1])[process.argv[2]]))" "$P/keys.json" "$1"; }
-seatsecret() { node -e "process.stdout.write(String(require(process.argv[1]).seats[Number(process.argv[2])].identity))" "$P/keys.json" "$1"; }
+signer_node_secret() { node -e "process.stdout.write(String(require(process.argv[1]).signerNodes[Number(process.argv[2])].identity))" "$P/keys.json" "$1"; }
 field() { echo "$1" | js "o=>o.$2"; }
 rnd() { node -e 'process.stdout.write(require("crypto").randomBytes(Number(process.argv[1])).toString("hex"))' "$1"; }
 sha() { node -e 'process.stdout.write(require("crypto").createHash("sha256").update(Buffer.from(process.argv[1],"hex")).digest("hex"))' "$1"; }
@@ -109,12 +109,12 @@ SIG1_12=$(node $HERE/stake-lock-forfeit.mjs $P/keys.json $CID1 1,2 | js 'o=>o.si
 
 say ""
 say "B WRONG KEYS AND SPENDS, EACH REFUSED (real submissions against live locks):"
-# B1: one-seat forfeit on lock 1
+# B1: one-signer node forfeit on lock 1
 B1=$(redeem 1 --witness cancel --forfeit-sig $SIG1_1 --signer-secret $(k playerSecret))
-say "  B1 Cancel, forfeit by 1 of 2 committee seats: $(rshow "$B1")"
-# B2: valid 2-of-2 forfeit but tx signed by committee seat 0's key, not the player
-B2=$(redeem 1 --witness cancel --forfeit-sig $SIG1_12 --signer-secret $(seatsecret 0))
-say "  B2 Cancel, valid 2-of-2 forfeit, tx signed by a committee seat's key (not the player): $(rshow "$B2")"
+say "  B1 Cancel, forfeit by 1 of 2 committee signer nodes: $(rshow "$B1")"
+# B2: valid 2-of-2 forfeit but tx signed by committee signer node 0's key, not the player
+B2=$(redeem 1 --witness cancel --forfeit-sig $SIG1_12 --signer-secret $(signer_node_secret 0))
+say "  B2 Cancel, valid 2-of-2 forfeit, tx signed by a committee signer node's key (not the player): $(rshow "$B2")"
 # B3: player Refund before expiry on lock 4
 B3=$(redeem 4 --witness refund --signer-secret $(k playerSecret))
 say "  B3 Refund before expiry, the player's key: $(rshow "$B3")"

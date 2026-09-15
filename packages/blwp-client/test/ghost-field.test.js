@@ -164,9 +164,9 @@ test('a page that cannot keep up sheds the oldest pictures, not the newest', asy
       'the page kept the oldest pictures and dropped the newest');
     assert.equal(field.others, 1, 'draining the renderer queue forgot who is in the round');
     assert.equal(GHOST_BACKLOG > 3, true, 'the default backlog is not a real budget');
-    assert.equal(playersLine({ seated: false }), 'round named · not joined');
-    assert.equal(playersLine({ seated: true, others: 0 }), '1 player · waiting');
-    assert.equal(playersLine({ seated: true, others: 1 }), '2 players in this round');
+    assert.equal(playersLine({ joined: false }), 'round named · not joined');
+    assert.equal(playersLine({ joined: true, others: 0 }), '1 player · waiting');
+    assert.equal(playersLine({ joined: true, others: 1 }), '2 players in this round');
   } finally { await node.close(); }
 });
 
@@ -284,13 +284,13 @@ test('a viewer\'s own pictures do not make the field look stalled', () => {
 });
 
 test('the players line says when trucks are arriving and none are drawn', () => {
-  assert.equal(playersLine({ seated: true, others: 4 }), '5 players in this round');
-  assert.equal(playersLine({ seated: true, others: 4, stalled: true }),
+  assert.equal(playersLine({ joined: true, others: 4 }), '5 players in this round');
+  assert.equal(playersLine({ joined: true, others: 4, stalled: true }),
     '5 players in this round · none drawn');
   // A round with nobody else in it says nothing about drawing, because there
   // is nothing to draw.
-  assert.equal(playersLine({ seated: true, others: 0, stalled: true }), '1 player · waiting');
-  assert.equal(playersLine({ seated: false, others: 4, stalled: true }), 'round named · not joined');
+  assert.equal(playersLine({ joined: true, others: 0, stalled: true }), '1 player · waiting');
+  assert.equal(playersLine({ joined: false, others: 4, stalled: true }), 'round named · not joined');
 
   // AND WHERE THE NEWEST OTHER TRUCK IS, because `none drawn` only separates
   // a renderer that never ran from one that ran. A truck drawn 100 m down the
@@ -313,75 +313,75 @@ test('the players line says when trucks are arriving and none are drawn', () => 
   assert.equal(newestPose(tied).tick, seen[0].tick, 'the named pose is not at the newest tick');
   assert.equal(newestPose({ latest: () => [] }), null, 'an empty field named a place');
   assert.equal(newestPose(null), null, 'a page with no field named a place');
-  assert.equal(playersLine({ seated: true, others: 1, at: newestPose(held) }),
+  assert.equal(playersLine({ joined: true, others: 1, at: newestPose(held) }),
     '2 players in this round · other at -91,-71 m');
-  assert.equal(playersLine({ seated: true, others: 1, stalled: true, at: newestPose(held) }),
+  assert.equal(playersLine({ joined: true, others: 1, stalled: true, at: newestPose(held) }),
     '2 players in this round · none drawn · other at -91,-71 m');
 });
 
 /**
- * AFTER A RELOAD THE CHIP NAMES THE LIVE OTHER, NOT A DEAD SEAT.
+ * AFTER A RELOAD THE CHIP NAMES THE LIVE OTHER, NOT A DEAD ENTRY.
  *
  * Measured 2026-09-10 in two real Chromes on the Daily. A reload keeps the
  * player's key and draws a new entry, so each tab held THREE pictures: its own
- * pre-reload seat (tick 4229, -96.703,-10.200), the other player's pre-reload
- * seat (4227, -100.400,57.800) and the other player live (3041, -100.400,
+ * pre-reload entry (tick 4229, -96.703,-10.200), the other player's pre-reload
+ * entry (4227, -100.400,57.800) and the other player live (3041, -100.400,
  * 23.800, +30 ticks in 3 s). `newestPose` took the highest tick, and the chip
  * read "4 players in this round · other at -97,-10 m" - a frozen truck, and
  * this tab's own.
  */
 const Q = 65536;
-const seatPic = (entry, player, tick, x, z) => ({
+const entryPic = (entry, player, tick, x, z) => ({
   entryId: b32(entry), playerPubkey: player, tick, x: Math.round(x * Q), z: Math.round(z * Q), heading: 0,
 });
 
-test('after a reload the chip names the live other player, not the abandoned seat with more ticks', () => {
+test('after a reload the chip names the live other player, not the abandoned entry with more ticks', () => {
   const me = b32(0xa1);
   const them = b32(0xb2);
   const client = { watch: () => Promise.resolve('watching 3'), playerPubkey: me };
   const field = watchGhosts(client, { roundId: b32(1), entryId: b32(0xc0) });
 
   // the subscribing burst, in the order it was measured
-  client.onGhost(seatPic(0x20, me, 4229, -96.703, -10.2));     // this tab, before its reload
-  client.onGhost(seatPic(0xc5, them, 4227, -100.4, 57.8));     // the other tab, before its reload
-  client.onGhost(seatPic(0x7f, them, 3041, -100.4, 23.8));     // the other tab, live
-  assert.equal(field.self, 1, 'this tab\'s own pre-reload seat was kept as somebody else');
+  client.onGhost(entryPic(0x20, me, 4229, -96.703, -10.2));     // this tab, before its reload
+  client.onGhost(entryPic(0xc5, them, 4227, -100.4, 57.8));     // the other tab, before its reload
+  client.onGhost(entryPic(0x7f, them, 3041, -100.4, 23.8));     // the other tab, live
+  assert.equal(field.self, 1, 'this tab\'s own pre-reload entry was kept as somebody else');
   assert.equal(field.others, 1, `a round of two players counted ${1 + field.others}`);
 
-  client.onGhost(seatPic(0x7f, them, 3071, -100.4, 23.8));     // and the live one moves on
+  client.onGhost(entryPic(0x7f, them, 3071, -100.4, 23.8));     // and the live one moves on
   const at = newestPose(field);
   assert.equal(at.tick, 3071, `the chip named tick ${at.tick}, not the live other`);
   assert.equal(Math.round(at.x * 1000), -100400);
   assert.equal(Math.round(at.z * 1000), 23800);
-  assert.equal(playersLine({ seated: true, others: field.others, at }), '2 players in this round · other at -100,24 m');
-  assert.equal(field.latest().some((g) => g.tick === 4229 || g.tick === 4227), false, 'a dead seat is still held');
+  assert.equal(playersLine({ joined: true, others: field.others, at }), '2 players in this round · other at -100,24 m');
+  assert.equal(field.latest().some((g) => g.tick === 4229 || g.tick === 4227), false, 'a dead entry is still held');
 });
 
-test('a dead seat that arrives after the live one is replaced by the live one\'s next picture', () => {
+test('a dead entry that arrives after the live one is replaced by the live one\'s next picture', () => {
   const them = b32(0xb2);
   const client = { watch: () => Promise.resolve('watching 2'), playerPubkey: b32(0xa1) };
   const field = watchGhosts(client, { roundId: b32(1), entryId: b32(0xc0) });
-  client.onGhost(seatPic(0x7f, them, 3041, -100.4, 23.8));
-  client.onGhost(seatPic(0xc5, them, 4227, -100.4, 57.8));     // the burst's order is the node's
-  client.onGhost(seatPic(0x7f, them, 3071, -100.4, 23.8));
+  client.onGhost(entryPic(0x7f, them, 3041, -100.4, 23.8));
+  client.onGhost(entryPic(0xc5, them, 4227, -100.4, 57.8));     // the burst's order is the node's
+  client.onGhost(entryPic(0x7f, them, 3071, -100.4, 23.8));
   assert.equal(field.others, 1);
-  assert.equal(newestPose(field).tick, 3071, 'the dead seat outlived the live one\'s next picture');
+  assert.equal(newestPose(field).tick, 3071, 'the dead entry outlived the live one\'s next picture');
 });
 
 test('two different players are still two trucks, and the newest of them is named', () => {
   const client = { watch: () => Promise.resolve('watching 2'), playerPubkey: b32(0xa1) };
   const field = watchGhosts(client, { roundId: b32(1), entryId: b32(0xc0) });
-  client.onGhost(seatPic(0x11, b32(0xb2), 500, 1, 2));
-  client.onGhost(seatPic(0x12, b32(0xb3), 700, 3, 4));
+  client.onGhost(entryPic(0x11, b32(0xb2), 500, 1, 2));
+  client.onGhost(entryPic(0x12, b32(0xb3), 700, 3, 4));
   assert.equal(field.others, 2, 'two players were counted as one');
   assert.equal(newestPose(field).tick, 700);
 });
 
-test('through the real client and daemon, this player\'s pre-reload seat is itself, and the other is named', async () => {
+test('through the real client and daemon, this player\'s pre-reload entry is itself, and the other is named', async () => {
   const { node, client, rid, drive, where } = await rig();
   try {
-    assert.deepEqual(client.playerPubkey, b32(5), 'join did not keep the key it seated with');
-    // THIS PLAYER'S SEAT BEFORE A RELOAD: same key, another world secret, so
+    assert.deepEqual(client.playerPubkey, b32(5), 'join did not keep the key it joined with');
+    // THIS PLAYER'S ENTRY BEFORE A RELOAD: same key, another world secret, so
     // another entry - the daemon's own-entry filter does not know it is us.
     const before = {
       roundId: rid, playerPubkey: b32(5), sessionPubkey: b32(0x55), stakeCommitment: b32(7),
@@ -390,22 +390,22 @@ test('through the real client and daemon, this player\'s pre-reload seat is itse
     };
     await fetch(`http://127.0.0.1:${node.port}/entry`, { method: 'POST', body: encodeEntryContract(before) });
     assumeStakeSeen(node.round, before);
-    const oldSeat = entryIdOf(before);
+    const oldSignerNode = entryIdOf(before);
     drive(0, 60);                          // the other player
-    const head0 = node.round.head(rid, oldSeat);
+    const head0 = node.round.head(rid, oldSignerNode);
     node.round.batch(encodeInputBatch({
-      roundId: rid, entryId: oldSeat, previousHash: head0 || GENESIS, firstTick: 0,
+      roundId: rid, entryId: oldSignerNode, previousHash: head0 || GENESIS, firstTick: 0,
       ticks: Array.from({ length: 200 }, () => [45875, 0, 0, 0, 0]), liquidations: [],
-    }));                                   // the old seat ran FURTHER, as measured
+    }));                                   // the old entry ran FURTHER, as measured
 
     const field = watchGhosts(client, where);
     await field.watching;
     await wait(80);
-    assert.ok(field.self >= 1, `the daemon pushed ${field.seen} pictures and none was this player's old seat`);
+    assert.ok(field.self >= 1, `the daemon pushed ${field.seen} pictures and none was this player's old entry`);
     assert.equal(field.others, 1, `a round of two players counted ${1 + field.others}`);
     const at = newestPose(field);
-    assert.equal(at.tick, 59, `the chip named tick ${at.tick} - the old seat ran to 199`);
-    console.log(`  real daemon: ${field.seen} pictures, ${field.self} of this player's own old seat refused, `
+    assert.equal(at.tick, 59, `the chip named tick ${at.tick} - the old entry ran to 199`);
+    console.log(`  real daemon: ${field.seen} pictures, ${field.self} of this player's own old entry refused, `
       + `the other named at tick ${at.tick}`);
   } finally { await node.close(); }
 });
@@ -413,16 +413,16 @@ test('through the real client and daemon, this player\'s pre-reload seat is itse
 /* ------------------------------------------------ what Unity is left holding */
 
 import { RETIRE_TICK } from '../src/ghost-field.js';
-import { assumeStakeSeen } from '../../blwp-node/test/seating.js';
+import { assumeStakeSeen } from '../../blwp-node/test/assignment.js';
 
 /**
  * WHAT `GhostField.Show` DOES WITH EACH DRAINED ITEM: make or move one truck per
- * seat, and take one away on a tick below zero. Replayed here so the page's
+ * entry, and take one away on a tick below zero. Replayed here so the page's
  * rule is measured by the trucks it leaves Unity holding.
  *
  * Measured 2026-09-10 on the Daily, before this: a reload handed Unity 9 and 11
- * seats, 8 and 10 of them abandoned (one picture each, frozen), and a watched
- * player's reload left its 105-picture seat frozen beside the new one.
+ * entries, 8 and 10 of them abandoned (one picture each, frozen), and a watched
+ * player's reload left its 105-picture entry frozen beside the new one.
  */
 const render = (trucks, items) => {
   for (const g of items) {
@@ -436,62 +436,62 @@ const watcher = (me = b32(0xa1)) => {
   return { client, field: watchGhosts(client, { roundId: b32(1), entryId: b32(0xc0) }) };
 };
 
-test('after a reload the abandoned seats never stand in Unity: the measured 8 leave 0 trucks', () => {
+test('after a reload the abandoned entries never stand in Unity: the measured 8 leave 0 trucks', () => {
   assert.equal(RETIRE_TICK < 0, true, 'a retire must be a tick no picture can carry');
   const them = b32(0xb2);
   const { client, field } = watcher();
   const trucks = new Map();
-  // the subscribing burst as P1 measured it: eight abandoned seats, one picture each, then the live one
-  [5315, 173, 5309, 5579, 8993, 173, 125, 4227].forEach((t, i) => client.onGhost(seatPic(0x30 + i, them, t, -100.4, i)));
-  client.onGhost(seatPic(0x7f, them, 29, -100.4, -44.2));
+  // the subscribing burst as P1 measured it: eight abandoned entries, one picture each, then the live one
+  [5315, 173, 5309, 5579, 8993, 173, 125, 4227].forEach((t, i) => client.onGhost(entryPic(0x30 + i, them, t, -100.4, i)));
+  client.onGhost(entryPic(0x7f, them, 29, -100.4, -44.2));
   render(trucks, field.drain());
-  for (let t = 35; t <= 149; t += 6) client.onGhost(seatPic(0x7f, them, t, -100.4, -44.2));
+  for (let t = 35; t <= 149; t += 6) client.onGhost(entryPic(0x7f, them, t, -100.4, -44.2));
   render(trucks, field.drain());
   assert.deepEqual([...trucks.keys()], [toHex(b32(0x7f))], `Unity is left holding ${trucks.size} trucks`);
   assert.equal(field.retired, 8);
-  console.log(`  burst of 8 abandoned seats and the live one: Unity holds ${trucks.size} truck, ${field.retired} retired`);
+  console.log(`  burst of 8 abandoned entries and the live one: Unity holds ${trucks.size} truck, ${field.retired} retired`);
 });
 
-test('a watched player who reloads leaves no truck behind: the old seat goes when the new one proves live', () => {
+test('a watched player who reloads leaves no truck behind: the old entry goes when the new one proves live', () => {
   const them = b32(0xb2);
   const { client, field } = watcher();
   const trucks = new Map();
-  for (let t = 5; t < 5 + 105 * 8; t += 8) client.onGhost(seatPic(0xe3, them, t, -100.4, 30.6));   // 105 pictures
+  for (let t = 5; t < 5 + 105 * 8; t += 8) client.onGhost(entryPic(0xe3, them, t, -100.4, 30.6));   // 105 pictures
   render(trucks, field.drain());
-  client.onGhost(seatPic(0xaf, them, 5, -100.4, -37.4));      // the reloaded seat's first picture
-  assert.equal(field.superseded, 1, 'the new seat\'s first picture was drawn while the old seat was live');
-  assert.equal(field.retired, 0, 'the live seat was retired on one picture of another');
-  client.onGhost(seatPic(0xaf, them, 11, -100.4, -37.4));     // ... and its second: now it is the live one
+  client.onGhost(entryPic(0xaf, them, 5, -100.4, -37.4));      // the reloaded entry's first picture
+  assert.equal(field.superseded, 1, 'the new entry\'s first picture was drawn while the old entry was live');
+  assert.equal(field.retired, 0, 'the live entry was retired on one picture of another');
+  client.onGhost(entryPic(0xaf, them, 11, -100.4, -37.4));     // ... and its second: now it is the live one
   render(trucks, field.drain());
   assert.deepEqual([...trucks.keys()], [toHex(b32(0xaf))], `Unity is left holding ${trucks.size} trucks`);
   assert.equal(field.retired, 1);
 });
 
-test('an abandoned seat arriving after the live one is proven never reaches Unity', () => {
+test('an abandoned entry arriving after the live one is proven never reaches Unity', () => {
   const them = b32(0xb2);
   const { client, field } = watcher();
-  client.onGhost(seatPic(0x7f, them, 29, -100.4, -44.2));
-  client.onGhost(seatPic(0x7f, them, 35, -100.4, -44.2));
-  client.onGhost(seatPic(0xc5, them, 4227, -100.4, 57.8));    // one picture, frozen
+  client.onGhost(entryPic(0x7f, them, 29, -100.4, -44.2));
+  client.onGhost(entryPic(0x7f, them, 35, -100.4, -44.2));
+  client.onGhost(entryPic(0xc5, them, 4227, -100.4, 57.8));    // one picture, frozen
   const items = field.drain();
-  assert.equal(items.some((g) => toHex(g.entryId) === toHex(b32(0xc5))), false, 'the abandoned seat reached Unity');
+  assert.equal(items.some((g) => toHex(g.entryId) === toHex(b32(0xc5))), false, 'the abandoned entry reached Unity');
   assert.deepEqual([...render(new Map(), items).keys()], [toHex(b32(0x7f))]);
   assert.equal(field.superseded, 1);
 });
 
-test('a player whose only seat has finished keeps their truck: one picture alone is not an abandoned seat', () => {
+test('a player whose only entry has finished keeps their truck: one picture alone is not an abandoned entry', () => {
   const { client, field } = watcher();
-  client.onGhost(seatPic(0x44, b32(0xd4), 9000, -20, 110));
+  client.onGhost(entryPic(0x44, b32(0xd4), 9000, -20, 110));
   assert.deepEqual([...render(new Map(), field.drain()).keys()], [toHex(b32(0x44))]);
   assert.equal(field.retired, 0);
 });
 
 test('two players are two trucks in Unity, not one', () => {
   const { client, field } = watcher();
-  client.onGhost(seatPic(0x11, b32(0xb2), 500, 1, 2));
-  client.onGhost(seatPic(0x12, b32(0xb3), 700, 3, 4));
-  client.onGhost(seatPic(0x11, b32(0xb2), 506, 1, 2));
-  client.onGhost(seatPic(0x12, b32(0xb3), 706, 3, 4));
+  client.onGhost(entryPic(0x11, b32(0xb2), 500, 1, 2));
+  client.onGhost(entryPic(0x12, b32(0xb3), 700, 3, 4));
+  client.onGhost(entryPic(0x11, b32(0xb2), 506, 1, 2));
+  client.onGhost(entryPic(0x12, b32(0xb3), 706, 3, 4));
   assert.equal(render(new Map(), field.drain()).size, 2);
   assert.equal(field.retired, 0);
 });
@@ -499,35 +499,35 @@ test('two players are two trucks in Unity, not one', () => {
 test('a retire is never shed from a full queue, or that truck would stand for good', () => {
   const client = { watch: () => Promise.resolve('watching'), playerPubkey: b32(0xa1) };
   const field = watchGhosts(client, { roundId: b32(1), entryId: b32(0xc0) }, { limit: 3 });
-  client.onGhost(seatPic(0x21, b32(0xb2), 10, 0, 0));      // a one-picture seat ...
-  client.onGhost(seatPic(0x22, b32(0xb2), 20, 0, 0));      // ... superseded by another: a retire is queued
-  for (let t = 1; t <= 10; t++) client.onGhost(seatPic(0x33, b32(0xb3), t, 0, 0));   // and a flood behind it
+  client.onGhost(entryPic(0x21, b32(0xb2), 10, 0, 0));      // a one-picture entry ...
+  client.onGhost(entryPic(0x22, b32(0xb2), 20, 0, 0));      // ... superseded by another: a retire is queued
+  for (let t = 1; t <= 10; t++) client.onGhost(entryPic(0x33, b32(0xb3), t, 0, 0));   // and a flood behind it
   const items = field.drain();
   assert.equal(items.length, 3);
   assert.ok(items.some((g) => g.tick < 0 && toHex(g.entryId) === toHex(b32(0x21))), 'the retire was shed');
   assert.ok(field.shed > 0, 'nothing was shed, so this proves nothing');
 });
 
-test('through a real daemon\'s subscribe burst, the other player\'s abandoned seats leave no truck in Unity', async () => {
+test('through a real daemon\'s subscribe burst, the other player\'s abandoned entries leave no truck in Unity', async () => {
   const { node, client, rid, drive, where, theirEid } = await rig();
   try {
-    // THE OTHER PLAYER'S ABANDONED SEATS: the same key, other world secrets, so
+    // THE OTHER PLAYER'S ABANDONED ENTRIES: the same key, other world secrets, so
     // other entries - each with a run of its own that then stops, as a reload
-    // leaves one. The daemon sends the latest picture of every seat on watch.
+    // leaves one. The daemon sends the latest picture of every entry on watch.
     const abandoned = [0x61, 0x62, 0x63].map((w) => ({
       roundId: rid, playerPubkey: b32(9), sessionPubkey: b32(w), stakeCommitment: b32(7),
       stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n,
       joinTick: 0, worldSecret: b32(w), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
     }));
-    for (const seat of abandoned) {
-      await fetch(`http://127.0.0.1:${node.port}/entry`, { method: 'POST', body: encodeEntryContract(seat) });
-      assumeStakeSeen(node.round, seat);
+    for (const entryKey of abandoned) {
+      await fetch(`http://127.0.0.1:${node.port}/entry`, { method: 'POST', body: encodeEntryContract(entryKey) });
+      assumeStakeSeen(node.round, entryKey);
       node.round.batch(encodeInputBatch({
-        roundId: rid, entryId: entryIdOf(seat), previousHash: GENESIS, firstTick: 0,
+        roundId: rid, entryId: entryIdOf(entryKey), previousHash: GENESIS, firstTick: 0,
         ticks: Array.from({ length: 40 }, (_, i) => words(9)(i)), liquidations: [],
       }));
     }
-    drive(0, 60);                                   // the live seat, before the watch
+    drive(0, 60);                                   // the live entry, before the watch
 
     const field = watchGhosts(client, where);
     await field.watching;

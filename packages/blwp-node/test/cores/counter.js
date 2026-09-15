@@ -1,10 +1,10 @@
-// A SECOND TITLE ON THE SAME SEATS - THE ACCEPTANCE FOR M3 R1 (the owner 2026-09-15 08:07: "several
+// A SECOND TITLE ON THE SAME SIGNER NODES - THE ACCEPTANCE FOR M3 R1 (the owner 2026-09-15 08:07: "several
 // games at once, and several rule sets at once ... two titles and two configs can run on the same
 // nodes in the same window").
 //
 // Deliberately nothing like the truck: a run adds its first input word each tick, for its config's
 // number of ticks, and delivers when the sum reaches its config's target. It is here to show the
-// seats replay whatever core a round names, under whatever config it names, and that the truck is
+// signer nodes replay whatever core a round names, under whatever config it names, and that the truck is
 // not special to them: the same adapter face (core/src/adapter.js), its own hash, its own configs.
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -13,7 +13,7 @@ const sha = (s) => createHash('sha256').update(s).digest();
 
 export const CORE = Object.freeze({
   name: 'counter (a second title)',
-  // its run length is its config's (R3): a round names it as blockTicks, and the seat checks it against this
+  // its run length is its config's (R3): a round names it as blockTicks, and the signer node checks it against this
   runTicks: (config = {}) => config.ticks ?? 120,
   INPUT_WORDS: 5,
   start: (seedWord, config = {}) => ({ seed: seedWord | 0, sum: 0, ticks: 0, target: config.target ?? 1000, length: config.ticks ?? 120 }),
@@ -35,7 +35,7 @@ export const COUNTER_HASH = sha(readFileSync(new URL(import.meta.url))).toString
 export const CONFIGS = [{ target: 1000, ticks: 120 }, { target: 2000000000, ticks: 120 }]
   .map((c) => ({ config: c, hash: sha(`counter-config:${c.target}:${c.ticks}`) }));
 
-/** The registry entry a seat installs beside the truck (serve's `cores`). */
+/** The registry entry a signer node installs beside the truck (serve's `cores`). */
 export const COUNTER = Object.freeze({
   name: CORE.name, hash: COUNTER_HASH, url: new URL(import.meta.url).href, adapter: CORE,
   configs: new Map(CONFIGS.map(({ config, hash }) => [hash.toString('hex'), config])),

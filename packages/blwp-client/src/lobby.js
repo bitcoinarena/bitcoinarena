@@ -9,21 +9,21 @@
 //
 // WHAT A ROW SAYS COMES FROM THE CONTRACT, NOT FROM THE LISTING. Whether a round
 // is free (no stake, no wallet, no Lightning) and whether its entry is open are
-// read off the verified contract and this page's clock. The seat counts are
+// read off the verified contract and this page's clock. The signer node counts are
 // shown as what each node says.
 //
-// AND JOIN IS OFFERED AT THE ROUND'S THRESHOLD OF ITS OWN SEATS (2 of 2 here,
+// AND JOIN IS OFFERED AT THE ROUND'S THRESHOLD OF ITS OWN SIGNER NODES (2 of 2 here,
 // 5 of 7 on mainnet). Every mark needs that many receipts, so a round only one
-// seat of a 2-of-2 holds is a round nobody can play. Each seat signs its
+// signer node of a 2-of-2 holds is a round nobody can play. Each signer node signs its
 // listing under its node key (lobby-listing.js); a row is joinable only when
 // that many DISTINCT keys the verified contract names have signed "open,
-// seated here", recently. One server cannot sign for two seats.
+// joined here", recently. One server cannot sign for two signer nodes.
 //
 // Joining is the join link: the same query with `round=` added. Nothing here
-// seats anybody, and nothing here mints a round.
+// signer nodes anybody, and nothing here mints a round.
 //
-// AND WHO IS SEATED, BY THE NAMES THEY CHOSE: each seat serves the name records
-// its seated players signed (lobby-name.js); a row carries the ones that check
+// AND WHO IS JOINED, BY THE NAMES THEY CHOSE: each signer node serves the name records
+// its joined players signed (lobby-name.js); a row carries the ones that check
 // (identity.js `checkedNames`) - never a key in place of a name.
 import { joinQuery, fetchRound, roundPays, roundLocks } from './join.js';
 import { checkedNames } from './identity.js';
@@ -31,7 +31,7 @@ import { lobbyListingId } from '../../protocol/src/lobby-listing.js';
 import { receiptsNeeded } from '../../protocol/src/threshold.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 
-/** How far a seat's signed time may be from this page's clock and still count. */
+/** How far a signer node's signed time may be from this page's clock and still count. */
 export const LOBBY_SKEW_MS = 60000;
 
 /**
@@ -61,7 +61,7 @@ export function lobbyJoinSearch(search, id) {
 
 /**
  * THE DAILY'S LOBBY AT THE BARE ROOT: `daily.json`, deployed beside the page,
- * names what a lobby link names - the seats, where the bond is asked for, the
+ * names what a lobby link names - the signer nodes, where the bond is asked for, the
  * signed advertisement - and nothing else. It becomes that link's query, held
  * to the same rules (`lobbyQuery`), so it trusts nothing a link would not; a
  * file that names a round, or fails a rule, is no lobby, and the root stays
@@ -79,16 +79,16 @@ export function dailyLobbySearch(daily) {
   try { return lobbyQuery(search) ? search : null; } catch { return null; }
 }
 
-/** Is this node's listing of this round its seat's own signed word? */
+/** Is this node's listing of this round its signer node's own signed word? */
 function lobbySigned(verify, { id, nodeKey, nowMs, x }) {
   try {
     return !!verify(fromHex(String(x.sig)), lobbyListingId({ roundId: fromHex(id), nodePubkey: fromHex(nodeKey), nowMs: BigInt(nowMs),
-      phase: x.phase, seatedHere: !!x.seatedHere, seated: Number(x.seated), playing: Number(x.playing) }), fromHex(nodeKey));
+      phase: x.phase, assignedHere: !!x.assignedHere, joined: Number(x.joined), playing: Number(x.playing) }), fromHex(nodeKey));
   } catch { return false; }
 }
 
 /**
- * EVERY ROUND THE NAMED NODES HOLD, CHECKED, AND WHICH OF THEM ITS SEATS AGREE ON.
+ * EVERY ROUND THE NAMED NODES HOLD, CHECKED, AND WHICH OF THEM ITS SIGNER NODES AGREE ON.
  *
  * `verify(sig, msg, key)` is BIP-340, injected like every curve in this bundle.
  * @returns {{ rows: object[], refused: string[] }} rows open before pending,
@@ -111,8 +111,8 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
         if (!/^[0-9a-f]{64}$/.test(id)) { refused.push(`${node}: listed something that is not a round id`); continue; }
         if (!said.has(id)) said.set(id, []);
         const signed = /^[0-9a-f]{64}$/.test(nodeKey) && Number.isFinite(at) && lobbySigned(verify, { id, nodeKey, nowMs: at, x });
-        said.get(id).push({ node, key: nodeKey, seated: Number(x.seated) || 0, playing: Number(x.playing) || 0,
-          watching: Number(x.watching) || 0, free: !!x.free, phase: x.phase, seatedHere: !!x.seatedHere,
+        said.get(id).push({ node, key: nodeKey, joined: Number(x.joined) || 0, playing: Number(x.playing) || 0,
+          watching: Number(x.watching) || 0, free: !!x.free, phase: x.phase, assignedHere: !!x.assignedHere,
           signed, fresh: Number.isFinite(at) && Math.abs(at - nowMs) <= skewMs,
           names: Array.isArray(x.names) ? x.names : [] });
       }
@@ -127,14 +127,14 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
     if (now >= contract.entryCloseMs) continue;
     const pays = roundPays(contract);
     const phase = now < contract.committeeTimeMs ? 'pending' : 'open';
-    // WHO COUNTS: a seat of THIS round (its key in the verified contract), its
-    // own signature, recent, saying open and seated. Each key once.
-    const seats = new Set(contract.nodes.map((k) => toHex(k)));
+    // WHO COUNTS: a signer node of THIS round (its key in the verified contract), its
+    // own signature, recent, saying open and assigned. Each key once.
+    const signerNodes = new Set(contract.nodes.map((k) => toHex(k)));
     let needed;
     try { needed = receiptsNeeded(contract.gameVerifySlots); } catch { needed = contract.nodes.length; }
     const agreeing = new Set();
     for (const c of counts) {
-      c.counts = !!(c.signed && c.fresh && seats.has(c.key) && c.phase === 'open' && c.seatedHere);
+      c.counts = !!(c.signed && c.fresh && signerNodes.has(c.key) && c.phase === 'open' && c.assignedHere);
       if (c.counts) agreeing.add(c.key);
     }
     rows.push({
@@ -145,7 +145,7 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
       committeeTimeMs: Number(contract.committeeTimeMs), startTimeMs: Number(contract.startTimeMs),
       entryCloseMs: Number(contract.entryCloseMs),
       said: counts,
-      seatsAgree: agreeing.size, needed, seats: seats.size,
+      signerNodesAgree: agreeing.size, needed, signerNodes: signerNodes.size,
       joinable: phase === 'open' && agreeing.size >= needed,
       // A NODE THAT CALLED A PAYING ROUND FREE, OR THE REVERSE, IS NAMED: the row
       // says what the contract says, and the disagreement is shown beside it.
@@ -160,7 +160,7 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
 
 /**
  * ONE FREE ROUND AND ONE PAYING ROUND, NEVER TWO OF EITHER (the owner 2026-09-15 16:08: "ALWAYS
- * exactly ONE no-money FREE round and ONE paying 2-of-2"). The seats hold more than one of a kind
+ * exactly ONE no-money FREE round and ONE paying 2-of-2"). The signer nodes hold more than one of a kind
  * for a while - a rollover opens the next round a minute before the last one's entry closes, and
  * a launcher restart opens a fresh pair beside the pair it left. Measured before: the Daily listed
  * 2 FREE and 2 PAID. Per kind this keeps one row: a joinable one over one that is not, an open one
@@ -193,9 +193,9 @@ export function lobbyLine(row, nowMs = Date.now()) {
   const when = row.phase === 'pending'
     ? `committee: pending, entry opens in ${lobbyClock(row.committeeTimeMs - nowMs)}`
     : `entry open, closes in ${lobbyClock(row.entryCloseMs - nowMs)}`;
-  const agree = `${row.seatsAgree} of ${row.needed} signer nodes agree`
-    + (row.phase === 'open' && !row.joinable ? ` - waiting for ${row.needed - row.seatsAgree} more` : '');
-  const counts = row.said.map((c) => `${c.seated} joined, ${c.playing} playing (says ${c.node})`).join('; ');
+  const agree = `${row.signerNodesAgree} of ${row.needed} signer nodes agree`
+    + (row.phase === 'open' && !row.joinable ? ` - waiting for ${row.needed - row.signerNodesAgree} more` : '');
+  const counts = row.said.map((c) => `${c.joined} joined, ${c.playing} playing (says ${c.node})`).join('; ');
   const who = row.names && row.names.length ? ` · players: ${row.names.map((n) => n.name).join(', ')}` : '';
   return `${money} · ${when} · ${agree} · ${counts || 'no signer node counts'}${who}`
     + (row.disagrees.length ? ` · ${row.disagrees.join(', ')} listed it as ${row.free ? 'paying' : 'free'}` : '');

@@ -13,7 +13,7 @@
 // `custody.hold` invoices `entry.stakeMsat`, so that player pays nothing, while
 // `winnings` pays `amountMsat - stake`, so a zero stake is paid the whole table
 // row out of other players' money. A door enforcing only the fee would look
-// checked and still pass a free seat.
+// checked and still pass a free round.
 //
 // This file was the measurement before the door was tightened - six of six
 // wrong fees taken, four of four self-named stakes taken - and it is the pin
@@ -131,7 +131,7 @@ test('the door takes the round\'s own fee and refuses every other', async () => 
  *
  * Every one of these satisfies `feeMatchesEntry` - the entry names its own
  * stake and pays 2% of THAT - so a door checking only the fee takes all four.
- * BEFORE: it did. The free seat is the one that matters: the hold is for
+ * BEFORE: it did. The free round is the one that matters: the hold is for
  * `entry.stakeMsat` and the payout is `amountMsat - stake`, so it would be paid
  * its whole row out of other players' money.
  */
@@ -141,7 +141,7 @@ test('a stake the round did not ask for is refused, even paying 2% of it', async
     const cases = [
       [STAKE, entryFeeMsat(STAKE), 'the round\'s own stake'],
       [1n, entryFeeMsat(1n), 'a stake of one msat'],
-      [0n, 0n, 'no stake at all - a free seat'],
+      [0n, 0n, 'no stake at all - a free round'],
       [STAKE * 1000n, entryFeeMsat(STAKE * 1000n), 'a thousand times the stake'],
     ];
     let took = 0;
@@ -173,11 +173,11 @@ test('a round that asks no stake takes a free entry and refuses a paid one', asy
   try {
     const free = await d.knock(0n, 0n);
     assert.equal(free.status, 201, free.why);
-    // AND IT SEATS ON A NODE WITH NO LIGHTNING AT ALL - `door()` gives this
-    // daemon no port - as a free seat, not as a Lightning fault. the owner 11:15:
-    // the Daily refused exactly this seat, with 22A's BigInt refusal.
-    assert.equal(free.hold, 'FREE', `a free seat was reported as ${free.hold}: ${free.holdWhy}`);
-    assert.equal(free.holdWhy, null, 'a free seat carried a reason, as if something had failed');
+    // AND IT IS TAKEN ON A NODE WITH NO LIGHTNING AT ALL - `door()` gives this
+    // daemon no port - as a free round, not as a Lightning fault. the owner 11:15:
+    // the Daily refused exactly this signer node, with 22A's BigInt refusal.
+    assert.equal(free.hold, 'FREE', `a free round was reported as ${free.hold}: ${free.holdWhy}`);
+    assert.equal(free.holdWhy, null, 'a free round carried a reason, as if something had failed');
 
     // A player cannot pay INTO a round that asks nothing either: the fee table
     // would owe nodes a share of money the round never collected.
@@ -196,10 +196,10 @@ test('a round that asks no stake takes a free entry and refuses a paid one', asy
  * `round.enter` is where `committeeTimeMs` and `vssSharesRef` are already
  * checked, and its own comment says why: "the same rule at the door, where it
  * cannot be skipped by a client that does not draw a lobby". A check that lived
- * only in the HTTP handler would be skipped by everything that seats an entry
+ * only in the HTTP handler would be skipped by everything that takes an entry
  * another way.
  */
-test('the check is in enter, so nothing that seats an entry can skip it', async () => {
+test('the check is in enter, so nothing that takes an entry can skip it', async () => {
   const { Round } = await import('../src/round.js');
   const r = new Round(openStore(':memory:'), () => NOW);
   const contract = contractFor([r.pubkey]);
@@ -219,7 +219,7 @@ test('the check is in enter, so nothing that seats an entry can skip it', async 
 
 /**
  * THE PLAYER'S OWN DONATION, AT THE DOOR (M3.2 6e, commit 2). The page now
- * writes it (`chooseDonation`, `entryFor`); the seat takes it out of the stake
+ * writes it (`chooseDonation`, `entryFor`); the signer node takes it out of the stake
  * with the fee and keeps it on the entry the payout table reads - and refuses
  * one msat more than the stake leaves once the fee is out.
  */
@@ -229,7 +229,7 @@ test('the door takes a player\'s own 2% donation out of the stake, and not a msa
     const donor = await d.knock(STAKE, OWED, 2000n);
     assert.equal(donor.status, 201, donor.why);
     const kept = d.node.round.entriesOf(d.rid).map((e) => (e.entry ? e.entry.donationMsat : e.donationMsat));
-    assert.deepEqual(kept.map(String), ['2000'], 'the seat keeps the donation the entry names');
+    assert.deepEqual(kept.map(String), ['2000'], 'the signer node keeps the donation the entry names');
     const rule = feeMatchesEntry({ stakeMsat: STAKE, feeMsat: OWED, donationMsat: 2000n });
     assert.equal(rule.net, 96000n, 'the net stake of a 2% donor');
     const over = await d.knock(STAKE, OWED, STAKE - OWED + 1n);

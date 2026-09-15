@@ -5,8 +5,8 @@
 // so an ed25519 identity could never be the key a bond was posted under.
 // Measured before this changed, over 500 fresh identities: 235 happened to be
 // valid secp x-only points, and the node held the secp secret for NONE of
-// them. So "the committee is the seated census" was not a rule any node could
-// satisfy - the trusted list and the seated list could not hold the same
+// them. So "the committee is the assigned census" was not a rule any node could
+// satisfy - the trusted list and the assigned list could not hold the same
 // bytes, whatever either of them said.
 //
 // One key now: x-only secp256k1, and every signature a NODE makes - its
@@ -112,9 +112,9 @@ test('a receipt is BIP-340 under the node key, and an ed25519 one is refused', (
     spawnFreeRadius: 20, timeFloor: 30, timeCeil: 150, minScore: 1,
     rankNumerator: 3, rankDenominator: 4, nodes: [round.pubkey, peerKey],
   });
-  // The round is seated with the two keys its contract names - stated, since
-  // this file is about the CURVE and not about seating.
-  round.seat(rid, [round.pubkey, peerKey]);
+  // The round is assigned the two keys its contract names - stated, since
+  // this file is about the CURVE and not about joining.
+  round.recordSignerNodes(rid, [round.pubkey, peerKey]);
 
   const session = ed25519.utils.randomSecretKey();
   const entry = {

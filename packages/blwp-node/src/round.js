@@ -60,7 +60,7 @@ export class Round {
   constructor(db, now = () => Date.now(), { cores = installedCores() } = {}) {
     this.db = db;
     this.now = now;
-    // THE CORES THIS SEAT RUNS (M3 R1): a round is opened only on one of them, and its run length is theirs.
+    // THE CORES THIS SIGNER NODE RUNS (M3 R1): a round is opened only on one of them, and its run length is theirs.
     this.cores = cores;
     // Read once, and made on the first ask if the file has none. A node that
     // could not sign would have to answer a checkpoint with something other
@@ -69,28 +69,28 @@ export class Round {
   }
 
   /**
-   * WHAT THE CENSUS SEATED FOR THIS ROUND, written once by whoever derived it.
+   * WHAT THE CENSUS ASSIGNED FOR THIS ROUND, written once by whoever derived it.
    *
    * The keys are the census's, not a list off the contract: `contract.nodes`
    * is what a round's author wrote down, and letter 26's ruling is that the
-   * seated set is the only list that counts. Kept here so `takeReceipt` and
+   * assigned set is the only list that counts. Kept here so `takeReceipt` and
    * the verdict read the same answer instead of each deciding for itself.
    */
-  seat(roundIdBytes, keys) {
+  recordSignerNodes(roundIdBytes, keys) {
     if (!Array.isArray(keys) || !keys.length)
-      throw new Error('a round is seated with the keys the census gave, not with none');
-    const put = this.db.prepare('INSERT OR IGNORE INTO seats (round_id, pubkey) VALUES (?, ?)');
+      throw new Error('a round is assigned the keys the census gave, not none');
+    const put = this.db.prepare('INSERT OR IGNORE INTO signer_nodes (round_id, pubkey) VALUES (?, ?)');
     for (const k of keys) {
       if (!(k instanceof Uint8Array) || k.length !== 32)
-        throw new Error('a seat is a 32-byte key');
+        throw new Error('a signer node is a 32-byte key');
       put.run(roundIdBytes, k);
     }
     return keys.length;
   }
 
-  /** The seated keys, or an empty list if this node never seated that round. */
-  seats(roundIdBytes) {
-    return this.db.prepare('SELECT pubkey FROM seats WHERE round_id = ? ORDER BY pubkey')
+  /** The assigned keys, or an empty list if this node was never assigned that round. */
+  signerNodes(roundIdBytes) {
+    return this.db.prepare('SELECT pubkey FROM signer_nodes WHERE round_id = ? ORDER BY pubkey')
       .all(roundIdBytes).map((r) => new Uint8Array(r.pubkey));
   }
 
@@ -173,18 +173,18 @@ export class Round {
       throw new Error('a receipt for a mark this node has not got');
     }
 
-    // THE SEATED KEYS, NOT THE CONTRACT'S LIST.
+    // THE ASSIGNED KEYS, NOT THE CONTRACT'S LIST.
     //
     // `contract.nodes` is what a round's author wrote down; the committee is
-    // what the census seated at `census_height` (26's ruling). A key on the
-    // contract that the chain did not seat is a stranger, and a node that
-    // never seated this round has no committee to check against - so it
+    // what THE CENSUS ASSIGNED at `census_height` (26's ruling). A key on the
+    // contract that the chain did not assign is a stranger, and a node that
+    // was never assigned this round has no committee to check against - so it
     // refuses rather than falling back to the author's list, which is the back
     // door this replaces.
     const roundId = new Uint8Array(mark.round_id);
-    const committee = this.seats(roundId);
+    const committee = this.signerNodes(roundId);
     if (!committee.length)
-      throw new Error('this node has not seated that round, so it knows no committee for it');
+      throw new Error('this node has not been assigned that round, so it knows no committee for it');
     if (!committee.some((n) => same(n, r.nodePubkey)))
       throw new Error(
         `${toHex(r.nodePubkey)} is not on this round's committee`);
@@ -323,7 +323,7 @@ export class Round {
     // six wrong fees taken, and four of four self-named stakes taken, every one
     // of the four "standing" under the rule.
     //
-    // A ZERO STAKE IS NOT A SMALL ENTRY, IT IS A FREE SEAT PAID FROM OTHER
+    // A ZERO STAKE IS NOT A SMALL ENTRY, IT IS A FREE ROUND PAID FROM OTHER
     // PLAYERS' MONEY. `custody.hold` issues the hold invoice for the entry's
     // net stake, so that player pays nothing; `winnings` pays `amountMsat -
     // net`, so their whole table row comes out of the pool.
@@ -606,7 +606,7 @@ export class Round {
     // A FIRST MARK SIGNED AFTER join_tick + THE START DEADLINE IS FORFEIT (§15).
     //
     // The first mark is the one that chains to nothing. Its tick is the
-    // player's own, under the entry's session key, so every seat reads the same
+    // player's own, under the entry's session key, so every signer node reads the same
     // number and no clock is consulted. Past the round's line it is the
     // player's own late start: refused - no receipt - and kept as the evidence
     // the entry is FORFEIT. Not ENTRY_VOID: a refund the player could choose by
@@ -978,16 +978,16 @@ export class Round {
       }
     }
     // AND TWO FIRST MARKS (M3, the guard case's leftover): the first mark this
-    // seat holds and a DIFFERENT one it refused as a late start. Both chain to
+    // signer node holds and a DIFFERENT one it refused as a late start. Both chain to
     // nothing - one parent, two chains, 13B's second limb - and the pair is the
     // same portable proof `provesEquivocation` checks. Measured before: without
-    // it both seats recorded ENTRY_VOID for the player's own split start.
+    // it both signer nodes recorded ENTRY_VOID for the player's own split start.
     const late = this.startForfeit(entryIdBytes);
     const heldFirst = this.firstMarkHeld(roundIdBytes, entryIdBytes);
     if (late && heldFirst && !same(late.mark, heldFirst))
       out.push({ how: 'two first marks, one of them late', tick: late.markTick, stored: heldFirst, offered: late.mark,
         seenMs: late.decidedMs });
-    // AND TWO FIRST MARKS KEPT AS A PAIR (first_mark_pairs): this seat holds
+    // AND TWO FIRST MARKS KEPT AS A PAIR (first_mark_pairs): this signer node holds
     // neither as a checkpoint - e.g. a peer's voided one and a different one sent here.
     for (const r of this.db.prepare('SELECT first_a, first_b, seen_ms FROM first_mark_pairs WHERE round_id = ? AND entry_id = ?')
       .all(roundIdBytes, entryIdBytes)) {
@@ -1018,9 +1018,9 @@ export class Round {
   }
 
   /**
-   * DOES THIS SEAT HOLD THE PROOF OF TWO FIRST MARKS? (§13B; M3.3-34) Two
+   * DOES THIS SIGNER NODE HOLD THE PROOF OF TWO FIRST MARKS? (§13B; M3.3-34) Two
    * different marks of this entry, both chaining to nothing, both signed by
-   * its session key - checked here, synchronously, from this seat's own store.
+   * its session key - checked here, synchronously, from this signer node's own store.
    * That pair forfeits the entry with no quorum, no replay and no window.
    */
   provenTwoFirstMarks(roundIdBytes, entryIdBytes) {
@@ -1040,14 +1040,14 @@ export class Round {
     return false;
   }
 
-  /** Another seat's sealed answer with its share of an entry's preimage, kept as it came. */
-  putHeldShare({ entryId, seat, bytes }) {
-    this.db.prepare('INSERT OR IGNORE INTO held_shares (entry_id, seat, answer, seen_ms) VALUES (?, ?, ?, ?)')
-      .run(entryId, seat, bytes, this.now());
+  /** Another signer node's sealed answer with its share of an entry's preimage, kept as it came. */
+  putHeldShare({ entryId, signerNode, bytes }) {
+    this.db.prepare('INSERT OR IGNORE INTO held_shares (entry_id, signer_node, answer, seen_ms) VALUES (?, ?, ?, ?)')
+      .run(entryId, signerNode, bytes, this.now());
   }
 
   heldShares(entryIdBytes) {
-    return this.db.prepare('SELECT answer FROM held_shares WHERE entry_id = ? ORDER BY seat').all(entryIdBytes)
+    return this.db.prepare('SELECT answer FROM held_shares WHERE entry_id = ? ORDER BY signer_node').all(entryIdBytes)
       .map((r) => new Uint8Array(r.answer));
   }
 
@@ -1191,11 +1191,11 @@ export class Round {
       .map((r) => ({ roundId: new Uint8Array(r.round_id), contract: new Uint8Array(r.contract), openedMs: r.opened_ms }));
   }
 
-  /** How many players this node seated in a round, and how many it has taken ticks from. */
+  /** How many players joined at this node in a round, and how many it has taken ticks from. */
   playersOf(roundIdBytes) {
-    const seated = this.db.prepare('SELECT COUNT(*) n FROM entries WHERE round_id = ?').get(roundIdBytes).n;
+    const joined = this.db.prepare('SELECT COUNT(*) n FROM entries WHERE round_id = ?').get(roundIdBytes).n;
     const playing = this.db.prepare('SELECT COUNT(DISTINCT entry_id) n FROM ticks WHERE round_id = ?').get(roundIdBytes).n;
-    return { seated, playing };
+    return { joined, playing };
   }
 
   entriesOf(roundIdBytes) {
@@ -1213,7 +1213,7 @@ export class Round {
    * this node encoded and the signature over its id - stored whole, so what is
    * served later is what was signed and not a re-encoding of it.
    *
-   * One seat, one result: a node that signed twice would be equivocating, and
+   * One signer node, one result: a node that signed twice would be equivocating, and
    * the primary key says so rather than keeping both.
    */
   putResult(roundIdBytes, entryIdBytes, nodePubkey, resultIdBytes, bytes) {
@@ -1390,24 +1390,24 @@ export class Round {
   }
 
   /**
-   * THIS SEAT'S NONCE PAIR FOR A ROUND'S SPEND, KEPT WHERE A RESTART CANNOT
+   * THIS SIGNER NODE'S NONCE PAIR FOR A ROUND'S SPEND, KEPT WHERE A RESTART CANNOT
    * REACH IT.
    *
    * `PoolSigning` used a Map and letter 19 measured the cost: after a restart
-   * five seats minted fresh nonces for a spend they had already signed, which
+   * five signer nodes minted fresh nonces for a spend they had already signed, which
    * is a second signature over the same input and a second txid. The row is
    * the memory now.
    *
    * Scalars in, scalars out - 32 big-endian bytes each, the ciphersuite's own
    * serialisation - so nothing here decides how a secret is written down.
    */
-  putPoolNonce({ roundId, seatId, sighash, hiding, binding, commitHiding, commitBinding,
+  putPoolNonce({ roundId, signerNodeId, sighash, hiding, binding, commitHiding, commitBinding,
     spentList = null, spentShare = null, attempt = 0 }) {
     this.db.prepare(
-      'INSERT OR REPLACE INTO pool_nonces (round_id, seat_id, sighash, hiding, binding, '
+      'INSERT OR REPLACE INTO pool_nonces (round_id, signer_node_id, sighash, hiding, binding, '
       + 'commit_hiding, commit_binding, spent_list, spent_share, attempt, updated_ms) '
       + 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(Buffer.from(roundId), String(seatId), Buffer.from(sighash),
+      .run(Buffer.from(roundId), String(signerNodeId), Buffer.from(sighash),
         hiding === null ? null : Buffer.from(hiding),
         binding === null ? null : Buffer.from(binding),
         Buffer.from(commitHiding), Buffer.from(commitBinding),
@@ -1417,15 +1417,15 @@ export class Round {
     return true;
   }
 
-  /** What this seat committed to for that round, or null if it committed to nothing. */
+  /** What this signer node committed to for that round, or null if it committed to nothing. */
   poolNonce(roundIdBytes) {
     const row = this.db.prepare(
-      'SELECT seat_id, sighash, hiding, binding, commit_hiding, commit_binding, '
+      'SELECT signer_node_id, sighash, hiding, binding, commit_hiding, commit_binding, '
       + 'spent_list, spent_share, attempt FROM pool_nonces WHERE round_id = ?')
       .get(Buffer.from(roundIdBytes));
     if (!row) return null;
     return {
-      seatId: row.seat_id,
+      signerNodeId: row.signer_node_id,
       sighash: new Uint8Array(row.sighash),
       hiding: row.hiding ? new Uint8Array(row.hiding) : null,
       binding: row.binding ? new Uint8Array(row.binding) : null,
@@ -1440,25 +1440,25 @@ export class Round {
   /**
    * THE COMMITTEE'S OWN KEY, PER EPOCH (M3.3 item 14).
    *
-   * `putEpoch` is a merge: the row is written when this seat deals, again as
+   * `putEpoch` is a merge: the row is written when this signer node deals, again as
    * contributions arrive, and once more when the key is finished, and none of
    * those may wipe what the others put there. The share in particular is
    * written once and must survive every later touch.
    */
-  putEpoch({ epochId, seats, mine = null, share = null, seatNo = null,
+  putEpoch({ epochId, signerNodes, mine = null, share = null, signerNodeNo = null,
     groupPubkey = null, negated = null }) {
     const had = this.db.prepare(
-      'SELECT mine, share, seat_no, group_pubkey, negated FROM dkg_epochs WHERE epoch_id = ?')
+      'SELECT mine, share, signer_node_no, group_pubkey, negated FROM dkg_epochs WHERE epoch_id = ?')
       .get(Buffer.from(epochId));
-    const flat = new Uint8Array(seats.length * 32);
-    seats.forEach((k, i) => flat.set(k, i * 32));
+    const flat = new Uint8Array(signerNodes.length * 32);
+    signerNodes.forEach((k, i) => flat.set(k, i * 32));
     this.db.prepare(
-      'INSERT OR REPLACE INTO dkg_epochs (epoch_id, seats, mine, share, seat_no, '
+      'INSERT OR REPLACE INTO dkg_epochs (epoch_id, signer_nodes, mine, share, signer_node_no, '
       + 'group_pubkey, negated, updated_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
       .run(Buffer.from(epochId), Buffer.from(flat),
         mine ? Buffer.from(mine) : (had && had.mine) || null,
         share ? Buffer.from(share) : (had && had.share) || null,
-        seatNo === null ? (had ? had.seat_no : null) : seatNo,
+        signerNodeNo === null ? (had ? had.signer_node_no : null) : signerNodeNo,
         groupPubkey ? Buffer.from(groupPubkey) : (had && had.group_pubkey) || null,
         negated === null ? (had ? had.negated : 0) : (negated ? 1 : 0),
         this.now());
@@ -1466,30 +1466,30 @@ export class Round {
   }
 
   /** The committee of the newest key this node holds a share of, or null. */
-  latestSharedEpochSeats() {
+  latestSharedEpochSignerNodes() {
     const row = this.db.prepare(
-      'SELECT seats FROM dkg_epochs WHERE share IS NOT NULL ORDER BY updated_ms DESC LIMIT 1').get();
+      'SELECT signer_nodes FROM dkg_epochs WHERE share IS NOT NULL ORDER BY updated_ms DESC LIMIT 1').get();
     if (!row) return null;
-    const flat = new Uint8Array(row.seats);
-    const seats = [];
-    for (let at = 0; at < flat.length; at += 32) seats.push(flat.slice(at, at + 32));
-    return seats;
+    const flat = new Uint8Array(row.signer_nodes);
+    const signerNodes = [];
+    for (let at = 0; at < flat.length; at += 32) signerNodes.push(flat.slice(at, at + 32));
+    return signerNodes;
   }
 
   /** What this node holds for an epoch, or null if it has never seen one. */
   epoch(epochIdBytes) {
     const row = this.db.prepare(
-      'SELECT seats, mine, share, seat_no, group_pubkey, negated FROM dkg_epochs WHERE epoch_id = ?')
+      'SELECT signer_nodes, mine, share, signer_node_no, group_pubkey, negated FROM dkg_epochs WHERE epoch_id = ?')
       .get(Buffer.from(epochIdBytes));
     if (!row) return null;
-    const flat = new Uint8Array(row.seats);
-    const seats = [];
-    for (let at = 0; at < flat.length; at += 32) seats.push(flat.subarray(at, at + 32));
+    const flat = new Uint8Array(row.signer_nodes);
+    const signerNodes = [];
+    for (let at = 0; at < flat.length; at += 32) signerNodes.push(flat.subarray(at, at + 32));
     return {
-      seats,
+      signerNodes,
       mine: row.mine ? new Uint8Array(row.mine) : null,
       share: row.share ? new Uint8Array(row.share) : null,
-      seatNo: row.seat_no === null ? null : row.seat_no,
+      signerNodeNo: row.signer_node_no === null ? null : row.signer_node_no,
       groupPubkey: row.group_pubkey ? new Uint8Array(row.group_pubkey) : null,
       negated: !!row.negated,
     };
@@ -1498,7 +1498,7 @@ export class Round {
   /**
    * ONE CONTRIBUTION PER DEALER PER EPOCH, and the primary key is the rule.
    *
-   * A seat that deals twice - after seeing everybody else's commitments - is
+   * A signer node that deals twice - after seeing everybody else's commitments - is
    * how the group key would be steered. `INSERT OR IGNORE` means the FIRST
    * deal stands and the second writes nothing, which is the same shape the
    * ticks already use for a repeat.
@@ -1525,7 +1525,7 @@ export class Round {
       .map((r) => ({ roundId: new Uint8Array(r.round_id), ...this.payout(new Uint8Array(r.round_id)) }));
   }
 
-  /** One seat's signature over a round's payout table. */
+  /** One signer node's signature over a round's payout table. */
   putPayoutSignature(roundIdBytes, nodePubkey, bytes) {
     this.db.prepare(
       'INSERT OR IGNORE INTO payout_signatures (round_id, node_pubkey, bytes, seen_ms) '
@@ -1540,37 +1540,37 @@ export class Round {
       .map((r) => ({ nodePubkey: new Uint8Array(r.node_pubkey), bytes: new Uint8Array(r.bytes) }));
   }
 
-  /** One seat's signed posting of a run's transcript; one per seat (P2). */
-  putPosting(roundIdBytes, entryIdBytes, seatPubkey, bytes) {
+  /** One signer node's signed posting of a run's transcript; one per signer node (P2). */
+  putPosting(roundIdBytes, entryIdBytes, signerNodePubkey, bytes) {
     return this.db.prepare(
-      'INSERT OR IGNORE INTO postings (round_id, entry_id, seat_pubkey, bytes, seen_ms) VALUES (?, ?, ?, ?, ?)')
-      .run(roundIdBytes, entryIdBytes, seatPubkey, bytes, this.now()).changes;
+      'INSERT OR IGNORE INTO postings (round_id, entry_id, signer_node_pubkey, bytes, seen_ms) VALUES (?, ?, ?, ?, ?)')
+      .run(roundIdBytes, entryIdBytes, signerNodePubkey, bytes, this.now()).changes;
   }
 
   /** Every signed posting this node holds for a run, its own included, with when each arrived. */
   postings(roundIdBytes, entryIdBytes) {
     return this.db.prepare(
-      'SELECT seat_pubkey, bytes, seen_ms FROM postings WHERE round_id = ? AND entry_id = ? ORDER BY seat_pubkey')
+      'SELECT signer_node_pubkey, bytes, seen_ms FROM postings WHERE round_id = ? AND entry_id = ? ORDER BY signer_node_pubkey')
       .all(roundIdBytes, entryIdBytes)
-      .map((r) => ({ seatPubkey: new Uint8Array(r.seat_pubkey), bytes: new Uint8Array(r.bytes), seenMs: Number(r.seen_ms) }));
+      .map((r) => ({ signerNodePubkey: new Uint8Array(r.signer_node_pubkey), bytes: new Uint8Array(r.bytes), seenMs: Number(r.seen_ms) }));
   }
 
-  /** One seat's signed re-run of a suspended result; one per seat (13A). */
-  putRerun(roundIdBytes, entryIdBytes, seatPubkey, bytes) {
+  /** One signer node's signed re-run of a suspended result; one per signer node (13A). */
+  putRerun(roundIdBytes, entryIdBytes, signerNodePubkey, bytes) {
     return this.db.prepare(
-      'INSERT OR IGNORE INTO reruns (round_id, entry_id, seat_pubkey, bytes, seen_ms) VALUES (?, ?, ?, ?, ?)')
-      .run(roundIdBytes, entryIdBytes, seatPubkey, bytes, this.now()).changes;
+      'INSERT OR IGNORE INTO reruns (round_id, entry_id, signer_node_pubkey, bytes, seen_ms) VALUES (?, ?, ?, ?, ?)')
+      .run(roundIdBytes, entryIdBytes, signerNodePubkey, bytes, this.now()).changes;
   }
 
   /** Every signed re-run this node holds for a run, its own included. */
   reruns(roundIdBytes, entryIdBytes) {
     return this.db.prepare(
-      'SELECT seat_pubkey, bytes, seen_ms FROM reruns WHERE round_id = ? AND entry_id = ? ORDER BY seat_pubkey')
+      'SELECT signer_node_pubkey, bytes, seen_ms FROM reruns WHERE round_id = ? AND entry_id = ? ORDER BY signer_node_pubkey')
       .all(roundIdBytes, entryIdBytes)
-      .map((r) => ({ seatPubkey: new Uint8Array(r.seat_pubkey), bytes: new Uint8Array(r.bytes), seenMs: Number(r.seen_ms) }));
+      .map((r) => ({ signerNodePubkey: new Uint8Array(r.signer_node_pubkey), bytes: new Uint8Array(r.bytes), seenMs: Number(r.seen_ms) }));
   }
 
-  /** A slash proof this node filed, with its evidence; one per accused seat per run. */
+  /** A slash proof this node filed, with its evidence; one per accused signer node per run. */
   putSlashProof(roundIdBytes, entryIdBytes, nodePubkey, proofId, bytes) {
     return this.db.prepare(
       'INSERT OR IGNORE INTO slash_proofs (round_id, entry_id, node_pubkey, proof_id, bytes, seen_ms) VALUES (?, ?, ?, ?, ?, ?)')
@@ -1586,7 +1586,7 @@ export class Round {
         bytes: new Uint8Array(r.bytes), seenMs: Number(r.seen_ms) }));
   }
 
-  /** A stake lock this seat verified: the handed contract (JSON), its id, its outpoint. */
+  /** A stake lock this signer node verified: the handed contract (JSON), its id, its outpoint. */
   putStakeLock({ entryId, roundId, outpoint, fields, contractId }) {
     this.db.prepare('INSERT OR REPLACE INTO stake_locks (entry_id, round_id, outpoint, fields, contract_id, verified_ms) VALUES (?, ?, ?, ?, ?, ?)')
       .run(Buffer.from(entryId), Buffer.from(roundId), `${Buffer.from(outpoint.txid).toString('hex')}:${outpoint.outIdx}`,
@@ -1610,8 +1610,8 @@ export class Round {
       .filter((l) => String(l.fields.refundPk).toLowerCase() === String(refundHex).toLowerCase());
   }
 
-  /** The committee's forfeit of a qualifier's lock, as this seat keeps it (W5b). */
-  /** §15: this seat holds the entry FORFEIT for a late start - its first mark, kept whole, is after the line. */
+  /** The committee's forfeit of a qualifier's lock, as this signer node keeps it (W5b). */
+  /** §15: this signer node holds the entry FORFEIT for a late start - its first mark, kept whole, is after the line. */
   putStartForfeit({ entryId, roundId, markTick, lastTick, mark, why }) {
     this.db.prepare('INSERT OR IGNORE INTO start_forfeits (entry_id, round_id, mark_tick, last_tick, mark, why, decided_ms) '
       + 'VALUES (?, ?, ?, ?, ?, ?, ?)').run(entryId, roundId, markTick, lastTick, mark, why, this.now());
@@ -1623,25 +1623,25 @@ export class Round {
       mark: new Uint8Array(r.mark), why: r.why, decidedMs: r.decided_ms } : null;
   }
 
-  /** Whether this seat stores that mark in an entry's chain. */
+  /** Whether this signer node stores that mark in an entry's chain. */
   holdsMark(checkpointIdBytes) {
     return !!this.db.prepare('SELECT 1 k FROM checkpoints WHERE checkpoint_id = ?').get(checkpointIdBytes);
   }
 
-  /** This seat's own receipt of a mark it holds, or null - never a new one. */
+  /** This signer node's own receipt of a mark it holds, or null - never a new one. */
   ownReceipt(checkpointIdBytes) {
     const r = this.db.prepare('SELECT bytes FROM receipts WHERE checkpoint_id = ? AND node_pubkey = ?')
       .get(checkpointIdBytes, this.identity.pubkey);
     return r ? new Uint8Array(r.bytes) : null;
   }
 
-  /** Every receipt this seat holds of one mark, one per signer (§16's Void evidence, M3.3-34). */
+  /** Every receipt this signer node holds of one mark, one per signer (§16's Void evidence, M3.3-34). */
   receiptsOfMark(checkpointIdBytes) {
     return this.db.prepare('SELECT bytes FROM receipts WHERE checkpoint_id = ? ORDER BY node_pubkey')
       .all(checkpointIdBytes).map((r) => new Uint8Array(r.bytes));
   }
 
-  /** How many DIFFERENT seated members signed a receipt of that mark, among these - each checked here. Stores nothing. */
+  /** How many DIFFERENT joined members signed a receipt of that mark, among these - each checked here. Stores nothing. */
   receiptSigners(receipts, checkpointIdBytes, roundIdBytes) {
     const signers = new Set();
     for (const bytes of receipts) {
@@ -1662,7 +1662,7 @@ export class Round {
     return same(inputChainHash, GENESIS) ? [] : out;
   }
 
-  /** §16's evidence: what a peer answered when this seat offered it the on-time first mark. */
+  /** §16's evidence: what a peer answered when this signer node offered it the on-time first mark. */
   putFirstMarkOffer({ entryId, peer, answer }) {
     this.db.prepare(
       'INSERT INTO first_mark_offers (entry_id, peer, answer, at_ms) VALUES (?, ?, ?, ?) '
@@ -1677,12 +1677,12 @@ export class Round {
     return out;
   }
 
-  /** §16: this seat holds the entry ENTRY_VOID - an outage before the first financial tick. */
+  /** §16: this signer node holds the entry ENTRY_VOID - an outage before the first financial tick. */
   /**
-   * `learned` - HOW this seat came to hold the Void (M3.3-34, ruled 2026-09-13):
+   * `learned` - HOW this signer node came to hold the Void (M3.3-34, ruled 2026-09-13):
    * 'own' (it held the first mark and decided the outage itself), 'player' (the
-   * player's own catch-up reached it, with the Void seats' receipts), 'forward'
-   * (another seat handed it on), 'forfeit-ask' (the push a forfeit ask makes).
+   * player's own catch-up reached it, with the Void signer nodes' receipts), 'forward'
+   * (another signer node handed it on), 'forfeit-ask' (the push a forfeit ask makes).
    * The first record stands.
    */
   putEntryVoid({ entryId, roundId, firstMark, evidenceKind, evidence = null, why, learned = 'own' }) {
@@ -1697,11 +1697,11 @@ export class Round {
   }
 
   /**
-   * THE PLAYER'S TWO FIRST MARKS, AS THIS SEAT HOLDS THEM (§13B, §13C; ruled
+   * THE PLAYER'S TWO FIRST MARKS, AS THIS SIGNER NODE HOLDS THEM (§13B, §13C; ruled
    * 2026-09-12): a proof of equivocation here, or a late first mark kept for
-   * FORFEIT that is not the on-time first mark this seat voided or holds. Then
+   * FORFEIT that is not the on-time first mark this signer node voided or holds. Then
    * the entry is FORFEIT and never the outage refund - even when a real outage
-   * made this seat record ENTRY_VOID first; that record stays as history (§14).
+   * made this signer node record ENTRY_VOID first; that record stays as history (§14).
    */
   twoFirstMarks(roundIdBytes, entryIdBytes) {
     if (this.equivocation(roundIdBytes, entryIdBytes).length) return true;
@@ -1713,10 +1713,10 @@ export class Round {
   }
 
   /**
-   * A FIRST MARK THIS SEAT, UP, REFUSED (M3.3-34, one-seat refusal) - kept only
+   * A FIRST MARK THIS SIGNER NODE, UP, REFUSED (M3.3-34, one-signer node refusal) - kept only
    * when it is the player's own (the entry's session key signs it), a first mark
-   * of an entry seated here, on time (a late one is FORFEIT, first-mark.js), and
-   * this seat holds no first mark of that entry (a second one is 13B's, not a
+   * of an entry joined here, on time (a late one is FORFEIT, first-mark.js), and
+   * this signer node holds no first mark of that entry (a second one is 13B's, not a
    * refusal). Anything else is not kept: a forged or conflicting mark proves no
    * refusal. Answers whether it was kept.
    */
@@ -1728,11 +1728,11 @@ export class Round {
   }
 
   /**
-   * THE PLAYER'S OWN ON-TIME FIRST MARK of an entry seated here, decoded - or
+   * THE PLAYER'S OWN ON-TIME FIRST MARK of an entry joined here, decoded - or
    * null: not a signed mark, not a first mark, not an entry of a round held
    * here, not signed by the entry's session key, or past the start line (a late
    * start is FORFEIT, first-mark.js). One check for a refusal kept here and a
-   * refusal another seat shows.
+   * refusal another signer node shows.
    */
   onTimeFirstMark(bytes) {
     let c; let signature;
@@ -1755,7 +1755,7 @@ export class Round {
     return decided.outcome ? null : c;
   }
 
-  /** The on-time first mark this seat, up, refused - or null. */
+  /** The on-time first mark this signer node, up, refused - or null. */
   refusedFirstMark(entryIdBytes) {
     const r = this.db.prepare('SELECT * FROM refused_first_marks WHERE entry_id = ?').get(entryIdBytes);
     return r ? { roundId: new Uint8Array(r.round_id), mark: new Uint8Array(r.mark), why: r.why, atMs: r.at_ms } : null;
@@ -1767,13 +1767,13 @@ export class Round {
       .run(entryId, roundId, outcome, why, this.now());
   }
 
-  /** The no-quorum outcome this seat decided for an entry, or null. */
+  /** The no-quorum outcome this signer node decided for an entry, or null. */
   noQuorum(entryIdBytes) {
     const r = this.db.prepare('SELECT * FROM no_quorum WHERE entry_id = ?').get(entryIdBytes);
     return r ? { roundId: new Uint8Array(r.round_id), outcome: r.outcome, why: r.why, decidedMs: r.decided_ms } : null;
   }
 
-  /** A seated player's signed name record for a round (M3.3-34). A newer one replaces it; an older one does not. */
+  /** A joined player's signed name record for a round (M3.3-34). A newer one replaces it; an older one does not. */
   putLobbyName({ roundId, playerPubkey, record, signature, atMs }) {
     return this.db.prepare('INSERT INTO lobby_names (round_id, player_pubkey, record, signature, at_ms) VALUES (?, ?, ?, ?, ?) '
       + 'ON CONFLICT (round_id, player_pubkey) DO UPDATE SET record = excluded.record, signature = excluded.signature, '
@@ -1781,13 +1781,13 @@ export class Round {
       .run(roundId, playerPubkey, record, signature, Number(atMs)).changes > 0;
   }
 
-  /** Every name record this seat keeps for a round, as the players signed them. */
+  /** Every name record this signer node keeps for a round, as the players signed them. */
   lobbyNames(roundIdBytes) {
     return this.db.prepare('SELECT record, signature FROM lobby_names WHERE round_id = ? ORDER BY player_pubkey')
       .all(roundIdBytes).map((r) => ({ record: new Uint8Array(r.record), signature: new Uint8Array(r.signature) }));
   }
 
-  /** The entry's first mark as this seat stores it (the chain's first link), or null. */
+  /** The entry's first mark as this signer node stores it (the chain's first link), or null. */
   firstMarkHeld(roundIdBytes, entryIdBytes) {
     const r = this.db.prepare('SELECT bytes FROM checkpoints WHERE round_id = ? AND entry_id = ? ORDER BY tick LIMIT 1')
       .get(roundIdBytes, entryIdBytes);
@@ -1800,7 +1800,7 @@ export class Round {
     return this.db.prepare('SELECT round_id FROM rounds WHERE state = ?').all(CLOSED).map((r) => new Uint8Array(r.round_id));
   }
 
-  /** Where this seat's close of a run stands (M3.3-34), kept across a restart. */
+  /** Where this signer node's close of a run stands (M3.3-34), kept across a restart. */
   putCloseHold({ roundId, entryId, state, attempts, sinceMs, lastWhy = null, signedMs = null }) {
     this.db.prepare('INSERT OR REPLACE INTO close_holds (round_id, entry_id, state, attempts, since_ms, last_why, signed_ms) '
       + 'VALUES (?, ?, ?, ?, ?, ?, ?)').run(roundId, entryId, state, attempts, sinceMs, lastWhy, signedMs);
@@ -1813,7 +1813,7 @@ export class Round {
       lastWhy: r.last_why, signedMs: r.signed_ms }));
   }
 
-  /** Keep the beacon this seat's chain named for a round: the block, its height, its time. */
+  /** Keep the beacon this signer node's chain named for a round: the block, its height, its time. */
   putBeacon(roundIdBytes, { hash, height, timeMs }) {
     this.db.prepare('INSERT OR REPLACE INTO round_beacons (round_id, hash, height, time_ms) VALUES (?, ?, ?, ?)')
       .run(roundIdBytes, hash, height, Number(timeMs));
@@ -1852,13 +1852,13 @@ export class Round {
     return c;
   }
 
-  /** Is this a seated member's signed receipt of that mark? Stores nothing. */
+  /** Is this a joined member's signed receipt of that mark? Stores nothing. */
   receiptVerifies(bytes, checkpointIdBytes, roundIdBytes) {
     try {
       const { body, signature } = splitSignedReceipt(bytes);
       const r = decodeCheckpointReceipt(body);
       if (!same(r.checkpointId, checkpointIdBytes)) return false;
-      if (!this.seats(roundIdBytes).some((n) => same(n, r.nodePubkey))) return false;
+      if (!this.signerNodes(roundIdBytes).some((n) => same(n, r.nodePubkey))) return false;
       return verifyNode(signature, receiptId(r), r.nodePubkey);
     } catch { return false; }
   }
@@ -1873,7 +1873,7 @@ export class Round {
     return r ? { message: new Uint8Array(r.message), signature: new Uint8Array(r.signature), claimPk: new Uint8Array(r.claim_pk), madeMs: Number(r.made_ms) } : null;
   }
 
-  /** A fee lock this seat verified (Pick A): the handed contract (JSON), its id, its outpoint. */
+  /** A fee lock this signer node verified (Pick A): the handed contract (JSON), its id, its outpoint. */
   putFeeLock({ entryId, roundId, outpoint, fields, contractId }) {
     this.db.prepare('INSERT OR REPLACE INTO fee_locks (entry_id, round_id, outpoint, fields, contract_id, verified_ms) VALUES (?, ?, ?, ?, ?, ?)')
       .run(Buffer.from(entryId), Buffer.from(roundId), `${Buffer.from(outpoint.txid).toString('hex')}:${outpoint.outIdx}`,
@@ -1896,7 +1896,7 @@ export class Round {
     return r ? { txid: r.txid, message: new Uint8Array(r.message), signature: new Uint8Array(r.signature), state: r.state, why: r.why, madeMs: Number(r.made_ms) } : null;
   }
 
-  /** Every round whose lock settlement this seat holds in `state` (W6: SUBMITTING, asked again at start). */
+  /** Every round whose lock settlement this signer node holds in `state` (W6: SUBMITTING, asked again at start). */
   lockSettlementsIn(state) {
     return this.db.prepare('SELECT round_id FROM lock_settlements WHERE state = ? ORDER BY made_ms').all(state)
       .map((r) => new Uint8Array(r.round_id));
@@ -1924,11 +1924,11 @@ export class Round {
     return this.db.prepare('SELECT round_id, state, made_ms FROM lock_settlements WHERE made_ms >= ? ORDER BY made_ms LIMIT ?')
       .all(Number(sinceMs), limit)
       .map((x) => ({ roundId: new Uint8Array(x.round_id), state: x.state, madeMs: Number(x.made_ms),
-        // THE REFUND KEYS OF THE LOCKS THIS SEAT VERIFIED - each a player key's, public in its entry.
+        // THE REFUND KEYS OF THE LOCKS THIS SIGNER NODE VERIFIED - each a player key's, public in its entry.
         refunds: refunds.all(x.round_id).map((l) => String(JSON.parse(l.fields).refundPk).toLowerCase()) }));
   }
 
-  /** The entry a verified lock at this outpoint already stakes, or null: one lock is one seat. */
+  /** The entry a verified lock at this outpoint already stakes, or null: one lock is one entry. */
   stakeLockAt(outpoint) {
     const r = this.db.prepare('SELECT entry_id FROM stake_locks WHERE outpoint = ?')
       .get(`${Buffer.from(outpoint.txid).toString('hex')}:${outpoint.outIdx}`);

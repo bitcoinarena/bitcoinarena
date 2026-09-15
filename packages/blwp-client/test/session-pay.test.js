@@ -2,7 +2,7 @@
 //
 // M3.2 item 5 is "`@blwp/client`: the session flow: enter, pay, play, settle".
 // This file was written as the measurement of the missing fourth - 0 methods
-// that could ask what a seat owes - and it is the pin after it.
+// that could ask what an entry owes - and it is the pin after it.
 //
 // THE CLIENT ASKS AND CHECKS. IT STILL DOES NOT PAY, and that is the split:
 // the wallet is item 6, and it is item 6 because the client is what defines
@@ -11,7 +11,7 @@
 //
 // WHAT THE CLIENT CAN DO TODAY, by method: `openRound`, `join` and `entryFor`
 // are ENTER; `connect`, `record`, `drain`, `markNow`, `resume` and `reconnect`
-// are PLAY. There is no method that asks what this seat owes, and the words
+// are PLAY. There is no method that asks what this entry owes, and the words
 // invoice, bolt11 and payment_request appear in `blwp-client/src` only inside
 // comments explaining that a wallet is M3.2.
 //
@@ -81,8 +81,8 @@ function fakePort() {
   };
 }
 
-/** A daemon with a Lightning port, one round open, and one seat taken. */
-async function seated({ port = fakePort() } = {}) {
+/** A daemon with a Lightning port, one round open, and one signer node taken. */
+async function joined({ port = fakePort() } = {}) {
   const node = await serve(openStore(':memory:'), {
     port: 0, funded: () => true, now: () => NOW, preflight: async () => ({ ready: true, why: "test port" }), lightning: port,
   });
@@ -114,7 +114,7 @@ async function seated({ port = fakePort() } = {}) {
  * THE FOUR WORDS OF ITEM 5, COUNTED AGAINST THE CLIENT'S OWN SURFACE.
  */
 test('the client can enter, ask what it owes, and play - and cannot send a satoshi', async () => {
-  const c = await seated();
+  const c = await joined();
   try {
     for (const m of ['openRound', 'join', 'entryFor'])
       assert.equal(typeof c.client[m], 'function', `ENTER is missing ${m}`);
@@ -210,8 +210,8 @@ test('the client checks an invoice with the protocol\'s own rule, not a second f
  * is the entry's own `stakeCommitment` - so a player CAN check it, once they
  * have something that asks.
  */
-test('the door already quotes what this seat owes', async () => {
-  const c = await seated();
+test('the door already quotes what this entry owes', async () => {
+  const c = await joined();
   try {
     // ONE READ OF THE BODY. `assert.equal(r.status, 200, await r.text())` then
     // `r.json()` throws "Body is unusable" - a test failing for its own reason
@@ -244,7 +244,7 @@ test('the door already quotes what this seat owes', async () => {
  * THE ASK, AGAINST A REAL DAEMON - the honest pair accepted.
  */
 test('the client asks the node what it owes and the honest quote stands', async () => {
-  const c = await seated();
+  const c = await joined();
   try {
     const got = await c.client.invoice(c.entry, { entryId: c.eid });
     assert.equal(got.ok, true, got.why);
@@ -285,7 +285,7 @@ async function liar(quote) {
 }
 
 test('a node that quotes a wrong amount or a wrong hash is refused by the player', async () => {
-  const c = await seated();
+  const c = await joined();
   const honest = {
     entry: toHex(c.eid), paymentHash: toHex(c.entry.stakeCommitment),
     amountMsat: String(NET), state: HELD, request: 'lnbcrt-liar',
@@ -329,8 +329,8 @@ test('a node that quotes a wrong amount or a wrong hash is refused by the player
 /**
  * AND THE DOOR'S OWN REFUSALS REACH THE PLAYER AS WORDS.
  */
-test('a node that seated nobody, and one with no Lightning, are refused by name', async () => {
-  const c = await seated();
+test('a node that joined nobody, and one with no Lightning, are refused by name', async () => {
+  const c = await joined();
   try {
     // AN ENTRY THIS NODE NEVER TOOK - and it has to be a REAL entry asking
     // about its OWN id, or the client refuses it before the door is reached.
@@ -340,12 +340,12 @@ test('a node that seated nobody, and one with no Lightning, are refused by name'
     const stranger = await c.client.invoice(never, { entryId: entryId(never) });
     assert.equal(stranger.ok, false);
     assert.equal(stranger.status, 404);
-    assert.match(stranger.why, /seated no such entry/);
+    assert.match(stranger.why, /holds no such entry/);
     console.log(`  an entry the node never took: ${stranger.status} ${stranger.why}`);
   } finally { await c.close(); }
 
   // A daemon with no Lightning port at all quotes nothing, and says why.
-  const dark = await seated({ port: null });
+  const dark = await joined({ port: null });
   try {
     const none = await dark.client.invoice(dark.entry, { entryId: dark.eid });
     assert.equal(none.ok, false);
@@ -355,7 +355,7 @@ test('a node that seated nobody, and one with no Lightning, are refused by name'
 });
 
 test('an invoice cannot be asked for without an entry or an entry id', async () => {
-  const c = await seated();
+  const c = await joined();
   try {
     assert.match((await c.client.invoice(null, { entryId: c.eid })).why, /no entry to check/);
     assert.match((await c.client.invoice(c.entry)).why, /no entry id to ask about/);
@@ -363,19 +363,19 @@ test('an invoice cannot be asked for without an entry or an entry id', async () 
 });
 
 /**
- * AND A CROSSED OR STALE PAIR IS REFUSED AS TWO SEATS, not as two hashes.
+ * AND A CROSSED OR STALE PAIR IS REFUSED AS TWO SIGNER NODES, not as two hashes.
  *
- * Measured before this check existed: asking about one seat's id while holding
+ * Measured before this check existed: asking about one entry's id while holding
  * another's contract WAS refused - by the payment hash differing. That is the
  * right answer for the wrong reason, and it stops being the right answer when
  * the two entries share a commitment: a player re-entering one round keeps
  * their preimage and changes their world secret, so two ids, one hash, one
- * amount, and the other seat's quote would be accepted as this one's.
+ * amount, and the other signer node's quote would be accepted as this one's.
  */
-test('an entry that is not the one being asked about is refused as two seats', async () => {
-  const c = await seated();
+test('an entry that is not the one being asked about is refused as two signer nodes', async () => {
+  const c = await joined();
   try {
-    // The same player, the same preimage, a second seat: two ids, one hash.
+    // The same player, the same preimage, a second signer node: two ids, one hash.
     const again = { ...c.entry, worldSecret: rand(32) };
     const took = await fetch(`http://127.0.0.1:${c.node.port}/entry`,
       { method: 'POST', body: encodeEntryContract(again) });
@@ -387,11 +387,11 @@ test('an entry that is not the one being asked about is refused as two seats', a
     const own = await c.client.invoice(again, { entryId: entryId(again) });
     assert.equal(own.ok, true, own.why);
 
-    // The OTHER seat's id, with an identical hash and amount - the case the
+    // The OTHER signer node's id, with an identical hash and amount - the case the
     // hash check cannot catch.
     const crossed = await c.client.invoice(again, { entryId: c.eid });
-    assert.equal(crossed.ok, false, 'a quote for another seat was accepted as this one\'s');
+    assert.equal(crossed.ok, false, 'a quote for another signer node was accepted as this one\'s');
     assert.match(crossed.why, /they are two entries/);
-    console.log(`  same hash, same amount, different seat: ${crossed.why}`);
+    console.log(`  same hash, same amount, different signer node: ${crossed.why}`);
   } finally { await c.close(); }
 });

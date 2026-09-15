@@ -45,11 +45,11 @@ const fromHexHere = (hex) => {
   return out;
 };
 
-/** A seated, connected tab - exactly the page's steps, with the page's node list or without it. */
+/** A joined, connected tab - exactly the page's steps, with the page's node list or without it. */
 async function tab(round, named, { pageNodes }) {
   const secret = ed25519.utils.randomSecretKey();
   const player = playerFor(named.round, { seed: tabSeed({ storage: storage(), random }), curve: feldmanGroup });
-  const seat = entryFor(named.round, { seed: player.seed, curve: feldmanGroup, random });
+  const signerNode = entryFor(named.round, { seed: player.seed, curve: feldmanGroup, random });
   // `nodes` is what the page's wrapper of `Client.at` adds (`index.html`): the
   // round's node list, `window.BLWP_NODES`. Without it, the Daily before this.
   const client = await Client.at({
@@ -63,7 +63,7 @@ async function tab(round, named, { pageNodes }) {
     verify, contract: named.round, roundIdGiven: fromHexHere(round.id),
   });
   const rid = await client.openRound(named.round);
-  const entry = { ...seat, roundId: rid, sessionPubkey: ed25519.getPublicKey(secret) };
+  const entry = { ...signerNode, roundId: rid, sessionPubkey: ed25519.getPublicKey(secret) };
   const eid = await client.join(entry);
   await client.connect();
   client.setRound({ roundId: rid, entryId: eid, blockTicks: named.round.blockTicks | 0 });
@@ -130,8 +130,8 @@ test('a checkpoint over inputs no node holds is refused by both daemons, and not
     const [A, B] = [client.base, ...client.peers];
     assert.equal(client.peers.length, 1, 'the page named two nodes and the client knows one peer');
     assert.equal(receiptsForLive(named.round), 2, 'a 2-of-2 needs both receipts to go live');
-    assert.deepEqual(client.peerSeats.map((s) => s.ok), [true],
-      `B did not seat the entry: ${JSON.stringify(client.peerSeats)}`);
+    assert.deepEqual(client.peerJoins.map((s) => s.ok), [true],
+      `B did not take the entry: ${JSON.stringify(client.peerJoins)}`);
 
     for (const tick of [60, 120, 180, 240]) {
       const r = await client.mark(driven(7, tick), { roundId: rid, entryId: eid, tick });
@@ -270,15 +270,15 @@ test('a daemon that has not caught up refuses rather than signs, then signs once
     assert.deepEqual(before, [60, 0], `without the node list A and B hold ${before}`);
 
     // NOW THE NODE LIST ARRIVES, with B never having seen the entry. Its first
-    // batch is refused for the seat, the seat is given, and its feed stops
+    // batch is refused for the signer node, the signer node is given, and its feed stops
     // there until the next try.
     client.deliverTo(named.nodes);
     drive(client, 60);
     await publishAll(client);
-    assert.equal(client.peerBatchesRefused, 1, 'B was expected to refuse once, for the missing seat');
+    assert.equal(client.peerBatchesRefused, 1, 'B was expected to refuse once, for the missing signer node');
     assert.match(client.peerBatches()[0].why, /no such entry/);
     assert.match(client.status(120), / inputs refused 1\b/, 'a refused input was not on the line');
-    assert.equal(await heldTicks(B, rid, eid), 0, 'B is seated and holds nothing yet');
+    assert.equal(await heldTicks(B, rid, eid), 0, 'B is joined and holds nothing yet');
 
     // B IS ASKED TO SIGN BEFORE IT HOLDS THE INPUTS, and does not. Sent the low
     // way, `mark`, which does not wait - the way a client that raced its

@@ -1,14 +1,14 @@
 // THE OTHER PLAYERS' NAMES, AS A PAGE MAKES AND CHECKS THEM (M3.3-34).
 //
-// A seated tab hands its seats one record, signed with the round key it is
-// seated under: the name the player chose, or none. Another page shows a name
+// A joined tab hands its signer nodes one record, signed with the round key it is
+// joined under: the name the player chose, or none. Another page shows a name
 // only from a record that decodes, is for this round and verifies under the
-// player key it names - the newest of each player's - so a seat can leave a
+// player key it names - the newest of each player's - so a signer node can leave a
 // name out but cannot write one, and no key is ever shown in place of a name.
 //
 // MEASURED BEFORE (TASKBOOK, M3.3-34), on the built page: tab 2 saved "Road Owl
-// 42"; tab 1's seated view read "2 players in this round · other at -76,-78 m ·
-// free seat" and the round's lobby row read only seat counts - fresh, after its
+// 42"; tab 1's joined view read "2 players in this round · other at -76,-78 m ·
+// free round" and the round's lobby row read only signer node counts - fresh, after its
 // repaint and after a reload - so the other player never saw the chosen name.
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -38,7 +38,7 @@ function tab() {
     setItem: (k, v) => { m.set(k, String(v)); }, removeItem: (k) => { m.delete(k); } };
 }
 
-test('the name a tab hands its seats is the name it shows, signed with the round key it is seated under', () => {
+test('the name a tab hands its signer nodes is the name it shows, signed with the round key it is joined under', () => {
   const storage = tab();
   assert.deepEqual(setPlayerName('Road Owl 42', { storage }), { ok: true, custom: true, name: 'Road Owl 42' });
   const signed = nameRecordFor(ROUND, { storage, random, curve: pageCurve, nowMs: 1789200000000 });
@@ -68,10 +68,10 @@ test('the other page shows a name only from a record its player signed for this 
   const two = tab();                                          // chose no name
   const plain = nameRecordFor(ROUND, { storage: two, random, curve: pageCurve, nowMs: 1500 });
   const plainRec = decodeLobbyName(fromHex(plain.record));
-  // A SEAT'S FORGERY: player one's key named, newest of all, the seat's own signature.
+  // A SIGNER NODE'S FORGERY: player one's key named, newest of all, the signer node's own signature.
   const forgedRec = { ...oneRec, name: 'Mallory', atMs: 9000n };
-  const seat = schnorr.utils.randomSecretKey();
-  const forged = { record: toHex(encodeLobbyName(forgedRec)), sig: toHex(schnorr.sign(lobbyNameId(forgedRec), seat)) };
+  const signerNode = schnorr.utils.randomSecretKey();
+  const forged = { record: toHex(encodeLobbyName(forgedRec)), sig: toHex(schnorr.sign(lobbyNameId(forgedRec), signerNode)) };
   // AND PLAYER ONE'S OWN RECORD FOR ANOTHER ROUND, moved here.
   const elsewhere = nameRecordFor({ id: b32(0x77) }, { storage: one, random, curve: pageCurve, nowMs: 3000 });
   const byNode = { 'http://a': [first, forged, { record: 'zz', sig: '00' }], 'http://b': [second, plain, elsewhere] };
@@ -93,22 +93,22 @@ test('the other page shows a name only from a record its player signed for this 
     assert.equal(n.name.includes(n.player.slice(0, 8)), false);
   }
   await assert.rejects(() => namesOf({ roundId: ROUND.id, nodes: ['http://a'], fetcher }), /no verify/);
-  // NO SEAT ANSWERING IS NOT AN EMPTY ROUND: the page keeps what it had.
+  // NO SIGNER NODE ANSWERING IS NOT AN EMPTY ROUND: the page keeps what it had.
   await assert.rejects(() => namesOf({ roundId: ROUND.id, nodes: ['http://down', 'http://gone'], fetcher, verify }),
     /no signer node answered for the names: http:\/\/down: 404; http:\/\/gone: 404/);
   const slow = async () => { const e = new Error('timed out'); e.name = 'TimeoutError'; throw e; };
   await assert.rejects(() => namesOf({ roundId: ROUND.id, nodes: ['http://a'], fetcher: slow, verify }), /http:\/\/a: no answer in time/);
 });
 
-test('the seated view names the others it holds a checked name for, and counts the rest', () => {
-  assert.equal(playersLine({ seated: true, others: 1, names: ['Road Owl 42'] }), '2 players in this round: Road Owl 42');
-  assert.equal(playersLine({ seated: true, others: 2, names: ['Road Owl 42'] }), '3 players in this round: Road Owl 42 +1 more');
-  assert.equal(playersLine({ seated: true, others: 0, names: ['Road Owl 42'] }), '2 players in this round: Road Owl 42',
-    'a seated player who has not driven yet is still in the round');
-  assert.equal(playersLine({ seated: true, others: 1, names: ['Road Owl 42'], stake: { free: true } }),
+test('the joined view names the others it holds a checked name for, and counts the rest', () => {
+  assert.equal(playersLine({ joined: true, others: 1, names: ['Road Owl 42'] }), '2 players in this round: Road Owl 42');
+  assert.equal(playersLine({ joined: true, others: 2, names: ['Road Owl 42'] }), '3 players in this round: Road Owl 42 +1 more');
+  assert.equal(playersLine({ joined: true, others: 0, names: ['Road Owl 42'] }), '2 players in this round: Road Owl 42',
+    'a joined player who has not driven yet is still in the round');
+  assert.equal(playersLine({ joined: true, others: 1, names: ['Road Owl 42'], stake: { free: true } }),
     '2 players in this round: Road Owl 42 · free round');
-  assert.equal(playersLine({ seated: true, others: 1 }), '2 players in this round');
-  assert.equal(playersLine({ seated: true, others: 0 }), '1 player · waiting');
+  assert.equal(playersLine({ joined: true, others: 1 }), '2 players in this round');
+  assert.equal(playersLine({ joined: true, others: 0 }), '1 player · waiting');
 });
 
 test('one wordlist, one key: the generated name is display-name.js\'s from the identity key, the same in every round', () => {

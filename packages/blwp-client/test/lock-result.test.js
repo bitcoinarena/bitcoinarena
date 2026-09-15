@@ -1,4 +1,4 @@
-// THE LOCK CLIENT'S ANSWER, READ INTO AN ENTRY'S OUTPOINT AND A SEAT'S CONTRACT (W1a glue).
+// THE LOCK CLIENT'S ANSWER, READ INTO AN ENTRY'S OUTPOINT AND A SIGNER NODE'S CONTRACT (W1a glue).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -13,7 +13,7 @@ const answer = (over = {}) => ({
   stored_blocks_left: 150, block_count_at_read: 306, stored_expiration: 456, ids_match: true, amount_msat: 980000, ...over,
 });
 
-test('an answer whose stored contract is the one built gives the entry its outpoint and the seat its contract', () => {
+test('an answer whose stored contract is the one built gives the entry its outpoint and the signer node its contract', () => {
   const got = lockFromClient(JSON.stringify(answer()), KEYS);
   assert.equal(toHex(got.outpoint.txid), 'ab'.repeat(32));
   assert.equal(got.outpoint.outIdx, 0n);

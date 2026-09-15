@@ -1,11 +1,11 @@
 #!/bin/bash
 # W5a ON A REAL FEDERATION: the player's refund after the stake lock's own
 # expiry, from a later session holding only the seed, and a withdraw over the
-# federation's listed gateway to the player's lnd - on the seats' own claim key
+# federation's listed gateway to the player's lnd - on the signer nodes' own claim key
 # (nothing injected). Rehearsal step 1's setup: stock fedimintd 0.12.0,
 # 4 guardians, 3 of 4, one gateway, regtest; then w5a.mjs.
 #
-#   FEDIMINT_BIN=<released v0.12.0> LOCK_BIN=<blwp-stake-lock, the seats' port>
+#   FEDIMINT_BIN=<released v0.12.0> LOCK_BIN=<blwp-stake-lock, the signer nodes' port>
 #     bash tools/w5a-regtest.sh
 set -uo pipefail
 : "${FEDIMINT_BIN:?}" ; : "${LOCK_BIN:?}"

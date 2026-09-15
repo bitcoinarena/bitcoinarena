@@ -1,8 +1,8 @@
-// M3 W7: THE SEAT DOOR OPENS NO PAYING FEDERATION ROUND THAT DOES NOT NAME ITS FEDERATION.
+// M3 W7: THE SIGNER NODE DOOR OPENS NO PAYING FEDERATION ROUND THAT DOES NOT NAME ITS FEDERATION.
 //
-// A round becomes real on a seat at POST /round and nowhere else. Measured before: the door
+// A round becomes real on a signer node at POST /round and nowhere else. Measured before: the door
 // decoded any contract and opened it - a paying FEDERATION round with a zero federation_id
-// included - and checked the custody fields only on a seat that holds Lightning. Now the decode
+// included - and checked the custody fields only on a signer node that holds Lightning. Now the decode
 // refuses the zero id (400), and a paying FEDERATION round is held to the custody fields in full
 // (409): its federation, the 144-block expiry, its relays. A THRESHOLD_LN round and a free round
 // open as before.
@@ -28,7 +28,7 @@ function zeroedFederation(c) {
   return forged;
 }
 
-test('the seat door refuses a paying FEDERATION round naming no federation (400) or failing the custody fields (409), and opens a named one, a THRESHOLD_LN one and a free one', async () => {
+test('the signer node door refuses a paying FEDERATION round naming no federation (400) or failing the custody fields (409), and opens a named one, a THRESHOLD_LN one and a free one', async () => {
   const d = await serve(openStore(':memory:'), { port: 0, ...opts });
   try {
     const base = `http://127.0.0.1:${d.port}`;
@@ -54,8 +54,8 @@ test('the seat door refuses a paying FEDERATION round naming no federation (400)
     assert.match(refusedRelay.text, /takes a stake and names no publication relay/);
     assert.equal(refusedExpiry.status, 409);
     assert.match(refusedExpiry.text, /stake_expiry_blocks 12 where §23\.1 rules 144/);
-    assert.equal(await held(noRelay), 404, 'a round the door refused exists on the seat');
-    assert.equal(await held(shortExpiry), 404, 'a round the door refused exists on the seat');
+    assert.equal(await held(noRelay), 404, 'a round the door refused exists on the signer node');
+    assert.equal(await held(shortExpiry), 404, 'a round the door refused exists on the signer node');
     assert.equal(opened.named.status, 201, opened.named.text);
     assert.equal(opened.lightning.status, 201, opened.lightning.text);
     assert.equal(opened.free.status, 201, opened.free.text);

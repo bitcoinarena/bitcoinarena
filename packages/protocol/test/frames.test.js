@@ -4,7 +4,7 @@
 // to this calculation". The core keeps the "never an input" half by having no
 // argument one could arrive through. This file keeps the rest: a ghost must
 // not stand in for anything that DECIDES something - a batch that becomes a
-// tick, a mark that becomes a receipt, a leaf that becomes a seat, an
+// tick, a mark that becomes a receipt, a leaf that becomes a signer node, an
 // advertisement that becomes a bond - and when a queue is full it is a picture
 // that goes, never the evidence.
 import { test } from 'node:test';
@@ -42,7 +42,7 @@ test('one type carries no authority, and it is the ghost', () => {
                       TYPE_VSS_HANDOUT])
     assert.equal(FRAMES.get(type).authority, true, 'type 0x' + type.toString(16));
 
-  // 18 since the VSS handout: a seat refuses an entry whose handout it cannot
+  // 18 since the VSS handout: a signer node refuses an entry whose handout it cannot
   // check, so that object gates play and carries authority. Saying so here is
   // the whole point of this guard - the count is not a number to keep green,
   // it is the question "what does the new one decide" asked out loud.

@@ -1,16 +1,16 @@
-// ENTRY_VOID (§16), THE OUTAGE REFUND, AT THE SEATS - AND THE LOCK BACK AT ONCE.
+// ENTRY_VOID (§16), THE OUTAGE REFUND, AT THE SIGNER NODES - AND THE LOCK BACK AT ONCE.
 //
 // "After commitment, before the first financial tick: if fewer than 5
 // game/verify nodes are available, the entry becomes ENTRY_VOID and the stake
 // is refunded by forfeit or by the stake lock's expiry (§23.2)." §23.2:
 // "VOID / ENTRY_VOID: forfeit at once; if nobody acts, the lock expires."
 //
-// An ON-TIME first mark forwarded at once, and a seat that did not answer: when
-// the start deadline passes at the seat holding it (the player's own mark past
+// An ON-TIME first mark forwarded at once, and a signer node that did not answer: when
+// the start deadline passes at the signer node holding it (the player's own mark past
 // join + deadline), the first mark still short of 2 of 2 receipts, the entry is
-// ENTRY_VOID there; a seat that was down and comes back is shown the evidence
+// ENTRY_VOID there; a signer node that was down and comes back is shown the evidence
 // and records the same Void, and the lock is forfeited to the player's refund
-// key at once - both seats sign, each on its own record. A seat that comes back
+// key at once - both signer nodes sign, each on its own record. A signer node that comes back
 // and is caught up by the player directly refuses the first mark too (§13C).
 // Unchanged: a late first mark is FORFEIT. No mark at all is FORFEIT at the
 // close (§15's walk-away, ruled 2026-09-12) - never ENTRY_VOID.
@@ -27,7 +27,7 @@ import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { resultFinality } from '../src/finality.js';
-import { assumeSeated } from './seating.js';
+import { assumeAssigned } from './assignment.js';
 import { lockPort } from './lock-fixture.js';
 import { b32, rand, RANDOMNESS, STAKE, WINDOW_MS, WINNER, GENESIS_HASH, wordsAt, contractFor, say, secretScalar, opts, wait } from './window-fixture.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
@@ -47,7 +47,7 @@ import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
 const curve = { ...feldmanGroup, tweakPoint };
 const END = WINNER.ticks;                      // 1320: past the 900 line; the run delivers here
 
-async function seats() {
+async function signerNodes() {
   const port = lockPort();
   const mk = (db, p = 0) => serve(db, { port: p, ...opts, stakeLocks: port, poolCurve: curve, finality: { everyMs: 100 } });
   const dbB = openStore(':memory:');
@@ -68,22 +68,22 @@ async function seats() {
   for (const d of [a, b]) {
     const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
     assert.equal(r.status, 201, await r.text());
-    assumeSeated(d.round, rid, c.nodes);
+    assumeAssigned(d.round, rid, c.nodes);
   }
   for (let pass = 0; pass < 2; pass++) for (const d of [a, b]) await d.dkg.run(c.nodes);
   return {
-    a, get b() { return b; }, c, rid, port, claimPk: a.dkg.seatFor(c.nodes).pool.groupPublicKey,
+    a, get b() { return b; }, c, rid, port, claimPk: a.dkg.signerNodeFor(c.nodes).pool.groupPublicKey,
     async downB() { await b.close(); },
     async upB() { b = await mk(dbB, bPort); wire(); },
     async close() { await a.close(); try { await b.close(); } catch { /* down */ } },
   };
 }
 
-async function seatAndBuild(w, { firstAt = 60 } = {}) {
+async function joinAndBuild(w, { firstAt = 60 } = {}) {
   const session = ed25519.utils.randomSecretKey();
   const preimage = secretScalar();
   const e = rand(32);
-  const dealt = await dealHandout({ preimage, seats: w.c.nodes, roundId: w.rid, playerPubkey: WINNER.key,
+  const dealt = await dealHandout({ preimage, signerNodes: w.c.nodes, roundId: w.rid, playerPubkey: WINNER.key,
     ephemeralSecret: e, ephemeralPubkey: feldmanGroup.pointX(e), coefficients: [scalarFrom32(rand(32)) % FIELD], needed: 2, curve: feldmanGroup });
   const outpoint = { txid: rand(32), outIdx: 0n };
   const entry = {
@@ -151,10 +151,10 @@ async function closeAndSettle(w, run) {
 }
 const until = async (fn, ms = 8000) => { for (let t = Date.now(); Date.now() - t < ms; await wait(100)) if (fn()) return true; return false; };
 
-test('(a) an on-time first mark with both seats up: nothing recorded, DELIVERED, the qualifier forfeit as before', async () => {
-  const w = await seats();
+test('(a) an on-time first mark with both signer nodes up: nothing recorded, DELIVERED, the qualifier forfeit as before', async () => {
+  const w = await signerNodes();
   try {
-    const run = await seatAndBuild(w);
+    const run = await joinAndBuild(w);
     for (const m of run.messages) for (const d of [w.a, w.b]) await say(d.port, m);
     await closeAndSettle(w, run);
     const facts = { a: recordAt(w.a, w, run), b: recordAt(w.b, w, run), forfeit: await forfeitAt(w.a, w, run) };
@@ -164,10 +164,10 @@ test('(a) an on-time first mark with both seats up: nothing recorded, DELIVERED,
   } finally { await w.close(); }
 });
 
-test('(b) an on-time first mark that missed a down seat is ENTRY_VOID at both seats, and the lock is forfeited to the player at once', async () => {
-  const w = await seats();
+test('(b) an on-time first mark that missed a down signer node is ENTRY_VOID at both signer nodes, and the lock is forfeited to the player at once', async () => {
+  const w = await signerNodes();
   try {
-    const run = await seatAndBuild(w);
+    const run = await joinAndBuild(w);
     await w.downB();
     const saidA = [];
     for (const m of run.messages) saidA.push(answer(await say(w.a.port, m)));
@@ -189,10 +189,10 @@ test('(b) an on-time first mark that missed a down seat is ENTRY_VOID at both se
   } finally { await w.close(); }
 });
 
-test("(b') the player catches the down seat up after seeing the run: it refuses the first mark as ENTRY_VOID - nothing is DELIVERED", async () => {
-  const w = await seats();
+test("(b') the player catches the down signer node up after seeing the run: it refuses the first mark as ENTRY_VOID - nothing is DELIVERED", async () => {
+  const w = await signerNodes();
   try {
-    const run = await seatAndBuild(w);
+    const run = await joinAndBuild(w);
     await w.downB();
     for (const m of run.messages) await say(w.a.port, m);
     await until(() => w.a.round.entryVoid(run.eid));
@@ -211,16 +211,16 @@ test("(b') the player catches the down seat up after seeing the run: it refuses 
   } finally { await w.close(); }
 });
 
-test('(c) a late first mark is still FORFEIT at both seats - never Void, never a refund; (d) no mark is FORFEIT at the close, never Void', async () => {
-  const w = await seats();
+test('(c) a late first mark is still FORFEIT at both signer nodes - never Void, never a refund; (d) no mark is FORFEIT at the close, never Void', async () => {
+  const w = await signerNodes();
   try {
-    const late = await seatAndBuild(w, { firstAt: END });
+    const late = await joinAndBuild(w, { firstAt: END });
     for (const m of late.messages) await say(w.a.port, m);
     await until(() => w.b.round.startForfeit(late.eid));
-    const none = await seatAndBuild(w);
+    const none = await joinAndBuild(w);
     await closeAndSettle(w, late);
     // WAITED ON, NOT RACED: the late start is now signed and final at once, so
-    // the wait above ends before the no-mark entry need be FINAL at both seats
+    // the wait above ends before the no-mark entry need be FINAL at both signer nodes
     // (measured in the full suite: A PROVISIONALLY_FINAL, B FINAL). Both are read
     // once both are FINAL - the values asserted are unchanged.
     await until(() => [w.a, w.b].every((d) => resultFinality(d.round, w.rid, none.eid).state === 'FINAL'), 15000);
@@ -230,17 +230,17 @@ test('(c) a late first mark is still FORFEIT at both seats - never Void, never a
     console.log('  FACTS (c, d):', JSON.stringify(facts));
     assert.deepEqual(facts, {
       // (c) ruled 2026-09-12 (M3.3-34, late start at close): measured before,
-      // no result at either seat, finality null.
+      // no result at either signer node, finality null.
       late: { a: { recorded: 'FORFEIT', results: ['FORFEIT'], finality: 'FINAL' }, b: { recorded: 'FORFEIT', results: ['FORFEIT'], finality: 'FINAL' }, forfeit: 409 },
-      // (d) ruled 2026-09-12 (§15): measured before, no result at either seat.
+      // (d) ruled 2026-09-12 (§15): measured before, no result at either signer node.
       noMark: { a: { recorded: null, results: ['FORFEIT'], finality: 'FINAL' }, b: { recorded: null, results: ['FORFEIT'], finality: 'FINAL' }, forfeit: 409, lockHeld: true } });
   } finally { await w.close(); }
 });
 
-test('(e) a player who sends the first mark to one seat while the other is up gets no Void: the forward reaches it', async () => {
-  const w = await seats();
+test('(e) a player who sends the first mark to one signer node while the other is up gets no Void: the forward reaches it', async () => {
+  const w = await signerNodes();
   try {
-    const run = await seatAndBuild(w);
+    const run = await joinAndBuild(w);
     await say(w.a.port, run.messages[0]);
     await say(w.a.port, run.messages[1]);
     await until(() => w.b.round.holdsMark(run.firstId));
@@ -254,9 +254,9 @@ test('(e) a player who sends the first mark to one seat while the other is up ge
   } finally { await w.close(); }
 });
 
-// WHEN THE PLAYER'S CHAIN NEVER PASSES THE START LINE: the seat holding the
-// on-time first mark decides at its close ("closed"), and a seat that does not
-// hold the first mark takes a round seat's closed Void - proven by that seat's
+// WHEN THE PLAYER'S CHAIN NEVER PASSES THE START LINE: the signer node holding the
+// on-time first mark decides at its close ("closed"), and a signer node that does not
+// hold the first mark takes a round signer node's closed Void - proven by that signer node's
 // own signed receipt of this first mark - and refuses the mark itself (pick (1)).
 // MEASURED BEFORE (tools/closed-line-probe.mjs): (ii) forfeit 409 while B was
 // open; (iii) B took the player's first mark, recorded nothing, forfeit 409 -
@@ -264,10 +264,10 @@ test('(e) a player who sends the first mark to one seat while the other is up ge
 const closeAt = (d, w) => say(d.port, `close ${toHex(w.rid)}`);
 const firstOnly = (run) => run.messages.slice(0, 2);
 
-test('(i) the chain stops at 60 and A closes while B is down: ENTRY_VOID (closed) at both seats, the lock back at once', async () => {
-  const w = await seats();
+test('(i) the chain stops at 60 and A closes while B is down: ENTRY_VOID (closed) at both signer nodes, the lock back at once', async () => {
+  const w = await signerNodes();
   try {
-    const run = await seatAndBuild(w);
+    const run = await joinAndBuild(w);
     await w.downB();
     for (const m of firstOnly(run)) await say(w.a.port, m);
     await wait(500);
@@ -287,10 +287,10 @@ test('(i) the chain stops at 60 and A closes while B is down: ENTRY_VOID (closed
   } finally { await w.close(); }
 });
 
-test('(ii) the forfeit asked while the down seat is back and still open: it takes the closed Void at once, the lock back at once', async () => {
-  const w = await seats();
+test('(ii) the forfeit asked while the down signer node is back and still open: it takes the closed Void at once, the lock back at once', async () => {
+  const w = await signerNodes();
   try {
-    const run = await seatAndBuild(w);
+    const run = await joinAndBuild(w);
     await w.downB();
     for (const m of firstOnly(run)) await say(w.a.port, m);
     await wait(500);
@@ -307,10 +307,10 @@ test('(ii) the forfeit asked while the down seat is back and still open: it take
   } finally { await w.close(); }
 });
 
-test('(iii) the player sends the first mark to the down seat once it is back and still open: refused as ENTRY_VOID, both seats Void, the lock back at once', async () => {
-  const w = await seats();
+test('(iii) the player sends the first mark to the down signer node once it is back and still open: refused as ENTRY_VOID, both signer nodes Void, the lock back at once', async () => {
+  const w = await signerNodes();
   try {
-    const run = await seatAndBuild(w);
+    const run = await joinAndBuild(w);
     await w.downB();
     for (const m of firstOnly(run)) await say(w.a.port, m);
     await wait(500);
@@ -329,17 +329,17 @@ test('(iii) the player sends the first mark to the down seat once it is back and
   } finally { await w.close(); }
 });
 
-// ONE SEAT'S WORD IS NOT A VOID AT THE OTHER (§16, §13C). A seat that does not
-// hold the first mark records a round seat's closed ENTRY_VOID only with the
-// PLAYER'S OWN signed first mark in hand - never with a mark a seat made up.
+// ONE SIGNER NODE'S WORD IS NOT A VOID AT THE OTHER (§16, §13C). A signer node that does not
+// hold the first mark records a round signer node's closed ENTRY_VOID only with the
+// PLAYER'S OWN signed first mark in hand - never with a mark a signer node made up.
 // MEASURED BEFORE (tools/closed-claim-probe.mjs): an invented first mark with
 // A's own receipt over it and "closed" -> B recorded ENTRY_VOID (closed), and
 // with A's side planted the lock was forfeited at once (200), though the
 // player never sent a mark.
-test('(f) a seat cannot void the other seat\'s entry with an invented first mark and its own receipt: no Void, no forfeit, the lock held', async () => {
-  const w = await seats();
+test('(f) a signer node cannot void the other signer node\'s entry with an invented first mark and its own receipt: no Void, no forfeit, the lock held', async () => {
+  const w = await signerNodes();
   try {
-    const run = await seatAndBuild(w);
+    const run = await joinAndBuild(w);
     const { encodeCheckpointReceipt, receiptId, joinSignedReceipt } = await import('../../protocol/src/receipt.js');
     const receiptBy = (d, id) => {
       const r = { checkpointId: id, receivedAtMs: BigInt(Date.now()), nodePubkey: d.round.pubkey };
@@ -353,7 +353,7 @@ test('(f) a seat cannot void the other seat\'s entry with an invented first mark
     };
     // A CLAIM AND A RECEIPT, NO MARK.
     const noMark = await post({ receipt: toHex(receiptBy(w.a, run.firstId)), entryVoid: { kind: 'closed', evidence: null } });
-    // A MARK A SEAT MADE UP: the right entry, tick 60, signed by a key that is not the player's.
+    // A MARK A SIGNER NODE MADE UP: the right entry, tick 60, signed by a key that is not the player's.
     const fakeKey = ed25519.utils.randomSecretKey();
     const fake = { roundId: w.rid, entryId: run.eid, tick: 60, stateHash: rand(32), inputChainHash: GENESIS_HASH,
       previousHash: NO_PREVIOUS, sessionPubkey: ed25519.getPublicKey(fakeKey) };
@@ -361,8 +361,8 @@ test('(f) a seat cannot void the other seat\'s entry with an invented first mark
     const invented = await post({ mark: toHex(fakeBytes), batches: [], receipt: toHex(receiptBy(w.a, checkpointId(fake))),
       entryVoid: { kind: 'closed', evidence: null } });
     const b = recordAt(w.b, w, run);
-    // A LYING SEAT CONTROLS ITS OWN STORE: its side of the Void, planted - the other seat must still not sign.
-    w.a.round.putEntryVoid({ entryId: run.eid, roundId: w.rid, firstMark: fakeBytes, evidenceKind: 'closed', evidence: null, why: 'planted by a lying seat' });
+    // A LYING SIGNER NODE CONTROLS ITS OWN STORE: its side of the Void, planted - the other signer node must still not sign.
+    w.a.round.putEntryVoid({ entryId: run.eid, roundId: w.rid, firstMark: fakeBytes, evidenceKind: 'closed', evidence: null, why: 'planted by a lying signer node' });
     const forfeit = await forfeitAt(w.a, w, run);
     const facts = { noMark, invented, b, forfeit: forfeit.status,
       lockHeld: w.port.locks.has(`${toHex(run.outpoint.txid)}:${run.outpoint.outIdx}`) };

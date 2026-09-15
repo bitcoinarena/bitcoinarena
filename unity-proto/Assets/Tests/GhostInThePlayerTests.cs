@@ -62,7 +62,7 @@ public class GhostInThePlayerTests
         Assert.IsNotNull(field.Model, "the field has no body to draw a ghost with");
         Assert.IsNotNull(field.Model.GetComponentInChildren<Renderer>(true),
             "the ghost body has no renderer, so a drawn ghost is invisible");
-        Assert.IsNotNull(field.Seat, "nothing tells a ghost what ground it stands on");
+        Assert.IsNotNull(field.Rest, "nothing tells a ghost what ground it stands on");
     }
 
     /// <summary>
@@ -124,7 +124,7 @@ public class GhostInThePlayerTests
         model.SetActive(false);
         var field = new GameObject("ghosts").AddComponent<GhostField>();
         field.Model = model;
-        field.Seat = (x, z, heading) => 7.5f;   // a ground with a value nobody defaults to
+        field.Rest = (x, z, heading) => 7.5f;   // a ground with a value nobody defaults to
 
         field.Show(first);
         var ghost = field.GetComponentInChildren<GhostTruck>(true);
@@ -168,7 +168,7 @@ public class GhostInThePlayerTests
     /// THE DRAWN POSE, IN THE SHIPPING PLAYER, AGAINST THE TRANSCRIPT.
     ///
     /// Not a field this test built: the one `Bootstrap` builds, with the body
-    /// it chose and the seat it wired. The twelve ints are handed in through
+    /// it chose and the rest it wired. The twelve ints are handed in through
     /// the field's own `Source`, which is the door `Draw` takes either way -
     /// the only difference from a live page is where the ints came from, and
     /// `two-nodes-play.test.js` already measures that half against two real

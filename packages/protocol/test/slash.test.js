@@ -24,7 +24,7 @@ import {
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const NODE = b32(0x11);          // the accused
-const HONEST = b32(0x22);        // another seat
+const HONEST = b32(0x22);        // another signer node
 const CANON = b32(0x44);         // the canonical transcript
 const BOND = b32(0x55);
 const committee = [NODE, HONEST, b32(0x23), b32(0x24), b32(0x25), b32(0x26), b32(0x27)];

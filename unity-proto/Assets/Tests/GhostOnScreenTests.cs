@@ -13,7 +13,7 @@ using Blwp;
 /// The pictures below are not numbers invented in C#. They are the exact
 /// twelve ints `BlwpNextGhost` hands across, captured from a real two-node run
 /// by `blwp-client/test/two-nodes-play.test.js`: two daemons, two identities,
-/// one contract naming both seats, a page that subscribed, and the other
+/// one contract naming both signer nodes, a page that subscribed, and the other
 /// player's transcript replayed by the node through `replay.js`. That test
 /// checks the poses against the core driven directly; this one checks that a
 /// renderer puts them where they say and that PhysX is still given nothing.

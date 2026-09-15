@@ -4,11 +4,11 @@
 // fix, on these seven daemons over their real doors: `payWithCommittee`
 // aggregated whatever the five returned, checked neither the shares nor the
 // aggregate, wrote the invalid spend as PAYOUT_QUEUED and sent it; nobody was
-// named; and a retry without the cheater was refused by every seat that had
+// named; and a retry without the cheater was refused by every signer node that had
 // signed, so the payout was locked for good (TASKBOOK, 5-of-7 bad share).
 //
 // Now the aggregate is checked before anything is written or sent, each share
-// is checked against its seat's public share, the bad one is named, and the
+// is checked against its signer node's public share, the bad one is named, and the
 // next attempt - fresh nonces, the cheater left out - pays. The fake chain
 // rejects an invalid signature the way bitcoind would, and every raw the asker
 // writes to its store is checked too.
@@ -28,7 +28,7 @@ import { DELIVERED, FORFEIT } from '../../protocol/src/payout.js';
 import { scalarFrom32, FIELD, SHARES_NEEDED, SHARES_TOTAL } from '../../protocol/src/shares.js';
 import { parseTransaction } from '../../protocol/src/tx.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
-import { assumeSeated } from './seating.js';
+import { assumeAssigned } from './assignment.js';
 import { rand, b32, curve, NOW, POOL_SATS, contractFor, dealThePool } from './pool-fixture.js';
 
 const FUNDED = { funded: () => true };
@@ -40,12 +40,12 @@ const url = (n) => `http://127.0.0.1:${n.port}`;
 async function committee({ chain }) {
   const dealt = dealThePool();
   const pool = { groupPublicKey: dealt.groupPublicKey };
-  // Every seat's public share: what a DKG committee computes from its commitments.
+  // Every signer node's public share: what a DKG committee computes from its commitments.
   const publicShares = new Map(dealt.shares.map((s) => [String(s.id), curve.pointFromScalar(s.share)]));
   const nodes = [];
   for (let i = 0; i < SHARES_TOTAL; i++)
     nodes.push(await serve(openStore(':memory:'), {
-      port: 0, ...FUNDED, now: () => NOW, poolKey: pool, poolCurve: curve, poolSeat: dealt.shares[i],
+      port: 0, ...FUNDED, now: () => NOW, poolKey: pool, poolCurve: curve, poolSignerNode: dealt.shares[i],
       poolPublicShares: publicShares, chainSpend: chain }));
   const contract = contractFor(nodes.map((n) => n.round.pubkey));
   const rid = roundId(contract);
@@ -60,7 +60,7 @@ async function committee({ chain }) {
   }));
   for (const n of nodes) {
     assert.equal((await post(n.port, '/round', encodeRoundContract(contract))).status, 201);
-    assumeSeated(n.round, rid, contract.nodes);
+    assumeAssigned(n.round, rid, contract.nodes);
     for (const e of entries) {
       assert.equal((await post(n.port, '/entry', encodeEntryContract(e.contract))).status, 201);
       const eid = entryIdOf(e.contract);
@@ -84,7 +84,7 @@ async function committee({ chain }) {
   return { nodes, contract, rid, utxo, out, close: () => Promise.all(nodes.map((n) => n.close())) };
 }
 
-/** A chain that checks the witness, a cheater at seat 2, and a log of every raw the asker writes. */
+/** A chain that checks the witness, a cheater at signer node 2, and a log of every raw the asker writes. */
 async function withCheater(run) {
   const sent = [];
   const box = { sighash: null, outputKey: null };
@@ -100,8 +100,8 @@ async function withCheater(run) {
   try {
     box.outputKey = c.out.outputKey;
     const asker = c.nodes[0];
-    const cheater = c.nodes[1];                                   // seat 2: always among the lowest five
-    assert.equal(String(cheater.signing.seat.id), '2');
+    const cheater = c.nodes[1];                                   // signer node 2: always among the lowest five
+    assert.equal(String(cheater.signing.signerNode.id), '2');
     cheater.signing.signatureShare = () => ({ ok: true, share: scalarFrom32(rand(32)) % FIELD, id: 2 });
     const mine = asker.signing.spendFor({ roundId: c.rid, utxo: c.utxo, contract: c.contract });
     assert.equal(mine.ok, true, mine.why);
@@ -109,13 +109,13 @@ async function withCheater(run) {
     const written = [];
     const put = asker.round.putPayout.bind(asker.round);
     asker.round.putPayout = (row) => { if (row.raw) written.push(valid(row.raw)); return put(row); };
-    const pay = (seats) => asker.payouts.payWithCommittee({ roundId: c.rid, utxo: c.utxo, contract: c.contract,
-      signing: asker.signing, seats: seats.map(url) });
+    const pay = (signerNodes) => asker.payouts.payWithCommittee({ roundId: c.rid, utxo: c.utxo, contract: c.contract,
+      signing: asker.signing, signerNodes: signerNodes.map(url) });
     await run({ c, asker, cheaterUrl: url(cheater), pay, sent, written, valid });
   } finally { await c.close(); }
 }
 
-test('5 of 7 with a garbage share: nothing invalid is written or sent, seat 2 is named, and the next attempt without it pays', async () => {
+test('5 of 7 with a garbage share: nothing invalid is written or sent, signer node 2 is named, and the next attempt without it pays', async () => {
   await withCheater(async ({ c, asker, cheaterUrl, pay, sent, written, valid }) => {
     const got = await pay(c.nodes.slice(1));
     const row = asker.round.payout(c.rid);
@@ -126,7 +126,7 @@ test('5 of 7 with a garbage share: nothing invalid is written or sent, seat 2 is
       written,
       rowState: row.state,
       rowRawValid: !!row.raw && valid(new Uint8Array(row.raw)),
-      signers: got.seats,
+      signers: got.signerNodes,
     };
     console.log('  FACTS (5 of 7, one garbage share, all six peers asked):', JSON.stringify(facts));
     assert.deepEqual(facts, {
@@ -136,20 +136,20 @@ test('5 of 7 with a garbage share: nothing invalid is written or sent, seat 2 is
       written: [true, true],               // queued and then paid: both raws verify
       rowState: got.state,
       rowRawValid: true,
-      signers: ['this seat', ...c.nodes.slice(2, SHARES_NEEDED + 1).map(url)],   // seats 1, 3, 4, 5, 6
+      signers: ['this signer node', ...c.nodes.slice(2, SHARES_NEEDED + 1).map(url)],   // signer nodes 1, 3, 4, 5, 6
     });
     assert.notEqual(got.state, PAYOUT_QUEUED);
   });
 });
 
-test('5 of 7, only four honest seats asked: nothing is written or sent and seat 2 is named; a call that leaves it out pays', async () => {
+test('5 of 7, only four honest signer nodes asked: nothing is written or sent and signer node 2 is named; a call that leaves it out pays', async () => {
   await withCheater(async ({ c, asker, cheaterUrl, pay, sent, written, valid }) => {
     const first = await pay(c.nodes.slice(1, SHARES_NEEDED));
     const rowAfterFirst = asker.round.payout(c.rid);
     const facts = {
       firstPaid: first.ok,
       culprits: first.culprits,
-      whyNamesCheater: String(first.why).includes(cheaterUrl) && /seat 2\b/.test(String(first.why)),
+      whyNamesCheater: String(first.why).includes(cheaterUrl) && /signer node 2\b/.test(String(first.why)),
       sentAfterFirst: sent.length,
       writtenAfterFirst: written.length,
       rowAfterFirst: rowAfterFirst.state,

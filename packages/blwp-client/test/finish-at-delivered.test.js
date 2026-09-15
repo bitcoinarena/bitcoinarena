@@ -20,7 +20,7 @@ import { Client } from '../src/client.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { decodeTranscript } from '../../protocol/src/transcript.js';
 import { toHex } from '../../protocol/src/hash.js';
-import { assumeStakeSeen } from '../../blwp-node/test/seating.js';
+import { assumeStakeSeen } from '../../blwp-node/test/assignment.js';
 
 const require = createRequire(import.meta.url);
 const core = require('../../core/dist/blwp-core.js');

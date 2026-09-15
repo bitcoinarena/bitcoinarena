@@ -58,9 +58,9 @@ export const isRefund = (outcome) => REFUNDS.includes(outcome);
  * refused rather than read as zero, because zero is exactly the on-top reading
  * coming back through a missing field.
  */
-// A FREE SEAT IS THREE ZEROS, NOT THREE MISSING FIELDS. Every entry the door
+// A FREE ROUND IS THREE ZEROS, NOT THREE MISSING FIELDS. Every entry the door
 // takes is decoded from signed bytes, so its three amounts are BigInt whether
-// the round asks 0 or 100000; the free seat the owner photographed refused at
+// the round asks 0 or 100000; the free round the owner photographed refused at
 // 11:15 was a daemon started between two edits, when the fee rule already
 // asked for the donation and the door did not yet pass it. Coercing a missing
 // or numeric amount to BigInt here would hide exactly that kind of wiring

@@ -9,7 +9,7 @@ import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
 import assert from 'node:assert/strict';
-import { assumeSeated } from './seating.js';
+import { assumeAssigned } from './assignment.js';
 import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
 import {
@@ -68,7 +68,7 @@ function rig({ nodes, round } = {}) {
   const r = round || new Round(openStore(), () => 1234);
   const c = nodes ? { ...contract(), nodes } : contract();
   const rid = r.open(c);
-  assumeSeated(r, rid, c.nodes);
+  assumeAssigned(r, rid, c.nodes);
   const eid = r.enter(entryFor(rid));
 
   const b = {
@@ -231,7 +231,7 @@ test('a mark taken before any batch may name the genesis', () => {
   const r = new Round(openStore(), () => 1234);
   const c2 = contract();
   const rid = r.open(c2);
-  assumeSeated(r, rid, c2.nodes);
+  assumeAssigned(r, rid, c2.nodes);
   const eid = r.enter(entryFor(rid));
   const c = {
     roundId: rid, entryId: eid, tick: 0,
@@ -418,8 +418,8 @@ test('a mark can carry a receipt from every member, and the count is what 13C as
 
   // seven: this node plus six peers
   const store = openStore();
-  const seat = new Round(store);
-  const { r, send, last } = rig({ nodes: [seat.pubkey, ...keys], round: seat });
+  const signerNode = new Round(store);
+  const { r, send, last } = rig({ nodes: [signerNode.pubkey, ...keys], round: signerNode });
   send(60, 0x5a);
   const markId = checkpointId(last());
 

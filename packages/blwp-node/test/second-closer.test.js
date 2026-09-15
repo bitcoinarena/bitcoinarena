@@ -30,7 +30,7 @@ import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { HELD, SETTLED, CANCELLED } from '../src/custody.js';
 import { feldmanGroup } from '../src/curve.js';
-import { assumeSeated, assumeStakeSeen } from './seating.js';
+import { assumeAssigned, assumeStakeSeen } from './assignment.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
 import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
@@ -99,13 +99,13 @@ const say = (port, message) => new Promise((resolve, reject) => {
 
 const secretScalar = () => { let p = rand(32); while (scalarFrom32(p) >= FIELD) p = rand(32); return p; };
 
-/** One player's stake dealt 2-of-2, seated, paid and played on both daemons. */
-async function seatAndPlay(daemons, c, rid, who) {
+/** One player's stake dealt 2-of-2, joined, paid and played on both daemons. */
+async function joinAndPlay(daemons, c, rid, who) {
   const session = ed25519.utils.randomSecretKey();
   const preimage = secretScalar();
   const e = rand(32);
   const dealt = await dealHandout({
-    preimage, seats: c.nodes, roundId: rid, playerPubkey: who.key,
+    preimage, signerNodes: c.nodes, roundId: rid, playerPubkey: who.key,
     ephemeralSecret: e, ephemeralPubkey: feldmanGroup.pointX(e),
     coefficients: [scalarFrom32(rand(32)) % FIELD], needed: 2, curve: feldmanGroup,
   });
@@ -127,8 +127,8 @@ async function seatAndPlay(daemons, c, rid, who) {
   for (const d of daemons) {
     const took = await fetch(`http://127.0.0.1:${d.port}/handout`, { method: 'POST', body: encodeHandout(dealt.handout) });
     assert.equal(took.status, 201, `${who.name}'s handout: ${await took.text()}`);
-    const seated = await fetch(`http://127.0.0.1:${d.port}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
-    assert.equal(seated.status, 201, `${who.name}'s entry: ${await seated.text()}`);
+    const joined = await fetch(`http://127.0.0.1:${d.port}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
+    assert.equal(joined.status, 201, `${who.name}'s entry: ${await joined.text()}`);
     const quote = await fetch(`http://127.0.0.1:${d.port}/invoice?entry=${toHex(eid)}`);
     assert.equal(quote.status, 200, `${who.name}'s invoice: ${await quote.text()}`);
     assumeStakeSeen(d.round, entry);
@@ -162,12 +162,12 @@ async function closedWithGap(gapMs, { bLateToAMs = 0 } = {}) {
     const rid = roundId(c);
     for (const d of [a, b]) {
       await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
-      assumeSeated(d.round, rid, c.nodes);
+      assumeAssigned(d.round, rid, c.nodes);
     }
-    const winner = await seatAndPlay([a, b], c, rid, WINNER);
-    const loser = await seatAndPlay([a, b], c, rid, LOSER);
-    // EVERY HOLD EITHER SEAT WRITES on the lost stake, in order, so the race
-    // can be seen on whichever seat it lands.
+    const winner = await joinAndPlay([a, b], c, rid, WINNER);
+    const loser = await joinAndPlay([a, b], c, rid, LOSER);
+    // EVERY HOLD EITHER SIGNER NODE WRITES on the lost stake, in order, so the race
+    // can be seen on whichever signer node it lands.
     const held = { A: [], B: [] };
     for (const [name, d] of [['A', a], ['B', b]]) {
       const put = d.round.putHold.bind(d.round);
@@ -197,8 +197,8 @@ async function closedWithGap(gapMs, { bLateToAMs = 0 } = {}) {
     if (bLateToAMs) {
       const keep = a.round.putPosting.bind(a.round);
       const refusedOnce = () => answeredByA.some((x) => !x.ok);
-      a.round.putPosting = (r, e, seat, bytes) =>
-        (toHex(seat) === toHex(b.round.pubkey) && !refusedOnce() ? 0 : keep(r, e, seat, bytes));
+      a.round.putPosting = (r, e, signerNode, bytes) =>
+        (toHex(signerNode) === toHex(b.round.pubkey) && !refusedOnce() ? 0 : keep(r, e, signerNode, bytes));
     }
 
     const first = say(a.port, `close ${toHex(rid)}`);
@@ -224,12 +224,12 @@ async function closedWithGap(gapMs, { bLateToAMs = 0 } = {}) {
 const wantOf = (loser) => ({ paymentHash: toHex(loser.entry.stakeCommitment), preimage: toHex(loser.preimage) });
 const bigints = (k, v) => (typeof v === 'bigint' ? String(v) : v);
 
-// SINCE P2 (v4.6.2 §13A) NO SEAT IS FINAL AT ITS OWN CLOSE: final needs both
-// seats' postings of the run's transcript, so the race is a matter of which
-// seat holds both postings first. Measured at an 800 ms gap: no seat was
+// SINCE P2 (v4.6.2 §13A) NO SIGNER NODE IS FINAL AT ITS OWN CLOSE: final needs both
+// signer nodes' postings of the run's transcript, so the race is a matter of which
+// signer node holds both postings first. Measured at an 800 ms gap: no signer node was
 // refused at all; with the cadences skewed it came and went. So the state the
 // race needs is made here: B's posting reaches A 3 s after the close. B is final
-// first, asks A, and A - genuinely not final ("1 of 2 settlement seats have
+// first, asks A, and A - genuinely not final ("1 of 2 settlement signer nodes have
 // posted") - refuses: the second closer refused its first share, as before P2.
 test('closed 800 ms apart: the second closer, refused its first share, ends SETTLED on the lost stake lnd settled through the first', async () => {
   const w = await closedWithGap(800, { bLateToAMs: 3000 });
@@ -238,7 +238,7 @@ test('closed 800 ms apart: the second closer, refused its first share, ends SETT
 
     // THE RACE HAPPENED: B was final, settled, and asked A for its share, and A
     // - not final yet - refused it.
-    const refused = w.answeredByA.filter((x) => !x.ok && /1 of 2 settlement seats have posted/.test(x.why));
+    const refused = w.answeredByA.filter((x) => !x.ok && /1 of 2 settlement signer nodes have posted/.test(x.why));
     assert.ok(refused.length, `the race did not happen - A never refused B's ask for its share: ${JSON.stringify(w.answeredByA)}`);
     assert.ok(w.answeredByA.some((x) => x.ok && x.atMs > refused[0].atMs), 'A never handed B its share after refusing it');
     assert.equal(w.stateOf(w.a, w.loser.eid), SETTLED, 'the first closer never settled the lost stake');

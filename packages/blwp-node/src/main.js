@@ -16,7 +16,7 @@
 //
 // Both or neither. With them the daemon can find the pool's output, send and
 // look up a payout, read each round's beacon, and derive each round's census -
-// which is where it learns the other seats' addresses, from the advertisements
+// which is where it learns the other signer nodes' addresses, from the advertisements
 // in their bonds. So a daemon that died in the middle of settling, started
 // again on its store, finishes what it owed. Measured without them: it
 // recovered nothing at any kill point.
@@ -54,7 +54,7 @@ if (Boolean(url) !== Boolean(cookiePath)) {
 // (tools/custody-restart-lnd.mjs): a custodian killed inside a settle and
 // restarted as this file left the stake ACTING whatever lnd said.
 const ln = lightningFromEnv(process.env);
-// AND THE ROUND'S FEDERATION, when this node seats stake-lock rounds (23.1
+// AND THE ROUND'S FEDERATION, when this node takes stake-lock rounds (23.1
 // step 5): BLWP_STAKE_LOCK_BIN and BLWP_FEDERATION_CLIENT_DIR, both or neither.
 const fed = stakeLocksFromEnv(process.env);
 if (!fed.ok) { console.error(fed.why); process.exit(2); }
@@ -80,7 +80,7 @@ if (url) {
   // the daemon starts: the start-up sweep asks it whose turn it is, and the
   // other readers of a beacon ask synchronously.
   // AND ITS CENSUS BLOCKS, for the same reason: the roster reads a view
-  // synchronously, and the seats' addresses are in it.
+  // synchronously, and the signer nodes' addresses are in it.
   const views = new Map();
   // UP TO THE BEACON, AND AS DEEP PAST IT AS THE ROUND ASKS. The beacon comes
   // after the census height in the normal order, and the roster checks the

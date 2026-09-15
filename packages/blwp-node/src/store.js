@@ -17,8 +17,37 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 
 export const OPEN = 0, CLOSED = 1;
 
+/**
+ * A STORE MADE WHILE A SIGNING MACHINE WAS CALLED A SEAT keeps its rows under the new names
+ * (the owner 2026-09-15 20:32: seat migrates in code too). The table and the six columns are renamed
+ * in place before anything is created, so the tables below find their rows under the names they
+ * use - and a store that already has the new names, or none at all, is left as it is. The old names
+ * appear here and nowhere else in the node: they are what an old store on disk still says.
+ */
+const RENAMED_COLUMNS = [
+  ['held_shares', 'seat', 'signer_node'],
+  ['pool_nonces', 'seat_id', 'signer_node_id'],
+  ['dkg_epochs', 'seats', 'signer_nodes'],
+  ['dkg_epochs', 'seat_no', 'signer_node_no'],
+  ['postings', 'seat_pubkey', 'signer_node_pubkey'],
+  ['reruns', 'seat_pubkey', 'signer_node_pubkey'],
+];
+
+export function renameToSignerNodes(db) {
+  const table = (t) => !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(t);
+  const columns = (t) => (table(t) ? db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name) : []);
+  const done = [];
+  if (table('seats') && !table('signer_nodes')) { db.exec('ALTER TABLE seats RENAME TO signer_nodes'); done.push('seats'); }
+  for (const [t, from, to] of RENAMED_COLUMNS) {
+    const have = columns(t);
+    if (have.includes(from) && !have.includes(to)) { db.exec(`ALTER TABLE ${t} RENAME COLUMN ${from} TO ${to}`); done.push(`${t}.${from}`); }
+  }
+  return done;
+}
+
 export function openStore(path = ':memory:') {
   const db = new DatabaseSync(path);
+  renameToSignerNodes(db);
   db.exec(`
     PRAGMA journal_mode = WAL;
     PRAGMA foreign_keys = ON;
@@ -125,10 +154,10 @@ export function openStore(path = ':memory:') {
     );
 
     -- TWO FIRST MARKS OF ONE ENTRY, NEITHER HELD HERE AS A CHECKPOINT (M3.3-34,
-    -- ruled 2026-09-12): the on-time first mark another seat voided and a
+    -- ruled 2026-09-12): the on-time first mark another signer node voided and a
     -- different one the player sent here. Both chain to nothing - one parent,
     -- two chains (13B) - so the pair is the proof, served at /equivocation so
-    -- the other seats can pull it. Never a checkpoint; never a refund.
+    -- the other signer nodes can pull it. Never a checkpoint; never a refund.
     CREATE TABLE IF NOT EXISTS first_mark_pairs (
       round_id BLOB NOT NULL,
       entry_id BLOB NOT NULL REFERENCES entries(entry_id),
@@ -138,15 +167,15 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (entry_id, first_a, first_b)
     );
 
-    -- ANOTHER SEAT'S SHARE OF A STAKE'S PREIMAGE, AS IT SEALED IT TO THIS SEAT
-    -- (M3.3-34): the envelope, never the opened share - so a seat that released
+    -- ANOTHER SIGNER NODE'S SHARE OF A STAKE'S PREIMAGE, AS IT SEALED IT TO THIS SIGNER NODE
+    -- (M3.3-34): the envelope, never the opened share - so a signer node that released
     -- its share and then went down cannot hand the stake back by staying down.
     CREATE TABLE IF NOT EXISTS held_shares (
       entry_id BLOB NOT NULL REFERENCES entries(entry_id),
-      seat     INTEGER NOT NULL,
+      signer_node     INTEGER NOT NULL,
       answer   BLOB NOT NULL,
       seen_ms  INTEGER NOT NULL,
-      PRIMARY KEY (entry_id, seat)
+      PRIMARY KEY (entry_id, signer_node)
     );
 
     -- A RECEIPT FOR A MARK THIS NODE HAS NEVER SEEN.
@@ -207,13 +236,13 @@ export function openStore(path = ':memory:') {
     -- KNOWN to strangers is the bond advertisement, M2.1 step 5b, and that is
     -- discovery: it is not what lets a node sign. A client already holds the
     -- key it should expect, in the Round Contract's nodes list.
-    -- WHO THIS ROUND SEATED, from the census at its own census_height.
+    -- WHO THIS ROUND WAS ASSIGNED, from the census at its own census_height.
     --
-    -- A round's committee is not a list its author typed: 5A.4 seats it from
+    -- A round's committee is not a list its author typed: 5A.4 assigns it from
     -- the chain census, and this is where that answer is kept so every trust
-    -- check reads the same one. A round with no rows here was never seated by
+    -- check reads the same one. A round with no rows here was never assigned by
     -- this node, and it issues no receipts against it.
-    CREATE TABLE IF NOT EXISTS seats (
+    CREATE TABLE IF NOT EXISTS signer_nodes (
       round_id BLOB NOT NULL,
       pubkey   BLOB NOT NULL,
       PRIMARY KEY (round_id, pubkey)
@@ -222,7 +251,7 @@ export function openStore(path = ':memory:') {
     -- THE SHARES A PLAYER PUBLISHED FOR THEIR STAKE PREIMAGE, once this node
     -- has checked them. 23.1's vss_shares_ref on an Entry Contract names a
     -- row here, and an entry that names one this node never accepted is
-    -- refused: a seat that cannot check a handout has no business letting the
+    -- refused: a signer node that cannot check a handout has no business letting the
     -- round it gates begin.
     --
     -- Only accepted handouts are stored, so the presence of a row IS the
@@ -315,17 +344,17 @@ export function openStore(path = ':memory:') {
       owed_count INTEGER NOT NULL DEFAULT 0
     );
 
-    -- THIS SEAT'S NONCE PAIR FOR A ROUND'S SPEND, AND IT OUTLIVES THE PROCESS.
+    -- THIS SIGNER NODE'S NONCE PAIR FOR A ROUND'S SPEND, AND IT OUTLIVES THE PROCESS.
     --
     -- It lived in a Map on PoolSigning and died with the daemon, and letter
     -- 19 measured what that costs: a second asker after a restart got FRESH
-    -- nonces from all five seats, a new signature, and a different txid over
+    -- nonces from all five signer nodes, a new signature, and a different txid over
     -- the same input - a conflicting spend of the pool. Before the restart the
     -- same asker got the same commitments back and rebuilt the IDENTICAL
     -- transaction, which is harmless. The difference was only the memory.
     --
     -- So it is on disk, one row per round, keyed by the round: this node holds
-    -- one seat, and a seat is one signature. seat_id is stored beside it so
+    -- one signer node, and a signer node is one signature. signer_node_id is stored beside it so
     -- a store that somehow met a different share refuses rather than signing
     -- with a pair that is not its own.
     --
@@ -334,7 +363,7 @@ export function openStore(path = ':memory:') {
     -- is enough to answer twice and not enough to sign twice.
     CREATE TABLE IF NOT EXISTS pool_nonces (
       round_id       BLOB PRIMARY KEY,
-      seat_id        TEXT NOT NULL,
+      signer_node_id        TEXT NOT NULL,
       sighash        BLOB NOT NULL,
       hiding         BLOB,
       binding        BLOB,
@@ -346,7 +375,7 @@ export function openStore(path = ':memory:') {
       updated_ms     INTEGER NOT NULL
     );
 
-    -- The seats' signatures over that table id. Keyed by signer, so one seat
+    -- The signer nodes' signatures over that table id. Keyed by signer, so one signer node
     -- signing twice is one vote, the way results already are.
     CREATE TABLE IF NOT EXISTS payout_signatures (
       round_id    BLOB NOT NULL,
@@ -364,27 +393,27 @@ export function openStore(path = ':memory:') {
 
     -- THE COMMITTEE'S OWN KEY, MADE WITHOUT A DEALER (M3.3 item 14).
     --
-    -- One row per EPOCH, and an epoch is the set of seats: the owner's rule is
+    -- One row per EPOCH, and an epoch is the set of signer nodes: the owner's rule is
     -- that a DKG runs once per committee and not once per round, because the
     -- pool is one P2TR output across rounds and a per-round key would mint a
-    -- new address every round. The same seats keep the same key until the
+    -- new address every round. The same signer nodes keep the same key until the
     -- committee changes, and a changed committee is a different epoch_id.
     --
-    -- WHAT IS KEPT AND WHY. mine is this seat's own contribution, bytes and
+    -- WHAT IS KEPT AND WHY. mine is this signer node's own contribution, bytes and
     -- all: a restart must serve the SAME deal to a peer that has already seen
     -- it, because re-dealing would publish a second polynomial under a second
-    -- id and the seats that combined the first would be holding shares of a
-    -- key nobody else has. share is this seat's share of the group secret -
+    -- id and the signer nodes that combined the first would be holding shares of a
+    -- key nobody else has. share is this signer node's share of the group secret -
     -- the sum of what it was dealt, normalised - and it is the one secret in
-    -- this table; it is written only when every seat has contributed.
-    -- group_pubkey is public and is stored beside it so a seat can answer
+    -- this table; it is written only when every signer node has contributed.
+    -- group_pubkey is public and is stored beside it so a signer node can answer
     -- what the committee's key is without redoing the sum.
     CREATE TABLE IF NOT EXISTS dkg_epochs (
       epoch_id     BLOB PRIMARY KEY,
-      seats        BLOB NOT NULL,      -- the committee, 32 bytes each, sorted
-      mine         BLOB,               -- this seat's own encoded contribution
-      share        BLOB,               -- 32 bytes, this seat's share of the secret
-      seat_no      INTEGER,            -- its x on the polynomial, 1..n
+      signer_nodes        BLOB NOT NULL,      -- the committee, 32 bytes each, sorted
+      mine         BLOB,               -- this signer_node's own encoded contribution
+      share        BLOB,               -- 32 bytes, this signer_node's share of the secret
+      signer_node_no      INTEGER,            -- its x on the polynomial, 1..n
       group_pubkey BLOB,               -- 33 bytes, compressed and even-y
       negated      INTEGER NOT NULL DEFAULT 0,
       updated_ms   INTEGER NOT NULL
@@ -392,9 +421,9 @@ export function openStore(path = ':memory:') {
 
     -- The contributions this node has ACCEPTED, one per dealer per epoch.
     --
-    -- Keyed by (epoch, dealer) so a seat that deals twice is one row and not
+    -- Keyed by (epoch, dealer) so a signer node that deals twice is one row and not
     -- two: dealing again after seeing everybody else's commitments is how a
-    -- seat would steer the group key, and the primary key is the whole of the
+    -- signer node would steer the group key, and the primary key is the whole of the
     -- mechanism that stops it.
     CREATE TABLE IF NOT EXISTS dkg_contributions (
       epoch_id   BLOB NOT NULL,
@@ -440,7 +469,7 @@ export function openStore(path = ':memory:') {
     -- re-encoding that might differ by a byte.
     --
     -- Keyed by the SIGNER as well as the run, because a node keeps the
-    -- results of others beside its own and one seat may hold only one.
+    -- results of others beside its own and one signer node may hold only one.
     CREATE TABLE IF NOT EXISTS results (
       round_id    BLOB NOT NULL,
       entry_id    BLOB NOT NULL REFERENCES entries(entry_id),
@@ -451,32 +480,32 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (round_id, entry_id, node_pubkey)
     );
 
-    -- A SETTLEMENT SEAT'S WORD THAT IT POSTED A RUN'S TRANSCRIPT (P2, 13A),
-    -- its own and the other seats', one per seat. A result is FINAL only once
+    -- A SETTLEMENT SIGNER NODE'S WORD THAT IT POSTED A RUN'S TRANSCRIPT (P2, 13A),
+    -- its own and the other signer nodes', one per signer node. A result is FINAL only once
     -- the round's threshold of these agree, and W opens when that was so here.
     CREATE TABLE IF NOT EXISTS postings (
       round_id    BLOB NOT NULL,
       entry_id    BLOB NOT NULL,
-      seat_pubkey BLOB NOT NULL,
+      signer_node_pubkey BLOB NOT NULL,
       bytes       BLOB NOT NULL,
       seen_ms     INTEGER NOT NULL,
-      PRIMARY KEY (round_id, entry_id, seat_pubkey)
+      PRIMARY KEY (round_id, entry_id, signer_node_pubkey)
     );
 
-    -- A COMMITTEE SEAT'S RE-RUN OF A SUSPENDED RESULT (13A), its own and the
-    -- other seats', one per seat: counted to 5 of 7, it replaces SUSPENDED.
+    -- A COMMITTEE SIGNER NODE'S RE-RUN OF A SUSPENDED RESULT (13A), its own and the
+    -- other signer nodes', one per signer node: counted to 5 of 7, it replaces SUSPENDED.
     CREATE TABLE IF NOT EXISTS reruns (
       round_id    BLOB NOT NULL,
       entry_id    BLOB NOT NULL,
-      seat_pubkey BLOB NOT NULL,
+      signer_node_pubkey BLOB NOT NULL,
       bytes       BLOB NOT NULL,
       seen_ms     INTEGER NOT NULL,
-      PRIMARY KEY (round_id, entry_id, seat_pubkey)
+      PRIMARY KEY (round_id, entry_id, signer_node_pubkey)
     );
 
     -- A SLASH PROOF THIS NODE FILED (5A.3B step 1): REPLAY_CONTRADICTS against
-    -- a seat that signed a result the committee's re-run contradicted, with the
-    -- signed result beside it. One per accused seat per run.
+    -- a signer node that signed a result the committee's re-run contradicted, with the
+    -- signed result beside it. One per accused signer node per run.
     CREATE TABLE IF NOT EXISTS slash_proofs (
       round_id    BLOB NOT NULL,
       entry_id    BLOB NOT NULL,
@@ -487,7 +516,7 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (round_id, entry_id, node_pubkey)
     );
 
-    -- A STAKE LOCK THIS SEAT VERIFIED (23.1 step 5): the contract the player
+    -- A STAKE LOCK THIS SIGNER NODE VERIFIED (23.1 step 5): the contract the player
     -- handed over, the federation's id for it, and where it sits.
     CREATE TABLE IF NOT EXISTS stake_locks (
       entry_id     BLOB PRIMARY KEY,
@@ -500,13 +529,13 @@ export function openStore(path = ':memory:') {
 
     -- A QUALIFIER'S STAKE LOCK, RELEASED (§23.2 row 1, W5b): the committee's
     -- forfeit signature over the lock's contract id, which only the lock's
-    -- refund key can spend. The seat's record that it released the stake.
+    -- refund key can spend. The signer node's record that it released the stake.
     -- THE ROUND'S ONE SETTLEMENT OF ITS LOSERS' STAKE LOCKS (W4): the txid the
-    -- seats rebuilt, their combined claim_pk signature over it, and where it
-    -- stands - SUBMITTING is written before the federation is asked, so a seat
+    -- signer nodes rebuilt, their combined claim_pk signature over it, and where it
+    -- stands - SUBMITTING is written before the federation is asked, so a signer node
     -- that died there knows it signed.
-    -- A FEE LOCK THIS SEAT VERIFIED (Pick A, §23.1 step 5, F5): the entry's 2%
-    -- node fee locked to H(F), claimed for the sitting seats in the round's one
+    -- A FEE LOCK THIS SIGNER NODE VERIFIED (Pick A, §23.1 step 5, F5): the entry's 2%
+    -- node fee locked to H(F), claimed for the sitting signer nodes in the round's one
     -- settlement with the F the entry hands over openly.
     CREATE TABLE IF NOT EXISTS fee_locks (
       entry_id     BLOB PRIMARY KEY,
@@ -528,7 +557,7 @@ export function openStore(path = ':memory:') {
     );
 
     -- WHAT THE SIGNED SETTLEMENT MOVES (W6): its claimed outpoints and how many
-    -- payout contracts it makes, kept with its intent - so a seat restarted inside
+    -- payout contracts it makes, kept with its intent - so a signer node restarted inside
     -- it asks the federation without rebuilding the bytes it signed.
     CREATE TABLE IF NOT EXISTS lock_settlement_moves (
       round_id     BLOB PRIMARY KEY,
@@ -546,7 +575,7 @@ export function openStore(path = ':memory:') {
       made_ms      INTEGER NOT NULL
     );
 
-    -- AN ENTRY THIS SEAT HOLDS FORFEIT FOR A LATE START (§15, §13C): its first
+    -- AN ENTRY THIS SIGNER NODE HOLDS FORFEIT FOR A LATE START (§15, §13C): its first
     -- mark, signed by the player, names a tick after join_tick + the round's
     -- start deadline - the player's own act, not an outage and not a refund.
     -- The mark is the evidence and is kept whole; it was refused, not
@@ -562,7 +591,7 @@ export function openStore(path = ':memory:') {
       decided_ms  INTEGER NOT NULL
     );
 
-    -- WHAT EACH OTHER SEAT ANSWERED when this seat offered it the player's
+    -- WHAT EACH OTHER SIGNER NODE ANSWERED when this signer node offered it the player's
     -- on-time first mark (§16's evidence): receipted, unanswered, late, refused.
     -- A receipted answer is never written over.
     CREATE TABLE IF NOT EXISTS first_mark_offers (
@@ -573,9 +602,9 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (entry_id, peer)
     );
 
-    -- AN ENTRY THIS SEAT HOLDS ENTRY_VOID (§16, the outage refund): an on-time
+    -- AN ENTRY THIS SIGNER NODE HOLDS ENTRY_VOID (§16, the outage refund): an on-time
     -- first mark that, when the start deadline passed, had fewer than the
-    -- threshold's receipts, the seats it was short of offered it and silent.
+    -- threshold's receipts, the signer nodes it was short of offered it and silent.
     -- The first mark and the evidence the deadline passed - the player's own
     -- signed mark past the line, or this round closed - are kept whole. Its
     -- lock is forfeited at once to the player's refund key (§23.2).
@@ -590,11 +619,11 @@ export function openStore(path = ':memory:') {
       learned        TEXT NOT NULL DEFAULT 'own'
     );
 
-    -- A FIRST MARK THIS SEAT, UP, REFUSED (M3.3-34, one-seat refusal): the
-    -- player's own signed, on-time first mark of an entry seated here, refused
-    -- when another seat handed it on (the stake not seen here, or the mark not
-    -- taken), while this seat holds no first mark of that entry. What lets this
-    -- seat reach §13C's VOID from its own store, as the seat that took it does.
+    -- A FIRST MARK THIS SIGNER NODE, UP, REFUSED (M3.3-34, one-signer node refusal): the
+    -- player's own signed, on-time first mark of an entry joined here, refused
+    -- when another signer node handed it on (the stake not seen here, or the mark not
+    -- taken), while this signer node holds no first mark of that entry. What lets this
+    -- signer node reach §13C's VOID from its own store, as the signer node that took it does.
     CREATE TABLE IF NOT EXISTS refused_first_marks (
       entry_id    BLOB PRIMARY KEY,
       round_id    BLOB NOT NULL,
@@ -615,8 +644,8 @@ export function openStore(path = ':memory:') {
       decided_ms  INTEGER NOT NULL
     );
 
-    -- WHAT A SEATED PLAYER CHOSE TO BE CALLED IN A ROUND (M3.3-34): the record
-    -- as the player signed it with the round key it is seated under
+    -- WHAT A JOINED PLAYER CHOSE TO BE CALLED IN A ROUND (M3.3-34): the record
+    -- as the player signed it with the round key it is joined under
     -- (lobby-name.js), kept to be shown to the other players. Nothing replays
     -- it and nothing is paid on it. A player's newest record wins.
     CREATE TABLE IF NOT EXISTS lobby_names (
@@ -628,10 +657,10 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (round_id, player_pubkey)
     );
 
-    -- WHERE THIS SEAT'S CLOSE OF A RUN STANDS, when it could not sign it at its
+    -- WHERE THIS SIGNER NODE'S CLOSE OF A RUN STANDS, when it could not sign it at its
     -- close (M3.3-34): HOLDING while a peer that matters is unreachable and the
     -- close is tried again, SIGNED once it was. Kept here, beside everything
-    -- else this seat must not forget across a restart.
+    -- else this signer node must not forget across a restart.
     CREATE TABLE IF NOT EXISTS close_holds (
       round_id   BLOB NOT NULL,
       entry_id   BLOB NOT NULL,
@@ -643,7 +672,7 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (round_id, entry_id)
     );
 
-    -- THE BEACON THIS SEAT'S CHAIN NAMED FOR A ROUND (M3.3-34): the block, its
+    -- THE BEACON THIS SIGNER NODE'S CHAIN NAMED FOR A ROUND (M3.3-34): the block, its
     -- height and time. A held close is retried after a restart, and a retry
     -- replays from this beacon; a chain reader that keeps its answers in memory
     -- has none for a round it has not read again.
@@ -679,7 +708,7 @@ export function openStore(path = ':memory:') {
   // every row it already holds was attempt 0.
   if (!db.prepare('PRAGMA table_info(pool_nonces)').all().some((c) => c.name === 'attempt'))
     db.exec('ALTER TABLE pool_nonces ADD COLUMN attempt INTEGER NOT NULL DEFAULT 0');
-  // AND BEFORE AN ENTRY_VOID SAID HOW THIS SEAT LEARNED IT (M3.3-34): every row
+  // AND BEFORE AN ENTRY_VOID SAID HOW THIS SIGNER NODE LEARNED IT (M3.3-34): every row
   // it already holds was decided on its own record.
   if (!db.prepare('PRAGMA table_info(entry_voids)').all().some((c) => c.name === 'learned'))
     db.exec("ALTER TABLE entry_voids ADD COLUMN learned TEXT NOT NULL DEFAULT 'own'");
@@ -702,8 +731,8 @@ export function openStore(path = ':memory:') {
  * on secp256k1, so an ed25519 identity could never be the key a bond is posted
  * under. Measured before this changed: of 500 fresh ed25519 identities, 235
  * happened to be valid secp x-only points and the node held the secp secret
- * for NONE of them. So "the committee is the seated census" was not a rule
- * anybody could satisfy - the trusted list and the seated list could not
+ * for NONE of them. So "the committee is the assigned census" was not a rule
+ * anybody could satisfy - the trusted list and the assigned list could not
  * contain the same bytes.
  *
  * It is one key now: x-only secp256k1, the key a bond is built from, the key

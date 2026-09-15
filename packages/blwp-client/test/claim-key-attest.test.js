@@ -1,14 +1,14 @@
 // THE CLAIM KEY A LOCK MAY NAME (v4.6.2 §23.1 step 0, F3).
 //
-// "Once selected, the settlement seats run a dealerless DKG for this round's
-// threshold key claim_pk and each seat signs (round_id, claim_pk). The key is
-// valid only with signatures from >=5 seats (claim_key_attestation_ref); a
-// client MUST refuse to lock to a key without them. Otherwise one seat could
+// "Once selected, the settlement signer nodes run a dealerless DKG for this round's
+// threshold key claim_pk and each signer node signs (round_id, claim_pk). The key is
+// valid only with signatures from >=5 signer nodes (claim_key_attestation_ref); a
+// client MUST refuse to lock to a key without them. Otherwise one signer node could
 // serve its own key and, after the shares are released, claim a loser's stake
 // for itself." protocol claim-key.js holds the attestation, its set's id and
 // claimKeyIsAttested; the round's threshold is its own (2 of 2, 5 of 7).
 //
-// MEASURED BEFORE (TASKBOOK, aed31be): GET /claim-key 404 on every seat, the
+// MEASURED BEFORE (TASKBOOK, aed31be): GET /claim-key 404 on every signer node, the
 // page's bundle had no way to check a key, entryFor wrote a zero attestation,
 // claimKeyIsAttested had 0 callers in node and client.
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../blwp-node/src/cores.js';
@@ -24,7 +24,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { openStore } from '../../blwp-node/src/store.js';
 import { serve } from '../../blwp-node/src/server.js';
-import { assumeSeated } from '../../blwp-node/test/seating.js';
+import { assumeAssigned } from '../../blwp-node/test/assignment.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { encodeRoundContract, roundId } from '../../protocol/src/contracts.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
@@ -41,18 +41,18 @@ const CLAIM = Uint8Array.from([0x02, ...b32(0xc1)]);
 const ROGUE = Uint8Array.from([0x03, ...b32(0xe7)]);
 
 /**
- * A paying round that names a federation, and its seats' daemons; `keyOf(i)` is the claim key seat i holds.
- * HARNESS KEY: each seat is handed its key, so a disagreeing or rogue seat can be staged. The shipping
- * path, where the seats make the key themselves, is blwp-node/test/claim-key-own.test.js.
+ * A paying round that names a federation, and its signer nodes' daemons; `keyOf(i)` is the claim key signer node i holds.
+ * HARNESS KEY: each signer node is handed its key, so a disagreeing or rogue signer node can be staged. The shipping
+ * path, where the signer nodes make the key themselves, is blwp-node/test/claim-key-own.test.js.
  */
-async function federationRound({ seats = 2, keyOf = () => CLAIM, federationId = TEST_FEDERATION_ID } = {}) {
+async function federationRound({ signerNodes = 2, keyOf = () => CLAIM, federationId = TEST_FEDERATION_ID } = {}) {
   const daemons = [];
-  for (let i = 0; i < seats; i++)
+  for (let i = 0; i < signerNodes; i++)
     daemons.push(await serve(openStore(':memory:'), { port: 0, funded: () => true, preflight: async () => ({ ready: true, why: 'test' }), claimKeyFor: () => keyOf(i) }));
   const now = BigInt(Date.now());
   const round = {
     networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
-    gameVerifySlots: seats, settlementSlots: seats, simCoreHash: CORE_HASH, startTimeMs: now + MIN_ENTRY_WINDOW_MS,
+    gameVerifySlots: signerNodes, settlementSlots: signerNodes, simCoreHash: CORE_HASH, startTimeMs: now + MIN_ENTRY_WINDOW_MS,
     entryCloseMs: now + MIN_ENTRY_WINDOW_MS + 600000n, objectionWindowMs: 3000n, custody: 'FEDERATION',
     slashMinimumServed: 20, slashRemainder: 'BURN', federationId, stakeExpiryBlocks: 144,
     publicationRelays: daemons.map((d) => `http://127.0.0.1:${d.port}`), donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,
@@ -65,11 +65,11 @@ async function federationRound({ seats = 2, keyOf = () => CLAIM, federationId = 
   for (const d of daemons) {
     const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(round) });
     assert.equal(r.status, 201, await r.text());
-    assumeSeated(d.round, rid, round.nodes);
+    assumeAssigned(d.round, rid, round.nodes);
   }
   const nodes = daemons.map((d) => `http://127.0.0.1:${d.port}`);
-  return { daemons, round: { ...round, id: rid }, rid, nodes, seats: round.nodes,
-    ask: (asked = nodes) => attestedClaimKey({ round: { ...round, id: rid }, seats: round.nodes, nodes: asked, curve: pageCurve }),
+  return { daemons, round: { ...round, id: rid }, rid, nodes, signerNodes: round.nodes,
+    ask: (asked = nodes) => attestedClaimKey({ round: { ...round, id: rid }, signerNodes: round.nodes, nodes: asked, curve: pageCurve }),
     close: async () => { for (const d of daemons) await d.close(); } };
 }
 
@@ -77,7 +77,7 @@ const callers = (dir) => readdirSync(ROOT + dir).filter((f) => f.endsWith('.js')
   .filter((f) => readFileSync(ROOT + dir + f, 'utf8').includes('claimKeyIsAttested(')).length;
 const entryWith = (f, extra = {}) => entryFor(f.round, { seed: b32(0x51), curve: pageCurve, random: (n) => new Uint8Array(n).fill(7), ...extra });
 
-test('two seats both attest the claim key: the page accepts it and its entry names the attested set, not zeros', async () => {
+test('two signer nodes both attest the claim key: the page accepts it and its entry names the attested set, not zeros', async () => {
   const f = await federationRound();
   try {
     const got = await f.ask();
@@ -92,57 +92,57 @@ test('two seats both attest the claim key: the page accepts it and its entry nam
       pageChecks: typeof bundled.attestedClaimKey === 'function',
       callers: { node: callers('packages/blwp-node/src/'), client: callers('packages/blwp-client/src/') },
     };
-    console.log('  FACTS (2 seats, one key):', JSON.stringify(facts));
+    console.log('  FACTS (2 signer nodes, one key):', JSON.stringify(facts));
     assert.deepEqual(facts, { attested: 2, needed: 2, entryRef: true, refIsZero: false, locks: true, pageChecks: true,
       callers: { node: 0, client: 1 } });
   } finally { await f.close(); }
 });
 
-test('seven seats: five attesting one key is enough, four is not', async () => {
+test('seven signer nodes: five attesting one key is enough, four is not', async () => {
   for (const [agree, ok] of [[5, true], [4, false]]) {
-    const f = await federationRound({ seats: 7, keyOf: (i) => (i < agree ? CLAIM : Uint8Array.from([0x02, ...b32(0x40 + i)])) });
+    const f = await federationRound({ signerNodes: 7, keyOf: (i) => (i < agree ? CLAIM : Uint8Array.from([0x02, ...b32(0x40 + i)])) });
     try {
       const got = await f.ask();
-      console.log(`  ${agree} of 7 seats attest one key: ${got.ok ? `accepted (${got.attested} of ${got.needed})` : got.why}`);
+      console.log(`  ${agree} of 7 signer nodes attest one key: ${got.ok ? `accepted (${got.attested} of ${got.needed})` : got.why}`);
       assert.equal(got.ok, ok, got.why);
       if (ok) assert.equal(toHex(got.claimPk), toHex(CLAIM));
-      else assert.match(got.why, /4 of 7 seats attest this claim key, and this round needs 5/);
+      else assert.match(got.why, /4 of 7 signer nodes attest this claim key, and this round needs 5/);
     } finally { await f.close(); }
   }
 });
 
-test('a seat that serves its own key is refused: asked alone it does not make the key, and among the others it is not the key taken', async () => {
-  const f = await federationRound({ seats: 7, keyOf: (i) => (i === 0 ? ROGUE : CLAIM) });
+test('a signer node that serves its own key is refused: asked alone it does not make the key, and among the others it is not the key taken', async () => {
+  const f = await federationRound({ signerNodes: 7, keyOf: (i) => (i === 0 ? ROGUE : CLAIM) });
   try {
     const alone = await f.ask([f.nodes[0]]);
-    assert.equal(alone.ok, false, 'one seat\'s own key was accepted');
-    assert.match(alone.why, /1 of 7 seats attest this claim key, and this round needs 5/);
+    assert.equal(alone.ok, false, 'one signer node\'s own key was accepted');
+    assert.match(alone.why, /1 of 7 signer nodes attest this claim key, and this round needs 5/);
     assert.throws(() => entryWith(f, { claimKey: alone }), /must refuse to lock to a key without it/);
     const all = await f.ask();
     assert.equal(all.ok, true, all.why);
-    assert.equal(toHex(all.claimPk), toHex(CLAIM), 'the rogue seat\'s key was taken');
+    assert.equal(toHex(all.claimPk), toHex(CLAIM), 'the rogue signer node\'s key was taken');
     assert.equal(all.attested, 6);
   } finally { await f.close(); }
 });
 
-test('a stranger\'s signed claim key counts for nothing, and a node not seated on the round attests none', async () => {
+test('a stranger\'s signed claim key counts for nothing, and a node not assigned to the round attests none', async () => {
   const f = await federationRound();
   try {
     const stranger = new Uint8Array(randomBytes(32));
-    const a = { roundId: f.rid, claimPk: ROGUE, seatPubkey: schnorr.getPublicKey(stranger) };
+    const a = { roundId: f.rid, claimPk: ROGUE, signerNodePubkey: schnorr.getPublicKey(stranger) };
     const forged = [...encodeClaimKeyAttestation(a), ...schnorr.sign(claimKeyAttestationId(a), stranger)];
     const fakeNode = 'http://stranger.example';
     const fetcher = (url, o) => (url.startsWith(fakeNode) ? Promise.resolve(new Response(new Uint8Array(forged))) : fetch(url, o));
-    const got = await attestedClaimKey({ round: f.round, seats: f.seats, nodes: [fakeNode, f.nodes[0]], curve: pageCurve, fetcher });
+    const got = await attestedClaimKey({ round: f.round, signerNodes: f.signerNodes, nodes: [fakeNode, f.nodes[0]], curve: pageCurve, fetcher });
     assert.equal(got.ok, false, 'a stranger\'s signature made up the threshold');
-    assert.match(got.why, /1 of 2 seats attest this claim key/);
-    // AND A NODE THAT IS NOT A SEAT OF THIS ROUND SIGNS NOTHING FOR IT.
+    assert.match(got.why, /1 of 2 signer nodes attest this claim key/);
+    // AND A NODE THAT IS NOT A SIGNER NODE OF THIS ROUND SIGNS NOTHING FOR IT.
     const outsider = await serve(openStore(':memory:'), { port: 0, funded: () => true, claimKeyFor: () => CLAIM });
     try {
       await fetch(`http://127.0.0.1:${outsider.port}/round`, { method: 'POST', body: encodeRoundContract(f.round) });
       const r = await fetch(`http://127.0.0.1:${outsider.port}/claim-key?round=${toHex(f.rid)}`);
       assert.equal(r.status, 409);
-      assert.match(await r.text(), /not seated on that round/);
+      assert.match(await r.text(), /not assigned to that round/);
     } finally { await outsider.close(); }
   } finally { await f.close(); }
 });

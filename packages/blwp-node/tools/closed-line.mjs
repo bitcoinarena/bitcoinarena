@@ -1,10 +1,10 @@
 // ENTRY_VOID (§16) WHEN THE PLAYER'S CHAIN NEVER PASSES THE START LINE, ON A REAL
 // FEDERATION. Run by outage-regtest.sh with OUTAGE_SCRIPT=closed-line.mjs.
 //
-// The Daily's own 2-of-2 round naming the federation, the seats making the
+// The Daily's own 2-of-2 round naming the federation, the signer nodes making the
 // round's claim key themselves; the round names no start deadline (900). One
-// player locks as the page does and both seats commit the lock. Then:
-//   seat B goes down; the player sends A the first batch and the first mark at
+// player locks as the page does and both signer nodes commit the lock. Then:
+//   signer node B goes down; the player sends A the first batch and the first mark at
 //     tick 60 - on time - and nothing more (the chain never passes 900)
 //   A closes the round: its only evidence is "closed"
 //   B comes back, its round still open; the player sends B the first mark
@@ -71,13 +71,13 @@ const entryVoidAt = async (base, eid) => { const r = await fetch(`${base}/entry-
 const shortAnswer = (s) => (typeof s === 'string' ? s.replace(/^(error [A-Z_]+).*/, '$1').slice(0, 60) : `receipt (${s.length} bytes)`);
 
 const round = await standUpRound({ host: '127.0.0.1', portA: 18595, portB: 18596, stakeMsat: 1000000n,
-  federationId, invite: env.INVITE, seat: { stakeLocks: port } });
+  federationId, invite: env.INVITE, signerNode: { stakeLocks: port } });
 const rid = fromHex(round.id);
 const contract = round.contract;
 const withId = { ...contract, id: rid };
 let code = 0;
 try {
-  const claimKey = await awaitAttestedClaimKey({ round: withId, seats: contract.nodes, nodes: round.nodes, curve: pageCurve });
+  const claimKey = await awaitAttestedClaimKey({ round: withId, signerNodes: contract.nodes, nodes: round.nodes, curve: pageCurve });
   say({ step: 'claim key', ok: claimKey.ok, attested: claimKey.attested, needed: claimKey.needed,
     startDeadlineTicks: contract.startDeadlineTicks === undefined ? 'omitted (900)' : contract.startDeadlineTicks });
   if (!claimKey.ok) throw new Error(claimKey.why);
@@ -85,7 +85,7 @@ try {
 
   const seed = random(32);
   const player = playerFor(withId, { seed, curve: pageCurve });
-  const stake = await stakeFor(withId, { seats: contract.nodes, curve: pageCurve, random, playerPubkey: player.pubkey, needed: 2 });
+  const stake = await stakeFor(withId, { signerNodes: contract.nodes, curve: pageCurve, random, playerPubkey: player.pubkey, needed: 2 });
   const put = await postHandout(stake, round.nodes, { needed: 2 });
   let paying = Promise.resolve(null);
   const lock = await lockStake({ round: contract, roundId: rid, invite: env.INVITE, seed, stake, claimKey,
@@ -95,11 +95,11 @@ try {
   const entry = { roundId: rid, sessionPubkey: ed25519.getPublicKey(session),
     ...entryFor(withId, { seed, curve: pageCurve, random, stake, claimKey, stakeLock: lock }) };
   const eid = entryId(entry);
-  const seated = [];
-  for (const b of round.nodes) seated.push((await fetch(`${b}/entry`, { method: 'POST', body: encodeEntryContract(entry) })).status);
+  const joined = [];
+  for (const b of round.nodes) joined.push((await fetch(`${b}/entry`, { method: 'POST', body: encodeEntryContract(entry) })).status);
   const handed = await handLock({ entryId: eid, fields: lock.fields, nodes: round.nodes, needed: 2 });
   say({ step: 'locked', outpoint: `${toHex(lock.outpoint.txid)}:${lock.outpoint.outIdx}`, amountMsat: lock.fields.amountMsat,
-    expiration: lock.fields.expiration, handouts: put.accepted, entries: seated, locks: handed.said.map((s) => s.status), committed: handed.committed });
+    expiration: lock.fields.expiration, handouts: put.accepted, entries: joined, locks: handed.said.map((s) => s.status), committed: handed.committed });
 
   // B DOWN; THE FIRST MARK AT A ONLY, ON TIME - AND NOTHING MORE; A CLOSES.
   await round.b.close();
@@ -134,7 +134,7 @@ try {
   const bAfter = await entryVoidAt(Bnode, eid);
   say({ step: 'forfeit asked', ok: forfeit.ok, msAfterAsked: Date.now() - asked, why: forfeit.ok ? null : forfeit.why.slice(0, 260),
     verifies: forfeit.ok && schnorr.verify(fromHex(forfeit.signature), fromHex(forfeit.contractId), claimKey.claimPk.subarray(1)),
-    bAfter: bAfter.outcome || bAfter.status, keptBySeats: [round.a, round.b].map((d) => !!d.round.forfeit(eid)),
+    bAfter: bAfter.outcome || bAfter.status, keptBySignerNodes: [round.a, round.b].map((d) => !!d.round.forfeit(eid)),
     resultsAnywhere: [round.a, round.b].map((d) => d.round.results(rid, eid).length) });
 
   if (forfeit.ok) {

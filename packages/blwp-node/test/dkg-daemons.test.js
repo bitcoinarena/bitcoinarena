@@ -1,10 +1,10 @@
 // SEVEN DAEMONS ON SEVEN SOCKETS MAKE A KEY NOBODY DEALT.
 //
-// M3.3 item 14. `dkg.test.js` proves the round's arithmetic with the seats in
+// M3.3 item 14. `dkg.test.js` proves the round's arithmetic with the signer nodes in
 // one process; this puts them on sockets, which is the difference between "the
 // maths works" and "a committee did it". Every share here is made by the
 // daemon that keeps it, and the only thing that crosses a wire is a
-// contribution - commitments and one SEALED envelope per seat.
+// contribution - commitments and one SEALED envelope per signer node.
 //
 // The number this replaces: before it, the process that started these daemons
 // handed each one its share and therefore held all seven.
@@ -33,8 +33,8 @@ async function daemons(n = SHARES_TOTAL) {
     nodes.push(await serve(openStore(':memory:'), { port: 0, ...FUNDED, poolCurve: curve }));
   for (const node of nodes)
     node.dkg.peers = nodes.filter((o) => o !== node).map((o) => `http://127.0.0.1:${o.port}`);
-  const seats = nodes.map((x) => x.round.pubkey);
-  return { nodes, seats, close: () => Promise.all(nodes.map((x) => x.close())) };
+  const signerNodes = nodes.map((x) => x.round.pubkey);
+  return { nodes, signerNodes, close: () => Promise.all(nodes.map((x) => x.close())) };
 }
 
 test('every daemon deals once, keeps one share, and they all name the same key', async () => {
@@ -43,37 +43,37 @@ test('every daemon deals once, keeps one share, and they all name the same key',
     // Each one has to know the committee before it can deal to it - and no
     // daemon was handed a share by anybody.
     for (const node of c.nodes) {
-      const before = node.dkg.seatFor(c.seats);
+      const before = node.dkg.signerNodeFor(c.signerNodes);
       assert.equal(before.ok, false, 'a daemon held a share before the DKG ran');
     }
 
     // THE ROUND, over real sockets. Run on every node; each deals, pushes to
     // its peers, pulls whatever it missed, and combines.
     const ran = [];
-    for (const node of c.nodes) ran.push(await node.dkg.run(c.seats));
+    for (const node of c.nodes) ran.push(await node.dkg.run(c.signerNodes));
 
     // The last to run sees everybody. The earlier ones may not have, because a
-    // seat that ran first could not pull a deal nobody had made - so they run
+    // signer node that ran first could not pull a deal nobody had made - so they run
     // again, which is harmless: the deal is made once and the contributions
     // are keyed by dealer.
-    for (const node of c.nodes) await node.dkg.run(c.seats);
+    for (const node of c.nodes) await node.dkg.run(c.signerNodes);
 
-    const held = c.nodes.map((node) => node.dkg.seatFor(c.seats));
+    const held = c.nodes.map((node) => node.dkg.signerNodeFor(c.signerNodes));
     for (const h of held) assert.equal(h.ok, true, h.why);
 
-    // ONE SHARE EACH, ALL DIFFERENT, AND EVERY SEAT NUMBER USED ONCE.
-    assert.equal(new Set(held.map((h) => h.seat.share)).size, SHARES_TOTAL,
+    // ONE SHARE EACH, ALL DIFFERENT, AND EVERY SIGNER NODE NUMBER USED ONCE.
+    assert.equal(new Set(held.map((h) => h.signerNode.share)).size, SHARES_TOTAL,
       'two daemons hold the same share');
-    assert.deepEqual([...held.map((h) => h.seat.id)].sort((a, b) => a - b), [1, 2, 3, 4, 5, 6, 7]);
+    assert.deepEqual([...held.map((h) => h.signerNode.id)].sort((a, b) => a - b), [1, 2, 3, 4, 5, 6, 7]);
 
-    // EVERY SEAT'S PUBLIC SHARE, each daemon computing all seven from the
-    // commitments alone - the point of the very share each seat holds.
+    // EVERY SIGNER NODE'S PUBLIC SHARE, each daemon computing all seven from the
+    // commitments alone - the point of the very share each signer node holds.
     for (const node of c.nodes) {
-      const pub = node.dkg.publicSharesFor(c.seats);
+      const pub = node.dkg.publicSharesFor(c.signerNodes);
       assert.equal(pub.ok, true, pub.why);
       for (const h of held)
-        assert.equal(Buffer.from(pub.shares.get(String(h.seat.id))).toString('hex'),
-          Buffer.from(dkgCurve.pointFromScalar(h.seat.share)).toString('hex'), `seat ${h.seat.id}'s public share`);
+        assert.equal(Buffer.from(pub.shares.get(String(h.signerNode.id))).toString('hex'),
+          Buffer.from(dkgCurve.pointFromScalar(h.signerNode.share)).toString('hex'), `signer node ${h.signerNode.id}'s public share`);
     }
 
     // AND THE SAME GROUP KEY, computed by each of them from public data.
@@ -84,7 +84,7 @@ test('every daemon deals once, keeps one share, and they all name the same key',
 
     // AND THE ONE THING THAT MATTERS: no process here holds a threshold.
     for (const node of c.nodes) {
-      const rows = node.round.contributionsOf(epochId(c.seats));
+      const rows = node.round.contributionsOf(epochId(c.signerNodes));
       assert.equal(rows.length, SHARES_TOTAL, 'a daemon stored a different number of deals');
       // It stored seven CONTRIBUTIONS - which are commitments and sealed
       // envelopes - and exactly one share it can open.
@@ -92,9 +92,9 @@ test('every daemon deals once, keeps one share, and they all name the same key',
       for (const r of rows) {
         const one = decodeContribution(r.bytes);
         for (const sh of one.shares)
-          if (toHex(sh.seatPubkey) === toHex(node.round.pubkey)) opens++;
+          if (toHex(sh.signerNodePubkey) === toHex(node.round.pubkey)) opens++;
       }
-      assert.equal(opens, SHARES_TOTAL, 'a daemon was not dealt one envelope by each seat');
+      assert.equal(opens, SHARES_TOTAL, 'a daemon was not dealt one envelope by each signer node');
     }
     console.log(`  each daemon holds 1 share of ${SHARES_NEEDED} needed - no process holds a threshold`);
   } finally { await c.close(); }
@@ -103,25 +103,25 @@ test('every daemon deals once, keeps one share, and they all name the same key',
 test('five of the seven sign under the key they made, and four do not', async () => {
   const c = await daemons();
   try {
-    for (const node of c.nodes) await node.dkg.run(c.seats);
-    for (const node of c.nodes) await node.dkg.run(c.seats);
-    const held = c.nodes.map((node) => node.dkg.seatFor(c.seats));
+    for (const node of c.nodes) await node.dkg.run(c.signerNodes);
+    for (const node of c.nodes) await node.dkg.run(c.signerNodes);
+    const held = c.nodes.map((node) => node.dkg.signerNodeFor(c.signerNodes));
     for (const h of held) assert.equal(h.ok, true, h.why);
     const groupPublicKey = held[0].pool.groupPublicKey;
 
     const signWith = (chosen) => {
       const message = rand(32);
       const nonces = chosen.map((h) => ({
-        hiding: nonceGenerate(rand(32), h.seat.share),
-        binding: nonceGenerate(rand(32), h.seat.share),
+        hiding: nonceGenerate(rand(32), h.signerNode.share),
+        binding: nonceGenerate(rand(32), h.signerNode.share),
       }));
       const commitments = chosen.map((h, i) => ({
-        id: h.seat.id,
+        id: h.signerNode.id,
         hiding: curve.pointFromScalar(nonces[i].hiding),
         binding: curve.pointFromScalar(nonces[i].binding),
       }));
       const shares = chosen.map((h, i) => signShare340({
-        id: h.seat.id, share: h.seat.share, groupPublicKey,
+        id: h.signerNode.id, share: h.signerNode.share, groupPublicKey,
         nonces: nonces[i], message, commitments, curve,
       }));
       const sig = aggregate340({ commitments, message, groupPublicKey, shares, curve });
@@ -139,21 +139,21 @@ test('five of the seven sign under the key they made, and four do not', async ()
 });
 
 test('a daemon deals once and serves the same bytes after a restart', async () => {
-  // THE WHOLE COMMITTEE, because the threshold is five: three seats cannot
+  // THE WHOLE COMMITTEE, because the threshold is five: three signer nodes cannot
   // carry it, and a fixture of three measured the arity check rather than the
   // deal-once rule it is named for.
   const c = await daemons();
   try {
-    const first = await c.nodes[0].dkg.deal(c.seats);
+    const first = await c.nodes[0].dkg.deal(c.signerNodes);
     assert.equal(first.ok, true, first.why);
-    const again = await c.nodes[0].dkg.deal(c.seats);
+    const again = await c.nodes[0].dkg.deal(c.signerNodes);
     assert.equal(again.ok, true, again.why);
     assert.equal(again.again, true, 'a second call dealt a second polynomial');
     assert.deepEqual(again.contribution.commitments, first.contribution.commitments,
       'the daemon re-dealt, so a peer holding the first has shares of a key nobody else has');
 
-    // AND THE DOOR SERVES IT, which is how a seat that was down catches up.
-    const id = toHex(epochId(c.seats));
+    // AND THE DOOR SERVES IT, which is how a signer node that was down catches up.
+    const id = toHex(epochId(c.signerNodes));
     const r = await fetch(`http://127.0.0.1:${c.nodes[0].port}/dkg?epoch=${id}`);
     assert.equal(r.status, 200);
     const served = decodeContribution(new Uint8Array(await r.arrayBuffer()));
@@ -166,8 +166,8 @@ test('a daemon deals once and serves the same bytes after a restart', async () =
 test('a stranger cannot contribute, and an unknown epoch is refused', async () => {
   const c = await daemons();
   try {
-    await c.nodes[0].dkg.deal(c.seats);
-    const id = toHex(epochId(c.seats));
+    await c.nodes[0].dkg.deal(c.signerNodes);
+    const id = toHex(epochId(c.signerNodes));
 
     // A COMMITTEE THIS NODE IS NOT ON. Nobody dealt it, so nothing is stored
     // and there is nothing to contribute to.
@@ -180,7 +180,7 @@ test('a stranger cannot contribute, and an unknown epoch is refused', async () =
 
     // AND A CONTRIBUTION FOR AN EPOCH THIS NODE HAS NEVER HEARD OF.
     const strange = await c.nodes[1].dkg.deal(outsiders);
-    assert.equal(strange.ok, false, 'a daemon dealt into a committee it is not seated on');
+    assert.equal(strange.ok, false, 'a daemon dealt into a committee it is not assigned to');
     assert.match(strange.why, /not on that committee/);
 
     // A body that is not a contribution at all.

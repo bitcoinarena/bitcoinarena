@@ -55,7 +55,7 @@ public class ImportedModelTests
             // see this: a hull tilted the wrong way has its centre at exactly
             // the right height, which is all the old check looked at, while one
             // track corner hangs 0.85 m under the ground and the opposite one
-            // floats 0.79 m over it. Seated correctly the corners come in
+            // floats 0.79 m over it. Resting correctly the corners come in
             // within +/-0.16 m, so 0.45 m is a real failure and not noise.
             float low = 99f, high = -99f;
             foreach (var corner in new[]

@@ -52,7 +52,7 @@ walk(SRC + 'lobby.js');
 walk(SRC + 'identity.js');
 // AND THE PLAYER'S DONATION (M3.2 6e): the choice, judged and kept per round.
 walk(SRC + 'donation-choice.js');
-// AND ITS SET (M3.2 6e): the round's donation set from its seats, checked. The
+// AND ITS SET (M3.2 6e): the round's donation set from its signer nodes, checked. The
 // donation itself is paid by the player's own Client (payDonation).
 walk(SRC + 'donation-pay.js');
 
@@ -125,38 +125,38 @@ out += '         fetchDonationSet: fetchDonationSet, donationRecipientsLine: don
 // `payDonation`'s answer and the line the page paints from it.
 out += '         donationPaidState: donationPaidState, donationPaidLine: donationPaidLine,\n';
 // AND THE SAME LINE FROM THE TAB'S NOTES ALONE, for a round link that cannot be
-// reached - no seat, no set, nothing asked of a wallet.
+// reached - no signer node, no set, nothing asked of a wallet.
 out += '         donationNotedState: donationNotedState, notedDonationForLink: notedDonationForLink,\n';
-// WHERE THE STAKE WENT, AFTER SETTLEMENT: the seats' hold state, the hold's
-// amount and the round's pool, asked of every settlement seat, and its line.
+// WHERE THE STAKE WENT, AFTER SETTLEMENT: the signer nodes' hold state, the hold's
+// amount and the round's pool, asked of every settlement signer node, and its line.
 out += '         settlementBy: settlementBy, settledLine: settledLine,\n';
-// THE STAKE THE PAGE DEALS, and the seats it is dealt to. `stakeFor` was in
-// this bundle already and had ZERO CALLERS - the page took a seat with 32
+// THE STAKE THE PAGE DEALS, and the signer nodes it is dealt to. `stakeFor` was in
+// this bundle already and had ZERO CALLERS - the page joined with 32
 // random bytes where `sha256(P)` belongs and 32 zero bytes where the shares
-// belong. `fetchSettlementSeats` is what stops it being dealt to the wrong
+// belong. `fetchSettlementSignerNodes` is what stops it being dealt to the wrong
 // committee: `contract.nodes` is the UNION of the role committees, and shares
-// sealed to a game-verify seat are a stake nobody can open at payout.
-out += '         stakeFor: stakeFor, fetchSettlementSeats: fetchSettlementSeats,\n';
+// sealed to a game-verify signer node are a stake nobody can open at payout.
+out += '         stakeFor: stakeFor, fetchSettlementSignerNodes: fetchSettlementSignerNodes,\n';
 out += '         roundPays: roundPays, postHandout: postHandout, attestedClaimKey: attestedClaimKey, roundLocks: roundLocks,\n';
 out += '         awaitAttestedClaimKey: awaitAttestedClaimKey,\n';
 // THE THRESHOLD THE STAKE IS DEALT AT - the round's (2 of 2, 5 of 7), the
 // same rule the node's door and settle read, never the slot count (M3.3-26).
 out += '         sharesNeededFor: sharesNeededFor,\n';
 // THE PLAYER'S STAKE LOCK (W1b): what the injected lock client is asked, and the
-// hand-over of the lock it made to every seat.
+// hand-over of the lock it made to every signer node.
 out += '         lockStake: lockStake, handLock: handLock, lockSecretFor: lockSecretFor, lockLine: lockLine,\n';
 out += '         saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, keptLockUse: keptLockUse,\n';
 out += '         findLock: findLock, refundStake: refundStake, forfeitOf: forfeitOf, redeemStake: redeemStake,\n';
-// AND THE WINNER'S PAYOUT (6d, W4): the seats' accepted settlement, the payout
+// AND THE WINNER'S PAYOUT (6d, W4): the signer nodes' accepted settlement, the payout
 // contract to this seed's key spent into the tab's wallet, and its line.
 out += '         settlementOf: settlementOf, redeemPayout: redeemPayout, payoutLine: payoutLine,\n';
-// AND THE PLAYER'S OWN STAKE BACK BY THE SEATS' FORFEIT, after the window, and its line.
+// AND THE PLAYER'S OWN STAKE BACK BY THE SIGNER NODES' FORFEIT, after the window, and its line.
 out += '         returnStake: returnStake, stakeBackLine: stakeBackLine,\n';
 // AND WHAT THE TAB STILL HAS TO COLLECT, kept per round, so a reload collects too.
 out += '         saveCollect: saveCollect, savedCollects: savedCollects, markCollectDone: markCollectDone,\n';
 // AND 6d's DESTINATION: the tab's round wallet withdrawn over Lightning to the player's own.
 out += '         tabLockWallet: tabLockWallet, withdrawCollected: withdrawCollected, withdrawLine: withdrawLine, makeInvoice: makeInvoice,\n';
-// AND A LOCK NO SEAT WILL SETTLE, BACK BY THE PLAYER'S KEY AFTER ITS EXPIRY, from the tab's record.
+// AND A LOCK NO SIGNER NODE WILL SETTLE, BACK BY THE PLAYER'S KEY AFTER ITS EXPIRY, from the tab's record.
 out += '         refundKept: refundKept, refundLine: refundLine,\n';
 // AND NOTHING SPENT BEFORE THE PLAYER WITHDRAWS: the look that spends nothing, and the collect
 // that happens only inside a withdraw, in one action. (join's owedLine is the hold panel's.)
@@ -171,7 +171,7 @@ out += '         dailyLobbySearch: dailyLobbySearch,\n';
 // WHO THE TAB IS IN THE LOBBY (M3.3-34): the generated key's public half, the
 // name made from it, and the player's own name over it.
 out += '         tabIdentity: tabIdentity, setPlayerName: setPlayerName, generatedName: generatedName,\n';
-// AND THE OTHERS' NAMES (M3.3-34): this tab's signed record for its seats, and
+// AND THE OTHERS' NAMES (M3.3-34): this tab's signed record for its signer nodes, and
 // the round's records fetched and checked before a name is drawn.
 out += '         nameRecordFor: nameRecordFor, postName: postName, namesOf: namesOf, checkedNames: checkedNames, shownNameOf: shownNameOf,\n';
 out += '         boardNames: boardNames,\n';
@@ -182,7 +182,7 @@ out += '         tabWallet: tabWallet, spendLog: spendLog, spentLine: spentLine,
 // A STAKE THAT CAME BACK (its hold CANCELLED or EXPIRED) is written into the log as
 // returned, so the running total counts only what left the wallet and stayed gone.
 out += '         noteSettlement: noteSettlement,\n';
-// WHAT THE SEAT COSTS, AS 22A's TRANSPARENCY LIST: the commitment, the fee and
+// WHAT THE ENTRY COSTS, AS 22A's TRANSPARENCY LIST: the commitment, the fee and
 // the donation out of it, the net stake, and what the wallet is asked. The
 // page renders it; the subtraction is `netStakeMsat`'s.
 out += '         owedLine: owedLine,\n';

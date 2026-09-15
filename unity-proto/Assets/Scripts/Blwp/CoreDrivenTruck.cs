@@ -92,7 +92,7 @@ namespace Blwp
         // they were put on the ground where they belong, the body stayed up
         // and the truck looked jacked up on stilts.
         float _bodyAboveGround = 1.4f;
-        float _saidSeat = -99f;
+        float _saidRest = -99f;
         float _spin;
 
         void Awake()
@@ -327,7 +327,7 @@ namespace Blwp
 
             // THE WHEEL'S OWN SIZE AND ITS OWN CENTRE.
             //
-            // A wheel was seated one COLLIDER radius above the ground - 0.550 m
+            // A wheel was resting one COLLIDER radius above the ground - 0.550 m
             // - while the streamed mesh reaches 0.728 m from its pivot. The
             // difference is 0.178 m and that is exactly how far the tyre was
             // measured inside the road, standing still, with the core and the
@@ -366,8 +366,8 @@ namespace Blwp
                 // AND THE WHEEL ROLLS ON THE SIZE IT IS DRAWN AS.
                 //
                 // The spin was advanced on the COLLIDER's radius while every
-                // seating line used the mesh's, which is the same leftover
-                // 3bd4208 took out of the seating and left in the rolling:
+                // resting line used the mesh's, which is the same leftover
+                // 3bd4208 took out of the resting and left in the rolling:
                 // 0.550 m against 0.523 m, so the tyre turned 5.2% slower than
                 // the ground it stands on and slipped for the whole drive.
                 _rollRadius = mean;
@@ -375,9 +375,9 @@ namespace Blwp
         }
 
         /// <summary>
-        /// The radius the wheels are SEATED on, and the meshes being seated.
+        /// The radius the wheels are RESTING on, and the meshes being resting.
         ///
-        /// Read-only, and here so the seating can be measured rather than
+        /// Read-only, and here so the resting can be measured rather than
         /// looked at: a wheel is placed one radius above the ground, so if the
         /// radius is not the mesh's own the mesh sinks or floats by exactly
         /// the difference and nothing in the game says so.
@@ -402,12 +402,12 @@ namespace Blwp
         ///
         /// So `Box` is kept, because it is what a screenshot of the old probe
         /// shows, and `Tyre` is the reading that means something: the mesh's
-        /// CENTRE against the height it is seated at. The wheel is a disc
+        /// CENTRE against the height it is resting at. The wheel is a disc
         /// whose two cross-axle extents are equal, so its distance from centre
         /// to rim is the same at every spin angle - which makes `Tyre` the
         /// only one of the two that answers "is the tyre in the road".
         /// </summary>
-        public struct WheelSeating
+        public struct WheelResting
         {
             public float Ground;      // the surface under this wheel
             public float Radius;      // the mesh's own radius, in world metres
@@ -422,9 +422,9 @@ namespace Blwp
         }
 
         /// <summary>Reads wheel `i` after a `PoseWheels`. False if it has none.</summary>
-        public bool SeatingOf(int i, out WheelSeating seating)
+        public bool RestingOf(int i, out WheelResting resting)
         {
-            seating = default;
+            resting = default;
             if (_wheels == null || i < 0 || i >= _wheels.Length || _wheels[i] == null) return false;
 
             var rs = _wheels[i].GetComponentsInChildren<Renderer>();
@@ -433,10 +433,10 @@ namespace Blwp
             for (int k = 1; k < rs.Length; k++) b.Encapsulate(rs[k].bounds);
 
             var at = transform.TransformPoint(_wheelMount[i]);
-            seating.Ground = Ground(at.x, at.z);
-            seating.Radius = i < _wheelR.Length ? _wheelR[i] : _wheelRadius;
-            seating.CentreY = b.center.y;
-            seating.BoxBottomY = b.min.y;
+            resting.Ground = Ground(at.x, at.z);
+            resting.Radius = i < _wheelR.Length ? _wheelR[i] : _wheelRadius;
+            resting.CentreY = b.center.y;
+            resting.BoxBottomY = b.min.y;
             return true;
         }
 
@@ -473,13 +473,13 @@ namespace Blwp
         /// every wheel rolls at the speed the core reports. Purely visual, so
         /// the spin may use frame time - nothing here is read back.
         /// </summary>
-        float _nextSeatingSay;
+        float _nextRestingSay;
 
         /// <summary>
         /// Puts the wheel meshes where the core's drive says they are.
         ///
         /// The steer angle, the road speed and the frame time are handed in
-        /// rather than read here, so the seating can be run - unchanged - in
+        /// rather than read here, so the resting can be run - unchanged - in
         /// an editor where `BlwpCore` is a stub and would answer nothing but
         /// zero. The Update call site passes the core's own three numbers.
         /// </summary>
@@ -490,7 +490,7 @@ namespace Blwp
             // the list collected once at startup goes stale. Cheap to notice,
             // and invisible if it is missed - the old wheels simply keep being
             // posed while the new ones sit wherever they were instantiated.
-            if (WheelsWentStale()) { CollectWheels(); _nextSeatingSay = 0f; }
+            if (WheelsWentStale()) { CollectWheels(); _nextRestingSay = 0f; }
             if (_wheels == null || _wheels.Length == 0) return;
 
             // Once per frame, not once per wheel: advancing it inside the loop
@@ -511,7 +511,7 @@ namespace Blwp
                          * Quaternion.Euler(_spin, 0f, 0f);
 
                 // The MESH's centre goes one MESH radius above the ground, and
-                // the pivot is placed wherever that requires. Seating the pivot
+                // the pivot is placed wherever that requires. Resting the pivot
                 // instead put the tyre 0.178 m into the road.
                 float radius = i < _wheelR.Length ? _wheelR[i] : _wheelRadius;
                 Vector3 hub = i < _wheelHub.Length ? spin * _wheelHub[i] : Vector3.zero;
@@ -519,18 +519,18 @@ namespace Blwp
                 _wheels[i].SetPositionAndRotation(at - hub, spin);
 
                 // WHERE THE WHEEL ACTUALLY ENDED UP, once per set of wheels.
-                // A wheel is seated one `_wheelRadius` above the ground, and
+                // A wheel is resting one `_wheelRadius` above the ground, and
                 // that radius comes off a WheelCollider - so if the streamed
                 // mesh is a different size the mesh sinks or floats by exactly
                 // the difference, and nothing in the game says so because the
-                // body is seated off the same number and looks right. The
+                // body is resting off the same number and looks right. The
                 // editor cannot see this: the wheels are streamed, so they
                 // only exist in a player.
                 // Behind the DEBUG toggle now that the letter is closed. It
                 // is the instrument that produced the finding and a future
                 // re-measurement wants it, but a shipping build should not be
                 // writing a console line every two seconds forever.
-                if (GameSettings.Debug && Time.time > _nextSeatingSay && i == 0)
+                if (GameSettings.Debug && Time.time > _nextRestingSay && i == 0)
                 {
                     var rs = _wheels[i].GetComponentsInChildren<Renderer>();
                     if (rs.Length > 0)
@@ -568,7 +568,7 @@ namespace Blwp
                                   + $"{b.extents.y:F3} m, resting on {(i < _wheelR.Length ? _wheelR[i] : _wheelRadius):F3} m, "
                                   + $"bottom {b.min.y:F3}, ground {g:F3}, "
                                   + $"box sunk {g - b.min.y:F3} m, tyre sunk "
-                                  + $"{(SeatingOf(i, out var seat) ? seat.Tyre : float.NaN):F3} m "
+                                  + $"{(RestingOf(i, out var resting) ? resting.Tyre : float.NaN):F3} m "
                                   + $"| core {core:F3}, "
                                   + $"terrain {drawn:F3}, deck lift {deck:F3}, "
                                   + $"ribbon wear {wear:F3}, core-terrain {core - drawn:F3}, "
@@ -589,7 +589,7 @@ namespace Blwp
                     }
                 }
             }
-            if (Time.time > _nextSeatingSay) _nextSeatingSay = Time.time + 2f;
+            if (Time.time > _nextRestingSay) _nextRestingSay = Time.time + 2f;
         }
 
         /// <summary>
@@ -691,7 +691,7 @@ namespace Blwp
         /// says what the ground is, and it is the relief LESS the craters.
         /// Unity's terrain is the relief alone: `MempoolTerrain` draws the hills
         /// the round started with and has never heard of a strike, so a truck
-        /// seated on `SampleSurface` stood on a lid over its own hole and hovered
+        /// resting on `SampleSurface` stood on a lid over its own hole and hovered
         /// by the crater's full depth - 6.00 m at the deepest.
         ///
         /// THE LIFT STAYS HERE. The deck is laid above the ground by a constant
@@ -729,12 +729,12 @@ namespace Blwp
         /// HOW HIGH A TRUCK OF THIS SHAPE SITS AT A POSE, AND THERE IS ONE RULE.
         ///
         /// `Apply` fits the body across its four contact points; the ghosts were
-        /// seated on a SINGLE sample under their centre, which is the same
+        /// resting on a SINGLE sample under their centre, which is the same
         /// number only on flat ground. Measured in PlayMode at one pose on this
         /// map: the local truck stood at y 6.840 and a ghost handed the local
         /// truck's own x, z and heading stood at 7.422 - 0.58 m apart, drawn
         /// from the same ground in the same frame. A picture of a truck that
-        /// floats above the truck it pictures is a second seating rule, and two
+        /// floats above the truck it pictures is a second resting rule, and two
         /// rules for one thing is how they drift.
         /// </summary>
         public float RideAt(float x, float z, float headingDegrees)
@@ -790,9 +790,9 @@ namespace Blwp
             // the fault that put the dust skirt 23 m down and the mushroom's
             // stem 26 m down earlier in this letter. Read off the renderers,
             // not off the offset that was asked for.
-            if (Time.time - _saidSeat > 4f)
+            if (Time.time - _saidRest > 4f)
             {
-                _saidSeat = Time.time;
+                _saidRest = Time.time;
                 var rs = GetComponentsInChildren<Renderer>();
                 if (rs.Length > 0)
                 {

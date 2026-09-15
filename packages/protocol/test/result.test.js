@@ -158,7 +158,7 @@ test('five distinct committee members on the same result, and nothing else', () 
  * Measured before this was checked: five keys on no committee at all, signing
  * the same bytes, came back "5 of 5 signed the same result:
  * PROVISIONALLY_FINAL". A result is final when the round's own committee says
- * so, and a stranger's signature is not a seat.
+ * so, and a stranger's signature is not a signer node.
  */
 test('strangers cannot make a result final, and cannot stop one either', () => {
   const agreed = resultId(result());

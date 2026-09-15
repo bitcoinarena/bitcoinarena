@@ -1,13 +1,13 @@
 // THE PAID WALK-AWAY ON A REAL FEDERATION (§15, §23.2; M3.3-34 walk-away step 6).
 // Run by outage-regtest.sh with OUTAGE_SCRIPT=walk-away.mjs.
 //
-// The Daily's own 2-of-2 round naming the federation, the seats making the
+// The Daily's own 2-of-2 round naming the federation, the signer nodes making the
 // round's claim key themselves; a short objection window so FINAL comes inside
-// the run. Player W locks as the page locks, both seats commit the lock - and W
-// sends nothing at all. Both seats close. Ruled (2026-09-12): no first mark is
-// FORFEIT, score 0, signed by both seats, final 2 of 2 - never ENTRY_VOID, never
+// the run. Player W locks as the page locks, both signer nodes commit the lock - and W
+// sends nothing at all. Both signer nodes close. Ruled (2026-09-12): no first mark is
+// FORFEIT, score 0, signed by both signer nodes, final 2 of 2 - never ENTRY_VOID, never
 // a refund. So: the forfeit door refuses (FORFEIT 0 is not a qualifier), and W
-// cannot redeem the lock before its expiry - not through the seats, not by
+// cannot redeem the lock before its expiry - not through the signer nodes, not by
 // refund. And past the expiry the refund goes through: the money hole every
 // loser has until W4 claims a forfeited lock (listed, parked), measured here.
 import { readFileSync, copyFileSync, mkdtempSync } from 'node:fs';
@@ -58,7 +58,7 @@ const lockView = async (lock) => {
   const s = await port.status(lock.outpoint);
   return { federationBlockCount: s.blockCount, lock: s.stored ? 'held' : 'none', blocksLeft: s.stored ? s.stored.blocksLeft : null };
 };
-const closeSeat = (base, rid) => new Promise((resolve) => {
+const closeSignerNode = (base, rid) => new Promise((resolve) => {
   const ws = new WebSocket(`${base.replace(/^http/, 'ws')}/play`);
   const t = setTimeout(() => { try { ws.close(); } catch {} resolve('no answer'); }, 15000);
   ws.on('open', () => ws.send(`close ${rid}`));
@@ -68,21 +68,21 @@ const closeSeat = (base, rid) => new Promise((resolve) => {
 
 const WINDOW_MS = 5000n;
 const round = await standUpRound({ host: '127.0.0.1', portA: 18597, portB: 18598, stakeMsat: 1000000n,
-  objectionWindowMs: WINDOW_MS, federationId, invite: env.INVITE, seat: { stakeLocks: port } });
+  objectionWindowMs: WINDOW_MS, federationId, invite: env.INVITE, signerNode: { stakeLocks: port } });
 const rid = fromHex(round.id);
 const contract = round.contract;
 const withId = { ...contract, id: rid };
-const seats = [['A', round.a], ['B', round.b]];
+const signerNodes = [['A', round.a], ['B', round.b]];
 let code = 0;
 try {
-  const claimKey = await awaitAttestedClaimKey({ round: withId, seats: contract.nodes, nodes: round.nodes, curve: pageCurve });
+  const claimKey = await awaitAttestedClaimKey({ round: withId, signerNodes: contract.nodes, nodes: round.nodes, curve: pageCurve });
   say({ step: 'claim key', ok: claimKey.ok, attested: claimKey.attested, needed: claimKey.needed, objectionWindowMs: WINDOW_MS });
   if (!claimKey.ok) throw new Error(claimKey.why);
 
-  // W: LOCKED AS THE PAGE LOCKS, COMMITTED AT BOTH SEATS - AND THEN NOTHING.
+  // W: LOCKED AS THE PAGE LOCKS, COMMITTED AT BOTH SIGNER NODES - AND THEN NOTHING.
   const seed = random(32);
   const player = playerFor(withId, { seed, curve: pageCurve });
-  const stake = await stakeFor(withId, { seats: contract.nodes, curve: pageCurve, random, playerPubkey: player.pubkey, needed: 2 });
+  const stake = await stakeFor(withId, { signerNodes: contract.nodes, curve: pageCurve, random, playerPubkey: player.pubkey, needed: 2 });
   const put = await postHandout(stake, round.nodes, { needed: 2 });
   let paying = Promise.resolve(null);
   const lock = await lockStake({ round: contract, roundId: rid, invite: env.INVITE, seed, stake, claimKey,
@@ -92,16 +92,16 @@ try {
   const entry = { roundId: rid, sessionPubkey: ed25519.getPublicKey(session),
     ...entryFor(withId, { seed, curve: pageCurve, random, stake, claimKey, stakeLock: lock }) };
   const eid = entryId(entry);
-  const seated = [];
-  for (const b of round.nodes) seated.push((await fetch(`${b}/entry`, { method: 'POST', body: encodeEntryContract(entry) })).status);
+  const joined = [];
+  for (const b of round.nodes) joined.push((await fetch(`${b}/entry`, { method: 'POST', body: encodeEntryContract(entry) })).status);
   const handed = await handLock({ entryId: eid, fields: lock.fields, nodes: round.nodes, needed: 2 });
-  say({ step: 'W locked, seated, committed - and sends nothing', deposit: paid, outpoint: `${toHex(lock.outpoint.txid)}:${lock.outpoint.outIdx}`,
-    amountMsat: lock.fields.amountMsat, expiration: lock.fields.expiration, handouts: put.accepted, entries: seated,
+  say({ step: 'W locked, joined, committed - and sends nothing', deposit: paid, outpoint: `${toHex(lock.outpoint.txid)}:${lock.outpoint.outIdx}`,
+    amountMsat: lock.fields.amountMsat, expiration: lock.fields.expiration, handouts: put.accepted, entries: joined,
     locks: handed.said.map((s) => s.status), committed: handed.committed, ...(await lockView(lock)) });
 
-  // BOTH SEATS CLOSE THE ROUND, THEN FINAL 2 OF 2 (the window is short here).
+  // BOTH SIGNER NODES CLOSE THE ROUND, THEN FINAL 2 OF 2 (the window is short here).
   const closed = [];
-  for (const b of round.nodes) closed.push(await closeSeat(b, round.id));
+  for (const b of round.nodes) closed.push(await closeSignerNode(b, round.id));
   const at = (d) => {
     const rs = d.round.results(rid, eid).map((r) => ({ p: decodePlayerResult(splitSignedResult(r.bytes).body), by: toHex(r.nodePubkey) }));
     return { results: [...new Set(rs.map((r) => `${r.p.outcome}/${r.p.score}`))], transcripts: [...new Set(rs.map((r) => toHex(r.p.transcriptHash).slice(0, 8)))],
@@ -109,20 +109,20 @@ try {
       startForfeit: !!d.round.startForfeit(eid), noQuorum: d.round.noQuorum(eid) ? d.round.noQuorum(eid).outcome : null };
   };
   const t0 = Date.now();
-  for (; Date.now() - t0 < 90000; await wait(1000)) if (seats.every(([, d]) => at(d).finality === 'FINAL')) break;
-  say({ step: 'both seats closed', closed, msToFinal: Date.now() - t0, A: at(round.a), B: at(round.b) });
+  for (; Date.now() - t0 < 90000; await wait(1000)) if (signerNodes.every(([, d]) => at(d).finality === 'FINAL')) break;
+  say({ step: 'both signer nodes closed', closed, msToFinal: Date.now() - t0, A: at(round.a), B: at(round.b) });
 
   // THE FORFEIT DOOR: FORFEIT 0 IS NOT A QUALIFIER.
   const f = await forfeitOf({ roundId: rid, entryId: toHex(eid), nodes: round.nodes });
   say({ step: 'the forfeit of W\'s lock asked', ok: f.ok, why: f.ok ? null : String(f.why).slice(0, 320),
-    keptBySeats: seats.map(([, d]) => !!d.round.forfeit(eid)), ...(await lockView(lock)) });
+    keptBySignerNodes: signerNodes.map(([, d]) => !!d.round.forfeit(eid)), ...(await lockView(lock)) });
 
   // W TRIES TO GET THE LOCK BACK BEFORE ITS EXPIRY.
-  let viaSeats;
-  try { await redeemStake({ round: contract, roundId: rid, invite: env.INVITE, seed, curve: pageCurve, LockClient, storage: tab(), nodes: round.nodes }); viaSeats = 'REDEEMED'; }
-  catch (e) { viaSeats = `refused: ${e.message.slice(0, 200)}`; }
+  let viaSignerNodes;
+  try { await redeemStake({ round: contract, roundId: rid, invite: env.INVITE, seed, curve: pageCurve, LockClient, storage: tab(), nodes: round.nodes }); viaSignerNodes = 'REDEEMED'; }
+  catch (e) { viaSignerNodes = `refused: ${e.message.slice(0, 200)}`; }
   const rf = (await refundStake({ round: contract, roundId: rid, invite: env.INVITE, seed, curve: pageCurve, LockClient, storage: tab(), nodes: round.nodes })).refunds[0];
-  say({ step: 'W tries to redeem before the expiry', viaSeats,
+  say({ step: 'W tries to redeem before the expiry', viaSignerNodes,
     refundBeforeExpiry: { accepted: rf.accepted, error: rf.error ? String(rf.error).slice(0, 160) : null,
       federationBlockCount: rf.block_count, expiration: rf.expiration, lockAfter: rf.stored_after ? 'held' : 'none' },
     ...(await lockView(lock)) });

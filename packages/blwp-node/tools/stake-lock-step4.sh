@@ -15,7 +15,7 @@
 #   2. EXPIRY    mine past it on the probe's bitcoind; poll the bitcoin height,
 #                the guardians' count and the lock's blocks left until their
 #                count reaches it - and if it stops moving, say so and stop
-#   3. REFUSED   a Refund after expiry signed by a committee seat's key, not
+#   3. REFUSED   a Refund after expiry signed by a committee signer node's key, not
 #                the player's
 #   4. REFUND    the player's Refund after expiry: accepted, the lock gone, the
 #                value back as the player's ecash
@@ -87,9 +87,9 @@ done
 say "  the guardians' count reached the expiry $(( $(date +%s%3N) - t )) ms after the mining returned"
 
 # ---- 3. REFUSED AFTER EXPIRY: not the player's key ----
-SEAT=$(node -e "process.stdout.write(require(process.argv[1]).seats[0].identity)" $P/keys.json)
-RW=$(refund $SEAT); HW=$(bcn getblockcount)
-say "(wrong key) a Refund after expiry signed by committee seat 1's key: $(show "$RW"); bitcoin height $HW"
+SIGNER_NODE=$(node -e "process.stdout.write(require(process.argv[1]).signerNodes[0].identity)" $P/keys.json)
+RW=$(refund $SIGNER_NODE); HW=$(bcn getblockcount)
+say "(wrong key) a Refund after expiry signed by committee signer node 1's key: $(show "$RW"); bitcoin height $HW"
 E1=$(ecash)
 
 # ---- 4. THE PLAYER'S REFUND ----

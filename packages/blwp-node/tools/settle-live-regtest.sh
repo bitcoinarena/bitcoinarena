@@ -1,10 +1,10 @@
 #!/bin/bash
 # THE WHOLE SETTLEMENT ON A REAL FEDERATION (W4): rehearsal step 1's setup (stock
 # fedimintd 0.12.0, 4 guardians, 3 of 4, one gateway, regtest), then
-# settle-live-regtest.mjs - two seats, a winner and a loser, a 100 sat round and a
-# 1000 sat round, each settled by the seats' one committee signature.
+# settle-live-regtest.mjs - two signer nodes, a winner and a loser, a 100 sat round and a
+# 1000 sat round, each settled by the signer nodes' one committee signature.
 #
-#   FEDIMINT_BIN=<released v0.12.0> LOCK_BIN=<blwp-stake-lock, the seats' port>
+#   FEDIMINT_BIN=<released v0.12.0> LOCK_BIN=<blwp-stake-lock, the signer nodes' port>
 #   WASM_PKG=<wasm-bindgen --target nodejs output of blwp-lock-client>
 #     bash tools/settle-live-regtest.sh
 set -uo pipefail
@@ -36,7 +36,7 @@ PROBE=$P INVITE=$INVITE GATEWAY=http://127.0.0.1:30170 LND_BIN=$L LOCK_BIN=$LOCK
   node $HERE/settle-live-regtest.mjs 2>&1 | grep --line-buffered -E '^\{|Error|panicked' | sed -u 's/^/LIVE /'
 # the driver's own exit, not the filter's: a pipeline ending in sed ends 0 whatever the driver did
 RC=${PIPESTATUS[0]}
-# W6_KILL=1: the driver was SIGKILLed after the guardians answered; the seats start again, same federation.
+# W6_KILL=1: the driver was SIGKILLed after the guardians answered; the signer nodes start again, same federation.
 if [ "${W6_KILL:-}" = "1" ]; then
   PROBE=$P LOCK_BIN=$LOCK_BIN node $HERE/settle-live-w6-resume.mjs 2>&1 | grep --line-buffered -E '^\{|Error|panicked' | sed -u 's/^/LIVE /'
   RC=${PIPESTATUS[0]}

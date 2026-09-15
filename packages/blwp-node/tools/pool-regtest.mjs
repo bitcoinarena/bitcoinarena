@@ -1,6 +1,6 @@
 // THE POOL, SPENT ON A REAL CHAIN.
 //
-// `pool-spend.test.js` proves that BIP-340 accepts a witness five seats
+// `pool-spend.test.js` proves that BIP-340 accepts a witness five signer nodes
 // produced. That is our own verifier agreeing with our own construction of the
 // sighash - and a sighash built wrong produces a perfectly valid signature over
 // the wrong message, which no unit test can tell from a right one. A wallet

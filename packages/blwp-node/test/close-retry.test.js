@@ -1,16 +1,16 @@
-// A SEAT WHOSE PEER IS DOWN AT THE CLOSE HOLDS AND TRIES AGAIN (M3.3-34, the Daily's close).
+// A SIGNER NODE WHOSE PEER IS DOWN AT THE CLOSE HOLDS AND TRIES AGAIN (M3.3-34, the Daily's close).
 //
-// Seat A closes a free 2-of-2 round while seat B is down: A cannot pull B's
+// Signer node A closes a free 2-of-2 round while signer node B is down: A cannot pull B's
 // receipts, so it can neither form the receipted transcript of a played run
 // nor rule out a first mark B holds. It signs nothing - HOLDING at /closing,
 // the close tried again on the finality watch's cadence - and records no
 // ENTRY_VOID and no VOID: a disconnect is not an escape. When B is back and
-// closes too, both seats sign ONE transcript per run and it goes FINAL 2 of 2:
-//   W  seated, sent nothing                FORFEIT, score 0
+// closes too, both signer nodes sign ONE transcript per run and it goes FINAL 2 of 2:
+//   W  joined, sent nothing                FORFEIT, score 0
 //   P  marks at ticks 60 and 120, stops    FAILED at its last receipted mark
 // And it keeps asking past the objection window, and across a restart of A.
 //
-// MEASURED BEFORE (TASKBOOK, M3.3-34): the close ran once - a seat that could
+// MEASURED BEFORE (TASKBOOK, M3.3-34): the close ran once - a signer node that could
 // not reach its peer signed neither run and nothing asked again; then, with
 // the first retry build, the watch gave up at the window's end and a restart
 // forgot the hold.
@@ -22,7 +22,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { resultFinality } from '../src/finality.js';
-import { assumeSeated } from './seating.js';
+import { assumeAssigned } from './assignment.js';
 import { rand, WINDOW_MS, WINNER, GENESIS_HASH, wordsAt, contractFor, say, opts, wait, RANDOMNESS } from './window-fixture.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
 import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
@@ -33,7 +33,7 @@ import { hash as stateHash } from '../../core/src/state.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { toHex } from '../../protocol/src/hash.js';
 
-async function seats({ finality = {} } = {}) {
+async function signerNodes({ finality = {} } = {}) {
   const mk = (db, port = 0, more = {}) => serve(db, { port, ...opts, finality: { everyMs: 100, ...finality }, ...more });
   const dbA = openStore(':memory:');
   const dbB = openStore(':memory:');
@@ -53,7 +53,7 @@ async function seats({ finality = {} } = {}) {
   const rid = roundId(c);
   for (const d of [a, b]) {
     assert.equal((await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) })).status, 201);
-    assumeSeated(d.round, rid, c.nodes);
+    assumeAssigned(d.round, rid, c.nodes);
   }
   return { get a() { return a; }, get b() { return b; }, c, rid,
     async downB() { await b.close(); }, async upB(more) { b = await mk(dbB, bPort, more); wire(); },
@@ -61,7 +61,7 @@ async function seats({ finality = {} } = {}) {
     async close() { try { await a.close(); } catch { /* down */ } try { await b.close(); } catch { /* down */ } } };
 }
 
-async function seat(w, playerPubkey) {
+async function signerNode(w, playerPubkey) {
   const session = ed25519.utils.randomSecretKey();
   const entry = { roundId: w.rid, playerPubkey, sessionPubkey: ed25519.getPublicKey(session),
     stakeCommitment: rand(32), stakeMsat: 0n, feeMsat: 0n, donationMsat: 0n, joinTick: 0, worldSecret: WINNER.worldSecret,
@@ -77,8 +77,8 @@ async function seat(w, playerPubkey) {
   for (let t = 0; t < 60; t++) step(st, ...wordsAt(t));
   const b1 = { roundId: w.rid, entryId: eid, previousHash: GENESIS_HASH, firstTick: 0, ticks: Array.from({ length: 60 }, (_, t) => wordsAt(t)), liquidations: [] };
   const m1 = { roundId: w.rid, entryId: eid, tick: 60, stateHash: hashNow(), inputChainHash: batchId(b1), previousHash: NO_PREVIOUS, sessionPubkey: entry.sessionPubkey };
-  // AND A SECOND MARK, at tick 120: a seat that forwarded the first mark holds its
-  // peer's receipt of that one only, so the two seats' receipted transcripts
+  // AND A SECOND MARK, at tick 120: a signer node that forwarded the first mark holds its
+  // peer's receipt of that one only, so the two signer nodes' receipted transcripts
   // differ unless the one that could not reach its peer waits.
   for (let t = 60; t < 120; t++) step(st, ...wordsAt(t));
   const b2 = { roundId: w.rid, entryId: eid, previousHash: batchId(b1), firstTick: 60, ticks: Array.from({ length: 60 }, (_, t) => wordsAt(60 + t)), liquidations: [] };
@@ -98,9 +98,9 @@ const brief = (c) => c && { state: c.state, attempts: c.attempts, sinceMs: c.sin
 // fixed sleep, and a count read too early reads nothing.
 const until = async (ms, ok) => { for (let t = Date.now(); Date.now() - t < ms; await wait(100)) { const v = await ok(); if (v) return v; } return null; };
 
-async function playedAndSeated(w) {
-  const P = await seat(w, WINNER.key);
-  const W = await seat(w, schnorr.getPublicKey(rand(32)));
+async function playedAndJoined(w) {
+  const P = await signerNode(w, WINNER.key);
+  const W = await signerNode(w, schnorr.getPublicKey(rand(32)));
   for (const d of [w.a, w.b]) for (const m of P.start) await say(d.port, m);
   await wait(300);
   for (const d of [w.a, w.b]) for (const m of P.more) await say(d.port, m);
@@ -122,10 +122,10 @@ function assertOneFinal(after) {
   }
 }
 
-test('a seat whose peer is down at the close holds - no result, no Void - tries again, and both runs go final 2 of 2 when the peer is back', async () => {
-  const w = await seats();
+test('a signer node whose peer is down at the close holds - no result, no Void - tries again, and both runs go final 2 of 2 when the peer is back', async () => {
+  const w = await signerNodes();
   try {
-    const { P, W } = await playedAndSeated(w);
+    const { P, W } = await playedAndJoined(w);
     await w.downB();
     assert.equal(await say(w.a.port, `close ${toHex(w.rid)}`), 'closed');
     await wait(1500);
@@ -142,9 +142,9 @@ test('a seat whose peer is down at the close holds - no result, no Void - tries 
       assert.deepEqual(whileDown[run].a, { results: [], signers: 0, transcripts: 0, finality: null, entryVoid: false }, run);
       assert.equal(whileDown[run].closing.state, 'HOLDING', run);
       assert.ok(whileDown[run].closing.attempts >= 3, `${run} tried ${whileDown[run].closing.attempts} times in 1.5 s at a 100 ms cadence`);
-      assert.match(whileDown[run].closing.lastWhy, /waiting on 1 seat/, run);
+      assert.match(whileDown[run].closing.lastWhy, /waiting on 1 signer node/, run);
     }
-    // AND AFTER: both runs final 2 of 2 at both seats, each over ONE transcript, as ruled.
+    // AND AFTER: both runs final 2 of 2 at both signer nodes, each over ONE transcript, as ruled.
     assertOneFinal(after);
     assert.equal(after.W.closing.state, 'SIGNED');
     assert.equal(after.P.closing.state, 'SIGNED');
@@ -152,14 +152,14 @@ test('a seat whose peer is down at the close holds - no result, no Void - tries 
 });
 
 // THE OWNER 2026-09-15 07:49: the result window is the objection window (the contract's
-// objection_window_ms, WINDOW_MS here), and a seat that cannot retrieve the transcript in it
-// treats the entry as VOID. Until then (M3.3-34) this seat kept asking past the window and both
+// objection_window_ms, WINDOW_MS here), and a signer node that cannot retrieve the transcript in it
+// treats the entry as VOID. Until then (M3.3-34) this signer node kept asking past the window and both
 // runs went final 2 of 2 when its peer came back - measured this morning, the test this replaces.
-test('past the result window a seat that cannot retrieve the transcript decides VOID (§13C), and no run it voided is FINAL anywhere after its peer is back', async () => {
+test('past the result window a signer node that cannot retrieve the transcript decides VOID (§13C), and no run it voided is FINAL anywhere after its peer is back', async () => {
   // The watch's window is 800 ms here, its back-off capped at 400 ms.
-  const w = await seats({ finality: { windowMs: 800, maxEveryMs: 400 } });
+  const w = await signerNodes({ finality: { windowMs: 800, maxEveryMs: 400 } });
   try {
-    const { P, W } = await playedAndSeated(w);
+    const { P, W } = await playedAndJoined(w);
     await w.downB();
     const closedAt = Date.now();
     assert.equal(await say(w.a.port, `close ${toHex(w.rid)}`), 'closed');
@@ -180,7 +180,7 @@ test('past the result window a seat that cannot retrieve the transcript decides 
     const after = { P: { a: look(w, w.a, P), b: look(w, w.b, P) }, W: { a: look(w, w.a, W), b: look(w, w.b, W) } };
     console.log('  FACTS (past the window):', JSON.stringify({ inWindow, pastWindow, after, bDecidedAfterMs }));
     assert.ok(bDecidedAfterMs >= 3000, `B decided ${bDecidedAfterMs} ms after its close - inside its own window of 3000`);
-    assert.equal(inWindow.state, 'HOLDING', 'inside the window the seat waits, as before');
+    assert.equal(inWindow.state, 'HOLDING', 'inside the window the signer node waits, as before');
     assert.ok(pastWindow.W.attempts > inWindow.attempts, `no retry after the window: ${inWindow.attempts} then ${pastWindow.W.attempts}`);
     for (const run of ['W', 'P']) {
       assert.equal(pastWindow[run].state, 'VOID', run);
@@ -196,16 +196,16 @@ test('past the result window a seat that cannot retrieve the transcript decides 
   } finally { await w.close(); }
 });
 
-test('a seat restarted while holding picks the hold up from its store, and signs the one transcript when its peer is back', async () => {
-  const w = await seats();
+test('a signer node restarted while holding picks the hold up from its store, and signs the one transcript when its peer is back', async () => {
+  const w = await signerNodes();
   try {
-    const { P, W } = await playedAndSeated(w);
+    const { P, W } = await playedAndJoined(w);
     await w.downB();
     assert.equal(await say(w.a.port, `close ${toHex(w.rid)}`), 'closed');
     await wait(800);
     const before = brief(await until(10000, () => closingAt(w, w.a, W)));
-    // BOTH SEATS COME BACK WITH A CHAIN READER THAT HAS READ NOTHING YET, as the
-    // Daily's do: its answers live in memory, so only the seat's store still
+    // BOTH SIGNER NODES COME BACK WITH A CHAIN READER THAT HAS READ NOTHING YET, as the
+    // Daily's do: its answers live in memory, so only the signer node's store still
     // names the beacon a retry replays from.
     const readNothing = { randomnessFor: () => undefined };
     await w.restartA(readNothing);

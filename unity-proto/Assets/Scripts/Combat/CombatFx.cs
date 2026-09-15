@@ -67,7 +67,7 @@ public class CombatFx : MonoBehaviour
         /// How high above the ground this body came to rest. The terrain is
         /// rebuilt from live mempool data, so a body pinned at the absolute
         /// height it died at is buried by the next fee update - the same thing
-        /// wrecks are re-seated for. Held as an OFFSET rather than re-seated
+        /// wrecks are set down again for. Held as an OFFSET rather than set down again
         /// flat, so a body that settled half on its side is not teleported.
         /// NaN until he has come to rest.
         /// </summary>
@@ -764,16 +764,16 @@ public class CombatFx : MonoBehaviour
     /// </summary>
     public void BurnBeat(Vector3 at, float vigour)
     {
-        var seat = at + Vector3.up * 1.4f;
+        var resting = at + Vector3.up * 1.4f;
         var jitter = new Vector3(Random.Range(-0.9f, 0.9f), 0f, Random.Range(-1.3f, 1.3f));
 
         // Slow. A hull burns for a long time; the same flipbook at explosion
         // speed reads as a strobe on a wreck.
-        if (vigour > 0.02f && !FlipbookBurst(seat + jitter, 1, Random.Range(2.4f, 4f)))
-            Fireball(seat + jitter, Mathf.Lerp(0.6f, 2.8f, vigour), fireMaterial, 0f, 1.4f);
+        if (vigour > 0.02f && !FlipbookBurst(resting + jitter, 1, Random.Range(2.4f, 4f)))
+            Fireball(resting + jitter, Mathf.Lerp(0.6f, 2.8f, vigour), fireMaterial, 0f, 1.4f);
 
-        if (!SmokeBurst(seat + Vector3.up * 1.4f, 1, Random.Range(4f, 7f)))
-            Smoke(seat + Vector3.up * 1.4f, Mathf.Lerp(1.5f, 3.5f, vigour), 0f);
+        if (!SmokeBurst(resting + Vector3.up * 1.4f, 1, Random.Range(4f, 7f)))
+            Smoke(resting + Vector3.up * 1.4f, Mathf.Lerp(1.5f, 3.5f, vigour), 0f);
     }
 
     void Fireball(Vector3 at, float size, Material mat, float delay, float life)
@@ -1261,7 +1261,7 @@ public class CombatFx : MonoBehaviour
                 }
                 case Kind.Wreck:
                 {
-                    // Re-seat it on the ground every frame. The terrain is
+                    // Set down again it on the ground every frame. The terrain is
                     // rebuilt from live mempool data, so a hull left at the
                     // height it died at is soon standing in mid-air.
                     var wp = p.t.position;

@@ -26,7 +26,7 @@ import { Client } from '../src/client.js';
 // The node fee is 27A.7's 2% of the stake, and the door checks it now
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
-import { assumeStakeSeen } from '../../blwp-node/test/seating.js';
+import { assumeStakeSeen } from '../../blwp-node/test/assignment.js';
 // FUNDED, because these are rounds somebody paid for. A node started without
 // being told who pays refuses everything now - disk is spent only on stakes
 // that exist - so a test that means to play a round has to say so.
@@ -714,13 +714,13 @@ test('ticks offered before the round is known do not end the run', async () => {
   } finally { client.close(); await node.close(); }
 });
 
-// THE RUN'S LAST TICK IS THE SEAT'S LINE. Measured live (round 5, the idle page):
+// THE RUN'S LAST TICK IS THE SIGNER NODE'S LINE. Measured live (round 5, the idle page):
 // after its run the page kept recording, a batch reaching tick 9113 of a run that
 // ends at 8999 was refused whole, and the client called its own run VOID - the
 // chip read "not publishing · error ... inputs past the end". The page's tick loop
 // (blwp.jslib `net.tick`) now asks `runOver()` before it records. `record`'s own
 // overflow rule is unchanged, and the first half shows what it does on its own.
-test('a run at its last tick takes no more: the seat holds exactly the run, nothing is refused, nothing is VOID', async () => {
+test('a run at its last tick takes no more: the signer node holds exactly the run, nothing is refused, nothing is VOID', async () => {
   const transcriptTicks = async (node, rid, eid) => Number((await fetch(`http://127.0.0.1:${node.port}/transcript`
     + `?round=${Buffer.from(rid).toString('hex')}&entry=${Buffer.from(eid).toString('hex')}`)).headers.get('x-ticks'));
 
@@ -737,7 +737,7 @@ test('a run at its last tick takes no more: the seat holds exactly the run, noth
       for (let k = 0; k < 3 && !client.ended; k++) await client.drain();
       await client.awaitPublishes();
       console.log(`  without runOver: ended ${client.ended} ${client.ending || ''} - ${String(client.endingReason || '').slice(0, 150)}; `
-        + `the seat holds ${await transcriptTicks(node, rid, eid)} ticks; held ${client.held}, nextTick ${client.nextTick}, `
+        + `the signer node holds ${await transcriptTicks(node, rid, eid)} ticks; held ${client.held}, nextTick ${client.nextTick}, `
         + `batches ${client.batchesSent}, refusals ${JSON.stringify(client.refusals)}, refusedWhy ${String(client.refusedWhy || '').slice(0, 150)}`);
       assert.equal(client.ended, true, 'the batch past the run\'s end was not refused');
       assert.match(client.endingReason, /inputs past the end/);
@@ -757,11 +757,11 @@ test('a run at its last tick takes no more: the seat holds exactly the run, noth
       while (client.held > 0) { const held = client.held; await client.drain(); if (client.held === held) break; }
       await client.awaitPublishes();
       const held = await transcriptTicks(node, rid, eid);
-      console.log(`  with runOver: ${past} ticks past the end not recorded; ended ${client.ended}; published to ${client.nextTick}; the seat holds ${held} ticks`);
+      console.log(`  with runOver: ${past} ticks past the end not recorded; ended ${client.ended}; published to ${client.nextTick}; the signer node holds ${held} ticks`);
       assert.equal(past, 600, 'the question answered past the end too early or too late');
       assert.equal(client.ended, false, `the run ended: ${client.ending} ${client.endingReason}`);
       assert.equal(client.nextTick, BLOCK_TICKS, 'the last batch did not end on the run\'s last tick');
-      assert.equal(held, BLOCK_TICKS, 'the seat does not hold exactly the run');
+      assert.equal(held, BLOCK_TICKS, 'the signer node does not hold exactly the run');
     } finally { client.close(); await node.close(); }
   }
 });

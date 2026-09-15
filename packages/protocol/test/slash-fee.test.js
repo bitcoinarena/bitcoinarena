@@ -43,7 +43,7 @@ const contract = {
 };
 
 // 22A's table for this round: one activated stake of 400000 msat, so a fee of
-// 8000, 4000 to each pool, and NODE the only eligible verify seat - 4000 owed.
+// 8000, 4000 to each pool, and NODE the only eligible verify signer node - 4000 owed.
 const feeEntries = [{ pubkey: b32(0xa1), outcome: 'DELIVERED', score: 500, stakeMsat: 400000n }];
 const feeTable = nodeFeeTable({
   contract, entries: feeEntries,
@@ -142,7 +142,7 @@ test('a role 22A pays nothing for is owed nothing, and claiming for it slashes',
 });
 
 test('there is no over-claim to measure without a table', () => {
-  for (const bad of [undefined, null, {}, { fee: 8000n }, { fee: 1, seats: new Map() }])
+  for (const bad of [undefined, null, {}, { fee: 8000n }, { fee: 1, signerNodes: new Map() }])
     assert.equal(ask(claimOf(), recordOf(), { feeTable: bad }).slashed, false,
       'a claim was judged against no table at all');
   assert.match(ask(claimOf(), recordOf(), { feeTable: undefined }).why,

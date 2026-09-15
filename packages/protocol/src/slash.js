@@ -1059,7 +1059,7 @@ export function slashHoldsOnFeeClaim({
   // THE TABLE 22A OWES FROM. Required, because the offence below is a
   // comparison with what it says: without one there is no owed amount and an
   // over-claim cannot be measured at all.
-  if (!feeTable || typeof feeTable.fee !== 'bigint' || !(feeTable.seats instanceof Map))
+  if (!feeTable || typeof feeTable.fee !== 'bigint' || !(feeTable.signerNodes instanceof Map))
     return { slashed: false, why: 'no fee table to measure the claim against' };
 
   const bound = feeInputsId({

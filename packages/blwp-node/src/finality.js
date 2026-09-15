@@ -10,7 +10,7 @@
 //
 // THE WINDOW OPENS when THIS node first held the threshold: the `seen_ms` of
 // the agreeing record that completed it, off the store - so a restart does not
-// open it again, and no message can open it earlier. Two seats see the
+// open it again, and no message can open it earlier. Two signer nodes see the
 // threshold at slightly different moments and close the window at slightly
 // different moments; neither closes it sooner than the contract's full length
 // after it could itself see the quorum.
@@ -43,11 +43,11 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
   const row = round.get(roundIdBytes);
   if (!row) return { state: null, why: 'no such round' };
   const contract = decodeRoundContract(new Uint8Array(row.contract));
-  const committee = round.seats(roundIdBytes);
+  const committee = round.signerNodes(roundIdBytes);
   const held = round.results(roundIdBytes, entryIdBytes);
-  const seen = verifiedFinal(held.map((r) => r.bytes), { contract, seats: committee });
+  const seen = verifiedFinal(held.map((r) => r.bytes), { contract, signerNodes: committee });
   if (!seen.ok || !seen.final) {
-    // §13C'S NO-QUORUM OUTCOME (M3.3-34), on this seat's own record once the
+    // §13C'S NO-QUORUM OUTCOME (M3.3-34), on this signer node's own record once the
     // result window passed with no result at the threshold: VOID - or FORFEIT,
     // proven equivocation. Only where no quorum is: §14, reachable only from
     // PROVISIONAL.
@@ -57,9 +57,9 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
   }
 
   // WHO SIGNED THE AGREED RUN, and when this node held each of them. The
-  // same checks `verifiedFinal` counted under: a seat, and a signature that
-  // verifies. The store keeps one record per seat.
-  const seats = new Set(committee.map(hex));
+  // same checks `verifiedFinal` counted under: a signer node, and a signature that
+  // verifies. The store keeps one record per signer node.
+  const signerNodes = new Set(committee.map(hex));
   const agreeing = [];
   let mine = null;
   for (const r of held) {
@@ -70,7 +70,7 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
       result = decodePlayerResult(split.body);
     } catch { continue; }
     const who = hex(result.nodePubkey);
-    if (!seats.has(who)) continue;
+    if (!signerNodes.has(who)) continue;
     let ok = false;
     try { ok = schnorr.verify(signature, resultId(result), result.nodePubkey); } catch { ok = false; }
     if (!ok) continue;
@@ -104,11 +104,11 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
 
   // AND WHETHER ANYONE CAN REPLAY IT (v4.6.2 §13A, P2): the transcript the
   // agreed run names must have been posted to the contract's relays by the
-  // round's threshold of settlement seats. Until then the window has not
+  // round's threshold of settlement signer nodes. Until then the window has not
   // opened and nothing moves; W counts from when that threshold was held here.
   const published = transcriptIsPublished({
     roundId: roundIdBytes, playerPubkey: agreeing[0].playerPubkey, transcriptHash: agreeing[0].transcriptHash,
-    postings: round.postings(roundIdBytes, entryIdBytes), seats: committee,
+    postings: round.postings(roundIdBytes, entryIdBytes), signerNodes: committee,
     settlementSlots: contract.settlementSlots, verify: (s, m, k) => schnorr.verify(s, m, k),
   });
   const unpostable = !(contract.publicationRelays || []).length;
@@ -119,7 +119,7 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
     now, objections, needed: seen.needed,
   });
   // A SUSPENDED RESULT IS DECIDED BY THE COMMITTEE'S RE-RUN (v4.6.2 §13A): once
-  // the round's threshold of seats have re-run the contradicted result to one
+  // the round's threshold of signer nodes have re-run the contradicted result to one
   // outcome, that outcome is authoritative - FINAL, once its transcript is
   // posted (P2). Short of the threshold it stays SUSPENDED: what 13C does then
   // is timed from the result window, which the contract does not carry yet.
@@ -127,19 +127,19 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
     const verify = (s, m, k) => schnorr.verify(s, m, k);
     const rerun = rerunIsAgreed({
       roundId: roundIdBytes, playerPubkey: agreeing[0].playerPubkey, contradictedRunId: agreeing[0].run,
-      records: round.reruns(roundIdBytes, entryIdBytes), seats: committee, slots: contract.gameVerifySlots, verify,
+      records: round.reruns(roundIdBytes, entryIdBytes), signerNodes: committee, slots: contract.gameVerifySlots, verify,
     });
     const said = { agreed: rerun.agreed || 0, needed: rerun.needed };
     if (rerun.ok) {
       const posted = transcriptIsPublished({
         roundId: roundIdBytes, playerPubkey: agreeing[0].playerPubkey, transcriptHash: rerun.result.transcriptHash,
-        postings: round.postings(roundIdBytes, entryIdBytes), seats: committee,
+        postings: round.postings(roundIdBytes, entryIdBytes), signerNodes: committee,
         settlementSlots: contract.settlementSlots, verify,
       });
       if (posted.ok && !unpostable)
         return {
           state: FINAL, rerun: { ...said, runId: hex(rerun.runId) }, published: true, posted: posted.posted,
-          why: `re-run by ${rerun.agreed} of ${committee.length} committee seats: the replay outcome is authoritative (13A)`,
+          why: `re-run by ${rerun.agreed} of ${committee.length} committee signer nodes: the replay outcome is authoritative (13A)`,
           provisionalAtMs, runId: hex(rerun.runId), contradictedRunId: seen.runId, objection: objection && objection.why,
         };
       return { ...f, rerun: said, published: false, posted: posted.posted || 0,

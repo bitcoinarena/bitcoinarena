@@ -274,7 +274,7 @@ public class MempoolTerrain : MonoBehaviour
         // the same hills the truck is driving over - a television showing a
         // different map from the one being simulated is the fault this letter
         // is about, wearing a hat. `HeightAt` is the one place the mesh, the
-        // sampling and the seat all read from, so redirecting it here moves
+        // sampling and the rest all read from, so redirecting it here moves
         // all three at once.
         //
         // The mempool relief below stays as the answer when there is no core -

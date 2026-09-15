@@ -1,4 +1,4 @@
-// A SEAT VERIFIES THE PLAYER'S STAKE LOCK (v4.6.2 §23.1 step 5).
+// A SIGNER NODE VERIFIES THE PLAYER'S STAKE LOCK (v4.6.2 §23.1 step 5).
 //
 // "STAKE_COMMITTED is recorded once >=5 settlement nodes have VERIFIED the
 // locks: the contract id at stake_lock_outpoint (and the fee lock's) equals
@@ -7,8 +7,8 @@
 // whose refund_pk is player_pubkey, and whose expiration is >= current height
 // + stake_expiry_blocks. Seeing the lock is not enough: the player built it."
 //
-// This is one seat's half. The player hands the seat the contract it locked;
-// the seat asks the federation what it holds at the entry's outpoint (the
+// This is one signer node's half. The player hands the signer node the contract it locked;
+// the signer node asks the federation what it holds at the entry's outpoint (the
 // stored contract id and the blocks left to its expiry), hashes the handed
 // contract with the stock client's own rule, and requires the two to be one
 // contract; then protocol stake-lock.js `lockMatchesEntry` checks every field
@@ -26,14 +26,14 @@ import { feeLockPays } from '../../protocol/src/lock-settlement.js';
 
 /**
  * WHETHER THIS ROUND'S GATE MINTS FEE LOCKS (Pick b), by the federation's own fee rule
- * - the same arithmetic the page runs before it locks. Where it mints, a seat takes no
+ * - the same arithmetic the page runs before it locks. Where it mints, a signer node takes no
  * entry without a fee lock and counts no stake whose fee lock it has not verified
  * (the owner 2026-09-14, pick (a): refuse at the door - measured before, one entry with no
  * fee lock made the round's one settlement refuse everybody: "an entry's fee lock was
  * never verified, so the fee cannot be claimed").
  */
 export async function roundMintsFees({ contract, port }) {
-  if (!port || typeof port.fees !== 'function') return { mints: false, why: 'this seat reads no federation fee rule' };
+  if (!port || typeof port.fees !== 'function') return { mints: false, why: 'this signer node reads no federation fee rule' };
   const gate = feeLockPays({ contract, fees: await port.fees() });
   return { mints: gate.pays, why: gate.why };
 }
@@ -46,7 +46,7 @@ export { lockFieldsFromJson, lockFieldsToJson };
 
 export async function verifyStakeLock({ round, port, entryIdBytes, fields, claimPk }) {
   const stored = round.entry(entryIdBytes);
-  if (!stored) return { ok: false, why: 'this node seated no such entry' };
+  if (!stored) return { ok: false, why: 'this node holds no such entry' };
   const entry = decodeEntryContract(stored);
   if (entry.stakeMsat === 0n) return { ok: false, why: 'that entry takes no stake, so there is no lock to verify' };
   const row = round.get(entry.roundId);
@@ -57,11 +57,11 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
   if (!port) return { ok: false, why: 'this node reaches no federation, so it cannot verify a stake lock' };
   const outpoint = entry.stakeLockOutpoint;
   if (!outpoint || zero(outpoint.txid)) return { ok: false, why: 'that entry names no stake lock outpoint' };
-  // ONE LOCK IS ONE SEAT. A lock this seat already counted for another entry
-  // cannot stake a second: two seats on one stake is one seat played free.
+  // ONE LOCK IS ONE ENTRY. A lock this signer node already counted for another entry
+  // cannot stake a second: two signer nodes on one stake is one signer node played free.
   const taken = round.stakeLockAt ? round.stakeLockAt(outpoint) : null;
   if (taken && !Buffer.from(taken.entryId).equals(Buffer.from(entryIdBytes)))
-    return { ok: false, why: 'that stake lock already stakes another entry in this round: one lock is one seat' };
+    return { ok: false, why: 'that stake lock already stakes another entry in this round: one lock is one entry' };
 
   const st = await port.status(outpoint);
   if (!st || !st.stored) return { ok: false, why: 'the federation holds no lock at the entry\'s stake_lock_outpoint' };
@@ -70,7 +70,7 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
     return { ok: false, why: 'the lock at that outpoint is not the contract handed over: its id is another' };
   if (fields.expiration !== st.blockCount + st.stored.blocksLeft)
     return { ok: false, why: 'that contract\'s expiration is not the one the federation holds' };
-  if (!(claimPk instanceof Uint8Array)) return { ok: false, why: 'this seat holds no claim key for that round' };
+  if (!(claimPk instanceof Uint8Array)) return { ok: false, why: 'this signer node holds no claim key for that round' };
 
   const matches = lockMatchesEntry({ lock: fields, entry, kind: 'stake', claimPk, height: st.blockCount });
   if (!matches.ok) return matches;
@@ -86,15 +86,15 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
 }
 
 /**
- * A SEAT VERIFIES THE PLAYER'S FEE LOCK (Pick A, the owner 2026-09-14; §23.1 step 5
+ * A SIGNER NODE VERIFIES THE PLAYER'S FEE LOCK (Pick A, the owner 2026-09-14; §23.1 step 5
  * "and the fee lock's"; F5): the entry's 2% node fee, locked to H(F) with F in
  * the entry, the round's claim key and the player's refund key - checked field
  * by field against the entry as the stake lock is. It is claimed for the round's
- * sitting seats in the one settlement, whatever the result.
+ * sitting signer nodes in the one settlement, whatever the result.
  */
 export async function verifyFeeLock({ round, port, entryIdBytes, fields, claimPk }) {
   const stored = round.entry(entryIdBytes);
-  if (!stored) return { ok: false, why: 'this node seated no such entry' };
+  if (!stored) return { ok: false, why: 'this node holds no such entry' };
   const entry = decodeEntryContract(stored);
   if (entry.feeMsat === 0n) return { ok: false, why: 'that entry owes no fee, so there is no fee lock to verify' };
   const row = round.get(entry.roundId);
@@ -113,7 +113,7 @@ export async function verifyFeeLock({ round, port, entryIdBytes, fields, claimPk
     return { ok: false, why: 'the lock at that outpoint is not the fee contract handed over: its id is another' };
   if (fields.expiration !== st.blockCount + st.stored.blocksLeft)
     return { ok: false, why: 'that fee contract\'s expiration is not the one the federation holds' };
-  if (!(claimPk instanceof Uint8Array)) return { ok: false, why: 'this seat holds no claim key for that round' };
+  if (!(claimPk instanceof Uint8Array)) return { ok: false, why: 'this signer node holds no claim key for that round' };
   const matches = lockMatchesEntry({ lock: fields, entry, kind: 'fee', claimPk, height: st.blockCount });
   if (!matches.ok) return matches;
   round.putFeeLock({ entryId: entryIdBytes, roundId: entry.roundId, outpoint, fields: lockFieldsToJson(fields), contractId: String(id) });

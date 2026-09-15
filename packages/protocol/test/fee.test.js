@@ -44,7 +44,7 @@ const entries = [player(0xa1, 'DELIVERED'), player(0xa2, 'FAILED'),
 
 const table = (over = {}) =>
   nodeFeeTable({ contract, entries, pools, eligible: all, ...over });
-const paid = (t) => [...t.seats.values()].reduce((a, b) => a + b, 0n);
+const paid = (t) => [...t.signerNodes.values()].reduce((a, b) => a + b, 0n);
 
 test('a role is paid from its own pool, and relay is paid by nothing', () => {
   // 22A: "An operator selected for BOTH roles earns BOTH shares, because it
@@ -58,7 +58,7 @@ test('a role is paid from its own pool, and relay is paid by nothing', () => {
   assert.equal(poolOfRole('relay'), null, '22A names two committees and relay is neither');
 });
 
-test('a seat in both pools earns both shares, and they do not merge', () => {
+test('a signer node in both pools earns both shares, and they do not merge', () => {
   const both = b32(0x21);
   const t = nodeFeeTable({
     contract, entries,
@@ -119,7 +119,7 @@ test('the pools sum to exactly the fee however ragged the numbers are', () => {
       `the pools lost a millisatoshi at ${stake}`);
     assert.equal(t.fee, (t.gross * 200n) / 10000n, `the fee is not 2% at ${stake}`);
     assert.equal(paid(t) + t.unallocated, t.fee, `the table leaked at ${stake}`);
-    for (const v of t.seats.values()) assert.ok(v >= 0n);
+    for (const v of t.signerNodes.values()) assert.ok(v >= 0n);
   }
 });
 
@@ -133,7 +133,7 @@ test('an unearned share stays in its own pool and never reaches the operator', (
 
   assert.equal(feeOwed(t, game[0], 'verify'), 4000n, 'the whole game/verify pool, and no more');
   for (const k of game.slice(1)) assert.equal(feeOwed(t, k, 'verify'), 0n);
-  assert.equal(t.fee, 8000n, 'the fee did not grow because six seats were idle');
+  assert.equal(t.fee, 8000n, 'the fee did not grow because six signer nodes were idle');
   assert.equal(paid(t) + t.unallocated, 8000n);
   assert.equal(t.unallocated, 0n, 'and nothing fell out of the pools');
 
@@ -159,7 +159,7 @@ test('a pool nobody qualified for is unallocated, not handed to anybody', () => 
 
   const nobodyAtAll = table({ eligible: new Set() });
   assert.equal(nobodyAtAll.unallocated, 8000n);
-  assert.equal(nobodyAtAll.seats.size, 0);
+  assert.equal(nobodyAtAll.signerNodes.size, 0);
 });
 
 /**
@@ -171,11 +171,11 @@ test('a pool that does not divide by seven is still handed out to the last msat'
   const t = nodeFeeTable({ contract, entries: odd, pools, eligible: all });
   assert.equal(paid(t) + t.unallocated, t.fee);
 
-  // 1% of 500001 is 5000 msat over seven seats: 714 each and two over
+  // 1% of 500001 is 5000 msat over seven signer nodes: 714 each and two over
   assert.equal(t.pools[GAME_VERIFY], 5000n);
   const shares = game.map((k) => feeOwed(t, k, 'verify'));
   assert.equal(shares.reduce((a, b) => a + b, 0n), 5000n);
-  assert.equal(shares.filter((v) => v === 715n).length, 2, 'two seats round up');
+  assert.equal(shares.filter((v) => v === 715n).length, 2, 'two signer nodes round up');
   assert.equal(shares.filter((v) => v === 714n).length, 5);
 
   // and they are the first two in the round's own remainder order
@@ -196,7 +196,7 @@ test('the round decides the remainder order, not the list order', () => {
   });
   for (const k of game)
     assert.equal(feeOwed(backwards, k, 'verify'), feeOwed(forwards, k, 'verify'),
-      'the order the caller lists seats in moved somebody\'s millisatoshi');
+      'the order the caller lists signer nodes in moved somebody\'s millisatoshi');
 
   // a different round rounds up a different pair
   const other = nodeFeeTable({

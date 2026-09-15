@@ -6,7 +6,7 @@
 // `contract.committeeSeed` - thirty-two bytes the round's AUTHOR wrote - so
 // the lottery was a pure function of a value the creator chose. On a fixed
 // census of eight bonded nodes with two slots, 34 offline candidate seeds were
-// enough to seat a chosen pair. Since letter 26 made the seated set the only
+// enough to assign a chosen pair. Since letter 26 made the assigned set the only
 // trusted list, that is the whole committee, and 5A.11's "committee cannot be
 // overwritten" passes - nothing was overwritten, it was computed.
 //
@@ -50,10 +50,10 @@ const contract = (over = {}) => ({
 
 test('a chosen seed can no longer choose the committee', () => {
   // THE GRIND, RUN. Eight bonded nodes, two slots, and an attacker who wants
-  // two named seats. The search is over the value the OLD code seated with.
+  // two named signer nodes. The search is over the value the OLD code assigned with.
   const field = census(8);
   const wanted = [toHex(b32(0x40)), toHex(b32(0x41))];
-  const seats = (seed) => selectCommittee({
+  const signerNodes = (seed) => selectCommittee({
     entries: field, contract: contract(), role: 'game', committeeSeed: seed,
   }).map((e) => toHex(e.pubkey)).sort();
 
@@ -62,17 +62,17 @@ test('a chosen seed can no longer choose the committee', () => {
   for (let i = 0; i < 100000 && !ground; i++) {
     tries++;
     const seed = taggedHash('grind', new Uint8Array([i & 255, (i >> 8) & 255, (i >> 16) & 255]));
-    const picked = seats(seed);
+    const picked = signerNodes(seed);
     if (picked.length === 2 && picked[0] === wanted[0] && picked[1] === wanted[1]) ground = seed;
   }
   assert.ok(ground, 'the search found no seed at all, so this measures nothing');
   assert.ok(tries < 1000, `grinding a seed took ${tries} tries, which is still cheap`);
 
-  // That seed still seats the pair when it IS the seed - the lottery is a
+  // That seed still signer nodes the pair when it IS the seed - the lottery is a
   // function of its input, and that is not the defect.
-  assert.deepEqual(seats(ground), wanted);
+  assert.deepEqual(signerNodes(ground), wanted);
 
-  // THE DEFECT IS GONE: putting those bytes on the contract seats nothing,
+  // THE DEFECT IS GONE: putting those bytes on the contract signer nodes nothing,
   // because the selection does not read the field. This is the before/after -
   // the same bytes that used to decide the committee now decide nothing.
   const withGround = contract({ committeeSeed: ground });
@@ -80,11 +80,11 @@ test('a chosen seed can no longer choose the committee', () => {
     censusRootGameVerify: withGround.censusRoot, censusRootSettlement: withGround.censusRoot,
     roundId: roundId(withGround), roundRandomness: b32(0xbe),
   });
-  const seatedNow = selectCommittee({
+  const assignedNow = selectCommittee({
     entries: field, contract: withGround, role: 'game', committeeSeed: beaconSeed,
   }).map((e) => toHex(e.pubkey)).sort();
-  assert.notDeepEqual(seatedNow, wanted,
-    'the ground seed still seated the pair, so grinding the contract still works');
+  assert.notDeepEqual(assignedNow, wanted,
+    'the ground seed still joined the pair, so grinding the contract still works');
 
   // and the lottery refuses to run at all on no seed rather than reaching for
   // the field
@@ -195,13 +195,13 @@ test('beacons after committee_time decide the committee: one beacon one pair, an
   // THE CLAIM IS NOT ABOUT TWO CHOSEN BEACONS. It used to be 0xbe against
   // 0x9c, and those differed only by the luck of the round id: when this
   // fixture took the real signed donation set (M3.2 6e) the round id moved and
-  // both seated the same pair - a 1-in-28 coincidence, measured, while all 28
+  // both joined the same pair - a 1-in-28 coincidence, measured, while all 28
   // pairs stayed reachable. So the draw is swept instead, which is stronger
   // than any two beacons differing and holds for whatever the round id is.
   const field = census(8);
   const c = contract();
   const rid = roundId(c);
-  const seatedBy = (randomness) => {
+  const signerNodesBy = (randomness) => {
     const seeded = committeeSeedFromBeacon(c, {
       roundId: rid, randomness, height: CENSUS_HEIGHT + 5, timeMs: AFTER,
     });
@@ -210,12 +210,12 @@ test('beacons after committee_time decide the committee: one beacon one pair, an
       .map((e) => toHex(e.pubkey)).sort();
   };
 
-  const one = seatedBy(b32(0xbe));
-  assert.deepEqual(one, seatedBy(b32(0xbe)), 'one beacon seated two committees');
+  const one = signerNodesBy(b32(0xbe));
+  assert.deepEqual(one, signerNodesBy(b32(0xbe)), 'one beacon assigned two committees');
   const pairs = new Set();
-  for (let k = 0; k < 256; k++) pairs.add(seatedBy(b32(k)).join('+'));
+  for (let k = 0; k < 256; k++) pairs.add(signerNodesBy(b32(k)).join('+'));
   assert.equal(pairs.size, 28,
-    `256 beacons seated ${pairs.size} of the 28 pairs, so the randomness does not decide the committee`);
+    `256 beacons assigned ${pairs.size} of the 28 pairs, so the randomness does not decide the committee`);
 });
 
 test('a fallback is the same beacon or it is nothing', () => {
@@ -225,7 +225,7 @@ test('a fallback is the same beacon or it is nothing', () => {
   // are absent, empty, or the born rule
   // itself. Anything else is a SECOND randomness source - and a second source
   // is a second committee, since a creator free to fall back would fall back
-  // to the beacon that seats their own nodes.
+  // to the beacon that signer nodes their own nodes.
   const rid = roundId(contract());
   const seeded = (randomnessFallback) => committeeSeedFromBeacon(
     { ...contract(), randomnessFallback },

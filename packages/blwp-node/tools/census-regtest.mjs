@@ -66,10 +66,10 @@ const SET = {
   arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK,
   bondMaturity: g.bondMaturity, tweakPoint, combine,
 };
-const seats = new Map();
+const signerNodes = new Map();
 for (let i = 0; i < g.arbitrationM; i++) {
   const secret = taggedHash('BLWP/v1/TestArbitration', new TextEncoder().encode(`bitcoin-regtest:${i}`));
-  seats.set(toHex(schnorr.getPublicKey(secret)), secret);
+  signerNodes.set(toHex(schnorr.getPublicKey(secret)), secret);
 }
 
 // The wallet is this script's own, and a rerun finds it already there: a
@@ -168,7 +168,7 @@ function postBond(nodeSecret, { network = 'regtest', endpoint = 'ws://node' } = 
            txid: JSON.parse(cli('decoderawtransaction', hex)).txid };
 }
 
-/** A slash: five of the seven seats, committing to the proof that justified it. */
+/** A slash: five of the seven signer nodes, committing to the proof that justified it. */
 function slash(bond) {
   const script = slashLeaf(g.arbitrationKeys, g.arbitrationK);
   const leaf = tapLeafHash(script);
@@ -185,7 +185,7 @@ function slash(bond) {
     return 0;
   });
   const stack = sorted
-    .map((k, i) => (i < g.arbitrationK ? schnorr.sign(sighash, seats.get(toHex(k))) : new Uint8Array(0)))
+    .map((k, i) => (i < g.arbitrationK ? schnorr.sign(sighash, signerNodes.get(toHex(k))) : new Uint8Array(0)))
     .reverse();
   const hex = toHex(serializeSpend({
     version: 2, locktime: 0, inputs, outputs,

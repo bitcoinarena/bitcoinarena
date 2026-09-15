@@ -1,10 +1,10 @@
-// THE CURVE THE PAGE BRINGS TO A SEAT.
+// THE CURVE THE PAGE BRINGS TO A SIGNER NODE.
 //
 // `@blwp/client` carries no crypto: signing, verifying and this key are
 // injected. The daemons already sit on `@noble/curves` secp256k1. This is
 // that same curve, loaded beside the client, so a tab can name a real
 // BIP-340 key. Without it the page fetches the round and then refuses the
-// seat, and two tabs of the daily are two single-player games.
+// signer node, and two tabs of the daily are two single-player games.
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 
 const hex = (b) => {
@@ -14,7 +14,7 @@ const hex = (b) => {
 };
 const big = (b) => BigInt('0x' + hex(b));
 
-/** The x-only public key of a secret, which is what a seat is named by. */
+/** The x-only public key of a secret, which is what a signer node is named by. */
 export const pointX = (secret) => schnorr.getPublicKey(secret);
 
 export const pointFromScalar = (scalar) => {

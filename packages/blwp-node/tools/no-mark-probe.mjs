@@ -1,11 +1,11 @@
 // §15 THE WALK-AWAY, MEASURED (read-only probe, M3.3-34's ENTRY_VOID piece): a
-// player is seated at both seats of a 2-of-2 - entry, handout and stake lock
+// player is joined at both signer nodes of a 2-of-2 - entry, handout and stake lock
 // committed (or a free round) - and then:
 //   (A) sends nothing at all                       paid (federation lock)
 //   (B) sends the first mark at tick 60, then nothing   paid - the mid-run stop, for contrast
 //   (C) sends nothing at all                       free round
-// Both seats close the round. Printed: what each seat's replay stored or why not,
-// the results each seat holds, ENTRY_VOID / start-FORFEIT records, and the forfeit
+// Both signer nodes close the round. Printed: what each signer node's replay stored or why not,
+// the results each signer node holds, ENTRY_VOID / start-FORFEIT records, and the forfeit
 // answer against the lock's expiry. Harness: closed-claim-probe.mjs's.
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
@@ -15,7 +15,7 @@ import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { resultFinality } from '../src/finality.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
-import { assumeSeated } from '../test/seating.js';
+import { assumeAssigned } from '../test/assignment.js';
 import { lockPort } from '../test/lock-fixture.js';
 import { b32, rand, STAKE, WINDOW_MS, WINNER, GENESIS_HASH, wordsAt, contractFor, say, secretScalar, opts, wait, RANDOMNESS } from '../test/window-fixture.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
@@ -35,7 +35,7 @@ import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
 const curve = { ...feldmanGroup, tweakPoint };
 const out = (o) => console.log(JSON.stringify(o, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
 
-async function seats({ free = false } = {}) {
+async function signerNodes({ free = false } = {}) {
   const port = lockPort();
   const mk = (db) => serve(db, { port: 0, ...opts, stakeLocks: port, poolCurve: curve, finality: { everyMs: 100 } });
   const a = await mk(openStore(':memory:'));
@@ -50,14 +50,14 @@ async function seats({ free = false } = {}) {
   const rid = roundId(c);
   for (const d of [a, b]) {
     await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
-    assumeSeated(d.round, rid, c.nodes);
+    assumeAssigned(d.round, rid, c.nodes);
   }
   if (!free) for (let pass = 0; pass < 2; pass++) for (const d of [a, b]) await d.dkg.run(c.nodes);
-  return { a, b, c, rid, port, free, claimPk: free ? null : a.dkg.seatFor(c.nodes).pool.groupPublicKey,
+  return { a, b, c, rid, port, free, claimPk: free ? null : a.dkg.signerNodeFor(c.nodes).pool.groupPublicKey,
     async close() { await a.close(); await b.close(); } };
 }
 
-async function seatAndBuild(w) {
+async function joinAndBuild(w) {
   const session = ed25519.utils.randomSecretKey();
   const outpoint = { txid: rand(32), outIdx: 0n };
   let entry;
@@ -72,7 +72,7 @@ async function seatAndBuild(w) {
   } else {
     const preimage = secretScalar();
     const e = rand(32);
-    dealt = await dealHandout({ preimage, seats: w.c.nodes, roundId: w.rid, playerPubkey: WINNER.key,
+    dealt = await dealHandout({ preimage, signerNodes: w.c.nodes, roundId: w.rid, playerPubkey: WINNER.key,
       ephemeralSecret: e, ephemeralPubkey: feldmanGroup.pointX(e), coefficients: [scalarFrom32(rand(32)) % FIELD], needed: 2, curve: feldmanGroup });
     entry = { roundId: w.rid, playerPubkey: WINNER.key, sessionPubkey: ed25519.getPublicKey(session),
       stakeCommitment: sha256(preimage), stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE), donationMsat: 0n,
@@ -84,19 +84,19 @@ async function seatAndBuild(w) {
     await w.port.put(outpoint, fields);
   }
   const eid = entryId(entry);
-  const seated = [];
+  const joined = [];
   for (const d of [w.a, w.b]) {
     const base = `http://127.0.0.1:${d.port}`;
     if (dealt) await fetch(`${base}/handout`, { method: 'POST', body: encodeHandout(dealt.handout) });
-    seated.push((await fetch(`${base}/entry`, { method: 'POST', body: encodeEntryContract(entry) })).status);
-    if (fields) seated.push((await fetch(`${base}/lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(fields)) })).status);
+    joined.push((await fetch(`${base}/entry`, { method: 'POST', body: encodeEntryContract(entry) })).status);
+    if (fields) joined.push((await fetch(`${base}/lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(fields)) })).status);
   }
   const st = init(seedWordForEntry(entry, RANDOMNESS));
   for (let t = 0; t < 60; t++) step(st, ...wordsAt(t));
   const b1 = { roundId: w.rid, entryId: eid, previousHash: GENESIS_HASH, firstTick: 0, ticks: Array.from({ length: 60 }, (_, t) => wordsAt(t)), liquidations: [] };
   const m1 = { roundId: w.rid, entryId: eid, tick: 60, stateHash: Uint8Array.from(stateHash(st).match(/../g).map((x) => parseInt(x, 16))),
     inputChainHash: batchId(b1), previousHash: NO_PREVIOUS, sessionPubkey: entry.sessionPubkey };
-  return { eid, fields, seated, firstId: checkpointId(m1), start: [encodeInputBatch(b1), joinSigned(encodeCheckpoint(m1), ed25519.sign(checkpointId(m1), session))] };
+  return { eid, fields, joined, firstId: checkpointId(m1), start: [encodeInputBatch(b1), joinSigned(encodeCheckpoint(m1), ed25519.sign(checkpointId(m1), session))] };
 }
 
 async function closeAndLook(w, run) {
@@ -115,7 +115,7 @@ async function closeAndLook(w, run) {
     if (f.ok || !/before the result is final/.test(await f.text())) break;
   }
   await wait(500);
-  const seat = (d) => ({
+  const signerNode = (d) => ({
     results: d.round.results(w.rid, run.eid).map((r) => { const p = decodePlayerResult(splitSignedResult(r.bytes).body); return `${p.outcome}/${p.score}`; }),
     finality: resultFinality(d.round, w.rid, run.eid).state,
     entryVoid: !!d.round.entryVoid(run.eid), startForfeit: !!d.round.startForfeit(run.eid),
@@ -125,15 +125,15 @@ async function closeAndLook(w, run) {
     const f = await fetch(`http://127.0.0.1:${w.a.port}/forfeit?round=${toHex(w.rid)}&entry=${toHex(run.eid)}`);
     forfeit = f.ok ? { status: 200 } : { status: f.status, why: (await f.text()).trim().slice(0, 150) };
   }
-  return { seated: run.seated, replayed: { a: replayed[0], b: replayed[1] }, a: seat(w.a), b: seat(w.b), forfeit,
+  return { joined: run.joined, replayed: { a: replayed[0], b: replayed[1] }, a: signerNode(w.a), b: signerNode(w.b), forfeit,
     lock: run.fields ? { expiration: run.fields.expiration, height: w.port.height, heldUntilExpiry: run.fields.expiration > w.port.height } : null };
 }
 
-for (const [name, free, sendFirst] of [['(A) paid, seated, sends nothing', false, false],
-  ['(B) paid, first mark at 60, then nothing', false, true], ['(C) free, seated, sends nothing', true, false]]) {
-  const w = await seats({ free });
+for (const [name, free, sendFirst] of [['(A) paid, joined, sends nothing', false, false],
+  ['(B) paid, first mark at 60, then nothing', false, true], ['(C) free, joined, sends nothing', true, false]]) {
+  const w = await signerNodes({ free });
   try {
-    const run = await seatAndBuild(w);
+    const run = await joinAndBuild(w);
     if (sendFirst) for (const d of [w.a, w.b]) for (const m of run.start) await say(d.port, m);
     await wait(500);
     out({ case: name, ...(await closeAndLook(w, run)) });

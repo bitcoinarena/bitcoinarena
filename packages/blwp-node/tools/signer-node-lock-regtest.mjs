@@ -1,10 +1,10 @@
-// A SEAT VERIFIES A REAL STAKE LOCK ON A REAL FEDERATION (v4.6.2 §23.1 step 5).
-// Driven by seat-lock-regtest.sh, which stands up stock fedimintd 0.12.0 (4
+// A SIGNER NODE VERIFIES A REAL STAKE LOCK ON A REAL FEDERATION (v4.6.2 §23.1 step 5).
+// Driven by signer-node-lock-regtest.sh, which stands up stock fedimintd 0.12.0 (4
 // guardians, 3 of 4) on regtest, deposits through a gateway, and makes the
 // locks with blwp-stake-lock.
 //
-//   node seat-lock-regtest.mjs prepare <dir>          three stakes: P, its point, an even-y player, a fee preimage F
-//   node seat-lock-regtest.mjs seat <dir> <keys.json>  a seat, the real port, the handovers
+//   node signer-node-lock-regtest.mjs prepare <dir>          three stakes: P, its point, an even-y player, a fee preimage F
+//   node signer-node-lock-regtest.mjs signer node <dir> <keys.json>  a signer node, the real port, the handovers
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -18,7 +18,7 @@ import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { feldmanGroup } from '../src/curve.js';
 import { stakeLockPort } from '../src/stake-lock-port.js';
-import { lockFieldsToJson } from '../src/stake-lock-seat.js';
+import { lockFieldsToJson } from '../src/stake-lock-signer-node.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
 import { dealHandout, encodeHandout, handoutId } from '../../protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../protocol/src/shares.js';
@@ -57,12 +57,12 @@ if (cmd === 'prepare') {
   process.exit(0);
 }
 
-if (cmd !== 'seat') throw new Error('usage: seat-lock-regtest.mjs prepare|seat <dir> [keys.json]');
+if (cmd !== 'signer node') throw new Error('usage: signer-node-lock-regtest.mjs prepare|signer node <dir> [keys.json]');
 const stakes = JSON.parse(readFileSync(`${dir}/stakes.json`, 'utf8'));
 const claimPk = fromHex(JSON.parse(readFileSync(keysPath, 'utf8')).claimPk);
 const lockOf = (name) => JSON.parse(readFileSync(`${dir}/lock-${name}.json`, 'utf8'));
 const port = stakeLockPort({ bin: process.env.LOCK_BIN, dataDir: `${dir}/client` });
-const seat = await serve(openStore(':memory:'), {
+const signerNode = await serve(openStore(':memory:'), {
   port: 0, funded: () => true, randomnessFor: () => ({ hash: b32(0x9b), height: 900001, timeMs: 900n }),
   stakeLocks: port, claimKeyFor: () => claimPk,
 });
@@ -74,25 +74,25 @@ try {
     gameVerifySlots: 2, settlementSlots: 2, simCoreHash: CORE_HASH, startTimeMs: now + MIN_ENTRY_WINDOW_MS,
     entryCloseMs: now + MIN_ENTRY_WINDOW_MS + 600000n, objectionWindowMs: 3000n, custody: 'FEDERATION',
     slashMinimumServed: 20, slashRemainder: 'BURN', federationId: fromHex(LockClient.federationIdOf(process.env.INVITE)), stakeExpiryBlocks: 144,
-    publicationRelays: [`http://127.0.0.1:${seat.port}`], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,
+    publicationRelays: [`http://127.0.0.1:${signerNode.port}`], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,
     censusRoot: b32(2), committeeTimeMs: now - 1000n, randomnessRule: 'bitcoin-block-hash', stakeMsat: STAKE,
     bondMinSats: 50000n, blockTicks: 9000, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
     timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
-    nodes: [seat.round.pubkey, b32(0x33)],
+    nodes: [signerNode.round.pubkey, b32(0x33)],
   };
   const rid = roundId(c);
-  const opened = await fetch(`http://127.0.0.1:${seat.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
+  const opened = await fetch(`http://127.0.0.1:${signerNode.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
   if (opened.status !== 201) throw new Error(`the round did not open: ${opened.status} ${await opened.text()}`);
-  seat.round.db.prepare('SELECT 1').get();
-  const { assumeSeated } = await import('../test/seating.js');
-  assumeSeated(seat.round, rid, c.nodes);
+  signerNode.round.db.prepare('SELECT 1').get();
+  const { assumeAssigned } = await import('../test/assignment.js');
+  assumeAssigned(signerNode.round, rid, c.nodes);
 
-  const seatEntry = async (name, outpoint) => {
+  const joinedEntry = async (name, outpoint) => {
     const s = stakes[name];
     const fee = feeOf(name);
     const e = rand(32);
     const dealt = await dealHandout({
-      preimage: fromHex(s.p), seats: c.nodes, roundId: rid, playerPubkey: fromHex(s.player),
+      preimage: fromHex(s.p), signerNodes: c.nodes, roundId: rid, playerPubkey: fromHex(s.player),
       ephemeralSecret: e, ephemeralPubkey: feldmanGroup.pointX(e),
       coefficients: [scalarFrom32(rand(32)) % FIELD], needed: 2, curve: feldmanGroup,
     });
@@ -105,12 +105,12 @@ try {
       feePreimage: fromHex(s.f), stakeLockOutpoint: outpoint, feeLockOutpoint: opOf(fee),
       claimKeyAttestationRef: new Uint8Array(32),
     };
-    const h = await fetch(`http://127.0.0.1:${seat.port}/handout`, { method: 'POST', body: encodeHandout(dealt.handout) });
-    const en = await fetch(`http://127.0.0.1:${seat.port}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
+    const h = await fetch(`http://127.0.0.1:${signerNode.port}/handout`, { method: 'POST', body: encodeHandout(dealt.handout) });
+    const en = await fetch(`http://127.0.0.1:${signerNode.port}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
     if (h.status !== 201 || en.status !== 201) throw new Error(`${name}: handout ${h.status}, entry ${en.status} ${await en.text()}`);
     // ITS FEE LOCK, handed over before any stake lock (pick a): a stake lock verified before its fee lock is not counted until it is.
     const eid = entryId(entry);
-    const fl = await fetch(`http://127.0.0.1:${seat.port}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(feeFieldsOf(name, fee))) });
+    const fl = await fetch(`http://127.0.0.1:${signerNode.port}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(feeFieldsOf(name, fee))) });
     const flWhy = (await fl.text()).trim();
     say({ feeLock: name, status: fl.status, why: flWhy.slice(0, 160) });
     if (fl.status !== 201) throw new Error(`${name}: fee lock ${fl.status} ${flWhy}`);
@@ -127,18 +127,18 @@ try {
   });
   const handOver = async (label, eid, fields) => {
     const t = Date.now();
-    const r = await fetch(`http://127.0.0.1:${seat.port}/lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(fields)) });
+    const r = await fetch(`http://127.0.0.1:${signerNode.port}/lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(fields)) });
     const why = (await r.text()).trim();
-    const seen = seat.round.stakeSeen(eid);
-    const stake = (await fetch(`http://127.0.0.1:${seat.port}/stake?entry=${toHex(eid)}`)).status;
+    const seen = signerNode.round.stakeSeen(eid);
+    const stake = (await fetch(`http://127.0.0.1:${signerNode.port}/stake?entry=${toHex(eid)}`)).status;
     say({ handover: label, status: r.status, ms: Date.now() - t, stakeSeenMsat: seen ? String(seen.paidMsat) : null, stake, why: why.slice(0, 160) });
   };
   const opOf = (lock) => ({ txid: fromHex(lock.txid), outIdx: BigInt(lock.out_idx) });
 
   const A = lockOf('A'); const B = lockOf('B');
-  const a = await seatEntry('A', opOf(A));
-  const bb = await seatEntry('B', opOf(B));
-  const cc = await seatEntry('C', { txid: fromHex(B.txid), outIdx: BigInt(B.out_idx) + 7n });
+  const a = await joinedEntry('A', opOf(A));
+  const bb = await joinedEntry('B', opOf(B));
+  const cc = await joinedEntry('C', { txid: fromHex(B.txid), outIdx: BigInt(B.out_idx) + 7n });
   const st0 = await port.status(opOf(A));
   say({ federation: 'status', blockCount: st0.blockCount, A: { expiration: A.computed_expiration, stored: st0.stored } });
 
@@ -154,4 +154,4 @@ try {
   for (let i = 0; i < 120 && st.blockCount <= start; i++) { await new Promise((r) => setTimeout(r, 1000)); st = await port.status(opOf(A)); }
   say({ federation: 'status', blockCount: st.blockCount, advancedFrom: start });
   await handOver('A, its own lock (+144 exactly), one block later', a.eid, fieldsOf('A', A));
-} finally { await seat.close(); }
+} finally { await signerNode.close(); }

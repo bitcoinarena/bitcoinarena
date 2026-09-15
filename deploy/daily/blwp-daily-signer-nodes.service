@@ -1,5 +1,5 @@
 [Unit]
-Description=BLWP Daily: the 2-of-2 seats and their round keeper (one free round, one paying THRESHOLD_LN round)
+Description=BLWP Daily: the 2-of-2 signer nodes and their round keeper (one free round, one paying THRESHOLD_LN round)
 After=blwp-daily-btc.service blwp-daily-lnd-committee.service
 Wants=blwp-daily-btc.service blwp-daily-lnd-committee.service
 [Service]
@@ -7,7 +7,7 @@ WorkingDirectory=@D@/code/packages/blwp-node
 Environment=PATH=@PATH@
 Environment=RT=@D@/btc RPCPORT=30401 BLWP_PAID_STAKE_MSAT=100000
 Environment=BLWP_LNCLI=/mnt/bitcoin/lnd-linux-amd64-v0.21.3-beta/lncli BLWP_LND_DIR=@D@/lnd-committee BLWP_LND_RPC=127.0.0.1:30410 BLWP_LND_NETWORK=regtest
-EnvironmentFile=@D@/seats.env
+EnvironmentFile=@D@/signer-nodes.env
 ExecStart=/bin/bash -c 'exec node tools/run-2of2.mjs >> @D@/daily.log 2>&1'
 Restart=always
 RestartSec=15

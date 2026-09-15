@@ -2,10 +2,10 @@
 // "the default path - nobody acting - is always the refund"). Run by
 // w5a-regtest.sh after the federation is up.
 //
-// On the Daily's own 2-of-2 round naming the federation, the seats making the
+// On the Daily's own 2-of-2 round naming the federation, the signer nodes making the
 // round's claim key themselves (nothing injected), two players - one whose key
 // is even-y, one odd-y - lock their stakes the way the page does and are
-// committed by both seats. Then, each from a LATER SESSION that holds only its
+// committed by both signer nodes. Then, each from a LATER SESSION that holds only its
 // seed (an empty tab store):
 //   a refund before the lock's expiry         - the guardians must refuse it
 //   blocks mined past the lock's own expiry
@@ -67,14 +67,14 @@ const short = (r) => ({
 });
 
 const round = await standUpRound({ host: '127.0.0.1', portA: 18561, portB: 18562, stakeMsat: 1000000n,
-  federationId, invite: env.INVITE, seat: { stakeLocks: port } });
+  federationId, invite: env.INVITE, signerNode: { stakeLocks: port } });
 const rid = fromHex(round.id);
 const contract = round.contract;
 const withId = { ...contract, id: rid };
 let code = 0;
 try {
-  // THE SEATS' OWN CLAIM KEY, attested as the page attests it.
-  const claimKey = await awaitAttestedClaimKey({ round: withId, seats: contract.nodes, nodes: round.nodes, curve: pageCurve });
+  // THE SIGNER NODES' OWN CLAIM KEY, attested as the page attests it.
+  const claimKey = await awaitAttestedClaimKey({ round: withId, signerNodes: contract.nodes, nodes: round.nodes, curve: pageCurve });
   say({ step: 'claim key', ok: claimKey.ok, attested: claimKey.attested, needed: claimKey.needed,
     key: claimKey.ok ? toHex(claimKey.claimPk).slice(0, 16) : claimKey.why });
   if (!claimKey.ok) throw new Error(claimKey.why);
@@ -89,7 +89,7 @@ try {
       player = playerFor(withId, { seed, curve: pageCurve });
       if ((secp256k1.getPublicKey(player.secret, true)[0] === 2) === (parity === 'even-y')) break;
     }
-    const stake = await stakeFor(withId, { seats: contract.nodes, curve: pageCurve, random, playerPubkey: player.pubkey, needed: 2 });
+    const stake = await stakeFor(withId, { signerNodes: contract.nodes, curve: pageCurve, random, playerPubkey: player.pubkey, needed: 2 });
     const put = await postHandout(stake, round.nodes, { needed: 2 });
     let paying = Promise.resolve(null);
     const lock = await lockStake({ round: contract, roundId: rid, invite: env.INVITE, seed, stake, claimKey,
@@ -97,12 +97,12 @@ try {
     const paid = await paying;
     const entry = { roundId: rid, sessionPubkey: ed25519.getPublicKey(ed25519.utils.randomSecretKey()),
       ...entryFor(withId, { seed, curve: pageCurve, random, stake, claimKey, stakeLock: lock }) };
-    const seated = [];
-    for (const base of round.nodes) seated.push((await fetch(`${base}/entry`, { method: 'POST', body: encodeEntryContract(entry) })).status);
+    const joined = [];
+    for (const base of round.nodes) joined.push((await fetch(`${base}/entry`, { method: 'POST', body: encodeEntryContract(entry) })).status);
     const handed = await handLock({ entryId: entryId(entry), fields: lock.fields, nodes: round.nodes, needed: 2 });
     players.push({ parity, seed, lock });
     say({ step: 'locked', parity, deposit: paid, handouts: put.accepted, outpoint: `${toHex(lock.outpoint.txid)}:${lock.outpoint.outIdx}`,
-      amountMsat: lock.fields.amountMsat, expiration: lock.fields.expiration, entries: seated,
+      amountMsat: lock.fields.amountMsat, expiration: lock.fields.expiration, entries: joined,
       locks: handed.said.map((s) => s.status), committed: handed.committed });
   }
 

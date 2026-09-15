@@ -36,7 +36,7 @@ import { toHex, sha256 } from '../../protocol/src/hash.js';
 
 export { HELD, SETTLED, CANCELLED, EXPIRED, SETTLE, CANCEL, NOTHING };
 
-/** A seat in a round that asks no stake: there is no hold, by design. */
+/** An entry in a round that asks no stake: there is no hold, by design. */
 export const FREE = 'FREE';
 
 /**
@@ -105,14 +105,14 @@ export class Custody {
    *
    * Measured before: nothing asked. An unpaid OPEN invoice reads HELD - money
    * nobody sent is not money in flight - and `paidMsat` had no caller, so a
-   * seated entry played on a stake that never arrived.
+   * joined entry played on a stake that never arrived.
    *
    * Seen once, remembered: the answer is written the first time Lightning shows
    * the full amount held, and later play is answered from the row.
    */
   async seenPaid(entryId) {
     const stored = this.round.entry(entryId);
-    if (!stored) return { ok: false, why: 'this node seated no such entry' };
+    if (!stored) return { ok: false, why: 'this node holds no such entry' };
     const entry = decodeEntryContract(stored);
     if (entry.stakeMsat === 0n) return { ok: true, state: FREE };
     const seen = this.round.stakeSeen(entryId);
@@ -145,9 +145,9 @@ export class Custody {
   async hold(entry) {
     // A ROUND THAT ASKS NO STAKE HOLDS NOTHING, AND NEEDS NO LIGHTNING TO SAY
     // SO. Satoshis are optional (the owner 2026-09-10 11:15): a free round is how
-    // ghosts are tested with no wallet, and its seat must not depend on a node
+    // ghosts are tested with no wallet, and its entry must not depend on a node
     // this operator may never run. Asked BEFORE the Lightning question, so a
-    // free seat on a node with none reads as free rather than as a fault. It
+    // free round on a node with none reads as free rather than as a fault. It
     // keys on the round asking nothing - not on a net of zero, which a paid
     // entry whose donation took the rest would also reach.
     if (entry && entry.stakeMsat === 0n)
@@ -340,7 +340,7 @@ export class Custody {
     }
 
     // AND THE POOL 23.2's TABLE DECIDED (M3.2 6e): `holdSettlement`'s own sum of
-    // the net stakes it settles - handed up so the seat can say it, not worked
+    // the net stakes it settles - handed up so the signer node can say it, not worked
     // out a second time by anybody who wants to show it.
     return { ok: true, actions: done, table: decided.table, poolMsat: decided.poolMsat };
   }

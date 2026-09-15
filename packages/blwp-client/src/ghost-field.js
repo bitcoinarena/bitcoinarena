@@ -22,7 +22,7 @@ export const GHOST_BACKLOG = 240;
 
 /**
  * THE TICK WORD OF A RETIRE. No picture has a negative tick, so the same twelve
- * words `BlwpNextGhost` already carries say "take this seat's truck away" -
+ * words `BlwpNextGhost` already carries say "take this entry's truck away" -
  * `GhostField.Show` reads a tick below zero as exactly that.
  */
 export const RETIRE_TICK = -1;
@@ -43,30 +43,30 @@ export function watchGhosts(client, where, { limit = GHOST_BACKLOG } = {}) {
     throw new Error('a watch names the round and the entry it is watching from');
 
   const mine = toHex(where.entryId);
-  // WHO THIS TAB IS, not only which seat it holds. A reload keeps the player's
-  // key and draws a new entry, so this tab's pre-reload seat is still in the
-  // round and is still this player (`Client.join` keeps the key it seated).
+  // WHO THIS TAB IS, not only which entry it holds. A reload keeps the player's
+  // key and draws a new entry, so this tab's pre-reload entry is still in the
+  // round and is still this player (`Client.join` keeps the key it joined).
   const me = where.playerPubkey || client.playerPubkey || null;
   const myKey = me ? toHex(me) : null;
   // ONE TRUCK PER PLAYER, and the picture that arrived LAST is that player's.
-  // A reload leaves the player's old seat in the round with a frozen run that
-  // may have gone further than the live one - measured 2026-09-10: dead seats
+  // A reload leaves the player's old entry in the round with a frozen run that
+  // may have gone further than the live one - measured 2026-09-10: dead entries
   // at ticks 4229 and 4227, the live other at 3041, and the chip named the
   // dead one at -97,-10 because `newestPose` takes the highest tick. A dead
-  // seat never sends again, so the live seat's next picture replaces it. A
+  // entry never sends again, so the live entry's next picture replaces it. A
   // picture that names no player is keyed by its entry, as before.
   const whoOf = (g) => (g.playerPubkey ? 'p:' + toHex(g.playerPubkey) : 'e:' + toHex(g.entryId));
-  // AND ONE SEAT OF EACH PLAYER IS THE ONE UNITY DRAWS. Unity keeps a truck per
-  // seat and never removed one, so every seat a player had left stood frozen:
-  // measured 2026-09-10 on the Daily, a reload handed Unity 9 and 11 seats, 8
+  // AND ONE ENTRY OF EACH PLAYER IS THE ONE UNITY DRAWS. Unity keeps a truck per
+  // entry and never removed one, so every entry a player had left stood frozen:
+  // measured 2026-09-10 on the Daily, a reload handed Unity 9 and 11 entries, 8
   // and 10 of them abandoned (one picture each), and a watched player's reload
-  // left its 105-picture seat frozen beside the new one. A seat is PROVEN once
-  // it sends a second picture - an abandoned seat never does.
-  const drawnSeat = new Map();   // player -> { e, entryId, playerPubkey }
-  const pictures = new Map();    // seat -> pictures seen
+  // left its 105-picture entry frozen beside the new one. An entry is PROVEN once
+  // it sends a second picture - an abandoned entry never does.
+  const drawnEntry = new Map();   // player -> { e, entryId, playerPubkey }
+  const pictures = new Map();    // entry -> pictures seen
   const queue = [];
-  const retire = (seat) => {
-    queue.push({ entryId: seat.entryId, playerPubkey: seat.playerPubkey, x: 0, z: 0, heading: 0,
+  const retire = (entryKey) => {
+    queue.push({ entryId: entryKey.entryId, playerPubkey: entryKey.playerPubkey, x: 0, z: 0, heading: 0,
       tick: RETIRE_TICK, retire: true });
     field.retired++;
   };
@@ -78,8 +78,8 @@ export function watchGhosts(client, where, { limit = GHOST_BACKLOG } = {}) {
     seen: 0,
     self: 0,
     shed: 0,
-    // seats a player left, told to Unity to take away; and first pictures of
-    // another seat while this player's drawn seat is live, never drawn
+    // entries a player left, told to Unity to take away; and first pictures of
+    // another entry while this player's drawn entry is live, never drawn
     retired: 0,
     superseded: 0,
     // HOW MANY PICTURES SOMEBODY ACTUALLY TOOK TO DRAW.
@@ -137,23 +137,23 @@ export function watchGhosts(client, where, { limit = GHOST_BACKLOG } = {}) {
 
   client.onGhost = (ghost) => {
     field.seen++;
-    // NEVER YOURSELF - this seat, or any earlier seat of this same player.
+    // NEVER YOURSELF - this entry, or any earlier entry of this same player.
     if (toHex(ghost.entryId) === mine
         || (myKey && ghost.playerPubkey && toHex(ghost.playerPubkey) === myKey)) { field.self++; return; }
 
     const who = whoOf(ghost);
-    const seat = toHex(ghost.entryId);
-    const n = (pictures.get(seat) || 0) + 1;
-    pictures.set(seat, n);
-    const drawn = drawnSeat.get(who);
-    if (drawn && drawn.e !== seat) {
-      // A FIRST PICTURE OF ANOTHER SEAT WHILE THE DRAWN ONE IS LIVE is a seat
+    const entryKey = toHex(ghost.entryId);
+    const n = (pictures.get(entryKey) || 0) + 1;
+    pictures.set(entryKey, n);
+    const drawn = drawnEntry.get(who);
+    if (drawn && drawn.e !== entryKey) {
+      // A FIRST PICTURE OF ANOTHER ENTRY WHILE THE DRAWN ONE IS LIVE is an entry
       // that player left: it never reaches Unity.
       if (n < 2 && (pictures.get(drawn.e) || 0) >= 2) { field.superseded++; return; }
-      // Otherwise the drawn seat is the one superseded, and Unity is told.
+      // Otherwise the drawn entry is the one superseded, and Unity is told.
       retire(drawn);
     }
-    drawnSeat.set(who, { e: seat, entryId: ghost.entryId, playerPubkey: ghost.playerPubkey });
+    drawnEntry.set(who, { e: entryKey, entryId: ghost.entryId, playerPubkey: ghost.playerPubkey });
 
     present.set(who, ghost);
     queue.push(ghost);
@@ -206,25 +206,25 @@ export function newestPose(field) {
  * last tick that landed. That is what the 16:08 two-Chrome close-out saw from
  * the other side, and neither tab had a number that said so.
  */
-export function playersLine({ seated, others, stalled = false, at = null, refused = null,
-  seatRefused = null, stake = null, names = [] } = {}) {
-  // WHY THERE IS NO SEAT, AND NOT MERELY THAT THERE IS NONE.
+export function playersLine({ joined, others, stalled = false, at = null, refused = null,
+  joinRefused = null, stake = null, names = [] } = {}) {
+  // WHY THERE IS NO ENTRY, AND NOT MERELY THAT THERE IS NONE.
   //
   // Letter 15 made the page refuse a paying round whose settlement committee
   // it cannot learn - and the refusal went to `console.error`, so the chip
-  // read "round named · not seated" exactly as it does for a round nobody was
+  // read "round named · not joined" exactly as it does for a round nobody was
   // sent to. Worse, the bridge then threw "the page did not say which round to
   // play", which names the wrong cause entirely. A refusal nobody can see is
-  // the silent seat again, wearing the other hat.
-  if (seatRefused) return `not joined · ${seatRefused}`;
-  if (!seated) return 'round named · not joined';
+  // the silent entry again, wearing the other hat.
+  if (joinRefused) return `not joined · ${joinRefused}`;
+  if (!joined) return 'round named · not joined';
   if (refused) return `not publishing · ${refused}`;
 
-  // AND WHETHER THIS SEAT IS PAID FOR.
+  // AND WHETHER THIS ENTRY IS PAID FOR.
   //
   // A dealt stake is not a funded one: the page deals the preimage and the
   // shares, and paying the hold invoice is a wallet it has not got yet (M3.2).
-  // Without this line a free seat and a funded seat read identically, which is
+  // Without this line a free round and a funded entry read identically, which is
   // the thing letter 15 exists to stop.
   //
   // THE WORD IS THE NODE'S. `Client.join` keeps the `x-hold` the node answered
@@ -233,14 +233,14 @@ export function playersLine({ seated, others, stalled = false, at = null, refuse
   const funding = stakeLine(stake);
   // AND WHO THE OTHERS ARE, BY THE NAMES THEY CHOSE (M3.3-34): each from a
   // record its player signed (identity.js `namesOf`), never a key. A player the
-  // seats keep no name for is counted, not stubbed. A named player who has not
+  // entries keep no name for is counted, not stubbed. A named player who has not
   // driven yet is still in the round, so the count is the larger of the two.
   const shown = (Array.isArray(names) ? names : []).filter((x) => typeof x === 'string' && x);
   const n = 1 + Math.max(others | 0, shown.length);
   // THE FUNDING WORD IS ON EVERY BRANCH, and it was not: this returned early
   // for a lone player, so the one line a player sits looking at while they
   // wait for somebody else - the longest-lived line on the chip - was the one
-  // that did not say the seat was unpaid. Its own test caught it.
+  // that did not say the entry was unpaid. Its own test caught it.
   if (n <= 1) return '1 player · waiting' + funding;
   // A PAGE THAT IS BEING SENT TRUCKS AND DRAWING NONE SAYS SO. Without this
   // the line reads the same as a page that is drawing them, which is what
@@ -252,17 +252,17 @@ export function playersLine({ seated, others, stalled = false, at = null, refuse
 }
 
 /**
- * WHAT THE SEAT COST, IN THE WORDS THE NODE USED.
+ * WHAT THE ENTRY COST, IN THE WORDS THE NODE USED.
  *
- * `free seat` is a round that asks no stake - there is nothing to pay and
+ * `free round` is a round that asks no stake - there is nothing to pay and
  * nothing was dealt. `stake dealt, unpaid` is a paying round the page has
  * dealt a preimage and shares for and has no hold for, with the node's reason.
  *
- * A HOLD IS COUNTED, NOT NAMED (23.1 step 5). The node's seat-time `x-hold`
+ * A HOLD IS COUNTED, NOT NAMED (23.1 step 5). The node's join-time `x-hold`
  * word used to be printed here, and it said "held" for an invoice nobody had
  * paid - lnd's OPEN and ACCEPTED both read as held. Now a hold reads "not yet
- * counted" until `stakeSeenBy` has asked the settlement seats, and then
- * "stake seen by N of M nodes (T needed)", with the seats that did not answer
+ * counted" until `stakeSeenBy` has asked the settlement entries, and then
+ * "stake seen by N of M nodes (T needed)", with the entries that did not answer
  * named and "committed" only at N >= T.
  */
 export function stakeLine(stake, nowMs = Date.now()) {
@@ -270,9 +270,9 @@ export function stakeLine(stake, nowMs = Date.now()) {
   if (stake.free) return ' · free round';
   if (!stake.dealt) return '';
   const s = stake.seen;
-  // A SEAT THE NODE ISSUED NO HOLD FOR, THAT NOBODY HAS SEEN, KEEPS THE NODE'S
+  // AN ENTRY THE NODE ISSUED NO HOLD FOR, THAT NOBODY HAS SEEN, KEEPS THE NODE'S
   // REASON. "0 of 2" there would hide why the stake can never be held - the
-  // thing letter 15 put on the chip. Once any seat has seen it (a hold issued
+  // thing letter 15 put on the chip. Once any entry has seen it (a hold issued
   // later and paid), the count is the truth.
   const noHold = stake.hold && stake.hold.state === 'none';
   if (s && typeof s.seen === 'number' && !(noHold && s.seen === 0)) {
@@ -288,10 +288,10 @@ export function stakeLine(stake, nowMs = Date.now()) {
 }
 
 /**
- * WHERE THE STAKE STANDS AFTER THE RUN, in the settlement seats' words (MF
+ * WHERE THE STAKE STANDS AFTER THE RUN, in the settlement entries' words (MF
  * item 14): "the player is waiting on other people's machines and must be told
  * so, with the refund path visible the whole time". `s` is `settlementBy`'s
- * answer. Nothing is added until the seats have a result to wait on - before
+ * answer. Nothing is added until the entries have a result to wait on - before
  * that the count above is the whole story.
  *
  * SETTLED says the run lost the stake, and no more: where a settled stake goes

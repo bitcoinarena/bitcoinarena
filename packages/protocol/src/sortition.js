@@ -7,7 +7,7 @@ import { compareEntries, meetsCensusMinimum } from './census.js';
 import { poolOfRole, GAME_VERIFY, SETTLEMENT } from './fee.js';
 
 /**
- * HOW MANY SEATS THIS ROUND GIVES THE POOL A ROLE SERVES IN.
+ * HOW MANY SIGNER NODES THIS ROUND GIVES THE POOL A ROLE SERVES IN.
  *
  * 5A.7 sizes the two pools, not the four roles - "GAME/VERIFY: 7 slots,
  * threshold 5; SETTLEMENT: 7 slots, threshold 5" - so the mapping is the one
@@ -15,7 +15,7 @@ import { poolOfRole, GAME_VERIFY, SETTLEMENT } from './fee.js';
  * second copy of a protocol mapping is a second place for it to drift.
  *
  * A role with no pool has no committee, and that is answered rather than
- * silently given zero seats.
+ * silently given zero signer nodes.
  */
 export function slotsForRole(contract, role) {
   const pool = poolOfRole(role);
@@ -77,8 +77,8 @@ export function selectCommittee({ entries, contract, role, exclude, committeeSee
   // It used to be read off `contract.committeeSeed` - thirty-two bytes the
   // round's AUTHOR wrote - so the lottery was a function of a value the
   // creator chose. Measured on a fixed census of eight bonded nodes with two
-  // slots: 34 offline candidate seeds were enough to seat a chosen pair, and
-  // since the seated set became the only trusted list that is the whole
+  // slots: 34 offline candidate seeds were enough to assign a chosen pair, and
+  // since the assigned set became the only trusted list that is the whole
   // committee. That is v4.4's grinding attack, which 5A.5 exists to close:
   //
   //   committee_seed = H(census_root_gv || census_root_settle
@@ -113,7 +113,7 @@ export function selectCommittee({ entries, contract, role, exclude, committeeSee
   // exists to prevent arriving through the front door. `census_min_nodes` is
   // the network's own answer to "too small", and on all three networks it is
   // at least the slot count, so meeting it also means there are enough nodes
-  // to fill the seats.
+  // to fill the signer nodes.
   //
   // BEFORE EXCLUSIONS, on purpose: `exclude` is for a re-draw, and excluding a
   // node does not unbond it. What is measured here is the census, not the

@@ -93,7 +93,7 @@ public class SplashScreen : MonoBehaviour
         if (truck != null) truck.controlsLocked = true;
         if (_autoPlay && Time.frameCount > 3) { _autoPlay = false; Play(); return; }
 
-        // The page's lobby, asked again every 0.75 s (it asks the seats every 5 s).
+        // The page's lobby, asked again every 0.75 s (it asks the signer nodes every 5 s).
         if (Time.unscaledTime - _polledAt > 0.75f)
         {
             _polledAt = Time.unscaledTime;
@@ -107,7 +107,7 @@ public class SplashScreen : MonoBehaviour
             }
         }
 
-        // PLAY IN THE LOBBY TAKES THE SEAT IN THIS PAGE (the owner 2026-09-13 07:11):
+        // PLAY IN THE LOBBY JOINS IN THIS PAGE (the owner 2026-09-13 07:11):
         // no reload, so no second loading screen - the round starts here once the
         // page has joined it.
         if (_joining && _lobby != null)
@@ -363,7 +363,7 @@ public class SplashScreen : MonoBehaviour
 
     /// <summary>
     /// The lobby in the copy area: who you are with NAME and KEY, then the
-    /// rounds - each with its seats' word - and the one PLAY will join picked
+    /// rounds - each with its signer nodes' word - and the one PLAY will join picked
     /// out. Laid out by `DailyLobby.MeasureLobby`, which is measured on every
     /// phone shape (LobbyScreenTests). Every word comes from the page.
     /// </summary>
@@ -654,7 +654,7 @@ public class SplashScreen : MonoBehaviour
         else GUI.Label(f.hint, Hint, _sub);
 
         // IN THE LOBBY, PLAY JOINS THE PICKED ROUND - and there is nothing to
-        // press until a round has both of its seats' word (M3.3-34).
+        // press until a round has both of its signer nodes' word (M3.3-34).
         bool canPlay = _lobby == null || (!_joining && !string.IsNullOrEmpty(_pickId));
         // the button breathes, so the eye finds it
         float pulse = 0.5f + 0.5f * Mathf.Sin(Time.unscaledTime * 2.4f);

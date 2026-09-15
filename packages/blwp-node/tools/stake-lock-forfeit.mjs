@@ -8,10 +8,10 @@
 //
 // Signed with this repo's own FROST 2-of-2 (protocol/src/frost-bip340.js),
 // two rounds, with the shares tools/stake-lock-keys.mjs kept in <keys.json>.
-// `seats` names who takes part: "1,2" is the committee; "1" is one seat alone,
+// `signer nodes` names who takes part: "1,2" is the committee; "1" is one signer node alone,
 // whose signature must not verify - that is refusal (a).
 //
-//   node tools/stake-lock-forfeit.mjs <keys.json> <contract-id-hex> [seats=1,2]
+//   node tools/stake-lock-forfeit.mjs <keys.json> <contract-id-hex> [signer nodes=1,2]
 import { readFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { schnorr } from '@noble/curves/secp256k1.js';
@@ -20,26 +20,26 @@ import { nonceGenerate340 } from '../../protocol/src/frost-bip340.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
 
-const [file, contractIdHex, seatsArg = '1,2'] = process.argv.slice(2);
+const [file, contractIdHex, signerNodesArg = '1,2'] = process.argv.slice(2);
 if (!file || !/^[0-9a-f]{64}$/.test(contractIdHex || ''))
-  throw new Error('usage: node tools/stake-lock-forfeit.mjs <keys.json> <contract-id-hex> [seats=1,2]');
+  throw new Error('usage: node tools/stake-lock-forfeit.mjs <keys.json> <contract-id-hex> [signer nodes=1,2]');
 const curve = { ...feldmanGroup, tweakPoint };
 const keys = JSON.parse(readFileSync(file, 'utf8'));
 const claimPk = fromHex(keys.claimPk);
 const message = fromHex(contractIdHex);
-const wanted = seatsArg.split(',').map(Number);
-const seats = keys.seats.filter((s) => wanted.includes(Number(s.seat)));
-if (seats.length !== wanted.length) throw new Error(`no such seat among ${keys.seats.map((s) => s.seat).join(',')}`);
+const wanted = signerNodesArg.split(',').map(Number);
+const signerNodes = keys.signerNodes.filter((s) => wanted.includes(Number(s.signerNode)));
+if (signerNodes.length !== wanted.length) throw new Error(`no such signer node among ${keys.signerNodes.map((s) => s.signerNode).join(',')}`);
 
-// ROUND ONE: each seat's nonce commitment. ROUND TWO: each seat's share over
-// the same list. Nothing here puts two shares in one seat's hands except the
-// harness that holds both files - the arithmetic is each seat's own.
-const signers = seats.map((s) => {
+// ROUND ONE: each signer node's nonce commitment. ROUND TWO: each signer node's share over
+// the same list. Nothing here puts two shares in one signer node's hands except the
+// harness that holds both files - the arithmetic is each signer node's own.
+const signers = signerNodes.map((s) => {
   const share = BigInt('0x' + s.share);
   const hiding = nonceGenerate340(new Uint8Array(randomBytes(32)), share);
   const binding = nonceGenerate340(new Uint8Array(randomBytes(32)), share);
-  return { id: s.seat, share, hiding, binding,
-    commitment: { id: s.seat, hiding: curve.pointFromScalar(hiding), binding: curve.pointFromScalar(binding) } };
+  return { id: s.signerNode, share, hiding, binding,
+    commitment: { id: s.signerNode, hiding: curve.pointFromScalar(hiding), binding: curve.pointFromScalar(binding) } };
 });
 const commitments = signers.map((s) => s.commitment);
 const shares = signers.map((s) => signShare340({
@@ -48,7 +48,7 @@ const shares = signers.map((s) => signShare340({
 }));
 const { signature } = aggregate340({ commitments, message, groupPublicKey: claimPk, shares, curve });
 console.log(JSON.stringify({
-  seats: signers.map((s) => s.id).join(','),
+  signerNodes: signers.map((s) => s.id).join(','),
   signature: toHex(signature),
   verifiesUnderClaimPk: schnorr.verify(signature, message, claimPk.subarray(1)),
 }));

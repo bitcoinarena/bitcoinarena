@@ -1,6 +1,6 @@
-// A CONNECTED WALLET PAYS THE HOLD INVOICE THIS SEAT OWES, AND NOTHING ELSE.
+// A CONNECTED WALLET PAYS THE HOLD INVOICE THIS ENTRY OWES, AND NOTHING ELSE.
 //
-// M3.2 item 6. The client could already ask what a seat owes and refuse a quote
+// M3.2 item 6. The client could already ask what an entry owes and refuse a quote
 // its own entry did not sign; `payStake` is the one method in it that moves a
 // satoshi.
 //
@@ -168,8 +168,8 @@ const contractFor = (nodes) => ({
   nodes,
 });
 
-/** A daemon with Lightning, a round open, and one seat taken. */
-async function seated() {
+/** A daemon with Lightning, a round open, and one signer node taken. */
+async function joined() {
   const port = fakePort();
   const node = await serve(openStore(':memory:'), {
     port: 0, funded: () => true, now: () => NOW, preflight: async () => ({ ready: true, why: "test port" }), lightning: port,
@@ -249,8 +249,8 @@ test('NIP-04 goes both ways over the shared secret, and only for the pair it was
  * THE NUMBER THAT CLOSES THE LETTER: the wallet is asked to pay the invoice
  * your own quote produced, and that one only.
  */
-test('a connected wallet pays the hold invoice this seat owes', async () => {
-  const c = await seated();
+test('a connected wallet pays the hold invoice this entry owes', async () => {
+  const c = await joined();
   const w = await walletOnARelay();
   try {
     const quoted = await c.client.invoice(c.entry, { entryId: c.eid });
@@ -285,11 +285,11 @@ test('a connected wallet pays the hold invoice this seat owes', async () => {
  * Not "the wallet declines it" - the wallet is never asked. Counted, because
  * zero requests is the only way to see the difference.
  */
-test('a quote for another seat sends nothing to the wallet', async () => {
-  const c = await seated();
+test('a quote for another signer node sends nothing to the wallet', async () => {
+  const c = await joined();
   const w = await walletOnARelay();
   try {
-    // A second seat: same round, same player, a different entry.
+    // A second signer node: same round, same player, a different entry.
     const other = { ...c.entry, worldSecret: rand(32) };
     await fetch(`http://127.0.0.1:${c.node.port}/entry`,
       { method: 'POST', body: encodeEntryContract(other) });
@@ -299,12 +299,12 @@ test('a quote for another seat sends nothing to the wallet', async () => {
     assert.equal(crossed.asked, false, 'the wallet was asked about a crossed pair');
     assert.match(crossed.why, /they are two entries/);
     assert.equal(w.asked.length, 0, `${w.asked.length} requests reached the wallet`);
-    console.log(`  crossed seats: ${w.asked.length} requests to the wallet - "${crossed.why}"`);
+    console.log(`  crossed signer nodes: ${w.asked.length} requests to the wallet - "${crossed.why}"`);
   } finally { await w.close(); await c.close(); }
 });
 
 test('a lying node sends nothing to the wallet either', async () => {
-  const c = await seated();
+  const c = await joined();
   const w = await walletOnARelay();
   const http = await import('node:http');
   const honest = {
@@ -343,7 +343,7 @@ test('a lying node sends nothing to the wallet either', async () => {
  * it to "payment failed" would hide the one sentence that says what to do.
  */
 test('a wallet that refuses is reported by name, and nothing is invented', async () => {
-  const c = await seated();
+  const c = await joined();
   const w = await walletOnARelay({
     answer: () => ({ error: { code: 'QUOTA_EXCEEDED', message: 'budget spent for this hour' } }),
   });
@@ -361,7 +361,7 @@ test('a wallet that refuses is reported by name, and nothing is invented', async
 });
 
 test('a wallet that claims it paid and shows no preimage is not believed', async () => {
-  const c = await seated();
+  const c = await joined();
   const w = await walletOnARelay({
     answer: () => ({ result_type: 'pay_invoice', result: { fees_paid: 0 } }),
   });
@@ -401,7 +401,7 @@ test('the client has two methods that move a satoshi, and each takes an entry, n
 });
 
 test('paying needs a connection and a curve, and says which is missing', async () => {
-  const c = await seated();
+  const c = await joined();
   try {
     assert.match((await c.client.payStake(c.entry, { entryId: c.eid, curve: pageCurve })).why,
       /no wallet connection/);
@@ -416,7 +416,7 @@ test('paying needs a connection and a curve, and says which is missing', async (
 });
 
 test('a relay that never answers times out rather than hanging', async () => {
-  const c = await seated();
+  const c = await joined();
   const wss = new WebSocketServer({ port: 0 });
   try {
     const uri = `nostr+walletconnect://${toHex(pageCurve.pointX(rand(32)))}`
@@ -441,7 +441,7 @@ test('a relay that never answers times out rather than hanging', async () => {
  * held is the node (23.1 step 5), which now answers exactly that.
  */
 test('a wallet that holds the payment and says nothing is paid once the node sees the stake held', async () => {
-  const c = await seated();
+  const c = await joined();
   const w = await walletOnARelay({ answer: () => null });
   // The node's Lightning shows the HTLC held in full once the wallet was asked.
   c.port.look = async () => ({ state: HELD, amountMsat: NET, paidMsat: w.asked.length ? NET : 0n });
@@ -462,7 +462,7 @@ test('a wallet that holds the payment and says nothing is paid once the node see
 });
 
 test('a wallet that says nothing while the node never sees the stake is still not paid', async () => {
-  const c = await seated();
+  const c = await joined();
   const w = await walletOnARelay({ answer: () => null });
   c.port.look = async () => ({ state: HELD, amountMsat: NET, paidMsat: 0n });
   try {
@@ -523,7 +523,7 @@ test('a tab holds one wallet connection, and a second tab holds none of it', asy
  * have invented.
  */
 test('every payment is written down with its hash and its round', async () => {
-  const c = await seated();
+  const c = await joined();
   const w = await walletOnARelay();
   const log = spendLog();
   try {
@@ -542,7 +542,7 @@ test('every payment is written down with its hash and its round', async () => {
     const [one] = log.entries();
     assert.equal(one.amountMsat, NET);
     assert.deepEqual(one.paymentHash, c.entry.stakeCommitment,
-      'the log recorded a hash that is not the one this seat paid against');
+      'the log recorded a hash that is not the one this entry paid against');
     assert.deepEqual(one.roundId, c.entry.roundId);
     console.log(`  1 payment logged: ${one.amountMsat} msat against `
       + `${toHex(one.paymentHash).slice(0, 16)}… in round ${toHex(one.roundId).slice(0, 16)}…`);
@@ -599,16 +599,16 @@ test('the page pastes a connection, shows the amount and the total, and calls pa
 
   // THE FOUR PLAYER-FACING THINGS.
   assert.match(page, /id="blwp-nwc"/, 'there is nowhere to paste a connection');
-  assert.match(page, /id="blwp-owed"/, 'the page never shows what this seat owes');
+  assert.match(page, /id="blwp-owed"/, 'the page never shows what this entry owes');
   assert.match(page, /id="blwp-spent"/, 'the page never shows the running total');
   assert.match(page, /BLWPCLIENT\.tabWallet\(/, 'the page does not hold a connection per tab');
   assert.match(page, /window\.sessionStorage/, 'the connection is not held per tab');
-  // THE SEATED ENTRY - your own, with its round id and session key. It
+  // THE JOINED ENTRY - your own, with its round id and session key. It
   // was `window.BLWP_ENTRY`, which carries neither: measured on the page, every
   // quote and every pay threw "expected 32 bytes, got nothing" in entryId
   // (Client.invoice -> entryId -> encodeEntryContract), so no stake was ever
   // paid through this path.
-  assert.match(page, /client\.payStake\(client\.seatEntry/,
+  assert.match(page, /client\.payStake\(client\.joinedEntry/,
     'the page does not pay your stake with its own entry');
   assert.match(page, /BLWPCLIENT\.spentLine\(/, 'the page adds up its own total');
 
@@ -717,7 +717,7 @@ test('a round that asks no money gets no payment box, driven off the shipped pag
   // A ROUND WHOSE STAKE GOES INTO A FEDERATION LOCK (W1b) NEVER SHOWS A HOLD
   // INVOICE TO PAY: while the deposit waits the panel points at it, and once
   // the lock is made it shows the lock. Measured on the page before this, the
-  // hold panel ("this seat owes", "Pay the stake") stood beside the invoice.
+  // hold panel ("this entry owes", "Pay the stake") stood beside the invoice.
   const lockRound = { stakeMsat: 1000000n, custody: 'FEDERATION', federationId: TEST_FEDERATION_ID };
   for (const id of ['blwp-nwc', 'blwp-pay']) el(id).style.display = '';
   run(lockRound, { connected: false }, null);

@@ -1,14 +1,14 @@
 // ENTRY_VOID (§16) ON A REAL FEDERATION, AND THE REFUND AT ONCE (§23.2).
 // Run by outage-regtest.sh after the federation is up.
 //
-// The Daily's own 2-of-2 round naming the federation, the seats making the
+// The Daily's own 2-of-2 round naming the federation, the signer nodes making the
 // round's claim key themselves (nothing injected); the round names no start
-// deadline (900 ticks). One player locks as the page does and both seats commit
-// the lock. Then seat B goes down, and the player plays at A: a first mark at
+// deadline (900 ticks). One player locks as the page does and both signer nodes commit
+// the lock. Then signer node B goes down, and the player plays at A: a first mark at
 // tick 60 - on time - and a mark at tick 960, past the line. Then:
 //   A records ENTRY_VOID                         (its offer to B unanswered)
 //   B comes back; the forfeit is asked           A shows B the evidence, B records
-//                                                the same Void, both seats sign
+//                                                the same Void, both signer nodes sign
 //   the forfeit verifies under the claim key     over the lock's contract id
 //   the player redeems from a later session with only the seed, BEFORE the
 //   lock's expiry - the refund at once - and withdraws it
@@ -78,13 +78,13 @@ const hex32 = (st) => Uint8Array.from(stateHash(st).match(/../g).map((x) => pars
 const entryVoidAt = async (base, eid) => { const r = await fetch(`${base}/entry-void?entry=${toHex(eid)}`); return r.ok ? await r.json() : { status: r.status }; };
 
 const round = await standUpRound({ host: '127.0.0.1', portA: 18591, portB: 18592, stakeMsat: 1000000n,
-  federationId, invite: env.INVITE, seat: { stakeLocks: port } });
+  federationId, invite: env.INVITE, signerNode: { stakeLocks: port } });
 const rid = fromHex(round.id);
 const contract = round.contract;
 const withId = { ...contract, id: rid };
 let code = 0;
 try {
-  const claimKey = await awaitAttestedClaimKey({ round: withId, seats: contract.nodes, nodes: round.nodes, curve: pageCurve });
+  const claimKey = await awaitAttestedClaimKey({ round: withId, signerNodes: contract.nodes, nodes: round.nodes, curve: pageCurve });
   say({ step: 'claim key', ok: claimKey.ok, attested: claimKey.attested, needed: claimKey.needed,
     startDeadlineTicks: contract.startDeadlineTicks === undefined ? 'omitted (900)' : contract.startDeadlineTicks });
   if (!claimKey.ok) throw new Error(claimKey.why);
@@ -92,7 +92,7 @@ try {
 
   const seed = random(32);
   const player = playerFor(withId, { seed, curve: pageCurve });
-  const stake = await stakeFor(withId, { seats: contract.nodes, curve: pageCurve, random, playerPubkey: player.pubkey, needed: 2 });
+  const stake = await stakeFor(withId, { signerNodes: contract.nodes, curve: pageCurve, random, playerPubkey: player.pubkey, needed: 2 });
   const put = await postHandout(stake, round.nodes, { needed: 2 });
   let paying = Promise.resolve(null);
   const lock = await lockStake({ round: contract, roundId: rid, invite: env.INVITE, seed, stake, claimKey,
@@ -114,14 +114,14 @@ try {
     if (tries > 20000) throw new Error('no world secret kept the drive running past tick 960');
   }
   const eid = entryId(entry);
-  const seated = [];
-  for (const b of round.nodes) seated.push((await fetch(`${b}/entry`, { method: 'POST', body: encodeEntryContract(entry) })).status);
+  const joined = [];
+  for (const b of round.nodes) joined.push((await fetch(`${b}/entry`, { method: 'POST', body: encodeEntryContract(entry) })).status);
   const handed = await handLock({ entryId: eid, fields: lock.fields, nodes: round.nodes, needed: 2 });
   say({ step: 'locked', outpoint: `${toHex(lock.outpoint.txid)}:${lock.outpoint.outIdx}`, amountMsat: lock.fields.amountMsat,
-    expiration: lock.fields.expiration, handouts: put.accepted, entries: seated, locks: handed.said.map((s) => s.status),
+    expiration: lock.fields.expiration, handouts: put.accepted, entries: joined, locks: handed.said.map((s) => s.status),
     committed: handed.committed, harnessSearch: { tries } });
 
-  // SEAT B GOES DOWN, then the player plays at A: first mark 60 (on time), a mark at 960 (past the 900 line).
+  // SIGNER NODE B GOES DOWN, then the player plays at A: first mark 60 (on time), a mark at 960 (past the 900 line).
   await round.b.close();
   const st = init(seedWordForEntry(entry, randomness));
   for (let t = 0; t < FIRST; t++) step(st, ...wordsAt(t));
@@ -151,7 +151,7 @@ try {
     verifies: forfeit.ok && schnorr.verify(fromHex(forfeit.signature), fromHex(forfeit.contractId), claimKey.claimPk.subarray(1)),
     claimPkIsTheRounds: forfeit.ok && forfeit.claimPk === toHex(claimKey.claimPk),
     bBefore: bBefore.outcome || bBefore.status, bAfter: bAfter.outcome || bAfter.status,
-    keptBySeats: [round.a, round.b].map((d) => !!d.round.forfeit(eid)),
+    keptBySignerNodes: [round.a, round.b].map((d) => !!d.round.forfeit(eid)),
     resultsAnywhere: [round.a, round.b].map((d) => d.round.results(rid, eid).length) });
 
   // THE PLAYER'S REDEEM, FROM A LATER SESSION WITH ONLY THE SEED - before the lock's expiry.

@@ -37,7 +37,7 @@ import { decodeClaimKeyAttestation, claimKeyIsAttested } from '../../protocol/sr
  * player's: 2 of 2, 5 of 7 (`receiptsNeeded` over the settlement slots). The
  * page deals at it, the node's door refuses any other, and the settle opens at
  * it (M3.3-26). The page used to deal `needed: settlementSlots` - 7 of 7 on
- * seven seats, which the door now refuses - and to post at 5 on a 2-of-2.
+ * seven signer nodes, which the door now refuses - and to post at 5 on a 2-of-2.
  */
 export const sharesNeededFor = (round) => receiptsNeeded(round.settlementSlots);
 
@@ -195,18 +195,18 @@ export async function fetchRandomness(id, nodes, { fetcher = fetch } = {}) {
 /**
  * PUBLISH THE HANDOUT, AND COUNT WHAT IT IS WORTH.
  *
- * A HANDOUT FEWER THAN `needed` SEATS HOLD IS A STAKE NOBODY CAN OPEN.
+ * A HANDOUT FEWER THAN `needed` SIGNER NODES HOLD IS A STAKE NOBODY CAN OPEN.
  * Reconstruction takes five of seven; a page that dealt to seven, reached
- * three and seated anyway would put a player at a paying round whose stake can
- * never be settled - and every seat that did not store it REFUSES the entry,
+ * three and joined anyway would put a player at a paying round whose stake can
+ * never be settled - and every signer node that did not store it REFUSES the entry,
  * so most of the committee has no record of that player at all.
  *
  * Measured before this existed, with three of seven reachable:
  *
- *   settlement seats holding the handout   3 of 7
+ *   settlement signer nodes holding the handout   3 of 7
  *   the threshold to open it               5
  *   reconstructable                        false
- *   the node the page joined               201, seated
+ *   the node the page joined               201, joined
  *   every other node                       400, "that entry names shares this
  *                                          node has not accepted"
  *
@@ -220,7 +220,7 @@ export async function fetchRandomness(id, nodes, { fetcher = fetch } = {}) {
  */
 export async function postHandout(stake, nodes, { fetcher = fetch, needed: asked } = {}) {
   if (!stake || !stake.body) throw new Error('there is no dealt stake to publish');
-  // THE SEATS THAT MUST HOLD IT are the threshold it was dealt at - which
+  // THE SIGNER NODES THAT MUST HOLD IT are the threshold it was dealt at - which
   // `stakeFor` makes the round's. The default was a flat 5 (M3.3-26).
   const needed = asked ?? stake.handout?.needed;
   if (!Number.isInteger(needed) || needed < 1)
@@ -267,23 +267,23 @@ export const roundPays = (round) => !!round && BigInt(round.stakeMsat || 0n) > 0
 export const roundLocks = (round) => roundPays(round) && round.custody === 'FEDERATION'
   && round.federationId instanceof Uint8Array && round.federationId.some((b) => b !== 0);
 
-/** 1 type + 2 version + 32 round + 33 claim key + 32 seat, then a 64-byte signature. */
+/** 1 type + 2 version + 32 round + 33 claim key + 32 signer node, then a 64-byte signature. */
 const ATTESTATION_BYTES = 100;
 
 /**
  * THE CLAIM KEY A LOCK MAY NAME (v4.6.2 §23.1 step 0, F3): "The key is valid
- * only with signatures from >=5 seats; a client MUST refuse to lock to a key
- * without them. Otherwise one seat could serve its own key and, after the
+ * only with signatures from >=5 signer nodes; a client MUST refuse to lock to a key
+ * without them. Otherwise one signer node could serve its own key and, after the
  * shares are released, claim a loser's stake for itself."
  *
- * Every node the page holds is asked for its seat's signed (round_id,
+ * Every node the page holds is asked for its signer node's signed (round_id,
  * claim_pk); the answers are grouped by key and counted by protocol
- * `claimKeyIsAttested` over the round's SETTLEMENT seats - the same list the
+ * `claimKeyIsAttested` over the round's SETTLEMENT signer nodes - the same list the
  * stake is dealt to - at the round's own threshold. A key short of it is
  * refused by name; the one that stands comes back with the attested set's id,
  * which the entry names as claim_key_attestation_ref.
  */
-export async function attestedClaimKey({ round, seats, nodes, curve, fetcher = fetch } = {}) {
+export async function attestedClaimKey({ round, signerNodes, nodes, curve, fetcher = fetch } = {}) {
   if (!round || !(round.id instanceof Uint8Array)) throw new Error('there is no round id to ask a claim key for');
   if (!curve || typeof curve.verify !== 'function') throw new Error('checking a claim key needs the page\'s curve');
   const id = toHex(round.id);
@@ -299,12 +299,12 @@ export async function attestedClaimKey({ round, seats, nodes, curve, fetcher = f
       if (toHex(a.roundId) !== id) { refused.push(`${node}: attested a claim key for another round`); continue; }
       const k = toHex(a.claimPk);
       if (!byKey.has(k)) byKey.set(k, { claimPk: a.claimPk, signatures: [] });
-      byKey.get(k).signatures.push({ seatPubkey: a.seatPubkey, signature: bytes.subarray(ATTESTATION_BYTES) });
+      byKey.get(k).signatures.push({ signerNodePubkey: a.signerNodePubkey, signature: bytes.subarray(ATTESTATION_BYTES) });
     } catch (e) { refused.push(`${node}: ${e.message}`); }
   }
   let best = null;
   for (const { claimPk, signatures } of byKey.values()) {
-    const said = claimKeyIsAttested({ roundId: round.id, claimPk, signatures, seats,
+    const said = claimKeyIsAttested({ roundId: round.id, claimPk, signatures, signerNodes,
       settlementSlots: round.settlementSlots, verify: (s, m, k) => curve.verify(s, m, k) });
     if (said.ok) return { ok: true, claimPk, ref: said.ref, attested: said.attested, needed: said.needed, refused };
     if (!best || (said.attested || 0) > (best.attested || 0)) best = said;
@@ -322,11 +322,11 @@ export async function attestedClaimKey({ round, seats, nodes, curve, fetcher = f
  * counted a stake committed on committees the node has no threshold for.
  */
 /**
- * THE ATTESTED CLAIM KEY, WAITED FOR - A LITTLE. The seats make the round's
- * claim key themselves when they seat it, and one of them can need a second
- * run: measured on a Daily 2-of-2 paying round, one seat held the key 266 ms
+ * THE ATTESTED CLAIM KEY, WAITED FOR - A LITTLE. The signer nodes make the round's
+ * claim key themselves when they are assigned to it, and one of them can need a second
+ * run: measured on a Daily 2-of-2 paying round, one signer node held the key 266 ms
  * after the round was up and the other at 1582 ms, and a page opened on the
- * link at once counted "1 of 2" and refused the seat. So the page asks again,
+ * link at once counted "1 of 2" and refused the signer node. So the page asks again,
  * every `everyMs`, for up to `waitMs`, and says each short count through
  * `onWait`. The rule is unchanged: nothing short of the round's threshold is
  * ever accepted, and at the end the last answer - a refusal - is returned.
@@ -347,13 +347,13 @@ export function stakeSeenNeeded(contract) {
 }
 
 /**
- * HOW MANY OF THE ROUND'S SETTLEMENT SEATS HAVE SEEN THIS STAKE HELD.
+ * HOW MANY OF THE ROUND'S SETTLEMENT SIGNER NODES HAVE SEEN THIS STAKE HELD.
  *
  * 23.1 step 5: "STAKE_COMMITTED is recorded once >=5 settlement nodes have seen
  * the held HTLC." Each node answers for itself (`GET /stake`, its own
- * Lightning). The seats are KEYS (`fetchSettlementSeats`) and the page holds
+ * Lightning). The signer nodes are KEYS (`fetchSettlementSignerNodes`) and the page holds
  * URLS, so each URL is asked who it is (`GET /identity`) and only a settlement
- * seat's answer is counted, once per key. A seat no URL answers for - down, or
+ * signer node's answer is counted, once per key. A signer node no URL answers for - down, or
  * never listed - is counted as NOT seen and named in `unanswered`.
  *
  *   { seen, of, needed, unanswered, committed, per }
@@ -361,8 +361,8 @@ export function stakeSeenNeeded(contract) {
  * `committed` is a label for the page: it gates nothing. Each node still
  * refuses its own receipt until it has seen the stake.
  */
-export async function stakeSeenBy({ entryId, seats, nodes, contract, fetcher = fetch } = {}) {
-  const want = new Set((seats || []).map((k) => toHex(k)));
+export async function stakeSeenBy({ entryId, signerNodes, nodes, contract, fetcher = fetch } = {}) {
+  const want = new Set((signerNodes || []).map((k) => toHex(k)));
   const eid = typeof entryId === 'string' ? entryId : toHex(entryId);
   const answered = new Set();
   const per = [];
@@ -392,24 +392,24 @@ export async function stakeSeenBy({ entryId, seats, nodes, contract, fetcher = f
 export const SETTLEMENT_OVER = ['SETTLED', 'CANCELLED', 'EXPIRED', 'FREE', 'none'];
 
 /**
- * WHERE THIS STAKE STANDS, asked of every settlement seat (MF item 14).
+ * WHERE THIS STAKE STANDS, asked of every settlement signer node (MF item 14).
  *
- * Each seat answers `GET /settlement` for itself - its hold now, where the
+ * Each signer node answers `GET /settlement` for itself - its hold now, where the
  * run's result stands, when its objection window closes, the height its hold
- * refunds at - and the seats are found at the page's addresses the way
- * `stakeSeenBy` finds them, one answer per seat key. The answer is one word
+ * refunds at - and the signer nodes are found at the page's addresses the way
+ * `stakeSeenBy` finds them, one answer per signer node key. The answer is one word
  * per field:
  *
- *   hold          the seats' own word when they agree, HELD while any differs
- *   finality      SUSPENDED if any seat says so, FINAL when all do,
+ *   hold          the signer nodes' own word when they agree, HELD while any differs
+ *   finality      SUSPENDED if any signer node says so, FINAL when all do,
  *                 PROVISIONALLY_FINAL when any has a result, else null
- *   windowClosesAtMs  the LATEST seat's window end - nothing moves before it
- *   refundHeight  the lowest height any seat names
+ *   windowClosesAtMs  the LATEST signer node's window end - nothing moves before it
+ *   refundHeight  the lowest height any signer node names
  *
  *   { of, answered, hold, finality, windowClosesAtMs, refundHeight, per }
  */
-export async function settlementBy({ entryId, seats, nodes, fetcher = fetch } = {}) {
-  const want = new Set((seats || []).map((k) => toHex(k)));
+export async function settlementBy({ entryId, signerNodes, nodes, fetcher = fetch } = {}) {
+  const want = new Set((signerNodes || []).map((k) => toHex(k)));
   const eid = typeof entryId === 'string' ? entryId : toHex(entryId);
   const answered = new Map();
   const per = [];
@@ -436,8 +436,8 @@ export async function settlementBy({ entryId, seats, nodes, fetcher = fetch } = 
   const states = all.map((a) => a.finality);
   const ends = all.map((a) => a.windowClosesAtMs).filter((v) => v !== null && v !== undefined).map(Number);
   const refunds = all.map((a) => a.refundHeight).filter((v) => Number.isInteger(v));
-  // THE HOLD'S AMOUNT AND THE ROUND'S POOL (M3.2 6e), as the seats say them:
-  // a number only when every seat that answered says the same one.
+  // THE HOLD'S AMOUNT AND THE ROUND'S POOL (M3.2 6e), as the signer nodes say them:
+  // a number only when every signer node that answered says the same one.
   const agreed = (field) => {
     const said = all.map((a) => a[field]);
     if (!said.length || said.some((v) => v === null || v === undefined)) return null;
@@ -460,8 +460,8 @@ export async function settlementBy({ entryId, seats, nodes, fetcher = fetch } = 
 }
 
 /**
- * WHERE THIS SEAT'S STAKE WENT, AS ONE LINE (M3.2 6e), off `settlementBy` - the
- * seats' own words and numbers, none worked out here. Measured before on the
+ * WHERE THIS ENTRY'S STAKE WENT, AS ONE LINE (M3.2 6e), off `settlementBy` - the
+ * signer nodes' own words and numbers, none worked out here. Measured before on the
  * daily page: after a round settled the panel still read "HELD" (the quote was
  * never asked again) and nothing anywhere showed the pool.
  */
@@ -469,8 +469,8 @@ export function settledLine(s) {
   if (!s || !s.answered) return '';
   const held = s.holdMsat !== null && s.holdMsat !== undefined ? `${s.holdMsat} msat ` : '';
   const pool = s.poolMsat !== null && s.poolMsat !== undefined ? ` · the round's pool ${s.poolMsat} msat` : '';
-  // WHAT THE ROUND OWES THIS SEAT (M3.2 6e): its row of the payout table as the
-  // seats serve it - shown when there is something owed; a loser's row is 0.
+  // WHAT THE ROUND OWES THIS ENTRY (M3.2 6e): its row of the payout table as the
+  // signer nodes serve it - shown when there is something owed; a loser's row is 0.
   const owed = s.owedMsat !== null && s.owedMsat !== undefined && BigInt(s.owedMsat) > 0n
     ? ` · the round's payout table: ${s.owedMsat} msat for your entry` : '';
   if (s.hold === 'SETTLED') return `Settled: your ${held}stake went into the pool${owed}${pool}`;
@@ -483,27 +483,27 @@ export function settledLine(s) {
 /**
  * WHO THE SETTLEMENT COMMITTEE IS, ASKED OF EVERY NODE THE ROUND NAMED.
  *
- * A STAKE IS DEALT TO THE SETTLEMENT SEATS AND TO NOBODY ELSE, and the list
+ * A STAKE IS DEALT TO THE SETTLEMENT SIGNER NODES AND TO NOBODY ELSE, and the list
  * the page already holds is the wrong one. Measured on nine bonded nodes with
  * seven game/verify slots and seven settlement slots:
  *
- *   /committee?role=game          7 seats
- *   /committee?role=settlement    7 seats
+ *   /committee?role=game          7 signer nodes
+ *   /committee?role=settlement    7 signer nodes
  *   contract.nodes (the union)    9      <- what `joinFromQuery` hands over
  *   in both committees            5
  *   settlement-only               2
  *
- * `Roster.seatsFor` says so in its own words - "a contract carries one flat
- * `nodes` list, so the seated set is the union of the role committees" - so
+ * `Roster.signerNodesFor` says so in its own words - "a contract carries one flat
+ * `nodes` list, so the assigned set is the union of the role committees" - so
  * dealing to it would seal nine shares for a seven-of-which-five scheme, two
- * of them to seats that can never open one. A stake nobody can open at payout
+ * of them to signer nodes that can never open one. A stake nobody can open at payout
  * is a stake that is lost, which is worse than one never dealt.
  *
  * ASKED OF EVERY NODE AND REFUSED ON DISAGREEMENT, exactly as the randomness
  * is: one node's answer about who may open a player's stake is one node
  * choosing who may open it.
  */
-export async function fetchSettlementSeats(id, nodes, { fetcher = fetch } = {}) {
+export async function fetchSettlementSignerNodes(id, nodes, { fetcher = fetch } = {}) {
   if (!Array.isArray(nodes) || !nodes.length)
     throw new Error('no node to ask which signer nodes settle this round');
   const said = [];
@@ -518,9 +518,9 @@ export async function fetchSettlementSeats(id, nodes, { fetcher = fetch } = {}) 
         refused.push(`${node}: answered ${bytes.length} bytes, which is not whole keys`);
         continue;
       }
-      const seats = [];
-      for (let at2 = 0; at2 < bytes.length; at2 += 32) seats.push(bytes.subarray(at2, at2 + 32));
-      said.push({ node, seats });
+      const signerNodes = [];
+      for (let at2 = 0; at2 < bytes.length; at2 += 32) signerNodes.push(bytes.subarray(at2, at2 + 32));
+      said.push({ node, signerNodes });
     } catch (e) {
       refused.push(`${node}: ${e.message}`);
     }
@@ -532,13 +532,13 @@ export async function fetchSettlementSeats(id, nodes, { fetcher = fetch } = {}) 
   // in two orders and that is the same committee. What must not differ is the
   // SET.
   const key = (list) => list.map(toHex).sort().join(',');
-  const first = key(said[0].seats);
+  const first = key(said[0].signerNodes);
   for (const s of said.slice(1)) {
-    if (key(s.seats) !== first)
+    if (key(s.signerNodes) !== first)
       throw new Error(`${said[0].node} and ${s.node} name two different settlement `
         + 'committees, so a stake dealt here could be opened by neither');
   }
-  return { seats: said[0].seats, agreed: said.length, refused };
+  return { signerNodes: said[0].signerNodes, agreed: said.length, refused };
 }
 
 /**
@@ -638,7 +638,7 @@ export async function joinFromQuery(search, { fetcher = fetch } = {}) {
  * Two people looking at one round is two identities, and on one machine that
  * is two tabs - so the key cannot live in `localStorage`, which every tab of a
  * browser shares and which would make two tabs one player whose own ghost is
- * dropped. `sessionStorage` is per tab, which is exactly the lifetime a seat
+ * dropped. `sessionStorage` is per tab, which is exactly the lifetime a signer node
  * at a round has.
  *
  * IT IS A REAL KEY NOW, AND IT WAS NOT. This function used to store 32 random
@@ -653,8 +653,8 @@ export async function joinFromQuery(search, { fetcher = fetch } = {}) {
  *
  * THE CURVE IS INJECTED, like `sign` and like the dealer's. This bundle
  * carries no crypto on purpose, and a page that cannot bring a curve gets a
- * REFUSAL rather than random bytes: seating a player at a money round under a
- * key nobody can spend from is worse than not seating them.
+ * REFUSAL rather than random bytes: joining a player at a money round under a
+ * key nobody can spend from is worse than not joining them.
  */
 //
 // WHAT IS KEPT NOW IS THE SEED, NOT A KEY (§24, v4.6.2, F2). The tab used to
@@ -668,7 +668,7 @@ export async function joinFromQuery(search, { fetcher = fetch } = {}) {
 //
 // AND A SEED THE PLAYER ALREADY HOLDS COMES BACK IN. A seed this page minted is
 // a seed this page knows: a lying page could mint one, show it as the backup,
-// and seat the player under it, and the fingerprint would agree with itself.
+// and enters the player under it, and the fingerprint would agree with itself.
 // The check means something only for a seed that existed BEFORE this page -
 // the player's backup, pasted in (`importSeed`). So: the tab's seed - imported
 // or minted - if it has one; else a fresh one for this tab alone. Nothing goes
@@ -725,14 +725,14 @@ export function playerFor(round, { seed, curve } = {}) {
 }
 
 /**
- * The seat this page takes at a round it did not write.
+ * The signer node this page takes at a round it did not write.
  *
  * The amounts are the ROUND'S, not the page's: a stake it disagrees with is a
  * stake the node would refuse, and copying the number out of the contract is
- * the only way a page can be sure it is asking for the seat that exists.
+ * the only way a page can be sure it is asking for the signer node that exists.
  *
  * THE STAKE IS DEALT BY `stakeFor` NOW, and handed in. Without one this still
- * commits to nothing - `random(32)` and `NO_SHARES` - which is the M2 seat and
+ * commits to nothing - `random(32)` and `NO_SHARES` - which is the M2 signer node and
  * is still the honest thing for a round with no money behind it. What it must
  * never do is look computed when it is not, which is why it is named here.
  *
@@ -743,7 +743,7 @@ export function playerFor(round, { seed, curve } = {}) {
 /**
  * THE FEE LOCK A STAKE LOCK CARRIES, CHECKED (Pick b): its image H(F) of the F it
  * hands over and its amount the entry's own fee - or none. A fee lock that is not
- * that is refused here, so the page never names one a seat would refuse.
+ * that is refused here, so the page never names one a signer node would refuse.
  */
 function feeLockOf(stakeLock, round) {
   const f = stakeLock && stakeLock.feeLock;
@@ -763,8 +763,8 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
   if (!round) throw new Error('there is no round to join');
   // THE PLAYER'S OWN DONATION (M3.2 6e, §22A), chosen on the page
   // (`chooseDonation`) and written here - never rewritten by anybody else. It
-  // must leave the fee inside the stake, by the seat's own rule, so the page
-  // never builds an entry a seat refuses. Before: this wrote 0n on every entry.
+  // must leave the fee inside the stake, by the signer node's own rule, so the page
+  // never builds an entry a signer node refuses. Before: this wrote 0n on every entry.
   if (typeof donationMsat !== 'bigint' || donationMsat < 0n)
     throw new Error('a donation is a BigInt millisatoshi amount, 0 or more');
   {
@@ -773,10 +773,10 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
     if (!fee.ok) throw new Error(fee.why);
   }
   // A PAYING ROUND ON AN UNKNOWN CORE IS REFUSED (§5): no override, no flag. A
-  // free round risks nothing and is seated as before.
+  // free round risks nothing and is joined as before.
   if (roundPays(round)) { const core = coreIsKnownGood(round.simCoreHash); if (!core.ok) throw new Error(core.why); }
-  // THE SEAT'S KEY IS THE SEED'S KEY FOR THIS ROUND, and nothing else (§24,
-  // v4.6.2, F2). A payout and a refund go to it, so a page that seated a player
+  // THE SIGNER NODE'S KEY IS THE SEED'S KEY FOR THIS ROUND, and nothing else (§24,
+  // v4.6.2, F2). A payout and a refund go to it, so a page that joined a player
   // under any other key - a bug, or a host that lies - would send the money
   // where the player's own check (`refund-key.mjs`) cannot find it. So the key
   // is derived here, and a key or a dealt stake naming another is refused.
@@ -791,14 +791,14 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
   if (stake && stake.vssSharesRef.some((b) => b !== 0) && !stake.stakePoint)
     throw new Error('that stake publishes shares and names no stake point, so no signer node could check them');
   // A LOCKING ROUND'S ENTRY NAMES THE ATTESTED CLAIM KEY (§23.1 step 0): with
-  // no attestation the page refuses the seat - "a client MUST refuse to lock
+  // no attestation the page refuses the signer node - "a client MUST refuse to lock
   // to a key without them" - rather than name a key nobody vouched for.
   if (roundLocks(round) && !(claimKey && claimKey.ref instanceof Uint8Array && claimKey.ref.some((b) => b !== 0)))
     throw new Error('this round\'s stake goes into a federation lock, and no claim key has its signer nodes\' '
       + 'attestation: a client must refuse to lock to a key without it (23.1 step 0)');
   // AND IT NAMES THE LOCK ITSELF (§7 stake_lock_outpoint, W1b). The page used to
-  // write zeros here for every round, so a lock round's seat named no lock and
-  // the seat could only refuse it. A lock round's entry is not built without a
+  // write zeros here for every round, so a lock round's signer node named no lock and
+  // the signer node could only refuse it. A lock round's entry is not built without a
   // real outpoint, and a round that locks nothing is not handed one.
   if (roundLocks(round) && !(stakeLock && stakeLock.outpoint && stakeLock.outpoint.txid instanceof Uint8Array
     && stakeLock.outpoint.txid.length === 32 && stakeLock.outpoint.txid.some((b) => b !== 0)))
@@ -819,13 +819,13 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
     // has none can never be the same entry id.
     vssSharesRef: stake ? stake.vssSharesRef : NO_SHARES,
     // §7's stake-lock fields (v4.6.2). A dealt stake names its point - the
-    // handout's A0, which every seat checks the shares against (F1). A lock
+    // handout's A0, which every signer node checks the shares against (F1). A lock
     // round's entry names its lock's outpoint (W1b); the fee lock is not made
     // yet (parked), so it and a non-locking round's outpoint are zeros, said
     // here rather than defaulted.
     stakePoint: stake && stake.stakePoint ? stake.stakePoint : new Uint8Array(33),
     // AND ITS FEE LOCK, ONLY WHEN THE PAGE MADE ONE (Pick b: a fee lock is minted
-    // only when claiming it can pay a seat): F handed over openly (F5) and the
+    // only when claiming it can pay a signer node): F handed over openly (F5) and the
     // lock's outpoint. Otherwise zeros, said here - no fee lock, nothing to claim.
     feePreimage: feeLockOf(stakeLock, round) ? stakeLock.feeLock.preimage : new Uint8Array(32),
     stakeLockOutpoint: stakeLock ? { txid: stakeLock.outpoint.txid, outIdx: BigInt(stakeLock.outpoint.outIdx) }
@@ -859,7 +859,7 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
  *
  * The player chooses P, publishes `sha256(P)` as the stake commitment their
  * hold invoice is issued against, splits P 5-of-7 over the settlement
- * committee and seals one share to each seat. Nobody else ever sees P: the
+ * committee and seals one share to each signer node. Nobody else ever sees P: the
  * page is where it is generated and the page is where it is forgotten.
  *
  * WHY THIS IS AN INPUT DEVICE AND NOT A SIMULATOR. Nothing here computes an
@@ -876,10 +876,10 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
  * reducing would change the number the payment hash already commits to, and
  * the shares would then open something the Entry Contract does not name.
  */
-export async function stakeFor(round, { seats, curve, random, playerPubkey, needed: asked } = {}) {
+export async function stakeFor(round, { signerNodes, curve, random, playerPubkey, needed: asked } = {}) {
   if (!round || !round.id) throw new Error('a stake is dealt for a round, and that is not one');
   // NO STAKE ON A CORE THIS CLIENT DOES NOT KNOW (§5). Refused before anything
-  // is dealt, so a backdoored round gets no handout, no hold and no seat.
+  // is dealt, so a backdoored round gets no handout, no hold and no signer node.
   { const core = coreIsKnownGood(round.simCoreHash); if (!core.ok) throw new Error(core.why); }
   // AT THE ROUND'S THRESHOLD, the one the node's door takes and its settle
   // opens at (M3.3-26). The default was a flat 5 whatever the round, and any
@@ -888,10 +888,10 @@ export async function stakeFor(round, { seats, curve, random, playerPubkey, need
     throw new Error('this round names no settlement slots, so no threshold to deal its stake at');
   const needed = sharesNeededFor(round);
   if (asked !== undefined && asked !== needed)
-    throw new Error(`a stake dealt ${asked} of ${seats ? seats.length : 0} is refused: `
+    throw new Error(`a stake dealt ${asked} of ${signerNodes ? signerNodes.length : 0} is refused: `
       + `this round's stakes open at ${needed} of ${round.settlementSlots}`);
-  if (!Array.isArray(seats) || seats.length < needed)
-    throw new Error(`a threshold of ${needed} cannot be dealt to ${seats ? seats.length : 0} signer nodes`);
+  if (!Array.isArray(signerNodes) || signerNodes.length < needed)
+    throw new Error(`a threshold of ${needed} cannot be dealt to ${signerNodes ? signerNodes.length : 0} signer nodes`);
   if (!curve || typeof curve.ecdhShared !== 'function' || typeof curve.pointX !== 'function')
     throw new Error('dealing a stake needs a curve, and none was injected');
   if (!playerPubkey || playerPubkey.length !== 32)
@@ -905,7 +905,7 @@ export async function stakeFor(round, { seats, curve, random, playerPubkey, need
 
   const ephemeralSecret = random(32);
   const dealt = await dealHandout({
-    preimage, seats, roundId: round.id, playerPubkey,
+    preimage, signerNodes, roundId: round.id, playerPubkey,
     ephemeralSecret, ephemeralPubkey: curve.pointX(ephemeralSecret),
     coefficients: Array.from({ length: needed - 1 }, () => scalarFrom32(random(32)) % FIELD),
     needed, curve,
@@ -920,10 +920,10 @@ export async function stakeFor(round, { seats, curve, random, playerPubkey, need
     stakeCommitment: sha256(preimage),
     vssSharesRef: dealt.id,
     // §23.1 step 1 (v4.6.2): P.G, which IS the handout's constant commitment
-    // A0 - so every seat can check the shares open to this stake (F1).
+    // A0 - so every signer node can check the shares open to this stake (F1).
     stakePoint: dealt.handout.commitments[0],
     handout: dealt.handout,
-    // Ready to POST to every seat, because a handout no seat accepted is a
+    // Ready to POST to every signer node, because a handout no signer node accepted is a
     // reference the entry cannot name.
     body: encodeHandout(dealt.handout),
   };

@@ -24,7 +24,7 @@
 // off disk." Same loop, same order, no second reading of the rules.
 import { isMainThread, parentPort, workerData, Worker } from 'node:worker_threads';
 // AND SINCE M3 R1 (the owner 2026-09-15 08:03/08:07) IT IS HANDED THE CORE: the round names one, the
-// seat's cores.js resolves it, and this file drives that core's adapter - it imports none. The
+// signer node's cores.js resolves it, and this file drives that core's adapter - it imports none. The
 // loop is the same; what a tick's events are, what a run came to and what a picture is are the
 // core's to say.
 import { lastTickOfRun } from '../../protocol/src/contracts.js';

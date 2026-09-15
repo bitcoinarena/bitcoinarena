@@ -9,20 +9,20 @@
 // had zero callers under any `src/` - so the dealer was not code in this
 // repository at all, it was whatever process started the seven daemons.
 //
-// PEDERSEN, AND IT IS n PARALLEL FELDMAN DEALS. Every seat picks a secret,
-// splits it to all seats with `splitSecret`, publishes the polynomial's
-// commitments and seals one share to each seat's key. Every seat then adds up
+// PEDERSEN, AND IT IS n PARALLEL FELDMAN DEALS. Every signer node picks a secret,
+// splits it to all signer nodes with `splitSecret`, publishes the polynomial's
+// commitments and seals one share to each signer node's key. Every signer node then adds up
 // the shares it was dealt: that sum is its share of a group secret equal to the
-// sum of everybody's, which no seat and no observer ever computes. The group
-// key is the sum of the constant-term commitments, and every seat works it out
+// sum of everybody's, which no signer node and no observer ever computes. The group
+// key is the sum of the constant-term commitments, and every signer node works it out
 // from public data alone.
 //
 // WHAT IS REUSED AND WHY. `splitSecret` already cuts a polynomial and publishes
 // Feldman commitments; `sealShare`/`openShare` already put one share in an
-// envelope only one seat's key opens; `shareOpensTo` is already the check that
+// envelope only one signer node's key opens; `shareOpensTo` is already the check that
 // a share lies on the published polynomial - the whole of letter 29. None of
 // that is rewritten here. What is new is the ROUND: who deals to whom, what a
-// seat must have before it may combine, and the refusals.
+// signer node must have before it may combine, and the refusals.
 //
 // THE CURVE IS INJECTED, like everywhere else in this package: nothing here
 // vendors an implementation of the thing that pins money.
@@ -49,10 +49,10 @@ const cat = (...parts) => {
  * THE DEALER KNOWS THE SECRET BEHIND ITS FIRST COMMITMENT, OR ITS DEAL IS REFUSED.
  *
  * Measured without this (dkg-rogue.test.js, 734a2ec): in a 2-of-2 committee
- * the seat that deals LAST takes the honest seat's first commitment, publishes
+ * the signer node that deals LAST takes the honest signer node's first commitment, publishes
  * A0 = X - (honest A0) for a key X it owns, and solves its second commitment
- * as a point so the one share it deals the honest seat still verifies. Every
- * check passed, the group key was X, and that seat alone signed for the pool.
+ * as a point so the one share it deals the honest signer node still verifies. Every
+ * check passed, the group key was X, and that signer node alone signed for the pool.
  * Feldman proves a share lies on the published polynomial; it does not prove
  * the dealer knows the polynomial's secret. This does.
  *
@@ -82,8 +82,8 @@ export function knowledgeIsProven({ id, commitment, proof, curve } = {}) {
     return { ok: false, why: 'checking a proof of knowledge needs a curve, and none was injected' };
   const refuse = {
     ok: false,
-    why: `seat ${id}'s proof of knowledge does not verify: it has not shown it knows the secret behind `
-      + 'its first commitment, and a seat that dealt after seeing the others could otherwise choose the group key',
+    why: `signer node ${id}'s proof of knowledge does not verify: it has not shown it knows the secret behind `
+      + 'its first commitment, and a signer node that dealt after seeing the others could otherwise choose the group key',
   };
   const R = cat(Uint8Array.of(0x02), proof.subarray(0, 32));
   const mu = scalarFrom32(proof.subarray(32));
@@ -97,45 +97,45 @@ export function knowledgeIsProven({ id, commitment, proof, curve } = {}) {
   return toHex(rhs) === toHex(R) ? { ok: true } : refuse;
 }
 
-/** The dealer's own seat number in its deal: the x its proof names. */
-const dealerSeat = (c) => {
-  const s = c && Array.isArray(c.shares) ? c.shares.find((x) => same(x.seatPubkey, c.from)) : null;
-  return s ? s.seat : null;
+/** The dealer's own signer node number in its deal: the x its proof names. */
+const dealerSignerNode = (c) => {
+  const s = c && Array.isArray(c.shares) ? c.shares.find((x) => same(x.signerNodePubkey, c.from)) : null;
+  return s ? s.signerNode : null;
 };
 
 function proofHolds(c, curve) {
-  const id = dealerSeat(c);
-  if (!id) return { ok: false, why: 'that seat dealt to a committee it is not on' };
+  const id = dealerSignerNode(c);
+  if (!id) return { ok: false, why: 'that signer node dealt to a committee it is not on' };
   if (!Array.isArray(c.commitments) || !c.commitments.length)
     return { ok: false, why: 'a contribution that publishes no polynomial cannot be checked' };
   return knowledgeIsProven({ id, commitment: c.commitments[0], proof: c.proof, curve });
 }
 
 /**
- * WHICH COMMITTEE THIS KEY BELONGS TO, AND IT IS THE SEATS THEMSELVES.
+ * WHICH COMMITTEE THIS KEY BELONGS TO, AND IT IS THE SIGNER NODES THEMSELVES.
  *
  * the owner's rule for the lifetime: a DKG runs once per committee EPOCH, not per
  * round. The pool is one P2TR output across rounds (item 13), so a per-round
  * key would mint a new pool address every round and force the funds to move.
- * When sortition seats a different committee, that epoch runs a new DKG; the
- * same seats keep the same group key and the same address.
+ * When sortition signer nodes a different committee, that epoch runs a new DKG; the
+ * same signer nodes keep the same group key and the same address.
  *
- * So the epoch is named by the SET OF SEATS and by nothing else. Sorted, so
+ * So the epoch is named by the SET OF SIGNER NODES and by nothing else. Sorted, so
  * two nodes holding one committee in two orders compute one id; hashed with
  * its own tag, so an epoch id can never be produced by hashing something else.
- * Nothing is added to any contract: every seat already knows who is seated.
+ * Nothing is added to any contract: every signer node already knows who is joined.
  */
-export function epochId(seats) {
-  if (!Array.isArray(seats) || !seats.length)
+export function epochId(signerNodes) {
+  if (!Array.isArray(signerNodes) || !signerNodes.length)
     throw new Error('an epoch is a committee, and that is nobody');
-  const keys = seats.map((k) => {
+  const keys = signerNodes.map((k) => {
     if (!(k instanceof Uint8Array) || k.length !== 32)
-      throw new Error('a seat is a 32-byte key');
+      throw new Error('a signer node is a 32-byte key');
     return k;
   }).sort((a, b) => (toHex(a) < toHex(b) ? -1 : toHex(a) > toHex(b) ? 1 : 0));
   for (let i = 1; i < keys.length; i++)
     if (same(keys[i], keys[i - 1]))
-      throw new Error('two seats of that committee are one key');
+      throw new Error('two signer nodes of that committee are one key');
 
   const w = new Writer();
   w.u16(keys.length);
@@ -147,12 +147,12 @@ export function encodeContribution(c) {
   const w = new Writer();
   w.u8(TYPE_DKG_CONTRIBUTION);
   w.u16(PROTOCOL_VERSION);
-  // WHICH COMMITTEE, so a contribution dealt to one set of seats cannot be
-  // replayed into another - the seats are what the epoch id is made of, so a
+  // WHICH COMMITTEE, so a contribution dealt to one set of signer nodes cannot be
+  // replayed into another - the signer nodes are what the epoch id is made of, so a
   // contribution naming an epoch is a contribution naming its recipients.
   w.bytes32(c.epochId);
-  // WHO DEALT IT. Not decoration: every seat must contribute exactly once, and
-  // a combine that counted one seat twice would let that seat choose the group
+  // WHO DEALT IT. Not decoration: every signer node must contribute exactly once, and
+  // a combine that counted one signer node twice would let that signer node choose the group
   // key by dealing again after seeing everybody else's commitments.
   w.bytes32(c.from);
   w.bytes32(c.ephemeralPubkey);
@@ -161,10 +161,10 @@ export function encodeContribution(c) {
   // THE PROOF THAT THE DEALER KNOWS a0 - carried with the polynomial it proves.
   w.bytes(c.proof, PROOF_BYTES);
   w.vec(c.shares, (s, ww) => {
-    ww.u16(s.seat);
-    ww.bytes32(s.seatPubkey);
+    ww.u16(s.signerNode);
+    ww.bytes32(s.signerNodePubkey);
     ww.bytes(s.sealed, VSS_SEALED_BYTES);
-  }, { sortedBy: (a, b) => a.seat - b.seat });
+  }, { sortedBy: (a, b) => a.signerNode - b.signerNode });
   return w.finish();
 }
 
@@ -181,8 +181,8 @@ export function decodeContribution(bytes) {
     commitments: r.vec((rr) => rr.bytes(COMMITMENT_BYTES)),
     proof: r.bytes(PROOF_BYTES),
     shares: r.vec((rr) => ({
-      seat: rr.u16(),
-      seatPubkey: rr.bytes32(),
+      signerNode: rr.u16(),
+      signerNodePubkey: rr.bytes32(),
       sealed: rr.bytes(VSS_SEALED_BYTES),
     })),
   };
@@ -193,53 +193,53 @@ export function decodeContribution(bytes) {
 export const contributionId = (c) => taggedHash(TAG.dkgContribution, encodeContribution(c));
 
 /**
- * ONE SEAT'S DEAL: a secret nobody is meant to know, split to the committee.
+ * ONE SIGNER NODE'S DEAL: a secret nobody is meant to know, split to the committee.
  *
- * The secret is this seat's own contribution to the group secret and is
+ * The secret is this signer node's own contribution to the group secret and is
  * forgotten the moment the shares are sealed - it is never stored, never sent,
- * and never needed again. What survives is one share per seat and the
+ * and never needed again. What survives is one share per signer node and the
  * polynomial's commitments.
  *
- * SEAT NUMBERS ARE 1..n IN THE ORDER THE COMMITTEE WAS GIVEN, the same rule
+ * SIGNER NODE NUMBERS ARE 1..n IN THE ORDER THE COMMITTEE WAS GIVEN, the same rule
  * `dealHandout` follows and for the same reason: they are the x of the
  * polynomial, so zero is the secret itself, and the opener must use the numbers
  * the dealer used.
  */
-export async function dealContribution({ secret, seats, epochId: id, from,
+export async function dealContribution({ secret, signerNodes, epochId: id, from,
   ephemeralSecret, ephemeralPubkey, coefficients, needed = SHARES_NEEDED, curve } = {}) {
-  if (!Array.isArray(seats) || seats.length < needed)
-    return { ok: false, why: `a threshold of ${needed} cannot be dealt to ${seats ? seats.length : 0} seats` };
+  if (!Array.isArray(signerNodes) || signerNodes.length < needed)
+    return { ok: false, why: `a threshold of ${needed} cannot be dealt to ${signerNodes ? signerNodes.length : 0} signer nodes` };
   if (!curve || typeof curve.pointFromScalar !== 'function')
     return { ok: false, why: 'dealing needs a curve, and none was injected' };
   if (!(id instanceof Uint8Array) || id.length !== 32)
     return { ok: false, why: 'a contribution names the epoch it belongs to' };
   if (!(from instanceof Uint8Array) || from.length !== 32)
-    return { ok: false, why: 'a contribution names the seat that dealt it' };
-  if (!seats.some((k) => same(k, from)))
-    return { ok: false, why: 'that seat is not on the committee it is dealing to' };
+    return { ok: false, why: 'a contribution names the signer node that dealt it' };
+  if (!signerNodes.some((k) => same(k, from)))
+    return { ok: false, why: 'that signer node is not on the committee it is dealing to' };
 
   let split;
-  try { split = splitSecret(secret, { seats: seats.length, needed, coefficients, curve }); }
+  try { split = splitSecret(secret, { signerNodes: signerNodes.length, needed, coefficients, curve }); }
   catch (e) { return { ok: false, why: e.message }; }
 
   const shares = [];
   for (const share of split.shares) {
-    const seatPubkey = seats[share.seat - 1];
+    const signerNodePubkey = signerNodes[share.signerNode - 1];
     shares.push({
-      seat: share.seat,
-      seatPubkey,
+      signerNode: share.signerNode,
+      signerNodePubkey,
       sealed: await sealShare({
-        value: share.value, seat: share.seat, seatPubkey, ephemeralSecret, curve,
+        value: share.value, signerNode: share.signerNode, signerNodePubkey, ephemeralSecret, curve,
       }),
     });
   }
-  // AND THE PROOF THAT THIS SEAT KNOWS a0. Its nonce is derived from the secret,
+  // AND THE PROOF THAT THIS SIGNER NODE KNOWS a0. Its nonce is derived from the secret,
   // the epoch and the commitment, so two proofs never share one.
-  const seatNo = seats.findIndex((k) => same(k, from)) + 1;
+  const signerNodeNo = signerNodes.findIndex((k) => same(k, from)) + 1;
   const nonce = mod(bytesToBigInt(taggedHash(TAG.dkgProofNonce, cat(secret, id, split.commitments[0]))));
   let proof;
   try {
-    proof = proveKnowledge({ id: seatNo, secret: scalarFrom32(secret), commitment: split.commitments[0], nonce, curve });
+    proof = proveKnowledge({ id: signerNodeNo, secret: scalarFrom32(secret), commitment: split.commitments[0], nonce, curve });
   } catch (e) { return { ok: false, why: e.message }; }
   return {
     ok: true,
@@ -248,11 +248,11 @@ export async function dealContribution({ secret, seats, epochId: id, from,
 }
 
 /**
- * IS THIS CONTRIBUTION ONE A SEAT CAN ACT ON?
+ * IS THIS CONTRIBUTION ONE A SIGNER NODE CAN ACT ON?
  *
  * The same family of shape checks `acceptHandout` makes, and they are not
  * ceremony: a threshold that disagrees with the number of commitments, two
- * shares for one seat, or a seat numbered zero each describe a deal that would
+ * shares for one signer node, or a signer node numbered zero each describe a deal that would
  * pass a per-share check and still be unusable.
  */
 export function acceptContribution(c, { curve } = {}) {
@@ -269,28 +269,28 @@ export function acceptContribution(c, { curve } = {}) {
   if (c.shares.length < c.needed)
     return { ok: false, why: `${c.shares.length} shares cannot carry a threshold of ${c.needed}` };
 
-  const seats = new Set();
+  const signerNodes = new Set();
   const keys = new Set();
   for (const s of c.shares) {
-    if (!Number.isInteger(s.seat) || s.seat < 1)
-      return { ok: false, why: 'a share of seat zero is a share of the secret itself' };
-    if (seats.has(s.seat)) return { ok: false, why: `two shares for seat ${s.seat} are one share` };
-    seats.add(s.seat);
-    if (!(s.seatPubkey instanceof Uint8Array) || s.seatPubkey.length !== 32)
-      return { ok: false, why: `seat ${s.seat} is not addressed to a key` };
+    if (!Number.isInteger(s.signerNode) || s.signerNode < 1)
+      return { ok: false, why: 'a share of signer node zero is a share of the secret itself' };
+    if (signerNodes.has(s.signerNode)) return { ok: false, why: `two shares for signer node ${s.signerNode} are one share` };
+    signerNodes.add(s.signerNode);
+    if (!(s.signerNodePubkey instanceof Uint8Array) || s.signerNodePubkey.length !== 32)
+      return { ok: false, why: `signer node ${s.signerNode} is not addressed to a key` };
     if (!(s.sealed instanceof Uint8Array) || s.sealed.length !== VSS_SEALED_BYTES)
-      return { ok: false, why: `seat ${s.seat}'s envelope is not a sealed share` };
-    if (keys.has(toHex(s.seatPubkey)))
-      return { ok: false, why: 'two seats of that contribution are one key' };
-    keys.add(toHex(s.seatPubkey));
+      return { ok: false, why: `signer node ${s.signerNode}'s envelope is not a sealed share` };
+    if (keys.has(toHex(s.signerNodePubkey)))
+      return { ok: false, why: 'two signer nodes of that contribution are one key' };
+    keys.add(toHex(s.signerNodePubkey));
   }
-  // AND THE DEALER IS ONE OF THE RECIPIENTS. A seat that dealt to everybody
+  // AND THE DEALER IS ONE OF THE RECIPIENTS. A signer node that dealt to everybody
   // but itself would hold no share of its own contribution and could never
   // sign with the key it helped make.
   if (!keys.has(toHex(c.from)))
-    return { ok: false, why: 'that seat dealt to a committee it is not on' };
+    return { ok: false, why: 'that signer node dealt to a committee it is not on' };
 
-  // AND THE DEALER KNOWS a0. Without this a seat dealing last chose the key.
+  // AND THE DEALER KNOWS a0. Without this a signer node dealing last chose the key.
   const known = proofHolds(c, curve);
   if (!known.ok) return known;
 
@@ -298,39 +298,39 @@ export function acceptContribution(c, { curve } = {}) {
 }
 
 /**
- * OPEN THE ONE ENVELOPE THIS SEAT WAS DEALT, AND CHECK IT AGAINST THE
+ * OPEN THE ONE ENVELOPE THIS SIGNER NODE WAS DEALT, AND CHECK IT AGAINST THE
  * POLYNOMIAL THE DEALER PUBLISHED.
  *
  * A CROOKED DEALER IS CAUGHT AT THE DEAL, which is the whole point of Feldman
- * being here rather than a plain Shamir split: a seat that cuts two
+ * being here rather than a plain Shamir split: a signer node that cuts two
  * polynomials hands somebody a share that does not lie on the commitments it
- * published, and THAT seat refuses it now - not at reconstruction months
+ * published, and THAT signer node refuses it now - not at reconstruction months
  * later, when there is nothing left to do about it.
  */
 export async function openMyContribution(c, { pubkey, secret, curve } = {}) {
   if (!(pubkey instanceof Uint8Array) || pubkey.length !== 32)
-    return { ok: false, why: 'a seat opens a share with its own 32-byte key, and that is not one' };
-  const mine = c.shares.find((s) => toHex(s.seatPubkey) === toHex(pubkey));
-  if (!mine) return { ok: false, why: 'this node is not one of the seats that contribution was dealt to' };
+    return { ok: false, why: 'a signer node opens a share with its own 32-byte key, and that is not one' };
+  const mine = c.shares.find((s) => toHex(s.signerNodePubkey) === toHex(pubkey));
+  if (!mine) return { ok: false, why: 'this node is not one of the signer nodes that contribution was dealt to' };
   // A SHARE ON A POLYNOMIAL NOBODY KNOWS IS NOT A SHARE: refused before it is opened.
   const known = proofHolds(c, curve);
   if (!known.ok) return known;
 
   const opened = await openShare({
-    sealed: mine.sealed, seat: mine.seat, secret, ephemeralPubkey: c.ephemeralPubkey, curve,
+    sealed: mine.sealed, signerNode: mine.signerNode, secret, ephemeralPubkey: c.ephemeralPubkey, curve,
   });
   if (!opened.ok) return opened;
 
   const consistent = shareOpensTo(opened.share, { commitments: c.commitments, curve });
   if (!consistent.ok)
-    return { ok: false, why: `${consistent.why} - that seat dealt a crooked polynomial` };
-  return { ok: true, share: opened.share, seat: mine.seat };
+    return { ok: false, why: `${consistent.why} - that signer node dealt a crooked polynomial` };
+  return { ok: true, share: opened.share, signerNode: mine.signerNode };
 }
 
 /**
  * THE GROUP KEY, FROM PUBLIC DATA ALONE.
  *
- * The sum of every contribution's constant-term commitment. Every seat
+ * The sum of every contribution's constant-term commitment. Every signer node
  * computes it from the commitments it was shown, so all of them arrive at the
  * same 33 bytes without anybody being told what it is - and nobody, at any
  * point, holds the secret behind it.
@@ -350,9 +350,9 @@ export function groupKeyOf(contributions, curve) {
   // `evenGroupSecret` negated the SECRET before splitting it. Nobody holds the
   // secret here, so nobody can negate it.
   //
-  // What every seat CAN do is negate its own share. The sum of -x_i is
+  // What every signer node CAN do is negate its own share. The sum of -x_i is
   // -(sum x_i), so negated shares are shares of FIELD - s, whose point is the
-  // even-y one - and each seat decides it alone, from the parity of a key it
+  // even-y one - and each signer node decides it alone, from the parity of a key it
   // computed from public data. It is the same move `poolShare` already makes
   // for the taproot tweak, and it needs no round and no message.
   const even = summed[0] === 0x02;
@@ -363,49 +363,49 @@ export function groupKeyOf(contributions, curve) {
 }
 
 /**
- * THIS SEAT'S SHARE OF THE GROUP SECRET: the sum of what it was dealt.
+ * THIS SIGNER NODE'S SHARE OF THE GROUP SECRET: the sum of what it was dealt.
  *
- * EVERY SEAT MUST HAVE CONTRIBUTED, and it is checked rather than assumed. A
+ * EVERY SIGNER NODE MUST HAVE CONTRIBUTED, and it is checked rather than assumed. A
  * combine over a subset is a key a subset chose: whoever was left out is a
- * party whose randomness is not in the secret, and - worse - a seat that could
+ * party whose randomness is not in the secret, and - worse - a signer node that could
  * see everybody else's commitments before dealing its own could steer the
  * group key. So the set of contributions must be exactly the committee, once
  * each, or this refuses by name.
  *
- * The seat number must also agree across the whole set: seat 3 in one deal and
- * seat 5 in another are two different x, and the sum would lie on no
+ * The signer node number must also agree across the whole set: signer node 3 in one deal and
+ * signer node 5 in another are two different x, and the sum would lie on no
  * polynomial at all.
  */
-export function combineShares({ opened, seats, contributions, curve }) {
+export function combineShares({ opened, signerNodes, contributions, curve }) {
   if (!Array.isArray(opened) || !opened.length)
-    return { ok: false, why: 'this seat opened nothing, so it has no share' };
-  if (!Array.isArray(seats) || !seats.length)
+    return { ok: false, why: 'this signer node opened nothing, so it has no share' };
+  if (!Array.isArray(signerNodes) || !signerNodes.length)
     return { ok: false, why: 'a combine needs the committee it is over' };
-  if (!Array.isArray(contributions) || contributions.length !== seats.length)
+  if (!Array.isArray(contributions) || contributions.length !== signerNodes.length)
     return {
       ok: false,
-      why: `${contributions ? contributions.length : 0} of the committee's ${seats.length} `
-        + 'seats contributed, and a key a subset chose is a key that subset can steer',
+      why: `${contributions ? contributions.length : 0} of the committee's ${signerNodes.length} `
+        + 'signer nodes contributed, and a key a subset chose is a key that subset can steer',
     };
 
   const dealers = new Set(contributions.map((c) => toHex(c.from)));
   if (dealers.size !== contributions.length)
-    return { ok: false, why: 'one seat contributed twice, so it dealt after seeing the others' };
-  for (const k of seats)
+    return { ok: false, why: 'one signer node contributed twice, so it dealt after seeing the others' };
+  for (const k of signerNodes)
     if (!dealers.has(toHex(k)))
-      return { ok: false, why: `seat ${toHex(k).slice(0, 16)} contributed nothing` };
+      return { ok: false, why: `signer node ${toHex(k).slice(0, 16)} contributed nothing` };
 
   if (opened.length !== contributions.length)
     return {
       ok: false,
-      why: `this seat opened ${opened.length} of ${contributions.length} contributions, `
+      why: `this signer node opened ${opened.length} of ${contributions.length} contributions, `
         + 'so its share would be a sum of some of them',
     };
-  const at = new Set(opened.map((o) => o.seat));
+  const at = new Set(opened.map((o) => o.signerNode));
   if (at.size !== 1)
-    return { ok: false, why: 'this seat was dealt different seat numbers by different dealers' };
+    return { ok: false, why: 'this signer node was dealt different signer node numbers by different dealers' };
 
-  // `openShare` hands back `{ seat, value }` and the value is the scalar, so
+  // `openShare` hands back `{ signer node, value }` and the value is the scalar, so
   // the sum is over `share.value` and not over the object.
   let sum = 0n;
   for (const o of opened) {
@@ -415,9 +415,9 @@ export function combineShares({ opened, seats, contributions, curve }) {
     sum = mod(sum + v);
   }
   if (sum === 0n)
-    return { ok: false, why: 'this seat\'s share summed to zero, which is no share at all' };
+    return { ok: false, why: 'this signer node\'s share summed to zero, which is no share at all' };
 
-  // NORMALISED HERE, so a seat never holds a share that cannot sign. A curve
+  // NORMALISED HERE, so a signer node never holds a share that cannot sign. A curve
   // is optional only because the epoch and the wire are measured without one;
   // a caller that means to sign passes it, and `groupKeyOf` says which way.
   if (curve) {
@@ -431,28 +431,28 @@ export function combineShares({ opened, seats, contributions, curve }) {
     return {
       ok: true,
       share: key.negated ? mod(FIELD - sum) : sum,
-      seat: [...at][0],
+      signerNode: [...at][0],
       groupPublicKey: key.groupPublicKey,
       negated: key.negated,
     };
   }
-  return { ok: true, share: sum, seat: [...at][0] };
+  return { ok: true, share: sum, signerNode: [...at][0] };
 }
 
 /**
- * EVERY SEAT COMBINED THE SAME CONTRIBUTIONS, OR NOBODY KEEPS A SHARE.
+ * EVERY SIGNER NODE COMBINED THE SAME CONTRIBUTIONS, OR NOBODY KEEPS A SHARE.
  *
  * Measured without this (dkg-equivocation.test.js): on a 5-of-7 committee a
  * dealer sent two DIFFERENT contributions - both with valid proofs, valid
- * shares for every seat - to two halves of the honest seats. Every check
- * passed, all six honest seats finished, and they held shares of TWO group
+ * shares for every signer node - to two halves of the honest signer nodes. Every check
+ * passed, all six honest signer nodes finished, and they held shares of TWO group
  * keys with two pool addresses: a committee that cannot sign, and sats sent to
  * either address that could stick.
  *
- * So each seat signs the set it combined - (dealer, contribution id) for every
- * seat, sorted by dealer - and keeps its share only when every seat of the
+ * So each signer node signs the set it combined - (dealer, contribution id) for every
+ * signer node, sorted by dealer - and keeps its share only when every signer node of the
  * committee has signed the same set. A dealer who equivocates is named, by the
- * contribution the seats disagree on. The price is liveness, not money: a seat
+ * contribution the signer nodes disagree on. The price is liveness, not money: a signer node
  * that never says anything stops the key from forming, which it could always
  * do by not dealing.
  */
@@ -460,7 +460,7 @@ export const AGREEMENT_SIGNATURE_BYTES = 64;
 
 const byDealer = (a, b) => (toHex(a.dealer) < toHex(b.dealer) ? -1 : toHex(a.dealer) > toHex(b.dealer) ? 1 : 0);
 
-/** The set a seat combined: one (dealer, contribution id) per contribution, sorted by dealer. */
+/** The set a signer node combined: one (dealer, contribution id) per contribution, sorted by dealer. */
 export const contributionSetOf = (contributions) =>
   contributions.map((c) => ({ dealer: c.from, id: contributionId(c) })).sort(byDealer);
 
@@ -469,8 +469,8 @@ export function encodeAgreement(a) {
   w.u8(TYPE_DKG_AGREEMENT);
   w.u16(PROTOCOL_VERSION);
   w.bytes32(a.epochId);
-  // WHO SAYS SO is in the signed bytes, so a statement cannot be moved to another seat.
-  w.bytes32(a.seat);
+  // WHO SAYS SO is in the signed bytes, so a statement cannot be moved to another signer node.
+  w.bytes32(a.signerNode);
   w.vec(a.held, (h, ww) => { ww.bytes32(h.dealer); ww.bytes32(h.id); }, { sortedBy: byDealer });
   return w.finish();
 }
@@ -480,12 +480,12 @@ export function decodeAgreement(bytes) {
   if (r.u8() !== TYPE_DKG_AGREEMENT) throw new Error('not a DKG agreement');
   const version = r.u16();
   if (version !== PROTOCOL_VERSION) throw new Error('protocol version ' + version);
-  const a = { epochId: r.bytes32(), seat: r.bytes32(), held: r.vec((rr) => ({ dealer: rr.bytes32(), id: rr.bytes32() })) };
+  const a = { epochId: r.bytes32(), signerNode: r.bytes32(), held: r.vec((rr) => ({ dealer: rr.bytes32(), id: rr.bytes32() })) };
   r.end();
   return a;
 }
 
-/** What a seat signs. */
+/** What a signer node signs. */
 export const agreementId = (a) => taggedHash(TAG.dkgAgreement, encodeAgreement(a));
 
 /** A signed statement on the wire: the agreement, then its 64-byte signature. */
@@ -499,26 +499,26 @@ export function splitSignedAgreement(bytes) {
 }
 
 /**
- * DID EVERY SEAT SAY THE SAME SET? `statements` are `{ agreement, signature }`;
- * `verify(signature, digest, seatKey)` is injected, as everywhere here. Two
+ * DID EVERY SIGNER NODE SAY THE SAME SET? `statements` are `{ agreement, signature }`;
+ * `verify(signature, digest, signerNodeKey)` is injected, as everywhere here. Two
  * valid statements that differ refuse at once, naming the dealer they differ
- * on; a seat that has not said anything yet is waited for, by name.
+ * on; a signer node that has not said anything yet is waited for, by name.
  */
-export function agreementHolds({ epochId: id, seats, statements, verify } = {}) {
+export function agreementHolds({ epochId: id, signerNodes, statements, verify } = {}) {
   if (typeof verify !== 'function') return { ok: false, why: 'checking an agreement needs a verifier, and none was injected' };
-  if (!Array.isArray(seats) || !seats.length) return { ok: false, why: 'an agreement is over a committee, and that is nobody' };
-  const seated = new Set(seats.map(toHex));
+  if (!Array.isArray(signerNodes) || !signerNodes.length) return { ok: false, why: 'an agreement is over a committee, and that is nobody' };
+  const joined = new Set(signerNodes.map(toHex));
   const said = new Map();
   for (const s of statements || []) {
     const a = s && s.agreement;
-    if (!a || !same(a.epochId, id) || !seated.has(toHex(a.seat))) continue;
+    if (!a || !same(a.epochId, id) || !joined.has(toHex(a.signerNode))) continue;
     let good = false;
-    try { good = !!verify(s.signature, agreementId(a), a.seat); } catch { good = false; }
+    try { good = !!verify(s.signature, agreementId(a), a.signerNode); } catch { good = false; }
     if (!good) continue;
-    const who = toHex(a.seat);
+    const who = toHex(a.signerNode);
     const set = a.held.map((h) => `${toHex(h.dealer)}:${toHex(h.id)}`).join(',');
     if (said.has(who) && said.get(who).set !== set)
-      return { ok: false, why: `seat ${who.slice(0, 16)} signed two different contribution sets` };
+      return { ok: false, why: `signer node ${who.slice(0, 16)} signed two different contribution sets` };
     said.set(who, { set, held: a.held });
   }
   const sets = [...said.values()];
@@ -528,14 +528,14 @@ export function agreementHolds({ epochId: id, seats, statements, verify } = {}) 
     const differ = other.held.filter((h) => mine.get(toHex(h.dealer)) !== toHex(h.id)).map((h) => toHex(h.dealer).slice(0, 16));
     return {
       ok: false,
-      why: `the seats hold different contribution sets - they differ on the deal of ${differ.join(', ') || 'a missing dealer'}: `
-        + 'a dealer sent different contributions to different seats, and combining would split the committee onto different keys',
+      why: `the signer nodes hold different contribution sets - they differ on the deal of ${differ.join(', ') || 'a missing dealer'}: `
+        + 'a dealer sent different contributions to different signer nodes, and combining would split the committee onto different keys',
     };
   }
-  if (said.size < seats.length)
-    return { ok: false, have: said.size, of: seats.length,
-      why: `${said.size} of the committee's ${seats.length} seats have said which contributions they combined; all must agree before a share is kept` };
-  if (sets[0].held.length !== seats.length || sets[0].held.some((h) => !seated.has(toHex(h.dealer))))
-    return { ok: false, why: 'the agreed set is not one contribution from every seat of the committee' };
-  return { ok: true, of: seats.length };
+  if (said.size < signerNodes.length)
+    return { ok: false, have: said.size, of: signerNodes.length,
+      why: `${said.size} of the committee's ${signerNodes.length} signer nodes have said which contributions they combined; all must agree before a share is kept` };
+  if (sets[0].held.length !== signerNodes.length || sets[0].held.some((h) => !joined.has(toHex(h.dealer))))
+    return { ok: false, why: 'the agreed set is not one contribution from every signer node of the committee' };
+  return { ok: true, of: signerNodes.length };
 }

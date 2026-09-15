@@ -9,7 +9,7 @@
 //   five of seven      sendrawtransaction -> a txid, a block carries it, and
 //                      the winner's own key holds the sats
 //   four of seven      nothing is sent; the row stays PAYOUT_QUEUED
-//   a rogue asker      every seat refuses, by name, over HTTP
+//   a rogue asker      every signer node refuses, by name, over HTTP
 //
 // The asker holds ONE share. What crosses the wire is a nonce commitment and a
 // signature share, twice five of them, and never a secret.
@@ -17,9 +17,9 @@
 // Own datadir, non-default ports, cookie auth, stopped when the numbers are
 // in. It touches no mainnet and no testnet4 datadir. The coins are worthless.
 //
-//   node packages/blwp-node/tools/payout-committee-regtest.mjs [--seats=N] [--keep]
+//   node packages/blwp-node/tools/payout-committee-regtest.mjs [--signer nodes=N] [--keep]
 //
-// --seats=N (M3.3-28): N daemons, their own key ceremony, and the committee's
+// --signer nodes=N (M3.3-28): N daemons, their own key ceremony, and the committee's
 // own threshold (`receiptsNeeded`: 2 of 2, 5 of 7) - one short of it is
 // refused and the threshold itself pays. Default 7.
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
@@ -47,7 +47,7 @@ import { scalarFrom32, FIELD, SHARES_TOTAL } from '../../protocol/src/shares.js'
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
-import { assumeSeated } from '../test/seating.js';
+import { assumeAssigned } from '../test/assignment.js';
 import { parseTransaction } from '../../protocol/src/tx.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 import { receiptsNeeded } from '../../protocol/src/threshold.js';
@@ -57,8 +57,8 @@ import { receiptsNeeded } from '../../protocol/src/threshold.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 const BITCOIN = process.env.BITCOIN_BIN || '/mnt/bitcoin/bitcoin-31.1/bin';
 const KEEP = process.argv.includes('--keep');
-const SEATS = Number((process.argv.find((a) => a.startsWith('--seats=')) || `--seats=${SHARES_TOTAL}`).split('=')[1]);
-const NEEDED = receiptsNeeded(SEATS);   // the committee's own threshold, never a leftover 5
+const SIGNER_NODES = Number((process.argv.find((a) => a.startsWith('--signer nodes=')) || `--signer nodes=${SHARES_TOTAL}`).split('=')[1]);
+const NEEDED = receiptsNeeded(SIGNER_NODES);   // the committee's own threshold, never a leftover 5
 const P = { rpc: 29683, p2p: 29684 };
 const rand = (n) => new Uint8Array(randomBytes(n));
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -125,36 +125,36 @@ async function main() {
     };
 
     // ---- SEVEN DAEMONS, EACH WITH ITS OWN STORE AND ITS OWN SHARE. ----
-    for (let i = 0; i < SEATS; i++) {
+    for (let i = 0; i < SIGNER_NODES; i++) {
       nodes.push(await serve(openStore(join(dir, `node-${i}.db`)), {
         port: 0, funded: () => true, now: () => NOW,
         poolCurve: curve, chainSpend: chain,
       }));
     }
-    say(`\n${SEATS} daemons on ports ${nodes.map((n) => n.port).join(', ')}; the committee's threshold is ${NEEDED} of ${SEATS}`);
+    say(`\n${SIGNER_NODES} daemons on ports ${nodes.map((n) => n.port).join(', ')}; the committee's threshold is ${NEEDED} of ${SIGNER_NODES}`);
 
     // ---- AND THEY MAKE THEIR OWN KEY (M3.3 item 14). ----
     const committee = nodes.map((n) => n.round.pubkey);
     for (const n of nodes) n.dkg.peers = nodes.filter((o) => o !== n).map((o) => `http://127.0.0.1:${o.port}`);
     for (const n of nodes) await n.dkg.run(committee);
     for (const n of nodes) await n.dkg.run(committee);
-    const seatsHeld = nodes.map((n) => n.dkg.seatFor(committee));
-    for (const [i, h] of seatsHeld.entries())
+    const signerNodesHeld = nodes.map((n) => n.dkg.signerNodeFor(committee));
+    for (const [i, h] of signerNodesHeld.entries())
       if (!h.ok) problems.push(`daemon ${i} ended with no share: ${h.why}`);
-    const keys = new Set(seatsHeld.filter((h) => h.ok).map((h) => toHex(h.pool.groupPublicKey)));
+    const keys = new Set(signerNodesHeld.filter((h) => h.ok).map((h) => toHex(h.pool.groupPublicKey)));
     if (keys.size !== 1) problems.push(`the daemons named ${keys.size} different keys`);
-    const pool = { groupPublicKey: seatsHeld[0].pool.groupPublicKey };
-    say(`each made its own share; ${keys.size === 1 ? 'one key' : `${keys.size} keys`} across all ${SEATS}, and this process holds none`);
+    const pool = { groupPublicKey: signerNodesHeld[0].pool.groupPublicKey };
+    say(`each made its own share; ${keys.size === 1 ? 'one key' : `${keys.size} keys`} across all ${SIGNER_NODES}, and this process holds none`);
     say(`  the committee's key: ${toHex(pool.groupPublicKey).slice(0, 32)}…`);
     for (const [i, n] of nodes.entries()) {
-      n.signing.seat = seatsHeld[i].seat;
+      n.signing.signerNode = signerNodesHeld[i].signerNode;
       n.signing.pool = pool;
       n.payouts.pool = pool;
     }
 
     const contract = {
       networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
-      gameVerifySlots: SEATS, settlementSlots: SEATS, simCoreHash: CORE_HASH,
+      gameVerifySlots: SIGNER_NODES, settlementSlots: SIGNER_NODES, simCoreHash: CORE_HASH,
       committeeTimeMs: BigInt(NOW), randomnessRule: 'bitcoin-block-hash',
       startTimeMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS,
       entryCloseMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS + 200000n,
@@ -185,7 +185,7 @@ async function main() {
     for (const n of nodes) {
       const opened = await post(n.port, '/round', encodeRoundContract(contract));
       if (opened.status !== 201) problems.push(`a node refused the round: ${await opened.text()}`);
-      assumeSeated(n.round, rid, contract.nodes);
+      assumeAssigned(n.round, rid, contract.nodes);
       for (const p of players) {
         const joined = await post(n.port, '/entry', encodeEntryContract(p.contract));
         if (joined.status !== 201) problems.push(`a node refused an entry: ${await joined.text()}`);
@@ -200,7 +200,7 @@ async function main() {
       }
     }
 
-    // ---- EVERY SEAT SIGNS THE TABLE IT COMPUTED, AND FETCHES THE OTHERS'. ----
+    // ---- EVERY SIGNER NODE SIGNS THE TABLE IT COMPUTED, AND FETCHES THE OTHERS'. ----
     const entriesOf = (n) => new PoolSigning(n.round, {}).entriesFor(rid).entries;
     let askerRows = null;   // what the committee's own table owes, as the asker queued it
     for (const n of nodes)
@@ -212,7 +212,7 @@ async function main() {
         roundId: rid, entries: entriesOf(n), minScore: contract.minScore, contract,
       });
       if (!queued.ok || queued.state !== PAYOUT_QUEUED)
-        problems.push(`a seat did not queue the payout: ${queued.why}`);
+        problems.push(`a signer node did not queue the payout: ${queued.why}`);
       if (n === nodes[0]) askerRows = queued.rows;
     }
     // WHAT THE WINNER IS OWED IS THE TABLE'S, not a constant. This checked
@@ -228,7 +228,7 @@ async function main() {
     if (owedSats === null) problems.push('the queued table owes the winner nothing');
     else if (owedSats !== loserNetSats)
       problems.push(`the table owes the winner ${owedSats} sats, not the loser's net stake ${loserNetSats} (22A)`);
-    say(`\nall ${SEATS} queued the payout; the table owes the winner ${owedSats} sats - the loser's net stake, ${loserNetSats} (22A)`);
+    say(`\nall ${SIGNER_NODES} queued the payout; the table owes the winner ${owedSats} sats - the loser's net stake, ${loserNetSats} (22A)`);
 
     // ---- THE POOL, FUNDED ON THE CHAIN - BY THIS HARNESS. ----
     //
@@ -252,38 +252,38 @@ async function main() {
     //
     // There is no door that takes a sighash, so the attack has no shape: the
     // nearest thing an asker can do is name an output of its own, and every
-    // seat rebuilds the spend before it answers.
+    // signer node rebuilds the spend before it answers.
     const rogue = { ...utxo, script: fromHex('5120' + toHex(schnorr.getPublicKey(rand(32)))) };
     let refusedRogue = 0;
     for (const n of nodes) {
       const got = await post(n.port, `/pool/commit?round=${toHex(rid)}`, encodeUtxo(rogue));
       const why = (await got.text()).trim();
       if (got.status !== 200) refusedRogue++;
-      else problems.push('a seat committed to a spend of an output that is not the pool');
+      else problems.push('a signer node committed to a spend of an output that is not the pool');
       if (n === nodes[0]) say(`\na rogue asker naming its own output: ${got.status} ${why}`);
     }
-    say(`  ${refusedRogue} of ${SEATS} seats refused it`);
+    say(`  ${refusedRogue} of ${SIGNER_NODES} signer nodes refused it`);
 
     // ---- ONE SHORT OF THE THRESHOLD (4 of 7; 1 of 2). ----
     const asker = nodes[0];
     const four = await asker.payouts.payWithCommittee({
       roundId: rid, utxo, contract, signing: asker.signing,
-      seats: nodes.slice(1, NEEDED - 1).map((n) => `http://127.0.0.1:${n.port}`),
+      signerNodes: nodes.slice(1, NEEDED - 1).map((n) => `http://127.0.0.1:${n.port}`),
     });
-    say(`\n${NEEDED - 1} of ${SEATS}: ${four.ok ? 'PAID' : 'refused: ' + four.why}`);
-    if (four.ok) problems.push(`${NEEDED - 1} of ${SEATS} paid the winner`);
+    say(`\n${NEEDED - 1} of ${SIGNER_NODES}: ${four.ok ? 'PAID' : 'refused: ' + four.why}`);
+    if (four.ok) problems.push(`${NEEDED - 1} of ${SIGNER_NODES} paid the winner`);
     if (asker.round.payout(rid).state !== PAYOUT_QUEUED)
       problems.push('a short committee moved the payout row');
 
     // ---- THE THRESHOLD, IN FRONT OF CONSENSUS (5 of 7; 2 of 2). ----
     const paid = await asker.payouts.payWithCommittee({
       roundId: rid, utxo, contract, signing: asker.signing,
-      seats: nodes.slice(1, NEEDED).map((n) => `http://127.0.0.1:${n.port}`),
+      signerNodes: nodes.slice(1, NEEDED).map((n) => `http://127.0.0.1:${n.port}`),
     });
-    say(`\n${NEEDED} of ${SEATS}, each on its own socket with its own share:`);
+    say(`\n${NEEDED} of ${SIGNER_NODES}, each on its own socket with its own share:`);
     if (!paid.ok) {
       say(`  REJECTED: ${paid.why}`);
-      problems.push(`${NEEDED} of ${SEATS} were rejected: ${paid.why}`);
+      problems.push(`${NEEDED} of ${SIGNER_NODES} were rejected: ${paid.why}`);
     } else {
       say(`  sendrawtransaction -> ${toHex(new Uint8Array(paid.txid).reverse())}`);
       mine(1);
@@ -303,7 +303,7 @@ async function main() {
         problems.push(`the winner holds ${sats} sats, not the ${owedSats} the table owes`);
       if (asker.round.payout(rid).state !== PAID)
         problems.push('the row was not marked PAID');
-      say(`  the asker's own store says ${asker.round.payout(rid).state}, signed by ${paid.signed} seats`);
+      say(`  the asker's own store says ${asker.round.payout(rid).state}, signed by ${paid.signed} signer nodes`);
     }
   } finally {
     for (const n of nodes) { try { await n.close(); } catch { /* going down anyway */ } }

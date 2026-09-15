@@ -1,10 +1,10 @@
-// FINALITY THAT DOES NOT DEPEND ON WHICH SEAT CLOSES FIRST (M3.3-25).
+// FINALITY THAT DOES NOT DEPEND ON WHICH SIGNER NODE CLOSES FIRST (M3.3-25).
 //
 // Measured on the regtest rehearsal (--close-order=AB|BA): the first daemon to
 // close is left one committee result short, whichever it is. Its one gather
-// answered 126-171 ms before the other seat had stored that run's result, and
+// answered 126-171 ms before the other signer node had stored that run's result, and
 // nothing asked again: AB left A at "1 of 2 agree" and its payout table at
-// "1 of 2 seats signed"; BA left B there. After a close the verifier now
+// "1 of 2 signer nodes signed"; BA left B there. After a close the verifier now
 // gathers every stored run that is not final again, every `everyMs`, until it
 // is final or the round's objection window has passed - and a run that turns
 // final re-runs that round's close logic: settle and cancel, then the payout
@@ -21,7 +21,7 @@ import { WebSocket } from 'ws';
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { HELD } from '../src/custody.js';
-import { assumeSeated, assumeStakeSeen } from './seating.js';
+import { assumeAssigned, assumeStakeSeen } from './assignment.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
 import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
@@ -104,9 +104,9 @@ async function played({ finality } = {}) {
   const signedMark = joinSigned(encodeCheckpoint(mark), ed25519.sign(checkpointId(mark), session));
   for (const d of [a, b]) {
     await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
-    assumeSeated(d.round, rid, c.nodes);
-    const seated = await fetch(`http://127.0.0.1:${d.port}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
-    assert.equal(seated.status, 201, await seated.text());
+    assumeAssigned(d.round, rid, c.nodes);
+    const joined = await fetch(`http://127.0.0.1:${d.port}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
+    assert.equal(joined.status, 201, await joined.text());
     assumeStakeSeen(d.round, entry);
     assert.equal(await say(d.port, encodeInputBatch(input)), String(TICKS));
     assert.equal((await say(d.port, signedMark)).length, SIGNED_RECEIPT_BYTES);
@@ -153,16 +153,16 @@ for (const [first, second] of [['a', 'b'], ['b', 'a']]) {
       const two = await settles(w[second], w.rid, w.eid);
       assert.equal(one.final, true, `the first to close never saw the run final: ${JSON.stringify(one)}`);
       assert.equal(two.final, true, `the second to close did not see the run final: ${JSON.stringify(two)}`);
-      assert.equal(one.signed, 2, `the first closer's table has ${one.signed} of 2 seats`);
-      assert.equal(two.signed, 2, `the second closer's table has ${two.signed} of 2 seats`);
+      assert.equal(one.signed, 2, `the first closer's table has ${one.signed} of 2 signer nodes`);
+      assert.equal(two.signed, 2, `the second closer's table has ${two.signed} of 2 signer nodes`);
       assert.notEqual(one.table, 'none');
-      assert.equal(one.table, two.table, 'the two seats queued different tables');
+      assert.equal(one.table, two.table, 'the two signer nodes queued different tables');
     } finally { await w.close(); }
   });
 }
 
 // RULED 2026-09-12 (M3.3-34): the window is for objections, not for abandoning
-// 2 of 2 - a seat still short of the second signature keeps asking after it.
+// 2 of 2 - a signer node still short of the second signature keeps asking after it.
 // What this test guarded stays guarded: a run that never turns final is asked
 // about EVER MORE RARELY, backing off to `maxEveryMs`, never at the watch's
 // cadence for ever. Measured before the ruling: A stopped asking at the window.

@@ -155,7 +155,7 @@ public class CameraNoseTests
         yield return null;
 
         // Put the scene back. Leaving an empty world behind is what turned
-        // `PostOfficeTests.TheGogglesAnimate` red after the seating fixture:
+        // `PostOfficeTests.TheGogglesAnimate` red after the resting fixture:
         // green alone, red after a fixture that destroyed every root.
         UnityEngine.SceneManagement.SceneManager.LoadScene(
             0, UnityEngine.SceneManagement.LoadSceneMode.Single);

@@ -22,15 +22,15 @@
 // output and stays with the guardians as fee; a share too small to pay its own
 // output fee is reported unpaid, not bumped from anyone else's.
 //
-// ONE TRANSACTION EVERY SEAT REBUILDS BYTE FOR BYTE: inputs sorted by outpoint,
-// payouts by payout key, and the nonce derived from the round id - so the seats
-// sign one txid, and a seat signs only the txid it rebuilt itself.
+// ONE TRANSACTION EVERY SIGNER NODE REBUILDS BYTE FOR BYTE: inputs sorted by outpoint,
+// payouts by payout key, and the nonce derived from the round id - so the signer nodes
+// sign one txid, and a signer node signs only the txid it rebuilt itself.
 // AND THE FEE LOCKS (Pick A, the owner 2026-09-14): every counted entry's fee lock -
 // winners' too, the fee is owed whatever the result (F5) - claimed with its F,
 // handed over openly at entry, in the same transaction and the same signature.
-// They pay the round's SITTING SEATS by §22A's own weights (`nodeFeeTable`: 1% to
-// the game/verify pool, 1% to the settlement pool, per eligible seat, leftovers in
-// the round's order), each seat one pre-expired payout contract to its own key -
+// They pay the round's SITTING SIGNER NODES by §22A's own weights (`nodeFeeTable`: 1% to
+// the game/verify pool, 1% to the settlement pool, per eligible signer node, leftovers in
+// the round's order), each signer node one pre-expired payout contract to its own key -
 // never to the donation recipients, and no split invented here. A VOID or
 // ENTRY_VOID entry's fee lock is not claimed: §22A's fee base leaves it out.
 import { holdSettlement, netStakeMsat, isRefund, SETTLE, CANCEL, FAILED } from './payout.js';
@@ -59,7 +59,7 @@ export function largestPayoutMsat(fees, target) {
 
 const NONCE_TAG = new TextEncoder().encode('blwp lock settlement v1');
 
-/** The settlement transaction's 8-byte nonce: one per round, the same at every seat. */
+/** The settlement transaction's 8-byte nonce: one per round, the same at every signer node. */
 export function settlementNonce(roundId) {
   if (!(roundId instanceof Uint8Array) || roundId.length !== 32) throw new Error('a round id is 32 bytes');
   const m = new Uint8Array(NONCE_TAG.length + 32);
@@ -76,12 +76,12 @@ export function settlementNonce(roundId) {
  *        every verified stake lock, keyed by the player's pubkey hex
  * @param {{ppm: bigint, baseMsat: bigint}} o.fees  the guardians' LNv2 fee rule
  */
-export function lockSettlement({ roundId, entries, minScore = 0, locks, fees, feeLocks = new Map(), seats = null, contract = null }) {
+export function lockSettlement({ roundId, entries, minScore = 0, locks, fees, feeLocks = new Map(), signerNodes = null, contract = null }) {
   if (!(locks instanceof Map)) return refuse('the verified stake locks are a Map by player key');
   if (!(feeLocks instanceof Map)) return refuse('the verified fee locks are a Map by player key');
   if (!fees || typeof fees.ppm !== 'bigint' || typeof fees.baseMsat !== 'bigint' || fees.ppm < 0n || fees.baseMsat < 0n)
     return refuse('the guardians\' fee rule is BigInt ppm and base msat, 0 or more');
-  const feePart = feeSettlement({ entries, feeLocks, seats, contract, fees });
+  const feePart = feeSettlement({ entries, feeLocks, signerNodes, contract, fees });
   if (!feePart.ok) return feePart;
   // THE STAKE PART'S VERDICT IS THE HOLD PATH'S. A round with losers and nobody to
   // pay is refused there ("the operator would keep ..."), and so its stakes are not
@@ -107,7 +107,7 @@ export function lockSettlement({ roundId, entries, minScore = 0, locks, fees, fe
   if (!claims.length && !feePart.claims.length)
     return { ok: true, nothing: true, why: 'no loser\'s lock is claimed in this round', claims, payouts: [], unpaid: [], forfeits,
       poolMsat: 0n, inputFeesMsat: 0n, spendableMsat: 0n, paidMsat: 0n, outputFeesMsat: 0n, unspentMsat: 0n,
-      feePoolMsat: 0n, seatPayouts: [], feeClaims: [] };
+      feePoolMsat: 0n, signerNodePayouts: [], feeClaims: [] };
   if (!claims.length)
     return finish({ roundId, claims: [], payouts: [], unpaid: [], forfeits, poolMsat: 0n, inputFeesMsat: 0n, spendableMsat: 0n,
       stakeWhy: 'no loser\'s lock is claimed in this round' }, feePart);
@@ -147,31 +147,31 @@ function finish(stake, fee) {
   const outputFeesMsat = stake.payouts.reduce((s, p) => s + p.feeMsat, 0n);
   const unspentMsat = stake.spendableMsat - paidMsat - outputFeesMsat;
   if (unspentMsat < 0n) return refuse('the payouts and their fees come to more than the claimed locks pay for');
-  if (fee.unspentMsat < 0n) return refuse('the seats\' payouts and their fees come to more than the fee locks pay for');
+  if (fee.unspentMsat < 0n) return refuse('the signer nodes\' payouts and their fees come to more than the fee locks pay for');
   return { ok: true, nothing: false, claims, payouts, unpaid: [...stake.unpaid, ...fee.unpaid], forfeits: stake.forfeits,
     nonce: settlementNonce(stake.roundId), stakeWhy: stake.stakeWhy,
     poolMsat: stake.poolMsat, inputFeesMsat: stake.inputFeesMsat, spendableMsat: stake.spendableMsat, paidMsat, outputFeesMsat, unspentMsat,
-    feeClaims: fee.claims, seatPayouts: fee.payouts, feePoolMsat: fee.poolMsat, feeInputFeesMsat: fee.inputFeesMsat,
+    feeClaims: fee.claims, signerNodePayouts: fee.payouts, feePoolMsat: fee.poolMsat, feeInputFeesMsat: fee.inputFeesMsat,
     feePaidMsat: fee.paidMsat, feeOutputFeesMsat: fee.outputFeesMsat, feeUnspentMsat: fee.unspentMsat, feeUnallocatedMsat: fee.unallocatedMsat,
     feeHole: fee.hole || null };
 }
 
 /**
- * WHETHER A FEE LOCK CAN PAY A SEAT - THE GATE THE PAGE ASKS BEFORE IT MINTS ONE
+ * WHETHER A FEE LOCK CAN PAY A SIGNER NODE - THE GATE THE PAGE ASKS BEFORE IT MINTS ONE
  * (Pick b, the owner 2026-09-14: "Do not mint a fee lock when claiming it cannot pay
- * a sitting seat ... The operator must not take money that only pays the
+ * a sitting signer node ... The operator must not take money that only pays the
  * federation.").
  *
- * The seats' own fee arithmetic (`feeSettlement`), run on the round's WORST case -
- * the fewest players a round opens for (more only raise each seat's share) - over
- * the seats the settlement pays: the round's own sitting seats, its `nodes`, in
- * both pools (the owner 2026-09-15 07:42: "22A node fee goes to the sitting seats of
+ * The signer nodes' own fee arithmetic (`feeSettlement`), run on the round's WORST case -
+ * the fewest players a round opens for (more only raise each signer node's share) - over
+ * the signer nodes the settlement pays: the round's own sitting signer nodes, its `nodes`, in
+ * both pools (the owner 2026-09-15 07:42: "22A node fee goes to the sitting signer nodes of
  * this round, even if there are only two. Not seven census slots when the round is
- * 2-of-2."). It used to invent one different seat per slot - four for a 2-of-2
- * the settlement pays as two. It pays only if every sitting seat would be paid
+ * 2-of-2."). It used to invent one different signer node per slot - four for a 2-of-2
+ * the settlement pays as two. It pays only if every sitting signer node would be paid
  * strictly more than nothing after the federation's own fee on every input and
  * output. `fees` is the federation's rule, read by the page's own lock client -
- * not a seat's word.
+ * not a signer node's word.
  */
 export function feeLockPays({ contract, fees, players = MIN_PLAYERS_PER_ROUND } = {}) {
   if (!contract) return { pays: false, why: 'no round to size the fee lock for' };
@@ -179,36 +179,36 @@ export function feeLockPays({ contract, fees, players = MIN_PLAYERS_PER_ROUND } 
     return { pays: false, why: 'the federation\'s fee rule is not known, so no fee lock is minted' };
   const stakeMsat = BigInt(contract.stakeMsat || 0n);
   const lockMsat = entryFeeMsat(stakeMsat);
-  // THE ROUND'S SITTING SEATS, each once - the seats its settlement pays, in both pools.
+  // THE ROUND'S SITTING SIGNER NODES, each once - the signer nodes its settlement pays, in both pools.
   const sitting = Array.isArray(contract.nodes) ? [...new Map(contract.nodes.map((k) => [toHex(k), k])).values()] : [];
-  const base = { stakeMsat, lockMsat, players, seats: sitting.length };
+  const base = { stakeMsat, lockMsat, players, signerNodes: sitting.length };
   if (lockMsat <= 0n) return { ...base, pays: false, why: 'this round owes no fee, so there is nothing to lock' };
-  if (!sitting.length) return { ...base, pays: false, why: 'that round names no sitting seats, so a fee lock would pay nobody' };
+  if (!sitting.length) return { ...base, pays: false, why: 'that round names no sitting signer nodes, so a fee lock would pay nobody' };
   const key = (tag, i) => { const k = new Uint8Array(32); k[0] = tag; k[1] = i; k[31] = 1; return k; };
   const pools = { [GAME_VERIFY]: sitting, [SETTLEMENT]: sitting };
   const entries = Array.from({ length: players }, (_, i) => ({ pubkey: key(0xb0, i), stakeMsat, feeMsat: lockMsat, donationMsat: 0n, outcome: FAILED, score: 0 }));
   const feeLocks = new Map(entries.map((e, i) => [toHex(e.pubkey), { outpoint: { txid: key(0xc0, i), outIdx: BigInt(i) }, amountMsat: lockMsat, preimage: key(0xd0, i) }]));
-  const part = feeSettlement({ entries, feeLocks, seats: pools, contract, fees });
+  const part = feeSettlement({ entries, feeLocks, signerNodes: pools, contract, fees });
   if (!part.ok) return { ...base, pays: false, why: part.why };
   const out = { ...base, inputFeesMsat: part.inputFeesMsat, outputFeesMsat: part.outputFeesMsat,
-    perSeatNetMsat: part.payouts.map((p) => p.msat), unpaidSeats: part.unpaid.length };
+    perSignerNodeNetMsat: part.payouts.map((p) => p.msat), unpaidSignerNodes: part.unpaid.length };
   if (part.hole) return { ...out, pays: false, why: part.hole.why };
-  if (part.unpaid.length) return { ...out, pays: false, why: `${part.unpaid.length} entitled seat(s) would be paid nothing after the federation's fees` };
-  if (!part.payouts.length || part.payouts.some((p) => p.msat <= 0n)) return { ...out, pays: false, why: 'a seat would be paid nothing after the federation\'s fees' };
-  return { ...out, pays: true, why: `every one of ${part.payouts.length} seats is paid more than nothing after the federation's fees` };
+  if (part.unpaid.length) return { ...out, pays: false, why: `${part.unpaid.length} entitled signer node(s) would be paid nothing after the federation's fees` };
+  if (!part.payouts.length || part.payouts.some((p) => p.msat <= 0n)) return { ...out, pays: false, why: 'a signer node would be paid nothing after the federation\'s fees' };
+  return { ...out, pays: true, why: `every one of ${part.payouts.length} signer nodes is paid more than nothing after the federation's fees` };
 }
 
 /**
- * THE FEE PART: every counted entry's fee lock in, each sitting seat's §22A share
- * out. `seats` names the round's sitting committee by pool ({ gameVerify,
+ * THE FEE PART: every counted entry's fee lock in, each sitting signer node's §22A share
+ * out. `signer nodes` names the round's sitting committee by pool ({ gameVerify,
  * settlement }: x-only keys); `feeLocks` the verified fee locks by player key,
  * each with its outpoint, amount and F.
  */
-function feeSettlement({ entries, feeLocks, seats, contract, fees }) {
+function feeSettlement({ entries, feeLocks, signerNodes, contract, fees }) {
   const none = { ok: true, claims: [], payouts: [], unpaid: [], poolMsat: 0n, inputFeesMsat: 0n, paidMsat: 0n, outputFeesMsat: 0n, unspentMsat: 0n, unallocatedMsat: 0n };
   if (!feeLocks.size) return none;
-  if (!contract || !seats || !Array.isArray(seats[GAME_VERIFY]) || !Array.isArray(seats[SETTLEMENT]))
-    return refuse('fee locks are claimed for the round\'s sitting seats, and no contract or seats were named');
+  if (!contract || !signerNodes || !Array.isArray(signerNodes[GAME_VERIFY]) || !Array.isArray(signerNodes[SETTLEMENT]))
+    return refuse('fee locks are claimed for the round\'s sitting signer nodes, and no contract or signer nodes were named');
   const counted = entries.filter((e) => !isRefund(e.outcome));
   const claims = [];
   for (const e of counted) {
@@ -218,15 +218,15 @@ function feeSettlement({ entries, feeLocks, seats, contract, fees }) {
     if (!(f.preimage instanceof Uint8Array) || f.preimage.length !== 32) return refuse('a fee lock is claimed with its F, and that is 32 bytes');
     claims.push({ pubkey: e.pubkey, outpoint: f.outpoint, amountMsat: f.amountMsat, preimage: f.preimage, kind: 'fee' });
   }
-  const eligible = new Set([...seats[GAME_VERIFY], ...seats[SETTLEMENT]].map(toHex));
+  const eligible = new Set([...signerNodes[GAME_VERIFY], ...signerNodes[SETTLEMENT]].map(toHex));
   let table;
-  try { table = nodeFeeTable({ contract, entries: counted, pools: seats, eligible }); } catch (e) { return refuse(e.message); }
+  try { table = nodeFeeTable({ contract, entries: counted, pools: signerNodes, eligible }); } catch (e) { return refuse(e.message); }
   const poolMsat = claims.reduce((s, c) => s + c.amountMsat, 0n);
-  if (table.fee !== poolMsat) return refuse(`the fee table owes the seats ${table.fee} msat and the fee locks hold ${poolMsat}`);
-  if (table.unallocated > 0n) return refuse(`${table.unallocated} msat of the fee has no eligible seat in its pool, so no fee lock is claimed`);
-  // ONE PAYOUT PER SEAT KEY: a seat in both pools is owed both shares (§22A), paid together.
+  if (table.fee !== poolMsat) return refuse(`the fee table owes the signer nodes ${table.fee} msat and the fee locks hold ${poolMsat}`);
+  if (table.unallocated > 0n) return refuse(`${table.unallocated} msat of the fee has no eligible signer node in its pool, so no fee lock is claimed`);
+  // ONE PAYOUT PER SIGNER NODE KEY: a signer node in both pools is owed both shares (§22A), paid together.
   const owed = new Map();
-  for (const [k, msat] of table.seats) { const key = k.slice(k.indexOf(':') + 1); owed.set(key, (owed.get(key) || 0n) + msat); }
+  for (const [k, msat] of table.signerNodes) { const key = k.slice(k.indexOf(':') + 1); owed.set(key, (owed.get(key) || 0n) + msat); }
   const inputFeesMsat = claims.reduce((s, c) => s + lnv2FeeMsat(fees, c.amountMsat), 0n);
   const spendable = poolMsat - inputFeesMsat;
   if (spendable <= 0n) return refuse(`the guardians' fees on the fee locks (${inputFeesMsat} msat) take the whole fee of ${poolMsat}`);
@@ -236,16 +236,16 @@ function feeSettlement({ entries, feeLocks, seats, contract, fees }) {
     const pubkey = fromHex(key);
     const got = largestPayoutMsat(fees, (msat * spendable) / poolMsat);
     if (got === 0n) { unpaid.push({ pubkey, owedMsat: msat, why: 'its fee share does not pay its own output fee' }); continue; }
-    payouts.push({ pubkey, payoutPk: refundKeyOf(pubkey), owedMsat: msat, msat: got, feeMsat: lnv2FeeMsat(fees, got), kind: 'seat' });
+    payouts.push({ pubkey, payoutPk: refundKeyOf(pubkey), owedMsat: msat, msat: got, feeMsat: lnv2FeeMsat(fees, got), kind: 'signer node' });
   }
-  // A FEE THAT CANNOT REACH A SEAT IS NOT CLAIMED. Measured under the guardians'
+  // A FEE THAT CANNOT REACH A SIGNER NODE IS NOT CLAIMED. Measured under the guardians'
   // real rule (1000 msat per input and per output): two 2000 msat fee locks bring
-  // 4000, their inputs cost 2000, and each seat's 1000 msat share cannot pay its
+  // 4000, their inputs cost 2000, and each signer node's 1000 msat share cannot pay its
   // own output - claimed, the players' fees would only have paid the guardians.
   // Left unclaimed, each fee lock expires back to its player; the hole is named.
   if (!payouts.length)
     return { ...none, unpaid, hole: { poolMsat, inputFeesMsat, owedMsat: [...owed.values()].reduce((s, m) => s + m, 0n),
-      why: `the fee locks hold ${poolMsat} msat and their inputs alone cost ${inputFeesMsat}: no seat's share pays its own output, `
+      why: `the fee locks hold ${poolMsat} msat and their inputs alone cost ${inputFeesMsat}: no signer node's share pays its own output, `
         + 'so no fee lock is claimed and each expires back to its player' } };
   const paidMsat = payouts.reduce((s, p) => s + p.msat, 0n);
   const outputFeesMsat = payouts.reduce((s, p) => s + p.feeMsat, 0n);

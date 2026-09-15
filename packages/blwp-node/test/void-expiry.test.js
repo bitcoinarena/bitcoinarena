@@ -1,6 +1,6 @@
 // A HOLD WHOSE HTLC HAS EXPIRED IS NOT LISTED HELD (M3.3-30).
 //
-// Measured on the regtest rehearsal: P3 - seated, paid, never played, VOID -
+// Measured on the regtest rehearsal: P3 - joined, paid, never played, VOID -
 // timed out in lnd (CANCELED, the money back with the player) while BOTH
 // daemons still listed it HELD, 35 of 35 runs. Nothing in the daemon moved a
 // row to EXPIRED.
@@ -26,7 +26,7 @@ import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
 import { toHex, sha256 } from '../../protocol/src/hash.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
-import { assumeSeated } from './seating.js';
+import { assumeAssigned } from './assignment.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const READY = { preflight: async () => ({ ready: true, why: 'test port' }) };
@@ -74,15 +74,15 @@ test('a paid hold turns EXPIRED once the daemon\'s own chain is past its HTLC\'s
     const c = contractFor(node.round.pubkey);
     const rid = roundId(c);
     await fetch(`http://127.0.0.1:${node.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
-    assumeSeated(node.round, rid, c.nodes);
+    assumeAssigned(node.round, rid, c.nodes);
     const entry = {
       roundId: rid, playerPubkey: b32(5), sessionPubkey: ed25519.getPublicKey(session),
       stakeCommitment: sha256(b32(65)), stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE),
       donationMsat: 0n, joinTick: 0, worldSecret: b32(0x16), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
     };
     const eid = entryId(entry);
-    const seated = await fetch(`http://127.0.0.1:${node.port}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
-    assert.equal(seated.status, 201, await seated.text());
+    const joined = await fetch(`http://127.0.0.1:${node.port}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
+    assert.equal(joined.status, 201, await joined.text());
     const quote = await fetch(`http://127.0.0.1:${node.port}/invoice?entry=${toHex(eid)}`);
     assert.equal(quote.status, 200, await quote.text());
     // SEEN-TIME: the one moment lnd is asked, and the expiry height comes back with it.
@@ -148,7 +148,7 @@ test('a launcher that gives only its own bitcoind (poolCall, as main.js does) st
     const c = contractFor(node.round.pubkey);
     const rid = roundId(c);
     await fetch(`http://127.0.0.1:${node.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
-    assumeSeated(node.round, rid, c.nodes);
+    assumeAssigned(node.round, rid, c.nodes);
     const entry = {
       roundId: rid, playerPubkey: b32(6), sessionPubkey: ed25519.getPublicKey(session),
       stakeCommitment: sha256(b32(66)), stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE),

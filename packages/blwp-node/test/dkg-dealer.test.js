@@ -56,7 +56,7 @@ test('a dealer still holds everything, which is why nothing that ships uses one'
   // AND IT IS NOT A COUNT ONLY: the shares in that one place OPEN the key.
   // Five of the seven, interpolated, are the group secret itself.
   const five = dealt.shares.slice(0, SHARES_NEEDED)
-    .map((s) => ({ seat: Number(s.id), value: s.share }));
+    .map((s) => ({ signerNode: Number(s.id), value: s.share }));
   // `reconstruct` hands back the 32 bytes themselves, not a result object.
   const secret = reconstruct(five, { needed: SHARES_NEEDED });
   assert.equal(secret.length, 32);
@@ -86,7 +86,7 @@ test('nothing that ships deals the pool key, and no launch path holds a share', 
     'something that ships now deals the pool key - letter 14 has moved, update this pin');
   console.log('  files under src/ that call the trusted dealer: 0');
 
-  // AND THE DAEMON MAKES ONE. `poolSeat` is still accepted - a fixture may
+  // AND THE DAEMON MAKES ONE. `poolSignerNode` is still accepted - a fixture may
   // hand a share in, the way `seedWord` may be handed to a replay - but the
   // daemon has its own now, and a call site rather than a mention is what is
   // checked. Written as a bare /dkg|dealerless/i first and it matched the

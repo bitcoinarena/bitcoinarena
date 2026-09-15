@@ -2,8 +2,8 @@
 //
 // Two shapes, both fixed-width, both readable by a node that trusts nothing
 // about the sender. The asker names an OUTPUT and hands over a commitment
-// list; the seat answers with a commitment and then with a scalar. There is no
-// sighash on this wire and no transaction: a seat that could be handed either
+// list; the signer node answers with a commitment and then with a scalar. There is no
+// sighash on this wire and no transaction: a signer node that could be handed either
 // would be signing somebody else's arithmetic, which is the whole of what
 // `pool-signing.js` refuses to do.
 import { Writer, Reader } from '../../protocol/src/encode.js';
@@ -33,7 +33,7 @@ export function decodeUtxo(bytes) {
 
 /**
  * The id travels as FROST's own 32-byte scalar, not as a small integer, so the
- * bytes a seat reads are the bytes that go into the binding factors.
+ * bytes a signer node reads are the bytes that go into the binding factors.
  */
 export function encodeCommitments(commitments) {
   const w = new Writer();
@@ -71,8 +71,8 @@ export const decodeShare = (bytes) => {
  * ROUND TWO'S BODY: the same output again, then the commitment list.
  *
  * The output is repeated rather than remembered against a session, because a
- * seat that had to keep one would be keeping state an asker could exhaust, and
- * because the seat rebuilds the spend from it either way - a second round that
+ * signer node that had to keep one would be keeping state an asker could exhaust, and
+ * because the signer node rebuilds the spend from it either way - a second round that
  * named a different output is a refusal, not a surprise.
  */
 export function encodeShareRequest(utxo, commitments) {

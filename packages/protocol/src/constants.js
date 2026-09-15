@@ -16,9 +16,9 @@ import {
 export const PROTOCOL_VERSION = 1;
 
 /**
- * THE FEWEST PLAYERS A ROUND OPENS FOR. The preflight sizes a seat's Lightning
+ * THE FEWEST PLAYERS A ROUND OPENS FOR. The preflight sizes a signer node's Lightning
  * for it, and the fee-lock gate (lock-settlement.js `feeLockPays`) takes it as
- * the worst case: more players only raise each seat's fee share.
+ * the worst case: more players only raise each signer node's fee share.
  */
 export const MIN_PLAYERS_PER_ROUND = 2;
 
@@ -160,18 +160,18 @@ export const TYPE_GHOST = 0x11;
  * they were cut from. 23.1's `vss_shares_ref` points at one of these.
  *
  * IT DECIDES SOMETHING, which is why it is a type of its own rather than a
- * blob beside an entry: a seat refuses an entry whose handout it cannot check,
+ * blob beside an entry: a signer node refuses an entry whose handout it cannot check,
  * so this object gates play. A Ghost is the only frame in this protocol that
  * decides nothing, and this is not a Ghost.
  */
 export const TYPE_VSS_HANDOUT = 0x12;
 
 /**
- * ONE SEAT'S CONTRIBUTION TO THE COMMITTEE'S OWN KEY (M3.3 item 14).
+ * ONE SIGNER NODE'S CONTRIBUTION TO THE COMMITTEE'S OWN KEY (M3.3 item 14).
  *
  * Its own type byte and its own tag, and NOT a VssHandout with the fields read
  * differently. A handout is a PLAYER splitting their stake preimage to the
- * committee; this is a SEAT splitting a secret nobody is meant to know to its
+ * committee; this is a SIGNER NODE splitting a secret nobody is meant to know to its
  * peers, and the two are only shaped alike. Sharing an encoding would let one
  * be presented as the other under an id somebody had already signed.
  */
@@ -198,19 +198,19 @@ export const TYPE_DKG_CONTRIBUTION = 0x13;
  */
 export const TYPE_SIGNED_DONATION_SET = 0x14;
 export const TYPE_AUTHORITY_ROTATION = 0x15;
-// ONE SETTLEMENT SEAT SAYING "this is the round's claim key" (§23.1 step 0,
+// ONE SETTLEMENT SIGNER NODE SAYING "this is the round's claim key" (§23.1 step 0,
 // v4.6.2): a client locks a stake to a claim_pk only with the round's
-// threshold of these, so no single seat can serve a key of its own (F3).
+// threshold of these, so no single signer node can serve a key of its own (F3).
 export const TYPE_CLAIM_KEY_ATTESTATION = 0x16;
-// ONE SEAT SAYING WHICH DKG CONTRIBUTIONS IT COMBINED, signed. A seat keeps its
-// share only when every seat of the committee has said the same set - so a
-// dealer who sent different contributions to different seats splits nobody.
+// ONE SIGNER NODE SAYING WHICH DKG CONTRIBUTIONS IT COMBINED, signed. A signer node keeps its
+// share only when every signer node of the committee has said the same set - so a
+// dealer who sent different contributions to different signer nodes splits nobody.
 export const TYPE_DKG_AGREEMENT = 0x17;
-// ONE SETTLEMENT SEAT SAYING IT POSTED A RUN'S CANONICAL TRANSCRIPT to the
+// ONE SETTLEMENT SIGNER NODE SAYING IT POSTED A RUN'S CANONICAL TRANSCRIPT to the
 // round's publication relays, signed. A result is FINAL only once the round's
-// threshold of seats have said so (§13A, v4.6.2 P2).
+// threshold of signer nodes have said so (§13A, v4.6.2 P2).
 export const TYPE_TRANSCRIPT_POSTING = 0x18;
-// ONE COMMITTEE SEAT'S RE-RUN OF A SUSPENDED RESULT (§13A), signed: the result
+// ONE COMMITTEE SIGNER NODE'S RE-RUN OF A SUSPENDED RESULT (§13A), signed: the result
 // its replay of the canonical transcript produces, tied to the contradicted run.
 // The spec names no wire object for it; this is that object.
 export const TYPE_RERUN_RESULT = 0x19;
@@ -246,9 +246,9 @@ export const TAG = {
   // signature binds to the table, and the two must never be interchangeable.
   payoutInputs: 'BLWP/v1/PayoutInputs',
   settlementRecord: 'BLWP/v1/SettlementRecord',
-  // One seat's deal in a committee's key generation, and the id of the epoch
+  // One signer node's deal in a committee's key generation, and the id of the epoch
   // those deals belong to. Separate tags: a contribution binds to one epoch,
-  // and an epoch is a set of seats - neither may be produced by hashing the
+  // and an epoch is a set of signer nodes - neither may be produced by hashing the
   // other.
   dkgContribution: 'BLWP/v1/DkgContribution',
   dkgEpoch: 'BLWP/v1/DkgEpoch',
@@ -258,7 +258,7 @@ export const TAG = {
   // so an accuser cannot choose either of them after the fact.
   feeInputs: 'BLWP/v1/FeeInputs',
   // The whole 22A table a claim is measured against: the gross, the fee and
-  // every seat's share. A proof names which table, or the accuser picks one.
+  // every signer node's share. A proof names which table, or the accuser picks one.
   feeTable: 'BLWP/v1/FeeTable',
   donationSet: 'BLWP/v1/DonationSet',
   // The signed publication of a set, and the cold key's rotation. Separate
@@ -280,7 +280,7 @@ export const TAG = {
   // signature binds to the root, and the two must never be interchangeable.
   censusInputs: 'BLWP/v1/CensusInputs',
   vssShare: 'BLWP/v1/VssShare',
-  // The key one seat's share is sealed under, and the nonce it is sealed with.
+  // The key one signer node's share is sealed under, and the nonce it is sealed with.
   // Two tags and not one: a key and a nonce derived from the same bytes under
   // one tag would BE the same bytes, and a nonce that equals its own key is
   // not a nonce.
@@ -291,7 +291,7 @@ export const TAG = {
   // never be produced by hashing a single share.
   vssHandout: 'BLWP/v1/VssHandout',
   remainder: 'BLWP/v1/Remainder',
-  // One seat's attestation of (round_id, claim_pk), and the attested set an
+  // One signer node's attestation of (round_id, claim_pk), and the attested set an
   // entry names as `claim_key_attestation_ref` (§7, §23.1 step 0, v4.6.2).
   claimKeyAttestation: 'BLWP/v1/ClaimKeyAttestation',
   claimKeyAttestationSet: 'BLWP/v1/ClaimKeyAttestationSet',
@@ -302,20 +302,20 @@ export const TAG = {
   // WHO A TAB IS IN THE LOBBY (M3.3-34): its identity key, from the same seed
   // as every round's player key but under its own tag, so it is never one.
   lobbyIdentity: 'BLWP/v1/LobbyIdentity',
-  // ONE SEAT'S SIGNED WORD ABOUT A ROUND IN ITS LOBBY (M3.3-34): the page
-  // offers Join only when the round's threshold of its own seats signed it.
+  // ONE SIGNER NODE'S SIGNED WORD ABOUT A ROUND IN ITS LOBBY (M3.3-34): the page
+  // offers Join only when the round's threshold of its own signer nodes signed it.
   lobbyListing: 'BLWP/v1/LobbyListing',
-  // A SEATED PLAYER'S NAME FOR ONE ROUND (lobby-name.js), signed with the
-  // round key it is seated under, so a seat can serve it but not write it.
+  // A JOINED PLAYER'S NAME FOR ONE ROUND (lobby-name.js), signed with the
+  // round key it is joined under, so a signer node can serve it but not write it.
   lobbyName: 'BLWP/v1/LobbyName',
   // The nonce of a DKG dealer's round-1 proof of knowledge, derived from its
   // own secret so no randomness source can repeat it across two proofs.
   dkgProofNonce: 'BLWP/v1/DkgProofNonce',
-  // What a seat signs to say which contributions it combined for an epoch.
+  // What a signer node signs to say which contributions it combined for an epoch.
   dkgAgreement: 'BLWP/v1/DkgAgreement',
-  // What a settlement seat signs once it has posted a run's transcript (§13A).
+  // What a settlement signer node signs once it has posted a run's transcript (§13A).
   transcriptPosting: 'BLWP/v1/TranscriptPosting',
-  // What a seat signs when it re-runs a suspended result (§13A).
+  // What a signer node signs when it re-runs a suspended result (§13A).
   rerunResult: 'BLWP/v1/RerunResult',
 };
 

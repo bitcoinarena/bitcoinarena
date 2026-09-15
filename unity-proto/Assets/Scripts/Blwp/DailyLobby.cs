@@ -17,7 +17,7 @@ namespace Blwp
         public int needed;
         public bool joinable;
         public int leftS = -1;
-        public int seated;
+        public int joined;
         /// <summary>What a paying round costs to enter, in whole sats; 0 for a free round.</summary>
         public long stakeSats;
     }
@@ -32,7 +32,7 @@ namespace Blwp
         public string fingerprint = "";
     }
 
-    /// <summary>The seat PLAY asked for, as the page took it: "" before any press, then joining, joined or refused - and why, and the step it is on.</summary>
+    /// <summary>The signer node PLAY asked for, as the page took it: "" before any press, then joining, joined or refused - and why, and the step it is on.</summary>
     [Serializable]
     public class LobbyJoin
     {
@@ -69,9 +69,9 @@ namespace Blwp
     ///
     /// The lobby is the title screen: the rounds, who you are, PLAY and
     /// SPECTATE. What it shows is decided in the page and nowhere else - every
-    /// round is fetched from the seats and checked against its own contract and
-    /// both seats' signed listings before it is a row, and Join exists only when
-    /// both seats of a 2-of-2 round say open and seated. Unity draws that and
+    /// round is fetched from the signer nodes and checked against its own contract and
+    /// both signer nodes' signed listings before it is a row, and Join exists only when
+    /// both signer nodes of a 2-of-2 round say open and joined. Unity draws that and
     /// hands the player's press back; it decides nothing and holds no key.
     ///
     /// Outside a WebGL player there is no page, so every call answers nothing
@@ -136,13 +136,13 @@ namespace Blwp
                 : "";
         }
 
-        /// <summary>How long a joined seat waits for its session before the round starts anyway.</summary>
+        /// <summary>How long a joined signer node waits for its session before the round starts anyway.</summary>
         public const float SessionPatienceS = 5f;
 
         /// <summary>
-        /// WHAT PLAY DOES ONCE THE PAGE HAS THE SEAT (M3.3-34, the owner 2026-09-13
+        /// WHAT PLAY DOES ONCE THE PAGE HAS JOINED (M3.3-34, the owner 2026-09-13
         /// 07:11: "after PLAY the loading screen must not come again. PLAY starts
-        /// the round"). The seat is taken in THIS page - PLAY used to navigate to
+        /// the round"). The round is joined in THIS page - PLAY used to navigate to
         /// the round's link, the page reloaded and Unity loaded a second time. The
         /// round starts when the page says joined and the session has opened, or
         /// `SessionPatienceS` after joined without one. "refused" hands the page's
@@ -186,7 +186,7 @@ namespace Blwp
             return PickDefault(rows);
         }
 
-        /// <summary>Asks the page to join that round - the round's own link, so the seat is taken as a shared link takes it.</summary>
+        /// <summary>Asks the page to join that round - the round's own link, so the round is joined as a shared link takes it.</summary>
         public static bool Join(string id) => Compiled && !string.IsNullOrEmpty(id) && BlwpLobbyJoin(id) == 1;
 
         /// <summary>The page asks for the name (the browser's own prompt, which a phone keyboard can type into); answers why it was refused, or "".</summary>
@@ -509,7 +509,7 @@ namespace Blwp
         public const float HowToMinCell = 40f;
 
         /// <summary>
-        /// One row's words, shortest first to go: the round id, then the seated count. A paying
+        /// One row's words, shortest first to go: the round id, then the joined count. A paying
         /// row says what it costs in every form (the owner 2026-09-15 16:08: "Paid must read like
         /// 'PAID · 100 sats'") - measured before, it said PAID and never how much.
         /// </summary>
@@ -517,14 +517,14 @@ namespace Blwp
         {
             string kind = r.free ? "FREE" : $"PAID · {r.stakeSats} {(r.stakeSats == 1 ? "sat" : "sats")}";
             string left = r.leftS >= 0 ? $"closes {r.leftS / 60}:{r.leftS % 60:00}" : "entry open";
-            // THE PLAYER IS NEVER TOLD "SEAT" (the owner 2026-09-15 16:22): the nodes that sign the
+            // THE PLAYER IS NEVER TOLD "SIGNER NODE" (the owner 2026-09-15 16:22): the nodes that sign the
             // round are signer nodes, and the players in it have joined.
             string signers = r.joinable ? $"{r.agree} of {r.needed} signer nodes" : $"{r.agree} of {r.needed} signer nodes - waiting";
             string id = string.IsNullOrEmpty(r.id) ? "" : (r.id.Length > 8 ? r.id.Substring(0, 8) : r.id);
             return new[]
             {
-                $"{kind} · {left} · {signers} · {r.seated} joined · {id}",
-                $"{kind} · {left} · {signers} · {r.seated} joined",
+                $"{kind} · {left} · {signers} · {r.joined} joined · {id}",
+                $"{kind} · {left} · {signers} · {r.joined} joined",
                 $"{kind} · {left} · {signers}",
             };
         }

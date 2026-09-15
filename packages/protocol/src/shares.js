@@ -29,25 +29,25 @@
 // WHAT "VERIFIABLE" MEANS, IN TWO LAYERS THAT CATCH DIFFERENT THINGS.
 //
 // The first is a hash commitment per share: a holder checks the value it was
-// handed against the value that was published for its seat, so a share
+// handed against the value that was published for its signer node, so a share
 // corrupted in transit or swapped by whoever passed it on is caught. It says
 // nothing about the DEALER, because the dealer wrote both.
 //
 // The second is Feldman, and it is what 23.1's "verifiability" is for. The
-// dealer publishes g^a for every coefficient, and a seat checks
+// dealer publishes g^a for every coefficient, and a signer node checks
 //
-//     g^(its share)  ==  product of C_j ^ (its seat number ^ j)
+//     g^(its share)  ==  product of C_j ^ (its signer node number ^ j)
 //
 // which holds only if that share lies on the ONE polynomial those commitments
 // describe. It is checked without reconstructing anything and by anybody, not
 // only by the holder.
 //
 // THE HOLE THIS CLOSES, MEASURED RATHER THAN ASSERTED. A dealer who splits
-// with two polynomials and gives three seats the second one hands out seven
+// with two polynomials and gives three signer nodes the second one hands out seven
 // shares that each pass their own hash commitment, and leaves NONE of the
 // twenty-one five-subsets able to open the committed P - a stake that can
 // never be settled, dealt by the player who stakes it. With the polynomial
-// commitments those three seats refuse the share the moment they are handed
+// commitments those three signer nodes refuse the share the moment they are handed
 // it, so the entry never becomes an entry.
 //
 // THE GROUP IS INJECTED, like every other curve operation in this package.
@@ -103,18 +103,18 @@ export const scalarTo32 = (v) => {
   return out;
 };
 
-/** What a seat can check its own share against, without reconstructing. */
-export const shareCommitment = (seat, value) =>
-  taggedHash(TAG.vssShare, new TextEncoder().encode(`${seat}:${value.toString(16)}`));
+/** What a signer node can check its own share against, without reconstructing. */
+export const shareCommitment = (signerNode, value) =>
+  taggedHash(TAG.vssShare, new TextEncoder().encode(`${signerNode}:${value.toString(16)}`));
 
 /**
- * Split a 32-byte secret into `seats` shares, `needed` of which rebuild it.
+ * Split a 32-byte secret into `signer nodes` shares, `needed` of which rebuild it.
  *
  * The polynomial's constant term is the secret and the rest are the caller's
  * randomness - injected, because this package has no business deciding where
  * randomness comes from, and a test needs the same split twice.
  */
-export function splitSecret(secret, { seats = SHARES_TOTAL, needed = SHARES_NEEDED,
+export function splitSecret(secret, { signerNodes = SHARES_TOTAL, needed = SHARES_NEEDED,
   coefficients, curve } = {}) {
   if (!(secret instanceof Uint8Array) || secret.length !== 32)
     throw new Error('a stake preimage is 32 bytes');
@@ -127,44 +127,44 @@ export function splitSecret(secret, { seats = SHARES_TOTAL, needed = SHARES_NEED
       + 'because reducing it would change the number its payment hash commits to');
   if (!Number.isInteger(needed) || needed < 2)
     throw new Error('a threshold below two is not a threshold');
-  if (!Number.isInteger(seats) || seats < needed)
-    throw new Error(`${seats} seats cannot carry a threshold of ${needed}`);
+  if (!Number.isInteger(signerNodes) || signerNodes < needed)
+    throw new Error(`${signerNodes} signer nodes cannot carry a threshold of ${needed}`);
   if (!Array.isArray(coefficients) || coefficients.length !== needed - 1)
     throw new Error(`a threshold of ${needed} needs ${needed - 1} coefficients`);
 
   const a = [scalarFrom32(secret), ...coefficients.map(mod)];
   const shares = [];
-  for (let seat = 1; seat <= seats; seat++) {
+  for (let signerNode = 1; signerNode <= signerNodes; signerNode++) {
     let value = 0n;
-    for (let j = a.length - 1; j >= 0; j--) value = mod(value * BigInt(seat) + a[j]);
-    shares.push({ seat, value, commitment: shareCommitment(seat, value) });
+    for (let j = a.length - 1; j >= 0; j--) value = mod(value * BigInt(signerNode) + a[j]);
+    shares.push({ signerNode, value, commitment: shareCommitment(signerNode, value) });
   }
 
   // AND THE POLYNOMIAL ITSELF, WHEN THERE IS A GROUP TO COMMIT IN. One point
   // per coefficient, the constant term first - so C_0 is g^P, which is why a
-  // seat can check its share against the polynomial without anybody learning
+  // signer node can check its share against the polynomial without anybody learning
   // P: the discrete log is the whole security of it.
   const commitments = curve
     ? a.map((coefficient) => curve.pointFromScalar(coefficient))
     : undefined;
-  return { shares, needed, seats, ...(commitments ? { commitments } : {}) };
+  return { shares, needed, signerNodes, ...(commitments ? { commitments } : {}) };
 }
 
 /**
  * DOES THIS SHARE LIE ON THE POLYNOMIAL THE DEALER PUBLISHED?
  *
- * Feldman: g^s must equal the product of C_j raised to (seat ^ j). A seat
+ * Feldman: g^s must equal the product of C_j raised to (signer node ^ j). A signer node
  * checks this on its own, learns nothing about P by doing it, and refuses at
- * HANDOUT rather than leaving a stake that no five seats can ever settle.
+ * HANDOUT rather than leaving a stake that no five signer nodes can ever settle.
  *
- * A SEAT WITH NO COMMITMENTS REFUSES, and that is not pedantry: "I was given
+ * A SIGNER NODE WITH NO COMMITMENTS REFUSES, and that is not pedantry: "I was given
  * no way to check" and "I checked and it is fine" are different answers, and a
  * function that returned the second for the first would make the whole layer
  * optional at the dealer's choice.
  */
 export function shareOpensTo(share, { commitments, curve } = {}) {
-  if (!share || !Number.isInteger(share.seat) || share.seat < 1)
-    return { ok: false, why: 'that is not a share of any seat' };
+  if (!share || !Number.isInteger(share.signerNode) || share.signerNode < 1)
+    return { ok: false, why: 'that is not a share of any signer node' };
   if (!Array.isArray(commitments) || commitments.length === 0)
     return { ok: false, why: 'this share names no polynomial, so nothing about the dealer can be checked' };
   if (!curve || typeof curve.pointFromScalar !== 'function'
@@ -175,7 +175,7 @@ export function shareOpensTo(share, { commitments, curve } = {}) {
   let power = 1n;
   for (const point of commitments) {
     terms.push({ point, coefficient: power });
-    power = mod(power * BigInt(share.seat));
+    power = mod(power * BigInt(share.signerNode));
   }
 
   const wanted = curve.combinePoints(terms);
@@ -183,15 +183,15 @@ export function shareOpensTo(share, { commitments, curve } = {}) {
   if (toHex(got) !== toHex(wanted))
     return {
       ok: false,
-      why: `seat ${share.seat} was handed a share that is not on the polynomial the dealer published`,
+      why: `signer node ${share.signerNode} was handed a share that is not on the polynomial the dealer published`,
     };
-  return { ok: true, why: `seat ${share.seat} lies on the published polynomial` };
+  return { ok: true, why: `signer node ${share.signerNode} lies on the published polynomial` };
 }
 
 /**
- * EVERY SEAT'S OWN CHECK, AND WHAT THE HANDOUT LOOKS LIKE FROM OUTSIDE.
+ * EVERY SIGNER NODE'S OWN CHECK, AND WHAT THE HANDOUT LOOKS LIKE FROM OUTSIDE.
  *
- * This is not a committee decision and it is not settlement: it is each seat
+ * This is not a committee decision and it is not settlement: it is each signer node
  * doing what 23.1 gives it to do, collected so the dealer's handout can be
  * described by a number. `refused` is the figure this letter moves.
  */
@@ -199,12 +199,12 @@ export function checkHandout({ shares, commitments, curve, published } = {}) {
   if (!Array.isArray(shares) || shares.length === 0)
     throw new Error('a handout of no shares is not a handout');
 
-  const seats = [];
+  const signerNodes = [];
   for (let i = 0; i < shares.length; i++) {
     const share = shares[i];
     const against = published ? published[i] : share.commitment;
     // A HANDOUT ON THE WIRE CARRIES NO PER-SHARE HASH, and that is right: the
-    // hash commitment answers "is this the value published for this seat",
+    // hash commitment answers "is this the value published for this signer node",
     // and on the wire the bytes ARE that value - the entry's `vss_shares_ref`
     // is what binds them. So with nothing to compare against, the transit half
     // does not apply and the polynomial half is the whole check. It is skipped
@@ -212,38 +212,38 @@ export function checkHandout({ shares, commitments, curve, published } = {}) {
     const transit = against === undefined ? true : shareIsConsistent(share, against);
     const dealer = shareOpensTo(share, { commitments, curve });
     // BOTH HALVES THROUGH THE ONE DOOR TOO, so the collected answer and a
-    // single seat's own answer can never disagree about the same share.
+    // single signer node's own answer can never disagree about the same share.
     if (against !== undefined && transit
         && dealer.ok !== shareIsConsistent(share, against, { commitments, curve }))
-      throw new Error(`seat ${share.seat}: the two ways of asking disagree`);
-    seats.push({
-      seat: share.seat,
+      throw new Error(`signer node ${share.signerNode}: the two ways of asking disagree`);
+    signerNodes.push({
+      signerNode: share.signerNode,
       ok: transit && dealer.ok,
       why: !transit
-        ? `seat ${share.seat} was handed a value that is not the one published for it`
+        ? `signer node ${share.signerNode} was handed a value that is not the one published for it`
         : dealer.why,
     });
   }
-  const refused = seats.filter((s) => !s.ok);
+  const refused = signerNodes.filter((s) => !s.ok);
   return {
     ok: refused.length === 0,
-    seats,
+    signerNodes,
     refused: refused.length,
-    accepted: seats.length - refused.length,
+    accepted: signerNodes.length - refused.length,
     why: refused.length === 0
-      ? `all ${seats.length} seats lie on one polynomial`
-      : `${refused.length} of ${seats.length} seats refused their share: `
+      ? `all ${signerNodes.length} signer nodes lie on one polynomial`
+      : `${refused.length} of ${signerNodes.length} signer nodes refused their share: `
         + refused.map((s) => s.why).join('; '),
   };
 }
 
 /**
- * IS THIS SHARE CONSISTENT - with what was published for its seat, and with
+ * IS THIS SHARE CONSISTENT - with what was published for its signer node, and with
  * the polynomial the dealer published?
  *
  * Two questions and they catch different things, which is why both are here
  * and why the second is optional rather than folded into the first. The hash
- * commitment says the value is the one published for this seat: it catches
+ * commitment says the value is the one published for this signer node: it catches
  * transit and a swap by whoever passed it on, and it is BLIND to the dealer,
  * who wrote both sides of it. Given the polynomial as well, this also asks
  * 23.1's own question - is the share on the one polynomial - which is the
@@ -253,7 +253,7 @@ export function checkHandout({ shares, commitments, curve, published } = {}) {
  * that measures the blindness calls it that way on purpose.
  */
 export function shareIsConsistent(share, commitment, { commitments, curve } = {}) {
-  if (toHex(shareCommitment(share.seat, share.value)) !== toHex(commitment)) return false;
+  if (toHex(shareCommitment(share.signerNode, share.value)) !== toHex(commitment)) return false;
   if (commitments === undefined && curve === undefined) return true;
   return shareOpensTo(share, { commitments, curve }).ok;
 }
@@ -267,9 +267,9 @@ export function shareIsConsistent(share, commitment, { commitments, curve } = {}
  * looks exactly like a right one.
  */
 export function reconstruct(shares, { needed = SHARES_NEEDED, stakeCommitment } = {}) {
-  const seats = new Set(shares.map((s) => s.seat));
-  if (seats.size !== shares.length)
-    throw new Error('two shares for one seat are one share');
+  const signerNodes = new Set(shares.map((s) => s.signerNode));
+  if (signerNodes.size !== shares.length)
+    throw new Error('two shares for one signer node are one share');
   if (shares.length < needed)
     throw new Error(`${shares.length} shares cannot reconstruct anything: ${needed} are needed`);
 
@@ -279,8 +279,8 @@ export function reconstruct(shares, { needed = SHARES_NEEDED, stakeCommitment } 
     let term = use[i].value;
     for (let j = 0; j < use.length; j++) {
       if (i === j) continue;
-      const xi = BigInt(use[i].seat);
-      const xj = BigInt(use[j].seat);
+      const xi = BigInt(use[i].signerNode);
+      const xj = BigInt(use[j].signerNode);
       term = mod(term * mod(-xj) * inverse(xi - xj));
     }
     secret = mod(secret + term);
@@ -290,7 +290,7 @@ export function reconstruct(shares, { needed = SHARES_NEEDED, stakeCommitment } 
   // AND IF THE COMMITMENT IS TO HAND, THE ANSWER IS CHECKED AGAINST IT.
   //
   // Measured: a dealer who splits with two polynomials hands out seven shares
-  // that each pass their own seat, and of the twenty-one five-subsets, TWO
+  // that each pass their own signer node, and of the twenty-one five-subsets, TWO
   // still produce a well-formed 32-byte value that is not P. Handed back
   // unchecked, that is a wrong preimage which looks exactly like a right one.
   // `stakeCommitment` is H(P) and it is in the entry contract the player
@@ -308,7 +308,7 @@ export function reconstruct(shares, { needed = SHARES_NEEDED, stakeCommitment } 
  *
  * This is what a settlement committee actually does, and it is also the
  * measurement of the hole below it: a dealer is free to hand out shares that
- * each pass their seat and yet leave NO subset able to open P.
+ * each pass their signer node and yet leave NO subset able to open P.
  */
 export function openStake(shares, { needed = SHARES_NEEDED, stakeCommitment } = {}) {
   const subsets = [];
@@ -324,7 +324,7 @@ export function openStake(shares, { needed = SHARES_NEEDED, stakeCommitment } = 
   for (const five of subsets) {
     try {
       const back = reconstruct(five, { needed, stakeCommitment });
-      if (opened === null) { opened = back; openedBy = five.map((s) => s.seat); }
+      if (opened === null) { opened = back; openedBy = five.map((s) => s.signerNode); }
     } catch { refused++; }
   }
   return {
@@ -336,17 +336,17 @@ export function openStake(shares, { needed = SHARES_NEEDED, stakeCommitment } = 
     refused,
     why: opened === null
       ? `none of the ${subsets.length} ways to pick ${needed} shares opens the committed preimage`
-      : `opened by seats ${openedBy.join(',')}`,
+      : `opened by signer nodes ${openedBy.join(',')}`,
   };
 }
 
 /**
- * A HANDOUT NO FIVE SEATS CAN OPEN IS THE DEALER'S DOING.
+ * A HANDOUT NO FIVE SIGNER NODES CAN OPEN IS THE DEALER'S DOING.
  *
  * The player IS the dealer of their own stake preimage: 23.1 has them split P
- * and encrypt one share to each settlement seat. A handout where no five of
+ * and encrypt one share to each settlement signer node. A handout where no five of
  * the seven open the committed P did not happen to anybody - it was made, and
- * only the player could have made it. Measured: three seats given a second
+ * only the player could have made it. Measured: three signer nodes given a second
  * polynomial's share leaves 0 of the 21 subsets able to open it, while all
  * seven still pass their holders' checks.
  *

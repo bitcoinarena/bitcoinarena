@@ -73,7 +73,7 @@ namespace Blwp
         void Update()
         {
             // AND ASKED AGAIN WHILE THERE IS NONE (M3.3-34, the owner 2026-09-13 07:11):
-            // PLAY in the lobby takes its seat in this page, after Start - the page
+            // PLAY in the lobby joins in this page, after Start - the page
             // is no longer reloaded, so a round named later has to be seen here.
             // AND ONCE A RUN IS OVER THE ROUND IS NOT ASKED FOR AGAIN (hole 1): the page lets go of the
             // finished round, so the address is asked afresh and answers only for the next join.

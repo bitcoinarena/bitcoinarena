@@ -1,16 +1,16 @@
-// A PAYING FEDERATION ROUND IS SEATED ONLY ON A FEDERATION WHOSE OWN THRESHOLD OF GUARDIANS ARE
+// A PAYING FEDERATION ROUND IS TAKEN ONLY ON A FEDERATION WHOSE OWN THRESHOLD OF GUARDIANS ARE
 // BONDED CENSUS NODES (§23.6, P3; the owner 2026-09-15 07:33: "every guardian / node must have its
 // own bond or it may not take part. federationIsBonded stays on").
 //
-// The seat door seats a round from the chain's census (seatRound). Before this it seated a
-// paying FEDERATION round on any federation: federationIsBonded had no caller. Now, where the seat
-// has a chain view, the round's federation is asked for its guardians (the seat's stake-lock port:
+// The signer node door assigns a round from the chain's census (assignSignerNodes). Before this it assigned a
+// paying FEDERATION round on any federation: federationIsBonded had no caller. Now, where the signer node
+// has a chain view, the round's federation is asked for its guardians (the signer node's stake-lock port:
 // blwp-stake-lock --mode guardians, the stock client's config) and counted against the census the
-// seat derived: at least the federation's own threshold of its guardian keys advertised under
+// signer node derived: at least the federation's own threshold of its guardian keys advertised under
 // guardian_of[] by distinct census nodes bonded at or above the round's bond_min. Otherwise 409,
-// and the round is stored with no seats - no receipts, no claim key, so no lock can name it.
+// and the round is stored with no signer nodes - no receipts, no claim key, so no lock can name it.
 //
-// The census here is two bonded seats, as in seated-committee.test.js; the federation's size and
+// The census here is two bonded signer nodes, as in signer-node-committee.test.js; the federation's size and
 // threshold are the port's, which stands in for the federation's config.
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { test } from 'node:test';
@@ -95,19 +95,19 @@ function rootFor(bonds, nodes) {
   assert.equal(census.ok, true, census.why);
   return census.root;
 }
-/** The seat's federation, as its stake-lock port answers: its id, its guardians' keys, its threshold. */
+/** The signer node's federation, as its stake-lock port answers: its id, its guardians' keys, its threshold. */
 const federation = ({ id = TEST_FEDERATION_ID, keys, threshold }) => ({
   asked: 0,
   async guardians() { this.asked++; return { federationId: id, guardians: keys.length, threshold, keys }; },
   async fees() { return { ppm: 0n, baseMsat: 0n }; },
 });
 
-/** Two seats bonded on the chain - each advertising the guardian keys given - and one door. */
+/** Two signer nodes bonded on the chain - each advertising the guardian keys given - and one door. */
 async function door({ advertised = [[], []], port }) {
-  const seats = [new Round(openStore(':memory:'), () => AFTER_COMMITTEE), new Round(openStore(':memory:'), () => AFTER_COMMITTEE)];
-  const keys = seats.map((s) => s.pubkey);
+  const signerNodes = [new Round(openStore(':memory:'), () => AFTER_COMMITTEE), new Round(openStore(':memory:'), () => AFTER_COMMITTEE)];
+  const keys = signerNodes.map((s) => s.pubkey);
   const bonds = keys.map((k, i) => bondOfKey(k, i + 1, advertised[i].map((g) => ({ federationId: TEST_FEDERATION_ID, guardianKey: g })),
-    seats[i].identity.secret));
+    signerNodes[i].identity.secret));
   const root = rootFor(bonds, keys);
   const node = await serve(openStore(':memory:'), {
     port: 0, funded: () => true, stakeLocks: port,
@@ -116,40 +116,40 @@ async function door({ advertised = [[], []], port }) {
   const post = async (over = {}) => {
     const c = contractWith(keys, root, over);
     const r = await fetch(`http://127.0.0.1:${node.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
-    return { status: r.status, why: (await r.text()).trim(), seats: node.round.seats(roundId(c)).length, round: () => c };
+    return { status: r.status, why: (await r.text()).trim(), signerNodes: node.round.signerNodes(roundId(c)).length, round: () => c };
   };
   return { node, post, bonds };
 }
 
-test('a paying FEDERATION round is seated when its federation\'s threshold of guardians are bonded census nodes, and refused with its count when they are not', async () => {
+test('a paying FEDERATION round is taken when its federation\'s threshold of guardians are bonded census nodes, and refused with its count when they are not', async () => {
   const two = [guardianKey(1), guardianKey(2)];
-  // (A) a 2-guardian federation, threshold 2: both guardians are the bonded seats.
+  // (A) a 2-guardian federation, threshold 2: both guardians are the bonded signer nodes.
   const a = await door({ advertised: [[two[0]], [two[1]]], port: federation({ keys: two, threshold: 2 }) });
   // (B) a 4-guardian federation, threshold 3: the same two are bonded, two are nobody's.
   const four = [...two, guardianKey(3), guardianKey(4)];
   const b = await door({ advertised: [[two[0]], [two[1]]], port: federation({ keys: four, threshold: 3 }) });
   // (C) today's census: no node advertises a guardian.
   const c = await door({ port: federation({ keys: two, threshold: 2 }) });
-  // (D) the seat reaches another federation than the round names.
+  // (D) the signer node reaches another federation than the round names.
   const d = await door({ advertised: [[two[0]], [two[1]]], port: federation({ id: b32(0xfd), keys: two, threshold: 2 }) });
   try {
     const got = { a: await a.post(), b: await b.post(), c: await c.post(), d: await d.post() };
     console.log('  FACTS:', JSON.stringify(Object.fromEntries(Object.entries(got).map(([k, v]) => [k, { ...v, why: v.why.slice(0, 150) }]))));
     assert.equal(got.a.status, 201, got.a.why);
-    assert.equal(got.a.seats, 2, 'a bonded federation\'s round was not seated');
+    assert.equal(got.a.signerNodes, 2, 'a bonded federation\'s round was not joined');
     assert.equal(got.b.status, 409);
     assert.match(got.b.why, /2 of that federation's 4 guardians are bonded census nodes, and its threshold is 3/);
-    assert.equal(got.b.seats, 0, 'a round on an unbonded federation was seated');
+    assert.equal(got.b.signerNodes, 0, 'a round on an unbonded federation was joined');
     assert.equal(got.c.status, 409);
     assert.match(got.c.why, /0 of that federation's 2 guardians are bonded census nodes/);
-    assert.equal(got.c.seats, 0);
+    assert.equal(got.c.signerNodes, 0);
     assert.equal(got.d.status, 409);
     assert.match(got.d.why, /reaches federation fdfd.* and that round names/);
-    assert.equal(got.d.seats, 0);
+    assert.equal(got.d.signerNodes, 0);
   } finally { for (const w of [a, b, c, d]) await w.node.close(); }
 });
 
-test('a THRESHOLD_LN round and a free round are seated on a census that lists no guardian, and the federation is not asked', async () => {
+test('a THRESHOLD_LN round and a free round are assigned on a census that lists no guardian, and the federation is not asked', async () => {
   const port = federation({ keys: [guardianKey(1), guardianKey(2)], threshold: 2 });
   const w = await door({ port });
   try {
@@ -157,21 +157,21 @@ test('a THRESHOLD_LN round and a free round are seated on a census that lists no
     const free = await w.post({ stakeMsat: 0n, federationId: new Uint8Array(32), configHash: TRUCK_CONFIG_HASH, slashMinimumServed: 22 });
     console.log('  FACTS:', JSON.stringify({ lightning, free, asked: port.asked }));
     assert.equal(lightning.status, 201, lightning.why);
-    assert.equal(lightning.seats, 2);
+    assert.equal(lightning.signerNodes, 2);
     assert.equal(free.status, 201, free.why);
-    assert.equal(free.seats, 2);
+    assert.equal(free.signerNodes, 2);
     assert.equal(port.asked, 0, 'the federation was asked about a round that takes no stake into it');
   } finally { await w.node.close(); }
 });
 
 /**
- * THE PAGE COUNTS THEM ITSELF (M3 G2/G3). The seat serves the bonds of the round's guardians out of
+ * THE PAGE COUNTS THEM ITSELF (M3 G2/G3). The signer node serves the bonds of the round's guardians out of
  * its census (/guardian-bonds) - candidates, not a count. The page proves each into headers of the
  * chain (here the same chain's headers, as a provider serves them), checks each advertisement is
  * signed by the node it names, and counts with the keys ITS OWN lock client read off the federation
- * (guardians(): here in that answer's shape). A seat can omit and cannot forge.
+ * (guardians(): here in that answer's shape). A signer node can omit and cannot forge.
  */
-test('the page counts the guardians on the bonds a seat serves: 2 of 2 proven; one omitted, or a branch altered, is refused; on the 4-guardian federation page and seat refuse with the same count', async () => {
+test('the page counts the guardians on the bonds a signer node serves: 2 of 2 proven; one omitted, or a branch altered, is refused; on the 4-guardian federation page and signer node refuse with the same count', async () => {
   const two = [guardianKey(1), guardianKey(2)];
   const four = [...two, guardianKey(3), guardianKey(4)];
   const answerOf = (keys, threshold) => ({
@@ -183,12 +183,12 @@ test('the page counts the guardians on the bonds a seat serves: 2 of 2 proven; o
   const b = await door({ advertised: [[two[0]], [two[1]]], port: federation({ keys: four, threshold: 3 }) });
   try {
     const served = async (w) => {
-      const seated = await w.post();
-      const c = seated.round();
+      const joined = await w.post();
+      const c = joined.round();
       const r = await fetch(`http://127.0.0.1:${w.node.port}/guardian-bonds?round=${toHex(roundId(c))}`);
       const body = await r.text();
       assert.equal(r.status, 200, body);
-      return { seated, c, body, chain: chainWith(w.bonds, c).blocks.map((x) => x.header) };
+      return { joined, c, body, chain: chainWith(w.bonds, c).blocks.map((x) => x.header) };
     };
     const count = (s, keys, threshold, offers = offersFrom(s.body)) =>
       bondedGuardians({ guardians: guardiansOf(answerOf(keys, threshold)), round: s.c, chain: s.chain, offers, verify });
@@ -202,12 +202,12 @@ test('the page counts the guardians on the bonds a seat serves: 2 of 2 proven; o
     const forged = await count(sa, two, 2, altered);
     const unbonded = await count(sb, four, 3);
     console.log('  FACTS:', JSON.stringify({
-      a: { seat: sa.seated.status, served: JSON.parse(sa.body).bonds.length, whole, omitted: omitted.why, forged: { why: forged.why, refused: forged.refused } },
-      b: { seat: sb.seated.status, seatWhy: sb.seated.why.slice(0, 120), served: JSON.parse(sb.body).bonds.length, page: unbonded.why },
+      a: { signerNode: sa.joined.status, served: JSON.parse(sa.body).bonds.length, whole, omitted: omitted.why, forged: { why: forged.why, refused: forged.refused } },
+      b: { signerNode: sb.joined.status, joinWhy: sb.joined.why.slice(0, 120), served: JSON.parse(sb.body).bonds.length, page: unbonded.why },
     }));
 
-    assert.equal(sa.seated.status, 201, sa.seated.why);
-    assert.equal(JSON.parse(sa.body).bonds.length, 2, 'the seat served another number of guardian bonds than its census holds');
+    assert.equal(sa.joined.status, 201, sa.joined.why);
+    assert.equal(JSON.parse(sa.body).bonds.length, 2, 'the signer node served another number of guardian bonds than its census holds');
     assert.equal(whole.ok, true, whole.why);
     assert.equal(whole.bonded, 2);
     assert.deepEqual(whole.refused, []);
@@ -216,10 +216,10 @@ test('the page counts the guardians on the bonds a seat serves: 2 of 2 proven; o
     assert.equal(forged.ok, false, 'a bond whose branch was altered was counted');
     assert.match(forged.refused.join(';'), /bond 1: the transaction is not in any block of that chain/);
 
-    assert.equal(sb.seated.status, 409);
+    assert.equal(sb.joined.status, 409);
     assert.equal(unbonded.ok, false);
     const said = /2 of that federation's 4 guardians are bonded census nodes, and its threshold is 3/;
     assert.match(unbonded.why, said);
-    assert.match(sb.seated.why, said, 'page and seat do not refuse with the same count');
+    assert.match(sb.joined.why, said, 'page and signer node do not refuse with the same count');
   } finally { for (const w of [a, b]) await w.node.close(); }
 });

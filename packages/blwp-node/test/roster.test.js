@@ -90,7 +90,7 @@ const chainWith = (bonds, contract) => {
   const blocks = [];
   for (let h = FROM; h <= TIP; h++) blocks.push({ transactions: h === FROM ? bonds : [] });
   // AND THE ROUND'S PUBLICATION, well below any beacon (5A.5, v4.6.2): a node
-  // seats only a round its own chain shows published before the beacon block.
+  // signer nodes only a round its own chain shows published before the beacon block.
   if (contract) blocks[1] = { transactions: [publicationOf(contract)] };
   return chainOf(blocks, FROM);
 };
@@ -152,7 +152,7 @@ test('one file under src/ reaches the census, and it is roster.js', () => {
     'the caller re-checks eligibility beside the census');
 });
 
-test('the daemon derives the census from the chain and seats a committee from it', () => {
+test('the daemon derives the census from the chain and signer nodes a committee from it', () => {
   const { rid, roster } = daemon([bondOf(0x11), bondOf(0x12)]);
 
   const census = roster.censusFor(rid);
@@ -161,27 +161,27 @@ test('the daemon derives the census from the chain and seats a committee from it
   assert.equal(census.unchecked.some((u) => /script template/.test(u)), false,
     'the daemon published a root with the bond template unchecked');
 
-  const seats = roster.committeeFor(rid, 'game');
-  assert.equal(seats.ok, true, seats.why);
-  assert.equal(seats.committee.length, 2);
-  assert.deepEqual(toHex(seats.root), toHex(census.root));
+  const signerNodes = roster.committeeFor(rid, 'game');
+  assert.equal(signerNodes.ok, true, signerNodes.why);
+  assert.equal(signerNodes.committee.length, 2);
+  assert.deepEqual(toHex(signerNodes.root), toHex(census.root));
   assert.deepEqual(
-    seats.committee.map((e) => toHex(e.pubkey)).sort(),
+    signerNodes.committee.map((e) => toHex(e.pubkey)).sort(),
     [keyFor(0x11), keyFor(0x12)].map(toHex).sort(),
     'the committee is not the bonded nodes the chain carries');
 });
 
-test('one bonded node against a two-slot contract seats nobody, by name', () => {
+test('one bonded node against a two-slot contract assigns nobody, by name', () => {
   const { rid, roster } = daemon([bondOf(0x11)]);
 
   const census = roster.censusFor(rid);
   assert.equal(census.ok, true, census.why);
   assert.equal(census.entries.length, 1, 'the chain carries one bond and the census disagrees');
 
-  const seats = roster.committeeFor(rid, 'game');
-  assert.equal(seats.ok, false, 'the daemon seated a committee of one');
-  assert.match(seats.why, /that census carries 1 game node where regtest was born needing 2/);
-  assert.equal(seats.committee, undefined);
+  const signerNodes = roster.committeeFor(rid, 'game');
+  assert.equal(signerNodes.ok, false, 'the daemon assigned a committee of one');
+  assert.match(signerNodes.why, /that census carries 1 game node where regtest was born needing 2/);
+  assert.equal(signerNodes.committee, undefined);
 });
 
 test('two bonded nodes, one game and one settlement, hold neither role', () => {
@@ -189,9 +189,9 @@ test('two bonded nodes, one game and one settlement, hold neither role', () => {
 
   assert.equal(roster.censusFor(rid).entries.length, 2, 'both bonds are in the census');
   for (const role of ['game', 'settlement']) {
-    const seats = roster.committeeFor(rid, role);
-    assert.equal(seats.ok, false, `${role} was seated from a census of one`);
-    assert.match(seats.why, new RegExp(`carries 1 ${role} node where regtest was born needing 2`));
+    const signerNodes = roster.committeeFor(rid, role);
+    assert.equal(signerNodes.ok, false, `${role} was assigned from a census of one`);
+    assert.match(signerNodes.why, new RegExp(`carries 1 ${role} node where regtest was born needing 2`));
   }
 });
 
@@ -204,9 +204,9 @@ test('the caller cannot name a minimum of its own', () => {
   for (const tried of [{ minimum: 1 }, { censusMinNodes: 1 }, { min: 1 }]) {
     const roster = new Roster(round, { chainFor,
       randomnessFor: ({ contract }) => beaconOf(chainFor({ contract }), contract), ...tried });
-    const seats = roster.committeeFor(rid, 'game', tried);
-    assert.equal(seats.ok, false, `a caller lowered the minimum with ${Object.keys(tried)[0]}`);
-    assert.match(seats.why, /born needing 2/);
+    const signerNodes = roster.committeeFor(rid, 'game', tried);
+    assert.equal(signerNodes.ok, false, `a caller lowered the minimum with ${Object.keys(tried)[0]}`);
+    assert.match(signerNodes.why, /born needing 2/);
   }
 });
 
@@ -236,13 +236,13 @@ test('the committee door answers off the chain, and refuses a short census by na
     const rid = toHex(roundId(c));
 
     const got = await fetch(`http://127.0.0.1:${node.port}/committee?round=${rid}&role=game`);
-    const seats = new Uint8Array(await got.arrayBuffer());
-    assert.equal(got.status, 200, `the door refused: ${new TextDecoder().decode(seats)}`);
+    const signerNodes = new Uint8Array(await got.arrayBuffer());
+    assert.equal(got.status, 200, `the door refused: ${new TextDecoder().decode(signerNodes)}`);
     assert.equal(got.headers.get('x-eligible'), '2');
-    assert.equal(got.headers.get('x-seats'), '2');
-    assert.equal(seats.length, 64, 'the door did not answer with two keys');
+    assert.equal(got.headers.get('x-signer-nodes'), '2');
+    assert.equal(signerNodes.length, 64, 'the door did not answer with two keys');
     assert.deepEqual(
-      [toHex(seats.slice(0, 32)), toHex(seats.slice(32))].sort(),
+      [toHex(signerNodes.slice(0, 32)), toHex(signerNodes.slice(32))].sort(),
       [keyFor(0x11), keyFor(0x12)].map(toHex).sort());
   } finally { await node.close(); }
 
@@ -270,10 +270,10 @@ test('the minimum the daemon applies is the one genesis carries', () => {
   assert.equal(short.roster.committeeFor(rid, 'game').ok, false);
 });
 
-test('a bond the census excluded is never seated, however many slots there are', () => {
-  // Found by a mutant that survived: seating `entries` plus `excluded` broke
+test('a bond the census excluded is never assigned, however many slots there are', () => {
+  // Found by a mutant that survived: joining `entries` plus `excluded` broke
   // nothing, because every fixture here was a bond that PASSED. A daemon that
-  // seated an excluded node would put a key the chain refuses on the
+  // assigned an excluded node would put a key the chain refuses on the
   // committee - unbonded, spent, or paying to somebody else's output key -
   // which is the whole of what the census is for.
   //
@@ -292,13 +292,13 @@ test('a bond the census excluded is never seated, however many slots there are',
   assert.ok(refused, 'the stranger was dropped silently instead of named');
   assert.match(refused.why, /not the taproot tweak of the keys and maturity it declares/);
 
-  // THREE SLOTS, TWO ELIGIBLE: the honest answer is two seats, and the only
-  // way to fill the third is to seat somebody the census refused.
-  const seats = roster.committeeFor(rid, 'game');
-  assert.equal(seats.ok, true, seats.why);
-  assert.equal(seats.committee.length, 2, 'a third seat was filled from somewhere');
-  assert.equal(seats.committee.some((e) => toHex(e.pubkey) === toHex(keyFor(0x13))), false,
-    'a bond the chain refused was seated on the committee');
+  // THREE SLOTS, TWO ELIGIBLE: the honest answer is two signer nodes, and the only
+  // way to fill the third is to assign somebody the census refused.
+  const signerNodes = roster.committeeFor(rid, 'game');
+  assert.equal(signerNodes.ok, true, signerNodes.why);
+  assert.equal(signerNodes.committee.length, 2, 'a third signer node was filled from somewhere');
+  assert.equal(signerNodes.committee.some((e) => toHex(e.pubkey) === toHex(keyFor(0x13))), false,
+    'a bond the chain refused was assigned to the committee');
 });
 
 test('a round whose census root is not the chain\'s is refused, not served', () => {
@@ -306,7 +306,7 @@ test('a round whose census root is not the chain\'s is refused, not served', () 
   // it "IS INVALID and no honest node will issue receipts against it". Every
   // contract names a root, and on this path nothing compared it with the
   // blocks - so a round could name any thirty-two bytes, and this node would
-  // derive a different census, seat a committee from it and serve that. Which
+  // derive a different census, signer node a committee from it and serve that. Which
   // is the divergence 5A.2 removes, arriving from the round's own header.
   const bonds = [bondOf(0x11), bondOf(0x12)];
   const honest = rootFor(bonds);
@@ -323,9 +323,9 @@ test('a round whose census root is not the chain\'s is refused, not served', () 
     'the refusal does not say what the chain actually gives');
 
   // and no committee comes out of a census that was refused
-  const seats = roster.committeeFor(rid, 'game');
-  assert.equal(seats.ok, false);
-  assert.equal(seats.committee, undefined);
+  const signerNodes = roster.committeeFor(rid, 'game');
+  assert.equal(signerNodes.ok, false);
+  assert.equal(signerNodes.committee, undefined);
 
   // THE SAME BLOCKS, THE ROOT THEY REALLY PRODUCE: held.
   const good = new Round(openStore(), () => AFTER_COMMITTEE);
@@ -343,9 +343,9 @@ test('a round whose census root is not the chain\'s is refused, not served', () 
   assert.match(bare.censusFor(goodId).why, /names census root 0000000000000000 and the chain gives/);
 });
 
-test('the daemon seats on the beacon\'s seed, and on nothing else', async () => {
+test('the daemon signer nodes on the beacon\'s seed, and on nothing else', async () => {
   // Found by mutants that survived: every fixture above has exactly as many
-  // eligible nodes as slots, so ANY seed seats the same two and none of them
+  // eligible nodes as slots, so ANY seed signer nodes the same two and none of them
   // could tell which seed was used. Six bonded nodes and two slots is a census
   // where the seed decides.
   const { committeeSeedFrom } = await import('../../protocol/src/beacon.js');
@@ -356,39 +356,39 @@ test('the daemon seats on the beacon\'s seed, and on nothing else', async () => 
   const chosen = b32(0x5e);                       // what an author would write
   const { round, rid, roster } = daemon(many, { committeeSeed: chosen });
 
-  const seats = roster.committeeFor(rid, 'game');
-  assert.equal(seats.ok, true, seats.why);
-  assert.equal(seats.committee.length, 2);
+  const signerNodes = roster.committeeFor(rid, 'game');
+  assert.equal(signerNodes.ok, true, signerNodes.why);
+  assert.equal(signerNodes.committee.length, 2);
 
   const contract = decodeRoundContract(new Uint8Array(round.get(rid).contract));
   const fromBeacon = committeeSeedFrom({
     censusRootGameVerify: contract.censusRoot, censusRootSettlement: contract.censusRoot,
     roundId: rid, roundRandomness: beaconOf(chainWith(many, contract), contract).hash,
   });
-  const seatedBy = (seed) => selectCommittee({
+  const signerNodesBy = (seed) => selectCommittee({
     entries: roster.censusFor(rid).entries, contract, role: 'game', committeeSeed: seed,
   }).map((e) => toHex(e.pubkey)).sort();
 
-  // WHO SITS IS WHO THE BEACON'S SEED SEATS.
-  assert.deepEqual(seats.committee.map((e) => toHex(e.pubkey)).sort(), seatedBy(fromBeacon));
+  // WHO SITS IS WHO THE BEACON'S SEED SIGNER NODES.
+  assert.deepEqual(signerNodes.committee.map((e) => toHex(e.pubkey)).sort(), signerNodesBy(fromBeacon));
 
-  // AND NOT WHO THE CONTRACT'S BYTES WOULD HAVE SEATED - which is a different
+  // AND NOT WHO THE CONTRACT'S BYTES WOULD HAVE JOINED - which is a different
   // pair here, or this test would not be able to tell them apart.
-  assert.notDeepEqual(seatedBy(fromBeacon), seatedBy(chosen),
-    'the two seeds seat the same pair, so this census cannot measure the difference');
-  assert.notDeepEqual(seats.committee.map((e) => toHex(e.pubkey)).sort(), seatedBy(chosen),
-    'the daemon seated the pair the contract\'s own bytes choose');
+  assert.notDeepEqual(signerNodesBy(fromBeacon), signerNodesBy(chosen),
+    'the two seeds signer node the same pair, so this census cannot measure the difference');
+  assert.notDeepEqual(signerNodes.committee.map((e) => toHex(e.pubkey)).sort(), signerNodesBy(chosen),
+    'the daemon joined the pair the contract\'s own bytes choose');
 });
 
-test('a node with no beacon, or one the creator already had, seats nobody', () => {
+test('a node with no beacon, or one the creator already had, assigns nobody', () => {
   const bonds = [bondOf(0x11), bondOf(0x12)];
   const { round, rid } = daemon(bonds);
 
   // NO BEACON: refused by name, and never a fallback to the contract's bytes.
   const blind = new Roster(round, { chainFor: ({ contract } = {}) => chainWith(bonds, contract) });
-  const seats = blind.committeeFor(rid, 'game');
-  assert.equal(seats.ok, false, 'a node with no beacon seated a committee anyway');
-  assert.match(seats.why, /no beacon for that round/);
+  const signerNodes = blind.committeeFor(rid, 'game');
+  assert.equal(signerNodes.ok, false, 'a node with no beacon assigned a committee anyway');
+  assert.match(signerNodes.why, /no beacon for that round/);
 
   // A BEACON THE CREATOR COULD HAVE HELD: at or before the round's own
   // committee time, which is where 5A.5 draws the line now that the field
@@ -407,11 +407,11 @@ test('a node with no beacon, or one the creator already had, seats nobody', () =
 });
 
 /**
- * A LATE BEACON IS NOT THE SAME AS THE RIGHT ONE, AT SEAT TIME.
+ * A LATE BEACON IS NOT THE SAME AS THE RIGHT ONE, AT ASSIGNMENT TIME.
  *
  * `committeeSeedFromBeacon` can only ask whether a beacon came after
  * committee_time - it is handed a height and a time and no chain - so a node
- * whose operator hands it any LATER block would seat on a block that operator
+ * whose operator hands it any LATER block would assign on a block that operator
  * chose. That is 5A.5's grinding attack with one extra step, and this is the
  * door where it is now shut: the roster has a chain view, so it asks whether
  * the beacon is the block that chain names.
@@ -426,15 +426,15 @@ test('the roster refuses a beacon that is late but not the block its chain names
   const view = chainWith(bonds, contractFor({ censusRoot: rootFor(bonds, {}) }));
   const headers = { headers: view.blocks.map((b) => b.header), firstHeight: view.firstHeight };
 
-  // THE HONEST PATH FIRST, and it says the check RAN. A green seat that
-  // skipped the check would look exactly like a green seat that made it.
+  // THE HONEST PATH FIRST, and it says the check RAN. A green signer node that
+  // skipped the check would look exactly like a green signer node that made it.
   const { rid, contract, roster } = daemon(bonds);
   const named = beaconFromChain(contract, headers);
   assert.equal(named.ok, true, named.why);
   const seeded = roster.seedFor(rid, contract);
   assert.equal(seeded.ok, true, seeded.why);
   assert.equal(seeded.checkedAgainstChain, true,
-    'the roster seated without asking its own chain which block that was');
+    'the roster assigned without asking its own chain which block that was');
   assert.equal(roster.committeeFor(rid, 'game').ok, true);
 
   // A REAL, LATER BLOCK OF THE SAME CHAIN. Not junk: it is mined, it links, and
@@ -452,7 +452,7 @@ test('the roster refuses a beacon that is late but not the block its chain names
     chainFor: ({ contract } = {}) => chainWith(bonds, contract), randomnessFor: () => wrong,
   });
   const refused = crooked.seedFor(wrongId, contract);
-  assert.equal(refused.ok, false, 'a later block seated a committee');
+  assert.equal(refused.ok, false, 'a later block assigned a committee');
   assert.match(refused.why, new RegExp(`is block ${later} where this chain names ${named.height}`));
   assert.match(refused.why, /a later block is a block somebody chose/);
 
@@ -488,7 +488,7 @@ test('a node with no chain view still refuses on 27 alone, and says the check di
 /**
  * AND THE CLOSING DOOR ASKS THE SAME QUESTION.
  *
- * The seat is not the only place a beacon decides something: `replay` derives
+ * The signer node is not the only place a beacon decides something: `replay` derives
  * every player's WORLD from it, so a node closing on a late-but-wrong block
  * computes a different world, a different state hash, and a result no honest
  * node will agree with. Before this the verifier asked only 27's rule - "was
@@ -544,11 +544,11 @@ test('a node closing a round refuses a beacon its own chain does not name', asyn
 
 /**
  * A ROUND EXISTS ONLY ONCE ITS HASH IS ON BITCOIN, BELOW ITS BEACON BLOCK
- * (5A.5, v4.6.2, P1). Before this a round was seated with no publication at
+ * (5A.5, v4.6.2, P1). Before this a round was assigned with no publication at
  * all, so a creator could publish many candidates for free, wait for the
  * beacon, and promote the one whose committee was his.
  */
-test('a round its chain never published, or published in its beacon block, is not seated', () => {
+test('a round its chain never published, or published in its beacon block, is not joined', () => {
   const bonds = [bondOf(0x11), bondOf(0x12)];
   const contract = contractFor({ censusRoot: rootFor(bonds, {}) });
   const round = new Round(openStore(), () => AFTER_COMMITTEE);

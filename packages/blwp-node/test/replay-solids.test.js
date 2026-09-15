@@ -51,7 +51,7 @@ test('no daemon hands a replay a collision world, and no page can send one', () 
  * edges, the post office shell of twenty-five pillars on the bays' own 6.8 m
  * pitch with its two ends and its lintel, and the miner's facade, lintel and
  * two tunnel sides. Centres and extents are the map's and do not move with the
- * round; only the heights do, because every shell is seated on the relief.
+ * round; only the heights do, because every shell rests on the relief.
  */
 test('the core builds the map Unity draws, box for box', () => {
   const st = init(0x028b8279);
@@ -90,7 +90,7 @@ test('the core builds the map Unity draws, box for box', () => {
   has(125.4, 42, 14, 2, 'TunnelLeft');
   console.log(`  the core builds all ${s.n} boxes a running player gathered, centre and extents to a millimetre`);
 
-  // AND THE HEIGHTS FOLLOW THE ROUND, because a shell is seated on the relief
+  // AND THE HEIGHTS FOLLOW THE ROUND, because a shell rests on the relief
   // the round generated and buried twenty metres so a dip cannot open a gap.
   const other = mapSolids(init(0xc4eab5b8).ground, HALF_X, HALF_Z);
   let sameXZ = 0, sameY = 0;
@@ -143,7 +143,7 @@ test('a drive into a wall replays into the same wall', () => {
   const b = MAP_BOXES * BOX_WORDS;
   extra[b] = -60 * ONE; extra[b + 1] = 714 * (ONE / 10);  // centre, z 71.4 - the bay's own lane
   extra[b + 2] = 5 * ONE; extra[b + 3] = 30 * ONE;        // half extents
-  extra[b + 4] = -2 * ONE; extra[b + 5] = 5 * ONE;        // y, seated in the ground
+  extra[b + 4] = -2 * ONE; extra[b + 5] = 5 * ONE;        // y, joined in the ground
   assert.equal(setSolids(hosted, MAP_BOXES + 1, extra), true);
   const fresh = init(seed);
   for (let t = 0; t < 600; t++) { step(hosted, ...WORDS); step(fresh, ...WORDS); }

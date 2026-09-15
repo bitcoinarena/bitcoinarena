@@ -1,4 +1,4 @@
-// A SEAT CHECKS EVERY FIELD OF A LOCK BEFORE IT COUNTS A STAKE.
+// A SIGNER NODE CHECKS EVERY FIELD OF A LOCK BEFORE IT COUNTS A STAKE.
 //
 // Section 23.1 step 5 (v4.6.2, F4): "STAKE_COMMITTED is recorded once >=5
 // settlement nodes have VERIFIED the locks: the contract id at
@@ -10,9 +10,9 @@
 // a short expiry alone would let a loser refund before settlement."
 //
 // THE FIELDS, NOT THE ID. A contract id is Fedimint's hash of the whole
-// contract (FEDERATION.md, audit point 8), and the seat's stock federation
+// contract (FEDERATION.md, audit point 8), and the signer node's stock federation
 // client answers `(contract_id, expiration)` for an outpoint. That client, not
-// this package, hashes a contract the seat was handed and compares it with
+// this package, hashes a contract the signer node was handed and compares it with
 // the id at the outpoint; what this checks is that the contract it hashed is
 // the one the entry committed to, field by field, refused by name.
 //
@@ -25,9 +25,9 @@ import { netStakeMsat } from './payout.js';
 import { STAKE_EXPIRY_BLOCKS } from './constants.js';
 
 /**
- * THE CONTRACT A PLAYER HANDS A SEAT (POST /lock), as JSON: hex bytes, the
+ * THE CONTRACT A PLAYER HANDS A SIGNER NODE (POST /lock), as JSON: hex bytes, the
  * amount as a decimal string. Here, not in the node, because the page writes
- * it and the seat reads it - one encoding, not two that look alike.
+ * it and the signer node reads it - one encoding, not two that look alike.
  */
 export function lockFieldsFromJson(j) {
   if (!j || typeof j !== 'object') throw new Error('a stake lock is a JSON object');

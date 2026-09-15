@@ -164,7 +164,7 @@ test('a short census yields no committee at all, where it used to yield a short 
 
   const scored = one.filter((e) => e.roles.includes('game'));
   assert.equal(scored.slice(0, c.gameVerifySlots).length, 1,
-    'the old arithmetic did not give one seat, so this is not the case it fixed');
+    'the old arithmetic did not give one signer node, so this is not the case it fixed');
 
   assert.throws(() => selectCommittee({ entries: one, contract: c, role: 'game', committeeSeed: SEED }),
     /carries 1 game node where regtest was born needing 2/);

@@ -88,7 +88,7 @@ export function encodeGenesisParameters(p) {
   // Sorted, because a set is a set: two nodes listing them differently must
   // not compute two different networks.
   if (!Array.isArray(p.arbitrationKeys) || p.arbitrationKeys.length !== p.arbitrationM)
-    throw new Error(`genesis names ${p.arbitrationM} arbitration seats and lists a different number`);
+    throw new Error(`genesis names ${p.arbitrationM} arbitration signer nodes and lists a different number`);
   w.vec([...p.arbitrationKeys].sort(compare32), (k, ww) => ww.bytes32(k), { sortedBy: compare32 });
   w.u32(p.noticePeriod);
   w.bytes32(p.bondMarker);

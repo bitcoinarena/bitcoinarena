@@ -3,8 +3,8 @@
 //
 // Measured before this: `entryFor` took no donation and wrote `donationMsat:
 // 0n` on every entry; the page had no donation prompt and no confirm; its lock
-// amount assumed 0 (98000 msat for a 2% donor, where the seat's check wants
-// 96000). The seat's door already took a 2% donor's entry.
+// amount assumed 0 (98000 msat for a 2% donor, where the signer node's check wants
+// 96000). The signer node's door already took a 2% donor's entry.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
@@ -107,9 +107,9 @@ test('the entry carries the donation into the field the payout table reads, and 
   const donor = entryFor(paying, { seed, curve: feldmanGroup, random: rand, donationMsat: 2000n });
   assert.equal(donor.donationMsat, 2000n);
   assert.equal(donor.feeMsat, entryFeeMsat(STAKE));
-  assert.equal(feeMatchesEntry(donor).ok, true, 'the seat s own rule takes it');
+  assert.equal(feeMatchesEntry(donor).ok, true, 'the signer node s own rule takes it');
   assert.equal(netStakeMsat(donor), 96000n);
-  assert.equal(lockAmountMsat(paying, donor.donationMsat), 96000n, 'a donor s lock holds the net the seat wants');
+  assert.equal(lockAmountMsat(paying, donor.donationMsat), 96000n, 'a donor s lock holds the net the signer node wants');
   assert.equal(lockAmountMsat(paying), 98000n);
   assert.throws(() => entryFor(paying, { seed, curve: feldmanGroup, random: rand, donationMsat: 98001n }), /cannot come to more than it/);
   assert.throws(() => entryFor(paying, { seed, curve: feldmanGroup, random: rand, donationMsat: 2000 }), /BigInt/);

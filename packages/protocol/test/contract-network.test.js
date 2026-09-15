@@ -79,28 +79,28 @@ test('the network and the config are each in the round id', () => {
 });
 
 /**
- * THE DEPTH RULE AND THE TWO SEAT COUNTS ARE THE ROUND'S, AND THEY ARE THREE
+ * THE DEPTH RULE AND THE TWO SIGNER NODE COUNTS ARE THE ROUND'S, AND THEY ARE THREE
  * DIFFERENT NUMBERS.
  *
  * 5A.11 pairs the depth with the height: "The Round Contract contains:
- * `census_height, census_confirmations`". Section 6 carries the seat counts and
+ * `census_height, census_confirmations`". Section 6 carries the signer node counts and
  * says what a disagreement means: "MUST equal genesis_parameters... A contract
  * disagreeing with the network it names is invalid, NOT A SMALLER COMMITTEE."
  *
  * The two counts are tested UNEQUAL. A mutant that swapped them survived while
  * every fixture used seven and seven, which proved only that seven is seven.
  */
-test('the depth and the two seat counts round-trip as three separate numbers', () => {
+test('the depth and the two signer node counts round-trip as three separate numbers', () => {
   const c = { ...sample(), censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 3 };
   const back = decodeRoundContract(encodeRoundContract(c));
   assert.equal(back.censusConfirmations, 6);
   assert.equal(back.gameVerifySlots, 7);
-  assert.equal(back.settlementSlots, 3, 'the settlement seats came back as the game seats');
+  assert.equal(back.settlementSlots, 3, 'the settlement signer nodes came back as the game signer nodes');
 
   const base = toHex(roundId(c));
   assert.notEqual(toHex(roundId({ ...c, censusConfirmations: 7 })), base, 'the depth');
-  assert.notEqual(toHex(roundId({ ...c, gameVerifySlots: 5 })), base, 'the game seats');
-  assert.notEqual(toHex(roundId({ ...c, settlementSlots: 5 })), base, 'the settlement seats');
+  assert.notEqual(toHex(roundId({ ...c, gameVerifySlots: 5 })), base, 'the game signer nodes');
+  assert.notEqual(toHex(roundId({ ...c, settlementSlots: 5 })), base, 'the settlement signer nodes');
 
   // and swapping the two is a different round, which it would not be if the
   // encoder wrote them in one order and the decoder read them in the other

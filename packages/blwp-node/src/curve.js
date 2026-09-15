@@ -54,7 +54,7 @@ export function bondSetFor(network) {
  *
  * 23.1 wants shares whose consistency a node can confirm "without
  * reconstructing P", and that needs commitments in a group where the discrete
- * log is hard: publish g^a for each coefficient and a seat can check its share
+ * log is hard: publish g^a for each coefficient and a signer node can check its share
  * lies on that polynomial while learning nothing about the constant term.
  *
  * secp256k1 and not a second group, for the same reason the node's identity
@@ -103,7 +103,7 @@ export const combinePoints = (terms) => {
  * scalar was flipped, so the normalisation was ceremony, and ceremony in the
  * middle of a key agreement is a thing a reader has to disprove.
  */
-/** The x-only public key of a secret, which is what a seat is named by. */
+/** The x-only public key of a secret, which is what a signer node is named by. */
 export const pointX = (secret) => schnorr.getPublicKey(secret);
 
 export const ecdhShared = (secret, theirXOnly) => {

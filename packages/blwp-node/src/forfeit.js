@@ -1,4 +1,4 @@
-// THE SEATS' FORFEIT OF A QUALIFIER'S STAKE LOCK (v4.6.2 §23.2 row 1, W5b).
+// THE SIGNER NODES' FORFEIT OF A QUALIFIER'S STAKE LOCK (v4.6.2 §23.2 row 1, W5b).
 //
 // "DELIVERED (qualifying): forfeit the stake lock -> it returns to the
 // player's key. Requires: threshold settlement signature over the lock,
@@ -9,9 +9,9 @@
 // by the lock's refund_pk - the player. So a forfeit can only return money to
 // its owner; what it must never be is a signature a loser can use.
 //
-// POOLSIGNING'S RULE, FOR A DIFFERENT MESSAGE: a seat signs only a forfeit it
+// POOLSIGNING'S RULE, FOR A DIFFERENT MESSAGE: a signer node signs only a forfeit it
 // rebuilt itself. Nobody hands it a contract id. The asker names the round and
-// the entry; the seat rebuilds the contract from the lock IT verified, and
+// the entry; the signer node rebuilds the contract from the lock IT verified, and
 // signs only if ITS OWN finality says the run is FINAL - window closed - and
 // ITS OWN result says the run qualifies (§18: DELIVERED and score >=
 // min_score). A loser's, a run inside its window, a Delivered run below the
@@ -39,15 +39,15 @@ const refuse = (why, status = 409) => ({ ok: false, status, why });
 
 export class Forfeit {
   /**
-   * `dkg` holds this seat's share of the round's claim key; `port` is the
+   * `dkg` holds this signer node's share of the round's claim key; `port` is the
    * federation (it hashes a contract the way the guardians do); `peersFor(rid)`
-   * names the other settlement seats' bases.
+   * names the other settlement signer nodes' bases.
    */
   constructor(round, { dkg, port, curve, random, peersFor = () => [], fetcher = (u, o) => fetch(u, o), onVoid = null, pullProof = null } = {}) {
     this.round = round;
-    // THE OTHER SEATS' PROOF OF TWO FIRST MARKS, pulled and checked here before a
+    // THE OTHER SIGNER NODES' PROOF OF TWO FIRST MARKS, pulled and checked here before a
     // Void lock is refunded (M3.3-34): `pullProof(rid, eid)` keeps a pair that
-    // verifies in this seat's own store.
+    // verifies in this signer node's own store.
     this.pullProof = pullProof;
     this.dkg = dkg;
     this.port = port;
@@ -55,59 +55,59 @@ export class Forfeit {
     this.random = random;
     this.peersFor = peersFor;
     this.fetcher = fetcher;
-    // ENTRY_VOID's evidence, handed to the other seats before a Void lock is
-    // forfeited: a seat that was down records the Void only when shown it.
+    // ENTRY_VOID's evidence, handed to the other signer nodes before a Void lock is
+    // forfeited: a signer node that was down records the Void only when shown it.
     this.onVoid = onVoid;
     this.pairs = new Map();          // contract id hex -> { hiding, binding, commitment, list, share }
   }
 
-  /** WHAT THIS SEAT WILL SIGN, rebuilt from its own store - or the refusal. */
+  /** WHAT THIS SIGNER NODE WILL SIGN, rebuilt from its own store - or the refusal. */
   async message(roundIdBytes, entryIdBytes) {
     const row = this.round.get(roundIdBytes);
     if (!row) return refuse('this node holds no such round', 404);
     const contract = decodeRoundContract(new Uint8Array(row.contract));
     const lock = this.round.stakeLock(entryIdBytes);
-    if (!lock) return refuse('this seat verified no stake lock for that entry, so it forfeits nothing');
+    if (!lock) return refuse('this signer node verified no stake lock for that entry, so it forfeits nothing');
     // ENTRY_VOID (§16, §23.2 "forfeit at once; if nobody acts, the lock expires"):
-    // an outage refund, on THIS seat's own record of it - never on an asker's
+    // an outage refund, on THIS signer node's own record of it - never on an asker's
     // word, and never for a late start (that is FORFEIT, first-mark.js) or a
     // run with no first mark. The lock goes back to the player's refund key
     // now, instead of at expiry. Everything else below still holds: the lock
-    // this seat verified, the round's claim key, the contract rebuilt here.
+    // this signer node verified, the round's claim key, the contract rebuilt here.
     const voided = this.round.entryVoid ? this.round.entryVoid(entryIdBytes) : null;
     // TWO FIRST MARKS AFTER THE VOID (§13B, §13C; ruled 2026-09-12): once this
-    // seat holds the player's second first mark - or its no-quorum rule decided
+    // signer node holds the player's second first mark - or its no-quorum rule decided
     // FORFEIT - the Void stays as history and it signs no refund. Measured before
-    // on a fresh federation: both seats signed it and the player redeemed the
+    // on a fresh federation: both signer nodes signed it and the player redeemed the
     // lock before its expiry.
-    // A VOID SEAT ASKS THE OTHERS FIRST (M3.3-34, a lock with receipts lost
-    // between seats that are up): a refund signed on this seat's own Void record
-    // alone forms while another seat holds the proof. Measured before: five seats
+    // A VOID SIGNER NODE ASKS THE OTHERS FIRST (M3.3-34, a lock with receipts lost
+    // between signer nodes that are up): a refund signed on this signer node's own Void record
+    // alone forms while another signer node holds the proof. Measured before: five signer nodes
     // that each kept only their own receipt recorded the Void, signed at once -
     // five signatures - and the player could redeem 98000 msat before the lock's
-    // expiry; seat 5 held the proof. The pair pulled here is checked and kept.
+    // expiry; signer node 5 held the proof. The pair pulled here is checked and kept.
     let pulled = null;
     if (voided && this.pullProof && !(this.round.twoFirstMarks && this.round.twoFirstMarks(roundIdBytes, entryIdBytes))) {
-      try { pulled = await this.pullProof(roundIdBytes, entryIdBytes); } catch { /* a seat that cannot answer proves nothing */ }
+      try { pulled = await this.pullProof(roundIdBytes, entryIdBytes); } catch { /* a signer node that cannot answer proves nothing */ }
     }
     const nq = voided && this.round.noQuorum ? this.round.noQuorum(entryIdBytes) : null;
     if (voided && ((this.round.twoFirstMarks && this.round.twoFirstMarks(roundIdBytes, entryIdBytes)) || (nq && nq.outcome === 'FORFEIT')))
       return refuse('the player signed two first marks for this entry (§13B): FORFEIT, never the outage refund - '
-        + 'this seat\'s ENTRY_VOID stays as history, and it signs no forfeit of the lock to the player');
-    // A VOID THIS SEAT LEARNED ONLY FROM A FORFEIT ASK SIGNS A LOCK REFUND ONLY IF
-    // ITS PROOF PULL REACHED EVERY OTHER SEAT (M3.3-34, ruled 2026-09-13 - "a seat
-    // down stops the rule", as no-quorum): with one unreachable, that seat may hold
+        + 'this signer node\'s ENTRY_VOID stays as history, and it signs no forfeit of the lock to the player');
+    // A VOID THIS SIGNER NODE LEARNED ONLY FROM A FORFEIT ASK SIGNS A LOCK REFUND ONLY IF
+    // ITS PROOF PULL REACHED EVERY OTHER SIGNER NODE (M3.3-34, ruled 2026-09-13 - "a signer node
+    // down stops the rule", as no-quorum): with one unreachable, that signer node may hold
     // the proof of two first marks, so no refund - the lock returns to the player
-    // at its expiry. Measured before on 5 of 7 (path 2, seat 4 down from its
-    // refusal - the ruled limit, no lock refund): the ask handed seats 5 and 6 the
+    // at its expiry. Measured before on 5 of 7 (path 2, signer node 4 down from its
+    // refusal - the ruled limit, no lock refund): the ask handed signer nodes 5 and 6 the
     // full receipts, they recorded the Void and signed, and a committee refund
-    // formed at once with six signatures while the only proof sat on the seat that
+    // formed at once with six signatures while the only proof sat on the signer node that
     // was down. Never signing at all took 2 of 2's outage refund away: there the
-    // forfeit ask is how the seat that was down learns the Void at all.
+    // forfeit ask is how the signer node that was down learns the Void at all.
     if (voided && voided.learned === 'forfeit-ask' && !(pulled && pulled.reached === pulled.peers))
-      return refuse('this seat learned the ENTRY_VOID only from a forfeit ask, and its proof pull reached '
-        + `${pulled ? `${pulled.reached} of ${pulled.peers}` : 'none'} of the other seats: it signs no refund of the lock - `
-        + 'a seat it cannot reach may hold the proof of two first marks; the lock returns to the player at its expiry');
+      return refuse('this signer node learned the ENTRY_VOID only from a forfeit ask, and its proof pull reached '
+        + `${pulled ? `${pulled.reached} of ${pulled.peers}` : 'none'} of the other signer nodes: it signs no refund of the lock - `
+        + 'a signer node it cannot reach may hold the proof of two first marks; the lock returns to the player at its expiry');
     if (!voided) {
       const standing = resultFinality(this.round, roundIdBytes, entryIdBytes);
       // VOID (§13C, §23.2 "do nothing"): nothing is forfeited - nobody acts, and
@@ -117,60 +117,60 @@ export class Forfeit {
       if (standing.state !== FINAL)
         return refuse(`no forfeit before the result is final with its objection window closed: ${standing.why || standing.state}`);
       const mine = this.round.results(roundIdBytes, entryIdBytes).find((r) => toHex(r.nodePubkey) === toHex(this.round.pubkey));
-      if (!mine) return refuse('this seat signed no result for that run, so it forfeits nothing');
+      if (!mine) return refuse('this signer node signed no result for that run, so it forfeits nothing');
       const result = decodePlayerResult(splitSignedResult(mine.bytes).body);
       if (!isQualifier(result, contract.minScore))
         return refuse(`that run is ${result.outcome} with score ${result.score} and this round's minimum is `
           + `${contract.minScore}: not a qualifier, so its stake lock is not forfeited`);
     }
-    const held = this.dkg.seatFor(contract.nodes);
-    if (!held.ok) return refuse(`this seat holds no share of the round's claim key: ${held.why}`);
+    const held = this.dkg.signerNodeFor(contract.nodes);
+    if (!held.ok) return refuse(`this signer node holds no share of the round's claim key: ${held.why}`);
     const claimPk = held.pool.groupPublicKey;
     const fields = lockFieldsFromJson(lock.fields);
     if (toHex(fields.claimPk) !== toHex(claimPk)) return refuse('that lock names another claim key than this round\'s');
-    if (!this.port) return refuse('this seat reaches no federation, so it cannot rebuild the lock');
+    if (!this.port) return refuse('this signer node reaches no federation, so it cannot rebuild the lock');
     const id = String(await this.port.contractId(fields));
-    if (id !== String(lock.contractId)) return refuse('the contract rebuilt from this seat\'s record is not the one it verified');
-    return { ok: true, message: fromHex(id), claimPk, seat: held.seat, needed: receiptsNeeded(contract.nodes.length) };
+    if (id !== String(lock.contractId)) return refuse('the contract rebuilt from this signer node\'s record is not the one it verified');
+    return { ok: true, message: fromHex(id), claimPk, signerNode: held.signerNode, needed: receiptsNeeded(contract.nodes.length) };
   }
 
-  /** ROUND ONE: this seat's nonce commitment for the forfeit it would sign. */
+  /** ROUND ONE: this signer node's nonce commitment for the forfeit it would sign. */
   async commit(roundIdBytes, entryIdBytes) {
     const m = await this.message(roundIdBytes, entryIdBytes);
     if (!m.ok) return m;
     const key = toHex(m.message);
     let pair = this.pairs.get(key);
     if (!pair) {
-      const hiding = nonceGenerate340(this.random(32), m.seat.share);
-      const binding = nonceGenerate340(this.random(32), m.seat.share);
+      const hiding = nonceGenerate340(this.random(32), m.signerNode.share);
+      const binding = nonceGenerate340(this.random(32), m.signerNode.share);
       pair = { hiding, binding, list: null, share: null,
-        commitment: { id: m.seat.id, hiding: this.curve.pointFromScalar(hiding), binding: this.curve.pointFromScalar(binding) } };
+        commitment: { id: m.signerNode.id, hiding: this.curve.pointFromScalar(hiding), binding: this.curve.pointFromScalar(binding) } };
       this.pairs.set(key, pair);
     }
     return { ok: true, commitment: pair.commitment };
   }
 
-  /** ROUND TWO: this seat's signature share, over the forfeit it rebuilt, for ONE commitment list. */
+  /** ROUND TWO: this signer node's signature share, over the forfeit it rebuilt, for ONE commitment list. */
   async share(roundIdBytes, entryIdBytes, commitments) {
     const m = await this.message(roundIdBytes, entryIdBytes);
     if (!m.ok) return m;
     const pair = this.pairs.get(toHex(m.message));
-    if (!pair) return refuse('this seat committed to no forfeit of that lock');
+    if (!pair) return refuse('this signer node committed to no forfeit of that lock');
     const own = commitments.find((c) => String(c.id) === String(pair.commitment.id));
     if (!own || toHex(own.hiding) !== toHex(pair.commitment.hiding) || toHex(own.binding) !== toHex(pair.commitment.binding))
-      return refuse('that list does not carry this seat\'s own commitment');
+      return refuse('that list does not carry this signer node\'s own commitment');
     if (commitments.length < m.needed) return refuse(`${commitments.length} commitments, and this round's key signs at ${m.needed}`);
     const key = listKey(commitments);
-    if (pair.list && pair.list !== key) return refuse('this seat signed that forfeit over another list, and keeps no second pair');
+    if (pair.list && pair.list !== key) return refuse('this signer node signed that forfeit over another list, and keeps no second pair');
     if (pair.share === null) {
-      pair.share = signShare340({ id: pair.commitment.id, share: m.seat.share, groupPublicKey: m.claimPk,
+      pair.share = signShare340({ id: pair.commitment.id, share: m.signerNode.share, groupPublicKey: m.claimPk,
         nonces: { hiding: pair.hiding, binding: pair.binding }, message: m.message, commitments, curve: this.curve });
       pair.list = key;
     }
     return { ok: true, share: pair.share };
   }
 
-  /** A combined forfeit handed over by a peer: kept only if it verifies over what THIS seat rebuilt. */
+  /** A combined forfeit handed over by a peer: kept only if it verifies over what THIS signer node rebuilt. */
   async take(roundIdBytes, entryIdBytes, signature) {
     const m = await this.message(roundIdBytes, entryIdBytes);
     if (!m.ok) return m;
@@ -180,7 +180,7 @@ export class Forfeit {
   }
 
   /**
-   * THE FORFEIT, asked by anyone: the one this seat keeps, or - if it is due -
+   * THE FORFEIT, asked by anyone: the one this signer node keeps, or - if it is due -
    * made now with its peers, checked under the claim key, kept, and handed to
    * them.
    */
@@ -189,10 +189,10 @@ export class Forfeit {
     if (kept) return { ok: true, ...kept, kept: true };
     const m = await this.message(roundIdBytes, entryIdBytes);
     if (!m.ok) return m;
-    // AN ENTRY_VOID LOCK: the evidence goes to the other seats before they are
-    // asked to sign, so a seat that was down records the same Void on its own.
+    // AN ENTRY_VOID LOCK: the evidence goes to the other signer nodes before they are
+    // asked to sign, so a signer node that was down records the same Void on its own.
     if (this.onVoid && this.round.entryVoid && this.round.entryVoid(entryIdBytes)) {
-      try { await this.onVoid(roundIdBytes, entryIdBytes); } catch { /* each seat still signs only on its own record */ }
+      try { await this.onVoid(roundIdBytes, entryIdBytes); } catch { /* each signer node still signs only on its own record */ }
     }
     const q = `round=${toHex(roundIdBytes)}&entry=${toHex(entryIdBytes)}`;
     const own = await this.commit(roundIdBytes, entryIdBytes);
@@ -207,7 +207,7 @@ export class Forfeit {
       } catch (e) { refused.push(`${base}: ${e.message}`); }
     }
     if (signers.length < m.needed)
-      return refuse(`${signers.length} of the ${m.needed} seats the forfeit needs committed to it: ${refused.join('; ')}`);
+      return refuse(`${signers.length} of the ${m.needed} signer nodes the forfeit needs committed to it: ${refused.join('; ')}`);
     const commitments = signers.map((s) => s.commitment).sort((a, b) => a.id - b.id);
     const shares = [];
     for (const s of signers) {

@@ -168,7 +168,7 @@ test('the same seed picks the same committee', () => {
   assert.equal(selectCommittee({ entries, contract: round, role: 'game', committeeSeed: SEED }).length, 2);
   assert.equal(selectCommittee({ entries, contract: { ...round, gameVerifySlots: 5 }, role: 'game', committeeSeed: SEED }).length, 5);
 
-  // a settlement seat count is a different number, and a role with no pool has
+  // a settlement signer node count is a different number, and a role with no pool has
   // no committee at all rather than a silent zero
   assert.equal(selectCommittee({
     entries: entries.map((e) => ({ ...e, roles: ['settlement'] })),
@@ -528,7 +528,7 @@ test('a round that takes a stake names at least one publication relay; a free ro
  * THE ENTRY'S STAKE-LOCK FIELDS (section 7, v4.6.2): stake_point, fee_preimage,
  * the two lock outpoints and the claim-key attestation. All signed by the
  * player, so all in the entry id - a lock outpoint swapped after signing would
- * point the seats at a lock the player did not commit to.
+ * point the signer nodes at a lock the player did not commit to.
  */
 const lockedEntry = () => ({
   roundId: b32(0x01), playerPubkey: b32(0x02), sessionPubkey: b32(0x03), stakeCommitment: b32(0x04),
@@ -561,7 +561,7 @@ test('an entry carries its stake point, fee preimage, lock outpoints and claim-k
   assert.throws(() => encodeEntryContract({ ...e, claimKeyAttestationRef: undefined }));
 });
 
-test('a seat takes shares only if their A0 is the entry\'s stake point (F1)', () => {
+test('a signer node takes shares only if their A0 is the entry\'s stake point (F1)', () => {
   const e = lockedEntry();
   const handout = { commitments: [new Uint8Array(e.stakePoint), new Uint8Array(33).fill(0x03)] };
   assert.deepEqual(stakePointIsTheHandouts(e, handout), { ok: true });

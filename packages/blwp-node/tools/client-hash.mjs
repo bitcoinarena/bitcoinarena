@@ -4,7 +4,7 @@
 //
 //   node packages/blwp-node/tools/client-hash.mjs <served page URL | build dir>
 //
-// A compromised web host can serve scripts that seat a player under the wrong
+// A compromised web host can serve scripts that enters a player under the wrong
 // key or on the wrong core, and any check those scripts run on themselves
 // passes. So the player - or anyone - hashes what the page ACTUALLY serves,
 // here, and compares it with the repo's list (`blwp-client/known-good-clients.json`),

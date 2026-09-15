@@ -1,7 +1,7 @@
 // WHICH BITCOIN OUTPUT A PAYOUT SPENDS, AND WHO GETS TO SAY.
 //
 // Item 17 put the signing on a wire: the asker names a round and an OUTPUT, and
-// every seat rebuilds the transaction from its own store before it signs. What
+// every signer node rebuilds the transaction from its own store before it signs. What
 // it did not ask is where that output comes from. `payWithCommittee` took a
 // `utxo` - txid, vout, value and script - as an argument, and nothing in the
 // daemon could produce one: no `scantxoutset`, no `gettxout`, no `listunspent`
@@ -11,7 +11,7 @@
 //
 // ITEM 18 CLOSED THAT IN TWO HALVES. `pool-watch.js` asks the chain, and
 // `Payouts.settleQueued` is the caller: it checks this node is the round's
-// asker, asks its own seat what the round owes, asks the watch for an output
+// asker, asks its own signer node what the round owes, asks the watch for an output
 // that covers it, and runs the signing round. The counts below are the
 // measurement, kept as a pin - a second file learning to ask the chain, or a
 // second caller of the payer, should turn this red.
@@ -98,7 +98,7 @@ test('one file asks the chain about outputs, and one calls the payer', () => {
  */
 test('a false value moves no output and burns nothing, because the amount is in the sighash', () => {
   const c = committee();
-  const five = c.seats.slice(0, SHARES_NEEDED);
+  const five = c.signerNodes.slice(0, SHARES_NEEDED);
 
   const entries = signingEntries(c.rounds[0], c.rid);
   const table = tableFor({ roundId: c.rid, entries, minScore: c.minScore }).table;
@@ -120,7 +120,7 @@ test('a false value moves no output and burns nothing, because the amount is in 
   console.log(`  the fee it REPORTS moves: honest ${honest.feeSats} sats, understated ${understated.feeSats} sats`
     + ' - a number in a return value, not an output in a transaction');
 
-  // AND THE SIGNATURE IS OVER AN INPUT THAT DOES NOT EXIST. Five seats sign a
+  // AND THE SIGNATURE IS OVER AN INPUT THAT DOES NOT EXIST. Five signer nodes sign a
   // spend of the pool at a value the chain does not hold, and the signature
   // does not verify against the sighash of the real one.
   const lying = { ...c.utxo, value: POOL_SATS / 4n };
@@ -147,7 +147,7 @@ test('a false value moves no output and burns nothing, because the amount is in 
 /**
  * THE HOLE THAT IS REAL: TWO ROUNDS, ONE OUTPOINT, TWO SIGNATURES.
  *
- * A pool is dealt once and many rounds settle out of it, and a seat's memory of
+ * A pool is dealt once and many rounds settle out of it, and a signer node's memory of
  * what it has signed is per ROUND - `PoolSigning#live` is keyed by round id.
  * Nothing anywhere remembers which OUTPOINT a committee has already signed
  * away. So the same output can be signed twice, for two different sets of
@@ -169,7 +169,7 @@ test('two rounds sign spends of the same pool output, and nothing refuses', () =
   const utxo = { txid: b32(0xab), vout: 0, value: POOL_SATS, script: a.out.script };
 
   const signRound = (c) => {
-    const five = c.seats.slice(0, SHARES_NEEDED);
+    const five = c.signerNodes.slice(0, SHARES_NEEDED);
     const { commitments, shares } = signWith(five, { rid: c.rid, contract: c.contract, utxo });
     const spend = five[0].spendFor({ roundId: c.rid, utxo, contract: c.contract });
     const sig = aggregate340({
@@ -191,5 +191,5 @@ test('two rounds sign spends of the same pool output, and nothing refuses', () =
   console.log(`  round A signs ${first.spend.outputs.length} output(s) spending `
     + `${Buffer.from(utxo.txid).toString('hex').slice(0, 16)}…:${utxo.vout}`);
   console.log(`  round B signs ${second.spend.outputs.length} output(s) spending the SAME outpoint`);
-  console.log('  seats that refused the second: 0');
+  console.log('  signer nodes that refused the second: 0');
 });

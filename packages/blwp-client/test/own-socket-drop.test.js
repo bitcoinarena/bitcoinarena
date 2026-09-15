@@ -28,7 +28,7 @@ import { Client } from '../src/client.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { decodeTranscript } from '../../protocol/src/transcript.js';
 import { toHex } from '../../protocol/src/hash.js';
-import { assumeStakeSeen } from '../../blwp-node/test/seating.js';
+import { assumeStakeSeen } from '../../blwp-node/test/assignment.js';
 
 const require = createRequire(import.meta.url);
 const core = require('../../core/dist/blwp-core.js');
@@ -37,7 +37,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const session = ed25519.utils.randomSecretKey();
 const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
 
-/** One real daemon and a seated client, reconnecting the way the bridge does. */
+/** One real daemon and a joined client, reconnecting the way the bridge does. */
 async function rig() {
   const node = await serve(openStore(), { port: 0, funded: () => true });
   const client = new Client({
@@ -163,7 +163,7 @@ test('two drops after the node took the batch but before its answer: nothing is 
 // answer was lost; the reconnect opened a new socket - `state` ready - and only then read where the
 // node is. The page drains every frame, so in between a batch went out from the OLD tick and head:
 // "the batch does not follow the chain head", the one resync spent, and the run ended at tick 180
-// with the node holding ticks the client never counted (seat A 12 batches, the client 10).
+// with the node holding ticks the client never counted (signer node A 12 batches, the client 10).
 // The reconnect's resume is held for 200 ms here, so the window is not a matter of luck.
 test('a drain while the reconnect is still resuming sends nothing from the old numbers: no refusal, and every tick lands in its place', async () => {
   const { node, client, rec, settle, publishAll, onNode, recorded } = await rig();

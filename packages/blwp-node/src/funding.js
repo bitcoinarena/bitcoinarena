@@ -14,7 +14,7 @@
 //   an ENTRY is funded when it names a round this node already holds, that
 //     round asks a stake, and this node can hold it: Lightning for a hold
 //     invoice, and - for a round naming a federation, whose stake is a lock
-//     the seat verifies there (§23.1 step 5, W1b) - the federation.
+//     the signer node verifies there (§23.1 step 5, W1b) - the federation.
 // NOT "the invoice is paid": the hold is issued after the entry is stored. The
 // transcript waits for the money anyway - input batches are refused until the
 // stake is seen paid.
@@ -45,7 +45,7 @@ export function operatorFunding({ named = () => [] } = {}) {
         if (BigInt(round.stakeMsat) <= 0n) return false;
         // CAN THIS NODE HOLD THE STAKE, asked of the stake's own custody. A
         // round naming a federation takes its stake as a lock in that
-        // federation, which the seat VERIFIES there (§23.1 step 5) - so the
+        // federation, which the signer node VERIFIES there (§23.1 step 5) - so the
         // node must reach the federation, and Lightning is not it. Any other
         // paying round is a hold invoice, which needs Lightning, as before.
         const locks = round.custody === 'FEDERATION' && round.federationId instanceof Uint8Array

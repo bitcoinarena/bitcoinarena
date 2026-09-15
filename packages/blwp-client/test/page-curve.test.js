@@ -24,7 +24,7 @@ test('the page curve is the daemon curve', () => {
     feldmanGroup.ecdhShared(secret, their));
 });
 
-test('the page loads the curve before it takes a seat', () => {
+test('the page loads the curve before it joins', () => {
   const page = readFileSync(
     new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html',
       import.meta.url).pathname, 'utf8');
@@ -32,7 +32,7 @@ test('the page loads the curve before it takes a seat', () => {
   const joinCall = page.indexOf('joinTheRoundIfOneWasNamed');
   assert.ok(curveTag >= 0, 'the page never loads blwp-curve.js');
   assert.ok(joinCall > curveTag, 'the curve script is not in front of the join');
-  assert.ok(!page.includes('so it is not taking a seat'),
-    'a named round still refuses the seat in silence');
+  assert.ok(!page.includes('so it is not joining'),
+    'a named round still refuses the signer node in silence');
   assert.ok(page.includes('id="blwp-players"'), 'the page never shows who is in the round');
 });

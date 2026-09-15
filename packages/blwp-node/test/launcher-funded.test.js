@@ -1,4 +1,4 @@
-// A LAUNCHED DAEMON OPENS A PAYING ROUND THE OPERATOR NAMED, AND SEATS ITS ENTRIES (M3.3-31).
+// A LAUNCHED DAEMON OPENS A PAYING ROUND THE OPERATOR NAMED, AND SIGNER NODES ITS ENTRIES (M3.3-31).
 //
 // Measured before: `main.js` passed `serve` no `funded`, so the default refused
 // every round and every entry with 402 - a daemon started the way an operator
@@ -34,7 +34,7 @@ import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../.
 import { encodeInputBatch } from '../../protocol/src/batch.js';
 import { toHex, sha256 } from '../../protocol/src/hash.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
-import { assumeSeated } from './seating.js';
+import { assumeAssigned } from './assignment.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const READY = { preflight: async () => ({ ready: true, why: 'test port' }) };
@@ -79,11 +79,11 @@ test('the launcher\'s rule with nothing named refuses a paying round and an entr
     const round = await post(node.port, '/round', encodeRoundContract(c));
     assert.equal(round.status, 402, `an unnamed paying round was opened: ${round.status} ${round.text}`);
     const entry = await post(node.port, '/entry', encodeEntryContract(entryFor(roundId(c))));
-    assert.equal(entry.status, 402, `an entry was seated with nothing named: ${entry.status} ${entry.text}`);
+    assert.equal(entry.status, 402, `an entry was taken with nothing named: ${entry.status} ${entry.text}`);
   } finally { await node.close(); }
 });
 
-test('once the operator names a paying round it is opened and its entry seated with a hold; an unheld round\'s entry, a free round and an unpaid batch stay refused', async () => {
+test('once the operator names a paying round it is opened and its entry taken with a hold; an unheld round\'s entry, a free round and an unpaid batch stay refused', async () => {
   const peer = schnorr.getPublicKey(b32(9));
   // The round is named by id, and its id is the hash of a contract that names
   // this node - so the node comes up first and the setting is read per ask.
@@ -99,16 +99,16 @@ test('once the operator names a paying round it is opened and its entry seated w
 
     const round = await post(node.port, '/round', encodeRoundContract(c));
     assert.equal(round.status, 201, `the named paying round was refused: ${round.status} ${round.text}`);
-    assumeSeated(node.round, rid, c.nodes);
+    assumeAssigned(node.round, rid, c.nodes);
     const entry = entryFor(rid);
-    const seated = await post(node.port, '/entry', encodeEntryContract(entry));
-    assert.equal(seated.status, 201, `an entry into the named paying round was refused: ${seated.status} ${seated.text}`);
-    assert.equal(seated.hold, HELD, 'the seated entry got no hold');
+    const joined = await post(node.port, '/entry', encodeEntryContract(entry));
+    assert.equal(joined.status, 201, `an entry into the named paying round was refused: ${joined.status} ${joined.text}`);
+    assert.equal(joined.hold, HELD, 'the joined entry got no hold');
 
     const freeRound = await post(node.port, '/round', encodeRoundContract(free));
     assert.equal(freeRound.status, 402, `a named FREE round was opened on a launched daemon: ${freeRound.status}`);
     const unheld = await post(node.port, '/entry', encodeEntryContract(entryFor(roundId(other))));
-    assert.equal(unheld.status, 402, `an entry for a round this node does not hold was seated: ${unheld.status} ${unheld.text}`);
+    assert.equal(unheld.status, 402, `an entry for a round this node does not hold was taken: ${unheld.status} ${unheld.text}`);
 
     // AND THE TRANSCRIPT STILL WAITS FOR THE MONEY: the stake is not paid.
     const ws = new WebSocket(`ws://127.0.0.1:${node.port}/play`);
@@ -123,7 +123,7 @@ test('once the operator names a paying round it is opened and its entry seated w
   } finally { await node.close(); }
 });
 
-test('a daemon that reaches no Lightning seats no entry, even into a named paying round', () => {
+test('a daemon that reaches no Lightning takes no entry, even into a named paying round', () => {
   const c = contractFor([schnorr.getPublicKey(b32(1)), schnorr.getPublicKey(b32(9))]);
   const funded = fundingFromEnv({ BLWP_FUNDED_ROUNDS: toHex(roundId(c)) });
   const held = { contract: encodeRoundContract(c) };
@@ -133,10 +133,10 @@ test('a daemon that reaches no Lightning seats no entry, even into a named payin
 });
 
 // A ROUND NAMING A FEDERATION TAKES ITS STAKE AS A LOCK THERE (§23.1, W1b), and
-// the seat verifies that lock in the federation - so what a node needs to hold
+// the signer node verifies that lock in the federation - so what a node needs to hold
 // such a stake is the federation, not Lightning. Measured before: a lock
 // round's entry on a node reaching only the federation was 402 by this rule,
-// so no page could be seated in one on a launched daemon.
+// so no page could be joined in one on a launched daemon.
 test('a lock round\'s entry is funded on a node that reaches its federation, and not on one that reaches only Lightning', () => {
   const nodes = [schnorr.getPublicKey(b32(1)), schnorr.getPublicKey(b32(9))];
   const lockRound = { ...contractFor(nodes), custody: 'FEDERATION', federationId: TEST_FEDERATION_ID };
@@ -207,7 +207,7 @@ test('main.js itself wires the rule: an unnamed paying round is 402; a named one
       entry = await post(PORT, '/entry', encodeEntryContract(entryFor(roundId(c))));
     } finally { await stop(naming); }
     assert.equal(named.status, 201, `main.js refused a paying round its operator named: ${named.status} ${named.text}`);
-    assert.equal(entry.status, 402, `main.js with no lnd seated an entry it cannot hold the stake of: ${entry.status} ${entry.text}`);
+    assert.equal(entry.status, 402, `main.js with no lnd joined an entry it cannot hold the stake of: ${entry.status} ${entry.text}`);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

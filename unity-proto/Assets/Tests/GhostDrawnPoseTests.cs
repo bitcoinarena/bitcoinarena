@@ -83,7 +83,7 @@ public class GhostDrawnPoseTests
         Assert.IsNotNull(field.Model, "the field has no body to draw a ghost with");
 
         // LET THE GROUND ARRIVE BEFORE ANY PICTURE IS DRAWN. The terrain is
-        // streamed and the seat a ghost is given is sampled from it at the
+        // streamed and the rest a ghost is given is sampled from it at the
         // moment it is shown - so a picture drawn while the relief is still
         // loading is held against a ground that has since moved. Measured: the
         // first frames put the local truck 3.4 m below where it settles.
@@ -284,20 +284,20 @@ public class GhostDrawnPoseTests
         Assert.AreEqual(me.z, them.z, 0.001f,
             "a ghost at the local truck's own z is not drawn at the local truck's z");
 
-        // AND THE HEIGHT IS THE PAGE'S OWN SEATING RULE AT THAT POSE, which is
+        // AND THE HEIGHT IS THE PAGE'S OWN RESTING RULE AT THAT POSE, which is
         // not the same claim as "the same y as the local truck" - and the
         // difference is the Editor, not the code. There is no core here, so
         // `Driving` is false and PhysX places the local truck; its y is a
         // physics result and owes the core's rule nothing. What CAN be checked,
         // and is what a ghost gets wrong when it gets it wrong, is that the
-        // picture is seated by the same function the core-driven truck is
-        // seated by: a y of zero, a single sample under the middle, or a body
+        // picture is resting by the same function the core-driven truck is
+        // resting by: a y of zero, a single sample under the middle, or a body
         // offset dropped all fail here.
         Assert.IsFalse(driver.Driving,
             "the core is driving in the Editor, so this test is comparing something else");
         var want = driver.RideAt(me.x, me.z, driver.transform.rotation.eulerAngles.y);
         Assert.AreEqual(want, them.y, 0.001f,
-            "a ghost is not seated by the rule this page seats a truck with");
+            "a ghost is not resting by the rule this page rests a truck with");
     }
 
     /// <summary>

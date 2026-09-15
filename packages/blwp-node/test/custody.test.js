@@ -78,7 +78,7 @@ function fakePort({ hash, amount } = {}) {
 // player in this file is `b32(n)`, so their own preimage is `preimageOf(n)`.
 const defaultPreimageFor = (entryId, entry) => preimageOf(entry.pubkey[0]);
 
-function seated(port, { preimageFor = defaultPreimageFor } = {}) {
+function joined(port, { preimageFor = defaultPreimageFor } = {}) {
   const round = new Round(openStore(':memory:'), () => NOW + 1000);
   const rid = round.open(contract);
   const custody = new Custody(round, { port, preimageFor });
@@ -87,7 +87,7 @@ function seated(port, { preimageFor = defaultPreimageFor } = {}) {
 
 
 test('a daemon with no Lightning holds no stakes and says so', async () => {
-  const { custody, rid } = seated(undefined);
+  const { custody, rid } = joined(undefined);
   const held = await custody.hold(entryFor(rid, 1));
   assert.equal(held.ok, false);
   assert.match(held.why, /reaches no Lightning, so it holds no stakes/);
@@ -99,7 +99,7 @@ test('a daemon with no Lightning holds no stakes and says so', async () => {
 
 test('the hold is issued against the entry\'s own signed numbers, once', async () => {
   const port = fakePort();
-  const { round, rid, custody } = seated(port);
+  const { round, rid, custody } = joined(port);
   const entry = entryFor(rid, 1);
   round.enter(entry);
 
@@ -126,7 +126,7 @@ test('an invoice that is not the entry\'s is refused, and nothing is stored', as
     ['a different hash', fakePort({ hash: b32(0xee) })],
     ['a different amount', fakePort({ amount: 999n })],
   ]) {
-    const { round, rid, custody } = seated(port);
+    const { round, rid, custody } = joined(port);
     const entry = entryFor(rid, 1);
     round.enter(entry);
     const held = await custody.hold(entry);
@@ -138,7 +138,7 @@ test('an invoice that is not the entry\'s is refused, and nothing is stored', as
 
 test('DELIVERED cancels, FORFEIT settles, and a VOID is never touched', async () => {
   const port = fakePort();
-  const { round, rid, custody } = seated(port);
+  const { round, rid, custody } = joined(port);
 
   const winner = entryFor(rid, 1);
   const loser = entryFor(rid, 2);
@@ -178,7 +178,7 @@ test('DELIVERED cancels, FORFEIT settles, and a VOID is never touched', async ()
 
 test('no stake moves without a final result, and nothing is paid to anybody', async () => {
   const port = fakePort();
-  const { round, rid, custody } = seated(port);
+  const { round, rid, custody } = joined(port);
   const winner = entryFor(rid, 1);
   const loser = entryFor(rid, 2);
   for (const e of [winner, loser]) { round.enter(e); await custody.hold(e); }
@@ -207,7 +207,7 @@ test('a stake whose hold already EXPIRED is not settled: a later close answers a
   // row is EXPIRED, and the next close must leave it where it is: releasing a
   // preimage for an HTLC that expired settles nothing and says the wrong thing.
   const port = fakePort();
-  const { round, rid, custody } = seated(port);
+  const { round, rid, custody } = joined(port);
   const winner = entryFor(rid, 1);
   const loser = entryFor(rid, 2);
   for (const e of [winner, loser]) { round.enter(e); await custody.hold(e); }
@@ -233,7 +233,7 @@ test('a stake whose hold already EXPIRED is not settled: a later close answers a
 
 test('a stake that has already moved is not moved twice', async () => {
   const port = fakePort();
-  const { round, rid, custody } = seated(port);
+  const { round, rid, custody } = joined(port);
   const winner = entryFor(rid, 1);
   const loser = entryFor(rid, 2);
   for (const e of [winner, loser]) { round.enter(e); await custody.hold(e); }
@@ -265,7 +265,7 @@ test('the score the round asked for is the score the pool pays by', async () => 
   // `minScore` on the way into 23.2's table, the cautious player would place
   // as well and the pool would be split two ways.
   const port = fakePort();
-  const { round, rid, custody } = seated(port);
+  const { round, rid, custody } = joined(port);
   const placed = entryFor(rid, 1);
   const cautious = entryFor(rid, 2);
   const loser = entryFor(rid, 3);
@@ -297,7 +297,7 @@ test('the score the round asked for is the score the pool pays by', async () => 
 // the loser first, so the settle is the act that gets interrupted, and a
 // winner behind it whose cancel never happens.
 async function midAct(port) {
-  const { round, rid, custody } = seated(port);
+  const { round, rid, custody } = joined(port);
   const loser = entryFor(rid, 2);
   const winner = entryFor(rid, 1);
   for (const e of [loser, winner]) { round.enter(e); await custody.hold(e); }
@@ -311,7 +311,7 @@ async function midAct(port) {
   return { round, rid, custody, loser, winner, id: entryIdOf(loser), close };
 }
 
-// 9.4'S NAMES ON THE SEATS, NOT A STAND-IN. IMPLEMENTATION.md 9.4:
+// 9.4'S NAMES ON THE SIGNER NODES, NOT A STAND-IN. IMPLEMENTATION.md 9.4:
 //
 //   AWAITING_INVOICE -> HELD -> (result FINAL)
 //     qualifying: CANCEL_REQUESTED -> CANCELLED -> ...
@@ -344,7 +344,7 @@ test('every act is on disk under 9.4\'s name when the call is made - CANCEL_REQU
 test('AWAITING_INVOICE is on disk before the invoice is asked for, and HELD once it is checked', async () => {
   assert.equal(custodyStates.AWAITING_INVOICE, 'AWAITING_INVOICE');
   const port = fakePort();
-  const { round, rid, custody } = seated(port);
+  const { round, rid, custody } = joined(port);
   const e = entryFor(rid, 1);
   round.enter(e);
   const eid = entryIdOf(e);
@@ -363,7 +363,7 @@ test('AWAITING_INVOICE is on disk before the invoice is asked for, and HELD once
 
 test('a node that died awaiting its invoice asks for it again and holds, rather than calling it held', async () => {
   const port = fakePort();
-  const { round, rid, custody } = seated(port);
+  const { round, rid, custody } = joined(port);
   const e = entryFor(rid, 1);
   round.enter(e);
   const eid = entryIdOf(e);
@@ -386,7 +386,7 @@ test('a node that died awaiting its invoice asks for it again and holds, rather 
 
 test('a store written under the old ACTING label is still asked about, and resolved', async () => {
   const port = fakePort();
-  const { round, rid, custody } = seated(port);
+  const { round, rid, custody } = joined(port);
   const e = entryFor(rid, 2);
   round.enter(e);
   const eid = entryIdOf(e);
@@ -499,7 +499,7 @@ test('a node with no preimage cannot settle, and the stake expires to its player
   // that has none is not stuck: it settles nothing, the HTLC expires, and the
   // player is refunded - which is the same direction a crash points in.
   const port = fakePort();
-  const { round, rid, custody } = seated(port, { preimageFor: null });
+  const { round, rid, custody } = joined(port, { preimageFor: null });
   const winner = entryFor(rid, 1);
   const loser = entryFor(rid, 2);
   for (const e of [winner, loser]) { round.enter(e); await custody.hold(e); }
@@ -523,7 +523,7 @@ test('a node with no preimage cannot settle, and the stake expires to its player
 
 test('a preimage that is not the one the hold was made for is refused', async () => {
   const port = fakePort();
-  const { round, rid, custody } = seated(port, { preimageFor: () => new Uint8Array(32).fill(0xab) });
+  const { round, rid, custody } = joined(port, { preimageFor: () => new Uint8Array(32).fill(0xab) });
   const winner = entryFor(rid, 1);
   const loser = entryFor(rid, 2);
   for (const e of [winner, loser]) { round.enter(e); await custody.hold(e); }
@@ -547,7 +547,7 @@ test('the preimage reaches the port, because releasing it is the settlement', as
     port.calls.push(['settle', toHex(paymentHash)]);
     seen.push(preimage);
   };
-  const { round, rid, custody } = seated(port);
+  const { round, rid, custody } = joined(port);
   const winner = entryFor(rid, 1);
   const loser = entryFor(rid, 2);
   for (const e of [winner, loser]) { round.enter(e); await custody.hold(e); }
@@ -569,7 +569,7 @@ test('a round nobody finished moves no stake and keeps nothing for this node', a
   // not as an exception somebody logs and steps past. Measured through the
   // daemon: until a player delivers, every round is one of these.
   const port = fakePort();
-  const { round, rid, custody } = seated(port);
+  const { round, rid, custody } = joined(port);
   const a = entryFor(rid, 1);
   const b = entryFor(rid, 2);
   for (const e of [a, b]) { round.enter(e); await custody.hold(e); }

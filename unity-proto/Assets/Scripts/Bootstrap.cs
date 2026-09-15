@@ -279,7 +279,7 @@ public class Bootstrap : MonoBehaviour
         // by nobody. Every test of the field made its own field, so the set
         // stayed green over a player that drew no ghost at all.
         //
-        // It is seated on the SAME surface the local truck stands on - a
+        // It is resting on the SAME surface the local truck stands on - a
         // picture carries x, z and a heading and cannot carry a height, because
         // the map is the fee histogram and moves under everyone - and it draws
         // with a body of the same truck, fitted by the same rule and carrying
@@ -288,11 +288,11 @@ public class Bootstrap : MonoBehaviour
         _ghosts.transform.SetParent(transform, false);
         var ghosts = _ghosts.AddComponent<Blwp.GhostField>();
         ghosts.Model = BuildGhostBody();
-        // THE SAME SEATING RULE THE LOCAL TRUCK USES, not a second one. It was
+        // THE SAME RESTING RULE THE LOCAL TRUCK USES, not a second one. It was
         // `driver.Ground(x, z) + driver.BodyAboveGround` - one sample under the
         // middle - while the truck itself is fitted across its four contact
         // points, and the two differ by 0.58 m at one measured pose on this map.
-        ghosts.Seat = (x, z, headingDegrees) => driver.RideAt(x, z, headingDegrees);
+        ghosts.Rest = (x, z, headingDegrees) => driver.RideAt(x, z, headingDegrees);
 
         // What a liquidation looks like: an aircraft, a bomb, and the ground it
         // leaves behind. Theatre - the core has no aircraft, and the hole is
@@ -961,7 +961,7 @@ public class Bootstrap : MonoBehaviour
     /// at an angle is measured across its diagonal and comes out longer than
     /// it is. Sizing off that made the streamed truck a DIFFERENT SIZE on
     /// every heading: over eight rounds that differed by nothing except which
-    /// way the truck was pointing, the same wheel came back seated on 0.503,
+    /// way the truck was pointing, the same wheel came back resting on 0.503,
     /// 0.488, 0.486, 0.493, 0.507 and 0.518 m. The sole had the same fault -
     /// the world box's floor is below the model's own - so a truck delivered
     /// at an angle was also set down at the wrong height.

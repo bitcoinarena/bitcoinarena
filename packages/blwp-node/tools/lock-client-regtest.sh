@@ -3,7 +3,7 @@
 # fedimintd 0.12.0, 4 guardians, 3 of 4, one gateway, regtest), the committee's
 # DKG claim key, then lock-client-regtest.mjs.
 #
-#   FEDIMINT_BIN=<released v0.12.0> LOCK_BIN=<blwp-stake-lock, the seats' port>
+#   FEDIMINT_BIN=<released v0.12.0> LOCK_BIN=<blwp-stake-lock, the signer nodes' port>
 #   WASM_PKG=<wasm-bindgen --target nodejs output of blwp-lock-client>
 #     bash tools/lock-client-regtest.sh
 set -uo pipefail

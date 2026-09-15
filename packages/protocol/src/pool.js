@@ -24,7 +24,7 @@
 // WHAT A SIGNER HAS TO DO ABOUT THAT, and it is two additions and no new
 // protocol: adding the SAME constant to every share adds it to the secret,
 // because the interpolating values over any signing set sum to one. So each
-// seat adds the tweak to its own share and knows nothing more than it did.
+// signer node adds the tweak to its own share and knows nothing more than it did.
 import { taggedHash } from './hash.js';
 import { FIELD } from './shares.js';
 
@@ -72,11 +72,11 @@ export function poolOutput({ groupPublicKey, curve }) {
 }
 
 /**
- * ONE SEAT'S SHARE, MOVED ONTO THE OUTPUT KEY.
+ * ONE SIGNER NODE'S SHARE, MOVED ONTO THE OUTPUT KEY.
  *
  * Adding the tweak to every share adds it to the secret, and negating every
  * share negates the secret - both because the interpolating values sum to one
- * over any signing set. A seat that got either wrong produces a signature that
+ * over any signing set. A signer node that got either wrong produces a signature that
  * verifies against nothing, which a node reports as a bad signature and not as
  * a bad share, so it is worth doing in one place.
  */
@@ -116,7 +116,7 @@ export function poolOwns(script, outputKey) {
 }
 
 /**
- * THE PUBLIC SIDE OF `poolShare`: a seat's public share moved onto the output
+ * THE PUBLIC SIDE OF `poolShare`: a signer node's public share moved onto the output
  * key the same way its secret share is - plus tG, negated for an odd output
  * key. What a payout checks one signer's signature share against.
  */

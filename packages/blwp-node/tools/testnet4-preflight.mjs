@@ -28,7 +28,7 @@ const said = lightningPreflight({ ...node, players, entry });
 console.log(`node      ${lnddir} (${said.network}), block ${node.info.block_height}, synced ${node.info.synced_to_chain}`);
 console.log(`channels  ${said.facts.activeChannels ?? 0} active, outbound ${said.facts.outboundMsat ?? 0n} msat, `
   + `usable inbound ${said.facts.inboundMsat ?? 0n} msat`);
-console.log(`a round   ${players} seat(s) at ${stakeMsat} msat: each hold is ${said.facts.heldPerSeatMsat} msat `
+console.log(`a round   ${players} signer node(s) at ${stakeMsat} msat: each hold is ${said.facts.heldPerSignerNodeMsat} msat `
   + `(the net of the 2% fee), ${said.facts.neededMsat} msat of inbound in all`);
 console.log(`hold      lncli offers addholdinvoice: ${node.holdInvoices} (the server side is proven only by issuing one)`);
 console.log(said.ready ? 'READY' : `NOT READY: ${said.missing.join('; ')}`);

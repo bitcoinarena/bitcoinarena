@@ -75,7 +75,7 @@ export function winnings({ table, stakes }) {
   for (const row of table) {
     const stake = byKey.get(hexOf(row.pubkey));
     if (stake === undefined)
-      return { ok: false, why: `the table pays a key this round never seated: ${hexOf(row.pubkey).slice(0, 16)}` };
+      return { ok: false, why: `the table pays a key this round never assigned: ${hexOf(row.pubkey).slice(0, 16)}` };
     const msat = row.amountMsat > stake ? row.amountMsat - stake : 0n;
     if (msat > 0n) { rows.push({ pubkey: row.pubkey, msat }); owed += msat; }
   }

@@ -1,10 +1,10 @@
-// A SEAT OPENS ONLY A ROUND ON A CORE AND CONFIG IT RUNS, AND A RESULT NAMES THE CORE THAT REPLAYED
+// A SIGNER NODE OPENS ONLY A ROUND ON A CORE AND CONFIG IT RUNS, AND A RESULT NAMES THE CORE THAT REPLAYED
 // (M3 R1 step B; the owner 2026-09-15 08:07: "each round names its sim_wasm_hash and its game_config/
-// config_hash. Seats replay what that round names").
+// config_hash. Signer nodes replay what that round names").
 //
 // Before step B every round was replayed by the one truck core whatever it named, and a result
-// took the contract's simCoreHash as its own - a seat could sign "core X" over a replay of core Y.
-// Now the seat's registry (cores.js installedCores: the truck always, and every core its operator
+// took the contract's simCoreHash as its own - a signer node could sign "core X" over a replay of core Y.
+// Now the signer node's registry (cores.js installedCores: the truck always, and every core its operator
 // installs) resolves the round's (simCoreHash, configHash); a pair it does not hold is refused at
 // the door (27A.7.5: not selectable - it serves nothing there, and is not slashed); and resultFrom
 // refuses a replay that ran another core than the round names.
@@ -19,7 +19,7 @@ import { contractFor, opts, b32 } from './window-fixture.js';
 import { encodeRoundContract, roundId } from '../../protocol/src/contracts.js';
 import { toHex } from '../../protocol/src/hash.js';
 
-test('the seat door opens a round on the truck\'s own core and config, and refuses an unknown core or a config it does not run - by name, nothing stored', async () => {
+test('the signer node door opens a round on the truck\'s own core and config, and refuses an unknown core or a config it does not run - by name, nothing stored', async () => {
   const d = await serve(openStore(':memory:'), { port: 0, ...opts });
   try {
     const nodes = [d.round.pubkey, b32(0x33)];
@@ -34,8 +34,8 @@ test('the seat door opens a round on the truck\'s own core and config, and refus
     console.log('  FACTS:', JSON.stringify({ unknownCore: { ...unknownCore, why: unknownCore.why.slice(0, 110) },
       otherConfig: { ...otherConfig, why: otherConfig.why.slice(0, 110) }, truck: { status: opened.status, held: opened.held } }));
     assert.equal(unknownCore.status, 409);
-    assert.match(unknownCore.why, /this seat holds no core 0101010101010101: it is not selectable for that round \(27A\.7\.5\)/);
-    assert.equal(unknownCore.held, 404, 'a round on an unknown core exists on the seat');
+    assert.match(unknownCore.why, /this signer node holds no core 0101010101010101: it is not selectable for that round \(27A\.7\.5\)/);
+    assert.equal(unknownCore.held, 404, 'a round on an unknown core exists on the signer node');
     assert.equal(otherConfig.status, 409);
     assert.match(otherConfig.why, /runs btc-logistics truck but not the config 4343434343434343/);
     assert.equal(otherConfig.held, 404);
@@ -56,7 +56,7 @@ test('the registry resolves a round by both hashes, holds the truck always, and 
   assert.equal(coreForRound({ simCoreHash: Uint8Array.from(Buffer.from(other.hash, 'hex')), configHash: TRUCK_CONFIG_HASH }, both).ok, false,
     'a core was run under a config it does not carry');
   assert.equal(coreForRound({ simCoreHash: Uint8Array.from(Buffer.from(other.hash, 'hex')), configHash: TRUCK_CONFIG_HASH }).ok, false,
-    'a seat that installed no second core ran one');
+    'a signer node that installed no second core ran one');
 });
 
 test('a result names the core that replayed the run, and one whose replay ran another core than the round names is refused', () => {

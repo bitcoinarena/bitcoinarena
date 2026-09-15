@@ -1,15 +1,15 @@
 // THE DAILY'S CLOSE, MEASURED ON THE LIVE PAGE (M3.3-34). A TOOL, not a test:
 // it wants the deployed Daily page, a headless Chrome and the Daily's running
-// seats (tools/run-2of2.mjs with closeAtEnd).
+// signer nodes (tools/run-2of2.mjs with closeAtEnd).
 //
 // Two players open the bare root (btc-logistics-core.pages.dev, daily.json's
 // lobby) and join the same free round:
 //   P plays - PLAY, AUTO, depart, throttle held for about a run
-//   W seats and walks away - its tab closes before any first mark
-// Nobody sends `close`: the seats must close the round at its end by their own
-// clocks. Then, read-only from both seats' own stores and from the public
-// /results through the tunnels: each run's outcome and score at each seat,
-// how many seats signed it, its finality, and no ENTRY_VOID.
+//   W signer nodes and walks away - its tab closes before any first mark
+// Nobody sends `close`: the signer nodes must close the round at its end by their own
+// clocks. Then, read-only from both signer nodes' own stores and from the public
+// /results through the tunnels: each run's outcome and score at each signer node,
+// how many signer nodes signed it, its finality, and no ENTRY_VOID.
 //
 //   node tools/daily-close-look.mjs
 import { mkdtempSync } from 'node:fs';
@@ -71,8 +71,8 @@ const STATE = `JSON.stringify({ lobby: window.BLWP_LOBBY || null, from: window.B
   round: window.BLWP_ROUND && typeof BLWPCLIENT !== 'undefined' ? Array.from(BLWPCLIENT.roundId(window.BLWP_ROUND), (x) => x.toString(16).padStart(2, '0')).join('') : null,
   player: window.BLWP_ENTRY && window.BLWP_ENTRY.playerPubkey ? Array.from(window.BLWP_ENTRY.playerPubkey, (x) => x.toString(16).padStart(2, '0')).join('') : null,
   unity: !!window.unityInstance, chip: (document.getElementById('blwp-players') || {}).textContent || null,
-  seatRefused: window.BLWP_SEAT_REFUSED || null, nodes: window.BLWP_NODES || null,
-  ...((c) => c ? { peers: c.peers || null, peerSeats: c.peerSeats || null } : {})(
+  joinRefused: window.BLWP_JOIN_REFUSED || null, nodes: window.BLWP_NODES || null,
+  ...((c) => c ? { peers: c.peers || null, peerJoins: c.peerJoins || null } : {})(
     window.unityInstance && window.unityInstance.Module && window.unityInstance.Module.blwpNet && window.unityInstance.Module.blwpNet.client),
   error: (document.getElementById('err') || {}).textContent || null })`;
 const stateOf = async (b) => { const v = await b.evaluate(STATE); try { return JSON.parse(v); } catch { return {}; } };
@@ -82,20 +82,20 @@ const until = async (b, ms, done) => { let s = {}; for (let t = Date.now(); Date
 const pressJoin = (b, id) => b.evaluate(`!!(window.BLWP_LOBBY_ACT && window.BLWP_LOBBY_ACT.join(${JSON.stringify(id)}))`);
 const leftOf = (line) => { const m = String(line).match(/closes in (\d+):(\d\d)/); return m ? Number(m[1]) * 60 + Number(m[2]) : -1; };
 
-// THE SEATS' OWN STORES, READ-ONLY: what each seat signed and how final it is.
-const seats = ['a', 'b'].map((n) => new Round(new DatabaseSync(join(DIR, `${n}.db`), { readOnly: true })));
-const entryOf = (seat, rid, playerHex) => seat.entriesOf(fromHex(rid)).find((e) => toHex(e.entry.playerPubkey) === playerHex);
-const view = (seat, rid, eid) => ({
-  results: [...new Set(seat.results(fromHex(rid), eid).map((r) => { const p = decodePlayerResult(splitSignedResult(r.bytes).body); return `${p.outcome}/${p.score}`; }))],
-  signers: new Set(seat.results(fromHex(rid), eid).map((r) => toHex(r.nodePubkey))).size,
-  finality: resultFinality(seat, fromHex(rid), eid).state, entryVoid: !!seat.entryVoid(eid),
-  closed: seat.get(fromHex(rid)).state === 1 });
+// THE SIGNER NODES' OWN STORES, READ-ONLY: what each signer node signed and how final it is.
+const signerNodes = ['a', 'b'].map((n) => new Round(new DatabaseSync(join(DIR, `${n}.db`), { readOnly: true })));
+const entryOf = (signerNode, rid, playerHex) => signerNode.entriesOf(fromHex(rid)).find((e) => toHex(e.entry.playerPubkey) === playerHex);
+const view = (signerNode, rid, eid) => ({
+  results: [...new Set(signerNode.results(fromHex(rid), eid).map((r) => { const p = decodePlayerResult(splitSignedResult(r.bytes).body); return `${p.outcome}/${p.score}`; }))],
+  signers: new Set(signerNode.results(fromHex(rid), eid).map((r) => toHex(r.nodePubkey))).size,
+  finality: resultFinality(signerNode, fromHex(rid), eid).state, entryVoid: !!signerNode.entryVoid(eid),
+  closed: signerNode.get(fromHex(rid)).state === 1 });
 
 const tabs = [];
 let code = 0;
 // A KILLED LOOK CLOSES ITS BROWSERS: measured, a killed run left its Chrome
 // drawing Unity in software at 778% CPU, and the next runs' tabs could not
-// seat a player in 60 s.
+// enter a player in 60 s.
 for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => { for (const t of tabs) t.close(); process.exit(143); });
 try {
   const P = await browse(ROOT);
@@ -104,7 +104,7 @@ try {
   const rows = (s0.lobby || []).filter((r) => r.join).sort((x, y) => leftOf(y.line) - leftOf(x.line));
   if (!rows.length) throw new Error('the Daily root listed no joinable round');
   const rid = rows[0].id;
-  const c = decodeRoundContract(seats[0].get(fromHex(rid)).contract ? new Uint8Array(seats[0].get(fromHex(rid)).contract) : new Uint8Array());
+  const c = decodeRoundContract(signerNodes[0].get(fromHex(rid)).contract ? new Uint8Array(signerNodes[0].get(fromHex(rid)).contract) : new Uint8Array());
   const endAt = roundEndMs(c);
   say({ step: 'picked', round: rid.slice(0, 16), from: s0.from, entryLeftS: leftOf(rows[0].line), roundEndsAt: new Date(Number(endAt)).toISOString() });
 
@@ -115,20 +115,20 @@ try {
   await until(W, 60000, (x) => Array.isArray(x.lobby) && x.lobby.some((r) => r.id === rid && r.join));
   await pressJoin(W, rid);
   const w = await until(W, 200000, (x) => (x.player && x.round === rid) || x.error);
-  // W WALKS AWAY ONLY ONCE BOTH SEATS HOLD ITS ENTRY: measured, a tab closed as
-  // soon as seat A held it left seat B without it - seated 1 of 2, no member
+  // W WALKS AWAY ONLY ONCE BOTH SIGNER NODES HOLD ITS ENTRY: measured, a tab closed as
+  // soon as signer node A held it left signer node B without it - joined 1 of 2, no member
   // of a 2-of-2 round, and nothing that could become final.
   for (let t = Date.now(); Date.now() - t < 60000
-    && !(entryOf(seats[0], rid, w.player) && entryOf(seats[1], rid, w.player)); await wait(500));
-  const wSeatedAt = [entryOf(seats[0], rid, w.player), entryOf(seats[1], rid, w.player)].map(Boolean);
+    && !(entryOf(signerNodes[0], rid, w.player) && entryOf(signerNodes[1], rid, w.player)); await wait(500));
+  const wJoinedAt = [entryOf(signerNodes[0], rid, w.player), entryOf(signerNodes[1], rid, w.player)].map(Boolean);
   W.close();
-  if (!wSeatedAt.every(Boolean)) {
-    const pAt = [entryOf(seats[0], rid, p.player), entryOf(seats[1], rid, p.player)].map(Boolean);
-    say({ step: 'W not seated', w, p: { player: p.player, round: p.round, error: p.error, seatedAtAB: pAt } });
-    throw new Error(`W was seated at ${wSeatedAt.filter(Boolean).length} of 2 seats in 60 s: no 2-of-2 walk-away to measure`);
+  if (!wJoinedAt.every(Boolean)) {
+    const pAt = [entryOf(signerNodes[0], rid, p.player), entryOf(signerNodes[1], rid, p.player)].map(Boolean);
+    say({ step: 'W not joined', w, p: { player: p.player, round: p.round, error: p.error, joinedAtAB: pAt } });
+    throw new Error(`W was joined at ${wJoinedAt.filter(Boolean).length} of 2 signer nodes in 60 s: no 2-of-2 walk-away to measure`);
   }
   say({ step: 'joined', p: { player: p.player && p.player.slice(0, 16), unity: p.unity, error: p.error },
-    w: { player: w.player && w.player.slice(0, 16), seatedAtAB: wSeatedAt, tabClosedBeforeAnyMark: true } });
+    w: { player: w.player && w.player.slice(0, 16), joinedAtAB: wJoinedAt, tabClosedBeforeAnyMark: true } });
 
   // P PLAYS: PLAY, AUTO, depart, throttle held for about a run.
   // PLAY IN THE LOBBY ALREADY STARTED THE ROUND (play=1): wait for Unity to say
@@ -148,9 +148,9 @@ try {
   const pChip = (await stateOf(P)).chip;
   say({ step: 'played', chip: pChip });
 
-  // SEAT B DOWN ACROSS THE ROUND'S END (DOWN_B_PID = the launcher's pid: SIGUSR1
-  // takes seat B down, SIGUSR2 brings it back): from 15 s before the end to 75 s
-  // after it. Seat A must close on its own clock, hold what it cannot sign, and
+  // SIGNER NODE B DOWN ACROSS THE ROUND'S END (DOWN_B_PID = the launcher's pid: SIGUSR1
+  // takes signer node B down, SIGUSR2 brings it back): from 15 s before the end to 75 s
+  // after it. Signer node A must close on its own clock, hold what it cannot sign, and
   // sign once B is back - no Void, no refund.
   const launcher = Number(env.DOWN_B_PID || 0);
   if (launcher) {
@@ -158,32 +158,32 @@ try {
     const at = (ms) => wait(Math.max(0, Number(endAt) + ms - Date.now()));
     const closingA = async () => { try { return await (await fetch(`${daily0.node[0]}/closing?round=${rid}`)).json(); } catch (e) { return e.message; } };
     const publicA = async (player) => {
-      const e = entryOf(seats[0], rid, player);
+      const e = entryOf(signerNodes[0], rid, player);
       const r = await fetch(`${daily0.node[0]}/results?round=${rid}&entry=${toHex(e.entryId)}`);
       return Number(r.headers.get('x-results'));
     };
-    const atA = () => ({ P: view(seats[0], rid, entryOf(seats[0], rid, p.player).entryId), W: view(seats[0], rid, entryOf(seats[0], rid, w.player).entryId) });
+    const atA = () => ({ P: view(signerNodes[0], rid, entryOf(signerNodes[0], rid, p.player).entryId), W: view(signerNodes[0], rid, entryOf(signerNodes[0], rid, w.player).entryId) });
     await at(-15000);
     process.kill(launcher, 'SIGUSR1');
-    say({ step: 'seat B down', msBeforeTheEnd: Number(endAt) - Date.now() });
+    say({ step: 'signer node B down', msBeforeTheEnd: Number(endAt) - Date.now() });
     let closedAtA = null;
     for (let t = Date.now(); Date.now() - t < 40000 && closedAtA === null; await wait(250)) {
-      const row = seats[0].get(fromHex(rid));
+      const row = signerNodes[0].get(fromHex(rid));
       if (row && row.state === 1) closedAtA = Number(row.closed_ms);
     }
     await at(20000);
     const look = await browse(ROOT);
     tabs.push(look);
     const sl = await until(look, 30000, (x) => Array.isArray(x.lobby) && x.lobby.length > 0);
-    say({ step: 'B down, 20 s after the end', seatAClosedMsAfterTheEnd: closedAtA === null ? null : closedAtA - Number(endAt),
+    say({ step: 'B down, 20 s after the end', signerNodeAClosedMsAfterTheEnd: closedAtA === null ? null : closedAtA - Number(endAt),
       closingAtA: await closingA(), atA: atA(), publicResultsAtA: { P: await publicA(p.player), W: await publicA(w.player) },
       thisRoundInTheLobby: (sl.lobby || []).some((r) => r.id === rid),
-      lobbyRows: (sl.lobby || []).map((r) => ({ id: r.id.slice(0, 16), agree: `${r.seatsAgree}/${r.needed}`, join: !!r.join })) });
+      lobbyRows: (sl.lobby || []).map((r) => ({ id: r.id.slice(0, 16), agree: `${r.signerNodesAgree}/${r.needed}`, join: !!r.join })) });
     look.close();
     await at(75000);
     say({ step: 'B down, 75 s after the end', closingAtA: await closingA(), atA: atA(),
       publicResultsAtA: { P: await publicA(p.player), W: await publicA(w.player) } });
-    // PAST SEAT A'S OBJECTION WINDOW (HOLD_S seconds after the end): a snapshot
+    // PAST SIGNER NODE A'S OBJECTION WINDOW (HOLD_S seconds after the end): a snapshot
     // midway and one 20 s before the hold ends.
     const holdMs = Number(env.HOLD_S || 0) * 1000;
     if (holdMs > 75000) {
@@ -193,41 +193,41 @@ try {
           publicResultsAtA: { P: await publicA(p.player), W: await publicA(w.player) } });
       }
     }
-    // AND THEN EITHER SEAT B ALONE COMES BACK, OR - RESTART_CMD - THE LAUNCHER
-    // RESTARTS WITH SEAT B STILL DOWN: seat A restarted while holding, a minute
-    // on its own store, and only then seat B back.
+    // AND THEN EITHER SIGNER NODE B ALONE COMES BACK, OR - RESTART_CMD - THE LAUNCHER
+    // RESTARTS WITH SIGNER NODE B STILL DOWN: signer node A restarted while holding, a minute
+    // on its own store, and only then signer node B back.
     if (env.RESTART_CMD) {
       const said = execFileSync('bash', [env.RESTART_CMD, 'b-down'], { encoding: 'utf8', timeout: 400000 });
       const again = Number((said.match(/launcher pid (\d+)/) || [])[1] || 0);
-      say({ step: 'launcher restarted, seat B down: seat A restarted while holding', pid: again, said: said.trim().split('\n').slice(-3) });
+      say({ step: 'launcher restarted, signer node B down: signer node A restarted while holding', pid: again, said: said.trim().split('\n').slice(-3) });
       if (!again) throw new Error('the launcher did not come back');
       await wait(60000);
-      say({ step: 'seat A restarted 60 s ago, B still down', closingAtA: await closingA(), atA: atA(),
+      say({ step: 'signer node A restarted 60 s ago, B still down', closingAtA: await closingA(), atA: atA(),
         publicResultsAtA: { P: await publicA(p.player), W: await publicA(w.player) } });
       process.kill(again, 'SIGUSR2');
-      say({ step: 'seat B back' });
+      say({ step: 'signer node B back' });
     } else {
       process.kill(launcher, 'SIGUSR2');
-      say({ step: 'seat B back' });
+      say({ step: 'signer node B back' });
     }
   }
 
-  // NOBODY CLOSES IT: wait for both seats to close it, sign both runs and reach FINAL.
+  // NOBODY CLOSES IT: wait for both signer nodes to close it, sign both runs and reach FINAL.
   const started = Date.now();
   let got = null;
   for (; Date.now() - started < 30 * 60000; await wait(10000)) {
-    const eP = [0, 1].map((i) => entryOf(seats[i], rid, p.player));
-    const eW = [0, 1].map((i) => entryOf(seats[i], rid, w.player));
+    const eP = [0, 1].map((i) => entryOf(signerNodes[i], rid, p.player));
+    const eW = [0, 1].map((i) => entryOf(signerNodes[i], rid, w.player));
     if (!eP.every(Boolean) || !eW.every(Boolean)) continue;
-    got = { P: seats.map((s, i) => view(s, rid, eP[i].entryId)), W: seats.map((s, i) => view(s, rid, eW[i].entryId)) };
+    got = { P: signerNodes.map((s, i) => view(s, rid, eP[i].entryId)), W: signerNodes.map((s, i) => view(s, rid, eW[i].entryId)) };
     if ([...got.P, ...got.W].every((x) => x.finality === 'FINAL')) break;
     if ((Date.now() - started) % 120000 < 10000) say({ step: 'waiting', got });
   }
-  // AND WHAT ANYONE CAN READ: /results on each seat's public address.
+  // AND WHAT ANYONE CAN READ: /results on each signer node's public address.
   const daily = await (await fetch(new URL('daily.json', ROOT))).json();
   const pub = {};
   for (const [who, player] of [['P', p.player], ['W', w.player]]) {
-    const eid = entryOf(seats[0], rid, player).entryId;
+    const eid = entryOf(signerNodes[0], rid, player).entryId;
     pub[who] = [];
     for (const node of daily.node) {
       const body = new Uint8Array(await (await fetch(`${node}/results?round=${rid}&entry=${toHex(eid)}`)).arrayBuffer());

@@ -4,7 +4,7 @@
 // enforces the "never an input" half by having no argument one could arrive
 // through. This file is the other half: a ghost must not be able to stand in
 // for anything that DECIDES something either - a batch that becomes a tick, a
-// mark that becomes a receipt, a census leaf that becomes a seat, an
+// mark that becomes a receipt, a census leaf that becomes a signer node, an
 // advertisement that becomes a bond.
 //
 // WHY A LIST AND NOT A COMMENT. Measured before this existed: the node's
@@ -27,7 +27,7 @@ import {
  * Every type this package can be handed, and whether it decides anything.
  *
  * `authority: true` means a frame of this type, accepted, changes what the
- * protocol will do: it becomes a tick, a receipt, a seat, a bond, a payout, a
+ * protocol will do: it becomes a tick, a receipt, a signer node, a bond, a payout, a
  * slash. `authority: false` is a picture.
  *
  * The map is exhaustive on purpose. A type byte missing from it is refused

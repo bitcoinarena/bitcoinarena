@@ -3,9 +3,9 @@
 # step 1's setup (stock fedimintd 0.12.0, 4 guardians, 3 of 4, one gateway,
 # regtest) and the committee's claim key, as lock-client-regtest.sh (W1a) has
 # them - then the built page in a headless Chrome joins a lock round from its
-# link, is paid its deposit, locks, and hands the lock to both seats.
+# link, is paid its deposit, locks, and hands the lock to both signer nodes.
 #
-#   FEDIMINT_BIN=<released v0.12.0> LOCK_BIN=<blwp-stake-lock, the seats' port>
+#   FEDIMINT_BIN=<released v0.12.0> LOCK_BIN=<blwp-stake-lock, the signer nodes' port>
 #     bash tools/page-lock-regtest.sh label=<built page dir> ...
 #   e.g. before=<today's page> after=<this page> nolock=<this page>: each a
 #   build/webgl with its template filled; `nolock` is served lock step off.

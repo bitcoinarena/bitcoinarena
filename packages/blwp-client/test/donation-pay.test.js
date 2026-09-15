@@ -1,4 +1,4 @@
-// THE PLAYER'S DONATION, PAID OVER LNURL TO THE DONATION SET THE SEATS SERVE
+// THE PLAYER'S DONATION, PAID OVER LNURL TO THE DONATION SET THE SIGNER NODES SERVE
 // (M3.2 item 6e; §22A, §24A.2; ruled 2026-09-13).
 //
 // In process, with the page's own payment code: two local LNURL endpoints at the
@@ -134,7 +134,7 @@ async function pay(entry, behave) {
   try {
     // THE PLAYER'S OWN CLIENT PAYS IT - the page calls this method, never a free function.
     const client = new Client({ base: 'http://127.0.0.1:9', core: {}, sign: async () => new Uint8Array(64), verify: () => true });
-    client.stakeCommitted = true;   // the seats hold the stake: only then does a donation go (6e)
+    client.stakeCommitted = true;   // the signer nodes hold the stake: only then does a donation go (6e)
     const said = await client.payDonation(entry, SET, { connection: wallet.uri, curve: pageCurve, fetcher: endpoints.fetcher, log, random: rand, timeoutMs: 5000 });
     return { said, issued: endpoints.issued, seen: endpoints.seen, asked: wallet.asked, log };
   } finally { await endpoints.close(); await wallet.close(); }
@@ -206,7 +206,7 @@ const tabStorage = () => ({ m: new Map(), getItem(k) { return this.m.has(k) ? th
 async function pageLoad({ storage, endpoints, wallet, donationMsat = 2000n, log = spendLog() }) {
   const entry = entryOf(donationMsat);
   const client = new Client({ base: 'http://127.0.0.1:9', core: {}, sign: async () => new Uint8Array(64), verify: () => true });
-  client.stakeCommitted = true;   // the seats hold the stake: only then does a donation go (6e)
+  client.stakeCommitted = true;   // the signer nodes hold the stake: only then does a donation go (6e)
   const askedBefore = wallet.asked.length;
   const issuedBefore = endpoints.issued.length;
   const said = await client.payDonation(entry, SET, { storage, connection: wallet.uri, curve: pageCurve, fetcher: endpoints.fetcher, log, random: rand, timeoutMs: 5000 });
@@ -281,7 +281,7 @@ const NOTE_IS = { paid: 'paid', unpaid: 'unpaid', asked: 'unknown' };
 const A = TEST_DONATION_ENDPOINTS[0];
 const B = TEST_DONATION_ENDPOINTS[1];
 
-/** Runs the page's own paintWallet for this seat and answers every element it painted. */
+/** Runs the page's own paintWallet for this entry and answers every element it painted. */
 function paintThePage({ round, entry, donationPaid, settlement, spent = SHIPPED.spendLog(), owed = null }) {
   const page = readFileSync(PAGE, 'utf8');
   const body = page.slice(page.indexOf('function paintWallet()'));
@@ -295,7 +295,7 @@ function paintThePage({ round, entry, donationPaid, settlement, spent = SHIPPED.
   return made;
 }
 
-test('a hold that has ended does not read HELD: the stake line takes the seats\' end state - SETTLED, CANCELLED, EXPIRED - and stays HELD only while it is', () => {
+test('a hold that has ended does not read HELD: the stake line takes the signer nodes\' end state - SETTLED, CANCELLED, EXPIRED - and stays HELD only while it is', () => {
   // BEFORE (bundle e9f22a89, live on the daily page): every one read "... · the wallet is
   // asked 98 sat · HELD" - the quote is asked once, at payment - beside "Settled: ...".
   const round = contractFor([b32(1), b32(2)]);
@@ -306,55 +306,55 @@ test('a hold that has ended does not read HELD: the stake line takes the seats\'
     ['HELD', 'PROVISIONALLY_FINAL', 'HELD']]) {
     const s = { answered: 2, of: 2, hold, holdMsat: 98000n, poolMsat: 98000n, finality };
     const made = paintThePage({ round, entry, donationPaid: undefined, settlement: s, owed });
-    assert.equal(made['blwp-owed'].textContent, base + want, `seats say ${hold}`);
-    console.log(`  seats say ${hold.padEnd(9)} -> "${made['blwp-owed'].textContent.slice(-40)}" beside "${made['blwp-settled'].textContent.slice(0, 40)}…"`);
+    assert.equal(made['blwp-owed'].textContent, base + want, `signer nodes say ${hold}`);
+    console.log(`  signer nodes say ${hold.padEnd(9)} -> "${made['blwp-owed'].textContent.slice(-40)}" beside "${made['blwp-settled'].textContent.slice(0, 40)}…"`);
   }
-  // NO ANSWER FROM THE SEATS YET: the quote's own state, as before.
+  // NO ANSWER FROM THE SIGNER NODES YET: the quote's own state, as before.
   assert.equal(paintThePage({ round, entry, donationPaid: undefined, settlement: undefined, owed })['blwp-owed'].textContent, base + 'HELD');
 });
 
 /**
  * Runs the shipping page's own settlement poll (askTheSettlement, with its flag) against
- * seats that answer `hold`, then its paintWallet - both off the shipped bundle.
+ * signer nodes that answer `hold`, then its paintWallet - both off the shipped bundle.
  */
 async function settleOnThePage({ hold, spent, stakeCommitment, round }) {
   const page = readFileSync(PAGE, 'utf8');
   const from = page.indexOf('    let settlementAsking = false;');
   const fn = page.indexOf('async function askTheSettlement()', from);
   const src = page.slice(from, page.indexOf('\n    }\n', fn) + 6);
-  const seatKeys = [b32(0x71), b32(0x72)];
+  const signerNodeKeys = [b32(0x71), b32(0x72)];
   const fetcher = async (url) => {
     const u = new URL(url);
-    if (u.pathname === '/identity') return new Response(seatKeys[u.port === '1' ? 0 : 1], { status: 200 });
+    if (u.pathname === '/identity') return new Response(signerNodeKeys[u.port === '1' ? 0 : 1], { status: 200 });
     return new Response(JSON.stringify({ entry: 'ee'.repeat(32), hold, holdMsat: '98000', poolMsat: '98000', finality: 'FINAL' }), { status: 200 });
   };
-  const client = { seatEntry: { stakeCommitment }, where: { entryId: 'ee'.repeat(32) } };
-  const win = { BLWP_ROUND: round, BLWP_STAKE: { seatKeys, nodes: ['http://127.0.0.1:1', 'http://127.0.0.1:2'] } };
+  const client = { joinedEntry: { stakeCommitment }, where: { entryId: 'ee'.repeat(32) } };
+  const win = { BLWP_ROUND: round, BLWP_STAKE: { signerNodeKeys, nodes: ['http://127.0.0.1:1', 'http://127.0.0.1:2'] } };
   const BL = { ...SHIPPED, settlementBy: (o) => SHIPPED.settlementBy({ ...o, fetcher }) };
   await new Function('window', 'BLWPCLIENT', 'theClient', 'spent', 'paintWallet', `${src}\n return askTheSettlement();`)(
     win, BL, () => client, spent, () => {});
   return win.BLWP_SETTLEMENT;
 }
 
-test('a winner is shown what the round owes it: the seats\' own payout-table row, 194000 msat beside its returned 96000 msat stake and the 98000 msat pool', async () => {
-  // BEFORE (bundle 675d62d1): the seats served hold and pool only, and a winner's line
+test('a winner is shown what the round owes it: the signer nodes\' own payout-table row, 194000 msat beside its returned 96000 msat stake and the 98000 msat pool', async () => {
+  // BEFORE (bundle 675d62d1): the signer nodes served hold and pool only, and a winner's line
   // read "Returned: your 96000 msat stake was cancelled back to the wallet · the
   // round's pool 98000 msat" - no winnings figure. Round 1's D2: hold 96000, row 194000.
-  const seatKeys = [b32(0x71), b32(0x72)];
+  const signerNodeKeys = [b32(0x71), b32(0x72)];
   const nodes = ['http://127.0.0.1:1', 'http://127.0.0.1:2'];
   const answers = (owed) => async (url) => {
     const u = new URL(url);
     const i = u.port === '1' ? 0 : 1;
-    if (u.pathname === '/identity') return new Response(seatKeys[i], { status: 200 });
+    if (u.pathname === '/identity') return new Response(signerNodeKeys[i], { status: 200 });
     return new Response(JSON.stringify({ entry: 'ee'.repeat(32), hold: 'CANCELLED', holdMsat: '96000', poolMsat: '98000', owedMsat: owed[i], finality: 'FINAL' }), { status: 200 });
   };
-  const won = await SHIPPED.settlementBy({ entryId: 'ee'.repeat(32), seats: seatKeys, nodes, fetcher: answers(['194000', '194000']) });
+  const won = await SHIPPED.settlementBy({ entryId: 'ee'.repeat(32), signerNodes: signerNodeKeys, nodes, fetcher: answers(['194000', '194000']) });
   assert.deepEqual([won.hold, won.holdMsat, won.owedMsat, won.poolMsat], ['CANCELLED', 96000n, 194000n, 98000n]);
   const made = paintThePage({ round: contractFor([b32(1), b32(2)]), entry: entryOf(2000n), donationPaid: undefined, settlement: won });
   assert.equal(made['blwp-settled'].textContent,
     'Returned: your 96000 msat stake was cancelled back to the wallet · the round\'s payout table: 194000 msat for your entry · the round\'s pool 98000 msat');
-  // SEATS THAT DISAGREE ON THE ROW SHOW NO ROW - the page never picks one.
-  const split = await SHIPPED.settlementBy({ entryId: 'ee'.repeat(32), seats: seatKeys, nodes, fetcher: answers(['194000', '193999']) });
+  // SIGNER NODES THAT DISAGREE ON THE ROW SHOW NO ROW - the page never picks one.
+  const split = await SHIPPED.settlementBy({ entryId: 'ee'.repeat(32), signerNodes: signerNodeKeys, nodes, fetcher: answers(['194000', '193999']) });
   assert.equal(split.owedMsat, null);
   assert.doesNotMatch(SHIPPED.settledLine(split), /payout table/);
   // A LOSER'S ROW IS 0 AND ADDS NOTHING: its line reads as before.
@@ -508,7 +508,7 @@ test('a reload whose round link cannot be reached still shows the donation from 
     const askedBefore = wallet.asked.length;
     const issuedBefore = endpoints.issued.length;
 
-    // THE ROUND LINK OF THAT ROUND, ITS NODES GONE: no seat, no set, no payDonation.
+    // THE ROUND LINK OF THAT ROUND, ITS NODES GONE: no signer node, no set, no payDonation.
     const shown = showNotedOnThePage({ search: `?round=${toHex(b32(0x21))}&node=http://127.0.0.1:1,http://127.0.0.1:2`, storage });
     assert.equal(shown.classes.has('show'), true, `the loading screen shows no donation: "${shown.textContent}"`);
     assert.match(shown.textContent, /1334 msat paid to http:\/\/127\.0\.0\.1:18777\/lnurlp\/blwp-test-a/);
@@ -523,7 +523,7 @@ test('a reload whose round link cannot be reached still shows the donation from 
     for (const [k, v] of storage.m) if (k !== 'blwp.player.seed') bare.setItem(k, v);
     const noSeed = showNotedOnThePage({ search: `?round=${toHex(b32(0x21))}`, storage: bare });
     assert.deepEqual([noSeed.textContent, noSeed.classes.has('show'), bare.getItem('blwp.player.seed')], ['', false, null], 'a seed was minted to read the notes');
-    console.log(`  no seat, round unreachable: "${shown.textContent}"`);
+    console.log(`  no signer node, round unreachable: "${shown.textContent}"`);
   } finally { await endpoints.close(); await wallet.close(); }
 });
 
@@ -556,29 +556,29 @@ test('the running total survives a reload and counts a donation share as a donat
   } finally { await endpoints.close(); await wallet.close(); }
 });
 
-test('after settlement the page shows where the stake went and the round\'s pool, as the seats say them', async () => {
-  // THE SEATS' OWN ANSWERS, as /settlement serves them after a 2% donor lost:
+test('after settlement the page shows where the stake went and the round\'s pool, as the signer nodes say them', async () => {
+  // THE SIGNER NODES' OWN ANSWERS, as /settlement serves them after a 2% donor lost:
   // the hold settled, its amount, and custody's holdSettlement pool.
-  const seatKeys = [b32(0x71), b32(0x72)];
+  const signerNodeKeys = [b32(0x71), b32(0x72)];
   const answers = (over = {}) => async (url) => {
     const u = new URL(url);
     const i = u.port === '1' ? 0 : 1;
-    if (u.pathname === '/identity') return new Response(seatKeys[i], { status: 200 });
+    if (u.pathname === '/identity') return new Response(signerNodeKeys[i], { status: 200 });
     return new Response(JSON.stringify({ entry: 'ee'.repeat(32), hold: 'SETTLED', holdMsat: '96000', poolMsat: '96000',
       finality: 'FINAL', windowClosesAtMs: null, refundHeight: null, ...(over[i] || {}) }), { status: 200 });
   };
   const nodes = ['http://127.0.0.1:1', 'http://127.0.0.1:2'];
-  const settled = await SHIPPED.settlementBy({ entryId: 'ee'.repeat(32), seats: seatKeys, nodes, fetcher: answers() });
+  const settled = await SHIPPED.settlementBy({ entryId: 'ee'.repeat(32), signerNodes: signerNodeKeys, nodes, fetcher: answers() });
   assert.deepEqual([settled.hold, settled.holdMsat, settled.poolMsat, settled.finality], ['SETTLED', 96000n, 96000n, 'FINAL']);
   const made = paintThePage({ round: contractFor([b32(1), b32(2)]), entry: entryOf(2000n), donationPaid: undefined, settlement: settled });
   assert.equal(made['blwp-settled'].textContent, 'Settled: your 96000 msat stake went into the pool · the round\'s pool 96000 msat');
 
-  // SEATS THAT DISAGREE ON THE POOL SHOW NO POOL - the page never picks one.
-  const split = await SHIPPED.settlementBy({ entryId: 'ee'.repeat(32), seats: seatKeys, nodes, fetcher: answers({ 1: { poolMsat: '98000' } }) });
+  // SIGNER NODES THAT DISAGREE ON THE POOL SHOW NO POOL - the page never picks one.
+  const split = await SHIPPED.settlementBy({ entryId: 'ee'.repeat(32), signerNodes: signerNodeKeys, nodes, fetcher: answers({ 1: { poolMsat: '98000' } }) });
   assert.equal(split.poolMsat, null);
   assert.equal(SHIPPED.settledLine(split), 'Settled: your 96000 msat stake went into the pool');
   // AND BEFORE SETTLEMENT: held, with the result's standing; nothing before anyone answered.
-  const held = await SHIPPED.settlementBy({ entryId: 'ee'.repeat(32), seats: seatKeys, nodes,
+  const held = await SHIPPED.settlementBy({ entryId: 'ee'.repeat(32), signerNodes: signerNodeKeys, nodes,
     fetcher: answers({ 0: { hold: 'HELD', poolMsat: null, finality: 'PROVISIONALLY_FINAL' }, 1: { hold: 'HELD', poolMsat: null, finality: 'PROVISIONALLY_FINAL' } }) });
   assert.equal(SHIPPED.settledLine(held), 'Settlement: your 96000 msat stake is held, the result PROVISIONALLY_FINAL');
   assert.equal(SHIPPED.settledLine(undefined), '');
@@ -596,7 +596,7 @@ test('a tab that cannot keep the record does not ask the wallet at all', async (
   } finally { await endpoints.close(); await wallet.close(); }
 });
 
-// ---- the set, from the seats
+// ---- the set, from the signer nodes
 
 const contractFor = (nodes) => ({
   networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH,
@@ -608,29 +608,29 @@ const contractFor = (nodes) => ({
 });
 const signedBytes = (set) => { const body = encodeDonationSetBody(set); const out = new Uint8Array(body.length + 64); out.set(body); out.set(set.signature, body.length); return out; };
 
-test('the page takes the set from every seat of the round, checked under the network\'s Ed25519 authority', async () => {
-  const seats = [];
-  for (let i = 0; i < 2; i++) seats.push(await serve(openStore(':memory:'), { port: 0, funded: () => true, now: () => NOW, donationSets: [SET] }));
+test('the page takes the set from every signer node of the round, checked under the network\'s Ed25519 authority', async () => {
+  const signerNodes = [];
+  for (let i = 0; i < 2; i++) signerNodes.push(await serve(openStore(':memory:'), { port: 0, funded: () => true, now: () => NOW, donationSets: [SET] }));
   try {
-    const round = contractFor(seats.map((s) => s.round.pubkey));
-    for (const s of seats) assert.equal((await fetch(`http://127.0.0.1:${s.port}/round`, { method: 'POST', body: encodeRoundContract(round) })).status, 201);
-    const nodes = seats.map((s) => `http://127.0.0.1:${s.port}`);
+    const round = contractFor(signerNodes.map((s) => s.round.pubkey));
+    for (const s of signerNodes) assert.equal((await fetch(`http://127.0.0.1:${s.port}/round`, { method: 'POST', body: encodeRoundContract(round) })).status, 201);
+    const nodes = signerNodes.map((s) => `http://127.0.0.1:${s.port}`);
     const got = await fetchDonationSet({ round, nodes, verifyEd25519 });
     assert.equal(got.ok, true, got.why);
     assert.deepEqual(got.set.recipients, SET.recipients);
     assert.match(donationRecipientsLine(got.set), /66\.67% to http:\/\/127\.0\.0\.1:18777\/lnurlp\/blwp-test-a, 33\.33% to .*blwp-test-b/);
     console.log(`  ${got.why}; ${donationRecipientsLine(got.set)}`);
-  } finally { await Promise.all(seats.map((s) => s.close())); }
+  } finally { await Promise.all(signerNodes.map((s) => s.close())); }
 });
 
-test('a seat missing, a seat serving another set, a forged set, or a set the rotated-away authority signed is refused', async () => {
+test('a signer node missing, a signer node serving another set, a forged set, or a set the rotated-away authority signed is refused', async () => {
   const round = contractFor([b32(1), b32(2)]);
-  const serving = (bySeat, rotations = []) => async (url) => {
+  const serving = (bySignerNode, rotations = []) => async (url) => {
     const u = new URL(url);
-    const seat = u.port;
+    const signerNode = u.port;
     if (u.pathname === '/donation-rotations') return new Response(JSON.stringify({ rotations }), { status: 200 });
-    const bytes = bySeat[seat];
-    return bytes ? new Response(bytes, { status: 200 }) : new Response('this seat holds no signed donation set', { status: 404 });
+    const bytes = bySignerNode[signerNode];
+    return bytes ? new Response(bytes, { status: 200 }) : new Response('this signer node holds no signed donation set', { status: 404 });
   };
   const nodes = ['http://127.0.0.1:1', 'http://127.0.0.1:2'];
   const honest = signedBytes(SET);
@@ -640,7 +640,7 @@ test('a seat missing, a seat serving another set, a forged set, or a set the rot
   assert.match((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({ 1: honest, 2: forged }) })).why, /serve different donation sets/);
   assert.match((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({ 1: forged, 2: forged }) })).why, /not signed by the network's donation authority/);
 
-  // A ROTATION, served by one seat only: the old authority's set is no set once it is in force.
+  // A ROTATION, served by one signer node only: the old authority's set is no set once it is in force.
   const oldKey = ed25519.utils.randomSecretKey();
   const newKey = ed25519.utils.randomSecretKey();
   const recovery = ed25519.utils.randomSecretKey();
@@ -660,9 +660,9 @@ test('a seat missing, a seat serving another set, a forged set, or a set the rot
 // NO DONATION BEFORE THE STAKE IS IN (M3.2 6e, §22A). The donation is part of one
 // wallet commitment, and the fee base and the donation count financially
 // activated entries only. Measured before: the page paid the donation as soon as
-// the seats took the entry - before "Pay the stake" was pressed - so a player
-// seated who never paid the stake, or whose wallet refused it, had donated anyway.
-test('no donation leaves the wallet before the seats hold the stake: uncommitted, the wallet is asked nothing; committed, 1334 + 666', async () => {
+// the signer nodes took the entry - before "Pay the stake" was pressed - so a player
+// joined who never paid the stake, or whose wallet refused it, had donated anyway.
+test('no donation leaves the wallet before the signer nodes hold the stake: uncommitted, the wallet is asked nothing; committed, 1334 + 666', async () => {
   const endpoints = await recipients();
   const wallet = await walletOnARelay();
   const log = spendLog();
@@ -675,7 +675,7 @@ test('no donation leaves the wallet before the seats hold the stake: uncommitted
     const earlyMsat = wallet.asked.map((pr) => decodeBolt11(pr).amountMsat);
     console.log(`  stake not committed: wallet asked ${earlyMsat.length} time(s) for ${earlyMsat.reduce((t, a) => t + a, 0n)} msat, `
       + `recipients invoiced ${endpoints.issued.length}, spent ${log.totalMsat} msat - ${early.why || 'paid'}`);
-    assert.deepEqual([earlyMsat.length, endpoints.issued.length, log.totalMsat], [0, 0, 0n], 'a donation left the wallet before the seats held the stake');
+    assert.deepEqual([earlyMsat.length, endpoints.issued.length, log.totalMsat], [0, 0, 0n], 'a donation left the wallet before the signer nodes held the stake');
     assert.equal(early.ok, false);
     assert.match(early.why, /stake/);
 
@@ -687,10 +687,10 @@ test('no donation leaves the wallet before the seats hold the stake: uncommitted
   } finally { await endpoints.close(); await wallet.close(); }
 });
 
-test('the page asks for the donation only once the seats hold the stake', () => {
+test('the page asks for the donation only once the signer nodes hold the stake', () => {
   const page = readFileSync(PAGE, 'utf8');
-  const at = page.indexOf('c.payDonation(c.seatEntry');
+  const at = page.indexOf('c.payDonation(c.joinedEntry');
   assert.ok(at > 0, 'the page no longer pays the donation through its Client');
-  const guard = page.slice(page.lastIndexOf('if (c && c.seatEntry', at), at);
-  assert.match(guard, /c\.stakeCommitted/, `the page asks for the donation before the seats hold the stake: ${guard.replace(/\s+/g, ' ').slice(0, 200)}`);
+  const guard = page.slice(page.lastIndexOf('if (c && c.joinedEntry', at), at);
+  assert.match(guard, /c\.stakeCommitted/, `the page asks for the donation before the signer nodes hold the stake: ${guard.replace(/\s+/g, ' ').slice(0, 200)}`);
 });

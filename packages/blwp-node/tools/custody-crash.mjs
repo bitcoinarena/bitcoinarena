@@ -149,7 +149,7 @@ async function custodianMidSettle(dbPath, logPath) {
   process.exit(4);
 }
 
-/** The child: seat three players, hold three stakes, then run forever. */
+/** The child: signer node three players, hold three stakes, then run forever. */
 async function custodian(dbPath, logPath) {
   const round = new Round(openStore(dbPath), () => NOW + 1000);
   const rid = round.open(CONTRACT);

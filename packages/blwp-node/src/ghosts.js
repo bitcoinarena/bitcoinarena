@@ -144,7 +144,7 @@ export function ghostForChecked(options) {
 export class Ghosts {
   constructor(round, { randomnessFor = () => undefined, limit = GHOST_SUBSCRIPTIONS, cores = installedCores() } = {}) {
     this.round = round;
-    // THE CORES THIS SEAT INSTALLED (M3 R1): a round's picture is drawn by the core it names, or not at all.
+    // THE CORES THIS SIGNER NODE INSTALLED (M3 R1): a round's picture is drawn by the core it names, or not at all.
     this.cores = cores;
     this.randomnessFor = randomnessFor;
     this.limit = limit;
@@ -217,7 +217,7 @@ export class Ghosts {
     return this.runs.delete(`${hex(roundIdBytes)}:${hex(entryIdBytes)}`);
   }
 
-  /** The core the round names, as this seat's cores.js resolves it (M3 R1) - or none: nothing is pictured. */
+  /** The core the round names, as this signer node's cores.js resolves it (M3 R1) - or none: nothing is pictured. */
   #coreOf(roundIdBytes) {
     const row = this.round.get(roundIdBytes);
     if (!row) return null;

@@ -1,4 +1,4 @@
-// FIVE SEATS, AND ONLY FIVE SEATS, OPEN A STAKE.
+// FIVE SIGNER NODES, AND ONLY FIVE SIGNER NODES, OPEN A STAKE.
 //
 // 23.4: "Settling a loser's HTLC requires reconstructing the preimage from at
 // least 5 preimage shares." Seven daemons, seven real identities, one player
@@ -25,7 +25,7 @@ import { Custody, HELD, SETTLED } from '../src/custody.js';
 import { FORFEIT, DELIVERED } from '../../protocol/src/payout.js';
 import { serve } from '../src/server.js';
 import { feldmanGroup } from '../src/curve.js';
-import { assumeSeated, assumeStakeSeen } from './seating.js';
+import { assumeAssigned, assumeStakeSeen } from './assignment.js';
 import { Preimages, decodeShareAnswer, SEALED_ANSWER_BYTES } from '../src/preimage.js';
 import { dealHandout, encodeHandout } from '../../protocol/src/handout.js';
 import { openShare } from '../../protocol/src/seal.js';
@@ -108,9 +108,9 @@ const contractFor = (nodes) => ({
   nodes,
 });
 
-/** One seat's signed posting of the transcript a result names (P2). */
+/** One signer node's signed posting of the transcript a result names (P2). */
 const postedBy = (who, rid, result) => {
-  const p = { roundId: rid, playerPubkey: result.playerPubkey, transcriptHash: result.transcriptHash, seatPubkey: who.round.pubkey };
+  const p = { roundId: rid, playerPubkey: result.playerPubkey, transcriptHash: result.transcriptHash, signerNodePubkey: who.round.pubkey };
   return joinSignedPosting(encodeTranscriptPosting(p), schnorr.sign(transcriptPostingId(p), who.round.identity.secret));
 };
 
@@ -127,11 +127,11 @@ async function committee(n = 7) {
 
 /**
  * ONE WHOLE ROUND ON ONE DAEMON, ending in a signed result: the player deals a
- * stake to all seven seats, joins, plays, marks, and the round is closed.
+ * stake to all seven signer nodes, joins, plays, marks, and the round is closed.
  */
-async function playedRound(node, c, stake, seats) {
+async function playedRound(node, c, stake, signerNodes) {
   const rid = roundId(c);
-  assumeSeated(node.round, rid, c.nodes);
+  assumeAssigned(node.round, rid, c.nodes);
 
   const entry = {
     roundId: rid, playerPubkey: b32(5), sessionPubkey: ed25519.getPublicKey(session),
@@ -175,12 +175,12 @@ async function playedRound(node, c, stake, seats) {
   assert.equal((await say(joinSigned(encodeCheckpoint(mark), ed25519.sign(mid, session)))).length,
     SIGNED_RECEIPT_BYTES);
 
-  // FIVE OF SEVEN RECEIPTS MAKE IT CANONICAL, from the seats themselves.
-  for (const seat of seats.slice(0, 5)) {
-    if (toHex(seat.round.pubkey) === toHex(node.round.pubkey)) continue;
-    const receipt = { checkpointId: mid, receivedAtMs: 1234n, nodePubkey: seat.round.pubkey };
+  // FIVE OF SEVEN RECEIPTS MAKE IT CANONICAL, from the signer nodes themselves.
+  for (const signerNode of signerNodes.slice(0, 5)) {
+    if (toHex(signerNode.round.pubkey) === toHex(node.round.pubkey)) continue;
+    const receipt = { checkpointId: mid, receivedAtMs: 1234n, nodePubkey: signerNode.round.pubkey };
     assert.equal(await say(joinSignedReceipt(encodeCheckpointReceipt(receipt),
-      schnorr.sign(receiptId(receipt), seat.round.identity.secret))), 'held');
+      schnorr.sign(receiptId(receipt), signerNode.round.identity.secret))), 'held');
   }
 
   assert.equal(await say(`close ${toHex(rid)}`), 'closed');
@@ -193,9 +193,9 @@ async function playedRound(node, c, stake, seats) {
 }
 
 /**
- * EVERY SEAT REPLAYS ITS OWN. A node hands out its share only for a run IT
+ * EVERY SIGNER NODE REPLAYS ITS OWN. A node hands out its share only for a run IT
  * signed a result for - a peer's record is a peer's claim - so a committee
- * where six seats never replayed is a committee of one, and this measurement
+ * where six signer nodes never replayed is a committee of one, and this measurement
  * would be measuring nothing.
  */
 async function everyoneReplays(nodes, stake) {
@@ -225,7 +225,7 @@ async function everyoneReplays(nodes, stake) {
   const posted = [];
   for (const node of nodes) posted.push(...node.round.postings(rid, out.eid));
   for (const node of nodes)
-    for (const p of posted) node.round.putPosting(rid, out.eid, p.seatPubkey, p.bytes);
+    for (const p of posted) node.round.putPosting(rid, out.eid, p.signerNodePubkey, p.bytes);
 
   const outcome = decodePlayerResult(splitSignedResult(
     nodes[0].round.results(rid, out.eid)[0].bytes).body).outcome;
@@ -237,7 +237,7 @@ async function dealTo(nodes, rid) {
   let preimage = rand(32);
   const e = rand(32);
   const dealt = await dealHandout({
-    preimage, seats: nodes.map((n) => n.round.pubkey), roundId: rid,
+    preimage, signerNodes: nodes.map((n) => n.round.pubkey), roundId: rid,
     playerPubkey: b32(5), ephemeralSecret: e, ephemeralPubkey: schnorr.getPublicKey(e),
     coefficients, curve: feldmanGroup,
   });
@@ -281,7 +281,7 @@ test('one node alone opens nothing, four refuse by name, five reconstruct', asyn
     assert.deepEqual(sha256(five.preimage), stake.stakeCommitment,
       'the reconstruction does not hash to the entry\'s own commitment');
 
-    // AND IT STOPS AT FIVE. Asking a sixth seat for a secret five already
+    // AND IT STOPS AT FIVE. Asking a sixth signer node for a secret five already
     // opened is spreading it for nothing.
     const all = await new Preimages(asker.round, {
       curve: feldmanGroup, peers: peersOf(6), fetcher: (u) => fetch(u), random: rand,
@@ -290,7 +290,7 @@ test('one node alone opens nothing, four refuse by name, five reconstruct', asyn
   } finally { for (const n of nodes) await n.close(); }
 });
 
-test('a stranger asking for a share is refused, and a seat gets an envelope only it can open', async () => {
+test('a stranger asking for a share is refused, and a signer node gets an envelope only it can open', async () => {
   const nodes = await committee(7);
   try {
     const c = contractFor(nodes.map((n) => n.round.pubkey));
@@ -299,18 +299,18 @@ test('a stranger asking for a share is refused, and a seat gets an envelope only
     const { eid } = await everyoneReplays(nodes, stake);
     const answerer = nodes[1];
 
-    const ask = (seat) => fetch(`http://127.0.0.1:${answerer.port}/share`
-      + `?round=${toHex(rid)}&entry=${toHex(eid)}&seat=${toHex(seat)}`);
+    const ask = (signerNode) => fetch(`http://127.0.0.1:${answerer.port}/share`
+      + `?round=${toHex(rid)}&entry=${toHex(eid)}&signer node=${toHex(signerNode)}`);
 
-    // A KEY THAT IS NOT A SEAT.
+    // A KEY THAT IS NOT A SIGNER NODE.
     const stranger = schnorr.getPublicKey(rand(32));
     const refused = await ask(stranger);
     assert.equal(refused.status, 409);
-    assert.match(await refused.text(), /not a seat of this round, and a share is not a public thing/);
+    assert.match(await refused.text(), /not a signer node of this round, and a share is not a public thing/);
 
-    // A SEAT'S KEY, CLAIMED BY SOMEBODY WHO HAS NOT GOT IT. The answer comes -
-    // and it is sealed to that seat, so the claimant holds an envelope it
-    // cannot open. That, with the seat check, is why no signature is needed.
+    // A SIGNER NODE'S KEY, CLAIMED BY SOMEBODY WHO HAS NOT GOT IT. The answer comes -
+    // and it is sealed to that signer node, so the claimant holds an envelope it
+    // cannot open. That, with the signer node check, is why no signature is needed.
     const got = await ask(answerer.round.pubkey);
     const bytes = new Uint8Array(await got.arrayBuffer());
     assert.equal(got.status, 200, new TextDecoder().decode(bytes));
@@ -318,18 +318,18 @@ test('a stranger asking for a share is refused, and a seat gets an envelope only
     const back = decodeShareAnswer(bytes);
 
     const impostor = await openShare({
-      sealed: back.sealed, seat: back.seat, secret: rand(32),
+      sealed: back.sealed, signerNode: back.signerNode, secret: rand(32),
       ephemeralPubkey: back.ephemeralPubkey, curve: feldmanGroup,
     });
     assert.equal(impostor.ok, false);
     assert.match(impostor.why, /sealed to somebody else/);
 
     const rightful = await openShare({
-      sealed: back.sealed, seat: back.seat, secret: answerer.round.identity.secret,
+      sealed: back.sealed, signerNode: back.signerNode, secret: answerer.round.identity.secret,
       ephemeralPubkey: back.ephemeralPubkey, curve: feldmanGroup,
     });
     assert.equal(rightful.ok, true, rightful.why);
-    assert.equal(rightful.share.seat, back.seat);
+    assert.equal(rightful.share.signerNode, back.signerNode);
   } finally { for (const n of nodes) await n.close(); }
 });
 
@@ -338,24 +338,24 @@ test('a delivered run never gives up its preimage, and neither does one that is 
   try {
     const stake = await dealTo(nodes, roundId(contractFor(nodes.map((n) => n.round.pubkey))));
     const { rid, eid } = await everyoneReplays(nodes, stake);
-    const ask = (node, seat) => fetch(`http://127.0.0.1:${node.port}/share`
-      + `?round=${toHex(rid)}&entry=${toHex(eid)}&seat=${toHex(seat)}`);
+    const ask = (node, signerNode) => fetch(`http://127.0.0.1:${node.port}/share`
+      + `?round=${toHex(rid)}&entry=${toHex(eid)}&signer node=${toHex(signerNode)}`);
 
-    // It answers while the run is the FAILED one every seat agreed on.
+    // It answers while the run is the FAILED one every signer node agreed on.
     assert.equal((await ask(nodes[1], nodes[0].round.pubkey)).status, 200);
 
     // NOW A RUN WHOSE RESULTS SAY DELIVERED. A second entry in the same round,
-    // and every seat's result for it says the player got through. The outcome
-    // is not computed here - what is under test is what a seat DOES with the
+    // and every signer node's result for it says the player got through. The outcome
+    // is not computed here - what is under test is what a signer node DOES with the
     // word - and 23.2 cancels a delivered stake, so its preimage must never
     // leave: releasing it would let anyone settle an invoice that has to go
     // back to its player.
-    // A ROUND OF ITS OWN, because every seat's round above is closed and a
+    // A ROUND OF ITS OWN, because every signer node's round above is closed and a
     // closed round takes no new entries.
     const holder = nodes[6];
     const other = { ...contractFor(nodes.map((n) => n.round.pubkey)), configHash: TRUCK_CONFIG_HASH, slashMinimumServed: 21 };
     const orid = holder.round.open(other);
-    assumeSeated(holder.round, orid, other.nodes);
+    assumeAssigned(holder.round, orid, other.nodes);
 
     const winner = {
       roundId: orid, playerPubkey: b32(6), sessionPubkey: ed25519.getPublicKey(session),
@@ -384,7 +384,7 @@ test('a delivered run never gives up its preimage, and neither does one that is 
     assert.match(may.why, /that run is DELIVERED/);
     assert.match(may.why, /would let anyone settle an invoice that has to go back to its player/);
 
-    // AND A RUN NOBODY AGREED ON. Four of seven seats signed the same FAILED
+    // AND A RUN NOBODY AGREED ON. Four of seven signer nodes signed the same FAILED
     // run, which is one short - and one short is not a threshold, so no share
     // moves and the stake goes home on its own timelock.
     const undecided = { ...winner, playerPubkey: b32(7), stakeCommitment: sha256(b32(0x78)) };
@@ -406,10 +406,10 @@ test('a delivered run never gives up its preimage, and neither does one that is 
   } finally { for (const n of nodes) await n.close(); }
 });
 
-test('a hold settles on a preimage five seats opened, and on nothing less', async () => {
+test('a hold settles on a preimage five signer nodes opened, and on nothing less', async () => {
   // (d) The hold path is unchanged and still follows the core's outcome word.
   // What changed is where the 32 bytes come from: no file, no injection - five
-  // seats, or the stake stays in flight.
+  // signer nodes, or the stake stays in flight.
   const nodes = await committee(7);
   const port = fakePort();
   try {
@@ -458,12 +458,12 @@ test('a hold settles on a preimage five seats opened, and on nothing less', asyn
     const settled = port.calls.filter((c) => c[0] === 'settle');
     assert.equal(settled.length, 1);
     assert.deepEqual(settled[0][2], stake.preimage,
-      'the bytes that went to Lightning are not the ones five seats opened');
+      'the bytes that went to Lightning are not the ones five signer nodes opened');
     assert.deepEqual(sha256(settled[0][2]), entry.stakeCommitment);
   } finally { for (const n of nodes) await n.close(); }
 });
 
-test('with four seats reachable the loser\'s stake stays in flight', async () => {
+test('with four signer nodes reachable the loser\'s stake stays in flight', async () => {
   const nodes = await committee(7);
   const port = fakePort();
   try {
@@ -506,7 +506,7 @@ test('a player who committed to one secret and dealt another opens nothing', asy
   // DECISION B, MEASURED. Feldman proves the dealer cut ONE polynomial; it
   // cannot prove that the polynomial's constant term is the preimage of the
   // hash the entry publishes, because the commitment is a group element and
-  // the hash is not. So the lie is caught HERE, at reconstruction: five seats
+  // the hash is not. So the lie is caught HERE, at reconstruction: five signer nodes
   // open it, sha256 is not the entry's stakeCommitment, nothing settles, the
   // hold expires and the player is refunded. The cheat gains nothing, and it
   // needs no proof system.
@@ -528,13 +528,13 @@ test('a player who committed to one secret and dealt another opens nothing', asy
     }).open({ roundId: rid, entryId: eid });
 
     assert.equal(opened.ok, false, 'a stake opened to something the entry does not name');
-    assert.equal(opened.held, 5, 'the seats did answer; the shares are consistent');
+    assert.equal(opened.held, 5, 'the signer nodes did answer; the shares are consistent');
     assert.match(opened.why, /those shares do not open that stake/);
     assert.match(opened.why, /not the committed preimage/);
   } finally { for (const n of nodes) await n.close(); }
 });
 
-test('a seat that never replayed the run hands over nothing', async () => {
+test('a signer node that never replayed the run hands over nothing', async () => {
   // A node releases its share for a run IT signed a result for. A peer's
   // record is a peer's claim, and acting on somebody else's word about what a
   // run came to is how a committee becomes one node with six echoes.
@@ -546,7 +546,7 @@ test('a seat that never replayed the run hands over nothing', async () => {
     const quiet = nodes[6];
     const c = { ...contractFor(nodes.map((n) => n.round.pubkey)), configHash: TRUCK_CONFIG_HASH, slashMinimumServed: 22 };
     const orid = quiet.round.open(c);
-    assumeSeated(quiet.round, orid, c.nodes);
+    assumeAssigned(quiet.round, orid, c.nodes);
     const entry = {
       roundId: orid, playerPubkey: b32(8), sessionPubkey: ed25519.getPublicKey(session),
       stakeCommitment: sha256(b32(0x7a)), stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n),
@@ -555,7 +555,7 @@ test('a seat that never replayed the run hands over nothing', async () => {
     const wid = entryId(entry);
     quiet.round.enter(entry);
 
-    // EVERY OTHER SEAT SIGNED, and this one did not.
+    // EVERY OTHER SIGNER NODE SIGNED, and this one did not.
     const shape = decodePlayerResult(splitSignedResult(
       nodes[0].round.results(rid, eid)[0].bytes).body);
     for (const who of nodes.slice(0, 6)) {

@@ -1,5 +1,5 @@
 // THE COMMITTEE SEED COMES FROM RANDOMNESS THE ROUND'S CREATOR COULD NOT HAVE
-// HAD, AND EVERY NODE GIVEN THE SAME VALUE REACHES THE SAME SEAT LIST.
+// HAD, AND EVERY NODE GIVEN THE SAME VALUE REACHES THE SAME SIGNER NODE LIST.
 //
 // Section 5A.5 makes the seed H(census roots || round_id || round_randomness)
 // with round_randomness "a public randomness beacon value that DOES NOT EXIST
@@ -86,7 +86,7 @@ test('two nodes given the same published hash reach the same seed', () => {
 
 /**
  * AND THE SAME SEED SELECTS THE SAME COMMITTEE. The seed is only worth
- * anything because the seat list follows from it.
+ * anything because the signer node list follows from it.
  */
 test('one seed selects one committee, and a different beacon selects another', () => {
   const entries = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => ({

@@ -12,7 +12,7 @@ using UnityEngine.TestTools;
 /// `ground - Renderer.bounds.min.y`, and `bounds` is axis-aligned in WORLD
 /// space: a spinning wheel is reported inside a taller box every frame
 /// without one vertex having moved. Measured on the daily, thirteen driving
-/// samples: the box's half-height ran 0.539..0.763 m against a seated radius
+/// samples: the box's half-height ran 0.539..0.763 m against a resting radius
 /// of 0.523 m, and the "bury" ran 0.016..0.240 m - equal to `half-height -
 /// 0.523` to within a millimetre in every one of them, while the mesh's own
 /// local extents never left 0.415, 0.680, 0.680. The bury WAS the box.
@@ -28,17 +28,17 @@ using UnityEngine.TestTools;
 /// browser was photographing is the model under test here. What cannot be
 /// done in either place is read its vertices - `isReadable` is false on a
 /// streamed mesh and turning Read/Write on was ruled out - so the reading is
-/// `WheelSeating.Tyre`, the mesh's CENTRE against the height it is seated at.
+/// `WheelResting.Tyre`, the mesh's CENTRE against the height it is resting at.
 /// That is exact rather than approximate for a wheel whose two cross-axle
 /// extents are equal, which the log says this one's are: 0.680 and 0.680.
 ///
-/// PlayMode, and the seating is driven directly, for the same reason
-/// `MushroomSeatingTests` drives the cloud: `PoseWheels` only runs while the
+/// PlayMode, and the resting is driven directly, for the same reason
+/// `MushroomRestingTests` drives the cloud: `PoseWheels` only runs while the
 /// core is driving, and in an editor `BlwpCore` is a stub that will never
 /// drive anything. The steer, the speed and the frame time are the core's
 /// three numbers, handed in.
 /// </summary>
-public class WheelSeatingTests
+public class WheelRestingTests
 {
     [TearDown] public void ClearTheWorld() => TestWorld.TearDown();
 
@@ -71,7 +71,7 @@ public class WheelSeatingTests
     {
         // ONE WORLD, and it is this fixture's. Other fixtures leave theirs
         // standing, and `FindFirstObjectByType` then hands over a LEFTOVER
-        // truck - seated by a leftover road network whose terrain has since
+        // truck - resting by a leftover road network whose terrain has since
         // been destroyed, so its `Ground` answers 0 while its ribbons still
         // hold the mesh they were built with. That is not a fault in the road:
         // it went red at 2.98 m over a road that is fine, in the full suite
@@ -94,7 +94,7 @@ public class WheelSeatingTests
 
         // What `Start` does when a core answers. PhysX poses the wheel meshes
         // off its own colliders otherwise, and two owners of one transform
-        // measure each other rather than the seating.
+        // measure each other rather than the resting.
         _rig.externallyDriven = true;
 
         // The streamed truck arrives a little after the world is built. Wait
@@ -206,11 +206,11 @@ public class WheelSeatingTests
     /// Rolls for `frames` at a road speed, which is what spins the wheels.
     ///
     /// The frame is let go of FIRST and the wheels posed after, so that when
-    /// this returns the seating was computed from the truck's CURRENT pose and
+    /// this returns the resting was computed from the truck's CURRENT pose and
     /// nothing has moved since. The other order failed by 0.295 m: PhysX is
-    /// still settling the body, so a wheel seated last frame is read against a
+    /// still settling the body, so a wheel resting last frame is read against a
     /// ground the truck has since dropped towards - which measures the
-    /// suspension, not the seating. The game has the same property and does
+    /// suspension, not the resting. The game has the same property and does
     /// not have the problem: it poses and reads inside one `Update`.
     /// </summary>
     IEnumerator Roll(int frames, float steer, float speed)
@@ -250,12 +250,12 @@ public class WheelSeatingTests
             int read = 0;
             for (int i = 0; i < _driver.Wheels.Count; i++)
             {
-                if (!_driver.SeatingOf(i, out var seat)) continue;
+                if (!_driver.RestingOf(i, out var resting)) continue;
                 read++;
-                Assert.AreEqual(0f, seat.Tyre, 0.01f,
+                Assert.AreEqual(0f, resting.Tyre, 0.01f,
                     $"round {round}: wheel {i} ({_driver.Wheels[i].name}) is "
-                    + $"{seat.Tyre:F3} m into the road. ground {seat.Ground:F3}, "
-                    + $"radius {seat.Radius:F3}, mesh centre {seat.CentreY:F3}");
+                    + $"{resting.Tyre:F3} m into the road. ground {resting.Ground:F3}, "
+                    + $"radius {resting.Radius:F3}, mesh centre {resting.CentreY:F3}");
             }
             Assert.Greater(read, 0, $"round {round} read no wheels at all");
         }
@@ -266,7 +266,7 @@ public class WheelSeatingTests
     ///
     /// While the wheel turns, `ground - bounds.min.y` reports a bury and the
     /// tyre is on the road. If that ever stops being true - a probe rewritten
-    /// to trust `bounds` again, or a seating that starts following the box -
+    /// to trust `bounds` again, or a resting that starts following the box -
     /// this is the test that says which of the two numbers moved.
     /// </summary>
     [UnityTest]
@@ -280,9 +280,9 @@ public class WheelSeatingTests
             yield return Roll(1, 0f, 9f);
             for (int i = 0; i < _driver.Wheels.Count; i++)
             {
-                if (!_driver.SeatingOf(i, out var seat)) continue;
-                worstBox = Mathf.Max(worstBox, seat.Box);
-                worstTyre = Mathf.Max(worstTyre, Mathf.Abs(seat.Tyre));
+                if (!_driver.RestingOf(i, out var resting)) continue;
+                worstBox = Mathf.Max(worstBox, resting.Box);
+                worstTyre = Mathf.Max(worstTyre, Mathf.Abs(resting.Tyre));
             }
         }
 
@@ -294,14 +294,14 @@ public class WheelSeatingTests
     }
 
     /// <summary>
-    /// THE ROAD IS DRAWN WHERE THINGS ARE SEATED ON IT.
+    /// THE ROAD IS DRAWN WHERE THINGS ARE RESTING ON IT.
     ///
     /// `RoadNetwork` says so itself, in a comment that ends "whether that is
     /// the gap in the photograph is a measurement, not an argument":
     /// `SurfaceHeight` gives the truck the deck lift IN FULL, and the ribbon
     /// mesh lays its vertices at `lift - broken * 0.55` on one edge and
     /// `lift - broken * 0.55 + broken * 0.25` on the other. A worn stretch is
-    /// therefore drawn BELOW the height everything standing on it is seated
+    /// therefore drawn BELOW the height everything standing on it is resting
     /// at, and the tyre floats over the rut by that difference.
     ///
     /// The measurement is taken against the ribbon's OWN vertices rather than
@@ -310,23 +310,23 @@ public class WheelSeatingTests
     /// has no triangles, so nothing is drawn there to stand on.
     /// </summary>
     [UnityTest]
-    public IEnumerator TheRoadIsDrawnWhereThingsAreSeatedOnIt()
+    public IEnumerator TheRoadIsDrawnWhereThingsAreRestingOnIt()
     {
         yield return Rig();
 
-        // The network the TRUCK is seated by, not whichever one the scene
+        // The network the TRUCK is resting by, not whichever one the scene
         // hands over first. The full suite leaves earlier worlds standing, and
         // a road network whose terrain has since been destroyed answers 0 for
         // the ground while still holding the ribbon it built when the terrain
         // was there: 2.34 m of disagreement about a road that is fine.
         var roads = _driver.roads;
-        Assert.IsNotNull(roads, "the truck is not seated by any road network");
+        Assert.IsNotNull(roads, "the truck is not resting by any road network");
 
         // And it is a LIVE network. A destroyed terrain answers 0 for the
         // ground under every ribbon it still holds, which reads as metres of
         // disagreement about a road nobody has touched.
         Assert.IsNotNull(roads.terrain,
-            "the road network the truck is seated by has lost its terrain, so "
+            "the road network the truck is resting by has lost its terrain, so "
             + "its ground is 0 and nothing measured against it means anything");
 
         // LET THE RIBBON CATCH UP FIRST. The ground comes from a live fetch and
@@ -349,7 +349,7 @@ public class WheelSeatingTests
         // The terrain is not the only thing moving under the road: the
         // frontline moves every frame and the lanes bend around it, while
         // `RoadNetwork.Update` rebuilds at most every 0.25 s. Between two
-        // rebuilds the seated centreline has walked on and the ribbon still
+        // rebuilds the resting centreline has walked on and the ribbon still
         // holds the old one, and at (82.4, -24.1), where a lane bends hardest,
         // that showed as -2.34 m - the same number and the same place on every
         // run it appeared, about one run in three, while the rule it is testing
@@ -404,12 +404,12 @@ public class WheelSeatingTests
         if (Mathf.Abs(worst) > 0.02f)
             Debug.Log($"[road] worst {worst:F3} m at ({where.x:F1}, {where.z:F1}); "
                       + $"lane {(roads.Model.LaneAt(where.x, where.z, RoadModel.HalfWidth + RoadNetwork.Shoulder).HasValue ? roads.Model.LaneAt(where.x, where.z, RoadModel.HalfWidth + RoadNetwork.Shoulder).Value.ToString() : "NONE")}, "
-                      + $"seated {roads.SurfaceHeight(where.x, where.z):F3}, drawn {where.y:F3}, "
+                      + $"resting {roads.SurfaceHeight(where.x, where.z):F3}, drawn {where.y:F3}, "
                       + $"bare {roads.Ground(where.x, where.z):F3}, lift {roads.Lift(where.x, where.z):F3}, "
                       + $"wear {roads.WearAt(where.x, where.z):F3}");
 
         Assert.Less(Mathf.Abs(worst), 0.02f,
-            $"a wheel seated on the road stands {worst:F3} m above the ribbon "
+            $"a wheel resting on the road stands {worst:F3} m above the ribbon "
             + $"that is drawn there, at ({where.x:F1}, {where.z:F1}). "
             + $"{checkedPairs} drawn cross-sections checked");
     }
@@ -418,8 +418,8 @@ public class WheelSeatingTests
     /// THE TYRE TURNS ONCE PER CIRCUMFERENCE OF THE TYRE.
     ///
     /// The spin was advanced on the WheelCollider's 0.550 m while every
-    /// seating line used the mesh's 0.523 m - the same leftover 3bd4208 took
-    /// out of the seating and left behind in the rolling. A wheel that rolls
+    /// resting line used the mesh's 0.523 m - the same leftover 3bd4208 took
+    /// out of the resting and left behind in the rolling. A wheel that rolls
     /// on a radius 5.2% larger than the one it is drawn as turns that much
     /// too slowly, and slips against the road for the whole drive.
     ///
@@ -435,14 +435,14 @@ public class WheelSeatingTests
         yield return NewRound(1);
         yield return Roll(1, 0f, 0f);
 
-        Assert.IsTrue(_driver.SeatingOf(0, out var seat), "no wheel 0");
+        Assert.IsTrue(_driver.RestingOf(0, out var resting), "no wheel 0");
         var wheel = _driver.Wheels[0];
 
         // Without this the test is vacuous, and it silently was: the stand-in
         // was 0.550 m, the collider is 0.550 m, and both radii turn the wheel
         // through the same angle.
-        Assert.Greater(Mathf.Abs(seat.Radius - _driver.WheelRadius), 0.02f,
-            $"the mesh ({seat.Radius:F3} m) and the collider "
+        Assert.Greater(Mathf.Abs(resting.Radius - _driver.WheelRadius), 0.02f,
+            $"the mesh ({resting.Radius:F3} m) and the collider "
             + $"({_driver.WheelRadius:F3} m) are the same size here, so this "
             + "test cannot tell which of them the wheel rolls on");
 
@@ -458,10 +458,10 @@ public class WheelSeatingTests
         }
 
         float ground = Speed * Dt * Frames;
-        float wanted = ground / seat.Radius * Mathf.Rad2Deg;
+        float wanted = ground / resting.Radius * Mathf.Rad2Deg;
         Assert.AreEqual(wanted, turned, 6f,
             $"{ground:F2} m of road turned the wheel {turned:F0} deg, and a "
-            + $"{seat.Radius:F3} m tyre covering it turns {wanted:F0} deg. "
+            + $"{resting.Radius:F3} m tyre covering it turns {wanted:F0} deg. "
             + $"Rolling radius {_driver.RollRadius:F3} m, collider "
             + $"{_driver.WheelRadius:F3} m");
     }
@@ -470,7 +470,7 @@ public class WheelSeatingTests
     /// THE TRUCK IS THE SAME SIZE WHICHEVER WAY IT IS POINTING.
     ///
     /// Found by the fixture above rather than looked for: over eight rounds
-    /// on eight headings the same wheel was seated on 0.503, 0.488, 0.486,
+    /// on eight headings the same wheel was resting on 0.503, 0.488, 0.486,
     /// 0.493, 0.507 and 0.518 m, and the rounds differ by nothing except the
     /// truck's heading. `NormaliseTruckModel` sizes the streamed model by
     /// `6.4 / max(worldBounds.size.x, worldBounds.size.z)`, and those are
@@ -499,13 +499,13 @@ public class WheelSeatingTests
             yield return NewRound(1, model);
             yield return Roll(3, 0f, 0f);
 
-            Assert.IsTrue(_driver.SeatingOf(0, out var seat), $"{heading} deg: no wheel 0");
-            if (float.IsNaN(first)) first = seat.Radius;
-            worst = Mathf.Max(worst, Mathf.Abs(seat.Radius - first));
+            Assert.IsTrue(_driver.RestingOf(0, out var resting), $"{heading} deg: no wheel 0");
+            if (float.IsNaN(first)) first = resting.Radius;
+            worst = Mathf.Max(worst, Mathf.Abs(resting.Radius - first));
 
-            Assert.AreEqual(first, seat.Radius, 0.005f,
+            Assert.AreEqual(first, resting.Radius, 0.005f,
                 $"the truck streamed in at {heading} deg is a different size than at "
-                + $"0 deg: wheel radius {seat.Radius:F3} m against {first:F3} m");
+                + $"0 deg: wheel radius {resting.Radius:F3} m against {first:F3} m");
         }
         Assert.Less(worst, 0.005f, $"worst spread {worst:F3} m");
     }
@@ -528,7 +528,7 @@ public class WheelSeatingTests
             yield return NewRound(round);
             yield return Roll(5, 0f, 4f);
 
-            Assert.IsTrue(_driver.SeatingOf(0, out var seat), $"round {round}: no wheel 0");
+            Assert.IsTrue(_driver.RestingOf(0, out var resting), $"round {round}: no wheel 0");
 
             // WHICH WHEEL, not just which radius. The streamed truck can
             // arrive in the middle of a run - `Rig` waits 240 frames and the
@@ -539,12 +539,12 @@ public class WheelSeatingTests
             // about the second thing. So the baseline is taken again when the
             // wheel itself changes, and the comparison stays honest.
             string now = _driver.Wheels[0].name;
-            if (measured == null || now != measured) { measured = now; first = seat.Radius; }
+            if (measured == null || now != measured) { measured = now; first = resting.Radius; }
 
-            Assert.Greater(seat.Radius, 0.1f,
-                $"round {round}: a wheel seated on {seat.Radius:F3} m is not a wheel");
-            Assert.AreEqual(first, seat.Radius, 0.001f,
-                $"round {round} re-collected {measured} at {seat.Radius:F3} m, where the "
+            Assert.Greater(resting.Radius, 0.1f,
+                $"round {round}: a wheel resting on {resting.Radius:F3} m is not a wheel");
+            Assert.AreEqual(first, resting.Radius, 0.001f,
+                $"round {round} re-collected {measured} at {resting.Radius:F3} m, where the "
                 + $"same wheel first measured {first:F3} m");
         }
     }

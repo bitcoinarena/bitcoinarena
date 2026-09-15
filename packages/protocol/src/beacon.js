@@ -17,7 +17,7 @@
 // because nothing was overwritten."
 //
 // So the ordering is the security property, not the hashing. Two nodes given
-// the same published value must reach the same seat list, and a value the
+// the same published value must reach the same signer node list, and a value the
 // creator could have known when they chose their round must not be usable at
 // all. The first is arithmetic; the second is evidence, and evidence is what
 // this file asks the caller for and refuses to assume.
@@ -108,7 +108,7 @@ export function beaconIsAfterRound(contract, { height, timeMs } = {}) {
   // the born rule itself. Anything else is a
   // SECOND randomness source, and a second source is a second committee: a
   // creator who could fall back to a beacon of their own choosing would pick
-  // the one that seats their nodes, which is 5A.5's whole attack with an extra
+  // the one that signer nodes their nodes, which is 5A.5's whole attack with an extra
   // step.
   //
   // The field does not encode, so a foreign fallback cannot arrive over the
@@ -203,7 +203,7 @@ export function medianTimePast(headers, firstHeight, at) {
  * with the block hash itself, which this function does not change. But a
  * source is not a selection: two honest nodes
  * polling at different moments would take different tips, derive different
- * seeds and seat different committees. This is the missing half.
+ * seeds and signer node different committees. This is the missing half.
  *
  * THE HEIGHT IS DERIVED, NEVER NAMED. It is not on the contract, not on the
  * entry and not an argument: an author who names the height picks the block,
@@ -222,7 +222,7 @@ export function medianTimePast(headers, firstHeight, at) {
  *
  * AND DEEP ENOUGH, by the round's own `censusConfirmations` rather than a
  * second knob. A hash one block deep can be reorged out, and a reorg that
- * changes the seed changes who sits. Too shallow is refused - not seated on,
+ * changes the seed changes who sits. Too shallow is refused - not assigned on,
  * not closed on, not invented around.
  */
 export function beaconFromChain(contract, view) {
@@ -275,7 +275,7 @@ export function beaconFromChain(contract, view) {
   // node whose view began at 103 named block 112 - of the same chain, for the
   // same round. "The first block in THIS VIEW after committee_time" is not
   // "the first block after committee_time" unless the view starts before that
-  // instant, and two honest nodes with different windows would have seated
+  // instant, and two honest nodes with different windows would have joined
   // different committees, which is the whole property this rule exists for.
   //
   // So: if the EARLIEST median this view can compute is already after

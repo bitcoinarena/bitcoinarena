@@ -106,7 +106,7 @@ test('a person opens the printed URL twice and the two tabs are on one round', a
       const secret = ed25519.utils.randomSecretKey();
       const sessionPubkey = ed25519.getPublicKey(secret);
       const player = playerFor(named.round, { seed: tabSeed({ storage: storage(), random }), curve: feldmanGroup });
-      const seat = entryFor(named.round, { seed: player.seed, curve: feldmanGroup, random });
+      const signerNode = entryFor(named.round, { seed: player.seed, curve: feldmanGroup, random });
 
       // EXACTLY WHAT THE JSLIB HANDS OVER, including the round id the player
       // was given - the door refuses a contract that does not hash to it.
@@ -124,7 +124,7 @@ test('a person opens the printed URL twice and the two tabs are on one round', a
 
       const rid = await client.openRound(named.round);
       assert.equal(toHex(rid), round.id, which + ': the node named a different round');
-      const entry = { ...seat, roundId: rid, sessionPubkey };
+      const entry = { ...signerNode, roundId: rid, sessionPubkey };
       const eid = await client.join(entry);
       await client.connect();
       client.setRound({ roundId: rid, entryId: eid, blockTicks: named.round.blockTicks | 0 });
@@ -202,7 +202,7 @@ test('a tab that has not driven is still shown the truck that is driving', async
       const secret = ed25519.utils.randomSecretKey();
       const sessionPubkey = ed25519.getPublicKey(secret);
       const player = playerFor(named.round, { seed: tabSeed({ storage: storage(), random }), curve: feldmanGroup });
-      const seat = entryFor(named.round, { seed: player.seed, curve: feldmanGroup, random });
+      const signerNode = entryFor(named.round, { seed: player.seed, curve: feldmanGroup, random });
       const client = await Client.at({
         headers: named.chain.headers, bonds: named.chain.bonds,
         signedAdvert: fromHexHere(named.advert.signedAdvert),
@@ -213,7 +213,7 @@ test('a tab that has not driven is still shown the truck that is driving', async
         verify, contract: named.round, roundIdGiven: fromHexHere(round.id),
       });
       const rid = await client.openRound(named.round);
-      const entry = { ...seat, roundId: rid, sessionPubkey };
+      const entry = { ...signerNode, roundId: rid, sessionPubkey };
       const eid = await client.join(entry);
       await client.connect();
       client.setRound({ roundId: rid, entryId: eid, blockTicks: named.round.blockTicks | 0 });
@@ -280,7 +280,7 @@ test('a renderer that drains one picture a frame keeps getting the driver\'s new
       const secret = ed25519.utils.randomSecretKey();
       const sessionPubkey = ed25519.getPublicKey(secret);
       const player = playerFor(named.round, { seed: tabSeed({ storage: storage(), random }), curve: feldmanGroup });
-      const seat = entryFor(named.round, { seed: player.seed, curve: feldmanGroup, random });
+      const signerNode = entryFor(named.round, { seed: player.seed, curve: feldmanGroup, random });
       const client = await Client.at({
         headers: named.chain.headers, bonds: named.chain.bonds,
         signedAdvert: fromHexHere(named.advert.signedAdvert),
@@ -291,7 +291,7 @@ test('a renderer that drains one picture a frame keeps getting the driver\'s new
         verify, contract: named.round, roundIdGiven: fromHexHere(round.id),
       });
       const rid = await client.openRound(named.round);
-      const entry = { ...seat, roundId: rid, sessionPubkey };
+      const entry = { ...signerNode, roundId: rid, sessionPubkey };
       const eid = await client.join(entry);
       await client.connect();
       client.setRound({ roundId: rid, entryId: eid, blockTicks: named.round.blockTicks | 0 });
@@ -420,7 +420,7 @@ test('the shipped bridge writes the driver\'s entry and pose in the twelve ints 
       const secret = ed25519.utils.randomSecretKey();
       const sessionPubkey = ed25519.getPublicKey(secret);
       const player = playerFor(named.round, { seed: tabSeed({ storage: storage(), random }), curve: feldmanGroup });
-      const seat = entryFor(named.round, { seed: player.seed, curve: feldmanGroup, random });
+      const signerNode = entryFor(named.round, { seed: player.seed, curve: feldmanGroup, random });
       const client = await Client.at({
         headers: named.chain.headers, bonds: named.chain.bonds,
         signedAdvert: fromHexHere(named.advert.signedAdvert),
@@ -431,7 +431,7 @@ test('the shipped bridge writes the driver\'s entry and pose in the twelve ints 
         verify, contract: named.round, roundIdGiven: fromHexHere(round.id),
       });
       const rid = await client.openRound(named.round);
-      const entry = { ...seat, roundId: rid, sessionPubkey };
+      const entry = { ...signerNode, roundId: rid, sessionPubkey };
       const eid = await client.join(entry);
       await client.connect();
       client.setRound({ roundId: rid, entryId: eid, blockTicks: named.round.blockTicks | 0 });

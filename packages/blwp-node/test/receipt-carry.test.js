@@ -12,7 +12,7 @@
 // one to: a losing player who withheld them would reach no-quorum and a VOID
 // refund, which 13C says a player cannot manufacture. So each daemon PULLS its
 // peers' receipts at the close, and every record goes through `takeReceipt`
-// unchanged - the mark held here, the signer seated, the signature verified.
+// unchanged - the mark held here, the signer joined, the signature verified.
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { PLANTED_FIRST_MARK_DEADLINE } from './planted-marks.js';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -28,7 +28,7 @@ import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { Round } from '../src/round.js';
 import { Roster } from '../src/roster.js';
-import { assumeSeated } from './seating.js';
+import { assumeAssigned } from './assignment.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import {
   encodeRoundContract, decodeRoundContract, roundId, encodeEntryContract, entryId,
@@ -110,7 +110,7 @@ async function played() {
   const signedMark = joinSigned(encodeCheckpoint(mark), ed25519.sign(checkpointId(mark), session));
   for (const d of [a, b]) {
     await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
-    assumeSeated(d.round, rid, c.nodes);
+    assumeAssigned(d.round, rid, c.nodes);
     await fetch(`http://127.0.0.1:${d.port}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
     assert.equal(await say(d.port, encodeInputBatch(input)), String(TICKS));
     const receipt = await say(d.port, signedMark);
@@ -158,7 +158,7 @@ test('each daemon pulls its peer\'s receipts at the close, and the run is replay
 
 test('a peer serving a forged receipt or a stranger\'s adds nothing, and a peer that is down is named and does not stop the other', async () => {
   const w = await played();
-  // THE BAD PEER: one record of garbage, one well-signed by a key the round never seated.
+  // THE BAD PEER: one record of garbage, one well-signed by a key the round never assigned.
   const stranger = schnorr.utils.randomSecretKey();
   const theirs = { checkpointId: checkpointId(w.mark), receivedAtMs: 1n, nodePubkey: schnorr.getPublicKey(stranger) };
   const strangers = joinSignedReceipt(encodeCheckpointReceipt(theirs), schnorr.sign(receiptId(theirs), stranger));
@@ -189,7 +189,7 @@ test('a peer serving a forged receipt or a stranger\'s adds nothing, and a peer 
 });
 
 // THE CENSUS'S OWN ADDRESSES, when the operator gave none - the same record
-// seat selection reads, the signed advertisement in each bond.
+// signer node selection reads, the signed advertisement in each bond.
 const HEIGHT = 900000;
 const TIP = HEIGHT + 10;
 const FROM = HEIGHT - 20;
@@ -207,7 +207,7 @@ const chainWith = (bonds, contract) => {
   const blocks = [];
   for (let h = FROM; h <= TIP; h++) blocks.push({ transactions: h === FROM ? bonds : [] });
   // AND THE ROUND'S PUBLICATION, well below any beacon (5A.5, v4.6.2): a node
-  // seats only a round its own chain shows published before the beacon block.
+  // signer nodes only a round its own chain shows published before the beacon block.
   if (contract) blocks[1] = { transactions: [publicationOf(contract)] };
   return chainOf(blocks, FROM);
 };
@@ -249,11 +249,11 @@ test('with no peers given, a daemon\'s verifier takes the round\'s committee end
     try {
       const rid = again.round.open(c);
       const roster = new Roster(again.round, { chainFor: () => published, randomnessFor: () => beacon });
-      const seated = roster.seatRound(rid);
-      assert.equal(seated.ok, true, seated.why);
+      const assigned = roster.assignSignerNodes(rid);
+      assert.equal(assigned.ok, true, assigned.why);
       assert.equal(typeof again.verifier.peersOf, 'function', 'the verifier has no per-round peer list');
       assert.deepEqual(again.verifier.peersOf(rid), [`http://127.0.0.1:${b.port}`],
-        'the verifier did not take the other seat\'s endpoint from the census');
+        'the verifier did not take the other signer node\'s endpoint from the census');
       again.verifier.peers = ['http://operator-given:1'];
       assert.deepEqual(again.verifier.peersOf(rid), ['http://operator-given:1'], 'a given peers list was replaced');
     } finally { await again.close(); }

@@ -1,4 +1,4 @@
-// FIVE SEATS, AND ONLY FIVE SEATS, CAN OPEN A STAKE.
+// FIVE SIGNER NODES, AND ONLY FIVE SIGNER NODES, CAN OPEN A STAKE.
 //
 // 23.4: "Settling a loser's HTLC requires reconstructing the preimage from at
 // least 5 preimage shares." Everything that sentence needs existed before this
@@ -6,15 +6,15 @@
 // the one thing that ever produced 32 bytes for a settle handed them over
 // directly. This is what asks.
 //
-// WHY IT IS A DOOR AND NOT A TABLE LOOKUP. Each seat holds ONE share, sealed
+// WHY IT IS A DOOR AND NOT A TABLE LOOKUP. Each signer node holds ONE share, sealed
 // to its own key, and never writes the opened value down. So reconstruction is
-// a conversation: a seat opens its own, asks the others, and stops the moment
+// a conversation: a signer node opens its own, asks the others, and stops the moment
 // it has five. A node that could do it alone would be the custody this letter
 // exists to end.
 //
 // TWO CONDITIONS ON ANSWERING, AND THEY ARE THE WHOLE SAFETY OF IT:
 //
-//   the asker is a seat   `round.seats` is the census's list, not the
+//   the asker is a signer node   `round.signer nodes` is the census's list, not the
 //                         contract's, so a stranger cannot make itself one by
 //                         asking
 //   the run settles       FINAL, and an outcome 23.2 settles. A DELIVERED run
@@ -24,7 +24,7 @@
 //
 // AND THE ANSWER IS SEALED TO THE ASKER, with a fresh one-time key, exactly as
 // the handout was. The two checks together are what makes this sound without a
-// signature: claiming another seat's key gets you an envelope only that seat
+// signature: claiming another signer node's key gets you an envelope only that signer node
 // can open, and not claiming one gets you refused.
 import { reconstruct, SHARES_NEEDED } from '../../protocol/src/shares.js';
 import { openMyShare, decodeHandout } from '../../protocol/src/handout.js';
@@ -37,13 +37,13 @@ import { FINAL } from '../../protocol/src/objection.js';
 import { decodeRoundContract, decodeEntryContract } from '../../protocol/src/contracts.js';
 import { toHex } from '../../protocol/src/hash.js';
 
-/** seat u16, the answering node's one-time key, and the share sealed to the asker. */
+/** signer node u16, the answering node's one-time key, and the share sealed to the asker. */
 export const SEALED_ANSWER_BYTES = 2 + 32 + 48;
 
-export const encodeShareAnswer = ({ seat, ephemeralPubkey, sealed }) => {
+export const encodeShareAnswer = ({ signerNode, ephemeralPubkey, sealed }) => {
   const out = new Uint8Array(SEALED_ANSWER_BYTES);
-  out[0] = (seat >> 8) & 0xff;
-  out[1] = seat & 0xff;
+  out[0] = (signerNode >> 8) & 0xff;
+  out[1] = signerNode & 0xff;
   out.set(ephemeralPubkey, 2);
   out.set(sealed, 34);
   return out;
@@ -53,7 +53,7 @@ export function decodeShareAnswer(bytes) {
   if (!(bytes instanceof Uint8Array) || bytes.length !== SEALED_ANSWER_BYTES)
     throw new Error(`a sealed share answer is ${SEALED_ANSWER_BYTES} bytes`);
   return {
-    seat: (bytes[0] << 8) | bytes[1],
+    signerNode: (bytes[0] << 8) | bytes[1],
     ephemeralPubkey: bytes.subarray(2, 34),
     sealed: bytes.subarray(34),
   };
@@ -64,7 +64,7 @@ export class Preimages {
     this.round = round;
     this.curve = curve;
     this.peers = peers;
-    // THE ROUND'S OWN SETTLEMENT SEATS, when the operator named none - the
+    // THE ROUND'S OWN SETTLEMENT SIGNER NODES, when the operator named none - the
     // census's addresses, as the receipt pull reads them. Measured before: the
     // loser's settle said "1 of 5 shares" with no peer in the reason, because
     // the real launchers pass no `peers` and this asked nobody.
@@ -83,7 +83,7 @@ export class Preimages {
   /** The handout an entry names, decoded, or a refusal that says which is missing. */
   handoutOf(entryIdBytes) {
     const stored = this.round.entry(entryIdBytes);
-    if (!stored) return { ok: false, why: 'this node seated no such entry' };
+    if (!stored) return { ok: false, why: 'this node holds no such entry' };
     const entry = decodeEntryContract(stored);
     if (!entry.vssSharesRef || entry.vssSharesRef.every((b) => b === 0))
       return { ok: false, why: 'that entry published no shares, so there is nothing to reconstruct' };
@@ -107,7 +107,7 @@ export class Preimages {
   }
 
   /**
-   * MAY THIS NODE HAND ITS SHARE TO A SEAT? 23.4's conditions, and no others.
+   * MAY THIS NODE HAND ITS SHARE TO A SIGNER NODE? 23.4's conditions, and no others.
    *
    * The outcome is the CORE'S, read off the result this node signed, and what
    * it means is `payout.js`'s table rather than a comparison written here.
@@ -117,23 +117,23 @@ export class Preimages {
     if (!row) return { ok: false, why: 'no such round' };
     const held = this.round.results(roundIdBytes, entryIdBytes);
     // A NO-QUORUM FORFEIT (§13C; M3.3-34, ruled 2026-09-13, path 3): no run was
-    // carried, so there is no result to read - this seat's own no-quorum record,
+    // carried, so there is no result to read - this signer node's own no-quorum record,
     // written only after the result window with the player's equivocation
     // proven, says FORFEIT, and a FORFEIT settles its hold into the pool (23.2).
     // Measured before: "this node has replayed nothing for that run" at both
-    // seats, so the hold could never settle and expired to the player.
+    // signer nodes, so the hold could never settle and expired to the player.
     // A PROOF OF TWO FIRST MARKS HELD HERE RELEASES FIRST - even over a result
-    // this seat signed before it held the proof: §13B forfeits the entry whatever
-    // run was signed. Measured before on 5 of 7: seats that had signed FAILED
+    // this signer node signed before it held the proof: §13B forfeits the entry whatever
+    // run was signed. Measured before on 5 of 7: signer nodes that had signed FAILED
     // (never final) refused, too few shares opened, the hold expired to the player.
     if (typeof this.round.provenTwoFirstMarks === 'function' && this.round.provenTwoFirstMarks(roundIdBytes, entryIdBytes))
       return { ok: true, outcome: 'FORFEIT', proven: true };
     const nq = !held.length && typeof this.round.noQuorum === 'function' ? this.round.noQuorum(entryIdBytes) : null;
     if (nq && nq.outcome === 'FORFEIT') return { ok: true, outcome: 'FORFEIT', noQuorum: true };
-    // AND ON A PROOF THIS SEAT HOLDS ITSELF (M3.3-34, a seat that stays down):
+    // AND ON A PROOF THIS SIGNER NODE HOLDS ITSELF (M3.3-34, a signer node that stays down):
     // two different first marks signed by the entry's own session key - §13B's
     // portable proof, which forfeits with no quorum, no replay and no window.
-    // Released while the seats are up, so a seat that goes down later cannot
+    // Released while the signer nodes are up, so a signer node that goes down later cannot
     // hand the stake back by staying down. Measured before: A held the proof,
     // B went down, "1 of 2 shares" - the hold stayed in flight to expire back.
     if (!held.length && typeof this.round.provenTwoFirstMarks === 'function'
@@ -143,7 +143,7 @@ export class Preimages {
     // FINAL, NOT MERELY AGREED (M3.3-32): the threshold makes a run
     // PROVISIONALLY_FINAL, and a share handed out inside the objection window
     // settles a stake an objection could still have kept - measured, a seven
-    // seat run gave its share up before its window closed.
+    // signer node run gave its share up before its window closed.
     const standing = resultFinality(this.round, roundIdBytes, entryIdBytes);
     if (standing.state !== FINAL)
       return { ok: false, state: standing.state,
@@ -172,17 +172,17 @@ export class Preimages {
   }
 
   /**
-   * ANSWER ONE SEAT, sealed to that seat.
+   * ANSWER ONE SIGNER NODE, sealed to that signer node.
    *
    * A fresh one-time key per answer, so two askers never share a secret and
-   * the same share handed to two seats is two different envelopes.
+   * the same share handed to two signer nodes is two different envelopes.
    */
   async answer({ roundId, entryId, asker }) {
     if (!(asker instanceof Uint8Array) || asker.length !== 32)
-      return { ok: false, why: 'a share is asked for by a seat, and that is not a key' };
-    const seats = this.round.seats(roundId).map(toHex);
-    if (!seats.includes(toHex(asker)))
-      return { ok: false, why: 'that key is not a seat of this round, and a share is not a public thing' };
+      return { ok: false, why: 'a share is asked for by a signer node, and that is not a key' };
+    const signerNodes = this.round.signerNodes(roundId).map(toHex);
+    if (!signerNodes.includes(toHex(asker)))
+      return { ok: false, why: 'that key is not a signer node of this round, and a share is not a public thing' };
 
     const may = this.mayRelease(roundId, entryId);
     if (!may.ok) return may;
@@ -192,12 +192,12 @@ export class Preimages {
 
     const ephemeralSecret = this.random(32);
     const sealed = await sealShare({
-      value: mine.share.value, seat: mine.share.seat, seatPubkey: asker,
+      value: mine.share.value, signerNode: mine.share.signerNode, signerNodePubkey: asker,
       ephemeralSecret, curve: this.curve,
     });
     return {
       ok: true,
-      answer: { seat: mine.share.seat, ephemeralPubkey: this.curve.pointX(ephemeralSecret), sealed },
+      answer: { signerNode: mine.share.signerNode, ephemeralPubkey: this.curve.pointX(ephemeralSecret), sealed },
     };
   }
 
@@ -205,76 +205,76 @@ export class Preimages {
    * THE 32 BYTES, OR A REFUSAL THAT SAYS HOW MANY SHORT IT WAS.
    *
    * Own share first, then the peers, and it STOPS at the threshold: asking a
-   * sixth seat for a secret five already reconstructed is spreading it for
+   * sixth signer node for a secret five already reconstructed is spreading it for
    * nothing.
    */
   async open({ roundId, entryId, needed = SHARES_NEEDED }) {
     const found = this.handoutOf(entryId);
     if (!found.ok) return found;
 
-    const bySeat = new Map();
+    const bySignerNode = new Map();
     const mine = await this.mine(entryId);
-    if (mine.ok) bySeat.set(mine.share.seat, mine.share);
+    if (mine.ok) bySignerNode.set(mine.share.signerNode, mine.share);
 
-    // THE ENVELOPES OTHER SEATS SEALED TO THIS ONE, KEPT (M3.3-34): opened here
-    // as they are opened from a peer, so a seat that released its share and then
+    // THE ENVELOPES OTHER SIGNER NODES SEALED TO THIS ONE, KEPT (M3.3-34): opened here
+    // as they are opened from a peer, so a signer node that released its share and then
     // went down cannot hand the stake back by staying down.
     const kept = typeof this.round.heldShares === 'function' ? this.round.heldShares(entryId) : [];
     for (const raw of kept) {
-      if (bySeat.size >= needed) break;
+      if (bySignerNode.size >= needed) break;
       try {
         const back = decodeShareAnswer(raw);
-        if (bySeat.has(back.seat)) continue;
+        if (bySignerNode.has(back.signerNode)) continue;
         const opened = await openShare({
-          sealed: back.sealed, seat: back.seat, secret: this.round.identity.secret,
+          sealed: back.sealed, signerNode: back.signerNode, secret: this.round.identity.secret,
           ephemeralPubkey: back.ephemeralPubkey, curve: this.curve,
         });
-        if (opened.ok) bySeat.set(back.seat, { seat: back.seat, value: opened.share.value });
-      } catch { /* not an envelope this seat can open */ }
+        if (opened.ok) bySignerNode.set(back.signerNode, { signerNode: back.signerNode, value: opened.share.value });
+      } catch { /* not an envelope this signer node can open */ }
     }
 
     let refused = 0;
     const why = [];
     for (const peer of this.peersOf(roundId)) {
-      if (bySeat.size >= needed) break;
+      if (bySignerNode.size >= needed) break;
       try {
-        // `proof=1`: this seat holds the proof of two first marks - the asked seat
+        // `proof=1`: this signer node holds the proof of two first marks - the asked signer node
         // pulls and checks it itself before it refuses (never on this word alone).
         const proven = typeof this.round.provenTwoFirstMarks === 'function' && this.round.provenTwoFirstMarks(roundId, entryId);
         const url = `${peer}/share?round=${toHex(roundId)}&entry=${toHex(entryId)}`
-          + `&seat=${toHex(this.round.pubkey)}${proven ? '&proof=1' : ''}`;
+          + `&signer node=${toHex(this.round.pubkey)}${proven ? '&proof=1' : ''}`;
         const got = await this.fetch(url);
         if (!got.ok) { refused++; why.push(`${peer}: ${await got.text()}`); continue; }
         const raw = new Uint8Array(await got.arrayBuffer());
         const back = decodeShareAnswer(raw);
         const opened = await openShare({
-          sealed: back.sealed, seat: back.seat, secret: this.round.identity.secret,
+          sealed: back.sealed, signerNode: back.signerNode, secret: this.round.identity.secret,
           ephemeralPubkey: back.ephemeralPubkey, curve: this.curve,
         });
         if (!opened.ok) { refused++; why.push(`${peer}: ${opened.why}`); continue; }
-        bySeat.set(back.seat, { seat: back.seat, value: opened.share.value });
-        if (typeof this.round.putHeldShare === 'function') this.round.putHeldShare({ entryId, seat: back.seat, bytes: raw });
+        bySignerNode.set(back.signerNode, { signerNode: back.signerNode, value: opened.share.value });
+        if (typeof this.round.putHeldShare === 'function') this.round.putHeldShare({ entryId, signerNode: back.signerNode, bytes: raw });
       } catch (e) { refused++; why.push(`${peer}: ${e.message}`); }
     }
 
-    if (bySeat.size < needed)
+    if (bySignerNode.size < needed)
       return {
-        ok: false, held: bySeat.size, refused,
-        why: `${bySeat.size} of ${needed} shares: a stake nobody can open stays in flight`
+        ok: false, held: bySignerNode.size, refused,
+        why: `${bySignerNode.size} of ${needed} shares: a stake nobody can open stays in flight`
           + (why.length ? ` (${why.join('; ')})` : ''),
       };
 
     // AND IT HAS TO BE THE PREIMAGE THE ENTRY NAMES. A dealer who committed to
-    // one secret and hashed another is caught HERE - five seats open it, the
+    // one secret and hashed another is caught HERE - five signer nodes open it, the
     // hash does not match, and nothing settles. The hold expires and the
     // player is refunded, so the cheat gains nothing and needs no proof system.
     let preimage;
     try {
-      preimage = reconstruct([...bySeat.values()].slice(0, needed),
+      preimage = reconstruct([...bySignerNode.values()].slice(0, needed),
         { needed, stakeCommitment: found.entry.stakeCommitment });
     } catch (e) {
-      return { ok: false, held: bySeat.size, why: `those shares do not open that stake: ${e.message}` };
+      return { ok: false, held: bySignerNode.size, why: `those shares do not open that stake: ${e.message}` };
     }
-    return { ok: true, preimage, held: bySeat.size, seats: [...bySeat.keys()] };
+    return { ok: true, preimage, held: bySignerNode.size, signerNodes: [...bySignerNode.keys()] };
   }
 }

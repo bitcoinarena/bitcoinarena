@@ -1,6 +1,6 @@
 // THE OBJECTION WINDOW'S DAEMONS AND PLAYERS, shared by objection-window.test.js
-// (M3.3-32) and publication-finality.test.js (P2): two seats that settle on a
-// paid fake Lightning, and one daemon on a seven-seat round whose other six
+// (M3.3-32) and publication-finality.test.js (P2): two signer nodes that settle on a
+// paid fake Lightning, and one daemon on a seven-signer node round whose other six
 // keys the test holds. Moved here unchanged, except that a contract can name
 // publication relays.
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
@@ -20,7 +20,7 @@ import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { HELD, SETTLED, CANCELLED } from '../src/custody.js';
 import { feldmanGroup } from '../src/curve.js';
-import { assumeSeated, assumeStakeSeen } from './seating.js';
+import { assumeAssigned, assumeStakeSeen } from './assignment.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
 import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
@@ -100,13 +100,13 @@ export const say = (port, message) => new Promise((resolve, reject) => {
 
 export const secretScalar = () => { let p = rand(32); while (scalarFrom32(p) >= FIELD) p = rand(32); return p; };
 
-/** One player's stake dealt at `needed` to every seat, seated, paid and played on `daemons`. */
-export async function seatAndPlay(daemons, c, rid, who, needed, { direct = false, donationMsat = 0n } = {}) {
+/** One player's stake dealt at `needed` to every signer node, joined, paid and played on `daemons`. */
+export async function joinAndPlay(daemons, c, rid, who, needed, { direct = false, donationMsat = 0n } = {}) {
   const session = ed25519.utils.randomSecretKey();
   const preimage = secretScalar();
   const e = rand(32);
   const dealt = await dealHandout({
-    preimage, seats: c.nodes, roundId: rid, playerPubkey: who.key,
+    preimage, signerNodes: c.nodes, roundId: rid, playerPubkey: who.key,
     ephemeralSecret: e, ephemeralPubkey: feldmanGroup.pointX(e),
     coefficients: Array.from({ length: needed - 1 }, () => scalarFrom32(rand(32)) % FIELD),
     needed, curve: feldmanGroup,
@@ -130,14 +130,14 @@ export async function seatAndPlay(daemons, c, rid, who, needed, { direct = false
     const took = await fetch(`http://127.0.0.1:${d.port}/handout`, { method: 'POST', body: encodeHandout(dealt.handout) });
     assert.equal(took.status, 201, `${who.name}'s handout: ${await took.text()}`);
     if (direct) {
-      // SEATED BEFORE THE RELAY RULE: the door refuses a stake in a paying
+      // JOINED BEFORE THE RELAY RULE: the door refuses a stake in a paying
       // round naming no relay now, so a test about one kept from before stores
       // the entry, and the stake it saw, the way they were kept.
       d.round.enter(entry);
       assumeStakeSeen(d.round, entry);
     } else {
-      const seated = await fetch(`http://127.0.0.1:${d.port}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
-      assert.equal(seated.status, 201, `${who.name}'s entry: ${await seated.text()}`);
+      const joined = await fetch(`http://127.0.0.1:${d.port}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
+      assert.equal(joined.status, 201, `${who.name}'s entry: ${await joined.text()}`);
       const quote = await fetch(`http://127.0.0.1:${d.port}/invoice?entry=${toHex(eid)}`);
       assert.equal(quote.status, 200, `${who.name}'s invoice: ${await quote.text()}`);
       // SEEN THE WAY A PAGE SEES IT: `GET /stake` asks the node's own Lightning,
@@ -153,13 +153,13 @@ export async function seatAndPlay(daemons, c, rid, who, needed, { direct = false
 
 export const opts = { funded: () => true, randomnessFor: () => BEACON, preflight: async () => ({ ready: true, why: 'test port' }) };
 /**
- * ONE DAEMON ON A SEVEN-SEAT ROUND, the other six seats' keys this test holds.
+ * ONE DAEMON ON A SEVEN-SIGNER NODE ROUND, the other six signer nodes' keys this test holds.
  * Two losers play on it and it signs its own result for each; then `sign` has
- * five of the other seats sign - the same run it did, or a rewritten one - and
+ * five of the other signer nodes sign - the same run it did, or a rewritten one - and
  * the run is PROVISIONALLY_FINAL on it.
  */
-export async function sevenSeats(windowMs, relays, { storedBeforeTheRule = false, finality = null, play = {} } = {}) {
-  // EVERY SEAT'S ADVERTISEMENT, as a census would give it: each names its own
+export async function sevenSignerNodes(windowMs, relays, { storedBeforeTheRule = false, finality = null, play = {} } = {}) {
+  // EVERY SIGNER NODE'S ADVERTISEMENT, as a census would give it: each names its own
   // bond outpoint, which a slash proof must name (5A.3B). Filled once the keys exist.
   const adverts = new Map();
   const holder = await serve(openStore(':memory:'), {
@@ -175,13 +175,13 @@ export async function sevenSeats(windowMs, relays, { storedBeforeTheRule = false
     // one stored before that rule stores it the way such a round was kept.
     if (storedBeforeTheRule) holder.round.open(c);
     else await fetch(`http://127.0.0.1:${holder.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
-    assumeSeated(holder.round, rid, c.nodes);
+    assumeAssigned(holder.round, rid, c.nodes);
     const runs = {};
     for (const [name, key] of [['agrees', 5], ['dissents', 6]]) {
       // `play` names who plays a run instead of the loser - a run that stops while
       // still LIVE, for one (M3.3-34 walk-away step 7).
-      runs[name] = await seatAndPlay([holder], c, rid, { ...(play[name] || LOSER), name, key: b32(key) }, 5, { direct: storedBeforeTheRule });
-      // FIVE OF SEVEN RECEIPTS MAKE THE TRANSCRIPT CANONICAL: its own and four seats'.
+      runs[name] = await joinAndPlay([holder], c, rid, { ...(play[name] || LOSER), name, key: b32(key) }, 5, { direct: storedBeforeTheRule });
+      // FIVE OF SEVEN RECEIPTS MAKE THE TRANSCRIPT CANONICAL: its own and four signer nodes'.
       for (const secret of others.slice(0, 4)) {
         const receipt = { checkpointId: runs[name].mid, receivedAtMs: 1234n, nodePubkey: schnorr.getPublicKey(secret) };
         assert.equal(await say(holder.port, joinSignedReceipt(encodeCheckpointReceipt(receipt),
@@ -192,7 +192,7 @@ export async function sevenSeats(windowMs, relays, { storedBeforeTheRule = false
     for (const p of holder.verifier.done) await p;
     await holder.verifier.settling;
 
-    // SEATS SAYING THEY POSTED THE RUN'S TRANSCRIPT (P2): the first `count` of
+    // SIGNER NODES SAYING THEY POSTED THE RUN'S TRANSCRIPT (P2): the first `count` of
     // the other six, about the transcript the holder's own result names unless
     // `over` says otherwise. A result is FINAL only once five of these agree.
     const post = (name, count = 5, over = {}, keys = others) => {
@@ -201,8 +201,8 @@ export async function sevenSeats(windowMs, relays, { storedBeforeTheRule = false
       const shape = decodePlayerResult(splitSignedResult(mine.bytes).body);
       for (const secret of keys.slice(0, count)) {
         const p = { roundId: rid, playerPubkey: shape.playerPubkey, transcriptHash: shape.transcriptHash,
-          seatPubkey: schnorr.getPublicKey(secret), ...over };
-        holder.round.putPosting(rid, eid, p.seatPubkey,
+          signerNodePubkey: schnorr.getPublicKey(secret), ...over };
+        holder.round.putPosting(rid, eid, p.signerNodePubkey,
           joinSignedPosting(encodeTranscriptPosting(p), schnorr.sign(transcriptPostingId(p), secret)));
       }
     };
@@ -221,7 +221,7 @@ export async function sevenSeats(windowMs, relays, { storedBeforeTheRule = false
       }
       if (posted) post(name);
     };
-    // OTHER SEATS' RE-RUNS OF A SUSPENDED RESULT (13A): the first `count` of the
+    // OTHER SIGNER NODES' RE-RUNS OF A SUSPENDED RESULT (13A): the first `count` of the
     // six re-run the holder's own replay - the same run - unless `over` says
     // otherwise, each tied to the run the five signed (or `contradicted`).
     const rerunBy = (name, count, { keys = others, over = {}, contradicted = runs[name].contradicted } = {}) => {

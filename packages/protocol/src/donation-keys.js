@@ -1,6 +1,6 @@
 /**
  * THE DONATION AUTHORITY AND RECOVERY KEYS, BY THE NETWORK ID A ROUND CONTRACT
- * CARRIES (M3.2 6e, §27A.4). A seat and a page know a round's network by its
+ * CARRIES (M3.2 6e, §27A.4). A signer node and a page know a round's network by its
  * id, not by a name; a network with no generated donation authority answers
  * null. Its own module, reading only genesis-ids.js, so the page bundle can use
  * it without genesis.js (which reads the core's game rules).

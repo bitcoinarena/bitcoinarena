@@ -68,7 +68,7 @@ try {
       groupPublicKey: toHex(dealt.groupPublicKey), shares: dealt.shares.map((s) => ({ id: s.id, share: s.share.toString(16) })),
       refundSecret: toHex(refundSecret), refundX: toHex(schnorr.getPublicKey(refundSecret)), poolScript: toHex(pool.script),
     });
-    out({ ok: true, poolX: toHex(dealt.groupPublicKey.subarray(1)), poolScript: toHex(pool.script), seats: dealt.shares.length });
+    out({ ok: true, poolX: toHex(dealt.groupPublicKey.subarray(1)), poolScript: toHex(pool.script), signerNodes: dealt.shares.length });
   } else if (act === 'swap') {
     const s = load(file);
     const [hash, height] = [fromHex(a[0]), Number(a[1])];
@@ -100,18 +100,18 @@ try {
     if (isClaim) {
       const ids = a[4].split(',').map(Number);
       const gk = fromHex(s.groupPublicKey);
-      const seats = s.shares.filter((x) => ids.includes(x.id)).map((x) => {
+      const signerNodes = s.shares.filter((x) => ids.includes(x.id)).map((x) => {
         const share = BigInt('0x' + x.share);
         const hiding = nonceGenerate340(rand(32), share);
         const binding = nonceGenerate340(rand(32), share);
         return { id: x.id, share, hiding, binding, commitment: { id: x.id, hiding: feldmanGroup.pointFromScalar(hiding), binding: feldmanGroup.pointFromScalar(binding) } };
       });
-      const cs = seats.map((x) => x.commitment);
+      const cs = signerNodes.map((x) => x.commitment);
       signature = aggregate340({
         commitments: cs, message, groupPublicKey: gk, curve: feldmanGroup,
-        shares: seats.map((x) => signShare340({ id: x.id, share: x.share, groupPublicKey: gk, nonces: { hiding: x.hiding, binding: x.binding }, message, commitments: cs, curve: feldmanGroup })),
+        shares: signerNodes.map((x) => signShare340({ id: x.id, share: x.share, groupPublicKey: gk, nonces: { hiding: x.hiding, binding: x.binding }, message, commitments: cs, curve: feldmanGroup })),
       }).signature;
-      signedBy = `${seats.length} of ${s.shares.length}`;
+      signedBy = `${signerNodes.length} of ${s.shares.length}`;
     } else {
       signature = schnorr.sign(message, fromHex(s.refundSecret), rand(32));
       signedBy = 'the operator\'s refund key';

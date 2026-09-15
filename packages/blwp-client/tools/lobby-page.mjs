@@ -2,7 +2,7 @@
 // A TOOL, not a test: it wants a built page, a headless Chrome and the regtest
 // bitcoind lobby-regtest.sh stands up. Nothing here reaches Lightning.
 //
-// The Daily's own 2-of-2 (`standUpRound`: bonded seats, a census, each round
+// The Daily's own 2-of-2 (`standUpRound`: bonded signer nodes, a census, each round
 // published under its beacon block), stake 0, and the tool's opener keeping a
 // free round joinable. Then, as two players would:
 //   tab 1 opens the LOBBY link - nodes, bond, advert, NO round - and is shown
@@ -99,7 +99,7 @@ const STATE = `(() => {
     lobbyShown: f(() => { const l = document.getElementById('blwp-lobby'); return !!l && getComputedStyle(l).display !== 'none'; }),
     round: f(() => (window.BLWP_ROUND ? hex(BLWPCLIENT.roundId(window.BLWP_ROUND)) : null)),
     // The page's BLWP_ENTRY is entryFor's fields - no round id or session key -
-    // so the tab is named by its player key and the seat is found at the nodes.
+    // so the tab is named by its player key and the signer node is found at the nodes.
     player: f(() => { const e = window.BLWP_ENTRY; return e && e.playerPubkey ? hex(e.playerPubkey) : null; }),
     unity: f(() => !!window.unityInstance),
     deposit: f(() => window.BLWP_DEPOSIT || null),
@@ -120,7 +120,7 @@ const stateOf = async (b) => {
 const until = async (b, ms, done) => { let s = {}; for (let t = Date.now(); Date.now() - t < ms; await wait(500)) { s = await stateOf(b); if (done(s)) break; } return s; };
 const listed = async (base) => { try { return (await (await fetch(`${base}/rounds`)).json()).rounds; } catch (e) { return `? ${e.message}`; } };
 const freeOpen = (rows) => (Array.isArray(rows) ? rows.filter((r) => r.free && r.phase === 'open') : []);
-const seatedIn = (x) => typeof x.player === 'string' && /^[0-9a-f]{64}$/.test(x.player) && x.unity === true;
+const joinedIn = (x) => typeof x.player === 'string' && /^[0-9a-f]{64}$/.test(x.player) && x.unity === true;
 
 const page = await servePage(env.BUILD, { host: '127.0.0.1', port: 0 });
 const pageUrl = `http://127.0.0.1:${page.port}`;
@@ -139,7 +139,7 @@ const ONE_NAME = 'Night Hauler 7';   // tab 1's own name, saved in its lobby
 let idTwoNamed = null;
 let code = 0;
 try {
-  const seats = [round.a, round.b];
+  const signerNodes = [round.a, round.b];
   say({ step: 'nodes list', a: freeOpen(await listed(round.nodes[0])).map((r) => r.id.slice(0, 16)),
     b: freeOpen(await listed(round.nodes[1])).map((r) => r.id.slice(0, 16)) });
 
@@ -191,7 +191,7 @@ try {
   say({ step: 'tab 2 keeps its generated name', name: TWO_NAME, custom: idTwo && idTwo.custom,
     isDisplayNameOfIdentityKey: !!(idTwo && TWO_NAME === displayNameFromKey(fromHex(idTwo.pubkey)) && idTwo.name === TWO_NAME) });
   const pressed2 = await pressJoin(two, target.id);
-  const joined = await Promise.all([one, two].map((b) => until(b, 200000, (x) => seatedIn(x) || x.pageError)));
+  const joined = await Promise.all([one, two].map((b) => until(b, 200000, (x) => joinedIn(x) || x.pageError)));
   await one.shot(`${P}/joined-tab1.png`);
   say({ step: 'joined', pressed: [pressed1, pressed2], href: joined.map((x) => x.href),
     round: joined.map((x) => (typeof x.round === 'string' ? x.round.slice(0, 16) : x.round)),
@@ -199,7 +199,7 @@ try {
     unity: joined.map((x) => x.unity), walletShown: joined.map((x) => x.walletShown), deposit: joined.map((x) => x.deposit),
     pageError: joined.map((x) => x.pageError), net: joined.map((x) => x.net), threw: joined.map((x) => x.threw || null),
     lobbyShownAfterJoin: joined.map((x) => x.lobbyShown), msSinceStart: Date.now() - t0 });
-  if (!joined.every(seatedIn)) throw new Error('a tab did not come to a seated, loaded game');
+  if (!joined.every(joinedIn)) throw new Error('a tab did not come to a joined, loaded game');
 
   // BOTH PLAY, as a player starts a run: PLAY, AUTO, depart, then throttle.
   for (const b of [one, two]) { await b.click(486, 554); await wait(3000); }
@@ -212,13 +212,13 @@ try {
     s = await stateOf(one);
     if (s.ghosts && s.ghosts.others > 0 && s.ghosts.drawn > 0) { ghostAtMs = Date.now() - drove; break; }
   }
-  // AND KEEP DRIVING, so the seats have marks to receipt: measured, stopping
+  // AND KEEP DRIVING, so the signer nodes have marks to receipt: measured, stopping
   // at the first ghost left 4-11 batches and 0-1 receipts per player.
   await wait(25000);
   for (const b of [one, two]) await b.key('keyUp');
   const ridNow = fromHex(target.id);
   for (let t = Date.now(); Date.now() - t < 20000; await wait(1000)) {
-    const every = seats.every((d) => { const es = d.round.entriesOf(ridNow); return es.length === 2 && es.every((e) => d.round.receipts(ridNow, e.entryId).count > 0); });
+    const every = signerNodes.every((d) => { const es = d.round.entriesOf(ridNow); return es.length === 2 && es.every((e) => d.round.receipts(ridNow, e.entryId).count > 0); });
     if (every) break;
   }
   s = await stateOf(one);
@@ -227,16 +227,16 @@ try {
   await two.shot(`${P}/playing-tab2.png`);
   const s2 = await stateOf(two);
   const rid = fromHex(target.id);
-  const perSeat = await Promise.all(seats.map(async (d) => {
+  const perSignerNode = await Promise.all(signerNodes.map(async (d) => {
     const entries = d.round.entriesOf(rid);
     return {
-      seated: entries.length,
+      joined: entries.length,
       players: d.round.playersOf(rid),
       hold: await Promise.all(entries.map(async (e) => (await d.custody.seenPaid(e.entryId)).state)),
       receipts: entries.map((e) => d.round.receipts(rid, e.entryId).count),
       batches: entries.map((e) => d.round.db.prepare('SELECT COUNT(*) n FROM batches WHERE round_id = ? AND entry_id = ?').get(rid, e.entryId).n),
       // THE HONEST FIRST MARK (ENTRY_VOID's deadline): each player's join tick
-      // and the tick of the first mark this seat stored, as the page sent them.
+      // and the tick of the first mark this signer node stored, as the page sent them.
       joinTick: entries.map((e) => e.entry.joinTick),
       firstMarkTick: entries.map((e) => d.round.db.prepare('SELECT MIN(tick) t FROM checkpoints WHERE round_id = ? AND entry_id = ?').get(rid, e.entryId).t),
       markTicks: entries.map((e) => d.round.db.prepare('SELECT tick FROM checkpoints WHERE round_id = ? AND entry_id = ? ORDER BY tick').all(rid, e.entryId).map((r) => r.tick).slice(0, 8)),
@@ -246,10 +246,10 @@ try {
   say({ step: 'played', ghostsTab1: s.ghosts, ghostsTab2: s2.ghosts, chipTab1: s.chip, chipTab2: s2.chip,
     walletShown: [s.walletShown, s2.walletShown],
     lightningOrWalletRequests: [...new Set(lightning.map((q) => { try { return `${q.method} ${new URL(q.url).pathname}`; } catch { return q.url; } }))],
-    lightningOrWalletRequestCount: lightning.length, seats: perSeat,
+    lightningOrWalletRequestCount: lightning.length, signerNodes: perSignerNode,
     exceptions: [one, two].map((b) => b.logs.filter((l) => l.startsWith('EXCEPTION')).length) });
 
-  // WHAT THE OTHER PLAYER IS SHOWN OF TAB 2'S NAME: tab 1's seated view, then a
+  // WHAT THE OTHER PLAYER IS SHOWN OF TAB 2'S NAME: tab 1's joined view, then a
   // lobby's row for the round - fresh, after the list's own repaint, and after
   // a reload. A key stub of tab 2 in place of the name counts as not shown.
   const twoKeys = [idTwoNamed && idTwoNamed.pubkey, idTwoNamed && idTwoNamed.fingerprint, s2.player]
@@ -276,27 +276,27 @@ try {
     const v = await b.evaluate('JSON.stringify(window.BLWP_NAMES_SAID || null)');
     try { return JSON.parse(v); } catch { return v; }
   }));
-  say({ step: 'names shown to others', tab2Generated: TWO_NAME, tab1Seated: seen(s.chip), tab1SeatedLater: seen(chipLater),
+  say({ step: 'names shown to others', tab2Generated: TWO_NAME, tab1Joined: seen(s.chip), tab1JoinedLater: seen(chipLater),
     lobbyRow: seen(rowFirst), afterRepaint: seen(rowRepaint), afterReload: seen(rowReload),
     // AND A CUSTOM NAME STILL WINS: tab 1's own, as tab 2 and the lobby show it.
-    customOverrides: { name: ONE_NAME, tab2Seated: String(s2.chip || '').includes(ONE_NAME),
-      tab2SeatedLater: String(chipTwoLater || '').includes(ONE_NAME), lobbyRow: String(rowFirst || '').includes(ONE_NAME),
+    customOverrides: { name: ONE_NAME, tab2Joined: String(s2.chip || '').includes(ONE_NAME),
+      tab2JoinedLater: String(chipTwoLater || '').includes(ONE_NAME), lobbyRow: String(rowFirst || '').includes(ONE_NAME),
       afterRepaint: String(rowRepaint || '').includes(ONE_NAME), afterReload: String(rowReload || '').includes(ONE_NAME),
       generatedOfTab1Shown: [s2.chip, rowFirst, rowReload].some((t) => idBefore && String(t || '').includes(idBefore.generated)) },
     exchanged: exchangedOne });
 
-  // 2 OF 2: WITH BOTH SEATS UP A ROW IS JOINABLE; WITH ONE SEAT DOWN IT IS NOT.
-  // Seat B goes away, a fresh lobby is opened, and the round the two tabs
+  // 2 OF 2: WITH BOTH SIGNER NODES UP A ROW IS JOINABLE; WITH ONE SIGNER NODE DOWN IT IS NOT.
+  // Signer node B goes away, a fresh lobby is opened, and the round the two tabs
   // played in (entry still open) must say 1 of 2 and offer no Join. B comes back.
-  const agreedBefore = (Array.isArray(s1.lobby) ? s1.lobby : []).map((r) => `${r.seatsAgree}/${r.needed} ${r.joinable ? 'join' : 'no join'}`);
+  const agreedBefore = (Array.isArray(s1.lobby) ? s1.lobby : []).map((r) => `${r.signerNodesAgree}/${r.needed} ${r.joinable ? 'join' : 'no join'}`);
   await round.b.close();
   const four = await browse(round.lobbyUrl);
   tabs.push(four);
   const s4 = await until(four, 60000, (x) => (Array.isArray(x.lobby) && x.lobby.length > 0) || x.pageError);
-  await four.shot(`${P}/lobby-one-seat.png`);
+  await four.shot(`${P}/lobby-one-signer node.png`);
   await round.restartB();
   say({ step: '2 of 2', bothUp: agreedBefore,
-    bDown: (Array.isArray(s4.lobby) ? s4.lobby : []).map((r) => ({ id: r.id.slice(0, 16), agree: `${r.seatsAgree}/${r.needed}`, join: !!r.join, line: r.line })) });
+    bDown: (Array.isArray(s4.lobby) ? s4.lobby : []).map((r) => ({ id: r.id.slice(0, 16), agree: `${r.signerNodesAgree}/${r.needed}`, join: !!r.join, line: r.line })) });
 
   // AFTER THIS ROUND'S ENTRY CLOSES: the lobby is not empty.
   const closesAt = Number(round.rounds().find((r) => r.id === target.id).entryCloseMs);
@@ -324,7 +324,7 @@ try {
   for (const b of [one, two]) await until(b, 60000, (x) => Array.isArray(x.lobby) && x.lobby.some((r) => r.id === next.id && r.join));
   const idTwoAgain = await identity(two);
   for (const b of [one, two]) await pressJoin(b, next.id);
-  const again = await Promise.all([one, two].map((b) => until(b, 200000, (x) => (seatedIn(x) && x.round === next.id) || x.pageError)));
+  const again = await Promise.all([one, two].map((b) => until(b, 200000, (x) => (joinedIn(x) && x.round === next.id) || x.pageError)));
   // AND BOTH START A RUN, as in the first round: PLAY, AUTO, depart, throttle.
   for (const b of [one, two]) { await b.click(486, 554); await wait(3000); }
   for (const b of [one, two]) { await b.click(303, 617); await wait(1200); await b.click(660, 617); await wait(1500); }
@@ -349,16 +349,16 @@ try {
   await three.shot(`${P}/lobby-round2-names.png`);
   await one.shot(`${P}/round2-tab1.png`);
   say({ step: 'second round, same tabs', round: next.id.slice(0, 16),
-    seated: again.map((x) => seatedIn(x) && x.round === next.id),
+    joined: again.map((x) => joinedIn(x) && x.round === next.id),
     newRoundKeys: again.map((x, i) => typeof x.player === 'string' && x.player !== firstRoundPlayers[i]),
     sameIdentityKey: !!(idTwoAgain && idTwoNamed && idTwoAgain.pubkey === idTwoNamed.pubkey),
     generatedAgain: idTwoAgain && idTwoAgain.generated, sameGenerated: !!(idTwoAgain && idTwoAgain.generated === TWO_NAME),
-    namesAfterMs, tab1Seated: seen(chips[0]), lobbyRow: seen(row2),
-    customOverrides: { tab2Seated: String(chips[1] || '').includes(ONE_NAME), lobbyRow: String(row2 || '').includes(ONE_NAME) },
+    namesAfterMs, tab1Joined: seen(chips[0]), lobbyRow: seen(row2),
+    customOverrides: { tab2Joined: String(chips[1] || '').includes(ONE_NAME), lobbyRow: String(row2 || '').includes(ONE_NAME) },
     exchanged });
 
-  // THE CUSTOM NAME IS ON NO SEAT'S ENTRY, BATCH, MARK OR RESULT: every table of
-  // both seats but lobby_names, every value, searched for the name's bytes.
+  // THE CUSTOM NAME IS ON NO SIGNER NODE'S ENTRY, BATCH, MARK OR RESULT: every table of
+  // both signer nodes but lobby_names, every value, searched for the name's bytes.
   const needle = Buffer.from(ONE_NAME, 'utf8');
   const scan = [round.a, round.b].map((d) => {
     const tables = d.round.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((t) => t.name);
@@ -379,7 +379,7 @@ try {
       entries: counted.entries, batches: counted.batches, checkpoints: counted.checkpoints, results: counted.results,
       lobbyNames: counted.lobby_names };
   });
-  say({ step: 'custom name on no entry, batch, mark or result', name: ONE_NAME, seats: scan });
+  say({ step: 'custom name on no entry, batch, mark or result', name: ONE_NAME, signerNodes: scan });
 } catch (e) {
   say({ error: e.message, stack: String(e.stack).split('\n').slice(1, 4).join(' | ') });
   code = 1;

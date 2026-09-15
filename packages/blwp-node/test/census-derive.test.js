@@ -2,7 +2,7 @@
 //
 // "Given `census_height`, EVERY PARTICIPANT RUNS THE SAME FIVE STEPS."
 //
-// Measured before this file existed: the five steps never joined. `scanCensus`
+// Measured before this file existed: the five steps never assigned. `scanCensus`
 // returned a `census` field of its own, and that root was taken with steps 2
 // and 3 unrun - so the shortest path through this package produced a census
 // over nodes whose advertisements nobody had read. RESOLVE was a thing a
@@ -447,7 +447,7 @@ test('a body naming the marker as its bond is scanned there and refused by name'
  */
 /**
  * A BOND SPENT AFTER THE CENSUS HEIGHT IS STILL IN THAT CENSUS, at the amount
- * the output held, and its seat stands.
+ * the output held, and its signer node stands.
  *
  * Measured rather than assumed, and it is the spec's own behaviour: 5A.4 step
  * 1 is "unspent AT census_height", so a spend later is not this census's
@@ -459,9 +459,9 @@ test('a body naming the marker as its bond is scanned there and refused by name'
  * which makes the output no longer unspent AT THE NEXT census_height." A node
  * whose bond goes away mid-round is removed by the next census, not this one.
  *
- * Pinned here because nothing pinned the AMOUNT or the seat, only the count.
+ * Pinned here because nothing pinned the AMOUNT or the signer node, only the count.
  */
-test('a bond spent after the census height keeps its place, its amount and its seat', () => {
+test('a bond spent after the census height keeps its place, its amount and its signer node', () => {
   const bond = bondTransaction(advertFor(0x1a), {
     previousTxid: b32(0xba), previousVout: 0, value: 60000,
     outputKey: bondFor(keyFor(0x1a)),
@@ -473,7 +473,7 @@ test('a bond spent after the census height keeps its place, its amount and its s
   // A SECOND BONDED NODE, because a census of one cannot hold a round at all:
   // regtest was born needing two, and `selectCommittee` refuses to slice a
   // committee out of anything smaller. The claim under test is unchanged - a
-  // bond spent AFTER the census keeps its place, its amount and its seat - and
+  // bond spent AFTER the census keeps its place, its amount and its signer node - and
   // it needs a census that is a census.
   const neighbour = bondTransaction(advertFor(0x1b), {
     previousTxid: b32(0xbb), previousVout: 0, value: 60000,
@@ -502,13 +502,13 @@ test('a bond spent after the census height keeps its place, its amount and its s
   assert.ok(mine, 'the spent-later bond is not in the census');
   assert.equal(mine.bondSats, 60000n, 'the amount changed with a later spend');
   assert.equal(toHex(later.root), toHex(untouched.root), 'a later spend moved the census root');
-  const seats = selectCommittee({
+  const signerNodes = selectCommittee({
     // The seed a beacon would have produced: a contract names none, and this
-    // test is about a spend keeping its seat, not about where seeds come from.
+    // test is about a spend keeping its signer node, not about where seeds come from.
     entries: later.entries, contract: round, role: 'game', committeeSeed: b32(0x11) });
-  assert.equal(seats.length, 2);
-  assert.equal(seats.some((e) => toHex(e.txid) === toHex(tx.txid)), true,
-    'the bond spent after the census lost its seat');
+  assert.equal(signerNodes.length, 2);
+  assert.equal(signerNodes.some((e) => toHex(e.txid) === toHex(tx.txid)), true,
+    'the bond spent after the census lost its signer node');
 
   // and the boundary is "at or before": spent IN the census block is out
   const atHeight = at({ ...funded, [HEIGHT]: [spend] });

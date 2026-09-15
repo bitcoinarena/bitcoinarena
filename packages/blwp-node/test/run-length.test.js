@@ -152,7 +152,7 @@ test('a round\'s run length is its own core\'s under its config: the counter ope
   assert.throws(() => withCounter.open(counterRound(BLOCK_TICKS)),
     new RegExp(`says a run is ${BLOCK_TICKS} ticks and this core ends one at ${LOW.config.ticks}`));
   const truckOnly = new Round(openStore(':memory:'), () => NOW + 1000);
-  assert.throws(() => truckOnly.open(counterRound(LOW.config.ticks)), /this seat holds no core/);
+  assert.throws(() => truckOnly.open(counterRound(LOW.config.ticks)), /this signer node holds no core/);
   assert.throws(() => lastTickOfRun(3000), /counted from the round's run length/);
   assert.equal(lastTickOfRun(3000, LOW.config.ticks), 3000 + LOW.config.ticks - 1);
 });

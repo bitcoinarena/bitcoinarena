@@ -1,19 +1,19 @@
 // THE LOCK CLIENT (W1a): the player's own client code makes the stake lock -
 // a wasm crate on the stock fedimint 0.12.0 client crates, driven from Node -
-// and a W2 seat commits the stake it locks. The real-federation run is
+// and a W2 signer node commits the stake it locks. The real-federation run is
 // tools/lock-client-regtest; what is here is what fits the suites.
 //
-// MEASURED FIRST: what a seat does today with the only outpoint the shipping
+// MEASURED FIRST: what a signer node does today with the only outpoint the shipping
 // path writes - zeros (join.js entryFor).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { lockFieldsToJson } from '../src/stake-lock-seat.js';
+import { lockFieldsToJson } from '../src/stake-lock-signer-node.js';
 import { toHex } from '../../protocol/src/hash.js';
-import { CLAIM, seatedWithLock } from './lock-fixture.js';
+import { CLAIM, joinedWithLock } from './lock-fixture.js';
 
-test('a seat handed a lock for an entry whose stake_lock_outpoint is zeros refuses it, and the stake stays uncommitted', async () => {
-  const s = await seatedWithLock({ claimKeyFor: () => CLAIM }, { outpoint: { txid: new Uint8Array(32), outIdx: 0n } });
+test('a signer node handed a lock for an entry whose stake_lock_outpoint is zeros refuses it, and the stake stays uncommitted', async () => {
+  const s = await joinedWithLock({ claimKeyFor: () => CLAIM }, { outpoint: { txid: new Uint8Array(32), outIdx: 0n } });
   try {
     const r = await fetch(`http://127.0.0.1:${s.d.port}/lock?entry=${toHex(s.eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(s.fields)) });
     const why = (await r.text()).trim();

@@ -18,12 +18,12 @@
  * MEASURED BEFORE: the page could not write a donation at all - `entryFor`
  * took no donation and wrote `donationMsat: 0n` on every entry, the page had no
  * donation prompt and no confirm, and its lock amount assumed 0: a 2% donor's
- * lock would have held 98000 msat where the seat's check wants the net, 96000.
- * The seat's door already took and stored a 2% donor's entry (201).
+ * lock would have held 98000 msat where the signer node's check wants the net, 96000.
+ * The signer node's door already took and stored a 2% donor's entry (201).
  *
  * Paying the recipients is `donation-pay.js`: the page fetches the set the
- * round's seats serve, lists every recipient in this prompt, and pays each its
- * share over LNURL once the seats have taken the entry.
+ * round's signer nodes serve, lists every recipient in this prompt, and pays each its
+ * share over LNURL once the signer nodes have taken the entry.
  */
 import { entryFeeMsat, feeMatchesEntry } from '../../protocol/src/fee.js';
 
@@ -48,7 +48,7 @@ const bpsOf = (stakeMsat, bps) => (stakeMsat * BigInt(bps)) / 10000n;
 /**
  * ONE ANSWER, JUDGED. `typed` is what the prompt returned; `confirm(message)` is
  * asked only above 5% and must answer `true` for such a donation to stand. The
- * donation must still leave the fee inside the stake (the seat's own rule,
+ * donation must still leave the fee inside the stake (the signer node's own rule,
  * `feeMatchesEntry`). Returns `{ ok, bps, donationMsat, netMsat }` or why not.
  */
 export function donationChoice({ typed, stakeMsat, confirm } = {}) {
@@ -74,7 +74,7 @@ const keyFor = (roundIdHex) => `blwp.donation.${roundIdHex}`;
  *
  * KEPT, because a reload over a stake lock this tab already made must write the
  * same donation - the lock holds the net, and a different donation is a
- * different net the seat would refuse. Kept in the tab's own storage only.
+ * different net the signer node would refuse. Kept in the tab's own storage only.
  * `ask(message, default)` is the prompt (null = cancel = none); up to `tries`
  * answers are judged; with none standing, the donation is 0.
  */

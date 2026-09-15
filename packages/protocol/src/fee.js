@@ -43,7 +43,7 @@ export const POOLS = [GAME_VERIFY, SETTLEMENT];
  * WHICH POOL A ROLE IS PAID FROM, and it is not a formality.
  *
  * 22A: "An operator selected for BOTH roles earns BOTH shares, because it
- * performs both services." So the two shares are separate money and a seat
+ * performs both services." So the two shares are separate money and a signer node
  * held in each is owed each - a table keyed by pubkey alone merges them, and a
  * claim in one role is then measured against the sum of both, which is an
  * over-claim nobody can see. Measured while writing this: a settlement claim
@@ -55,8 +55,8 @@ export const POOLS = [GAME_VERIFY, SETTLEMENT];
 export const POOL_OF_ROLE = { game: GAME_VERIFY, verify: GAME_VERIFY, settlement: SETTLEMENT };
 export const poolOfRole = (role) => POOL_OF_ROLE[role] || null;
 
-/** Seats are keyed by pool AND key, because the two shares are separate money. */
-const seatKey = (pool, pubkey) => `${pool}:${hex(pubkey)}`;
+/** Signer nodes are keyed by pool AND key, because the two shares are separate money. */
+const signerNodeKey = (pool, pubkey) => `${pool}:${hex(pubkey)}`;
 
 /**
  * THE FEE BASE, 22A: "gross_round_volume = sum of stake of every financially
@@ -77,9 +77,9 @@ export function grossVolumeMsat(entries) {
 }
 
 /**
- * WHAT EVERY SEAT IS OWED, AND WHAT NOBODY IS.
+ * WHAT EVERY SIGNER NODE IS OWED, AND WHAT NOBODY IS.
  *
- * `pools` names the seats of each pool - the committee, as selected - and
+ * `pools` names the signer nodes of each pool - the committee, as selected - and
  * `eligible` is who among them qualified under 22A's availability rule, which
  * is 5A.3 row 6's question and is answered elsewhere.
  *
@@ -106,7 +106,7 @@ export function nodeFeeTable({ contract, entries, pools, eligible }) {
   const shareOf = { [GAME_VERIFY]: first, [SETTLEMENT]: fee - first };
 
   const id = roundId(contract);
-  const seats = new Map();
+  const signerNodes = new Map();
   let unallocated = 0n;
 
   for (const pool of POOLS) {
@@ -121,30 +121,30 @@ export function nodeFeeTable({ contract, entries, pools, eligible }) {
     // already uses for the pool so there is one implementation of it.
     const each = amount / BigInt(earning.length);
     let left = amount - each * BigInt(earning.length);
-    for (const k of earning) seats.set(seatKey(pool, k), (seats.get(seatKey(pool, k)) || 0n) + each);
+    for (const k of earning) signerNodes.set(signerNodeKey(pool, k), (signerNodes.get(signerNodeKey(pool, k)) || 0n) + each);
     for (const e of remainderOrder(id, earning.map((pubkey) => ({ pubkey })))) {
       if (left <= 0n) break;
-      seats.set(seatKey(pool, e.pubkey), seats.get(seatKey(pool, e.pubkey)) + 1n);
+      signerNodes.set(signerNodeKey(pool, e.pubkey), signerNodes.get(signerNodeKey(pool, e.pubkey)) + 1n);
       left -= 1n;
     }
   }
 
-  const paid = [...seats.values()].reduce((a, b) => a + b, 0n);
+  const paid = [...signerNodes.values()].reduce((a, b) => a + b, 0n);
   if (paid + unallocated !== fee)
     throw new Error(`fee table broken: ${paid} paid and ${unallocated} unallocated of ${fee}`);
 
-  return { gross, fee, pools: shareOf, seats, unallocated };
+  return { gross, fee, pools: shareOf, signerNodes, unallocated };
 }
 
 /**
- * What one seat is owed FOR ONE ROLE, or nothing at all.
+ * What one signer node is owed FOR ONE ROLE, or nothing at all.
  *
- * The role is required: 22A pays the two pools separately and a seat held in
+ * The role is required: 22A pays the two pools separately and a signer node held in
  * both earns both, so "what is this node owed" has no single answer.
  */
 export const feeOwed = (table, nodePubkey, role) => {
   const pool = poolOfRole(role);
-  return pool ? (table.seats.get(seatKey(pool, nodePubkey)) || 0n) : 0n;
+  return pool ? (table.signerNodes.get(signerNodeKey(pool, nodePubkey)) || 0n) : 0n;
 };
 
 const hex = (bytes) => {
@@ -162,7 +162,7 @@ const hex = (bytes) => {
  * that suits them and every honest claim is an over-claim.
  *
  * The gross and the fee are in it as well as the rows: a table that agreed on
- * every seat while disagreeing about what the round was worth would be a
+ * every signer node while disagreeing about what the round was worth would be a
  * different table with the same fingerprint.
  */
 export function feeTableId(table) {
@@ -172,7 +172,7 @@ export function feeTableId(table) {
   w.u64(table.gross);
   w.u64(table.fee);
   w.u64(table.unallocated);
-  const rows = [...table.seats.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  const rows = [...table.signerNodes.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
   w.vec(rows, (row, ww) => {
     // `pool:key`, so the same node's two shares are two rows and a table that
     // moved money between the pools is a different table.
@@ -229,9 +229,9 @@ export const entryFeeMsat = (stakeMsat) => {
  */
 export function feeMatchesEntry(entry) {
   // STRICT, AND ON PURPOSE. Every entry the door judges is decoded from signed
-  // bytes, so its amounts are BigInt - a free seat is three zeros, not three
+  // bytes, so its amounts are BigInt - a free round is three zeros, not three
   // missing fields. Coercing a Number or a missing amount here would have
-  // hidden the wiring fault that refused the Daily's free seat at 11:15 (the
+  // hidden the wiring fault that refused the Daily's free round at 11:15 (the
   // door not yet passing the donation) instead of naming it.
   if (!entry || typeof entry.stakeMsat !== 'bigint' || typeof entry.feeMsat !== 'bigint')
     return { ok: false, why: 'an entry carries a BigInt millisatoshi stake and fee' };

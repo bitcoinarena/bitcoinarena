@@ -13,11 +13,11 @@
 // one key always shows one name, and a custom name is kept in the tab beside
 // the seed - cleared, the generated one comes back.
 //
-// AND THE OTHER PLAYERS OF A ROUND ARE SHOWN IT: once seated, the tab hands the
-// round's seats one record - this round, the round key it is seated under, its
+// AND THE OTHER PLAYERS OF A ROUND ARE SHOWN IT: once joined, the tab hands the
+// round's signer nodes one record - this round, the round key it is joined under, its
 // identity key, the name it chose (empty for none) - signed with that round key
 // (lobby-name.js). The other pages check each record before they draw its name,
-// so a seat can leave a name out but cannot write one, and nobody is shown a
+// so a signer node can leave a name out but cannot write one, and nobody is shown a
 // key in place of a name: no record, no name, only a count.
 import { tabSeed, playerFor } from './join.js';
 import { identitySecretFor } from '../../protocol/src/player-key.js';
@@ -28,7 +28,7 @@ import { displayNameFromKey } from '../../protocol/src/display-name.js';
 /** Where a tab keeps the name its player chose. */
 export const CUSTOM_NAME_KEY = 'blwp.player.name';
 
-/** The longest name a player may choose, in characters - the seats' rule too. */
+/** The longest name a player may choose, in characters - the signer nodes' rule too. */
 export const PLAYER_NAME_MAX = LOBBY_NAME_MAX;
 
 /**
@@ -45,7 +45,7 @@ export const identityFingerprint = (pubkey) => toHex(pubkey.subarray(0, 8)).matc
 
 /**
  * WHETHER A CHOSEN NAME STANDS, and the name as it is kept: the protocol's
- * rule (lobby-name.js), so a seat keeps exactly the names a page lets through.
+ * rule (lobby-name.js), so a signer node keeps exactly the names a page lets through.
  */
 export const playerNameIsValid = lobbyNameIsValid;
 
@@ -80,8 +80,8 @@ export function tabIdentity({ storage, random, curve } = {}) {
 }
 
 /**
- * THE NAME THIS TAB HANDS THE SEATS OF A ROUND IT IS SEATED IN: the round, the
- * round key it is seated under, its identity key, the name the player chose -
+ * THE NAME THIS TAB HANDS THE SIGNER NODES OF A ROUND IT IS JOINED IN: the round, the
+ * round key it is joined under, its identity key, the name the player chose -
  * empty for none, and the others are then shown the generated one - and now,
  * signed with that round key. The others are shown what this tab shows itself.
  */
@@ -94,7 +94,7 @@ export function nameRecordFor(round, { storage, random, curve, nowMs = Date.now(
   return { record: toHex(encodeLobbyName(record)), sig: toHex(curve.signSchnorr(lobbyNameId(record), player.secret)) };
 }
 
-/** The signed record, handed to every seat (POST /name); what each answered. */
+/** The signed record, handed to every signer node (POST /name); what each answered. */
 export async function postName(signed, nodes, { fetcher = fetch } = {}) {
   const said = [];
   for (const node of [...new Set(nodes || [])]) {
@@ -133,7 +133,7 @@ export function checkedNames(items, roundIdHex, verify) {
 }
 
 /**
- * The names a round's seats keep (GET /names), checked as above. A seat that
+ * The names a round's signer nodes keep (GET /names), checked as above. A signer node that
  * does not answer is one of several; when NONE answers that is an error, not
  * an empty round - a page that drew "nobody named" there would wipe the names
  * it had (measured: a busy page whose every ask timed out lost them).

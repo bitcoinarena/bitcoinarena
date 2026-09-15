@@ -1,17 +1,17 @@
-// ONE DEALER, TWO VALID CONTRIBUTIONS - AND NO HONEST SEAT KEEPS A SHARE OF EITHER KEY.
+// ONE DEALER, TWO VALID CONTRIBUTIONS - AND NO HONEST SIGNER NODE KEEPS A SHARE OF EITHER KEY.
 //
 // Measured before the agreement step (this file at its first run): on 5 of 7,
-// all six honest seats took the contribution meant for them (201) and finished
+// all six honest signer nodes took the contribution meant for them (201) and finished
 // - on 2 distinct group keys and 2 distinct pool addresses.
 //
 // Ownership is closed (0672ceb): a contribution without a valid proof of
-// knowledge is refused. What is left is agreement. A dishonest seat deals two
+// knowledge is refused. What is left is agreement. A dishonest signer node deals two
 // DIFFERENT contributions - both with valid proofs and valid shares for every
-// seat, so every per-contribution check passes - and sends one to some honest
-// seats and the other to the rest. Each honest seat combines what it holds.
+// signer node, so every per-contribution check passes - and sends one to some honest
+// signer nodes and the other to the rest. Each honest signer node combines what it holds.
 //
-// Now every seat signs the set it combined and keeps its share only when every
-// seat signed the same one: the split is refused, naming the dealer.
+// Now every signer node signs the set it combined and keeps its share only when every
+// signer node signed the same one: the split is refused, naming the dealer.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
@@ -46,14 +46,14 @@ async function equivocate({ honestCount }) {
 
 async function contributionOf(c) {
   const e = rand(32);
-  const dealt = await dealContribution({ secret: scalarTo32(scalar()), seats: c.order, epochId: c.epoch,
+  const dealt = await dealContribution({ secret: scalarTo32(scalar()), signerNodes: c.order, epochId: c.epoch,
     from: c.attackerPub, ephemeralSecret: e, ephemeralPubkey: curve.pointX(e),
     coefficients: Array.from({ length: c.needed - 1 }, scalar), needed: c.needed, curve });
   assert.equal(dealt.ok, true, dealt.why);
   return encodeContribution(dealt.contribution);
 }
 
-test('5 of 7: a dealer sending two valid contributions to two halves of the honest seats', async () => {
+test('5 of 7: a dealer sending two valid contributions to two halves of the honest signer nodes', async () => {
   const c = await equivocate({ honestCount: 6 });
   try {
     for (const node of c.honest) await node.dkg.run(c.order);       // the six honest deals, exchanged
@@ -77,7 +77,7 @@ test('5 of 7: a dealer sending two valid contributions to two halves of the hone
     for (const d of done.filter((x) => !x.ok)) console.log('  refused:', d.why);
 
     // Each contribution is still valid on its own, so each is taken (201); the
-    // disagreement is caught where it matters - before any seat keeps a share.
+    // disagreement is caught where it matters - before any signer node keeps a share.
     assert.deepEqual(facts, { postedStatuses: '201,201,201,201,201,201', honestFinished: 0,
       distinctGroupKeys: 0, distinctPoolAddresses: 0 });
     const attacker = toHex(c.attackerPub).slice(0, 16);
@@ -85,23 +85,23 @@ test('5 of 7: a dealer sending two valid contributions to two halves of the hone
       assert.match(d.why, /hold different contribution sets/);
       assert.ok(d.why.includes(attacker), 'the refusal does not name the dealer who equivocated');
     }
-    for (const node of c.honest) assert.equal(node.dkg.seatFor(c.order).ok, false, 'a seat kept a share of a split key');
+    for (const node of c.honest) assert.equal(node.dkg.signerNodeFor(c.order).ok, false, 'a signer node kept a share of a split key');
   } finally { await c.close(); }
 });
 
-test('2 of 2 and 7 of 7 with nobody equivocating: every seat agrees and keeps a share of one key', async () => {
+test('2 of 2 and 7 of 7 with nobody equivocating: every signer node agrees and keeps a share of one key', async () => {
   for (const n of [2, 7]) {
     const nodes = [];
     for (let i = 0; i < n; i++) nodes.push(await serve(openStore(':memory:'), { port: 0, funded: () => true, poolCurve: curve }));
     try {
       for (const node of nodes) node.dkg.peers = nodes.filter((o) => o !== node).map((o) => `http://127.0.0.1:${o.port}`);
-      const seats = nodes.map((x) => x.round.pubkey);
-      for (const node of nodes) await node.dkg.run(seats);
-      for (const node of nodes) await node.dkg.run(seats);
-      const held = nodes.map((node) => node.dkg.seatFor(seats));
+      const signerNodes = nodes.map((x) => x.round.pubkey);
+      for (const node of nodes) await node.dkg.run(signerNodes);
+      for (const node of nodes) await node.dkg.run(signerNodes);
+      const held = nodes.map((node) => node.dkg.signerNodeFor(signerNodes));
       for (const h of held) assert.equal(h.ok, true, h.why);
       const keys = new Set(held.map((h) => toHex(h.pool.groupPublicKey)));
-      console.log(`  ${n} of ${n} seats, nobody equivocating: ${held.filter((h) => h.ok).length} kept a share, ${keys.size} group key`);
+      console.log(`  ${n} of ${n} signer nodes, nobody equivocating: ${held.filter((h) => h.ok).length} kept a share, ${keys.size} group key`);
       assert.equal(keys.size, 1);
     } finally { await Promise.all(nodes.map((x) => x.close())); }
   }

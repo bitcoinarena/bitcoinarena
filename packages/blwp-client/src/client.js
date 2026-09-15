@@ -82,7 +82,7 @@ import { donationPaidRecord, noteDonationShare } from './donation-pay.js';
  * shares reference. The amount must be the entry's net stake - the stake less
  * the 2% fee and the player's donation, `netStakeMsat` as at every other door -
  * or the committee's hold check refuses the entry. Measured before (M3.2 6e):
- * this asked for the stake less the fee only, so a 2% donor's entry was seated
+ * this asked for the stake less the fee only, so a 2% donor's entry was joined
  * on a 980000 msat invoice it could never be quoted (it holds 960000).
  */
 export async function federationStakeFor(round, { nodes, fetcher = fetch, donationMsat = 0n } = {}) {
@@ -121,7 +121,7 @@ export async function federationStakeFor(round, { nodes, fetcher = fetch, donati
  */
 export const RECEIPTS_FOR_LIVE = 5;
 
-/** 2-of-2 on this build's test nets; 5-of-7 on a seven-seat contract. */
+/** 2-of-2 on this build's test nets; 5-of-7 on a seven-signer node contract. */
 export function receiptsForLive(contract) {
   const slots = contract?.gameVerifySlots ?? contract?.nodes?.length;
   if (slots === 2) return 2;
@@ -327,7 +327,7 @@ export class Client {
     // lies here can make a checkpoint fail to go live, never make one live.
     client.deliverTo(discovery.nodes || []);
     // THE PLAYER'S STAKE LOCK, made by the page before the entry was built
-    // (W1b), handed to the seats by `join` once they hold the entry.
+    // (W1b), handed to the signer nodes by `join` once they hold the entry.
     if (stakeLock) client.stakeLock = stakeLock;
     return client;
   }
@@ -369,7 +369,7 @@ export class Client {
     // Batches answered "stake not seen" - a wallet still paying, not a refusal.
     this.stakeWaits = 0;
     this.stakeWhy = null;
-    // How many settlement seats have seen this seat's stake held (23.1 step 5).
+    // How many settlement signer nodes have seen this entry's stake held (23.1 step 5).
     // `stakeCommitted` is a label: it gates nothing. NOT `stakeSeen`, which is
     // the method `payStake` asks one node with - a field of that name hid it
     // and every payment threw "this.stakeSeen is not a function".
@@ -379,7 +379,7 @@ export class Client {
     this.stakeWatchStopped = false;
     this.stakeWatch = null;         // the running count, so a second start joins it
     // AND WHERE THE STAKE STANDS AFTER THE RUN (MF item 14), asked once it is
-    // committed and until every seat has moved the hold.
+    // committed and until every signer node has moved the hold.
     this.settlement = null;
     this.settlementWatch = null;
     this.settlementPolls = 0;
@@ -389,9 +389,9 @@ export class Client {
     this.resynced = false;
     this.recovering = null;
     this.nextTick = 0;            // the tick the node is owed next
-    // What the node said about this seat's hold when it took the entry. NOT
+    // What the node said about this entry's hold when it took the entry. NOT
     // `hold`, which is the tick buffer below.
-    this.seatHold = null;
+    this.joinHold = null;
     this.loads = [];              // [tick, feeSats, btcHundredths], not yet published
     this.nodes = [];              // the committee, off the round's own contract
     this.gameVerifySlots = 7;
@@ -414,7 +414,7 @@ export class Client {
     this.marksRefusedWhy = null;
     this.peers = [];              // the other committee nodes' bases
     this.peerLinks = new Map();   // base -> { sock, said, opening }
-    this.peerSeats = [];
+    this.peerJoins = [];
     // THE RUN'S INPUTS, FOR THE OTHER COMMITTEE NODES. Measured 2026-09-10 on
     // the Daily: with checkpoints reaching both daemons, B held 0 ticks of
     // either run (A: 588 and 630) - B was receipting runs it could not replay.
@@ -521,17 +521,17 @@ export class Client {
     });
     if (r.status !== 201) throw new Error(`the node refused the entry: ${(await r.text()).trim()}`);
 
-    // WHO THIS CLIENT SEATED, kept for the ghost field. A reload keeps the
-    // player's key (sessionStorage) and draws a NEW entry, so the seat this tab
+    // WHO THIS CLIENT JOINED, kept for the ghost field. A reload keeps the
+    // player's key (sessionStorage) and draws a NEW entry, so the signer node this tab
     // held before the reload is still in the round, frozen - and it is this
     // player. A field that knew only its entry id kept it as somebody else:
-    // measured 2026-09-10, each tab held its own pre-reload seat as an "other",
+    // measured 2026-09-10, each tab held its own pre-reload signer node as an "other",
     // and the chip named it because its frozen run had gone furthest.
     this.playerPubkey = entry.playerPubkey;
 
-    // AND WHETHER THERE IS A HOLD ON THIS SEAT, WHICH THE NODE ALREADY SAID.
+    // AND WHETHER THERE IS A HOLD ON THIS ENTRY, WHICH THE NODE ALREADY SAID.
     //
-    // 23.1 issues the hold invoice AT THE SEAT - `POST /entry` calls
+    // 23.1 issues the hold invoice AT THE SIGNER NODE - `POST /entry` calls
     // `custody.hold` and answers `x-hold` with the state, or `x-hold-why` with
     // the reason there is none. Both headers were read by nothing, so a page
     // that wanted to tell a player whether their stake was funded had to
@@ -541,46 +541,46 @@ export class Client {
     // Kept rather than returned, because every caller of `join` wants the
     // entry id and none of them expected a second value.
     //
-    // `seatHold` AND NOT `hold`, which is already the ticks waiting to go out.
+    // `joinHold` AND NOT `hold`, which is already the ticks waiting to go out.
     // Written as `this.hold` first and every suite stayed green by luck of
     // ordering: the jslib calls `setRound` after `join`, and `setRound` puts
     // the array back. A page that joined and published without one in between
     // would have called `.push` on an object and lost the run.
-    this.seatHold = {
+    this.joinHold = {
       state: r.headers.get('x-hold') || 'none',
       why: r.headers.get('x-hold-why') || null,
     };
-    const seated = agrees(mine, new Uint8Array(await r.arrayBuffer()), 'entry');
+    const joined = agrees(mine, new Uint8Array(await r.arrayBuffer()), 'entry');
 
-    // AND ON EVERY OTHER COMMITTEE NODE, or it refuses this seat's checkpoints
-    // as "no such entry" - measured: daemon B answered 404 for every Daily seat.
-    // A node that will not seat it is written down, not thrown: this node took
+    // AND ON EVERY OTHER COMMITTEE NODE, or it refuses this entry's checkpoints
+    // as "no such entry" - measured: daemon B answered 404 for every Daily signer node.
+    // A node that will not take it is written down, not thrown: this node took
     // the entry, and the run can still be played.
-    this.seatEntry = entry;
-    this.peerSeats = await Promise.all(this.peers.map((base) => this.seatOn(base)));
+    this.joinedEntry = entry;
+    this.peerJoins = await Promise.all(this.peers.map((base) => this.joinOn(base)));
 
-    // AND THE STAKE LOCK GOES TO EVERY SEAT NOW THAT THE ENTRY IS THERE (§23.1
-    // step 5, W1b). A seat verifies it in the federation and only then counts
-    // the stake; before the entry is seated it has nothing to check it against.
-    // The count is kept, not thrown: the seat is taken either way, and the
-    // stake is committed or not by the seats' own answers.
+    // AND THE STAKE LOCK GOES TO EVERY SIGNER NODE NOW THAT THE ENTRY IS THERE (§23.1
+    // step 5, W1b). A signer node verifies it in the federation and only then counts
+    // the stake; before the entry is joined it has nothing to check it against.
+    // The count is kept, not thrown: the round is joined either way, and the
+    // stake is committed or not by the signer nodes' own answers.
     if (this.stakeLock) {
       this.lockHanded = await handLock({ entryId: mine, fields: this.stakeLock.fields,
         nodes: [this.base, ...this.peers], needed: this.stakeLock.needed });
-      // AND THE PAGE IS TOLD WHICH SEAT NOW HOLDS IT, so a reload does not
-      // hand the same lock to a second entry (a seat refuses that anyway).
+      // AND THE PAGE IS TOLD WHICH SIGNER NODE NOW HOLDS IT, so a reload does not
+      // hand the same lock to a second entry (a signer node refuses that anyway).
       if (this.lockHanded.ok && typeof this.stakeLock.onCommitted === 'function') {
-        try { this.stakeLock.onCommitted(mine); } catch { /* the page's bookkeeping, not the seat's */ }
+        try { this.stakeLock.onCommitted(mine); } catch { /* the page's bookkeeping, not the signer node's */ }
       }
       // AND THE FEE LOCK, WHEN THE PAGE MADE ONE (Pick b: only when it can pay a
-      // seat): each seat checks it against the entry's F and fee and keeps it for
+      // signer node): each signer node checks it against the entry's F and fee and keeps it for
       // the round's one settlement.
       if (this.stakeLock.feeLock) {
         this.feeLockHanded = await handLock({ entryId: mine, fields: this.stakeLock.feeLock.fields,
           nodes: [this.base, ...this.peers], needed: this.stakeLock.needed, door: 'fee-lock' });
       }
     }
-    return seated;
+    return joined;
   }
 
   /** A socket to another committee node, for checkpoints only. */
@@ -615,10 +615,10 @@ export class Client {
     return new Promise((r) => { link.said.push(r); link.sock.send(message); });
   }
 
-  /** Seats this client's entry on one other committee node. */
-  async seatOn(base) {
+  /** Signer nodes this client's entry on one other committee node. */
+  async joinOn(base) {
     try {
-      const p = await fetch(`${base}/entry`, { method: 'POST', body: encodeEntryContract(this.seatEntry) });
+      const p = await fetch(`${base}/entry`, { method: 'POST', body: encodeEntryContract(this.joinedEntry) });
       return { base, ok: p.status === 201, why: p.status === 201 ? null : (await p.text()).trim() };
     } catch (e) { return { base, ok: false, why: e.message }; }
   }
@@ -680,8 +680,8 @@ export class Client {
             f.refused++;
             this.peerBatchesRefused++;
             f.why = typeof a === 'string' ? a : `${a.length} bytes where a tick count was due`;
-            // A NODE THAT LOST THE SEAT IS GIVEN IT AGAIN; the next feed retries.
-            if (/no such entry/.test(f.why) && this.seatEntry) await this.seatOn(base);
+            // A NODE THAT LOST THE SIGNER NODE IS GIVEN IT AGAIN; the next feed retries.
+            if (/no such entry/.test(f.why) && this.joinedEntry) await this.joinOn(base);
             return;
           }
           f.down = false;
@@ -1141,7 +1141,7 @@ export class Client {
   }
 
   /**
-   * WHAT THIS SEAT OWES, ASKED OF THE NODE AND CHECKED AGAINST OUR OWN ENTRY.
+   * WHAT THIS ENTRY OWES, ASKED OF THE NODE AND CHECKED AGAINST OUR OWN ENTRY.
    *
    * M3.2 item 5's PAY step, and it stops exactly where a satoshi would move.
    * This asks and verifies; nothing here pays, and the client has no method
@@ -1170,12 +1170,12 @@ export class Client {
 
     // AND THE CONTRACT IS THE ONE BEING ASKED ABOUT.
     //
-    // A crossed pair - one seat's contract, another seat's id - is refused
+    // A crossed pair - one entry's contract, another entry's id - is refused
     // below anyway, because the hashes differ. That is a correct refusal for
     // the wrong reason, and it stops being correct the moment the two entries
     // share a commitment: one player re-entering a round keeps their preimage
     // and changes their world secret, so two ids, one hash, one amount, and
-    // the quote for the other seat would be accepted as this one's. Checked
+    // the quote for the other signer node would be accepted as this one's. Checked
     // here, where the answer is "these are two entries" and not "these are two
     // hashes".
     if (toHex(entryId(entry)) !== toHex(eid))
@@ -1223,7 +1223,7 @@ export class Client {
   }
 
   /**
-   * PAY THE HOLD INVOICE THIS SEAT OWES, AND NOTHING ELSE EVER.
+   * PAY THE HOLD INVOICE THIS ENTRY OWES, AND NOTHING ELSE EVER.
    *
    * M3.2 item 6 - one of the two methods in this client that move a satoshi;
    * the other is `payDonation` (6e), the player's donation.
@@ -1232,7 +1232,7 @@ export class Client {
    * it is a signature, not a check: there is no argument here that could carry
    * an arbitrary bolt11, so no caller - page, test or a script somebody pastes
    * - can walk this into paying something. The invoice is fetched by
-   * `invoice()`, which refuses an amount, a hash or a seat the entry did not
+   * `invoice()`, which refuses an amount, a hash or a signer node the entry did not
    * sign, and only what survives that is handed to the wallet.
    *
    * THE BUDGET PROVES NOTHING AND IS NOT ASKED TO. §24A.1: "an NWC budget is
@@ -1341,11 +1341,11 @@ export class Client {
     const none = { paid: [], failed: [], unknown: [], paidMsat: 0n, asked: 0 };
     if (!entry || typeof entry.donationMsat !== 'bigint') return { ok: false, ...none, why: 'there is no entry whose donation to pay' };
     if (entry.donationMsat === 0n) return { ok: true, ...none, why: 'this entry donates nothing, so nothing is paid' };
-    // NOT BEFORE THE SEATS HOLD THE STAKE (M3.2 6e, §22A): the donation is part of
+    // NOT BEFORE THE SIGNER NODES HOLD THE STAKE (M3.2 6e, §22A): the donation is part of
     // one wallet commitment, counted over financially activated entries only.
-    // Measured before: a seated entry whose stake nobody had seen paid 2000 msat
+    // Measured before: a joined entry whose stake nobody had seen paid 2000 msat
     // to the recipients - a player who never paid the stake had donated anyway.
-    // `stakeCommitted` is the settlement seats' own count (`watchStake`), not
+    // `stakeCommitted` is the settlement signer nodes' own count (`watchStake`), not
     // this page's memory of having paid.
     if (this.stakeCommitted !== true)
       return { ok: false, ...none, why: 'the stake is not in yet: no signer node has counted it, so no donation leaves the wallet' };
@@ -1417,7 +1417,7 @@ export class Client {
   }
 
   /**
-   * COUNT THE SETTLEMENT SEATS THAT HAVE SEEN THIS STAKE HELD, until enough
+   * COUNT THE SETTLEMENT SIGNER NODES THAT HAVE SEEN THIS STAKE HELD, until enough
    * have (23.1 step 5). Asked lightly - once every `everyMs` - and stopped the
    * moment N >= T, or when the run ends or this client closes.
    *
@@ -1428,31 +1428,31 @@ export class Client {
    * does not decide what the player may do.
    */
   //
-  // ONE WATCH AT A TIME. The page starts it from the seat and again after a
+  // ONE WATCH AT A TIME. The page starts it from the signer node and again after a
   // payment; a second start returns the watch already running rather than
-  // polling every seat twice.
-  watchStake({ seats, nodes, contract, everyMs = 2000, settlementEveryMs = 5000, fetcher } = {}) {
+  // polling every signer node twice.
+  watchStake({ signerNodes, nodes, contract, everyMs = 2000, settlementEveryMs = 5000, fetcher } = {}) {
     if (this.stakeWatch) return this.stakeWatch;
     // A COUNT THAT IS OVER STAYS OVER. Committed, the run ended, or this client
     // closed: the last count is handed back and no node is asked. The chip
     // paints every 500 ms, and this is what stops it restarting a finished
     // count - a rule here, where the suite runs it, not only in index.html.
-    // Measured before: a second call after committed polled every seat again.
+    // Measured before: a second call after committed polled every signer node again.
     if (this.stakeCommitted || this.ended || this.stakeWatchStopped)
       return Promise.resolve(this.stakeCount);
-    const eid = (this.where && this.where.entryId) || (this.seatEntry && entryId(this.seatEntry));
+    const eid = (this.where && this.where.entryId) || (this.joinedEntry && entryId(this.joinedEntry));
     if (!eid) return Promise.reject(new Error('there is no entry to count: join first'));
     this.stakeWatch = (async () => {
       for (;;) {
-        const s = await stakeSeenBy({ entryId: eid, seats, nodes, contract, ...(fetcher ? { fetcher } : {}) });
+        const s = await stakeSeenBy({ entryId: eid, signerNodes, nodes, contract, ...(fetcher ? { fetcher } : {}) });
         this.stakePolls++;
         this.stakeCount = s;
         this.stakeCommitted = s.committed;
         // COMMITTED IS WHERE THE NEXT WAIT BEGINS: the run, the close, the
-        // objection window, the settle. The seats are asked about that now.
+        // objection window, the settle. The signer nodes are asked about that now.
         if (s.committed && !this.stakeWatchStopped)
-          this.watchSettlement({ seats, nodes, everyMs: settlementEveryMs, ...(fetcher ? { fetcher } : {}) })
-            .catch(() => { /* a stake with no seat to ask has nothing to say */ });
+          this.watchSettlement({ signerNodes, nodes, everyMs: settlementEveryMs, ...(fetcher ? { fetcher } : {}) })
+            .catch(() => { /* a stake with no signer node to ask has nothing to say */ });
         if (s.committed || this.ended || this.stakeWatchStopped) return s;
         await new Promise((r) => setTimeout(r, everyMs));
         if (this.ended || this.stakeWatchStopped) return this.stakeCount;
@@ -1462,22 +1462,22 @@ export class Client {
   }
 
   /**
-   * WHERE THIS SEAT'S STAKE STANDS, asked of every settlement seat (MF item
+   * WHERE THIS ENTRY'S STAKE STANDS, asked of every settlement signer node (MF item
    * 14): "the player is waiting on other people's machines and must be told
    * so, with the refund path visible the whole time". Started once the stake
-   * is committed, asked every `everyMs`, and stopped when every seat that
+   * is committed, asked every `everyMs`, and stopped when every signer node that
    * answers has moved the hold (settled, handed back, expired) or this client
    * closes. The answer rides on `stakeCount`, which is what the page already
    * hands the chip, so the chip says it with no new wiring.
    */
-  watchSettlement({ seats, nodes, everyMs = 5000, fetcher } = {}) {
+  watchSettlement({ signerNodes, nodes, everyMs = 5000, fetcher } = {}) {
     if (this.settlementWatch) return this.settlementWatch;
     if (this.settlementOver || this.stakeWatchStopped) return Promise.resolve(this.settlement);
-    const eid = (this.where && this.where.entryId) || (this.seatEntry && entryId(this.seatEntry));
+    const eid = (this.where && this.where.entryId) || (this.joinedEntry && entryId(this.joinedEntry));
     if (!eid) return Promise.reject(new Error('there is no entry to ask about: join first'));
     this.settlementWatch = (async () => {
       for (;;) {
-        const s = await settlementBy({ entryId: eid, seats, nodes, ...(fetcher ? { fetcher } : {}) });
+        const s = await settlementBy({ entryId: eid, signerNodes, nodes, ...(fetcher ? { fetcher } : {}) });
         this.settlementPolls++;
         this.settlement = s;
         this.stakeCount = { ...(this.stakeCount || {}), settlement: s };
@@ -1491,7 +1491,7 @@ export class Client {
   }
 
   /**
-   * HAS THE NODE SEEN THIS SEAT'S STAKE HELD? `GET /stake` (23.1 step 5).
+   * HAS THE NODE SEEN THIS ENTRY'S STAKE HELD? `GET /stake` (23.1 step 5).
    * An answer, never a throw: `{ ok, state, paidMsat }` or `{ ok: false, why }`.
    */
   async stakeSeen(eid) {
@@ -1881,17 +1881,17 @@ export class Client {
   }
 
   /**
-   * WHETHER THIS RUN HAS REACHED ITS LAST TICK - the seat's own line,
+   * WHETHER THIS RUN HAS REACHED ITS LAST TICK - the signer node's own line,
    * `lastTickOfRun(joinTick)`, and not a number of this file's. The game keeps
    * stepping after a run ends; those ticks are not inputs of the run, and a
-   * batch that carries them is refused whole by every seat. Measured live
+   * batch that carries them is refused whole by every signer node. Measured live
    * (round 5, an idle page): recorded to 9113 of a run ending at 8999, refused
    * twice, and the run ended VOID - "inputs past the end". The page's tick loop
    * asks this before it records, drains or marks.
    */
   runOver() {
     if (!this.where || !(this.maxHold > 0)) return false;
-    const join = this.seatEntry && Number.isInteger(this.seatEntry.joinTick) ? this.seatEntry.joinTick : 0;
+    const join = this.joinedEntry && Number.isInteger(this.joinedEntry.joinTick) ? this.joinedEntry.joinTick : 0;
     return this.nextTick + this.hold.length > lastTickOfRun(join, this.maxHold);
   }
 

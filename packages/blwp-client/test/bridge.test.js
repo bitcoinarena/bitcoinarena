@@ -143,7 +143,7 @@ test('the page prints its own word only while there is no client to have one', (
 // session start, behind the network, so its first lines are read here: the Client's
 // `runOver()` is asked before anything is recorded, drained or marked. Measured live
 // before (round 5): an idle page recorded to tick 9113 of a run ending at 8999, the
-// seat refused the batch, and the page's run ended VOID.
+// signer node refused the batch, and the page's run ended VOID.
 test('the page\'s tick loop asks whether the run is over before it records a tick', () => {
   const src = readFileSync(JSLIB, 'utf8');
   const at = src.indexOf('net.tick = function (words) {');

@@ -1,4 +1,4 @@
-// A DISHONEST 2-OF-2 SEAT CAN NO LONGER MAKE THE COMMITTEE'S KEY ONE IT OWNS.
+// A DISHONEST 2-OF-2 SIGNER NODE CAN NO LONGER MAKE THE COMMITTEE'S KEY ONE IT OWNS.
 //
 // Measured at 734a2ec, before round 1 carried a proof of knowledge: all four
 // protocol facts were YES (accepted, honest share verified, combine emitted
@@ -7,10 +7,10 @@
 //
 // The slice's goal is a federation that signs without a trusted dealer. Our DKG
 // round 1 carries no proof of knowledge (Zcash Foundation's frost-secp256k1-tr
-// does). Without one, the seat that deals LAST can publish a first commitment
+// does). Without one, the signer node that deals LAST can publish a first commitment
 // A0 = X - (honest A0) for a key X it owns, never knowing A0's secret, and
 // solve its second commitment as a POINT so the one share it gives the honest
-// seat still lies on the polynomial. The group key is then X.
+// signer node still lies on the polynomial. The group key is then X.
 //
 // The construction is unchanged, and the attacker now also attaches its best
 // try at a proof - made with a secret it guesses, because it cannot know the
@@ -43,7 +43,7 @@ const sortKeys = (ks) => [...ks].sort((a, b) => (toHex(a) < toHex(b) ? -1 : toHe
 const MESSAGE = new Uint8Array(32).fill(0x6d);
 
 /**
- * THE ROGUE CONTRIBUTION, built from nothing but the honest seat's PUBLISHED
+ * THE ROGUE CONTRIBUTION, built from nothing but the honest signer node's PUBLISHED
  * first commitment. `x` is the attacker's own key; the attacker never learns
  * the secret behind the A0 it publishes.
  */
@@ -52,7 +52,7 @@ async function rogueContribution({ honestA0, x, order, honestPub, attackerPub, e
   const A0 = curve.combinePoints([{ point: X, coefficient: 1n }, { point: honestA0, coefficient: FIELD - 1n }]);
   const jh = order.findIndex((k) => toHex(k) === toHex(honestPub)) + 1;
   const ja = order.findIndex((k) => toHex(k) === toHex(attackerPub)) + 1;
-  const r = scalar();                                   // the share the honest seat will get
+  const r = scalar();                                   // the share the honest signer node will get
   const invj = inv(BigInt(jh));
   const A1 = curve.combinePoints([                      // so that A0 + jh*A1 = r*G
     { point: curve.pointFromScalar(r), coefficient: invj },
@@ -60,9 +60,9 @@ async function rogueContribution({ honestA0, x, order, honestPub, attackerPub, e
   ]);
   const e = rand(32);
   const shares = [
-    { seat: jh, seatPubkey: honestPub, sealed: await sealShare({ value: r, seat: jh, seatPubkey: honestPub, ephemeralSecret: e, curve }) },
-    { seat: ja, seatPubkey: attackerPub, sealed: await sealShare({ value: 1n, seat: ja, seatPubkey: attackerPub, ephemeralSecret: e, curve }) },
-  ].sort((a, b) => a.seat - b.seat);
+    { signerNode: jh, signerNodePubkey: honestPub, sealed: await sealShare({ value: r, signerNode: jh, signerNodePubkey: honestPub, ephemeralSecret: e, curve }) },
+    { signerNode: ja, signerNodePubkey: attackerPub, sealed: await sealShare({ value: 1n, signerNode: ja, signerNodePubkey: attackerPub, ephemeralSecret: e, curve }) },
+  ].sort((a, b) => a.signerNode - b.signerNode);
   // ITS BEST TRY AT A PROOF: it does not know A0's secret, so it guesses one.
   const proof = proveKnowledge({ id: ja, secret: scalar(), commitment: A0, nonce: scalar(), curve });
   return { epochId: epoch, from: attackerPub, ephemeralPubkey: curve.pointX(e), needed: 2, commitments: [A0, A1], proof, shares };
@@ -78,7 +78,7 @@ test('2-of-2, in the protocol: a rogue contribution made after seeing the honest
   const epoch = epochId(order);
 
   const he = rand(32);
-  const honest = (await dealContribution({ secret: scalarTo32(scalar()), seats: order, epochId: epoch, from: honestPub,
+  const honest = (await dealContribution({ secret: scalarTo32(scalar()), signerNodes: order, epochId: epoch, from: honestPub,
     ephemeralSecret: he, ephemeralPubkey: curve.pointX(he), coefficients: [scalar()], needed: 2, curve })).contribution;
 
   const x = scalar();
@@ -90,8 +90,8 @@ test('2-of-2, in the protocol: a rogue contribution made after seeing the honest
   const openedRogue = await openMyContribution(rogue, { pubkey: honestPub, secret: hs, curve });
   facts.honestShareStillVerifies = openedRogue.ok;
   const openedOwn = await openMyContribution(honest, { pubkey: honestPub, secret: hs, curve });
-  const combined = combineShares({ opened: [openedOwn, openedRogue.ok ? openedRogue : { share: { value: 1n }, seat: openedOwn.seat }],
-    seats: order, contributions: [honest, rogue], curve });
+  const combined = combineShares({ opened: [openedOwn, openedRogue.ok ? openedRogue : { share: { value: 1n }, signerNode: openedOwn.signerNode }],
+    signerNodes: order, contributions: [honest, rogue], curve });
   const xEven = attackerSecret(x);
   facts.combineEmitsAttackersKey = combined.ok
     && toHex(combined.groupPublicKey.subarray(1)) === toHex(schnorr.getPublicKey(scalarTo32(xEven)));
@@ -105,12 +105,12 @@ test('2-of-2, in the protocol: a rogue contribution made after seeing the honest
     combineEmitsAttackersKey: false, attackerAloneSignsForGroupKey: false,
   });
   for (const why of [accepted.why, openedRogue.why, combined.why]) assert.match(why, /proof of knowledge does not verify/);
-  // and the honest seat's own contribution still passes every check
+  // and the honest signer node's own contribution still passes every check
   assert.equal(acceptContribution(honest, { curve }).ok, true);
   assert.equal(openedOwn.ok, true);
 });
 
-test('2-of-2, on the daemon: the honest seat still sends its A0 first, and the rogue deal built from it is refused', async () => {
+test('2-of-2, on the daemon: the honest signer node still sends its A0 first, and the rogue deal built from it is refused', async () => {
   const log = [];
   const say = (s) => { log.push(s); };
   const honest = await serve(openStore(':memory:'), { port: 0, funded: () => true, poolCurve: curve });
@@ -171,7 +171,7 @@ test('2-of-2, on the daemon: the honest seat still sends its A0 first, and the r
     console.log('  FACTS (daemon, 2 of 2):', JSON.stringify(facts));
 
     // Before (734a2ec): the rogue was taken 201, the key was the attacker's, and it spent the pool
-    // output alone. The window is still there - the honest seat still sends first - but it is useless.
+    // output alone. The window is still there - the honest signer node still sends first - but it is useless.
     assert.deepEqual(facts, {
       honestPushedBeforeAttackerDealt: true, honestAcceptedRogue: false,
       groupKeyIsAttackers: false, attackerAloneSpendsPoolOutput: false,

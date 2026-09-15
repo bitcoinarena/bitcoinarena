@@ -20,7 +20,7 @@ import { toHex } from '../../protocol/src/hash.js';
 // The node fee is 27A.7's 2% of the stake, and the door checks it now
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
-import { assumeStakeSeen } from './seating.js';
+import { assumeStakeSeen } from './assignment.js';
 import {
   decodeCheckpointReceipt, receiptId, splitSignedReceipt, SIGNED_RECEIPT_BYTES,
 } from '../../protocol/src/receipt.js';
@@ -289,9 +289,9 @@ test('a batch longer than the round it belongs to is refused by name', async () 
   try {
     const c = contract();
     const rid = (await post(node.port, '/round', encodeRoundContract(c))).bytes;
-    const seated = entryFor(rid);
-    const eid = (await post(node.port, '/entry', encodeEntryContract(seated))).bytes;
-    assumeStakeSeen(node.round, seated);
+    const joined = entryFor(rid);
+    const eid = (await post(node.port, '/entry', encodeEntryContract(joined))).bytes;
+    assumeStakeSeen(node.round, joined);
     const sock = await talk(node.port);
 
     const tooLong = {

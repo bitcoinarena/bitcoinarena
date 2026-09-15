@@ -1,4 +1,4 @@
-// FIVE SEATS MOVE THE POOL AND FOUR CANNOT.
+// FIVE SIGNER NODES MOVE THE POOL AND FOUR CANNOT.
 //
 // Item 10 built a threshold signature with zero callers; item 13 is the thing
 // that calls it. Measured before this existed: no object in any source file
@@ -7,7 +7,7 @@
 //
 // The pool is one P2TR output whose key is the committee's, with NO SCRIPT
 // PATH - 23.5 says every operation needs the threshold, and a leaf is a second
-// way in. What is measured here is the transaction: five seats produce a
+// way in. What is measured here is the transaction: five signer nodes produce a
 // witness BIP-340 accepts against the output key, four produce nothing, one
 // produces nothing. `pool-regtest.mjs` then puts the same transaction in front
 // of a real bitcoind.
@@ -126,7 +126,7 @@ test('five of seven move the pool: BIP-340 accepts the witness', () => {
     assert.equal(witness.length, 1);
     assert.equal(witness[0].length, 64);
   }
-  assert.equal(accepted, 6, 'a five-seat spend was not accepted against the pool key');
+  assert.equal(accepted, 6, 'a five-signer node spend was not accepted against the pool key');
 });
 
 test('four of seven are refused by name, and produce nothing if they sign anyway', () => {

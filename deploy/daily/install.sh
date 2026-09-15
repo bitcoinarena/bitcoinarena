@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# INSTALLS THE DAILY'S SEATS AS PERSISTENT USER SERVICES (the owner 2026-09-15: keep the Daily through
+# INSTALLS THE DAILY'S SIGNER NODES AS PERSISTENT USER SERVICES (the owner 2026-09-15: keep the Daily through
 # restarts). Nothing here starts a service; `systemctl --user enable --now` does, once the temporary
 # units they replace are stopped.
 #
 #   bash deploy/daily/install.sh <commit>
 #
 # THE CODE IS A CHECKOUT ON PERSISTENT DISK, detached at a pushed commit: /tmp is emptied at every
-# boot (tmpfiles "D /tmp"), and the seats used to run the working tree - where a half-done edit
+# boot (tmpfiles "D /tmp"), and the signer nodes used to run the working tree - where a half-done edit
 # reached players. The checkout moves only when a commit is checked out there on purpose.
 set -euo pipefail
-COMMIT="${1:?name the pushed commit the Daily seats run}"
+COMMIT="${1:?name the pushed commit the Daily signer nodes run}"
 D="${BLWP_2OF2_DIR:-/mnt/bitcoin/blwp-2of2}"
 REPO="${BLWP_REPO:-/home/arena/btc-logistics-war}"
 HERE="$(cd "$(dirname "$0")" && pwd)"

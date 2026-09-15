@@ -12,7 +12,7 @@ import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { assumeSeated, assumeStakeSeen } from './seating.js';
+import { assumeAssigned, assumeStakeSeen } from './assignment.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
@@ -64,7 +64,7 @@ const TICKS = 1000;
 const wordsAt = (t) => [45875, ((t * 977) % 30000) - 15000, (t % 700) < 40 ? 65536 : 0, 0, 0];
 
 const session = ed25519.utils.randomSecretKey();
-const peer = ed25519.utils.randomSecretKey();          // the second committee seat
+const peer = ed25519.utils.randomSecretKey();          // the second committee signer node
 
 /** Two slots, so two receipts make a mark canonical - genesis.js's own rule. */
 const contractFor = (nodePubkey) => ({
@@ -113,22 +113,22 @@ function play(ticks, entry) {
 
 /**
  * A WHOLE ROUND THROUGH THE DAEMON'S OWN DOORS: contract, entry, inputs, a
- * mark, the second seat's receipt for it, and then "close".
+ * mark, the second signer node's receipt for it, and then "close".
  */
 async function roundThrough(node, {
   objectFirst = false, carried = true, contract, keepSocket = false,
-  // WHICH SEAT CARRIES THE MARK. A receipt only counts from a key the round's
+  // WHICH SIGNER NODE CARRIES THE MARK. A receipt only counts from a key the round's
   // committee names, so a test with a different committee has to hand in the
-  // seat that belongs to it.
-  seat = { secret: peer, pubkey: schnorr.getPublicKey(peer) },
+  // signer node that belongs to it.
+  signerNode = { secret: peer, pubkey: schnorr.getPublicKey(peer) },
 } = {}) {
   const c = contract || contractFor(node.round ? node.round.pubkey : b32(0));
   const rid = roundId(c);
   assert.equal((await post(node.port, '/round', encodeRoundContract(c))).status, 201);
-  // WHO THE CENSUS SEATED, stated: this file is about replay, results and
-  // thresholds, not about seating - which `roster.test.js` measures from real
-  // blocks. Nothing in src/ seats from a contract.
-  assumeSeated(node.round, rid, c.nodes);
+  // WHO THE CENSUS ASSIGNED, stated: this file is about replay, results and
+  // thresholds, not about joining - which `roster.test.js` measures from real
+  // blocks. Nothing in src/ assigns from a contract.
+  assumeAssigned(node.round, rid, c.nodes);
 
   const entry = {
     roundId: rid, playerPubkey: b32(5), sessionPubkey: ed25519.getPublicKey(session),
@@ -158,12 +158,12 @@ async function roundThrough(node, {
   assert.equal(receipted.length, SIGNED_RECEIPT_BYTES,
     `the node refused the mark: ${typeof receipted === 'string' ? receipted : receipted.length + ' bytes'}`);
 
-  // AND THE SECOND SEAT'S RECEIPT, which is what makes it canonical (13C).
+  // AND THE SECOND SIGNER NODE'S RECEIPT, which is what makes it canonical (13C).
   // Withheld when the caller wants to see what an uncarried transcript does.
   if (carried) {
-    const receipt = { checkpointId: mid, receivedAtMs: 1234n, nodePubkey: seat.pubkey };
+    const receipt = { checkpointId: mid, receivedAtMs: 1234n, nodePubkey: signerNode.pubkey };
     const rbody = encodeCheckpointReceipt(receipt);
-    assert.equal(await s.say(joinSignedReceipt(rbody, schnorr.sign(receiptId(receipt), seat.secret))), 'held');
+    assert.equal(await s.say(joinSignedReceipt(rbody, schnorr.sign(receiptId(receipt), signerNode.secret))), 'held');
   }
 
   if (objectFirst) {
@@ -173,7 +173,7 @@ async function roundThrough(node, {
 
   assert.equal(await s.say(`close ${toHex(rid)}`), 'closed');
   if (!keepSocket) s.ws.close();
-  return { rid, eid, contract: c, socket: s, mark: { id: mid, seat } };
+  return { rid, eid, contract: c, socket: s, mark: { id: mid, signerNode } };
 }
 
 const hexToBytes = (h) => Uint8Array.from(h.match(/../g).map((x) => parseInt(x, 16)));
@@ -218,14 +218,14 @@ test('a round closed on a running daemon leaves a signed result nobody asked it 
     assert.deepEqual(result.transcriptHash, node.round.canonicalTranscript(rid, eid).hash,
       'the signed hash is not the canonical transcript this node carries');
 
-    // AND A SECOND REPLAY DOES NOT REWRITE WHAT THIS SEAT ALREADY SIGNED. One
-    // seat, one result: a node that could replace its own would be able to
+    // AND A SECOND REPLAY DOES NOT REWRITE WHAT THIS SIGNER NODE ALREADY SIGNED. One
+    // signer node, one result: a node that could replace its own would be able to
     // change its answer after the committee had seen it.
     const before = got.bytes;
     for (const p of node.verifier.onRoundClosed(rid)) await p;
     const after = await results(node.port, rid, eid);
-    assert.equal(after.count, 1, 'a second replay stored a second result for one seat');
-    assert.deepEqual(after.bytes, before, 'a second replay rewrote what the seat had signed');
+    assert.equal(after.count, 1, 'a second replay stored a second result for one signer node');
+    assert.deepEqual(after.bytes, before, 'a second replay rewrote what the signer node had signed');
 
     // THE SIGNATURE IS THE NODE'S OWN, over the id of what it stored.
     assert.ok(schnorr.verify(signature, resultId(result), node.round.pubkey),
@@ -287,7 +287,7 @@ test('an objection recorded over the wire reaches the pool as an objected job', 
  * AND A TRANSCRIPT THE COMMITTEE HAS NOT CARRIED IS NOT SIGNED OVER.
  *
  * 13C makes the canonical transcript the prefix of marks enough members have
- * receipted. With one of two seats holding the mark there is no canonical
+ * receipted. With one of two signer nodes holding the mark there is no canonical
  * transcript, and a node that signed anyway would be signing a different
  * object from the one its peers will sign - the disagreement would look like
  * a divergence in the run rather than in what was carried.
@@ -306,7 +306,7 @@ test('a transcript no committee has carried is replayed and not signed', async (
 });
 
 /**
- * TWO SEATS, AND EACH ENDS UP HOLDING THE OTHER'S SIGNATURE.
+ * TWO SIGNER NODES, AND EACH ENDS UP HOLDING THE OTHER'S SIGNATURE.
  *
  * Serving a result nobody fetches is a committee of one writing in a diary.
  * Section 13 needs the threshold to have signed the IDENTICAL result, and that
@@ -318,7 +318,7 @@ test('two daemons each fetch the other\'s result and a 2-of-2 counts to two', as
   const a = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => BEACON });
   const b = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => BEACON });
   try {
-    // ONE CONTRACT, naming both seats. Neither node is the committee; the
+    // ONE CONTRACT, naming both signer nodes. Neither node is the committee; the
     // contract is, and it names them by key.
     const c = {
       ...contractFor(a.round.pubkey),
@@ -331,17 +331,17 @@ test('two daemons each fetch the other\'s result and a 2-of-2 counts to two', as
     a.verifier.peers = [`http://127.0.0.1:${b.port}`];
     b.verifier.peers = [`http://127.0.0.1:${a.port}`];
 
-    // Each daemon's mark is carried by the OTHER seat, which is what the
+    // Each daemon's mark is carried by the OTHER signer node, which is what the
     // contract names and what 13C's threshold counts.
-    const seatB = { secret: b.round.identity.secret, pubkey: b.round.pubkey };
-    const seatA = { secret: a.round.identity.secret, pubkey: a.round.pubkey };
-    const first = await roundThrough(a, { contract: c, seat: seatB });
-    const second = await roundThrough(b, { contract: c, seat: seatA });
+    const signerNodeB = { secret: b.round.identity.secret, pubkey: b.round.pubkey };
+    const signerNodeA = { secret: a.round.identity.secret, pubkey: a.round.pubkey };
+    const first = await roundThrough(a, { contract: c, signerNode: signerNodeB });
+    const second = await roundThrough(b, { contract: c, signerNode: signerNodeA });
     assert.equal(toHex(first.rid), toHex(second.rid), 'the two nodes are not in the same round');
     await settle(a); await settle(b);
 
     // THE DAEMON ALREADY ASKED. Closing a round replays it and then fetches
-    // the other seats, so the node that closed SECOND holds both signatures
+    // the other signer nodes, so the node that closed SECOND holds both signatures
     // with nothing in this test having called `gather`.
     const auto = await results(b.port, first.rid, first.eid);
     assert.equal(auto.count, 2,
@@ -366,11 +366,11 @@ test('two daemons each fetch the other\'s result and a 2-of-2 counts to two', as
     // PlayerResult carries `node_pubkey`, so a record names who made it. What
     // "the identical result" means is the identical RUN, and that is what the
     // two agree on - same player, same outcome, same score, same transcript,
-    // same core - while the seats differ.
+    // same core - while the signer nodes differ.
     const held = a.round.results(first.rid, first.eid);
     assert.equal(held.length, 2);
     const [one, two] = held.map((r) => decodePlayerResult(splitSignedResult(r.bytes).body));
-    assert.notDeepEqual(one.nodePubkey, two.nodePubkey, 'one seat signed twice');
+    assert.notDeepEqual(one.nodePubkey, two.nodePubkey, 'one signer node signed twice');
     assert.deepEqual(one.playerPubkey, two.playerPubkey);
     assert.equal(one.outcome, two.outcome);
     assert.equal(one.score, two.score);
@@ -379,16 +379,16 @@ test('two daemons each fetch the other\'s result and a 2-of-2 counts to two', as
     assert.notDeepEqual(held[0].resultId, held[1].resultId,
       'two records that name different signers produced one id');
 
-    // and a signer the census did not seat does not count, however well it
-    // signs: since letter 26 the SEATED set names the committee, not whoever
+    // and a signer the census did not assign does not count, however well it
+    // signs: since letter 26 the Assigned set names the committee, not whoever
     // answers and not a list on the contract.
     const outsider = { ...c, nodes: [a.round.pubkey, b32(0xee)] };
     const short = verifiedFinal(held.map((r) => r.bytes),
-      { contract: outsider, seats: outsider.nodes });
-    assert.equal(short.final, false, 'a stranger was counted as a seat');
+      { contract: outsider, signerNodes: outsider.nodes });
+    assert.equal(short.final, false, 'a stranger was counted as a signer node');
     assert.equal(short.strangers, 1);
 
-    // ASKING AGAIN CHANGES NOTHING: one seat, one result.
+    // ASKING AGAIN CHANGES NOTHING: one signer node, one result.
     const again = await a.verifier.gather(first.rid, first.eid);
     assert.equal(again.held, 2, 'a second fetch stored the peer\'s result twice');
     assert.equal(again.kept, 0, 'a record already held was written again');
@@ -407,17 +407,17 @@ test('two daemons each fetch the other\'s result and a 2-of-2 counts to two', as
 test('a receipt arriving after the close produces the result the replay could not sign', async () => {
   const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => BEACON });
   try {
-    // Closed with the mark held by ONE of two seats, so there is no canonical
+    // Closed with the mark held by ONE of two signer nodes, so there is no canonical
     // transcript and nothing to sign over.
     const { rid, eid, socket, mark } = await roundThrough(node, { carried: false, keepSocket: true });
     await settle(node);
     assert.equal((await results(node.port, rid, eid)).count, 0,
       'a result was signed over a transcript nobody had carried');
 
-    // NOW THE SECOND SEAT CARRIES IT, on the same socket a peer would use.
-    const receipt = { checkpointId: mark.id, receivedAtMs: 4321n, nodePubkey: mark.seat.pubkey };
+    // NOW THE SECOND SIGNER NODE CARRIES IT, on the same socket a peer would use.
+    const receipt = { checkpointId: mark.id, receivedAtMs: 4321n, nodePubkey: mark.signerNode.pubkey };
     const said = await socket.say(joinSignedReceipt(
-      encodeCheckpointReceipt(receipt), schnorr.sign(receiptId(receipt), mark.seat.secret)));
+      encodeCheckpointReceipt(receipt), schnorr.sign(receiptId(receipt), mark.signerNode.secret)));
     assert.equal(said, 'held');
 
     await node.verifier.settling;
@@ -429,16 +429,16 @@ test('a receipt arriving after the close produces the result the replay could no
     assert.deepEqual(result.transcriptHash, node.round.canonicalTranscript(rid, eid).hash);
     assert.equal(result.score, 128);
 
-    // AND THE SEAT DOES NOT REPLAY AGAIN FOR A RUN IT HAS SIGNED. Asked
+    // AND THE SIGNER NODE DOES NOT REPLAY AGAIN FOR A RUN IT HAS SIGNED. Asked
     // directly, the retry declines rather than queueing work whose answer the
     // store would only throw away.
     assert.equal(node.verifier.retry(rid, eid), null,
-      'a seat that has signed was queued to replay again');
+      'a signer node that has signed was queued to replay again');
 
-    // AND A SECOND LATE RECEIPT DOES NOT SIGN IT AGAIN. One seat, one result.
-    const again = { checkpointId: mark.id, receivedAtMs: 4321n, nodePubkey: mark.seat.pubkey };
+    // AND A SECOND LATE RECEIPT DOES NOT SIGN IT AGAIN. One signer node, one result.
+    const again = { checkpointId: mark.id, receivedAtMs: 4321n, nodePubkey: mark.signerNode.pubkey };
     await socket.say(joinSignedReceipt(
-      encodeCheckpointReceipt(again), schnorr.sign(receiptId(again), mark.seat.secret)));
+      encodeCheckpointReceipt(again), schnorr.sign(receiptId(again), mark.signerNode.secret)));
     await node.verifier.settling;
     assert.equal((await results(node.port, rid, eid)).count, 1);
 
@@ -470,7 +470,7 @@ test('a peer that serves forged or foreign records adds nothing to the store', a
     const forged = joinSignedResult(
       splitSignedResult(own).body,
       schnorr.sign(resultId(mine), stranger));                 // wrong key, right bytes
-    // The foreign one is otherwise IMPECCABLE: a real seat of this round's
+    // The foreign one is otherwise IMPECCABLE: a real signer node of this round's
     // committee, signing correctly - about a different round. Only the check
     // that a record is about the run it is filed under can refuse it, so the
     // fixture would not notice that check missing if this were forged too.
@@ -479,9 +479,9 @@ test('a peer that serves forged or foreign records adds nothing to the store', a
       encodePlayerResult(elsewhere), schnorr.sign(resultId(elsewhere), peer));
 
     // AND ONE ABOUT ANOTHER PLAYER of this very round, signed impeccably by a
-    // real seat. A PlayerResult names no entry, so only the player check can
-    // refuse it - and without that check this record would take the seat's row
-    // under this entry and keep the seat's true answer out for good.
+    // real signer node. A PlayerResult names no entry, so only the player check can
+    // refuse it - and without that check this record would join's row
+    // under this entry and keep the signer node's true answer out for good.
     const somebodyElse = { ...mine, playerPubkey: b32(0x42), nodePubkey: schnorr.getPublicKey(peer) };
     const wrongPlayer = joinSignedResult(
       encodePlayerResult(somebodyElse), schnorr.sign(resultId(somebodyElse), peer));
@@ -502,7 +502,7 @@ test('a peer that serves forged or foreign records adds nothing to the store', a
     assert.equal(got.fetched, 3, 'the peer served nothing to refuse');
     assert.equal(got.kept, 0, 'a forged or foreign record was written to the store');
     assert.equal(got.held, 1, 'the store grew from a peer that proved nothing');
-    assert.equal(got.final, false, 'one seat of two was called final');
+    assert.equal(got.final, false, 'one signer node of two was called final');
 
     // AND A PEER THAT IS SIMPLY DOWN IS NOT A FAULT, only a peer that answered
     // nothing: a committee that stopped counting when a node was offline would
@@ -557,19 +557,19 @@ test('a beacon at or before the round\'s committee time is refused before anythi
 /**
  * TWO DAEMONS, ONE PUBLISHED HASH AND HEIGHT, ONE COMMITTEE SEED.
  *
- * The seed is what 5A.5 selects seats from, so two nodes that disagreed about
+ * The seed is what 5A.5 selects signer nodes from, so two nodes that disagreed about
  * it would disagree about who the committee is - which is the one thing a
  * committee cannot survive.
  */
-test('two daemons given the same published hash and height derive the same seed and seats', async () => {
+test('two daemons given the same published hash and height derive the same seed and signer nodes', async () => {
   const a = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => BEACON });
   const b = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => BEACON });
   try {
     const c = { ...contractFor(a.round.pubkey), nodes: [a.round.pubkey, b.round.pubkey] };
-    const seatB = { secret: b.round.identity.secret, pubkey: b.round.pubkey };
-    const seatA = { secret: a.round.identity.secret, pubkey: a.round.pubkey };
-    const { rid } = await roundThrough(a, { contract: c, seat: seatB });
-    await roundThrough(b, { contract: c, seat: seatA });
+    const signerNodeB = { secret: b.round.identity.secret, pubkey: b.round.pubkey };
+    const signerNodeA = { secret: a.round.identity.secret, pubkey: a.round.pubkey };
+    const { rid } = await roundThrough(a, { contract: c, signerNode: signerNodeB });
+    await roundThrough(b, { contract: c, signerNode: signerNodeA });
     await settle(a); await settle(b);
 
     const seedA = a.verifier.seeds.get(toHex(rid));
@@ -581,7 +581,7 @@ test('two daemons given the same published hash and height derive the same seed 
     assert.deepEqual(seedA, committeeSeedFromBeacon(c,
       { roundId: rid, randomness: RANDOMNESS, height: HEIGHT, timeMs: BEACON.timeMs }).seed);
 
-    // AND THE SAME SEED PICKS THE SAME SEATS.
+    // AND THE SAME SEED PICKS THE SAME SIGNER NODES.
     const entries = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => ({
       txid: b32(n), vout: 0, pubkey: b32(0xa0 + n), bondSats: 100000n,
       height: 1, roles: ['game'], spent: false,
@@ -589,19 +589,19 @@ test('two daemons given the same published hash and height derive the same seed 
     // THE SEED IS THE BEACON'S, handed to the lottery: the contract carries no
     // seed the selection reads, which is what makes grinding a round id
     // worthless rather than merely expensive.
-    const seatsOf = (seed) => selectCommittee({
+    const signerNodesOf = (seed) => selectCommittee({
       entries, role: 'game', contract: c, committeeSeed: seed,
     }).map((e) => toHex(e.pubkey));
-    assert.deepEqual(seatsOf(seedA), seatsOf(seedB));
-    assert.equal(seatsOf(seedA).length, c.gameVerifySlots);
+    assert.deepEqual(signerNodesOf(seedA), signerNodesOf(seedB));
+    assert.equal(signerNodesOf(seedA).length, c.gameVerifySlots);
 
-    // A DIFFERENT PUBLISHED HASH PICKS DIFFERENT SEATS, which is what makes
+    // A DIFFERENT PUBLISHED HASH PICKS DIFFERENT SIGNER NODES, which is what makes
     // grinding the round id worthless.
     //
     // ASKED OF A SPREAD OF HASHES, NOT OF ONE. Two slots drawn from ten equal
     // bonds is ninety ordered pairs, so one other hash agrees with this one
     // about a percent of the time - and this file went red on exactly that,
-    // with nothing wrong. What the claim needs is that the seats MOVE with the
+    // with nothing wrong. What the claim needs is that the signer nodes MOVE with the
     // hash, so it is asked of sixteen of them: a selection that ignored the
     // beacon would return one set for all sixteen, and any real one returns
     // several. A single coincidence proves nothing either way and no longer
@@ -610,11 +610,11 @@ test('two daemons given the same published hash and height derive the same seed 
     for (let h = 0x9c; h < 0xac; h++) {
       const other = committeeSeedFromBeacon(c,
         { roundId: rid, randomness: b32(h), height: HEIGHT, timeMs: BEACON.timeMs }).seed;
-      spread.add(seatsOf(other).join(','));
+      spread.add(signerNodesOf(other).join(','));
     }
     assert.ok(spread.size > 1,
       `sixteen published hashes picked the one committee ${[...spread][0]}, so the beacon does not reach the draw`);
-    assert.ok([...spread].some((x) => x !== seatsOf(seedA).join(',')),
+    assert.ok([...spread].some((x) => x !== signerNodesOf(seedA).join(',')),
       'sixteen other hashes all picked this round\'s own committee');
   } finally { await a.close(); await b.close(); }
 });

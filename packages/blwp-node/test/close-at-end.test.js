@@ -1,9 +1,9 @@
-// A SEAT CLOSES A ROUND THAT IS OVER, BY ITS OWN CLOCK (M3.3-34, the Daily's close).
+// A SIGNER NODE CLOSES A ROUND THAT IS OVER, BY ITS OWN CLOCK (M3.3-34, the Daily's close).
 //
-// With `closeAtEnd` a seat closes every round it holds once protocol
+// With `closeAtEnd` a signer node closes every round it holds once protocol
 // `roundEndMs` has passed - entry close, plus the start deadline, a whole run
 // and the start deadline again - by the same path a `close <round>` message
-// takes. A round not yet over stays open; a seat without the option closes
+// takes. A round not yet over stays open; a signer node without the option closes
 // nothing by itself.
 //
 // MEASURED BEFORE (TASKBOOK, M3.3-34): nothing on the Daily closed a round, so
@@ -19,7 +19,7 @@ import { roundEndMs } from '../../protocol/src/first-mark.js';
 
 const WINDOW = 60000n;
 
-test('a seat with closeAtEnd closes the round that is over and keeps the one that is not; without it, neither closes', async () => {
+test('a signer node with closeAtEnd closes the round that is over and keeps the one that is not; without it, neither closes', async () => {
   const now = BigInt(Date.now());
   const withIt = await serve(openStore(':memory:'), { port: 0, funded: () => true, closeAtEnd: { everyMs: 50 } });
   const without = await serve(openStore(':memory:'), { port: 0, funded: () => true });

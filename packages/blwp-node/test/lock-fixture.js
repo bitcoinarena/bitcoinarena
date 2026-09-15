@@ -1,5 +1,5 @@
-// A SEAT OF A PAYING FEDERATION ROUND, a player's stake dealt and seated, and a
-// federation port that holds locks by outpoint - shared by seat-lock.test.js
+// A SIGNER NODE OF A PAYING FEDERATION ROUND, a player's stake dealt and joined, and a
+// federation port that holds locks by outpoint - shared by signer-node-lock.test.js
 // (W2) and lock-client.test.js (W1a). Moved here unchanged, except that the
 // entry's stake_lock_outpoint can be given (zeros, for the refusal).
 import assert from 'node:assert/strict';
@@ -9,7 +9,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { feldmanGroup } from '../src/curve.js';
-import { assumeSeated } from './seating.js';
+import { assumeAssigned } from './assignment.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
 import { dealHandout, encodeHandout, handoutId } from '../../protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../protocol/src/shares.js';
@@ -21,8 +21,8 @@ import { b32, rand, STAKE, WINDOW_MS, contractFor, opts } from './window-fixture
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 
 const secretScalar = () => { let p = rand(32); while (scalarFrom32(p) >= FIELD) p = rand(32); return p; };
-// HARNESS KEY: a claim key the tests hand a seat (`claimKeyFor`), to measure the
-// lock check in isolation. The shipping path's seats make their own
+// HARNESS KEY: a claim key the tests hand a signer node (`claimKeyFor`), to measure the
+// lock check in isolation. The shipping path's signer nodes make their own
 // (claim-key-own.test.js).
 export const CLAIM = Uint8Array.from([0x02, ...b32(0xc1)]);
 
@@ -53,7 +53,7 @@ export function lockPort({ height = 1000 } = {}) {
     // hash of every input, output and the nonce.
     // THE FEDERATION'S OWN LNv2 RULE BY DEFAULT - 1000 msat per input and output, 0 ppm,
     // as the regtest guardians answered (feeRule, W4). Under it a 100 sat round mints no
-    // fee lock (Pick b's gate), so a round that is not about fees seats its entries as it
+    // fee lock (Pick b's gate), so a round that is not about fees signer nodes its entries as it
     // always did; zero was no federation's rule, and under it the gate mints at 100 sat
     // and pick (a)'s door rightly refuses an entry that brings no fee lock. A test about
     // the fee arithmetic sets its own rule.
@@ -69,7 +69,7 @@ export function lockPort({ height = 1000 } = {}) {
       if (!signature) return said;
       port.settlements.push({ claims, payouts, signature });
       // THE SAME BYTES AGAIN ARE ACCEPTED AGAIN, as the real guardians answered
-      // (stake-lock-step3.sh, (c1)): two seats submitting one txid is harmless.
+      // (stake-lock-step3.sh, (c1)): two signer nodes submitting one txid is harmless.
       if (port.accepted.has(toHex(message))) return { ...said, accepted: true };
       const fee = (m) => port.feeRule.baseMsat + (m * port.feeRule.ppm) / 1000000n;
       for (const c of claims) {
@@ -101,24 +101,24 @@ export function lockPort({ height = 1000 } = {}) {
   return port;
 }
 
-/** One seat of a paying FEDERATION round, a player's stake dealt and seated, the entry naming its lock. */
-export async function seatedWithLock(extra = {}, { federationId = TEST_FEDERATION_ID, custody = 'FEDERATION', outpoint: given } = {}) {
+/** One signer node of a paying FEDERATION round, a player's stake dealt and joined, the entry naming its lock. */
+export async function joinedWithLock(extra = {}, { federationId = TEST_FEDERATION_ID, custody = 'FEDERATION', outpoint: given } = {}) {
   const port = lockPort();
   const d = await serve(openStore(':memory:'), { port: 0, ...opts, stakeLocks: port, ...extra });
   let c; let rid;
-  // A ROUND THE CODEC OR THE DOOR REFUSES (M3 W7) CLOSES THE SEAT IT STARTED: measured, a refused
-  // contract left this seat open and the test file never exited.
+  // A ROUND THE CODEC OR THE DOOR REFUSES (M3 W7) CLOSES THE SIGNER NODE IT STARTED: measured, a refused
+  // contract left this signer node open and the test file never exited.
   try {
     c = { ...contractFor([d.round.pubkey, b32(0x33)], BigInt(WINDOW_MS), [`http://127.0.0.1:${d.port}`]), custody, federationId };
     rid = roundId(c);
     assert.equal((await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) })).status, 201);
   } catch (e) { await d.close(); throw e; }
-  assumeSeated(d.round, rid, c.nodes);
+  assumeAssigned(d.round, rid, c.nodes);
   const preimage = secretScalar();
   const e = rand(32);
   const player = rand(32);
   const dealt = await dealHandout({
-    preimage, seats: c.nodes, roundId: rid, playerPubkey: player,
+    preimage, signerNodes: c.nodes, roundId: rid, playerPubkey: player,
     ephemeralSecret: e, ephemeralPubkey: feldmanGroup.pointX(e),
     coefficients: [scalarFrom32(rand(32)) % FIELD], needed: 2, curve: feldmanGroup,
   });
@@ -132,8 +132,8 @@ export async function seatedWithLock(extra = {}, { federationId = TEST_FEDERATIO
     claimKeyAttestationRef: new Uint8Array(32),
   };
   assert.equal((await fetch(`http://127.0.0.1:${d.port}/handout`, { method: 'POST', body: encodeHandout(dealt.handout) })).status, 201);
-  const seated = await fetch(`http://127.0.0.1:${d.port}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
-  assert.equal(seated.status, 201, await seated.text());
+  const joined = await fetch(`http://127.0.0.1:${d.port}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
+  assert.equal(joined.status, 201, await joined.text());
   const eid = entryId(entry);
   // THE LOCK THE PLAYER MADE, as the federation stores it.
   const fields = {

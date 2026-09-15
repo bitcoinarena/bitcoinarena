@@ -21,7 +21,7 @@
 // A VALUE IS THE CHAIN'S, NEVER A CALLER'S. BIP-341 hashes every prevout
 // amount into the sighash, so a committee signing at an amount the chain does
 // not hold produces a signature the chain refuses - measured, and it can burn
-// nothing. What it can do is waste a signing round, and a seat that reads the
+// nothing. What it can do is waste a signing round, and a signer node that reads the
 // amount itself cannot be asked to.
 import { poolOutput } from '../../protocol/src/pool.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
@@ -103,7 +103,7 @@ export class PoolWatch {
   /**
    * ONE NAMED OUTPOINT, CONFIRMED AGAINST THE CHAIN.
    *
-   * This is the rule for a payout: the asker names an outpoint and the seat
+   * This is the rule for a payout: the asker names an outpoint and the signer node
    * takes everything else from here. It refuses an output the chain does not
    * hold - spent, or never existed - and one that pays somebody other than
    * this pool, which is the check that stops a committee signing away a coin
@@ -149,8 +149,8 @@ export class PoolWatch {
    * HOW FAR THE CHAIN HAS GOT, which is the only clock item 19 waits on.
    *
    * `getblockcount` and nothing else. The takeover order is measured in blocks
-   * past the round's beacon precisely so that every seat reads one number off
-   * one chain and agrees without talking; a wall clock would put two seats a
+   * past the round's beacon precisely so that every signer node reads one number off
+   * one chain and agrees without talking; a wall clock would put two signer nodes a
    * minute apart and let both of them take over.
    */
   async tip() {
@@ -190,8 +190,8 @@ export class PoolWatch {
    * WHAT ALREADY SPENT THIS POOL, block by block from `fromHeight` to the tip.
    *
    * `unspent` answers from the UTXO set, so a pool output that has been paid
-   * out is simply absent - and a seat that did not send the payment had no way
-   * to learn it was made. Measured: after the asker paid, 6 of 6 other seats
+   * out is simply absent - and a signer node that did not send the payment had no way
+   * to learn it was made. Measured: after the asker paid, 6 of 6 other signer nodes
    * stayed PAYOUT_QUEUED at every kill point. This reads each block with its
    * inputs' previous outputs (`getblock` verbosity 3) and returns every
    * transaction spending an output with this pool's script: the output it

@@ -1,7 +1,7 @@
-// THE DONATION SET A ROUND NAMES, SERVED BY ITS SEATS (M3.2 6e; §22A, §27A.4;
+// THE DONATION SET A ROUND NAMES, SERVED BY ITS SIGNER NODES (M3.2 6e; §22A, §27A.4;
 // the owner 2026-09-13: the donation authority signs with Ed25519).
 //
-// Measured before this: every seat answered /donation-set 404, and every
+// Measured before this: every signer node answered /donation-set 404, and every
 // launcher named the placeholder donationSetId b32(0xd0) - no set's id - so no
 // round named a set anybody could pay.
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
@@ -38,15 +38,15 @@ const contractFor = (nodes, donationSetIdOfRound) => ({
   minScore: 1, rankNumerator: 3, rankDenominator: 4, nodes,
 });
 
-async function seatsWith(setsPerSeat, rotationsPerSeat = []) {
-  const seats = [];
-  for (const [i, donationSets] of setsPerSeat.entries())
-    seats.push(await serve(openStore(':memory:'), { port: 0, funded: () => true, now: () => NOW, donationSets, donationRotations: rotationsPerSeat[i] || [] }));
-  const nodes = seats.map((s) => s.round.pubkey);
+async function signerNodesWith(setsPerSignerNode, rotationsPerSignerNode = []) {
+  const signerNodes = [];
+  for (const [i, donationSets] of setsPerSignerNode.entries())
+    signerNodes.push(await serve(openStore(':memory:'), { port: 0, funded: () => true, now: () => NOW, donationSets, donationRotations: rotationsPerSignerNode[i] || [] }));
+  const nodes = signerNodes.map((s) => s.round.pubkey);
   const post = async (contract) => {
-    for (const s of seats) {
+    for (const s of signerNodes) {
       const r = await fetch(`http://127.0.0.1:${s.port}/round`, { method: 'POST', body: encodeRoundContract(contract) });
-      assert.equal(r.status, 201, `a seat refused the round: ${await r.text()}`);
+      assert.equal(r.status, 201, `a signer node refused the round: ${await r.text()}`);
     }
     return roundId(contract);
   };
@@ -54,7 +54,7 @@ async function seatsWith(setsPerSeat, rotationsPerSeat = []) {
     const r = await fetch(`http://127.0.0.1:${s.port}/donation-set?round=${hex(rid)}`);
     return { status: r.status, bytes: new Uint8Array(await r.arrayBuffer()) };
   };
-  return { seats, nodes, post, ask, close: () => Promise.all(seats.map((s) => s.close())) };
+  return { signerNodes, nodes, post, ask, close: () => Promise.all(signerNodes.map((s) => s.close())) };
 }
 
 test('each test set is signed by its network\'s Ed25519 donation authority and splits 2000 msat between two local recipients', () => {
@@ -68,50 +68,50 @@ test('each test set is signed by its network\'s Ed25519 donation authority and s
   console.log(`  2000 msat: ${split.shares.map((s) => `${s.amountMsat} to ${urlOfLnurl(s.lnurl)}`).join(', ')}`);
 });
 
-test('every seat of a round serves the set the round names, byte for byte', async () => {
-  const w = await seatsWith([[SET], [SET]]);
+test('every signer node of a round serves the set the round names, byte for byte', async () => {
+  const w = await signerNodesWith([[SET], [SET]]);
   try {
     const contract = contractFor(w.nodes, SET_ID);
     const rid = await w.post(contract);
-    const said = await Promise.all(w.seats.map((s) => w.ask(s, rid)));
+    const said = await Promise.all(w.signerNodes.map((s) => w.ask(s, rid)));
     assert.deepEqual(said.map((x) => x.status), [200, 200]);
-    assert.equal(hex(said[0].bytes), hex(said[1].bytes), 'the seats serve different bytes');
+    assert.equal(hex(said[0].bytes), hex(said[1].bytes), 'the signer nodes serve different bytes');
     const body = said[0].bytes.slice(0, -DONATION_SIGNATURE_BYTES);
     const signature = said[0].bytes.slice(-DONATION_SIGNATURE_BYTES);
     const served = { ...decodeDonationSetBody(body), signature };
     assert.equal(ed25519.verify(signature, donationSetBodyId(served), AUTHORITY_PUBKEY_REGTEST), true);
     assert.equal(donationSetMatchesRound(contract, served.recipients).ok, true);
-    console.log(`  both seats: 200, ${said[0].bytes.length} bytes, set ${hex(SET_ID).slice(0, 16)}..., signed by ${hex(AUTHORITY_PUBKEY_REGTEST).slice(0, 16)}`);
+    console.log(`  both signer nodes: 200, ${said[0].bytes.length} bytes, set ${hex(SET_ID).slice(0, 16)}..., signed by ${hex(AUTHORITY_PUBKEY_REGTEST).slice(0, 16)}`);
   } finally { await w.close(); }
 });
 
-test('a seat serves no set it cannot stand behind: the placeholder, none held, or a set another key signed', async () => {
+test('a signer node serves no set it cannot stand behind: the placeholder, none held, or a set another key signed', async () => {
   const forger = ed25519.utils.randomSecretKey();
   const forged = { ...SET, signature: ed25519.sign(donationSetBodyId(SET), forger) };
-  const w = await seatsWith([[SET], [], [forged]]);
+  const w = await signerNodesWith([[SET], [], [forged]]);
   try {
     const placeholder = await w.post(contractFor(w.nodes, b32(0xd0)));
     const named = await w.post(contractFor(w.nodes, SET_ID));
-    const onPlaceholder = await Promise.all(w.seats.map((s) => w.ask(s, placeholder)));
-    const onNamed = await Promise.all(w.seats.map((s) => w.ask(s, named)));
+    const onPlaceholder = await Promise.all(w.signerNodes.map((s) => w.ask(s, placeholder)));
+    const onNamed = await Promise.all(w.signerNodes.map((s) => w.ask(s, named)));
     assert.deepEqual(onPlaceholder.map((x) => x.status), [404, 404, 404], 'a set served for a round naming the placeholder');
-    assert.deepEqual(onNamed.map((x) => x.status), [200, 404, 404], 'the seat with no set or a forged one served it');
-    const bad = await fetch(`http://127.0.0.1:${w.seats[0].port}/donation-set?round=zz`);
+    assert.deepEqual(onNamed.map((x) => x.status), [200, 404, 404], 'the signer node with no set or a forged one served it');
+    const bad = await fetch(`http://127.0.0.1:${w.signerNodes[0].port}/donation-set?round=zz`);
     assert.equal(bad.status, 400);
-    const unknown = await w.ask(w.seats[0], b32(0x77));
+    const unknown = await w.ask(w.signerNodes[0], b32(0x77));
     assert.equal(unknown.status, 404);
     console.log(`  placeholder ${onPlaceholder.map((x) => x.status)}; named: held ${onNamed[0].status}, none ${onNamed[1].status}, forged ${onNamed[2].status}`);
   } finally { await w.close(); }
 });
 
-test('a seat serves the authority rotations it holds for the round\'s network, and an empty list when it holds none', async () => {
+test('a signer node serves the authority rotations it holds for the round\'s network, and an empty list when it holds none', async () => {
   const recovery = ed25519.utils.randomSecretKey();
   const body = { networkId: NETWORK_ID_REGTEST, serial: 1n, newAuthority: ed25519.getPublicKey(ed25519.utils.randomSecretKey()), validFrom: 5 };
   const rotation = { ...body, signature: ed25519.sign(authorityRotationId(body), recovery) };
-  const w = await seatsWith([[SET], [SET]], [[rotation], []]);
+  const w = await signerNodesWith([[SET], [SET]], [[rotation], []]);
   try {
     const rid = await w.post(contractFor(w.nodes, SET_ID));
-    const said = await Promise.all(w.seats.map(async (s) => (await fetch(`http://127.0.0.1:${s.port}/donation-rotations?round=${hex(rid)}`)).json()));
+    const said = await Promise.all(w.signerNodes.map(async (s) => (await fetch(`http://127.0.0.1:${s.port}/donation-rotations?round=${hex(rid)}`)).json()));
     assert.equal(said[0].rotations.length, 1);
     const back = decodeAuthorityRotation(Uint8Array.from(Buffer.from(said[0].rotations[0].body, 'hex')));
     assert.equal(hex(back.newAuthority), hex(body.newAuthority));

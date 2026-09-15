@@ -57,7 +57,7 @@ export function resultFrom({ answer, contract, entry, transcript, entryId, nodeP
   if (!contract || !(contract.simCoreHash instanceof Uint8Array))
     return { ok: false, why: 'that round names no simulation core to have replayed under' };
   // THE CORE THAT REPLAYED IS THE ONLY CORE A RESULT MAY NAME (M3 R1). Before, the result took the
-  // contract's simCoreHash whatever had run the replay - a seat could sign "core X" over a replay of
+  // contract's simCoreHash whatever had run the replay - a signer node could sign "core X" over a replay of
   // core Y. Now the replay says which core ran it (replay.js coreHash), and it must be the round's.
   const named = Array.from(contract.simCoreHash, (b) => b.toString(16).padStart(2, '0')).join('');
   if (typeof answer.coreHash !== 'string' || answer.coreHash !== named)
@@ -121,7 +121,7 @@ export function signResult(result, secretKey) {
  * count.
  *
  * AGREEMENT IS ON THE RUN, NOT ON THE BYTES. Section 13's PlayerResult carries
- * `node_pubkey`, so two seats that replayed the same run to the same answer
+ * `node_pubkey`, so two signer nodes that replayed the same run to the same answer
  * still produce two different result IDS - the record names who made it. Their
  * ids can never match, and counting ids would put every honest committee at
  * one of seven forever. What "the identical result" means is the identical
@@ -130,25 +130,25 @@ export function signResult(result, secretKey) {
  * grouping computed here, never signed and never sent, so it adds no object to
  * the protocol.
  *
- * ONE SEAT, ONE VOTE. A node that signed two results has equivocated; counting
- * both would let one seat carry two votes and dropping the later one would let
+ * ONE SIGNER NODE, ONE VOTE. A node that signed two results has equivocated; counting
+ * both would let one signer node carry two votes and dropping the later one would let
  * arrival order decide which.
  *
  * The threshold comes off the contract's own slots through `receiptsNeeded`.
  * Nothing in this file knows that seven means five.
  */
-export function verifiedFinal(records, { contract, seats: seated }) {
-  // THE SEATS ARE THE CENSUS'S. They used to be `contract.nodes` - the list a
-  // round's author wrote - so a result from a key the chain never seated
-  // counted towards a final. 26's ruling: the seated set is the only list
-  // that counts, and a round nobody seated has no committee at all.
-  if (!Array.isArray(seated) || !seated.length)
-    return { ok: false, why: 'that round has no seated committee to count against' };
+export function verifiedFinal(records, { contract, signerNodes: joined }) {
+  // THE SIGNER NODES ARE THE CENSUS'S. They used to be `contract.nodes` - the list a
+  // round's author wrote - so a result from a key the chain never assigned
+  // counted towards a final. 26's ruling: the assigned set is the only list
+  // that counts, and a round nobody was assigned to has no committee at all.
+  if (!Array.isArray(joined) || !joined.length)
+    return { ok: false, why: 'that round has no assigned committee to count against' };
   let needed;
   try { needed = receiptsNeeded(contract.gameVerifySlots); }
   catch (err) { return { ok: false, why: err.message }; }
 
-  const seats = new Set(seated.map(hex));
+  const signerNodes = new Set(joined.map(hex));
   const seen = new Set();
   const byRun = new Map();
   let forged = 0, doubled = 0, strangers = 0;
@@ -165,7 +165,7 @@ export function verifiedFinal(records, { contract, seats: seated }) {
     } catch { forged++; continue; }
 
     const who = hex(result.nodePubkey);
-    if (!seats.has(who)) { strangers++; continue; }
+    if (!signerNodes.has(who)) { strangers++; continue; }
     if (seen.has(who)) { doubled++; continue; }
     seen.add(who);
 
@@ -208,7 +208,7 @@ export function verifiedFinal(records, { contract, seats: seated }) {
  * THE RUN A RESULT DESCRIBES, with the signer taken out.
  *
  * Not a protocol object: nothing signs this and nothing sends it. It exists so
- * two seats' records can be asked "is this the same run?" without the answer
+ * two signer nodes' records can be asked "is this the same run?" without the answer
  * being "no, because you are not me".
  */
 export const runId = (r) => resultId({ ...r, nodePubkey: new Uint8Array(32) });

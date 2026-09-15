@@ -3,10 +3,10 @@
 // "Find a round: link, QR, copied round_id, a lobby - carries nothing." So the
 // door lists what THIS node holds and says so: which rounds a player can still
 // join, whether each is free (no stake, no Lightning, no wallet), and how many
-// players it has seated and taken ticks from. The page checks every listed id
+// players it has joined and taken ticks from. The page checks every listed id
 // against its contract before it shows it (lobby.js); this is the node's half.
 //
-// One seat, five rounds: free and open, free with its committee pending, free
+// One signer node, five rounds: free and open, free with its committee pending, free
 // and past its entry close, paying and open, free and closed. Only the three a
 // player could still come to are listed, the open ones first.
 //
@@ -20,7 +20,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
-import { assumeSeated } from './seating.js';
+import { assumeAssigned } from './assignment.js';
 import { b32, rand, STAKE, contractFor, say } from './window-fixture.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
 import { encodeInputBatch } from '../../protocol/src/batch.js';
@@ -31,7 +31,7 @@ import { lobbyListingId } from '../../protocol/src/lobby-listing.js';
 const WINDOW = 60000n;          // MIN_ENTRY_WINDOW_MS: committee -> start
 const ENTRY = 120000n;          // start -> entry close, as round-2of2 opens them
 
-test('the node lists the rounds a player can still join - free or paying, open or pending - with its own seat counts', async () => {
+test('the node lists the rounds a player can still join - free or paying, open or pending - with its own signer node counts', async () => {
   const d = await serve(openStore(':memory:'), { port: 0, funded: () => true });
   const base = `http://127.0.0.1:${d.port}`;
   try {
@@ -54,10 +54,10 @@ test('the node lists the rounds a player can still join - free or paying, open o
       assert.equal(r.status, 201, `${name}: ${await r.text()}`);
       ids[name] = toHex(roundId(c));
     }
-    assumeSeated(d.round, roundId(rounds.freeOpen), rounds.freeOpen.nodes);
+    assumeAssigned(d.round, roundId(rounds.freeOpen), rounds.freeOpen.nodes);
     assert.equal(await say(d.port, `close ${ids.freeClosed}`), 'closed');
 
-    // ONE FREE PLAYER, SEATED WITH NO WALLET AND NO LIGHTNING, AND ONE TICK PLAYED.
+    // ONE FREE PLAYER, JOINED WITH NO WALLET AND NO LIGHTNING, AND ONE TICK PLAYED.
     const entry = {
       roundId: roundId(rounds.freeOpen), playerPubkey: schnorr.getPublicKey(rand(32)),
       sessionPubkey: ed25519.getPublicKey(ed25519.utils.randomSecretKey()),
@@ -66,8 +66,8 @@ test('the node lists the rounds a player can still join - free or paying, open o
       feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n },
       feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
     };
-    const seated = await fetch(`${base}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
-    assert.equal(seated.status, 201, await seated.text());
+    const joined = await fetch(`${base}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
+    assert.equal(joined.status, 201, await joined.text());
     const played = await say(d.port, encodeInputBatch({ roundId: entry.roundId, entryId: entryId(entry),
       previousHash: GENESIS, firstTick: 0, ticks: [[0, 0, 0, 0, 0]], liquidations: [] }));
 
@@ -75,7 +75,7 @@ test('the node lists the rounds a player can still join - free or paying, open o
     const body = r.status === 200 ? await r.json() : null;
     const listed = body ? body.rounds : [];
     const byId = Object.fromEntries(listed.map((x) => [x.id, x]));
-    const pick = (x) => x && { phase: x.phase, free: x.free, wallet: x.wallet, seated: x.seated, playing: x.playing, seatedHere: x.seatedHere };
+    const pick = (x) => x && { phase: x.phase, free: x.free, wallet: x.wallet, joined: x.joined, playing: x.playing, assignedHere: x.assignedHere };
     const facts = {
       status: r.status, played,
       order: listed.map((x) => Object.keys(ids).find((k) => ids[k] === x.id)),
@@ -89,28 +89,28 @@ test('the node lists the rounds a player can still join - free or paying, open o
       // open before pending, and among the open the soonest entry close first:
       // payingOpen's committee came 1 s before freeOpen's, so its entry closes first
       order: ['payingOpen', 'freeOpen', 'freePending'],
-      freeOpen: { phase: 'open', free: true, wallet: 'none', seated: 1, playing: 1, seatedHere: true },
-      freePending: { phase: 'pending', free: true, wallet: 'none', seated: 0, playing: 0, seatedHere: false },
-      payingOpen: { phase: 'open', free: false, wallet: 'federation-lock', seated: 0, playing: 0, seatedHere: false },
+      freeOpen: { phase: 'open', free: true, wallet: 'none', joined: 1, playing: 1, assignedHere: true },
+      freePending: { phase: 'pending', free: true, wallet: 'none', joined: 0, playing: 0, assignedHere: false },
+      payingOpen: { phase: 'open', free: false, wallet: 'federation-lock', joined: 0, playing: 0, assignedHere: false },
     });
     // The times the page needs to say "entry closes in 1:42", as the contract has them.
     assert.equal(byId[ids.freeOpen].entryCloseMs, String(rounds.freeOpen.entryCloseMs));
 
-    // 2-OF-2: EACH ROW IS THIS SEAT'S SIGNED WORD, and says the round's threshold.
-    // The page counts distinct seats of the round that signed "open, seated";
-    // what one seat signed cannot be read as another's, or changed after.
+    // 2-OF-2: EACH ROW IS THIS SIGNER NODE'S SIGNED WORD, and says the round's threshold.
+    // The page counts distinct signer nodes of the round that signed "open, joined";
+    // what one signer node signed cannot be read as another's, or changed after.
     assert.equal(body.node, toHex(d.round.pubkey));
     const signedAs = (x, change = {}) => lobbyListingId({ roundId: fromHex(x.id), nodePubkey: d.round.pubkey,
-      nowMs: BigInt(body.nowMs), phase: x.phase, seatedHere: x.seatedHere, seated: x.seated, playing: x.playing, ...change });
+      nowMs: BigInt(body.nowMs), phase: x.phase, assignedHere: x.assignedHere, joined: x.joined, playing: x.playing, ...change });
     const verified = listed.map((x) => schnorr.verify(fromHex(x.sig), signedAs(x), d.round.pubkey));
     const open = byId[ids.freeOpen];
     const tampered = {
-      seated: schnorr.verify(fromHex(open.sig), signedAs(open, { seated: open.seated + 1 }), d.round.pubkey),
-      seatedHere: schnorr.verify(fromHex(open.sig), signedAs(open, { seatedHere: false }), d.round.pubkey),
+      joined: schnorr.verify(fromHex(open.sig), signedAs(open, { joined: open.joined + 1 }), d.round.pubkey),
+      assignedHere: schnorr.verify(fromHex(open.sig), signedAs(open, { assignedHere: false }), d.round.pubkey),
       anotherKey: schnorr.verify(fromHex(open.sig), signedAs(open, { nodePubkey: b32(0x33) }), b32(0x33)),
     };
-    console.log('  signed (2-of-2):', JSON.stringify({ verified, needed: open.needed, seats: open.seats, tampered }));
-    assert.deepEqual({ verified, needed: open.needed, seats: open.seats, tampered },
-      { verified: [true, true, true], needed: 2, seats: 2, tampered: { seated: false, seatedHere: false, anotherKey: false } });
+    console.log('  signed (2-of-2):', JSON.stringify({ verified, needed: open.needed, signerNodes: open.signerNodes, tampered }));
+    assert.deepEqual({ verified, needed: open.needed, signerNodes: open.signerNodes, tampered },
+      { verified: [true, true, true], needed: 2, signerNodes: 2, tampered: { joined: false, assignedHere: false, anotherKey: false } });
   } finally { await d.close(); }
 });

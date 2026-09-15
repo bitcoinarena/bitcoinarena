@@ -10,14 +10,14 @@
 //
 // Two halves closed it. `pool-watch.js` asks the chain (that was 80cc813), and
 // `Payouts.settleQueued` is the caller: it checks this node is the round's
-// asker, asks its own seat what the round owes, asks the watch for the one
+// asker, asks its own signer node what the round owes, asks the watch for the one
 // confirmed output that covers it, and runs the signing round.
 //
-// AND EXACTLY ONE SEAT ASKS. Every seat closes the round, so seven askers
+// AND EXACTLY ONE SIGNER NODE ASKS. Every signer node closes the round, so seven askers
 // would run seven signing rounds over one output - seven DIFFERENT
 // transactions, because FROST aggregates over the nonces that were committed,
-// and each seat holds one live nonce pair per round. `askerFor` picks one out
-// of the round id over the seated keys: no message, no election, no clock.
+// and each signer node holds one live nonce pair per round. `askerFor` picks one out
+// of the round id over the assigned keys: no message, no election, no clock.
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -43,7 +43,7 @@ import { scalarFrom32, FIELD, SHARES_NEEDED, SHARES_TOTAL } from '../../protocol
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
-import { assumeSeated } from './seating.js';
+import { assumeAssigned } from './assignment.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { parseTransaction } from '../../protocol/src/tx.js';
 
@@ -56,7 +56,7 @@ const curve = { ...feldmanGroup, tweakPoint };
 const NOW = 1788700000000;
 const POOL_SATS = 200000n;
 const FUNDED = { funded: () => true };
-// THE ROUND'S OWN CHAIN ANCHOR. Every seat reads the same one; the takeover
+// THE ROUND'S OWN CHAIN ANCHOR. Every signer node reads the same one; the takeover
 // order is measured in blocks past it.
 const BEACON_HEIGHT = 900001;
 const BEACON = { hash: b32(0x9b), height: BEACON_HEIGHT, timeMs: BigInt(NOW) };
@@ -152,7 +152,7 @@ async function committee({ held = null, chain = null } = {}) {
   for (let i = 0; i < SHARES_TOTAL; i++) {
     nodes.push(await serve(openStore(':memory:'), {
       port: 0, ...FUNDED, now: () => NOW,
-      poolKey: pool, poolCurve: curve, poolSeat: dealt.shares[i],
+      poolKey: pool, poolCurve: curve, poolSignerNode: dealt.shares[i],
       poolCall: holding.call, randomnessFor: () => BEACON,
       ...(chain ? { chainSpend: chain } : {}),
     }));
@@ -174,7 +174,7 @@ async function committee({ held = null, chain = null } = {}) {
 
   for (const n of nodes) {
     assert.equal((await post(n.port, '/round', encodeRoundContract(contract))).status, 201);
-    assumeSeated(n.round, rid, contract.nodes);
+    assumeAssigned(n.round, rid, contract.nodes);
     for (const e of entries) {
       assert.equal((await post(n.port, '/entry', encodeEntryContract(e.contract))).status, 201);
       const eid = entryIdOf(e.contract);
@@ -209,39 +209,39 @@ async function committee({ held = null, chain = null } = {}) {
  * THE RULE FIRST, on its own, because it decides whether the rest of this file
  * is describing one spend or seven.
  */
-test('every seat works out the same asker, and only that one asks', () => {
-  const seats = Array.from({ length: SHARES_TOTAL }, (_, i) => b32(i + 1));
+test('every signer node works out the same asker, and only that one asks', () => {
+  const signerNodes = Array.from({ length: SHARES_TOTAL }, (_, i) => b32(i + 1));
 
-  // The same round always names the same seat, however many times it is asked.
+  // The same round always names the same signer node, however many times it is asked.
   const rid = new Uint8Array([0, 0, 0, 9, ...new Uint8Array(28)]);
-  const first = askerFor(rid, seats);
+  const first = askerFor(rid, signerNodes);
   assert.equal(first.ok, true, first.why);
   assert.equal(first.of, SHARES_TOTAL);
-  assert.deepEqual(askerFor(rid, seats).asker, first.asker);
+  assert.deepEqual(askerFor(rid, signerNodes).asker, first.asker);
   assert.equal(first.at, 9 % SHARES_TOTAL);
 
   // AND IT MOVES WITH THE ROUND. A committee that always asked through its
-  // first seat would be one node's committee: the load and the exposure both
+  // first signer node would be one node's committee: the load and the exposure both
   // belong to whoever the round names.
   const asked = new Set();
   for (let i = 0; i < 200; i++) {
     const r = new Uint8Array(32);
     r.set([(i >> 24) & 255, (i >> 16) & 255, (i >> 8) & 255, i & 255]);
-    asked.add(askerFor(r, seats).at);
+    asked.add(askerFor(r, signerNodes).at);
   }
-  assert.equal(asked.size, SHARES_TOTAL, `200 rounds only ever asked ${asked.size} of the seats`);
-  console.log(`  200 rounds asked all ${asked.size} seats; one round always names the same one`);
+  assert.equal(asked.size, SHARES_TOTAL, `200 rounds only ever asked ${asked.size} of the signer nodes`);
+  console.log(`  200 rounds asked all ${asked.size} signer nodes; one round always names the same one`);
 
   // A TOP BIT SET IS NOT A NEGATIVE INDEX. `<<` in JavaScript makes a signed
-  // 32-bit number, so a round id starting 0xff would have picked seats[-x] and
+  // 32-bit number, so a round id starting 0xff would have picked signer nodes[-x] and
   // handed every such round to nobody at all.
   const high = new Uint8Array(32); high.set([0xff, 0xff, 0xff, 0xfe]);
-  const it = askerFor(high, seats);
+  const it = askerFor(high, signerNodes);
   assert.equal(it.ok, true, it.why);
-  assert.ok(it.at >= 0 && it.at < SHARES_TOTAL, `a round id of 0xfffffffe picked seat ${it.at}`);
+  assert.ok(it.at >= 0 && it.at < SHARES_TOTAL, `a round id of 0xfffffffe picked signer node ${it.at}`);
 
   assert.equal(askerFor(b32(1), []).ok, false);
-  assert.equal(askerFor(new Uint8Array(4), seats).ok, false);
+  assert.equal(askerFor(new Uint8Array(4), signerNodes).ok, false);
 });
 
 /**
@@ -253,11 +253,11 @@ test('the round\'s own asker finds the pool and pays the winner', async () => {
   const chain = { send: async (raw) => { sent.push(raw); return { ok: true, txid: b32(0xcd) }; } };
   const c = await committee({ chain });
   try {
-    const seats = c.nodes[0].round.seats(c.rid);
-    const who = askerFor(c.rid, seats);
+    const signerNodes = c.nodes[0].round.signerNodes(c.rid);
+    const who = askerFor(c.rid, signerNodes);
     const asker = c.nodes.find((n) => toHex(n.round.pubkey) === toHex(who.asker));
-    assert.ok(asker, 'the round named a seat that is not on this committee');
-    console.log(`  the round names seat ${who.at + 1} of ${who.of}`);
+    assert.ok(asker, 'the round named a signer node that is not on this committee');
+    console.log(`  the round names signer node ${who.at + 1} of ${who.of}`);
 
     // NOBODY NAMES AN OUTPOINT. That is the whole of the letter: the only
     // arguments are the round and the things this node already holds.
@@ -285,28 +285,28 @@ test('the round\'s own asker finds the pool and pays the winner', async () => {
 });
 
 /**
- * AND WITH NO PEER LIST, THE ROUND'S OWN SEATS SIGN IT.
+ * AND WITH NO PEER LIST, THE ROUND'S OWN SIGNER NODES SIGN IT.
  *
  * Measured on the real-lnd rehearsal with the daemons' own 2-of-2 pool: both
- * seats signed and queued the table, and the round's asker stopped at "1 of 2
- * seats committed to this spend". `settleQueued` handed the signing round
+ * signer nodes signed and queued the table, and the round's asker stopped at "1 of 2
+ * signer nodes committed to this spend". `settleQueued` handed the signing round
  * `this.peers` - the list an operator passes - while the table's gather beside
- * it asks `peersOf`, which falls back to the round's settlement seats off the
+ * it asks `peersOf`, which falls back to the round's settlement signer nodes off the
  * census (M3.3-24). A daemon given no list - the rehearsal's, the Daily's,
  * `main.js` at a live close - asked nobody for a signature.
  */
-test('with no peer list, the round\'s asker asks the round\'s own seats and pays the winner', async () => {
+test('with no peer list, the round\'s asker asks the round\'s own signer nodes and pays the winner', async () => {
   const sent = [];
   const chain = { send: async (raw) => { sent.push(raw); return { ok: true, txid: b32(0xce) }; } };
   const c = await committee({ chain });
   try {
-    // WHAT A LAUNCHED DAEMON HAS: no operator list, only the census's seats.
+    // WHAT A LAUNCHED DAEMON HAS: no operator list, only the census's signer nodes.
     for (const n of c.nodes) {
       const others = c.nodes.filter((o) => o !== n).map((o) => `http://127.0.0.1:${o.port}`);
       n.payouts.peers = [];
       n.payouts.peersFor = () => others;
     }
-    const who = askerFor(c.rid, c.nodes[0].round.seats(c.rid));
+    const who = askerFor(c.rid, c.nodes[0].round.signerNodes(c.rid));
     const asker = c.nodes.find((n) => toHex(n.round.pubkey) === toHex(who.asker));
     const paid = await asker.payouts.settleQueued({
       roundId: c.rid, contract: c.contract, signing: asker.signing, watch: asker.poolWatch,
@@ -325,7 +325,7 @@ test('with no peer list, the round\'s asker asks the round\'s own seats and pays
  * AND THE SIX OTHERS DO NOT, AT THE HEIGHT THE ROUND CLOSES AT.
  *
  * The round's own asker is first in the order and is alone at beacon+0. Every
- * other seat names the height at which its own turn comes, so a refusal says
+ * other signer node names the height at which its own turn comes, so a refusal says
  * WHEN rather than only no.
  */
 test('at the beacon height only the round\'s own asker may ask', async () => {
@@ -333,7 +333,7 @@ test('at the beacon height only the round\'s own asker may ask', async () => {
   const chain = { send: async (raw) => { sent.push(raw); return { ok: true, txid: b32(0xcd) }; } };
   const c = await committee({ chain });
   try {
-    const who = askerFor(c.rid, c.nodes[0].round.seats(c.rid));
+    const who = askerFor(c.rid, c.nodes[0].round.signerNodes(c.rid));
     let waiting = 0;
     for (const n of c.nodes) {
       if (toHex(n.round.pubkey) === toHex(who.asker)) continue;
@@ -342,14 +342,14 @@ test('at the beacon height only the round\'s own asker may ask', async () => {
       });
       assert.equal(got.ok, false);
       assert.equal(got.waiting, true);
-      assert.ok(got.place > 0, 'a waiting seat thinks it is first in the order');
+      assert.ok(got.place > 0, 'a waiting signer node thinks it is first in the order');
       assert.match(got.why, /in the takeover order and may ask at height/);
-      assert.equal(n.round.payout(c.rid).state, PAYOUT_QUEUED, 'a waiting seat moved its row');
+      assert.equal(n.round.payout(c.rid).state, PAYOUT_QUEUED, 'a waiting signer node moved its row');
       waiting++;
     }
     assert.equal(waiting, SHARES_TOTAL - 1);
-    assert.equal(sent.length, 0, 'a seat that is not the asker reached the chain');
-    console.log(`  at beacon+0: ${waiting} seats waited, 0 transactions sent`);
+    assert.equal(sent.length, 0, 'a signer node that is not the asker reached the chain');
+    console.log(`  at beacon+0: ${waiting} signer nodes waited, 0 transactions sent`);
   } finally { await c.close(); }
 });
 
@@ -357,15 +357,15 @@ test('at the beacon height only the round\'s own asker may ask', async () => {
  * ITEM 19, AND THE NUMBER IT IS OPENED ON: THE ASKER IS DOWN.
  *
  * Nothing is broadcast and the winner is unpaid for as long as the chain has
- * not advanced. Then the next seat in the order pays, and it is ONE
- * transaction - not one per eligible seat.
+ * not advanced. Then the next signer node in the order pays, and it is ONE
+ * transaction - not one per eligible signer node.
  */
-test('a down asker strands nothing: the next seat pays after the wait', async () => {
+test('a down asker strands nothing: the next signer node pays after the wait', async () => {
   const sent = [];
   const chain = { send: async (raw) => { sent.push(raw); return { ok: true, txid: b32(0xcd) }; } };
   const c = await committee({ chain });
   try {
-    const ring = askerOrder(c.rid, c.nodes[0].round.seats(c.rid));
+    const ring = askerOrder(c.rid, c.nodes[0].round.signerNodes(c.rid));
     const nodeAt = (k) => c.nodes.find((n) => toHex(n.round.pubkey) === toHex(ring.order[k]));
     const down = nodeAt(0);
     const next = nodeAt(1);
@@ -373,7 +373,7 @@ test('a down asker strands nothing: the next seat pays after the wait', async ()
       roundId: c.rid, contract: c.contract, signing: n.signing, watch: n.poolWatch, ...extra,
     });
 
-    // THE ASKER IS DOWN. It simply never runs, and the second seat is refused
+    // THE ASKER IS DOWN. It simply never runs, and the second signer node is refused
     // by the clock rather than by anything the first one said.
     const early = await settle(next);
     assert.equal(early.ok, false);
@@ -398,10 +398,10 @@ test('a down asker strands nothing: the next seat pays after the wait', async ()
     assert.equal(toWinner.length, 1);
     assert.equal(toWinner[0].value, netStakeMsat({ stakeMsat: c.contract.stakeMsat, feeMsat: entryFeeMsat(c.contract.stakeMsat), donationMsat: 0n }) / 1000n, 'the takeover paid a different amount');
     assert.equal(tx.outputs.filter((o) => toHex(o.script) === toHex(payToKey(c.loser.pubkey))).length, 0);
-    console.log(`  after ${TAKEOVER_BLOCKS} blocks seat ${2} of ${ring.of} paid `
+    console.log(`  after ${TAKEOVER_BLOCKS} blocks signer node ${2} of ${ring.of} paid `
       + `${toWinner[0].value} sats - the same table`);
 
-    // AND THE SEAT THAT WAS DOWN COMES BACK. Its own row still says queued;
+    // AND THE SIGNER NODE THAT WAS DOWN COMES BACK. Its own row still says queued;
     // it must not build a second spend.
     const back = await settle(down);
     assert.equal(back.ok, true, back.why);
@@ -427,7 +427,7 @@ test('a restart between two asks reproduces the same bytes, not a rival', async 
   const chain = { send: async (raw) => { sent.push(raw); return { ok: true, txid: b32(0xcd) }; } };
   const c = await committee({ chain });
   try {
-    const ring = askerOrder(c.rid, c.nodes[0].round.seats(c.rid));
+    const ring = askerOrder(c.rid, c.nodes[0].round.signerNodes(c.rid));
     const asker = c.nodes.find((n) => toHex(n.round.pubkey) === toHex(ring.order[0]));
     const first = await asker.payouts.settleQueued({
       roundId: c.rid, contract: c.contract, signing: asker.signing, watch: asker.poolWatch,
@@ -435,11 +435,11 @@ test('a restart between two asks reproduces the same bytes, not a rival', async 
     assert.equal(first.ok, true, first.why);
     assert.equal(sent.length, 1);
 
-    // EVERY SEAT RESTARTS: fresh PoolSigning objects over the same stores,
+    // EVERY SIGNER NODE RESTARTS: fresh PoolSigning objects over the same stores,
     // which is exactly what a process restart leaves behind.
     for (const n of c.nodes)
       n.signing = new PoolSigning(n.round, {
-        curve, seat: c.dealt.shares[c.nodes.indexOf(n)], pool: c.pool,
+        curve, signerNode: c.dealt.shares[c.nodes.indexOf(n)], pool: c.pool,
       });
 
     c.holding.mine(TAKEOVER_BLOCKS * SHARES_TOTAL);       // everybody is eligible now
@@ -456,7 +456,7 @@ test('a restart between two asks reproduces the same bytes, not a rival', async 
 });
 
 /**
- * AND A SPEND ALREADY IN A MEMPOOL STOPS THE NEXT SEAT BEFORE IT ASKS.
+ * AND A SPEND ALREADY IN A MEMPOOL STOPS THE NEXT SIGNER NODE BEFORE IT ASKS.
  *
  * `forRound` reads `scantxoutset`, which scans the UTXO set and does not see a
  * mempool, so on its own a takeover would start a signing round over an output
@@ -467,11 +467,11 @@ test('an output already going stops a takeover before it asks anybody', async ()
   const chain = { send: async (raw) => { sent.push(raw); return { ok: true, txid: b32(0xcd) }; } };
   const c = await committee({ chain });
   try {
-    const ring = askerOrder(c.rid, c.nodes[0].round.seats(c.rid));
+    const ring = askerOrder(c.rid, c.nodes[0].round.signerNodes(c.rid));
     const next = c.nodes.find((n) => toHex(n.round.pubkey) === toHex(ring.order[1]));
     c.holding.mine(TAKEOVER_BLOCKS);
 
-    // The seat in front broadcast a minute ago: the output is out of the
+    // The signer node in front broadcast a minute ago: the output is out of the
     // mempool's view but still in the UTXO set, which is the window this
     // check exists for.
     c.holding.spend(b32(0xab), 0);
@@ -491,45 +491,45 @@ test('an output already going stops a takeover before it asks anybody', async ()
 /**
  * AND NO NODE CAN MOVE ITS OWN PLACE.
  *
- * The order is the seats the store keeps sorted BY PUBKEY - which no seat
+ * The order is the signer nodes the store keeps sorted BY PUBKEY - which no signer node
  * picks - rotated by an index taken from the round id, which is a hash of a
  * contract signed before the round ran.
  */
 test('the takeover order is the round\'s, and nothing a node holds moves it', () => {
-  const seats = Array.from({ length: SHARES_TOTAL }, (_, i) => b32(i + 1));
+  const signerNodes = Array.from({ length: SHARES_TOTAL }, (_, i) => b32(i + 1));
   const rid = b32(0x21);
 
-  const ring = askerOrder(rid, seats);
+  const ring = askerOrder(rid, signerNodes);
   assert.equal(ring.ok, true, ring.why);
   assert.equal(ring.order.length, SHARES_TOTAL);
-  assert.deepEqual(ring.order[0], askerFor(rid, seats).asker, 'the ring does not start at the asker');
-  assert.equal(new Set(ring.order.map(toHex)).size, SHARES_TOTAL, 'a seat appears twice in the order');
-  assert.deepEqual(askerOrder(rid, seats).order.map(toHex), ring.order.map(toHex),
+  assert.deepEqual(ring.order[0], askerFor(rid, signerNodes).asker, 'the ring does not start at the asker');
+  assert.equal(new Set(ring.order.map(toHex)).size, SHARES_TOTAL, 'a signer node appears twice in the order');
+  assert.deepEqual(askerOrder(rid, signerNodes).order.map(toHex), ring.order.map(toHex),
     'the order is not the same twice');
 
-  // THE SAME SEATS IN A DIFFERENT ORDER ARE THE SAME RING. The store sorts by
+  // THE SAME SIGNER NODES IN A DIFFERENT ORDER ARE THE SAME RING. The store sorts by
   // pubkey, so a node cannot present its own list and move itself up.
-  const shuffled = [...seats].reverse();
-  assert.notDeepEqual(shuffled.map(toHex), seats.map(toHex));
+  const shuffled = [...signerNodes].reverse();
+  assert.notDeepEqual(shuffled.map(toHex), signerNodes.map(toHex));
   const sorted = [...shuffled].sort((a, b) => (toHex(a) < toHex(b) ? -1 : 1));
   assert.deepEqual(askerOrder(rid, sorted).order.map(toHex), ring.order.map(toHex));
 
-  // AND THE WAIT IS THE CHAIN'S. One seat at the beacon, one more every
+  // AND THE WAIT IS THE CHAIN'S. One signer node at the beacon, one more every
   // TAKEOVER_BLOCKS, all of them once the chain is far enough past it.
-  const at = (tip) => eligibleAsker({ roundId: rid, seats, beaconHeight: 100, tipHeight: tip });
+  const at = (tip) => eligibleAsker({ roundId: rid, signerNodes, beaconHeight: 100, tipHeight: tip });
   assert.equal(at(100).allowed.length, 1);
   assert.equal(at(100).nextAt, 100 + TAKEOVER_BLOCKS);
-  assert.equal(at(100 + TAKEOVER_BLOCKS - 1).allowed.length, 1, 'a seat came in early');
+  assert.equal(at(100 + TAKEOVER_BLOCKS - 1).allowed.length, 1, 'a signer node came in early');
   assert.equal(at(100 + TAKEOVER_BLOCKS).allowed.length, 2);
   assert.equal(at(100 + TAKEOVER_BLOCKS * (SHARES_TOTAL - 1)).allowed.length, SHARES_TOTAL);
   assert.equal(at(100 + TAKEOVER_BLOCKS * (SHARES_TOTAL - 1)).nextAt, null);
-  assert.equal(at(99).allowed.length, 0, 'a seat asked before the beacon it waits from');
+  assert.equal(at(99).allowed.length, 0, 'a signer node asked before the beacon it waits from');
 
   // A round with no beacon and a node with no tip both refuse rather than
   // guessing that it is somebody's turn.
-  assert.equal(eligibleAsker({ roundId: rid, seats, tipHeight: 100 }).ok, false);
-  assert.equal(eligibleAsker({ roundId: rid, seats, beaconHeight: 100 }).ok, false);
-  console.log(`  ${SHARES_TOTAL} seats, one at the beacon and one more every `
+  assert.equal(eligibleAsker({ roundId: rid, signerNodes, tipHeight: 100 }).ok, false);
+  assert.equal(eligibleAsker({ roundId: rid, signerNodes, beaconHeight: 100 }).ok, false);
+  console.log(`  ${SHARES_TOTAL} signer nodes, one at the beacon and one more every `
     + `${TAKEOVER_BLOCKS} blocks; the order is the same however the list arrives`);
 });
 
@@ -544,7 +544,7 @@ test('an empty pool and a pool with a choice both refuse, and the row stays queu
 
   const empty = await committee({ chain, held: [] });
   try {
-    const who = askerFor(empty.rid, empty.nodes[0].round.seats(empty.rid));
+    const who = askerFor(empty.rid, empty.nodes[0].round.signerNodes(empty.rid));
     const asker = empty.nodes.find((n) => toHex(n.round.pubkey) === toHex(who.asker));
     const got = await asker.payouts.settleQueued({
       roundId: empty.rid, contract: empty.contract, signing: asker.signing, watch: asker.poolWatch,
@@ -560,7 +560,7 @@ test('an empty pool and a pool with a choice both refuse, and the row stays queu
     { txid: b32(0xac), vout: 1, sats: POOL_SATS },
   ] });
   try {
-    const who = askerFor(two.rid, two.nodes[0].round.seats(two.rid));
+    const who = askerFor(two.rid, two.nodes[0].round.signerNodes(two.rid));
     const asker = two.nodes.find((n) => toHex(n.round.pubkey) === toHex(who.asker));
     const got = await asker.payouts.settleQueued({
       roundId: two.rid, contract: two.contract, signing: asker.signing, watch: asker.poolWatch,
@@ -587,7 +587,7 @@ test('an output too shallow for the depth asked for is refused by its own name',
     { txid: b32(0xab), vout: 0, sats: POOL_SATS, confirmations: 3 },
   ] });
   try {
-    const who = askerFor(c.rid, c.nodes[0].round.seats(c.rid));
+    const who = askerFor(c.rid, c.nodes[0].round.signerNodes(c.rid));
     const asker = c.nodes.find((n) => toHex(n.round.pubkey) === toHex(who.asker));
     const got = await asker.payouts.settleQueued({
       roundId: c.rid, contract: c.contract, signing: asker.signing, watch: asker.poolWatch,
@@ -614,7 +614,7 @@ test('a queued payout is swept on start, and a paid one is left alone', async ()
   const chain = { send: async (raw) => { sent.push(raw); return { ok: true, txid: b32(0xcd) }; } };
   const c = await committee({ chain });
   try {
-    const who = askerFor(c.rid, c.nodes[0].round.seats(c.rid));
+    const who = askerFor(c.rid, c.nodes[0].round.signerNodes(c.rid));
     const asker = c.nodes.find((n) => toHex(n.round.pubkey) === toHex(who.asker));
 
     const swept = await asker.payouts.settleAllQueued({

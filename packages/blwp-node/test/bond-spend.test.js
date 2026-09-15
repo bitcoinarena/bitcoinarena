@@ -140,15 +140,15 @@ test('the recovery leaf spends after maturity and not before', () => {
  * PATH B: five of seven, before maturity, counted the way tapscript counts.
  */
 test('the slash leaf spends with five of seven and not with four', () => {
-  const seats = [1, 2, 3, 4, 5, 6, 7].map(keyPair);
-  const sorted = [...seats].sort((a, b) => {
+  const signerNodes = [1, 2, 3, 4, 5, 6, 7].map(keyPair);
+  const sorted = [...signerNodes].sort((a, b) => {
     for (let i = 0; i < 32; i++) if (a.pubkey[i] !== b.pubkey[i]) return a.pubkey[i] - b.pubkey[i];
     return 0;
   });
-  const leaf = slashLeaf(seats.map((s) => s.pubkey), genesis.arbitrationK);
+  const leaf = slashLeaf(signerNodes.map((s) => s.pubkey), genesis.arbitrationK);
 
   // The witness is one item per key, in the order the SCRIPT checks them, and
-  // pushed so the first key's signature is on top. A seat that is not signing
+  // pushed so the first key's signature is on top. A signer node that is not signing
   // supplies an empty item, which counts as zero without failing the script.
   const witnessOf = (signing) => sorted
     .map((s) => (signing.has(s) ? schnorr.sign(SIGHASH, s.secret) : new Uint8Array(0)))
@@ -167,7 +167,7 @@ test('the slash leaf spends with five of seven and not with four', () => {
   const otherFive = run(leaf, witnessOf(new Set(sorted.slice(2, 7))));
   assert.equal(otherFive.ok, true, otherFive.why);
 
-  // and five signatures from people who are not seats slash nothing
+  // and five signatures from people who are not signer nodes slash nothing
   const strangers = [1, 2, 3, 4, 5].map(keyPair);
   const outside = sorted.map((s, i) => (i < 5 ? schnorr.sign(SIGHASH, strangers[i].secret) : new Uint8Array(0))).reverse();
   assert.equal(run(leaf, outside).ok, false, 'five strangers slashed the bond');

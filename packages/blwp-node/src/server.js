@@ -77,7 +77,7 @@ import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../protocol/src/po
 import { federationIsBonded } from '../../protocol/src/federation.js';
 import { installedCores, coreForRound } from './cores.js';
 import { SIGNED_RERUN_BYTES } from '../../protocol/src/rerun.js';
-import { verifyStakeLock, verifyFeeLock, lockFieldsFromJson, roundMintsFees } from './stake-lock-seat.js';
+import { verifyStakeLock, verifyFeeLock, lockFieldsFromJson, roundMintsFees } from './stake-lock-signer-node.js';
 import { encodeClaimKeyAttestation, claimKeyAttestationId } from '../../protocol/src/claim-key.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { splitSlashEvidence, slashProofId, SLASH_EVIDENCE_BYTES } from '../../protocol/src/slash.js';
@@ -183,8 +183,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // dealt today because a dealerless DKG is its own letter. Absent, the
   // daemon runs exactly as it did and answers the two signing doors with a
   // refusal rather than a signature.
-  poolSeat = null,
-  // EVERY SEAT'S PUBLIC SHARE (Map seat id -> point) for a DEALT pool, so a bad
+  poolSignerNode = null,
+  // EVERY SIGNER NODE'S PUBLIC SHARE (Map signer node id -> point) for a DEALT pool, so a bad
   // signature share can be named. A DKG committee's come from its commitments.
   poolPublicShares = null,
   // AND SOMETHING THAT CAN ASK THE CHAIN WHICH OUTPUT HOLDS THE POOL.
@@ -199,38 +199,38 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // from the close and, while a run waits on its window, from that window's
   // end (M3.3-32).
   finality = {},
-  // THE DAILY'S CLOSE (M3.3-34), OPT-IN: close each round this seat holds by
+  // THE DAILY'S CLOSE (M3.3-34), OPT-IN: close each round this signer node holds by
   // its own clock once it is over (protocol roundEndMs). `true`, or
   // `{ everyMs }`. Off by default: a harness closes its rounds when it says so.
   closeAtEnd = false,
-  // THE SEATS' ADVERTISEMENTS, by round (Map node key hex -> advert), so a slash
-  // proof names each accused seat's own bond. Defaults to this node's census.
+  // THE SIGNER NODES' ADVERTISEMENTS, by round (Map node key hex -> advert), so a slash
+  // proof names each accused signer node's own bond. Defaults to this node's census.
   advertsFor = null,
   // THE ROUND'S FEDERATION, as a port (23.1 step 5): `status(outpoint)` and
   // `contractId(fields)`, the stock client's answers (blwp-stake-lock). Null:
   // this node verifies no stake lock.
   stakeLocks = null,
-  // THE ROUND'S CLAIM KEY, by round (33 bytes). Defaults to this seat's own
-  // DKG committee key - the key the settlement seats hold for that round.
+  // THE ROUND'S CLAIM KEY, by round (33 bytes). Defaults to this signer node's own
+  // DKG committee key - the key the settlement signer nodes hold for that round.
   claimKeyFor = null,
-  // THE SIGNED DONATION SETS ITS OPERATOR HANDED THIS SEAT (M3.2 6e, §22A,
+  // THE SIGNED DONATION SETS ITS OPERATOR HANDED THIS SIGNER NODE (M3.2 6e, §22A,
   // §27A.4), and any authority rotations: each checked here before it is ever
-  // served. None by default: a seat with none serves no set.
+  // served. None by default: a signer node with none serves no set.
   donationSets = [], donationRotations = [],
-  // THE CORES THIS SEAT RUNS BESIDE THE TRUCK (M3 R1; the owner 08:07: several games and rule sets at
+  // THE CORES THIS SIGNER NODE RUNS BESIDE THE TRUCK (M3 R1; the owner 08:07: several games and rule sets at
   // once): each { name, hash, url, adapter, configs } as cores.js builds the truck. The truck is
-  // always installed; a round naming a core or config this seat does not hold is refused at the door.
+  // always installed; a round naming a core or config this signer node does not hold is refused at the door.
   cores = [],
   // WHERE THIS NODE'S OWN CHAIN IS (M3.3-30): a height, asked of its own
   // bitcoind. Given none, the pool's chain call answers it when there is one.
   chainTip = null,
   expiry = {} } = {}) {
-  // THE CORES THIS SEAT RUNS (M3 R1), made once: the round store opens only rounds on them, and the door,
+  // THE CORES THIS SIGNER NODE RUNS (M3 R1), made once: the round store opens only rounds on them, and the door,
   // the replay and the ghosts resolve each round's core through the same registry.
   const installed = installedCores(cores);
   const round = new Round(db, undefined, { cores: installed });
 
-  // THE DONATION SET A ROUND NAMES, AS THIS SEAT CAN STAND BEHIND IT (M3.2 6e):
+  // THE DONATION SET A ROUND NAMES, AS THIS SIGNER NODE CAN STAND BEHIND IT (M3.2 6e):
   // one of the handed sets whose recipients hash to the id the round's contract
   // names, for the round's network, in force at the round's census height, and
   // signed by that network's donation authority at that height - Ed25519
@@ -238,10 +238,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const verifyDonation = (sig, msg, pub) => { try { return ed25519.verify(sig, msg, pub); } catch { return false; } };
   const donationSetFor = (contract) => {
     const keys = donationKeysForNetworkId(contract.networkId);
-    if (!keys) return { ok: false, why: 'this round\'s network has no donation authority this seat knows' };
+    if (!keys) return { ok: false, why: 'this round\'s network has no donation authority this signer node knows' };
     const want = toHex(contract.donationSetId);
     const named = donationSets.filter((s) => { try { return toHex(donationSetId(s.recipients)) === want; } catch { return false; } });
-    if (!named.length) return { ok: false, why: 'this seat holds no signed donation set with the id this round names' };
+    if (!named.length) return { ok: false, why: 'this signer node holds no signed donation set with the id this round names' };
     const at = authorityAt({ networkId: contract.networkId, authority: keys.authority, recovery: keys.recovery,
       rotations: donationRotations, height: contract.censusHeight, verify: verifyDonation });
     for (const s of named) {
@@ -251,13 +251,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return { ok: false, why: 'the set this round names is not signed by its network\'s donation authority at the round\'s height' };
   };
 
-  // THE BEACON IS KEPT WITH THE ROUND (M3.3-34). A seat restarted while it holds
+  // THE BEACON IS KEPT WITH THE ROUND (M3.3-34). A signer node restarted while it holds
   // a close must still name the block its chain named: measured on the Daily,
-  // whose chain reader keeps its answers in memory, a restarted seat held its
+  // whose chain reader keeps its answers in memory, a restarted signer node held its
   // pre-restart rounds for ever on "that randomness names no time". The first
   // block after committee_time does not change as the chain grows, so a kept
   // answer is the same answer - and `beaconFor` still checks it against this
-  // seat's own chain view. The reader's answer wins whenever it has one.
+  // signer node's own chain view. The reader's answer wins whenever it has one.
   if (randomnessFor) {
     const read = randomnessFor;
     const written = new Map();
@@ -283,10 +283,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // outcome word the core produced - and this file only says WHEN it is asked.
   // WHO CAN OPEN A STAKE. One share each, sealed, and five of them or nothing.
   // The peers are the same list the verifier gathers results from, because a
-  // seat that answers about a run is a seat that can be asked about its share.
+  // signer node that answers about a run is a signer node that can be asked about its share.
   const preimages = new Preimages(round, {
     curve: feldmanGroup, peers, fetcher: (u, o) => fetch(u, o), random: (n) => new Uint8Array(randomBytes(n)),
-    // AND WHEN THE OPERATOR SAID NOTHING, the round's SETTLEMENT seats off the
+    // AND WHEN THE OPERATOR SAID NOTHING, the round's SETTLEMENT signer nodes off the
     // census - they hold the shares. Read when a stake is opened, long after
     // `roster` below exists.
     peersFor: (roundIdBytes) => settlementPeers(roundIdBytes),
@@ -297,7 +297,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
    *
    * 23.4 wants five of seven preimage shares before a stake moves, and that is
    * now literally what happens: this node opens its own share and asks the
-   * other seats for theirs, each answer sealed to this node's key. Fewer than
+   * other signer nodes for theirs, each answer sealed to this node's key. Fewer than
    * five and there is no preimage, so `custody.js` leaves the hold in flight
    * and it expires back to its player.
    *
@@ -322,18 +322,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     port: lightning, preimageFor: preimageFor || fromTheCommittee,
   });
 
-  // TWO FIRST MARKS PROVEN HERE (§13B; M3.3-34, a seat that stays down): ask
-  // the other seats for their shares NOW, while they are up, and keep the
-  // envelopes (preimages.open) - so a seat that goes down later and stays down
+  // TWO FIRST MARKS PROVEN HERE (§13B; M3.3-34, a signer node that stays down): ask
+  // the other signer nodes for their shares NOW, while they are up, and keep the
+  // envelopes (preimages.open) - so a signer node that goes down later and stays down
   // past the hold's expiry cannot hand the stake back. Measured before: A held
   // the proof, B went down before the close, "1 of 2 shares" - the hold stayed
-  // in flight to expire back to the player. `pull`: this seat learned of the
+  // in flight to expire back to the player. `pull`: this signer node learned of the
   // pair from a refused forward, and fetches the proof first.
   // THE PROOF, SPREAD THE MOMENT IT FORMS - on a lock as on a hold (M3.3-34):
-  // every other seat is asked to pull the pair and check it itself (POST
-  // /proof-pull), while the seats are still reachable. Measured before on 5 of
-  // 7: receipts lost between seats that are up, the seat holding the proof cut
-  // off from the Void seats when the refund was asked - their pull found
+  // every other signer node is asked to pull the pair and check it itself (POST
+  // /proof-pull), while the signer nodes are still reachable. Measured before on 5 of
+  // 7: receipts lost between signer nodes that are up, the signer node holding the proof cut
+  // off from the Void signer nodes when the refund was asked - their pull found
   // nothing, five signed, 98000 msat back to the player; on a hold the proof had
   // spread through the share gathering and the stake settled.
   async function spreadProof(rid, eid) {
@@ -399,7 +399,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
    * 20's threshold and 9.4's qualifying tail. `chain` and `pool` are injected
    * the way the Lightning port is: a daemon given neither still signs the
    * table and serves its signature, because agreeing on what is owed is
-   * something every seat does whether or not it is the one that broadcasts.
+   * something every signer node does whether or not it is the one that broadcasts.
    */
   const payouts = new Payouts(round, {
     curve: poolCurve, chain: chainSpend, pool: poolKey,
@@ -409,24 +409,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // read. Item 19's takeover waits a number of BLOCKS past this height, so a
     // node that seeds on one beacon cannot wait on another.
     ...(randomnessFor ? { randomnessFor } : {}),
-    // AND THE OTHER SETTLEMENT SEATS AT A LIVE CLOSE: the table's signatures are
-    // theirs. Measured before: "1 of 2 seats signed this table" on both daemons,
+    // AND THE OTHER SETTLEMENT SIGNER NODES AT A LIVE CLOSE: the table's signatures are
+    // theirs. Measured before: "1 of 2 signer nodes signed this table" on both daemons,
     // because the census peers were read only at start, for rounds already owing.
     peersFor: (roundIdBytes) => settlementPeers(roundIdBytes),
   });
 
   // AND THIS NODE'S HALF OF A SIGNING ROUND. `Payouts` decides which
-  // transaction is right; this decides whether THIS seat will put its own
+  // transaction is right; this decides whether THIS signer node will put its own
   // share behind it, and it rebuilds the transaction itself before it does.
   const signing = new PoolSigning(round, {
-    curve: poolCurve, seat: poolSeat, pool: poolKey, publicShares: poolPublicShares,
+    curve: poolCurve, signerNode: poolSignerNode, pool: poolKey, publicShares: poolPublicShares,
   });
 
   // AND THIS NODE'S HALF OF MAKING THE COMMITTEE'S KEY.
   //
-  // `poolSeat` above is a share this daemon was HANDED, which means somebody
+  // `poolSignerNode` above is a share this daemon was HANDED, which means somebody
   // dealt it and therefore held every one. A committee that runs this makes
-  // its own: one contribution each, one share kept, and a group key every seat
+  // its own: one contribution each, one share kept, and a group key every signer node
   // computes from public data. The share it ends with has the same shape
   // `PoolSigning` already takes, so nothing about the signing changes.
   const dkg = new Dkg(round, {
@@ -434,13 +434,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     peers, fetcher: (u, o) => fetch(u, o),
   });
 
-  // THE PLAYER'S FIRST MARK, FORWARDED TO THE ROUND'S OTHER SEATS.
+  // THE PLAYER'S FIRST MARK, FORWARDED TO THE ROUND'S OTHER SIGNER NODES.
   //
-  // A seat the player never reached cannot tell a late start from a run, and
-  // cannot receipt a run it never saw start. So a seat that takes a first mark
+  // A signer node the player never reached cannot tell a late start from a run, and
+  // cannot receipt a run it never saw start. So a signer node that takes a first mark
   // - or refuses it as a late start, FORFEIT - hands it on at once: the signed mark, the
-  // batches it commits to (a seat receipts only a mark whose inputs it holds),
-  // and this seat's own receipt. Each other seat applies the same rule to the
+  // batches it commits to (a signer node receipts only a mark whose inputs it holds),
+  // and this signer node's own receipt. Each other signer node applies the same rule to the
   // same signed tick. What each answered is kept by entry, for whoever asks.
   const firstMarkForwards = new Map();
   const firstMarkOf = (data, isBinary) => {
@@ -458,13 +458,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (!held && !round.startForfeit(c.entryId)) return null;      // refused for another reason: nothing to hand on
     const batches = held ? round.batchesThrough(c.roundId, c.entryId, c.inputChainHash) : [];
     const own = held ? round.ownReceipt(id) : null;
-    // AND ONCE THIS SEAT HOLDS THE ENTRY ENTRY_VOID (§16), THE EVIDENCE GOES WITH
-    // IT: the player's own signed mark past the start line, or "closed". A seat
+    // AND ONCE THIS SIGNER NODE HOLDS THE ENTRY ENTRY_VOID (§16), THE EVIDENCE GOES WITH
+    // IT: the player's own signed mark past the start line, or "closed". A signer node
     // that was down records the Void from it instead of taking the mark late.
     const voided = held ? round.entryVoid(c.entryId) : null;
-    // WITH THE VOID, EVERY RECEIPT THIS SEAT HOLDS OF THE MARK (M3.3-34, ruled
-    // 2026-09-13, pick A): the returning seat counts them itself. Measured
-    // before: one receipt went, the returning seat read 1 of 5, took the mark
+    // WITH THE VOID, EVERY RECEIPT THIS SIGNER NODE HOLDS OF THE MARK (M3.3-34, ruled
+    // 2026-09-13, pick A): the returning signer node counts them itself. Measured
+    // before: one receipt went, the returning signer node read 1 of 5, took the mark
     // late, and all seven signed FAILED - the hold settled into the pool.
     const body = JSON.stringify({ mark: toHex(bytes), batches: batches.map((b) => toHex(b)), receipt: own ? toHex(own) : null,
       receipts: voided ? round.receiptsOfMark(id).map((r) => toHex(r)) : [], ask,
@@ -492,24 +492,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
     firstMarkForwards.set(toHex(c.entryId), said);
     // A PEER REFUSED THIS FIRST MARK AS A CONFLICT (409): it may hold another one
-    // - pull its proof, and on two first marks gather the shares while the seats
-    // are up. Not on a 404 (a seat that has not seated the entry yet holds no
-    // mark of it): measured, payout-second-seat pulled twice per run for nothing.
+    // - pull its proof, and on two first marks gather the shares while the signer nodes
+    // are up. Not on a 404 (a signer node that has not taken the entry yet holds no
+    // mark of it): measured, payout-second-signer node pulled twice per run for nothing.
     if (said.some((s) => (s.answer === 'refused' && s.status === 409) || s.answer === 'FORFEIT')) gatherOnProof(c.roundId, c.entryId, { pull: true });
     return said;
   }
 
-  // ENTRY_VOID (§16), THE OUTAGE REFUND, ON THIS SEAT'S OWN RECORD.
+  // ENTRY_VOID (§16), THE OUTAGE REFUND, ON THIS SIGNER NODE'S OWN RECORD.
   //
   // The player's on-time first mark is forwarded at once and what each other
-  // seat answered is kept (forwardFirstMark). When the start deadline passes
-  // HERE - this seat takes a mark the player signed past join tick + deadline,
+  // signer node answered is kept (forwardFirstMark). When the start deadline passes
+  // HERE - this signer node takes a mark the player signed past join tick + deadline,
   // or its round closes - and the first mark is still short of the threshold's
-  // receipts, with the seats it is short of offered it and silent, the entry is
-  // ENTRY_VOID (entry-void.js), and the evidence goes to the other seats. A
-  // seat that was down refuses a first mark reaching it after that line -
+  // receipts, with the signer nodes it is short of offered it and silent, the entry is
+  // ENTRY_VOID (entry-void.js), and the evidence goes to the other signer nodes. A
+  // signer node that was down refuses a first mark reaching it after that line -
   // forwarded, or sent by the player directly - and records the same Void, so a
-  // run cannot be kept by catching a down seat up after seeing it (§13C).
+  // run cannot be kept by catching a down signer node up after seeing it (§13C).
   // A late START is FORFEIT (first-mark.js) and is not decided here.
   const firstMarkMessage = (rid, eid) => {
     const bytes = round.firstMarkHeld(rid, eid);
@@ -518,15 +518,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return c.previousHash.every((x) => x === 0) ? { bytes, c } : null;
   };
   // THE PLAYER'S SECOND FIRST MARK (§13B; ruled 2026-09-12): a first mark this
-  // seat does not hold, while it keeps a DIFFERENT first mark as a late start or
+  // signer node does not hold, while it keeps a DIFFERENT first mark as a late start or
   // holds a proof of two - refused, never taken and never voided here. Measured
   // before on a fresh federation: A voided on a real outage, the player sent B a
   // late first mark, A's forfeit showed B the Void, B recorded it too, both
   // signed the refund and the player redeemed the lock before its expiry.
   const TWO_FIRST_MARKS = 'the player signed another first mark for this entry (§13B): two first marks are FORFEIT, never an outage refund';
-  // SAME-MARK ONLY (path 1): a first mark that differs from the one this seat
+  // SAME-MARK ONLY (path 1): a first mark that differs from the one this signer node
   // voided or kept as a late start is the second one - refused, and the pair
-  // kept as the proof other seats pull at /equivocation. A first mark this seat
+  // kept as the proof other signer nodes pull at /equivocation. A first mark this signer node
   // HOLDS is counted only before a Void (`orHeld`): at the door a different
   // one already goes to the chain's own refusal, which keeps that proof
   // (equivocation at a tick, or a parent that is not the head).
@@ -537,10 +537,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const other = [late && late.mark, voided && voided.firstMark, orHeld && round.firstMarkHeld(c.roundId, c.entryId)]
       .find((m) => m && toHex(m) !== toHex(bytes));
     if (!other || !round.putFirstMarkPair({ a: other, b: bytes })) return false;
-    // A VOID SEAT ALSO KEEPS THE PLAYER'S LATE FIRST MARK AS A LATE START (M3.3-34,
+    // A VOID SIGNER NODE ALSO KEEPS THE PLAYER'S LATE FIRST MARK AS A LATE START (M3.3-34,
     // ruled 2026-09-13), next to the pair: the late start's own record, through
     // the chain's own first-mark rule (signature checked, kept, refused FORFEIT).
-    // Measured before: seat 4, voided from the full receipts, refused the late
+    // Measured before: signer node 4, voided from the full receipts, refused the late
     // mark as a second first mark and kept no late start of it.
     const line = round.startLine(c.roundId, c.entryId);
     if (voided && !late && line && c.tick > line.lastTick) {
@@ -562,7 +562,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const had = round.entryVoid(eid);
     if (had) return had;
     // THE PLAYER'S TWO FIRST MARKS ARE NOT AN OUTAGE (§13B, §13C). Measured: an
-    // on-time first mark to B while A was down and a late one to A - both seats
+    // on-time first mark to B while A was down and a late one to A - both signer nodes
     // recorded ENTRY_VOID and forfeited the lock to the player at once, a refund
     // for the player's own split start. With the proof held here, no Void: the
     // close's no-quorum rule makes it FORFEIT (verify #noQuorum).
@@ -578,7 +578,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return round.entryVoid(eid);
   }
   // AFTER A LATER MARK IS TAKEN HERE: inside the start line, offer the first mark
-  // again to any seat that has not taken it (it may be back); past it, decide.
+  // again to any signer node that has not taken it (it may be back); past it, decide.
   async function afterMarkTaken(bytes) {
     let c;
     try { c = decodeCheckpoint(splitSigned(bytes).body); } catch { return; }
@@ -593,7 +593,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (round.entryVoid(c.entryId)) return;
     if (decideOutage(c.roundId, c.entryId, { evidenceKind: 'mark', evidence: bytes })) await forwardFirstMark(f);
   }
-  // HAS THE START DEADLINE PASSED, as far as THIS seat can check, for a first
+  // HAS THE START DEADLINE PASSED, as far as THIS signer node can check, for a first
   // mark it has never held? Its own record, its own round closed, or the
   // player's own signed mark past the line - never a peer's word alone.
   function lateEvidenceHere(c, claim, claimReceipt = null) {
@@ -601,11 +601,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (!line || c.tick > line.lastTick) return null;             // a late START is FORFEIT's
     if (round.entryVoid(c.entryId)) return { kind: 'recorded', evidence: null };
     if (line.closed) return { kind: 'closed', evidence: null };
-    // A ROUND SEAT THAT CLOSED WITH THE ENTRY VOID: this seat does not hold the
-    // first mark, and a seat of the round - proven by its own signed receipt of
+    // A ROUND SIGNER NODE THAT CLOSED WITH THE ENTRY VOID: this signer node does not hold the
+    // first mark, and a signer node of the round - proven by its own signed receipt of
     // THIS first mark, taken in time - says the round closed without it reaching
-    // the threshold. This seat records only what it knows: it never took the
-    // first mark. A seat that holds it never gets here, so a run that started
+    // the threshold. This signer node records only what it knows: it never took the
+    // first mark. A signer node that holds it never gets here, so a run that started
     // cannot be voided this way; the lock goes back to the player, never to anyone else.
     if (claim && claim.kind === 'closed' && claimReceipt && round.receiptVerifies(claimReceipt, checkpointId(c), c.roundId))
       return { kind: 'closed', evidence: null };
@@ -622,12 +622,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const had = round.entryVoid(c.entryId);
     if (had) return had;
     if (secondFirstMark(c, bytes, { orHeld: true })) return null;
-    // THE PLAYER'S OWN FIRST MARK, OR NO VOID HERE. A seat records ENTRY_VOID
+    // THE PLAYER'S OWN FIRST MARK, OR NO VOID HERE. A signer node records ENTRY_VOID
     // only for a first mark it holds in the player's own hand - signed by the
     // entry's session key, from the player or in a forward - never on another
-    // seat's word alone. Measured before this (closed-claim-probe.mjs): a mark
-    // one seat invented, with its own receipt over it and "closed", voided the
-    // entry at the other seat and the lock was forfeited though the player
+    // signer node's word alone. Measured before this (closed-claim-probe.mjs): a mark
+    // one signer node invented, with its own receipt over it and "closed", voided the
+    // entry at the other signer node and the lock was forfeited though the player
     // never sent a mark. Such a mark now goes on to the door's own checks,
     // which refuse its signature.
     let signed;
@@ -635,18 +635,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (toHex(checkpointId(signed)) !== toHex(checkpointId(c)) || !signed.previousHash.every((x) => x === 0)) return null;
     const line = round.startLine(c.roundId, c.entryId);
     const id = checkpointId(c);
-    // THE VOID SEATS' RECEIPTS, each checked here and counted once per signer:
-    // with this seat silent, the seats short of the threshold are the ones that
-    // were down - §16's outage, recorded here as the Void seats recorded it.
+    // THE VOID SIGNER NODES' RECEIPTS, each checked here and counted once per signer:
+    // with this signer node silent, the signer nodes short of the threshold are the ones that
+    // were down - §16's outage, recorded here as the Void signer nodes recorded it.
     const receipts = round.receiptSigners(givenReceipts, id, c.roundId);
     const d = outageOutcome({ firstMark: true, lateStart: false, deadlinePassed: true, receipts, needed: line.needed,
       offers: ['late'], state: null });
     if (d.outcome !== ENTRY_VOID) return null;
     round.putEntryVoid({ entryId: c.entryId, roundId: c.roundId, firstMark: bytes, evidenceKind: late.kind === 'recorded' ? 'mark' : late.kind,
-      evidence: late.evidence, why: `this seat was offered the on-time first mark only after the start deadline had passed; ${d.why}`, learned });
+      evidence: late.evidence, why: `this signer node was offered the on-time first mark only after the start deadline had passed; ${d.why}`, learned });
     return round.entryVoid(c.entryId);
   }
-  /** The receipts a Void seat handed over: its own, and every one it holds of the mark. */
+  /** The receipts a Void signer node handed over: its own, and every one it holds of the mark. */
   const receiptsGiven = (got) => [got.receipt, ...(Array.isArray(got.receipts) ? got.receipts : [])]
     .filter(Boolean).flatMap((r) => { try { return [fromHex(String(r))]; } catch { return []; } });
   async function lateByPeers(c, bytes) {
@@ -657,9 +657,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const got = await r.json();
         // SAME-MARK VOID EVIDENCE ONLY (M3.3-34, ruled 2026-09-12, path 1): a
         // peer's Void of a DIFFERENT first mark is the player's second first
-        // mark. Measured before: this seat took it as a normal mark (the peer's
+        // mark. Measured before: this signer node took it as a normal mark (the peer's
         // receipt was of its own mark, so no Void here), later recorded the
-        // peer's Void too, and both seats signed the refund - the player
+        // peer's Void too, and both signer nodes signed the refund - the player
         // redeemed the lock before its expiry. Now the pair is kept, the mark
         // refused. An ON-TIME mark only: a late one keeps its own rule (a late
         // start, FORFEIT, recorded as such), and the pair forms where the
@@ -670,24 +670,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           && round.putFirstMarkPair({ a: theirs, b: bytes })) return { twoFirst: true };
         const late = lateEvidenceHere(c, { kind: got.evidenceKind, evidence: got.evidence }, got.receipt ? fromHex(String(got.receipt)) : null);
         if (late) return { late, receipts: receiptsGiven(got) };
-      } catch { /* a seat that is down proves nothing */ }
+      } catch { /* a signer node that is down proves nothing */ }
     }
     return null;
   }
   async function pushVoid(rid, eid) {
     if (!round.entryVoid(eid)) return;
     const f = firstMarkMessage(rid, eid);
-    // named as the forfeit ask's push: a seat that learns the Void only from it
+    // named as the forfeit ask's push: a signer node that learns the Void only from it
     // signs no lock refund before the result window passes (forfeit.js)
     if (f) await forwardFirstMark(f, { ask: 'forfeit' });
   }
 
-  // THE SEATS' FORFEIT OF A QUALIFIER'S STAKE LOCK (W5b), with this seat's share
-  // of the round's claim key. Its peers are the round's settlement seats, from
+  // THE SIGNER NODES' FORFEIT OF A QUALIFIER'S STAKE LOCK (W5b), with this signer node's share
+  // of the round's claim key. Its peers are the round's settlement signer nodes, from
   // the census; a node with none (an in-process test) falls back to its DKG's.
   // AND OF AN ENTRY_VOID LOCK (§16, §23.2), at once: the evidence is shown to
-  // the other seats first, so a seat that was down can record the same Void.
-  // THE NAMES THIS SEAT KEEPS FOR A ROUND, as the players signed them (M3.3-34).
+  // the other signer nodes first, so a signer node that was down can record the same Void.
+  // THE NAMES THIS SIGNER NODE KEEPS FOR A ROUND, as the players signed them (M3.3-34).
   const namesHeld = (rid) => round.lobbyNames(rid).map((n) => ({ record: toHex(n.record), sig: toHex(n.signature) }));
 
   const forfeits = new Forfeit(round, {
@@ -697,22 +697,22 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       return picked.ok ? endpointsOf(picked.committee, round.pubkey) : (dkg.peers || []);
     },
     onVoid: (rid, eid) => pushVoid(rid, eid),
-    // Before a Void lock is refunded: the other seats' proof of two first marks.
+    // Before a Void lock is refunded: the other signer nodes' proof of two first marks.
     pullProof: (rid, eid) => verifier.pullFirstMarkProofReach(rid, eid),
   });
 
   // AND THE LOSERS' LOCKS, CLAIMED INTO THE ROUND'S ONE SETTLEMENT (W4, the owner
-  // 2026-09-14): the same seats, the same claim key, each loser's P opened by the
-  // share conversation, one txid rebuilt by every seat and signed once.
+  // 2026-09-14): the same signer nodes, the same claim key, each loser's P opened by the
+  // share conversation, one txid rebuilt by every signer node and signed once.
   const settlements = new LockSettlement(round, {
     dkg, port: stakeLocks, curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)), preimages,
     peersFor: (rid) => {
       const picked = roster.committeeFor(rid, 'settlement');
       return picked.ok ? endpointsOf(picked.committee, round.pubkey) : (dkg.peers || []);
     },
-    // WHO THE FEE LOCKS PAY (Pick A): the round's sitting seats, drawn from the
+    // WHO THE FEE LOCKS PAY (Pick A): the round's sitting signer nodes, drawn from the
     // census by role - the contract's own nodes where there is no census.
-    seatsFor: (rid, contract) => {
+    signerNodesFor: (rid, contract) => {
       const game = roster.committeeFor(rid, 'game');
       const settle = roster.committeeFor(rid, 'settlement');
       return { gameVerify: game.ok ? game.committee.map((e) => e.pubkey) : contract.nodes,
@@ -726,31 +726,31 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // closed round stopped at PAYOUT_QUEUED with the winner unpaid.
   const poolWatch = new PoolWatch({ call: poolCall, pool: poolKey, curve: poolCurve });
 
-  // THE SEAT AND THE POOL KEY, READ BACK FROM THIS NODE'S OWN STORE.
+  // THE SIGNER NODE AND THE POOL KEY, READ BACK FROM THIS NODE'S OWN STORE.
   //
-  // Measured 2026-09-10 on an isolated regtest: a seat SIGKILLed mid-settlement
+  // Measured 2026-09-10 on an isolated regtest: a signer node SIGKILLed mid-settlement
   // and started again as `src/main.js` starts a daemon recovered nothing at any
   // of four kill points - the share it made in the key ceremony was on disk,
   // and nothing read it back, so `canSpend` was false and neither the
   // reconcile nor the sweep ran. The committee of a round this node still owes
   // a payout on comes first; otherwise the newest committee it holds a share
-  // of. A seat and key the caller passed in are never replaced.
-  if (!poolSeat || !poolKey) {
+  // of. A signer node and key the caller passed in are never replaced.
+  if (!poolSignerNode || !poolKey) {
     const held = (() => {
       for (const row of round.payoutsInState(PAYOUT_QUEUED)) {
         const r = round.get(row.roundId);
         if (!r) continue;
-        const got = dkg.seatFor(decodeRoundContract(new Uint8Array(r.contract)).nodes);
-        if (got.ok) return { ...got, seats: decodeRoundContract(new Uint8Array(r.contract)).nodes };
+        const got = dkg.signerNodeFor(decodeRoundContract(new Uint8Array(r.contract)).nodes);
+        if (got.ok) return { ...got, signerNodes: decodeRoundContract(new Uint8Array(r.contract)).nodes };
       }
-      const seats = round.latestSharedEpochSeats();
-      return seats ? { ...dkg.seatFor(seats), seats } : null;
+      const signerNodes = round.latestSharedEpochSignerNodes();
+      return signerNodes ? { ...dkg.signerNodeFor(signerNodes), signerNodes } : null;
     })();
     if (held && held.ok) {
-      if (!signing.seat) signing.seat = held.seat;
+      if (!signing.signerNode) signing.signerNode = held.signerNode;
       if (!signing.pool) signing.pool = held.pool;
-      if (!signing.publicShares && held.seats) {
-        const pub = dkg.publicSharesFor(held.seats);
+      if (!signing.publicShares && held.signerNodes) {
+        const pub = dkg.publicSharesFor(held.signerNodes);
         if (pub.ok) signing.publicShares = pub.shares;
       }
       if (!payouts.pool) payouts.pool = held.pool;
@@ -763,7 +763,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // blocks - asked for, never invented, the same way the randomness is.
   const roster = new Roster(round, {
     ...(chainFor ? { chainFor } : {}),
-    // The same beacon the verifier reads: one source, so a node cannot seat
+    // The same beacon the verifier reads: one source, so a node cannot assign
     // one committee and sign results against another.
     ...(randomnessFor ? { randomnessFor } : {}),
   });
@@ -779,13 +779,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // out of `replay.js` like everything else that touches the core.
   const ghosts = new Ghosts(round, { cores: installed, ...(randomnessFor ? { randomnessFor } : {}) });
 
-  // THE ROUND'S SETTLEMENT SEATS, OFF THE CENSUS: who holds a stake's shares
+  // THE ROUND'S SETTLEMENT SIGNER NODES, OFF THE CENSUS: who holds a stake's shares
   // and who signs its payout table. The same rule the receipt pull uses, for
   // the other committee. Called at a close, when `roster` exists.
   function settlementPeers(roundIdBytes) {
     const picked = roster.committeeFor(roundIdBytes, 'settlement');
     if (!picked.ok) {
-      console.error(`[custody] ${toHex(roundIdBytes).slice(0, 16)} reads no settlement seat addresses: ${picked.why}`);
+      console.error(`[custody] ${toHex(roundIdBytes).slice(0, 16)} reads no settlement signer node addresses: ${picked.why}`);
       return [];
     }
     return endpointsOf(picked.committee, round.pubkey);
@@ -798,24 +798,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       return census.ok ? new Map(census.entries.map((e) => [toHex(e.pubkey), e.advert])) : null;
     }),
     ...(randomnessFor ? { randomnessFor } : {}),
-    // THE SAME CHAIN THE SEAT WAS CHECKED AGAINST. A node that closes a round
+    // THE SAME CHAIN THE SIGNER NODE WAS CHECKED AGAINST. A node that closes a round
     // on a beacon its own chain does not name computes a different world for
     // every player in it, so the check belongs on both doors.
     ...(chainFor ? { chainFor } : {}),
-    // WHERE THE OTHER SEATS ANSWER. A contract names a committee by KEY, and a
+    // WHERE THE OTHER SIGNER NODES ANSWER. A contract names a committee by KEY, and a
     // key is not an address - finding one is discovery's job (25.1), not this
     // letter's - so the operator says where they are and the contract still
     // says whose signatures count.
     peers,
     // AND WHEN THE OPERATOR SAID NOTHING, THE CENSUS SAYS: the round's game
-    // committee, each seat's endpoint off the signed advertisement in its bond
-    // - the same record seating reads, and the rule the payout path uses below.
+    // committee, each signer node's endpoint off the signed advertisement in its bond
+    // - the same record joining reads, and the rule the payout path uses below.
     // Measured before this: both daemons of the regtest rehearsal closed with
     // peers [], so no receipt and no result could ever be fetched.
     peersFor: (roundIdBytes) => {
       const picked = roster.committeeFor(roundIdBytes, 'game');
       if (!picked.ok) {
-        console.error(`[verify] ${toHex(roundIdBytes).slice(0, 16)} reads no seat addresses: ${picked.why}`);
+        console.error(`[verify] ${toHex(roundIdBytes).slice(0, 16)} reads no signer node addresses: ${picked.why}`);
         return [];
       }
       return endpointsOf(picked.committee, round.pubkey);
@@ -840,8 +840,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
    *
    * A close gathers each run's results once. Measured on the regtest rehearsal
    * in both orders: the first daemon to close answered 126-171 ms before the
-   * other seat had stored that run's result, so it was left at "1 of 2 agree"
-   * and its payout table at "1 of 2 seats signed", and nothing asked again.
+   * other signer node had stored that run's result, so it was left at "1 of 2 agree"
+   * and its payout table at "1 of 2 signer nodes signed", and nothing asked again.
    *
    * So after a close, every stored run that is not final is gathered again from
    * the round's peers every `everyMs` - results, the same pull as the close's -
@@ -868,24 +868,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
    */
   const finalityTimers = new Set();
 
-  // WHERE THIS SEAT'S CLOSE OF A RUN STANDS, for a run it could not sign at its
+  // WHERE THIS SIGNER NODE'S CLOSE OF A RUN STANDS, for a run it could not sign at its
   // close (M3.3-34): HOLDING - its peer down or unreachable, the close tried
   // again on the finality watch's cadence - until SIGNED. Served at /closing.
-  // Never a refund and never a VOID: a seat that cannot reach its peer can
+  // Never a refund and never a VOID: a signer node that cannot reach its peer can
   // neither form the receipted transcript nor rule out a first mark it lacks.
   // KEPT IN THE STORE and read back at start, so a restart does not forget a
   // run it was holding or how long it had been asking.
   const closing = new Map();          // `${round}:${entry}` -> state
-  // THE POOL 23.2's TABLE DECIDED FOR A ROUND, as this seat's custody last ran
+  // THE POOL 23.2's TABLE DECIDED FOR A ROUND, as this signer node's custody last ran
   // it (M3.2 6e): `holdSettlement`'s own figure, served on /settlement so a
   // page can show it - nobody outside the committee works it out again.
   const settledPools = new Map();     // round hex -> poolMsat
-  // AND EACH SEAT'S ROW OF THAT TABLE (M3.2 6e): computePayoutTable's own rows,
+  // AND EACH SIGNER NODE'S ROW OF THAT TABLE (M3.2 6e): computePayoutTable's own rows,
   // by player key, so a winner's page can show what the round owes it.
   const settledRows = new Map();      // round hex -> Map(player key hex -> amountMsat)
   for (const h of round.closeHolds())
     closing.set(`${toHex(h.roundId)}:${toHex(h.entryId)}`, { round: toHex(h.roundId), entry: toHex(h.entryId),
-      // a run this seat has signed is SIGNED, whatever an older build kept
+      // a run this signer node has signed is SIGNED, whatever an older build kept
       state: h.state === 'HOLDING' && round.hasResult(h.roundId, h.entryId, round.pubkey) ? 'SIGNED' : h.state,
       attempts: h.attempts, sinceMs: h.sinceMs, lastWhy: h.lastWhy, signedMs: h.signedMs });
   const holding = (rid, eid, { why = null, tried = false, signed = false, decided = null } = {}) => {
@@ -905,9 +905,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
   /**
    * ONE SUSPENDED RUN'S RE-RUN, AND THE SLASH PROOFS ONCE IT IS AUTHORITATIVE.
-   * Re-runs (13A) while SUSPENDED - this seat's own once, the other seats'
+   * Re-runs (13A) while SUSPENDED - this signer node's own once, the other signer nodes'
    * gathered each time - and, once the re-run has made the run FINAL, files a
-   * REPLAY_CONTRADICTS proof against every seat that signed the contradicted
+   * REPLAY_CONTRADICTS proof against every signer node that signed the contradicted
    * result (5A.3B step 1). Returns whether it is done.
    */
   async function rerunAndFile(rid, eid) {
@@ -926,7 +926,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
   /**
    * AND A WATCH FOR IT, started when an objection suspends a run: the other
-   * seats' re-runs arrive over time, so it asks again every `everyMs` until the
+   * signer nodes' re-runs arrive over time, so it asks again every `everyMs` until the
    * run is decided or its budget - `finality.rerunMs`, else the contract's own
    * objection window - runs out. How long 13C should wait is the parked result
    * window; a re-run that lands later is acted on at the next close logic.
@@ -934,31 +934,31 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const rerunTimers = new Set();
 
   /**
-   * THE ROUND'S CLAIM KEY AS THIS SEAT HOLDS IT (33 bytes), or null: the
-   * `claimKeyFor` option, else this seat's own DKG committee key for the round.
-   * One place, so the key a seat attests (/claim-key) and the key it checks a
+   * THE ROUND'S CLAIM KEY AS THIS SIGNER NODE HOLDS IT (33 bytes), or null: the
+   * `claimKeyFor` option, else this signer node's own DKG committee key for the round.
+   * One place, so the key a signer node attests (/claim-key) and the key it checks a
    * lock against (/lock) cannot be two keys.
    */
   function claimKeyOf(rid) {
     try {
       if (claimKeyFor) return claimKeyFor(rid);
       const r = round.get(rid);
-      const held = r ? dkg.seatFor(decodeRoundContract(new Uint8Array(r.contract)).nodes) : null;
+      const held = r ? dkg.signerNodeFor(decodeRoundContract(new Uint8Array(r.contract)).nodes) : null;
       return held && held.ok ? held.pool.groupPublicKey : null;
     } catch { return null; }
   }
 
   /**
-   * THE ROUND'S CLAIM KEY, MADE BY ITS OWN SEATS WHEN THEY SEAT IT.
+   * THE ROUND'S CLAIM KEY, MADE BY ITS OWN SIGNER NODES WHEN THEY ARE ASSIGNED TO IT.
    *
-   * Measured before (TASKBOOK, W5 step 1): on a Daily 2-of-2 seated from its
-   * census with no key injected, neither seat held a group key and /claim-key
+   * Measured before (TASKBOOK, W5 step 1): on a Daily 2-of-2 assigned from its
+   * census with no key injected, neither signer node held a group key and /claim-key
    * answered 409 on both - nothing in the daemon ran the key generation, and a
-   * run by hand found no peer ("1 of the committee's 2 seats have
-   * contributed"). Every lock rehearsal had injected a key. So a seat that
-   * seats a round runs its half of the key generation with the same seats
+   * run by hand found no peer ("1 of the committee's 2 signer nodes have
+   * contributed"). Every lock rehearsal had injected a key. So a signer node that
+   * signer nodes a round runs its half of the key generation with the same signer nodes
    * `claimKeyOf` reads, reaching the others at the endpoints the census gives
-   * (the rule the verify and payout paths use). A seat that seats first holds
+   * (the rule the verify and payout paths use). A signer node that signer nodes first holds
    * only its own contribution until the other deals, and running twice is
    * harmless by design, so it runs again - every second while the round's
    * entries are open, and at least `CLAIM_KEY_MIN_TRIES` times - until the key
@@ -967,27 +967,27 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   /**
    * THE ROUND'S FEDERATION IS BONDED (§23.6, P3; the owner 2026-09-15 07:33: "every guardian / node
    * must have its own bond or it may not take part. federationIsBonded stays on"). Its guardians
-   * come from the federation's own config, through this seat's stake-lock port (blwp-stake-lock
-   * --mode guardians: the broadcast keys and NumPeers' threshold); the census is the one this seat
+   * come from the federation's own config, through this signer node's stake-lock port (blwp-stake-lock
+   * --mode guardians: the broadcast keys and NumPeers' threshold); the census is the one this signer node
    * derived from the chain for the round. At least the federation's threshold of its guardian keys
    * must be advertised under guardian_of[] by distinct census nodes bonded at or above the round's
-   * bond_min. A seat that reaches no federation, or another one than the round names, cannot say,
-   * and seats nothing.
+   * bond_min. A signer node that reaches no federation, or another one than the round names, cannot say,
+   * and signer nodes nothing.
    */
   async function guardiansBonded(rid, contract) {
     if (!stakeLocks || typeof stakeLocks.guardians !== 'function')
-      return { ok: false, why: 'this seat reaches no federation to read the guardians of, so it seats no round that takes a stake into one (§23.6)' };
+      return { ok: false, why: 'this signer node reaches no federation to read the guardians of, so it signer nodes no round that takes a stake into one (§23.6)' };
     const census = roster.censusFor(rid);
     if (!census.ok) return census;
     let g;
     try { g = await stakeLocks.guardians(); }
-    catch (e) { return { ok: false, why: `this seat could not read its federation's guardians: ${e.message}` }; }
+    catch (e) { return { ok: false, why: `this signer node could not read its federation's guardians: ${e.message}` }; }
     if (!g || toHex(g.federationId) !== toHex(contract.federationId))
-      return { ok: false, why: `this seat reaches federation ${g ? toHex(g.federationId).slice(0, 16) : 'none'} and that round names `
+      return { ok: false, why: `this signer node reaches federation ${g ? toHex(g.federationId).slice(0, 16) : 'none'} and that round names `
         + `${toHex(contract.federationId).slice(0, 16)}, so it cannot count that federation's guardians` };
     const bonded = federationIsBonded({ federationId: contract.federationId, guardianKeys: g.keys, threshold: g.threshold,
       census: census.entries, bondMinSats: contract.bondMinSats });
-    return bonded.ok ? bonded : { ok: false, why: `this seat seats no round on an unbonded federation (§23.6): ${bonded.why}` };
+    return bonded.ok ? bonded : { ok: false, why: `this signer node signer nodes no round on an unbonded federation (§23.6): ${bonded.why}` };
   }
 
   const CLAIM_KEY_EVERY_MS = 1000;
@@ -999,10 +999,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const row = round.get(rid);
     if (!row || claimKeyRuns.has(key)) return;
     const contract = decodeRoundContract(new Uint8Array(row.contract));
-    const seats = contract.nodes;
-    // A ROUND POSTED AGAIN - a player's session opens it too - to a seat that
+    const signerNodes = contract.nodes;
+    // A ROUND POSTED AGAIN - a player's session opens it too - to a signer node that
     // already holds its key makes nothing: measured, the key was made twice.
-    if (dkg.seatFor(seats).ok) return;
+    if (dkg.signerNodeFor(signerNodes).ok) return;
     const peersOf = () => {
       const found = new Set();
       for (const role of ['settlement', 'game']) {
@@ -1016,11 +1016,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const attempt = async () => {
       if (shuttingDown) { claimKeyRuns.delete(key); return; }
       let said;
-      try { said = await dkg.run(seats, peersOf()); } catch (e) { said = { ok: false, why: e.message }; }
+      try { said = await dkg.run(signerNodes, peersOf()); } catch (e) { said = { ok: false, why: e.message }; }
       tries++;
-      if (dkg.seatFor(seats).ok) {
+      if (dkg.signerNodeFor(signerNodes).ok) {
         claimKeyRuns.delete(key);
-        console.log(`[claim-key] ${key.slice(0, 16)}: this seat holds the round's key (${tries} run(s))`);
+        console.log(`[claim-key] ${key.slice(0, 16)}: this signer node holds the round's key (${tries} run(s))`);
         return;
       }
       if (tries >= CLAIM_KEY_MIN_TRIES && Date.now() >= Number(contract.entryCloseMs)) {
@@ -1064,13 +1064,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const maxEveryMs = finality.maxEveryMs ?? 60000;
     const gathered = [...((closed && closed.gathered) || [])];
     const stored = ((closed && closed.replayed) || []).filter((r) => r && r.stored);
-    // A RUN THIS SEAT COULD NOT SIGN AT ITS CLOSE - a peer down or unreachable -
+    // A RUN THIS SIGNER NODE COULD NOT SIGN AT ITS CLOSE - a peer down or unreachable -
     // is tried again on this cadence (verifier.retryClose), HOLDING meanwhile.
     // A run already decided otherwise (ENTRY_VOID) is not, and neither is one
-    // this seat has already signed: one seat, one result. Measured: a restart
+    // this signer node has already signed: one signer node, one result. Measured: a restart
     // re-ran the close of rounds with one run short, and their signed, FINAL
     // runs came back HOLDING and were retried. A late start IS tried again
-    // (M3.3-34, ruled): it is signed FORFEIT 0 once no seat is unreachable.
+    // (M3.3-34, ruled): it is signed FORFEIT 0 once no signer node is unreachable.
     // Nor one §13C's no-quorum rule already decided (VOID or FORFEIT, after the
     // result window): that is its outcome, not a hold.
     const unsigned = ((closed && closed.replayed) || [])
@@ -1085,32 +1085,32 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       && typeof latest.owed.agreed === 'number');
     const settleShort = () => !!(latest && (latest.actions || [])
       .some((a) => a.action === SETTLE && a.state === HELD && a.final));
-    // A PAYOUT THIS SEAT QUEUED AND HAS NOT SEEN PAID IS SHORT TOO. Measured
+    // A PAYOUT THIS SIGNER NODE QUEUED AND HAS NOT SEEN PAID IS SHORT TOO. Measured
     // on the real-lnd rehearsal with the daemons' own 2-of-2 pool, 2 of 2
-    // runs: the seat whose one ask came before the other had queued stopped at
-    // "1 of 2 seats committed to this spend" and kept PAYOUT_QUEUED after the
-    // chain carried the other seat's payment. Asked again on the same cadence,
-    // `settleQueued` reads the chain first and writes PAID. Only a seat that
+    // runs: the signer node whose one ask came before the other had queued stopped at
+    // "1 of 2 signer nodes committed to this spend" and kept PAYOUT_QUEUED after the
+    // chain carried the other signer node's payment. Asked again on the same cadence,
+    // `settleQueued` reads the chain first and writes PAID. Only a signer node that
     // can spend and watch the pool is ever short of this.
     const payoutShort = () => !!(payouts.canSpend && poolWatch.reaches && latest && latest.owed
       && latest.owed.ok && latest.owed.state === PAYOUT_QUEUED && !(latest.paid && latest.paid.ok));
     const waitingOn = () => (latest && latest.waiting) || [];
     const windowDue = () => waitingOn().some((w) => w.closesAtMs !== null && round.now() >= w.closesAtMs);
     // A run whose transcript is not posted yet: the close logic runs again,
-    // which posts and gathers the seats' postings (P2).
+    // which posts and gathers the signer nodes' postings (P2).
     const unposted = () => waitingOn().some((w) => w.published === false);
     // A SUSPENDED RUN: the close logic runs again, which re-runs and gathers (13A).
     const suspendedShort = () => !!(latest && (latest.suspended || []).length);
     // A NO-QUORUM DECISION STILL TO COME (path 3): the money waits for it, so the
     // watch keeps asking until it lands and the table can hold the FORFEIT.
-    // Measured before: the watch stopped with "still to decide", no seat settled.
+    // Measured before: the watch stopped with "still to decide", no signer node settled.
     const pendingShort = () => !!(latest && latest.pendingNoQuorum && latest.pendingNoQuorum.length);
-    // A RUN AGREED 2 OF 2 BUT NOT FINAL HERE YET - the other seat's posting or
+    // A RUN AGREED 2 OF 2 BUT NOT FINAL HERE YET - the other signer node's posting or
     // its window still pending - is short too, past the window as inside it
-    // (M3.3-34). Measured: a seat that signed after the window stopped here with
-    // "1 of 2 settlement seats have posted" while its peer was FINAL.
-    // A RUN THIS SEAT HAS DECIDED BY §13C (past its result window: VOID, or FORFEIT) is not short of
-    // anything: it is asked for no more. Measured before: a seat's watch asked with no end for a run it
+    // (M3.3-34). Measured: a signer node that signed after the window stopped here with
+    // "1 of 2 settlement signer nodes have posted" while its peer was FINAL.
+    // A RUN THIS SIGNER NODE HAS DECIDED BY §13C (past its result window: VOID, or FORFEIT) is not short of
+    // anything: it is asked for no more. Measured before: a signer node's watch asked with no end for a run it
     // had signed 1 of 2 after its peer decided VOID.
     const decidedHere = (eid) => !!round.noQuorum(eid);
     const notFinalYet = () => stored.some((r) => !decidedHere(r.entryId) && resultFinality(round, roundIdBytes, r.entryId).state !== 'FINAL');
@@ -1151,10 +1151,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         && !notFinalYet() && !pendingShort()) return;
       if (Date.now() >= until && (unsigned.length || short.length || notFinalYet() || pendingShort())) {
         // THE WINDOW IS FOR OBJECTIONS, NOT FOR ABANDONING 2 OF 2 (M3.3-34).
-        // Measured before: the watch stopped here, and a seat whose peer came
+        // Measured before: the watch stopped here, and a signer node whose peer came
         // back after it never signed and never gathered - stuck at 1 of 2. A
         // run unsigned here or short of final keeps being asked for, backing
-        // off; only the one transcript every seat can reach is ever signed.
+        // off; only the one transcript every signer node can reach is ever signed.
         if (!pastWindow)
           console.log(`[close] ${toHex(roundIdBytes).slice(0, 16)} past the window with ${unsigned.length} run(s) unsigned here `
             + `and ${short.length} short of final: still asking, backing off to ${Math.round(maxEveryMs / 1000)} s`);
@@ -1165,7 +1165,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           + `${short.length} run(s) short of final${tableShort() ? ' and the table short' : ''}`
           + `${settleShort() ? ' and a lost stake still unsettled' : ''}`
           + `${waitingOn().length ? ' and a run still inside its objection window' : ''}`
-          + `${payoutShort() ? ' and a queued payout this seat has not seen paid' : ''}`);
+          + `${payoutShort() ? ' and a queued payout this signer node has not seen paid' : ''}`);
         return;
       }
       let turned = false;
@@ -1175,8 +1175,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const at = gathered.findIndex((x) => x && toHex(x.entryId) === toHex(r.entryId));
         if (at >= 0) gathered[at] = g; else gathered.push(g);
         if (g && g.ok && g.final) turned = true;
-        // PAST THIS SEAT'S RESULT WINDOW, a signed run no quorum can reach any more - enough seats say they
-        // decided it by §13C - is decided here too, on this seat's own count (verifier.shortPastWindow).
+        // PAST THIS SIGNER NODE'S RESULT WINDOW, a signed run no quorum can reach any more - enough signer nodes say they
+        // decided it by §13C - is decided here too, on this signer node's own count (verifier.shortPastWindow).
         else if (g && g.ok) {
           let d = null;
           try { d = await verifier.shortPastWindow(roundIdBytes, r.entryId, g); } catch { d = null; }
@@ -1208,8 +1208,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
    */
   function afterClose(roundIdBytes) {
     // §16 AT THE CLOSE: an entry whose on-time first mark is still short of the
-    // threshold, the seats it is short of offered it and silent, is ENTRY_VOID
-    // with "closed" as the evidence - and the other seats are shown it.
+    // threshold, the signer nodes it is short of offered it and silent, is ENTRY_VOID
+    // with "closed" as the evidence - and the other signer nodes are shown it.
     (async () => {
       for (const { entryId } of round.entriesOf(roundIdBytes)) {
         const f = firstMarkMessage(roundIdBytes, entryId);
@@ -1231,7 +1231,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
   async function settleTheStakes(roundIdBytes, closed) {
     // FIRST THE TRANSCRIPTS GO WHERE ANYONE CAN REPLAY THEM (P2), whether or
-    // not this node holds a stake: another seat's finality counts this one's
+    // not this node holds a stake: another signer node's finality counts this one's
     // posting. Every run the gather agreed on, each time the close logic runs.
     for (const g of (closed && closed.gathered) || []) {
       if (!(g && g.ok && g.final)) continue;
@@ -1241,7 +1241,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       } catch (e) { console.error(`[publish] ${e.message}`); }
     }
     // AND A SUSPENDED RESULT IS RE-RUN (13A), each time the close logic runs:
-    // this seat's own re-run once, and the other seats' gathered every time.
+    // this signer node's own re-run once, and the other signer nodes' gathered every time.
     for (const g of (closed && closed.gathered) || []) {
       if (!(g && g.ok && g.final)) continue;
       try { await rerunAndFile(roundIdBytes, g.entryId); } catch (e) { console.error(`[rerun] ${e.message}`); }
@@ -1261,14 +1261,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         score: r.score, stakeMsat: r.stakeMsat, feeMsat: r.feeMsat, donationMsat: r.donationMsat,
       }));
     // A NO-QUORUM FORFEIT (§13C; M3.3-34, ruled 2026-09-13, path 3): the
-    // player's proven equivocation, decided on this seat's own record after the
+    // player's proven equivocation, decided on this signer node's own record after the
     // result window - no run was carried, so no result was signed and none is
     // made up. It is a loser: FORFEIT, score 0, its stake from its own Entry
     // Contract, and its hold settles into the pool like any FORFEIT. Measured
     // before: left out of the table, its hold stayed HELD - expiring back to
     // the player - while the winner was paid its own stake from a pool of 0.
     // A no-quorum VOID stays out: nothing is forfeited (§13C).
-    // Read LIVE from this seat's store, not from `closed`: the finality watch
+    // Read LIVE from this signer node's store, not from `closed`: the finality watch
     // hands this the close's first snapshot again and again, and the rule
     // decides after it (measured: the snapshot's "pending" never cleared).
     const listed = new Set(entries.map((e) => toHex(e.entryId)));
@@ -1322,18 +1322,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           closesAtMs: s.closesAtMs === undefined ? null : Number(s.closesAtMs), why: s.why };
       });
     const suspended = entries.filter((e) => stateOf(e.entryId) === SUSPENDED).map((e) => toHex(e.entryId));
-    // A SEAT THAT REACHES NO LIGHTNING - a lock round's seat - holds no invoice
+    // A SIGNER NODE THAT REACHES NO LIGHTNING - a lock round's signer node - holds no invoice
     // to act on, and its runs still wait: to be posted, and for their window;
     // the forfeit waits on FINAL. So what is waiting is handed back and the
     // finality watch keeps posting and gathering. Measured before (W5b): this
-    // returned first, the watch ended after one pass, and the seat that posted
-    // first never gathered the other's posting - "1 of 2 settlement seats have
+    // returned first, the watch ended after one pass, and the signer node that posted
+    // first never gathered the other's posting - "1 of 2 settlement signer nodes have
     // posted", never FINAL, no forfeit.
     if (!custody.reaches) {
       // A LOCK ROUND'S LOSERS ARE CLAIMED (W4, the owner 2026-09-14 07:22: "a loser
       // loses the stake. The lock is claimed into the pool. Winners are paid from
       // that."): once nothing waits inside its window and nothing is suspended,
-      // the seats' one settlement claims every loser's lock and pays each
+      // the signer nodes' one settlement claims every loser's lock and pays each
       // qualifier's payout contract. Measured before: nothing claimed a loser's
       // lock, and it went back to the loser at its expiry.
       let lockSettled = null;
@@ -1376,17 +1376,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
     // ...AND WHAT THE ROUND OWES. The stakes moving is 23.2; who is owed what
     // out of the pool is §20, and it needs its own five of seven. This node
-    // signs the table it computed and asks the other seats for theirs.
+    // signs the table it computed and asks the other signer nodes for theirs.
     await payouts.gather({ roundId: roundIdBytes }).catch((e) => console.error(`[payout] ${e.message}`));
     const owed = payouts.queue({
       roundId: roundIdBytes, entries, minScore: contract.minScore, contract,
     });
     console.log(`[payout] ${owed.ok ? owed.state : owed.why}`);
 
-    // ...AND THE SPEND ITSELF, if this node is the seat that asks for it.
+    // ...AND THE SPEND ITSELF, if this node is the signer node that asks for it.
     //
-    // Every seat closes the round, so exactly one of them asks: `askerFor`
-    // picks it out of the round id over the seated keys, with no message and
+    // Every signer node closes the round, so exactly one of them asks: `askerFor`
+    // picks it out of the round id over the assigned keys, with no message and
     // no election. The rest log why they are not asking, because "nothing
     // happened" and "somebody else is doing it" must not look the same to an
     // operator reading a log.
@@ -1414,23 +1414,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
    * promise for the same reason the verifier's is: a caller that cannot await
    * it cannot tell "not asked yet" from "not asked".
    */
-  // THE OTHER SEATS' ADDRESSES, READ OFF THE CHAIN.
+  // THE OTHER SIGNER NODES' ADDRESSES, READ OFF THE CHAIN.
   //
-  // Measured 2026-09-10 on an isolated regtest: a seat restarted as
+  // Measured 2026-09-10 on an isolated regtest: a signer node restarted as
   // `src/main.js` with only its two chain settings reached the committee step
-  // of a payout that still needed signatures and stopped - "1 of 5 seats
-  // committed to this spend" - because it knew no other seat's address. The
+  // of a payout that still needed signatures and stopped - "1 of 5 signer nodes
+  // committed to this spend" - because it knew no other signer node's address. The
   // spec's record of where a node lives is the signed advertisement in its
-  // bond, and seat selection already reads those out of the same blocks. So a
+  // bond, and signer node selection already reads those out of the same blocks. So a
   // node handed no peers takes the settlement committee's endpoints from the
-  // census of every round it still owes a payout on, the same way it seated
+  // census of every round it still owes a payout on, the same way it assigned
   // them. A peers list the caller passed in is never replaced.
   if (chainFor && (!payouts.peers || !payouts.peers.length)) {
     const found = new Set();
     for (const row of round.payoutsInState(PAYOUT_QUEUED)) {
       const picked = roster.committeeFor(row.roundId, 'settlement');
       if (!picked.ok) {
-        console.error(`[payout] ${toHex(row.roundId).slice(0, 16)} reads no seat addresses: ${picked.why}`);
+        console.error(`[payout] ${toHex(row.roundId).slice(0, 16)} reads no signer node addresses: ${picked.why}`);
         continue;
       }
       for (const u of endpointsOf(picked.committee, round.pubkey)) found.add(u);
@@ -1522,7 +1522,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
   // AND EVERY CLOSED ROUND WITH A RUN STILL SHORT OF FINAL HERE (M3.3-34).
   //
-  // The finality watch - the retries of a close this seat could not sign, the
+  // The finality watch - the retries of a close this signer node could not sign, the
   // asks for the second signature - lives in memory, and a restart used to drop
   // it for every round without a Lightning stake: a run held at 0 or 1 of 2
   // stayed there. Read off the store (results, entries), a start now runs the
@@ -1534,7 +1534,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (shuttingDown) break;
       const key = toHex(rid);
       if ((already || []).includes(key)) continue;
-      if (!round.seats(rid).some((s) => toHex(s) === toHex(round.pubkey))) continue;
+      if (!round.signerNodes(rid).some((s) => toHex(s) === toHex(round.pubkey))) continue;
       const short = round.entriesOf(rid).filter(({ entryId }) => !voidStands(rid, entryId) && !round.noQuorum(entryId)
         && resultFinality(round, rid, entryId).state !== 'FINAL');
       if (!short.length) continue;
@@ -1545,12 +1545,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return picked;
   }).catch((e) => { console.error(`[close] ${e.message}`); return []; });
 
-  // AND EVERY LOCK SETTLEMENT THIS SEAT WAS INSIDE (W6, the owner 2026-09-15). Measured before: the
+  // AND EVERY LOCK SETTLEMENT THIS SIGNER NODE WAS INSIDE (W6, the owner 2026-09-15). Measured before: the
   // start above runs a close again only for a round with a run short of FINAL, and a lock
-  // settlement happens only once every run is FINAL - so a seat restarted inside one never asked
+  // settlement happens only once every run is FINAL - so a signer node restarted inside one never asked
   // again and its row stayed SUBMITTING whether the money had moved or not. After the closes, each
   // SUBMITTING round goes through settle(), which asks the federation first; and again on a slow
-  // cadence, so one whose rebuild waited on a seat that was down is taken up once that seat is back.
+  // cadence, so one whose rebuild waited on a signer node that was down is taken up once that signer node is back.
   let recoveringNow = null;
   const recoverSettlements = () => {
     if (recoveringNow || shuttingDown) return recoveringNow || Promise.resolve([]);
@@ -1565,16 +1565,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (!shuttingDown && round.lockSettlementsIn(SUBMITTING).length) recoverSettlements();
   }, finality.maxEveryMs ?? 60000);
   // A BACKGROUND CHECK DOES NOT HOLD THE PROCESS UP: a running daemon's server does. Measured:
-  // without this, a test that left a seat open never let node --test exit.
+  // without this, a test that left a signer node open never let node --test exit.
   settleRecoverTimer.unref();
 
-  // AND EVERY ROUND THAT IS OVER, CLOSED BY THIS SEAT ITSELF (closeAtEnd).
+  // AND EVERY ROUND THAT IS OVER, CLOSED BY THIS SIGNER NODE ITSELF (closeAtEnd).
   //
   // Measured before (M3.3-34): nothing on the Daily ever closed a round - only
   // a `close <round>` message does, and no launcher, opener or page sent one -
   // so no run there was ever replayed, signed or made final, a walk-away was
   // refunded at its lock's expiry and a delivery was never paid. With this on,
-  // the seat closes a round once `roundEndMs` has passed on its own clock, by
+  // the signer node closes a round once `roundEndMs` has passed on its own clock, by
   // the very path that message takes, and at start for any round already over.
   let endTimer = null;
   if (closeAtEnd) {
@@ -1588,7 +1588,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         try { end = roundEndMs(c); } catch { continue; }
         if (nowMs < end) continue;
         if (round.close(held.roundId)) {
-          console.log(`[close] ${toHex(held.roundId).slice(0, 16)} is over at ${end}: closed by this seat`);
+          console.log(`[close] ${toHex(held.roundId).slice(0, 16)} is over at ${end}: closed by this signer node`);
           afterClose(held.roundId);
         }
       }
@@ -1638,7 +1638,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return res.end(JSON.stringify(bondProof));
       }
 
-      // AND THE BONDS OF A ROUND'S GUARDIANS (M3; the owner 07:33), out of the census this seat derived
+      // AND THE BONDS OF A ROUND'S GUARDIANS (M3; the owner 07:33), out of the census this signer node derived
       // for it: each transaction and its merkle branch, for the page to prove into headers it agreed
       // from providers and count against its own federation's keys. Candidates, not a count.
       if (req.method === 'GET' && url.pathname === '/guardian-bonds') {
@@ -1652,22 +1652,22 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // A PAYING FEDERATION ROUND NAMING NO FEDERATION IS NO CONTRACT (M3 W7): the decode refuses it.
         let contract;
         try { contract = decodeRoundContract(await read(req)); }
-        catch (e) { return text(res, 400, `that is not a round this seat opens: ${e.message}`); }
+        catch (e) { return text(res, 400, `that is not a round this signer node opens: ${e.message}`); }
         // Asked BEFORE anything is decoded into the database, so a refusal
         // costs a parse and nothing else.
         if (!funded({ kind: 'round', contract, node: fundingView }))
           return text(res, 402, 'this node stores nothing for a round nobody has funded');
-        // A ROUND ON A CORE OR CONFIG THIS SEAT DOES NOT RUN IS NOT OPENED HERE (M3 R1; the owner 08:07: each
-        // round names its sim_wasm_hash and config_hash, seats replay what that round names). 27A.7.5: the
-        // seat is not selectable for it - it serves nothing there, and is not slashed. Refused before
-        // anything of the round exists on this seat.
+        // A ROUND ON A CORE OR CONFIG THIS SIGNER NODE DOES NOT RUN IS NOT OPENED HERE (M3 R1; the owner 08:07: each
+        // round names its sim_wasm_hash and config_hash, signer nodes replay what that round names). 27A.7.5: the
+        // signer node is not selectable for it - it serves nothing there, and is not slashed. Refused before
+        // anything of the round exists on this signer node.
         {
           const runs = coreForRound(contract, installed);
           if (!runs.ok) return text(res, 409, runs.why);
         }
         // AND A ROUND THAT TAKES A STAKE INTO A FEDERATION IS HELD TO THE CUSTODY FIELDS IN FULL
         // (M3 W7, §23): which federation, the 144-block expiry, the relays - before anything of it
-        // exists on this seat. A free round and a THRESHOLD_LN round are the checks below.
+        // exists on this signer node. A free round and a THRESHOLD_LN round are the checks below.
         if (contract.custody === 'FEDERATION' && contract.stakeMsat > 0n) {
           const custodyOk = custodyFieldsAreValid(contract);
           if (!custodyOk.ok) return text(res, 409, custodyOk.why);
@@ -1675,7 +1675,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
         // A ROUND THAT ASKS A STAKE, ON A NODE THAT HOLDS STAKES, IS OPENED ONLY
         // WHEN THAT NODE CAN HOLD THEM. A hold invoice is RECEIVED money; the
-        // operator's testnet4 lnd had 0 msat of inbound where two 100-sat seats
+        // operator's testnet4 lnd had 0 msat of inbound where two 100-sat signer nodes
         // need 196000, and a player's payment would simply have failed after
         // they had sat down. So the round is refused here, with both numbers.
         // A round that asks nothing never asks (M3.3-19), and a node with no
@@ -1698,41 +1698,41 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             return text(res, 503, `this node's Lightning cannot hold this round's stakes: ${said ? said.why : 'no answer'}`);
         }
         const id = round.open(contract);
-        // AND KEEP THE BEACON THIS SEAT CAN NAME FOR IT NOW (M3.3-34), through
-        // the kept reader above: a seat restarted before it ever replays a run
+        // AND KEEP THE BEACON THIS SIGNER NODE CAN NAME FOR IT NOW (M3.3-34), through
+        // the kept reader above: a signer node restarted before it ever replays a run
         // of this round still has the block to replay from.
         if (randomnessFor) { try { randomnessFor({ contract, roundIdBytes: new Uint8Array(id) }); } catch { /* none yet */ } }
 
-        // AND SEAT IT FROM THE CHAIN, when this node can see one. The seated
+        // AND ASSIGN ITS SIGNER NODES FROM THE CHAIN, when this node can see one. The assigned
         // set is the only committee that counts (26), so a contract naming
-        // anybody the census did not seat is refused HERE - the round is
-        // stored, and it has no seats, so it issues no receipts and counts no
-        // results until somebody seats it honestly.
+        // anybody the census did not assign is refused HERE - the round is
+        // stored, and it has no signer nodes, so it issues no receipts and counts no
+        // results until somebody assigns it honestly.
         //
-        // A node with no chain view seats nothing and says nothing: it cannot
+        // A node with no chain view signer nodes nothing and says nothing: it cannot
         // check the list, so it does not pretend to. What it must not do is
         // fall back to the author's list, and it does not.
         if (chainFor) {
-          // AND A ROUND THAT TAKES A STAKE INTO A FEDERATION IS SEATED ONLY ON A BONDED ONE (§23.6, P3;
-          // the owner 2026-09-15 07:33): refused here like a committee the chain did not seat - stored,
-          // no seats, so no claim key and no lock can name it.
+          // AND A ROUND THAT TAKES A STAKE INTO A FEDERATION IS ASSIGNED SIGNER NODES ONLY ON A BONDED ONE (§23.6, P3;
+          // the owner 2026-09-15 07:33): refused here like a committee the chain did not assign - stored,
+          // no signer nodes, so no claim key and no lock can name it.
           if (contract.custody === 'FEDERATION' && contract.stakeMsat > 0n) {
             const bonded = await guardiansBonded(id, contract);
             if (!bonded.ok) return text(res, 409, bonded.why);
           }
-          const seated = roster.seatRound(id);
-          if (!seated.ok) return text(res, 409, seated.why);
-          // AND ITS SEATS MAKE ITS CLAIM KEY, in the background (see makeClaimKey).
+          const assigned = roster.assignSignerNodes(id);
+          if (!assigned.ok) return text(res, 409, assigned.why);
+          // AND ITS SIGNER NODES MAKE ITS CLAIM KEY, in the background (see makeClaimKey).
           makeClaimKey(id);
         }
         return bytes(res, 201, id);
       }
 
-      // A FIRST MARK HANDED ON BY ANOTHER SEAT. The same checks a player's
-      // own send meets - a seated entry, a stake this seat has seen, the mark's
+      // A FIRST MARK HANDED ON BY ANOTHER SIGNER NODE. The same checks a player's
+      // own send meets - a joined entry, a stake this signer node has seen, the mark's
       // own signature and chain - and the same rule: taken and receipted in
       // time, refused and recorded FORFEIT (a late start) after join_tick + the deadline.
-      // The forwarder's receipt is kept beside this seat's own.
+      // The forwarder's receipt is kept beside this signer node's own.
       if (req.method === 'POST' && url.pathname === '/first-mark') {
         const answer = (status, body) => { res.writeHead(status, { 'content-type': 'application/json', ...CORS }); return res.end(JSON.stringify(body)); };
         let got;
@@ -1743,21 +1743,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         try { bytes = fromHex(String(got.mark)); c = decodeCheckpoint(splitSigned(bytes).body); }
         catch (e) { return answer(400, { why: `that is not a signed mark: ${e.message}` }); }
         if (!c.previousHash.every((x) => x === 0)) return answer(400, { why: 'only a first mark is handed on' });
-        if (!round.entry(c.entryId)) return answer(404, { why: 'this seat seated no such entry' });
+        if (!round.entry(c.entryId)) return answer(404, { why: 'this signer node holds no such entry' });
         let seen;
         try { seen = await custody.seenPaid(c.entryId); } catch (e) { seen = { ok: false, why: e.message }; }
-        // A SEAT THAT IS UP AND REFUSES keeps what it refused (M3.3-34): the
+        // A SIGNER NODE THAT IS UP AND REFUSES keeps what it refused (M3.3-34): the
         // player's own on-time first mark, so it can reach §13C's VOID from its
-        // own store as the seat that took it does (round.putRefusedFirstMark
+        // own store as the signer node that took it does (round.putRefusedFirstMark
         // keeps nothing forged, late, or conflicting with a mark held here).
         if (!seen.ok) {
           round.putRefusedFirstMark({ bytes, why: STAKE_NOT_SEEN + seen.why });
           return answer(409, { why: STAKE_NOT_SEEN + seen.why });
         }
-        // §16: A FIRST MARK THIS SEAT DOES NOT HOLD, handed on after the start
+        // §16: A FIRST MARK THIS SIGNER NODE DOES NOT HOLD, handed on after the start
         // deadline passed - shown by the player's own signed mark past the line,
-        // or by this seat's round being closed - is refused and recorded
-        // ENTRY_VOID here. A claim of it this seat cannot check is refused.
+        // or by this signer node's round being closed - is refused and recorded
+        // ENTRY_VOID here. A claim of it this signer node cannot check is refused.
         if (!round.holdsMark(checkpointId(c)) && secondFirstMark(c, bytes)) {
           gatherOnProof(c.roundId, c.entryId);
           return answer(409, { why: TWO_FIRST_MARKS });
@@ -1767,7 +1767,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           if (late) {
             const v = voidHere(c, bytes, late, receiptsGiven(got), got.ask === 'forfeit' ? 'forfeit-ask' : 'forward');
             if (v) return answer(409, { entryVoid: true, why: v.why });
-          } else if (got.entryVoid) return answer(409, { why: 'that ENTRY_VOID claim does not verify at this seat' });
+          } else if (got.entryVoid) return answer(409, { why: 'that ENTRY_VOID claim does not verify at this signer node' });
         }
         for (const b of Array.isArray(got.batches) ? got.batches : []) {
           try { round.batch(fromHex(String(b))); } catch { /* held already, or refused: the mark says which */ }
@@ -1783,15 +1783,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return answer(200, { receipt: toHex(receipt) });
       }
 
-      // ENTRY_VOID (§16), AS THIS SEAT HOLDS IT: why, the first mark, the evidence
-      // the start deadline passed, and this seat's receipt of the first mark if
-      // it took it in time - what a returning seat checks before it records the
-      // same Void. 404: this seat holds none.
+      // ENTRY_VOID (§16), AS THIS SIGNER NODE HOLDS IT: why, the first mark, the evidence
+      // the start deadline passed, and this signer node's receipt of the first mark if
+      // it took it in time - what a returning signer node checks before it records the
+      // same Void. 404: this signer node holds none.
       if (req.method === 'GET' && url.pathname === '/entry-void') {
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
         if (eid.length !== 32) return text(res, 400, 'an entry is asked for by its id');
         const v = round.entryVoid(new Uint8Array(eid));
-        if (!v) return text(res, 404, 'this seat holds no ENTRY_VOID for that entry');
+        if (!v) return text(res, 404, 'this signer node holds no ENTRY_VOID for that entry');
         let own = null;
         try { own = round.ownReceipt(checkpointId(decodeCheckpoint(splitSigned(v.firstMark).body))); } catch { own = null; }
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
@@ -1801,11 +1801,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           offers: round.firstMarkOffers(new Uint8Array(eid)) }));
       }
 
-      // A SEATED PLAYER'S NAME FOR A ROUND (M3.3-34): the record the player signed
-      // with the round key it is seated under (lobby-name.js). Kept only from a
-      // player THIS seat seated in that round, the newest winning, and served
+      // A JOINED PLAYER'S NAME FOR A ROUND (M3.3-34): the record the player signed
+      // with the round key it is joined under (lobby-name.js). Kept only from a
+      // player who joined at THIS signer node in that round, the newest winning, and served
       // beside the listing and at /names so the other players are shown it. The
-      // page checks every record again: a seat can leave a name out, never write one.
+      // page checks every record again: a signer node can leave a name out, never write one.
       if (req.method === 'POST' && url.pathname === '/name') {
         const answer = (status, body) => { res.writeHead(status, { 'content-type': 'application/json', ...CORS }); return res.end(JSON.stringify(body)); };
         let bytes;
@@ -1820,11 +1820,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         let signed = false;
         try { signed = sig.length === 64 && schnorr.verify(sig, lobbyNameId(rec), rec.playerPubkey); } catch { signed = false; }
         if (!signed) return answer(400, { why: 'the signature does not verify under the player key the record names' });
-        if (!round.get(rec.roundId)) return answer(404, { why: 'this seat holds no such round' });
+        if (!round.get(rec.roundId)) return answer(404, { why: 'this signer node holds no such round' });
         if (!round.entriesOf(rec.roundId).some((e) => toHex(e.entry.playerPubkey) === toHex(rec.playerPubkey)))
-          return answer(409, { why: 'this seat has seated no player with that key in that round' });
+          return answer(409, { why: 'this signer node holds no player with that key in that round' });
         const kept = round.putLobbyName({ roundId: rec.roundId, playerPubkey: rec.playerPubkey, record: bytes, signature: sig, atMs: rec.atMs });
-        return kept ? answer(201, { kept: true }) : answer(200, { kept: false, why: 'this seat keeps a newer name of that player' });
+        return kept ? answer(201, { kept: true }) : answer(200, { kept: false, why: 'this signer node keeps a newer name of that player' });
       }
       if (req.method === 'GET' && url.pathname === '/names') {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
@@ -1833,16 +1833,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return res.end(JSON.stringify({ round: toHex(rid), names: namesHeld(new Uint8Array(rid)) }));
       }
 
-      // WHAT THIS SEAT HOLDS ABOUT AN ENTRY'S START: FORFEIT for a late start, with the
+      // WHAT THIS SIGNER NODE HOLDS ABOUT AN ENTRY'S START: FORFEIT for a late start, with the
       // first mark's tick and the line it missed, or 404 - no mark is no record.
-      // A FIRST MARK THIS SEAT, UP, REFUSED (M3.3-34): the player's own signed
-      // on-time first mark and why, for a seat closing the round - which checks
+      // A FIRST MARK THIS SIGNER NODE, UP, REFUSED (M3.3-34): the player's own signed
+      // on-time first mark and why, for a signer node closing the round - which checks
       // it again, and so never reads the player as never started. 404: none.
       if (req.method === 'GET' && url.pathname === '/refused-first-mark') {
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
         if (eid.length !== 32) return text(res, 400, 'an entry is asked for by its id');
         const r = round.refusedFirstMark(new Uint8Array(eid));
-        if (!r) return text(res, 404, 'this seat refused no first mark of that entry');
+        if (!r) return text(res, 404, 'this signer node refused no first mark of that entry');
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ mark: toHex(r.mark), why: r.why }));
       }
@@ -1851,7 +1851,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
         if (eid.length !== 32) return text(res, 400, 'an entry is asked for by its id');
         const v = round.startForfeit(new Uint8Array(eid));
-        if (!v) return text(res, 404, 'this seat holds no FORFEIT for a late first mark of that entry');
+        if (!v) return text(res, 404, 'this signer node holds no FORFEIT for a late first mark of that entry');
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ outcome: 'FORFEIT', markTick: v.markTick, lastTick: v.lastTick, why: v.why,
           mark: toHex(v.mark), forwarded: firstMarkForwards.get(toHex(eid)) || null }));
@@ -1859,7 +1859,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
       // THE LOBBY (M3.3-34, §25): the rounds THIS node holds that a player can
       // still come to - open, entry not yet closed - with what joining asks of
-      // them and how many players this node has seated and taken ticks from.
+      // them and how many players joined at this node and it has taken ticks from.
       // "A lobby carries nothing": every id here is a name, and the page fetches
       // each contract and hashes it before it shows a row. `free` and `wallet`
       // are read off the contract this node stores; the counts are its own.
@@ -1879,14 +1879,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           // §5A.5: before committee_time the lobby shows "committee: pending"
           // and offers no entry; the entry door refuses by the same rule.
           const phase = nowMs < c.committeeTimeMs ? 'pending' : 'open';
-          const seatedHere = round.seats(held.roundId).length > 0;
+          const assignedHere = round.signerNodes(held.roundId).length > 0;
           // THE ROUND'S THRESHOLD, from its contract: 2 of 2 here, 5 of 7 on
-          // mainnet. A round is playable only when that many of its seats hold
-          // it, so the page counts seats, and this one signs what it says.
+          // mainnet. A round is playable only when that many of its signer nodes hold
+          // it, so the page counts signer nodes, and this one signs what it says.
           let needed = null;
           try { needed = roundThreshold(c.gameVerifySlots); } catch { needed = null; }
           const sig = schnorr.sign(lobbyListingId({ roundId: held.roundId, nodePubkey: round.pubkey, nowMs, phase,
-            seatedHere, seated: players.seated, playing: players.playing }), round.identity.secret);
+            assignedHere, joined: players.joined, playing: players.playing }), round.identity.secret);
           listed.push({
             id, phase,
             committeeTimeMs: String(c.committeeTimeMs), startTimeMs: String(c.startTimeMs),
@@ -1894,13 +1894,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             // WHAT JOINING ASKS OF THE PLAYER: nothing, a Lightning payment, or a
             // federation stake lock. A free round needs no wallet and no Lightning.
             free, wallet: free ? 'none' : (locks ? 'federation-lock' : 'lightning'),
-            seatedHere, seated: players.seated, playing: players.playing, watching: watchers,
-            // AND WHAT ITS SEATED PLAYERS CHOSE TO BE CALLED - each record its
-            // player's own signature (lobby-name.js), not this seat's word.
+            assignedHere, joined: players.joined, playing: players.playing, watching: watchers,
+            // AND WHAT ITS JOINED PLAYERS CHOSE TO BE CALLED - each record its
+            // player's own signature (lobby-name.js), not this signer node's word.
             names: namesHeld(held.roundId),
-            needed, seats: c.nodes.length,
-            // THIS SEAT'S SIGNED WORD (lobby-listing.js): round, node, time, phase,
-            // seated here, and the two counts. `watching` is not signed.
+            needed, signerNodes: c.nodes.length,
+            // THIS SIGNER NODE'S SIGNED WORD (lobby-listing.js): round, node, time, phase,
+            // joined here, and the two counts. `watching` is not signed.
             sig: toHex(sig),
           });
         }
@@ -1922,7 +1922,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // kept only if THIS NODE'S OWN share lies on the published polynomial.
       //
       // This is the door letter 29 exists for, and 23.1's secrecy half changed
-      // what a node can see through it: the shares are sealed one per seat
+      // what a node can see through it: the shares are sealed one per signer node
       // now, so a node opens its own and checks that one. A dealer who split
       // with two polynomials is refused by WHOEVER HE CHEATED - which is still
       // before any entry naming these shares is accepted, and still with
@@ -1942,7 +1942,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
         // THE ROUND'S THRESHOLD, NOT THE PLAYER'S (M3.3-26). `acceptHandout`
         // checks a handout only against itself, and measured: a crafted 1-of-2
-        // (one seat opens it alone) and a 7-of-7 on seven seats (every seat must
+        // (one signer node opens it alone) and a 7-of-7 on seven signer nodes (every signer node must
         // open it) were both taken 201. A loser who could deal his own
         // threshold could deal an unopenable stake and be refunded on the
         // timelock every time. So a stake is dealt at the round's number or not
@@ -1967,7 +1967,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
         const id = handoutId(handout);
         round.rememberHandout({ id, roundId: handout.roundId, bytes: encodeHandout(handout) });
-        res.writeHead(201, { 'content-type': 'application/octet-stream', 'x-seat': String(mine.seat), ...CORS });
+        res.writeHead(201, { 'content-type': 'application/octet-stream', 'x-signer-node': String(mine.signerNode), ...CORS });
         return res.end(Buffer.from(id));
       }
 
@@ -1982,16 +1982,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const contract = decodeEntryContract(await read(req));
         if (!funded({ kind: 'entry', contract, node: fundingView }))
           return text(res, 402, 'this node stores nothing for an entry nobody has funded');
-        // AND NO STAKE IS SEATED IN A ROUND NONE OF WHOSE RESULTS CAN BE FINAL -
+        // AND NO STAKE IS JOINED IN A ROUND NONE OF WHOSE RESULTS CAN BE FINAL -
         // the round's own contract, as stored, however it came to be stored:
         // refused before the entry is kept and before any hold is issued.
         const into = custody.reaches ? round.get(contract.roundId) : null;
         if (into) {
           const relays = publicationRelaysAreValid(decodeRoundContract(new Uint8Array(into.contract)));
-          if (!relays.ok) return text(res, 409, `this node seats no stake in that round: ${relays.why}`);
+          if (!relays.ok) return text(res, 409, `this node takes no stake in that round: ${relays.why}`);
         }
         // THE FEE-LOCK DOOR (the owner 2026-09-14, pick a). Where the round's gate mints fee locks,
-        // an entry that brings none is not seated: its stake would not be counted, and in the
+        // an entry that brings none is not taken: its stake would not be counted, and in the
         // round's one settlement it would refuse everybody's claim (measured: "an entry's fee
         // lock was never verified, so the fee cannot be claimed"). A round that mints nothing -
         // the Daily's free rounds, a 100 sat round under the federation's 1000 msat rule - is
@@ -2002,20 +2002,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           if (rc.custody === 'FEDERATION' && rc.federationId.some((x) => x !== 0)) {
             let gate;
             try { gate = await roundMintsFees({ contract: rc, port: stakeLocks }); }
-            catch (e) { return text(res, 503, `this node could not read the federation's fee rule, so it seats no entry in a round that may mint fee locks: ${e.message}`); }
+            catch (e) { return text(res, 503, `this node could not read the federation's fee rule, so it takes no entry in a round that may mint fee locks: ${e.message}`); }
             const namesNone = contract.feeLockOutpoint.txid.every((x) => x === 0) || contract.feePreimage.every((x) => x === 0);
             if (gate.mints && namesNone)
-              return text(res, 409, `this round mints fee locks (${gate.why}): an entry that brings no fee lock is not seated - `
+              return text(res, 409, `this round mints fee locks (${gate.why}): an entry that brings no fee lock is not taken - `
                 + 'its stake would not be counted, and it would block the round\'s settlement');
           }
         }
-        const seated = round.enter(contract);
+        const joined = round.enter(contract);
 
-        // THE SEAT IS WHERE THE HOLD IS ISSUED. 23.1: the endpoint issues a
+        // THE SIGNER NODE IS WHERE THE HOLD IS ISSUED. 23.1: the endpoint issues a
         // hold invoice for the payment hash the entry already carries, so the
         // moment there is an entry there is something to pay.
         //
-        // A FAILURE HERE DOES NOT UNSEAT ANYBODY. The entry is stored and
+        // A FAILURE HERE DOES NOT UNJOIN ANYBODY. The entry is stored and
         // signed; a Lightning node that is down is this operator's problem,
         // not a reason to throw away a player's contract. The reason travels
         // in a header and `/invoice` will make the same idempotent attempt
@@ -2029,11 +2029,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           ...(held.ok ? {} : { 'x-hold-why': held.why.replace(/[^\x20-\x7e]/g, ' ') }),
           ...CORS,
         });
-        return res.end(Buffer.from(seated));
+        return res.end(Buffer.from(joined));
       }
 
       /**
-       * WHAT A SEATED PLAYER PAYS. 23.1's endpoint, and the last thing that
+       * WHAT A JOINED PLAYER PAYS. 23.1's endpoint, and the last thing that
        * happens before their money is in flight.
        *
        * IT IS AN INPUT DEVICE AND NOTHING ELSE. The answer is a payment
@@ -2050,7 +2050,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
        * does not hold. It cannot mean "not the player's own": a hold invoice
        * is a bearer instruction to PAY, so somebody else holding it can only
        * fund that player's stake, never take it. What would be wrong is this
-       * node inventing an invoice for an entry it never seated.
+       * node inventing an invoice for an entry it never took.
        */
       /**
        * HAS THIS NODE SEEN THE STAKE HELD? 23.1 step 5, asked by the player.
@@ -2063,7 +2063,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'GET' && url.pathname === '/stake') {
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
         if (eid.length !== 32) return text(res, 400, 'a stake is asked for by entry id');
-        if (!round.entry(eid)) return text(res, 404, 'this node seated no such entry');
+        if (!round.entry(eid)) return text(res, 404, 'this node holds no such entry');
         let seen;
         try { seen = await custody.seenPaid(new Uint8Array(eid)); }
         catch (e) { seen = { ok: false, why: e.message }; }
@@ -2091,7 +2091,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
         if (eid.length !== 32) return text(res, 400, 'a settlement is asked for by entry id');
         const stored = round.entry(eid);
-        if (!stored) return text(res, 404, 'this node seated no such entry');
+        if (!stored) return text(res, 404, 'this node holds no such entry');
         const entry = decodeEntryContract(stored);
         const row = round.hold(eid);
         const standing = resultFinality(round, entry.roundId, new Uint8Array(eid));
@@ -2102,11 +2102,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           entry: eid.toString('hex'),
           hold: entry.stakeMsat === 0n ? 'FREE' : (row ? row.state : 'none'),
           // WHAT THIS HOLD HOLDS and THE POOL THE TABLE DECIDED (M3.2 6e), both
-          // this seat's own numbers: the hold's amount as Lightning was asked for
+          // this signer node's own numbers: the hold's amount as Lightning was asked for
           // it, and custody's `holdSettlement` pool - null until it has run.
           holdMsat: row && row.amountMsat !== undefined && row.amountMsat !== null ? String(row.amountMsat) : null,
           poolMsat: pool === undefined ? null : String(pool),
-          // THIS SEAT'S ROW OF THE PAYOUT TABLE (M3.2 6e) - what the round owes it,
+          // THIS SIGNER NODE'S ROW OF THE PAYOUT TABLE (M3.2 6e) - what the round owes it,
           // its own stake included; null until custody has run, or with no row.
           owedMsat: (() => { const rows = settledRows.get(toHex(entry.roundId)); const v = rows && rows.get(toHex(entry.playerPubkey)); return v === undefined ? null : String(v); })(),
           why: row ? row.why : null,
@@ -2128,7 +2128,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
        * (`&donation=`, msat, none is 0) - because `/entry` then takes the
        * gateway's hold invoice up (lnd-port.js) and `invoiceMatchesEntry`
        * refuses any other amount. Measured before (M3.2 6e): the donation was
-       * left out, so a 2% donor was seated on a 980000 msat invoice and its
+       * left out, so a 2% donor was joined on a 980000 msat invoice and its
        * quote refused it (the entry holds 960000). The hash and the amount
        * are read off the invoice, not taken from the federation's word.
        */
@@ -2173,7 +2173,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
         if (eid.length !== 32) return text(res, 400, 'an invoice is asked for by entry id');
         const stored = round.entry(eid);
-        if (!stored) return text(res, 404, 'this node seated no such entry, and it does not invent invoices for strangers');
+        if (!stored) return text(res, 404, 'this node holds no such entry, and it does not invent invoices for strangers');
         let quoted;
         try { quoted = await custody.hold(decodeEntryContract(stored)); }
         catch (e) { quoted = { ok: false, why: e.message }; }
@@ -2241,21 +2241,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return res.end(body);
       }
 
-      // THE PLAYER'S LATE FIRST MARK, AS THIS SEAT KEEPS IT (M3.3-34, path 2):
-      // the other half of a two-first-marks proof, for a seat that missed its
+      // THE PLAYER'S LATE FIRST MARK, AS THIS SIGNER NODE KEEPS IT (M3.3-34, path 2):
+      // the other half of a two-first-marks proof, for a signer node that missed its
       // forward to pull at its close. Measured before on a fresh federation: the
-      // forward to the Void seat lost, neither seat decided anything in 92 s -
-      // ENTRY_VOID at one, a late start at the other - and the Void seat's door
-      // tried to gather the refund. 204: this seat keeps none.
-      // PULL AND CHECK THE PROOF OF TWO FIRST MARKS NOW (M3.3-34): a seat that
-      // refused a second first mark asks this seat to pull the pair itself -
-      // checked here, never taken on the asker's word - while every seat is
+      // forward to the Void signer node lost, neither signer node decided anything in 92 s -
+      // ENTRY_VOID at one, a late start at the other - and the Void signer node's door
+      // tried to gather the refund. 204: this signer node keeps none.
+      // PULL AND CHECK THE PROOF OF TWO FIRST MARKS NOW (M3.3-34): a signer node that
+      // refused a second first mark asks this signer node to pull the pair itself -
+      // checked here, never taken on the asker's word - while every signer node is
       // still reachable. Nothing is spread further from here.
       if (req.method === 'POST' && url.pathname === '/proof-pull') {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
         if (rid.length !== 32 || eid.length !== 32) return text(res, 400, 'a proof is pulled for a round and an entry');
-        if (!round.entry(new Uint8Array(eid))) return text(res, 404, 'this seat seated no such entry');
+        if (!round.entry(new Uint8Array(eid))) return text(res, 404, 'this signer node holds no such entry');
         const proven = await verifier.pullFirstMarkProof(new Uint8Array(rid), new Uint8Array(eid));
         return text(res, 200, proven ? 'proven' : 'no proof');
       }
@@ -2264,7 +2264,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
         if (eid.length !== 32) return text(res, 400, 'an entry is asked for by its id');
         const late = round.startForfeit(new Uint8Array(eid));
-        if (!late) return text(res, 204, 'this seat keeps no late first mark for that entry');
+        if (!late) return text(res, 204, 'this signer node keeps no late first mark for that entry');
         res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
         return res.end(Buffer.from(late.mark));
       }
@@ -2311,43 +2311,43 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // without replaying. Section 13's own record, body then signature, as
       // many as this node holds for that run.
       /**
-       * ONE SEAT'S SHARE OF ONE STAKE, FOR ANOTHER SEAT. 23.4's five.
+       * ONE SIGNER NODE'S SHARE OF ONE STAKE, FOR ANOTHER SIGNER NODE. 23.4's five.
        *
-       * Refused unless the asker is a seat of this round AND the run is final
+       * Refused unless the asker is a signer node of this round AND the run is final
        * with an outcome 23.2 settles - a DELIVERED run's preimage must never
        * leave, because releasing it lets anyone settle an invoice that has to
        * go back to its player.
        *
        * The answer is SEALED TO THE ASKER. Those two together are what make
-       * this sound with no signature on the request: claiming a seat's key
-       * gets an envelope only that seat can open, and not claiming one gets a
+       * this sound with no signature on the request: claiming a signer node's key
+       * gets an envelope only that signer node can open, and not claiming one gets a
        * refusal.
        */
       if (req.method === 'GET' && url.pathname === '/share') {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
-        const asker = Buffer.from(url.searchParams.get('seat') || '', 'hex');
+        const asker = Buffer.from(url.searchParams.get('signer node') || '', 'hex');
         if (rid.length !== 32 || eid.length !== 32)
           return text(res, 400, 'a share is asked for by round and entry');
         const ask = { roundId: new Uint8Array(rid), entryId: new Uint8Array(eid), asker: new Uint8Array(asker) };
         let said = await preimages.answer(ask);
-        // A PROOF OF TWO FIRST MARKS THIS SEAT HAS NOT PULLED YET (M3.3-34): the
-        // asker's seats may hold it - pulled, checked here and kept, never taken
-        // on the asker's word; then asked of this seat's own record again.
+        // A PROOF OF TWO FIRST MARKS THIS SIGNER NODE HAS NOT PULLED YET (M3.3-34): the
+        // asker's signer nodes may hold it - pulled, checked here and kept, never taken
+        // on the asker's word; then asked of this signer node's own record again.
         // `proof=1`: the asker holds a proof of two first marks - pulled even over a
-        // result this seat signed (measured: a seat that had signed FAILED refused).
+        // result this signer node signed (measured: a signer node that had signed FAILED refused).
         if (!said.ok && (url.searchParams.get('proof') === '1' || !round.results(ask.roundId, ask.entryId).length)
           && await verifier.pullFirstMarkProof(ask.roundId, ask.entryId)) said = await preimages.answer(ask);
-        // A SEAT HOLDING THE PROOF GATHERS TOO, while the seats are up (M3.3-34):
-        // measured before on 5 of 7 - seats that learned the proof here, when
-        // asked, never gathered; with the two seats that had gathered down, the
+        // A SIGNER NODE HOLDING THE PROOF GATHERS TOO, while the signer nodes are up (M3.3-34):
+        // measured before on 5 of 7 - signer nodes that learned the proof here, when
+        // asked, never gathered; with the two signer nodes that had gathered down, the
         // four up reached 4 of 5 shares and the hold went back to the player
         // (98000 msat). In the background: the asker is answered now.
         if (round.provenTwoFirstMarks(ask.roundId, ask.entryId)) gatherOnProof(ask.roundId, ask.entryId);
         if (!said.ok) return text(res, 409, said.why);
         res.writeHead(200, {
           'content-type': 'application/octet-stream',
-          'x-seat': String(said.answer.seat), ...CORS,
+          'x-signer-node': String(said.answer.signerNode), ...CORS,
         });
         return res.end(Buffer.from(encodeShareAnswer(said.answer)));
       }
@@ -2374,10 +2374,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return res.end(Buffer.from(out));
       }
 
-      // ROUND ONE OF A SIGNING ROUND: this seat's nonce commitment.
+      // ROUND ONE OF A SIGNING ROUND: this signer node's nonce commitment.
       //
       // The body is the OUTPUT the asker wants spent and nothing else. There is
-      // no sighash on this door and there must not be: a seat that signed what
+      // no sighash on this door and there must not be: a signer node that signed what
       // it was handed would make five of seven decorative, because five
       // signatures over an attacker's bytes spend the pool just as well.
       if (req.method === 'POST' && url.pathname === '/pool/commit') {
@@ -2399,10 +2399,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return res.end(Buffer.from(encodeCommitments([got.commitment])));
       }
 
-      // ROUND TWO: this seat's signature share, over the spend it built itself.
+      // ROUND TWO: this signer node's signature share, over the spend it built itself.
       //
       // The commitment list is what changes between the rounds, and it is part
-      // of the message - it is hashed into the binding factors. A seat that
+      // of the message - it is hashed into the binding factors. A signer node that
       // already signed under one list hands the same bytes back and refuses a
       // second, because two challenges under one nonce pair publish the share.
       if (req.method === 'POST' && url.pathname === '/pool/share') {
@@ -2426,7 +2426,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return res.end(Buffer.from(encodeShare(got.share)));
       }
 
-      // WHERE THIS SEAT'S CLOSE OF EACH RUN STANDS (M3.3-34): only runs it could
+      // WHERE THIS SIGNER NODE'S CLOSE OF EACH RUN STANDS (M3.3-34): only runs it could
       // not sign at its close - HOLDING while a peer is down or unreachable and
       // the close is tried again, SIGNED once it is. Never a refund or a VOID.
       if (req.method === 'GET' && url.pathname === '/closing') {
@@ -2441,7 +2441,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const held = round.results(rid, eid);
         const out = new Uint8Array(held.length * SIGNED_RESULT_BYTES);
         held.forEach((r, i) => out.set(r.bytes, i * SIGNED_RESULT_BYTES));
-        // AND §13C'S NO-QUORUM OUTCOME, when this seat decided one (M3.3-34):
+        // AND §13C'S NO-QUORUM OUTCOME, when this signer node decided one (M3.3-34):
         // VOID has no signed result to serve, so it is said here.
         const nq = eid.length === 32 ? round.noQuorum(new Uint8Array(eid)) : null;
         res.writeHead(200, {
@@ -2451,7 +2451,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return res.end(Buffer.from(out));
       }
 
-      // EVERY SEAT'S WORD THAT IT POSTED A RUN'S TRANSCRIPT (P2), fixed-size
+      // EVERY SIGNER NODE'S WORD THAT IT POSTED A RUN'S TRANSCRIPT (P2), fixed-size
       // records back to back, as `/results` serves results.
       if (req.method === 'GET' && url.pathname === '/postings') {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
@@ -2463,8 +2463,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return res.end(Buffer.from(out));
       }
 
-      // THE PLAYER'S STAKE LOCK, handed to a seat to verify (23.1 step 5): the
-      // contract it locked, as JSON. The seat asks the federation what it holds
+      // THE PLAYER'S STAKE LOCK, handed to a signer node to verify (23.1 step 5): the
+      // contract it locked, as JSON. The signer node asks the federation what it holds
       // at the entry's outpoint, hashes the contract, checks every field against
       // the entry, and only then counts the stake as seen.
       if (req.method === 'POST' && url.pathname === '/lock') {
@@ -2474,7 +2474,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         try { fields = lockFieldsFromJson(JSON.parse(Buffer.from(await read(req)).toString('utf8'))); }
         catch (e) { return text(res, 400, `that is not a stake lock: ${e.message}`); }
         const stored = round.entry(eid);
-        if (!stored) return text(res, 404, 'this node seated no such entry');
+        if (!stored) return text(res, 404, 'this node holds no such entry');
         const claimPk = claimKeyOf(decodeEntryContract(stored).roundId);
         let got;
         try { got = await verifyStakeLock({ round, port: stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk }); }
@@ -2486,7 +2486,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
       // AND THE PLAYER'S FEE LOCK (Pick A, F5): the entry's 2% locked to H(F),
       // checked field by field as the stake lock is, and claimed for the round's
-      // sitting seats in its one settlement.
+      // sitting signer nodes in its one settlement.
       if (req.method === 'POST' && url.pathname === '/fee-lock') {
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
         if (eid.length !== 32) return text(res, 400, 'a fee lock is handed over for an entry id');
@@ -2494,7 +2494,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         try { fields = lockFieldsFromJson(JSON.parse(Buffer.from(await read(req)).toString('utf8'))); }
         catch (e) { return text(res, 400, `that is not a fee lock: ${e.message}`); }
         const stored = round.entry(eid);
-        if (!stored) return text(res, 404, 'this node seated no such entry');
+        if (!stored) return text(res, 404, 'this node holds no such entry');
         const claimPk = claimKeyOf(decodeEntryContract(stored).roundId);
         let got;
         try { got = await verifyFeeLock({ round, port: stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk }); }
@@ -2506,7 +2506,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // WHERE A PLAYER'S STAKE LOCK IS, BY ITS REFUND KEY (W5a). A player who
       // comes back with only their seed can derive the round's refund key, and
       // nothing else - the outpoint and the stake point were random. Every lock
-      // is public in the federation; this seat answers with the ones it verified.
+      // is public in the federation; this signer node answers with the ones it verified.
       if (req.method === 'GET' && url.pathname === '/stake-lock') {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         const refund = (url.searchParams.get('refund') || '').toLowerCase();
@@ -2517,9 +2517,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
 
       // THE COMMITTEE'S FORFEIT OF A QUALIFIER'S STAKE LOCK (§23.2 row 1, W5b).
-      // Between seats: round one (a nonce commitment), round two (a signature
+      // Between signer nodes: round one (a nonce commitment), round two (a signature
       // share over one commitment list), and the combined signature handed
-      // over. Each seat answers only for a forfeit it rebuilt from its own
+      // over. Each signer node answers only for a forfeit it rebuilt from its own
       // verified lock, final and qualifying by its own record (forfeit.js).
       if (req.method === 'POST' && ['/forfeit-commit', '/forfeit-share', '/forfeit-signature'].includes(url.pathname)) {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
@@ -2547,9 +2547,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return got.ok ? text(res, 201, 'forfeit kept') : text(res, got.status || 409, got.why);
       }
 
-      // THE ROUND'S ONE SETTLEMENT OF ITS LOSERS' LOCKS (W4), between seats: a
+      // THE ROUND'S ONE SETTLEMENT OF ITS LOSERS' LOCKS (W4), between signer nodes: a
       // nonce commitment, a share over one commitment list, the combined
-      // signature. Each seat answers only for the txid it rebuilt itself from its
+      // signature. Each signer node answers only for the txid it rebuilt itself from its
       // own record (settlement.js).
       if (req.method === 'POST' && ['/settle-commit', '/settle-share', '/settle-signature'].includes(url.pathname)) {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
@@ -2592,7 +2592,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // it derives its key for each round listed here and matches it against the keys the round's
       // settlement pays and the refund keys of its verified locks - both public already (the
       // settlement at /lock-settlement, a refund key from the entry's player key). The device asks
-      // nothing per round, so no seat learns which rounds it looks for; the contract of a round it
+      // nothing per round, so no signer node learns which rounds it looks for; the contract of a round it
       // matched it takes from /round. At most 7 days back, at most 500 rounds.
       if (req.method === 'GET' && url.pathname === '/settled') {
         const nowMs = Number(round.now());
@@ -2610,7 +2610,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
 
       // AND IN PUBLIC: the forfeit of a qualifier's lock - kept, or made now with
-      // the other seats if it is due. A loser's, or one inside its window, is 409.
+      // the other signer nodes if it is due. A loser's, or one inside its window, is 409.
       if (req.method === 'GET' && url.pathname === '/forfeit') {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
@@ -2622,16 +2622,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           claimPk: toHex(got.claimPk), kept: !!got.kept }));
       }
 
-      // THIS SEAT'S SIGNED CLAIM KEY (v4.6.2 §23.1 step 0, F3): "each seat signs
+      // THIS SIGNER NODE'S SIGNED CLAIM KEY (v4.6.2 §23.1 step 0, F3): "each signer node signs
       // (round_id, claim_pk). The key is valid only with signatures from >=5
-      // seats; a client MUST refuse to lock to a key without them." The
+      // signer nodes; a client MUST refuse to lock to a key without them." The
       // attestation's bytes and, beside them, this node's BIP-340 signature over
-      // their id - the seat key is in the signed bytes, so a signature cannot be
-      // moved to another seat's record. Only a SEATED node attests.
+      // their id - the signer node key is in the signed bytes, so a signature cannot be
+      // moved to another signer node's record. Only a Assigned node attests.
       // THE DONATION SET THIS ROUND NAMES (M3.2 6e, §22A): its signed bytes then
-      // the 64-byte Ed25519 signature, or 404 - a seat serves no set it cannot
-      // stand behind. Before: no seat served one (404 for every round).
-      // AND THE AUTHORITY ROTATIONS THIS SEAT HOLDS FOR THE ROUND'S NETWORK
+      // the 64-byte Ed25519 signature, or 404 - a signer node serves no set it cannot
+      // stand behind. Before: no signer node served one (404 for every round).
+      // AND THE AUTHORITY ROTATIONS THIS SIGNER NODE HOLDS FOR THE ROUND'S NETWORK
       // (§27A.4), so a page applies them too: a set the old authority signed
       // after a rotation is in force is no set. Served as held; the page checks
       // each against the network's recovery key itself.
@@ -2665,12 +2665,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         if (rid.length !== 32) return text(res, 400, 'that is not a round id');
         if (!round.get(rid)) return text(res, 404, 'this node holds no such round');
-        if (!round.seats(rid).some((k) => toHex(k) === toHex(round.pubkey)))
-          return text(res, 409, 'this node is not seated on that round, so it attests no claim key for it');
+        if (!round.signerNodes(rid).some((k) => toHex(k) === toHex(round.pubkey)))
+          return text(res, 409, 'this node is not assigned to that round, so it attests no claim key for it');
         const claimPk = claimKeyOf(new Uint8Array(rid));
         if (!(claimPk instanceof Uint8Array) || claimPk.length !== 33)
-          return text(res, 409, 'this seat holds no claim key for that round yet');
-        const a = { roundId: new Uint8Array(rid), claimPk, seatPubkey: round.pubkey };
+          return text(res, 409, 'this signer node holds no claim key for that round yet');
+        const a = { roundId: new Uint8Array(rid), claimPk, signerNodePubkey: round.pubkey };
         const body = encodeClaimKeyAttestation(a);
         const sig = schnorr.sign(claimKeyAttestationId(a), round.identity.secret);
         const out = new Uint8Array(body.length + sig.length);
@@ -2680,7 +2680,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return res.end(Buffer.from(out));
       }
 
-      // EVERY SEAT'S RE-RUN OF A SUSPENDED RESULT (13A), fixed-size records.
+      // EVERY SIGNER NODE'S RE-RUN OF A SUSPENDED RESULT (13A), fixed-size records.
       if (req.method === 'GET' && url.pathname === '/reruns') {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
@@ -2753,7 +2753,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         try {
           const fresh = round.object(rid, eid);
           // AN OBJECTION THAT HOLDS SUSPENDS THE RESULT, AND THE COMMITTEE
-          // RE-RUNS IT (13A): this seat starts its own re-run at once.
+          // RE-RUNS IT (13A): this signer node starts its own re-run at once.
           if (resultFinality(round, rid, eid).state === SUSPENDED) watchRerun(new Uint8Array(rid), new Uint8Array(eid));
           return text(res, fresh ? 201 : 200, fresh ? 'objected' : 'already objected');
         } catch (err) { return text(res, 404, err.message); }
@@ -2834,14 +2834,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
 
       /**
-       * ONE SEAT'S CONTRIBUTION TO THE COMMITTEE'S KEY (M3.3 item 14).
+       * ONE SIGNER NODE'S CONTRIBUTION TO THE COMMITTEE'S KEY (M3.3 item 14).
        *
-       * POST hands one over; GET serves this node's own, so a seat that was
+       * POST hands one over; GET serves this node's own, so a signer node that was
        * down when the others dealt can fetch what it missed rather than
        * asking anybody to deal again.
        *
        * NOTHING SECRET CROSSES EITHER WAY. A contribution is a polynomial's
-       * commitments and one SEALED envelope per seat, and only the seat a
+       * commitments and one SEALED envelope per signer node, and only the signer node a
        * given envelope is addressed to can open it - so this door carries the
        * same object to everybody and tells nobody anything.
        */
@@ -2862,7 +2862,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return res.end(Buffer.from(held.mine));
       }
 
-      // WHICH CONTRIBUTIONS THIS SEAT COMBINED, SIGNED. Every seat asks every other
+      // WHICH CONTRIBUTIONS THIS SIGNER NODE COMBINED, SIGNED. Every signer node asks every other
       // before it keeps a share, and keeps it only if all of them said the same set.
       if (req.method === 'GET' && url.pathname === '/dkg-agreement') {
         const id = Buffer.from(url.searchParams.get('epoch') || '', 'hex');
@@ -2877,17 +2877,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const id = Buffer.from(url.searchParams.get('round') || '', 'hex');
         const role = url.searchParams.get('role') || 'game';
         if (id.length !== 32) return text(res, 400, 'that is not a round id');
-        const seats = roster.committeeFor(id, role);
-        if (!seats.ok) return text(res, 409, seats.why);
+        const signerNodes = roster.committeeFor(id, role);
+        if (!signerNodes.ok) return text(res, 409, signerNodes.why);
         res.writeHead(200, {
           'content-type': 'application/octet-stream',
-          'x-eligible': String(seats.eligible),
-          'x-seats': String(seats.committee.length),
-          'x-census-root': toHex(seats.root),
+          'x-eligible': String(signerNodes.eligible),
+          'x-signer-nodes': String(signerNodes.committee.length),
+          'x-census-root': toHex(signerNodes.root),
           ...CORS,
         });
-        const out = new Uint8Array(seats.committee.length * 32);
-        seats.committee.forEach((e, i) => out.set(e.pubkey, i * 32));
+        const out = new Uint8Array(signerNodes.committee.length * 32);
+        signerNodes.committee.forEach((e, i) => out.set(e.pubkey, i * 32));
         return res.end(Buffer.from(out));
       }
 
@@ -3031,7 +3031,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             // whoever asked. The promises are deliberately not awaited here:
             // the socket is told the round is shut, and the replays run on
             // their own threads through the pool.
-            // Replay every entry, and then ASK THE OTHER SEATS. Serving a
+            // Replay every entry, and then ASK THE OTHER SIGNER NODES. Serving a
             // result nobody fetches is a committee of one: the count section
             // 13 asks for only exists on a node holding more than its own
             // signature.
@@ -3100,7 +3100,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
     // NO PLAY ON A STAKE THIS NODE HAS NOT SEEN HELD. 23.1 step 5 and 9 step 7:
     // play begins once the held HTLC has been seen, and a node that has not
-    // seen it signs nothing for that entry. Measured before: a seated entry's
+    // seen it signs nothing for that entry. Measured before: a joined entry's
     // input batch was taken with nothing paid, on a node with Lightning and on
     // one with none. A free round (stake 0) passes without asking anybody.
     //
@@ -3126,19 +3126,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           // A WAIT, SAID AS ONE: the client holds the ticks and asks again.
           if (!seen.ok) {
             // A FIRST MARK REFUSED HERE IS KEPT (M3.3-34): the player's own
-            // on-time first mark, refused by a seat that was up, is served at
-            // /refused-first-mark - so no seat reads the player as never started
-            // (measured before: FORFEIT 0 at both seats, final 2 of 2).
+            // on-time first mark, refused by a signer node that was up, is served at
+            // /refused-first-mark - so no signer node reads the player as never started
+            // (measured before: FORFEIT 0 at both signer nodes, final 2 of 2).
             const fm = firstMarkOf(data, isBinary);
             if (fm) round.putRefusedFirstMark({ bytes: fm.bytes, why: STAKE_NOT_SEEN + seen.why });
             return sock.send('error ' + STAKE_NOT_SEEN + seen.why);
           }
         }
         const firstMark = firstMarkOf(data, isBinary);
-        // §16: A FIRST MARK THIS SEAT HAS NEVER HELD, reaching it after the start
-        // deadline passed - this seat's own evidence first, then the other
-        // seats' - is ENTRY_VOID here, not a run taken late. A player cannot
-        // keep a run by catching a down seat up after seeing it (§13C).
+        // §16: A FIRST MARK THIS SIGNER NODE HAS NEVER HELD, reaching it after the start
+        // deadline passed - this signer node's own evidence first, then the other
+        // signer nodes' - is ENTRY_VOID here, not a run taken late. A player cannot
+        // keep a run by catching a down signer node up after seeing it (§13C).
         if (firstMark && !round.holdsMark(checkpointId(firstMark.c)) && secondFirstMark(firstMark.c, firstMark.bytes)) {
           gatherOnProof(firstMark.c.roundId, firstMark.c.entryId);
           return sock.send('error FORFEIT: ' + TWO_FIRST_MARKS);
@@ -3157,10 +3157,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         }
         const handled = handle(data, isBinary);
         if (firstMark) Promise.resolve(handled).finally(() => gatherOnProof(firstMark.c.roundId, firstMark.c.entryId));
-        // A FIRST MARK THIS SEAT TOOK OR REFUSED GOES ON TO THE OTHER SEATS, after
+        // A FIRST MARK THIS SIGNER NODE TOOK OR REFUSED GOES ON TO THE OTHER SIGNER NODES, after
         // the player has its answer: the player is never kept waiting on a peer,
         // and a peer that is down is named in the forward's record. A LATER mark
-        // re-offers the first to a seat that has not taken it, or - past the
+        // re-offers the first to a signer node that has not taken it, or - past the
         // start line - decides §16's outage (afterMarkTaken).
         if (firstMark) forwardFirstMark(firstMark).catch((e) => console.error(`[first-mark] ${e.message}`));
         else if (isBinary && new Uint8Array(data)[0] === TYPE_CHECKPOINT)

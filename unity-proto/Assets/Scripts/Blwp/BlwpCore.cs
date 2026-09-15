@@ -449,7 +449,7 @@ namespace Blwp
         /// that same function read back, not a second copy of it. Unity's
         /// terrain cannot be made to agree: `MempoolTerrain` draws the relief
         /// as it was before the strike and has never heard of a crater, so a
-        /// truck seated on `SampleSurface` hovered over its own hole by the
+        /// truck resting on `SampleSurface` hovered over its own hole by the
         /// crater's full depth, measured at up to 6.00 m.
         ///
         /// This is the BARE surface. A road deck is laid a constant lift above

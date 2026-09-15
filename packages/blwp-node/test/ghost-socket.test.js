@@ -30,7 +30,7 @@ import { O_TRUCK, T_X, T_Z, T_HEADING } from '../../core/src/state.js';
 // The node fee is 27A.7's 2% of the stake, and the door checks it now
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
-import { assumeStakeSeen } from './seating.js';
+import { assumeStakeSeen } from './assignment.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const contract = (stakeMsat = 100000n) => ({
   networkId: b32(0x4e), configHash: TRUCK_CONFIG_HASH, censusConfirmations: 6, gameVerifySlots: 7,
@@ -105,12 +105,12 @@ async function twoIdentities(node, stakeMsat = 100000n) {
   const rid = (await post(node.port, '/round', encodeRoundContract(c))).bytes;
   const a = entryFor(rid, 5, stakeMsat);
   const b = entryFor(rid, 9, stakeMsat);
-  const seatA = await post(node.port, '/entry', encodeEntryContract(a));
-  const seatB = await post(node.port, '/entry', encodeEntryContract(b));
+  const joinA = await post(node.port, '/entry', encodeEntryContract(a));
+  const joinB = await post(node.port, '/entry', encodeEntryContract(b));
   assumeStakeSeen(node.round, a);
   assumeStakeSeen(node.round, b);
-  const eidA = seatA.bytes;
-  const eidB = seatB.bytes;
+  const eidA = joinA.bytes;
+  const eidB = joinB.bytes;
   const batchOf = (eid, n, first, count, previousHash = GENESIS) => {
     const words = wordsAt(n);
     const batch = {
@@ -119,7 +119,7 @@ async function twoIdentities(node, stakeMsat = 100000n) {
     };
     return { bytes: encodeInputBatch(batch), id: batchId(batch) };
   };
-  return { rid, a, b, eidA, eidB, batchOf, seats: [seatA, seatB] };
+  return { rid, a, b, eidA, eidB, batchOf, joins: [joinA, joinB] };
 }
 
 test('a second identity\'s ghost arrives on the socket, carrying the truck the core reached', async () => {
@@ -167,21 +167,21 @@ test('a second identity\'s ghost arrives on the socket, carrying the truck the c
 
 /**
  * A GHOST NEEDS NO MONEY. M3.3-19, the owner 2026-09-10 11:15: "satoshis are
- * optional; a stake-0 round must seat without Lightning so ghosts can be
- * tested with no wallet". The Daily refused exactly this seat.
+ * optional; a stake-0 round must take entries without Lightning so ghosts can be
+ * tested with no wallet". The Daily refused exactly this signer node.
  *
  * The same drive as above on a round that asks nothing, on a daemon given no
- * Lightning port: both identities are seated as FREE, and the watcher is shown
+ * Lightning port: both identities are joined as FREE, and the watcher is shown
  * the other truck at the pose the core reached - the picture does not depend
  * on a stake existing.
  */
-test('a round that asks no stake seats two players with no Lightning, and the ghost follows', async () => {
+test('a round that asks no stake takes two players with no Lightning, and the ghost follows', async () => {
   const node = await serve(openStore(), { port: 0, ...FUNDED });
   try {
-    const { rid, b, eidA, eidB, batchOf, seats } = await twoIdentities(node, 0n);
-    assert.deepEqual(seats.map((s) => s.status), [201, 201], 'a free seat was refused');
-    assert.deepEqual(seats.map((s) => s.hold), ['FREE', 'FREE'],
-      'a free seat was reported as something other than free');
+    const { rid, b, eidA, eidB, batchOf, joins } = await twoIdentities(node, 0n);
+    assert.deepEqual(joins.map((s) => s.status), [201, 201], 'a free round was refused');
+    assert.deepEqual(joins.map((s) => s.hold), ['FREE', 'FREE'],
+      'a free round was reported as something other than free');
 
     const viewer = await talk(node.port);
     const other = await talk(node.port);
@@ -195,7 +195,7 @@ test('a round that asks no stake seats two players with no Lightning, and the gh
     assert.deepEqual([g.x, g.z, g.heading],
       [truck.get(119).x, truck.get(119).z, truck.get(119).heading],
       'the free round\'s ghost is not the core\'s truck');
-    console.log(`  free round, no Lightning: 2 seats FREE, ghost of ${toHex(eidB).slice(0, 8)} `
+    console.log(`  free round, no Lightning: 2 players FREE, ghost of ${toHex(eidB).slice(0, 8)} `
       + `at tick ${g.tick}, (${g.x}, ${g.z}) - the core's own`);
     viewer.shut(); other.shut();
   } finally { await node.close(); }

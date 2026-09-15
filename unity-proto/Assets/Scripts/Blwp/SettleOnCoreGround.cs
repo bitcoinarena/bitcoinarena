@@ -19,7 +19,7 @@ namespace Blwp
     /// rebuilds for a crater as well as for a mempool poll, so one watch covers
     /// both.
     ///
-    /// No new rule and no new sampling. Each thing is re-seated at exactly the
+    /// No new rule and no new sampling. Each thing is set down again at exactly the
     /// point it was placed from, with exactly the lift it was given; only the
     /// surface underneath is the core's rather than Unity's.
     /// </summary>

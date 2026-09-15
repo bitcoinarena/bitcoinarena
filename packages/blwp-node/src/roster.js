@@ -41,19 +41,19 @@ export const NO_CHAIN_VIEW = () => undefined;
  *
  * 5A.5's seed is `H(roots || round_id || round_randomness)` and the randomness
  * is the network's `randomness_source` - `bitcoin-block-hash` on every network
- * this build knows. A node given none seats nobody: "I have no beacon" and
+ * this build knows. A node given none assigns nobody: "I have no beacon" and
  * "the committee is whatever the contract says" must never be the same answer,
  * because the second is the grinding attack.
  */
 export const NO_BEACON = () => undefined;
 
 /**
- * WHERE THE OTHER SEATS OF A COMMITTEE ANSWER, off their own advertisements.
+ * WHERE THE OTHER SIGNER NODES OF A COMMITTEE ANSWER, off their own advertisements.
  *
- * A committee is keys; a key is not an address. The census entry of each seat
+ * A committee is keys; a key is not an address. The census entry of each signer node
  * carries the signed advertisement from its bond, and its `endpoint` is where
- * that seat says it answers - the socket form (`ws://`), turned into the HTTP
- * base the doors are on. This node is never its own peer, and a seat that
+ * that signer node says it answers - the socket form (`ws://`), turned into the HTTP
+ * base the doors are on. This node is never its own peer, and a signer node that
  * advertised nowhere is left out rather than guessed at. One rule, used by
  * the payout path and the close alike.
  */
@@ -76,12 +76,12 @@ export class Roster {
   }
 
   /**
-   * THE SEED THIS ROUND IS SEATED WITH, from the beacon and never from the
+   * THE SEED THIS ROUND'S SIGNER NODES ARE ASSIGNED WITH, from the beacon and never from the
    * contract's own bytes.
    *
    * The field is checked against it - a round naming a seed its beacon does
    * not produce is refused by name - and the seed handed to the lottery is the
-   * BEACON'S, so even a caller that skipped the comparison could not seat from
+   * BEACON'S, so even a caller that skipped the comparison could not assign from
    * chosen bytes.
    */
   seedFor(roundIdBytes, contract) {
@@ -90,7 +90,7 @@ export class Roster {
     if (!randomness)
       return {
         ok: false,
-        why: 'this node has no beacon for that round, so it cannot say who the census seats',
+        why: 'this node has no beacon for that round, so it cannot say who the census assigns',
       };
     // 27'S RULE FIRST, because it needs no chain. "Did this come after
     // committee_time" is the question every node can ask, and a beacon the
@@ -126,7 +126,7 @@ export class Roster {
       //
       // This used to skip the check and say so on the answer, and that was a
       // hole with a number: on the no-bitcoind path the census view was two
-      // blocks and `checkedAgainstChain` came back FALSE while the round seated
+      // blocks and `checkedAgainstChain` came back FALSE while the round joined
       // anyway - so an operator handing a deliberately narrow view skipped the
       // one check that says the beacon is the chain's. A node that has a chain
       // and cannot answer with it refuses.
@@ -203,7 +203,7 @@ export class Roster {
     //
     // Every contract names a `censusRoot`, and on this path nothing compared
     // it with what the chain actually gives. A round could name any
-    // thirty-two bytes, and this node would derive a different census, seat a
+    // thirty-two bytes, and this node would derive a different census, signer node a
     // committee out of it, and serve that - which is the divergence 5A.2
     // exists to remove, arriving from the round's own header. The spec is
     // blunt: a round whose census root is not the one its census derives to
@@ -229,9 +229,9 @@ export class Roster {
    * THE BONDS OF THIS ROUND'S GUARDIANS, AS EVIDENCE A PAGE CHECKS ITSELF (M3; the owner 07:33: every
    * guardian has its own bond). Every census node whose advertisement names a guardian key of the
    * round's federation under guardian_of[], with its bond transaction and the merkle branch that
-   * puts it in a block of this seat's chain view. A hint, not a count: the page proves each into
+   * puts it in a block of this signer node's chain view. A hint, not a count: the page proves each into
    * headers it agreed from providers and counts with the keys its own lock client read off the
-   * federation (blwp-client/src/guardians.js). A seat can omit a bond here; it cannot forge one.
+   * federation (blwp-client/src/guardians.js). A signer node can omit a bond here; it cannot forge one.
    */
   guardianBondsFor(roundIdBytes) {
     const census = this.censusFor(roundIdBytes);
@@ -261,43 +261,43 @@ export class Roster {
   }
 
   /**
-   * EVERY SEAT THIS ROUND HAS, over the roles its contract names slots for.
+   * EVERY SIGNER NODE THIS ROUND HAS, over the roles its contract names slots for.
    *
-   * A contract carries one flat `nodes` list, so the seated set is the union
-   * of the role committees - a node seated for either pool is seated.
+   * A contract carries one flat `nodes` list, so the assigned set is the union
+   * of the role committees - a node assigned for either pool is assigned.
    */
-  seatsFor(roundIdBytes) {
-    const seats = new Map();
+  signerNodesFor(roundIdBytes) {
+    const signerNodes = new Map();
     for (const role of ['game', 'settlement']) {
       const picked = this.committeeFor(roundIdBytes, role);
       if (!picked.ok) return picked;
-      for (const e of picked.committee) seats.set(toHex(e.pubkey), e.pubkey);
+      for (const e of picked.committee) signerNodes.set(toHex(e.pubkey), e.pubkey);
     }
-    return { ok: true, seats: [...seats.values()] };
+    return { ok: true, signerNodes: [...signerNodes.values()] };
   }
 
   /**
-   * SEAT THE ROUND, and refuse one whose contract names anybody else.
+   * ASSIGN THE ROUND'S SIGNER NODES, and refuse one whose contract names anybody else.
    *
-   * 26's ruling: the seated set from the chain census is the only list that
+   * 26's ruling: the assigned set from the chain census is the only list that
    * counts. `contract.nodes` is what a round's author wrote down, so it is
-   * CHECKED against the seats - exactly, both ways - and a contract naming a
-   * stranger, omitting a seated node, or being a different set altogether is
+   * CHECKED against the signer nodes - exactly, both ways - and a contract naming a
+   * stranger, omitting a assigned node, or being a different set altogether is
    * refused by name rather than rewritten or accepted on overlap.
    *
-   * The seats are stored, so `takeReceipt` and the verdict read the census's
+   * The signer nodes are stored, so `takeReceipt` and the verdict read the census's
    * answer rather than each deciding for themselves.
    */
-  seatRound(roundIdBytes) {
+  assignSignerNodes(roundIdBytes) {
     const row = this.round.get(roundIdBytes);
     if (!row) return { ok: false, why: 'this node holds no such round' };
     const contract = decodeRoundContract(new Uint8Array(row.contract));
 
-    const seated = this.seatsFor(roundIdBytes);
-    if (!seated.ok) return seated;
+    const assigned = this.signerNodesFor(roundIdBytes);
+    if (!assigned.ok) return assigned;
 
     const named = Array.isArray(contract.nodes) ? contract.nodes : [];
-    const have = new Set(seated.seats.map(toHex));
+    const have = new Set(assigned.signerNodes.map(toHex));
     const says = new Set(named.map(toHex));
 
     const strangers = [...says].filter((k) => !have.has(k));
@@ -306,15 +306,15 @@ export class Roster {
       return {
         ok: false,
         why: `that round names ${named.length} committee ${named.length === 1 ? 'key' : 'keys'} and `
-          + `the census seats ${seated.seats.length}: `
-          + `${strangers.length} the chain did not seat`
+          + `the census assigns ${assigned.signerNodes.length}: `
+          + `${strangers.length} the chain did not assign`
           + `${strangers.length ? ` (${strangers[0].slice(0, 16)})` : ''}, `
-          + `${missing.length} seated ${missing.length === 1 ? 'node' : 'nodes'} it does not name`
+          + `${missing.length} assigned ${missing.length === 1 ? 'node' : 'nodes'} it does not name`
           + `${missing.length ? ` (${missing[0].slice(0, 16)})` : ''}`,
       };
 
-    this.round.seat(roundIdBytes, seated.seats);
-    return { ok: true, seats: seated.seats };
+    this.round.recordSignerNodes(roundIdBytes, assigned.signerNodes);
+    return { ok: true, signerNodes: assigned.signerNodes };
   }
 
   /**
@@ -333,7 +333,7 @@ export class Roster {
 
     // THE LOTTERY IS DRAWN ON THE BEACON'S SEED. Not on `contract.committeeSeed`:
     // that field is the author's claim about it, and 34 offline tries were
-    // enough to make it seat a chosen pair.
+    // enough to make it signer node a chosen pair.
     const seeded = this.seedFor(roundIdBytes, contract);
     if (!seeded.ok) return { ok: false, why: seeded.why, root: census.root };
 

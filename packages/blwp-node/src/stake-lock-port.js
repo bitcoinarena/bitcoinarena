@@ -1,4 +1,4 @@
-// THE ROUND'S FEDERATION, AS A SEAT ASKS IT (v4.6.2 §23.1 step 5).
+// THE ROUND'S FEDERATION, AS A SIGNER NODE ASKS IT (v4.6.2 §23.1 step 5).
 //
 // Two answers, both the stock Fedimint 0.12.0 client's own, through
 // blwp-stake-lock (tools/stake-lock, our code on the stock client crates):
@@ -81,7 +81,7 @@ export function stakeLockPort({ bin, dataDir, timeoutMs = 60000 }) {
 
 /**
  * THE PORT FROM TWO SETTINGS, ALL OR NONE: the tool, and the data directory of a
- * client that has joined the round's federation (the seat's own, read-only here).
+ * client that has joined the round's federation (the signer node's own, read-only here).
  * @returns {{ ok: true, given: false } | { ok: true, given: true, stakeLocks } | { ok: false, why }}
  */
 export function stakeLocksFromEnv(env) {

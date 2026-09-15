@@ -1,20 +1,20 @@
-// ONE SEAT REFUSED: §13C'S VOID AFTER THE RESULT WINDOW (M3.3-34, ruled 2026-09-12).
+// ONE SIGNER NODE REFUSED: §13C'S VOID AFTER THE RESULT WINDOW (M3.3-34, ruled 2026-09-12).
 //
-// A seated entry's on-time first mark reaches seat A; seat B is UP and refuses
+// A joined entry's on-time first mark reaches signer node A; signer node B is UP and refuses
 // it - here because B has not seen the stake lock - so the mark is receipted by
 // 1 of 2. No result can reach the threshold, and nothing shows the player caused
 // it: §13C's "the fault is on the operator side -> the entry becomes VOID, the
 // stake is refunded by letting the HTLC expire, and the entry is excluded from
-// the pool and from the payout table". Both seats HOLD until the result window
+// the pool and from the payout table". Both signer nodes HOLD until the result window
 // has passed - not at the close - and then record VOID, final, not HOLDING. The
 // lock stays held (no act: it returns at its expiry); the forfeit door is 409.
-// Not FORFEIT (walk-away, late start) and not ENTRY_VOID (§16, an outage: a seat
+// Not FORFEIT (walk-away, late start) and not ENTRY_VOID (§16, an outage: a signer node
 // that answered and refused was up). When the refusals are the player's own
-// equivocation (§13B) it is FORFEIT instead. A seat that cannot be reached keeps
+// equivocation (§13B) it is FORFEIT instead. A signer node that cannot be reached keeps
 // the hold going; a refusal later made good ends as the run's own outcome.
 //
 // MEASURED BEFORE (scratchpad probe on this fixture): A 1 receipt, the offer to
-// B "refused"; at the close both seats HOLDING - 3 attempts at 2 s, 12 and 11 at
+// B "refused"; at the close both signer nodes HOLDING - 3 attempts at 2 s, 12 and 11 at
 // 10 s - no result, finality null, no Void, forfeit 409 at both, lock held: a
 // hold for ever.
 import { test } from 'node:test';
@@ -26,7 +26,7 @@ import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { resultFinality } from '../src/finality.js';
-import { assumeSeated } from './seating.js';
+import { assumeAssigned } from './assignment.js';
 import { lockPort } from './lock-fixture.js';
 import { b32, rand, RANDOMNESS, STAKE, WINDOW_MS, WINNER, GENESIS_HASH, wordsAt, contractFor, say, secretScalar, opts, wait } from './window-fixture.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
@@ -46,7 +46,7 @@ import { toHex, sha256 } from '../../protocol/src/hash.js';
 const curve = { ...feldmanGroup, tweakPoint };
 const END = WINNER.ticks;                      // 1320
 
-async function seats() {
+async function signerNodes() {
   const port = lockPort();
   const mk = (db, p = 0) => serve(db, { port: p, ...opts, stakeLocks: port, poolCurve: curve, finality: { everyMs: 100 } });
   const dbA = openStore(':memory:');
@@ -66,11 +66,11 @@ async function seats() {
   const rid = roundId(c);
   for (const d of [a, b]) {
     assert.equal((await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) })).status, 201);
-    assumeSeated(d.round, rid, c.nodes);
+    assumeAssigned(d.round, rid, c.nodes);
   }
   for (let pass = 0; pass < 2; pass++) for (const d of [a, b]) await d.dkg.run(c.nodes);
   return {
-    get a() { return a; }, get b() { return b; }, c, rid, port, claimPk: a.dkg.seatFor(c.nodes).pool.groupPublicKey,
+    get a() { return a; }, get b() { return b; }, c, rid, port, claimPk: a.dkg.signerNodeFor(c.nodes).pool.groupPublicKey,
     async downB() { await b.close(); },
     async upB() { b = await mk(dbB, bPort); wire(); },
     async close() { try { await a.close(); } catch { /* down */ } try { await b.close(); } catch { /* down */ } },
@@ -78,16 +78,16 @@ async function seats() {
 }
 
 /**
- * Seated at both seats; the stake lock posted to the seats named in `lockAt`
- * (a seat not given it has not seen the stake, and refuses the entry's marks).
+ * Joined at both signer nodes; the stake lock posted to the signer nodes named in `lockAt`
+ * (a signer node not given it has not seen the stake, and refuses the entry's marks).
  * `messages`: the run - a first mark at 60, a mark at 1320. `alt`: another
  * first mark at 90 and a mark at 120 on it - the player's second chain.
  */
-async function seatAndBuild(w, { lockAt = ['a', 'b'] } = {}) {
+async function joinAndBuild(w, { lockAt = ['a', 'b'] } = {}) {
   const session = ed25519.utils.randomSecretKey();
   const preimage = secretScalar();
   const e = rand(32);
-  const dealt = await dealHandout({ preimage, seats: w.c.nodes, roundId: w.rid, playerPubkey: WINNER.key,
+  const dealt = await dealHandout({ preimage, signerNodes: w.c.nodes, roundId: w.rid, playerPubkey: WINNER.key,
     ephemeralSecret: e, ephemeralPubkey: feldmanGroup.pointX(e), coefficients: [scalarFrom32(rand(32)) % FIELD], needed: 2, curve: feldmanGroup });
   const outpoint = { txid: rand(32), outIdx: 0n };
   const entry = {
@@ -158,16 +158,16 @@ const brief = (x) => ({ results: x.results, finality: x.finality, noQuorum: x.no
 const VOIDED = { results: [], finality: 'VOID', noQuorum: 'VOID', entryVoid: false, closing: 'VOID', forfeit: 409,
   publicResults: { signed: 0, noQuorum: 'VOID' }, payoutTable: null };
 
-test('one seat refused (1): B is up and refuses the on-time first mark - both HOLD until the result window, then both record VOID, the lock held', async () => {
-  const w = await seats();
+test('one signer node refused (1): B is up and refuses the on-time first mark - both HOLD until the result window, then both record VOID, the lock held', async () => {
+  const w = await signerNodes();
   try {
-    const run = await seatAndBuild(w, { lockAt: ['a'] });
+    const run = await joinAndBuild(w, { lockAt: ['a'] });
     const saidB = [];
     for (const m of run.messages) { await say(w.a.port, m); saidB.push(String(await say(w.b.port, m)).slice(0, 40)); }
     await until(() => w.b.round.refusedFirstMark(run.eid) && Object.values(w.a.round.firstMarkOffers(run.eid)).includes('refused'));
     const offersAtA = w.a.round.firstMarkOffers(run.eid);
     await Promise.all([say(w.a.port, `close ${toHex(w.rid)}`), say(w.b.port, `close ${toHex(w.rid)}`)]);
-    // WAITED ON, NOT SLEPT ON: read once both seats' closes have recorded the
+    // WAITED ON, NOT SLEPT ON: read once both signer nodes' closes have recorded the
     // hold - in the full suite a close can take longer than a fixed sleep. The
     // assertions below (HOLDING, "no quorum yet", nothing decided) are what show
     // the read came inside the result window.
@@ -192,16 +192,16 @@ test('one seat refused (1): B is up and refuses the on-time first mark - both HO
   } finally { await w.close(); }
 });
 
-test('one seat refused (2): the refusals are the player\'s own two first marks - FORFEIT at both seats, not VOID', async () => {
-  const w = await seats();
+test('one signer node refused (2): the refusals are the player\'s own two first marks - FORFEIT at both signer nodes, not VOID', async () => {
+  const w = await signerNodes();
   try {
-    const run = await seatAndBuild(w);
+    const run = await joinAndBuild(w);
     await w.downB();
     // The player's first chain to A (B is down: its forward goes unanswered)...
     for (const m of run.messages.slice(0, 2)) await say(w.a.port, m);
     await w.upB();
     // ...and a second first chain to B: B takes it and hands its first mark to A,
-    // which refuses it (it holds another); each seat refuses the other's.
+    // which refuses it (it holds another); each signer node refuses the other's.
     for (const m of run.alt) await say(w.b.port, m);
     for (const m of run.messages.slice(0, 2)) await say(w.a.port, m);
     await wait(1000);
@@ -222,13 +222,13 @@ test('one seat refused (2): the refusals are the player\'s own two first marks -
   } finally { await w.close(); }
 });
 
-// THE OWNER 2026-09-15 07:49: the result window is the objection window, and a seat that cannot
+// THE OWNER 2026-09-15 07:49: the result window is the objection window, and a signer node that cannot
 // retrieve the transcript in it treats the entry as VOID. Until then (M3.3-34) A held past the
-// window with no VOID - measured this morning: HOLDING "waiting on 1 seat" at the window + 2 s.
-test('one seat refused (4): the refusing seat is unreachable at the close - past the window A cannot retrieve the transcript and decides VOID; back, both VOID', async () => {
-  const w = await seats();
+// window with no VOID - measured this morning: HOLDING "waiting on 1 signer node" at the window + 2 s.
+test('one signer node refused (4): the refusing signer node is unreachable at the close - past the window A cannot retrieve the transcript and decides VOID; back, both VOID', async () => {
+  const w = await signerNodes();
   try {
-    const run = await seatAndBuild(w, { lockAt: ['a'] });
+    const run = await joinAndBuild(w, { lockAt: ['a'] });
     for (const m of run.messages) { await say(w.a.port, m); await say(w.b.port, m); }
     await until(() => w.b.round.refusedFirstMark(run.eid) && Object.values(w.a.round.firstMarkOffers(run.eid)).includes('refused'));
     await w.downB();
@@ -250,14 +250,14 @@ test('one seat refused (4): the refusing seat is unreachable at the close - past
   } finally { await w.close(); }
 });
 
-// THE FIRST MARK REACHED ONLY THE SEAT THAT REFUSED IT (M3.3-34 follow-up): the
-// player's direct send, not A's forward. Refused while the refusing seat was up,
-// the operator side's fault (§13C) - VOID at both seats after the window, never
-// the walk-away's FORFEIT 0 at one seat or both.
-test('one seat refused (8): the first mark reached only the seat that refused it - both HOLD, then VOID at both, never FORFEIT 0', async () => {
-  const w = await seats();
+// THE FIRST MARK REACHED ONLY THE SIGNER NODE THAT REFUSED IT (M3.3-34 follow-up): the
+// player's direct send, not A's forward. Refused while the refusing signer node was up,
+// the operator side's fault (§13C) - VOID at both signer nodes after the window, never
+// the walk-away's FORFEIT 0 at one signer node or both.
+test('one signer node refused (8): the first mark reached only the signer node that refused it - both HOLD, then VOID at both, never FORFEIT 0', async () => {
+  const w = await signerNodes();
   try {
-    const run = await seatAndBuild(w, { lockAt: ['a'] });
+    const run = await joinAndBuild(w, { lockAt: ['a'] });
     const saidB = [];
     for (const m of run.messages.slice(0, 2)) saidB.push(String(await say(w.b.port, m)).slice(0, 40));   // to B only
     await wait(500);
@@ -270,7 +270,7 @@ test('one seat refused (8): the first mark reached only the seat that refused it
     await until(() => [w.a, w.b].every((d) => d.round.noQuorum(run.eid) || resultFinality(d.round, w.rid, run.eid).state === 'FINAL'));
     await wait(300);
     const after = { a: await at(w.a, w, run), b: await at(w.b, w, run), lockHeld: lockHeld(w, run) };
-    console.log('  FACTS (refused, 8 - reached only the refusing seat):', JSON.stringify({ saidB, refusedAtB, inWindow, after }));
+    console.log('  FACTS (refused, 8 - reached only the refusing signer node):', JSON.stringify({ saidB, refusedAtB, inWindow, after }));
     for (const s of ['a', 'b']) {
       assert.deepEqual(inWindow[s].results, [], `${s} signed at the close`);
       assert.equal(inWindow[s].closing && inWindow[s].closing.state, 'HOLDING', s);
@@ -280,10 +280,10 @@ test('one seat refused (8): the first mark reached only the seat that refused it
   } finally { await w.close(); }
 });
 
-test('one seat refused (5, 6): B refuses, then sees the stake and takes the mark in time - 2 of 2, the run\'s own outcome, FINAL, never voided', async () => {
-  const w = await seats();
+test('one signer node refused (5, 6): B refuses, then sees the stake and takes the mark in time - 2 of 2, the run\'s own outcome, FINAL, never voided', async () => {
+  const w = await signerNodes();
   try {
-    const run = await seatAndBuild(w, { lockAt: ['a'] });
+    const run = await joinAndBuild(w, { lockAt: ['a'] });
     for (const m of run.messages.slice(0, 2)) { await say(w.a.port, m); await say(w.b.port, m); }
     await until(() => w.b.round.refusedFirstMark(run.eid));
     const refusedFirst = !!w.b.round.refusedFirstMark(run.eid);

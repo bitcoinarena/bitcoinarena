@@ -117,8 +117,8 @@ export function objectionHolds({
   if (!Array.isArray(receipts) || !receipts.length)
     return { holds: false, why: 'an objection carries the receipts that back it, and this carries none' };
 
-  const seats = new Set(committee.map(hex));
-  const stranger = receipts.find((r) => !seats.has(hex(r.nodePubkey)));
+  const signerNodes = new Set(committee.map(hex));
+  const stranger = receipts.find((r) => !signerNodes.has(hex(r.nodePubkey)));
   if (stranger)
     return {
       holds: false,
@@ -149,7 +149,7 @@ export function objectionHolds({
  * window the caller chooses is a window the operator chooses.
  *
  * `needed` is the committee's threshold and is passed on to
- * `provisionallyFinal` as it is: a two-seat round is agreed at 2 of 2, not at
+ * `provisionallyFinal` as it is: a two-signer node round is agreed at 2 of 2, not at
  * the default five (M3.3-26's rule, `receiptsNeeded`).
  */
 export function finality({
@@ -171,7 +171,7 @@ export function finality({
   // does not erase it". Anyone able to produce one valid objection could
   // otherwise un-finalise a settled round at any time.
   // PUBLICATION IS A CONDITION OF FINALITY (v4.6.2, P2): the window W counts
-  // from the moment the round's threshold of settlement seats had posted the
+  // from the moment the round's threshold of settlement signer nodes had posted the
   // transcript, not from the fifth signature, and a result nobody has posted is
   // never FINAL. `null` says "not posted"; a caller that tracks no posting at
   // all leaves it out, and the window runs from the threshold as it did.
@@ -179,7 +179,7 @@ export function finality({
     return {
       state: PROVISIONALLY_FINAL, published: false, signers: agreed.signers,
       why: 'the transcript has not been posted to the round\'s publication relays by its '
-        + 'threshold of settlement seats, so the objection window has not opened',
+        + 'threshold of settlement signer nodes, so the objection window has not opened',
     };
   const opensAtMs = publishedAtMs === undefined || BigInt(publishedAtMs) < BigInt(provisionalAtMs)
     ? BigInt(provisionalAtMs) : BigInt(publishedAtMs);

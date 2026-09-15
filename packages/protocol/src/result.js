@@ -163,11 +163,11 @@ export function provisionallyFinal(signedBy, { committee, needed = RESULTS_FOR_F
   if (!Array.isArray(committee) || !committee.length)
     return { final: false, signers: 0, why: 'no committee to check the signers against' };
 
-  const seats = new Set(committee.map(hex));
+  const signerNodes = new Set(committee.map(hex));
   const byResult = new Map();
   let strangers = 0;
   for (const { resultId: id, nodePubkey } of signedBy) {
-    if (!seats.has(hex(nodePubkey))) { strangers++; continue; }
+    if (!signerNodes.has(hex(nodePubkey))) { strangers++; continue; }
     const key = hex(id);
     const who = byResult.get(key) || new Set();
     who.add(hex(nodePubkey));
