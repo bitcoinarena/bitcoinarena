@@ -34,9 +34,11 @@ node "$ROOT/unity-proto/tools/fill-template.mjs" --check "$BUILD"
 
 # THE LOBBY'S SEATS GO BESIDE THE PAGE ON EVERY DEPLOY (the owner 2026-09-15 12:54: the Daily lobby
 # must list rounds). The page's bare root shows the lobby only from daily.json (index.html reads
-# it when the address has no query), and a Unity build rewrites this folder - measured: every
-# deploy from 0.0.1265 to 0.0.1304 answered /daily.json with the page itself, so the bare root
-# was the offline daily. The file is the seats' own launcher's (tools/run-2of2.mjs writes it
+# it when the address has no query), and no deploy put it here - measured: every deploy from
+# 0.0.1265 to 0.0.1304 answered /daily.json with the page itself, so the bare root was the
+# offline daily. (A full Unity build does not remove it: the build of 0.0.1311, 13:23-13:25, left
+# a daily.json already in this folder in place. It was never copied in.) The file is the seats'
+# own launcher's, current on every deploy (tools/run-2of2.mjs writes it
 # with the tunnels it bonded under), and it is checked before it ships: two seats, a bond door,
 # a signed advertisement, and every seat answering /rounds. A missing file or a silent seat
 # refuses the deploy by name - a lobby that points at silence is not shipped.
