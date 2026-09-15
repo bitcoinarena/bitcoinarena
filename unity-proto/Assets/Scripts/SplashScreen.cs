@@ -355,8 +355,8 @@ public class SplashScreen : MonoBehaviour
         // were cut at half height and split panels 1 and 2 (measured, 1280x800).
         // A cell is exactly its panel's shape, so nothing is stretched.
         if (!_howToAsked) { _howToAsked = true; _howToWhole = Resources.Load<Texture2D>(Blwp.DailyLobby.HowToWhole); }
-        // A PHONE UPRIGHT TURNS PAGES (the owner 2026-09-15 11:57): only the page shown is drawn -
-        // panels 1 and 2, or 3 and 4 - and either arrow turns to the other one.
+        // A PHONE UPRIGHT TURNS PAGES (the owner 2026-09-15 11:57, option B): only the page shown is
+        // drawn - one panel, 1 to 4 - and the arrows turn back and on, round.
         _howToShown.Clear();
         if (_howToWhole != null && l.howToCells != null)
             for (int i = 0; i < l.howToCells.Length; i++)
@@ -370,8 +370,9 @@ public class SplashScreen : MonoBehaviour
         if (l.howToCarousel)
         {
             var arrow = new GUIStyle(GUI.skin.button) { fontSize = Mathf.RoundToInt(font * 1.6f), alignment = TextAnchor.MiddleCenter };
-            if (GUI.Button(l.howToPrev, "<", arrow)) _howToPage = 1 - _howToPage;
-            if (GUI.Button(l.howToNext, ">", arrow)) _howToPage = 1 - _howToPage;
+            int pages = Blwp.DailyLobby.HowToPages;
+            if (GUI.Button(l.howToPrev, "<", arrow)) _howToPage = (_howToPage + pages - 1) % pages;
+            if (GUI.Button(l.howToNext, ">", arrow)) _howToPage = (_howToPage + 1) % pages;
         }
 
         var youStyle = new GUIStyle(_body)

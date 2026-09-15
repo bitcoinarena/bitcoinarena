@@ -10,7 +10,7 @@ using Blwp;
 /// OnGUI never runs in batch mode, so visible is measured the way the title
 /// screen's own test measures it: the layout is arithmetic, asked for at the
 /// screen shapes iPhones and Android phones actually have - portrait and
-/// landscape, at 1x and at the 2x drawing buffer the page gives a phone - and
+/// landscape, in CSS pixels, as the page lays the title screen out - and
 /// every element has to sit inside the panel, clear of every other, with room
 /// for at least two rounds and buttons a finger can hit.
 /// </summary>
@@ -35,20 +35,27 @@ public class LobbyScreenTests
             $"{what}: {inner} is not inside {outer}");
     }
 
+    static string Heights(DailyLobby.Frame f) => string.Join("/", System.Array.ConvertAll(f.howToCells, c => c.height.ToString("0.0")));
+
     /// <summary>
-    /// A PHONE UPRIGHT'S TWO PAGES (the owner 2026-09-15 11:57): page one is 1 and 2 side by side, each
-    /// CarouselTaller x the grid's top row on that same screen (`top`); page two is 3 and 4 side by
-    /// side; the arrows are a finger's size, in the box, on no panel and not on each other.
+    /// A PHONE UPRIGHT'S FOUR PAGES (the owner 2026-09-15, option B): panel i alone on page i, each
+    /// taller than the same panel in the grid that screen had (`grid`), and 1 and 2 at least
+    /// CarouselTaller x that grid's top row; the arrows a finger's size, in the box, on no panel
+    /// and not on each other.
     /// </summary>
-    static void CarouselPagesAreRight(DailyLobby.Frame l, Rect copy, float top, string at)
+    static void CarouselPagesAreRight(DailyLobby.Frame l, DailyLobby.Frame grid, Rect copy, string at)
     {
-        Assert.GreaterOrEqual(l.howToCells[1].x, l.howToCells[0].xMax - 0.5f, $"2 is not right of 1 {at}");
+        float top = Mathf.Max(grid.howToCells[0].height, grid.howToCells[1].height);
+        for (int i = 0; i < 4; i++)
+        {
+            Assert.AreEqual(i, DailyLobby.HowToPageOf(i), $"panel {i + 1} is not alone on page {i + 1} {at}");
+            Assert.Greater(l.howToCells[i].height, grid.howToCells[i].height + 0.5f,
+                $"panel {i + 1} is {l.howToCells[i].height:0.0} px, no taller than the grid's {grid.howToCells[i].height:0.0} px {at} (copy {copy}, box {l.howTo})");
+        }
         for (int i = 0; i < 2; i++)
             Assert.GreaterOrEqual(l.howToCells[i].height, DailyLobby.CarouselTaller * top - 0.5f,
                 $"panel {i + 1} is {l.howToCells[i].height:0.0} px, not {DailyLobby.CarouselTaller} x the grid's top row {top:0.0} px {at}"
                 + $" (copy {copy}, box {l.howTo})");
-        Assert.AreEqual(l.howToCells[2].y, l.howToCells[3].y, 0.5f, $"3 and 4 are not side by side {at}");
-        Assert.GreaterOrEqual(l.howToCells[3].x, l.howToCells[2].xMax - 0.5f, $"4 is not right of 3 {at}");
         foreach (var (r, what) in new[] { (l.howToPrev, "the left arrow"), (l.howToNext, "the right arrow") })
         {
             Assert.GreaterOrEqual(r.width, 34f, $"{what} is under a finger's width {at}: {r}");
@@ -63,17 +70,18 @@ public class LobbyScreenTests
     public void EveryLobbyElementIsInsideThePanelAndClearOfEveryOtherOnEveryPhone()
     {
         foreach (var css in Css)
-        // 1x, 2x, and the densities phones actually draw at - measured on the
-        // live page, an iPhone's Unity screen is 3x (1170x2532); Android 2.625x.
-        foreach (var dpr in new[] { 1f, 2f, 2.625f, 3f })
         {
-            float w = css.x * dpr, h = css.y * dpr;
+            // IN CSS PIXELS, AS THE PAGE LAYS IT OUT: SplashScreen.OnGUI measures Screen / UiScale -
+            // the canvas's pixels per CSS pixel, since 0.0.1159 - so an iPhone drawing at 3x
+            // (1170x2532) is laid out at 390x844. The 2x / 2.625x / 3x shapes this once multiplied
+            // out are shapes no live phone lays out.
+            float w = css.x, h = css.y;
             float min = Mathf.Min(w, h);
             float sub = Mathf.Clamp(min * 0.028f, 14f, 24f);
             float btn = Mathf.Clamp(min * 0.040f, 18f, 34f);
             var f = SplashScreen.Measure(w, h, sub, btn);
             var l = DailyLobby.MeasureLobby(f.copy, Mathf.Round(sub), css.y > css.x);
-            string at = $"at {css.x}x{css.y} css, {dpr}x";
+            string at = $"at {css.x}x{css.y} css";
 
             Inside(f.panel, new Rect(0, 0, w, h), $"the panel {at}");
             foreach (var (r, what) in new[] { (f.play, "PLAY"), (f.spectate, "SPECTATE"), (f.hint, "the hint") })
@@ -100,23 +108,21 @@ public class LobbyScreenTests
                     if (!l.howToCarousel || DailyLobby.HowToPageOf(i) == DailyLobby.HowToPageOf(j))
                         Assert.IsFalse(c.Overlaps(l.howToCells[j]), $"how-to panels {i + 1} and {j + 1} overlap {at}");
             }
+            // THE GRID THE HOW-TO HAD ON THIS SCREEN BEFORE (carousel: false): what a phone's pages
+            // are held to, and on a screen that is not portrait, exactly what it must still be.
+            var grid = DailyLobby.MeasureLobby(f.copy, Mathf.Round(sub), portrait, carousel: false);
             if (portrait)
             {
-                // PAGE ONE: 1 and 2 side by side, each at least 15% taller than the grid's top row
-                // on this same screen - the grid a phone upright had before (carousel: false).
-                var grid = DailyLobby.MeasureLobby(f.copy, Mathf.Round(sub), true, carousel: false);
-                float top = Mathf.Max(grid.howToCells[0].height, grid.howToCells[1].height);
-                Assert.AreEqual(l.howToCells[0].y, l.howToCells[1].y, 0.5f, $"1 and 2 are not side by side {at}");
-                if (!l.howToCarousel)
-                {
-                    // THE GRID STAYS ONLY WHERE THE CAROUSEL CANNOT BE THAT MUCH TALLER (the owner, option A):
-                    // the least it needs - 1 and 2 at CarouselTaller x the top row and two 34 px arrows,
-                    // no gaps at all - is wider than the copy area. And there it is 1-2 over 3-4.
-                    float least = DailyLobby.CarouselTaller * top * (DailyLobby.PanelAspectOf(0) + DailyLobby.PanelAspectOf(1)) + 2f * 34f;
-                    Assert.Greater(least, f.copy.width + 0.5f, $"the carousel fits ({least:0} px in {f.copy.width:0}) and the grid was kept {at}");
-                    Assert.Greater(l.howToCells[2].y, l.howToCells[0].yMax - 0.5f, $"3-4 are not under 1-2 {at}");
-                }
-                else CarouselPagesAreRight(l, f.copy, top, at);
+                Assert.IsTrue(l.howToCarousel, $"a portrait screen without the one-panel pages {at}");
+                CarouselPagesAreRight(l, grid, f.copy, at);
+                TestContext.Out.WriteLine($"HOWTO {css.x}x{css.y} copy {f.copy.width:0} grid {Heights(grid)} rows {grid.rows}"
+                    + $" -> pages {Heights(l)} rows {l.rows}");
+            }
+            else
+            {
+                Assert.AreEqual(grid.howTo, l.howTo, $"the how-to moved on a screen that is not portrait {at}");
+                for (int i = 0; i < 4; i++)
+                    Assert.AreEqual(grid.howToCells[i], l.howToCells[i], $"panel {i + 1} moved on a screen that is not portrait {at}");
             }
             if (css.x >= 1366f)
                 Assert.AreEqual(l.howToCells[0].y, l.howToCells[3].y, 0.5f, $"a wide desktop does not get 1-2-3-4 in one row {at}");
