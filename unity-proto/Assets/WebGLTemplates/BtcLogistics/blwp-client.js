@@ -10915,6 +10915,8 @@ const CLOSED = 'closed: ';
 
 /** How long `finish` waits for the held ticks to go out before it ends the run anyway. */
 const FINISH_WAIT_MS = 10000;
+/** The core's own word for a delivered run (core rules/gate.js RUN_DELIVERED), as it reads off the state. */
+const RUN_DELIVERED_WORD = 1;
 
 class Client {
   /**
@@ -12509,6 +12511,22 @@ class Client {
    * on its own, and `ended` still says when it has.
    */
   get over() { return this.ended || !!this.finishing; }
+
+  /**
+   * THE CORE'S WORD FOR THIS RUN, handed over after every tick: the state word (the core's own
+   * RUN_* value) and the hash at that tick. On DELIVERED the run finishes; anything else is left
+   * alone. Nothing is worked out here - the word is read, not computed.
+   *
+   * ONLY FOR A RUN THIS CLIENT HAS BEEN TOLD IT IS PLAYING (`setRound`, the same step that puts the
+   * page's core into the round's world). Measured live (0.0.1342, the second PLAY in one tab): the
+   * page had the new client a few seconds before the core entered the new round, the bridge read the
+   * old core - still DELIVERED from the first run - and finished the new run at tick 1.
+   */
+  coreWord({ state, stateHash = null, tick = 0 } = {}) {
+    if (!this.where || this.ended || this.finishing) return null;
+    if ((state | 0) !== RUN_DELIVERED_WORD) return null;
+    return this.finish({ stateHash, tick, why: `the core said DELIVERED at tick ${tick}` });
+  }
 
   /** The ending, as the game reads it: FINISHING while the last of the run goes out, then the word it ended with. */
   endingLine() {

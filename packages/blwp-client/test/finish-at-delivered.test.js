@@ -60,6 +60,31 @@ async function rig() {
   } catch (e) { client.ended = true; client.close(); await node.close(); throw e; }
 }
 
+test('the core\'s DELIVERED finishes only a run the client has been told it is playing, and nothing else', async () => {
+  // MEASURED LIVE (0.0.1342, a second PLAY in one tab): the new client existed before the page's core
+  // entered the new round, the old core still said DELIVERED, and the new run finished at tick 1.
+  const node = await serve(openStore(), { port: 0, funded: () => true });
+  const early = new Client({ base: `http://127.0.0.1:${node.port}`, core, sign: (id) => ed25519.sign(id, session), verify });
+  try {
+    assert.equal(early.coreWord({ state: 1, tick: 1 }), null, 'a client not yet told its round finished a run');
+    assert.equal(early.over, false);
+    assert.ok(!early.ended, 'a client not yet told its round reads as ended');
+  } finally { early.ended = true; early.close(); await node.close(); }
+  const { node: n2, client, rec, recorded } = await rig();
+  try {
+    rec(10);
+    assert.equal(client.coreWord({ state: 0, tick: recorded() }), null, 'a live word ended the run');
+    assert.equal(client.coreWord({ state: 2, tick: recorded() }), null, 'a word other than DELIVERED finished it here');
+    assert.equal(client.over, false);
+    const done = client.coreWord({ state: 1, tick: recorded() });
+    assert.ok(done && done.then, 'DELIVERED on a told run did not finish it');
+    assert.equal(client.over, true);
+    await done;
+    assert.equal(client.ending, 'FINISHED');
+    assert.match(client.endingLine(), /^FINISHED the core said DELIVERED at tick 10$/);
+  } finally { client.ended = true; client.close(); await n2.close(); }
+});
+
 test('when the core says the run is over, every held tick reaches the node, nothing is recorded or sent after, and the run ends FINISHED', async () => {
   const { node, client, rec, onNode, recorded } = await rig();
   try {

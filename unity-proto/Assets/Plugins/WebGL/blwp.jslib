@@ -500,9 +500,12 @@ mergeInto(LibraryManager.library, {
       // recorded 10-89 s more, the truck parked at the tunnel's back wall. The word is the core's own
       // (O_SCORE 18 + S_STATE 5, RUN_DELIVERED 1), read, not worked out: this tick is already
       // recorded, `finish` sends what is held and the last checkpoint at this tick, then nothing.
-      if ((b.st.i32[18 + 5] | 0) === 1) {
-        net.finishing = net.client.finish({ stateHash: b.core.hash(b.st), tick: net.seen,
-          why: 'the core said DELIVERED at tick ' + net.seen });
+      // The word goes to the client, which acts only for a run it has been told it is playing - the
+      // hash is taken only when the word is DELIVERED, so no tick pays for it otherwise.
+      var word = b.st.i32[18 + 5] | 0;
+      var done = word === 1 ? net.client.coreWord({ state: word, stateHash: b.core.hash(b.st), tick: net.seen }) : null;
+      if (done) {
+        net.finishing = done;
         // AND THE PAGE LETS GO OF THE ROUND (hole 2): the address is the lobby's again.
         if (typeof window !== 'undefined' && window.BLWP_RUN_OVER) window.BLWP_RUN_OVER('DELIVERED');
         return;
