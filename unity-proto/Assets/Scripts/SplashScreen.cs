@@ -52,8 +52,8 @@ public class SplashScreen : MonoBehaviour
     readonly System.Collections.Generic.List<int> _howToShown = new System.Collections.Generic.List<int>();
     Rect _lastName, _lastKey, _lastMore;
     string _lastNotice = "";
-    readonly System.Collections.Generic.List<(Blwp.LobbyRow row, Rect rect)> _drawnRows =
-        new System.Collections.Generic.List<(Blwp.LobbyRow row, Rect rect)>();
+    readonly System.Collections.Generic.List<(Blwp.LobbyRow row, Rect rect, string words)> _drawnRows =
+        new System.Collections.Generic.List<(Blwp.LobbyRow row, Rect rect, string words)>();
 
     void Awake()
     {
@@ -404,7 +404,7 @@ public class SplashScreen : MonoBehaviour
         var head = new GUIStyle(_body)
             { fontSize = Mathf.RoundToInt(font), fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleLeft, wordWrap = false };
         head.normal.textColor = PanelSkin.Gold;
-        GUI.Label(l.head, Fit(head, $"ROUNDS · JOIN NEEDS {needed} OF {needed} SEATS", l.head.width), head);
+        GUI.Label(l.head, Fit(head, $"ROUNDS · JOIN NEEDS {needed} OF {needed} SIGNER NODES", l.head.width), head);
         if (_offset >= rows.Length) _offset = 0;
         if (l.rows > 0 && rows.Length > l.rows)
         {
@@ -428,15 +428,16 @@ public class SplashScreen : MonoBehaviour
             rowStyle.fontSize = Mathf.RoundToInt(font);
             rowStyle.normal.textColor = r.joinable ? (picked ? PanelSkin.Gold : Color.white) : new Color(1f, 1f, 1f, 0.5f);
             var inner = new Rect(rect.x + 8f, rect.y, rect.width - 16f, rect.height);
-            GUI.Label(inner, FitWords(rowStyle, Blwp.DailyLobby.RowWords(r), inner.width), rowStyle);
+            string words = FitWords(rowStyle, Blwp.DailyLobby.RowWords(r), inner.width);
+            GUI.Label(inner, words, rowStyle);
             if (r.joinable && GUI.Button(rect, GUIContent.none, GUIStyle.none)) { _tapId = r.id; _pickId = r.id; }
-            _drawnRows.Add((r, rect));
+            _drawnRows.Add((r, rect, words));
         }
         if (rows.Length == 0 && l.list.height > 0)
         {
             var none = new GUIStyle(_body) { fontSize = Mathf.RoundToInt(font), wordWrap = true };
             none.normal.textColor = new Color(1f, 1f, 1f, 0.7f);
-            GUI.Label(l.list, "No round is open for entry right now. The seats are asked again every 5 seconds."
+            GUI.Label(l.list, "No round is open for entry right now. The signer nodes are asked again every 5 seconds."
                 + (_lobby.refused.Length > 0 ? $"\nNot listed: {_lobby.refused.Length}" : ""), none);
         }
     }
@@ -445,14 +446,14 @@ public class SplashScreen : MonoBehaviour
     string LobbyHint()
     {
         if (_joining) return string.IsNullOrEmpty(_lobby.join.stage) ? "joining the round …" : $"joining the round - {_lobby.join.stage} …";
-        if (!string.IsNullOrEmpty(_joinWhy)) return $"not seated: {_joinWhy}";
+        if (!string.IsNullOrEmpty(_joinWhy)) return $"not joined: {_joinWhy}";
         int k = Blwp.DailyLobby.Keep(_lobby.rows, _pickId);
         if (k >= 0)
         {
             var r = _lobby.rows[k];
-            return $"PLAY joins round {Short(r.id)} - {r.agree} of {r.needed} seats agree";
+            return $"PLAY joins round {Short(r.id)} - {r.agree} of {r.needed} signer nodes agree";
         }
-        return _lobby.rows.Length > 0 ? "PLAY waits for a round both seats agree on" : "PLAY waits for an open round";
+        return _lobby.rows.Length > 0 ? "PLAY waits for a round both signer nodes agree on" : "PLAY waits for an open round";
     }
 
     void JoinPicked()
@@ -529,11 +530,13 @@ public class SplashScreen : MonoBehaviour
               .Append(",\"listed\":").Append(_lobby.rows.Length).Append(",\"rows\":[");
             for (int i = 0; i < _drawnRows.Count; i++)
             {
-                var (row, rect) = _drawnRows[i];
+                var (row, rect, words) = _drawnRows[i];
                 if (i > 0) sb.Append(',');
                 sb.Append("{\"id\":").Append(J(row.id)).Append(",\"joinable\":").Append(row.joinable ? "true" : "false")
                   .Append(",\"agree\":").Append(row.agree).Append(",\"needed\":").Append(row.needed)
-                  .Append(",\"rect\":").Append(R(rect)).Append('}');
+                  .Append(",\"rect\":").Append(R(rect))
+                  // THE WORDS THIS ROW WAS DRAWN WITH, so what the player reads is measured, not inferred.
+                  .Append(",\"words\":").Append(J(words)).Append('}');
             }
             sb.Append(']');
         }

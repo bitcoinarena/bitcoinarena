@@ -13739,6 +13739,29 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
   return { rows, refused };
 }
 
+/**
+ * ONE FREE ROUND AND ONE PAYING ROUND, NEVER TWO OF EITHER (the owner 2026-09-15 16:08: "ALWAYS
+ * exactly ONE no-money FREE round and ONE paying 2-of-2"). The seats hold more than one of a kind
+ * for a while - a rollover opens the next round a minute before the last one's entry closes, and
+ * a launcher restart opens a fresh pair beside the pair it left. Measured before: the Daily listed
+ * 2 FREE and 2 PAID. Per kind this keeps one row: a joinable one over one that is not, an open one
+ * over a pending one, then the one with the most entry left. Order is kept.
+ */
+function lobbyOnePerKind(rows) {
+  const better = (x, y) => (x.joinable !== y.joinable ? x.joinable
+    : x.phase !== y.phase ? x.phase === 'open' : x.entryCloseMs > y.entryCloseMs);
+  const kept = new Map();
+  for (const r of rows) {
+    const kind = r.free ? 'free' : 'paying';
+    if (!kept.has(kind) || better(r, kept.get(kind))) kept.set(kind, r);
+  }
+  const keep = new Set(kept.values());
+  return rows.filter((r) => keep.has(r));
+}
+
+/** A row's stake in whole sats, as the lobby says it: 0 for a free round. */
+const lobbyStakeSats = (row) => (row.free ? 0 : Number(BigInt(row.stakeMsat) / 1000n));
+
 const lobbyClock = (ms) => {
   const s = Math.max(0, Math.ceil(ms / 1000));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
@@ -13903,6 +13926,7 @@ return { Client: Client, markState: markState,
          refundKept: refundKept, refundLine: refundLine,
          lookOwed: lookOwed, owedToLine: owedToLine, collectOwed: collectOwed, collectAndWithdraw: collectAndWithdraw, findOwedRounds: findOwedRounds,
          lobbyQuery: lobbyQuery, fetchLobby: fetchLobby, lobbyLine: lobbyLine, lobbyJoinSearch: lobbyJoinSearch,
+         lobbyOnePerKind: lobbyOnePerKind, lobbyStakeSats: lobbyStakeSats,
          dailyLobbySearch: dailyLobbySearch,
          tabIdentity: tabIdentity, setPlayerName: setPlayerName, generatedName: generatedName,
          nameRecordFor: nameRecordFor, postName: postName, namesOf: namesOf, checkedNames: checkedNames, shownNameOf: shownNameOf,

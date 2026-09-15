@@ -164,6 +164,8 @@ out += '         lookOwed: lookOwed, owedToLine: owedToLine, collectOwed: collec
 // THE LOBBY (M3.3-34): a link that names nodes and no round lists what they
 // hold, every row checked against its own contract; Join is the join link.
 out += '         lobbyQuery: lobbyQuery, fetchLobby: fetchLobby, lobbyLine: lobbyLine, lobbyJoinSearch: lobbyJoinSearch,\n';
+// AND ONE FREE ROUND AND ONE PAYING ROUND LISTED, NEVER TWO OF EITHER, with the paying one's stake.
+out += '         lobbyOnePerKind: lobbyOnePerKind, lobbyStakeSats: lobbyStakeSats,\n';
 // AND THE DAILY'S OWN LOBBY AT THE BARE ROOT, from daily.json beside the page.
 out += '         dailyLobbySearch: dailyLobbySearch,\n';
 // WHO THE TAB IS IN THE LOBBY (M3.3-34): the generated key's public half, the

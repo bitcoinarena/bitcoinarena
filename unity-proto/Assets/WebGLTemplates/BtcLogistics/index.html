@@ -624,7 +624,7 @@
             seats: seats.seats, nodes: named.nodes, curve: window.BLWP_CURVE,
           }, {
             onWait: (short) => {
-              if (stageNow) stageNow.textContent = 'Waiting for the round\'s seats to make its claim key: '
+              if (stageNow) stageNow.textContent = 'Waiting for the round\'s signer nodes to make its claim key: '
                 + String(short.attested || 0) + ' of ' + String(short.needed || '?') + ' …';
             },
           });
@@ -1387,8 +1387,10 @@
             verify: (s, m, k) => !!(window.BLWP_CURVE && window.BLWP_CURVE.verify && window.BLWP_CURVE.verify(s, m, k)) });
         } catch (e) { got = { rows: [], refused: [e.message] }; }
         const now = Date.now();
-        window.BLWP_LOBBY = got.rows.map((r) => ({ id: r.id, phase: r.phase, free: r.free, wallet: r.wallet,
-          seatsAgree: r.seatsAgree, needed: r.needed, joinable: r.joinable,
+        // ONE FREE ROUND AND ONE PAYING ROUND, never two of either (the owner 2026-09-15 16:08), and
+        // what the paying one costs.
+        window.BLWP_LOBBY = BLWPCLIENT.lobbyOnePerKind(got.rows).map((r) => ({ id: r.id, phase: r.phase, free: r.free, wallet: r.wallet,
+          seatsAgree: r.seatsAgree, needed: r.needed, joinable: r.joinable, stakeSats: BLWPCLIENT.lobbyStakeSats(r),
           line: BLWPCLIENT.lobbyLine(r, now), join: r.joinable ? BLWPCLIENT.lobbyJoinSearch(search, r.id) : null }));
         refused = got.refused || [];
       };
@@ -1399,7 +1401,7 @@
         you: me ? { name: me.name, custom: !!me.custom, generated: me.generated || '', fingerprint: me.fingerprint || '' }
           : { name: 'no identity', custom: false, generated: '', fingerprint: '' },
         rows: (window.BLWP_LOBBY || []).map((r) => ({ id: r.id, line: r.line, free: !!r.free, agree: r.seatsAgree | 0,
-          needed: r.needed | 0, joinable: !!r.join, leftS: leftOf(r.line), seated: seatedOf(r.line) })),
+          needed: r.needed | 0, joinable: !!r.join, leftS: leftOf(r.line), seated: seatedOf(r.line), stakeSats: Number(r.stakeSats) || 0 })),
         refused: refused.map(String), nodes: named.nodes.length,
         join: window.BLWP_JOIN ? { state: window.BLWP_JOIN.state, why: String(window.BLWP_JOIN.why || ''), stage: String(window.BLWP_JOIN.stage || '') }
           : { state: '', why: '', stage: '' },

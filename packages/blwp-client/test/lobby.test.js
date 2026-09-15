@@ -14,7 +14,7 @@ import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
-import { lobbyQuery, lobbyJoinSearch, fetchLobby, lobbyLine, dailyLobbySearch } from '../src/lobby.js';
+import { lobbyQuery, lobbyJoinSearch, fetchLobby, lobbyLine, dailyLobbySearch, lobbyOnePerKind, lobbyStakeSats } from '../src/lobby.js';
 import { encodeRoundContract, roundId } from '../../protocol/src/contracts.js';
 import { lobbyListingId } from '../../protocol/src/lobby-listing.js';
 import { encodeLobbyName, lobbyNameId } from '../../protocol/src/lobby-name.js';
@@ -232,4 +232,27 @@ test('the bare root\'s daily.json becomes exactly a lobby link\'s names, or no l
     nothing: null,
   };
   for (const [what, d] of Object.entries(refused)) assert.equal(dailyLobbySearch(d), null, what);
+});
+
+// ONE OF EACH (the owner 2026-09-15 16:08): the rows the live Daily's seats held at 16:08 - two free
+// and two paying, one pair a restart's leftover - and the rollover minute's overlap.
+test('the lobby lists one free round and one paying round, never two of either, and the paying one says its stake', () => {
+  const T = 1_000_000;
+  const row = (id, free, left, more = {}) => ({ id, free, phase: 'open', joinable: true, entryCloseMs: T + left * 1000,
+    stakeMsat: free ? 0n : 100000n, ...more });
+  const at1608 = [row('892b28a0', true, 900), row('fe0a8c1f', false, 900), row('5a343b8d', true, 1140), row('eb1109af', false, 1140)];
+  assert.deepEqual(lobbyOnePerKind(at1608).map((r) => r.id), ['5a343b8d', 'eb1109af'],
+    'two of a kind listed, or not the one with the most entry left');
+  // THE ROLLOVER MINUTE: the old round's last seconds beside the next one's full window.
+  assert.deepEqual(lobbyOnePerKind([row('old', true, 40), row('next', true, 1000), row('pay', false, 500)]).map((r) => r.id), ['next', 'pay']);
+  // A round nobody can join does not push out one they can; a pending one does not push out an open one.
+  assert.deepEqual(lobbyOnePerKind([row('a', true, 30), row('b', true, 1000, { joinable: false })]).map((r) => r.id), ['a']);
+  assert.deepEqual(lobbyOnePerKind([row('a', true, 30), row('b', true, 1000, { phase: 'pending' })]).map((r) => r.id), ['a']);
+  // Only one kind open: only that one listed; nothing open: nothing listed.
+  assert.deepEqual(lobbyOnePerKind([row('pay', false, 500)]).map((r) => r.id), ['pay']);
+  assert.deepEqual(lobbyOnePerKind([]), []);
+  // WHAT A PAYING ROW COSTS, in whole sats: 100000 msat is 100 sat; a free row costs nothing.
+  assert.equal(lobbyStakeSats(row('pay', false, 500)), 100);
+  assert.equal(lobbyStakeSats(row('free', true, 500)), 0);
+  assert.equal(lobbyStakeSats({ free: false, stakeMsat: 2_100_000_000_000_000_000n }), 2_100_000_000_000_000);
 });

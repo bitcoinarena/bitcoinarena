@@ -216,6 +216,36 @@ public class LobbyScreenTests
     }
 
     /// <summary>
+    /// A PAYING ROW SAYS WHAT IT COSTS (the owner 2026-09-15 16:08: "Paid must read like 'PAID ·
+    /// 100 sats'"). Measured before: the live Daily's paying round (100000 msat) read
+    /// "PAID · closes ... · 2 of 2 seats" in every form. The stake is in every form the row is
+    /// shortened to, from the page's own view row; a free row says FREE and no amount.
+    /// </summary>
+    [Test]
+    public void APaidRowSaysItsStakeInSatsInEveryFormAndAFreeRowSaysFree()
+    {
+        var s = DailyLobby.Parse("{\"mode\":\"lobby\",\"rows\":["
+            + "{\"id\":\"5a343b8d00\",\"free\":true,\"agree\":2,\"needed\":2,\"joinable\":true,\"leftS\":993,\"seated\":1,\"stakeSats\":0},"
+            + "{\"id\":\"eb1109af00\",\"free\":false,\"agree\":2,\"needed\":2,\"joinable\":true,\"leftS\":1000,\"seated\":0,\"stakeSats\":100}]}");
+        Assert.IsNotNull(s, "the page's lobby view was not read");
+        foreach (var w in DailyLobby.RowWords(s.rows[1]))
+        {
+            StringAssert.StartsWith("PAID · 100 sats · closes 16:40 · 2 of 2 signer nodes", w, "a form of the paying row does not say its stake");
+            // NEVER "SEAT" TO THE PLAYER (the owner 2026-09-15 16:22).
+            StringAssert.DoesNotContain("seat", w.ToLowerInvariant(), "a lobby row says seat to the player");
+        }
+        foreach (var w in DailyLobby.RowWords(s.rows[0]))
+        {
+            StringAssert.StartsWith("FREE · closes 16:33 · 2 of 2 signer nodes", w);
+            StringAssert.DoesNotContain("sat", w, "a free row names an amount");
+            StringAssert.DoesNotContain("seat", w.ToLowerInvariant(), "a lobby row says seat to the player");
+        }
+        StringAssert.Contains("1 joined", DailyLobby.RowWords(s.rows[0])[1]);
+        Assert.AreEqual("PAID · 1 sat · entry open · 2 of 2 signer nodes",
+            DailyLobby.RowWords(new LobbyRow { free = false, stakeSats = 1, agree = 2, needed = 2, joinable = true })[2]);
+    }
+
+    /// <summary>
     /// PLAY STARTS THE ROUND, IN THIS PAGE (M3.3-34, the owner 2026-09-13 07:11:
     /// "after PLAY the loading screen must not come again"). The page takes the
     /// seat without a reload and says so; the round starts once the page says

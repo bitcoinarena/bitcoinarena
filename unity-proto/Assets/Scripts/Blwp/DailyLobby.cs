@@ -18,6 +18,8 @@ namespace Blwp
         public bool joinable;
         public int leftS = -1;
         public int seated;
+        /// <summary>What a paying round costs to enter, in whole sats; 0 for a free round.</summary>
+        public long stakeSats;
     }
 
     /// <summary>Who this tab is: the name and the identity key's fingerprint.</summary>
@@ -506,17 +508,24 @@ namespace Blwp
         /// </summary>
         public const float HowToMinCell = 40f;
 
-        /// <summary>One row's words, shortest first to go: the round id, then the seated count.</summary>
+        /// <summary>
+        /// One row's words, shortest first to go: the round id, then the seated count. A paying
+        /// row says what it costs in every form (the owner 2026-09-15 16:08: "Paid must read like
+        /// 'PAID · 100 sats'") - measured before, it said PAID and never how much.
+        /// </summary>
         public static string[] RowWords(LobbyRow r)
         {
+            string kind = r.free ? "FREE" : $"PAID · {r.stakeSats} {(r.stakeSats == 1 ? "sat" : "sats")}";
             string left = r.leftS >= 0 ? $"closes {r.leftS / 60}:{r.leftS % 60:00}" : "entry open";
-            string seats = r.joinable ? $"{r.agree} of {r.needed} seats" : $"{r.agree} of {r.needed} seats - waiting";
+            // THE PLAYER IS NEVER TOLD "SEAT" (the owner 2026-09-15 16:22): the nodes that sign the
+            // round are signer nodes, and the players in it have joined.
+            string signers = r.joinable ? $"{r.agree} of {r.needed} signer nodes" : $"{r.agree} of {r.needed} signer nodes - waiting";
             string id = string.IsNullOrEmpty(r.id) ? "" : (r.id.Length > 8 ? r.id.Substring(0, 8) : r.id);
             return new[]
             {
-                $"{(r.free ? "FREE" : "PAID")} · {left} · {seats} · {r.seated} seated · {id}",
-                $"{(r.free ? "FREE" : "PAID")} · {left} · {seats} · {r.seated} seated",
-                $"{(r.free ? "FREE" : "PAID")} · {left} · {seats}",
+                $"{kind} · {left} · {signers} · {r.seated} joined · {id}",
+                $"{kind} · {left} · {signers} · {r.seated} joined",
+                $"{kind} · {left} · {signers}",
             };
         }
     }
