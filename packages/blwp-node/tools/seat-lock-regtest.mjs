@@ -5,6 +5,7 @@
 //
 //   node seat-lock-regtest.mjs prepare <dir>          three stakes: P, its point, an even-y player, a fee preimage F
 //   node seat-lock-regtest.mjs seat <dir> <keys.json>  a seat, the real port, the handovers
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -69,7 +70,7 @@ const say = (o) => console.log(JSON.stringify(o));
 try {
   const now = BigInt(Date.now());
   const c = {
-    networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
+    networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
     gameVerifySlots: 2, settlementSlots: 2, simCoreHash: CORE_HASH, startTimeMs: now + MIN_ENTRY_WINDOW_MS,
     entryCloseMs: now + MIN_ENTRY_WINDOW_MS + 600000n, objectionWindowMs: 3000n, custody: 'FEDERATION',
     slashMinimumServed: 20, slashRemainder: 'BURN', federationId: fromHex(LockClient.federationIdOf(process.env.INVITE)), stakeExpiryBlocks: 144,

@@ -16,6 +16,7 @@
 // It touches no mainnet and no testnet4 datadir. The coins are worthless.
 //
 //   node packages/blwp-node/tools/payout-regtest.mjs [--keep]
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { CORE_HASH } from './core-hash.mjs';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -100,7 +101,7 @@ async function main() {
     const seatKeys = seatSecrets.map((s) => schnorr.getPublicKey(s));
     const round = new Round(openStore(join(dir, 'node.db')), () => NOW);
     const contract = {
-      networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
+      networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
       gameVerifySlots: 7, settlementSlots: 7, simCoreHash: CORE_HASH,
       committeeTimeMs: BigInt(NOW), randomnessRule: 'bitcoin-block-hash',
       startTimeMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS,
@@ -271,7 +272,7 @@ async function main() {
       mine(1);
       const smallTx = parseTransaction(fromHex(cli('getrawtransaction', small)));
       const smallVout = smallTx.outputs.findIndex((o) => toHex(o.script) === toHex(out.script));
-      const rid2 = round.open({ ...contract, configHash: b32(0x44) });
+      const rid2 = round.open({ ...contract, configHash: TRUCK_CONFIG_HASH, slashMinimumServed: 21 });
       assumeSeated(round, rid2, [round.pubkey, ...seatKeys.slice(1)]);
       const tiny = [{ pubkey: winner, msat: (floor - 1n) * 1000n }];
       const built2 = tableFor({ roundId: rid2, entries, minScore: contract.minScore });

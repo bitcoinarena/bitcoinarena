@@ -8,6 +8,7 @@
 // Three thresholds and they are not the same one: the results are final, the
 // TABLE is final, and the spend is authorised. This file measures the second
 // and the third.
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -42,8 +43,8 @@ const seatSecrets = Array.from({ length: SHARES_TOTAL }, () => rand(32));
 const seatKeys = seatSecrets.map((s) => schnorr.getPublicKey(s));
 
 const contractFor = (stakeMsat) => ({
-  networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
-  gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1),
+  networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
+  gameVerifySlots: 7, settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH,
   committeeTimeMs: BigInt(NOW), randomnessRule: 'bitcoin-block-hash',
   startTimeMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS,
   entryCloseMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS + 200000n,

@@ -3,6 +3,7 @@
 // paid fake Lightning, and one daemon on a seven-seat round whose other six
 // keys the test holds. Moved here unchanged, except that a contract can name
 // publication relays.
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import assert from 'node:assert/strict';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -78,8 +79,8 @@ export { PLANTED_FIRST_MARK_DEADLINE };
 
 export const contractFor = (nodes, objectionWindowMs, publicationRelays = []) => ({
   startDeadlineTicks: PLANTED_FIRST_MARK_DEADLINE,
-  networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
-  gameVerifySlots: nodes.length, settlementSlots: nodes.length, simCoreHash: b32(1), startTimeMs: 60500n,
+  networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
+  gameVerifySlots: nodes.length, settlementSlots: nodes.length, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n,
   // NO FEDERATION IS NAMED, SO THE ROUND IS NOT A FEDERATION ROUND (W7): THRESHOLD_LN, the hold
   // invoices these rounds run. A stake-lock test says FEDERATION and names TEST_FEDERATION_ID.
   entryCloseMs: 2000n, objectionWindowMs, custody: 'THRESHOLD_LN',

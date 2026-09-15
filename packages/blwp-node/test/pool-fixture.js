@@ -10,6 +10,7 @@
 // `dealt` is optional and is the whole reason this moved: a pool is dealt once
 // and many rounds are settled out of it, so a test about two rounds hands the
 // same shares to both.
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -47,8 +48,8 @@ export const NOW = 1788700000000;
 export const POOL_SATS = 200000n;
 
 export const contractFor = (nodes, stakeMsat = 1000000n) => ({
-  networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
-  gameVerifySlots: SHARES_TOTAL, settlementSlots: SHARES_TOTAL, simCoreHash: b32(1),
+  networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
+  gameVerifySlots: SHARES_TOTAL, settlementSlots: SHARES_TOTAL, simCoreHash: TRUCK_CORE_HASH,
   committeeTimeMs: BigInt(NOW), randomnessRule: 'bitcoin-block-hash',
   startTimeMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS,
   entryCloseMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS + 200000n,

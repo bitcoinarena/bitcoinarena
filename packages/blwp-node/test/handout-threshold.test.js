@@ -11,6 +11,7 @@
 // refuses any other by name. An honest dealer cannot even make the bad ones
 // (`dealHandout` refuses), so the bad ones here are crafted, the way a
 // cheating player would send them.
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -33,8 +34,8 @@ const b32 = (n) => new Uint8Array(32).fill(n);
 const FUNDED = { funded: () => true };
 
 const contractFor = (nodes) => ({
-  networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
-  gameVerifySlots: nodes.length, settlementSlots: nodes.length, simCoreHash: b32(1), startTimeMs: 60500n,
+  networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
+  gameVerifySlots: nodes.length, settlementSlots: nodes.length, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n,
   entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'THRESHOLD_LN',
   slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n,

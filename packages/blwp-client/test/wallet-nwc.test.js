@@ -9,6 +9,7 @@
 // happen" but WHICH bolt11 reached the wallet, and how many requests reached it
 // when the quote was one the entry did not sign - the answer there has to be
 // zero, and zero is a thing you can only see by counting.
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../blwp-node/src/cores.js';
 import { test } from 'node:test';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -154,8 +155,8 @@ function fakePort() {
 }
 
 const contractFor = (nodes) => ({
-  networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
-  gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1),
+  networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
+  gameVerifySlots: 7, settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH,
   committeeTimeMs: BigInt(NOW), randomnessRule: 'bitcoin-block-hash',
   startTimeMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS,
   entryCloseMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS + 200000n,

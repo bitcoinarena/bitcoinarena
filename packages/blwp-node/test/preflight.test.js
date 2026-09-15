@@ -4,6 +4,7 @@
 // fixture: synced, one active channel of 400000 sat, 396530 on our side and 0
 // on the other. A hold invoice is received money, so that node cannot take one
 // stake, and until this file nothing said so before a player's payment failed.
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -102,8 +103,8 @@ test('the inbound a round needs is the NET hold, so a donating seat needs less',
 const NOW = 1788700000000;
 const b32g = (n) => new Uint8Array(32).fill(n);
 const contractFor = (nodes, stakeMsat) => ({
-  networkId: NETWORK_ID_REGTEST, configHash: b32g(0x43), censusConfirmations: 1,
-  gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32g(1),
+  networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
+  gameVerifySlots: 7, settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH,
   committeeTimeMs: BigInt(NOW), randomnessRule: 'bitcoin-block-hash',
   startTimeMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS, entryCloseMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS + 200000n,
   objectionWindowMs: 600000n, custody: 'THRESHOLD_LN', slashMinimumServed: 20,

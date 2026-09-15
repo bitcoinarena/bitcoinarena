@@ -4,6 +4,7 @@
 // imports the core, which is what keeps the daemon a store rather than a
 // second simulator. What it does check is the key - the same tick twice with
 // different bytes is section 13B's equivocation, and it is refused by name.
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -33,7 +34,7 @@ import { toHex } from '../../protocol/src/hash.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const contract = () => ({
-  networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1), startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'THRESHOLD_LN', slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
+  networkId: b32(0x4e), configHash: TRUCK_CONFIG_HASH, censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'THRESHOLD_LN', slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
   stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: 9000,
   exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,

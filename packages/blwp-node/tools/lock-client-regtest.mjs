@@ -8,6 +8,7 @@
 //   the entry names the outpoint; both seats are handed the contract (W2).
 // And two that must be refused: an outpoint that holds no lock, and a lock to
 // a key nobody attested.
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { readFileSync } from 'node:fs';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -66,7 +67,7 @@ try {
   const STAKE = 1000000n;
   const now = BigInt(Date.now());
   const c = {
-    networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1, gameVerifySlots: 2, settlementSlots: 2,
+    networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1, gameVerifySlots: 2, settlementSlots: 2,
     simCoreHash: CORE_HASH, startTimeMs: now + MIN_ENTRY_WINDOW_MS, entryCloseMs: now + MIN_ENTRY_WINDOW_MS + 600000n,
     objectionWindowMs: 3000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'BURN', federationId: fromHex(LockClient.federationIdOf(env.INVITE)),
     stakeExpiryBlocks: 144, publicationRelays: nodes, donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000, censusRoot: b32(2),

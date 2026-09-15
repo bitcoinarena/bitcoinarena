@@ -6,6 +6,7 @@
 // fetches each contract and hashes it (a mismatch gets no row), reads free or
 // paying and open or pending off that contract and its own clock, and counts
 // DISTINCT SEATS OF THE ROUND whose signed listing says open and seated.
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../blwp-node/src/cores.js';
 import { test } from 'node:test';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -36,8 +37,8 @@ const stranger = schnorr.utils.randomSecretKey();
 const keyOf = (s) => schnorr.getPublicKey(s);
 
 const contractAt = (committeeTimeMs, extra = {}) => ({
-  networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 6,
-  gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1),
+  networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 6,
+  gameVerifySlots: 2, settlementSlots: 2, simCoreHash: TRUCK_CORE_HASH,
   committeeTimeMs, randomnessRule: 'bitcoin-block-hash',
   startTimeMs: committeeTimeMs + MIN_ENTRY_WINDOW_MS, entryCloseMs: committeeTimeMs + MIN_ENTRY_WINDOW_MS + 120000n,
   objectionWindowMs: 600000n, custody: 'THRESHOLD_LN', slashMinimumServed: 20,

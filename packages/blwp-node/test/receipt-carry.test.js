@@ -13,6 +13,7 @@
 // refund, which 13C says a player cannot manufacture. So each daemon PULLS its
 // peers' receipts at the close, and every record goes through `takeReceipt`
 // unchanged - the mark held here, the signer seated, the signature verified.
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { PLANTED_FIRST_MARK_DEADLINE } from './planted-marks.js';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -63,8 +64,8 @@ const session = ed25519.utils.randomSecretKey();
 
 /** A free round - carrying receipts is not about money, so no Lightning. */
 const contractFor = (nodes) => ({
-  startDeadlineTicks: PLANTED_FIRST_MARK_DEADLINE, networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
-  gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1), startTimeMs: 60500n,
+  startDeadlineTicks: PLANTED_FIRST_MARK_DEADLINE, networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
+  gameVerifySlots: 2, settlementSlots: 2, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n,
   entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'THRESHOLD_LN',
   slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n,

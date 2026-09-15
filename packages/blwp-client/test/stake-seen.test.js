@@ -14,6 +14,7 @@
 // that answers is counted as not seen, and the line says how many did not
 // answer. COMMITTED is a label, true only at N >= T. It does not gate driving:
 // the late-payer path stays, and each node still refuses its own receipt.
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../blwp-node/src/cores.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -63,8 +64,8 @@ async function committee(n) {
   for (const port of ports) nodes.push(await serve(openStore(':memory:'), { port: 0, ...FUNDED, ...READY, lightning: port }));
   const keys = nodes.map((d) => d.round.pubkey);
   const contract = {
-    networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
-    gameVerifySlots: n, settlementSlots: n, simCoreHash: b32(1), startTimeMs: 60500n,
+    networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
+    gameVerifySlots: n, settlementSlots: n, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n,
     entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'THRESHOLD_LN',
     slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: ['http://127.0.0.1:9'] /* a paying round names a relay (§13A); never posted to here */, donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
     censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n,

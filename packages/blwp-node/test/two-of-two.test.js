@@ -1,3 +1,4 @@
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -31,8 +32,8 @@ test('a 2-slot round is canonical at two distinct receipts', () => {
   const db = openStore(':memory:');
   const round = new Round(db);
   const contract = {
-    networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 1,
-    gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1),
+    networkId: b32(0x4e), configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
+    gameVerifySlots: 2, settlementSlots: 2, simCoreHash: TRUCK_CORE_HASH,
     startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n,
     custody: 'THRESHOLD_LN', slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [],
     donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000, censusRoot: b32(2),

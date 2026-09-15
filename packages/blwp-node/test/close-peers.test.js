@@ -8,6 +8,7 @@
 // which the real launchers never pass. They now take the round's settlement
 // committee from the census, the same rule the receipt pull uses; a list the
 // operator gave still wins.
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -111,8 +112,8 @@ const chainWith = (bonds, contract) => {
   return chainOf(blocks, FROM);
 };
 const contractFor = (nodes, censusRoot) => ({
-  networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 6,
-  gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1),
+  networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 6,
+  gameVerifySlots: 2, settlementSlots: 2, simCoreHash: TRUCK_CORE_HASH,
   committeeTimeMs: BigInt(FIRST_TIME + 15 * SPACING) * 1000n,
   startTimeMs: BigInt(FIRST_TIME + 15 * SPACING) * 1000n + 60500n,
   entryCloseMs: BigInt(FIRST_TIME + 15 * SPACING) * 1000n + 200000n,

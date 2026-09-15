@@ -4,6 +4,7 @@
 // Measured before this: every seat answered /donation-set 404, and every
 // launcher named the placeholder donationSetId b32(0xd0) - no set's id - so no
 // round named a set anybody could pay.
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ed25519 } from '@noble/curves/ed25519.js';
@@ -26,8 +27,8 @@ const SET = TEST_DONATION_SET_REGTEST;
 const SET_ID = donationSetId(SET.recipients);
 
 const contractFor = (nodes, donationSetIdOfRound) => ({
-  networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
-  gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1),
+  networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
+  gameVerifySlots: 7, settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH,
   committeeTimeMs: BigInt(NOW), randomnessRule: 'bitcoin-block-hash',
   startTimeMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS, entryCloseMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS + 200000n,
   objectionWindowMs: 600000n, custody: 'THRESHOLD_LN', slashMinimumServed: 20, slashRemainder: 'BURN',

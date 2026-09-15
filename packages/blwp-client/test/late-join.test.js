@@ -16,6 +16,7 @@
 // an entry id is the hash of its bytes, so a node that returns somebody else's
 // entry, or the same one with a friendlier join tick, does not hash to what
 // was asked for.
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../blwp-node/src/cores.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -44,8 +45,8 @@ const verify = async (sig, m, pk) => ed25519.verify(sig, m, pk);
 const FUNDED = { funded: () => true };
 
 const contract = () => ({
-  networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 6,
-  gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1),
+  networkId: b32(0x4e), configHash: TRUCK_CONFIG_HASH, censusConfirmations: 6,
+  gameVerifySlots: 7, settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH,
   startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n,
   custody: 'THRESHOLD_LN', slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [],
   donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000, censusRoot: b32(2),

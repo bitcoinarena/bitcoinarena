@@ -11,6 +11,7 @@
 // Each settlement seat now answers `GET /settlement` (the node's half). The
 // client asks every seat, once the stake is committed, until every seat that
 // answers has moved the hold; the chip adds what the seats said.
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../blwp-node/src/cores.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -66,8 +67,8 @@ async function committee() {
   for (const port of ports) nodes.push(await serve(openStore(':memory:'), { port: 0, ...FUNDED, ...READY, lightning: port }));
   const keys = nodes.map((d) => d.round.pubkey);
   const contract = {
-    networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
-    gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1), startTimeMs: 60500n,
+    networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
+    gameVerifySlots: 2, settlementSlots: 2, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n,
     entryCloseMs: 2000n, objectionWindowMs: WINDOW_MS, custody: 'THRESHOLD_LN',
     slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144,
     // P2: the two seats' own relay doors, where each run's transcript is posted.

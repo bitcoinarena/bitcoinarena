@@ -56,6 +56,13 @@ export function resultFrom({ answer, contract, entry, transcript, entryId, nodeP
   }
   if (!contract || !(contract.simCoreHash instanceof Uint8Array))
     return { ok: false, why: 'that round names no simulation core to have replayed under' };
+  // THE CORE THAT REPLAYED IS THE ONLY CORE A RESULT MAY NAME (M3 R1). Before, the result took the
+  // contract's simCoreHash whatever had run the replay - a seat could sign "core X" over a replay of
+  // core Y. Now the replay says which core ran it (replay.js coreHash), and it must be the round's.
+  const named = Array.from(contract.simCoreHash, (b) => b.toString(16).padStart(2, '0')).join('');
+  if (typeof answer.coreHash !== 'string' || answer.coreHash !== named)
+    return { ok: false, why: `that run was replayed under core ${String(answer.coreHash).slice(0, 16)}, `
+      + `not the core ${named.slice(0, 16)} the round names` };
   if (!entry || !(entry.roundId instanceof Uint8Array) || !(entry.playerPubkey instanceof Uint8Array))
     return { ok: false, why: 'that entry names no round or no player' };
   if (!(nodePubkey instanceof Uint8Array)) return { ok: false, why: 'no node is signing this' };

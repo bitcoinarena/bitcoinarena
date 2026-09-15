@@ -10,6 +10,7 @@
 // that check, and the 2-of-2 built the honest way: two daemons whose OWN
 // identities are bonded on the chain and seated from the census, which step 1
 // of this slice made possible by making a node's identity its bond key.
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -78,8 +79,8 @@ const chainWith = (bonds, contract) => {
   return chainOf(blocks, FROM);
 };
 const contractWith = (nodes, censusRoot) => ({
-  networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 6,
-  gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1),
+  networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 6,
+  gameVerifySlots: 2, settlementSlots: 2, simCoreHash: TRUCK_CORE_HASH,
   startTimeMs: BigInt(FIRST_TIME + 15 * SPACING) * 1000n + 60500n,
   entryCloseMs: BigInt(FIRST_TIME + 15 * SPACING) * 1000n + 200000n,
   objectionWindowMs: 600000n, custody: 'THRESHOLD_LN',

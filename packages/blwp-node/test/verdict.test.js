@@ -6,6 +6,7 @@
 // letter 20 already counts exactly these signatures - it says outright that it
 // counts rather than verifies, because that package has no curve. This one
 // does, so here a signature that does not verify never reaches the count.
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { PLANTED_FIRST_MARK_DEADLINE } from './planted-marks.js';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -55,8 +56,8 @@ const TICKS = 1000;
 const secrets = [0, 1, 2, 3, 4, 5, 6].map(() => ed25519.utils.randomSecretKey());
 const COMMITTEE = secrets.map((s) => schnorr.getPublicKey(s));
 const contract = () => ({
-  startDeadlineTicks: PLANTED_FIRST_MARK_DEADLINE, networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 6, gameVerifySlots: 7,
-  settlementSlots: 7, simCoreHash: b32(1), startTimeMs: 60500n, entryCloseMs: 2000n,
+  startDeadlineTicks: PLANTED_FIRST_MARK_DEADLINE, networkId: b32(0x4e), configHash: TRUCK_CONFIG_HASH, censusConfirmations: 6, gameVerifySlots: 7,
+  settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n, entryCloseMs: 2000n,
   objectionWindowMs: 600000n, custody: 'THRESHOLD_LN', slashMinimumServed: 20,
   slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000, censusRoot: b32(2),
   committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash', stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: 9000,

@@ -7,6 +7,7 @@
 // here: a seat restarted with its timers on, on a store whose one round carries those bytes -
 // made by flipping the custody byte of a THRESHOLD_LN round, the exact bytes a build before W7
 // stored for it.
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -33,8 +34,8 @@ const peer = ed25519.utils.randomSecretKey();
 const STAKE = 100000n;
 
 const contractFor = (nodePubkey, custody = 'THRESHOLD_LN', stakeMsat = STAKE) => ({
-  networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
-  gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1), startTimeMs: 60500n,
+  networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
+  gameVerifySlots: 2, settlementSlots: 2, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n,
   entryCloseMs: 2000n, objectionWindowMs: 600000n, custody,
   slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144,
   publicationRelays: ['http://127.0.0.1:9'], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),

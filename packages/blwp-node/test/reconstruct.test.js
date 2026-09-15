@@ -10,6 +10,7 @@
 //
 // Everything here goes through the daemons' own doors. Nothing hands a share
 // to anybody in this file.
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { PLANTED_FIRST_MARK_DEADLINE } from './planted-marks.js';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -96,8 +97,8 @@ const session = ed25519.utils.randomSecretKey();
 // contract this file builds for them names the same ones and has the same id.
 let committeeRelays = [];
 const contractFor = (nodes) => ({
-  startDeadlineTicks: PLANTED_FIRST_MARK_DEADLINE, networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
-  gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1), startTimeMs: 60500n,
+  startDeadlineTicks: PLANTED_FIRST_MARK_DEADLINE, networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
+  gameVerifySlots: 7, settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n,
   entryCloseMs: 2000n, objectionWindowMs: 0n, custody: 'THRESHOLD_LN',
   slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: committeeRelays, donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n,
@@ -352,7 +353,7 @@ test('a delivered run never gives up its preimage, and neither does one that is 
     // A ROUND OF ITS OWN, because every seat's round above is closed and a
     // closed round takes no new entries.
     const holder = nodes[6];
-    const other = { ...contractFor(nodes.map((n) => n.round.pubkey)), configHash: b32(0x44) };
+    const other = { ...contractFor(nodes.map((n) => n.round.pubkey)), configHash: TRUCK_CONFIG_HASH, slashMinimumServed: 21 };
     const orid = holder.round.open(other);
     assumeSeated(holder.round, orid, other.nodes);
 
@@ -543,7 +544,7 @@ test('a seat that never replayed the run hands over nothing', async () => {
     const { rid, eid } = await everyoneReplays(nodes, stake);
 
     const quiet = nodes[6];
-    const c = { ...contractFor(nodes.map((n) => n.round.pubkey)), configHash: b32(0x45) };
+    const c = { ...contractFor(nodes.map((n) => n.round.pubkey)), configHash: TRUCK_CONFIG_HASH, slashMinimumServed: 22 };
     const orid = quiet.round.open(c);
     assumeSeated(quiet.round, orid, c.nodes);
     const entry = {

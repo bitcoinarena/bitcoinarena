@@ -8,6 +8,7 @@
 // loaded by this process at all, and a gate that let a round through could
 // still not issue a hold. It opens one round that asks 100000 msat and one
 // that asks nothing, in memory, on a loopback port, and prints both answers.
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { CORE_HASH } from './core-hash.mjs';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -31,7 +32,7 @@ const port = { createHeld: refuse('createHeld'), look: refuse('look'), settle: r
 const NOW = Date.now();
 const b32 = (n) => new Uint8Array(32).fill(n);
 const contractFor = (nodes, stakeMsat) => ({
-  networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
+  networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
   gameVerifySlots: 7, settlementSlots: 7, simCoreHash: CORE_HASH,
   committeeTimeMs: BigInt(NOW), randomnessRule: 'bitcoin-block-hash',
   startTimeMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS, entryCloseMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS + 200000n,

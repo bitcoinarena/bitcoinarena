@@ -75,6 +75,7 @@ import { ENTRY_VOID, netStakeMsat } from '../../protocol/src/payout.js';
 import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../protocol/src/objection.js';
 import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../protocol/src/posting.js';
 import { federationIsBonded } from '../../protocol/src/federation.js';
+import { installedCores, coreForRound } from './cores.js';
 import { SIGNED_RERUN_BYTES } from '../../protocol/src/rerun.js';
 import { verifyStakeLock, verifyFeeLock, lockFieldsFromJson, roundMintsFees } from './stake-lock-seat.js';
 import { encodeClaimKeyAttestation, claimKeyAttestationId } from '../../protocol/src/claim-key.js';
@@ -216,6 +217,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // §27A.4), and any authority rotations: each checked here before it is ever
   // served. None by default: a seat with none serves no set.
   donationSets = [], donationRotations = [],
+  // THE CORES THIS SEAT RUNS BESIDE THE TRUCK (M3 R1; the owner 08:07: several games and rule sets at
+  // once): each { name, hash, url, adapter, configs } as cores.js builds the truck. The truck is
+  // always installed; a round naming a core or config this seat does not hold is refused at the door.
+  cores = [],
   // WHERE THIS NODE'S OWN CHAIN IS (M3.3-30): a height, asked of its own
   // bitcoind. Given none, the pool's chain call answers it when there is one.
   chainTip = null,
@@ -769,7 +774,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // WHAT SHOWS OTHER PLAYERS' TRUCKS. Pictures only: 0.10 says a ghost is
   // never an input to anybody's simulation, and the frames it hands out came
   // out of `replay.js` like everything else that touches the core.
-  const ghosts = new Ghosts(round, { ...(randomnessFor ? { randomnessFor } : {}) });
+  const installed = installedCores(cores);
+  const ghosts = new Ghosts(round, { cores: installed, ...(randomnessFor ? { randomnessFor } : {}) });
 
   // THE ROUND'S SETTLEMENT SEATS, OFF THE CENSUS: who holds a stake's shares
   // and who signs its payout table. The same rule the receipt pull uses, for
@@ -784,6 +790,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   }
 
   const verifier = new Verifier(round, {
+    cores: installed,
     advertsFor: advertsFor || ((rid) => {
       const census = roster.censusFor(rid);
       return census.ok ? new Map(census.entries.map((e) => [toHex(e.pubkey), e.advert])) : null;
@@ -1638,6 +1645,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // costs a parse and nothing else.
         if (!funded({ kind: 'round', contract, node: fundingView }))
           return text(res, 402, 'this node stores nothing for a round nobody has funded');
+        // A ROUND ON A CORE OR CONFIG THIS SEAT DOES NOT RUN IS NOT OPENED HERE (M3 R1; the owner 08:07: each
+        // round names its sim_wasm_hash and config_hash, seats replay what that round names). 27A.7.5: the
+        // seat is not selectable for it - it serves nothing there, and is not slashed. Refused before
+        // anything of the round exists on this seat.
+        {
+          const runs = coreForRound(contract, installed);
+          if (!runs.ok) return text(res, 409, runs.why);
+        }
         // AND A ROUND THAT TAKES A STAKE INTO A FEDERATION IS HELD TO THE CUSTODY FIELDS IN FULL
         // (M3 W7, §23): which federation, the 144-block expiry, the relays - before anything of it
         // exists on this seat. A free round and a THRESHOLD_LN round are the checks below.

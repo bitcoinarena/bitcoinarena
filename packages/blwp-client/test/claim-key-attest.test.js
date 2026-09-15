@@ -11,6 +11,7 @@
 // MEASURED BEFORE (TASKBOOK, aed31be): GET /claim-key 404 on every seat, the
 // page's bundle had no way to check a key, entryFor wrote a zero attestation,
 // claimKeyIsAttested had 0 callers in node and client.
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../blwp-node/src/cores.js';
 import { test } from 'node:test';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -50,7 +51,7 @@ async function federationRound({ seats = 2, keyOf = () => CLAIM, federationId = 
     daemons.push(await serve(openStore(':memory:'), { port: 0, funded: () => true, preflight: async () => ({ ready: true, why: 'test' }), claimKeyFor: () => keyOf(i) }));
   const now = BigInt(Date.now());
   const round = {
-    networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
+    networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
     gameVerifySlots: seats, settlementSlots: seats, simCoreHash: CORE_HASH, startTimeMs: now + MIN_ENTRY_WINDOW_MS,
     entryCloseMs: now + MIN_ENTRY_WINDOW_MS + 600000n, objectionWindowMs: 3000n, custody: 'FEDERATION',
     slashMinimumServed: 20, slashRemainder: 'BURN', federationId, stakeExpiryBlocks: 144,

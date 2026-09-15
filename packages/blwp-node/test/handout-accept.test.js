@@ -14,6 +14,7 @@
 // catches a crooked dealer: a node sees only its own share, so it refuses when
 // IT is the one cheated, and a dealer who cheated somebody else gets past this
 // door and is stopped at that seat's. Both are measured below.
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -42,10 +43,10 @@ const FUNDED = { funded: () => true,
   randomnessFor: () => ({ hash: b32(0xbe), height: 900005, timeMs: 900n }) };
 
 const contractFor = (node) => ({
-  networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 6,
+  networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 6,
   // SEVEN SETTLEMENT SEATS, because the handouts below are dealt 5-of-7 to
   // seven: the door now asks the round what its stakes open at (M3.3-26).
-  gameVerifySlots: 2, settlementSlots: 7, simCoreHash: b32(1),
+  gameVerifySlots: 2, settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH,
   committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
   startTimeMs: 500n + MIN_ENTRY_WINDOW_MS, entryCloseMs: 200000n,
   objectionWindowMs: 600000n, custody: 'THRESHOLD_LN', slashMinimumServed: 20,
@@ -218,7 +219,7 @@ test('a handout published for another round does not let an entry in', async () 
   const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED });
   try {
     const one = contractFor(node);
-    const two = { ...one, configHash: b32(0x44) };
+    const two = { ...one, configHash: TRUCK_CONFIG_HASH, slashMinimumServed: 21 };
     const ridOne = (await post(node.port, '/round', encodeRoundContract(one))).bytes;
     const ridTwo = (await post(node.port, '/round', encodeRoundContract(two))).bytes;
     assert.notEqual(toHex(ridOne), toHex(ridTwo));

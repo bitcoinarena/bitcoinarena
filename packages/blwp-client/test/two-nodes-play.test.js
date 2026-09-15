@@ -9,6 +9,7 @@
 // that player published, through `replay.js`, and this test drives the same
 // core over the same inputs and compares. Unity is a television; nothing here
 // or there simulates the other truck.
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../blwp-node/src/cores.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -58,8 +59,8 @@ test('two daemons, one page: the other truck arrives where its own transcript pu
   try {
     // ONE CONTRACT, TWO SEATS - the 2-of-2 that already runs.
     const contract = {
-      networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 6,
-      gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1),
+      networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 6,
+      gameVerifySlots: 2, settlementSlots: 2, simCoreHash: TRUCK_CORE_HASH,
       committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
       startTimeMs: 500n + MIN_ENTRY_WINDOW_MS, entryCloseMs: 200000n,
       objectionWindowMs: 600000n, custody: 'THRESHOLD_LN', slashMinimumServed: 20,

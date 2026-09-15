@@ -9,6 +9,7 @@
 // This file is the half a page can be tested on. The jslib is the one file
 // `node --test` cannot load, so the rule that decides whether a player ever
 // sees a competitor lives here instead of there.
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../blwp-node/src/cores.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -50,8 +51,8 @@ async function rig() {
   const node = await serve(openStore(), { port: 0, ...FUNDED });
   const client = new Client({ base: `http://127.0.0.1:${node.port}`, core, sign, verify });
   const c = {
-    networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 6,
-    gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1),
+    networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 6,
+    gameVerifySlots: 7, settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH,
     committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
     startTimeMs: 500n + MIN_ENTRY_WINDOW_MS, entryCloseMs: 200000n,
     objectionWindowMs: 600000n, custody: 'THRESHOLD_LN', slashMinimumServed: 20,

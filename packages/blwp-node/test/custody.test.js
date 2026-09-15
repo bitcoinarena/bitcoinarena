@@ -9,6 +9,7 @@
 //
 // SINGLE-NODE CUSTODY, NOT §23.5: one Lightning node behind two daemons. What
 // is measured is the state machine, not a threshold.
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -31,8 +32,8 @@ import { entryFeeMsat } from '../../protocol/src/fee.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const NOW = 1788700000000;
 const contract = {
-  networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 6,
-  gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1),
+  networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 6,
+  gameVerifySlots: 2, settlementSlots: 2, simCoreHash: TRUCK_CORE_HASH,
   committeeTimeMs: BigInt(NOW), randomnessRule: 'bitcoin-block-hash',
   startTimeMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS,
   entryCloseMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS + 200000n,

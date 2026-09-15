@@ -27,6 +27,7 @@
  * Bitcoin. A round played on it is a local test round. Reading a real chain is
  * the operator's own bitcoind, and no live node is touched from here.
  */
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { CORE_HASH } from './core-hash.mjs';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -410,7 +411,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     censusView = onChain.blocksFrom(Math.max(0, bondHeight - 20), onChain.height());
   }
   const contract = {
-    networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations,
+    networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations,
     gameVerifySlots: 2, settlementSlots: 2, simCoreHash: CORE_HASH,
     committeeTimeMs, randomnessRule: 'bitcoin-block-hash',
     startTimeMs: committeeTimeMs + MIN_ENTRY_WINDOW_MS,

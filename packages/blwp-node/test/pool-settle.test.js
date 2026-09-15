@@ -18,6 +18,7 @@
 // transactions, because FROST aggregates over the nonces that were committed,
 // and each seat holds one live nonce pair per round. `askerFor` picks one out
 // of the round id over the seated keys: no message, no election, no clock.
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -62,8 +63,8 @@ const BEACON = { hash: b32(0x9b), height: BEACON_HEIGHT, timeMs: BigInt(NOW) };
 const post = (port, path, body) => fetch(`http://127.0.0.1:${port}${path}`, { method: 'POST', body });
 
 const contractFor = (nodes) => ({
-  networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
-  gameVerifySlots: SHARES_TOTAL, settlementSlots: SHARES_TOTAL, simCoreHash: b32(1),
+  networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
+  gameVerifySlots: SHARES_TOTAL, settlementSlots: SHARES_TOTAL, simCoreHash: TRUCK_CORE_HASH,
   committeeTimeMs: BigInt(NOW), randomnessRule: 'bitcoin-block-hash',
   startTimeMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS,
   entryCloseMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS + 200000n,

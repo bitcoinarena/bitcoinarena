@@ -16,6 +16,7 @@
 // loser, does. What the settle calls is the custody's `preimageFor`, which is
 // the daemon's `fromTheCommittee`: its own share plus the other seats', asked
 // for over HTTP once the run is final on them, opened at the round's number.
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { PLANTED_FIRST_MARK_DEADLINE } from './planted-marks.js';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -72,8 +73,8 @@ function paidPort() {
 // P2 (v4.6.2 §13A): the relays each run's transcript is posted to - the
 // daemons' own doors - or no result of the round can become final.
 const contractFor = (nodes, publicationRelays) => ({
-  startDeadlineTicks: PLANTED_FIRST_MARK_DEADLINE, networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 1,
-  gameVerifySlots: nodes.length, settlementSlots: nodes.length, simCoreHash: b32(1), startTimeMs: 60500n,
+  startDeadlineTicks: PLANTED_FIRST_MARK_DEADLINE, networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
+  gameVerifySlots: nodes.length, settlementSlots: nodes.length, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n,
   entryCloseMs: 2000n, objectionWindowMs: 0n, custody: 'THRESHOLD_LN',
   slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays, donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n,

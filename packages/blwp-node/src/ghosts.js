@@ -24,7 +24,7 @@ import { toHex as hex } from '../../protocol/src/hash.js';
 import { batchId, batchTicks } from '../../protocol/src/batch.js';
 import { GENESIS, decodeTranscript } from '../../protocol/src/transcript.js';
 import { replay, RunInProgress } from './replay.js';
-import { coreForRound } from './cores.js';
+import { coreForRound, installedCores } from './cores.js';
 
 const same = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array
   && a.length === b.length && a.every((v, i) => v === b[i]);
@@ -142,8 +142,10 @@ export function ghostForChecked(options) {
  * source, no picture, and the refusal says which.
  */
 export class Ghosts {
-  constructor(round, { randomnessFor = () => undefined, limit = GHOST_SUBSCRIPTIONS } = {}) {
+  constructor(round, { randomnessFor = () => undefined, limit = GHOST_SUBSCRIPTIONS, cores = installedCores() } = {}) {
     this.round = round;
+    // THE CORES THIS SEAT INSTALLED (M3 R1): a round's picture is drawn by the core it names, or not at all.
+    this.cores = cores;
     this.randomnessFor = randomnessFor;
     this.limit = limit;
     this.frames = new Map();
@@ -219,7 +221,7 @@ export class Ghosts {
   #coreOf(roundIdBytes) {
     const row = this.round.get(roundIdBytes);
     if (!row) return null;
-    const found = coreForRound(decodeRoundContract(new Uint8Array(row.contract)));
+    const found = coreForRound(decodeRoundContract(new Uint8Array(row.contract)), this.cores);
     return found.ok ? found.core : null;
   }
 

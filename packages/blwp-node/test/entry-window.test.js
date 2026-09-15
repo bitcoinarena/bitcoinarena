@@ -13,6 +13,7 @@
 // settlement committee, so an entry cannot be CONSTRUCTED before the committee
 // exists. "Selecting at start_time and allowing commitment before that is
 // impossible, not merely unwise."
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -30,8 +31,8 @@ import { entryFeeMsat } from '../../protocol/src/fee.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const COMMITTEE_TIME = 500n;
 const contract = (over = {}) => ({
-  networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 6,
-  gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1),
+  networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 6,
+  gameVerifySlots: 2, settlementSlots: 2, simCoreHash: TRUCK_CORE_HASH,
   committeeTimeMs: COMMITTEE_TIME, randomnessRule: 'bitcoin-block-hash',
   startTimeMs: COMMITTEE_TIME + MIN_ENTRY_WINDOW_MS, entryCloseMs: 200000n,
   objectionWindowMs: 600000n, custody: 'THRESHOLD_LN', slashMinimumServed: 20,

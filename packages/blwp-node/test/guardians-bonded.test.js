@@ -12,6 +12,7 @@
 //
 // The census here is two bonded seats, as in seated-committee.test.js; the federation's size and
 // threshold are the port's, which stands in for the federation's config.
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -62,8 +63,8 @@ const beaconOf = (bonds, contract) => {
   return { hash: named.hash, height: named.height, timeMs: named.timeMs };
 };
 const contractWith = (nodes, censusRoot, over = {}) => ({
-  networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 6,
-  gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1),
+  networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 6,
+  gameVerifySlots: 2, settlementSlots: 2, simCoreHash: TRUCK_CORE_HASH,
   startTimeMs: BigInt(FIRST_TIME + 15 * SPACING) * 1000n + 60500n,
   entryCloseMs: BigInt(FIRST_TIME + 15 * SPACING) * 1000n + 200000n,
   objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'BURN',
@@ -140,8 +141,8 @@ test('a THRESHOLD_LN round and a free round are seated on a census that lists no
   const port = federation({ keys: [guardianKey(1), guardianKey(2)], threshold: 2 });
   const w = await door({ port });
   try {
-    const lightning = await w.post({ custody: 'THRESHOLD_LN', federationId: new Uint8Array(32), configHash: b32(0x44) });
-    const free = await w.post({ stakeMsat: 0n, federationId: new Uint8Array(32), configHash: b32(0x45) });
+    const lightning = await w.post({ custody: 'THRESHOLD_LN', federationId: new Uint8Array(32), configHash: TRUCK_CONFIG_HASH, slashMinimumServed: 21 });
+    const free = await w.post({ stakeMsat: 0n, federationId: new Uint8Array(32), configHash: TRUCK_CONFIG_HASH, slashMinimumServed: 22 });
     console.log('  FACTS:', JSON.stringify({ lightning, free, asked: port.asked }));
     assert.equal(lightning.status, 201, lightning.why);
     assert.equal(lightning.seats, 2);

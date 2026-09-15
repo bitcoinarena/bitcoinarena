@@ -37,7 +37,7 @@ import {
   joinSignedResult, splitSignedResult, decodePlayerResult, resultId, SIGNED_RESULT_BYTES,
 } from '../../protocol/src/result.js';
 import { decodeRoundContract } from '../../protocol/src/contracts.js';
-import { coreForRound } from './cores.js';
+import { coreForRound, installedCores } from './cores.js';
 import { committeeSeedFromBeacon, beaconFromChain, beaconIsTheChains } from '../../protocol/src/beacon.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
@@ -113,8 +113,10 @@ export const NO_RANDOMNESS_SOURCE = () => undefined;
 export class Verifier {
   constructor(round, {
     randomnessFor = NO_RANDOMNESS_SOURCE, chainFor = null, pool = new ReplayPool(), peers = [],
-    peersFor = null, advertsFor = null,
+    peersFor = null, advertsFor = null, cores = installedCores(),
   } = {}) {
+    // THE CORES THIS SEAT INSTALLED (M3 R1): a round's runs are replayed by the core it names, or not at all.
+    this.cores = cores;
     /**
      * THE SEATS' OWN ADVERTISEMENTS, by round: a Map of node key (hex) to the
      * decoded advertisement, whose bond outpoint a slash proof must name. The
@@ -336,7 +338,10 @@ export class Verifier {
     if (!canonical && this.#neverStarted(roundIdBytes, entryId)) {
       const ruled = stoppedOutcome({ receiptedMarks: 0, deadlinePassed: true });
       return this.#sign({ roundIdBytes, entryId, entry, contract,
-        answer: { ok: true, outcome: ruled.outcome, score: 0 }, transcript: this.#unstarted(roundIdBytes, entryId) });
+        // No core is stepped for a run that never started - §15 rules it over the empty transcript - so the
+        // answer names the core this seat holds for the round (M3 R1): a seat that holds none signs nothing.
+        answer: { ok: true, outcome: ruled.outcome, score: 0, coreHash: this.#coreOf(roundIdBytes)?.hash },
+        transcript: this.#unstarted(roundIdBytes, entryId) });
     }
     if (!answer.ok) return { entryId, stored: false, why: answer.why };
     if (!canonical) return { entryId, stored: false, why: noCanonical };
@@ -406,7 +411,7 @@ export class Verifier {
   #coreOf(roundIdBytes) {
     const row = this.round.get(roundIdBytes);
     if (!row) return null;
-    const found = coreForRound(decodeRoundContract(new Uint8Array(row.contract)));
+    const found = coreForRound(decodeRoundContract(new Uint8Array(row.contract)), this.cores);
     return found.ok ? found.core : null;
   }
 

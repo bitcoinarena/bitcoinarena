@@ -6,6 +6,7 @@
 // way in, and it is the same family as `?practice=0`: the URL NAMES things -
 // a round id, the daemons holding it, where headers and the bond are asked
 // for - and nothing here mints any of them.
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../blwp-node/src/cores.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -40,11 +41,11 @@ const FUNDED = {
 const ADVERT = 'ab'.repeat(64);
 
 const contractOn = (a, b, seed = 0x43) => ({
-  networkId: NETWORK_ID_REGTEST, configHash: b32(seed), censusConfirmations: 6,
-  gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1),
+  networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 6,
+  gameVerifySlots: 2, settlementSlots: 2, simCoreHash: TRUCK_CORE_HASH,
   committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
   startTimeMs: 500n + MIN_ENTRY_WINDOW_MS, entryCloseMs: 200000n,
-  objectionWindowMs: 600000n, custody: 'THRESHOLD_LN', slashMinimumServed: 20,
+  objectionWindowMs: 600000n, custody: 'THRESHOLD_LN', slashMinimumServed: 20 + (seed - 0x43),
   slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,
   censusRoot: b32(2), stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: 9000,
   exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,

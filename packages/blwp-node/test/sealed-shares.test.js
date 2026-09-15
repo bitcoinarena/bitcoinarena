@@ -7,6 +7,7 @@
 // use this file as it stands"), and the hold invoice made it true.
 //
 // What is measured here is the closing number: a stranger opens ZERO.
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -33,10 +34,10 @@ const coefficients = [1n, 2n, 3n, 4n].map((n) => n * 0x1234567890abcdefn + 7n);
 const secret = () => new Uint8Array(randomBytes(32));
 
 const contractFor = (node) => ({
-  networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 6,
+  networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 6,
   // seven settlement seats: the handout is dealt 5-of-7, and the door asks the
   // round what its stakes open at (M3.3-26)
-  gameVerifySlots: 2, settlementSlots: 7, simCoreHash: b32(1), committeeTimeMs: 500n,
+  gameVerifySlots: 2, settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH, committeeTimeMs: 500n,
   randomnessRule: 'bitcoin-block-hash', startTimeMs: 500n + MIN_ENTRY_WINDOW_MS,
   entryCloseMs: 200000n, objectionWindowMs: 600000n, custody: 'THRESHOLD_LN',
   slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),

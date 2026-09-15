@@ -30,6 +30,7 @@
 // testnet4 datadir. The coins are worthless.
 //
 //   node packages/blwp-node/tools/settle-crash-regtest.mjs --point=2 [--keep]
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { CORE_HASH } from './core-hash.mjs';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -323,7 +324,7 @@ async function main() {
     censusView = rt.blocksFrom(0, rt.height());
 
     const contract = {
-      networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 6,
+      networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 6,
       gameVerifySlots: SHARES_TOTAL, settlementSlots: SHARES_TOTAL, simCoreHash: CORE_HASH,
       committeeTimeMs: BigInt(NOW), randomnessRule: 'bitcoin-block-hash',
       startTimeMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS,

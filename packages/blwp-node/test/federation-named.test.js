@@ -6,6 +6,7 @@
 // refuses the zero id (400), and a paying FEDERATION round is held to the custody fields in full
 // (409): its federation, the 144-block expiry, its relays. A THRESHOLD_LN round and a free round
 // open as before.
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -41,8 +42,8 @@ test('the seat door refuses a paying FEDERATION round naming no federation (400)
     const shortExpiry = { ...named, stakeExpiryBlocks: 12 };
     const refusedRelay = await post(encodeRoundContract(noRelay));
     const refusedExpiry = await post(encodeRoundContract(shortExpiry));
-    const lightning = { ...named, custody: 'THRESHOLD_LN', federationId: new Uint8Array(32), configHash: b32(0x44) };
-    const free = { ...named, federationId: new Uint8Array(32), stakeMsat: 0n, configHash: b32(0x45) };
+    const lightning = { ...named, custody: 'THRESHOLD_LN', federationId: new Uint8Array(32), configHash: TRUCK_CONFIG_HASH, slashMinimumServed: 21 };
+    const free = { ...named, federationId: new Uint8Array(32), stakeMsat: 0n, configHash: TRUCK_CONFIG_HASH, slashMinimumServed: 22 };
     const opened = { named: await post(encodeRoundContract(named)), lightning: await post(encodeRoundContract(lightning)), free: await post(encodeRoundContract(free)) };
     console.log(`  zero id ${zero.status} "${zero.text.slice(0, 90)}"; no relay ${refusedRelay.status}; expiry 12 ${refusedExpiry.status}; `
       + `named ${opened.named.status}, THRESHOLD_LN ${opened.lightning.status}, free ${opened.free.status}`);

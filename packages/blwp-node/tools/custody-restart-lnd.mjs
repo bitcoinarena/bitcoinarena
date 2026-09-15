@@ -28,6 +28,7 @@
 // (as in `custody-lnd.mjs`): what is measured is the restart, not 23.4.
 //
 //   node packages/blwp-node/tools/custody-restart-lnd.mjs --point=1|2 [--keep]
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { CORE_HASH } from './core-hash.mjs';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -190,7 +191,7 @@ async function main() {
     const db = openStore(join(dir, 'bob-node.db'));
     const round = new Round(db, () => NOW);
     const contract = {
-      networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 6,
+      networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 6,
       gameVerifySlots: 2, settlementSlots: 2, simCoreHash: CORE_HASH,
       committeeTimeMs: BigInt(NOW), randomnessRule: 'bitcoin-block-hash',
       startTimeMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS,

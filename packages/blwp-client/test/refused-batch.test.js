@@ -13,6 +13,7 @@
 // That is the 16:08 two-Chrome close-out of letter 36, from the other side:
 // P1 in the field on fire, P2's ghost still at P1's bay, tick stuck at 4241,
 // chip reading play and two players the whole time.
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../blwp-node/src/cores.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -44,8 +45,8 @@ async function rig() {
   const node = await serve(openStore(), { port: 0, ...FUNDED });
   const client = new Client({ base: `http://127.0.0.1:${node.port}`, core, sign, verify });
   const c = {
-    networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 6, gameVerifySlots: 7,
-    settlementSlots: 7, simCoreHash: b32(1), startTimeMs: 60500n, entryCloseMs: 2000n,
+    networkId: b32(0x4e), configHash: TRUCK_CONFIG_HASH, censusConfirmations: 6, gameVerifySlots: 7,
+    settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n, entryCloseMs: 2000n,
     objectionWindowMs: 600000n, custody: 'THRESHOLD_LN', slashMinimumServed: 20,
     slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,
     censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
