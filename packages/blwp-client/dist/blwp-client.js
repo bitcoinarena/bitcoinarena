@@ -4638,6 +4638,33 @@ function merkleRootFromProof(txid, branch, position) {
 }
 
 /**
+ * THE BRANCH ITSELF, from a block's txids (hashing order) - what a node that
+ * holds the block hands a client, so the client can rebuild the root with
+ * `merkleRootFromProof` and check it against a header it agreed on. Bitcoin's
+ * tree: an odd level pairs its last hash with itself.
+ */
+function merkleBranchOf(txids, position) {
+  if (!Number.isInteger(position) || position < 0 || position >= txids.length)
+    throw new Error(`no transaction at position ${position} of ${txids.length}`);
+  const branch = [];
+  let level = txids.map((t) => t.slice());
+  let index = position;
+  while (level.length > 1) {
+    const sibling = index ^ 1;
+    branch.push((level[sibling] || level[index]).slice());
+    const next = [];
+    for (let i = 0; i < level.length; i += 2) {
+      const pair = new Uint8Array(64);
+      pair.set(level[i], 0); pair.set(level[i + 1] || level[i], 32);
+      next.push(hash256(pair));
+    }
+    level = next;
+    index >>= 1;
+  }
+  return branch;
+}
+
+/**
  * The whole question, in one answer: is this transaction in this block?
  *
  * This is what makes an advertisement worth reading. A provider hands over a
