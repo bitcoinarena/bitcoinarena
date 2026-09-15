@@ -74,7 +74,7 @@ test('the core\'s DELIVERED finishes only a run the client has been told it is p
   try {
     rec(10);
     assert.equal(client.coreWord({ state: 0, tick: recorded() }), null, 'a live word ended the run');
-    assert.equal(client.coreWord({ state: 2, tick: recorded() }), null, 'a word other than DELIVERED finished it here');
+    assert.equal(client.coreWord({ state: 7, tick: recorded() }), null, 'a word the core does not have ended the run');
     assert.equal(client.over, false);
     const done = client.coreWord({ state: 1, tick: recorded() });
     assert.ok(done && done.then, 'DELIVERED on a told run did not finish it');
@@ -84,6 +84,27 @@ test('the core\'s DELIVERED finishes only a run the client has been told it is p
     assert.match(client.endingLine(), /^FINISHED the core said DELIVERED at tick 10$/);
   } finally { client.ended = true; client.close(); await n2.close(); }
 });
+
+// WRECKED AND MISSED LATCH IN THE CORE THE SAME WAY DELIVERED DOES (the owner 2026-09-15: "end the
+// run here too, same client path"). Before this, only DELIVERED ended a run: a wrecked or missed
+// run went on recording to the run's last tick with the player on a truck that could not drive.
+for (const [state, word] of [[2, 'WRECKED'], [3, 'MISSED']]) {
+  test(`the core's ${word} ends a run the same way: every held tick out, nothing after, the word named`, async () => {
+    const { node, client, rec, onNode, recorded } = await rig();
+    try {
+      rec(40);
+      const done = client.coreWord({ state, tick: recorded() });
+      assert.ok(done && done.then, `${word} did not finish the run`);
+      assert.equal(client.over, true);
+      assert.equal(rec(20), 0, `ticks after ${word} were recorded`);
+      await done;
+      await wait(300);
+      assert.equal((await onNode()).length, 40, 'the node does not hold exactly the ticks up to the word');
+      assert.equal(client.ending, 'FINISHED');
+      assert.equal(client.endingLine(), `FINISHED the core said ${word} at tick 40`);
+    } finally { client.ended = true; client.close(); await node.close(); }
+  });
+}
 
 test('when the core says the run is over, every held tick reaches the node, nothing is recorded or sent after, and the run ends FINISHED', async () => {
   const { node, client, rec, onNode, recorded } = await rig();

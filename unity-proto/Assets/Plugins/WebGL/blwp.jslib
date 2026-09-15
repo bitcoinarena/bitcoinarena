@@ -502,12 +502,13 @@ mergeInto(LibraryManager.library, {
       // recorded, `finish` sends what is held and the last checkpoint at this tick, then nothing.
       // The word goes to the client, which acts only for a run it has been told it is playing - the
       // hash is taken only when the word is DELIVERED, so no tick pays for it otherwise.
+      // DELIVERED 1, WRECKED 2, MISSED 3 all latch; 0 is a live run and costs no hash.
       var word = b.st.i32[18 + 5] | 0;
-      var done = word === 1 ? net.client.coreWord({ state: word, stateHash: b.core.hash(b.st), tick: net.seen }) : null;
+      var done = word !== 0 ? net.client.coreWord({ state: word, stateHash: b.core.hash(b.st), tick: net.seen }) : null;
       if (done) {
         net.finishing = done;
         // AND THE PAGE LETS GO OF THE ROUND (hole 2): the address is the lobby's again.
-        if (typeof window !== 'undefined' && window.BLWP_RUN_OVER) window.BLWP_RUN_OVER('DELIVERED');
+        if (typeof window !== 'undefined' && window.BLWP_RUN_OVER) window.BLWP_RUN_OVER(net.client.endingLine());
         return;
       }
       if (net.client.state !== 'ready') return;

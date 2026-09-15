@@ -300,7 +300,10 @@ public class TruckHealth : MonoBehaviour
         if (truck != null)
         {
             truck.enabled = true;
-            truck.Respawn();
+            // INSIDE A LIVE ROUND THE WRECK IS THE END OF THE RUN (the owner 2026-09-15): the page
+            // finishes it off the core's WRECKED and the lobby comes back; a respawn would teleport
+            // the core's truck, a write in no transcript. The next round's core starts it afresh.
+            if (DeliveryGate.BackToTheBay(Blwp.BlwpNet.RoundSeed)) truck.Respawn();
         }
 
         Respawned?.Invoke();

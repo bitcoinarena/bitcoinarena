@@ -189,6 +189,9 @@ public class DeliveryGate : MonoBehaviour
         MissedAt = Time.unscaledTime;
 
         bay.Clear();
+        // INSIDE A LIVE ROUND A MISSED BLOCK ENDS THE RUN WHERE IT STANDS (the owner 2026-09-15): the
+        // page finishes it off the core's word; a teleport would be a core write in no transcript.
+        if (!BackToTheBay(Blwp.BlwpNet.RoundSeed)) return;
         if (truck != null) truck.Respawn();
         _reopenAt = Time.unscaledTime + Mathf.Max(0f, scoreHoldSeconds * 0.55f);
     }

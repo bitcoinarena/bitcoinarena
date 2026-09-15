@@ -10915,8 +10915,8 @@ const CLOSED = 'closed: ';
 
 /** How long `finish` waits for the held ticks to go out before it ends the run anyway. */
 const FINISH_WAIT_MS = 10000;
-/** The core's own word for a delivered run (core rules/gate.js RUN_DELIVERED), as it reads off the state. */
-const RUN_DELIVERED_WORD = 1;
+/** The core's own words for a run that is over (core rules/gate.js RUN_DELIVERED 1, RUN_WRECKED 2, RUN_MISSED 3), as they read off the state. */
+const RUN_ENDING_WORDS = Object.freeze({ 1: 'DELIVERED', 2: 'WRECKED', 3: 'MISSED' });
 
 class Client {
   /**
@@ -12524,8 +12524,11 @@ class Client {
    */
   coreWord({ state, stateHash = null, tick = 0 } = {}) {
     if (!this.where || this.ended || this.finishing) return null;
-    if ((state | 0) !== RUN_DELIVERED_WORD) return null;
-    return this.finish({ stateHash, tick, why: `the core said DELIVERED at tick ${tick}` });
+    // DELIVERED, WRECKED AND MISSED ALL LATCH IN THE CORE (the owner 2026-09-15: "end the run here too,
+    // same client path") - a run that has an outcome is over, whichever it is.
+    const word = RUN_ENDING_WORDS[state | 0];
+    if (!word) return null;
+    return this.finish({ stateHash, tick, why: `the core said ${word} at tick ${tick}` });
   }
 
   /** The ending, as the game reads it: FINISHING while the last of the run goes out, then the word it ended with. */
