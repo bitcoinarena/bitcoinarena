@@ -67,8 +67,12 @@ test('a seat restarted on a store holding a paying FEDERATION round with no fede
   const onRejection = (e) => rejections.push(String(e && e.message || e));
   process.on('unhandledRejection', onRejection);
   try {
-    // 1. A HOLD ROUND AND ITS ISSUED HOLD, on a store file.
-    const first = await serve(openStore(path), seatOpts);
+    // 1. A HOLD ROUND AND ITS ISSUED HOLD, on a store file - by a seat with no timers. With its
+    // close-at-end timer on (every 100 ms, the round's end long past) it closed the round before
+    // the entry came in under load: measured 2026-09-15 07:57, /entry 400 "the round is closed".
+    // The timers belong to the restart below, which is what this test measures.
+    const { expiry, finality, closeAtEnd, ...setupOpts } = seatOpts;
+    const first = await serve(openStore(path), setupOpts);
     const c = contractFor(first.round.pubkey);
     const rid = roundId(c);
     let eid;
