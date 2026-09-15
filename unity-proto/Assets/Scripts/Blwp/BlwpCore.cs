@@ -33,6 +33,7 @@ namespace Blwp
         [DllImport("__Internal")] private static extern int BlwpRestart(int seed);
         [DllImport("__Internal")] private static extern int BlwpTeleport(int x, int z, int heading);
         [DllImport("__Internal")] private static extern int BlwpTakeImpact();
+        [DllImport("__Internal")] private static extern int BlwpReadImpact();
         [DllImport("__Internal")] private static extern int BlwpSubmitLoad(int feeSats, int btcHundredths);
         public const bool Compiled = true;
 #else
@@ -49,6 +50,7 @@ namespace Blwp
         private static int BlwpRestart(int seed) => 0;
         private static int BlwpTeleport(int x, int z, int h) => 0;
         private static int BlwpTakeImpact() => 0;
+        private static int BlwpReadImpact() => 0;
         private static int BlwpSubmitLoad(int f, int b) => 0;
         public const bool Compiled = false;
 #endif
@@ -196,14 +198,39 @@ namespace Blwp
         }
 
         /// <summary>
-        /// The hardest armour impact since this was last called, m/s.
+        /// The hardest armour impact since this was last called, m/s - for the shake and the bang only;
+        /// the core prices every crash from that tick's own impact and never reads this word.
         ///
-        /// Reading clears it, so one crash is applied once. PhysX raised
-        /// OnCollisionEnter for this and the body is kinematic now, so nothing
-        /// fires - which is why a truck could be driven into a tank at speed
-        /// and come away unmarked.
+        /// Outside a signed run reading clears it, so one crash is felt once. IN A SIGNED RUN IT IS
+        /// NOT CLEARED (the owner 2026-09-16): the core is then the signer nodes' replay and the page
+        /// writes nothing into it - measured before, the clear moved the state hash off the replay 35
+        /// times in one run (0.0.1358) while outcome, score and tick agreed. There the word only
+        /// rises, so a rise above what was already felt is the crash; one softer than the run's
+        /// hardest so far is charged by the core and not shaken here.
         /// </summary>
-        public static float TakeImpact() => Available ? BlwpTakeImpact() / (float)ONE : 0f;
+        public static float TakeImpact()
+        {
+            if (!Available) return 0f;
+            if (MayClearImpact(BlwpNet.Live)) return BlwpTakeImpact() / (float)ONE;
+            return FeltImpact(BlwpReadImpact(), ref _impactFelt) / (float)ONE;
+        }
+
+        static int _impactFelt;
+
+        /// <summary>Whether the page may clear the core's impact word: only while no signed run is live.</summary>
+        public static bool MayClearImpact(bool signedRunLive) => !signedRunLive;
+
+        /// <summary>
+        /// A read-only impact word, felt when it rises: the new hardest impact, or 0. A word below what
+        /// was felt is a new world (init or restart starts it at 0), so the memory starts again.
+        /// </summary>
+        public static int FeltImpact(int word, ref int felt)
+        {
+            if (word < felt) felt = 0;
+            if (word <= felt) return 0;
+            felt = word;
+            return word;
+        }
 
         /// <summary>
         /// WHAT WENT ON THE BED, handed to the core at roll-out.

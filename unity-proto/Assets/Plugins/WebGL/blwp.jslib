@@ -212,6 +212,17 @@ mergeInto(LibraryManager.library, {
     return v;
   },
 
+  // The same word, READ ONLY (the owner 2026-09-16). In a signed run the core is the signer nodes'
+  // replay of the transcript and the page writes nothing into it; the clear above did, 35 times in
+  // one measured run (0.0.1358), moving the state hash off the replay. No rule reads the word - the
+  // core prices a crash from that tick's own impact - so Unity reads it and remembers what it felt.
+  BlwpReadImpact: function () {
+    var b = Module.blwp;
+    if (!b) return 0;
+    var T = 5, T_IMPACT = 12;
+    return b.st.i32[T + T_IMPACT] | 0;
+  },
+
   // A query parameter from the page's own URL, written into a caller-owned
   // buffer. Handing a build to somebody in the mode you meant them to see is
   // what a shared link is for, and it beats asking them to find a switch.
