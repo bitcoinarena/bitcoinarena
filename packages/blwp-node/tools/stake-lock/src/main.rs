@@ -53,6 +53,7 @@
 //!     --locks TXID:IDX:PREIMAGE:MSAT[,...] --nonce HEX16 \
 //!     (--payouts PK:MSAT[,...] | --qualifier-pk HEX) [--signature HEX]
 //!   blwp-stake-lock --mode fees --data-dir D
+//!   blwp-stake-lock --mode guardians --data-dir D
 //!
 //! W4 (the owner 2026-09-14): a loser loses the stake - the seats' settlement names
 //! every payout exactly with --payouts (their rule, blwp-node settlement.js),
@@ -80,7 +81,7 @@ use fedimint_core::module::{Amounts, ApiRequestErased};
 use fedimint_core::secp256k1::schnorr::Signature;
 use fedimint_core::secp256k1::{Message, PublicKey, SECP256K1, SecretKey};
 use fedimint_core::transaction::{Transaction, TransactionSignature};
-use fedimint_core::{Amount, OutPoint, TransactionId};
+use fedimint_core::{Amount, NumPeersExt, OutPoint, TransactionId};
 use fedimint_lnv2_common::config::LightningClientConfig;
 use fedimint_lnv2_common::contracts::{OutgoingContract, PaymentImage};
 use fedimint_lnv2_common::endpoint_constants::{
@@ -213,8 +214,38 @@ async fn main() -> anyhow::Result<()> {
         "settle" => settle(&a, &client, lnv2, &api).await,
         "status" => status(&a, &api).await,
         "fees" => fees(&client, lnv2).await,
-        other => bail!("no mode {other}: lock, redeem, settle, status, fees or id"),
+        "guardians" => guardians(&client).await,
+        other => bail!("no mode {other}: lock, redeem, settle, status, fees, guardians or id"),
     }
+}
+
+/// THE FEDERATION'S GUARDIANS, OFF ITS OWN CONFIG (the owner 2026-09-15 07:33: every guardian
+/// has its own bond; federationIsBonded stays on). Each guardian's broadcast key - the 33-byte
+/// secp256k1 key a census node advertises under guardian_of[] (§5A.1) - and the federation's
+/// own consensus threshold, n - floor((n-1)/3) over its API endpoints (NumPeers::threshold).
+/// fedimint 0.12 hashes the endpoints into the federation id (calculate_federation_id), so the
+/// id fixes n and the threshold; the keys come with the config the stock client downloaded
+/// and checked on join. Read-only: nothing is sent.
+async fn guardians(client: &ClientHandle) -> anyhow::Result<()> {
+    let config = client.config().await;
+    let n = config.global.api_endpoints.to_num_peers();
+    let keys = config
+        .global
+        .broadcast_public_keys
+        .clone()
+        .context("this federation's config names no guardian broadcast keys")?;
+    let listed: Vec<serde_json::Value> = keys
+        .iter()
+        .map(|(peer, key)| serde_json::json!({ "peer": peer.to_string(), "key": key.to_string() }))
+        .collect();
+    println!("{}", serde_json::json!({
+        "mode": "guardians",
+        "federation_id": client.federation_id().to_string(),
+        "guardians": n.total(),
+        "threshold": n.threshold(),
+        "keys": listed,
+    }));
+    Ok(())
 }
 
 async fn lock(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api: &DynModuleApi) -> anyhow::Result<()> {
