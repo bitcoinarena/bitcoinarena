@@ -31,6 +31,9 @@ import { bondSetFor } from '../src/curve.js';
 import { bondFor } from './curve.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { beaconFromChain } from '../../protocol/src/beacon.js';
+import { advertId } from '../../protocol/src/advert.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
+import { guardiansOf, offersFrom, bondedGuardians } from '../../blwp-client/src/guardians.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const guardianKey = (n) => Uint8Array.from([0x02, ...b32(0x60 + n)]);
@@ -46,10 +49,17 @@ const advertFor = (key, n, guardianOf) => ({
   bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 1,
   payoutPubkey: b32(3), guardianOf, timestamp: 1788700000000n,
 });
-/** A real bond for a node's own identity key, its advertisement naming the guardian keys it runs. */
-const bondOfKey = (key, n, guardianOf = []) => bondTransaction(advertFor(key, n, guardianOf), {
-  previousTxid: b32(0xa0 + n), previousVout: 0, outputKey: bondFor(key),
-});
+/**
+ * A real bond for a node's own identity key, its advertisement naming the guardian keys it runs -
+ * signed by that key (5A.1), which the page checks when it counts guardians itself.
+ */
+const bondOfKey = (key, n, guardianOf = [], secret) => {
+  const a = advertFor(key, n, guardianOf);
+  return bondTransaction(a, {
+    previousTxid: b32(0xa0 + n), previousVout: 0, outputKey: bondFor(key),
+    signature: secret ? schnorr.sign(advertId(a), secret) : undefined,
+  });
+};
 const chainWith = (bonds, contract) => {
   const blocks = [];
   for (let h = FROM; h <= TIP; h++) blocks.push({ transactions: h === FROM ? bonds : [] });
@@ -94,8 +104,10 @@ const federation = ({ id = TEST_FEDERATION_ID, keys, threshold }) => ({
 
 /** Two seats bonded on the chain - each advertising the guardian keys given - and one door. */
 async function door({ advertised = [[], []], port }) {
-  const keys = [new Round(openStore(':memory:'), () => AFTER_COMMITTEE).pubkey, new Round(openStore(':memory:'), () => AFTER_COMMITTEE).pubkey];
-  const bonds = keys.map((k, i) => bondOfKey(k, i + 1, advertised[i].map((g) => ({ federationId: TEST_FEDERATION_ID, guardianKey: g }))));
+  const seats = [new Round(openStore(':memory:'), () => AFTER_COMMITTEE), new Round(openStore(':memory:'), () => AFTER_COMMITTEE)];
+  const keys = seats.map((s) => s.pubkey);
+  const bonds = keys.map((k, i) => bondOfKey(k, i + 1, advertised[i].map((g) => ({ federationId: TEST_FEDERATION_ID, guardianKey: g })),
+    seats[i].identity.secret));
   const root = rootFor(bonds, keys);
   const node = await serve(openStore(':memory:'), {
     port: 0, funded: () => true, stakeLocks: port,
@@ -104,9 +116,9 @@ async function door({ advertised = [[], []], port }) {
   const post = async (over = {}) => {
     const c = contractWith(keys, root, over);
     const r = await fetch(`http://127.0.0.1:${node.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
-    return { status: r.status, why: (await r.text()).trim(), seats: node.round.seats(roundId(c)).length };
+    return { status: r.status, why: (await r.text()).trim(), seats: node.round.seats(roundId(c)).length, round: () => c };
   };
-  return { node, post };
+  return { node, post, bonds };
 }
 
 test('a paying FEDERATION round is seated when its federation\'s threshold of guardians are bonded census nodes, and refused with its count when they are not', async () => {
@@ -150,4 +162,64 @@ test('a THRESHOLD_LN round and a free round are seated on a census that lists no
     assert.equal(free.seats, 2);
     assert.equal(port.asked, 0, 'the federation was asked about a round that takes no stake into it');
   } finally { await w.node.close(); }
+});
+
+/**
+ * THE PAGE COUNTS THEM ITSELF (M3 G2/G3). The seat serves the bonds of the round's guardians out of
+ * its census (/guardian-bonds) - candidates, not a count. The page proves each into headers of the
+ * chain (here the same chain's headers, as a provider serves them), checks each advertisement is
+ * signed by the node it names, and counts with the keys ITS OWN lock client read off the federation
+ * (guardians(): here in that answer's shape). A seat can omit and cannot forge.
+ */
+test('the page counts the guardians on the bonds a seat serves: 2 of 2 proven; one omitted, or a branch altered, is refused; on the 4-guardian federation page and seat refuse with the same count', async () => {
+  const two = [guardianKey(1), guardianKey(2)];
+  const four = [...two, guardianKey(3), guardianKey(4)];
+  const answerOf = (keys, threshold) => ({
+    federation_id: toHex(TEST_FEDERATION_ID), guardians: keys.length, threshold,
+    keys: keys.map((k, peer) => ({ peer: String(peer), key: toHex(k) })),
+  });
+  const verify = (sig, msg, pk) => { try { return schnorr.verify(sig, msg, pk); } catch { return false; } };
+  const a = await door({ advertised: [[two[0]], [two[1]]], port: federation({ keys: two, threshold: 2 }) });
+  const b = await door({ advertised: [[two[0]], [two[1]]], port: federation({ keys: four, threshold: 3 }) });
+  try {
+    const served = async (w) => {
+      const seated = await w.post();
+      const c = seated.round();
+      const r = await fetch(`http://127.0.0.1:${w.node.port}/guardian-bonds?round=${toHex(roundId(c))}`);
+      const body = await r.text();
+      assert.equal(r.status, 200, body);
+      return { seated, c, body, chain: chainWith(w.bonds, c).blocks.map((x) => x.header) };
+    };
+    const count = (s, keys, threshold, offers = offersFrom(s.body)) =>
+      bondedGuardians({ guardians: guardiansOf(answerOf(keys, threshold)), round: s.c, chain: s.chain, offers, verify });
+
+    const sa = await served(a);
+    const sb = await served(b);
+    const whole = await count(sa, two, 2);
+    const omitted = await count(sa, two, 2, offersFrom(sa.body).slice(0, 1));
+    const altered = offersFrom(sa.body);
+    altered[1] = { ...altered[1], branch: altered[1].branch.map(() => new Uint8Array(32)) };
+    const forged = await count(sa, two, 2, altered);
+    const unbonded = await count(sb, four, 3);
+    console.log('  FACTS:', JSON.stringify({
+      a: { seat: sa.seated.status, served: JSON.parse(sa.body).bonds.length, whole, omitted: omitted.why, forged: { why: forged.why, refused: forged.refused } },
+      b: { seat: sb.seated.status, seatWhy: sb.seated.why.slice(0, 120), served: JSON.parse(sb.body).bonds.length, page: unbonded.why },
+    }));
+
+    assert.equal(sa.seated.status, 201, sa.seated.why);
+    assert.equal(JSON.parse(sa.body).bonds.length, 2, 'the seat served another number of guardian bonds than its census holds');
+    assert.equal(whole.ok, true, whole.why);
+    assert.equal(whole.bonded, 2);
+    assert.deepEqual(whole.refused, []);
+    assert.equal(omitted.ok, false, 'one bond counted as a federation of two');
+    assert.match(omitted.why, /1 of that federation's 2 guardians are bonded census nodes, and its threshold is 2/);
+    assert.equal(forged.ok, false, 'a bond whose branch was altered was counted');
+    assert.match(forged.refused.join(';'), /bond 1: the transaction is not in any block of that chain/);
+
+    assert.equal(sb.seated.status, 409);
+    assert.equal(unbonded.ok, false);
+    const said = /2 of that federation's 4 guardians are bonded census nodes, and its threshold is 3/;
+    assert.match(unbonded.why, said);
+    assert.match(sb.seated.why, said, 'page and seat do not refuse with the same count');
+  } finally { for (const w of [a, b]) await w.node.close(); }
 });

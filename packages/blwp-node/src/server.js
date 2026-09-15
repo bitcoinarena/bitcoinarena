@@ -1638,6 +1638,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return res.end(JSON.stringify(bondProof));
       }
 
+      // AND THE BONDS OF A ROUND'S GUARDIANS (M3; the owner 07:33), out of the census this seat derived
+      // for it: each transaction and its merkle branch, for the page to prove into headers it agreed
+      // from providers and count against its own federation's keys. Candidates, not a count.
+      if (req.method === 'GET' && url.pathname === '/guardian-bonds') {
+        const got = roster.guardianBondsFor(Buffer.from(url.searchParams.get('round') || '', 'hex'));
+        if (!got.ok) return text(res, 404, got.why);
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify(got));
+      }
+
       if (req.method === 'POST' && url.pathname === '/round') {
         // A PAYING FEDERATION ROUND NAMING NO FEDERATION IS NO CONTRACT (M3 W7): the decode refuses it.
         let contract;

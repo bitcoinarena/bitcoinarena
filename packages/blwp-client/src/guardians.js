@@ -43,6 +43,18 @@ export function guardiansOf(answer) {
 }
 
 /**
+ * A seat's /guardian-bonds answer as offers: hex to bytes, nothing believed.
+ * The seat names candidates; `bondedGuardians` is what decides.
+ */
+export function offersFrom(answer) {
+  const a = typeof answer === 'string' ? JSON.parse(answer) : answer;
+  if (!a || !Array.isArray(a.bonds)) throw new Error('that answer names no guardian bonds');
+  return a.bonds.map((b) => ({
+    transaction: fromHex(b.transaction), branch: b.branch.map(fromHex), position: b.position,
+  }));
+}
+
+/**
  * The count: { ok, bonded, threshold, why?, counted, refused }. `offers` are
  * `{ transaction, branch, position, signedAdvert? }` from whoever named the
  * candidates; `verify(signature, message, pubkey)` is the page's schnorr check.

@@ -18,6 +18,7 @@ import { deriveCensus } from '../../protocol/src/census.js';
 import { selectCommittee } from '../../protocol/src/sortition.js';
 import { decodeRoundContract } from '../../protocol/src/contracts.js';
 import { parseTransaction } from '../../protocol/src/tx.js';
+import { merkleBranchOf } from '../../protocol/src/chain.js';
 import { networkOf } from '../../protocol/src/constants.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { committeeSeedFromBeacon, beaconFromChain, beaconIsTheChains } from '../../protocol/src/beacon.js';
@@ -222,6 +223,41 @@ export class Roster {
       };
 
     return census;
+  }
+
+  /**
+   * THE BONDS OF THIS ROUND'S GUARDIANS, AS EVIDENCE A PAGE CHECKS ITSELF (M3; the owner 07:33: every
+   * guardian has its own bond). Every census node whose advertisement names a guardian key of the
+   * round's federation under guardian_of[], with its bond transaction and the merkle branch that
+   * puts it in a block of this seat's chain view. A hint, not a count: the page proves each into
+   * headers it agreed from providers and counts with the keys its own lock client read off the
+   * federation (blwp-client/src/guardians.js). A seat can omit a bond here; it cannot forge one.
+   */
+  guardianBondsFor(roundIdBytes) {
+    const census = this.censusFor(roundIdBytes);
+    if (!census.ok) return census;
+    const contract = decodeRoundContract(new Uint8Array(this.round.get(roundIdBytes).contract));
+    const fid = toHex(contract.federationId);
+    const view = this.chainFor({ contract, roundIdBytes });
+
+    const where = new Map();
+    for (const block of view.blocks) {
+      let txids;
+      try { txids = (block.transactions || []).map((raw) => parseTransaction(raw).txid); } catch { continue; }
+      txids.forEach((t, position) => where.set(toHex(t), { block, txids, position }));
+    }
+    const bonds = [];
+    for (const e of census.entries) {
+      if (!((e.advert && e.advert.guardianOf) || []).some((g) => toHex(g.federationId) === fid)) continue;
+      const at = where.get(toHex(e.txid));
+      if (!at) continue;
+      bonds.push({
+        nodePubkey: toHex(e.pubkey), position: at.position,
+        transaction: toHex(at.block.transactions[at.position]),
+        branch: merkleBranchOf(at.txids, at.position).map(toHex),
+      });
+    }
+    return { ok: true, federationId: fid, bonds };
   }
 
   /**
