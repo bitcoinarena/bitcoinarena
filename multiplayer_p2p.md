@@ -492,10 +492,13 @@ developer approval is required.
 
 **The truck game is one use of this network** (the owner 2026-09-15). The seats
 and the federation are a generic consensus and custody layer. They replay
-and settle a named core (`sim_wasm_hash`); they do not embed truck, cargo or
-map. A second game is a new core + client (Unity or not) on the same nodes
-and federation - a hard fork of the core, or another title, not a rewrite of
-the seats. M3 keeps that split as far as it will go.
+and settle a named core (`sim_wasm_hash`) and the round's rule set
+(`config_hash` / `game_config`); they do not embed truck, cargo or map. A
+second game is a new core + client on the same nodes and federation. **Several
+games and several rule sets run at once** (the owner 2026-09-15 08:07): each
+round names its core and its rules; two titles and two configs can be live
+on the same seats in the same window. Not a rewrite of the seats. M3 keeps
+that split as far as it will go.
 
 Unity is not trusted for money. Unity handles rendering, audio, UI, input
 capture, animation, ghosts and lobby. A deterministic core compiled to
