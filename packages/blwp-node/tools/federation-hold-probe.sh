@@ -150,7 +150,12 @@ for g in 0 1 2 3; do
       FM_BIND_P2P=127.0.0.1:$base FM_BIND_API=127.0.0.1:$((base+1)) FM_BIND_UI=127.0.0.1:$((base+2)) \
       FM_BIND_METRICS=127.0.0.1:$((base+3)) FM_P2P_URL=fedimint://127.0.0.1:$base FM_API_URL=ws://127.0.0.1:$((base+1)) \
       FM_ENABLE_IROH=false FM_PASSWORD_API=probe FM_PASSWORD_UI=probe \
-      FM_LNV2_INCOMING_HOLD_SECS=$HOLD_SECS
+      FM_LNV2_INCOMING_HOLD_SECS=$HOLD_SECS \
+      FM_DISABLE_BASE_FEES=${DISABLE_BASE_FEES:-1}
+    # THE FEDERATION'S BASE FEE IS 0 (the owner 2026-09-15 07:44: "run the federation with
+    # disable_base_fees"). fedimint 0.12 takes it at DKG from each guardian's env - set-local-params
+    # has no flag - and then LNv2's fee_consensus is FeeConsensus::zero(); without it, 1000 msat on
+    # every input and every output (measured). DISABLE_BASE_FEES=0 runs the stock default, to compare.
     setsid nohup $F/fedimintd > $P/g$g/fedimintd.out 2>&1 < /dev/null & echo "$! fedimintd-$g" >> $P/pids )
   up() { grep -q "Setup UI running" $P/g$g/fedimintd.out 2>/dev/null; }
   until_ "guardian $g" 180 up
