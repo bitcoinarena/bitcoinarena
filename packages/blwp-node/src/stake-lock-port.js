@@ -12,7 +12,7 @@
 // federation is the tool's business, and a daemon that linked the client
 // crates in would be a daemon in Rust.
 import { execFile } from 'node:child_process';
-import { toHex } from '../../protocol/src/hash.js';
+import { toHex, fromHex } from '../../protocol/src/hash.js';
 
 export const STAKE_LOCK_SETTINGS = ['BLWP_STAKE_LOCK_BIN', 'BLWP_FEDERATION_CLIENT_DIR'];
 
@@ -45,6 +45,15 @@ export function stakeLockPort({ bin, dataDir, timeoutMs = 60000 }) {
     async contractId(fields) {
       const j = await run(bin, ['--mode', 'id', ...contractArgs(fields)], timeoutMs);
       return String(j.contract_id);
+    },
+    /**
+     * THE FEDERATION'S GUARDIANS, off its own config (§23.6; the owner 2026-09-15 07:33): its id, each
+     * guardian's 33-byte broadcast key, and its consensus threshold - what federationIsBonded counts.
+     */
+    async guardians() {
+      const j = await run(bin, ['--mode', 'guardians', '--data-dir', dataDir], timeoutMs);
+      return { federationId: fromHex(String(j.federation_id)), guardians: Number(j.guardians), threshold: Number(j.threshold),
+        keys: (j.keys || []).map((k) => fromHex(String(k.key))) };
     },
     /** The guardians' own LNv2 fee rule, off the federation's config (W4). */
     async fees() {

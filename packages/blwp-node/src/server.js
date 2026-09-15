@@ -74,6 +74,7 @@ import { outageOutcome } from '../../protocol/src/entry-void.js';
 import { ENTRY_VOID, netStakeMsat } from '../../protocol/src/payout.js';
 import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../protocol/src/objection.js';
 import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../protocol/src/posting.js';
+import { federationIsBonded } from '../../protocol/src/federation.js';
 import { SIGNED_RERUN_BYTES } from '../../protocol/src/rerun.js';
 import { verifyStakeLock, verifyFeeLock, lockFieldsFromJson, roundMintsFees } from './stake-lock-seat.js';
 import { encodeClaimKeyAttestation, claimKeyAttestationId } from '../../protocol/src/claim-key.js';
@@ -954,6 +955,32 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
    * entries are open, and at least `CLAIM_KEY_MIN_TRIES` times - until the key
    * exists. A harness that hands a key (`claimKeyFor`) makes none.
    */
+  /**
+   * THE ROUND'S FEDERATION IS BONDED (§23.6, P3; the owner 2026-09-15 07:33: "every guardian / node
+   * must have its own bond or it may not take part. federationIsBonded stays on"). Its guardians
+   * come from the federation's own config, through this seat's stake-lock port (blwp-stake-lock
+   * --mode guardians: the broadcast keys and NumPeers' threshold); the census is the one this seat
+   * derived from the chain for the round. At least the federation's threshold of its guardian keys
+   * must be advertised under guardian_of[] by distinct census nodes bonded at or above the round's
+   * bond_min. A seat that reaches no federation, or another one than the round names, cannot say,
+   * and seats nothing.
+   */
+  async function guardiansBonded(rid, contract) {
+    if (!stakeLocks || typeof stakeLocks.guardians !== 'function')
+      return { ok: false, why: 'this seat reaches no federation to read the guardians of, so it seats no round that takes a stake into one (§23.6)' };
+    const census = roster.censusFor(rid);
+    if (!census.ok) return census;
+    let g;
+    try { g = await stakeLocks.guardians(); }
+    catch (e) { return { ok: false, why: `this seat could not read its federation's guardians: ${e.message}` }; }
+    if (!g || toHex(g.federationId) !== toHex(contract.federationId))
+      return { ok: false, why: `this seat reaches federation ${g ? toHex(g.federationId).slice(0, 16) : 'none'} and that round names `
+        + `${toHex(contract.federationId).slice(0, 16)}, so it cannot count that federation's guardians` };
+    const bonded = federationIsBonded({ federationId: contract.federationId, guardianKeys: g.keys, threshold: g.threshold,
+      census: census.entries, bondMinSats: contract.bondMinSats });
+    return bonded.ok ? bonded : { ok: false, why: `this seat seats no round on an unbonded federation (§23.6): ${bonded.why}` };
+  }
+
   const CLAIM_KEY_EVERY_MS = 1000;
   const CLAIM_KEY_MIN_TRIES = 30;
   const claimKeyRuns = new Set();
@@ -1645,6 +1672,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // check the list, so it does not pretend to. What it must not do is
         // fall back to the author's list, and it does not.
         if (chainFor) {
+          // AND A ROUND THAT TAKES A STAKE INTO A FEDERATION IS SEATED ONLY ON A BONDED ONE (§23.6, P3;
+          // the owner 2026-09-15 07:33): refused here like a committee the chain did not seat - stored,
+          // no seats, so no claim key and no lock can name it.
+          if (contract.custody === 'FEDERATION' && contract.stakeMsat > 0n) {
+            const bonded = await guardiansBonded(id, contract);
+            if (!bonded.ok) return text(res, 409, bonded.why);
+          }
           const seated = roster.seatRound(id);
           if (!seated.ok) return text(res, 409, seated.why);
           // AND ITS SEATS MAKE ITS CLAIM KEY, in the background (see makeClaimKey).
