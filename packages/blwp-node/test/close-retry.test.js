@@ -151,7 +151,11 @@ test('a seat whose peer is down at the close holds - no result, no Void - tries 
   } finally { await w.close(); }
 });
 
-test('past the objection window a seat still short of 2 of 2 keeps asking, and signs the one transcript when its peer is back', async () => {
+// THE OWNER 2026-09-15 07:49: the result window is the objection window (the contract's
+// objection_window_ms, WINDOW_MS here), and a seat that cannot retrieve the transcript in it
+// treats the entry as VOID. Until then (M3.3-34) this seat kept asking past the window and both
+// runs went final 2 of 2 when its peer came back - measured this morning, the test this replaces.
+test('past the result window a seat that cannot retrieve the transcript decides VOID (§13C), and no run it voided is FINAL anywhere after its peer is back', async () => {
   // The watch's window is 800 ms here, its back-off capped at 400 ms.
   const w = await seats({ finality: { windowMs: 800, maxEveryMs: 400 } });
   try {
@@ -160,21 +164,28 @@ test('past the objection window a seat still short of 2 of 2 keeps asking, and s
     const closedAt = Date.now();
     assert.equal(await say(w.a.port, `close ${toHex(w.rid)}`), 'closed');
     await wait(700);
-    const inWindow = (await until(10000, () => closingAt(w, w.a, W))).attempts;
+    const inWindowAt = await until(10000, () => closingAt(w, w.a, W));
+    const inWindow = { state: inWindowAt.state, attempts: inWindowAt.attempts };
     await wait(Math.max(2800, closedAt + 3500 - Date.now()));
     const pastWindow = { W: brief(await closingAt(w, w.a, W)), P: brief(await closingAt(w, w.a, P)),
       atA: { W: look(w, w.a, W), P: look(w, w.a, P) } };
-    await backAndFinal(w, [P, W]);
+    // B BACK, and closed: what each seat holds 3 s later.
+    await w.upB();
+    assert.equal(await say(w.b.port, `close ${toHex(w.rid)}`), 'closed');
+    await wait(3000);
     const after = { P: { a: look(w, w.a, P), b: look(w, w.b, P) }, W: { a: look(w, w.a, W), b: look(w, w.b, W) } };
-    const verdictAtA = (run) => { const f = resultFinality(w.a.round, w.rid, run.eid);
-      return { state: f.state, why: f.why ? String(f.why).slice(0, 160) : null, closesInMs: f.closesAtMs == null ? null : Number(f.closesAtMs) - Date.now() }; };
-    console.log('  FACTS (past the window):', JSON.stringify({ inWindow, pastWindow, after, verdictAtA: { W: verdictAtA(W), P: verdictAtA(P) } }));
-    assert.ok(pastWindow.W.attempts > inWindow, `no retry after the window: ${inWindow} then ${pastWindow.W.attempts}`);
-    assert.equal(pastWindow.W.state, 'HOLDING');
-    assert.equal(pastWindow.P.state, 'HOLDING');
-    assert.deepEqual(pastWindow.atA.W, { results: [], signers: 0, transcripts: 0, finality: null, entryVoid: false });
-    assert.deepEqual(pastWindow.atA.P, { results: [], signers: 0, transcripts: 0, finality: null, entryVoid: false });
-    assertOneFinal(after);
+    console.log('  FACTS (past the window):', JSON.stringify({ inWindow, pastWindow, after }));
+    assert.equal(inWindow.state, 'HOLDING', 'inside the window the seat waits, as before');
+    assert.ok(pastWindow.W.attempts > inWindow.attempts, `no retry after the window: ${inWindow.attempts} then ${pastWindow.W.attempts}`);
+    for (const run of ['W', 'P']) {
+      assert.equal(pastWindow[run].state, 'VOID', run);
+      assert.match(pastWindow[run].lastWhy, /no quorum at 0 of 2/, run);
+      assert.deepEqual(pastWindow.atA[run], { results: [], signers: 0, transcripts: 0, finality: 'VOID', entryVoid: false }, run);
+      // AND IT STAYS SO: A signs nothing for a run it voided, and nothing it voided goes final at B.
+      assert.equal(after[run].a.finality, 'VOID', run);
+      assert.deepEqual(after[run].a.results, [], run);
+      assert.notEqual(after[run].b.finality, 'FINAL', `${run}: a run A voided went final at B`);
+    }
   } finally { await w.close(); }
 });
 

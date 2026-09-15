@@ -302,10 +302,12 @@ export class Verifier {
     // A PROOF OF TWO FIRST MARKS HELD HERE waits on nobody (§13B; M3.3-34, a
     // seat that stays down): no transcript a down seat holds can unmake it.
     if (down && !this.round.provenTwoFirstMarks(roundIdBytes, entryId) && (noMarkHere ? !this.round.entryVoid(entryId)
-      : this.#mightGrow(roundIdBytes, entryId, down)))
-      return { entryId, stored: false, waiting: true,
-        why: `waiting on ${down} seat(s): ${(carried && carried.down.length ? carried.down.join('; ') : 'none of them answered').slice(0, 160)}`
-          + `${noCanonical ? ` - ${noCanonical}` : ''}` };
+      : this.#mightGrow(roundIdBytes, entryId, down))) {
+      const why = `waiting on ${down} seat(s): ${(carried && carried.down.length ? carried.down.join('; ') : 'none of them answered').slice(0, 160)}`
+        + `${noCanonical ? ` - ${noCanonical}` : ''}`;
+      // PAST THE RESULT WINDOW, still unable to retrieve the transcript: §13C decides (07:49).
+      return this.#unretrievedPastWindow(roundIdBytes, entryId, contract, why) || { entryId, stored: false, waiting: true, why };
+    }
 
     // §13C, ONE SEAT REFUSED (M3.3-34): no mark carried at the threshold, every
     // seat answered, and the seats it is short of were up and refused the
@@ -394,6 +396,35 @@ export class Verifier {
     const carried = this.carried.get(`${hex(roundIdBytes)}:${hex(entryId)}`);
     return !!carried && this.#unreached(roundIdBytes, carried) === 0 && carried.refused.length === 0 && carried.taken === 0
       && !(carried.refusedMarks && carried.refusedMarks.length);
+  }
+
+  /**
+   * THE RESULT WINDOW IS THE OBJECTION WINDOW (the owner 2026-09-15 07:49): "same duration, on the
+   * contract. A seat that cannot retrieve the transcript in that window treats the entry as VOID."
+   * A seat still waiting on a seat it cannot reach - so it cannot know the receipted transcript -
+   * once its close plus the round's objection_window_ms has passed, decides by §13C's no-quorum
+   * rule: VOID, or FORFEIT on the player's proven equivocation; a result already at the threshold
+   * is not touched (the rule answers nothing for it). Decided once, kept with the other no-quorum
+   * outcomes. Inside the window it answers null and the seat waits, as before. This ends the
+   * M3.3-34 hold "past the window, keep asking" for a seat that cannot retrieve the transcript.
+   */
+  #unretrievedPastWindow(roundIdBytes, entryId, contract, why) {
+    const row = this.round.get(roundIdBytes);
+    const closedMs = row && row.closed_ms !== null && row.closed_ms !== undefined ? Number(row.closed_ms) : null;
+    if (closedMs === null || this.round.now() < closedMs + Number(contract.objectionWindowMs)) return null;
+    const had = this.round.noQuorum(entryId);
+    if (had) return { entryId, stored: false, decided: had.outcome, why: had.why };
+    const line = this.round.startLine(roundIdBytes, entryId);
+    if (!line) return null;
+    const signers = new Set(this.round.results(roundIdBytes, entryId).map((r) => hex(r.nodePubkey))).size;
+    const d = noQuorumRule({ signatures: signers, needed: line.needed,
+      equivocationProven: this.round.provenTwoFirstMarks(roundIdBytes, entryId),
+      state: finalityOf(this.round, roundIdBytes, entryId).state });
+    if (!d.outcome) return null;
+    const reason = `${d.why} - this seat could not retrieve the transcript within the result window `
+      + `(objection_window_ms ${contract.objectionWindowMs} after its close): ${why}`;
+    this.round.putNoQuorum({ entryId, roundId: roundIdBytes, outcome: d.outcome, why: reason });
+    return { entryId, stored: false, decided: d.outcome, why: reason };
   }
 
   /**
@@ -629,7 +660,8 @@ export class Verifier {
    * Measured: both runs silent at the live seat. The finality watch calls this
    * on its cadence: the cheap pull first, and only once every peer answered,
    * the same replay and signature the close makes. Until then it is waiting -
-   * never a refund, never a VOID.
+   * inside the result window; past it, a seat still unable to retrieve the
+   * transcript decides by §13C (the owner 2026-09-15 07:49, #unretrievedPastWindow).
    */
   async retryClose(roundIdBytes, entryIdBytes) {
     // A RUN THIS SEAT HAS SIGNED IS NOT CLOSED AGAIN (as `retry`): one seat, one result.
@@ -650,9 +682,12 @@ export class Verifier {
     // (§13B; M3.3-34): measured, this wait kept seat A from deciding FORFEIT
     // with B down through the hold's expiry, after #keep no longer waited.
     if (down && !this.round.provenTwoFirstMarks(roundIdBytes, entryIdBytes)
-      && (noMarkHere || this.#mightGrow(roundIdBytes, entryIdBytes, down)))
-      return { entryId: entryIdBytes, stored: false, waiting: true,
-        why: `waiting on ${down} seat(s): ${(carried.down.length ? carried.down.join('; ') : 'none of them answered').slice(0, 160)}` };
+      && (noMarkHere || this.#mightGrow(roundIdBytes, entryIdBytes, down))) {
+      const why = `waiting on ${down} seat(s): ${(carried.down.length ? carried.down.join('; ') : 'none of them answered').slice(0, 160)}`;
+      // PAST THE RESULT WINDOW, still unable to retrieve the transcript: §13C decides (07:49).
+      return this.#unretrievedPastWindow(roundIdBytes, entryIdBytes, contract, why)
+        || { entryId: entryIdBytes, stored: false, waiting: true, why };
+    }
     const options = { roundRandomness: beacon.hash };
     const answer = await this.pool.submit({ key: `${hex(roundIdBytes)}:${hex(entryIdBytes)}:retry:${++retryJobs}`,
       objected: this.round.objected(roundIdBytes, entryIdBytes),

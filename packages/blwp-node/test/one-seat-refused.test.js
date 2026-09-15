@@ -222,7 +222,10 @@ test('one seat refused (2): the refusals are the player\'s own two first marks -
   } finally { await w.close(); }
 });
 
-test('one seat refused (4): the refusing seat is unreachable at the close - A holds past the window, no VOID; back, both VOID', async () => {
+// THE OWNER 2026-09-15 07:49: the result window is the objection window, and a seat that cannot
+// retrieve the transcript in it treats the entry as VOID. Until then (M3.3-34) A held past the
+// window with no VOID - measured this morning: HOLDING "waiting on 1 seat" at the window + 2 s.
+test('one seat refused (4): the refusing seat is unreachable at the close - past the window A cannot retrieve the transcript and decides VOID; back, both VOID', async () => {
   const w = await seats();
   try {
     const run = await seatAndBuild(w, { lockAt: ['a'] });
@@ -237,10 +240,11 @@ test('one seat refused (4): the refusing seat is unreachable at the close - A ho
     await until(() => w.a.round.noQuorum(run.eid) && w.b.round.noQuorum(run.eid));
     const after = { a: await at(w.a, w, run), b: await at(w.b, w, run), lockHeld: lockHeld(w, run) };
     console.log('  FACTS (refused, 4 - peer unreachable):', JSON.stringify({ pastWindowBDown, after }));
-    assert.equal(pastWindowBDown.closing.state, 'HOLDING');
-    assert.match(pastWindowBDown.closing.why, /waiting on 1 seat/);
-    assert.equal(pastWindowBDown.noQuorum, null);
-    assert.equal(pastWindowBDown.finality, null);
+    assert.equal(pastWindowBDown.closing.state, 'VOID');
+    assert.match(pastWindowBDown.closing.why, /no quorum at 0 of 2/);
+    assert.equal(pastWindowBDown.noQuorum, 'VOID');
+    assert.equal(pastWindowBDown.finality, 'VOID');
+    assert.deepEqual(pastWindowBDown.results, [], 'A signed a result for a run it could not retrieve');
     for (const s of ['a', 'b']) assert.deepEqual(brief(after[s]), VOIDED, s);
     assert.equal(after.lockHeld, true);
   } finally { await w.close(); }
