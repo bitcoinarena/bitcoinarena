@@ -16,7 +16,10 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
-import { replayInWorker } from '../src/replay.js';
+import { replayInWorker as replayInWorkerUnder } from '../src/replay.js';
+import { TRUCK } from '../src/cores.js';
+// THE TRUCK'S RUNS, REPLAYED UNDER THE TRUCK (M3 R1): replay takes the core it runs under; these are truck runs.
+const replayInWorker = (t, e, o = {}) => replayInWorkerUnder(t, e, { core: TRUCK, ...o });
 import { resultFrom, signResult, verifiedFinal } from '../src/verdict.js';
 import { resultId, joinSignedResult } from '../../protocol/src/result.js';
 import { transcriptHash } from '../../protocol/src/transcript.js';

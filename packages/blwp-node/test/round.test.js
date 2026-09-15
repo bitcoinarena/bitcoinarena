@@ -117,15 +117,22 @@ test('a batch for a round or an entry the node has not got is refused', () => {
  * simulator the client's own header argues against, and it would arrive
  * exactly like this: one more import, in one more place, for one good reason.
  */
-test('the node reaches the simulator through replay.js and nowhere else', async () => {
+//
+// AND SINCE M3 R1 (the owner 2026-09-15 08:03/08:07: the seats replay the core a round names; several
+// cores at once) THE DOOR HAS TWO HALVES, each still exactly one file: cores.js is the only file that
+// IMPORTS a core - the installed cores, by hash - and replay.js is the only file that STEPS one, the
+// core it is handed. Measured before the split: the one file that did both was replay.js.
+test('the node imports a core only in cores.js and steps one only in replay.js', async () => {
   const { readFileSync, readdirSync } = await import('node:fs');
-  const reaches = [];
+  const imports = [];
+  const steps = [];
   for (const f of readdirSync(new URL('../src/', import.meta.url).pathname)) {
     const src = readFileSync(new URL('../src/' + f, import.meta.url).pathname, 'utf8');
-    if (/packages\/core|@blwp\/core|core\/src|\bstep\s*\(/.test(src)) reaches.push(f);
+    if (/packages\/core|@blwp\/core|core\/src/.test(src)) imports.push(f);
+    if (/\bstep\s*\(/.test(src)) steps.push(f);
   }
-  assert.deepEqual(reaches, ['replay.js'],
-    'the simulator is reached from somewhere other than the one door, or from none');
+  assert.deepEqual(imports, ['cores.js'], 'a core is imported somewhere other than the one door, or nowhere');
+  assert.deepEqual(steps, ['replay.js'], 'a core is stepped somewhere other than the replay, or nowhere');
 
   // and that door replays a finished transcript - it does not tick anything
   const src = readFileSync(new URL('../src/replay.js', import.meta.url).pathname, 'utf8');

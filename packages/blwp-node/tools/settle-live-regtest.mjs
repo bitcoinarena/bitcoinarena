@@ -20,7 +20,10 @@ import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { stakeLockPort } from '../src/stake-lock-port.js';
-import { replay } from '../src/replay.js';
+import { replay as replayUnder } from '../src/replay.js';
+import { TRUCK } from '../src/cores.js';
+// THE TRUCK'S RUNS, REPLAYED UNDER THE TRUCK (M3 R1): replay takes the core it runs under; these are truck runs.
+const replay = (t, e, o = {}) => replayUnder(t, e, { core: TRUCK, ...o });
 import { assumeSeated } from '../test/seating.js';
 import { rand, b32, RANDOMNESS, WINDOW_MS, GENESIS_HASH, wordsAt, contractFor, say as tell, secretScalar, opts, wait } from '../test/window-fixture.js';
 import { lockFromClient } from '../../blwp-client/src/lock-result.js';

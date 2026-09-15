@@ -35,7 +35,10 @@ import { standUpRound } from './round-2of2.mjs';
 import { watchSockets } from './socket-watch.mjs';
 const sockets = watchSockets();
 import { bitcoindRpc } from '../src/chain-rpc.js';
-import { replay } from '../src/replay.js';
+import { replay as replayUnder } from '../src/replay.js';
+import { TRUCK } from '../src/cores.js';
+// THE TRUCK'S RUNS, REPLAYED UNDER THE TRUCK (M3 R1): replay takes the core it runs under; these are truck runs.
+const replay = (t, e, o = {}) => replayUnder(t, e, { core: TRUCK, ...o });
 import { feldmanGroup } from '../src/curve.js';
 import { Client, federationStakeFor } from '../../blwp-client/src/client.js';
 import {

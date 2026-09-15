@@ -15,7 +15,11 @@ import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js
 import assert from 'node:assert/strict';
 import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
-import { replay, replayInWorker, NO_SEED_RULE } from '../src/replay.js';
+import { replay as replayUnder, replayInWorker as replayInWorkerUnder, NO_SEED_RULE, NO_CORE_RULE } from '../src/replay.js';
+import { TRUCK } from '../src/cores.js';
+// THE TRUCK'S RUNS, REPLAYED UNDER THE TRUCK (M3 R1): replay takes the core it runs under; these are truck runs.
+const replay = (t, e, o = {}) => replayUnder(t, e, { core: TRUCK, ...o });
+const replayInWorker = (t, e, o = {}) => replayInWorkerUnder(t, e, { core: TRUCK, ...o });
 import { init, step, submitLiquidation } from '../../core/src/sim.js';
 import { hash } from '../../core/src/state.js';
 import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
@@ -309,4 +313,15 @@ test('a node that refused to replay produces no state at all', async () => {
   const refused = replay(transcript, { ...entry, worldSecret: undefined, vssSharesRef: new Uint8Array(32) });
   assert.equal(refused.ok, false);
   assert.equal(refused.stateHash, undefined, 'a refusal carried a state hash');
+});
+
+// M3 R1 (the owner 2026-09-15 08:03/08:07): the seats replay the core a round names, handed to replay -
+// replay.js imports none. With no core named, it refuses by name, on this thread and in a worker.
+test('a replay with no core named to run it under is refused by name, on this thread and in a worker', async () => {
+  const { transcript, entry } = stored(600);
+  assert.deepEqual(replayUnder(transcript, entry, { seedWord: SEED }), { ok: false, why: NO_CORE_RULE });
+  assert.deepEqual(await replayInWorkerUnder(transcript, entry, { seedWord: SEED }), { ok: false, why: NO_CORE_RULE });
+  const under = replay(transcript, entry, { seedWord: SEED });
+  assert.equal(under.ok, true, under.why);
+  assert.equal(under.coreHash, TRUCK.hash, 'the answer names another core than the one that replayed');
 });

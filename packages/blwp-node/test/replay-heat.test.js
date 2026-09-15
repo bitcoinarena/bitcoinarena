@@ -22,7 +22,10 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
-import { replay } from '../src/replay.js';
+import { replay as replayUnder } from '../src/replay.js';
+import { TRUCK } from '../src/cores.js';
+// THE TRUCK'S RUNS, REPLAYED UNDER THE TRUCK (M3 R1): replay takes the core it runs under; these are truck runs.
+const replay = (t, e, o = {}) => replayUnder(t, e, { core: TRUCK, ...o });
 import { ghostForChecked } from '../src/ghosts.js';
 import { init, step, submitLoad, heatOf } from '../../core/src/sim.js';
 import { heat as heatRule } from '../../core/src/rules/cargo.js';
@@ -168,7 +171,7 @@ test('the ghost of a loaded run is at the pose that run actually reached', () =>
   const run = played(TICKS);
   const { transcript, entry, rid, eid, batches } = stored(TICKS);
 
-  const made = ghostForChecked({
+  const made = ghostForChecked({ core: TRUCK,
     transcript, entry, batches, roundId: rid, entryId: eid, tick: AT, seedWord: SEED,
   });
   assert.equal(made.ok, true, made.why);
@@ -181,7 +184,7 @@ test('the ghost of a loaded run is at the pose that run actually reached', () =>
   // The same tick off a transcript with no load in it - the picture every
   // watcher was being shown until this letter.
   const { transcript: blind, entry: e2, rid: r2, eid: i2, batches: b2 } = stored(TICKS, { withLoad: false });
-  const old = ghostForChecked({
+  const old = ghostForChecked({ core: TRUCK,
     transcript: blind, entry: e2, batches: b2, roundId: r2, entryId: i2, tick: AT, seedWord: SEED,
   });
   assert.equal(old.ok, true, old.why);

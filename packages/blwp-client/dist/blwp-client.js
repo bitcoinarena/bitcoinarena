@@ -6349,6 +6349,7 @@ function playerKeyIsDerived({ seed, roundId, playerPubkey, curve } = {}) {
 // naming any other core is refused by `coreIsKnownGood` (known-core.js).
 const KNOWN_GOOD_CORE_HASHES = Object.freeze([
   'f33aa45c61db5f531fbf1b714c2da0fde031d84a14d7a9fde665a142d4828f3c',
+  '5f3b517648bde43dca8c93938c45f4996242630f8cc173d1d940df89c4dd8e48',
 ]);
 
 // ---- protocol/src/known-core.js

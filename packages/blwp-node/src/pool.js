@@ -99,9 +99,10 @@ export class ReplayPool {
       if (!next) return;
       this.running++;
       this.order.push(next.job.key);
-      const { transcript, entry, options } = next.job;
+      // THE CORE THE ROUND NAMES travels with the job (M3 R1): the worker replays under it, or refuses.
+      const { transcript, entry, options, core } = next.job;
       Promise.resolve()
-        .then(() => replayInWorker(transcript, entry, options))
+        .then(() => replayInWorker(transcript, entry, { ...options, core }))
         .then(next.resolve, next.reject)
         .finally(() => { this.running--; this.#pump(); });
     }

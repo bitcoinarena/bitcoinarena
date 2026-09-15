@@ -22,11 +22,10 @@
 // that it runs in a worker and the transcript comes off the wire rather than
 // off disk." Same loop, same order, no second reading of the rules.
 import { isMainThread, parentPort, workerData, Worker } from 'node:worker_threads';
-import { init, step, submitLiquidation, submitLoad, runScore } from '../../core/src/sim.js';
-import {
-  hash, O_SCORE, S_STATE, S_HEAT, O_TRUCK, T_X, T_Z, T_HEADING,
-} from '../../core/src/state.js';
-import { RUN_LIVE, RUN_DELIVERED, BLOCK_TICKS } from '../../core/src/rules/gate.js';
+// AND SINCE M3 R1 (the owner 2026-09-15 08:03/08:07) IT IS HANDED THE CORE: the round names one, the
+// seat's cores.js resolves it, and this file drives that core's adapter - it imports none. The
+// loop is the same; what a tick's events are, what a run came to and what a picture is are the
+// core's to say.
 import { lastTickOfRun } from '../../protocol/src/contracts.js';
 import { INPUT_WORDS } from '../../protocol/src/batch.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
@@ -54,6 +53,8 @@ const hex = (b) => {
  * a refusal, not a guess.
  */
 export const NO_SEED_RULE = 'that entry carries no world secret to replay from';
+/** A replay with no core named to run it under is refused, not run under whichever core is nearest. */
+export const NO_CORE_RULE = 'no core is named to replay that run under';
 
 /**
  * REPLAY ONE PLAYER'S RUN FROM WHAT THE NODE ALREADY STORES.
@@ -81,7 +82,9 @@ export const NO_SEED_RULE = 'that entry carries no world secret to replay from';
  * OF, because 11's input chain covers ticks and `ghostBinds` checks the tick
  * against the inputs that cover it. The same state is mark N+1 and ghost N.
  */
-export function replay(transcript, entry, { seedWord, roundRandomness, marks = [], pictures = [] } = {}) {
+export function replay(transcript, entry, { core, seedWord, roundRandomness, marks = [], pictures = [] } = {}) {
+  if (!core || !core.adapter || typeof core.adapter.start !== 'function') return { ok: false, why: NO_CORE_RULE };
+  const a = core.adapter;
   if (!Number.isInteger(seedWord)) {
     if (!(entry?.worldSecret instanceof Uint8Array) || entry.worldSecret.length !== 32)
       return { ok: false, why: NO_SEED_RULE };
@@ -113,7 +116,7 @@ export function replay(transcript, entry, { seedWord, roundRandomness, marks = [
   if (reaches > ends)
     return {
       ok: false,
-      why: `that run ends at tick ${ends} - ${BLOCK_TICKS} ticks from its join at ${start} - `
+      why: `that run ends at tick ${ends} - ${a.RUN_TICKS} ticks from its join at ${start} - `
         + `and that transcript reaches ${reaches}`,
     };
 
@@ -132,7 +135,8 @@ export function replay(transcript, entry, { seedWord, roundRandomness, marks = [
   // to submitLiquidation BEFORE that tick". After it would be a different
   // game - the strike would land a tick late, every tick, and only in the
   // replay.
-  const due = new Map((transcript.liquidations || []).map(([at, size]) => [at, size]));
+  // The events are the core's (adapter.eventsOf): for the truck, liquidations and loads.
+  const events = a.eventsOf(transcript);
 
   // AND THE LOAD, WHICH DECIDES HOW HARD THE WAR HUNTS THIS RUN.
   //
@@ -145,12 +149,11 @@ export function replay(transcript, entry, { seedWord, roundRandomness, marks = [
   // Before the tick, like a liquidation, and for the same reason: it is round
   // setup for the tick it names, not a consequence of it. More than one at a
   // tick cannot happen - the node keys them by tick - so a Map is the shape.
-  const loaded = new Map((transcript.loads || []).map(([at, fee, btc]) => [at, [fee, btc]]));
   const want = new Map(marks.map((m) => [m.tick, hex(m.stateHash)]));
   const wanted = new Set(pictures);
   const taken = new Map();
 
-  const st = init(seedWord);
+  const st = a.start(seedWord);
   let checked = 0;
   let divergedAt = null;
 
@@ -164,24 +167,18 @@ export function replay(transcript, entry, { seedWord, roundRandomness, marks = [
   // legitimately publish; the loop below only sees ticks it steps, so it is
   // checked here.
   const atStart = want.get(start);
-  if (atStart !== undefined) { checked++; if (hash(st) !== atStart) divergedAt = start; }
+  if (atStart !== undefined) { checked++; if (a.stateHash(st) !== atStart) divergedAt = start; }
 
   for (const t of ticks) {
-    if (loaded.has(t.tick)) submitLoad(st, ...loaded.get(t.tick));
-    if (due.has(t.tick)) submitLiquidation(st, due.get(t.tick));
-    step(st, t.words[0], t.words[1], t.words[2], t.words[3], t.words[4]);
+    events.before(st, t.tick);
+    a.step(st, t.words);
 
     // THE PICTURE, if this tick is one somebody asked for. Three words and no
     // more: x, z, heading are what draws a truck on a map, and every other
     // word of the state would be a claim about somebody's run that a 5 Hz
     // frame cannot prove and a renderer does not need.
     if (wanted.has(t.tick)) {
-      taken.set(t.tick, {
-        tick: t.tick,
-        x: st.i32[O_TRUCK + T_X],
-        z: st.i32[O_TRUCK + T_Z],
-        heading: st.i32[O_TRUCK + T_HEADING],
-      });
+      taken.set(t.tick, { tick: t.tick, ...a.picture(st) });
     }
 
     // A CHECKPOINT AT TICK N IS THE STATE AFTER N HAS BEEN STEPPED. The
@@ -191,7 +188,7 @@ export function replay(transcript, entry, { seedWord, roundRandomness, marks = [
     const at = want.get(t.tick + 1);
     if (at !== undefined) {
       checked++;
-      if (hash(st) !== at && divergedAt === null) divergedAt = t.tick + 1;
+      if (a.stateHash(st) !== at && divergedAt === null) divergedAt = t.tick + 1;
     }
   }
 
@@ -209,22 +206,23 @@ export function replay(transcript, entry, { seedWord, roundRandomness, marks = [
   // A run still LIVE at the last stored tick has no outcome at all. That is
   // not FAILED - the transcript simply stops - and saying otherwise would let
   // a lost connection be scored as a lost run.
-  const ended = st.i32[O_SCORE + S_STATE];
-  const outcome = ended === RUN_LIVE ? null : (ended === RUN_DELIVERED ? 'DELIVERED' : 'FAILED');
+  const ran = a.result(st);
 
   return {
     ok: true,
-    outcome,
+    // THE CORE THAT REPLAYED IT, by its own hash - what a result may name, and nothing else.
+    coreHash: core.hash,
+    outcome: ran.outcome,
     // Every tick that was asked for and reached, in the order asked. A tick
     // this run never got to is simply absent - the caller is refusing it by
     // name, and a zeroed picture would be a truck somewhere it never was.
     pictures: pictures.map((at) => taken.get(at)).filter(Boolean),
-    score: runScore(st),
+    score: ran.score,
     ticks: ticks.length,
-    liquidations: due.size,
-    loads: loaded.size,
-    heat: st.i32[O_SCORE + S_HEAT],
-    stateHash: hash(st),
+    liquidations: events.count.liquidations,
+    loads: events.count.loads,
+    heat: ran.heat,
+    stateHash: a.stateHash(st),
     checked,
     unchecked: marks.length - checked,
     divergedAt,
@@ -239,7 +237,8 @@ export function replay(transcript, entry, { seedWord, roundRandomness, marks = [
  * node answering anything - no batch stored, no receipt issued, no checkpoint
  * taken - for as long as it took, and a daemon that goes deaf while it thinks
  * is a daemon that drops the run it is meant to be witnessing. IMPLEMENTATION
- * calls for "worker threads, each importing @blwp/core once".
+ * calls for worker threads, each loading the simulator once - since M3 R1 the core the round names,
+ * by its adapter's URL (cores.js), not a core this file imports.
  *
  * IT IS THE SAME FILE. The worker entry is this module: a Worker is started on
  * `import.meta.url`, so there is exactly one door to the simulator whichever
@@ -254,9 +253,13 @@ export function replay(transcript, entry, { seedWord, roundRandomness, marks = [
  * tick.
  */
 export function replayInWorker(transcript, entry, options = {}) {
+  // THE CORE CROSSES AS ITS HASH AND ITS MODULE, not as the object: the worker imports the adapter
+  // itself, so no function is ever handed across a thread.
+  const { core, ...rest } = options;
+  if (!core || typeof core.url !== 'string') return Promise.resolve({ ok: false, why: NO_CORE_RULE });
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL(import.meta.url), {
-      workerData: { blwpReplay: true, transcript, entry, options },
+      workerData: { blwpReplay: true, transcript, entry, options: rest, core: { hash: core.hash, url: core.url } },
     });
     let answered = false;
     worker.once('message', (m) => { answered = true; resolve(m); });
@@ -270,9 +273,14 @@ export function replayInWorker(transcript, entry, options = {}) {
 // THE WORKER SIDE OF THE SAME FILE. Only reached when this module is started
 // as a Worker by `replayInWorker`; in the daemon's own thread it does nothing.
 if (!isMainThread && workerData && workerData.blwpReplay) {
-  const { transcript, entry, options } = workerData;
-  parentPort.postMessage(replay(transcript, entry, options));
-  parentPort.close();
+  const { transcript, entry, options, core } = workerData;
+  import(core.url).then((m) => {
+    parentPort.postMessage(replay(transcript, entry, { ...options, core: { hash: core.hash, url: core.url, adapter: m.CORE } }));
+    parentPort.close();
+  }, (e) => {
+    parentPort.postMessage({ ok: false, why: `the core named for that run could not be loaded: ${e.message}` });
+    parentPort.close();
+  });
 }
 
 /**
@@ -309,8 +317,13 @@ if (!isMainThread && workerData && workerData.blwpReplay) {
  * anybody's simulation and no browser computes any of it.
  */
 export class RunInProgress {
-  constructor(entry, { seedWord, roundRandomness } = {}) {
+  constructor(entry, { core, seedWord, roundRandomness } = {}) {
     this.ok = true;
+    // THE CORE THE ROUND NAMES (M3 R1), as `replay` takes it: none named, none run.
+    if (!core || !core.adapter || typeof core.adapter.start !== 'function')
+      return Object.assign(this, { ok: false, why: NO_CORE_RULE });
+    this.core = core;
+    this.a = core.adapter;
     if (!Number.isInteger(seedWord)) {
       if (!(entry?.worldSecret instanceof Uint8Array) || entry.worldSecret.length !== 32)
         return Object.assign(this, { ok: false, why: NO_SEED_RULE });
@@ -325,7 +338,7 @@ export class RunInProgress {
     this.seedWord = seedWord;
     this.joinTick = entry.joinTick;
     this.endsAt = lastTickOfRun(entry.joinTick);
-    this.st = init(seedWord);
+    this.st = this.a.start(seedWord);
     // The last tick STEPPED. Nothing yet, so one before the join.
     this.at = entry.joinTick - 1;
     // Liquidations land BEFORE their own tick and exactly once, whether the
@@ -344,12 +357,7 @@ export class RunInProgress {
 
   /** x, z and heading as of the last tick stepped. Three words, like `replay`. */
   pose() {
-    return {
-      tick: this.at,
-      x: this.st.i32[O_TRUCK + T_X],
-      z: this.st.i32[O_TRUCK + T_Z],
-      heading: this.st.i32[O_TRUCK + T_HEADING],
-    };
+    return { tick: this.at, ...this.a.picture(this.st) };
   }
 
   /**
@@ -381,7 +389,7 @@ export class RunInProgress {
     if (tick > this.endsAt)
       return {
         ok: false,
-        why: `that run ends at tick ${this.endsAt} - ${BLOCK_TICKS} ticks from its join at `
+        why: `that run ends at tick ${this.endsAt} - ${this.a.RUN_TICKS} ticks from its join at `
           + `${this.joinTick} - and that picture asks for ${tick}`,
       };
 
@@ -408,16 +416,24 @@ export class RunInProgress {
         this.loadDue.set(at, [fee, btc]); this.loadSeen.add(at);
       }
 
+    // THE CORE APPLIES THEM (adapter.eventsOf), each before its own tick - and a tick is stepped once,
+    // so each lands once, whichever slice brought it.
+    const events = this.a.eventsOf({
+      liquidations: [...this.due],
+      loads: [...this.loadDue].map(([at, [fee, btc]]) => [at, fee, btc]),
+    });
     for (let at = this.at + 1; at <= tick; at++) {
       const t = ticks[at - from];
       if (!Array.isArray(t.words) || t.words.length !== INPUT_WORDS)
         return { ok: false, why: `tick ${t.tick} does not carry five words` };
-      if (this.loadDue.has(at)) { submitLoad(this.st, ...this.loadDue.get(at)); this.loadDue.delete(at); }
-      if (this.due.has(at)) { submitLiquidation(this.st, this.due.get(at)); this.due.delete(at); }
-      step(this.st, t.words[0], t.words[1], t.words[2], t.words[3], t.words[4]);
+      events.before(this.st, at);
+      this.a.step(this.st, t.words);
       this.at = at;
       this.stepped++;
     }
+    // Consumed as they land: nothing at or before the last tick stepped is kept.
+    for (const at of [...this.due.keys()]) if (at <= this.at) this.due.delete(at);
+    for (const at of [...this.loadDue.keys()]) if (at <= this.at) this.loadDue.delete(at);
     return { ok: true, ...this.pose() };
   }
 }

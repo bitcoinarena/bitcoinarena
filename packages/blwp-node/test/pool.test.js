@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
 import { ReplayPool, classOf, OBJECTED, RANKED, REST } from '../src/pool.js';
+import { TRUCK } from '../src/cores.js';
 import { init, step, submitLiquidation } from '../../core/src/sim.js';
 import { hash } from '../../core/src/state.js';
 import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
@@ -98,7 +99,7 @@ test('an objected run leaves the queue while unobjected runs sit', async () => {
   const s = stored(TICKS);
   const pool = new ReplayPool({ workers: 1 });
   const job = (key, extra) => ({
-    key, transcript: s.transcript, entry: s.entry,
+    core: TRUCK, key, transcript: s.transcript, entry: s.entry,
     options: { seedWord: SEED, marks: run.marks }, ...extra,
   });
 
@@ -134,7 +135,7 @@ test('an objection arriving last is served next, whatever is queued ahead of it'
   const s = stored(TICKS);
   const pool = new ReplayPool({ workers: 1 });
   const job = (key, extra) => ({
-    key, transcript: s.transcript, entry: s.entry, options: { seedWord: SEED }, ...extra,
+    core: TRUCK, key, transcript: s.transcript, entry: s.entry, options: { seedWord: SEED }, ...extra,
   });
 
   const all = [pool.submit(job('busy'))];
@@ -162,9 +163,9 @@ test('through the pool: same hashes, same refusal, and a late run starts at its 
 
   const pool = new ReplayPool({ workers: 2 });
   const [a, b] = await Promise.all([
-    pool.submit({ key: 'from-0', transcript: s0.transcript, entry: s0.entry,
+    pool.submit({ core: TRUCK, key: 'from-0', transcript: s0.transcript, entry: s0.entry,
       options: { seedWord: SEED, marks: straight.marks } }),
-    pool.submit({ key: 'from-50', transcript: s50.transcript, entry: s50.entry,
+    pool.submit({ core: TRUCK, key: 'from-50', transcript: s50.transcript, entry: s50.entry,
       options: { seedWord: SEED, marks: late.marks } }),
   ]);
 
@@ -177,7 +178,7 @@ test('through the pool: same hashes, same refusal, and a late run starts at its 
   // is refused with the reason, and the pool does not paper over it: the seed
   // now comes from the entry's own secret and the round's randomness, and the
   // randomness is a future Bitcoin block hash no node here draws.
-  const refused = await pool.submit({ key: 'no-seed', transcript: s0.transcript, entry: s0.entry });
+  const refused = await pool.submit({ core: TRUCK, key: 'no-seed', transcript: s0.transcript, entry: s0.entry });
   assert.equal(refused.ok, false);
   assert.match(refused.why, /names no randomness to mix the player seed/);
 

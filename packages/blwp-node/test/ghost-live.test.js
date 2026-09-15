@@ -24,6 +24,7 @@ import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
 import { Ghosts, ghostForChecked } from '../src/ghosts.js';
 import { RunInProgress } from '../src/replay.js';
+import { TRUCK } from '../src/cores.js';
 import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
 import { GENESIS, decodeTranscript } from '../../protocol/src/transcript.js';
 import { decodeGhost } from '../../protocol/src/ghost.js';
@@ -107,7 +108,7 @@ test('the live picture is the same pose a full replay produces, at every tick', 
   for (let at = CHUNK - 1; at < 600; at += CHUNK) {
     const warm = world.ghosts.frameFor && null;   // the live path is `latest`
     void warm;
-    const slow = ghostForChecked({
+    const slow = ghostForChecked({ core: TRUCK,
       transcript, entry: world.entry, batches,
       roundId: world.rid, entryId: world.eid, tick: at, roundRandomness: BEACON.hash,
     });
@@ -177,7 +178,7 @@ test('a late joiner\'s picture starts at their own join tick', () => {
 
 test('a run refuses to be stepped past the end of a round, and past a gap', () => {
   const world = driving(60);
-  const run = new RunInProgress(world.entry, { roundRandomness: BEACON.hash });
+  const run = new RunInProgress(world.entry, { core: TRUCK, roundRandomness: BEACON.hash });
   assert.equal(run.ok, true, run.why);
 
   const whole = world.round.ticksFrom(world.rid, world.eid, 0);
@@ -188,7 +189,7 @@ test('a run refuses to be stepped past the end of a round, and past a gap', () =
   // A SLICE THAT SKIPS AHEAD IS NOT A LONGER RUN.
   const ahead = world.round.ticksFrom(world.rid, world.eid, 30);
   assert.equal(ahead.from, 30);
-  const fresh = new RunInProgress(world.entry, { roundRandomness: BEACON.hash });
+  const fresh = new RunInProgress(world.entry, { core: TRUCK, roundRandomness: BEACON.hash });
   assert.equal(fresh.stepTo(ahead, 40).ok, false);
   assert.match(fresh.stepTo(ahead, 40).why, /this run is at tick -1 and that slice starts at 30/);
 });
@@ -229,7 +230,7 @@ test('a live picture of a loaded run is the pose a full replay produces', () => 
   const cold = new Ghosts(world.round, { randomnessFor: () => BEACON });
   let compared = 0;
   for (let at = CHUNK - 1; at < 600; at += CHUNK) {
-    const slow = ghostForChecked({
+    const slow = ghostForChecked({ core: TRUCK,
       transcript, entry: world.entry, batches,
       roundId: world.rid, entryId: world.eid, tick: at, roundRandomness: BEACON.hash,
     });
@@ -278,7 +279,7 @@ test('a load is applied once however many slices a watcher asks for', () => {
 
   const transcript = live.round.transcript(live.rid, live.eid);
   const batches = decodeTranscript(live.round.handOver(live.rid, live.eid).bytes).batches;
-  const slow = ghostForChecked({
+  const slow = ghostForChecked({ core: TRUCK,
     transcript, entry: live.entry, batches,
     roundId: live.rid, entryId: live.eid, tick: last.ghost.tick, roundRandomness: BEACON.hash,
   });

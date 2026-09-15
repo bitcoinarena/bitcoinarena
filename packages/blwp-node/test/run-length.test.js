@@ -18,7 +18,10 @@ import assert from 'node:assert/strict';
 
 import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
-import { replay } from '../src/replay.js';
+import { replay as replayUnder } from '../src/replay.js';
+import { TRUCK } from '../src/cores.js';
+// THE TRUCK'S RUNS, REPLAYED UNDER THE TRUCK (M3 R1): replay takes the core it runs under; these are truck runs.
+const replay = (t, e, o = {}) => replayUnder(t, e, { core: TRUCK, ...o });
 import { encodeInputBatch } from '../../protocol/src/batch.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';

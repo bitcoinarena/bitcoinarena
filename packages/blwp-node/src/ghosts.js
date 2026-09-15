@@ -24,6 +24,7 @@ import { toHex as hex } from '../../protocol/src/hash.js';
 import { batchId, batchTicks } from '../../protocol/src/batch.js';
 import { GENESIS, decodeTranscript } from '../../protocol/src/transcript.js';
 import { replay, RunInProgress } from './replay.js';
+import { coreForRound } from './cores.js';
 
 const same = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array
   && a.length === b.length && a.every((v, i) => v === b[i]);
@@ -66,7 +67,7 @@ function headCovering(batches, tick) {
  * is anything the asking side gets to choose.
  */
 export function ghostFor({
-  transcript, entry, batches, roundId, entryId, tick, seedWord, roundRandomness,
+  transcript, entry, batches, roundId, entryId, tick, seedWord, roundRandomness, core,
 }) {
   if (!Number.isInteger(tick) || tick < 0)
     return { ok: false, why: 'a ghost is at a whole tick' };
@@ -87,7 +88,7 @@ export function ghostFor({
   if (same(chain.head, GENESIS))
     return { ok: false, why: 'that head is before any input went out' };
 
-  const run = replay(transcript, entry, { seedWord, roundRandomness, pictures: [tick] });
+  const run = replay(transcript, entry, { core, seedWord, roundRandomness, pictures: [tick] });
   if (!run.ok) return { ok: false, why: run.why };
 
   const shot = run.pictures.find((p) => p.tick === tick);
@@ -202,6 +203,7 @@ export class Ghosts {
     const had = this.runs.get(key);
     if (had) return had;
     const made = new RunInProgress(entry, {
+      core: this.#coreOf(roundIdBytes),
       roundRandomness: this.#randomnessOf(roundIdBytes, entry, entryIdBytes),
     });
     this.runs.set(key, made);
@@ -211,6 +213,14 @@ export class Ghosts {
   /** A run this node will not picture again - a round that closed, say. */
   forget(roundIdBytes, entryIdBytes) {
     return this.runs.delete(`${hex(roundIdBytes)}:${hex(entryIdBytes)}`);
+  }
+
+  /** The core the round names, as this seat's cores.js resolves it (M3 R1) - or none: nothing is pictured. */
+  #coreOf(roundIdBytes) {
+    const row = this.round.get(roundIdBytes);
+    if (!row) return null;
+    const found = coreForRound(decodeRoundContract(new Uint8Array(row.contract)));
+    return found.ok ? found.core : null;
   }
 
   #randomnessOf(roundIdBytes, entry, entryId) {
@@ -259,6 +269,7 @@ export class Ghosts {
     catch (e) { return { ok: false, why: e.message }; }
 
     const made = ghostForChecked({
+      core: this.#coreOf(roundIdBytes),
       transcript: this.round.transcript(roundIdBytes, entryIdBytes),
       entry: held,
       batches,

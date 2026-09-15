@@ -19,6 +19,7 @@ import assert from 'node:assert/strict';
 import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
 import { ghostFor, ghostForChecked } from '../src/ghosts.js';
+import { TRUCK } from '../src/cores.js';
 import { init, step, submitLiquidation } from '../../core/src/sim.js';
 import { O_TRUCK, T_X, T_Z, T_HEADING } from '../../core/src/state.js';
 import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
@@ -95,7 +96,7 @@ function stored(ticks, { from = 0, chunk = CHUNK } = {}) {
   return {
     round: r, rid, eid, entry, batches,
     transcript: r.transcript(rid, eid),
-    make: (tick, over = {}) => ghostForChecked({
+    make: (tick, over = {}) => ghostForChecked({ core: TRUCK,
       transcript: r.transcript(rid, eid), entry, batches, roundId: rid, entryId: eid,
       tick, seedWord: SEED, ...over,
     }),
@@ -195,7 +196,7 @@ test('a run with no published inputs produces no picture', () => {
   const eid = r.enter(entry);
 
   // an entry that has entered and never published a batch
-  const none = ghostFor({
+  const none = ghostFor({ core: TRUCK,
     transcript: r.transcript(rid, eid), entry, batches: [], roundId: rid, entryId: eid,
     tick: 0, seedWord: SEED,
   });
@@ -204,7 +205,7 @@ test('a run with no published inputs produces no picture', () => {
 
   // and a chain of empty batches is the same answer: there is no tick to be a
   // picture of, and the refusal says that rather than "no such tick"
-  const empty = ghostFor({
+  const empty = ghostFor({ core: TRUCK,
     transcript: r.transcript(rid, eid), entry, roundId: rid, entryId: eid, tick: 0, seedWord: SEED,
     batches: [{ roundId: rid, entryId: eid, previousHash: GENESIS, firstTick: 0, ticks: [], liquidations: [] }],
   });

@@ -37,6 +37,7 @@ import {
   joinSignedResult, splitSignedResult, decodePlayerResult, resultId, SIGNED_RESULT_BYTES,
 } from '../../protocol/src/result.js';
 import { decodeRoundContract } from '../../protocol/src/contracts.js';
+import { coreForRound } from './cores.js';
 import { committeeSeedFromBeacon, beaconFromChain, beaconIsTheChains } from '../../protocol/src/beacon.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
@@ -192,7 +193,7 @@ export class Verifier {
       // that asked nobody could never hold T of them. Pulled here, by the
       // node, and not trusted to the client: a losing player who withheld
       // receipts would reach no-quorum and a VOID refund.
-      return this.carryReceipts(roundIdBytes, entryId).then(() => this.pool.submit({
+      return this.carryReceipts(roundIdBytes, entryId).then(() => this.pool.submit({ core: this.#coreOf(roundIdBytes),
         key: `${hex(roundIdBytes)}:${hex(entryId)}`,
         objected,
         transcript,
@@ -396,6 +397,17 @@ export class Verifier {
     const carried = this.carried.get(`${hex(roundIdBytes)}:${hex(entryId)}`);
     return !!carried && this.#unreached(roundIdBytes, carried) === 0 && carried.refused.length === 0 && carried.taken === 0
       && !(carried.refusedMarks && carried.refusedMarks.length);
+  }
+
+  /**
+   * THE CORE A ROUND'S RUNS ARE REPLAYED UNDER (M3 R1): the one its contract names, as this seat's
+   * cores.js resolves it - or none, and the replay refuses (replay.js NO_CORE_RULE).
+   */
+  #coreOf(roundIdBytes) {
+    const row = this.round.get(roundIdBytes);
+    if (!row) return null;
+    const found = coreForRound(decodeRoundContract(new Uint8Array(row.contract)));
+    return found.ok ? found.core : null;
   }
 
   /**
@@ -633,7 +645,7 @@ export class Verifier {
     if (reach <= last) return answer;
     const prefix = { ticks: full.ticks.filter((t) => t.tick < last),
       liquidations: full.liquidations.filter((l) => l[0] < last), loads: full.loads.filter((l) => l[0] < last) };
-    return this.pool.submit({ key: `${hex(roundIdBytes)}:${hex(entryId)}:stopped`, objected: false,
+    return this.pool.submit({ core: this.#coreOf(roundIdBytes), key: `${hex(roundIdBytes)}:${hex(entryId)}:stopped`, objected: false,
       transcript: prefix, entry, options });
   }
 
@@ -722,7 +734,7 @@ export class Verifier {
         || { entryId: entryIdBytes, stored: false, waiting: true, why };
     }
     const options = { roundRandomness: beacon.hash };
-    const answer = await this.pool.submit({ key: `${hex(roundIdBytes)}:${hex(entryIdBytes)}:retry:${++retryJobs}`,
+    const answer = await this.pool.submit({ core: this.#coreOf(roundIdBytes), key: `${hex(roundIdBytes)}:${hex(entryIdBytes)}:retry:${++retryJobs}`,
       objected: this.round.objected(roundIdBytes, entryIdBytes),
       transcript: this.round.transcript(roundIdBytes, entryIdBytes), entry: found.entry, options });
     return this.#keep({ roundIdBytes, entryId: entryIdBytes, entry: found.entry, contract, answer, options });
@@ -898,7 +910,7 @@ export class Verifier {
       const beacon = beaconFor(this.randomnessFor, contract, roundIdBytes, found.entry, entryIdBytes, this.chainFor);
       if (!beacon.ok) report.refused.push(beacon.why);
       else {
-        const answer = await this.pool.submit({
+        const answer = await this.pool.submit({ core: this.#coreOf(roundIdBytes),
           key: `${hex(roundIdBytes)}:${hex(entryIdBytes)}:rerun`,
           objected: true,
           transcript: this.round.transcript(roundIdBytes, entryIdBytes),
@@ -1125,7 +1137,7 @@ export class Verifier {
     if (!beacon.ok) return null;
     this.seeds.set(hex(roundIdBytes), beacon.committeeSeed);
 
-    const work = this.pool.submit({
+    const work = this.pool.submit({ core: this.#coreOf(roundIdBytes),
       key: `${hex(roundIdBytes)}:${hex(entryIdBytes)}:retry`,
       objected: this.round.objected(roundIdBytes, entryIdBytes),
       transcript: this.round.transcript(roundIdBytes, entryIdBytes),
