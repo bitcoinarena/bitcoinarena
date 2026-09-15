@@ -13,8 +13,8 @@ const sha = (s) => createHash('sha256').update(s).digest();
 
 export const CORE = Object.freeze({
   name: 'counter (a second title)',
-  // replay's run-length rule is still the protocol's (R3); a counter run ends by its own config
-  RUN_TICKS: 9000,
+  // its run length is its config's (R3): a round names it as blockTicks, and the seat checks it against this
+  runTicks: (config = {}) => config.ticks ?? 120,
   INPUT_WORDS: 5,
   start: (seedWord, config = {}) => ({ seed: seedWord | 0, sum: 0, ticks: 0, target: config.target ?? 1000, length: config.ticks ?? 120 }),
   eventsOf: () => ({ count: { liquidations: 0, loads: 0 }, before() {} }),

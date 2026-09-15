@@ -44,9 +44,10 @@ async function twoSeats() {
 }
 
 /** A free round on both seats, naming the core and config given. */
-async function open(w, simCoreHash, configHash) {
+// A round shorter than the fixture's start deadline names its own (the protocol: the deadline is below the run length).
+async function open(w, simCoreHash, configHash, blockTicks = 9000, startDeadlineTicks) {
   const c = { ...contractFor([w.a.round.pubkey, w.b.round.pubkey], BigInt(WINDOW_MS), [w.a, w.b].map((d) => `http://127.0.0.1:${d.port}`)),
-    stakeMsat: 0n, federationId: new Uint8Array(32), simCoreHash, configHash };
+    stakeMsat: 0n, federationId: new Uint8Array(32), simCoreHash, configHash, blockTicks, ...(startDeadlineTicks ? { startDeadlineTicks } : {}) };
   const rid = roundId(c);
   for (const d of [w.a, w.b]) {
     const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
@@ -93,8 +94,8 @@ test('the truck and a second title, the second under two configs, run on the sam
   const w = await twoSeats();
   try {
     const truck = await open(w, TRUCK_CORE_HASH, TRUCK_CONFIG_HASH);
-    const low = await open(w, COUNTER_CORE_HASH, LOW.hash);
-    const high = await open(w, COUNTER_CORE_HASH, HIGH.hash);
+    const low = await open(w, COUNTER_CORE_HASH, LOW.hash, LOW.config.ticks, 90);
+    const high = await open(w, COUNTER_CORE_HASH, HIGH.hash, HIGH.config.ticks, 90);
     const runs = {
       truck: { ...truck, ...(await play(w, truck.rid, TRUCK.adapter, {})) },
       low: { ...low, ...(await play(w, low.rid, COUNTER.adapter, LOW.config)) },

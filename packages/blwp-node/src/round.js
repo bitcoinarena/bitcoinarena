@@ -32,6 +32,7 @@ import { receiptsNeeded } from '../../protocol/src/genesis.js';
 import { decodeHandout } from '../../protocol/src/handout.js';
 import { stakePointIsTheHandouts } from '../../protocol/src/contracts.js';
 import { firstMarkOutcome, startDeadlineOf } from '../../protocol/src/first-mark.js';
+import { coreForRound, installedCores, runTicksOf } from './cores.js';
 
 /**
  * 5-of-7 unless the round's contract is the 2-slot test genesis.
@@ -56,9 +57,11 @@ const verifyNode = (signature, message, pubkey) => {
 };
 
 export class Round {
-  constructor(db, now = () => Date.now()) {
+  constructor(db, now = () => Date.now(), { cores = installedCores() } = {}) {
     this.db = db;
     this.now = now;
+    // THE CORES THIS SEAT RUNS (M3 R1): a round is opened only on one of them, and its run length is theirs.
+    this.cores = cores;
     // Read once, and made on the first ask if the file has none. A node that
     // could not sign would have to answer a checkpoint with something other
     // than a receipt, and there is no such answer.
@@ -272,7 +275,10 @@ export class Round {
     // node would bound batches with one number while the run really ended at
     // another. Measured before this existed: 9000, 4500 and 1 were all
     // accepted here.
-    const runLength = runLengthIsTheCores(contract);
+    // THE ROUND'S OWN CORE AND CONFIG say how long a run is (M3 R1 R3), not the truck's rules.
+    const runs = coreForRound(contract, this.cores);
+    if (!runs.ok) throw new Error(runs.why);
+    const runLength = runLengthIsTheCores(contract, runTicksOf(runs.core, runs.config));
     if (!runLength.ok) throw new Error(runLength.why);
 
     const bytes = encodeRoundContract(contract);
@@ -461,7 +467,7 @@ export class Round {
     const joined = this.entry(b.entryId);
     if (joined) {
       const joinTick = decodeEntryContract(joined).joinTick;
-      const last = lastTickOfRun(joinTick);
+      const last = lastTickOfRun(joinTick, blockTicks);
       const reaches = b.firstTick + b.ticks.length - 1;
       if (reaches > last)
         throw new Error(

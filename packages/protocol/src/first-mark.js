@@ -23,7 +23,6 @@
 import { START_DEADLINE_TICKS } from './constants.js';
 import { FORFEIT, FAILED } from './payout.js';
 import { msForTicks } from './tick.js';
-import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 
 /** The round's start deadline, in ticks after a player's join tick. */
 export const startDeadlineOf = (contract) =>
@@ -103,6 +102,8 @@ export function stoppedOutcome({ receiptedMarks, liveAtLast = false, deadlinePas
  */
 export function roundEndMs(contract) {
   if (!contract || contract.entryCloseMs === undefined) throw new Error('a round\'s end is counted from its entry close, and it names none');
-  const span = msForTicks(2 * startDeadlineOf(contract) + BLOCK_TICKS);
+  // the round's own run length (M3 R1 R3): its contract's blockTicks, which the seat checked against its core
+  if (!Number.isInteger(contract.blockTicks) || contract.blockTicks < 1) throw new Error('a round\'s end is counted from its run length, and it names none');
+  const span = msForTicks(2 * startDeadlineOf(contract) + contract.blockTicks);
   return BigInt(contract.entryCloseMs) + span.ms + (span.exact ? 0n : 1n);
 }

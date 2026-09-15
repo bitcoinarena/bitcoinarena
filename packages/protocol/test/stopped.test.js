@@ -29,9 +29,11 @@ test('a round is over at its entry close plus the start deadline, a whole run an
   const { msForTicks } = await import('../src/tick.js');
   // The default deadline: 900 + 9000 + 900 = 10800 ticks = 179956 ms and 112/2048 - rounded up to 179957.
   assert.equal(msForTicks(10800).ms, 179956n);
-  assert.equal(roundEndMs({ entryCloseMs: 1000n }), 1000n + 179957n);
-  assert.equal(roundEndMs({ entryCloseMs: 1000n, startDeadlineTicks: 120 }),
+  assert.equal(roundEndMs({ entryCloseMs: 1000n, blockTicks: 9000 }), 1000n + 179957n);
+  assert.equal(roundEndMs({ entryCloseMs: 1000n, startDeadlineTicks: 120, blockTicks: 9000 }),
     1000n + msForTicks(9240).ms + (msForTicks(9240).exact ? 0n : 1n));
-  assert.ok(roundEndMs({ entryCloseMs: 0n, startDeadlineTicks: 120 }) < roundEndMs({ entryCloseMs: 0n }), 'a shorter deadline ends sooner');
+  assert.ok(roundEndMs({ entryCloseMs: 0n, startDeadlineTicks: 120, blockTicks: 9000 }) < roundEndMs({ entryCloseMs: 0n, blockTicks: 9000 }), 'a shorter deadline ends sooner');
   assert.throws(() => roundEndMs({}), /entry close/);
+  // M3 R1 R3: the round's own run length, never the truck's constant - a round naming none has no end to count.
+  assert.throws(() => roundEndMs({ entryCloseMs: 1000n }), /run length/);
 });

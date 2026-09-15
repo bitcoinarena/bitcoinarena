@@ -39,7 +39,6 @@ import { PROTOCOL_VERSION, TYPE_TRANSCRIPT, TAG } from './constants.js';
 import { encodeInputBatch, decodeInputBatch, batchId, batchTicks } from './batch.js';
 import { entryId, lastTickOfRun } from './contracts.js';
 // The run length is the core's; this reads it rather than restating it.
-import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import {
   decodeCheckpoint, checkpointId, splitSigned, NO_PREVIOUS, SIGNED_CHECKPOINT_BYTES,
 } from './checkpoint.js';
@@ -251,7 +250,7 @@ export function flatten(t) {
  * audited during item 16, parked because adding one moves every round id. It
  * is reported as unchecked rather than assumed.
  */
-export function transcriptBelongsToEntry(transcript, entry) {
+export function transcriptBelongsToEntry(transcript, entry, blockTicks) {
   if (!transcript || !Array.isArray(transcript.batches))
     return { ok: false, why: 'that is not a transcript' };
   if (!entry || !Number.isInteger(entry.joinTick))
@@ -297,11 +296,14 @@ export function transcriptBelongsToEntry(transcript, entry) {
   // is over however it ended - delivered, wrecked or missed.
   const last = batchTicks(transcript.batches[transcript.batches.length - 1]);
   const reaches = last.length ? last[last.length - 1] : first[0];
-  const ends = lastTickOfRun(entry.joinTick);
+  // The run length is the round's, handed in (M3 R1 R3): its contract's blockTicks.
+  if (!Number.isInteger(blockTicks) || blockTicks < 1)
+    return { ok: false, why: 'that round names no run length to check the transcript against' };
+  const ends = lastTickOfRun(entry.joinTick, blockTicks);
   if (reaches > ends)
     return {
       ok: false,
-      why: `that run ends at tick ${ends} - ${BLOCK_TICKS} ticks from its join at `
+      why: `that run ends at tick ${ends} - ${blockTicks} ticks from its join at `
         + `${entry.joinTick} - and that transcript reaches ${reaches}`,
     };
 

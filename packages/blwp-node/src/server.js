@@ -225,7 +225,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // bitcoind. Given none, the pool's chain call answers it when there is one.
   chainTip = null,
   expiry = {} } = {}) {
-  const round = new Round(db);
+  // THE CORES THIS SEAT RUNS (M3 R1), made once: the round store opens only rounds on them, and the door,
+  // the replay and the ghosts resolve each round's core through the same registry.
+  const installed = installedCores(cores);
+  const round = new Round(db, undefined, { cores: installed });
 
   // THE DONATION SET A ROUND NAMES, AS THIS SEAT CAN STAND BEHIND IT (M3.2 6e):
   // one of the handed sets whose recipients hash to the id the round's contract
@@ -774,7 +777,6 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // WHAT SHOWS OTHER PLAYERS' TRUCKS. Pictures only: 0.10 says a ghost is
   // never an input to anybody's simulation, and the frames it hands out came
   // out of `replay.js` like everything else that touches the core.
-  const installed = installedCores(cores);
   const ghosts = new Ghosts(round, { cores: installed, ...(randomnessFor ? { randomnessFor } : {}) });
 
   // THE ROUND'S SETTLEMENT SEATS, OFF THE CENSUS: who holds a stake's shares

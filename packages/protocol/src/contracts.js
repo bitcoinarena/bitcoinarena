@@ -13,7 +13,6 @@ import { taggedHash } from './hash.js';
 // THE RUN LENGTH IS THE CORE'S. `genesis.js` already reads it from the same
 // place and writes it into the config hash a contract's network_id commits to;
 // restating the number here would be the second clock letter 21 forbade.
-import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import {
   TAG, PROTOCOL_VERSION, TYPE_ROUND_CONTRACT, TYPE_ENTRY_CONTRACT, ROLES,
   CUSTODY, custodyByte, slashRemainderByte, slashRemainderOf, MIN_ENTRY_WINDOW_MS,
@@ -439,17 +438,23 @@ export function stakePointIsTheHandouts(entry, handout) {
  * with it - a second clock disagreeing with the first, which is exactly what
  * letter 21 put the tick in the core to prevent.
  */
-export function runLengthIsTheCores(contract) {
+//
+// AND SINCE M3 R1 R3 (the owner 2026-09-15 08:07: several cores at once) "the core" is the ROUND'S core
+// under the round's config - handed in as `coreTicks` by whoever resolved it (the seat's cores.js) -
+// and no longer the truck's BLOCK_TICKS read from its rules: the protocol names no game.
+export function runLengthIsTheCores(contract, coreTicks) {
   if (!contract || !Number.isInteger(contract.blockTicks))
     return { ok: false, why: 'that round names no run length' };
-  if (contract.blockTicks !== BLOCK_TICKS)
+  if (!Number.isInteger(coreTicks) || coreTicks < 1)
+    return { ok: false, why: 'there is no core run length to check that round against' };
+  if (contract.blockTicks !== coreTicks)
     return {
       ok: false,
       why: `that round says a run is ${contract.blockTicks} ticks and this core ends one at `
-        + `${BLOCK_TICKS}: a contract disagreeing with the network it names is invalid, and a `
+        + `${coreTicks}: a contract disagreeing with the network it names is invalid, and a `
         + 'second clock is not a shorter round',
     };
-  return { ok: true, blockTicks: BLOCK_TICKS };
+  return { ok: true, blockTicks: coreTicks };
 }
 
 /**
@@ -461,7 +466,12 @@ export function runLengthIsTheCores(contract) {
  * whose ticks reach `joinTick + BLOCK_TICKS` carries inputs for a run that is
  * over however it ended.
  */
-export const lastTickOfRun = (joinTick) => joinTick + BLOCK_TICKS - 1;
+export function lastTickOfRun(joinTick, blockTicks) {
+  // The run length is the round's (its contract's blockTicks, checked against its core) - M3 R1 R3.
+  if (!Number.isInteger(blockTicks) || blockTicks < 1)
+    throw new Error('a run\'s last tick is counted from the round\'s run length, and none was given');
+  return joinTick + blockTicks - 1;
+}
 
 
 function compare32(a, b) {

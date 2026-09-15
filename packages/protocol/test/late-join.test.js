@@ -24,8 +24,10 @@ import { toHex } from '../src/hash.js';
 import { batchId } from '../src/batch.js';
 import { entryId } from '../src/contracts.js';
 import {
-  GENESIS, checkTranscript, flatten, transcriptBelongsToEntry,
+  GENESIS, checkTranscript, flatten, transcriptBelongsToEntry as belongsWith,
 } from '../src/transcript.js';
+// M3 R1 R3: the run length is the round's, handed in - these are the truck's runs, so the truck's.
+const transcriptBelongsToEntry = (t, e, ticks = BLOCK_TICKS) => belongsWith(t, e, ticks);
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const entryAt = (joinTick, over = {}) => ({

@@ -30,7 +30,7 @@ import { toHex } from '../../protocol/src/hash.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { createServer } from 'node:http';
-import { encodeEntryContract } from '../../protocol/src/contracts.js';
+import { encodeEntryContract, encodeRoundContract } from '../../protocol/src/contracts.js';
 import { encodeTranscript, GENESIS } from '../../protocol/src/transcript.js';
 import { batchId } from '../../protocol/src/batch.js';
 
@@ -205,7 +205,11 @@ test('an entry that does not hash to the id asked for is refused', async () => {
 });
 
 test('a transcript that does not begin at the entry\'s join tick is refused on resume', async () => {
-  const rid = b32(1);
+  // A REAL ROUND, served by the stub too (M3 R1 R3): resume reads a run's length off the round it
+  // fetches and hashes, as it does the entry. Before, rid was b32(1), no round's hash - and resume,
+  // asking for the round, stopped at "the node has no round" before the check this test is about.
+  const round = contract();
+  const rid = roundId(round);
   const entry = entryFor(rid, 50);
   const eid = entryId(entry);
 
@@ -220,6 +224,7 @@ test('a transcript that does not begin at the entry\'s join tick is refused on r
   const node = await liar({
     '/transcript': encodeTranscript(early),
     '/entry': encodeEntryContract(entry),
+    '/round': encodeRoundContract(round),
   });
   try {
     const client = new Client({ base: node.base, core, sign, verify });

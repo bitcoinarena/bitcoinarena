@@ -112,12 +112,14 @@ export function replay(transcript, entry, { core, seedWord, roundRandomness, mar
   // and replaying them spends a worker on ticks no honest node will replay.
   // Measured before this existed: 9600 ticks of a 9000-tick run replayed
   // clean, all 9600 of them.
-  const ends = lastTickOfRun(start);
+  // THE RUN'S LENGTH IS ITS CORE'S, under the round's config (M3 R1 R3): runTicks(config), else RUN_TICKS.
+  const runTicks = typeof a.runTicks === 'function' ? a.runTicks(core.config) : a.RUN_TICKS;
+  const ends = lastTickOfRun(start, runTicks);
   const reaches = ticks[ticks.length - 1].tick;
   if (reaches > ends)
     return {
       ok: false,
-      why: `that run ends at tick ${ends} - ${a.RUN_TICKS} ticks from its join at ${start} - `
+      why: `that run ends at tick ${ends} - ${runTicks} ticks from its join at ${start} - `
         + `and that transcript reaches ${reaches}`,
     };
 
@@ -338,7 +340,8 @@ export class RunInProgress {
 
     this.seedWord = seedWord;
     this.joinTick = entry.joinTick;
-    this.endsAt = lastTickOfRun(entry.joinTick);
+    this.runTicks = typeof this.a.runTicks === 'function' ? this.a.runTicks(core.config) : this.a.RUN_TICKS;
+    this.endsAt = lastTickOfRun(entry.joinTick, this.runTicks);
     this.st = this.a.start(seedWord, core.config);
     // The last tick STEPPED. Nothing yet, so one before the join.
     this.at = entry.joinTick - 1;
@@ -390,7 +393,7 @@ export class RunInProgress {
     if (tick > this.endsAt)
       return {
         ok: false,
-        why: `that run ends at tick ${this.endsAt} - ${this.a.RUN_TICKS} ticks from its join at `
+        why: `that run ends at tick ${this.endsAt} - ${this.runTicks} ticks from its join at `
           + `${this.joinTick} - and that picture asks for ${tick}`,
       };
 

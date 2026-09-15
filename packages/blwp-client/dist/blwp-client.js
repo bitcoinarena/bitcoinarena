@@ -1206,242 +1206,6 @@ async function provesEquivocation(a, b, sessionPubkey, verify) {
   };
 }
 
-// ---- core/src/fixed.js
-// Q16.16 fixed point. THE ONLY FILE that may use * and / directly, and the
-// determinism guard enforces that (tools/check-determinism.js).
-//
-// One unit is 1/65536. The range is +/-32768, which covers a 260 x 170 m map,
-// velocities, angles and health with room to spare.
-//
-// Every operation here produces an exact integer result, so it is identical in
-// every conforming engine: ECMAScript specifies integer arithmetic on Numbers
-// exactly as long as operands and results are integers below 2^53, and
-// specifies the bitwise operators as 32-bit with defined wrapping.
-
-const SHIFT = 16;
-const ONE = 65536;
-const HALF = 32768;
-
-const fromInt = (n) => (n << SHIFT) | 0;
-const toInt = (x) => x >> SHIFT;            // arithmetic shift = floor
-
-/** Only for constants in source. Never call this on runtime data. */
-const fromFloat = (f) => Math.round(f * ONE) | 0;
-
-const add = (a, b) => (a + b) | 0;
-const sub = (a, b) => (a - b) | 0;
-const neg = (a) => (-a) | 0;
-const abs = (a) => (a < 0 ? (-a) | 0 : a);
-
-/**
- * Fast multiply. Exact while |a*b| < 2^53, which holds for any pair of Q16.16
- * values whose product stays inside the representable range - the intermediate
- * is at most 2^31 * 2^31 = 2^62, so this is NOT universally safe and the caller
- * must know its magnitudes. Used on the simulation's hot paths.
- */
-const mulFast = (a, b) => ((a * b) / ONE) | 0;
-
-/**
- * Rounding multiply, and rounding conversion back to a whole number. `mulFast`
- * and `toInt` both throw the fraction away, which is right for the simulation -
- * a truncation there is a rule, applied identically on every engine - but wrong
- * where the value being produced is a *reported* number that some other
- * implementation rounds. The score is the one such number: the old game ends on
- * `Mathf.RoundToInt`, so the core has to round too or it sits a point low on
- * roughly half of all runs. Same magnitude rules as `mulFast`: the caller must
- * know |a*b| stays under 2^53.
- */
-const mulRound = (a, b) => (((a * b) + (ONE >> 1)) / ONE) | 0;
-const toIntRound = (x) => (x + (ONE >> 1)) >> SHIFT;
-
-/**
- * Exact multiply for anything that could overflow the double's integer range.
- * BigInt is exact at any width; it allocates, so it stays off per-unit inner
- * loops by convention rather than by enforcement.
- */
-const mulWide = (a, b) =>
-  Number((BigInt(a) * BigInt(b)) >> BigInt(SHIFT)) | 0;
-
-/** Truncating divide. Returns 0 for a zero divisor rather than NaN or Infinity. */
-const div = (a, b) => (b === 0 ? 0 : ((a * ONE) / b) | 0);
-
-/**
- * Rounding divide, the counterpart of `mulRound` and for the same reason: a
- * quotient that feeds a *reported* number must not lose its fraction, or the
- * loss compounds through the multiplies that follow it. Every truncation leans
- * the same way, so they add rather than cancel. Only for those; `div` stays
- * the simulation's divide.
- */
-const divRound = (a, b) =>
-  b === 0 ? 0 : (((a * ONE) + ((b / 2) | 0)) / b) | 0;
-
-/**
- * Rounded `a * b / c` without ever landing on the intermediate. A ratio taken
- * on its own has to be stored as a Q16.16 fraction of at most 1.0, which
- * quantises it to 1.5e-5 - and once that ratio is scaled up by a thousand the
- * error is scaled with it. Kept as one expression the quotient is only ever
- * rounded at the end, at the precision of the answer rather than the ratio.
- * The caller must know |a*b| stays under 2^53.
- */
-const mulDivRound = (a, b, c) =>
-  c === 0 ? 0 : (((a * b) + ((c / 2) | 0)) / c) | 0;
-
-/**
- * Truncating divide of two PLAIN INTEGERS - not Q16.16 values.
- *
- * `div` scales its numerator by ONE first, which is right for fixed-point and
- * wrong for a count. Splitting a hundred parts of something, or a byte into
- * buckets, was being written as `x / n | 0` at the call site, which is exactly
- * the arithmetic the guard exists to keep in one auditable file.
- *
- * Truncates towards zero, as `| 0` does, so it is the same value the inline
- * form produced. Both arguments must already be int32.
- */
-const idiv = (a, b) => (b === 0 ? 0 : (a / b) | 0);
-
-const min = (a, b) => (a < b ? a : b);
-const max = (a, b) => (a > b ? a : b);
-const clamp = (x, lo, hi) => (x < lo ? lo : x > hi ? hi : x);
-const sign = (a) => (a > 0 ? 1 : a < 0 ? -1 : 0);
-
-/**
- * Integer square root of a Q16.16 value, by Newton-Raphson on integers.
- *
- * Math.sqrt is correctly rounded and would in fact be deterministic, but it is
- * banned wholesale rather than by exception: a whitelist with one hole in it is
- * a whitelist somebody widens later.
- */
-function sqrt(x) {
-  if (x <= 0) return 0;
-  // sqrt(x/ONE)*ONE = sqrt(x*ONE); the product needs 48 bits, so it stays exact
-  let n = x * ONE;
-  let r = 1 << 15;
-  for (let i = 0; i < 24; i++) {
-    const next = ((r + (n / r)) / 2) | 0;
-    if (next === r) break;
-    r = next;
-  }
-  return r | 0;
-}
-
-/**
- * Length of a 2D vector, both components Q16.16.
- *
- * The first version scaled the components down by 256 before squaring, out of
- * caution about overflow, and then applied the FIXED-POINT square root to the
- * result - counting the scale twice. It returned roughly 256x too much, the
- * speed cap fired on the first tick, and the vehicle covered five metres in
- * fifty seconds. No overflow guard was needed: at the map's maximum speed the
- * intermediate is 3.4e12, comfortably inside the exact integer range.
- */
-/**
- * Cube root, Q16.16 in and out.
- *
- * `Math.cbrt` is out for the same reason `Math.sqrt` is: it is a host
- * function, and the poison test refuses every one of them. Newton on
- * `y = (2y + x/y^2) / 3`, which is the cube-root iteration written in this
- * file's own operations - `mulFast` for `y^2`, `div` for `x/y^2`, `idiv` for
- * the third - so there is no arithmetic here that is not already tested.
- *
- * Twenty iterations from a power-of-two start. The iteration thirds its error
- * when it is far out, so the largest input this core has - a liquidation
- * capped at 32767 millions, whose root is 32 - is reached in a handful;
- * twenty is the same work for every input, which keeps the cost off the
- * input value.
- *
- * The last three lines are the correction. Newton lands within a unit but not
- * always ON the floor, and a root that is one Q16.16 unit high would make a
- * crater one fifteen-thousandth of a metre wider on one machine and not on
- * another if any step ever rounded differently. So it is walked to the exact
- * floor: the largest y whose cube does not exceed x.
- *
- * Bounds. The caller's x reaches 32767 * ONE = 2.147e9 and the root 32 * ONE.
- * `mulFast(y, y)` peaks at 4.4e12 before its divide and `div(x, t)` at 1.4e14,
- * both exact in a double long before 2^53. Above that the input would have to
- * be a liquidation of thirty-two billion dollars, which `LIQ_MAX` refuses.
- */
-function cbrt(x) {
-  if (x <= 0) return 0;
-
-  // THE START MATTERS, and starting at 1.0 does not work. Newton's first step
-  // from there is `(2 + x) / 3`, which for x = 1000 lands on 334 - and 334
-  // squared in Q16.16 is 7.3e9, past a signed word, so `mulFast` wraps
-  // negative and the iteration is destroyed before it has begun. Measured:
-  // 1000 came out as 334.15 and 8000 as 2667.
-  //
-  // So the start is a power of two at the right size. `x` is ONE * v, so
-  // log2(x) = 16 + log2(v) and the root is ONE * v^(1/3) = 2^(16 + log2(v)/3).
-  // From there the iteration never overshoots and every intermediate stays
-  // inside the range the bounds note below promises.
-  let bits = -1;
-  for (let t = x; t > 0; t >>>= 1) bits++;
-  let shift = 16 + (((bits - 16) / 3) | 0);
-  if (shift < 0) shift = 0;
-  if (shift > 30) shift = 30;
-  let y = (1 << shift) | 0;
-  if (y < 1) y = 1;
-
-  for (let i = 0; i < 20; i++) {
-    const sq = mulFast(y, y);
-    if (sq <= 0) break;
-    y = idiv(add(add(y, y), div(x, sq)), 3);
-    if (y <= 0) { y = 1; break; }
-  }
-
-  // The cube is compared, never stored, so it is worked out in the double
-  // domain: `mulFast` would wrap at y = 32.0 exactly, where the true cube is
-  // 2^31, and a wrap in the CORRECTION would turn "too big" into "far too
-  // small" and walk the answer the wrong way. Exact to 2^53, which the bounds
-  // note below is well inside.
-  const cube = (v) => ((v * v) / ONE) * v / ONE;
-  while (y > 1 && cube(y) > x) y = (y - 1) | 0;
-  while (cube((y + 1) | 0) <= x) y = (y + 1) | 0;
-  return y;
-}
-
-const length2 = (x, y) => {
-  if (x === 0 && y === 0) return 0;
-  return sqrt((mulFast(x, x) + mulFast(y, y)) | 0);
-};
-
-// ---- core/src/rules/gate.js
-// The far end of the run, and the clock that ends it.
-//
-// The block IS the round. A run still on the road when the block closes has
-// missed it: the freight is lost and the score is zero. Without that the clock
-// counted down and did nothing, which taught the player that time is free -
-// and time is the only cost left on dawdling once exposure stopped paying for
-// it.
-
-
-const GATE_X = Math.imul(114, ONE);
-const HALF_MOUTH = Math.imul(34, ONE);
-/** A compressed block: 150 s at 60 Hz. Bitcoin's ten minutes is far too long
- *  to wait for a score. */
-const BLOCK_TICKS = 9000;
-
-const RUN_LIVE = 0;
-const RUN_DELIVERED = 1;
-const RUN_WRECKED = 2;
-const RUN_MISSED = 3;
-
-/** Has the courier crossed the line, inside the mouth? */
-const arrived = (x, z) => x >= GATE_X && abs(z) <= HALF_MOUTH;
-
-/**
- * Advances the run's outcome. Returns the new state word.
- *
- * Order matters: a wreck beats an arrival in the same tick, and a missed block
- * beats both - a truck that is destroyed as the block closes did not deliver.
- */
-function outcome(state, x, z, hp, tickInBlock) {
-  if (state !== RUN_LIVE) return state;
-  if (tickInBlock >= BLOCK_TICKS) return RUN_MISSED;
-  if (hp <= 0) return RUN_WRECKED;
-  if (arrived(x, z)) return RUN_DELIVERED;
-  return RUN_LIVE;
-}
-
 // ---- protocol/src/contracts.js
 // The two artifacts everything else hangs off.
 //
@@ -1458,7 +1222,6 @@ function outcome(state, x, z, hp, tickInBlock) {
 // THE RUN LENGTH IS THE CORE'S. `genesis.js` already reads it from the same
 // place and writes it into the config hash a contract's network_id commits to;
 // restating the number here would be the second clock letter 21 forbade.
-
 
 /**
  * The balance constants live in the contract because 18A.7 says they must:
@@ -1879,17 +1642,23 @@ function stakePointIsTheHandouts(entry, handout) {
  * with it - a second clock disagreeing with the first, which is exactly what
  * letter 21 put the tick in the core to prevent.
  */
-function runLengthIsTheCores(contract) {
+//
+// AND SINCE M3 R1 R3 (the owner 2026-09-15 08:07: several cores at once) "the core" is the ROUND'S core
+// under the round's config - handed in as `coreTicks` by whoever resolved it (the seat's cores.js) -
+// and no longer the truck's BLOCK_TICKS read from its rules: the protocol names no game.
+function runLengthIsTheCores(contract, coreTicks) {
   if (!contract || !Number.isInteger(contract.blockTicks))
     return { ok: false, why: 'that round names no run length' };
-  if (contract.blockTicks !== BLOCK_TICKS)
+  if (!Number.isInteger(coreTicks) || coreTicks < 1)
+    return { ok: false, why: 'there is no core run length to check that round against' };
+  if (contract.blockTicks !== coreTicks)
     return {
       ok: false,
       why: `that round says a run is ${contract.blockTicks} ticks and this core ends one at `
-        + `${BLOCK_TICKS}: a contract disagreeing with the network it names is invalid, and a `
+        + `${coreTicks}: a contract disagreeing with the network it names is invalid, and a `
         + 'second clock is not a shorter round',
     };
-  return { ok: true, blockTicks: BLOCK_TICKS };
+  return { ok: true, blockTicks: coreTicks };
 }
 
 /**
@@ -1901,7 +1670,12 @@ function runLengthIsTheCores(contract) {
  * whose ticks reach `joinTick + BLOCK_TICKS` carries inputs for a run that is
  * over however it ended.
  */
-const lastTickOfRun = (joinTick) => joinTick + BLOCK_TICKS - 1;
+function lastTickOfRun(joinTick, blockTicks) {
+  // The run length is the round's (its contract's blockTicks, checked against its core) - M3 R1 R3.
+  if (!Number.isInteger(blockTicks) || blockTicks < 1)
+    throw new Error('a run\'s last tick is counted from the round\'s run length, and none was given');
+  return joinTick + blockTicks - 1;
+}
 
 
 function compare32(a, b) {
@@ -2226,7 +2000,6 @@ const batchTicks = (b) =>
 
 // The run length is the core's; this reads it rather than restating it.
 
-
 const GENESIS = new Uint8Array(32);
 
 const same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
@@ -2434,7 +2207,7 @@ function flatten(t) {
  * audited during item 16, parked because adding one moves every round id. It
  * is reported as unchecked rather than assumed.
  */
-function transcriptBelongsToEntry(transcript, entry) {
+function transcriptBelongsToEntry(transcript, entry, blockTicks) {
   if (!transcript || !Array.isArray(transcript.batches))
     return { ok: false, why: 'that is not a transcript' };
   if (!entry || !Number.isInteger(entry.joinTick))
@@ -2480,11 +2253,14 @@ function transcriptBelongsToEntry(transcript, entry) {
   // is over however it ended - delivered, wrecked or missed.
   const last = batchTicks(transcript.batches[transcript.batches.length - 1]);
   const reaches = last.length ? last[last.length - 1] : first[0];
-  const ends = lastTickOfRun(entry.joinTick);
+  // The run length is the round's, handed in (M3 R1 R3): its contract's blockTicks.
+  if (!Number.isInteger(blockTicks) || blockTicks < 1)
+    return { ok: false, why: 'that round names no run length to check the transcript against' };
+  const ends = lastTickOfRun(entry.joinTick, blockTicks);
   if (reaches > ends)
     return {
       ok: false,
-      why: `that run ends at tick ${ends} - ${BLOCK_TICKS} ticks from its join at `
+      why: `that run ends at tick ${ends} - ${blockTicks} ticks from its join at `
         + `${entry.joinTick} - and that transcript reaches ${reaches}`,
     };
 
@@ -12420,6 +12196,23 @@ class Client {
     return entry;
   }
 
+  /**
+   * THE ROUND, BY ITS ID, CHECKED AS `entryFor` CHECKS AN ENTRY: its id is the hash of its bytes, so a
+   * node that returned another round - or this one with another run length - fails the comparison.
+   * What it answers is read, not trusted. (M3 R1 R3: a run's length is its round's, and a client that
+   * reconnects before it was told the round still has to know it.)
+   */
+  async roundFor(id) {
+    const r = await readWithOneRetry(fetch, `${this.base}/round?id=${toHex(id)}`);
+    if (!r.ok) throw new Error(`the node has no round ${toHex(id)}: ${(await r.text()).trim()}`);
+    let round;
+    try { round = decodeRoundContract(new Uint8Array(await r.arrayBuffer())); }
+    catch (e) { throw new Error(`that round will not decode: ${e.message}`); }
+    if (toHex(roundId(round)) !== toHex(id))
+      throw new Error(`the node returned round ${toHex(roundId(round))} for ${toHex(id)}, so that is not the round this player entered`);
+    return round;
+  }
+
   async resume({ roundId, entryId }) {
     // A RUN THAT ENDED STAYS ENDED, and a socket coming back does not undo it.
     //
@@ -12470,7 +12263,10 @@ class Client {
     // entry - or an edited one with a friendlier join tick - fails the
     // comparison. Nothing here trusts the answer; it checks it.
     const entry = await this.entryFor(entryId);
-    const belongs = transcriptBelongsToEntry(t, entry);
+    // AND IT ENDS WHERE ITS ROUND'S RUN ENDS: the run length off the round, fetched and hashed like the
+    // entry (M3 R1 R3) - a reconnect may come before the page was told the round (setRound).
+    const round = await this.roundFor(roundId);
+    const belongs = transcriptBelongsToEntry(t, entry, round.blockTicks);
     if (!belongs.ok && t.batches.length)
       throw new Error(`the transcript is not this entry's run: ${belongs.why}`);
 
@@ -12666,7 +12462,7 @@ class Client {
   runOver() {
     if (!this.where || !(this.maxHold > 0)) return false;
     const join = this.seatEntry && Number.isInteger(this.seatEntry.joinTick) ? this.seatEntry.joinTick : 0;
-    return this.nextTick + this.hold.length > lastTickOfRun(join);
+    return this.nextTick + this.hold.length > lastTickOfRun(join, this.maxHold);
   }
 
   record(words) {

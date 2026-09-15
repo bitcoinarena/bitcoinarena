@@ -20,6 +20,16 @@ export const TRUCK = Object.freeze({
   configs: new Map([[toHex(GENESIS_CONFIG_HASH), {}]]),
 });
 
+/**
+ * A CORE'S RUN LENGTH UNDER A CONFIG (M3 R1 R3): its `runTicks(config)` where it has one, else its one
+ * RUN_TICKS (the truck's BLOCK_TICKS - one config). A round names it as blockTicks; the seat checks it.
+ */
+export function runTicksOf(core, config) {
+  const a = core && core.adapter;
+  if (!a) return null;
+  return typeof a.runTicks === 'function' ? a.runTicks(config) : a.RUN_TICKS;
+}
+
 /** The truck's hashes as a round names them: its sim_wasm_hash and its (genesis) config_hash. */
 export const TRUCK_CORE_HASH = fromHex(TRUCK.hash);
 export const TRUCK_CONFIG_HASH = GENESIS_CONFIG_HASH;

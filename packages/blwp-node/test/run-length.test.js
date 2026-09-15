@@ -84,7 +84,7 @@ test('a round that says a run is some other length is not a shorter round', () =
       `a round naming ${ticks} was stored`);
   }
   assert.match(runLengthIsTheCores({}).why, /names no run length/);
-  assert.equal(runLengthIsTheCores(contractWith(BLOCK_TICKS)).blockTicks, BLOCK_TICKS);
+  assert.equal(runLengthIsTheCores(contractWith(BLOCK_TICKS), BLOCK_TICKS).blockTicks, BLOCK_TICKS);
 });
 
 test('a whole run is stored, and the tick after it is refused', () => {
@@ -111,7 +111,7 @@ test('a late joiner gets a whole run, counted from its own join tick', () => {
 
   // 0.8: the same mission duration even when late. The run ends 9000 ticks
   // after THIS entry's join, not 9000 after the round began.
-  assert.equal(lastTickOfRun(3000), 3000 + BLOCK_TICKS - 1);
+  assert.equal(lastTickOfRun(3000, BLOCK_TICKS), 3000 + BLOCK_TICKS - 1);
   const whole = drive(round, rid, eid, 3000, BLOCK_TICKS);
   assert.equal(whole.refused, null, whole.refused);
   assert.equal(whole.stored, BLOCK_TICKS, 'a late joiner was cut short');
@@ -137,4 +137,22 @@ test('replay refuses a transcript that reaches past the run, however it was got'
     { roundRandomness: b32(0xbe) });
   assert.equal(whole.ok, true, whole.why);
   assert.equal(whole.ticks, BLOCK_TICKS, 'a full legal run did not replay');
+});
+
+// M3 R1 R3 (the owner 2026-09-15 08:07: several cores and rule sets at once): a round's run length is its own
+// core's under its config, not the truck's BLOCK_TICKS - measured on the round store itself.
+test('a round\'s run length is its own core\'s under its config: the counter opens at its 120 and refuses 9000, and a store without it opens neither', async () => {
+  const { COUNTER, CONFIGS } = await import('./cores/counter.js');
+  const { installedCores } = await import('../src/cores.js');
+  const { fromHex } = await import('../../protocol/src/hash.js');
+  const [LOW] = CONFIGS;
+  const counterRound = (blockTicks) => ({ ...contractWith(blockTicks), simCoreHash: fromHex(COUNTER.hash), configHash: LOW.hash });
+  const withCounter = new Round(openStore(':memory:'), () => NOW + 1000, { cores: installedCores([COUNTER]) });
+  assert.ok(withCounter.open(counterRound(LOW.config.ticks)));
+  assert.throws(() => withCounter.open(counterRound(BLOCK_TICKS)),
+    new RegExp(`says a run is ${BLOCK_TICKS} ticks and this core ends one at ${LOW.config.ticks}`));
+  const truckOnly = new Round(openStore(':memory:'), () => NOW + 1000);
+  assert.throws(() => truckOnly.open(counterRound(LOW.config.ticks)), /this seat holds no core/);
+  assert.throws(() => lastTickOfRun(3000), /counted from the round's run length/);
+  assert.equal(lastTickOfRun(3000, LOW.config.ticks), 3000 + LOW.config.ticks - 1);
 });

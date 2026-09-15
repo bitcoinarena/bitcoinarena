@@ -34,7 +34,7 @@ import {
   NO_PREVIOUS, SIGNED_CHECKPOINT_BYTES,
 } from '../../protocol/src/checkpoint.js';
 import {
-  encodeRoundContract, encodeEntryContract, decodeEntryContract, roundId, entryId, lastTickOfRun,
+  encodeRoundContract, decodeRoundContract, encodeEntryContract, decodeEntryContract, roundId, entryId, lastTickOfRun,
 } from '../../protocol/src/contracts.js';
 import {
   GENESIS, decodeTranscript, checkTranscript, transcriptBelongsToEntry,
@@ -1544,6 +1544,23 @@ export class Client {
     return entry;
   }
 
+  /**
+   * THE ROUND, BY ITS ID, CHECKED AS `entryFor` CHECKS AN ENTRY: its id is the hash of its bytes, so a
+   * node that returned another round - or this one with another run length - fails the comparison.
+   * What it answers is read, not trusted. (M3 R1 R3: a run's length is its round's, and a client that
+   * reconnects before it was told the round still has to know it.)
+   */
+  async roundFor(id) {
+    const r = await readWithOneRetry(fetch, `${this.base}/round?id=${toHex(id)}`);
+    if (!r.ok) throw new Error(`the node has no round ${toHex(id)}: ${(await r.text()).trim()}`);
+    let round;
+    try { round = decodeRoundContract(new Uint8Array(await r.arrayBuffer())); }
+    catch (e) { throw new Error(`that round will not decode: ${e.message}`); }
+    if (toHex(roundId(round)) !== toHex(id))
+      throw new Error(`the node returned round ${toHex(roundId(round))} for ${toHex(id)}, so that is not the round this player entered`);
+    return round;
+  }
+
   async resume({ roundId, entryId }) {
     // A RUN THAT ENDED STAYS ENDED, and a socket coming back does not undo it.
     //
@@ -1594,7 +1611,10 @@ export class Client {
     // entry - or an edited one with a friendlier join tick - fails the
     // comparison. Nothing here trusts the answer; it checks it.
     const entry = await this.entryFor(entryId);
-    const belongs = transcriptBelongsToEntry(t, entry);
+    // AND IT ENDS WHERE ITS ROUND'S RUN ENDS: the run length off the round, fetched and hashed like the
+    // entry (M3 R1 R3) - a reconnect may come before the page was told the round (setRound).
+    const round = await this.roundFor(roundId);
+    const belongs = transcriptBelongsToEntry(t, entry, round.blockTicks);
     if (!belongs.ok && t.batches.length)
       throw new Error(`the transcript is not this entry's run: ${belongs.why}`);
 
@@ -1790,7 +1810,7 @@ export class Client {
   runOver() {
     if (!this.where || !(this.maxHold > 0)) return false;
     const join = this.seatEntry && Number.isInteger(this.seatEntry.joinTick) ? this.seatEntry.joinTick : 0;
-    return this.nextTick + this.hold.length > lastTickOfRun(join);
+    return this.nextTick + this.hold.length > lastTickOfRun(join, this.maxHold);
   }
 
   record(words) {
