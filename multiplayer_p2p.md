@@ -490,10 +490,18 @@ developer approval is required.
 
 # 5. Unity vs deterministic core
 
+**The truck game is one use of this network** (the owner 2026-09-15). The seats
+and the federation are a generic consensus and custody layer. They replay
+and settle a named core (`sim_wasm_hash`); they do not embed truck, cargo or
+map. A second game is a new core + client (Unity or not) on the same nodes
+and federation - a hard fork of the core, or another title, not a rewrite of
+the seats. M3 keeps that split as far as it will go.
+
 Unity is not trusted for money. Unity handles rendering, audio, UI, input
-capture, animation, ghosts and lobby. A deterministic Rust core compiled to
-WASM handles vehicle state, movement, world collision, damage, cargo,
-enemies, delivery, failure, timeout and score.
+capture, animation, ghosts and lobby. A deterministic core compiled to
+WASM handles the settled world: in this title, vehicle state, movement,
+world collision, damage, cargo, enemies, delivery, failure, timeout and
+score.
 
 Requirements: fixed-point arithmetic; deterministic simulation; fixed
 protocol tick; no Unity PhysX for settled state; canonical serialization;
