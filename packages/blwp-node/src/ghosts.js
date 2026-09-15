@@ -222,7 +222,7 @@ export class Ghosts {
     const row = this.round.get(roundIdBytes);
     if (!row) return null;
     const found = coreForRound(decodeRoundContract(new Uint8Array(row.contract)), this.cores);
-    return found.ok ? found.core : null;
+    return found.ok ? { ...found.core, config: found.config } : null;
   }
 
   #randomnessOf(roundIdBytes, entry, entryId) {

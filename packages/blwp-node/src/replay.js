@@ -14,8 +14,9 @@
 // a receipt over, and "five of seven agree" degrades to "five of seven were
 // told the same thing".
 //
-// So the core is imported HERE and nowhere else in the daemon. One door, and
-// it opens on a transcript that is already stored and already finished.
+// So a core is stepped HERE and nowhere else in the daemon - since M3 R1 the core the round names,
+// which cores.js (the only file that imports one) hands in. One door, and it opens on a transcript
+// that is already stored and already finished.
 //
 // THE SHAPE IS `core/tools/replay.js`, whose own header said this was coming:
 // "this is the shape the node's replay pool needs - the difference there is
@@ -153,7 +154,7 @@ export function replay(transcript, entry, { core, seedWord, roundRandomness, mar
   const wanted = new Set(pictures);
   const taken = new Map();
 
-  const st = a.start(seedWord);
+  const st = a.start(seedWord, core.config);
   let checked = 0;
   let divergedAt = null;
 
@@ -259,7 +260,7 @@ export function replayInWorker(transcript, entry, options = {}) {
   if (!core || typeof core.url !== 'string') return Promise.resolve({ ok: false, why: NO_CORE_RULE });
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL(import.meta.url), {
-      workerData: { blwpReplay: true, transcript, entry, options: rest, core: { hash: core.hash, url: core.url } },
+      workerData: { blwpReplay: true, transcript, entry, options: rest, core: { hash: core.hash, url: core.url, config: core.config } },
     });
     let answered = false;
     worker.once('message', (m) => { answered = true; resolve(m); });
@@ -275,7 +276,7 @@ export function replayInWorker(transcript, entry, options = {}) {
 if (!isMainThread && workerData && workerData.blwpReplay) {
   const { transcript, entry, options, core } = workerData;
   import(core.url).then((m) => {
-    parentPort.postMessage(replay(transcript, entry, { ...options, core: { hash: core.hash, url: core.url, adapter: m.CORE } }));
+    parentPort.postMessage(replay(transcript, entry, { ...options, core: { hash: core.hash, url: core.url, config: core.config, adapter: m.CORE } }));
     parentPort.close();
   }, (e) => {
     parentPort.postMessage({ ok: false, why: `the core named for that run could not be loaded: ${e.message}` });
@@ -338,7 +339,7 @@ export class RunInProgress {
     this.seedWord = seedWord;
     this.joinTick = entry.joinTick;
     this.endsAt = lastTickOfRun(entry.joinTick);
-    this.st = this.a.start(seedWord);
+    this.st = this.a.start(seedWord, core.config);
     // The last tick STEPPED. Nothing yet, so one before the join.
     this.at = entry.joinTick - 1;
     // Liquidations land BEFORE their own tick and exactly once, whether the
