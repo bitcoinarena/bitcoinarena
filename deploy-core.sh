@@ -32,6 +32,36 @@ cp "$ROOT/deploy/_headers" "$BUILD/_headers"
 node "$ROOT/unity-proto/tools/fill-template.mjs" "$BUILD"
 node "$ROOT/unity-proto/tools/fill-template.mjs" --check "$BUILD"
 
+# THE LOBBY'S SEATS GO BESIDE THE PAGE ON EVERY DEPLOY (the owner 2026-09-15 12:54: the Daily lobby
+# must list rounds). The page's bare root shows the lobby only from daily.json (index.html reads
+# it when the address has no query), and a Unity build rewrites this folder - measured: every
+# deploy from 0.0.1265 to 0.0.1304 answered /daily.json with the page itself, so the bare root
+# was the offline daily. The file is the seats' own launcher's (tools/run-2of2.mjs writes it
+# with the tunnels it bonded under), and it is checked before it ships: two seats, a bond door,
+# a signed advertisement, and every seat answering /rounds. A missing file or a silent seat
+# refuses the deploy by name - a lobby that points at silence is not shipped.
+DAILY_DIR="${BLWP_2OF2_DIR:-/mnt/bitcoin/blwp-2of2}"
+DAILY="$DAILY_DIR/daily.json"
+[ -f "$DAILY" ] || { echo "refusing: no $DAILY - the Daily's seats (packages/blwp-node/tools/run-2of2.mjs) write it; without it the bare root shows no lobby" >&2; exit 3; }
+node - "$DAILY" <<'CHECK' || { echo "refusing: $DAILY does not name live seats" >&2; exit 3; }
+const d = JSON.parse(require('fs').readFileSync(process.argv[2], 'utf8'));
+const nodes = Array.isArray(d.node) ? d.node : [];
+const bad = (why) => { console.error(`daily.json: ${why}`); process.exit(1); };
+if (nodes.length < 2 || !nodes.every((n) => /^https:\/\/[^/]+$/.test(n))) bad(`names ${nodes.length} https seats, not two or more`);
+if (typeof d.bond !== 'string' || !/^https:\/\//.test(d.bond)) bad('names no bond door');
+if (!/^[0-9a-f]{128}$/.test(String(d.advert))) bad('carries no signed advertisement');
+(async () => {
+  for (const n of nodes) {
+    let r; try { r = await fetch(`${n}/rounds`, { signal: AbortSignal.timeout(15000) }); } catch (e) { bad(`${n}/rounds did not answer: ${e.message}`); }
+    if (r.status !== 200) bad(`${n}/rounds answered ${r.status}`);
+    let body; try { body = await r.json(); } catch { bad(`${n}/rounds is not JSON`); }
+    if (!Array.isArray(body.rounds)) bad(`${n}/rounds lists no rounds array`);
+    console.log(`daily.json seat ${n}: /rounds 200, ${body.rounds.length} round(s), ${body.rounds.filter((x) => x.phase === 'open').length} open`);
+  }
+})();
+CHECK
+cp "$DAILY" "$BUILD/daily.json"
+
 
 echo "deploying $(du -sh "$BUILD" | cut -f1) to Cloudflare Pages project '$PROJECT'"
 wrangler pages deploy "$BUILD" --project-name "$PROJECT" --branch main --commit-dirty=true
