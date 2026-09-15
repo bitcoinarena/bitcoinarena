@@ -155,9 +155,14 @@ namespace Blwp
         }
 
         /// <summary>
-        /// The round PLAY joins when the player has picked none: the joinable one
-        /// with the most entry time left, so a press never lands on a round that
-        /// is about to close. -1 when no round can be joined.
+        /// The round PLAY joins when the player has picked none: a joinable FREE
+        /// round first (the owner 2026-09-15: a player with no sats who presses PLAY
+        /// must not land on a paying round while a free one is listed - measured
+        /// on the Daily, the paying round had the most entry left after every
+        /// rollover and was PLAY's pick), and within the same kind the one with
+        /// the most entry time left, so a press never lands on a round that is
+        /// about to close. A paying round is PLAY's only when no free round can be
+        /// joined; the player can still tap its row. -1 when no round can be joined.
         /// </summary>
         public static int PickDefault(LobbyRow[] rows)
         {
@@ -165,7 +170,8 @@ namespace Blwp
             for (int i = 0; rows != null && i < rows.Length; i++)
             {
                 if (rows[i] == null || !rows[i].joinable) continue;
-                if (best < 0 || rows[i].leftS > rows[best].leftS) best = i;
+                if (best < 0 || (rows[i].free && !rows[best].free)
+                    || (rows[i].free == rows[best].free && rows[i].leftS > rows[best].leftS)) best = i;
             }
             return best;
         }

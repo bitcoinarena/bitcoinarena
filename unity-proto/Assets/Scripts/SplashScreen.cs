@@ -33,7 +33,9 @@ public class SplashScreen : MonoBehaviour
     // SPECTATE. Null when the page is not a lobby (offline, or a round).
     Blwp.LobbyState _lobby;
     float _polledAt = -10f, _shownAt = -10f;
-    string _pickId = "", _nameWhy = "";
+    // _pickId: the round PLAY joins now. _tapId: the round the player tapped, if any - only a tap is
+    // kept across refreshes; with none, PLAY's target is worked out afresh, a free round first.
+    string _pickId = "", _tapId = "", _nameWhy = "";
     int _offset;
     bool _joining, _autoPlay, _hiddenTold;
     string _joinWhy = "";
@@ -97,7 +99,9 @@ public class SplashScreen : MonoBehaviour
             _lobby = Blwp.DailyLobby.Poll();
             if (_lobby != null)
             {
-                int k = Blwp.DailyLobby.Keep(_lobby.rows, _pickId);
+                // THE PLAYER'S TAP IS KEPT, A DEFAULT IS NOT (the owner 2026-09-15, free first): keeping
+                // the last default made a paying round picked once stay picked through every rollover.
+                int k = Blwp.DailyLobby.Keep(_lobby.rows, _tapId);
                 _pickId = k >= 0 ? _lobby.rows[k].id : "";
             }
         }
@@ -425,7 +429,7 @@ public class SplashScreen : MonoBehaviour
             rowStyle.normal.textColor = r.joinable ? (picked ? PanelSkin.Gold : Color.white) : new Color(1f, 1f, 1f, 0.5f);
             var inner = new Rect(rect.x + 8f, rect.y, rect.width - 16f, rect.height);
             GUI.Label(inner, FitWords(rowStyle, Blwp.DailyLobby.RowWords(r), inner.width), rowStyle);
-            if (r.joinable && GUI.Button(rect, GUIContent.none, GUIStyle.none)) _pickId = r.id;
+            if (r.joinable && GUI.Button(rect, GUIContent.none, GUIStyle.none)) { _tapId = r.id; _pickId = r.id; }
             _drawnRows.Add((r, rect));
         }
         if (rows.Length == 0 && l.list.height > 0)

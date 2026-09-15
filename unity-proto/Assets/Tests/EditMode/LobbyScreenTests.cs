@@ -187,6 +187,35 @@ public class LobbyScreenTests
     }
 
     /// <summary>
+    /// PLAY JOINS A FREE ROUND FIRST (the owner 2026-09-15, the 12:54 lobby: one free round and one
+    /// paying 2-of-2 open at once). The rows the Daily listed after its first rollover: the old
+    /// free round about to close, the new free round, the paying round with the most entry left -
+    /// all joinable. Measured before: PLAY picked the paying round, so a player with no sats who
+    /// pressed PLAY landed on a stake while a free round was listed. The paying round stays one tap.
+    /// </summary>
+    [Test]
+    public void AfterRolloverWithBothRoundsJoinablePlayJoinsTheFreeRoundAndTheTapOnThePaidRowStays()
+    {
+        LobbyRow Row(string id, bool free, int leftS) => new LobbyRow { id = id, free = free, joinable = true, agree = 2, needed = 2, leftS = leftS };
+        var after = new[] { Row("a5be918a", true, 48), Row("01e305d9", true, 1694), Row("81a75ce7", false, 1761) };
+        Assert.AreEqual(1, DailyLobby.PickDefault(after),
+            "PLAY's target is not the free round with the most entry left: a player with no sats lands on the paying round");
+        Assert.AreEqual(1, DailyLobby.Keep(after, ""), "with nothing tapped, PLAY does not target the free round");
+
+        // A MOMENT WITH ONLY THE PAYING ROUND JOINABLE (the free one between close and the next):
+        // it is PLAY's then - and nothing of it sticks once a free round is back and nobody tapped.
+        var paidOnly = new[] { Row("81a75ce7", false, 1761) };
+        Assert.AreEqual(0, DailyLobby.PickDefault(paidOnly), "with no free round, the paying round is PLAY's");
+        Assert.AreEqual(1, DailyLobby.Keep(after, ""), "a default on the paying round outlived the free round's return");
+
+        // THE PLAYER'S OWN TAP ON THE PAYING ROW STAYS - one tap away, and kept.
+        Assert.AreEqual(2, DailyLobby.Keep(after, "81a75ce7"), "the player's tap on the paying round was taken back");
+        // and a free round that is not joinable is never PLAY's
+        var closing = new[] { new LobbyRow { id = "a5be918a", free = true, joinable = false, leftS = 30 }, Row("81a75ce7", false, 1761) };
+        Assert.AreEqual(1, DailyLobby.PickDefault(closing), "a free round that cannot be joined was picked over a joinable paying one");
+    }
+
+    /// <summary>
     /// PLAY STARTS THE ROUND, IN THIS PAGE (M3.3-34, the owner 2026-09-13 07:11:
     /// "after PLAY the loading screen must not come again"). The page takes the
     /// seat without a reload and says so; the round starts once the page says
