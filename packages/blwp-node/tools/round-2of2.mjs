@@ -44,7 +44,7 @@ import { beaconFromChain, medianTimePast } from '../../protocol/src/beacon.js';
 import { regtest } from './regtest-bond.mjs';
 import { chainOf, publicationOf } from '../../protocol/tools/chainview.js';
 import { bitcoindRpc } from '../src/chain-rpc.js';
-import { operatorFunding } from '../src/funding.js';
+import { operatorFunding, freeOrOperatorFunding } from '../src/funding.js';
 import { serve } from '../src/server.js';
 import { lightningFromEnv } from '../src/lnd-settings.js';
 import { serveDonationRecipients, TEST_RECIPIENT_PORT } from '../src/lnurl-recipients.js';
@@ -98,15 +98,25 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
                                      // (`claimKeyFor`, `stakeLocks`). None by default: every
                                      // existing caller's round names no federation, as before.
                                      federationId = new Uint8Array(32), invite = null, seat = {},
+                                     // A SECOND KIND OF ROUND KEPT OPEN BESIDE THE FIRST (the owner
+                                     // 2026-09-15 12:54, option B): `{ stakeMsat, custody:
+                                     // 'THRESHOLD_LN' }` - a paying round on the same two seats, its
+                                     // stakes held by the committee's Lightning, no federation. None
+                                     // by default: one kind of round, as before.
+                                     paid = null,
                                      // THE DONATION SET'S TWO LOCAL TEST RECIPIENTS (M3.2 6e): bound
                                      // for a paid round, at the address the signed set names. A
                                      // free round asks no donation and binds nothing.
-                                     donationRecipients = stakeMsat > 0n ? { port: TEST_RECIPIENT_PORT } : null } = {}) {
+                                     donationRecipients = stakeMsat > 0n || (paid && BigInt(paid.stakeMsat) > 0n)
+                                       ? { port: TEST_RECIPIENT_PORT } : null } = {}) {
   // WHAT THESE DAEMONS FUND (M3.3-31): a PAYING round goes through the
   // launcher's own rule - the round its operator names, and entries into a
   // paying round the node holds when it reaches Lightning - not a harness's
   // `() => true`. A free round keeps `() => true`: the launcher opens none.
-  const funded = stakeMsat > 0n ? operatorFunding() : () => true;
+  // With a paying kind beside a free first round, both: the free round and its
+  // entries as before, the paying rounds by the operator's rule, each named
+  // by this tool as it opens it.
+  const funded = stakeMsat > 0n ? operatorFunding() : paid ? freeOrOperatorFunding() : () => true;
 
   // THE BEACON IS THE CHAIN'S OR THERE IS NONE.
   //
@@ -606,7 +616,10 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // from 2026-09-06), so a round opened on it today would be past its entry
   // close before anybody saw it: refused by name rather than listed as open.
   const held = [contract];
-  async function openNext() {
+  // `kind` overrides the first round's stake and custody - `paid` for the paying
+  // round kept beside the free one; nothing else of the contract changes, so both
+  // kinds name the same core, config and seats.
+  async function openNext(kind = {}) {
     if (!onChain) throw new Error('a later round needs a bitcoind: the fixture chain\'s clock is fixed, '
       + 'so a round opened on it now would already be past its entry close');
     // JUST PAST THE LATER OF THE TIP'S TIME AND NOW. The tip's own time is what
@@ -617,7 +630,10 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // second one 6 s later. Now is later than that tip, so the rule still holds.
     const tip = onChain.blocksFrom(onChain.height(), onChain.height()).blocks[0].header;
     const committee = (BigInt(Math.max(blockTimeOf(tip), Math.floor(Date.now() / 1000))) + 2n) * 1000n;
-    const next = { ...contract, committeeTimeMs: committee, startTimeMs: committee + MIN_ENTRY_WINDOW_MS,
+    const next = { ...contract,
+      ...(kind.stakeMsat !== undefined ? { stakeMsat: BigInt(kind.stakeMsat) } : {}),
+      ...(kind.custody ? { custody: kind.custody } : {}),
+      committeeTimeMs: committee, startTimeMs: committee + MIN_ENTRY_WINDOW_MS,
       entryCloseMs: committee + MIN_ENTRY_WINDOW_MS + (contract.entryCloseMs - contract.startTimeMs) };
     censusView = onChain.blocksFrom(Math.max(0, bondHeight - 20), onChain.height());
     next.censusRoot = censusRootFor(next);
@@ -630,18 +646,24 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     return nextId;
   }
 
-  // AND KEEP ONE JOINABLE: whenever no round this tool opened has more than
-  // `leadMs` of entry left, open the next. One at a time; a failure is handed
+  // AND KEEP ONE JOINABLE OF EACH KIND: whenever no round of a kind this tool
+  // opened has more than `leadMs` of entry left, open the next of that kind -
+  // the free round, and the paying one beside it when `paid` is given (the owner
+  // 2026-09-15 12:54: both at once). One opening at a time; a failure is handed
   // to `onError` and the next check tries again.
   let keeper = null;
-  function keepOpen({ everyMs = 5000, leadMs = 60000, onOpen = () => {}, onError = () => {} } = {}) {
+  function keepOpen({ everyMs = 5000, leadMs = 60000, onOpen = () => {}, onError = () => {},
+    kinds = [{}, ...(paid ? [paid] : [])] } = {}) {
     if (keeper) return keeper;
     let opening = null;
+    const stakeOf = (k) => BigInt(k.stakeMsat !== undefined ? k.stakeMsat : contract.stakeMsat);
     const check = () => {
       if (opening) return;
       const now = BigInt(Date.now());
-      if (held.some((c) => c.entryCloseMs > now + BigInt(leadMs))) return;
-      opening = openNext().then(onOpen, onError).finally(() => { opening = null; });
+      const due = kinds.find((k) => !held.some((c) => BigInt(c.stakeMsat) === stakeOf(k)
+        && c.entryCloseMs > now + BigInt(leadMs)));
+      if (!due) return;
+      opening = openNext(due).then((id) => onOpen(id, due), onError).finally(() => { opening = null; });
     };
     const timer = setInterval(check, everyMs);
     check();

@@ -50,6 +50,17 @@ if (!env.RT) {
   console.error('the Daily opens its rounds on a regtest bitcoind: name its datadir as RT= (and its RPCPORT=)');
   process.exit(2);
 }
+// A PAYING 2-OF-2 ROUND BESIDE THE FREE ONE (the owner 2026-09-15 12:54, option B): BLWP_PAID_STAKE_MSAT
+// names its stake; its custody is THRESHOLD_LN - the committee's own Lightning (the four BLWP_LND*
+// settings, a regtest lnd on this chain) holds the stakes, no federation. The keeper keeps one of
+// each kind open. Refused here without the four settings: a seat with no Lightning answers every
+// paying round 503, and a launcher asking every five seconds would only fill its log.
+const paidStake = env.BLWP_PAID_STAKE_MSAT ? BigInt(env.BLWP_PAID_STAKE_MSAT) : 0n;
+if (paidStake > 0n && !['BLWP_LNCLI', 'BLWP_LND_DIR', 'BLWP_LND_RPC', 'BLWP_LND_NETWORK'].every((k) => env[k])) {
+  console.error('BLWP_PAID_STAKE_MSAT needs the committee\'s Lightning: set BLWP_LNCLI, BLWP_LND_DIR, BLWP_LND_RPC and BLWP_LND_NETWORK');
+  process.exit(2);
+}
+const paid = paidStake > 0n ? { stakeMsat: paidStake, custody: 'THRESHOLD_LN' } : null;
 mkdirSync(dir, { recursive: true, mode: 0o700 });
 const rpcport = env.RPCPORT || '30401';
 const rpc = bitcoindRpc({ url: `http://127.0.0.1:${rpcport}/`, cookiePath: `${env.RT}/regtest/.cookie` });
@@ -59,7 +70,7 @@ const cli = (...a) => execFileSync(env.BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1
 // BOTH SEATS CLOSE EACH ROUND AT ITS END, by their own clocks (server closeAtEnd,
 // protocol roundEndMs), so every run is replayed, signed and made final.
 const round = await standUpRound({ host, portA, portB, store: dir, rpc, cli, page, seat: { closeAtEnd: true },
-  bDownAtStart: !!env.BLWP_START_B_DOWN });
+  bDownAtStart: !!env.BLWP_START_B_DOWN, paid });
 // SEAT B STARTS DOWN (BLWP_START_B_DOWN=1), for an operator's look at seat A
 // restarted while it holds a close that needs B; SIGUSR2 brings B up.
 if (env.BLWP_START_B_DOWN) { await round.b.close(); say({ seatB: 'down', atStart: true }); }
@@ -74,7 +85,8 @@ writeFileSync(join(dir, 'lobby-url.txt'), round.lobbyUrl + '\n');
 writeFileSync(join(dir, 'daily.json'),
   JSON.stringify({ node: round.nodes, bond: round.bond, advert: round.advert }, null, 2) + '\n');
 console.log(round.lobbyUrl);
-round.keepOpen({ onOpen: (id) => say({ opened: id }), onError: (e) => say({ notOpened: e.message }) });
+round.keepOpen({ onOpen: (id, kind) => say({ opened: id, stakeMsat: String(kind && kind.stakeMsat !== undefined ? kind.stakeMsat : 0n),
+  custody: (kind && kind.custody) || 'free' }), onError: (e) => say({ notOpened: e.message }) });
 
 // SEAT B DOWN AND BACK, for an operator's 2-of-2 look: SIGUSR1 closes seat B,
 // SIGUSR2 serves it again on the same store and port (standUpRound's own
