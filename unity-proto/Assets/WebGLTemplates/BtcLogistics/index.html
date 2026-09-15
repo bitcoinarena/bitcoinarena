@@ -620,7 +620,7 @@
           // this letter closed.
           window.BLWP_SEAT_REFUSED = 'this round pays and its settlement committee '
             + 'could not be learned, so no stake could be dealt: ' + e.message;
-          console.error('[blwp] seat refused: ' + window.BLWP_SEAT_REFUSED);
+          console.error('[blwp] join refused: ' + window.BLWP_SEAT_REFUSED);
           return;
         }
         // A ROUND WHOSE STAKE GOES INTO A FEDERATION LOCK NAMES AN ATTESTED
@@ -643,7 +643,7 @@
           });
           if (!att.ok) {
             window.BLWP_SEAT_REFUSED = att.why;
-            console.error('[blwp] seat refused: ' + att.why);
+            console.error('[blwp] join refused: ' + att.why);
             return;
           }
           claimKey = att;
@@ -664,7 +664,7 @@
         const use = BLWPCLIENT.keptLockUse(kept);
         if (use.use === 'staked') {
           window.BLWP_SEAT_REFUSED = use.why;
-          console.error('[blwp] seat refused: ' + use.why);
+          console.error('[blwp] join refused: ' + use.why);
           return;
         }
         const reuse = use.use === 'reuse' ? use.kept : null;
@@ -686,7 +686,7 @@
           : await BLWPCLIENT.postHandout(stake, named.nodes, { needed: BLWPCLIENT.sharesNeededFor(named.round) });
         if (!put.ok) {
           window.BLWP_SEAT_REFUSED = put.why;
-          console.error('[blwp] seat refused: ' + put.why + ' — ' + put.refused.join('; '));
+          console.error('[blwp] join refused: ' + put.why + ' — ' + put.refused.join('; '));
           return;
         }
         // AND A ROUND WHOSE STAKE GOES INTO A FEDERATION LOCK GETS ITS LOCK
@@ -752,7 +752,7 @@
             console.log('[blwp] stake locked at ' + BLWPCLIENT.toHex(made.outpoint.txid) + ':' + String(made.outpoint.outIdx));
           } catch (e) {
             window.BLWP_SEAT_REFUSED = 'this round\'s stake goes into a federation lock, and it was not made: ' + e.message;
-            console.error('[blwp] seat refused: ' + window.BLWP_SEAT_REFUSED);
+            console.error('[blwp] join refused: ' + window.BLWP_SEAT_REFUSED);
             return;
           }
           // AND WHAT THE COLLECT NEEDS AFTER THE WINDOW, KEPT IN THE TAB (6d): a reload -
@@ -771,7 +771,7 @@
         // rather than this page's assumption. Dealing is not funding, and a
         // page that printed "not paid" as a constant would be reporting its
         // own guess as the player's balance.
-        console.log('[blwp] stake dealt to ' + seats.seats.length + ' settlement seat(s), '
+        console.log('[blwp] stake dealt to ' + seats.seats.length + ' settlement signer node(s), '
           + put.accepted + ' accepted the handout. Paying it is M3.2; the chip says '
           + 'what the node holds.');
       } else {
@@ -1268,7 +1268,7 @@
         : null;
       const who = (typeof BLWPCLIENT !== 'undefined' && BLWPCLIENT.playersLine)
         ? BLWPCLIENT.playersLine({ seated, others, stalled, at, refused, seatRefused, stake, names: window.BLWP_OTHER_NAMES || [] })
-        : (seated ? (others ? (1 + others) + ' players in this round' : '1 player · waiting') : 'round named · not seated');
+        : (seated ? (others ? (1 + others) + ' players in this round' : '1 player · waiting') : 'round named · not joined');
       el.textContent = ab + '\n' + playLine(net) + '\n' + who;
     }
     // WHO THE OTHER PLAYERS ARE (M3.3-34): this tab hands the round's seats its
@@ -1449,7 +1449,7 @@
           joinTheRoundIfOneWasNamed()
             .then(() => {
               if (window.BLWP_ENTRY) join.state = 'joined';
-              else refuse(window.BLWP_SEAT_REFUSED || 'this page took no seat in that round');
+              else refuse(window.BLWP_SEAT_REFUSED || 'this page did not join that round');
             })
             .catch((e) => refuse(e && e.message ? e.message : e));
           return true;

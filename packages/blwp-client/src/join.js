@@ -224,7 +224,7 @@ export async function postHandout(stake, nodes, { fetcher = fetch, needed: asked
   // `stakeFor` makes the round's. The default was a flat 5 (M3.3-26).
   const needed = asked ?? stake.handout?.needed;
   if (!Number.isInteger(needed) || needed < 1)
-    throw new Error('this stake does not say how many seats open it');
+    throw new Error('this stake does not say how many signer nodes open it');
   if (!Array.isArray(nodes) || !nodes.length)
     throw new Error('no node to publish this handout to');
   const accepted = [];
@@ -242,7 +242,7 @@ export async function postHandout(stake, nodes, { fetcher = fetch, needed: asked
   if (accepted.length < needed)
     return {
       ok: false, accepted: accepted.length, needed, refused,
-      why: `${accepted.length} of the ${needed} seats needed to open this stake took the `
+      why: `${accepted.length} of the ${needed} signer nodes needed to open this stake took the `
         + 'handout, so it could never be settled',
     };
   return { ok: true, accepted: accepted.length, needed, refused };
@@ -311,7 +311,7 @@ export async function attestedClaimKey({ round, seats, nodes, curve, fetcher = f
   }
   return {
     ok: false, refused, attested: best ? best.attested || 0 : 0,
-    why: best ? `no claim key has this round's attestation: ${best.why}` : `no seat served a claim key for this round${refused.length ? ': ' + refused.join('; ') : ''}`,
+    why: best ? `no claim key has this round's attestation: ${best.why}` : `no signer node served a claim key for this round${refused.length ? ': ' + refused.join('; ') : ''}`,
   };
 }
 
@@ -472,11 +472,11 @@ export function settledLine(s) {
   // WHAT THE ROUND OWES THIS SEAT (M3.2 6e): its row of the payout table as the
   // seats serve it - shown when there is something owed; a loser's row is 0.
   const owed = s.owedMsat !== null && s.owedMsat !== undefined && BigInt(s.owedMsat) > 0n
-    ? ` · the round's payout table: ${s.owedMsat} msat for this seat` : '';
-  if (s.hold === 'SETTLED') return `Settled: this seat's ${held}stake went into the pool${owed}${pool}`;
-  if (s.hold === 'CANCELLED') return `Returned: this seat's ${held}stake was cancelled back to the wallet${owed}${pool}`;
-  if (s.hold === 'EXPIRED') return `Expired: this seat's ${held}stake came back to the wallet when its hold ran out`;
-  if (s.hold === 'HELD') return `Settlement: this seat's ${held}stake is held${s.finality ? `, the result ${s.finality}` : ', no result yet'}`;
+    ? ` · the round's payout table: ${s.owedMsat} msat for your entry` : '';
+  if (s.hold === 'SETTLED') return `Settled: your ${held}stake went into the pool${owed}${pool}`;
+  if (s.hold === 'CANCELLED') return `Returned: your ${held}stake was cancelled back to the wallet${owed}${pool}`;
+  if (s.hold === 'EXPIRED') return `Expired: your ${held}stake came back to the wallet when its hold ran out`;
+  if (s.hold === 'HELD') return `Settlement: your ${held}stake is held${s.finality ? `, the result ${s.finality}` : ', no result yet'}`;
   return '';
 }
 
@@ -505,7 +505,7 @@ export function settledLine(s) {
  */
 export async function fetchSettlementSeats(id, nodes, { fetcher = fetch } = {}) {
   if (!Array.isArray(nodes) || !nodes.length)
-    throw new Error('no node to ask which seats settle this round');
+    throw new Error('no node to ask which signer nodes settle this round');
   const said = [];
   const refused = [];
   for (const node of nodes) {
@@ -713,7 +713,7 @@ const roundIdOf = (round) => (round.id instanceof Uint8Array && round.id.length 
  * outside it (`blwp-node/tools/refund-key.mjs <seed> <round id>`).
  */
 export function playerFor(round, { seed, curve } = {}) {
-  if (!round) throw new Error('there is no round to take a seat at');
+  if (!round) throw new Error('there is no round to join');
   if (!curve || typeof curve.pointX !== 'function')
     throw new Error('a player identity is a key on a curve, and none was injected');
   if (!(seed instanceof Uint8Array) || seed.length !== 32)
@@ -760,7 +760,7 @@ function feeLockOf(stakeLock, round) {
 
 export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stake, claimKey, stakeLock,
   donationMsat = 0n } = {}) {
-  if (!round) throw new Error('there is no round to take a seat at');
+  if (!round) throw new Error('there is no round to join');
   // THE PLAYER'S OWN DONATION (M3.2 6e, §22A), chosen on the page
   // (`chooseDonation`) and written here - never rewritten by anybody else. It
   // must leave the fee inside the stake, by the seat's own rule, so the page
@@ -789,12 +789,12 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
   if (stake && (!stake.stakeCommitment || !stake.vssSharesRef))
     throw new Error('that is not a dealt stake: it names no commitment or no shares');
   if (stake && stake.vssSharesRef.some((b) => b !== 0) && !stake.stakePoint)
-    throw new Error('that stake publishes shares and names no stake point, so no seat could check them');
+    throw new Error('that stake publishes shares and names no stake point, so no signer node could check them');
   // A LOCKING ROUND'S ENTRY NAMES THE ATTESTED CLAIM KEY (§23.1 step 0): with
   // no attestation the page refuses the seat - "a client MUST refuse to lock
   // to a key without them" - rather than name a key nobody vouched for.
   if (roundLocks(round) && !(claimKey && claimKey.ref instanceof Uint8Array && claimKey.ref.some((b) => b !== 0)))
-    throw new Error('this round\'s stake goes into a federation lock, and no claim key has its seats\' '
+    throw new Error('this round\'s stake goes into a federation lock, and no claim key has its signer nodes\' '
       + 'attestation: a client must refuse to lock to a key without it (23.1 step 0)');
   // AND IT NAMES THE LOCK ITSELF (§7 stake_lock_outpoint, W1b). The page used to
   // write zeros here for every round, so a lock round's seat named no lock and
@@ -803,7 +803,7 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
   if (roundLocks(round) && !(stakeLock && stakeLock.outpoint && stakeLock.outpoint.txid instanceof Uint8Array
     && stakeLock.outpoint.txid.length === 32 && stakeLock.outpoint.txid.some((b) => b !== 0)))
     throw new Error('this round\'s stake goes into a federation lock, and no lock was made: an entry naming '
-      + 'no stake lock outpoint is one no seat can commit (23.1 step 5)');
+      + 'no stake lock outpoint is one no signer node can commit (23.1 step 5)');
   if (!roundLocks(round) && stakeLock)
     throw new Error('this round names no federation, so there is no lock for its entry to name');
   if (stakeLock && stake && stake.stakePoint && !(stakeLock.fields && stakeLock.fields.paymentImage
@@ -891,7 +891,7 @@ export async function stakeFor(round, { seats, curve, random, playerPubkey, need
     throw new Error(`a stake dealt ${asked} of ${seats ? seats.length : 0} is refused: `
       + `this round's stakes open at ${needed} of ${round.settlementSlots}`);
   if (!Array.isArray(seats) || seats.length < needed)
-    throw new Error(`a threshold of ${needed} cannot be dealt to ${seats ? seats.length : 0} seats`);
+    throw new Error(`a threshold of ${needed} cannot be dealt to ${seats ? seats.length : 0} signer nodes`);
   if (!curve || typeof curve.ecdhShared !== 'function' || typeof curve.pointX !== 'function')
     throw new Error('dealing a stake needs a curve, and none was injected');
   if (!playerPubkey || playerPubkey.length !== 32)

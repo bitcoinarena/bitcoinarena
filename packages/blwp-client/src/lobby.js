@@ -96,7 +96,7 @@ function lobbySigned(verify, { id, nodeKey, nowMs, x }) {
  */
 export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, skewMs = LOBBY_SKEW_MS } = {}) {
   if (!Array.isArray(nodes) || !nodes.length) throw new Error('a lobby asks the nodes it was named, and it was named none');
-  if (typeof verify !== 'function') throw new Error('a lobby checks each seat\'s signed listing, and no verify was injected');
+  if (typeof verify !== 'function') throw new Error('a lobby checks each signer node\'s signed listing, and no verify was injected');
   const refused = [];
   const said = new Map();                                   // id -> [{ node, key, ... }]
   for (const node of [...new Set(nodes)]) {
@@ -193,10 +193,10 @@ export function lobbyLine(row, nowMs = Date.now()) {
   const when = row.phase === 'pending'
     ? `committee: pending, entry opens in ${lobbyClock(row.committeeTimeMs - nowMs)}`
     : `entry open, closes in ${lobbyClock(row.entryCloseMs - nowMs)}`;
-  const agree = `${row.seatsAgree} of ${row.needed} seats agree`
+  const agree = `${row.seatsAgree} of ${row.needed} signer nodes agree`
     + (row.phase === 'open' && !row.joinable ? ` - waiting for ${row.needed - row.seatsAgree} more` : '');
-  const counts = row.said.map((c) => `${c.seated} seated, ${c.playing} playing (says ${c.node})`).join('; ');
+  const counts = row.said.map((c) => `${c.seated} joined, ${c.playing} playing (says ${c.node})`).join('; ');
   const who = row.names && row.names.length ? ` · players: ${row.names.map((n) => n.name).join(', ')}` : '';
-  return `${money} · ${when} · ${agree} · ${counts || 'no seat counts'}${who}`
+  return `${money} · ${when} · ${agree} · ${counts || 'no signer node counts'}${who}`
     + (row.disagrees.length ? ` · ${row.disagrees.join(', ')} listed it as ${row.free ? 'paying' : 'free'}` : '');
 }

@@ -844,7 +844,7 @@ public class ArmyRenderer : MonoBehaviour
         }
 
         if (say && drawnArmour > 0)
-            Debug.Log($"[seat] tanks at tick {Blwp.BlwpCore.Tick}: hull bottom vs ground - "
+            Debug.Log($"[ground] tanks at tick {Blwp.BlwpCore.Tick}: hull bottom vs ground - "
                       + $"under 1 m {seat[0]}, 0.3-1 m under {seat[1]}, 5-30 cm under {seat[2]}, "
                       + $"on it {seat[3]}, 5-30 cm over {seat[4]}, 0.3-1 m over {seat[5]}, "
                       + $"over 1 m {seat[6]}; deepest {deepest:F2} m, highest {highest:F2} m");

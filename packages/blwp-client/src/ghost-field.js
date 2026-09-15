@@ -216,8 +216,8 @@ export function playersLine({ seated, others, stalled = false, at = null, refuse
   // sent to. Worse, the bridge then threw "the page did not say which round to
   // play", which names the wrong cause entirely. A refusal nobody can see is
   // the silent seat again, wearing the other hat.
-  if (seatRefused) return `not seated · ${seatRefused}`;
-  if (!seated) return 'round named · not seated';
+  if (seatRefused) return `not joined · ${seatRefused}`;
+  if (!seated) return 'round named · not joined';
   if (refused) return `not publishing · ${refused}`;
 
   // AND WHETHER THIS SEAT IS PAID FOR.
@@ -267,7 +267,7 @@ export function playersLine({ seated, others, stalled = false, at = null, refuse
  */
 export function stakeLine(stake, nowMs = Date.now()) {
   if (!stake) return '';
-  if (stake.free) return ' · free seat';
+  if (stake.free) return ' · free round';
   if (!stake.dealt) return '';
   const s = stake.seen;
   // A SEAT THE NODE ISSUED NO HOLD FOR, THAT NOBODY HAS SEEN, KEEPS THE NODE'S

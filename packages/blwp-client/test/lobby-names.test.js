@@ -95,7 +95,7 @@ test('the other page shows a name only from a record its player signed for this 
   await assert.rejects(() => namesOf({ roundId: ROUND.id, nodes: ['http://a'], fetcher }), /no verify/);
   // NO SEAT ANSWERING IS NOT AN EMPTY ROUND: the page keeps what it had.
   await assert.rejects(() => namesOf({ roundId: ROUND.id, nodes: ['http://down', 'http://gone'], fetcher, verify }),
-    /no seat answered for the names: http:\/\/down: 404; http:\/\/gone: 404/);
+    /no signer node answered for the names: http:\/\/down: 404; http:\/\/gone: 404/);
   const slow = async () => { const e = new Error('timed out'); e.name = 'TimeoutError'; throw e; };
   await assert.rejects(() => namesOf({ roundId: ROUND.id, nodes: ['http://a'], fetcher: slow, verify }), /http:\/\/a: no answer in time/);
 });
@@ -106,7 +106,7 @@ test('the seated view names the others it holds a checked name for, and counts t
   assert.equal(playersLine({ seated: true, others: 0, names: ['Road Owl 42'] }), '2 players in this round: Road Owl 42',
     'a seated player who has not driven yet is still in the round');
   assert.equal(playersLine({ seated: true, others: 1, names: ['Road Owl 42'], stake: { free: true } }),
-    '2 players in this round: Road Owl 42 · free seat');
+    '2 players in this round: Road Owl 42 · free round');
   assert.equal(playersLine({ seated: true, others: 1 }), '2 players in this round');
   assert.equal(playersLine({ seated: true, others: 0 }), '1 player · waiting');
 });

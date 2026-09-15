@@ -164,7 +164,7 @@ test('a page that cannot keep up sheds the oldest pictures, not the newest', asy
       'the page kept the oldest pictures and dropped the newest');
     assert.equal(field.others, 1, 'draining the renderer queue forgot who is in the round');
     assert.equal(GHOST_BACKLOG > 3, true, 'the default backlog is not a real budget');
-    assert.equal(playersLine({ seated: false }), 'round named · not seated');
+    assert.equal(playersLine({ seated: false }), 'round named · not joined');
     assert.equal(playersLine({ seated: true, others: 0 }), '1 player · waiting');
     assert.equal(playersLine({ seated: true, others: 1 }), '2 players in this round');
   } finally { await node.close(); }
@@ -290,7 +290,7 @@ test('the players line says when trucks are arriving and none are drawn', () => 
   // A round with nobody else in it says nothing about drawing, because there
   // is nothing to draw.
   assert.equal(playersLine({ seated: true, others: 0, stalled: true }), '1 player · waiting');
-  assert.equal(playersLine({ seated: false, others: 4, stalled: true }), 'round named · not seated');
+  assert.equal(playersLine({ seated: false, others: 4, stalled: true }), 'round named · not joined');
 
   // AND WHERE THE NEWEST OTHER TRUCK IS, because `none drawn` only separates
   // a renderer that never ran from one that ran. A truck drawn 100 m down the

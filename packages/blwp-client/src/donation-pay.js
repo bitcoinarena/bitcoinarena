@@ -190,7 +190,7 @@ export async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u)
   if (typeof verifyEd25519 !== 'function') return { ok: false, why: 'checking a donation set needs an Ed25519 verifier, and none was injected' };
   const networkKeys = keys || donationKeysForNetworkId(round.networkId);
   if (!networkKeys) return { ok: false, why: 'this round\'s network has no donation authority this page knows' };
-  if (!Array.isArray(nodes) || !nodes.length) return { ok: false, why: 'the round names no seats to ask for its donation set' };
+  if (!Array.isArray(nodes) || !nodes.length) return { ok: false, why: 'the round names no signer nodes to ask for its donation set' };
   const rid = toHex(roundId(round));
   const answers = await Promise.all(nodes.map(async (node) => {
     const base = String(node).replace(/\/+$/, '');
@@ -208,9 +208,9 @@ export async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u)
   }));
   const missing = answers.filter((a) => !a.bytes);
   if (missing.length)
-    return { ok: false, why: `not every seat of this round serves its donation set: ${missing.map((a) => `${a.node}: ${a.why}`).join('; ')}` };
+    return { ok: false, why: `not every signer node of this round serves its donation set: ${missing.map((a) => `${a.node}: ${a.why}`).join('; ')}` };
   const served = toHex(answers[0].bytes);
-  if (answers.some((a) => toHex(a.bytes) !== served)) return { ok: false, why: 'the seats of this round serve different donation sets' };
+  if (answers.some((a) => toHex(a.bytes) !== served)) return { ok: false, why: 'the signer nodes of this round serve different donation sets' };
   const bytes = answers[0].bytes;
   if (bytes.length <= DONATION_SIGNATURE_BYTES) return { ok: false, why: 'that is no signed donation set' };
   let set;
@@ -237,5 +237,5 @@ export async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u)
   if (await verifyEd25519(set.signature, donationSetBodyId(set), inForce.authority) !== true)
     return { ok: false, why: 'that donation set is not signed by the network\'s donation authority at the round\'s height' };
   return { ok: true, set, seats: answers.length, rotated: inForce.rotated,
-    why: `${answers.length} seat(s) serve the set this round names, signed by its donation authority` };
+    why: `${answers.length} signer node(s) serve the set this round names, signed by its donation authority` };
 }

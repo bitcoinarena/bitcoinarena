@@ -247,7 +247,7 @@ test('NIP-04 goes both ways over the shared secret, and only for the pair it was
 
 /**
  * THE NUMBER THAT CLOSES THE LETTER: the wallet is asked to pay the invoice
- * this seat's own quote produced, and that one only.
+ * your own quote produced, and that one only.
  */
 test('a connected wallet pays the hold invoice this seat owes', async () => {
   const c = await seated();
@@ -267,7 +267,7 @@ test('a connected wallet pays the hold invoice this seat owes', async () => {
     // THE WALLET WAS ASKED FOR EXACTLY ONE INVOICE, AND IT IS THE QUOTE'S.
     assert.equal(w.asked.length, 1, `the wallet was asked ${w.asked.length} times`);
     assert.equal(w.asked[0], quoted.request,
-      'the wallet was asked to pay something other than this seat\'s quote');
+      'the wallet was asked to pay something other than your quote');
     console.log(`  ${paid.amountMsat} msat, 1 request to the wallet, and it is the quote: `
       + `${w.asked[0]}`);
 
@@ -297,7 +297,7 @@ test('a quote for another seat sends nothing to the wallet', async () => {
     const crossed = await c.client.payStake(other, { connection: w.uri, entryId: c.eid, ...pays });
     assert.equal(crossed.ok, false);
     assert.equal(crossed.asked, false, 'the wallet was asked about a crossed pair');
-    assert.match(crossed.why, /they are two seats/);
+    assert.match(crossed.why, /they are two entries/);
     assert.equal(w.asked.length, 0, `${w.asked.length} requests reached the wallet`);
     console.log(`  crossed seats: ${w.asked.length} requests to the wallet - "${crossed.why}"`);
   } finally { await w.close(); await c.close(); }
@@ -603,13 +603,13 @@ test('the page pastes a connection, shows the amount and the total, and calls pa
   assert.match(page, /id="blwp-spent"/, 'the page never shows the running total');
   assert.match(page, /BLWPCLIENT\.tabWallet\(/, 'the page does not hold a connection per tab');
   assert.match(page, /window\.sessionStorage/, 'the connection is not held per tab');
-  // THE SEATED ENTRY - this seat's own, with its round id and session key. It
+  // THE SEATED ENTRY - your own, with its round id and session key. It
   // was `window.BLWP_ENTRY`, which carries neither: measured on the page, every
   // quote and every pay threw "expected 32 bytes, got nothing" in entryId
   // (Client.invoice -> entryId -> encodeEntryContract), so no stake was ever
   // paid through this path.
   assert.match(page, /client\.payStake\(client\.seatEntry/,
-    'the page does not pay this seat\'s stake with its own entry');
+    'the page does not pay your stake with its own entry');
   assert.match(page, /BLWPCLIENT\.spentLine\(/, 'the page adds up its own total');
 
   // AND NO SECOND WAY TO PAY. The whole safety property of `payStake` is its

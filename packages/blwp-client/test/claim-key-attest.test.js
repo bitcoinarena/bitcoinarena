@@ -150,7 +150,7 @@ test('a stranger\'s signed claim key counts for nothing, and a node not seated o
 test('a round whose stake goes into a lock gets no entry without an attested key; a hold-invoice round keeps a zero attestation', async () => {
   const f = await federationRound();
   try {
-    assert.throws(() => entryWith(f), /no claim key has its seats' attestation: a client must refuse to lock to a key without it/);
+    assert.throws(() => entryWith(f), /no claim key has its signer nodes' attestation: a client must refuse to lock to a key without it/);
     const hold = { ...f.round, federationId: new Uint8Array(32) };
     assert.equal(roundLocks(hold), false);
     assert.equal(entryFor(hold, { seed: b32(0x51), curve: pageCurve, random: (n) => new Uint8Array(n).fill(7) })

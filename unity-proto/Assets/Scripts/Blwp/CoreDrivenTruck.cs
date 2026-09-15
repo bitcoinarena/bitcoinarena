@@ -565,7 +565,7 @@ namespace Blwp
                         float deck = roads != null ? roads.Lift(at.x, at.z) : 0f;
                         float wear = roads != null ? roads.WearAt(at.x, at.z) : 0f;
                         Debug.Log($"[wheel] {_wheels[i].name}: visual radius "
-                                  + $"{b.extents.y:F3} m, seated on {(i < _wheelR.Length ? _wheelR[i] : _wheelRadius):F3} m, "
+                                  + $"{b.extents.y:F3} m, resting on {(i < _wheelR.Length ? _wheelR[i] : _wheelRadius):F3} m, "
                                   + $"bottom {b.min.y:F3}, ground {g:F3}, "
                                   + $"box sunk {g - b.min.y:F3} m, tyre sunk "
                                   + $"{(SeatingOf(i, out var seat) ? seat.Tyre : float.NaN):F3} m "
@@ -798,7 +798,7 @@ namespace Blwp
                 {
                     var bb = rs[0].bounds;
                     for (int k = 1; k < rs.Length; k++) bb.Encapsulate(rs[k].bounds);
-                    Debug.Log($"[seat] truck at tick {BlwpCore.Tick}: bottom "
+                    Debug.Log($"[ground] truck at tick {BlwpCore.Tick}: bottom "
                               + $"{(bb.min.y - LastSurface):+0.00;-0.00} m vs the ground, "
                               + $"ride {ride:F2}, surface {LastSurface:F2}, "
                               + $"body offset {_bodyAboveGround:F2}");

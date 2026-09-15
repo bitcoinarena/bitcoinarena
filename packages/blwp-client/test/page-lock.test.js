@@ -213,7 +213,7 @@ test('a 1000 sat round: the page mints one 20000 msat fee lock to H(F), names F 
 });
 
 // 6d (W4): THE WINNER COLLECTS ITS PAYOUT; A LOSER FINDS NONE.
-test('the winner\'s page collects its own payout contract from the seats\' settlement - by Refund under its key - and a loser\'s asks the wallet nothing', async () => {
+test('the winner\'s page collects its own payout contract from the signer nodes\' settlement - by Refund under its key - and a loser\'s asks the wallet nothing', async () => {
   const winner = playerFor({ ...round, id: rid }, { seed, curve: pageCurve });
   const loserSeed = b32(0x52);
   const winnerPk = toHex(refundKeyOf(winner.pubkey));
@@ -286,13 +286,13 @@ test('the winner\'s page collects its own payout contract from the seats\' settl
     fetcher: async () => ({ ok: true, status: 200, json: async () => ({ state: 'NONE' }), text: async () => '' }) });
   assert.equal(unsettled.ok, false);
   assert.equal(unsettled.final, false, 'a page gave up on a payout before the seats settled');
-  assert.match(payoutLine(unsettled), /^Payout: waiting for the seats' settlement/);
-  assert.match(unsettled.why, /no seat holds an accepted settlement/);
+  assert.match(payoutLine(unsettled), /^Payout: waiting for the signer nodes' settlement/);
+  assert.match(unsettled.why, /no signer node holds an accepted settlement/);
   assert.equal(asked.length, 0);
 });
 
 // 6d: AND THE WINNER'S OWN STAKE BACK BY THE SEATS' FORFEIT, AFTER THE WINDOW.
-test('after the settlement the winner\'s page redeems its own stake by the seats\' forfeit into the same wallet; a loser\'s is final with the lock client asked nothing; inside the window or unsettled it asks again', async () => {
+test('after the settlement the winner\'s page redeems its own stake by the signer nodes\' forfeit into the same wallet; a loser\'s is final with the lock client asked nothing; inside the window or unsettled it asks again', async () => {
   const player = playerFor({ ...round, id: rid }, { seed, curve: pageCurve });
   const refund = toHex(refundKeyOf(player.pubkey));
   const fields = { paymentImage: { kind: 'point', bytes: POINT }, amountMsat: 980000n, claimPk: CLAIM, refundPk: refundKeyOf(player.pubkey), expiration: 464 };
@@ -333,7 +333,7 @@ test('after the settlement the winner\'s page redeems its own stake by the seats
   assert.equal(back.amountMsat, 980000n);
   assert.equal(joins, 0, 'the page opened a second wallet beside the one its payout is in');
   assert.deepEqual(redeemed, [{ txid: 'cd'.repeat(32), outIdx: 0, sig: SIG, key: toHex(player.secret) }]);
-  assert.equal(stakeBackLine(back), 'Stake returned: 980000 msat back to this tab\'s federation wallet by the seats\' forfeit (balance 973312 → 1950624 msat)');
+  assert.equal(stakeBackLine(back), 'Stake returned: 980000 msat back to this tab\'s federation wallet by the signer nodes\' forfeit (balance 973312 → 1950624 msat)');
   // A RELOAD: answered from the tab's note - seats and wallet asked nothing.
   redeemed.length = 0; asked.length = 0;
   const again = await returnStake({ ...ask, storage, fetcher: seats() });
@@ -1044,7 +1044,7 @@ test('the refund from the seed alone: the seats are asked by the seed\'s refund 
   }
   const got = await refundStake({ round, roundId: rid, invite: INVITE, seed, curve: pageCurve, LockClient: Fake,
     nodes: ['http://a.test', 'http://b.test'], fetcher });
-  assert.equal(asked.length, 2, 'not every seat was asked');
+  assert.equal(asked.length, 2, 'not every signer node was asked');
   assert.ok(asked.every((u) => u.includes(`round=${toHex(rid)}`) && u.includes(`refund=${refund}`)));
   const r = refunded.find((x) => x.refund).refund;
   assert.deepEqual([r.txid, r.outIdx, r.key], ['ab'.repeat(32), 0, toHex(player.secret)]);
@@ -1053,10 +1053,10 @@ test('the refund from the seed alone: the seats are asked by the seed\'s refund 
   assert.deepEqual(got.refunds.map((x) => x.accepted), [true]);
   // AND ANOTHER SEED FINDS NOTHING TO REFUND.
   await assert.rejects(() => refundStake({ round, roundId: rid, invite: INVITE, seed: b32(0x53), curve: pageCurve, LockClient: Fake,
-    nodes: ['http://a.test'], fetcher }), /no seat knows a stake lock that refunds to this seed's key/);
+    nodes: ['http://a.test'], fetcher }), /no signer node knows a stake lock that refunds to this seed's key/);
 });
 
-test('the redeem from the seed alone: the seats\' forfeit and the player\'s key go to the lock client; a lock no seat forfeits is not redeemed', async () => {
+test('the redeem from the seed alone: the signer nodes\' forfeit and the player\'s key go to the lock client; a lock no seat forfeits is not redeemed', async () => {
   const player = playerFor({ ...round, id: rid }, { seed, curve: pageCurve });
   const refund = toHex(refundKeyOf(player.pubkey));
   const fields = { paymentImage: { kind: 'point', bytes: POINT }, amountMsat: 980000n, claimPk: CLAIM, refundPk: refundKeyOf(player.pubkey), expiration: 464 };
@@ -1083,7 +1083,7 @@ test('the redeem from the seed alone: the seats\' forfeit and the player\'s key 
   // A LOSER'S: every seat refuses the forfeit, and nothing reaches the lock client.
   calls.length = 0;
   await assert.rejects(() => redeemStake({ round, roundId: rid, invite: INVITE, seed, curve: pageCurve, LockClient: Fake,
-    nodes: ['http://a.test', 'http://b.test'], fetcher: seatsSay(409) }), /no seat gave a forfeit of this lock: .*not a qualifier/);
+    nodes: ['http://a.test', 'http://b.test'], fetcher: seatsSay(409) }), /no signer node gave a forfeit of this lock: .*not a qualifier/);
   assert.equal(calls.length, 0, 'a lock no seat forfeited was sent to the federation');
 });
 

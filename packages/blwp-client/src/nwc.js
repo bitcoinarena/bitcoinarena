@@ -299,9 +299,9 @@ export function spentLine(log) {
  * over.
  */
 export function owedLine(entry, quote, settlement = null) {
-  if (!entry) return 'this seat owes —';
+  if (!entry) return 'your entry owes —';
   let net;
-  try { net = netStakeMsat(entry); } catch (e) { return `this seat cannot be paid: ${e.message}`; }
+  try { net = netStakeMsat(entry); } catch (e) { return `your entry cannot be paid: ${e.message}`; }
   const split = `${sats(entry.stakeMsat)} round: ${sats(entry.feeMsat)} fee and `
     + `${sats(entry.donationMsat)} donation out of it, ${sats(net)} staked`;
   // A HOLD THAT HAS ENDED IS NOT HELD (M3.2 6e). The quote is asked once, at

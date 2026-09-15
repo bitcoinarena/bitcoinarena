@@ -153,7 +153,7 @@ export async function namesOf({ roundId, nodes, fetcher = fetch, verify } = {}) 
       if (body && Array.isArray(body.names)) items.push(...body.names);
     } catch (e) { refused.push(`${node}: ${e.name === 'TimeoutError' ? 'no answer in time' : e.message}`); }
   }
-  if (!answered) throw new Error(`no seat answered for the names: ${refused.join('; ') || 'no seats named'}`);
+  if (!answered) throw new Error(`no signer node answered for the names: ${refused.join('; ') || 'no signer nodes named'}`);
   return checkedNames(items, id, verify);
 }
 

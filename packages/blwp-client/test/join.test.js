@@ -473,7 +473,7 @@ test('a page refuses to deal without a curve, a committee, or a player', async (
   await assert.rejects(() => stakeFor(round, { seats, random: rand, playerPubkey: b32(5) }),
     /needs a curve, and none was injected/);
   await assert.rejects(() => stakeFor(round, { seats: seats.slice(0, 3), curve: feldmanGroup, random: rand, playerPubkey: b32(5) }),
-    /cannot be dealt to 3 seats/);
+    /cannot be dealt to 3 signer nodes/);
   await assert.rejects(() => stakeFor(round, { seats, curve: feldmanGroup, random: rand }),
     /that is 32 bytes of key/);
   await assert.rejects(() => stakeFor(null, { seats, curve: feldmanGroup, random: rand, playerPubkey: b32(5) }),

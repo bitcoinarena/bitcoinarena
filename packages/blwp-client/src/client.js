@@ -1182,7 +1182,7 @@ export class Client {
       return {
         ok: false,
         why: `that entry is ${toHex(entryId(entry)).slice(0, 16)} and the invoice was asked `
-          + `for ${toHex(eid).slice(0, 16)}: they are two seats`,
+          + `for ${toHex(eid).slice(0, 16)}: they are two entries`,
       };
 
     let said;
@@ -1192,7 +1192,7 @@ export class Client {
       if (!r.ok) return { ok: false, status: r.status, why: body.trim() };
       said = JSON.parse(body);
     } catch (e) {
-      return { ok: false, why: `the node would not quote this seat: ${e.message}` };
+      return { ok: false, why: `the node would not quote your entry: ${e.message}` };
     }
 
     // WHAT CAME BACK HAS TO BE THE SHAPE BEFORE IT CAN BE THE RIGHT VALUE. A
@@ -1348,7 +1348,7 @@ export class Client {
     // `stakeCommitted` is the settlement seats' own count (`watchStake`), not
     // this page's memory of having paid.
     if (this.stakeCommitted !== true)
-      return { ok: false, ...none, why: 'the stake is not in yet: no seat count has committed it, so no donation leaves the wallet' };
+      return { ok: false, ...none, why: 'the stake is not in yet: no signer node has counted it, so no donation leaves the wallet' };
     if (!set || !Array.isArray(set.recipients)) return { ok: false, ...none, why: 'there is no donation set to pay' };
     if (round) {
       const named = donationSetMatchesRound(round, set.recipients);
@@ -1441,7 +1441,7 @@ export class Client {
     if (this.stakeCommitted || this.ended || this.stakeWatchStopped)
       return Promise.resolve(this.stakeCount);
     const eid = (this.where && this.where.entryId) || (this.seatEntry && entryId(this.seatEntry));
-    if (!eid) return Promise.reject(new Error('there is no seat to count: join first'));
+    if (!eid) return Promise.reject(new Error('there is no entry to count: join first'));
     this.stakeWatch = (async () => {
       for (;;) {
         const s = await stakeSeenBy({ entryId: eid, seats, nodes, contract, ...(fetcher ? { fetcher } : {}) });
@@ -1474,7 +1474,7 @@ export class Client {
     if (this.settlementWatch) return this.settlementWatch;
     if (this.settlementOver || this.stakeWatchStopped) return Promise.resolve(this.settlement);
     const eid = (this.where && this.where.entryId) || (this.seatEntry && entryId(this.seatEntry));
-    if (!eid) return Promise.reject(new Error('there is no seat to ask about: join first'));
+    if (!eid) return Promise.reject(new Error('there is no entry to ask about: join first'));
     this.settlementWatch = (async () => {
       for (;;) {
         const s = await settlementBy({ entryId: eid, seats, nodes, ...(fetcher ? { fetcher } : {}) });

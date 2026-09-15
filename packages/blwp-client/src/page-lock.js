@@ -124,7 +124,7 @@ export async function lockStake({ round, roundId, invite, seed, stake, claimKey,
     throw new Error('a stake lock is made by the lock client, and none was loaded');
   if (!stake || namesNothing(stake.stakePoint)) throw new Error('a lock is to the stake\'s point, and this stake names none');
   if (!claimKey || !claimKey.ok || namesNothing(claimKey.claimPk))
-    throw new Error('no claim key has its seats\' attestation: a client must refuse to lock to a key without it (23.1 step 0)');
+    throw new Error('no claim key has its signer nodes\' attestation: a client must refuse to lock to a key without it (23.1 step 0)');
   if (!(playerPubkey instanceof Uint8Array) || playerPubkey.length !== 32)
     throw new Error('a lock refunds to the player\'s key, and that is 32 bytes');
 
@@ -342,9 +342,9 @@ export async function refundStake({ round, roundId, invite, seed, curve, LockCli
   onStep = () => {} } = {}) {
   if (!round || !roundLocks(round)) throw new Error('this round names no federation, so its stake is not a lock');
   const player = playerFor({ ...round, id: roundId }, { seed, curve });
-  onStep('asking the seats where this seed\'s lock is');
+  onStep('asking the signer nodes where this seed\'s lock is');
   const locks = await findLock({ roundId, playerPubkey: player.pubkey, nodes, fetcher });
-  if (!locks.length) throw new Error('no seat knows a stake lock that refunds to this seed\'s key in this round');
+  if (!locks.length) throw new Error('no signer node knows a stake lock that refunds to this seed\'s key in this round');
   const secret = lockSecretFor(seed, roundId);
   const store = storage ? lockStoreFor(storage, roundId, secret) : unkeptLockStore();
   onStep('joining the federation');
@@ -378,7 +378,7 @@ export async function forfeitOf({ roundId, entryId, nodes, fetcher = fetch } = {
       refused.push(`${node}: answered no signature`);
     } catch (e) { refused.push(`${node}: ${e.message}`); }
   }
-  return { ok: false, why: `no seat gave a forfeit of this lock: ${refused.join('; ')}`, refused };
+  return { ok: false, why: `no signer node gave a forfeit of this lock: ${refused.join('; ')}`, refused };
 }
 
 /**
@@ -392,12 +392,12 @@ export async function redeemStake({ round, roundId, invite, seed, curve, LockCli
   client: given = null, onStep = () => {} } = {}) {
   if (!round || !roundLocks(round)) throw new Error('this round names no federation, so its stake is not a lock');
   const player = playerFor({ ...round, id: roundId }, { seed, curve });
-  onStep('asking the seats where this seed\'s lock is');
+  onStep('asking the signer nodes where this seed\'s lock is');
   const locks = await findLock({ roundId, playerPubkey: player.pubkey, nodes, fetcher });
-  if (!locks.length) throw new Error('no seat knows a stake lock that refunds to this seed\'s key in this round');
+  if (!locks.length) throw new Error('no signer node knows a stake lock that refunds to this seed\'s key in this round');
   const forfeits = [];
   for (const l of locks) {
-    onStep('asking the seats for the forfeit of the lock');
+    onStep('asking the signer nodes for the forfeit of the lock');
     const f = await forfeitOf({ roundId, entryId: l.entryId, nodes, fetcher });
     if (!f.ok) throw new Error(f.why);
     forfeits.push({ lock: l, forfeit: f });
@@ -435,7 +435,7 @@ export async function settlementOf({ roundId, nodes, fetcher = fetch } = {}) {
       said.push(`${node}: ${j.state}`);
     } catch (e) { said.push(`${node}: ${e.message}`); }
   }
-  return { ok: false, why: `no seat holds an accepted settlement of this round yet (${said.join('; ')})` };
+  return { ok: false, why: `no signer node holds an accepted settlement of this round yet (${said.join('; ')})` };
 }
 
 /**
@@ -459,7 +459,7 @@ export async function redeemPayout({ round, roundId, invite, seed, curve, LockCl
   } catch { /* an unreadable note is no note */ }
   const player = playerFor({ ...round, id: roundId }, { seed, curve });
   const mine = toHex(refundKeyOf(player.pubkey));
-  onStep('asking the seats for the round\'s settlement');
+  onStep('asking the signer nodes for the round\'s settlement');
   const s = await settlementOf({ roundId, nodes, fetcher });
   if (!s.ok) return { ok: false, final: false, why: s.why };
   const at = s.moved.payouts.findIndex((p) => p.kind === 'qualifier' && String(p.pk).toLowerCase() === mine);
@@ -511,7 +511,7 @@ export async function returnStake({ round, roundId, invite, seed, curve, LockCli
   } catch (e) {
     const lost = /that run is \S+ with score/.test(e.message);
     return { ok: false, final: lost,
-      why: lost ? 'the seats forfeit this seed\'s lock to nobody: the run did not qualify, so its stake went into the round\'s pool' : e.message };
+      why: lost ? 'the signer nodes forfeit this seed\'s lock to nobody: the run did not qualify, so its stake went into the round\'s pool' : e.message };
   }
   const rs = got.redeems;
   const ok = rs.length > 0 && rs.every((r) => r.accepted === true);
@@ -524,7 +524,7 @@ export async function returnStake({ round, roundId, invite, seed, curve, LockCli
   const res = { ok, final: ok || spent, spent, amountMsat: BigInt(rs.reduce((t, r) => t + Number(r.amount_msat || 0), 0)),
     balance_before: rs.length ? rs[0].balance_before : undefined, balance_after: rs.length ? rs[rs.length - 1].balance_after : undefined,
     txid: rs.length ? rs[0].txid : undefined, forfeitFrom: rs.length ? rs[0].forfeitFrom : undefined,
-    why: ok ? undefined : spent ? 'the stake lock is already spent - back to this seed\'s key, the only key that can after the seats\' forfeit'
+    why: ok ? undefined : spent ? 'the stake lock is already spent - back to this seed\'s key, the only key that can after the signer nodes\' forfeit'
       : (rs.find((r) => r.error) || {}).error || 'the federation did not accept the redeem' };
   if (ok && storage) {
     try { storage.setItem(noted, JSON.stringify({ ...res, amountMsat: String(res.amountMsat) })); } catch { /* unkept: a reload asks again */ }
@@ -811,8 +811,8 @@ export function owedToLine(o) {
     return `${p} · ${k}`;
   }
   if (o.inTabMsat > 0n) return `${o.inTabMsat} msat is in this tab's wallet - withdraw it before you close the tab`;
-  if (!o.settled) return 'Waiting for the seats\' settlement';
-  return 'Waiting for the seats';
+  if (!o.settled) return 'Waiting for the signer nodes\' settlement';
+  return 'Waiting for the signer nodes';
 }
 
 /**
@@ -882,7 +882,7 @@ export function withdrawLine(w, withdrawableMsat = null) {
 /** THE STAKE AS THE PLAYER SEES IT AFTER THE WINDOW (6d): back, gone into the pool, or not yet. */
 export function stakeBackLine(p) {
   if (!p) return '';
-  if (p.ok) return `Stake returned: ${String(p.amountMsat)} msat back to this tab's federation wallet by the seats' forfeit`
+  if (p.ok) return `Stake returned: ${String(p.amountMsat)} msat back to this tab's federation wallet by the signer nodes' forfeit`
     + (p.balance_after !== undefined ? ` (balance ${p.balance_before} → ${p.balance_after} msat)` : '');
   if (p.spent) return `Stake already back: ${String(p.amountMsat)} msat - ${p.why}`;
   if (p.final) return `No stake back: ${p.why}`;
@@ -896,7 +896,7 @@ export function payoutLine(p) {
     + (p.balance_after !== undefined ? ` (balance ${p.balance_before} → ${p.balance_after} msat)` : '');
   if (p.spent) return `Payout already collected: ${String(p.amountMsat)} msat - ${p.why}`;
   if (p.final) return `No payout: ${p.why}`;
-  return `Payout: waiting for the seats' settlement - ${p.why}`;
+  return `Payout: waiting for the signer nodes' settlement - ${p.why}`;
 }
 
 /**
@@ -906,7 +906,7 @@ export function payoutLine(p) {
 export async function handLock({ entryId, fields, nodes, needed, fetcher = fetch, door = 'lock' } = {}) {
   if (!(entryId instanceof Uint8Array) || entryId.length !== 32) throw new Error('a lock is handed over for an entry, by its id');
   // `door`: 'lock' for the stake lock, 'fee-lock' for the fee lock (Pick b).
-  if (door !== 'lock' && door !== 'fee-lock') throw new Error('a lock is handed to a seat\'s /lock or /fee-lock');
+  if (door !== 'lock' && door !== 'fee-lock') throw new Error('a lock is handed to a signer node\'s /lock or /fee-lock');
   const body = JSON.stringify(lockFieldsToJson(fields));
   const said = [];
   for (const node of [...new Set(nodes || [])]) {

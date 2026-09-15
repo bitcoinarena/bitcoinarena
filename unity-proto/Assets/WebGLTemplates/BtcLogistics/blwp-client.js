@@ -3316,9 +3316,9 @@ function spentLine(log) {
  * over.
  */
 function owedLine(entry, quote, settlement = null) {
-  if (!entry) return 'this seat owes —';
+  if (!entry) return 'your entry owes —';
   let net;
-  try { net = netStakeMsat(entry); } catch (e) { return `this seat cannot be paid: ${e.message}`; }
+  try { net = netStakeMsat(entry); } catch (e) { return `your entry cannot be paid: ${e.message}`; }
   const split = `${sats(entry.stakeMsat)} round: ${sats(entry.feeMsat)} fee and `
     + `${sats(entry.donationMsat)} donation out of it, ${sats(net)} staked`;
   // A HOLD THAT HAS ENDED IS NOT HELD (M3.2 6e). The quote is asked once, at
@@ -6793,7 +6793,7 @@ async function postHandout(stake, nodes, { fetcher = fetch, needed: asked } = {}
   // `stakeFor` makes the round's. The default was a flat 5 (M3.3-26).
   const needed = asked ?? stake.handout?.needed;
   if (!Number.isInteger(needed) || needed < 1)
-    throw new Error('this stake does not say how many seats open it');
+    throw new Error('this stake does not say how many signer nodes open it');
   if (!Array.isArray(nodes) || !nodes.length)
     throw new Error('no node to publish this handout to');
   const accepted = [];
@@ -6811,7 +6811,7 @@ async function postHandout(stake, nodes, { fetcher = fetch, needed: asked } = {}
   if (accepted.length < needed)
     return {
       ok: false, accepted: accepted.length, needed, refused,
-      why: `${accepted.length} of the ${needed} seats needed to open this stake took the `
+      why: `${accepted.length} of the ${needed} signer nodes needed to open this stake took the `
         + 'handout, so it could never be settled',
     };
   return { ok: true, accepted: accepted.length, needed, refused };
@@ -6880,7 +6880,7 @@ async function attestedClaimKey({ round, seats, nodes, curve, fetcher = fetch } 
   }
   return {
     ok: false, refused, attested: best ? best.attested || 0 : 0,
-    why: best ? `no claim key has this round's attestation: ${best.why}` : `no seat served a claim key for this round${refused.length ? ': ' + refused.join('; ') : ''}`,
+    why: best ? `no claim key has this round's attestation: ${best.why}` : `no signer node served a claim key for this round${refused.length ? ': ' + refused.join('; ') : ''}`,
   };
 }
 
@@ -7041,11 +7041,11 @@ function settledLine(s) {
   // WHAT THE ROUND OWES THIS SEAT (M3.2 6e): its row of the payout table as the
   // seats serve it - shown when there is something owed; a loser's row is 0.
   const owed = s.owedMsat !== null && s.owedMsat !== undefined && BigInt(s.owedMsat) > 0n
-    ? ` · the round's payout table: ${s.owedMsat} msat for this seat` : '';
-  if (s.hold === 'SETTLED') return `Settled: this seat's ${held}stake went into the pool${owed}${pool}`;
-  if (s.hold === 'CANCELLED') return `Returned: this seat's ${held}stake was cancelled back to the wallet${owed}${pool}`;
-  if (s.hold === 'EXPIRED') return `Expired: this seat's ${held}stake came back to the wallet when its hold ran out`;
-  if (s.hold === 'HELD') return `Settlement: this seat's ${held}stake is held${s.finality ? `, the result ${s.finality}` : ', no result yet'}`;
+    ? ` · the round's payout table: ${s.owedMsat} msat for your entry` : '';
+  if (s.hold === 'SETTLED') return `Settled: your ${held}stake went into the pool${owed}${pool}`;
+  if (s.hold === 'CANCELLED') return `Returned: your ${held}stake was cancelled back to the wallet${owed}${pool}`;
+  if (s.hold === 'EXPIRED') return `Expired: your ${held}stake came back to the wallet when its hold ran out`;
+  if (s.hold === 'HELD') return `Settlement: your ${held}stake is held${s.finality ? `, the result ${s.finality}` : ', no result yet'}`;
   return '';
 }
 
@@ -7074,7 +7074,7 @@ function settledLine(s) {
  */
 async function fetchSettlementSeats(id, nodes, { fetcher = fetch } = {}) {
   if (!Array.isArray(nodes) || !nodes.length)
-    throw new Error('no node to ask which seats settle this round');
+    throw new Error('no node to ask which signer nodes settle this round');
   const said = [];
   const refused = [];
   for (const node of nodes) {
@@ -7282,7 +7282,7 @@ const roundIdOf = (round) => (round.id instanceof Uint8Array && round.id.length 
  * outside it (`blwp-node/tools/refund-key.mjs <seed> <round id>`).
  */
 function playerFor(round, { seed, curve } = {}) {
-  if (!round) throw new Error('there is no round to take a seat at');
+  if (!round) throw new Error('there is no round to join');
   if (!curve || typeof curve.pointX !== 'function')
     throw new Error('a player identity is a key on a curve, and none was injected');
   if (!(seed instanceof Uint8Array) || seed.length !== 32)
@@ -7329,7 +7329,7 @@ function feeLockOf(stakeLock, round) {
 
 function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stake, claimKey, stakeLock,
   donationMsat = 0n } = {}) {
-  if (!round) throw new Error('there is no round to take a seat at');
+  if (!round) throw new Error('there is no round to join');
   // THE PLAYER'S OWN DONATION (M3.2 6e, §22A), chosen on the page
   // (`chooseDonation`) and written here - never rewritten by anybody else. It
   // must leave the fee inside the stake, by the seat's own rule, so the page
@@ -7358,12 +7358,12 @@ function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stak
   if (stake && (!stake.stakeCommitment || !stake.vssSharesRef))
     throw new Error('that is not a dealt stake: it names no commitment or no shares');
   if (stake && stake.vssSharesRef.some((b) => b !== 0) && !stake.stakePoint)
-    throw new Error('that stake publishes shares and names no stake point, so no seat could check them');
+    throw new Error('that stake publishes shares and names no stake point, so no signer node could check them');
   // A LOCKING ROUND'S ENTRY NAMES THE ATTESTED CLAIM KEY (§23.1 step 0): with
   // no attestation the page refuses the seat - "a client MUST refuse to lock
   // to a key without them" - rather than name a key nobody vouched for.
   if (roundLocks(round) && !(claimKey && claimKey.ref instanceof Uint8Array && claimKey.ref.some((b) => b !== 0)))
-    throw new Error('this round\'s stake goes into a federation lock, and no claim key has its seats\' '
+    throw new Error('this round\'s stake goes into a federation lock, and no claim key has its signer nodes\' '
       + 'attestation: a client must refuse to lock to a key without it (23.1 step 0)');
   // AND IT NAMES THE LOCK ITSELF (§7 stake_lock_outpoint, W1b). The page used to
   // write zeros here for every round, so a lock round's seat named no lock and
@@ -7372,7 +7372,7 @@ function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stak
   if (roundLocks(round) && !(stakeLock && stakeLock.outpoint && stakeLock.outpoint.txid instanceof Uint8Array
     && stakeLock.outpoint.txid.length === 32 && stakeLock.outpoint.txid.some((b) => b !== 0)))
     throw new Error('this round\'s stake goes into a federation lock, and no lock was made: an entry naming '
-      + 'no stake lock outpoint is one no seat can commit (23.1 step 5)');
+      + 'no stake lock outpoint is one no signer node can commit (23.1 step 5)');
   if (!roundLocks(round) && stakeLock)
     throw new Error('this round names no federation, so there is no lock for its entry to name');
   if (stakeLock && stake && stake.stakePoint && !(stakeLock.fields && stakeLock.fields.paymentImage
@@ -7460,7 +7460,7 @@ async function stakeFor(round, { seats, curve, random, playerPubkey, needed: ask
     throw new Error(`a stake dealt ${asked} of ${seats ? seats.length : 0} is refused: `
       + `this round's stakes open at ${needed} of ${round.settlementSlots}`);
   if (!Array.isArray(seats) || seats.length < needed)
-    throw new Error(`a threshold of ${needed} cannot be dealt to ${seats ? seats.length : 0} seats`);
+    throw new Error(`a threshold of ${needed} cannot be dealt to ${seats ? seats.length : 0} signer nodes`);
   if (!curve || typeof curve.ecdhShared !== 'function' || typeof curve.pointX !== 'function')
     throw new Error('dealing a stake needs a curve, and none was injected');
   if (!playerPubkey || playerPubkey.length !== 32)
@@ -8233,7 +8233,7 @@ async function lockStake({ round, roundId, invite, seed, stake, claimKey, player
     throw new Error('a stake lock is made by the lock client, and none was loaded');
   if (!stake || namesNothing(stake.stakePoint)) throw new Error('a lock is to the stake\'s point, and this stake names none');
   if (!claimKey || !claimKey.ok || namesNothing(claimKey.claimPk))
-    throw new Error('no claim key has its seats\' attestation: a client must refuse to lock to a key without it (23.1 step 0)');
+    throw new Error('no claim key has its signer nodes\' attestation: a client must refuse to lock to a key without it (23.1 step 0)');
   if (!(playerPubkey instanceof Uint8Array) || playerPubkey.length !== 32)
     throw new Error('a lock refunds to the player\'s key, and that is 32 bytes');
 
@@ -8451,9 +8451,9 @@ async function refundStake({ round, roundId, invite, seed, curve, LockClient, st
   onStep = () => {} } = {}) {
   if (!round || !roundLocks(round)) throw new Error('this round names no federation, so its stake is not a lock');
   const player = playerFor({ ...round, id: roundId }, { seed, curve });
-  onStep('asking the seats where this seed\'s lock is');
+  onStep('asking the signer nodes where this seed\'s lock is');
   const locks = await findLock({ roundId, playerPubkey: player.pubkey, nodes, fetcher });
-  if (!locks.length) throw new Error('no seat knows a stake lock that refunds to this seed\'s key in this round');
+  if (!locks.length) throw new Error('no signer node knows a stake lock that refunds to this seed\'s key in this round');
   const secret = lockSecretFor(seed, roundId);
   const store = storage ? lockStoreFor(storage, roundId, secret) : unkeptLockStore();
   onStep('joining the federation');
@@ -8487,7 +8487,7 @@ async function forfeitOf({ roundId, entryId, nodes, fetcher = fetch } = {}) {
       refused.push(`${node}: answered no signature`);
     } catch (e) { refused.push(`${node}: ${e.message}`); }
   }
-  return { ok: false, why: `no seat gave a forfeit of this lock: ${refused.join('; ')}`, refused };
+  return { ok: false, why: `no signer node gave a forfeit of this lock: ${refused.join('; ')}`, refused };
 }
 
 /**
@@ -8501,12 +8501,12 @@ async function redeemStake({ round, roundId, invite, seed, curve, LockClient, st
   client: given = null, onStep = () => {} } = {}) {
   if (!round || !roundLocks(round)) throw new Error('this round names no federation, so its stake is not a lock');
   const player = playerFor({ ...round, id: roundId }, { seed, curve });
-  onStep('asking the seats where this seed\'s lock is');
+  onStep('asking the signer nodes where this seed\'s lock is');
   const locks = await findLock({ roundId, playerPubkey: player.pubkey, nodes, fetcher });
-  if (!locks.length) throw new Error('no seat knows a stake lock that refunds to this seed\'s key in this round');
+  if (!locks.length) throw new Error('no signer node knows a stake lock that refunds to this seed\'s key in this round');
   const forfeits = [];
   for (const l of locks) {
-    onStep('asking the seats for the forfeit of the lock');
+    onStep('asking the signer nodes for the forfeit of the lock');
     const f = await forfeitOf({ roundId, entryId: l.entryId, nodes, fetcher });
     if (!f.ok) throw new Error(f.why);
     forfeits.push({ lock: l, forfeit: f });
@@ -8544,7 +8544,7 @@ async function settlementOf({ roundId, nodes, fetcher = fetch } = {}) {
       said.push(`${node}: ${j.state}`);
     } catch (e) { said.push(`${node}: ${e.message}`); }
   }
-  return { ok: false, why: `no seat holds an accepted settlement of this round yet (${said.join('; ')})` };
+  return { ok: false, why: `no signer node holds an accepted settlement of this round yet (${said.join('; ')})` };
 }
 
 /**
@@ -8568,7 +8568,7 @@ async function redeemPayout({ round, roundId, invite, seed, curve, LockClient, s
   } catch { /* an unreadable note is no note */ }
   const player = playerFor({ ...round, id: roundId }, { seed, curve });
   const mine = toHex(refundKeyOf(player.pubkey));
-  onStep('asking the seats for the round\'s settlement');
+  onStep('asking the signer nodes for the round\'s settlement');
   const s = await settlementOf({ roundId, nodes, fetcher });
   if (!s.ok) return { ok: false, final: false, why: s.why };
   const at = s.moved.payouts.findIndex((p) => p.kind === 'qualifier' && String(p.pk).toLowerCase() === mine);
@@ -8620,7 +8620,7 @@ async function returnStake({ round, roundId, invite, seed, curve, LockClient, st
   } catch (e) {
     const lost = /that run is \S+ with score/.test(e.message);
     return { ok: false, final: lost,
-      why: lost ? 'the seats forfeit this seed\'s lock to nobody: the run did not qualify, so its stake went into the round\'s pool' : e.message };
+      why: lost ? 'the signer nodes forfeit this seed\'s lock to nobody: the run did not qualify, so its stake went into the round\'s pool' : e.message };
   }
   const rs = got.redeems;
   const ok = rs.length > 0 && rs.every((r) => r.accepted === true);
@@ -8633,7 +8633,7 @@ async function returnStake({ round, roundId, invite, seed, curve, LockClient, st
   const res = { ok, final: ok || spent, spent, amountMsat: BigInt(rs.reduce((t, r) => t + Number(r.amount_msat || 0), 0)),
     balance_before: rs.length ? rs[0].balance_before : undefined, balance_after: rs.length ? rs[rs.length - 1].balance_after : undefined,
     txid: rs.length ? rs[0].txid : undefined, forfeitFrom: rs.length ? rs[0].forfeitFrom : undefined,
-    why: ok ? undefined : spent ? 'the stake lock is already spent - back to this seed\'s key, the only key that can after the seats\' forfeit'
+    why: ok ? undefined : spent ? 'the stake lock is already spent - back to this seed\'s key, the only key that can after the signer nodes\' forfeit'
       : (rs.find((r) => r.error) || {}).error || 'the federation did not accept the redeem' };
   if (ok && storage) {
     try { storage.setItem(noted, JSON.stringify({ ...res, amountMsat: String(res.amountMsat) })); } catch { /* unkept: a reload asks again */ }
@@ -8920,8 +8920,8 @@ function owedToLine(o) {
     return `${p} · ${k}`;
   }
   if (o.inTabMsat > 0n) return `${o.inTabMsat} msat is in this tab's wallet - withdraw it before you close the tab`;
-  if (!o.settled) return 'Waiting for the seats\' settlement';
-  return 'Waiting for the seats';
+  if (!o.settled) return 'Waiting for the signer nodes\' settlement';
+  return 'Waiting for the signer nodes';
 }
 
 /**
@@ -8991,7 +8991,7 @@ function withdrawLine(w, withdrawableMsat = null) {
 /** THE STAKE AS THE PLAYER SEES IT AFTER THE WINDOW (6d): back, gone into the pool, or not yet. */
 function stakeBackLine(p) {
   if (!p) return '';
-  if (p.ok) return `Stake returned: ${String(p.amountMsat)} msat back to this tab's federation wallet by the seats' forfeit`
+  if (p.ok) return `Stake returned: ${String(p.amountMsat)} msat back to this tab's federation wallet by the signer nodes' forfeit`
     + (p.balance_after !== undefined ? ` (balance ${p.balance_before} → ${p.balance_after} msat)` : '');
   if (p.spent) return `Stake already back: ${String(p.amountMsat)} msat - ${p.why}`;
   if (p.final) return `No stake back: ${p.why}`;
@@ -9005,7 +9005,7 @@ function payoutLine(p) {
     + (p.balance_after !== undefined ? ` (balance ${p.balance_before} → ${p.balance_after} msat)` : '');
   if (p.spent) return `Payout already collected: ${String(p.amountMsat)} msat - ${p.why}`;
   if (p.final) return `No payout: ${p.why}`;
-  return `Payout: waiting for the seats' settlement - ${p.why}`;
+  return `Payout: waiting for the signer nodes' settlement - ${p.why}`;
 }
 
 /**
@@ -9015,7 +9015,7 @@ function payoutLine(p) {
 async function handLock({ entryId, fields, nodes, needed, fetcher = fetch, door = 'lock' } = {}) {
   if (!(entryId instanceof Uint8Array) || entryId.length !== 32) throw new Error('a lock is handed over for an entry, by its id');
   // `door`: 'lock' for the stake lock, 'fee-lock' for the fee lock (Pick b).
-  if (door !== 'lock' && door !== 'fee-lock') throw new Error('a lock is handed to a seat\'s /lock or /fee-lock');
+  if (door !== 'lock' && door !== 'fee-lock') throw new Error('a lock is handed to a signer node\'s /lock or /fee-lock');
   const body = JSON.stringify(lockFieldsToJson(fields));
   const said = [];
   for (const node of [...new Set(nodes || [])]) {
@@ -10645,7 +10645,7 @@ async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verif
   if (typeof verifyEd25519 !== 'function') return { ok: false, why: 'checking a donation set needs an Ed25519 verifier, and none was injected' };
   const networkKeys = keys || donationKeysForNetworkId(round.networkId);
   if (!networkKeys) return { ok: false, why: 'this round\'s network has no donation authority this page knows' };
-  if (!Array.isArray(nodes) || !nodes.length) return { ok: false, why: 'the round names no seats to ask for its donation set' };
+  if (!Array.isArray(nodes) || !nodes.length) return { ok: false, why: 'the round names no signer nodes to ask for its donation set' };
   const rid = toHex(roundId(round));
   const answers = await Promise.all(nodes.map(async (node) => {
     const base = String(node).replace(/\/+$/, '');
@@ -10663,9 +10663,9 @@ async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verif
   }));
   const missing = answers.filter((a) => !a.bytes);
   if (missing.length)
-    return { ok: false, why: `not every seat of this round serves its donation set: ${missing.map((a) => `${a.node}: ${a.why}`).join('; ')}` };
+    return { ok: false, why: `not every signer node of this round serves its donation set: ${missing.map((a) => `${a.node}: ${a.why}`).join('; ')}` };
   const served = toHex(answers[0].bytes);
-  if (answers.some((a) => toHex(a.bytes) !== served)) return { ok: false, why: 'the seats of this round serve different donation sets' };
+  if (answers.some((a) => toHex(a.bytes) !== served)) return { ok: false, why: 'the signer nodes of this round serve different donation sets' };
   const bytes = answers[0].bytes;
   if (bytes.length <= DONATION_SIGNATURE_BYTES) return { ok: false, why: 'that is no signed donation set' };
   let set;
@@ -10692,7 +10692,7 @@ async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verif
   if (await verifyEd25519(set.signature, donationSetBodyId(set), inForce.authority) !== true)
     return { ok: false, why: 'that donation set is not signed by the network\'s donation authority at the round\'s height' };
   return { ok: true, set, seats: answers.length, rotated: inForce.rotated,
-    why: `${answers.length} seat(s) serve the set this round names, signed by its donation authority` };
+    why: `${answers.length} signer node(s) serve the set this round names, signed by its donation authority` };
 }
 
 // ---- blwp-client/src/client.js
@@ -11870,7 +11870,7 @@ class Client {
       return {
         ok: false,
         why: `that entry is ${toHex(entryId(entry)).slice(0, 16)} and the invoice was asked `
-          + `for ${toHex(eid).slice(0, 16)}: they are two seats`,
+          + `for ${toHex(eid).slice(0, 16)}: they are two entries`,
       };
 
     let said;
@@ -11880,7 +11880,7 @@ class Client {
       if (!r.ok) return { ok: false, status: r.status, why: body.trim() };
       said = JSON.parse(body);
     } catch (e) {
-      return { ok: false, why: `the node would not quote this seat: ${e.message}` };
+      return { ok: false, why: `the node would not quote your entry: ${e.message}` };
     }
 
     // WHAT CAME BACK HAS TO BE THE SHAPE BEFORE IT CAN BE THE RIGHT VALUE. A
@@ -12036,7 +12036,7 @@ class Client {
     // `stakeCommitted` is the settlement seats' own count (`watchStake`), not
     // this page's memory of having paid.
     if (this.stakeCommitted !== true)
-      return { ok: false, ...none, why: 'the stake is not in yet: no seat count has committed it, so no donation leaves the wallet' };
+      return { ok: false, ...none, why: 'the stake is not in yet: no signer node has counted it, so no donation leaves the wallet' };
     if (!set || !Array.isArray(set.recipients)) return { ok: false, ...none, why: 'there is no donation set to pay' };
     if (round) {
       const named = donationSetMatchesRound(round, set.recipients);
@@ -12129,7 +12129,7 @@ class Client {
     if (this.stakeCommitted || this.ended || this.stakeWatchStopped)
       return Promise.resolve(this.stakeCount);
     const eid = (this.where && this.where.entryId) || (this.seatEntry && entryId(this.seatEntry));
-    if (!eid) return Promise.reject(new Error('there is no seat to count: join first'));
+    if (!eid) return Promise.reject(new Error('there is no entry to count: join first'));
     this.stakeWatch = (async () => {
       for (;;) {
         const s = await stakeSeenBy({ entryId: eid, seats, nodes, contract, ...(fetcher ? { fetcher } : {}) });
@@ -12162,7 +12162,7 @@ class Client {
     if (this.settlementWatch) return this.settlementWatch;
     if (this.settlementOver || this.stakeWatchStopped) return Promise.resolve(this.settlement);
     const eid = (this.where && this.where.entryId) || (this.seatEntry && entryId(this.seatEntry));
-    if (!eid) return Promise.reject(new Error('there is no seat to ask about: join first'));
+    if (!eid) return Promise.reject(new Error('there is no entry to ask about: join first'));
     this.settlementWatch = (async () => {
       for (;;) {
         const s = await settlementBy({ entryId: eid, seats, nodes, ...(fetcher ? { fetcher } : {}) });
@@ -13174,8 +13174,8 @@ function playersLine({ seated, others, stalled = false, at = null, refused = nul
   // sent to. Worse, the bridge then threw "the page did not say which round to
   // play", which names the wrong cause entirely. A refusal nobody can see is
   // the silent seat again, wearing the other hat.
-  if (seatRefused) return `not seated · ${seatRefused}`;
-  if (!seated) return 'round named · not seated';
+  if (seatRefused) return `not joined · ${seatRefused}`;
+  if (!seated) return 'round named · not joined';
   if (refused) return `not publishing · ${refused}`;
 
   // AND WHETHER THIS SEAT IS PAID FOR.
@@ -13225,7 +13225,7 @@ function playersLine({ seated, others, stalled = false, at = null, refused = nul
  */
 function stakeLine(stake, nowMs = Date.now()) {
   if (!stake) return '';
-  if (stake.free) return ' · free seat';
+  if (stake.free) return ' · free round';
   if (!stake.dealt) return '';
   const s = stake.seen;
   // A SEAT THE NODE ISSUED NO HOLD FOR, THAT NOBODY HAS SEEN, KEEPS THE NODE'S
@@ -13599,7 +13599,7 @@ async function namesOf({ roundId, nodes, fetcher = fetch, verify } = {}) {
       if (body && Array.isArray(body.names)) items.push(...body.names);
     } catch (e) { refused.push(`${node}: ${e.name === 'TimeoutError' ? 'no answer in time' : e.message}`); }
   }
-  if (!answered) throw new Error(`no seat answered for the names: ${refused.join('; ') || 'no seats named'}`);
+  if (!answered) throw new Error(`no signer node answered for the names: ${refused.join('; ') || 'no signer nodes named'}`);
   return checkedNames(items, id, verify);
 }
 
@@ -13761,7 +13761,7 @@ function lobbySigned(verify, { id, nodeKey, nowMs, x }) {
  */
 async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, skewMs = LOBBY_SKEW_MS } = {}) {
   if (!Array.isArray(nodes) || !nodes.length) throw new Error('a lobby asks the nodes it was named, and it was named none');
-  if (typeof verify !== 'function') throw new Error('a lobby checks each seat\'s signed listing, and no verify was injected');
+  if (typeof verify !== 'function') throw new Error('a lobby checks each signer node\'s signed listing, and no verify was injected');
   const refused = [];
   const said = new Map();                                   // id -> [{ node, key, ... }]
   for (const node of [...new Set(nodes)]) {
@@ -13858,11 +13858,11 @@ function lobbyLine(row, nowMs = Date.now()) {
   const when = row.phase === 'pending'
     ? `committee: pending, entry opens in ${lobbyClock(row.committeeTimeMs - nowMs)}`
     : `entry open, closes in ${lobbyClock(row.entryCloseMs - nowMs)}`;
-  const agree = `${row.seatsAgree} of ${row.needed} seats agree`
+  const agree = `${row.seatsAgree} of ${row.needed} signer nodes agree`
     + (row.phase === 'open' && !row.joinable ? ` - waiting for ${row.needed - row.seatsAgree} more` : '');
-  const counts = row.said.map((c) => `${c.seated} seated, ${c.playing} playing (says ${c.node})`).join('; ');
+  const counts = row.said.map((c) => `${c.seated} joined, ${c.playing} playing (says ${c.node})`).join('; ');
   const who = row.names && row.names.length ? ` · players: ${row.names.map((n) => n.name).join(', ')}` : '';
-  return `${money} · ${when} · ${agree} · ${counts || 'no seat counts'}${who}`
+  return `${money} · ${when} · ${agree} · ${counts || 'no signer node counts'}${who}`
     + (row.disagrees.length ? ` · ${row.disagrees.join(', ')} listed it as ${row.free ? 'paying' : 'free'}` : '');
 }
 

@@ -391,7 +391,7 @@ test('an entry that is not the one being asked about is refused as two seats', a
     // hash check cannot catch.
     const crossed = await c.client.invoice(again, { entryId: c.eid });
     assert.equal(crossed.ok, false, 'a quote for another seat was accepted as this one\'s');
-    assert.match(crossed.why, /they are two seats/);
+    assert.match(crossed.why, /they are two entries/);
     console.log(`  same hash, same amount, different seat: ${crossed.why}`);
   } finally { await c.close(); }
 });

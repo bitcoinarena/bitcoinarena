@@ -338,7 +338,7 @@ async function settleOnThePage({ hold, spent, stakeCommitment, round }) {
 
 test('a winner is shown what the round owes it: the seats\' own payout-table row, 194000 msat beside its returned 96000 msat stake and the 98000 msat pool', async () => {
   // BEFORE (bundle 675d62d1): the seats served hold and pool only, and a winner's line
-  // read "Returned: this seat's 96000 msat stake was cancelled back to the wallet · the
+  // read "Returned: your 96000 msat stake was cancelled back to the wallet · the
   // round's pool 98000 msat" - no winnings figure. Round 1's D2: hold 96000, row 194000.
   const seatKeys = [b32(0x71), b32(0x72)];
   const nodes = ['http://127.0.0.1:1', 'http://127.0.0.1:2'];
@@ -352,14 +352,14 @@ test('a winner is shown what the round owes it: the seats\' own payout-table row
   assert.deepEqual([won.hold, won.holdMsat, won.owedMsat, won.poolMsat], ['CANCELLED', 96000n, 194000n, 98000n]);
   const made = paintThePage({ round: contractFor([b32(1), b32(2)]), entry: entryOf(2000n), donationPaid: undefined, settlement: won });
   assert.equal(made['blwp-settled'].textContent,
-    'Returned: this seat\'s 96000 msat stake was cancelled back to the wallet · the round\'s payout table: 194000 msat for this seat · the round\'s pool 98000 msat');
+    'Returned: your 96000 msat stake was cancelled back to the wallet · the round\'s payout table: 194000 msat for your entry · the round\'s pool 98000 msat');
   // SEATS THAT DISAGREE ON THE ROW SHOW NO ROW - the page never picks one.
   const split = await SHIPPED.settlementBy({ entryId: 'ee'.repeat(32), seats: seatKeys, nodes, fetcher: answers(['194000', '193999']) });
   assert.equal(split.owedMsat, null);
   assert.doesNotMatch(SHIPPED.settledLine(split), /payout table/);
   // A LOSER'S ROW IS 0 AND ADDS NOTHING: its line reads as before.
   assert.equal(SHIPPED.settledLine({ answered: 2, hold: 'SETTLED', holdMsat: 98000n, poolMsat: 98000n, owedMsat: 0n }),
-    'Settled: this seat\'s 98000 msat stake went into the pool · the round\'s pool 98000 msat');
+    'Settled: your 98000 msat stake went into the pool · the round\'s pool 98000 msat');
   console.log(`  winner: "${made['blwp-settled'].textContent}"`);
 });
 
@@ -386,7 +386,7 @@ test('a stake that came back is not counted as spent: a cancelled winner and an 
     assert.equal(SHIPPED.spentLine(SHIPPED.spendLog({ storage })), line, `${hold}: after a reload`);
     console.log(`  ${hold.padEnd(9)}: "${made['blwp-spent'].textContent}" beside "${made['blwp-settled'].textContent.slice(0, 60)}…"`);
   }
-  // A STAKE THE PAGE NEVER PAID, or a donation share, is not marked: only this seat's stake.
+  // A STAKE THE PAGE NEVER PAID, or a donation share, is not marked: only your stake.
   const other = SHIPPED.spendLog();
   other.record({ amountMsat: 1334n, paymentHash: b32(0x62), roundId: b32(0x21), kind: 'donation' });
   assert.equal(SHIPPED.noteSettlement(other, { hold: 'CANCELLED' }, b32(0x62)), false);
@@ -571,16 +571,16 @@ test('after settlement the page shows where the stake went and the round\'s pool
   const settled = await SHIPPED.settlementBy({ entryId: 'ee'.repeat(32), seats: seatKeys, nodes, fetcher: answers() });
   assert.deepEqual([settled.hold, settled.holdMsat, settled.poolMsat, settled.finality], ['SETTLED', 96000n, 96000n, 'FINAL']);
   const made = paintThePage({ round: contractFor([b32(1), b32(2)]), entry: entryOf(2000n), donationPaid: undefined, settlement: settled });
-  assert.equal(made['blwp-settled'].textContent, 'Settled: this seat\'s 96000 msat stake went into the pool · the round\'s pool 96000 msat');
+  assert.equal(made['blwp-settled'].textContent, 'Settled: your 96000 msat stake went into the pool · the round\'s pool 96000 msat');
 
   // SEATS THAT DISAGREE ON THE POOL SHOW NO POOL - the page never picks one.
   const split = await SHIPPED.settlementBy({ entryId: 'ee'.repeat(32), seats: seatKeys, nodes, fetcher: answers({ 1: { poolMsat: '98000' } }) });
   assert.equal(split.poolMsat, null);
-  assert.equal(SHIPPED.settledLine(split), 'Settled: this seat\'s 96000 msat stake went into the pool');
+  assert.equal(SHIPPED.settledLine(split), 'Settled: your 96000 msat stake went into the pool');
   // AND BEFORE SETTLEMENT: held, with the result's standing; nothing before anyone answered.
   const held = await SHIPPED.settlementBy({ entryId: 'ee'.repeat(32), seats: seatKeys, nodes,
     fetcher: answers({ 0: { hold: 'HELD', poolMsat: null, finality: 'PROVISIONALLY_FINAL' }, 1: { hold: 'HELD', poolMsat: null, finality: 'PROVISIONALLY_FINAL' } }) });
-  assert.equal(SHIPPED.settledLine(held), 'Settlement: this seat\'s 96000 msat stake is held, the result PROVISIONALLY_FINAL');
+  assert.equal(SHIPPED.settledLine(held), 'Settlement: your 96000 msat stake is held, the result PROVISIONALLY_FINAL');
   assert.equal(SHIPPED.settledLine(undefined), '');
   console.log(`  after settlement: "${made['blwp-settled'].textContent}"`);
 });
@@ -636,7 +636,7 @@ test('a seat missing, a seat serving another set, a forged set, or a set the rot
   const honest = signedBytes(SET);
   const forged = signedBytes({ ...SET, signature: ed25519.sign(donationSetBodyId(SET), ed25519.utils.randomSecretKey()) });
   assert.equal((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({ 1: honest, 2: honest }) })).ok, true);
-  assert.match((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({ 1: honest }) })).why, /not every seat/);
+  assert.match((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({ 1: honest }) })).why, /not every signer node/);
   assert.match((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({ 1: honest, 2: forged }) })).why, /serve different donation sets/);
   assert.match((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({ 1: forged, 2: forged }) })).why, /not signed by the network's donation authority/);
 

@@ -206,7 +206,7 @@ test('a round that asks no stake deals none, and says so', async () => {
  * letter stopped short.
  *
  * The refusal and the stake went to `console.error` and `console.log`. The chip
- * reads `playersLine`, so a refused seat printed "round named · not seated" -
+ * reads `playersLine`, so a refused seat printed "round named · not joined" -
  * word for word what a page nobody sent a round to prints - and a free seat
  * printed "1 player · waiting", word for word what a funded one prints. A
  * silent refusal and a silent free seat are the same fault this letter opened
@@ -218,14 +218,14 @@ test('the chip says why there is no seat, and what the seat cost', () => {
   // is a true sentence about the wrong cause.
   assert.equal(
     playersLine({ seated: false, seatRefused: 'its settlement committee could not be learned' }),
-    'not seated · its settlement committee could not be learned');
+    'not joined · its settlement committee could not be learned');
 
   // A round nobody was sent to still reads the way it always did.
-  assert.equal(playersLine({ seated: false }), 'round named · not seated');
+  assert.equal(playersLine({ seated: false }), 'round named · not joined');
 
   // A FREE ROUND SAYS SO.
   assert.equal(playersLine({ seated: true, others: 1, stake: { free: true, dealt: false } }),
-    '2 players in this round · free seat');
+    '2 players in this round · free round');
 
   // A DEALT BUT UNFUNDED SEAT SAYS SO, and it must not read like a funded one.
   const dealtOnly = playersLine({
@@ -233,7 +233,7 @@ test('the chip says why there is no seat, and what the seat cost', () => {
   });
   assert.equal(dealtOnly, '1 player · waiting · stake dealt, unpaid');
   assert.notEqual(dealtOnly, playersLine({ seated: true, others: 0 }),
-    'a free seat reads exactly like a funded one');
+    'a free round reads exactly like a funded one');
 
   // AND A HOLD IS COUNTED, NOT NAMED: the node's seat-time HELD also covers an
   // invoice nobody has paid (M3.3-21, stake-seen.test.js). The reason there is

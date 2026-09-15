@@ -774,7 +774,7 @@ namespace Blwp
                         if (_cloud - _saidSeat > 1.2f || _saidSeat < 0f)
                         {
                             _saidSeat = _cloud;
-                            Debug.Log($"[cloud] stem seat t={_cloud:F1}s: foot was {colB.min.y:F2}, "
+                            Debug.Log($"[cloud] stem footing t={_cloud:F1}s: foot was {colB.min.y:F2}, "
                                       + $"crater floor {floor:F2}, "
                                       + $"{(gap > 0f ? "buried" : "floating")} {Mathf.Abs(gap):F2} m "
                                       + $"-> foot now {floor:F2}");
