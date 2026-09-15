@@ -28,4 +28,8 @@ echo "federation up in $(( $(date +%s) - t )) s, invite ${INVITE:0:24}..."
 node $HERE/stake-lock-keys.mjs $P/keys.json >/dev/null || { echo "NO KEYS"; exit 1; }
 PROBE=$P INVITE=$INVITE GATEWAY=http://127.0.0.1:30170 LND_BIN=$L LOCK_BIN=$LOCK_BIN WASM_PKG=$WASM_PKG \
   node $HERE/lock-client-regtest.mjs 2>&1 | grep -E '^\{|Error|panicked' | sed 's/^/W1A /'
+# THE DRIVER'S OWN EXIT, kept past the grep and the probe line below: it printed an error and
+# this script still ended 0 (measured, W7 2026-09-15).
+RC=${PIPESTATUS[0]}
 echo "probe dir: $P"
+exit $RC

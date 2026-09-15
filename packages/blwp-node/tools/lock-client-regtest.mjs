@@ -100,13 +100,37 @@ try {
   const lc = await LockClient.join(env.INVITE, LockClient.federationIdOf(env.INVITE), toHex(rand(32)), memStore);
   say({ step: 'join', ms: Date.now() - t, balanceMsat: await lc.balanceMsat() });
   t = Date.now();
-  const rcv = JSON.parse(await lc.receive('3000000', env.GATEWAY));
+  // 3200000: four stake locks' worth and a fee lock for each entry (pick (a) - the door seats no entry
+  // without one where the round mints them); 3000000 held three stake locks and one fee lock.
+  const rcv = JSON.parse(await lc.receive('3200000', env.GATEWAY));
   const paid = await lncliPay(rcv.invoice);
   const final = await lc.awaitReceive(rcv.operation);
-  say({ step: 'deposit', msat: 3000000, alice: paid, final, ms: Date.now() - t, balanceMsat: await lc.balanceMsat() });
+  say({ step: 'deposit', msat: 3200000, alice: paid, final, ms: Date.now() - t, balanceMsat: await lc.balanceMsat() });
+
+  // THE FEDERATION'S OWN FEE RULE AND THE GATE, before any entry (Pick b; pick (a)): at this round's
+  // 1000 sat the gate mints, so every entry brings a fee lock. Measured before: A, B and C brought
+  // none and the door refused A - "an entry that brings no fee lock is not seated" (409) - since
+  // 5a3b227, and the driver printed the error and went on to exit 0.
+  const rule = JSON.parse(await lc.feeRule());
+  const fees = { ppm: BigInt(rule.fee_ppm), baseMsat: BigInt(rule.fee_base_msat) };
+  const gate1000 = feeLockPays({ contract: c, fees });
+  const gate100 = feeLockPays({ contract: { ...c, stakeMsat: 100000n }, fees });
+  say({ step: 'fee rule and gate', rule, gate1000: { pays: gate1000.pays, lock: String(gate1000.lockMsat), perSeatNet: (gate1000.perSeatNetMsat || []).map(String) },
+    gate100: { pays: gate100.pays, why: gate100.why.slice(0, 120) } });
+  if (!gate1000.pays) throw new Error(`the gate refused a 1000 sat round: ${gate1000.why}`);
 
   const stakeOf = () => { const p = scalar(); return { p, point: feldmanGroup.pointFromScalar(scalarFrom32(p) % FIELD), player: evenPlayer() }; };
   const seatEntry = async (s, outpoint, claimKey, fee = null) => {
+    // WHERE THE ROUND MINTS FEE LOCKS THE ENTRY BRINGS ONE (pick (a)), to H(F) under the attested key,
+    // handed to both seats after the entry - unless the caller brings its own (D, whose order is its test).
+    let hand = null;
+    if (!fee && gate1000.pays) {
+      const F = rand(32);
+      const got = lockFromClient(await lc.lockHash(toHex(sha256(F)), String(entryFeeMsat(STAKE)), toHex(att.claimPk), toHex(refundKeyOf(s.player)), 150),
+        { hash: sha256(F), claimPk: att.claimPk, refundPk: refundKeyOf(s.player) });
+      fee = { preimage: F, outpoint: got.outpoint };
+      hand = got.fields;
+    }
     const e = rand(32);
     const dealt = await dealHandout({ preimage: s.p, seats: c.nodes, roundId: rid, playerPubkey: s.player,
       ephemeralSecret: e, ephemeralPubkey: feldmanGroup.pointX(e), coefficients: [scalarFrom32(rand(32)) % FIELD], needed: 2, curve: feldmanGroup });
@@ -118,12 +142,17 @@ try {
       feeLockOutpoint: fee ? fee.outpoint : { txid: new Uint8Array(32), outIdx: 0n },
       claimKeyAttestationRef: claimKey.ref,
     };
+    const eid = entryId(entry);
     for (const d of seats) {
       await fetch(`http://127.0.0.1:${d.port}/handout`, { method: 'POST', body: encodeHandout(dealt.handout) });
       const r = await fetch(`http://127.0.0.1:${d.port}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
       if (r.status !== 201) throw new Error(`entry: ${r.status} ${await r.text()}`);
+      if (hand) {
+        const fl = await fetch(`http://127.0.0.1:${d.port}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(hand)) });
+        if (fl.status !== 201) throw new Error(`fee-lock: ${fl.status} ${await fl.text()}`);
+      }
     }
-    return entryId(entry);
+    return eid;
   };
   const handOver = async (label, eid, fields) => {
     const out = [];
@@ -161,13 +190,6 @@ try {
   // federation's own fee rule, asked of the wasm client; the gate at this round's
   // 1000 sat and, for contrast, at 100 sat; then at 1000 sat a real hash-image
   // lock of the entry's 20000 msat fee to H(F), handed to both seats' /fee-lock.
-  const rule = JSON.parse(await lc.feeRule());
-  const fees = { ppm: BigInt(rule.fee_ppm), baseMsat: BigInt(rule.fee_base_msat) };
-  const gate1000 = feeLockPays({ contract: c, fees });
-  const gate100 = feeLockPays({ contract: { ...c, stakeMsat: 100000n }, fees });
-  say({ step: 'fee rule and gate', rule, gate1000: { pays: gate1000.pays, lock: String(gate1000.lockMsat), perSeatNet: (gate1000.perSeatNetMsat || []).map(String) },
-    gate100: { pays: gate100.pays, why: gate100.why.slice(0, 120) } });
-  if (!gate1000.pays) throw new Error(`the gate refused a 1000 sat round: ${gate1000.why}`);
   const D = stakeOf();
   const F = rand(32);
   const lockD = await lc.lock(toHex(D.point), String(net), toHex(att.claimPk), toHex(refundKeyOf(D.player)), 150);
