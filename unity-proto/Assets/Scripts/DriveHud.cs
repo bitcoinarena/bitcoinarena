@@ -307,7 +307,7 @@ public class DriveHud : MonoBehaviour
     }
 
     /// <summary>
-    /// The SIM switch's second line. In a signed run it fires nothing (`Bootstrap.SimMayWriteCore`),
+    /// The SIM switch's second line. In a signed run it fires nothing (`Bootstrap.LiquidationMayWriteCore`),
     /// so it says so rather than "firing liquidations".
     /// </summary>
     public static string SimWords(bool sim, bool signedRunLive)

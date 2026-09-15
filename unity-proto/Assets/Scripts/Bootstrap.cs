@@ -142,11 +142,12 @@ public class Bootstrap : MonoBehaviour
     }
 
     /// <summary>
-    /// WHETHER A SIMULATED LIQUIDATION MAY WRITE THE CORE: only while no signed run is live. From the
-    /// session's `Start` (before the page puts the core in the round's world) until the run is over,
-    /// the core is the signer nodes' replay of the transcript, and the transcript has no clock of ours.
+    /// WHETHER A LIQUIDATION - SIMULATED OR FROM THE LIVE MARKET - MAY WRITE THE CORE: only while no
+    /// signed run is live. From the session's `Start` (before the page puts the core in the round's
+    /// world) until the run is over, the core is the signer nodes' replay of the transcript, and the
+    /// transcript carries neither our clock nor our market feed.
     /// </summary>
-    public static bool SimMayWriteCore(bool signedRunLive) => !signedRunLive;
+    public static bool LiquidationMayWriteCore(bool signedRunLive) => !signedRunLive;
 
     /// <summary>
     /// ONE simulated liquidation, and it is the only implementation there is.
@@ -168,7 +169,7 @@ public class Bootstrap : MonoBehaviour
         // transcript. Measured before on the Daily: one SIM press at tick 192 made the card read
         // DELIVERED 222 at tick 2129 on a run both signer nodes signed FAILED 268. Outside a signed
         // run - practice in the lobby, no node named - it still fires.
-        if (!SimMayWriteCore(Blwp.BlwpNet.Live))
+        if (!LiquidationMayWriteCore(Blwp.BlwpNet.Live))
         {
             Debug.Log($"[sim] simulated liquidation not offered: a signed run is live ({why})");
             return false;
@@ -221,8 +222,20 @@ public class Bootstrap : MonoBehaviour
         // reaches the renderer only, which is the whole point: a liquidation
         // changes the size, the crater and the fallout, not which mesh hangs in
         // the sky.
+        //
+        // AND NOT INTO A SIGNED RUN (the owner 2026-09-15): a live forced order is in no transcript, so
+        // written into the core the score card reads it would be a world the signer nodes never
+        // replay. Measured before on the Daily (0.0.1356): four live liquidations ($684 - $294,853)
+        // fell inside one signed run, each sent by this handler, which has no filter but usd > 0.
+        // Outside a signed run it still fires. Each one held back is logged, so a quiet market and
+        // a held one can be told apart.
         Market.OnLiquidation += (l) =>
         {
+            if (!LiquidationMayWriteCore(Blwp.BlwpNet.Live))
+            {
+                Debug.Log($"[feed] liquidation {l.Venue} ${l.UsdValue:N0} not offered to the core: a signed run is live");
+                return;
+            }
             if (_strike != null) _strike.NoteSubmitter(!l.Long, l.UsdValue, l.Venue);
             Blwp.BlwpCore.Liquidation(l.UsdValue);
         };

@@ -12,8 +12,20 @@ public class SimLiquidationTests
     [Test]
     public void ASimulatedLiquidationIsNotOfferedToTheCoreOfASignedRun()
     {
-        Assert.IsFalse(Bootstrap.SimMayWriteCore(true), "a simulated liquidation reached the core the signer nodes replay");
-        Assert.IsTrue(Bootstrap.SimMayWriteCore(false), "outside a signed run the SIM switch stopped firing");
+        Assert.IsFalse(Bootstrap.LiquidationMayWriteCore(true), "a simulated liquidation reached the core the signer nodes replay");
+        Assert.IsTrue(Bootstrap.LiquidationMayWriteCore(false), "outside a signed run the SIM switch stopped firing");
+    }
+
+    /// <summary>
+    /// THE LIVE MARKET FEED IS HELD TO THE SAME RULE (the owner 2026-09-15): its handler in Bootstrap asks
+    /// this before `BlwpCore.Liquidation`. Measured before on the Daily (0.0.1356): four live forced
+    /// orders fell inside one signed run and the handler sent every one; none is in a transcript.
+    /// </summary>
+    [Test]
+    public void ALiveMarketLiquidationIsNotOfferedToTheCoreOfASignedRun()
+    {
+        Assert.IsFalse(Bootstrap.LiquidationMayWriteCore(true), "a live market liquidation reached the core the signer nodes replay");
+        Assert.IsTrue(Bootstrap.LiquidationMayWriteCore(false), "outside a signed run the live market stopped striking");
     }
 
     [Test]
