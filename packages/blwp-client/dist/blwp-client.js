@@ -10913,6 +10913,9 @@ const MARK_INPUT_WAIT_MS = 10000;
  */
 const CLOSED = 'closed: ';
 
+/** How long `finish` waits for the held ticks to go out before it ends the run anyway. */
+const FINISH_WAIT_MS = 10000;
+
 class Client {
   /**
    * A client that reaches a node because Bitcoin says where it is, AND because
@@ -12457,6 +12460,46 @@ class Client {
   }
 
   /**
+   * THE CORE SAID THE RUN IS OVER, AND THE RUN STOPS THERE (the owner 2026-09-15 16:14).
+   *
+   * Measured before this, replaying every run a signer node held: each truck that drove into
+   * the miner's mouth was DELIVERED in the core and signed so 2 of 2 - and its page went on
+   * recording 620 to 5319 more ticks (10-89 s), the truck parked at the tunnel's back wall, the
+   * HUD still counting metres to the drop-off, the round never over for the player.
+   *
+   * NOTHING HERE DECIDES THAT. The caller hands over the core's own word and the state hash at
+   * the tick it said it; this stops taking ticks, puts every tick it holds on the wire, sends the
+   * last checkpoint at that tick, and closes. Nothing is sent after. The word is FINISHED, not
+   * the outcome: what the run came to is the replay's to say, from the ticks that went out.
+   */
+  finish({ stateHash = null, tick = 0, why = 'the core ended the run' } = {}) {
+    if (this.ended) return Promise.resolve(null);
+    if (this.finishing) return this.finishing;
+    this.finishing = (async () => {
+      const deadline = Date.now() + FINISH_WAIT_MS;
+      while (!this.ended && (this.hold.length || this.publishing) && Date.now() < deadline) {
+        const p = this.drain();
+        if (p && p.then) { try { await p; } catch { /* the drain names its own fault */ } }
+        else await new Promise((r) => setTimeout(r, 25));
+      }
+      await this.awaitPublishes();
+      let mark = null;
+      if (!this.ended && stateHash) { try { mark = await this.markNow(stateHash, tick); } catch { mark = null; } }
+      const unsent = this.hold.length;
+      if (!this.ended) {
+        this.ended = true;
+        this.ending = 'FINISHED';
+        this.endingReason = unsent ? `${why}; ${unsent} tick(s) could not be sent` : why;
+        this.state = 'ended';
+        if (this.onEnd) this.onEnd(this.ending, this.endingReason);
+        if (this.sock) { const s = this.sock; this.sock = null; try { s.close(); } catch { /* gone */ } }
+      }
+      return { unsent, mark };
+    })();
+    return this.finishing;
+  }
+
+  /**
    * One tick's five words, kept until they can go out.
    *
    * Ticks are the transcript, so they are never thrown away while there is
@@ -12503,6 +12546,8 @@ class Client {
 
   record(words) {
     if (this.ended) return false;
+    // AND NOT ONCE THE CORE HAS ENDED THE RUN: `finish` is putting the last of it on the wire.
+    if (this.finishing) return false;
 
     // A CLIENT THAT HAS NOT BEEN TOLD WHICH ROUND IT IS PLAYING IS NOT
     // HOLDING A TRANSCRIPT, and must not end a run it never began.

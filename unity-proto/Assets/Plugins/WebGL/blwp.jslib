@@ -470,6 +470,8 @@ mergeInto(LibraryManager.library, {
 
     net.tick = function (words) {
       if (!net.client) return;
+      // THE RUN IS OVER ONCE THE CORE SAID SO: the game may keep stepping, none of it is the run.
+      if (net.finishing) return;
       // PAST THE RUN'S LAST TICK THE GAME'S TICKS ARE NOT INPUTS. The game keeps
       // stepping after a run ends; recorded, they went out in a batch every seat
       // refused whole, and the run ended VOID (measured live: an idle page to
@@ -485,6 +487,16 @@ mergeInto(LibraryManager.library, {
       }
       net.client.record(words);
       net.seen++;
+      // THE CORE SAID DELIVERED, SO THE RUN ENDS HERE (the owner 2026-09-15 16:14). Measured before:
+      // every truck that drove into the mouth was DELIVERED in the core and signed so, and its page
+      // recorded 10-89 s more, the truck parked at the tunnel's back wall. The word is the core's own
+      // (O_SCORE 18 + S_STATE 5, RUN_DELIVERED 1), read, not worked out: this tick is already
+      // recorded, `finish` sends what is held and the last checkpoint at this tick, then nothing.
+      if ((b.st.i32[18 + 5] | 0) === 1) {
+        net.finishing = net.client.finish({ stateHash: b.core.hash(b.st), tick: net.seen,
+          why: 'the core said DELIVERED at tick ' + net.seen });
+        return;
+      }
       if (net.client.state !== 'ready') return;
       if (net.batchEvery > 0 && net.seen % net.batchEvery === 0) net.client.drain();
       // The hash is taken HERE, at the tick the mark names - a checkpoint says

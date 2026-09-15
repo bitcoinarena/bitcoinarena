@@ -2042,8 +2042,17 @@ public class DriveHud : MonoBehaviour
         Shadowed(new Rect(x - 90f, y - style.fontSize * 1.6f, 180f, style.fontSize * 1.6f),
                  offScreen ? "▲ DROP-OFF" : "DROP-OFF", style, colour);
         Shadowed(new Rect(x - 90f, y, 180f, style.fontSize * 1.6f),
-                 $"{distance:0} m", style, new Color(1f, 1f, 1f, 0.9f));
+                 DropOffWords(Blwp.BlwpCore.Available && Blwp.BlwpCore.RunState == 1, distance),
+                 style, new Color(1f, 1f, 1f, 0.9f));
     }
+
+    /// <summary>
+    /// The line under DROP-OFF: metres while the run is on, DELIVERED once the core says so
+    /// (the owner 2026-09-15 16:14). Measured before: the trucks the core had delivered went on
+    /// to the tunnel's back wall and the HUD read 11-30 m to a drop-off already made.
+    /// </summary>
+    public static string DropOffWords(bool delivered, float distance) =>
+        delivered ? "DELIVERED" : $"{distance:0} m";
 
     /// <summary>
     /// WASTED, over a drained and slowed world.

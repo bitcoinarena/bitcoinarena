@@ -295,7 +295,9 @@ public class DeliveryGate : MonoBehaviour
         // at the inside of a wall. Ninety-five is clear of the leading face at
         // 108, and the whole run home is over the fighting with the post
         // office ahead.
-        var chase = FindFirstObjectByType<ChaseCamera>();
+        // INSIDE A LIVE ROUND THE RUN IS OVER HERE (the owner 2026-09-15 16:14): no fly home, no bay.
+        bool home = BackToTheBay(Blwp.BlwpNet.RoundSeed);
+        var chase = home ? FindFirstObjectByType<ChaseCamera>() : null;
         var post = FindFirstObjectByType<PostOffice>();
         if (chase != null)
             chase.FlyIn(new Vector3(95f, 34f, transform.position.z),
@@ -309,9 +311,24 @@ public class DeliveryGate : MonoBehaviour
         // score card has had its moment. Clearing the bed and respawning are
         // safe to do now: the truck is at the gate, not being driven.
         bay.Clear();
+        if (!home) return;
         if (truck != null) truck.Respawn();
         _reopenAt = Time.unscaledTime + Mathf.Max(0f, scoreHoldSeconds);
     }
+
+    /// <summary>
+    /// WHETHER A DELIVERY SENDS THE TRUCK BACK TO THE BAY - only when no round is live.
+    ///
+    /// Inside a live round a run is one drive. The core's DELIVERED latches and a live round
+    /// never restarts the core on roll-out, so the old way round - the bed cleared, the truck
+    /// teleported to the bay - put the player back at the ramp in a core that still said
+    /// DELIVERED: the next load driven to the miner could never deliver, the cargo stayed on
+    /// the bed and nothing ended (the owner 16:14: BANKED 198, then a trip that never finished).
+    /// And the teleport is a write into the core that is in no transcript, so the replay parks
+    /// the truck at the tunnel's back wall while the page draws it at the bay. In a round the
+    /// cargo comes off and the page ends the run; nothing is moved.
+    /// </summary>
+    public static bool BackToTheBay(int roundSeed) => roundSeed == 0;
 
     float _reopenAt;
 

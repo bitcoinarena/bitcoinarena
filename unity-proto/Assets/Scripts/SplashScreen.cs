@@ -83,6 +83,7 @@ public class SplashScreen : MonoBehaviour
 
     void Update()
     {
+        if (!Showing && BackToLobby(Blwp.BlwpNet.Ended, _fromLobby)) ShowLobbyAgain();
         if (!Showing)
         {
             if (!_hiddenTold && Blwp.DailyLobby.Compiled) { _hiddenTold = true; Blwp.DailyLobby.Shown("{\"showing\":false}"); }
@@ -148,6 +149,28 @@ public class SplashScreen : MonoBehaviour
 #endif
     }
 
+    /// <summary>A round was started from the lobby, so its end comes back here.</summary>
+    bool _fromLobby;
+
+    /// <summary>
+    /// BACK TO THE LOBBY WHEN THE RUN IS OVER (the owner 2026-09-15 16:14: a live drive into the
+    /// mouth ends and the player is back in the lobby). The page says the run ended - the core's
+    /// DELIVERED finished it, or a VOID did - and a round PLAY started from this lobby comes back
+    /// to it, instead of leaving the player on a truck that can no longer be driven.
+    /// </summary>
+    public static bool BackToLobby(bool runEnded, bool fromLobby) => runEnded && fromLobby;
+
+    void ShowLobbyAgain()
+    {
+        _fromLobby = false;
+        _joining = false;
+        _joinedAt = -1f;
+        _joinWhy = "";
+        _hiddenTold = false;
+        _polledAt = -10f;
+        Showing = true;
+    }
+
     public void Play()
     {
         // Fly in from over the middle of the field.
@@ -164,6 +187,7 @@ public class SplashScreen : MonoBehaviour
                                      : new Vector3(-114f, 20f, 0f),
                         4.2f);
 
+        _fromLobby = _lobby != null;
         Showing = false;
         WakeAudio();
         AudioListener.volume = 1f;
