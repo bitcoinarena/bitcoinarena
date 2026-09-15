@@ -1,0 +1,10 @@
+[Unit]
+Description=BLWP Daily: the committee regtest lnd on the Daily's bitcoind
+After=blwp-daily-btc.service
+Wants=blwp-daily-btc.service
+[Service]
+ExecStart=/mnt/bitcoin/lnd-linux-amd64-v0.21.3-beta/lnd --lnddir=@D@/lnd-committee --bitcoin.regtest --bitcoin.node=bitcoind --bitcoind.rpchost=127.0.0.1:30401 --bitcoind.rpccookie=@D@/btc/regtest/.cookie --bitcoind.rpcpolling --bitcoind.blockpollinginterval=1s --bitcoind.txpollinginterval=1s --rpclisten=127.0.0.1:30410 --restlisten=127.0.0.1:30411 --listen=127.0.0.1:30412 --noseedbackup --nobootstrap --alias=blwp-daily-committee
+Restart=always
+RestartSec=10
+[Install]
+WantedBy=default.target

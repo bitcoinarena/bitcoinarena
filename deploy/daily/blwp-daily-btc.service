@@ -1,0 +1,9 @@
+[Unit]
+Description=BLWP Daily: the regtest bitcoind its rounds are published on (rpc 30401)
+[Service]
+ExecStart=/mnt/bitcoin/bitcoin-31.1/bin/bitcoind -regtest -datadir=@D@/btc -port=30402 -rpcport=30401 -listen=0 -listenonion=0 -txindex -fallbackfee=0.0001
+Restart=always
+RestartSec=10
+TimeoutStopSec=300
+[Install]
+WantedBy=default.target

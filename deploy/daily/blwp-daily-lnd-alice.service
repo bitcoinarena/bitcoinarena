@@ -1,0 +1,10 @@
+[Unit]
+Description=BLWP Daily: the alice regtest lnd on the Daily's bitcoind
+After=blwp-daily-btc.service
+Wants=blwp-daily-btc.service
+[Service]
+ExecStart=/mnt/bitcoin/lnd-linux-amd64-v0.21.3-beta/lnd --lnddir=@D@/lnd-alice --bitcoin.regtest --bitcoin.node=bitcoind --bitcoind.rpchost=127.0.0.1:30401 --bitcoind.rpccookie=@D@/btc/regtest/.cookie --bitcoind.rpcpolling --bitcoind.blockpollinginterval=1s --bitcoind.txpollinginterval=1s --rpclisten=127.0.0.1:30420 --restlisten=127.0.0.1:30421 --listen=127.0.0.1:30422 --noseedbackup --nobootstrap --alias=blwp-daily-alice
+Restart=always
+RestartSec=10
+[Install]
+WantedBy=default.target

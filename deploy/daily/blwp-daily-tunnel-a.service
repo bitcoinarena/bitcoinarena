@@ -1,0 +1,8 @@
+[Unit]
+Description=BLWP Daily: quick tunnel a to seat a (198.51.100.7:18080); its public name changes on every start
+[Service]
+ExecStart=/usr/bin/cloudflared tunnel --no-autoupdate --url http://198.51.100.7:18080
+Restart=always
+RestartSec=10
+[Install]
+WantedBy=default.target

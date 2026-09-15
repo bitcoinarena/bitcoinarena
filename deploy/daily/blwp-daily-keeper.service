@@ -1,0 +1,12 @@
+[Unit]
+Description=BLWP Daily: after a tunnel or launcher restart, run the seats under the new names and deploy the page with their daily.json
+After=blwp-daily-tunnel-a.service blwp-daily-tunnel-b.service
+[Service]
+Environment=PATH=@PATH@
+ExecStart=/bin/bash @D@/code/deploy/daily/keeper.sh
+Restart=always
+RestartSec=15
+StandardOutput=append:@D@/keeper.log
+StandardError=append:@D@/keeper.log
+[Install]
+WantedBy=default.target

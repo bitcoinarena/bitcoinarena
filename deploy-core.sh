@@ -10,7 +10,9 @@
 #   ./deploy-core.sh some-project -> that project instead
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-BUILD="$ROOT/unity-proto/build/webgl"
+# The page to deploy: the last Unity build, or - for the Daily's keeper after a reboot has emptied
+# /tmp - the copy of the last deployed page kept on persistent disk (BLWP_BUILD_DIR).
+BUILD="${BLWP_BUILD_DIR:-$ROOT/unity-proto/build/webgl}"
 PROJECT="${1:-btc-logistics-core}"
 
 if [ "$PROJECT" = "btc-logistics-war" ]; then
@@ -67,3 +69,15 @@ cp "$DAILY" "$BUILD/daily.json"
 
 echo "deploying $(du -sh "$BUILD" | cut -f1) to Cloudflare Pages project '$PROJECT'"
 wrangler pages deploy "$BUILD" --project-name "$PROJECT" --branch main --commit-dirty=true
+
+# AND WHAT WAS DEPLOYED IS KEPT WHERE A REBOOT LEAVES IT (the Daily's keeper, deploy/daily): /tmp is
+# emptied at boot (tmpfiles "D /tmp"), and the keeper redeploys this copy with a new daily.json when
+# the seats' tunnels or bonds change. Only for the Daily's own project.
+if [ "$PROJECT" = "btc-logistics-core" ]; then
+  PAGE="$DAILY_DIR/page"
+  mkdir -p "$PAGE"
+  if [ "$(cd "$BUILD" && pwd -P)" != "$(cd "$PAGE" && pwd -P)" ]; then
+    rm -rf "$PAGE.new" && cp -a "$BUILD" "$PAGE.new" && rm -rf "$PAGE" && mv "$PAGE.new" "$PAGE"
+    echo "kept the deployed page at $PAGE"
+  fi
+fi
