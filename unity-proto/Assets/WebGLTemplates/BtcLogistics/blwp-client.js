@@ -8051,13 +8051,16 @@ function finish(stake, fee) {
  * a sitting seat ... The operator must not take money that only pays the
  * federation.").
  *
- * The seats' own fee arithmetic (`feeSettlement`), run on the round's WORST case:
- * the fewest players a round opens for (more only raise each seat's share), and
- * the round's game/verify and settlement slots as that many DIFFERENT seats (a
- * seat in both pools, or fewer keys, only raise the shares). It pays only if
- * every entitled seat would be paid strictly more than nothing after the
- * federation's own fee on every input and output. `fees` is the federation's
- * rule, read by the page's own lock client - not a seat's word.
+ * The seats' own fee arithmetic (`feeSettlement`), run on the round's WORST case -
+ * the fewest players a round opens for (more only raise each seat's share) - over
+ * the seats the settlement pays: the round's own sitting seats, its `nodes`, in
+ * both pools (the owner 2026-09-15 07:42: "22A node fee goes to the sitting seats of
+ * this round, even if there are only two. Not seven census slots when the round is
+ * 2-of-2."). It used to invent one different seat per slot - four for a 2-of-2
+ * the settlement pays as two. It pays only if every sitting seat would be paid
+ * strictly more than nothing after the federation's own fee on every input and
+ * output. `fees` is the federation's rule, read by the page's own lock client -
+ * not a seat's word.
  */
 function feeLockPays({ contract, fees, players = MIN_PLAYERS_PER_ROUND } = {}) {
   if (!contract) return { pays: false, why: 'no round to size the fee lock for' };
@@ -8065,13 +8068,13 @@ function feeLockPays({ contract, fees, players = MIN_PLAYERS_PER_ROUND } = {}) {
     return { pays: false, why: 'the federation\'s fee rule is not known, so no fee lock is minted' };
   const stakeMsat = BigInt(contract.stakeMsat || 0n);
   const lockMsat = entryFeeMsat(stakeMsat);
-  const base = { stakeMsat, lockMsat, players, seats: Number(contract.gameVerifySlots) + Number(contract.settlementSlots) };
+  // THE ROUND'S SITTING SEATS, each once - the seats its settlement pays, in both pools.
+  const sitting = Array.isArray(contract.nodes) ? [...new Map(contract.nodes.map((k) => [toHex(k), k])).values()] : [];
+  const base = { stakeMsat, lockMsat, players, seats: sitting.length };
   if (lockMsat <= 0n) return { ...base, pays: false, why: 'this round owes no fee, so there is nothing to lock' };
+  if (!sitting.length) return { ...base, pays: false, why: 'that round names no sitting seats, so a fee lock would pay nobody' };
   const key = (tag, i) => { const k = new Uint8Array(32); k[0] = tag; k[1] = i; k[31] = 1; return k; };
-  const pools = {
-    [GAME_VERIFY]: Array.from({ length: Number(contract.gameVerifySlots) }, (_, i) => key(0xa1, i)),
-    [SETTLEMENT]: Array.from({ length: Number(contract.settlementSlots) }, (_, i) => key(0xa2, i)),
-  };
+  const pools = { [GAME_VERIFY]: sitting, [SETTLEMENT]: sitting };
   const entries = Array.from({ length: players }, (_, i) => ({ pubkey: key(0xb0, i), stakeMsat, feeMsat: lockMsat, donationMsat: 0n, outcome: FAILED, score: 0 }));
   const feeLocks = new Map(entries.map((e, i) => [toHex(e.pubkey), { outpoint: { txid: key(0xc0, i), outIdx: BigInt(i) }, amountMsat: lockMsat, preimage: key(0xd0, i) }]));
   const part = feeSettlement({ entries, feeLocks, seats: pools, contract, fees });

@@ -215,10 +215,36 @@ test('the gate: a 1000 sat round mints its 20000 msat fee lock, and every sittin
   console.log(`  1000 sat: ${show(g)}`);
   assert.equal(g.pays, true, g.why);
   assert.equal(g.lockMsat, 20000n);
-  assert.equal(g.perSeatNetMsat.length, 4, 'every entitled seat - two game/verify, two settlement, as different keys');
+  // THE ROUND'S SITTING SEATS (the owner 2026-09-15 07:42): a 2-of-2 pays its two seats, each both pools' shares.
+  assert.equal(g.seats, 2, 'the round\'s two sitting seats, not one seat per slot');
+  assert.equal(g.perSeatNetMsat.length, 2, 'one payout per sitting seat - a seat in both pools is paid both shares together');
   for (const net of g.perSeatNetMsat) assert.ok(net > 0n, `a seat nets ${net}`);
   assert.equal(g.inputFeesMsat, 2000n, 'two fee locks in, 1000 msat each');
-  assert.equal(g.outputFeesMsat, 4000n, 'four seat payouts out, 1000 msat each');
+  assert.equal(g.outputFeesMsat, 2000n, 'two seat payouts out, 1000 msat each');
+});
+
+test('the gate sizes the fee for the seats the settlement pays: a 5-of-7 its seven, a 2-of-2 its two - never a seat per slot', () => {
+  const seven = [1, 2, 3, 4, 5, 6, 7].map(SEAT);
+  const g7 = feeLockPays({ contract: { ...contractOf(seven), stakeMsat: 1000000n }, fees: REAL_RULE });
+  console.log(`  5-of-7, 1000 sat: ${show(g7)}`);
+  assert.equal(g7.seats, 7);
+  assert.equal(g7.perSeatNetMsat.length, 7);
+  // THE SAME SEATS AS THE SETTLEMENT: the seats' own plan over the same two players pays exactly these nets.
+  const two = [SEAT(1), SEAT(2)];
+  const g2 = feeLockPays({ contract: at(1000000n), fees: REAL_RULE });
+  // two 1000 sat players - the gate's worst case at this stake: 980000 msat staked, 20000 msat fee each
+  const W = { ...entry(1, DELIVERED, 3), stakeMsat: 1000000n, feeMsat: 20000n };
+  const L = { ...entry(2, FAILED, 0), stakeMsat: 1000000n, feeMsat: 20000n };
+  const plan = lockSettlement({ roundId: RID, entries: [W, L], minScore: 1, fees: REAL_RULE, contract: { ...contractOf(two), stakeMsat: 1000000n },
+    locks: new Map([lockFor(W, 1, 980000n), lockFor(L, 2, 980000n)]), seats: { gameVerify: two, settlement: two },
+    feeLocks: new Map([feeLockFor(W, 1, 20000n), feeLockFor(L, 2, 20000n)]) });
+  console.log(`  2-of-2 settlement over the same seats: ${plan.ok ? `seat payouts [${plan.seatPayouts.map((p) => p.msat).join(', ')}]` : plan.why}`);
+  assert.equal(plan.ok, true, plan.why);
+  assert.equal(plan.seatPayouts.length, g2.perSeatNetMsat.length, 'the gate counted other seats than the settlement pays');
+  // AND A ROUND THAT NAMES NO SEATS MINTS NOTHING: there is nobody to pay.
+  const none = feeLockPays({ contract: { ...at(1000000n), nodes: [] }, fees: REAL_RULE });
+  assert.equal(none.pays, false);
+  assert.match(none.why, /names no sitting seats/);
 });
 
 test('the gate\'s floor, measured: the smallest stake it mints for, and 1000 sat the smallest bracket (10 / 100 / 1000 sat) above it', () => {
