@@ -35,6 +35,30 @@ public class LobbyScreenTests
             $"{what}: {inner} is not inside {outer}");
     }
 
+    /// <summary>
+    /// A PHONE UPRIGHT'S TWO PAGES (the owner 2026-09-15 11:57): page one is 1 and 2 side by side, each
+    /// CarouselTaller x the grid's top row on that same screen (`top`); page two is 3 and 4 side by
+    /// side; the arrows are a finger's size, in the box, on no panel and not on each other.
+    /// </summary>
+    static void CarouselPagesAreRight(DailyLobby.Frame l, Rect copy, float top, string at)
+    {
+        Assert.GreaterOrEqual(l.howToCells[1].x, l.howToCells[0].xMax - 0.5f, $"2 is not right of 1 {at}");
+        for (int i = 0; i < 2; i++)
+            Assert.GreaterOrEqual(l.howToCells[i].height, DailyLobby.CarouselTaller * top - 0.5f,
+                $"panel {i + 1} is {l.howToCells[i].height:0.0} px, not {DailyLobby.CarouselTaller} x the grid's top row {top:0.0} px {at}"
+                + $" (copy {copy}, box {l.howTo})");
+        Assert.AreEqual(l.howToCells[2].y, l.howToCells[3].y, 0.5f, $"3 and 4 are not side by side {at}");
+        Assert.GreaterOrEqual(l.howToCells[3].x, l.howToCells[2].xMax - 0.5f, $"4 is not right of 3 {at}");
+        foreach (var (r, what) in new[] { (l.howToPrev, "the left arrow"), (l.howToNext, "the right arrow") })
+        {
+            Assert.GreaterOrEqual(r.width, 34f, $"{what} is under a finger's width {at}: {r}");
+            Assert.GreaterOrEqual(r.height, 34f, $"{what} is under a finger's height {at}: {r}");
+            Inside(r, l.howTo, $"{what} {at}");
+            for (int i = 0; i < 4; i++) Assert.IsFalse(r.Overlaps(l.howToCells[i]), $"{what} overlaps panel {i + 1} {at}");
+        }
+        Assert.IsFalse(l.howToPrev.Overlaps(l.howToNext), $"the arrows overlap {at}");
+    }
+
     [Test]
     public void EveryLobbyElementIsInsideThePanelAndClearOfEveryOtherOnEveryPhone()
     {
@@ -62,18 +86,37 @@ public class LobbyScreenTests
             // here; 1-2 over 3-4 on a portrait screen, one row on a desktop.
             Assert.IsNotNull(l.howToCells, $"no how-to panels {at}");
             Assert.AreEqual(4, l.howToCells.Length, $"not four how-to panels {at}");
+            // A PHONE UPRIGHT TURNS PAGES (the owner 2026-09-15 11:57): panels on different pages
+            // share the box, so only panels on the same page must keep clear of each other.
+            bool portrait = css.y > css.x;
+            Assert.IsFalse(l.howToCarousel && !portrait, $"a carousel on a screen that is not portrait {at}");
             for (int i = 0; i < 4; i++)
             {
                 var c = l.howToCells[i];
                 Assert.GreaterOrEqual(c.height, DailyLobby.HowToMinCell - 0.5f, $"how-to panel {i + 1} is under {DailyLobby.HowToMinCell} px high {at}: {c}");
                 Assert.AreEqual(DailyLobby.PanelAspectOf(i), c.width / c.height, 0.01f, $"how-to panel {i + 1} is stretched {at}: {c}");
                 Inside(c, l.howTo, $"how-to panel {i + 1} {at}");
-                for (int j = i + 1; j < 4; j++) Assert.IsFalse(c.Overlaps(l.howToCells[j]), $"how-to panels {i + 1} and {j + 1} overlap {at}");
+                for (int j = i + 1; j < 4; j++)
+                    if (!l.howToCarousel || DailyLobby.HowToPageOf(i) == DailyLobby.HowToPageOf(j))
+                        Assert.IsFalse(c.Overlaps(l.howToCells[j]), $"how-to panels {i + 1} and {j + 1} overlap {at}");
             }
-            if (css.y > css.x)
+            if (portrait)
             {
+                // PAGE ONE: 1 and 2 side by side, each at least 15% taller than the grid's top row
+                // on this same screen - the grid a phone upright had before (carousel: false).
+                var grid = DailyLobby.MeasureLobby(f.copy, Mathf.Round(sub), true, carousel: false);
+                float top = Mathf.Max(grid.howToCells[0].height, grid.howToCells[1].height);
                 Assert.AreEqual(l.howToCells[0].y, l.howToCells[1].y, 0.5f, $"1 and 2 are not side by side {at}");
-                Assert.Greater(l.howToCells[2].y, l.howToCells[0].yMax - 0.5f, $"3-4 are not under 1-2 {at}");
+                if (!l.howToCarousel)
+                {
+                    // THE GRID STAYS ONLY WHERE THE CAROUSEL CANNOT BE THAT MUCH TALLER (the owner, option A):
+                    // the least it needs - 1 and 2 at CarouselTaller x the top row and two 34 px arrows,
+                    // no gaps at all - is wider than the copy area. And there it is 1-2 over 3-4.
+                    float least = DailyLobby.CarouselTaller * top * (DailyLobby.PanelAspectOf(0) + DailyLobby.PanelAspectOf(1)) + 2f * 34f;
+                    Assert.Greater(least, f.copy.width + 0.5f, $"the carousel fits ({least:0} px in {f.copy.width:0}) and the grid was kept {at}");
+                    Assert.Greater(l.howToCells[2].y, l.howToCells[0].yMax - 0.5f, $"3-4 are not under 1-2 {at}");
+                }
+                else CarouselPagesAreRight(l, f.copy, top, at);
             }
             if (css.x >= 1366f)
                 Assert.AreEqual(l.howToCells[0].y, l.howToCells[3].y, 0.5f, $"a wide desktop does not get 1-2-3-4 in one row {at}");

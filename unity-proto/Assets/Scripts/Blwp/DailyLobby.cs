@@ -232,6 +232,10 @@ namespace Blwp
             public Rect you, name, key, head, more, list, howTo;
             public Rect[] howToCells;
             public bool howToGrid;
+            /// <summary>A phone upright (the owner 2026-09-15 11:57): two pages in one box - panels 1 and 2
+            /// (howToCells[0..1]), then 3 and 4 (howToCells[2..3]) - and the arrows that turn them.</summary>
+            public bool howToCarousel;
+            public Rect howToPrev, howToNext;
             public float rowH;
             public int rows;
             public bool narrow;
@@ -247,7 +251,7 @@ namespace Blwp
         /// ROUNDS header with its page button; then as many round rows as fit.
         /// Every button is at least 34 px high, a finger's width on a phone.
         /// </summary>
-        public static Frame MeasureLobby(Rect copy, float font, bool portrait = false)
+        public static Frame MeasureLobby(Rect copy, float font, bool portrait = false, bool carousel = true)
         {
             float line = font * 1.45f;
             float btnH = Mathf.Max(font * 2.1f, 34f);
@@ -287,6 +291,8 @@ namespace Blwp
             float WidthFor(float h) => BoxWidthFor(grid, h, cellGap);
             float HeightFor(float w) => BoxHeightFor(grid, w, cellGap);
             Rect howTo = default;
+            Rect prev = default, next = default;
+            Rect[] pages = null;
             // A PHONE ON ITS SIDE: 1-2 over 3-4 in a column at the right. Where the
             // rest can stay one line wide beside it, the column takes the FULL height
             // of the copy area (bigger panels); where it cannot - stacked, who-you-are,
@@ -310,6 +316,12 @@ namespace Blwp
                 float hw = WidthFor(hh);
                 if (hw > copy.width) { hw = copy.width; hh = HeightFor(hw); }
                 howTo = new Rect(copy.x + (copy.width - hw) * 0.5f, copy.y, hw, hh);
+                // A PHONE UPRIGHT TURNS PAGES (the owner 2026-09-15 11:57): the four panels as 1-2 over 3-4
+                // were hard to read and took too much of a phone. Panels 1 and 2 first, 15% taller than
+                // this grid's top row; the arrows turn to 3 and 4. Its room is the grid's, so the
+                // rounds still come first. `carousel: false` is that grid, kept as the measure.
+                if (portrait && carousel)
+                    (howTo, prev, next, pages) = CarouselOf(howTo, copy, room, btnH, gap, cellGap);
                 copy = new Rect(copy.x, howTo.yMax + gap, copy.width, Mathf.Max(0f, copy.yMax - howTo.yMax - gap));
             }
 
@@ -359,8 +371,50 @@ namespace Blwp
             }
             int rows = Mathf.Max(0, Mathf.FloorToInt((list.height + 0.01f) / rowH));
             return new Frame { you = you, name = name, key = key, head = head, more = more, list = list,
-                               howTo = howTo, howToCells = HowToCells(howTo, grid, cellGap), howToGrid = grid,
+                               howTo = howTo, howToCells = pages ?? HowToCells(howTo, grid, cellGap), howToGrid = grid,
+                               howToCarousel = pages != null, howToPrev = prev, howToNext = next,
                                rowH = rowH, rows = rows, narrow = narrow };
+        }
+
+        /// <summary>How much taller panels 1 and 2 are on a phone's first page than in the grid's top row.</summary>
+        public const float CarouselTaller = 1.15f;
+
+        /// <summary>The carousel page panel `i` is on: 1 and 2 first, then 3 and 4.</summary>
+        public static int HowToPageOf(int panel) => panel < 2 ? 0 : 1;
+
+        /// <summary>
+        /// THE TWO PAGES IN ONE BOX (the owner 2026-09-15 11:57), from the grid box a phone upright
+        /// had: panels 1 and 2 side by side at one height, CarouselTaller times the grid's top
+        /// row - never wider than the copy area beside the two arrows, never taller than the
+        /// room the rounds leave; panels 3 and 4 on page two, as wide as page one, centred in the
+        /// same box, so turning the page moves nothing else. Every cell its own panel's shape.
+        /// </summary>
+        static (Rect box, Rect prev, Rect next, Rect[] cells) CarouselOf(Rect grid, Rect copy, float room, float arrow, float gap, float g)
+        {
+            float a0 = PanelAspectOf(0), a1 = PanelAspectOf(1), a2 = PanelAspectOf(2), a3 = PanelAspectOf(3);
+            float c = Mathf.Max(0f, (grid.width - g) * 0.5f);
+            float want = CarouselTaller * c / Mathf.Min(a0, a1);
+            float avail = Mathf.Max(0f, copy.width - 2f * (arrow + gap));
+            float h = Mathf.Max(0f, Mathf.Min(want, Mathf.Min((avail - g) / (a0 + a1), room)));
+            // ONLY WHERE IT IS THAT MUCH TALLER (the owner 2026-09-15, option A): where the width beside
+            // the arrows, or the rounds' room, holds 1 and 2 under CarouselTaller x the grid's top row,
+            // the grid stays - measured at 1x, 375x667: a 277 px copy area drew them at 76.9 px, under
+            // the grid's own 111.4. Every phone at 2x to 3x and the tablet reach it.
+            if (h < want - 0.01f) return (grid, default, default, null);
+            float pageW = h * (a0 + a1) + g;
+            float boxW = pageW + 2f * (arrow + gap);
+            var box = new Rect(copy.x + (copy.width - boxW) * 0.5f, copy.y, boxW, h);
+            var prev = new Rect(box.x, box.y, arrow, h);
+            var next = new Rect(box.xMax - arrow, box.y, arrow, h);
+            float x0 = prev.xMax + gap;
+            float h2 = Mathf.Max(0f, pageW - g) / (a2 + a3);
+            float y2 = box.y + (h - h2) * 0.5f;
+            var cells = new[]
+            {
+                new Rect(x0, box.y, h * a0, h), new Rect(x0 + h * a0 + g, box.y, h * a1, h),
+                new Rect(x0, y2, h2 * a2, h2), new Rect(x0 + h2 * a2 + g, y2, h2 * a3, h2),
+            };
+            return (box, prev, next, cells);
         }
 
         /// <summary>

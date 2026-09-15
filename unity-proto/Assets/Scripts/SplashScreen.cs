@@ -43,6 +43,11 @@ public class SplashScreen : MonoBehaviour
     bool _howToAsked;
     Rect _lastHowTo;
     Rect[] _lastHowToCells;
+    // A phone upright turns pages (the owner 2026-09-15 11:57): which one, its arrows, what was drawn
+    int _howToPage;
+    bool _lastHowToCarousel;
+    Rect _lastHowToPrev, _lastHowToNext;
+    readonly System.Collections.Generic.List<int> _howToShown = new System.Collections.Generic.List<int>();
     Rect _lastName, _lastKey, _lastMore;
     string _lastNotice = "";
     readonly System.Collections.Generic.List<(Blwp.LobbyRow row, Rect rect)> _drawnRows =
@@ -339,6 +344,7 @@ public class SplashScreen : MonoBehaviour
         float font = _sub.fontSize;
         var l = Blwp.DailyLobby.MeasureLobby(copy, font, Screen.height > Screen.width);
         _lastName = l.name; _lastKey = l.key; _lastMore = l.more; _lastHowTo = l.howTo; _lastHowToCells = l.howToCells;
+        _lastHowToCarousel = l.howToCarousel; _lastHowToPrev = l.howToPrev; _lastHowToNext = l.howToNext;
         var you = _lobby.you;
 
         // THE OWNER'S HOW-TO, FOUR PANELS, EACH WHOLE (2026-09-14 07:55): load
@@ -349,13 +355,24 @@ public class SplashScreen : MonoBehaviour
         // were cut at half height and split panels 1 and 2 (measured, 1280x800).
         // A cell is exactly its panel's shape, so nothing is stretched.
         if (!_howToAsked) { _howToAsked = true; _howToWhole = Resources.Load<Texture2D>(Blwp.DailyLobby.HowToWhole); }
+        // A PHONE UPRIGHT TURNS PAGES (the owner 2026-09-15 11:57): only the page shown is drawn -
+        // panels 1 and 2, or 3 and 4 - and either arrow turns to the other one.
+        _howToShown.Clear();
         if (_howToWhole != null && l.howToCells != null)
             for (int i = 0; i < l.howToCells.Length; i++)
             {
+                if (l.howToCarousel && Blwp.DailyLobby.HowToPageOf(i) != _howToPage) continue;
                 var cell = l.howToCells[i];
                 if (cell.width <= 0f || cell.height <= 0f) continue;
                 GUI.DrawTextureWithTexCoords(cell, _howToWhole, Blwp.DailyLobby.PanelUv(i));
+                _howToShown.Add(i + 1);
             }
+        if (l.howToCarousel)
+        {
+            var arrow = new GUIStyle(GUI.skin.button) { fontSize = Mathf.RoundToInt(font * 1.6f), alignment = TextAnchor.MiddleCenter };
+            if (GUI.Button(l.howToPrev, "<", arrow)) _howToPage = 1 - _howToPage;
+            if (GUI.Button(l.howToNext, ">", arrow)) _howToPage = 1 - _howToPage;
+        }
 
         var youStyle = new GUIStyle(_body)
             { fontSize = Mathf.RoundToInt(font), wordWrap = true, richText = true, alignment = TextAnchor.MiddleLeft };
@@ -499,7 +516,11 @@ public class SplashScreen : MonoBehaviour
             sb.Append(",\"you\":").Append(J(_lobby.you.name)).Append(",\"withdrawNotice\":").Append(J(_lastNotice)).Append(",\"name\":").Append(R(_lastName))
               .Append(",\"key\":").Append(R(_lastKey)).Append(",\"howTo\":").Append(R(_lastHowTo))
               .Append(",\"howToCells\":[").Append(_lastHowToCells == null ? "" : string.Join(",", System.Array.ConvertAll(_lastHowToCells, R))).Append(']')
-              .Append(",\"howToDrawn\":").Append(_howToWhole != null && _lastHowToCells != null ? _lastHowToCells.Length : 0).Append(",\"picked\":").Append(J(_pickId))
+              .Append(",\"howToDrawn\":").Append(_howToWhole != null ? _howToShown.Count : 0)
+              .Append(",\"howToShown\":[").Append(string.Join(",", _howToShown)).Append(']')
+              .Append(",\"howToCarousel\":").Append(_lastHowToCarousel ? "true" : "false").Append(",\"howToPage\":").Append(_howToPage)
+              .Append(",\"howToPrev\":").Append(R(_lastHowToPrev)).Append(",\"howToNext\":").Append(R(_lastHowToNext))
+              .Append(",\"picked\":").Append(J(_pickId))
               .Append(",\"listed\":").Append(_lobby.rows.Length).Append(",\"rows\":[");
             for (int i = 0; i < _drawnRows.Count; i++)
             {
