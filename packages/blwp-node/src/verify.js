@@ -428,6 +428,39 @@ export class Verifier {
   }
 
   /**
+   * §13C FOR A RUN THIS SEAT SIGNED, PAST ITS RESULT WINDOW, THAT NO QUORUM CAN REACH ANY MORE (the
+   * follow-up to the owner 2026-09-15 07:49). Measured: a seat back after its peer had decided VOID
+   * signed 1 of 2 and its watch asked with no end. Not on the peer's word about the entry - only on
+   * the count of seats that say they decided it by §13C and so will sign nothing (`gather`'s
+   * noQuorumPeers): when the seats left cannot reach the threshold and this seat's own result window
+   * (its close + objection_window_ms) has passed, it decides by the same rule - VOID, or FORFEIT on
+   * proven equivocation. A quorum that can still form, or has, is not touched.
+   */
+  async shortPastWindow(roundIdBytes, entryIdBytes, gathered) {
+    const row = this.round.get(roundIdBytes);
+    if (!row) return null;
+    const contract = decodeRoundContract(new Uint8Array(row.contract));
+    const closedMs = row.closed_ms !== null && row.closed_ms !== undefined ? Number(row.closed_ms) : null;
+    if (closedMs === null || this.round.now() < closedMs + Number(contract.objectionWindowMs)) return null;
+    const had = this.round.noQuorum(entryIdBytes);
+    if (had) return { entryId: entryIdBytes, stored: false, decided: had.outcome, why: had.why };
+    const line = this.round.startLine(roundIdBytes, entryIdBytes);
+    if (!line || !gathered) return null;
+    const seats = this.round.seats(roundIdBytes).length;
+    const declined = new Set((gathered.noQuorumPeers || []).map((p) => p.peer)).size;
+    if (seats - declined >= line.needed) return null;          // a quorum can still form
+    const signers = new Set(this.round.results(roundIdBytes, entryIdBytes).map((r) => hex(r.nodePubkey))).size;
+    const d = noQuorumRule({ signatures: signers, needed: line.needed,
+      equivocationProven: this.round.provenTwoFirstMarks(roundIdBytes, entryIdBytes),
+      state: finalityOf(this.round, roundIdBytes, entryIdBytes).state });
+    if (!d.outcome) return null;
+    const why = `${d.why} - past this seat's result window with ${signers} of ${line.needed} signatures, and `
+      + `${declined} of ${seats} seats decided it by §13C, so no quorum can form`;
+    this.round.putNoQuorum({ entryId: entryIdBytes, roundId: roundIdBytes, outcome: d.outcome, why });
+    return { entryId: entryIdBytes, stored: false, decided: d.outcome, why };
+  }
+
+  /**
    * §13C'S NO-QUORUM RULE FOR A ONE-SEAT REFUSAL (M3.3-34, ruled). The evidence,
    * on this seat's own record: it holds the player's on-time first mark with
    * fewer than the threshold's receipts, and the seats it is short of answered
@@ -721,12 +754,17 @@ export class Verifier {
     const playerPubkey = mine.entry.playerPubkey;
 
     let fetched = 0, kept = 0, refused = 0;
+    // AND EACH SEAT'S OWN WORD THAT IT DECIDED THE ENTRY BY §13C (x-no-quorum): not taken as the entry's
+    // outcome here - it only says that seat will sign nothing, which `shortPastWindow` counts.
+    const noQuorumPeers = [];
     for (const peer of this.peersOf(roundIdBytes)) {
       let body;
       try {
         const url = `${peer}/results?round=${hex(roundIdBytes)}&entry=${hex(entryIdBytes)}`;
         const answer = await fetch(url);
         if (!answer.ok) { refused++; continue; }
+        const said = answer.headers.get('x-no-quorum');
+        if (said) noQuorumPeers.push({ peer, outcome: said });
         body = new Uint8Array(await answer.arrayBuffer());
       } catch { refused++; continue; }      // a peer that is down is not a fault
 
@@ -743,7 +781,7 @@ export class Verifier {
     });
     // The entry is in the answer because a caller with a round's worth of
     // them cannot otherwise say which run each one is about.
-    return { ok: true, entryId: entryIdBytes, fetched, kept, refused, held: held.length, ...seen };
+    return { ok: true, entryId: entryIdBytes, fetched, kept, refused, held: held.length, noQuorumPeers, ...seen };
   }
 
   /**

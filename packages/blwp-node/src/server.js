@@ -1100,7 +1100,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // its window still pending - is short too, past the window as inside it
     // (M3.3-34). Measured: a seat that signed after the window stopped here with
     // "1 of 2 settlement seats have posted" while its peer was FINAL.
-    const notFinalYet = () => stored.some((r) => resultFinality(round, roundIdBytes, r.entryId).state !== 'FINAL');
+    // A RUN THIS SEAT HAS DECIDED BY §13C (past its result window: VOID, or FORFEIT) is not short of
+    // anything: it is asked for no more. Measured before: a seat's watch asked with no end for a run it
+    // had signed 1 of 2 after its peer decided VOID.
+    const decidedHere = (eid) => !!round.noQuorum(eid);
+    const notFinalYet = () => stored.some((r) => !decidedHere(r.entryId) && resultFinality(round, roundIdBytes, r.entryId).state !== 'FINAL');
     // closesAtMs is on the round's clock and `until` on this watch's, so the
     // distance is carried across rather than the number.
     const stretch = () => {
@@ -1133,7 +1137,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           console.log(`[close] ${toHex(u.entryId).slice(0, 16)} HOLDING (attempt ${s.attempts}): ${String(r && r.why).slice(0, 140)}`);
         }
       }
-      const short = stored.filter((r) => !isFinal(r.entryId));
+      const short = stored.filter((r) => !isFinal(r.entryId) && !decidedHere(r.entryId));
       if (!short.length && !unsigned.length && !tableShort() && !settleShort() && !waitingOn().length && !payoutShort() && !suspendedShort()
         && !notFinalYet() && !pendingShort()) return;
       if (Date.now() >= until && (unsigned.length || short.length || notFinalYet() || pendingShort())) {
@@ -1162,6 +1166,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const at = gathered.findIndex((x) => x && toHex(x.entryId) === toHex(r.entryId));
         if (at >= 0) gathered[at] = g; else gathered.push(g);
         if (g && g.ok && g.final) turned = true;
+        // PAST THIS SEAT'S RESULT WINDOW, a signed run no quorum can reach any more - enough seats say they
+        // decided it by §13C - is decided here too, on this seat's own count (verifier.shortPastWindow).
+        else if (g && g.ok) {
+          let d = null;
+          try { d = await verifier.shortPastWindow(roundIdBytes, r.entryId, g); } catch { d = null; }
+          if (d && d.decided) {
+            turned = true;
+            console.log(`[close] ${toHex(r.entryId).slice(0, 16)} ${d.decided}: ${String(d.why).slice(0, 160)}`);
+          }
+        }
       }
       if (shuttingDown) return;
       if (turned || tableShort() || settleShort() || windowDue() || payoutShort() || unposted() || suspendedShort() || pendingShort()

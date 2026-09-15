@@ -169,12 +169,17 @@ test('past the result window a seat that cannot retrieve the transcript decides 
     await wait(Math.max(2800, closedAt + 3500 - Date.now()));
     const pastWindow = { W: brief(await closingAt(w, w.a, W)), P: brief(await closingAt(w, w.a, P)),
       atA: { W: look(w, w.a, W), P: look(w, w.a, P) } };
-    // B BACK, and closed: what each seat holds 3 s later.
+    // B BACK, and closed: it signs what it replays (1 of 2), and once ITS OWN window has passed with A
+    // saying it decided the entry by §13C - so no quorum can form - it decides the same. Measured
+    // before that follow-up: B signed 1 of 2 and its watch asked with no end.
     await w.upB();
+    const bClosedAt = Date.now();
     assert.equal(await say(w.b.port, `close ${toHex(w.rid)}`), 'closed');
-    await wait(3000);
+    await until(15000, () => ['W', 'P'].every((k) => resultFinality(w.b.round, w.rid, { W, P }[k].eid).state === 'VOID'));
+    const bDecidedAfterMs = Date.now() - bClosedAt;
     const after = { P: { a: look(w, w.a, P), b: look(w, w.b, P) }, W: { a: look(w, w.a, W), b: look(w, w.b, W) } };
-    console.log('  FACTS (past the window):', JSON.stringify({ inWindow, pastWindow, after }));
+    console.log('  FACTS (past the window):', JSON.stringify({ inWindow, pastWindow, after, bDecidedAfterMs }));
+    assert.ok(bDecidedAfterMs >= 3000, `B decided ${bDecidedAfterMs} ms after its close - inside its own window of 3000`);
     assert.equal(inWindow.state, 'HOLDING', 'inside the window the seat waits, as before');
     assert.ok(pastWindow.W.attempts > inWindow.attempts, `no retry after the window: ${inWindow.attempts} then ${pastWindow.W.attempts}`);
     for (const run of ['W', 'P']) {
@@ -185,6 +190,8 @@ test('past the result window a seat that cannot retrieve the transcript decides 
       assert.equal(after[run].a.finality, 'VOID', run);
       assert.deepEqual(after[run].a.results, [], run);
       assert.notEqual(after[run].b.finality, 'FINAL', `${run}: a run A voided went final at B`);
+      assert.equal(after[run].b.finality, 'VOID', `${run}: B, back, did not decide it after its own window`);
+      assert.equal(after[run].b.signers, 1, `${run}: B's own signature is history, not withdrawn`);
     }
   } finally { await w.close(); }
 });
