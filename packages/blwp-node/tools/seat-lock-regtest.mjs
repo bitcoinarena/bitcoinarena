@@ -3,7 +3,7 @@
 // guardians, 3 of 4) on regtest, deposits through a gateway, and makes the
 // locks with blwp-stake-lock.
 //
-//   node seat-lock-regtest.mjs prepare <dir>          three stakes: P, its point, an even-y player
+//   node seat-lock-regtest.mjs prepare <dir>          three stakes: P, its point, an even-y player, a fee preimage F
 //   node seat-lock-regtest.mjs seat <dir> <keys.json>  a seat, the real port, the handovers
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -44,12 +44,15 @@ if (cmd === 'prepare') {
     let player;
     do { player = secp256k1.utils.randomSecretKey(); } while (secp256k1.getPublicKey(player, true)[0] !== 0x02);
     const x = schnorr.getPublicKey(player);
+    // and F, the fee preimage: at 1000 sat the round mints fee locks (pick a), so each entry locks its fee to H(F)
+    const F = rand(32);
     stakes[name] = { p: toHex(p), point: toHex(feldmanGroup.pointFromScalar(scalarFrom32(p) % FIELD)),
-      player: toHex(x), refundPk: toHex(refundKeyOf(x)) };
+      player: toHex(x), refundPk: toHex(refundKeyOf(x)), f: toHex(F), feeHash: toHex(sha256(F)) };
   }
   writeFileSync(`${dir}/stakes.json`, JSON.stringify(stakes, null, 1));
   const net = netStakeMsat({ stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE), donationMsat: 0n });
-  console.log(JSON.stringify({ A: stakes.A.point, B: stakes.B.point, AR: stakes.A.refundPk, BR: stakes.B.refundPk, net: String(net) }));
+  console.log(JSON.stringify({ A: stakes.A.point, B: stakes.B.point, AR: stakes.A.refundPk, BR: stakes.B.refundPk, CR: stakes.C.refundPk,
+    FA: stakes.A.feeHash, FB: stakes.B.feeHash, FC: stakes.C.feeHash, fee: String(entryFeeMsat(STAKE)), net: String(net) }));
   process.exit(0);
 }
 
@@ -85,6 +88,7 @@ try {
 
   const seatEntry = async (name, outpoint) => {
     const s = stakes[name];
+    const fee = feeOf(name);
     const e = rand(32);
     const dealt = await dealHandout({
       preimage: fromHex(s.p), seats: c.nodes, roundId: rid, playerPubkey: fromHex(s.player),
@@ -97,14 +101,25 @@ try {
       roundId: rid, playerPubkey: fromHex(s.player), sessionPubkey: ed25519.getPublicKey(ed25519.utils.randomSecretKey()),
       stakeCommitment: sha256(fromHex(s.p)), stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE), donationMsat: 0n,
       joinTick: 0, worldSecret: rand(32), vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0],
-      feePreimage: new Uint8Array(32), stakeLockOutpoint: outpoint, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n },
+      feePreimage: fromHex(s.f), stakeLockOutpoint: outpoint, feeLockOutpoint: opOf(fee),
       claimKeyAttestationRef: new Uint8Array(32),
     };
     const h = await fetch(`http://127.0.0.1:${seat.port}/handout`, { method: 'POST', body: encodeHandout(dealt.handout) });
     const en = await fetch(`http://127.0.0.1:${seat.port}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
     if (h.status !== 201 || en.status !== 201) throw new Error(`${name}: handout ${h.status}, entry ${en.status} ${await en.text()}`);
-    return { entry, eid: entryId(entry) };
+    // ITS FEE LOCK, handed over before any stake lock (pick a): a stake lock verified before its fee lock is not counted until it is.
+    const eid = entryId(entry);
+    const fl = await fetch(`http://127.0.0.1:${seat.port}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(feeFieldsOf(name, fee))) });
+    const flWhy = (await fl.text()).trim();
+    say({ feeLock: name, status: fl.status, why: flWhy.slice(0, 160) });
+    if (fl.status !== 201) throw new Error(`${name}: fee lock ${fl.status} ${flWhy}`);
+    return { entry, eid };
   };
+  const feeOf = (name) => JSON.parse(readFileSync(`${dir}/fee-${name}.json`, 'utf8'));
+  const feeFieldsOf = (name, lock) => ({
+    paymentImage: { kind: 'hash', bytes: fromHex(stakes[name].feeHash) }, amountMsat: BigInt(lock.amount_msat),
+    claimPk, refundPk: fromHex(stakes[name].refundPk), expiration: Number(lock.computed_expiration),
+  });
   const fieldsOf = (name, lock) => ({
     paymentImage: { kind: 'point', bytes: fromHex(stakes[name].point) }, amountMsat: BigInt(lock.amount_msat),
     claimPk, refundPk: fromHex(stakes[name].refundPk), expiration: Number(lock.computed_expiration),

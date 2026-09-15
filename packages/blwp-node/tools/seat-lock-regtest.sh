@@ -9,7 +9,8 @@
 set -uo pipefail
 : "${FEDIMINT_BIN:?FEDIMINT_BIN must name the directory holding the released Fedimint v0.12.0 builds}"
 : "${LOCK_BIN:?LOCK_BIN must name the built blwp-stake-lock}"
-: "${WASM_PKG:?WASM_PKG must name the nodejs build of blwp-lock-client (the round names its federation by the setup's invite)}"
+# (no quote marks inside ${...:?} - one there opened a quote and bash read on to line 38, "INVOICE: unbound variable")
+: "${WASM_PKG:?WASM_PKG must name the nodejs build of blwp-lock-client - the round names its federation by the invite of this setup}"
 F=$FEDIMINT_BIN
 FH=${FEDIMINT_HOME:-$F/home}
 P=${PROBE_DIR:-$(mktemp -d /tmp/seat-lock-XXXXXX)}
@@ -53,9 +54,27 @@ for S in A:144 B:150; do
   [ -s $P/lock-$N.json ] || { say "LOCK $N FAILED: $(echo "$LOCK" | tail -3 | tr -d '\n' | cut -c1-300)"; exit 1; }
   say "LOCK $N (+$D): $(cat $P/lock-$N.json | js 'o=>`${o.txid}:${o.out_idx} ids_match ${o.ids_match} expiration ${o.computed_expiration} at count ${o.block_count_at_lock}`')"
 done
+# THE FEE LOCKS (pick a, since 5a3b227): at 1000 sat the round mints fee locks, so the door seats no
+# entry without one. Measured before: entry A refused 409 "an entry that brings no fee lock is not
+# seated", and this script went on to exit 0. One per entry, its fee to H(F) under the claim key.
+FEE=$(echo "$PREP" | js 'o=>o.fee')
+for N in A B C; do
+  FHASH=$(echo "$PREP" | js "o=>o.F$N"); RF=$(echo "$PREP" | js "o=>o.${N}R")
+  LOCK=$(HOME=$FH timeout 180 $LOCK_BIN --data-dir $P/client --amount-msat $FEE --hash $FHASH --claim-pk $CLAIM --refund-pk $RF --expiry-delta 150 2>&1)
+  echo "$LOCK" | grep '"stored_contract_id"' | tail -1 > $P/fee-$N.json
+  [ -s $P/fee-$N.json ] || { say "FEE LOCK $N FAILED: $(echo "$LOCK" | tail -3 | tr -d '\n' | cut -c1-300)"; exit 1; }
+  say "FEE LOCK $N ($FEE msat to H(F), +150): $(cat $P/fee-$N.json | js 'o=>`${o.txid}:${o.out_idx} ids_match ${o.ids_match} expiration ${o.computed_expiration}`')"
+done
 
 # THE SEAT. When it writes mine-now, two blocks are mined so the federation's
 # count moves on.
 ( while [ ! -e $P/mine-now ]; do sleep 1; done; ADDR=$(bcn getnewaddress 2>/dev/null || echo bcrt1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080); bcn generatetoaddress 2 "$ADDR" >/dev/null 2>&1 ) &
-INVITE=$INVITE WASM_PKG=$WASM_PKG LOCK_BIN=$LOCK_BIN node $HERE/seat-lock-regtest.mjs seat $P $P/keys.json 2>&1 | grep -E '^\{' | sed 's/^/SEAT /'
+MINER=$!
+# the whole output kept and the exit passed on: a filter for JSON lines alone once hid the seat's error behind exit 0
+INVITE=$INVITE WASM_PKG=$WASM_PKG LOCK_BIN=$LOCK_BIN node $HERE/seat-lock-regtest.mjs seat $P $P/keys.json > $P/seat.log 2>&1
+RC=$?
+kill $MINER 2>/dev/null
+grep -E '^\{' $P/seat.log | sed 's/^/SEAT /'
+[ $RC -eq 0 ] || { say "THE SEAT STEP FAILED (exit $RC):"; grep -vE '^\{' $P/seat.log | tail -8; }
 say "probe dir: $P"
+exit $RC
