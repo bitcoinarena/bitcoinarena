@@ -300,12 +300,20 @@ public class DriveHud : MonoBehaviour
                  sim ? "SIM  ·  ON" : "SIM  ·  OFF", label, simTint);
         Shadowed(new Rect(simBox.x + 12f, simBox.y + simBox.height * 0.50f,
                           simBox.width - 16f, simBox.height * 0.46f),
-                 sim ? "firing liquidations  ·  tap to stop"
-                     : "tap to fire liquidations",
+                 SimWords(sim, Blwp.BlwpNet.Live),
                  sub, new Color(1f, 1f, 1f, 0.7f));
 
         if (GUI.Button(simBox, GUIContent.none, GUIStyle.none)) Bootstrap.ToggleSim();
     }
+
+    /// <summary>
+    /// The SIM switch's second line. In a signed run it fires nothing (`Bootstrap.SimMayWriteCore`),
+    /// so it says so rather than "firing liquidations".
+    /// </summary>
+    public static string SimWords(bool sim, bool signedRunLive)
+        => signedRunLive ? "off in a signed run"
+         : sim ? "firing liquidations  ·  tap to stop"
+               : "tap to fire liquidations";
 
     /// <summary>
     /// Sound and debug, top right.

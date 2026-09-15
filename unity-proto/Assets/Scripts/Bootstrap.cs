@@ -142,6 +142,13 @@ public class Bootstrap : MonoBehaviour
     }
 
     /// <summary>
+    /// WHETHER A SIMULATED LIQUIDATION MAY WRITE THE CORE: only while no signed run is live. From the
+    /// session's `Start` (before the page puts the core in the round's world) until the run is over,
+    /// the core is the signer nodes' replay of the transcript, and the transcript has no clock of ours.
+    /// </summary>
+    public static bool SimMayWriteCore(bool signedRunLive) => !signedRunLive;
+
+    /// <summary>
     /// ONE simulated liquidation, and it is the only implementation there is.
     /// The silent-market clock calls it and so does the SIM switch, so there
     /// is no second path that could dig a different hole.
@@ -155,6 +162,17 @@ public class Bootstrap : MonoBehaviour
     {
         if (!Blwp.BlwpCore.Available) return false;
         _nextSim = Time.time + LiquidationSilence;
+
+        // NOT IN A SIGNED RUN (the owner 2026-09-15): the core this writes is the one the score card
+        // reads and the signer nodes replay from the transcript, and a simulated liquidation is in no
+        // transcript. Measured before on the Daily: one SIM press at tick 192 made the card read
+        // DELIVERED 222 at tick 2129 on a run both signer nodes signed FAILED 268. Outside a signed
+        // run - practice in the lobby, no node named - it still fires.
+        if (!SimMayWriteCore(Blwp.BlwpNet.Live))
+        {
+            Debug.Log($"[sim] simulated liquidation not offered: a signed run is live ({why})");
+            return false;
+        }
 
         // one million to a thousand million, the span the crater rule spans
         double usd = UnityEngine.Random.Range(1f, 1000f) * 1e6;
