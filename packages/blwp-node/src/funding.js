@@ -59,6 +59,30 @@ export function operatorFunding({ named = () => [] } = {}) {
   return funded;
 }
 
+/**
+ * THE DAILY'S LAUNCHER WITH A FREE ROUND AND A PAYING ONE BESIDE IT (the owner
+ * 2026-09-15 12:54: always one free round and one 2-of-2 round, both at once).
+ * A free round and an entry into a free round this node holds are funded, as
+ * the launcher's `() => true` had them - they hold nothing. Anything else is
+ * the operator's rule unchanged: a paying round only when named, its entries
+ * only where this node can hold the stake.
+ */
+export function freeOrOperatorFunding({ named = () => [] } = {}) {
+  const paying = operatorFunding({ named });
+  const funded = (ask = {}) => {
+    try {
+      if (ask.kind === 'round' && BigInt(ask.contract.stakeMsat) === 0n) return true;
+      if (ask.kind === 'entry') {
+        const held = ask.node && ask.node.holds(ask.contract.roundId);
+        if (held && BigInt(decodeRoundContract(new Uint8Array(held.contract)).stakeMsat) === 0n) return true;
+      }
+    } catch { return false; }
+    return paying(ask);
+  };
+  funded.nameRound = paying.nameRound;
+  return funded;
+}
+
 /** The launcher's rule, off the operator's own settings. */
 export function fundingFromEnv(env) {
   return operatorFunding({

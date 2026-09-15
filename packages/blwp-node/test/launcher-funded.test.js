@@ -27,7 +27,7 @@ import { WebSocket } from 'ws';
 
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
-import { fundingFromEnv } from '../src/funding.js';
+import { fundingFromEnv, freeOrOperatorFunding } from '../src/funding.js';
 import { HELD } from '../src/custody.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
@@ -151,6 +151,29 @@ test('a lock round\'s entry is funded on a node that reaches its federation, and
   assert.equal(ask(lockRound, { reachesFederation: false, reachesLightning: false }), false);
   assert.equal(ask(holdRound, { reachesFederation: true, reachesLightning: false }), false,
     'a hold round\'s entry was funded on a node with no Lightning to hold it');
+});
+
+// THE DAILY'S LAUNCHER WITH A FREE ROUND AND A PAYING ONE BESIDE IT (the owner 2026-09-15 12:54, option
+// B): the free round and its entries stay funded as `() => true` had them, and the paying rounds go
+// through the operator's rule unchanged - named, and their entries only where the stake can be held.
+test('beside a free round, the launcher funds the free round and its entries, and a paying round only as the operator\'s rule does', () => {
+  const nodes = [schnorr.getPublicKey(b32(1)), schnorr.getPublicKey(b32(9))];
+  const free = contractFor(nodes, 0n, 0x46);
+  const paying = contractFor(nodes, 100000n, 0x47);
+  const unnamed = contractFor(nodes, 100000n, 0x48);
+  const funded = freeOrOperatorFunding();
+  funded.nameRound(roundId(paying));
+  const holds = (c) => ({ holds: () => ({ contract: encodeRoundContract(c) }) });
+  assert.equal(funded({ kind: 'round', contract: free }), true, 'the free round beside the paying one was refused');
+  assert.equal(funded({ kind: 'entry', contract: entryFor(roundId(free), 0n), node: { ...holds(free), reachesLightning: false } }), true,
+    'an entry into the free round was refused');
+  assert.equal(funded({ kind: 'round', contract: paying }), true, 'the paying round this launcher named was refused');
+  assert.equal(funded({ kind: 'round', contract: unnamed }), false, 'a paying round nobody named was funded');
+  assert.equal(funded({ kind: 'entry', contract: entryFor(roundId(paying)), node: { ...holds(paying), reachesLightning: true } }), true);
+  assert.equal(funded({ kind: 'entry', contract: entryFor(roundId(paying)), node: { ...holds(paying), reachesLightning: false } }), false,
+    'an entry into the paying round was funded on a node with no Lightning to hold it');
+  assert.equal(funded({ kind: 'entry', contract: entryFor(roundId(unnamed)), node: { holds: () => null } }), false,
+    'an entry for a round this node does not hold was funded');
 });
 
 test('main.js itself wires the rule: an unnamed paying round is 402; a named one is opened, and with no lnd its entries are 402', async () => {
