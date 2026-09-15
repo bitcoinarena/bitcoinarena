@@ -162,9 +162,9 @@ paths are the ones every LNv2 payment runs; this use of them is not.
    Contract names the federation by id; more than one federation may exist.
 3. **At least two gateways** run by different operators. The client picks at
    random and falls back.
-4. **Federation fees:** `disable_base_fees` (`lnv2-server/src/lib.rs:298`),
-   or the base fees (1 sat per LNv2 input/output, 100 msat per note) go into
-   the round's quote.
+4. **Federation fees:** MUST `disable_base_fees` (`lnv2-server/src/lib.rs:298`)
+   (the owner 2026-09-15). Base fees stay 0. The game's 22A node fee is 2% to
+   sitting seats and is not a Fedimint fee.
 5. **Spec** §6, §9, §22, §23, §24A updated (v4.6.2, with this file).
 6. **The rehearsal below passes.**
 

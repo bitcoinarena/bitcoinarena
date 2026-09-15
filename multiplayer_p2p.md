@@ -1700,6 +1700,10 @@ nodes**, together with the input batches whose hashes it commits to. All
 nodes replay that object, so "node A saw more than node B" cannot by itself
 produce disagreement.
 
+**Result window.** The result window **equals the objection window** - same
+duration, a field on the contract (the owner 2026-09-15). A seat that cannot
+retrieve the transcript in that window treats the entry as VOID.
+
 **No-quorum rule.** If, after the result window, no result has 5-of-7
 signatures:
 
@@ -2109,17 +2113,24 @@ gross_round_volume = Σ stake of every financially activated entry
 61 active players x 100 sat = 6,100 sat
 ```
 
-## Node fee: 2% mandatory, to the selected slots
+## Node fee: 2% mandatory, to the round's sitting seats
 
 ```text
 node_fee = 2.00% of gross_round_volume
-1.00% -> GAME/VERIFY pool     (7 slots)
-1.00% -> SETTLEMENT pool      (7 slots)
+1.00% -> GAME/VERIFY pool     (the round's sitting seats)
+1.00% -> SETTLEMENT pool      (the round's sitting seats)
 ```
 
-Each eligible slot receives `1.00% / 7 ≈ 0.1429%` of gross volume for its
-role. An operator selected for both roles earns both shares, because it
-performs both services.
+Each pool's share is divided among the round's **sitting seats** - the seats
+the census seated for this round, its `nodes` - however many there are: two
+in a 2-of-2, seven in a 5-of-7. Not seven census slots when the round is
+2-of-2 (the owner 2026-09-15). In a 5-of-7 each eligible seat receives
+`1.00% / 7 ≈ 0.1429%` of gross volume for its role; in a 2-of-2, `1.00% / 2`.
+An operator selected for both roles earns both shares, because it performs
+both services. A fee lock is sized for the same seats the settlement pays.
+The **2% stays** (the owner 2026-09-15). Fedimint's own base fees are **0**:
+the federation runs with `disable_base_fees`. Lightning `min_htlc` / routing
+is not a federation fee.
 
 **Availability qualification.** A selected node earns its share only if it
 performed the contract-defined minimum service: for game/verify, the
@@ -2495,7 +2506,8 @@ but the design. A federation is therefore valid for a paying round only if:
   nodes** at `census_height`, each advertising that guardian peer key under
   `guardian_of[]` (§5A.1) with a bond at or above the bracket's
   `bond_min_settlement`, so a guardian who colludes is slashable like any
-  seat;
+  seat. **Every guardian / node must have its own bond or it may not take
+  part** (the owner 2026-09-15). `federationIsBonded` stays on;
 - the client has fetched the federation's configuration from its guardians
   and its hash equals `federation_id`;
 - `federation_id` is on the client's known-good list, or the client shows it
