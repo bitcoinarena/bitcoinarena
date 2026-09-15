@@ -158,6 +158,44 @@ test('two drops after the node took the batch but before its answer: nothing is 
   } finally { client.ended = true; client.close(); await node.close(); }
 });
 
+// A DRAIN WHILE THE RECONNECT IS STILL RESUMING (measured live on the Daily, 2026-09-15 12:21Z, a
+// free round through a quick tunnel): the socket dropped with a batch the node had stored and whose
+// answer was lost; the reconnect opened a new socket - `state` ready - and only then read where the
+// node is. The page drains every frame, so in between a batch went out from the OLD tick and head:
+// "the batch does not follow the chain head", the one resync spent, and the run ended at tick 180
+// with the node holding ticks the client never counted (seat A 12 batches, the client 10).
+// The reconnect's resume is held for 200 ms here, so the window is not a matter of luck.
+test('a drain while the reconnect is still resuming sends nothing from the old numbers: no refusal, and every tick lands in its place', async () => {
+  const { node, client, rec, settle, publishAll, onNode, recorded } = await rig();
+  try {
+    rec(60);
+    await client.drain();
+    await client.awaitPublishes();
+    const resume = client.resume.bind(client);
+    client.resume = async (w) => { await wait(200); return resume(w); };
+    rec(30);
+    answerLost(client, node);
+    await client.drain();                               // the node takes 60..89; the answer is lost
+    for (let i = 0; i < 100 && !(client.reconnecting && client.sock && client.sock.readyState === 1); i++) await wait(5);
+    const midway = { reconnecting: !!client.reconnecting, open: !!(client.sock && client.sock.readyState === 1), nextTick: client.nextTick };
+    rec(10);
+    const early = client.drain();                       // the page's next frame, mid-reconnect
+    if (early && early.then) await early.catch(() => {});
+    await settle();
+    rec(30);
+    await publishAll();
+    const held = await onNode();
+    const wrong = held.findIndex((v, i) => v !== i);
+    console.log(`  drain mid-reconnect: ${JSON.stringify(midway)}; refusals ${client.refusals} (${client.refusedWhy}); `
+      + `${client.ended ? 'ENDED ' + client.endingReason : 'alive'}; recorded ${recorded()}, node holds ${held.length}, first misplaced ${wrong}`);
+    assert.ok(midway.reconnecting && midway.open, 'the test did not reach the window between the new socket and the resume');
+    assert.equal(client.refusals, 0, `a batch built from the pre-resume numbers was refused: ${client.refusedWhy}`);
+    assert.equal(client.ended, false, `the run ended: ${client.ending} ${client.endingReason}`);
+    assert.equal(held.length, recorded(), `the node holds ${held.length} ticks for ${recorded()} recorded`);
+    assert.equal(wrong, -1, `tick ${wrong} holds the input recorded for ${held[wrong]}`);
+  } finally { client.ended = true; client.close(); await node.close(); }
+});
+
 test('a node that actually says no is still a refusal: counted, resynced, and not an interruption', async () => {
   const { node, client, rec, publishAll, onNode, recorded } = await rig();
   try {

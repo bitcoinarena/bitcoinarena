@@ -1870,7 +1870,14 @@ export class Client {
     // NOTHING GOES OUT WHILE THE TWO NUMBERS ARE BEING RE-READ. A batch built
     // from the old `nextTick` while `resume` is replacing it is the refusal
     // again, one tick later.
+    // AND THE SAME WHILE A RECONNECT IS STILL RESUMING: its new socket is open -
+    // `state` ready - before `resume` has read where the node is. Measured live
+    // on the Daily (2026-09-15 12:21Z, a free round through a quick tunnel): the
+    // page drained in that window, a batch went out from the pre-drop tick and
+    // head, the node refused it, and the run ended at tick 180 with ticks stored
+    // that the client never counted.
     if (this.recovering) return this.recovering;
+    if (this.reconnecting) return this.reconnecting;
 
     // AND NOTHING GOES OUT WHILE THERE IS NO SOCKET. Without this the words
     // were sliced out of the hold, handed to a `send` that answered `error
