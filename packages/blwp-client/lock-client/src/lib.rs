@@ -42,7 +42,7 @@ use fedimint_core::invite_code::InviteCode;
 use fedimint_core::module::{Amounts, ApiRequestErased};
 use fedimint_core::secp256k1::{PublicKey, SECP256K1, SecretKey};
 use fedimint_core::util::SafeUrl;
-use fedimint_core::{Amount, OutPoint, TransactionId};
+use fedimint_core::{Amount, NumPeersExt, OutPoint, TransactionId};
 use fedimint_derive_secret::DerivableSecret;
 use fedimint_lnv2_client::{FinalReceiveOperationState, FinalSendOperationState, LightningClientModule};
 use fedimint_core::bitcoin::hashes::sha256;
@@ -524,6 +524,36 @@ impl LockClient {
             .fee_consensus
             .clone();
         Ok(serde_json::json!({ "fee_ppm": fee.parts_per_million, "fee_base_msat": fee.base.msats }).to_string())
+    }
+
+    /// THE FEDERATION'S GUARDIANS, off the config this client downloaded and
+    /// checked on join (the owner 2026-09-15 07:33: every guardian has its own
+    /// bond) - as JSON { federation_id, guardians, threshold, keys: [{ peer, key }] }.
+    /// Each key is the guardian's 33-byte broadcast key, the one a census node
+    /// advertises under guardian_of[] (§5A.1); the threshold is the federation's
+    /// own n - floor((n-1)/3) over its API endpoints, which its id hashes. The
+    /// same read as the seats' stake-lock `--mode guardians`, so the page counts
+    /// bonded guardians against the federation's word and not a seat's.
+    #[wasm_bindgen(js_name = guardians)]
+    pub async fn guardians(&self) -> Result<String, JsError> {
+        let config = self.client.config().await;
+        let n = config.global.api_endpoints.to_num_peers();
+        let keys = config
+            .global
+            .broadcast_public_keys
+            .clone()
+            .ok_or_else(|| js("this federation's config names no guardian broadcast keys"))?;
+        let listed: Vec<serde_json::Value> = keys
+            .iter()
+            .map(|(peer, key)| serde_json::json!({ "peer": peer.to_string(), "key": key.to_string() }))
+            .collect();
+        Ok(serde_json::json!({
+            "federation_id": self.client.federation_id().to_string(),
+            "guardians": n.total(),
+            "threshold": n.threshold(),
+            "keys": listed,
+        })
+        .to_string())
     }
 
     /// THE STAKE LOCK: one stock OutgoingContract funded from this client's

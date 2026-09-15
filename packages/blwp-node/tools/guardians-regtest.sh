@@ -60,5 +60,36 @@ console.log(ok ? "GUARDIANS MATCH THE STOCK CONFIG" : "GUARDIANS DO NOT MATCH TH
 process.exit(ok ? 0 : 1);
 ' $P/config.json $P/info.json
 RC=$?
+
+# THE PAGE'S OWN READ (WASM_PKG, optional: a wasm-bindgen --target web output of the lock client).
+# The page joins the federation by the invite with the stock client compiled to wasm and reads the
+# guardians off the config it downloaded - it must name what the seat's tool names, key for key.
+if [ -n "${WASM_PKG:-}" ] && [ $RC -eq 0 ]; then
+  INVITE=$(echo "$UP" | grep -oE 'invite=[^ ]+' | tail -1 | cut -d= -f2-)
+  G="$G" INVITE="$INVITE" WASM_PKG="$WASM_PKG" timeout 150 node --input-type=module -e '
+import { copyFileSync, mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { randomBytes } from "node:crypto";
+const env = process.env;
+const g = JSON.parse(env.G);
+const dir = mkdtempSync(join(tmpdir(), "guardians-glue-"));
+copyFileSync(join(env.WASM_PKG, "blwp_lock_client.js"), join(dir, "blwp_lock_client.mjs"));
+const glue = await import(join(dir, "blwp_lock_client.mjs"));
+await glue.default({ module_or_path: readFileSync(join(env.WASM_PKG, "blwp_lock_client_bg.wasm")) });
+const held = new Map();
+const store = { entries: () => JSON.stringify([...held]), put: (k, v) => { held.set(k, v); }, remove: (k) => { held.delete(k); } };
+const t = Date.now();
+const lc = await glue.LockClient.join(env.INVITE, glue.LockClient.federationIdOf(env.INVITE), randomBytes(32).toString("hex"), store);
+const w = JSON.parse(await lc.guardians());
+const byPeer = (keys) => JSON.stringify(keys.map((k) => [String(k.peer), k.key]).sort());
+const same = byPeer(w.keys) === byPeer(g.keys) && w.threshold === g.threshold && w.guardians === g.guardians
+  && w.federation_id === g.federation_id;
+console.log("WASM " + JSON.stringify({ ms: Date.now() - t, ...w }));
+console.log(same ? "THE PAGE READS THE SAME GUARDIANS" : "THE PAGE READS OTHER GUARDIANS");
+process.exit(same ? 0 : 1);
+' 2>&1 | grep -E '^WASM |THE PAGE|Error|panicked'
+  RC=${PIPESTATUS[0]}
+fi
 echo "probe dir: $P (exit $RC)"
 exit $RC
