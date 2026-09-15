@@ -36,11 +36,17 @@ ENVF="$D/seats.env"
 LAST="$D/keeper.deployed.json"
 say() { echo "{\"at\":\"$(date -u +%FT%TZ)\",$1}"; }
 
+# A QUICK TUNNEL'S PUBLIC NAME, and nothing else that looks like one. cloudflared logs the address it
+# asks for a tunnel at - https://api.trycloudflare.com - before it has one, and when that request
+# fails it never logs a name at all. Measured (13:51:52Z): the keeper took api.trycloudflare.com as
+# seat A's address and restarted the seats under it. A quick tunnel's name is words joined by
+# hyphens; anything else, api included, is no name, and with no name the seats are left alone.
+name_in() { grep -oE 'https://[a-z0-9]+(-[a-z0-9]+)+\.trycloudflare\.com' | grep -v '^https://api\.' | tail -1; }
 tunnel() {
   local id; id=$(systemctl --user show "blwp-daily-tunnel-$1" -p InvocationID --value 2>/dev/null)
   [ -n "$id" ] || return 0
-  journalctl --user "_SYSTEMD_INVOCATION_ID=$id" -o cat --no-pager 2>/dev/null \
-    | grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' | tail -1
+  [ "$(systemctl --user show "blwp-daily-tunnel-$1" -p ActiveState --value 2>/dev/null)" = active ] || return 0
+  journalctl --user "_SYSTEMD_INVOCATION_ID=$id" -o cat --no-pager 2>/dev/null | name_in
 }
 answers() { curl -s -m 15 -o /dev/null -w '%{http_code}' "$1/rounds" | grep -q '^200$'; }
 CF="$D/cloudflare.env"
