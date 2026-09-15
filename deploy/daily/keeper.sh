@@ -12,6 +12,19 @@
 #      page with it through deploy-core.sh - which checks every seat again and refuses silence -
 #      when daily.json differs from the one last deployed from here.
 # Durable public names (an account tunnel) stay parked; this covers the gap.
+#
+# ITS DEPLOYS NEED CLOUDFLARE AUTH THAT NEEDS NO BROWSER (the owner 2026-09-15: a Pages-only API token,
+# for the keeper alone). Measured before: wrangler's OAuth login lapsed - "Not logged in ... the
+# environment is non-interactive" - and a tunnel restart then left the Daily naming dead seats with
+# nothing able to deploy. The unit reads $BLWP_2OF2_DIR/cloudflare.env, owned by this user, mode 600:
+#   CLOUDFLARE_API_TOKEN=<token>
+#   CLOUDFLARE_ACCOUNT_ID=<the account that owns the btc-logistics-core Pages project>
+# The token, created at dash.cloudflare.com -> My Profile -> API Tokens -> Create Custom Token:
+#   Permissions:        Account | Cloudflare Pages | Edit          (nothing else)
+#   Account Resources:  Include | <that one account>
+#   Client IP filter / TTL: optional
+# With CLOUDFLARE_ACCOUNT_ID set, wrangler pages deploy needs no user or membership scope. Without
+# the file, wrangler falls back to its OAuth login. Nothing here prints the token.
 set -uo pipefail
 D="${BLWP_2OF2_DIR:-/mnt/bitcoin/blwp-2of2}"
 CODE="${BLWP_DAILY_CODE:-$D/code}"
@@ -44,7 +57,8 @@ d = json.load(open(sys.argv[1]))
 sys.exit(0 if d.get('node') == [sys.argv[2], sys.argv[3]] else 1)
 PY
       if ! cmp -s "$D/daily.json" "$LAST"; then
-        say "\"daily.json\":\"changed since the last deploy\",\"deploying\":\"$D/page\""
+        AUTH=$([ -n "${CLOUDFLARE_API_TOKEN:-}" ] && echo "api token (Pages edit)" || echo "wrangler login")
+        say "\"daily.json\":\"changed since the last deploy\",\"deploying\":\"$D/page\",\"auth\":\"$AUTH\""
         if BLWP_2OF2_DIR="$D" BLWP_BUILD_DIR="$D/page" "$CODE/deploy-core.sh" > "$D/keeper-deploy.log" 2>&1; then
           cp "$D/daily.json" "$LAST"
           say "\"deployed\":\"$(grep -oE 'https://[0-9a-f]{8}\.btc-logistics-core\.pages\.dev' "$D/keeper-deploy.log" | tail -1)\""

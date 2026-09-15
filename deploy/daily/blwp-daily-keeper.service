@@ -3,6 +3,9 @@ Description=BLWP Daily: after a tunnel or launcher restart, run the seats under 
 After=blwp-daily-tunnel-a.service blwp-daily-tunnel-b.service
 [Service]
 Environment=PATH=@PATH@
+# The keeper's own Cloudflare API token (Pages edit only) and account id, if present - see keeper.sh.
+# Optional: without it wrangler falls back to its interactive login.
+EnvironmentFile=-@D@/cloudflare.env
 ExecStart=/bin/bash @D@/code/deploy/daily/keeper.sh
 Restart=always
 RestartSec=15
