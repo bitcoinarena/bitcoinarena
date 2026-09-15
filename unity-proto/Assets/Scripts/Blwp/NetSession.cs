@@ -75,12 +75,15 @@ namespace Blwp
             // AND ASKED AGAIN WHILE THERE IS NONE (M3.3-34, the owner 2026-09-13 07:11):
             // PLAY in the lobby takes its seat in this page, after Start - the page
             // is no longer reloaded, so a round named later has to be seen here.
+            // AND ONCE A RUN IS OVER THE ROUND IS NOT ASKED FOR AGAIN (hole 1): the page lets go of the
+            // finished round, so the address is asked afresh and answers only for the next join.
+            if (BlwpNet.Ended) nodeUrl = "";
             if (string.IsNullOrEmpty(nodeUrl) && Time.unscaledTime >= _nextAsk)
             {
                 _nextAsk = Time.unscaledTime + 0.5f;
                 nodeUrl = BlwpNet.NodeUrl();
             }
-            if (ShouldOpen(nodeUrl, BlwpCore.Available, BlwpNet.Running,
+            if (ShouldOpen(nodeUrl, BlwpCore.Available, BlwpNet.Live,
                            BlwpCore.Tick, settleTicks))
                 BlwpNet.Start(nodeUrl);
 

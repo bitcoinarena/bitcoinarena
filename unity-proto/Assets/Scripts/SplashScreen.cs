@@ -113,7 +113,7 @@ public class SplashScreen : MonoBehaviour
         if (_joining && _lobby != null)
         {
             if (_lobby.join.state == "joined" && _joinedAt < 0f) _joinedAt = Time.unscaledTime;
-            string next = Blwp.DailyLobby.AfterJoin(_lobby, Blwp.BlwpNet.Running,
+            string next = Blwp.DailyLobby.AfterJoin(_lobby, Blwp.BlwpNet.Live,
                                                     _joinedAt < 0f ? 0f : Time.unscaledTime - _joinedAt);
             if (next == "play") { _joining = false; Play(); return; }
             if (next == "refused") { _joining = false; _joinWhy = _lobby.join.why; _polledAt = -10f; }

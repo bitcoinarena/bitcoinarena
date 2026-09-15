@@ -222,7 +222,30 @@ namespace Blwp
         {
             if (!Driving) return;
             HandBack(lockControls: true);
+            _stoppedAtEnd = true;
             Debug.Log($"[blwp] the core stopped driving: {why}");
+        }
+
+        /// <summary>The core stopped driving because a run was over, not because it was handed away.</summary>
+        bool _stoppedAtEnd;
+
+        /// <summary>
+        /// WHETHER THE CORE TAKES THE TRUCK BACK: it stopped at a run's end and a new session is live
+        /// (the owner 2026-09-15 16:14, hole 1: a second PLAY in the same tab starts a new round). The
+        /// page has already put the core into the new round's world when that session started
+        /// recording; this only lets it drive again. A handover (`OnDisable`) is never taken back.
+        /// </summary>
+        public static bool ResumesDriving(bool driving, bool stoppedAtEnd, bool sessionLive) =>
+            !driving && stoppedAtEnd && sessionLive;
+
+        void TakeBack()
+        {
+            _stoppedAtEnd = false;
+            if (_rb != null) { _wasKinematic = _rb.isKinematic; _rb.isKinematic = true; }
+            if (_truck != null) _truck.externallyDriven = true;
+            _havePrev = false;
+            Driving = true;
+            Debug.Log("[blwp] the core drives again: a new round's session is live");
         }
 
         /// <summary>
@@ -591,6 +614,7 @@ namespace Blwp
         void Update()
         {
             if (ShouldStop(Driving, BlwpNet.Ended)) { StopDriving(BlwpNet.Ending()); return; }
+            if (ResumesDriving(Driving, _stoppedAtEnd, BlwpNet.Live)) TakeBack();
             if (!Driving) return;
 
             // A fixed step, caught up in whole ticks. Rendering interpolates

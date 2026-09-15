@@ -26,6 +26,25 @@ public class RunEndsAtDeliveredTests
         Assert.AreEqual("DELIVERED", DriveHud.DropOffWords(true, 0f));
     }
 
+    /// <summary>
+    /// A SECOND PLAY IN THE SAME TAB STARTS A NEW ROUND (the owner 2026-09-15 16:14, hole 1). Measured
+    /// before: `BlwpNet.Running` never went false and the page refused a second session, so after a
+    /// run ended the lobby's next PLAY could never open one; and the truck, handed back at the end,
+    /// was never driven by the core again.
+    /// </summary>
+    [Test]
+    public void AfterARunIsOverTheNextSessionMayOpenAndTheCoreDrivesAgain()
+    {
+        Assert.IsTrue(Blwp.BlwpNet.MayStart(false, false), "the first session could not open");
+        Assert.IsFalse(Blwp.BlwpNet.MayStart(true, false), "a second session opened beside a live run");
+        Assert.IsTrue(Blwp.BlwpNet.MayStart(true, true), "after the run was over no new session could open");
+
+        Assert.IsTrue(Blwp.CoreDrivenTruck.ResumesDriving(false, true, true), "a new live session found a truck the core no longer drives");
+        Assert.IsFalse(Blwp.CoreDrivenTruck.ResumesDriving(false, true, false), "the core took the truck back with no live session");
+        Assert.IsFalse(Blwp.CoreDrivenTruck.ResumesDriving(false, false, true), "a truck handed away (not ended) was taken back");
+        Assert.IsFalse(Blwp.CoreDrivenTruck.ResumesDriving(true, true, true), "a truck already driven was taken again");
+    }
+
     [Test]
     public void AnEndedRunStartedFromTheLobbyComesBackToTheLobby()
     {

@@ -467,6 +467,19 @@
         return await crypto.subtle.verify({ name: 'Ed25519' }, key, sig, msg);
       } catch { return false; }
     }
+    // THE RUN IS OVER, SO THE PAGE LETS GO OF ITS ROUND (the owner 2026-09-15 16:14, hole 2). Measured
+    // before: after the run ended the address still read `?round=...&play=1`, so a reload joined the
+    // finished round again. Called by the bridge at the core's word and when the run ends; twice is
+    // the same as once. The chain and the advert go - they are what tells Unity there is a session to
+    // open - and the address is the lobby's own again: the bare root, or the lobby link PLAY left.
+    // The round and the entry stay for whatever reads the finished run; the next join replaces them.
+    window.BLWP_RUN_OVER = (word) => {
+      window.BLWP_CHAIN = undefined;
+      window.BLWP_ADVERT = undefined;
+      const back = typeof window.BLWP_LOBBY_BACK === 'string' ? window.BLWP_LOBBY_BACK : '';
+      if (location.search !== back) history.replaceState(null, '', location.pathname + back);
+      window.BLWP_RUN_ENDED = String(word || '');
+    };
     async function joinTheRoundIfOneWasNamed() {
       if (typeof BLWPCLIENT === 'undefined') return;
       const named = await BLWPCLIENT.joinFromQuery(location.search);
@@ -1421,6 +1434,7 @@
           if (!r) return false;
           if (window.BLWP_JOIN && window.BLWP_JOIN.state === 'joining') return true;
           const back = location.search;
+          window.BLWP_LOBBY_BACK = back;         // where the address goes back to once the run is over
           history.replaceState(null, '', location.pathname + r.join + '&play=1');
           window.BLWP_SEAT_REFUSED = null;
           const join = window.BLWP_JOIN = { state: 'joining', why: '', stage: '' };

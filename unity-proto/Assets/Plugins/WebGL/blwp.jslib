@@ -231,7 +231,14 @@ mergeInto(LibraryManager.library, {
     }
     var b = Module.blwp;
     if (!b) { console.error('[blwp] no core, so nothing to commit to'); return 0; }
-    if (Module.blwpNet) return 1;                      // already running
+    // ONE SESSION AT A TIME, AND A NEW ONE ONCE THE LAST RUN HAS ENDED (the owner 2026-09-15 16:14,
+    // hole 1): a second PLAY in the same tab starts a new round without a reload. A run still live
+    // is still running; one whose last publish is still on its way (finishing) is not ready yet.
+    if (Module.blwpNet) {
+      var was = Module.blwpNet.client;
+      if (!was || !was.over) return 1;                 // already running
+      if (!was.ended) return 0;                        // the last of the run is still going out
+    }
 
     var base = UTF8ToString(urlPtr);
     var net = Module.blwpNet = {
@@ -402,6 +409,7 @@ mergeInto(LibraryManager.library, {
       // client's: this prints them and picks neither.
       net.client.onEnd = function (word, why) {
         console.log('[blwp] run ended ' + word + ': ' + why);
+        if (typeof window !== 'undefined' && window.BLWP_RUN_OVER) window.BLWP_RUN_OVER(word);
       };
       net.client.onDrop = function () {
         net.client.reconnect(net.where).then(function (r) {
@@ -495,6 +503,8 @@ mergeInto(LibraryManager.library, {
       if ((b.st.i32[18 + 5] | 0) === 1) {
         net.finishing = net.client.finish({ stateHash: b.core.hash(b.st), tick: net.seen,
           why: 'the core said DELIVERED at tick ' + net.seen });
+        // AND THE PAGE LETS GO OF THE ROUND (hole 2): the address is the lobby's again.
+        if (typeof window !== 'undefined' && window.BLWP_RUN_OVER) window.BLWP_RUN_OVER('DELIVERED');
         return;
       }
       if (net.client.state !== 'ready') return;

@@ -96,17 +96,30 @@ namespace Blwp
         /// </summary>
         public static bool Start(string nodeUrl)
         {
-            if (Running || string.IsNullOrEmpty(nodeUrl)) return false;
+            if (!MayStart(Running, Ended) || string.IsNullOrEmpty(nodeUrl)) return false;
             var bytes = System.Text.Encoding.UTF8.GetBytes(nodeUrl + "\0");
             var handle = GCHandle.Alloc(bytes, GCHandleType.Pinned);
             try
             {
-                Running = BlwpNetStart(handle.AddrOfPinnedObject(), BatchEvery, MarkEvery) == 1;
-                if (Running) Debug.Log($"[blwp] session opening against {nodeUrl}");
-                return Running;
+                // Only a session the page TOOK changes this: a start the page declined while the
+                // last run's final publish is still going out leaves the old state as it was.
+                bool took = BlwpNetStart(handle.AddrOfPinnedObject(), BatchEvery, MarkEvery) == 1;
+                if (took) { Running = true; Debug.Log($"[blwp] session opening against {nodeUrl}"); }
+                return took;
             }
             finally { handle.Free(); }
         }
+
+        /// <summary>
+        /// WHETHER A SESSION MAY BE ASKED FOR: none has been, or the last one's run is over (the owner
+        /// 2026-09-15 16:14, hole 1 - a second PLAY in the same tab starts a new round without a
+        /// reload). Measured before: `Running` never went false, so the second round in a tab could
+        /// never open a session.
+        /// </summary>
+        public static bool MayStart(bool running, bool over) => !running || over;
+
+        /// <summary>A session is open and its run is not over.</summary>
+        public static bool Live => Running && !Ended;
 
         /// <summary>
         /// One line for the debug panel: the state, the counts and the tick.
