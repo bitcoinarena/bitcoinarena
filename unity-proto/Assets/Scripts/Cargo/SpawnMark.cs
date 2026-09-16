@@ -50,6 +50,24 @@ public class SpawnMark : MonoBehaviour
         // comes back.
         bool held = truck.controlsLocked || (loadout != null && loadout.IsOpen);
         bool parked = held && Vector3.Distance(truck.transform.position, was) < parkedWithin;
+
+        // WHAT THIS DECIDED, AND ON WHICH DISTANCE (the owner 2026-09-16 08:17).
+        //
+        // `parked` is a THREE-dimensional distance against a mark whose height moves with the ground.
+        // The core's own rule is two-dimensional - `BlwpCore.Teleport` takes x and z and drops y,
+        // because the core recomputes height from its own surface. So on the rebuild this component
+        // exists for, where the stand-in terrain at 2.7 m is replaced by real relief at 9 m, the
+        // vertical change alone spends 6.3 m of the 12 m budget without the truck having moved an inch
+        // across the ground. Both distances are printed side by side so the difference is a measured
+        // number rather than an argument, and nothing here changes which one is used.
+        var at = truck.transform.position;
+        float d3 = Vector3.Distance(at, was);
+        float d2 = Vector2.Distance(new Vector2(at.x, at.z), new Vector2(was.x, was.z));
+        Debug.Log($"[spawnmark] terrain v{terrain.Version}: mark {was.x:F2},{was.y:F2},{was.z:F2} "
+                  + $"-> {mark.x:F2},{mark.y:F2},{mark.z:F2}; truck at {at.x:F2},{at.y:F2},{at.z:F2}; "
+                  + $"2-D {d2:F2} m, 3-D {d3:F2} m, of {parkedWithin:F1} m; held {held}, parked {parked}, "
+                  + $"externallyDriven {truck.externallyDriven}");
+
         if (parked) truck.Respawn();
     }
 }
