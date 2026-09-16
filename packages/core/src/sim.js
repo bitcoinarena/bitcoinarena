@@ -36,7 +36,7 @@ import {
 import { vehicleStep } from './rules/vehicle.js';
 import { flatGround, groundFromSeed, gradeAlong, heightAtWorld, DEFAULT_COLS, DEFAULT_ROWS } from './rules/ground.js';
 import { noSolids, resolveSolids, resolveArmour, BOX_WORDS } from './rules/solids.js';
-import { initTactics, postOf, scoot, onRespawn, enterInLane, pressure, partnerOf, FORWARD_LINE, rifleTeamOf, pushNear, mix, FIRE_TEAMS_PER_SIDE, TAC_SEED, firstManOf, initObjectives, objectiveHolders, clearOnEntry, holdLegs, onPost } from './rules/tactics.js';
+import { initTactics, postOf, scoot, onRespawn, enterInLane, pressure, partnerOf, FORWARD_LINE, rifleTeamOf, pushNear, mix, FIRE_TEAMS_PER_SIDE, TAC_SEED, firstManOf, initObjectives, objectiveHolders, clearOnEntry, holdLegs, onPost, initMarket, readMarket, trendHit, supplyOf, TAC_MARKET, MK_SAMPLES } from './rules/tactics.js';
 import { mapSolids } from './rules/map.js';
 import { emplacementAt } from './rules/emplacements.js';
 import { heat as heatForLoad } from './rules/cargo.js';
@@ -455,6 +455,22 @@ function strikePoint(s, seamAt) {
   return { x: s[b + U_X], z: s[b + U_Z] };
 }
 
+/**
+ * A PRICE SAMPLE (§4.13 rule 2, world input): the tape shifts one sample (oldest out at -x, newest in at +x) and the lead
+ * and trend are re-read on this tick (§4.14). `price` is in the tape's own unit. Returns false for a non-positive price.
+ */
+export function submitSample(st, price) {
+  const p = price | 0;
+  if (p <= 0) return false;
+  const h = st.tape;
+  for (let i = 0; i < h.length - 1; i++) h[i] = h[i + 1];
+  h[h.length - 1] = p;
+  const s = st.i32;
+  s[O_TACTICS + TAC_MARKET + MK_SAMPLES] = (s[O_TACTICS + TAC_MARKET + MK_SAMPLES] + 1) | 0;
+  readMarket(s, O_TACTICS, h);
+  return true;
+}
+
 export function submitLiquidation(st, size) {
   const v = size | 0;
   if (v <= 0) return false;
@@ -564,6 +580,7 @@ export function init(seedWord) {
   s[O_SCORE + S_STATE] = RUN_LIVE;
 
   st.tape = tape(rng);
+  initMarket(s, O_TACTICS, st.tape);   // §4.13 round open, §4.14 lead and trend from the seeded tape
 
   // THE RELIEF IS THE ROUND'S, AND IT IS MADE HERE.
   //
@@ -799,7 +816,9 @@ function reinforce(s, rng) {
     // spawn rate, it is a queue that starts when someone dies.
     s[O_ARMY + c.word] = sub(s[O_ARMY + c.word], Math.imul(deficit, TICK_DT));
     if (s[O_ARMY + c.word] > 0) continue;
-    s[O_ARMY + c.word] = c.wait;
+    // SUPPLY (§3, §4.14): the wait x 4 / (4 + supply), supply = objectives held - lost + the lead's momentum - the trend's
+    // strength against, -3..+3: holding all three, 4/7 of the wait; losing the round and the minute, up to 4 times it.
+    s[O_ARMY + c.word] = mulFast(c.wait, div(Math.imul(4, ONE), Math.imul(4 + supplyOf(s, O_TACTICS, c.side), ONE)));
     if (slot >= 0) {
       spawnUnit(s, rng, slot);
       // A tank id back on the field rejoins its own pair as BOUNDING (WAR_TACTICS.md §3).
@@ -1409,7 +1428,9 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
         if (foe >= 0) {
           // Rolled whether it hits BEFORE the reload is set, and the reload is
           // set either way: a miss costs a shell and the time to load another.
-          const connects = nextBelow(rng, 1000) < HIT_PER_MIL;
+          // One roll, as before; its threshold is the trend's for a shot at a tank (§4.14: 550 +- 50 x strength) and the
+          // plain one for a shot the truck outranks - the truck exception is untouched.
+          const roll = nextBelow(rng, 1000);
           const fb = unitBase(foe);
 
           // THE COURIER IS A TARGET CHOICE, not a second gun. Army.cs:696-706:
@@ -1447,6 +1468,7 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
                 toTruck, length2(sub(u.x, s[fb + U_X]), sub(u.z, s[fb + U_Z])), heat);
           }
 
+          const connects = roll < (onCourier ? HIT_PER_MIL : trendHit(s, O_TACTICS, u.side, HIT_PER_MIL, 50));
           if (connects) {
             // One draw either way, and in hundredths like the shell's own
             // damage, so the stream does not change shape with the target.
@@ -1522,7 +1544,7 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
           s[b + U_COOLDOWN] = (RIFLE_LOOK_TICKS + nextBelow(rng, RIFLE_LOOK_TICKS_SPAN)) | 0;
         } else {
           s[b + U_COOLDOWN] = (RIFLE_RELOAD_TICKS + nextBelow(rng, RIFLE_RELOAD_TICKS_SPAN)) | 0;
-          const connects = nextBelow(rng, 1000) < RIFLE_HIT_PER_MIL;
+          const rollR = nextBelow(rng, 1000);    // §4.14: 45 +- 5 x strength at a man; the plain 45 at the truck
           const fb = unitBase(foe);
 
           // The truck takes the shot only if it is inside the rifle's reach
@@ -1548,6 +1570,7 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
                 toTruck, length2(sub(u.x, s[fb + U_X]), sub(u.z, s[fb + U_Z])), heatR);
           }
 
+          const connects = rollR < (onCourier ? RIFLE_HIT_PER_MIL : trendHit(s, O_TACTICS, u.side, RIFLE_HIT_PER_MIL, 5));
           if (connects) {
             // Rand(1.5, 3.5) at the truck, one point at a man. Drawn in
             // hundredths like every other damage in this file, so it is one

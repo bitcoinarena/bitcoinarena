@@ -1495,8 +1495,11 @@ test('and it tells further and further behind the line', () => {
   // 3-4) and on all eight behind the line (hot 4-6 against cold 2-4).
   // -> 5,6,3,6 with the hull-down emplacements in the surface (rules/emplacements.js). Eight seeds: a full bed has more
   // tanks on the truck on all eight at the seam (hot 4-6 against cold 3-5) and on all eight behind it (hot 4-6, cold 2-4).
+  // -> 5,6,4,6 with the assault clock and supply (§4.12, §3; the trend is SIDEWAYS on the seeded tape). Eight seeds: at
+  // the seam a full bed has more tanks on the truck on all eight (hot 4-6, cold 3-5); behind it on seven, the same on one
+  // (seed 7: 4-4).
   assert.deepEqual([noticing(0, -25), noticing(20000, -25), noticing(0, -50), noticing(20000, -50)],
-    [5, 6, 3, 6],
+    [5, 6, 4, 6],
     'heat no longer widens how many tanks have the truck, at the seam or behind it');
 });
 

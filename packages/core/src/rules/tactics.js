@@ -46,8 +46,17 @@ const PERIOD_MIN = 720, PERIOD_SPAN = 480;        // §2.6 a leg of the role swa
 // [49+w] its push depth in Q16.16 metres (§4.10); [61+o] objective o (§4.11): lane in the low byte, holder in the next;
 // [64+w] the verdict of the team's last push re-read (§4.10: 0 none, 1 take, 2 give, 3 drift).
 export const TAC_SEED = 0, TAC_SLOT = 1, TAC_SCOOT = 13, TAC_ROLE_START = 25, TAC_ROLE_MEMBER = 37, TAC_PUSH = 49;
-export const TAC_OBJ = 61, TAC_VERDICT = 64;
-export const TAC_WORDS = 76;
+export const TAC_OBJ = 61, TAC_VERDICT = 64, TAC_ASSAULT = 76, TAC_MARKET = 82;
+export const TAC_WORDS = 88;
+// [82] the round's open (§4.13 TAC_OPEN, in the tape's unit), [83] samples taken since init, [84] trend (+1 UP, -1 DOWN, 0
+// SIDEWAYS), [85] its strength 0-3, [86] lead (+1 BULLS, -1 BEARS, 0 FLAT), [87] the lead's momentum 0-3 (§4.14).
+export const MK_OPEN = 0, MK_SAMPLES = 1, MK_TREND = 2, MK_STRENGTH = 3, MK_LEAD = 4, MK_MOMENTUM = 5;
+// [76 + 3 x sideIndex] (bull 0, bear 1) the side's ASSAULT (§4.12): target objective in bits 0-3, phase in 4-7, the count of
+// assaults it has started from bit 8; [77 + ...] the phase's start tick; [78 + ...] the tick the next may start.
+export const ASSAULT_IDLE = 0, ASSAULT_PUSH = 1, ASSAULT_CONSOLIDATE = 2;
+const ASSAULT_FIRST = 1200, ASSAULT_GAP = 2700, ASSAULT_GAP_FAVOURED = 1800, ASSAULT_REARM = 1200;
+const ASSAULT_TICKS = 1800, CONSOLIDATE_TICKS = 900;
+const ASSAULT_REST = Math.imul(16, ONE), ASSAULT_CEILING = Math.imul(40, ONE), ASSAULT_CEILING_BESIDE = Math.imul(32, ONE);
 export const VERDICT_NONE = 0, VERDICT_TAKE = 1, VERDICT_GIVE = 2, VERDICT_DRIFT = 3;
 const ON_POST = (Math.imul(3, ONE) >> 1) | 0;     // §4.3, §4.10 within 1.5 m of its hold, hull-down pick included
 export const OBJ_RIDGE = 0, OBJ_HOLLOW = 1, OBJ_GAP = 2, OBJECTIVES = 3;
@@ -119,6 +128,11 @@ export function initTactics(s, base, seedWord) {
   }
   for (let o = 0; o < OBJECTIVES; o++) s[base + TAC_OBJ + o] = 0;
   for (let w = 0; w < Math.imul(2, TEAMS_PER_SIDE); w++) s[base + TAC_VERDICT + w] = VERDICT_NONE;
+  for (let si = 0; si < 2; si++) {
+    const a = base + TAC_ASSAULT + Math.imul(3, si);
+    s[a] = 0; s[a + 1] = 0;
+    s[a + 2] = ASSAULT_FIRST + mod(mix(mix(hash, si === 0 ? 601 : 607), 0) >>> 1, ASSAULT_FIRST);   // 20 to 40 s
+  }
 }
 
 // =====================================================================================================================
@@ -182,6 +196,160 @@ export function objectiveWeight(s, base, slot) {
 
 /** The push ceiling on a slot (§4.11): 16 on RIDGE's lane, 24 everywhere else. */
 const goalOf = (s, base, slot) => (slot === objectiveLane(s, base, OBJ_RIDGE) ? RIDGE_GOAL : PUSH_MAX);
+
+// =====================================================================================================================
+// THE ASSAULT (WAR_TACTICS.md §4.12): a declared attempt by one side on one objective it does not hold - a start, 30 s,
+// an end and a result. Dumb on purpose: hashed side, hashed target, fixed length; the odds on the lane decide it.
+// =====================================================================================================================
+
+const assaultWord = (base, side) => (base + TAC_ASSAULT + (side < 0 ? 0 : 3)) | 0;
+export const assaultTarget = (s, base, side) => s[assaultWord(base, side)] & 15;
+export const assaultPhase = (s, base, side) => (s[assaultWord(base, side)] >> 4) & 15;
+export const assaultCount = (s, base, side) => s[assaultWord(base, side)] >>> 8;
+
+// =====================================================================================================================
+// THE CHART FIGHTS THE WAR (WAR_TACTICS.md §4.14, the owner 2026-09-16 21:30/21:40). Two readings of the tape, re-read on the
+// sample tick and never between: the LEAD (newest against the round's open: who is winning the round, supply) and the
+// TREND (the colour of the last six finished 10 s candles: who is attacking right now). Chart -> war only: nothing here
+// reads the truck, and nothing in the war writes the tape.
+// =====================================================================================================================
+
+/**
+ * The trend's side for `side`: +1 when the trend is that side's (UP for the bulls, side -1; DOWN for the bears, side +1),
+ * -1 when it runs against it, 0 when SIDEWAYS.
+ */
+export function trendFor(s, base, side) {
+  const t = s[base + TAC_MARKET + MK_TREND];
+  if (t === 0) return 0;
+  return (t > 0) === (side < 0) ? 1 : -1;
+}
+export const trendStrength = (s, base) => s[base + TAC_MARKET + MK_STRENGTH];
+
+/** §4.14: the trend's side runs the 30-60 s assault clock. */
+const isFavoured = (s, base, side) => trendFor(s, base, side) > 0;
+
+/** Round setup (§4.13): the open is the seeded tape's newest sample at init, the trend and lead read from it. */
+export function initMarket(s, base, tape) {
+  s[base + TAC_MARKET + MK_OPEN] = tape[tape.length - 1];
+  s[base + TAC_MARKET + MK_SAMPLES] = 0;
+  readMarket(s, base, tape);
+}
+
+/**
+ * Re-read lead and trend from the tape (§4.14). A candle is two samples (open = the first, close = the second, §4.15's
+ * bucket); the newest finished one ends at the newest sample when an even count of samples has been taken, else one
+ * sample earlier. Green: close > open by 3 bp of the open or more; red: below by as much; else a doji, neither.
+ */
+export function readMarket(s, base, tape) {
+  const last = tape.length - 1, count = s[base + TAC_MARKET + MK_SAMPLES];
+  const end = last - (count & 1);
+  let net = 0;
+  for (let c = 0; c < 6; c++) {
+    const close = tape[end - Math.imul(c, 2)], open = tape[end - Math.imul(c, 2) - 1];
+    const doji = Math.imul(idiv(abs(open), 10000), 3);   // 3 bp of the open
+    if (close - open > doji) net++; else if (open - close > doji) net--;
+  }
+  const a = net < 0 ? -net : net;
+  s[base + TAC_MARKET + MK_TREND] = a < 2 ? 0 : (net > 0 ? 1 : -1);
+  s[base + TAC_MARKET + MK_STRENGTH] = a < 2 ? 0 : a < 4 ? 1 : a < 6 ? 2 : 3;
+  const open = s[base + TAC_MARKET + MK_OPEN], d = tape[last] - open;
+  s[base + TAC_MARKET + MK_LEAD] = d > 0 ? 1 : d < 0 ? -1 : 0;
+  const unit = idiv(abs(open), 10000);             // one basis point of the open
+  const bp = unit > 0 ? idiv(d < 0 ? -d : d, unit) : 0;
+  s[base + TAC_MARKET + MK_MOMENTUM] = bp < 5 ? 0 : bp < 20 ? 1 : bp < 50 ? 2 : 3;
+}
+
+/** §4.4 / §11.6 hit threshold under the trend: `per mil + step x strength` for the trend's side, minus for the other. */
+export function trendHit(s, base, side, perMil, step) {
+  return (perMil + Math.imul(Math.imul(trendFor(s, base, side), step), trendStrength(s, base))) | 0;
+}
+
+/**
+ * §3 supply for `side`, -3..+3: objectives held minus objectives the other side holds (§4.11), plus the lead's momentum
+ * for the side above the open, minus the trend's strength for the side it runs against (§4.14).
+ */
+export function supplyOf(s, base, side) {
+  const mine = side < 0 ? HOLDER_BULL : HOLDER_BEAR;
+  let supply = 0;
+  for (let o = 0; o < OBJECTIVES; o++) {
+    const h = objectiveHolder(s, base, o);
+    if (h === mine) supply++; else if (h !== HOLDER_NONE) supply--;
+  }
+  const lead = s[base + TAC_MARKET + MK_LEAD];
+  if (lead !== 0 && (lead > 0) === (side < 0)) supply += s[base + TAC_MARKET + MK_MOMENTUM];
+  if (trendFor(s, base, side) < 0) supply -= trendStrength(s, base);
+  return supply < -3 ? -3 : supply > 3 ? 3 : supply;
+}
+
+/** The assault clock, once per tick at the top of pressure(): starts, succeeds, fails, consolidates, re-arms. */
+export function assaultClock(s, base, tick) {
+  const hash = s[base + TAC_SEED];
+  for (let si = 0; si < 2; si++) {
+    const side = si === 0 ? -1 : 1, a = assaultWord(base, side), mine = side < 0 ? HOLDER_BULL : HOLDER_BEAR;
+    const word = s[a], target = word & 15, phase = (word >> 4) & 15, n = word >>> 8;
+    const gap = (m) => isFavoured(s, base, side)
+      ? ASSAULT_GAP_FAVOURED + mod(mix(mix(hash, si === 0 ? 601 : 607), m) >>> 1, ASSAULT_GAP_FAVOURED)   // 30 to 60 s
+      : ASSAULT_GAP + mod(mix(mix(hash, si === 0 ? 601 : 607), m) >>> 1, ASSAULT_GAP);                    // 45 to 90 s
+    if (phase === ASSAULT_IDLE) {
+      // PAUSED for the side the trend runs against (§4.14): no assault starts, and the wait stands still - SIDEWAYS
+      // releases the clock where it stood.
+      if (trendFor(s, base, side) < 0) { s[a + 2] = (s[a + 2] + 1) | 0; continue; }
+      if ((tick | 0) < s[a + 2]) continue;
+      let unheld = 0;
+      for (let o = 0; o < OBJECTIVES; o++) if (objectiveHolder(s, base, o) !== mine) unheld++;
+      if (unheld === 0) { s[a + 2] = ((tick | 0) + ASSAULT_REARM) | 0; continue; }          // holds all three: defends
+      let pick = mod(mix(mix(mix(hash, si === 0 ? 613 : 617), n), 1) >>> 1, unheld), chosen = 0;
+      for (let o = 0; o < OBJECTIVES; o++) {
+        if (objectiveHolder(s, base, o) === mine) continue;
+        if (pick === 0) { chosen = o; break; }
+        pick--;
+      }
+      s[a] = chosen | (ASSAULT_PUSH << 4) | Math.imul(n + 1, 256);
+      s[a + 1] = tick | 0;
+    } else if (phase === ASSAULT_PUSH) {
+      if (objectiveHolder(s, base, target) === mine) {                                     // success
+        s[a] = target | (ASSAULT_CONSOLIDATE << 4) | Math.imul(n, 256);
+        s[a + 1] = tick | 0;
+      } else if ((tick | 0) - s[a + 1] >= ASSAULT_TICKS) {                                  // failure
+        s[a] = target | (ASSAULT_IDLE << 4) | Math.imul(n, 256);
+        s[a + 1] = tick | 0; s[a + 2] = ((tick | 0) + gap(n)) | 0;
+      }
+    } else if ((tick | 0) - s[a + 1] >= CONSOLIDATE_TICKS) {                                // consolidated
+      s[a] = target | (ASSAULT_IDLE << 4) | Math.imul(n, 256);
+      s[a + 1] = tick | 0; s[a + 2] = ((tick | 0) + gap(n)) | 0;
+    }
+  }
+}
+
+/**
+ * A team's weight, rest and push ceiling on `slot` (§4.10-§4.12). Outside the side's assault lanes, §4.11 as before
+ * (w 2 on an objective's lane, 1 beside; rest +8 there; ceiling 16 on RIDGE's lane, else 24). While it pushes: w 3, rest
+ * +16, ceiling 40 on the assaulted lane (RIDGE included); w >= 2 and ceiling 32 beside it. While it consolidates: rest
+ * +16 on the lane, the rest as §4.11.
+ */
+export function laneTerms(s, base, side, slot) {
+  let weight = objectiveWeight(s, base, slot);
+  let rest = weight === 2 ? OBJECTIVE_REST : 0;
+  let ceiling = goalOf(s, base, slot);
+  // THE TREND (§4.14): its side w + 1 and rest + 8 on every lane, ceiling + 8 x strength; the other side rest - 8 and
+  // ceiling - 8 x strength (the objective's +8 and a -8 cancel to 0).
+  const t = trendFor(s, base, side), strength = trendStrength(s, base);
+  if (t !== 0) {
+    if (t > 0) weight++;
+    rest = (rest + Math.imul(t, PUSH_STEP)) | 0;
+    ceiling = (ceiling + Math.imul(Math.imul(t, PUSH_STEP), strength)) | 0;
+    if (ceiling < PUSH_MIN) ceiling = PUSH_MIN;
+  }
+  const phase = assaultPhase(s, base, side);
+  if (phase !== ASSAULT_IDLE) {
+    const d = slot - objectiveLane(s, base, assaultTarget(s, base, side));
+    if (phase === ASSAULT_PUSH) {
+      if (d === 0) { weight = t > 0 ? 4 : 3; rest = ASSAULT_REST; if (ceiling < ASSAULT_CEILING) ceiling = ASSAULT_CEILING; }
+      else if (d === 1 || d === -1) { if (weight < 2) weight = 2; if (ceiling < ASSAULT_CEILING_BESIDE) ceiling = ASSAULT_CEILING_BESIDE; }
+    } else if (d === 0) rest = ASSAULT_REST;
+  }
+  return { weight, rest, ceiling };
+}
 
 /**
  * THE HOLDER (§4.11), each objective re-read every PUSH_TICKS on a tick hashed from (seed, objective): the side with
@@ -353,7 +521,8 @@ export function scoot(s, base, index, tick, seamAt, ground) {
     for (let t = 0; t < TEAMS_PER_SIDE; t++) if (t !== team && s[base + TAC_SLOT + teamWord(side, t)] === next) held = true;
     if (!held) {
       s[base + TAC_SLOT + w] = next;
-      if (s[base + TAC_PUSH + w] > goalOf(s, base, next)) s[base + TAC_PUSH + w] = goalOf(s, base, next);   // onto the crest
+      const cap = laneTerms(s, base, side, next).ceiling;
+      if (s[base + TAC_PUSH + w] > cap) s[base + TAC_PUSH + w] = cap;   // onto the crest, or out of the assault lanes
       return true;
     }
   }
@@ -372,6 +541,7 @@ function slotHeld(s, base, side, team, slot) {
  * `seamAt(x)` is the front's z at x.
  */
 export function pressure(s, base, tick, seamAt, ground) {
+  assaultClock(s, base, tick);                    // §4.12: "written by the assault clock at the top of pressure"
   const hash = s[base + TAC_SEED];
   const reach = Math.imul(GUN_M, 256);
   for (let w = 0; w < Math.imul(2, TEAMS_PER_SIDE); w++) {
@@ -391,8 +561,8 @@ export function pressure(s, base, tick, seamAt, ground) {
     const k0 = Math.imul(team, 2), i0 = (k0 << 3) | (side < 0 ? 0 : 4), i1 = ((k0 + 1) << 3) | (side < 0 ? 0 : 4);
     const widow = aliveAt(s, i0) !== aliveAt(s, i1);
     let push = s[base + TAC_PUSH + w];
-    const slot = s[base + TAC_SLOT + w], weight = objectiveWeight(s, base, slot);
-    const rest = widow ? 0 : weight === 2 ? OBJECTIVE_REST : 0;
+    const slot = s[base + TAC_SLOT + w], terms = laneTerms(s, base, side, slot), weight = terms.weight;
+    const rest = widow ? 0 : terms.rest;
     const verdict = !widow && own + weight >= foe + PUSH_TAKE_LEAD ? VERDICT_TAKE
       : !widow && foe >= own + PUSH_GIVE_LEAD + weight ? VERDICT_GIVE : VERDICT_DRIFT;
     // (b) A CONFIRMED VERDICT (re-ruled 20:30): a step only when this reading agrees with the last one, so a new
@@ -400,10 +570,10 @@ export function pressure(s, base, tick, seamAt, ground) {
     const confirmed = s[base + TAC_VERDICT + w] === verdict;
     s[base + TAC_VERDICT + w] = verdict;
     if (!confirmed) continue;
-    if (verdict === VERDICT_TAKE) push = Math.min(goalOf(s, base, slot), push + PUSH_STEP);
+    if (verdict === VERDICT_TAKE) push = Math.min(terms.ceiling, push + PUSH_STEP);
     else if (verdict === VERDICT_GIVE) push = Math.max(PUSH_MIN, push - PUSH_STEP);
     else push = push > rest ? push - PUSH_STEP : push < rest ? push + PUSH_STEP : rest;
-    if (push > goalOf(s, base, slot)) push = goalOf(s, base, slot);
+    if (push > terms.ceiling) push = terms.ceiling;
     s[base + TAC_PUSH + w] = push | 0;
   }
 }

@@ -4,7 +4,7 @@
 // before the lobby in Unity's RunEndsAtDeliveredTests.AWreckShowsWastedBeforeTheLobby.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { init, step, teleport, groundAt } from '../src/sim.js';
+import { init, step, teleport, groundAt, submitSample } from '../src/sim.js';
 import { frontlineZ } from '../src/rules/frontline.js';
 import * as L from '../src/state.js';
 import * as T from '../src/rules/tactics.js';
@@ -198,11 +198,13 @@ test('push moves one 8 m step on its re-read only, on a confirmed verdict with t
   assert.ok(steps >= 40 && flips > 0, `nothing moved to check: ${steps} push steps, ${flips} holder changes`);
 });
 
-test('with nobody fighting, a team rests at +8 m on an objective\'s lane and at 0 anywhere else', () => {
+test('with nobody fighting and no assault running, a team rests at +8 m on an objective\'s lane and at 0 anywhere else', () => {
   for (const seedWord of [1, 2, 3, 4, 5]) {
     const s = init(seedWord).i32, lanes = lanesOf(s);
     for (let i = 0; i < 96; i += 4) s[base(i) + L.U_STATE] = 0;           // no tank alive: own 0, foe 0 everywhere
     for (let w = 0; w < 12; w++) s[L.O_TACTICS + T.TAC_PUSH + w] = (w % 2 ? 24 : -8) * ONE;
+    // no assault running (§4.12 would lift its lane's rest to 16): both sides' clocks set beyond the run
+    for (const si of [0, 1]) s[L.O_TACTICS + T.TAC_ASSAULT + 3 * si + 2] = 1 << 30;
     for (let tick = 1; tick <= 3000; tick++) T.pressure(s, L.O_TACTICS, tick, () => 0);
     for (let w = 0; w < 12; w++) {
       const slot = s[L.O_TACTICS + T.TAC_SLOT + w];
@@ -338,4 +340,78 @@ test('an overwatch post on the 30 m line stands behind a crest that hides the hu
     assert.equal(emplacementAt(0, seamAt(0) - 16 * ONE, st.tape, st.ground, 130 * ONE, 85 * ONE) < ONE, true, 'the forward line stands on a berm');
   }
   console.log(`  posts where the relief lifts the crest over a 3 m turret: ${over.length}${over.length ? ' - ' + over.join('; ') : ''}`);
+});
+
+test('an assault starts only on an objective the side does not hold, never while it holds all three, runs at most 1800 ticks, and the next waits 45-90 s (§4.12)', () => {
+  let starts = 0;
+  for (const seedWord of [1, 2, 3, 4, 5]) {
+    const st = init(seedWord), s = st.i32;
+    const last = { '-1': { ph: T.ASSAULT_IDLE, start: 0, end: null, n: 0 }, '1': { ph: T.ASSAULT_IDLE, start: 0, end: null, n: 0 } };
+    for (let t = 0; t < 10800; t++) {
+      const holders = [0, 1, 2].map((o) => T.objectiveHolder(s, L.O_TACTICS, o));
+      step(st, 0, 0, 0, ONE, 0);
+      const tick = s[L.O_TICK];
+      for (const side of [-1, 1]) {
+        const ph = T.assaultPhase(s, L.O_TACTICS, side), tg = T.assaultTarget(s, L.O_TACTICS, side), was = last[side];
+        const mine = side < 0 ? T.HOLDER_BULL : T.HOLDER_BEAR;
+        if (ph === T.ASSAULT_PUSH && was.ph !== T.ASSAULT_PUSH) {
+          starts++;
+          assert.notEqual(holders[tg], mine, `seed ${seedWord} tick ${tick}: side ${side} assaulted objective ${tg}, which it held`);
+          assert.ok(holders.some((h) => h !== mine), `seed ${seedWord} tick ${tick}: side ${side} assaulted while holding all three`);
+          if (was.end === null) assert.ok(tick >= 1200, `seed ${seedWord}: first assault at tick ${tick}, before 20 s`);   // a side holding all three re-arms 20 s, so later than 40 s is legal
+          else assert.ok(tick - was.end >= 2700, `seed ${seedWord} tick ${tick}: side ${side} assaulted ${tick - was.end} ticks after its last one ended`);
+          assert.equal(T.assaultCount(s, L.O_TACTICS, side), was.n + 1, 'the assault count did not step by one');
+          was.start = tick; was.n++;
+        }
+        if (ph === T.ASSAULT_PUSH) assert.ok(tick - was.start <= 1800, `seed ${seedWord} tick ${tick}: an assault ran ${tick - was.start} ticks`);
+        if (was.ph === T.ASSAULT_PUSH && ph === T.ASSAULT_IDLE) was.end = tick;
+        if (was.ph === T.ASSAULT_CONSOLIDATE && ph === T.ASSAULT_IDLE) { assert.ok(tick - was.start >= 900, 'consolidation shorter than 900 ticks'); was.end = tick; }
+        if (was.ph === T.ASSAULT_PUSH && ph === T.ASSAULT_CONSOLIDATE) { assert.equal(T.objectiveHolder(s, L.O_TACTICS, tg), mine, 'consolidating without the objective'); was.start = tick; }
+        was.ph = ph;
+        // push ceilings: 40 on the assaulted lane, 32 beside it, §4.11's elsewhere
+        for (let w = side < 0 ? 0 : 6; w < (side < 0 ? 6 : 12); w++) {
+          const slot = s[L.O_TACTICS + T.TAC_SLOT + w], push = s[L.O_TACTICS + T.TAC_PUSH + w];
+          assert.ok(push <= 40 * ONE, `seed ${seedWord} tick ${tick}: team ${w} pushed ${push / ONE} m`);
+          const terms = T.laneTerms(s, L.O_TACTICS, side, slot);
+          if (ph !== T.ASSAULT_PUSH || Math.abs(slot - T.objectiveLane(s, L.O_TACTICS, tg)) > 1) {
+            assert.equal(terms.weight, T.objectiveWeight(s, L.O_TACTICS, slot), `seed ${seedWord} tick ${tick}: team ${w} outside the assault lanes has weight ${terms.weight}`);
+            assert.ok(terms.ceiling <= 24 * ONE, `seed ${seedWord} tick ${tick}: team ${w} outside the assault lanes has ceiling ${terms.ceiling / ONE}`);
+          }
+        }
+      }
+    }
+  }
+  assert.ok(starts >= 10, `only ${starts} assaults - nothing checked`);
+});
+
+test('the trend is the colour of the last six finished candles: six green is UP 3, alternating is SIDEWAYS, a doji is neither; the side it runs against mounts no assault (§4.14)', () => {
+  const st = init(1), s = st.i32, open = st.tape[63], bp = Math.floor(open / 10000);
+  const word = () => [s[L.O_TACTICS + T.TAC_MARKET + T.MK_TREND], s[L.O_TACTICS + T.TAC_MARKET + T.MK_STRENGTH]];
+  let p = open;
+  for (let k = 0; k < 12; k++) { p += 5 * bp; submitSample(st, p); }
+  assert.deepEqual(word(), [1, 3], 'six green candles are not UP 3');
+  assert.equal(s[L.O_TACTICS + T.TAC_MARKET + T.MK_LEAD], 1, 'price above the open is not a BULLS lead');
+  // alternate: green, red, green, red, green, red
+  for (let k = 0; k < 12; k++) { p += (k % 4 < 2 ? 1 : -1) * (k % 2 === 1 ? 5 * bp : 0); submitSample(st, p); }
+  assert.deepEqual(word(), [0, 0], `alternating candles read ${word()}`);
+  // six dojis (2 bp bodies) are SIDEWAYS too
+  for (let k = 0; k < 12; k++) { p += k % 2 === 1 ? 2 * bp : 0; submitSample(st, p); }
+  assert.deepEqual(word(), [0, 0], 'doji candles counted as a colour');
+  // four red, two doji -> DOWN 2
+  for (let k = 0; k < 12; k++) { p += k % 2 === 1 ? (k < 8 ? -5 * bp : bp) : 0; submitSample(st, p); }
+  assert.deepEqual(word(), [-1, 2], `four red two doji read ${word()}`);
+  // the bears' trend: the bulls start no assault while it holds, from tick 900 of a run
+  const r = init(2), rs = r.i32, ro = r.tape[63], rb = Math.floor(ro / 10000);
+  let rp = ro, bullStarts = 0, bearStarts = 0; const was = { '-1': 0, '1': 0 };
+  for (let t = 0; t < 5400; t++) {
+    if (t >= 300 && t < 900 && (t - 300) % 50 === 0) { rp -= 5 * rb; submitSample(r, rp); }
+    step(r, 0, 0, 0, ONE, 0);
+    for (const side of [-1, 1]) {
+      const ph = T.assaultPhase(rs, L.O_TACTICS, side);
+      if (ph === T.ASSAULT_PUSH && was[side] !== T.ASSAULT_PUSH && t >= 900) { if (side < 0) bullStarts++; else bearStarts++; }
+      was[side] = ph;
+    }
+  }
+  assert.equal(bullStarts, 0, `the bulls assaulted ${bullStarts} times under a bear trend`);
+  assert.ok(bearStarts > 0, 'the bears mounted no assault under their own trend - nothing checked');
 });

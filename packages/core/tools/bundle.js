@@ -100,7 +100,7 @@ for (const file of order) {
 // would leave the page able to do what the bridge no longer asks for.
 out += '\nreturn { init: init, step: step, hash: hash, runScore: runScore,\n';
 out += '         groundAt: groundAt, teleport: teleport,\n';
-out += '         restart: restart, frontAt: frontAt, submitLiquidation: submitLiquidation,\n';
+out += '         restart: restart, frontAt: frontAt, submitLiquidation: submitLiquidation, submitSample: submitSample,\n';
 out += '         submitLoad: submitLoad, heatOf: heatOf,\n';
 out += '         create: create, WORDS: WORDS };\n})();\n';
 out += 'if (typeof module !== "undefined") module.exports = BLWP;\n';
