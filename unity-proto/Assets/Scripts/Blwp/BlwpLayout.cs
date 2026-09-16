@@ -29,9 +29,11 @@ namespace Blwp
         public const int B_Y = 3;
         public const int B_Z = 4;
         public const int C_D = 3;
+        public const int C_DIG = 5;
+        public const int C_LOAD = 6;
         public const int C_R = 2;
         public const int C_ROUNDS = 4;
-        public const int C_WORDS = 5;
+        public const int C_WORDS = 7;
         public const int C_X = 0;
         public const int C_Z = 1;
         public const int H_DIR = 5;
@@ -107,7 +109,7 @@ namespace Blwp
         public const int U_WORDS = 8;
         public const int U_X = 0;
         public const int U_Z = 1;
-        public const int WORDS = 2230;
+        public const int WORDS = 2246;
 
         /// <summary>Where the core starts the truck, Q16.16 metres.</summary>
         public const int START_X = -6579814;

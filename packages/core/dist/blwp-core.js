@@ -1082,8 +1082,15 @@ const K_STATE = 0, K_X = 1, K_Z = 2, K_LOAD = 3, K_SERIAL = 4;
  */
 const O_CRATERS = O_STRIKE + STRIKE_WORDS;
 const MAX_CRATERS = 8;
-const C_WORDS = 5;
-const C_X = 0, C_Z = 1, C_R = 2, C_D = 3, C_ROUNDS = 4;
+/**
+ * ARMED, THEN DUG (the owner 2026-09-16): the blast is on the tick the liquidation is consumed and the
+ * hole opens 384 ticks later, so every slot carries its own dig tick and the load it was armed with.
+ * Until then its radius is zero, which is what every reader already tests - the terrain, the army's
+ * push-out and the page see no bowl at all. Per slot rather than one pending hole: a second
+ * liquidation inside those 384 ticks must not drop the first, and a live market fires them in bursts.
+ */
+const C_WORDS = 7;
+const C_X = 0, C_Z = 1, C_R = 2, C_D = 3, C_ROUNDS = 4, C_DIG = 5, C_LOAD = 6;
 
 const craterBase = (i) => O_CRATERS + Math.imul(i, C_WORDS);
 
@@ -2178,6 +2185,21 @@ function paceOf(index) {
 const ARMOUR_STANDOFF = Math.imul(9, ONE);
 const ARMOUR_SPREAD = Math.imul(10, ONE);
 
+/**
+ * THE TRUCK'S OWN RING, and it is not the seam's (the owner 2026-09-16).
+ *
+ * Armour holds about 28 m off the TRUCK and comes at it from the beam, not down its nose. The 9 m
+ * above is the stand-off from the SEAM and stays as it is; copying it onto the truck is what put a
+ * tank on the cab. Measured before: the nearest tank sat at a median of 16.7 to 20.4 m on four of
+ * five seeds, crossed 12 m in every run, and closed to 3.8 m.
+ *
+ * `FLANK_RATE` is how fast the bearing walks round the ring, in Q16.16 turns a tick: 180 is a
+ * quarter turn in about 91 ticks, so a tank that arrives head-on is on the beam in a second and a
+ * half rather than snapping there.
+ */
+const TRUCK_RING = Math.imul(28, ONE);
+const FLANK_RATE = 180;
+
 // A rifleman's distance from the seam, and it is TWO numbers in the C#, added:
 //
 //     standoff     = Rand(4f, 12f)          Army.Spawn
@@ -2464,7 +2486,7 @@ const SIDE_BEAR = 1;
  * cooldown has expired - reload, then the hit roll. Nothing may be inserted
  * before the wobble or every recorded transcript stops replaying.
  */
-function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index, tick, craters) {
+function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, halfX, halfZ, dt, index, tick, craters) {
   if (u.hp <= 0) return 0;
 
   // THE DRAW STAYS, THE WOBBLE GOES.
@@ -2759,6 +2781,39 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index, tick, 
       if (d < 655) continue;
       u.x = add(u.x, div(mulFast(dx, sub(reach, d)), d));
       u.z = add(u.z, div(mulFast(dz, sub(reach, d)), d));
+    }
+  }
+
+  // AND OFF THE TRUCK: a tank holds `TRUCK_RING` and stands on the beam.
+  //
+  // A PUSH, after the step, in the same class as the craters above and the map edge - a place a unit
+  // may not be, resolved rather than negotiated. Not a steer: x and z are never rolled into one
+  // normalised vector here, because that coupling was tried on the chase, measured, and reverted.
+  // The truck is not pushed; it drives where the player drives it, and the armour gives way.
+  // ONLY A TANK THAT HAS THE TRUCK. The ring is an engagement rule, not a fence round the cab:
+  // `courierReach` is the reach the gun itself notices the courier at, heat and all, so heat still
+  // decides who closes. Measured with the ring on every tank inside 28 m instead: "heat tells
+  // further and further behind the line" fell from 2.42x to 1.00x, because armour that had never
+  // noticed the truck was held at the same radius whatever the depth, and a parked truck then had
+  // the same eleven guns on it at 25 m and at 50 m.
+  if (u.armour) {
+    const reach = courierReach(heat, true);
+    const tdx = sub(u.x, truckX), tdz = sub(u.z, truckZ);
+    if (abs(tdx) <= reach && abs(tdz) <= reach && length2(tdx, tdz) < reach) {
+      const d = length2(tdx, tdz);
+      // The same hundredth of a metre the crater push keeps: a divide needs a direction.
+      if (d > 655 && d < TRUCK_RING) {
+        // Out to the ring along the radius, then round it toward the nearer beam - the truck's
+        // heading a quarter turn either way - by at most `FLANK_RATE` in the tick.
+        const bear = atan2(tdx, tdz);
+        const left = (truckHeading + 16384) & 65535, right = (truckHeading - 16384) & 65535;
+        const offL = (((left - bear + 32768) & 65535) - 32768) | 0;
+        const offR = (((right - bear + 32768) & 65535) - 32768) | 0;
+        const off = abs(offL) < abs(offR) ? offL : offR;
+        const to = (bear + (off > FLANK_RATE ? FLANK_RATE : off < -FLANK_RATE ? -FLANK_RATE : off)) & 65535;
+        u.x = add(truckX, mulFast(sin(to), TRUCK_RING));
+        u.z = add(truckZ, mulFast(cos(to), TRUCK_RING));
+      }
     }
   }
 
@@ -3871,6 +3926,15 @@ function setSolids(st, count, boxes) {
  * Lifetime rides the same root, so one rule sets both: ten rounds at the
  * small end, twenty at the large, which is the span (z) asks for.
  */
+/**
+ * HOW LONG THE GROUND TAKES TO OPEN, in ticks (the owner 2026-09-16).
+ *
+ * The blast is the tick the liquidation is consumed; the bowl is 384 ticks after it, and the page
+ * draws it on the tick the core says it exists. Measured before: the hole stood in the state on the
+ * consume tick, so a crater appeared under the strike as the fireball did.
+ */
+const CRATER_DELAY = 384;
+
 const CRATER_R_MIN = Math.imul(16, ONE);
 const CRATER_R_MAX = Math.imul(40, ONE);
 const CRATER_LOAD_MIN = ONE;                       // one million
@@ -3925,15 +3989,25 @@ function falloutRate(R) {
   return add(FALLOUT_MIN, mulFast(t, sub(FALLOUT_MAX, FALLOUT_MIN)));
 }
 
-/** The crater slot to use: a free one, else the one with fewest rounds left. */
+/**
+ * The crater slot to use: a free one, else the one with fewest rounds left.
+ *
+ * A slot that is ARMED and not yet dug is taken, not free: the hole it is holding has been promised
+ * to a strike that has already happened. Only if all eight are armed does one give way, and it is
+ * the one that opens soonest - deterministic, ties to the lowest index, like the rounds ladder.
+ */
 function craterSlot(s) {
-  let worst = -1, least = 0x7fffffff;
+  let worst = -1, least = 0x7fffffff, armed = -1, soonest = 0x7fffffff;
   for (let i = 0; i < MAX_CRATERS; i++) {
     const b = craterBase(i);
+    if (s[b + C_DIG] > 0) {
+      if (s[b + C_DIG] < soonest) { soonest = s[b + C_DIG]; armed = i; }
+      continue;
+    }
     if (s[b + C_ROUNDS] <= 0) return i;
     if (s[b + C_ROUNDS] < least) { least = s[b + C_ROUNDS]; worst = i; }
   }
-  return worst;
+  return worst >= 0 ? worst : armed;
 }
 
 function strikePoint(s, seamAt) {
@@ -3981,6 +4055,11 @@ function restart(st, seedWord) {
   // The craters cross the round with the ground, one round older. This is why
   // the lifetime is counted in ROUNDS and lives here: a round is a thing that
   // ends, and a tick is not.
+  //
+  // A hole that is ARMED and not yet dug does NOT cross: it has no rounds, so the test below drops
+  // it, and that is the rule rather than an accident. A dig tick is counted in the round it was
+  // armed in, and a new round starts its tick at zero - carrying one over would open a bowl out of
+  // a strike nobody in this round saw.
   for (let i = 0; i < MAX_CRATERS; i++) {
     const b = craterBase(i);
     const left = (st.i32[b + C_ROUNDS] - 1) | 0;
@@ -4552,16 +4631,33 @@ function step(st, throttle, steer, brake, handbrake, practice) {
     s[O_STRIKE + K_LOAD] = s[O_LIQ + L_LAST];
     s[O_STRIKE + K_SERIAL] = (s[O_STRIKE + K_SERIAL] + 1) | 0;
 
-    // The hole, at the impact and nowhere near it.
-    const hole = craterOf(s[O_LIQ + L_LAST]);
+    // The hole is ARMED here, at the impact, and dug `CRATER_DELAY` ticks later: the slot keeps the
+    // place and the load, and its radius stays zero until then. `craterOf` runs at the dig, so the
+    // load is the only thing that has to be carried.
     const slot = craterBase(craterSlot(s));
     s[slot + C_X] = at.x;
     s[slot + C_Z] = at.z;
-    s[slot + C_R] = hole.r;
-    s[slot + C_D] = hole.d;
-    s[slot + C_ROUNDS] = hole.rounds;
+    s[slot + C_R] = 0;
+    s[slot + C_D] = 0;
+    s[slot + C_ROUNDS] = 0;
+    s[slot + C_LOAD] = s[O_LIQ + L_LAST];
+    s[slot + C_DIG] = (s[O_TICK] + CRATER_DELAY) | 0;
   } else {
     s[O_STRIKE + K_STATE] = 0;
+  }
+
+  // ---- 0b. the ground opens ----------------------------------------------
+  // Before the army and the terrain are read, so a bowl dug this tick is one world for everything
+  // that reads it. Index order, which is protocol.
+  for (let i = 0; i < MAX_CRATERS; i++) {
+    const b = craterBase(i);
+    if (s[b + C_DIG] <= 0 || s[b + C_DIG] > s[O_TICK]) continue;
+    const hole = craterOf(s[b + C_LOAD]);
+    s[b + C_R] = hole.r;
+    s[b + C_D] = hole.d;
+    s[b + C_ROUNDS] = hole.rounds;
+    s[b + C_DIG] = 0;
+    s[b + C_LOAD] = 0;
   }
   fillArmour(st);
 
@@ -4733,7 +4829,7 @@ function step(st, throttle, steer, brake, handbrake, practice) {
     // own seam is still what the truck is measured against, so `seamZ` stays
     // for the callers below it.
     const unitSeam = frontlineZ(st.tape, u.x, HALF_X, HALF_Z);
-    stepUnit(u, rng, unitSeam, tx, tz, HALF_X, HALF_Z, TICK_DT, i, s[O_TICK], craters);
+    stepUnit(u, rng, unitSeam, tx, tz, s[T + T_HEADING], s[O_SCORE + S_HEAT], HALF_X, HALF_Z, TICK_DT, i, s[O_TICK], craters);
 
     // Armour fires on armour. Drawn in index order, always, so the transcript
     // replays: a tank that fires earlier changes what the ones after it see.

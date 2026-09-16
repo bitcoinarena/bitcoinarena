@@ -6153,6 +6153,7 @@ function playerKeyIsDerived({ seed, roundId, playerPubkey, curve } = {}) {
 const KNOWN_GOOD_CORE_HASHES = Object.freeze([
   'f33aa45c61db5f531fbf1b714c2da0fde031d84a14d7a9fde665a142d4828f3c',
   '5f3b517648bde43dca8c93938c45f4996242630f8cc173d1d940df89c4dd8e48',
+  'ac526bca7c566fc3bf510ae3d9ac9b4326b18d47e40251912045474bc2bb4a0d',
 ]);
 
 // ---- protocol/src/known-core.js

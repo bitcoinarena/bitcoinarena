@@ -215,8 +215,15 @@ export const K_STATE = 0, K_X = 1, K_Z = 2, K_LOAD = 3, K_SERIAL = 4;
  */
 export const O_CRATERS = O_STRIKE + STRIKE_WORDS;
 export const MAX_CRATERS = 8;
-export const C_WORDS = 5;
-export const C_X = 0, C_Z = 1, C_R = 2, C_D = 3, C_ROUNDS = 4;
+/**
+ * ARMED, THEN DUG (the owner 2026-09-16): the blast is on the tick the liquidation is consumed and the
+ * hole opens 384 ticks later, so every slot carries its own dig tick and the load it was armed with.
+ * Until then its radius is zero, which is what every reader already tests - the terrain, the army's
+ * push-out and the page see no bowl at all. Per slot rather than one pending hole: a second
+ * liquidation inside those 384 ticks must not drop the first, and a live market fires them in bursts.
+ */
+export const C_WORDS = 7;
+export const C_X = 0, C_Z = 1, C_R = 2, C_D = 3, C_ROUNDS = 4, C_DIG = 5, C_LOAD = 6;
 
 export const craterBase = (i) => O_CRATERS + Math.imul(i, C_WORDS);
 

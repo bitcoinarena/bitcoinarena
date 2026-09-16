@@ -153,6 +153,21 @@ function paceOf(index) {
 const ARMOUR_STANDOFF = Math.imul(9, ONE);
 const ARMOUR_SPREAD = Math.imul(10, ONE);
 
+/**
+ * THE TRUCK'S OWN RING, and it is not the seam's (the owner 2026-09-16).
+ *
+ * Armour holds about 28 m off the TRUCK and comes at it from the beam, not down its nose. The 9 m
+ * above is the stand-off from the SEAM and stays as it is; copying it onto the truck is what put a
+ * tank on the cab. Measured before: the nearest tank sat at a median of 16.7 to 20.4 m on four of
+ * five seeds, crossed 12 m in every run, and closed to 3.8 m.
+ *
+ * `FLANK_RATE` is how fast the bearing walks round the ring, in Q16.16 turns a tick: 180 is a
+ * quarter turn in about 91 ticks, so a tank that arrives head-on is on the beam in a second and a
+ * half rather than snapping there.
+ */
+const TRUCK_RING = Math.imul(28, ONE);
+const FLANK_RATE = 180;
+
 // A rifleman's distance from the seam, and it is TWO numbers in the C#, added:
 //
 //     standoff     = Rand(4f, 12f)          Army.Spawn
@@ -439,7 +454,7 @@ export const SIDE_BEAR = 1;
  * cooldown has expired - reload, then the hit roll. Nothing may be inserted
  * before the wobble or every recorded transcript stops replaying.
  */
-export function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index, tick, craters) {
+export function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, halfX, halfZ, dt, index, tick, craters) {
   if (u.hp <= 0) return 0;
 
   // THE DRAW STAYS, THE WOBBLE GOES.
@@ -734,6 +749,39 @@ export function stepUnit(u, rng, seamZ, truckX, truckZ, halfX, halfZ, dt, index,
       if (d < 655) continue;
       u.x = add(u.x, div(mulFast(dx, sub(reach, d)), d));
       u.z = add(u.z, div(mulFast(dz, sub(reach, d)), d));
+    }
+  }
+
+  // AND OFF THE TRUCK: a tank holds `TRUCK_RING` and stands on the beam.
+  //
+  // A PUSH, after the step, in the same class as the craters above and the map edge - a place a unit
+  // may not be, resolved rather than negotiated. Not a steer: x and z are never rolled into one
+  // normalised vector here, because that coupling was tried on the chase, measured, and reverted.
+  // The truck is not pushed; it drives where the player drives it, and the armour gives way.
+  // ONLY A TANK THAT HAS THE TRUCK. The ring is an engagement rule, not a fence round the cab:
+  // `courierReach` is the reach the gun itself notices the courier at, heat and all, so heat still
+  // decides who closes. Measured with the ring on every tank inside 28 m instead: "heat tells
+  // further and further behind the line" fell from 2.42x to 1.00x, because armour that had never
+  // noticed the truck was held at the same radius whatever the depth, and a parked truck then had
+  // the same eleven guns on it at 25 m and at 50 m.
+  if (u.armour) {
+    const reach = courierReach(heat, true);
+    const tdx = sub(u.x, truckX), tdz = sub(u.z, truckZ);
+    if (abs(tdx) <= reach && abs(tdz) <= reach && length2(tdx, tdz) < reach) {
+      const d = length2(tdx, tdz);
+      // The same hundredth of a metre the crater push keeps: a divide needs a direction.
+      if (d > 655 && d < TRUCK_RING) {
+        // Out to the ring along the radius, then round it toward the nearer beam - the truck's
+        // heading a quarter turn either way - by at most `FLANK_RATE` in the tick.
+        const bear = atan2(tdx, tdz);
+        const left = (truckHeading + 16384) & 65535, right = (truckHeading - 16384) & 65535;
+        const offL = (((left - bear + 32768) & 65535) - 32768) | 0;
+        const offR = (((right - bear + 32768) & 65535) - 32768) | 0;
+        const off = abs(offL) < abs(offR) ? offL : offR;
+        const to = (bear + (off > FLANK_RATE ? FLANK_RATE : off < -FLANK_RATE ? -FLANK_RATE : off)) & 65535;
+        u.x = add(truckX, mulFast(sin(to), TRUCK_RING));
+        u.z = add(truckZ, mulFast(cos(to), TRUCK_RING));
+      }
     }
   }
 

@@ -25219,27 +25219,27 @@
  "checkpoints": [
   {
    "tick": 600,
-   "hash": "677caedd1169163f403fd7e59912d35d283dd475e44863d1bfd6b811c080fa18"
+   "hash": "f870a0b6418e4ac5da626134bd8aa4bb0c87dfb2e78b99396e5a9c3c6eda7b6b"
   },
   {
    "tick": 1200,
-   "hash": "044a7c42c2889ad428468f4f2a4a8c1a374d0efc92a6c8b71da6532661c46632"
+   "hash": "3e1bf4fb74414ff7ad839673674bc5ac7fecee117018f8528ef29c863eb1b747"
   },
   {
    "tick": 1800,
-   "hash": "b44d94e43b1d67f6f19a4144784e79e70e512bcd2625dba1233d7b339504d606"
+   "hash": "10e2a25d34f2234fb5bdb7211595efa85a81860f3c64cad56cf1c0e5887041ec"
   },
   {
    "tick": 2400,
-   "hash": "f131dc7fe39986731b991d1b8a1fed5a72e2a071006ecd4cbcba0b7faf5880c5"
+   "hash": "c7801b1625604afa62b765eabb7d87f731f05c1002f686a2ce29ebc82a36eed0"
   },
   {
    "tick": 3000,
-   "hash": "4970c440d1d6b838bcc0a401b97679118eea860a5a37013758f21f12bb1f7c32"
+   "hash": "5ed78b59b3b02abb560a5c463a7becdbcea6ce49bfd12ad4b3fa95d346d63652"
   },
   {
    "tick": 3600,
-   "hash": "7470d7f559f2ed8acba3fc200cbde5375615ae6d4c146dbe4f9a52b58a8b4baf"
+   "hash": "268e4772a2cd4a80cac9285cfa3b6abd87a3d7aa29d6f43b1394a25920d6051d"
   }
  ]
 }

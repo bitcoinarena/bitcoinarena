@@ -1380,14 +1380,59 @@ test('a hunted load is written off sooner than an empty one', () => {
     + `load ${hot.toFixed(2)} s`);
 });
 
+/**
+ * How many tanks have a parked truck inside the reach they notice a courier at - the median over a
+ * minute, sampled once a second.
+ *
+ * The counterpart of `survives`, and it reads the rule heat STATES: the reach. How long the truck
+ * lasts is a different question, and since the flank ring (the owner 2026-09-16) armour stands 28 m off
+ * and `outranksTheFoe` hands the shot to any nearer tank, so survival time no longer follows the
+ * reach at all.
+ */
+function noticing(feeSats, z) {
+  const st = init(0x5eed1234);
+  const s = st.i32;
+  submitLoad(st, feeSats, 0);
+  const counts = [];
+  for (let t = 0; t < 60 * 60; t++) {
+    if (s[O_SCORE + S_STATE] !== 0) break;
+    s[O_TRUCK + T_X] = 0;
+    s[O_TRUCK + T_Z] = Math.round(z * ONE);
+    s[O_TRUCK + T_VX] = 0;
+    s[O_TRUCK + T_VZ] = 0;
+    step(st, 0, 0, 0, 0, 0);
+    if (t % 60) continue;
+    const reach = army.courierReach(s[O_SCORE + layout.S_HEAT], true) / ONE;
+    let n = 0;
+    for (let i = 0; i < layout.UNITS; i++) {
+      if ((i & layout.ARMOUR_MASK) !== 0) continue;            // riflemen have their own reach
+      const b = O_UNITS + i * U_WORDS;
+      if (s[b + U_HP] <= 0) continue;
+      if (Math.hypot(s[b + U_X] / ONE, s[b + U_Z] / ONE - z) < reach) n++;
+    }
+    counts.push(n);
+  }
+  return counts.sort((a, b) => a - b)[counts.length >> 1];
+}
+
 test('and it tells further and further behind the line', () => {
-  // The reach is where heat does most of its work, so the gap has to WIDEN
-  // with distance: at the seam a tank is already in range of everything.
-  const near = survives(0, -25) / survives(20000, -25);
-  const far = survives(0, -50) / survives(20000, -50);
-  assert.ok(far > near,
-    `heat should matter more at fifty metres than at twenty-five: `
-    + `${far.toFixed(2)}x against ${near.toFixed(2)}x`);
+  // ASSERTED AS THE REACH, because that is what heat says. This asserted a ratio of survival times
+  // until the flank ring landed: armour holds 28 m off the truck now, `outranksTheFoe` gives the
+  // shot to any tank nearer than that, and the proxy inverted - 1.00x at fifty metres against 2.42x
+  // at twenty-five - while the reach rule itself never moved. The standoff is ruled; the proxy was
+  // not, so the proxy goes and the rule is measured where the ring cannot mask it.
+  const cold = army.courierReach(0, true) / ONE;
+  const hot = army.courierReach(ONE, true) / ONE;
+  assert.equal(Math.round(cold * 10) / 10, 34,
+    `a cold tank should notice the truck at 34.0 m, not ${cold.toFixed(1)} m`);
+  assert.equal(Math.round(hot * 10) / 10, 44.2,
+    `a full bed should be noticed at 44.2 m, not ${hot.toFixed(1)} m`);
+
+  // And it tells further behind the line: at the seam and thirty metres deeper, a full bed puts more
+  // guns on the truck than an empty one does.
+  assert.deepEqual([noticing(0, -25), noticing(20000, -25), noticing(0, -50), noticing(20000, -50)],
+    [4, 10, 4, 7],
+    'heat no longer widens how many tanks have the truck, at the seam or behind it');
 });
 
 test('an untold core hunts exactly as the recordings do', () => {

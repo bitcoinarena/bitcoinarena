@@ -20,7 +20,7 @@ import {
   O_AIR, AIR_BULL, AIR_BEAR, MAX_HELIS, MAX_BOMBS,
   O_LIQ, L_PENDING, L_LAST, L_SERIAL, LIQ_MAX,
   O_STRIKE, K_STATE, K_X, K_Z, K_LOAD, K_SERIAL,
-  O_CRATERS, MAX_CRATERS, craterBase, C_X, C_Z, C_R, C_D, C_ROUNDS,
+  O_CRATERS, MAX_CRATERS, craterBase, C_X, C_Z, C_R, C_D, C_ROUNDS, C_DIG, C_LOAD,
   H_STATE, H_SIDE, H_X, H_Y, H_Z, H_DIR, H_T, H_DROPIN,
   B_STATE, B_SIDE, B_X, B_Y, B_Z, B_VX, B_VY, B_VZ,
   T_X, T_Z, T_HEADING, T_VX, T_VZ, T_ANGVEL, T_HP, T_CARGO, T_FLAGS,
@@ -341,6 +341,15 @@ export function setSolids(st, count, boxes) {
  * Lifetime rides the same root, so one rule sets both: ten rounds at the
  * small end, twenty at the large, which is the span (z) asks for.
  */
+/**
+ * HOW LONG THE GROUND TAKES TO OPEN, in ticks (the owner 2026-09-16).
+ *
+ * The blast is the tick the liquidation is consumed; the bowl is 384 ticks after it, and the page
+ * draws it on the tick the core says it exists. Measured before: the hole stood in the state on the
+ * consume tick, so a crater appeared under the strike as the fireball did.
+ */
+const CRATER_DELAY = 384;
+
 const CRATER_R_MIN = Math.imul(16, ONE);
 const CRATER_R_MAX = Math.imul(40, ONE);
 const CRATER_LOAD_MIN = ONE;                       // one million
@@ -395,15 +404,25 @@ function falloutRate(R) {
   return add(FALLOUT_MIN, mulFast(t, sub(FALLOUT_MAX, FALLOUT_MIN)));
 }
 
-/** The crater slot to use: a free one, else the one with fewest rounds left. */
+/**
+ * The crater slot to use: a free one, else the one with fewest rounds left.
+ *
+ * A slot that is ARMED and not yet dug is taken, not free: the hole it is holding has been promised
+ * to a strike that has already happened. Only if all eight are armed does one give way, and it is
+ * the one that opens soonest - deterministic, ties to the lowest index, like the rounds ladder.
+ */
 function craterSlot(s) {
-  let worst = -1, least = 0x7fffffff;
+  let worst = -1, least = 0x7fffffff, armed = -1, soonest = 0x7fffffff;
   for (let i = 0; i < MAX_CRATERS; i++) {
     const b = craterBase(i);
+    if (s[b + C_DIG] > 0) {
+      if (s[b + C_DIG] < soonest) { soonest = s[b + C_DIG]; armed = i; }
+      continue;
+    }
     if (s[b + C_ROUNDS] <= 0) return i;
     if (s[b + C_ROUNDS] < least) { least = s[b + C_ROUNDS]; worst = i; }
   }
-  return worst;
+  return worst >= 0 ? worst : armed;
 }
 
 function strikePoint(s, seamAt) {
@@ -451,6 +470,11 @@ export function restart(st, seedWord) {
   // The craters cross the round with the ground, one round older. This is why
   // the lifetime is counted in ROUNDS and lives here: a round is a thing that
   // ends, and a tick is not.
+  //
+  // A hole that is ARMED and not yet dug does NOT cross: it has no rounds, so the test below drops
+  // it, and that is the rule rather than an accident. A dig tick is counted in the round it was
+  // armed in, and a new round starts its tick at zero - carrying one over would open a bowl out of
+  // a strike nobody in this round saw.
   for (let i = 0; i < MAX_CRATERS; i++) {
     const b = craterBase(i);
     const left = (st.i32[b + C_ROUNDS] - 1) | 0;
@@ -1022,16 +1046,33 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
     s[O_STRIKE + K_LOAD] = s[O_LIQ + L_LAST];
     s[O_STRIKE + K_SERIAL] = (s[O_STRIKE + K_SERIAL] + 1) | 0;
 
-    // The hole, at the impact and nowhere near it.
-    const hole = craterOf(s[O_LIQ + L_LAST]);
+    // The hole is ARMED here, at the impact, and dug `CRATER_DELAY` ticks later: the slot keeps the
+    // place and the load, and its radius stays zero until then. `craterOf` runs at the dig, so the
+    // load is the only thing that has to be carried.
     const slot = craterBase(craterSlot(s));
     s[slot + C_X] = at.x;
     s[slot + C_Z] = at.z;
-    s[slot + C_R] = hole.r;
-    s[slot + C_D] = hole.d;
-    s[slot + C_ROUNDS] = hole.rounds;
+    s[slot + C_R] = 0;
+    s[slot + C_D] = 0;
+    s[slot + C_ROUNDS] = 0;
+    s[slot + C_LOAD] = s[O_LIQ + L_LAST];
+    s[slot + C_DIG] = (s[O_TICK] + CRATER_DELAY) | 0;
   } else {
     s[O_STRIKE + K_STATE] = 0;
+  }
+
+  // ---- 0b. the ground opens ----------------------------------------------
+  // Before the army and the terrain are read, so a bowl dug this tick is one world for everything
+  // that reads it. Index order, which is protocol.
+  for (let i = 0; i < MAX_CRATERS; i++) {
+    const b = craterBase(i);
+    if (s[b + C_DIG] <= 0 || s[b + C_DIG] > s[O_TICK]) continue;
+    const hole = craterOf(s[b + C_LOAD]);
+    s[b + C_R] = hole.r;
+    s[b + C_D] = hole.d;
+    s[b + C_ROUNDS] = hole.rounds;
+    s[b + C_DIG] = 0;
+    s[b + C_LOAD] = 0;
   }
   fillArmour(st);
 
@@ -1203,7 +1244,7 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
     // own seam is still what the truck is measured against, so `seamZ` stays
     // for the callers below it.
     const unitSeam = frontlineZ(st.tape, u.x, HALF_X, HALF_Z);
-    stepUnit(u, rng, unitSeam, tx, tz, HALF_X, HALF_Z, TICK_DT, i, s[O_TICK], craters);
+    stepUnit(u, rng, unitSeam, tx, tz, s[T + T_HEADING], s[O_SCORE + S_HEAT], HALF_X, HALF_Z, TICK_DT, i, s[O_TICK], craters);
 
     // Armour fires on armour. Drawn in index order, always, so the transcript
     // replays: a tank that fires earlier changes what the ones after it see.

@@ -44,14 +44,22 @@ const b32 = (n) => new Uint8Array(32).fill(n);
 const RANDOMNESS = b32(0x9b);
 const session = ed25519.utils.randomSecretKey();
 const wordsAt = (t) => [45875, ((t * 977) % 30000) - 15000, (t % 700) < 40 ? 65536 : 0, 0, 0];
-// THE FIXTURE'S OWN WORLD, RE-MEASURED. Letter 36 gave the round its relief
-// from its own seed, so this drive is on hills now and it DELIVERED where it
-// used to wreck - and these tests are about a run that came to nothing. The
-// world secret is the fixture's to choose and it chooses one where the drive
-// still loses: b32(0x16) wrecks player 5 at tick 547 with a score of 128 and
-// player 6 at 947. 1000 ticks is past both, and a run's state latches when it
-// leaves LIVE.
-const TICKS = 1000;
+// THE FIXTURE'S OWN WORLD, RE-MEASURED AGAIN (the owner 2026-09-16). These tests are about a run that
+// came to nothing, and the world secret is the fixture's to choose. b32(0x16) chose one where the
+// drive was WRECKED at tick 547 for a score of 128 - by armour that drove onto the truck. Armour
+// now holds about 28 m off it, so nothing rams: measured, that same drive is still LIVE at tick
+// 1000, and 0 of 256 world secrets end both players inside 1000 ticks. What is left is the round's
+// own clock - `outcome` returns MISSED at BLOCK_TICKS - so the earliest a drive can be lost without
+// being rammed is tick 9000. Measured: 99 of 256 secrets lose both players, every one at 9000 and
+// not one earlier. b32(0x21) is one of them: both MISSED at 9000, score 0.
+const TICKS = 9000;
+// WHERE THE FIRST MARK GOES. A first mark after join_tick + the round's start deadline is FORFEIT
+// (§15), so a run that ends on the round's own clock plants one early and chains the last one onto
+// it. A short fixture (`stored(120)`) still has the one mark it always had.
+const FIRST_MARK_TICK = 600;
+// AND HOW MANY TICKS ONE BATCH CARRIES. A transcript length-prefixes each batch with a u16, so the
+// round's 9000 ticks cannot go in one: 20 bytes a row plus 109 of header is 180,109. 1500 is 30,109.
+const BATCH_TICKS = 1500;
 
 const secrets = [0, 1, 2, 3, 4, 5, 6].map(() => ed25519.utils.randomSecretKey());
 const COMMITTEE = secrets.map((s) => schnorr.getPublicKey(s));
@@ -85,39 +93,59 @@ function stored(ticks, { player = 5 } = {}) {
   const entry = {
     roundId: rid, playerPubkey: b32(player), sessionPubkey: ed25519.getPublicKey(session),
     stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n,
-    joinTick: 0, worldSecret: b32(0x16), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
+    joinTick: 0, worldSecret: b32(0x21), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
   };
   const eid = r.enter(entry);
-  const rows = [];
-  for (let t = 0; t < ticks; t++) rows.push(wordsAt(t));
-  const batch = {
-    roundId: rid, entryId: eid, previousHash: GENESIS, firstTick: 0, ticks: rows, liquidations: [],
-  };
-  assert.equal(r.batch(encodeInputBatch(batch)), ticks);
-
-  // The player's own state at the last tick, off the same core, seeded the way
-  // the entry's world secret and the round's randomness say.
-  const st = init(seedWordForEntry(entry, RANDOMNESS));
-  for (let t = 0; t < ticks; t++) step(st, ...wordsAt(t));
-  const stateHash = Uint8Array.from(hash(st).match(/../g).map((x) => parseInt(x, 16)));
-
-  const mark = {
-    roundId: rid, entryId: eid, tick: ticks, stateHash,
-    inputChainHash: batchId(batch), previousHash: NO_PREVIOUS,
-    sessionPubkey: ed25519.getPublicKey(session),
-  };
-  const mid = checkpointId(mark);
-  r.checkpoint(joinSigned(encodeCheckpoint(mark), ed25519.sign(mid, session)));
-
-  // AND THE SIGNER NODES THAT CARRY IT. Seven slots need five receipts; the node
-  // issues its own when it takes the mark, so four committee members supply
-  // the rest. Fewer would leave the transcript uncarried and canonical would
-  // refuse - which is the gate, and it is not stepped around here.
-  for (let i = 0; i < 4; i++) {
-    const receipt = { checkpointId: mid, receivedAtMs: 1234n, nodePubkey: COMMITTEE[i] };
-    r.takeReceipt(joinSignedReceipt(encodeCheckpointReceipt(receipt),
-      schnorr.sign(receiptId(receipt), secrets[i])));
+  // THE INPUTS, IN BATCHES THE WIRE CAN CARRY: a transcript length-prefixes each batch with a u16,
+  // and the round's 9000 ticks are 180,109 bytes in one. BATCH_TICKS of 1500 is 30,109, chained so
+  // each names the one before - `Round.batch` refuses anything else and answers the ticks that were
+  // new. A short fixture still sends the single batch it always sent.
+  const batches = [];
+  for (let from = 0; from < ticks; from += BATCH_TICKS) {
+    const rows = [];
+    for (let t = from; t < from + BATCH_TICKS && t < ticks; t++) rows.push(wordsAt(t));
+    const b = {
+      roundId: rid, entryId: eid, firstTick: from, ticks: rows, liquidations: [],
+      previousHash: batches.length ? batchId(batches[batches.length - 1]) : GENESIS,
+    };
+    assert.equal(r.batch(encodeInputBatch(b)), rows.length);
+    batches.push(b);
   }
+  const batch = batches[batches.length - 1];
+
+  // The player's own state, off the same core, seeded the way the entry's world secret and the
+  // round's randomness say - at the planted first mark and again at the last tick.
+  const bytesOf = (h) => Uint8Array.from(h.match(/../g).map((x) => parseInt(x, 16)));
+  const first = Math.min(ticks, FIRST_MARK_TICK);
+  const st = init(seedWordForEntry(entry, RANDOMNESS));
+  for (let t = 0; t < first; t++) step(st, ...wordsAt(t));
+  const firstHash = bytesOf(hash(st));
+  for (let t = first; t < ticks; t++) step(st, ...wordsAt(t));
+  const stateHash = bytesOf(hash(st));
+
+  // THE MARKS, AND THE SIGNER NODES THAT CARRY THEM. Seven slots need five receipts; the node issues
+  // its own when it takes a mark, so four committee members supply the rest. Fewer would leave the
+  // transcript uncarried and canonical would refuse - which is the gate, and it is not stepped around
+  // here. The first mark is planted inside the start deadline (§15); where the run ends on the
+  // round's clock the mark at the last tick chains onto it, and the canonical transcript is what that
+  // last carried mark commits to.
+  const plant = (tick, sh, previousHash, chain = batch) => {
+    const m = {
+      roundId: rid, entryId: eid, tick, stateHash: sh,
+      inputChainHash: batchId(chain), previousHash,
+      sessionPubkey: ed25519.getPublicKey(session),
+    };
+    const id = checkpointId(m);
+    r.checkpoint(joinSigned(encodeCheckpoint(m), ed25519.sign(id, session)));
+    for (let i = 0; i < 4; i++) {
+      const receipt = { checkpointId: id, receivedAtMs: 1234n, nodePubkey: COMMITTEE[i] };
+      r.takeReceipt(joinSignedReceipt(encodeCheckpointReceipt(receipt),
+        schnorr.sign(receiptId(receipt), secrets[i])));
+    }
+    return id;
+  };
+  const pid = plant(first, firstHash, NO_PREVIOUS, batches[0]);
+  if (ticks > first) plant(ticks, stateHash, pid);
 
   return { contract: c, entry, transcript: r.transcript(rid, eid),
     canonical: r.canonicalTranscript(rid, eid) };
@@ -152,7 +180,7 @@ test('nodes that replayed the same run sign the same result, and five of seven v
   // over hills, it delivered where it used to wreck, and the fixture moved its
   // world secret to one where it still loses. Measured each time, not adjusted
   // to pass.
-  assert.equal(answer.score, 128, 'the run no longer scores what this fixture was measured against');
+  assert.equal(answer.score, 0, 'the run no longer scores what this fixture was measured against');
   assert.equal(answer.outcome, 'FAILED');
   for (const x of signed) {
     assert.equal(x.built.score, answer.score, 'the signed score is not the replayed one');

@@ -53,14 +53,24 @@ const RANDOMNESS = b32(0x9b);
 // contract can prove.
 const HEIGHT = 900001;
 const BEACON = { hash: RANDOMNESS, height: HEIGHT, timeMs: 900n };
-// THE FIXTURE'S OWN WORLD, RE-MEASURED. Letter 36 gave the round its relief
-// from its own seed, so this drive is on hills now and it DELIVERED where it
-// used to wreck - and these tests are about a run that came to nothing. The
-// world secret is the fixture's to choose and it chooses one where the drive
-// still loses: b32(0x16) wrecks player 5 at tick 547 with a score of 128 and
-// player 6 at 947. 1000 ticks is past both, and a run's state latches when it
-// leaves LIVE.
-const TICKS = 1000;
+// THE FIXTURE'S OWN WORLD, RE-MEASURED AGAIN (the owner 2026-09-16). These tests are about a run that
+// came to nothing, and the world secret is the fixture's to choose. b32(0x16) chose one where the
+// drive was WRECKED at tick 547 for a score of 128 - by armour that drove onto the truck. Armour
+// now holds about 28 m off it, so nothing rams: measured, that same drive is still LIVE at tick
+// 1000 with a score of 478, and 0 of 256 world secrets end both players inside 1000 ticks.
+// What is left is the round's own clock - `outcome` returns MISSED at BLOCK_TICKS - so the earliest
+// a drive can be lost without being rammed is tick 9000. Measured: 99 of 256 secrets lose both
+// players, every one of them at 9000 and not one earlier. b32(0x21) is one of them, and it loses
+// both with nothing to show: MISSED at 9000, score 0.
+const TICKS = 9000;
+// WHERE THE FIRST MARK GOES. A first mark after join_tick + the round's start deadline is FORFEIT
+// (§15), and this fixture's rounds set that deadline to PLANTED_FIRST_MARK_DEADLINE. A run that ends
+// on the round's own clock cannot have its first mark there, so it is planted early and the mark at
+// the last tick chains onto it - which is what a real run does anyway, a mark a second.
+const FIRST_MARK_TICK = 600;
+// AND HOW MANY TICKS ONE BATCH CARRIES. A transcript length-prefixes each batch with a u16, so the
+// round's 9000 ticks cannot go in one: 20 bytes a row plus 109 of header is 180,109. 1500 is 30,109.
+const BATCH_TICKS = 1500;
 const wordsAt = (t) => [45875, ((t * 977) % 30000) - 15000, (t % 700) < 40 ? 65536 : 0, 0, 0];
 
 const session = ed25519.utils.randomSecretKey();
@@ -132,7 +142,7 @@ async function roundThrough(node, {
 
   const entry = {
     roundId: rid, playerPubkey: b32(5), sessionPubkey: ed25519.getPublicKey(session),
-    stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n, joinTick: 0, worldSecret: b32(0x16), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
+    stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n, joinTick: 0, worldSecret: b32(0x21), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
   };
   const eid = entryId(entry);
   assert.equal((await post(node.port, '/entry', encodeEntryContract(entry))).status, 201);
@@ -141,15 +151,37 @@ async function roundThrough(node, {
   const s = socket(node.port);
   await s.open;
 
-  const rows = [];
-  for (let t = 0; t < TICKS; t++) rows.push(wordsAt(t));
-  const batch = { roundId: rid, entryId: eid, previousHash: GENESIS, firstTick: 0, ticks: rows, liquidations: [] };
-  assert.equal(await s.say(encodeInputBatch(batch)), String(TICKS));
+  // THE INPUTS, IN BATCHES THE WIRE CAN CARRY. A transcript length-prefixes each batch with a u16,
+  // so one batch of the round's 9000 ticks does not encode at all: 20 bytes a row plus 109 of header
+  // is 180,109. BATCH_TICKS of 1500 is 30,109 bytes, and six of them chained - each naming the one
+  // before, which `Round.batch` checks - carry the run. `batch` answers how many ticks were new.
+  const batches = [];
+  for (let from = 0; from < TICKS; from += BATCH_TICKS) {
+    const rows = [];
+    for (let t = from; t < from + BATCH_TICKS && t < TICKS; t++) rows.push(wordsAt(t));
+    const b = { roundId: rid, entryId: eid, firstTick: from, ticks: rows, liquidations: [],
+      previousHash: batches.length ? batchId(batches[batches.length - 1]) : GENESIS };
+    assert.equal(await s.say(encodeInputBatch(b)), String(rows.length));
+    batches.push(b);
+  }
+  const batch = batches[batches.length - 1];
 
-  // THE MARK, signed by the session key the entry names.
+  // THE FIRST MARK, planted inside the start deadline and signed by the session key the entry names.
+  const planted = {
+    roundId: rid, entryId: eid, tick: FIRST_MARK_TICK, stateHash: hexToBytes(play(FIRST_MARK_TICK, entry)),
+    inputChainHash: batchId(batches[0]), previousHash: NO_PREVIOUS,
+    sessionPubkey: ed25519.getPublicKey(session),
+  };
+  const pid = checkpointId(planted);
+  const plantedReceipt = await s.say(joinSigned(encodeCheckpoint(planted), ed25519.sign(pid, session)));
+  assert.equal(plantedReceipt.length, SIGNED_RECEIPT_BYTES,
+    `the node refused the first mark: ${typeof plantedReceipt === 'string' ? plantedReceipt : plantedReceipt.length + ' bytes'}`);
+
+  // AND THE MARK AT THE LAST TICK, chained onto it. The canonical transcript is the inputs the LAST
+  // carried mark commits to, so this one is what makes the whole 9000-tick run canonical.
   const mark = {
     roundId: rid, entryId: eid, tick: TICKS, stateHash: hexToBytes(play(TICKS, entry)),
-    inputChainHash: batchId(batch), previousHash: NO_PREVIOUS,
+    inputChainHash: batchId(batch), previousHash: pid,
     sessionPubkey: ed25519.getPublicKey(session),
   };
   const mid = checkpointId(mark);
@@ -158,12 +190,15 @@ async function roundThrough(node, {
   assert.equal(receipted.length, SIGNED_RECEIPT_BYTES,
     `the node refused the mark: ${typeof receipted === 'string' ? receipted : receipted.length + ' bytes'}`);
 
-  // AND THE SECOND SIGNER NODE'S RECEIPT, which is what makes it canonical (13C).
+  // AND THE SECOND SIGNER NODE'S RECEIPTS, which is what makes them canonical (13C). Both marks, or
+  // the carried prefix stops at the first and the run replays to 600 ticks instead of the round.
   // Withheld when the caller wants to see what an uncarried transcript does.
   if (carried) {
-    const receipt = { checkpointId: mid, receivedAtMs: 1234n, nodePubkey: signerNode.pubkey };
-    const rbody = encodeCheckpointReceipt(receipt);
-    assert.equal(await s.say(joinSignedReceipt(rbody, schnorr.sign(receiptId(receipt), signerNode.secret))), 'held');
+    for (const cid of [pid, mid]) {
+      const receipt = { checkpointId: cid, receivedAtMs: 1234n, nodePubkey: signerNode.pubkey };
+      const rbody = encodeCheckpointReceipt(receipt);
+      assert.equal(await s.say(joinSignedReceipt(rbody, schnorr.sign(receiptId(receipt), signerNode.secret))), 'held');
+    }
   }
 
   if (objectFirst) {
@@ -173,7 +208,9 @@ async function roundThrough(node, {
 
   assert.equal(await s.say(`close ${toHex(rid)}`), 'closed');
   if (!keepSocket) s.ws.close();
-  return { rid, eid, contract: c, socket: s, mark: { id: mid, signerNode } };
+  // Both marks go back: the canonical prefix is carried marks IN ORDER, so a caller that carries
+  // only the last one leaves a gap at the planted first and nothing is canonical at all.
+  return { rid, eid, contract: c, socket: s, mark: { id: mid, planted: pid, signerNode } };
 }
 
 const hexToBytes = (h) => Uint8Array.from(h.match(/../g).map((x) => parseInt(x, 16)));
@@ -210,7 +247,7 @@ test('a round closed on a running daemon leaves a signed result nobody asked it 
     assert.deepEqual(result.nodePubkey, node.round.pubkey, 'the node signed under somebody else');
     assert.deepEqual(result.simCoreHash, contract.simCoreHash);
     assert.equal(result.outcome, 'FAILED');
-    assert.equal(result.score, 128, 'the stored score is not the one the replay found');
+    assert.equal(result.score, 0, 'the stored score is not the one the replay found');
 
     // THE HASH IS THE CANONICAL TRANSCRIPT'S, 13C's own object - the prefix of
     // marks the committee receipted. A node that signed over the rows it
@@ -415,10 +452,15 @@ test('a receipt arriving after the close produces the result the replay could no
       'a result was signed over a transcript nobody had carried');
 
     // NOW THE SECOND SIGNER NODE CARRIES IT, on the same socket a peer would use.
-    const receipt = { checkpointId: mark.id, receivedAtMs: 4321n, nodePubkey: mark.signerNode.pubkey };
-    const said = await socket.say(joinSignedReceipt(
-      encodeCheckpointReceipt(receipt), schnorr.sign(receiptId(receipt), mark.signerNode.secret)));
-    assert.equal(said, 'held');
+    // Both marks of the chain, because the prefix is carried in order: the planted first mark and
+    // then the one at the last tick, which is what the canonical transcript commits to.
+    let said;
+    for (const cid of [mark.planted, mark.id]) {
+      const receipt = { checkpointId: cid, receivedAtMs: 4321n, nodePubkey: mark.signerNode.pubkey };
+      said = await socket.say(joinSignedReceipt(
+        encodeCheckpointReceipt(receipt), schnorr.sign(receiptId(receipt), mark.signerNode.secret)));
+      assert.equal(said, 'held');
+    }
 
     await node.verifier.settling;
     for (const p of node.verifier.done) await p;
@@ -427,7 +469,7 @@ test('a receipt arriving after the close produces the result the replay could no
     assert.equal(now.count, 1, 'the late receipt did not produce a result');
     const result = decodePlayerResult(splitSignedResult(now.bytes).body);
     assert.deepEqual(result.transcriptHash, node.round.canonicalTranscript(rid, eid).hash);
-    assert.equal(result.score, 128);
+    assert.equal(result.score, 0);
 
     // AND THE SIGNER NODE DOES NOT REPLAY AGAIN FOR A RUN IT HAS SIGNED. Asked
     // directly, the retry declines rather than queueing work whose answer the
