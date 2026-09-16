@@ -193,6 +193,13 @@ mergeInto(LibraryManager.library, {
     return 1;
   },
 
+  // HOW MANY TIMES THE PAGE ITSELF PUT THE CORE IN A NEW WORLD (the session start's init), which
+  // C# does not see. Read-only; C# adds its own count of Init and Restart to it.
+  BlwpReliefEpoch: function () {
+    var b = Module.blwp;
+    return b ? (b.reliefEpoch | 0) : 0;
+  },
+
   // Put the truck back. A host command: the round ended, or it was written
   // off, and it belongs in the bay.
   BlwpTeleport: function (x, z, heading) {
@@ -454,6 +461,9 @@ mergeInto(LibraryManager.library, {
           // counts from here too, because a checkpoint is labelled with it and
           // hashes the core as it stands.
           b.st = b.core.init(net.seedWord);
+          // A NEW WORLD IS A NEW RELIEF: the seed names the hills. Counted here, where C# never
+          // hears about it, so the drawn terrain knows to rebuild (BlwpCore.ReliefEpoch).
+          b.reliefEpoch = (b.reliefEpoch | 0) + 1;
           net.seen = 0;
           net.client.setRound({
             roundId: net.where.roundId, entryId: net.where.entryId,

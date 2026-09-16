@@ -59,6 +59,7 @@ public class MempoolTerrain : MonoBehaviour
     public float craterRevealDelay = 6.4f;
 
     int _drawnCraters = -1, _drawnRevealed = -1;
+    int _drawnEpoch = -1;   // the core relief the drawn mesh was built for; -1 is the mempool's
     readonly Dictionary<long, float> _due = new Dictionary<long, float>();
     readonly HashSet<long> _live = new HashSet<long>();
     readonly List<long> _stale = new List<long>();
@@ -128,6 +129,13 @@ public class MempoolTerrain : MonoBehaviour
     void Update()
     {
         if (!Blwp.BlwpCore.HasSurface) return;
+        // THE CORE'S RELIEF CHANGED, SO THE PICTURE OF IT IS WRONG NOW (the owner 2026-09-16 12:38: "truck
+        // buried in dirt, only the cab roof showing" at 2:14 of a 2:30 block). A new round restarts the
+        // core into its own seed, and the seed moves the hills. Before this nothing rebuilt the mesh on
+        // that: only a crater change or the mempool poll every `refreshSeconds` did - and the poll skips
+        // the rebuild when no host answers - so for up to twenty seconds, or indefinitely, the truck rode
+        // the new round's ground through the last round's hills. Measured here, then rebuilt at once.
+        if (Blwp.BlwpCore.ReliefEpoch != _drawnEpoch) { SayStale(); Build(); return; }
         if (Blwp.BlwpCore.CraterCount != _drawnCraters) { Build(); return; }
 
         CollectRevealed();
@@ -334,6 +342,7 @@ public class MempoolTerrain : MonoBehaviour
     public void Build()
     {
         Revision++;
+        _drawnEpoch = Blwp.BlwpCore.HasSurface ? Blwp.BlwpCore.ReliefEpoch : -1;
 
         Version++;
         CollectRevealed();
@@ -400,6 +409,49 @@ public class MempoolTerrain : MonoBehaviour
         // the truck drives on this, so the collider has to follow every rebuild
         GetComponent<MeshCollider>().sharedMesh = null;
         GetComponent<MeshCollider>().sharedMesh = _mesh;
+    }
+
+    /// <summary>
+    /// HOW WRONG THE DRAWN MESH IS AGAINST THE CORE'S SURFACE NOW, read off the vertices actually drawn
+    /// and not off `HeightAt` - which already answers with the new relief. Every second vertex, once per
+    /// relief change, just before the rebuild that corrects it.
+    /// </summary>
+    void SayStale()
+    {
+        if (_verts == null || _verts.Length != columns * rows) return;
+        float above = 0f, below = 0f; int over = 0, n = 0;
+        for (int z = 0; z < rows; z += 2)
+            for (int x = 0; x < columns; x += 2)
+            {
+                float d = _verts[z * columns + x].y - HeightAt(x / (float)(columns - 1), z / (float)(rows - 1));
+                if (d > above) above = d;
+                if (d < below) below = d;
+                if (Mathf.Abs(d) > 0.5f) over++;
+                n++;
+            }
+        Debug.Log($"[ground] relief changed (drawn for {_drawnEpoch}, core now {Blwp.BlwpCore.ReliefEpoch}): the drawn "
+                  + $"terrain stood up to {above:F2} m above and {-below:F2} m below the core's surface, {over} of {n} "
+                  + "vertices off by more than 0.5 m - rebuilt now");
+    }
+
+    /// <summary>
+    /// The height of the mesh AS DRAWN at this point: the triangle under it, from the vertices the
+    /// renderer holds. `SampleSurface` recomputes from `HeightAt` and so cannot see a stale mesh.
+    /// </summary>
+    public float DrawnHeightAt(float worldX, float worldZ)
+    {
+        int vx = columns, vz = rows;
+        if (_verts == null || _verts.Length != vx * vz) return float.NaN;
+        float fu = Mathf.Clamp01(worldX / width + 0.5f) * (vx - 1);
+        float fv = Mathf.Clamp01(worldZ / depth + 0.5f) * (vz - 1);
+        int x0 = Mathf.Clamp(Mathf.FloorToInt(fu), 0, vx - 2);
+        int z0 = Mathf.Clamp(Mathf.FloorToInt(fv), 0, vz - 2);
+        float tx = fu - x0, tz = fv - z0;
+        float a = _verts[z0 * vx + x0].y, b = _verts[(z0 + 1) * vx + x0].y;
+        float c = _verts[z0 * vx + x0 + 1].y, d = _verts[(z0 + 1) * vx + x0 + 1].y;
+        return tx + tz < 1f
+            ? a + (c - a) * tx + (b - a) * tz
+            : d + (b - d) * (1f - tx) + (c - d) * (1f - tz);
     }
 
     /// <summary>

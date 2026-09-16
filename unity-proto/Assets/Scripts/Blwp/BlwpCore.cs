@@ -31,6 +31,7 @@ namespace Blwp
         [DllImport("__Internal")] private static extern int BlwpStateWords();
         [DllImport("__Internal")] private static extern int BlwpQueryParam(IntPtr name, IntPtr outp, int cap);
         [DllImport("__Internal")] private static extern int BlwpRestart(int seed);
+        [DllImport("__Internal")] private static extern int BlwpReliefEpoch();
         [DllImport("__Internal")] private static extern int BlwpTeleport(int x, int z, int heading);
         [DllImport("__Internal")] private static extern int BlwpTakeImpact();
         [DllImport("__Internal")] private static extern int BlwpReadImpact();
@@ -48,6 +49,7 @@ namespace Blwp
         private static int BlwpStateWords() => 0;
         private static int BlwpQueryParam(IntPtr n, IntPtr o, int cap) => 0;
         private static int BlwpRestart(int seed) => 0;
+        private static int BlwpReliefEpoch() => 0;
         private static int BlwpTeleport(int x, int z, int h) => 0;
         private static int BlwpTakeImpact() => 0;
         private static int BlwpReadImpact() => 0;
@@ -89,6 +91,7 @@ namespace Blwp
             // round's own, so the surface is worth asking about the moment the
             // core is up - which is what the truck and the terrain draw from.
             if (Available) HasRelief = true;
+            if (Available) _reliefEpoch++;
             if (Available)
             {
                 int words = BlwpStateWords();
@@ -126,7 +129,11 @@ namespace Blwp
         public static bool Restart(int seed)
         {
             if (!Available) return false;
-            return BlwpRestart(seed) == 1;
+            bool ok = BlwpRestart(seed) == 1;
+            // A RESTART BRINGS THE RELIEF ITS SEED NAMES (sim.js restart -> init), so whatever was drawn
+            // from the last round's ground is now a different map.
+            if (ok) _reliefEpoch++;
+            return ok;
         }
 
         public static void Step(int throttle, int steer, int brake, int handbrake, int practice)
@@ -158,6 +165,21 @@ namespace Blwp
 
         /// <summary>True once the core has actually taken the relief.</summary>
         public static bool HasRelief { get; private set; }
+
+        /// <summary>
+        /// WHICH RELIEF THE CORE HOLDS, as a count of the times it was made (the owner 2026-09-16 12:38).
+        ///
+        /// Every `Init` and every `Restart` makes the relief the seed names, and a new round's seed moves
+        /// the hills. Anything drawn from the ground watches this and rebuilds when it moves, or the
+        /// truck drives the new round's hills through the old round's picture of them.
+        /// </summary>
+        ///
+        /// AND THE PAGE'S OWN COUNT. A signed round's session start re-creates the core in the round's
+        /// world from JavaScript (blwp.jslib, `b.core.init(net.seedWord)`), and C# is never told: measured
+        /// live on 0.0.1385, the tick went 234 -> 32 with no rebuild, and two seeds' reliefs differ by up
+        /// to 5.59 m. Both counts only ever go up, so their sum moves whenever either does.
+        public static int ReliefEpoch => _reliefEpoch + BlwpReliefEpoch();
+        static int _reliefEpoch;
 
         /// <summary>
         /// True when <see cref="SurfaceAt"/> is worth asking: a core is

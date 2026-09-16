@@ -801,7 +801,14 @@ namespace Blwp
                     Debug.Log($"[ground] truck at tick {BlwpCore.Tick}: bottom "
                               + $"{(bb.min.y - LastSurface):+0.00;-0.00} m vs the ground, "
                               + $"ride {ride:F2}, surface {LastSurface:F2}, "
-                              + $"body offset {_bodyAboveGround:F2}");
+                              + $"body offset {_bodyAboveGround:F2}"
+                              // AND THE TERRAIN AS DRAWN under the truck against the core's surface there: a
+                              // truck on the core's ground inside a mesh drawn higher looks buried, and
+                              // nothing above could see it.
+                              + (terrain != null && BlwpCore.HasSurface
+                                  ? $"; under the truck the drawn terrain {terrain.DrawnHeightAt(x, z):F2} vs the core "
+                                    + $"{BlwpCore.SurfaceAt(x, z):F2} ({terrain.DrawnHeightAt(x, z) - BlwpCore.SurfaceAt(x, z):+0.00;-0.00} m)"
+                                  : ""));
                 }
             }
 
