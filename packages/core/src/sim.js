@@ -1193,7 +1193,7 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
   // the start of this one, and takes or gives ground.
   // The objectives' holders are re-read first, from the same positions; nothing in the odds reads them (§4.11).
   objectiveHolders(s, O_TACTICS, s[O_TICK], (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z));
-  pressure(s, O_TACTICS, s[O_TICK], (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z));
+  pressure(s, O_TACTICS, s[O_TICK], (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z), (x, z) => surfaceAt(st, x, z));
   // Tanks are pushed out of each other BEFORE anything moves, which is where
   // `Army.Update` does it - the first three lines of it, over every armour
   // pair, ahead of StepArmour and StepInfantry. The position is protocol: a
@@ -1451,7 +1451,7 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
           }
           s[b + U_TARGET] = (RELOAD_MIN + nextBelow(rng, RELOAD_SPAN)) | 0;
           // SHOOT-AND-SCOOT: the team moves on to its next hashed slot (rules/tactics.js).
-          scoot(s, O_TACTICS, i, s[O_TICK]);
+          scoot(s, O_TACTICS, i, s[O_TICK], (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z), groundOf);
         } else {
           // THE TRUCK WITH NO TANK TO FIGHT (WAR_TACTICS.md §1.2 GAP, closed): a tank with no enemy in range and the
           // truck inside its heat-widened reach fires on the truck, on its normal reload. The same draws as a shot at
@@ -1467,7 +1467,7 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
               courierDmg = add(courierDmg, shellForHeat(shell, heat));
             }
             s[b + U_TARGET] = (RELOAD_MIN + nextBelow(rng, RELOAD_SPAN)) | 0;
-            scoot(s, O_TACTICS, i, s[O_TICK]);
+            scoot(s, O_TACTICS, i, s[O_TICK], (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z), groundOf);
           }
         }
       }

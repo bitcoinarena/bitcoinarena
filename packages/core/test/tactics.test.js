@@ -4,7 +4,8 @@
 // before the lobby in Unity's RunEndsAtDeliveredTests.AWreckShowsWastedBeforeTheLobby.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { init, step, teleport } from '../src/sim.js';
+import { init, step, teleport, groundAt } from '../src/sim.js';
+import { frontlineZ } from '../src/rules/frontline.js';
 import * as L from '../src/state.js';
 import * as T from '../src/rules/tactics.js';
 import { stepUnit } from '../src/rules/army.js';
@@ -152,14 +153,21 @@ test('a team\'s objective weight is 2 on an objective\'s lane, 1 beside one, 0 e
   }
 });
 
-test('push moves one 8 m step on its re-read only, stays in [-8, 24], at most 16 on RIDGE; holders flip only on their re-read and never on a tie', () => {
+test('push moves one 8 m step on its re-read only, on a confirmed verdict with the team on post, stays in [-8, 24], at most 16 on RIDGE; holders flip only on their re-read', () => {
   const pushTick = (s, w, tick) => ((tick + ((T.mix(s[L.O_TACTICS + T.TAC_SEED], 300 + w) >>> 1) % 300)) % 300) === 0;
   const holdTick = (s, o, tick) => ((tick + ((T.mix(s[L.O_TACTICS + T.TAC_SEED], 400 + o) >>> 1) % 300)) % 300) === 0;
+  // Seeds 1-10: the hold cadence steps a push rarely (measured 0-10 steps a seed, 50 in all; seeds 1, 2 and 8 none).
   let steps = 0, flips = 0;
-  for (const seedWord of [1, 2, 3]) {
+  for (const seedWord of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) {
     const st = init(seedWord), s = st.i32, lanes = lanesOf(s);
+    const seamAt = (x) => frontlineZ(st.tape, x, 130 * ONE, 85 * ONE), ground = (x, z) => groundAt(st, x, z);
     for (let t = 0; t < 3600; t++) {
       const before = Array.from({ length: 12 }, (_, w) => s[L.O_TACTICS + T.TAC_PUSH + w]);
+      const verdictBefore = Array.from({ length: 12 }, (_, w) => s[L.O_TACTICS + T.TAC_VERDICT + w]);
+      // on post as the re-read sees it: this tick's posts, the positions at its start
+      const onPostAtRead = Array.from({ length: 12 }, (_, w) => { const side = w < 6 ? -1 : 1, k0 = (w % 6) * 2;
+        return [k0, k0 + 1].every((k) => { const i = (k << 3) | (side < 0 ? 0 : 4);
+          return s[base(i) + L.U_STATE] === 0 || T.onPost(s, L.O_TACTICS, i, s[L.O_TICK] + 1, seamAt, ground); }); });
       const holders = [0, 1, 2].map((o) => T.objectiveHolder(s, L.O_TACTICS, o));
       step(st, 0, 0, 0, ONE, 0);
       const tick = s[L.O_TICK];
@@ -173,6 +181,8 @@ test('push moves one 8 m step on its re-read only, stays in [-8, 24], at most 16
         if (!ontoRidge) {
           assert.ok(pushTick(s, w, tick), `seed ${seedWord} tick ${tick}: team ${w} push moved off its re-read tick`);
           assert.equal(Math.abs(d), 8 * ONE, `seed ${seedWord} tick ${tick}: team ${w} push moved ${d / ONE} m`);
+          assert.ok(onPostAtRead[w], `seed ${seedWord} tick ${tick}: team ${w} pushed with a tank off post`);
+          assert.equal(s[L.O_TACTICS + T.TAC_VERDICT + w], verdictBefore[w], `seed ${seedWord} tick ${tick}: team ${w} stepped on an unconfirmed verdict`);
           steps++;
         }
       }
@@ -185,7 +195,7 @@ test('push moves one 8 m step on its re-read only, stays in [-8, 24], at most 16
       }
     }
   }
-  assert.ok(steps > 100 && flips > 0, `nothing moved to check: ${steps} push steps, ${flips} holder changes`);
+  assert.ok(steps >= 40 && flips > 0, `nothing moved to check: ${steps} push steps, ${flips} holder changes`);
 });
 
 test('with nobody fighting, a team rests at +8 m on an objective\'s lane and at 0 anywhere else', () => {
@@ -203,10 +213,10 @@ test('with nobody fighting, a team rests at +8 m on an objective\'s lane and at 
 });
 
 test('the objective words are the same with the truck parked and driven through RIDGE, until the fight itself differs', () => {
-  // Seeds 1 and 5: the fight stays identical long enough (524 and 605 ticks) for holders to be written inside the
-  // compared stretch (2 and 4 times). On seeds 2 and 3 a shot at the truck split the worlds at 297 and 273 ticks with no
-  // holder written yet, so they compared lanes only.
-  for (const seedWord of [1, 5]) {
+  // Seeds 5 and 7: the fight stays identical long enough (491 and 555 ticks, hold cadence) for holders to be written
+  // inside the compared stretch (358 and 394 holder-ticks). On seeds 1, 3 and 9 a shot at the truck split the worlds at
+  // 294, 324 and 352 ticks with no holder written yet, so they would compare lanes only.
+  for (const seedWord of [5, 7]) {
     const a = init(seedWord), b = init(seedWord);
     const ridgeX = T.slotX(T.objectiveLane(a.i32, L.O_TACTICS, T.OBJ_RIDGE));
     let compared = 0, written = 0;
@@ -238,4 +248,35 @@ test('a bounding tank pushed onto the seam (depth 0) holds the seam, not the old
   stepUnit(u, r, 0, -100 * ONE, 0, 0, 0, 130 * ONE, 85 * ONE, 1092, 0, 1000, null, () => 0);
   assert.equal(u.z, 0, `a tank standing on its depth-0 post moved to z ${u.z / ONE}`);
   assert.equal(u.x, 15 * ONE);
+});
+
+test('a team scoots at most once in 1200 ticks and only with both living tanks on post (§4.3, re-ruled 20:30)', () => {
+  // On post is read from the positions at the start of the tick, against the slot the team scooted FROM; the scoot is
+  // taken mid-loop, after lower indices stepped, so one tick of a tank's travel (0.12 m) is allowed on top of 1.5 m.
+  let scoots = 0;
+  for (const seedWord of [1, 2, 3, 4, 5]) {
+    const st = init(seedWord), s = st.i32;
+    const seamAt = (x) => frontlineZ(st.tape, x, 130 * ONE, 85 * ONE), ground = (x, z) => groundAt(st, x, z);
+    const lastScoot = new Map();
+    for (let t = 0; t < 3600; t++) {
+      const slots = Array.from({ length: 12 }, (_, w) => s[L.O_TACTICS + T.TAC_SLOT + w]);
+      const nearPost = Array.from({ length: 12 }, (_, w) => { const side = w < 6 ? -1 : 1, k0 = (w % 6) * 2;
+        return [k0, k0 + 1].every((k) => { const i = (k << 3) | (side < 0 ? 0 : 4);
+          if (s[base(i) + L.U_STATE] === 0) return true;
+          const p = T.postOf(s, L.O_TACTICS, i, s[L.O_TICK] + 1), line = seamAt(p.x) + side * p.depth;
+          let hold = line;
+          if (!p.bounding) { let br = -Infinity; for (let c = -2; c <= 2; c++) { const z = line + c * 2 * ONE; const r = ground(p.x, z - side * 6 * ONE) - ground(p.x, z); if (r > br) { br = r; hold = z; } } }
+          return Math.hypot(s[base(i)] - p.x, s[base(i) + 1] - hold) <= 1.62 * ONE; }); });
+      step(st, 0, 0, 0, ONE, 0);
+      const tick = s[L.O_TICK];
+      for (let w = 0; w < 12; w++) {
+        if (s[L.O_TACTICS + T.TAC_SLOT + w] === slots[w]) continue;
+        scoots++;
+        assert.ok(nearPost[w], `seed ${seedWord} tick ${tick}: team ${w} scooted with a tank off post`);
+        if (lastScoot.has(w)) assert.ok(tick - lastScoot.get(w) >= T.SCOOT_TICKS, `seed ${seedWord} tick ${tick}: team ${w} scooted ${tick - lastScoot.get(w)} ticks after its last`);
+        lastScoot.set(w, tick);
+      }
+    }
+  }
+  assert.ok(scoots > 0, 'no team scooted - nothing checked');
 });

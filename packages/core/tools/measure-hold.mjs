@@ -144,7 +144,8 @@ for (const k of offKeys) {
     console.log(`  ${String(r[s2]).padStart(7)} ${pc(r[s2], off)} | ${pc(r[s2], all)}    ${s2.slice(k.length + 3)}`);
 }
 for (const k of Object.keys(r).filter((x) => x.startsWith('stacked:')).sort((a, b) => r[b] - r[a])) console.log(`  (post changes: ${r[k]} ${k})`);
-const legsN = r.legs, failed = r['failed legs'] || 0;
-console.log(`LEGS ${legsN}: bounding tank arrived ${pc(legsN - failed, legsN)}, failed ${failed} ${pc(failed, legsN)}   (bar: arrived >= 80%)`);
+const legsN = r.legs, failed = r['failed legs'] || 0, died = r['failed: never given a post (a tank of the pair died in the leg)'] || 0;
+console.log(`LEGS with both of the pair alive through the leg (the H2 bar): ${legsN - died}, bounding tank arrived ${legsN - failed} = ${pc(legsN - failed, legsN - died)}   (bar: >= 80%)`);
+console.log(`all legs ${legsN} incl. ${died} in which a tank died: arrived ${pc(legsN - failed, legsN)}, failed ${failed}`);
 for (const k of Object.keys(r).filter((x) => x.startsWith('failed: ')).sort((a, b) => r[b] - r[a]))
   console.log(`  ${String(r[k]).padStart(5)} ${pc(r[k], failed)} of failed | ${pc(r[k], legsN)} of legs  ${k.slice(8)}`);

@@ -1487,8 +1487,11 @@ test('and it tells further and further behind the line', () => {
   // -> 4,6,3,6 with the doctrine's half-line budget, moves that run to their end, pressure and objectives (§0 row 4b,
   // §4.10, §4.11; 2026-09-16). Eight seeds again: a full bed has more tanks on the truck on all eight at the seam (hot
   // 4-6 against cold 3-4) and on all eight behind the line (hot 4-6 against cold 2-3).
+  // -> 4,5,4,6 with the hold cadence (legs 12-20 s, push re-read only on post with a confirmed verdict, scoot 20 s from
+  // post; WAR_TACTICS.md re-ruled 20:30). Eight seeds: behind the line a full bed has more tanks on the truck on all
+  // eight (hot 4-6 against cold 2-5); at the seam on six, the same on two (seeds 1 and 4: 5-5, 3-3).
   assert.deepEqual([noticing(0, -25), noticing(20000, -25), noticing(0, -50), noticing(20000, -50)],
-    [4, 6, 3, 6],
+    [4, 5, 4, 6],
     'heat no longer widens how many tanks have the truck, at the seam or behind it');
 });
 

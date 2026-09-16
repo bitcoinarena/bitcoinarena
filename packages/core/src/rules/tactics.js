@@ -21,6 +21,7 @@
 // There is no road in the core: the kill zone every slot covers is the seam band the truck has to cross.
 import { ONE, idiv, abs, add, sub, mulFast, sqrt } from '../fixed.js';
 import { O_UNITS, U_WORDS, U_STATE } from '../state.js';
+import { hullDownHold } from './army.js';
 
 export const TEAMS_PER_SIDE = 6;
 export const SLOTS_PER_SIDE = 7;
@@ -37,15 +38,18 @@ const PUSH_TICKS = 300;                           // §4.10 each team re-reads i
 const PUSH_TAKE_LEAD = 3;                         // §4.10 the lead in tanks (with the objective weight) that takes ground
 const PUSH_GIVE_LEAD = 1;                         // §4.10 ...and that gives it
 const GUN_M = 46;                                 // §4.10 local odds are read inside the gun's reach
-export const SCOOT_TICKS = 600;                   // ten seconds between one team's relocations
-const PERIOD_MIN = 360, PERIOD_SPAN = 240;        // a leg of the role swap: 6 to 10 s
+export const SCOOT_TICKS = 1200;                  // §4.3 twenty seconds between one team's relocations (re-ruled 20:30)
+const PERIOD_MIN = 720, PERIOD_SPAN = 480;        // §2.6 a leg of the role swap: 12 to 20 s (re-ruled 20:30)
 
 // O_TACTICS: [0] seed hash; per team w (bull 0-5, bear 6-11): [1+w] slot 0..6, [13+w] tick of the last scoot,
 // [25+w] tick its role clock started, [37+w] the member bounding at that start (+2: it came back alone, §3),
-// [49+w] its push depth in Q16.16 metres (§4.10); [61+o] objective o (§4.11): lane in the low byte, holder in the next.
+// [49+w] its push depth in Q16.16 metres (§4.10); [61+o] objective o (§4.11): lane in the low byte, holder in the next;
+// [64+w] the verdict of the team's last push re-read (§4.10: 0 none, 1 take, 2 give, 3 drift).
 export const TAC_SEED = 0, TAC_SLOT = 1, TAC_SCOOT = 13, TAC_ROLE_START = 25, TAC_ROLE_MEMBER = 37, TAC_PUSH = 49;
-export const TAC_OBJ = 61;
-export const TAC_WORDS = 64;
+export const TAC_OBJ = 61, TAC_VERDICT = 64;
+export const TAC_WORDS = 76;
+export const VERDICT_NONE = 0, VERDICT_TAKE = 1, VERDICT_GIVE = 2, VERDICT_DRIFT = 3;
+const ON_POST = (Math.imul(3, ONE) >> 1) | 0;     // §4.3, §4.10 within 1.5 m of its hold, hull-down pick included
 export const OBJ_RIDGE = 0, OBJ_HOLLOW = 1, OBJ_GAP = 2, OBJECTIVES = 3;
 export const HOLDER_NONE = 0, HOLDER_BULL = 1, HOLDER_BEAR = 2;
 const RIDGE_GOAL = Math.imul(16, ONE);            // §4.11 a team on the crest holds the crest
@@ -114,6 +118,7 @@ export function initTactics(s, base, seedWord) {
     s[base + TAC_PUSH + w] = 0;
   }
   for (let o = 0; o < OBJECTIVES; o++) s[base + TAC_OBJ + o] = 0;
+  for (let w = 0; w < Math.imul(2, TEAMS_PER_SIDE); w++) s[base + TAC_VERDICT + w] = VERDICT_NONE;
 }
 
 // =====================================================================================================================
@@ -269,7 +274,32 @@ export function onRespawn(s, base, index, tick) {
   const w = teamWord(side, team);
   s[base + TAC_ROLE_START + w] = tick | 0;
   s[base + TAC_ROLE_MEMBER + w] = aliveAt(s, partnerOf(index)) ? member : (member | ALONE);
+  s[base + TAC_VERDICT + w] = VERDICT_NONE;         // §4.10: a respawn clears the team's verdict
   enterInLane(s, base, index);
+}
+
+/**
+ * ON POST (§4.3, §4.10, re-ruled 2026-09-16 20:30): the tank stands within 1.5 m of its hold - its slot x and its line,
+ * the hull-down pick for an overwatch tank. `seamAt(x)` is the front's z at x, `ground(x, z)` the surface.
+ */
+export function onPost(s, base, index, tick, seamAt, ground) {
+  const p = postOf(s, base, index, tick), side = teamOf(index).side;
+  const line = add(seamAt(p.x) | 0, mulFast(Math.imul(side, ONE), p.depth));
+  const hold = p.bounding ? line : hullDownHold(line, side, p.x, ground);
+  const b = O_UNITS + Math.imul(index, U_WORDS);
+  const dx = sub(s[b], p.x), dz = sub(s[b + 1], hold);
+  if (abs(dx) > ON_POST || abs(dz) > ON_POST) return false;
+  return add(mulFast(dx, dx), mulFast(dz, dz)) <= mulFast(ON_POST, ON_POST);
+}
+
+/** Both living tanks of the tank's team stand on post (a dead one does not hold the team back). */
+function teamOnPost(s, base, side, team, tick, seamAt, ground) {
+  const k0 = Math.imul(team, 2);
+  for (let m = 0; m < 2; m++) {
+    const idx = ((k0 + m) << 3) | (side < 0 ? 0 : 4);
+    if (aliveAt(s, idx) && !onPost(s, base, idx, tick, seamAt, ground)) return false;
+  }
+  return true;
 }
 
 /**
@@ -278,10 +308,13 @@ export function onRespawn(s, base, index, tick) {
  * 132 m) across the field, and the pair drove through the other teams - 92.8% of the ticks where the separation
  * push undid a tank's own step.
  */
-export function scoot(s, base, index, tick) {
+export function scoot(s, base, index, tick, seamAt, ground) {
   const { side, team } = teamOf(index);
   const w = teamWord(side, team);
   if ((tick | 0) - s[base + TAC_SCOOT + w] < SCOOT_TICKS) return false;
+  // ONLY FROM POST (re-ruled 20:30): a shot from a team still in a swap or a push does not scoot it and spends no
+  // cool-down; the next shot may.
+  if (!teamOnPost(s, base, side, team, tick, seamAt, ground)) return false;
   s[base + TAC_SCOOT + w] = tick | 0;
   const here = s[base + TAC_SLOT + w];
   let first = ((mix(mix(mix(s[base + TAC_SEED], side < 0 ? 211 : 223), team), tick | 0) >>> 1) & 1) ? 1 : -1;
@@ -319,12 +352,14 @@ function slotHeld(s, base, side, team, slot) {
  * 24), gives ground (-8 m, down to -8) or drifts one step back toward 0. A widow never pushes: it drifts to 0.
  * `seamAt(x)` is the front's z at x.
  */
-export function pressure(s, base, tick, seamAt) {
+export function pressure(s, base, tick, seamAt, ground) {
   const hash = s[base + TAC_SEED];
   const reach = Math.imul(GUN_M, 256);
   for (let w = 0; w < Math.imul(2, TEAMS_PER_SIDE); w++) {
     const side = w < TEAMS_PER_SIDE ? -1 : 1, team = mod(w, TEAMS_PER_SIDE);
     if (mod((tick | 0) + mod(mix(hash, 300 + w) >>> 1, PUSH_TICKS), PUSH_TICKS) !== 0) continue;
+    // (a) A PUSH COMPLETES BEFORE THE NEXT IS READ (re-ruled 20:30): no re-read while a living tank of the team is off post.
+    if (!teamOnPost(s, base, side, team, tick, seamAt, ground)) continue;
     const px = slotX(s[base + TAC_SLOT + w]), pz = seamAt(px) | 0;
     let own = 0, foe = 0;
     for (let i = 0; i < 96; i += 4) {
@@ -339,8 +374,15 @@ export function pressure(s, base, tick, seamAt) {
     let push = s[base + TAC_PUSH + w];
     const slot = s[base + TAC_SLOT + w], weight = objectiveWeight(s, base, slot);
     const rest = widow ? 0 : weight === 2 ? OBJECTIVE_REST : 0;
-    if (!widow && own + weight >= foe + PUSH_TAKE_LEAD) push = Math.min(goalOf(s, base, slot), push + PUSH_STEP);
-    else if (!widow && foe >= own + PUSH_GIVE_LEAD + weight) push = Math.max(PUSH_MIN, push - PUSH_STEP);
+    const verdict = !widow && own + weight >= foe + PUSH_TAKE_LEAD ? VERDICT_TAKE
+      : !widow && foe >= own + PUSH_GIVE_LEAD + weight ? VERDICT_GIVE : VERDICT_DRIFT;
+    // (b) A CONFIRMED VERDICT (re-ruled 20:30): a step only when this reading agrees with the last one, so a new
+    // direction needs two readings and 0 -> 8 -> 0 inside ten seconds cannot happen; a continued direction steps at once.
+    const confirmed = s[base + TAC_VERDICT + w] === verdict;
+    s[base + TAC_VERDICT + w] = verdict;
+    if (!confirmed) continue;
+    if (verdict === VERDICT_TAKE) push = Math.min(goalOf(s, base, slot), push + PUSH_STEP);
+    else if (verdict === VERDICT_GIVE) push = Math.max(PUSH_MIN, push - PUSH_STEP);
     else push = push > rest ? push - PUSH_STEP : push < rest ? push + PUSH_STEP : rest;
     if (push > goalOf(s, base, slot)) push = goalOf(s, base, slot);
     s[base + TAC_PUSH + w] = push | 0;

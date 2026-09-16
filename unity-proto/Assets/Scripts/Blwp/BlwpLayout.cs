@@ -86,7 +86,7 @@ namespace Blwp
         public const int S_HEAT = 7;
         public const int S_PRACTICE = 6;
         public const int S_STATE = 5;
-        public const int TACTICS_WORDS = 64;
+        public const int TACTICS_WORDS = 76;
         public const int TRUCK_WORDS = 13;
         public const int T_ANGVEL = 5;
         public const int T_CARGO = 7;
@@ -111,7 +111,7 @@ namespace Blwp
         public const int U_WORDS = 8;
         public const int U_X = 0;
         public const int U_Z = 1;
-        public const int WORDS = 2310;
+        public const int WORDS = 2322;
 
         /// <summary>Where the core starts the truck, Q16.16 metres.</summary>
         public const int START_X = -6579814;
