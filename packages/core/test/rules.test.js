@@ -22,6 +22,30 @@ import * as army from '../src/rules/army.js';
 import * as layout from '../src/state.js';
 import * as gate from '../src/rules/gate.js';
 
+/**
+ * KEEPS LIVE ARMOUR OUT OF TOUCH WITH THE TRUCK, for a test that measures something else (the owner 2026-09-16 17:06:
+ * "Touch truck-tank = truck dies"). With nothing holding tanks off it, a truck pinned in the battle is rolled into and
+ * written off by contact - measured, first touch at 95-1932 ticks wherever it stood on the field - which hides the
+ * fire, the heat and the flag these tests exist for. Pinned the way `parkedUnderFire` pins the air: a live tank
+ * nearer than 6.5 m (the nose and tail circles, 2.0 / 1.8 m out, plus 3 + 1.275 m) is set back out to 6.5 m along
+ * the line from the truck. The contact rule itself is measured on its own, below.
+ */
+function keepArmourOff(st) {
+  const s = st.i32, ONE_ = 65536, R = Math.round(6.5 * ONE_);
+  const tx = s[layout.O_TRUCK + layout.T_X], tz = s[layout.O_TRUCK + layout.T_Z];
+  for (let i = 0; i < layout.UNITS; i++) {
+    if ((i & layout.ARMOUR_MASK) !== 0) continue;
+    const b = layout.O_UNITS + i * layout.U_WORDS;
+    if (s[b + layout.U_HP] <= 0) continue;
+    const dx = (s[b + layout.U_X] - tx) / ONE_, dz = (s[b + layout.U_Z] - tz) / ONE_;
+    const d = Math.hypot(dx, dz);
+    if (d >= 6.5) continue;
+    const nx = d > 0.01 ? dx / d : 1, nz = d > 0.01 ? dz / d : 0;
+    s[b + layout.U_X] = tx + Math.round(nx * R);
+    s[b + layout.U_Z] = tz + Math.round(nz * R);
+  }
+}
+
 const ONE = 65536;
 
 /**
@@ -394,7 +418,7 @@ test('a wall stops the truck and a lintel does not', () => {
     const st = init(1);
     if (boxes) assert.ok(setSolids(st, boxes.length / 6, boxes), 'die Hindernisse wurden abgelehnt');
     const sx = st.i32[O + T_X] / Q;
-    for (let i = 0; i < 600; i++) step(st, Q, 0, 0, 0, 0);
+    for (let i = 0; i < 600; i++) { keepArmourOff(st); step(st, Q, 0, 0, 0, 0); }
     return { x: st.i32[O + T_X] / Q, v: st.i32[O + T_SPEED] / Q, from: sx };
   };
 
@@ -543,7 +567,7 @@ const parkedUnderFire = (seed, ticks) => {
     st.i32[O + T_Z] = 0;
   };
   hold();
-  for (let t = 0; t < ticks; t++) { step(st, 0, 0, 0, 0, 0); hold(); }
+  for (let t = 0; t < ticks; t++) { keepArmourOff(st); step(st, 0, 0, 0, 0, 0); hold(); }
   return { hp: st.i32[O + T_HP] / Q, state: st.i32[O_SCORE + S_STATE] };
 };
 
@@ -913,7 +937,7 @@ test('nothing but the truck reads the practice flag', async () => {
       st.i32[O_TRUCK + T_HP] = ONE * 100;
     };
     pin();
-    for (let i = 0; i < 3600; i++) { step(st, ONE, 0, 0, 0, practice); pin(); }
+    for (let i = 0; i < 3600; i++) { keepArmourOff(st); step(st, ONE, 0, 0, 0, practice); pin(); }
     return st;
   };
   const live = drive(0), shielded = drive(1);
@@ -1366,6 +1390,7 @@ function survives(feeSats, z) {
     s[O_TRUCK + T_Z] = Math.round(z * ONE);
     s[O_TRUCK + T_VX] = 0;
     s[O_TRUCK + T_VZ] = 0;
+    keepArmourOff(st);
     step(st, 0, 0, 0, 0, 0);
     ticks++;
   }
@@ -1400,6 +1425,7 @@ function noticing(feeSats, z) {
     s[O_TRUCK + T_Z] = Math.round(z * ONE);
     s[O_TRUCK + T_VX] = 0;
     s[O_TRUCK + T_VZ] = 0;
+    keepArmourOff(st);
     step(st, 0, 0, 0, 0, 0);
     if (t % 60) continue;
     const reach = army.courierReach(s[O_SCORE + layout.S_HEAT], true) / ONE;
@@ -1431,14 +1457,63 @@ test('and it tells further and further behind the line', () => {
   // And it tells further behind the line: at the seam and thirty metres deeper, a full bed puts more
   // guns on the truck than an empty one does.
   //
-  // MOVED ON PURPOSE, 4,10,4,7 -> 7,10,7,9 (the owner 2026-09-16 15:36): the ring now gives way at a
-  // tank's own pace instead of writing the tank onto it, so a truck can no longer carry a tank off the
-  // field. The empty bed's count rose by about three on every seed; the full bed still has more on
-  // the truck at both depths on all eight seeds measured (0x5eed1234 and 1-7): cold 5-11 / hot 9-12 at
-  // the seam, cold 4-7 / hot 6-10 behind it. Same strict equality, new world.
+  // MOVED ON PURPOSE (the owner 2026-09-16). 4,10,4,7 -> 7,10,7,9 when the truck's ring gave way at a tank's pace
+  // (15:36); -> 6,10,3,7 when the ring went (17:00: "Tanks must NOT react to the truck except by shooting") and a touch
+  // became a write-off (17:06), with armour kept out of contact here by `keepArmourOff`. Measured on eight seeds
+  // (0x5eed1234 and 1-7): a full bed has more tanks on the truck on every seed at both depths - at the seam hot 8-11
+  // against cold 6-9, behind the line hot 4-8 against cold 1-3. Same strict equality, new world.
   assert.deepEqual([noticing(0, -25), noticing(20000, -25), noticing(0, -50), noticing(20000, -50)],
-    [7, 10, 7, 9],
+    [6, 10, 3, 7],
     'heat no longer widens how many tanks have the truck, at the seam or behind it');
+});
+
+/**
+ * A TANK IS THE END OF THE RUN (the owner 2026-09-16 17:06: "Touch truck-tank = truck dies", and 17:00: "Tanks must NOT
+ * react to the truck except by shooting. No dodge. No being pushed"). Before, a crash was priced by speed - a write-off
+ * only from 4 m/s - and a ring moved armour off the truck: 0 of 24 slow drive-ins touched a tank with the ring, and
+ * without it 17 of 24 touched and 22 of 24 trucks lived.
+ */
+function intoATank(practice) {
+  const st = init(3), s = st.i32;
+  for (let t = 0; t < 300; t++) step(st, 0, 0, 0, ONE, 0);
+  let best = -1, bd = Infinity;
+  for (let i = 0; i < layout.UNITS; i++) {
+    if ((i & layout.ARMOUR_MASK) !== 0) continue;
+    const b = O_UNITS + i * U_WORDS;
+    if (s[b + U_HP] <= 0) continue;
+    const d = Math.hypot(s[b + U_X], s[b + U_Z]);
+    if (d < bd) { bd = d; best = i; }
+  }
+  const tb = O_UNITS + best * U_WORDS;
+  const before = [s[tb + U_X], s[tb + U_Z]];
+  // The truck is put ON the tank, standing still: no speed at all, only the touch.
+  s[O_TRUCK + T_X] = s[tb + U_X] - Math.round(3 * ONE);
+  s[O_TRUCK + T_Z] = s[tb + U_Z];
+  s[O_TRUCK + T_VX] = 0; s[O_TRUCK + T_VZ] = 0;
+  step(st, 0, 0, 0, ONE, practice);
+  return { hp: s[O_TRUCK + T_HP] / ONE, state: s[O_SCORE + S_STATE], tankMoved: Math.hypot(s[tb + U_X] - before[0], s[tb + U_Z] - before[1]) / ONE };
+}
+
+test('a truck that touches a tank is written off, however slowly it touched', () => {
+  const r = intoATank(0);
+  assert.equal(r.hp, 0, `standing against a tank left the truck on ${r.hp} points`);
+  assert.equal(r.state, gate.RUN_WRECKED, `the run says ${r.state} after the truck touched a tank`);
+  assert.ok(r.tankMoved < 0.2, `the tank was moved ${r.tankMoved.toFixed(2)} m by the truck - a tank is not pushed`);
+});
+
+test('practice still withholds it, as it withholds fire', () => {
+  const r = intoATank(ONE);
+  assert.equal(r.hp, 100, `a practice truck lost ${100 - r.hp} points on a touch`);
+  assert.equal(r.state, gate.RUN_LIVE);
+});
+
+test('a tank does not give way to the truck: nothing in the army step reads where the truck is', async () => {
+  const src = await readFile(new URL('../src/rules/army.js', import.meta.url), 'utf8');
+  const body = src.slice(src.indexOf('export function stepUnit'), src.indexOf('\n}\n', src.indexOf('export function stepUnit')));
+  const code = body.split('\n').filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*')).join('\n');
+  const reads = (code.match(/\btruck(?:X|Z|Heading)\b/g) || []).length;
+  // the three names appear once each, in the parameter list, and nowhere after it
+  assert.equal(reads, 3, `stepUnit reads the truck's position ${reads - 3} time(s) outside its parameters`);
 });
 
 test('an untold core hunts exactly as the recordings do', () => {

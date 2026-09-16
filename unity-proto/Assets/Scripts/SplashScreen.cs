@@ -83,7 +83,15 @@ public class SplashScreen : MonoBehaviour
 
     void Update()
     {
-        if (!Showing && BackToLobby(Blwp.BlwpNet.Ended, _fromLobby)) ShowLobbyAgain();
+        // WASTED FIRST, THEN THE LOBBY (the owner 2026-09-16 17:00). A wreck ends the run in the same tick, so the lobby
+        // came up in the frame the truck blew and covered the whole death sequence.
+        bool wrecked = Blwp.BlwpCore.Available && Blwp.BlwpCore.RunState == 2;       // RUN_WRECKED
+        if (!wrecked) _wreckedAt = -1f;
+        else if (_wreckedAt < 0f) _wreckedAt = Time.unscaledTime;
+        if (_health == null) _health = FindFirstObjectByType<TruckHealth>();
+        float hold = _health != null ? _health.respawnSeconds : 5f;
+        if (!Showing && BackToLobby(Blwp.BlwpNet.Ended, _fromLobby, wrecked,
+                                    _wreckedAt < 0f ? 0f : Time.unscaledTime - _wreckedAt, hold)) ShowLobbyAgain();
         if (!Showing && BackFromSpectating(_spectating, _spectator != null && _spectator.Active)) ShowLobbyAgain();
         if (!Showing)
         {
@@ -174,6 +182,17 @@ public class SplashScreen : MonoBehaviour
     /// to it, instead of leaving the player on a truck that can no longer be driven.
     /// </summary>
     public static bool BackToLobby(bool runEnded, bool fromLobby) => runEnded && fromLobby;
+
+    /// <summary>
+    /// AND A WRECK IS SHOWN BEFORE IT (the owner 2026-09-16 17:00: "when he dies the WASTED screen is missing and the
+    /// lobby comes first. Show WASTED, then lobby"). A run the core ended WRECKED goes back only once the death
+    /// sequence has had `hold` unscaled seconds - the truck's own burn, `TruckHealth.respawnSeconds`.
+    /// </summary>
+    public static bool BackToLobby(bool runEnded, bool fromLobby, bool wrecked, float sinceWreck, float hold) =>
+        BackToLobby(runEnded, fromLobby) && (!wrecked || sinceWreck >= hold);
+
+    float _wreckedAt = -1f;
+    TruckHealth _health;
 
     void ShowLobbyAgain()
     {

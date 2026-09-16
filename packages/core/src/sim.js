@@ -97,9 +97,8 @@ export const TRUCK_ARMOUR = Math.imul(3, ONE) >> 1;   // 1.5, TruckHealth.armour
  * counterpart yet, because the core has no hulls. It is on the list with
  * `Army.Wrecks`.
  */
-const CRASH_WRITE_OFF = Math.imul(4, ONE);       // TruckHealth.crashSpeed
-const CRASH_FLOOR = ONE >> 1;                    // 0.5 m/s, below it nothing
-const CRASH_POINTS = Math.imul(6, ONE);          // points per m/s
+// SUPERSEDED (the owner 2026-09-16 17:06): the speed-priced crash above - 4 m/s a write-off, 0.5 m/s the floor, 6 points
+// per m/s - is gone. Any touch with live armour writes the truck off; see the armour contact in `step`.
 
 export const HALF_X = Math.imul(130, ONE);
 export const HALF_Z = Math.imul(85, ONE);
@@ -1104,7 +1103,7 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
   // keeps the phase order exactly as it was.
   v.fx = sin(v.heading); v.fz = cos(v.heading);
   v.impact = 0;
-  resolveArmour(v, st.armour.xz, st.armour.n);
+  const touchedArmour = resolveArmour(v, st.armour.xz, st.armour.n);
 
   // The hardest armour impact this tick, for whatever applies damage.
   if (v.impact > s[T + T_IMPACT]) s[T + T_IMPACT] = v.impact;
@@ -1117,11 +1116,13 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
   // `practice` withholds it exactly as it withholds courier fire; the apron
   // does not, because the core has no invulnerable radius - that is a listed
   // gap and not something to invent here.
-  if (!practice && s[O_SCORE + S_STATE] === RUN_LIVE && v.impact > CRASH_FLOOR) {
-    if (v.impact >= CRASH_WRITE_OFF) s[T + T_HP] = 0;
-    else s[T + T_HP] = max(0, sub(s[T + T_HP],
-                                  div(mulFast(v.impact, CRASH_POINTS), TRUCK_ARMOUR)));
-  }
+  //
+  // A TANK IS NOT A WALL, IT IS THE END (the owner 2026-09-16 17:06: "Touch truck-tank = truck dies"). The crash used
+  // to be priced by how hard the truck went in - nothing under 0.5 m/s, a write-off only from 4 m/s - so a truck
+  // could lean on a tank and drive on: measured, 17 of 24 slow drive-ins touched a tank and 22 of 24 trucks lived.
+  // Any contact with live armour in a live run now writes it off; the impact word still goes to the host for the
+  // shake and the sound.
+  if (!practice && s[O_SCORE + S_STATE] === RUN_LIVE && touchedArmour) s[T + T_HP] = 0;
 
   s[T + T_X] = clamp(v.x, -HALF_X, HALF_X);
   s[T + T_Z] = clamp(v.z, -HALF_Z, HALF_Z);

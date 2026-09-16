@@ -77,6 +77,22 @@ public class RunEndsAtDeliveredTests
         Assert.AreEqual(1092f / 65536f * 60f, BlockClock.CoreSecondsLeft(8940), 1e-3f, "sixty ticks before the end is a second");
     }
 
+    /// <summary>
+    /// WASTED, THEN THE LOBBY (the owner 2026-09-16 17:00). A wreck ends the run in its own tick; the lobby waits for the
+    /// burn.
+    /// </summary>
+    [Test]
+    public void AWreckShowsWastedBeforeTheLobby()
+    {
+        Assert.IsFalse(SplashScreen.BackToLobby(true, true, wrecked: true, sinceWreck: 0f, hold: 5f),
+            "the lobby came up in the frame the truck blew and covered WASTED");
+        Assert.IsFalse(SplashScreen.BackToLobby(true, true, wrecked: true, sinceWreck: 4.9f, hold: 5f), "WASTED cut short");
+        Assert.IsTrue(SplashScreen.BackToLobby(true, true, wrecked: true, sinceWreck: 5f, hold: 5f), "after WASTED, the lobby");
+        Assert.IsTrue(SplashScreen.BackToLobby(true, true, wrecked: false, sinceWreck: 0f, hold: 5f),
+            "a delivery or a miss still goes straight back");
+        Assert.IsFalse(SplashScreen.BackToLobby(false, true, wrecked: true, sinceWreck: 9f, hold: 5f), "a run still going");
+    }
+
     [Test]
     public void ExitFromSpectateComesBackToTheLobby()
     {

@@ -2185,20 +2185,6 @@ function paceOf(index) {
 const ARMOUR_STANDOFF = Math.imul(9, ONE);
 const ARMOUR_SPREAD = Math.imul(10, ONE);
 
-/**
- * THE TRUCK'S OWN RING, and it is not the seam's (the owner 2026-09-16).
- *
- * Armour holds about 28 m off the TRUCK and comes at it from the beam, not down its nose. The 9 m
- * above is the stand-off from the SEAM and stays as it is; copying it onto the truck is what put a
- * tank on the cab. Measured before: the nearest tank sat at a median of 16.7 to 20.4 m on four of
- * five seeds, crossed 12 m in every run, and closed to 3.8 m.
- *
- * `FLANK_RATE` is how fast the bearing walks round the ring, in Q16.16 turns a tick: 180 is a
- * quarter turn in about 91 ticks, so a tank that arrives head-on is on the beam in a second and a
- * half rather than snapping there.
- */
-const TRUCK_RING = Math.imul(28, ONE);
-const FLANK_RATE = 180;
 
 // A rifleman's distance from the seam, and it is TWO numbers in the C#, added:
 //
@@ -2488,8 +2474,6 @@ const SIDE_BEAR = 1;
  */
 function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, halfX, halfZ, dt, index, tick, craters) {
   if (u.hp <= 0) return 0;
-  // Where the unit stood when the tick began: the truck's ring gives way from here (below).
-  const wasX = u.x, wasZ = u.z;
 
   // THE DRAW STAYS, THE WOBBLE GOES.
   //
@@ -2786,53 +2770,12 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, halfX, half
     }
   }
 
-  // AND OFF THE TRUCK: a tank holds `TRUCK_RING` and stands on the beam.
-  //
-  // A PUSH, after the step, in the same class as the craters above and the map edge - a place a unit
-  // may not be, resolved rather than negotiated. Not a steer: x and z are never rolled into one
-  // normalised vector here, because that coupling was tried on the chase, measured, and reverted.
-  // The truck is not pushed; it drives where the player drives it, and the armour gives way.
-  // ONLY A TANK THAT HAS THE TRUCK. The ring is an engagement rule, not a fence round the cab:
-  // `courierReach` is the reach the gun itself notices the courier at, heat and all, so heat still
-  // decides who closes. Measured with the ring on every tank inside 28 m instead: "heat tells
-  // further and further behind the line" fell from 2.42x to 1.00x, because armour that had never
-  // noticed the truck was held at the same radius whatever the depth, and a parked truck then had
-  // the same eleven guns on it at 25 m and at 50 m.
-  if (u.armour) {
-    const reach = courierReach(heat, true);
-    const tdx = sub(u.x, truckX), tdz = sub(u.z, truckZ);
-    if (abs(tdx) <= reach && abs(tdz) <= reach && length2(tdx, tdz) < reach) {
-      const d = length2(tdx, tdz);
-      // The same hundredth of a metre the crater push keeps: a divide needs a direction.
-      if (d > 655 && d < TRUCK_RING) {
-        // Out to the ring along the radius, then round it toward the nearer beam - the truck's
-        // heading a quarter turn either way - by at most `FLANK_RATE` in the tick.
-        const bear = atan2(tdx, tdz);
-        const left = (truckHeading + 16384) & 65535, right = (truckHeading - 16384) & 65535;
-        const offL = (((left - bear + 32768) & 65535) - 32768) | 0;
-        const offR = (((right - bear + 32768) & 65535) - 32768) | 0;
-        const off = abs(offL) < abs(offR) ? offL : offR;
-        const to = (bear + (off > FLANK_RATE ? FLANK_RATE : off < -FLANK_RATE ? -FLANK_RATE : off)) & 65535;
-        // AT A TANK'S OWN PACE, NOT THE TRUCK'S (the owner 2026-09-16 15:36: "if he drives toward a tank it
-        // races very fast off the field - he is pushing it away"). The ring point was written straight
-        // into the tank, so a truck driving at it carried it: measured, the tank sat at 28.0 m for 293-380
-        // ticks, was carried 122-149 m at 27-38 m/s against its own 6.8. It gives way at most
-        // `ARMOUR_WALK` a second from where it stood when the tick began - its own step and the giving
-        // way together, never the two added - and a truck that closes faster than that reaches it.
-        const ringX = add(truckX, mulFast(sin(to), TRUCK_RING));
-        const ringZ = add(truckZ, mulFast(cos(to), TRUCK_RING));
-        const gx = sub(ringX, wasX), gz = sub(ringZ, wasZ);
-        const gap = length2(gx, gz), most = mulFast(ARMOUR_WALK, dt);
-        if (gap > most) {
-          u.x = add(wasX, div(mulFast(gx, most), gap));
-          u.z = add(wasZ, div(mulFast(gz, most), gap));
-        } else {
-          u.x = ringX;
-          u.z = ringZ;
-        }
-      }
-    }
-  }
+  // NOTHING OFF THE TRUCK (the owner 2026-09-16 17:00: "Tanks must NOT react to the truck except by shooting. No
+  // dodge. No being pushed. They are much stronger than him; that must be obvious."). The ring that held armour
+  // 28 m off the truck (3c4f849), and the cap on it (11ea754), are gone: measured with it, no tank ever stood inside
+  // 12 m of a truck held in the battle (0 tank-ticks, 5 seeds x 3 places x 2 beds) because the truck moved them. A
+  // tank goes where its own line and its foe send it; the truck that drives into one is the thing pushed
+  // (`resolveArmour`), and the gun below is the only way a tank answers the truck.
 
   // The rifleman is not a vehicle and C# does not treat him as one: he walks
   // in z and holds his squad's x, and he simply FACES the way he is walking,
@@ -3699,9 +3642,8 @@ const TRUCK_ARMOUR = Math.imul(3, ONE) >> 1;   // 1.5, TruckHealth.armour
  * counterpart yet, because the core has no hulls. It is on the list with
  * `Army.Wrecks`.
  */
-const CRASH_WRITE_OFF = Math.imul(4, ONE);       // TruckHealth.crashSpeed
-const CRASH_FLOOR = ONE >> 1;                    // 0.5 m/s, below it nothing
-const CRASH_POINTS = Math.imul(6, ONE);          // points per m/s
+// SUPERSEDED (the owner 2026-09-16 17:06): the speed-priced crash above - 4 m/s a write-off, 0.5 m/s the floor, 6 points
+// per m/s - is gone. Any touch with live armour writes the truck off; see the armour contact in `step`.
 
 const HALF_X = Math.imul(130, ONE);
 const HALF_Z = Math.imul(85, ONE);
@@ -4706,7 +4648,7 @@ function step(st, throttle, steer, brake, handbrake, practice) {
   // keeps the phase order exactly as it was.
   v.fx = sin(v.heading); v.fz = cos(v.heading);
   v.impact = 0;
-  resolveArmour(v, st.armour.xz, st.armour.n);
+  const touchedArmour = resolveArmour(v, st.armour.xz, st.armour.n);
 
   // The hardest armour impact this tick, for whatever applies damage.
   if (v.impact > s[T + T_IMPACT]) s[T + T_IMPACT] = v.impact;
@@ -4719,11 +4661,13 @@ function step(st, throttle, steer, brake, handbrake, practice) {
   // `practice` withholds it exactly as it withholds courier fire; the apron
   // does not, because the core has no invulnerable radius - that is a listed
   // gap and not something to invent here.
-  if (!practice && s[O_SCORE + S_STATE] === RUN_LIVE && v.impact > CRASH_FLOOR) {
-    if (v.impact >= CRASH_WRITE_OFF) s[T + T_HP] = 0;
-    else s[T + T_HP] = max(0, sub(s[T + T_HP],
-                                  div(mulFast(v.impact, CRASH_POINTS), TRUCK_ARMOUR)));
-  }
+  //
+  // A TANK IS NOT A WALL, IT IS THE END (the owner 2026-09-16 17:06: "Touch truck-tank = truck dies"). The crash used
+  // to be priced by how hard the truck went in - nothing under 0.5 m/s, a write-off only from 4 m/s - so a truck
+  // could lean on a tank and drive on: measured, 17 of 24 slow drive-ins touched a tank and 22 of 24 trucks lived.
+  // Any contact with live armour in a live run now writes it off; the impact word still goes to the host for the
+  // shake and the sound.
+  if (!practice && s[O_SCORE + S_STATE] === RUN_LIVE && touchedArmour) s[T + T_HP] = 0;
 
   s[T + T_X] = clamp(v.x, -HALF_X, HALF_X);
   s[T + T_Z] = clamp(v.z, -HALF_Z, HALF_Z);
