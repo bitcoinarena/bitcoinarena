@@ -435,6 +435,7 @@ namespace Blwp
         Material _fire;
         float _cloud = -1f;
         Vector3 _cloudAt;
+        int _impactTick = -1;    // the core's tick when the bomb landed, not the page's clock
 
         /// <summary>
         /// Put a column over the impact.
@@ -513,6 +514,7 @@ namespace Blwp
             _countedWreckage = false;
             _cloudAt = at;
             _cloud = 0f;
+            _impactTick = BlwpCore.Available ? BlwpCore.State[Layout.O_TICK] : -1;
             _saidRest = -1f;
             _saidSkirt = -1f;    // or the second cloud says nothing until t=3.0s
             _saidHeat = -99f;
@@ -844,6 +846,43 @@ namespace Blwp
                                       + $"{(gap > 0f ? "buried" : "floating")} {Mathf.Abs(gap):F2} m "
                                       + $"-> lowest point now {floor:F2}, "
                                       + $"stem foot {_stemFoot:F2} = {(_stemFoot - floor):F2} m proud of the floor");
+
+                            // THE CORE'S OWN CLOCK, BECAUSE THE PAGE'S IS NOT IT (the owner 2026-09-16).
+                            //
+                            // The bowl is dug 384 ticks after the core consumes the liquidation, and the
+                            // cloud's clock starts at the IMPACT - the bomb run sits between the two and has
+                            // never been measured. A prediction that the cloud spends 80% of its life on
+                            // pre-crater ground was made from those two numbers and measured wrong, because
+                            // the gap between them was assumed to be nothing.
+                            //
+                            // Wall seconds cannot answer it: under swiftshader this page runs at roughly half
+                            // real-time, so a timestamp gap is a different quantity from a tick gap. The raw
+                            // words are printed instead - impact tick, tick now, and the nearest slot's dig
+                            // tick and radius - and the delay itself is NOT copied into C#: the liquidation's
+                            // consume tick is `dig - CRATER_DELAY` and that arithmetic is done off the core's
+                            // own numbers, where the constant lives. A radius of 0 with a dig tick set is a
+                            // slot armed and not yet dug, which is exactly the state this is here to catch.
+                            int tickNow = BlwpCore.Available ? BlwpCore.State[Layout.O_TICK] : -1;
+                            int slot = -1, dig = 0, radw = 0;
+                            float near = float.MaxValue;
+                            if (BlwpCore.Available)
+                                for (int i = 0; i < Layout.MAX_CRATERS; i++)
+                                {
+                                    int b = Layout.O_CRATERS + i * Layout.C_WORDS;
+                                    if (BlwpCore.State[b + Layout.C_DIG] == 0 && BlwpCore.State[b + Layout.C_R] <= 0) continue;
+                                    float dx = BlwpCore.Metres(BlwpCore.State[b + Layout.C_X]) - _cloudAt.x;
+                                    float dz = BlwpCore.Metres(BlwpCore.State[b + Layout.C_Z]) - _cloudAt.z;
+                                    float d2 = dx * dx + dz * dz;
+                                    if (d2 >= near) continue;
+                                    near = d2; slot = i;
+                                    dig = BlwpCore.State[b + Layout.C_DIG];
+                                    radw = BlwpCore.State[b + Layout.C_R];
+                                }
+                            Debug.Log($"[cloud] clock t={_cloud:F1}s: impact tick {_impactTick}, tick now {tickNow}, "
+                                      + $"nearest slot {slot}"
+                                      + (slot < 0 ? " none" : $" {Mathf.Sqrt(near):F1} m from the cloud")
+                                      + $", dig tick {dig}, radius "
+                                      + (radw > 0 ? $"{BlwpCore.Metres(radw):F1} m dug" : "0 (armed, not dug)"));
                         }
                     }
                 }
