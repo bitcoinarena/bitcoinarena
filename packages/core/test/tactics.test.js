@@ -213,10 +213,10 @@ test('with nobody fighting, a team rests at +8 m on an objective\'s lane and at 
 });
 
 test('the objective words are the same with the truck parked and driven through RIDGE, until the fight itself differs', () => {
-  // Seeds 5 and 7: the fight stays identical long enough (491 and 555 ticks, hold cadence) for holders to be written
-  // inside the compared stretch (358 and 394 holder-ticks). On seeds 1, 3 and 9 a shot at the truck split the worlds at
-  // 294, 324 and 352 ticks with no holder written yet, so they would compare lanes only.
-  for (const seedWord of [5, 7]) {
+  // Seeds 9 and 10: the fight stays identical long enough (352 and 361 ticks, columns off the budget) for holders to be
+  // written inside the compared stretch (223 and 211 holder-ticks). Seeds 1-8 split at 263-327 ticks, and 1, 2 and 4
+  // with no holder written yet, so they would compare lanes only.
+  for (const seedWord of [9, 10]) {
     const a = init(seedWord), b = init(seedWord);
     const ridgeX = T.slotX(T.objectiveLane(a.i32, L.O_TACTICS, T.OBJ_RIDGE));
     let compared = 0, written = 0;

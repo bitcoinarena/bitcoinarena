@@ -725,16 +725,17 @@ export function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, half
   // Every fidget measured on seeds 1-10 (14 of 442 flips) was a real change of post, a 14 m leg swap and an 8 m push
   // step the other way inside 2 s: the order reversed, and the hull reversed with it. The memory is the tank's own
   // U_COOLDOWN word (sim.js): bit 0 moved last tick, bits 1-2 its last z sign, 3-4 its last x sign, bit 5 it gave
-  // ground (above), bit 6 its move is granted (sim.js), from bit 7 the tick of its last reversal.
+  // ground (above), bit 6 its move is granted (sim.js), bit 7 it has stood on post since it spawned (sim.js), from bit 8
+  // the tick of its last reversal.
   if (u.armour && u.tac) {
     const mem = u.cooldown | 0, zWas = (mem >> 1) & 3, xWas = (mem >> 3) & 3;
-    let flipped = (mem >>> 7) | 0;
+    let flipped = (mem >>> 8) | 0;
     const recent = ((tick | 0) - flipped) < REVERSE_TICKS;
     let zNow = dz > 0 ? 1 : dz < 0 ? 2 : 0, xNow = dx > 0 ? 1 : dx < 0 ? 2 : 0;
     if (recent && zNow && zWas && zNow !== zWas) { dz = 0; zNow = 0; }
     if (recent && xNow && xWas && xNow !== xWas) { dx = 0; xNow = 0; }
     if ((zNow && zWas && zNow !== zWas) || (xNow && xWas && xNow !== xWas)) flipped = tick | 0;
-    u.reverseMemory = (Math.imul(flipped, 128) | (gaveGround << 5) | ((xNow || xWas) << 3) | ((zNow || zWas) << 1)) | 0;
+    u.reverseMemory = (Math.imul(flipped, 256) | (gaveGround << 5) | ((xNow || xWas) << 3) | ((zNow || zWas) << 1)) | 0;
   }
 
   // Sideways: a slow drift. NOT a chase towards the engaged foe.

@@ -2578,16 +2578,17 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, halfX, half
   // Every fidget measured on seeds 1-10 (14 of 442 flips) was a real change of post, a 14 m leg swap and an 8 m push
   // step the other way inside 2 s: the order reversed, and the hull reversed with it. The memory is the tank's own
   // U_COOLDOWN word (sim.js): bit 0 moved last tick, bits 1-2 its last z sign, 3-4 its last x sign, bit 5 it gave
-  // ground (above), bit 6 its move is granted (sim.js), from bit 7 the tick of its last reversal.
+  // ground (above), bit 6 its move is granted (sim.js), bit 7 it has stood on post since it spawned (sim.js), from bit 8
+  // the tick of its last reversal.
   if (u.armour && u.tac) {
     const mem = u.cooldown | 0, zWas = (mem >> 1) & 3, xWas = (mem >> 3) & 3;
-    let flipped = (mem >>> 7) | 0;
+    let flipped = (mem >>> 8) | 0;
     const recent = ((tick | 0) - flipped) < REVERSE_TICKS;
     let zNow = dz > 0 ? 1 : dz < 0 ? 2 : 0, xNow = dx > 0 ? 1 : dx < 0 ? 2 : 0;
     if (recent && zNow && zWas && zNow !== zWas) { dz = 0; zNow = 0; }
     if (recent && xNow && xWas && xNow !== xWas) { dx = 0; xNow = 0; }
     if ((zNow && zWas && zNow !== zWas) || (xNow && xWas && xNow !== xWas)) flipped = tick | 0;
-    u.reverseMemory = (Math.imul(flipped, 128) | (gaveGround << 5) | ((xNow || xWas) << 3) | ((zNow || zWas) << 1)) | 0;
+    u.reverseMemory = (Math.imul(flipped, 256) | (gaveGround << 5) | ((xNow || xWas) << 3) | ((zNow || zWas) << 1)) | 0;
   }
 
   // Sideways: a slow drift. NOT a chase towards the engaged foe.
@@ -5367,15 +5368,25 @@ function step(st, throttle, steer, brake, handbrake, practice) {
   // were a budget wait, 49854 of them more than 8 m out. A tank still on its old post waits there - that is its
   // overwatch - and a tank that has started goes on. A new move starts while the grants already running, the pushed
   // hulls and the tanks of its side still to step that rank above it are fewer than the budget.
-  const lineBudget = [0, 0], lineMoved = [0, 0], onTheLine = [], offPost = [], grantedBefore = [];
+  // A COLUMN (RULED, the owner 2026-09-16 21:20): a tank that has not yet stood on its post (within 1.5 m) since it spawned
+  // or respawned. Columns do not count against the half-line budget: they neither wait on it nor use it up. Bit 7 of the
+  // tank's U_COOLDOWN word, cleared at spawn. Counted by distance alone (40 m of its post), the opening drive and every
+  // respawn queued for the budget 40 m short of their posts: 7.1 points of living-pair tank-ticks (a274fbc).
+  const lineBudget = [0, 0], lineMoved = [0, 0], onTheLine = [], offPost = [], grantedBefore = [], stoodOnPost = [];
+  const seamOf = (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z);
   for (let i = 0; i < UNITS; i += 4) {
     const ib = unitBase(i);
-    onTheLine[i >> 2] = false; offPost[i >> 2] = 0; grantedBefore[i >> 2] = false;
+    onTheLine[i >> 2] = false; offPost[i >> 2] = 0; grantedBefore[i >> 2] = false; stoodOnPost[i >> 2] = false;
     if (s[ib + U_STATE] === 0) continue;
+    // Under this tick's post and under the last tick's: arriving on post is what lets the pair swap (holdLegs), so the
+    // tick a bound ends, its tank already stands against the next leg's post. Read only against this tick's post, 1159
+    // mover-ticks on over-half side-ticks (seeds 6-8) were tanks that had arrived and were still called columns.
+    stoodOnPost[i >> 2] = ((s[ib + U_COOLDOWN] >> 7) & 1) === 1 || onPost(s, O_TACTICS, i, s[O_TICK], seamOf, groundOf)
+      || onPost(s, O_TACTICS, i, (s[O_TICK] - 1) | 0, seamOf, groundOf);
     const ip = postOf(s, O_TACTICS, i, s[O_TICK]);
     const sd = s[ib + U_SIDE] < 0 ? -1 : 1;
     const lineZ = add(frontlineZ(st.tape, ip.x, HALF_X, HALF_Z), mulFast(Math.imul(sd, ONE), ip.depth));
-    if (abs(sub(s[ib + U_Z], lineZ)) <= LINE_REACH) {
+    if (stoodOnPost[i >> 2] && abs(sub(s[ib + U_Z], lineZ)) <= LINE_REACH) {
       lineBudget[sd < 0 ? 0 : 1]++; onTheLine[i >> 2] = true;
       grantedBefore[i >> 2] = ((s[ib + U_COOLDOWN] >> 6) & 1) === 1;
       const holdZ = ip.bounding ? lineZ : hullDownHold(lineZ, sd, ip.x, groundOf);
@@ -5693,8 +5704,8 @@ function step(st, throttle, steer, brake, handbrake, practice) {
       const granted = onTheLine[i >> 2] && !u.tacWait && u.wantsMove
         && (!sepMoved[i >> 2] || grantedBefore[i >> 2] || lineMoved[u.side < 0 ? 0 : 1] <= lineBudget[u.side < 0 ? 0 : 1]);
       if (granted && !grantedBefore[i >> 2] && !sepMoved[i >> 2]) lineMoved[u.side < 0 ? 0 : 1]++;
-      u.cooldown = ((u.x !== s[b + U_X] || u.z !== s[b + U_Z]) ? 1 : 0) | (granted ? 64 : 0)
-        | (u.tac ? (u.reverseMemory & ~65) : 0);
+      u.cooldown = ((u.x !== s[b + U_X] || u.z !== s[b + U_Z]) ? 1 : 0) | (granted ? 64 : 0) | (stoodOnPost[i >> 2] ? 128 : 0)
+        | (u.tac ? (u.reverseMemory & ~193) : 0);
     }
     s[b + U_X] = u.x; s[b + U_Z] = u.z;
     s[b + U_HEADING] = u.heading; s[b + U_COOLDOWN] = u.cooldown;

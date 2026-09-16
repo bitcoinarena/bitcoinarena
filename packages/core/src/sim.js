@@ -36,7 +36,7 @@ import {
 import { vehicleStep } from './rules/vehicle.js';
 import { flatGround, groundFromSeed, gradeAlong, heightAtWorld, DEFAULT_COLS, DEFAULT_ROWS } from './rules/ground.js';
 import { noSolids, resolveSolids, resolveArmour, BOX_WORDS } from './rules/solids.js';
-import { initTactics, postOf, scoot, onRespawn, enterInLane, pressure, partnerOf, FORWARD_LINE, rifleTeamOf, pushNear, mix, FIRE_TEAMS_PER_SIDE, TAC_SEED, firstManOf, initObjectives, objectiveHolders, clearOnEntry, holdLegs } from './rules/tactics.js';
+import { initTactics, postOf, scoot, onRespawn, enterInLane, pressure, partnerOf, FORWARD_LINE, rifleTeamOf, pushNear, mix, FIRE_TEAMS_PER_SIDE, TAC_SEED, firstManOf, initObjectives, objectiveHolders, clearOnEntry, holdLegs, onPost } from './rules/tactics.js';
 import { mapSolids } from './rules/map.js';
 import { heat as heatForLoad } from './rules/cargo.js';
 import { stepUnit, standingStill, separatePair, clearOfTruck, runOver, truckSpeed, threatAt, pickTarget, pickRifleTarget, riflePost, RELOAD_MIN, RELOAD_SPAN, DAMAGE_MIN, DAMAGE_SPAN, BACKOFF_RANGE, HIT_PER_MIL, ARMOUR_RANGE, RIFLE_RANGE, RIFLE_HIT_PER_MIL, RIFLE_RELOAD_TICKS, RIFLE_RELOAD_TICKS_SPAN, RIFLE_LOOK_TICKS, RIFLE_LOOK_TICKS_SPAN, RIFLE_HP, RIFLE_DAMAGE, hullDownHold, COURIER_RANGE, COURIER_DAMAGE_MIN, COURIER_DAMAGE_SPAN, COURIER_RIFLE_MIN, COURIER_RIFLE_SPAN, courierReach, outranksTheFoe, shellForHeat } from './rules/army.js';
@@ -1236,15 +1236,25 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
   // were a budget wait, 49854 of them more than 8 m out. A tank still on its old post waits there - that is its
   // overwatch - and a tank that has started goes on. A new move starts while the grants already running, the pushed
   // hulls and the tanks of its side still to step that rank above it are fewer than the budget.
-  const lineBudget = [0, 0], lineMoved = [0, 0], onTheLine = [], offPost = [], grantedBefore = [];
+  // A COLUMN (RULED, the owner 2026-09-16 21:20): a tank that has not yet stood on its post (within 1.5 m) since it spawned
+  // or respawned. Columns do not count against the half-line budget: they neither wait on it nor use it up. Bit 7 of the
+  // tank's U_COOLDOWN word, cleared at spawn. Counted by distance alone (40 m of its post), the opening drive and every
+  // respawn queued for the budget 40 m short of their posts: 7.1 points of living-pair tank-ticks (a274fbc).
+  const lineBudget = [0, 0], lineMoved = [0, 0], onTheLine = [], offPost = [], grantedBefore = [], stoodOnPost = [];
+  const seamOf = (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z);
   for (let i = 0; i < UNITS; i += 4) {
     const ib = unitBase(i);
-    onTheLine[i >> 2] = false; offPost[i >> 2] = 0; grantedBefore[i >> 2] = false;
+    onTheLine[i >> 2] = false; offPost[i >> 2] = 0; grantedBefore[i >> 2] = false; stoodOnPost[i >> 2] = false;
     if (s[ib + U_STATE] === 0) continue;
+    // Under this tick's post and under the last tick's: arriving on post is what lets the pair swap (holdLegs), so the
+    // tick a bound ends, its tank already stands against the next leg's post. Read only against this tick's post, 1159
+    // mover-ticks on over-half side-ticks (seeds 6-8) were tanks that had arrived and were still called columns.
+    stoodOnPost[i >> 2] = ((s[ib + U_COOLDOWN] >> 7) & 1) === 1 || onPost(s, O_TACTICS, i, s[O_TICK], seamOf, groundOf)
+      || onPost(s, O_TACTICS, i, (s[O_TICK] - 1) | 0, seamOf, groundOf);
     const ip = postOf(s, O_TACTICS, i, s[O_TICK]);
     const sd = s[ib + U_SIDE] < 0 ? -1 : 1;
     const lineZ = add(frontlineZ(st.tape, ip.x, HALF_X, HALF_Z), mulFast(Math.imul(sd, ONE), ip.depth));
-    if (abs(sub(s[ib + U_Z], lineZ)) <= LINE_REACH) {
+    if (stoodOnPost[i >> 2] && abs(sub(s[ib + U_Z], lineZ)) <= LINE_REACH) {
       lineBudget[sd < 0 ? 0 : 1]++; onTheLine[i >> 2] = true;
       grantedBefore[i >> 2] = ((s[ib + U_COOLDOWN] >> 6) & 1) === 1;
       const holdZ = ip.bounding ? lineZ : hullDownHold(lineZ, sd, ip.x, groundOf);
@@ -1562,8 +1572,8 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
       const granted = onTheLine[i >> 2] && !u.tacWait && u.wantsMove
         && (!sepMoved[i >> 2] || grantedBefore[i >> 2] || lineMoved[u.side < 0 ? 0 : 1] <= lineBudget[u.side < 0 ? 0 : 1]);
       if (granted && !grantedBefore[i >> 2] && !sepMoved[i >> 2]) lineMoved[u.side < 0 ? 0 : 1]++;
-      u.cooldown = ((u.x !== s[b + U_X] || u.z !== s[b + U_Z]) ? 1 : 0) | (granted ? 64 : 0)
-        | (u.tac ? (u.reverseMemory & ~65) : 0);
+      u.cooldown = ((u.x !== s[b + U_X] || u.z !== s[b + U_Z]) ? 1 : 0) | (granted ? 64 : 0) | (stoodOnPost[i >> 2] ? 128 : 0)
+        | (u.tac ? (u.reverseMemory & ~193) : 0);
     }
     s[b + U_X] = u.x; s[b + U_Z] = u.z;
     s[b + U_HEADING] = u.heading; s[b + U_COOLDOWN] = u.cooldown;

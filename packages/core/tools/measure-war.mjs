@@ -68,7 +68,7 @@ for (const seed of SEEDS) {
   const w5 = new Map();                            // squad key -> { halted, moving, allOnPost }
   const aliveBefore = new Map(Array.from({ length: 96 }, (_, i) => [i, alive(i)]));
   const pushHist = [];                             // per tick: squad key -> [pushNear, mean z of men on post]
-  const legOpen = new Map(), roleWas = new Map(), pushWas = [], pushDir = [];
+  const legOpen = new Map(), roleWas = new Map(), pushWas = [], pushDir = []; const stood = new Set();
   const holderWas = [0, 0, 0]; let changedHands = false;
   for (let t = 0; t < TICKS; t++) {
     const pre = new Map(Array.from({ length: 96 }, (_, i) => [i, [s[base(i)], s[base(i) + 1]]]));
@@ -81,7 +81,16 @@ for (const seed of SEEDS) {
     const mvOf = (i) => { const q = pre.get(i); return q ? Math.hypot(s[base(i)] - q[0], s[base(i) + 1] - q[1]) / ONE : 0; };
 
     // ================= ARMOUR =================
-    const onLine = (i) => { const p = T.postOf(s, L.O_TACTICS, i, tick); const tz = frontlineZ(st.tape, p.x, HX, HZ) + sideOf(i) * p.depth; return Math.abs(s[base(i) + 1] - tz) <= 40 * ONE; };
+    // ON THE LINE = within 40 m of its post AND not a column. A column (RULED, the owner 2026-09-16 21:20) is a tank that has
+    // not yet stood on its post (within 1.5 m, hull-down pick included) since it spawned or respawned.
+    for (const i of liveT) {
+      if (!aliveBefore.get(i) || mvOf(i) > 5) stood.delete(i);
+      const p = T.postOf(s, L.O_TACTICS, i, tick), sd = sideOf(i), line = frontlineZ(st.tape, p.x, HX, HZ) + sd * p.depth;
+      let hold = line;
+      if (!p.bounding) { let br = -Infinity; for (let c = -2; c <= 2; c++) { const z = line + c * 2 * ONE; const rise = groundAt(st, p.x, z - sd * 6 * ONE) - groundAt(st, p.x, z); if (rise > br) { br = rise; hold = z; } } }
+      if (Math.hypot(s[base(i)] - p.x, s[base(i) + 1] - hold) <= 1.5 * ONE) stood.add(i);
+    }
+    const onLine = (i) => { if (!stood.has(i)) return false; const p = T.postOf(s, L.O_TACTICS, i, tick); const tz = frontlineZ(st.tape, p.x, HX, HZ) + sideOf(i) * p.depth; return Math.abs(s[base(i) + 1] - tz) <= 40 * ONE; };
     for (const i of liveT) {
       let n = 0; for (const j of liveT) if (j !== i && sideOf(j) === sideOf(i) && Math.hypot(s[base(i)] - s[base(j)], s[base(i) + 1] - s[base(j) + 1]) < 12 * ONE) n++;
       add('A1 tank-ticks'); if (n >= 2) add('A1 pile');
