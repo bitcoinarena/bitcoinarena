@@ -744,8 +744,10 @@ a thing the truck drives on is settled state (multiplayer_p2p.md §0.5), so the 
 **height layer** the core's surface reader adds, exactly as the craters are a layer it subtracts
 (`surfaceAt = ground + candles - craters`). A client draws what the core computes, or it desyncs.
 
-- **The body is a plateau**, height **H = 2 m**, footprint the candle's x-slot (8.1 m, a 10 s candle)
-  by its open-to-close in z, at the seam's scale (§4.13). Consecutive candles share an edge (close of one is
+- **The body is a plateau**, height **H = 2 m** - the same for every candle; height carries no price,
+  the length in z does - footprint the candle's x-slot (8.1 m, a 10 s candle) by its open-to-close in z
+  (portrait, as on a chart: time along x, price along z; up to 122 m long at a full-range move; a body
+  shorter than 1 m - a doji - is built 1 m long so every candle exists as terrain), at the seam's scale (§4.13). Consecutive candles share an edge (close of one is
   the open of the next), so the chart is a **staircase of plateaus** at one height, not sixteen boxes:
   in x there is no step between neighbours where their bodies overlap in z, and where they do not, the
   step is the chart's own step.
