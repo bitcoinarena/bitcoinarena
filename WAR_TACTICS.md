@@ -1,6 +1,7 @@
-# Tank tactics
+# War tactics
 
-HARD (the owner 2026-09-16). Source of truth for armour in the **core**.
+HARD (the owner 2026-09-16). Source of truth for the **army** in the **core**: armour (part A) and infantry
+(part B). Renamed from TANK_TACTICS.md on the owner's order (2026-09-16) when the soldiers were added.
 Deterministic. Same integers on every signer node. No live LLM. No `Math.random`.
 
 Truck rules and tank-vs-tank rules are **not the same**.
@@ -10,15 +11,18 @@ the owner's HARD rules changed. Where this file **rules** something the owner di
 **RULED HERE** so he can overrule it. Where the code on the branch does not yet do what this file says,
 the line is marked **GAP**.
 
-Implementation: `packages/core/src/rules/tactics.js` (assignment, roles, slots, scoot) and the army step
-`packages/core/src/rules/army.js` (moves a tank to what tactics.js hands it, picks the hull-down spot).
-`sim.js` wires spawn, respawn, fire and touch. No other file decides where a tank goes.
+Implementation: `packages/core/src/rules/tactics.js` (assignment, roles, slots, scoot, push - armour and, per
+part B, the infantry's fire teams and rush clock) and the army step `packages/core/src/rules/army.js`
+(moves a unit to what tactics.js hands it, picks the hull-down spot, walks a man). `sim.js` wires spawn,
+respawn, fire, touch, run-over. No other file decides where a tank or a man goes.
+
+Sections 0-7 are armour (part A). Sections 8-14 are infantry (part B). §0 and §6 cover both.
 
 ---
 
 ## 0. What the player must see (the owner 2026-09-16, addendum)
 
-The tanks must **not look dumb among themselves**. They must read as **smart**, an **active
+The tanks - and the men, §8 on - must **not look dumb among themselves**. They must read as **smart**, an **active
 battlefield** - to the player, from the cab. This section is what "smart" means here, in numbers, so
 that a probe can fail it. Every number is measured over 5 seeds x 3600 ticks with the truck held in its
 bay unless said otherwise.
@@ -44,9 +48,23 @@ really look like war - not tanks stood in a row playing each other dumb. A DYNAM
 three rows are that order. A static line of six slots that never moves in z is **not** this spec, even
 if every other row passes. §4.10 is the rule that moves it.
 
+Infantry rows (part B, §8-§12), same probe conditions:
+
+| The player sees | The rule that makes it | Probe passes when |
+|---|---|---|
+| Men move in groups, not as 36 loners | fire teams §9.2, rush clock §11.2 | each living man is within 18 m of another living man of his fire team on > 80% of ticks; the 4 of a fire team move (step > 0.02 m) in the same tick or halt in the same tick on > 90% of ticks |
+| Fire and movement: some run while others shoot | rush / halt per fire team §11.2 | in any 5 s window every squad has at least one fire team halted and, unless all on post, at least one moving |
+| A ragged line with depth, not a fence | standoff scatter §11.1 | z spread (sd) of a side's men on post between 4 m and 12 m; x spread between 20 m and 60 m |
+| Infantry goes where the armour goes | follow the push §12.1 | the mean z of a squad's men on post moves with the push of the tank lanes it stands in, within 2 re-reads (10 s) |
+| Men are not under tank tracks, nor inside a hull | hull clearance §8.3 | no living man inside 3 m of a living tank's centre on more than 0.5% of man-ticks |
+| Men fall, columns walk in | rifle §11.4, respawn §10 | every 60 s window each side loses >= 3 men and receives >= 3; a replacement walks in from the back edge, never appears on the line |
+| Nobody flees the truck, the truck runs men down | §8.2 | a man's target post is identical with the truck present or absent; a man inside 3.6 m of a truck at >= 2.5 m/s is dead that tick |
+
 If a probe on this table fails, the doctrine is not live, whatever the code says.
 
 ---
+
+# Part A - Armour
 
 ## 1. Two relations
 
@@ -367,9 +385,10 @@ The x band of a team's slot, 27 m wide, centred on the slot. A team never crosse
 
 ---
 
-## 7. Tests that must fail if this is wrong
+## 7. Tests that must fail if this is wrong (armour)
 
-Each test names the section it guards. All run on the core alone, seeds fixed, no client.
+Each test names the section it guards. All run on the core alone, seeds fixed, no client. The infantry's
+tests are §14.
 
 - Two living tanks of a side hold the same slot at any tick (§2.4, §4.3).
 - A widow bounds, or holds nearer than the overwatch line (§3).
@@ -398,4 +417,195 @@ Each test names the section it guards. All run on the core alone, seeds fixed, n
 - A §0 probe row fails.
 - WASTED skipped, lobby first (§6; client test).
 
-Implement in `packages/core/src/rules/tactics.js` and the army step.
+---
+
+# Part B - Infantry
+
+The soldiers were not in TANK_TACTICS.md. the owner 2026-09-16: *"Also make a concept for the soldiers."*
+What the core does today for a rifleman is the C# `Army.StepInfantry` port, and it stays where this part
+does not say otherwise: those lines are marked **KEEP**. What is new is marked **RULED HERE** and is
+built the same way as part A: integer hashes of (seed, roster id, tick), no draw, no truck, so the stream
+does not shift and every signer node computes the same bits.
+
+## 8. Three relations of a rifleman
+
+### 8.1 Man vs man
+
+- No spacing rule, no push, no collision between men (KEEP: C# `Separate` runs on armour pairs only).
+  Men may stand close; a fire team is 4 men inside 18 m of each other (§9.2).
+- Rifle: 26 m, reload 2.5 to 4.5 s, look again after 0.4 to 1.1 s when nobody is in range, hit **4.5%**,
+  one round kills a man (10 HP at scale, damage 10). Target: the nearest living enemy **rifleman** inside
+  26 m. A man never fires at a tank (KEEP).
+- No crowded, no overrun, no fall-back (KEEP: `StepInfantry` has none).
+
+### 8.2 Man vs truck (the truck exception, infantry form)
+
+- **No movement rule reads the truck.** A man does not dodge, scatter or flee from it (KEEP: `ClearPath`'s
+  corridor branch never ran in the game and is not ported).
+- **Shoot** the truck: only once he has a rifle target, and only when the truck is inside 26 m
+  (`+0.8 x heat`) and nearer than that target (`outranks` up to `2.5 x heat` nearer). A round at the truck
+  is 1.5 to 3.5 (KEEP). A man with nobody in 26 m looks again after 0.4 to 1.1 s and fires at nothing -
+  **not** at the truck. **RULED HERE:** that stays for the rifle (the tank's GAP in §1.2 is the tank's:
+  a rifle that fired at every passing truck would put 246 rounds into a parked one, measured).
+- **Run over:** a man inside 3.6 m of the truck's centre while the truck moves at >= 2.5 m/s (its own
+  core velocity, never `T_WHEEL`) dies that tick. Below 2.5 m/s nothing happens (KEEP).
+- **Cleared:** a living man inside 1.6 m of a truck that is not a wreck is pushed out to 1.6 m (KEEP).
+  A wreck clears nobody and runs nobody down.
+- A man never wrecks the truck: touch man-truck is not touch tank-truck (§1.2).
+
+### 8.3 Man vs tank (RULED HERE)
+
+- **Hull clearance:** a living man inside 3.0 m of a living tank's centre - either side - is pushed out to
+  3.0 m along the line between them; the tank does not move. Today there is no such rule (**GAP**):
+  measured before, men stood inside hulls. A man does not stop a tank and the tank does not kill him;
+  he steps aside.
+- A man is never a tank's target and a tank is never his (KEEP).
+- A man is never crowded by a tank and a tank never gives ground to a man (KEEP).
+
+## 9. Organisation (bit-identical on every node)
+
+### 9.1 Roster
+
+- 36 riflemen a side: every index with `index & 3 != 0`, side on bit 2. Roster number
+  `r = ((index >> 3) << 2 | (index & 3)) - 1` runs 0..35 within the side in index order.
+  Same integer shifts as the armour, no table.
+
+### 9.2 Squads and fire teams
+
+- **Squads:** three a side, `k = 0..2`, each with a drawn, drifting **anchor** x (KEEP, protocol: the
+  anchor is `Rand(-80, 80)` at init and walks `sin(t x 0.12 + k x 2.4) x 3.6 m/s`, clamped to ±80 m).
+  A man's squad is **drawn at spawn** (`nextBelow(3)`, KEEP: protocol) and lives in his `U_TARGET`.
+- **Fire teams (RULED HERE):** four men. A fire team is `f = r >> 2` (nine a side), stable for the
+  round like a tank pair. It is **not** the squad: the squad says where a man's post is, the fire team
+  says **when he moves**. Two men of a fire team can be in different squads; that is fine - the rush
+  clock is what they share, and what the player reads as a group is men running and stopping together.
+  (Making the squad stable too would move a spawn draw, which is protocol. Not done.)
+- **Post:** `x = anchor + hash(index) in [-9, +9]`, `z = seam(x) - side x (4 + hash(index) in [0, 8])
+  + hash(index) in [-5, +5]` (KEEP). So 4 to 12 m short of the seam, ±5 m of depth scatter, ±9 m about
+  the anchor. A man walks to his post and stands there.
+
+### 9.3 Pace and gait
+
+- Walk 2.788 m/s x pace, pace `0.82..1.18` hashed from the index (KEEP). x and z on separate controllers,
+  each clamped to its own walk (KEEP).
+
+## 10. Death and respawn
+
+- Death: rifle round (§8.1), run over (§8.2), bomb (16 m blast, both sides, KEEP), crater fallout is
+  the truck's only.
+- Replacement clock: Army.InfantryReinforceSeconds, **2.5 s** at deficit 1, `deficit` times faster,
+  lowest dead rifle index of the side first (KEEP).
+- A replacement spawns at the back edge (`z = ±(76..79) m`), at his squad's post x (his squad drawn at
+  that spawn), and **walks in** at 2.8 m/s: 60 to 70 m, about 25 s. Visible columns walking to the
+  line are the doctrine, not a fault (KEEP).
+- Fire team membership never changes: `f` is the roster number's. A replacement rejoins its fire team's
+  rush clock at the current leg (§11.2).
+
+## 11. When which tactic
+
+### 11.1 Default hold - the line
+
+- **Fires:** whenever a man is on post and his fire team's clock says halt, or he has nowhere to go.
+- Holds his post (§9.2), hull facing the enemy side, fires per §8.1. The ±5 m depth scatter is the
+  "ragged line": men do not stand on a fence.
+
+### 11.2 Fire and movement - rush and halt by fire team (RULED HERE)
+
+- Today each man has his own halt clock hashed from his index: rests of 3 to 11 s (the first 2 to 9 s)
+  and halts of 0.4 to 1.8 s, re-hashed per cycle (KEEP the numbers). **Changed:** the clock is hashed from
+  the **fire team** `(seed, side, f, cycle)`, not the man, so four men rest and halt together. Same cost,
+  no draw.
+- While halted a man stands (step 0 in x and z) and fires. While resting (moving) he walks to his post;
+  once on it he stands until the post moves (drift, push §12.1) and fires.
+- **Bounding:** two fire teams whose posts overlap in x never halt in the same tick if both are off
+  their post - the leg phase of `f` and `f + 1` (same side) is offset by half a rest. **RULED HERE**
+  from the phase, so that of any two neighbouring teams one is covering while the other runs.
+- A moving man **fires** (KEEP: C# fires on the move; a 4.5% rifle on the move is what it is). A halted
+  man is not more accurate: no suppression, no prone. None exists.
+
+### 11.3 Cover (RULED HERE)
+
+- No prone, no crater cover: `AvoidWrecks` moves a man **out** of a crater (KEEP). A crater is fallout, not
+  cover.
+- A man does not use a tank as cover; he stays out of its hull (§8.3). Nothing else.
+
+### 11.4 Fire
+
+- §8.1 and §8.2. Drawn in index order after the armour's shots of the same tick (KEEP: protocol).
+
+### 11.5 Forbidden
+
+- Scattering from the truck. Charging a tank. Hiding in a crater. Prone. Smoke. Suppression that the
+  core does not model. Men walking through a tank's hull.
+
+## 12. Combined arms - infantry follows the armour (RULED HERE, for "DYNAMIC WAR")
+
+### 12.1 The push moves the men
+
+- A squad's men stand in the lanes of the tank teams whose slots are within 18 m of the squad's anchor
+  x (0, 1 or 2 teams). Their standoff is shifted by the **mean push** of those teams (§4.10), rounded to
+  8 m steps toward 0: post `z = seam(x) - side x (4 + hash - meanPush) + scatter`. No team in reach →
+  push 0, the line as today.
+- So an assault reads as an assault: the bounding tank crosses the seam, the overwatch tank covers, and
+  the fire teams in that lane rush forward behind it in the next legs; a team giving ground takes its
+  men back with it.
+- A man's post is clamped to `[seam - side x 40, seam + side x 8]`: infantry never leads the armour
+  across the seam by more than 8 m and never sits more than 40 m behind it.
+
+### 12.2 Infantry does not move the armour
+
+- Nothing in §4 reads a rifleman. Local odds (§4.10) count tanks only.
+
+### 12.3 The air
+
+- Bombs (16 m) fall on the seam band and kill men of both sides (KEEP). A fire team that lost 2 or more
+  keeps rushing; there is no morale.
+
+## 13. Vocabulary (infantry, all required)
+
+**Squad**
+12 men on one drawn, drifting anchor. Says where a man's post is.
+
+**Fire team**
+4 men by sorted roster id. Says when a man moves. Stable for the round.
+
+**Rush**
+The resting leg of the fire team's clock: the four walk to their posts.
+
+**Halt**
+The halted leg: the four stand and fire. 0.4 to 1.8 s.
+
+**Fire and movement**
+Neighbouring fire teams alternate rush and halt; one covers, one runs.
+
+**Line**
+A side's men on post: 4 to 12 m short of the seam, ±5 m ragged.
+
+**Column**
+Replacements walking in from the back edge to the line.
+
+**Follow the push**
+A squad's line moves with the push of the tank lanes it stands in (§12.1).
+
+**Hull clearance**
+3 m about any living tank; a man steps out of it.
+
+## 14. Tests that must fail if this is wrong (infantry)
+
+- A man's post differs between a run with the truck parked and one with it driven through the line, seed
+  equal (§8.2).
+- A man inside 3.6 m of a truck at 2.5 m/s or more survives the tick; a man inside 3.6 m of a wreck or of
+  a truck at 2.4 m/s dies of it (§8.2).
+- A living man ends a tick inside 3.0 m of a living tank's centre (§8.3, GAP today).
+- A fire team's four men have different halt clocks (§11.2).
+- Two neighbouring fire teams (same side, posts overlapping in x) are both halted off post in the same
+  tick (§11.2).
+- A squad's line does not move with the push of the tank teams in its lane within 10 s (§12.1).
+- A man's post leads the seam by more than 8 m or trails it by more than 40 m (§12.1).
+- The armour's local odds count a rifleman (§12.2).
+- Any infantry tactics value is computed from a draw of the round's RNG (§9: the stream must be
+  identical with tactics on and off, spawn draws included).
+- A §0 infantry row fails.
+
+Implement part A in `packages/core/src/rules/tactics.js` and part B beside it; the army step moves what
+they hand out.
