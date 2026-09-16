@@ -166,9 +166,10 @@ the owner ordered is in the state and not on the screen. Each is a client test.
 - **The front IS a chart: candles and the line (the owner 2026-09-16 20:00: "make the front explicitly
   candles, big enough to read from above and in 3D").** The tape (§4.13) is a price series and the seam is its 21-sample box average - an **SMA(21)**.
   So the client draws what a trader already knows: **candlesticks** on the ground for the raw tape and
-  the seam as the moving-average line the armies fight on. A candle is 4 samples (20 s at the 5 s
-  cadence): 16 candles across the 260 m map, each 16.5 m wide, body from open-z to close-z (a 2 m
-  plateau the war drives on, §4.15), wick from low to high (a solid pillar), green when close > open (a rising price - the bulls' ground) and red when it fell (the
+  the seam as the moving-average line the armies fight on. A candle is **10 seconds** (the owner
+  2026-09-16 20:15) = 2 samples at the 5 s cadence: **32 candles across the 260 m map, each 8.1 m
+  wide**, body from open-z to close-z (a 2 m plateau the war drives on, §4.15), wick from low to high
+  (a solid pillar), green when close > open (a rising price - the bulls' ground) and red when it fell (the
   bears'). The newest candle, at the miner's end, is **forming**: it grows as samples arrive, and the
   whole chart scrolls 4.13 m toward the post office per sample. From above - map, minimap, gunship - it
   reads as a TradingView chart with two armies on it; from the cab the ground under the truck is a red
@@ -179,10 +180,20 @@ the owner ordered is in the state and not on the screen. Each is a client test.
   solid 1 m pillar 9 m tall; and above the plateau the body glows to **6 m** as light, so it reads in
   3D from the cab and as a chart from 300 m up. The plateau is in the core's ground (it decides where
   a hull stands, where a man hides, whether a loaded truck makes the climb); the glow is the client's.
-  The bucket is **fixed at 4 samples** (it is terrain now, not a view). Client test: the candles' open,
+  The bucket is **fixed at 2 samples = 10 s** (it is terrain now, not a view). Client test: the candles' open,
   high, low, close equal the tape's per bucket, the drawn plateau, ramps and wick equal the core's
   `candleHeight` within 0.1 m at every metre, the glow reaches 6 m, and the line equals `seam(x)`
   within 0.5 m.
+- **Two charts, one tape** (the owner 2026-09-16 20:15: *"10 candles at the start, 250 at the end"*). The
+  **ground** is the rolling window: the last 32 ten-second candles, 5 min 20 s of price, older ones
+  scrolled into the post office. The **HUD chart** is the **whole round** since the contract's
+  `start_time`: 10 candles after 100 s, 250 after 41 min, compressing as a chart does, the round's open
+  marked, the lead and `THE BULLS WIN` read off it (§4.14). Both from the same attested samples; the
+  HUD chart is the client's memory of them, the ground is the core's 64. At round start the ground is
+  **full**: the tape is pre-filled with the 64 samples before `start_time` from the feed's history
+  (protocol: the committee attests them with the first sample), so the first truck rolls out onto a
+  chart, not onto flat ground. (Ten candles on the ground at the start and a filling chart is a
+  20-sample prefill; not chosen: the first players would fight on an empty battlefield.)
 - **The price is shown to the cent** (the owner 2026-09-16 20:00): `$75,000.02`, thousands separator, two
   decimals, always - HUD, spectate, result. Beside it the **lead** (§4.14): `BULLS +0.42%` or
   `BEARS -0.17%` against the round's open, from the same words. The core carries the tape in **cents**
@@ -721,8 +732,8 @@ a thing the truck drives on is settled state (multiplayer_p2p.md §0.5), so the 
 **height layer** the core's surface reader adds, exactly as the craters are a layer it subtracts
 (`surfaceAt = ground + candles - craters`). A client draws what the core computes, or it desyncs.
 
-- **The body is a plateau**, height **H = 2 m**, footprint the candle's x-slot (16.5 m) by its
-  open-to-close in z, at the seam's scale (§4.13). Consecutive candles share an edge (close of one is
+- **The body is a plateau**, height **H = 2 m**, footprint the candle's x-slot (8.1 m, a 10 s candle)
+  by its open-to-close in z, at the seam's scale (§4.13). Consecutive candles share an edge (close of one is
   the open of the next), so the chart is a **staircase of plateaus** at one height, not sixteen boxes:
   in x there is no step between neighbours where their bodies overlap in z, and where they do not, the
   step is the chart's own step.
@@ -761,7 +772,7 @@ a thing the truck drives on is settled state (multiplayer_p2p.md §0.5), so the 
   - **The truck** (§1.2): a plateau under it is ground; a wick is a wall; nothing in the war changes for
     it. A wreck on a plateau is a wreck on a plateau.
   - **Item 2** stays out: no rule here lets a tank read a wreck or move a whole line.
-- **Why 2 m and not 6**: a 6 m plateau needs a 15 m ramp at the same grade, which on a 16.5 m body is
+- **Why 2 m and not 6**: a 6 m plateau needs a 15 m ramp at the same grade, which on an 8.1 m body is
   no plateau at all - the candle becomes a ridge. Two metres hides a hull (3 m) to the turret, hides a
   prone man entirely, keeps the ramp short enough that the body's edge is still a line, and the glow
   gives the 6 m the eye wants. the owner can retune H and R; the grade `H / R` is the number that matters.
@@ -839,7 +850,8 @@ Ticks on which neither side assaults. The line breathes as §4.10; men crawl int
 fewer tanks.
 
 **Candle**
-Four samples of the tape as terrain: a 2 m plateau with 5 m ramps, a solid wick, a glow to 6 m. Green
+Ten seconds - two samples - of the tape as terrain: an 8.1 m wide, 2 m plateau with 5 m ramps, a
+solid wick, a glow to 6 m. 32 on the ground; the whole round in the HUD chart. Green
 up, red down. Scrolls 0.83 m/s toward the post office. Hull-down crests and candle-lip cover come with
 it (§4.15).
 

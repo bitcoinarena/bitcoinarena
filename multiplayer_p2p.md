@@ -209,8 +209,9 @@ text; this section is what the protocol commits to.
   per round and **moves during the round** as samples arrive - one per 5 s -
   so the front scrolls and redraws while the player drives, and the armies
   follow it at their own speed.
-- **The front is candlesticks, and the candles are terrain.** Four samples
-  make a candle: a 2 m plateau the truck drives on with a 5 m ramp on every
+- **The front is candlesticks, and the candles are terrain.** Ten seconds -
+  two samples - make a candle, 32 on the ground (the last 5 min 20 s; the
+  HUD chart shows the whole round since `start_time`, 250 candles at 41 min): a 2 m plateau the truck drives on with a 5 m ramp on every
   side, a solid wick, and a glow to 6 m - green up, red down, readable from
   above and from the cab. The plateaus and wicks are in the core's ground
   (`surfaceAt`), so they are settled state like the relief and the craters:
@@ -1613,7 +1614,9 @@ PriceSample { tick, price_cents, attestation }
 `price_cents` is the BTC/USD price in cents as an integer. `attestation` is
 the game/verify committee's signature over `(round_id, tick, price_cents)`:
 the committee nodes publish one attested sample every 5 s of round time from
-the contract's named feed, and a client includes each sample in its next
+the contract's named feed - and, with the first, the 64 samples before
+`start_time` from the feed's history, so the ground is a full chart from the
+first tick - and a client includes each sample in its next
 `InputBatch` at the tick it applied it. A sample without a valid attestation,
 or applied at a tick other than the one signed, makes the batch invalid. A
 run that received no attested feed runs on the round's seeded synthetic tape
