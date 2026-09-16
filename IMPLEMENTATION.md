@@ -987,7 +987,7 @@ behaviour behind the handbrake, the grip and the camera pitch has to be
 derived again from scratch. That is an iteration with the player at the
 wheel, not a mechanical port.
 
-**M1 army on screen.** Tanks, infantry and gunships are not decoration.
+**M1 army on screen.** Tanks, infantry and gunships are not decoration. Armour movement and truck exception: **TANK_TACTICS.md** (the owner 2026-09-16).
 Each pursues a real goal: close on the front, hold the line, engage a
 foe, or fall back if overrun — the same jobs `Army.cs` already names.
 Gunships run the length of the front on their own side and always aim a
