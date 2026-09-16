@@ -218,8 +218,10 @@ text; this section is what the protocol commits to.
   (`surfaceAt`), so they are settled state like the relief and the craters:
   a hull-down tank sits behind a candle's edge, a rifleman hides under its
   lip, a heavy truck may not make the climb, and every node replays the same
-  chart at the same metre. The chart scrolls continuously toward the post
-  office at 0.83 m/s as samples arrive (WAR_TACTICS.md §4.15).
+  chart at the same metre. The chart spans the field between the two buildings and scrolls
+  continuously toward the post office at 0.65 m/s as samples arrive; its
+  HIGH, LOW and the crossing of the round's OPEN are the war's objectives
+  (WAR_TACTICS.md §4.11, §4.15).
 - **The price is shown to the cent**: `$75,000.02`, always, with the lead
   against the round's open beside it (`BULLS +0.42%`).
 - **The price decides who wins the war - not points.** There is no simulated

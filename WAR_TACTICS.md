@@ -12,7 +12,7 @@ the owner's HARD rules changed. Where this file **rules** something the owner di
 the line is marked **GAP**.
 
 Amended 2026-09-16 19:02-19:05 (the owner's order, items 1 and 3 of his list, nothing else): **objectives**
-(§4.11: RIDGE, HOLLOW, GAP - no truck is an objective, §1.2) and **infantry that hides** (§11.3-§11.5:
+(§4.11: HIGH, LOW, OPEN of the chart - no truck is an objective, §1.2) and **infantry that hides** (§11.3-§11.5:
 cover in craters and wrecks, prone, suppression; the earlier "no cover" ruling of §11.3 is **OVERRULED**).
 Item 2 of his list (wrecks as cover for tanks, side pressure, whole-line retreat) is **not** in this file:
 no rule below lets a tank, a gun or the truck read a wreck. Everything added by that order is **GAP** until
@@ -67,9 +67,9 @@ How the rows are read (RULED HERE, after the first probe run, so two probes cann
 | Losses and replacements, both sides, all round | gun §4.4, reinforce §3 | neither side is at full 12 with zero losses over any 60 s window while the other side has a tank inside 46 m; neither side falls below 4 living tanks on more than 5% of ticks |
 | The two lines are not mirror images | §2.4, §4.10 | the two sides' slot orders differ on every seed; the two sides' mean push depth differs by >= 4 m on > 50% of ticks |
 | **An assault goes for something** | objectives §4.11 | of team-ticks with push >= 16 (forward hull on or across the seam), >= 60% are teams on an objective's own lane (by chance: 3 lanes of 7 slots); the mean push of teams on objective lanes exceeds the mean push of all other teams by >= 6 m |
-| Every objective is fought over | §4.11 | on >= 60% of ticks each of the three objectives has a living tank of **each** side inside 46 m of its point |
+| Every objective is fought over | §4.11 | on >= 60% of ticks each present objective has a living tank of **each** side inside 46 m of its point |
 | Objectives change hands | holder §4.11 | on >= 4 of 5 seeds at least one objective's holder goes from one side to the other inside the 3600 ticks |
-| The player knows what the war is for | markers §4.11 (client) | the client draws RIDGE, HOLLOW and GAP at the core's points in the holder's colour, within 1 tick of the core's words (client test) |
+| The player knows what the war is for | markers §4.11 (client) | the client draws HIGH, LOW and OPEN at the core's points in the holder's colour, within 1 tick of the core's words (client test) |
 | No truck is an objective | §1.2, §4.11 | objective lanes, points and holders are bit-identical with the truck parked and the truck driven through the line, seed equal |
 
 the owner 2026-09-16 (during this review): *"We want an exciting game for the player and the war must
@@ -120,7 +120,7 @@ measured or read from the core on the branch, each with a section below that fix
    (supply).
 3. **No tempo.** Six teams re-read their odds every 5 s on their own clocks, so the whole front
    breathes at once, all the time, at the same amplitude. No lull, no build-up, no assault that is
-   declared and then happens, no climax, no "they are coming for HOLLOW". §4.12.
+   declared and then happens, no climax, no "they are coming for the HIGH". §4.12.
 4. **The objectives have no consequence.** A holder colours a marker (§4.11). Nothing in the war gets
    better for holding RIDGE or worse for losing GAP, so nothing is worth defending and the marker is a
    label on a lane. §3 (supply), §4.12.
@@ -156,10 +156,10 @@ the owner ordered is in the state and not on the screen. Each is a client test.
 - **Every shot is seen.** Muzzle flash and a tracer for every tank round and every rifle round, a
   different tracer for a suppressing round (§11.5); a shell's fall is a burst on the ground where the
   core says it landed.
-- **The three names are on the map.** RIDGE, HOLLOW, GAP at the core's points, in the holder's colour,
-  grey when unheld, readable from the cab at 100 m (§4.11).
+- **The names are on the map.** HIGH, LOW, OPEN at the core's points, riding the chart, in the holder's
+  colour, grey when unheld, readable from the cab at 100 m (§4.11).
 - **An assault is announced.** On the tick the core's assault word is set: a banner - `BEARS ASSAULT
-  HOLLOW` - and a sound; on the flip, `HOLLOW TAKEN`; on the end without a flip, `ASSAULT ON HOLLOW
+  HIGH` - and a sound; on the flip, `HIGH TAKEN`; on the end without a flip, `ASSAULT ON HIGH
   FAILS`. Nothing else in the HUD may be louder than this while it runs (§4.12).
 - **The front is a line the player can see** - the seam drawn on the ground, and when the tape moves
   it, the line moves and the armies drive after it (§4.13). That is the market on the ground and it is
@@ -168,8 +168,8 @@ the owner ordered is in the state and not on the screen. Each is a client test.
   candles, big enough to read from above and in 3D").** The tape (§4.13) is a price series and the seam is its 21-sample box average - an **SMA(21)**.
   So the client draws what a trader already knows: **candlesticks** on the ground for the raw tape and
   the seam as the moving-average line the armies fight on. A candle is **10 seconds** (the owner
-  2026-09-16 20:15) = 2 samples at the 5 s cadence: **32 candles across the 260 m map, each 8.1 m
-  wide**, body from open-z to close-z (a 2 m plateau the war drives on, §4.15), wick from low to high
+  2026-09-16 20:15) = 2 samples at the 5 s cadence: **32 candles across the 208 m field, each 6.5 m of
+  slot**, body from open-z to close-z (a 2 m plateau the war drives on, §4.15), wick from low to high
   (a solid pillar), green when close > open (a rising price - the bulls' ground) and red when it fell (the
   bears'). The newest candle, at the miner's end, is **forming**: it grows as samples arrive, and the
   whole chart scrolls 4.13 m toward the post office per sample. From above - map, minimap, gunship - it
@@ -525,70 +525,56 @@ no truck. **RULED HERE**, numbers included, so it can be built without guessing;
   are the check that it actually happens; if they fail, the steps or the thresholds are retuned, not
   the rows.
 
-### 4.11 Objectives - what the assault goes for (the owner 2026-09-16 19:02-19:05)
+### 4.11 Objectives - what the assault goes for (the owner 2026-09-16 19:02-19:05, re-ruled 21:15: HIGH and LOW of the chart)
 
-the owner: *"an assault visibly goes for something. Not a seam with no reason."* Three named objectives on
-the seam band, **exactly three**, hashed from the round seed and the ground the seed made, so every signer
-node holds the same three. Not the truck's crossing: the owner overruled that at 19:05 (§1.2) - the war has
-many trucks and ghosts and must never move toward one. So all three are **ground**, and ground is a pure
-function of the seed (`groundFromSeed`). **GAP**, all of it, and **RULED HERE** where he gave no number.
+the owner: *"an assault visibly goes for something. Not a seam with no reason."* And at 21:15: *"would the
+high and low of the chart not make more sense as objectives?"* Yes - the earlier three were read from
+the seed's relief (RIDGE, HOLLOW, GAP: highest crest, lowest dip, flattest lane; measured on seeds 1-5,
+in the history), because at 19:02 the front was a fixed curve. Now the front is the chart (§4.13,
+§4.15), and the chart has the two places every trader already looks at. So the objectives are **the
+chart's HIGH and LOW**, plus **OPEN** where the chart crosses the round's open price. Not the truck's
+crossing (§1.2): the war has many trucks and ghosts and never moves toward one. All from the tape,
+which every node replays. **GAP**, all of it, **RULED HERE** where he gave no number.
 
-- **Where they can be.** On the five inner slot lanes, `slot = 1..5` (x = -54, -27, 0, 27, 54). The outer
-  lanes (±81) are levelled apron (`LEVEL_X` 86 m) and one of them holds the bay: nothing is fought for
-  there. Each objective is a **lane** and a **point** on it, `(slot x, seam(slot x))`, read at init; the
-  point rides the seam's curve like every post, so it moves when the tape moves and the lane does not.
-- **Reading the ground**, per lane, over the seam band: the 21 samples `z = -40 .. +40 m` in 4 m steps at
-  the lane's x, `heightAtWorld` of the round's ground (the relief, craters excluded - a crater is not
-  there at init and an objective does not move for one). Per lane: `top` = the highest, `bottom` = the
-  lowest, `relief = top - bottom`.
-- **The three, in this order, each the best of the lanes still free**, where "free" is: not taken, and
-  not next to a taken lane while a lane at least two away is still free (so the three do not sit on
-  three neighbouring lanes and leave half the front without a reason):
-  1. **RIDGE** - the lane with the highest `top`. The crest: the hull-down gun over it (§4.1) sees the
-     most of the seam. Ties → the lower slot number.
-  2. **HOLLOW** - the lane with the lowest `bottom`. The dip: the ground that hides an assault going
-     across, and the one a crater usually deepens. Ties → the lower slot number.
-  3. **GAP** - the lane with the smallest `relief`. The flat: the fastest way across for anything on
-     tracks or wheels. the owner's name for it was ROAD; there is no drawn road in the core (§4.1) and the
-     truck's route is not an input, so GAP is the driveable stretch the ground itself offers.
-  Measured on seeds 1-5 (working tree, 2026-09-16), lane = slot, x in metres:
-
-  | seed | RIDGE | HOLLOW | GAP |
-  |---|---|---|---|
-  | 1 | 3 (x 0, top 6.23 m) | 1 (x -54, bottom 1.91 m) | 5 (x 54, relief 2.41 m) |
-  | 2 | 2 (x -27, top 6.09 m) | 4 (x 27, bottom 1.92 m) | 1 (x -54, relief 1.62 m) |
-  | 3 | 4 (x 27, top 6.31 m) | 1 (x -54, bottom 2.03 m) | 5 (x 54, relief 1.47 m) |
-  | 4 | 5 (x 54, top 5.58 m) | 1 (x -54, bottom 1.21 m) | 3 (x 0, relief 1.59 m) |
-  | 5 | 2 (x -27, top 5.98 m) | 4 (x 27, bottom 1.59 m) | 3 (x 0, relief 2.76 m) |
-
-  Five seeds, five different triples, three lanes apart or more on every one of them. Without the
-  "not next to a taken lane" clause seeds 1 and 2 put two of the three on neighbouring lanes.
-- **State:** three words in `O_TACTICS` (`TAC_OBJ`, one per objective: lane in the low byte, holder in the
-  next: 0 none, 1 bull, 2 bear). Written at init and by the holder re-read; read by `pressure`, `scoot`
-  and the client. No draw.
-- **Weight `w`** (read by §4.10): a team is **on** an objective when its slot is the objective's lane
-  (`w = 2`), **next to** one when its slot is the lane ±1 (`w = 1`), else `w = 0`. A team next to two
-  objectives is still `w = 1`. So the odds are weighted toward the objectives, as the owner ordered, without
-  a tank ever leaving its lane for one: the line is still §2.4, the scoot still 27 m (§4.3, "toward the
-  objective"). What changes is **who pushes and how far**.
+- **HIGH** - the candle with the highest high in the window (the 64 samples on the ground, §4.13). Its
+  point is `(candle x, seam(candle x))`: the front where the bulls' line bulges furthest north, because
+  the price was highest there. The bears' natural target ("break the high"), the bulls' to defend.
+- **LOW** - the candle with the lowest low. The mirror: the bulls' target ("break the low"), the bears'
+  to defend.
+- **OPEN** - the candle in which the chart last crossed the round's open price (`TAC_OPEN`, §4.13),
+  the newest such crossing; its point on the seam. That is the line between BULLS and BEARS leading
+  (§4.14): whoever holds it holds the break-even. It exists only while the window contains a
+  crossing; a chart wholly above or below the open has **two** objectives, and the third marker is not
+  drawn. (the owner can drop OPEN; HIGH and LOW are his.)
+- **Spacing**: an objective's lane is the 27 m slot lane its candle x falls in; two objectives on the
+  same or neighbouring lanes are one objective for weight and rest (the rules below never stack), and
+  the client draws both names on the one marker. A single tall candle that is both the high and the low
+  of the window (a first-minute chart) is one marker, `HIGH/LOW`.
+- **They move, because the chart moves**: the candle scrolls 0.65 m/s toward the post office (§4.15),
+  so the objective's x drifts with it and its lane changes every ~40 s; when its candle leaves the map,
+  the next-best extreme in the window takes the name; a new high or low at the miner's end takes the
+  name the tick its sample lands. **Re-read on the sample tick only** (every 5 s), never between: an
+  objective does not flicker inside a sample. State: `TAC_OBJ`, three words - candle index in the low
+  byte, holder in the next (0 none, 1 bull, 2 bear), 0xFF for "none" (OPEN absent).
+- **Weight `w`** (read by §4.10): a team is **on** an objective when its slot lane is the objective's
+  lane (`w = 2`), **next to** one when it is the lane ±1 (`w = 1`), else `w = 0`; never more than 2. So
+  the odds are weighted toward the extremes of the chart without a tank ever leaving its lane: the line
+  is still §2.4, the scoot still 27 m (§4.3, "toward the objective"). What changes is **who pushes and
+  how far**.
 - **Rest** (read by §4.10): a team on an objective's lane drifts to `push = +8` when nobody has the upper
-  hand, not to 0. Its forward hull leans in 8 m short of the seam. Nowhere else.
-- **Goal** (read by §4.10): the push ceiling on an objective's lane is 24 (the general one) for HOLLOW and
-  GAP, and **16** for RIDGE - a team on the crest holds the crest, it does not roll down the far side of
-  it. Off an objective's lane the ceiling is 24 as before.
+  hand, not to 0. Nowhere else.
+- **Goal** (read by §4.10): the push ceiling on an objective's lane is 24, as everywhere; the old RIDGE
+  cap is gone with RIDGE.
 - **Holder**, re-read every 5 s (300 ticks) on the tick hashed from `(seed, objective)`: the side with
-  more living tanks inside 46 m of the point holds it; equal counts (0-0 included) leave the holder as it
-  was. Rifles do not count (§12.2). The holder is what the client colours the marker with; it changes
-  nothing in the odds - the odds already see the tanks that took it. It is **information for the
-  player**, and the player must see it: the client draws the three names at the three points, in the
-  holder's colour, grey when nobody holds. That is a client row in §0.
-- **Nothing here reads a truck** (§1.2). A probe that drives the truck through RIDGE must find the same
-  three words as one that leaves it in the bay.
-- Why three and not one: with one objective every push would go to one lane and the rest of the front
-  would be the static line the owner refused (§0). With three at least two lanes apart, both sides have
-  something to take at both ends and the middle, the independent slot orders (§2.4) put different teams
-  on them, and the §0 rows "an assault goes for something", "every objective is fought over" and
-  "objectives change hands" are what a run must show.
+  more living tanks inside 46 m of the point holds it; equal counts (0-0 included) leave the holder as
+  it was; a name that jumps to a new candle keeps its holder until the next re-read. Rifles do not count
+  (§12.2). The holder colours the marker and changes nothing in the odds. It is **information for the
+  player**: the client draws HIGH, LOW, OPEN at the points, in the holder's colour, grey when nobody
+  holds, riding the chart. That is a client row in §0.
+- **Nothing here reads a truck** (§1.2), and nothing here reads the relief: an objective is the chart's.
+- Why these and not the relief: the relief is the seed's and nobody looks at it; the high and the low
+  are what the market drew, every trader reads them at a glance, and they are where the front is
+  furthest into the other side's half - the places a war on a chart *would* be fought over.
 
 ### 4.12 Tempo - the assault (RULED HERE, 2026-09-16 19:20, for §0.1 points 2-4)
 
@@ -663,7 +649,7 @@ for, and the core does not draw it yet:**
   seeded tape's newest sample at init) is held in `O_TACTICS` as `TAC_OPEN` (one word). Every later
   sample against it is the **lead** (§4.14).
 - **Sample cadence (RULED HERE): one sample per 5 s (300 ticks).** A sample shifts the whole tape one
-  slot toward -x, 4.13 m of map (260 m / 63), so the front's shape **scrolls** left at 0.83 m/s and the
+  slot toward -x, 3.3 m of field (208 m / 63), so the front's shape **scrolls** left at 0.65 m/s (208 m / 63 per 5 s) and the
   newest price enters at the miner's end. That is inside a man's 2.8 m/s and a tank's 6.8; at one sample
   a second the scroll would be 4.13 m/s and the men could never close on the line. 64 samples at 5 s is
   5 min 20 s of price on the ground. A new sample can also move the window's low or high, and then the
@@ -750,14 +736,19 @@ a thing the truck drives on is settled state (multiplayer_p2p.md §0.5), so the 
 **height layer** the core's surface reader adds, exactly as the craters are a layer it subtracts
 (`surfaceAt = ground + candles - craters`). A client draws what the core computes, or it desyncs.
 
+- **The chart spans the field, not the buildings** (found 21:15): the post office ends at x = -114.4 and
+  the miner begins at 108.4, so the tape's 260 m had eight candles inside walls. The 32 candles are laid
+  over **x = -104 .. +104** (208 m, the air corridor's own width): slot **6.5 m**, body **3.7 m**,
+  corridor **2.8 m** - the truck (2.55 m) passes with 12 cm a side, which is a corridor, not a road; the
+  ramp is unchanged. `frontlineZ` maps the tape over the same 208 m so the seam and the candles agree.
 - **The body is a plateau**, height **H = 2 m** - the same for every candle; height carries no price,
-  the length in z does - **4.6 m wide** in its 8.1 m slot (a 10 s candle), by its open-to-close in z
+  the length in z does - **3.7 m wide** in its 6.5 m slot (a 10 s candle), by its open-to-close in z
   (portrait, as on a chart: time along x, price along z; up to 122 m long at a full-range move; a body
   shorter than 1 m - a doji - is built 1 m long so every candle exists as terrain),
-- **Padding (the owner 2026-09-16 21:00): a 3.5 m corridor between candles, flat, drivable.** The body
-  takes 57% of its slot, as a chart's bar does, and the 3.5 m between two bodies is ground at ground
-  level - a passage running north-south across the whole front, 31 of them, one every 8.1 m. A truck
-  (2.55 m over its body circles) drives it; a tank pair (12 m) does not fit and goes over the top. The
+- **Padding (the owner 2026-09-16 21:00): a 2.8 m corridor between candles, flat, drivable.** The body
+  takes 57% of its slot, as a chart's bar does, and the 2.8 m between two bodies is ground at ground
+  level - a passage running north-south across the whole front, 31 of them, one every 6.5 m. A truck
+  (2.55 m over its body circles) drives it, slowly; a tank pair (12 m) does not fit and goes over the top. The
   corridors scroll with the chart at 0.83 m/s: a truck standing in one is carried sideways by its wall
   at that speed, which is slow enough to steer against and is the chart moving under the wheels. at the seam's scale (§4.13). Each candle is its own island in its slot with 3.5 m of flat
   ground to the next: 32 bars with gaps, as on the screen.
@@ -784,9 +775,9 @@ a thing the truck drives on is settled state (multiplayer_p2p.md §0.5), so the 
 - **The glow** above the plateau, 2 m to 6 m, is light (§0.2): no collision, no rule reads it.
 - **It moves, so it moves smoothly.** The tape shifts one sample per 5 s (§4.13), which is a 4.13 m
   jump in x - fine for a post, not for ground under a wheel. So the candle layer (and, for free, the
-  seam: `frontlineZ` is read at `x + offset`) carries a **continuous scroll**: `offset = -4.13 m x
+  seam: `frontlineZ` is read at `x + offset`) carries a **continuous scroll**: `offset = -3.3 m x
   (tick - sampleTick) / 300`, reset to 0 on the sample tick as the tape shifts. The chart glides toward
-  the post office at 0.83 m/s and never jumps. A **rescale** (a new window high or low) moves body
+  the post office at 0.65 m/s and never jumps. A **rescale** (a new window high or low) moves body
   ends in z; they **lerp to their targets over the 300 ticks** to the next sample, so an edge moves at
   most 0.2 m per tick in the worst case (a full ±61 m rescale) and a few centimetres in the usual one.
   State: `TAC_SAMPLE_TICK` (one word) and the previous 64-sample targets (a second tape, 64 words) -
@@ -801,8 +792,7 @@ a thing the truck drives on is settled state (multiplayer_p2p.md §0.5), so the 
     side + 0.5 m; same eligibility, same claim order. It scrolls; the claim is re-read each tick and
     the man crawls with it. Cover from the lip is COVER (§11.4): 2 m of ground is a wreck's worth.
   - **Lines and posts**: unchanged - they are z from the seam; the men walk over the plateaus.
-  - **Objectives** (§4.11) read the seed's relief only, never the candles (they move; an objective
-    does not). **Craters** cut into a plateau as into ground. **Air** flies at 19 m, above the glow.
+  - **Objectives** (§4.11) are the chart's HIGH, LOW and OPEN and ride it (re-ruled 21:15). **Craters** cut into a plateau as into ground. **Air** flies at 19 m, above the glow.
   - **The truck** (§1.2): a plateau under it is ground; a wick is a wall; nothing in the war changes for
     it. A wreck on a plateau is a wreck on a plateau.
   - **Item 2** stays out: no rule here lets a tank read a wreck or move a whole line.
@@ -864,8 +854,8 @@ The living tank of a pair whose partner is dead. A singleton until the id respaw
 The x band of a team's slot, 27 m wide, centred on the slot. A team never crosses another's.
 
 **Objective**
-One of three named lanes and points on the seam - RIDGE (highest crest), HOLLOW (lowest dip), GAP
-(flattest stretch) - from the seed's ground, never from a truck. Weights the push of the teams on and
+HIGH, LOW and OPEN of the chart on the ground - the highest high, the lowest low, the newest crossing
+of the round's open - as points on the seam, riding the scroll; never from a truck. Weights the push of the teams on and
 beside it (§4.11). Has a holder the player sees.
 
 **Holder**
@@ -884,8 +874,8 @@ Ticks on which neither side assaults. The line breathes as §4.10; men crawl int
 fewer tanks.
 
 **Candle**
-Ten seconds - two samples - of the tape as terrain: a 4.6 m wide, 2 m plateau in an 8.1 m slot, 5 m
-ramps on the z-ends, walls on the x-faces, a 3.5 m flat corridor to the next, a solid wick, a glow to
+Ten seconds - two samples - of the tape as terrain: a 3.7 m wide, 2 m plateau in a 6.5 m slot, 5 m
+ramps on the z-ends, walls on the x-faces, a 2.8 m flat corridor to the next, a solid wick, a glow to
 6 m. 32 on the ground; the whole round in the HUD chart. Green
 up, red down. Scrolls 0.83 m/s toward the post office. Hull-down crests and candle-lip cover come with
 it (§4.15).
@@ -958,13 +948,11 @@ tests are §14.
   forward line (§4.10).
 - Over 5 seeds x 3600 ticks no team of a side ever crosses the seam, or no team ever gives ground (§4.10,
   §0 rows 11-13).
-- Two seeds give the same three objectives, or one seed gives different objectives on two nodes, or an
-  objective is on an outer lane (±81), or two objectives share a lane (§4.11).
-- Two objectives sit on neighbouring lanes while a lane two or more away was free (§4.11).
+- An objective is not the window's highest high / lowest low / newest open-crossing candle, or changes on
+  a tick that is not a sample tick, or two nodes differ on one tape (§4.11).
 - Any objective word - lane, point, holder - differs between the truck parked and the truck driven
-  through RIDGE, seed equal (§1.2, §4.11).
-- A team on RIDGE's lane has `push > 16`; a team on an objective's lane rests at 0, or a team off one
-  rests at 8 (§4.11).
+  through HIGH, seed equal (§1.2, §4.11).
+- A team on an objective's lane rests at 0, or a team off one rests at 8; `w` stacks above 2 (§4.11).
 - A team's `w` is other than 2 on an objective's lane, 1 beside it, 0 elsewhere (§4.11).
 - The holder changes on a tick that is not that objective's re-read tick, or changes on equal counts
   (§4.11).
@@ -1324,7 +1312,7 @@ by the men in the holes.
   release. A truck under a bomb is a truck under a bomb: it takes the blast per §1.2 (the owner 19:40:
   yes), after roll-out; today `detonate` reads units only (GAP).
 - **What the player sees** (§0.2): the rotor is heard 3 s before the gunship enters the corridor; the
-  banner names the call (`BEAR CAS - HOLLOW`, `BULL COUNTER - RIDGE`); the run-in is along the named
+  banner names the call (`BEAR CAS - HIGH`, `BULL COUNTER - LOW`); the run-in is along the named
   lane; a driven-off gunship trails smoke and climbs out; a held bomb is a gunship that crosses its own
   men and does not drop. A sortie is again "an event you look up for" - the sentence the C# claimed and
   the recording measured false.
