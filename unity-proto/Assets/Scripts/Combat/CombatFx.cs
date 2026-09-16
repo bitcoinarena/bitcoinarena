@@ -807,13 +807,18 @@ public class CombatFx : MonoBehaviour
     {
         if (_live.Count >= maxPieces) return;
         var t = Take(_cubes, _cube, debrisMaterial ?? blastMaterial);
-        t.SetPositionAndRotation(at, Random.rotation);
+        // ONE SIZE ABOVE THE BLAST POINT, not centred on it (the owner 2026-09-16 12:38, "black cube through
+        // the road"). The blast point is on the road, so a chunk centred there started half inside it and
+        // below its own resting height - measured on this rule, most chunks "landed" on their first frame,
+        // right at the centre of the blast.
+        var start = at + Vector3.up * size;
+        t.SetPositionAndRotation(start, Random.rotation);
         var scale = Vector3.one * size;
         t.localScale = scale;
         Add(new Piece
         {
             t = t, life = Random.Range(1.4f, 2.4f), baseScale = scale, kind = Kind.Debris,
-            from = at, velocity = velocity,
+            from = start, velocity = velocity,
             spin = new Vector3(Random.Range(-720f, 720f), Random.Range(-720f, 720f), Random.Range(-720f, 720f)),
         });
     }
@@ -1320,14 +1325,33 @@ public class CombatFx : MonoBehaviour
 
                 case Kind.Debris:
                 {
+                    if (k > 0.7f) p.t.localScale = p.baseScale * Mathf.Lerp(1f, 0f, (k - 0.7f) / 0.3f);
+
+                    // LANDED: it stays where it came down, still, on its lowest corner. Before, landing
+                    // zeroed the velocity and the next frame recomputed the position from the blast
+                    // point with it - measured on this rule, a chunk that had flown was pulled back to
+                    // the centre by up to 11 m, went on spinning there, and rested at half its edge, so a
+                    // tilted cube stood up to 12.6 cm into the road.
+                    if (!float.IsNaN(p.restOffset))
+                    {
+                        p.t.position = new Vector3(p.from.x, Ground(p.from.x, p.from.z) + HalfHeight(p.t), p.from.z);
+                        break;
+                    }
+
                     // a real arc, so pieces land instead of drifting off
                     float t2 = p.age;
                     var pos = p.from + p.velocity * t2 + Vector3.up * (-9.81f * 0.5f * t2 * t2);
-                    float floor = Ground(pos.x, pos.z) + p.baseScale.y * 0.5f;
-                    if (pos.y < floor) { pos.y = floor; p.velocity = Vector3.zero; }
-                    p.t.position = pos;
                     p.t.Rotate(p.spin * dt, Space.Self);
-                    if (k > 0.7f) p.t.localScale = p.baseScale * Mathf.Lerp(1f, 0f, (k - 0.7f) / 0.3f);
+                    float floor = Ground(pos.x, pos.z) + HalfHeight(p.t);
+                    if (pos.y < floor)
+                    {
+                        pos.y = floor;
+                        p.from = pos;                 // where it came down, not where it was thrown from
+                        p.velocity = Vector3.zero;
+                        p.spin = Vector3.zero;
+                        p.restOffset = floor - Ground(pos.x, pos.z);
+                    }
+                    p.t.position = pos;
                     break;
                 }
 
@@ -1343,6 +1367,19 @@ public class CombatFx : MonoBehaviour
     }
 
     public int LivePieces => _live.Count;
+
+    /// <summary>
+    /// How far a box's lowest corner hangs below its centre, as it is turned and scaled now: half of its
+    /// extent along world up. Half its edge is only right for a box sitting square.
+    /// </summary>
+    static float HalfHeight(Transform t)
+    {
+        var s = t.localScale;
+        var r = t.rotation;
+        return 0.5f * (Mathf.Abs((r * Vector3.right).y) * s.x
+                     + Mathf.Abs((r * Vector3.up).y) * s.y
+                     + Mathf.Abs((r * Vector3.forward).y) * s.z);
+    }
 
     /// <summary>
     /// Every piece ever created. Exposed because the live count cannot show

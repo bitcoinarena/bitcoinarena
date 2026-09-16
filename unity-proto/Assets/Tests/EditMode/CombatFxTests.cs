@@ -61,6 +61,87 @@ public class CombatFxTests
         Object.DestroyImmediate(fx.gameObject);
     }
 
+    /// <summary>
+    /// "Nuke blast: black cube through the road" (the owner 2026-09-16 12:38). The debris of a blast is dark
+    /// cubes. They must fly out, come down and stay where they came down, on top of the road. On the
+    /// old rule a chunk started centred on the road, landed on its first frame, and every chunk that
+    /// had flown was pulled back to the blast point the frame after it landed, spinning, with a tilted
+    /// corner through the asphalt. Measured on a flat ground at 0 m, so the road is y = 0.
+    /// </summary>
+    [Test]
+    public void BlastDebrisStaysWhereItLandsAndOnTopOfTheRoad()
+    {
+        var fx = Rig();
+        // Debris by its own material: in EditMode Awake has not run, so the pool's pieces carry no mesh
+        // to tell a cube from a sphere by.
+        fx.debrisMaterial = new Material(fx.blastMaterial);
+        const float dt = 1f / 60f;
+        float deepest = 0f, biggestJump = 0f, landedMoved = 0f;
+        int chunks = 0, landedOnFirstFrame = 0;
+
+        for (int blast = 0; blast < 40; blast++)
+        {
+            fx.Blast(Vector3.zero, 26f);
+            var pieces = new System.Collections.Generic.List<Transform>();
+            foreach (Transform c in fx.transform)
+                if (c.gameObject.activeSelf && c.GetComponent<MeshRenderer>() is MeshRenderer mr
+                    && mr.sharedMaterial == fx.debrisMaterial)
+                    pieces.Add(c);
+            chunks += pieces.Count;
+
+            var last = new Vector3[pieces.Count];
+            var landedAt = new Vector3?[pieces.Count];
+            for (int i = 0; i < pieces.Count; i++) last[i] = pieces[i].position;
+
+            for (int f = 0; f < 60 * 3; f++)
+            {
+                fx.Step(dt);
+                for (int i = 0; i < pieces.Count; i++)
+                {
+                    var t = pieces[i];
+                    if (!t.gameObject.activeSelf || t.localScale.x < 1e-4f) continue;
+                    var at = t.position;
+                    float low = LowestCorner(t);
+                    deepest = Mathf.Min(deepest, low);
+                    biggestJump = Mathf.Max(biggestJump,
+                        Vector2.Distance(new Vector2(at.x, at.z), new Vector2(last[i].x, last[i].z)));
+                    if (landedAt[i] == null && Mathf.Abs(at.y - last[i].y) < 1e-5f && f > 0)
+                        landedAt[i] = at;
+                    if (landedAt[i] != null)
+                        landedMoved = Mathf.Max(landedMoved, Vector2.Distance(
+                            new Vector2(at.x, at.z), new Vector2(landedAt[i].Value.x, landedAt[i].Value.z)));
+                    if (f == 0 && low < 1e-4f) landedOnFirstFrame++;
+                    last[i] = at;
+                }
+            }
+            for (int f = 0; f < 60 * 3; f++) fx.Step(dt);    // clear the field for the next blast
+        }
+
+        Debug.Log($"[debris-test] {chunks} chunks from 40 blasts: deepest corner {deepest * 100f:F2} cm below the road, "
+                  + $"biggest x/z step in one frame {biggestJump:F3} m, moved after coming to rest {landedMoved:F3} m, "
+                  + $"on the road after the first frame {landedOnFirstFrame}");
+
+        Assert.Greater(chunks, 0, "a blast threw no debris - the test measured nothing");
+        // Fastest sideways throw is 7 m/s: one frame is 0.117 m.
+        Assert.LessOrEqual(biggestJump, 7f * dt + 0.01f,
+            $"a chunk jumped {biggestJump:F2} m across the ground in one frame");
+        Assert.LessOrEqual(landedMoved, 0.001f, $"a chunk moved {landedMoved:F3} m after it had come to rest");
+        Assert.GreaterOrEqual(deepest, -0.001f, $"a chunk stood {-deepest * 100f:F2} cm into the road");
+        Object.DestroyImmediate(fx.gameObject);
+    }
+
+    /// <summary>The lowest of a unit cube's eight corners, as the transform puts them in the world.</summary>
+    static float LowestCorner(Transform t)
+    {
+        float low = float.MaxValue;
+        for (int c = 0; c < 8; c++)
+        {
+            var corner = new Vector3((c & 1) == 0 ? -0.5f : 0.5f, (c & 2) == 0 ? -0.5f : 0.5f, (c & 4) == 0 ? -0.5f : 0.5f);
+            low = Mathf.Min(low, t.TransformPoint(corner).y);
+        }
+        return low;
+    }
+
     [Test]
     public void EffectCountIsCapped()
     {
