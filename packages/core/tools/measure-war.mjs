@@ -36,7 +36,7 @@ patch('sim.js', '  const groundOf = (x, z) => surfaceAt(st, x, z);\n',
 patch('sim.js', '  for (let i = 0; i < UNITS; i++) {\n    const b = unitBase(i);\n    u.x = s[b + U_X];',
   '  if (globalThis.__W) globalThis.__W.halted(halted);\n', 'before');
 const url = (rel) => pathToFileURL(join(tmp, 'src', rel)).href;
-const { init, step, teleport } = await import(url('sim.js'));
+const { init, step, teleport, groundAt } = await import(url('sim.js'));
 const L = await import(url('state.js'));
 const T = await import(url('rules/tactics.js'));
 const { frontlineZ } = await import(url('rules/frontline.js'));
@@ -68,6 +68,7 @@ for (const seed of SEEDS) {
   const w5 = new Map();                            // squad key -> { halted, moving, allOnPost }
   const aliveBefore = new Map(Array.from({ length: 96 }, (_, i) => [i, alive(i)]));
   const pushHist = [];                             // per tick: squad key -> [pushNear, mean z of men on post]
+  const legOpen = new Map(), roleWas = new Map(), pushWas = [], pushDir = [];
   const holderWas = [0, 0, 0]; let changedHands = false;
   for (let t = 0; t < TICKS; t++) {
     const pre = new Map(Array.from({ length: 96 }, (_, i) => [i, [s[base(i)], s[base(i) + 1]]]));
@@ -127,6 +128,23 @@ for (const seed of SEEDS) {
         for (const i of ls) if (Math.hypot(s[base(i)] - xm * ONE, s[base(i) + 1] - zx) < 46 * ONE) n++;
         add('A9 samples'); if (n < 2) add('A9 gap'); }
     }
+    // ================= HOLD IS THE DEFAULT (§0, re-ruled 2026-09-16 20:30) =================
+    // On post = within 1.5 m of its hold: slot x, its line, the hull-down pick for an overwatch tank (§4.1).
+    const seamAt = (x) => frontlineZ(st.tape, x, HX, HZ), groundOf = (x, z) => groundAt(st, x, z);
+    const holdOf = (i) => { const p = T.postOf(s, L.O_TACTICS, i, tick), sd = sideOf(i); const line = seamAt(p.x) + sd * p.depth;
+      if (p.bounding) return [p.x, line];
+      let best = line, br = -Infinity; for (let c = -2; c <= 2; c++) { const z = line + c * 2 * ONE; const rise = groundOf(p.x, z - sd * 6 * ONE) - groundOf(p.x, z); if (rise > br) { br = rise; best = z; } }
+      return [p.x, best]; };
+    const onPostNow = (i) => { const [hx, hz] = holdOf(i); return Math.hypot(s[base(i)] - hx, s[base(i) + 1] - hz) <= 1.5 * ONE; };
+    for (const i of liveT) { const j = T.partnerOf(i); if (j < 0 || !alive(j)) continue; add('H1 pair tank-ticks'); if (onPostNow(i)) add('H1 on post'); }
+    for (const i of liveT) { const j = T.partnerOf(i); if (j < i || !alive(j)) { legOpen.delete(i); roleWas.delete(i); continue; }
+      const bi = T.isBounding(s, L.O_TACTICS, i, tick), was = roleWas.get(i); roleWas.set(i, bi);
+      if (was !== undefined && was !== bi) { const o = legOpen.get(i); if (o) { add('H2 legs'); if (o.arrived) add('H2 arrived'); } legOpen.set(i, { fwd: bi ? i : j, arrived: false }); }
+      const o = legOpen.get(i); if (o && !o.arrived && onPostNow(o.fwd)) o.arrived = true; }
+    for (let w = 0; w < 12; w++) { const pu = s[L.O_TACTICS + T.TAC_PUSH + w];
+      if (pushWas[w] !== undefined && pu !== pushWas[w]) { const d = Math.sign(pu - pushWas[w]); add('H3 push steps'); if (pushDir[w] && pushDir[w] !== d) add('H3 push reversals'); pushDir[w] = d; }
+      pushWas[w] = pu; }
+
     // ================= OBJECTIVES (§4.11) =================
     const lanes = [0, 1, 2].map((o) => T.objectiveLane(s, L.O_TACTICS, o));
     for (let w = 0; w < 12; w++) {
@@ -269,6 +287,9 @@ const rows = [
   ['A12b side below 4 tanks', P(pct('A12b below 4', 'A12b side-ticks')), pct('A12b below 4', 'A12b side-ticks') <= 0.05],
   ['A13a slot orders differ', `${r['13a orders differ'] || 0} of ${r['13a seeds']}`, r['13a orders differ'] === r['13a seeds']],
   ['A13b sides\' mean push differs >= 4 m', P(pct('A13b differ', 'A13b ticks')), pct('A13b differ', 'A13b ticks') > 0.5],
+  ['H1  pair tank-ticks within 1.5 m of the hold', P(pct('H1 on post', 'H1 pair tank-ticks')), pct('H1 on post', 'H1 pair tank-ticks') >= 0.5],
+  ['H2  legs whose new bounding tank reached its post', `${r['H2 arrived'] || 0} of ${r['H2 legs'] || 0} = ${P(pct('H2 arrived', 'H2 legs'))}`, pct('H2 arrived', 'H2 legs') >= 0.8],
+  ['H3  push steps reversing the previous (information)', `${r['H3 push reversals'] || 0} of ${r['H3 push steps'] || 0} = ${P(pct('H3 push reversals', 'H3 push steps'))}, ${((r['H3 push steps'] || 0) / (SEEDS.length * 12 * TICKS / 3600)).toFixed(2)} steps per team-minute`, true],
   ['O1  pushed >= 16 team-ticks on an objective lane', P(pct('O1 pushed on a lane', 'O1 pushed team-ticks')), pct('O1 pushed on a lane', 'O1 pushed team-ticks') >= 0.6],
   ['O1  mean push on objective lanes minus the rest', `${(r['O1 on push'] / r['O1 on n'] - r['O1 off push'] / r['O1 off n']).toFixed(2)} m`, r['O1 on push'] / r['O1 on n'] - r['O1 off push'] / r['O1 off n'] >= 6],
   ['O2  ticks with both sides inside 46 m (RIDGE/HOLLOW/GAP)', [0, 1, 2].map((o) => P(pct(`O2 fought ${o}`, `O2 ticks ${o}`))).join(' / '), [0, 1, 2].every((o) => pct(`O2 fought ${o}`, `O2 ticks ${o}`) >= 0.6)],
