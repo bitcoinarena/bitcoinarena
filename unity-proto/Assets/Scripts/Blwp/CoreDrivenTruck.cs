@@ -621,8 +621,9 @@ namespace Blwp
             // between them; the simulation never sees a partial one.
             _accumulator += Time.deltaTime;
             float step = 1f / Mathf.Max(1, tickHz);
-            int guard = 0;
-            while (_accumulator >= step && guard++ < 8)
+            int due = TicksDue(ref _accumulator, step, MostTicksPerFrame, out float dropped);
+            if (dropped > 0f) SayBehind(dropped, step);
+            for (int n = 0; n < due; n++)
             {
                 // Remember where the truck was BEFORE this tick. Without it
                 // there is nothing to draw between, and the truck moves in
@@ -635,10 +636,56 @@ namespace Blwp
                 _prevHeading = BlwpCore.TruckHeading;
                 _havePrev = true;
 
-                _accumulator -= step;
                 BlwpCore.Step(Throttle(), Steer(), Brake(), Handbrake(), PracticeMode.Input);
             }
             Apply(Mathf.Clamp01(_accumulator / step));
+        }
+
+        /// <summary>The most core ticks one frame steps.</summary>
+        public const int MostTicksPerFrame = 8;
+
+        /// <summary>
+        /// HOW MANY TICKS THIS FRAME STEPS, AND THE TIME IT GIVES UP (the owner 2026-09-16 12:26: "tanks
+        /// suddenly become very fast and race to another place - not instant", on login, every time).
+        ///
+        /// The loop stepped at most `most` ticks a frame and kept the rest of the time owed. A frame
+        /// is at most a third of a second (Unity's maximumDeltaTime), which is 20 ticks, so every slow
+        /// frame left 12 ticks owed and nothing ever let them go: measured on the live page in a
+        /// headless browser, the core stepped 5.5 to 10.6 ticks per wall second against its 60, and
+        /// the debt stood at about 11,000 ticks after 229 s. The moment the frames got fast again it
+        /// was paid back at 8 ticks a frame - the whole war, tanks and all, at eight times its speed
+        /// until it had caught up with a clock nobody plays by.
+        ///
+        /// Time a frame cannot step is dropped instead: the world runs slower while the page is slow
+        /// and at its own speed when it is not. The protocol defines no tick rate against wall time,
+        /// so a replay steps the same ticks either way. What is left is under one step, for drawing
+        /// between ticks.
+        /// </summary>
+        public static int TicksDue(ref float accumulator, float step, int most, out float dropped)
+        {
+            dropped = 0f;
+            int due = 0;
+            while (accumulator >= step && due < most) { accumulator -= step; due++; }
+            if (accumulator >= step)
+            {
+                float keep = Mathf.Repeat(accumulator, step);
+                dropped = accumulator - keep;
+                accumulator = keep;
+            }
+            return due;
+        }
+
+        float _droppedS, _droppedSaidAt = -99f;
+
+        /// <summary>The time given up, said at most every ten seconds, so a slow page can be read off its console.</summary>
+        void SayBehind(float dropped, float step)
+        {
+            _droppedS += dropped;
+            if (Time.unscaledTime - _droppedSaidAt < 10f) return;
+            _droppedSaidAt = Time.unscaledTime;
+            Debug.Log($"[blwp] the page is slower than the core: {_droppedS:F2} s ({Mathf.RoundToInt(_droppedS / step)} ticks) "
+                      + $"let go so far rather than raced through at {MostTicksPerFrame} ticks a frame; "
+                      + $"this frame {Time.deltaTime * 1000f:F0} ms");
         }
 
         /// <summary>
