@@ -221,14 +221,17 @@ text; this section is what the protocol commits to.
   office at 0.83 m/s as samples arrive (WAR_TACTICS.md §4.15).
 - **The price is shown to the cent**: `$75,000.02`, always, with the lead
   against the round's open beside it (`BULLS +0.42%`).
-- **The market decides who wins the war.** There is no simulated winner: it is
-  bulls against bears, and the price over the round decides. The side the
-  price favours presses along the whole front, the other digs in (WAR_TACTICS
-  §4.14). At the end of a run the screen says **THE BULLS WIN** or **THE BEARS
-  WIN** from the round's open against the newest sample, together with the
-  truck's own result: DELIVERED / WRECKED / MISSED, the score, the sats. The
-  war's winner is the market's; the truck's result is the player's; the score
-  (§0.15) reads only the truck.
+- **The price decides who wins the war - not points.** There is no simulated
+  winner: it is bulls against bears, and the price at the end of the round
+  against the price at its start decides. Higher: **THE BULLS WIN**. Lower:
+  **THE BEARS WIN**. Objectives, kills and ground are how the war looks; none
+  of it counts. The side the price favours presses along the whole front, the
+  other digs in (WAR_TACTICS §4.14). During the round the HUD shows the lead
+  (`BULLS +0.42%`); a run's end screen shows the lead at that moment beside the
+  truck's own result - DELIVERED / WRECKED / MISSED, the score, the sats; the
+  round's end and the settlement carry the verdict. The war's winner is the
+  market's; the truck's result is the player's; the score (§0.15) reads only
+  the truck.
 - **The price is world input, not player input** (§11): every node replays the
   same front, or the transcript does not replay. A player cannot move the
   market, and the armies do not read the truck.
@@ -1664,12 +1667,25 @@ PlayerResult {
 }
 ```
 
-`front` is the market's verdict at the tick the run ended - the round's open
-against the newest attested sample (WAR_TACTICS.md §4.14) - and is what the
-client shows as **THE BULLS WIN** / **THE BEARS WIN** beside the truck's
-result. It is signed so that a node that disagrees about who won disagrees
-about the tape, which is a replay difference and therefore objectionable
-(§13A). It does not enter `score`.
+`front` here is the lead at the tick the run ended (`BULLS LEADING`), signed
+with the run so that the tape the run was played against is part of the
+result. It does not enter `score`. **Who won the round** is decided once, by
+the price, at the round's end (WAR_TACTICS.md §4.14):
+
+```text
+RoundResult {
+  round_id
+  open_cents, close_cents          // first and last attested sample of the round
+  front                            // BULLS if close > open, BEARS if lower, FLAT if equal
+  node_pubkey, signature           // 5-of-7 of the settlement committee
+}
+```
+
+It is what every client shows as **THE BULLS WIN** / **THE BEARS WIN**, the
+same for every player in the round, whenever they drove. A node that
+disagrees about it disagrees about the attested tape, which is objectionable
+(§13A). It moves no money and enters no score: the payout table (§20) reads
+rank, and rank reads the truck.
 
 Once **5-of-7** nodes sign the identical result, the result becomes
 `PROVISIONALLY_FINAL` and the objection window opens (§13A). It becomes

@@ -199,10 +199,11 @@ the owner ordered is in the state and not on the screen. Each is a client test.
   decimals, always - HUD, spectate, result. Beside it the **lead** (§4.14): `BULLS +0.42%` or
   `BEARS -0.17%` against the round's open, from the same words. The core carries the tape in **cents**
   (§4.13), so the client rounds nothing.
-- **The end screen says who won the round** (the owner 2026-09-16 20:00): `THE BULLS WIN` or `THE BEARS
-  WIN` from the price over the round (§4.14), then the truck's result - DELIVERED / WRECKED / MISSED, the
-  score, the sats. WASTED first if wrecked (§6). The war's winner is the market's; the truck's is the
-  player's; both are on the one screen.
+- **The end screen says who is winning, and the round's end says who won** (the owner 2026-09-16 20:00 /
+  20:45): a run's end screen shows the lead at that tick - `BULLS LEADING +0.42%` - then the truck's
+  result: DELIVERED / WRECKED / MISSED, the score, the sats. WASTED first if wrecked (§6). At the round's
+  end, from its open and close: `THE BULLS WIN` / `THE BEARS WIN` (§4.14). The war's winner is the
+  price's; the truck's result is the player's; nothing is points.
 - **Sound carries and lags.** A gun 100 m off is heard 0.3 s late and quieter; a bomb is felt in the cab.
 - **The air is announced and answered.** Rotor 3 s before entry, the call's banner with its lane, the
   run-in along that lane, smoke on a driven-off gunship (§12.3).
@@ -687,7 +688,8 @@ for, and the core does not draw it yet:**
   (§4.11-§4.12) are the **local** fight about a line the market draws; the market moves the line, the
   armies fight where it is. Nothing may compute a winner from the war; the seam's position is the score,
   and it is the price. **Who wins is §4.14**: the price over the round, shown as `THE BULLS WIN` /
-  `THE BEARS WIN` (the owner 2026-09-16 20:00), and the war knows who is ahead while it runs.
+  `THE BEARS WIN` (the owner 2026-09-16 20:00 / 20:45: the price at the end of the round against its
+  start, not points), and the war knows who is ahead while it runs.
 
 ### 4.14 The lead - the war knows who is winning (the owner 2026-09-16 20:00; RULED HERE on the numbers, GAP)
 
@@ -720,12 +722,16 @@ in. All of it from two words - the round's open and the newest sample - so the t
 - **FLAT** (open to the cent): neither side, §4.10-§4.12 as written. Momentum 0 with a lead: the lead's
   `w + 1` and the trailing rest `-8` only; supply and clocks unchanged. So a $2 move already tilts the
   line and a $400 move is a rout in the making.
-- **The winner**: at the **end of the player's run** (§6, DELIVERED / WRECKED / MISSED alike) the lead
-  at that tick is the result's `front`: `THE BULLS WIN` when BULLS, `THE BEARS WIN` when BEARS, `NO MOVE`
-  when FLAT to the cent (rare, and honest). It is the price over the round up to that moment - the
-  round's open against the newest sample - and it is the same for every player whose run ends on the
-  same sample. Nothing in the score reads it (multiplayer_p2p.md §0.15: the score is the truck's); it is
-  the sentence on the screen and the `front` word in the signed result (§13 there), so a replay that
+- **The winner is the price at the end of the round, not points (the owner 2026-09-16 20:45).** One
+  verdict per **round**, at the contract's end: the round's **close** (the last attested sample) against
+  its **open** (the first). Higher → `THE BULLS WIN`; lower → `THE BEARS WIN`; equal to the cent → `NO
+  MOVE`. Nothing else counts: not objectives held, not tanks killed, not ground taken - those are how
+  the war *looks* while the price decides it. It is the same for every player in the round, whenever
+  their run was. During the round the screen shows the **lead** (`BULLS +0.42%`, "BULLS LEADING"); a
+  run's end screen shows the lead at that tick and says so - *leading*, not *won* - beside the truck's
+  result, score and sats; the round's end screen and the settlement carry `THE BULLS WIN`. Nothing in
+  the score reads any of it (multiplayer_p2p.md §0.15: the score is the truck's). The verdict is the
+  committee's signed `RoundResult` (§13 there) from the attested open and close, so a node that
   disagrees about who won disagrees about the tape, which is a fraud proof.
 - **Nothing here reads the truck** (§1.2): the lead is the market's; a player cannot move it and the
   armies do not care where he is. **Nothing here reads the war**: the war cannot change the lead. The
@@ -871,7 +877,8 @@ it (§4.15).
 
 **Lead / momentum**
 Which side the price favours against the round's open, and by how much in 5/20/50 bp steps. Tilts
-weight, rest, supply, clocks (§4.14). Ends the run as `THE BULLS WIN` / `THE BEARS WIN`.
+weight, rest, supply, clocks (§4.14). At the round's end, close against open: `THE BULLS WIN` /
+`THE BEARS WIN`. Not points.
 
 **Tape / front**
 The price series across the map; `seam(x)` is read from it every tick. Seeded per round, moved by the
@@ -914,7 +921,8 @@ tests are §14.
 - Any word computes a winner, a front score or a "side ahead" from the war (§4.13); the lead, momentum
   or `front` differs from `sign(newest - open)` and its bp steps; the lead changes on a tick with no
   sample; a trailing side's `w` or a leading side's rest is other than §4.14's; `front` at the run's
-  end is not the lead of that tick (§4.14).
+  end is not the lead of that tick, or the round's verdict is other than `sign(close - open)` of the
+  attested open and close, or anything but the price enters it (§4.14).
 - A bounding tank fires in a tick it moved, gun or coax (§4.4).
 - A coax burst with an enemy tank inside 46 m or a fireable truck in reach; at a man beyond 30 m; at
   the truck; with other than the three draws of a gun shot; a coax hit that leaves a man alive; a coax
