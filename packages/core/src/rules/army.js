@@ -244,6 +244,8 @@ const WALK_FACING_FLOOR = 39322;
 const RIFLE_STANDOFF = Math.imul(4, ONE);
 const RIFLE_SPREAD = Math.imul(8, ONE);      // + 0 to 8, so 4 to 12
 const RIFLE_SQUAD_Z = Math.imul(10, ONE);    // then -5 to +5
+const RIFLE_LEAD_MAX = Math.imul(-8, ONE);   // §12.1 a man's post leads the seam by at most 8 m
+const RIFLE_TRAIL_MAX = Math.imul(40, ONE);  // and trails it by at most 40 m
 
 /**
  * Pushed this far past its own line, a unit is overrun and falls right back.
@@ -275,6 +277,41 @@ const SQUADS = 8;
 const SQUAD_MASK = SQUADS - 1;
 const SQUAD_SPAN = Math.imul(76, ONE);     // anchors run from -76 to +76
 const SQUAD_WIDTH = Math.imul(16, ONE);    // each unit sits within 8 m of its anchor
+
+/**
+ * ARMOUR DOCTRINE (WAR_TACTICS.md, the owner 2026-09-16 18:20): where a tank goes is assigned in `rules/tactics.js` -
+ * teams, roles, frontage slots, shoot-and-scoot - and handed in on `u` (tac, tacX, tacDepth, tacBounding). This step only
+ * moves the tank there, and picks the hull-down spot for a tank that holds.
+ *
+ * Measured before (5 seeds x 3600 ticks, truck in the bay): an engaged tank's post was its enemy's x, so every tank
+ * facing one enemy steered for the same metre - nearest tank median 8.50 m, the friendly spacing exactly; on 42.5% of
+ * tank-ticks the separation push undid the tank's own step; groups of 9 (median) to 20 within 20 m.
+ */
+const LANE_LEASH = 0;                            // a slot is a position held: the gun reaches 46 m, the hull stays
+const HULL_SEARCH = 2;                           // candidates either side of the post, HULL_STEP apart
+const HULL_STEP = Math.imul(2, ONE);
+const CREST_LOOK = Math.imul(6, ONE);            // how far toward the enemy the crest is looked for
+/**
+ * HULL-DOWN (WAR_TACTICS.md §4.1): of the five candidates about an overwatch hold line (-4, -2, 0, +2, +4 m), the one
+ * with the largest ground rise 6 m toward the enemy; ties to the first in that scan. Exported because sim.js ranks
+ * the half-line budget by how far a tank stands from the place it is really going to.
+ */
+export function hullDownHold(hold, side, x, ground) {
+  const toward = Math.imul(-side, CREST_LOOK);
+  let best = hold, bestRise = -2147483647;
+  for (let c = -HULL_SEARCH; c <= HULL_SEARCH; c++) {
+    const z = add(hold, Math.imul(c, HULL_STEP));
+    const rise = sub(ground(x, add(z, toward)), ground(x, z));
+    if (rise > bestRise) { bestRise = rise; best = z; }
+  }
+  return best;
+}
+
+const POST_DEPTH = ONE;                          // a tank within 1 m of its post's depth stands
+const REVERSE_TICKS = 120;                       // §0 row 2: at most one reversal of a tank's own travel in any 2 s
+const POST_SIDE = Math.imul(2, ONE);             // and within 2 m of its slot across: a depth move on a hull up to 30
+                                                 // degrees off drifts x; correcting half a metre of it flipped the step
+const CROSSING = Math.imul(4, ONE);              // further than this across from its slot, a tank is still crossing
 const SQUAD_OFFSET = Math.imul(18, ONE);   // a rifleman: Army.Spawn's Rand(-9, 9)
 const TWO = Math.imul(2, ONE);
 
@@ -328,8 +365,10 @@ const OVERRUN = Math.imul(14, ONE);
  * along. That only stays harmless while this runs from the first tick, which
  * is why it is at the top of the army's step and not somewhere convenient.
  */
-const FRIENDLY_SPACING = Math.imul(17, ONE) >> 1;   // 8.5 m, Army.FriendlySpacing
-const HOSTILE_SPACING = Math.imul(15, ONE) >> 1;    // 7.5 m, Army.HostileSpacing
+// WAR_TACTICS.md §1.1 (the owner 2026-09-16): never inside 12 m, tank to tank, either side - was C#'s 8.5 m friendly and
+// 7.5 m hostile, and the measured nearest tank sat at 8.50 m, pressed against it, on half of all tank-ticks.
+const FRIENDLY_SPACING = Math.imul(12, ONE);
+const HOSTILE_SPACING = Math.imul(12, ONE);
 const COINCIDENT = 655;                             // 0.01 m, C#'s 1e-4 on d2
 
 export function separatePair(s, a, b, xOff, zOff, sideOff) {
@@ -440,7 +479,7 @@ export const SIDE_BEAR = 1;
  * cooldown has expired - reload, then the hit roll. Nothing may be inserted
  * before the wobble or every recorded transcript stops replaying.
  */
-export function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, halfX, halfZ, dt, index, tick, craters) {
+export function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, halfX, halfZ, dt, index, tick, craters, ground) {
   if (u.hp <= 0) return 0;
 
   // THE DRAW STAYS, THE WOBBLE GOES.
@@ -475,7 +514,9 @@ export function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, half
   // a coupling between where he stands and when he stops, and the condition
   // only bites once he is ON his post - which is not the approach the mark at
   // t=15 measures. Named here rather than ported blind.
-  const still = !u.armour && standingStill(index, tick | 0);
+  // FIRE AND MOVEMENT (WAR_TACTICS.md §11.2): the halt clock is the FIRE TEAM's, handed in on `u.halted` by sim.js, so
+  // four men rest and halt together. A caller that does not set it gets the man's own clock, as before.
+  const still = !u.armour && (u.halted === undefined ? standingStill(index, tick | 0) : u.halted);
   const walk = u.armour ? ARMOUR_WALK
              : still ? 0 : mulFast(RIFLE_WALK, paceOf(index));
   // Each unit holds at its OWN distance, scattered about the mean.
@@ -498,8 +539,11 @@ export function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, half
   const standoff = u.armour
     ? add(ARMOUR_STANDOFF,
           sub(Math.imul(scatter, ARMOUR_SPREAD) >> 10, ARMOUR_SPREAD >> 1))
-    : add(add(RIFLE_STANDOFF, Math.imul(scatter, RIFLE_SPREAD) >> 10),
-          sub(Math.imul(scatter2, RIFLE_SQUAD_Z) >> 10, RIFLE_SQUAD_Z >> 1));
+    // FOLLOW THE PUSH (WAR_TACTICS.md §12.1): the man's stand-off less the mean push of the tank lanes his squad stands
+    // in, and never more than 8 m past the seam nor 40 m behind it.
+    : clamp(sub(add(add(RIFLE_STANDOFF, Math.imul(scatter, RIFLE_SPREAD) >> 10),
+                    sub(Math.imul(scatter2, RIFLE_SQUAD_Z) >> 10, RIFLE_SQUAD_Z >> 1)), u.infPush | 0),
+            RIFLE_LEAD_MAX, RIFLE_TRAIL_MAX);
   // The side a unit BELONGS to, not the side it happens to be standing on.
   //
   // Taken from the current position, a unit that stepped over the seam had its
@@ -507,7 +551,14 @@ export function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, half
   // instead of holding short of it, and by t=10 the whole force had walked
   // through a front that no longer existed.
   const side = u.side < 0 ? -1 : 1;
-  const hold = add(seamZ, Math.imul(side, standoff));
+  let hold = add(seamZ, Math.imul(side, standoff));
+  if (u.armour && u.tac) {
+    // Measured from the seam at the SLOT, not at the hull: the seam curves with x, and a target that moved as the
+    // hull crept across kept it on the edge of its post.
+    hold = add(u.tacSeam, mulFast(Math.imul(side, ONE), u.tacDepth));
+    // HULL-DOWN, for the overwatch tank: the candidate with the highest ground between it and the enemy.
+    if (!u.tacBounding && ground) hold = hullDownHold(hold, side, u.tacX, ground);
+  }
 
   // Give ground when something is too close.
   //
@@ -520,7 +571,10 @@ export function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, half
   // Dir - the way it faces and pushes - is +1. Using side made every unit read
   // as overrun the moment it reached its own holding line, so the whole army
   // sat on the fall-back line and never fired a shot.
-  const past = mulFast(sub(u.z, seamZ), Math.imul(-side, ONE));
+  // WAR_TACTICS.md §4.10: a tank's overrun is measured from its team's pushed forward line, not the seam - or every
+  // push across the seam would be thrown back by this rule on the tick it arrived.
+  const overrunFrom = u.armour && u.tac ? add(u.tacSeam, mulFast(Math.imul(side, ONE), u.tacForward)) : seamZ;
+  const past = mulFast(sub(u.z, overrunFrom), Math.imul(-side, ONE));
   // ARMOUR ONLY, and that is C#'s own division, not a preference.
   //
   // `StepArmour` falls back to `front - Dir*34` when a tank has overrun its
@@ -535,8 +589,12 @@ export function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, half
   const overrun = u.armour && past > OVERRUN_DEPTH;
 
   let dz;
+  // Bit 5 of a tank's memory word (sim.js U_COOLDOWN): it gave ground and the enemy has not left 30 m since.
+  let gaveGround = u.armour && u.crowdedLoose ? ((u.cooldown | 0) >> 5) & 1 : 0;
   if (overrun) {
-    const back = add(seamZ, Math.imul(side, FALL_BACK));
+    const back = u.armour && u.tac
+      ? add(u.tacSeam, mulFast(Math.imul(side, ONE), sub(FALL_BACK, u.tacPush)))
+      : add(seamZ, Math.imul(side, FALL_BACK));
     const g = sub(back, u.z);
     dz = mulFast(mulFast(walk, g > 0 ? ONE : -ONE), dt);
   } else if (u.crowded) {
@@ -558,9 +616,27 @@ export function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, half
     const g = sub(back, u.z);
     const want = abs(g) > mulFast(CROWD_WALK, dt) ? (g > 0 ? ONE : -ONE) : 0;
     dz = mulFast(mulFast(CROWD_WALK, want), dt);
+    gaveGround = 1;
+  } else if (u.armour && u.crowdedLoose && gaveGround && mulFast(sub(u.z, hold), Math.imul(side, ONE)) > 0) {
+    // ...AND THEN HOLDS (WAR_TACTICS.md §1.1). A tank that gave ground, with the enemy still inside the 24 m it backed
+    // off from plus the 6 m it gave, stands where it is. Without this it stepped out of 24 m, walked back in and backed
+    // off again: measured, 23% of the tank direction flips that came twice inside 2 s.
+    // ONLY A TANK THAT GAVE GROUND (bit 5 of its memory word, cleared once no enemy is inside 30 m). Read as "any tank
+    // short of its post with an enemy inside 30 m" it also stopped every assault: with the slots staggered an enemy hull
+    // stands about 27 m from a lane's seam, and tanks posted across the seam stood on 8774 tank-ticks (seeds 1-15).
+    dz = 0;
   } else {
     const gap = sub(hold, u.z);
-    const want = abs(gap) > mulFast(walk, dt) ? (gap > 0 ? ONE : -ONE) : 0;
+    // A TANK'S POST IS A PLACE, NOT A LINE: within POST_DEPTH of it the tank stands. With the step's own length as
+    // the deadband a hull driving sideways to its slot drifted a few centimetres in depth, left the band, reversed
+    // to correct, drifted back - measured ~10 heading reversals a tank-second and 16-18% of one-second windows
+    // fidgeting.
+    // And while it is still crossing to its slot it does not correct its depth at all: the move across comes first,
+    // the depth after it arrives. With any band on depth, a hull crossing on a slant drifted over the band's edge
+    // and back each tick and swung between two headings 135 degrees apart (measured 3.8 reversals a tank-second).
+    const crossing = u.armour && u.tac && abs(sub(u.tacX, u.x)) > CROSSING;
+    const band = u.armour ? POST_DEPTH : mulFast(walk, dt);
+    const want = !crossing && abs(gap) > band ? (gap > 0 ? ONE : -ONE) : 0;
     dz = mulFast(mulFast(walk, want), dt);
   }
   // Sideways: hold a squad position, not a random walk.
@@ -624,10 +700,33 @@ export function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, half
   // truck's 34 m, which is why 35% of the armour was ever near it against the
   // recording's 71% - the spread was right (sd 46 against C#'s 36-45) and the
   // SHAPE was flat where the recording's is peaked.
-  const post = u.armour ? (u.engaged ? u.foeX : ladder) : riflePost(anchor, index);
+  // FRONTAGE: a tank holds its team's slot (rules/tactics.js) and closes on its foe only inside LANE_LEASH.
+  const lane = u.armour ? u.tacX : 0;
+  const post = u.armour
+    ? (u.engaged ? add(lane, clamp(sub(u.foeX, lane), neg(LANE_LEASH), LANE_LEASH)) : lane)
+    : riflePost(anchor, index);
   const dxWant = sub(post, u.x);
   const dxCap = mulFast(walk, dt);
-  const dx = clamp(dxWant, neg(dxCap), dxCap);
+  // What the tank asks for before anything holds it: sim.js keeps a granted move granted until it arrives.
+  u.wantsMove = u.armour && (dz !== 0 || abs(dxWant) > POST_SIDE);
+  let dx = u.armour && (u.tacWait || abs(dxWant) <= POST_SIDE) ? 0 : clamp(dxWant, neg(dxCap), dxCap);
+  if (u.armour && u.tacWait) dz = 0;       // one of the pair holds: this one waits for its overwatch partner (sim.js)
+  // ONE REVERSAL IN TWO SECONDS (WAR_TACTICS.md §0 row 2). A tank's own step may change its x or z sign once; a second
+  // change inside REVERSE_TICKS of the first is not taken - the hull stands until two seconds have passed, then goes.
+  // Every fidget measured on seeds 1-10 (14 of 442 flips) was a real change of post, a 14 m leg swap and an 8 m push
+  // step the other way inside 2 s: the order reversed, and the hull reversed with it. The memory is the tank's own
+  // U_COOLDOWN word (sim.js): bit 0 moved last tick, bits 1-2 its last z sign, 3-4 its last x sign, bit 5 it gave
+  // ground (above), bit 6 its move is granted (sim.js), from bit 7 the tick of its last reversal.
+  if (u.armour && u.tac) {
+    const mem = u.cooldown | 0, zWas = (mem >> 1) & 3, xWas = (mem >> 3) & 3;
+    let flipped = (mem >>> 7) | 0;
+    const recent = ((tick | 0) - flipped) < REVERSE_TICKS;
+    let zNow = dz > 0 ? 1 : dz < 0 ? 2 : 0, xNow = dx > 0 ? 1 : dx < 0 ? 2 : 0;
+    if (recent && zNow && zWas && zNow !== zWas) { dz = 0; zNow = 0; }
+    if (recent && xNow && xWas && xNow !== xWas) { dx = 0; xNow = 0; }
+    if ((zNow && zWas && zNow !== zWas) || (xNow && xWas && xNow !== xWas)) flipped = tick | 0;
+    u.reverseMemory = (Math.imul(flipped, 128) | (gaveGround << 5) | ((xNow || xWas) << 3) | ((zNow || zWas) << 1)) | 0;
+  }
 
   // Sideways: a slow drift. NOT a chase towards the engaged foe.
   //
@@ -668,9 +767,20 @@ export function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, half
   let stepX = dx, stepZ = dz;
   if (u.armour) {
     const far = length2(dx, dz);
-    if (far > TURN_FLOOR) {
-      const want = atan2(dx, dz);
-      // the short way round, or a tank crossing north turns the long way home
+    // WAR_TACTICS.md §4.5: moving, the hull points along its step; standing on its post, at the enemy side (the seam
+    // normal), so a held line is a line of guns facing the seam.
+    const enemyDir = u.side < 0 ? 0 : 32768;
+    const standing = u.tac === true && far <= TURN_FLOOR;
+    // A TANK BACKS OFF FACING THE ENEMY: its hull lines up with the line of travel, nose first or tail first,
+    // whichever is the shorter turn. Turning round to drive 8 or 14 m back and round again to stand cost two half-turns
+    // of standing still, and a hull paused mid-drive by the half-line budget stood with its gun off the seam - 6.15% of
+    // holding ticks on the line, most of A7's miss.
+    const travel = far > TURN_FLOOR ? atan2(dx, dz) : 0;
+    const offNose = (((travel - u.heading + 32768) & 65535) - 32768) | 0;
+    const offTail = (((travel + 32768 - u.heading + 32768) & 65535) - 32768) | 0;
+    const tailFirst = u.tac === true && abs(offTail) < abs(offNose);
+    if (far > TURN_FLOOR || standing) {
+      const want = standing ? enemyDir : tailFirst ? (travel + 32768) & 65535 : travel;
       const off = (((want - u.heading + 32768) & 65535) - 32768) | 0;
       u.heading = add(u.heading, Math.imul(off, TURN_RATE) >> 16) & 65535;
     }
@@ -688,8 +798,19 @@ export function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, half
     // it was never written for. The heading still stops updating below the
     // floor, where the direction of a 6 mm step is noise; the tank still only
     // ever drives where it points.
-    stepX = mulFast(sin(u.heading), far);
-    stepZ = mulFast(cos(u.heading), far);
+    // ALONG THE HULL BY THE PROJECTION, not the whole distance: the full `far` laid along a hull that is not pointing
+    // at the post overshoots it in depth by the sideways part, and a tank cannot strafe, so it overshot back and
+    // forth every tick (measured: path over net distance p90 31, 18% of one-second windows fidgeting). The
+    // projection is signed - negative is reversing - and never longer than the move asked for.
+    // PIVOT, THEN DRIVE: a hull more than 30 degrees off the way it is going turns where it stands and does not move.
+    // Driving along a hull still turning swung the step's sideways part from one sign to the other mid-turn -
+    // measured, two thirds of the direction flips that came twice inside 2 s (WAR_TACTICS.md §0 row 2).
+    const lined = far > TURN_FLOOR
+      ? (tailFirst ? abs(offTail) : abs(offNose)) <= 5461
+      : true;
+    const along = lined ? add(mulFast(dx, sin(u.heading)), mulFast(dz, cos(u.heading))) : 0;
+    stepX = mulFast(sin(u.heading), along);
+    stepZ = mulFast(cos(u.heading), along);
   }
 
   const edge = sub(FRONT_X, Math.imul(4, ONE));

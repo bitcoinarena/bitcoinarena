@@ -573,12 +573,14 @@ const parkedUnderFire = (seed, ticks) => {
 
 test('incoming fire costs the truck condition', () => {
   for (const seed of [20260901, 20268820, 20276739]) {
-    // Ten seconds: long enough for the army to reach it, short enough that
-    // none of the three has spent all hundred points yet - the corrected
-    // death times are 34.3 / 17.5 / 19.8 s.
-    const r = parkedUnderFire(seed, 60 * 10);
-    assert.ok(r.hp < 100, `seed ${seed}: der Truck steht nach 10 s unbeschaedigt da`);
-    assert.ok(r.hp > 0, `seed ${seed}: nach 10 s schon zerstoert - hp ${r.hp.toFixed(2)}`);
+    // Fifteen seconds: long enough for the army to reach it, short enough that
+    // none of the three has spent all hundred points yet. MOVED ON PURPOSE (WAR_TACTICS.md, 2026-09-16): with the
+    // doctrine's half-line budget (§0 row 4b) the armour reaches its posts later, and the first hit on the parked
+    // truck lands at 9.53 / 10.98 / 11.08 s (was 8.65 / 8.43 / 8.90), the write-off at 24.38 / 30.00 / 25.37 s (was
+    // 19.55 / 16.90 / 18.52). Ten seconds no longer reached the army on two of the three.
+    const r = parkedUnderFire(seed, 60 * 15);
+    assert.ok(r.hp < 100, `seed ${seed}: der Truck steht nach 15 s unbeschaedigt da`);
+    assert.ok(r.hp > 0, `seed ${seed}: nach 15 s schon zerstoert - hp ${r.hp.toFixed(2)}`);
   }
 });
 
@@ -757,7 +759,23 @@ test('the army closes at the pace the C# army closes', async () => {
   };
 
   const at0 = { armour: mean(true, -1), rifle: mean(false, -1) };
-  for (let i = 0; i < 60 * 5; i++) step(st, 0, 0, 0, 0, 0);
+  // A DRIVING tank's pace, and not the side's mean. WAR_TACTICS.md §0 row 4b (the owner 2026-09-16): no more than half of
+  // a side's tanks on the line move in any tick, and the line begins 40 m from a post - so for the last 40 m of the
+  // approach half the side holds while the other half drives, and the mean closes slower than any tank drives (4.61
+  // m/s measured on seed 1, 24% of the bull tank-ticks of these five seconds waiting on the budget). The recording's
+  // number is what a tank does when it moves; that is what is held to it.
+  let drivenZ = 0, driving = 0;
+  for (let i = 0; i < 60 * 5; i++) {
+    const before = [];
+    for (let k = 0; k < UNITS; k += 4) before[k] = st.i32[O_UNITS + k * U_WORDS + U_Z];
+    step(st, 0, 0, 0, 0, 0);
+    for (let k = 0; k < UNITS; k += 4) {
+      const b = O_UNITS + k * U_WORDS;
+      if (st.i32[b + U_STATE] === 0 || st.i32[b + U_SIDE] !== -1) continue;
+      const dz = st.i32[b + U_Z] - before[k];
+      if (Math.abs(dz) > 65 && Math.abs(dz) < 5 * Q) { drivenZ += dz / Q; driving++; }   // moved, and not a respawn
+    }
+  }
   const at5 = { armour: mean(true, -1), rifle: mean(false, -1) };
 
   // Five seconds of closing, against the recording's own first two rows.
@@ -765,17 +783,20 @@ test('the army closes at the pace the C# army closes', async () => {
   const wantRifle = (ref.rows[1].bullInf.z - ref.rows[0].bullInf.z) / 5;
   const gotArmour = (at5.armour - at0.armour) / 5;
   const gotRifle = (at5.rifle - at0.rifle) / 5;
+  const tankPace = (drivenZ / driving) * 60;
 
-  assert.ok(Math.abs(gotArmour - wantArmour) < 0.8,
-    `armour closes at ${gotArmour.toFixed(2)} m/s, the C# army at ${wantArmour.toFixed(2)}`);
+  assert.ok(Math.abs(tankPace - wantArmour) < 0.8,
+    `a driving tank closes at ${tankPace.toFixed(2)} m/s, the C# army at ${wantArmour.toFixed(2)}`);
   assert.ok(Math.abs(gotRifle - wantRifle) < 0.5,
     `infantry closes at ${gotRifle.toFixed(2)} m/s, the C# army at ${wantRifle.toFixed(2)}`);
 
   // Armour arrives first. Both arms moving together is the signature of the
   // fault this test was written after: the kind flag never reached the step,
   // so tanks walked at rifle pace.
-  assert.ok(Math.abs(gotArmour) > Math.abs(gotRifle) * 2,
-    'armour and infantry close at the same speed - the kind flag is not reaching the step');
+  // A driving tank against the riflemen (the fault was the tank's own pace; the side's mean is §0 row 4b's, above).
+  assert.ok(Math.abs(tankPace) > Math.abs(gotRifle) * 2,
+    `armour and infantry close at the same speed (${tankPace.toFixed(2)} against ${gotRifle.toFixed(2)} m/s, the side's `
+    + `armour ${gotArmour.toFixed(2)}) - the kind flag is not reaching the step`);
 
   // And it settles into a front rather than through one.
   for (let i = 0; i < 60 * 60; i++) step(st, 0, 0, 0, 0, 0);
@@ -1458,12 +1479,16 @@ test('and it tells further and further behind the line', () => {
   // guns on the truck than an empty one does.
   //
   // MOVED ON PURPOSE (the owner 2026-09-16). 4,10,4,7 -> 7,10,7,9 when the truck's ring gave way at a tank's pace
-  // (15:36); -> 6,10,3,7 when the ring went (17:00: "Tanks must NOT react to the truck except by shooting") and a touch
-  // became a write-off (17:06), with armour kept out of contact here by `keepArmourOff`. Measured on eight seeds
-  // (0x5eed1234 and 1-7): a full bed has more tanks on the truck on every seed at both depths - at the seam hot 8-11
-  // against cold 6-9, behind the line hot 4-8 against cold 1-3. Same strict equality, new world.
+  // (15:36); -> 6,10,3,7 when the ring went and a touch became a write-off (17:00 / 17:06); -> 4,6,3,6 with
+  // WAR_TACTICS.md (18:20): armour holds seeded team slots on lines 14 and 26 m off the seam, so fewer tanks are
+  // near any one parked truck. Measured on eight seeds (0x5eed1234 and 1-7), armour kept out of contact by
+  // `keepArmourOff`: at the seam a full bed has more tanks on the truck on all eight (hot 4-7 against cold 2-4); behind
+  // the line on seven, and the same on one (seed 7, 3-3). Same strict equality, new world.
+  // -> 4,6,3,6 with the doctrine's half-line budget, moves that run to their end, pressure and objectives (§0 row 4b,
+  // §4.10, §4.11; 2026-09-16). Eight seeds again: a full bed has more tanks on the truck on all eight at the seam (hot
+  // 4-6 against cold 3-4) and on all eight behind the line (hot 4-6 against cold 2-3).
   assert.deepEqual([noticing(0, -25), noticing(20000, -25), noticing(0, -50), noticing(20000, -50)],
-    [6, 10, 3, 7],
+    [4, 6, 3, 6],
     'heat no longer widens how many tanks have the truck, at the seam or behind it');
 });
 
@@ -1632,7 +1657,10 @@ test('nothing accrues while the truck is still on the apron', () => {
     `gaining ground inside the apron banked ${s[O_SCORE + S_EXPOSURE]} of exposure`);
   assert.equal(runScore(st), 0, 'the apron paid a score');
 
-  for (let t = 0; t < 40; t++) step(st, ONE, 0, 0, 0, 1);
+  // 60 ticks, not 40: past the apron something has to be in range for driving to bank anything. With the doctrine's
+  // posts (WAR_TACTICS.md, 2026-09-16) the nearest tank at tick 220 is 46.1 m off (gun 46 m; it was 45.5) and the
+  // first exposure lands at tick 222 (was 216), so a 40-tick leg ended two ticks short of measuring anything.
+  for (let t = 0; t < 60; t++) step(st, ONE, 0, 0, 0, 1);
   const outside = (s[O_TRUCK + T_X] - x0) / ONE;
   assert.ok(outside > 22, `the fixture never left the apron - ${outside.toFixed(1)} m`);
   assert.ok(s[O_SCORE + S_EXPOSURE] > 0,

@@ -1094,7 +1094,14 @@ const C_X = 0, C_Z = 1, C_R = 2, C_D = 3, C_ROUNDS = 4, C_DIG = 5, C_LOAD = 6;
 
 const craterBase = (i) => O_CRATERS + Math.imul(i, C_WORDS);
 
-const WORDS = O_CRATERS + Math.imul(MAX_CRATERS, C_WORDS);
+/**
+ * ARMOUR TACTICS (TANK_TACTICS.md, the owner 2026-09-16 18:20): the round seed's hash and, per team, its frontage slot,
+ * last scoot, and role clock - rules/tactics.js reads and writes them. Appended, so no offset above moves.
+ */
+const O_TACTICS = O_CRATERS + Math.imul(MAX_CRATERS, C_WORDS);
+const TACTICS_WORDS = 64;   // rules/tactics.js TAC_WORDS
+
+const WORDS = O_TACTICS + TACTICS_WORDS;
 
 // truck fields, relative to O_TRUCK
 const T_X = 0, T_Z = 1, T_HEADING = 2, T_VX = 3, T_VZ = 4;
@@ -1844,6 +1851,394 @@ function resolveArmour(v, xz, count) {
  */
 const CORRECTION_CAP = 39322;
 
+// ---- rules/tactics.js
+// ARMOUR TACTICS - WAR_TACTICS.md at the repo root is the spec (the owner 2026-09-16 18:20). This file is its
+// implementation; the army step (rules/army.js) only moves a tank to what is handed out here.
+//
+// Deterministic: every value is an integer function of the round seed word, the tank's roster slot index, the tick
+// and the words in O_TACTICS. No draw is taken, so no stream shifts, and every signer node computes the same bits.
+//
+//   §2 ASSIGNMENT    stable pairs by sorted roster id per side: (0,1), (2,3) ... - never re-paired from the living.
+//                    An odd tank is a singleton OVERWATCH on its own slot. In a pair one OVERWATCH, one BOUNDING;
+//                    they swap on a period and phase hashed from (seed, side, team) - bounding overwatch.
+//                    FRONTAGE: seven slots a side, 27 m apart, a permutation hashed from (seed, side) hands each team a distinct
+//                    one; the two sides' permutations are independent - crossfire.
+//   §3 DEATH         a widow holds OVERWATCH on the team's slot, no rush. A respawned id rejoins its own pair as
+//                    BOUNDING, the partner already holding: the team's role clock restarts with it bounding. Teams
+//                    are roster ids, so a new hull never takes another team's partner.
+//   §4 WHEN          default hold: hull-down on the overwatch line, reverse slope (rules/army.js picks the spot
+//                    behind the crest). After a shot: shoot-and-scoot to the next free slot beside the team, the
+//                    side hashed - not away from the truck. Moving between slots the pair keeps its two depth lines:
+//                    a staggered column, not bumper to bumper.
+//   §1.2 THE TRUCK   nothing here reads the truck. The army shoots it; a touch wrecks it (sim.js).
+//
+// There is no road in the core: the kill zone every slot covers is the seam band the truck has to cross.
+
+
+const TEAMS_PER_SIDE = 6;
+const SLOTS_PER_SIDE = 7;
+const ROSTER_PER_SIDE = 12;                       // armour slots a side: every 4th unit index, side on bit 2
+const SLOT_PITCH = Math.imul(27, ONE);
+const FIRST_SLOT = Math.imul(-81, ONE);             // outer tank at 87 m, inside the 88 m field
+const PAIR_HALF = Math.imul(6, ONE);       // each tank of a pair 6 m off the slot's centre line: 12 m apart
+                                                  // so the two can leapfrog past each other outside the 12 m bubble
+const FORWARD_LINE = Math.imul(16, ONE);   // §2.5 the bounding tank, from the seam, before any push
+const OVERWATCH_LINE = Math.imul(30, ONE); // §2.5 the overwatch tank, from the seam, before any push
+const FALL_BACK_LINE = Math.imul(34, ONE); // §1.1 overrun falls back to this, less the push
+const PUSH_STEP = Math.imul(8, ONE), PUSH_MIN = Math.imul(-8, ONE), PUSH_MAX = Math.imul(24, ONE);
+const PUSH_TICKS = 300;                           // §4.10 each team re-reads its odds every 5 s
+const PUSH_TAKE_LEAD = 3;                         // §4.10 the lead in tanks (with the objective weight) that takes ground
+const PUSH_GIVE_LEAD = 1;                         // §4.10 ...and that gives it
+const GUN_M = 46;                                 // §4.10 local odds are read inside the gun's reach
+const SCOOT_TICKS = 600;                   // ten seconds between one team's relocations
+const PERIOD_MIN = 360, PERIOD_SPAN = 240;        // a leg of the role swap: 6 to 10 s
+
+// O_TACTICS: [0] seed hash; per team w (bull 0-5, bear 6-11): [1+w] slot 0..6, [13+w] tick of the last scoot,
+// [25+w] tick its role clock started, [37+w] the member bounding at that start (+2: it came back alone, §3),
+// [49+w] its push depth in Q16.16 metres (§4.10); [61+o] objective o (§4.11): lane in the low byte, holder in the next.
+const TAC_SEED = 0, TAC_SLOT = 1, TAC_SCOOT = 13, TAC_ROLE_START = 25, TAC_ROLE_MEMBER = 37, TAC_PUSH = 49;
+const TAC_OBJ = 61;
+const TAC_WORDS = 64;
+const OBJ_RIDGE = 0, OBJ_HOLLOW = 1, OBJ_GAP = 2, OBJECTIVES = 3;
+const HOLDER_NONE = 0, HOLDER_BULL = 1, HOLDER_BEAR = 2;
+const RIDGE_GOAL = Math.imul(16, ONE);            // §4.11 a team on the crest holds the crest
+const OBJECTIVE_REST = Math.imul(8, ONE);         // §4.11 home, at an objective, is leaning in
+const ALONE = 2;
+
+/** a mod b for a >= 0, b > 0: no raw `%` outside an arithmetic file (tools/check-determinism.js). */
+const mod = (a, b) => (a - Math.imul(idiv(a, b), b)) | 0;
+
+/** A 32-bit mix, integers only. */
+function mix(a, b) {
+  let h = Math.imul((a ^ Math.imul(b | 0, 0x9e3779b1)) | 0, 0x85ebca6b);
+  h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35); h ^= h >>> 16;
+  return h | 0;
+}
+
+const seedHash = (seedWord) => mix(seedWord | 0, 0x7a3c5e11);
+
+/** Roster slot index -> side (-1 bull, +1 bear), roster number 0..11, team, member 0/1. */
+function teamOf(index) {
+  const k = ((index | 0) >> 3) & 15;
+  return { side: ((index >> 2) & 1) === 0 ? -1 : 1, k, team: k >> 1, member: k & 1 };
+}
+
+/** The unit index of the other tank of the pair, or -1 for a singleton. */
+function partnerOf(index) {
+  const { k } = teamOf(index);
+  const pk = k ^ 1;
+  if (pk >= ROSTER_PER_SIDE) return -1;
+  return ((pk << 3) | ((index | 0) & 4)) | 0;
+}
+
+/** The side's slot permutation, hashed from (seed, side): Fisher-Yates on the hash, no draw. */
+function slotOrder(hash, side) {
+  const order = [0, 1, 2, 3, 4, 5, 6];
+  let h = mix(hash, side < 0 ? 11 : 23);
+  for (let i = SLOTS_PER_SIDE - 1; i > 0; i--) {
+    h = mix(h, i);
+    const j = mod(h >>> 1, i + 1);
+    const t = order[i]; order[i] = order[j]; order[j] = t;
+  }
+  return order;
+}
+
+const slotX = (slot) => (FIRST_SLOT + Math.imul(slot, SLOT_PITCH)) | 0;
+const teamWord = (side, team) => (side < 0 ? 0 : TEAMS_PER_SIDE) + team;
+const aliveAt = (s, index) => index >= 0 && s[O_UNITS + Math.imul(index, U_WORDS) + U_STATE] !== 0;
+
+/** The team's swap period and phase, hashed from (seed, side, team). */
+function schedule(hash, side, team) {
+  const h = mix(mix(hash, side < 0 ? 101 : 103), team);
+  const period = PERIOD_MIN + mod(h >>> 1, PERIOD_SPAN);
+  return { period, member: (h >>> 11) & 1, phase: mod(h >>> 12, period) };
+}
+
+function initTactics(s, base, seedWord) {
+  const hash = seedHash(seedWord);
+  s[base + TAC_SEED] = hash;
+  for (let w = 0; w < Math.imul(2, TEAMS_PER_SIDE); w++) {
+    const side = w < TEAMS_PER_SIDE ? -1 : 1, team = mod(w, TEAMS_PER_SIDE);
+    const sch = schedule(hash, side, team);
+    s[base + TAC_SLOT + w] = slotOrder(hash, side)[team];     // distinct by construction
+    s[base + TAC_SCOOT + w] = -SCOOT_TICKS;
+    s[base + TAC_ROLE_START + w] = -sch.phase;
+    s[base + TAC_ROLE_MEMBER + w] = sch.member;
+    s[base + TAC_PUSH + w] = 0;
+  }
+  for (let o = 0; o < OBJECTIVES; o++) s[base + TAC_OBJ + o] = 0;
+}
+
+// =====================================================================================================================
+// OBJECTIVES (WAR_TACTICS.md §4.11, the owner 2026-09-16 19:02-19:05): RIDGE, HOLLOW and GAP - three inner lanes read
+// from the round's ground, which is a function of the seed alone. Nothing here reads a truck.
+// =====================================================================================================================
+
+const OBJ_FIRST_LANE = 1, OBJ_LAST_LANE = 5;      // the outer lanes (+-81 m) are levelled apron and hold the bay
+const OBJ_BAND = Math.imul(40, ONE), OBJ_BAND_STEP = Math.imul(4, ONE);   // 21 samples, z = -40..+40 m
+
+/**
+ * Picks the three lanes at init. `heightAt(x, z)` is the round's relief (no craters). Each objective is the best of
+ * the lanes still free, in the order RIDGE (highest top), HOLLOW (lowest bottom), GAP (smallest relief), ties to the
+ * lower slot; a lane next to a taken one is free only when no lane at least two away from every taken one is left.
+ */
+function initObjectives(s, base, heightAt) {
+  const top = [], bottom = [], relief = [];
+  for (let lane = OBJ_FIRST_LANE; lane <= OBJ_LAST_LANE; lane++) {
+    const x = slotX(lane);
+    let hi = 0, lo = 0;
+    for (let z = -OBJ_BAND, n = 0; z <= OBJ_BAND; z += OBJ_BAND_STEP, n++) {
+      const h = heightAt(x, z) | 0;
+      if (n === 0 || h > hi) hi = h;
+      if (n === 0 || h < lo) lo = h;
+    }
+    top[lane] = hi; bottom[lane] = lo; relief[lane] = (hi - lo) | 0;
+  }
+  const taken = [];
+  const score = [(l) => -top[l], (l) => bottom[l], (l) => relief[l]];    // lower is better
+  for (let o = 0; o < OBJECTIVES; o++) {
+    let apart = false;
+    for (let lane = OBJ_FIRST_LANE; lane <= OBJ_LAST_LANE; lane++) if (freeLane(taken, lane, true)) apart = true;
+    let best = -1;
+    for (let lane = OBJ_FIRST_LANE; lane <= OBJ_LAST_LANE; lane++) {
+      if (!freeLane(taken, lane, apart)) continue;
+      if (best < 0 || score[o](lane) < score[o](best)) best = lane;
+    }
+    taken.push(best);
+    s[base + TAC_OBJ + o] = best;
+  }
+}
+
+function freeLane(taken, lane, apart) {
+  for (const t of taken) if (t === lane || (apart && (t === lane - 1 || t === lane + 1))) return false;
+  return true;
+}
+
+const objectiveLane = (s, base, o) => s[base + TAC_OBJ + o] & 255;
+const objectiveHolder = (s, base, o) => (s[base + TAC_OBJ + o] >> 8) & 255;
+
+/** A team's objective weight (§4.11): 2 on an objective's lane, 1 beside one, else 0. */
+function objectiveWeight(s, base, slot) {
+  let w = 0;
+  for (let o = 0; o < OBJECTIVES; o++) {
+    const d = slot - objectiveLane(s, base, o);
+    if (d === 0) return 2;
+    if (d === 1 || d === -1) w = 1;
+  }
+  return w;
+}
+
+/** The push ceiling on a slot (§4.11): 16 on RIDGE's lane, 24 everywhere else. */
+const goalOf = (s, base, slot) => (slot === objectiveLane(s, base, OBJ_RIDGE) ? RIDGE_GOAL : PUSH_MAX);
+
+/**
+ * THE HOLDER (§4.11), each objective re-read every PUSH_TICKS on a tick hashed from (seed, objective): the side with
+ * more living tanks inside the gun's reach of the point `(lane x, seam(lane x))` holds it; equal counts leave it.
+ * Information for the player - nothing in the odds reads it.
+ */
+function objectiveHolders(s, base, tick, seamAt) {
+  const reach = Math.imul(GUN_M, 256);
+  for (let o = 0; o < OBJECTIVES; o++) {
+    if (mod((tick | 0) + mod(mix(s[base + TAC_SEED], 400 + o) >>> 1, PUSH_TICKS), PUSH_TICKS) !== 0) continue;
+    const lane = objectiveLane(s, base, o), px = slotX(lane), pz = seamAt(px) | 0;
+    let bull = 0, bear = 0;
+    for (let i = 0; i < 96; i += 4) {
+      if (!aliveAt(s, i)) continue;
+      const b = O_UNITS + Math.imul(i, U_WORDS);
+      const dx = (s[b] - px) >> 8, dz = (s[b + 1] - pz) >> 8;
+      if (abs(dx) >= reach || abs(dz) >= reach || Math.imul(dx, dx) + Math.imul(dz, dz) >= Math.imul(reach, reach)) continue;
+      if (teamOf(i).side < 0) bull++; else bear++;
+    }
+    const holder = bull > bear ? HOLDER_BULL : bear > bull ? HOLDER_BEAR : objectiveHolder(s, base, o);
+    s[base + TAC_OBJ + o] = lane | (holder << 8);
+  }
+}
+
+/**
+ * Whether this tank bounds in this tick (§2.5, §2.6, §3). With its partner alive: the role clock. With its partner
+ * dead: a widow holds overwatch - unless this tank is the one that came back while the partner was dead, which
+ * holds the forward line as BOUNDING until the partner returns.
+ */
+function isBounding(s, base, index, tick) {
+  const partner = partnerOf(index);
+  const { side, team, member } = teamOf(index);
+  const w = teamWord(side, team);
+  const roleWord = s[base + TAC_ROLE_MEMBER + w];
+  if (!aliveAt(s, partner)) return partner >= 0 && (roleWord & ALONE) !== 0 && (roleWord & 1) === member;
+  const { period } = schedule(s[base + TAC_SEED], side, team);
+  const leg = idiv((tick | 0) - s[base + TAC_ROLE_START + w], period) & 1;
+  return ((roleWord & 1) ^ leg) === member;
+}
+
+/** Where a tank goes this tick: its team's slot, its side of the pair, and its depth line. */
+function postOf(s, base, index, tick) {
+  const { side, team, member } = teamOf(index);
+  const x = (slotX(s[base + TAC_SLOT + teamWord(side, team)]) + (member === 0 ? -PAIR_HALF : PAIR_HALF)) | 0;
+  const bounding = isBounding(s, base, index, tick);
+  const push = s[base + TAC_PUSH + teamWord(side, team)];
+  return { x, depth: ((bounding ? FORWARD_LINE : OVERWATCH_LINE) - push) | 0, bounding, push };
+}
+
+/**
+ * A tank enters in its own team's lane: the spawn's x draw is still taken (the stream does not shift), and the x it
+ * gave is replaced by the tank's post. Measured, a hull entering at a random x walked diagonally through the other
+ * teams' lines to reach its own, and those crossings were most of what was left of hulls pressing together.
+ */
+function enterInLane(s, base, index) {
+  s[O_UNITS + Math.imul(index, U_WORDS)] = postOf(s, base, index, 0).x;
+}
+
+const TANK_GAP = Math.imul(12, ONE);              // §1.1 hull to hull, both sides alike
+
+/**
+ * A NEW HULL IS NOT PLACED INSIDE ANOTHER'S 12 m (§1.1). The respawn enters in its lane at the back edge, and its
+ * partner - or a tank of the neighbouring lane - may still be standing there: measured, a respawn put 10.80 m from its
+ * partner, which the separation only undid on the next tick. The new hull keeps its lane x and is moved along z only,
+ * just clear of each living tank in index order: back toward its own edge while the field has room (`halfZ`), else
+ * forward. Integers; no draw.
+ */
+function clearOnEntry(s, index, halfZ) {
+  const b = O_UNITS + Math.imul(index, U_WORDS), side = teamOf(index).side;
+  for (let pass = 0; pass < 3; pass++) {
+    let moved = false;
+    for (let j = 0; j < 96; j += 4) {
+      if (j === index || !aliveAt(s, j)) continue;
+      const o = O_UNITS + Math.imul(j, U_WORDS);
+      const dx = sub(s[o], s[b]), dz = sub(s[o + 1], s[b + 1]);
+      if (abs(dx) >= TANK_GAP || abs(dz) >= TANK_GAP) continue;
+      if (add(mulFast(dx, dx), mulFast(dz, dz)) >= mulFast(TANK_GAP, TANK_GAP)) continue;
+      const need = add(sqrt(sub(mulFast(TANK_GAP, TANK_GAP), mulFast(dx, dx))), 66);   // and a millimetre
+      const back = side < 0 ? sub(s[o + 1], need) : add(s[o + 1], need);
+      s[b + 1] = abs(back) <= halfZ ? back : (side < 0 ? add(s[o + 1], need) : sub(s[o + 1], need));
+      moved = true;
+    }
+    if (!moved) return;
+  }
+}
+
+/** A tank id came back (§3): it rejoins its own pair as BOUNDING - the team's role clock restarts on it. */
+function onRespawn(s, base, index, tick) {
+  const { side, team, member } = teamOf(index);
+  const w = teamWord(side, team);
+  s[base + TAC_ROLE_START + w] = tick | 0;
+  s[base + TAC_ROLE_MEMBER + w] = aliveAt(s, partnerOf(index)) ? member : (member | ALONE);
+  enterInLane(s, base, index);
+}
+
+/**
+ * After a team fired (§4): to the free slot beside it, left or right hashed from (seed, side, team, tick), at most
+ * once per SCOOT_TICKS. Beside it, not the next in the side's permutation: measured, that was a median 66 m (p90
+ * 132 m) across the field, and the pair drove through the other teams - 92.8% of the ticks where the separation
+ * push undid a tank's own step.
+ */
+function scoot(s, base, index, tick) {
+  const { side, team } = teamOf(index);
+  const w = teamWord(side, team);
+  if ((tick | 0) - s[base + TAC_SCOOT + w] < SCOOT_TICKS) return false;
+  s[base + TAC_SCOOT + w] = tick | 0;
+  const here = s[base + TAC_SLOT + w];
+  let first = ((mix(mix(mix(s[base + TAC_SEED], side < 0 ? 211 : 223), team), tick | 0) >>> 1) & 1) ? 1 : -1;
+  // TOWARD THE OBJECTIVE (§4.3, §4.11): off every objective's lane, the side nearer the nearest one, if that slot is
+  // free (a tie between two, the hashed side). On one, as written: teams rotate through the lane.
+  let near = SLOTS_PER_SIDE, toward = 0;
+  for (let o = 0; o < OBJECTIVES; o++) {
+    const d = objectiveLane(s, base, o) - here, a = d < 0 ? -d : d;
+    if (a === 0) { near = 0; toward = 0; break; }
+    if (a < near) { near = a; toward = d < 0 ? -1 : 1; } else if (a === near && (d < 0 ? -1 : 1) !== toward) toward = 0;
+  }
+  if (toward !== 0 && !slotHeld(s, base, side, team, here + toward)) first = toward;
+  for (let n = 0; n < 2; n++) {
+    const next = here + (n === 0 ? first : -first);
+    if (next < 0 || next >= SLOTS_PER_SIDE) continue;
+    let held = false;
+    for (let t = 0; t < TEAMS_PER_SIDE; t++) if (t !== team && s[base + TAC_SLOT + teamWord(side, t)] === next) held = true;
+    if (!held) {
+      s[base + TAC_SLOT + w] = next;
+      if (s[base + TAC_PUSH + w] > goalOf(s, base, next)) s[base + TAC_PUSH + w] = goalOf(s, base, next);   // onto the crest
+      return true;
+    }
+  }
+  return false;                                   // hemmed in both sides: hold, and try again after the next shot
+}
+
+function slotHeld(s, base, side, team, slot) {
+  for (let t = 0; t < TEAMS_PER_SIDE; t++) if (t !== team && s[base + TAC_SLOT + teamWord(side, t)] === slot) return true;
+  return false;
+}
+
+/**
+ * PRESSURE (§4.10): every PUSH_TICKS, on a tick hashed per team, a team counts the living tanks of each side inside
+ * the gun's reach of its slot on the seam - from the positions at the start of the tick - and takes ground (+8 m, up to
+ * 24), gives ground (-8 m, down to -8) or drifts one step back toward 0. A widow never pushes: it drifts to 0.
+ * `seamAt(x)` is the front's z at x.
+ */
+function pressure(s, base, tick, seamAt) {
+  const hash = s[base + TAC_SEED];
+  const reach = Math.imul(GUN_M, 256);
+  for (let w = 0; w < Math.imul(2, TEAMS_PER_SIDE); w++) {
+    const side = w < TEAMS_PER_SIDE ? -1 : 1, team = mod(w, TEAMS_PER_SIDE);
+    if (mod((tick | 0) + mod(mix(hash, 300 + w) >>> 1, PUSH_TICKS), PUSH_TICKS) !== 0) continue;
+    const px = slotX(s[base + TAC_SLOT + w]), pz = seamAt(px) | 0;
+    let own = 0, foe = 0;
+    for (let i = 0; i < 96; i += 4) {
+      if (!aliveAt(s, i)) continue;
+      const b = O_UNITS + Math.imul(i, U_WORDS);
+      const dx = (s[b] - px) >> 8, dz = (s[b + 1] - pz) >> 8;
+      if (abs(dx) >= reach || abs(dz) >= reach || Math.imul(dx, dx) + Math.imul(dz, dz) >= Math.imul(reach, reach)) continue;
+      if (teamOf(i).side === side) own++; else foe++;
+    }
+    const k0 = Math.imul(team, 2), i0 = (k0 << 3) | (side < 0 ? 0 : 4), i1 = ((k0 + 1) << 3) | (side < 0 ? 0 : 4);
+    const widow = aliveAt(s, i0) !== aliveAt(s, i1);
+    let push = s[base + TAC_PUSH + w];
+    const slot = s[base + TAC_SLOT + w], weight = objectiveWeight(s, base, slot);
+    const rest = widow ? 0 : weight === 2 ? OBJECTIVE_REST : 0;
+    if (!widow && own + weight >= foe + PUSH_TAKE_LEAD) push = Math.min(goalOf(s, base, slot), push + PUSH_STEP);
+    else if (!widow && foe >= own + PUSH_GIVE_LEAD + weight) push = Math.max(PUSH_MIN, push - PUSH_STEP);
+    else push = push > rest ? push - PUSH_STEP : push < rest ? push + PUSH_STEP : rest;
+    if (push > goalOf(s, base, slot)) push = goalOf(s, base, slot);
+    s[base + TAC_PUSH + w] = push | 0;
+  }
+}
+
+// =====================================================================================================================
+// PART B - INFANTRY (WAR_TACTICS.md §8-§12). Same construction: integer hashes of (seed, roster id, tick), no draw.
+// =====================================================================================================================
+
+/**
+ * A rifleman's roster number 0..35 within his side and his fire team 0..8 (§9.1, §9.2): a rifle index is
+ * `k x 8 + side x 4 + j`, j = 1..3, so `r = 3k + j - 1` and the team is `r >> 2` - nine teams of four.
+ */
+function rifleTeamOf(index) {
+  const k = ((index | 0) >> 3) & 15, j = (index | 0) & 3;
+  const r = Math.imul(k, 3) + j - 1;
+  return { side: ((index >> 2) & 1) === 0 ? -1 : 1, r, team: r >> 2 };
+}
+
+const FIRE_TEAMS_PER_SIDE = 9;
+
+/** The unit index of fire team `team`'s first man, roster `4 x team` (§9.2: the team stands on his squad). */
+function firstManOf(side, team) {
+  const r = Math.imul(team, 4), k = idiv(r, 3), j = mod(r, 3) + 1;
+  return (Math.imul(k, 8) + (side < 0 ? 0 : 4) + j) | 0;
+}
+const REACH_18 = Math.imul(18, ONE);
+
+/**
+ * The mean push of the tank teams of `side` whose slot is within 18 m of `anchorX`, rounded to 8 m steps toward 0
+ * (§12.1). No team in reach: 0.
+ */
+function pushNear(s, base, side, anchorX) {
+  let sum = 0, n = 0;
+  for (let t = 0; t < TEAMS_PER_SIDE; t++) {
+    const w = teamWord(side, t);
+    const d = slotX(s[base + TAC_SLOT + w]) - (anchorX | 0);
+    if (d > REACH_18 || d < -REACH_18) continue;
+    sum += s[base + TAC_PUSH + w]; n++;
+  }
+  if (n === 0) return 0;
+  return Math.imul(idiv(idiv(sum, n), PUSH_STEP), PUSH_STEP) | 0;
+}
+
 // ---- rules/map.js
 // THE MAP'S OWN COLLISION BOXES, AND THEY BELONG HERE.
 //
@@ -2276,6 +2671,8 @@ const WALK_FACING_FLOOR = 39322;
 const RIFLE_STANDOFF = Math.imul(4, ONE);
 const RIFLE_SPREAD = Math.imul(8, ONE);      // + 0 to 8, so 4 to 12
 const RIFLE_SQUAD_Z = Math.imul(10, ONE);    // then -5 to +5
+const RIFLE_LEAD_MAX = Math.imul(-8, ONE);   // §12.1 a man's post leads the seam by at most 8 m
+const RIFLE_TRAIL_MAX = Math.imul(40, ONE);  // and trails it by at most 40 m
 
 /**
  * Pushed this far past its own line, a unit is overrun and falls right back.
@@ -2307,6 +2704,41 @@ const SQUADS = 8;
 const SQUAD_MASK = SQUADS - 1;
 const SQUAD_SPAN = Math.imul(76, ONE);     // anchors run from -76 to +76
 const SQUAD_WIDTH = Math.imul(16, ONE);    // each unit sits within 8 m of its anchor
+
+/**
+ * ARMOUR DOCTRINE (WAR_TACTICS.md, the owner 2026-09-16 18:20): where a tank goes is assigned in `rules/tactics.js` -
+ * teams, roles, frontage slots, shoot-and-scoot - and handed in on `u` (tac, tacX, tacDepth, tacBounding). This step only
+ * moves the tank there, and picks the hull-down spot for a tank that holds.
+ *
+ * Measured before (5 seeds x 3600 ticks, truck in the bay): an engaged tank's post was its enemy's x, so every tank
+ * facing one enemy steered for the same metre - nearest tank median 8.50 m, the friendly spacing exactly; on 42.5% of
+ * tank-ticks the separation push undid the tank's own step; groups of 9 (median) to 20 within 20 m.
+ */
+const LANE_LEASH = 0;                            // a slot is a position held: the gun reaches 46 m, the hull stays
+const HULL_SEARCH = 2;                           // candidates either side of the post, HULL_STEP apart
+const HULL_STEP = Math.imul(2, ONE);
+const CREST_LOOK = Math.imul(6, ONE);            // how far toward the enemy the crest is looked for
+/**
+ * HULL-DOWN (WAR_TACTICS.md §4.1): of the five candidates about an overwatch hold line (-4, -2, 0, +2, +4 m), the one
+ * with the largest ground rise 6 m toward the enemy; ties to the first in that scan. Exported because sim.js ranks
+ * the half-line budget by how far a tank stands from the place it is really going to.
+ */
+function hullDownHold(hold, side, x, ground) {
+  const toward = Math.imul(-side, CREST_LOOK);
+  let best = hold, bestRise = -2147483647;
+  for (let c = -HULL_SEARCH; c <= HULL_SEARCH; c++) {
+    const z = add(hold, Math.imul(c, HULL_STEP));
+    const rise = sub(ground(x, add(z, toward)), ground(x, z));
+    if (rise > bestRise) { bestRise = rise; best = z; }
+  }
+  return best;
+}
+
+const POST_DEPTH = ONE;                          // a tank within 1 m of its post's depth stands
+const REVERSE_TICKS = 120;                       // §0 row 2: at most one reversal of a tank's own travel in any 2 s
+const POST_SIDE = Math.imul(2, ONE);             // and within 2 m of its slot across: a depth move on a hull up to 30
+                                                 // degrees off drifts x; correcting half a metre of it flipped the step
+const CROSSING = Math.imul(4, ONE);              // further than this across from its slot, a tank is still crossing
 const SQUAD_OFFSET = Math.imul(18, ONE);   // a rifleman: Army.Spawn's Rand(-9, 9)
 const TWO = Math.imul(2, ONE);
 
@@ -2360,8 +2792,10 @@ const OVERRUN = Math.imul(14, ONE);
  * along. That only stays harmless while this runs from the first tick, which
  * is why it is at the top of the army's step and not somewhere convenient.
  */
-const FRIENDLY_SPACING = Math.imul(17, ONE) >> 1;   // 8.5 m, Army.FriendlySpacing
-const HOSTILE_SPACING = Math.imul(15, ONE) >> 1;    // 7.5 m, Army.HostileSpacing
+// WAR_TACTICS.md §1.1 (the owner 2026-09-16): never inside 12 m, tank to tank, either side - was C#'s 8.5 m friendly and
+// 7.5 m hostile, and the measured nearest tank sat at 8.50 m, pressed against it, on half of all tank-ticks.
+const FRIENDLY_SPACING = Math.imul(12, ONE);
+const HOSTILE_SPACING = Math.imul(12, ONE);
 const COINCIDENT = 655;                             // 0.01 m, C#'s 1e-4 on d2
 
 function separatePair(s, a, b, xOff, zOff, sideOff) {
@@ -2472,7 +2906,7 @@ const SIDE_BEAR = 1;
  * cooldown has expired - reload, then the hit roll. Nothing may be inserted
  * before the wobble or every recorded transcript stops replaying.
  */
-function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, halfX, halfZ, dt, index, tick, craters) {
+function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, halfX, halfZ, dt, index, tick, craters, ground) {
   if (u.hp <= 0) return 0;
 
   // THE DRAW STAYS, THE WOBBLE GOES.
@@ -2507,7 +2941,9 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, halfX, half
   // a coupling between where he stands and when he stops, and the condition
   // only bites once he is ON his post - which is not the approach the mark at
   // t=15 measures. Named here rather than ported blind.
-  const still = !u.armour && standingStill(index, tick | 0);
+  // FIRE AND MOVEMENT (WAR_TACTICS.md §11.2): the halt clock is the FIRE TEAM's, handed in on `u.halted` by sim.js, so
+  // four men rest and halt together. A caller that does not set it gets the man's own clock, as before.
+  const still = !u.armour && (u.halted === undefined ? standingStill(index, tick | 0) : u.halted);
   const walk = u.armour ? ARMOUR_WALK
              : still ? 0 : mulFast(RIFLE_WALK, paceOf(index));
   // Each unit holds at its OWN distance, scattered about the mean.
@@ -2530,8 +2966,11 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, halfX, half
   const standoff = u.armour
     ? add(ARMOUR_STANDOFF,
           sub(Math.imul(scatter, ARMOUR_SPREAD) >> 10, ARMOUR_SPREAD >> 1))
-    : add(add(RIFLE_STANDOFF, Math.imul(scatter, RIFLE_SPREAD) >> 10),
-          sub(Math.imul(scatter2, RIFLE_SQUAD_Z) >> 10, RIFLE_SQUAD_Z >> 1));
+    // FOLLOW THE PUSH (WAR_TACTICS.md §12.1): the man's stand-off less the mean push of the tank lanes his squad stands
+    // in, and never more than 8 m past the seam nor 40 m behind it.
+    : clamp(sub(add(add(RIFLE_STANDOFF, Math.imul(scatter, RIFLE_SPREAD) >> 10),
+                    sub(Math.imul(scatter2, RIFLE_SQUAD_Z) >> 10, RIFLE_SQUAD_Z >> 1)), u.infPush | 0),
+            RIFLE_LEAD_MAX, RIFLE_TRAIL_MAX);
   // The side a unit BELONGS to, not the side it happens to be standing on.
   //
   // Taken from the current position, a unit that stepped over the seam had its
@@ -2539,7 +2978,14 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, halfX, half
   // instead of holding short of it, and by t=10 the whole force had walked
   // through a front that no longer existed.
   const side = u.side < 0 ? -1 : 1;
-  const hold = add(seamZ, Math.imul(side, standoff));
+  let hold = add(seamZ, Math.imul(side, standoff));
+  if (u.armour && u.tac) {
+    // Measured from the seam at the SLOT, not at the hull: the seam curves with x, and a target that moved as the
+    // hull crept across kept it on the edge of its post.
+    hold = add(u.tacSeam, mulFast(Math.imul(side, ONE), u.tacDepth));
+    // HULL-DOWN, for the overwatch tank: the candidate with the highest ground between it and the enemy.
+    if (!u.tacBounding && ground) hold = hullDownHold(hold, side, u.tacX, ground);
+  }
 
   // Give ground when something is too close.
   //
@@ -2552,7 +2998,10 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, halfX, half
   // Dir - the way it faces and pushes - is +1. Using side made every unit read
   // as overrun the moment it reached its own holding line, so the whole army
   // sat on the fall-back line and never fired a shot.
-  const past = mulFast(sub(u.z, seamZ), Math.imul(-side, ONE));
+  // WAR_TACTICS.md §4.10: a tank's overrun is measured from its team's pushed forward line, not the seam - or every
+  // push across the seam would be thrown back by this rule on the tick it arrived.
+  const overrunFrom = u.armour && u.tac ? add(u.tacSeam, mulFast(Math.imul(side, ONE), u.tacForward)) : seamZ;
+  const past = mulFast(sub(u.z, overrunFrom), Math.imul(-side, ONE));
   // ARMOUR ONLY, and that is C#'s own division, not a preference.
   //
   // `StepArmour` falls back to `front - Dir*34` when a tank has overrun its
@@ -2567,8 +3016,12 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, halfX, half
   const overrun = u.armour && past > OVERRUN_DEPTH;
 
   let dz;
+  // Bit 5 of a tank's memory word (sim.js U_COOLDOWN): it gave ground and the enemy has not left 30 m since.
+  let gaveGround = u.armour && u.crowdedLoose ? ((u.cooldown | 0) >> 5) & 1 : 0;
   if (overrun) {
-    const back = add(seamZ, Math.imul(side, FALL_BACK));
+    const back = u.armour && u.tac
+      ? add(u.tacSeam, mulFast(Math.imul(side, ONE), sub(FALL_BACK, u.tacPush)))
+      : add(seamZ, Math.imul(side, FALL_BACK));
     const g = sub(back, u.z);
     dz = mulFast(mulFast(walk, g > 0 ? ONE : -ONE), dt);
   } else if (u.crowded) {
@@ -2590,9 +3043,27 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, halfX, half
     const g = sub(back, u.z);
     const want = abs(g) > mulFast(CROWD_WALK, dt) ? (g > 0 ? ONE : -ONE) : 0;
     dz = mulFast(mulFast(CROWD_WALK, want), dt);
+    gaveGround = 1;
+  } else if (u.armour && u.crowdedLoose && gaveGround && mulFast(sub(u.z, hold), Math.imul(side, ONE)) > 0) {
+    // ...AND THEN HOLDS (WAR_TACTICS.md §1.1). A tank that gave ground, with the enemy still inside the 24 m it backed
+    // off from plus the 6 m it gave, stands where it is. Without this it stepped out of 24 m, walked back in and backed
+    // off again: measured, 23% of the tank direction flips that came twice inside 2 s.
+    // ONLY A TANK THAT GAVE GROUND (bit 5 of its memory word, cleared once no enemy is inside 30 m). Read as "any tank
+    // short of its post with an enemy inside 30 m" it also stopped every assault: with the slots staggered an enemy hull
+    // stands about 27 m from a lane's seam, and tanks posted across the seam stood on 8774 tank-ticks (seeds 1-15).
+    dz = 0;
   } else {
     const gap = sub(hold, u.z);
-    const want = abs(gap) > mulFast(walk, dt) ? (gap > 0 ? ONE : -ONE) : 0;
+    // A TANK'S POST IS A PLACE, NOT A LINE: within POST_DEPTH of it the tank stands. With the step's own length as
+    // the deadband a hull driving sideways to its slot drifted a few centimetres in depth, left the band, reversed
+    // to correct, drifted back - measured ~10 heading reversals a tank-second and 16-18% of one-second windows
+    // fidgeting.
+    // And while it is still crossing to its slot it does not correct its depth at all: the move across comes first,
+    // the depth after it arrives. With any band on depth, a hull crossing on a slant drifted over the band's edge
+    // and back each tick and swung between two headings 135 degrees apart (measured 3.8 reversals a tank-second).
+    const crossing = u.armour && u.tac && abs(sub(u.tacX, u.x)) > CROSSING;
+    const band = u.armour ? POST_DEPTH : mulFast(walk, dt);
+    const want = !crossing && abs(gap) > band ? (gap > 0 ? ONE : -ONE) : 0;
     dz = mulFast(mulFast(walk, want), dt);
   }
   // Sideways: hold a squad position, not a random walk.
@@ -2656,10 +3127,33 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, halfX, half
   // truck's 34 m, which is why 35% of the armour was ever near it against the
   // recording's 71% - the spread was right (sd 46 against C#'s 36-45) and the
   // SHAPE was flat where the recording's is peaked.
-  const post = u.armour ? (u.engaged ? u.foeX : ladder) : riflePost(anchor, index);
+  // FRONTAGE: a tank holds its team's slot (rules/tactics.js) and closes on its foe only inside LANE_LEASH.
+  const lane = u.armour ? u.tacX : 0;
+  const post = u.armour
+    ? (u.engaged ? add(lane, clamp(sub(u.foeX, lane), neg(LANE_LEASH), LANE_LEASH)) : lane)
+    : riflePost(anchor, index);
   const dxWant = sub(post, u.x);
   const dxCap = mulFast(walk, dt);
-  const dx = clamp(dxWant, neg(dxCap), dxCap);
+  // What the tank asks for before anything holds it: sim.js keeps a granted move granted until it arrives.
+  u.wantsMove = u.armour && (dz !== 0 || abs(dxWant) > POST_SIDE);
+  let dx = u.armour && (u.tacWait || abs(dxWant) <= POST_SIDE) ? 0 : clamp(dxWant, neg(dxCap), dxCap);
+  if (u.armour && u.tacWait) dz = 0;       // one of the pair holds: this one waits for its overwatch partner (sim.js)
+  // ONE REVERSAL IN TWO SECONDS (WAR_TACTICS.md §0 row 2). A tank's own step may change its x or z sign once; a second
+  // change inside REVERSE_TICKS of the first is not taken - the hull stands until two seconds have passed, then goes.
+  // Every fidget measured on seeds 1-10 (14 of 442 flips) was a real change of post, a 14 m leg swap and an 8 m push
+  // step the other way inside 2 s: the order reversed, and the hull reversed with it. The memory is the tank's own
+  // U_COOLDOWN word (sim.js): bit 0 moved last tick, bits 1-2 its last z sign, 3-4 its last x sign, bit 5 it gave
+  // ground (above), bit 6 its move is granted (sim.js), from bit 7 the tick of its last reversal.
+  if (u.armour && u.tac) {
+    const mem = u.cooldown | 0, zWas = (mem >> 1) & 3, xWas = (mem >> 3) & 3;
+    let flipped = (mem >>> 7) | 0;
+    const recent = ((tick | 0) - flipped) < REVERSE_TICKS;
+    let zNow = dz > 0 ? 1 : dz < 0 ? 2 : 0, xNow = dx > 0 ? 1 : dx < 0 ? 2 : 0;
+    if (recent && zNow && zWas && zNow !== zWas) { dz = 0; zNow = 0; }
+    if (recent && xNow && xWas && xNow !== xWas) { dx = 0; xNow = 0; }
+    if ((zNow && zWas && zNow !== zWas) || (xNow && xWas && xNow !== xWas)) flipped = tick | 0;
+    u.reverseMemory = (Math.imul(flipped, 128) | (gaveGround << 5) | ((xNow || xWas) << 3) | ((zNow || zWas) << 1)) | 0;
+  }
 
   // Sideways: a slow drift. NOT a chase towards the engaged foe.
   //
@@ -2700,9 +3194,20 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, halfX, half
   let stepX = dx, stepZ = dz;
   if (u.armour) {
     const far = length2(dx, dz);
-    if (far > TURN_FLOOR) {
-      const want = atan2(dx, dz);
-      // the short way round, or a tank crossing north turns the long way home
+    // WAR_TACTICS.md §4.5: moving, the hull points along its step; standing on its post, at the enemy side (the seam
+    // normal), so a held line is a line of guns facing the seam.
+    const enemyDir = u.side < 0 ? 0 : 32768;
+    const standing = u.tac === true && far <= TURN_FLOOR;
+    // A TANK BACKS OFF FACING THE ENEMY: its hull lines up with the line of travel, nose first or tail first,
+    // whichever is the shorter turn. Turning round to drive 8 or 14 m back and round again to stand cost two half-turns
+    // of standing still, and a hull paused mid-drive by the half-line budget stood with its gun off the seam - 6.15% of
+    // holding ticks on the line, most of A7's miss.
+    const travel = far > TURN_FLOOR ? atan2(dx, dz) : 0;
+    const offNose = (((travel - u.heading + 32768) & 65535) - 32768) | 0;
+    const offTail = (((travel + 32768 - u.heading + 32768) & 65535) - 32768) | 0;
+    const tailFirst = u.tac === true && abs(offTail) < abs(offNose);
+    if (far > TURN_FLOOR || standing) {
+      const want = standing ? enemyDir : tailFirst ? (travel + 32768) & 65535 : travel;
       const off = (((want - u.heading + 32768) & 65535) - 32768) | 0;
       u.heading = add(u.heading, Math.imul(off, TURN_RATE) >> 16) & 65535;
     }
@@ -2720,8 +3225,19 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, halfX, half
     // it was never written for. The heading still stops updating below the
     // floor, where the direction of a 6 mm step is noise; the tank still only
     // ever drives where it points.
-    stepX = mulFast(sin(u.heading), far);
-    stepZ = mulFast(cos(u.heading), far);
+    // ALONG THE HULL BY THE PROJECTION, not the whole distance: the full `far` laid along a hull that is not pointing
+    // at the post overshoots it in depth by the sideways part, and a tank cannot strafe, so it overshot back and
+    // forth every tick (measured: path over net distance p90 31, 18% of one-second windows fidgeting). The
+    // projection is signed - negative is reversing - and never longer than the move asked for.
+    // PIVOT, THEN DRIVE: a hull more than 30 degrees off the way it is going turns where it stands and does not move.
+    // Driving along a hull still turning swung the step's sideways part from one sign to the other mid-turn -
+    // measured, two thirds of the direction flips that came twice inside 2 s (WAR_TACTICS.md §0 row 2).
+    const lined = far > TURN_FLOOR
+      ? (tailFirst ? abs(offTail) : abs(offNose)) <= 5461
+      : true;
+    const along = lined ? add(mulFast(dx, sin(u.heading)), mulFast(dz, cos(u.heading))) : 0;
+    stepX = mulFast(sin(u.heading), along);
+    stepZ = mulFast(cos(u.heading), along);
   }
 
   const edge = sub(FRONT_X, Math.imul(4, ONE));
@@ -3586,6 +4102,7 @@ const sortieWait = (rng) => mulFast(SORTIE_SECONDS, between(rng, JITTER_MIN, JIT
 
 
 
+
 var heatForLoad = heat;
 
 
@@ -3665,6 +4182,14 @@ const HALF_Z = Math.imul(85, ONE);
 //
 // PostOffice.BayFor(SoloBay) is the authority; TruckSpawnTests holds the two
 // numbers together so they cannot drift apart again in silence.
+// WAR_TACTICS.md §1.1: crowded gives 6 m and then holds - so the hold reaches the ground given, 24 + 6 m.
+const CROWD_HOLD_RANGE = Math.imul(30, ONE);
+// A partner further than this from its post is still moving to it (the hull-down spot is within 4 m of the line).
+const WANTS_MOVE = Math.imul(2, ONE);            // off its hold by more than this, a tank on the line will move
+const SEP_MOVE = 1311;                              // 0.02 m: a separation push past this is a move (§0 row 2)
+const LINE_REACH = Math.imul(40, ONE);               // WAR_TACTICS.md §0: within 40 m of its post's depth, a tank is on the line
+const HALF_REST_TICKS = 210;                        // WAR_TACTICS.md §11.2 half of a mean 7 s rest
+const HULL_CLEAR = Math.imul(3, ONE);               // WAR_TACTICS.md §8.3
 const START_X = -6579814;                   // -100.4 m, 14 m out on the apron
 const START_Z = 668467;                     // 10.2 m, the solo bay (14 of 24)
 
@@ -4091,6 +4616,8 @@ function init(seedWord) {
   // protocol; C# takes it from `Random.value` once at Awake.
   s[O_TRUCK + T_FLAGS] = (Math.imul(seedWord | 0, 2654435761) >>> 31) & 1;
   s[O_TRUCK + T_CARGO] = 45875;             // 0.7 of a bed
+  // Armour tactics from the seed, before any unit moves (rules/tactics.js).
+  initTactics(s, O_TACTICS, seedWord);
   s[O_SCORE + S_BESTX] = START_X;
   s[O_SCORE + S_CARGO] = 45875;
   s[O_SCORE + S_STATE] = RUN_LIVE;
@@ -4110,6 +4637,8 @@ function init(seedWord) {
   // arrive at the same hills by construction rather than by agreement. Unity
   // draws what this says now; it does not say what this should be.
   st.ground = groundFromSeed(seedWord, DEFAULT_COLS, DEFAULT_ROWS, HALF_X, HALF_Z);
+  // OBJECTIVES (WAR_TACTICS.md §4.11): three lanes read from this ground, so from the seed alone - never a truck.
+  initObjectives(s, O_TACTICS, (x, z) => heightAtWorld(st.ground, x, z, HALF_X, HALF_Z));
 
   // THE MAP'S OWN WALLS, AND THEY ARE THE CORE'S TOO.
   //
@@ -4142,7 +4671,10 @@ function init(seedWord) {
   for (let k = 0; k < SQUAD_WORDS; k++)
     s[O_SQUADS + k] = Math.imul(nextBelow(rng, 161) - 80, ONE);
 
-  for (let i = 0; i < UNITS; i++) spawnUnit(s, rng, i);
+  for (let i = 0; i < UNITS; i++) {
+    spawnUnit(s, rng, i);
+    if (isArmour(i)) enterInLane(s, O_TACTICS, i);   // WAR_TACTICS.md: every tank enters in its team's lane
+  }
   return st;
 }
 
@@ -4244,6 +4776,9 @@ function spawnUnit(s, rng, i) {
   // nobody. A front is made of two sides shooting on their own clocks.
   s[b + U_TARGET] = nextBelow(rng, 180);
   s[b + U_COOLDOWN] = nextBelow(rng, 120);
+  // A tank's word is not a clock (its reload is U_TARGET): moved-last-tick and its reversal memory start clear. The draw
+  // above is still taken, so no stream shifts.
+  if (isArmour(i)) s[b + U_COOLDOWN] = 0;
   // The stagger used to be thrown away on the next line - `U_TARGET = -1` - so
   // every tank could fire on its first tick of contact. The word is shared: it
   // is the armour's reload counter and the rifleman's squad, and the -1 was
@@ -4324,7 +4859,11 @@ function reinforce(s, rng) {
     s[O_ARMY + c.word] = sub(s[O_ARMY + c.word], Math.imul(deficit, TICK_DT));
     if (s[O_ARMY + c.word] > 0) continue;
     s[O_ARMY + c.word] = c.wait;
-    if (slot >= 0) spawnUnit(s, rng, slot);
+    if (slot >= 0) {
+      spawnUnit(s, rng, slot);
+      // A tank id back on the field rejoins its own pair as BOUNDING (WAR_TACTICS.md §3).
+      if (isArmour(slot)) { onRespawn(s, O_TACTICS, slot, s[O_TICK]); clearOnEntry(s, slot, HALF_Z); }
+    }
   }
 }
 
@@ -4696,6 +5235,10 @@ function step(st, throttle, steer, brake, handbrake, practice) {
   // to be carried at its real size. The rifle still adds exactly ONE until
   // its own half of (j) is done.
   let courierDmg = 0;
+  // NO FIRE BEFORE ROLL-OUT (WAR_TACTICS.md §1.2, the owner 2026-09-16): no gun chooses the truck until its best x is
+  // APRON_RADIUS past its start. Latched through S_BESTX, which never goes back. Measured before, truck idle 60 s in
+  // the bay over 8 seeds: 4/8 hit on HEAD's core, 7/8 hit and one wrecked once tanks fired on a truck with no enemy near.
+  const rolledOut = sub(s[O_SCORE + S_BESTX], START_X) >= APRON_RADIUS;
   const u = { x: 0, z: 0, hp: 0, heading: 0, cooldown: 0, armour: false, side: 1, crowded: false, engaged: false, foeX: 0 };
 
   // A read-only view of any unit, for target selection. Declared before the
@@ -4707,11 +5250,18 @@ function step(st, throttle, steer, brake, handbrake, practice) {
     peek.side = s[pb + U_SIDE]; peek.armour = isArmour(i);
     return peek;
   };
+  // PRESSURE (WAR_TACTICS.md §4.10): each team re-reads its local odds on its own hashed tick, from the positions at
+  // the start of this one, and takes or gives ground.
+  // The objectives' holders are re-read first, from the same positions; nothing in the odds reads them (§4.11).
+  objectiveHolders(s, O_TACTICS, s[O_TICK], (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z));
+  pressure(s, O_TACTICS, s[O_TICK], (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z));
   // Tanks are pushed out of each other BEFORE anything moves, which is where
   // `Army.Update` does it - the first three lines of it, over every armour
   // pair, ahead of StepArmour and StepInfantry. The position is protocol: a
   // separation applied after the step would be resolving last tick's overlap
   // against this tick's positions.
+  const beforeSepX = [], beforeSepZ = [];
+  for (let i = 0; i < UNITS; i += 4) { beforeSepX[i >> 2] = s[unitBase(i) + U_X]; beforeSepZ[i >> 2] = s[unitBase(i) + U_Z]; }
   for (let i = 0; i < UNITS; i++) {
     if (!isArmour(i)) continue;
     const ab = unitBase(i);
@@ -4727,6 +5277,77 @@ function step(st, throttle, steer, brake, handbrake, practice) {
     }
   }
 
+  const groundOf = (x, z) => surfaceAt(st, x, z);
+  // NEVER MORE THAN HALF THE LINE MOVING (WAR_TACTICS.md §0 row 4b): at the start of the tick count each side's tanks on
+  // the line (within 40 m of their post's depth; a respawn walking in is a column, not the line) and allow half of them
+  // to move this tick, in index order. The rest hold and cover.
+  // A tank still driving in from further back is not on the line: it neither waits for the budget nor uses it up.
+  // Measured with it counted, a side's column blocked itself - no tank on its line, a budget of nought, and the
+  // seam-metre samples covered by two hulls were 0.1% in the first ten seconds and 57% at the end of the minute.
+  // THE BUDGET GOES TO GROUND CHANGING HANDS FIRST (§0 row 11, the owner 2026-09-16: "point the budgeted movers at actual
+  // crossings and giving ground"): a tank posted across the seam or on a team giving ground, then the tanks furthest
+  // from where they are going - a scoot, a leg swap - before a hull correcting a metre. `offPost` is that rank: how far
+  // (|dx| + |dz|) a tank on the line stands from its hold at the start of the tick - the hull-down spot for an
+  // overwatch tank, not the plain line, or every overwatch hull on its crest ranks as a mover - plus 256 m for a
+  // crossing or a give.
+  // A MOVE ONCE GRANTED RUNS TO ITS END (bit 6 of the tank's U_COOLDOWN word). Granted afresh every tick, the budget
+  // froze tanks halfway through a bound: of the standing tank-ticks more than 1 m off their hold (seeds 1-5), 112170
+  // were a budget wait, 49854 of them more than 8 m out. A tank still on its old post waits there - that is its
+  // overwatch - and a tank that has started goes on. A new move starts while the grants already running, the pushed
+  // hulls and the tanks of its side still to step that rank above it are fewer than the budget.
+  const lineBudget = [0, 0], lineMoved = [0, 0], onTheLine = [], offPost = [], grantedBefore = [];
+  for (let i = 0; i < UNITS; i += 4) {
+    const ib = unitBase(i);
+    onTheLine[i >> 2] = false; offPost[i >> 2] = 0; grantedBefore[i >> 2] = false;
+    if (s[ib + U_STATE] === 0) continue;
+    const ip = postOf(s, O_TACTICS, i, s[O_TICK]);
+    const sd = s[ib + U_SIDE] < 0 ? -1 : 1;
+    const lineZ = add(frontlineZ(st.tape, ip.x, HALF_X, HALF_Z), mulFast(Math.imul(sd, ONE), ip.depth));
+    if (abs(sub(s[ib + U_Z], lineZ)) <= LINE_REACH) {
+      lineBudget[sd < 0 ? 0 : 1]++; onTheLine[i >> 2] = true;
+      grantedBefore[i >> 2] = ((s[ib + U_COOLDOWN] >> 6) & 1) === 1;
+      const holdZ = ip.bounding ? lineZ : hullDownHold(lineZ, sd, ip.x, groundOf);
+      offPost[i >> 2] = add(abs(sub(s[ib + U_X], ip.x)), abs(sub(s[ib + U_Z], holdZ)));
+      if (ip.depth < 0 || ip.push < 0) offPost[i >> 2] = add(offPost[i >> 2], Math.imul(256, ONE));
+    }
+  }
+  lineBudget[0] >>= 1; lineBudget[1] >>= 1;
+  // A tank the separation has just pushed more than 0.02 m (the §0 line between holding and moving) is moving this
+  // tick, whatever it asks for itself: it spends the budget first and takes its own step on top. Measured without
+  // this, 4.25% of side-ticks had more than half the line moving, most of them pushed hulls. A graze below 0.02 m -
+  // a pair standing at its 12 m, most separation contacts - is not a move: that tank's own step needs the budget like
+  // any other. Counting every graze let six grazed hulls of a line of eleven all drive (3-4% of side-ticks over half).
+  const sepMoved = [];
+  for (let i = 0; i < UNITS; i += 4) {
+    const ib = unitBase(i);
+    sepMoved[i >> 2] = onTheLine[i >> 2]
+      && length2(sub(s[ib + U_X], beforeSepX[i >> 2]), sub(s[ib + U_Z], beforeSepZ[i >> 2])) > SEP_MOVE;
+    if (sepMoved[i >> 2] || grantedBefore[i >> 2]) lineMoved[s[ib + U_SIDE] < 0 ? 0 : 1]++;
+  }
+  // The budget can shrink under running grants - a tank dies or a push takes a hull out of 40 m. Then the grants that
+  // rank lowest (nearest their hold; on a tie the higher index) stop until there is room again.
+  for (let sd = 0; sd < 2; sd++) {
+    while (lineMoved[sd] > lineBudget[sd]) {
+      let low = -1;
+      for (let i = 0; i < UNITS; i += 4) {
+        if (!grantedBefore[i >> 2] || sepMoved[i >> 2] || (s[unitBase(i) + U_SIDE] < 0 ? 0 : 1) !== sd) continue;
+        if (low < 0 || offPost[i >> 2] <= offPost[low >> 2]) low = i;
+      }
+      if (low < 0) break;                                // only pushed hulls left: nothing a rule can stop
+      grantedBefore[low >> 2] = false; lineMoved[sd]--;
+    }
+  }
+  // FIRE TEAMS (WAR_TACTICS.md §11.2): each side's nine four-man teams share one halt clock hashed from (seed, side,
+  // team); odd teams run half a rest (210 ticks) behind, and a team does not halt in a tick its lower neighbour halts,
+  // so of two neighbouring teams one is always moving while the other covers.
+  const halted = [[], []];
+  for (let sd = 0; sd < 2; sd++) {
+    for (let f = 0; f < FIRE_TEAMS_PER_SIDE; f++) {
+      const key = mix(s[O_TACTICS + TAC_SEED], 500 + Math.imul(sd, 16) + f) & 0x7fffffff;
+      const raw = standingStill(key, (s[O_TICK] - ((f & 1) === 1 ? HALF_REST_TICKS : 0)) | 0);
+      halted[sd][f] = raw && !(f > 0 && halted[sd][f - 1]);
+    }
+  }
   for (let i = 0; i < UNITS; i++) {
     const b = unitBase(i);
     u.x = s[b + U_X]; u.z = s[b + U_Z]; u.hp = s[b + U_HP];
@@ -4739,6 +5360,14 @@ function step(st, throttle, steer, brake, handbrake, practice) {
     u.side = s[b + U_SIDE];
     // The post he is holding, read fresh every tick: the anchors walk.
     u.anchor = u.armour ? 0 : s[squadWord(u.side, s[b + U_TARGET])];
+    if (!u.armour) {
+      const rt = rifleTeamOf(i);
+      // A FIRE TEAM TAKES ITS POST FROM ITS FIRST MAN'S SQUAD (WAR_TACTICS.md §9.2, the owner 2026-09-16): the four stand
+      // on one anchor. His squad is the one drawn at his spawn, kept in his U_TARGET - no draw moves.
+      u.anchor = s[squadWord(u.side, s[unitBase(firstManOf(rt.side, rt.team)) + U_TARGET])];
+      u.halted = halted[rt.side < 0 ? 0 : 1][rt.team];
+      u.infPush = pushNear(s, O_TACTICS, rt.side, u.anchor);   // §12.1 follow the push of the tank lanes here
+    }
 
     // Is anything of the other side too close? Decided before the step, from
     // the positions everyone had at the start of the tick, so the order units
@@ -4748,6 +5377,7 @@ function step(st, throttle, steer, brake, handbrake, practice) {
     // order units are visited in cannot decide who gives ground or who is
     // chasing whom.
     u.crowded = false;
+    u.crowdedLoose = false;
     u.engaged = false;
     u.foeX = 0;
     // ARMOUR ONLY, on both sides of the test, because Army.NearestEnemy walks
@@ -4764,6 +5394,8 @@ function step(st, throttle, steer, brake, handbrake, practice) {
         if (abs(ddx) > nearest || abs(ddz) > nearest) continue;
         const dd = length2(ddx, ddz);
         if (dd < BACKOFF_RANGE) u.crowded = true;
+        // and within the ground it would give (24 + 6 m): a tank that already gave ground holds there (army.js).
+        if (dd < CROWD_HOLD_RANGE) u.crowdedLoose = true;
         if (dd < nearest) { nearest = dd; u.engaged = true; u.foeX = s[jb + U_X]; }
       }
     }
@@ -4790,13 +5422,36 @@ function step(st, throttle, steer, brake, handbrake, practice) {
     // own seam is still what the truck is measured against, so `seamZ` stays
     // for the callers below it.
     const unitSeam = frontlineZ(st.tape, u.x, HALF_X, HALF_Z);
-    stepUnit(u, rng, unitSeam, tx, tz, s[T + T_HEADING], s[O_SCORE + S_HEAT], HALF_X, HALF_Z, TICK_DT, i, s[O_TICK], craters);
+    if (u.armour) {
+      const tac = postOf(s, O_TACTICS, i, s[O_TICK]);
+      // `tac` says the tank is under the doctrine; the depth cannot say it, because a bounding tank pushed 16 m stands
+      // ON the seam, depth 0 - read as "no tactics", that tank was sent to the old standoff and lost its memory word.
+      u.tac = true; u.tacX = tac.x; u.tacDepth = tac.depth; u.tacBounding = tac.bounding;
+      u.tacSeam = frontlineZ(st.tape, tac.x, HALF_X, HALF_Z);
+      u.tacPush = tac.push; u.tacForward = FORWARD_LINE - tac.push;
+      // NO PARTNER WAIT. A bounding tank used to wait while its overwatch partner had moved the tick before; §2.6 rules
+      // the swap simultaneous, and row 4b is the half-line budget below. Measured on seeds 1-15, that wait held a tank
+      // posted across the seam on 25277 tank-ticks (the budget on 1130): the crossings §4.10 orders did not happen.
+      u.tacWait = false;
+      if (onTheLine[i >> 2] && !sepMoved[i >> 2] && !grantedBefore[i >> 2]) {
+        let ahead = 0;
+        for (let j = i + 4; j < UNITS; j += 4) {
+          if (onTheLine[j >> 2] && !sepMoved[j >> 2] && !grantedBefore[j >> 2] && s[unitBase(j) + U_SIDE] === u.side
+              && offPost[j >> 2] > WANTS_MOVE && offPost[j >> 2] > offPost[i >> 2]) ahead++;
+        }
+        if (lineMoved[u.side < 0 ? 0 : 1] + ahead >= lineBudget[u.side < 0 ? 0 : 1]) u.tacWait = true;
+      }
+    } else { u.tac = false; u.tacX = 0; u.tacDepth = 0; u.tacBounding = false; u.tacSeam = 0; u.tacPush = 0; u.tacForward = 0; u.tacWait = false; }
+    stepUnit(u, rng, unitSeam, tx, tz, s[T + T_HEADING], s[O_SCORE + S_HEAT], HALF_X, HALF_Z, TICK_DT, i, s[O_TICK], craters, groundOf);
+    // OVERWATCH (the owner 2026-09-16 18:10): a tank that moved this tick is bounding, and does not fire in it.
+    const movedThisTick = u.armour && u.tacBounding
+      && (abs(sub(u.x, s[b + U_X])) + abs(sub(u.z, s[b + U_Z]))) > 1310;
 
     // Armour fires on armour. Drawn in index order, always, so the transcript
     // replays: a tank that fires earlier changes what the ones after it see.
     if (u.armour && u.hp > 0) {
       if (s[b + U_TARGET] > 0) s[b + U_TARGET] = (s[b + U_TARGET] - 1) | 0;
-      else {
+      else if (!movedThisTick) {
         const foe = pickTarget(peekAt, UNITS, i, u.x, u.z, u.side);
         if (foe >= 0) {
           // Rolled whether it hits BEFORE the reload is set, and the reload is
@@ -4832,7 +5487,7 @@ function step(st, throttle, steer, brake, handbrake, practice) {
           const reachA = courierReach(heat, true);
           const dxTruck = sub(u.x, tx), dzTruck = sub(u.z, tz);
           let onCourier = false;
-          if (abs(dxTruck) <= reachA && abs(dzTruck) <= reachA) {
+          if (rolledOut && abs(dxTruck) <= reachA && abs(dzTruck) <= reachA) {
             const toTruck = length2(dxTruck, dzTruck);
             if (toTruck < reachA)
               onCourier = outranksTheFoe(
@@ -4856,6 +5511,25 @@ function step(st, throttle, steer, brake, handbrake, practice) {
             }
           }
           s[b + U_TARGET] = (RELOAD_MIN + nextBelow(rng, RELOAD_SPAN)) | 0;
+          // SHOOT-AND-SCOOT: the team moves on to its next hashed slot (rules/tactics.js).
+          scoot(s, O_TACTICS, i, s[O_TICK]);
+        } else {
+          // THE TRUCK WITH NO TANK TO FIGHT (WAR_TACTICS.md §1.2 GAP, closed): a tank with no enemy in range and the
+          // truck inside its heat-widened reach fires on the truck, on its normal reload. The same draws as a shot at
+          // a foe - hit, damage, reload - in that order, so the stream keeps its shape. Before, it picked no target and
+          // never fired on the truck at all.
+          const heat = s[O_SCORE + S_HEAT];
+          const reachA = courierReach(heat, true);
+          const dxTruck = sub(u.x, tx), dzTruck = sub(u.z, tz);
+          if (rolledOut && abs(dxTruck) <= reachA && abs(dzTruck) <= reachA && length2(dxTruck, dzTruck) < reachA) {
+            if (nextBelow(rng, 1000) < HIT_PER_MIL) {
+              const shell = add(COURIER_DAMAGE_MIN,
+                    idiv(Math.imul(nextBelow(rng, 100), COURIER_DAMAGE_SPAN), 100));
+              courierDmg = add(courierDmg, shellForHeat(shell, heat));
+            }
+            s[b + U_TARGET] = (RELOAD_MIN + nextBelow(rng, RELOAD_SPAN)) | 0;
+            scoot(s, O_TACTICS, i, s[O_TICK]);
+          }
         }
       }
     }
@@ -4914,7 +5588,7 @@ function step(st, throttle, steer, brake, handbrake, practice) {
           const reachR = courierReach(heatR, false);
           const dxTruck = sub(u.x, tx), dzTruck = sub(u.z, tz);
           let onCourier = false;
-          if (abs(dxTruck) <= reachR && abs(dzTruck) <= reachR) {
+          if (rolledOut && abs(dxTruck) <= reachR && abs(dzTruck) <= reachR) {
             const toTruck = length2(dxTruck, dzTruck);
             if (toTruck < reachR)
               onCourier = outranksTheFoe(
@@ -4939,6 +5613,17 @@ function step(st, throttle, steer, brake, handbrake, practice) {
       u.cooldown = s[b + U_COOLDOWN];
     }
 
+    // A tank's U_COOLDOWN says whether it moved this tick (ONE OF THE PAIR HOLDS, above): armour keeps its reload in U_TARGET.
+    if (u.armour) {
+      // bit 0; the bits above it are the reversal memory army.js keeps (ONE REVERSAL IN TWO SECONDS)
+      // A pushed hull moves this tick whatever the budget says, but keeps a grant for the ticks after only if the budget
+      // has room for it - else the pushes of one tick carried over as grants and the line stayed over half (4.0%).
+      const granted = onTheLine[i >> 2] && !u.tacWait && u.wantsMove
+        && (!sepMoved[i >> 2] || grantedBefore[i >> 2] || lineMoved[u.side < 0 ? 0 : 1] <= lineBudget[u.side < 0 ? 0 : 1]);
+      if (granted && !grantedBefore[i >> 2] && !sepMoved[i >> 2]) lineMoved[u.side < 0 ? 0 : 1]++;
+      u.cooldown = ((u.x !== s[b + U_X] || u.z !== s[b + U_Z]) ? 1 : 0) | (granted ? 64 : 0)
+        | (u.tac ? (u.reverseMemory & ~65) : 0);
+    }
     s[b + U_X] = u.x; s[b + U_Z] = u.z;
     s[b + U_HEADING] = u.heading; s[b + U_COOLDOWN] = u.cooldown;
   }
@@ -5052,6 +5737,25 @@ function step(st, throttle, steer, brake, handbrake, practice) {
       const b = unitBase(i);
       if (s[b + U_STATE] === 0) continue;
       clearOfTruck(s, b, tx2, tz2, U_X, U_Z);
+    }
+  }
+
+  // HULL CLEARANCE (WAR_TACTICS.md §8.3): a living man inside 3 m of a living tank's centre - either side - steps out
+  // to 3 m along the line between them; the tank does not move. Before this nothing kept men out of hulls.
+  for (let i = 0; i < UNITS; i++) {
+    if (isArmour(i)) continue;
+    const mb = unitBase(i);
+    if (s[mb + U_STATE] === 0) continue;
+    for (let j = 0; j < UNITS; j += 4) {
+      const tb = unitBase(j);
+      if (s[tb + U_STATE] === 0) continue;
+      const dx = sub(s[mb + U_X], s[tb + U_X]), dz = sub(s[mb + U_Z], s[tb + U_Z]);
+      if (abs(dx) >= HULL_CLEAR || abs(dz) >= HULL_CLEAR) continue;
+      const d = length2(dx, dz);
+      if (d >= HULL_CLEAR) continue;
+      if (d <= 655) { s[mb + U_X] = add(s[tb + U_X], HULL_CLEAR); continue; }
+      s[mb + U_X] = add(s[tb + U_X], div(mulFast(dx, HULL_CLEAR), d));
+      s[mb + U_Z] = add(s[tb + U_Z], div(mulFast(dz, HULL_CLEAR), d));
     }
   }
 

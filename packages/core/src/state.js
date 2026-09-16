@@ -227,7 +227,14 @@ export const C_X = 0, C_Z = 1, C_R = 2, C_D = 3, C_ROUNDS = 4, C_DIG = 5, C_LOAD
 
 export const craterBase = (i) => O_CRATERS + Math.imul(i, C_WORDS);
 
-export const WORDS = O_CRATERS + Math.imul(MAX_CRATERS, C_WORDS);
+/**
+ * ARMOUR TACTICS (TANK_TACTICS.md, the owner 2026-09-16 18:20): the round seed's hash and, per team, its frontage slot,
+ * last scoot, and role clock - rules/tactics.js reads and writes them. Appended, so no offset above moves.
+ */
+export const O_TACTICS = O_CRATERS + Math.imul(MAX_CRATERS, C_WORDS);
+export const TACTICS_WORDS = 64;   // rules/tactics.js TAC_WORDS
+
+export const WORDS = O_TACTICS + TACTICS_WORDS;
 
 // truck fields, relative to O_TRUCK
 export const T_X = 0, T_Z = 1, T_HEADING = 2, T_VX = 3, T_VZ = 4;

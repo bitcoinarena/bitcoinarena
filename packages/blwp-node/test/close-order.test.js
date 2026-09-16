@@ -37,7 +37,7 @@ const b32 = (n) => new Uint8Array(32).fill(n);
 const RANDOMNESS = b32(0x9b);
 const BEACON = { hash: RANDOMNESS, height: 900001, timeMs: 900n };
 const GENESIS_HASH = (await import('../../protocol/src/transcript.js')).GENESIS;
-const TICKS = 1000;   // the node fixture's drive: this world secret wrecks at tick 547
+const TICKS = 1000;   // the node fixture's drive: this world secret wrecks at tick 956 (547 before the armour doctrine)
 const wordsAt = (t) => [45875, ((t * 977) % 30000) - 15000, (t % 700) < 40 ? 65536 : 0, 0, 0];
 const session = ed25519.utils.randomSecretKey();
 const STAKE = 100000n;

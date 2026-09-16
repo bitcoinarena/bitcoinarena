@@ -1,7 +1,7 @@
 // THE SIGNER NODES FORFEIT A QUALIFIER'S STAKE LOCK, AND ONLY A QUALIFIER'S (v4.6.2 §23.2 row 1, W5b).
 //
 // Two signer nodes of a lock round, each with a share of the round's claim key; a
-// winner who delivers (score 12) and a loser who wrecks, both staked by a lock
+// winner who delivers (score 367) and a loser who wrecks, both staked by a lock
 // the signer nodes verified (POST /lock, a port that holds locks by outpoint). After
 // the close the signer nodes replay, post and wait out the objection window; then:
 //   the winner's forfeit - a BIP-340 signature by claim_pk over the lock's
@@ -177,7 +177,9 @@ test('the qualifier\'s lock is forfeited by both signer nodes after the window -
 });
 
 test('a Delivered run below the round\'s min_score is not a qualifier: its forfeit is 409 (§18)', async () => {
-  const w = await lockRound({ minScore: 100 });
+  // 1000, not 100: the fixture's winner delivers with score 367 since the armour doctrine (window-fixture.js; it
+  // was 12), and the claim is about a DELIVERED run under the minimum.
+  const w = await lockRound({ minScore: 1000 });
   try {
     const winner = await lockAndPlay(w, WINNER);
     assert.deepEqual(await closeRound(w), ['closed', 'closed']);
@@ -186,9 +188,9 @@ test('a Delivered run below the round\'s min_score is not a qualifier: its forfe
       got = await ask(w.a, w, winner.eid);
       if (!/before the result is final/.test(String(got.body))) break;
     }
-    console.log(`  a Delivered run, score 12, min_score 100: ${got.status} ${String(got.body).slice(0, 120)}`);
+    console.log(`  a Delivered run, score 367, min_score 1000: ${got.status} ${String(got.body).slice(0, 120)}`);
     assert.equal(got.status, 409);
-    assert.match(String(got.body), /DELIVERED with score 12 and this round's minimum is 100: not a qualifier/);
+    assert.match(String(got.body), /DELIVERED with score 367 and this round's minimum is 1000: not a qualifier/);
     assert.equal(w.a.round.forfeit(winner.eid), null);
   } finally { await w.close(); }
 });

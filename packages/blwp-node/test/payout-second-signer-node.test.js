@@ -58,7 +58,7 @@ const WINDOW_MS = 3000;
 const HTLC_EXPIRY = 901000;        // above the fake chain's tip, so no hold expires here
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const WINNER = { name: 'winner', key: b32(0x0a), worldSecret: fromHex(`01${'00'.repeat(30)}d1`), ticks: 1320 };
+const WINNER = { name: 'winner', key: b32(0x0a), worldSecret: fromHex(`01${'00'.repeat(30)}1d`), ticks: 1320 };
 const LOSER = { name: 'loser', key: b32(5), worldSecret: b32(0x16), ticks: 1000 };
 
 function paidPort() {

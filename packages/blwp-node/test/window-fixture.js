@@ -53,8 +53,12 @@ export const HTLC_EXPIRY = 500;   // the height the fake lnd says each paid HTLC
 export const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // second-closer's two players: the winner DELIVERS by tick 1320, the loser
-// wrecks at tick 547.
-export const WINNER = { name: 'winner', key: b32(0x0a), worldSecret: fromHex(`01${'00'.repeat(30)}d1`), ticks: 1320 };
+// wrecks before tick 1000. RE-MEASURED with the armour doctrine (WAR_TACTICS.md part A, 2026-09-16): the old
+// winner (last byte d1) delivered at tick 1270 and now WRECKS at tick 284 on a tank holding the outer lane in
+// front of the bay (§1.2: the outer slots are not moved away from the bay). Of the 255 last bytes 01..ff with
+// this drive, two deliver by 1320: 1d (tick 1173, score 367) and a9 (1156, 160); the first is taken. The
+// loser now wrecks at tick 956, score 420 (was 547, 128).
+export const WINNER = { name: 'winner', key: b32(0x0a), worldSecret: fromHex(`01${'00'.repeat(30)}1d`), ticks: 1320 };
 export const LOSER = { name: 'loser', key: b32(5), worldSecret: b32(0x16), ticks: 1000 };
 
 /** A Lightning node whose players have paid, and which writes down WHEN it was told to act. */

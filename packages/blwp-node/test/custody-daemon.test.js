@@ -54,8 +54,8 @@ const BEACON = { hash: RANDOMNESS, height: 900001, timeMs: 900n };
 // from its own seed, so this drive is on hills now and it DELIVERED where it
 // used to wreck - and these tests are about a run that came to nothing. The
 // world secret is the fixture's to choose and it chooses one where the drive
-// still loses: b32(0x16) wrecks player 5 at tick 547 with a score of 128 and
-// player 6 at 947. 1000 ticks is past both, and a run's state latches when it
+// still loses: b32(0x16) wrecks player 5 at tick 956 with a score of 420 and
+// player 6 at 377 (547 / 128 and 947 before the armour doctrine, 2026-09-16). 1000 ticks is past both, and a run's state latches when it
 // leaves LIVE.
 const TICKS = 1000;
 const wordsAt = (t) => [45875, ((t * 977) % 30000) - 15000, (t % 700) < 40 ? 65536 : 0, 0, 0];
