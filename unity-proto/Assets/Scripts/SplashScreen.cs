@@ -84,6 +84,7 @@ public class SplashScreen : MonoBehaviour
     void Update()
     {
         if (!Showing && BackToLobby(Blwp.BlwpNet.Ended, _fromLobby)) ShowLobbyAgain();
+        if (!Showing && BackFromSpectating(_spectating, _spectator != null && _spectator.Active)) ShowLobbyAgain();
         if (!Showing)
         {
             if (!_hiddenTold && Blwp.DailyLobby.Compiled) { _hiddenTold = true; Blwp.DailyLobby.Shown("{\"showing\":false}"); }
@@ -126,8 +127,22 @@ public class SplashScreen : MonoBehaviour
         WakeAudio();
         var cam = Object.FindFirstObjectByType<SpectatorCamera>();
         if (cam != null) cam.Enter();
+        _spectator = cam;
+        _spectating = true;
         Showing = false;
     }
+
+    /// <summary>SPECTATE hid the lobby, and the free camera it opened.</summary>
+    bool _spectating;
+    SpectatorCamera _spectator;
+
+    /// <summary>
+    /// EXIT FROM SPECTATE GOES BACK TO THE LOBBY (the owner 2026-09-16 14:45). SPECTATE hides the lobby and opens the
+    /// free camera; EXIT only closed the camera, so the player was left over a locked truck with no PLAY - measured
+    /// on 0.0.1391, the lobby still not showing 1, 5 and 15 s after EXIT. The lobby comes back once the camera
+    /// SPECTATE opened is no longer flying.
+    /// </summary>
+    public static bool BackFromSpectating(bool spectating, bool cameraActive) => spectating && !cameraActive;
 
 #if UNITY_WEBGL && !UNITY_EDITOR
     [DllImport("__Internal")] static extern void UnlockAudio();
@@ -162,6 +177,7 @@ public class SplashScreen : MonoBehaviour
 
     void ShowLobbyAgain()
     {
+        _spectating = false;
         _fromLobby = false;
         _joining = false;
         _joinedAt = -1f;
@@ -197,6 +213,7 @@ public class SplashScreen : MonoBehaviour
                                      : new Vector3(-114f, 20f, 0f),
                         4.2f);
 
+        _spectating = false;                      // a run is not spectating, whatever the camera does later
         _fromLobby = StartedFromLobby(_lobby != null, fromAddress);
         Showing = false;
         WakeAudio();

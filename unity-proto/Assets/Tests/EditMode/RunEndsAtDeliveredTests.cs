@@ -58,6 +58,20 @@ public class RunEndsAtDeliveredTests
     /// `play=1`; opened again, auto-play starts the run on the fourth frame, before the first lobby poll, and on
     /// 0.0.1386 that run ended on "RUN STOPPED - the core said DELIVERED" with no lobby ever coming back.
     /// </summary>
+    /// <summary>
+    /// EXIT from SPECTATE is the way back to the lobby (the owner 2026-09-16 14:45). Measured on 0.0.1391: EXIT closed
+    /// the free camera and the lobby stayed hidden 15 s later, over a locked truck.
+    /// </summary>
+    [Test]
+    public void ExitFromSpectateComesBackToTheLobby()
+    {
+        Assert.IsTrue(SplashScreen.BackFromSpectating(spectating: true, cameraActive: false),
+            "EXIT closed the free camera and the player was left with no lobby and no PLAY");
+        Assert.IsFalse(SplashScreen.BackFromSpectating(spectating: true, cameraActive: true), "still flying: the lobby waits");
+        Assert.IsFalse(SplashScreen.BackFromSpectating(spectating: false, cameraActive: false),
+            "a run started with PLAY is not spectating and must not be sent back to the lobby");
+    }
+
     [Test]
     public void ARunTheAddressStartedAlsoComesBackToTheLobby()
     {
