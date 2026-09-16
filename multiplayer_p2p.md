@@ -211,8 +211,9 @@ text; this section is what the protocol commits to.
   follow it at their own speed.
 - **The front is candlesticks, and the candles are terrain.** Ten seconds -
   two samples - make a candle, 32 on the ground (the last 5 min 20 s; the
-  HUD chart shows the whole round since `start_time`, 250 candles at 41 min): a 2 m plateau the truck drives on with a 5 m ramp on every
-  side, a solid wick, and a glow to 6 m - green up, red down, readable from
+  HUD chart shows the whole round since `start_time`, 250 candles at 41 min): a 4.6 m wide, 2 m plateau the truck drives onto over 5 m
+  ramps at its ends, walls at its sides, a 3.5 m flat corridor between
+  candles to drive through, a solid wick, and a glow to 6 m - green up, red down, readable from
   above and from the cab. The plateaus and wicks are in the core's ground
   (`surfaceAt`), so they are settled state like the relief and the craters:
   a hull-down tank sits behind a candle's edge, a rifleman hides under its

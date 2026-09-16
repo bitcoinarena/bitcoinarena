@@ -751,18 +751,27 @@ a thing the truck drives on is settled state (multiplayer_p2p.md §0.5), so the 
 (`surfaceAt = ground + candles - craters`). A client draws what the core computes, or it desyncs.
 
 - **The body is a plateau**, height **H = 2 m** - the same for every candle; height carries no price,
-  the length in z does - footprint the candle's x-slot (8.1 m, a 10 s candle) by its open-to-close in z
+  the length in z does - **4.6 m wide** in its 8.1 m slot (a 10 s candle), by its open-to-close in z
   (portrait, as on a chart: time along x, price along z; up to 122 m long at a full-range move; a body
-  shorter than 1 m - a doji - is built 1 m long so every candle exists as terrain), at the seam's scale (§4.13). Consecutive candles share an edge (close of one is
-  the open of the next), so the chart is a **staircase of plateaus** at one height, not sixteen boxes:
-  in x there is no step between neighbours where their bodies overlap in z, and where they do not, the
-  step is the chart's own step.
-- **The ramp skirt**, width **R = 5 m**, on every free edge of the union of bodies: `h = H x
-  clamp(d / R, 0, 1)`, `d` the distance to the nearest edge from outside, so the ramp is a straight 40%
-  grade (22°). Small enough that the body's edge is still a line from above; the terrain's own relief
-  reaches 55% (`RELIEF_PEAK` 6 m over half a lattice cell), so nothing here is steeper than a hill the
-  world already has. A heavy truck that cannot make 40% cannot make the red candle - that is cargo
-  physics (`slopeSin`), not a new rule, and it is the point.
+  shorter than 1 m - a doji - is built 1 m long so every candle exists as terrain),
+- **Padding (the owner 2026-09-16 21:00): a 3.5 m corridor between candles, flat, drivable.** The body
+  takes 57% of its slot, as a chart's bar does, and the 3.5 m between two bodies is ground at ground
+  level - a passage running north-south across the whole front, 31 of them, one every 8.1 m. A truck
+  (2.55 m over its body circles) drives it; a tank pair (12 m) does not fit and goes over the top. The
+  corridors scroll with the chart at 0.83 m/s: a truck standing in one is carried sideways by its wall
+  at that speed, which is slow enough to steer against and is the chart moving under the wheels. at the seam's scale (§4.13). Each candle is its own island in its slot with 3.5 m of flat
+  ground to the next: 32 bars with gaps, as on the screen.
+- **The ramps are on the z-ends only**, width **R = 5 m**, as wide as the body: `h = H x
+  clamp(d / R, 0, 1)`, `d` the distance in z from the end, a straight 40% grade (22°) up onto the
+  plateau from north or south. The terrain's own relief reaches 55% (`RELIEF_PEAK` 6 m over half a
+  lattice cell), so nothing here is steeper than a hill the world already has. A heavy truck that cannot
+  make 40% cannot make the red candle - that is cargo physics (`slopeSin`), not a new rule, and it is
+  the point. **The x-faces are walls**: a 2 m vertical step in the height field, and for the truck two
+  solid boxes per candle (`resolveSolids`, like the wick) so it cannot climb them - it uses the corridor
+  or the ramp. Tanks and men have no vehicle physics (they stand on the height read): a tank crossing a
+  face steps 2 m up or down in the core, and the renderer eases the hull over 0.3 s. So a scoot (§4.3,
+  27 m in x) crosses three candles and two corridors without a rule change. No ramp in x, so the
+  corridor stays flat and the candle's edge stays a line from above.
 - **The wick is a solid**: a 1 m x 1 m pillar, 9 m tall, from low to high in z at the candle's centre
   x, in the solids list (`resolveSolids` for the truck: it is a wall; for a unit the crater push with
   a 0.5 m radius, §8.3's class). A wick is the one thing in the chart that is not drivable, and it is
@@ -870,8 +879,9 @@ Ticks on which neither side assaults. The line breathes as §4.10; men crawl int
 fewer tanks.
 
 **Candle**
-Ten seconds - two samples - of the tape as terrain: an 8.1 m wide, 2 m plateau with 5 m ramps, a
-solid wick, a glow to 6 m. 32 on the ground; the whole round in the HUD chart. Green
+Ten seconds - two samples - of the tape as terrain: a 4.6 m wide, 2 m plateau in an 8.1 m slot, 5 m
+ramps on the z-ends, walls on the x-faces, a 3.5 m flat corridor to the next, a solid wick, a glow to
+6 m. 32 on the ground; the whole round in the HUD chart. Green
 up, red down. Scrolls 0.83 m/s toward the post office. Hull-down crests and candle-lip cover come with
 it (§4.15).
 
