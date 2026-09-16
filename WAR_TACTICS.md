@@ -213,6 +213,58 @@ the owner ordered is in the state and not on the screen. Each is a client test.
 
 ---
 
+### 0.3 The HUD - a TradingView chart with the player on it (the owner 2026-09-16 21:50; client spec, RULED HERE on the layout)
+
+the owner: *"the player's position must be on it, where we are right now, and it must look like a classic
+TradingView chart."* The ground already is a chart (§4.15); the HUD is the same chart drawn the way
+a trader has seen it ten thousand times, with one thing no chart has: **a dot for the truck**. Every
+number on it is a core word or the client's memory of attested samples - nothing is invented.
+
+- **The mapping that makes it possible.** On the ground, x is time and z is price (§4.13, §4.15). So
+  every unit on the field has a chart position: the candle it stands over is its **time**, and its z
+  read through the window's scale (`z / (85 m x 0.72)` → `lo..hi` of the window) is its **price
+  level**. The truck at x = -20 m, z = +14 m is "over the candle from 3:10 ago, at $75,180". That is
+  the dot.
+- **Layout - classic TradingView, dark.** Background `#131722`, grid lines `#1f2530`, candles green
+  `#26a69a` / red `#ef5350` (hollow-or-filled as TradingView), wicks 1 px. **Price axis on the
+  right** in dollars to the cent, the **last price** as a tag on the axis in the last candle's colour
+  with a dotted line across the chart. **Time axis at the bottom** in `m:ss` since the round's open.
+  Symbol line top-left: `BTCUSD · 10s · BLWP`, then `$75,000.02`, then the lead `+0.42%` in green /
+  `-0.17%` in red exactly where TradingView puts the change, then the six trend dots and `▲ 2`
+  (§4.14). Crosshair on hover (mouse) or off (cab). No toolbar, no drawing tools, no indicators but
+  the one below.
+- **Two ranges, one chart, a toggle (`Tab`).**
+  - **GROUND** (default in the cab): the 32 candles that are on the terrain right now - the rolling
+    5:20 window, scrolling as the ground scrolls. This *is* the minimap: what the player sees on the
+    chart is under his wheels at the same x.
+  - **ROUND**: every candle since the round's open (10 after 100 s, 250 after 41 min), compressing as
+    a chart does; the GROUND window shown as a shaded range on it, like TradingView's visible-range
+    box on the overview bar; the **open** as a horizontal dashed line labelled `OPEN` - the price
+    above or below it is the lead, and the `THE BULLS WIN` verdict at the round's end is the last
+    candle against that line.
+- **On the chart, in this z-order** (all from core words, each a client test):
+  1. the **seam** as the one indicator: a white 2 px line, labelled `FRONT · SMA 21` in the legend
+     where TradingView lists indicators; the armies stand on it and it is the only line the war reads;
+  2. the **objectives** (§4.11): `HIGH`, `LOW`, `OPEN` as TradingView-style price labels pinned to
+     their candle, in the holder's colour, grey when unheld; they scroll with their candle;
+  3. the **assault** (§4.12): the assault lane as a translucent column over its candles in the
+     attacker's colour while it runs, its banner above the chart (`BEARS ASSAULT HIGH`), the outcome
+     flashed once (`HIGH TAKEN`);
+  4. the **truck**: an orange dot with a heading tick and a `YOU` label, always drawn, always on top;
+     in the cab a faint vertical line down to the time axis so the player reads *when* he is;
+  5. the **ghosts** (multiplayer_p2p.md §0.9): grey dots with their names, same mapping - a rival
+     driving ahead of you is a dot to your right on the chart;
+  6. the **gate**: a gold vertical line at the right edge of the GROUND range - "now" is where the
+     miner is, and the run ends when the dot reaches it;
+  7. the armies **not** as dots (a hundred markers would bury the chart); the ground shows them.
+- **Size and place.** Cab: bottom-right, 30% of the width, GROUND range, no crosshair, price and lead
+  always legible at the game's 1024x768 floor; `Tab` swaps to ROUND, `M` maximises to full width
+  (the top-down view of §0.2 underneath it at the same scale, so the chart and the field line up). 
+  Spectate: full width, ROUND range, crosshair on. Result screen: ROUND range with the verdict.
+- **What it must never do**: draw a price the core does not hold (no client-side ticker; the cents are
+  the tape's), draw the truck anywhere but at its core position through the mapping, or let a client
+  setting (candle width, colours, range) change anything but the drawing (§4.15).
+
 # Part A - Armour
 
 ## 1. Two relations
