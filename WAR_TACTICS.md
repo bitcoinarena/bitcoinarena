@@ -93,6 +93,8 @@ Infantry rows (part B, §8-§12), same probe conditions:
 | **Men hide** | posture §11.4 | of man-ticks of living men on the line (within 40 m of post) who did not step, >= 85% are PRONE or COVER; a man in the open who did not step while his fire team is under fire (§11.5) is PRONE on 100% of those man-ticks |
 | Wrecks and craters are used | cover places §11.3 | on >= 70% of the ticks on which a side has a free eligible place within 12 m of the post of one of its men on the line, at least one man of that side is on a place (within 0.5 m) |
 | Fire pins men down | suppression §11.5 | each side has at least one pinned fire team on 10% to 70% of ticks; a pinned man is never STAND and never steps more than 0.01 m in a tick (a crawl) |
+| **Tanks are feared by men** | coax §4.4 | coax kills are >= 20% of a side's rifle-side deaths per 60 s; a coax burst is never fired with an enemy tank inside 46 m or a fireable truck in reach |
+| **Men are feared by tanks** | AT man §11.7 | AT hits are 15% to 50% of a side's tank deaths per 60 s (below 15% the launcher is decoration, above 50% the tanks are the fodder); every AT shot is from PRONE or COVER at a tank inside 30 m; the §0 floor row (never below 4 tanks on more than 5% of ticks) is re-measured with both arms on and stands |
 | **Not cannon fodder** | §11.3-§11.5 | a side loses <= 20 men per 60 s, mean over 5 seeds (measured 2026-09-16 on the working tree before these rules: 26.5 to 41.5 a side, mean 32.7 - both sides 53, 60, 61, 70, 83 on seeds 1-5); rifle deaths per man-tick of STAND men are >= 2x those of PRONE and COVER men together |
 
 If a probe on this table fails, the doctrine is not live, whatever the code says.
@@ -342,7 +344,8 @@ the owner ordered is in the state and not on the screen. Each is a client test.
 
 ### 4.3 After a shot - shoot-and-scoot to the next hashed slot
 
-- **Fires:** on the tick a tank of the team **fires** (hit or miss, at a tank or the truck), after the
+- **Fires:** on the tick a tank of the team **fires the gun** (hit or miss, at a tank or the truck; not
+  the coax, §4.4), after the
   reload is set; at most **once per 10 s (600 ticks) per team** (`TAC_SCOOT`).
 - **Next hashed slot** (RULED HERE, from measurement): the **adjacent** slot, `here ± 1`, the side hashed
   from `(seed, side, team, tick)`; if that one is held by another team of the side or off the end, the
@@ -369,6 +372,18 @@ the owner ordered is in the state and not on the screen. Each is a client test.
 - **BOUNDING fires only standing:** a bounding tank whose position changed by more than 0.02 m (x + z,
   `1310` Q16.16) in the tick does not fire in that tick. Its reload still counts down.
 - Drawn in index order, always: a tank that fires earlier changes what the ones after it see.
+- **Coax (the owner 2026-09-16 19:25: yes; GAP).** A tank with **no** enemy tank inside 46 m and **no**
+  truck it may fire on (§1.2: inside its heat-widened 34 m reach and rolled out) fires its **coaxial
+  machine gun** on its normal reload at the nearest living enemy **man** inside **30 m**. Priority is
+  fixed: enemy tank, then the truck, then a man - the main gun never waits for the coax. Same three
+  draws in the same order as a shot at a tank - hit, damage, reload - so the stream keeps its shape;
+  the damage draw is taken and discarded, a coax hit kills the man (10 HP). Hit by the man's posture
+  (§11.4): **STAND 40%, PRONE 20%, COVER 10%** (400 / 200 / 100 per mil). The burst is a round aimed at
+  him: +60 to his fire team's suppression word (§11.5). OVERWATCH and BOUNDING rules above apply to the
+  coax as to the gun (a bounding tank fires it only standing). A coax burst does **not** trigger the
+  scoot (§4.3): the scoot answers the main gun's flash, and a tank facing infantry only would otherwise
+  scoot every 10 s for the rest of the round. No tank moves for a man (§8.3, §12.2 stand): the coax is
+  the only thing a tank does about infantry, and it is what the infantry hides from.
 
 ### 4.5 Heading (RULED HERE)
 
@@ -625,6 +640,10 @@ Offset on the road when moving. Here: 12 m in x and 14 m in z between the two hu
 **Stop**
 Seam parking lot. Wiggle-to-death because hulls almost touch. Forbidden (§4.9).
 
+**Coax**
+The tank's machine gun: nearest enemy man inside 30 m when there is no tank and no truck to shoot.
+Kills; pins; never moves the tank; never scoots it.
+
 **Widow**
 The living tank of a pair whose partner is dead. A singleton until the id respawns.
 
@@ -687,7 +706,11 @@ tests are §14.
 - Touch in practice sets RUN_WRECKED (§1.2).
 - A tank with the truck inside 34 m and no enemy tank in range never fires on the truck after roll-out (§1.2 GAP).
 - Any gun hits a truck that has not rolled out; over 8 seeds x 60 s idle in the bay any hit or wreck (§1.2 ruling).
-- A bounding tank fires in a tick it moved (§4.4).
+- A bounding tank fires in a tick it moved, gun or coax (§4.4).
+- A coax burst with an enemy tank inside 46 m or a fireable truck in reach; at a man beyond 30 m; at
+  the truck; with other than the three draws of a gun shot; a coax hit that leaves a man alive; a coax
+  burst that triggers a scoot; a coax hit on a roll of 400 or more at STAND, 200 at PRONE, 100 at COVER
+  (§4.4).
 - Both tanks of a living pair are bounding in the same tick (§2.5).
 - A scoot moves a team more than 27 m, or into a held slot, or fires twice inside 600 ticks for one team
   (§4.3).
@@ -743,7 +766,7 @@ does not shift and every signer node computes the same bits.
   Men may stand close; a fire team is 4 men inside 18 m of each other (§9.2).
 - Rifle: 26 m, reload 2.5 to 4.5 s, look again after 0.4 to 1.1 s when nobody is in range, hit **4.5%**,
   one round kills a man (10 HP at scale, damage 10). Target: the nearest living enemy **rifleman** inside
-  26 m. A man never fires at a tank (KEEP).
+  26 m. The **rifle** never fires at a tank (KEEP); the AT man's launcher does (§11.7).
 - No crowded, no overrun, no fall-back (KEEP: `StepInfantry` has none).
 
 ### 8.2 Man vs truck (the truck exception, infantry form)
@@ -767,7 +790,9 @@ does not shift and every signer node computes the same bits.
   3.0 m along the line between them; the tank does not move. Today there is no such rule (**GAP**):
   measured before, men stood inside hulls. A man does not stop a tank and the tank does not kill him;
   he steps aside.
-- A man is never a tank's target and a tank is never his (KEEP).
+- A man **is** a tank's target - of its coax only, inside 30 m, when it has no tank and no truck to
+  fire on (§4.4; the owner 2026-09-16 19:25 overruled the KEEP). A tank is the AT man's target (§11.7).
+  A rifleman's rifle and a tank's gun still never meet.
 - A man is never crowded by a tank and a tank never gives ground to a man (KEEP).
 
 ## 9. Organisation (bit-identical on every node)
@@ -913,7 +938,8 @@ function of the state, a claim is a function of the seed and the unit id, no dra
 ### 11.5 Suppression - fire pins men down (RULED HERE, from the owner's order)
 
 - **Suppression word** `TAC_SUPP`, one per fire team (18 words, appended): **+60 per round aimed at one
-  of the team's living men** (a rifle round, hit or miss; a suppressing round, below), **-1 per tick**,
+  of the team's living men** (a rifle round, hit or miss; a coax burst, §4.4; a suppressing round,
+  below), **-1 per tick**,
   clamped to `[0, 600]`. Integers, written on the shooter's tick, read at the top of the next.
   - **Under fire**: `TAC_SUPP > 0` (a round in the last second or so, decaying).
   - **Pinned**: `TAC_SUPP >= 120` (two rounds inside three seconds, or one heavy burst).
@@ -945,7 +971,32 @@ function of the state, a claim is a function of the seed and the unit id, no dra
 - §8.1 and §8.2, hit thresholds per §11.4, suppressing rounds per §11.5. Drawn in index order after the
   armour's shots of the same tick (KEEP: protocol).
 
-### 11.7 Forbidden
+### 11.7 The AT man - men hurt tanks (the owner 2026-09-16 19:25: yes; GAP)
+
+- Man `j = 3` of every fire team - roster `r` with `r & 3 == 3`, nine a side, fixed for the round like
+  the team itself - carries an **AT launcher** beside his rifle. He is the **AT man**. Replacement of
+  that id is an AT man too (§10: the role is the roster number's).
+- **Fires:** when the launcher is loaded, he is **PRONE or COVER** (§11.4: he did not step this tick;
+  a crawl is not a step) and a living enemy **tank** is inside **30 m**: at the nearest one, in that tick,
+  instead of his rifle. His rifle's clock (§8.1) is not touched by a launcher shot and the rifle is what
+  he fires on every other tick it allows. Pinned (§11.5): half rate, like the rifle.
+- **Round:** hit **25%** (250 per mil), damage **20 to 35** against 60 to 100 HP (three to five hits kill;
+  a tank that pushes into a lane alone and stays there dies), reload **8 to 12 s** (480 + draw below
+  240 ticks). Three draws in the same order as a tank's shot - hit, damage, reload - taken from the
+  round's RNG in index order with the rifles' shots (§11.6). A hit's damage is a shell's for the
+  crater/heat rules: none (it is a tank being hit, not the truck).
+- **Never at the truck** (RULED HERE): §8.2 stands as written for the rifle and the launcher fires at
+  tanks only. A 25% rocket of 20 to 35 against a 100 HP truck would end most runs that pass an AT man
+  at 30 m; not measured, because it is not allowed. the owner can overrule.
+- Never at a man, never at a wreck (§11.3: a dead index is not a target).
+- **State:** `TAC_AT`, one word per AT man (18 words, appended): the tick the launcher is loaded again,
+  0 at spawn (loaded). No offset above moves.
+- **What it is for:** with the coax (§4.4) the two arms now fear each other. A tank kills men in the
+  open, so men hide (§11.3-§11.5); hidden men kill tanks that come close alone, so tanks bound in pairs
+  with one covering (§2.6) and an assault (§4.12) is a thing that can be stopped by the men in the
+  holes. That is combined arms, and the player sees both halves of it from the cab.
+
+### 11.8 Forbidden
 
 - Scattering from the truck. Going prone for the truck. Charging a tank. Using a **living** tank as cover
   (§8.3; a wreck is another thing, §11.3). Smoke. Morale, routing, a man who runs from the line. Men
@@ -968,7 +1019,10 @@ function of the state, a claim is a function of the seed and the unit id, no dra
 
 ### 12.2 Infantry does not move the armour
 
-- Nothing in §4 reads a rifleman. Local odds (§4.10) count tanks only.
+- No **movement** rule in §4 reads a rifleman; the coax (§4.4) is a gun, not a step. Local odds (§4.10),
+  holders (§4.11) and assaults (§4.12) count tanks only. A lane full of AT men (§11.7) is not seen by
+  the armour's rules - it is felt in the losses, and bounding overwatch is the answer the doctrine
+  already gives.
 
 ### 12.3 The air
 
@@ -983,6 +1037,10 @@ function of the state, a claim is a function of the seed and the unit id, no dra
 
 **Squad**
 12 men on one drawn, drifting anchor. Says where a man's post is.
+
+**AT man**
+Man 3 of a fire team (`r & 3 == 3`); carries the launcher: 30 m, 25%, 20 to 35, 8 to 12 s, fired only
+from the ground at a tank. Never at the truck.
 
 **Fire team**
 4 men by sorted roster id. Says when a man moves. Stable for the round.
@@ -1067,24 +1125,20 @@ A round at a man 26 to 34 m off: never hits, pins his team.
   8 m; a fire team in an assault lane of its side is pinned below 240, or one elsewhere at or above 120
   is not (§4.12, §11.5, §12.1).
 - A side's bomb during its assault aims anywhere but the objective's point (§12.3).
+- A launcher fired by a man with `r & 3 != 3`, or while STAND, or at a tank beyond 30 m, at a truck, a
+  man or a wreck; a reload outside 480 to 719 ticks; a hit on a roll of 250 or more; damage outside 20
+  to 35; a launcher shot that moves the man's rifle clock; a launcher fired in a tick the rifle also
+  fired (§11.7).
 - A §0 infantry row fails.
 
 ## 15. Parked rulings - the owner's, not mine (2026-09-16 19:20)
 
-Three things would make the war more of a war and each one breaks a KEEP or decides what the game is.
-Not done; each has my recommendation so the ruling is one word.
+Each one breaks a KEEP or decides what the game is; each has my recommendation so the ruling is one
+word.
 
-1. **Tanks fire on men.** Today a man is never a tank's target (§8.3 KEEP). So a rifleman walks past a
-   tank as past a tree, and the tank the player fears does not frighten the infantry it drives through.
-   Proposal: a **coax**: a tank with no enemy tank inside 46 m fires on the nearest enemy man inside
-   30 m on its normal reload, one hit roll (STAND 40%, PRONE 20%, COVER 10%), one round kills. Same
-   draw shape as a shot at a tank. Makes §11.3-§11.5 matter twice over: men hide *from tanks*.
-   **Recommend: yes.**
-2. **Men hurt tanks.** Today they cannot. Proposal: man `j = 3` of each fire team carries an **AT
-   launcher**: 30 m, reload 8 to 12 s, hit 25%, damage 20 to 35 against 60 to 100 HP, fired only from
-   PRONE or COVER, at the nearest enemy tank. With it a lane full of hidden infantry is a lane a tank
-   should not push into alone - which is what bounding overwatch is for, and the player sees why.
-   Changes tank loss rates (§0 floor row re-measured). **Recommend: yes, after 1.**
+1. **Tanks fire on men.** RULED yes (the owner 2026-09-16 19:25) → §4.4 coax, §8.3.
+2. **Men hurt tanks.** RULED yes (the owner 2026-09-16 19:25) → §11.7 AT man, §8.1. Open inside it: the
+   launcher at the truck - RULED HERE never; one word from the owner changes it.
 3. **A winner.** The round is the truck's; the war has none. Proposal: the side holding two or more
    objectives at the run's end is the round's **front winner**, shown once on the result screen with the
    three holders; nothing in the score reads it. Cheap, and it is the sentence the player tells someone
