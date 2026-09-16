@@ -456,6 +456,8 @@ export const SIDE_BEAR = 1;
  */
 export function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, halfX, halfZ, dt, index, tick, craters) {
   if (u.hp <= 0) return 0;
+  // Where the unit stood when the tick began: the truck's ring gives way from here (below).
+  const wasX = u.x, wasZ = u.z;
 
   // THE DRAW STAYS, THE WOBBLE GOES.
   //
@@ -779,8 +781,23 @@ export function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, half
         const offR = (((right - bear + 32768) & 65535) - 32768) | 0;
         const off = abs(offL) < abs(offR) ? offL : offR;
         const to = (bear + (off > FLANK_RATE ? FLANK_RATE : off < -FLANK_RATE ? -FLANK_RATE : off)) & 65535;
-        u.x = add(truckX, mulFast(sin(to), TRUCK_RING));
-        u.z = add(truckZ, mulFast(cos(to), TRUCK_RING));
+        // AT A TANK'S OWN PACE, NOT THE TRUCK'S (the owner 2026-09-16 15:36: "if he drives toward a tank it
+        // races very fast off the field - he is pushing it away"). The ring point was written straight
+        // into the tank, so a truck driving at it carried it: measured, the tank sat at 28.0 m for 293-380
+        // ticks, was carried 122-149 m at 27-38 m/s against its own 6.8. It gives way at most
+        // `ARMOUR_WALK` a second from where it stood when the tick began - its own step and the giving
+        // way together, never the two added - and a truck that closes faster than that reaches it.
+        const ringX = add(truckX, mulFast(sin(to), TRUCK_RING));
+        const ringZ = add(truckZ, mulFast(cos(to), TRUCK_RING));
+        const gx = sub(ringX, wasX), gz = sub(ringZ, wasZ);
+        const gap = length2(gx, gz), most = mulFast(ARMOUR_WALK, dt);
+        if (gap > most) {
+          u.x = add(wasX, div(mulFast(gx, most), gap));
+          u.z = add(wasZ, div(mulFast(gz, most), gap));
+        } else {
+          u.x = ringX;
+          u.z = ringZ;
+        }
       }
     }
   }

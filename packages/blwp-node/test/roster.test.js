@@ -353,21 +353,33 @@ test('the daemon signer nodes on the beacon\'s seed, and on nothing else', async
   const { selectCommittee } = await import('../../protocol/src/sortition.js');
 
   const many = [0x21, 0x22, 0x23, 0x24, 0x25, 0x26].map((n) => bondOf(n));
-  const chosen = b32(0x5e);                       // what an author would write
-  const { round, rid, roster } = daemon(many, { committeeSeed: chosen });
+
+  // WHAT AN AUTHOR WOULD WRITE, picked so the two seeds CAN be told apart. The contract carries the
+  // core's hash, so the round id and the beacon's seed move with every core change: at 0x5e alone the
+  // tank-ring core (2026-09-16) happened onto the one census where both seeds sit the same pair (a
+  // chance of about one in fifteen at six nodes and two slots). The first author seed from 0x5e on that
+  // separates them is taken, and the precondition below still has to hold.
+  const tryWith = (byte) => {
+    const chosen = b32(byte);
+    const { round, rid, roster } = daemon(many, { committeeSeed: chosen });
+    const contract = decodeRoundContract(new Uint8Array(round.get(rid).contract));
+    const fromBeacon = committeeSeedFrom({
+      censusRootGameVerify: contract.censusRoot, censusRootSettlement: contract.censusRoot,
+      roundId: rid, roundRandomness: beaconOf(chainWith(many, contract), contract).hash,
+    });
+    const signerNodesBy = (seed) => selectCommittee({
+      entries: roster.censusFor(rid).entries, contract, role: 'game', committeeSeed: seed,
+    }).map((e) => toHex(e.pubkey)).sort();
+    return { chosen, rid, roster, fromBeacon, signerNodesBy };
+  };
+  let pick = tryWith(0x5e);
+  for (let byte = 0x5f; byte < 0x7e && pick.signerNodesBy(pick.fromBeacon).join() === pick.signerNodesBy(pick.chosen).join(); byte++)
+    pick = tryWith(byte);
+  const { chosen, rid, roster, fromBeacon, signerNodesBy } = pick;
 
   const signerNodes = roster.committeeFor(rid, 'game');
   assert.equal(signerNodes.ok, true, signerNodes.why);
   assert.equal(signerNodes.committee.length, 2);
-
-  const contract = decodeRoundContract(new Uint8Array(round.get(rid).contract));
-  const fromBeacon = committeeSeedFrom({
-    censusRootGameVerify: contract.censusRoot, censusRootSettlement: contract.censusRoot,
-    roundId: rid, roundRandomness: beaconOf(chainWith(many, contract), contract).hash,
-  });
-  const signerNodesBy = (seed) => selectCommittee({
-    entries: roster.censusFor(rid).entries, contract, role: 'game', committeeSeed: seed,
-  }).map((e) => toHex(e.pubkey)).sort();
 
   // WHO SITS IS WHO THE BEACON'S SEED SIGNER NODES.
   assert.deepEqual(signerNodes.committee.map((e) => toHex(e.pubkey)).sort(), signerNodesBy(fromBeacon));

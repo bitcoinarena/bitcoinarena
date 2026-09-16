@@ -1430,8 +1430,14 @@ test('and it tells further and further behind the line', () => {
 
   // And it tells further behind the line: at the seam and thirty metres deeper, a full bed puts more
   // guns on the truck than an empty one does.
+  //
+  // MOVED ON PURPOSE, 4,10,4,7 -> 7,10,7,9 (the owner 2026-09-16 15:36): the ring now gives way at a
+  // tank's own pace instead of writing the tank onto it, so a truck can no longer carry a tank off the
+  // field. The empty bed's count rose by about three on every seed; the full bed still has more on
+  // the truck at both depths on all eight seeds measured (0x5eed1234 and 1-7): cold 5-11 / hot 9-12 at
+  // the seam, cold 4-7 / hot 6-10 behind it. Same strict equality, new world.
   assert.deepEqual([noticing(0, -25), noticing(20000, -25), noticing(0, -50), noticing(20000, -50)],
-    [4, 10, 4, 7],
+    [7, 10, 7, 9],
     'heat no longer widens how many tanks have the truck, at the seam or behind it');
 });
 
