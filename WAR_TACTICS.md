@@ -238,10 +238,10 @@ number on it is a core word or the client's memory of attested samples - nothing
     5:20 window, scrolling as the ground scrolls. This *is* the minimap: what the player sees on the
     chart is under his wheels at the same x.
   - **ROUND**: every candle since the round's open (10 after 100 s, 250 after 41 min), compressing as
-    a chart does; the GROUND window shown as a shaded range on it, like TradingView's visible-range
-    box on the overview bar; the **open** as a horizontal dashed line labelled `OPEN` - the price
-    above or below it is the lead, and the `THE BULLS WIN` verdict at the round's end is the last
-    candle against that line.
+    a chart does; the GROUND window shown as a shaded range on it; the **open** as a horizontal dashed
+    line labelled `OPEN` - the price above or below it is the lead, and the `THE BULLS WIN` verdict at
+    the round's end is the last candle against that line. **No overview bar under the chart** (the owner
+    2026-09-16 22:35): one chart, one range at a time, `Tab` between them.
 - **On the chart, in this z-order** (all from core words, each a client test):
   1. the **seam** as the one indicator: a white 2 px line, labelled `FRONT · SMA 21` in the legend
      where TradingView lists indicators; the armies stand on it and it is the only line the war reads;
