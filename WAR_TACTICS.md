@@ -205,6 +205,11 @@ the owner ordered is in the state and not on the screen. Each is a client test.
   past its start. It latches: backing into the bay after roll-out does not make it safe again. A truck idling on
   the ramp takes no hit and is never wrecked by fire (measured: 8 seeds, 60 s idle in the bay, 0 hits, 0 wrecks).
   The outer slots are **not** moved away from the bay to hide this. After roll-out the truck-fire rule stands.
+- **A bomb hits the truck (the owner 2026-09-16 19:40: yes; GAP).** A truck inside 16 m of a blast (§12.3)
+  takes `shell x (1 - d/16)`, `shell` the courier damage of a hit at the truck's heat (`shellForHeat`,
+  the 5 to 11 band at heat 0), **no draw** (the band's midpoint, so the stream does not shift), after
+  roll-out only (a truck idling in the bay is never wrecked by anything, above). A wreck takes nothing.
+  The gunship still never aims at, follows or avoids the truck: the bomb was going there anyway.
 - Otherwise **ignore** the truck.
 - **No truck is an objective (the owner 2026-09-16 19:05).** One war carries many trucks and ghosts; a war
   that moved toward a truck would move toward one player. So no objective (§4.11) is placed, weighted,
@@ -602,6 +607,12 @@ for, and the core does not draw it yet:**
 - Rising market: the bulls' seam runs +z, the whole bull line advances and the bear line gives ground,
   across the lanes, with the objectives and their holders riding along. Falling market, the reverse.
   Nothing in §4.10-§4.12 needs to know: they are all relative to `seam(x)`.
+- **The price is the only winner (the owner 2026-09-16 19:40).** There is no front winner, no round score
+  for the war, no side that "won": it is bears against bulls and the game runs no simulation of its own
+  - the Bitcoin price decides, and the game depends on it. The objectives, the assaults and the holders
+  (§4.11-§4.12) are the **local** fight about a line the market draws; the market moves the line, the
+  armies fight where it is. Nothing may compute a winner from the war; the seam's position is the score,
+  and it is the price.
 
 ---
 
@@ -711,6 +722,9 @@ tests are §14.
 - Touch in practice sets RUN_WRECKED (§1.2).
 - A tank with the truck inside 34 m and no enemy tank in range never fires on the truck after roll-out (§1.2 GAP).
 - Any gun hits a truck that has not rolled out; over 8 seeds x 60 s idle in the bay any hit or wreck (§1.2 ruling).
+- A blast inside 16 m of a rolled-out truck leaves its HP unchanged, or takes a draw, or touches a truck
+  in the bay or a wreck; a gunship's call, lane, aim or release reads the truck (§1.2, §12.3).
+- Any word computes a winner, a front score or a "side ahead" from the war (§4.13).
 - A bounding tank fires in a tick it moved, gun or coax (§4.4).
 - A coax burst with an enemy tank inside 46 m or a fireable truck in reach; at a man beyond 30 m; at
   the truck; with other than the three draws of a gun shot; a coax hit that leaves a man alive; a coax
@@ -1086,8 +1100,8 @@ by the men in the holes.
   a gunship home, and the sky over a lane full of hidden infantry is not the bomber's. Nothing else
   touches a gunship: no rifle, no coax, no gun.
 - **A gunship reads no truck** (§1.2): not for the call, the lane, the aim, the own-troops check or the
-  release. A truck under a bomb is a truck under a bomb - and today it takes nothing from a blast
-  (`detonate` reads units only); whether it should is the owner's, §15.
+  release. A truck under a bomb is a truck under a bomb: it takes the blast per §1.2 (the owner 19:40:
+  yes), after roll-out; today `detonate` reads units only (GAP).
 - **What the player sees** (§0.2): the rotor is heard 3 s before the gunship enters the corridor; the
   banner names the call (`BEAR CAS - HOLLOW`, `BULL COUNTER - RIDGE`); the run-in is along the named
   lane; a driven-off gunship trails smoke and climbs out; a held bomb is a gunship that crosses its own
@@ -1213,15 +1227,10 @@ word.
 1. **Tanks fire on men.** RULED yes (the owner 2026-09-16 19:25) → §4.4 coax, §8.3.
 2. **Men hurt tanks.** RULED yes (the owner 2026-09-16 19:25) → §11.7 AT man, §8.1. Open inside it: the
    launcher at the truck - RULED HERE never; one word from the owner changes it.
-3. **Bombs on the truck.** Today `detonate` reads units only: a truck under a 16 m blast takes nothing.
-   Proposal: the truck inside a blast takes the armour's `120 x (1 - d/16)` scaled to a shell's band
-   (the courier damage of §1.2 at the centre, nothing at 16 m), after roll-out only (§1.2), no draw;
-   the gunship still never aims at it. **Recommend: yes** - a bomb that spares the truck in the middle
-   of an assault lane looks staged.
-4. **A winner.** The round is the truck's; the war has none. Proposal: the side holding two or more
-   objectives at the run's end is the round's **front winner**, shown once on the result screen with the
-   three holders; nothing in the score reads it. Cheap, and it is the sentence the player tells someone
-   afterwards. **Recommend: yes.**
+3. **Bombs on the truck.** RULED yes (the owner 2026-09-16 19:40) → §1.2, §12.3.
+4. **A winner.** RULED **no** (the owner 2026-09-16 19:40): *"it is bears against bulls and we start no
+   simulation of our own. The Bitcoin price decides, and we depend on it."* → §4.13. No front winner,
+   ever; the recommendation was wrong on the game's own terms.
 5. **Item 2 of the 19:02 list** - wrecks as cover for tanks, side pressure, whole-line retreat - stays
    parked as the owner ordered. With §4.12 in, a whole-line retreat is not needed for movement; side
    pressure would be a second general fighting the assault clock. **Recommend: leave out.**
