@@ -10915,7 +10915,7 @@ const MARK_INPUT_WAIT_MS = 10000;
 const CLOSED = 'closed: ';
 
 /** How long `finish` waits for the held ticks to go out before it ends the run anyway. */
-const FINISH_WAIT_MS = 10000;
+const FINISH_WAIT_MS = 300;
 /** The core's own words for a run that is over (core rules/gate.js RUN_DELIVERED 1, RUN_WRECKED 2, RUN_MISSED 3), as they read off the state. */
 const RUN_ENDING_WORDS = Object.freeze({ 1: 'DELIVERED', 2: 'WRECKED', 3: 'MISSED' });
 

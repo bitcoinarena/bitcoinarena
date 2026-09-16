@@ -248,7 +248,9 @@ mergeInto(LibraryManager.library, {
     if (Module.blwpNet) {
       var was = Module.blwpNet.client;
       if (!was || !was.over) return 1;                 // already running
-      if (!was.ended) return 0;                        // the last of the run is still going out
+      // the owner 2026-09-16: hang after DELIVERED wasted seconds waiting for
+      // `ended` while the last publish drained. `over` is enough; finishing
+      // can drain on the old client in the background.
     }
 
     var base = UTF8ToString(urlPtr);
