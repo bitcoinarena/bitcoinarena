@@ -3475,7 +3475,10 @@ function pressure(s, base, tick, seamAt, ground) {
     const widow = aliveAt(s, i0) !== aliveAt(s, i1);
     let push = s[base + TAC_PUSH + w];
     const slot = s[base + TAC_SLOT + w], terms = laneTerms(s, base, side, slot), weight = terms.weight;
-    const rest = widow ? 0 : terms.rest;
+    // A widow never pushes (§4.10): it drifts to 0 - or, on the side a trend runs against, back to that side's -8 (§4.14
+    // "the bears are pushed back": giving ground is not a push). Drifting widows to 0 held the pushed-back side's widows
+    // at 0 on 49 of its re-reads in the up-trend probe (seeds 1-5, from tick 1200).
+    const rest = widow ? (terms.rest < 0 ? terms.rest : 0) : terms.rest;
     const verdict = !widow && own + weight >= foe + PUSH_TAKE_LEAD ? VERDICT_TAKE
       : !widow && foe >= own + PUSH_GIVE_LEAD + weight ? VERDICT_GIVE : VERDICT_DRIFT;
     // (b) A CONFIRMED VERDICT (re-ruled 20:30): a step only when this reading agrees with the last one, so a new
