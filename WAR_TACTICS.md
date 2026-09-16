@@ -55,7 +55,8 @@ How the rows are read (RULED HERE, after the first probe run, so two probes cann
 | A line of tanks, not a pile | frontage slots §2.4 | no 3 living tanks of one side all within 12 m of each other (the tank-tank minimum, §1.1), on more than 2% of tank-ticks. RULED (the owner 2026-09-16): §2.4 puts a pair's hulls 12 m apart and neighbouring inner hulls 15 m apart, so every interior tank is in a 20 m triple by design - that is formation, not a clump. Two tanks at 12 m is a legal pair; three inside 12 m is a pile. The geometry is not spread to suit a probe. (was: groups of 9 to 20 within 20 m) |
 | Hulls that hold still on a post, no wiggle | hold = stand, §4.1 | a tank on its post moves < 0.02 m/tick of its own step; a tank on the line reverses its own travel direction (x or z sign flip) at most once in any 2 s window - a second flip inside 2 s is a fidget, and fidgets are < 2% of all flips |
 | Nobody pressed against anybody | 12 m bubble §1.1 | the separation push undoes a tank's own step on < 5% of tank-ticks (was 42.5%) |
-| Something is always happening | role swap §2.6 (a leg is 6 to 10 s) and scoot §4.3 | (a) in any 10 s window at least one tank per side changes post; (b) on >= 98% of ticks no more than half of a side's tanks on the line are moving (columns walking in do not count) |
+| **Hold is the default** | §2.6, §4.3, §4.10 as re-ruled 20:30 | of tank-ticks with both of a pair alive, >= 50% have the tank within 1.5 m of its post (measured before: 27.4%); the new bounding tank reaches its forward post before the leg ends on >= 80% of legs (was 56.2%) |
+| Something is always happening | role swap §2.6 (a leg is 12 to 20 s) and scoot §4.3 | (a) in any 10 s window at least one tank per side changes post; (b) on >= 98% of ticks no more than half of a side's tanks on the line are moving (columns walking in do not count) |
 | Leapfrog, in pairs | bounding overwatch §2.6 | of a pair, never both bounding; the bounding one is 14 m nearer the seam than its partner when both are on post |
 | Fire, then move - cause and effect | shoot-and-scoot §4.3 | after a team's shot, that team changes slot within 1 tick unless hemmed in (§4.3) or inside its 10 s scoot cool-down |
 | A tank faces what it fights | heading rule §4.5 | a holding tank on the line points its hull at the enemy side (heading within 30 degrees of the seam normal) on > 95% of holding ticks |
@@ -317,7 +318,10 @@ the owner ordered is in the state and not on the screen. Each is a client test.
 
 ### 2.6 Role clock (bounding overwatch)
 
-- Per team: `period` in ticks = `360 + (h % 240)` → **6 to 10 s** at 60 ticks/s; `phase = h' % period`;
+- Per team: `period` in ticks = `720 + (h % 480)` → **12 to 20 s** at 60 ticks/s (was 6 to 10 s;
+  re-ruled 2026-09-16 20:30 from the implementer's measurement: at 6-10 s the new bounding tank reached
+  its post before the leg ended on only 56% of legs and a pair was on post together 17.5% of the time -
+  the cadence was moving the tanks the spec calls "hold"); `phase = h' % period`;
   first bounding `member = bit`, all from `h = mix(mix(hash, sideConst), team)`.
 - `leg = floor((tick - roleStart) / period) & 1`; the member bounding in this tick is `firstMember ^ leg`.
   At init `roleStart = -phase`, so the teams of a side do not all swap on the same tick.
@@ -400,7 +404,10 @@ the owner ordered is in the state and not on the screen. Each is a client test.
 
 - **Fires:** on the tick a tank of the team **fires the gun** (hit or miss, at a tank or the truck; not
   the coax, §4.4), after the
-  reload is set; at most **once per 10 s (600 ticks) per team** (`TAC_SCOOT`).
+  reload is set; at most **once per 20 s (1200 ticks) per team** (`TAC_SCOOT`; was 10 s, re-ruled
+  2026-09-16 20:30), and **only when both living tanks of the team are on post** (within 1.5 m of their
+  hold, hull-down pick included) - a shot from a team in a swap or a push does not scoot it; the next
+  shot may.
 - **Next hashed slot** (RULED HERE, from measurement): the **adjacent** slot, `here ± 1`, the side hashed
   from `(seed, side, team, tick)`; if that one is held by another team of the side or off the end, the
   other side; if both are held or off the end, **hold** and try again after the next shot. Not the next
@@ -486,7 +493,12 @@ no truck. **RULED HERE**, numbers included, so it can be built without guessing;
   init 0). Both of the team's lines are `push` nearer the enemy: forward line `16 - push`, overwatch
   line `30 - push`. The seam itself is `push = 16`; `push = 24` is 8 m across.
 - **Re-read every 5 s (300 ticks) per team**, on a tick hashed from `(seed, side, team)` so the teams do
-  not all step together. `w` is the team's objective weight (§4.11): 2 on an objective's lane, 1 next
+  not all step together. **Re-ruled 2026-09-16 20:30** (measured: 6.4 steps per team-minute, a push held
+  a median 5 s, 43% of steps reversed the previous one): (a) a re-read is **skipped** while either living
+  tank of the team is more than 1.5 m from its post - a push completes before the next is read; (b) a
+  step is taken only when the re-read's verdict (take / give / drift) **equals the previous re-read's
+  verdict** (`TAC_VERDICT`, one word per team) - a new direction needs two readings, 10 s, so 0 → 8 → 0
+  in ten seconds cannot happen; a continued direction steps at once. Respawn and init clear the word. `w` is the team's objective weight (§4.11): 2 on an objective's lane, 1 next
   to it, 0 elsewhere - plus 1 on every lane for the side the price favours (§4.14). Rest is 0, +8 on an
   objective's lane (§4.11), -8 on every lane for the trailing side (§4.14; the objective's +8 and the
   trailing -8 cancel to 0).
@@ -792,7 +804,7 @@ bumper-to-bumper.
 One part holds and shoots while another moves. Here: the OVERWATCH tank of a pair, and every singleton.
 
 **Bounding overwatch**
-A holds, B advances, then swap. Leapfrog. Here: the role clock, legs of 6 to 10 s per team.
+A holds, B advances, then swap. Leapfrog. Here: the role clock, legs of 12 to 20 s per team.
 
 **Hull-down**
 Turret over crest / cover, hull hidden. Here: the best-rise candidate of five about the overwatch line.
@@ -808,7 +820,7 @@ inside 46 m of any metre of it.
 Both sides of the road / seam. Here: independent slot permutations per side.
 
 **Shoot-and-scoot**
-Fire, then next slot. Here: adjacent free slot, hashed side, once per 10 s per team.
+Fire, then next slot. Here: adjacent free slot, hashed side, once per 20 s per team, both on post.
 
 **2-tank fire team**
 The stable pair. Here: roster ids `(2t, 2t+1)` of a side.
@@ -864,7 +876,7 @@ The price series across the map; `seam(x)` is read from it every tick. Seeded pe
 market during it; every post in this file is relative to it (§4.13).
 
 **Tick**
-1/60 s. Every time in this file is in ticks in the code: 6 s = 360, 10 s = 600.
+1/60 s. Every time in this file is in ticks in the code: 12 s = 720, 20 s = 1200.
 
 ---
 
@@ -907,8 +919,10 @@ tests are §14.
   burst that triggers a scoot; a coax hit on a roll of 400 or more at STAND, 200 at PRONE, 100 at COVER
   (§4.4).
 - Both tanks of a living pair are bounding in the same tick (§2.5).
-- A scoot moves a team more than 27 m, or into a held slot, or fires twice inside 600 ticks for one team
-  (§4.3).
+- A scoot moves a team more than 27 m, or into a held slot, or fires twice inside 1200 ticks for one
+  team, or fires while a tank of the team is off post (§4.3).
+- A push steps on a verdict that differs from the previous re-read's, or steps while a tank of the team
+  is more than 1.5 m from its post (§4.10).
 - Two different seeds give the same slot order on a side, or one seed gives different orders on two
   nodes (§2.2, §2.4: the order is a pure function of the seed).
 - Any tactics value is computed from a draw of the round's RNG (§2.2: the stream must be identical with
