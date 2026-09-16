@@ -594,6 +594,13 @@ for, and the core does not draw it yet:**
   `PriceHistory` did. A sample is protocol input, hashed like a load: every node gets the same sample on
   the same tick or the transcript replays differently. **No move rule reads the tape's future**; the
   armies read `seam(x)` on the tick, as they do now.
+- **Sample cadence (RULED HERE): one sample per 5 s (300 ticks).** A sample shifts the whole tape one
+  slot toward -x, 4.13 m of map (260 m / 63), so the front's shape **scrolls** left at 0.83 m/s and the
+  newest price enters at the miner's end. That is inside a man's 2.8 m/s and a tank's 6.8; at one sample
+  a second the scroll would be 4.13 m/s and the men could never close on the line. 64 samples at 5 s is
+  5 min 20 s of price on the ground. A new sample can also move the window's low or high, and then the
+  whole curve rescales in one tick - that is the market re-drawing the front, and it is allowed: the
+  filter's 1.42 m/m limit is on the shape, not on how fast the shape changes.
 - **The armies follow at walk speed**, nothing more: a moved seam moves the posts (every rule already
   reads the seam per tick), a tank drives at 6.8 m/s and a man at 2.8 m/s to its new post, in its lane,
   with its roles, slots, objectives and claims unchanged. A 20 m step is 3 s of driving and 7 s of
