@@ -709,8 +709,14 @@ replays, both re-read on the sample tick (5 s) and never between:
 **UP (the bulls' trend; DOWN is the mirror with the sides swapped):**
 
 - **Only the bulls assault** (§4.12): their clock runs 30-60 s; the bears' assault clock is **paused** -
-  they mount no assault, they COUNTER (§12.3, 2 s after a lost objective) and they hold. Sideways
-  releases the clock where it stood.
+  they mount no assault, they COUNTER (§12.3, 2 s after a lost objective) and they hold. An assault
+  already running when the trend turns against its side **runs out** (its 30 s, or the flip) with the
+  new weights and ceilings - it is not cancelled, it just gets harder. Sideways releases the clock where
+  it stood.
+- **Cadence**: the trend is re-read on every candle close (10 s) over a rolling 60 s window, so it
+  ramps, it does not switch: from six green (UP 3) one red candle makes net 4 (UP 2), two make UP 1,
+  three make SIDEWAYS - 30 s from a full bull trend to neutral, 60 s to a full bear trend. A single
+  candle can lift SIDEWAYS to strength 1 (net 1 → 2) but never further.
 - **The bulls press along the whole front**: `w + 1` on every lane (§4.10), rest `+8` on every lane,
   push ceiling `24 + 8 x strength` (up to 48: the forward hull 32 m across the seam) - and the seam
   itself is moving north with the price (§4.13), so the bull line is carried forward twice: by the
