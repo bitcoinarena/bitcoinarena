@@ -122,7 +122,7 @@ measured or read from the core on the branch, each with a section below that fix
    breathes at once, all the time, at the same amplitude. No lull, no build-up, no assault that is
    declared and then happens, no climax, no "they are coming for the HIGH". §4.12.
 4. **The objectives have no consequence.** A holder colours a marker (§4.11). Nothing in the war gets
-   better for holding RIDGE or worse for losing GAP, so nothing is worth defending and the marker is a
+   better for holding the HIGH or worse for losing the LOW, so nothing is worth defending and the marker is a
    label on a lane. §3 (supply), §4.12.
 
 And what the **player** sees is under-specified: the §0 rows keep the war from looking dumb; they do not
@@ -354,7 +354,7 @@ the owner ordered is in the state and not on the screen. Each is a client test.
   armour and rifle clocks. The floor of §0 ("never below 4 tanks on more than 5% of ticks") stands and
   is measured with this on: if the floor fails, the divisor is retuned, not the rule. The market's
   momentum adds to supply for the leading side (§4.14).
-- So losing an objective is felt: the side that lost GAP replaces its dead more slowly along the whole
+- So losing an objective is felt: the side that lost the LOW replaces its dead more slowly along the whole
   front, and the side that took it is fuller. That is what makes an objective worth defending and an
   assault worth mounting (§4.12), and it is bounded - nothing runs away, because a holder is re-read
   every 5 s and the fuller side's tanks are what flip it back.
