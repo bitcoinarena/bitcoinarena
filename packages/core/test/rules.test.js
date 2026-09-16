@@ -1493,8 +1493,10 @@ test('and it tells further and further behind the line', () => {
   // -> 4,6,4,6 with the post held until the bound arrives, stops inside 1.5 m and columns off the half-line budget
   // (the owner 21:20). Eight seeds: a full bed has more tanks on the truck on all eight at the seam (hot 5-6 against cold
   // 3-4) and on all eight behind the line (hot 4-6 against cold 2-4).
+  // -> 5,6,3,6 with the hull-down emplacements in the surface (rules/emplacements.js). Eight seeds: a full bed has more
+  // tanks on the truck on all eight at the seam (hot 4-6 against cold 3-5) and on all eight behind it (hot 4-6, cold 2-4).
   assert.deepEqual([noticing(0, -25), noticing(20000, -25), noticing(0, -50), noticing(20000, -50)],
-    [4, 6, 4, 6],
+    [5, 6, 3, 6],
     'heat no longer widens how many tanks have the truck, at the seam or behind it');
 });
 

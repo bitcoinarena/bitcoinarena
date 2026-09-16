@@ -311,3 +311,31 @@ test('a pair swaps roles only with both tanks on post: the post is held until th
   }
   assert.ok(swaps > 20, `only ${swaps} swaps - nothing checked`);
 });
+
+test('an overwatch post on the 30 m line stands behind a crest that hides the hull: >= 2 m within 6 m toward the enemy (§4.1, §4.15)', async () => {
+  // The berm is 2.4 m over the higher of the relief at its foot and at its top. Where the relief itself climbs more than
+  // ~0.6 m between the two, the crest passes 3 m and the turret no longer sees over it: counted and printed, not hidden
+  // - tools/measure-hulldown-killzone.mjs measures that share (3.6% of overwatch on-post ticks, commit body).
+  const over = [];
+  const { emplacementAt } = await import('../src/rules/emplacements.js');
+  for (const seedWord of [1, 2, 3, 4, 5]) {
+    const st = init(seedWord);
+    const seamAt = (x) => frontlineZ(st.tape, x, 130 * ONE, 85 * ONE), g = (x, z) => groundAt(st, x, z);
+    for (let slot = 0; slot < T.SLOTS_PER_SIDE; slot++) {
+      for (const side of [-1, 1]) for (const hull of [-6, 6]) {
+        const x = T.slotX(slot) + hull * ONE;
+        if (Math.abs(x) > 83 * ONE) continue;                         // the levelled aprons take no berm
+        const z = seamAt(x) + side * 30 * ONE;
+        let top = -Infinity; for (let d = 1; d <= 6; d++) top = Math.max(top, g(x, z - side * d * ONE));
+        const crest = (top - g(x, z)) / ONE;
+        assert.ok(crest >= 2, `seed ${seedWord} slot ${slot} side ${side} hull ${hull}: crest ${crest.toFixed(2)} m in front of the overwatch line`);
+        if (crest >= 3) over.push(`seed ${seedWord} slot ${slot} side ${side} hull ${hull}: ${crest.toFixed(2)} m`);
+      }
+      const between = T.slotX(slot) + 13 * ONE;                       // the flat 5 m between two lanes
+      if (slot < 6) assert.equal(emplacementAt(between, seamAt(between) - 25 * ONE, st.tape, st.ground, 130 * ONE, 85 * ONE), 0);
+    }
+    for (const x of [-100 * ONE, 90 * ONE]) assert.equal(emplacementAt(x, seamAt(x) + 25 * ONE, st.tape, st.ground, 130 * ONE, 85 * ONE), 0, 'a berm on an apron');
+    assert.equal(emplacementAt(0, seamAt(0) - 16 * ONE, st.tape, st.ground, 130 * ONE, 85 * ONE) < ONE, true, 'the forward line stands on a berm');
+  }
+  console.log(`  posts where the relief lifts the crest over a 3 m turret: ${over.length}${over.length ? ' - ' + over.join('; ') : ''}`);
+});

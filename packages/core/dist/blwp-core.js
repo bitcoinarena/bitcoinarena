@@ -2162,6 +2162,7 @@ function hullDownHold(hold, side, x, ground) {
 
 const POST_DEPTH = ONE;                          // a tank within 1 m of its post's depth stands
 const REVERSE_TICKS = 120;                       // §0 row 2: at most one reversal of a tank's own travel in any 2 s
+const POST_DEPTH_ARRIVE = ONE >> 2;             // a hull already driving to its line goes on to 0.25 m of it
 const POST_SIDE = ONE;                           // and within 1 m of its slot across. It was 2 m: a depth move on a hull
                                                  // up to 30 degrees off drifts x, and correcting half a metre of it
                                                  // flipped the step. But "on post" is ruled as 1.5 m (§0 "Hold is the
@@ -2493,7 +2494,12 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, halfX, half
     // the depth after it arrives. With any band on depth, a hull crossing on a slant drifted over the band's edge
     // and back each tick and swung between two headings 135 degrees apart (measured 3.8 reversals a tank-second).
     const crossing = u.armour && u.tac && abs(sub(u.tacX, u.x)) > CROSSING;
-    const band = u.armour ? POST_DEPTH : mulFast(walk, dt);
+    // ARRIVE ON THE LINE, NOT AT THE EDGE OF THE BAND: a standing tank corrects its depth only past POST_DEPTH; a tank that
+    // moved last tick along z toward its hold (bit 0 and its last z sign, sim.js U_COOLDOWN) goes on to 0.25 m. A hull-down
+    // hold is a foot of a berm: stopped 1 m short of it, the tank's 6 m look ended on the ramp - 9% of overwatch on-post
+    // ticks had 1-1.95 m in front of them instead of 2 m (rules/emplacements.js).
+    const arrivingZ = u.armour && u.tac && ((u.cooldown | 0) & 1) === 1 && (((u.cooldown | 0) >> 1) & 3) === (gap > 0 ? 1 : 2);
+    const band = u.armour ? (arrivingZ ? POST_DEPTH_ARRIVE : POST_DEPTH) : mulFast(walk, dt);
     const want = !crossing && abs(gap) > band ? (gap > 0 ? ONE : -ONE) : 0;
     dz = mulFast(mulFast(walk, want), dt);
   }
@@ -3492,6 +3498,187 @@ function mapSolids(ground, halfX, halfZ) {
 }
 
 
+// ---- rules/frontline.js
+// Where the two armies meet, ported from PriceHistory.FrontlineZ.
+//
+// The seam is the price tape laid across the map: the oldest sample sits at the
+// far -x end, the newest at +x, and the line's z is how far the price has moved
+// from the window's midpoint. A rising market pushes the bulls forward.
+
+
+const SAMPLES = 64;
+
+/**
+ * Frontline z at a world x. `hist` is an Int32Array of SAMPLES prices in
+ * Q16.16 (scaled however the caller likes - only ratios matter), `halfX` and
+ * `halfZ` are the map's half extents in Q16.16.
+ */
+/**
+ * The tape, box-averaged over WINDOW samples, edges held.
+ *
+ * WHY THERE IS A FILTER HERE AT ALL. The tape is a price series and the raw
+ * function laid it across the map at one sample every 4.13 m, so the "front"
+ * was a price chart, not a line: measured across the map it ran +29.1, +2.6,
+ * +37.6, +5.8, +28.1, -8.6, +8.8, -40.5, -28.4 at 22 m steps. A man walking
+ * nine metres sideways saw his goal move sixty. Chasing it, nobody ever
+ * arrived - infantry sat 36.5 m behind a line whose own standoff is 8.
+ *
+ * THE WIDTH IS DERIVED, NOT PICKED. A rifleman closes in z at 3.4 m/s and
+ * moves in x at 2.4 m/s (`Army.cs:681`), so a goal that slides more than
+ * 3.4/2.4 = 1.42 metres per metre of x runs away faster than he can walk.
+ * Measured over five tapes, the raw slope is 6.00 mean and 14.21 at the 99th
+ * percentile, with 88% of the map above the limit. Box-averaged:
+ *
+ *     N     mean   p99    max   over the limit   amplitude
+ *      1    6.00  14.21  14.35      88.0%        +-56.7 m
+ *      9    0.93   2.66   2.80      22.9%        +-38.5 m
+ *     13    0.56   1.80   1.93       3.7%        +-42.7 m
+ *     21    0.42   1.20   1.27       0.0%        +-39.5 m
+ *
+ * 21 is the first width where the 99th percentile AND the maximum are both
+ * under 1.42 and no part of the map is above it. Wider only costs amplitude:
+ * the front must still move with the market, and at 21 it still swings
+ * +-39.5 m across the map.
+ *
+ * The normalisation below deliberately keeps the RAW window's low and high,
+ * not the smoothed one's. Renormalising against the smoothed range would
+ * re-expand the filtered curve to full scale and put the slope back: measured,
+ * that variant still leaves 9.9% of the map over the limit at N=21.
+ *
+ * C# has no filter. This is not a port of `PriceHistory.FrontlineZ` losing a
+ * term - it is the core refusing to copy a fault: a quantity used as a FRONT
+ * LINE cannot have 4 m resolution and 60 m steps, whatever it was called
+ * upstream.
+ */
+const WINDOW = 21;
+const HALFW = 10;
+
+function smooth(hist, j) {
+  let sum = 0;
+  for (let k = j - HALFW; k <= j + HALFW; k++) {
+    const q = k < 0 ? 0 : (k > SAMPLES - 1 ? SAMPLES - 1 : k);
+    sum += hist[q];
+  }
+  // `div`, not a bare `/`: the determinism guard allows the operator only
+  // inside the arithmetic file, and it is right to. Exact here with room to
+  // spare - the largest tape value measured over three seeds and a minute is
+  // 20,099,840, so `sum * ONE` peaks at 2.77e13 against the 9.01e15 where a
+  // double stops counting integers, a factor of 325.
+  return div(sum, Math.imul(WINDOW, ONE));
+}
+
+function frontlineZ(hist, x, halfX, halfZ) {
+  if (SAMPLES < 2) return 0;
+
+  // position along the tape, 0 at -halfX, ONE at +halfX
+  const u = clamp(div(add(x, halfX), Math.imul(2, halfX)), 0, ONE);
+  const at = mulFast(u, Math.imul(SAMPLES - 1, ONE));
+  const i = clamp(at >> 16, 0, SAMPLES - 2);
+  const f = at & 65535;
+
+  const a = smooth(hist, i), b = smooth(hist, i + 1);
+  const price = add(a, mulFast(sub(b, a), f));
+
+  // the window's own range decides the scale, so a quiet market still moves
+  let lo = hist[0], hi = hist[0];
+  for (let k = 1; k < SAMPLES; k++) { lo = min(lo, hist[k]); hi = max(hi, hist[k]); }
+  const span = sub(hi, lo);
+  if (span <= 0) return 0;
+
+  // -1 .. +1 about the midpoint, then C#'s own share of the map's half depth.
+  //
+  // 43690 stood here - two thirds - and `PriceHistory.FrontlineZ:128` returns
+  // `(n - 0.5) * worldDepth * 0.72`. With `n` in [0, 1] that is +-0.36 of the
+  // FULL depth, and `MempoolTerrain` has width 260 and depth 170, which are
+  // exactly twice the core's HALF_X 130 and HALF_Z 85. So C#'s amplitude is
+  // 0.72 of the HALF depth and the core's was 0.6667 of it: the same quantity
+  // in the same units, off by 8%, and +-56.7 m where C# has +-61.2 m.
+  //
+  // That 3.1 m of amplitude is depth C# MEANS, not tape noise, so it comes
+  // back. The other 18.8 m of the gap to C# is the jag this file filters out
+  // on purpose - 86% of the difference - and it stays out: a front a man
+  // cannot close on is not a front, whatever its amplitude.
+  //
+  // It changes no envelope quantity. Both verdicts are measured under
+  // `--seam0`, where the tape is flat, `span` is zero and this function
+  // returns 0 before it ever reaches the scale - 68/72 air off and 65/72 air
+  // on, identical to the digit with either constant. This is a wrong number
+  // made right, not a number tuned to a test.
+  const t = sub(div(mulFast(sub(price, lo), Math.imul(2, ONE)), span), ONE);
+  return mulFast(t, mulFast(halfZ, 47186));
+}
+
+// ---- rules/emplacements.js
+// HULL-DOWN EMPLACEMENTS - WAR_TACTICS.md §4.1 "default hold = hull-down: turret over crest, hull hidden".
+//
+// Measured on the round's relief (tools/measure-hulldown-killzone.mjs, 5874630): not one metre of the seam band has a
+// 2 m crest in the 6 m in front of it (0 of 42350 spots on each of seeds 1-5, highest 1.95 m), so an overwatch tank
+// took the best crest there was on 96.7% of its ticks and still had its hull in the open on 100% of them. §4.15 says
+// what hides a hull: "two metres hides a hull (3 m) to the turret", on a 5 m ramp (40%, 22 degrees).
+//
+// So each side has an EMPLACEMENT in every one of its seven slot lanes: a berm whose near foot is the resting overwatch
+// line - 30 m behind the seam, where the overwatch of every lane stands on most of its on-post ticks - rising 5 m to
+// 2.4 m above the ground, flat 4 m, down 5 m. The hull-down search (army.js) finds a 2 m rise 6 m in front
+// of the line's candidate and holds it: hull behind the berm, turret over it. The height is taken from the ground at
+// the foot, so a hill falling away toward the enemy does not eat the 2 m (it did: 17% of overwatch ticks with the berm
+// in front had a crest of 0.9-1.9 m). Across x it covers the pair (hulls at +-6 m, 1.8 m half-width) flat to 8 m of the
+// slot centre and eases out by 11 m, 5 m of flat ground between lanes. It stays full height to 83 m from the centre and
+// fades out by 86 m, where the aprons are levelled, so no bay stands on a slope and the outer lanes' inner hulls are
+// covered (fading with the relief's own ease from 66 m left 29% of overwatch ticks, the outer lanes, without one).
+//
+// A height LAYER, like the craters: `surfaceAt = relief + emplacements - craters`. The relief itself is untouched, so
+// the objectives (§4.11, read from the relief) do not move. It follows the seam at each x, read from the round's tape. Integers only; no draw; nothing reads the truck.
+
+
+
+
+// 2.4 m, not 2: a hull stands anywhere within 1.5 m of its hold (on post), and at exactly 2 m a tank a few centimetres up
+// the ramp saw 1.96 m (37.9% of the served overwatch ticks). 2.4 m hides a 3 m hull to its turret from 29.25 m to 31 m
+// behind the seam and still leaves the turret over the crest; the ramp is 48%, under the relief's own 55%.
+const BERM_HEIGHT = 157286;              // 2.4 m in Q16.16 (2.4 x 65536 = 157286.4)
+const RAMP = Math.imul(5, ONE);
+const TOP = Math.imul(4, ONE);
+const FOOT_BEHIND_LINE = ONE >> 1;           // the foot 0.5 m in front of the line: a hull on the line is behind it
+const LINE_REST = Math.imul(30, ONE);        // §2.5 overwatch line at push 0
+const HALF_TOP_X = Math.imul(8, ONE);
+const HALF_FOOT_X = Math.imul(11, ONE);
+const FULL_X = Math.imul(83, ONE), NONE_X = Math.imul(86, ONE);
+const PITCH = Math.imul(27, ONE);
+
+/**
+ * The emplacement height at a world point, Q16.16 metres; 0 off every berm. `ground` is the round's relief grid.
+ */
+function emplacementAt(x, z, tape, ground, halfX, halfZ) {
+  const ax = abs(x);
+  if (ax >= NONE_X) return 0;
+  const first = slotX(0);
+  const lane = clamp(idiv(add(sub(x, first), PITCH >> 1), PITCH), 0, SLOTS_PER_SIDE - 1);
+  const dx = abs(sub(x, slotX(lane)));
+  if (dx >= HALF_FOOT_X) return 0;
+  // Every lane at the resting 30 m line: an objective lane's +8 rest (22 m) was measured to hold only 7% of its overwatch
+  // ticks - the push steps only from post on a confirmed verdict - and a 22 m berm left 22.1% of all overwatch on-post
+  // ticks standing at 30 m with no crest in front.
+  const line = LINE_REST;
+  const seam = frontlineZ(tape, x, halfX, halfZ);
+  const off = sub(z, seam), side = off < 0 ? -1 : 1, depth = abs(off);   // metres behind the seam on that side
+  const foot = sub(line, FOOT_BEHIND_LINE);
+  const up = sub(foot, RAMP), down = sub(up, TOP), far = sub(down, RAMP);
+  if (depth >= foot || depth <= far) return 0;
+  const fz = depth > up ? div(sub(foot, depth), RAMP) : depth >= down ? ONE : div(sub(depth, far), RAMP);
+  const fx = dx <= HALF_TOP_X ? ONE : div(sub(HALF_FOOT_X, dx), sub(HALF_FOOT_X, HALF_TOP_X));
+  const fend = ax <= FULL_X ? ONE : div(sub(NONE_X, ax), sub(NONE_X, FULL_X));
+  // 2 m above the HIGHER of the ground at its foot and the relief at its top: a hill climbing toward the enemy neither
+  // eats the 2 m nor outscores the berm in the hull-down search (measured: relief rising 0.4 m per metre left a hull at
+  // the foot with 1.6 m in front, and the search moved to the slope).
+  const footGround = heightAtWorld(ground, x, add(seam, Math.imul(side, foot)), halfX, halfZ);
+  const topGround = heightAtWorld(ground, x, add(seam, Math.imul(side, up)), halfX, halfZ);
+  const base0 = footGround > topGround ? footGround : topGround;
+  const here = heightAtWorld(ground, x, z, halfX, halfZ);
+  const want = sub(add(base0, mulFast(BERM_HEIGHT, fz)), here);
+  if (want <= 0) return 0;
+  return mulFast(mulFast(want, fx), fend);
+}
+
 // ---- rules/cargo.js
 // The load, ported from CargoBay.
 //
@@ -3721,116 +3908,6 @@ function outcome(state, x, z, hp, tickInBlock) {
   if (hp <= 0) return RUN_WRECKED;
   if (arrived(x, z)) return RUN_DELIVERED;
   return RUN_LIVE;
-}
-
-// ---- rules/frontline.js
-// Where the two armies meet, ported from PriceHistory.FrontlineZ.
-//
-// The seam is the price tape laid across the map: the oldest sample sits at the
-// far -x end, the newest at +x, and the line's z is how far the price has moved
-// from the window's midpoint. A rising market pushes the bulls forward.
-
-
-const SAMPLES = 64;
-
-/**
- * Frontline z at a world x. `hist` is an Int32Array of SAMPLES prices in
- * Q16.16 (scaled however the caller likes - only ratios matter), `halfX` and
- * `halfZ` are the map's half extents in Q16.16.
- */
-/**
- * The tape, box-averaged over WINDOW samples, edges held.
- *
- * WHY THERE IS A FILTER HERE AT ALL. The tape is a price series and the raw
- * function laid it across the map at one sample every 4.13 m, so the "front"
- * was a price chart, not a line: measured across the map it ran +29.1, +2.6,
- * +37.6, +5.8, +28.1, -8.6, +8.8, -40.5, -28.4 at 22 m steps. A man walking
- * nine metres sideways saw his goal move sixty. Chasing it, nobody ever
- * arrived - infantry sat 36.5 m behind a line whose own standoff is 8.
- *
- * THE WIDTH IS DERIVED, NOT PICKED. A rifleman closes in z at 3.4 m/s and
- * moves in x at 2.4 m/s (`Army.cs:681`), so a goal that slides more than
- * 3.4/2.4 = 1.42 metres per metre of x runs away faster than he can walk.
- * Measured over five tapes, the raw slope is 6.00 mean and 14.21 at the 99th
- * percentile, with 88% of the map above the limit. Box-averaged:
- *
- *     N     mean   p99    max   over the limit   amplitude
- *      1    6.00  14.21  14.35      88.0%        +-56.7 m
- *      9    0.93   2.66   2.80      22.9%        +-38.5 m
- *     13    0.56   1.80   1.93       3.7%        +-42.7 m
- *     21    0.42   1.20   1.27       0.0%        +-39.5 m
- *
- * 21 is the first width where the 99th percentile AND the maximum are both
- * under 1.42 and no part of the map is above it. Wider only costs amplitude:
- * the front must still move with the market, and at 21 it still swings
- * +-39.5 m across the map.
- *
- * The normalisation below deliberately keeps the RAW window's low and high,
- * not the smoothed one's. Renormalising against the smoothed range would
- * re-expand the filtered curve to full scale and put the slope back: measured,
- * that variant still leaves 9.9% of the map over the limit at N=21.
- *
- * C# has no filter. This is not a port of `PriceHistory.FrontlineZ` losing a
- * term - it is the core refusing to copy a fault: a quantity used as a FRONT
- * LINE cannot have 4 m resolution and 60 m steps, whatever it was called
- * upstream.
- */
-const WINDOW = 21;
-const HALFW = 10;
-
-function smooth(hist, j) {
-  let sum = 0;
-  for (let k = j - HALFW; k <= j + HALFW; k++) {
-    const q = k < 0 ? 0 : (k > SAMPLES - 1 ? SAMPLES - 1 : k);
-    sum += hist[q];
-  }
-  // `div`, not a bare `/`: the determinism guard allows the operator only
-  // inside the arithmetic file, and it is right to. Exact here with room to
-  // spare - the largest tape value measured over three seeds and a minute is
-  // 20,099,840, so `sum * ONE` peaks at 2.77e13 against the 9.01e15 where a
-  // double stops counting integers, a factor of 325.
-  return div(sum, Math.imul(WINDOW, ONE));
-}
-
-function frontlineZ(hist, x, halfX, halfZ) {
-  if (SAMPLES < 2) return 0;
-
-  // position along the tape, 0 at -halfX, ONE at +halfX
-  const u = clamp(div(add(x, halfX), Math.imul(2, halfX)), 0, ONE);
-  const at = mulFast(u, Math.imul(SAMPLES - 1, ONE));
-  const i = clamp(at >> 16, 0, SAMPLES - 2);
-  const f = at & 65535;
-
-  const a = smooth(hist, i), b = smooth(hist, i + 1);
-  const price = add(a, mulFast(sub(b, a), f));
-
-  // the window's own range decides the scale, so a quiet market still moves
-  let lo = hist[0], hi = hist[0];
-  for (let k = 1; k < SAMPLES; k++) { lo = min(lo, hist[k]); hi = max(hi, hist[k]); }
-  const span = sub(hi, lo);
-  if (span <= 0) return 0;
-
-  // -1 .. +1 about the midpoint, then C#'s own share of the map's half depth.
-  //
-  // 43690 stood here - two thirds - and `PriceHistory.FrontlineZ:128` returns
-  // `(n - 0.5) * worldDepth * 0.72`. With `n` in [0, 1] that is +-0.36 of the
-  // FULL depth, and `MempoolTerrain` has width 260 and depth 170, which are
-  // exactly twice the core's HALF_X 130 and HALF_Z 85. So C#'s amplitude is
-  // 0.72 of the HALF depth and the core's was 0.6667 of it: the same quantity
-  // in the same units, off by 8%, and +-56.7 m where C# has +-61.2 m.
-  //
-  // That 3.1 m of amplitude is depth C# MEANS, not tape noise, so it comes
-  // back. The other 18.8 m of the gap to C# is the jag this file filters out
-  // on purpose - 86% of the difference - and it stays out: a front a man
-  // cannot close on is not a front, whatever its amplitude.
-  //
-  // It changes no envelope quantity. Both verdicts are measured under
-  // `--seam0`, where the tape is flat, `span` is zero and this function
-  // returns 0 before it ever reaches the scale - 68/72 air off and 65/72 air
-  // on, identical to the digit with either constant. This is a wrong number
-  // made right, not a number tuned to a test.
-  const t = sub(div(mulFast(sub(price, lo), Math.imul(2, ONE)), span), ONE);
-  return mulFast(t, mulFast(halfZ, 47186));
 }
 
 // ---- rules/air.js
@@ -4169,6 +4246,7 @@ const sortieWait = (rng) => mulFast(SORTIE_SECONDS, between(rng, JITTER_MIN, JIT
 // into a single browser file - after the import line is stripped, every
 // `x.thing` points at nothing - and a real bundler in the trust path is
 // exactly what section 3.6 argues against for anything that pins money.
+
 
 
 
@@ -4664,7 +4742,8 @@ function craterCut(s, x, z) {
  * all come through here now.
  */
 function surfaceAt(st, x, z) {
-  return sub(heightAtWorld(st.ground, x, z, HALF_X, HALF_Z),
+  // relief + the hull-down emplacements (rules/emplacements.js) - craters
+  return sub(add(heightAtWorld(st.ground, x, z, HALF_X, HALF_Z), emplacementAt(x, z, st.tape, st.ground, HALF_X, HALF_Z)),
              craterCut(st.i32, x, z));
 }
 

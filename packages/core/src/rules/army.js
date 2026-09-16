@@ -309,6 +309,7 @@ export function hullDownHold(hold, side, x, ground) {
 
 const POST_DEPTH = ONE;                          // a tank within 1 m of its post's depth stands
 const REVERSE_TICKS = 120;                       // §0 row 2: at most one reversal of a tank's own travel in any 2 s
+const POST_DEPTH_ARRIVE = ONE >> 2;             // a hull already driving to its line goes on to 0.25 m of it
 const POST_SIDE = ONE;                           // and within 1 m of its slot across. It was 2 m: a depth move on a hull
                                                  // up to 30 degrees off drifts x, and correcting half a metre of it
                                                  // flipped the step. But "on post" is ruled as 1.5 m (§0 "Hold is the
@@ -640,7 +641,12 @@ export function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, half
     // the depth after it arrives. With any band on depth, a hull crossing on a slant drifted over the band's edge
     // and back each tick and swung between two headings 135 degrees apart (measured 3.8 reversals a tank-second).
     const crossing = u.armour && u.tac && abs(sub(u.tacX, u.x)) > CROSSING;
-    const band = u.armour ? POST_DEPTH : mulFast(walk, dt);
+    // ARRIVE ON THE LINE, NOT AT THE EDGE OF THE BAND: a standing tank corrects its depth only past POST_DEPTH; a tank that
+    // moved last tick along z toward its hold (bit 0 and its last z sign, sim.js U_COOLDOWN) goes on to 0.25 m. A hull-down
+    // hold is a foot of a berm: stopped 1 m short of it, the tank's 6 m look ended on the ramp - 9% of overwatch on-post
+    // ticks had 1-1.95 m in front of them instead of 2 m (rules/emplacements.js).
+    const arrivingZ = u.armour && u.tac && ((u.cooldown | 0) & 1) === 1 && (((u.cooldown | 0) >> 1) & 3) === (gap > 0 ? 1 : 2);
+    const band = u.armour ? (arrivingZ ? POST_DEPTH_ARRIVE : POST_DEPTH) : mulFast(walk, dt);
     const want = !crossing && abs(gap) > band ? (gap > 0 ? ONE : -ONE) : 0;
     dz = mulFast(mulFast(walk, want), dt);
   }

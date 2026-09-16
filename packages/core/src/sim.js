@@ -38,6 +38,7 @@ import { flatGround, groundFromSeed, gradeAlong, heightAtWorld, DEFAULT_COLS, DE
 import { noSolids, resolveSolids, resolveArmour, BOX_WORDS } from './rules/solids.js';
 import { initTactics, postOf, scoot, onRespawn, enterInLane, pressure, partnerOf, FORWARD_LINE, rifleTeamOf, pushNear, mix, FIRE_TEAMS_PER_SIDE, TAC_SEED, firstManOf, initObjectives, objectiveHolders, clearOnEntry, holdLegs, onPost } from './rules/tactics.js';
 import { mapSolids } from './rules/map.js';
+import { emplacementAt } from './rules/emplacements.js';
 import { heat as heatForLoad } from './rules/cargo.js';
 import { stepUnit, standingStill, separatePair, clearOfTruck, runOver, truckSpeed, threatAt, pickTarget, pickRifleTarget, riflePost, RELOAD_MIN, RELOAD_SPAN, DAMAGE_MIN, DAMAGE_SPAN, BACKOFF_RANGE, HIT_PER_MIL, ARMOUR_RANGE, RIFLE_RANGE, RIFLE_HIT_PER_MIL, RIFLE_RELOAD_TICKS, RIFLE_RELOAD_TICKS_SPAN, RIFLE_LOOK_TICKS, RIFLE_LOOK_TICKS_SPAN, RIFLE_HP, RIFLE_DAMAGE, hullDownHold, COURIER_RANGE, COURIER_DAMAGE_MIN, COURIER_DAMAGE_SPAN, COURIER_RIFLE_MIN, COURIER_RIFLE_SPAN, courierReach, outranksTheFoe, shellForHeat } from './rules/army.js';
 import { accrue, earning, scoreOf, frontWeight, APRON_RADIUS } from './rules/score.js';
@@ -532,7 +533,8 @@ function craterCut(s, x, z) {
  * all come through here now.
  */
 export function surfaceAt(st, x, z) {
-  return sub(heightAtWorld(st.ground, x, z, HALF_X, HALF_Z),
+  // relief + the hull-down emplacements (rules/emplacements.js) - craters
+  return sub(add(heightAtWorld(st.ground, x, z, HALF_X, HALF_Z), emplacementAt(x, z, st.tape, st.ground, HALF_X, HALF_Z)),
              craterCut(st.i32, x, z));
 }
 
