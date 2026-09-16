@@ -228,8 +228,11 @@ text; this section is what the protocol commits to.
   winner: it is bulls against bears, and the price at the end of the round
   against the price at its start decides. Higher: **THE BULLS WIN**. Lower:
   **THE BEARS WIN**. Objectives, kills and ground are how the war looks; none
-  of it counts. The side the price favours presses along the whole front, the
-  other digs in (WAR_TACTICS §4.14). During the round the HUD shows the lead
+  of it counts. The chart fights the war: when the price rises the bulls
+  attack, press along the whole front, hit harder and are resupplied faster,
+  and the bears are pushed back and die faster; when it falls, the reverse;
+  sideways, both fight over the chart's HIGH, LOW and OPEN (WAR_TACTICS
+  §4.14). During the round the HUD shows the lead
   (`BULLS +0.42%`); a run's end screen shows the lead at that moment beside the
   truck's own result - DELIVERED / WRECKED / MISSED, the score, the sats; the
   round's end and the settlement carry the verdict. The war's winner is the
