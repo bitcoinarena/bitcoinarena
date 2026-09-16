@@ -139,8 +139,10 @@ Rows for the four points, same probe conditions, plus the moved-tape probe named
 | **The front moves visibly** | assault ceiling §4.12 | on every seed at least one forward hull stands >= 16 m across the seam (push >= 32) at some tick |
 | **Lulls exist** | assault clock §4.12 | on 25% to 60% of ticks no assault is running on either side; no assault starts inside 20 s of the previous one on the same side |
 | **Assaults can fail and can win** | §4.12 | over 5 seeds, between 30% and 70% of assaults end with the objective's holder flipped to the attacker |
-| **The war knows who is winning** | lead §4.14 | with the tape stepped to a +0.3% lead at tick 600 (the lead probe): the bulls' mean push across all lanes exceeds the bears' by >= 8 m on >= 70% of ticks from 1200 on; the bears' mean forward line is >= 4 m further from the seam than with FLAT; with -0.3% the mirror |
-| **The lead is the market's alone** | §4.14 | lead, momentum and `front` are bit-identical with the truck parked and driven, and identical across any two players' runs on the same samples |
+| **Up: the bulls attack, the bears are pushed back** | trend §4.14 | the trend probe: the tape driven +0.5% over ticks 600-1200 and held: from tick 900 on every assault started is a bull assault; the bulls' mean push across all lanes exceeds the bears' by >= 12 m on >= 70% of ticks from 1200 on; no bear hull crosses the seam after tick 1200 |
+| **The losers die faster, and get less** | trend §4.14, supply §3 | in the trend probe from tick 900 on, bear losses (tanks and men) per 60 s exceed bull losses by >= 30%, and the bears' mean living tanks are fewer than the bulls' on >= 70% of ticks; the -0.5% probe is the mirror |
+| **Sideways: they fight over the status quo** | §4.14 | with the tape held inside ±8 bp for 3600 ticks, both sides mount assaults, the holder of at least one objective flips on >= 4 of 5 seeds, and neither side's mean push exceeds the other's by more than 4 m over the run |
+| **The chart is the market's alone** | §4.14 | lead, trend, momentum and `front` are bit-identical with the truck parked and driven, and identical across any two players' runs on the same samples |
 | **Losses bite** | supply §3 | on ticks where one side holds more objectives than the other, that side has more living tanks on >= 55% of them; a side down to 2 objectives lost never falls below 4 tanks on more than 8% of ticks (the floor row above stays) |
 
 ### 0.2 What the client must draw and play (client tests; the core gives every word)
@@ -352,8 +354,9 @@ the owner ordered is in the state and not on the screen. Each is a client test.
   holder words. The wait is `wait x 4 / (4 + supply)`: holding all three against none, 4/7 of the wait
   (a tank every 3.4 s at deficit 1); holding none against three, 4/1 - four times the wait (24 s). Both
   armour and rifle clocks. The floor of §0 ("never below 4 tanks on more than 5% of ticks") stands and
-  is measured with this on: if the floor fails, the divisor is retuned, not the rule. The market's
-  momentum adds to supply for the leading side (§4.14).
+  is measured with this on: if the floor fails, the divisor is retuned, not the rule. The market adds
+  to it: `+ momentum` of the lead for the side above the open, `- strength` of the trend for the side
+  it runs against (§4.14).
 - So losing an objective is felt: the side that lost the LOW replaces its dead more slowly along the whole
   front, and the side that took it is fuller. That is what makes an objective worth defending and an
   assault worth mounting (§4.12), and it is bounded - nothing runs away, because a holder is re-read
@@ -428,7 +431,8 @@ the owner ordered is in the state and not on the screen. Each is a client test.
 
 ### 4.4 Fire
 
-- Gun 46 m, reload 1.4 to 3.2 s, hit 55%, damage 11 to 24 against 60 to 100 HP (the C# 6 to 10 at x10).
+- Gun 46 m, reload 1.4 to 3.2 s, hit 55% (`± 5% x trend strength`, §4.14), damage 11 to 24 against 60
+  to 100 HP (the C# 6 to 10 at x10).
   Target: the nearest living enemy tank inside 46 m; the truck outranks it per §1.2.
 - **OVERWATCH fires** in every tick its reload is 0 and it has a target, standing or moving.
 - **BOUNDING fires only standing:** a bounding tank whose position changed by more than 0.02 m (x + z,
@@ -499,10 +503,12 @@ no truck. **RULED HERE**, numbers included, so it can be built without guessing;
   tank of the team is more than 1.5 m from its post - a push completes before the next is read; (b) a
   step is taken only when the re-read's verdict (take / give / drift) **equals the previous re-read's
   verdict** (`TAC_VERDICT`, one word per team) - a new direction needs two readings, 10 s, so 0 → 8 → 0
-  in ten seconds cannot happen; a continued direction steps at once. Respawn and init clear the word. `w` is the team's objective weight (§4.11): 2 on an objective's lane, 1 next
-  to it, 0 elsewhere - plus 1 on every lane for the side the price favours (§4.14). Rest is 0, +8 on an
-  objective's lane (§4.11), -8 on every lane for the trailing side (§4.14; the objective's +8 and the
-  trailing -8 cancel to 0).
+  in ten seconds cannot happen; a continued direction steps at once. Respawn and init clear the word.
+  `w` is the team's objective weight (§4.11): 2 on an objective's lane, 1 next to it, 0 elsewhere -
+  plus 1 on every lane for the side of the trend (§4.14). Rest is 0, +8 on an objective's lane (§4.11),
+  +8 / -8 on every lane for the trend's side / the side it runs against (§4.14; the objective's +8 and
+  a -8 cancel to 0). Ceilings: 24; `24 ± 8 x strength` under a trend (§4.14); the assault's under an
+  assault (§4.12).
   - `own + w >= foe + 2` → `push += 8`, up to **24** (the forward hull 8 m across the seam, the overwatch
     hull 6 m short of it), on an objective's lane up to that objective's **goal** (§4.11), and in an
     assault lane up to the assault's **ceiling** (§4.12). Taking ground.
@@ -583,7 +589,8 @@ does not hold, with a start, a length, an end and a result the player is told. I
 between assaults there is a lull, the line breathes as §4.10, and men crawl into holes. **GAP**.
 
 - **Assault clock**, per side: the next assault starts `2700 + (h % 2700)` ticks (45 to 90 s) after the
-  last one ended (30 to 60 s for the side the price favours, §4.14), `h = mix(mix(hash, sideConst), n)` for the side's n-th assault; the first at
+  last one ended (30 to 60 s for the trend's side; **paused** for the side the trend runs against,
+  §4.14), `h = mix(mix(hash, sideConst), n)` for the side's n-th assault; the first at
   `1200 + (h % 1200)` (20 to 40 s) from init, so the two sides never start together and the first minute
   has a lull, a build-up and an attack in it.
 - **Target**: of the objectives the side does **not** hold at the start tick, the one hashed from
@@ -677,55 +684,80 @@ for, and the core does not draw it yet:**
   `THE BEARS WIN` (the owner 2026-09-16 20:00 / 20:45: the price at the end of the round against its
   start, not points), and the war knows who is ahead while it runs.
 
-### 4.14 The lead - the war knows who is winning (the owner 2026-09-16 20:00; RULED HERE on the numbers, GAP)
+### 4.14 The lead and the trend - the chart fights the war (the owner 2026-09-16 20:00 / 21:30; RULED HERE on the numbers, GAP)
 
-the owner: *"depending on how the price moves in the round we have a 'Bears win' or 'Bulls win'. The
-armies' tactics must refer to that."* So the market is not only the line the armies stand on; it is
-the **general's mood** on both sides. The side the price favours presses; the side it runs against digs
-in. All of it from two words - the round's open and the newest sample - so the transcript replays it.
+the owner 21:30: *"Make the attackers depend on the chart. When it goes up the bulls are winning and the
+bears are pushed back - more kills on the losers, less supply. Down, the other way round. Sideways,
+they fight over the status quo."* Two readings of the tape do that, both from words every node
+replays, both re-read on the sample tick (5 s) and never between:
 
-- **Lead**: `delta = newest - open` in cents; `lead = sign(delta)`: **BULLS** when the price is above the
-  round's open, **BEARS** below, **FLAT** at exactly the open. **Momentum** in basis points of the open,
-  `bp = |delta| x 10000 / open` (integer division): **0** below 5 bp, **1** from 5, **2** from 20,
-  **3** from 50 bp. At $75,000 one momentum step is $37.50; a 0.5% move is momentum 3. Re-read on every
-  sample (§4.13, 5 s), never between.
-- **The leading side presses** (RULED HERE):
-  - `w += 1` on **every** lane (§4.10): the whole line leans in. This is the market's order, not the
-    odds' - it is not item 2's side pressure, which read the war; this reads the price. A team still
-    never leaves its lane (§2.4).
-  - supply `+ momentum` (§3): the side the price favours is fuller. Bounded like supply is.
-  - its assault clock (§4.12) runs `1800 + (h % 1800)` (30 to 60 s) instead of 45 to 90; at momentum
-    3 its assault ceiling is 48 (forward hull 32 m across). A bull run is an offensive.
-- **The trailing side digs in** (RULED HERE):
-  - rest `-8` on every lane (§4.10): the forward hull sits 24 m short of the seam and hull-down (the
-    overwatch's crest search covers both). It still assaults - on its own clock (45 to 90 s) - and it
-    still takes objectives when the local odds say so; the lean is the default, not a cage.
-  - its COUNTER sortie (§12.3) launches 120 ticks (2 s) after a lost objective instead of 300, and its
-    men's cover reach (§11.3) is **18 m** instead of 12: a side that is losing the market fights from
-    the holes and answers fast.
-  - at momentum 3 its pinned threshold (§11.5) is 180: men with their backs to the wall keep rushing
-    longer.
-- **FLAT** (open to the cent): neither side, §4.10-§4.12 as written. Momentum 0 with a lead: the lead's
-  `w + 1` and the trailing rest `-8` only; supply and clocks unchanged. So a $2 move already tilts the
-  line and a $400 move is a rout in the making.
-- **The winner is the price at the end of the round, not points (the owner 2026-09-16 20:45).** One
-  verdict per **round**, at the contract's end: the round's **close** (the last attested sample) against
-  its **open** (the first). Higher → `THE BULLS WIN`; lower → `THE BEARS WIN`; equal to the cent → `NO
-  MOVE`. Nothing else counts: not objectives held, not tanks killed, not ground taken - those are how
-  the war *looks* while the price decides it. It is the same for every player in the round, whenever
-  their run was. During the round the screen shows the **lead** (`BULLS +0.42%`, "BULLS LEADING"); a
-  run's end screen shows the lead at that tick and says so - *leading*, not *won* - beside the truck's
-  result, score and sats; the round's end screen and the settlement carry `THE BULLS WIN`. Nothing in
-  the score reads any of it (multiplayer_p2p.md §0.15: the score is the truck's). The verdict is the
-  committee's signed `RoundResult` (§13 there) from the attested open and close, so a node that
-  disagrees about who won disagrees about the tape, which is a fraud proof.
-- **Nothing here reads the truck** (§1.2): the lead is the market's; a player cannot move it and the
-  armies do not care where he is. **Nothing here reads the war**: the war cannot change the lead. The
-  arrow points one way, price → war, which is the game.
-- Why the effects are small: `w + 1` and `rest - 8` are one odds step and one push step. Measured
-  before (§4.10), one odds step decides most re-reads, so the lean is visible in a minute; but a side
-  down 0.5% is not beaten - it still holds its objectives with local odds and can still win an assault.
-  The market tilts the war, it does not play it. The §0.1 rows say how much.
+- **Lead** - the price against the **round's open** (`TAC_OPEN`, §4.13): `lead = sign(newest - open)`,
+  BULLS / BEARS / FLAT. This is **who is winning the round** (the verdict, below) and it feeds
+  **supply**. It is slow: it can stay BULLS for the whole round.
+- **Trend** - the price against **60 s ago** (six candles, twelve samples): `d = newest - sample[-12]`,
+  in basis points of the open. `|d| < 10 bp` → **SIDEWAYS**; else UP or DOWN with **strength 1** from
+  10 bp, **2** from 30, **3** from 60 (at $75,000: $75 / $225 / $450 in a minute). This is **who is
+  attacking right now**, and it turns inside a minute. The two can disagree - price above the open
+  but falling is "the bulls are winning, the bears are pushing back" - and that is a sentence the
+  player can read off the ground.
+
+**UP (the bulls' trend; DOWN is the mirror with the sides swapped):**
+
+- **Only the bulls assault** (§4.12): their clock runs 30-60 s; the bears' assault clock is **paused** -
+  they mount no assault, they COUNTER (§12.3, 2 s after a lost objective) and they hold. Sideways
+  releases the clock where it stood.
+- **The bulls press along the whole front**: `w + 1` on every lane (§4.10), rest `+8` on every lane,
+  push ceiling `24 + 8 x strength` (up to 48: the forward hull 32 m across the seam) - and the seam
+  itself is moving north with the price (§4.13), so the bull line is carried forward twice: by the
+  market's line and by its own push.
+- **The bears are pushed back**: rest `-8` on every lane, push ceiling `24 - 8 x strength` (down to 0
+  at strength 3: no bear crosses the seam while the market runs against it), cover reach 18 m (§11.3),
+  pinned at 180 at strength 3 (§11.5: backs to the wall, they keep rushing longer). They still hold
+  objectives with local odds, still fire, still counter from the air.
+- **More kills on the losers** (RULED HERE, same draws, thresholds only): the gun's hit (§4.4) is
+  `550 + 50 x strength` per mil for the trend's side and `550 - 50 x strength` for the other (70% against
+  40% at strength 3); the rifle's `45 ± 5 x strength` (60 against 30); coax and AT likewise `± 10% of
+  their value per strength`. Posture (§11.4) multiplies after. The losing side dies faster, the winning
+  side less - and the bars on the ground say why.
+- **Less supply for the losers**: supply (§3) is `held - lost + momentum(lead) - strength(trend
+  against)`, so a side losing both the round and the minute replaces its dead at a quarter of the
+  pace of one winning both. Bounded as supply is; the §0 floor row stands and is measured with it.
+- **The bomb goes with the trend**: the trend's side's next sortie is CAS on its assault (as §4.12); the
+  other side's interdiction (§12.3) is paused with its assault clock - it flies COUNTER only.
+
+**SIDEWAYS (|d| < 10 bp over the minute): the fight over the status quo.**
+
+- Both sides assault on their normal clocks (45-90 s), hashed targets among objectives not held; `w`,
+  rest, ceilings, hit thresholds and supply as §4.10-§4.12 and the lead alone give them. The
+  objectives (§4.11) are what is fought over, and the holders are what changes hands. This is where
+  the local odds decide, and it is the state the war returns to whenever the market stops.
+- The **lead** still applies in SIDEWAYS: `+ momentum` supply for the side above the open. A market
+  that rose and then went flat leaves the bulls fuller, not attacking.
+
+**Momentum of the lead** (kept for supply): `bp = |newest - open| x 10000 / open`, 0 below 5 bp, 1
+from 5, 2 from 20, 3 from 50.
+
+**The winner is the price at the end of the round, not points (the owner 2026-09-16 20:45).** One verdict
+per **round**, at the contract's end: the round's **close** (the last attested sample) against its
+**open** (the first). Higher → `THE BULLS WIN`; lower → `THE BEARS WIN`; equal to the cent → `NO MOVE`.
+Nothing else counts: not objectives held, not tanks killed, not ground taken - those are how the war
+*looks* while the price decides it. It is the same for every player in the round, whenever their run
+was. During the round the screen shows the **lead** (`BULLS +0.42%`, "BULLS LEADING") and the **trend**
+(an arrow: `▲ 2`, `▬`, `▼ 1`); a run's end screen shows the lead at that tick and says so - *leading*,
+not *won* - beside the truck's result, score and sats; the round's end screen and the settlement carry
+`THE BULLS WIN`. Nothing in the score reads any of it (multiplayer_p2p.md §0.15: the score is the
+truck's). The verdict is the committee's signed `RoundResult` (§13 there) from the attested open and
+close, so a node that disagrees about who won disagrees about the tape, which is a fraud proof.
+
+**Nothing here reads the truck** (§1.2): lead and trend are the market's; a player cannot move them and
+the armies do not care where he is. **Nothing here reads the war**: the war cannot change the chart.
+The arrow points one way, chart → war, which is the game.
+
+**Why the numbers**: one odds step and one push step (`w + 1`, `rest ± 8`) were measured to decide most
+re-reads (§4.10), so the lean shows inside a minute; the hit thresholds are the only rule that changes
+the *kill ratio* rather than the geometry, and ±15 points at strength 3 is a rout a player can see
+without being a massacre - a side down 0.6% in a minute still holds its holes and its objectives.
+The §0.1 rows say how much it must show; the steps are retuned against them, not the rows.
 
 ### 4.15 The candles are terrain (the owner 2026-09-16 20:10; RULED HERE on the numbers, GAP)
 
@@ -881,9 +913,14 @@ up, red down. Scrolls 0.83 m/s toward the post office. Hull-down crests and cand
 it (§4.15).
 
 **Lead / momentum**
-Which side the price favours against the round's open, and by how much in 5/20/50 bp steps. Tilts
-weight, rest, supply, clocks (§4.14). At the round's end, close against open: `THE BULLS WIN` /
-`THE BEARS WIN`. Not points.
+The price against the round's open: who is winning the round, and by how much in 5/20/50 bp steps.
+Feeds supply and the verdict: at the round's end, close against open, `THE BULLS WIN` / `THE BEARS
+WIN`. Not points (§4.14).
+
+**Trend / strength**
+The price against 60 s ago, in 10/30/60 bp steps; SIDEWAYS inside 10 bp. Who is attacking now: the
+trend's side assaults, presses, hits harder and is fuller; the other holds, is pushed back, dies
+faster. Sideways: both fight over the objectives (§4.14).
 
 **Tape / front**
 The price series across the map; `seam(x)` is read from it every tick. Seeded per round, moved by the
@@ -927,7 +964,10 @@ tests are §14.
   or `front` differs from `sign(newest - open)` and its bp steps; the lead changes on a tick with no
   sample; a trailing side's `w` or a leading side's rest is other than §4.14's; `front` at the run's
   end is not the lead of that tick, or the round's verdict is other than `sign(close - open)` of the
-  attested open and close, or anything but the price enters it (§4.14).
+  attested open and close, or anything but the price enters it; the trend differs from
+  `sign(newest - sample[-12])` and its bp steps, or changes off a sample tick; the side the trend runs
+  against starts an assault; a hit threshold differs from base ± 5% (gun), ± 0.5% (rifle) or ± 10% of
+  value (coax, AT) per strength; supply ignores the trend (§4.14).
 - A bounding tank fires in a tick it moved, gun or coax (§4.4).
 - A coax burst with an enemy tank inside 46 m or a fireable truck in reach; at a man beyond 30 m; at
   the truck; with other than the three draws of a gun shot; a coax hit that leaves a man alive; a coax
@@ -1118,7 +1158,7 @@ function of the state, a claim is a function of the seed and the unit id, no dra
   - a crater has **4** places, on the rim 1 m inside it: `centre + (R - 1 m) x (sin a, side x cos a)` for
     `a = -50°, -20°, +20°, +50°` from the seam normal, so the four lie on the near lip with the rifle over
     the far edge. Integers: `sin/cos` of those four angles are four constants in Q16.16.
-- **Eligible** for a man: a place within **12 m** of his post (18 m for the trailing side, §4.14) (§9.2, §12.1 - his post, not his position,
+- **Eligible** for a man: a place within **12 m** of his post (18 m for the side the trend runs against, §4.14) (§9.2, §12.1 - his post, not his position,
   so a man does not wander to cover), inside his clamp (`[seam - side x 40, seam + side x 8]`), and not
   inside 3 m of a **living** tank's centre (§8.3). A place further than 12 m from his post is not his:
   the line stays a line, with men in the holes it has.
@@ -1276,7 +1316,7 @@ by the men in the holes.
   1. **CAS** - the tick a side's assault starts (§4.12): a gunship for the objective's lane. The bomb
      goes where the attack goes.
   2. **COUNTER** - the tick an objective's holder flips **against** a side (§4.11): a gunship for the
-     lost lane, launched 300 ticks (5 s) later - 120 ticks for the side the price runs against (§4.14). Losing ground calls the air; the player sees the answer
+     lost lane, launched 300 ticks (5 s) later - 120 ticks for the side the trend runs against (§4.14). Losing ground calls the air; the player sees the answer
      come.
   3. **INTERDICTION** - in a lull (no assault by this side, no call pending) 1800 + (h % 1800) ticks
      (30 to 60 s) after the side's last sortie ended, `h = mix(mix(hash, sideConst), 900 + n)`: a
