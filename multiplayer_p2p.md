@@ -194,6 +194,40 @@ gate and mission timeout. Existing logic (e.g. `Army.cs`) is extracted into
 the deterministic Rust core. Unity may keep richer visual physics and
 suspension, but settled state comes from the core.
 
+## 0.5A The front is the price — a dynamic candle front *(new, 2026-09-16, the owner)*
+
+The battlefield's front line is the live Bitcoin price laid across the map as a
+chart. This is the game's premise (README: "the live Bitcoin price chart is the
+battlefield") and it is now stated as a rule the core, the transcript and the
+result screen all carry. WAR_TACTICS.md §4.13-§4.14 and §0.2 are the normative
+text; this section is what the protocol commits to.
+
+- **The front is a price history.** The core holds a tape of 64 price samples
+  in USD cents. Laid from the post office (oldest) to the miner (newest), its
+  21-sample moving average is the seam the two armies fight over: a rising
+  price moves the bull line forward, a falling one the bear line. It is seeded
+  per round and **moves during the round** as samples arrive - one per 5 s -
+  so the front scrolls and redraws while the player drives, and the armies
+  follow it at their own speed.
+- **The front is drawn as candlesticks.** The client draws the tape as candles
+  standing on the ground - green up, red down, translucent, 6 m tall, readable
+  from above and from the cab - and the seam as the moving-average line. The
+  candles are light, not solids: nothing in the simulation reads them, so a
+  client that draws none plays the identical round.
+- **The price is shown to the cent**: `$75,000.02`, always, with the lead
+  against the round's open beside it (`BULLS +0.42%`).
+- **The market decides who wins the war.** There is no simulated winner: it is
+  bulls against bears, and the price over the round decides. The side the
+  price favours presses along the whole front, the other digs in (WAR_TACTICS
+  §4.14). At the end of a run the screen says **THE BULLS WIN** or **THE BEARS
+  WIN** from the round's open against the newest sample, together with the
+  truck's own result: DELIVERED / WRECKED / MISSED, the score, the sats. The
+  war's winner is the market's; the truck's result is the player's; the score
+  (§0.15) reads only the truck.
+- **The price is world input, not player input** (§11): every node replays the
+  same front, or the transcript does not replay. A player cannot move the
+  market, and the armies do not read the truck.
+
 ## 0.6 Route choice and battlefield exposure
 
 ```text
@@ -366,7 +400,9 @@ picks a truck and cargo, commits 100 sat from her external Lightning wallet,
 and rolls out. She steers, brakes, chooses her route, meets deterministic
 armies and fire, takes damage, sees competitors as ghosts, reaches the gate.
 Independent BLWP nodes replay her authenticated input history and confirm
-`DELIVERED, score 18,321`. After membership and results are finalized, her
+`DELIVERED, score 18,321, THE BULLS WIN (+0.42%)` - the price rose over the
+round, the bull line pressed while she drove, and the end screen says so
+beside her score and her sats. After membership and results are finalized, her
 rank determines her share of the loser pool, settled to her external wallet.
 
 ## 0.17 What changes technically
@@ -1562,6 +1598,25 @@ separate data-availability network is required.
 A transcript whose inputs were never published cannot be replayed and
 therefore cannot be finalized as a win — withholding is never an advantage.
 
+**Price samples are world input** *(new, 2026-09-16)*. The front (§0.5A) moves
+with the live price, so the price the run was played against must replay
+identically on every node:
+
+```text
+PriceSample { tick, price_cents, attestation }
+```
+
+`price_cents` is the BTC/USD price in cents as an integer. `attestation` is
+the game/verify committee's signature over `(round_id, tick, price_cents)`:
+the committee nodes publish one attested sample every 5 s of round time from
+the contract's named feed, and a client includes each sample in its next
+`InputBatch` at the tick it applied it. A sample without a valid attestation,
+or applied at a tick other than the one signed, makes the batch invalid. A
+run that received no attested feed runs on the round's seeded synthetic tape
+and its result carries `front_mode = SIM` - the same fallback the client
+already shows for every feed - and nodes replay it the same way. The player
+never chooses the price; he can only replay it or not play.
+
 ---
 
 # 12. Randomness
@@ -1596,10 +1651,18 @@ Each committee node independently replays the player's canonical transcript
 PlayerResult {
   round_id, player_pubkey
   result, score
+  front, front_open_cents, front_close_cents, front_mode   // BULLS | BEARS | FLAT; LIVE | SIM   (new)
   transcript_hash, sim_wasm_hash
   node_pubkey, signature
 }
 ```
+
+`front` is the market's verdict at the tick the run ended - the round's open
+against the newest attested sample (WAR_TACTICS.md §4.14) - and is what the
+client shows as **THE BULLS WIN** / **THE BEARS WIN** beside the truck's
+result. It is signed so that a node that disagrees about who won disagrees
+about the tape, which is a replay difference and therefore objectionable
+(§13A). It does not enter `score`.
 
 Once **5-of-7** nodes sign the identical result, the result becomes
 `PROVISIONALLY_FINAL` and the objection window opens (§13A). It becomes
