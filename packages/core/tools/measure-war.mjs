@@ -36,7 +36,7 @@ patch('sim.js', '  const groundOf = (x, z) => surfaceAt(st, x, z);\n',
 patch('sim.js', '  for (let i = 0; i < UNITS; i++) {\n    const b = unitBase(i);\n    u.x = s[b + U_X];',
   '  if (globalThis.__W) globalThis.__W.halted(halted);\n', 'before');
 const url = (rel) => pathToFileURL(join(tmp, 'src', rel)).href;
-const { init, step, teleport, groundAt } = await import(url('sim.js'));
+const { init, step, teleport, groundAt, submitSample } = await import(url('sim.js'));
 const L = await import(url('state.js'));
 const T = await import(url('rules/tactics.js'));
 const { frontlineZ } = await import(url('rules/frontline.js'));
@@ -153,6 +153,15 @@ for (const seed of SEEDS) {
     for (let w = 0; w < 12; w++) { const pu = s[L.O_TACTICS + T.TAC_PUSH + w];
       if (pushWas[w] !== undefined && pu !== pushWas[w]) { const d = Math.sign(pu - pushWas[w]); add('H3 push steps'); if (pushDir[w] && pushDir[w] !== d) add('H3 push reversals'); pushDir[w] = d; }
       pushWas[w] = pu; }
+
+    // ================= LOSSES BITE (§3 supply, §0.1) =================
+    {
+      const held = { '-1': 0, '1': 0 };
+      for (let o = 0; o < 3; o++) { const hh = T.objectiveHolder(s, L.O_TACTICS, o); if (hh === T.HOLDER_BULL) held['-1']++; else if (hh === T.HOLDER_BEAR) held['1']++; }
+      const tanks = { '-1': liveT.filter((i) => sideOf(i) === -1).length, '1': liveT.filter((i) => sideOf(i) === 1).length };
+      if (held['-1'] !== held['1']) { const more = held['-1'] > held['1'] ? '-1' : '1', less = more === '-1' ? '1' : '-1'; add('S1 uneven ticks'); if (tanks[more] > tanks[less]) add('S1 more tanks'); }
+      for (const sd of ['-1', '1']) { const other = sd === '-1' ? '1' : '-1'; if (held[other] >= 2) { add('S2 down two'); if (tanks[sd] < 4) add('S2 below 4'); } }
+    }
 
     // ================= OBJECTIVES (§4.11) =================
     const lanes = [0, 1, 2].map((o) => T.objectiveLane(s, L.O_TACTICS, o));
@@ -273,6 +282,32 @@ function mean(a) { return a.reduce((x, y) => x + y, 0) / a.length; }
   r['X10 compared'] = compared; r['X10 differ'] = diff; r['O5 compared'] = objCompared; r['O5 differ'] = objDiff;
 }
 
+// Row "the chart is the market's alone" (§4.14): lead, trend and momentum bit-identical with the truck parked and the truck
+// driven through the line, and across two players' runs (two seeds) on the same samples. The tape is driven as the trend
+// probe does (+0.5% over twelve samples, then down again). `front` (the round's verdict) is not a core word yet.
+{
+  let compared = 0, diff = 0, across = 0, acrossDiff = 0;
+  const market = (st) => [0, 1, 2, 3, 4, 5].map((k) => st.i32[L.O_TACTICS + T.TAC_MARKET + k]).join(',');
+  for (const seed of SEEDS) {
+    const a = init(seed), b = init(seed), c = init(seed + 1000);
+    const open = a.tape[a.tape.length - 1];
+    let price = open;
+    for (let t = 0; t < TICKS; t++) {
+      if (t >= 600 && t < 1800 && (t - 600) % 50 === 0) {
+        price += (t < 1200 ? 1 : -1) * Math.round(open * 0.005 / 12);
+        submitSample(a, price); submitSample(b, price); submitSample(c, price);
+      }
+      step(a, 0, 0, 0, ONE, ONE);
+      teleport(b, Math.round((-80 + 160 * t / TICKS) * ONE), 0, 16384);
+      step(b, 0, 0, 0, ONE, ONE);
+      step(c, 0, 0, 0, ONE, ONE);
+      compared++; if (market(a) !== market(b)) diff++;
+      across++; if (market(a) !== market(c)) acrossDiff++;
+    }
+  }
+  r['M1 compared'] = compared; r['M1 differ'] = diff; r['M1 across'] = across; r['M1 across differ'] = acrossDiff;
+}
+
 rmSync(tmp, { recursive: true, force: true });
 const pct = (a, b) => (r[b] ? (r[a] || 0) / r[b] : 0);
 const P = (x) => (100 * x).toFixed(2) + '%';
@@ -305,6 +340,10 @@ const rows = [
   ['O3  seeds on which an objective changed hands', `${r['O3 changed hands'] || 0} of ${r['O3 seeds']}`, (r['O3 changed hands'] || 0) >= 4],
   ['O4  client draws the markers (client test, not this probe)', 'not built', false],
   ['O5  objective words differing, truck parked vs driven', `${r['O5 differ']} of ${r['O5 compared']}`, r['O5 differ'] === 0],
+  ['M1  lead/trend/momentum differing, truck parked vs driven', `${r['M1 differ']} of ${r['M1 compared']}`, r['M1 differ'] === 0],
+  ['M1  lead/trend/momentum differing, two players (seeds) on the same samples', `${r['M1 across differ']} of ${r['M1 across']}`, r['M1 across differ'] === 0],
+  ['S1  side holding more objectives has more living tanks', P(pct('S1 more tanks', 'S1 uneven ticks')), pct('S1 more tanks', 'S1 uneven ticks') >= 0.55],
+  ['S2  side with 2+ objectives lost below 4 tanks', P(pct('S2 below 4', 'S2 down two')), pct('S2 below 4', 'S2 down two') <= 0.08],
   ['B1  man within 18 m of a fire-team mate', P(pct('B1 near a mate', 'B1 man-ticks')), pct('B1 near a mate', 'B1 man-ticks') > 0.8],
   ['B1  fire team moves or halts together', P(pct('B1b together', 'B1b team-ticks')), pct('B1b together', 'B1b team-ticks') > 0.9],
   ['B2  5 s squad windows without a halted team / a mover', `${r['B2 fail'] || 0} of ${r['B2 squad-windows']}`, (r['B2 fail'] || 0) === 0],
