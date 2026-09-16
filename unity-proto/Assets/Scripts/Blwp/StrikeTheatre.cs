@@ -514,6 +514,7 @@ namespace Blwp
             _cloudAt = at;
             _cloud = 0f;
             _saidRest = -1f;
+            _saidSkirt = -1f;    // or the second cloud says nothing until t=3.0s
             _saidHeat = -99f;
 
             // THE MESH IF THERE IS ONE. The primitives - a cylinder, a sphere
@@ -707,6 +708,21 @@ namespace Blwp
                 return;
             }
 
+            // THE ANCHOR IS RE-READ FROM THE CORE, EVERY FRAME (the owner 2026-09-16).
+            //
+            // `_cloudAt` is taken at the bomb run, and the bowl is dug 384 ticks
+            // after the blast - so the height in it is the ground as it stood
+            // BEFORE the crater existed and it never changed again. Measured on
+            // the Daily: it sat frozen at 3.46 while the core's surface beneath
+            // it fell to -0.65, a stale anchor 4.11 m up in the air.
+            //
+            // Only the height is re-read. Where the bomb fell is a fact about
+            // the strike and does not move; how high the ground is there is a
+            // fact about the core, and the core is the only thing that knows it.
+            // Everything below hangs off this one point, so the whole
+            // hierarchy - stem, cap and skirt - goes down with the bowl together.
+            _cloudAt.y = CoreGround(_cloudAt.x, _cloudAt.z);
+
             // The mesh grows and goes on the SAME clock the primitives used, so
             // the shape changed and the timing did not: full height in `Rise`
             // seconds, nothing left by `Gone`.
@@ -727,73 +743,14 @@ namespace Blwp
                 _mushroom.localScale = _mushroomFull * g;
                 _mushroom.position = _cloudAt;
 
-                // AND THE STEM STANDS IN THE BOWL, on its base.
+                // THE SKIRT TAKES ITS SHAPE BEFORE ANYTHING IS SEATED.
                 //
-                // `_cloudAt` is the impact point on the ground, and putting the
-                // transform there put the model's ORIGIN there - which is its
-                // middle, measured y -27.5 .. +23.0 about it on a model 55.0 m
-                // tall. So half the cloud was under the surface: the stem's
-                // foot was buried and the player saw a cap sitting on the
-                // grass with no column beneath it. It is the same fault that
-                // hid the dust skirt, left unfixed for the column.
-                //
-                // The lowest point of everything that is NOT the skirt is the
-                // stem's foot, so no node name is trusted for it, and the
-                // floor it stands on is `Ground` - the core's surface, relief
-                // LESS craters - which is the crater floor itself.
-                if (_mushroomSkins != null && _mushroomSkins.Length > 0)
-                {
-                    var colB = new Bounds(_cloudAt, Vector3.zero);
-                    bool anyCol = false;
-                    foreach (var mr in _mushroomSkins)
-                    {
-                        if (mr == null || mr.transform == _skirt3) continue;
-                        if (!anyCol) { colB = mr.bounds; anyCol = true; }
-                        else colB.Encapsulate(mr.bounds);
-                    }
-                    if (anyCol)
-                    {
-                        float floor = Ground(_cloudAt.x, _cloudAt.z);
-                        float gap = floor - colB.min.y;      // + buried, - floating
-                        _mushroom.position += Vector3.up * gap;
-
-                        // ASK THE RENDERERS AGAIN. Reporting `colB.min.y + gap`
-                        // is a tautology - it is the floor by construction
-                        // whether the transform moved or not - and a test
-                        // built on it passed with the resting deleted.
-                        _cloudFloor = floor;
-                        var after = new Bounds(_cloudAt, Vector3.zero);
-                        bool anyAfter = false;
-                        foreach (var mr in _mushroomSkins)
-                        {
-                            if (mr == null || mr.transform == _skirt3) continue;
-                            if (!anyAfter) { after = mr.bounds; anyAfter = true; }
-                            else after.Encapsulate(mr.bounds);
-                        }
-                        _stemFoot = anyAfter ? after.min.y : float.NaN;
-                        _restings++;
-                        if (_cloud - _saidRest > 1.2f || _saidRest < 0f)
-                        {
-                            _saidRest = _cloud;
-                            Debug.Log($"[cloud] stem footing t={_cloud:F1}s: foot was {colB.min.y:F2}, "
-                                      + $"crater floor {floor:F2}, "
-                                      + $"{(gap > 0f ? "buried" : "floating")} {Mathf.Abs(gap):F2} m "
-                                      + $"-> foot now {floor:F2}");
-                        }
-                    }
-                }
-
-                // THE HEAT, on the mesh. The primitives cooled white through
-                // orange to ash across the eight seconds and the mesh wore one
-                // colour for its whole life, which is a fireball that never
-                // goes out. Same curve, same clock - the colour IS the clock -
-                // driven through a property block so the streamed materials
-                // are not written to.
-                // THE SKIRT SPREADS, and it spreads along the ground rather
-                // than with the column. The old one reached 1.5 times the
-                // cap's width; this keeps that shape by pushing the asset's
-                // own skirt outward on its own curve while its height stays
-                // where the model put it.
+                // The spread used to be applied below, after the resting had
+                // already chosen where the parent goes. Once the skirt counts
+                // towards that choice, setting it afterwards would seat the
+                // cloud on LAST frame's disc while this one is still growing -
+                // a lag that shows as the dust sinking and popping back on a
+                // curve. Same formula, same curve, read in the right order.
                 if (_skirt3 != null)
                 {
                     // 1.5 times the cap, which is what the primitive skirt
@@ -812,67 +769,149 @@ namespace Blwp
                     _skirt3.localScale = new Vector3(_skirtRest.x * spread,
                                                      _skirtRest.y,
                                                      _skirtRest.z * spread);
+                    _skirt3.localPosition = _skirtRestPos;
+                }
 
-                    // AND IT SITS ON THE GROUND, which is the whole point of
-                    // a dust skirt and the reason it was never in a picture.
+                // AND THE WHOLE CLOUD STANDS ON ITS LOWEST POINT (the owner 2026-09-16).
+                //
+                // `_cloudAt` is the impact point on the ground, and putting the
+                // transform there put the model's ORIGIN there - which is its
+                // middle, measured y -27.5 .. +23.0 about it on a model 55.0 m
+                // tall. So half the cloud was under the surface: the stem's
+                // foot was buried and the player saw a cap sitting on the
+                // grass with no column beneath it.
+                //
+                // The lowest point of the WHOLE hierarchy is what rests on the
+                // core's surface - the skirt included, because the skirt is
+                // what the player sees meeting the ground. It used to be the
+                // lowest point of everything EXCEPT the skirt, and the skirt
+                // lifted itself separately onto the highest of five samples;
+                // that is two objects seated by two rules, and it is what put
+                // the dust 6.34 m into the air over the road deck.
+                //
+                // It has a measured price, and it is not hidden: the authored
+                // skirt hangs 0.69 m to 1.04 m BELOW the stem's foot, so with
+                // the disc on the ground the stem stands that much proud of the
+                // crater floor. `TheStemStandsOnTheCraterFloorRatherThanUnderIt`
+                // is red on exactly that number and stays red until the asset
+                // is reauthored. Ground contact is what the player sees; the
+                // stem's foot inside the column is not.
+                if (_mushroomSkins != null && _mushroomSkins.Length > 0)
+                {
+                    var colB = new Bounds(_cloudAt, Vector3.zero);
+                    bool anyCol = false;
+                    foreach (var mr in _mushroomSkins)
+                    {
+                        if (mr == null) continue;
+                        if (!anyCol) { colB = mr.bounds; anyCol = true; }
+                        else colB.Encapsulate(mr.bounds);
+                    }
+                    if (anyCol)
+                    {
+                        float floor = CoreGround(_cloudAt.x, _cloudAt.z);
+                        float gap = floor - colB.min.y;      // + buried, - floating
+                        _mushroom.position += Vector3.up * gap;
+
+                        // ASK THE RENDERERS AGAIN. Reporting `colB.min.y + gap`
+                        // is a tautology - it is the floor by construction
+                        // whether the transform moved or not - and a test
+                        // built on it passed with the resting deleted.
+                        _cloudFloor = floor;
+
+                        // AND `_stemFoot` STAYS THE STEM'S OWN FOOT. The skirt
+                        // is deliberately left out of this second pass: it is
+                        // the seating bounds above that had to grow to take the
+                        // disc in, not the meaning of the word. Folding the
+                        // skirt in here would make `_stemFoot` the same number
+                        // as the floor by construction and turn a red test
+                        // green without moving anything - the tautology this
+                        // block already carries a warning about.
+                        var after = new Bounds(_cloudAt, Vector3.zero);
+                        bool anyAfter = false;
+                        foreach (var mr in _mushroomSkins)
+                        {
+                            if (mr == null || mr.transform == _skirt3) continue;
+                            if (!anyAfter) { after = mr.bounds; anyAfter = true; }
+                            else after.Encapsulate(mr.bounds);
+                        }
+                        _stemFoot = anyAfter ? after.min.y : float.NaN;
+                        _restings++;
+                        if (_cloud - _saidRest > 1.2f || _saidRest < 0f)
+                        {
+                            _saidRest = _cloud;
+                            Debug.Log($"[cloud] stem footing t={_cloud:F1}s: lowest point was {colB.min.y:F2}, "
+                                      + $"crater floor {floor:F2}, "
+                                      + $"{(gap > 0f ? "buried" : "floating")} {Mathf.Abs(gap):F2} m "
+                                      + $"-> lowest point now {floor:F2}, "
+                                      + $"stem foot {_stemFoot:F2} = {(_stemFoot - floor):F2} m proud of the floor");
+                        }
+                    }
+                }
+
+                // THE HEAT, on the mesh. The primitives cooled white through
+                // orange to ash across the eight seconds and the mesh wore one
+                // colour for its whole life, which is a fireball that never
+                // goes out. Same curve, same clock - the colour IS the clock -
+                // driven through a property block so the streamed materials
+                // are not written to.
+                // THE SKIRT IS READ HERE, NOT SHAPED HERE. Its spread and its
+                // authored local position are both set above, before the
+                // seating, because the seating now counts the disc in. The
+                // rationale for the 1.5 curve lives with the code that applies
+                // it rather than being repeated here.
+                if (_skirt3 != null)
+                {
+                    // AND THIS IS WHERE IT IS READ, NOT WHERE IT IS PLACED.
                     //
-                    // The streamed model's origin is its CENTRE: measured at
-                    // dress time it runs y -27.5 .. +23.0 about that origin,
-                    // so placing the origin on the surface buries everything
-                    // below it. The stem and the cap are above and drew fine;
-                    // the skirt is the lowest part and sat 23 m under the
-                    // terrain - y -25.53 .. -21.05 against a ground of 1.86,
-                    // isVisible true and every fragment behind the hill.
-                    //
-                    // The lift is the mesh's own lowest vertex, not a chosen
-                    // number: reset to the authored local position, ask the
-                    // renderer where its bottom is now that it is scaled, and
-                    // raise it by exactly that gap. The skirt has its own
-                    // transform, so the stem and cap do not move.
+                    // The disc is shaped and reset to its authored local
+                    // position above, before the seating, so that the resting
+                    // can see it. What is left here is measurement: where the
+                    // underside ended up once the parent had been seated, and
+                    // which ground that is. Nothing below moves anything.
                     if (_skirtR != null)
                     {
-                        _skirt3.localPosition = _skirtRestPos;
                         var sb = _skirtR.bounds;
 
-                        // THE RIM, NOT THE MIDDLE. Resting the lowest vertex
-                        // on Ground() at the centre left the rim under the
-                        // hill: measured at t=1.6 s on a 48.3 m disc whose
-                        // whole height is 4.47 m -
+                        // AND IT RIDES THE PARENT (the owner 2026-09-16). It used to
+                        // lift ITSELF onto the highest of five `Ground()`
+                        // samples, on the reasoning that a wide disc must clear
+                        // the tallest ground beneath it. That rule was measured
+                        // on the Daily and it is what put the skirt in the sky:
+                        // at t=1.8 s its underside stood at 5.69 while the
+                        // core's surface under it was -0.65 - 6.34 m of air,
+                        // the centre hanging 5.59 m clear and the north edge
+                        // 7.88 m. It was resting on the road deck's high side.
                         //
-                        //   centre g3.05 +0.00   N g5.64 +2.59
-                        //   E g2.77 -0.28        S g5.19 +2.14   W g5.53 +2.48
-                        //
-                        // three sides buried by more than half the mesh's own
-                        // height. The ground the disc has to clear is the
-                        // HIGHEST ground under it, so that is what it is
-                        // resting on; the low side stands a little proud, which
-                        // is what thrown-up dust does anyway.
-                        float rr = Mathf.Max(sb.extents.x, sb.extents.z);
-                        float top = Ground(sb.center.x, sb.center.z);
-                        top = Mathf.Max(top, Ground(sb.center.x, sb.center.z + rr));
-                        top = Mathf.Max(top, Ground(sb.center.x + rr, sb.center.z));
-                        top = Mathf.Max(top, Ground(sb.center.x, sb.center.z - rr));
-                        top = Mathf.Max(top, Ground(sb.center.x - rr, sb.center.z));
-                        _skirt3.position += Vector3.up * (top - sb.min.y);
-                        _skirtUnderside = _skirtR.bounds.min.y;   // measured, not assumed
+                        // The seating is now done once, on the parent, against
+                        // the core's own surface. A second lift here would be a
+                        // second opinion about the ground - the exact thing the
+                        // funnel in `RoadNetwork.Ground` exists to prevent - so
+                        // the skirt stays where the model authored it and the
+                        // whole hierarchy moves as one.
+                        _skirtUnderside = sb.min.y;   // measured, not assumed
 
                         // WHAT THE SKIRT IS STANDING ON, AND WHICH GROUND THAT IS (the owner 2026-09-16).
                         //
                         // The stem and the crater floor are already reported by the `[cloud] stem footing`
-                        // line above; this is the smallest print that adds the rest: the skirt rests on the
-                        // HIGHEST of five samples, so it can stand proud of the core's surface by design, and
-                        // `Ground()` is the road deck where there is one while `SurfaceAt` is always the core.
-                        // `_cloudAt.y` is the height taken at the bomb run - BEFORE the bowl exists, since the
-                        // crater is dug 384 ticks after the blast - so it is printed against the core surface
-                        // as it stands now. Nothing here changes a position.
+                        // line above; this is the smallest print that adds the rest. The skirt no longer
+                        // seats itself at all - it rides the parent, which rests on the lowest point of the
+                        // whole hierarchy against the core's surface - so its underside IS the seating, and
+                        // reading it against `SurfaceAt` is the check on that seating rather than a note
+                        // about a second rule.
+                        //
+                        // `Ground()` is printed beside it only as the old road-deck answer, to keep the gap
+                        // that caused this visible: it is the deck where there is one, `SurfaceAt` is always
+                        // the core. `_cloudAt.y` is re-read from the core every frame now, so it follows the
+                        // bowl the strike digs 384 ticks after the blast instead of standing at the height
+                        // taken at the bomb run. Nothing here changes a position.
                         if (_cloud - _saidSkirt > 1.2f || _saidSkirt < 0f)
                         {
                             _saidSkirt = _cloud;
                             float coreAtSkirt = BlwpCore.HasSurface ? BlwpCore.SurfaceAt(sb.center.x, sb.center.z) : float.NaN;
                             float coreAtImpact = BlwpCore.HasSurface ? BlwpCore.SurfaceAt(_cloudAt.x, _cloudAt.z) : float.NaN;
-                            Debug.Log($"[cloud] skirt footing t={_cloud:F1}s: underside was {sb.min.y:F2} -> {_skirtUnderside:F2}, "
-                                      + $"five-sample high {top:F2}, Ground(skirt) {Ground(sb.center.x, sb.center.z):F2}, "
-                                      + $"SurfaceAt(skirt) {coreAtSkirt:F2}; impact y {_cloudAt.y:F2} taken pre-crater, "
+                            Debug.Log($"[cloud] skirt footing t={_cloud:F1}s: underside {_skirtUnderside:F2}, "
+                                      + $"Ground(skirt) {Ground(sb.center.x, sb.center.z):F2}, "
+                                      + $"SurfaceAt(skirt) {coreAtSkirt:F2}; anchor y {_cloudAt.y:F2} re-read from the core, "
                                       + $"SurfaceAt(impact) {coreAtImpact:F2}, floor {_cloudFloor:F2}, stem foot {_stemFoot:F2}");
                         }
                     }
@@ -1292,6 +1331,28 @@ namespace Blwp
             roads != null ? roads.SurfaceHeight(x, z)
                           : (BlwpCore.HasSurface ? BlwpCore.SurfaceAt(x, z)
                                                  : (terrain != null ? terrain.SampleSurface(x, z) : 0f));
+
+        /// <summary>
+        /// THE CORE'S SURFACE, AND NOTHING LAID ON TOP OF IT (the owner 2026-09-16).
+        ///
+        /// `Ground` above answers with the ROAD DECK wherever there is one:
+        /// `RoadNetwork.SurfaceHeight` returns the ribbon's own chord plus
+        /// `lift` (0.45 m), faded across a 2.6 m shoulder. That is right for a
+        /// tyre, which really does stand on the deck, and wrong for a strike,
+        /// which is the core's own event happening to the core's own ground.
+        ///
+        /// Measured on the Daily before this existed: a strike at 4.3,-41.5 -
+        /// inside a lane - rested its stem 0.56 m and then 0.75 m above
+        /// `SurfaceAt` at the very same x,z, because the deck was standing in
+        /// for the ground.
+        ///
+        /// The fallback is the bare terrain, not `Ground`, so no road can reach
+        /// the cloud by another route; it exists only for the Editor, where
+        /// `BlwpInit` returns 0 and there is no core to ask.
+        /// </summary>
+        float CoreGround(float x, float z) =>
+            BlwpCore.HasSurface ? BlwpCore.SurfaceAt(x, z)
+                                : (terrain != null ? terrain.SampleSurface(x, z) : 0f);
 
         /* --------------------------------------------------- the stand-ins */
 
