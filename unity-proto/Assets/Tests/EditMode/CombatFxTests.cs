@@ -91,6 +91,10 @@ public class CombatFxTests
 
             var last = new Vector3[pieces.Count];
             var landedAt = new Vector3?[pieces.Count];
+            // AT REST IS TWO STILL FRAMES IN A ROW. One frame of no height change also happens at the top
+            // of a throw - replayed, in 118 of 200 runs of 120 chunks - and read that as a landing; two
+            // in a row cannot, the change differing by g dt^2 = 2.7 mm from one frame to the next.
+            var stillFrames = new int[pieces.Count];
             for (int i = 0; i < pieces.Count; i++) last[i] = pieces[i].position;
 
             for (int f = 0; f < 60 * 3; f++)
@@ -105,7 +109,8 @@ public class CombatFxTests
                     deepest = Mathf.Min(deepest, low);
                     biggestJump = Mathf.Max(biggestJump,
                         Vector2.Distance(new Vector2(at.x, at.z), new Vector2(last[i].x, last[i].z)));
-                    if (landedAt[i] == null && Mathf.Abs(at.y - last[i].y) < 1e-5f && f > 0)
+                    stillFrames[i] = f > 0 && Mathf.Abs(at.y - last[i].y) < 1e-5f ? stillFrames[i] + 1 : 0;
+                    if (landedAt[i] == null && stillFrames[i] >= 2)
                         landedAt[i] = at;
                     if (landedAt[i] != null)
                         landedMoved = Mathf.Max(landedMoved, Vector2.Distance(
