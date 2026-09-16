@@ -69,8 +69,12 @@ const cli = (...a) => execFileSync(env.BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1
 
 // BOTH SIGNER NODES CLOSE EACH ROUND AT ITS END, by their own clocks (server closeAtEnd,
 // protocol roundEndMs), so every run is replayed, signed and made final.
+// A ROUND IS ABOUT ONE RUN LONG (the owner 2026-09-16 15:36: the lobby said "closes 30 min" beside a two-minute
+// play, and the same round id came back for half an hour). Entries close 150 s after the round starts - a run's
+// 9000 ticks - and the keeper opens the next with a minute to go. BLWP_ENTRY_WINDOW_MS names another.
+const entryWindowMs = BigInt(env.BLWP_ENTRY_WINDOW_MS || 150000);
 const round = await standUpRound({ host, portA, portB, store: dir, rpc, cli, page, signerNode: { closeAtEnd: true },
-  bDownAtStart: !!env.BLWP_START_B_DOWN, paid });
+  bDownAtStart: !!env.BLWP_START_B_DOWN, paid, entryWindowMs });
 // SIGNER NODE B STARTS DOWN (BLWP_START_B_DOWN=1), for an operator's look at signer node A
 // restarted while it holds a close that needs B; SIGUSR2 brings B up.
 if (env.BLWP_START_B_DOWN) { await round.b.close(); say({ signerNodeB: 'down', atStart: true }); }

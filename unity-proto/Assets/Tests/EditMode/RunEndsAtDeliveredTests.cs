@@ -62,6 +62,21 @@ public class RunEndsAtDeliveredTests
     /// EXIT from SPECTATE is the way back to the lobby (the owner 2026-09-16 14:45). Measured on 0.0.1391: EXIT closed
     /// the free camera and the lobby stayed hidden 15 s later, over a locked truck.
     /// </summary>
+    /// <summary>
+    /// "0:00 LEFT" IS THE TICK THE CORE ENDS THE RUN ON (the owner 2026-09-16 15:36: "when time hits zero the round does
+    /// not end"). The HUD read a Unity stopwatch from scene load; the core ends a run MISSED after 9000 of its own
+    /// ticks from roll-out. With a core the clock is the core's count.
+    /// </summary>
+    [Test]
+    public void TheRunClockIsTheCoresOwnCount()
+    {
+        Assert.AreEqual(9000 * 1092f / 65536f, BlockClock.CoreSecondsLeft(0), 1e-3f, "a run that has not rolled out has all of it");
+        Assert.AreEqual(149.96f, BlockClock.CoreSecondsLeft(0), 0.01f, "9000 ticks at 65536/1092 a second");
+        Assert.AreEqual(0f, BlockClock.CoreSecondsLeft(9000), "the tick the core says MISSED shows 0:00");
+        Assert.AreEqual(0f, BlockClock.CoreSecondsLeft(9500), "never below zero");
+        Assert.AreEqual(1092f / 65536f * 60f, BlockClock.CoreSecondsLeft(8940), 1e-3f, "sixty ticks before the end is a second");
+    }
+
     [Test]
     public void ExitFromSpectateComesBackToTheLobby()
     {

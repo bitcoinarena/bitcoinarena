@@ -75,6 +75,10 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
                                      // A PAYING ROUND, for a rehearsal with Lightning. Every
                                      // existing caller asks for none and gets a free round.
                                      stakeMsat = 0n,
+                                     // HOW LONG A ROUND TAKES ENTRIES after its start (the owner 2026-09-16 15:36:
+                                     // "FREE shows closes 30 min but a play is ~2 min"). Half an hour unless the
+                                     // caller names a window - the Daily names one run's length.
+                                     entryWindowMs = 1_800_000n,
                                      // THE ROUND'S OBJECTION WINDOW (M3.3-32): nothing moves
                                      // until it has closed. The spec's reference unless a
                                      // rehearsal names a shorter one to watch both sides of it.
@@ -425,7 +429,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     gameVerifySlots: 2, settlementSlots: 2, simCoreHash: CORE_HASH,
     committeeTimeMs, randomnessRule: 'bitcoin-block-hash',
     startTimeMs: committeeTimeMs + MIN_ENTRY_WINDOW_MS,
-    entryCloseMs: committeeTimeMs + MIN_ENTRY_WINDOW_MS + 1_800_000n,
+    entryCloseMs: committeeTimeMs + MIN_ENTRY_WINDOW_MS + BigInt(entryWindowMs),
     objectionWindowMs, custody: 'FEDERATION', slashMinimumServed: 20,
     slashRemainder: 'BURN', federationId, stakeExpiryBlocks: 144,
     // WHERE THE SIGNER NODES POST EACH RUN'S TRANSCRIPT (v4.6.2 §13A, P2): the two

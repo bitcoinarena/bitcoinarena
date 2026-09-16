@@ -1191,11 +1191,25 @@ export class Round {
       .map((r) => ({ roundId: new Uint8Array(r.round_id), contract: new Uint8Array(r.contract), openedMs: r.opened_ms }));
   }
 
-  /** How many players joined at this node in a round, and how many it has taken ticks from. */
+  /**
+   * How many PLAYERS joined at this node in a round, and how many of them it has taken ticks from.
+   *
+   * PLAYERS, NOT ENTRIES (the owner 2026-09-16 15:36: "after each successful run lobby says 1 joined then 2
+   * then 3 as if he never left"). Every PLAY is a new entry, so one player's three runs counted three;
+   * measured on the Daily, one round held 7 entries from 1 player key. An entry's player is the key in
+   * its contract.
+   */
   playersOf(roundIdBytes) {
-    const joined = this.db.prepare('SELECT COUNT(*) n FROM entries WHERE round_id = ?').get(roundIdBytes).n;
-    const playing = this.db.prepare('SELECT COUNT(DISTINCT entry_id) n FROM ticks WHERE round_id = ?').get(roundIdBytes).n;
-    return { joined, playing };
+    const ticked = new Set(this.db.prepare('SELECT DISTINCT entry_id FROM ticks WHERE round_id = ?')
+      .all(roundIdBytes).map((r) => toHex(new Uint8Array(r.entry_id))));
+    const joined = new Set(), playing = new Set();
+    for (const r of this.db.prepare('SELECT entry_id, contract FROM entries WHERE round_id = ?').all(roundIdBytes)) {
+      let player;
+      try { player = toHex(decodeEntryContract(new Uint8Array(r.contract)).playerPubkey); } catch { continue; }
+      joined.add(player);
+      if (ticked.has(toHex(new Uint8Array(r.entry_id)))) playing.add(player);
+    }
+    return { joined: joined.size, playing: playing.size };
   }
 
   entriesOf(roundIdBytes) {

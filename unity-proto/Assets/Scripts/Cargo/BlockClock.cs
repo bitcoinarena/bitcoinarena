@@ -37,6 +37,15 @@ public class BlockClock : MonoBehaviour
              "new block within a second of it being found.")]
     public ChainStats stats;
 
+    /// <summary>The ticks a core run lasts before it is MISSED: `BLOCK_TICKS`, packages/core/src/rules/gate.js.</summary>
+    public const int RunTicks = 9000;
+
+    /// <summary>
+    /// Seconds of a core run left after `elapsed` of its ticks, at the core's own rate - 65536/1092 ticks a second
+    /// (packages/core/src/tick.js) - never below zero.
+    /// </summary>
+    public static float CoreSecondsLeft(int elapsed) => Mathf.Max(0, RunTicks - elapsed) * 1092f / 65536f;
+
     /// <summary>Seconds left in this round.</summary>
     public float Remaining { get; private set; }
 
@@ -96,6 +105,17 @@ public class BlockClock : MonoBehaviour
         {
             int mining = stats.Recent[0].height + 1;
             if (mining > Height) Height = mining;
+        }
+
+        // A CORE'S RUN IS TIMED BY THE CORE (the owner 2026-09-16 15:36: "when time hits zero the round does not
+        // end"). This clock was a Unity stopwatch from scene load, looping every 150 s through the lobby too,
+        // while the core ends a run at MISSED after `RunTicks` of its own ticks from roll-out - and drops ticks
+        // on a slow page. So the HUD read 0:00 while the core still had seconds, or minutes, left, and the run
+        // went on. With a core, "left" is the core's own count, and 0:00 is the tick the run ends on.
+        if (Blwp.BlwpCore.Available)
+        {
+            Remaining = CoreSecondsLeft(Blwp.BlwpCore.State[Blwp.Layout.O_SCORE + Blwp.Layout.S_ELAPSED]);
+            return;
         }
 
         Remaining -= Time.deltaTime;
