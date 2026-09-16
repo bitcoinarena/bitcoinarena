@@ -161,6 +161,20 @@ the owner ordered is in the state and not on the screen. Each is a client test.
 - **The front is a line the player can see** - the seam drawn on the ground, and when the tape moves
   it, the line moves and the armies drive after it (§4.13). That is the market on the ground and it is
   the picture the game is named for.
+- **The front is drawn as a chart: candles and the line (the owner 2026-09-16 19:50, RULED HERE on the
+  form).** The tape (§4.13) is a price series and the seam is its 21-sample box average - an **SMA(21)**.
+  So the client draws what a trader already knows: **candlesticks** on the ground for the raw tape and
+  the seam as the moving-average line the armies fight on. A candle is 4 samples (20 s at the 5 s
+  cadence): 16 candles across the 260 m map, each 16.5 m wide, body from open-z to close-z, wick from
+  low to high, green when close > open (a rising price - the bulls' ground) and red when it fell (the
+  bears'). The newest candle, at the miner's end, is **forming**: it grows as samples arrive, and the
+  whole chart scrolls 4.13 m toward the post office per sample. From above - map, minimap, gunship - it
+  reads as a TradingView chart with two armies on it; from the cab the ground under the truck is a red
+  or a green band and the line ahead is the front. **Decoration, not geometry**: candles are decals or
+  light on the ground and change nothing in the core - no collision, no cover, no hull-down, no rule
+  reads a candle. The bucket size is the client's (a 3- or 6-sample candle is the same tape); the core
+  hands the client the 64 samples and nothing else. Client test: the candles' open, high, low, close
+  equal the tape's per bucket, and the drawn line equals `seam(x)` within 0.5 m at every metre.
 - **Sound carries and lags.** A gun 100 m off is heard 0.3 s late and quieter; a bomb is felt in the cab.
 - **The air is announced and answered.** Rotor 3 s before entry, the call's banner with its lane, the
   run-in along that lane, smoke on a driven-off gunship (§12.3).
