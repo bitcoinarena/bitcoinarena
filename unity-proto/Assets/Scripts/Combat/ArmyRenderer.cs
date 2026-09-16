@@ -1093,15 +1093,6 @@ public class ArmyRenderer : MonoBehaviour
         float left = Ground(x - rx, z - rz);
 
         float rest = (front + back + right + left) * 0.25f;
-
-        // The plane fit is exact only while the ground under the hull IS a
-        // plane. At a road edge it is a step - the deck stands 30 cm over the
-        // ground it is laid on - and the fit splits the difference, which put
-        // one track 0.52 m under the surface. Raise the whole hull just enough
-        // that no corner is left below what it is standing on. On genuinely
-        // flat or evenly sloped ground this term is zero.
-        float saddle = Mathf.Max((front + back) * 0.5f, (right + left) * 0.5f) - rest;
-        rest += Mathf.Max(0f, saddle);
         // Both signs are inverted against the ground on purpose: a positive
         // rotation about local X pitches the NOSE DOWN, and a positive rotation
         // about local Z lifts the RIGHT side. Taken the intuitive way round the
@@ -1124,8 +1115,30 @@ public class ArmyRenderer : MonoBehaviour
         }
         _attitude[t] = new Vector2(pitch, roll);
 
-        t.SetPositionAndRotation(
-            new Vector3(x, rest + lift, z),
-            Quaternion.Euler(0f, yaw * Mathf.Rad2Deg, 0f) * Quaternion.Euler(pitch, 0f, roll));
+        // NO TRACK CORNER UNDER THE GROUND IT STANDS ON (the owner 2026-09-16).
+        //
+        // The fit above samples four EDGE MIDPOINTS and the hull rests on four CORNERS, which it
+        // never sampled - and the attitude finally applied is not even the one it computed: pitch and
+        // roll are clamped and then eased towards the fit over several frames. So the corners are
+        // measured against the ground under each of them, with the rotation that is about to be
+        // used, and the hull is raised by the worst shortfall. Measured before this, one Daily run:
+        // 270 of 1596 corners under the ground, 16.9%, the deepest 0.63 m down.
+        //
+        // This replaces the old `saddle` term, which lifted by the better of the two mid-pairs - a
+        // guess at the corners from points that are not them. A lift along Y only: the plane fit
+        // still decides the attitude, so no chase is coupled into x or z.
+        var attitude = Quaternion.Euler(0f, yaw * Mathf.Rad2Deg, 0f) * Quaternion.Euler(pitch, 0f, roll);
+        float sink = 0f;
+        for (int k = 0; k < 4; k++)
+        {
+            // the hull's own corners, at the same half-length and half-width the caller seats it by
+            var corner = new Vector3((k & 1) == 0 ? halfWidth : -halfWidth, 0f,
+                                     (k & 2) == 0 ? halfLength : -halfLength);
+            var at = new Vector3(x, rest, z) + attitude * corner;
+            sink = Mathf.Max(sink, Ground(at.x, at.z) - at.y);
+        }
+        rest += sink;
+
+        t.SetPositionAndRotation(new Vector3(x, rest + lift, z), attitude);
     }
 }
