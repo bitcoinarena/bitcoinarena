@@ -120,10 +120,20 @@ public class TruckController : MonoBehaviour
 
     public void Respawn()
     {
-        _rb.linearVelocity = Vector3.zero;
-        _rb.angularVelocity = Vector3.zero;
-        _rb.position = spawnPosition;
-        _rb.rotation = spawnRotation;
+        // PHYSX DOES NOT OWN THE POSE OF A CORE-DRIVEN TRUCK (the owner 2026-09-16).
+        //
+        // While the core is answering, `CoreDrivenTruck` holds this Rigidbody kinematic and rewrites
+        // the transform from core words every frame. These four writes therefore moved nothing at all
+        // on that path - measured on the Daily, the truck's re-seat came entirely from the teleport
+        // below - while making the code read as though PhysX still decided where the truck was. They
+        // stay for the free-driving truck, which really is a physics body.
+        if (!externallyDriven)
+        {
+            _rb.linearVelocity = Vector3.zero;
+            _rb.angularVelocity = Vector3.zero;
+            _rb.position = spawnPosition;
+            _rb.rotation = spawnRotation;
+        }
         transform.SetPositionAndRotation(spawnPosition, spawnRotation);
         _steer = 0f;
 
