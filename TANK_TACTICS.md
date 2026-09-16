@@ -25,7 +25,7 @@ bay unless said otherwise.
 
 | The player sees | The rule that makes it | Probe passes when |
 |---|---|---|
-| A line of tanks, not a pile | frontage slots §2.4 | no 3 living tanks of one side inside 20 m of each other, on more than 2% of tank-ticks (was: groups of 9 to 20) |
+| A line of tanks, not a pile | frontage slots §2.4 | no 3 living tanks of one side all within 12 m of each other (the tank-tank minimum, §1.1), on more than 2% of tank-ticks. RULED (the owner 2026-09-16): §2.4 puts a pair's hulls 12 m apart and neighbouring inner hulls 15 m apart, so every interior tank is in a 20 m triple by design - that is formation, not a clump. Two tanks at 12 m is a legal pair; three inside 12 m is a pile. The geometry is not spread to suit a probe. (was: groups of 9 to 20 within 20 m) |
 | Hulls that hold still on a post, no wiggle | hold = stand, §4.1 | a tank on its post moves < 0.02 m/tick; a tank reverses its travel direction (x or z sign flip) at most once in any 2 s, outside a separation push |
 | Nobody pressed against anybody | 12 m bubble §1.1 | the separation push undoes a tank's own step on < 5% of tank-ticks (was 42.5%) |
 | Something is always happening | role swap §2.6 (a leg is 6 to 10 s) and scoot §4.3 | in any 10 s window at least one tank per side changes post; at no tick are more than half a side's living tanks moving |
@@ -77,6 +77,12 @@ If a probe on this table fails, the doctrine is not live, whatever the code says
   truck inside its (heat-widened) 34 m reach fires on the truck on its normal reload. Same draws as a
   shot at a foe: one hit roll, one damage roll, one reload roll - in that order - so the stream keeps its
   shape.
+  **RULED (the owner 2026-09-16): no fire before roll-out.** The kill zone is the road, not the loading bay. No gun
+  chooses the truck - not the tank's no-enemy rule above, not the truck outranking a picked enemy, not a
+  rifle - until the truck has **rolled out**: its best x reached (`S_BESTX`) is at least 22 m (`APRON_RADIUS`)
+  past its start. It latches: backing into the bay after roll-out does not make it safe again. A truck idling on
+  the ramp takes no hit and is never wrecked by fire (measured: 8 seeds, 60 s idle in the bay, 0 hits, 0 wrecks).
+  The outer slots are **not** moved away from the bay to hide this. After roll-out the truck-fire rule stands.
 - Otherwise **ignore** the truck.
 - **Touch either way = truck dies immediately** (WRECKED). That used to work and it stays. Touch = a
   living tank's hull circle (radius 3.0 m) overlaps either of the truck's two body circles (radius 1.275 m,
@@ -373,7 +379,8 @@ Each test names the section it guards. All run on the core alone, seeds fixed, n
   line, seed equal (§1.2: no rule reads the truck).
 - Touch truck-tank in a live scored run does not set RUN_WRECKED on that tick (§1.2).
 - Touch in practice sets RUN_WRECKED (§1.2).
-- A tank with the truck inside 34 m and no enemy tank in range never fires on the truck (§1.2 GAP).
+- A tank with the truck inside 34 m and no enemy tank in range never fires on the truck after roll-out (§1.2 GAP).
+- Any gun hits a truck that has not rolled out; over 8 seeds x 60 s idle in the bay any hit or wreck (§1.2 ruling).
 - A bounding tank fires in a tick it moved (§4.4).
 - Both tanks of a living pair are bounding in the same tick (§2.5).
 - A scoot moves a team more than 27 m, or into a held slot, or fires twice inside 600 ticks for one team
