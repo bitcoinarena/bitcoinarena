@@ -139,9 +139,9 @@ Rows for the four points, same probe conditions, plus the moved-tape probe named
 | **The front moves visibly** | assault ceiling §4.12 | on every seed at least one forward hull stands >= 16 m across the seam (push >= 32) at some tick |
 | **Lulls exist** | assault clock §4.12 | on 25% to 60% of ticks no assault is running on either side; no assault starts inside 20 s of the previous one on the same side |
 | **Assaults can fail and can win** | §4.12 | over 5 seeds, between 30% and 70% of assaults end with the objective's holder flipped to the attacker |
-| **Up: the bulls attack, the bears are pushed back** | trend §4.14 | the trend probe: the tape driven +0.5% over ticks 600-1200 and held: from tick 900 on every assault started is a bull assault; the bulls' mean push across all lanes exceeds the bears' by >= 12 m on >= 70% of ticks from 1200 on; no bear hull crosses the seam after tick 1200 |
+| **Up: the bulls attack, the bears are pushed back** | trend §4.14 | the trend probe: the tape driven so that the six candles closing over ticks 600-1200 are green (+0.5% in all) and held: from tick 900 on every assault started is a bull assault; the bulls' mean push across all lanes exceeds the bears' by >= 12 m on >= 70% of ticks from 1200 on; no bear hull crosses the seam after tick 1200 |
 | **The losers die faster, and get less** | trend §4.14, supply §3 | in the trend probe from tick 900 on, bear losses (tanks and men) per 60 s exceed bull losses by >= 30%, and the bears' mean living tanks are fewer than the bulls' on >= 70% of ticks; the -0.5% probe is the mirror |
-| **Sideways: they fight over the status quo** | §4.14 | with the tape held inside ±8 bp for 3600 ticks, both sides mount assaults, the holder of at least one objective flips on >= 4 of 5 seeds, and neither side's mean push exceeds the other's by more than 4 m over the run |
+| **Sideways: they fight over the status quo** | §4.14 | with the tape alternating green and red candles of 5 bp for 3600 ticks, both sides mount assaults, the holder of at least one objective flips on >= 4 of 5 seeds, and neither side's mean push exceeds the other's by more than 4 m over the run |
 | **The chart is the market's alone** | §4.14 | lead, trend, momentum and `front` are bit-identical with the truck parked and driven, and identical across any two players' runs on the same samples |
 | **Losses bite** | supply §3 | on ticks where one side holds more objectives than the other, that side has more living tanks on >= 55% of them; a side down to 2 objectives lost never falls below 4 tanks on more than 8% of ticks (the floor row above stays) |
 
@@ -694,10 +694,15 @@ replays, both re-read on the sample tick (5 s) and never between:
 - **Lead** - the price against the **round's open** (`TAC_OPEN`, §4.13): `lead = sign(newest - open)`,
   BULLS / BEARS / FLAT. This is **who is winning the round** (the verdict, below) and it feeds
   **supply**. It is slow: it can stay BULLS for the whole round.
-- **Trend** - the price against **60 s ago** (six candles, twelve samples): `d = newest - sample[-12]`,
-  in basis points of the open. `|d| < 10 bp` → **SIDEWAYS**; else UP or DOWN with **strength 1** from
-  10 bp, **2** from 30, **3** from 60 (at $75,000: $75 / $225 / $450 in a minute). This is **who is
-  attacking right now**, and it turns inside a minute. The two can disagree - price above the open
+- **Trend** - **the colour of the last candles** (the owner 21:40: *"a few green candles and the bulls have
+  the advantage; a few red and the bears are winning right now"*). Over the last **six finished
+  candles** (60 s; the forming one does not count): `net = green - red`, where a candle is green when
+  close > open, red when close < open, and a candle whose body is under **3 bp** of the open (a doji,
+  $2.25 at $75,000) is neither. `|net| < 2` → **SIDEWAYS**; else UP (green) or DOWN (red) with
+  **strength 1** at |net| 2-3, **2** at 4-5, **3** at 6 (all six one colour). So "three green, three
+  red" is sideways; "four green, one red, one doji" is UP 1; six green in a row is UP 3 - what the
+  player sees on the ground is the rule. This is **who is attacking right now**, and it turns inside a
+  minute. The two can disagree - price above the open
   but falling is "the bulls are winning, the bears are pushing back" - and that is a sentence the
   player can read off the ground.
 
@@ -725,7 +730,7 @@ replays, both re-read on the sample tick (5 s) and never between:
 - **The bomb goes with the trend**: the trend's side's next sortie is CAS on its assault (as §4.12); the
   other side's interdiction (§12.3) is paused with its assault clock - it flies COUNTER only.
 
-**SIDEWAYS (|d| < 10 bp over the minute): the fight over the status quo.**
+**SIDEWAYS (|net| < 2 over the last six candles): the fight over the status quo.**
 
 - Both sides assault on their normal clocks (45-90 s), hashed targets among objectives not held; `w`,
   rest, ceilings, hit thresholds and supply as §4.10-§4.12 and the lead alone give them. The
@@ -743,7 +748,7 @@ per **round**, at the contract's end: the round's **close** (the last attested s
 Nothing else counts: not objectives held, not tanks killed, not ground taken - those are how the war
 *looks* while the price decides it. It is the same for every player in the round, whenever their run
 was. During the round the screen shows the **lead** (`BULLS +0.42%`, "BULLS LEADING") and the **trend**
-(an arrow: `▲ 2`, `▬`, `▼ 1`); a run's end screen shows the lead at that tick and says so - *leading*,
+(the last six candles' colours as six dots, and `▲ 2` / `▬` / `▼ 1`); a run's end screen shows the lead at that tick and says so - *leading*,
 not *won* - beside the truck's result, score and sats; the round's end screen and the settlement carry
 `THE BULLS WIN`. Nothing in the score reads any of it (multiplayer_p2p.md §0.15: the score is the
 truck's). The verdict is the committee's signed `RoundResult` (§13 there) from the attested open and
@@ -918,7 +923,8 @@ Feeds supply and the verdict: at the round's end, close against open, `THE BULLS
 WIN`. Not points (§4.14).
 
 **Trend / strength**
-The price against 60 s ago, in 10/30/60 bp steps; SIDEWAYS inside 10 bp. Who is attacking now: the
+The colour of the last six finished candles: green minus red; SIDEWAYS below 2, strength 1 / 2 / 3 at
+2-3 / 4-5 / 6. Who is attacking now: the
 trend's side assaults, presses, hits harder and is fuller; the other holds, is pushed back, dies
 faster. Sideways: both fight over the objectives (§4.14).
 
@@ -965,7 +971,8 @@ tests are §14.
   sample; a trailing side's `w` or a leading side's rest is other than §4.14's; `front` at the run's
   end is not the lead of that tick, or the round's verdict is other than `sign(close - open)` of the
   attested open and close, or anything but the price enters it; the trend differs from
-  `sign(newest - sample[-12])` and its bp steps, or changes off a sample tick; the side the trend runs
+  the colour count of the last six finished candles (doji under 3 bp neither) and its strength steps,
+  or changes off a candle's closing sample tick; the side the trend runs
   against starts an assault; a hit threshold differs from base ± 5% (gun), ± 0.5% (rifle) or ± 10% of
   value (coax, AT) per strength; supply ignores the trend (§4.14).
 - A bounding tank fires in a tick it moved, gun or coax (§4.4).
