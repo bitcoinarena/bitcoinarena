@@ -18,6 +18,11 @@ Item 2 of his list (wrecks as cover for tanks, side pressure, whole-line retreat
 no rule below lets a tank, a gun or the truck read a wreck. Everything added by that order is **GAP** until
 the core does it.
 
+Revised 2026-09-16 19:20 (the owner: *"Do we have an absolutely dynamic war? Is it immersive? What is
+missing?"*): the verdict is §0.1 - **not yet** - with the four reasons and the sections that answer them:
+supply (§3), the assault (§4.12), the tape as the general (§4.13), the client's list (§0.2). Three rulings
+only the owner can make are parked in §15. All of it GAP, all of it RULED HERE.
+
 Implementation: `packages/core/src/rules/tactics.js` (assignment, roles, slots, scoot, push, objectives -
 armour and, per part B, the infantry's fire teams, rush clock, cover claims and suppression) and the army
 step `packages/core/src/rules/army.js` (moves a unit to what tactics.js hands it, picks the hull-down spot,
@@ -91,6 +96,68 @@ Infantry rows (part B, §8-§12), same probe conditions:
 | **Not cannon fodder** | §11.3-§11.5 | a side loses <= 20 men per 60 s, mean over 5 seeds (measured 2026-09-16 on the working tree before these rules: 26.5 to 41.5 a side, mean 32.7 - both sides 53, 60, 61, 70, 83 on seeds 1-5); rifle deaths per man-tick of STAND men are >= 2x those of PRONE and COVER men together |
 
 If a probe on this table fails, the doctrine is not live, whatever the code says.
+
+### 0.1 Verdict (the owner 2026-09-16 19:20: "Do we have an absolutely dynamic war? Is it immersive? What is missing?")
+
+**Not yet.** With §1-§14 as written above and built, the war does not look dumb, it fights over three
+named places and its men hide. It is still not a war that **goes anywhere**, for four reasons, each
+measured or read from the core on the branch, each with a section below that fixes it:
+
+1. **The front is frozen and identical on every round.** `sim.js` `tape()` builds the price tape from
+   the sample index alone (`Math.imul(i + 1, 2654435761)`), takes no seed and is never written again
+   during a run. So the seam - the thing the whole game is named for, the market as a front line - is
+   the same curve on seed 1 and seed 5 and does not move a centimetre in 3600 ticks. §4.13.
+2. **The war is homeostatic.** Respawn runs `deficit` times faster the more a side has lost (§3), the
+   push drifts home whenever nobody has the upper hand (§4.10) and its ceiling is 24 (a hull 8 m across
+   the seam). Every swing is undone in 5 to 10 s. From a cab 8 m is nothing. Nothing accumulates,
+   nothing is ever won or lost, and a war in which nothing is at stake is a screensaver. §4.12, §3
+   (supply).
+3. **No tempo.** Six teams re-read their odds every 5 s on their own clocks, so the whole front
+   breathes at once, all the time, at the same amplitude. No lull, no build-up, no assault that is
+   declared and then happens, no climax, no "they are coming for HOLLOW". §4.12.
+4. **The objectives have no consequence.** A holder colours a marker (§4.11). Nothing in the war gets
+   better for holding RIDGE or worse for losing GAP, so nothing is worth defending and the marker is a
+   label on a lane. §3 (supply), §4.12.
+
+And what the **player** sees is under-specified: the §0 rows keep the war from looking dumb; they do not
+make it look like war. §0.2 is the client's list. Three things the core cannot give without a ruling
+from the owner - tanks that fire on men, men that hurt tanks, a winner - are parked in §15.
+
+Rows for the four points, same probe conditions, plus the moved-tape probe named in §4.13:
+
+| The player sees | The rule that makes it | Probe passes when |
+|---|---|---|
+| **Every round is a different war** | seeded tape §4.13 | the seam z at x = 0, -54 and 54 differs between any two of seeds 1-5 by >= 10 m at at least one of the three |
+| **The market moves the front, and the armies follow** | live tape §4.13 | with the tape stepped +20 m at tick 1800 (the moved-tape probe): every living tank on the line is within 10 m of its new post by tick 2100 and every man on the line within 10 m of his by tick 2400; nobody's slot, team, objective lane or claim order changes |
+| **An assault is declared, then it happens** | tempo §4.12 | within 600 ticks of an assault's start the attacking side's mean push on the assaulted lane is >= 8 m higher than at the start, on >= 80% of assaults |
+| **The front moves visibly** | assault ceiling §4.12 | on every seed at least one forward hull stands >= 16 m across the seam (push >= 32) at some tick |
+| **Lulls exist** | assault clock §4.12 | on 25% to 60% of ticks no assault is running on either side; no assault starts inside 20 s of the previous one on the same side |
+| **Assaults can fail and can win** | §4.12 | over 5 seeds, between 30% and 70% of assaults end with the objective's holder flipped to the attacker |
+| **Losses bite** | supply §3 | on ticks where one side holds more objectives than the other, that side has more living tanks on >= 55% of them; a side down to 2 objectives lost never falls below 4 tanks on more than 8% of ticks (the floor row above stays) |
+
+### 0.2 What the client must draw and play (client tests; the core gives every word)
+
+The core hands the client, every tick: posts, postures, claims, the three objectives and their holders,
+each side's assault and its phase, every shot, every wreck. If the client does not show them, the war
+the owner ordered is in the state and not on the screen. Each is a client test.
+
+- **Wrecks stay.** A dead tank is drawn as a hulk where it died until its id respawns (§3, §11.3): men
+  lie behind it. A dead tank that vanishes leaves men lying behind nothing.
+- **Men are drawn down.** PRONE and COVER (§11.4) are two poses, not one; a pinned team (§11.5) is visibly
+  flat, and a crawl is a crawl.
+- **Every shot is seen.** Muzzle flash and a tracer for every tank round and every rifle round, a
+  different tracer for a suppressing round (§11.5); a shell's fall is a burst on the ground where the
+  core says it landed.
+- **The three names are on the map.** RIDGE, HOLLOW, GAP at the core's points, in the holder's colour,
+  grey when unheld, readable from the cab at 100 m (§4.11).
+- **An assault is announced.** On the tick the core's assault word is set: a banner - `BEARS ASSAULT
+  HOLLOW` - and a sound; on the flip, `HOLLOW TAKEN`; on the end without a flip, `ASSAULT ON HOLLOW
+  FAILS`. Nothing else in the HUD may be louder than this while it runs (§4.12).
+- **The front is a line the player can see** - the seam drawn on the ground, and when the tape moves
+  it, the line moves and the armies drive after it (§4.13). That is the market on the ground and it is
+  the picture the game is named for.
+- **Sound carries and lags.** A gun 100 m off is heard 0.3 s late and quieter; a bomb is felt in the cab.
+- WASTED as §6.
 
 ---
 
@@ -220,6 +287,18 @@ If a probe on this table fails, the doctrine is not live, whatever the code says
 - Replacement clock: Army.Reinforce. The side's armour clock runs only while the side is short and runs
   `deficit` times faster; when it fires, the **lowest dead armour index** of that side spawns (`wait` 6 s
   at deficit 1). So the order ids come back in is fixed by index, not by who died first.
+- **Supply (RULED HERE, 2026-09-16 19:20, GAP): the objectives feed the clock.** The `deficit` scaling
+  above is what makes the war homeostatic (§0.1): the more a side loses, the faster it is whole again,
+  and no swing survives ten seconds. It stays (KEEP, C#), but it is multiplied by **supply**:
+  `held - lost` over the three objectives (§4.11), -3 to +3, read at the clock's own tick from the
+  holder words. The wait is `wait x 4 / (4 + supply)`: holding all three against none, 4/7 of the wait
+  (a tank every 3.4 s at deficit 1); holding none against three, 4/1 - four times the wait (24 s). Both
+  armour and rifle clocks. The floor of §0 ("never below 4 tanks on more than 5% of ticks") stands and
+  is measured with this on: if the floor fails, the divisor is retuned, not the rule.
+- So losing an objective is felt: the side that lost GAP replaces its dead more slowly along the whole
+  front, and the side that took it is fuller. That is what makes an objective worth defending and an
+  assault worth mounting (§4.12), and it is bounded - nothing runs away, because a holder is re-read
+  every 5 s and the fuller side's tanks are what flip it back.
 - That **id respawns:** it rejoins the **same** pair as **BOUNDING** (partner already holding):
   `roleStart = respawn tick`, `firstMember = the respawned member`. The team's role clock restarts, the
   first leg is a full `period`.
@@ -341,8 +420,8 @@ no truck. **RULED HERE**, numbers included, so it can be built without guessing;
   not all step together. `w` is the team's objective weight (§4.11): 2 on an objective's lane, 1 next
   to it, 0 elsewhere.
   - `own + w >= foe + 2` → `push += 8`, up to **24** (the forward hull 8 m across the seam, the overwatch
-    hull 6 m short of it), and on an objective's lane up to that objective's **goal** (§4.11). Taking
-    ground.
+    hull 6 m short of it), on an objective's lane up to that objective's **goal** (§4.11), and in an
+    assault lane up to the assault's **ceiling** (§4.12). Taking ground.
   - `foe >= own + 2 + w` → `push -= 8`, down to **-8** (forward line 24 m, overwatch 38 m). Giving ground.
   - otherwise `push` steps one 8 m **toward its rest**: 0, or +8 on an objective's lane (§4.11). The line
     drifts home when nobody has the upper hand - and home, at an objective, is leaning in.
@@ -427,6 +506,83 @@ function of the seed (`groundFromSeed`). **GAP**, all of it, and **RULED HERE** 
   on them, and the §0 rows "an assault goes for something", "every objective is fought over" and
   "objectives change hands" are what a run must show.
 
+### 4.12 Tempo - the assault (RULED HERE, 2026-09-16 19:20, for §0.1 points 2-4)
+
+§4.10 breathes; it never charges. An assault is a **declared** attempt by one side on one objective it
+does not hold, with a start, a length, an end and a result the player is told. It is the war's tempo:
+between assaults there is a lull, the line breathes as §4.10, and men crawl into holes. **GAP**.
+
+- **Assault clock**, per side: the next assault starts `2700 + (h % 2700)` ticks (45 to 90 s) after the
+  last one ended, `h = mix(mix(hash, sideConst), n)` for the side's n-th assault; the first at
+  `1200 + (h % 1200)` (20 to 40 s) from init, so the two sides never start together and the first minute
+  has a lull, a build-up and an attack in it.
+- **Target**: of the objectives the side does **not** hold at the start tick, the one hashed from
+  `(seed, side, n)`. A side that holds all three mounts none: its clock re-arms 20 s and it defends. Both
+  sides may assault at once, on different objectives or on the same one (then it is a meeting battle on
+  one lane, and that is fine).
+- **Length**: 1800 ticks (30 s), or until the holder (§4.11) flips to the attacker - **success** - after
+  which 900 ticks (15 s) of **consolidation**; or the 30 s run out - **failure** - and the clock re-arms.
+- **What it does**, for the attacking side while it runs:
+  - the objective's lane and both neighbouring lanes are the **assault lanes**: `w = 3` on the lane,
+    `w = 2` beside it (§4.10, §4.11), the rest is `+16` on the lane, and the push **ceiling is 40**
+    (forward hull 24 m across the seam, overwatch 10 m across) on the lane and 32 beside it - RIDGE
+    included (a crest is taken by going over it; the 16 cap of §4.11 is for holding it, and returns at
+    consolidation). At 8 m per 5 s a team on the lane goes from rest to ceiling in 15 s: the player sees
+    it build.
+  - the infantry in the assault lanes has its lead clamp raised from 8 m to **24 m** across the seam
+    (§12.1) and its fire teams are pinned at **240** instead of 120 (§11.5): under fire they still rush;
+    only a burst stops them. Men go with the tanks.
+  - the side's next sortie (§12.3) aims at the objective's point instead of the densest cluster: the
+    bomb falls on the defenders.
+  - a team **not** in an assault lane changes nothing: the rest of the front holds as §4.10, which is
+    what keeps an assault from being a whole-line stampede (item 2, not done).
+- **Consolidation** (after success): the lane's rest is 16 (the forward hull on the seam), ceiling back to
+  §4.11's, `w` back to §4.11's. The men dig in: claims re-read with the lane's new craters and wrecks.
+- **The defender** gets no weight: its advantage is that it was there first, hull-down, with supply (§3)
+  if it holds more. A defence that holds is the attacker's odds never reaching `own + w >= foe + 2` on
+  the lane, and that happens - §0.1 "Assaults can fail and can win" says how often it must.
+- **State**: per side `TAC_ASSAULT` (3 words: objective id + phase in one, start tick, next tick).
+  Written by the assault clock at the top of `pressure`; read by `pressure`, the infantry clamp, the
+  sortie aim and the client. No draw, no truck (§1.2): an assault never targets, waits for or avoids a
+  truck, and the truck driving through an assault lane is shot at as §1.2 and otherwise ignored.
+- **Why this and not a smarter general**: a general that read the whole board would be one rule that
+  moved everything, and it would move it the same way every time. The assault clock is dumb on purpose:
+  hashed side, hashed target, fixed length. What makes it look decided is that the objective is named,
+  the build-up is visible, and the outcome is not known in advance - the odds on that lane decide it.
+
+### 4.13 The market is the general - the tape moves the front (GAP, 2026-09-16 19:20)
+
+The seam is the price tape laid across the map (`rules/frontline.js`): the oldest sample at -x, the
+newest at +x, z is the price against the window's midpoint, box-averaged over 21 samples so a man can
+walk to it. Every post in this file - slot, line, objective point, man's post, cover eligibility - is
+measured from `seam(x)`. So the tape is the general: when the price moves, the whole front moves, both
+sides drive, and the player sees the market on the ground. **That is the picture the game is named
+for, and the core does not draw it yet:**
+
+- **Measured on the branch:** `tape()` in `sim.js` is 64 samples from `i` alone, no seed, written at
+  init and never again. The seam is the same curve on every seed and moves 0 m in a round.
+- **Rule 1 - seeded (GAP).** The init tape is `mix(seedHash, 0x7e5a1c3d + i)` per sample, walked as
+  today (the step's shape stays), so every round has its own front. §0.1 row "Every round is a
+  different war".
+- **Rule 2 - live (GAP, protocol).** The host feeds the newest price each time it has one; the core
+  shifts the tape one sample (oldest out at -x, newest in at +x) on the tick the sample arrives, as
+  `PriceHistory` did. A sample is protocol input, hashed like a load: every node gets the same sample on
+  the same tick or the transcript replays differently. **No move rule reads the tape's future**; the
+  armies read `seam(x)` on the tick, as they do now.
+- **The armies follow at walk speed**, nothing more: a moved seam moves the posts (every rule already
+  reads the seam per tick), a tank drives at 6.8 m/s and a man at 2.8 m/s to its new post, in its lane,
+  with its roles, slots, objectives and claims unchanged. A 20 m step is 3 s of driving and 7 s of
+  walking, a line visibly advancing. **The moved-tape probe** (§0.1): seed 1, the truck in its bay, the
+  tape stepped so that `seam(0)` moves +20 m at tick 1800, and nothing else.
+- **What must not happen:** the seam jumping faster than 1.42 m per m of x (the filter's own limit, so
+  a man can walk to it), objective lanes changing (they are lanes, the point rides the seam), a cover
+  claim dropping because the post moved (a claim is re-read on eligibility each tick, so a place more
+  than 12 m from the **new** post is dropped and the man walks - that is correct and is what "the men
+  follow" looks like).
+- Rising market: the bulls' seam runs +z, the whole bull line advances and the bear line gives ground,
+  across the lanes, with the objectives and their holders riding along. Falling market, the reverse.
+  Nothing in §4.10-§4.12 needs to know: they are all relative to `seam(x)`.
+
 ---
 
 ## 5. Vocabulary (all required)
@@ -484,6 +640,21 @@ beside it (§4.11). Has a holder the player sees.
 The side with more living tanks inside 46 m of an objective's point at its last re-read. Colours the
 marker; moves nothing.
 
+**Assault**
+A side's declared 30 s attempt on one objective it does not hold: weight 3 on the lane, ceiling 40,
+men and the next bomb with it. Ends in success (holder flips; 15 s consolidation) or failure (§4.12).
+
+**Lull**
+Ticks on which neither side assaults. The line breathes as §4.10; men crawl into holes.
+
+**Supply**
+`held - lost` over the objectives; divides a side's replacement wait (§3). Losing ground is felt as
+fewer tanks.
+
+**Tape / front**
+The price series across the map; `seam(x)` is read from it every tick. Seeded per round, moved by the
+market during it; every post in this file is relative to it (§4.13).
+
 **Tick**
 1/60 s. Every time in this file is in ticks in the code: 6 s = 360, 10 s = 600.
 
@@ -540,7 +711,18 @@ tests are §14.
 - A team's `w` is other than 2 on an objective's lane, 1 beside it, 0 elsewhere (§4.11).
 - The holder changes on a tick that is not that objective's re-read tick, or changes on equal counts
   (§4.11).
-- A §0 probe row fails.
+- A side's assault starts while it holds all three objectives, targets one it holds, runs past 1800
+  ticks without a flip, or starts inside 2700 ticks of its last one's end (§4.12).
+- A team outside the assault lanes has `w`, rest or ceiling other than §4.10-§4.11's during an assault;
+  a team on the assaulted lane has `push > 40` (§4.12).
+- The assault word, target or phase differs between the truck parked and the truck driven through the
+  assaulted lane, seed equal (§1.2, §4.12).
+- The replacement wait ignores supply, or supply reads anything but the three holder words (§3).
+- Two seeds give the same tape; the tape changes on a tick with no sample; a sample changes anything
+  but the tape (§4.13).
+- In the moved-tape probe any slot, team, objective lane or claim order changes (§4.13).
+- A §0 or §0.1 probe row fails.
+- A §0.2 row is not drawn (client test).
 - WASTED skipped, lobby first (§6; client test).
 
 ---
@@ -781,7 +963,8 @@ function of the state, a claim is a function of the seed and the unit id, no dra
   the fire teams in that lane rush forward behind it in the next legs; a team giving ground takes its
   men back with it.
 - A man's post is clamped to `[seam - side x 40, seam + side x 8]`: infantry never leads the armour
-  across the seam by more than 8 m and never sits more than 40 m behind it.
+  across the seam by more than 8 m and never sits more than 40 m behind it. In an **assault lane** of
+  his own side (§4.12) the lead is **24 m**: the men go across with the tanks.
 
 ### 12.2 Infantry does not move the armour
 
@@ -792,6 +975,9 @@ function of the state, a claim is a function of the seed and the unit id, no dra
 - Bombs (16 m) fall on the seam band and kill men of both sides (KEEP; 8 m against a man in COVER,
   §11.4) and pin every team inside 16 m (§11.5). A fire team that lost 2 or more keeps rushing once the
   word decays; there is no morale.
+- While a side assaults (§4.12) its sortie's aim point is the objective's point, not the densest enemy
+  cluster (`aimPoint`): the bomb goes where the attack goes. The heli's own flight and release are as
+  today; only the aim word changes. GAP.
 
 ## 13. Vocabulary (infantry, all required)
 
@@ -877,7 +1063,35 @@ A round at a man 26 to 34 m off: never hits, pins his team.
 - A man fires a suppressing round with a rifle target inside 26 m, at a man beyond 34 m, at a truck, or
   with any draw but the look-again draw; or a suppressing round changes a man's HP (§11.5).
 - A man's own hit chance changes with his posture (§11.4 KEEP).
+- A man in an assault lane of his side leads the seam by more than 24 m, or a man elsewhere by more than
+  8 m; a fire team in an assault lane of its side is pinned below 240, or one elsewhere at or above 120
+  is not (§4.12, §11.5, §12.1).
+- A side's bomb during its assault aims anywhere but the objective's point (§12.3).
 - A §0 infantry row fails.
+
+## 15. Parked rulings - the owner's, not mine (2026-09-16 19:20)
+
+Three things would make the war more of a war and each one breaks a KEEP or decides what the game is.
+Not done; each has my recommendation so the ruling is one word.
+
+1. **Tanks fire on men.** Today a man is never a tank's target (§8.3 KEEP). So a rifleman walks past a
+   tank as past a tree, and the tank the player fears does not frighten the infantry it drives through.
+   Proposal: a **coax**: a tank with no enemy tank inside 46 m fires on the nearest enemy man inside
+   30 m on its normal reload, one hit roll (STAND 40%, PRONE 20%, COVER 10%), one round kills. Same
+   draw shape as a shot at a tank. Makes §11.3-§11.5 matter twice over: men hide *from tanks*.
+   **Recommend: yes.**
+2. **Men hurt tanks.** Today they cannot. Proposal: man `j = 3` of each fire team carries an **AT
+   launcher**: 30 m, reload 8 to 12 s, hit 25%, damage 20 to 35 against 60 to 100 HP, fired only from
+   PRONE or COVER, at the nearest enemy tank. With it a lane full of hidden infantry is a lane a tank
+   should not push into alone - which is what bounding overwatch is for, and the player sees why.
+   Changes tank loss rates (§0 floor row re-measured). **Recommend: yes, after 1.**
+3. **A winner.** The round is the truck's; the war has none. Proposal: the side holding two or more
+   objectives at the run's end is the round's **front winner**, shown once on the result screen with the
+   three holders; nothing in the score reads it. Cheap, and it is the sentence the player tells someone
+   afterwards. **Recommend: yes.**
+4. **Item 2 of the 19:02 list** - wrecks as cover for tanks, side pressure, whole-line retreat - stays
+   parked as the owner ordered. With §4.12 in, a whole-line retreat is not needed for movement; side
+   pressure would be a second general fighting the assault clock. **Recommend: leave out.**
 
 Implement part A in `packages/core/src/rules/tactics.js` and part B beside it; the army step moves what
 they hand out.
