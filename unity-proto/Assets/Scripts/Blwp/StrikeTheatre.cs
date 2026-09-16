@@ -384,6 +384,7 @@ namespace Blwp
         Vector3 _mushroomFull = Vector3.one;
         Vector3 _mushroomSize;   // the modelled size, measured once at full scale
         float _saidRest = -1f;   // so the resting is reported once a strike
+        float _saidSkirt = -1f;  // and the skirt's own footing on its own clock
         float _cloudFloor, _stemFoot, _skirtUnderside;
         int _restings;
         bool _countedWreckage;
@@ -854,6 +855,26 @@ namespace Blwp
                         top = Mathf.Max(top, Ground(sb.center.x - rr, sb.center.z));
                         _skirt3.position += Vector3.up * (top - sb.min.y);
                         _skirtUnderside = _skirtR.bounds.min.y;   // measured, not assumed
+
+                        // WHAT THE SKIRT IS STANDING ON, AND WHICH GROUND THAT IS (the owner 2026-09-16).
+                        //
+                        // The stem and the crater floor are already reported by the `[cloud] stem footing`
+                        // line above; this is the smallest print that adds the rest: the skirt rests on the
+                        // HIGHEST of five samples, so it can stand proud of the core's surface by design, and
+                        // `Ground()` is the road deck where there is one while `SurfaceAt` is always the core.
+                        // `_cloudAt.y` is the height taken at the bomb run - BEFORE the bowl exists, since the
+                        // crater is dug 384 ticks after the blast - so it is printed against the core surface
+                        // as it stands now. Nothing here changes a position.
+                        if (_cloud - _saidSkirt > 1.2f || _saidSkirt < 0f)
+                        {
+                            _saidSkirt = _cloud;
+                            float coreAtSkirt = BlwpCore.HasSurface ? BlwpCore.SurfaceAt(sb.center.x, sb.center.z) : float.NaN;
+                            float coreAtImpact = BlwpCore.HasSurface ? BlwpCore.SurfaceAt(_cloudAt.x, _cloudAt.z) : float.NaN;
+                            Debug.Log($"[cloud] skirt footing t={_cloud:F1}s: underside was {sb.min.y:F2} -> {_skirtUnderside:F2}, "
+                                      + $"five-sample high {top:F2}, Ground(skirt) {Ground(sb.center.x, sb.center.z):F2}, "
+                                      + $"SurfaceAt(skirt) {coreAtSkirt:F2}; impact y {_cloudAt.y:F2} taken pre-crater, "
+                                      + $"SurfaceAt(impact) {coreAtImpact:F2}, floor {_cloudFloor:F2}, stem foot {_stemFoot:F2}");
+                        }
                     }
                 }
 
