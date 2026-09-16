@@ -747,6 +747,13 @@ public class ArmyRenderer : MonoBehaviour
         int liveArmour = 0, drawnArmour = 0, skipped = 0;
         var resting = new int[7];
         float deepest = float.MaxValue, highest = float.MinValue;
+        // AND THE SAME AGAIN PER TRACK CORNER (the owner 2026-09-16). The census above measures the
+        // hull's lowest point against the ground under its CENTRE, and a centre reading hides tilt:
+        // a hull reads as seated while one track is in the dirt, which is the fault the player sees
+        // as ground drawn inside the hull. The four corners are `RestOnTerrain`'s own half-length
+        // and half-width, so the diagnostic and the seating describe one rectangle.
+        var corners = new int[7];
+        float deepestCorner = float.MaxValue, highestCorner = float.MinValue;
         float minX = float.MaxValue, maxX = float.MinValue;
         float minZ = float.MaxValue, maxZ = float.MinValue;
         float closest = float.MaxValue;
@@ -799,6 +806,23 @@ public class ArmyRenderer : MonoBehaviour
                           : clear <= 0.05f ? 3 : clear <= 0.3f ? 4 : clear <= 1f ? 5 : 6;
                     resting[k]++;
                 }
+                // In the hull's OWN frame at y = 0: `WrapOnItsSole` puts the model's base at the
+                // wrapper's origin, so that plane is the track, and the tilt comes with the
+                // transform rather than being averaged away.
+                foreach (var corner in new[]
+                {
+                    new Vector3(1.8f, 0f, 3.4f), new Vector3(-1.8f, 0f, 3.4f),
+                    new Vector3(1.8f, 0f, -3.4f), new Vector3(-1.8f, 0f, -3.4f),
+                })
+                {
+                    var p = hull.TransformPoint(corner);
+                    float clear = p.y - Ground(p.x, p.z);
+                    if (clear < deepestCorner) deepestCorner = clear;
+                    if (clear > highestCorner) highestCorner = clear;
+                    int k = clear < -1f ? 0 : clear < -0.3f ? 1 : clear < -0.05f ? 2
+                          : clear <= 0.05f ? 3 : clear <= 0.3f ? 4 : clear <= 1f ? 5 : 6;
+                    corners[k]++;
+                }
                 var w = hull.position;
                 foreach (var q in drawnAt)
                 {
@@ -848,6 +872,12 @@ public class ArmyRenderer : MonoBehaviour
                       + $"under 1 m {resting[0]}, 0.3-1 m under {resting[1]}, 5-30 cm under {resting[2]}, "
                       + $"on it {resting[3]}, 5-30 cm over {resting[4]}, 0.3-1 m over {resting[5]}, "
                       + $"over 1 m {resting[6]}; deepest {deepest:F2} m, highest {highest:F2} m");
+        if (say && drawnArmour > 0)
+            Debug.Log($"[ground] tank corners at tick {Blwp.BlwpCore.Tick}: track corner vs the ground "
+                      + $"under it, {drawnArmour * 4} corners - under 1 m {corners[0]}, "
+                      + $"0.3-1 m under {corners[1]}, 5-30 cm under {corners[2]}, on it {corners[3]}, "
+                      + $"5-30 cm over {corners[4]}, 0.3-1 m over {corners[5]}, over 1 m {corners[6]}; "
+                      + $"deepest {deepestCorner:F2} m, highest {highestCorner:F2} m");
         if (say)
             Debug.Log($"[tanks] core alive {liveArmour}, drawn {drawnArmour}, "
                       + $"skipped for want of a hull {skipped}; drawn x "
