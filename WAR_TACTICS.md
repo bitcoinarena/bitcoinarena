@@ -772,10 +772,15 @@ a thing the truck drives on is settled state (multiplayer_p2p.md §0.5), so the 
   face steps 2 m up or down in the core, and the renderer eases the hull over 0.3 s. So a scoot (§4.3,
   27 m in x) crosses three candles and two corridors without a rule change. No ramp in x, so the
   corridor stays flat and the candle's edge stays a line from above.
-- **The wick is a solid**: a 1 m x 1 m pillar, 9 m tall, from low to high in z at the candle's centre
-  x, in the solids list (`resolveSolids` for the truck: it is a wall; for a unit the crater push with
-  a 0.5 m radius, §8.3's class). A wick is the one thing in the chart that is not drivable, and it is
-  narrow enough to miss.
+- **The wick is a solid for the truck only**: a 1 m x 1 m pillar, 9 m tall, from low to high in z at
+  the candle's centre x, in the solids list (`resolveSolids`: a wall the truck steers around). **Tanks
+  and men pass through it**, as they pass through the x-faces (the owner 2026-09-16 21:05, "can a tank
+  cross a candle, wick included?" - yes): the core has no pathing, a wick is a line up to 122 m long,
+  and a push-out on it would pin every tank that scoots or enters its lane in x against it - the same
+  fault the separation push had before §4.3 (92.8% of steps undone). So a tank crosses any candle: up
+  the 2 m face in one step, over the plateau, through the wick, down the far face; the renderer draws
+  the wick as a column of light with a thin core, and a hull passing through light is what it looks
+  like. Only the truck must use a corridor, a ramp, and go round the wick.
 - **The glow** above the plateau, 2 m to 6 m, is light (§0.2): no collision, no rule reads it.
 - **It moves, so it moves smoothly.** The tape shifts one sample per 5 s (§4.13), which is a 4.13 m
   jump in x - fine for a post, not for ground under a wheel. So the candle layer (and, for free, the
@@ -975,8 +980,8 @@ tests are §14.
 - In the moved-tape probe any slot, team, objective lane or claim order changes (§4.13).
 - The candle layer differs between two nodes on one transcript; a plateau is other than 2 m or a ramp
   other than 40%; the chart jumps in x on a sample tick (offset not continuous) or an edge moves more
-  than 0.2 m in a tick; a wick is not in the solids; an objective reads a candle; a unit stands inside
-  a wick; the client's drawn height differs from `candleHeight` by more than 0.1 m (§4.15).
+  than 0.2 m in a tick; a wick is not in the solids; an objective reads a candle; a truck ends a tick
+  inside a wick or an x-face box; a tank or a man is pushed by a wick or an x-face; the client's drawn height differs from `candleHeight` by more than 0.1 m (§4.15).
 - A §0 or §0.1 probe row fails.
 - A §0.2 row is not drawn (client test).
 - WASTED skipped, lobby first (§6; client test).
