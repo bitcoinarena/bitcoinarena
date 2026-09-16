@@ -292,6 +292,25 @@ export function onPost(s, base, index, tick, seamAt, ground) {
   return add(mulFast(dx, dx), mulFast(dz, dz)) <= mulFast(ON_POST, ON_POST);
 }
 
+/**
+ * THE POST IS HELD UNTIL THE BOUND ARRIVES (§2.6 with §0 "Hold is the default"): at a leg boundary of a pair with both
+ * alive, if either tank is not yet on post under the roles of the leg that is ending, the team's role clock starts one
+ * tick later - the swap waits for the bound to finish, and no post moves under a tank still walking to it. Measured at
+ * 1830888 (tools/measure-hold.mjs): of 36 legs whose bounding tank never reached its post, 24 ended with it travelling
+ * and 8 opened on a tank still walking in.
+ */
+export function holdLegs(s, base, tick, seamAt, ground) {
+  for (let w = 0; w < Math.imul(2, TEAMS_PER_SIDE); w++) {
+    const side = w < TEAMS_PER_SIDE ? -1 : 1, team = mod(w, TEAMS_PER_SIDE), k0 = Math.imul(team, 2);
+    const i0 = (k0 << 3) | (side < 0 ? 0 : 4), i1 = ((k0 + 1) << 3) | (side < 0 ? 0 : 4);
+    if (!aliveAt(s, i0) || !aliveAt(s, i1)) continue;
+    const { period } = schedule(s[base + TAC_SEED], side, team);
+    const start = s[base + TAC_ROLE_START + w];
+    const now = idiv((tick | 0) - start, period) & 1, before = idiv(((tick | 0) - 1 - start) | 0, period) & 1;
+    if (now !== before && !teamOnPost(s, base, side, team, ((tick | 0) - 1) | 0, seamAt, ground)) s[base + TAC_ROLE_START + w] = (start + 1) | 0;
+  }
+}
+
 /** Both living tanks of the tank's team stand on post (a dead one does not hold the team back). */
 function teamOnPost(s, base, side, team, tick, seamAt, ground) {
   const k0 = Math.imul(team, 2);

@@ -2162,8 +2162,13 @@ function hullDownHold(hold, side, x, ground) {
 
 const POST_DEPTH = ONE;                          // a tank within 1 m of its post's depth stands
 const REVERSE_TICKS = 120;                       // §0 row 2: at most one reversal of a tank's own travel in any 2 s
-const POST_SIDE = Math.imul(2, ONE);             // and within 2 m of its slot across: a depth move on a hull up to 30
-                                                 // degrees off drifts x; correcting half a metre of it flipped the step
+const POST_SIDE = ONE;                           // and within 1 m of its slot across. It was 2 m: a depth move on a hull
+                                                 // up to 30 degrees off drifts x, and correcting half a metre of it
+                                                 // flipped the step. But "on post" is ruled as 1.5 m (§0 "Hold is the
+                                                 // default"), and 1 m across with the 1 m depth band stays inside it: at
+                                                 // 2 m (1830888) 20.2 points of living-pair ticks were a tank standing
+                                                 // still inside the band and outside 1.5 m, its bound never counted done.
+const POST_SIDE_ARRIVE = ONE >> 1;               // a hull already driving across to its slot goes on to 0.5 m of it
 const CROSSING = Math.imul(4, ONE);              // further than this across from its slot, a tank is still crossing
 const SQUAD_OFFSET = Math.imul(18, ONE);   // a rifleman: Army.Spawn's Rand(-9, 9)
 const TWO = Math.imul(2, ONE);
@@ -2561,8 +2566,12 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, halfX, half
   const dxWant = sub(post, u.x);
   const dxCap = mulFast(walk, dt);
   // What the tank asks for before anything holds it: sim.js keeps a granted move granted until it arrives.
-  u.wantsMove = u.armour && (dz !== 0 || abs(dxWant) > POST_SIDE);
-  let dx = u.armour && (u.tacWait || abs(dxWant) <= POST_SIDE) ? 0 : clamp(dxWant, neg(dxCap), dxCap);
+  // ARRIVE ON THE SLOT, NOT AT THE EDGE OF THE BAND: a standing tank starts to correct only past POST_SIDE; a tank that
+  // moved last tick along x toward its slot (bit 0 and its last x sign, sim.js U_COOLDOWN) keeps going to 0.5 m.
+  const arriving = u.armour && u.tac && ((u.cooldown | 0) & 1) === 1 && (((u.cooldown | 0) >> 3) & 3) === (dxWant > 0 ? 1 : 2);
+  const sideBand = arriving ? POST_SIDE_ARRIVE : POST_SIDE;
+  u.wantsMove = u.armour && (dz !== 0 || abs(dxWant) > sideBand);
+  let dx = u.armour && (u.tacWait || abs(dxWant) <= sideBand) ? 0 : clamp(dxWant, neg(dxCap), dxCap);
   if (u.armour && u.tacWait) dz = 0;       // one of the pair holds: this one waits for its overwatch partner (sim.js)
   // ONE REVERSAL IN TWO SECONDS (WAR_TACTICS.md §0 row 2). A tank's own step may change its x or z sign once; a second
   // change inside REVERSE_TICKS of the first is not taken - the hull stands until two seconds have passed, then goes.
@@ -3187,6 +3196,25 @@ function onPost(s, base, index, tick, seamAt, ground) {
   const dx = sub(s[b], p.x), dz = sub(s[b + 1], hold);
   if (abs(dx) > ON_POST || abs(dz) > ON_POST) return false;
   return add(mulFast(dx, dx), mulFast(dz, dz)) <= mulFast(ON_POST, ON_POST);
+}
+
+/**
+ * THE POST IS HELD UNTIL THE BOUND ARRIVES (§2.6 with §0 "Hold is the default"): at a leg boundary of a pair with both
+ * alive, if either tank is not yet on post under the roles of the leg that is ending, the team's role clock starts one
+ * tick later - the swap waits for the bound to finish, and no post moves under a tank still walking to it. Measured at
+ * 1830888 (tools/measure-hold.mjs): of 36 legs whose bounding tank never reached its post, 24 ended with it travelling
+ * and 8 opened on a tank still walking in.
+ */
+function holdLegs(s, base, tick, seamAt, ground) {
+  for (let w = 0; w < Math.imul(2, TEAMS_PER_SIDE); w++) {
+    const side = w < TEAMS_PER_SIDE ? -1 : 1, team = mod(w, TEAMS_PER_SIDE), k0 = Math.imul(team, 2);
+    const i0 = (k0 << 3) | (side < 0 ? 0 : 4), i1 = ((k0 + 1) << 3) | (side < 0 ? 0 : 4);
+    if (!aliveAt(s, i0) || !aliveAt(s, i1)) continue;
+    const { period } = schedule(s[base + TAC_SEED], side, team);
+    const start = s[base + TAC_ROLE_START + w];
+    const now = idiv((tick | 0) - start, period) & 1, before = idiv(((tick | 0) - 1 - start) | 0, period) & 1;
+    if (now !== before && !teamOnPost(s, base, side, team, ((tick | 0) - 1) | 0, seamAt, ground)) s[base + TAC_ROLE_START + w] = (start + 1) | 0;
+  }
 }
 
 /** Both living tanks of the tank's team stand on post (a dead one does not hold the team back). */
@@ -5295,6 +5323,8 @@ function step(st, throttle, steer, brake, handbrake, practice) {
   // PRESSURE (WAR_TACTICS.md §4.10): each team re-reads its local odds on its own hashed tick, from the positions at
   // the start of this one, and takes or gives ground.
   // The objectives' holders are re-read first, from the same positions; nothing in the odds reads them (§4.11).
+  // A leg does not swap while a tank of its pair is off post (§2.6, §0 "Hold is the default"), read before anything moves.
+  holdLegs(s, O_TACTICS, s[O_TICK], (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z), (x, z) => surfaceAt(st, x, z));
   objectiveHolders(s, O_TACTICS, s[O_TICK], (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z));
   pressure(s, O_TACTICS, s[O_TICK], (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z), (x, z) => surfaceAt(st, x, z));
   // Tanks are pushed out of each other BEFORE anything moves, which is where

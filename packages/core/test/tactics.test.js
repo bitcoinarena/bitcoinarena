@@ -280,3 +280,34 @@ test('a team scoots at most once in 1200 ticks and only with both living tanks o
   }
   assert.ok(scoots > 0, 'no team scooted - nothing checked');
 });
+
+test('a pair swaps roles only with both tanks on post: the post is held until the bound arrives (§2.6, §0 hold)', () => {
+  // On post under the roles of the leg that is ending, read from the positions at the start of the swap tick, with one
+  // tick of travel (0.12 m) on top of 1.5 m.
+  let swaps = 0;
+  for (const seedWord of [1, 2, 3, 4, 5]) {
+    const st = init(seedWord), s = st.i32;
+    const seamAt = (x) => frontlineZ(st.tape, x, 130 * ONE, 85 * ONE), ground = (x, z) => groundAt(st, x, z);
+    const near = (i, tick) => { const side = T.teamOf(i).side, p = T.postOf(s, L.O_TACTICS, i, tick), line = seamAt(p.x) + side * p.depth;
+      let hold = line;
+      if (!p.bounding) { let br = -Infinity; for (let c = -2; c <= 2; c++) { const z = line + c * 2 * ONE; const r = ground(p.x, z - side * 6 * ONE) - ground(p.x, z); if (r > br) { br = r; hold = z; } } }
+      return Math.hypot(s[base(i)] - p.x, s[base(i) + 1] - hold) <= 1.62 * ONE; };
+    for (let t = 0; t < 3600; t++) {
+      const tickBefore = s[L.O_TICK];
+      const pairs = ARMOUR.filter((i) => T.partnerOf(i) > i && alive(s, i) && alive(s, T.partnerOf(i)))
+        .map((i) => [i, T.isBounding(s, L.O_TACTICS, i, tickBefore), near(i, tickBefore) && near(T.partnerOf(i), tickBefore)]);
+      step(st, 0, 0, 0, ONE, 0);
+      for (const [i, was, onPost] of pairs) {
+        if (!alive(s, i) || !alive(s, T.partnerOf(i))) continue;
+        if (T.isBounding(s, L.O_TACTICS, i, s[L.O_TICK]) === was) continue;
+        // a tank of the pair died and came back inside this tick: §3 restarts the clock on the respawn (measured: seed 4
+        // tick 900, tank 48 at 10 hp replaced by a fresh hull) - that is not a leg swap
+        const { side, team } = T.teamOf(i);
+        if (s[L.O_TACTICS + T.TAC_ROLE_START + (side < 0 ? 0 : 6) + team] === s[L.O_TICK]) continue;
+        swaps++;
+        assert.ok(onPost, `seed ${seedWord} tick ${s[L.O_TICK]}: pair of tank ${i} swapped roles with a tank off post`);
+      }
+    }
+  }
+  assert.ok(swaps > 20, `only ${swaps} swaps - nothing checked`);
+});
