@@ -20,8 +20,7 @@ the core does it.
 
 Revised 2026-09-16 19:20 (the owner: *"Do we have an absolutely dynamic war? Is it immersive? What is
 missing?"*): the verdict is §0.1 - **not yet** - with the four reasons and the sections that answer them:
-supply (§3), the assault (§4.12), the tape as the general (§4.13), the client's list (§0.2). Three rulings
-only the owner can make are parked in §15. All of it GAP, all of it RULED HERE.
+supply (§3), the assault (§4.12), the tape as the general (§4.13), the client's list (§0.2). Rulings only the owner can make are parked in §15. All of it GAP, all of it RULED HERE.
 
 Implementation: `packages/core/src/rules/tactics.js` (assignment, roles, slots, scoot, push, objectives -
 armour and, per part B, the infantry's fire teams, rush clock, cover claims and suppression) and the army
@@ -95,6 +94,10 @@ Infantry rows (part B, §8-§12), same probe conditions:
 | Fire pins men down | suppression §11.5 | each side has at least one pinned fire team on 10% to 70% of ticks; a pinned man is never STAND and never steps more than 0.01 m in a tick (a crawl) |
 | **Tanks are feared by men** | coax §4.4 | coax kills are >= 20% of a side's rifle-side deaths per 60 s; a coax burst is never fired with an enemy tank inside 46 m or a fireable truck in reach |
 | **Men are feared by tanks** | AT man §11.7 | AT hits are 15% to 50% of a side's tank deaths per 60 s (below 15% the launcher is decoration, above 50% the tanks are the fodder); every AT shot is from PRONE or COVER at a tank inside 30 m; the §0 floor row (never below 4 tanks on more than 5% of ticks) is re-measured with both arms on and stands |
+| **The sky is not weather** | calls §12.3 | on 25% to 60% of ticks no gunship is aloft (was: airborne 69-93%, two at once); a gunship of the attacking side is aloft within 300 ticks of >= 90% of assault starts; no launch before the first call |
+| **Bombs go where the attack goes** | run-in §12.3 | >= 80% of a side's bombs land inside 27 m (x) of the called lane; during CAS >= 60% land inside 16 m of the objective's point |
+| **Air spares its own** | own-troops check §12.3 | men of a side killed by its own bombs are <= 10% of that side's bomb kills (was 15-40%) |
+| **Air can be driven off** | AT vs gunship §12.3 | over 5 seeds at least 3 gunships are hit and leave without another drop; <= 50% of sorties are driven off (above that the air is decoration) |
 | **Not cannon fodder** | §11.3-§11.5 | a side loses <= 20 men per 60 s, mean over 5 seeds (measured 2026-09-16 on the working tree before these rules: 26.5 to 41.5 a side, mean 32.7 - both sides 53, 60, 61, 70, 83 on seeds 1-5); rifle deaths per man-tick of STAND men are >= 2x those of PRONE and COVER men together |
 
 If a probe on this table fails, the doctrine is not live, whatever the code says.
@@ -122,8 +125,8 @@ measured or read from the core on the branch, each with a section below that fix
    label on a lane. §3 (supply), §4.12.
 
 And what the **player** sees is under-specified: the §0 rows keep the war from looking dumb; they do not
-make it look like war. §0.2 is the client's list. Three things the core cannot give without a ruling
-from the owner - tanks that fire on men, men that hurt tanks, a winner - are parked in §15.
+make it look like war. §0.2 is the client's list. Tanks that fire on men and men that hurt tanks are ruled in (§4.4, §11.7); the
+air is a called arm (§12.3); what only the owner can rule - bombs on the truck, a winner, item 2 - is in §15.
 
 Rows for the four points, same probe conditions, plus the moved-tape probe named in §4.13:
 
@@ -159,6 +162,8 @@ the owner ordered is in the state and not on the screen. Each is a client test.
   it, the line moves and the armies drive after it (§4.13). That is the market on the ground and it is
   the picture the game is named for.
 - **Sound carries and lags.** A gun 100 m off is heard 0.3 s late and quieter; a bomb is felt in the cab.
+- **The air is announced and answered.** Rotor 3 s before entry, the call's banner with its lane, the
+  run-in along that lane, smoke on a driven-off gunship (§12.3).
 - WASTED as §6.
 
 ---
@@ -547,8 +552,8 @@ between assaults there is a lull, the line breathes as §4.10, and men crawl int
   - the infantry in the assault lanes has its lead clamp raised from 8 m to **24 m** across the seam
     (§12.1) and its fire teams are pinned at **240** instead of 120 (§11.5): under fire they still rush;
     only a burst stops them. Men go with the tanks.
-  - the side's next sortie (§12.3) aims at the objective's point instead of the densest cluster: the
-    bomb falls on the defenders.
+  - the start tick **calls a CAS sortie** (§12.3): a gunship for the objective's lane, bombs on its point,
+    ahead of the side's own men.
   - a team **not** in an assault lane changes nothing: the rest of the front holds as §4.10, which is
     what keeps an assault from being a whole-line stampede (item 2, not done).
 - **Consolidation** (after success): the lane's rest is 16 (the forward hull on the seam), ceiling back to
@@ -988,7 +993,8 @@ function of the state, a claim is a function of the seed and the unit id, no dra
 - **Never at the truck** (RULED HERE): §8.2 stands as written for the rifle and the launcher fires at
   tanks only. A 25% rocket of 20 to 35 against a 100 HP truck would end most runs that pass an AT man
   at 30 m; not measured, because it is not allowed. the owner can overrule.
-- Never at a man, never at a wreck (§11.3: a dead index is not a target).
+- Never at a man, never at a wreck (§11.3: a dead index is not a target). At an enemy **gunship** inside
+  30 m when no enemy tank is inside 30 m: 15%, one hit drives it off (§12.3).
 - **State:** `TAC_AT`, one word per AT man (18 words, appended): the tick the launcher is loaded again,
   0 at spawn (loaded). No offset above moves.
 - **What it is for:** with the coax (§4.4) the two arms now fear each other. A tank kills men in the
@@ -1024,14 +1030,71 @@ function of the state, a claim is a function of the seed and the unit id, no dra
   the armour's rules - it is felt in the losses, and bounding overwatch is the answer the doctrine
   already gives.
 
-### 12.3 The air
+### 12.3 The air arm - called, not weather (the owner 2026-09-16 19:30: "the helicopters must act
+tactically and be part of the whole concept"; RULED HERE, GAP)
 
-- Bombs (16 m) fall on the seam band and kill men of both sides (KEEP; 8 m against a man in COVER,
-  §11.4) and pin every team inside 16 m (§11.5). A fire team that lost 2 or more keeps rushing once the
-  word decays; there is no morale.
-- While a side assaults (§4.12) its sortie's aim point is the objective's point, not the densest enemy
-  cluster (`aimPoint`): the bomb goes where the attack goes. The heli's own flight and release are as
-  today; only the aim word changes. GAP.
+**What the core does today** (`rules/air.js`, its own header): both sortie clocks start at zero, a
+gunship launches every 17 s x [0.7, 1.4) per side, enters at ±104 m, flies straight across the map at
+20 m/s along the seam on its own side (26 ± 9 m off it, 19 m up), drops on a timer (1.5 to 4 s, then
+every 1.6 to 3.2 s) while |x| < 92, aims each bomb's z at the densest enemy clump near where it is
+already going, and leaves at |x| > 104. Measured: a gunship is airborne 69 to 93% of the round, two are
+up at once on every seed, 26 to 42% of the bombs land on nobody, bombs kill 60 to 76 men a round and 11
+to 29 of them are the bomber's own side. Nothing calls a sortie, nothing stops one, nothing on the
+ground can touch one, and the first sortie of every round bombs an empty seam. The file's own word for
+it is "weather". Weather is not tactical. This section makes the air a **third arm** of the same war:
+it comes when the war needs it, goes where the attack goes, spares its own men, and can be driven off
+by the men in the holes.
+
+- **Bombs** (KEEP): 16 m, every man inside dies whatever his side (8 m against COVER, §11.4), armour takes
+  `120 x (1 - d/16)`, every team inside 16 m is pinned +300 (§11.5). The blast is not what changes; the
+  **when, where and whether** are.
+- **A sortie is called, never clocked** (the standing clock is gone; both `O_AIR` words become
+  cool-downs). Three calls, per side, each writing `TAC_AIR` (3 words a side: kind, lane, tick):
+  1. **CAS** - the tick a side's assault starts (§4.12): a gunship for the objective's lane. The bomb
+     goes where the attack goes.
+  2. **COUNTER** - the tick an objective's holder flips **against** a side (§4.11): a gunship for the
+     lost lane, launched 300 ticks (5 s) later. Losing ground calls the air; the player sees the answer
+     come.
+  3. **INTERDICTION** - in a lull (no assault by this side, no call pending) 1800 + (h % 1800) ticks
+     (30 to 60 s) after the side's last sortie ended, `h = mix(mix(hash, sideConst), 900 + n)`: a
+     gunship for the lane of the objective the side does **not** hold with the most enemy tanks inside
+     46 m (ties → the lower objective number). Not the densest clump anywhere: the lane the war is
+     about.
+  **One gunship per side aloft** (was two); a call while one is up is queued (one deep, newest wins)
+  and launches the tick the aloft one is gone. **Cool-down 900 ticks (15 s)** per side between launches,
+  calls included. No launch before a call: the first sortie of the round is the first CAS, COUNTER or
+  interdiction, not tick 1 (the recording's wasted first sortie is **not** copied; `csharp-gunships.json`
+  is re-pinned for the new launch rule, and that is a deliberate departure from the vectors, said here).
+- **The run-in is along the lane** (RULED HERE): the gunship enters at the corridor end drawn as today
+  (the `dir` draw stays, protocol) and flies the seam as today, but its **drop window** is the called
+  lane ±27 m in x (one lane either side), not |x| < 92. Inside the window it drops on its timer as
+  today, aimed at: CAS - the objective's point; COUNTER - the densest enemy clump within 27 m of the
+  lane's x (the `aimPoint` scan, windowed); interdiction - the same, windowed. Outside the window it
+  holds its bombs. So a sortie is three to four bombs on one lane, 60 m apart at most, and the player
+  who watches the banner (§0.2) knows where they will fall.
+- **Own troops** (RULED HERE): a bomb is **not released** if a living man or tank of the gunship's own
+  side is inside 16 m of the aim point (landing x, aim z) at the release tick; the drop timer is re-armed
+  (its draw taken, so the stream keeps its shape) and the next window is tried. Measured before: 11 to
+  29 of a side's own men a round died under its own bombs; the §0 row below caps it at 10% of a side's
+  bomb kills. A CAS gunship over an assault lane full of its own men therefore drops **ahead** of them -
+  on the objective's far side - or not at all, which is what close air support is.
+- **Driven off** (RULED HERE, from the owner's "2. yes" §11.7): the AT man's launcher fires at an enemy
+  gunship inside **30 m** horizontally when **no** enemy tank is inside 30 m (tank first, always), from
+  PRONE or COVER, same three draws, hit **15%**; a hit sets the gunship to **LEAVING** (`H_STATE = 2`):
+  it drops nothing more, flies out on its track at 20 m/s and is gone at |x| > 104, and the side's
+  cool-down starts from the hit tick. No wreck, no debris, no second hit: one rocket is enough to send
+  a gunship home, and the sky over a lane full of hidden infantry is not the bomber's. Nothing else
+  touches a gunship: no rifle, no coax, no gun.
+- **A gunship reads no truck** (§1.2): not for the call, the lane, the aim, the own-troops check or the
+  release. A truck under a bomb is a truck under a bomb - and today it takes nothing from a blast
+  (`detonate` reads units only); whether it should is the owner's, §15.
+- **What the player sees** (§0.2): the rotor is heard 3 s before the gunship enters the corridor; the
+  banner names the call (`BEAR CAS - HOLLOW`, `BULL COUNTER - RIDGE`); the run-in is along the named
+  lane; a driven-off gunship trails smoke and climbs out; a held bomb is a gunship that crosses its own
+  men and does not drop. A sortie is again "an event you look up for" - the sentence the C# claimed and
+  the recording measured false.
+- State: `TAC_AIR` 6 words (3 a side) appended; `H_STATE` gains value 2 (LEAVING); `O_AIR`'s two words
+  are cool-down ticks. No offset above moves.
 
 ## 13. Vocabulary (infantry, all required)
 
@@ -1062,6 +1125,13 @@ Replacements walking in from the back edge to the line.
 
 **Follow the push**
 A squad's line moves with the push of the tank lanes it stands in (§12.1).
+
+**Sortie / call**
+A gunship launched for a reason: CAS (an assault's lane), COUNTER (a lost objective's lane, 5 s later),
+INTERDICTION (in a lull, the contested objective). One aloft per side, 15 s between (§12.3).
+
+**Driven off**
+A gunship hit by an AT rocket: LEAVING, no more bombs, out on its track.
 
 **Hull clearance**
 3 m about any living tank; a man steps out of it.
@@ -1124,7 +1194,11 @@ A round at a man 26 to 34 m off: never hits, pins his team.
 - A man in an assault lane of his side leads the seam by more than 24 m, or a man elsewhere by more than
   8 m; a fire team in an assault lane of its side is pinned below 240, or one elsewhere at or above 120
   is not (§4.12, §11.5, §12.1).
-- A side's bomb during its assault aims anywhere but the objective's point (§12.3).
+- A side's CAS bomb aims anywhere but the objective's point; any bomb is released outside the called
+  lane ±27 m, or with an own living unit inside 16 m of its aim point; a gunship launches without a call
+  or inside 900 ticks of the side's last launch, or two of a side are aloft; a LEAVING gunship drops;
+  a launcher fires at a gunship with an enemy tank inside 30 m, or beyond 30 m, or a hit does not set
+  LEAVING; any air word differs with the truck parked and driven, seed equal (§12.3).
 - A launcher fired by a man with `r & 3 != 3`, or while STAND, or at a tank beyond 30 m, at a truck, a
   man or a wreck; a reload outside 480 to 719 ticks; a hit on a roll of 250 or more; damage outside 20
   to 35; a launcher shot that moves the man's rifle clock; a launcher fired in a tick the rifle also
@@ -1139,11 +1213,16 @@ word.
 1. **Tanks fire on men.** RULED yes (the owner 2026-09-16 19:25) → §4.4 coax, §8.3.
 2. **Men hurt tanks.** RULED yes (the owner 2026-09-16 19:25) → §11.7 AT man, §8.1. Open inside it: the
    launcher at the truck - RULED HERE never; one word from the owner changes it.
-3. **A winner.** The round is the truck's; the war has none. Proposal: the side holding two or more
+3. **Bombs on the truck.** Today `detonate` reads units only: a truck under a 16 m blast takes nothing.
+   Proposal: the truck inside a blast takes the armour's `120 x (1 - d/16)` scaled to a shell's band
+   (the courier damage of §1.2 at the centre, nothing at 16 m), after roll-out only (§1.2), no draw;
+   the gunship still never aims at it. **Recommend: yes** - a bomb that spares the truck in the middle
+   of an assault lane looks staged.
+4. **A winner.** The round is the truck's; the war has none. Proposal: the side holding two or more
    objectives at the run's end is the round's **front winner**, shown once on the result screen with the
    three holders; nothing in the score reads it. Cheap, and it is the sentence the player tells someone
    afterwards. **Recommend: yes.**
-4. **Item 2 of the 19:02 list** - wrecks as cover for tanks, side pressure, whole-line retreat - stays
+5. **Item 2 of the 19:02 list** - wrecks as cover for tanks, side pressure, whole-line retreat - stays
    parked as the owner ordered. With §4.12 in, a whole-line retreat is not needed for movement; side
    pressure would be a second general fighting the assault clock. **Recommend: leave out.**
 
