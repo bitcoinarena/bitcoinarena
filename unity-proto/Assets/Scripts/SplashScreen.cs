@@ -91,7 +91,7 @@ public class SplashScreen : MonoBehaviour
         }
         // held here, whatever else thinks it should be driveable
         if (truck != null) truck.controlsLocked = true;
-        if (_autoPlay && Time.frameCount > 3) { _autoPlay = false; Play(); return; }
+        if (_autoPlay && Time.frameCount > 3) { _autoPlay = false; Play(fromAddress: true); return; }
 
         // The page's lobby, asked again every 0.75 s (it asks the signer nodes every 5 s).
         if (Time.unscaledTime - _polledAt > 0.75f)
@@ -171,7 +171,17 @@ public class SplashScreen : MonoBehaviour
         Showing = true;
     }
 
-    public void Play()
+    public void Play() => Play(fromAddress: false);
+
+    /// <summary>
+    /// WHETHER THE END OF THIS RUN GOES BACK TO THE LOBBY. PLAY pressed in the lobby does; so does a run the
+    /// page's address started (`play=1`, what PLAY leaves behind and a reload brings back). That one used
+    /// to be decided by whether a lobby poll had landed yet - auto-play fires on the fourth frame, before
+    /// the first poll - so it never came back (the owner 2026-09-16 14:24, measured on 0.0.1386).
+    /// </summary>
+    public static bool StartedFromLobby(bool lobbyPolled, bool fromAddress) => lobbyPolled || fromAddress;
+
+    void Play(bool fromAddress)
     {
         // Fly in from over the middle of the field.
         //
@@ -187,7 +197,7 @@ public class SplashScreen : MonoBehaviour
                                      : new Vector3(-114f, 20f, 0f),
                         4.2f);
 
-        _fromLobby = _lobby != null;
+        _fromLobby = StartedFromLobby(_lobby != null, fromAddress);
         Showing = false;
         WakeAudio();
         AudioListener.volume = 1f;

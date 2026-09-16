@@ -52,4 +52,19 @@ public class RunEndsAtDeliveredTests
         Assert.IsFalse(SplashScreen.BackToLobby(false, true), "a run still going was taken away from the player");
         Assert.IsFalse(SplashScreen.BackToLobby(true, false), "a session not started from the lobby was sent to it");
     }
+
+    /// <summary>
+    /// A run the ADDRESS started is a lobby run too (the owner 2026-09-16 14:24). PLAY leaves the round's link with
+    /// `play=1`; opened again, auto-play starts the run on the fourth frame, before the first lobby poll, and on
+    /// 0.0.1386 that run ended on "RUN STOPPED - the core said DELIVERED" with no lobby ever coming back.
+    /// </summary>
+    [Test]
+    public void ARunTheAddressStartedAlsoComesBackToTheLobby()
+    {
+        Assert.IsTrue(SplashScreen.StartedFromLobby(lobbyPolled: false, fromAddress: true),
+            "auto-play fired before the first lobby poll, and its run was left on the banner");
+        Assert.IsTrue(SplashScreen.StartedFromLobby(lobbyPolled: true, fromAddress: false), "PLAY in the lobby");
+        Assert.IsFalse(SplashScreen.StartedFromLobby(lobbyPolled: false, fromAddress: false),
+            "the offline title screen's PLAY has no lobby to go back to");
+    }
 }

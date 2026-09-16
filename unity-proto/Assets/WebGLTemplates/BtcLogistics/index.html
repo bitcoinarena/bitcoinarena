@@ -473,12 +473,32 @@
     // the same as once. The chain and the advert go - they are what tells Unity there is a session to
     // open - and the address is the lobby's own again: the bare root, or the lobby link PLAY left.
     // The round and the entry stay for whatever reads the finished run; the next join replaces them.
+    //
+    // A RUN THAT STARTED FROM A ROUND'S OWN LINK HAS A LOBBY TOO (the owner 2026-09-16 14:24: "RUN STOPPED, cannot
+    // pick the next round"). PLAY leaves the address as the round's link with `&play=1`; opened again - a
+    // reload, a restored tab, a phone bringing the tab back - that address joins the round with no lobby
+    // behind it. Measured on 0.0.1386: DELIVERED, the banner, and no lobby, ever. So a page that has no
+    // lobby goes back to the lobby its link names - the same query without the round and `play` - and
+    // starts it here, without a reload.
     window.BLWP_RUN_OVER = (word) => {
       window.BLWP_CHAIN = undefined;
       window.BLWP_ADVERT = undefined;
-      const back = typeof window.BLWP_LOBBY_BACK === 'string' ? window.BLWP_LOBBY_BACK : '';
+      const noLobby = !window.BLWP_LOBBY_ACT;
+      let back = typeof window.BLWP_LOBBY_BACK === 'string' ? window.BLWP_LOBBY_BACK : '';
+      if (noLobby && typeof window.BLWP_LOBBY_BACK !== 'string') {
+        const q = new URLSearchParams(location.search.replace(/^\?/, ''));
+        q.delete('round'); q.delete('play');
+        const s = q.toString();
+        back = s ? '?' + s : '';
+      }
       if (location.search !== back) history.replaceState(null, '', location.pathname + back);
       window.BLWP_RUN_ENDED = String(word || '');
+      if (noLobby && !window.BLWP_LOBBY_STARTING) {
+        window.BLWP_LOBBY_STARTING = true;
+        showTheLobbyIfOneWasNamed()
+          .then((shown) => console.log('[blwp] the run is over: ' + (shown ? 'the lobby is up' : 'this page names no lobby')))
+          .catch((e) => console.error('[blwp] the run is over, and that lobby cannot be read: ' + e.message));
+      }
     };
     async function joinTheRoundIfOneWasNamed() {
       if (typeof BLWPCLIENT === 'undefined') return;
