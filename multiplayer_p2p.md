@@ -209,11 +209,15 @@ text; this section is what the protocol commits to.
   per round and **moves during the round** as samples arrive - one per 5 s -
   so the front scrolls and redraws while the player drives, and the armies
   follow it at their own speed.
-- **The front is drawn as candlesticks.** The client draws the tape as candles
-  standing on the ground - green up, red down, translucent, 6 m tall, readable
-  from above and from the cab - and the seam as the moving-average line. The
-  candles are light, not solids: nothing in the simulation reads them, so a
-  client that draws none plays the identical round.
+- **The front is candlesticks, and the candles are terrain.** Four samples
+  make a candle: a 2 m plateau the truck drives on with a 5 m ramp on every
+  side, a solid wick, and a glow to 6 m - green up, red down, readable from
+  above and from the cab. The plateaus and wicks are in the core's ground
+  (`surfaceAt`), so they are settled state like the relief and the craters:
+  a hull-down tank sits behind a candle's edge, a rifleman hides under its
+  lip, a heavy truck may not make the climb, and every node replays the same
+  chart at the same metre. The chart scrolls continuously toward the post
+  office at 0.83 m/s as samples arrive (WAR_TACTICS.md §4.15).
 - **The price is shown to the cent**: `$75,000.02`, always, with the lead
   against the round's open beside it (`BULLS +0.42%`).
 - **The market decides who wins the war.** There is no simulated winner: it is

@@ -167,21 +167,22 @@ the owner ordered is in the state and not on the screen. Each is a client test.
   candles, big enough to read from above and in 3D").** The tape (§4.13) is a price series and the seam is its 21-sample box average - an **SMA(21)**.
   So the client draws what a trader already knows: **candlesticks** on the ground for the raw tape and
   the seam as the moving-average line the armies fight on. A candle is 4 samples (20 s at the 5 s
-  cadence): 16 candles across the 260 m map, each 16.5 m wide, body from open-z to close-z, wick from
-  low to high, green when close > open (a rising price - the bulls' ground) and red when it fell (the
+  cadence): 16 candles across the 260 m map, each 16.5 m wide, body from open-z to close-z (a 2 m
+  plateau the war drives on, §4.15), wick from low to high (a solid pillar), green when close > open (a rising price - the bulls' ground) and red when it fell (the
   bears'). The newest candle, at the miner's end, is **forming**: it grows as samples arrive, and the
   whole chart scrolls 4.13 m toward the post office per sample. From above - map, minimap, gunship - it
   reads as a TradingView chart with two armies on it; from the cab the ground under the truck is a red
-  or a green band and the line ahead is the front. **Size (the owner's order): readable from above and in
-  3D.** A candle body is a translucent volume standing on the ground, **6 m tall** (a tank hull is 3 m:
-  a tank drives *inside* a candle and is seen through it), 16.5 m wide, as long in z as open-to-close
-  (up to 122 m); the wick is a 1 m pillar **9 m tall** from low to high; the forming candle pulses. From
-  300 m up it is a chart; from the cab it is a green or red glass wall the war stands in. **Light, not
-  a solid**: no collision, no cover, no hull-down, no line of sight, no rule in the core reads a candle
-  - the core hands the client the 64 samples and nothing else, and a client that drew no candles would
-  play the identical round. The bucket size is the client's (a 3- or 6-sample candle is the same tape).
-  Client test: the candles' open, high, low, close equal the tape's per bucket, the drawn line equals
-  `seam(x)` within 0.5 m at every metre, and a body is >= 6 m tall on screen from any camera.
+  or a green band and the line ahead is the front. **The candles are terrain (the owner 2026-09-16 20:10:
+  "make the candles drivable, a small ramp on every side, so they are not a foreign body but part of
+  the world - and with that, collision").** §4.15 is the rule: a candle body is a **2 m plateau** the
+  truck, the tanks and the men drive and walk on, with a 5 m ramp skirt on every side; the wick is a
+  solid 1 m pillar 9 m tall; and above the plateau the body glows to **6 m** as light, so it reads in
+  3D from the cab and as a chart from 300 m up. The plateau is in the core's ground (it decides where
+  a hull stands, where a man hides, whether a loaded truck makes the climb); the glow is the client's.
+  The bucket is **fixed at 4 samples** (it is terrain now, not a view). Client test: the candles' open,
+  high, low, close equal the tape's per bucket, the drawn plateau, ramps and wick equal the core's
+  `candleHeight` within 0.1 m at every metre, the glow reaches 6 m, and the line equals `seam(x)`
+  within 0.5 m.
 - **The price is shown to the cent** (the owner 2026-09-16 20:00): `$75,000.02`, thousands separator, two
   decimals, always - HUD, spectate, result. Beside it the **lead** (§4.14): `BULLS +0.42%` or
   `BEARS -0.17%` against the round's open, from the same words. The core carries the tape in **cents**
@@ -368,6 +369,8 @@ the owner ordered is in the state and not on the screen. Each is a client test.
   rise from the candidate to 6 m toward the enemy; the tank holds the candidate with the **largest
   rise** (ties → the first, nearest the hold line, in scan order -4, -2, 0, +2, +4). That is the point
   behind the crest with the gun over it.
+- A candle's plateau edge (§4.15) is a crest like any other to this search: the chart's steps are
+  where the overwatch tanks sit, and they creep with the scroll.
 - **Reverse slope** is the same rule seen from the other side: sit behind the crest, gun just over. It is
   **not** a second behaviour in this core.
 - BOUNDING holds the forward line as given, no crest search: it is the one that moves.
@@ -709,6 +712,60 @@ in. All of it from two words - the round's open and the newest sample - so the t
   down 0.5% is not beaten - it still holds its objectives with local odds and can still win an assault.
   The market tilts the war, it does not play it. The §0.1 rows say how much.
 
+### 4.15 The candles are terrain (the owner 2026-09-16 20:10; RULED HERE on the numbers, GAP)
+
+the owner: *"Does it not make sense to make the candles drivable? A small ramp on every side, so it is
+not a foreign body in the world but part of it. The ramp as small as possible so the candle shape
+stays. And with that, collision."* Yes - and it moves the candles out of the client and into the core:
+a thing the truck drives on is settled state (multiplayer_p2p.md §0.5), so the candle geometry is a
+**height layer** the core's surface reader adds, exactly as the craters are a layer it subtracts
+(`surfaceAt = ground + candles - craters`). A client draws what the core computes, or it desyncs.
+
+- **The body is a plateau**, height **H = 2 m**, footprint the candle's x-slot (16.5 m) by its
+  open-to-close in z, at the seam's scale (§4.13). Consecutive candles share an edge (close of one is
+  the open of the next), so the chart is a **staircase of plateaus** at one height, not sixteen boxes:
+  in x there is no step between neighbours where their bodies overlap in z, and where they do not, the
+  step is the chart's own step.
+- **The ramp skirt**, width **R = 5 m**, on every free edge of the union of bodies: `h = H x
+  clamp(d / R, 0, 1)`, `d` the distance to the nearest edge from outside, so the ramp is a straight 40%
+  grade (22°). Small enough that the body's edge is still a line from above; the terrain's own relief
+  reaches 55% (`RELIEF_PEAK` 6 m over half a lattice cell), so nothing here is steeper than a hill the
+  world already has. A heavy truck that cannot make 40% cannot make the red candle - that is cargo
+  physics (`slopeSin`), not a new rule, and it is the point.
+- **The wick is a solid**: a 1 m x 1 m pillar, 9 m tall, from low to high in z at the candle's centre
+  x, in the solids list (`resolveSolids` for the truck: it is a wall; for a unit the crater push with
+  a 0.5 m radius, §8.3's class). A wick is the one thing in the chart that is not drivable, and it is
+  narrow enough to miss.
+- **The glow** above the plateau, 2 m to 6 m, is light (§0.2): no collision, no rule reads it.
+- **It moves, so it moves smoothly.** The tape shifts one sample per 5 s (§4.13), which is a 4.13 m
+  jump in x - fine for a post, not for ground under a wheel. So the candle layer (and, for free, the
+  seam: `frontlineZ` is read at `x + offset`) carries a **continuous scroll**: `offset = -4.13 m x
+  (tick - sampleTick) / 300`, reset to 0 on the sample tick as the tape shifts. The chart glides toward
+  the post office at 0.83 m/s and never jumps. A **rescale** (a new window high or low) moves body
+  ends in z; they **lerp to their targets over the 300 ticks** to the next sample, so an edge moves at
+  most 0.2 m per tick in the worst case (a full ±61 m rescale) and a few centimetres in the usual one.
+  State: `TAC_SAMPLE_TICK` (one word) and the previous 64-sample targets (a second tape, 64 words) -
+  appended, no offset above moves.
+- **What it does to the war**, all of it emergent from rules already written:
+  - **Hull-down** (§4.1): the overwatch tank's crest search finds a plateau edge as it finds a hill: a
+    tank sits below the edge with its gun over it. The chart's steps are the war's positions, and they
+    walk 0.83 m/s toward the post office, so a hull-down tank re-reads its candidate and creeps with
+    it (a step, not a fidget: the §0 wiggle row is measured with the scroll on).
+  - **Cover** (§11.3): a plateau edge that stands between a man and the enemy is a **candle lip**, a
+    third kind of cover place: one place every 4 m along the edge, at the foot of the ramp on the man's
+    side + 0.5 m; same eligibility, same claim order. It scrolls; the claim is re-read each tick and
+    the man crawls with it. Cover from the lip is COVER (§11.4): 2 m of ground is a wreck's worth.
+  - **Lines and posts**: unchanged - they are z from the seam; the men walk over the plateaus.
+  - **Objectives** (§4.11) read the seed's relief only, never the candles (they move; an objective
+    does not). **Craters** cut into a plateau as into ground. **Air** flies at 19 m, above the glow.
+  - **The truck** (§1.2): a plateau under it is ground; a wick is a wall; nothing in the war changes for
+    it. A wreck on a plateau is a wreck on a plateau.
+  - **Item 2** stays out: no rule here lets a tank read a wreck or move a whole line.
+- **Why 2 m and not 6**: a 6 m plateau needs a 15 m ramp at the same grade, which on a 16.5 m body is
+  no plateau at all - the candle becomes a ridge. Two metres hides a hull (3 m) to the turret, hides a
+  prone man entirely, keeps the ramp short enough that the body's edge is still a line, and the glow
+  gives the 6 m the eye wants. the owner can retune H and R; the grade `H / R` is the number that matters.
+
 ---
 
 ## 5. Vocabulary (all required)
@@ -780,6 +837,11 @@ Ticks on which neither side assaults. The line breathes as §4.10; men crawl int
 **Supply**
 `held - lost` over the objectives; divides a side's replacement wait (§3). Losing ground is felt as
 fewer tanks.
+
+**Candle**
+Four samples of the tape as terrain: a 2 m plateau with 5 m ramps, a solid wick, a glow to 6 m. Green
+up, red down. Scrolls 0.83 m/s toward the post office. Hull-down crests and candle-lip cover come with
+it (§4.15).
 
 **Lead / momentum**
 Which side the price favours against the round's open, and by how much in 5/20/50 bp steps. Tilts
@@ -865,6 +927,10 @@ tests are §14.
 - Two seeds give the same tape; the tape changes on a tick with no sample; a sample changes anything
   but the tape (§4.13).
 - In the moved-tape probe any slot, team, objective lane or claim order changes (§4.13).
+- The candle layer differs between two nodes on one transcript; a plateau is other than 2 m or a ramp
+  other than 40%; the chart jumps in x on a sample tick (offset not continuous) or an edge moves more
+  than 0.2 m in a tick; a wick is not in the solids; an objective reads a candle; a unit stands inside
+  a wick; the client's drawn height differs from `candleHeight` by more than 0.1 m (§4.15).
 - A §0 or §0.1 probe row fails.
 - A §0.2 row is not drawn (client test).
 - WASTED skipped, lobby first (§6; client test).
@@ -1008,6 +1074,8 @@ function of the state, a claim is a function of the seed and the unit id, no dra
   side he stands on):
   - a wreck has **2** places: `(wreck x ± 2 m, wreck z + side x 3.6 m)` - behind the hull, 0.6 m clear of
     its 3 m circle;
+  - a **candle lip** (§4.15) has one place every 4 m along a plateau edge that stands between the man's
+    post and the enemy side, at the foot of the ramp on his side + 0.5 m; it scrolls with the chart;
   - a crater has **4** places, on the rim 1 m inside it: `centre + (R - 1 m) x (sin a, side x cos a)` for
     `a = -50°, -20°, +20°, +50°` from the seam normal, so the four lie on the near lip with the rifle over
     the far edge. Integers: `sin/cos` of those four angles are four constants in Q16.16.
