@@ -11,10 +11,18 @@ the owner's HARD rules changed. Where this file **rules** something the owner di
 **RULED HERE** so he can overrule it. Where the code on the branch does not yet do what this file says,
 the line is marked **GAP**.
 
-Implementation: `packages/core/src/rules/tactics.js` (assignment, roles, slots, scoot, push - armour and, per
-part B, the infantry's fire teams and rush clock) and the army step `packages/core/src/rules/army.js`
-(moves a unit to what tactics.js hands it, picks the hull-down spot, walks a man). `sim.js` wires spawn,
-respawn, fire, touch, run-over. No other file decides where a tank or a man goes.
+Amended 2026-09-16 19:02-19:05 (the owner's order, items 1 and 3 of his list, nothing else): **objectives**
+(§4.11: RIDGE, HOLLOW, GAP - no truck is an objective, §1.2) and **infantry that hides** (§11.3-§11.5:
+cover in craters and wrecks, prone, suppression; the earlier "no cover" ruling of §11.3 is **OVERRULED**).
+Item 2 of his list (wrecks as cover for tanks, side pressure, whole-line retreat) is **not** in this file:
+no rule below lets a tank, a gun or the truck read a wreck. Everything added by that order is **GAP** until
+the core does it.
+
+Implementation: `packages/core/src/rules/tactics.js` (assignment, roles, slots, scoot, push, objectives -
+armour and, per part B, the infantry's fire teams, rush clock, cover claims and suppression) and the army
+step `packages/core/src/rules/army.js` (moves a unit to what tactics.js hands it, picks the hull-down spot,
+walks a man, writes his posture). `sim.js` wires spawn, respawn, fire, touch, run-over, wrecks. No other
+file decides where a tank or a man goes.
 
 Sections 0-7 are armour (part A). Sections 8-14 are infantry (part B). §0 and §6 cover both.
 
@@ -27,26 +35,44 @@ battlefield** - to the player, from the cab. This section is what "smart" means 
 that a probe can fail it. Every number is measured over 5 seeds x 3600 ticks with the truck held in its
 bay unless said otherwise.
 
+How the rows are read (RULED HERE, after the first probe run, so two probes cannot disagree):
+- **Holding** = the rules gave the tank no step of its own this tick (dx = dz = 0 before separation,
+  craters and the field clamp). A hull moved only by the separation push is still holding.
+- **A direction flip** counts the tank's **own** step only, outside separation: the sign of dx or of
+  dz reversing between two ticks in which the tank stepped.
+- **On the line** = a living tank within 40 m (z) of its post. A hull further than that - a respawn
+  walking in from the back edge - is a **column**, and rows about the line (2, 4b, 7) do not count it.
+- **Tolerances.** A row written "at no tick" / "every metre" is read at the tolerance given in the row;
+  where none is given it is 100%. A tolerance is a measurement allowance for respawns and transit, not
+  a licence: a row that fails at its tolerance is red.
+
 | The player sees | The rule that makes it | Probe passes when |
 |---|---|---|
 | A line of tanks, not a pile | frontage slots §2.4 | no 3 living tanks of one side all within 12 m of each other (the tank-tank minimum, §1.1), on more than 2% of tank-ticks. RULED (the owner 2026-09-16): §2.4 puts a pair's hulls 12 m apart and neighbouring inner hulls 15 m apart, so every interior tank is in a 20 m triple by design - that is formation, not a clump. Two tanks at 12 m is a legal pair; three inside 12 m is a pile. The geometry is not spread to suit a probe. (was: groups of 9 to 20 within 20 m) |
-| Hulls that hold still on a post, no wiggle | hold = stand, §4.1 | a tank on its post moves < 0.02 m/tick; a tank reverses its travel direction (x or z sign flip) at most once in any 2 s, outside a separation push |
+| Hulls that hold still on a post, no wiggle | hold = stand, §4.1 | a tank on its post moves < 0.02 m/tick of its own step; a tank on the line reverses its own travel direction (x or z sign flip) at most once in any 2 s window - a second flip inside 2 s is a fidget, and fidgets are < 2% of all flips |
 | Nobody pressed against anybody | 12 m bubble §1.1 | the separation push undoes a tank's own step on < 5% of tank-ticks (was 42.5%) |
-| Something is always happening | role swap §2.6 (a leg is 6 to 10 s) and scoot §4.3 | in any 10 s window at least one tank per side changes post; at no tick are more than half a side's living tanks moving |
+| Something is always happening | role swap §2.6 (a leg is 6 to 10 s) and scoot §4.3 | (a) in any 10 s window at least one tank per side changes post; (b) on >= 98% of ticks no more than half of a side's tanks on the line are moving (columns walking in do not count) |
 | Leapfrog, in pairs | bounding overwatch §2.6 | of a pair, never both bounding; the bounding one is 14 m nearer the seam than its partner when both are on post |
 | Fire, then move - cause and effect | shoot-and-scoot §4.3 | after a team's shot, that team changes slot within 1 tick unless hemmed in (§4.3) or inside its 10 s scoot cool-down |
-| A tank faces what it fights | heading rule §4.5 | a holding tank's hull points at the enemy side (heading within 30 degrees of the seam normal) on > 95% of holding ticks |
+| A tank faces what it fights | heading rule §4.5 | a holding tank on the line points its hull at the enemy side (heading within 30 degrees of the seam normal) on > 95% of holding ticks |
 | Relocation reads as a decision, not a drift | adjacent-slot rule §4.3 | a team never crosses another team's lane while relocating; a slot change moves a team exactly 27 m in x |
-| The kill zone is covered | slots and gun range §4.2 | every metre of the seam with x in [-81, 81] is inside 46 m of at least 2 living tanks of each side while that side has >= 6 alive |
+| The kill zone is covered | slots and gun range §4.2 | on the ticks on which a side has >= 6 alive, >= 95% of the seam-metre samples (x in [-81, 81], every metre, every tick) are inside 46 m of at least 2 of that side's living tanks - a tank in transit counts if its gun reaches; a tank still walking in from the back edge does not reach. RULED (the owner 2026-09-16): coverage is the share of seam-metre samples, not "every metre covered on >= 95% of ticks"; that tick-union reading cannot coexist with bounding overwatch, scoot or respawn. The bar stays 95%. |
 | Nobody runs from the truck, nobody chases it | §1.2 | a tank's x and z targets are the same with the truck present and absent (bit-identical posts, truck parked vs truck driving) |
 | **A war, not a shooting gallery: ground changes hands** | pressure §4.10 | in every 60 s window at least one team of each side crosses the seam in its lane, and at least one team of each side gives ground; the forward line of some team differs from its 16 m default on > 30% of ticks |
 | Losses and replacements, both sides, all round | gun §4.4, reinforce §3 | neither side is at full 12 with zero losses over any 60 s window while the other side has a tank inside 46 m; neither side falls below 4 living tanks on more than 5% of ticks |
 | The two lines are not mirror images | §2.4, §4.10 | the two sides' slot orders differ on every seed; the two sides' mean push depth differs by >= 4 m on > 50% of ticks |
+| **An assault goes for something** | objectives §4.11 | of team-ticks with push >= 16 (forward hull on or across the seam), >= 60% are teams on an objective's own lane (by chance: 3 lanes of 7 slots); the mean push of teams on objective lanes exceeds the mean push of all other teams by >= 6 m |
+| Every objective is fought over | §4.11 | on >= 60% of ticks each of the three objectives has a living tank of **each** side inside 46 m of its point |
+| Objectives change hands | holder §4.11 | on >= 4 of 5 seeds at least one objective's holder goes from one side to the other inside the 3600 ticks |
+| The player knows what the war is for | markers §4.11 (client) | the client draws RIDGE, HOLLOW and GAP at the core's points in the holder's colour, within 1 tick of the core's words (client test) |
+| No truck is an objective | §1.2, §4.11 | objective lanes, points and holders are bit-identical with the truck parked and the truck driven through the line, seed equal |
 
 the owner 2026-09-16 (during this review): *"We want an exciting game for the player and the war must
-really look like war - not tanks stood in a row playing each other dumb. A DYNAMIC WAR."* The last
-three rows are that order. A static line of six slots that never moves in z is **not** this spec, even
-if every other row passes. §4.10 is the rule that moves it.
+really look like war - not tanks stood in a row playing each other dumb. A DYNAMIC WAR."* The three
+rows from "A war, not a shooting gallery" are that order. A static line of six slots that never moves in
+z is **not** this spec, even if every other row passes. §4.10 is the rule that moves it. The five
+objective rows are his 19:02 order - *"an assault visibly goes for something, not a seam with no
+reason"* - and §4.11 is the rule that aims it.
 
 Infantry rows (part B, §8-§12), same probe conditions:
 
@@ -57,8 +83,12 @@ Infantry rows (part B, §8-§12), same probe conditions:
 | A ragged line with depth, not a fence | standoff scatter §11.1 | z spread (sd) of a side's men on post between 4 m and 12 m; x spread between 20 m and 60 m |
 | Infantry goes where the armour goes | follow the push §12.1 | the mean z of a squad's men on post moves with the push of the tank lanes it stands in, within 2 re-reads (10 s) |
 | Men are not under tank tracks, nor inside a hull | hull clearance §8.3 | no living man inside 3 m of a living tank's centre on more than 0.5% of man-ticks |
-| Men fall, columns walk in | rifle §11.4, respawn §10 | every 60 s window each side loses >= 3 men and receives >= 3; a replacement walks in from the back edge, never appears on the line |
-| Nobody flees the truck, the truck runs men down | §8.2 | a man's target post is identical with the truck present or absent; a man inside 3.6 m of a truck at >= 2.5 m/s is dead that tick |
+| Men fall, columns walk in | rifle §11.6, respawn §10 | every 60 s window each side loses >= 3 men and receives >= 3; a replacement walks in from the back edge, never appears on the line |
+| Nobody flees the truck, the truck runs men down | §8.2 | a man's target post is identical with the truck present or absent, and no cover claim or posture rule takes a truck argument; a man inside 3.6 m of a truck at >= 2.5 m/s is dead that tick |
+| **Men hide** | posture §11.4 | of man-ticks of living men on the line (within 40 m of post) who did not step, >= 85% are PRONE or COVER; a man in the open who did not step while his fire team is under fire (§11.5) is PRONE on 100% of those man-ticks |
+| Wrecks and craters are used | cover places §11.3 | on >= 70% of the ticks on which a side has a free eligible place within 12 m of the post of one of its men on the line, at least one man of that side is on a place (within 0.5 m) |
+| Fire pins men down | suppression §11.5 | each side has at least one pinned fire team on 10% to 70% of ticks; a pinned man is never STAND and never steps more than 0.01 m in a tick (a crawl) |
+| **Not cannon fodder** | §11.3-§11.5 | a side loses <= 20 men per 60 s, mean over 5 seeds (measured 2026-09-16 on the working tree before these rules: 26.5 to 41.5 a side, mean 32.7 - both sides 53, 60, 61, 70, 83 on seeds 1-5); rifle deaths per man-tick of STAND men are >= 2x those of PRONE and COVER men together |
 
 If a probe on this table fails, the doctrine is not live, whatever the code says.
 
@@ -102,6 +132,10 @@ If a probe on this table fails, the doctrine is not live, whatever the code says
   the ramp takes no hit and is never wrecked by fire (measured: 8 seeds, 60 s idle in the bay, 0 hits, 0 wrecks).
   The outer slots are **not** moved away from the bay to hide this. After roll-out the truck-fire rule stands.
 - Otherwise **ignore** the truck.
+- **No truck is an objective (the owner 2026-09-16 19:05).** One war carries many trucks and ghosts; a war
+  that moved toward a truck would move toward one player. So no objective (§4.11) is placed, weighted,
+  held or re-read from a truck - not its position, its crossing of the seam, its route, its load. The
+  guns answer a truck that comes near (above); the war's movement ignores every truck.
 - **Touch either way = truck dies immediately** (WRECKED). That used to work and it stays. Touch = a
   living tank's hull circle (radius 3.0 m) overlaps either of the truck's two body circles (radius 1.275 m,
   centres +2.0 m and -1.8 m along the nose): `d < 4.275 m`. Tested against last tick's tank positions,
@@ -240,6 +274,11 @@ If a probe on this table fails, the doctrine is not live, whatever the code says
 - The whole **team** moves: both hulls keep their ±6 m and their own depth lines. That is the **staggered
   column** while moving (§4.6). Roles do not change on a scoot.
 - Not away from the truck, not toward it: the truck is not an input.
+- **Toward the objective** (§4.11, GAP): a team that has an objective and is **not** on its lane takes the
+  side nearer the lane instead of the hashed side, if that slot is free; otherwise the rule above as
+  written. A team **on** its objective lane scoots as written: teams rotate through the lane, and the one
+  next to it moves in behind. The objective is a place fought over, not a parking lot, and the
+  shoot-and-scoot row of §0 holds for it too.
 - The scoot is written on the shooter's tick; the partner reads the new slot on its own step of the same
   tick if its index is higher, else the next tick. One tick of skew, protocol.
 
@@ -299,11 +338,14 @@ no truck. **RULED HERE**, numbers included, so it can be built without guessing;
   init 0). Both of the team's lines are `push` nearer the enemy: forward line `16 - push`, overwatch
   line `30 - push`. The seam itself is `push = 16`; `push = 24` is 8 m across.
 - **Re-read every 5 s (300 ticks) per team**, on a tick hashed from `(seed, side, team)` so the teams do
-  not all step together:
-  - `own >= foe + 2` → `push += 8`, up to **24** (the forward hull 8 m across the seam, the overwatch
-    hull 6 m short of it). Taking ground.
-  - `foe >= own + 2` → `push -= 8`, down to **-8** (forward line 24 m, overwatch 38 m). Giving ground.
-  - otherwise `push` steps one 8 m **toward 0**. The line drifts home when nobody has the upper hand.
+  not all step together. `w` is the team's objective weight (§4.11): 2 on an objective's lane, 1 next
+  to it, 0 elsewhere.
+  - `own + w >= foe + 2` → `push += 8`, up to **24** (the forward hull 8 m across the seam, the overwatch
+    hull 6 m short of it), and on an objective's lane up to that objective's **goal** (§4.11). Taking
+    ground.
+  - `foe >= own + 2 + w` → `push -= 8`, down to **-8** (forward line 24 m, overwatch 38 m). Giving ground.
+  - otherwise `push` steps one 8 m **toward its rest**: 0, or +8 on an objective's lane (§4.11). The line
+    drifts home when nobody has the upper hand - and home, at an objective, is leaning in.
 - **Overrun** (§1.1) is measured from the team's own forward line, not from the seam: a hull more than
   14 m past `16 - push` falls back to `34 - push`. Otherwise every push across the seam would be undone
   by the fall-back rule the same tick.
@@ -319,6 +361,71 @@ no truck. **RULED HERE**, numbers included, so it can be built without guessing;
   never equal everywhere; some stretch is always being taken and some other given. The §0 rows above
   are the check that it actually happens; if they fail, the steps or the thresholds are retuned, not
   the rows.
+
+### 4.11 Objectives - what the assault goes for (the owner 2026-09-16 19:02-19:05)
+
+the owner: *"an assault visibly goes for something. Not a seam with no reason."* Three named objectives on
+the seam band, **exactly three**, hashed from the round seed and the ground the seed made, so every signer
+node holds the same three. Not the truck's crossing: the owner overruled that at 19:05 (§1.2) - the war has
+many trucks and ghosts and must never move toward one. So all three are **ground**, and ground is a pure
+function of the seed (`groundFromSeed`). **GAP**, all of it, and **RULED HERE** where he gave no number.
+
+- **Where they can be.** On the five inner slot lanes, `slot = 1..5` (x = -54, -27, 0, 27, 54). The outer
+  lanes (±81) are levelled apron (`LEVEL_X` 86 m) and one of them holds the bay: nothing is fought for
+  there. Each objective is a **lane** and a **point** on it, `(slot x, seam(slot x))`, read at init; the
+  point rides the seam's curve like every post, so it moves when the tape moves and the lane does not.
+- **Reading the ground**, per lane, over the seam band: the 21 samples `z = -40 .. +40 m` in 4 m steps at
+  the lane's x, `heightAtWorld` of the round's ground (the relief, craters excluded - a crater is not
+  there at init and an objective does not move for one). Per lane: `top` = the highest, `bottom` = the
+  lowest, `relief = top - bottom`.
+- **The three, in this order, each the best of the lanes still free**, where "free" is: not taken, and
+  not next to a taken lane while a lane at least two away is still free (so the three do not sit on
+  three neighbouring lanes and leave half the front without a reason):
+  1. **RIDGE** - the lane with the highest `top`. The crest: the hull-down gun over it (§4.1) sees the
+     most of the seam. Ties → the lower slot number.
+  2. **HOLLOW** - the lane with the lowest `bottom`. The dip: the ground that hides an assault going
+     across, and the one a crater usually deepens. Ties → the lower slot number.
+  3. **GAP** - the lane with the smallest `relief`. The flat: the fastest way across for anything on
+     tracks or wheels. the owner's name for it was ROAD; there is no drawn road in the core (§4.1) and the
+     truck's route is not an input, so GAP is the driveable stretch the ground itself offers.
+  Measured on seeds 1-5 (working tree, 2026-09-16), lane = slot, x in metres:
+
+  | seed | RIDGE | HOLLOW | GAP |
+  |---|---|---|---|
+  | 1 | 3 (x 0, top 6.23 m) | 1 (x -54, bottom 1.91 m) | 5 (x 54, relief 2.41 m) |
+  | 2 | 2 (x -27, top 6.09 m) | 4 (x 27, bottom 1.92 m) | 1 (x -54, relief 1.62 m) |
+  | 3 | 4 (x 27, top 6.31 m) | 1 (x -54, bottom 2.03 m) | 5 (x 54, relief 1.47 m) |
+  | 4 | 5 (x 54, top 5.58 m) | 1 (x -54, bottom 1.21 m) | 3 (x 0, relief 1.59 m) |
+  | 5 | 2 (x -27, top 5.98 m) | 4 (x 27, bottom 1.59 m) | 3 (x 0, relief 2.76 m) |
+
+  Five seeds, five different triples, three lanes apart or more on every one of them. Without the
+  "not next to a taken lane" clause seeds 1 and 2 put two of the three on neighbouring lanes.
+- **State:** three words in `O_TACTICS` (`TAC_OBJ`, one per objective: lane in the low byte, holder in the
+  next: 0 none, 1 bull, 2 bear). Written at init and by the holder re-read; read by `pressure`, `scoot`
+  and the client. No draw.
+- **Weight `w`** (read by §4.10): a team is **on** an objective when its slot is the objective's lane
+  (`w = 2`), **next to** one when its slot is the lane ±1 (`w = 1`), else `w = 0`. A team next to two
+  objectives is still `w = 1`. So the odds are weighted toward the objectives, as the owner ordered, without
+  a tank ever leaving its lane for one: the line is still §2.4, the scoot still 27 m (§4.3, "toward the
+  objective"). What changes is **who pushes and how far**.
+- **Rest** (read by §4.10): a team on an objective's lane drifts to `push = +8` when nobody has the upper
+  hand, not to 0. Its forward hull leans in 8 m short of the seam. Nowhere else.
+- **Goal** (read by §4.10): the push ceiling on an objective's lane is 24 (the general one) for HOLLOW and
+  GAP, and **16** for RIDGE - a team on the crest holds the crest, it does not roll down the far side of
+  it. Off an objective's lane the ceiling is 24 as before.
+- **Holder**, re-read every 5 s (300 ticks) on the tick hashed from `(seed, objective)`: the side with
+  more living tanks inside 46 m of the point holds it; equal counts (0-0 included) leave the holder as it
+  was. Rifles do not count (§12.2). The holder is what the client colours the marker with; it changes
+  nothing in the odds - the odds already see the tanks that took it. It is **information for the
+  player**, and the player must see it: the client draws the three names at the three points, in the
+  holder's colour, grey when nobody holds. That is a client row in §0.
+- **Nothing here reads a truck** (§1.2). A probe that drives the truck through RIDGE must find the same
+  three words as one that leaves it in the bay.
+- Why three and not one: with one objective every push would go to one lane and the rest of the front
+  would be the static line the owner refused (§0). With three at least two lanes apart, both sides have
+  something to take at both ends and the middle, the independent slot orders (§2.4) put different teams
+  on them, and the §0 rows "an assault goes for something", "every objective is fought over" and
+  "objectives change hands" are what a run must show.
 
 ---
 
@@ -368,6 +475,15 @@ The living tank of a pair whose partner is dead. A singleton until the id respaw
 **Lane**
 The x band of a team's slot, 27 m wide, centred on the slot. A team never crosses another's.
 
+**Objective**
+One of three named lanes and points on the seam - RIDGE (highest crest), HOLLOW (lowest dip), GAP
+(flattest stretch) - from the seed's ground, never from a truck. Weights the push of the teams on and
+beside it (§4.11). Has a holder the player sees.
+
+**Holder**
+The side with more living tanks inside 46 m of an objective's point at its last re-read. Colours the
+marker; moves nothing.
+
 **Tick**
 1/60 s. Every time in this file is in ticks in the code: 6 s = 360, 10 s = 600.
 
@@ -414,6 +530,16 @@ tests are §14.
   forward line (§4.10).
 - Over 5 seeds x 3600 ticks no team of a side ever crosses the seam, or no team ever gives ground (§4.10,
   §0 rows 11-13).
+- Two seeds give the same three objectives, or one seed gives different objectives on two nodes, or an
+  objective is on an outer lane (±81), or two objectives share a lane (§4.11).
+- Two objectives sit on neighbouring lanes while a lane two or more away was free (§4.11).
+- Any objective word - lane, point, holder - differs between the truck parked and the truck driven
+  through RIDGE, seed equal (§1.2, §4.11).
+- A team on RIDGE's lane has `push > 16`; a team on an objective's lane rests at 0, or a team off one
+  rests at 8 (§4.11).
+- A team's `w` is other than 2 on an objective's lane, 1 beside it, 0 elsewhere (§4.11).
+- The holder changes on a tick that is not that objective's re-read tick, or changes on equal counts
+  (§4.11).
 - A §0 probe row fails.
 - WASTED skipped, lobby first (§6; client test).
 
@@ -466,8 +592,10 @@ does not shift and every signer node computes the same bits.
 
 ### 9.1 Roster
 
-- 36 riflemen a side: every index with `index & 3 != 0`, side on bit 2. Roster number
-  `r = ((index >> 3) << 2 | (index & 3)) - 1` runs 0..35 within the side in index order.
+- 36 riflemen a side: every index with `index & 3 != 0`, side on bit 2. A rifle index is
+  `8k + 4s + j` with `k = 0..11`, `s` the side bit and `j = 1..3`; the dense roster number is
+  `r = 3k + j - 1`, 0..35 within the side in index order. (Corrected 2026-09-16: the earlier
+  `((index >> 3) << 2 | (index & 3)) - 1` left gaps and made twelve teams of three.)
   Same integer shifts as the armour, no table.
 
 ### 9.2 Squads and fire teams
@@ -480,6 +608,10 @@ does not shift and every signer node computes the same bits.
   says **when he moves**. Two men of a fire team can be in different squads; that is fine - the rush
   clock is what they share, and what the player reads as a group is men running and stopping together.
   (Making the squad stable too would move a spawn draw, which is protocol. Not done.)
+- **A fire team takes its post from its first man's squad.** RULED (the owner 2026-09-16): every man of fire team
+  `f` stands on the anchor of the squad drawn for the team's first roster number (`r = 4f`), not his own - so
+  the four stand together (row B1). No draw moves: the squad is still drawn at spawn and kept in `U_TARGET`; only
+  which man's squad the post reads changes.
 - **Post:** `x = anchor + hash(index) in [-9, +9]`, `z = seam(x) - side x (4 + hash(index) in [0, 8])
   + hash(index) in [-5, +5]` (KEEP). So 4 to 12 m short of the seam, ±5 m of depth scatter, ±9 m about
   the anchor. A man walks to his post and stands there.
@@ -491,8 +623,10 @@ does not shift and every signer node computes the same bits.
 
 ## 10. Death and respawn
 
-- Death: rifle round (§8.1), run over (§8.2), bomb (16 m blast, both sides, KEEP), crater fallout is
-  the truck's only.
+- Death: rifle round (§8.1, at the posture's threshold §11.4), run over (§8.2), bomb (16 m blast, both
+  sides, KEEP; 8 m against a man in COVER, §11.4), crater fallout is the truck's only.
+- A dead man frees his cover place that tick (§11.3). A dead tank is a wreck and a place for men until
+  it respawns (§3, §11.3).
 - Replacement clock: Army.InfantryReinforceSeconds, **2.5 s** at deficit 1, `deficit` times faster,
   lowest dead rifle index of the side first (KEEP).
 - A replacement spawns at the back edge (`z = ±(76..79) m`), at his squad's post x (his squad drawn at
@@ -506,8 +640,9 @@ does not shift and every signer node computes the same bits.
 ### 11.1 Default hold - the line
 
 - **Fires:** whenever a man is on post and his fire team's clock says halt, or he has nowhere to go.
-- Holds his post (§9.2), hull facing the enemy side, fires per §8.1. The ±5 m depth scatter is the
-  "ragged line": men do not stand on a fence.
+- Holds his post (§9.2) - or his cover place, if he has a claim (§11.3) - facing the enemy side, **down**
+  (§11.4), fires per §8.1. The ±5 m depth scatter is the "ragged line": men do not stand on a fence, and
+  they do not stand at all when they are not running.
 
 ### 11.2 Fire and movement - rush and halt by fire team (RULED HERE)
 
@@ -517,26 +652,122 @@ does not shift and every signer node computes the same bits.
   no draw.
 - While halted a man stands (step 0 in x and z) and fires. While resting (moving) he walks to his post;
   once on it he stands until the post moves (drift, push §12.1) and fires.
-- **Bounding:** two fire teams whose posts overlap in x never halt in the same tick if both are off
-  their post - the leg phase of `f` and `f + 1` (same side) is offset by half a rest. **RULED HERE**
-  from the phase, so that of any two neighbouring teams one is covering while the other runs.
+- **Bounding:** neighbouring fire teams `f` and `f + 1` of a side never halt in the same tick: the
+  odd teams' clock runs **half a rest (210 ticks, 3.5 s) behind**, and a team whose lower neighbour
+  `f - 1` halts in this tick does not halt in it. **RULED HERE**, so that of any two neighbouring teams
+  one is covering while the other runs. The clock key is `mix(seedHash, 500 + 16 x sideBit + f)`, the
+  cycle's rest and halt hashed from `(key, cycle)` exactly as the per-man clock was.
 - A moving man **fires** (KEEP: C# fires on the move; a 4.5% rifle on the move is what it is). A halted
-  man is not more accurate: no suppression, no prone. None exists.
+  man is not more accurate than that - but he is **harder to hit**, because he is down (§11.4), and a
+  team under fire does not rush (§11.5). (The earlier "no suppression, no prone. None exists." is
+  OVERRULED, the owner 2026-09-16 19:02.)
 
-### 11.3 Cover (RULED HERE)
+### 11.3 Cover - wrecks and craters (the owner 2026-09-16 19:02; OVERRULES the earlier §11.3)
 
-- No prone, no crater cover: `AvoidWrecks` moves a man **out** of a crater (KEEP). A crater is fallout, not
-  cover.
-- A man does not use a tank as cover; he stays out of its hull (§8.3). Nothing else.
+the owner: *"they must not stay cannon fodder. They take cover, go prone, suppress, use wrecks and craters.
+Real infantry hides."* The earlier ruling here - no prone, no crater cover, a man pushed out of a crater -
+was made because the core had none of it. It is **OVERRULED**: this section and the two after it are in
+the spec and go in the core. **GAP**, all of it. Deterministic like everything else: a cover place is a
+function of the state, a claim is a function of the seed and the unit id, no draw, no truck.
 
-### 11.4 Fire
+- **A wreck** is a dead armour index (§3). Its hull words keep the place it died until the id respawns,
+  and that hull, either side's, is the wreck. It is a **place for men only**: no rule in part A reads it
+  (item 2 of the owner's list, not done). It is gone the tick the id respawns (§3).
+- **A crater** (`O_CRATERS`, radius `C_R` > 0, 16 to 40 m) is cover from the tick its bowl opens (dig
+  tick). The `AvoidWrecks` push that moved a man out of a crater **no longer applies to a man**; it still
+  applies to a tank (3.2 m). Fallout is the truck's only (§10) and stays so: a man lies in a crater unhurt.
+- **Cover places**, each 0.5 m wide, on the man's **own side** (the side he belongs to, `U_SIDE`, never the
+  side he stands on):
+  - a wreck has **2** places: `(wreck x ± 2 m, wreck z + side x 3.6 m)` - behind the hull, 0.6 m clear of
+    its 3 m circle;
+  - a crater has **4** places, on the rim 1 m inside it: `centre + (R - 1 m) x (sin a, side x cos a)` for
+    `a = -50°, -20°, +20°, +50°` from the seam normal, so the four lie on the near lip with the rifle over
+    the far edge. Integers: `sin/cos` of those four angles are four constants in Q16.16.
+- **Eligible** for a man: a place within **12 m** of his post (§9.2, §12.1 - his post, not his position,
+  so a man does not wander to cover), inside his clamp (`[seam - side x 40, seam + side x 8]`), and not
+  inside 3 m of a **living** tank's centre (§8.3). A place further than 12 m from his post is not his:
+  the line stays a line, with men in the holes it has.
+- **Claims** (the owner: *"nearest cover slot from seed + unit id"*): per side, per tick, the living men are
+  visited in the order of `mix(seedHash, 600 + index)` ascending (a fixed order for the round, hashed
+  from seed and unit id, not the index order, so the same eight men do not always get the holes), and
+  each takes the **nearest** free eligible place; ties by the place's own order (wrecks by index, then
+  craters by slot, then place number). A man with none is **in the open**. A dead man's claim is free
+  the tick he dies; a wreck's places are free the tick it respawns; a crater's the tick it expires. A
+  man keeps his claim while it stays eligible and free, so a claim does not flicker: the visit is
+  "keep it if you have it, else take the nearest", and a man who keeps one is skipped by the others.
+- **On his place** a man **walks** to it (his own gait, §9.3) when his fire team's clock says rush, and
+  is COVER (§11.4) once within 0.5 m. It is his post while he holds the claim: the line's post (§9.2) is
+  where he stands when he has no hole.
+- State: one word per rifle index, `TAC_COVER` (72 words, appended to `O_TACTICS`; no offset above
+  moves): the claimed place id, or NONE. Written by the claim pass at the top of the infantry step,
+  after the armour's separation pass and before any man moves.
 
-- §8.1 and §8.2. Drawn in index order after the armour's shots of the same tick (KEEP: protocol).
+### 11.4 Posture - stand, prone, cover (RULED HERE, from the owner's order)
 
-### 11.5 Forbidden
+- Three postures, derived, not chosen, and written for the renderer into the `TAC_COVER` word's high
+  bits each tick (the client draws the man down or up from it, §0 "Men hide"):
+  - **STAND**: the man stepped this tick - his own step over **0.01 m** (x + z), so a crawl (§11.5) is
+    not a step - a rush leg, a walk to his post or his place, a column walking in. Running men run
+    upright.
+  - **COVER**: within 0.5 m of his claimed place, not stepping.
+  - **PRONE**: everything else that did not step - a halt on the line in the open, a man on post with no
+    hole, a man waiting on a post that has not moved. A halt is a firing halt, and it is fired from the
+    ground. the owner: *"Prone when in the open under fire"* - and under fire is where the line is, so a
+    halted man in the open is prone whether a round has reached his team yet or not. Pinned men (§11.5)
+    add the crawl.
+- **What it is worth** - the rifle's hit roll (§8.1) is one draw, `< 45` per mil; the threshold is what
+  changes, the draw count never does, so the stream keeps its shape:
+  - at a STAND man: **45** per mil (4.5%, KEEP);
+  - at a PRONE man: **22** per mil (half);
+  - at a COVER man: **11** per mil (a quarter).
+  - A bomb (16 m, §12.3) reaches a COVER man only inside **8 m** of the blast; a PRONE or STAND man at 16 m
+    as before. A wreck or a crater lip is what a bomb's splinters stop; the open is not.
+  - A tank's gun never fires at a man (§8.3 KEEP); nothing to halve there.
+- A man's own fire does not change with posture (KEEP: the rifle is 4.5% standing, walking or down).
+  What posture buys him is time alive, and time alive is rounds fired.
+- Posture never reads the truck: a man does not go prone for a truck, and run-over (§8.2) kills a
+  prone man as it kills a standing one.
 
-- Scattering from the truck. Charging a tank. Hiding in a crater. Prone. Smoke. Suppression that the
-  core does not model. Men walking through a tank's hull.
+### 11.5 Suppression - fire pins men down (RULED HERE, from the owner's order)
+
+- **Suppression word** `TAC_SUPP`, one per fire team (18 words, appended): **+60 per round aimed at one
+  of the team's living men** (a rifle round, hit or miss; a suppressing round, below), **-1 per tick**,
+  clamped to `[0, 600]`. Integers, written on the shooter's tick, read at the top of the next.
+  - **Under fire**: `TAC_SUPP > 0` (a round in the last second or so, decaying).
+  - **Pinned**: `TAC_SUPP >= 120` (two rounds inside three seconds, or one heavy burst).
+- **A pinned fire team does not rush.** Its clock (§11.2) keeps ticking, but a rest leg moves nobody;
+  the four stay down where they are and fire. A man in the open **crawls** instead: toward his claimed
+  place if he has one, else toward his post, at **0.5 m/s** (0.0083 m/tick, one sixth of a walk) - so a
+  pinned man is never STAND (§11.4: he is PRONE or COVER while he crawls; a crawl is under the 0.01 m
+  probe threshold and does not count as a step). A pinned man **fires at half rate**: his reload draw is
+  taken as always and its value doubled.
+- Being pinned ends by decay: no round for 2 s (120 ticks) and the team is under fire but free to rush;
+  no round for 10 s and it is clear. The bounding rule of §11.2 still holds for a pinned team's
+  neighbour: it may halt when the pinned team's clock says halt, and it rushes when its own clock says
+  rush - the pinned team is the one covering, from the ground.
+- **Suppressing fire**: a man with **no** rifle target inside 26 m (§8.1) but a living enemy **man**
+  inside **34 m** fires a **suppressing round** at the nearest such man: it takes the look-again draw
+  (0.4 to 1.1 s, KEEP) and no other, never hits, kills nobody, and adds 60 to that man's fire team's
+  `TAC_SUPP`. A man with nobody inside 34 m looks again and fires at nothing, as today. A suppressing
+  round is **never** fired at a truck (§8.2 stands: the rifle fires at a truck only with a rifle target
+  in 26 m, and only after roll-out, §1.2). The stream shifts only where a man suppresses, by the same
+  look-again draw he took before - the round is what changed, not the draw.
+- **A shell** (§4.4) that lands - hit or miss - inside 8 m of a man adds 60 to his team's word too; a
+  tank's fire pins infantry, which is what infantry hides from. A bomb blast (§12.3) adds 300 to every
+  team with a living man inside 16 m of it: after a bomb, everybody is down.
+- No morale (§12.3 stays): a team pinned to two men is still a team, still fires, still rushes when the
+  word decays. Suppression is time, not fear.
+
+### 11.6 Fire
+
+- §8.1 and §8.2, hit thresholds per §11.4, suppressing rounds per §11.5. Drawn in index order after the
+  armour's shots of the same tick (KEEP: protocol).
+
+### 11.7 Forbidden
+
+- Scattering from the truck. Going prone for the truck. Charging a tank. Using a **living** tank as cover
+  (§8.3; a wreck is another thing, §11.3). Smoke. Morale, routing, a man who runs from the line. Men
+  walking through a tank's hull. A tank, a gun or the truck reading a wreck (item 2, not done).
 
 ## 12. Combined arms - infantry follows the armour (RULED HERE, for "DYNAMIC WAR")
 
@@ -558,8 +789,9 @@ does not shift and every signer node computes the same bits.
 
 ### 12.3 The air
 
-- Bombs (16 m) fall on the seam band and kill men of both sides (KEEP). A fire team that lost 2 or more
-  keeps rushing; there is no morale.
+- Bombs (16 m) fall on the seam band and kill men of both sides (KEEP; 8 m against a man in COVER,
+  §11.4) and pin every team inside 16 m (§11.5). A fire team that lost 2 or more keeps rushing once the
+  word decays; there is no morale.
 
 ## 13. Vocabulary (infantry, all required)
 
@@ -590,6 +822,28 @@ A squad's line moves with the push of the tank lanes it stands in (§12.1).
 **Hull clearance**
 3 m about any living tank; a man steps out of it.
 
+**Wreck**
+A dead armour index, where it died, until it respawns. Two cover places for men behind it; nothing for
+a tank.
+
+**Cover place**
+A 0.5 m spot behind a wreck (2) or on a crater's near lip (4), on the man's own side. Claimed by the
+nearest eligible man in seed-hashed order (§11.3).
+
+**Posture**
+STAND (stepping), PRONE (halted in the open), COVER (halted on a place). Derived every tick; the
+renderer draws it; the rifle's hit threshold reads it (§11.4).
+
+**Under fire / pinned**
+A fire team's suppression word above 0 / at 120 or more. Pinned: no rush, crawl, half rate of fire
+(§11.5).
+
+**Suppressing fire**
+A round at a man 26 to 34 m off: never hits, pins his team.
+
+**Crawl**
+0.5 m/s toward cover or post while pinned; not a step.
+
 ## 14. Tests that must fail if this is wrong (infantry)
 
 - A man's post differs between a run with the truck parked and one with it driven through the line, seed
@@ -605,6 +859,24 @@ A squad's line moves with the push of the tank lanes it stands in (§12.1).
 - The armour's local odds count a rifleman (§12.2).
 - Any infantry tactics value is computed from a draw of the round's RNG (§9: the stream must be
   identical with tactics on and off, spawn draws included).
+- Two living men hold the same cover place, or a man holds a place more than 12 m from his post, or a
+  place on the enemy's side of a wreck or crater, or one inside 3 m of a living tank (§11.3).
+- A wreck's places survive the tick its id respawns; a crater's the tick it expires; a dead man's claim
+  survives his death tick (§11.3).
+- A man is pushed out of a crater by the `AvoidWrecks` rule, or a tank is not (§11.3).
+- A man's claim, posture or suppression word differs between the truck parked and the truck driven
+  through the line, seed equal (§8.2, §11.3-§11.5).
+- A man who stepped is PRONE or COVER, or a man who did not step is STAND (§11.4).
+- The rifle's hit roll is taken a different number of times, or a shot at a PRONE man connects on a roll
+  of 22 or more, or at a COVER man on 11 or more, or at a STAND man misses on a roll under 45 (§11.4).
+- A bomb kills a COVER man 8 m or more from the blast (§11.4).
+- A suppression word rises by other than 60 per round (300 per bomb), falls by other than 1 per tick, or
+  leaves [0, 600] (§11.5).
+- A pinned fire team's man steps more than 0.01 m in a tick, or is STAND, or reloads in less than twice
+  his drawn reload (§11.5).
+- A man fires a suppressing round with a rifle target inside 26 m, at a man beyond 34 m, at a truck, or
+  with any draw but the look-again draw; or a suppressing round changes a man's HP (§11.5).
+- A man's own hit chance changes with his posture (§11.4 KEEP).
 - A §0 infantry row fails.
 
 Implement part A in `packages/core/src/rules/tactics.js` and part B beside it; the army step moves what
