@@ -134,6 +134,33 @@ public class ChartHudTests
     }
 
     [Test]
+    public void OpenKeepsOffThePriceRowTheLegendAndTheLabels()
+    {
+        // The boxes as build 0.0.1459 logged them on a 1280x657 player (panel 587,437,384,197): OPEN's old place above its
+        // line shared 429 px of box with the price row and 435 px with the legend row.
+        var plot = new Rect(591f, 480.3f, 303.2f, 139f);
+        float openY = 489.7f, w = 42.5f, h = 20.3f;
+        var symbol = new Rect(593.2f, 439.2f, 180f, h);
+        var price = new Rect(593.2f, 459.2f, 291.4f, h);
+        var legend = new Rect(593.2f, 479.4f, 117.2f, h);
+        var you = new Rect(623.6f, 518.2f, 42.5f, 24.3f);
+        var high = new Rect(777.7f, 464.4f, 116.7f, h);
+        var gate = new Rect(839.7f, 480.3f, 39.7f, h);
+        var old = new Rect(593.2f, 469.4f, w, h);
+        Assert.Greater(ChartHud.Shared(old, price), 0f, "the old place is on the price row");
+        var avoid = new[] { symbol, price, legend, you, high, new Rect(), gate };
+        var r = ChartHud.PlaceOpen(plot, openY, w, h, avoid, out bool placed);
+        Assert.IsTrue(placed);
+        foreach (var a in avoid) Assert.AreEqual(0f, ChartHud.Shared(r, a), $"OPEN {r} shares area with {a}");
+        Assert.GreaterOrEqual(r.x, plot.x); Assert.LessOrEqual(r.xMax, plot.xMax);
+        Assert.AreEqual(openY + 1f, r.y, 0.01f, "below its line: above it the price row runs the plot's width");
+        // nowhere free: stays where it was, and says so
+        var all = ChartHud.PlaceOpen(plot, openY, w, h, new[] { new Rect(0f, 0f, 2000f, 2000f) }, out bool none);
+        Assert.IsFalse(none);
+        Assert.AreEqual(new Rect(plot.x + 2f, openY - h, w, h), all);
+    }
+
+    [Test]
     public void TheChartClearsTheThrottlePadsAtTheFloor()
     {
         foreach (var (w, h) in new[] { (1024, 768), (1280, 800), (1920, 1080) })

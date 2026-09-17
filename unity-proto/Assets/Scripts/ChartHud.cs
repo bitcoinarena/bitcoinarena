@@ -78,6 +78,13 @@ public class ChartHud : MonoBehaviour
         public readonly List<Rect> AssaultColumns = new List<Rect>();
         public readonly List<Color> AssaultColours = new List<Color>();
         public readonly List<string> Banners = new List<string>();
+        /// <summary>
+        /// Where the header rows and the plot's labels were drawn, as the painter laid them out (text width from the style):
+        /// what the OPEN label is measured against.
+        /// </summary>
+        public Rect SymbolBox, PriceBox, LegendBox, OpenBox, YouBox, HighBox, LowBox, GateBox;
+        /// <summary>False when no place for the OPEN label clears every box, and it stayed above its line at the left.</summary>
+        public bool OpenPlaced;
         public readonly List<Label> PriceAxis = new List<Label>();
         public readonly List<Label> TimeAxis = new List<Label>();
     }
@@ -279,7 +286,50 @@ public class ChartHud : MonoBehaviour
             $"frontSum={Sum(L.CH_CANDLE + 4 * f.Candles, f.Candles)}", $"fronts={f.Front.Count}", $"high={_view[L.CH_HIGH_P]}", $"low={_view[L.CH_LOW_P]}",
             $"panel={f.Panel.x:0},{f.Panel.y:0},{f.Panel.width:0},{f.Panel.height:0}", $"screen={Screen.width}x{Screen.height}",
             $"charts={ChartsPainted}",
+            $"symbolBox={B(f.SymbolBox)}", $"priceBox={B(f.PriceBox)}", $"legendBox={B(f.LegendBox)}", $"openBox={B(f.OpenBox)}",
+            $"youBox={B(f.YouBox)}", $"highBox={B(f.HighBox)}", $"lowBox={B(f.LowBox)}", $"gateBox={B(f.GateBox)}",
+            $"openShares={OpenShares(f)}", $"openPlaced={f.OpenPlaced}",
         }));
+    }
+
+    /// <summary>
+    /// Where the OPEN label goes: above its line, then below it, each scanned rightwards from the plot's left edge in 4 px
+    /// steps, the first box inside the plot that shares no area with any of <paramref name="avoid"/>. Nothing free: above the
+    /// line at the left, and <paramref name="placed"/> false. Layout only - the line itself is the core's open price.
+    /// </summary>
+    public static Rect PlaceOpen(Rect plot, float openY, float width, float height, Rect[] avoid, out bool placed)
+    {
+        foreach (float y in new[] { openY - height, openY + 1f })
+        {
+            for (float x = plot.x + 2f; x + width <= plot.xMax; x += 4f)
+            {
+                var r = new Rect(x, y, width, height);
+                bool free = true;
+                foreach (var a in avoid) if (Shared(r, a) > 0f) { free = false; break; }
+                if (free) { placed = true; return r; }
+            }
+        }
+        placed = false;
+        return new Rect(plot.x + 2f, openY - height, width, height);
+    }
+
+    static string B(Rect r) => $"{r.x:0.0},{r.y:0.0},{r.width:0.0},{r.height:0.0}";
+
+    /// <summary>The area, in px, that two boxes share; 0 when they do not touch.</summary>
+    public static float Shared(Rect a, Rect b)
+    {
+        float w = Mathf.Min(a.xMax, b.xMax) - Mathf.Max(a.x, b.x), h = Mathf.Min(a.yMax, b.yMax) - Mathf.Max(a.y, b.y);
+        return w > 0f && h > 0f ? w * h : 0f;
+    }
+
+    /// <summary>Every box the OPEN label shares area with, and how much: "price:120.5+legend:30.0", or "-".</summary>
+    public static string OpenShares(Frame f)
+    {
+        var parts = new List<string>();
+        void One(string name, Rect r) { float s = Shared(f.OpenBox, r); if (s > 0f) parts.Add($"{name}:{s:0.0}"); }
+        One("symbol", f.SymbolBox); One("price", f.PriceBox); One("legend", f.LegendBox); One("you", f.YouBox);
+        One("high", f.HighBox); One("low", f.LowBox); One("gate", f.GateBox);
+        return parts.Count == 0 ? "-" : string.Join("+", parts);
     }
 
     long Sum(int from, int count)
@@ -341,6 +391,9 @@ public class ChartHud : MonoBehaviour
         }
         Text(new Rect(dx + 4f, y2, 120f, lh), f.Trend, Axis, _text);
         Text(new Rect(x0, y2 + lh, 200f, lh), "FRONT · SMA 21", Color.white, _text);
+        f.SymbolBox = new Rect(x0, f.Panel.y + 2f, _text.CalcSize(new GUIContent(f.Header)).x, lh);
+        f.PriceBox = Rect.MinMaxRect(x0, y2, dx + 4f + _text.CalcSize(new GUIContent(f.Trend)).x, y2 + lh);
+        f.LegendBox = new Rect(x0, y2 + lh, _text.CalcSize(new GUIContent("FRONT · SMA 21")).x, lh);
 
         // assault columns under the candles
         for (int i = 0; i < f.AssaultColumns.Count; i++) { var c = f.AssaultColours[i]; c.a = 0.16f; Box(f.AssaultColumns[i], c); }
@@ -349,9 +402,8 @@ public class ChartHud : MonoBehaviour
 
         foreach (var c in f.Bars) { Box(c.Wick, c.Green ? Green : Red); Box(c.Body, c.Green ? Green : Red); }
 
-        // OPEN, dashed
+        // OPEN, dashed (its label is placed further down, once every box it must keep off is known)
         for (float x = p.x; x < p.xMax; x += 8f) Box(new Rect(x, f.OpenY, 4f, 1f), Axis);
-        Text(new Rect(p.x + 2f, f.OpenY - lh, 60f, lh), "OPEN", Axis, _text);
 
         // 1. the seam, white 2 px
         for (int i = 1; i < f.Front.Count; i++) Line(f.Front[i - 1], f.Front[i], 2f, Color.white);
@@ -369,6 +421,8 @@ public class ChartHud : MonoBehaviour
             float hw = _text.CalcSize(new GUIContent(f.High.Text)).x, lw = _text.CalcSize(new GUIContent(f.Low.Text)).x;
             Box(new Rect(f.High.At.x - 0.5f, f.High.At.y - 5f, 1f, 4f), Axis);
             Text(new Rect(Mathf.Clamp(f.High.At.x - hw * 0.5f, p.x, p.xMax - hw), f.High.At.y - 5f - lh, hw + 2f, lh), f.High.Text, Axis, _text);
+            f.HighBox = new Rect(Mathf.Clamp(f.High.At.x - hw * 0.5f, p.x, p.xMax - hw), f.High.At.y - 5f - lh, hw, lh);
+            f.LowBox = new Rect(Mathf.Clamp(f.Low.At.x - lw * 0.5f, p.x, p.xMax - lw), f.Low.At.y + 5f, lw, lh);
             Box(new Rect(f.Low.At.x - 0.5f, f.Low.At.y + 1f, 1f, 4f), Axis);
             Text(new Rect(Mathf.Clamp(f.Low.At.x - lw * 0.5f, p.x, p.xMax - lw), f.Low.At.y + 5f, lw + 2f, lh), f.Low.Text, Axis, _text);
         }
@@ -382,7 +436,8 @@ public class ChartHud : MonoBehaviour
         foreach (var a in f.TimeAxis) Text(new Rect(a.At.x - 14f, a.At.y, 60f, lh), a.Text, a.Colour, _text);
 
         // 6. the gate, gold
-        if (f.GateOn) { Box(new Rect(f.GateX - 1f, p.y, 2f, p.height), Gold); Text(new Rect(f.GateX - 34f, p.y, 34f, lh), "GATE", Gold, _text); }
+        if (f.GateOn) { Box(new Rect(f.GateX - 1f, p.y, 2f, p.height), Gold); Text(new Rect(f.GateX - 34f, p.y, 34f, lh), "GATE", Gold, _text);
+            f.GateBox = new Rect(f.GateX - 34f, p.y, _text.CalcSize(new GUIContent("GATE")).x, lh); }
 
         // 5. ghosts
         foreach (var g in f.Ghosts)
@@ -391,13 +446,20 @@ public class ChartHud : MonoBehaviour
             Text(new Rect(g.At.x + 4f, g.At.y - lh * 0.5f, 90f, lh), g.Text, g.Colour, _text);
         }
 
+        // THE OPEN LABEL, off the header and off the labels already on the plot. Measured on 0.0.1459: drawn above its line at
+        // the plot's left edge it shared 429 px of box and 246 drawn pixels with the price row ("$78,515.00 +0.00%") and
+        // 435 px with the legend row. YOU's box is known before YOU is drawn, so the truck stays on top of it.
+        f.YouBox = Rect.MinMaxRect(f.You.x - 4f, f.You.y - lh, f.You.x + 6f + _text.CalcSize(new GUIContent(f.YouOn ? "YOU" : "YOU ›")).x, f.You.y + 4f);
+        float ow = _text.CalcSize(new GUIContent("OPEN")).x;
+        f.OpenBox = PlaceOpen(p, f.OpenY, ow, lh, new[] { f.SymbolBox, f.PriceBox, f.LegendBox, f.YouBox, f.HighBox, f.LowBox, f.GateBox }, out f.OpenPlaced);
+        Text(f.OpenBox, "OPEN", Axis, _text);
+
         // 4. the truck, always on top: a faint line down to the time axis, the dot, its heading, YOU
         Box(new Rect(f.You.x, f.You.y, 1f, p.yMax - f.You.y), new Color(Truck.r, Truck.g, Truck.b, 0.35f));
         float rad = (90f - f.YouHeading) * Mathf.Deg2Rad;
         Line(f.You, f.You + new Vector2(Mathf.Cos(rad), -Mathf.Sin(rad)) * 10f, 2f, Truck);
         Box(new Rect(f.You.x - 4f, f.You.y - 4f, 8f, 8f), Truck);
         Text(new Rect(f.You.x + 6f, f.You.y - lh, 60f, lh), f.YouOn ? "YOU" : "YOU ›", Truck, _text);
-
         GUI.color = old;
     }
 
