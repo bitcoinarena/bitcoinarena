@@ -182,3 +182,31 @@ test('a player who joined late starts at his own joinTick, not at zero', () => {
     ticks: [[0, 0, 0, 0, 0], [0, 0, 0, 0, 0]], liquidations: [[51, 9]] })), 2);
   assert.equal(r.handOver(rid, eid).ticks, 2);
 });
+
+/**
+ * A BATCH LANDS WHOLE OR NOT AT ALL - and that is also why it is one commit (the owner 2026-09-17 19:15, the ghost lag).
+ *
+ * Every row written outside a transaction is its own commit, so a batch of six ticks with a sample cost seven disk
+ * syncs on the thread that also pushes other players' trucks: measured live, `batch stored` held that loop 24-46 ms.
+ * The rows land together now. What that must mean, and what this measures, is that a batch which fails part of the way
+ * through leaves the store exactly as it was.
+ */
+test('a batch that fails part of the way through leaves no tick behind', () => {
+  const r = fresh(), c = contract();
+  const rid = r.open(c); const e = entryFor(rid); const eid = r.enter(e);
+  const bytes = encodeInputBatch({
+    roundId: rid, entryId: eid, previousHash: GENESIS, firstTick: 0,
+    ticks: [[65536, 0, 0, 0, 0], [65536, 100, 0, 0, 0], [65536, 200, 0, 0, 0]], liquidations: [],
+  });
+  // The rows go in and the batch row cannot: the store is left as it was, not three ticks into a batch nobody holds.
+  r.db.exec('ALTER TABLE batches RENAME TO batches_away');
+  assert.throws(() => r.batch(bytes));
+  r.db.exec('ALTER TABLE batches_away RENAME TO batches');
+  assert.equal(r.transcript(rid, eid).ticks.length, 0, 'a failed batch left its ticks in the store');
+  assert.equal(r.nextTick(rid, eid), 0, 'a failed batch moved the run on');
+
+  // AND THE SAME BATCH LANDS WHOLE once the store is whole again.
+  assert.equal(r.batch(bytes), 3);
+  assert.equal(r.transcript(rid, eid).ticks.length, 3);
+});
+
