@@ -296,6 +296,11 @@ const CREST_LOOK = Math.imul(6, ONE);            // how far toward the enemy the
  * with the largest ground rise 6 m toward the enemy; ties to the first in that scan. Exported because sim.js ranks
  * the half-line budget by how far a tank stands from the place it is really going to.
  */
+/** The rise toward the enemy in front of a hold at z (§4.1): the ground CREST_LOOK ahead less the ground under it. */
+export function crestRise(z, side, x, ground) {
+  return sub(ground(x, add(z, Math.imul(-side, CREST_LOOK))), ground(x, z));
+}
+
 export function hullDownHold(hold, side, x, ground) {
   const toward = Math.imul(-side, CREST_LOOK);
   let best = hold, bestRise = -2147483647;
@@ -563,7 +568,8 @@ export function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, half
     // hull crept across kept it on the edge of its post.
     hold = add(u.tacSeam, mulFast(Math.imul(side, ONE), u.tacDepth));
     // HULL-DOWN, for the overwatch tank: the candidate with the highest ground between it and the enemy.
-    if (!u.tacBounding && ground) hold = hullDownHold(hold, side, u.tacX, ground);
+    // the crest the core holds for this tank (tactics.js crestHold, §4.1 hysteresis), handed in as an offset from the line
+    if (!u.tacBounding && ground) hold = add(hold, u.tacCrest | 0);
   }
 
   // Give ground when something is too close.

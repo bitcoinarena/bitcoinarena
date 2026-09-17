@@ -273,12 +273,13 @@ test('a team scoots at most once in 1200 ticks and only with both living tanks o
     const lastScoot = new Map();
     for (let t = 0; t < 3600; t++) {
       const slots = Array.from({ length: 12 }, (_, w) => s[L.O_TACTICS + T.TAC_SLOT + w]);
+      // the hold as the step will read it: the crests updated first (§4.1 hysteresis, updateCrests runs before the tactics)
+      const held = s.slice(); T.updateCrests(held, L.O_TACTICS, s[L.O_TICK] + 1, seamAt, ground);
       const nearPost = Array.from({ length: 12 }, (_, w) => { const side = w < 6 ? -1 : 1, k0 = (w % 6) * 2;
         return [k0, k0 + 1].every((k) => { const i = (k << 3) | (side < 0 ? 0 : 4);
           if (s[base(i) + L.U_STATE] === 0) return true;
           const p = T.postOf(s, L.O_TACTICS, i, s[L.O_TICK] + 1), line = seamAt(p.x) + side * p.depth;
-          let hold = line;
-          if (!p.bounding) { let br = -Infinity; for (let c = -2; c <= 2; c++) { const z = line + c * 2 * ONE; const r = ground(p.x, z - side * 6 * ONE) - ground(p.x, z); if (r > br) { br = r; hold = z; } } }
+          const hold = p.bounding ? line : T.crestHold(held, L.O_TACTICS, i, p, line, side, ground);
           return Math.hypot(s[base(i)] - p.x, s[base(i) + 1] - hold) <= 1.62 * ONE; }); });
       step(st, 0, 0, 0, ONE, 0);
       const tick = s[L.O_TICK];
@@ -301,12 +302,14 @@ test('a pair swaps roles only with both tanks on post: the post is held until th
   for (const seedWord of [1, 2, 3, 4, 5]) {
     const st = init(seedWord), s = st.i32;
     const seamAt = (x) => frontAt(st, x), ground = (x, z) => groundAt(st, x, z);
+    let held = s;
     const near = (i, tick) => { const side = T.teamOf(i).side, p = T.postOf(s, L.O_TACTICS, i, tick), line = seamAt(p.x) + side * p.depth;
-      let hold = line;
-      if (!p.bounding) { let br = -Infinity; for (let c = -2; c <= 2; c++) { const z = line + c * 2 * ONE; const r = ground(p.x, z - side * 6 * ONE) - ground(p.x, z); if (r > br) { br = r; hold = z; } } }
+      const hold = p.bounding ? line : T.crestHold(held, L.O_TACTICS, i, p, line, side, ground);
       return Math.hypot(s[base(i)] - p.x, s[base(i) + 1] - hold) <= 1.62 * ONE; };
     for (let t = 0; t < 3600; t++) {
       const tickBefore = s[L.O_TICK];
+      // the crests as the step reads them at the swap check (§4.1 hysteresis: updated before holdLegs)
+      held = s.slice(); T.updateCrests(held, L.O_TACTICS, tickBefore + 1, seamAt, ground);
       const pairs = ARMOUR.filter((i) => T.partnerOf(i) > i && alive(s, i) && alive(s, T.partnerOf(i)))
         .map((i) => [i, T.isBounding(s, L.O_TACTICS, i, tickBefore), near(i, tickBefore) && near(T.partnerOf(i), tickBefore)]);
       step(st, 0, 0, 0, ONE, 0);
@@ -421,4 +424,46 @@ test('the trend is the colour of the last six finished candles: six green is UP 
   }
   assert.equal(bullStarts, 0, `the bulls assaulted ${bullStarts} times under a bear trend`);
   assert.ok(bearStarts > 0, 'the bears mounted no assault under their own trend - nothing checked');
+});
+
+test('hull-down hysteresis: a held crest changes only on a 60-tick search or for a new post, and only for >= 0.3 m more rise (§4.1)', async () => {
+  const { crestRise } = await import('../src/rules/army.js');
+  let switches = 0, keptForLess = 0, fresh = 0, betweenKept = 0;
+  for (const seedWord of [1, 2, 3]) {
+    const st = init(seedWord), s = st.i32, open = s[L.O_TACTICS + T.TAC_MARKET + T.MK_OPEN];
+    const seamAt = (x) => frontAt(st, x), ground = (x, z) => groundAt(st, x, z);
+    for (let t = 1; t <= 1800; t++) {
+      if (t % 300 === 0) submitSample(st, open + ((t * 7919) % 801) - 400);
+      // THE RULE ON A COPY of this tick's real state, at this tick and at the next search tick, with the same seam and ground
+      for (const tick of [s[L.O_TICK] + 1, Math.ceil((s[L.O_TICK] + 1) / T.CREST_EVERY) * T.CREST_EVERY]) {
+        const c = s.slice();
+        const before = [];
+        for (let i = 0; i < 96; i += 4) {
+          if (!c[L.O_UNITS + i * L.U_WORDS + L.U_STATE]) continue;
+          const p = T.postOf(c, L.O_TACTICS, i, tick), side = T.teamOf(i).side;
+          if (p.bounding) continue;
+          const line = seamAt(p.x) + side * p.depth;
+          before.push({ i, k: i >> 2, p, side, line, off: c[L.O_TACTICS + T.TAC_CREST + (i >> 2)], key: c[L.O_TACTICS + T.TAC_CREST_KEY + (i >> 2)],
+            best: Math.max(...[-2, -1, 0, 1, 2].map((q) => crestRise(line + q * 2 * ONE, side, p.x, ground))) });
+        }
+        T.updateCrests(c, L.O_TACTICS, tick, seamAt, ground);
+        for (const o of before) {
+          const nowKey = c[L.O_TACTICS + T.TAC_CREST_KEY + o.k], nowOff = c[L.O_TACTICS + T.TAC_CREST + o.k];
+          if (nowKey !== o.key) { fresh++; continue; }
+          const heldRise = crestRise(o.line + o.off, o.side, o.p.x, ground);
+          if (nowOff !== o.off) {
+            switches++;
+            assert.equal(tick % T.CREST_EVERY, 0, `seed ${seedWord} tick ${tick}: tank ${o.i} changed crest between searches`);
+            assert.ok(o.best - heldRise >= T.CREST_SWITCH, `seed ${seedWord} tick ${tick}: tank ${o.i} switched for ${((o.best - heldRise) / ONE).toFixed(3)} m`);
+          } else if (o.best - heldRise >= T.CREST_SWITCH) {
+            assert.notEqual(tick % T.CREST_EVERY, 0, `seed ${seedWord} tick ${tick}: tank ${o.i} kept a crest beaten by ${((o.best - heldRise) / ONE).toFixed(3)} m on a search`);
+            betweenKept++;
+          } else if (tick % T.CREST_EVERY === 0 && o.best > heldRise) keptForLess++;
+        }
+      }
+      step(st, 0, 0, 0, ONE, 0);
+    }
+  }
+  console.log(`  seeds 1-3 x 1800: ${switches} switches (each on a search, each for >= 0.3 m), ${keptForLess} searches kept a crest beaten by < 0.3 m, ${betweenKept} held between searches though beaten by >= 0.3 m, ${fresh} fresh picks`);
+  assert.ok(switches > 0 && keptForLess > 0 && betweenKept > 0, 'the rule was not exercised both ways');
 });

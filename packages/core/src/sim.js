@@ -36,7 +36,7 @@ import {
 import { vehicleStep } from './rules/vehicle.js';
 import { flatGround, groundFromSeed, gradeAlong, heightAtWorld, DEFAULT_COLS, DEFAULT_ROWS } from './rules/ground.js';
 import { noSolids, resolveSolids, resolveArmour, BOX_WORDS } from './rules/solids.js';
-import { initTactics, postOf, scoot, onRespawn, enterInLane, pressure, partnerOf, FORWARD_LINE, rifleTeamOf, pushNear, mix, FIRE_TEAMS_PER_SIDE, TAC_SEED, firstManOf, initObjectives, objectiveHolders, clearOnEntry, holdLegs, onPost, initMarket, readMarket, trendHit, supplyOf, TAC_MARKET, MK_OPEN, MK_SAMPLES, MK_SAMPLE_TICK, MK_PREV_LO, MK_PREV_HI, MK_PREV_OLDEST } from './rules/tactics.js';
+import { initTactics, postOf, scoot, onRespawn, enterInLane, pressure, partnerOf, FORWARD_LINE, rifleTeamOf, pushNear, mix, FIRE_TEAMS_PER_SIDE, TAC_SEED, firstManOf, initObjectives, objectiveHolders, clearOnEntry, holdLegs, onPost, updateCrests, crestHold, initMarket, readMarket, trendHit, supplyOf, TAC_MARKET, MK_OPEN, MK_SAMPLES, MK_SAMPLE_TICK, MK_PREV_LO, MK_PREV_HI, MK_PREV_OLDEST } from './rules/tactics.js';
 import { mapSolids } from './rules/map.js';
 import { CANDLES, CL_WORDS, candleLayout, candleHeightAt, writeCandleView, levelled } from './rules/candles.js';
 import { scrollOf, FIELD_SLOT } from './rules/frontline.js';
@@ -1362,6 +1362,8 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
   // the start of this one, and takes or gives ground.
   // The objectives' holders are re-read first, from the same positions; nothing in the odds reads them (§4.11).
   // A leg does not swap while a tank of its pair is off post (§2.6, §0 "Hold is the default"), read before anything moves.
+  // the held crests first (§4.1 hysteresis): every reader of a post below reads the same pick
+  updateCrests(s, O_TACTICS, s[O_TICK], (x) => seamAtX(st, x), (x, z) => surfaceAt(st, x, z));
   holdLegs(s, O_TACTICS, s[O_TICK], (x) => seamAtX(st, x), (x, z) => surfaceAt(st, x, z));
   objectiveHolders(s, O_TACTICS, s[O_TICK], (x) => seamAtX(st, x));
   pressure(s, O_TACTICS, s[O_TICK], (x) => seamAtX(st, x), (x, z) => surfaceAt(st, x, z));
@@ -1426,7 +1428,7 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
     if (stoodOnPost[i >> 2] && abs(sub(s[ib + U_Z], lineZ)) <= LINE_REACH) {
       lineBudget[sd < 0 ? 0 : 1]++; onTheLine[i >> 2] = true;
       grantedBefore[i >> 2] = ((s[ib + U_COOLDOWN] >> 6) & 1) === 1;
-      const holdZ = ip.bounding ? lineZ : hullDownHold(lineZ, sd, ip.x, groundOf);
+      const holdZ = ip.bounding ? lineZ : crestHold(s, O_TACTICS, i, ip, lineZ, sd, groundOf);
       offPost[i >> 2] = add(abs(sub(s[ib + U_X], ip.x)), abs(sub(s[ib + U_Z], holdZ)));
       if (ip.depth < 0 || ip.push < 0) offPost[i >> 2] = add(offPost[i >> 2], Math.imul(256, ONE));
     }
@@ -1548,6 +1550,10 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
       // ON the seam, depth 0 - read as "no tactics", that tank was sent to the old standoff and lost its memory word.
       u.tac = true; u.tacX = tac.x; u.tacDepth = tac.depth; u.tacBounding = tac.bounding;
       u.tacSeam = seamAtX(st, tac.x);
+      {
+        const sdc = u.side < 0 ? -1 : 1, lineC = add(u.tacSeam, mulFast(Math.imul(sdc, ONE), tac.depth));
+        u.tacCrest = tac.bounding ? 0 : sub(crestHold(s, O_TACTICS, i, tac, lineC, sdc, groundOf), lineC);
+      }
       u.tacPush = tac.push; u.tacForward = FORWARD_LINE - tac.push;
       // NO PARTNER WAIT. A bounding tank used to wait while its overwatch partner had moved the tick before; §2.6 rules
       // the swap simultaneous, and row 4b is the half-line budget below. Measured on seeds 1-15, that wait held a tank
@@ -1561,8 +1567,11 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
         }
         if (lineMoved[u.side < 0 ? 0 : 1] + ahead >= lineBudget[u.side < 0 ? 0 : 1]) u.tacWait = true;
       }
-    } else { u.tac = false; u.tacX = 0; u.tacDepth = 0; u.tacBounding = false; u.tacSeam = 0; u.tacPush = 0; u.tacForward = 0; u.tacWait = false; }
+    } else { u.tac = false; u.tacX = 0; u.tacDepth = 0; u.tacBounding = false; u.tacSeam = 0; u.tacPush = 0; u.tacForward = 0; u.tacWait = false; u.tacCrest = 0; }
     stepUnit(u, rng, unitSeam, tx, tz, s[T + T_HEADING], s[O_SCORE + S_HEAT], HALF_X, HALF_Z, TICK_DT, i, s[O_TICK], craters, groundOf);
+    // A PROBE'S VIEW OF THE TANK'S OWN STEP (§0 row 2 reads flips of the own step, outside separation, which ran before this
+    // loop): written only when a probe set `st.trace`, never read by a rule, outside the state and its hash.
+    if (st.trace && u.armour) { st.trace.dx[i >> 2] = sub(u.x, s[b + U_X]); st.trace.dz[i >> 2] = sub(u.z, s[b + U_Z]); }
     // OVERWATCH (the owner 2026-09-16 18:10): a tank that moved this tick is bounding, and does not fire in it.
     const movedThisTick = u.armour && u.tacBounding
       && (abs(sub(u.x, s[b + U_X])) + abs(sub(u.z, s[b + U_Z]))) > 1310;
