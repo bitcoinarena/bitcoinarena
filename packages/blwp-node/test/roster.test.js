@@ -647,9 +647,11 @@ test('the committee and the seed are kept per view, and a new header builds them
   let grown = 0;
   const roster = new Roster(round, {
     // The same view until it is asked to grow: a block arrives and every reader sees a longer one.
+    // The same chain, handed over as a fresh object each time once `grown` is set: what a view rebuilt block by block
+    // looks like to a reader.
     chainFor: ({ contract: c } = {}) => {
       const v = chainWith(bonds, c);
-      return grown ? { ...v, blocks: [...v.blocks, ...v.blocks.slice(-1)] } : v;
+      return grown === 2 ? { ...v, blocks: [...v.blocks] } : grown === 1 ? { ...v, blocks: [...v.blocks, ...v.blocks.slice(-1)] } : v;
     },
     randomnessFor: ({ contract: c }) => beaconOf(chainWith(bonds, c), c),
   });
@@ -662,10 +664,22 @@ test('the committee and the seed are kept per view, and a new header builds them
   assert.equal(roster.committeeFor(rid, 'game'), committee, 'the same round, role and view assigned twice');
   assert.notEqual(roster.committeeFor(rid, 'settlement'), committee, 'another role answered with the game committee');
 
-  // A NEW HEADER IS A NEW VIEW: nothing kept is served across it.
-  grown = 1;
-  assert.notEqual(roster.seedFor(rid, contract), first, 'a longer view was answered from the old seed');
-  assert.notEqual(roster.committeeFor(rid, 'game'), committee, 'a longer view was answered from the old committee');
+  // ANOTHER VIEW OF THE SAME CHAIN IS THE SAME ANSWER (the owner 2026-09-18 01:30): the committee is made of the census
+  // root and the seed, so a view rebuilt block by block does not assign it again - that rebuild was 132-165 ms inside a
+  // pictured truck's stall. The seed's own chain check is not kept across it: `seeds` is keyed by the view.
+  grown = 2;
+  assert.equal(roster.committeeFor(rid, 'game'), committee, 'a fresh view of the same chain assigned the committee again');
+
+  // AND A DIFFERENT CENSUS IS A DIFFERENT COMMITTEE: nothing is served across a chain that says something else.
+  const others = [bondOf(0x21), bondOf(0x22)];
+  const elsewhere = new Round(openStore(), () => AFTER_COMMITTEE);
+  const otherContract = contractFor({ censusRoot: rootFor(others) });
+  const rid2 = elsewhere.open(otherContract);
+  const second = new Roster(elsewhere, { chainFor: ({ contract: c } = {}) => chainWith(others, c),
+    randomnessFor: ({ contract: c }) => beaconOf(chainWith(others, c), c) }).committeeFor(rid2, 'game');
+  assert.equal(second.ok, true, second.why);
+  assert.notDeepEqual(second.committee.map((e) => toHex(e.pubkey)).sort(),
+    committee.committee.map((e) => toHex(e.pubkey)).sort(), 'another census gave the same committee');
 
   // AND A REFUSAL IS NEVER KEPT.
   const blind = new Roster(round, { chainFor: () => ({ pending: true }), randomnessFor: ({ contract: c }) => beaconOf(chainWith(bonds, c), c) });
