@@ -1170,7 +1170,7 @@ public class DriveHud : MonoBehaviour
         // Where there is no gap at all - a phone held upright - it keeps its
         // old corner, because there is nowhere better and the alternative is
         // not drawing it.
-        StreamingRoom(w, h, out float x, out float width, out float top, out _);
+        StreamingRoom(w, h, items, out float x, out float width, out float top, out _);
         return new Rect(x, top, width, StreamingLineHeight(w, h, items) * (items + 1) + pad);
     }
 
@@ -1182,21 +1182,34 @@ public class DriveHud : MonoBehaviour
     /// painter's row height), moves right of the steering pads where the gap still holds it, and ends above whatever stands
     /// below it in its own columns - a pad or the HUD chart - or the screen's edge.
     /// </summary>
-    public void StreamingRoom(int w, int h, out float x, out float width, out float top, out float bottom)
-        => StreamingRoom(w, h, !HighLowYieldsToModelList(w, h), out x, out width, out top, out bottom);
+    public void StreamingRoom(int w, int h, int items, out float x, out float width, out float top, out float bottom)
+        => StreamingRoom(w, h, !HighLowYieldsToModelList(w, h, items), out x, out width, out top, out bottom);
 
     /// <summary>
     /// HIGH / LOW YIELDS WHILE MODELS LOAD ONLY WHERE THE LIST CANNOT FIT UNDER IT - measured, not guessed. The one shape of
     /// the five checked (HudLayoutTests): a phone held upright, 390x844, where under HIGH / LOW the room is 356.6..504.9
     /// px (the HUD chart stands at 521.8 in the same columns) and eleven rows at the 13 px font need 172.9 - 24.6 px short.
-    /// There the list keeps its old corner and HIGH / LOW is not painted until the list retires; everywhere else both show.
+    /// There the list keeps its old corner and HIGH / LOW is not painted while the list loads; everywhere else both show.
+    /// Asked with the rows the list really draws (ModelListRows), not a fixed eleven.
     /// </summary>
-    public bool HighLowYieldsToModelList(int w, int h)
+    public bool HighLowYieldsToModelList(int w, int h, int items)
     {
-        const int Items = 11;
         StreamingRoom(w, h, true, out _, out _, out float top, out float bottom);
-        float need = SmallFont(w, h) * (Items + 1) + Mathf.Max(8f, h * 0.02f);
+        float need = SmallFont(w, h) * (items + 1) + Mathf.Max(8f, h * 0.02f);
         return bottom - top < need;
+    }
+
+    /// <summary>
+    /// The model rows the list draws. All of them while models load; once loading has settled and something failed, the
+    /// list stays up for the failure (it would otherwise retire), and where the full list does not fit under HIGH / LOW -
+    /// a phone held upright - it keeps only the failed rows, which do fit, so HIGH / LOW is not hidden for the whole session.
+    /// </summary>
+    public int ModelListRows(int w, int h)
+    {
+        if (streamer == null) return 0;
+        int all = streamer.Items.Count;
+        bool settledOnAFailure = streamer.AllDone && streamer.Failed > 0 && streamer.SinceDone > 4f;
+        return settledOnAFailure && HighLowYieldsToModelList(w, h, all) ? streamer.Failed : all;
     }
 
     void StreamingRoom(int w, int h, bool underHighLow, out float x, out float width, out float top, out float bottom)
@@ -1252,7 +1265,7 @@ public class DriveHud : MonoBehaviour
     {
         float pad = Mathf.Max(8f, h * 0.02f);
         float roomy = SmallFont(w, h) * 1.5f;
-        StreamingRoom(w, h, out _, out _, out float top, out float bottom);
+        StreamingRoom(w, h, items, out _, out _, out float top, out float bottom);
         float room = bottom - top - pad;
         if (room <= 0f) return SmallFont(w, h);
         return Mathf.Clamp(room / (items + 1), SmallFont(w, h), roomy);
@@ -2454,8 +2467,10 @@ public class DriveHud : MonoBehaviour
         // ONE PITCH, asked of the same function the box uses - the box is
         // sized from it, so a second copy here would put the last row outside
         // the frame the border draws.
-        float lh = StreamingLineHeight(w, h, streamer.Items.Count);
-        var box = StreamingBox(w, h, streamer.Items.Count);
+        int rows = ModelListRows(w, h);
+        bool failedOnly = rows < streamer.Items.Count;
+        float lh = StreamingLineHeight(w, h, rows);
+        var box = StreamingBox(w, h, rows);
 
         GUI.color = new Color(0f, 0f, 0f, 0.45f);
         GUI.DrawTexture(box, _flat);
@@ -2474,6 +2489,7 @@ public class DriveHud : MonoBehaviour
 
         foreach (var item in streamer.Items)
         {
+            if (failedOnly && item.state != ModelStreamer.State.Failed) continue;
             var style = new GUIStyle(_small);
             switch (item.state)
             {

@@ -795,7 +795,7 @@ public class ChartHud : MonoBehaviour
         if (DriveHud.RunStoppedLine(_session != null ? _session.Ending : "").Length > 0) return;
         int w = Screen.width, h = Screen.height;
         // the one measured shape where the model list cannot fit under HIGH / LOW (DriveHud.HighLowYieldsToModelList)
-        if (_drive.ModelListShowing && _drive.HighLowYieldsToModelList(w, h)) return;
+        if (_drive.ModelListShowing && _drive.HighLowYieldsToModelList(w, h, _drive.ModelListRows(w, h))) return;
         _text.fontSize = HeaderFont(f.Panel.height);
         float tw = _text.CalcSize(new GUIContent(line)).x, lh = _text.fontSize * 1.35f;
         var box = _drive.HighLowBox(w, h, tw + 16f, lh + 4f);
