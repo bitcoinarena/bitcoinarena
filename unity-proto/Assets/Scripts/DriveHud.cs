@@ -1257,6 +1257,8 @@ public class DriveHud : MonoBehaviour
         // behind a toggle and the other is what the player is playing for, so
         // where they do not both fit the readout goes.
         if (box.yMax + pad * 0.5f + ManifestContentHeight(w, h) > h) return new Rect();
+        // nor onto the pads when they are up
+        if (PadsShown && box.yMax > TouchPad.RectFor(TouchPad.Pad.Up, w, h).y) return new Rect();
         return box;
     }
 
@@ -1363,6 +1365,19 @@ public class DriveHud : MonoBehaviour
         // to it, which is already how the lines fit.
         var head = HeadlineBox(w, h);
         float left = head.width > 0f ? head.xMax : pad;
+        // On a phone held upright the chart stands over the left / right controls: the column keeps right of it.
+        if (Mobile && h > w)
+        {
+            var chart = MobileChartPanel(w, h);
+            if (top < chart.yMax && top + height > chart.y) left = Mathf.Max(left, chart.xMax + pad);
+        }
+        // With the HUD chart top right and no room under its row: bottom right, left of the pad block, on the screen.
+        if (ChartTopRight(w, h) && !ScoreUnderRow(w, h))
+        {
+            float m = TouchPad.Margin(w, h);
+            float right = PadsShown ? Mathf.Min(TouchPad.RectFor(TouchPad.Pad.Handbrake, w, h).x, TouchPad.RectFor(TouchPad.Pad.Up, w, h).x) - pad * 0.5f : w - pad;
+            return new Rect(left, h - m - height, Mathf.Max(0f, right - left), height);
+        }
         return new Rect(left, top, w - pad - left, height);
     }
 
@@ -1372,37 +1387,104 @@ public class DriveHud : MonoBehaviour
     /// cannot drift.
     /// </summary>
     /// <summary>
-    /// WHETHER THE HUD CHART STANDS TOP RIGHT (T1, the owner 2026-09-17): a desktop (no touch screen), and a window with the
-    /// room - under the icons the full chart and the score column under it end on the screen, and the headline gap left of
-    /// the chart stays wider than a readable card (150 px, HudLayoutTests' bar). Measured without the rule at 844x390: the
-    /// column ended at y 450 of 390 and the send-off card was 140 px wide. Otherwise the chart stays under SIM.
+    /// A phone or tablet browser (Unity's mobile platform flag, taken from the browser on WebGL) - not "a touch screen":
+    /// the owner's desktop reports one and shows the pads. Tests set <see cref="MobileOverride"/>.
+    /// </summary>
+    public static bool Mobile => MobileOverride ?? Application.isMobilePlatform;
+    public static bool? MobileOverride;
+
+    /// <summary>
+    /// ON MOBILE, DIRECTLY ABOVE THE LEFT / RIGHT CONTROLS (the owner 2026-09-17 12:40: "MOBILE: HUD further down, directly
+    /// ABOVE the left/right controls. Not mid-screen over the truck"). Its left edge at the left pad's, its bottom half a
+    /// margin over the pads; as wide as 1.2x the old chart where that stops short of the throttle column, as tall as it is
+    /// where the left column (PRACTICE / SIM) leaves the room. The score column keeps right of it.
+    /// </summary>
+    public Rect MobileChartPanel(int w, int h)
+    {
+        float m = TouchPad.Margin(w, h);
+        var full = ChartHud.BaseSize(w, h) * ChartHud.Scale;
+        var left = TouchPad.RectFor(TouchPad.Pad.Left, w, h);
+        var up = TouchPad.RectFor(TouchPad.Pad.Up, w, h);
+        float bottom = left.y - m * 0.5f;
+        float width = Mathf.Max(0f, Mathf.Min(full.x, up.x - m * 0.5f - left.x));
+        float height = Mathf.Max(0f, Mathf.Min(full.y, bottom - (SimBox(w, h).yMax + m * 0.5f)));
+        return new Rect(left.x, bottom - height, width, height);
+    }
+
+    /// <summary>The pads are on screen (a touch screen as far as Unity knows). Tests set <see cref="PadsOverride"/>.</summary>
+    public static bool PadsShown => PadsOverride ?? TouchControls.TouchScreen;
+    public static bool? PadsOverride;
+
+    /// <summary>
+    /// THE HUD CHART TOP RIGHT, ABOVE THE BUTTONS - EVERY SCREEN (the owner 2026-09-17 12:35, HARD FAIL: "the HUD is in the
+    /// center covering the truck. It must sit TOP RIGHT, above the buttons. Not center, not over the steering arrows").
+    /// His screen showed the pads, so the desktop-only rule of the last build left it in the middle. Measured from his
+    /// screenshot: a Unity screen of about 3072x1515 (PRACTICE 200 px of the shot for its fixed 300 px). The chart takes the
+    /// top-right corner at the margin, 1.2x wide; under it one row - the wanted pips, then the sound and debug buttons at
+    /// the right; the score column goes under that row where there is room above the pads (or the screen's bottom), and
+    /// otherwise to the bottom right, left of the pad block. The chart's height gives way (never its corner) where even
+    /// then the column is short.
+    /// </summary>
+    public Rect ChartPanel(int w, int h)
+    {
+        float m = TouchPad.Margin(w, h), pad = Mathf.Max(10f, h * 0.025f);
+        var full = ChartHud.BaseSize(w, h) * ChartHud.Scale;
+        bool under = ScoreUnderRow(w, h);
+        float bottom = PadsShown ? TouchPad.RectFor(TouchPad.Pad.Up, w, h).y - pad * 0.6f : h - m;
+        // the score column at the bottom right, when it is there, is below the chart's row too (measured at 1000x360
+        // before: the column y 215-346 over the wanted row y 225-259)
+        if (!under) bottom = Mathf.Min(bottom, h - m - ManifestContentHeight(w, h) - pad * 0.5f);
+        float below = m * 0.5f + RowHeight(w, h) + m * 0.5f + (under ? pad * 0.5f + ManifestContentHeight(w, h) : 0f);
+        // SCALED, NOT SQUEEZED (the owner 2026-09-17, L1: "scaled to the shorter height"): one factor for both sides, so it
+        // fits the height and leaves the headline gap left of it a readable card's width (150 px)
+        float gapPad = Mathf.Max(10f, h * 0.022f);
+        float room = (w - m) - (HeadlineLeft(w, h) + 150f + gapPad);
+        float k = Mathf.Clamp01(Mathf.Min(Mathf.Min((bottom - m - below) / full.y, room / full.x), (w - 2f * m) / full.x));
+        return new Rect(w - m - full.x * k, m, full.x * k, full.y * k);
+    }
+
+    /// <summary>The headline gap's left edge: right of the left column (the same rule as <see cref="HeadlineBox"/>).</summary>
+    float HeadlineLeft(int w, int h)
+    {
+        float gapPad = Mathf.Max(10f, h * 0.022f);
+        float blockRight = gapPad + Mathf.Min(300f, w * 0.24f) + gapPad;
+        return Mathf.Max(Mathf.Max(blockRight, PracticeBox(w, h).xMax), Mathf.Max(HealthBox(w, h).xMax, ExposureBox(w, h).xMax)) + gapPad;
+    }
+
+    /// <summary>Whether the score column fits under the chart's row at the chart's full height; else it goes bottom right.</summary>
+    bool ScoreUnderRow(int w, int h)
+    {
+        float m = TouchPad.Margin(w, h), pad = Mathf.Max(10f, h * 0.025f);
+        var full = ChartHud.BaseSize(w, h) * ChartHud.Scale;
+        float bottom = PadsShown ? TouchPad.RectFor(TouchPad.Pad.Up, w, h).y - pad * 0.6f : h - m;
+        return m + full.y + m * 0.5f + RowHeight(w, h) + m * 0.5f + pad * 0.5f + ManifestContentHeight(w, h) <= bottom;
+    }
+
+    float RowHeight(int w, int h) => Mathf.Max(WantedBoxBase(w, h).height, TouchPad.RectFor(TouchPad.Pad.Sound, w, h).height);
+
+    /// <summary>
+    /// Whether the HUD chart stands top right: whenever its corner holds a chart at least half its full height and the
+    /// headline gap left of it stays wider than a readable card (150 px, HudLayoutTests' bar). Otherwise under SIM.
     /// </summary>
     public bool ChartTopRight(int w, int h)
     {
-        if (TouchControls.TouchScreen) return false;
-        float pad = Mathf.Max(10f, h * 0.025f), gapPad = Mathf.Max(10f, h * 0.022f);
-        var chart = ChartHud.DesktopPanelFor(w, h);
-        if (chart.height < (ChartHud.BaseSize(w, h) * ChartHud.Scale).y - 0.01f) return false;
-        // the stack under it: the wanted row, the buttons at their own distance below it, then the score column
-        var wanted = WantedBoxBase(w, h);
-        var icons = TouchPad.RectFor(TouchPad.Pad.Debug, w, h);
-        float stack = chart.yMax + TouchPad.Margin(w, h) * 0.5f + wanted.height + (icons.y - wanted.yMax) + icons.height;
-        if (stack + pad * 0.5f + ManifestContentHeight(w, h) > h) return false;
-        float blockRight = gapPad + Mathf.Min(300f, w * 0.24f) + gapPad;
-        float left = Mathf.Max(Mathf.Max(blockRight, PracticeBox(w, h).xMax), Mathf.Max(HealthBox(w, h).xMax, ExposureBox(w, h).xMax)) + gapPad;
-        return chart.x - gapPad - left > 150f;
+        // a phone held upright stands the chart over the drive pads; held on its side it is a wide screen with the same
+        // right-side buttons, and takes this corner (L1, the owner 2026-09-17)
+        if (Mobile && h > w) return false;
+        var chart = ChartPanel(w, h);
+        return chart.height >= (ChartHud.BaseSize(w, h) * ChartHud.Scale).y * 0.5f - 0.01f;
     }
 
     /// <summary>
-    /// The sound and debug buttons, where the HUD draws and clicks them: TouchPad's corner, or on the desktop with the HUD
-    /// chart top right, under the chart and the wanted row at the distance they keep from that row (the owner 2026-09-17:
-    /// "have the HUD above the sound button and the other button").
+    /// The sound and debug buttons, where the HUD draws and clicks them: TouchPad's corner, or with the HUD chart top right,
+    /// in the row under the chart, at the right margin (the owner 2026-09-17: "have the HUD above the sound button and the
+    /// other button").
     /// </summary>
     public Rect SettingsRect(TouchPad.Pad pad, int w, int h)
     {
         var r = TouchPad.RectFor(pad, w, h);
         if (!ChartTopRight(w, h)) return r;
-        r.y = WantedBox(w, h).yMax + (TouchPad.RectFor(TouchPad.Pad.Debug, w, h).y - WantedBoxBase(w, h).yMax);
+        r.y = ChartPanel(w, h).yMax + TouchPad.Margin(w, h) * 0.5f + (RowHeight(w, h) - r.height) * 0.5f;
         return r;
     }
 
@@ -1410,6 +1492,7 @@ public class DriveHud : MonoBehaviour
     public float ChartCorner(int w, int h)
     {
         float corner = SettingsRect(TouchPad.Pad.Debug, w, h).yMax;
+        if (ChartTopRight(w, h)) corner = Mathf.Max(corner, WantedBox(w, h).yMax);
         if (GameSettings.Debug)
         {
             var readout = DebugPanelBox(w, h, 8);
@@ -1562,13 +1645,18 @@ public class DriveHud : MonoBehaviour
     public Rect WantedBox(int w, int h)
     {
         var r = WantedBoxBase(w, h);
-        // under the HUD chart on the desktop (its top at the margin), the buttons under this row
-        if (ChartTopRight(w, h)) r.y = ChartHud.DesktopPanelFor(w, h).yMax + TouchPad.Margin(w, h) * 0.5f;
+        // with the HUD chart top right: in the row under it, left of the sound and debug buttons
+        if (ChartTopRight(w, h))
+        {
+            float m = TouchPad.Margin(w, h);
+            r.y = ChartPanel(w, h).yMax + m * 0.5f + (RowHeight(w, h) - r.height) * 0.5f;
+            r.x = TouchPad.RectFor(TouchPad.Pad.Sound, w, h).x - m * 0.5f - r.width;
+        }
         return r;
     }
 
     /// <summary>The wanted row's own place, top right, before the desktop HUD chart moves it down.</summary>
-    Rect WantedBoxBase(int w, int h)
+    public Rect WantedBoxBase(int w, int h)
     {
         float pad = Mathf.Max(10f, h * 0.025f);
         float font = Mathf.Clamp(Mathf.Min(w, h) * 0.055f, 24f, 46f);
@@ -1611,7 +1699,7 @@ public class DriveHud : MonoBehaviour
         float s = TouchPad.ButtonSize(w, h), m = TouchPad.Margin(w, h);
         float right = Mathf.Min(w - (m + s * 0.7f) - pad, WantedBox(w, h).x - pad);
         // On the desktop the HUD chart stands in the top right (T1): the gap ends left of it.
-        if (ChartTopRight(w, h)) right = Mathf.Min(right, ChartHud.DesktopPanelFor(w, h).x - pad);
+        if (ChartTopRight(w, h)) right = Mathf.Min(right, ChartPanel(w, h).x - pad);
 
         // And the debug readout, which is wider than the settings column it
         // hangs from - 260 px against about 60 - so with it up the gap's right
@@ -1895,6 +1983,28 @@ public class DriveHud : MonoBehaviour
     /// the block clock are rows of: it starts where the block clock's box
     /// ends, and it moves when that one does.
     /// </summary>
+    /// <summary>
+    /// THE HIGH / LOW LINE'S PLACE, CENTRAL ON THE SCREEN (the owner 2026-09-17 12:55): the run-stopped row - reserved in the
+    /// headline stack and empty while a run is on - centred on the screen where the gap allows, as wide as its text and never
+    /// wider than the gap; where there is no gap (a phone held upright), centred under the block clock on the whole width.
+    /// </summary>
+    public Rect HighLowBox(int w, int h, float width, float height)
+    {
+        var row = RunStoppedBox(w, h);
+        var head = HeadlineBox(w, h);
+        if (head.width <= 0f)
+        {
+            // no gap beside the left column (a phone held upright): under that column, centred - measured, in the row it
+            // lay on the danger bar at 390x844
+            float m = TouchPad.Margin(w, h);
+            float wd = Mathf.Min(width, w - 2f * m);
+            return new Rect((w - wd) * 0.5f, Mathf.Max(row.y, SimBox(w, h).yMax + m * 0.5f), wd, height);
+        }
+        float wd2 = Mathf.Min(width, head.width);
+        float x = Mathf.Clamp(w * 0.5f - wd2 * 0.5f, head.x, head.xMax - wd2);
+        return new Rect(x, row.y, wd2, height);
+    }
+
     public Rect RunStoppedBox(int w, int h)
     {
         float font = Mathf.RoundToInt(Mathf.Min(w, h) * 0.030f);

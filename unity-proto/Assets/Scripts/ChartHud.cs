@@ -354,8 +354,12 @@ public class ChartHud : MonoBehaviour
     public static string ObjectiveName(int kind) =>
         kind == L.OBJ_RIDGE ? "RIDGE" : kind == L.OBJ_HOLLOW ? "HOLLOW" : kind == L.OBJ_GAP ? "GAP" : "?";
 
+    /// <summary>
+    /// Whole dollars on the chart - axis, HIGH, LOW, the last price (the owner 2026-09-17 12:40: "decimals still overlap. Remove
+    /// decimal places from the chart generally. Integers only").
+    /// </summary>
     public static string Dollars(int price, float unit) =>
-        "$" + (price / (double)unit).ToString("N2", CultureInfo.InvariantCulture);
+        "$" + System.Math.Round(price / (double)unit, System.MidpointRounding.AwayFromZero).ToString("N0", CultureInfo.InvariantCulture);
 
     public static string Clock(int seconds)
     {
@@ -384,9 +388,9 @@ public class ChartHud : MonoBehaviour
         if (_drive == null) _drive = GetComponent<DriveHud>();
         if (_drive == null) _drive = FindFirstObjectByType<DriveHud>();
         _sim = _drive != null ? _drive.SimBox(Screen.width, Screen.height) : new Rect(10f, Screen.height * 0.45f, 300f, 40f);
-        var panel = _drive != null && _drive.ChartTopRight(Screen.width, Screen.height)
-            ? DesktopPanelFor(Screen.width, Screen.height)
-            : PanelFor(Screen.width, Screen.height, _sim);
+        var panel = _drive != null && DriveHud.Mobile && Screen.height > Screen.width ? _drive.MobileChartPanel(Screen.width, Screen.height)
+                  : _drive != null && _drive.ChartTopRight(Screen.width, Screen.height) ? _drive.ChartPanel(Screen.width, Screen.height)
+                  : PanelFor(Screen.width, Screen.height, _sim);
         Styles(HeaderFont(panel.height));
         float priceW = 0f;
         foreach (var t in AxisTexts(_view)) priceW = Mathf.Max(priceW, _right.CalcSize(new GUIContent(t)).x);
@@ -395,6 +399,7 @@ public class ChartHud : MonoBehaviour
         // over the left third of the chart while the models streamed, and YOU was under it.
         GUI.depth = -1;
         Paint(f);
+        PaintHighLow(f);
         Last = f;
         if (Event.current.type == EventType.Repaint) { ChartsPainted++; Tell(f); }
     }
@@ -427,7 +432,7 @@ public class ChartHud : MonoBehaviour
             $"youLabelShares={Shares(f.YouBox, f)}", $"youMarkShares={Shares(f.YouMarkBox, f)}",
             $"lastTagBox={B(f.LastTagBox)}", $"gateLineBox={B(f.GateLineBox)}",
             $"ghostLabelBoxes={string.Join("|", f.GhostLabelBoxes.ConvertAll(B))}", $"ghostDotBoxes={string.Join("|", f.GhostDotBoxes.ConvertAll(B))}",
-            $"ghostsUnplaced={f.GhostsUnplaced}", $"ghostSlots={string.Join(" || ", f.GhostSlots)}", $"ghostLabelShares={string.Join("|", f.GhostLabelBoxes.ConvertAll(r => GhostShares(r, f)))}", $"highBox={B(f.HighBox)}", $"lowBox={B(f.LowBox)}", $"gateBox={B(f.GateBox)}",
+            $"ghostsUnplaced={f.GhostsUnplaced}", $"ghostSlots={string.Join(" || ", f.GhostSlots)}", $"ghostLabelShares={string.Join("|", f.GhostLabelBoxes.ConvertAll(r => GhostShares(r, f)))}", $"highLowBox={B(HighLowDrawn)}", $"highLow={HighLowLine(f).Replace(' ', '_')}", $"gateBox={B(f.GateBox)}",
             $"openShares={OpenShares(f)}", $"openPlaced={f.OpenPlaced}",
             $"axisW={f.AxisWidth:0.0}", $"priceTextW={f.PriceTextWidth:0.0}", $"lowPlaced={f.LowPlaced}", $"timeBoxes={string.Join("|", f.TimeBoxes.ConvertAll(B))}",
         }));
@@ -699,17 +704,13 @@ public class ChartHud : MonoBehaviour
         if (f.GateOn) f.GateBox = new Rect(f.GateX - 34f, p.y, _text.CalcSize(new GUIContent("GATE")).x, lh);
         else if (f.GatePinned) { float gw = _text.CalcSize(new GUIContent(GateWord(f))).x; f.GateBox = new Rect(f.GateX - gw - 2f, p.y, gw, lh); }
 
-        // HIGH above its candle, LOW by its candle inside the plot (PlaceLow), TradingView's marks
-        f.LowPlaced = false; f.LowBox = new Rect();
+        // HIGH and LOW are not written on the chart (the owner 2026-09-17 12:55: "HIGH/LOW central on screen not on the chart"):
+        // their candles keep a 4 px tick; the words are PaintHighLow's, central on the screen.
+        f.LowPlaced = false; f.LowBox = new Rect(); f.HighBox = new Rect();
         if (f.High.Text != null)
         {
-            float hw = _text.CalcSize(new GUIContent(f.High.Text)).x, lw = _text.CalcSize(new GUIContent(f.Low.Text)).x;
             Box(new Rect(f.High.At.x - 0.5f, f.High.At.y - 5f, 1f, 4f), Axis);
-            Text(new Rect(Mathf.Clamp(f.High.At.x - hw * 0.5f, p.x, p.xMax - hw), f.High.At.y - 5f - lh, hw + 2f, lh), f.High.Text, Axis, _text);
-            f.HighBox = new Rect(Mathf.Clamp(f.High.At.x - hw * 0.5f, p.x, p.xMax - hw), f.High.At.y - 5f - lh, hw, lh);
-            f.LowBox = PlaceLow(p, f.Low.At, lw, lh, new[] { f.SymbolBox, f.PriceBox, f.LegendBox, f.HighBox, f.GateBox }, out f.LowPlaced);
             Box(new Rect(f.Low.At.x - 0.5f, f.Low.At.y + 1f, 1f, 4f), Axis);
-            if (f.LowPlaced) Text(new Rect(f.LowBox.x, f.LowBox.y, lw + 2f, lh), f.Low.Text, Axis, _text);
         }
 
         // last price: dotted line and the tag on the axis
@@ -774,6 +775,35 @@ public class ChartHud : MonoBehaviour
         Line(f.You, tickEnd, 2f, Truck);
         Box(new Rect(f.You.x - 4f, f.You.y - 4f, 8f, 8f), Truck);
         Text(f.YouBox, youWord, Truck, _text);
+        GUI.color = old;
+    }
+
+    /// <summary>Where the HIGH / LOW line was drawn last (empty when not drawn), for the log and the probe.</summary>
+    public Rect HighLowDrawn;
+
+    /// <summary>The words of the central HIGH / LOW line, whole dollars.</summary>
+    public static string HighLowLine(Frame f) => f.High.Text == null ? "" : f.High.Text + "   ·   " + f.Low.Text;
+
+    /// <summary>
+    /// HIGH AND LOW, CENTRAL ON THE SCREEN (the owner 2026-09-17 12:55). One line in the headline stack's reserved run-stopped
+    /// row, at the screen's centre where that row allows, on a dark plate; not while the run-stopped line owns the row.
+    /// </summary>
+    void PaintHighLow(Frame f)
+    {
+        HighLowDrawn = new Rect();
+        string line = HighLowLine(f);
+        if (_drive == null || line.Length == 0) return;
+        if (_session == null) _session = FindFirstObjectByType<Blwp.NetSession>();
+        if (DriveHud.RunStoppedLine(_session != null ? _session.Ending : "").Length > 0) return;
+        int w = Screen.width, h = Screen.height;
+        _text.fontSize = HeaderFont(f.Panel.height);
+        float tw = _text.CalcSize(new GUIContent(line)).x, lh = _text.fontSize * 1.35f;
+        var box = _drive.HighLowBox(w, h, tw + 16f, lh + 4f);
+        if (box.width <= 0f) return;
+        HighLowDrawn = box;
+        var old = GUI.color;
+        Box(box, new Color(Background.r, Background.g, Background.b, 0.8f));
+        Text(new Rect(box.center.x - tw * 0.5f, box.y + 2f, tw + 2f, lh), line, Axis, _text);
         GUI.color = old;
     }
 

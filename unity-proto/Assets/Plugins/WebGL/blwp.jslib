@@ -142,8 +142,11 @@ mergeInto(LibraryManager.library, {
   // The surface without the candle layer: what the terrain mesh draws under the candles' own mesh.
   BlwpTerrainAt: function (x, z) {
     var b = Module.blwp;
-    if (!b || !b.core.terrainAt) return 0;
-    return b.core.terrainAt(b.st, x | 0, z | 0) | 0;
+    if (!b) return 0;
+    // A core without the candle layer (the Daily's signer-node core before §4.15) has no terrainAt: its ground IS the
+    // surface without candles. Answering 0 there drew the whole map flat.
+    var f = b.core.terrainAt || b.core.groundAt;
+    return f ? f(b.st, x | 0, z | 0) | 0 : 0;
   },
 
   // The state hash, for a checkpoint. Written as ASCII into a caller-owned
