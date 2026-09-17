@@ -377,12 +377,23 @@ export class Roster {
    * minimum - a caller that pre-checked it here would be the second place that
    * rule lived, and the two would drift.
    */
+  /**
+   * ASSIGNED ONCE PER ROUND, FROM THE CENSUS ROOT AND THE SEED (the owner 2026-09-18 01:30, the ghost lag).
+   *
+   * Keyed on the view's length it was rebuilt on every block - about ten a minute on the Daily - and that rebuild was
+   * the 132-165 ms left sitting in the pictured truck's stalls. A committee cannot change when a header arrives: the
+   * census is fixed at the round's census height and the seed is the randomness published after the round id, fixed
+   * once the view reaches the beacon. So the key is what the answer is made of. A different census root or a different
+   * seed misses and is assigned again; a refusal is never kept; and the chain check behind the seed still runs when the
+   * view grows, so nothing is verified less often than before.
+   */
   committeeFor(roundIdBytes, role) {
     const row = this.round.get(roundIdBytes);
     const contract = row ? decodeRoundContract(new Uint8Array(row.contract)) : null;
-    const view = contract ? this.chainFor({ contract, roundIdBytes }) : null;
-    const kept = view && Array.isArray(view.blocks)
-      ? `${toHex(roundIdBytes)}:${role}:${view.firstHeight}:${view.blocks.length}` : null;
+    const census = contract ? this.censusFor(roundIdBytes) : null;
+    const seeded = contract ? this.seedFor(roundIdBytes, contract) : null;
+    const kept = census && census.ok && seeded && seeded.ok && seeded.seed
+      ? `${toHex(roundIdBytes)}:${role}:${toHex(census.root)}:${toHex(seeded.seed)}` : null;
     if (kept && this.committees.has(kept)) return this.committees.get(kept);
     const answer = timed(`committee assigned ${toHex(roundIdBytes).slice(0, 8)}`,
       () => this.#committeeFor(roundIdBytes, role), { over: 20 });
