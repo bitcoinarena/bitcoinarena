@@ -1354,15 +1354,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const done = await timed('custody settleHeldInvoices', () => custody.settleHeldInvoices({
       roundId: roundIdBytes, entries, minScore: contract.minScore, finalFor: isFinal,
     }));
-    if (done && done.ok && typeof done.poolMsat === 'bigint') settledPools.set(toHex(roundIdBytes), done.poolMsat);
-    if (done && done.ok && done.table && Array.isArray(done.table.table))
-      settledRows.set(toHex(roundIdBytes), new Map(done.table.table.map((r) => [toHex(r.pubkey), r.amountMsat])));
-    for (const a of done.actions || [])
-      console.log(`[custody] ${toHex(a.entryId).slice(0, 16)} ${a.action} -> ${a.state}: ${a.why}`);
-    for (const w of waiting)
-      console.log(w.published
-        ? `[custody] ${w.entryId.slice(0, 16)} waits for its objection window, which closes at ${w.closesAtMs}`
-        : `[custody] ${w.entryId.slice(0, 16)} waits: ${w.why}`);
+    // WHAT THE SETTLE MAKES OF ITS ANSWER, TIMED (the owner 2026-09-17 19:15, the ghost lag). The listed inventory: 856 of
+    // these lines in six minutes, and the five lines before every stall the sampler could not name carried them - the
+    // work has a voice in the log and no timer, so its share of the 190-210 ms was unknown. It is timed here, where it
+    // runs, on the thread the other players' trucks are drawn from.
+    timed('custody settle read', () => {
+      if (done && done.ok && typeof done.poolMsat === 'bigint') settledPools.set(toHex(roundIdBytes), done.poolMsat);
+      if (done && done.ok && done.table && Array.isArray(done.table.table))
+        settledRows.set(toHex(roundIdBytes), new Map(done.table.table.map((r) => [toHex(r.pubkey), r.amountMsat])));
+      for (const a of done.actions || [])
+        console.log(`[custody] ${toHex(a.entryId).slice(0, 16)} ${a.action} -> ${a.state}: ${a.why}`);
+      for (const w of waiting)
+        console.log(w.published
+          ? `[custody] ${w.entryId.slice(0, 16)} waits for its objection window, which closes at ${w.closesAtMs}`
+          : `[custody] ${w.entryId.slice(0, 16)} waits: ${w.why}`);
+    }, { over: 20 });
     for (const s of suspended)
       console.log(`[custody] ${s.slice(0, 16)} is SUSPENDED by a valid objection: nothing moves, and its hold expires to its player`);
     const said = {
@@ -1386,10 +1392,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // out of the pool is §20, and it needs its own five of seven. This node
     // signs the table it computed and asks the other signer nodes for theirs.
     await timed('payout gather', () => payouts.gather({ roundId: roundIdBytes })).catch((e) => console.error(`[payout] ${e.message}`));
-    const owed = timed('payout queue', () => payouts.queue({
-      roundId: roundIdBytes, entries, minScore: contract.minScore, contract,
-    }));
-    console.log(`[payout] ${owed.ok ? owed.state : owed.why}`);
+    const owed = timed('payout table', () => {
+      const said = payouts.queue({ roundId: roundIdBytes, entries, minScore: contract.minScore, contract });
+      console.log(`[payout] ${said.ok ? said.state : said.why}`);
+      return said;
+    }, { over: 20 });
 
     // ...AND THE SPEND ITSELF, if this node is the signer node that asks for it.
     //
