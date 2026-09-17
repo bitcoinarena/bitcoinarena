@@ -45,7 +45,7 @@ const THRESHOLD = () => {
  * which is a different fact and is printed as one.
  */
 const ran = [];
-const KEPT = 256;
+const KEPT = 2048;
 const notice = (label, from, to) => {
   if (to - from < 5) return;
   ran.push({ label, from, to });
@@ -95,10 +95,14 @@ export function watchLoop({ every = 50, over = 250, say = console.log } = {}) {
     const late = now - last - every;
     last = now;
     if (late < over) return;
-    const inside = ran.filter((r) => r.to > now - late - every && r.from < now)
-      .sort((a, b) => (b.to - b.from) - (a.to - a.from)).slice(0, 3);
+    const inside = ran.filter((r) => r.to > now - late - every && r.from < now);
+    const total = inside.reduce((a, r) => a + (r.to - r.from), 0);
+    const longest = inside.slice().sort((a, b) => (b.to - b.from) - (a.to - a.from)).slice(0, 3);
+    // HOW MANY RAN AND HOW LONG THEY WERE ALTOGETHER, not only the longest three: a stall made of forty small frames
+    // reads as "nothing named" when only the three biggest are printed, and that is the opposite of the truth.
     const held = inside.length
-      ? inside.map((r) => `${r.label} ${(r.to - r.from).toFixed(0)} ms`).join(', ')
+      ? `${inside.length} phase(s) totalling ${total.toFixed(0)} ms, longest `
+        + longest.map((r) => `${r.label} ${(r.to - r.from).toFixed(0)} ms`).join(', ')
       : null;
     const gc = collections.filter((c) => c.at >= now - late - every).reduce((a, c) => a + c.ms, 0);
     // AND WHETHER THIS PROCESS WAS RUNNING AT ALL. A loop held while the process used almost no processor was not
