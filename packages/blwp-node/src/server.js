@@ -374,7 +374,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   let expiryTimer = null;
   if (custody.reaches) {
     let sweeping = false;
-    expiryTimer = setInterval(async () => {
+    expiryTimer = setInterval(async () => timed('custody expiry sweep', async () => {
       if (sweeping || shuttingDown) return;
       sweeping = true;
       try {
@@ -390,7 +390,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             console.log(`[custody] ${toHex(e).slice(0, 16)} HELD -> EXPIRED: this node's chain is at ${tipHeight}, past its HTLC's expiry`);
         }
       } catch (e) { console.error(`[custody] expiry: ${e.message}`); } finally { sweeping = false; }
-    }, expiry.everyMs ?? 5000);
+    }, { over: 100 }), expiry.everyMs ?? 5000);
     if (expiryTimer.unref) expiryTimer.unref();
   }
 
@@ -1122,7 +1122,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (w.closesAtMs !== null) until = Math.max(until, Date.now() + (w.closesAtMs - round.now()) + windowMs);
     };
     let timer = null;
-    const tick = async () => {
+    const tick = async () => timed(`finality ${toHex(roundIdBytes).slice(0, 8)}`, () => ticked(), { over: 100 });
+
+    const ticked = async () => {
       finalityTimers.delete(timer);
       if (shuttingDown) return;
       stretch();
