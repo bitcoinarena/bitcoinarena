@@ -12718,7 +12718,13 @@ class Client {
    * counted.
    */
   drain() {
+    // A DRAIN THAT FINDS A BATCH IN FLIGHT IS OWED, NOT DROPPED (the owner 2026-09-17 19:15: "updates only every 300-600 ms").
+    // The page drains every sixth tick; a slot that found the last batch unanswered used to wait for the next slot, so
+    // any link slower than 100 ms round trip halved the pictures - measured through a proxy holding 80 ms each way:
+    // 5.0 pictures a second, 200 ms apart, 167 ms old on arrival. The answer now sends what is held at once.
+    if (this.publishing && !this.ended) this.drainOwed = true;
     if (this.ended || this.publishing || !this.hold.length || !this.where) return this.publishing;
+    this.drainOwed = false;
     // NOTHING GOES OUT WHILE THE TWO NUMBERS ARE BEING RE-READ. A batch built
     // from the old `nextTick` while `resume` is replacing it is the refusal
     // again, one tick later.
@@ -12814,9 +12820,9 @@ class Client {
         }
       }
       this.publishing = null;
-      // A MARK IS WAITING ON TICKS STILL HELD: carry on draining now rather
-      // than on the page's next call, so the mark goes as soon as it can.
-      if (this.inputWaiters.length && this.hold.length) {
+      // A MARK IS WAITING ON TICKS STILL HELD, OR A SLOT WAS MISSED WHILE THIS BATCH WAS IN FLIGHT: carry on draining now
+      // rather than on the page's next call, so the mark goes as soon as it can and the pictures keep the page's cadence.
+      if ((this.inputWaiters.length || (this.drainOwed && r.accepted)) && this.hold.length) {
         const d = this.drain();
         if (d && d.catch) d.catch(() => {});
       }
@@ -13044,6 +13050,113 @@ class Client {
   }
 }
 
+// ---- protocol/src/display-name.js
+// 0.12 DISPLAY NAME. Identity is the player key. The name is presentation.
+//
+// the owner 2026-09-08 18:55 (M3): default name is derived from the key so every
+// client shows the same string for the same player. A player may override it.
+// The override lives next to the secret in the browser, not on the signed
+// final, so the board still cannot be injected with a name (letter 20).
+// Donation LNURL comments carry the player public key as hex, not the name
+// (the owner 2026-09-08 18:59).
+//
+//   default = adjective-animal-NNNN
+//   digest  = taggedHash('BLWP/v1/DISPLAY_NAME', playerPubkey)
+//
+// Two wordlists would name one player twice, which is why this file exists
+// rather than letting a client invent one.
+
+
+const DISPLAY_NAME_TAG = 'BLWP/v1/DISPLAY_NAME';
+const DISPLAY_NAME_MAX = 32;
+
+const ADJECTIVES = Object.freeze([
+  'amber', 'azure', 'bold', 'brave', 'brisk', 'calm', 'cool', 'coral',
+  'crisp', 'dark', 'dawn', 'deep', 'dry', 'dusk', 'eager', 'even',
+  'fair', 'firm', 'flat', 'glad', 'gold', 'grim', 'harsh', 'holy',
+  'icy', 'idle', 'iron', 'jade', 'jolly', 'keen', 'kind', 'late',
+  'loud', 'lush', 'merry', 'mild', 'mint', 'neat', 'near', 'noble',
+  'odd', 'open', 'pale', 'plain', 'proud', 'quick', 'quiet', 'rapid',
+  'rare', 'royal', 'safe', 'sharp', 'silent', 'steel', 'swift', 'tall',
+  'true', 'urban', 'vast', 'vivid', 'warm', 'wild', 'young', 'zinc',
+]);
+
+const ANIMALS = Object.freeze([
+  'otter', 'hawk', 'wolf', 'bear', 'fox', 'lynx', 'stag', 'elk',
+  'moose', 'swan', 'crow', 'raven', 'dove', 'lark', 'wren', 'pike',
+  'perch', 'trout', 'carp', 'bass', 'eel', 'crab', 'seal', 'whale',
+  'shark', 'ray', 'frog', 'toad', 'newt', 'deer', 'boar', 'ram',
+  'colt', 'mare', 'ox', 'yak', 'ape', 'bat', 'cub', 'doe',
+  'emu', 'gnu', 'hen', 'hog', 'jay', 'owl', 'pup', 'sow',
+  'asp', 'bee', 'cat', 'cow', 'dog', 'fly', 'goat', 'hare',
+  'ibis', 'koi', 'mole', 'puma', 'rook', 'tern', 'orca', 'kiwi',
+]);
+
+if (ADJECTIVES.length !== 64 || ANIMALS.length !== 64) {
+  throw new Error('display-name wordlists must be 64 each');
+}
+if (new Set(ADJECTIVES).size !== 64 || new Set(ANIMALS).size !== 64) {
+  throw new Error('display-name wordlists must be unique');
+}
+
+function requirePubkey(playerPubkey) {
+  if (!(playerPubkey instanceof Uint8Array) || playerPubkey.length !== 32) {
+    throw new Error('a display name is derived from a 32-byte player key');
+  }
+}
+
+/** Default name every client derives for this key. adjective-animal-NNNN */
+function displayNameFromKey(playerPubkey) {
+  requirePubkey(playerPubkey);
+  const d = taggedHash(DISPLAY_NAME_TAG, playerPubkey);
+  const adj = ADJECTIVES[d[0] & 63];
+  const animal = ANIMALS[d[1] & 63];
+  const num = ((d[2] << 8) | d[3]) % 10000;
+  return adj + '-' + animal + '-' + String(num).padStart(4, '0');
+}
+
+/**
+ * A custom name the player typed. Empty / invalid means "use the default".
+ * No em dash. Max 32. Printable ASCII letters, digits, space, dot, _ -.
+ */
+function normalizeDisplayName(raw) {
+  if (raw == null) return null;
+  if (typeof raw !== 'string') return null;
+  const s = raw.trim();
+  if (!s) return null;
+  if (s.length > DISPLAY_NAME_MAX) return null;
+  if (/[—–]/.test(s)) return null;
+  if (!/^[A-Za-z0-9][A-Za-z0-9._ -]{0,31}$/.test(s)) return null;
+  return s;
+}
+
+/** Name to show on the board and in the client. Not the donation comment. */
+function displayNameFor(playerPubkey, custom) {
+  return normalizeDisplayName(custom) || displayNameFromKey(playerPubkey);
+}
+
+/** LNURL-pay comment: the player public key as hex. Not the display name. */
+function donationCommentFor(playerPubkey, commentAllowed = 140) {
+  requirePubkey(playerPubkey);
+  const hex = toHex(playerPubkey);
+  const max = Number(commentAllowed);
+  if (!Number.isFinite(max) || max < hex.length) return '';
+  return hex;
+}
+
+/**
+ * What the browser stores. secretKey never leaves the machine except via the
+ * player's own backup download. displayName null = derive from the key.
+ */
+function playerStoreRecord({ secretKey, displayName = null }) {
+  requirePubkey(secretKey);
+  return {
+    version: 1,
+    secretKey: toHex(secretKey),
+    displayName: normalizeDisplayName(displayName),
+  };
+}
+
 // ---- blwp-client/src/ghost-field.js
 // WHAT THE PAGE DOES WITH A PICTURE OF SOMEBODY ELSE'S TRUCK.
 //
@@ -13062,6 +13175,7 @@ class Client {
 // NOTHING HERE IS AN INPUT. 0.10: another player's truck is a picture, never
 // an input to my simulation. A queue of pictures is handed to a renderer and
 // to nothing else - `packages/core` is not imported, and cannot be.
+
 
 /** How many pictures a page will hold before it starts dropping the oldest. */
 const GHOST_BACKLOG = 240;
@@ -13122,7 +13236,12 @@ function watchGhosts(client, where, { limit = GHOST_BACKLOG, clock = Date.now } 
   // Unity has already drawn is gone from the queue; it is still a player
   // in the round, and the page's count has to say so.
   const present = new Map();
+  // HOW EACH DRAWN TRUCK LAST MOVED, for the debug label over it (the owner 2026-09-17 19:15): the arrows between its last
+  // two pictures and when the newest arrived.
+  const motion = new Map();
   const field = {
+    present,
+    motion,
     seen: 0,
     self: 0,
     shed: 0,
@@ -13141,7 +13260,6 @@ function watchGhosts(client, where, { limit = GHOST_BACKLOG, clock = Date.now } 
     // players and the screen showed one truck - and the page had no number
     // that could tell the two apart.
     drawn: 0,
-    present,
     get size() { return queue.length; },
     get others() { return present.size; },
 
@@ -13220,6 +13338,10 @@ function watchGhosts(client, where, { limit = GHOST_BACKLOG, clock = Date.now } 
     }
     drawnEntry.set(who, { e: entryKey, entryId: ghost.entryId, playerPubkey: ghost.playerPubkey, at: clock() });
 
+    const was = present.get(who);
+    const before = motion.get(who);
+    motion.set(who, { atMs: clock(),
+      glyphs: was && toHex(was.entryId) === entryKey ? moveGlyphs(was, ghost) : (before ? before.glyphs : '') });
     present.set(who, ghost);
     queue.push(ghost);
     // A FULL QUEUE SHEDS PICTURES OLDEST FIRST, which is piece 2 of letter 18
@@ -13240,6 +13362,91 @@ function watchGhosts(client, where, { limit = GHOST_BACKLOG, clock = Date.now } 
 
 /** Q16.16: the words a picture carries, per metre. `GhostTruck.ONE` is the same number. */
 const ONE_METRE = 65536;
+
+/**
+ * WHICH WAY A TRUCK WENT BETWEEN TWO OF ITS PICTURES, as the debug label draws it (the owner 2026-09-17 19:15): an up
+ * arrow for forward, a down arrow for back, a left or right arrow for a turn, both when it did both. Read off the
+ * pictures - what reached this page through the nodes - not off anybody's keys. Forward is the step along the hull
+ * (heading in turns: x = sin, z = cos, a growing heading turns right); a turn is the heading's change, mirrored while
+ * backing, so a steer to the right reads right either way. Under 2 cm and under 16 of 65536 of a turn is standing.
+ */
+function moveGlyphs(a, b) {
+  const dx = (b.x - a.x) / ONE_METRE, dz = (b.z - a.z) / ONE_METRE;
+  const h = (b.heading / 65536) * 2 * Math.PI;
+  const along = dx * Math.sin(h) + dz * Math.cos(h);
+  const back = along < -0.02;
+  let dh = ((((b.heading - a.heading) % 65536) + 98304) % 65536) - 32768;
+  if (back) dh = -dh;
+  return (along > 0.02 ? '\u2191' : back ? '\u2193' : '') + (dh < -16 ? '\u2190' : dh > 16 ? '\u2192' : '');
+}
+
+/**
+ * THE WALL CLOCK OF EACH TICK A TAB DROVE, shared with the other tabs of this browser (the owner 2026-09-17 19:15: "age =
+ * how old the last move is, as seen on the other client after it went through the nodes"). A driving tab posts its
+ * newest tick and the time it recorded it; a watching tab reads the time of the tick a picture names when that picture
+ * is drawn. Only the stamp travels on the channel - the picture itself still comes from the nodes. A tab with no
+ * channel, or a truck driven in another browser, has no stamp, and its label says the age since the picture arrived.
+ */
+function tickClock({ Channel = globalThis.BroadcastChannel, name = 'blwp-ghost-clock', keep = 64 } = {}) {
+  const stamps = new Map();
+  const put = (e, t, ms) => {
+    let a = stamps.get(e);
+    if (!a) stamps.set(e, (a = []));
+    a.push([t, ms]);
+    if (a.length > keep) a.shift();
+  };
+  let channel = null;
+  try { if (typeof Channel === 'function') channel = new Channel(name); } catch { channel = null; }
+  if (channel) {
+    channel.onmessage = (m) => {
+      const d = m && m.data;
+      if (d && typeof d.e === 'string' && Number.isInteger(d.t) && Number.isFinite(d.ms)) put(d.e, d.t, d.ms);
+    };
+  }
+  return {
+    shared: channel !== null,
+    post(entryHex, tick, ms = Date.now()) {
+      put(entryHex, tick, ms);
+      if (channel) { try { channel.postMessage({ e: entryHex, t: tick, ms }); } catch { /* a closed channel */ } }
+    },
+    /** When the tab driving `entryHex` recorded `tick`, off its nearest stamp within a second; null when none. */
+    sentMs(entryHex, tick) {
+      const a = stamps.get(entryHex);
+      if (!a) return null;
+      let best = null;
+      for (const s of a) if (best === null || Math.abs(s[0] - tick) < Math.abs(best[0] - tick)) best = s;
+      if (best === null || Math.abs(best[0] - tick) > 60) return null;
+      return best[1] + ((tick - best[0]) * 1000) / 60;
+    },
+    close() { if (channel) channel.close(); },
+  };
+}
+
+/**
+ * ONE DEBUG LABEL PER DRAWN TRUCK: its entry (the key Unity keeps the truck under), the player's name, how old its
+ * newest picture is in ms, and how it moved. `estimated` is true when no stamp of the driver's own clock was found and
+ * the age is only the time since that picture arrived here.
+ */
+function ghostLabels(field, { nowMs = Date.now(), nameOf = () => null, clock = null } = {}) {
+  const out = [];
+  if (!field || !field.present) return out;
+  for (const [who, g] of field.present) {
+    const entry = toHex(g.entryId);
+    const player = g.playerPubkey ? toHex(g.playerPubkey) : null;
+    const name = (player && nameOf(player)) || (g.playerPubkey ? displayNameFromKey(g.playerPubkey) : entry.slice(0, 8));
+    const sent = clock ? clock.sentMs(entry, g.tick) : null;
+    const m = field.motion ? field.motion.get(who) : null;
+    const estimated = sent === null;
+    const ageMs = Math.max(0, Math.round(nowMs - (estimated ? (m ? m.atMs : nowMs) : sent)));
+    out.push({ entry, name, ageMs, estimated, glyphs: m ? m.glyphs : '' });
+  }
+  return out;
+}
+
+/** The labels as the bridge hands them to Unity: one line a truck, tab-separated, line 2 already written. */
+function ghostLabelText(labels) {
+  return labels.map((l) => `${l.entry}\t${l.name}\t${l.estimated ? '~' : ''}${l.ageMs}ms ${l.glyphs}`.trimEnd()).join('\n');
+}
 
 /**
  * WHERE THE NEWEST OTHER TRUCK IS, in metres, or null for nobody.
@@ -13443,113 +13650,6 @@ function decodeLobbyName(bytes) {
 
 /** What the joined player signs (BIP-340, its round key) for its name in one round. */
 const lobbyNameId = (record) => taggedHash(TAG.lobbyName, encodeLobbyName(record));
-
-// ---- protocol/src/display-name.js
-// 0.12 DISPLAY NAME. Identity is the player key. The name is presentation.
-//
-// the owner 2026-09-08 18:55 (M3): default name is derived from the key so every
-// client shows the same string for the same player. A player may override it.
-// The override lives next to the secret in the browser, not on the signed
-// final, so the board still cannot be injected with a name (letter 20).
-// Donation LNURL comments carry the player public key as hex, not the name
-// (the owner 2026-09-08 18:59).
-//
-//   default = adjective-animal-NNNN
-//   digest  = taggedHash('BLWP/v1/DISPLAY_NAME', playerPubkey)
-//
-// Two wordlists would name one player twice, which is why this file exists
-// rather than letting a client invent one.
-
-
-const DISPLAY_NAME_TAG = 'BLWP/v1/DISPLAY_NAME';
-const DISPLAY_NAME_MAX = 32;
-
-const ADJECTIVES = Object.freeze([
-  'amber', 'azure', 'bold', 'brave', 'brisk', 'calm', 'cool', 'coral',
-  'crisp', 'dark', 'dawn', 'deep', 'dry', 'dusk', 'eager', 'even',
-  'fair', 'firm', 'flat', 'glad', 'gold', 'grim', 'harsh', 'holy',
-  'icy', 'idle', 'iron', 'jade', 'jolly', 'keen', 'kind', 'late',
-  'loud', 'lush', 'merry', 'mild', 'mint', 'neat', 'near', 'noble',
-  'odd', 'open', 'pale', 'plain', 'proud', 'quick', 'quiet', 'rapid',
-  'rare', 'royal', 'safe', 'sharp', 'silent', 'steel', 'swift', 'tall',
-  'true', 'urban', 'vast', 'vivid', 'warm', 'wild', 'young', 'zinc',
-]);
-
-const ANIMALS = Object.freeze([
-  'otter', 'hawk', 'wolf', 'bear', 'fox', 'lynx', 'stag', 'elk',
-  'moose', 'swan', 'crow', 'raven', 'dove', 'lark', 'wren', 'pike',
-  'perch', 'trout', 'carp', 'bass', 'eel', 'crab', 'seal', 'whale',
-  'shark', 'ray', 'frog', 'toad', 'newt', 'deer', 'boar', 'ram',
-  'colt', 'mare', 'ox', 'yak', 'ape', 'bat', 'cub', 'doe',
-  'emu', 'gnu', 'hen', 'hog', 'jay', 'owl', 'pup', 'sow',
-  'asp', 'bee', 'cat', 'cow', 'dog', 'fly', 'goat', 'hare',
-  'ibis', 'koi', 'mole', 'puma', 'rook', 'tern', 'orca', 'kiwi',
-]);
-
-if (ADJECTIVES.length !== 64 || ANIMALS.length !== 64) {
-  throw new Error('display-name wordlists must be 64 each');
-}
-if (new Set(ADJECTIVES).size !== 64 || new Set(ANIMALS).size !== 64) {
-  throw new Error('display-name wordlists must be unique');
-}
-
-function requirePubkey(playerPubkey) {
-  if (!(playerPubkey instanceof Uint8Array) || playerPubkey.length !== 32) {
-    throw new Error('a display name is derived from a 32-byte player key');
-  }
-}
-
-/** Default name every client derives for this key. adjective-animal-NNNN */
-function displayNameFromKey(playerPubkey) {
-  requirePubkey(playerPubkey);
-  const d = taggedHash(DISPLAY_NAME_TAG, playerPubkey);
-  const adj = ADJECTIVES[d[0] & 63];
-  const animal = ANIMALS[d[1] & 63];
-  const num = ((d[2] << 8) | d[3]) % 10000;
-  return adj + '-' + animal + '-' + String(num).padStart(4, '0');
-}
-
-/**
- * A custom name the player typed. Empty / invalid means "use the default".
- * No em dash. Max 32. Printable ASCII letters, digits, space, dot, _ -.
- */
-function normalizeDisplayName(raw) {
-  if (raw == null) return null;
-  if (typeof raw !== 'string') return null;
-  const s = raw.trim();
-  if (!s) return null;
-  if (s.length > DISPLAY_NAME_MAX) return null;
-  if (/[—–]/.test(s)) return null;
-  if (!/^[A-Za-z0-9][A-Za-z0-9._ -]{0,31}$/.test(s)) return null;
-  return s;
-}
-
-/** Name to show on the board and in the client. Not the donation comment. */
-function displayNameFor(playerPubkey, custom) {
-  return normalizeDisplayName(custom) || displayNameFromKey(playerPubkey);
-}
-
-/** LNURL-pay comment: the player public key as hex. Not the display name. */
-function donationCommentFor(playerPubkey, commentAllowed = 140) {
-  requirePubkey(playerPubkey);
-  const hex = toHex(playerPubkey);
-  const max = Number(commentAllowed);
-  if (!Number.isFinite(max) || max < hex.length) return '';
-  return hex;
-}
-
-/**
- * What the browser stores. secretKey never leaves the machine except via the
- * player's own backup download. displayName null = derive from the key.
- */
-function playerStoreRecord({ secretKey, displayName = null }) {
-  requirePubkey(secretKey);
-  return {
-    version: 1,
-    secretKey: toHex(secretKey),
-    displayName: normalizeDisplayName(displayName),
-  };
-}
 
 // ---- blwp-client/src/identity.js
 // WHO THIS TAB IS IN THE LOBBY (M3.3-34): a key the page generated, a name
