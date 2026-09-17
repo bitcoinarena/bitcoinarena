@@ -40,7 +40,11 @@ import { entryFeeMsat } from '../../protocol/src/fee.js';
 const ONE = 65536;
 const M = (w) => (w / ONE).toFixed(3);
 const b32 = (n) => new Uint8Array(32).fill(n);
-const SEED = 7;
+// 1, not 7: with hold as the default (tank legs 12-20 s, posts held until the bound arrives; 4f9993e) seed 7's
+// heat-blind replay ended only 0.84 m from the page at tick 900 (40.83 m before the cadence), too close to measure the
+// fault. Seed 1 on the moving-ribbon core (44c72d7): the two part at tick 251 and are 28.946 m apart at 900, the loaded
+// bed still reading 57229 (65.38 m at 900 when first measured, before the ribbon).
+const SEED = 1;
 
 // AN ORDINARY AUTO LOAD. What the page's core was HOLDING is the number that
 // was measured - 57229 - and not the bed it came off, so the bed here is one
