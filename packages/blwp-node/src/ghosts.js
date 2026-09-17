@@ -141,6 +141,9 @@ export function ghostForChecked(options) {
  * made one up would be seeding a world its peers could not reproduce. No
  * source, no picture, and the refusal says which.
  */
+/** The most ticks one picture replays in one call (see `latest`). */
+export const STEP_BUDGET = 150;
+
 export class Ghosts {
   constructor(round, { randomnessFor = () => undefined, limit = GHOST_SUBSCRIPTIONS, cores = installedCores() } = {}) {
     this.round = round;
@@ -298,13 +301,20 @@ export class Ghosts {
    * trust, and that does not stop being true when it is fast.
    */
   latest(roundIdBytes, entryIdBytes) {
-    const at = this.playedThrough(roundIdBytes, entryIdBytes);
-    if (at === null)
+    const published = this.playedThrough(roundIdBytes, entryIdBytes);
+    if (published === null)
       return { ok: false, why: 'that entry has published no inputs, so there is nothing to be a picture of' };
-
-    const key = `${hex(roundIdBytes)}:${hex(entryIdBytes)}:${at}`;
-    const had = this.frames.get(key);
-    if (had) { this.served++; return had; }
+    // NEVER A WHOLE RUN IN ONE CALL (the owner 2026-09-17 17:05 / 17:12: ghosts a minute late and stuttering). The first
+    // picture of a truck replayed its whole run here, on the event loop both signer nodes share: 3.55 s a run at 395 us a
+    // tick, so a watcher arriving with two or three trucks mid-run stopped the Daily for 14-21 s (measured 18.7 s and
+    // 20.0 s within one minute) - every batch and every picture waited. A call steps at most STEP_BUDGET ticks; a cold
+    // truck is drawn at the tick it has reached and catches up over the next pushes, ten a second.
+    const warm = this.runs.get(`${hex(roundIdBytes)}:${hex(entryIdBytes)}`);
+    if (warm) {
+      const key = `${hex(roundIdBytes)}:${hex(entryIdBytes)}:${Math.min(published, warm.at + STEP_BUDGET)}`;
+      const had = this.frames.get(key);
+      if (had) { this.served++; return had; }
+    }
 
     const stored = this.round.entry(entryIdBytes);
     if (!stored) return { ok: false, why: 'no such entry on this node' };
@@ -318,6 +328,10 @@ export class Ghosts {
 
     const run = this.#runFor(roundIdBytes, entryIdBytes, entry);
     if (!run.ok) return { ok: false, why: run.why };
+    const at = Math.min(published, run.at + STEP_BUDGET);
+    const key = `${hex(roundIdBytes)}:${hex(entryIdBytes)}:${at}`;
+    const had = this.frames.get(key);
+    if (had) { this.served++; return had; }
 
     const before = run.stepped;
     const walked = run.stepTo(this.round.ticksFrom(roundIdBytes, entryIdBytes, run.at + 1), at);

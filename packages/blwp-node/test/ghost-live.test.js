@@ -23,13 +23,14 @@ import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js
 import assert from 'node:assert/strict';
 import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
-import { Ghosts, ghostForChecked } from '../src/ghosts.js';
+import { Ghosts, ghostForChecked, STEP_BUDGET } from '../src/ghosts.js';
 import { RunInProgress } from '../src/replay.js';
 import { TRUCK } from '../src/cores.js';
 import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
 import { GENESIS, decodeTranscript } from '../../protocol/src/transcript.js';
 import { decodeGhost } from '../../protocol/src/ghost.js';
 import { toHex } from '../../protocol/src/hash.js';
+import { decodeEntryContract } from '../../protocol/src/contracts.js';
 
 // The node fee is 27A.7's 2% of the stake, and the door checks it now
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
@@ -289,4 +290,30 @@ test('a load is applied once however many slices a watcher asks for', () => {
     'a hundred slices produced a different pose from one replay');
   console.log(`  100 slices, load in every one of them, and tick ${last.ghost.tick} `
     + `is byte-identical to a cold replay`);
+});
+
+test('a truck already far into its run does not stop the node: each picture replays at most STEP_BUDGET ticks, and the pictures catch up', () => {
+  // the owner 2026-09-17 17:05 / 17:12: ghosts a minute late. Measured on the Daily's signer-node process: 18.7 s and 20.0 s
+  // with no answer within one minute - the first picture of a truck replayed its whole run on the shared event loop.
+  const TICKS = 6000;
+  const { round, rid, eid, ghosts } = driving(TICKS);
+  let worst = 0, calls = 0, last = null;
+  while (calls < 200) {
+    const t0 = performance.now();
+    const made = ghosts.latest(rid, eid);
+    worst = Math.max(worst, performance.now() - t0);
+    calls++;
+    assert.equal(made.ok, true, made.why);
+    last = made.ghost.tick;
+    if (last === TICKS - 1) break;
+  }
+  const exact = ghostForChecked({ core: TRUCK, transcript: round.transcript(rid, eid), entry: decodeEntryContract(round.entry(eid)),
+    batches: decodeTranscript(round.handOver(rid, eid).bytes).batches, roundId: rid, entryId: eid, tick: TICKS - 1, roundRandomness: BEACON.hash });
+  console.log(`  a truck at tick ${TICKS - 1}: ${calls} pictures to catch up, the slowest call ${worst.toFixed(0)} ms (${STEP_BUDGET} ticks a call)`);
+  assert.equal(last, TICKS - 1, 'the pictures never caught up with the published tick');
+  assert.ok(calls <= Math.ceil(TICKS / STEP_BUDGET) + 1, `${calls} calls to catch up`);
+  assert.ok(worst < 400, `one picture held the node ${worst.toFixed(0)} ms`);
+  assert.equal(exact.ok, true, exact.why);
+  const caught = decodeGhost(ghosts.latest(rid, eid).bytes);
+  assert.deepEqual([caught.x, caught.z, caught.heading], [exact.ghost.x, exact.ghost.z, exact.ghost.heading], 'the caught-up picture is not where a full replay puts the truck');
 });
