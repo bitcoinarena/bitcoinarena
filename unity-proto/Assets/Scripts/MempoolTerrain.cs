@@ -288,8 +288,9 @@ public class MempoolTerrain : MonoBehaviour
         // The mempool relief below stays as the answer when there is no core -
         // the Editor, where PhysX drives - so the game still looks like
         // something to work on without a browser.
+        // Without the candle layer (WAR_TACTICS.md §4.15): CandleTerrain draws the candles on this ground.
         if (Blwp.BlwpCore.HasSurface)
-            return Blwp.BlwpCore.SurfaceAt((u - 0.5f) * width, (v - 0.5f) * depth);
+            return Blwp.BlwpCore.TerrainAt((u - 0.5f) * width, (v - 0.5f) * depth);
 
         int c = Mathf.Clamp(Mathf.RoundToInt(u * (columns - 1)), 0, columns - 1);
         float fee = Mathf.Max(_profile[c], subSat);
@@ -378,7 +379,7 @@ public class MempoolTerrain : MonoBehaviour
                     // (x, radius, z) - see CollectRevealed.
                     float dx = wx - _revealed[k].x, dz = wz - _revealed[k].z;
                     if (dx * dx + dz * dz >= _revealed[k].y * _revealed[k].y) continue;
-                    h = Blwp.BlwpCore.SurfaceAt(wx, wz);
+                    h = Blwp.BlwpCore.TerrainAt(wx, wz);
                     break;
                 }
 

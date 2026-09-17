@@ -167,6 +167,20 @@ namespace Blwp
         public const int OBJ_HOLLOW = 1;
         public const int OBJ_RIDGE = 0;
 
+        // candle view (src/rules/candles.js): the candles the core stands everything on, for the renderer
+        public const int CANDLES = 32;
+        public const int CANDLE_BODY_HALF = 121242;
+        public const int CANDLE_H = 131072;
+        public const int CANDLE_MIN_LENGTH = 65536;
+        public const int CANDLE_RAMP = 327680;
+        public const int CANDLE_SLOT = 425984;
+        public const int CANDLE_X0 = -6815744;
+        public const int CV_APRON = 1;
+        public const int CV_COUNT = 0;
+        public const int CV_FIRST = 2;
+        public const int CV_TOTAL = 194;
+        public const int CV_WORDS = 6;
+
         /// <summary>Base word offset of unit <paramref name="i"/>.</summary>
         public static int UnitBase(int i) => O_UNITS + i * U_WORDS;
 

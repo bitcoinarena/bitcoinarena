@@ -39,6 +39,7 @@ import { noSolids, resolveSolids, resolveArmour, BOX_WORDS } from './rules/solid
 import { initTactics, postOf, scoot, onRespawn, enterInLane, pressure, partnerOf, FORWARD_LINE, rifleTeamOf, pushNear, mix, FIRE_TEAMS_PER_SIDE, TAC_SEED, firstManOf, initObjectives, objectiveHolders, clearOnEntry, holdLegs, onPost, initMarket, readMarket, trendHit, supplyOf, TAC_MARKET, MK_SAMPLES } from './rules/tactics.js';
 import { mapSolids } from './rules/map.js';
 import { emplacementAt } from './rules/emplacements.js';
+import { CANDLES, CL_WORDS, candleLayout, candleHeightAt, candleWalls, writeCandleView, levelled } from './rules/candles.js';
 import { heat as heatForLoad } from './rules/cargo.js';
 import { stepUnit, standingStill, separatePair, clearOfTruck, runOver, truckSpeed, threatAt, pickTarget, pickRifleTarget, riflePost, RELOAD_MIN, RELOAD_SPAN, DAMAGE_MIN, DAMAGE_SPAN, BACKOFF_RANGE, HIT_PER_MIL, ARMOUR_RANGE, RIFLE_RANGE, RIFLE_HIT_PER_MIL, RIFLE_RELOAD_TICKS, RIFLE_RELOAD_TICKS_SPAN, RIFLE_LOOK_TICKS, RIFLE_LOOK_TICKS_SPAN, RIFLE_HP, RIFLE_DAMAGE, hullDownHold, COURIER_RANGE, COURIER_DAMAGE_MIN, COURIER_DAMAGE_SPAN, COURIER_RIFLE_MIN, COURIER_RIFLE_SPAN, courierReach, outranksTheFoe, shellForHeat } from './rules/army.js';
 import { accrue, earning, scoreOf, frontWeight, APRON_RADIUS } from './rules/score.js';
@@ -190,6 +191,7 @@ export function setGround(st, cols, rows, heights) {
   g.h.set(heights.subarray(0, Math.imul(cols, rows)));
   st.ground = g;
   st.uploadedGround = true;
+  if (st.tape) refreshCandles(st);
   return true;
 }
 
@@ -468,6 +470,7 @@ export function submitSample(st, price) {
   if (st.roundTape) st.roundTape.push(p);
   const s = st.i32;
   s[O_TACTICS + TAC_MARKET + MK_SAMPLES] = (s[O_TACTICS + TAC_MARKET + MK_SAMPLES] + 1) | 0;
+  refreshCandles(st);
   readMarket(s, O_TACTICS, h);
   return true;
 }
@@ -488,7 +491,7 @@ export function restart(st, seedWord) {
   // into the same seed makes the same relief; carrying the previous one over
   // would keep a host-uploaded field alive across a round and put the two
   // sides back in different worlds.
-  if (st.uploadedGround) fresh.ground = st.ground;
+  if (st.uploadedGround) { fresh.ground = st.ground; refreshCandles(fresh); }
   // NOT THE OLD SOLIDS EITHER, for the ground's reason: `init` makes the map's
   // own, and carrying a host-uploaded set across a round would keep one alive
   // that no replay has.
@@ -550,9 +553,40 @@ function craterCut(s, x, z) {
  * all come through here now.
  */
 export function surfaceAt(st, x, z) {
-  // relief + the hull-down emplacements (rules/emplacements.js) - craters
-  return sub(add(heightAtWorld(st.ground, x, z, HALF_X, HALF_Z), emplacementAt(x, z, st.tape, st.ground, HALF_X, HALF_Z)),
+  // relief levelled in the chart band (§4.15) + the hull-down emplacements (rules/emplacements.js) + the candles - craters
+  if (!st.candles) {
+    return sub(add(heightAtWorld(st.ground, x, z, HALF_X, HALF_Z), emplacementAt(x, z, st.tape, st.ground, HALF_X, HALF_Z)),
+               craterCut(st.i32, x, z));
+  }
+  const relief = levelled(heightAtWorld(st.ground, x, z, HALF_X, HALF_Z), st.apron, x, z);
+  return sub(add(add(relief, emplacementAt(x, z, st.tape, st.ground, HALF_X, HALF_Z, st.apron)), candleHeightAt(st.candles, x, z)),
              craterCut(st.i32, x, z));
+}
+
+/**
+ * THE CANDLES FROM THE TAPE (§4.15): the layout the surface reads, the apron height the band is levelled to, and the
+ * x-face walls the truck resolves against. Derived, not hashed: rebuilt whenever the tape or the ground changes, so
+ * every replay that has the tape has the same terrain.
+ */
+function refreshCandles(st) {
+  if (!st.candles) st.candles = new Int32Array(Math.imul(CANDLES, CL_WORDS));
+  candleLayout(st.tape, st.i32[O_TACTICS + TAC_MARKET + MK_SAMPLES], HALF_Z, st.candles);
+  st.apron = heightAtWorld(st.ground, START_X, 0, HALF_X, HALF_Z);
+  st.candleSolids = candleWalls(st.candles, st.apron);
+}
+
+/**
+ * The surface WITHOUT the candle layer: what the terrain mesh draws, so the candles are drawn once, by their own mesh
+ * from `candleView`, and the ground under them is the levelled band. Everything that stands on the world reads `surfaceAt`.
+ */
+export function terrainAt(st, x, z) {
+  return st.candles ? sub(surfaceAt(st, x, z), candleHeightAt(st.candles, x, z)) : surfaceAt(st, x, z);
+}
+
+/** The candles as the renderer meshes them (rules/candles.js CV_*). Returns the words written; reading writes no state. */
+export function candleView(st, out) {
+  if (!st.candles) return 0;
+  return writeCandleView(st.candles, st.apron, out);
 }
 
 export function groundAt(st, x, z) {
@@ -615,6 +649,7 @@ export function init(seedWord) {
   // relief this core generated, so the player and every replay walk the same
   // walls by construction. Unity draws them; it does not send them.
   st.solids = mapSolids(st.ground, HALF_X, HALF_Z);
+  refreshCandles(st);
 
   // The tanks the player can see are the host's, and it sends them every
   // tick. Empty until it does.
@@ -1145,6 +1180,8 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
   resolveSolids(v, st.solids,
                 sin(v.heading), cos(v.heading),
                 surfaceAt(st, v.x, v.z));
+  // The candles' x-faces (§4.15), the truck's alone: tanks and men stand on the height read and cross them.
+  if (st.candleSolids) resolveSolids(v, st.candleSolids, sin(v.heading), cos(v.heading), surfaceAt(st, v.x, v.z));
 
   // And out of the armour. Last tick's tank positions, because the army has
   // not moved yet this tick - one frame stale, sixteen milliseconds, and it

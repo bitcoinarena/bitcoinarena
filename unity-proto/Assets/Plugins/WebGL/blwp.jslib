@@ -130,6 +130,22 @@ mergeInto(LibraryManager.library, {
     return b.core.chartPoint(b.st, range | 0, x | 0, z | 0, out) | 0;
   },
 
+  // THE CANDLES AS TERRAIN (WAR_TACTICS.md §4.15): each body's x and z span and plateau height, as the core stands the
+  // truck and the tanks on them. CandleTerrain meshes these words and computes none of them.
+  BlwpCandleView: function (ptr, cap) {
+    var b = Module.blwp;
+    if (!b || !b.core.candleView || (cap | 0) < b.core.CV_TOTAL) return 0;
+    var out = new Int32Array(Module.HEAP32.buffer, ptr, b.core.CV_TOTAL);
+    return b.core.candleView(b.st, out) | 0;
+  },
+
+  // The surface without the candle layer: what the terrain mesh draws under the candles' own mesh.
+  BlwpTerrainAt: function (x, z) {
+    var b = Module.blwp;
+    if (!b || !b.core.terrainAt) return 0;
+    return b.core.terrainAt(b.st, x | 0, z | 0) | 0;
+  },
+
   // The state hash, for a checkpoint. Written as ASCII into a caller-owned
   // buffer because returning a string from a jslib means allocating in the
   // Unity heap and freeing it on the C# side, which is a leak waiting to be

@@ -21,6 +21,7 @@ import { ONE, add, sub, abs, mulFast, div, idiv, clamp } from '../fixed.js';
 import { frontlineZ } from './frontline.js';
 import { heightAtWorld } from './ground.js';
 import { slotX, SLOTS_PER_SIDE } from './tactics.js';
+import { levelled } from './candles.js';
 
 // 2.4 m, not 2: a hull stands anywhere within 1.5 m of its hold (on post), and at exactly 2 m a tank a few centimetres up
 // the ramp saw 1.96 m (37.9% of the served overwatch ticks). 2.4 m hides a 3 m hull to its turret from 29.25 m to 31 m
@@ -38,7 +39,10 @@ const PITCH = Math.imul(27, ONE);
 /**
  * The emplacement height at a world point, Q16.16 metres; 0 off every berm. `ground` is the round's relief grid.
  */
-export function emplacementAt(x, z, tape, ground, halfX, halfZ) {
+export function emplacementAt(x, z, tape, ground, halfX, halfZ, apron) {
+  // `apron` given: the relief as the surface reads it, levelled in the chart band (§4.15)
+  const relief = (px, pz) => (apron === undefined ? heightAtWorld(ground, px, pz, halfX, halfZ)
+                                                  : levelled(heightAtWorld(ground, px, pz, halfX, halfZ), apron, px, pz));
   const ax = abs(x);
   if (ax >= NONE_X) return 0;
   const first = slotX(0);
@@ -60,10 +64,10 @@ export function emplacementAt(x, z, tape, ground, halfX, halfZ) {
   // 2 m above the HIGHER of the ground at its foot and the relief at its top: a hill climbing toward the enemy neither
   // eats the 2 m nor outscores the berm in the hull-down search (measured: relief rising 0.4 m per metre left a hull at
   // the foot with 1.6 m in front, and the search moved to the slope).
-  const footGround = heightAtWorld(ground, x, add(seam, Math.imul(side, foot)), halfX, halfZ);
-  const topGround = heightAtWorld(ground, x, add(seam, Math.imul(side, up)), halfX, halfZ);
+  const footGround = relief(x, add(seam, Math.imul(side, foot)));
+  const topGround = relief(x, add(seam, Math.imul(side, up)));
   const base0 = footGround > topGround ? footGround : topGround;
-  const here = heightAtWorld(ground, x, z, halfX, halfZ);
+  const here = relief(x, z);
   const want = sub(add(base0, mulFast(BERM_HEIGHT, fz)), here);
   if (want <= 0) return 0;
   return mulFast(mulFast(want, fx), fend);

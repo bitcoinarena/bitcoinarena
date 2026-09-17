@@ -38,6 +38,8 @@ namespace Blwp
         [DllImport("__Internal")] private static extern int BlwpSubmitLoad(int feeSats, int btcHundredths);
         [DllImport("__Internal")] private static extern int BlwpChartView(int range, IntPtr ptr, int cap);
         [DllImport("__Internal")] private static extern int BlwpChartPoint(int range, int x, int z, IntPtr ptr);
+        [DllImport("__Internal")] private static extern int BlwpCandleView(IntPtr ptr, int cap);
+        [DllImport("__Internal")] private static extern int BlwpTerrainAt(int x, int z);
         public const bool Compiled = true;
 #else
         private static int BlwpInit(int seed) => 0;
@@ -58,6 +60,8 @@ namespace Blwp
         private static int BlwpSubmitLoad(int f, int b) => 0;
         private static int BlwpChartView(int r, IntPtr ptr, int cap) => 0;
         private static int BlwpChartPoint(int r, int x, int z, IntPtr ptr) => 0;
+        private static int BlwpCandleView(IntPtr ptr, int cap) => 0;
+        private static int BlwpTerrainAt(int x, int z) => 0;
         public const bool Compiled = false;
 #endif
 
@@ -169,6 +173,26 @@ namespace Blwp
             try { return BlwpChartView(range, handle.AddrOfPinnedObject(), into.Length); }
             finally { handle.Free(); }
         }
+
+        /// <summary>
+        /// THE CANDLES AS TERRAIN (WAR_TACTICS.md §4.15), read out of the core into <paramref name="into"/> (at least
+        /// `Layout.CV_TOTAL`): the apron height and each body's x span, z span, plateau height and colour, as the core stands
+        /// everything on them. Returns the words written, 0 without a core.
+        /// </summary>
+        public static int CandleView(int[] into)
+        {
+            if (!Available || into == null || into.Length < Layout.CV_TOTAL) return 0;
+            var handle = GCHandle.Alloc(into, GCHandleType.Pinned);
+            try { return BlwpCandleView(handle.AddrOfPinnedObject(), into.Length); }
+            finally { handle.Free(); }
+        }
+
+        /// <summary>
+        /// The core's surface WITHOUT the candle layer: the terrain mesh draws this, and CandleTerrain draws the candles on
+        /// it. Anything standing on the world reads <see cref="SurfaceAt"/>.
+        /// </summary>
+        public static float TerrainAt(float x, float z) =>
+            Available ? BlwpTerrainAt(Mathf.RoundToInt(x * ONE), Mathf.RoundToInt(z * ONE)) / (float)ONE : 0f;
 
         /// <summary>A ground point (Q16.16 metres) on that chart: [0] t, [1] price, [2] 1 inside the range.</summary>
         public static bool ChartPoint(int range, int x, int z, int[] into)

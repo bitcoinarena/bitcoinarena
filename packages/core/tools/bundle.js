@@ -103,6 +103,7 @@ out += '\nreturn { init: init, step: step, hash: hash, runScore: runScore,\n';
 out += '         groundAt: groundAt, teleport: teleport,\n';
 out += '         restart: restart, frontAt: frontAt, submitLiquidation: submitLiquidation, submitSample: submitSample,\n';
 out += '         chartView: chartView, chartPoint: chartPoint, CH_WORDS: CH_WORDS,\n';
+out += '         candleView: candleView, CV_TOTAL: CV_TOTAL, terrainAt: terrainAt,\n';
 out += '         submitLoad: submitLoad, heatOf: heatOf,\n';
 out += '         create: create, WORDS: WORDS };\n})();\n';
 out += 'if (typeof module !== "undefined") module.exports = BLWP;\n';

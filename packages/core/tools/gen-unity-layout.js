@@ -62,6 +62,11 @@ for (const k of Object.keys(chart).filter((k) => /^(CH_|CHART_)/.test(k) && type
   out += `        public const int ${k} = ${chart[k]};\n`;
 for (const k of Object.keys(tactics).filter((k) => /^(OBJ_|HOLDER_|ASSAULT_)/.test(k) && typeof tactics[k] === 'number').sort())
   out += `        public const int ${k} = ${tactics[k]};\n`;
+// THE CANDLES AS TERRAIN (WAR_TACTICS.md §4.15): `candleView`'s words and the geometry's numbers, for CandleTerrain.
+const candles = await import(new URL('../src/rules/candles.js', import.meta.url));
+out += '\n        // candle view (src/rules/candles.js): the candles the core stands everything on, for the renderer\n';
+for (const k of Object.keys(candles).filter((k) => /^(CV_|CANDLE_|CANDLES$)/.test(k) && typeof candles[k] === 'number').sort())
+  out += `        public const int ${k} = ${candles[k]};\n`;
 out += '\n';
 out += '        /// <summary>Base word offset of unit <paramref name="i"/>.</summary>\n';
 out += '        public static int UnitBase(int i) => O_UNITS + i * U_WORDS;\n';
