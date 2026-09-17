@@ -43,7 +43,7 @@ import { chainBeacon } from '../src/beacon-source.js';
 import { beaconFromChain, medianTimePast } from '../../protocol/src/beacon.js';
 import { regtest } from './regtest-bond.mjs';
 import { chainOf, publicationOf } from '../../protocol/tools/chainview.js';
-import { bitcoindRpc } from '../src/chain-rpc.js';
+import { bitcoindRpc, blocksOver } from '../src/chain-rpc.js';
 import { operatorFunding, freeOrOperatorFunding } from '../src/funding.js';
 import { serve } from '../src/server.js';
 import { lightningFromEnv } from '../src/lnd-settings.js';
@@ -501,21 +501,48 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // chain's clock needs, and bounded, so a chain that never names one says so.
   // One function for every round this tool publishes: the first, and each one
   // the opener adds (M3.3-34) - each under its own beacon block.
+  // NOTHING HERE BLOCKS THE SIGNER NODES (the owner 2026-09-17 19:15: ghosts "only every 300-600 ms"). Both signer nodes
+  // share this process's event loop, and every round this keeper opened read the WHOLE chain since the start again -
+  // two synchronous bitcoin-cli spawns a block, from 20 below the bonds to the tip, twice or more an opening. The Daily
+  // mines ~10 blocks a minute, so twenty minutes after a start that was ~440 blocking spawns every round: measured from
+  // outside, both nodes answered nothing for 28.1 s at once, and 300-650 ms stalls every 1-3 s besides. The view now
+  // GROWS - only blocks above the one it holds are read - and every call on this path is bitcoind's RPC, awaited.
+  // bitcoind's RPC when the caller gave one (the Daily does); a tool that gave only its cli keeps the cli, synchronous
+  // as it always was - only an argument that is not a string is written as JSON for it.
+  const chainRpc = rpc || (async (method, params = []) => {
+    const out = cli(method, ...params.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))));
+    return /^[[{]/.test(out) ? JSON.parse(out) : out;
+  });
+  async function viewToTip() {
+    const from = Math.max(0, bondHeight - 20);
+    const tip = Number(await chainRpc('getblockcount', []));
+    const have = censusView && censusView.firstHeight === from ? censusView : { blocks: [], firstHeight: from };
+    const next = from + have.blocks.length;
+    if (next > tip) return have;
+    const more = await blocksOver(chainRpc, next, tip);
+    return { blocks: have.blocks.concat(more.blocks), firstHeight: from };
+  }
+  const tipHeader = async () => {
+    const h = Number(await chainRpc('getblockcount', []));
+    return (await blocksOver(chainRpc, h, h)).blocks[0].header;
+  };
+  const mineAsync = async (n) => chainRpc('generatetoaddress', [n, await chainRpc('getnewaddress', [])]);
+
   async function publishOnChain(c) {
-    const raw = cli('createrawtransaction', '[]',
-      JSON.stringify([{ data: toHex(publicationPayload(roundId(c))) }]));
-    const paid = JSON.parse(cli('fundrawtransaction', raw)).hex;
-    onChain.include([JSON.parse(cli('signrawtransactionwithwallet', paid)).hex]);
+    const raw = await chainRpc('createrawtransaction', [[], [{ data: toHex(publicationPayload(roundId(c))) }]]);
+    const paid = (await chainRpc('fundrawtransaction', [raw])).hex;
+    const signed = (await chainRpc('signrawtransactionwithwallet', [paid])).hex;
+    await chainRpc('generateblock', [await chainRpc('getnewaddress', []), [signed]]);
     let tries = 0;
     for (;;) {
-      censusView = onChain.blocksFrom(Math.max(0, bondHeight - 20), onChain.height());
+      censusView = await viewToTip();
       const named = beaconFromChain(c,
         { headers: censusView.blocks.map((b) => b.header), firstHeight: censusView.firstHeight });
       if (named.ok) return named;
       if (++tries > 8) throw new Error('this chain names no beacon after 8 batches: ' + named.why);
       const wait = Number(c.committeeTimeMs) + 1500 - Date.now();
       if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-      onChain.mine(6);
+      await mineAsync(6);
     }
   }
   if (onChain) await publishOnChain(contract);
@@ -632,14 +659,14 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // block mined since the first round, the tip was two minutes old, the next
     // round opened with 59 s of its 180 s entry left, and the keeper opened a
     // second one 6 s later. Now is later than that tip, so the rule still holds.
-    const tip = onChain.blocksFrom(onChain.height(), onChain.height()).blocks[0].header;
+    const tip = await tipHeader();
     const committee = (BigInt(Math.max(blockTimeOf(tip), Math.floor(Date.now() / 1000))) + 2n) * 1000n;
     const next = { ...contract,
       ...(kind.stakeMsat !== undefined ? { stakeMsat: BigInt(kind.stakeMsat) } : {}),
       ...(kind.custody ? { custody: kind.custody } : {}),
       committeeTimeMs: committee, startTimeMs: committee + MIN_ENTRY_WINDOW_MS,
       entryCloseMs: committee + MIN_ENTRY_WINDOW_MS + (contract.entryCloseMs - contract.startTimeMs) };
-    censusView = onChain.blocksFrom(Math.max(0, bondHeight - 20), onChain.height());
+    censusView = await viewToTip();
     next.censusRoot = censusRootFor(next);
     await publishOnChain(next);
     const seen = beacon ? await beacon.refresh(next) : { ok: false, why: 'no beacon' };
