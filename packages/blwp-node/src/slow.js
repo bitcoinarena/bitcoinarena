@@ -17,9 +17,15 @@ const THRESHOLD = () => {
   return named === undefined ? 100 : Number(named);
 };
 
-/** `label`, run and timed. Returns exactly what `fn` returns, promise or value. */
-export function timed(label, fn, { say = console.log } = {}) {
-  const limit = THRESHOLD();
+/**
+ * `label`, run and timed. Returns exactly what `fn` returns, promise or value.
+ *
+ * `over` names a threshold of its own, for a step that is small on its own and large in a loop: a close's per-entry
+ * work is under 100 ms an entry and holds the loop for a second across eight of them, and a number nobody can see is a
+ * number nobody can act on.
+ */
+export function timed(label, fn, { say = console.log, over = null } = {}) {
+  const limit = over === null ? THRESHOLD() : Math.max(over, THRESHOLD() > 0 ? 0 : Infinity);
   if (!(limit > 0)) return fn();
   const began = performance.now();
   let out;
