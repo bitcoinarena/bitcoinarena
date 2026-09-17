@@ -47,9 +47,11 @@ namespace Blwp
     {
 #if UNITY_WEBGL && !UNITY_EDITOR
         [DllImport("__Internal")] private static extern int BlwpNextGhost(IntPtr ptr, int cap);
+        [DllImport("__Internal")] private static extern int BlwpGhostLabels(IntPtr ptr, int cap);
         public const bool Compiled = true;
 #else
         private static int BlwpNextGhost(IntPtr ptr, int cap) => 0;
+        private static int BlwpGhostLabels(IntPtr ptr, int cap) => 0;
         public const bool Compiled = false;
 #endif
 
@@ -108,6 +110,79 @@ namespace Blwp
         private readonly int[] words = new int[Words];
 
         void Update() => Draw(PerFrame);
+
+        /// <summary>
+        /// THE DEBUG LABEL OVER EACH GHOST (the owner 2026-09-17 19:15): the player's name, then how old the truck's newest
+        /// picture is in ms and how it moved - an up arrow forward, a down arrow back, a left or right arrow for a turn,
+        /// both when it did both. The page writes it (`ghostLabels` in @blwp/client) from what came through the nodes;
+        /// a "~" before the age means this browser holds no stamp of the driver's clock and it is the time since the
+        /// picture arrived. Read ten times a second, drawn every frame.
+        /// </summary>
+        public Func<string> LabelSource;
+        public IReadOnlyDictionary<string, string[]> Labels => labels;
+        private Dictionary<string, string[]> labels = new Dictionary<string, string[]>();
+        private readonly byte[] labelBytes = new byte[8192];
+        private float labelsReadAt = -1f;
+        private GUIStyle labelStyle, labelShadow;
+
+        /// <summary>`entry TAB name TAB line-two`, one a line, into entry -> { name, line two }.</summary>
+        public static Dictionary<string, string[]> ParseLabels(string text)
+        {
+            var parsed = new Dictionary<string, string[]>();
+            if (string.IsNullOrEmpty(text)) return parsed;
+            foreach (var line in text.Split('\n'))
+            {
+                var parts = line.Split('\t');
+                if (parts.Length < 3 || parts[0].Length == 0) continue;
+                parsed[parts[0]] = new[] { parts[1], parts[2] };
+            }
+            return parsed;
+        }
+
+        private string ReadLabels()
+        {
+            if (LabelSource != null) return LabelSource();
+            var handle = GCHandle.Alloc(labelBytes, GCHandleType.Pinned);
+            try
+            {
+                var n = BlwpGhostLabels(handle.AddrOfPinnedObject(), labelBytes.Length);
+                return n > 0 ? System.Text.Encoding.UTF8.GetString(labelBytes, 0, n) : "";
+            }
+            finally { handle.Free(); }
+        }
+
+        void LateUpdate()
+        {
+            if (Time.unscaledTime - labelsReadAt < 0.1f) return;
+            labelsReadAt = Time.unscaledTime;
+            labels = ParseLabels(ReadLabels());
+        }
+
+        void OnGUI()
+        {
+            if (labels.Count == 0) return;
+            var cam = Camera.main;
+            if (cam == null) return;
+            if (labelStyle == null)
+            {
+                labelStyle = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.LowerCenter, fontStyle = FontStyle.Bold };
+                labelShadow = new GUIStyle(labelStyle);
+                labelStyle.normal.textColor = Color.white;
+                labelShadow.normal.textColor = new Color(0f, 0f, 0f, 0.85f);
+            }
+            var size = Mathf.Max(13, Screen.height / 48);
+            labelStyle.fontSize = size; labelShadow.fontSize = size;
+            foreach (var kv in trucks)
+            {
+                if (kv.Value == null || !labels.TryGetValue(kv.Key, out var label)) continue;
+                var p = cam.WorldToScreenPoint(kv.Value.transform.position + Vector3.up * 3.8f);
+                if (p.z <= 0f) continue;
+                var rect = new Rect(p.x - 160f, Screen.height - p.y - size * 3f, 320f, size * 3f);
+                var text = label[0] + "\n" + label[1];
+                GUI.Label(new Rect(rect.x + 1.5f, rect.y + 1.5f, rect.width, rect.height), text, labelShadow);
+                GUI.Label(rect, text, labelStyle);
+            }
+        }
 
         /// <summary>The page's record for "a new round is watched: take every truck away".</summary>
         public const int ClearTick = -2;
