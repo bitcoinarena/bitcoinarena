@@ -85,6 +85,12 @@ public class ChartHud : MonoBehaviour
         public Rect SymbolBox, PriceBox, LegendBox, OpenBox, YouBox, HighBox, LowBox, GateBox;
         /// <summary>YOU's dot and heading tick, where the core puts the truck; YouBox is its label.</summary>
         public Rect YouMarkBox;
+        /// <summary>The last-price tag on the price axis, and the GATE's gold line across the plot.</summary>
+        public Rect LastTagBox, GateLineBox;
+        /// <summary>Each other player's dot and id label, in the order they were drawn.</summary>
+        public readonly List<Rect> GhostDotBoxes = new List<Rect>(), GhostLabelBoxes = new List<Rect>();
+        /// <summary>Other players' id labels that found no free box and stayed right of their dot.</summary>
+        public int GhostsUnplaced;
         /// <summary>False when no place for the YOU label clears every box, and it stayed up and right of the dot.</summary>
         public bool YouPlaced;
         /// <summary>False when no place for the OPEN label clears every box, and it stayed above its line at the left.</summary>
@@ -295,7 +301,10 @@ public class ChartHud : MonoBehaviour
             $"charts={ChartsPainted}",
             $"symbolBox={B(f.SymbolBox)}", $"priceBox={B(f.PriceBox)}", $"legendBox={B(f.LegendBox)}", $"openBox={B(f.OpenBox)}",
             $"youBox={B(f.YouBox)}", $"youMarkBox={B(f.YouMarkBox)}", $"youPlaced={f.YouPlaced}", $"plotBox={B(f.Plot)}",
-            $"youLabelShares={Shares(f.YouBox, f)}", $"youMarkShares={Shares(f.YouMarkBox, f)}", $"highBox={B(f.HighBox)}", $"lowBox={B(f.LowBox)}", $"gateBox={B(f.GateBox)}",
+            $"youLabelShares={Shares(f.YouBox, f)}", $"youMarkShares={Shares(f.YouMarkBox, f)}",
+            $"lastTagBox={B(f.LastTagBox)}", $"gateLineBox={B(f.GateLineBox)}",
+            $"ghostLabelBoxes={string.Join("|", f.GhostLabelBoxes.ConvertAll(B))}", $"ghostDotBoxes={string.Join("|", f.GhostDotBoxes.ConvertAll(B))}",
+            $"ghostsUnplaced={f.GhostsUnplaced}", $"ghostLabelShares={string.Join("|", f.GhostLabelBoxes.ConvertAll(r => GhostShares(r, f)))}", $"highBox={B(f.HighBox)}", $"lowBox={B(f.LowBox)}", $"gateBox={B(f.GateBox)}",
             $"openShares={OpenShares(f)}", $"openPlaced={f.OpenPlaced}",
         }));
     }
@@ -342,6 +351,32 @@ public class ChartHud : MonoBehaviour
     }
 
     /// <summary>
+    /// Where another player's id label goes: level with its dot, then above, then below; along each row rightwards then
+    /// leftwards from the dot in 4 px steps; the first box inside the plot (so never on the price axis and its last-price tag)
+    /// that shares no area with <paramref name="avoid"/> (GATE's label and line, the header rows, OPEN, YOU, HIGH, LOW, the
+    /// ghosts' dots and the labels already placed). Nothing free: right of the dot, and <paramref name="placed"/> false. The dot
+    /// is the core's mapping of that truck and does not move.
+    /// </summary>
+    public static Rect PlaceGhostLabel(Rect plot, Vector2 dot, float width, float height, Rect[] avoid, out bool placed)
+    {
+        foreach (float y in new[] { dot.y - height * 0.5f, dot.y - 3f - height, dot.y + 3f })
+        {
+            if (y < plot.y || y + height > plot.yMax) continue;
+            for (float d = 0f; d <= plot.width; d += 4f)
+                foreach (float x in new[] { dot.x + 4f + d, dot.x - 4f - width - d })
+                {
+                    if (x < plot.x || x + width > plot.xMax) continue;
+                    var r = new Rect(x, y, width, height);
+                    bool free = true;
+                    foreach (var a in avoid) if (Shared(r, a) > 0f) { free = false; break; }
+                    if (free) { placed = true; return r; }
+                }
+        }
+        placed = false;
+        return new Rect(dot.x + 4f, dot.y - height * 0.5f, width, height);
+    }
+
+    /// <summary>
     /// Where the OPEN label goes: above its line, then below it, each scanned rightwards from the plot's left edge in 4 px
     /// steps, the first box inside the plot that shares no area with any of <paramref name="avoid"/>. Nothing free: above the
     /// line at the left, and <paramref name="placed"/> false. Layout only - the line itself is the core's open price.
@@ -378,6 +413,17 @@ public class ChartHud : MonoBehaviour
         void One(string name, Rect r) { float s = Shared(box, r); if (s > 0f) parts.Add($"{name}:{s:0.0}"); }
         One("symbol", f.SymbolBox); One("price", f.PriceBox); One("legend", f.LegendBox); One("open", f.OpenBox);
         One("high", f.HighBox); One("low", f.LowBox); One("gate", f.GateBox);
+        return parts.Count == 0 ? "-" : string.Join("+", parts);
+    }
+
+    /// <summary>What an other player's id label shares area with: GATE's label and line, the last-price tag, the header rows, OPEN, YOU, HIGH, LOW.</summary>
+    public static string GhostShares(Rect box, Frame f)
+    {
+        var parts = new List<string>();
+        void One(string name, Rect r) { float s = Shared(box, r); if (s > 0f) parts.Add($"{name}:{s:0.0}"); }
+        One("gate", f.GateBox); One("gateLine", f.GateLineBox); One("lastTag", f.LastTagBox);
+        One("symbol", f.SymbolBox); One("price", f.PriceBox); One("legend", f.LegendBox); One("open", f.OpenBox);
+        One("youLabel", f.YouBox); One("youMark", f.YouMarkBox); One("high", f.HighBox); One("low", f.LowBox);
         return parts.Count == 0 ? "-" : string.Join("+", parts);
     }
 
@@ -491,19 +537,13 @@ public class ChartHud : MonoBehaviour
         for (float x = p.x; x < p.xMax; x += 4f) Box(new Rect(x, f.LastY, 2f, 1f), lastColour);
         foreach (var a in f.PriceAxis) Text(new Rect(a.At.x, a.At.y - lh * 0.5f, 90f, lh), a.Text, a.Colour, _right);
         Box(new Rect(p.xMax + 2f, f.LastY - lh * 0.5f, f.Panel.xMax - p.xMax - 3f, lh), lastColour);
+        f.LastTagBox = new Rect(p.xMax + 2f, f.LastY - lh * 0.5f, f.Panel.xMax - p.xMax - 3f, lh);
         Text(new Rect(p.xMax + 4f, f.LastY - lh * 0.5f, 90f, lh), f.Price, Color.white, _right);
         foreach (var a in f.TimeAxis) Text(new Rect(a.At.x - 14f, a.At.y, 60f, lh), a.Text, a.Colour, _text);
 
         // 6. the gate, gold
-        if (f.GateOn) { Box(new Rect(f.GateX - 1f, p.y, 2f, p.height), Gold); Text(new Rect(f.GateX - 34f, p.y, 34f, lh), "GATE", Gold, _text);
+        if (f.GateOn) { Box(new Rect(f.GateX - 1f, p.y, 2f, p.height), Gold); f.GateLineBox = new Rect(f.GateX - 1f, p.y, 2f, p.height); Text(new Rect(f.GateX - 34f, p.y, 34f, lh), "GATE", Gold, _text);
             f.GateBox = new Rect(f.GateX - 34f, p.y, _text.CalcSize(new GUIContent("GATE")).x, lh); }
-
-        // 5. ghosts
-        foreach (var g in f.Ghosts)
-        {
-            Box(new Rect(g.At.x - 3f, g.At.y - 3f, 6f, 6f), g.Colour);
-            Text(new Rect(g.At.x + 4f, g.At.y - lh * 0.5f, 90f, lh), g.Text, g.Colour, _text);
-        }
 
         // THE OPEN LABEL, off the header and off the labels already on the plot. Measured on 0.0.1459: drawn above its line at
         // the plot's left edge it shared 429 px of box and 246 drawn pixels with the price row ("$78,515.00 +0.00%") and
@@ -518,6 +558,24 @@ public class ChartHud : MonoBehaviour
         float ow = _text.CalcSize(new GUIContent("OPEN")).x;
         f.OpenBox = PlaceOpen(p, f.OpenY, ow, lh, new[] { f.SymbolBox, f.PriceBox, f.LegendBox, f.YouMarkBox, f.YouBox, f.HighBox, f.LowBox, f.GateBox }, out f.OpenPlaced);
         Text(f.OpenBox, "OPEN", Axis, _text);
+
+        // 5. ghosts: the dot where the core maps the other truck, its id label clear of the chrome. Measured before the rule:
+        // the id drawn right of its dot ran over GATE's label and line and past the plot onto the last-price tag.
+        f.GhostDotBoxes.Clear(); f.GhostLabelBoxes.Clear();
+        foreach (var g in f.Ghosts) f.GhostDotBoxes.Add(new Rect(g.At.x - 3f, g.At.y - 3f, 6f, 6f));
+        var taken = new List<Rect> { f.SymbolBox, f.PriceBox, f.LegendBox, f.OpenBox, f.YouBox, f.YouMarkBox, f.HighBox, f.LowBox,
+                                     f.GateBox, f.GateLineBox, f.LastTagBox };
+        taken.AddRange(f.GhostDotBoxes);
+        for (int i = 0; i < f.Ghosts.Count; i++)
+        {
+            var g = f.Ghosts[i];
+            var label = PlaceGhostLabel(p, g.At, _text.CalcSize(new GUIContent(g.Text)).x, lh, taken.ToArray(), out bool placed);
+            f.GhostLabelBoxes.Add(label);
+            if (!placed) f.GhostsUnplaced++;
+            taken.Add(label);
+            Box(f.GhostDotBoxes[i], g.Colour);
+            Text(label, g.Text, g.Colour, _text);
+        }
 
         // 4. the truck, always on top: a faint line down to the time axis, the dot, its heading, YOU
         Box(new Rect(f.You.x, f.You.y, 1f, p.yMax - f.You.y), new Color(Truck.r, Truck.g, Truck.b, 0.35f));

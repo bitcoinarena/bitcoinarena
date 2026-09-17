@@ -168,6 +168,37 @@ public class ChartHudTests
     }
 
     [Test]
+    public void TheOtherPlayersIdKeepsOffGateAndTheLastPriceTag()
+    {
+        // The frame build 0.0.1461 logged with the other truck at the gate and above the window's top (x 103.1 m, z 80.4 m):
+        // its id drawn right of the dot at 865,501.5 shared 145.4 px² with GATE's label, 20.2 with GATE's line, 396.9 with the
+        // last-price tag and 362.6 with HIGH.
+        var plot = new Rect(591.2f, 511.7f, 303.2f, 104.6f);
+        var dot = new Vector2(861f, 511.65f);
+        float w = 61.7f, h = 20.3f;
+        var gate = new Rect(839.7f, 511.7f, 39.7f, h);
+        var gateLine = new Rect(872.7f, 511.7f, 2f, 104.6f);
+        var lastTag = new Rect(896.4f, 508.7f, 73.8f, h);
+        var high = new Rect(777.7f, 493.6f, 116.7f, h);
+        var avoid = new[]
+        {
+            new Rect(593.2f, 439.2f, 180f, h), new Rect(593.2f, 459.2f, 291.4f, h), new Rect(593.2f, 479.4f, 117.2f, h),
+            new Rect(713.2f, 498.6f, 42.5f, h), new Rect(641.6f, 566.3f, 32.5f, h), new Rect(623.6f, 582.5f, 15f, 8f),
+            high, new Rect(), gate, gateLine, lastTag, new Rect(dot.x - 3f, dot.y - 3f, 6f, 6f),
+        };
+        var old = new Rect(dot.x + 4f, dot.y - h * 0.5f, w, h);
+        Assert.Greater(ChartHud.Shared(old, gate) + ChartHud.Shared(old, lastTag), 0f, "the old place is on GATE and the tag");
+        var r = ChartHud.PlaceGhostLabel(plot, dot, w, h, avoid, out bool placed);
+        Assert.IsTrue(placed, "no place for the id");
+        foreach (var a in avoid) Assert.AreEqual(0f, ChartHud.Shared(r, a), $"id {r} shares area with {a}");
+        Assert.IsTrue(r.x >= plot.x && r.xMax <= plot.xMax && r.y >= plot.y && r.yMax <= plot.yMax, $"id {r} off the plot {plot}");
+        Assert.LessOrEqual(r.xMax, lastTag.x, "never on the price axis");
+        var none = ChartHud.PlaceGhostLabel(plot, dot, w, h, new[] { new Rect(0f, 0f, 2000f, 2000f) }, out bool nowhere);
+        Assert.IsFalse(nowhere);
+        Assert.AreEqual(old, none, "nothing free: it stays right of its dot");
+    }
+
+    [Test]
     public void OpenKeepsOffThePriceRowTheLegendAndTheLabels()
     {
         // The boxes as build 0.0.1459 logged them on a 1280x657 player (panel 587,437,384,197): OPEN's old place above its
