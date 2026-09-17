@@ -109,6 +109,8 @@ out += '         GENESIS: GENESIS, NO_PREVIOUS: NO_PREVIOUS,\n';
 out += '         encodeRoundContract: encodeRoundContract, roundId: roundId,\n';
 out += '         encodeEntryContract: encodeEntryContract, entryId: entryId,\n';
 out += '         watchGhosts: watchGhosts, GHOST_BACKLOG: GHOST_BACKLOG,\n';
+// The debug label over a ghost (the owner 2026-09-17 19:15): the page writes it, blwp.jslib hands it to Unity.
+out += '         tickClock: tickClock, ghostLabels: ghostLabels, ghostLabelText: ghostLabelText, moveGlyphs: moveGlyphs,\n';
 out += '         playersLine: playersLine, newestPose: newestPose,\n';
 out += '         stakeLine: stakeLine,\n';
 out += '         joinQuery: joinQuery, joinFromQuery: joinFromQuery,\n';
