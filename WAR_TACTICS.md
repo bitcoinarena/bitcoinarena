@@ -869,6 +869,14 @@ a thing the truck drives on is settled state (multiplayer_p2p.md §0.5), so the 
   over **x = -104 .. +104** (208 m, the air corridor's own width): slot **6.5 m**, body **3.7 m**,
   corridor **2.8 m** - the truck (2.55 m) passes with 12 cm a side, which is a corridor, not a road; the
   ramp is unchanged. `frontlineZ` maps the tape over the same 208 m so the seam and the candles agree.
+  **Spawn ruling B (the owner 2026-09-17): the truck leaves the apron, then meets the chart.** At -104 m the first
+  x-face stood 2.2 m behind the spawn (START_X -100.4) and bays started on candle 0. The 32 slots are fitted
+  between the apron and the miner instead: the first face **26 m past the spawn centre** (x -74.4; the nose,
+  3.275 m ahead, meets it 22.7 m out, past the 22 m apron), the last slot ending before the **miner face at
+  x 108.4** (last face 107.0), so no body stands in the gate throat or across the delivery line (x 114). Pitch
+  **5.756 m**, corridor kept at **2.8 m**, body **2.956 m** (0.203 m a side for the 2.55 m truck). Not a shift
+  alone (it put candles 29-31 in the gate throat) and not fewer candles (the world would show 29 of the HUD's 32).
+  The band keeps `|x| <= 104`.
 - **The body is a plateau**, height **H = 2 m** - the same for every candle; height carries no price,
   the length in z does - **3.7 m wide** in its 6.5 m slot (a 10 s candle), by its open-to-close in z
   (portrait, as on a chart: time along x, price along z; up to 90 m long at a full-range move; a body
@@ -891,8 +899,11 @@ a thing the truck drives on is settled state (multiplayer_p2p.md §0.5), so the 
   face steps 2 m up or down in the core, and the renderer eases the hull over 0.3 s. So a scoot (§4.3,
   27 m in x) crosses three candles and two corridors without a rule change. No ramp in x, so the
   corridor stays flat and the candle's edge stays a line from above.
-- **The wick is a solid for the truck only**: a 1 m x 1 m pillar, 9 m tall, from low to high in z at
-  the candle's centre x, in the solids list (`resolveSolids`: a wall the truck steers around). **Tanks
+- **The wick is a solid for the truck only**: a 1 m x 1 m pillar, 9 m tall, at the candle's centre x, in the
+  solids list (`resolveSolids`: a wall the truck steers around) - **only where it stands past the body**
+  (ruling w1, the owner 2026-09-17): the body owns the 2 m plateau, the high wick collides from the body's high end
+  to the high, the low wick from the low to the body's low end, and no wick runs through the body. A two-sample
+  candle's low and high are its body's ends, so on today's tape no wick collider exists. **Tanks
   and men pass through it**, as they pass through the x-faces (the owner 2026-09-16 21:05, "can a tank
   cross a candle, wick included?" - yes): the core has no pathing, a wick is a line up to 90 m long,
   and a push-out on it would pin every tank that scoots or enters its lane in x against it - the same
