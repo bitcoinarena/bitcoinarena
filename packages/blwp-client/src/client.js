@@ -1976,7 +1976,13 @@ export class Client {
    * counted.
    */
   drain() {
+    // A DRAIN THAT FINDS A BATCH IN FLIGHT IS OWED, NOT DROPPED (the owner 2026-09-17 19:15: "updates only every 300-600 ms").
+    // The page drains every sixth tick; a slot that found the last batch unanswered used to wait for the next slot, so
+    // any link slower than 100 ms round trip halved the pictures - measured through a proxy holding 80 ms each way:
+    // 5.0 pictures a second, 200 ms apart, 167 ms old on arrival. The answer now sends what is held at once.
+    if (this.publishing && !this.ended) this.drainOwed = true;
     if (this.ended || this.publishing || !this.hold.length || !this.where) return this.publishing;
+    this.drainOwed = false;
     // NOTHING GOES OUT WHILE THE TWO NUMBERS ARE BEING RE-READ. A batch built
     // from the old `nextTick` while `resume` is replacing it is the refusal
     // again, one tick later.
@@ -2072,9 +2078,9 @@ export class Client {
         }
       }
       this.publishing = null;
-      // A MARK IS WAITING ON TICKS STILL HELD: carry on draining now rather
-      // than on the page's next call, so the mark goes as soon as it can.
-      if (this.inputWaiters.length && this.hold.length) {
+      // A MARK IS WAITING ON TICKS STILL HELD, OR A SLOT WAS MISSED WHILE THIS BATCH WAS IN FLIGHT: carry on draining now
+      // rather than on the page's next call, so the mark goes as soon as it can and the pictures keep the page's cadence.
+      if ((this.inputWaiters.length || (this.drainOwed && r.accepted)) && this.hold.length) {
         const d = this.drain();
         if (d && d.catch) d.catch(() => {});
       }

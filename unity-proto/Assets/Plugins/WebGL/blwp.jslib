@@ -320,6 +320,11 @@ mergeInto(LibraryManager.library, {
     }
 
     var base = UTF8ToString(urlPtr);
+    // THE TICK CLOCK THIS BROWSER'S TABS SHARE, for the debug label over a ghost (the owner 2026-09-17 19:15): one per
+    // page, kept across rounds.
+    if (!Module.blwpTickClock && BLWPCLIENT.tickClock) {
+      try { Module.blwpTickClock = BLWPCLIENT.tickClock(); } catch (e) { Module.blwpTickClock = null; }
+    }
     var net = Module.blwpNet = {
       // `state` here is ONLY the word before a client exists - opening, or
       // error if the session never got off the ground. Once there is a client
@@ -612,7 +617,14 @@ mergeInto(LibraryManager.library, {
         return;
       }
       if (net.client.state !== 'ready') return;
-      if (net.batchEvery > 0 && net.seen % net.batchEvery === 0) net.client.drain();
+      if (net.batchEvery > 0 && net.seen % net.batchEvery === 0) {
+        // WHEN THIS TICK WAS DRIVEN, told to the other tabs: the newest recorded tick and now.
+        if (Module.blwpTickClock && net.where) {
+          if (!net.entryHex) net.entryHex = BLWPCLIENT.toHex(net.where.entryId);
+          Module.blwpTickClock.post(net.entryHex, net.client.offered - 1);
+        }
+        net.client.drain();
+      }
       // The hash is taken HERE, at the tick the mark names - a checkpoint says
       // where the world was at that tick, and hashing it when a queue got
       // round to it would commit to a different world.
@@ -657,6 +669,19 @@ mergeInto(LibraryManager.library, {
     HEAP32[out + 10] = g.heading | 0;
     HEAP32[out + 11] = g.tick | 0;
     return 12;
+  },
+
+  // THE DEBUG LABEL OVER EACH GHOST (the owner 2026-09-17 19:15): one line a truck, `entry TAB name TAB age+arrows`,
+  // written as UTF-8 (the arrows are not ASCII). The rule is `ghostLabels` in @blwp/client; the names are the ones the
+  // page checked off the nodes. Returns the bytes written, 0 for none.
+  BlwpGhostLabels: function (ptr, cap) {
+    var net = Module.blwpNet;
+    if (!net || !net.ghosts || !BLWPCLIENT.ghostLabels) return 0;
+    var names = (typeof window !== 'undefined' && window.BLWP_NAMES_BY_PLAYER) || {};
+    var text = BLWPCLIENT.ghostLabelText(BLWPCLIENT.ghostLabels(net.ghosts, {
+      nameOf: function (player) { return names[player] || null; }, clock: Module.blwpTickClock }));
+    if (!text) return 0;
+    return stringToUTF8(text, ptr, cap | 0);
   },
 
   // The status line, as ASCII, for the debug panel. A status nobody can read is

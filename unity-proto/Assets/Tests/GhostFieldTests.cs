@@ -206,4 +206,19 @@ public class GhostFieldTests
         Assert.AreEqual(9f, only.transform.position.x, 0.0001f);
         Assert.AreEqual(0, field.Draw(100), "an empty queue still drew something");
     }
+
+    /// <summary>
+    /// THE DEBUG LABEL OVER A GHOST (the owner 2026-09-17 19:15): the page's line for each truck - entry, name, then the age
+    /// and arrows - lands on the truck of that entry, two lines, and a line that is not one is dropped.
+    /// </summary>
+    [Test]
+    public void TheDebugLabelNamesTheTruckAndSaysItsAgeAndMove()
+    {
+        var labels = GhostField.ParseLabels("aaaaaaaa\tDaniel\t20ms \u2191\u2192\nbbbbbbbb\tOther\t~140ms\nbroken line");
+        Assert.AreEqual(2, labels.Count, "a line that is not entry, name and age was kept");
+        Assert.AreEqual("the owner", labels["aaaaaaaa"][0]);
+        Assert.AreEqual("20ms \u2191\u2192", labels["aaaaaaaa"][1]);
+        Assert.AreEqual("~140ms", labels["bbbbbbbb"][1]);
+        Assert.AreEqual(0, GhostField.ParseLabels("").Count);
+    }
 }

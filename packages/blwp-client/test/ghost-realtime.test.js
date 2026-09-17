@@ -117,3 +117,35 @@ test('a watcher is shown the driver\'s newest published tick, ten pictures a sec
     assert.equal(got[got.length - 1][1], tick - 1, 'the last picture is not the last tick');
   } finally { sock.close(); await node.close(); }
 });
+
+test('a truck that drove before anybody watched is pictured at its newest tick, not replayed from its start', async () => {
+  // the owner 2026-09-17 19:15: "in the second round the ghost does not appear reliably - sometimes missing, then at the
+  // wrong position". A run was stepped only when a watcher asked, STEP_BUDGET ticks a push, so a truck that drove 20 s
+  // alone was first shown 150 ticks into its run.
+  const { node, client, rid, theirEid, where } = await rig();
+  const sock = new WebSocket(`ws://127.0.0.1:${node.port}/play`);
+  try {
+    await new Promise((r) => sock.on('open', r));
+    const answers = [];
+    sock.on('message', (m) => answers.push(String(m)));
+    let head = GENESIS, tick = 0;
+    for (let n = 0; n < 20; n++) {
+      const batch = { roundId: rid, entryId: theirEid, previousHash: head, firstTick: tick, ticks: Array.from({ length: 60 }, (_, i) => words(9)(tick + i)), liquidations: [] };
+      sock.send(encodeInputBatch(batch));
+      head = batchId(batch); tick += 60;
+    }
+    for (let i = 0; i < 100 && answers.length < 20; i++) await wait(20);
+    assert.equal(answers.filter((a) => a === '60').length, 20, `the node took ${answers.join(',')}`);
+    const got = [];
+    const field = watchGhosts(client, where);
+    const was = client.onGhost;
+    client.onGhost = (g) => { if (toHex(g.entryId) === toHex(theirEid)) got.push(g.tick); was(g); };
+    await field.watching;
+    const batch = { roundId: rid, entryId: theirEid, previousHash: head, firstTick: tick, ticks: Array.from({ length: 6 }, (_, i) => words(9)(tick + i)), liquidations: [] };
+    sock.send(encodeInputBatch(batch));
+    for (let i = 0; i < 100 && got[got.length - 1] !== tick + 5; i++) await wait(20);
+    assert.ok(got.length, 'no picture of the truck that drove');
+    assert.equal(got[0], tick - 1, `the first picture shown on watching was tick ${got[0]} of a truck that had published ${tick - 1}`);
+    assert.equal(got[got.length - 1], tick + 5, 'the next batch was not the next picture');
+  } finally { sock.close(); await node.close(); }
+});
