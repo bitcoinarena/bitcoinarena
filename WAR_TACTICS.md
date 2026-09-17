@@ -144,6 +144,7 @@ Rows for the four points, same probe conditions, plus the moved-tape probe named
 | **Sideways: they fight over the status quo** | §4.14 | with the tape alternating green and red candles of 5 bp for 3600 ticks, both sides mount assaults, the holder of at least one objective flips on >= 4 of 5 seeds, and neither side's mean push exceeds the other's by more than 4 m over the run |
 | **The chart is a road, not a trap** | ribbon §4.15 | the east-drive probe: the truck at full throttle straight east from the apron to the gate at z = seam − 10 m never drops below **85%** of its flat-ground speed, never stops, and crosses in <= 1.05 x the flat time (measured 2026-09-17 on 492f128: 94.2% / 96.3%, 0 stops, 832 vs 828 ticks) |
 | **The chart glides, nothing jumps** | scroll §4.15 | between samples the candle layer and the seam move <= 0.01 m per tick; **on a sample tick no surface point, no berm and no post moves more than 0.02 m** (measured: candle layer 0.137 m and the seam-following berms 2.571 m on sample ticks - red: the seam must be read at `x + offset` like the candles, and the rescale lerp must start from the drawn state, not the target) |
+| **Trucks and tanks get through** | passability §4.15 | the north-south drive (z = -54 to +54 and back at x = 20 m, full throttle): >= 85% of flat speed, 0 stops; no vertical face and no added height over 1 m or grade over 25% anywhere in the band but a crater; every tank reaches a given post in <= 1.2 x the flat-ground time |
 | **The chart is the market's alone** | §4.14 | lead, trend, momentum and `front` are bit-identical with the truck parked and driven, and identical across any two players' runs on the same samples |
 | **Losses bite** | supply §3 | on ticks where one side holds more objectives than the other, that side has more living tanks on >= 55% of them; a side down to 2 objectives lost never falls below 4 tanks on more than 8% of ticks (the floor row above stays) |
 
@@ -935,6 +936,26 @@ a thing the truck drives on is settled state (multiplayer_p2p.md §0.5), so the 
   hull's tracks, and is a bump a truck barely notices at speed while still being a metre of ground
   from above and from the cab. The glow to 6 m gives the eye the height; the ground gives the wheels
   what they can use.
+- **Passability guarantee (the owner 2026-09-17 14:40: "make it so trucks and tanks get through"; RULED
+  HERE, absolute).** Nothing the core adds to the ground inside the band may stop a truck or a tank,
+  from any direction:
+  - **no vertical face** anywhere in the band but a crater's own bowl; every added edge is a ramp of
+    **at most 25%**, and every added height is **at most 1 m** - the candle plateau is the ceiling for
+    anything built for the war's benefit;
+  - **berms are withdrawn**: the 2.4 m hull-down berms the core grew on the hold band (e0f4ed7) are
+    walls to a truck crossing the front and are exactly what §4.1 no longer needs - the crest an
+    overwatch tank sits behind is a candle's edge, a crater's rim or a pancake swell, never a bump made
+    for it. If hull-down falls below the §0 row without them, the row is re-measured with the ribbon
+    in place before anything is added back, and whatever comes back obeys the two limits above;
+  - **tanks and men have no physics** and cross any height in a step; a tank is never pushed by
+    terrain (only by the separation pass and the crater push, §1.1, §8.3), so no chart shape can pin
+    one - the wick and the faces were the last such pushes and are gone;
+  - **the truck's path is never read** to shape the ground (§1.2): the guarantee holds everywhere, not
+    where the truck is.
+  Probes (§0 rows): the east drive (>= 85%, 0 stops); a **north-south drive** - the truck at full
+  throttle from z = -54 to +54 at x = 20 m, and back - >= 85% of flat speed and 0 stops; and **no tank
+  pinned** - over 5 seeds x 3600 ticks every tank that is given a post reaches within 1.5 m of it in
+  <= 1.2 x the flat-ground time, or the terrain is the fault, not the tank.
 - **The glow** above the plateau, 1 m to 6 m, is light (§0.2): no collision, no rule reads it.
 - **It moves, so it moves smoothly.** The tape shifts one sample per 5 s (§4.13), which is a 2.878 m
   jump in x - fine for a post, not for ground under a wheel. So the candle layer (and, for free, the
