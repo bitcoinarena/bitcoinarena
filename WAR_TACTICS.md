@@ -222,7 +222,7 @@ number on it is a core word or the client's memory of attested samples - nothing
 
 - **The mapping that makes it possible.** On the ground, x is time and z is price (§4.13, §4.15). So
   every unit on the field has a chart position: the candle it stands over is its **time**, and its z
-  read through the window's scale (`z / (85 m x 0.72)` → `lo..hi` of the window) is its **price
+  read through the window's scale (`z / (85 m x 0.53)` → `lo..hi` of the window) is its **price
   level**. The truck at x = -20 m, z = +14 m is "over the candle from 3:10 ago, at $75,180". That is
   the dot.
 - **Layout - classic TradingView, dark.** Background `#131722`, grid lines `#1f2530`, candles green
@@ -831,23 +831,39 @@ a thing the truck drives on is settled state (multiplayer_p2p.md §0.5), so the 
 **height layer** the core's surface reader adds, exactly as the craters are a layer it subtracts
 (`surfaceAt = ground + candles - craters`). A client draws what the core computes, or it desyncs.
 
+- **Band size and what is left for the relief (the owner 2026-09-17 09:30: "a smaller chart so more
+  relief shows, or flatten only where the chart is right now?"; RULED HERE, either can be overruled).**
+  Not dynamic: a pad that moves with the scroll and rewrites itself on every new high or low is ground
+  that rises and sinks under a wheel every 10-20 s in a trend - an elevator under the truck, corridors
+  that are flat only between candles at the same price, and mountains dissolving where the chart passes.
+  Deterministic, but nervous, and a physics hazard. **Static, and smaller**: the seam's amplitude drops
+  from `0.72 x 85 m = ±61 m` (C#'s number) to **±45 m** (`0.53 x halfZ`), the band to `|z| <= 54`
+  (45 + 5 + 4), which leaves **31 m of relief at each edge** and a cone that reaches **12.4 m** at the map's
+  edge - the mempool's mountains at nearly their full 14.5 m, standing right behind the lines: the
+  overwatch line at a seam extreme (45 + 30 = 75 m) is on the hills, and every column walks down from
+  them onto the chart plain. The front still sweeps 90 m with the market; a full-range candle is 90 m
+  long, not 122, still a wall from the cab. And inside the band the relief is not a plane but a
+  **pancake**: the relief times **0.15** (6 m hills become 0.9 m swells, the mempool's 14.5 m become
+  2.2 m), so the mempool still shows on the plain as long low swells the eye reads, while a 2 m plateau
+  sits on it and a 40% ramp meets ground that varies less than a metre over 100 m - drivable everywhere,
+  and the corridors stay corridors. The band rule below is read with these numbers.
 - **The chart band is flat, whatever the mempool says (the owner 2026-09-17 09:20).** The ground the
   core builds is the seed's lattice (`groundFromSeed`, 6 m peaks) and, when the host uploads it, the
   **mempool relief** (`MempoolTerrain`: 9 m of fee height plus 5.5 m of base relief - a busy chain is a
   mountainous map). A candle ramp that starts halfway up a fee mountain is not a ramp, and a corridor
   across one is not a corridor. So, before the candle layer is added, the relief is **levelled inside
-  the chart band**: `|x| <= 104`, `|z| <= 70` (the ±61 m the candles can reach, plus the 5 m ramp,
-  plus 4 m), to **one height - the apron's** (the plane the bays and the gate stand on, so the roll-out
-  and the last metres to the gate are level with the chart). Outside the band the relief is **clamped
-  to a 40% cone**: `h(x, z) <= 0.4 x (|z| - 70)` for `|x| <= 104`, so no ground rises toward the band
-  faster than a ramp does - at the map's edge (85 m) that is 6 m, and the mempool's mountains stand
-  full height only beyond the buildings and the corridor's ends. Inside the band the only relief is
+  the chart band**: `|x| <= 104`, `|z| <= 54` (the ±45 m the candles can reach, plus the 5 m ramp,
+  plus 4 m), to **the pancake above** (relief x 0.15 about the apron's height, the plane the bays and the gate
+  stand on, so the roll-out and the last metres to the gate are level with the chart). Outside the band the relief is **clamped
+  to a 40% cone**: `h(x, z) <= pancake + 0.4 x (|z| - 54)` for `|x| <= 104`, so no ground rises toward
+  the band faster than a ramp does - at the map's edge (85 m) that is 12.4 m, the mempool's mountains at
+  nearly full height behind the lines. Inside the band the only relief is
   the chart's own (2 m plateaus), the craters (§10, they still cut), and nothing else: hull-down
   (§4.1) finds candle edges and crater rims, which is what the war is fought on now. The uploaded grid
   is not changed; the surface reader applies the band and the cone as it applies the craters, so the
   host's terrain revision can come and go and the chart stays flat. Test: inside the band, away from
-  candles and craters, the surface is the apron height to the centimetre on every seed and every
-  uploaded grid; every ramp foot and every corridor is on it; the steepest grade in the cone is 40%.
+  candles and craters, the surface is `apron + 0.15 x relief` to the centimetre on every seed and every
+  uploaded grid, and never more than 2.2 m off the apron; every ramp foot and every corridor is on it; the steepest grade in the cone is 40%.
 - **The chart spans the field, not the buildings** (found 21:15): the post office ends at x = -114.4 and
   the miner begins at 108.4, so the tape's 260 m had eight candles inside walls. The 32 candles are laid
   over **x = -104 .. +104** (208 m, the air corridor's own width): slot **6.5 m**, body **3.7 m**,
@@ -855,7 +871,7 @@ a thing the truck drives on is settled state (multiplayer_p2p.md §0.5), so the 
   ramp is unchanged. `frontlineZ` maps the tape over the same 208 m so the seam and the candles agree.
 - **The body is a plateau**, height **H = 2 m** - the same for every candle; height carries no price,
   the length in z does - **3.7 m wide** in its 6.5 m slot (a 10 s candle), by its open-to-close in z
-  (portrait, as on a chart: time along x, price along z; up to 122 m long at a full-range move; a body
+  (portrait, as on a chart: time along x, price along z; up to 90 m long at a full-range move; a body
   shorter than 1 m - a doji - is built 1 m long so every candle exists as terrain),
 - **Padding (the owner 2026-09-16 21:00): a 2.8 m corridor between candles, flat, drivable.** The body
   takes 57% of its slot, as a chart's bar does, and the 2.8 m between two bodies is ground at ground
@@ -878,7 +894,7 @@ a thing the truck drives on is settled state (multiplayer_p2p.md §0.5), so the 
 - **The wick is a solid for the truck only**: a 1 m x 1 m pillar, 9 m tall, from low to high in z at
   the candle's centre x, in the solids list (`resolveSolids`: a wall the truck steers around). **Tanks
   and men pass through it**, as they pass through the x-faces (the owner 2026-09-16 21:05, "can a tank
-  cross a candle, wick included?" - yes): the core has no pathing, a wick is a line up to 122 m long,
+  cross a candle, wick included?" - yes): the core has no pathing, a wick is a line up to 90 m long,
   and a push-out on it would pin every tank that scoots or enters its lane in x against it - the same
   fault the separation push had before §4.3 (92.8% of steps undone). So a tank crosses any candle: up
   the 2 m face in one step, over the plateau, through the wick, down the far face; the renderer draws
@@ -891,7 +907,7 @@ a thing the truck drives on is settled state (multiplayer_p2p.md §0.5), so the 
   (tick - sampleTick) / 300`, reset to 0 on the sample tick as the tape shifts. The chart glides toward
   the post office at 0.65 m/s and never jumps. A **rescale** (a new window high or low) moves body
   ends in z; they **lerp to their targets over the 300 ticks** to the next sample, so an edge moves at
-  most 0.2 m per tick in the worst case (a full ±61 m rescale) and a few centimetres in the usual one.
+  most 0.2 m per tick in the worst case (a full ±45 m rescale) and a few centimetres in the usual one.
   State: `TAC_SAMPLE_TICK` (one word) and the previous 64-sample targets (a second tape, 64 words) -
   appended, no offset above moves.
 - **What it does to the war**, all of it emergent from rules already written:
