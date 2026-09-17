@@ -3936,7 +3936,10 @@ function wickSegments(layout, c, out) {
 
 /**
  * Each candle's two x-faces as solid boxes for the truck (resolveSolids): zero thickness on the face line, the body's
- * z-length, from the apron to the plateau. Zero thickness keeps the corridor 2.8 m and the plateau 3.7 m - the circles'
+ * z-length, from 0 to the plateau IN THE CANDLE LAYER'S OWN HEIGHT - resolved with the truck's height in that layer
+ * (0 in a corridor, H on a plateau), not with the world height. At the apron's absolute height a berm or the band's
+ * relief lifting the ground past 2 m put the floor above the wall's top and the wall was skipped: measured, 14 of 184
+ * straight drives at pinned z (seeds 1-8) passed through a candle, 54 face crossings. Zero thickness keeps the corridor 2.8 m and the plateau 3.7 m - the circles'
  * radius (1.275 m) is far more than a tick's travel, so a centre never reaches the line. Then the wick past the body
  * (w1): a 1 m x 1 m, 9 m pillar over each protruding segment only, at the candle's centre x.
  */
@@ -3952,8 +3955,8 @@ function candleWalls(layout, apron) {
       box[b + 1] = add(z0, (sub(z1, z0)) >> 1);
       box[b + 2] = 0;
       box[b + 3] = (sub(z1, z0)) >> 1;
-      box[b + 4] = apron;
-      box[b + 5] = add(apron, CANDLE_H);
+      box[b + 4] = 0;
+      box[b + 5] = CANDLE_H;
     }
     n = add(n, 2);
   }
@@ -3965,8 +3968,8 @@ function candleWalls(layout, apron) {
       box[b + 1] = add(z0, (sub(z1, z0)) >> 1);
       box[b + 2] = WICK_HALF;
       box[b + 3] = (sub(z1, z0)) >> 1;
-      box[b + 4] = apron;
-      box[b + 5] = add(apron, WICK_HEIGHT);
+      box[b + 4] = 0;
+      box[b + 5] = WICK_HEIGHT;
       n = add(n, 1);
     }
   }
@@ -4781,6 +4784,17 @@ function tape(rngWords) {
  * A ground put here is marked as such, because a restart must keep an uploaded
  * one and must NOT keep a generated one - the seed makes that again.
  */
+/**
+ * A REFERENCE WORLD WITHOUT THE CANDLE FIELD, for the tests that reproduce a recording made before the candles existed
+ * (the PhysX half-lock turn: its 59 m circle has no candle-free place on the map - measured, the free strips are 37 m and
+ * 40 m). The band, the pancake, the berms and the craters stay; only the candles' height and their x-face walls go. Like
+ * `setGround`, a test door: the bundle does not offer it, so no page can take the chart out of its world.
+ */
+function setCandleField(st, on) {
+  st.noCandleField = !on;
+  return true;
+}
+
 function setGround(st, cols, rows, heights) {
   if (cols < 2 || rows < 2 || heights.length < Math.imul(cols, rows)) return false;
   const g = flatGround(cols, rows);
@@ -5158,7 +5172,7 @@ function surfaceAt(st, x, z) {
                craterCut(st.i32, x, z));
   }
   const relief = levelled(heightAtWorld(st.ground, x, z, HALF_X, HALF_Z), st.apron, x, z, st.ground, HALF_X, HALF_Z);
-  return sub(add(add(relief, emplacementAt(x, z, st.tape, st.ground, HALF_X, HALF_Z, st.apron, samplesTaken(st))), candleHeightAt(st.candles, x, z)),
+  return sub(add(add(relief, emplacementAt(x, z, st.tape, st.ground, HALF_X, HALF_Z, st.apron, samplesTaken(st))), (st.noCandleField ? 0 : candleHeightAt(st.candles, x, z))),
              craterCut(st.i32, x, z));
 }
 
@@ -5179,7 +5193,7 @@ function refreshCandles(st) {
  * from `candleView`, and the ground under them is the levelled band. Everything that stands on the world reads `surfaceAt`.
  */
 function terrainAt(st, x, z) {
-  return st.candles ? sub(surfaceAt(st, x, z), candleHeightAt(st.candles, x, z)) : surfaceAt(st, x, z);
+  return st.candles && !st.noCandleField ? sub(surfaceAt(st, x, z), candleHeightAt(st.candles, x, z)) : surfaceAt(st, x, z);
 }
 
 /** The candles as the renderer meshes them (rules/candles.js CV_*). Returns the words written; reading writes no state. */
@@ -5780,7 +5794,8 @@ function step(st, throttle, steer, brake, handbrake, practice) {
                 sin(v.heading), cos(v.heading),
                 surfaceAt(st, v.x, v.z));
   // The candles' x-faces (§4.15), the truck's alone: tanks and men stand on the height read and cross them.
-  if (st.candleSolids) resolveSolids(v, st.candleSolids, sin(v.heading), cos(v.heading), surfaceAt(st, v.x, v.z));
+  // Against the truck's height in the candle layer (0 in a corridor, 2 m on a plateau): the walls stand in that layer.
+  if (st.candleSolids && !st.noCandleField) resolveSolids(v, st.candleSolids, sin(v.heading), cos(v.heading), candleHeightAt(st.candles, v.x, v.z));
 
   // And out of the armour. Last tick's tank positions, because the army has
   // not moved yet this tick - one frame stale, sixteen milliseconds, and it

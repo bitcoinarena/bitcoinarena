@@ -185,6 +185,17 @@ function tape(rngWords) {
  * A ground put here is marked as such, because a restart must keep an uploaded
  * one and must NOT keep a generated one - the seed makes that again.
  */
+/**
+ * A REFERENCE WORLD WITHOUT THE CANDLE FIELD, for the tests that reproduce a recording made before the candles existed
+ * (the PhysX half-lock turn: its 59 m circle has no candle-free place on the map - measured, the free strips are 37 m and
+ * 40 m). The band, the pancake, the berms and the craters stay; only the candles' height and their x-face walls go. Like
+ * `setGround`, a test door: the bundle does not offer it, so no page can take the chart out of its world.
+ */
+export function setCandleField(st, on) {
+  st.noCandleField = !on;
+  return true;
+}
+
 export function setGround(st, cols, rows, heights) {
   if (cols < 2 || rows < 2 || heights.length < Math.imul(cols, rows)) return false;
   const g = flatGround(cols, rows);
@@ -562,7 +573,7 @@ export function surfaceAt(st, x, z) {
                craterCut(st.i32, x, z));
   }
   const relief = levelled(heightAtWorld(st.ground, x, z, HALF_X, HALF_Z), st.apron, x, z, st.ground, HALF_X, HALF_Z);
-  return sub(add(add(relief, emplacementAt(x, z, st.tape, st.ground, HALF_X, HALF_Z, st.apron, samplesTaken(st))), candleHeightAt(st.candles, x, z)),
+  return sub(add(add(relief, emplacementAt(x, z, st.tape, st.ground, HALF_X, HALF_Z, st.apron, samplesTaken(st))), (st.noCandleField ? 0 : candleHeightAt(st.candles, x, z))),
              craterCut(st.i32, x, z));
 }
 
@@ -583,7 +594,7 @@ function refreshCandles(st) {
  * from `candleView`, and the ground under them is the levelled band. Everything that stands on the world reads `surfaceAt`.
  */
 export function terrainAt(st, x, z) {
-  return st.candles ? sub(surfaceAt(st, x, z), candleHeightAt(st.candles, x, z)) : surfaceAt(st, x, z);
+  return st.candles && !st.noCandleField ? sub(surfaceAt(st, x, z), candleHeightAt(st.candles, x, z)) : surfaceAt(st, x, z);
 }
 
 /** The candles as the renderer meshes them (rules/candles.js CV_*). Returns the words written; reading writes no state. */
@@ -1184,7 +1195,8 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
                 sin(v.heading), cos(v.heading),
                 surfaceAt(st, v.x, v.z));
   // The candles' x-faces (§4.15), the truck's alone: tanks and men stand on the height read and cross them.
-  if (st.candleSolids) resolveSolids(v, st.candleSolids, sin(v.heading), cos(v.heading), surfaceAt(st, v.x, v.z));
+  // Against the truck's height in the candle layer (0 in a corridor, 2 m on a plateau): the walls stand in that layer.
+  if (st.candleSolids && !st.noCandleField) resolveSolids(v, st.candleSolids, sin(v.heading), cos(v.heading), candleHeightAt(st.candles, v.x, v.z));
 
   // And out of the armour. Last tick's tank positions, because the army has
   // not moved yet this tick - one frame stale, sixteen milliseconds, and it

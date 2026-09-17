@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { init, step, restart, runScore, setGround, setSolids, groundAt, submitLoad, heatOf, HALF_X, teleport, bayZ, START_X } from '../src/sim.js';
+import { init, step, restart, runScore, setGround, setSolids, groundAt, submitLoad, heatOf, HALF_X, teleport, bayZ, START_X, setCandleField } from '../src/sim.js';
 
 // WHERE THE CHART IS NOT (WAR_TACTICS.md §4.15). The candles stand on |z| <= 46.6 between x -74.4 and 107.0, the band
 // is |x| <= 104, |z| <= 54, and a fixture about the vehicle, the walls, the armour or the score that is not about the
@@ -327,7 +327,7 @@ test('the core drives like the PhysX truck it replaces', async () => {
     near(Math.abs(wheel / n), t.wheel, tol.wheel, 'wheel angle deg');
   }
 });
-test('the half-lock turn drives like the PhysX truck (no place off the chart: listed red, TASKBOOK)', async () => {
+test('the half-lock turn drives like the PhysX truck, in the recording world without the candle field', async () => {
   const ref = JSON.parse(
     await readFile(new URL('./vectors/physx-reference.json', import.meta.url), 'utf8'));
   const tol = ref.tolerance;
@@ -347,7 +347,11 @@ test('the half-lock turn drives like the PhysX truck (no place off the chart: li
   for (const t of ref.turns) {
     // The half-lock turn only: its 59 m circle has no place off the chart (see above).
     if (t.steer === 1) continue;
-    const s = init(1);                                   // from the spawn, as recorded: through the candle field
+    // THE RECORDING'S WORLD: the PhysX run predates the candles, and a 59 m circle has no candle-free place on the map
+    // (the strips past |z| 46.6 and before the first face are 37 m and 40 m). So the candle field is taken out of this
+    // one world - the reference door, as `setGround` gives the flat reference its ground - and the circle is unchanged.
+    const s = init(1);
+    setCandleField(s, false);
     drive(s, HZ * 8, 1, 0);
     drive(s, HZ * 5, 1, t.steer);
 
@@ -1788,15 +1792,23 @@ test('the seam banks more than the quiet lane for the same ground made good', ()
   //
   // Far from the front pays nothing. The bound is 10x, not 1.5x: a quiet
   // rim was still banking hundreds, which is the failure this guards.
-  const TARGET = 60 * ONE;
+  // ON THE CHART (§4.15): the seam lanes cross the candle field, whose x-faces are walls - measured, the straight drive
+  // at pinned z stopped 22.73 m out at candle 0 (z 0) and 39.99 m out at candle 3 (z 20), while the rim (z 62, past the
+  // candles) made the ground. The rule this test is about is the bank, not the driving, so the truck is carried along
+  // its lane at 12 m/s - the same ground made good for every lane, through the candle world as it is (a face it is
+  // placed across still pushes it) - instead of driven into a wall.
+  const TARGET = 60 * ONE, STEP = Math.round(12 * ONE / 60);
   const lane = (z) => {
     const st = init(0x5eed1234);
     const s = st.i32;
-    let ticks = 0;
+    let ticks = 0, x = s[O_TRUCK + T_X];
     while (s[O_TRUCK + T_X] < TARGET && ticks < 5400) {
+      x += STEP;
+      s[O_TRUCK + T_X] = x;
       s[O_TRUCK + T_Z] = Math.round(z * ONE);
+      s[O_TRUCK + T_VX] = 12 * ONE;
       s[O_TRUCK + T_VZ] = 0;
-      step(st, ONE, 0, 0, 0, 1);
+      step(st, 0, 0, 0, 0, 1);
       ticks++;
     }
     assert.ok(s[O_TRUCK + T_X] >= TARGET, `lane z=${z} never made the ground`);

@@ -121,7 +121,10 @@ export function wickSegments(layout, c, out) {
 
 /**
  * Each candle's two x-faces as solid boxes for the truck (resolveSolids): zero thickness on the face line, the body's
- * z-length, from the apron to the plateau. Zero thickness keeps the corridor 2.8 m and the plateau 3.7 m - the circles'
+ * z-length, from 0 to the plateau IN THE CANDLE LAYER'S OWN HEIGHT - resolved with the truck's height in that layer
+ * (0 in a corridor, H on a plateau), not with the world height. At the apron's absolute height a berm or the band's
+ * relief lifting the ground past 2 m put the floor above the wall's top and the wall was skipped: measured, 14 of 184
+ * straight drives at pinned z (seeds 1-8) passed through a candle, 54 face crossings. Zero thickness keeps the corridor 2.8 m and the plateau 3.7 m - the circles'
  * radius (1.275 m) is far more than a tick's travel, so a centre never reaches the line. Then the wick past the body
  * (w1): a 1 m x 1 m, 9 m pillar over each protruding segment only, at the candle's centre x.
  */
@@ -137,8 +140,8 @@ export function candleWalls(layout, apron) {
       box[b + 1] = add(z0, (sub(z1, z0)) >> 1);
       box[b + 2] = 0;
       box[b + 3] = (sub(z1, z0)) >> 1;
-      box[b + 4] = apron;
-      box[b + 5] = add(apron, CANDLE_H);
+      box[b + 4] = 0;
+      box[b + 5] = CANDLE_H;
     }
     n = add(n, 2);
   }
@@ -150,8 +153,8 @@ export function candleWalls(layout, apron) {
       box[b + 1] = add(z0, (sub(z1, z0)) >> 1);
       box[b + 2] = WICK_HALF;
       box[b + 3] = (sub(z1, z0)) >> 1;
-      box[b + 4] = apron;
-      box[b + 5] = add(apron, WICK_HEIGHT);
+      box[b + 4] = 0;
+      box[b + 5] = WICK_HEIGHT;
       n = add(n, 1);
     }
   }
