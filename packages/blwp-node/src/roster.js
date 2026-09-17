@@ -112,7 +112,10 @@ export class Roster {
     const kept = view && Array.isArray(view.blocks)
       ? `${toHex(roundIdBytes)}:${view.firstHeight}:${view.blocks.length}` : null;
     if (kept && this.seeds.has(kept)) return this.seeds.get(kept);
-    const answer = this.#seedFor(roundIdBytes, contract, view);
+    // TIMED WHERE THE PROFILE POINTED: this is the chain check - every header hashed, its proof of work read - and it
+    // runs when the view is new or a header has arrived, never twice for the same one.
+    const answer = timed(`committee chain check ${toHex(roundIdBytes).slice(0, 8)}`,
+      () => this.#seedFor(roundIdBytes, contract, view), { over: 20 });
     if (kept && answer.ok) {
       this.seeds.set(kept, answer);
       if (this.seeds.size > Roster.CENSUS_KEPT) this.seeds.delete(this.seeds.keys().next().value);
@@ -381,7 +384,8 @@ export class Roster {
     const kept = view && Array.isArray(view.blocks)
       ? `${toHex(roundIdBytes)}:${role}:${view.firstHeight}:${view.blocks.length}` : null;
     if (kept && this.committees.has(kept)) return this.committees.get(kept);
-    const answer = this.#committeeFor(roundIdBytes, role);
+    const answer = timed(`committee assigned ${toHex(roundIdBytes).slice(0, 8)}`,
+      () => this.#committeeFor(roundIdBytes, role), { over: 20 });
     if (kept && answer.ok) {
       this.committees.set(kept, answer);
       if (this.committees.size > Roster.CENSUS_KEPT) this.committees.delete(this.committees.keys().next().value);
