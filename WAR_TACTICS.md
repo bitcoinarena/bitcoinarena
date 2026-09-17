@@ -707,8 +707,8 @@ for, and the core does not draw it yet:**
   seeded tape's newest sample at init) is held in `O_TACTICS` as `TAC_OPEN` (one word). Every later
   sample against it is the **lead** (§4.14).
 - **Sample cadence (RULED HERE): one sample per 5 s (300 ticks).** A sample shifts the whole tape one
-  slot toward -x, 3.3 m of field (208 m / 63), so the front's shape **scrolls** left at 0.65 m/s (208 m / 63 per 5 s) and the
-  newest price enters at the miner's end. That is inside a man's 2.8 m/s and a tank's 6.8; at one sample
+  slot toward -x - **half a candle slot, 2.878 m** at spawn ruling B's 5.756 m pitch (§4.15) - so the
+  front's shape **scrolls** left at **0.576 m/s** and the newest price enters at the miner's end. That is inside a man's 2.8 m/s and a tank's 6.8; at one sample
   a second the scroll would be 2.9 m/s and the men could barely close on the line. 64 samples at 5 s is
   5 min 20 s of price on the ground. A new sample can also move the window's low or high, and then the
   whole curve rescales in one tick - that is the market re-drawing the front, and it is allowed: the
