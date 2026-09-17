@@ -227,8 +227,11 @@ export function moveGlyphs(a, b) {
  * newest tick and the time it recorded it; a watching tab reads the time of the tick a picture names when that picture
  * is drawn. Only the stamp travels on the channel - the picture itself still comes from the nodes. A tab with no
  * channel, or a truck driven in another browser, has no stamp, and its label says the age since the picture arrived.
+ *
+ * THE CHANNEL IS HANDED IN, as `sign` and `verify` are: nothing in this package reads a name off the page (the client's
+ * own rule, `discovery.test.js`), and a test drives the same door the page does.
  */
-export function tickClock({ Channel = globalThis.BroadcastChannel, name = 'blwp-ghost-clock', keep = 64 } = {}) {
+export function tickClock({ Channel = null, name = 'blwp-ghost-clock', keep = 64 } = {}) {
   const stamps = new Map();
   const put = (e, t, ms) => {
     let a = stamps.get(e);
