@@ -11,6 +11,7 @@
 // here reaches the core: `replay.js` remains the only file in this daemon that
 // does, and this file only decides which runs are handed to it.
 import { ReplayPool } from './pool.js';
+import { timed } from './slow.js';
 import { SIGNED_RECEIPT_BYTES } from '../../protocol/src/receipt.js';
 import { resultFrom, signResult, verifiedFinal, runId } from './verdict.js';
 import { stoppedOutcome } from '../../protocol/src/first-mark.js';
@@ -179,15 +180,16 @@ export class Verifier {
       // THE BEACON BEFORE THE REPLAY. A round whose committee could have been
       // ground is not a round to spend a worker on, and it is certainly not
       // one to sign a result for.
-      const beacon = beaconFor(this.randomnessFor, contract, roundIdBytes, entry, entryId,
-        this.chainFor);
+      const beacon = timed(`close beacon ${hex(entryId).slice(0, 8)}`,
+        () => beaconFor(this.randomnessFor, contract, roundIdBytes, entry, entryId, this.chainFor));
       if (!beacon.ok) {
         this.queued.push({ entryId, objected: false, refused: beacon.why });
         return Promise.resolve({ entryId, stored: false, why: beacon.why });
       }
       this.seeds.set(hex(roundIdBytes), beacon.committeeSeed);
 
-      const transcript = this.round.transcript(roundIdBytes, entryId);
+      const transcript = timed(`close read transcript ${hex(entryId).slice(0, 8)}`,
+        () => this.round.transcript(roundIdBytes, entryId));
       const objected = this.round.objected(roundIdBytes, entryId);
       this.queued.push({ entryId, objected });
       // THE PEERS' RECEIPTS BEFORE THE CANONICAL CHAIN IS TAKEN (13C). Each
@@ -195,15 +197,17 @@ export class Verifier {
       // that asked nobody could never hold T of them. Pulled here, by the
       // node, and not trusted to the client: a losing player who withheld
       // receipts would reach no-quorum and a VOID refund.
-      return this.carryReceipts(roundIdBytes, entryId).then(() => this.pool.submit({ core: this.#coreOf(roundIdBytes),
+      return timed(`close carryReceipts ${hex(entryId).slice(0, 8)}`, () => this.carryReceipts(roundIdBytes, entryId))
+        .then(() => timed(`close hand to worker ${hex(entryId).slice(0, 8)}`, () => this.pool.submit({ core: this.#coreOf(roundIdBytes),
         key: `${hex(roundIdBytes)}:${hex(entryId)}`,
         objected,
         transcript,
         entry,
         // The WORLD seed's half of the same published value.
         options: { roundRandomness: beacon.hash },
-      })).then((answer) => this.#keep({ roundIdBytes, entryId, entry, contract, answer,
-        options: { roundRandomness: beacon.hash } }));
+      }))).then((answer) => timed(`close keep and sign ${hex(entryId).slice(0, 8)}`,
+        () => this.#keep({ roundIdBytes, entryId, entry, contract, answer,
+          options: { roundRandomness: beacon.hash } })));
     });
 
     this.done = work;
