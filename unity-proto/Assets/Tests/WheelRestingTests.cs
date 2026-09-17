@@ -389,10 +389,13 @@ public class WheelRestingTests
             var v = mesh.vertices;
             var l2w = mf.transform.localToWorldMatrix;
 
-            for (int i = 0; i + 1 < v.Length; i += 2)
+            // a cross-section is RoadNetwork.Across vertices now (the road lies on the candle ribbon); its middle one is
+            // the centre of the deck
+            for (int i = 0; i + RoadNetwork.Across <= v.Length; i += RoadNetwork.Across)
             {
-                if (!drawn.Contains(i) || !drawn.Contains(i + 1)) continue;
-                var centre = (l2w.MultiplyPoint3x4(v[i]) + l2w.MultiplyPoint3x4(v[i + 1])) * 0.5f;
+                int c = i + RoadNetwork.Across / 2;
+                if (!drawn.Contains(c)) continue;
+                var centre = l2w.MultiplyPoint3x4(v[c]);
                 float gap = roads.SurfaceHeight(centre.x, centre.z) - centre.y;
                 checkedPairs++;
                 if (Mathf.Abs(gap) > Mathf.Abs(worst)) { worst = gap; where = centre; }

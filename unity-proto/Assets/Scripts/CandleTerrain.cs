@@ -37,6 +37,8 @@ public class CandleTerrain : MonoBehaviour
     float _builtShift, _builtAt = -1f;
     int _builtSurface = int.MinValue;
     public int Rebuilds { get; private set; }
+    /// <summary>The core's candle words this frame, for what lies on the ribbon (the roads); null before the first view.</summary>
+    public static int[] LiveWords { get; private set; }
 
     /// <summary>The geometry of one view, as lists per part. Pure, for the tests: the ground is asked, not computed.</summary>
     public class Parts
@@ -302,6 +304,7 @@ public class CandleTerrain : MonoBehaviour
     void LateUpdate()
     {
         if (!Blwp.BlwpCore.Available || Blwp.BlwpCore.CandleView(_words) == 0) return;
+        LiveWords = _words;
         EnsureMeshes();
         float now = Time.unscaledTime, shift = _words[L.CV_SHIFT] / ONE;
         if (_formingTop != null)

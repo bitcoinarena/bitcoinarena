@@ -43,15 +43,21 @@ public class RoadNetwork : MonoBehaviour
     /// and off at the edge a tank half on the road would step 45 cm as it
     /// crossed the line.
     /// </summary>
-    /// <summary>Inside the chart band (§4.15: |x| &lt;= 104 m, |z| &lt;= 54 m), where no road is drawn.</summary>
-    public static bool InBand(Vector3 p) => Mathf.Abs(p.x) <= BandX && Mathf.Abs(p.z) <= BandZ;
-    public const float BandX = 104f, BandZ = 54f;
+    /// <summary>
+    /// ROADS ARE WHOLE AGAIN (the owner 2026-09-17 17:38, roads-incomplete-1737.jpg: "roads are incomplete - fragments only,
+    /// the candle ribbon ate the roads"). The 13:42 rule cut every road out of the chart band because the candles were 2 m
+    /// walls then; the ribbon is ground now (1 m, 25% ramps, 0.5 m wick ridges), so the roads run through the band again and
+    /// lie ON it: each vertex is the ground under the candles plus the live candle layer (CandleTerrain.LayerAt on the
+    /// core's words), re-laid as the chart scrolls.
+    /// </summary>
+    public const int Across = 5;
+    public const float RelaySeconds = 0.1f;
+    float CandleLayer(float x, float z) => CandleTerrain.LiveWords != null ? CandleTerrain.LayerAt(CandleTerrain.LiveWords, x, z) : 0f;
 
     public float SurfaceHeight(float x, float z)
     {
         float bare = Ground(x, z);
         if (Model == null) return bare;
-        if (InBand(new Vector3(x, 0f, z))) return bare;          // no deck in the band: the core's surface
 
         var lane = Model.LaneAt(x, z, RoadModel.HalfWidth + Shoulder);
         if (lane == null) return bare;
@@ -76,14 +82,19 @@ public class RoadNetwork : MonoBehaviour
         float slope = Model.CenterZ(lane.Value, x + 1f) - Model.CenterZ(lane.Value, x - 1f);
         var side = new Vector3(-slope, 0f, 2f).normalized;
 
-        float gl = DeckGround(x - side.x * RoadModel.HalfWidth, centreZ - side.z * RoadModel.HalfWidth);
-        float gr = DeckGround(x + side.x * RoadModel.HalfWidth, centreZ + side.z * RoadModel.HalfWidth);
-
         float across = (z - centreZ) * side.z;
         float t = Mathf.Clamp01((across + RoadModel.HalfWidth) / (2f * RoadModel.HalfWidth));
 
+        // the same stations the mesh lays (Across of them), each on the ground under it plus the candle layer, lerped
+        float st = t * (Across - 1);
+        int k0 = Mathf.Min(Across - 2, Mathf.FloorToInt(st));
+        float Station(int k)
+        {
+            var p = new Vector3(x, 0f, centreZ) + side * RoadModel.HalfWidth * (2f * k / (float)(Across - 1) - 1f);
+            return DeckGround(p.x, p.z) + CandleLayer(p.x, p.z);
+        }
         float broken = Model.SeverityAt(lane.Value, x) * Random01(x, lane.Value) * 0.9f;
-        float deck = Mathf.Lerp(gl, gr, t) + lift - broken * 0.55f + broken * 0.25f * t;
+        float deck = Mathf.Lerp(Station(k0), Station(k0 + 1), st - k0) + lift - broken * 0.55f + broken * 0.25f * t;
 
         float d = Mathf.Abs(z - centreZ);
         float fade = Mathf.Clamp01(Mathf.InverseLerp(RoadModel.HalfWidth + Shoulder,
@@ -146,8 +157,6 @@ public class RoadNetwork : MonoBehaviour
     public float Lift(float x, float z)
     {
         if (Model == null) return 0f;
-        if (InBand(new Vector3(x, 0f, z))) return 0f;
-
         var lane = Model.LaneAt(x, z, RoadModel.HalfWidth + Shoulder);
         if (lane == null) return 0f;
 
@@ -179,7 +188,10 @@ public class RoadNetwork : MonoBehaviour
 
     readonly Dictionary<Lane, Mesh> _meshes = new Dictionary<Lane, Mesh>();
     readonly Dictionary<Lane, float> _lastSignature = new Dictionary<Lane, float>();
-    float _rebuildAcc;
+    float _rebuildAcc, _relayAcc;
+    // per lane: each vertex's place and its height WITHOUT the candle layer, and the vertices as last laid
+    readonly Dictionary<Lane, List<Vector3>> _base = new Dictionary<Lane, List<Vector3>>();
+    readonly Dictionary<Lane, List<Vector3>> _laid = new Dictionary<Lane, List<Vector3>>();
 
     /// <summary>Lane meshes, exposed so a test can check they were built on the ground.</summary>
     public IReadOnlyDictionary<Lane, Mesh> Meshes => _meshes;
@@ -217,6 +229,14 @@ public class RoadNetwork : MonoBehaviour
     {
         if (Model == null) return;
         Model.Tick(Time.deltaTime);
+
+        // THE CHART SCROLLS UNDER THE ROADS: re-lay every vertex on the live candle layer, ten times a second, in C#
+        _relayAcc += Time.deltaTime;
+        if (_relayAcc >= RelaySeconds && CandleTerrain.LiveWords != null)
+        {
+            _relayAcc = 0f;
+            foreach (var lane in RoadModel.Order) Relay(lane);
+        }
 
         // The frontline moves every frame, but rebuilding five ribbons at frame
         // rate is wasted work - the seam drifts slowly.
@@ -291,23 +311,22 @@ public class RoadNetwork : MonoBehaviour
             // Sample the ground under each EDGE, not just the centreline. A
             // ribbon held flat across its width floats on one side and buries
             // itself on the other wherever the terrain slopes sideways.
-            var left = new Vector3(x, 0f, z) - side * RoadModel.HalfWidth;
-            var right = new Vector3(x, 0f, z) + side * RoadModel.HalfWidth;
-            float gl = DeckGround(left.x, left.z);
-            float gr = DeckGround(right.x, right.z);
-
-            left.y = gl + lift - broken * 0.55f;
-            right.y = gr + lift - broken * 0.55f + broken * 0.25f;
-            verts.Add(left);
-            verts.Add(right);
-
-            var centre = new Vector3(x, (left.y + right.y) * 0.5f, z);
-            if (i > 0) run += Vector3.Distance(prev, centre);
-            prev = centre;
-            float v = run / TileMetres;
+            // FIVE ACROSS, not two: the road lies on the candle ribbon now, and an 8 m chord from edge to edge missed its
+            // 4 m ramps. Each vertex samples the ground under it; the candle layer is added when laid (Relay).
+            float centreY = 0f;
             float uWidth = RoadModel.HalfWidth * 2f / TileMetres;   // square tiles
-            uvs.Add(new Vector2(0f, v));
-            uvs.Add(new Vector2(uWidth, v));
+            if (i > 0) run += Vector3.Distance(prev, new Vector3(x, prev.y, z));
+            float v = run / TileMetres;
+            for (int k = 0; k < Across; k++)
+            {
+                float a = k / (float)(Across - 1);
+                var p = new Vector3(x, 0f, z) + side * RoadModel.HalfWidth * (2f * a - 1f);
+                p.y = DeckGround(p.x, p.z) + lift - broken * 0.55f + broken * 0.25f * a;
+                verts.Add(p);
+                uvs.Add(new Vector2(uWidth * a, v));
+                if (k == Across / 2) centreY = p.y;
+            }
+            prev = new Vector3(x, centreY, z);
         }
 
         for (int i = 0; i < n; i++)
@@ -315,19 +334,41 @@ public class RoadNetwork : MonoBehaviour
             // a cut section is missing, not merely dark: the road ends in rubble
             if (severity[i] > 0.82f || severity[i + 1] > 0.82f) continue;
             // NO ROADS INSIDE THE CHART BAND (§4.15, the owner 2026-09-17 13:42): the corridors are the roads there
-            if (InBand(verts[i * 2]) || InBand(verts[i * 2 + 1]) || InBand(verts[i * 2 + 2]) || InBand(verts[i * 2 + 3])) continue;
             // Winding matters: with left at v and right at v+1, the order
             // (v, v+2, v+1) puts the normal in -Y and Unity culls the road as a
             // back face - drawn every frame and invisible from above.
-            int v = i * 2;
-            tris.Add(v); tris.Add(v + 1); tris.Add(v + 2);
-            tris.Add(v + 1); tris.Add(v + 3); tris.Add(v + 2);
+            for (int k = 0; k + 1 < Across; k++)
+            {
+                int v = i * Across + k, w = v + Across;
+                tris.Add(v); tris.Add(v + 1); tris.Add(w);
+                tris.Add(v + 1); tris.Add(w + 1); tris.Add(w);
+            }
         }
 
+        _base[lane] = new List<Vector3>(verts);
+        for (int j = 0; j < verts.Count; j++) verts[j] = verts[j] + Vector3.up * CandleLayer(verts[j].x, verts[j].z);
+        _laid[lane] = verts;
         mesh.Clear();
         mesh.SetVertices(verts);
         mesh.SetUVs(0, uvs);
         mesh.SetTriangles(tris, 0);
+        mesh.RecalculateNormals();
+        mesh.RecalculateBounds();
+    }
+
+    /// <summary>Lay a lane's vertices on the live candle layer; the mesh is touched only where a height moved.</summary>
+    void Relay(Lane lane)
+    {
+        if (!_base.TryGetValue(lane, out var baseVerts) || !_laid.TryGetValue(lane, out var laid)) return;
+        bool moved = false;
+        for (int j = 0; j < baseVerts.Count; j++)
+        {
+            float y = baseVerts[j].y + CandleLayer(baseVerts[j].x, baseVerts[j].z);
+            if (Mathf.Abs(y - laid[j].y) > 1e-3f) { laid[j] = new Vector3(baseVerts[j].x, y, baseVerts[j].z); moved = true; }
+        }
+        if (!moved) return;
+        var mesh = _meshes[lane];
+        mesh.SetVertices(laid);
         mesh.RecalculateNormals();
         mesh.RecalculateBounds();
     }
