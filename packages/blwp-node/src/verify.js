@@ -78,7 +78,15 @@ const headersOf = (view) => {
   return had.headers;
 };
 
-/** And the answer that scan gives, per round, per view and per beacon: it cannot change while all three are the same. */
+/**
+ * And the answer that scan gives, per round, per view START and per beacon - never per block count.
+ *
+ * Keyed on the count, it was thrown away every time the chain moved: measured live, one old round's finality retry
+ * still rescanned twenty thousand headers and held the loop 605 ms twice in six minutes, which is the 635 ms the other
+ * player's truck was late by. A beacon is the first block after the round's committee time, so a view that reaches it
+ * gives the same answer however much more chain arrives after it. ONLY A PASS IS KEPT: a refusal may be a view that
+ * has not reached the beacon yet, and that one is asked again.
+ */
 const beaconChecks = new Map();
 
 function beaconFor(randomnessFor, contract, roundIdBytes, entry, entryId, chainFor) {
@@ -108,16 +116,14 @@ function beaconFor(randomnessFor, contract, roundIdBytes, entry, entryId, chainF
   if (view && view.pending)
     return { ok: false, why: 'this node is still reading its chain view for that round' };
   if (view && Array.isArray(view.blocks) && view.blocks.length) {
-    const key = `${hex(roundIdBytes)}:${view.firstHeight}:${view.blocks.length}:${hash ? hex(hash) : 'none'}:${height}`;
-    const had = beaconChecks.get(key);
-    if (had && !had.ok) return had;
-    if (!had) {
+    const key = `${hex(roundIdBytes)}:${view.firstHeight}:${hash ? hex(hash) : 'none'}:${height}`;
+    if (!beaconChecks.has(key)) {
       const headers = headersOf(view);
       const named = beaconFromChain(contract, headers);
-      if (!named.ok) { beaconChecks.set(key, named); return named; }
+      if (!named.ok) return named;
       const agrees = beaconIsTheChains(contract, { hash, height, timeMs: given && given.timeMs }, headers);
-      if (!agrees.ok) { beaconChecks.set(key, agrees); return agrees; }
-      beaconChecks.set(key, { ok: true });
+      if (!agrees.ok) return agrees;
+      beaconChecks.set(key, true);
       if (beaconChecks.size > 64) beaconChecks.delete(beaconChecks.keys().next().value);
     }
   }
