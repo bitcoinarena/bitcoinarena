@@ -847,6 +847,23 @@ a thing the truck drives on is settled state (multiplayer_p2p.md §0.5), so the 
   2.2 m), so the mempool still shows on the plain as long low swells the eye reads, while a 2 m plateau
   sits on it and a 40% ramp meets ground that varies less than a metre over 100 m - drivable everywhere,
   and the corridors stay corridors. The band rule below is read with these numbers.
+- **What a candle IS, so the chart is continuous (found 2026-09-17 09:45 on the live top-down: the
+  candles stood as scattered pillars with gaps, not as a chart).** The tape is a series of closes. A
+  10 s candle `c` (samples `2c`, `2c + 1`) has **open = the previous candle's close** (sample `2c - 1`;
+  the first candle's open is its own first sample), **close = sample `2c + 1`**, **high / low = the max /
+  min of samples `2c - 1`, `2c`, `2c + 1`**. So every candle's body starts exactly where the last one
+  ended: the chart is a continuous staircase in z, as every candlestick chart of a price series is,
+  and a body never floats off its neighbour. A candle whose two samples happen to be its own open
+  and close would leave a gap the size of one sample step at every candle - that was the picture.
+- **The look, so they read as world candles and not as pillars (same finding; client rows, each a
+  test):** every body the **same height** - a 2 m matte slab in the candle's colour, its top face 20%
+  lighter, its z-ends the 40% ramps, its x-faces vertical; **above it** the glow, a translucent volume
+  (30% alpha, additive) from 2 m to 6 m in the same colour, no edges drawn; the **wick** a 1 m column
+  of light, 9 m tall, from low to high, brighter than the glow, no cap; the forming candle's glow
+  pulses at 1 Hz; colours green `#26a69a` / red `#ef5350` (TradingView's), not cyan; the **seam** as a
+  white line on the ground through the bodies, 0.5 m wide, always visible; the 2.8 m corridor between
+  bodies is bare ground, nothing drawn in it. **No roads inside the chart band**: the corridors are
+  the roads. Height must never encode price - a tall candle is a long candle, never a high one.
 - **The chart band is flat, whatever the mempool says (the owner 2026-09-17 09:20).** The ground the
   core builds is the seed's lattice (`groundFromSeed`, 6 m peaks) and, when the host uploads it, the
   **mempool relief** (`MempoolTerrain`: 9 m of fee height plus 5.5 m of base relief - a busy chain is a
