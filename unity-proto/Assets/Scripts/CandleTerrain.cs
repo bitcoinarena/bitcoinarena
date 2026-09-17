@@ -16,9 +16,15 @@ using L = Blwp.Layout;
 /// in between, so it glides at the core's 0.576 m/s.
 ///
 /// The look (§4.15 client rows): matte TradingView green #26a69a / red #ef5350, the plateau 20% lighter than its ramps; a
-/// glow volume from the plateau to 6 m, 30% alpha, additive, no edges; the wick a 1 m column of light, 9 m tall, from the
-/// candle's low to its high; the forming candle's glow pulsing at 1 Hz; the seam a 0.5 m white line on the ground. Wick
-/// and glow are light only - the core has no collider for them.
+/// glow volume from the plateau to 6 m with no edges; the wick a 1 m column of light, 9 m tall, from the candle's low to its
+/// high; the forming candle's glow pulsing at 1 Hz; the seam a 0.5 m white line on the ground. Wick and glow are light only
+/// - the core has no collider for them.
+///
+/// BLENDED, NOT ADDED (live 0.0.1496, 2026-09-17): the glow washed the truck's view WHITE. The source was Bootstrap's
+/// opaque Lit fire material, whose alpha is 1, so every face ADDED its full colour, and a low sight line along the field
+/// crosses two faces per slot, 31 slots. Now the shipped transparent particle material (FireFlipbook, alpha-blended, its
+/// variant in the build), vertex colours white (a missing colour attribute reads black on WebGL): any stack of faces tends
+/// to the candle's own colour and never past it; 10% a face (wick 35%).
 /// </summary>
 public class CandleTerrain : MonoBehaviour
 {
@@ -26,7 +32,7 @@ public class CandleTerrain : MonoBehaviour
     /// <summary>The plateau, 20% lighter than the ramps.</summary>
     public static Color Top(Color c) => Color.Lerp(c, Color.white, 0.2f);
     public const float Station = 0.5f, XStation = 1f, Lift = 0.03f, GlowTo = 6f, WickHeight = 9f, WickHalf = 0.5f, SeamHalf = 0.25f;
-    public const float GlowAlpha = 0.30f, WickAlpha = 0.60f, RebuildSeconds = 0.1f, GroundSeconds = 2f;
+    public const float GlowAlpha = 0.10f, WickAlpha = 0.35f, RebuildSeconds = 0.1f, GroundSeconds = 2f;
 
     /// <summary>A transparent source material shipped in the build (Bootstrap's fire flipbook): the glow is a clone of it.</summary>
     public Material glowSource;
@@ -263,7 +269,7 @@ public class CandleTerrain : MonoBehaviour
         return m;
     }
 
-    /// <summary>An additive, translucent light from the shipped transparent particle material: no texture, the colour's alpha.</summary>
+    /// <summary>A translucent light from the shipped transparent particle material: no texture, the colour's alpha, blended.</summary>
     Material Light(Color c, float alpha)
     {
         Material m = glowSource != null ? new Material(glowSource) : Matte(c);
@@ -273,8 +279,14 @@ public class CandleTerrain : MonoBehaviour
         var col = new Color(c.r, c.g, c.b, alpha);
         if (m.HasProperty("_BaseColor")) m.SetColor("_BaseColor", col);
         m.color = col;
+        if (m.HasProperty("_Surface")) m.SetFloat("_Surface", 1f);
+        m.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
         if (m.HasProperty("_SrcBlend")) m.SetFloat("_SrcBlend", (float)UnityEngine.Rendering.BlendMode.SrcAlpha);
-        if (m.HasProperty("_DstBlend")) m.SetFloat("_DstBlend", (float)UnityEngine.Rendering.BlendMode.One);
+        if (m.HasProperty("_SrcBlendAlpha")) m.SetFloat("_SrcBlendAlpha", (float)UnityEngine.Rendering.BlendMode.One);
+        if (m.HasProperty("_DstBlendAlpha")) m.SetFloat("_DstBlendAlpha", (float)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+        if (m.HasProperty("_DstBlend")) m.SetFloat("_DstBlend", (float)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+        if (m.HasProperty("_Blend")) m.SetFloat("_Blend", 0f);                         // URP particles: 0 = Alpha, 2 = Additive
+        m.DisableKeyword("_ALPHAPREMULTIPLY_ON"); m.DisableKeyword("_ALPHAMODULATE_ON");
         if (m.HasProperty("_ZWrite")) m.SetFloat("_ZWrite", 0f);
         if (m.HasProperty("_Cull")) m.SetFloat("_Cull", 0f);
         m.renderQueue = 3000;
@@ -320,10 +332,10 @@ public class CandleTerrain : MonoBehaviour
             _builtAt = now; _builtSurface = surfaceSig; _builtShift = shift;
             var p = Build(_words, _ground.Get);
             Set(_body, p.Body, p.SideGreen, p.SideRed, p.TopGreen, p.TopRed);
-            Set(_glow, p.Glow, p.GlowGreen, p.GlowRed);
-            Set(_forming, p.Forming, p.FormingTris);
+            Lit(_glow, p.Glow, p.GlowGreen, p.GlowRed);
+            Lit(_forming, p.Forming, p.FormingTris);
             _formingGreen = p.FormingGreen;
-            Set(_wick, p.Wick, p.WickGreen, p.WickRed);
+            Lit(_wick, p.Wick, p.WickGreen, p.WickRed);
             BuildSeam(L.CANDLE_WEST / ONE, L.CANDLE_EAST / ONE, Blwp.BlwpCore.FrontlineZ, Surface, _seamVerts, _seamTris);
             Set(_seam, _seamVerts, _seamTris);
             Rebuilds++;
@@ -340,6 +352,15 @@ public class CandleTerrain : MonoBehaviour
     }
 
     float Surface(float x, float z) => _ground.Get(x, z) + LayerAt(_words, x, z);
+
+    readonly List<Color> _white = new List<Color>();
+
+    void Lit(Mesh mesh, List<Vector3> verts, params List<int>[] subs)
+    {
+        while (_white.Count < verts.Count) _white.Add(Color.white);
+        Set(mesh, verts, subs);
+        mesh.SetColors(_white, 0, verts.Count);
+    }
 
     static void Set(Mesh mesh, List<Vector3> verts, params List<int>[] subs)
     {
