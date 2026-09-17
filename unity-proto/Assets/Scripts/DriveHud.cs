@@ -1170,17 +1170,68 @@ public class DriveHud : MonoBehaviour
         // Where there is no gap at all - a phone held upright - it keeps its
         // old corner, because there is nowhere better and the alternative is
         // not drawing it.
+        StreamingRoom(w, h, out float x, out float width, out float top, out _);
+        return new Rect(x, top, width, StreamingLineHeight(w, h, items) * (items + 1) + pad);
+    }
+
+    /// <summary>
+    /// THE ROOM THE MODEL LIST MAY USE, UNDER HIGH / LOW. Live 0.0.1497 (probe on-12.png, 1280x656): HIGH / LOW (central, the owner
+    /// 12:55) and the list both started under the block clock in the headline gap and were painted on each other - measured
+    /// 9382 px shared at 1280x800, 8207 at 1280x656, 4588 at 844x390, 3574 at 390x844 - and at 1280x800 with pads the list
+    /// also lay on the right steering pad. HIGH / LOW keeps its row; the list starts under that row's box (asked at the
+    /// painter's row height), moves right of the steering pads where the gap still holds it, and ends above whatever stands
+    /// below it in its own columns - a pad or the HUD chart - or the screen's edge.
+    /// </summary>
+    public void StreamingRoom(int w, int h, out float x, out float width, out float top, out float bottom)
+        => StreamingRoom(w, h, !HighLowYieldsToModelList(w, h), out x, out width, out top, out bottom);
+
+    /// <summary>
+    /// HIGH / LOW YIELDS WHILE MODELS LOAD ONLY WHERE THE LIST CANNOT FIT UNDER IT - measured, not guessed. The one shape of
+    /// the five checked (HudLayoutTests): a phone held upright, 390x844, where under HIGH / LOW the room is 356.6..504.9
+    /// px (the HUD chart stands at 521.8 in the same columns) and eleven rows at the 13 px font need 172.9 - 24.6 px short.
+    /// There the list keeps its old corner and HIGH / LOW is not painted until the list retires; everywhere else both show.
+    /// </summary>
+    public bool HighLowYieldsToModelList(int w, int h)
+    {
+        const int Items = 11;
+        StreamingRoom(w, h, true, out _, out _, out float top, out float bottom);
+        float need = SmallFont(w, h) * (Items + 1) + Mathf.Max(8f, h * 0.02f);
+        return bottom - top < need;
+    }
+
+    void StreamingRoom(int w, int h, bool underHighLow, out float x, out float width, out float top, out float bottom)
+    {
+        float pad = Mathf.Max(8f, h * 0.02f);
         var head = HeadlineBox(w, h);
+        var chart = HudChartPanel(w, h);
+        var highLow = HighLowBox(w, h, w, ChartHud.RowHeight(chart.height) + 4f);
+        float below = underHighLow ? highLow.yMax + pad : 0f;
         if (head.width <= 0f)
         {
-            float narrow = Mathf.Min(290f, w * 0.34f);
-            return new Rect(w - narrow - pad, h * 0.30f, narrow, height);
+            // no gap beside the left column (a phone held upright): the right-hand corner, under HIGH / LOW where it fits
+            width = Mathf.Min(290f, w * 0.34f);
+            x = w - width - pad;
+            top = Mathf.Max(h * 0.30f, below);
         }
-
-        float width = Mathf.Min(290f, head.width);
-        float top = BlockTimerBox(w, h).yMax + pad;
-        return new Rect(head.x, top, width,
-                        StreamingLineHeight(w, h, items) * (items + 1) + pad);
+        else
+        {
+            width = Mathf.Min(290f, head.width);
+            x = head.x;
+            if (PadsShown)
+            {
+                float clear = TouchPad.RectFor(TouchPad.Pad.Right, w, h).xMax + pad;
+                if (x < clear && clear + width <= head.xMax) x = clear;
+            }
+            top = Mathf.Max(BlockTimerBox(w, h).yMax + pad, below);
+        }
+        bottom = h - pad;
+        float l = x, r = x + width, t = top, floor = bottom;
+        void Below(Rect o) { if (o.width > 0f && o.xMax > l && o.x < r && o.y >= t) floor = Mathf.Min(floor, o.y - pad); }
+        if (PadsShown)
+            foreach (var p in new[] { TouchPad.Pad.Left, TouchPad.Pad.Right, TouchPad.Pad.Up, TouchPad.Pad.Down, TouchPad.Pad.Handbrake })
+                Below(TouchPad.RectFor(p, w, h));
+        Below(chart);
+        bottom = floor;
     }
 
     /// <summary>
@@ -1201,12 +1252,9 @@ public class DriveHud : MonoBehaviour
     {
         float pad = Mathf.Max(8f, h * 0.02f);
         float roomy = SmallFont(w, h) * 1.5f;
-        var head = HeadlineBox(w, h);
-        if (head.width <= 0f) return roomy;
-
-        float top = BlockTimerBox(w, h).yMax + pad;
-        float room = h - top - pad * 2f;
-        if (room <= 0f) return roomy;
+        StreamingRoom(w, h, out _, out _, out float top, out float bottom);
+        float room = bottom - top - pad;
+        if (room <= 0f) return SmallFont(w, h);
         return Mathf.Clamp(room / (items + 1), SmallFont(w, h), roomy);
     }
 
@@ -1988,6 +2036,15 @@ public class DriveHud : MonoBehaviour
     /// headline stack and empty while a run is on - centred on the screen where the gap allows, as wide as its text and never
     /// wider than the gap; where there is no gap (a phone held upright), centred under the block clock on the whole width.
     /// </summary>
+    /// <summary>
+    /// The panel the HUD chart is drawn in on this screen: above the left pad on a phone held upright, top right on the
+    /// desktop, else under SIM off the pads. One place, so the chart painter and the layout tests ask the same question.
+    /// </summary>
+    public Rect HudChartPanel(int w, int h)
+        => Mobile && h > w ? MobileChartPanel(w, h)
+         : ChartTopRight(w, h) ? ChartPanel(w, h)
+         : ChartHud.PanelFor(w, h, SimBox(w, h));
+
     public Rect HighLowBox(int w, int h, float width, float height)
     {
         var row = RunStoppedBox(w, h);
@@ -2379,18 +2436,19 @@ public class DriveHud : MonoBehaviour
     /// itself a few seconds after the last one lands, so it does not become
     /// permanent furniture.
     /// </summary>
+    /// <summary>The "Loading models" list is on screen this frame (the conditions DrawStreamingPanel draws it under).</summary>
+    public bool ModelListShowing =>
+        streamer != null && streamer.Items.Count > 0 && !SendOffShowing && !ArrivalShowing
+        && !(streamer.AllDone && streamer.Failed == 0 && streamer.SinceDone > 4f);
+
     void DrawStreamingPanel(int w, int h)
     {
-        if (streamer == null || streamer.Items.Count == 0) return;
-
         // AND NOT WHILE A CARD IS UP. Both stand in the gap - it is the only
         // column with nothing permanent in it - and of the two, a list of
         // model names is the one to drop while the player is being told what
-        // his run was worth.
-        if (SendOffShowing || ArrivalShowing) return;
-        // gone once everything has settled, unless something failed - a failure
-        // is worth leaving on screen
-        if (streamer.AllDone && streamer.Failed == 0 && streamer.SinceDone > 4f) return;
+        // his run was worth. And gone once everything has settled, unless
+        // something failed - a failure is worth leaving on screen.
+        if (!ModelListShowing) return;
 
         float pad = Mathf.Max(8f, h * 0.02f);
         // ONE PITCH, asked of the same function the box uses - the box is

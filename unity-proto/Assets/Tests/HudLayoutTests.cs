@@ -662,6 +662,55 @@ public class HudLayoutTests
     /// drawn straight across both.
     /// </summary>
     [Test]
+    public void TheModelListAndHighLowNeverShareTheCentreColumnWhileModelsLoad()
+    {
+        // LIVE 0.0.1497 (probe screenshot on-12.png, 1280x656 with pads): HIGH / LOW (the owner 12:55, central, the run-stopped
+        // row) and the "Loading models" list both stood in the headline gap under the block clock and were painted on each
+        // other. HIGH / LOW stays central; the list starts under it, rows tightened to stay above the pads. The HIGH / LOW box
+        // is asked with the widest text the row allows (HighLowBox clamps it to the gap) and the painter's own row height.
+        var shapes = new[] { (1280, 800, false, false, "desktop"), (1280, 800, false, true, "desktop+pads"),
+                             (1280, 656, false, true, "touch 1280x656"), (390, 844, true, true, "phone portrait"),
+                             (844, 390, true, true, "phone landscape") };
+        var fails = new System.Collections.Generic.List<string>();
+        try
+        {
+            foreach (var (w, h, mobile, pads, name) in shapes)
+            {
+                DriveHud.MobileOverride = mobile; DriveHud.PadsOverride = pads;
+                var panel = _hud.HudChartPanel(w, h);
+                bool yields = _hud.HighLowYieldsToModelList(w, h);
+                // where HIGH / LOW yields while models load it is not painted then: nothing to share
+                var hl = yields ? new Rect() : _hud.HighLowBox(w, h, w, ChartHud.RowHeight(panel.height) + 4f);
+                var list = _hud.StreamingBox(w, h, 11);
+                if (yields) Debug.Log($"[loading-overlap] {name} {w}x{h}: HIGH / LOW yields while models load - eleven rows at the font's pitch do not fit under it (HighLowYieldsToModelList)");
+                var cut = Rect.MinMaxRect(Mathf.Max(hl.xMin, list.xMin), Mathf.Max(hl.yMin, list.yMin), Mathf.Min(hl.xMax, list.xMax), Mathf.Min(hl.yMax, list.yMax));
+                float shared = hl.Overlaps(list) ? cut.width * cut.height : 0f;
+                string padHit = "";
+                if (pads)
+                    foreach (var pad in new[] { TouchPad.Pad.Left, TouchPad.Pad.Right, TouchPad.Pad.Up, TouchPad.Pad.Down, TouchPad.Pad.Handbrake })
+                        if (list.Overlaps(TouchPad.RectFor(pad, w, h))) padHit += $" {pad}{TouchPad.RectFor(pad, w, h)}";
+                float row = _hud.StreamingLineHeight(w, h, 11), font = Mathf.Round(Mathf.Clamp(Mathf.Min(w, h) * 0.032f, 13f, 20f));
+                _hud.StreamingRoom(w, h, out _, out _, out float roomTop, out float roomBottom);
+                float need = font * 12f + Mathf.Max(8f, h * 0.02f), shortfall = need - (roomBottom - roomTop);
+                Debug.Log($"[loading-overlap] {name} {w}x{h}: highLow x={hl.x:0.0} y={hl.y:0.0} w={hl.width:0.0} h={hl.height:0.0}; "
+                          + $"models x={list.x:0.0} y={list.y:0.0} w={list.width:0.0} h={list.height:0.0}; shared {cut.width:0.0}x{cut.height:0.0} = {shared:0} px; "
+                          + $"row {row:0.0} (font {font}); bottom {list.yMax:0.0} of {h}, room {roomTop:0.0}..{roomBottom:0.0}, shortfall at the font's own pitch {Mathf.Max(0f, shortfall):0.0} px{(padHit.Length > 0 ? "; on pads" + padHit : "")}");
+                if (shared > 0f) fails.Add($"{name}: HIGH/LOW and the model list share {shared:0} px");
+                if (padHit.Length > 0) fails.Add($"{name}: the model list is on the pads{padHit}");
+                if (list.yMax > h) fails.Add($"{name}: the model list runs {list.yMax - h:0.0} px off the bottom");
+                if (row < font) fails.Add($"{name}: rows {row:0.0} px under the {font} px font");
+                if (shortfall > 0f) fails.Add($"{name}: the model list needs {shortfall:0.0} px more than its room");
+                // HIGH / LOW yields only on the measured shape: a phone held upright
+                Assert.AreEqual(name == "phone portrait", yields, $"{name}: HIGH / LOW yields {yields}");
+                var chart = _hud.HudChartPanel(w, h);
+                if (chart.width > 0f && list.Overlaps(chart)) fails.Add($"{name}: the model list is on the HUD chart {chart}");
+            }
+        }
+        finally { DriveHud.MobileOverride = null; DriveHud.PadsOverride = null; }
+        Assert.IsEmpty(fails, string.Join("; ", fails));
+    }
+
+    [Test]
     public void TheScoreColumnAndTheModelListKeepOffEverything()
     {
         foreach (var size in new[] { new Vector2(1920, 1080), new Vector2(1024, 768),

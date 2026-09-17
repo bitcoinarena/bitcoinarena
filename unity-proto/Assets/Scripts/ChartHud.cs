@@ -388,9 +388,7 @@ public class ChartHud : MonoBehaviour
         if (_drive == null) _drive = GetComponent<DriveHud>();
         if (_drive == null) _drive = FindFirstObjectByType<DriveHud>();
         _sim = _drive != null ? _drive.SimBox(Screen.width, Screen.height) : new Rect(10f, Screen.height * 0.45f, 300f, 40f);
-        var panel = _drive != null && DriveHud.Mobile && Screen.height > Screen.width ? _drive.MobileChartPanel(Screen.width, Screen.height)
-                  : _drive != null && _drive.ChartTopRight(Screen.width, Screen.height) ? _drive.ChartPanel(Screen.width, Screen.height)
-                  : PanelFor(Screen.width, Screen.height, _sim);
+        var panel = _drive != null ? _drive.HudChartPanel(Screen.width, Screen.height) : PanelFor(Screen.width, Screen.height, _sim);
         Styles(HeaderFont(panel.height));
         float priceW = 0f;
         foreach (var t in AxisTexts(_view)) priceW = Mathf.Max(priceW, _right.CalcSize(new GUIContent(t)).x);
@@ -796,6 +794,8 @@ public class ChartHud : MonoBehaviour
         if (_session == null) _session = FindFirstObjectByType<Blwp.NetSession>();
         if (DriveHud.RunStoppedLine(_session != null ? _session.Ending : "").Length > 0) return;
         int w = Screen.width, h = Screen.height;
+        // the one measured shape where the model list cannot fit under HIGH / LOW (DriveHud.HighLowYieldsToModelList)
+        if (_drive.ModelListShowing && _drive.HighLowYieldsToModelList(w, h)) return;
         _text.fontSize = HeaderFont(f.Panel.height);
         float tw = _text.CalcSize(new GUIContent(line)).x, lh = _text.fontSize * 1.35f;
         var box = _drive.HighLowBox(w, h, tw + 16f, lh + 4f);
