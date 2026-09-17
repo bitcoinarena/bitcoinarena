@@ -107,10 +107,11 @@ public class ChartHudTests
         float cw = parked.Plot.width / 32f;
         Assert.AreEqual(driven.Plot.x + Words("ground-driven")[L.CH_YOU_T] / 65536f * cw, driven.You.x, 0.01f);
         Assert.Greater(driven.You.x - parked.You.x, 10f, "driven +x, YOU moved right on the chart");
-        // The gate at x 114 is past the last candle: the core says off, t 0.97 of a candle past 32; the HUD pins GATE ›.
+        // The gate at x 114 is past the last candle: the core says off, t 0.97 of a candle past 32 plus the scroll - at the
+        // open the chart has slid one sample, half a candle (§4.15 movement) - so 1.47; the HUD pins GATE ›.
         var w = Words("ground-open");
         Assert.AreEqual(0, w[L.CH_GATE_ON]);
-        Assert.AreEqual(0.9729f, (w[L.CH_GATE_T] - 32 * 65536) / 65536f, 0.0001f, "the gate stands 0.97 of a candle past the last");
+        Assert.AreEqual(1.4729f, (w[L.CH_GATE_T] - 32 * 65536) / 65536f, 0.0001f, "the gate stands 1.47 of a candle past the last");
         Assert.IsFalse(parked.GateOn);
         Assert.IsTrue(parked.GatePinned);
         Assert.AreEqual(parked.Plot.xMax, parked.GateX, 0.01f, "GATE › is pinned at the plot's right edge");

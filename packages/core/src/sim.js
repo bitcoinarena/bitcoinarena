@@ -36,10 +36,10 @@ import {
 import { vehicleStep } from './rules/vehicle.js';
 import { flatGround, groundFromSeed, gradeAlong, heightAtWorld, DEFAULT_COLS, DEFAULT_ROWS } from './rules/ground.js';
 import { noSolids, resolveSolids, resolveArmour, BOX_WORDS } from './rules/solids.js';
-import { initTactics, postOf, scoot, onRespawn, enterInLane, pressure, partnerOf, FORWARD_LINE, rifleTeamOf, pushNear, mix, FIRE_TEAMS_PER_SIDE, TAC_SEED, firstManOf, initObjectives, objectiveHolders, clearOnEntry, holdLegs, onPost, initMarket, readMarket, trendHit, supplyOf, TAC_MARKET, MK_SAMPLES } from './rules/tactics.js';
+import { initTactics, postOf, scoot, onRespawn, enterInLane, pressure, partnerOf, FORWARD_LINE, rifleTeamOf, pushNear, mix, FIRE_TEAMS_PER_SIDE, TAC_SEED, firstManOf, initObjectives, objectiveHolders, clearOnEntry, holdLegs, onPost, initMarket, readMarket, trendHit, supplyOf, TAC_MARKET, MK_SAMPLES, MK_SAMPLE_TICK, MK_PREV_LO, MK_PREV_HI, MK_PREV_OLDEST } from './rules/tactics.js';
 import { mapSolids } from './rules/map.js';
-import { emplacementAt } from './rules/emplacements.js';
-import { CANDLES, CL_WORDS, candleLayout, candleHeightAt, candleWalls, writeCandleView, levelled } from './rules/candles.js';
+import { CANDLES, CL_WORDS, candleLayout, candleHeightAt, writeCandleView, levelled } from './rules/candles.js';
+import { scrollOf, FIELD_SLOT } from './rules/frontline.js';
 import { heat as heatForLoad } from './rules/cargo.js';
 import { stepUnit, standingStill, separatePair, clearOfTruck, runOver, truckSpeed, threatAt, pickTarget, pickRifleTarget, riflePost, RELOAD_MIN, RELOAD_SPAN, DAMAGE_MIN, DAMAGE_SPAN, BACKOFF_RANGE, HIT_PER_MIL, ARMOUR_RANGE, RIFLE_RANGE, RIFLE_HIT_PER_MIL, RIFLE_RELOAD_TICKS, RIFLE_RELOAD_TICKS_SPAN, RIFLE_LOOK_TICKS, RIFLE_LOOK_TICKS_SPAN, RIFLE_HP, RIFLE_DAMAGE, hullDownHold, COURIER_RANGE, COURIER_DAMAGE_MIN, COURIER_DAMAGE_SPAN, COURIER_RIFLE_MIN, COURIER_RIFLE_SPAN, courierReach, outranksTheFoe, shellForHeat } from './rules/army.js';
 import { accrue, earning, scoreOf, frontWeight, APRON_RADIUS } from './rules/score.js';
@@ -188,7 +188,7 @@ function tape(rngWords) {
 /**
  * A REFERENCE WORLD WITHOUT THE CANDLE FIELD, for the tests that reproduce a recording made before the candles existed
  * (the PhysX half-lock turn: its 59 m circle has no candle-free place on the map - measured, the free strips are 37 m and
- * 40 m). The band, the pancake, the berms and the craters stay; only the candles' height and their x-face walls go. Like
+ * 40 m). The band, the pancake and the craters stay; only the candles' height and their x-face walls go. Like
  * `setGround`, a test door: the bundle does not offer it, so no page can take the chart out of its world.
  */
 export function setCandleField(st, on) {
@@ -475,11 +475,17 @@ function strikePoint(s, seamAt) {
 export function submitSample(st, price) {
   const p = price | 0;
   if (p <= 0) return false;
-  const h = st.tape;
+  const h = st.tape, s = st.i32;
+  // the scale and the west edge the chart is drawn with at this tick, read BEFORE the tape moves, are what the next 300
+  // ticks lerp from (§4.15 rescale and glide): read after it, the new sample was already in the window at a full lerp
+  const was = scaleNow(st);
+  s[O_TACTICS + TAC_MARKET + MK_PREV_LO] = was.lo;
+  s[O_TACTICS + TAC_MARKET + MK_PREV_HI] = was.hi;
+  s[O_TACTICS + TAC_MARKET + MK_PREV_OLDEST] = glideOlder(st);
   for (let i = 0; i < h.length - 1; i++) h[i] = h[i + 1];
   h[h.length - 1] = p;
   if (st.roundTape) st.roundTape.push(p);
-  const s = st.i32;
+  s[O_TACTICS + TAC_MARKET + MK_SAMPLE_TICK] = s[O_TICK];
   s[O_TACTICS + TAC_MARKET + MK_SAMPLES] = (s[O_TACTICS + TAC_MARKET + MK_SAMPLES] + 1) | 0;
   refreshCandles(st);
   readMarket(s, O_TACTICS, h);
@@ -566,15 +572,61 @@ function craterCut(s, x, z) {
 /** Samples submitted this round: the parity the candles and the seam pair the tape by (§4.15). */
 const samplesTaken = (st) => st.i32[O_TACTICS + TAC_MARKET + MK_SAMPLES];
 
+/** §4.15 movement: the scroll in samples (Q16.16) this tick - frontline.js `scrollOf`. */
+export const scrollNow = (st) => scrollOf(samplesTaken(st), st.i32[O_TICK], st.i32[O_TACTICS + TAC_MARKET + MK_SAMPLE_TICK]);
+/** The scroll as metres toward -x: half a slot per sample. */
+const shiftNow = (st) => mulFast(scrollNow(st), FIELD_SLOT >> 1);
+
+/**
+ * THE PRICE-TO-Z SCALE THIS TICK (§4.15 rescale): the tape window's low and high, lerped from the window the chart had at
+ * the last sample over the 300 ticks after it, so a new high or low moves body ends a little each tick, never at once.
+ */
+export function scaleNow(st) {
+  const s = st.i32, m = O_TACTICS + TAC_MARKET;
+  let lo = st.tape[0], hi = st.tape[0];
+  for (let k = 1; k < SAMPLES; k++) { lo = min(lo, st.tape[k]); hi = max(hi, st.tape[k]); }
+  const f = clamp(div(sub(s[O_TICK], s[m + MK_SAMPLE_TICK]), 300), 0, ONE);
+  return { lo: add(s[m + MK_PREV_LO], mulFast(sub(lo, s[m + MK_PREV_LO]), f)), hi: add(s[m + MK_PREV_HI], mulFast(sub(hi, s[m + MK_PREV_HI]), f)) };
+}
+
+/** How far this tick is into the 300 ticks after the last sample, 0..ONE. */
+const sampleLerp = (st) => clamp(div(sub(st.i32[O_TICK], st.i32[O_TACTICS + TAC_MARKET + MK_SAMPLE_TICK]), 300), 0, ONE);
+
+/** The value held west of the tape (§4.15 glide): the sample that left it, fading into the oldest over 300 ticks. */
+function glideOlder(st) {
+  const was = st.i32[O_TACTICS + TAC_MARKET + MK_PREV_OLDEST];
+  return add(was, mulFast(sub(st.tape[0], was), sampleLerp(st)));
+}
+
+/**
+ * THE TAPE AS THE WORLD READS IT THIS TICK (§4.15 glide, "nothing jumps"): the newest sample fades in from the one before
+ * it over 300 ticks, as the scale does. At the sample tick the glided tape is the old one moved one index, which the
+ * scroll's reset takes back exactly; read raw, the new sample stood in the east held edge and slot 31 at once (3.5 m).
+ */
+function glideTape(st) {
+  if (!st.glide) st.glide = new Int32Array(SAMPLES);
+  const g = st.glide, t = st.tape, n = SAMPLES - 1;
+  for (let i = 0; i < n; i++) g[i] = t[i];
+  g[n] = add(t[n - 1], mulFast(sub(t[n], t[n - 1]), sampleLerp(st)));
+  return g;
+}
+
+/** The seam's z at x: the glided tape through the candle field's mapping, scrolled, on this tick's scale. */
+function seamAtX(st, x) {
+  // read from this tick's refresh (refreshCandles) - the seam is asked hundreds of times a tick
+  if (st.seamLo !== undefined) return frontlineZ(st.glide, x, HALF_X, HALF_Z, samplesTaken(st), st.seamScroll, st.seamLo, st.seamHi, st.seamOlder);
+  const w = scaleNow(st);
+  return frontlineZ(glideTape(st), x, HALF_X, HALF_Z, samplesTaken(st), scrollNow(st), w.lo, w.hi, glideOlder(st));
+}
+
 export function surfaceAt(st, x, z) {
-  // relief as the static chart band holds it (§4.15: pancake inside, cone outside) + the hull-down emplacements (rules/emplacements.js) + the candles - craters
-  if (!st.candles) {
-    return sub(add(heightAtWorld(st.ground, x, z, HALF_X, HALF_Z), emplacementAt(x, z, st.tape, st.ground, HALF_X, HALF_Z, undefined, samplesTaken(st))),
-               craterCut(st.i32, x, z));
-  }
+  // relief as the static chart band holds it (§4.15: pancake inside, cone outside) + the candles - craters.
+  // PASSABILITY (§4.15, the owner 2026-09-17 14:40 "make it so trucks and tanks get through"): nothing added in the band stands
+  // over 1 m or climbs over 25% but a crater's bowl, so the 2.4 m hull-down berms (e0f4ed7) are withdrawn - a berm across
+  // the hold band was a wall to a truck crossing the front. The candle ribbon (1 m, 25%) is the only layer added.
+  if (!st.candles) return sub(heightAtWorld(st.ground, x, z, HALF_X, HALF_Z), craterCut(st.i32, x, z));
   const relief = levelled(heightAtWorld(st.ground, x, z, HALF_X, HALF_Z), st.apron, x, z, st.ground, HALF_X, HALF_Z);
-  return sub(add(add(relief, emplacementAt(x, z, st.tape, st.ground, HALF_X, HALF_Z, st.apron, samplesTaken(st))), (st.noCandleField ? 0 : candleHeightAt(st.candles, x, z))),
-             craterCut(st.i32, x, z));
+  return sub(add(relief, (st.noCandleField ? 0 : candleHeightAt(st.candles, x, z, st.candleShift))), craterCut(st.i32, x, z));
 }
 
 /**
@@ -584,9 +636,12 @@ export function surfaceAt(st, x, z) {
  */
 function refreshCandles(st) {
   if (!st.candles) st.candles = new Int32Array(Math.imul(CANDLES, CL_WORDS));
-  candleLayout(st.tape, st.i32[O_TACTICS + TAC_MARKET + MK_SAMPLES], HALF_Z, st.candles);
+  const w = scaleNow(st), g = glideTape(st), older = glideOlder(st);
+  candleLayout(g, st.i32[O_TACTICS + TAC_MARKET + MK_SAMPLES], HALF_Z, st.candles, w.lo, w.hi, older, sampleLerp(st));
+  st.candleShift = shiftNow(st);
   st.apron = heightAtWorld(st.ground, START_X, 0, HALF_X, HALF_Z);
-  st.candleSolids = candleWalls(st.candles, st.apron);
+  // the seam's scale, scroll and glided tape for this tick (seamAtX reads them hundreds of times a tick)
+  st.seamScroll = scrollNow(st); st.seamLo = w.lo; st.seamHi = w.hi; st.seamOlder = older;
 }
 
 /**
@@ -594,13 +649,13 @@ function refreshCandles(st) {
  * from `candleView`, and the ground under them is the levelled band. Everything that stands on the world reads `surfaceAt`.
  */
 export function terrainAt(st, x, z) {
-  return st.candles && !st.noCandleField ? sub(surfaceAt(st, x, z), candleHeightAt(st.candles, x, z)) : surfaceAt(st, x, z);
+  return st.candles && !st.noCandleField ? sub(surfaceAt(st, x, z), candleHeightAt(st.candles, x, z, st.candleShift)) : surfaceAt(st, x, z);
 }
 
 /** The candles as the renderer meshes them (rules/candles.js CV_*). Returns the words written; reading writes no state. */
 export function candleView(st, out) {
   if (!st.candles) return 0;
-  return writeCandleView(st.candles, st.apron, out);
+  return writeCandleView(st.candles, st.apron, out, samplesTaken(st), st.candleShift | 0);
 }
 
 export function groundAt(st, x, z) {
@@ -1123,6 +1178,8 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
   const rng = s.subarray(O_RNG, O_RNG + 4);
   const T = O_TRUCK;
   s[O_TICK] = (s[O_TICK] + 1) | 0;
+  // the chart moves (§4.15): this tick's scroll and scale, before anything reads the ground
+  if (st.candles) refreshCandles(st);
 
   // ---- 0. the liquidation queue ------------------------------------------
   // First, before anything moves, and it draws no random number. The order of
@@ -1135,7 +1192,7 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
     // One accepted liquidation, one strike, in the tick it is consumed. The
     // load is the size itself in the unit it arrived in; nothing is scaled
     // here, because the crater that reads it is its own step.
-    const at = strikePoint(s, (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z, samplesTaken(st)));
+    const at = strikePoint(s, (x) => seamAtX(st, x));
     s[O_STRIKE + K_STATE] = 1;
     s[O_STRIKE + K_X] = at.x;
     s[O_STRIKE + K_Z] = at.z;
@@ -1195,8 +1252,7 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
                 sin(v.heading), cos(v.heading),
                 surfaceAt(st, v.x, v.z));
   // The candles' x-faces (§4.15), the truck's alone: tanks and men stand on the height read and cross them.
-  // Against the truck's height in the candle layer (0 in a corridor, 2 m on a plateau): the walls stand in that layer.
-  if (st.candleSolids && !st.noCandleField) resolveSolids(v, st.candleSolids, sin(v.heading), cos(v.heading), candleHeightAt(st.candles, v.x, v.z));
+  // Nothing in the chart is a solid (§4.15, 492f128): the truck feels the candles only as ground.
 
   // And out of the armour. Last tick's tank positions, because the army has
   // not moved yet this tick - one frame stale, sixteen milliseconds, and it
@@ -1244,7 +1300,7 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
 
   // ---- 2. army -----------------------------------------------------------
   const tx = s[T + T_X], tz = s[T + T_Z];
-  const seamZ = frontlineZ(st.tape, tx, HALF_X, HALF_Z, samplesTaken(st));
+  const seamZ = seamAtX(st, tx);
   // Damage dealt to the truck this tick, in Q16.16 rather than a count of
   // hits. It used to be a tally of flat points because every courier hit was
   // worth exactly one; a tank shell is Rand(5, 11), so the truck's damage has
@@ -1270,9 +1326,9 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
   // the start of this one, and takes or gives ground.
   // The objectives' holders are re-read first, from the same positions; nothing in the odds reads them (§4.11).
   // A leg does not swap while a tank of its pair is off post (§2.6, §0 "Hold is the default"), read before anything moves.
-  holdLegs(s, O_TACTICS, s[O_TICK], (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z, samplesTaken(st)), (x, z) => surfaceAt(st, x, z));
-  objectiveHolders(s, O_TACTICS, s[O_TICK], (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z, samplesTaken(st)));
-  pressure(s, O_TACTICS, s[O_TICK], (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z, samplesTaken(st)), (x, z) => surfaceAt(st, x, z));
+  holdLegs(s, O_TACTICS, s[O_TICK], (x) => seamAtX(st, x), (x, z) => surfaceAt(st, x, z));
+  objectiveHolders(s, O_TACTICS, s[O_TICK], (x) => seamAtX(st, x));
+  pressure(s, O_TACTICS, s[O_TICK], (x) => seamAtX(st, x), (x, z) => surfaceAt(st, x, z));
   // Tanks are pushed out of each other BEFORE anything moves, which is where
   // `Army.Update` does it - the first three lines of it, over every armour
   // pair, ahead of StepArmour and StepInfantry. The position is protocol: a
@@ -1318,7 +1374,7 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
   // tank's U_COOLDOWN word, cleared at spawn. Counted by distance alone (40 m of its post), the opening drive and every
   // respawn queued for the budget 40 m short of their posts: 7.1 points of living-pair tank-ticks (a274fbc).
   const lineBudget = [0, 0], lineMoved = [0, 0], onTheLine = [], offPost = [], grantedBefore = [], stoodOnPost = [];
-  const seamOf = (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z, samplesTaken(st));
+  const seamOf = (x) => seamAtX(st, x);
   for (let i = 0; i < UNITS; i += 4) {
     const ib = unitBase(i);
     onTheLine[i >> 2] = false; offPost[i >> 2] = 0; grantedBefore[i >> 2] = false; stoodOnPost[i >> 2] = false;
@@ -1330,7 +1386,7 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
       || onPost(s, O_TACTICS, i, (s[O_TICK] - 1) | 0, seamOf, groundOf);
     const ip = postOf(s, O_TACTICS, i, s[O_TICK]);
     const sd = s[ib + U_SIDE] < 0 ? -1 : 1;
-    const lineZ = add(frontlineZ(st.tape, ip.x, HALF_X, HALF_Z, samplesTaken(st)), mulFast(Math.imul(sd, ONE), ip.depth));
+    const lineZ = add(seamAtX(st, ip.x), mulFast(Math.imul(sd, ONE), ip.depth));
     if (stoodOnPost[i >> 2] && abs(sub(s[ib + U_Z], lineZ)) <= LINE_REACH) {
       lineBudget[sd < 0 ? 0 : 1]++; onTheLine[i >> 2] = true;
       grantedBefore[i >> 2] = ((s[ib + U_COOLDOWN] >> 6) & 1) === 1;
@@ -1449,13 +1505,13 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
     // `FrontlineAt(s.x)` per man. This is that, not a new rule. The truck's
     // own seam is still what the truck is measured against, so `seamZ` stays
     // for the callers below it.
-    const unitSeam = frontlineZ(st.tape, u.x, HALF_X, HALF_Z, samplesTaken(st));
+    const unitSeam = seamAtX(st, u.x);
     if (u.armour) {
       const tac = postOf(s, O_TACTICS, i, s[O_TICK]);
       // `tac` says the tank is under the doctrine; the depth cannot say it, because a bounding tank pushed 16 m stands
       // ON the seam, depth 0 - read as "no tactics", that tank was sent to the old standoff and lost its memory word.
       u.tac = true; u.tacX = tac.x; u.tacDepth = tac.depth; u.tacBounding = tac.bounding;
-      u.tacSeam = frontlineZ(st.tape, tac.x, HALF_X, HALF_Z, samplesTaken(st));
+      u.tacSeam = seamAtX(st, tac.x);
       u.tacPush = tac.push; u.tacForward = FORWARD_LINE - tac.push;
       // NO PARTNER WAIT. A bounding tank used to wait while its overwatch partner had moved the tick before; §2.6 rules
       // the swap simultaneous, and row 4b is the half-line budget below. Measured on seeds 1-15, that wait held a tank
@@ -1543,7 +1599,7 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
           }
           s[b + U_TARGET] = (RELOAD_MIN + nextBelow(rng, RELOAD_SPAN)) | 0;
           // SHOOT-AND-SCOOT: the team moves on to its next hashed slot (rules/tactics.js).
-          scoot(s, O_TACTICS, i, s[O_TICK], (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z, samplesTaken(st)), groundOf);
+          scoot(s, O_TACTICS, i, s[O_TICK], (x) => seamAtX(st, x), groundOf);
         } else {
           // THE TRUCK WITH NO TANK TO FIGHT (WAR_TACTICS.md §1.2 GAP, closed): a tank with no enemy in range and the
           // truck inside its heat-widened reach fires on the truck, on its normal reload. The same draws as a shot at
@@ -1559,7 +1615,7 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
               courierDmg = add(courierDmg, shellForHeat(shell, heat));
             }
             s[b + U_TARGET] = (RELOAD_MIN + nextBelow(rng, RELOAD_SPAN)) | 0;
-            scoot(s, O_TACTICS, i, s[O_TICK], (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z, samplesTaken(st)), groundOf);
+            scoot(s, O_TACTICS, i, s[O_TICK], (x) => seamAtX(st, x), groundOf);
           }
         }
       }
@@ -1705,7 +1761,7 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
   // gunship crosses the entire two-hundred-metre corridor in ten seconds and
   // the seam it stands off is the one under its own nose, as FrontlineAt(h.x)
   // has it.
-  const seamAt = (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z, samplesTaken(st));
+  const seamAt = (x) => seamAtX(st, x);
   const groundAt = (x, z) => surfaceAt(st, x, z);
   stepHelicopters(s, rng, seamAt, groundAt);
   stepBombs(s, groundAt);
@@ -1839,7 +1895,7 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
  * the line half a field away from the men standing on it is a lie, so the
  * drawing asks the core rather than working it out again. One rule, one place.
  */
-export const frontAt = (st, x) => frontlineZ(st.tape, x | 0, HALF_X, HALF_Z, samplesTaken(st));
+export const frontAt = (st, x) => seamAtX(st, x | 0);
 
 /**
  * WHAT WENT ON THE BED. AN INPUT, AND THE ONLY WAY HEAT IS EVER SET.

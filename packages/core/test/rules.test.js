@@ -1415,7 +1415,11 @@ test('a second round starts where the first one did', () => {
   // The world the host uploaded is round setup, not round state, and survives.
   // Dropping it would put the truck on a flat table for as long as it took
   // Unity to notice and send the relief again.
-  assert.equal(groundAt(b, 0, 0), groundAt(a, 0, 0),
+  // Against a fresh round given the same upload, not against `a`: the chart scrolls with the tick (§4.15 movement), so
+  // the surface at a point differs between tick 900 and tick 0 even on the same relief.
+  const uploaded = init(SEED);
+  setGround(uploaded, 33, 33, relief);
+  assert.equal(groundAt(b, 0, 0), groundAt(uploaded, 0, 0),
     'the restart threw away the relief the host had uploaded');
   assert.equal(b.solids.n, 1, 'the restart threw away the solids the host had uploaded');
 
@@ -1577,8 +1581,11 @@ test('and it tells further and further behind the line', () => {
   // -> 5,6,4,6 with the assault clock and supply (§4.12, §3; the trend is SIDEWAYS on the seeded tape). Eight seeds: at
   // the seam a full bed has more tanks on the truck on all eight (hot 4-6, cold 3-5); behind it on seven, the same on one
   // (seed 7: 4-4).
+  // -> 4,6,2,6 with the chart moving under the army (§4.15 scroll and glide, the ribbon, berms eased with their ramp;
+  // 2026-09-17). Eight seeds: at the seam a full bed has more tanks on the truck on seven (hot 4-6, cold 2-5), the same
+  // on one (seed 4: 4-4); behind it on all eight (hot 4-6, cold 1-3).
   assert.deepEqual([noticing(0, -25), noticing(20000, -25), noticing(0, -50), noticing(20000, -50)],
-    [5, 6, 4, 6],
+    [4, 6, 2, 6],
     'heat no longer widens how many tanks have the truck, at the seam or behind it');
 });
 

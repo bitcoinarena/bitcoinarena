@@ -643,8 +643,8 @@ export function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, half
     const crossing = u.armour && u.tac && abs(sub(u.tacX, u.x)) > CROSSING;
     // ARRIVE ON THE LINE, NOT AT THE EDGE OF THE BAND: a standing tank corrects its depth only past POST_DEPTH; a tank that
     // moved last tick along z toward its hold (bit 0 and its last z sign, sim.js U_COOLDOWN) goes on to 0.25 m. A hull-down
-    // hold is a foot of a berm: stopped 1 m short of it, the tank's 6 m look ended on the ramp - 9% of overwatch on-post
-    // ticks had 1-1.95 m in front of them instead of 2 m (rules/emplacements.js).
+    // hold is the foot of a crest: stopped 1 m short of it, the tank's 6 m look ended on the ramp - 9% of overwatch on-post
+    // ticks had 1-1.95 m in front of them instead of 2 m (measured with the berms, withdrawn 2026-09-17 by §4.15 passability).
     const arrivingZ = u.armour && u.tac && ((u.cooldown | 0) & 1) === 1 && (((u.cooldown | 0) >> 1) & 3) === (gap > 0 ? 1 : 2);
     const band = u.armour ? (arrivingZ ? POST_DEPTH_ARRIVE : POST_DEPTH) : mulFast(walk, dt);
     const want = !crossing && abs(gap) > band ? (gap > 0 ? ONE : -ONE) : 0;

@@ -86,7 +86,7 @@ namespace Blwp
         public const int S_HEAT = 7;
         public const int S_PRACTICE = 6;
         public const int S_STATE = 5;
-        public const int TACTICS_WORDS = 88;
+        public const int TACTICS_WORDS = 92;
         public const int TRUCK_WORDS = 13;
         public const int T_ANGVEL = 5;
         public const int T_CARGO = 7;
@@ -111,7 +111,7 @@ namespace Blwp
         public const int U_WORDS = 8;
         public const int U_X = 0;
         public const int U_Z = 1;
-        public const int WORDS = 2334;
+        public const int WORDS = 2338;
 
         /// <summary>Where the core starts the truck, Q16.16 metres.</summary>
         public const int START_X = -6579814;
@@ -169,16 +169,20 @@ namespace Blwp
 
         // candle view (src/rules/candles.js): the candles the core stands everything on, for the renderer
         public const int CANDLES = 32;
-        public const int CANDLE_BODY_HALF = 96870;
-        public const int CANDLE_H = 131072;
+        public const int CANDLE_BODY_HALF = 188620;
+        public const int CANDLE_EAST = 7104085;
+        public const int CANDLE_H = 65536;
         public const int CANDLE_MIN_LENGTH = 65536;
-        public const int CANDLE_RAMP = 327680;
+        public const int CANDLE_RAMP = 262144;
         public const int CANDLE_SLOT = 377241;
+        public const int CANDLE_WEST = -4967627;
         public const int CANDLE_X0 = -4967627;
         public const int CV_APRON = 1;
         public const int CV_COUNT = 0;
-        public const int CV_FIRST = 2;
-        public const int CV_TOTAL = 258;
+        public const int CV_FIRST = 4;
+        public const int CV_FORMING = 2;
+        public const int CV_SHIFT = 3;
+        public const int CV_TOTAL = 260;
         public const int CV_WORDS = 8;
         public const int WICK_HALF = 32768;
         public const int WICK_HEIGHT = 589824;

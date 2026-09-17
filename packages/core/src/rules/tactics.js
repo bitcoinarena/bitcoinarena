@@ -47,10 +47,14 @@ const PERIOD_MIN = 720, PERIOD_SPAN = 480;        // §2.6 a leg of the role swa
 // [64+w] the verdict of the team's last push re-read (§4.10: 0 none, 1 take, 2 give, 3 drift).
 export const TAC_SEED = 0, TAC_SLOT = 1, TAC_SCOOT = 13, TAC_ROLE_START = 25, TAC_ROLE_MEMBER = 37, TAC_PUSH = 49;
 export const TAC_OBJ = 61, TAC_VERDICT = 64, TAC_ASSAULT = 76, TAC_MARKET = 82;
-export const TAC_WORDS = 88;
+export const TAC_WORDS = 92;
 // [82] the round's open (§4.13 TAC_OPEN, in the tape's unit), [83] samples taken since init, [84] trend (+1 UP, -1 DOWN, 0
 // SIDEWAYS), [85] its strength 0-3, [86] lead (+1 BULLS, -1 BEARS, 0 FLAT), [87] the lead's momentum 0-3 (§4.14).
 export const MK_OPEN = 0, MK_SAMPLES = 1, MK_TREND = 2, MK_STRENGTH = 3, MK_LEAD = 4, MK_MOMENTUM = 5;
+/** §4.15 movement: the tick of the last price sample, and the window's low and high the chart was drawn with before it. */
+export const MK_SAMPLE_TICK = 6, MK_PREV_LO = 7, MK_PREV_HI = 8;
+/** §4.15 glide: the sample that left the tape at the last sample, faded out at -x over the 300 ticks after it. */
+export const MK_PREV_OLDEST = 9;
 // [76 + 3 x sideIndex] (bull 0, bear 1) the side's ASSAULT (§4.12): target objective in bits 0-3, phase in 4-7, the count of
 // assaults it has started from bit 8; [77 + ...] the phase's start tick; [78 + ...] the tick the next may start.
 export const ASSAULT_IDLE = 0, ASSAULT_PUSH = 1, ASSAULT_CONSOLIDATE = 2;
@@ -232,6 +236,12 @@ const isFavoured = (s, base, side) => trendFor(s, base, side) > 0;
 export function initMarket(s, base, tape) {
   s[base + TAC_MARKET + MK_OPEN] = tape[tape.length - 1];
   s[base + TAC_MARKET + MK_SAMPLES] = 0;
+  let lo = tape[0], hi = tape[0];
+  for (let k = 1; k < tape.length; k++) { lo = lo < tape[k] ? lo : tape[k]; hi = hi > tape[k] ? hi : tape[k]; }
+  s[base + TAC_MARKET + MK_SAMPLE_TICK] = 0;
+  s[base + TAC_MARKET + MK_PREV_LO] = lo;
+  s[base + TAC_MARKET + MK_PREV_HI] = hi;
+  s[base + TAC_MARKET + MK_PREV_OLDEST] = tape[0];
   readMarket(s, base, tape);
 }
 

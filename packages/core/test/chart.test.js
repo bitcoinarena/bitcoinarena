@@ -6,7 +6,7 @@ import { CANDLE_SLOT } from '../src/rules/candles.js';
 import { GATE_X } from '../src/rules/gate.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { init, step, teleport, submitSample, frontAt, HALF_X, HALF_Z } from '../src/sim.js';
+import { init, step, teleport, submitSample, frontAt, scrollNow, HALF_X, HALF_Z } from '../src/sim.js';
 import { hash } from '../src/state.js';
 import * as L from '../src/state.js';
 import * as T from '../src/rules/tactics.js';
@@ -15,27 +15,33 @@ import * as C from '../src/chart.js';
 const ONE = 65536;
 const view = (st, range) => { const o = new Int32Array(C.CH_WORDS); C.chartView(st, range, o); return o; };
 const candle = (o, i) => Array.from(o.slice(C.CH_CANDLE + 4 * i, C.CH_CANDLE + 4 * i + 4));
+/** THE STAIRCASE (§4.15, 2026-09-17 13:42): candle i of a series opens on the previous close (sample 2i - 1, its own first
+ *  sample where there is none), closes on 2i + 1, and its high and low are over the three. */
+const stair = (series, i, hasPrev = i > 0) => {
+  const m = series[2 * i], c = series[2 * i + 1], o = hasPrev ? series[2 * i - 1] : m;
+  return [o, Math.max(o, m, c), Math.min(o, m, c), c];
+};
 
-test('GROUND is the tape on the terrain: 32 candles of two samples, the window its scale, the ground edge to edge', () => {
+test('GROUND is the tape on the terrain: 32 staircase candles of two samples, the window its scale, the ground edge to edge', () => {
   const st = init(7), o = view(st, C.CHART_GROUND);
   assert.equal(o[C.CH_RANGE], C.CHART_GROUND);
   assert.equal(o[C.CH_CANDLES], 32);
-  for (let i = 0; i < 32; i++) {
-    const a = st.tape[2 * i], b = st.tape[2 * i + 1];
-    assert.deepEqual(candle(o, i), [a, Math.max(a, b), Math.min(a, b), b], `candle ${i}`);
-  }
+  for (let i = 0; i < 32; i++) assert.deepEqual(candle(o, i), stair(st.tape, i), `candle ${i}`);
   assert.equal(o[C.CH_LO], Math.min(...st.tape));
   assert.equal(o[C.CH_HI], Math.max(...st.tape));
   // The candle field's first and last sample (§4.15 seam remap: the tape is laid over the candles, not the old +-130 m
   // map) are the chart's first and last sample: candle 0's open, candle 31's close.
-  const p = [0, 0, 0];
-  C.chartPoint(st, C.CHART_GROUND, xAtTape(0, 0), 0, p); assert.equal(p[0], ONE / 4); assert.equal(p[2], 1);
-  C.chartPoint(st, C.CHART_GROUND, xAtTape(63 * ONE, 0), 0, p); assert.equal(p[0], 32 * ONE - ONE / 4); assert.equal(p[2], 1);
+  // Read through the scroll the chart stands at (§4.15 movement): at init one sample, half a slot.
+  // The scrolled x is a whole Q16.16 metre off the slot grid, so the round trip x -> t may land one unit off: 1/65536 of
+  // a candle, 0.09 mm (measured 16385 for 16384).
+  const p = [0, 0, 0], sc = scrollNow(st);
+  C.chartPoint(st, C.CHART_GROUND, xAtTape(0, 0, sc), 0, p); assert.ok(Math.abs(p[0] - ONE / 4) <= 1, `t ${p[0]}`); assert.equal(p[2], 1);
+  C.chartPoint(st, C.CHART_GROUND, xAtTape(63 * ONE, 0, sc), 0, p); assert.ok(Math.abs(p[0] - (32 * ONE - ONE / 4)) <= 1, `t ${p[0]}`); assert.equal(p[2], 1);
   assert.equal(o[C.CH_WINDOW_FROM], ONE / 4);
   assert.equal(o[C.CH_WINDOW_TO], 32 * ONE - ONE / 4);
 });
 
-test('ROUND is the lead: from the open candle, one more candle every two samples, the last close against the open', () => {
+test('ROUND is the lead: from the open candle, one more staircase candle every two samples, the last close against the open', () => {
   const st = init(7);
   let o = view(st, C.CHART_ROUND);
   assert.equal(o[C.CH_CANDLES], 1);
@@ -47,10 +53,7 @@ test('ROUND is the lead: from the open candle, one more candle every two samples
   assert.equal(o[C.CH_CANDLES], 1 + 45, '90 samples are 45 candles after the open candle');
   const round = [before, open, ...prices];   // what the round saw, tape and memory together
   assert.equal(st.roundTape.length, round.length);
-  for (let i = 0; i < o[C.CH_CANDLES]; i++) {
-    const a = round[2 * i], b = round[2 * i + 1];
-    assert.deepEqual(candle(o, i), [a, Math.max(a, b), Math.min(a, b), b], `round candle ${i}`);
-  }
+  for (let i = 0; i < o[C.CH_CANDLES]; i++) assert.deepEqual(candle(o, i), stair(round, i), `round candle ${i}`);
   const fronts = Array.from(o.slice(C.CH_CANDLE + 4 * o[C.CH_CANDLES], C.CH_CANDLE + 5 * o[C.CH_CANDLES])).filter((v) => v !== C.CH_NONE);
   assert.ok(fronts.length > 0);
   assert.equal(o[C.CH_LO], Math.min(...round, ...fronts), 'ROUND scales to its candles and the seam over them');
@@ -79,7 +82,9 @@ test('YOU is the core truck: parked it stays, driven it moves right on the chart
   C.chartPoint(st, C.CHART_GROUND, s[L.O_TRUCK + L.T_X], s[L.O_TRUCK + L.T_Z], p);
   assert.deepEqual(at, p);
   for (let t = 0; t < 120; t++) step(st, 0, 0, ONE, ONE, 0);
-  assert.deepEqual(you(), at, 'parked');
+  // Parked, the chart slides under it (§4.15 movement): 120 ticks are 0.4 of a sample, 0.2 of a candle, toward the new.
+  const parked = you();
+  assert.deepEqual([parked[0] - at[0], parked[1], parked[2]], [Math.round(0.2 * ONE), at[1], at[2]], 'parked');
   for (let t = 0; t < 600; t++) step(st, ONE, 0, 0, 0, 0);
   const moved = you();
   assert.ok(s[L.O_TRUCK + L.T_X] > -6579814 + 5 * ONE, `the truck drove (x ${s[L.O_TRUCK + L.T_X] / ONE})`);
@@ -90,7 +95,7 @@ test('YOU is the core truck: parked it stays, driven it moves right on the chart
   teleport(st, 0, 0, 16384); const lowP = you()[1];
   teleport(st, 0, 20 * ONE, 16384); assert.ok(you()[1] > lowP);
   const o = view(st, C.CHART_GROUND), i = 16;
-  const x = xAtTape((2 * i + 0.5) * ONE, 0);          // candle 16's middle on the candle field
+  const x = xAtTape((2 * i + 0.5) * ONE, 0, scrollNow(st));   // candle 16's middle on the candle field, as it stands now
   C.chartPoint(st, C.CHART_GROUND, x, frontAt(st, x), p);
   assert.ok(Math.abs(p[1] - o[C.CH_CANDLE + 4 * 32 + i]) <= 2, 'the seam through the mapping is the seam line drawn');
   assert.ok(Math.abs(HALF_Z) > 0);
@@ -122,7 +127,9 @@ test('GATE is the core gate, the objectives and the assault the core words, and 
   // 0.97 of a candle past the 32nd (the HUD pins GATE › at the right edge; ChartHudTests).
   assert.equal(o[C.CH_GATE_ON], 0, 'the gate past the last candle is on the chart');
   assert.equal(p[2], 0);
-  const past = (o[C.CH_GATE_T] - o[C.CH_CANDLES] * ONE) / ONE;
-  assert.ok(Math.abs(past - (GATE_X - (xAtTape(63 * ONE, 0) + (CANDLE_SLOT >> 2))) / CANDLE_SLOT) < 1e-3 && past > 0.97 && past < 0.98,
+  // The chart has scrolled (§4.15): 4800 ticks with no sample hold the slide at two samples, one candle further.
+  const sc = scrollNow(st), past = (o[C.CH_GATE_T] - o[C.CH_CANDLES] * ONE) / ONE;
+  assert.equal(sc, 2 * ONE, 'the slide holds at two samples when no sample comes');
+  assert.ok(Math.abs(past - (GATE_X - (xAtTape(63 * ONE, 0, sc) + (CANDLE_SLOT >> 2))) / CANDLE_SLOT) < 1e-3 && past - 1 > 0.97 && past - 1 < 0.98,
     `the gate is ${past.toFixed(4)} of a candle past the last`);
 });

@@ -8,7 +8,7 @@
 // through the window's scale, the inverse of `frontlineZ`.
 import { ONE, mulFast, div, idiv, abs, min, max } from './fixed.js';
 import { O_TACTICS, O_TRUCK, T_X, T_Z, T_HEADING } from './state.js';
-import { HALF_X, HALF_Z, frontAt } from './sim.js';
+import { HALF_X, HALF_Z, frontAt, scrollNow, scaleNow } from './sim.js';
 import { SAMPLES, FRONT_DEPTH, tapeAtX, xAtTape } from './rules/frontline.js';
 import { GATE_X } from './rules/gate.js';
 import { TAC_MARKET, MK_OPEN, MK_SAMPLES, MK_TREND, MK_STRENGTH, MK_LEAD, MK_MOMENTUM, OBJECTIVES, objectiveLane,
@@ -59,9 +59,7 @@ function rangeOf(st, range) {
 
 /** The tape window's low and high: the scale the seam is laid across the ground with. */
 function windowScale(st) {
-  let lo = st.tape[0], hi = st.tape[0];
-  for (let k = 1; k < SAMPLES; k++) { lo = min(lo, st.tape[k]); hi = max(hi, st.tape[k]); }
-  return { lo, hi };
+  return scaleNow(st);           // the window as the world draws it this tick (§4.15 rescale lerp)
 }
 
 /** A ground z as a price: the inverse of `frontlineZ`'s scale. */
@@ -73,7 +71,7 @@ function priceAtZ(w, z) {
 }
 
 /** A ground x as a round sample, Q16.16. */
-const sampleOfX = (st, L, x) => (tapeAtX(x, st.i32[O_TACTICS + TAC_MARKET + MK_SAMPLES]) + Math.imul(L - SAMPLES, ONE)) | 0;
+const sampleOfX = (st, L, x) => (tapeAtX(x, st.i32[O_TACTICS + TAC_MARKET + MK_SAMPLES], scrollNow(st)) + Math.imul(L - SAMPLES, ONE)) | 0;
 /** A round sample (Q16.16) as t in a range starting at candle `first`. */
 const tOfSample = (first, rq) => ((rq - Math.imul(first, Math.imul(2, ONE)) + (ONE >> 1)) >> 1) | 0;
 const onRange = (n, t) => (t >= 0 && t <= Math.imul(n, ONE) ? 1 : 0);
@@ -129,18 +127,24 @@ export function chartView(st, range, out) {
   if (rg === CHART_ROUND) { lo = sampleAt(st, L, Math.imul(r.first, 2)); hi = lo; }
   for (let i = 0; i < n; i++) {
     const k = (r.first + i) | 0, a = Math.imul(k, 2);
-    const o = sampleAt(st, L, a), c = a + 1 <= L - 1 ? sampleAt(st, L, a + 1) : o;
+    // THE STAIRCASE (§4.15, 2026-09-17 13:42), the world candles' own rule: open = the previous candle's close (sample
+    // a - 1, where GROUND's tape - or ROUND's memory - still has it), close = sample a + 1, low / high over the three.
+    const m0 = sampleAt(st, L, a), c = a + 1 <= L - 1 ? sampleAt(st, L, a + 1) : m0;
+    // on the tape, or in the round's memory (GROUND's first candle too: the world's slot 0 opens on the sample that left)
+    const prev = (L - a) < SAMPLES || (a - 1 >= 0 && st.roundTape && st.roundTape.length === L);
+    const o = prev ? sampleAt(st, L, a - 1) : m0;
+    const hiC = max(max(o, c), m0), loC = min(min(o, c), m0);
     const b = CH_CANDLE + Math.imul(i, 4);
-    out[b] = o; out[b + 1] = max(o, c); out[b + 2] = min(o, c); out[b + 3] = c;
-    if (rg === CHART_ROUND) { lo = min(lo, min(o, c)); hi = max(hi, max(o, c)); }
+    out[b] = o; out[b + 1] = hiC; out[b + 2] = loC; out[b + 3] = c;
+    if (rg === CHART_ROUND) { lo = min(lo, loC); hi = max(hi, hiC); }
     const centre = (Math.imul(i, ONE) + (ONE >> 1)) | 0;
-    if (max(o, c) > highP) { highP = max(o, c); highT = centre; }
-    if (min(o, c) < lowP) { lowP = min(o, c); lowT = centre; }
+    if (hiC > highP) { highP = hiC; highT = centre; }
+    if (loC < lowP) { lowP = loC; lowT = centre; }
     // The seam over this candle, where the candle is on the ground at all.
     const aq = (Math.imul(a, ONE) + (ONE >> 1) - Math.imul(L - SAMPLES, ONE)) | 0;
     const front = CH_CANDLE + Math.imul(n, 4) + i;
     if (aq < 0 || aq > LAST_Q) out[front] = CH_NONE;
-    else out[front] = priceAtZ(w, frontAt(st, xAtTape(aq, count)));
+    else out[front] = priceAtZ(w, frontAt(st, xAtTape(aq, count, scrollNow(st))));
     if (rg === CHART_ROUND && out[front] !== CH_NONE) { lo = min(lo, out[front]); hi = max(hi, out[front]); }
   }
   out[CH_HIGH_T] = highT; out[CH_HIGH_P] = highP; out[CH_LOW_T] = lowT; out[CH_LOW_P] = lowP;

@@ -57,115 +57,134 @@ public class CandleTerrainTests
         return best;
     }
 
-    [Test]
-    public void TheDrawnCandlesMeetTheCoresHeightsWithinATenthOfAMetre()
+    /// <summary>A ground that is not flat, so a slab laid at the apron's height (the 13:42 fault) cannot pass.</summary>
+    static float Ground(float x, float z) => 0.4f * Mathf.Sin(x * 0.07f) + 0.3f * Mathf.Cos(z * 0.05f) + 0.2f;
+
+    static List<int> AllTris(CandleTerrain.Parts p)
     {
+        var t = new List<int>(p.TopGreen); t.AddRange(p.TopRed); t.AddRange(p.SideGreen); t.AddRange(p.SideRed);
+        return t;
+    }
+
+    [Test]
+    public void TheLayerIsTheCoresCandleHeightAtEveryPointTheCoreMeasured()
+    {
+        // The renderer's candle layer is the core's rule (candleHeightAt) on the core's words: the ribbon's ramps, the
+        // neighbour-covered faces, the field's ends and the scroll (CV_SHIFT), within a centimetre of the core's heights.
         Load();
         foreach (var kv in _views)
         {
-            var verts = new List<Vector3>(); var green = new List<int>(); var red = new List<int>();
-            CandleTerrain.Build(kv.Value, verts, green, red);
-            var all = new List<int>(green); all.AddRange(red);
-            float apron = kv.Value[L.CV_APRON] / 65536f, worst = 0f;
-            int n = 0;
+            float worst = 0f; int n = 0, plateau = 0, ramp = 0;
             foreach (var (x, z, h) in _heights[kv.Key])
             {
-                float top = DrawnTop(verts, all, x, z);
-                float drawn = float.IsNaN(top) ? 0f : top - apron;       // nothing drawn = the ground under it
-                worst = Mathf.Max(worst, Mathf.Abs(drawn - h));
-                Assert.LessOrEqual(Mathf.Abs(drawn - h), 0.1f, $"{kv.Key}: at {x:0.00},{z:0.00} the core stands on {h:0.000} m, drawn {drawn:0.000}");
+                float mine = CandleTerrain.LayerAt(kv.Value, x, z);
+                worst = Mathf.Max(worst, Mathf.Abs(mine - h));
+                Assert.AreEqual(h, mine, 0.01f, $"{kv.Key}: layer at {x:0.00},{z:0.00}");
+                if (h >= L.CANDLE_H / 65536f - 1e-4f) plateau++; else if (h > 0f) ramp++;
                 n++;
             }
-            Debug.Log($"[candle-mesh] {kv.Key}: {n} core heights, worst drawn difference {worst:0.0000} m, {verts.Count} vertices");
-            Assert.Greater(n, 1000);
+            Debug.Log($"[candle-layer] {kv.Key}: shift {kv.Value[L.CV_SHIFT] / 65536f:0.000} m, {n} core heights ({plateau} plateau, {ramp} ramp), worst {worst:0.0000} m");
+            Assert.Greater(plateau, 100); Assert.Greater(ramp, 50);
         }
     }
 
     [Test]
-    public void TopsFaceUpFacesFaceOutAndColoursFollowTheCore()
+    public void TheDrawnTopIsTheCoresSurfaceWithinATenthOfAMetreOnGroundThatIsNotFlat()
     {
+        // ONE SURFACE (§4.15, 13:42): the drawn top is the core's surface - ground plus the candle layer - at every point the
+        // core measured (fixture heights), on a ground that rises and falls; nothing is laid at the apron's height.
         Load();
-        var v = _views["open"];
-        var verts = new List<Vector3>(); var green = new List<int>(); var red = new List<int>();
-        CandleTerrain.Build(v, verts, green, red);
-        var mesh = new Mesh { indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
-        mesh.SetVertices(verts); mesh.subMeshCount = 2; mesh.SetTriangles(green, 0); mesh.SetTriangles(red, 1);
-        mesh.RecalculateNormals();
-        var normals = mesh.normals;
-        int up = 0, outward = 0, wrong = 0;
-        for (int i = 0; i < verts.Count; i += 4)
+        foreach (var kv in _views)
         {
-            var nrm = normals[i];
-            var p = verts[i]; var q = verts[i + 2];
-            if (Mathf.Abs(p.x - q.x) > 0.01f) { if (nrm.y > 0.5f) up++; else wrong++; }        // a top quad spans x
-            else
+            var v = kv.Value;
+            var p = CandleTerrain.Build(v, Ground);
+            var tris = AllTris(p);
+            float worst = 0f; int n = 0, inBody = 0;
+            foreach (var (x, z, h) in _heights[kv.Key])
             {
-                // a face: its x is one of the body's two; outward is away from the body's centre
-                int c = Mathf.Clamp(Mathf.FloorToInt((p.x - L.CANDLE_X0 / 65536f) / (L.CANDLE_SLOT / 65536f)), 0, L.CANDLES - 1);
-                float cx = (v[L.CV_FIRST + c * L.CV_WORDS] + v[L.CV_FIRST + c * L.CV_WORDS + 1]) * 0.5f / 65536f;
-                if (Mathf.Sign(nrm.x) == Mathf.Sign(p.x - cx) && Mathf.Abs(nrm.x) > 0.9f) outward++; else wrong++;
+                float top = CandleTerrain.TopAt(p.Body, tris, x, z);
+                float drawn = float.IsNaN(top) ? Ground(x, z) : top - CandleTerrain.Lift;
+                if (!float.IsNaN(top)) inBody++;
+                float want = Ground(x, z) + h;
+                worst = Mathf.Max(worst, Mathf.Abs(drawn - want));
+                Assert.LessOrEqual(Mathf.Abs(drawn - want), 0.1f, $"{kv.Key}: at {x:0.00},{z:0.00} the core stands on {want:0.000} m, drawn {drawn:0.000}");
+                n++;
             }
+            Debug.Log($"[candle-mesh] {kv.Key}: {n} core heights ({inBody} under a drawn top), worst {worst:0.0000} m, {p.Body.Count} body vertices, {p.Wick.Count / 4} wick quads");
+            Assert.Greater(n, 1000); Assert.Greater(inBody, 500);
         }
-        Debug.Log($"[candle-mesh] tops up {up}, faces out {outward}, wrong {wrong}");
-        Assert.AreEqual(0, wrong);
-        Assert.Greater(up, 0); Assert.Greater(outward, 0);
-        int greens = 0;
-        for (int c = 0; c < L.CANDLES; c++) greens += v[L.CV_FIRST + c * L.CV_WORDS + 5];
-        Assert.AreEqual(greens > 0, green.Count > 0);
-        Assert.AreEqual(greens < L.CANDLES, red.Count > 0);
     }
 
     [Test]
-    public void AWickIsDrawnOnlyWhereItStandsPastTheBody()
+    public void ARibbonNoWallsGlowToSixMetresWicksFromLowToHighForming()
     {
-        // Today's tape has no wick past a body (two samples a candle); the core's words carry one as a candle with more
-        // samples would: candle 5 given a low 6 m under its body and a high 10 m over it.
         Load();
-        var v = (int[])_views["open"].Clone();
-        int b = L.CV_FIRST + 5 * L.CV_WORDS;
+        var v = _views["one-sample"];
+        var p = CandleTerrain.Build(v, Ground);
+        var mesh = new Mesh { indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
+        mesh.SetVertices(p.Body); mesh.subMeshCount = 4;
+        mesh.SetTriangles(p.SideGreen, 0); mesh.SetTriangles(p.SideRed, 1); mesh.SetTriangles(p.TopGreen, 2); mesh.SetTriangles(p.TopRed, 3);
+        // 492f128: nothing in the chart is a wall. Every triangle faces up and climbs no more than the 25% ramp along x and
+        // along z (the ground's own slope adds under 3%). Per axis, not the magnitude: a triangle over a corner where the
+        // ramp runs in x and in z at once interpolates both, up to sqrt(2) x 25% = 35.4% (measured 37.9% with the ground).
+        var tris = AllTris(p);
+        int tops = p.TopGreen.Count / 3 + p.TopRed.Count / 3, ramps = 0;
+        float steepest = 0f, steepestAxis = 0f;
+        for (int t = 0; t < tris.Count; t += 3)
+        {
+            Vector3 a = p.Body[tris[t]], b = p.Body[tris[t + 1]], c = p.Body[tris[t + 2]];
+            var nrm = Vector3.Cross(b - a, c - a).normalized;
+            Assert.Greater(nrm.y, 0f, $"a triangle at {a} faces down");
+            float grade = Mathf.Sqrt(1f - nrm.y * nrm.y) / nrm.y;
+            steepest = Mathf.Max(steepest, grade);
+            steepestAxis = Mathf.Max(steepestAxis, Mathf.Max(Mathf.Abs(nrm.x), Mathf.Abs(nrm.z)) / nrm.y);
+            if (grade > 0.05f) ramps++;
+        }
+        Debug.Log($"[candle-mesh] plateau triangles {tops}, ramp triangles {ramps}, steepest {steepest * 100f:0.0}% ({steepestAxis * 100f:0.0}% along an axis); forming slot {v[L.CV_FORMING]}, forming glow vertices {p.Forming.Count}, shift {v[L.CV_SHIFT] / 65536f:0.000} m");
+        Assert.LessOrEqual(steepestAxis, 0.25f + 0.035f, "steeper than the ribbon's 25% ramp along an axis");
+        Assert.LessOrEqual(steepest, 0.25f * Mathf.Sqrt(2f) + 0.035f, "steeper than a corner of 25% ramps");
+        Assert.Greater(tops, 0); Assert.Greater(ramps, 0);
+        // the glow: every vertex between the plateau it stands on and 6 m
+        foreach (var g in p.Glow)
+            Assert.LessOrEqual(g.y, Ground(g.x, g.z) + CandleTerrain.GlowTo + 0.05f, $"glow at {g} over 6 m");
+        // the wick: inside [low, high] of its candle, 9 m over the ground, where the slot stands after the scroll
+        float shift = v[L.CV_SHIFT] / 65536f;
         for (int c = 0; c < L.CANDLES; c++)
         {
-            int k = L.CV_FIRST + c * L.CV_WORDS;
-            Assert.AreEqual(v[k + 2], v[k + 6], $"candle {c}: the core sent a low wick past the body on a two-sample tape");
-            Assert.AreEqual(v[k + 3], v[k + 7], $"candle {c}: the core sent a high wick past the body on a two-sample tape");
+            int b = L.CV_FIRST + c * L.CV_WORDS;
+            float cx = (v[b] + v[b + 1]) * 0.5f / 65536f - shift, low = v[b + 6] / 65536f, high = v[b + 7] / 65536f;
+            foreach (var w in p.Wick)
+                if (Mathf.Abs(w.x - cx) <= CandleTerrain.WickHalf + 1e-3f)
+                    Assert.IsTrue(w.z >= low - 1e-3f && w.z <= high + 1e-3f, $"candle {c}: wick vertex {w} outside {low:0.00}..{high:0.00}");
         }
-        v[b + 6] = v[b + 2] - 6 * 65536;
-        v[b + 7] = v[b + 3] + 10 * 65536;
-        var verts = new List<Vector3>(); var green = new List<int>(); var red = new List<int>();
-        CandleTerrain.Build(v, verts, green, red);
-        var all = new List<int>(green); all.AddRange(red);
-        float apron = v[L.CV_APRON] / 65536f, top = apron + L.WICK_HEIGHT / 65536f, cx = (v[b] + v[b + 1]) * 0.5f / 65536f;
-        float z0 = v[b + 2] / 65536f, z1 = v[b + 3] / 65536f, low = v[b + 6] / 65536f, high = v[b + 7] / 65536f;
-        int tall = 0;
-        foreach (var p in verts)
-        {
-            if (Mathf.Abs(p.y - top) > 1e-3f) continue;
-            tall++;
-            Assert.LessOrEqual(Mathf.Abs(p.x - cx), 0.5f + 1e-3f, $"wick vertex {p} off the centre line {cx}");
-            bool lowSeg = p.z >= low - 1e-3f && p.z <= z0 + 1e-3f, highSeg = p.z >= z1 - 1e-3f && p.z <= high + 1e-3f;
-            Assert.IsTrue(lowSeg || highSeg, $"wick vertex {p} stands over the body {z0:0.00}..{z1:0.00}");
-        }
-        float atLow = DrawnTop(verts, all, cx, (low + z0) * 0.5f), atHigh = DrawnTop(verts, all, cx, (z1 + high) * 0.5f);
-        float onBody = DrawnTop(verts, all, cx + 0.2f, (z0 + z1) * 0.5f);
-        Debug.Log($"[candle-mesh] wick: {tall} vertices at {top - apron:0.00} m; drawn top over the low wick {atLow - apron:0.00} m, over the high wick {atHigh - apron:0.00} m, over the body {onBody - apron:0.00} m");
-        Assert.AreEqual(24, tall, "two pillars: a lid (4 vertices) and four sides (2 each at the top) - 12 a pillar");
-        Assert.AreEqual(L.WICK_HEIGHT / 65536f, atLow - apron, 1e-3f);
-        Assert.AreEqual(L.WICK_HEIGHT / 65536f, atHigh - apron, 1e-3f);
-        Assert.LessOrEqual(onBody - apron, L.CANDLE_H / 65536f + 1e-3f, "a wick drawn through the body");
-        // pillar sides face out: the mesh's own normals on the wick's tall quads
-        var mesh = new Mesh { indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
-        mesh.SetVertices(verts); mesh.subMeshCount = 2; mesh.SetTriangles(green, 0); mesh.SetTriangles(red, 1); mesh.RecalculateNormals();
-        var n = mesh.normals;
-        for (int i = 0; i < verts.Count; i += 4)
-        {
-            var a = verts[i]; var c2 = verts[i + 2];
-            if (Mathf.Abs(a.y - top) > 1e-3f && Mathf.Abs(c2.y - top) > 1e-3f) continue;
-            var mid = (a + c2) * 0.5f;
-            var outward = new Vector3(mid.x - cx, 0f, 0f);
-            if (Mathf.Abs(a.y - c2.y) < 1e-3f) Assert.Greater(n[i].y, 0.5f, $"a wick lid faces down at {mid}");
-            else if (Mathf.Abs(a.x - c2.x) < 1e-3f) Assert.Greater(n[i].x * outward.x, 0f, $"a wick side faces in at {mid}");
-            else Assert.Greater(Mathf.Abs(n[i].z), 0.9f, $"a wick end is not an end at {mid}");
-        }
+        Assert.Greater(p.Wick.Count, 0, "no wick drawn on a staircase tape (the middle sample stands past most bodies)");
+        // the forming candle (one sample taken: the newest slot, half grown) glows in its own pulsing mesh
+        Assert.AreEqual(L.CANDLES - 1, v[L.CV_FORMING]);
+        Assert.Greater(p.Forming.Count, 0);
+        Assert.AreEqual(CandleTerrain.Green, new Color(0x26 / 255f, 0xa6 / 255f, 0x9a / 255f));
+        Assert.AreEqual(CandleTerrain.Red, new Color(0xef / 255f, 0x53 / 255f, 0x50 / 255f));
+    }
+
+    [Test]
+    public void TheGroundCacheAsksEachCellOnceAndAgainOnlyAfterItsHold()
+    {
+        int asked = 0;
+        var cache = new CandleTerrain.GroundCache((x, z) => { asked++; return Ground(x, z); }) { Hold = 2f, Now = 0f };
+        float worst = 0f;
+        for (float x = -10f; x < 10f; x += 0.37f)
+            for (float z = -10f; z < 10f; z += 0.41f)
+                worst = Mathf.Max(worst, Mathf.Abs(cache.Get(x, z) - Ground(x, z)));
+        int first = asked;
+        for (float x = -10f; x < 10f; x += 0.37f) for (float z = -10f; z < 10f; z += 0.41f) cache.Get(x, z);
+        Assert.AreEqual(first, asked, "a held cell was asked again");
+        cache.Now = 1.9f;
+        for (float x = -10f; x < 10f; x += 0.37f) for (float z = -10f; z < 10f; z += 0.41f) cache.Get(x, z);
+        Assert.AreEqual(first, asked, "a cell was asked again inside its hold");
+        cache.Now = 4.1f;
+        for (float x = -10f; x < 10f; x += 0.37f) for (float z = -10f; z < 10f; z += 0.41f) cache.Get(x, z);
+        Debug.Log($"[ground-cache] {first} cells for a 20 m square, worst bilinear error {worst:0.0000} m, {asked - first} asked again after 4.1 s");
+        Assert.AreEqual(2 * first, asked, "every cell is asked again within two holds");
+        Assert.Less(worst, 0.01f);
     }
 
     [Test]

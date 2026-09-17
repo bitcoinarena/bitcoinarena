@@ -205,7 +205,7 @@ public class Bootstrap : MonoBehaviour
         BuildLighting();
         _terrain = BuildTerrain();
         // THE CANDLES ON IT (WAR_TACTICS.md §4.15): the core's candle bodies, meshed from its words.
-        new GameObject("CandleTerrain").AddComponent<CandleTerrain>();
+        new GameObject("CandleTerrain").AddComponent<CandleTerrain>().glowSource = fireMaterial;
 
         // live tape first: the frontline is the price chart, so everything
         // downstream wants it already ticking

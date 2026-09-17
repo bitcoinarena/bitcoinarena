@@ -6,7 +6,7 @@
 //
 // Lines: `view NAME w0 w1 ...` and `h NAME x z height` (Q16.16), heights above the apron. Samples on each body's centre
 // line and 1 cm inside each x-face, every 0.5 m (2 m after a sample) from 2 m before the body to 2 m after it.
-import { init, submitSample, candleView, surfaceAt, terrainAt } from '../src/sim.js';
+import { init, step, submitSample, candleView, surfaceAt, terrainAt } from '../src/sim.js';
 import * as L from '../src/state.js';
 import * as T from '../src/rules/tactics.js';
 import * as C from '../src/rules/candles.js';
@@ -17,7 +17,8 @@ const put = (name, st, step) => {
   candleView(st, v);
   lines.push(`view ${name} ${Array.from(v).join(' ')}`);
   for (let c = 0; c < C.CANDLES; c++) {
-    const b = C.CV_FIRST + c * C.CV_WORDS, x0 = v[b], x1 = v[b + 1], z0 = v[b + 2], z1 = v[b + 3];
+    // the view's slots are unshifted; the world stands them CV_SHIFT toward -x (the scroll)
+    const sh = v[C.CV_SHIFT], b = C.CV_FIRST + c * C.CV_WORDS, x0 = v[b] - sh, x1 = v[b + 1] - sh, z0 = v[b + 2], z1 = v[b + 3];
     for (const x of [(x0 + x1) >> 1, x0 + 655, x1 - 655])
       for (let z = z0 - 2 * ONE; z <= z1 + 2 * ONE; z += step)
         lines.push(`h ${name} ${x} ${z} ${(surfaceAt(st, x, z) - terrainAt(st, x, z)) | 0}`);
@@ -26,5 +27,7 @@ const put = (name, st, step) => {
 let st = init(1);
 put('open', st, ONE >> 1);
 submitSample(st, st.i32[L.O_TACTICS + T.TAC_MARKET + T.MK_OPEN] + 3000);
+// half a sample on: the chart has slid a quarter slot and the forming candle has grown half its glide (§4.15 movement)
+for (let t = 0; t < 150; t++) step(st, 0, 0, 0, 0, 1);
 put('one-sample', st, Math.imul(2, ONE));
 process.stdout.write(lines.join('\n') + '\n');

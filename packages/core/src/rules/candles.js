@@ -1,18 +1,16 @@
-// THE CANDLES ARE TERRAIN - WAR_TACTICS.md §4.15.
+// THE CANDLES ARE TERRAIN - WAR_TACTICS.md §4.15, as a RAISED RIBBON (playtest fix 492f128, the owner 2026-09-17 13:51).
 //
-// The tape's candles as a height layer the surface reader adds (`surfaceAt = relief + emplacements + candles - craters`),
-// on a static chart band levelled to a pancake of the relief, with each candle's two x-faces as truck-only walls. Laid
-// between the apron and the miner (spawn ruling B, the owner 2026-09-17): 32 slots of 5.756 m, a 2.956 m body and a 2.8 m
-// corridor in each; a body runs from its open's z to its
-// close's z (the seam's own price-to-z scale), at least 1 m long; a plateau 2 m high reached by a 5 m ramp inside each
-// z-end. Derived from the tape alone and rebuilt when the tape changes; nothing here is hashed state and nothing draws.
-//
-// Not here yet (the slice, the owner 2026-09-17): the scroll, the rescale lerp, the seam remap to 208 m, the glow, cover
-// lips. The wick (ruled w1, the owner 2026-09-17): a truck-only collider only where the wick stands past the body - the body
-// owns the 2 m plateau; a high wick above the body's high end, a low wick below its low end, never through the body.
-import { ONE, add, sub, abs, mulFast, div, idiv, min, max, clamp } from '../fixed.js';
+// The tape's candles as a height layer the surface reader adds (`surfaceAt = relief + candles - craters`),
+// on a static chart band levelled to a pancake of the relief. 32 slots of 5.756 m between the apron and the miner (spawn
+// ruling B); each body as wide as its slot, bodies touching; a body runs from its open (the previous candle's close - a
+// continuous staircase) to its close in z, at least 1 m long. The union of the bodies is a ribbon 1 m above the ground,
+// its every free edge a 4 m ramp at 25%: h = H x clamp(d / R, 0, 1), d the distance to the union's boundary. Nothing in
+// the chart is a solid - no wall, no wick collider (w1 withdrawn): the chart is the road. The wick and the glow are light.
+// It moves: the scroll slides it toward the post office half a slot per sample (frontline.js `scrollOf`), and a new
+// window high or low lerps the price-to-z scale over the 300 ticks after the sample. Derived, not hashed: the tape, the
+// samples taken and the market words make it.
+import { ONE, add, sub, abs, mulFast, div, idiv, min, max, clamp, length2 } from '../fixed.js';
 import { SAMPLES, FRONT_DEPTH, FIELD_X0, FIELD_SLOT } from './frontline.js';
-import { BOX_WORDS } from './solids.js';
 import { heightAtWorld } from './ground.js';
 
 export const CANDLES = 32;
@@ -23,25 +21,34 @@ export const CANDLES = 32;
 // At 6.5 m (x -104..+104) the first face stood 2.2 m BEHIND the spawn and bays 9-12 started on candle 0.
 export const CANDLE_X0 = FIELD_X0;                 // -75.79998 m: first face at -74.39998 m, 26.00001 m past START_X
 export const CANDLE_SLOT = FIELD_SLOT;             // 5.75624 m; 32 slots end at 108.39969 m, before the miner face
-export const CANDLE_BODY_HALF = 96870;             // 1.47812 m: a 2.95624 m body (0.203 m a side for a 2.55 m truck), a 2.80001 m corridor
-export const CANDLE_H = 131072;                    // 2 m plateau
-export const CANDLE_RAMP = 327680;                 // 5 m ramp inside each z-end
+export const CANDLE_BODY_HALF = FIELD_SLOT >> 1;   // the full slot: bodies touch (492f128, no padding)
+export const CANDLE_H = ONE;                       // 1 m plateau (was 2)
+export const CANDLE_RAMP = 262144;                 // 4 m ramp: 1 m over 4 m is 25% (was 5 m at 40%)
 export const CANDLE_MIN_LENGTH = ONE;              // a doji is built 1 m long
+/**
+ * THE RIBBON'S WORLD ENDS (§4.15 "nothing jumps"): the chart scrolls under fixed edges, ramped like any free edge. On the
+ * whole-slot move (every second sample) slot 0's candle leaves at -x - west of X0 it has slid fully out, so it does not
+ * pop - and a new forming candle is born in slot 31 with no length (`grow`, below), so it does not pop either. The east
+ * end is the field's own: nothing stands past it at any scroll.
+ */
+export const CANDLE_WEST = FIELD_X0;
+export const CANDLE_EAST = FIELD_X0 + Math.imul(32, FIELD_SLOT);   // 108.40 m, the miner face
 export const BAND_X = 6815744;                     // |x| <= 104 m
 export const BAND_Z = 3538944;                     // |z| <= 54 m: the seam's 45 m, the 5 m ramp, 4 m
 export const CONE = 26214;                         // 0.4: the grade the relief may rise toward the band
 export const PANCAKE = 9830;                       // 0.15: the relief inside the band, about the apron's height
-export const WICK_HALF = 32768;                    // a 1 m x 1 m pillar
-export const WICK_HEIGHT = 589824;                 // 9 m
+export const WICK_HALF = 32768;                    // the wick's light column: 1 m wide
+export const WICK_HEIGHT = 589824;                 // 9 m tall - light only, never a solid
 
 /** Per candle in `layout`: slot centre x, body z from and to (from < to), 1 when close >= open, the low's z and the high's z. */
 export const CL_X = 0, CL_Z0 = 1, CL_Z1 = 2, CL_GREEN = 3, CL_LOW = 4, CL_HIGH = 5, CL_WORDS = 6;
 
 /**
- * The renderer's view: count, apron height, then per candle x from, x to, z from, z to, plateau height, green, and the wick's
+ * The renderer's view: count, apron height, the forming candle's slot (-1 when every slot is a whole candle; its glow
+ * pulses), the scroll as a shift toward -x in metres (Q16.16; the slots below are unshifted), then per candle x from, x to, z from, z to, plateau height, green, and the wick's
  * collider past the body: low wick z from (= body z from when none), high wick z to (= body z to when none).
  */
-export const CV_COUNT = 0, CV_APRON = 1, CV_FIRST = 2, CV_WORDS = 8;
+export const CV_COUNT = 0, CV_APRON = 1, CV_FORMING = 2, CV_SHIFT = 3, CV_FIRST = 4, CV_WORDS = 8;
 export const CV_TOTAL = CV_FIRST + Math.imul(CANDLES, CV_WORDS);
 
 /** A price as a ground z, by the seam's own scale (frontlineZ): the window's low at -45 m, its high at +45 m. */
@@ -53,41 +60,75 @@ function zOfPrice(p, lo, span, halfZ) {
 
 /**
  * The 32 bodies from the tape. Candles pair the round's samples (candle k = round samples 2k, 2k+1, as the HUD's chart
- * does), so which tape sample opens slot 0 follows the parity of the samples taken: `taken` odd drops the oldest sample
- * (its open has left the tape) and leaves the newest slot a doji of the forming candle.
+ * does), so which tape sample starts slot 0 follows the parity of the samples taken: `taken` odd drops the oldest sample
+ * and leaves the newest slot the forming candle.
+ *
+ * A CONTINUOUS STAIRCASE (§4.15, the owner 2026-09-17 13:42; found on the live top-down: scattered pillars with gaps). The
+ * tape is a series of closes: candle c's open is the previous candle's close (sample 2c - 1; the first slot's open is its
+ * own first sample, the one before it has left the tape), its close sample 2c + 1, its low and high the min and max of
+ * those three samples. Every body starts where the last one ended.
  */
-export function candleLayout(tape, taken, halfZ, out) {
+export function candleLayout(tape, taken, halfZ, out, scaleLo = null, scaleHi = null, older = tape[0], grow = ONE) {
   let lo = tape[0], hi = tape[0];
   for (let k = 1; k < SAMPLES; k++) { lo = min(lo, tape[k]); hi = max(hi, tape[k]); }
+  if (scaleLo !== null) { lo = scaleLo; hi = scaleHi; }
   const span = sub(hi, lo), shift = taken & 1;
   for (let c = 0; c < CANDLES; c++) {
-    const o = min(add(Math.imul(c, 2), shift), SAMPLES - 1), k = min(o + 1, SAMPLES - 1);
-    const zo = zOfPrice(tape[o], lo, span, halfZ), zc = zOfPrice(tape[k], lo, span, halfZ);
+    const first = min(add(Math.imul(c, 2), shift), SAMPLES - 1), k = min(first + 1, SAMPLES - 1);
+    // slot 0's open before the tape: the sample that left it last (the glide), so the open does not jump when it leaves
+    const zo = zOfPrice(first > 0 ? tape[first - 1] : older, lo, span, halfZ), zc = zOfPrice(tape[k], lo, span, halfZ);
+    const zm = zOfPrice(tape[first], lo, span, halfZ);
     let z0 = min(zo, zc), z1 = max(zo, zc);
-    if (sub(z1, z0) < CANDLE_MIN_LENGTH) { z0 = sub((z0 + z1) >> 1, CANDLE_MIN_LENGTH >> 1); z1 = add(z0, CANDLE_MIN_LENGTH); }
+    // A forming candle is born with its open and its (glided) close on one z: its doji length grows with the glide too,
+    // 0 to 1 m over the sample's 300 ticks, so a new body rises out of the ground instead of standing there at once.
+    const minLength = (shift === 1 && c === CANDLES - 1) ? mulFast(CANDLE_MIN_LENGTH, grow) : CANDLE_MIN_LENGTH;
+    if (sub(z1, z0) < minLength) { z0 = sub((z0 + z1) >> 1, minLength >> 1); z1 = add(z0, minLength); }
     const b = Math.imul(c, CL_WORDS);
     out[b + CL_X] = add(add(CANDLE_X0, Math.imul(c, CANDLE_SLOT)), CANDLE_SLOT >> 1);
     out[b + CL_Z0] = z0;
     out[b + CL_Z1] = z1;
-    out[b + CL_GREEN] = tape[k] >= tape[o] ? 1 : 0;
-    // The candle's low and high are its samples' own: with two samples a candle they are the body's ends, so no wick
-    // stands past the body on this tape and no wick collider is made.
-    out[b + CL_LOW] = min(zo, zc);
-    out[b + CL_HIGH] = max(zo, zc);
+    out[b + CL_GREEN] = tape[k] >= (first > 0 ? tape[first - 1] : older) ? 1 : 0;
+    // The low and high over the three samples: the middle one stands past the body when the price went beyond both
+    // ends inside the candle - that is the wick (w1: a collider only there).
+    out[b + CL_LOW] = min(min(zo, zc), zm);
+    out[b + CL_HIGH] = max(max(zo, zc), zm);
   }
   return out;
 }
 
-/** The candle layer's height at a world point, Q16.16; 0 in a corridor, off the field's x, and beyond a body's ends. */
-export function candleHeightAt(layout, x, z) {
-  const dx = sub(x, CANDLE_X0);
+/**
+ * The candle layer's height at a world point, Q16.16: the ribbon. `shift` is the scroll in metres toward -x (the layout's
+ * slots are unshifted). Inside a body: H, less the ramp within R of the union's boundary - its own z-ends, and the parts of
+ * its x-faces its neighbour does not cover (the distance to such a part's nearest end where the neighbour does cover the
+ * point's z). A slot is wider than R, so no boundary two slots away is within reach. 0 off the ribbon.
+ */
+export function candleHeightAt(layout, x, z, shift = 0) {
+  if (x <= CANDLE_WEST || x >= CANDLE_EAST) return 0;
+  const xs = add(x, shift);
+  const dx = sub(xs, CANDLE_X0);
   if (dx < 0 || dx >= Math.imul(CANDLES, CANDLE_SLOT)) return 0;
   const c = idiv(dx, CANDLE_SLOT), b = Math.imul(c, CL_WORDS);
-  if (abs(sub(x, layout[b + CL_X])) >= CANDLE_BODY_HALF) return 0;
   const z0 = layout[b + CL_Z0], z1 = layout[b + CL_Z1];
   if (z <= z0 || z >= z1) return 0;
-  const d = min(sub(z, z0), sub(z1, z));
+  let d = min(min(sub(z, z0), sub(z1, z)), min(sub(x, CANDLE_WEST), sub(CANDLE_EAST, x)));
+  const left = sub(xs, add(CANDLE_X0, Math.imul(c, CANDLE_SLOT))), right = sub(Math.imul(CANDLE_SLOT, 1), left);
+  if (left < CANDLE_RAMP) d = min(d, faceDistance(layout, c - 1, z0, z1, z, left));
+  if (right < CANDLE_RAMP) d = min(d, faceDistance(layout, c + 1, z0, z1, z, right));
   return d >= CANDLE_RAMP ? CANDLE_H : mulFast(CANDLE_H, div(d, CANDLE_RAMP));
+}
+
+/**
+ * Distance from a point `across` metres inside a body's x-face (at height z, the body spanning z0..z1) to the free part of
+ * that face - where the neighbour in slot `n` does not cover. No neighbour: the whole face is free.
+ */
+function faceDistance(layout, n, z0, z1, z, across) {
+  if (n < 0 || n >= CANDLES) return across;
+  const nb = Math.imul(n, CL_WORDS), n0 = layout[nb + CL_Z0], n1 = layout[nb + CL_Z1];
+  if (z <= n0 || z >= n1) return across;                 // the neighbour does not cover this z: the face is free here
+  let best = 2147483647;
+  if (n0 > z0) best = min(best, length2(across, sub(z, n0)));   // the free part below the neighbour
+  if (n1 < z1) best = min(best, length2(across, sub(n1, z)));   // the free part above it
+  return best;
 }
 
 /**
@@ -119,52 +160,17 @@ export function wickSegments(layout, c, out) {
   return n;
 }
 
-/**
- * Each candle's two x-faces as solid boxes for the truck (resolveSolids): zero thickness on the face line, the body's
- * z-length, from 0 to the plateau IN THE CANDLE LAYER'S OWN HEIGHT - resolved with the truck's height in that layer
- * (0 in a corridor, H on a plateau), not with the world height. At the apron's absolute height a berm or the band's
- * relief lifting the ground past 2 m put the floor above the wall's top and the wall was skipped: measured, 14 of 184
- * straight drives at pinned z (seeds 1-8) passed through a candle, 54 face crossings. Zero thickness keeps the corridor 2.8 m and the plateau 3.7 m - the circles'
- * radius (1.275 m) is far more than a tick's travel, so a centre never reaches the line. Then the wick past the body
- * (w1): a 1 m x 1 m, 9 m pillar over each protruding segment only, at the candle's centre x.
- */
-export function candleWalls(layout, apron) {
-  const box = new Int32Array(Math.imul(Math.imul(CANDLES, 4), BOX_WORDS));
-  const seg = new Int32Array(4);
-  let n = 0;
-  for (let c = 0; c < CANDLES; c++) {
-    const l = Math.imul(c, CL_WORDS), z0 = layout[l + CL_Z0], z1 = layout[l + CL_Z1];
-    for (let f = 0; f < 2; f++) {
-      const b = Math.imul(add(Math.imul(c, 2), f), BOX_WORDS);
-      box[b] = f === 0 ? sub(layout[l + CL_X], CANDLE_BODY_HALF) : add(layout[l + CL_X], CANDLE_BODY_HALF);
-      box[b + 1] = add(z0, (sub(z1, z0)) >> 1);
-      box[b + 2] = 0;
-      box[b + 3] = (sub(z1, z0)) >> 1;
-      box[b + 4] = 0;
-      box[b + 5] = CANDLE_H;
-    }
-    n = add(n, 2);
-  }
-  for (let c = 0; c < CANDLES; c++) {
-    const k = wickSegments(layout, c, seg);
-    for (let w = 0; w < k; w++) {
-      const b = Math.imul(n, BOX_WORDS), z0 = seg[Math.imul(w, 2)], z1 = seg[Math.imul(w, 2) + 1];
-      box[b] = layout[Math.imul(c, CL_WORDS) + CL_X];
-      box[b + 1] = add(z0, (sub(z1, z0)) >> 1);
-      box[b + 2] = WICK_HALF;
-      box[b + 3] = (sub(z1, z0)) >> 1;
-      box[b + 4] = 0;
-      box[b + 5] = WICK_HEIGHT;
-      n = add(n, 1);
-    }
-  }
-  return { n, box };
+/** Nothing in the chart is a solid (492f128): no x-face walls, no wick collider. Kept so the caller has one shape. */
+export function candleWalls() {
+  return { n: 0, box: new Int32Array(0) };
 }
 
 /** The renderer's words (CV_*): what CandleTerrain meshes. Returns the words written. */
-export function writeCandleView(layout, apron, out) {
+export function writeCandleView(layout, apron, out, taken = 0, shift = 0) {
   out[CV_COUNT] = CANDLES;
   out[CV_APRON] = apron;
+  out[CV_SHIFT] = shift;
+  out[CV_FORMING] = (taken & 1) ? CANDLES - 1 : -1;       // odd: the newest slot has one sample
   for (let c = 0; c < CANDLES; c++) {
     const l = Math.imul(c, CL_WORDS), b = add(CV_FIRST, Math.imul(c, CV_WORDS));
     out[b] = sub(layout[l + CL_X], CANDLE_BODY_HALF);

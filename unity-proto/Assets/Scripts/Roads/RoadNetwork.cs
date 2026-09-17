@@ -43,10 +43,15 @@ public class RoadNetwork : MonoBehaviour
     /// and off at the edge a tank half on the road would step 45 cm as it
     /// crossed the line.
     /// </summary>
+    /// <summary>Inside the chart band (§4.15: |x| &lt;= 104 m, |z| &lt;= 54 m), where no road is drawn.</summary>
+    public static bool InBand(Vector3 p) => Mathf.Abs(p.x) <= BandX && Mathf.Abs(p.z) <= BandZ;
+    public const float BandX = 104f, BandZ = 54f;
+
     public float SurfaceHeight(float x, float z)
     {
         float bare = Ground(x, z);
         if (Model == null) return bare;
+        if (InBand(new Vector3(x, 0f, z))) return bare;          // no deck in the band: the core's surface
 
         var lane = Model.LaneAt(x, z, RoadModel.HalfWidth + Shoulder);
         if (lane == null) return bare;
@@ -141,6 +146,7 @@ public class RoadNetwork : MonoBehaviour
     public float Lift(float x, float z)
     {
         if (Model == null) return 0f;
+        if (InBand(new Vector3(x, 0f, z))) return 0f;
 
         var lane = Model.LaneAt(x, z, RoadModel.HalfWidth + Shoulder);
         if (lane == null) return 0f;
@@ -308,6 +314,8 @@ public class RoadNetwork : MonoBehaviour
         {
             // a cut section is missing, not merely dark: the road ends in rubble
             if (severity[i] > 0.82f || severity[i + 1] > 0.82f) continue;
+            // NO ROADS INSIDE THE CHART BAND (§4.15, the owner 2026-09-17 13:42): the corridors are the roads there
+            if (InBand(verts[i * 2]) || InBand(verts[i * 2 + 1]) || InBand(verts[i * 2 + 2]) || InBand(verts[i * 2 + 3])) continue;
             // Winding matters: with left at v and right at v+1, the order
             // (v, v+2, v+1) puts the normal in -Y and Unity culls the road as a
             // back face - drawn every frame and invisible from above.

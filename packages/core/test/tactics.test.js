@@ -4,8 +4,10 @@
 // before the lobby in Unity's RunEndsAtDeliveredTests.AWreckShowsWastedBeforeTheLobby.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { init, step, teleport, groundAt, submitSample } from '../src/sim.js';
+import { init, step, teleport, groundAt, submitSample, frontAt } from '../src/sim.js';
 import { frontlineZ } from '../src/rules/frontline.js';
+import { levelled } from '../src/rules/candles.js';
+import { heightAtWorld } from '../src/rules/ground.js';
 import * as L from '../src/state.js';
 import * as T from '../src/rules/tactics.js';
 import { stepUnit } from '../src/rules/army.js';
@@ -153,14 +155,14 @@ test('a team\'s objective weight is 2 on an objective\'s lane, 1 beside one, 0 e
   }
 });
 
-test('push moves one 8 m step on its re-read only, on a confirmed verdict with the team on post, stays in [-8, 24], at most 16 on RIDGE; holders flip only on their re-read', () => {
+test('push moves one 8 m step on its re-read only, on a confirmed verdict with the team on post, stays in [-8, the lane ceiling], at most 16 on a quiet RIDGE; holders flip only on their re-read', () => {
   const pushTick = (s, w, tick) => ((tick + ((T.mix(s[L.O_TACTICS + T.TAC_SEED], 300 + w) >>> 1) % 300)) % 300) === 0;
   const holdTick = (s, o, tick) => ((tick + ((T.mix(s[L.O_TACTICS + T.TAC_SEED], 400 + o) >>> 1) % 300)) % 300) === 0;
   // Seeds 1-10: the hold cadence steps a push rarely (measured 0-10 steps a seed, 50 in all; seeds 1, 2 and 8 none).
   let steps = 0, flips = 0;
   for (const seedWord of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) {
     const st = init(seedWord), s = st.i32, lanes = lanesOf(s);
-    const seamAt = (x) => frontlineZ(st.tape, x, 130 * ONE, 85 * ONE), ground = (x, z) => groundAt(st, x, z);
+    const seamAt = (x) => frontAt(st, x), ground = (x, z) => groundAt(st, x, z);
     for (let t = 0; t < 3600; t++) {
       const before = Array.from({ length: 12 }, (_, w) => s[L.O_TACTICS + T.TAC_PUSH + w]);
       const verdictBefore = Array.from({ length: 12 }, (_, w) => s[L.O_TACTICS + T.TAC_VERDICT + w]);
@@ -173,8 +175,14 @@ test('push moves one 8 m step on its re-read only, on a confirmed verdict with t
       const tick = s[L.O_TICK];
       for (let w = 0; w < 12; w++) {
         const now = s[L.O_TACTICS + T.TAC_PUSH + w], d = now - before[w];
-        assert.ok(now >= -8 * ONE && now <= 24 * ONE, `seed ${seedWord} tick ${tick}: team ${w} push ${now / ONE} m`);
-        if (s[L.O_TACTICS + T.TAC_SLOT + w] === lanes[T.OBJ_RIDGE]) assert.ok(now <= 16 * ONE, `seed ${seedWord} tick ${tick}: team ${w} on RIDGE pushed ${now / ONE} m`);
+        // The ceiling is the lane's own (laneTerms, §4.11-§4.14): 16 on RIDGE's lane and 24 elsewhere, raised by the trend and
+        // by an assault (40 on its lane, 32 beside). Measured on the moving chart (2026-09-17): seed 6 tick 2332, team 11 at
+        // 32 m beside an assault - [-8, 24] held on these seeds only while no assault pushed past 24.
+        const ceiling = T.laneTerms(s, L.O_TACTICS, w < 6 ? -1 : 1, s[L.O_TACTICS + T.TAC_SLOT + w]).ceiling;
+        assert.ok(now >= -8 * ONE, `seed ${seedWord} tick ${tick}: team ${w} push ${now / ONE} m`);
+        if (d > 0) assert.ok(now <= ceiling, `seed ${seedWord} tick ${tick}: team ${w} pushed to ${now / ONE} m over its ceiling ${ceiling / ONE}`);
+        if (s[L.O_TACTICS + T.TAC_SLOT + w] === lanes[T.OBJ_RIDGE] && T.assaultPhase(s, L.O_TACTICS, w < 6 ? -1 : 1) === T.ASSAULT_IDLE && T.trendFor(s, L.O_TACTICS, w < 6 ? -1 : 1) <= 0)
+          assert.ok(now <= 16 * ONE, `seed ${seedWord} tick ${tick}: team ${w} on RIDGE pushed ${now / ONE} m`);
         if (d === 0) continue;
         // a scoot onto RIDGE may cut a push to the crest's 16 m on the shooter's tick
         const ontoRidge = s[L.O_TACTICS + T.TAC_SLOT + w] === lanes[T.OBJ_RIDGE] && now === 16 * ONE && d < 0;
@@ -261,7 +269,7 @@ test('a team scoots at most once in 1200 ticks and only with both living tanks o
   let scoots = 0;
   for (const seedWord of [1, 2, 3, 4, 5]) {
     const st = init(seedWord), s = st.i32;
-    const seamAt = (x) => frontlineZ(st.tape, x, 130 * ONE, 85 * ONE), ground = (x, z) => groundAt(st, x, z);
+    const seamAt = (x) => frontAt(st, x), ground = (x, z) => groundAt(st, x, z);
     const lastScoot = new Map();
     for (let t = 0; t < 3600; t++) {
       const slots = Array.from({ length: 12 }, (_, w) => s[L.O_TACTICS + T.TAC_SLOT + w]);
@@ -292,7 +300,7 @@ test('a pair swaps roles only with both tanks on post: the post is held until th
   let swaps = 0;
   for (const seedWord of [1, 2, 3, 4, 5]) {
     const st = init(seedWord), s = st.i32;
-    const seamAt = (x) => frontlineZ(st.tape, x, 130 * ONE, 85 * ONE), ground = (x, z) => groundAt(st, x, z);
+    const seamAt = (x) => frontAt(st, x), ground = (x, z) => groundAt(st, x, z);
     const near = (i, tick) => { const side = T.teamOf(i).side, p = T.postOf(s, L.O_TACTICS, i, tick), line = seamAt(p.x) + side * p.depth;
       let hold = line;
       if (!p.bounding) { let br = -Infinity; for (let c = -2; c <= 2; c++) { const z = line + c * 2 * ONE; const r = ground(p.x, z - side * 6 * ONE) - ground(p.x, z); if (r > br) { br = r; hold = z; } } }
@@ -317,34 +325,28 @@ test('a pair swaps roles only with both tanks on post: the post is held until th
   assert.ok(swaps > 20, `only ${swaps} swaps - nothing checked`);
 });
 
-test('an overwatch post on the 30 m line stands behind a crest that hides the hull: >= 2 m within 6 m toward the enemy (§4.1, §4.15)', async () => {
-  // The berm is 2.4 m over the higher of the relief at its foot and at its top. Where the relief itself climbs more than
-  // ~0.6 m between the two, the crest passes 3 m and the turret no longer sees over it: counted and printed, not hidden
-  // - tools/measure-hulldown-killzone.mjs measures that share (3.6% of overwatch on-post ticks, commit body).
-  const over = [];
-  const { emplacementAt } = await import('../src/rules/emplacements.js');
+test('passability: nothing the core adds in the band stands over 1 m or climbs over 25%, at any scroll (§4.15, 14:40)', () => {
+  // the owner 2026-09-17 14:40 "make it so trucks and tanks get through". The 2.4 m hull-down berms (e0f4ed7) are withdrawn;
+  // what the core adds on the levelled relief is the candle ribbon alone. Read as surface less the levelled relief (no
+  // craters on a fresh round), on five seeds, at the open and after four samples and 900 ticks of glide.
   for (const seedWord of [1, 2, 3, 4, 5]) {
-    const st = init(seedWord);
-    // The berms read the relief as the surface does (§4.15: the band's pancake), apron and sample parity given: read raw,
-    // seed 3's forward line stood on 1.391 m of berm that the surface holds at 0.413 m.
-    const seamAt = (x) => frontlineZ(st.tape, x, 130 * ONE, 85 * ONE), g = (x, z) => groundAt(st, x, z);
-    for (let slot = 0; slot < T.SLOTS_PER_SIDE; slot++) {
-      for (const side of [-1, 1]) for (const hull of [-6, 6]) {
-        const x = T.slotX(slot) + hull * ONE;
-        if (Math.abs(x) > 83 * ONE) continue;                         // the levelled aprons take no berm
-        const z = seamAt(x) + side * 30 * ONE;
-        let top = -Infinity; for (let d = 1; d <= 6; d++) top = Math.max(top, g(x, z - side * d * ONE));
-        const crest = (top - g(x, z)) / ONE;
-        assert.ok(crest >= 2, `seed ${seedWord} slot ${slot} side ${side} hull ${hull}: crest ${crest.toFixed(2)} m in front of the overwatch line`);
-        if (crest >= 3) over.push(`seed ${seedWord} slot ${slot} side ${side} hull ${hull}: ${crest.toFixed(2)} m`);
-      }
-      const between = T.slotX(slot) + 13 * ONE;                       // the flat 5 m between two lanes
-      if (slot < 6) assert.equal(emplacementAt(between, seamAt(between) - 25 * ONE, st.tape, st.ground, 130 * ONE, 85 * ONE, st.apron, 0), 0);
+    const st = init(seedWord), s = st.i32, open = s[L.O_TACTICS + T.TAC_MARKET + T.MK_OPEN];
+    for (const phase of [0, 1]) {
+      if (phase) for (let t = 1; t <= 900; t++) { if (t % 300 === 0) submitSample(st, open + ((t * 7919) % 4001) - 1500); step(st, 0, 0, 0, ONE, 0); }
+      const added = (x, z) => groundAt(st, x, z) - levelled(heightAtWorld(st.ground, x, z, 130 * ONE, 85 * ONE), st.apron, x, z, st.ground, 130 * ONE, 85 * ONE);
+      const h = ONE >> 2;
+      let most = 0, steep = 0;
+      for (let x = -104 * ONE; x <= 104 * ONE; x += ONE >> 1)
+        for (let z = -54 * ONE; z <= 54 * ONE; z += ONE) {
+          const a = added(x, z);
+          most = Math.max(most, a);
+          steep = Math.max(steep, Math.abs(added(x + h, z) - a) / h, Math.abs(added(x, z + h) - a) / h);
+        }
+      assert.ok(most <= ONE, `seed ${seedWord}: ${(most / ONE).toFixed(3)} m added in the band`);
+      assert.ok(steep <= 0.25 + 1e-3, `seed ${seedWord}: an added grade of ${(steep * 100).toFixed(1)}%`);
+      if (seedWord === 1) console.log(`  seed 1 ${phase ? 'after 900 ticks' : 'at the open'}: most added ${(most / ONE).toFixed(3)} m, steepest added grade ${(steep * 100).toFixed(1)}%`);
     }
-    for (const x of [-100 * ONE, 90 * ONE]) assert.equal(emplacementAt(x, seamAt(x) + 25 * ONE, st.tape, st.ground, 130 * ONE, 85 * ONE, st.apron, 0), 0, 'a berm on an apron');
-    assert.equal(emplacementAt(0, seamAt(0) - 16 * ONE, st.tape, st.ground, 130 * ONE, 85 * ONE, st.apron, 0) < ONE, true, 'the forward line stands on a berm');
   }
-  console.log(`  posts where the relief lifts the crest over a 3 m turret: ${over.length}${over.length ? ' - ' + over.join('; ') : ''}`);
 });
 
 test('an assault starts only on an objective the side does not hold, never while it holds all three, runs at most 1800 ticks, and the next waits 45-90 s (§4.12)', () => {

@@ -27,14 +27,26 @@ export const FIELD_X0 = -4967627;                  // -75.79998 m
 export const FIELD_SLOT = 377241;                  // 5.75624 m
 const TAPE_HALF = 32768, TAPE_LAST_Q = Math.imul(SAMPLES - 1, ONE);
 
-/** The tape position (Q16.16 samples, unclamped) a world x reads, with `taken` samples submitted this round. */
-export function tapeAtX(x, taken) {
-  return add(add(Math.imul(taken & 1, ONE), Math.imul(divRound(sub(x, FIELD_X0), FIELD_SLOT), 2)), -TAPE_HALF);
+/**
+ * THE SCROLL (§4.15 movement, the owner 2026-09-17 13:49), in samples, Q16.16: how far the chart has slid toward the post
+ * office since its slots last lined up. One sample is half a slot (2.878 m at the spawn-B pitch) over the 300 ticks a
+ * sample lasts, 0.576 m/s; held at a whole sample when the next one is late. The pairing moves a candle one whole slot
+ * every second sample, so the slide runs 0..2 samples between those moves - `(1 - taken & 1)` whole samples plus the
+ * fraction - and every sample tick lands exactly where the slide had got to: no jump.
+ */
+export function scrollOf(taken, tick, sampleTick) {
+  const frac = clamp(div(sub(tick, sampleTick), 300), 0, ONE);      // ticks are whole: (tick - sampleTick) / 300 in Q16
+  return add(Math.imul(1 - (taken & 1), ONE), frac);
+}
+
+/** The tape position (Q16.16 samples, unclamped) a world x reads, with `taken` samples submitted and the chart `scroll`ed. */
+export function tapeAtX(x, taken, scroll = 0) {
+  return add(add(add(Math.imul(taken & 1, ONE), Math.imul(divRound(sub(x, FIELD_X0), FIELD_SLOT), 2)), -TAPE_HALF), scroll);
 }
 
 /** The world x of a tape position (Q16.16 samples): the inverse of `tapeAtX`. */
-export function xAtTape(q, taken) {
-  return add(FIELD_X0, mulFast(sub(add(q, TAPE_HALF), Math.imul(taken & 1, ONE)) >> 1, FIELD_SLOT));
+export function xAtTape(q, taken, scroll = 0) {
+  return add(FIELD_X0, mulFast(sub(add(sub(q, scroll), TAPE_HALF), Math.imul(taken & 1, ONE)) >> 1, FIELD_SLOT));
 }
 
 /**
@@ -82,11 +94,11 @@ export function xAtTape(q, taken) {
 const WINDOW = 21;
 const HALFW = 10;
 
-function smooth(hist, j) {
+function smooth(hist, j, older) {
   let sum = 0;
   for (let k = j - HALFW; k <= j + HALFW; k++) {
-    const q = k < 0 ? 0 : (k > SAMPLES - 1 ? SAMPLES - 1 : k);
-    sum += hist[q];
+    // west of the tape: the sample that left it last, fading into the oldest (§4.15 glide); east: the newest, held
+    sum += k < 0 ? older : hist[k > SAMPLES - 1 ? SAMPLES - 1 : k];
   }
   // `div`, not a bare `/`: the determinism guard allows the operator only
   // inside the arithmetic file, and it is right to. Exact here with room to
@@ -96,20 +108,23 @@ function smooth(hist, j) {
   return div(sum, Math.imul(WINDOW, ONE));
 }
 
-export function frontlineZ(hist, x, halfX, halfZ, taken = 0) {
+export function frontlineZ(hist, x, halfX, halfZ, taken = 0, scroll = 0, scaleLo = null, scaleHi = null, older = hist[0]) {
   if (SAMPLES < 2) return 0;
 
   // position along the tape over the candle field (tapeAtX), held at the tape's ends beyond it
-  const at = clamp(tapeAtX(x, taken), 0, TAPE_LAST_Q);
-  const i = clamp(at >> 16, 0, SAMPLES - 2);
+  // Not clamped to the tape (§4.15 "nothing jumps"): a position clamped at an end reads a fixed tape index while the tape
+  // moves under it - 3.6 m at x 102 on every sample. Past the ends `smooth` holds the edges, flat by HALFW + 1 samples out.
+  const at = clamp(tapeAtX(x, taken, scroll), Math.imul(-HALFW - 1, ONE), Math.imul(SAMPLES + HALFW, ONE));
+  const i = at >> 16;
   const f = at & 65535;
 
-  const a = smooth(hist, i), b = smooth(hist, i + 1);
+  const a = smooth(hist, i, older), b = smooth(hist, i + 1, older);
   const price = add(a, mulFast(sub(b, a), f));
 
   // the window's own range decides the scale, so a quiet market still moves
   let lo = hist[0], hi = hist[0];
   for (let k = 1; k < SAMPLES; k++) { lo = min(lo, hist[k]); hi = max(hi, hist[k]); }
+  if (scaleLo !== null) { lo = scaleLo; hi = scaleHi; }   // the window lerped over the sample (§4.15 rescale)
   const span = sub(hi, lo);
   if (span <= 0) return 0;
 
