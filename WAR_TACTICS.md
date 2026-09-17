@@ -174,7 +174,7 @@ the owner ordered is in the state and not on the screen. Each is a client test.
   slot**, body from open-z to close-z (a 2 m plateau the war drives on, §4.15), wick from low to high
   (a solid pillar), green when close > open (a rising price - the bulls' ground) and red when it fell (the
   bears'). The newest candle, at the miner's end, is **forming**: it grows as samples arrive, and the
-  whole chart scrolls 4.13 m toward the post office per sample. From above - map, minimap, gunship - it
+  whole chart scrolls 3.3 m toward the post office per sample. From above - map, minimap, gunship - it
   reads as a TradingView chart with two armies on it; from the cab the ground under the truck is a red
   or a green band and the line ahead is the front. **The candles are terrain (the owner 2026-09-16 20:10:
   "make the candles drivable, a small ramp on every side, so they are not a foreign body but part of
@@ -654,9 +654,8 @@ between assaults there is a lull, the line breathes as §4.10, and men crawl int
 - **What it does**, for the attacking side while it runs:
   - the objective's lane and both neighbouring lanes are the **assault lanes**: `w = 3` on the lane,
     `w = 2` beside it (§4.10, §4.11), the rest is `+16` on the lane, and the push **ceiling is 40**
-    (forward hull 24 m across the seam, overwatch 10 m across) on the lane and 32 beside it - RIDGE
-    included (a crest is taken by going over it; the 16 cap of §4.11 is for holding it, and returns at
-    consolidation). At 8 m per 5 s a team on the lane goes from rest to ceiling in 15 s: the player sees
+    (forward hull 24 m across the seam, overwatch 10 m across) on the lane and 32 beside it. At 8 m
+    per 5 s a team on the lane goes from rest to ceiling in 15 s: the player sees
     it build.
   - the infantry in the assault lanes has its lead clamp raised from 8 m to **24 m** across the seam
     (§12.1) and its fire teams are pinned at **240** instead of 120 (§11.5): under fire they still rush;
@@ -710,7 +709,7 @@ for, and the core does not draw it yet:**
 - **Sample cadence (RULED HERE): one sample per 5 s (300 ticks).** A sample shifts the whole tape one
   slot toward -x, 3.3 m of field (208 m / 63), so the front's shape **scrolls** left at 0.65 m/s (208 m / 63 per 5 s) and the
   newest price enters at the miner's end. That is inside a man's 2.8 m/s and a tank's 6.8; at one sample
-  a second the scroll would be 4.13 m/s and the men could never close on the line. 64 samples at 5 s is
+  a second the scroll would be 3.3 m/s and the men could never close on the line. 64 samples at 5 s is
   5 min 20 s of price on the ground. A new sample can also move the window's low or high, and then the
   whole curve rescales in one tick - that is the market re-drawing the front, and it is allowed: the
   filter's 1.42 m/m limit is on the shape, not on how fast the shape changes.
@@ -913,9 +912,10 @@ a thing the truck drives on is settled state (multiplayer_p2p.md §0.5), so the 
   takes 57% of its slot, as a chart's bar does, and the 2.8 m between two bodies is ground at ground
   level - a passage running north-south across the whole front, 31 of them, one every 6.5 m. A truck
   (2.55 m over its body circles) drives it, slowly; a tank pair (12 m) does not fit and goes over the top. The
-  corridors scroll with the chart at 0.83 m/s: a truck standing in one is carried sideways by its wall
-  at that speed, which is slow enough to steer against and is the chart moving under the wheels. at the seam's scale (§4.13). Each candle is its own island in its slot with 3.5 m of flat
-  ground to the next: 32 bars with gaps, as on the screen.
+  corridors scroll with the chart at 0.65 m/s: a truck standing in one is carried sideways by its wall
+  at that speed, which is slow enough to steer against and is the chart moving under the wheels. Each
+  candle is its own island in its slot with 2.8 m of flat ground to the next: 32 bars with gaps, as on
+  the screen.
 - **The ramps are on the z-ends only**, width **R = 5 m**, as wide as the body: `h = H x
   clamp(d / R, 0, 1)`, `d` the distance in z from the end, a straight 40% grade (22°) up onto the
   plateau from north or south. The terrain's own relief reaches 55% (`RELIEF_PEAK` 6 m over half a
@@ -940,7 +940,7 @@ a thing the truck drives on is settled state (multiplayer_p2p.md §0.5), so the 
   the wick as a column of light with a thin core, and a hull passing through light is what it looks
   like. Only the truck must use a corridor, a ramp, and go round the wick.
 - **The glow** above the plateau, 2 m to 6 m, is light (§0.2): no collision, no rule reads it.
-- **It moves, so it moves smoothly.** The tape shifts one sample per 5 s (§4.13), which is a 4.13 m
+- **It moves, so it moves smoothly.** The tape shifts one sample per 5 s (§4.13), which is a 3.3 m
   jump in x - fine for a post, not for ground under a wheel. So the candle layer (and, for free, the
   seam: `frontlineZ` is read at `x + offset`) carries a **continuous scroll**: `offset = -3.3 m x
   (tick - sampleTick) / 300`, reset to 0 on the sample tick as the tape shifts. The chart glides toward
@@ -952,7 +952,7 @@ a thing the truck drives on is settled state (multiplayer_p2p.md §0.5), so the 
 - **What it does to the war**, all of it emergent from rules already written:
   - **Hull-down** (§4.1): the overwatch tank's crest search finds a plateau edge as it finds a hill: a
     tank sits below the edge with its gun over it. The chart's steps are the war's positions, and they
-    walk 0.83 m/s toward the post office, so a hull-down tank re-reads its candidate and creeps with
+    walk 0.65 m/s toward the post office, so a hull-down tank re-reads its candidate and creeps with
     it (a step, not a fidget: the §0 wiggle row is measured with the scroll on).
   - **Cover** (§11.3): a plateau edge that stands between a man and the enemy is a **candle lip**, a
     third kind of cover place: one place every 4 m along the edge, at the foot of the ramp on the man's
@@ -963,7 +963,7 @@ a thing the truck drives on is settled state (multiplayer_p2p.md §0.5), so the 
   - **The truck** (§1.2): a plateau under it is ground; a wick is a wall; nothing in the war changes for
     it. A wreck on a plateau is a wreck on a plateau.
   - **Item 2** stays out: no rule here lets a tank read a wreck or move a whole line.
-- **Why 2 m and not 6**: a 6 m plateau needs a 15 m ramp at the same grade, which on an 8.1 m body is
+- **Why 2 m and not 6**: a 6 m plateau needs a 15 m ramp at the same grade, which on a 3.7 m body is
   no plateau at all - the candle becomes a ridge. Two metres hides a hull (3 m) to the turret, hides a
   prone man entirely, keeps the ramp short enough that the body's edge is still a line, and the glow
   gives the 6 m the eye wants. the owner can retune H and R; the grade `H / R` is the number that matters.
@@ -1044,7 +1044,7 @@ fewer tanks.
 Ten seconds - two samples - of the tape as terrain: a 3.7 m wide, 2 m plateau in a 6.5 m slot, 5 m
 ramps on the z-ends, walls on the x-faces, a 2.8 m flat corridor to the next, a solid wick, a glow to
 6 m. 32 on the ground; the whole round in the HUD chart. Green
-up, red down. Scrolls 0.83 m/s toward the post office. Hull-down crests and candle-lip cover come with
+up, red down. Scrolls 0.65 m/s toward the post office. Hull-down crests and candle-lip cover come with
 it (§4.15).
 
 **Lead / momentum**
