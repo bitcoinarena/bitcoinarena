@@ -195,9 +195,7 @@ export class Verifier {
       // THE WORKER READS THE RUN WHEN THERE IS A FILE TO READ IT FROM (the owner 2026-09-17 19:15): this loop feeds
       // pictured trucks, and a stored run's rows are not its work. A store with no file - a test's ':memory:' - is
       // read here as before.
-      const store = this.round.db.blwpPath || null;
-      const transcript = store ? null : timed(`close read transcript ${hex(entryId).slice(0, 8)}`,
-        () => this.round.transcript(roundIdBytes, entryId), { over: 20 });
+      const run = this.#runFor(roundIdBytes, entryId);
       const objected = this.round.objected(roundIdBytes, entryId);
       this.queued.push({ entryId, objected });
       // THE PEERS' RECEIPTS BEFORE THE CANONICAL CHAIN IS TAKEN (13C). Each
@@ -209,8 +207,7 @@ export class Verifier {
         .then(() => timed(`close hand to worker ${hex(entryId).slice(0, 8)}`, () => this.pool.submit({ core: this.#coreOf(roundIdBytes),
         key: `${hex(roundIdBytes)}:${hex(entryId)}`,
         objected,
-        transcript,
-        source: store ? { store, roundId: roundIdBytes, entryId } : null,
+        ...run,
         entry,
         // The WORLD seed's half of the same published value.
         options: { roundRandomness: beacon.hash },
@@ -716,6 +713,18 @@ export class Verifier {
   }
 
   /**
+   * WHAT A WORKER IS GIVEN OF A RUN: its name when this store is a file, its rows when it is not (a test's memory).
+   * The daemon's own thread reads no stored run it does not have to - it is the thread that pushes another player's
+   * truck (the owner 2026-09-17 19:15, the ghost lag).
+   */
+  #runFor(roundIdBytes, entryIdBytes) {
+    const store = this.round.db.blwpPath || null;
+    return store
+      ? { transcript: null, source: { store, roundId: roundIdBytes, entryId: entryIdBytes } }
+      : { transcript: this.round.transcript(roundIdBytes, entryIdBytes), source: null };
+  }
+
+  /**
    * THE CLOSE, ONCE MORE, FOR A RUN THIS SIGNER NODE COULD NOT SIGN AT ITS CLOSE
    * (M3.3-34, the Daily's close). A signer node whose peer was down or unreachable at
    * the close could not pull that peer's receipts, so it could neither form the
@@ -727,7 +736,11 @@ export class Verifier {
    * inside the result window; past it, a signer node still unable to retrieve the
    * transcript decides by §13C (the owner 2026-09-15 07:49, #unretrievedPastWindow).
    */
-  async retryClose(roundIdBytes, entryIdBytes) {
+  retryClose(roundIdBytes, entryIdBytes) {
+    return timed(`close retry ${hex(entryIdBytes).slice(0, 8)}`, () => this.#retryClose(roundIdBytes, entryIdBytes), { over: 50 });
+  }
+
+  async #retryClose(roundIdBytes, entryIdBytes) {
     // A RUN THIS SIGNER NODE HAS SIGNED IS NOT CLOSED AGAIN (as `retry`): one signer node, one result.
     if (this.round.hasResult(roundIdBytes, entryIdBytes, this.round.pubkey))
       return { entryId: entryIdBytes, stored: false, why: 'this signer node has already signed this run' };
@@ -755,7 +768,7 @@ export class Verifier {
     const options = { roundRandomness: beacon.hash };
     const answer = await this.pool.submit({ core: this.#coreOf(roundIdBytes), key: `${hex(roundIdBytes)}:${hex(entryIdBytes)}:retry:${++retryJobs}`,
       objected: this.round.objected(roundIdBytes, entryIdBytes),
-      transcript: this.round.transcript(roundIdBytes, entryIdBytes), entry: found.entry, options });
+      ...this.#runFor(roundIdBytes, entryIdBytes), entry: found.entry, options });
     return this.#keep({ roundIdBytes, entryId: entryIdBytes, entry: found.entry, contract, answer, options });
   }
 
@@ -932,7 +945,7 @@ export class Verifier {
         const answer = await this.pool.submit({ core: this.#coreOf(roundIdBytes),
           key: `${hex(roundIdBytes)}:${hex(entryIdBytes)}:rerun`,
           objected: true,
-          transcript: this.round.transcript(roundIdBytes, entryIdBytes),
+          ...this.#runFor(roundIdBytes, entryIdBytes),
           entry: found.entry,
           options: { roundRandomness: beacon.hash },
         });
@@ -1159,7 +1172,7 @@ export class Verifier {
     const work = this.pool.submit({ core: this.#coreOf(roundIdBytes),
       key: `${hex(roundIdBytes)}:${hex(entryIdBytes)}:retry`,
       objected: this.round.objected(roundIdBytes, entryIdBytes),
-      transcript: this.round.transcript(roundIdBytes, entryIdBytes),
+      ...this.#runFor(roundIdBytes, entryIdBytes),
       entry: found.entry,
       options: { roundRandomness: beacon.hash },
     }).then((answer) => this.#keep({
