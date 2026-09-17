@@ -11,6 +11,7 @@
 //
 import { PerformanceObserver, constants } from 'node:perf_hooks';
 import { readFileSync } from 'node:fs';
+import { createHook } from 'node:async_hooks';
 
 /**
  * THE PROCESSOR THIS THREAD ITSELF USED, in ms - not the process's, which counts every replay worker and would say a
@@ -77,14 +78,42 @@ function watchCollections() {
 }
 
 /**
+ * AND WHAT RAN THAT NOBODY TIMED. Measured live on the Daily: stalls of 322-441 ms with 160-300 ms of this thread's
+ * processor and NO timed phase inside them at all - work, and not the machine, and not many small frames either. A
+ * label cannot be added to code nobody has identified, so this names the callback's KIND instead: node hands every
+ * asynchronous callback a resource type (a socket read is TCPWRAP, a timer is Timeout, a settled promise is PROMISE),
+ * and a callback that held the loop 5 ms or more is written into the same ring the watcher reads. It costs a hook on
+ * every async callback, so it is opt-in: BLWP_NAME_ASYNC=1.
+ */
+function nameAsyncWork() {
+  const running = new Map();
+  const hook = createHook({
+    before(id) { running.set(id, performance.now()); },
+    after(id) {
+      const from = running.get(id);
+      if (from === undefined) return;
+      running.delete(id);
+      const to = performance.now();
+      if (to - from >= 5) notice(`a ${typeOf.get(id) || 'callback'}`, from, to);
+    },
+    init(id, type) { typeOf.set(id, type); if (typeOf.size > 4096) typeOf.delete(typeOf.keys().next().value); },
+    destroy(id) { typeOf.delete(id); running.delete(id); },
+  });
+  hook.enable();
+  return hook;
+}
+const typeOf = new Map();
+
+/**
  * THE LOOP WATCHES ITSELF AND SAYS WHAT HELD IT (the owner 2026-09-17 19:15, the ghost lag). Measured from outside, 32 of
  * the 34 stalls over 300 ms left on the Daily had no phase name at all: an outside pinger can only say WHEN the loop
  * stopped answering. This ticks every `every` ms and, when a tick is late by more than `over`, prints the labels that
  * were open, the garbage collections inside that window, and - when there were neither - says so in those words,
  * because "nothing was named" is the fact that tells an operator to time something new.
  */
-export function watchLoop({ every = 50, over = 250, say = console.log } = {}) {
+export function watchLoop({ every = 50, over = 250, say = console.log, names = process.env.BLWP_NAME_ASYNC === '1' } = {}) {
   watchCollections();
+  if (names) { nameAsyncWork(); say('[lag] every asynchronous callback is named while BLWP_NAME_ASYNC=1'); }
   let last = performance.now();
   let lastCpu = threadCpu();
   const timer = setInterval(() => {
