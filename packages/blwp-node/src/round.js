@@ -24,6 +24,7 @@ import {
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { toHex } from '../../protocol/src/hash.js';
+import { readTranscript } from './transcript-read.js';
 // 27A.7's node fee. The rate lives in one place and `genesis.js` writes it into
 // the genesis parameters, so a round naming a config has committed to it.
 import { feeMatchesEntry } from '../../protocol/src/fee.js';
@@ -1123,23 +1124,9 @@ export class Round {
    * rather than as a shorter list nobody can size.
    */
   transcript(roundIdBytes, entryIdBytes) {
-    const ticks = this.db.prepare(
-      'SELECT tick, words FROM ticks WHERE round_id = ? AND entry_id = ? ORDER BY tick').all(roundIdBytes, entryIdBytes);
-    const liq = this.db.prepare(
-      'SELECT tick, size FROM liquidations WHERE round_id = ? AND entry_id = ? ORDER BY tick').all(roundIdBytes, entryIdBytes);
-    const loads = this.db.prepare(
-      'SELECT tick, fee_sats, btc_hund FROM loads WHERE round_id = ? AND entry_id = ? ORDER BY tick').all(roundIdBytes, entryIdBytes);
-    const samples = this.db.prepare(
-      'SELECT tick, price FROM samples WHERE round_id = ? AND entry_id = ? ORDER BY tick').all(roundIdBytes, entryIdBytes);
-    const tapes = this.#tapes(roundIdBytes, entryIdBytes);
-    return {
-      tapes,
-      ticks: ticks.map((r) => ({ tick: r.tick, words: [...new Int32Array(new Uint8Array(r.words).buffer)] })),
-      liquidations: liq.map((r) => [r.tick, r.size]),
-      loads: loads.map((r) => [r.tick, r.fee_sats, r.btc_hund]),
-      samples: samples.map((r) => [r.tick, r.price]),
-    };
+    return readTranscript(this.db, roundIdBytes, entryIdBytes);
   }
+
 
   /** The live tapes of a run, `[tick, p0 .. p63]`. */
   #tapes(roundIdBytes, entryIdBytes) {

@@ -260,11 +260,18 @@ export function replay(transcript, entry, { core, seedWord, roundRandomness, mar
 export function replayInWorker(transcript, entry, options = {}) {
   // THE CORE CROSSES AS ITS HASH AND ITS MODULE, not as the object: the worker imports the adapter
   // itself, so no function is ever handed across a thread.
-  const { core, ...rest } = options;
+  //
+  // AND A STORED RUN CROSSES AS ITS NAME. `source` is a store's path and the two ids: the worker opens that file
+  // read-only and reads the run's inputs itself. Measured on the Daily (the owner 2026-09-17 19:15, the ghost lag): a
+  // close held the daemon's loop 554-1511 ms before it waited, none of its steps over 100 ms alone - it is the
+  // per-entry work of up to seven entries, and a transcript read is 21-31 ms of each. The loop that feeds pictured
+  // trucks does not read them any more. A caller holding a transcript already still hands it over as before.
+  const { core, source, ...rest } = options;
   if (!core || typeof core.url !== 'string') return Promise.resolve({ ok: false, why: NO_CORE_RULE });
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL(import.meta.url), {
-      workerData: { blwpReplay: true, transcript, entry, options: rest, core: { hash: core.hash, url: core.url, config: core.config } },
+      workerData: { blwpReplay: true, transcript, entry, source: source || null, options: rest,
+        core: { hash: core.hash, url: core.url, config: core.config } },
     });
     let answered = false;
     worker.once('message', (m) => { answered = true; resolve(m); });
@@ -278,9 +285,18 @@ export function replayInWorker(transcript, entry, options = {}) {
 // THE WORKER SIDE OF THE SAME FILE. Only reached when this module is started
 // as a Worker by `replayInWorker`; in the daemon's own thread it does nothing.
 if (!isMainThread && workerData && workerData.blwpReplay) {
-  const { transcript, entry, options, core } = workerData;
-  import(core.url).then((m) => {
-    parentPort.postMessage(replay(transcript, entry, { ...options, core: { hash: core.hash, url: core.url, config: core.config, adapter: m.CORE } }));
+  const { transcript, entry, source, options, core } = workerData;
+  import(core.url).then(async (m) => {
+    let inputs = transcript;
+    if (source) {
+      // READ HERE, NOT ON THE DAEMON'S LOOP. Read-only, and only the rows of this one run.
+      const { DatabaseSync } = await import('node:sqlite');
+      const { readTranscript } = await import('./transcript-read.js');
+      const db = new DatabaseSync(source.store, { readOnly: true });
+      try { inputs = readTranscript(db, source.roundId, source.entryId); }
+      finally { try { db.close(); } catch { /* closing */ } }
+    }
+    parentPort.postMessage(replay(inputs, entry, { ...options, core: { hash: core.hash, url: core.url, config: core.config, adapter: m.CORE } }));
     parentPort.close();
   }, (e) => {
     parentPort.postMessage({ ok: false, why: `the core named for that run could not be loaded: ${e.message}` });
