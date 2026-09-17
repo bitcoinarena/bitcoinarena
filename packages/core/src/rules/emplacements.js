@@ -42,7 +42,7 @@ const PITCH = Math.imul(27, ONE);
 export function emplacementAt(x, z, tape, ground, halfX, halfZ, apron) {
   // `apron` given: the relief as the surface reads it, levelled in the chart band (§4.15)
   const relief = (px, pz) => (apron === undefined ? heightAtWorld(ground, px, pz, halfX, halfZ)
-                                                  : levelled(heightAtWorld(ground, px, pz, halfX, halfZ), apron, px, pz));
+                                                  : levelled(heightAtWorld(ground, px, pz, halfX, halfZ), apron, px, pz, ground, halfX, halfZ));
   const ax = abs(x);
   if (ax >= NONE_X) return 0;
   const first = slotX(0);

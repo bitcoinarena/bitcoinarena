@@ -553,12 +553,12 @@ function craterCut(s, x, z) {
  * all come through here now.
  */
 export function surfaceAt(st, x, z) {
-  // relief levelled in the chart band (§4.15) + the hull-down emplacements (rules/emplacements.js) + the candles - craters
+  // relief as the static chart band holds it (§4.15: pancake inside, cone outside) + the hull-down emplacements (rules/emplacements.js) + the candles - craters
   if (!st.candles) {
     return sub(add(heightAtWorld(st.ground, x, z, HALF_X, HALF_Z), emplacementAt(x, z, st.tape, st.ground, HALF_X, HALF_Z)),
                craterCut(st.i32, x, z));
   }
-  const relief = levelled(heightAtWorld(st.ground, x, z, HALF_X, HALF_Z), st.apron, x, z);
+  const relief = levelled(heightAtWorld(st.ground, x, z, HALF_X, HALF_Z), st.apron, x, z, st.ground, HALF_X, HALF_Z);
   return sub(add(add(relief, emplacementAt(x, z, st.tape, st.ground, HALF_X, HALF_Z, st.apron)), candleHeightAt(st.candles, x, z)),
              craterCut(st.i32, x, z));
 }

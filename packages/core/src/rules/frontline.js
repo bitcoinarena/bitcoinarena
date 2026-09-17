@@ -8,8 +8,12 @@ import { ONE, add, sub, mulFast, div, clamp, min, max } from '../fixed.js';
 
 export const SAMPLES = 64;
 
-/** The seam's reach either side of z = 0 as a share of the half depth, Q16.16 (0.72, see `frontlineZ`). */
-export const FRONT_DEPTH = 47186;
+/**
+ * The seam's reach either side of z = 0 as a share of the half depth, Q16.16: 0.53, +-45 m (WAR_TACTICS.md §4.15, the owner
+ * 2026-09-17 09:40: a smaller static chart, so the relief outside the band stands behind the lines). It was 0.72 (C#'s
+ * +-61.2 m, see `frontlineZ`); 0.53 x 65536 = 34734.08.
+ */
+export const FRONT_DEPTH = 34734;
 
 /**
  * Frontline z at a world x. `hist` is an Int32Array of SAMPLES prices in

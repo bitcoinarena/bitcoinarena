@@ -1,7 +1,7 @@
 // THE CANDLES ARE TERRAIN - WAR_TACTICS.md §4.15.
 //
 // The tape's candles as a height layer the surface reader adds (`surfaceAt = relief + emplacements + candles - craters`),
-// on a chart band levelled to the apron's height, with each candle's two x-faces as truck-only walls. Laid over
+// on a static chart band levelled to a pancake of the relief, with each candle's two x-faces as truck-only walls. Laid over
 // x = -104 .. +104: 32 slots of 6.5 m, a 3.7 m body and a 2.8 m corridor in each; a body runs from its open's z to its
 // close's z (the seam's own price-to-z scale), at least 1 m long; a plateau 2 m high reached by a 5 m ramp inside each
 // z-end. Derived from the tape alone and rebuilt when the tape changes; nothing here is hashed state and nothing draws.
@@ -11,6 +11,7 @@
 import { ONE, add, sub, abs, mulFast, div, idiv, min, max, clamp } from '../fixed.js';
 import { SAMPLES, FRONT_DEPTH } from './frontline.js';
 import { BOX_WORDS } from './solids.js';
+import { heightAtWorld } from './ground.js';
 
 export const CANDLES = 32;
 export const CANDLE_X0 = -6815744;                 // -104 m, the first slot's west edge
@@ -20,8 +21,9 @@ export const CANDLE_H = 131072;                    // 2 m plateau
 export const CANDLE_RAMP = 327680;                 // 5 m ramp inside each z-end
 export const CANDLE_MIN_LENGTH = ONE;              // a doji is built 1 m long
 export const BAND_X = 6815744;                     // |x| <= 104 m
-export const BAND_Z = 4587520;                     // |z| <= 70 m
+export const BAND_Z = 3538944;                     // |z| <= 54 m: the seam's 45 m, the 5 m ramp, 4 m
 export const CONE = 26214;                         // 0.4: the grade the relief may rise toward the band
+export const PANCAKE = 9830;                       // 0.15: the relief inside the band, about the apron's height
 
 /** Per candle in `layout`: slot centre x, body z from and to (from < to), 1 when close >= open. */
 export const CL_X = 0, CL_Z0 = 1, CL_Z1 = 2, CL_GREEN = 3, CL_WORDS = 4;
@@ -30,7 +32,7 @@ export const CL_X = 0, CL_Z0 = 1, CL_Z1 = 2, CL_GREEN = 3, CL_WORDS = 4;
 export const CV_COUNT = 0, CV_APRON = 1, CV_FIRST = 2, CV_WORDS = 6;
 export const CV_TOTAL = CV_FIRST + Math.imul(CANDLES, CV_WORDS);
 
-/** A price as a ground z, by the seam's own scale (frontlineZ): the window's low at -61.2 m, its high at +61.2 m. */
+/** A price as a ground z, by the seam's own scale (frontlineZ): the window's low at -45 m, its high at +45 m. */
 function zOfPrice(p, lo, span, halfZ) {
   if (span <= 0) return 0;
   const t = sub(div(mulFast(sub(p, lo), Math.imul(2, ONE)), span), ONE);
@@ -73,16 +75,20 @@ export function candleHeightAt(layout, x, z) {
 }
 
 /**
- * The relief inside the chart band is the apron's height; outside it, within the band's x, the relief is held to a 40%
- * cone about that height, `|h - apron| <= 0.4 (|z| - 70)`, so no ground rises (or falls) toward the band faster than a
- * ramp does. Beyond |x| = 104 the relief is untouched.
+ * STATIC, NOT DYNAMIC (§4.15, the owner 2026-09-17 09:40): the band is fixed, so no ground moves under a wheel. Inside
+ * |x| <= 104, |z| <= 54 the relief is a pancake - `apron + 0.15 (relief - apron)`, the mempool's swells kept low. Outside
+ * it, within the band's x, the relief is held to a 40% cone from the pancake at the band's edge,
+ * `|h - edge| <= 0.4 (|z| - 54)` (12.4 m at the map's edge), so no ground rises (or falls) toward the band faster than a
+ * ramp does. The edge's pancake is read from `ground`, unlevelled. Beyond |x| = 104 the relief is untouched.
  */
-export function levelled(relief, apron, x, z) {
+export function levelled(relief, apron, x, z, ground, halfX, halfZ) {
   if (abs(x) > BAND_X) return relief;
   const az = abs(z);
-  if (az <= BAND_Z) return apron;
+  if (az <= BAND_Z) return add(apron, mulFast(PANCAKE, sub(relief, apron)));
+  const edgeRelief = heightAtWorld(ground, x, z < 0 ? -BAND_Z : BAND_Z, halfX, halfZ);
+  const edge = add(apron, mulFast(PANCAKE, sub(edgeRelief, apron)));
   const lim = mulFast(CONE, sub(az, BAND_Z));
-  return clamp(relief, sub(apron, lim), add(apron, lim));
+  return clamp(relief, sub(edge, lim), add(edge, lim));
 }
 
 /**

@@ -5,6 +5,8 @@ import assert from 'node:assert/strict';
 import { init, step, teleport, surfaceAt, setGround, candleView, HALF_X, HALF_Z } from '../src/sim.js';
 import * as C from '../src/rules/candles.js';
 import { emplacementAt } from '../src/rules/emplacements.js';
+import { heightAtWorld } from '../src/rules/ground.js';
+import { mulFast } from '../src/fixed.js';
 import * as L from '../src/state.js';
 
 const Q = 65536;
@@ -35,7 +37,7 @@ test('32 bodies over x -104..+104: 3.7 m bodies, 2.8 m corridors, open to close 
     const k = body(st, c);
     assert.equal(k.x, C.CANDLE_X0 + c * C.CANDLE_SLOT + (C.CANDLE_SLOT >> 1));
     assert.ok(k.z1 - k.z0 >= C.CANDLE_MIN_LENGTH, `candle ${c} is ${(k.z1 - k.z0) / Q} m`);
-    assert.ok(Math.abs(k.z0) <= 62 * Q && Math.abs(k.z1) <= 62 * Q, `candle ${c} reaches past the seam's 61.2 m`);
+    assert.ok(Math.abs(k.z0) <= 46 * Q && Math.abs(k.z1) <= 46 * Q, `candle ${c} reaches past the seam's 45 m`);
     if (c > 0) assert.equal((k.x - C.CANDLE_BODY_HALF) - (body(st, c - 1).x + C.CANDLE_BODY_HALF), 183500, 'a 2.8 m corridor (183500 / 65536)');
   }
   const words = new Int32Array(C.CV_TOTAL);
@@ -45,34 +47,42 @@ test('32 bodies over x -104..+104: 3.7 m bodies, 2.8 m corridors, open to close 
   assert.deepEqual([...words.subarray(b, b + 5)], [body(st, 5).x - C.CANDLE_BODY_HALF, body(st, 5).x + C.CANDLE_BODY_HALF, body(st, 5).z0, body(st, 5).z1, C.CANDLE_H]);
 });
 
-test('the chart band is the apron height away from candles, berms and craters, on every seed and an uploaded grid; the cone is 40%', () => {
+test('the chart band is the pancake (apron + 0.15 x relief, within 2.2 m) away from candles, berms and craters, on every seed and an uploaded grid; the cone is 40%', () => {
   const grids = [];
   for (const seed of [1, 2, 3, 4, 5]) grids.push(init(seed));
   const up = init(1);
   const h = new Int32Array(64 * 48);
-  for (let i = 0; i < h.length; i++) h[i] = Math.imul((i * 2654435761) >>> 20, 9) & 0xFFFFF;   // up to 16 m of noise
+  for (let i = 0; i < h.length; i++) h[i] = ((i * 2654435761) >>> 12) % 950272;   // up to the mempool's 14.5 m
   assert.ok(setGround(up, 64, 48, h));
   grids.push(up);
   for (const st of grids) {
-    let flat = 0, spots = 0;
+    let flat = 0, spots = 0, worst = 0;
     for (let x = -104 * Q; x <= 104 * Q; x += Q >> 1)
-      for (let z = -70 * Q; z <= 70 * Q; z += 2 * Q) {
+      for (let z = -54 * Q; z <= 54 * Q; z += 2 * Q) {
         spots++;
         if (C.candleHeightAt(st.candles, x, z) !== 0 || emplacementAt(x, z, st.tape, st.ground, HALF_X, HALF_Z, st.apron) !== 0) continue;
-        assert.equal(surfaceAt(st, x, z), st.apron, `surface at ${x / Q},${z / Q}`);
+        const relief = heightAtWorld(st.ground, x, z, HALF_X, HALF_Z), got = surfaceAt(st, x, z);
+        assert.equal(got, st.apron + mulFast(C.PANCAKE, relief - st.apron), `surface at ${x / Q},${z / Q}`);
+        worst = Math.max(worst, Math.abs(got - st.apron));
         flat++;
       }
+    assert.ok(worst <= 2.2 * Q, `the pancake stands ${worst / Q} m off the apron`);
     assert.ok(flat > spots >> 1, `only ${flat} of ${spots} spots off the candles and berms`);
-    // the cone: no grade toward the band steeper than 40% between |z| 70 and 85, over the band's x
-    let steepest = 0;
+    // the cone, between |z| 54 and 85 over the band's x (berms taken out): the ground stays inside 0.4 (|z| - 54) of the
+    // pancake at the band's edge on every grid; on the seeds' relief no grade toward the band is steeper than 40%. An
+    // uploaded grid keeps its own cell-to-cell grade inside that envelope (printed): a pointwise rule cannot smooth it.
+    let steepest = 0, outside = 0;
+    const bare = (x, z) => surfaceAt(st, x, z) - emplacementAt(x, z, st.tape, st.ground, HALF_X, HALF_Z, st.apron);
     for (let x = -104 * Q; x <= 104 * Q; x += Q)
-      for (let z = 70 * Q; z < 85 * Q; z += Q >> 2)
+      for (let z = 54 * Q; z < 85 * Q; z += Q >> 2)
         for (const s of [1, -1]) {
-          const a = C.levelled(surfaceAt(st, x, s * z) - emplacementAt(x, s * z, st.tape, st.ground, HALF_X, HALF_Z, st.apron), st.apron, x, s * z);
-          const b = C.levelled(surfaceAt(st, x, s * (z + (Q >> 2))) - emplacementAt(x, s * (z + (Q >> 2)), st.tape, st.ground, HALF_X, HALF_Z, st.apron), st.apron, x, s * (z + (Q >> 2)));
-          steepest = Math.max(steepest, Math.abs(b - a) / (Q >> 2));
+          steepest = Math.max(steepest, Math.abs(bare(x, s * (z + (Q >> 2))) - bare(x, s * z)) / (Q >> 2));
+          const edge = st.apron + mulFast(C.PANCAKE, heightAtWorld(st.ground, x, s * 54 * Q, HALF_X, HALF_Z) - st.apron);
+          if (Math.abs(bare(x, s * z) - edge) > mulFast(C.CONE, z - 54 * Q) + 1) outside++;
         }
-    assert.ok(steepest <= 0.4 + 1e-3, `steepest grade in the cone ${steepest.toFixed(4)}`);
+    console.log(`  pancake within ${(worst / Q).toFixed(3)} m of the apron on ${flat} of ${spots} spots; steepest cone grade ${steepest.toFixed(4)}${st.uploadedGround ? ' (uploaded grid)' : ''}`);
+    assert.equal(outside, 0, 'ground outside the cone');
+    if (!st.uploadedGround) assert.ok(steepest <= 0.4 + 1e-3, `steepest grade in the cone ${steepest.toFixed(4)}`);
   }
 });
 

@@ -3685,8 +3685,12 @@ function mapSolids(ground, halfX, halfZ) {
 
 const SAMPLES = 64;
 
-/** The seam's reach either side of z = 0 as a share of the half depth, Q16.16 (0.72, see `frontlineZ`). */
-const FRONT_DEPTH = 47186;
+/**
+ * The seam's reach either side of z = 0 as a share of the half depth, Q16.16: 0.53, +-45 m (WAR_TACTICS.md §4.15, the owner
+ * 2026-09-17 09:40: a smaller static chart, so the relief outside the band stands behind the lines). It was 0.72 (C#'s
+ * +-61.2 m, see `frontlineZ`); 0.53 x 65536 = 34734.08.
+ */
+const FRONT_DEPTH = 34734;
 
 /**
  * Frontline z at a world x. `hist` is an Int32Array of SAMPLES prices in
@@ -3792,13 +3796,14 @@ function frontlineZ(hist, x, halfX, halfZ) {
 // THE CANDLES ARE TERRAIN - WAR_TACTICS.md §4.15.
 //
 // The tape's candles as a height layer the surface reader adds (`surfaceAt = relief + emplacements + candles - craters`),
-// on a chart band levelled to the apron's height, with each candle's two x-faces as truck-only walls. Laid over
+// on a static chart band levelled to a pancake of the relief, with each candle's two x-faces as truck-only walls. Laid over
 // x = -104 .. +104: 32 slots of 6.5 m, a 3.7 m body and a 2.8 m corridor in each; a body runs from its open's z to its
 // close's z (the seam's own price-to-z scale), at least 1 m long; a plateau 2 m high reached by a 5 m ramp inside each
 // z-end. Derived from the tape alone and rebuilt when the tape changes; nothing here is hashed state and nothing draws.
 //
 // Not here yet (the slice, the owner 2026-09-17): the scroll, the rescale lerp, the seam remap to 208 m, the glow, cover
 // lips - and the wick, whose 1 m pillar from low to high covers the whole plateau of a two-sample candle (ruling open).
+
 
 
 
@@ -3810,8 +3815,9 @@ const CANDLE_H = 131072;                    // 2 m plateau
 const CANDLE_RAMP = 327680;                 // 5 m ramp inside each z-end
 const CANDLE_MIN_LENGTH = ONE;              // a doji is built 1 m long
 const BAND_X = 6815744;                     // |x| <= 104 m
-const BAND_Z = 4587520;                     // |z| <= 70 m
+const BAND_Z = 3538944;                     // |z| <= 54 m: the seam's 45 m, the 5 m ramp, 4 m
 const CONE = 26214;                         // 0.4: the grade the relief may rise toward the band
+const PANCAKE = 9830;                       // 0.15: the relief inside the band, about the apron's height
 
 /** Per candle in `layout`: slot centre x, body z from and to (from < to), 1 when close >= open. */
 const CL_X = 0, CL_Z0 = 1, CL_Z1 = 2, CL_GREEN = 3, CL_WORDS = 4;
@@ -3820,7 +3826,7 @@ const CL_X = 0, CL_Z0 = 1, CL_Z1 = 2, CL_GREEN = 3, CL_WORDS = 4;
 const CV_COUNT = 0, CV_APRON = 1, CV_FIRST = 2, CV_WORDS = 6;
 const CV_TOTAL = CV_FIRST + Math.imul(CANDLES, CV_WORDS);
 
-/** A price as a ground z, by the seam's own scale (frontlineZ): the window's low at -61.2 m, its high at +61.2 m. */
+/** A price as a ground z, by the seam's own scale (frontlineZ): the window's low at -45 m, its high at +45 m. */
 function zOfPrice(p, lo, span, halfZ) {
   if (span <= 0) return 0;
   const t = sub(div(mulFast(sub(p, lo), Math.imul(2, ONE)), span), ONE);
@@ -3863,16 +3869,20 @@ function candleHeightAt(layout, x, z) {
 }
 
 /**
- * The relief inside the chart band is the apron's height; outside it, within the band's x, the relief is held to a 40%
- * cone about that height, `|h - apron| <= 0.4 (|z| - 70)`, so no ground rises (or falls) toward the band faster than a
- * ramp does. Beyond |x| = 104 the relief is untouched.
+ * STATIC, NOT DYNAMIC (§4.15, the owner 2026-09-17 09:40): the band is fixed, so no ground moves under a wheel. Inside
+ * |x| <= 104, |z| <= 54 the relief is a pancake - `apron + 0.15 (relief - apron)`, the mempool's swells kept low. Outside
+ * it, within the band's x, the relief is held to a 40% cone from the pancake at the band's edge,
+ * `|h - edge| <= 0.4 (|z| - 54)` (12.4 m at the map's edge), so no ground rises (or falls) toward the band faster than a
+ * ramp does. The edge's pancake is read from `ground`, unlevelled. Beyond |x| = 104 the relief is untouched.
  */
-function levelled(relief, apron, x, z) {
+function levelled(relief, apron, x, z, ground, halfX, halfZ) {
   if (abs(x) > BAND_X) return relief;
   const az = abs(z);
-  if (az <= BAND_Z) return apron;
+  if (az <= BAND_Z) return add(apron, mulFast(PANCAKE, sub(relief, apron)));
+  const edgeRelief = heightAtWorld(ground, x, z < 0 ? -BAND_Z : BAND_Z, halfX, halfZ);
+  const edge = add(apron, mulFast(PANCAKE, sub(edgeRelief, apron)));
   const lim = mulFast(CONE, sub(az, BAND_Z));
-  return clamp(relief, sub(apron, lim), add(apron, lim));
+  return clamp(relief, sub(edge, lim), add(edge, lim));
 }
 
 /**
@@ -3957,7 +3967,7 @@ const PITCH = Math.imul(27, ONE);
 function emplacementAt(x, z, tape, ground, halfX, halfZ, apron) {
   // `apron` given: the relief as the surface reads it, levelled in the chart band (§4.15)
   const relief = (px, pz) => (apron === undefined ? heightAtWorld(ground, px, pz, halfX, halfZ)
-                                                  : levelled(heightAtWorld(ground, px, pz, halfX, halfZ), apron, px, pz));
+                                                  : levelled(heightAtWorld(ground, px, pz, halfX, halfZ), apron, px, pz, ground, halfX, halfZ));
   const ax = abs(x);
   if (ax >= NONE_X) return 0;
   const first = slotX(0);
@@ -5071,12 +5081,12 @@ function craterCut(s, x, z) {
  * all come through here now.
  */
 function surfaceAt(st, x, z) {
-  // relief levelled in the chart band (§4.15) + the hull-down emplacements (rules/emplacements.js) + the candles - craters
+  // relief as the static chart band holds it (§4.15: pancake inside, cone outside) + the hull-down emplacements (rules/emplacements.js) + the candles - craters
   if (!st.candles) {
     return sub(add(heightAtWorld(st.ground, x, z, HALF_X, HALF_Z), emplacementAt(x, z, st.tape, st.ground, HALF_X, HALF_Z)),
                craterCut(st.i32, x, z));
   }
-  const relief = levelled(heightAtWorld(st.ground, x, z, HALF_X, HALF_Z), st.apron, x, z);
+  const relief = levelled(heightAtWorld(st.ground, x, z, HALF_X, HALF_Z), st.apron, x, z, st.ground, HALF_X, HALF_Z);
   return sub(add(add(relief, emplacementAt(x, z, st.tape, st.ground, HALF_X, HALF_Z, st.apron)), candleHeightAt(st.candles, x, z)),
              craterCut(st.i32, x, z));
 }
