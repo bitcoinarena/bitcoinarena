@@ -16,6 +16,7 @@
 // an input to my simulation. A queue of pictures is handed to a renderer and
 // to nothing else - `packages/core` is not imported, and cannot be.
 import { toHex } from '../../protocol/src/hash.js';
+import { displayNameFromKey } from '../../protocol/src/display-name.js';
 
 /** How many pictures a page will hold before it starts dropping the oldest. */
 export const GHOST_BACKLOG = 240;
@@ -76,7 +77,12 @@ export function watchGhosts(client, where, { limit = GHOST_BACKLOG, clock = Date
   // Unity has already drawn is gone from the queue; it is still a player
   // in the round, and the page's count has to say so.
   const present = new Map();
+  // HOW EACH DRAWN TRUCK LAST MOVED, for the debug label over it (the owner 2026-09-17 19:15): the arrows between its last
+  // two pictures and when the newest arrived.
+  const motion = new Map();
   const field = {
+    present,
+    motion,
     seen: 0,
     self: 0,
     shed: 0,
@@ -95,7 +101,6 @@ export function watchGhosts(client, where, { limit = GHOST_BACKLOG, clock = Date
     // players and the screen showed one truck - and the page had no number
     // that could tell the two apart.
     drawn: 0,
-    present,
     get size() { return queue.length; },
     get others() { return present.size; },
 
@@ -174,6 +179,10 @@ export function watchGhosts(client, where, { limit = GHOST_BACKLOG, clock = Date
     }
     drawnEntry.set(who, { e: entryKey, entryId: ghost.entryId, playerPubkey: ghost.playerPubkey, at: clock() });
 
+    const was = present.get(who);
+    const before = motion.get(who);
+    motion.set(who, { atMs: clock(),
+      glyphs: was && toHex(was.entryId) === entryKey ? moveGlyphs(was, ghost) : (before ? before.glyphs : '') });
     present.set(who, ghost);
     queue.push(ghost);
     // A FULL QUEUE SHEDS PICTURES OLDEST FIRST, which is piece 2 of letter 18
@@ -194,6 +203,91 @@ export function watchGhosts(client, where, { limit = GHOST_BACKLOG, clock = Date
 
 /** Q16.16: the words a picture carries, per metre. `GhostTruck.ONE` is the same number. */
 const ONE_METRE = 65536;
+
+/**
+ * WHICH WAY A TRUCK WENT BETWEEN TWO OF ITS PICTURES, as the debug label draws it (the owner 2026-09-17 19:15): an up
+ * arrow for forward, a down arrow for back, a left or right arrow for a turn, both when it did both. Read off the
+ * pictures - what reached this page through the nodes - not off anybody's keys. Forward is the step along the hull
+ * (heading in turns: x = sin, z = cos, a growing heading turns right); a turn is the heading's change, mirrored while
+ * backing, so a steer to the right reads right either way. Under 2 cm and under 16 of 65536 of a turn is standing.
+ */
+export function moveGlyphs(a, b) {
+  const dx = (b.x - a.x) / ONE_METRE, dz = (b.z - a.z) / ONE_METRE;
+  const h = (b.heading / 65536) * 2 * Math.PI;
+  const along = dx * Math.sin(h) + dz * Math.cos(h);
+  const back = along < -0.02;
+  let dh = ((((b.heading - a.heading) % 65536) + 98304) % 65536) - 32768;
+  if (back) dh = -dh;
+  return (along > 0.02 ? '\u2191' : back ? '\u2193' : '') + (dh < -16 ? '\u2190' : dh > 16 ? '\u2192' : '');
+}
+
+/**
+ * THE WALL CLOCK OF EACH TICK A TAB DROVE, shared with the other tabs of this browser (the owner 2026-09-17 19:15: "age =
+ * how old the last move is, as seen on the other client after it went through the nodes"). A driving tab posts its
+ * newest tick and the time it recorded it; a watching tab reads the time of the tick a picture names when that picture
+ * is drawn. Only the stamp travels on the channel - the picture itself still comes from the nodes. A tab with no
+ * channel, or a truck driven in another browser, has no stamp, and its label says the age since the picture arrived.
+ */
+export function tickClock({ Channel = globalThis.BroadcastChannel, name = 'blwp-ghost-clock', keep = 64 } = {}) {
+  const stamps = new Map();
+  const put = (e, t, ms) => {
+    let a = stamps.get(e);
+    if (!a) stamps.set(e, (a = []));
+    a.push([t, ms]);
+    if (a.length > keep) a.shift();
+  };
+  let channel = null;
+  try { if (typeof Channel === 'function') channel = new Channel(name); } catch { channel = null; }
+  if (channel) {
+    channel.onmessage = (m) => {
+      const d = m && m.data;
+      if (d && typeof d.e === 'string' && Number.isInteger(d.t) && Number.isFinite(d.ms)) put(d.e, d.t, d.ms);
+    };
+  }
+  return {
+    shared: channel !== null,
+    post(entryHex, tick, ms = Date.now()) {
+      put(entryHex, tick, ms);
+      if (channel) { try { channel.postMessage({ e: entryHex, t: tick, ms }); } catch { /* a closed channel */ } }
+    },
+    /** When the tab driving `entryHex` recorded `tick`, off its nearest stamp within a second; null when none. */
+    sentMs(entryHex, tick) {
+      const a = stamps.get(entryHex);
+      if (!a) return null;
+      let best = null;
+      for (const s of a) if (best === null || Math.abs(s[0] - tick) < Math.abs(best[0] - tick)) best = s;
+      if (best === null || Math.abs(best[0] - tick) > 60) return null;
+      return best[1] + ((tick - best[0]) * 1000) / 60;
+    },
+    close() { if (channel) channel.close(); },
+  };
+}
+
+/**
+ * ONE DEBUG LABEL PER DRAWN TRUCK: its entry (the key Unity keeps the truck under), the player's name, how old its
+ * newest picture is in ms, and how it moved. `estimated` is true when no stamp of the driver's own clock was found and
+ * the age is only the time since that picture arrived here.
+ */
+export function ghostLabels(field, { nowMs = Date.now(), nameOf = () => null, clock = null } = {}) {
+  const out = [];
+  if (!field || !field.present) return out;
+  for (const [who, g] of field.present) {
+    const entry = toHex(g.entryId);
+    const player = g.playerPubkey ? toHex(g.playerPubkey) : null;
+    const name = (player && nameOf(player)) || (g.playerPubkey ? displayNameFromKey(g.playerPubkey) : entry.slice(0, 8));
+    const sent = clock ? clock.sentMs(entry, g.tick) : null;
+    const m = field.motion ? field.motion.get(who) : null;
+    const estimated = sent === null;
+    const ageMs = Math.max(0, Math.round(nowMs - (estimated ? (m ? m.atMs : nowMs) : sent)));
+    out.push({ entry, name, ageMs, estimated, glyphs: m ? m.glyphs : '' });
+  }
+  return out;
+}
+
+/** The labels as the bridge hands them to Unity: one line a truck, tab-separated, line 2 already written. */
+export function ghostLabelText(labels) {
+  return labels.map((l) => `${l.entry}\t${l.name}\t${l.estimated ? '~' : ''}${l.ageMs}ms ${l.glyphs}`.trimEnd()).join('\n');
+}
 
 /**
  * WHERE THE NEWEST OTHER TRUCK IS, in metres, or null for nobody.

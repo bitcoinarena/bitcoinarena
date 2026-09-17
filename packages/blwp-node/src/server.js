@@ -3090,8 +3090,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // interest set again - and the entry that published it is not shown
         // itself, because `interestSet` drops the viewer by id.
         if (took > 0) {
-          try { showRound(decodeInputBatch(bytes).roundId); }
-          catch (e) { console.error(`[ghosts] ${e.message}`); }
+          try {
+            const landed = decodeInputBatch(bytes);
+            // AND THE PUBLISHER'S PICTURE IS KEPT WARM WHETHER OR NOT ANYBODY WATCHES YET (the owner 2026-09-17 19:15: "in
+            // the second round the ghost does not appear reliably - sometimes missing, then at the wrong position").
+            // A run was stepped only when a watcher asked, so a truck that drove alone for a minute before the other
+            // tab reached the round was pictured from its first tick, STEP_BUDGET ticks a push: missing, then racing
+            // along where it had been. Stepped here, its batch's own few ticks, it is at its newest tick when anybody
+            // arrives.
+            ghosts.latest(landed.roundId, landed.entryId);
+            showRound(landed.roundId);
+          } catch (e) { console.error(`[ghosts] ${e.message}`); }
         }
       } catch (e) {
         sock.send('error ' + e.message);

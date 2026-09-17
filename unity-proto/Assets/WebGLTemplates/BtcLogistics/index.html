@@ -1349,6 +1349,8 @@
           const all = await BLWPCLIENT.namesOf({ roundId: BLWPCLIENT.roundId(window.BLWP_ROUND), nodes, fetcher: namesFetch,
             verify: (s, m, k) => !!window.BLWP_CURVE.verify(s, m, k) });
           window.BLWP_OTHER_NAMES = all.filter((x) => x.player !== mine).map((x) => x.name);
+          // AND WHOSE NAME IS WHOSE, for the debug label over each ghost (the owner 2026-09-17 19:15).
+          window.BLWP_NAMES_BY_PLAYER = Object.fromEntries(all.map((x) => [x.player, x.name]));
         } catch (e) { said.error = 'names: ' + e.message; console.error('[blwp] names: ' + e.message); }
       } finally {
         // WHAT THE LAST EXCHANGE DID, for a harness or a player's console.
