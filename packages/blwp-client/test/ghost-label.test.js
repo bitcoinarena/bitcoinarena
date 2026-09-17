@@ -24,10 +24,11 @@ test('the arrows say forward, back, left and right, and both at once', () => {
 });
 
 test('the tick clock gives one tab the time another tab drove a tick, and none it never heard of', () => {
-  const a = tickClock({ name: `blwp-test-${process.pid}` });
-  const b = tickClock({ name: `blwp-test-${process.pid}` });
+  const a = tickClock({ Channel: BroadcastChannel, name: `blwp-test-${process.pid}` });
+  const b = tickClock({ Channel: BroadcastChannel, name: `blwp-test-${process.pid}` });
   try {
-    assert.equal(a.shared, true, 'no BroadcastChannel in this runtime');
+    assert.equal(a.shared, true, 'the channel handed in was not opened');
+    assert.equal(tickClock({}).shared, false, 'a clock with no channel handed in opened one anyway');
     a.post('ee', 600, 1000);
     return new Promise((done) => setTimeout(() => {
       assert.equal(b.sentMs('ee', 600), 1000, 'the other tab did not hear the stamp');
