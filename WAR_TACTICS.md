@@ -171,16 +171,16 @@ the owner ordered is in the state and not on the screen. Each is a client test.
   So the client draws what a trader already knows: **candlesticks** on the ground for the raw tape and
   the seam as the moving-average line the armies fight on. A candle is **10 seconds** (the owner
   2026-09-16 20:15) = 2 samples at the 5 s cadence: **32 candles across the 208 m field, each 6.5 m of
-  slot**, body from open-z to close-z (a 2 m plateau the war drives on, §4.15), wick from low to high
-  (a solid pillar), green when close > open (a rising price - the bulls' ground) and red when it fell (the
+  slot**, body from open-z to close-z (a 1 m plateau the war drives on, §4.15), wick from low to high
+  (a column of light), green when close > open (a rising price - the bulls' ground) and red when it fell (the
   bears'). The newest candle, at the miner's end, is **forming**: it grows as samples arrive, and the
   whole chart scrolls 3.3 m toward the post office per sample. From above - map, minimap, gunship - it
   reads as a TradingView chart with two armies on it; from the cab the ground under the truck is a red
   or a green band and the line ahead is the front. **The candles are terrain (the owner 2026-09-16 20:10:
   "make the candles drivable, a small ramp on every side, so they are not a foreign body but part of
-  the world - and with that, collision").** §4.15 is the rule: a candle body is a **2 m plateau** the
-  truck, the tanks and the men drive and walk on, with a 5 m ramp skirt on every side; the wick is a
-  solid 1 m pillar 9 m tall; and above the plateau the body glows to **6 m** as light, so it reads in
+  the world - and with that, collision").** §4.15 is the rule: a candle body is a **1 m plateau** the
+  truck, the tanks and the men drive and walk on, with a 4 m ramp (25%) on every free edge, bodies
+  touching, so the chart is a raised ribbon the truck drives along; the wick is a 9 m column of light; and above the plateau the body glows to **6 m** as light, so it reads in
   3D from the cab and as a chart from 300 m up. The plateau is in the core's ground (it decides where
   a hull stands, where a man hides, whether a loaded truck makes the climb); the glow is the client's.
   The bucket is **fixed at 2 samples = 10 s** (it is terrain now, not a view). Client test: the candles' open,
@@ -843,9 +843,8 @@ a thing the truck drives on is settled state (multiplayer_p2p.md §0.5), so the 
   them onto the chart plain. The front still sweeps 90 m with the market; a full-range candle is 90 m
   long, not 122, still a wall from the cab. And inside the band the relief is not a plane but a
   **pancake**: the relief times **0.15** (6 m hills become 0.9 m swells, the mempool's 14.5 m become
-  2.2 m), so the mempool still shows on the plain as long low swells the eye reads, while a 2 m plateau
-  sits on it and a 40% ramp meets ground that varies less than a metre over 100 m - drivable everywhere,
-  and the corridors stay corridors. The band rule below is read with these numbers.
+  2.2 m), so the mempool still shows on the plain as long low swells the eye reads, while a 1 m plateau
+  sits on it and a 25% ramp meets ground that varies less than a metre over 100 m - drivable everywhere. The band rule below is read with these numbers.
 - **What a candle IS, so the chart is continuous (found 2026-09-17 09:45 on the live top-down: the
   candles stood as scattered pillars with gaps, not as a chart).** The tape is a series of closes. A
   10 s candle `c` (samples `2c`, `2c + 1`) has **open = the previous candle's close** (sample `2c - 1`;
@@ -855,14 +854,12 @@ a thing the truck drives on is settled state (multiplayer_p2p.md §0.5), so the 
   and a body never floats off its neighbour. A candle whose two samples happen to be its own open
   and close would leave a gap the size of one sample step at every candle - that was the picture.
 - **The look, so they read as world candles and not as pillars (same finding; client rows, each a
-  test):** every body the **same height** - a 2 m matte slab in the candle's colour, its top face 20%
-  lighter, its z-ends the 40% ramps, its x-faces vertical; **above it** the glow, a translucent volume
-  (30% alpha, additive) from 2 m to 6 m in the same colour, no edges drawn; the **wick** a 1 m column
+  test):** every body the **same height** - a 1 m matte slab in the candle's colour, its top face 20%
+  lighter, every free edge a 25% ramp, a 0.3 m darker seam line at each slot boundary; **above it**
+  the glow, a translucent volume (30% alpha, additive) from 1 m to 6 m in the same colour, no edges drawn; the **wick** a 1 m column
   of light, 9 m tall, from low to high, brighter than the glow, no cap; the forming candle's glow
   pulses at 1 Hz; colours green `#26a69a` / red `#ef5350` (TradingView's), not cyan; the **seam** as a
-  white line on the ground through the bodies, 0.5 m wide, always visible; the 2.8 m corridor between
-  bodies is bare ground, nothing drawn in it. **No roads inside the chart band**: the corridors are
-  the roads. Height must never encode price - a tall candle is a long candle, never a high one.
+  white line on the ground through the bodies, 0.5 m wide, always visible; **No roads inside the chart band**: the chart is the road. Height must never encode price - a tall candle is a long candle, never a high one.
 - **One surface, the core's - the client never draws the raw grid (found 2026-09-17 09:50: the terrain
   ran THROUGH the candles).** The mounds poked through the slabs because the client draws the host's
   uploaded mempool grid as its ground mesh while the candles are placed on the core's levelled band.
@@ -877,69 +874,66 @@ a thing the truck drives on is settled state (multiplayer_p2p.md §0.5), so the 
 - **The chart band is flat, whatever the mempool says (the owner 2026-09-17 09:20).** The ground the
   core builds is the seed's lattice (`groundFromSeed`, 6 m peaks) and, when the host uploads it, the
   **mempool relief** (`MempoolTerrain`: 9 m of fee height plus 5.5 m of base relief - a busy chain is a
-  mountainous map). A candle ramp that starts halfway up a fee mountain is not a ramp, and a corridor
-  across one is not a corridor. So, before the candle layer is added, the relief is **levelled inside
+  mountainous map). A candle ramp that starts halfway up a fee mountain is not a ramp. So, before the candle layer is added, the relief is **levelled inside
   the chart band**: `|x| <= 104`, `|z| <= 54` (the ±45 m the candles can reach, plus the 5 m ramp,
   plus 4 m), to **the pancake above** (relief x 0.15 about the apron's height, the plane the bays and the gate
   stand on, so the roll-out and the last metres to the gate are level with the chart). Outside the band the relief is **clamped
   to a 40% cone**: `h(x, z) <= pancake + 0.4 x (|z| - 54)` for `|x| <= 104`, so no ground rises toward
-  the band faster than a ramp does - at the map's edge (85 m) that is 12.4 m, the mempool's mountains at
+  the band faster than a hill may (steeper than the chart's 25% ramps, but a hill, never a step) - at the map's edge (85 m) that is 12.4 m, the mempool's mountains at
   nearly full height behind the lines. Inside the band the only relief is
-  the chart's own (2 m plateaus), the craters (§10, they still cut), and nothing else: hull-down
+  the chart's own (1 m plateaus), the craters (§10, they still cut), and nothing else: hull-down
   (§4.1) finds candle edges and crater rims, which is what the war is fought on now. The uploaded grid
   is not changed; the surface reader applies the band and the cone as it applies the craters, so the
   host's terrain revision can come and go and the chart stays flat. Test: inside the band, away from
   candles and craters, the surface is `apron + 0.15 x relief` to the centimetre on every seed and every
-  uploaded grid, and never more than 2.2 m off the apron; every ramp foot and every corridor is on it; the steepest grade in the cone is 40%.
+  uploaded grid, and never more than 2.2 m off the apron; every ramp foot is on it; the steepest grade in the cone is 40%.
 - **The chart spans the field, not the buildings** (found 21:15): the post office ends at x = -114.4 and
   the miner begins at 108.4, so the tape's 260 m had eight candles inside walls. The 32 candles are laid
-  over **x = -104 .. +104** (208 m, the air corridor's own width): slot **6.5 m**, body **3.7 m**,
-  corridor **2.8 m** - the truck (2.55 m) passes with 12 cm a side, which is a corridor, not a road; the
-  ramp is unchanged. `frontlineZ` maps the tape over the same 208 m so the seam and the candles agree.
+  over **x = -104 .. +104** (208 m, the air corridor's own width): slot **6.5 m** (superseded by
+  spawn ruling B below: 5.756 m), body the full slot. `frontlineZ` maps the tape over the same 208 m so the seam and the candles agree.
   **Spawn ruling B (the owner 2026-09-17): the truck leaves the apron, then meets the chart.** At -104 m the first
   x-face stood 2.2 m behind the spawn (START_X -100.4) and bays started on candle 0. The 32 slots are fitted
   between the apron and the miner instead: the first face **26 m past the spawn centre** (x -74.4; the nose,
   3.275 m ahead, meets it 22.7 m out, past the 22 m apron), the last slot ending before the **miner face at
   x 108.4** (last face 107.0), so no body stands in the gate throat or across the delivery line (x 114). Pitch
-  **5.756 m**, corridor kept at **2.8 m**, body **2.956 m** (0.203 m a side for the 2.55 m truck). Not a shift
+  **5.756 m**, body the full pitch (no padding, playtest 10:05). Not a shift
   alone (it put candles 29-31 in the gate throat) and not fewer candles (the world would show 29 of the HUD's 32).
   The band keeps `|x| <= 104`.
-- **The body is a plateau**, height **H = 2 m** - the same for every candle; height carries no price,
-  the length in z does - **3.7 m wide** in its 6.5 m slot (a 10 s candle), by its open-to-close in z
-  (portrait, as on a chart: time along x, price along z; up to 90 m long at a full-range move; a body
-  shorter than 1 m - a doji - is built 1 m long so every candle exists as terrain),
-- **Padding (the owner 2026-09-16 21:00): a 2.8 m corridor between candles, flat, drivable.** The body
-  takes 57% of its slot, as a chart's bar does, and the 2.8 m between two bodies is ground at ground
-  level - a passage running north-south across the whole front, 31 of them, one every 6.5 m. A truck
-  (2.55 m over its body circles) drives it, slowly; a tank pair (12 m) does not fit and goes over the top. The
-  corridors scroll with the chart at 0.65 m/s: a truck standing in one is carried sideways by its wall
-  at that speed, which is slow enough to steer against and is the chart moving under the wheels. Each
-  candle is its own island in its slot with 2.8 m of flat ground to the next: 32 bars with gaps, as on
-  the screen.
-- **The ramps are on the z-ends only**, width **R = 5 m**, as wide as the body: `h = H x
-  clamp(d / R, 0, 1)`, `d` the distance in z from the end, a straight 40% grade (22°) up onto the
-  plateau from north or south. The terrain's own relief reaches 55% (`RELIEF_PEAK` 6 m over half a
-  lattice cell), so nothing here is steeper than a hill the world already has. A heavy truck that cannot
-  make 40% cannot make the red candle - that is cargo physics (`slopeSin`), not a new rule, and it is
-  the point. **The x-faces are walls**: a 2 m vertical step in the height field, and for the truck two
-  solid boxes per candle (`resolveSolids`, like the wick) so it cannot climb them - it uses the corridor
-  or the ramp. Tanks and men have no vehicle physics (they stand on the height read): a tank crossing a
-  face steps 2 m up or down in the core, and the renderer eases the hull over 0.3 s. So a scoot (§4.3,
-  27 m in x) crosses three candles and two corridors without a rule change. No ramp in x, so the
-  corridor stays flat and the candle's edge stays a line from above.
-- **The wick is a solid for the truck only**: a 1 m x 1 m pillar, 9 m tall, at the candle's centre x, in the
-  solids list (`resolveSolids`: a wall the truck steers around) - **only where it stands past the body**
-  (ruling w1, the owner 2026-09-17): the body owns the 2 m plateau, the high wick collides from the body's high end
-  to the high, the low wick from the low to the body's low end, and no wick runs through the body. A two-sample
-  candle's low and high are its body's ends, so on today's tape no wick collider exists. **Tanks
-  and men pass through it**, as they pass through the x-faces (the owner 2026-09-16 21:05, "can a tank
-  cross a candle, wick included?" - yes): the core has no pathing, a wick is a line up to 90 m long,
-  and a push-out on it would pin every tank that scoots or enters its lane in x against it - the same
-  fault the separation push had before §4.3 (92.8% of steps undone). So a tank crosses any candle: up
-  the 2 m face in one step, over the plateau, through the wick, down the far face; the renderer draws
-  the wick as a column of light with a thin core, and a hull passing through light is what it looks
-  like. Only the truck must use a corridor, a ramp, and go round the wick.
-- **The glow** above the plateau, 2 m to 6 m, is light (§0.2): no collision, no rule reads it.
+- **PLAYTEST 2026-09-17 10:05 (the owner: "disappointing - I get stuck in the candles far too fast, and
+  driving onto them is hard, you really have to watch how you approach"). Root cause, mine:** the
+  truck's whole journey runs along **x**, post office to miner, and the padding I ruled at 21:00 put
+  a **vertical wall on every x-face** and a north-south corridor too narrow for the truck (2.8 m for
+  2.55 m) between every two candles. Eastward, every candle whose body spanned the truck's z was a wall
+  it could only pass by driving to the body's end - up to 45 m north or south - to find a ramp, or by
+  threading a corridor that runs the wrong way. A chart the player must slalom is a trap, and the
+  padding is what made it one. **Fix, RULED HERE: the candles become a raised ribbon the truck drives
+  along, not a row of islands it drives around.** Solid, never driven through (the owner: "not permeable"),
+  but no wall, no gap, no pillar - every edge is a ramp, and the whole thing is terrain.
+- **The body is a plateau**, height **H = 1 m** (was 2) - the same for every candle; height carries no
+  price, the length in z does - as **wide as its slot** (the pitch of spawn ruling B, 5.756 m; no
+  padding, bodies touch), by its open-to-close in z (portrait, as on a chart: time along x, price along
+  z; up to 90 m long at a full-range move; a doji is built 1 m long). Because a candle's open is the
+  previous close, consecutive bodies overlap in z and the chart is a **continuous raised ribbon**
+  following the price, one metre above the plain, its width in z the candle's range. The gap between
+  bars on the screen is drawn, not built: a 0.3 m darker seam line on the plateau at every slot boundary.
+- **No corridors.** The 2.8 m passages are gone; the truck drives **over** the chart, along it, like a
+  road that follows the price. Where the price was flat it is a level road; where it moved, the ribbon
+  steps in z and the truck rides a ramp down or up.
+- **Ramps on every free edge**, width **R = 4 m**, a **25% grade** (14°): `h = H x clamp(d / R, 0, 1)`,
+  `d` the distance to the union's boundary from outside - the z-ends of the ribbon and, where two
+  neighbours do not overlap in z, the x-faces of the step. 25% is a road climb, not a hill: a loaded
+  truck takes it at speed from any angle, and there is no angle from which a candle is a wall. The
+  terrain's own relief reaches 55%; the chart is the gentlest thing on the map.
+- **Nothing in the chart is a solid.** No x-face boxes, no wick pillar (ruling w1 is withdrawn with the
+  walls): the wick is a column of light from low to high, 9 m tall, and the truck drives under and
+  through it. The only thing the truck feels is the ground: one metre up, one metre down, at 25%.
+  Tanks and men stand on the height read as before, and cross anything.
+- **Why 1 m and not 2**: two metres at 25% is an 8 m ramp, and on a 5.8 m slot every step of the chart
+  would be ramp and no plateau; one metre is a 4 m ramp, hides a prone man (0.5 m) entirely and a
+  hull's tracks, and is a bump a truck barely notices at speed while still being a metre of ground
+  from above and from the cab. The glow to 6 m gives the eye the height; the ground gives the wheels
+  what they can use.
+- **The glow** above the plateau, 1 m to 6 m, is light (§0.2): no collision, no rule reads it.
 - **It moves, so it moves smoothly.** The tape shifts one sample per 5 s (§4.13), which is a 3.3 m
   jump in x - fine for a post, not for ground under a wheel. So the candle layer (and, for free, the
   seam: `frontlineZ` is read at `x + offset`) carries a **continuous scroll**: `offset = -3.3 m x
@@ -957,7 +951,7 @@ a thing the truck drives on is settled state (multiplayer_p2p.md §0.5), so the 
   - **Cover** (§11.3): a plateau edge that stands between a man and the enemy is a **candle lip**, a
     third kind of cover place: one place every 4 m along the edge, at the foot of the ramp on the man's
     side + 0.5 m; same eligibility, same claim order. It scrolls; the claim is re-read each tick and
-    the man crawls with it. Cover from the lip is COVER (§11.4): 2 m of ground is a wreck's worth.
+    the man crawls with it. Cover from the lip is COVER (§11.4): a metre of ground hides a prone man.
   - **Lines and posts**: unchanged - they are z from the seam; the men walk over the plateaus.
   - **Objectives** (§4.11) are the chart's HIGH, LOW and OPEN and ride it (re-ruled 21:15). **Craters** cut into a plateau as into ground. **Air** flies at 19 m, above the glow.
   - **The truck** (§1.2): a plateau under it is ground; a wick is a wall; nothing in the war changes for
@@ -1041,9 +1035,9 @@ Ticks on which neither side assaults. The line breathes as §4.10; men crawl int
 fewer tanks.
 
 **Candle**
-Ten seconds - two samples - of the tape as terrain: a 3.7 m wide, 2 m plateau in a 6.5 m slot, 5 m
-ramps on the z-ends, walls on the x-faces, a 2.8 m flat corridor to the next, a solid wick, a glow to
-6 m. 32 on the ground; the whole round in the HUD chart. Green
+Ten seconds - two samples - of the tape as terrain: a 1 m plateau as wide as its 5.756 m slot, bodies
+touching into a raised ribbon, 4 m ramps at 25% on every free edge, no wall, no corridor, no solid, a
+wick of light, a glow to 6 m. 32 on the ground; the whole round in the HUD chart. Green
 up, red down. Scrolls 0.65 m/s toward the post office. Hull-down crests and candle-lip cover come with
 it (§4.15).
 
@@ -1143,9 +1137,9 @@ tests are §14.
 - Two seeds give the same tape; the tape changes on a tick with no sample; a sample changes anything
   but the tape (§4.13).
 - In the moved-tape probe any slot, team, objective lane or claim order changes (§4.13).
-- The candle layer differs between two nodes on one transcript; a plateau is other than 2 m or a ramp
-  other than 40%; the chart jumps in x on a sample tick (offset not continuous) or an edge moves more
-  than 0.2 m in a tick; a wick is not in the solids; an objective reads a candle; a truck ends a tick
+- The candle layer differs between two nodes on one transcript; a plateau is other than 1 m or a ramp
+  other than 25%; any candle face is vertical, or a wick, an x-face or any part of the chart is in the solids; the chart jumps in x on a sample tick (offset not continuous) or an edge moves more
+  than 0.2 m in a tick; an objective reads a candle; a truck ends a tick
   inside a wick or an x-face box; a tank or a man is pushed by a wick or an x-face; the client's drawn height differs from `candleHeight` by more than 0.1 m (§4.15).
 - A §0 or §0.1 probe row fails.
 - A §0.2 row is not drawn (client test).
