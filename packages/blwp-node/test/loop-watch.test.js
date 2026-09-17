@@ -19,6 +19,9 @@ test('a stall is named by the timed phase that ran inside it', async () => {
     await wait(120);
     assert.equal(said.length, 1, `the watcher said ${said.length} things: ${said.join(' | ')}`);
     assert.match(said[0], /the loop was held \d+ ms and in it ran a long sum \d+ ms/);
+    // AND WHETHER THIS PROCESS WAS RUNNING: a spin uses the processor, so the line says so and does not blame the host.
+    assert.match(said[0], /this process used \d+ ms of processor in it/);
+    assert.equal(/waiting for the machine/.test(said[0]), false, 'a spin was blamed on the machine');
 
     // AND A STALL IN SOMETHING NOBODY TIMED SAYS SO, in those words: that is the fact that says what to time next.
     said.length = 0;
@@ -26,6 +29,15 @@ test('a stall is named by the timed phase that ran inside it', async () => {
     await wait(120);
     assert.equal(said.length, 1, said.join(' | '));
     assert.match(said[0], /by something nobody timed/);
+
+    // A LOOP HELD WITHOUT THIS PROCESS RUNNING SAYS THE MACHINE, not a phase: a sleeping timer thread is the same
+    // shape as a descheduled process, which is what a host carrying a bitcoind at five cores does to a signer node.
+    said.length = 0;
+    const { execFileSync } = await import('node:child_process');
+    execFileSync('sleep', ['0.25']);                 // the loop is held and this process burns nothing
+    await wait(120);
+    assert.equal(said.length, 1, said.join(' | '));
+    assert.match(said[0], /waiting for the machine, not for itself/);
 
     // A QUIET LOOP SAYS NOTHING.
     said.length = 0;

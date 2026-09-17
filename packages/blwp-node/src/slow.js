@@ -69,8 +69,12 @@ function watchCollections() {
 export function watchLoop({ every = 50, over = 250, say = console.log } = {}) {
   watchCollections();
   let last = performance.now();
+  let lastCpu = process.cpuUsage();
   const timer = setInterval(() => {
     const now = performance.now();
+    const cpu = process.cpuUsage();
+    const used = (cpu.user - lastCpu.user + cpu.system - lastCpu.system) / 1000;
+    lastCpu = cpu;
     const late = now - last - every;
     last = now;
     if (late < over) return;
@@ -80,10 +84,16 @@ export function watchLoop({ every = 50, over = 250, say = console.log } = {}) {
       ? inside.map((r) => `${r.label} ${(r.to - r.from).toFixed(0)} ms`).join(', ')
       : null;
     const gc = collections.filter((c) => c.at >= now - late - every).reduce((a, c) => a + c.ms, 0);
+    // AND WHETHER THIS PROCESS WAS RUNNING AT ALL. A loop held while the process used almost no processor was not
+    // held by anything it did: it was not given the machine. That is a different fault from a slow phase and must not
+    // be read as one - this host also carries a bitcoind at about five cores.
+    const running = used > late * 0.5;
     say(`[lag] the loop was held ${late.toFixed(0)} ms`
       + (held ? ` and in it ran ${held}` : '')
       + (gc >= 20 ? `${held ? ',' : ''} with ${gc.toFixed(0)} ms of garbage collection in it` : '')
-      + (!held && gc < 20 ? ' by something nobody timed' : ''));
+      + (!held && gc < 20 ? ' by something nobody timed' : '')
+      + `; this process used ${used.toFixed(0)} ms of processor in it`
+      + (running ? '' : ' - it was waiting for the machine, not for itself'));
   }, every);
   timer.unref?.();
   return { stop: () => clearInterval(timer) };
