@@ -233,6 +233,18 @@ test('the page ships the client it is written against, and one consumer of onGho
   assert.equal(/onGhost\s*=/.test(jslib), false,
     'the page sets onGhost itself, so the rule for what is kept lives in the one file no test can load');
 
+  // AND EVERYTHING THE PAGE CALLS IS IN THE BUNDLE'S EXPORTS. `tools/bundle.js` writes that list by hand, so a new
+  // function can be in the file and not on the table: measured while wiring the ghost label (the owner 2026-09-17 19:15),
+  // `BLWPCLIENT.tickClock` was undefined in the page although `tickClock` was bundled. The page would have carried a
+  // label that never appeared, and nothing but a browser would have said so.
+  const exported = new Set(Object.keys(await import(root + 'packages/blwp-client/dist/blwp-client.js')
+    .then(() => ({})).catch(() => ({}))));
+  const { createRequire: requireFrom } = await import('node:module');
+  const bundle = requireFrom(import.meta.url)(root + 'packages/blwp-client/dist/blwp-client.js');
+  for (const name of new Set([...jslib.matchAll(/BLWPCLIENT\.([A-Za-z0-9_]+)/g)].map((m) => m[1])))
+    assert.ok(bundle[name] !== undefined || exported.has(name),
+      `blwp.jslib calls BLWPCLIENT.${name} and the bundle does not export it`);
+
   // ONE CONSUMER OF onGhost IN THE SOURCE, and it is the measured one.
   const dir = new URL('../src/', import.meta.url).pathname;
   const sets = readdirSync(dir).filter((f) => /onGhost\s*=/.test(readFileSync(dir + f, 'utf8')));
