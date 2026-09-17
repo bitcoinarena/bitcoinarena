@@ -181,7 +181,7 @@ export class Verifier {
       // ground is not a round to spend a worker on, and it is certainly not
       // one to sign a result for.
       const beacon = timed(`close beacon ${hex(entryId).slice(0, 8)}`,
-        () => beaconFor(this.randomnessFor, contract, roundIdBytes, entry, entryId, this.chainFor));
+        () => beaconFor(this.randomnessFor, contract, roundIdBytes, entry, entryId, this.chainFor), { over: 20 });
       if (!beacon.ok) {
         this.queued.push({ entryId, objected: false, refused: beacon.why });
         return Promise.resolve({ entryId, stored: false, why: beacon.why });
@@ -189,7 +189,7 @@ export class Verifier {
       this.seeds.set(hex(roundIdBytes), beacon.committeeSeed);
 
       const transcript = timed(`close read transcript ${hex(entryId).slice(0, 8)}`,
-        () => this.round.transcript(roundIdBytes, entryId));
+        () => this.round.transcript(roundIdBytes, entryId), { over: 20 });
       const objected = this.round.objected(roundIdBytes, entryId);
       this.queued.push({ entryId, objected });
       // THE PEERS' RECEIPTS BEFORE THE CANONICAL CHAIN IS TAKEN (13C). Each
@@ -207,7 +207,7 @@ export class Verifier {
         options: { roundRandomness: beacon.hash },
       }))).then((answer) => timed(`close keep and sign ${hex(entryId).slice(0, 8)}`,
         () => this.#keep({ roundIdBytes, entryId, entry, contract, answer,
-          options: { roundRandomness: beacon.hash } })));
+          options: { roundRandomness: beacon.hash } }), { over: 20 }));
     });
 
     this.done = work;
