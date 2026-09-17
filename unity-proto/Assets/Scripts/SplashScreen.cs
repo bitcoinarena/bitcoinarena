@@ -52,6 +52,8 @@ public class SplashScreen : MonoBehaviour
     readonly System.Collections.Generic.List<int> _howToShown = new System.Collections.Generic.List<int>();
     Rect _lastName, _lastKey, _lastMore;
     string _lastNotice = "";
+    string _lastSilent = "";
+    Rect _lastSilentRect;
     readonly System.Collections.Generic.List<(Blwp.LobbyRow row, Rect rect, string words)> _drawnRows =
         new System.Collections.Generic.List<(Blwp.LobbyRow row, Rect rect, string words)>();
 
@@ -503,7 +505,27 @@ public class SplashScreen : MonoBehaviour
             if (r.joinable && GUI.Button(rect, GUIContent.none, GUIStyle.none)) { _tapId = r.id; _pickId = r.id; }
             _drawnRows.Add((r, rect, words));
         }
-        if (rows.Length == 0 && l.list.height > 0)
+        // A SILENT SIGNER NODE IS SAID HERE, ON THE LIST THE PLAYER IS READING, in red and bold - under the rows it has, or in
+        // place of "No round is open" when it has none. Not the hint line's grey.
+        _lastSilent = Blwp.DailyLobby.LobbyError(_lobby, _joining ? "" : _joinWhy);
+        _lastSilentRect = new Rect();
+        if (!string.IsNullOrEmpty(_lastSilent) && l.list.height > 0)
+        {
+            int drawn = Mathf.Clamp(rows.Length - _offset, 0, l.rows);
+            var red = new GUIStyle(_body) { fontSize = Mathf.RoundToInt(font), fontStyle = FontStyle.Bold, wordWrap = true, alignment = TextAnchor.MiddleLeft };
+            red.normal.textColor = new Color(1f, 0.50f, 0.46f);
+            var said = new GUIContent(_lastSilent);
+            float inner = l.list.width - 20f;
+            float top = l.list.y + drawn * l.rowH;
+            while (red.fontSize > 10 && red.CalcHeight(said, inner) + 12f > Mathf.Max(l.list.yMax - top, l.list.height * 0.5f)) red.fontSize--;
+            float height = red.CalcHeight(said, inner) + 12f;
+            if (top + height > l.list.yMax) top = l.list.yMax - height;       // over the last row rather than off the list
+            _lastSilentRect = new Rect(l.list.x, top, l.list.width, height);
+            PanelSkin.Gradient(_lastSilentRect, new Color(0.24f, 0.05f, 0.05f, 0.96f), new Color(0.16f, 0.03f, 0.03f, 0.96f));
+            PanelSkin.Border(_lastSilentRect, new Color(1f, 0.42f, 0.42f, 0.9f));
+            GUI.Label(new Rect(_lastSilentRect.x + 10f, _lastSilentRect.y + 6f, inner, height - 12f), said, red);
+        }
+        if (rows.Length == 0 && l.list.height > 0 && string.IsNullOrEmpty(_lastSilent))
         {
             var none = new GUIStyle(_body) { fontSize = Mathf.RoundToInt(font), wordWrap = true };
             none.normal.textColor = new Color(1f, 1f, 1f, 0.7f);
@@ -596,6 +618,7 @@ public class SplashScreen : MonoBehaviour
               .Append(",\"howToShown\":[").Append(string.Join(",", _howToShown)).Append(']')
               .Append(",\"howToCarousel\":").Append(_lastHowToCarousel ? "true" : "false").Append(",\"howToPage\":").Append(_howToPage)
               .Append(",\"howToPrev\":").Append(R(_lastHowToPrev)).Append(",\"howToNext\":").Append(R(_lastHowToNext))
+              .Append(",\"silent\":").Append(J(_lastSilent)).Append(",\"silentRect\":").Append(R(_lastSilentRect))
               .Append(",\"picked\":").Append(J(_pickId))
               .Append(",\"listed\":").Append(_lobby.rows.Length).Append(",\"rows\":[");
             for (int i = 0; i < _drawnRows.Count; i++)
@@ -695,6 +718,9 @@ public class SplashScreen : MonoBehaviour
         {
             var hint = new GUIStyle(_sub) { wordWrap = false };
             hint.normal.textColor = new Color(1f, 1f, 1f, 0.6f);
+            // A REFUSED JOIN IS AN ERROR AND READS AS ONE: red and bold on the line above PLAY, not the hint's grey (2026-09-17,
+            // "the tiny grey fetch line is not enough").
+            if (!_joining && !string.IsNullOrEmpty(_joinWhy)) { hint.normal.textColor = new Color(1f, 0.50f, 0.46f); hint.fontStyle = FontStyle.Bold; }
             GUI.Label(f.hint, Fit(hint, LobbyHint(), f.hint.width), hint);
         }
         else GUI.Label(f.hint, Hint, _sub);

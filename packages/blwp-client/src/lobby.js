@@ -35,6 +35,33 @@ import { toHex, fromHex } from '../../protocol/src/hash.js';
 export const LOBBY_SKEW_MS = 60000;
 
 /**
+ * HOW LONG A SIGNER NODE HAS TO ANSWER ONE LOBBY READ (2026-09-17: "never hang forever"). Measured before on the Daily with
+ * one tunnel silent: the first /rounds failed after 125.1 s and the next node's took 60 s, while the page sat on
+ * "Connecting …" for 185 s and then showed a closed round with PLAY enabled for 237 s. 10 s is the session's own limit for a
+ * provider ("no answer in 10000 ms"), so the lobby and the run give up on a node at the same point.
+ */
+export const SIGNER_ANSWER_MS = 10000;
+
+/**
+ * `fetcher` with a limit: a read that has not answered in `ms` is refused with the words the lobby shows, and a real
+ * fetch is aborted rather than left open. An injected fetcher that ignores the signal still loses the race.
+ */
+export function answerWithin(fetcher, ms = SIGNER_ANSWER_MS) {
+  return (url, opts = {}) => {
+    const abort = typeof AbortController === 'function' ? new AbortController() : null;
+    let timer;
+    const late = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        if (abort) abort.abort();
+        reject(Object.assign(new Error(`did not answer in ${ms >= 1000 ? `${Math.round(ms / 1000)} s` : `${ms} ms`}`), { silent: true }));
+      }, ms);
+    });
+    const asked = Promise.resolve().then(() => fetcher(url, abort ? { ...opts, signal: abort.signal } : opts));
+    return Promise.race([asked, late]).finally(() => clearTimeout(timer));
+  };
+}
+
+/**
  * WHAT A LOBBY LINK NAMES, or null when this is not one: a link that names a
  * round is a join, and a link that names no node is the offline daily. Held to
  * the same rules as a join link (two chain sources, a bond, an advertisement).
@@ -94,14 +121,22 @@ function lobbySigned(verify, { id, nodeKey, nowMs, x }) {
  * @returns {{ rows: object[], refused: string[] }} rows open before pending,
  *   soonest entry close first; a round past its entry close is not a row.
  */
-export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, skewMs = LOBBY_SKEW_MS } = {}) {
+export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, skewMs = LOBBY_SKEW_MS, answerMs = SIGNER_ANSWER_MS } = {}) {
   if (!Array.isArray(nodes) || !nodes.length) throw new Error('a lobby asks the nodes it was named, and it was named none');
   if (typeof verify !== 'function') throw new Error('a lobby checks each signer node\'s signed listing, and no verify was injected');
   const refused = [];
+  const unanswered = [];                                    // signer nodes that did not answer within answerMs
   const said = new Map();                                   // id -> [{ node, key, ... }]
-  for (const node of [...new Set(nodes)]) {
+  const ask = answerWithin(fetcher, answerMs);
+  // EVERY NODE AT ONCE, each within its limit: asked one after another, one silent node held the next one's answer back
+  // and a lobby of two cost two limits. Answers are read in the order the nodes were named.
+  const unique = [...new Set(nodes)];
+  const answers = await Promise.all(unique.map((node) =>
+    ask(`${String(node).replace(/\/+$/, '')}/rounds`).then((r) => ({ r }), (e) => ({ e }))));
+  for (const [k, node] of unique.entries()) {
     try {
-      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/rounds`);
+      const { r, e } = answers[k];
+      if (e) throw e;
       if (!r.ok) { refused.push(`${node}: answered ${r.status}`); continue; }
       const body = await r.json();
       const nodeKey = String(body && body.node).toLowerCase();
@@ -116,12 +151,14 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
           signed, fresh: Number.isFinite(at) && Math.abs(at - nowMs) <= skewMs,
           names: Array.isArray(x.names) ? x.names : [] });
       }
-    } catch (e) { refused.push(`${node}: ${e.message}`); }
+    } catch (e) { refused.push(`${node}: ${e.message}`); if (e && e.silent) unanswered.push(String(node)); }
   }
   const rows = [];
+  // A ROUND'S CONTRACT FROM A NODE THAT ANSWERED FIRST, so a silent one costs its limit once per paint, not once per row.
+  const answeredFirst = [...unique.filter((n) => !unanswered.includes(String(n))), ...unique.filter((n) => unanswered.includes(String(n)))];
   for (const [id, counts] of said) {
     let contract;
-    try { ({ contract } = await fetchRound(id, nodes, { fetcher })); }
+    try { ({ contract } = await fetchRound(id, answeredFirst, { fetcher: ask })); }
     catch (e) { refused.push(`${id.slice(0, 16)}: ${e.message}`); continue; }
     const now = BigInt(Math.floor(nowMs));
     if (now >= contract.entryCloseMs) continue;
@@ -155,7 +192,7 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
     });
   }
   rows.sort((x, y) => (x.phase === y.phase ? x.entryCloseMs - y.entryCloseMs : (x.phase === 'open' ? -1 : 1)));
-  return { rows, refused };
+  return { rows, refused, unanswered };
 }
 
 /**

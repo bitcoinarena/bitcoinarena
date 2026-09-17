@@ -69,7 +69,7 @@
       background: #0d1014; border: 1px solid #3a3f45; color: #ffc46b; word-break: break-all;
       user-select: all; font: 400 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
 
-    #err { display: none; color: #ff6b6b; max-width: 560px; text-align: center; font-size: 14px; }
+    #err { display: none; color: #ff6b6b; max-width: 560px; text-align: center; font-size: 17px; font-weight: 600; line-height: 1.4; margin-top: 10px; }
     #err.show { display: block; }
     /* A donation that already left the wallet, from the tab's notes, under a
        refusal: the player is told what was paid even when the round is gone. */
@@ -397,6 +397,30 @@
       err.textContent = message;
       err.classList.add('show');
       stage.textContent = 'Could not start';
+    }
+
+    // THE LOADING SCREEN CANNOT SIT FOREVER (2026-09-17). Measured before, on this screen: a loader request that never
+    // answered left "0% · Connecting …" up for all 300 s watched, and Unity's code file held left "0 % · 0.0 / 22.3 MB ·
+    // Loading the program …" up for all 300 s - no error either time, fail() never called; and the Daily with one signer
+    // node silent kept "Connecting …" for 185 s before Unity was even asked for. Every second this looks at what the
+    // screen says; when a loading line has not changed for LOAD_STALL_S, fail() says so. A line that is not a loading
+    // line (a stake lock, a claim key, an invoice) is the page waiting on the player or a named step, not stuck.
+    const LOAD_STALL_S = 90;
+    const LOADING_LINES = new Set(['Connecting …', ...STAGES.map((s) => s[1])]);
+    let loadSeen = '', loadChangedAt = Date.now();
+    const loadWatch = setInterval(() => {
+      if (window.unityInstance || !document.getElementById('boot') || err.classList.contains('show')) { clearInterval(loadWatch); return; }
+      const now = pct.textContent + ' | ' + stage.textContent;
+      if (now !== loadSeen || !LOADING_LINES.has(stage.textContent)) { loadSeen = now; loadChangedAt = Date.now(); return; }
+      if (Date.now() - loadChangedAt < LOAD_STALL_S * 1000) return;
+      clearInterval(loadWatch);
+      window.BLWP_LOAD_STALLED = { stage: stage.textContent, pct: pct.textContent, afterS: LOAD_STALL_S };
+      console.error('[blwp] loading stalled at "' + stage.textContent + '" (' + pct.textContent + ') for ' + LOAD_STALL_S + ' s');
+      fail(stallMessage(stage.textContent, pct.textContent));
+    }, 1000);
+    function stallMessage(at, progress) {
+      return 'Nothing has loaded for ' + LOAD_STALL_S + ' seconds - the page stopped at "' + at + '" (' + progress.trim()
+        + '). Check your connection and reload the page.';
     }
 
     const canvas = document.getElementById('canvas');
@@ -1408,6 +1432,7 @@
       };
       who();
       let refused = [];
+      let unanswered = [];
       const leftOf = (line) => { const m = String(line).match(/closes in (\d+):(\d\d)/); return m ? Number(m[1]) * 60 + Number(m[2]) : -1; };
       const joinedOf = (line) => { const m = String(line).match(/(\d+) joined/); return m ? Number(m[1]) : 0; };
       const paint = async () => {
@@ -1418,7 +1443,7 @@
         try {
           got = await BLWPCLIENT.fetchLobby({ nodes: named.nodes,
             verify: (s, m, k) => !!(window.BLWP_CURVE && window.BLWP_CURVE.verify && window.BLWP_CURVE.verify(s, m, k)) });
-        } catch (e) { got = { rows: [], refused: [e.message] }; }
+        } catch (e) { got = { rows: [], refused: [e.message], unanswered: [] }; }
         const now = Date.now();
         // ONE FREE ROUND AND ONE PAYING ROUND, never two of either (the owner 2026-09-15 16:08), and
         // what the paying one costs.
@@ -1426,6 +1451,7 @@
           signerNodesAgree: r.signerNodesAgree, needed: r.needed, joinable: r.joinable, stakeSats: BLWPCLIENT.lobbyStakeSats(r),
           line: BLWPCLIENT.lobbyLine(r, now), raw: r, join: r.joinable ? BLWPCLIENT.lobbyJoinSearch(search, r.id) : null }));
         refused = got.refused || [];
+        unanswered = got.unanswered || [];
       };
       // THE LOBBY, AS UNITY DRAWS IT (the owner 2026-09-12 22:11-22:16): the title
       // screen is the lobby - no HTML over the game. What it shows is this, and
@@ -1436,9 +1462,14 @@
         // THE LINE IS MADE WHEN IT IS READ (the owner 2026-09-16 15:36: "lobby list should refresh every second"):
         // made at paint time, "closes in" stood still between paints and moved in paint-sized steps.
         rows: (window.BLWP_LOBBY || []).map((r) => { const line = r.raw ? BLWPCLIENT.lobbyLine(r.raw, Date.now()) : r.line;
+          // A ROUND WHOSE ENTRY HAS CLOSED IS NOT JOINABLE, whatever the last paint said. Measured before: "closes 0:00" with
+          // PLAY enabled for 237 s while the repaint waited on a silent signer node, and for 11.7 s at every rollover.
+          const leftS = leftOf(line);
           return { id: r.id, line, free: !!r.free, agree: r.signerNodesAgree | 0,
-            needed: r.needed | 0, joinable: !!r.join, leftS: leftOf(line), joined: joinedOf(line), stakeSats: Number(r.stakeSats) || 0 }; }),
+            needed: r.needed | 0, joinable: !!r.join && leftS !== 0, leftS, joined: joinedOf(line), stakeSats: Number(r.stakeSats) || 0 }; }),
         refused: refused.map(String), nodes: named.nodes.length,
+        // THE SIGNER NODES THAT DID NOT ANSWER the last read within the limit, by address, for the lobby to say so on screen.
+        unanswered: unanswered.map(String), answerS: Math.round((BLWPCLIENT.SIGNER_ANSWER_MS || 10000) / 1000),
         join: window.BLWP_JOIN ? { state: window.BLWP_JOIN.state, why: String(window.BLWP_JOIN.why || ''), stage: String(window.BLWP_JOIN.stage || '') }
           : { state: '', why: '', stage: '' },
         // A WITHDRAWAL AVAILABLE (the owner 2026-09-14), for the lobby to say so.
@@ -1469,12 +1500,34 @@
             window.BLWP_ENTRY = undefined;
             history.replaceState(null, '', location.pathname + back);
           };
+          // A JOIN THAT THE SIGNER NODES DO NOT ANSWER IS REFUSED BY TIME (2026-09-17). Measured before on the silent Daily:
+          // after PLAY every /round and /identity failed only after 125-150 s and the lobby said "joining the round …" for
+          // as long as it was watched. JOIN_ANSWER_S with no named step (a stake lock or an invoice names its step and waits
+          // on the player, and is not cut) refuses it, naming the signer nodes that did not answer; a late answer after that
+          // is dropped, so a refused join never turns into a session.
+          const JOIN_ANSWER_S = 30;
+          const since = Date.now();
+          const hosts = (list) => list.map((n) => String(n).replace(/^[a-z]+:\/\//, '').replace(/\/+$/, '')).join(' and ');
+          const clock = setInterval(() => {
+            if (join.state !== 'joining') { clearInterval(clock); return; }
+            if (join.stage) return;
+            if (Date.now() - since < JOIN_ANSWER_S * 1000) return;
+            clearInterval(clock);
+            join.cancelled = true;
+            const silent = unanswered.length ? unanswered : named.nodes;
+            refuse('signer node' + (silent.length === 1 ? ' ' : 's ') + hosts(silent) + ' did not answer in ' + JOIN_ANSWER_S + ' s');
+          }, 1000);
           joinTheRoundIfOneWasNamed()
             .then(() => {
+              if (join.cancelled) {
+                if (window.BLWP_JOIN === join) { window.BLWP_ENTRY = undefined; window.BLWP_CHAIN = undefined; window.BLWP_ADVERT = undefined; window.BLWP_ROUND = undefined; }
+                console.error('[blwp] a join answered after it was refused by time: dropped');
+                return;
+              }
               if (window.BLWP_ENTRY) join.state = 'joined';
               else refuse(window.BLWP_JOIN_REFUSED || 'this page did not join that round');
             })
-            .catch((e) => refuse(e && e.message ? e.message : e));
+            .catch((e) => { if (!join.cancelled) refuse(e && e.message ? e.message : e); });
           return true;
         },
         // THE NAME, in the browser's own prompt: a phone's keyboard types into it.

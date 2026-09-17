@@ -14,7 +14,7 @@ import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
-import { lobbyQuery, lobbyJoinSearch, fetchLobby, lobbyLine, dailyLobbySearch, lobbyOnePerKind, lobbyStakeSats } from '../src/lobby.js';
+import { lobbyQuery, lobbyJoinSearch, fetchLobby, lobbyLine, dailyLobbySearch, lobbyOnePerKind, lobbyStakeSats, answerWithin, SIGNER_ANSWER_MS } from '../src/lobby.js';
 import { encodeRoundContract, roundId } from '../../protocol/src/contracts.js';
 import { lobbyListingId } from '../../protocol/src/lobby-listing.js';
 import { encodeLobbyName, lobbyNameId } from '../../protocol/src/lobby-name.js';
@@ -184,6 +184,38 @@ test('what does not count toward 2 of 2: a node down, a stranger\'s key, one key
   });
   assert.match(cases.nodeDown.refused.join('; '), new RegExp(`${B.replace(/[.]/g, '\\.')}: answered 503`));
   await assert.rejects(fetchLobby({ nodes: [A, B], fetcher: network({ nodes: {}, contracts }).fetcher, nowMs: NOW }), /no verify was injected/);
+});
+
+test('a silent signer node costs one limit, not the lobby: the other still lists, the silent one is named, no join (2026-09-17)', async () => {
+  // MEASURED BEFORE, on the Daily with one tunnel silent: /rounds failed after 125.1 s and the next node's took 60 s, all while
+  // the page sat on "Connecting …". The silent node here never answers at all.
+  const { contracts, id } = roundsOf({ r: contractAt(BigInt(NOW) - 1000n) });
+  const net = network({ nodes: { [A]: { secret: signerNodeA, rounds: [listing(signerNodeA, id.r)] }, [B]: { secret: signerNodeB, rounds: [listing(signerNodeB, id.r)] } }, contracts });
+  const silentB = (url, opts) => (url.startsWith(B) ? new Promise(() => {}) : net.fetcher(url, opts));
+  const t0 = Date.now();
+  const got = await fetchLobby({ nodes: [B, A], fetcher: silentB, nowMs: NOW, verify, answerMs: 1000 });
+  const took = Date.now() - t0;
+  console.log(`  silent B, limit 1 s: answered in ${took} ms; unanswered ${JSON.stringify(got.unanswered)}; refused ${JSON.stringify(got.refused)}`);
+  assert.ok(took < 2500, `one limit, not two or a hang: ${took} ms`);
+  assert.deepEqual(got.unanswered, [B]);
+  assert.ok(got.refused.includes(`${B}: did not answer in 1 s`), 'the words the lobby shows name the node');
+  assert.equal(got.rows.length, 1, 'the round the answering node lists is still a row');
+  assert.equal(got.rows[0].joinable, false, 'no join while one of 2 is silent');
+  assert.equal(got.rows[0].signerNodesAgree, 1);
+  // both answering: nobody is named
+  const both = await fetchLobby({ nodes: [A, B], fetcher: net.fetcher, nowMs: NOW, verify, answerMs: 1000 });
+  assert.deepEqual(both.unanswered, []);
+  assert.equal(both.rows[0].joinable, true);
+  assert.equal(SIGNER_ANSWER_MS, 10000);
+});
+
+test('answerWithin refuses a read that has not answered in its limit, and aborts a fetch that honours the signal', async () => {
+  let aborted = false;
+  const hangs = (url, opts) => new Promise((_, reject) => { opts.signal.addEventListener('abort', () => { aborted = true; reject(new Error('aborted')); }); });
+  await assert.rejects(answerWithin(hangs, 200)('http://x/rounds'), (e) => e.silent === true && /did not answer in 200 ms/.test(e.message));
+  assert.equal(aborted, true);
+  const quick = answerWithin(async () => new Response('ok', { status: 200 }), 200);
+  assert.equal((await quick('http://x/rounds')).status, 200);
 });
 
 test('a row names its joined players by the names they signed; a signer node\'s forgery and a record for another round are not shown', async () => {

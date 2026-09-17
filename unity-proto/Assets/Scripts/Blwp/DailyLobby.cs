@@ -62,6 +62,9 @@ namespace Blwp
         public int nodes;
         public LobbyJoin join = new LobbyJoin();
         public LobbyWithdraw withdraw = new LobbyWithdraw();
+        /// <summary>The signer nodes, by address, that did not answer the page's last lobby read within `answerS` seconds.</summary>
+        public string[] unanswered = new string[0];
+        public int answerS = 10;
     }
 
     /// <summary>
@@ -118,6 +121,7 @@ namespace Blwp
             if (s.you == null) s.you = new LobbyYou();
             if (s.join == null) s.join = new LobbyJoin();
             if (s.withdraw == null) s.withdraw = new LobbyWithdraw();
+            if (s.unanswered == null) s.unanswered = new string[0];
             return s;
         }
 
@@ -134,6 +138,42 @@ namespace Blwp
             return long.TryParse(s.withdraw.msat, out var msat) && msat > 0
                 ? $"Withdrawal available: {msat / 1000} sat - press Withdraw in the wallet panel"
                 : "";
+        }
+
+        /// <summary>
+        /// A SIGNER NODE THAT DID NOT ANSWER, SAID ON THE LOBBY ITSELF (2026-09-17: "never hang forever"). Measured before on the
+        /// Daily with its tunnels silent: a round past its close with PLAY enabled for 237 s, then an empty list and a grey PLAY
+        /// with no message for as long as it was watched; the only error text anywhere was the small grey hint after a refused
+        /// join. The page now gives each signer node `answerS` seconds; this is what the player reads when one did not.
+        /// "" when every signer node answered.
+        /// </summary>
+        public static string UnansweredLine(LobbyState s)
+        {
+            if (s == null || s.unanswered == null || s.unanswered.Length == 0) return "";
+            var names = new string[s.unanswered.Length];
+            for (int i = 0; i < names.Length; i++) names[i] = Host(s.unanswered[i]);
+            string who = names.Length == 1 ? $"Signer node {names[0]} did not" : $"Signer nodes {string.Join(" and ", names)} did not";
+            return $"{who} answer in {Math.Max(1, s.answerS)} s. PLAY waits until every signer node of the round answers - asked again every second.";
+        }
+
+        /// <summary>
+        /// The red box on the lobby's list: a refused join first (its reason, which names the signer nodes that did not answer
+        /// a join), then the signer nodes that did not answer the last lobby read. "" when there is nothing to say.
+        /// </summary>
+        public static string LobbyError(LobbyState s, string joinWhy)
+        {
+            string silent = UnansweredLine(s);
+            if (string.IsNullOrEmpty(joinWhy)) return silent;
+            return $"Not joined: {joinWhy}." + (string.IsNullOrEmpty(silent) ? "" : "\n" + silent);
+        }
+
+        /// <summary>An address as the player reads it: no scheme, no trailing slash.</summary>
+        public static string Host(string url)
+        {
+            string h = url ?? "";
+            int k = h.IndexOf("://", StringComparison.Ordinal);
+            if (k >= 0) h = h.Substring(k + 3);
+            return h.TrimEnd('/');
         }
 
         /// <summary>How long a joined signer node waits for its session before the round starts anyway.</summary>
@@ -519,7 +559,11 @@ namespace Blwp
             string left = r.leftS >= 0 ? $"closes {r.leftS / 60}:{r.leftS % 60:00}" : "entry open";
             // THE PLAYER IS NEVER TOLD "SIGNER NODE" (the owner 2026-09-15 16:22): the nodes that sign the
             // round are signer nodes, and the players in it have joined.
-            string signers = r.joinable ? $"{r.agree} of {r.needed} signer nodes" : $"{r.agree} of {r.needed} signer nodes - waiting";
+            // A ROUND WHOSE ENTRY HAS CLOSED SAYS SO rather than "waiting" (the page no longer offers it: measured, "closes 0:00"
+            // with PLAY enabled for 237 s behind a silent signer node).
+            string signers = r.joinable ? $"{r.agree} of {r.needed} signer nodes"
+                : r.leftS == 0 ? $"{r.agree} of {r.needed} signer nodes - entry closed"
+                : $"{r.agree} of {r.needed} signer nodes - waiting";
             string id = string.IsNullOrEmpty(r.id) ? "" : (r.id.Length > 8 ? r.id.Substring(0, 8) : r.id);
             return new[]
             {
