@@ -61,6 +61,26 @@ import { schnorr } from '@noble/curves/secp256k1.js';
  * here - before a run is replayed rather than after - because a round whose
  * committee could have been ground is not a round to sign a result for.
  */
+/**
+ * THE HEADERS OF A VIEW, BUILT ONCE PER VIEW (the owner 2026-09-17 19:15, the ghost lag). A view of an old round reaches
+ * from twenty below its census to the tip - twenty thousand blocks on the Daily - and this used to lay out its
+ * headers again on every ask. Measured live: the finality watch's retry of ONE old round held the loop a median
+ * 305 ms, 255 times in eight minutes, and that is the thread another player's truck is drawn from. The view object
+ * is the same object while it is the same view, so its headers are kept beside it and go when it does.
+ */
+const headersOfView = new WeakMap();
+const headersOf = (view) => {
+  let had = headersOfView.get(view);
+  if (!had || had.blocks !== view.blocks.length) {
+    had = { blocks: view.blocks.length, headers: { headers: view.blocks.map((b) => b.header), firstHeight: view.firstHeight } };
+    headersOfView.set(view, had);
+  }
+  return had.headers;
+};
+
+/** And the answer that scan gives, per round, per view and per beacon: it cannot change while all three are the same. */
+const beaconChecks = new Map();
+
 function beaconFor(randomnessFor, contract, roundIdBytes, entry, entryId, chainFor) {
   const given = randomnessFor({ contract, roundIdBytes, entry, entryId });
   const hash = given && (given.hash || (given instanceof Uint8Array ? given : undefined));
@@ -88,12 +108,18 @@ function beaconFor(randomnessFor, contract, roundIdBytes, entry, entryId, chainF
   if (view && view.pending)
     return { ok: false, why: 'this node is still reading its chain view for that round' };
   if (view && Array.isArray(view.blocks) && view.blocks.length) {
-    const headers = { headers: view.blocks.map((b) => b.header), firstHeight: view.firstHeight };
-    const named = beaconFromChain(contract, headers);
-    if (!named.ok) return named;
-    const agrees = beaconIsTheChains(contract, { hash, height, timeMs: given && given.timeMs },
-      headers);
-    if (!agrees.ok) return agrees;
+    const key = `${hex(roundIdBytes)}:${view.firstHeight}:${view.blocks.length}:${hash ? hex(hash) : 'none'}:${height}`;
+    const had = beaconChecks.get(key);
+    if (had && !had.ok) return had;
+    if (!had) {
+      const headers = headersOf(view);
+      const named = beaconFromChain(contract, headers);
+      if (!named.ok) { beaconChecks.set(key, named); return named; }
+      const agrees = beaconIsTheChains(contract, { hash, height, timeMs: given && given.timeMs }, headers);
+      if (!agrees.ok) { beaconChecks.set(key, agrees); return agrees; }
+      beaconChecks.set(key, { ok: true });
+      if (beaconChecks.size > 64) beaconChecks.delete(beaconChecks.keys().next().value);
+    }
   }
 
   return { ok: true, hash, height, committeeSeed: seeded.seed, rootsAreOne: seeded.rootsAreOne };
