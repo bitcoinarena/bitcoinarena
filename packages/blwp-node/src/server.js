@@ -1248,7 +1248,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // this signer node's own re-run once, and the other signer nodes' gathered every time.
     for (const g of (closed && closed.gathered) || []) {
       if (!(g && g.ok && g.final)) continue;
-      try { await timed(`rerun ${toHex(g.entryId).slice(0, 8)}`, () => rerunAndFile(roundIdBytes, g.entryId)); }
+      try { await timed(`rerun ${toHex(g.entryId).slice(0, 8)}`, () => rerunAndFile(roundIdBytes, g.entryId), { over: 20 }); }
       catch (e) { console.error(`[rerun] ${e.message}`); }
     }
     const row = round.get(roundIdBytes);
@@ -1276,7 +1276,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // Read LIVE from this signer node's store, not from `closed`: the finality watch
     // hands this the close's first snapshot again and again, and the rule
     // decides after it (measured: the snapshot's "pending" never cleared).
-    const listed = new Set(entries.map((e) => toHex(e.entryId)));
+    // WHAT THE CLOSE MAKES OF WHAT CAME BACK - the continuation after the gathers, named so a stall in it is not "a
+    // promise" (the owner 2026-09-17 19:15).
+    const listed = timed(`close read its entries ${toHex(roundIdBytes).slice(0, 8)}`,
+      () => new Set(entries.map((e) => toHex(e.entryId))), { over: 20 });
     const noQuorumForfeits = new Set();
     const pendingNoQuorum = [];
     for (const { entryId, entry } of round.entriesOf(roundIdBytes)) {
