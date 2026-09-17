@@ -7,7 +7,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { init, step, restart, runScore, setGround, setSolids, groundAt, submitLoad, heatOf, HALF_X } from '../src/sim.js';
+import { init, step, restart, runScore, setGround, setSolids, groundAt, submitLoad, heatOf, HALF_X, teleport, bayZ, START_X } from '../src/sim.js';
+
+// WHERE THE CHART IS NOT (WAR_TACTICS.md §4.15). The candles stand on |z| <= 46.6 between x -74.4 and 107.0, the band
+// is |x| <= 104, |z| <= 54, and a fixture about the vehicle, the walls, the armour or the score that is not about the
+// candles drives where neither is - measured (tools: scratchpad free-ground): on the bay lanes z = -78.2 / +78.2 and at
+// z = +-70 the surface is the recorded relief to 0.000 m, no candle, no berm, the nearest candle collider 25-33 m off.
+const OFF_CHART_LANE = bayZ(0);                        // -78.2 m, bay 0
+const OFF_CHART_NORTH = bayZ(23);                      // +78.2 m, bay 23
+const OFF_CHART_Z = Math.round(70 * 65536);            // +70 m: past the band, inside the units' field
 // Offsets are IMPORTED, never typed. They were typed in nine places in this
 // file, and when the truck block grew its thirteenth word every one of them
 // had to be found - which is the same drift that let `T_IMPACT` and
@@ -264,6 +272,8 @@ test('the core drives like the PhysX truck it replaces', async () => {
     // is the VEHICLE against a PhysX recording, so it is given the recording's
     // own world; `setGround` is the reference door and no browser can reach it.
     assert.ok(setGround(s, 33, 33, new Int32Array(33 * 33)), 'the flat reference world was refused');
+    // Off the chart (§4.15): 13 s straight from bay 0 reaches x 97.8, 33 m from the nearest candle collider.
+    teleport(s, START_X, OFF_CHART_LANE, 16384);
     for (let t = 1; t <= 13; t++) {
       drive(s, HZ, 1, 0);
       const want = ref.accel[String(t)];
@@ -275,7 +285,69 @@ test('the core drives like the PhysX truck it replaces', async () => {
   }
 
   for (const t of ref.turns) {
+    // THE HALF-LOCK TURN HAS NO PLACE OFF THE CHART: its 59 m circle does not fit the 37 m strip past |z| 46.6 or the
+    // 40 m between the post office and the first face (measured from both bay lanes: into the berms and 0.83 m from a
+    // candle collider, or into the map wall). It is its own test below, red and listed.
+    if (t.steer !== 1) continue;
     const s = init(1);
+    // Full lock from bay 23 turns toward the field and stays in z 49.3..78.2, 15.9 m from the nearest candle collider.
+    teleport(s, START_X, OFF_CHART_NORTH, 16384);
+    drive(s, HZ * 8, 1, 0);
+    drive(s, HZ * 5, 1, t.steer);
+
+    let prev = headDeg(s), turned = 0, vsum = 0, slip = 0, wheel = 0, n = 0;
+    for (let i = 0; i < HZ * 5; i++) {
+      drive(s, 1, 1, t.steer);
+      const h = headDeg(s);
+      let d = h - prev; if (d > 180) d -= 360; if (d < -180) d += 360;
+      turned += d; prev = h;
+
+      const vx = s.i32[O + VX] / Q, vz = s.i32[O + VZ] / Q;
+      const sp = Math.sqrt(vx * vx + vz * vz);
+      vsum += sp;
+      if (sp > 1) {
+        let sl = Math.atan2(vx, vz) * 180 / Math.PI - h;
+        if (sl > 180) sl -= 360; if (sl < -180) sl += 360;
+        slip += sl;
+      }
+      wheel += s.i32[O + STEER] * 360 / Q;
+      n++;
+    }
+
+    const v = vsum / n, yaw = Math.abs(turned / 5);
+    const radius = v / (yaw * Math.PI / 180);
+    const near = (got, want, f, what) => assert.ok(
+      Math.abs(got - want) / want < f,
+      `steer ${t.steer}: ${what} is ${got.toFixed(2)}, the PhysX truck was ${want}`);
+
+    near(yaw, t.yaw, tol.yaw, 'yaw rate deg/s');
+    near(v, t.v, tol.v, 'speed m/s');
+    near(radius, t.radius, tol.radius, 'turn radius m');
+    near(Math.abs(slip / n), t.slip, tol.slip, 'slip angle deg');
+    near(Math.abs(wheel / n), t.wheel, tol.wheel, 'wheel angle deg');
+  }
+});
+test('the half-lock turn drives like the PhysX truck (no place off the chart: listed red, TASKBOOK)', async () => {
+  const ref = JSON.parse(
+    await readFile(new URL('./vectors/physx-reference.json', import.meta.url), 'utf8'));
+  const tol = ref.tolerance;
+  const O = 5, HEAD = 2, VX = 3, VZ = 4, SPEED = 9, STEER = 11, HZ = 60, Q = 65536;
+
+  // Scales its inputs to Q16.16, unlike the file-level `drive` - and holds the
+  // field clear every tick, because this fixture is the VEHICLE against the
+  // PhysX recording and the core's armour is solid now.
+  const drive = (s, n, th, st) => {
+    for (let i = 0; i < n; i++) {
+      clearTheField(s);
+      step(s, Math.round(th * Q), Math.round(st * Q), 0, 0, 0);
+    }
+  };
+  const headDeg = (s) => (s.i32[O + HEAD] & 65535) * 360 / Q;
+
+  for (const t of ref.turns) {
+    // The half-lock turn only: its 59 m circle has no place off the chart (see above).
+    if (t.steer === 1) continue;
+    const s = init(1);                                   // from the spawn, as recorded: through the candle field
     drive(s, HZ * 8, 1, 0);
     drive(s, HZ * 5, 1, t.steer);
 
@@ -351,7 +423,9 @@ test('a hill costs the core what it costs Unity', async () => {
     clearTheField(st);
     assert.ok(setGround(st, COLS, ROWS, heights), 'the relief was refused');
     st.i32[O + T_X] = Math.round(ref.startX * Q);
-    st.i32[O + T_Z] = Math.round(ref.lane * Q);
+    // The recorded relief varies with x only, so the recorded line is laid on the bay 0 lane: off the chart band, where
+    // the surface is the recorded relief to 0.000 m (on the recording's own lane z -20 the band flattens it by 4.995 m).
+    st.i32[O + T_Z] = OFF_CHART_LANE;
 
     const out = [];
     for (let k = 0; k < 60 * 22; k++) {
@@ -416,6 +490,7 @@ test('a wall stops the truck and a lintel does not', () => {
 
   const run = (boxes) => {
     const st = init(1);
+    teleport(st, START_X, OFF_CHART_LANE, 16384);        // off the chart: the open run meets no candle face
     if (boxes) assert.ok(setSolids(st, boxes.length / 6, boxes), 'die Hindernisse wurden abgelehnt');
     const sx = st.i32[O + T_X] / Q;
     for (let i = 0; i < 600; i++) { keepArmourOff(st); step(st, Q, 0, 0, 0, 0); }
@@ -427,8 +502,7 @@ test('a wall stops the truck and a lintel does not', () => {
 
   // A slab across the road, from the ground up, thirty metres ahead.
   const wallAt = open.from + 30;
-  const st0 = init(1);
-  const z = st0.i32[O + T_Z] / Q;
+  const z = OFF_CHART_LANE / Q;
   const wall = run(new Int32Array([q(wallAt), q(z), q(1), q(20), 0, q(50)]));
 
   // The nose stops one radius plus the nose offset short of the face.
@@ -611,7 +685,7 @@ test('crashing into armour costs condition, and hard enough writes it off', () =
   const driveInto = (ticks, throttle) => {
     const st = init(1);
     st.i32[O + T_X] = 0;
-    st.i32[O + T_Z] = 0;
+    st.i32[O + T_Z] = OFF_CHART_Z;                       // off the chart: at z 0 candle 13's face stood in the way
     const at = Math.round(14 * Q);
     for (let t = 0; t < ticks; t++) {
       clearTheField(st);
@@ -632,7 +706,7 @@ test('crashing into armour costs condition, and hard enough writes it off', () =
   // Nothing to hit: the same drive with no tank must cost nothing at all, or
   // the test above is measuring the road rather than the crash.
   const st = init(1);
-  st.i32[O + T_X] = 0; st.i32[O + T_Z] = 0;
+  st.i32[O + T_X] = 0; st.i32[O + T_Z] = OFF_CHART_Z;
   for (let t = 0; t < 180; t++) { clearTheField(st); step(st, Q, 0, 0, 0, 0); }
   assert.equal(st.i32[O + T_HP] / Q, 100, 'der Truck verliert Punkte ohne etwas zu treffen');
 });
@@ -650,7 +724,7 @@ test('a truck at speed rides a rifleman down, and a crawling one does not', () =
     // before the rule ever looks at him. That is what made the first version
     // of this test report a survivor.
     st.i32[O + T_X] = 0;
-    st.i32[O + T_Z] = 0;
+    st.i32[O + T_Z] = OFF_CHART_Z;                       // off the chart: at z 0 the nose sat past candle 13's west face
     const b = O_UNITS + 1 * U_WORDS;
     st.i32[b + U_X] = st.i32[O + T_X] + Math.round(1.0 * Q);
     st.i32[b + U_Z] = st.i32[O + T_Z];
@@ -698,6 +772,7 @@ test('armour blocks the truck and infantry does not', () => {
   // tank to stay where it was put.
   const run = (slot) => {
     const st = init(1);
+    teleport(st, START_X, OFF_CHART_LANE, 16384);        // off the chart: from bay 14 candle 0's face stopped it at -76.7
     const at = st.i32[O + T_X] + Math.round(30 * Q);
     for (let i = 0; i < 600; i++) {
       clearTheField(st);

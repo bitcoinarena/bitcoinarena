@@ -56,32 +56,35 @@ public class ChartPlacementTests
     }
 
     [Test]
-    public void TheObjectivesStripIsInTheMiddleOffTheChartAndEveryHudBox()
+    public void OnTheDesktopTheChartIsTopRightUnderTheIconsAndCoversNoHudBox()
     {
-        // the owner 09:17: RIDGE / HOLLOW / GAP and the assault banners off the chart, central on the screen. Held at its widest
-        // (the whole room) with both lines, against the boxes the HUD draws in. The run-stopped row is its room; that line
-        // and the strip are never drawn together.
-        foreach (var (w, h) in new[] { (1280, 657), (1280, 800), (1366, 768), (1920, 1080), (1024, 768), (844, 390), (800, 600) })
+        // the owner 2026-09-17: top right on the desktop (T1), and "it must not cover the sound button and the other one at the
+        // top right". The editor has no touch screen, so the HUD lays out as a desktop here - the same branch a desktop
+        // browser takes. Measured before: the right column is 232 px wide at 1280x657 and the chart 461 px.
+        Assert.IsFalse(TouchControls.TouchScreen, "the editor reports a touch screen: this is not the desktop layout");
+        foreach (var (w, h) in new[] { (1024, 768), (844, 390), (800, 600) })
+            Debug.Log($"[topright] {w}x{h} top right: {_hud.ChartTopRight(w, h)} (no room: the chart stays under SIM)");
+        foreach (var (w, h) in new[] { (1280, 657), (1280, 800), (1366, 768), (1440, 900), (1536, 864), (1920, 1080) })
         {
+            Assert.IsTrue(_hud.ChartTopRight(w, h), $"{w}x{h}: a desktop window with room did not put the chart top right");
+            var r = ChartHud.DesktopPanelFor(w, h, _hud.ChartCorner(w, h));
+            var base1 = ChartHud.BaseSize(w, h) * ChartHud.Scale;
+            var sound = TouchPad.RectFor(TouchPad.Pad.Sound, w, h);
+            var debug = TouchPad.RectFor(TouchPad.Pad.Debug, w, h);
+            var manifest = _hud.ManifestBox(w, h);
             var head = _hud.HeadlineBox(w, h);
-            var chart = ChartHud.PanelFor(w, h, _hud.SimBox(w, h));
-            var row = _hud.RunStoppedBox(w, h);
-            var room = ChartHud.ObjectivesRoom(head, row, chart);
-            int font = ChartHud.ObjectivesFont(room.height, 2, ChartHud.HeaderFont(chart.height));
-            float lh = font * 1.35f;
-            var box = ChartHud.ObjectivesBox(room, w * 0.5f, room.width - 16f, lh, 2);
-            var typical = ChartHud.ObjectivesBox(room, w * 0.5f, 300f, lh, 2);
-            Debug.Log($"[objectives] {w}x{h} room={room} font={font} box={box} typical={typical} offCentre={typical.center.x - w * 0.5f:0.0} chart={chart} row={row}");
-            Assert.GreaterOrEqual(font, 9, $"{w}x{h}: strip font {font} unreadable");
-            Assert.GreaterOrEqual(box.height, lh * 2f, $"{w}x{h}: two lines do not fit {box}");
-            Assert.AreEqual(Mathf.Clamp(w * 0.5f, room.x + typical.width * 0.5f, room.xMax - typical.width * 0.5f), typical.center.x, 0.01f, $"{w}x{h}: not at the centre the room allows");
-            Assert.IsTrue(box.xMin >= 0 && box.yMin >= 0 && box.xMax <= w && box.yMax <= h, $"{w}x{h}: strip {box} off screen");
-            var others = new (string, Rect)[] { ("chart", chart), ("sim", _hud.SimBox(w, h)), ("practice", _hud.PracticeBox(w, h)),
-                ("health", _hud.HealthBox(w, h)), ("exposure", _hud.ExposureBox(w, h)), ("wanted", _hud.WantedBox(w, h)),
-                ("blockTimer", _hud.BlockTimerBox(w, h)), ("liquidation", _hud.LiquidationBox(w, h)) };
-            foreach (var (name, r) in others) Assert.AreEqual(0f, ChartHud.Shared(box, r), $"{w}x{h}: strip {box} on {name} {r}");
-            foreach (TouchPad.Pad pad in System.Enum.GetValues(typeof(TouchPad.Pad)))
-                Assert.AreEqual(0f, ChartHud.Shared(box, TouchPad.RectFor(pad, w, h)), $"{w}x{h}: strip {box} on the {pad} pad");
+            Debug.Log($"[topright] {w}x{h} chart={r} scale {r.width / base1.x * ChartHud.Scale:0.000}x{r.height / base1.y * ChartHud.Scale:0.000} sound={sound} debug={debug} "
+                      + $"manifest={manifest} headline={head} clock={_hud.BlockTimerBox(w, h)} runStopped={_hud.RunStoppedBox(w, h)}");
+            Assert.IsTrue(r.xMin >= 0 && r.yMin >= 0 && r.xMax <= w && r.yMax <= h, $"{w}x{h}: chart {r} off screen");
+            Assert.AreEqual(w - TouchPad.Margin(w, h), r.xMax, 0.01f, $"{w}x{h}: not at the right margin");
+            Assert.GreaterOrEqual(r.y, Mathf.Max(sound.yMax, debug.yMax), $"{w}x{h}: chart {r} over the icons");
+            Assert.AreEqual(base1.x, r.width, 0.01f, $"{w}x{h}: not the 1.2x chart");
+            Assert.AreEqual(base1.y, r.height, 0.01f, $"{w}x{h}: not the 1.2x chart");
+            Assert.IsTrue(manifest.yMax <= h, $"{w}x{h}: the score column {manifest} runs off the screen");
+            var others = new (string, Rect)[] { ("sound", sound), ("debug", debug), ("wanted", _hud.WantedBox(w, h)), ("manifest", manifest),
+                ("headline", head), ("clock", _hud.BlockTimerBox(w, h)), ("liquidation", _hud.LiquidationBox(w, h)), ("runStopped", _hud.RunStoppedBox(w, h)),
+                ("health", _hud.HealthBox(w, h)), ("exposure", _hud.ExposureBox(w, h)), ("practice", _hud.PracticeBox(w, h)), ("sim", _hud.SimBox(w, h)) };
+            foreach (var (name, o) in others) Assert.AreEqual(0f, ChartHud.Shared(r, o), $"{w}x{h}: chart {r} on {name} {o}");
         }
     }
 }

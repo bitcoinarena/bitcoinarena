@@ -94,15 +94,27 @@ public class ChartHudTests
     [Test]
     public void YouGoesWhereTheCoresTruckIs()
     {
+        // §4.15 G1: the chart is the candle field. Parked in its bay the truck stands before the field (core YOU off, t < 0):
+        // YOU is pinned at the plot's left edge. Driven onto the field it is the core's truck through the mapping.
         var parked = ChartHud.Build(Words("ground-open"), Panel, null);
         var driven = ChartHud.Build(Words("ground-driven"), Panel, null);
-        Assert.IsTrue(parked.YouOn && driven.YouOn);
+        Assert.AreEqual(0, Words("ground-open")[L.CH_YOU_ON]);
+        Assert.Less(Words("ground-open")[L.CH_YOU_T], 0, "the parked truck is before the field");
+        Assert.IsFalse(parked.YouOn);
+        Assert.AreEqual(parked.Plot.x, parked.You.x, 0.01f, "before the field YOU is pinned at the left edge");
+        Assert.AreEqual(1, Words("ground-driven")[L.CH_YOU_ON]);
+        Assert.IsTrue(driven.YouOn);
         float cw = parked.Plot.width / 32f;
-        Assert.AreEqual(parked.Plot.x + Words("ground-open")[L.CH_YOU_T] / 65536f * cw, parked.You.x, 0.01f);
         Assert.AreEqual(driven.Plot.x + Words("ground-driven")[L.CH_YOU_T] / 65536f * cw, driven.You.x, 0.01f);
         Assert.Greater(driven.You.x - parked.You.x, 10f, "driven +x, YOU moved right on the chart");
-        Assert.AreEqual(Words("ground-open")[L.CH_GATE_ON], 1);
-        Assert.IsTrue(parked.GateOn);
+        // The gate at x 114 is past the last candle: the core says off, t 0.97 of a candle past 32; the HUD pins GATE ›.
+        var w = Words("ground-open");
+        Assert.AreEqual(0, w[L.CH_GATE_ON]);
+        Assert.AreEqual(0.9729f, (w[L.CH_GATE_T] - 32 * 65536) / 65536f, 0.0001f, "the gate stands 0.97 of a candle past the last");
+        Assert.IsFalse(parked.GateOn);
+        Assert.IsTrue(parked.GatePinned);
+        Assert.AreEqual(parked.Plot.xMax, parked.GateX, 0.01f, "GATE › is pinned at the plot's right edge");
+        Assert.AreEqual("GATE " + ChartHud.PinArrow, ChartHud.GateWord(parked));
         Assert.Greater(parked.GateX, driven.You.x, "the gate is ahead of the truck");
     }
 
@@ -326,28 +338,16 @@ public class ChartHudTests
     }
 
     [Test]
-    public void TheObjectivesAndBannersAreOffTheChartInTheMiddle()
+    public void ThePinArrowIsAGlyphTheShippedFontHas()
     {
-        var w = Words("ground-assault");
-        var f = ChartHud.Build(w, Panel, null);
-        var lines = ChartHud.ObjectiveLines(f);
-        StringAssert.Contains("ASSAULT", lines[0]);
-        foreach (var o in f.Objectives) StringAssert.Contains(o.Text, lines[1]);
-        // the 1280x657 player's boxes: the gap, the run-stopped row, the chart reaching into the gap under it
-        var headline = new Rect(347.59f, 0f, 700.79f, 657f);
-        var row = new Rect(347.59f, 277.42f, 700.79f, 56f);
-        var chart = new Rect(308.79f, 379.48f, 460.8f, 236.52f);
-        var room = ChartHud.ObjectivesRoom(headline, row, chart);
-        foreach (var (got, want) in new[] { (room.x, row.x), (room.y, row.y), (room.xMax, row.xMax), (room.yMax, row.yMax) })
-            Assert.AreEqual(want, got, 0.01f, $"the chart is under the row: the whole row ({room} vs {row})");
-        var box = ChartHud.ObjectivesBox(room, 640f, 300f, 20f, 2);
-        Assert.AreEqual(640f, box.center.x, 0.01f, "at the screen's centre");
-        Assert.AreEqual(0f, ChartHud.Shared(box, chart));
-        // 1920x1080: the chart top (483.16) is above the row's bottom (507.7): the room stops above the chart
-        var room2 = ChartHud.ObjectivesRoom(new Rect(371.28f, 0f, 1242.42f, 1080f), new Rect(371.28f, 418.1f, 1242.42f, 89.6f), new Rect(507.6f, 483.16f, 691.2f, 388.8f));
-        Assert.AreEqual(481.16f, room2.yMax, 0.01f);
-        Assert.LessOrEqual(ChartHud.ObjectivesFont(room2.height, 2, 26) * 1.35f * 2f + 4f, room2.height);
-        var wide = ChartHud.ObjectivesBox(room, 640f, 900f, 20f, 2);
-        Assert.IsTrue(wide.x >= room.x - 0.01f && wide.xMax <= room.xMax + 0.01f, $"{wide} wider than the room {room}");
+        // The font a WebGL player draws IMGUI with is the one Unity embeds (no OS fonts in a browser). Measured on 0.0.1474:
+        // the pinned "GATE ›" and "YOU ›" were drawn without their arrow.
+        var font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        Assert.IsNotNull(font, "no embedded font");
+        foreach (char c in new[] { '\u203A', '\u00BB', '\u25B6', '\u2192', '>' })
+            Debug.Log($"[glyph] {font.name} U+{(int)c:X4} '{c}' present={font.HasCharacter(c)}");
+        foreach (var word in new[] { "YOU " + ChartHud.PinArrow, "GATE " + ChartHud.PinArrow })
+            foreach (char c in word)
+                Assert.IsTrue(c == ' ' || font.HasCharacter(c), $"'{c}' (U+{(int)c:X4}) of \"{word}\" is not in the shipped font");
     }
 }

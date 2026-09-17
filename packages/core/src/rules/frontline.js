@@ -4,7 +4,7 @@
 // far -x end, the newest at +x, and the line's z is how far the price has moved
 // from the window's midpoint. A rising market pushes the bulls forward.
 
-import { ONE, add, sub, mulFast, div, clamp, min, max } from '../fixed.js';
+import { ONE, add, sub, mulFast, div, divRound, clamp, min, max } from '../fixed.js';
 
 export const SAMPLES = 64;
 
@@ -14,6 +14,28 @@ export const SAMPLES = 64;
  * +-61.2 m, see `frontlineZ`); 0.53 x 65536 = 34734.08.
  */
 export const FRONT_DEPTH = 34734;
+
+/**
+ * THE CHART'S X (WAR_TACTICS.md §4.15, seam remap ruled 2026-09-17): the tape is laid over the candle field, not the old
+ * +-130 m map, so the fight line's price at an x is read from the samples of the candle standing at that x. 32 slots of
+ * FIELD_SLOT from FIELD_X0 (spawn ruling B: first face 26 m past the spawn centre, last slot ending before the miner face);
+ * slot k holds the round's candle whose samples are tape k*2 + (taken & 1) and the next, so its centre is that pair's middle.
+ * Measured before: at a candle's centre the seam read the tape up to 9.7 samples away, and HUD YOU sat on the wrong candle
+ * for 28-29 of 32.
+ */
+export const FIELD_X0 = -4967627;                  // -75.79998 m
+export const FIELD_SLOT = 377241;                  // 5.75624 m
+const TAPE_HALF = 32768, TAPE_LAST_Q = Math.imul(SAMPLES - 1, ONE);
+
+/** The tape position (Q16.16 samples, unclamped) a world x reads, with `taken` samples submitted this round. */
+export function tapeAtX(x, taken) {
+  return add(add(Math.imul(taken & 1, ONE), Math.imul(divRound(sub(x, FIELD_X0), FIELD_SLOT), 2)), -TAPE_HALF);
+}
+
+/** The world x of a tape position (Q16.16 samples): the inverse of `tapeAtX`. */
+export function xAtTape(q, taken) {
+  return add(FIELD_X0, mulFast(sub(add(q, TAPE_HALF), Math.imul(taken & 1, ONE)) >> 1, FIELD_SLOT));
+}
 
 /**
  * Frontline z at a world x. `hist` is an Int32Array of SAMPLES prices in
@@ -74,12 +96,11 @@ function smooth(hist, j) {
   return div(sum, Math.imul(WINDOW, ONE));
 }
 
-export function frontlineZ(hist, x, halfX, halfZ) {
+export function frontlineZ(hist, x, halfX, halfZ, taken = 0) {
   if (SAMPLES < 2) return 0;
 
-  // position along the tape, 0 at -halfX, ONE at +halfX
-  const u = clamp(div(add(x, halfX), Math.imul(2, halfX)), 0, ONE);
-  const at = mulFast(u, Math.imul(SAMPLES - 1, ONE));
+  // position along the tape over the candle field (tapeAtX), held at the tape's ends beyond it
+  const at = clamp(tapeAtX(x, taken), 0, TAPE_LAST_Q);
   const i = clamp(at >> 16, 0, SAMPLES - 2);
   const f = at & 65535;
 

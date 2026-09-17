@@ -114,4 +114,76 @@ public class CandleTerrainTests
         Assert.AreEqual(greens > 0, green.Count > 0);
         Assert.AreEqual(greens < L.CANDLES, red.Count > 0);
     }
+
+    [Test]
+    public void AWickIsDrawnOnlyWhereItStandsPastTheBody()
+    {
+        // Today's tape has no wick past a body (two samples a candle); the core's words carry one as a candle with more
+        // samples would: candle 5 given a low 6 m under its body and a high 10 m over it.
+        Load();
+        var v = (int[])_views["open"].Clone();
+        int b = L.CV_FIRST + 5 * L.CV_WORDS;
+        for (int c = 0; c < L.CANDLES; c++)
+        {
+            int k = L.CV_FIRST + c * L.CV_WORDS;
+            Assert.AreEqual(v[k + 2], v[k + 6], $"candle {c}: the core sent a low wick past the body on a two-sample tape");
+            Assert.AreEqual(v[k + 3], v[k + 7], $"candle {c}: the core sent a high wick past the body on a two-sample tape");
+        }
+        v[b + 6] = v[b + 2] - 6 * 65536;
+        v[b + 7] = v[b + 3] + 10 * 65536;
+        var verts = new List<Vector3>(); var green = new List<int>(); var red = new List<int>();
+        CandleTerrain.Build(v, verts, green, red);
+        var all = new List<int>(green); all.AddRange(red);
+        float apron = v[L.CV_APRON] / 65536f, top = apron + L.WICK_HEIGHT / 65536f, cx = (v[b] + v[b + 1]) * 0.5f / 65536f;
+        float z0 = v[b + 2] / 65536f, z1 = v[b + 3] / 65536f, low = v[b + 6] / 65536f, high = v[b + 7] / 65536f;
+        int tall = 0;
+        foreach (var p in verts)
+        {
+            if (Mathf.Abs(p.y - top) > 1e-3f) continue;
+            tall++;
+            Assert.LessOrEqual(Mathf.Abs(p.x - cx), 0.5f + 1e-3f, $"wick vertex {p} off the centre line {cx}");
+            bool lowSeg = p.z >= low - 1e-3f && p.z <= z0 + 1e-3f, highSeg = p.z >= z1 - 1e-3f && p.z <= high + 1e-3f;
+            Assert.IsTrue(lowSeg || highSeg, $"wick vertex {p} stands over the body {z0:0.00}..{z1:0.00}");
+        }
+        float atLow = DrawnTop(verts, all, cx, (low + z0) * 0.5f), atHigh = DrawnTop(verts, all, cx, (z1 + high) * 0.5f);
+        float onBody = DrawnTop(verts, all, cx + 0.2f, (z0 + z1) * 0.5f);
+        Debug.Log($"[candle-mesh] wick: {tall} vertices at {top - apron:0.00} m; drawn top over the low wick {atLow - apron:0.00} m, over the high wick {atHigh - apron:0.00} m, over the body {onBody - apron:0.00} m");
+        Assert.AreEqual(24, tall, "two pillars: a lid (4 vertices) and four sides (2 each at the top) - 12 a pillar");
+        Assert.AreEqual(L.WICK_HEIGHT / 65536f, atLow - apron, 1e-3f);
+        Assert.AreEqual(L.WICK_HEIGHT / 65536f, atHigh - apron, 1e-3f);
+        Assert.LessOrEqual(onBody - apron, L.CANDLE_H / 65536f + 1e-3f, "a wick drawn through the body");
+        // pillar sides face out: the mesh's own normals on the wick's tall quads
+        var mesh = new Mesh { indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
+        mesh.SetVertices(verts); mesh.subMeshCount = 2; mesh.SetTriangles(green, 0); mesh.SetTriangles(red, 1); mesh.RecalculateNormals();
+        var n = mesh.normals;
+        for (int i = 0; i < verts.Count; i += 4)
+        {
+            var a = verts[i]; var c2 = verts[i + 2];
+            if (Mathf.Abs(a.y - top) > 1e-3f && Mathf.Abs(c2.y - top) > 1e-3f) continue;
+            var mid = (a + c2) * 0.5f;
+            var outward = new Vector3(mid.x - cx, 0f, 0f);
+            if (Mathf.Abs(a.y - c2.y) < 1e-3f) Assert.Greater(n[i].y, 0.5f, $"a wick lid faces down at {mid}");
+            else if (Mathf.Abs(a.x - c2.x) < 1e-3f) Assert.Greater(n[i].x * outward.x, 0f, $"a wick side faces in at {mid}");
+            else Assert.Greater(Mathf.Abs(n[i].z), 0.9f, $"a wick end is not an end at {mid}");
+        }
+    }
+
+    [Test]
+    public void AHullClimbsACandleFaceInAThirdOfASecondAndFollowsASlopeWithoutLag()
+    {
+        // §4.15: the core steps a tank 2 m onto a plateau in one tick; the renderer eases the hull over 0.3 s.
+        const float dt = 1f / 60f, H = L.CANDLE_H / 65536f;
+        float drawn = 0f; int frames = 0;
+        float first = ArmyRenderer.EaseRest(0f, H, dt);
+        while (drawn < H - 1e-4f && frames < 100) { drawn = ArmyRenderer.EaseRest(drawn, H, dt); frames++; }
+        Debug.Log($"[hull-ease] 2 m face at 60 fps: first frame {first:0.000} m, reached in {frames} frames ({frames * dt:0.000} s)");
+        Assert.Less(first, 0.2f, $"the hull popped {first:0.000} m in one frame");
+        Assert.AreEqual(ArmyRenderer.FaceSeconds, frames * dt, dt + 1e-4f);
+        // down a face the same way
+        Assert.AreEqual(H - H / ArmyRenderer.FaceSeconds * dt, ArmyRenderer.EaseRest(H, 0f, dt), 1e-4f);
+        // a relief slope at 5 m/s over 55% (2.75 m/s) is followed exactly, frame by frame
+        float ground = 0f; drawn = 0f; float worst = 0f;
+        for (int i = 0; i < 120; i++) { ground += 2.75f * dt; drawn = ArmyRenderer.EaseRest(drawn, ground, dt); worst = Mathf.Max(worst, Mathf.Abs(drawn - ground)); }
+        Assert.Less(worst, 1e-4f, $"the hull lagged a slope by {worst:0.0000} m");
+    }
 }

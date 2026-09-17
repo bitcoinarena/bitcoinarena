@@ -32,7 +32,10 @@ public class TouchControls : MonoBehaviour
     readonly Dictionary<TouchPad.Pad, Texture2D> _arrows = new Dictionary<TouchPad.Pad, Texture2D>();
 
     /// <summary>Show on touch devices, and on desktop only when asked (so it can be checked).</summary>
-    public bool Visible => forceShow || Application.isMobilePlatform
+    public bool Visible => forceShow || TouchScreen;
+
+    /// <summary>A touch device: the pads are the controls. Otherwise a desktop (the HUD chart goes top right there).</summary>
+    public static bool TouchScreen => Application.isMobilePlatform
 #if ENABLE_INPUT_SYSTEM
         || Touchscreen.current != null
 #endif

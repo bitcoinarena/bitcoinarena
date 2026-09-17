@@ -73,6 +73,12 @@ public class ChartHud : MonoBehaviour
         public bool LastGreen;
         public Vector2 You; public bool YouOn; public float YouHeading;
         public float GateX; public bool GateOn;
+        /// <summary>
+        /// The gate past the last candle (§4.15 G1, the owner 2026-09-17: at x 114 it stands 0.97 of a candle past the field):
+        /// the core says off the chart and gives its true t; the HUD pins "GATE ›" at the plot's right edge, as YOU is pinned
+        /// at the left before the field.
+        /// </summary>
+        public bool GatePinned;
         public Rect Window; public bool WindowShaded;
         public readonly List<Label> Ghosts = new List<Label>();
         public readonly List<Label> Objectives = new List<Label>();
@@ -171,6 +177,23 @@ public class ChartHud : MonoBehaviour
     }
 
     /// <summary>
+    /// TOP RIGHT ON THE DESKTOP (the owner 2026-09-17: "the HUD chart goes top right on the desktop" - T1 - and "it must not
+    /// cover the sound button and the other one at the top right"). Right-aligned at the screen margin, its top under the
+    /// settings icons (<paramref name="corner"/>: the icons' bottom, or the debug readout's when that is open), the full
+    /// 1.2x size where the screen has the height. The score column steps under it and the headline gap ends left of it
+    /// (DriveHud). Touch screens keep <see cref="PanelFor"/>: under SIM, off the pads.
+    /// </summary>
+    public static Rect DesktopPanelFor(int w, int h, float corner)
+    {
+        float m = TouchPad.Margin(w, h);
+        var size = BaseSize(w, h) * Scale;
+        float y = corner + m * 0.5f;
+        float width = Mathf.Min(size.x, w - 2f * m);
+        float height = Mathf.Max(0f, Mathf.Min(size.y, h - m - y));
+        return new Rect(w - m - width, y, width, height);
+    }
+
+    /// <summary>
     /// Lays the core's chart words out in <paramref name="panel"/>. Pure: the tests hand it words, the player hands it
     /// the core's. Scaling a price onto pixels is all it does with them.
     /// </summary>
@@ -231,7 +254,8 @@ public class ChartHud : MonoBehaviour
         f.You = new Vector2(Mathf.Clamp(X(v[L.CH_YOU_T]), plot.x, plot.xMax), Mathf.Clamp(Y(v[L.CH_YOU_P]), plot.y, plot.yMax));
         f.YouHeading = (v[L.CH_YOU_HEADING] & 0xFFFF) * 360f / 65536f;
         f.GateOn = v[L.CH_GATE_ON] != 0;
-        f.GateX = X(v[L.CH_GATE_T]);
+        f.GatePinned = !f.GateOn && v[L.CH_GATE_T] > v[L.CH_CANDLES] * 65536;
+        f.GateX = f.GatePinned ? plot.xMax : X(v[L.CH_GATE_T]);
         f.WindowShaded = f.Range == L.CHART_ROUND;
         f.Window = Rect.MinMaxRect(X(v[L.CH_WINDOW_FROM]), plot.y, X(v[L.CH_WINDOW_TO]), plot.yMax);
 
@@ -318,36 +342,15 @@ public class ChartHud : MonoBehaviour
     public static Rect TimeLabelBox(Rect panel, Rect plot, Vector2 at, float width, float height) =>
         new Rect(Mathf.Clamp(at.x - width * 0.5f, panel.x + 2f, plot.xMax - width), at.y, width, height);
 
+    /// <summary>The gate's label: "GATE" on the chart, "GATE ›" pinned at the right edge past the last candle.</summary>
+    public static string GateWord(Frame f) => f.GatePinned ? "GATE " + PinArrow : "GATE";
+
     /// <summary>
-    /// THE OBJECTIVES OFF THE CHART, IN THE MIDDLE OF THE SCREEN (the owner 2026-09-17 09:17: "those names do not fit on the
-    /// HUD, put them somewhere else, central on the screen"). The room is the headline stack's run-stopped row (<paramref
-    /// name="row"/>), which is reserved and empty while the run is on, across the gap between the columns, and it ends above
-    /// the chart where the chart reaches into the gap. Measured before: a strip UNDER that row had 46.1 / 17.6 / 23.2 /
-    /// -24.5 / 23.2 / 69.1 / 50.8 px above the chart at 1280x657 / 1280x800 / 1366x768 / 1920x1080 / 1024x768 / 844x390 /
-    /// 800x600, and two lines need 50-63; in the row itself there is 33.6 to 89.6.
+    /// The arrow on a pinned mark (YOU before the field, GATE past it). ASCII ">": on the 0.0.1474 player "YOU ›" and
+    /// "GATE ›" were drawn as "YOU" and "GATE", a pin that looked like a mark on the chart - although the Editor's embedded
+    /// font reports U+203A present, so the cause is not proven; the player build is the measurement.
     /// </summary>
-    public static Rect ObjectivesRoom(Rect headline, Rect row, Rect chart)
-    {
-        float bottom = row.yMax;
-        if (chart.xMax > headline.x && chart.x < headline.xMax) bottom = Mathf.Min(bottom, chart.y - 2f);
-        return Rect.MinMaxRect(headline.x, row.y, headline.xMax, Mathf.Max(row.y, bottom));
-    }
-
-    /// <summary>The strip's font: the chart's, or smaller so its lines fit the room's height.</summary>
-    public static int ObjectivesFont(float roomHeight, int lines, int preferred) =>
-        Mathf.Min(preferred, Mathf.FloorToInt((roomHeight - 4f) / (1.35f * Mathf.Max(1, lines))));
-
-    /// <summary>The strip in its room: as wide as its text (never wider than the room), at the screen's centre where the room allows.</summary>
-    public static Rect ObjectivesBox(Rect room, float screenCentre, float textWidth, float lineHeight, int lines)
-    {
-        float width = Mathf.Min(room.width, textWidth + 16f);
-        float x = Mathf.Clamp(screenCentre - width * 0.5f, room.x, room.xMax - width);
-        return new Rect(x, room.y, width, Mathf.Min(room.height, lineHeight * lines + 4f));
-    }
-
-    /// <summary>The words of the strip: the assault banners on one line, the objectives' names on the other.</summary>
-    public static string[] ObjectiveLines(Frame f) =>
-        new[] { string.Join("   ", f.Banners), string.Join("  ·  ", f.Objectives.ConvertAll(o => o.Text)) };
+    public const string PinArrow = ">";
 
     public static string ObjectiveName(int kind) =>
         kind == L.OBJ_RIDGE ? "RIDGE" : kind == L.OBJ_HOLLOW ? "HOLLOW" : kind == L.OBJ_GAP ? "GAP" : "?";
@@ -382,7 +385,9 @@ public class ChartHud : MonoBehaviour
         if (_drive == null) _drive = GetComponent<DriveHud>();
         if (_drive == null) _drive = FindFirstObjectByType<DriveHud>();
         _sim = _drive != null ? _drive.SimBox(Screen.width, Screen.height) : new Rect(10f, Screen.height * 0.45f, 300f, 40f);
-        var panel = PanelFor(Screen.width, Screen.height, _sim);
+        var panel = _drive != null && _drive.ChartTopRight(Screen.width, Screen.height)
+            ? DesktopPanelFor(Screen.width, Screen.height, _drive.ChartCorner(Screen.width, Screen.height))
+            : PanelFor(Screen.width, Screen.height, _sim);
         Styles(HeaderFont(panel.height));
         float priceW = 0f;
         foreach (var t in AxisTexts(_view)) priceW = Mathf.Max(priceW, _right.CalcSize(new GUIContent(t)).x);
@@ -391,7 +396,6 @@ public class ChartHud : MonoBehaviour
         // over the left third of the chart while the models streamed, and YOU was under it.
         GUI.depth = -1;
         Paint(f);
-        PaintObjectives(f);
         Last = f;
         if (Event.current.type == EventType.Repaint) { ChartsPainted++; Tell(f); }
     }
@@ -413,7 +417,7 @@ public class ChartHud : MonoBehaviour
             $"lead={_view[L.CH_LEAD]}", $"leadBp={_view[L.CH_LEAD_BP]}", $"trend={_view[L.CH_TREND]}", $"strength={_view[L.CH_STRENGTH]}",
             $"youT={_view[L.CH_YOU_T]}", $"youP={_view[L.CH_YOU_P]}", $"youOn={_view[L.CH_YOU_ON]}",
             $"youPx={f.You.x:0.0},{f.You.y:0.0}", $"truck={t.x:0.00},{t.z:0.00}",
-            $"gateT={_view[L.CH_GATE_T]}", $"gateOn={_view[L.CH_GATE_ON]}", $"gatePx={f.GateX:0.0}",
+            $"gateT={_view[L.CH_GATE_T]}", $"gateOn={_view[L.CH_GATE_ON]}", $"gatePinned={f.GatePinned}", $"gatePx={f.GateX:0.0}", $"youShown={(f.YouOn ? "on" : "pinned")}",
             $"ghosts={f.Ghosts.Count}/{_ghosts.Count}", $"ghostAt={Ghosts()}", $"assault={a(0)},{a(1)}", $"columns={f.AssaultColumns.Count}",
             $"banners={string.Join("+", f.Banners).Replace(' ', '_')}", $"candleSum={Sum(L.CH_CANDLE, 4 * f.Candles)}",
             $"frontSum={Sum(L.CH_CANDLE + 4 * f.Candles, f.Candles)}", $"fronts={f.Front.Count}", $"high={_view[L.CH_HIGH_P]}", $"low={_view[L.CH_LOW_P]}",
@@ -426,7 +430,7 @@ public class ChartHud : MonoBehaviour
             $"ghostLabelBoxes={string.Join("|", f.GhostLabelBoxes.ConvertAll(B))}", $"ghostDotBoxes={string.Join("|", f.GhostDotBoxes.ConvertAll(B))}",
             $"ghostsUnplaced={f.GhostsUnplaced}", $"ghostSlots={string.Join(" || ", f.GhostSlots)}", $"ghostLabelShares={string.Join("|", f.GhostLabelBoxes.ConvertAll(r => GhostShares(r, f)))}", $"highBox={B(f.HighBox)}", $"lowBox={B(f.LowBox)}", $"gateBox={B(f.GateBox)}",
             $"openShares={OpenShares(f)}", $"openPlaced={f.OpenPlaced}",
-            $"objectivesBox={B(ObjectivesDrawn)}", $"axisW={f.AxisWidth:0.0}", $"priceTextW={f.PriceTextWidth:0.0}", $"lowPlaced={f.LowPlaced}", $"timeBoxes={string.Join("|", f.TimeBoxes.ConvertAll(B))}",
+            $"axisW={f.AxisWidth:0.0}", $"priceTextW={f.PriceTextWidth:0.0}", $"lowPlaced={f.LowPlaced}", $"timeBoxes={string.Join("|", f.TimeBoxes.ConvertAll(B))}",
         }));
     }
 
@@ -678,7 +682,8 @@ public class ChartHud : MonoBehaviour
 
         // assault columns under the candles
         for (int i = 0; i < f.AssaultColumns.Count; i++) { var c = f.AssaultColours[i]; c.a = 0.16f; Box(f.AssaultColumns[i], c); }
-        // The assault banners are not drawn here: they ran off the panel across the world (playtest 09:17). PaintObjectives.
+        // No assault banners: they name RIDGE / HOLLOW / GAP, and those names are off the HUD (the owner 2026-09-17, after 09:17:
+        // "RIDGE HOLLOW GAP must go, only LOW and HIGH").
 
         foreach (var c in f.Bars) { Box(c.Wick, c.Green ? Green : Red); Box(c.Body, c.Green ? Green : Red); }
 
@@ -689,10 +694,11 @@ public class ChartHud : MonoBehaviour
         for (int i = 1; i < f.Front.Count; i++) Line(f.Front[i - 1], f.Front[i], 2f, Color.white);
 
         // 2. objectives: not on the chart. Their names (RIDGE, HOLLOW, GAP) sat on the candles and on each other; the chart
-        // marks HIGH and LOW only (the owner 09:13 and 09:17). PaintObjectives puts them in the middle of the screen.
+        // marks HIGH and LOW only, and the names are nowhere on the HUD (the owner 09:13, 09:17 and after: "only LOW and HIGH").
 
         // the gate's label box, known before LOW is placed off it
         if (f.GateOn) f.GateBox = new Rect(f.GateX - 34f, p.y, _text.CalcSize(new GUIContent("GATE")).x, lh);
+        else if (f.GatePinned) { float gw = _text.CalcSize(new GUIContent(GateWord(f))).x; f.GateBox = new Rect(f.GateX - gw - 2f, p.y, gw, lh); }
 
         // HIGH above its candle, LOW by its candle inside the plot (PlaceLow), TradingView's marks
         f.LowPlaced = false; f.LowBox = new Rect();
@@ -725,6 +731,7 @@ public class ChartHud : MonoBehaviour
 
         // 6. the gate, gold
         if (f.GateOn) { Box(new Rect(f.GateX - 1f, p.y, 2f, p.height), Gold); f.GateLineBox = new Rect(f.GateX - 1f, p.y, 2f, p.height); Text(new Rect(f.GateX - 34f, p.y, 34f, lh), "GATE", Gold, _text); }
+        else if (f.GatePinned) { Box(new Rect(f.GateX - 1f, p.y, 2f, p.height), Gold); f.GateLineBox = new Rect(f.GateX - 1f, p.y, 2f, p.height); Text(new Rect(f.GateBox.x, p.y, f.GateBox.width + 2f, lh), GateWord(f), Gold, _text); }
 
         // THE OPEN LABEL, off the header and off the labels already on the plot. Measured on 0.0.1459: drawn above its line at
         // the plot's left edge it shared 429 px of box and 246 drawn pixels with the price row ("$78,515.00 +0.00%") and
@@ -733,7 +740,7 @@ public class ChartHud : MonoBehaviour
         var tickEnd = f.You + new Vector2(Mathf.Cos(rad), -Mathf.Sin(rad)) * 10f;
         f.YouMarkBox = Rect.MinMaxRect(Mathf.Min(f.You.x - 4f, tickEnd.x - 1f), Mathf.Min(f.You.y - 4f, tickEnd.y - 1f),
                                        Mathf.Max(f.You.x + 4f, tickEnd.x + 1f), Mathf.Max(f.You.y + 4f, tickEnd.y + 1f));
-        string youWord = f.YouOn ? "YOU" : "YOU ›";
+        string youWord = f.YouOn ? "YOU" : "YOU " + PinArrow;
         f.YouBox = PlaceYouLabel(p, f.You, f.YouMarkBox, _text.CalcSize(new GUIContent(youWord)).x, lh,
                                  new[] { f.SymbolBox, f.PriceBox, f.LegendBox, f.HighBox, f.LowBox, f.GateBox }, out f.YouPlaced);
         float ow = _text.CalcSize(new GUIContent("OPEN")).x;
@@ -768,60 +775,6 @@ public class ChartHud : MonoBehaviour
         Line(f.You, tickEnd, 2f, Truck);
         Box(new Rect(f.You.x - 4f, f.You.y - 4f, 8f, 8f), Truck);
         Text(f.YouBox, youWord, Truck, _text);
-        GUI.color = old;
-    }
-
-    /// <summary>Where the strip was drawn last, for the log and the tests; empty when there was nothing to say.</summary>
-    public Rect ObjectivesDrawn;
-
-    void PaintObjectives(Frame f)
-    {
-        ObjectivesDrawn = new Rect();
-        if (_drive == null || (f.Banners.Count == 0 && f.Objectives.Count == 0)) return;
-        // the run-stopped line owns the row once the run has ended
-        if (_session == null) _session = FindFirstObjectByType<Blwp.NetSession>();
-        if (DriveHud.RunStoppedLine(_session != null ? _session.Ending : "").Length > 0) return;
-        int w = Screen.width, h = Screen.height;
-        var lines = ObjectiveLines(f);
-        int count = 0;
-        foreach (var l in lines) if (l.Length > 0) count++;
-        var room = ObjectivesRoom(_drive.HeadlineBox(w, h), _drive.RunStoppedBox(w, h), f.Panel);
-        int font = ObjectivesFont(room.height, count, _text.fontSize);
-        float tw = 0f;
-        for (int pass = 0; pass < 2; pass++)
-        {
-            _text.fontSize = Mathf.Max(9, font);
-            tw = 0f;
-            foreach (var l in lines) if (l.Length > 0) tw = Mathf.Max(tw, _text.CalcSize(new GUIContent(l)).x);
-            if (tw + 16f <= room.width) break;
-            font = Mathf.FloorToInt(font * (room.width - 16f) / tw);   // and narrow enough for the gap
-        }
-        if (_text.fontSize < 9 || room.height < _text.fontSize) return;
-        float lh = _text.fontSize * 1.35f;
-        var box = ObjectivesBox(room, w * 0.5f, tw, lh, count);
-        ObjectivesDrawn = box;
-        var old = GUI.color;
-        Box(box, new Color(Background.r, Background.g, Background.b, 0.8f));
-        float y = box.y + 2f;
-        if (lines[0].Length > 0)
-        {
-            Text(new Rect(box.center.x - _text.CalcSize(new GUIContent(lines[0])).x * 0.5f, y, box.width, lh), lines[0], Gold, _text);
-            y += lh;
-        }
-        if (lines[1].Length > 0)
-        {
-            // each name in its holder's colour, the row centred as a whole
-            float sep = _text.CalcSize(new GUIContent("  ·  ")).x;
-            float x = box.center.x - _text.CalcSize(new GUIContent(lines[1])).x * 0.5f;
-            for (int i = 0; i < f.Objectives.Count; i++)
-            {
-                if (i > 0) { Text(new Rect(x, y, sep, lh), "  ·  ", Axis, _text); x += sep; }
-                var o = f.Objectives[i];
-                float ow = _text.CalcSize(new GUIContent(o.Text)).x;
-                Text(new Rect(x, y, ow + 2f, lh), o.Text, o.Colour, _text);
-                x += ow;
-            }
-        }
         GUI.color = old;
     }
 

@@ -215,10 +215,13 @@ test('with nobody fighting and no assault running, a team rests at +8 m on an ob
 });
 
 test('the objective words are the same with the truck parked and driven through RIDGE, until the fight itself differs', () => {
-  // Seeds 9 and 10: the fight stays identical long enough (352 and 361 ticks, columns off the budget) for holders to be
-  // written inside the compared stretch (223 and 211 holder-ticks). Seeds 1-8 split at 263-327 ticks, and 1, 2 and 4
-  // with no holder written yet, so they would compare lanes only.
-  for (const seedWord of [9, 10]) {
+  // Seeds 21 and 109: the fight stays identical long enough (476 and 462 ticks) for holders to be written inside the
+  // compared stretch (201 and 296 holder-ticks). Re-picked with the candles (§4.15, seam +-45 m on the candle field):
+  // the worlds still part on RNG word 0 at the same ticks as before (seeds 9 / 10 at 352 / 361 - the truck's presence
+  // changes a draw, not the terrain), but an objective is first held later now (429 / 441), so 9 and 10 compared
+  // nothing. Of seeds 1-120, the qualifying ones (split past 300 with a holder written) were searched and these two
+  // hold the most of both.
+  for (const seedWord of [21, 109]) {
     const a = init(seedWord), b = init(seedWord);
     const ridgeX = T.slotX(T.objectiveLane(a.i32, L.O_TACTICS, T.OBJ_RIDGE));
     let compared = 0, written = 0;
@@ -322,6 +325,8 @@ test('an overwatch post on the 30 m line stands behind a crest that hides the hu
   const { emplacementAt } = await import('../src/rules/emplacements.js');
   for (const seedWord of [1, 2, 3, 4, 5]) {
     const st = init(seedWord);
+    // The berms read the relief as the surface does (§4.15: the band's pancake), apron and sample parity given: read raw,
+    // seed 3's forward line stood on 1.391 m of berm that the surface holds at 0.413 m.
     const seamAt = (x) => frontlineZ(st.tape, x, 130 * ONE, 85 * ONE), g = (x, z) => groundAt(st, x, z);
     for (let slot = 0; slot < T.SLOTS_PER_SIDE; slot++) {
       for (const side of [-1, 1]) for (const hull of [-6, 6]) {
@@ -334,10 +339,10 @@ test('an overwatch post on the 30 m line stands behind a crest that hides the hu
         if (crest >= 3) over.push(`seed ${seedWord} slot ${slot} side ${side} hull ${hull}: ${crest.toFixed(2)} m`);
       }
       const between = T.slotX(slot) + 13 * ONE;                       // the flat 5 m between two lanes
-      if (slot < 6) assert.equal(emplacementAt(between, seamAt(between) - 25 * ONE, st.tape, st.ground, 130 * ONE, 85 * ONE), 0);
+      if (slot < 6) assert.equal(emplacementAt(between, seamAt(between) - 25 * ONE, st.tape, st.ground, 130 * ONE, 85 * ONE, st.apron, 0), 0);
     }
-    for (const x of [-100 * ONE, 90 * ONE]) assert.equal(emplacementAt(x, seamAt(x) + 25 * ONE, st.tape, st.ground, 130 * ONE, 85 * ONE), 0, 'a berm on an apron');
-    assert.equal(emplacementAt(0, seamAt(0) - 16 * ONE, st.tape, st.ground, 130 * ONE, 85 * ONE) < ONE, true, 'the forward line stands on a berm');
+    for (const x of [-100 * ONE, 90 * ONE]) assert.equal(emplacementAt(x, seamAt(x) + 25 * ONE, st.tape, st.ground, 130 * ONE, 85 * ONE, st.apron, 0), 0, 'a berm on an apron');
+    assert.equal(emplacementAt(0, seamAt(0) - 16 * ONE, st.tape, st.ground, 130 * ONE, 85 * ONE, st.apron, 0) < ONE, true, 'the forward line stands on a berm');
   }
   console.log(`  posts where the relief lifts the crest over a 3 m turret: ${over.length}${over.length ? ' - ' + over.join('; ') : ''}`);
 });

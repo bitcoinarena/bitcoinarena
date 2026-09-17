@@ -9,7 +9,7 @@
 import { ONE, mulFast, div, idiv, abs, min, max } from './fixed.js';
 import { O_TACTICS, O_TRUCK, T_X, T_Z, T_HEADING } from './state.js';
 import { HALF_X, HALF_Z, frontAt } from './sim.js';
-import { SAMPLES, FRONT_DEPTH } from './rules/frontline.js';
+import { SAMPLES, FRONT_DEPTH, tapeAtX, xAtTape } from './rules/frontline.js';
 import { GATE_X } from './rules/gate.js';
 import { TAC_MARKET, MK_OPEN, MK_SAMPLES, MK_TREND, MK_STRENGTH, MK_LEAD, MK_MOMENTUM, OBJECTIVES, objectiveLane,
   objectiveHolder, assaultPhase, assaultTarget, slotX, candleColour } from './rules/tactics.js';
@@ -73,7 +73,7 @@ function priceAtZ(w, z) {
 }
 
 /** A ground x as a round sample, Q16.16. */
-const sampleOfX = (L, x) => (mulFast(div((x + HALF_X) | 0, Math.imul(2, HALF_X)), LAST_Q) + Math.imul(L - SAMPLES, ONE)) | 0;
+const sampleOfX = (st, L, x) => (tapeAtX(x, st.i32[O_TACTICS + TAC_MARKET + MK_SAMPLES]) + Math.imul(L - SAMPLES, ONE)) | 0;
 /** A round sample (Q16.16) as t in a range starting at candle `first`. */
 const tOfSample = (first, rq) => ((rq - Math.imul(first, Math.imul(2, ONE)) + (ONE >> 1)) >> 1) | 0;
 const onRange = (n, t) => (t >= 0 && t <= Math.imul(n, ONE) ? 1 : 0);
@@ -84,7 +84,7 @@ const onRange = (n, t) => (t >= 0 && t <= Math.imul(n, ONE) ? 1 : 0);
  */
 export function chartPoint(st, range, x, z, out) {
   const r = rangeOf(st, range | 0), w = windowScale(st);
-  const t = tOfSample(r.first, sampleOfX(r.L, x | 0));
+  const t = tOfSample(r.first, sampleOfX(st, r.L, x | 0));
   out[0] = t;
   out[1] = priceAtZ(w, z | 0);
   out[2] = onRange(r.n, t);
@@ -140,7 +140,7 @@ export function chartView(st, range, out) {
     const aq = (Math.imul(a, ONE) + (ONE >> 1) - Math.imul(L - SAMPLES, ONE)) | 0;
     const front = CH_CANDLE + Math.imul(n, 4) + i;
     if (aq < 0 || aq > LAST_Q) out[front] = CH_NONE;
-    else out[front] = priceAtZ(w, frontAt(st, (mulFast(div(aq, LAST_Q), Math.imul(2, HALF_X)) - HALF_X) | 0));
+    else out[front] = priceAtZ(w, frontAt(st, xAtTape(aq, count)));
     if (rg === CHART_ROUND && out[front] !== CH_NONE) { lo = min(lo, out[front]); hi = max(hi, out[front]); }
   }
   out[CH_HIGH_T] = highT; out[CH_HIGH_P] = highP; out[CH_LOW_T] = lowT; out[CH_LOW_P] = lowP;

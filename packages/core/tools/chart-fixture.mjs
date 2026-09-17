@@ -2,7 +2,7 @@
 // core hands a page, not on numbers a test made up.
 //
 //   node tools/chart-fixture.mjs > ../../unity-proto/Assets/Tests/Fixtures/chart-words.txt
-import { init, step, submitSample } from '../src/sim.js';
+import { init, step, submitSample, teleport, bayZ, START_X } from '../src/sim.js';
 import * as L from '../src/state.js';
 import * as T from '../src/rules/tactics.js';
 import * as C from '../src/chart.js';
@@ -17,6 +17,9 @@ const put = (name, st, range) => {
 let st = init(7);
 put('ground-open', st, C.CHART_GROUND);
 put('round-open', st, C.CHART_ROUND);
+// Driven ONTO the candle field (§4.15 G1): from seed 7's bay the truck meets candle 0's face before the field and YOU
+// would still be the pre-chart pin; bay 23's lane (z 78.2) is past the candles, so 10 s at full throttle reach the field.
+teleport(st, START_X, bayZ(23), 16384);
 for (let t = 0; t < 600; t++) step(st, ONE, 0, 0, 0, 0);
 put('ground-driven', st, C.CHART_GROUND);
 const open = st.i32[L.O_TACTICS + T.TAC_MARKET + T.MK_OPEN];

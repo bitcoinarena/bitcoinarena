@@ -39,7 +39,7 @@ const PITCH = Math.imul(27, ONE);
 /**
  * The emplacement height at a world point, Q16.16 metres; 0 off every berm. `ground` is the round's relief grid.
  */
-export function emplacementAt(x, z, tape, ground, halfX, halfZ, apron) {
+export function emplacementAt(x, z, tape, ground, halfX, halfZ, apron, taken = 0) {
   // `apron` given: the relief as the surface reads it, levelled in the chart band (§4.15)
   const relief = (px, pz) => (apron === undefined ? heightAtWorld(ground, px, pz, halfX, halfZ)
                                                   : levelled(heightAtWorld(ground, px, pz, halfX, halfZ), apron, px, pz, ground, halfX, halfZ));
@@ -53,7 +53,7 @@ export function emplacementAt(x, z, tape, ground, halfX, halfZ, apron) {
   // ticks - the push steps only from post on a confirmed verdict - and a 22 m berm left 22.1% of all overwatch on-post
   // ticks standing at 30 m with no crest in front.
   const line = LINE_REST;
-  const seam = frontlineZ(tape, x, halfX, halfZ);
+  const seam = frontlineZ(tape, x, halfX, halfZ, taken);
   const off = sub(z, seam), side = off < 0 ? -1 : 1, depth = abs(off);   // metres behind the seam on that side
   const foot = sub(line, FOOT_BEHIND_LINE);
   const up = sub(foot, RAMP), down = sub(up, TOP), far = sub(down, RAMP);

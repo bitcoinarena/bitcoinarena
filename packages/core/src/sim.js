@@ -552,14 +552,17 @@ function craterCut(s, x, z) {
  * three readers of one quantity is how two of them end up disagreeing. They
  * all come through here now.
  */
+/** Samples submitted this round: the parity the candles and the seam pair the tape by (§4.15). */
+const samplesTaken = (st) => st.i32[O_TACTICS + TAC_MARKET + MK_SAMPLES];
+
 export function surfaceAt(st, x, z) {
   // relief as the static chart band holds it (§4.15: pancake inside, cone outside) + the hull-down emplacements (rules/emplacements.js) + the candles - craters
   if (!st.candles) {
-    return sub(add(heightAtWorld(st.ground, x, z, HALF_X, HALF_Z), emplacementAt(x, z, st.tape, st.ground, HALF_X, HALF_Z)),
+    return sub(add(heightAtWorld(st.ground, x, z, HALF_X, HALF_Z), emplacementAt(x, z, st.tape, st.ground, HALF_X, HALF_Z, undefined, samplesTaken(st))),
                craterCut(st.i32, x, z));
   }
   const relief = levelled(heightAtWorld(st.ground, x, z, HALF_X, HALF_Z), st.apron, x, z, st.ground, HALF_X, HALF_Z);
-  return sub(add(add(relief, emplacementAt(x, z, st.tape, st.ground, HALF_X, HALF_Z, st.apron)), candleHeightAt(st.candles, x, z)),
+  return sub(add(add(relief, emplacementAt(x, z, st.tape, st.ground, HALF_X, HALF_Z, st.apron, samplesTaken(st))), candleHeightAt(st.candles, x, z)),
              craterCut(st.i32, x, z));
 }
 
@@ -1121,7 +1124,7 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
     // One accepted liquidation, one strike, in the tick it is consumed. The
     // load is the size itself in the unit it arrived in; nothing is scaled
     // here, because the crater that reads it is its own step.
-    const at = strikePoint(s, (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z));
+    const at = strikePoint(s, (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z, samplesTaken(st)));
     s[O_STRIKE + K_STATE] = 1;
     s[O_STRIKE + K_X] = at.x;
     s[O_STRIKE + K_Z] = at.z;
@@ -1229,7 +1232,7 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
 
   // ---- 2. army -----------------------------------------------------------
   const tx = s[T + T_X], tz = s[T + T_Z];
-  const seamZ = frontlineZ(st.tape, tx, HALF_X, HALF_Z);
+  const seamZ = frontlineZ(st.tape, tx, HALF_X, HALF_Z, samplesTaken(st));
   // Damage dealt to the truck this tick, in Q16.16 rather than a count of
   // hits. It used to be a tally of flat points because every courier hit was
   // worth exactly one; a tank shell is Rand(5, 11), so the truck's damage has
@@ -1255,9 +1258,9 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
   // the start of this one, and takes or gives ground.
   // The objectives' holders are re-read first, from the same positions; nothing in the odds reads them (§4.11).
   // A leg does not swap while a tank of its pair is off post (§2.6, §0 "Hold is the default"), read before anything moves.
-  holdLegs(s, O_TACTICS, s[O_TICK], (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z), (x, z) => surfaceAt(st, x, z));
-  objectiveHolders(s, O_TACTICS, s[O_TICK], (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z));
-  pressure(s, O_TACTICS, s[O_TICK], (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z), (x, z) => surfaceAt(st, x, z));
+  holdLegs(s, O_TACTICS, s[O_TICK], (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z, samplesTaken(st)), (x, z) => surfaceAt(st, x, z));
+  objectiveHolders(s, O_TACTICS, s[O_TICK], (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z, samplesTaken(st)));
+  pressure(s, O_TACTICS, s[O_TICK], (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z, samplesTaken(st)), (x, z) => surfaceAt(st, x, z));
   // Tanks are pushed out of each other BEFORE anything moves, which is where
   // `Army.Update` does it - the first three lines of it, over every armour
   // pair, ahead of StepArmour and StepInfantry. The position is protocol: a
@@ -1303,7 +1306,7 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
   // tank's U_COOLDOWN word, cleared at spawn. Counted by distance alone (40 m of its post), the opening drive and every
   // respawn queued for the budget 40 m short of their posts: 7.1 points of living-pair tank-ticks (a274fbc).
   const lineBudget = [0, 0], lineMoved = [0, 0], onTheLine = [], offPost = [], grantedBefore = [], stoodOnPost = [];
-  const seamOf = (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z);
+  const seamOf = (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z, samplesTaken(st));
   for (let i = 0; i < UNITS; i += 4) {
     const ib = unitBase(i);
     onTheLine[i >> 2] = false; offPost[i >> 2] = 0; grantedBefore[i >> 2] = false; stoodOnPost[i >> 2] = false;
@@ -1315,7 +1318,7 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
       || onPost(s, O_TACTICS, i, (s[O_TICK] - 1) | 0, seamOf, groundOf);
     const ip = postOf(s, O_TACTICS, i, s[O_TICK]);
     const sd = s[ib + U_SIDE] < 0 ? -1 : 1;
-    const lineZ = add(frontlineZ(st.tape, ip.x, HALF_X, HALF_Z), mulFast(Math.imul(sd, ONE), ip.depth));
+    const lineZ = add(frontlineZ(st.tape, ip.x, HALF_X, HALF_Z, samplesTaken(st)), mulFast(Math.imul(sd, ONE), ip.depth));
     if (stoodOnPost[i >> 2] && abs(sub(s[ib + U_Z], lineZ)) <= LINE_REACH) {
       lineBudget[sd < 0 ? 0 : 1]++; onTheLine[i >> 2] = true;
       grantedBefore[i >> 2] = ((s[ib + U_COOLDOWN] >> 6) & 1) === 1;
@@ -1434,13 +1437,13 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
     // `FrontlineAt(s.x)` per man. This is that, not a new rule. The truck's
     // own seam is still what the truck is measured against, so `seamZ` stays
     // for the callers below it.
-    const unitSeam = frontlineZ(st.tape, u.x, HALF_X, HALF_Z);
+    const unitSeam = frontlineZ(st.tape, u.x, HALF_X, HALF_Z, samplesTaken(st));
     if (u.armour) {
       const tac = postOf(s, O_TACTICS, i, s[O_TICK]);
       // `tac` says the tank is under the doctrine; the depth cannot say it, because a bounding tank pushed 16 m stands
       // ON the seam, depth 0 - read as "no tactics", that tank was sent to the old standoff and lost its memory word.
       u.tac = true; u.tacX = tac.x; u.tacDepth = tac.depth; u.tacBounding = tac.bounding;
-      u.tacSeam = frontlineZ(st.tape, tac.x, HALF_X, HALF_Z);
+      u.tacSeam = frontlineZ(st.tape, tac.x, HALF_X, HALF_Z, samplesTaken(st));
       u.tacPush = tac.push; u.tacForward = FORWARD_LINE - tac.push;
       // NO PARTNER WAIT. A bounding tank used to wait while its overwatch partner had moved the tick before; §2.6 rules
       // the swap simultaneous, and row 4b is the half-line budget below. Measured on seeds 1-15, that wait held a tank
@@ -1528,7 +1531,7 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
           }
           s[b + U_TARGET] = (RELOAD_MIN + nextBelow(rng, RELOAD_SPAN)) | 0;
           // SHOOT-AND-SCOOT: the team moves on to its next hashed slot (rules/tactics.js).
-          scoot(s, O_TACTICS, i, s[O_TICK], (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z), groundOf);
+          scoot(s, O_TACTICS, i, s[O_TICK], (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z, samplesTaken(st)), groundOf);
         } else {
           // THE TRUCK WITH NO TANK TO FIGHT (WAR_TACTICS.md §1.2 GAP, closed): a tank with no enemy in range and the
           // truck inside its heat-widened reach fires on the truck, on its normal reload. The same draws as a shot at
@@ -1544,7 +1547,7 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
               courierDmg = add(courierDmg, shellForHeat(shell, heat));
             }
             s[b + U_TARGET] = (RELOAD_MIN + nextBelow(rng, RELOAD_SPAN)) | 0;
-            scoot(s, O_TACTICS, i, s[O_TICK], (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z), groundOf);
+            scoot(s, O_TACTICS, i, s[O_TICK], (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z, samplesTaken(st)), groundOf);
           }
         }
       }
@@ -1690,7 +1693,7 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
   // gunship crosses the entire two-hundred-metre corridor in ten seconds and
   // the seam it stands off is the one under its own nose, as FrontlineAt(h.x)
   // has it.
-  const seamAt = (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z);
+  const seamAt = (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z, samplesTaken(st));
   const groundAt = (x, z) => surfaceAt(st, x, z);
   stepHelicopters(s, rng, seamAt, groundAt);
   stepBombs(s, groundAt);
@@ -1824,7 +1827,7 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
  * the line half a field away from the men standing on it is a lie, so the
  * drawing asks the core rather than working it out again. One rule, one place.
  */
-export const frontAt = (st, x) => frontlineZ(st.tape, x | 0, HALF_X, HALF_Z);
+export const frontAt = (st, x) => frontlineZ(st.tape, x | 0, HALF_X, HALF_Z, samplesTaken(st));
 
 /**
  * WHAT WENT ON THE BED. AN INPUT, AND THE ONLY WAY HEAT IS EVER SET.

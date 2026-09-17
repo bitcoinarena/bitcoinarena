@@ -1,6 +1,9 @@
 // WAR_TACTICS.md §0.3: the HUD's one chart, as the core hands it to the page. GROUND is the minimap's window, ROUND
 // the lead's; YOU, the gate, the objectives and the assault are core words through one mapping; reading it changes
 // nothing.
+import { xAtTape } from '../src/rules/frontline.js';
+import { CANDLE_SLOT } from '../src/rules/candles.js';
+import { GATE_X } from '../src/rules/gate.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { init, step, teleport, submitSample, frontAt, HALF_X, HALF_Z } from '../src/sim.js';
@@ -23,10 +26,11 @@ test('GROUND is the tape on the terrain: 32 candles of two samples, the window i
   }
   assert.equal(o[C.CH_LO], Math.min(...st.tape));
   assert.equal(o[C.CH_HI], Math.max(...st.tape));
-  // The minimap's extents, -130 m .. +130 m, are the chart's first and last sample: candle 0's open, candle 31's close.
+  // The candle field's first and last sample (§4.15 seam remap: the tape is laid over the candles, not the old +-130 m
+  // map) are the chart's first and last sample: candle 0's open, candle 31's close.
   const p = [0, 0, 0];
-  C.chartPoint(st, C.CHART_GROUND, -HALF_X, 0, p); assert.equal(p[0], ONE / 4); assert.equal(p[2], 1);
-  C.chartPoint(st, C.CHART_GROUND, HALF_X, 0, p); assert.equal(p[0], 32 * ONE - ONE / 4); assert.equal(p[2], 1);
+  C.chartPoint(st, C.CHART_GROUND, xAtTape(0, 0), 0, p); assert.equal(p[0], ONE / 4); assert.equal(p[2], 1);
+  C.chartPoint(st, C.CHART_GROUND, xAtTape(63 * ONE, 0), 0, p); assert.equal(p[0], 32 * ONE - ONE / 4); assert.equal(p[2], 1);
   assert.equal(o[C.CH_WINDOW_FROM], ONE / 4);
   assert.equal(o[C.CH_WINDOW_TO], 32 * ONE - ONE / 4);
 });
@@ -86,7 +90,7 @@ test('YOU is the core truck: parked it stays, driven it moves right on the chart
   teleport(st, 0, 0, 16384); const lowP = you()[1];
   teleport(st, 0, 20 * ONE, 16384); assert.ok(you()[1] > lowP);
   const o = view(st, C.CHART_GROUND), i = 16;
-  const x = Math.round(((2 * i + 0.5) / 63) * 2 * HALF_X) - HALF_X;
+  const x = xAtTape((2 * i + 0.5) * ONE, 0);          // candle 16's middle on the candle field
   C.chartPoint(st, C.CHART_GROUND, x, frontAt(st, x), p);
   assert.ok(Math.abs(p[1] - o[C.CH_CANDLE + 4 * 32 + i]) <= 2, 'the seam through the mapping is the seam line drawn');
   assert.ok(Math.abs(HALF_Z) > 0);
@@ -113,5 +117,12 @@ test('GATE is the core gate, the objectives and the assault the core words, and 
   assert.ok(seen > 0, 'no assault ran in 80 s, so the assault mark was never checked');
   const o = view(st, C.CHART_GROUND), p = [0, 0, 0];
   C.chartPoint(st, C.CHART_GROUND, 114 * ONE, 0, p);
-  assert.equal(o[C.CH_GATE_T], p[0]); assert.equal(o[C.CH_GATE_ON], 1);
+  assert.equal(o[C.CH_GATE_T], p[0]);
+  // §4.15 G1: the chart is the candle field and the gate at x 114 stands past its last candle - off the chart, its true t
+  // 0.97 of a candle past the 32nd (the HUD pins GATE › at the right edge; ChartHudTests).
+  assert.equal(o[C.CH_GATE_ON], 0, 'the gate past the last candle is on the chart');
+  assert.equal(p[2], 0);
+  const past = (o[C.CH_GATE_T] - o[C.CH_CANDLES] * ONE) / ONE;
+  assert.ok(Math.abs(past - (GATE_X - (xAtTape(63 * ONE, 0) + (CANDLE_SLOT >> 2))) / CANDLE_SLOT) < 1e-3 && past > 0.97 && past < 0.98,
+    `the gate is ${past.toFixed(4)} of a candle past the last`);
 });

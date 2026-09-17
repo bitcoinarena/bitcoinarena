@@ -10,7 +10,9 @@ using L = Blwp.Layout;
 /// break points, which is exact because the ramp is straight. The terrain mesh under it is the core's surface without
 /// the candle layer (BlwpCore.TerrainAt), so the candles are drawn once.
 ///
-/// Not here yet (the slice): the scroll, the rescale lerp, the glow, the wick.
+/// The wick (ruling w1): a 1 m x 1 m, 9 m pillar at the centre x, only over the segments the core says stand past the body
+/// (the view's low-wick-from and high-wick-to words), the same pillar the core resolves the truck against.
+/// Not here yet (the slice): the scroll, the rescale lerp, the glow.
 /// </summary>
 public class CandleTerrain : MonoBehaviour
 {
@@ -39,6 +41,9 @@ public class CandleTerrain : MonoBehaviour
             int b = L.CV_FIRST + c * L.CV_WORDS;
             float x0 = v[b] / ONE, x1 = v[b + 1] / ONE, z0 = v[b + 2] / ONE, z1 = v[b + 3] / ONE, H = v[b + 4] / ONE;
             var tris = v[b + 5] != 0 ? green : red;
+            float cx = (x0 + x1) * 0.5f, half = L.WICK_HALF / ONE, top = apron + L.WICK_HEIGHT / ONE;
+            if (v[b + 6] < v[b + 2]) Pillar(verts, tris, cx, half, v[b + 6] / ONE, z0, apron, top);
+            if (v[b + 7] > v[b + 3]) Pillar(verts, tris, cx, half, z1, v[b + 7] / ONE, apron, top);
             float r = Mathf.Min(ramp, (z1 - z0) * 0.5f), peak = H * r / ramp;
             zs[0] = z0; zs[1] = z0 + r; zs[2] = z1 - r; zs[3] = z1;
             hs[0] = apron; hs[1] = apron + peak; hs[2] = apron + peak; hs[3] = apron;
@@ -57,6 +62,17 @@ public class CandleTerrain : MonoBehaviour
                                   new Vector3(x0, hs[s], zs[s]), new Vector3(x0, apron, zs[s]));
             }
         }
+    }
+
+    /// <summary>A wick pillar over z from..to at x centre +- half, from the apron to its top: four sides and a lid.</summary>
+    static void Pillar(List<Vector3> verts, List<int> tris, float cx, float half, float za, float zb, float bottom, float top)
+    {
+        float xa = cx - half, xb = cx + half;
+        Quad(verts, tris, new Vector3(xa, top, za), new Vector3(xa, top, zb), new Vector3(xb, top, zb), new Vector3(xb, top, za));
+        Quad(verts, tris, new Vector3(xb, bottom, za), new Vector3(xb, top, za), new Vector3(xb, top, zb), new Vector3(xb, bottom, zb));
+        Quad(verts, tris, new Vector3(xa, bottom, zb), new Vector3(xa, top, zb), new Vector3(xa, top, za), new Vector3(xa, bottom, za));
+        Quad(verts, tris, new Vector3(xa, bottom, za), new Vector3(xa, top, za), new Vector3(xb, top, za), new Vector3(xb, bottom, za));
+        Quad(verts, tris, new Vector3(xb, bottom, zb), new Vector3(xb, top, zb), new Vector3(xa, top, zb), new Vector3(xa, bottom, zb));
     }
 
     /// <summary>A quad a b c d, clockwise from its front: two triangles on four vertices of its own (flat shading).</summary>

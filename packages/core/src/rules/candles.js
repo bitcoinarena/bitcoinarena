@@ -11,7 +11,7 @@
 // lips. The wick (ruled w1, the owner 2026-09-17): a truck-only collider only where the wick stands past the body - the body
 // owns the 2 m plateau; a high wick above the body's high end, a low wick below its low end, never through the body.
 import { ONE, add, sub, abs, mulFast, div, idiv, min, max, clamp } from '../fixed.js';
-import { SAMPLES, FRONT_DEPTH } from './frontline.js';
+import { SAMPLES, FRONT_DEPTH, FIELD_X0, FIELD_SLOT } from './frontline.js';
 import { BOX_WORDS } from './solids.js';
 import { heightAtWorld } from './ground.js';
 
@@ -21,8 +21,8 @@ export const CANDLES = 32;
 // apron), and the 32 slots end at the miner's face (x 108.4 m), so no body stands in the gate throat or across the
 // delivery line (x 114). 32 slots over 184.2 m: pitch 5.75625 m, the corridor kept at 2.8 m, the body what is left.
 // At 6.5 m (x -104..+104) the first face stood 2.2 m BEHIND the spawn and bays 9-12 started on candle 0.
-export const CANDLE_X0 = -4967627;                 // -75.79998 m: first face at -74.39998 m, 26.00001 m past START_X
-export const CANDLE_SLOT = 377241;                 // 5.75624 m; 32 slots end at 108.39969 m, before the miner face
+export const CANDLE_X0 = FIELD_X0;                 // -75.79998 m: first face at -74.39998 m, 26.00001 m past START_X
+export const CANDLE_SLOT = FIELD_SLOT;             // 5.75624 m; 32 slots end at 108.39969 m, before the miner face
 export const CANDLE_BODY_HALF = 96870;             // 1.47812 m: a 2.95624 m body (0.203 m a side for a 2.55 m truck), a 2.80001 m corridor
 export const CANDLE_H = 131072;                    // 2 m plateau
 export const CANDLE_RAMP = 327680;                 // 5 m ramp inside each z-end

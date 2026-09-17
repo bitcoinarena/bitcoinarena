@@ -1257,6 +1257,14 @@ public class DriveHud : MonoBehaviour
         // behind a toggle and the other is what the player is playing for, so
         // where they do not both fit the readout goes.
         if (box.yMax + pad * 0.5f + ManifestContentHeight(w, h) > h) return new Rect();
+        // With the HUD chart top right (T1) the chart steps under the readout and the column under the chart: all three
+        // or the readout goes. Measured at 1920x1080 with the readout up: the column ended at y 1165 of 1080.
+        if (ChartTopRight(w, h))
+        {
+            float m = TouchPad.Margin(w, h);
+            var chart = ChartHud.DesktopPanelFor(w, h, box.yMax);
+            if (chart.yMax + pad * 0.5f + ManifestContentHeight(w, h) > h || chart.height < (ChartHud.BaseSize(w, h) * ChartHud.Scale).y - 0.01f) return new Rect();
+        }
         return box;
     }
 
@@ -1345,12 +1353,10 @@ public class DriveHud : MonoBehaviour
         // is developer chrome behind a toggle and SCORE, BANKED and CARGO are
         // what the player is playing for. Same shape as the condition bar
         // stepping under the F1 panel.
-        float corner = TouchPad.RectFor(TouchPad.Pad.Debug, w, h).yMax + pad * 0.5f;
-        if (GameSettings.Debug)
-        {
-            var readout = DebugPanelBox(w, h, 8);
-            if (readout.height > 0f) corner = readout.yMax + pad * 0.5f;
-        }
+        float corner = ChartCorner(w, h) + pad * 0.5f;
+        // ON THE DESKTOP UNDER THE HUD CHART (T1, the owner 2026-09-17): the chart takes the top right under the icons, and the
+        // column stacks from its bottom edge.
+        if (ChartTopRight(w, h)) corner = ChartHud.DesktopPanelFor(w, h, ChartCorner(w, h)).yMax + pad * 0.5f;
         float top = Mathf.Max(corner, Mathf.Max(pad, bottom - height));
 
         // ALWAYS THE STRIP RIGHT OF THE GAP, never the full width.
@@ -1375,6 +1381,36 @@ public class DriveHud : MonoBehaviour
     /// caption, BANKED, SCORE and CARGO. Shared with the box, so the two
     /// cannot drift.
     /// </summary>
+    /// <summary>
+    /// WHETHER THE HUD CHART STANDS TOP RIGHT (T1, the owner 2026-09-17): a desktop (no touch screen), and a window with the
+    /// room - under the icons the full chart and the score column under it end on the screen, and the headline gap left of
+    /// the chart stays wider than a readable card (150 px, HudLayoutTests' bar). Measured without the rule at 844x390: the
+    /// column ended at y 450 of 390 and the send-off card was 140 px wide. Otherwise the chart stays under SIM.
+    /// </summary>
+    public bool ChartTopRight(int w, int h)
+    {
+        if (TouchControls.TouchScreen) return false;
+        float pad = Mathf.Max(10f, h * 0.025f), gapPad = Mathf.Max(10f, h * 0.022f);
+        var chart = ChartHud.DesktopPanelFor(w, h, TouchPad.RectFor(TouchPad.Pad.Debug, w, h).yMax);
+        if (chart.height < (ChartHud.BaseSize(w, h) * ChartHud.Scale).y - 0.01f) return false;
+        if (chart.yMax + pad * 0.5f + ManifestContentHeight(w, h) > h) return false;
+        float blockRight = gapPad + Mathf.Min(300f, w * 0.24f) + gapPad;
+        float left = Mathf.Max(Mathf.Max(blockRight, PracticeBox(w, h).xMax), Mathf.Max(HealthBox(w, h).xMax, ExposureBox(w, h).xMax)) + gapPad;
+        return chart.x - gapPad - left > 150f;
+    }
+
+    /// <summary>The bottom of the top-right corner's own furniture: the settings icons, or the debug readout when it is up.</summary>
+    public float ChartCorner(int w, int h)
+    {
+        float corner = TouchPad.RectFor(TouchPad.Pad.Debug, w, h).yMax;
+        if (GameSettings.Debug)
+        {
+            var readout = DebugPanelBox(w, h, 8);
+            if (readout.height > 0f) corner = readout.yMax;
+        }
+        return corner;
+    }
+
     public float ManifestContentHeight(int w, int h)
     {
         int min = Mathf.Min(w, h);
@@ -1558,6 +1594,8 @@ public class DriveHud : MonoBehaviour
         // them. Both are asked, and the nearer one wins.
         float s = TouchPad.ButtonSize(w, h), m = TouchPad.Margin(w, h);
         float right = Mathf.Min(w - (m + s * 0.7f) - pad, WantedBox(w, h).x - pad);
+        // On the desktop the HUD chart stands in the top right (T1): the gap ends left of it.
+        if (ChartTopRight(w, h)) right = Mathf.Min(right, ChartHud.DesktopPanelFor(w, h, ChartCorner(w, h)).x - pad);
 
         // And the debug readout, which is wider than the settings column it
         // hangs from - 260 px against about 60 - so with it up the gap's right

@@ -180,6 +180,8 @@ namespace Blwp
         public const int CV_FIRST = 2;
         public const int CV_TOTAL = 258;
         public const int CV_WORDS = 8;
+        public const int WICK_HALF = 32768;
+        public const int WICK_HEIGHT = 589824;
 
         /// <summary>Base word offset of unit <paramref name="i"/>.</summary>
         public static int UnitBase(int i) => O_UNITS + i * U_WORDS;

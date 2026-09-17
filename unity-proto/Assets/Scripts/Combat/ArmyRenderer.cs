@@ -1139,6 +1139,30 @@ public class ArmyRenderer : MonoBehaviour
         }
         rest += sink;
 
+        // OVER A CANDLE'S FACE IN 0.3 s (WAR_TACTICS.md §4.15: "a tank crossing a face steps 2 m up or down in the core,
+        // and the renderer eases the hull over 0.3 s"). The core's height is the target; the drawn height moves toward it
+        // at most a plateau's height per 0.3 s, so a face is a climb the eye sees and ordinary slopes (a tank at 5 m/s on
+        // the relief's 55% is 2.75 m/s) are followed without lag. A hull that jumped sideways (pooled, respawned) snaps.
+        if (_rest.TryGetValue(t, out var drawn) && (new Vector2(drawn.x - x, drawn.z - z)).sqrMagnitude < SnapDistance * SnapDistance)
+            rest = EaseRest(drawn.y, rest, Time.deltaTime);
+        _rest[t] = new Vector3(x, rest, z);
+
         t.SetPositionAndRotation(new Vector3(x, rest + lift, z), attitude);
     }
+
+    /// <summary>Drawn rest height per pooled hull (x, height, z), for the face ease.</summary>
+    readonly Dictionary<Transform, Vector3> _rest = new Dictionary<Transform, Vector3>();
+
+    /// <summary>A hull that moved farther than this in a frame was placed, not driven: it snaps to its ground.</summary>
+    public const float SnapDistance = 3f;
+
+    /// <summary>The time a candle's full face takes to climb or drop, drawn.</summary>
+    public const float FaceSeconds = 0.3f;
+
+    /// <summary>
+    /// The drawn height one frame on: toward the core's <paramref name="target"/> at most a plateau
+    /// (Layout.CANDLE_H) per <see cref="FaceSeconds"/>. Pure, for the tests.
+    /// </summary>
+    public static float EaseRest(float drawn, float target, float dt) =>
+        Mathf.MoveTowards(drawn, target, Blwp.Layout.CANDLE_H / 65536f / FaceSeconds * Mathf.Max(0f, dt));
 }
