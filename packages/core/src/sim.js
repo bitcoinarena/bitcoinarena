@@ -465,6 +465,7 @@ export function submitSample(st, price) {
   const h = st.tape;
   for (let i = 0; i < h.length - 1; i++) h[i] = h[i + 1];
   h[h.length - 1] = p;
+  if (st.roundTape) st.roundTape.push(p);
   const s = st.i32;
   s[O_TACTICS + TAC_MARKET + MK_SAMPLES] = (s[O_TACTICS + TAC_MARKET + MK_SAMPLES] + 1) | 0;
   readMarket(s, O_TACTICS, h);
@@ -580,6 +581,9 @@ export function init(seedWord) {
   s[O_SCORE + S_STATE] = RUN_LIVE;
 
   st.tape = tape(rng);
+  // THE ROUND'S OWN SAMPLES, for the chart's ROUND range (WAR_TACTICS.md §0.3): the open's candle, then every sample
+  // taken. The tape keeps 64 and forgets; this keeps the round. A view, not state - nothing in a step reads it.
+  st.roundTape = [st.tape[SAMPLES - 2], st.tape[SAMPLES - 1]];
   initMarket(s, O_TACTICS, st.tape);   // §4.13 round open, §4.14 lead and trend from the seeded tape
 
   // THE RELIEF IS THE ROUND'S, AND IT IS MADE HERE.

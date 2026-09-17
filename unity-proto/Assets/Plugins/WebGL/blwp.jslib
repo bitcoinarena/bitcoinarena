@@ -112,6 +112,24 @@ mergeInto(LibraryManager.library, {
     return n;
   },
 
+  // THE HUD'S CHART (WAR_TACTICS.md §0.3), in `range` (0 GROUND, 1 ROUND), as the core lays it out: candles, the seam,
+  // the lead, YOU, the gate, the objectives and the assault. The painter reads these words and works none of them out.
+  BlwpChartView: function (range, ptr, cap) {
+    var b = Module.blwp;
+    if (!b || !b.core.chartView || (cap | 0) < b.core.CH_WORDS) return 0;
+    var out = new Int32Array(Module.HEAP32.buffer, ptr, b.core.CH_WORDS);
+    return b.core.chartView(b.st, range | 0, out) | 0;
+  },
+
+  // Where a ground point (Q16.16 metres) sits on that chart: t, price, on the range. A ghost's place, by the same
+  // mapping the truck's is.
+  BlwpChartPoint: function (range, x, z, ptr) {
+    var b = Module.blwp;
+    if (!b || !b.core.chartPoint) return 0;
+    var out = new Int32Array(Module.HEAP32.buffer, ptr, 3);
+    return b.core.chartPoint(b.st, range | 0, x | 0, z | 0, out) | 0;
+  },
+
   // The state hash, for a checkpoint. Written as ASCII into a caller-owned
   // buffer because returning a string from a jslib means allocating in the
   // Unity heap and freeing it on the C# side, which is a leak waiting to be

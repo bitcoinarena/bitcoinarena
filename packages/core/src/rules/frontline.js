@@ -8,6 +8,9 @@ import { ONE, add, sub, mulFast, div, clamp, min, max } from '../fixed.js';
 
 export const SAMPLES = 64;
 
+/** The seam's reach either side of z = 0 as a share of the half depth, Q16.16 (0.72, see `frontlineZ`). */
+export const FRONT_DEPTH = 47186;
+
 /**
  * Frontline z at a world x. `hist` is an Int32Array of SAMPLES prices in
  * Q16.16 (scaled however the caller likes - only ratios matter), `halfX` and
@@ -105,5 +108,5 @@ export function frontlineZ(hist, x, halfX, halfZ) {
   // on, identical to the digit with either constant. This is a wrong number
   // made right, not a number tuned to a test.
   const t = sub(div(mulFast(sub(price, lo), Math.imul(2, ONE)), span), ONE);
-  return mulFast(t, mulFast(halfZ, 47186));
+  return mulFast(t, mulFast(halfZ, FRONT_DEPTH));
 }

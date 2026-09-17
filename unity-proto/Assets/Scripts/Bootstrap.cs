@@ -482,6 +482,10 @@ public class Bootstrap : MonoBehaviour
         hud.gate = _gate;
         hud.runScore = _score;
         hud.loadout = Object.FindFirstObjectByType<LoadoutPanel>();
+        // THE CHART (WAR_TACTICS.md §0.3): one TradingView chart with the truck on it, GROUND or ROUND on Tab. It paints
+        // the core's chart words and nothing else.
+        var chart = gameObject.AddComponent<ChartHud>();
+        chart.loadout = hud.loadout;
 
         // The block is the round: it puts a price on time, without which the
         // safest possible load was also the best one.

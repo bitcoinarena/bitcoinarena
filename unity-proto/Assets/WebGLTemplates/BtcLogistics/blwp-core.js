@@ -3148,6 +3148,12 @@ function initMarket(s, base, tape) {
   readMarket(s, base, tape);
 }
 
+/** A finished candle's colour (§4.14): +1 green (close above open by 3 bp of the open or more), -1 red, 0 a doji. */
+function candleColour(open, close) {
+  const doji = Math.imul(idiv(abs(open), 10000), 3);   // 3 bp of the open
+  return close - open > doji ? 1 : open - close > doji ? -1 : 0;
+}
+
 /**
  * Re-read lead and trend from the tape (§4.14). A candle is two samples (open = the first, close = the second, §4.15's
  * bucket); the newest finished one ends at the newest sample when an even count of samples has been taken, else one
@@ -3158,9 +3164,7 @@ function readMarket(s, base, tape) {
   const end = last - (count & 1);
   let net = 0;
   for (let c = 0; c < 6; c++) {
-    const close = tape[end - Math.imul(c, 2)], open = tape[end - Math.imul(c, 2) - 1];
-    const doji = Math.imul(idiv(abs(open), 10000), 3);   // 3 bp of the open
-    if (close - open > doji) net++; else if (open - close > doji) net--;
+    net += candleColour(tape[end - Math.imul(c, 2) - 1], tape[end - Math.imul(c, 2)]);
   }
   const a = net < 0 ? -net : net;
   s[base + TAC_MARKET + MK_TREND] = a < 2 ? 0 : (net > 0 ? 1 : -1);
@@ -3681,6 +3685,9 @@ function mapSolids(ground, halfX, halfZ) {
 
 const SAMPLES = 64;
 
+/** The seam's reach either side of z = 0 as a share of the half depth, Q16.16 (0.72, see `frontlineZ`). */
+const FRONT_DEPTH = 47186;
+
 /**
  * Frontline z at a world x. `hist` is an Int32Array of SAMPLES prices in
  * Q16.16 (scaled however the caller likes - only ratios matter), `halfX` and
@@ -3778,7 +3785,7 @@ function frontlineZ(hist, x, halfX, halfZ) {
   // on, identical to the digit with either constant. This is a wrong number
   // made right, not a number tuned to a test.
   const t = sub(div(mulFast(sub(price, lo), Math.imul(2, ONE)), span), ONE);
-  return mulFast(t, mulFast(halfZ, 47186));
+  return mulFast(t, mulFast(halfZ, FRONT_DEPTH));
 }
 
 // ---- rules/emplacements.js
@@ -4847,6 +4854,7 @@ function submitSample(st, price) {
   const h = st.tape;
   for (let i = 0; i < h.length - 1; i++) h[i] = h[i + 1];
   h[h.length - 1] = p;
+  if (st.roundTape) st.roundTape.push(p);
   const s = st.i32;
   s[O_TACTICS + TAC_MARKET + MK_SAMPLES] = (s[O_TACTICS + TAC_MARKET + MK_SAMPLES] + 1) | 0;
   readMarket(s, O_TACTICS, h);
@@ -4962,6 +4970,9 @@ function init(seedWord) {
   s[O_SCORE + S_STATE] = RUN_LIVE;
 
   st.tape = tape(rng);
+  // THE ROUND'S OWN SAMPLES, for the chart's ROUND range (WAR_TACTICS.md §0.3): the open's candle, then every sample
+  // taken. The tape keeps 64 and forgets; this keeps the round. A view, not state - nothing in a step reads it.
+  st.roundTape = [st.tape[SAMPLES - 2], st.tape[SAMPLES - 1]];
   initMarket(s, O_TACTICS, st.tape);   // §4.13 round open, §4.14 lead and trend from the seeded tape
 
   // THE RELIEF IS THE ROUND'S, AND IT IS MADE HERE.
@@ -6206,9 +6217,186 @@ const runScore = (st) =>
                 st.i32[O_SCORE + S_ELAPSED],
                 st.i32[O_SCORE + S_CARGO]);
 
+// ---- chart.js
+// THE CHART THE HUD DRAWS (WAR_TACTICS.md §0.3). One TradingView chart with the truck on it, in two ranges: GROUND, the
+// 32 candles on the terrain now (the minimap), and ROUND, every candle since the round's open (the lead). `Tab` picks
+// the range in the client; everything the client paints comes out of here, so a HUD cannot put a candle, a price or
+// the truck anywhere the core does not.
+//
+// A view, never a rule: nothing here writes state, and nothing in a step reads it. The mapping is §0.3's - on the
+// ground x is time and z is price, so a point's candle is the tape sample under its x and its price is its z read
+// through the window's scale, the inverse of `frontlineZ`.
+
+
+
+
+
+
+const CHART_GROUND = 0, CHART_ROUND = 1;
+/** Header words of `chartView`'s output. Prices are in the tape's unit (CHART_UNIT per dollar); t is Q16.16 candles
+ *  from the left edge of the range (candle i spans i..i+1). */
+const CH_RANGE = 0, CH_CANDLES = 1, CH_LO = 2, CH_HI = 3, CH_LAST = 4, CH_OPEN = 5, CH_LEAD = 6, CH_LEAD_BP = 7;
+const CH_MOMENTUM = 8, CH_TREND = 9, CH_STRENGTH = 10, CH_DOTS = 11, CH_FIRST = 12, CH_CANDLE_SECONDS = 13;
+const CH_UNIT = 14, CH_YOU_T = 15, CH_YOU_P = 16, CH_YOU_HEADING = 17, CH_YOU_ON = 18, CH_GATE_T = 19;
+const CH_GATE_ON = 20, CH_WINDOW_FROM = 21, CH_WINDOW_TO = 22, CH_SAMPLES = 23;
+/** The range's HIGH and LOW: the candle holding the highest high and the lowest low, t of its centre and the price. */
+const CH_HIGH_T = 24, CH_HIGH_P = 25, CH_LOW_T = 26, CH_LOW_P = 27;
+/** Per objective (RIDGE, HOLLOW, GAP): its kind, t, price (the seam at its lane), holder, on the range. */
+const CH_OBJ = 28, CH_OBJ_WORDS = 5;
+/** Per side (bulls, then bears): the assault's phase, target objective, the target lane's t, on the range, and the
+ *  lane's two edges in t (half a slot pitch either side). */
+const CH_ASSAULT = 43, CH_ASSAULT_WORDS = 6;
+/** Then CH_CANDLES x (open, high, low, close), then CH_CANDLES seam prices (CH_NONE off the ground window). */
+const CH_CANDLE = 55, CH_MAX_CANDLES = 512, CH_WORDS = 2615;
+const CH_NONE = -2147483648;
+/** A point's place on the chart: t, price, on the range. */
+const CH_POINT_WORDS = 3;
+const CANDLE_SECONDS = 10, CHART_UNIT = 256;
+const LAST = SAMPLES - 1, LAST_Q = Math.imul(SAMPLES - 1, ONE);
+
+/** Samples in the round so far: the open's candle (two) and every sample since. */
+const roundLength = (st) => (st.i32[O_TACTICS + TAC_MARKET + MK_SAMPLES] + 2) | 0;
+
+/** Round sample r (0 = the open candle's first). The tape holds the newest SAMPLES; the round's memory the rest. */
+function sampleAt(st, L, r) {
+  const back = (L - 1 - r) | 0;
+  if (back < SAMPLES) return st.tape[LAST - back];
+  return st.roundTape[r];
+}
+
+/** The candles in a range: [first, last] by round candle index (candle k = samples 2k, 2k+1; 0 holds the open). */
+function rangeOf(st, range) {
+  const L = roundLength(st);
+  const last = (L - 1) >> 1;                         // the newest, still forming when L is odd
+  let first;
+  if (range === CHART_GROUND) first = (L - SAMPLES + 1) >> 1;   // the whole candles still on the tape
+  else first = st.roundTape && st.roundTape.length === L ? 0 : (max(0, L - SAMPLES) + 1) >> 1;
+  if (last - first + 1 > CH_MAX_CANDLES) first = (last - CH_MAX_CANDLES + 1) | 0;
+  return { L, first, n: (last - first + 1) | 0 };
+}
+
+/** The tape window's low and high: the scale the seam is laid across the ground with. */
+function windowScale(st) {
+  let lo = st.tape[0], hi = st.tape[0];
+  for (let k = 1; k < SAMPLES; k++) { lo = min(lo, st.tape[k]); hi = max(hi, st.tape[k]); }
+  return { lo, hi };
+}
+
+/** A ground z as a price: the inverse of `frontlineZ`'s scale. */
+function priceAtZ(w, z) {
+  const span = (w.hi - w.lo) | 0;
+  const mid = (w.lo + (span >> 1)) | 0;
+  if (span <= 0) return w.lo;
+  return (mid + mulFast(div(z, mulFast(HALF_Z, FRONT_DEPTH)), span >> 1)) | 0;
+}
+
+/** A ground x as a round sample, Q16.16. */
+const sampleOfX = (L, x) => (mulFast(div((x + HALF_X) | 0, Math.imul(2, HALF_X)), LAST_Q) + Math.imul(L - SAMPLES, ONE)) | 0;
+/** A round sample (Q16.16) as t in a range starting at candle `first`. */
+const tOfSample = (first, rq) => ((rq - Math.imul(first, Math.imul(2, ONE)) + (ONE >> 1)) >> 1) | 0;
+const onRange = (n, t) => (t >= 0 && t <= Math.imul(n, ONE) ? 1 : 0);
+
+/**
+ * Where a ground point sits on the chart in `range`: out[0] t, out[1] price, out[2] 1 when it is inside the range.
+ * The truck, a ghost, the gate - one mapping for all of them.
+ */
+function chartPoint(st, range, x, z, out) {
+  const r = rangeOf(st, range | 0), w = windowScale(st);
+  const t = tOfSample(r.first, sampleOfX(r.L, x | 0));
+  out[0] = t;
+  out[1] = priceAtZ(w, z | 0);
+  out[2] = onRange(r.n, t);
+  return CH_POINT_WORDS;
+}
+
+/** The chart in `range`, written into `out` (at least CH_WORDS long). Returns the words written. */
+function chartView(st, range, out) {
+  const s = st.i32, m = O_TACTICS + TAC_MARKET;
+  const rg = range === CHART_ROUND ? CHART_ROUND : CHART_GROUND;
+  const r = rangeOf(st, rg), w = windowScale(st), n = r.n, L = r.L;
+  const count = s[m + MK_SAMPLES];
+
+  out[CH_RANGE] = rg;
+  out[CH_CANDLES] = n;
+  out[CH_FIRST] = r.first;
+  out[CH_CANDLE_SECONDS] = CANDLE_SECONDS;
+  out[CH_UNIT] = CHART_UNIT;
+  out[CH_SAMPLES] = count;
+  const open = s[m + MK_OPEN], last = st.tape[LAST];
+  out[CH_LAST] = last;
+  out[CH_OPEN] = open;
+  out[CH_LEAD] = s[m + MK_LEAD];
+  out[CH_MOMENTUM] = s[m + MK_MOMENTUM];
+  out[CH_TREND] = s[m + MK_TREND];
+  out[CH_STRENGTH] = s[m + MK_STRENGTH];
+  const bp = idiv(abs(open), 10000);
+  out[CH_LEAD_BP] = bp > 0 ? idiv((last - open) | 0, bp) : 0;
+  // The six candles the trend is read from (§4.14), newest in bits 0-1: 1 green, 2 red, 0 doji.
+  let dots = 0;
+  const end = LAST - (count & 1);
+  for (let c = 0; c < 6; c++) {
+    const col = candleColour(st.tape[end - Math.imul(c, 2) - 1], st.tape[end - Math.imul(c, 2)]);
+    dots |= (col > 0 ? 1 : col < 0 ? 2 : 0) << Math.imul(c, 2);
+  }
+  out[CH_DOTS] = dots;
+
+  // Candles, and the range's price scale: GROUND is the window the seam is laid with; ROUND the candles' own and the
+  // seam over them, so the one indicator never runs off the chart (measured: round-open's seam 931 px, under a chart
+  // ending at 741).
+  let lo = w.lo, hi = w.hi, highP = CH_NONE, lowP = 2147483647, highT = 0, lowT = 0;
+  if (rg === CHART_ROUND) { lo = sampleAt(st, L, Math.imul(r.first, 2)); hi = lo; }
+  for (let i = 0; i < n; i++) {
+    const k = (r.first + i) | 0, a = Math.imul(k, 2);
+    const o = sampleAt(st, L, a), c = a + 1 <= L - 1 ? sampleAt(st, L, a + 1) : o;
+    const b = CH_CANDLE + Math.imul(i, 4);
+    out[b] = o; out[b + 1] = max(o, c); out[b + 2] = min(o, c); out[b + 3] = c;
+    if (rg === CHART_ROUND) { lo = min(lo, min(o, c)); hi = max(hi, max(o, c)); }
+    const centre = (Math.imul(i, ONE) + (ONE >> 1)) | 0;
+    if (max(o, c) > highP) { highP = max(o, c); highT = centre; }
+    if (min(o, c) < lowP) { lowP = min(o, c); lowT = centre; }
+    // The seam over this candle, where the candle is on the ground at all.
+    const aq = (Math.imul(a, ONE) + (ONE >> 1) - Math.imul(L - SAMPLES, ONE)) | 0;
+    const front = CH_CANDLE + Math.imul(n, 4) + i;
+    if (aq < 0 || aq > LAST_Q) out[front] = CH_NONE;
+    else out[front] = priceAtZ(w, frontAt(st, (mulFast(div(aq, LAST_Q), Math.imul(2, HALF_X)) - HALF_X) | 0));
+    if (rg === CHART_ROUND && out[front] !== CH_NONE) { lo = min(lo, out[front]); hi = max(hi, out[front]); }
+  }
+  out[CH_HIGH_T] = highT; out[CH_HIGH_P] = highP; out[CH_LOW_T] = lowT; out[CH_LOW_P] = lowP;
+  out[CH_LO] = lo;
+  out[CH_HI] = hi;
+
+  const t0 = tOfSample(r.first, Math.imul(L - SAMPLES, ONE)), t1 = tOfSample(r.first, Math.imul(L - 1, ONE));
+  out[CH_WINDOW_FROM] = max(0, t0);
+  out[CH_WINDOW_TO] = min(Math.imul(n, ONE), t1);
+
+  const p = [0, 0, 0];
+  chartPoint(st, rg, s[O_TRUCK + T_X], s[O_TRUCK + T_Z], p);
+  out[CH_YOU_T] = p[0]; out[CH_YOU_P] = p[1]; out[CH_YOU_ON] = p[2];
+  out[CH_YOU_HEADING] = s[O_TRUCK + T_HEADING];
+  chartPoint(st, rg, GATE_X, 0, p);
+  out[CH_GATE_T] = p[0]; out[CH_GATE_ON] = p[2];
+
+  for (let o = 0; o < OBJECTIVES; o++) {
+    const x = slotX(objectiveLane(s, O_TACTICS, o)), b = CH_OBJ + Math.imul(o, CH_OBJ_WORDS);
+    chartPoint(st, rg, x, frontAt(st, x), p);
+    out[b] = o; out[b + 1] = p[0]; out[b + 2] = p[1]; out[b + 3] = objectiveHolder(s, O_TACTICS, o); out[b + 4] = p[2];
+  }
+  for (let si = 0; si < 2; si++) {
+    const side = si === 0 ? -1 : 1, b = CH_ASSAULT + Math.imul(si, CH_ASSAULT_WORDS);
+    const target = assaultTarget(s, O_TACTICS, side), x = slotX(objectiveLane(s, O_TACTICS, min(target, OBJECTIVES - 1)));
+    const half = (slotX(1) - slotX(0)) >> 1;
+    chartPoint(st, rg, x, 0, p);
+    out[b] = assaultPhase(s, O_TACTICS, side); out[b + 1] = target; out[b + 2] = p[0]; out[b + 3] = p[2];
+    chartPoint(st, rg, (x - half) | 0, 0, p); out[b + 4] = p[0];
+    chartPoint(st, rg, (x + half) | 0, 0, p); out[b + 5] = p[0];
+  }
+  return (CH_CANDLE + Math.imul(n, 5)) | 0;
+}
+
 return { init: init, step: step, hash: hash, runScore: runScore,
          groundAt: groundAt, teleport: teleport,
          restart: restart, frontAt: frontAt, submitLiquidation: submitLiquidation, submitSample: submitSample,
+         chartView: chartView, chartPoint: chartPoint, CH_WORDS: CH_WORDS,
          submitLoad: submitLoad, heatOf: heatOf,
          create: create, WORDS: WORDS };
 })();

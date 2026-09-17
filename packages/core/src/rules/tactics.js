@@ -235,6 +235,12 @@ export function initMarket(s, base, tape) {
   readMarket(s, base, tape);
 }
 
+/** A finished candle's colour (§4.14): +1 green (close above open by 3 bp of the open or more), -1 red, 0 a doji. */
+export function candleColour(open, close) {
+  const doji = Math.imul(idiv(abs(open), 10000), 3);   // 3 bp of the open
+  return close - open > doji ? 1 : open - close > doji ? -1 : 0;
+}
+
 /**
  * Re-read lead and trend from the tape (§4.14). A candle is two samples (open = the first, close = the second, §4.15's
  * bucket); the newest finished one ends at the newest sample when an even count of samples has been taken, else one
@@ -245,9 +251,7 @@ export function readMarket(s, base, tape) {
   const end = last - (count & 1);
   let net = 0;
   for (let c = 0; c < 6; c++) {
-    const close = tape[end - Math.imul(c, 2)], open = tape[end - Math.imul(c, 2) - 1];
-    const doji = Math.imul(idiv(abs(open), 10000), 3);   // 3 bp of the open
-    if (close - open > doji) net++; else if (open - close > doji) net--;
+    net += candleColour(tape[end - Math.imul(c, 2) - 1], tape[end - Math.imul(c, 2)]);
   }
   const a = net < 0 ? -net : net;
   s[base + TAC_MARKET + MK_TREND] = a < 2 ? 0 : (net > 0 ? 1 : -1);

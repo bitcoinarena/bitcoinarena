@@ -36,6 +36,8 @@ namespace Blwp
         [DllImport("__Internal")] private static extern int BlwpTakeImpact();
         [DllImport("__Internal")] private static extern int BlwpReadImpact();
         [DllImport("__Internal")] private static extern int BlwpSubmitLoad(int feeSats, int btcHundredths);
+        [DllImport("__Internal")] private static extern int BlwpChartView(int range, IntPtr ptr, int cap);
+        [DllImport("__Internal")] private static extern int BlwpChartPoint(int range, int x, int z, IntPtr ptr);
         public const bool Compiled = true;
 #else
         private static int BlwpInit(int seed) => 0;
@@ -54,6 +56,8 @@ namespace Blwp
         private static int BlwpTakeImpact() => 0;
         private static int BlwpReadImpact() => 0;
         private static int BlwpSubmitLoad(int f, int b) => 0;
+        private static int BlwpChartView(int r, IntPtr ptr, int cap) => 0;
+        private static int BlwpChartPoint(int r, int x, int z, IntPtr ptr) => 0;
         public const bool Compiled = false;
 #endif
 
@@ -150,6 +154,28 @@ namespace Blwp
         {
             var handle = GCHandle.Alloc(_state, GCHandleType.Pinned);
             try { BlwpReadState(handle.AddrOfPinnedObject(), _state.Length); }
+            finally { handle.Free(); }
+        }
+
+        /// <summary>
+        /// THE HUD'S CHART (WAR_TACTICS.md §0.3), read out of the core into <paramref name="into"/> (at least
+        /// `Layout.CH_WORDS`): candles, seam, lead, YOU, gate, objectives, assault, laid out by `src/chart.js`. Returns
+        /// the words written, 0 without a core. The painter reads these; it computes none of them.
+        /// </summary>
+        public static int ChartView(int range, int[] into)
+        {
+            if (!Available || into == null || into.Length < Layout.CH_WORDS) return 0;
+            var handle = GCHandle.Alloc(into, GCHandleType.Pinned);
+            try { return BlwpChartView(range, handle.AddrOfPinnedObject(), into.Length); }
+            finally { handle.Free(); }
+        }
+
+        /// <summary>A ground point (Q16.16 metres) on that chart: [0] t, [1] price, [2] 1 inside the range.</summary>
+        public static bool ChartPoint(int range, int x, int z, int[] into)
+        {
+            if (!Available || into == null || into.Length < Layout.CH_POINT_WORDS) return false;
+            var handle = GCHandle.Alloc(into, GCHandleType.Pinned);
+            try { return BlwpChartPoint(range, x, z, handle.AddrOfPinnedObject()) == Layout.CH_POINT_WORDS; }
             finally { handle.Free(); }
         }
 

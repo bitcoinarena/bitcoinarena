@@ -117,6 +117,56 @@ namespace Blwp
         public const int START_X = -6579814;
         public const int START_Z = 668467;
 
+        // chart view (src/chart.js) and the objective, holder and assault names it carries
+        public const int CHART_GROUND = 0;
+        public const int CHART_ROUND = 1;
+        public const int CH_ASSAULT = 43;
+        public const int CH_ASSAULT_WORDS = 6;
+        public const int CH_CANDLE = 55;
+        public const int CH_CANDLES = 1;
+        public const int CH_CANDLE_SECONDS = 13;
+        public const int CH_DOTS = 11;
+        public const int CH_FIRST = 12;
+        public const int CH_GATE_ON = 20;
+        public const int CH_GATE_T = 19;
+        public const int CH_HI = 3;
+        public const int CH_HIGH_P = 25;
+        public const int CH_HIGH_T = 24;
+        public const int CH_LAST = 4;
+        public const int CH_LEAD = 6;
+        public const int CH_LEAD_BP = 7;
+        public const int CH_LO = 2;
+        public const int CH_LOW_P = 27;
+        public const int CH_LOW_T = 26;
+        public const int CH_MAX_CANDLES = 512;
+        public const int CH_MOMENTUM = 8;
+        public const int CH_NONE = -2147483648;
+        public const int CH_OBJ = 28;
+        public const int CH_OBJ_WORDS = 5;
+        public const int CH_OPEN = 5;
+        public const int CH_POINT_WORDS = 3;
+        public const int CH_RANGE = 0;
+        public const int CH_SAMPLES = 23;
+        public const int CH_STRENGTH = 10;
+        public const int CH_TREND = 9;
+        public const int CH_UNIT = 14;
+        public const int CH_WINDOW_FROM = 21;
+        public const int CH_WINDOW_TO = 22;
+        public const int CH_WORDS = 2615;
+        public const int CH_YOU_HEADING = 17;
+        public const int CH_YOU_ON = 18;
+        public const int CH_YOU_P = 16;
+        public const int CH_YOU_T = 15;
+        public const int ASSAULT_CONSOLIDATE = 2;
+        public const int ASSAULT_IDLE = 0;
+        public const int ASSAULT_PUSH = 1;
+        public const int HOLDER_BEAR = 2;
+        public const int HOLDER_BULL = 1;
+        public const int HOLDER_NONE = 0;
+        public const int OBJ_GAP = 2;
+        public const int OBJ_HOLLOW = 1;
+        public const int OBJ_RIDGE = 0;
+
         /// <summary>Base word offset of unit <paramref name="i"/>.</summary>
         public static int UnitBase(int i) => O_UNITS + i * U_WORDS;
 

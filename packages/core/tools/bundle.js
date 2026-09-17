@@ -34,6 +34,7 @@ function walk(file) {
 }
 walk(SRC + 'sim.js');
 walk(SRC + 'state.js');
+walk(SRC + 'chart.js');   // the HUD's chart (WAR_TACTICS.md §0.3): a view the page reads, never a rule
 
 // Flat concatenation means one scope, so two modules exporting the same name
 // would silently shadow each other - and the survivor would depend on file
@@ -101,6 +102,7 @@ for (const file of order) {
 out += '\nreturn { init: init, step: step, hash: hash, runScore: runScore,\n';
 out += '         groundAt: groundAt, teleport: teleport,\n';
 out += '         restart: restart, frontAt: frontAt, submitLiquidation: submitLiquidation, submitSample: submitSample,\n';
+out += '         chartView: chartView, chartPoint: chartPoint, CH_WORDS: CH_WORDS,\n';
 out += '         submitLoad: submitLoad, heatOf: heatOf,\n';
 out += '         create: create, WORDS: WORDS };\n})();\n';
 out += 'if (typeof module !== "undefined") module.exports = BLWP;\n';

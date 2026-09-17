@@ -61,7 +61,10 @@ public static class DriveInput
         }
     }
 
-    /// <summary>Switch between the chase cam and the overview. Edge-triggered.</summary>
+    /// <summary>
+    /// Switch between the chase cam and the overview. Edge-triggered. `G` only: `Tab` is the chart's range
+    /// (WAR_TACTICS.md §0.3), and one key doing both flipped the camera every time the player changed range.
+    /// </summary>
     public static bool CameraToggle
     {
         get
@@ -69,9 +72,9 @@ public static class DriveInput
             if (TouchCameraTapped) return true;
 #if ENABLE_INPUT_SYSTEM
             var k = Keyboard.current;
-            return k != null && (k.gKey.wasPressedThisFrame || k.tabKey.wasPressedThisFrame);
+            return k != null && k.gKey.wasPressedThisFrame;
 #else
-            return Input.GetKeyDown(KeyCode.G) || Input.GetKeyDown(KeyCode.Tab);
+            return Input.GetKeyDown(KeyCode.G);
 #endif
         }
     }

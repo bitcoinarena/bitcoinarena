@@ -98,6 +98,13 @@ namespace Blwp
         public int Retired { get; private set; }
 
         private readonly Dictionary<string, GhostTruck> trucks = new Dictionary<string, GhostTruck>();
+
+        /// <summary>
+        /// Each shown entry's newest picture, in the core's own words (Q16.16). The HUD chart (WAR_TACTICS.md §0.3)
+        /// puts a ghost where its picture is, through the core's mapping - not where its drawn body has eased to.
+        /// </summary>
+        public IReadOnlyDictionary<string, GhostPicture> Pictures => pictures;
+        private readonly Dictionary<string, GhostPicture> pictures = new Dictionary<string, GhostPicture>();
         private readonly int[] words = new int[Words];
 
         void Update() => Draw(PerFrame);
@@ -161,6 +168,7 @@ namespace Blwp
                 if (trucks.TryGetValue(picture.Entry, out var gone))
                 {
                     trucks.Remove(picture.Entry);
+                    pictures.Remove(picture.Entry);
                     if (gone != null) Destroy(gone.gameObject);
                     Retired++;
                 }
@@ -187,6 +195,7 @@ namespace Blwp
                        BlwpCore.Degrees(picture.Heading))
                 : (float?)null;
             ghost.Show(picture.X, picture.Z, picture.Heading, resting);
+            pictures[picture.Entry] = picture;
             Shown++;
         }
     }

@@ -53,6 +53,15 @@ const sim = await import(new URL('../src/sim.js', import.meta.url));
 out += '        /// <summary>Where the core starts the truck, Q16.16 metres.</summary>\n';
 out += `        public const int START_X = ${sim.START_X};\n`;
 out += `        public const int START_Z = ${sim.START_Z};\n`;
+// THE HUD'S CHART (WAR_TACTICS.md §0.3) reaches C# the same way: the words of `chartView`'s output and the names the
+// painter labels them with, so the page reads the core's chart and restates none of it.
+const chart = await import(new URL('../src/chart.js', import.meta.url));
+const tactics = await import(new URL('../src/rules/tactics.js', import.meta.url));
+out += '\n        // chart view (src/chart.js) and the objective, holder and assault names it carries\n';
+for (const k of Object.keys(chart).filter((k) => /^(CH_|CHART_)/.test(k) && typeof chart[k] === 'number').sort())
+  out += `        public const int ${k} = ${chart[k]};\n`;
+for (const k of Object.keys(tactics).filter((k) => /^(OBJ_|HOLDER_|ASSAULT_)/.test(k) && typeof tactics[k] === 'number').sort())
+  out += `        public const int ${k} = ${tactics[k]};\n`;
 out += '\n';
 out += '        /// <summary>Base word offset of unit <paramref name="i"/>.</summary>\n';
 out += '        public static int UnitBase(int i) => O_UNITS + i * U_WORDS;\n';
