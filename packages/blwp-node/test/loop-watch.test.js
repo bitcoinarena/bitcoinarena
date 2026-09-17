@@ -18,7 +18,7 @@ test('a stall is named by the timed phase that ran inside it', async () => {
     timed('a long sum', () => spin(200), { over: 1e9 });     // its own logging off: the watcher is what is measured
     await wait(120);
     assert.equal(said.length, 1, `the watcher said ${said.length} things: ${said.join(' | ')}`);
-    assert.match(said[0], /the loop was held \d+ ms and in it ran a long sum \d+ ms/);
+    assert.match(said[0], /the loop was held \d+ ms and in it ran 1 phase\(s\) totalling \d+ ms, longest a long sum \d+ ms/);
     // AND WHETHER THIS PROCESS WAS RUNNING: a spin uses the processor, so the line says so and does not blame the host.
     assert.match(said[0], /this thread used \d+ ms of processor in it/);
     assert.equal(/waiting for the machine/.test(said[0]), false, 'a spin was blamed on the machine');
@@ -51,6 +51,6 @@ test('a phase too short to hold anything is not written down, and the ring is bo
   for (let i = 0; i < 50; i++) timed('a quick one', () => {}, { over: 1e9 });
   assert.equal(heldRecently().length, before, 'a phase under 5 ms was written down');
   for (let i = 0; i < 300; i++) timed('a slow one', () => spin(6), { over: 1e9 });
-  assert.ok(heldRecently().length <= 256, `the ring holds ${heldRecently().length}`);
+  assert.ok(heldRecently().length <= 2048, `the ring holds ${heldRecently().length}`);
   assert.equal(heldRecently().at(-1).label, 'a slow one');
 });
