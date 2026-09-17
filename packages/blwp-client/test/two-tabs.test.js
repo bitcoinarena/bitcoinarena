@@ -460,7 +460,12 @@ test('the shipped bridge writes the driver\'s entry and pose in the twelve ints 
       return took;
     };
 
-    // BEFORE ANYTHING ARRIVES.
+    // BEFORE ANYTHING ARRIVES. A field Unity has not seen hands it the CLEAR record first (tick -2, entry all zero:
+    // `GhostField.ClearTick`), so no truck of the last round stands in this one - the rule the 17:12 ghost letter added.
+    // Then an empty field hands out nothing.
+    assert.equal(library.BlwpNextGhost(0, WORDS), WORDS, 'a new field did not clear the last round\'s trucks');
+    assert.equal(heap[11], -2, 'the first record of a new field is not the clear');
+    assert.deepEqual([...heap.slice(0, 8)], [0, 0, 0, 0, 0, 0, 0, 0], 'the clear record names an entry');
     assert.equal(library.BlwpNextGhost(0, WORDS), 0, 'an empty field handed out a picture');
 
     const drawn = [];
@@ -526,13 +531,13 @@ test('the shipped bridge writes the driver\'s entry and pose in the twelve ints 
     console.log(`  the farthest decoded pose is ${far.toFixed(1)} m from the origin`);
     assert.ok(far > 0.5, `the driver was decoded standing at ${far} m from the origin`);
 
-    // AND A BACKLOG IS HANDED OVER ONE AT A TIME, WHOLE.
+    // AND A BACKLOG IS THE NEWEST PICTURE OF THAT TRUCK, NOT A QUEUE OF WHERE IT WAS.
     //
-    // A page that is drawing every frame almost never holds two pictures at
-    // once, so the traffic above cannot tell a bridge that takes one from a
-    // bridge that takes two and drops one - and a dropped picture is a truck
-    // that jumps. This lets the queue fill first, which is what a page does
-    // whenever a frame is late.
+    // A page that is drawing every frame almost never holds two pictures at once, so the traffic above cannot tell a
+    // bridge that takes one from a bridge that takes two and drops one. This lets the queue fill first, which is what a
+    // page does whenever a frame is late - and since 628d54a (the owner 2026-09-17 17:05 / 17:12: "the ghost must be
+    // REALTIME") a frame then draws each truck where its NEWEST picture puts it and the older ones are collapsed, so
+    // one truck's backlog is one picture and the rest are counted.
     for (let batch = 0; batch < 3; batch++) {
       for (let t = 0; t < 6; t++) driver.client.record([45875, 0, 0, 0, 0]);
       await driver.client.drain();
@@ -553,8 +558,13 @@ test('the shipped bridge writes the driver\'s entry and pose in the twelve ints 
       if (picture == null) break;
       after.push(picture);
     }
-    assert.equal(after.length, backlog,
-      `the frame drew ${after.length} of the ${backlog} pictures the page was holding`);
+    const trucks = new Set(Module.blwpNet.ghosts.latest().map((g) => toHex(g.entryId))).size;
+    assert.equal(after.length, trucks,
+      `the frame drew ${after.length} pictures of ${trucks} truck(s) from a backlog of ${backlog}`);
+    assert.equal(Module.blwpNet.ghosts.size, 0, 'a picture was left in the page after the frame drained it');
+    assert.ok(Module.blwpNet.ghosts.collapsed >= backlog - trucks,
+      `${backlog} pictures collapsed to ${after.length} and the page counted ${Module.blwpNet.ghosts.collapsed}`);
+    for (const d of after) assert.equal(d.tick, Math.max(...his.map((h) => h.tick), d.tick), 'a truck was drawn at an older picture than the page held');
   } finally {
     for (const t of tabs) { try { t.client.close(); } catch { /* gone */ } }
     await round.close();
