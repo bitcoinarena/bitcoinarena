@@ -19,6 +19,8 @@ import { toHex } from '../../protocol/src/hash.js';
 
 /** How many pictures a page will hold before it starts dropping the oldest. */
 export const GHOST_BACKLOG = 240;
+/** A drawn truck that has sent no picture for this long is retired (a live run sends ten a second). */
+export const SILENT_MS = 3000;
 
 /**
  * THE TICK WORD OF A RETIRE. No picture has a negative tick, so the same twelve
@@ -37,7 +39,7 @@ export const RETIRE_TICK = -1;
  * keep one, because "the other end will not do that" is not a reason to accept
  * it if it does.
  */
-export function watchGhosts(client, where, { limit = GHOST_BACKLOG } = {}) {
+export function watchGhosts(client, where, { limit = GHOST_BACKLOG, clock = Date.now } = {}) {
   if (!client) throw new Error('no client to watch with');
   if (!where || !where.roundId || !where.entryId)
     throw new Error('a watch names the round and the entry it is watching from');
@@ -82,6 +84,9 @@ export function watchGhosts(client, where, { limit = GHOST_BACKLOG } = {}) {
     // another entry while this player's drawn entry is live, never drawn
     retired: 0,
     superseded: 0,
+    // pictures dropped because a newer one of the same truck was already waiting, and trucks retired for silence
+    collapsed: 0,
+    silenced: 0,
     // HOW MANY PICTURES SOMEBODY ACTUALLY TOOK TO DRAW.
     //
     // A field that is filling and never drained looks exactly like a field
@@ -95,11 +100,25 @@ export function watchGhosts(client, where, { limit = GHOST_BACKLOG } = {}) {
     get others() { return present.size; },
 
     /**
-     * The oldest pictures first, up to `max`. A renderer drains what it can
-     * draw this frame and leaves the rest; nothing here waits on it.
+     * WHAT THE RENDERER DRAWS NOW: every retire, then the NEWEST picture of each truck - never a backlog of where a truck
+     * was (the owner 2026-09-17 17:05 / 17:12: "the ghost is drawn at a completely different place ... 60 s+ delay ... must
+     * be REALTIME"). Pictures queued behind a newer one of the same truck are dropped here, so a tab whose frames paused
+     * or fell behind draws each other truck where its newest picture puts it, not where it stood a minute ago. A truck
+     * that has sent nothing for SILENT_MS is retired: a live run sends ten pictures a second even parked, so silence is a
+     * run that ended or a tab that left, and its truck must not stand frozen. Up to `max` are handed over; the rest stay.
      */
-    drain(max = queue.length) {
-      const took = queue.splice(0, Math.max(0, max | 0));
+    drain(max = queue.length, nowMs = clock()) {
+      for (const [who, d] of drawnEntry)
+        if (nowMs - d.at > SILENT_MS) { retire(d); drawnEntry.delete(who); present.delete(who); field.silenced++; }
+      const retires = [], newest = new Map();
+      for (const g of queue) {
+        if (g.retire) { retires.push(g); newest.delete(toHex(g.entryId)); } else newest.set(toHex(g.entryId), g);
+      }
+      const all = retires.concat([...newest.values()]);
+      field.collapsed += queue.length - all.length;
+      const took = all.slice(0, Math.max(0, max | 0));
+      queue.length = 0;
+      for (const g of all.slice(took.length)) queue.push(g);
       field.drawn += took.length;
       return took;
     },
@@ -153,7 +172,7 @@ export function watchGhosts(client, where, { limit = GHOST_BACKLOG } = {}) {
       // Otherwise the drawn entry is the one superseded, and Unity is told.
       retire(drawn);
     }
-    drawnEntry.set(who, { e: entryKey, entryId: ghost.entryId, playerPubkey: ghost.playerPubkey });
+    drawnEntry.set(who, { e: entryKey, entryId: ghost.entryId, playerPubkey: ghost.playerPubkey, at: clock() });
 
     present.set(who, ghost);
     queue.push(ghost);

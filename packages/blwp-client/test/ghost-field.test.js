@@ -21,7 +21,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { openStore } from '../../blwp-node/src/store.js';
 import { serve } from '../../blwp-node/src/server.js';
 import { Client } from '../src/client.js';
-import { watchGhosts, GHOST_BACKLOG, playersLine, newestPose } from '../src/ghost-field.js';
+import { watchGhosts, GHOST_BACKLOG, SILENT_MS, playersLine, newestPose } from '../src/ghost-field.js';
 import { encodeInputBatch } from '../../protocol/src/batch.js';
 import { GENESIS } from '../../protocol/src/transcript.js';
 import { encodeEntryContract, entryId as entryIdOf } from '../../protocol/src/contracts.js';
@@ -160,8 +160,11 @@ test('a page that cannot keep up sheds the oldest pictures, not the newest', asy
     assert.equal(field.seen, 6);
     assert.equal(field.size, 3, 'the page kept more than it said it would');
     assert.equal(field.shed, 3);
-    assert.deepEqual(field.drain().map((g) => g.tick), [4, 5, 6],
+    // AND A DRAIN HANDS OVER THE NEWEST PICTURE OF THE TRUCK ONLY (the owner 2026-09-17 17:12: the ghost must be realtime): the
+    // two older ones still queued behind it are where the truck was, and are dropped rather than drawn in turn.
+    assert.deepEqual(field.drain().map((g) => g.tick), [6],
       'the page kept the oldest pictures and dropped the newest');
+    assert.equal(field.collapsed, 2);
     assert.equal(field.others, 1, 'draining the renderer queue forgot who is in the round');
     assert.equal(GHOST_BACKLOG > 3, true, 'the default backlog is not a real budget');
     assert.equal(playersLine({ joined: false }), 'round named · not joined');
@@ -503,7 +506,10 @@ test('a retire is never shed from a full queue, or that truck would stand for go
   client.onGhost(entryPic(0x22, b32(0xb2), 20, 0, 0));      // ... superseded by another: a retire is queued
   for (let t = 1; t <= 10; t++) client.onGhost(entryPic(0x33, b32(0xb3), t, 0, 0));   // and a flood behind it
   const items = field.drain();
-  assert.equal(items.length, 3);
+  // the retire, and at most the newest picture of each truck (17:12: realtime, no backlog)
+  assert.ok(items.length >= 2 && items.length <= 3, `${items.length} items`);
+  const pics = items.filter((g) => !g.retire).map((g) => toHex(g.entryId));
+  assert.equal(new Set(pics).size, pics.length, 'two pictures of one truck were handed over');
   assert.ok(items.some((g) => g.tick < 0 && toHex(g.entryId) === toHex(b32(0x21))), 'the retire was shed');
   assert.ok(field.shed > 0, 'nothing was shed, so this proves nothing');
 });
@@ -552,4 +558,30 @@ test('through a real daemon\'s subscribe burst, the other player\'s abandoned en
     assert.deepEqual([...trucks.keys()], [toHex(theirEid)],
       `Unity is left holding ${trucks.size} trucks: ${[...trucks.keys()].map((k) => k.slice(0, 8)).join(', ')}`);
   } finally { await node.close(); }
+});
+
+test('realtime: a page that fell behind draws each truck at its newest picture, and a truck that stops sending is retired', () => {
+  // the owner 2026-09-17 17:05 / 17:12: the ghost stood where the other player had been a minute before, and after the next
+  // round old trucks stayed. A drain hands over the newest picture per truck; a truck silent for SILENT_MS goes.
+  const client = { watch: () => Promise.resolve('watching'), playerPubkey: b32(0xa1) };
+  let clock = 1000000;
+  const field = watchGhosts(client, { roundId: b32(1), entryId: b32(0xc0) }, { clock: () => clock });
+  for (let t = 1; t <= 200; t++) {           // twenty seconds of two trucks nobody drew (a paused tab)
+    client.onGhost(entryPic(0x41, b32(0xd1), t, t * 65536, 0));
+    client.onGhost(entryPic(0x42, b32(0xd2), t, 0, t * 65536));
+  }
+  const now = clock;
+  const first = field.drain(24, now);
+  assert.deepEqual(first.map((g) => [toHex(g.entryId).slice(0, 2), g.tick]).sort(), [['41', 200], ['42', 200]],
+    'the first frame after the pause did not put both trucks at their newest picture');
+  assert.equal(field.size, 0, 'a backlog was left to replay');
+  assert.equal(field.drain(24, now + 1000).length, 0);
+  // one truck keeps sending, the other has stopped (its run ended)
+  clock = now + SILENT_MS;
+  client.onGhost(entryPic(0x41, b32(0xd1), 201, 0, 0));
+  const later = field.drain(24, now + SILENT_MS + 500);
+  const retired = later.filter((g) => g.retire).map((g) => toHex(g.entryId).slice(0, 2));
+  assert.deepEqual(retired, ['42'], 'the silent truck was not retired, or the live one was');
+  assert.ok(later.some((g) => !g.retire && toHex(g.entryId).startsWith('41') && g.tick === 201), 'the live truck was not drawn');
+  assert.equal(field.silenced, 1);
 });

@@ -587,6 +587,14 @@ mergeInto(LibraryManager.library, {
       }
       net.client.record(words);
       net.seen++;
+      // HOW FAR BEHIND THE OTHER TRUCKS ARE, measured on the page (the owner 2026-09-17 17:12: "the ghost must be realtime"):
+      // every 300 ticks, this run's own round tick against the newest picture of another truck - the same round clock.
+      if (net.ghosts && net.seen % 300 === 0) {
+        var pose = BLWPCLIENT.newestPose(net.ghosts), own = net.client.offered | 0;
+        console.log('[ghost] own tick ' + own + ' newest other picture tick ' + (pose ? pose.tick : '-')
+          + (pose ? ' behind ' + (own - pose.tick) + ' ticks' : '') + ' others ' + net.ghosts.others
+          + ' collapsed ' + (net.ghosts.collapsed | 0) + ' silenced ' + (net.ghosts.silenced | 0) + ' drawn ' + (net.ghosts.drawn | 0));
+      }
       // THE CORE SAID DELIVERED, SO THE RUN ENDS HERE (the owner 2026-09-15 16:14). Measured before:
       // every truck that drove into the mouth was DELIVERED in the core and signed so, and its page
       // recorded 10-89 s more, the truck parked at the tunnel's back wall. The word is the core's own
@@ -626,6 +634,15 @@ mergeInto(LibraryManager.library, {
     var net = Module.blwpNet;
     var field = net && net.ghosts;
     if (!field || cap < 12) return 0;
+    // A NEW WATCH (the next round, a new PLAY) CLEARS EVERY GHOST FIRST (the owner 2026-09-17 17:12: "after the next round
+    // suddenly 3 ghosts, no updates"): the field of the last round is gone, and nothing in the new one could retire its
+    // trucks. One record, entry all zero and tick -2, before the new field's first picture.
+    if (Module.blwpGhostFieldShown !== field) {
+      Module.blwpGhostFieldShown = field;
+      for (var z = 0; z < 11; z++) HEAP32[(ptr >> 2) + z] = 0;
+      HEAP32[(ptr >> 2) + 11] = -2;
+      return 12;
+    }
     var got = field.drain(1);
     if (!got.length) return 0;
     var g = got[0];

@@ -109,6 +109,10 @@ namespace Blwp
 
         void Update() => Draw(PerFrame);
 
+        /// <summary>The page's record for "a new round is watched: take every truck away".</summary>
+        public const int ClearTick = -2;
+        public int Cleared { get; private set; }
+
         /// <summary>Take up to `max` pictures and put each truck where its own says.</summary>
         public int Draw(int max)
         {
@@ -154,6 +158,17 @@ namespace Blwp
         public void Show(GhostPicture picture)
         {
             if (string.IsNullOrEmpty(picture.Entry)) return;
+
+            // CLEAR ALL (tick -2): the page started watching a new round, so no truck of the last one stands on
+            // (the owner 2026-09-17 17:12: "after the next round suddenly 3 ghosts").
+            if (picture.Tick == ClearTick)
+            {
+                foreach (var t in trucks.Values) if (t != null) { Destroy(t.gameObject); Retired++; }
+                trucks.Clear();
+                pictures.Clear();
+                Cleared++;
+                return;
+            }
 
             // A RETIRE, NOT A PICTURE. The page sends tick -1 for an entry its
             // player has left - a reload keeps the key and draws a new entry - so

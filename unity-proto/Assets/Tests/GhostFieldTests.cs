@@ -124,6 +124,25 @@ public class GhostFieldTests
     /// <summary>
     /// A picture with no entry is not a truck. Nothing invents an identity.
     /// </summary>
+    [UnityTest]
+    public IEnumerator ANewRoundsWatchClearsEveryTruckOfTheLastRound()
+    {
+        // the owner 2026-09-17 17:12: "after the next round suddenly 3 ghosts in the game". The page sends one clear record
+        // (tick -2) when it starts watching a new round; every truck of the last one goes, and the new round's draw.
+        var field = Field(
+            new GhostPicture("aaaaaaaa", 3 * ONE, 4 * ONE, 0, 100),
+            new GhostPicture("bbbbbbbb", 5 * ONE, 4 * ONE, 0, 100),
+            new GhostPicture("cccccccc", 7 * ONE, 4 * ONE, 0, 100),
+            new GhostPicture("00000000", 0, 0, 0, GhostField.ClearTick),
+            new GhostPicture("dddddddd", 9 * ONE, 4 * ONE, 0, 3));
+        Assert.AreEqual(5, field.Draw(10));
+        yield return null;
+        Assert.AreEqual(1, field.Trucks, "trucks of the last round stayed after the new watch");
+        Assert.AreEqual(1, field.Cleared);
+        Assert.AreEqual(1, field.GetComponentsInChildren<GhostTruck>(true).Length);
+        Assert.IsTrue(field.Pictures.ContainsKey("dddddddd") && field.Pictures.Count == 1);
+    }
+
     [Test]
     public void APictureWithNoEntryDrawsNothing()
     {
