@@ -20,7 +20,7 @@ test('a stall is named by the timed phase that ran inside it', async () => {
     assert.equal(said.length, 1, `the watcher said ${said.length} things: ${said.join(' | ')}`);
     assert.match(said[0], /the loop was held \d+ ms and in it ran a long sum \d+ ms/);
     // AND WHETHER THIS PROCESS WAS RUNNING: a spin uses the processor, so the line says so and does not blame the host.
-    assert.match(said[0], /this process used \d+ ms of processor in it/);
+    assert.match(said[0], /this thread used \d+ ms of processor in it/);
     assert.equal(/waiting for the machine/.test(said[0]), false, 'a spin was blamed on the machine');
 
     // AND A STALL IN SOMETHING NOBODY TIMED SAYS SO, in those words: that is the fact that says what to time next.

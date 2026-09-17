@@ -10,6 +10,23 @@
 // nothing. `BLWP_SLOW_MS` moves the threshold (default 100 ms); `BLWP_SLOW_MS=0` turns it off.
 //
 import { PerformanceObserver, constants } from 'node:perf_hooks';
+import { readFileSync } from 'node:fs';
+
+/**
+ * THE PROCESSOR THIS THREAD ITSELF USED, in ms - not the process's, which counts every replay worker and would say a
+ * daemon was busy while its own loop sat waiting for the machine. Linux keeps it per thread; where it does not, the
+ * process's own number is used and it is the only number there is.
+ */
+const threadCpu = () => {
+  try {
+    const stat = readFileSync(`/proc/self/task/${process.pid}/stat`, 'utf8');
+    const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+    return (Number(fields[11]) + Number(fields[12])) * 10;      // utime + stime, in clock ticks of 10 ms
+  } catch {
+    const { user, system } = process.cpuUsage();
+    return (user + system) / 1000;
+  }
+};
 
 // AWAITED WORK IS MEASURED IN TWO NUMBERS, because they answer different questions: `held` is the synchronous stretch
 // before the first await - the part a socket waits behind - and `took` is the whole call, which may be mostly waiting
@@ -69,11 +86,11 @@ function watchCollections() {
 export function watchLoop({ every = 50, over = 250, say = console.log } = {}) {
   watchCollections();
   let last = performance.now();
-  let lastCpu = process.cpuUsage();
+  let lastCpu = threadCpu();
   const timer = setInterval(() => {
     const now = performance.now();
-    const cpu = process.cpuUsage();
-    const used = (cpu.user - lastCpu.user + cpu.system - lastCpu.system) / 1000;
+    const cpu = threadCpu();
+    const used = cpu - lastCpu;
     lastCpu = cpu;
     const late = now - last - every;
     last = now;
@@ -92,7 +109,7 @@ export function watchLoop({ every = 50, over = 250, say = console.log } = {}) {
       + (held ? ` and in it ran ${held}` : '')
       + (gc >= 20 ? `${held ? ',' : ''} with ${gc.toFixed(0)} ms of garbage collection in it` : '')
       + (!held && gc < 20 ? ' by something nobody timed' : '')
-      + `; this process used ${used.toFixed(0)} ms of processor in it`
+      + `; this thread used ${used.toFixed(0)} ms of processor in it`
       + (running ? '' : ' - it was waiting for the machine, not for itself'));
   }, every);
   timer.unref?.();
