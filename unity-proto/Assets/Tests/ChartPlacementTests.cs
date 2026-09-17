@@ -54,4 +54,34 @@ public class ChartPlacementTests
             }
         }
     }
+
+    [Test]
+    public void TheObjectivesStripIsInTheMiddleOffTheChartAndEveryHudBox()
+    {
+        // the owner 09:17: RIDGE / HOLLOW / GAP and the assault banners off the chart, central on the screen. Held at its widest
+        // (the whole room) with both lines, against the boxes the HUD draws in. The run-stopped row is its room; that line
+        // and the strip are never drawn together.
+        foreach (var (w, h) in new[] { (1280, 657), (1280, 800), (1366, 768), (1920, 1080), (1024, 768), (844, 390), (800, 600) })
+        {
+            var head = _hud.HeadlineBox(w, h);
+            var chart = ChartHud.PanelFor(w, h, _hud.SimBox(w, h));
+            var row = _hud.RunStoppedBox(w, h);
+            var room = ChartHud.ObjectivesRoom(head, row, chart);
+            int font = ChartHud.ObjectivesFont(room.height, 2, ChartHud.HeaderFont(chart.height));
+            float lh = font * 1.35f;
+            var box = ChartHud.ObjectivesBox(room, w * 0.5f, room.width - 16f, lh, 2);
+            var typical = ChartHud.ObjectivesBox(room, w * 0.5f, 300f, lh, 2);
+            Debug.Log($"[objectives] {w}x{h} room={room} font={font} box={box} typical={typical} offCentre={typical.center.x - w * 0.5f:0.0} chart={chart} row={row}");
+            Assert.GreaterOrEqual(font, 9, $"{w}x{h}: strip font {font} unreadable");
+            Assert.GreaterOrEqual(box.height, lh * 2f, $"{w}x{h}: two lines do not fit {box}");
+            Assert.AreEqual(Mathf.Clamp(w * 0.5f, room.x + typical.width * 0.5f, room.xMax - typical.width * 0.5f), typical.center.x, 0.01f, $"{w}x{h}: not at the centre the room allows");
+            Assert.IsTrue(box.xMin >= 0 && box.yMin >= 0 && box.xMax <= w && box.yMax <= h, $"{w}x{h}: strip {box} off screen");
+            var others = new (string, Rect)[] { ("chart", chart), ("sim", _hud.SimBox(w, h)), ("practice", _hud.PracticeBox(w, h)),
+                ("health", _hud.HealthBox(w, h)), ("exposure", _hud.ExposureBox(w, h)), ("wanted", _hud.WantedBox(w, h)),
+                ("blockTimer", _hud.BlockTimerBox(w, h)), ("liquidation", _hud.LiquidationBox(w, h)) };
+            foreach (var (name, r) in others) Assert.AreEqual(0f, ChartHud.Shared(box, r), $"{w}x{h}: strip {box} on {name} {r}");
+            foreach (TouchPad.Pad pad in System.Enum.GetValues(typeof(TouchPad.Pad)))
+                Assert.AreEqual(0f, ChartHud.Shared(box, TouchPad.RectFor(pad, w, h)), $"{w}x{h}: strip {box} on the {pad} pad");
+        }
+    }
 }

@@ -35,6 +35,7 @@ public class ChartHud : MonoBehaviour
     readonly List<Ghost> _ghosts = new List<Ghost>();
     Texture2D _flat;
     GUIStyle _text, _right;
+    Blwp.NetSession _session;
     DriveHud _drive;
     Rect _sim;
     SplashScreen _splash;
@@ -99,6 +100,12 @@ public class ChartHud : MonoBehaviour
         public bool YouPlaced;
         /// <summary>False when no place for the OPEN label clears every box, and it stayed above its line at the left.</summary>
         public bool OpenPlaced;
+        /// <summary>False when LOW found no box inside the plot clear of the others: it is not drawn.</summary>
+        public bool LowPlaced;
+        /// <summary>The price axis' width, and the widest dollar text it holds (the painter's measure; 0 in a bare Build).</summary>
+        public float AxisWidth, PriceTextWidth;
+        /// <summary>Each time-axis label's box, as drawn.</summary>
+        public readonly List<Rect> TimeBoxes = new List<Rect>();
         public readonly List<Label> PriceAxis = new List<Label>();
         public readonly List<Label> TimeAxis = new List<Label>();
     }
@@ -167,16 +174,17 @@ public class ChartHud : MonoBehaviour
     /// Lays the core's chart words out in <paramref name="panel"/>. Pure: the tests hand it words, the player hands it
     /// the core's. Scaling a price onto pixels is all it does with them.
     /// </summary>
-    public static Frame Build(int[] v, Rect panel, IList<Ghost> ghosts)
+    public static Frame Build(int[] v, Rect panel, IList<Ghost> ghosts, float priceTextWidth = 0f)
     {
-        var f = new Frame { Panel = panel, Range = v[L.CH_RANGE], Candles = v[L.CH_CANDLES], First = v[L.CH_FIRST] };
+        var f = new Frame { Panel = panel, Range = v[L.CH_RANGE], Candles = v[L.CH_CANDLES], First = v[L.CH_FIRST], PriceTextWidth = priceTextWidth };
         int n = Mathf.Max(1, f.Candles);
         float unit = Mathf.Max(1, v[L.CH_UNIT]);
         // THE PLOT STARTS BELOW THE HEADER'S THREE ROWS, and MarkClearance below that. It started at 22% of the panel, above the
         // rows' own bottom: measured on 0.0.1459 the legend row ("FRONT · SMA 21") reached 19.4 px into the plot, and a truck
         // whose price is near the window's top drew its YOU dot and label on it (dot 34 px², label on the row).
-        float headH = HeaderHeight(panel.height), axisW = Mathf.Max(64f, panel.width * 0.2f), axisH = Mathf.Max(14f, panel.height * 0.09f);
+        float headH = HeaderHeight(panel.height), axisW = AxisWidth(panel.width, priceTextWidth), axisH = Mathf.Max(14f, panel.height * 0.09f);
         f.Plot = new Rect(panel.x + 4f, panel.y + headH, panel.width - axisW - 4f, panel.height - headH - axisH);
+        f.AxisWidth = axisW;
 
         f.Header = $"{Symbol} · {RangeName(f.Range)}";
         f.Price = Dollars(v[L.CH_LAST], unit);
@@ -265,6 +273,82 @@ public class ChartHud : MonoBehaviour
         return f;
     }
 
+    /// <summary>
+    /// THE PRICE AXIS HOLDS ITS WIDEST DOLLAR TEXT (the owner 2026-09-17 09:13 playtest, "the $ amount does not fit"). The
+    /// labels start 4 px right of the plot and need 4 px before the panel's edge. The screenshot: axis 20% of the panel
+    /// (156 of 795 px), "$78,515.00" 183 px wide, 31 px of it past the panel.
+    /// </summary>
+    public static float AxisWidth(float panelWidth, float priceTextWidth) => Mathf.Max(64f, panelWidth * 0.2f, priceTextWidth + 8f);
+
+    /// <summary>The price texts the axis must hold: the range's low and high, and the last price.</summary>
+    public static string[] AxisTexts(int[] v) =>
+        new[] { Dollars(v[L.CH_LO], Mathf.Max(1, v[L.CH_UNIT])), Dollars(v[L.CH_HI], Mathf.Max(1, v[L.CH_UNIT])), Dollars(v[L.CH_LAST], Mathf.Max(1, v[L.CH_UNIT])) };
+
+    /// <summary>
+    /// LOW OFF THE TIME AXIS (the owner 2026-09-17 09:13 playtest: "LOW collides with the time axis"). The lowest candle sits in
+    /// the plot's bottom air, so LOW drawn 5 px under its wick landed on the time labels' row (the screenshot: "LOW $77,551.25"
+    /// over "-2:30" and "-1:10"). In order: under the wick where that still ends inside the plot, then right of the wick,
+    /// then left of it, at the low's level held inside the plot; each must clear <paramref name="avoid"/>. Nowhere: not placed,
+    /// and LOW is not drawn.
+    /// </summary>
+    public static Rect PlaceLow(Rect plot, Vector2 low, float width, float height, Rect[] avoid, out bool placed)
+    {
+        float side = Mathf.Clamp(low.y - height * 0.5f, plot.y, plot.yMax - height);
+        var tries = new[]
+        {
+            new Rect(Mathf.Clamp(low.x - width * 0.5f, plot.x, plot.xMax - width), low.y + 5f, width, height),
+            new Rect(low.x + 4f, side, width, height),
+            new Rect(low.x - 4f - width, side, width, height),
+        };
+        foreach (var r in tries)
+        {
+            if (r.x < plot.x || r.xMax > plot.xMax || r.y < plot.y || r.yMax > plot.yMax) continue;
+            bool clear = true;
+            foreach (var a in avoid) if (Shared(r, a) > 0f) { clear = false; break; }
+            if (clear) { placed = true; return r; }
+        }
+        placed = false;
+        return new Rect();
+    }
+
+    /// <summary>
+    /// A time label centred under its candle and held inside the panel: at -14 px the first one began left of the panel
+    /// (the screenshot: "-5:10" read "5:10").
+    /// </summary>
+    public static Rect TimeLabelBox(Rect panel, Rect plot, Vector2 at, float width, float height) =>
+        new Rect(Mathf.Clamp(at.x - width * 0.5f, panel.x + 2f, plot.xMax - width), at.y, width, height);
+
+    /// <summary>
+    /// THE OBJECTIVES OFF THE CHART, IN THE MIDDLE OF THE SCREEN (the owner 2026-09-17 09:17: "those names do not fit on the
+    /// HUD, put them somewhere else, central on the screen"). The room is the headline stack's run-stopped row (<paramref
+    /// name="row"/>), which is reserved and empty while the run is on, across the gap between the columns, and it ends above
+    /// the chart where the chart reaches into the gap. Measured before: a strip UNDER that row had 46.1 / 17.6 / 23.2 /
+    /// -24.5 / 23.2 / 69.1 / 50.8 px above the chart at 1280x657 / 1280x800 / 1366x768 / 1920x1080 / 1024x768 / 844x390 /
+    /// 800x600, and two lines need 50-63; in the row itself there is 33.6 to 89.6.
+    /// </summary>
+    public static Rect ObjectivesRoom(Rect headline, Rect row, Rect chart)
+    {
+        float bottom = row.yMax;
+        if (chart.xMax > headline.x && chart.x < headline.xMax) bottom = Mathf.Min(bottom, chart.y - 2f);
+        return Rect.MinMaxRect(headline.x, row.y, headline.xMax, Mathf.Max(row.y, bottom));
+    }
+
+    /// <summary>The strip's font: the chart's, or smaller so its lines fit the room's height.</summary>
+    public static int ObjectivesFont(float roomHeight, int lines, int preferred) =>
+        Mathf.Min(preferred, Mathf.FloorToInt((roomHeight - 4f) / (1.35f * Mathf.Max(1, lines))));
+
+    /// <summary>The strip in its room: as wide as its text (never wider than the room), at the screen's centre where the room allows.</summary>
+    public static Rect ObjectivesBox(Rect room, float screenCentre, float textWidth, float lineHeight, int lines)
+    {
+        float width = Mathf.Min(room.width, textWidth + 16f);
+        float x = Mathf.Clamp(screenCentre - width * 0.5f, room.x, room.xMax - width);
+        return new Rect(x, room.y, width, Mathf.Min(room.height, lineHeight * lines + 4f));
+    }
+
+    /// <summary>The words of the strip: the assault banners on one line, the objectives' names on the other.</summary>
+    public static string[] ObjectiveLines(Frame f) =>
+        new[] { string.Join("   ", f.Banners), string.Join("  ·  ", f.Objectives.ConvertAll(o => o.Text)) };
+
     public static string ObjectiveName(int kind) =>
         kind == L.OBJ_RIDGE ? "RIDGE" : kind == L.OBJ_HOLLOW ? "HOLLOW" : kind == L.OBJ_GAP ? "GAP" : "?";
 
@@ -298,11 +382,16 @@ public class ChartHud : MonoBehaviour
         if (_drive == null) _drive = GetComponent<DriveHud>();
         if (_drive == null) _drive = FindFirstObjectByType<DriveHud>();
         _sim = _drive != null ? _drive.SimBox(Screen.width, Screen.height) : new Rect(10f, Screen.height * 0.45f, 300f, 40f);
-        var f = Build(_view, PanelFor(Screen.width, Screen.height, _sim), _ghosts);
+        var panel = PanelFor(Screen.width, Screen.height, _sim);
+        Styles(HeaderFont(panel.height));
+        float priceW = 0f;
+        foreach (var t in AxisTexts(_view)) priceW = Mathf.Max(priceW, _right.CalcSize(new GUIContent(t)).x);
+        var f = Build(_view, panel, _ghosts, priceW);
         // IN FRONT OF THE REST OF THE HUD (lower depth is nearer). Measured on the player build: the "Loading models" list drew
         // over the left third of the chart while the models streamed, and YOU was under it.
         GUI.depth = -1;
         Paint(f);
+        PaintObjectives(f);
         Last = f;
         if (Event.current.type == EventType.Repaint) { ChartsPainted++; Tell(f); }
     }
@@ -337,6 +426,7 @@ public class ChartHud : MonoBehaviour
             $"ghostLabelBoxes={string.Join("|", f.GhostLabelBoxes.ConvertAll(B))}", $"ghostDotBoxes={string.Join("|", f.GhostDotBoxes.ConvertAll(B))}",
             $"ghostsUnplaced={f.GhostsUnplaced}", $"ghostSlots={string.Join(" || ", f.GhostSlots)}", $"ghostLabelShares={string.Join("|", f.GhostLabelBoxes.ConvertAll(r => GhostShares(r, f)))}", $"highBox={B(f.HighBox)}", $"lowBox={B(f.LowBox)}", $"gateBox={B(f.GateBox)}",
             $"openShares={OpenShares(f)}", $"openPlaced={f.OpenPlaced}",
+            $"objectivesBox={B(ObjectivesDrawn)}", $"axisW={f.AxisWidth:0.0}", $"priceTextW={f.PriceTextWidth:0.0}", $"lowPlaced={f.LowPlaced}", $"timeBoxes={string.Join("|", f.TimeBoxes.ConvertAll(B))}",
         }));
     }
 
@@ -543,15 +633,20 @@ public class ChartHud : MonoBehaviour
         var prev = style.normal.textColor; style.normal.textColor = c; GUI.Label(r, s, style); style.normal.textColor = prev;
     }
 
-    void Paint(Frame f)
+    void Styles(int size)
     {
         if (_text == null)
         {
             _text = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.UpperLeft, clipping = TextClipping.Overflow, wordWrap = false };
             _right = new GUIStyle(_text) { alignment = TextAnchor.MiddleLeft };
         }
+        _text.fontSize = size; _right.fontSize = size;
+    }
+
+    void Paint(Frame f)
+    {
         int small = HeaderFont(f.Panel.height);
-        _text.fontSize = small; _right.fontSize = small;
+        Styles(small);
         var old = GUI.color;
         var p = f.Plot;
 
@@ -563,8 +658,7 @@ public class ChartHud : MonoBehaviour
         // header: symbol and range, price, lead, the six trend dots, the trend
         float lh = small * 1.35f, x0 = f.Panel.x + 6f;
         Text(new Rect(x0, f.Panel.y + 2f, f.Panel.width, lh), f.Header, Axis, _text);
-        var hint = $"Tab: {RangeName(f.Range == L.CHART_GROUND ? L.CHART_ROUND : L.CHART_GROUND)}";
-        Text(new Rect(f.Panel.xMax - _text.CalcSize(new GUIContent(hint)).x - 6f, f.Panel.y + 2f, 200f, lh), hint, Grid * 3f, _text);
+        // No "Tab: ROUND" hint beside it (playtest 09:13, the header ran into it: "GROUNDTab: ROUND"). Tab still switches.
         float y2 = f.Panel.y + 2f + lh, w1 = _text.CalcSize(new GUIContent(f.Price)).x;
         Text(new Rect(x0, y2, 200f, lh), f.Price, Color.white, _text);
         float w2 = _text.CalcSize(new GUIContent(f.Lead)).x;
@@ -584,8 +678,7 @@ public class ChartHud : MonoBehaviour
 
         // assault columns under the candles
         for (int i = 0; i < f.AssaultColumns.Count; i++) { var c = f.AssaultColours[i]; c.a = 0.16f; Box(f.AssaultColumns[i], c); }
-        if (f.Banners.Count > 0)
-            Text(new Rect(f.Panel.x + f.Panel.width * 0.42f, y2 + lh, f.Panel.width, lh), string.Join("  ", f.Banners), Gold, _text);
+        // The assault banners are not drawn here: they ran off the panel across the world (playtest 09:17). PaintObjectives.
 
         foreach (var c in f.Bars) { Box(c.Wick, c.Green ? Green : Red); Box(c.Body, c.Green ? Green : Red); }
 
@@ -595,37 +688,43 @@ public class ChartHud : MonoBehaviour
         // 1. the seam, white 2 px
         for (int i = 1; i < f.Front.Count; i++) Line(f.Front[i - 1], f.Front[i], 2f, Color.white);
 
-        // 2. objectives
-        foreach (var o in f.Objectives)
-        {
-            Box(new Rect(o.At.x - 3f, o.At.y - 3f, 6f, 6f), o.Colour);
-            Text(new Rect(o.At.x + 4f, o.At.y - lh, 80f, lh), o.Text, o.Colour, _text);
-        }
+        // 2. objectives: not on the chart. Their names (RIDGE, HOLLOW, GAP) sat on the candles and on each other; the chart
+        // marks HIGH and LOW only (the owner 09:13 and 09:17). PaintObjectives puts them in the middle of the screen.
 
-        // HIGH above its candle, LOW below its candle, TradingView's marks
+        // the gate's label box, known before LOW is placed off it
+        if (f.GateOn) f.GateBox = new Rect(f.GateX - 34f, p.y, _text.CalcSize(new GUIContent("GATE")).x, lh);
+
+        // HIGH above its candle, LOW by its candle inside the plot (PlaceLow), TradingView's marks
+        f.LowPlaced = false; f.LowBox = new Rect();
         if (f.High.Text != null)
         {
             float hw = _text.CalcSize(new GUIContent(f.High.Text)).x, lw = _text.CalcSize(new GUIContent(f.Low.Text)).x;
             Box(new Rect(f.High.At.x - 0.5f, f.High.At.y - 5f, 1f, 4f), Axis);
             Text(new Rect(Mathf.Clamp(f.High.At.x - hw * 0.5f, p.x, p.xMax - hw), f.High.At.y - 5f - lh, hw + 2f, lh), f.High.Text, Axis, _text);
             f.HighBox = new Rect(Mathf.Clamp(f.High.At.x - hw * 0.5f, p.x, p.xMax - hw), f.High.At.y - 5f - lh, hw, lh);
-            f.LowBox = new Rect(Mathf.Clamp(f.Low.At.x - lw * 0.5f, p.x, p.xMax - lw), f.Low.At.y + 5f, lw, lh);
+            f.LowBox = PlaceLow(p, f.Low.At, lw, lh, new[] { f.SymbolBox, f.PriceBox, f.LegendBox, f.HighBox, f.GateBox }, out f.LowPlaced);
             Box(new Rect(f.Low.At.x - 0.5f, f.Low.At.y + 1f, 1f, 4f), Axis);
-            Text(new Rect(Mathf.Clamp(f.Low.At.x - lw * 0.5f, p.x, p.xMax - lw), f.Low.At.y + 5f, lw + 2f, lh), f.Low.Text, Axis, _text);
+            if (f.LowPlaced) Text(new Rect(f.LowBox.x, f.LowBox.y, lw + 2f, lh), f.Low.Text, Axis, _text);
         }
 
         // last price: dotted line and the tag on the axis
         var lastColour = f.LastGreen ? Green : Red;
         for (float x = p.x; x < p.xMax; x += 4f) Box(new Rect(x, f.LastY, 2f, 1f), lastColour);
-        foreach (var a in f.PriceAxis) Text(new Rect(a.At.x, a.At.y - lh * 0.5f, 90f, lh), a.Text, a.Colour, _right);
+        float axisText = f.Panel.xMax - (p.xMax + 4f);
+        foreach (var a in f.PriceAxis) Text(new Rect(a.At.x, a.At.y - lh * 0.5f, axisText, lh), a.Text, a.Colour, _right);
         Box(new Rect(p.xMax + 2f, f.LastY - lh * 0.5f, f.Panel.xMax - p.xMax - 3f, lh), lastColour);
         f.LastTagBox = new Rect(p.xMax + 2f, f.LastY - lh * 0.5f, f.Panel.xMax - p.xMax - 3f, lh);
-        Text(new Rect(p.xMax + 4f, f.LastY - lh * 0.5f, 90f, lh), f.Price, Color.white, _right);
-        foreach (var a in f.TimeAxis) Text(new Rect(a.At.x - 14f, a.At.y, 60f, lh), a.Text, a.Colour, _text);
+        Text(new Rect(p.xMax + 4f, f.LastY - lh * 0.5f, axisText, lh), f.Price, Color.white, _right);
+        f.TimeBoxes.Clear();
+        foreach (var a in f.TimeAxis)
+        {
+            var box = TimeLabelBox(f.Panel, p, a.At, _text.CalcSize(new GUIContent(a.Text)).x, lh);
+            f.TimeBoxes.Add(box);
+            Text(box, a.Text, a.Colour, _text);
+        }
 
         // 6. the gate, gold
-        if (f.GateOn) { Box(new Rect(f.GateX - 1f, p.y, 2f, p.height), Gold); f.GateLineBox = new Rect(f.GateX - 1f, p.y, 2f, p.height); Text(new Rect(f.GateX - 34f, p.y, 34f, lh), "GATE", Gold, _text);
-            f.GateBox = new Rect(f.GateX - 34f, p.y, _text.CalcSize(new GUIContent("GATE")).x, lh); }
+        if (f.GateOn) { Box(new Rect(f.GateX - 1f, p.y, 2f, p.height), Gold); f.GateLineBox = new Rect(f.GateX - 1f, p.y, 2f, p.height); Text(new Rect(f.GateX - 34f, p.y, 34f, lh), "GATE", Gold, _text); }
 
         // THE OPEN LABEL, off the header and off the labels already on the plot. Measured on 0.0.1459: drawn above its line at
         // the plot's left edge it shared 429 px of box and 246 drawn pixels with the price row ("$78,515.00 +0.00%") and
@@ -669,6 +768,60 @@ public class ChartHud : MonoBehaviour
         Line(f.You, tickEnd, 2f, Truck);
         Box(new Rect(f.You.x - 4f, f.You.y - 4f, 8f, 8f), Truck);
         Text(f.YouBox, youWord, Truck, _text);
+        GUI.color = old;
+    }
+
+    /// <summary>Where the strip was drawn last, for the log and the tests; empty when there was nothing to say.</summary>
+    public Rect ObjectivesDrawn;
+
+    void PaintObjectives(Frame f)
+    {
+        ObjectivesDrawn = new Rect();
+        if (_drive == null || (f.Banners.Count == 0 && f.Objectives.Count == 0)) return;
+        // the run-stopped line owns the row once the run has ended
+        if (_session == null) _session = FindFirstObjectByType<Blwp.NetSession>();
+        if (DriveHud.RunStoppedLine(_session != null ? _session.Ending : "").Length > 0) return;
+        int w = Screen.width, h = Screen.height;
+        var lines = ObjectiveLines(f);
+        int count = 0;
+        foreach (var l in lines) if (l.Length > 0) count++;
+        var room = ObjectivesRoom(_drive.HeadlineBox(w, h), _drive.RunStoppedBox(w, h), f.Panel);
+        int font = ObjectivesFont(room.height, count, _text.fontSize);
+        float tw = 0f;
+        for (int pass = 0; pass < 2; pass++)
+        {
+            _text.fontSize = Mathf.Max(9, font);
+            tw = 0f;
+            foreach (var l in lines) if (l.Length > 0) tw = Mathf.Max(tw, _text.CalcSize(new GUIContent(l)).x);
+            if (tw + 16f <= room.width) break;
+            font = Mathf.FloorToInt(font * (room.width - 16f) / tw);   // and narrow enough for the gap
+        }
+        if (_text.fontSize < 9 || room.height < _text.fontSize) return;
+        float lh = _text.fontSize * 1.35f;
+        var box = ObjectivesBox(room, w * 0.5f, tw, lh, count);
+        ObjectivesDrawn = box;
+        var old = GUI.color;
+        Box(box, new Color(Background.r, Background.g, Background.b, 0.8f));
+        float y = box.y + 2f;
+        if (lines[0].Length > 0)
+        {
+            Text(new Rect(box.center.x - _text.CalcSize(new GUIContent(lines[0])).x * 0.5f, y, box.width, lh), lines[0], Gold, _text);
+            y += lh;
+        }
+        if (lines[1].Length > 0)
+        {
+            // each name in its holder's colour, the row centred as a whole
+            float sep = _text.CalcSize(new GUIContent("  ·  ")).x;
+            float x = box.center.x - _text.CalcSize(new GUIContent(lines[1])).x * 0.5f;
+            for (int i = 0; i < f.Objectives.Count; i++)
+            {
+                if (i > 0) { Text(new Rect(x, y, sep, lh), "  ·  ", Axis, _text); x += sep; }
+                var o = f.Objectives[i];
+                float ow = _text.CalcSize(new GUIContent(o.Text)).x;
+                Text(new Rect(x, y, ow + 2f, lh), o.Text, o.Colour, _text);
+                x += ow;
+            }
+        }
         GUI.color = old;
     }
 

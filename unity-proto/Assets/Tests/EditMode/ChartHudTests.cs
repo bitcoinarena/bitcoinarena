@@ -269,4 +269,85 @@ public class ChartHudTests
                     Assert.IsFalse(r.Overlaps(TouchPad.RectFor(pad, w, h)), $"{w}x{h}: chart {r} over the {pad} pad {TouchPad.RectFor(pad, w, h)}");
             }
     }
+
+    [Test]
+    public void TheDollarFitsInsideThePanel()
+    {
+        // the owner's screenshots, in their own pixels. 09:13: panel 795 px wide, "$78,515.00" 183 px wide; the axis was 20% of
+        // the panel (159 px) and the tag ran 31 px past the panel. 09:17: panel 434 px, the text 100 px, axis 86.8 px.
+        foreach (var (pw, tw) in new[] { (795f, 183f), (434f, 100f) })
+        {
+            var panel = new Rect(50f, 300f, pw, pw * 0.62f);
+            float oldPlotRight = panel.xMax - Mathf.Max(64f, pw * 0.2f);
+            Assert.Greater(oldPlotRight + 4f + tw, panel.xMax, $"{pw}: the old axis clipped the dollar");
+            foreach (var name in new[] { "ground-open", "round-90", "ground-assault" })
+            {
+                var f = ChartHud.Build(Words(name), panel, null, tw);
+                Assert.LessOrEqual(f.Plot.xMax + 4f + tw, panel.xMax - 4f, $"{pw} {name}: dollar {tw} px past the panel");
+                Assert.AreEqual(ChartHud.AxisWidth(pw, tw), f.AxisWidth, 0.01f);
+            }
+        }
+        // no measure (a bare Build): the old axis, so every other layout test keeps its numbers
+        Assert.AreEqual(Mathf.Max(64f, Panel.width * 0.2f), ChartHud.Build(Words("ground-open"), Panel, null).AxisWidth, 0.01f);
+    }
+
+    [Test]
+    public void LowKeepsOffTheTimeAxis()
+    {
+        // 09:13 screenshot, its pixels: plot 67..700 x 880..1172, the lowest wick's tip at (455, 1158), "LOW $77,551.25" 274 x 40,
+        // HIGH's box over the top; the time labels -5:10 -3:50 -2:30 -1:10 on the row under the plot.
+        var plot = Rect.MinMaxRect(67f, 880f, 700f, 1172f);
+        var low = new Vector2(455f, 1158f);
+        float lw = 274f, lh = 40f;
+        var high = new Rect(415f, 865f, 285f, 40f);
+        float cw = plot.width / 32f;
+        var times = new List<Rect>();
+        var panel = Rect.MinMaxRect(63f, 725f, 858f, 1217f);
+        for (int i = 0; i < 32; i += 8) times.Add(ChartHud.TimeLabelBox(panel, plot, new Vector2(plot.x + (i + 0.5f) * cw, plot.yMax + 1f), 80f, lh));
+        var old = new Rect(Mathf.Clamp(low.x - lw * 0.5f, plot.x, plot.xMax - lw), low.y + 5f, lw, lh);
+        Assert.Greater(times.Sum(t => ChartHud.Shared(old, t)), 0f, "the old LOW sat on the time labels");
+        var r = ChartHud.PlaceLow(plot, low, lw, lh, new[] { high }, out bool placed);
+        Assert.IsTrue(placed);
+        foreach (var t in times) Assert.AreEqual(0f, ChartHud.Shared(r, t), $"LOW {r} on time label {t}");
+        Assert.AreEqual(0f, ChartHud.Shared(r, high));
+        Assert.IsTrue(r.x >= plot.x && r.xMax <= plot.xMax && r.y >= plot.y && r.yMax <= plot.yMax, $"LOW {r} off the plot {plot}");
+        foreach (var t in times) Assert.GreaterOrEqual(t.x, panel.x, $"time label {t} begins left of the panel");
+
+        // 09:17 screenshot: plot 53..397 x 300..450, tip (235, 445), LOW 152 x 22: right of the wick fits
+        var plot2 = Rect.MinMaxRect(53f, 300f, 397f, 450f);
+        var r2 = ChartHud.PlaceLow(plot2, new Vector2(235f, 445f), 152f, 22f, new Rect[0], out bool placed2);
+        Assert.IsTrue(placed2);
+        Assert.LessOrEqual(r2.yMax, plot2.yMax);
+
+        // no room anywhere: not placed, not drawn
+        var none = ChartHud.PlaceLow(plot2, new Vector2(235f, 445f), 152f, 22f, new[] { plot2 }, out bool placed3);
+        Assert.IsFalse(placed3);
+        Assert.AreEqual(new Rect(), none);
+    }
+
+    [Test]
+    public void TheObjectivesAndBannersAreOffTheChartInTheMiddle()
+    {
+        var w = Words("ground-assault");
+        var f = ChartHud.Build(w, Panel, null);
+        var lines = ChartHud.ObjectiveLines(f);
+        StringAssert.Contains("ASSAULT", lines[0]);
+        foreach (var o in f.Objectives) StringAssert.Contains(o.Text, lines[1]);
+        // the 1280x657 player's boxes: the gap, the run-stopped row, the chart reaching into the gap under it
+        var headline = new Rect(347.59f, 0f, 700.79f, 657f);
+        var row = new Rect(347.59f, 277.42f, 700.79f, 56f);
+        var chart = new Rect(308.79f, 379.48f, 460.8f, 236.52f);
+        var room = ChartHud.ObjectivesRoom(headline, row, chart);
+        foreach (var (got, want) in new[] { (room.x, row.x), (room.y, row.y), (room.xMax, row.xMax), (room.yMax, row.yMax) })
+            Assert.AreEqual(want, got, 0.01f, $"the chart is under the row: the whole row ({room} vs {row})");
+        var box = ChartHud.ObjectivesBox(room, 640f, 300f, 20f, 2);
+        Assert.AreEqual(640f, box.center.x, 0.01f, "at the screen's centre");
+        Assert.AreEqual(0f, ChartHud.Shared(box, chart));
+        // 1920x1080: the chart top (483.16) is above the row's bottom (507.7): the room stops above the chart
+        var room2 = ChartHud.ObjectivesRoom(new Rect(371.28f, 0f, 1242.42f, 1080f), new Rect(371.28f, 418.1f, 1242.42f, 89.6f), new Rect(507.6f, 483.16f, 691.2f, 388.8f));
+        Assert.AreEqual(481.16f, room2.yMax, 0.01f);
+        Assert.LessOrEqual(ChartHud.ObjectivesFont(room2.height, 2, 26) * 1.35f * 2f + 4f, room2.height);
+        var wide = ChartHud.ObjectivesBox(room, 640f, 900f, 20f, 2);
+        Assert.IsTrue(wide.x >= room.x - 0.01f && wide.xMax <= room.xMax + 0.01f, $"{wide} wider than the room {room}");
+    }
 }
