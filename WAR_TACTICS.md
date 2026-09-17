@@ -864,6 +864,17 @@ a thing the truck drives on is settled state (multiplayer_p2p.md §0.5), so the 
   white line on the ground through the bodies, 0.5 m wide, always visible; the 2.8 m corridor between
   bodies is bare ground, nothing drawn in it. **No roads inside the chart band**: the corridors are
   the roads. Height must never encode price - a tall candle is a long candle, never a high one.
+- **One surface, the core's - the client never draws the raw grid (found 2026-09-17 09:50: the terrain
+  ran THROUGH the candles).** The mounds poked through the slabs because the client draws the host's
+  uploaded mempool grid as its ground mesh while the candles are placed on the core's levelled band.
+  Two surfaces, and they disagree by exactly the relief the band removes. Rule: the drawn ground **is**
+  `surfaceAt(x, z)` - band, cone, pancake, candle plateaus and ramps, craters, all of it - sampled by
+  the client from the core at the mesh's own resolution (the 160 x 96 grid, plus the candle edges at
+  1 m so a ramp is a ramp and not a stair). The host still uploads its grid; it goes into the core,
+  and the core's surface comes back out to the mesh. Nothing else is drawn as ground. Test: at every
+  mesh vertex the drawn height equals `surfaceAt` within 0.1 m; inside a candle's footprint no
+  terrain sample is above the plateau; a wheel, a track and a boot stand on the drawn surface, never
+  in it or above it.
 - **The chart band is flat, whatever the mempool says (the owner 2026-09-17 09:20).** The ground the
   core builds is the seed's lattice (`groundFromSeed`, 6 m peaks) and, when the host uploads it, the
   **mempool relief** (`MempoolTerrain`: 9 m of fee height plus 5.5 m of base relief - a busy chain is a
