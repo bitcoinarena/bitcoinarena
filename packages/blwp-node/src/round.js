@@ -516,9 +516,12 @@ export class Round {
         putTape.run(b.roundId, b.entryId, tick, new Uint8Array(new Int32Array(prices).buffer));
 
       if (!seen) {
-        const n = this.db.prepare(
-          'SELECT COUNT(*) c FROM batches WHERE round_id = ? AND entry_id = ?')
-          .get(b.roundId, b.entryId).c;
+        // THE NEXT SEQUENCE OFF THE LAST ONE, not off a count of them all: a count walks every batch this entry has
+        // published, which by the end of a run is fifteen hundred rows, on the thread that also pushes other players'
+        // trucks. The rows are only ever appended, so the last one's number plus one is the same number.
+        const last = this.db.prepare(
+          'SELECT MAX(seq) m FROM batches WHERE round_id = ? AND entry_id = ?').get(b.roundId, b.entryId).m;
+        const n = last === null ? 0 : last + 1;
         this.db.prepare(
           'INSERT INTO batches (round_id, entry_id, seq, batch_id, bytes) VALUES (?, ?, ?, ?, ?)')
           .run(b.roundId, b.entryId, n, id, bytes);
