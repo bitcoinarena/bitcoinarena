@@ -35,6 +35,8 @@ public class ChartHud : MonoBehaviour
     readonly List<Ghost> _ghosts = new List<Ghost>();
     Texture2D _flat;
     GUIStyle _text, _right;
+    DriveHud _drive;
+    Rect _sim;
     SplashScreen _splash;
     SpectatorCamera _spectator;
     Blwp.GhostField _field;
@@ -126,15 +128,39 @@ public class ChartHud : MonoBehaviour
         if (TabPressed()) Toggle();
     }
 
-    /// <summary>Bottom right at 30% of the width, left of the throttle pads, at the game's 1024x768 floor too.</summary>
-    public static Rect PanelFor(int w, int h)
+    /// <summary>The chart's size before the 2026-09-17 playtest: 30% of the width, 30% of the height at most.</summary>
+    public static Vector2 BaseSize(int w, int h)
+    {
+        float width = Mathf.Max(300f, w * 0.30f);
+        return new Vector2(width, Mathf.Max(170f, Mathf.Min(h * 0.30f, width * 0.62f)));
+    }
+
+    /// <summary>the owner 2026-09-17 08:31 playtest: "make the chart 20% larger - it is unreadable".</summary>
+    public const float Scale = 1.2f;
+
+    /// <summary>
+    /// UNDER SIM ON/OFF, CLEAR OF THE STEERING ARROWS (the owner 2026-09-17 08:31 playtest: "move the HUD chart under SIM
+    /// ON/OFF so it does not cover the right steering arrow"). The top edge sits just under the SIM switch
+    /// (<paramref name="sim"/>, the rect the HUD draws it in); the left edge is the SIM switch's, or just right of the
+    /// right steering arrow where the chart would otherwise reach down onto it; the right edge stops before the throttle
+    /// and handbrake pads and the bottom edge above the screen's margin. Scale x the old size where that fits, else what fits.
+    /// </summary>
+    public static Rect PanelFor(int w, int h, Rect sim)
     {
         float m = TouchPad.Margin(w, h);
+        var size = BaseSize(w, h) * Scale;
+        var left = TouchPad.RectFor(TouchPad.Pad.Left, w, h);
+        var right = TouchPad.RectFor(TouchPad.Pad.Right, w, h);
         var brake = TouchPad.RectFor(TouchPad.Pad.Handbrake, w, h);
-        float width = Mathf.Max(300f, w * 0.30f);
-        float height = Mathf.Max(170f, Mathf.Min(h * 0.30f, width * 0.62f));
-        float right = brake.x - m * 0.5f;
-        return new Rect(right - width, h - m - height, width, height);
+        var up = TouchPad.RectFor(TouchPad.Pad.Up, w, h);
+        float y = sim.yMax + m * 0.5f;
+        float x = sim.x;
+        // Directly under SIM the chart would come down onto the steering arrows: start it past the right arrow instead.
+        if (y + size.y > Mathf.Min(left.y, right.y) - m * 0.5f) x = Mathf.Max(x, right.xMax + m * 0.5f);
+        float maxRight = Mathf.Min(brake.x, up.x) - m * 0.5f;
+        float width = Mathf.Min(size.x, maxRight - x);
+        float height = Mathf.Min(size.y, h - m - y);
+        return new Rect(x, y, Mathf.Max(0f, width), Mathf.Max(0f, height));
     }
 
     /// <summary>
@@ -269,7 +295,10 @@ public class ChartHud : MonoBehaviour
                 if (Blwp.BlwpCore.ChartPoint(Range, kv.Value.X, kv.Value.Z, _point))
                     _ghosts.Add(new Ghost(kv.Key.Length > 8 ? kv.Key.Substring(0, 8) : kv.Key, _point[0], _point[1], _point[2]));
 
-        var f = Build(_view, PanelFor(Screen.width, Screen.height), _ghosts);
+        if (_drive == null) _drive = GetComponent<DriveHud>();
+        if (_drive == null) _drive = FindFirstObjectByType<DriveHud>();
+        _sim = _drive != null ? _drive.SimBox(Screen.width, Screen.height) : new Rect(10f, Screen.height * 0.45f, 300f, 40f);
+        var f = Build(_view, PanelFor(Screen.width, Screen.height, _sim), _ghosts);
         // IN FRONT OF THE REST OF THE HUD (lower depth is nearer). Measured on the player build: the "Loading models" list drew
         // over the left third of the chart while the models streamed, and YOU was under it.
         GUI.depth = -1;
@@ -299,7 +328,7 @@ public class ChartHud : MonoBehaviour
             $"ghosts={f.Ghosts.Count}/{_ghosts.Count}", $"ghostAt={Ghosts()}", $"assault={a(0)},{a(1)}", $"columns={f.AssaultColumns.Count}",
             $"banners={string.Join("+", f.Banners).Replace(' ', '_')}", $"candleSum={Sum(L.CH_CANDLE, 4 * f.Candles)}",
             $"frontSum={Sum(L.CH_CANDLE + 4 * f.Candles, f.Candles)}", $"fronts={f.Front.Count}", $"high={_view[L.CH_HIGH_P]}", $"low={_view[L.CH_LOW_P]}",
-            $"panel={f.Panel.x:0},{f.Panel.y:0},{f.Panel.width:0},{f.Panel.height:0}", $"screen={Screen.width}x{Screen.height}",
+            $"panel={f.Panel.x:0},{f.Panel.y:0},{f.Panel.width:0},{f.Panel.height:0}", $"simBox={B(_sim)}", $"padLeft={B(TouchPad.RectFor(TouchPad.Pad.Left, Screen.width, Screen.height))}", $"padRight={B(TouchPad.RectFor(TouchPad.Pad.Right, Screen.width, Screen.height))}", $"padBrake={B(TouchPad.RectFor(TouchPad.Pad.Handbrake, Screen.width, Screen.height))}", $"padUp={B(TouchPad.RectFor(TouchPad.Pad.Up, Screen.width, Screen.height))}", $"padDown={B(TouchPad.RectFor(TouchPad.Pad.Down, Screen.width, Screen.height))}", $"screen={Screen.width}x{Screen.height}",
             $"charts={ChartsPainted}",
             $"symbolBox={B(f.SymbolBox)}", $"priceBox={B(f.PriceBox)}", $"legendBox={B(f.LegendBox)}", $"openBox={B(f.OpenBox)}",
             $"youBox={B(f.YouBox)}", $"youMarkBox={B(f.YouMarkBox)}", $"youPlaced={f.YouPlaced}", $"plotBox={B(f.Plot)}",
@@ -312,7 +341,8 @@ public class ChartHud : MonoBehaviour
     }
 
     /// <summary>The header's font size for a panel this tall: the painter's and the layout's one number.</summary>
-    public static int HeaderFont(float panelHeight) => Mathf.RoundToInt(Mathf.Clamp(panelHeight * 0.075f, 11f, 18f));
+    // The cap scales with the chart (playtest 08:31, unreadable): 18 px was the old chart's ceiling.
+    public static int HeaderFont(float panelHeight) => Mathf.RoundToInt(Mathf.Clamp(panelHeight * 0.075f, 11f, 18f * Scale));
 
     /// <summary>One header row's height: the font and its line spacing.</summary>
     public static float RowHeight(float panelHeight) => HeaderFont(panelHeight) * 1.35f;

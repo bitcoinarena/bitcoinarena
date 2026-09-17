@@ -31,7 +31,7 @@ public class ChartHudTests
         return _words[name];
     }
 
-    static readonly Rect Panel = ChartHud.PanelFor(1024, 768);
+    static readonly Rect Panel = ChartHud.PanelFor(1024, 768, new Rect(19.2f, 330f, 300f, 42f));
 
     static IEnumerable<Rect> Everything(ChartHud.Frame f) =>
         f.Bars.SelectMany(b => new[] { b.Body, b.Wick })
@@ -254,14 +254,19 @@ public class ChartHudTests
     }
 
     [Test]
-    public void TheChartClearsTheThrottlePadsAtTheFloor()
+    public void TheChartSitsUnderAGivenSimBoxAndClearsEveryPad()
     {
-        foreach (var (w, h) in new[] { (1024, 768), (1280, 800), (1920, 1080) })
-        {
-            var r = ChartHud.PanelFor(w, h);
-            Assert.IsTrue(r.xMin >= 0 && r.yMin >= 0 && r.xMax <= w && r.yMax <= h, $"{w}x{h}: {r} off screen");
-            foreach (var pad in new[] { TouchPad.Pad.Up, TouchPad.Pad.Down, TouchPad.Pad.Handbrake, TouchPad.Pad.Left, TouchPad.Pad.Right })
-                Assert.IsFalse(r.Overlaps(TouchPad.RectFor(pad, w, h)), $"{w}x{h}: chart over the {pad} pad");
-        }
+        // Playtest 2026-09-17 08:31: under SIM ON/OFF, off the right steering arrow, 20% larger. The real SIM boxes are the
+        // PlayMode ChartPlacementTests'; here the rule is held against a SIM switch high and low in the left column.
+        foreach (var (w, h) in new[] { (1024, 768), (1280, 657), (1280, 800), (1920, 1080), (844, 390) })
+            foreach (float at in new[] { 0.35f, 0.55f })
+            {
+                var sim = new Rect(Mathf.Max(10f, h * 0.025f), h * at, Mathf.Min(w * 0.52f, 300f), 40f);
+                var r = ChartHud.PanelFor(w, h, sim);
+                Assert.GreaterOrEqual(r.y, sim.yMax, $"{w}x{h}: chart {r} not under SIM {sim}");
+                Assert.IsTrue(r.xMin >= 0 && r.yMin >= 0 && r.xMax <= w && r.yMax <= h, $"{w}x{h}: {r} off screen");
+                foreach (TouchPad.Pad pad in System.Enum.GetValues(typeof(TouchPad.Pad)))
+                    Assert.IsFalse(r.Overlaps(TouchPad.RectFor(pad, w, h)), $"{w}x{h}: chart {r} over the {pad} pad {TouchPad.RectFor(pad, w, h)}");
+            }
     }
 }
