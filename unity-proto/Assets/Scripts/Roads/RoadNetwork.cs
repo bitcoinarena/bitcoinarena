@@ -71,8 +71,8 @@ public class RoadNetwork : MonoBehaviour
         float slope = Model.CenterZ(lane.Value, x + 1f) - Model.CenterZ(lane.Value, x - 1f);
         var side = new Vector3(-slope, 0f, 2f).normalized;
 
-        float gl = Ground(x - side.x * RoadModel.HalfWidth, centreZ - side.z * RoadModel.HalfWidth);
-        float gr = Ground(x + side.x * RoadModel.HalfWidth, centreZ + side.z * RoadModel.HalfWidth);
+        float gl = DeckGround(x - side.x * RoadModel.HalfWidth, centreZ - side.z * RoadModel.HalfWidth);
+        float gr = DeckGround(x + side.x * RoadModel.HalfWidth, centreZ + side.z * RoadModel.HalfWidth);
 
         float across = (z - centreZ) * side.z;
         float t = Mathf.Clamp01((across + RoadModel.HalfWidth) / (2f * RoadModel.HalfWidth));
@@ -83,7 +83,26 @@ public class RoadNetwork : MonoBehaviour
         float d = Mathf.Abs(z - centreZ);
         float fade = Mathf.Clamp01(Mathf.InverseLerp(RoadModel.HalfWidth + Shoulder,
                                                      RoadModel.HalfWidth, d));
-        return Mathf.Lerp(bare, deck, fade);
+        return Rest(bare, deck, fade);
+    }
+
+    /// <summary>
+    /// What stands on the road rests on: the deck, faded across the shoulder - or the core's surface where that is higher.
+    /// The deck lies on the ground UNDER the candles (<see cref="DeckGround"/>), so on a candle's plateau the surface is
+    /// the higher one and a truck or a tank there stands on the plateau, not in it. Pure, for the tests.
+    /// </summary>
+    public static float Rest(float surface, float deck, float fade) => Mathf.Max(surface, Mathf.Lerp(surface, deck, fade));
+
+    /// <summary>
+    /// THE GROUND THE ROAD RIBBON IS LAID ON: the core's surface without the candle layer (WAR_TACTICS.md §4.15). There is
+    /// no road in the core; the ribbon is drawn here only. Laid on `SurfaceAt` it climbed the candles: measured, the deck
+    /// was over a candle along 8.5 / 26.5 / 11.5 / 8.0 m of 236 m (BullRear / Bull / Bear / BearRear) and sampled edge to
+    /// edge it drew a slope where the core has a 2 m wall. The candles are drawn by CandleTerrain, standing on this ground.
+    /// </summary>
+    public float DeckGround(float x, float z)
+    {
+        if (Blwp.BlwpCore.HasSurface) return Blwp.BlwpCore.TerrainAt(x, z);
+        return terrain != null ? terrain.SampleSurface(x, z) : 0f;
     }
 
     /// <summary>
@@ -268,8 +287,8 @@ public class RoadNetwork : MonoBehaviour
             // itself on the other wherever the terrain slopes sideways.
             var left = new Vector3(x, 0f, z) - side * RoadModel.HalfWidth;
             var right = new Vector3(x, 0f, z) + side * RoadModel.HalfWidth;
-            float gl = Ground(left.x, left.z);
-            float gr = Ground(right.x, right.z);
+            float gl = DeckGround(left.x, left.z);
+            float gr = DeckGround(right.x, right.z);
 
             left.y = gl + lift - broken * 0.55f;
             right.y = gr + lift - broken * 0.55f + broken * 0.25f;

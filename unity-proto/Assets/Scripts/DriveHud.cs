@@ -324,9 +324,9 @@ public class DriveHud : MonoBehaviour
     /// </summary>
     void DrawSettings(int w, int h)
     {
-        IconButton(TouchPad.RectFor(TouchPad.Pad.Sound, w, h), Icon.Speaker,
+        IconButton(SettingsRect(TouchPad.Pad.Sound, w, h), Icon.Speaker,
                    GameSettings.Sound, GameSettings.ToggleSound);
-        IconButton(TouchPad.RectFor(TouchPad.Pad.Debug, w, h), Icon.Bars,
+        IconButton(SettingsRect(TouchPad.Pad.Debug, w, h), Icon.Bars,
                    GameSettings.Debug, GameSettings.ToggleDebug);
     }
 
@@ -1247,7 +1247,7 @@ public class DriveHud : MonoBehaviour
         float bw = Mathf.Min(w * 0.42f, 260f);
         float pad = Mathf.Max(10f, h * 0.025f);
         var box = new Rect(w - bw - pad,
-                           TouchPad.RectFor(TouchPad.Pad.Debug, w, h).yMax + lh * 0.6f,
+                           SettingsRect(TouchPad.Pad.Debug, w, h).yMax + lh * 0.6f,
                            bw, lh * lines + lh * 0.6f);
 
         // AND IT IS NOT DRAWN AT ALL WHERE IT WOULD PUSH THE SCORE OFF THE
@@ -1257,14 +1257,6 @@ public class DriveHud : MonoBehaviour
         // behind a toggle and the other is what the player is playing for, so
         // where they do not both fit the readout goes.
         if (box.yMax + pad * 0.5f + ManifestContentHeight(w, h) > h) return new Rect();
-        // With the HUD chart top right (T1) the chart steps under the readout and the column under the chart: all three
-        // or the readout goes. Measured at 1920x1080 with the readout up: the column ended at y 1165 of 1080.
-        if (ChartTopRight(w, h))
-        {
-            float m = TouchPad.Margin(w, h);
-            var chart = ChartHud.DesktopPanelFor(w, h, box.yMax);
-            if (chart.yMax + pad * 0.5f + ManifestContentHeight(w, h) > h || chart.height < (ChartHud.BaseSize(w, h) * ChartHud.Scale).y - 0.01f) return new Rect();
-        }
         return box;
     }
 
@@ -1353,10 +1345,8 @@ public class DriveHud : MonoBehaviour
         // is developer chrome behind a toggle and SCORE, BANKED and CARGO are
         // what the player is playing for. Same shape as the condition bar
         // stepping under the F1 panel.
+        // Under the buttons and the readout - which, on the desktop with the HUD chart top right, stand under the chart.
         float corner = ChartCorner(w, h) + pad * 0.5f;
-        // ON THE DESKTOP UNDER THE HUD CHART (T1, the owner 2026-09-17): the chart takes the top right under the icons, and the
-        // column stacks from its bottom edge.
-        if (ChartTopRight(w, h)) corner = ChartHud.DesktopPanelFor(w, h, ChartCorner(w, h)).yMax + pad * 0.5f;
         float top = Mathf.Max(corner, Mathf.Max(pad, bottom - height));
 
         // ALWAYS THE STRIP RIGHT OF THE GAP, never the full width.
@@ -1391,18 +1381,35 @@ public class DriveHud : MonoBehaviour
     {
         if (TouchControls.TouchScreen) return false;
         float pad = Mathf.Max(10f, h * 0.025f), gapPad = Mathf.Max(10f, h * 0.022f);
-        var chart = ChartHud.DesktopPanelFor(w, h, TouchPad.RectFor(TouchPad.Pad.Debug, w, h).yMax);
+        var chart = ChartHud.DesktopPanelFor(w, h);
         if (chart.height < (ChartHud.BaseSize(w, h) * ChartHud.Scale).y - 0.01f) return false;
-        if (chart.yMax + pad * 0.5f + ManifestContentHeight(w, h) > h) return false;
+        // the stack under it: the wanted row, the buttons at their own distance below it, then the score column
+        var wanted = WantedBoxBase(w, h);
+        var icons = TouchPad.RectFor(TouchPad.Pad.Debug, w, h);
+        float stack = chart.yMax + TouchPad.Margin(w, h) * 0.5f + wanted.height + (icons.y - wanted.yMax) + icons.height;
+        if (stack + pad * 0.5f + ManifestContentHeight(w, h) > h) return false;
         float blockRight = gapPad + Mathf.Min(300f, w * 0.24f) + gapPad;
         float left = Mathf.Max(Mathf.Max(blockRight, PracticeBox(w, h).xMax), Mathf.Max(HealthBox(w, h).xMax, ExposureBox(w, h).xMax)) + gapPad;
         return chart.x - gapPad - left > 150f;
     }
 
+    /// <summary>
+    /// The sound and debug buttons, where the HUD draws and clicks them: TouchPad's corner, or on the desktop with the HUD
+    /// chart top right, under the chart and the wanted row at the distance they keep from that row (the owner 2026-09-17:
+    /// "have the HUD above the sound button and the other button").
+    /// </summary>
+    public Rect SettingsRect(TouchPad.Pad pad, int w, int h)
+    {
+        var r = TouchPad.RectFor(pad, w, h);
+        if (!ChartTopRight(w, h)) return r;
+        r.y = WantedBox(w, h).yMax + (TouchPad.RectFor(TouchPad.Pad.Debug, w, h).y - WantedBoxBase(w, h).yMax);
+        return r;
+    }
+
     /// <summary>The bottom of the top-right corner's own furniture: the settings icons, or the debug readout when it is up.</summary>
     public float ChartCorner(int w, int h)
     {
-        float corner = TouchPad.RectFor(TouchPad.Pad.Debug, w, h).yMax;
+        float corner = SettingsRect(TouchPad.Pad.Debug, w, h).yMax;
         if (GameSettings.Debug)
         {
             var readout = DebugPanelBox(w, h, 8);
@@ -1554,6 +1561,15 @@ public class DriveHud : MonoBehaviour
     /// </summary>
     public Rect WantedBox(int w, int h)
     {
+        var r = WantedBoxBase(w, h);
+        // under the HUD chart on the desktop (its top at the margin), the buttons under this row
+        if (ChartTopRight(w, h)) r.y = ChartHud.DesktopPanelFor(w, h).yMax + TouchPad.Margin(w, h) * 0.5f;
+        return r;
+    }
+
+    /// <summary>The wanted row's own place, top right, before the desktop HUD chart moves it down.</summary>
+    Rect WantedBoxBase(int w, int h)
+    {
         float pad = Mathf.Max(10f, h * 0.025f);
         float font = Mathf.Clamp(Mathf.Min(w, h) * 0.055f, 24f, 46f);
         float height = font * 1.4f;
@@ -1595,7 +1611,7 @@ public class DriveHud : MonoBehaviour
         float s = TouchPad.ButtonSize(w, h), m = TouchPad.Margin(w, h);
         float right = Mathf.Min(w - (m + s * 0.7f) - pad, WantedBox(w, h).x - pad);
         // On the desktop the HUD chart stands in the top right (T1): the gap ends left of it.
-        if (ChartTopRight(w, h)) right = Mathf.Min(right, ChartHud.DesktopPanelFor(w, h, ChartCorner(w, h)).x - pad);
+        if (ChartTopRight(w, h)) right = Mathf.Min(right, ChartHud.DesktopPanelFor(w, h).x - pad);
 
         // And the debug readout, which is wider than the settings column it
         // hangs from - 260 px against about 60 - so with it up the gap's right

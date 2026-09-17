@@ -177,20 +177,19 @@ public class ChartHud : MonoBehaviour
     }
 
     /// <summary>
-    /// TOP RIGHT ON THE DESKTOP (the owner 2026-09-17: "the HUD chart goes top right on the desktop" - T1 - and "it must not
-    /// cover the sound button and the other one at the top right"). Right-aligned at the screen margin, its top under the
-    /// settings icons (<paramref name="corner"/>: the icons' bottom, or the debug readout's when that is open), the full
-    /// 1.2x size where the screen has the height. The score column steps under it and the headline gap ends left of it
-    /// (DriveHud). Touch screens keep <see cref="PanelFor"/>: under SIM, off the pads.
+    /// TOP RIGHT ON THE DESKTOP, ABOVE THE BUTTONS (the owner 2026-09-17: "the HUD chart goes top right on the desktop" - T1 -
+    /// then "have the HUD above the sound button and the other button on desktop"). Right-aligned at the screen margin, its
+    /// top at the margin, the full 1.2x size. The wanted row, the sound and debug buttons, the debug readout and the score
+    /// column step down under it in their own order (DriveHud), and the headline gap ends left of it. Touch screens keep
+    /// <see cref="PanelFor"/>: under SIM, off the pads.
     /// </summary>
-    public static Rect DesktopPanelFor(int w, int h, float corner)
+    public static Rect DesktopPanelFor(int w, int h)
     {
         float m = TouchPad.Margin(w, h);
         var size = BaseSize(w, h) * Scale;
-        float y = corner + m * 0.5f;
         float width = Mathf.Min(size.x, w - 2f * m);
-        float height = Mathf.Max(0f, Mathf.Min(size.y, h - m - y));
-        return new Rect(w - m - width, y, width, height);
+        float height = Mathf.Max(0f, Mathf.Min(size.y, h - 2f * m));
+        return new Rect(w - m - width, m, width, height);
     }
 
     /// <summary>
@@ -386,7 +385,7 @@ public class ChartHud : MonoBehaviour
         if (_drive == null) _drive = FindFirstObjectByType<DriveHud>();
         _sim = _drive != null ? _drive.SimBox(Screen.width, Screen.height) : new Rect(10f, Screen.height * 0.45f, 300f, 40f);
         var panel = _drive != null && _drive.ChartTopRight(Screen.width, Screen.height)
-            ? DesktopPanelFor(Screen.width, Screen.height, _drive.ChartCorner(Screen.width, Screen.height))
+            ? DesktopPanelFor(Screen.width, Screen.height)
             : PanelFor(Screen.width, Screen.height, _sim);
         Styles(HeaderFont(panel.height));
         float priceW = 0f;

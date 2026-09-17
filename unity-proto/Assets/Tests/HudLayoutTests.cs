@@ -182,8 +182,8 @@ public class HudLayoutTests
                                  _hud.BlockBoxHeight(w, h));
             var head = _hud.HeadlineBox(w, h);
             var practice = _hud.PracticeBox(w, h);
-            var sound = TouchPad.RectFor(TouchPad.Pad.Sound, w, h);
-            var debug = TouchPad.RectFor(TouchPad.Pad.Debug, w, h);
+            var sound = _hud.SettingsRect(TouchPad.Pad.Sound, w, h);
+            var debug = _hud.SettingsRect(TouchPad.Pad.Debug, w, h);
 
             // EVERY box in the column, not the two widest-looking ones. The
             // condition bar inherits the diagnostics panel's fixed 320 px and
@@ -221,8 +221,8 @@ public class HudLayoutTests
             int w = (int)size.x, h = (int)size.y;
             string at = $"at {w}x{h}";
 
-            var sound = TouchPad.RectFor(TouchPad.Pad.Sound, w, h);
-            var debug = TouchPad.RectFor(TouchPad.Pad.Debug, w, h);
+            var sound = _hud.SettingsRect(TouchPad.Pad.Sound, w, h);
+            var debug = _hud.SettingsRect(TouchPad.Pad.Debug, w, h);
             var view = TouchPad.RectFor(TouchPad.Pad.View, w, h);
 
             Assert.IsFalse(sound.Overlaps(debug), $"the two settings overlap {at}");
@@ -698,9 +698,9 @@ public class HudLayoutTests
             Apart(man, wanted, "the score column and the wanted row");
             Apart(man, health, "the score column and the condition bar");
             Apart(man, practice, "the score column and the practice switch");
-            Apart(man, TouchPad.RectFor(TouchPad.Pad.Sound, w, h),
+            Apart(man, _hud.SettingsRect(TouchPad.Pad.Sound, w, h),
                   "the score column and the sound icon");
-            Apart(man, TouchPad.RectFor(TouchPad.Pad.Debug, w, h),
+            Apart(man, _hud.SettingsRect(TouchPad.Pad.Debug, w, h),
                   "the score column and the debug icon");
             Apart(man, TouchPad.RectFor(TouchPad.Pad.View, w, h),
                   "the score column and the view toggle");

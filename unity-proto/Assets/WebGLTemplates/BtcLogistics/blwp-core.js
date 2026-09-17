@@ -3685,8 +3685,34 @@ function mapSolids(ground, halfX, halfZ) {
 
 const SAMPLES = 64;
 
-/** The seam's reach either side of z = 0 as a share of the half depth, Q16.16 (0.72, see `frontlineZ`). */
-const FRONT_DEPTH = 47186;
+/**
+ * The seam's reach either side of z = 0 as a share of the half depth, Q16.16: 0.53, +-45 m (WAR_TACTICS.md §4.15, the owner
+ * 2026-09-17 09:40: a smaller static chart, so the relief outside the band stands behind the lines). It was 0.72 (C#'s
+ * +-61.2 m, see `frontlineZ`); 0.53 x 65536 = 34734.08.
+ */
+const FRONT_DEPTH = 34734;
+
+/**
+ * THE CHART'S X (WAR_TACTICS.md §4.15, seam remap ruled 2026-09-17): the tape is laid over the candle field, not the old
+ * +-130 m map, so the fight line's price at an x is read from the samples of the candle standing at that x. 32 slots of
+ * FIELD_SLOT from FIELD_X0 (spawn ruling B: first face 26 m past the spawn centre, last slot ending before the miner face);
+ * slot k holds the round's candle whose samples are tape k*2 + (taken & 1) and the next, so its centre is that pair's middle.
+ * Measured before: at a candle's centre the seam read the tape up to 9.7 samples away, and HUD YOU sat on the wrong candle
+ * for 28-29 of 32.
+ */
+const FIELD_X0 = -4967627;                  // -75.79998 m
+const FIELD_SLOT = 377241;                  // 5.75624 m
+const TAPE_HALF = 32768, TAPE_LAST_Q = Math.imul(SAMPLES - 1, ONE);
+
+/** The tape position (Q16.16 samples, unclamped) a world x reads, with `taken` samples submitted this round. */
+function tapeAtX(x, taken) {
+  return add(add(Math.imul(taken & 1, ONE), Math.imul(divRound(sub(x, FIELD_X0), FIELD_SLOT), 2)), -TAPE_HALF);
+}
+
+/** The world x of a tape position (Q16.16 samples): the inverse of `tapeAtX`. */
+function xAtTape(q, taken) {
+  return add(FIELD_X0, mulFast(sub(add(q, TAPE_HALF), Math.imul(taken & 1, ONE)) >> 1, FIELD_SLOT));
+}
 
 /**
  * Frontline z at a world x. `hist` is an Int32Array of SAMPLES prices in
@@ -3747,12 +3773,11 @@ function smooth(hist, j) {
   return div(sum, Math.imul(WINDOW, ONE));
 }
 
-function frontlineZ(hist, x, halfX, halfZ) {
+function frontlineZ(hist, x, halfX, halfZ, taken = 0) {
   if (SAMPLES < 2) return 0;
 
-  // position along the tape, 0 at -halfX, ONE at +halfX
-  const u = clamp(div(add(x, halfX), Math.imul(2, halfX)), 0, ONE);
-  const at = mulFast(u, Math.imul(SAMPLES - 1, ONE));
+  // position along the tape over the candle field (tapeAtX), held at the tape's ends beyond it
+  const at = clamp(tapeAtX(x, taken), 0, TAPE_LAST_Q);
   const i = clamp(at >> 16, 0, SAMPLES - 2);
   const f = at & 65535;
 
@@ -3788,6 +3813,187 @@ function frontlineZ(hist, x, halfX, halfZ) {
   return mulFast(t, mulFast(halfZ, FRONT_DEPTH));
 }
 
+// ---- rules/candles.js
+// THE CANDLES ARE TERRAIN - WAR_TACTICS.md §4.15.
+//
+// The tape's candles as a height layer the surface reader adds (`surfaceAt = relief + emplacements + candles - craters`),
+// on a static chart band levelled to a pancake of the relief, with each candle's two x-faces as truck-only walls. Laid
+// between the apron and the miner (spawn ruling B, the owner 2026-09-17): 32 slots of 5.756 m, a 2.956 m body and a 2.8 m
+// corridor in each; a body runs from its open's z to its
+// close's z (the seam's own price-to-z scale), at least 1 m long; a plateau 2 m high reached by a 5 m ramp inside each
+// z-end. Derived from the tape alone and rebuilt when the tape changes; nothing here is hashed state and nothing draws.
+//
+// Not here yet (the slice, the owner 2026-09-17): the scroll, the rescale lerp, the seam remap to 208 m, the glow, cover
+// lips. The wick (ruled w1, the owner 2026-09-17): a truck-only collider only where the wick stands past the body - the body
+// owns the 2 m plateau; a high wick above the body's high end, a low wick below its low end, never through the body.
+
+
+
+
+const CANDLES = 32;
+// SPAWN RULING B (the owner 2026-09-17): the truck leaves the apron, then meets the chart. The first x-face stands 26 m past
+// the spawn centre (START_X -100.4 m; the nose is 3.275 m ahead of it, so the nose meets it 22.7 m out, past the 22 m
+// apron), and the 32 slots end at the miner's face (x 108.4 m), so no body stands in the gate throat or across the
+// delivery line (x 114). 32 slots over 184.2 m: pitch 5.75625 m, the corridor kept at 2.8 m, the body what is left.
+// At 6.5 m (x -104..+104) the first face stood 2.2 m BEHIND the spawn and bays 9-12 started on candle 0.
+const CANDLE_X0 = FIELD_X0;                 // -75.79998 m: first face at -74.39998 m, 26.00001 m past START_X
+const CANDLE_SLOT = FIELD_SLOT;             // 5.75624 m; 32 slots end at 108.39969 m, before the miner face
+const CANDLE_BODY_HALF = 96870;             // 1.47812 m: a 2.95624 m body (0.203 m a side for a 2.55 m truck), a 2.80001 m corridor
+const CANDLE_H = 131072;                    // 2 m plateau
+const CANDLE_RAMP = 327680;                 // 5 m ramp inside each z-end
+const CANDLE_MIN_LENGTH = ONE;              // a doji is built 1 m long
+const BAND_X = 6815744;                     // |x| <= 104 m
+const BAND_Z = 3538944;                     // |z| <= 54 m: the seam's 45 m, the 5 m ramp, 4 m
+const CONE = 26214;                         // 0.4: the grade the relief may rise toward the band
+const PANCAKE = 9830;                       // 0.15: the relief inside the band, about the apron's height
+const WICK_HALF = 32768;                    // a 1 m x 1 m pillar
+const WICK_HEIGHT = 589824;                 // 9 m
+
+/** Per candle in `layout`: slot centre x, body z from and to (from < to), 1 when close >= open, the low's z and the high's z. */
+const CL_X = 0, CL_Z0 = 1, CL_Z1 = 2, CL_GREEN = 3, CL_LOW = 4, CL_HIGH = 5, CL_WORDS = 6;
+
+/**
+ * The renderer's view: count, apron height, then per candle x from, x to, z from, z to, plateau height, green, and the wick's
+ * collider past the body: low wick z from (= body z from when none), high wick z to (= body z to when none).
+ */
+const CV_COUNT = 0, CV_APRON = 1, CV_FIRST = 2, CV_WORDS = 8;
+const CV_TOTAL = CV_FIRST + Math.imul(CANDLES, CV_WORDS);
+
+/** A price as a ground z, by the seam's own scale (frontlineZ): the window's low at -45 m, its high at +45 m. */
+function zOfPrice(p, lo, span, halfZ) {
+  if (span <= 0) return 0;
+  const t = sub(div(mulFast(sub(p, lo), Math.imul(2, ONE)), span), ONE);
+  return mulFast(t, mulFast(halfZ, FRONT_DEPTH));
+}
+
+/**
+ * The 32 bodies from the tape. Candles pair the round's samples (candle k = round samples 2k, 2k+1, as the HUD's chart
+ * does), so which tape sample opens slot 0 follows the parity of the samples taken: `taken` odd drops the oldest sample
+ * (its open has left the tape) and leaves the newest slot a doji of the forming candle.
+ */
+function candleLayout(tape, taken, halfZ, out) {
+  let lo = tape[0], hi = tape[0];
+  for (let k = 1; k < SAMPLES; k++) { lo = min(lo, tape[k]); hi = max(hi, tape[k]); }
+  const span = sub(hi, lo), shift = taken & 1;
+  for (let c = 0; c < CANDLES; c++) {
+    const o = min(add(Math.imul(c, 2), shift), SAMPLES - 1), k = min(o + 1, SAMPLES - 1);
+    const zo = zOfPrice(tape[o], lo, span, halfZ), zc = zOfPrice(tape[k], lo, span, halfZ);
+    let z0 = min(zo, zc), z1 = max(zo, zc);
+    if (sub(z1, z0) < CANDLE_MIN_LENGTH) { z0 = sub((z0 + z1) >> 1, CANDLE_MIN_LENGTH >> 1); z1 = add(z0, CANDLE_MIN_LENGTH); }
+    const b = Math.imul(c, CL_WORDS);
+    out[b + CL_X] = add(add(CANDLE_X0, Math.imul(c, CANDLE_SLOT)), CANDLE_SLOT >> 1);
+    out[b + CL_Z0] = z0;
+    out[b + CL_Z1] = z1;
+    out[b + CL_GREEN] = tape[k] >= tape[o] ? 1 : 0;
+    // The candle's low and high are its samples' own: with two samples a candle they are the body's ends, so no wick
+    // stands past the body on this tape and no wick collider is made.
+    out[b + CL_LOW] = min(zo, zc);
+    out[b + CL_HIGH] = max(zo, zc);
+  }
+  return out;
+}
+
+/** The candle layer's height at a world point, Q16.16; 0 in a corridor, off the field's x, and beyond a body's ends. */
+function candleHeightAt(layout, x, z) {
+  const dx = sub(x, CANDLE_X0);
+  if (dx < 0 || dx >= Math.imul(CANDLES, CANDLE_SLOT)) return 0;
+  const c = idiv(dx, CANDLE_SLOT), b = Math.imul(c, CL_WORDS);
+  if (abs(sub(x, layout[b + CL_X])) >= CANDLE_BODY_HALF) return 0;
+  const z0 = layout[b + CL_Z0], z1 = layout[b + CL_Z1];
+  if (z <= z0 || z >= z1) return 0;
+  const d = min(sub(z, z0), sub(z1, z));
+  return d >= CANDLE_RAMP ? CANDLE_H : mulFast(CANDLE_H, div(d, CANDLE_RAMP));
+}
+
+/**
+ * STATIC, NOT DYNAMIC (§4.15, the owner 2026-09-17 09:40): the band is fixed, so no ground moves under a wheel. Inside
+ * |x| <= 104, |z| <= 54 the relief is a pancake - `apron + 0.15 (relief - apron)`, the mempool's swells kept low. Outside
+ * it, within the band's x, the relief is held to a 40% cone from the pancake at the band's edge,
+ * `|h - edge| <= 0.4 (|z| - 54)` (12.4 m at the map's edge), so no ground rises (or falls) toward the band faster than a
+ * ramp does. The edge's pancake is read from `ground`, unlevelled. Beyond |x| = 104 the relief is untouched.
+ */
+function levelled(relief, apron, x, z, ground, halfX, halfZ) {
+  if (abs(x) > BAND_X) return relief;
+  const az = abs(z);
+  if (az <= BAND_Z) return add(apron, mulFast(PANCAKE, sub(relief, apron)));
+  const edgeRelief = heightAtWorld(ground, x, z < 0 ? -BAND_Z : BAND_Z, halfX, halfZ);
+  const edge = add(apron, mulFast(PANCAKE, sub(edgeRelief, apron)));
+  const lim = mulFast(CONE, sub(az, BAND_Z));
+  return clamp(relief, sub(edge, lim), add(edge, lim));
+}
+
+/**
+ * The wick's collider segments of candle `c` past its body, [z from, z to] each, or none: the low wick from the low's z to
+ * the body's low end, the high wick from the body's high end to the high's z. Written into `out` (4 words); returns how many.
+ */
+function wickSegments(layout, c, out) {
+  const l = Math.imul(c, CL_WORDS);
+  let n = 0;
+  if (layout[l + CL_LOW] < layout[l + CL_Z0]) { out[0] = layout[l + CL_LOW]; out[1] = layout[l + CL_Z0]; n = 1; }
+  if (layout[l + CL_HIGH] > layout[l + CL_Z1]) { out[Math.imul(n, 2)] = layout[l + CL_Z1]; out[Math.imul(n, 2) + 1] = layout[l + CL_HIGH]; n = n + 1; }
+  return n;
+}
+
+/**
+ * Each candle's two x-faces as solid boxes for the truck (resolveSolids): zero thickness on the face line, the body's
+ * z-length, from 0 to the plateau IN THE CANDLE LAYER'S OWN HEIGHT - resolved with the truck's height in that layer
+ * (0 in a corridor, H on a plateau), not with the world height. At the apron's absolute height a berm or the band's
+ * relief lifting the ground past 2 m put the floor above the wall's top and the wall was skipped: measured, 14 of 184
+ * straight drives at pinned z (seeds 1-8) passed through a candle, 54 face crossings. Zero thickness keeps the corridor 2.8 m and the plateau 3.7 m - the circles'
+ * radius (1.275 m) is far more than a tick's travel, so a centre never reaches the line. Then the wick past the body
+ * (w1): a 1 m x 1 m, 9 m pillar over each protruding segment only, at the candle's centre x.
+ */
+function candleWalls(layout, apron) {
+  const box = new Int32Array(Math.imul(Math.imul(CANDLES, 4), BOX_WORDS));
+  const seg = new Int32Array(4);
+  let n = 0;
+  for (let c = 0; c < CANDLES; c++) {
+    const l = Math.imul(c, CL_WORDS), z0 = layout[l + CL_Z0], z1 = layout[l + CL_Z1];
+    for (let f = 0; f < 2; f++) {
+      const b = Math.imul(add(Math.imul(c, 2), f), BOX_WORDS);
+      box[b] = f === 0 ? sub(layout[l + CL_X], CANDLE_BODY_HALF) : add(layout[l + CL_X], CANDLE_BODY_HALF);
+      box[b + 1] = add(z0, (sub(z1, z0)) >> 1);
+      box[b + 2] = 0;
+      box[b + 3] = (sub(z1, z0)) >> 1;
+      box[b + 4] = 0;
+      box[b + 5] = CANDLE_H;
+    }
+    n = add(n, 2);
+  }
+  for (let c = 0; c < CANDLES; c++) {
+    const k = wickSegments(layout, c, seg);
+    for (let w = 0; w < k; w++) {
+      const b = Math.imul(n, BOX_WORDS), z0 = seg[Math.imul(w, 2)], z1 = seg[Math.imul(w, 2) + 1];
+      box[b] = layout[Math.imul(c, CL_WORDS) + CL_X];
+      box[b + 1] = add(z0, (sub(z1, z0)) >> 1);
+      box[b + 2] = WICK_HALF;
+      box[b + 3] = (sub(z1, z0)) >> 1;
+      box[b + 4] = 0;
+      box[b + 5] = WICK_HEIGHT;
+      n = add(n, 1);
+    }
+  }
+  return { n, box };
+}
+
+/** The renderer's words (CV_*): what CandleTerrain meshes. Returns the words written. */
+function writeCandleView(layout, apron, out) {
+  out[CV_COUNT] = CANDLES;
+  out[CV_APRON] = apron;
+  for (let c = 0; c < CANDLES; c++) {
+    const l = Math.imul(c, CL_WORDS), b = add(CV_FIRST, Math.imul(c, CV_WORDS));
+    out[b] = sub(layout[l + CL_X], CANDLE_BODY_HALF);
+    out[b + 1] = add(layout[l + CL_X], CANDLE_BODY_HALF);
+    out[b + 2] = layout[l + CL_Z0];
+    out[b + 3] = layout[l + CL_Z1];
+    out[b + 4] = CANDLE_H;
+    out[b + 5] = layout[l + CL_GREEN];
+    out[b + 6] = min(layout[l + CL_LOW], layout[l + CL_Z0]);
+    out[b + 7] = max(layout[l + CL_HIGH], layout[l + CL_Z1]);
+  }
+  return CV_TOTAL;
+}
+
 // ---- rules/emplacements.js
 // HULL-DOWN EMPLACEMENTS - WAR_TACTICS.md §4.1 "default hold = hull-down: turret over crest, hull hidden".
 //
@@ -3812,6 +4018,7 @@ function frontlineZ(hist, x, halfX, halfZ) {
 
 
 
+
 // 2.4 m, not 2: a hull stands anywhere within 1.5 m of its hold (on post), and at exactly 2 m a tank a few centimetres up
 // the ramp saw 1.96 m (37.9% of the served overwatch ticks). 2.4 m hides a 3 m hull to its turret from 29.25 m to 31 m
 // behind the seam and still leaves the turret over the crest; the ramp is 48%, under the relief's own 55%.
@@ -3828,7 +4035,10 @@ const PITCH = Math.imul(27, ONE);
 /**
  * The emplacement height at a world point, Q16.16 metres; 0 off every berm. `ground` is the round's relief grid.
  */
-function emplacementAt(x, z, tape, ground, halfX, halfZ) {
+function emplacementAt(x, z, tape, ground, halfX, halfZ, apron, taken = 0) {
+  // `apron` given: the relief as the surface reads it, levelled in the chart band (§4.15)
+  const relief = (px, pz) => (apron === undefined ? heightAtWorld(ground, px, pz, halfX, halfZ)
+                                                  : levelled(heightAtWorld(ground, px, pz, halfX, halfZ), apron, px, pz, ground, halfX, halfZ));
   const ax = abs(x);
   if (ax >= NONE_X) return 0;
   const first = slotX(0);
@@ -3839,7 +4049,7 @@ function emplacementAt(x, z, tape, ground, halfX, halfZ) {
   // ticks - the push steps only from post on a confirmed verdict - and a 22 m berm left 22.1% of all overwatch on-post
   // ticks standing at 30 m with no crest in front.
   const line = LINE_REST;
-  const seam = frontlineZ(tape, x, halfX, halfZ);
+  const seam = frontlineZ(tape, x, halfX, halfZ, taken);
   const off = sub(z, seam), side = off < 0 ? -1 : 1, depth = abs(off);   // metres behind the seam on that side
   const foot = sub(line, FOOT_BEHIND_LINE);
   const up = sub(foot, RAMP), down = sub(up, TOP), far = sub(down, RAMP);
@@ -3850,10 +4060,10 @@ function emplacementAt(x, z, tape, ground, halfX, halfZ) {
   // 2 m above the HIGHER of the ground at its foot and the relief at its top: a hill climbing toward the enemy neither
   // eats the 2 m nor outscores the berm in the hull-down search (measured: relief rising 0.4 m per metre left a hull at
   // the foot with 1.6 m in front, and the search moved to the slope).
-  const footGround = heightAtWorld(ground, x, add(seam, Math.imul(side, foot)), halfX, halfZ);
-  const topGround = heightAtWorld(ground, x, add(seam, Math.imul(side, up)), halfX, halfZ);
+  const footGround = relief(x, add(seam, Math.imul(side, foot)));
+  const topGround = relief(x, add(seam, Math.imul(side, up)));
   const base0 = footGround > topGround ? footGround : topGround;
-  const here = heightAtWorld(ground, x, z, halfX, halfZ);
+  const here = relief(x, z);
   const want = sub(add(base0, mulFast(BERM_HEIGHT, fz)), here);
   if (want <= 0) return 0;
   return mulFast(mulFast(want, fx), fend);
@@ -4432,6 +4642,7 @@ const sortieWait = (rng) => mulFast(SORTIE_SECONDS, between(rng, JITTER_MIN, JIT
 
 
 
+
 var heatForLoad = heat;
 
 
@@ -4573,12 +4784,24 @@ function tape(rngWords) {
  * A ground put here is marked as such, because a restart must keep an uploaded
  * one and must NOT keep a generated one - the seed makes that again.
  */
+/**
+ * A REFERENCE WORLD WITHOUT THE CANDLE FIELD, for the tests that reproduce a recording made before the candles existed
+ * (the PhysX half-lock turn: its 59 m circle has no candle-free place on the map - measured, the free strips are 37 m and
+ * 40 m). The band, the pancake, the berms and the craters stay; only the candles' height and their x-face walls go. Like
+ * `setGround`, a test door: the bundle does not offer it, so no page can take the chart out of its world.
+ */
+function setCandleField(st, on) {
+  st.noCandleField = !on;
+  return true;
+}
+
 function setGround(st, cols, rows, heights) {
   if (cols < 2 || rows < 2 || heights.length < Math.imul(cols, rows)) return false;
   const g = flatGround(cols, rows);
   g.h.set(heights.subarray(0, Math.imul(cols, rows)));
   st.ground = g;
   st.uploadedGround = true;
+  if (st.tape) refreshCandles(st);
   return true;
 }
 
@@ -4857,6 +5080,7 @@ function submitSample(st, price) {
   if (st.roundTape) st.roundTape.push(p);
   const s = st.i32;
   s[O_TACTICS + TAC_MARKET + MK_SAMPLES] = (s[O_TACTICS + TAC_MARKET + MK_SAMPLES] + 1) | 0;
+  refreshCandles(st);
   readMarket(s, O_TACTICS, h);
   return true;
 }
@@ -4877,7 +5101,7 @@ function restart(st, seedWord) {
   // into the same seed makes the same relief; carrying the previous one over
   // would keep a host-uploaded field alive across a round and put the two
   // sides back in different worlds.
-  if (st.uploadedGround) fresh.ground = st.ground;
+  if (st.uploadedGround) { fresh.ground = st.ground; refreshCandles(fresh); }
   // NOT THE OLD SOLIDS EITHER, for the ground's reason: `init` makes the map's
   // own, and carrying a host-uploaded set across a round would keep one alive
   // that no replay has.
@@ -4938,10 +5162,44 @@ function craterCut(s, x, z) {
  * three readers of one quantity is how two of them end up disagreeing. They
  * all come through here now.
  */
+/** Samples submitted this round: the parity the candles and the seam pair the tape by (§4.15). */
+const samplesTaken = (st) => st.i32[O_TACTICS + TAC_MARKET + MK_SAMPLES];
+
 function surfaceAt(st, x, z) {
-  // relief + the hull-down emplacements (rules/emplacements.js) - craters
-  return sub(add(heightAtWorld(st.ground, x, z, HALF_X, HALF_Z), emplacementAt(x, z, st.tape, st.ground, HALF_X, HALF_Z)),
+  // relief as the static chart band holds it (§4.15: pancake inside, cone outside) + the hull-down emplacements (rules/emplacements.js) + the candles - craters
+  if (!st.candles) {
+    return sub(add(heightAtWorld(st.ground, x, z, HALF_X, HALF_Z), emplacementAt(x, z, st.tape, st.ground, HALF_X, HALF_Z, undefined, samplesTaken(st))),
+               craterCut(st.i32, x, z));
+  }
+  const relief = levelled(heightAtWorld(st.ground, x, z, HALF_X, HALF_Z), st.apron, x, z, st.ground, HALF_X, HALF_Z);
+  return sub(add(add(relief, emplacementAt(x, z, st.tape, st.ground, HALF_X, HALF_Z, st.apron, samplesTaken(st))), (st.noCandleField ? 0 : candleHeightAt(st.candles, x, z))),
              craterCut(st.i32, x, z));
+}
+
+/**
+ * THE CANDLES FROM THE TAPE (§4.15): the layout the surface reads, the apron height the band is levelled to, and the
+ * x-face walls the truck resolves against. Derived, not hashed: rebuilt whenever the tape or the ground changes, so
+ * every replay that has the tape has the same terrain.
+ */
+function refreshCandles(st) {
+  if (!st.candles) st.candles = new Int32Array(Math.imul(CANDLES, CL_WORDS));
+  candleLayout(st.tape, st.i32[O_TACTICS + TAC_MARKET + MK_SAMPLES], HALF_Z, st.candles);
+  st.apron = heightAtWorld(st.ground, START_X, 0, HALF_X, HALF_Z);
+  st.candleSolids = candleWalls(st.candles, st.apron);
+}
+
+/**
+ * The surface WITHOUT the candle layer: what the terrain mesh draws, so the candles are drawn once, by their own mesh
+ * from `candleView`, and the ground under them is the levelled band. Everything that stands on the world reads `surfaceAt`.
+ */
+function terrainAt(st, x, z) {
+  return st.candles && !st.noCandleField ? sub(surfaceAt(st, x, z), candleHeightAt(st.candles, x, z)) : surfaceAt(st, x, z);
+}
+
+/** The candles as the renderer meshes them (rules/candles.js CV_*). Returns the words written; reading writes no state. */
+function candleView(st, out) {
+  if (!st.candles) return 0;
+  return writeCandleView(st.candles, st.apron, out);
 }
 
 function groundAt(st, x, z) {
@@ -5004,6 +5262,7 @@ function init(seedWord) {
   // relief this core generated, so the player and every replay walk the same
   // walls by construction. Unity draws them; it does not send them.
   st.solids = mapSolids(st.ground, HALF_X, HALF_Z);
+  refreshCandles(st);
 
   // The tanks the player can see are the host's, and it sends them every
   // tick. Empty until it does.
@@ -5475,7 +5734,7 @@ function step(st, throttle, steer, brake, handbrake, practice) {
     // One accepted liquidation, one strike, in the tick it is consumed. The
     // load is the size itself in the unit it arrived in; nothing is scaled
     // here, because the crater that reads it is its own step.
-    const at = strikePoint(s, (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z));
+    const at = strikePoint(s, (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z, samplesTaken(st)));
     s[O_STRIKE + K_STATE] = 1;
     s[O_STRIKE + K_X] = at.x;
     s[O_STRIKE + K_Z] = at.z;
@@ -5534,6 +5793,9 @@ function step(st, throttle, steer, brake, handbrake, practice) {
   resolveSolids(v, st.solids,
                 sin(v.heading), cos(v.heading),
                 surfaceAt(st, v.x, v.z));
+  // The candles' x-faces (§4.15), the truck's alone: tanks and men stand on the height read and cross them.
+  // Against the truck's height in the candle layer (0 in a corridor, 2 m on a plateau): the walls stand in that layer.
+  if (st.candleSolids && !st.noCandleField) resolveSolids(v, st.candleSolids, sin(v.heading), cos(v.heading), candleHeightAt(st.candles, v.x, v.z));
 
   // And out of the armour. Last tick's tank positions, because the army has
   // not moved yet this tick - one frame stale, sixteen milliseconds, and it
@@ -5581,7 +5843,7 @@ function step(st, throttle, steer, brake, handbrake, practice) {
 
   // ---- 2. army -----------------------------------------------------------
   const tx = s[T + T_X], tz = s[T + T_Z];
-  const seamZ = frontlineZ(st.tape, tx, HALF_X, HALF_Z);
+  const seamZ = frontlineZ(st.tape, tx, HALF_X, HALF_Z, samplesTaken(st));
   // Damage dealt to the truck this tick, in Q16.16 rather than a count of
   // hits. It used to be a tally of flat points because every courier hit was
   // worth exactly one; a tank shell is Rand(5, 11), so the truck's damage has
@@ -5607,9 +5869,9 @@ function step(st, throttle, steer, brake, handbrake, practice) {
   // the start of this one, and takes or gives ground.
   // The objectives' holders are re-read first, from the same positions; nothing in the odds reads them (§4.11).
   // A leg does not swap while a tank of its pair is off post (§2.6, §0 "Hold is the default"), read before anything moves.
-  holdLegs(s, O_TACTICS, s[O_TICK], (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z), (x, z) => surfaceAt(st, x, z));
-  objectiveHolders(s, O_TACTICS, s[O_TICK], (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z));
-  pressure(s, O_TACTICS, s[O_TICK], (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z), (x, z) => surfaceAt(st, x, z));
+  holdLegs(s, O_TACTICS, s[O_TICK], (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z, samplesTaken(st)), (x, z) => surfaceAt(st, x, z));
+  objectiveHolders(s, O_TACTICS, s[O_TICK], (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z, samplesTaken(st)));
+  pressure(s, O_TACTICS, s[O_TICK], (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z, samplesTaken(st)), (x, z) => surfaceAt(st, x, z));
   // Tanks are pushed out of each other BEFORE anything moves, which is where
   // `Army.Update` does it - the first three lines of it, over every armour
   // pair, ahead of StepArmour and StepInfantry. The position is protocol: a
@@ -5655,7 +5917,7 @@ function step(st, throttle, steer, brake, handbrake, practice) {
   // tank's U_COOLDOWN word, cleared at spawn. Counted by distance alone (40 m of its post), the opening drive and every
   // respawn queued for the budget 40 m short of their posts: 7.1 points of living-pair tank-ticks (a274fbc).
   const lineBudget = [0, 0], lineMoved = [0, 0], onTheLine = [], offPost = [], grantedBefore = [], stoodOnPost = [];
-  const seamOf = (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z);
+  const seamOf = (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z, samplesTaken(st));
   for (let i = 0; i < UNITS; i += 4) {
     const ib = unitBase(i);
     onTheLine[i >> 2] = false; offPost[i >> 2] = 0; grantedBefore[i >> 2] = false; stoodOnPost[i >> 2] = false;
@@ -5667,7 +5929,7 @@ function step(st, throttle, steer, brake, handbrake, practice) {
       || onPost(s, O_TACTICS, i, (s[O_TICK] - 1) | 0, seamOf, groundOf);
     const ip = postOf(s, O_TACTICS, i, s[O_TICK]);
     const sd = s[ib + U_SIDE] < 0 ? -1 : 1;
-    const lineZ = add(frontlineZ(st.tape, ip.x, HALF_X, HALF_Z), mulFast(Math.imul(sd, ONE), ip.depth));
+    const lineZ = add(frontlineZ(st.tape, ip.x, HALF_X, HALF_Z, samplesTaken(st)), mulFast(Math.imul(sd, ONE), ip.depth));
     if (stoodOnPost[i >> 2] && abs(sub(s[ib + U_Z], lineZ)) <= LINE_REACH) {
       lineBudget[sd < 0 ? 0 : 1]++; onTheLine[i >> 2] = true;
       grantedBefore[i >> 2] = ((s[ib + U_COOLDOWN] >> 6) & 1) === 1;
@@ -5786,13 +6048,13 @@ function step(st, throttle, steer, brake, handbrake, practice) {
     // `FrontlineAt(s.x)` per man. This is that, not a new rule. The truck's
     // own seam is still what the truck is measured against, so `seamZ` stays
     // for the callers below it.
-    const unitSeam = frontlineZ(st.tape, u.x, HALF_X, HALF_Z);
+    const unitSeam = frontlineZ(st.tape, u.x, HALF_X, HALF_Z, samplesTaken(st));
     if (u.armour) {
       const tac = postOf(s, O_TACTICS, i, s[O_TICK]);
       // `tac` says the tank is under the doctrine; the depth cannot say it, because a bounding tank pushed 16 m stands
       // ON the seam, depth 0 - read as "no tactics", that tank was sent to the old standoff and lost its memory word.
       u.tac = true; u.tacX = tac.x; u.tacDepth = tac.depth; u.tacBounding = tac.bounding;
-      u.tacSeam = frontlineZ(st.tape, tac.x, HALF_X, HALF_Z);
+      u.tacSeam = frontlineZ(st.tape, tac.x, HALF_X, HALF_Z, samplesTaken(st));
       u.tacPush = tac.push; u.tacForward = FORWARD_LINE - tac.push;
       // NO PARTNER WAIT. A bounding tank used to wait while its overwatch partner had moved the tick before; §2.6 rules
       // the swap simultaneous, and row 4b is the half-line budget below. Measured on seeds 1-15, that wait held a tank
@@ -5880,7 +6142,7 @@ function step(st, throttle, steer, brake, handbrake, practice) {
           }
           s[b + U_TARGET] = (RELOAD_MIN + nextBelow(rng, RELOAD_SPAN)) | 0;
           // SHOOT-AND-SCOOT: the team moves on to its next hashed slot (rules/tactics.js).
-          scoot(s, O_TACTICS, i, s[O_TICK], (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z), groundOf);
+          scoot(s, O_TACTICS, i, s[O_TICK], (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z, samplesTaken(st)), groundOf);
         } else {
           // THE TRUCK WITH NO TANK TO FIGHT (WAR_TACTICS.md §1.2 GAP, closed): a tank with no enemy in range and the
           // truck inside its heat-widened reach fires on the truck, on its normal reload. The same draws as a shot at
@@ -5896,7 +6158,7 @@ function step(st, throttle, steer, brake, handbrake, practice) {
               courierDmg = add(courierDmg, shellForHeat(shell, heat));
             }
             s[b + U_TARGET] = (RELOAD_MIN + nextBelow(rng, RELOAD_SPAN)) | 0;
-            scoot(s, O_TACTICS, i, s[O_TICK], (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z), groundOf);
+            scoot(s, O_TACTICS, i, s[O_TICK], (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z, samplesTaken(st)), groundOf);
           }
         }
       }
@@ -6042,7 +6304,7 @@ function step(st, throttle, steer, brake, handbrake, practice) {
   // gunship crosses the entire two-hundred-metre corridor in ten seconds and
   // the seam it stands off is the one under its own nose, as FrontlineAt(h.x)
   // has it.
-  const seamAt = (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z);
+  const seamAt = (x) => frontlineZ(st.tape, x, HALF_X, HALF_Z, samplesTaken(st));
   const groundAt = (x, z) => surfaceAt(st, x, z);
   stepHelicopters(s, rng, seamAt, groundAt);
   stepBombs(s, groundAt);
@@ -6176,7 +6438,7 @@ function step(st, throttle, steer, brake, handbrake, practice) {
  * the line half a field away from the men standing on it is a lie, so the
  * drawing asks the core rather than working it out again. One rule, one place.
  */
-const frontAt = (st, x) => frontlineZ(st.tape, x | 0, HALF_X, HALF_Z);
+const frontAt = (st, x) => frontlineZ(st.tape, x | 0, HALF_X, HALF_Z, samplesTaken(st));
 
 /**
  * WHAT WENT ON THE BED. AN INPUT, AND THE ONLY WAY HEAT IS EVER SET.
@@ -6291,7 +6553,7 @@ function priceAtZ(w, z) {
 }
 
 /** A ground x as a round sample, Q16.16. */
-const sampleOfX = (L, x) => (mulFast(div((x + HALF_X) | 0, Math.imul(2, HALF_X)), LAST_Q) + Math.imul(L - SAMPLES, ONE)) | 0;
+const sampleOfX = (st, L, x) => (tapeAtX(x, st.i32[O_TACTICS + TAC_MARKET + MK_SAMPLES]) + Math.imul(L - SAMPLES, ONE)) | 0;
 /** A round sample (Q16.16) as t in a range starting at candle `first`. */
 const tOfSample = (first, rq) => ((rq - Math.imul(first, Math.imul(2, ONE)) + (ONE >> 1)) >> 1) | 0;
 const onRange = (n, t) => (t >= 0 && t <= Math.imul(n, ONE) ? 1 : 0);
@@ -6302,7 +6564,7 @@ const onRange = (n, t) => (t >= 0 && t <= Math.imul(n, ONE) ? 1 : 0);
  */
 function chartPoint(st, range, x, z, out) {
   const r = rangeOf(st, range | 0), w = windowScale(st);
-  const t = tOfSample(r.first, sampleOfX(r.L, x | 0));
+  const t = tOfSample(r.first, sampleOfX(st, r.L, x | 0));
   out[0] = t;
   out[1] = priceAtZ(w, z | 0);
   out[2] = onRange(r.n, t);
@@ -6358,7 +6620,7 @@ function chartView(st, range, out) {
     const aq = (Math.imul(a, ONE) + (ONE >> 1) - Math.imul(L - SAMPLES, ONE)) | 0;
     const front = CH_CANDLE + Math.imul(n, 4) + i;
     if (aq < 0 || aq > LAST_Q) out[front] = CH_NONE;
-    else out[front] = priceAtZ(w, frontAt(st, (mulFast(div(aq, LAST_Q), Math.imul(2, HALF_X)) - HALF_X) | 0));
+    else out[front] = priceAtZ(w, frontAt(st, xAtTape(aq, count)));
     if (rg === CHART_ROUND && out[front] !== CH_NONE) { lo = min(lo, out[front]); hi = max(hi, out[front]); }
   }
   out[CH_HIGH_T] = highT; out[CH_HIGH_P] = highP; out[CH_LOW_T] = lowT; out[CH_LOW_P] = lowP;
@@ -6397,6 +6659,7 @@ return { init: init, step: step, hash: hash, runScore: runScore,
          groundAt: groundAt, teleport: teleport,
          restart: restart, frontAt: frontAt, submitLiquidation: submitLiquidation, submitSample: submitSample,
          chartView: chartView, chartPoint: chartPoint, CH_WORDS: CH_WORDS,
+         candleView: candleView, CV_TOTAL: CV_TOTAL, terrainAt: terrainAt,
          submitLoad: submitLoad, heatOf: heatOf,
          create: create, WORDS: WORDS };
 })();

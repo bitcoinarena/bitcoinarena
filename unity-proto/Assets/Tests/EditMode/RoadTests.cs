@@ -220,4 +220,15 @@ public class TerritoryTests
             Assert.Less(Mathf.Abs(c.g - c.b), 0.12f, $"{lane} sieht nach Parteifarbe aus");
         }
     }
+
+    [Test]
+    public void WhatStandsOnARoadOverACandleStandsOnThePlateau()
+    {
+        // §4.15: the ribbon lies on the ground under the candles; the core's surface there is the plateau. Before, the deck
+        // was laid on SurfaceAt and climbed the candles (8.0 - 26.5 m of each 236 m lane).
+        Assert.AreEqual(2f, RoadNetwork.Rest(2f, 0.45f, 1f), 1e-5f, "on a 2 m plateau under the road");
+        Assert.AreEqual(0.45f, RoadNetwork.Rest(0f, 0.45f, 1f), 1e-5f, "on the deck off the candles");
+        Assert.AreEqual(0.225f, RoadNetwork.Rest(0f, 0.45f, 0.5f), 1e-5f, "faded across the shoulder");
+        Assert.AreEqual(0.45f, RoadNetwork.Rest(-1f, 0.45f, 1f), 1e-5f, "the deck over a crater, as before");
+    }
 }

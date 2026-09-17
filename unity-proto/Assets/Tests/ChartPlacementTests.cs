@@ -56,35 +56,38 @@ public class ChartPlacementTests
     }
 
     [Test]
-    public void OnTheDesktopTheChartIsTopRightUnderTheIconsAndCoversNoHudBox()
+    public void OnTheDesktopTheChartIsTopRightAboveTheButtonsAndCoversNoHudBox()
     {
-        // the owner 2026-09-17: top right on the desktop (T1), and "it must not cover the sound button and the other one at the
-        // top right". The editor has no touch screen, so the HUD lays out as a desktop here - the same branch a desktop
-        // browser takes. Measured before: the right column is 232 px wide at 1280x657 and the chart 461 px.
+        // the owner 2026-09-17: top right on the desktop (T1), "must not cover the sound button and the other one", then "have
+        // the HUD above the sound button and the other button on desktop". The editor has no touch screen, so the HUD lays
+        // out as a desktop here - the branch a desktop browser takes.
         Assert.IsFalse(TouchControls.TouchScreen, "the editor reports a touch screen: this is not the desktop layout");
         foreach (var (w, h) in new[] { (1024, 768), (844, 390), (800, 600) })
-            Debug.Log($"[topright] {w}x{h} top right: {_hud.ChartTopRight(w, h)} (no room: the chart stays under SIM)");
+            Debug.Log($"[topright] {w}x{h} top right: {_hud.ChartTopRight(w, h)}");
         foreach (var (w, h) in new[] { (1280, 657), (1280, 800), (1366, 768), (1440, 900), (1536, 864), (1920, 1080) })
         {
             Assert.IsTrue(_hud.ChartTopRight(w, h), $"{w}x{h}: a desktop window with room did not put the chart top right");
-            var r = ChartHud.DesktopPanelFor(w, h, _hud.ChartCorner(w, h));
+            var r = ChartHud.DesktopPanelFor(w, h);
             var base1 = ChartHud.BaseSize(w, h) * ChartHud.Scale;
-            var sound = TouchPad.RectFor(TouchPad.Pad.Sound, w, h);
-            var debug = TouchPad.RectFor(TouchPad.Pad.Debug, w, h);
+            var sound = _hud.SettingsRect(TouchPad.Pad.Sound, w, h);
+            var debug = _hud.SettingsRect(TouchPad.Pad.Debug, w, h);
+            var wanted = _hud.WantedBox(w, h);
             var manifest = _hud.ManifestBox(w, h);
             var head = _hud.HeadlineBox(w, h);
-            Debug.Log($"[topright] {w}x{h} chart={r} scale {r.width / base1.x * ChartHud.Scale:0.000}x{r.height / base1.y * ChartHud.Scale:0.000} sound={sound} debug={debug} "
-                      + $"manifest={manifest} headline={head} clock={_hud.BlockTimerBox(w, h)} runStopped={_hud.RunStoppedBox(w, h)}");
+            float m = TouchPad.Margin(w, h);
+            Debug.Log($"[topright] {w}x{h} chart={r} wanted={wanted} sound={sound} debug={debug} manifest={manifest} headline={head} clock={_hud.BlockTimerBox(w, h)}");
             Assert.IsTrue(r.xMin >= 0 && r.yMin >= 0 && r.xMax <= w && r.yMax <= h, $"{w}x{h}: chart {r} off screen");
-            Assert.AreEqual(w - TouchPad.Margin(w, h), r.xMax, 0.01f, $"{w}x{h}: not at the right margin");
-            Assert.GreaterOrEqual(r.y, Mathf.Max(sound.yMax, debug.yMax), $"{w}x{h}: chart {r} over the icons");
-            Assert.AreEqual(base1.x, r.width, 0.01f, $"{w}x{h}: not the 1.2x chart");
-            Assert.AreEqual(base1.y, r.height, 0.01f, $"{w}x{h}: not the 1.2x chart");
-            Assert.IsTrue(manifest.yMax <= h, $"{w}x{h}: the score column {manifest} runs off the screen");
-            var others = new (string, Rect)[] { ("sound", sound), ("debug", debug), ("wanted", _hud.WantedBox(w, h)), ("manifest", manifest),
+            Assert.AreEqual(w - m, r.xMax, 0.01f, $"{w}x{h}: not at the right margin");
+            Assert.AreEqual(m, r.y, 0.01f, $"{w}x{h}: not at the top margin");
+            Assert.LessOrEqual(r.yMax, Mathf.Min(sound.y, debug.y), $"{w}x{h}: the chart is not above the buttons");
+            Assert.AreEqual(base1.x, r.width, 0.01f); Assert.AreEqual(base1.y, r.height, 0.01f);
+            Assert.IsTrue(manifest.yMax <= h && sound.yMax <= h, $"{w}x{h}: the stack under the chart runs off the screen");
+            var others = new (string, Rect)[] { ("sound", sound), ("debug", debug), ("wanted", wanted), ("manifest", manifest),
                 ("headline", head), ("clock", _hud.BlockTimerBox(w, h)), ("liquidation", _hud.LiquidationBox(w, h)), ("runStopped", _hud.RunStoppedBox(w, h)),
                 ("health", _hud.HealthBox(w, h)), ("exposure", _hud.ExposureBox(w, h)), ("practice", _hud.PracticeBox(w, h)), ("sim", _hud.SimBox(w, h)) };
             foreach (var (name, o) in others) Assert.AreEqual(0f, ChartHud.Shared(r, o), $"{w}x{h}: chart {r} on {name} {o}");
+            Assert.AreEqual(0f, ChartHud.Shared(manifest, sound)); Assert.AreEqual(0f, ChartHud.Shared(manifest, debug));
+            Assert.AreEqual(0f, ChartHud.Shared(wanted, sound)); Assert.AreEqual(0f, ChartHud.Shared(wanted, debug));
         }
     }
 }
