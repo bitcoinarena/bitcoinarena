@@ -174,7 +174,7 @@ the owner ordered is in the state and not on the screen. Each is a client test.
   slot**, body from open-z to close-z (a 1 m plateau the war drives on, §4.15), wick from low to high
   (a column of light), green when close > open (a rising price - the bulls' ground) and red when it fell (the
   bears'). The newest candle, at the miner's end, is **forming**: it grows as samples arrive, and the
-  whole chart scrolls 3.3 m toward the post office per sample. From above - map, minimap, gunship - it
+  whole chart scrolls 2.878 m (half a slot) toward the post office per sample. From above - map, minimap, gunship - it
   reads as a TradingView chart with two armies on it; from the cab the ground under the truck is a red
   or a green band and the line ahead is the front. **The candles are terrain (the owner 2026-09-16 20:10:
   "make the candles drivable, a small ramp on every side, so they are not a foreign body but part of
@@ -608,7 +608,7 @@ which every node replays. **GAP**, all of it, **RULED HERE** where he gave no nu
   same or neighbouring lanes are one objective for weight and rest (the rules below never stack), and
   the client draws both names on the one marker. A single tall candle that is both the high and the low
   of the window (a first-minute chart) is one marker, `HIGH/LOW`.
-- **They move, because the chart moves**: the candle scrolls 0.65 m/s toward the post office (§4.15),
+- **They move, because the chart moves**: the candle scrolls 0.576 m/s toward the post office (§4.15),
   so the objective's x drifts with it and its lane changes every ~40 s; when its candle leaves the map,
   the next-best extreme in the window takes the name; a new high or low at the miner's end takes the
   name the tick its sample lands. **Re-read on the sample tick only** (every 5 s), never between: an
@@ -709,7 +709,7 @@ for, and the core does not draw it yet:**
 - **Sample cadence (RULED HERE): one sample per 5 s (300 ticks).** A sample shifts the whole tape one
   slot toward -x, 3.3 m of field (208 m / 63), so the front's shape **scrolls** left at 0.65 m/s (208 m / 63 per 5 s) and the
   newest price enters at the miner's end. That is inside a man's 2.8 m/s and a tank's 6.8; at one sample
-  a second the scroll would be 3.3 m/s and the men could never close on the line. 64 samples at 5 s is
+  a second the scroll would be 2.9 m/s and the men could barely close on the line. 64 samples at 5 s is
   5 min 20 s of price on the ground. A new sample can also move the window's low or high, and then the
   whole curve rescales in one tick - that is the market re-drawing the front, and it is allowed: the
   filter's 1.42 m/m limit is on the shape, not on how fast the shape changes.
@@ -934,11 +934,11 @@ a thing the truck drives on is settled state (multiplayer_p2p.md §0.5), so the 
   from above and from the cab. The glow to 6 m gives the eye the height; the ground gives the wheels
   what they can use.
 - **The glow** above the plateau, 1 m to 6 m, is light (§0.2): no collision, no rule reads it.
-- **It moves, so it moves smoothly.** The tape shifts one sample per 5 s (§4.13), which is a 3.3 m
+- **It moves, so it moves smoothly.** The tape shifts one sample per 5 s (§4.13), which is a 2.878 m
   jump in x - fine for a post, not for ground under a wheel. So the candle layer (and, for free, the
-  seam: `frontlineZ` is read at `x + offset`) carries a **continuous scroll**: `offset = -3.3 m x
+  seam: `frontlineZ` is read at `x + offset`) carries a **continuous scroll**: `offset = -2.878 m x
   (tick - sampleTick) / 300`, reset to 0 on the sample tick as the tape shifts. The chart glides toward
-  the post office at 0.65 m/s and never jumps. A **rescale** (a new window high or low) moves body
+  the post office at 0.576 m/s and never jumps. A **rescale** (a new window high or low) moves body
   ends in z; they **lerp to their targets over the 300 ticks** to the next sample, so an edge moves at
   most 0.2 m per tick in the worst case (a full ±45 m rescale) and a few centimetres in the usual one.
   State: `TAC_SAMPLE_TICK` (one word) and the previous 64-sample targets (a second tape, 64 words) -
@@ -946,7 +946,7 @@ a thing the truck drives on is settled state (multiplayer_p2p.md §0.5), so the 
 - **What it does to the war**, all of it emergent from rules already written:
   - **Hull-down** (§4.1): the overwatch tank's crest search finds a plateau edge as it finds a hill: a
     tank sits below the edge with its gun over it. The chart's steps are the war's positions, and they
-    walk 0.65 m/s toward the post office, so a hull-down tank re-reads its candidate and creeps with
+    walk 0.576 m/s toward the post office, so a hull-down tank re-reads its candidate and creeps with
     it (a step, not a fidget: the §0 wiggle row is measured with the scroll on).
   - **Cover** (§11.3): a plateau edge that stands between a man and the enemy is a **candle lip**, a
     third kind of cover place: one place every 4 m along the edge, at the foot of the ramp on the man's
@@ -1038,7 +1038,7 @@ fewer tanks.
 Ten seconds - two samples - of the tape as terrain: a 1 m plateau as wide as its 5.756 m slot, bodies
 touching into a raised ribbon, 4 m ramps at 25% on every free edge, no wall, no corridor, no solid, a
 wick of light, a glow to 6 m. 32 on the ground; the whole round in the HUD chart. Green
-up, red down. Scrolls 0.65 m/s toward the post office. Hull-down crests and candle-lip cover come with
+up, red down. Scrolls 0.576 m/s toward the post office. Hull-down crests and candle-lip cover come with
 it (§4.15).
 
 **Lead / momentum**

@@ -219,7 +219,7 @@ text; this section is what the protocol commits to.
   a hull-down tank sits behind a candle's edge, a rifleman hides under its
   lip, a heavy truck may not make the climb, and every node replays the same
   chart at the same metre. The chart spans the field between the two buildings and scrolls
-  continuously toward the post office at 0.65 m/s as samples arrive; its
+  continuously toward the post office at 0.58 m/s as samples arrive; its
   HIGH, LOW and the crossing of the round's OPEN are the war's objectives
   (WAR_TACTICS.md §4.11, §4.15).
 - **The price is shown to the cent**: `$75,000.02`, always, with the lead
