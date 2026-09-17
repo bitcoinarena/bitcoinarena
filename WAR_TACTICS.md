@@ -964,6 +964,16 @@ a thing the truck drives on is settled state (multiplayer_p2p.md §0.5), so the 
   pinned** - over 5 seeds x 3600 ticks every tank that is given a post reaches within 1.5 m of it in
   <= 1.2 x the flat-ground time, or the terrain is the fault, not the tank.
 - **The glow** above the plateau, 1 m to 6 m, is light (§0.2): no collision, no rule reads it.
+- **The glow must not become a wall (the owner 2026-09-17 15:10, first screenshot of the ribbon build):
+  from the cab, looking east along the chart, thirty-two translucent volumes stand one behind the
+  other and their alphas stack into an opaque red-green curtain across the whole battlefield - the war
+  is behind glass.** Rule (client, RULED HERE): the glow's alpha **falls with height** (30% at the
+  plateau to 0% at 6 m) and **with distance** (full inside 30 m of the camera, gone beyond 90 m), and
+  the renderer **caps the summed alpha along any ray at 50%** - beyond that, further candles add no
+  colour. From above (camera >= 20 m) the fall-off with distance is off and the chart is a chart; from
+  the cab the player sees the two or three candles around him glowing and the rest of the field
+  clear. The wicks stay visible at any distance (thin, no stacking). Test: from the truck's cab at any
+  point of the east drive, no pixel of the far half of the field is more than 50% tinted by glow.
 - **It moves, so it moves smoothly.** The tape shifts one sample per 5 s (§4.13), which is a 2.878 m
   jump in x - fine for a post, not for ground under a wheel. So the candle layer (and, for free, the
   seam: `frontlineZ` is read at `x + offset`) carries a **continuous scroll**: `offset = -2.878 m x
