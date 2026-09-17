@@ -509,10 +509,21 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // GROWS - only blocks above the one it holds are read - and every call on this path is bitcoind's RPC, awaited.
   // bitcoind's RPC when the caller gave one (the Daily does); a tool that gave only its cli keeps the cli, synchronous
   // as it always was - only an argument that is not a string is written as JSON for it.
-  const chainRpc = rpc || (async (method, params = []) => {
+  const chainCall = rpc || (async (method, params = []) => {
     const out = cli(method, ...params.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))));
     return /^[[{]/.test(out) ? JSON.parse(out) : out;
   });
+  // A BUSY BITCOIND IS ASKED AGAIN, NOT GIVEN UP ON. Measured on the Daily: with the node at ~5 cores of this host, one
+  // `getblockcount` came back "fetch failed" during stand-up and took the whole launcher down with it - the signer nodes
+  // then restart-looped. Reading the chain is not a decision; a read that fails is retried five times, 300 ms apart,
+  // and only then thrown, which is what a spawned bitcoin-cli did by being a fresh connection every time.
+  const chainRpc = async (method, params = []) => {
+    let last;
+    for (let i = 0; i < 5; i++) {
+      try { return await chainCall(method, params); } catch (e) { last = e; await new Promise((r) => setTimeout(r, 300)); }
+    }
+    throw last;
+  };
   async function viewToTip() {
     const from = Math.max(0, bondHeight - 20);
     const tip = Number(await chainRpc('getblockcount', []));
