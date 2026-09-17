@@ -495,26 +495,39 @@ export class Round {
         throw new Error(`expected tick ${next}, got ${at[0]}`);
     }
 
+    // ONE COMMIT FOR THE WHOLE BATCH, not one per row (the owner 2026-09-17 19:15, the ghost lag). Every `run` outside a
+    // transaction is its own commit, so a batch of six ticks with a sample and a tape cost seven disk syncs on the
+    // thread that also pushes other players' trucks: measured live on the Daily, `batch stored` held the loop 24-46 ms
+    // and the frames around it made stalls of 263-280 ms. The rows are the same rows and the checks above are
+    // unchanged; what changes is that they land together, which is also what a batch means.
+    this.db.exec('BEGIN IMMEDIATE');
     let fresh = 0;
-    for (let i = 0; i < b.ticks.length; i++) {
-      const words = new Uint8Array(new Int32Array(b.ticks[i]).buffer);
-      fresh += put.run(b.roundId, b.entryId, at[i], words).changes;
-    }
-    for (const [tick, size] of b.liquidations) putLiq.run(b.roundId, b.entryId, tick, size);
-    for (const [tick, fee, btc] of (b.loads || []))
-      putLoad.run(b.roundId, b.entryId, tick, fee, btc);
-    for (const [tick, price] of (b.samples || []))
-      putSample.run(b.roundId, b.entryId, tick, price);
-    for (const [tick, ...prices] of (b.tapes || []))
-      putTape.run(b.roundId, b.entryId, tick, new Uint8Array(new Int32Array(prices).buffer));
+    try {
+      for (let i = 0; i < b.ticks.length; i++) {
+        const words = new Uint8Array(new Int32Array(b.ticks[i]).buffer);
+        fresh += put.run(b.roundId, b.entryId, at[i], words).changes;
+      }
+      for (const [tick, size] of b.liquidations) putLiq.run(b.roundId, b.entryId, tick, size);
+      for (const [tick, fee, btc] of (b.loads || []))
+        putLoad.run(b.roundId, b.entryId, tick, fee, btc);
+      for (const [tick, price] of (b.samples || []))
+        putSample.run(b.roundId, b.entryId, tick, price);
+      for (const [tick, ...prices] of (b.tapes || []))
+        putTape.run(b.roundId, b.entryId, tick, new Uint8Array(new Int32Array(prices).buffer));
 
-    if (!seen) {
-      const n = this.db.prepare(
-        'SELECT COUNT(*) c FROM batches WHERE round_id = ? AND entry_id = ?')
-        .get(b.roundId, b.entryId).c;
-      this.db.prepare(
-        'INSERT INTO batches (round_id, entry_id, seq, batch_id, bytes) VALUES (?, ?, ?, ?, ?)')
-        .run(b.roundId, b.entryId, n, id, bytes);
+      if (!seen) {
+        const n = this.db.prepare(
+          'SELECT COUNT(*) c FROM batches WHERE round_id = ? AND entry_id = ?')
+          .get(b.roundId, b.entryId).c;
+        this.db.prepare(
+          'INSERT INTO batches (round_id, entry_id, seq, batch_id, bytes) VALUES (?, ?, ?, ?, ?)')
+          .run(b.roundId, b.entryId, n, id, bytes);
+      }
+      this.db.exec('COMMIT');
+    } catch (e) {
+      // NOTHING HALF-STORED: a batch that threw leaves the store as it was, and the client is told, as before.
+      try { this.db.exec('ROLLBACK'); } catch { /* already rolled back */ }
+      throw e;
     }
     return fresh;
   }
