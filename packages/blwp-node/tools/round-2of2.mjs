@@ -329,15 +329,29 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // round whose census height is below the signer nodes' view gets its own - from 20
   // below that height to the tip, read once: its bonds and beacon are deep.
   const older = new Map();
+  // AND IT IS READ OFF THE LOOP (the owner 2026-09-17 19:15, the ghost lag). Measured live with the daemon's own timing:
+  // one close held the event loop 7,627 ms in `beacon` - this read, two synchronous bitcoin-cli spawns a block from
+  // twenty below an old round's census to the tip, on the thread that answers /play and pushes a pictured truck. The
+  // read now runs on bitcoind's RPC without holding the loop, once per height; until it is there the round is PENDING,
+  // which every reader of this view refuses on, and the close's own cadence asks again. Nothing is answered from a
+  // view that is not the round's own.
+  const reading = new Map();
   const chainFor = ({ contract } = {}) => {
     if (!onChain || !censusView || !contract) return censusView;
     const from = Math.max(0, contract.censusHeight - 20);
     if (from >= censusView.firstHeight) return censusView;
-    if (!older.has(from)) {
-      older.set(from, onChain.blocksFrom(from, onChain.height()));
-      console.log(`[view] a round with census ${contract.censusHeight} reads its own view from ${from}; the signer nodes' begins at ${censusView.firstHeight}`);
+    if (older.has(from)) return older.get(from);
+    if (!reading.has(from)) {
+      console.log(`[view] a round with census ${contract.censusHeight} needs its own view from ${from}; the signer nodes' begins at ${censusView.firstHeight} - reading it without holding the loop`);
+      reading.set(from, (async () => {
+        const tip = Number(await chainRpc('getblockcount', []));
+        const got = await blocksOver(chainRpc, from, tip);
+        older.set(from, got);
+        console.log(`[view] the view from ${from} is read: ${got.blocks.length} blocks`);
+      })().catch((e) => console.error(`[view] the view from ${from} could not be read: ${e.message}`))
+        .finally(() => reading.delete(from)));
     }
-    return older.get(from);
+    return { pending: true };
   };
   // THE COMMITTEE'S ONE LIGHTNING ENDPOINT, OPT-IN (§23.1): the four BLWP_LND*
   // settings, the same parse src/main.js uses, and the same port for both

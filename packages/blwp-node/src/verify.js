@@ -83,6 +83,10 @@ function beaconFor(randomnessFor, contract, roundIdBytes, entry, entryId, chainF
   // has already run, and refusing here would refuse every node that closes
   // without one.
   const view = chainFor ? chainFor({ contract, roundIdBytes }) : null;
+  // A VIEW STILL BEING READ IS NOT A VIEW, AND NOT "NO CHAIN" EITHER: this node has a chain and has not read this
+  // round's part of it yet, so it says so and is asked again rather than passing the beacon unchecked.
+  if (view && view.pending)
+    return { ok: false, why: 'this node is still reading its chain view for that round' };
   if (view && Array.isArray(view.blocks) && view.blocks.length) {
     const headers = { headers: view.blocks.map((b) => b.header), firstHeight: view.firstHeight };
     const named = beaconFromChain(contract, headers);
