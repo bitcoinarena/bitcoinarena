@@ -199,6 +199,34 @@ public class ChartHudTests
     }
 
     [Test]
+    public void TheIdOfATruckPinnedTopLeftWithTheRowUnderItTaken()
+    {
+        // B's screen on build 0.0.1461+placement: A's truck pinned to the plot's top edge at the left, B at the gate. Logged
+        // boxes; the GATE line from the logged gate pixel 873.7; the symbol row above the plot. A's id stayed right of its dot
+        // (657.7,501.5) and lay on OPEN 122.1 px² / 68 drawn pixels.
+        var plot = new Rect(591.2f, 511.7f, 303.2f, 104.6f);
+        var dot = new Vector2(653.7f, 511.65f);
+        float w = 62.6f, h = 20.3f;
+        var names = new[] { "symbol", "price", "legend", "open", "youLabel", "youMark", "high", "gate", "gateLine", "lastTag", "ghostDot" };
+        var avoid = new[]
+        {
+            new Rect(593.2f, 439.2f, 180f, h), new Rect(593.2f, 459.2f, 291.4f, h), new Rect(593.2f, 479.4f, 117.2f, h),
+            new Rect(713.2f, 498.6f, 42.5f, h), new Rect(805.2f, 516.7f, 32.5f, h), new Rect(859.7f, 507.7f, 13.4f, 10.5f),
+            new Rect(777.7f, 493.6f, 116.7f, h), new Rect(839.7f, 511.7f, 39.7f, h), new Rect(872.7f, 511.7f, 2f, 104.6f),
+            new Rect(896.4f, 508.7f, 73.8f, h), new Rect(dot.x - 3f, dot.y - 3f, 6f, 6f),
+        };
+        string report = ChartHud.GhostSlotReport(plot, dot, w, h, avoid, names);
+        TestContext.Out.WriteLine("[slots] " + report);
+        var r = ChartHud.PlaceGhostLabel(plot, dot, w, h, avoid, out bool placed);
+        TestContext.Out.WriteLine($"[slots] placed={placed} box={r.x:0.0},{r.y:0.0},{r.width:0.0},{r.height:0.0} open={ChartHud.Shared(r, avoid[3]):0.0}");
+        // Before the further rows: level and above were off the plot, below blocked end to end, and the id stayed right of its
+        // dot on OPEN (123.5 px² of box). With them it must find a box inside the plot on none of the chrome.
+        Assert.IsTrue(placed, "no free box even with the further rows");
+        foreach (var a in avoid) Assert.AreEqual(0f, ChartHud.Shared(r, a), $"id {r} shares area with {a}");
+        Assert.IsTrue(r.x >= plot.x && r.xMax <= plot.xMax && r.y >= plot.y && r.yMax <= plot.yMax, $"id {r} off the plot {plot}");
+    }
+
+    [Test]
     public void OpenKeepsOffThePriceRowTheLegendAndTheLabels()
     {
         // The boxes as build 0.0.1459 logged them on a 1280x657 player (panel 587,437,384,197): OPEN's old place above its

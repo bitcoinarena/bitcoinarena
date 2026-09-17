@@ -91,6 +91,8 @@ public class ChartHud : MonoBehaviour
         public readonly List<Rect> GhostDotBoxes = new List<Rect>(), GhostLabelBoxes = new List<Rect>();
         /// <summary>Other players' id labels that found no free box and stayed right of their dot.</summary>
         public int GhostsUnplaced;
+        /// <summary>For each ghost, the rows its label tried and what blocked them (GhostSlotReport).</summary>
+        public readonly List<string> GhostSlots = new List<string>();
         /// <summary>False when no place for the YOU label clears every box, and it stayed up and right of the dot.</summary>
         public bool YouPlaced;
         /// <summary>False when no place for the OPEN label clears every box, and it stayed above its line at the left.</summary>
@@ -304,7 +306,7 @@ public class ChartHud : MonoBehaviour
             $"youLabelShares={Shares(f.YouBox, f)}", $"youMarkShares={Shares(f.YouMarkBox, f)}",
             $"lastTagBox={B(f.LastTagBox)}", $"gateLineBox={B(f.GateLineBox)}",
             $"ghostLabelBoxes={string.Join("|", f.GhostLabelBoxes.ConvertAll(B))}", $"ghostDotBoxes={string.Join("|", f.GhostDotBoxes.ConvertAll(B))}",
-            $"ghostsUnplaced={f.GhostsUnplaced}", $"ghostLabelShares={string.Join("|", f.GhostLabelBoxes.ConvertAll(r => GhostShares(r, f)))}", $"highBox={B(f.HighBox)}", $"lowBox={B(f.LowBox)}", $"gateBox={B(f.GateBox)}",
+            $"ghostsUnplaced={f.GhostsUnplaced}", $"ghostSlots={string.Join(" || ", f.GhostSlots)}", $"ghostLabelShares={string.Join("|", f.GhostLabelBoxes.ConvertAll(r => GhostShares(r, f)))}", $"highBox={B(f.HighBox)}", $"lowBox={B(f.LowBox)}", $"gateBox={B(f.GateBox)}",
             $"openShares={OpenShares(f)}", $"openPlaced={f.OpenPlaced}",
         }));
     }
@@ -350,6 +352,56 @@ public class ChartHud : MonoBehaviour
         return new Rect(dot.x + 6f, dot.y - height, width, height);
     }
 
+    /// <summary>The rows PlaceGhostLabel tries for an id beside <paramref name="dot"/>, in order.</summary>
+    public static float[] GhostRows(Vector2 dot, float height, Rect plot)
+    {
+        // Level, above, below - and then, measured on 2026-09-17 with a truck pinned to the plot's top-left and the one row
+        // under it taken end to end (OPEN, YOU, GATE: no free start), further rows below and above the dot, one label and 3 px
+        // apart, while inside the plot. The dot does not move; only its label looks further.
+        var rows = new List<float> { dot.y - height * 0.5f, dot.y - 3f - height, dot.y + 3f };
+        for (int k = 1; ; k++)
+        {
+            float below = dot.y + 3f + k * (height + 3f), above = dot.y - 3f - height - k * (height + 3f);
+            bool b = below + height <= plot.yMax, a = above >= plot.y;
+            if (!b && !a) break;
+            if (b) rows.Add(below);
+            if (a) rows.Add(above);
+        }
+        return rows.ToArray();
+    }
+
+    /// <summary>
+    /// WHAT PlaceGhostLabel CONSIDERED, row by row: off the plot, or which boxes block which label starts (x ranges) and the
+    /// first free start rightwards and leftwards of the dot, or none. For the log and the tests - it places nothing.
+    /// </summary>
+    public static string GhostSlotReport(Rect plot, Vector2 dot, float width, float height, Rect[] avoid, string[] names)
+    {
+        var rows = new List<string>();
+        foreach (float y in GhostRows(dot, height, plot))
+        {
+            if (y < plot.y || y + height > plot.yMax) { rows.Add($"y{y:0.0}:off-plot"); continue; }
+            var blocked = new List<string>();
+            for (int i = 0; i < avoid.Length; i++)
+            {
+                var a = avoid[i];
+                if (a.width <= 0f || a.height <= 0f || a.yMax <= y || a.y >= y + height) continue;
+                float x0 = Mathf.Max(plot.x, a.x - width), x1 = Mathf.Min(plot.xMax - width, a.xMax);
+                if (x1 > x0) blocked.Add($"{(i < names.Length ? names[i] : "?")}[{x0:0.0}-{x1:0.0}]");
+            }
+            string right = "none", left = "none";
+            for (float d = 0f; d <= plot.width; d += 4f)
+            {
+                float xr = dot.x + 4f + d, xl = dot.x - 4f - width - d;
+                bool Free(float x) { if (x < plot.x || x + width > plot.xMax) return false; var r = new Rect(x, y, width, height);
+                    foreach (var a in avoid) if (Shared(r, a) > 0f) return false; return true; }
+                if (right == "none" && Free(xr)) right = $"{xr:0.0}";
+                if (left == "none" && Free(xl)) left = $"{xl:0.0}";
+            }
+            rows.Add($"y{y:0.0}:blocked={(blocked.Count == 0 ? "-" : string.Join("+", blocked))};right={right};left={left}");
+        }
+        return string.Join(" | ", rows);
+    }
+
     /// <summary>
     /// Where another player's id label goes: level with its dot, then above, then below; along each row rightwards then
     /// leftwards from the dot in 4 px steps; the first box inside the plot (so never on the price axis and its last-price tag)
@@ -359,7 +411,7 @@ public class ChartHud : MonoBehaviour
     /// </summary>
     public static Rect PlaceGhostLabel(Rect plot, Vector2 dot, float width, float height, Rect[] avoid, out bool placed)
     {
-        foreach (float y in new[] { dot.y - height * 0.5f, dot.y - 3f - height, dot.y + 3f })
+        foreach (float y in GhostRows(dot, height, plot))
         {
             if (y < plot.y || y + height > plot.yMax) continue;
             for (float d = 0f; d <= plot.width; d += 4f)
@@ -561,7 +613,7 @@ public class ChartHud : MonoBehaviour
 
         // 5. ghosts: the dot where the core maps the other truck, its id label clear of the chrome. Measured before the rule:
         // the id drawn right of its dot ran over GATE's label and line and past the plot onto the last-price tag.
-        f.GhostDotBoxes.Clear(); f.GhostLabelBoxes.Clear();
+        f.GhostDotBoxes.Clear(); f.GhostLabelBoxes.Clear(); f.GhostSlots.Clear();
         foreach (var g in f.Ghosts) f.GhostDotBoxes.Add(new Rect(g.At.x - 3f, g.At.y - 3f, 6f, 6f));
         var taken = new List<Rect> { f.SymbolBox, f.PriceBox, f.LegendBox, f.OpenBox, f.YouBox, f.YouMarkBox, f.HighBox, f.LowBox,
                                      f.GateBox, f.GateLineBox, f.LastTagBox };
@@ -569,7 +621,12 @@ public class ChartHud : MonoBehaviour
         for (int i = 0; i < f.Ghosts.Count; i++)
         {
             var g = f.Ghosts[i];
-            var label = PlaceGhostLabel(p, g.At, _text.CalcSize(new GUIContent(g.Text)).x, lh, taken.ToArray(), out bool placed);
+            float gw = _text.CalcSize(new GUIContent(g.Text)).x;
+            var label = PlaceGhostLabel(p, g.At, gw, lh, taken.ToArray(), out bool placed);
+            var slotNames = new List<string> { "symbol", "price", "legend", "open", "youLabel", "youMark", "high", "low", "gate", "gateLine", "lastTag" };
+            for (int j = 0; j < f.GhostDotBoxes.Count; j++) slotNames.Add($"ghostDot{j}");
+            for (int j = 0; j < f.GhostLabelBoxes.Count; j++) slotNames.Add($"ghostLabel{j}");
+            f.GhostSlots.Add(GhostSlotReport(p, g.At, gw, lh, taken.ToArray(), slotNames.ToArray()));
             f.GhostLabelBoxes.Add(label);
             if (!placed) f.GhostsUnplaced++;
             taken.Add(label);
