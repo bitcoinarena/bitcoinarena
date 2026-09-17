@@ -323,7 +323,7 @@ mergeInto(LibraryManager.library, {
     // THE TICK CLOCK THIS BROWSER'S TABS SHARE, for the debug label over a ghost (the owner 2026-09-17 19:15): one per
     // page, kept across rounds.
     if (!Module.blwpTickClock && BLWPCLIENT.tickClock) {
-      try { Module.blwpTickClock = BLWPCLIENT.tickClock(); } catch (e) { Module.blwpTickClock = null; }
+      try { Module.blwpTickClock = BLWPCLIENT.tickClock({ Channel: typeof BroadcastChannel !== 'undefined' ? BroadcastChannel : null }); } catch (e) { Module.blwpTickClock = null; }
     }
     var net = Module.blwpNet = {
       // `state` here is ONLY the word before a client exists - opening, or
