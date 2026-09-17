@@ -1436,6 +1436,10 @@ public class DriveHud : MonoBehaviour
         if (ChartTopRight(w, h) && !ScoreUnderRow(w, h))
         {
             float m = TouchPad.Margin(w, h);
+            // AS WIDE AS IT WAS BEFORE THE CHART SHRANK (live 0.0.1508, 1280x656 with pads): its left edge is the headline gap's
+            // right edge, which is the chart's left edge, so the 30% smaller chart (16:01) cut the column down and its lines
+            // were clipped to "drop-off" and "0". Down here it keeps the strip the full-size chart left it.
+            if (!Mobile) left = Mathf.Min(left, ChartPanel(w, h, ChartHud.BaseSize(w, h) * ChartHud.Scale).x - Mathf.Max(10f, h * 0.022f));
             float right = PadsShown ? Mathf.Min(TouchPad.RectFor(TouchPad.Pad.Handbrake, w, h).x, TouchPad.RectFor(TouchPad.Pad.Up, w, h).x) - pad * 0.5f : w - pad;
             return new Rect(left, h - m - height, Mathf.Max(0f, right - left), height);
         }
@@ -1486,10 +1490,11 @@ public class DriveHud : MonoBehaviour
     /// otherwise to the bottom right, left of the pad block. The chart's height gives way (never its corner) where even
     /// then the column is short.
     /// </summary>
-    public Rect ChartPanel(int w, int h)
+    public Rect ChartPanel(int w, int h) => ChartPanel(w, h, CornerFullSize(w, h));
+
+    Rect ChartPanel(int w, int h, Vector2 full)
     {
         float m = TouchPad.Margin(w, h), pad = Mathf.Max(10f, h * 0.025f);
-        var full = CornerFullSize(w, h);
         bool under = ScoreUnderRow(w, h);
         float bottom = PadsShown ? TouchPad.RectFor(TouchPad.Pad.Up, w, h).y - pad * 0.6f : h - m;
         // the score column at the bottom right, when it is there, is below the chart's row too (measured at 1000x360

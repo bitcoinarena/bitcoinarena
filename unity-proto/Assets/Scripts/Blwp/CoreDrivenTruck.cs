@@ -616,6 +616,7 @@ namespace Blwp
             if (ShouldStop(Driving, BlwpNet.Ended)) { StopDriving(BlwpNet.Ending()); return; }
             if (ResumesDriving(Driving, _stoppedAtEnd, BlwpNet.Live)) TakeBack();
             if (!Driving) return;
+            FreshTape();
 
             // A fixed step, caught up in whole ticks. Rendering interpolates
             // between them; the simulation never sees a partial one.
@@ -649,6 +650,54 @@ namespace Blwp
         }
 
         MarketFeed _feed;
+
+        // THE LIVE TAPE, FRESH FOR EVERY CORE (the owner 2026-09-17 16:44 / 16:46: the same seeded candles on every reload;
+        // "the prices must be 100% current, not pre-seeded and cached"). A new core - the page's first, a roll-out restart,
+        // the network's init for a run - shows as the tick going back; each one asks Binance for the last 320 s at that
+        // moment and hands the 64 five-second prices to the core before the next tick, while no live sample has landed.
+        // Nothing is kept between cores. The seeded tape is only what stands when the answer never comes.
+        int _life, _lastTick = -1, _tapeLife = -1;
+        int[] _tapeWords;
+        public int TapesSubmitted { get; private set; }
+
+        void FreshTape()
+        {
+            int tick = BlwpCore.Tick;
+            if (_lastTick < 0 || tick < _lastTick)
+            {
+                _life++; _tapeWords = null;
+                StartCoroutine(FetchTape(_life));
+            }
+            _lastTick = tick;
+            if (_tapeWords != null && _tapeLife == _life)
+            {
+                var words = _tapeWords; _tapeWords = null;
+                if (BlwpCore.SamplesTaken == 0 && BlwpCore.SubmitTape(words))
+                {
+                    TapesSubmitted++;
+                    Debug.Log($"[tape] live tape handed to the core at tick {tick}: ${words[0] / (double)BlwpCore.PriceUnit:0.00} .. ${words[63] / (double)BlwpCore.PriceUnit:0.00}");
+                }
+                else Debug.Log($"[tape] live tape not taken at tick {tick} (samples {BlwpCore.SamplesTaken}): the live samples carry on");
+            }
+        }
+
+        System.Collections.IEnumerator FetchTape(int life)
+        {
+            using (var req = UnityEngine.Networking.UnityWebRequest.Get(LiveTape.Url))
+            {
+                req.timeout = 5;
+                yield return req.SendWebRequest();
+                if (life != _life) yield break;                        // a newer core asked since
+                if (req.result != UnityEngine.Networking.UnityWebRequest.Result.Success)
+                {
+                    Debug.Log($"[tape] no live history ({req.error}): the seeded tape stands until the live samples replace it");
+                    yield break;
+                }
+                var words = LiveTape.FromKlines(req.downloadHandler.text);
+                if (words == null) { Debug.Log("[tape] the live history does not cover 5 minutes: the seeded tape stands"); yield break; }
+                _tapeWords = words; _tapeLife = life;
+            }
+        }
         /// <summary>Live price samples handed to the core this session.</summary>
         public int SamplesSubmitted { get; private set; }
 

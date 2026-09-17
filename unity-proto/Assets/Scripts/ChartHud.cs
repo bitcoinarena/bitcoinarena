@@ -40,6 +40,8 @@ public class ChartHud : MonoBehaviour
     Rect _sim;
     SplashScreen _splash;
     SpectatorCamera _spectator;
+    /// <summary>Chart frames painted while the free camera was flying (for the probe).</summary>
+    public int SpectateFrames { get; private set; }
     Blwp.GhostField _field;
     float _toldAt = -99f;
     int _toldRange = -1;
@@ -377,7 +379,9 @@ public class ChartHud : MonoBehaviour
         if (_splash == null) _splash = FindFirstObjectByType<SplashScreen>();
         if (_spectator == null) _spectator = FindFirstObjectByType<SpectatorCamera>();
         if (_splash != null && _splash.Showing) return;
-        if (_spectator != null && _spectator.Active) return;
+        // ON IN SPECTATE (the owner 2026-09-17 16:38: "put the HUD back onto spectate"): the same chart as the drive, in the same
+        // panel, over the free camera - the page's core keeps stepping while it flies, so the chart moves there too.
+        if (_spectator != null && _spectator.Active) SpectateFrames++;
         if (loadout != null && loadout.IsOpen) return;
         if (Blwp.BlwpCore.ChartView(Range, _view) == 0) return;
 
@@ -417,7 +421,7 @@ public class ChartHud : MonoBehaviour
         string a(int s) { int b = L.CH_ASSAULT + s * L.CH_ASSAULT_WORDS; return $"{_view[b]}/{_view[b + 1]}"; }
         Debug.Log("[chart] " + string.Join(" ", new[]
         {
-            $"range={RangeName(f.Range)}", $"candles={f.Candles}", $"first={f.First}", $"samples={_view[L.CH_SAMPLES]}",
+            $"range={RangeName(f.Range)}", $"spectate={(_spectator != null && _spectator.Active ? 1 : 0)}", $"candles={f.Candles}", $"first={f.First}", $"samples={_view[L.CH_SAMPLES]}",
             $"lo={_view[L.CH_LO]}", $"hi={_view[L.CH_HI]}", $"open={_view[L.CH_OPEN]}", $"last={_view[L.CH_LAST]}",
             $"lead={_view[L.CH_LEAD]}", $"leadBp={_view[L.CH_LEAD_BP]}", $"trend={_view[L.CH_TREND]}", $"strength={_view[L.CH_STRENGTH]}",
             $"youT={_view[L.CH_YOU_T]}", $"youP={_view[L.CH_YOU_P]}", $"youOn={_view[L.CH_YOU_ON]}",

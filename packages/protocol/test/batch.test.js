@@ -117,10 +117,11 @@ test('the ceiling the encoder sets is the one the transport is built on', () => 
     liquidations: Array.from({ length: MAX_BATCH_TICKS }, (_, i) => [i, 1]),
     loads: Array.from({ length: MAX_BATCH_TICKS }, (_, i) => [i, 1, 0]),
     samples: Array.from({ length: MAX_BATCH_TICKS }, (_, i) => [i, 1]),
+    tapes: [[0, ...Array.from({ length: 64 }, () => 1)]],
   };
   assert.equal(encodeInputBatch(b).length, MAX_INPUT_BATCH_BYTES);
-  // + 2 + 65535 x 8 for the price samples (2026-09-17)
-  assert.equal(MAX_INPUT_BATCH_BYTES, 2621509 + 2 + MAX_BATCH_TICKS * 8);
+  // + 2 + 65535 x 8 for the price samples and + 2 + 260 for the one live tape a batch may carry (2026-09-17)
+  assert.equal(MAX_INPUT_BATCH_BYTES, 2621509 + 2 + MAX_BATCH_TICKS * 8 + 2 + 260);
 });
 
 test('a tick costs twenty bytes, a liquidation eight and a load twelve', () => {
@@ -161,4 +162,28 @@ test('price samples are carried, sorted, committed to, and a batch without them 
   // one encoding per batch: an explicitly empty sample vector is not canonical
   const withEmpty = new Uint8Array([...encodeInputBatch(plain), 0, 0]);
   assert.throws(() => decodeInputBatch(withEmpty));
+});
+
+/**
+ * THE LIVE TAPE (the owner 2026-09-17 16:44: reload showed the same seeded candles). The 64 live prices a page hands its core
+ * before any sample: one a batch, kept in their own order, committed to, and absent from a batch without one.
+ */
+test('a live tape is carried in its own order, one a batch, and a batch without one keeps its bytes', () => {
+  const prices = Array.from({ length: 64 }, (_, i) => 19640000 + ((i * 7919) % 5000));
+  const plain = sample();
+  assert.equal(toHex(encodeInputBatch({ ...plain, tapes: [] })), toHex(encodeInputBatch(plain)));
+  const taped = { ...sample(), tapes: [[120, ...prices]] };
+  const bytes = encodeInputBatch(taped);
+  assert.equal(bytes.length - encodeInputBatch(plain).length, 2 + 2 + 4 + 64 * 4, 'the empty sample vector, the tape vector and one tape');
+  const back = decodeInputBatch(bytes);
+  assert.deepEqual(back.tapes, [[120, ...prices]]);
+  assert.deepEqual(back.samples, []);
+  assert.equal(toHex(encodeInputBatch(back)), toHex(bytes));
+  const swapped = prices.slice(); [swapped[0], swapped[1]] = [swapped[1], swapped[0]];
+  assert.notEqual(toHex(batchId(taped)), toHex(batchId({ ...sample(), tapes: [[120, ...swapped]] })), 'the order of the prices is not committed to');
+  assert.throws(() => encodeInputBatch({ ...sample(), tapes: [[120, ...prices], [121, ...prices]] }), /at most one tape/);
+  assert.throws(() => encodeInputBatch({ ...sample(), tapes: [[120, ...prices.slice(1)]] }), /64 prices/);
+  // samples and a tape together
+  const both = { ...sample(), samples: [[300, 19650000]], tapes: [[120, ...prices]] };
+  assert.deepEqual(decodeInputBatch(encodeInputBatch(both)).samples, [[300, 19650000]]);
 });

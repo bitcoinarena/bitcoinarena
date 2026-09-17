@@ -207,11 +207,13 @@ export function flatten(t) {
   const liquidations = [];
   const loads = [];
   const samples = [];
+  const tapes = [];
   for (const b of t.batches) {
     for (const row of b.ticks) ticks.push(row);
     for (const l of b.liquidations) liquidations.push(l);
     for (const l of (b.loads || [])) loads.push(l);
     for (const l of (b.samples || [])) samples.push(l);
+    for (const l of (b.tapes || [])) tapes.push(l);
   }
   const firstTick = t.batches.length ? t.batches[0].firstTick : 0;
   liquidations.sort((a, c) => a[0] - c[0] || a[1] - c[1]);
@@ -223,6 +225,7 @@ export function flatten(t) {
     liquidations: liquidations.map(([at, size]) => [at - firstTick, size]),
     loads: loads.map(([at, fee, btc]) => [at - firstTick, fee, btc]),
     samples: samples.map(([at, price]) => [at - firstTick, price]),
+    tapes: tapes.sort((a, c) => a[0] - c[0]).map(([at, ...prices]) => [at - firstTick, ...prices]),
   };
 }
 

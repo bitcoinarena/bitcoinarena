@@ -71,6 +71,17 @@ mergeInto(LibraryManager.library, {
     return ok;
   },
 
+  // THE LIVE TAPE (the owner 2026-09-17 16:44: reload showed the same seeded candles): 64 live prices, oldest first, in the
+  // tape's unit, handed to the core before any sample - and to the network beside the tick, like a sample.
+  BlwpSubmitTape: function (ptr, n) {
+    var b = Module.blwp;
+    if (!b || !b.core.submitTape || (n | 0) !== 64) return 0;
+    var prices = Array.prototype.slice.call(new Int32Array(Module.HEAP32.buffer, ptr, 64));
+    var ok = b.core.submitTape(b.st, prices) ? 1 : 0;
+    if (ok && Module.blwpNet && Module.blwpNet.tape) Module.blwpNet.tape(prices);
+    return ok;
+  },
+
   BlwpFrontlineZ: function (x) {
     var b = Module.blwp;
     if (!b || !b.core.frontAt) return 0;
@@ -550,6 +561,11 @@ mergeInto(LibraryManager.library, {
     net.sample = function (price) {
       if (!net.client) return;
       net.client.submitSample(price);
+    };
+
+    net.tape = function (prices) {
+      if (!net.client) return;
+      net.client.submitTape(prices);
     };
 
     net.tick = function (words) {

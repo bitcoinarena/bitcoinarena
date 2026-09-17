@@ -37,6 +37,7 @@ namespace Blwp
         [DllImport("__Internal")] private static extern int BlwpReadImpact();
         [DllImport("__Internal")] private static extern int BlwpSubmitLoad(int feeSats, int btcHundredths);
         [DllImport("__Internal")] private static extern int BlwpSubmitSample(int price);
+        [DllImport("__Internal")] private static extern int BlwpSubmitTape(IntPtr ptr, int n);
         [DllImport("__Internal")] private static extern int BlwpChartView(int range, IntPtr ptr, int cap);
         [DllImport("__Internal")] private static extern int BlwpChartPoint(int range, int x, int z, IntPtr ptr);
         [DllImport("__Internal")] private static extern int BlwpCandleView(IntPtr ptr, int cap);
@@ -60,6 +61,7 @@ namespace Blwp
         private static int BlwpReadImpact() => 0;
         private static int BlwpSubmitLoad(int f, int b) => 0;
         private static int BlwpSubmitSample(int price) => 0;
+        private static int BlwpSubmitTape(IntPtr ptr, int n) => 0;
         private static int BlwpChartView(int r, IntPtr ptr, int cap) => 0;
         private static int BlwpChartPoint(int r, int x, int z, IntPtr ptr) => 0;
         private static int BlwpCandleView(IntPtr ptr, int cap) => 0;
@@ -348,6 +350,21 @@ namespace Blwp
             int word = PriceWord(usd);
             return Available && word > 0 && BlwpSubmitSample(word) == 1;
         }
+
+        /// <summary>
+        /// THE LIVE TAPE: the last 64 prices, 5 s apart, oldest first, in the tape's unit, handed to the core before any
+        /// sample (the owner 2026-09-17 16:44: "reload always shows the same world candles - seeded tape is fallback only").
+        /// </summary>
+        public static bool SubmitTape(int[] words)
+        {
+            if (!Available || words == null || words.Length != 64) return false;
+            var h = GCHandle.Alloc(words, GCHandleType.Pinned);
+            try { return BlwpSubmitTape(h.AddrOfPinnedObject(), 64) == 1; }
+            finally { h.Free(); }
+        }
+
+        /// <summary>Samples the core has taken this round (MK_SAMPLES).</summary>
+        public static int SamplesTaken => _state[Layout.O_TACTICS + Layout.TAC_MARKET + Layout.MK_SAMPLES];
 
         public static bool SubmitLoad(long feeSats, int btcHundredths)
         {

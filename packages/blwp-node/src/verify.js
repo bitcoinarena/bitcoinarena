@@ -650,7 +650,7 @@ export class Verifier {
     if (reach <= last) return answer;
     const prefix = { ticks: full.ticks.filter((t) => t.tick < last),
       liquidations: full.liquidations.filter((l) => l[0] < last), loads: full.loads.filter((l) => l[0] < last),
-      samples: (full.samples || []).filter((l) => l[0] < last) };
+      samples: (full.samples || []).filter((l) => l[0] < last), tapes: (full.tapes || []).filter((l) => l[0] < last) };
     return this.pool.submit({ core: this.#coreOf(roundIdBytes), key: `${hex(roundIdBytes)}:${hex(entryId)}:stopped`, objected: false,
       transcript: prefix, entry, options });
   }

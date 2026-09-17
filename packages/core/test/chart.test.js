@@ -46,12 +46,16 @@ test('ROUND is the lead: from the open candle, one more staircase candle every t
   let o = view(st, C.CHART_ROUND);
   assert.equal(o[C.CH_CANDLES], 1);
   assert.equal(candle(o, 0)[3], o[C.CH_OPEN], 'the round starts on the open');
-  const open = o[C.CH_OPEN], before = st.tape[62];
+  const seededOpen = o[C.CH_OPEN], seededBefore = st.tape[62];
   const prices = [];
-  for (let k = 0; k < 90; k++) { const p = open + ((k * 7919) % 4001) - 1500; prices.push(p); submitSample(st, p); }
+  for (let k = 0; k < 90; k++) { const p = seededOpen + ((k * 7919) % 4001) - 1500; prices.push(p); submitSample(st, p); }
   o = view(st, C.CHART_ROUND);
   assert.equal(o[C.CH_CANDLES], 1 + 45, '90 samples are 45 candles after the open candle');
-  const round = [before, open, ...prices];   // what the round saw, tape and memory together
+  // THE FIRST LIVE PRICE CONTINUES THE CHART (the owner 2026-09-17 16:42): the seeded tape, the open with it, is moved onto
+  // the first sample's level, so the open candle ends where the first price begins.
+  const d = prices[0] - seededOpen, open = seededOpen + d;
+  assert.equal(o[C.CH_OPEN], open, 'the open did not move onto the first live price');
+  const round = [seededBefore + d, open, ...prices];   // what the round saw, tape and memory together
   assert.equal(st.roundTape.length, round.length);
   for (let i = 0; i < o[C.CH_CANDLES]; i++) assert.deepEqual(candle(o, i), stair(round, i), `round candle ${i}`);
   const fronts = Array.from(o.slice(C.CH_CANDLE + 4 * o[C.CH_CANDLES], C.CH_CANDLE + 5 * o[C.CH_CANDLES])).filter((v) => v !== C.CH_NONE);

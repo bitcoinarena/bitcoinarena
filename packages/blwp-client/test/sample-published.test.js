@@ -86,6 +86,19 @@ test('price samples every 300 ticks ride the batches that cover their ticks, and
   } finally { await node.close(); }
 });
 
+test('a live tape handed over at the start goes out with the first batch and the node stores it at tick zero', async () => {
+  const { node, client, rid, eid } = await rig();
+  try {
+    const tape = Array.from({ length: 64 }, (_, i) => Math.round((76700 + i) * 256));
+    assert.equal(client.submitTape(tape.slice(1)), false, 'a short tape was accepted');
+    assert.equal(client.submitTape(tape), true);
+    await drive(client, 200);
+    const t = node.round.transcript(rid, eid);
+    assert.deepEqual(t.tapes, [[0, ...tape]], 'the node did not store the live tape at tick zero');
+    assert.equal(client.tapes.length, 0, 'the client is still holding the published tape');
+  } finally { await node.close(); }
+});
+
 test('an ended run submits no more samples', async () => {
   const { node, client } = await rig();
   try {

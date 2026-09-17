@@ -36,7 +36,7 @@ import {
 import { vehicleStep } from './rules/vehicle.js';
 import { flatGround, groundFromSeed, gradeAlong, heightAtWorld, DEFAULT_COLS, DEFAULT_ROWS } from './rules/ground.js';
 import { noSolids, resolveSolids, resolveArmour, BOX_WORDS } from './rules/solids.js';
-import { initTactics, postOf, scoot, onRespawn, enterInLane, pressure, partnerOf, FORWARD_LINE, rifleTeamOf, pushNear, mix, FIRE_TEAMS_PER_SIDE, TAC_SEED, firstManOf, initObjectives, objectiveHolders, clearOnEntry, holdLegs, onPost, initMarket, readMarket, trendHit, supplyOf, TAC_MARKET, MK_SAMPLES, MK_SAMPLE_TICK, MK_PREV_LO, MK_PREV_HI, MK_PREV_OLDEST } from './rules/tactics.js';
+import { initTactics, postOf, scoot, onRespawn, enterInLane, pressure, partnerOf, FORWARD_LINE, rifleTeamOf, pushNear, mix, FIRE_TEAMS_PER_SIDE, TAC_SEED, firstManOf, initObjectives, objectiveHolders, clearOnEntry, holdLegs, onPost, initMarket, readMarket, trendHit, supplyOf, TAC_MARKET, MK_OPEN, MK_SAMPLES, MK_SAMPLE_TICK, MK_PREV_LO, MK_PREV_HI, MK_PREV_OLDEST } from './rules/tactics.js';
 import { mapSolids } from './rules/map.js';
 import { CANDLES, CL_WORDS, candleLayout, candleHeightAt, writeCandleView, levelled } from './rules/candles.js';
 import { scrollOf, FIELD_SLOT } from './rules/frontline.js';
@@ -475,7 +475,19 @@ function strikePoint(s, seamAt) {
 export function submitSample(st, price) {
   const p = price | 0;
   if (p <= 0) return false;
-  const h = st.tape, s = st.i32;
+  const h = st.tape, s = st.i32, m = O_TACTICS + TAC_MARKET;
+  // THE FIRST LIVE PRICE CONTINUES THE CHART, IT DOES NOT SHOVE IT (the owner 2026-09-17 16:42, from the cab: "at the start
+  // of the round the candles move left, then freeze"). The seeded tape is the round's own shape around a made-up level
+  // ($78,515 on the Daily) and the first live price ($76,737) landed far outside it: the rescale swung the whole chart
+  // - the seam at x 0 moved 19.3 m sideways over the 300 ticks after the sample and stopped there. Every price the
+  // chart reads is relative to the window, so the first sample moves the seeded tape, the open, the scale it lerps from
+  // and the glide's old edge by one offset onto the live level: nothing moves, and the price continues from there.
+  if (s[m + MK_SAMPLES] === 0) {
+    const d = (p - h[h.length - 1]) | 0;
+    for (let i = 0; i < h.length; i++) h[i] = (h[i] + d) | 0;
+    if (st.roundTape) for (let i = 0; i < st.roundTape.length; i++) st.roundTape[i] = (st.roundTape[i] + d) | 0;
+    for (const w of [MK_OPEN, MK_PREV_LO, MK_PREV_HI, MK_PREV_OLDEST]) s[m + w] = (s[m + w] + d) | 0;
+  }
   // the scale and the west edge the chart is drawn with at this tick, read BEFORE the tape moves, are what the next 300
   // ticks lerp from (§4.15 rescale and glide): read after it, the new sample was already in the window at a full lerp
   const was = scaleNow(st);
@@ -487,6 +499,30 @@ export function submitSample(st, price) {
   if (st.roundTape) st.roundTape.push(p);
   s[O_TACTICS + TAC_MARKET + MK_SAMPLE_TICK] = s[O_TICK];
   s[O_TACTICS + TAC_MARKET + MK_SAMPLES] = (s[O_TACTICS + TAC_MARKET + MK_SAMPLES] + 1) | 0;
+  refreshCandles(st);
+  readMarket(s, O_TACTICS, h);
+  return true;
+}
+
+/**
+ * THE LIVE TAPE (the owner 2026-09-17 16:44: "reload always shows the SAME world candles - not live. Seeded tape is fallback
+ * only"). The page hands the core the last SAMPLES live prices (5 s apart, oldest first) before any live sample has
+ * arrived: the tape, the open and the scale become the market's, and the seeded tape stays only as the fallback when no
+ * history could be fetched. Once per core, before the first sample; in the transcript like a sample (batch `tapes`).
+ * The scroll keeps its place, so nothing slides.
+ */
+export function submitTape(st, prices) {
+  const s = st.i32, m = O_TACTICS + TAC_MARKET;
+  if (!prices || prices.length !== SAMPLES || s[m + MK_SAMPLES] !== 0) return false;
+  for (let i = 0; i < SAMPLES; i++) if ((prices[i] | 0) <= 0) return false;
+  const h = st.tape;
+  let lo = prices[0] | 0, hi = prices[0] | 0;
+  for (let i = 0; i < SAMPLES; i++) { h[i] = prices[i] | 0; lo = min(lo, h[i]); hi = max(hi, h[i]); }
+  st.roundTape = [h[SAMPLES - 2], h[SAMPLES - 1]];
+  s[m + MK_OPEN] = h[SAMPLES - 1];
+  s[m + MK_PREV_LO] = lo;
+  s[m + MK_PREV_HI] = hi;
+  s[m + MK_PREV_OLDEST] = h[0];
   refreshCandles(st);
   readMarket(s, O_TACTICS, h);
   return true;

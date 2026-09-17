@@ -236,3 +236,44 @@ test('tanks cross the ribbon: up onto the plateaus and down, nothing pushes them
   }
 });
 
+
+test('the first live price continues the chart: no sideways shove at the start of a round (the owner 16:42, from the cab)', () => {
+  // Measured before: a first sample of $76,737 on the Daily's $78,515 seeded tape swung the rescale - the seam at x 0 went
+  // 2.05 -> 21.39 m in the 300 ticks after the sample and stayed there. The first sample now moves the seeded tape onto the
+  // live level, so the chart is where it would be had the first price equalled the seeded newest.
+  const run = (first) => {
+    const st = init(0x5eed1234), seeded = st.tape[st.tape.length - 1], track = [];
+    const price = first === 'live' ? Math.round(76737.48 * 256) : seeded;
+    for (let t = 0; t <= 900; t++) {
+      if (t === 300) submitSample(st, price);
+      if (t === 600) submitSample(st, price + 300);
+      if (t % 30 === 0) track.push([frontAt(st, 0), frontAt(st, 40 * Q), C.candleHeightAt(st.candles, 20 * Q, 0, st.candleShift)]);
+      step(st, 0, 0, Q, Q, 1);
+    }
+    return { track, newest: st.tape[st.tape.length - 1] / 256 };
+  };
+  const live = run('live'), same = run('same');
+  let worst = 0;
+  for (let i = 0; i < live.track.length; i++) for (let k = 0; k < 3; k++) worst = Math.max(worst, Math.abs(live.track[i][k] - same.track[i][k]));
+  console.log(`  live first price vs seeded-level first price: seam and candles apart at most ${(worst / Q).toFixed(4)} m over 900 ticks; newest $${live.newest.toFixed(2)}`);
+  assert.ok(worst <= Q >> 8, `the first live price moved the chart ${(worst / Q).toFixed(3)} m`);
+  assert.ok(Math.abs(live.newest - 76738.65) < 1, 'the tape does not read the live price');
+});
+
+test('the live tape replaces the seeded one before any sample, keeps the scroll, and is refused after a sample (the owner 16:44)', async () => {
+  const { submitTape } = await import('../src/sim.js');
+  const st = init(0x5eed1234), s = st.i32;
+  const seeded = Array.from(st.tape);
+  const live = Array.from({ length: 64 }, (_, i) => Math.round((76700 + 3 * Math.sin(i / 5) + i * 0.4) * 256));
+  const shift = st.candleShift;
+  assert.equal(submitTape(st, live.slice(1)), false, 'a tape of 63 prices was taken');
+  assert.equal(submitTape(st, live), true);
+  assert.deepEqual(Array.from(st.tape), live, 'the tape is not the live one');
+  assert.notDeepEqual(Array.from(st.tape), seeded);
+  assert.equal(s[L.O_TACTICS + T.TAC_MARKET + T.MK_OPEN], live[63], 'the open is not the live newest price');
+  assert.equal(st.candleShift, shift, 'the tape moved the scroll');
+  for (let t = 0; t < 300; t++) step(st, 0, 0, Q, Q, 1);
+  submitSample(st, live[63] + 256);
+  assert.equal(st.tape[63], live[63] + 256, 'the first live sample after a live tape was moved');
+  assert.equal(submitTape(st, live), false, 'a tape was taken after a sample');
+});

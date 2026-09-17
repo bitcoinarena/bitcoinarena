@@ -45,6 +45,9 @@ import { Writer, Reader } from './encode.js';
 import { taggedHash } from './hash.js';
 import { PROTOCOL_VERSION, TYPE_INPUT_BATCH, TAG } from './constants.js';
 
+/** The prices a live tape carries: the core's SAMPLES. */
+export const TAPE_PRICES = 64;
+
 /** How many words of input a tick carries. The core's `step` arity. */
 export const INPUT_WORDS = 5;
 
@@ -77,7 +80,17 @@ export function encodeInputBatch(b) {
 
   // `[tick, price]`, sorted; absent when empty (see the head of this file).
   const samples = [...(b.samples || [])].sort((x, y) => x[0] - y[0] || x[1] - y[1]);
-  if (samples.length) w.vec(samples, (l, ww) => { ww.u32(l[0]); ww.i32(l[1]); });
+  // THE LIVE TAPE (the owner 2026-09-17 16:44): `[tick, p0 .. p63]`, the 64 live prices a page handed its core before any
+  // sample, in their own order (oldest first - not sorted inside). Absent when empty; when present the sample vector is
+  // written before it even if empty, so the two optional tails read back unambiguously.
+  const tapes = [...(b.tapes || [])].sort((x, y) => x[0] - y[0]);
+  // one a batch at most: a run hands over one tape, and the transport ceiling stays a short message
+  if (tapes.length > 1) throw new Error('a batch carries at most one tape');
+  if (samples.length || tapes.length) w.vec(samples, (l, ww) => { ww.u32(l[0]); ww.i32(l[1]); });
+  if (tapes.length) w.vec(tapes, (l, ww) => {
+    if (l.length !== 1 + TAPE_PRICES) throw new Error(`a tape carries ${TAPE_PRICES} prices`);
+    ww.u32(l[0]); for (let i = 1; i <= TAPE_PRICES; i++) ww.i32(l[i]);
+  });
   return w.finish();
 }
 
@@ -100,10 +113,15 @@ export function decodeInputBatch(bytes) {
   });
   b.liquidations = r.vec((rr) => [rr.u32(), rr.i32()]);
   b.loads = r.vec((rr) => [rr.u32(), rr.i32(), rr.i32()]);
-  // whatever follows the loads is a sample vector or nothing; bytes that do not read as one are trailing bytes
-  try { b.samples = r.at < bytes.length ? r.vec((rr) => [rr.u32(), rr.i32()]) : []; } catch { throw new Error('trailing bytes after the batch'); }
-  // one encoding per batch: an empty sample vector is written as none
-  if (r.at === bytes.length && b.samples.length === 0 && bytes.length !== encodeInputBatch(b).length) throw new Error('an empty sample vector is not canonical');
+  // whatever follows the loads is a sample vector, then a tape vector, or nothing; bytes that do not read as those are
+  // trailing bytes
+  try {
+    b.samples = r.at < bytes.length ? r.vec((rr) => [rr.u32(), rr.i32()]) : [];
+    b.tapes = r.at < bytes.length ? r.vec((rr) => { const t = [rr.u32()]; for (let i = 0; i < TAPE_PRICES; i++) t.push(rr.i32()); return t; }) : [];
+  } catch { throw new Error('trailing bytes after the batch'); }
+  if (b.tapes.length > 1) throw new Error('a batch carries at most one tape');
+  // one encoding per batch: empty optional tails are written as none
+  if (r.at === bytes.length && bytes.length !== encodeInputBatch(b).length) throw new Error('an empty optional vector is not canonical');
   if (r.at !== bytes.length) throw new Error('trailing bytes after the batch');
   return b;
 }
@@ -135,7 +153,7 @@ const BATCH_HEADER_BYTES = 1 + 2 + 32 + 32 + 32 + 4;
  */
 export const MAX_INPUT_BATCH_BYTES =
   BATCH_HEADER_BYTES + 2 + MAX_BATCH_TICKS * 20 + 2 + MAX_BATCH_TICKS * 8
-  + 2 + MAX_BATCH_TICKS * 12 + 2 + MAX_BATCH_TICKS * 8;
+  + 2 + MAX_BATCH_TICKS * 12 + 2 + MAX_BATCH_TICKS * 8 + 2 + (4 + 4 * TAPE_PRICES);
 
 /** The absolute tick numbers a batch covers, in order. */
 export const batchTicks = (b) =>

@@ -86,6 +86,14 @@ public class ChartPlacementTests
                     Assert.AreEqual(w - m, r.xMax, 0.01f); Assert.AreEqual(m, r.y, 0.01f);
                     Assert.LessOrEqual(r.yMax, Mathf.Min(sound.y, Mathf.Min(debug.y, wanted.y)) + 0.01f, $"pads={pads} {w}x{h}: not above the buttons");
                     Assert.IsTrue(manifest.yMin >= 0 && manifest.yMax <= h + 0.01f && sound.yMax <= h, $"pads={pads} {w}x{h}: off screen");
+                    // live 0.0.1508 at 1280x656 with pads: the 30% smaller chart narrowed the score column until its lines clipped to
+                    // "drop-off" and "0". Its widest line, measured in 0.0.1497's frame at that shape ("yours only if you reach the
+                    // drop-off"), spans 155 px: the column holds at least that.
+                    Debug.Log($"[score-column] pads={pads} {w}x{h} x={manifest.x:0.0} w={manifest.width:0.0}");
+                    // held where it was measured; other shapes are logged (1280x800 with pads: 134 px, the same as before the chart
+                    // shrank - listed in PRIORITIES, not measured on screen)
+                    if (pads && w == 1280 && h == 657)
+                        Assert.GreaterOrEqual(manifest.width, 155f, $"pads={pads} {w}x{h}: the score column is {manifest.width:0} px wide - its lines clip");
                     var others = new System.Collections.Generic.List<(string, Rect)> { ("sound", sound), ("debug", debug), ("wanted", wanted), ("manifest", manifest),
                         ("headline", head), ("clock", _hud.BlockTimerBox(w, h)), ("liquidation", _hud.LiquidationBox(w, h)), ("runStopped", _hud.RunStoppedBox(w, h)),
                         ("health", _hud.HealthBox(w, h)), ("exposure", _hud.ExposureBox(w, h)), ("practice", _hud.PracticeBox(w, h)), ("sim", _hud.SimBox(w, h)) };

@@ -394,6 +394,7 @@ export class Client {
     this.joinHold = null;
     this.loads = [];              // [tick, feeSats, btcHundredths], not yet published
     this.samples = [];            // [tick, price], the live price samples not yet published
+    this.tapes = [];              // [tick, p0 .. p63], the live tape not yet published
     this.nodes = [];              // the committee, off the round's own contract
     this.gameVerifySlots = 7;
     this.hold = [];               // ticks waiting to go out
@@ -1113,7 +1114,7 @@ export class Client {
    * `ticks` is five Q16.16 words each, exactly what the core's `step` takes.
    * Nothing is computed from them here; they are carried.
    */
-  async batch(ticks, { roundId, entryId, liquidations = [], loads = [], samples = [] }) {
+  async batch(ticks, { roundId, entryId, liquidations = [], loads = [], samples = [], tapes = [] }) {
     const b = {
       roundId, entryId,
       previousHash: this.batchHead,
@@ -1122,6 +1123,7 @@ export class Client {
       liquidations,
       loads,
       samples,
+      tapes,
     };
     const bytes = encodeInputBatch(b);
     const answer = await this.send(bytes);
@@ -1642,6 +1644,7 @@ export class Client {
       this.held = this.hold.length;
       this.loads = this.loads.filter(([at]) => at >= this.nextTick);
       this.samples = this.samples.filter(([at]) => at >= this.nextTick);
+      this.tapes = this.tapes.filter(([at]) => at >= this.nextTick);
       this.batchesLandedUnheard++;
     }
     // AND THE PEERS ARE FED WHAT THIS NODE TOOK, including a batch whose answer
@@ -1715,6 +1718,7 @@ export class Client {
     this.held = 0;
     this.loads = [];
     this.samples = [];
+    this.tapes = [];
     this.dropped = 0;
     this.batchesSent = 0;
     this.marksSent = 0;
@@ -1895,6 +1899,13 @@ export class Client {
     return true;
   }
 
+  /** THE LIVE TAPE the page handed its core (64 prices, oldest first), published with the batch covering its tick. */
+  submitTape(prices) {
+    if (this.ended || !this.where || !prices || prices.length !== 64) return false;
+    this.tapes.push([this.offered, ...Array.from(prices, (p) => p | 0)]);
+    return true;
+  }
+
   /**
    * WHETHER THIS RUN HAS REACHED ITS LAST TICK - the signer node's own line,
    * `lastTickOfRun(joinTick)`, and not a number of this file's. The game keeps
@@ -2015,8 +2026,10 @@ export class Client {
     this.loads = later;
     const samples = this.samples.filter(([at]) => at < through);
     this.samples = this.samples.filter(([at]) => at >= through);
+    const tapes = this.tapes.filter(([at]) => at < through).slice(0, 1);
+    this.tapes = this.tapes.filter((t) => !tapes.includes(t));
 
-    this.publishing = this.batch(words, { ...this.where, loads, samples }).then((r) => {
+    this.publishing = this.batch(words, { ...this.where, loads, samples, tapes }).then((r) => {
       if (r.accepted) {
         this.batchesSent++;
         // PUBLISHING AGAIN IS NEWS TOO. A run that recovered must stop
@@ -2033,6 +2046,7 @@ export class Client {
         this.hold = words.concat(this.hold); this.held = this.hold.length;
         this.loads = loads.concat(this.loads);
         this.samples = samples.concat(this.samples);
+        this.tapes = tapes.concat(this.tapes);
         if (typeof r.answer === 'string' && r.answer.startsWith(CLOSED)) {
           // THE LINK WENT WITH THE BATCH IN FLIGHT. The node refused nothing,
           // so this is not a refusal and does not resync towards VOID -
@@ -2070,6 +2084,7 @@ export class Client {
       this.held = this.hold.length;
       this.loads = loads.concat(this.loads);
       this.samples = samples.concat(this.samples);
+      this.tapes = tapes.concat(this.tapes);
       this.publishing = null;
       throw e;
     });

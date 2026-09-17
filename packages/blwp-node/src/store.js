@@ -460,6 +460,15 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (round_id, entry_id, tick)
     );
 
+    -- THE LIVE TAPE a run's page handed its core before any sample (batch.js): 64 prices, oldest first, little-endian i32.
+    CREATE TABLE IF NOT EXISTS tapes (
+      round_id  BLOB NOT NULL,
+      entry_id  BLOB NOT NULL REFERENCES entries(entry_id),
+      tick      INTEGER NOT NULL,
+      prices    BLOB NOT NULL,
+      PRIMARY KEY (round_id, entry_id, tick)
+    );
+
     -- THE LIVE PRICE SAMPLES a run's page handed its core (batch.js), one at a tick: the tape the war was fought on.
     CREATE TABLE IF NOT EXISTS samples (
       round_id  BLOB NOT NULL,

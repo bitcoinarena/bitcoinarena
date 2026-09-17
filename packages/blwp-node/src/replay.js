@@ -225,6 +225,7 @@ export function replay(transcript, entry, { core, seedWord, roundRandomness, mar
     liquidations: events.count.liquidations,
     loads: events.count.loads,
     samples: events.count.samples,
+    tapes: events.count.tapes,
     heat: ran.heat,
     stateHash: a.stateHash(st),
     checked,
@@ -422,7 +423,10 @@ export class RunInProgress {
       }
 
     // THE PRICE SAMPLES, ONCE EACH, like the liquidations: each moves the tape at its own tick.
-    if (!this.sampleDue) { this.sampleDue = new Map(); this.sampleSeen = new Set(); }
+    if (!this.sampleDue) { this.sampleDue = new Map(); this.sampleSeen = new Set(); this.tapeDue = new Map(); this.tapeSeen = new Set(); }
+    // THE LIVE TAPE, ONCE: served whole with every slice, applied at its own tick
+    for (const [at, ...prices] of transcript.tapes || [])
+      if (at > this.at && !this.tapeSeen.has(at)) { this.tapeDue.set(at, prices); this.tapeSeen.add(at); }
     for (const [at, price] of transcript.samples || [])
       if (at > this.at && !this.sampleSeen.has(at)) { this.sampleDue.set(at, price); this.sampleSeen.add(at); }
 
@@ -432,6 +436,7 @@ export class RunInProgress {
       liquidations: [...this.due],
       loads: [...this.loadDue].map(([at, [fee, btc]]) => [at, fee, btc]),
       samples: [...this.sampleDue],
+      tapes: [...this.tapeDue].map(([at, prices]) => [at, ...prices]),
     });
     for (let at = this.at + 1; at <= tick; at++) {
       const t = ticks[at - from];
@@ -446,6 +451,7 @@ export class RunInProgress {
     for (const at of [...this.due.keys()]) if (at <= this.at) this.due.delete(at);
     for (const at of [...this.loadDue.keys()]) if (at <= this.at) this.loadDue.delete(at);
     for (const at of [...this.sampleDue.keys()]) if (at <= this.at) this.sampleDue.delete(at);
+    for (const at of [...this.tapeDue.keys()]) if (at <= this.at) this.tapeDue.delete(at);
     return { ok: true, ...this.pose() };
   }
 }

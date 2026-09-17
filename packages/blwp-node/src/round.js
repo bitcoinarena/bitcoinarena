@@ -432,6 +432,8 @@ export class Round {
       + 'VALUES (?, ?, ?, ?, ?)');
     const putSample = this.db.prepare(
       'INSERT OR IGNORE INTO samples (round_id, entry_id, tick, price) VALUES (?, ?, ?, ?)');
+    const putTape = this.db.prepare(
+      'INSERT OR IGNORE INTO tapes (round_id, entry_id, tick, prices) VALUES (?, ?, ?, ?)');
 
     // THE CHAIN, checked before anything is written. A batch that does not
     // name the head is not a late arrival to be sorted later - it belongs to
@@ -502,6 +504,8 @@ export class Round {
       putLoad.run(b.roundId, b.entryId, tick, fee, btc);
     for (const [tick, price] of (b.samples || []))
       putSample.run(b.roundId, b.entryId, tick, price);
+    for (const [tick, ...prices] of (b.tapes || []))
+      putTape.run(b.roundId, b.entryId, tick, new Uint8Array(new Int32Array(prices).buffer));
 
     if (!seen) {
       const n = this.db.prepare(
@@ -1127,12 +1131,21 @@ export class Round {
       'SELECT tick, fee_sats, btc_hund FROM loads WHERE round_id = ? AND entry_id = ? ORDER BY tick').all(roundIdBytes, entryIdBytes);
     const samples = this.db.prepare(
       'SELECT tick, price FROM samples WHERE round_id = ? AND entry_id = ? ORDER BY tick').all(roundIdBytes, entryIdBytes);
+    const tapes = this.#tapes(roundIdBytes, entryIdBytes);
     return {
+      tapes,
       ticks: ticks.map((r) => ({ tick: r.tick, words: [...new Int32Array(new Uint8Array(r.words).buffer)] })),
       liquidations: liq.map((r) => [r.tick, r.size]),
       loads: loads.map((r) => [r.tick, r.fee_sats, r.btc_hund]),
       samples: samples.map((r) => [r.tick, r.price]),
     };
+  }
+
+  /** The live tapes of a run, `[tick, p0 .. p63]`. */
+  #tapes(roundIdBytes, entryIdBytes) {
+    return this.db.prepare('SELECT tick, prices FROM tapes WHERE round_id = ? AND entry_id = ? ORDER BY tick')
+      .all(roundIdBytes, entryIdBytes)
+      .map((r) => [r.tick, ...new Int32Array(new Uint8Array(r.prices).slice().buffer)]);
   }
 
   /**
@@ -1180,6 +1193,8 @@ export class Round {
       'SELECT tick, price FROM samples WHERE round_id = ? AND entry_id = ? AND tick >= ? ORDER BY tick')
       .all(roundIdBytes, entryIdBytes, from);
     return {
+      // the tape comes whole, like the loads: it is handed over once, at the start
+      tapes: this.#tapes(roundIdBytes, entryIdBytes),
       from,
       ticks: ticks.map((r) => ({ tick: r.tick, words: [...new Int32Array(new Uint8Array(r.words).buffer)] })),
       liquidations: liq.map((r) => [r.tick, r.size]),

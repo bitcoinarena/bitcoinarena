@@ -11,7 +11,7 @@ import { replay as replayUnder } from '../src/replay.js';
 import { TRUCK } from '../src/cores.js';
 // THE TRUCK'S RUNS, REPLAYED UNDER THE TRUCK (M3 R1): replay takes the core it runs under; these are truck runs.
 const replay = (t, e, o = {}) => replayUnder(t, e, { core: TRUCK, ...o });
-import { init, step, submitSample } from '../../core/src/sim.js';
+import { init, step, submitSample, submitTape } from '../../core/src/sim.js';
 import { hash, O_TRUCK, T_X, T_Z } from '../../core/src/state.js';
 import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
 import { GENESIS } from '../../protocol/src/transcript.js';
@@ -47,15 +47,22 @@ const wordsAt = () => [45875, 6000, 0, 0, 0];
 // Three live BTCUSD prices in the tape's unit (256 a dollar), one every 300 ticks, as CoreDrivenTruck submits them.
 const SAMPLES = [[300, Math.round(76727.4 * 256)], [600, Math.round(76811.9 * 256)], [900, Math.round(76502.2 * 256)]];
 
-/** The player's own run: the page hands its core each price before the tick it belongs to. */
-function played(ticks, samples = SAMPLES) {
+// The live tape a page fetched at the start (the owner 16:44): 64 prices 5 s apart, handed over at tick 0.
+const TAPE = Array.from({ length: 64 }, (_, i) => Math.round((76690 + 11 * Math.sin(i / 4) + i * 0.3) * 256));
+
+/** The player's own run: the page hands its core the live tape and each price before the tick it belongs to. */
+function played(ticks, samples = SAMPLES, tape = null) {
   const st = init(SEED), due = new Map(samples);
-  for (let t = 0; t < ticks; t++) { if (due.has(t)) submitSample(st, due.get(t)); step(st, ...wordsAt(t)); }
+  for (let t = 0; t < ticks; t++) {
+    if (tape && t === 0) submitTape(st, tape);
+    if (due.has(t)) submitSample(st, due.get(t));
+    step(st, ...wordsAt(t));
+  }
   return st;
 }
 
 /** The same run through the daemon's door: batches in (the samples beside the ticks they name), transcript out. */
-function stored(ticks, { chunk = 100, samples = SAMPLES } = {}) {
+function stored(ticks, { chunk = 100, samples = SAMPLES, tape = null } = {}) {
   const r = new Round(openStore(), () => 1234);
   const rid = r.open(contract());
   const entry = entryFor(rid);
@@ -66,6 +73,7 @@ function stored(ticks, { chunk = 100, samples = SAMPLES } = {}) {
     const b = {
       roundId: rid, entryId: eid, previousHash, firstTick: i, ticks: Array.from({ length: n }, (_, k) => wordsAt(i + k)),
       liquidations: [], loads: [], samples: samples.filter(([at]) => at >= i && at < i + n),
+      tapes: tape && i === 0 ? [[0, ...tape]] : [],
     };
     assert.equal(r.batch(encodeInputBatch(b)), n, 'the node did not store every tick');
     previousHash = batchId(b);
@@ -101,4 +109,18 @@ test('live price samples are in the transcript, so a replay reaches the player\'
   assert.notEqual(without.stateHash, hash(run), 'the samples changed nothing, so this measures nothing');
   const apart = Math.hypot((run.i32[O_TRUCK + T_X] - blind.i32[O_TRUCK + T_X]) / ONE, (run.i32[O_TRUCK + T_Z] - blind.i32[O_TRUCK + T_Z]) / ONE);
   console.log(`  replay with the samples: the player's state hash; without them a different state (truck ${apart.toFixed(3)} m apart at tick ${TICKS})`);
+});
+
+test('the live tape is in the transcript, so a replay starts from the market the page started from, not the seed', () => {
+  const TICKS = 900;
+  const run = played(TICKS, SAMPLES, TAPE);
+  const { round, rid, eid, transcript, entry } = stored(TICKS, { tape: TAPE });
+  assert.deepEqual(transcript.tapes, [[0, ...TAPE]], 'the node did not store the tape');
+  assert.deepEqual(round.ticksFrom(rid, eid, 600).tapes, [[0, ...TAPE]], 'a live slice does not carry the tape');
+  const got = replay(transcript, entry, { seedWord: SEED });
+  assert.equal(got.ok, true, got.why);
+  assert.equal(got.tapes, 1);
+  assert.equal(got.stateHash, hash(run), 'the replay of a live-taped run reached a different state');
+  assert.notEqual(got.stateHash, hash(played(TICKS)), 'the tape changed nothing, so this measures nothing');
+  console.log(`  a live-taped run: stored, served whole with a slice, replayed to the page's own state hash`);
 });
