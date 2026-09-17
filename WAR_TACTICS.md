@@ -831,6 +831,23 @@ a thing the truck drives on is settled state (multiplayer_p2p.md §0.5), so the 
 **height layer** the core's surface reader adds, exactly as the craters are a layer it subtracts
 (`surfaceAt = ground + candles - craters`). A client draws what the core computes, or it desyncs.
 
+- **The chart band is flat, whatever the mempool says (the owner 2026-09-17 09:20).** The ground the
+  core builds is the seed's lattice (`groundFromSeed`, 6 m peaks) and, when the host uploads it, the
+  **mempool relief** (`MempoolTerrain`: 9 m of fee height plus 5.5 m of base relief - a busy chain is a
+  mountainous map). A candle ramp that starts halfway up a fee mountain is not a ramp, and a corridor
+  across one is not a corridor. So, before the candle layer is added, the relief is **levelled inside
+  the chart band**: `|x| <= 104`, `|z| <= 70` (the ±61 m the candles can reach, plus the 5 m ramp,
+  plus 4 m), to **one height - the apron's** (the plane the bays and the gate stand on, so the roll-out
+  and the last metres to the gate are level with the chart). Outside the band the relief is **clamped
+  to a 40% cone**: `h(x, z) <= 0.4 x (|z| - 70)` for `|x| <= 104`, so no ground rises toward the band
+  faster than a ramp does - at the map's edge (85 m) that is 6 m, and the mempool's mountains stand
+  full height only beyond the buildings and the corridor's ends. Inside the band the only relief is
+  the chart's own (2 m plateaus), the craters (§10, they still cut), and nothing else: hull-down
+  (§4.1) finds candle edges and crater rims, which is what the war is fought on now. The uploaded grid
+  is not changed; the surface reader applies the band and the cone as it applies the craters, so the
+  host's terrain revision can come and go and the chart stays flat. Test: inside the band, away from
+  candles and craters, the surface is the apron height to the centimetre on every seed and every
+  uploaded grid; every ramp foot and every corridor is on it; the steepest grade in the cone is 40%.
 - **The chart spans the field, not the buildings** (found 21:15): the post office ends at x = -114.4 and
   the miner begins at 108.4, so the tape's 260 m had eight candles inside walls. The 32 candles are laid
   over **x = -104 .. +104** (208 m, the air corridor's own width): slot **6.5 m**, body **3.7 m**,
