@@ -80,6 +80,9 @@ export class Roster {
     // answer that cannot change. A census is fixed at the round's own `censusHeight` - blocks mined above it are not
     // in it - so it is kept per round and per view start, and only when it matched the root the round names.
     this.censuses = new Map();
+    // AND THE SEED AND THE COMMITTEE THE SAME WAY, per round and per view.
+    this.seeds = new Map();
+    this.committees = new Map();
   }
 
   /** How many derived censuses are kept: a round is asked about while it settles, and then never again. */
@@ -94,7 +97,30 @@ export class Roster {
    * BEACON'S, so even a caller that skipped the comparison could not assign from
    * chosen bytes.
    */
+  /**
+   * THE SEED, CHECKED AGAINST THE CHAIN ONCE PER VIEW (the owner 2026-09-17 19:15, the ghost lag).
+   *
+   * A V8 profile of a live signer node named this path: `peersOf -> peersFor -> committeeFor -> seedFor ->
+   * beaconFromChain / beaconIsTheChains -> chainWork -> meetsTarget -> blockHashOf -> hash256`, 39.8 s of a 417 s
+   * window, under `carryReceipts` (31.3 s) and the finality tick (28.3 s) - and `carryReceipts` asks `peersOf` twice
+   * per peer, per entry, at every close and every retry. Every ask re-hashed the round's whole view and re-checked its
+   * proof of work. The work itself is not skipped: it runs when the view is new and when a header arrives, and the key
+   * says so - a round it has not seen, or a view of a different length, misses and rebuilds. Only a pass is kept.
+   */
   seedFor(roundIdBytes, contract) {
+    const view = this.chainFor({ contract, roundIdBytes });
+    const kept = view && Array.isArray(view.blocks)
+      ? `${toHex(roundIdBytes)}:${view.firstHeight}:${view.blocks.length}` : null;
+    if (kept && this.seeds.has(kept)) return this.seeds.get(kept);
+    const answer = this.#seedFor(roundIdBytes, contract, view);
+    if (kept && answer.ok) {
+      this.seeds.set(kept, answer);
+      if (this.seeds.size > Roster.CENSUS_KEPT) this.seeds.delete(this.seeds.keys().next().value);
+    }
+    return answer;
+  }
+
+  #seedFor(roundIdBytes, contract, viewGiven) {
     const given = this.randomnessFor({ contract, roundIdBytes });
     const randomness = given instanceof Uint8Array ? given : given && given.hash;
     if (!randomness)
@@ -127,7 +153,7 @@ export class Roster {
     // shape would refuse for something that is not about the beacon at all. So
     // the answer carries `checkedAgainstChain`, and a caller that needs the
     // check can see whether it happened rather than assume it did.
-    const view = this.chainFor({ contract, roundIdBytes });
+    const view = viewGiven;
     if (view && view.pending)
       return { ok: false, why: 'this node is still reading its chain view for that round' };
     let checkedAgainstChain = false;
@@ -349,6 +375,21 @@ export class Roster {
    * rule lived, and the two would drift.
    */
   committeeFor(roundIdBytes, role) {
+    const row = this.round.get(roundIdBytes);
+    const contract = row ? decodeRoundContract(new Uint8Array(row.contract)) : null;
+    const view = contract ? this.chainFor({ contract, roundIdBytes }) : null;
+    const kept = view && Array.isArray(view.blocks)
+      ? `${toHex(roundIdBytes)}:${role}:${view.firstHeight}:${view.blocks.length}` : null;
+    if (kept && this.committees.has(kept)) return this.committees.get(kept);
+    const answer = this.#committeeFor(roundIdBytes, role);
+    if (kept && answer.ok) {
+      this.committees.set(kept, answer);
+      if (this.committees.size > Roster.CENSUS_KEPT) this.committees.delete(this.committees.keys().next().value);
+    }
+    return answer;
+  }
+
+  #committeeFor(roundIdBytes, role) {
     const census = this.censusFor(roundIdBytes);
     if (!census.ok) return census;
 

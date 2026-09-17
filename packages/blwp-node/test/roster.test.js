@@ -631,3 +631,45 @@ test('the census is derived once for a round and a view, and again when the view
   assert.equal(bad.censuses.size, 0, 'a refusal was kept');
 });
 
+/**
+ * THE COMMITTEE AND ITS SEED ARE KEPT PER ROUND AND PER VIEW, AND A NEW HEADER REBUILDS THEM.
+ *
+ * A V8 profile of a live signer node named `peersOf -> committeeFor -> seedFor -> beaconFromChain -> chainWork ->
+ * meetsTarget -> hash256` as 39.8 s of a 417 s window: every ask re-hashed the round's whole view and re-checked its
+ * proof of work, and `carryReceipts` asks twice per peer, per entry, at every close and retry. The work is not
+ * skipped - it runs again for a view that grew, which is what this measures.
+ */
+test('the committee and the seed are kept per view, and a new header builds them again', () => {
+  const bonds = [bondOf(0x11), bondOf(0x12)];
+  const round = new Round(openStore(), () => AFTER_COMMITTEE);
+  const contract = contractFor({ censusRoot: rootFor(bonds) });
+  const rid = round.open(contract);
+  let grown = 0;
+  const roster = new Roster(round, {
+    // The same view until it is asked to grow: a block arrives and every reader sees a longer one.
+    chainFor: ({ contract: c } = {}) => {
+      const v = chainWith(bonds, c);
+      return grown ? { ...v, blocks: [...v.blocks, ...v.blocks.slice(-1)] } : v;
+    },
+    randomnessFor: ({ contract: c }) => beaconOf(chainWith(bonds, c), c),
+  });
+
+  const first = roster.seedFor(rid, contract);
+  assert.equal(first.ok, true, first.why);
+  assert.equal(roster.seedFor(rid, contract), first, 'the same round and view checked the chain twice');
+  const committee = roster.committeeFor(rid, 'game');
+  assert.equal(committee.ok, true, committee.why);
+  assert.equal(roster.committeeFor(rid, 'game'), committee, 'the same round, role and view assigned twice');
+  assert.notEqual(roster.committeeFor(rid, 'settlement'), committee, 'another role answered with the game committee');
+
+  // A NEW HEADER IS A NEW VIEW: nothing kept is served across it.
+  grown = 1;
+  assert.notEqual(roster.seedFor(rid, contract), first, 'a longer view was answered from the old seed');
+  assert.notEqual(roster.committeeFor(rid, 'game'), committee, 'a longer view was answered from the old committee');
+
+  // AND A REFUSAL IS NEVER KEPT.
+  const blind = new Roster(round, { chainFor: () => ({ pending: true }), randomnessFor: ({ contract: c }) => beaconOf(chainWith(bonds, c), c) });
+  assert.equal(blind.seedFor(rid, contract).ok, false);
+  assert.equal(blind.seeds.size, 0, 'a refusal was kept');
+});
+

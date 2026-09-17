@@ -99,8 +99,23 @@ function logTail(until) {
   return { lines, stop: () => { try { tail.kill(); } catch { /* gone */ } } };
 }
 
-/** One seat in the round: a client that has joined, connected and been told which round it plays. */
-async function seat(named, roundIdHex) {
+/**
+ * One seat in the round: a client that has joined, connected and been told which round it plays.
+ *
+ * A NODE THAT HAS JUST STARTED IS ASKED AGAIN. It reads an old round's chain view before it answers for it, so the
+ * first seats after a restart are refused with that in words; the lobby page retries, and so does this.
+ */
+async function seat(named, roundIdHex, until = Date.now() + 120000) {
+  for (;;) {
+    try { return await seated(named, roundIdHex); }
+    catch (e) {
+      if (Date.now() >= until || !/still reading its chain view|no beacon|randomness/.test(e.message)) throw e;
+      await wait(5000);
+    }
+  }
+}
+
+async function seated(named, roundIdHex) {
   const secret = ed25519.utils.randomSecretKey();
   const player = playerFor(named.round, { seed: tabSeed({ storage: storage(), random }), curve: feldmanGroup });
   const built = entryFor(named.round, { seed: player.seed, curve: feldmanGroup, random });
