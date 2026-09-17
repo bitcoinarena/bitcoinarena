@@ -324,7 +324,11 @@ export class Verifier {
   // start already FORFEIT at the door - is FORFEIT, score 0, over the empty
   // receipted transcript. Measured before: both came to no result at all, and
   // the stake lock went back to the player at its expiry (no-mark-probe.mjs).
-  async #keep({ roundIdBytes, entryId, entry, contract, answer, options }) {
+  async #keep(args) {
+    return timed(`close keep ${hex(args.entryId).slice(0, 8)}`, () => this.#kept(args), { over: 20 });
+  }
+
+  async #kept({ roundIdBytes, entryId, entry, contract, answer, options }) {
     let canonical = null;
     let noCanonical = null;
     try { canonical = this.round.canonicalTranscript(roundIdBytes, entryId); }
@@ -735,12 +739,12 @@ export class Verifier {
     // of each. Nothing here moves money: this is section 13, and the money
     // word is `Custody.settleHeldInvoices`.
     this.settling = Promise.all(this.onRoundClosed(roundIdBytes))
-      .then(async (replayed) => ({
+      .then(async (replayed) => timed(`close asked the others ${hex(roundIdBytes).slice(0, 8)}`, async () => ({
         replayed,
         gathered: await Promise.all(replayed
           .filter((d) => d && d.stored)
           .map((d) => this.gather(roundIdBytes, d.entryId))),
-      }));
+      }), { over: 20 }));
     return this.settling;
   }
 
@@ -818,7 +822,11 @@ export class Verifier {
    * counting against the contract's own slots, so a peer cannot make itself a
    * signer node by answering.
    */
-  async gather(roundIdBytes, entryIdBytes) {
+  gather(roundIdBytes, entryIdBytes) {
+    return timed(`close gather ${hex(entryIdBytes).slice(0, 8)}`, () => this.#gather(roundIdBytes, entryIdBytes), { over: 50 });
+  }
+
+  async #gather(roundIdBytes, entryIdBytes) {
     const row = this.round.get(roundIdBytes);
     if (!row) return { ok: false, why: 'no such round' };
     const contract = decodeRoundContract(new Uint8Array(row.contract));
@@ -844,17 +852,24 @@ export class Verifier {
         body = new Uint8Array(await answer.arrayBuffer());
       } catch { refused++; continue; }      // a peer that is down is not a fault
 
-      for (let at = 0; at + SIGNED_RESULT_BYTES <= body.length; at += SIGNED_RESULT_BYTES) {
-        fetched++;
-        const record = body.subarray(at, at + SIGNED_RESULT_BYTES);
-        if (this.#keepPeerResult(roundIdBytes, entryIdBytes, record, playerPubkey)) kept++;
-      }
+      // THE RECORDS A PEER SENT, CHECKED: every one split, decoded, re-encoded to its own id and checked against the
+      // signature under the key it names. This is the continuation after that peer answered, and it is timed because a
+      // stall named only "a promise" is a stall nobody can act on (the owner 2026-09-17 19:15).
+      timed(`close gather records ${hex(entryIdBytes).slice(0, 8)}`, () => {
+        for (let at = 0; at + SIGNED_RESULT_BYTES <= body.length; at += SIGNED_RESULT_BYTES) {
+          fetched++;
+          const record = body.subarray(at, at + SIGNED_RESULT_BYTES);
+          if (this.#keepPeerResult(roundIdBytes, entryIdBytes, record, playerPubkey)) kept++;
+        }
+      }, { over: 20 });
     }
 
-    const held = this.round.results(roundIdBytes, entryIdBytes);
-    const seen = verifiedFinal(held.map((r) => r.bytes), {
-      contract, signerNodes: this.round.signerNodes(roundIdBytes),
-    });
+    const { held, seen } = timed(`close gather counted ${hex(entryIdBytes).slice(0, 8)}`, () => {
+      const rows = this.round.results(roundIdBytes, entryIdBytes);
+      return { held: rows, seen: verifiedFinal(rows.map((r) => r.bytes), {
+        contract, signerNodes: this.round.signerNodes(roundIdBytes),
+      }) };
+    }, { over: 20 });
     // The entry is in the answer because a caller with a round's worth of
     // them cannot otherwise say which run each one is about.
     return { ok: true, entryId: entryIdBytes, fetched, kept, refused, held: held.length, noQuorumPeers, ...seen };
