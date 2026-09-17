@@ -143,8 +143,9 @@ Rows for the four points, same probe conditions, plus the moved-tape probe named
 | **The losers die faster, and get less** | trend §4.14, supply §3 | in the trend probe from tick 900 on, bear losses (tanks and men) per 60 s exceed bull losses by >= 30%, and the bears' mean living tanks are fewer than the bulls' on >= 70% of ticks; the -0.5% probe is the mirror |
 | **Sideways: they fight over the status quo** | §4.14 | with the tape alternating green and red candles of 5 bp for 3600 ticks, both sides mount assaults, the holder of at least one objective flips on >= 4 of 5 seeds, and neither side's mean push exceeds the other's by more than 4 m over the run |
 | **The chart is a road, not a trap** | ribbon §4.15 | the east-drive probe: the truck at full throttle straight east from the apron to the gate at z = seam − 10 m never drops below **85%** of its flat-ground speed, never stops, and crosses in <= 1.05 x the flat time (measured 2026-09-17 on 492f128: 94.2% / 96.3%, 0 stops, 832 vs 828 ticks) |
-| **The chart glides, nothing jumps** | scroll §4.15 | between samples the candle layer and the seam move <= 0.01 m per tick; **on a sample tick no surface point, no berm and no post moves more than 0.02 m** (measured: candle layer 0.137 m and the seam-following berms 2.571 m on sample ticks - red: the seam must be read at `x + offset` like the candles, and the rescale lerp must start from the drawn state, not the target) |
-| **Trucks and tanks get through** | passability §4.15 | the north-south drive (z = -54 to +54 and back at x = 20 m, full throttle): >= 85% of flat speed, 0 stops; no vertical face and no added height over 1 m or grade over 25% anywhere in the band but a crater; every tank reaches a given post in <= 1.2 x the flat-ground time |
+| **The chart glides, nothing jumps** | scroll §4.15 | on a sample tick no surface point, seam point or post moves more than **2 x its own between-sample per-tick rate, and never more than 0.05 m**; between samples nothing on the chart moves more than 0.04 m per tick (the forming candle and the newest sample gliding in are the fastest points) (measured 2026-09-17 after the glide fixes: candle layer 0.005 m, whole surface 0.037 m = its glide rate, seam <= 0.06 m on the sample tick - the seam is the one point still over; earlier: 0.137 m and berms 2.571 m) |
+| **Trucks and tanks get through** | passability §4.15 | the north-south drive (z = -54 to +54 and back at x = 20 m, full throttle): >= 85% of flat speed, 0 stops; no vertical face and no added height over 1 m or grade over 25% anywhere in the band but a crater (measured 2026-09-17, berms withdrawn: 97.7%, 0 stops, 1010 vs 1052 ticks; east drive 96.5%, 831/828; most added height 1.000 m, steepest 25.0% on seeds 1-5 at open and after 4 samples - green) |
+| **A tank gets where it is sent** | army movement §1.1, §4.6 | of hold jumps >= 3 m, <= 10% take more than 1.2 x the flat-ground time `(|dx| + |dz|) / 6.8 m/s` to come within 1.5 m, and the p90 is <= 1.3 x (measured 2026-09-17 on the ribbon: 11-19%, p90 1.22-1.46; on flat ground without candles 13-17%, p90 1.26-1.56 - so it is the separation pass and cross-then-close, not terrain; RULED HERE as an army row, retune §1.1's push or §4.6's controllers, not the row) |
 | **The chart is the market's alone** | §4.14 | lead, trend, momentum and `front` are bit-identical with the truck parked and driven, and identical across any two players' runs on the same samples |
 | **Losses bite** | supply §3 | on ticks where one side holds more objectives than the other, that side has more living tanks on >= 55% of them; a side down to 2 objectives lost never falls below 4 tanks on more than 8% of ticks (the floor row above stays) |
 
@@ -444,7 +445,13 @@ number on it is a core word or the client's memory of attested samples - nothing
   rise** (ties → the first, nearest the hold line, in scan order -4, -2, 0, +2, +4). That is the point
   behind the crest with the gun over it.
 - A candle's plateau edge (§4.15) is a crest like any other to this search: the chart's steps are
-  where the overwatch tanks sit, and they creep with the scroll.
+  where the overwatch tanks sit, and they creep with the scroll. **Hysteresis (RULED HERE 2026-09-17,
+  measured: on the ribbon the search superseded 452 posts on one seed against 8 on flat ground,
+  because a scrolling chart offers a new best edge every few ticks):** the search runs every **60
+  ticks**, not every tick, and keeps the current candidate unless another's rise beats it by **>= 0.3
+  m**; between searches the held candidate scrolls with the chart (its x + offset, §4.15), which is a
+  creep, not a new post. A hull-down tank therefore changes crest at most once a second and only for
+  a visibly better one - the §0 wiggle row is measured with the ribbon on.
 - **Reverse slope** is the same rule seen from the other side: sit behind the crest, gun just over. It is
   **not** a second behaviour in this core.
 - BOUNDING holds the forward line as given, no crest search: it is the one that moves.
@@ -964,8 +971,10 @@ a thing the truck drives on is settled state (multiplayer_p2p.md §0.5), so the 
   the post office at 0.576 m/s and never jumps. A **rescale** (a new window high or low) moves body
   ends in z; they **lerp to their targets over the 300 ticks** to the next sample, so an edge moves at
   most 0.2 m per tick in the worst case (a full ±45 m rescale) and a few centimetres in the usual one.
-  State: `TAC_SAMPLE_TICK` (one word) and the previous 64-sample targets (a second tape, 64 words) -
-  appended, no offset above moves.
+  The **newest sample glides in** over the 300 ticks and the **oldest fades out** over the same (its
+  previous value kept in one word, `MK_PREV_OLDEST`), and a new forming candle grows from zero length;
+  the rescale is read before the tape shift. State: `TAC_SAMPLE_TICK`, `MK_PREV_OLDEST` and the previous
+  64-sample targets (a second tape, 64 words) - appended, no offset above moves.
 - **What it does to the war**, all of it emergent from rules already written:
   - **Hull-down** (§4.1): the overwatch tank's crest search finds a plateau edge as it finds a hill: a
     tank sits below the edge with its gun over it. The chart's steps are the war's positions, and they
