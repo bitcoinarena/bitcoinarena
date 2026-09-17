@@ -69,6 +69,7 @@ import { authorityAt, donationSetSignedBy, encodeDonationSetBody, encodeAuthorit
 import { donationSetId } from '../../protocol/src/donation.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { Custody, NO_LIGHTNING, SETTLE, HELD } from './custody.js';
+import { timed } from './slow.js';
 import { resultFinality } from './finality.js';
 import { outageOutcome } from '../../protocol/src/entry-void.js';
 import { ENTRY_VOID, netStakeMsat } from '../../protocol/src/payout.js';
@@ -1217,11 +1218,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (decideOutage(roundIdBytes, entryId, { evidenceKind: 'closed' })) await forwardFirstMark(f);
       }
     })().catch((e) => console.error(`[entry-void] ${e.message}`));
-    stakes = verifier.settleRound(roundIdBytes)
+    stakes = timed(`close ${toHex(roundIdBytes).slice(0, 8)} settleRound`, () => verifier.settleRound(roundIdBytes))
       .then(async (closed) => {
         // A daemon taken away while it replayed acts on nothing afterwards.
         if (shuttingDown) return { ok: false, why: 'this node was shut down before its close logic ran' };
-        const money = await settleTheStakes(roundIdBytes, closed);
+        const money = await timed(`close ${toHex(roundIdBytes).slice(0, 8)} settleTheStakes`,
+          () => settleTheStakes(roundIdBytes, closed));
         watchFinality(roundIdBytes, closed, money);
         return money;
       })
@@ -1236,7 +1238,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     for (const g of (closed && closed.gathered) || []) {
       if (!(g && g.ok && g.final)) continue;
       try {
-        const p = await verifier.publish(roundIdBytes, g.entryId);
+        const p = await timed(`publish ${toHex(g.entryId).slice(0, 8)}`, () => verifier.publish(roundIdBytes, g.entryId));
         for (const r of p.refused || []) console.log(`[publish] ${toHex(g.entryId).slice(0, 16)} ${r}`);
       } catch (e) { console.error(`[publish] ${e.message}`); }
     }
@@ -1244,7 +1246,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // this signer node's own re-run once, and the other signer nodes' gathered every time.
     for (const g of (closed && closed.gathered) || []) {
       if (!(g && g.ok && g.final)) continue;
-      try { await rerunAndFile(roundIdBytes, g.entryId); } catch (e) { console.error(`[rerun] ${e.message}`); }
+      try { await timed(`rerun ${toHex(g.entryId).slice(0, 8)}`, () => rerunAndFile(roundIdBytes, g.entryId)); }
+      catch (e) { console.error(`[rerun] ${e.message}`); }
     }
     const row = round.get(roundIdBytes);
     if (!row) return { ok: false, why: 'no such round' };
@@ -1343,9 +1346,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       return { ok: false, why: 'this node reaches no Lightning, so it settles nothing', waiting, suspended, lockSettled };
     }
-    const done = await custody.settleHeldInvoices({
+    const done = await timed('custody settleHeldInvoices', () => custody.settleHeldInvoices({
       roundId: roundIdBytes, entries, minScore: contract.minScore, finalFor: isFinal,
-    });
+    }));
     if (done && done.ok && typeof done.poolMsat === 'bigint') settledPools.set(toHex(roundIdBytes), done.poolMsat);
     if (done && done.ok && done.table && Array.isArray(done.table.table))
       settledRows.set(toHex(roundIdBytes), new Map(done.table.table.map((r) => [toHex(r.pubkey), r.amountMsat])));
@@ -1377,10 +1380,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // ...AND WHAT THE ROUND OWES. The stakes moving is 23.2; who is owed what
     // out of the pool is §20, and it needs its own five of seven. This node
     // signs the table it computed and asks the other signer nodes for theirs.
-    await payouts.gather({ roundId: roundIdBytes }).catch((e) => console.error(`[payout] ${e.message}`));
-    const owed = payouts.queue({
+    await timed('payout gather', () => payouts.gather({ roundId: roundIdBytes })).catch((e) => console.error(`[payout] ${e.message}`));
+    const owed = timed('payout queue', () => payouts.queue({
       roundId: roundIdBytes, entries, minScore: contract.minScore, contract,
-    });
+    }));
     console.log(`[payout] ${owed.ok ? owed.state : owed.why}`);
 
     // ...AND THE SPEND ITSELF, if this node is the signer node that asks for it.
@@ -1392,9 +1395,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // operator reading a log.
     let paid = null;
     if (owed.ok && owed.state === PAYOUT_QUEUED) {
-      paid = await payouts.settleQueued({
+      paid = await timed('payout settleQueued', () => payouts.settleQueued({
         roundId: roundIdBytes, contract, signing, watch: poolWatch,
-      }).catch((e) => ({ ok: false, why: e.message }));
+      })).catch((e) => ({ ok: false, why: e.message }));
       console.log(`[payout] ${paid.ok ? `${paid.state} ${paid.txid ? toHex(paid.txid) : ''}` : paid.why}`);
     }
     // WHAT THIS CLOSE BELIEVED, whatever it did. A settlement that moves
@@ -1554,7 +1557,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   let recoveringNow = null;
   const recoverSettlements = () => {
     if (recoveringNow || shuttingDown) return recoveringNow || Promise.resolve([]);
-    recoveringNow = settlements.recover()
+    recoveringNow = timed('settlement recover', () => settlements.recover())
       .then((done) => { for (const d of done) console.log(`[settle] ${d.round.slice(0, 16)} asked again: ${d.state} - ${d.why}`); return done; })
       .catch((e) => { console.error(`[settle] ${e.message}`); return []; })
       .finally(() => { recoveringNow = null; });
@@ -1578,7 +1581,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // the very path that message takes, and at start for any round already over.
   let endTimer = null;
   if (closeAtEnd) {
-    const sweep = () => {
+    const sweep = () => timed('close sweep', () => {
       if (shuttingDown) return;
       const nowMs = BigInt(round.now());
       for (const held of round.openRounds()) {
@@ -1592,7 +1595,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           afterClose(held.roundId);
         }
       }
-    };
+    });
     endTimer = setInterval(sweep, (closeAtEnd && closeAtEnd.everyMs) || 2000);
     sweep();
   }
@@ -3098,8 +3101,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             // tab reached the round was pictured from its first tick, STEP_BUDGET ticks a push: missing, then racing
             // along where it had been. Stepped here, its batch's own few ticks, it is at its newest tick when anybody
             // arrives.
-            ghosts.latest(landed.roundId, landed.entryId);
-            showRound(landed.roundId);
+            timed('ghost warm step', () => ghosts.latest(landed.roundId, landed.entryId));
+            timed('ghost push', () => showRound(landed.roundId));
           } catch (e) { console.error(`[ghosts] ${e.message}`); }
         }
       } catch (e) {
