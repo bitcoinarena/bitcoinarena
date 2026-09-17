@@ -134,6 +134,40 @@ public class ChartHudTests
     }
 
     [Test]
+    public void TheHeaderRowsEndAboveThePlotAndYouKeepsOffThem()
+    {
+        // Measured on 0.0.1459 (panel 587,437,384,197): the legend row ended at 499.7 and the plot began at 480.3, 19.4 px
+        // inside it, and a truck near the window's top put its YOU dot (34 px²) and label on "FRONT · SMA 21".
+        foreach (var name in new[] { "ground-open", "round-90", "ground-assault" })
+        {
+            var f = ChartHud.Build(Words(name), Panel, null);
+            float lh = ChartHud.RowHeight(Panel.height);
+            float rowsEnd = Panel.y + 2f + 3f * lh;
+            Assert.GreaterOrEqual(f.Plot.y - rowsEnd, ChartHud.MarkClearance - 0.01f, $"{name}: plot top {f.Plot.y} vs rows end {rowsEnd}");
+            var legend = new Rect(Panel.x + 6f, Panel.y + 2f + 2f * lh, 117.2f, lh);
+            Assert.AreEqual(0f, ChartHud.Shared(legend, f.Plot), $"{name}: the legend row reaches into the plot");
+        }
+        var g = ChartHud.Build(Words("ground-open"), Panel, null);
+        float h = ChartHud.RowHeight(Panel.height);
+        var rows = new[]
+        {
+            new Rect(Panel.x + 6f, Panel.y + 2f, 180f, h), new Rect(Panel.x + 6f, Panel.y + 2f + h, 291.4f, h),
+            new Rect(Panel.x + 6f, Panel.y + 2f + 2f * h, 117.2f, h),
+        };
+        // the truck at the window's top: the dot pinned to the plot's top edge, heading +x (the tick to the right)
+        foreach (var dot in new[] { new Vector2(g.Plot.x + 36f, g.Plot.y), new Vector2(g.Plot.x + 36f, g.Plot.y + 9f), new Vector2(g.Plot.xMax - 3f, g.Plot.y) })
+        {
+            var mark = Rect.MinMaxRect(dot.x - 4f, dot.y - 4f, dot.x + 11f, dot.y + 4f);
+            foreach (var r in rows) Assert.AreEqual(0f, ChartHud.Shared(mark, r), $"dot {dot}: mark {mark} on header row {r}");
+            var label = ChartHud.PlaceYouLabel(g.Plot, dot, mark, 42.5f, h, rows, out bool placed);
+            Assert.IsTrue(placed, $"dot {dot}: no place for YOU");
+            Assert.AreEqual(0f, ChartHud.Shared(label, mark), $"dot {dot}: label on the mark");
+            foreach (var r in rows) Assert.AreEqual(0f, ChartHud.Shared(label, r), $"dot {dot}: label {label} on header row {r}");
+            Assert.IsTrue(label.x >= g.Plot.x && label.xMax <= g.Plot.xMax && label.y >= g.Plot.y && label.yMax <= g.Plot.yMax, $"dot {dot}: label {label} off the plot {g.Plot}");
+        }
+    }
+
+    [Test]
     public void OpenKeepsOffThePriceRowTheLegendAndTheLabels()
     {
         // The boxes as build 0.0.1459 logged them on a 1280x657 player (panel 587,437,384,197): OPEN's old place above its

@@ -83,6 +83,10 @@ public class ChartHud : MonoBehaviour
         /// what the OPEN label is measured against.
         /// </summary>
         public Rect SymbolBox, PriceBox, LegendBox, OpenBox, YouBox, HighBox, LowBox, GateBox;
+        /// <summary>YOU's dot and heading tick, where the core puts the truck; YouBox is its label.</summary>
+        public Rect YouMarkBox;
+        /// <summary>False when no place for the YOU label clears every box, and it stayed up and right of the dot.</summary>
+        public bool YouPlaced;
         /// <summary>False when no place for the OPEN label clears every box, and it stayed above its line at the left.</summary>
         public bool OpenPlaced;
         public readonly List<Label> PriceAxis = new List<Label>();
@@ -134,7 +138,10 @@ public class ChartHud : MonoBehaviour
         var f = new Frame { Panel = panel, Range = v[L.CH_RANGE], Candles = v[L.CH_CANDLES], First = v[L.CH_FIRST] };
         int n = Mathf.Max(1, f.Candles);
         float unit = Mathf.Max(1, v[L.CH_UNIT]);
-        float headH = Mathf.Max(34f, panel.height * 0.22f), axisW = Mathf.Max(64f, panel.width * 0.2f), axisH = Mathf.Max(14f, panel.height * 0.09f);
+        // THE PLOT STARTS BELOW THE HEADER'S THREE ROWS, and MarkClearance below that. It started at 22% of the panel, above the
+        // rows' own bottom: measured on 0.0.1459 the legend row ("FRONT · SMA 21") reached 19.4 px into the plot, and a truck
+        // whose price is near the window's top drew its YOU dot and label on it (dot 34 px², label on the row).
+        float headH = HeaderHeight(panel.height), axisW = Mathf.Max(64f, panel.width * 0.2f), axisH = Mathf.Max(14f, panel.height * 0.09f);
         f.Plot = new Rect(panel.x + 4f, panel.y + headH, panel.width - axisW - 4f, panel.height - headH - axisH);
 
         f.Header = $"{Symbol} · {RangeName(f.Range)}";
@@ -287,9 +294,51 @@ public class ChartHud : MonoBehaviour
             $"panel={f.Panel.x:0},{f.Panel.y:0},{f.Panel.width:0},{f.Panel.height:0}", $"screen={Screen.width}x{Screen.height}",
             $"charts={ChartsPainted}",
             $"symbolBox={B(f.SymbolBox)}", $"priceBox={B(f.PriceBox)}", $"legendBox={B(f.LegendBox)}", $"openBox={B(f.OpenBox)}",
-            $"youBox={B(f.YouBox)}", $"highBox={B(f.HighBox)}", $"lowBox={B(f.LowBox)}", $"gateBox={B(f.GateBox)}",
+            $"youBox={B(f.YouBox)}", $"youMarkBox={B(f.YouMarkBox)}", $"youPlaced={f.YouPlaced}", $"plotBox={B(f.Plot)}",
+            $"youLabelShares={Shares(f.YouBox, f)}", $"youMarkShares={Shares(f.YouMarkBox, f)}", $"highBox={B(f.HighBox)}", $"lowBox={B(f.LowBox)}", $"gateBox={B(f.GateBox)}",
             $"openShares={OpenShares(f)}", $"openPlaced={f.OpenPlaced}",
         }));
+    }
+
+    /// <summary>The header's font size for a panel this tall: the painter's and the layout's one number.</summary>
+    public static int HeaderFont(float panelHeight) => Mathf.RoundToInt(Mathf.Clamp(panelHeight * 0.075f, 11f, 18f));
+
+    /// <summary>One header row's height: the font and its line spacing.</summary>
+    public static float RowHeight(float panelHeight) => HeaderFont(panelHeight) * 1.35f;
+
+    /// <summary>
+    /// How far YOU's mark reaches from its centre: the 8 px dot's half (4) and the 10 px heading tick, 2 px wide (11). A dot
+    /// pinned to the plot's top edge reaches this far above it, so the plot keeps this clear of the header's rows.
+    /// </summary>
+    public const float MarkClearance = 12f;
+
+    /// <summary>The header above the plot: 2 px, the symbol, price and legend rows, and MarkClearance.</summary>
+    public static float HeaderHeight(float panelHeight) => 2f + 3f * RowHeight(panelHeight) + MarkClearance;
+
+    /// <summary>
+    /// Where the YOU label goes, around the dot and never over it: up-right of the dot, then below; along each row, rightwards
+    /// then leftwards from the dot in 4 px steps; the first box inside the plot that shares no area with the mark or any of
+    /// <paramref name="avoid"/>. Nothing free: up-right of the dot, and <paramref name="placed"/> false. The dot itself is the
+    /// core's truck and does not move.
+    /// </summary>
+    public static Rect PlaceYouLabel(Rect plot, Vector2 dot, Rect mark, float width, float height, Rect[] avoid, out bool placed)
+    {
+        foreach (float y in new[] { dot.y - height, dot.y + 5f })
+        {
+            if (y < plot.y || y + height > plot.yMax) continue;
+            for (float d = 0f; d <= plot.width; d += 4f)
+                foreach (float x in new[] { dot.x + 6f + d, dot.x - 6f - width - d })
+                {
+                    if (x < plot.x || x + width > plot.xMax) continue;
+                    var r = new Rect(x, y, width, height);
+                    if (Shared(r, mark) > 0f) continue;
+                    bool free = true;
+                    foreach (var a in avoid) if (Shared(r, a) > 0f) { free = false; break; }
+                    if (free) { placed = true; return r; }
+                }
+        }
+        placed = false;
+        return new Rect(dot.x + 6f, dot.y - height, width, height);
     }
 
     /// <summary>
@@ -322,12 +371,22 @@ public class ChartHud : MonoBehaviour
         return w > 0f && h > 0f ? w * h : 0f;
     }
 
+    /// <summary>Every chrome box <paramref name="box"/> shares area with (header rows, OPEN, HIGH, LOW, GATE), or "-".</summary>
+    public static string Shares(Rect box, Frame f)
+    {
+        var parts = new List<string>();
+        void One(string name, Rect r) { float s = Shared(box, r); if (s > 0f) parts.Add($"{name}:{s:0.0}"); }
+        One("symbol", f.SymbolBox); One("price", f.PriceBox); One("legend", f.LegendBox); One("open", f.OpenBox);
+        One("high", f.HighBox); One("low", f.LowBox); One("gate", f.GateBox);
+        return parts.Count == 0 ? "-" : string.Join("+", parts);
+    }
+
     /// <summary>Every box the OPEN label shares area with, and how much: "price:120.5+legend:30.0", or "-".</summary>
     public static string OpenShares(Frame f)
     {
         var parts = new List<string>();
         void One(string name, Rect r) { float s = Shared(f.OpenBox, r); if (s > 0f) parts.Add($"{name}:{s:0.0}"); }
-        One("symbol", f.SymbolBox); One("price", f.PriceBox); One("legend", f.LegendBox); One("you", f.YouBox);
+        One("symbol", f.SymbolBox); One("price", f.PriceBox); One("legend", f.LegendBox); One("you", f.YouBox); One("youMark", f.YouMarkBox);
         One("high", f.HighBox); One("low", f.LowBox); One("gate", f.GateBox);
         return parts.Count == 0 ? "-" : string.Join("+", parts);
     }
@@ -363,7 +422,7 @@ public class ChartHud : MonoBehaviour
             _text = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.UpperLeft, clipping = TextClipping.Overflow, wordWrap = false };
             _right = new GUIStyle(_text) { alignment = TextAnchor.MiddleLeft };
         }
-        int small = Mathf.RoundToInt(Mathf.Clamp(f.Panel.height * 0.075f, 11f, 18f));
+        int small = HeaderFont(f.Panel.height);
         _text.fontSize = small; _right.fontSize = small;
         var old = GUI.color;
         var p = f.Plot;
@@ -449,17 +508,22 @@ public class ChartHud : MonoBehaviour
         // THE OPEN LABEL, off the header and off the labels already on the plot. Measured on 0.0.1459: drawn above its line at
         // the plot's left edge it shared 429 px of box and 246 drawn pixels with the price row ("$78,515.00 +0.00%") and
         // 435 px with the legend row. YOU's box is known before YOU is drawn, so the truck stays on top of it.
-        f.YouBox = Rect.MinMaxRect(f.You.x - 4f, f.You.y - lh, f.You.x + 6f + _text.CalcSize(new GUIContent(f.YouOn ? "YOU" : "YOU ›")).x, f.You.y + 4f);
+        float rad = (90f - f.YouHeading) * Mathf.Deg2Rad;
+        var tickEnd = f.You + new Vector2(Mathf.Cos(rad), -Mathf.Sin(rad)) * 10f;
+        f.YouMarkBox = Rect.MinMaxRect(Mathf.Min(f.You.x - 4f, tickEnd.x - 1f), Mathf.Min(f.You.y - 4f, tickEnd.y - 1f),
+                                       Mathf.Max(f.You.x + 4f, tickEnd.x + 1f), Mathf.Max(f.You.y + 4f, tickEnd.y + 1f));
+        string youWord = f.YouOn ? "YOU" : "YOU ›";
+        f.YouBox = PlaceYouLabel(p, f.You, f.YouMarkBox, _text.CalcSize(new GUIContent(youWord)).x, lh,
+                                 new[] { f.SymbolBox, f.PriceBox, f.LegendBox, f.HighBox, f.LowBox, f.GateBox }, out f.YouPlaced);
         float ow = _text.CalcSize(new GUIContent("OPEN")).x;
-        f.OpenBox = PlaceOpen(p, f.OpenY, ow, lh, new[] { f.SymbolBox, f.PriceBox, f.LegendBox, f.YouBox, f.HighBox, f.LowBox, f.GateBox }, out f.OpenPlaced);
+        f.OpenBox = PlaceOpen(p, f.OpenY, ow, lh, new[] { f.SymbolBox, f.PriceBox, f.LegendBox, f.YouMarkBox, f.YouBox, f.HighBox, f.LowBox, f.GateBox }, out f.OpenPlaced);
         Text(f.OpenBox, "OPEN", Axis, _text);
 
         // 4. the truck, always on top: a faint line down to the time axis, the dot, its heading, YOU
         Box(new Rect(f.You.x, f.You.y, 1f, p.yMax - f.You.y), new Color(Truck.r, Truck.g, Truck.b, 0.35f));
-        float rad = (90f - f.YouHeading) * Mathf.Deg2Rad;
-        Line(f.You, f.You + new Vector2(Mathf.Cos(rad), -Mathf.Sin(rad)) * 10f, 2f, Truck);
+        Line(f.You, tickEnd, 2f, Truck);
         Box(new Rect(f.You.x - 4f, f.You.y - 4f, 8f, 8f), Truck);
-        Text(new Rect(f.You.x + 6f, f.You.y - lh, 60f, lh), f.YouOn ? "YOU" : "YOU ›", Truck, _text);
+        Text(f.YouBox, youWord, Truck, _text);
         GUI.color = old;
     }
 
