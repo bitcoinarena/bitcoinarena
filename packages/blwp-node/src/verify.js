@@ -281,12 +281,18 @@ export class Verifier {
         body = new Uint8Array(await answer.arrayBuffer());
         report.answered++;
       } catch (e) { report.down.push(`${peer}: ${e.message}`); continue; }
-      for (let at = 0; at + SIGNED_RECEIPT_BYTES <= body.length; at += SIGNED_RECEIPT_BYTES) {
-        try {
-          this.round.takeReceipt(body.slice(at, at + SIGNED_RECEIPT_BYTES));
-          report.taken++;
-        } catch (e) { report.refused.push(`${peer}: ${e.message}`); }
-      }
+      // THE RECEIPTS A PEER SENT, TAKEN INTO THE STORE - the continuation after that peer answered, and the last
+      // unnamed one on this chain (the owner 2026-09-17 19:15, the ghost lag): stalls of 299-377 ms named only 6-9 ms of
+      // frame work and left 190-250 ms of this thread's processor unaccounted. Each receipt is checked and written
+      // here, per peer, per entry, at the close and at every retry.
+      timed(`close take receipts ${hex(entryIdBytes).slice(0, 8)}`, () => {
+        for (let at = 0; at + SIGNED_RECEIPT_BYTES <= body.length; at += SIGNED_RECEIPT_BYTES) {
+          try {
+            this.round.takeReceipt(body.slice(at, at + SIGNED_RECEIPT_BYTES));
+            report.taken++;
+          } catch (e) { report.refused.push(`${peer}: ${e.message}`); }
+        }
+      }, { over: 20 });
     }
     // AND ANY SIGNER NODE'S REFUSED FIRST MARK (M3.3-34): the player's own on-time first
     // mark that a signer node, up, refused - checked here (round.onTimeFirstMark). It
