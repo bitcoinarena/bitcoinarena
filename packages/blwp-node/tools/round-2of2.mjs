@@ -44,6 +44,7 @@ import { beaconFromChain, medianTimePast } from '../../protocol/src/beacon.js';
 import { regtest } from './regtest-bond.mjs';
 import { chainOf, publicationOf } from '../../protocol/tools/chainview.js';
 import { bitcoindRpc, blocksOver } from '../src/chain-rpc.js';
+import { timed } from '../src/slow.js';
 import { operatorFunding, freeOrOperatorFunding } from '../src/funding.js';
 import { serve } from '../src/server.js';
 import { lightningFromEnv } from '../src/lnd-settings.js';
@@ -692,12 +693,16 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       committeeTimeMs: committee, startTimeMs: committee + MIN_ENTRY_WINDOW_MS,
       entryCloseMs: committee + MIN_ENTRY_WINDOW_MS + (contract.entryCloseMs - contract.startTimeMs) };
     censusView = await viewToTip();
-    next.censusRoot = censusRootFor(next);
+    // THE KEEPER'S OWN WORK, NAMED (the owner 2026-09-17 19:15, the ghost lag). Eight of twelve stalls over 300 ms still
+    // name nothing but 0-20 ms of frames while this thread burns 190-250 ms, and the keeper opening a round is the
+    // last stretch of this thread nobody timed: it runs in the same process as both signer nodes, so whatever it holds,
+    // the pictured trucks wait for. One name, on both of its stretches; nothing is moved.
+    next.censusRoot = timed('keeper opening a round', () => censusRootFor(next), { over: 20 });
     await publishOnChain(next);
     const seen = beacon ? await beacon.refresh(next) : { ok: false, why: 'no beacon' };
     if (!seen.ok) throw new Error('the next round names no beacon: ' + seen.why);
     if (funded.nameRound) funded.nameRound(roundId(next));
-    const nextId = await postRound(next);
+    const nextId = await timed('keeper opening a round', () => postRound(next), { over: 20 });
     held.push(next);
     return nextId;
   }
