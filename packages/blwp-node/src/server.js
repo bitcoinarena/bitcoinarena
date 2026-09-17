@@ -69,7 +69,7 @@ import { authorityAt, donationSetSignedBy, encodeDonationSetBody, encodeAuthorit
 import { donationSetId } from '../../protocol/src/donation.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { Custody, NO_LIGHTNING, SETTLE, HELD } from './custody.js';
-import { timed } from './slow.js';
+import { timed, watchLoop } from './slow.js';
 import { resultFinality } from './finality.js';
 import { outageOutcome } from '../../protocol/src/entry-void.js';
 import { ENTRY_VOID, netStakeMsat } from '../../protocol/src/payout.js';
@@ -1603,6 +1603,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const http = createServer(async (req, res) => {
     try {
       const url = new URL(req.url, 'http://node');
+      // EVERY DOOR IS TIMED, so a stall inside one has a name (the owner 2026-09-17 19:15, the ghost lag: 32 of the 34
+      // stalls left on the Daily had no phase name at all). The label is the path, never the query, which carries ids.
+      return await timed(`door ${req.method} ${url.pathname}`, () => served(req, res, url), { over: 200 });
+    } catch (e) {
+      // The message is the reason - "the round is closed", "no such entry" -
+      // because a node that answers "400" to everything makes a client guess.
+      return text(res, 400, e.message);
+    }
+  });
+
+  const served = async (req, res, url) => {
+    {
 
       // The preflight a browser sends before a POST it cannot classify as
       // simple. Answered and nothing else: there is no state to change here.
@@ -2895,16 +2907,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
 
       return text(res, 404, 'no such door');
-    } catch (e) {
-      // The message is the reason - "the round is closed", "no such entry" -
-      // because a node that answers "400" to everything makes a client guess.
-      return text(res, 400, e.message);
     }
-  });
+  };
 
   // Batches in, and one word back: how many ticks were new. A repeat answers
   // `0` rather than an error, because re-sending is the right thing for a
   // client that never learned whether the first one landed.
+  // AND THE LOOP WATCHES ITSELF (the owner 2026-09-17 19:15, the ghost lag): a stall over 250 ms prints the timed phases
+  // that ran inside it, the garbage collection in it, or - when there was neither - that nothing named held it.
+  watchLoop({ say: (line) => console.log(line) });
+
   const wss = new WebSocketServer({
     server: http,
     path: '/play',
@@ -2985,7 +2997,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (sock.readyState === sock.OPEN) sock.close(1009, 'frame too large');
     });
 
-    const handle = (data, isBinary) => {
+    const handle = (data, isBinary) => timed(`play frame ${isBinary ? 'bytes' : 'text'}`, () => handled(data, isBinary), { over: 200 });
+
+    const handled = (data, isBinary) => {
       try {
         if (!isBinary) {
           const t = data.toString();
@@ -3085,7 +3099,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const stands = bearsAuthority(bytes, 'an input');
         if (!stands.ok) return sock.send('error ' + stands.why);
 
-        const took = round.batch(bytes);
+        const took = timed('batch stored', () => round.batch(bytes), { over: 200 });
         sock.send(String(took));
 
         // A NEW TICK IS A NEW PICTURE. The batch that just landed moved
