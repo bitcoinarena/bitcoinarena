@@ -587,3 +587,47 @@ test('a round its chain never published, or published in its beacon block, is no
   assert.equal(seeded.ok, true, seeded.why);
   assert.equal(seeded.checkedAgainstChain, true);
 });
+
+/**
+ * A CENSUS IS DERIVED ONCE PER ROUND AND VIEW, NOT ON EVERY ASK (the owner 2026-09-17 19:15, the ghost lag).
+ *
+ * Deriving one parses every transaction of every block of the round's view, and the payout's `gather` asks for it on
+ * the finality cadence: measured live, that held the signer node's event loop - the one that pushes another player's
+ * truck - 142-209 ms every time, for an answer that cannot change. A census is fixed at the round's own census
+ * height, so it is kept per round and per view start. What must not change is the answer.
+ */
+test('the census is derived once for a round and a view, and again when the view begins somewhere else', () => {
+  const bonds = [bondOf(0x11), bondOf(0x12)];
+  const round = new Round(openStore(), () => AFTER_COMMITTEE);
+  const contract = contractFor({ censusRoot: rootFor(bonds) });
+  const rid = round.open(contract);
+  let derived = 0;
+  const roster = new Roster(round, {
+    chainFor: ({ contract: c } = {}) => { derived++; return chainWith(bonds, c); },
+    randomnessFor: ({ contract: c }) => beaconOf(chainWith(bonds, c), c),
+  });
+
+  const first = roster.censusFor(rid);
+  assert.equal(first.ok, true, first.why);
+  const again = roster.censusFor(rid);
+  assert.equal(again, first, 'the same round and view derived its census twice');
+  assert.equal(derived, 2, 'the view is still read each time - only the derivation is kept');
+  assert.deepEqual(toHex(again.root), toHex(contract.censusRoot), 'the kept census is not the round\'s own');
+
+  // A VIEW THAT BEGINS SOMEWHERE ELSE IS ANOTHER VIEW, and is derived again.
+  const moved = new Roster(round, {
+    chainFor: ({ contract: c } = {}) => { const v = chainWith(bonds, c); return { ...v, firstHeight: v.firstHeight + 1 }; },
+    randomnessFor: ({ contract: c }) => beaconOf(chainWith(bonds, c), c),
+  });
+  const elsewhere = moved.censusFor(rid);
+  assert.notEqual(elsewhere, first, 'a view beginning elsewhere answered with the kept census');
+
+  // AND A REFUSAL IS NEVER KEPT: a round whose root the chain does not give is asked again, not remembered.
+  const wrong = new Round(openStore(), () => AFTER_COMMITTEE);
+  const rid2 = wrong.open(contractFor({ censusRoot: new Uint8Array(32).fill(0x99) }));
+  const bad = new Roster(wrong, { chainFor: ({ contract: c } = {}) => chainWith(bonds, c),
+    randomnessFor: ({ contract: c }) => beaconOf(chainWith(bonds, c), c) });
+  assert.equal(bad.censusFor(rid2).ok, false);
+  assert.equal(bad.censuses.size, 0, 'a refusal was kept');
+});
+

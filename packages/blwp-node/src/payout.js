@@ -32,6 +32,7 @@ import { receiptsNeeded } from '../../protocol/src/threshold.js';
 import { decodeRoundContract } from '../../protocol/src/contracts.js';
 import { tableFor, signPayoutTable, verifiedTable, splitSignedTable } from './payout-table.js';
 import { toHex } from '../../protocol/src/hash.js';
+import { timed } from './slow.js';
 import { encodeUtxo, decodeCommitments, decodeShare, encodeShareRequest } from './pool-wire.js';
 
 /** 9.4's two words for the qualifying tail, and they are states now. */
@@ -225,7 +226,8 @@ export class Payouts {
   /** Ask the other signer nodes what they signed, and keep only what verifies. */
   async gather({ roundId }) {
     let fetched = 0, kept = 0, refused = 0;
-    for (const peer of this.peersOf(roundId)) {
+    const peers = timed('payout peersOf', () => this.peersOf(roundId), { over: 20 });
+    for (const peer of peers) {
       let body;
       try {
         const got = await this.chainFetch(`${peer}/payout?round=${toHex(roundId)}`);

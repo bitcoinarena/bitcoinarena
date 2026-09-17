@@ -21,6 +21,7 @@ import { parseTransaction } from '../../protocol/src/tx.js';
 import { merkleBranchOf } from '../../protocol/src/chain.js';
 import { networkOf } from '../../protocol/src/constants.js';
 import { toHex } from '../../protocol/src/hash.js';
+import { timed } from './slow.js';
 import { committeeSeedFromBeacon, beaconFromChain, beaconIsTheChains } from '../../protocol/src/beacon.js';
 import { findPublication, publicationIsBeforeBeacon } from '../../protocol/src/publication.js';
 import { bondSetFor } from './curve.js';
@@ -73,7 +74,16 @@ export class Roster {
     this.round = round;
     this.chainFor = chainFor;
     this.randomnessFor = randomnessFor;
+    // A CENSUS DERIVED ONCE, NOT ON EVERY ASK (the owner 2026-09-17 19:15, the ghost lag). Deriving one parses every
+    // transaction of every block in the round's view, and the payout's `gather` asks for it on the finality cadence:
+    // measured live, `payout peersOf` held the event loop that pushes a pictured truck 142-209 ms, every time, for an
+    // answer that cannot change. A census is fixed at the round's own `censusHeight` - blocks mined above it are not
+    // in it - so it is kept per round and per view start, and only when it matched the root the round names.
+    this.censuses = new Map();
   }
+
+  /** How many derived censuses are kept: a round is asked about while it settles, and then never again. */
+  static CENSUS_KEPT = 64;
 
   /**
    * THE SEED THIS ROUND'S SIGNER NODES ARE ASSIGNED WITH, from the beacon and never from the
@@ -186,6 +196,12 @@ export class Roster {
         why: 'this node has no chain view for that round, so it cannot say who is bonded',
       };
 
+    // THE ONE ALREADY DERIVED, if it was derived from a view that begins where this one does, for this round's own
+    // census height. Nothing that arrives later is in it.
+    const kept = `${toHex(roundIdBytes)}:${view.firstHeight}:${contract.censusHeight}`;
+    const had = this.censuses.get(kept);
+    if (had) return had;
+
     const byTxid = new Map();
     for (const block of view.blocks) {
       for (const raw of block.transactions || []) {
@@ -226,6 +242,10 @@ export class Roster {
         root: census.root,
       };
 
+    // KEPT ONLY WHEN IT IS THIS ROUND'S OWN: a refusal above is never kept, so a view that grows into the answer is
+    // still derived when it can be.
+    this.censuses.set(kept, census);
+    if (this.censuses.size > Roster.CENSUS_KEPT) this.censuses.delete(this.censuses.keys().next().value);
     return census;
   }
 
