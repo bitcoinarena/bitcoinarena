@@ -176,7 +176,7 @@ the owner ordered is in the state and not on the screen. Each is a client test.
   the seam as the moving-average line the armies fight on. A candle is **10 seconds** (the owner
   2026-09-16 20:15) = 2 samples at the 5 s cadence: **32 candles across the 208 m field, each 6.5 m of
   slot**, body from open-z to close-z (a 1 m plateau the war drives on, §4.15), wick from low to high
-  (a column of light), green when close > open (a rising price - the bulls' ground) and red when it fell (the
+  (a 0.5 m ridge beyond the body), green when close > open (a rising price - the bulls' ground) and red when it fell (the
   bears'). The newest candle, at the miner's end, is **forming**: it grows as samples arrive, and the
   whole chart scrolls 2.878 m (half a slot) toward the post office per sample. From above - map, minimap, gunship - it
   reads as a TradingView chart with two armies on it; from the cab the ground under the truck is a red
@@ -933,8 +933,8 @@ a thing the truck drives on is settled state (multiplayer_p2p.md §0.5), so the 
   truck takes it at speed from any angle, and there is no angle from which a candle is a wall. The
   terrain's own relief reaches 55%; the chart is the gentlest thing on the map.
 - **Nothing in the chart is a solid.** No x-face boxes, no wick pillar (ruling w1 is withdrawn with the
-  walls): the wick is a column of light from low to high, 9 m tall, and the truck drives under and
-  through it. The only thing the truck feels is the ground: one metre up, one metre down, at 25%.
+  walls): the wick is a 0.5 m ridge of ground beyond the body (15:30). The only thing the truck feels
+  is the ground: a metre up, a metre down, half a metre over a wick, all at 25%.
   Tanks and men stand on the height read as before, and cross anything.
 - **Why 1 m and not 2**: two metres at 25% is an 8 m ramp, and on a 5.8 m slot every step of the chart
   would be ramp and no plateau; one metre is a 4 m ramp, hides a prone man (0.5 m) entirely and a
