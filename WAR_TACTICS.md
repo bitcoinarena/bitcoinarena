@@ -184,12 +184,11 @@ the owner ordered is in the state and not on the screen. Each is a client test.
   "make the candles drivable, a small ramp on every side, so they are not a foreign body but part of
   the world - and with that, collision").** §4.15 is the rule: a candle body is a **1 m plateau** the
   truck, the tanks and the men drive and walk on, with a 4 m ramp (25%) on every free edge, bodies
-  touching, so the chart is a raised ribbon the truck drives along; the wick is a 9 m column of light; and above the plateau the body glows to **6 m** as light, so it reads in
-  3D from the cab and as a chart from 300 m up. The plateau is in the core's ground (it decides where
-  a hull stands, where a man hides, whether a loaded truck makes the climb); the glow is the client's.
+  touching, so the chart is a raised ribbon the truck drives along; the wick is a 9 m opaque emissive column; nothing above the plateau but the wick (no glow, 15:20). The plateau is in the core's ground (it decides
+  where a hull stands, where a man hides, whether a loaded truck makes the climb); the colour is the client's.
   The bucket is **fixed at 2 samples = 10 s** (it is terrain now, not a view). Client test: the candles' open,
   high, low, close equal the tape's per bucket, the drawn plateau, ramps and wick equal the core's
-  `candleHeight` within 0.1 m at every metre, the glow reaches 6 m, and the line equals `seam(x)`
+  `candleHeight` within 0.1 m at every metre, nothing translucent is drawn above the slab, and the line equals `seam(x)`
   within 0.5 m.
 - **Two charts, one tape** (the owner 2026-09-16 20:15: *"10 candles at the start, 250 at the end"*). The
   **ground** is the rolling window: the last 32 ten-second candles, 5 min 20 s of price, older ones
@@ -865,10 +864,9 @@ a thing the truck drives on is settled state (multiplayer_p2p.md §0.5), so the 
   and close would leave a gap the size of one sample step at every candle - that was the picture.
 - **The look, so they read as world candles and not as pillars (same finding; client rows, each a
   test):** every body the **same height** - a 1 m matte slab in the candle's colour, its top face 20%
-  lighter, every free edge a 25% ramp, a 0.3 m darker seam line at each slot boundary; **above it**
-  the glow, a translucent volume (30% alpha, additive) from 1 m to 6 m in the same colour, no edges drawn; the **wick** a 1 m column
-  of light, 9 m tall, from low to high, brighter than the glow, no cap; the forming candle's glow
-  pulses at 1 Hz; colours green `#26a69a` / red `#ef5350` (TradingView's), not cyan; the **seam** as a
+  lighter, every free edge a 25% ramp, a 0.3 m darker seam line at each slot boundary; **nothing
+  translucent above it** (no glow, 15:20); the **wick** a 1 m opaque emissive column, 9 m tall, from
+  low to high, no cap; the forming candle's top face pulses at 1 Hz; colours green `#26a69a` / red `#ef5350` (TradingView's), not cyan; the **seam** as a
   white line on the ground through the bodies, 0.5 m wide, always visible; **No roads inside the chart band**: the chart is the road. Height must never encode price - a tall candle is a long candle, never a high one.
 - **One surface, the core's - the client never draws the raw grid (found 2026-09-17 09:50: the terrain
   ran THROUGH the candles).** The mounds poked through the slabs because the client draws the host's
@@ -941,7 +939,7 @@ a thing the truck drives on is settled state (multiplayer_p2p.md §0.5), so the 
 - **Why 1 m and not 2**: two metres at 25% is an 8 m ramp, and on a 5.8 m slot every step of the chart
   would be ramp and no plateau; one metre is a 4 m ramp, hides a prone man (0.5 m) entirely and a
   hull's tracks, and is a bump a truck barely notices at speed while still being a metre of ground
-  from above and from the cab. The glow to 6 m gives the eye the height; the ground gives the wheels
+  from above and from the cab. The colour gives the eye the chart; the ground gives the wheels
   what they can use.
 - **Passability guarantee (the owner 2026-09-17 14:40: "make it so trucks and tanks get through"; RULED
   HERE, absolute).** Nothing the core adds to the ground inside the band may stop a truck or a tank,
@@ -963,17 +961,15 @@ a thing the truck drives on is settled state (multiplayer_p2p.md §0.5), so the 
   throttle from z = -54 to +54 at x = 20 m, and back - >= 85% of flat speed and 0 stops; and **no tank
   pinned** - over 5 seeds x 3600 ticks every tank that is given a post reaches within 1.5 m of it in
   <= 1.2 x the flat-ground time, or the terrain is the fault, not the tank.
-- **The glow** above the plateau, 1 m to 6 m, is light (§0.2): no collision, no rule reads it.
-- **The glow must not become a wall (the owner 2026-09-17 15:10, first screenshot of the ribbon build):
-  from the cab, looking east along the chart, thirty-two translucent volumes stand one behind the
-  other and their alphas stack into an opaque red-green curtain across the whole battlefield - the war
-  is behind glass.** Rule (client, RULED HERE): the glow's alpha **falls with height** (30% at the
-  plateau to 0% at 6 m) and **with distance** (full inside 30 m of the camera, gone beyond 90 m), and
-  the renderer **caps the summed alpha along any ray at 50%** - beyond that, further candles add no
-  colour. From above (camera >= 20 m) the fall-off with distance is off and the chart is a chart; from
-  the cab the player sees the two or three candles around him glowing and the rest of the field
-  clear. The wicks stay visible at any distance (thin, no stacking). Test: from the truck's cab at any
-  point of the east drive, no pixel of the far half of the field is more than 50% tinted by glow.
+- **No glow. The candle is its slab (the owner 2026-09-17 15:20: "I do not want to see through all the
+  candles at all, the way it is now").** The translucent volume above the plateau is gone - the
+  fall-off and alpha-cap rules of 15:10 with it. A candle is its **1 m opaque slab**, matte, in the
+  candle's colour, top face 20% lighter, the 0.3 m dark seam line at each slot boundary, the 25% ramps
+  in the same colour; and its **wick**, a 1 m x 1 m **opaque emissive column** from low to high, 9 m
+  tall, no collision (§4.15 passability). Nothing about a candle is transparent and nothing stands
+  above the plateau but the wick. From the cab the player sees a metre-high coloured road ahead and
+  the wicks as bright posts along it; from above, the coloured slabs are the chart - a 1 m slab reads
+  from any height because it is the colour, not the height, that draws it. The war is in plain sight.
 - **It moves, so it moves smoothly.** The tape shifts one sample per 5 s (§4.13), which is a 2.878 m
   jump in x - fine for a post, not for ground under a wheel. So the candle layer (and, for free, the
   seam: `frontlineZ` is read at `x + offset`) carries a **continuous scroll**: `offset = -2.878 m x
@@ -995,14 +991,14 @@ a thing the truck drives on is settled state (multiplayer_p2p.md §0.5), so the 
     side + 0.5 m; same eligibility, same claim order. It scrolls; the claim is re-read each tick and
     the man crawls with it. Cover from the lip is COVER (§11.4): a metre of ground hides a prone man.
   - **Lines and posts**: unchanged - they are z from the seam; the men walk over the plateaus.
-  - **Objectives** (§4.11) are the chart's HIGH, LOW and OPEN and ride it (re-ruled 21:15). **Craters** cut into a plateau as into ground. **Air** flies at 19 m, above the glow.
+  - **Objectives** (§4.11) are the chart's HIGH, LOW and OPEN and ride it (re-ruled 21:15). **Craters** cut into a plateau as into ground. **Air** flies at 19 m, above the wicks.
   - **The truck** (§1.2): a plateau under it is ground; a wick is a wall; nothing in the war changes for
     it. A wreck on a plateau is a wreck on a plateau.
   - **Item 2** stays out: no rule here lets a tank read a wreck or move a whole line.
 - **Why 2 m and not 6**: a 6 m plateau needs a 15 m ramp at the same grade, which on a 3.7 m body is
   no plateau at all - the candle becomes a ridge. Two metres hides a hull (3 m) to the turret, hides a
-  prone man entirely, keeps the ramp short enough that the body's edge is still a line, and the glow
-  gives the 6 m the eye wants. the owner can retune H and R; the grade `H / R` is the number that matters.
+  prone man entirely, keeps the ramp short enough that the body's edge is still a line, and the colour
+  gives the eye the chart. the owner can retune H and R; the grade `H / R` is the number that matters.
 
 ---
 
@@ -1079,7 +1075,7 @@ fewer tanks.
 **Candle**
 Ten seconds - two samples - of the tape as terrain: a 1 m plateau as wide as its 5.756 m slot, bodies
 touching into a raised ribbon, 4 m ramps at 25% on every free edge, no wall, no corridor, no solid, a
-wick of light, a glow to 6 m. 32 on the ground; the whole round in the HUD chart. Green
+opaque emissive wick, no glow. 32 on the ground; the whole round in the HUD chart. Green
 up, red down. Scrolls 0.576 m/s toward the post office. Hull-down crests and candle-lip cover come with
 it (§4.15).
 

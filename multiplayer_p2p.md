@@ -213,7 +213,7 @@ text; this section is what the protocol commits to.
   two samples - make a candle, 32 on the ground (the last 5 min 20 s; the
   HUD chart shows the whole round since `start_time`, 250 candles at 41 min): a 1 m plateau as wide as its slot, bodies touching into a
   raised ribbon the truck drives along, a 4 m ramp at 25% on every free
-  edge, no wall and no corridor, a wick of light, and a glow to 6 m - green up, red down, readable from
+  edge, no wall and no corridor, an opaque emissive wick, no glow, and a glow to 6 m - green up, red down, readable from
   above and from the cab. The plateaus and wicks are in the core's ground
   (`surfaceAt`), so they are settled state like the relief and the craters:
   a hull-down tank sits behind a candle's edge, a rifleman hides under its
