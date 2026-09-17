@@ -188,7 +188,11 @@ export class Verifier {
       }
       this.seeds.set(hex(roundIdBytes), beacon.committeeSeed);
 
-      const transcript = timed(`close read transcript ${hex(entryId).slice(0, 8)}`,
+      // THE WORKER READS THE RUN WHEN THERE IS A FILE TO READ IT FROM (the owner 2026-09-17 19:15): this loop feeds
+      // pictured trucks, and a stored run's rows are not its work. A store with no file - a test's ':memory:' - is
+      // read here as before.
+      const store = this.round.db.blwpPath || null;
+      const transcript = store ? null : timed(`close read transcript ${hex(entryId).slice(0, 8)}`,
         () => this.round.transcript(roundIdBytes, entryId), { over: 20 });
       const objected = this.round.objected(roundIdBytes, entryId);
       this.queued.push({ entryId, objected });
@@ -202,6 +206,7 @@ export class Verifier {
         key: `${hex(roundIdBytes)}:${hex(entryId)}`,
         objected,
         transcript,
+        source: store ? { store, roundId: roundIdBytes, entryId } : null,
         entry,
         // The WORLD seed's half of the same published value.
         options: { roundRandomness: beacon.hash },

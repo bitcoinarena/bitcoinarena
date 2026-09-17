@@ -47,6 +47,10 @@ export function renameToSignerNodes(db) {
 
 export function openStore(path = ':memory:') {
   const db = new DatabaseSync(path);
+  // WHERE THIS STORE IS, kept on the handle (the owner 2026-09-17 19:15, the ghost lag): a replay worker opens the same
+  // file read-only and reads a run's rows itself, instead of the thread that answers /play reading them and handing
+  // them across. ':memory:' names no file, and those rows are handed across as before.
+  db.blwpPath = path === ':memory:' ? null : path;
   renameToSignerNodes(db);
   db.exec(`
     PRAGMA journal_mode = WAL;
