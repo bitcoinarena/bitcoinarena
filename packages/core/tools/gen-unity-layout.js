@@ -60,7 +60,7 @@ const tactics = await import(new URL('../src/rules/tactics.js', import.meta.url)
 out += '\n        // chart view (src/chart.js) and the objective, holder and assault names it carries\n';
 for (const k of Object.keys(chart).filter((k) => /^(CH_|CHART_)/.test(k) && typeof chart[k] === 'number').sort())
   out += `        public const int ${k} = ${chart[k]};\n`;
-for (const k of Object.keys(tactics).filter((k) => /^(OBJ_|HOLDER_|ASSAULT_)/.test(k) && typeof tactics[k] === 'number').sort())
+for (const k of Object.keys(tactics).filter((k) => /^(OBJ_|HOLDER_|ASSAULT_|MK_|TAC_MARKET$)/.test(k) && typeof tactics[k] === 'number').sort())
   out += `        public const int ${k} = ${tactics[k]};\n`;
 // THE CANDLES AS TERRAIN (WAR_TACTICS.md §4.15): `candleView`'s words and the geometry's numbers, for CandleTerrain.
 const candles = await import(new URL('../src/rules/candles.js', import.meta.url));

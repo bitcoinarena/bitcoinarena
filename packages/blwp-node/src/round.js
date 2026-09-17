@@ -430,6 +430,8 @@ export class Round {
     const putLoad = this.db.prepare(
       'INSERT OR IGNORE INTO loads (round_id, entry_id, tick, fee_sats, btc_hund) '
       + 'VALUES (?, ?, ?, ?, ?)');
+    const putSample = this.db.prepare(
+      'INSERT OR IGNORE INTO samples (round_id, entry_id, tick, price) VALUES (?, ?, ?, ?)');
 
     // THE CHAIN, checked before anything is written. A batch that does not
     // name the head is not a late arrival to be sorted later - it belongs to
@@ -498,6 +500,8 @@ export class Round {
     for (const [tick, size] of b.liquidations) putLiq.run(b.roundId, b.entryId, tick, size);
     for (const [tick, fee, btc] of (b.loads || []))
       putLoad.run(b.roundId, b.entryId, tick, fee, btc);
+    for (const [tick, price] of (b.samples || []))
+      putSample.run(b.roundId, b.entryId, tick, price);
 
     if (!seen) {
       const n = this.db.prepare(
@@ -1121,10 +1125,13 @@ export class Round {
       'SELECT tick, size FROM liquidations WHERE round_id = ? AND entry_id = ? ORDER BY tick').all(roundIdBytes, entryIdBytes);
     const loads = this.db.prepare(
       'SELECT tick, fee_sats, btc_hund FROM loads WHERE round_id = ? AND entry_id = ? ORDER BY tick').all(roundIdBytes, entryIdBytes);
+    const samples = this.db.prepare(
+      'SELECT tick, price FROM samples WHERE round_id = ? AND entry_id = ? ORDER BY tick').all(roundIdBytes, entryIdBytes);
     return {
       ticks: ticks.map((r) => ({ tick: r.tick, words: [...new Int32Array(new Uint8Array(r.words).buffer)] })),
       liquidations: liq.map((r) => [r.tick, r.size]),
       loads: loads.map((r) => [r.tick, r.fee_sats, r.btc_hund]),
+      samples: samples.map((r) => [r.tick, r.price]),
     };
   }
 
@@ -1168,11 +1175,16 @@ export class Round {
     const loads = this.db.prepare(
       'SELECT tick, fee_sats, btc_hund FROM loads WHERE round_id = ? AND entry_id = ? ORDER BY tick')
       .all(roundIdBytes, entryIdBytes);
+    // the price samples from `from` on, like the liquidations: each belongs to its own tick
+    const samples = this.db.prepare(
+      'SELECT tick, price FROM samples WHERE round_id = ? AND entry_id = ? AND tick >= ? ORDER BY tick')
+      .all(roundIdBytes, entryIdBytes, from);
     return {
       from,
       ticks: ticks.map((r) => ({ tick: r.tick, words: [...new Int32Array(new Uint8Array(r.words).buffer)] })),
       liquidations: liq.map((r) => [r.tick, r.size]),
       loads: loads.map((r) => [r.tick, r.fee_sats, r.btc_hund]),
+      samples: samples.map((r) => [r.tick, r.price]),
     };
   }
 

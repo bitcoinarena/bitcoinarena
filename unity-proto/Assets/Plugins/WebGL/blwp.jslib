@@ -60,6 +60,17 @@ mergeInto(LibraryManager.library, {
     return ok;
   },
 
+  // A LIVE PRICE SAMPLE (the owner 2026-09-17 16:01: the chart was frozen, nothing ever submitted one), in the tape's unit
+  // (256 a dollar), handed to the core before the next tick - and to the network in the same breath, like a load, so
+  // the signer nodes replay the tape the page fought on.
+  BlwpSubmitSample: function (price) {
+    var b = Module.blwp;
+    if (!b || !b.core.submitSample) return 0;
+    var ok = b.core.submitSample(b.st, price | 0) ? 1 : 0;
+    if (ok && Module.blwpNet) Module.blwpNet.sample(price | 0);
+    return ok;
+  },
+
   BlwpFrontlineZ: function (x) {
     var b = Module.blwp;
     if (!b || !b.core.frontAt) return 0;
@@ -534,6 +545,11 @@ mergeInto(LibraryManager.library, {
     net.load = function (feeSats, btcHundredths) {
       if (!net.client) return;
       net.client.submitLoad(feeSats, btcHundredths);
+    };
+
+    net.sample = function (price) {
+      if (!net.client) return;
+      net.client.submitSample(price);
     };
 
     net.tick = function (words) {

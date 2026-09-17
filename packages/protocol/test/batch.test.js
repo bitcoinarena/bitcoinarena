@@ -116,9 +116,11 @@ test('the ceiling the encoder sets is the one the transport is built on', () => 
     ticks: Array.from({ length: MAX_BATCH_TICKS }, () => [65536, 0, 0, 0, 0]),
     liquidations: Array.from({ length: MAX_BATCH_TICKS }, (_, i) => [i, 1]),
     loads: Array.from({ length: MAX_BATCH_TICKS }, (_, i) => [i, 1, 0]),
+    samples: Array.from({ length: MAX_BATCH_TICKS }, (_, i) => [i, 1]),
   };
   assert.equal(encodeInputBatch(b).length, MAX_INPUT_BATCH_BYTES);
-  assert.equal(MAX_INPUT_BATCH_BYTES, 2621509);
+  // + 2 + 65535 x 8 for the price samples (2026-09-17)
+  assert.equal(MAX_INPUT_BATCH_BYTES, 2621509 + 2 + MAX_BATCH_TICKS * 8);
 });
 
 test('a tick costs twenty bytes, a liquidation eight and a load twelve', () => {
@@ -133,4 +135,30 @@ test('a tick costs twenty bytes, a liquidation eight and a load twelve', () => {
   assert.equal(at(0, 1) - at(0, 0), 8);
   assert.equal(at(0, 0, 1) - at(0, 0), 12);
   assert.equal(at(6, 0), 229, 'six ticks is one send at the spec\'s 10 Hz');
+});
+
+/**
+ * THE PRICE SAMPLES (the owner 2026-09-17 16:01: the chart was frozen - nothing ever submitted one). A sample moves the
+ * tape, so it is carried like a liquidation: `[tick, price]`, sorted, committed to - and written only when there are
+ * any, so every batch recorded before samples existed keeps its bytes and its id.
+ */
+test('price samples are carried, sorted, committed to, and a batch without them keeps its old bytes', () => {
+  const plain = sample();
+  const before = toHex(encodeInputBatch(plain));
+  assert.equal(toHex(encodeInputBatch({ ...plain, samples: [] })), before, 'an empty sample list changed the bytes');
+  assert.deepEqual(decodeInputBatch(encodeInputBatch(plain)).samples, []);
+
+  const priced = { ...sample(), samples: [[300, 20099840], [120, 20101447]] };
+  const bytes = encodeInputBatch(priced);
+  assert.equal(bytes.length - encodeInputBatch(plain).length, 2 + 2 * 8, 'a sample costs eight bytes and the vector two');
+  const back = decodeInputBatch(bytes);
+  assert.deepEqual(back.samples, [[120, 20101447], [300, 20099840]]);
+  assert.equal(toHex(encodeInputBatch(back)), toHex(bytes));
+  assert.equal(toHex(batchId(priced)), toHex(batchId({ ...sample(), samples: [[120, 20101447], [300, 20099840]] })), 'order changed the id');
+  assert.notEqual(toHex(batchId(priced)), toHex(batchId(plain)));
+  assert.notEqual(toHex(batchId(priced)), toHex(batchId({ ...sample(), samples: [[120, 20101448], [300, 20099840]] })), 'a changed price kept the id');
+
+  // one encoding per batch: an explicitly empty sample vector is not canonical
+  const withEmpty = new Uint8Array([...encodeInputBatch(plain), 0, 0]);
+  assert.throws(() => decodeInputBatch(withEmpty));
 });

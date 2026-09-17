@@ -24,6 +24,12 @@
 // btcHundredths]`, sparse like the liquidations, because a load is declared
 // at roll-out and rarely again; the core decides what it costs.
 //
+// AND THE PRICE SAMPLES (the owner 2026-09-17 16:01: the chart was frozen - nothing ever submitted one). The live
+// BTCUSD price every 300 ticks moves the tape, the candles, the seam and the market the army reads, so a transcript
+// without them replays a different war. `[tick, price]` (the tape's unit, 256 a dollar), sparse like the
+// liquidations. Written only when there are any: a batch without samples is byte for byte the batch it was before,
+// so every stored batch keeps its id.
+//
 // AND THEY ARE CHAINED. `previous_hash` is the spec's own field (section 11):
 // each batch names the one before it, so a transcript is an ordered object
 // rather than a bag of rows that happen to sit in a table. Without it, "hand
@@ -68,6 +74,10 @@ export function encodeInputBatch(b) {
   // reason. Twelve bytes each and there is one of them in an ordinary run.
   const loads = [...(b.loads || [])].sort((x, y) => x[0] - y[0] || x[1] - y[1] || x[2] - y[2]);
   w.vec(loads, (l, ww) => { ww.u32(l[0]); ww.i32(l[1]); ww.i32(l[2]); });
+
+  // `[tick, price]`, sorted; absent when empty (see the head of this file).
+  const samples = [...(b.samples || [])].sort((x, y) => x[0] - y[0] || x[1] - y[1]);
+  if (samples.length) w.vec(samples, (l, ww) => { ww.u32(l[0]); ww.i32(l[1]); });
   return w.finish();
 }
 
@@ -90,6 +100,10 @@ export function decodeInputBatch(bytes) {
   });
   b.liquidations = r.vec((rr) => [rr.u32(), rr.i32()]);
   b.loads = r.vec((rr) => [rr.u32(), rr.i32(), rr.i32()]);
+  // whatever follows the loads is a sample vector or nothing; bytes that do not read as one are trailing bytes
+  try { b.samples = r.at < bytes.length ? r.vec((rr) => [rr.u32(), rr.i32()]) : []; } catch { throw new Error('trailing bytes after the batch'); }
+  // one encoding per batch: an empty sample vector is written as none
+  if (r.at === bytes.length && b.samples.length === 0 && bytes.length !== encodeInputBatch(b).length) throw new Error('an empty sample vector is not canonical');
   if (r.at !== bytes.length) throw new Error('trailing bytes after the batch');
   return b;
 }
@@ -121,7 +135,7 @@ const BATCH_HEADER_BYTES = 1 + 2 + 32 + 32 + 32 + 4;
  */
 export const MAX_INPUT_BATCH_BYTES =
   BATCH_HEADER_BYTES + 2 + MAX_BATCH_TICKS * 20 + 2 + MAX_BATCH_TICKS * 8
-  + 2 + MAX_BATCH_TICKS * 12;
+  + 2 + MAX_BATCH_TICKS * 12 + 2 + MAX_BATCH_TICKS * 8;
 
 /** The absolute tick numbers a batch covers, in order. */
 export const batchTicks = (b) =>

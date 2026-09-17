@@ -163,9 +163,20 @@ namespace Blwp
         public const int HOLDER_BEAR = 2;
         public const int HOLDER_BULL = 1;
         public const int HOLDER_NONE = 0;
+        public const int MK_LEAD = 4;
+        public const int MK_MOMENTUM = 5;
+        public const int MK_OPEN = 0;
+        public const int MK_PREV_HI = 8;
+        public const int MK_PREV_LO = 7;
+        public const int MK_PREV_OLDEST = 9;
+        public const int MK_SAMPLES = 1;
+        public const int MK_SAMPLE_TICK = 6;
+        public const int MK_STRENGTH = 3;
+        public const int MK_TREND = 2;
         public const int OBJ_GAP = 2;
         public const int OBJ_HOLLOW = 1;
         public const int OBJ_RIDGE = 0;
+        public const int TAC_MARKET = 82;
 
         // candle view (src/rules/candles.js): the candles the core stands everything on, for the renderer
         public const int CANDLES = 32;
@@ -186,6 +197,9 @@ namespace Blwp
         public const int CV_WORDS = 8;
         public const int WICK_HALF = 32768;
         public const int WICK_HEIGHT = 589824;
+        public const int WICK_RIDGE_H = 32768;
+        public const int WICK_RIDGE_RAMP = 131072;
+        public const int WICK_RIDGE_TOP_HALF = 32768;
 
         /// <summary>Base word offset of unit <paramref name="i"/>.</summary>
         public static int UnitBase(int i) => O_UNITS + i * U_WORDS;

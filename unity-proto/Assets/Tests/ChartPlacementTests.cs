@@ -69,9 +69,12 @@ public class ChartPlacementTests
                 DriveHud.PadsOverride = pads;
                 foreach (var (w, h) in shapes)
                 {
-                    var full = ChartHud.BaseSize(w, h) * ChartHud.Scale;
+                    var full = _hud.CornerFullSize(w, h);
                     var r = _hud.ChartPanel(w, h);
                     bool top = _hud.ChartTopRight(w, h);
+                    // 16:01: 30% smaller on the desktop than the 1.2x chart, in the same corner
+                    Assert.AreEqual(ChartHud.BaseSize(w, h).x * ChartHud.Scale * 0.7f, full.x, 0.01f, $"{w}x{h}: the desktop chart is not 30% smaller");
+                    if (!pads && w >= 1920) Assert.AreEqual(full.x, r.width, 0.01f, $"{w}x{h}: a desktop with room draws the whole (30% smaller) chart");
                     var sound = _hud.SettingsRect(TouchPad.Pad.Sound, w, h);
                     var debug = _hud.SettingsRect(TouchPad.Pad.Debug, w, h);
                     var wanted = _hud.WantedBox(w, h);
@@ -156,7 +159,7 @@ public class ChartPlacementTests
                 foreach (var (w, h) in shapes)
                 {
                     bool portrait = mobile && h > w;
-                    var full = ChartHud.BaseSize(w, h) * ChartHud.Scale;
+                    var full = portrait ? ChartHud.BaseSize(w, h) * ChartHud.Scale : _hud.CornerFullSize(w, h);
                     var chart = portrait ? _hud.MobileChartPanel(w, h) : _hud.ChartPanel(w, h);
                     float m = TouchPad.Margin(w, h);
                     var sound = _hud.SettingsRect(TouchPad.Pad.Sound, w, h);

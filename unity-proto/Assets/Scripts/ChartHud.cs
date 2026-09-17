@@ -151,6 +151,9 @@ public class ChartHud : MonoBehaviour
     /// <summary>the owner 2026-09-17 08:31 playtest: "make the chart 20% larger - it is unreadable".</summary>
     public const float Scale = 1.2f;
 
+    /// <summary>the owner 2026-09-17 16:01 (hud-desktop-1601.jpg): "position is perfect - make it 30% SMALLER on desktop".</summary>
+    public const float DesktopScale = 0.7f;
+
     /// <summary>
     /// UNDER SIM ON/OFF, CLEAR OF THE STEERING ARROWS (the owner 2026-09-17 08:31 playtest: "move the HUD chart under SIM
     /// ON/OFF so it does not cover the right steering arrow"). The top edge sits just under the SIM switch

@@ -460,6 +460,15 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (round_id, entry_id, tick)
     );
 
+    -- THE LIVE PRICE SAMPLES a run's page handed its core (batch.js), one at a tick: the tape the war was fought on.
+    CREATE TABLE IF NOT EXISTS samples (
+      round_id  BLOB NOT NULL,
+      entry_id  BLOB NOT NULL REFERENCES entries(entry_id),
+      tick      INTEGER NOT NULL,
+      price     INTEGER NOT NULL,
+      PRIMARY KEY (round_id, entry_id, tick)
+    );
+
     -- WHAT THIS NODE REPLAYED AND SIGNED, section 13's PlayerResult.
     --
     -- A node that signs a result and keeps it nowhere has told nobody: five

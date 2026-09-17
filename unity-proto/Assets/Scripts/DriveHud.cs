@@ -1489,7 +1489,7 @@ public class DriveHud : MonoBehaviour
     public Rect ChartPanel(int w, int h)
     {
         float m = TouchPad.Margin(w, h), pad = Mathf.Max(10f, h * 0.025f);
-        var full = ChartHud.BaseSize(w, h) * ChartHud.Scale;
+        var full = CornerFullSize(w, h);
         bool under = ScoreUnderRow(w, h);
         float bottom = PadsShown ? TouchPad.RectFor(TouchPad.Pad.Up, w, h).y - pad * 0.6f : h - m;
         // the score column at the bottom right, when it is there, is below the chart's row too (measured at 1000x360
@@ -1512,11 +1512,17 @@ public class DriveHud : MonoBehaviour
         return Mathf.Max(Mathf.Max(blockRight, PracticeBox(w, h).xMax), Mathf.Max(HealthBox(w, h).xMax, ExposureBox(w, h).xMax)) + gapPad;
     }
 
+    /// <summary>
+    /// The corner chart's full size: 1.2x the old chart, and on the desktop 30% smaller than that (the owner 2026-09-17 16:01,
+    /// same corner). A phone on its side keeps the 1.2x.
+    /// </summary>
+    public Vector2 CornerFullSize(int w, int h) => ChartHud.BaseSize(w, h) * ChartHud.Scale * (Mobile ? 1f : ChartHud.DesktopScale);
+
     /// <summary>Whether the score column fits under the chart's row at the chart's full height; else it goes bottom right.</summary>
     bool ScoreUnderRow(int w, int h)
     {
         float m = TouchPad.Margin(w, h), pad = Mathf.Max(10f, h * 0.025f);
-        var full = ChartHud.BaseSize(w, h) * ChartHud.Scale;
+        var full = CornerFullSize(w, h);
         float bottom = PadsShown ? TouchPad.RectFor(TouchPad.Pad.Up, w, h).y - pad * 0.6f : h - m;
         return m + full.y + m * 0.5f + RowHeight(w, h) + m * 0.5f + pad * 0.5f + ManifestContentHeight(w, h) <= bottom;
     }
@@ -1533,7 +1539,7 @@ public class DriveHud : MonoBehaviour
         // right-side buttons, and takes this corner (L1, the owner 2026-09-17)
         if (Mobile && h > w) return false;
         var chart = ChartPanel(w, h);
-        return chart.height >= (ChartHud.BaseSize(w, h) * ChartHud.Scale).y * 0.5f - 0.01f;
+        return chart.height >= CornerFullSize(w, h).y * 0.5f - 0.01f;
     }
 
     /// <summary>

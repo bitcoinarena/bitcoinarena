@@ -3866,6 +3866,15 @@ const CANDLE_H = ONE;                       // 1 m plateau (was 2)
 const CANDLE_RAMP = 262144;                 // 4 m ramp: 1 m over 4 m is 25% (was 5 m at 40%)
 const CANDLE_MIN_LENGTH = ONE;              // a doji is built 1 m long
 /**
+ * THE WICK IS GROUND TOO (§4.15, the owner 2026-09-17 15:30: "can I drive through it? that would not be logical"): a ridge
+ * 0.5 m tall with a 1 m top along the slot's centre line, from the body's end out to the high (and from the low to the
+ * body's other end), its sides and far end ramped at 25% (2 m). It runs R into the body, where the body's own ramp is
+ * already past 0.5 m, so ridge and body meet without a step. Nothing stands above 1 m; nothing is passed through.
+ */
+const WICK_RIDGE_H = ONE >> 1;              // 0.5 m
+const WICK_RIDGE_TOP_HALF = ONE >> 1;       // the 1 m top
+const WICK_RIDGE_RAMP = Math.imul(2, ONE);  // 0.5 m over 2 m: 25%
+/**
  * THE RIBBON'S WORLD ENDS (§4.15 "nothing jumps"): the chart scrolls under fixed edges, ramped like any free edge. On the
  * whole-slot move (every second sample) slot 0's candle leaves at -x - west of X0 it has slid fully out, so it does not
  * pop - and a new forming candle is born in slot 31 with no length (`grow`, below), so it does not pop either. The east
@@ -3949,12 +3958,33 @@ function candleHeightAt(layout, x, z, shift = 0) {
   if (dx < 0 || dx >= Math.imul(CANDLES, CANDLE_SLOT)) return 0;
   const c = idiv(dx, CANDLE_SLOT), b = Math.imul(c, CL_WORDS);
   const z0 = layout[b + CL_Z0], z1 = layout[b + CL_Z1];
-  if (z <= z0 || z >= z1) return 0;
-  let d = min(min(sub(z, z0), sub(z1, z)), min(sub(x, CANDLE_WEST), sub(CANDLE_EAST, x)));
+  const clip = min(sub(x, CANDLE_WEST), sub(CANDLE_EAST, x));
+  const ridge = wickRidge(layout, b, sub(xs, add(CANDLE_X0, add(Math.imul(c, CANDLE_SLOT), CANDLE_SLOT >> 1))), z, clip);
+  if (z <= z0 || z >= z1) return ridge;
+  let d = min(min(sub(z, z0), sub(z1, z)), clip);
   const left = sub(xs, add(CANDLE_X0, Math.imul(c, CANDLE_SLOT))), right = sub(Math.imul(CANDLE_SLOT, 1), left);
   if (left < CANDLE_RAMP) d = min(d, faceDistance(layout, c - 1, z0, z1, z, left));
   if (right < CANDLE_RAMP) d = min(d, faceDistance(layout, c + 1, z0, z1, z, right));
-  return d >= CANDLE_RAMP ? CANDLE_H : mulFast(CANDLE_H, div(d, CANDLE_RAMP));
+  const body = d >= CANDLE_RAMP ? CANDLE_H : mulFast(CANDLE_H, div(d, CANDLE_RAMP));
+  return max(body, ridge);
+}
+
+/**
+ * The wick ridge of the candle at layout offset `b`, at `across` from the slot's centre line and `z`: 0.5 m on its 1 m
+ * top, down 25% to 0 over 2 m at its sides, at its far end (the high, the low) and at the field's fixed ends (`clip`).
+ */
+function wickRidge(layout, b, across, z, clip) {
+  const side = sub(add(WICK_RIDGE_TOP_HALF, WICK_RIDGE_RAMP), abs(across));
+  if (side <= 0) return 0;
+  const z0 = layout[b + CL_Z0], z1 = layout[b + CL_Z1], lo = layout[b + CL_LOW], hi = layout[b + CL_HIGH];
+  let along = -1;
+  // the low wick from the low into the body, the high wick from the body out to the high; each also ramps down toward its
+  // inner end R inside the body, which a short body (a doji) does not reach - no step where it stops
+  if (lo < z0 && z > lo && z < add(z0, CANDLE_RAMP)) along = min(sub(z, lo), sub(add(z0, CANDLE_RAMP), z));
+  if (hi > z1 && z < hi && z > sub(z1, CANDLE_RAMP)) along = max(along, min(sub(hi, z), sub(z, sub(z1, CANDLE_RAMP))));
+  if (along <= 0) return 0;
+  const d = min(min(side, along), clip);
+  return d >= WICK_RIDGE_RAMP ? WICK_RIDGE_H : mulFast(WICK_RIDGE_H, div(d, WICK_RIDGE_RAMP));
 }
 
 /**

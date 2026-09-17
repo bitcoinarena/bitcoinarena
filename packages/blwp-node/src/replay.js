@@ -224,6 +224,7 @@ export function replay(transcript, entry, { core, seedWord, roundRandomness, mar
     ticks: ticks.length,
     liquidations: events.count.liquidations,
     loads: events.count.loads,
+    samples: events.count.samples,
     heat: ran.heat,
     stateHash: a.stateHash(st),
     checked,
@@ -420,11 +421,17 @@ export class RunInProgress {
         this.loadDue.set(at, [fee, btc]); this.loadSeen.add(at);
       }
 
+    // THE PRICE SAMPLES, ONCE EACH, like the liquidations: each moves the tape at its own tick.
+    if (!this.sampleDue) { this.sampleDue = new Map(); this.sampleSeen = new Set(); }
+    for (const [at, price] of transcript.samples || [])
+      if (at > this.at && !this.sampleSeen.has(at)) { this.sampleDue.set(at, price); this.sampleSeen.add(at); }
+
     // THE CORE APPLIES THEM (adapter.eventsOf), each before its own tick - and a tick is stepped once,
     // so each lands once, whichever slice brought it.
     const events = this.a.eventsOf({
       liquidations: [...this.due],
       loads: [...this.loadDue].map(([at, [fee, btc]]) => [at, fee, btc]),
+      samples: [...this.sampleDue],
     });
     for (let at = this.at + 1; at <= tick; at++) {
       const t = ticks[at - from];
@@ -438,6 +445,7 @@ export class RunInProgress {
     // Consumed as they land: nothing at or before the last tick stepped is kept.
     for (const at of [...this.due.keys()]) if (at <= this.at) this.due.delete(at);
     for (const at of [...this.loadDue.keys()]) if (at <= this.at) this.loadDue.delete(at);
+    for (const at of [...this.sampleDue.keys()]) if (at <= this.at) this.sampleDue.delete(at);
     return { ok: true, ...this.pose() };
   }
 }

@@ -1855,6 +1855,12 @@ function contractWarnings(c) {
 // btcHundredths]`, sparse like the liquidations, because a load is declared
 // at roll-out and rarely again; the core decides what it costs.
 //
+// AND THE PRICE SAMPLES (the owner 2026-09-17 16:01: the chart was frozen - nothing ever submitted one). The live
+// BTCUSD price every 300 ticks moves the tape, the candles, the seam and the market the army reads, so a transcript
+// without them replays a different war. `[tick, price]` (the tape's unit, 256 a dollar), sparse like the
+// liquidations. Written only when there are any: a batch without samples is byte for byte the batch it was before,
+// so every stored batch keeps its id.
+//
 // AND THEY ARE CHAINED. `previous_hash` is the spec's own field (section 11):
 // each batch names the one before it, so a transcript is an ordered object
 // rather than a bag of rows that happen to sit in a table. Without it, "hand
@@ -1898,6 +1904,10 @@ function encodeInputBatch(b) {
   // reason. Twelve bytes each and there is one of them in an ordinary run.
   const loads = [...(b.loads || [])].sort((x, y) => x[0] - y[0] || x[1] - y[1] || x[2] - y[2]);
   w.vec(loads, (l, ww) => { ww.u32(l[0]); ww.i32(l[1]); ww.i32(l[2]); });
+
+  // `[tick, price]`, sorted; absent when empty (see the head of this file).
+  const samples = [...(b.samples || [])].sort((x, y) => x[0] - y[0] || x[1] - y[1]);
+  if (samples.length) w.vec(samples, (l, ww) => { ww.u32(l[0]); ww.i32(l[1]); });
   return w.finish();
 }
 
@@ -1920,6 +1930,10 @@ function decodeInputBatch(bytes) {
   });
   b.liquidations = r.vec((rr) => [rr.u32(), rr.i32()]);
   b.loads = r.vec((rr) => [rr.u32(), rr.i32(), rr.i32()]);
+  // whatever follows the loads is a sample vector or nothing; bytes that do not read as one are trailing bytes
+  try { b.samples = r.at < bytes.length ? r.vec((rr) => [rr.u32(), rr.i32()]) : []; } catch { throw new Error('trailing bytes after the batch'); }
+  // one encoding per batch: an empty sample vector is written as none
+  if (r.at === bytes.length && b.samples.length === 0 && bytes.length !== encodeInputBatch(b).length) throw new Error('an empty sample vector is not canonical');
   if (r.at !== bytes.length) throw new Error('trailing bytes after the batch');
   return b;
 }
@@ -1951,7 +1965,7 @@ const BATCH_HEADER_BYTES = 1 + 2 + 32 + 32 + 32 + 4;
  */
 const MAX_INPUT_BATCH_BYTES =
   BATCH_HEADER_BYTES + 2 + MAX_BATCH_TICKS * 20 + 2 + MAX_BATCH_TICKS * 8
-  + 2 + MAX_BATCH_TICKS * 12;
+  + 2 + MAX_BATCH_TICKS * 12 + 2 + MAX_BATCH_TICKS * 8;
 
 /** The absolute tick numbers a batch covers, in order. */
 const batchTicks = (b) =>
@@ -2163,19 +2177,23 @@ function flatten(t) {
   const ticks = [];
   const liquidations = [];
   const loads = [];
+  const samples = [];
   for (const b of t.batches) {
     for (const row of b.ticks) ticks.push(row);
     for (const l of b.liquidations) liquidations.push(l);
     for (const l of (b.loads || [])) loads.push(l);
+    for (const l of (b.samples || [])) samples.push(l);
   }
   const firstTick = t.batches.length ? t.batches[0].firstTick : 0;
   liquidations.sort((a, c) => a[0] - c[0] || a[1] - c[1]);
   loads.sort((a, c) => a[0] - c[0] || a[1] - c[1] || a[2] - c[2]);
+  samples.sort((a, c) => a[0] - c[0] || a[1] - c[1]);
   return {
     firstTick,
     ticks,
     liquidations: liquidations.map(([at, size]) => [at - firstTick, size]),
     loads: loads.map(([at, fee, btc]) => [at - firstTick, fee, btc]),
+    samples: samples.map(([at, price]) => [at - firstTick, price]),
   };
 }
 
@@ -6166,6 +6184,7 @@ const KNOWN_GOOD_CORE_HASHES = Object.freeze([
   'a8e0a5c7e07345fcd1d9bc5899fb81cd233e68ebdee0e15b257f84bdebb906e2',
   'fbfbdd9876ae034c93c2ca79e02bb2c14e15e786ffddc02d8758720ad8710a11',
   'c27c490126eaa75dc7bf15c1d5d82ca1588d2db32ac3349220477f371d09d19e',
+  '00c438e61c3cee92134dcfdb716414fbd99573e874bcff2a2f75839a15073e5b',
 ]);
 
 // ---- protocol/src/known-core.js
@@ -11094,6 +11113,7 @@ class Client {
     // `hold`, which is the tick buffer below.
     this.joinHold = null;
     this.loads = [];              // [tick, feeSats, btcHundredths], not yet published
+    this.samples = [];            // [tick, price], the live price samples not yet published
     this.nodes = [];              // the committee, off the round's own contract
     this.gameVerifySlots = 7;
     this.hold = [];               // ticks waiting to go out
@@ -11813,7 +11833,7 @@ class Client {
    * `ticks` is five Q16.16 words each, exactly what the core's `step` takes.
    * Nothing is computed from them here; they are carried.
    */
-  async batch(ticks, { roundId, entryId, liquidations = [], loads = [] }) {
+  async batch(ticks, { roundId, entryId, liquidations = [], loads = [], samples = [] }) {
     const b = {
       roundId, entryId,
       previousHash: this.batchHead,
@@ -11821,6 +11841,7 @@ class Client {
       ticks,
       liquidations,
       loads,
+      samples,
     };
     const bytes = encodeInputBatch(b);
     const answer = await this.send(bytes);
@@ -12340,6 +12361,7 @@ class Client {
       this.hold = this.hold.slice(landed);
       this.held = this.hold.length;
       this.loads = this.loads.filter(([at]) => at >= this.nextTick);
+      this.samples = this.samples.filter(([at]) => at >= this.nextTick);
       this.batchesLandedUnheard++;
     }
     // AND THE PEERS ARE FED WHAT THIS NODE TOOK, including a batch whose answer
@@ -12412,6 +12434,7 @@ class Client {
     this.hold = [];
     this.held = 0;
     this.loads = [];
+    this.samples = [];
     this.dropped = 0;
     this.batchesSent = 0;
     this.marksSent = 0;
@@ -12582,6 +12605,17 @@ class Client {
   }
 
   /**
+   * A LIVE PRICE SAMPLE the page handed its core before the tick it is about to record (the owner 2026-09-17 16:01: the chart
+   * was frozen because nothing ever did). It moves the tape, so it goes into the transcript beside that tick, published
+   * with the batch that covers it, exactly as a load is. Refused once the run has ended.
+   */
+  submitSample(price) {
+    if (this.ended || !this.where) return false;
+    this.samples.push([this.offered, price | 0]);
+    return true;
+  }
+
+  /**
    * WHETHER THIS RUN HAS REACHED ITS LAST TICK - the signer node's own line,
    * `lastTickOfRun(joinTick)`, and not a number of this file's. The game keeps
    * stepping after a run ends; those ticks are not inputs of the run, and a
@@ -12699,8 +12733,10 @@ class Client {
     const loads = this.loads.filter(([at]) => at < through);
     const later = this.loads.filter(([at]) => at >= through);
     this.loads = later;
+    const samples = this.samples.filter(([at]) => at < through);
+    this.samples = this.samples.filter(([at]) => at >= through);
 
-    this.publishing = this.batch(words, { ...this.where, loads }).then((r) => {
+    this.publishing = this.batch(words, { ...this.where, loads, samples }).then((r) => {
       if (r.accepted) {
         this.batchesSent++;
         // PUBLISHING AGAIN IS NEWS TOO. A run that recovered must stop
@@ -12716,6 +12752,7 @@ class Client {
         // zero from the tick the refusal happened at.
         this.hold = words.concat(this.hold); this.held = this.hold.length;
         this.loads = loads.concat(this.loads);
+        this.samples = samples.concat(this.samples);
         if (typeof r.answer === 'string' && r.answer.startsWith(CLOSED)) {
           // THE LINK WENT WITH THE BATCH IN FLIGHT. The node refused nothing,
           // so this is not a refusal and does not resync towards VOID -
@@ -12752,6 +12789,7 @@ class Client {
       this.hold = words.concat(this.hold);
       this.held = this.hold.length;
       this.loads = loads.concat(this.loads);
+      this.samples = samples.concat(this.samples);
       this.publishing = null;
       throw e;
     });

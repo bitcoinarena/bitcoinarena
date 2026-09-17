@@ -15,32 +15,25 @@ using L = Blwp.Layout;
 /// held two to four seconds, staggered, so a rebuild asks the bridge for few cells; the mesh is rebuilt ten times a second and slid by the shift
 /// in between, so it glides at the core's 0.576 m/s.
 ///
-/// The look (§4.15 client rows): matte TradingView green #26a69a / red #ef5350, the plateau 20% lighter than its ramps; a
-/// glow volume from the plateau to 6 m with no edges; the wick a 1 m column of light, 9 m tall, from the candle's low to its
-/// high; the forming candle's glow pulsing at 1 Hz; the seam a 0.5 m white line on the ground. Wick and glow are light only
-/// - the core has no collider for them.
-///
-/// BLENDED, NOT ADDED (live 0.0.1496, 2026-09-17): the glow washed the truck's view WHITE. The source was Bootstrap's
-/// opaque Lit fire material, whose alpha is 1, so every face ADDED its full colour, and a low sight line along the field
-/// crosses two faces per slot, 31 slots. Now the shipped transparent particle material (FireFlipbook, alpha-blended, its
-/// variant in the build), vertex colours white (a missing colour attribute reads black on WebGL): any stack of faces tends
-/// to the candle's own colour and never past it; 10% a face (wick 35%).
+/// The look (§4.15 client rows, the owner 2026-09-17 15:20 and 15:30): matte TradingView green #26a69a / red #ef5350, the
+/// plateau 20% lighter than its ramps; NO GLOW ("I do not want to see through the candles") and no column: the WICK IS
+/// GROUND, a 0.5 m ridge with a 1 m top beyond the body's ends, ramped at 25%, in the core's layer like the body and drawn
+/// the same way; the forming candle's top face pulses at 1 Hz; the seam a 0.5 m white line on the ground. Nothing about a
+/// candle is transparent, nothing stands above 1 m, nothing is passed through.
 /// </summary>
 public class CandleTerrain : MonoBehaviour
 {
     public static readonly Color Green = new Color(0x26 / 255f, 0xa6 / 255f, 0x9a / 255f), Red = new Color(0xef / 255f, 0x53 / 255f, 0x50 / 255f);
     /// <summary>The plateau, 20% lighter than the ramps.</summary>
     public static Color Top(Color c) => Color.Lerp(c, Color.white, 0.2f);
-    public const float Station = 0.5f, XStation = 1f, Lift = 0.03f, GlowTo = 6f, WickHeight = 9f, WickHalf = 0.5f, SeamHalf = 0.25f;
-    public const float GlowAlpha = 0.10f, WickAlpha = 0.35f, RebuildSeconds = 0.1f, GroundSeconds = 2f;
+    public const float Station = 0.5f, XStation = 1f, Lift = 0.03f, SeamHalf = 0.25f;
+    public const float RebuildSeconds = 0.1f, GroundSeconds = 2f;
 
-    /// <summary>A transparent source material shipped in the build (Bootstrap's fire flipbook): the glow is a clone of it.</summary>
-    public Material glowSource;
 
     const float ONE = 65536f;
     readonly int[] _words = new int[L.CV_TOTAL];
-    Mesh _body, _glow, _forming, _wick, _seam;
-    Material _formingMat;
+    Mesh _body, _seam;
+    Material _formingTop;
     float _builtShift, _builtAt = -1f;
     int _builtSurface = int.MinValue;
     public int Rebuilds { get; private set; }
@@ -50,13 +43,11 @@ public class CandleTerrain : MonoBehaviour
     {
         public readonly List<Vector3> Body = new List<Vector3>();
         public readonly List<int> SideGreen = new List<int>(), SideRed = new List<int>(), TopGreen = new List<int>(), TopRed = new List<int>();
-        public readonly List<Vector3> Glow = new List<Vector3>();
-        public readonly List<int> GlowGreen = new List<int>(), GlowRed = new List<int>();
-        public readonly List<Vector3> Forming = new List<Vector3>();
-        public readonly List<int> FormingTris = new List<int>();
+        /// <summary>The forming candle's top faces, drawn with the pulsing material.</summary>
+        public readonly List<int> FormingTop = new List<int>();
         public bool FormingGreen;
-        public readonly List<Vector3> Wick = new List<Vector3>();
-        public readonly List<int> WickGreen = new List<int>(), WickRed = new List<int>();
+        /// <summary>Triangles of the wick ridges beyond the bodies (counted for the tests; they are in the lists above).</summary>
+        public int RidgeTriangles;
     }
 
     static float W(int[] v, int c, int k) => v[L.CV_FIRST + c * L.CV_WORDS + k] / ONE;
@@ -75,12 +66,29 @@ public class CandleTerrain : MonoBehaviour
         if (dx < 0f || dx >= n * S) return 0f;
         int c = Mathf.Clamp(Mathf.FloorToInt(dx / S), 0, n - 1);
         float z0 = W(v, c, 2), z1 = W(v, c, 3), H = W(v, c, 4);
-        if (z <= z0 || z >= z1) return 0f;
-        float d = Mathf.Min(Mathf.Min(z - z0, z1 - z), Mathf.Min(x - west, east - x));
+        float clip = Mathf.Min(x - west, east - x);
+        float ridge = RidgeAt(v, c, dx - (c + 0.5f) * S, z, clip);
+        if (z <= z0 || z >= z1) return ridge;
+        float d = Mathf.Min(Mathf.Min(z - z0, z1 - z), clip);
         float left = dx - c * S, right = S - left;
         if (left < R) d = Mathf.Min(d, FaceDistance(v, n, c - 1, z0, z1, z, left));
         if (right < R) d = Mathf.Min(d, FaceDistance(v, n, c + 1, z0, z1, z, right));
-        return d >= R ? H : H * d / R;
+        return Mathf.Max(d >= R ? H : H * d / R, ridge);
+    }
+
+    /// <summary>The wick ridge (core `wickRidge`): 0.5 m on a 1 m top along the slot's centre, 25% down its sides and ends.</summary>
+    static float RidgeAt(int[] v, int c, float across, float z, float clip)
+    {
+        float RH = L.WICK_RIDGE_H / ONE, top = L.WICK_RIDGE_TOP_HALF / ONE, RR = L.WICK_RIDGE_RAMP / ONE, R = L.CANDLE_RAMP / ONE;
+        float side = top + RR - Mathf.Abs(across);
+        if (side <= 0f) return 0f;
+        float z0 = W(v, c, 2), z1 = W(v, c, 3), lo = W(v, c, 6), hi = W(v, c, 7);
+        float along = -1f;
+        if (lo < z0 && z > lo && z < z0 + R) along = Mathf.Min(z - lo, z0 + R - z);
+        if (hi > z1 && z < hi && z > z1 - R) along = Mathf.Max(along, Mathf.Min(hi - z, z - (z1 - R)));
+        if (along <= 0f) return 0f;
+        float d = Mathf.Min(Mathf.Min(side, along), clip);
+        return d >= RR ? RH : RH * d / RR;
     }
 
     static float FaceDistance(int[] v, int n, int nb, float z0, float z1, float z, float across)
@@ -107,7 +115,7 @@ public class CandleTerrain : MonoBehaviour
     }
 
     /// <summary>
-    /// The ribbon, glows and wicks for a view, in world space at the view's shift. <paramref name="ground"/> is the core's
+    /// The ribbon and its wick ridges for a view, in world space at the view's shift. <paramref name="ground"/> is the core's
     /// ground under the candle layer, in metres, asked at world x, z.
     /// </summary>
     public static Parts Build(int[] v, Func<float, float, float> ground)
@@ -123,62 +131,71 @@ public class CandleTerrain : MonoBehaviour
             bool green = W(v, c, 5) != 0f;
             if (c == forming) p.FormingGreen = green;
             if (xb - xa < 0.01f) continue;
+            float cx = (sx0 + sx1) * 0.5f, low = W(v, c, 6), high = W(v, c, 7);
+            float rtop = L.WICK_RIDGE_TOP_HALF / ONE, rout = rtop + L.WICK_RIDGE_RAMP / ONE, rr = L.WICK_RIDGE_RAMP / ONE;
+            // the forming candle pulses whole (a half-grown body has no flat top yet): its faces go to the pulsing material
+            var side = c == forming ? p.FormingTop : (green ? p.SideGreen : p.SideRed);
+            var top = c == forming ? p.FormingTop : (green ? p.TopGreen : p.TopRed);
             if (z1 - z0 > 0.01f)
             {
                 // the height field over the slot, with a station at every kink of the ramps: R in from each end and face,
-                // and the neighbours' z-ends where a face turns from covered to free
+                // the neighbours' z-ends where a face turns from covered to free, and the wick ridge's edges
                 float nb0 = c > 0 ? W(v, c - 1, 2) : z0, nb1 = c > 0 ? W(v, c - 1, 3) : z1;
                 float na0 = c + 1 < n ? W(v, c + 1, 2) : z0, na1 = c + 1 < n ? W(v, c + 1, 3) : z1;
-                Stations(xa, xb, XStation, xs, sx0 + R, sx1 - R, west + R, east - R);
-                Stations(z0, z1, Station, zs, z0 + R, z1 - R, nb0, nb1, na0, na1, nb0 + R, nb1 - R, na0 + R, na1 - R);
-                int cols = xs.Count, first = p.Body.Count;
-                var layer = new float[cols * zs.Count];
-                for (int j = 0; j < zs.Count; j++)
-                    for (int i = 0; i < cols; i++)
-                    {
-                        float h = LayerAt(v, xs[i], zs[j]);
-                        layer[j * cols + i] = h;
-                        p.Body.Add(new Vector3(xs[i], ground(xs[i], zs[j]) + h + Lift, zs[j]));
-                    }
-                var side = green ? p.SideGreen : p.SideRed;
-                var top = green ? p.TopGreen : p.TopRed;
-                for (int j = 0; j + 1 < zs.Count; j++)
-                    for (int i = 0; i + 1 < cols; i++)
-                    {
-                        int a = j * cols + i, b = a + cols;
-                        bool plateau = layer[a] >= H - 1e-3f && layer[a + 1] >= H - 1e-3f && layer[b] >= H - 1e-3f && layer[b + 1] >= H - 1e-3f;
-                        var t = plateau ? top : side;
-                        // clockwise from above (Unity's front face): a, b, b+1 and a, b+1, a+1
-                        t.Add(first + a); t.Add(first + b); t.Add(first + b + 1);
-                        t.Add(first + a); t.Add(first + b + 1); t.Add(first + a + 1);
-                    }
-
-                // the glow over the plateau: from its top to 6 m, the two x sides and a lid, no edge lines
-                var glow = c == forming ? p.Forming : p.Glow;
-                var gt = c == forming ? p.FormingTris : (green ? p.GlowGreen : p.GlowRed);
-                for (int j = 0; j + 1 < zs.Count; j++)
-                {
-                    float za = zs[j], zb = zs[j + 1];
-                    float ga0 = ground(xa, za) + H, gb0 = ground(xa, zb) + H, ga1 = ground(xb, za) + H, gb1 = ground(xb, zb) + H;
-                    float up = GlowTo - H;
-                    Quad(glow, gt, new Vector3(xa, ga0 + up, za), new Vector3(xa, gb0 + up, zb), new Vector3(xb, gb1 + up, zb), new Vector3(xb, ga1 + up, za));
-                    Quad(glow, gt, new Vector3(xb, ga1, za), new Vector3(xb, ga1 + up, za), new Vector3(xb, gb1 + up, zb), new Vector3(xb, gb1, zb));
-                    Quad(glow, gt, new Vector3(xa, gb0, zb), new Vector3(xa, gb0 + up, zb), new Vector3(xa, ga0 + up, za), new Vector3(xa, ga0, za));
-                }
+                Stations(xa, xb, XStation, xs, sx0 + R, sx1 - R, west + R, east - R, cx - rtop, cx + rtop, cx - rout, cx + rout);
+                Stations(z0, z1, Station, zs, z0 + R, z1 - R, nb0, nb1, na0, na1, nb0 + R, nb1 - R, na0 + R, na1 - R, z0 + R - rr, z1 - R + rr);
+                Grid(p, v, ground, xs, zs, side, top, false);
             }
-            // the wick: a 1 m column of light from the low to the high, 9 m tall from the ground, where its slot stands
-            float cx = (sx0 + sx1) * 0.5f, low = W(v, c, 6), high = W(v, c, 7);
-            var wt = green ? p.WickGreen : p.WickRed;
-            if (high - low > 1e-3f && cx - WickHalf > west && cx + WickHalf < east)
-                for (float z = low; z < high - 1e-4f; z += Station)
+            // THE WICK RIDGES beyond the body's ends (15:30): ground, drawn like the body, only as wide as the ridge
+            float ra = Mathf.Max(xa, cx - rout), rb = Mathf.Min(xb, cx + rout);
+            if (rb - ra > 0.01f)
+            {
+                // A ridge runs R into its body (core wickRidge); a body shorter than R - a doji - leaves it poking out past
+                // the body's OTHER end, so that stretch is drawn too (measured: a doji's high ridge down to z1 - R, 3 m below it).
+                void Ridge(float from, float to, float kink)
                 {
-                    float zb = Mathf.Min(high, z + Station);
-                    float ga = ground(cx, z), gb = ground(cx, zb);
-                    Quad(p.Wick, wt, new Vector3(cx + WickHalf, ga, z), new Vector3(cx + WickHalf, ga + WickHeight, z), new Vector3(cx + WickHalf, gb + WickHeight, zb), new Vector3(cx + WickHalf, gb, zb));
-                    Quad(p.Wick, wt, new Vector3(cx - WickHalf, gb, zb), new Vector3(cx - WickHalf, gb + WickHeight, zb), new Vector3(cx - WickHalf, ga + WickHeight, z), new Vector3(cx - WickHalf, ga, z));
+                    if (to - from < 0.01f) return;
+                    Stations(ra, rb, Station, xs, cx - rtop, cx + rtop);
+                    Stations(from, to, Station, zs, kink);
+                    p.RidgeTriangles += Grid(p, v, ground, xs, zs, side, green ? p.TopGreen : p.TopRed, true);
                 }
+                if (low < z0 - 0.01f) { Ridge(low, z0, low + rr); Ridge(z1, z0 + R, z0 + R - rr); }
+                if (high > z1 + 0.01f) { Ridge(z1, high, high - rr); Ridge(z1 - R, z0, z1 - R + rr); }
+            }
         }
         return p;
+    }
+
+    /// <summary>
+    /// One height field of the candle layer over the stations: vertices at the core's ground plus LayerAt, a quad flat at a
+    /// height above the ground (a plateau or a ridge top) into <paramref name="top"/>, the rest (ramps) into <paramref name="side"/>.
+    /// Returns the triangles added.
+    /// </summary>
+    static int Grid(Parts p, int[] v, Func<float, float, float> ground, List<float> xs, List<float> zs, List<int> side, List<int> top, bool ridgeOnly)
+    {
+        int cols = xs.Count, first = p.Body.Count, added = 0;
+        var layer = new float[cols * zs.Count];
+        for (int j = 0; j < zs.Count; j++)
+            for (int i = 0; i < cols; i++)
+            {
+                float h = LayerAt(v, xs[i], zs[j]);
+                layer[j * cols + i] = h;
+                p.Body.Add(new Vector3(xs[i], ground(xs[i], zs[j]) + h + Lift, zs[j]));
+            }
+        for (int j = 0; j + 1 < zs.Count; j++)
+            for (int i = 0; i + 1 < cols; i++)
+            {
+                int a = j * cols + i, b = a + cols;
+                float h0 = layer[a];
+                if (ridgeOnly && h0 <= 0f && layer[a + 1] <= 0f && layer[b] <= 0f && layer[b + 1] <= 0f) continue;   // bare ground beside a ridge
+                bool flat = h0 > 1e-3f && Mathf.Abs(layer[a + 1] - h0) < 1e-3f && Mathf.Abs(layer[b] - h0) < 1e-3f && Mathf.Abs(layer[b + 1] - h0) < 1e-3f;
+                var t = flat ? top : side;
+                // clockwise from above (Unity's front face): a, b, b+1 and a, b+1, a+1
+                t.Add(first + a); t.Add(first + b); t.Add(first + b + 1);
+                t.Add(first + a); t.Add(first + b + 1); t.Add(first + a + 1);
+                added += 2;
+            }
+        return added;
     }
 
     /// <summary>The seam as a 0.5 m white strip on the core's surface, across the candle field, from the core's front line.</summary>
@@ -269,38 +286,11 @@ public class CandleTerrain : MonoBehaviour
         return m;
     }
 
-    /// <summary>A translucent light from the shipped transparent particle material: no texture, the colour's alpha, blended.</summary>
-    Material Light(Color c, float alpha)
-    {
-        Material m = glowSource != null ? new Material(glowSource) : Matte(c);
-        if (m.HasProperty("_BaseMap")) m.SetTexture("_BaseMap", null);
-        if (m.HasProperty("_MainTex")) m.SetTexture("_MainTex", null);
-        m.DisableKeyword("_FLIPBOOKBLENDING_ON");
-        var col = new Color(c.r, c.g, c.b, alpha);
-        if (m.HasProperty("_BaseColor")) m.SetColor("_BaseColor", col);
-        m.color = col;
-        if (m.HasProperty("_Surface")) m.SetFloat("_Surface", 1f);
-        m.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
-        if (m.HasProperty("_SrcBlend")) m.SetFloat("_SrcBlend", (float)UnityEngine.Rendering.BlendMode.SrcAlpha);
-        if (m.HasProperty("_SrcBlendAlpha")) m.SetFloat("_SrcBlendAlpha", (float)UnityEngine.Rendering.BlendMode.One);
-        if (m.HasProperty("_DstBlendAlpha")) m.SetFloat("_DstBlendAlpha", (float)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
-        if (m.HasProperty("_DstBlend")) m.SetFloat("_DstBlend", (float)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
-        if (m.HasProperty("_Blend")) m.SetFloat("_Blend", 0f);                         // URP particles: 0 = Alpha, 2 = Additive
-        m.DisableKeyword("_ALPHAPREMULTIPLY_ON"); m.DisableKeyword("_ALPHAMODULATE_ON");
-        if (m.HasProperty("_ZWrite")) m.SetFloat("_ZWrite", 0f);
-        if (m.HasProperty("_Cull")) m.SetFloat("_Cull", 0f);
-        m.renderQueue = 3000;
-        return m;
-    }
-
     void EnsureMeshes()
     {
         if (_body != null) return;
-        _body = Child("CandleBodies", new[] { Matte(Green), Matte(Red), Matte(Top(Green)), Matte(Top(Red)) });
-        _glow = Child("CandleGlow", new[] { Light(Green, GlowAlpha), Light(Red, GlowAlpha) });
-        _formingMat = Light(Green, GlowAlpha);
-        _forming = Child("CandleGlowForming", new[] { _formingMat });
-        _wick = Child("CandleWicks", new[] { Light(Green, WickAlpha), Light(Red, WickAlpha) });
+        _formingTop = Matte(Top(Green));
+        _body = Child("CandleBodies", new[] { Matte(Green), Matte(Red), Matte(Top(Green)), Matte(Top(Red)), _formingTop });
         _seam = Child("Seam", new[] { Matte(Color.white) });
     }
 
@@ -314,12 +304,12 @@ public class CandleTerrain : MonoBehaviour
         if (!Blwp.BlwpCore.Available || Blwp.BlwpCore.CandleView(_words) == 0) return;
         EnsureMeshes();
         float now = Time.unscaledTime, shift = _words[L.CV_SHIFT] / ONE;
-        // the forming candle's glow pulses at 1 Hz
-        if (_formingMat != null)
+        if (_formingTop != null)
         {
-            float a = GlowAlpha * (0.6f + 0.4f * Mathf.Sin(now * Mathf.PI * 2f));
-            var c = _formingGreen ? Green : Red;
-            _formingMat.SetColor("_BaseColor", new Color(c.r, c.g, c.b, a));
+            // the forming candle's top face pulses at 1 Hz: its top colour, 15% toward white and back
+            var c = Color.Lerp(Top(_formingGreen ? Green : Red), Color.white, 0.15f * (0.5f + 0.5f * Mathf.Sin(now * Mathf.PI * 2f)));
+            if (_formingTop.HasProperty("_BaseColor")) _formingTop.SetColor("_BaseColor", c);
+            _formingTop.color = c;
         }
         int surfaceSig = Blwp.BlwpCore.ReliefEpoch * 1000003 + Blwp.BlwpCore.StrikeCount * 1009 + Blwp.BlwpCore.CraterCount;
         if (_ground == null) _ground = new GroundCache(Blwp.BlwpCore.TerrainAt) { Hold = GroundSeconds };
@@ -331,18 +321,15 @@ public class CandleTerrain : MonoBehaviour
         {
             _builtAt = now; _builtSurface = surfaceSig; _builtShift = shift;
             var p = Build(_words, _ground.Get);
-            Set(_body, p.Body, p.SideGreen, p.SideRed, p.TopGreen, p.TopRed);
-            Lit(_glow, p.Glow, p.GlowGreen, p.GlowRed);
-            Lit(_forming, p.Forming, p.FormingTris);
+            Set(_body, p.Body, p.SideGreen, p.SideRed, p.TopGreen, p.TopRed, p.FormingTop);
             _formingGreen = p.FormingGreen;
-            Lit(_wick, p.Wick, p.WickGreen, p.WickRed);
             BuildSeam(L.CANDLE_WEST / ONE, L.CANDLE_EAST / ONE, Blwp.BlwpCore.FrontlineZ, Surface, _seamVerts, _seamTris);
             Set(_seam, _seamVerts, _seamTris);
             Rebuilds++;
             if (Rebuilds <= 3 || Rebuilds % 600 == 0)
             {
                 int f = L.CV_FIRST;
-                Debug.Log($"[candles] rebuild={Rebuilds} count={_words[L.CV_COUNT]} shift={shift:0.000} forming={_words[L.CV_FORMING]} first={_words[f]},{_words[f + 1]},{_words[f + 2]},{_words[f + 3]},{_words[f + 4]},{_words[f + 5]} bodyVerts={p.Body.Count} wickQuads={p.Wick.Count / 4} glowVerts={p.Glow.Count + p.Forming.Count} groundAsked={_ground.Asked} {SurfaceCheck()}");
+                Debug.Log($"[candles] rebuild={Rebuilds} count={_words[L.CV_COUNT]} shift={shift:0.000} forming={_words[L.CV_FORMING]} first={_words[f]},{_words[f + 1]},{_words[f + 2]},{_words[f + 3]},{_words[f + 4]},{_words[f + 5]} bodyVerts={p.Body.Count} ridgeTriangles={p.RidgeTriangles} formingTop={p.FormingTop.Count / 3} groundAsked={_ground.Asked} {SurfaceCheck()}");
             }
         }
         // between rebuilds the ribbon slides with the core's shift, so it glides at 0.576 m/s rather than stepping; the
@@ -352,15 +339,6 @@ public class CandleTerrain : MonoBehaviour
     }
 
     float Surface(float x, float z) => _ground.Get(x, z) + LayerAt(_words, x, z);
-
-    readonly List<Color> _white = new List<Color>();
-
-    void Lit(Mesh mesh, List<Vector3> verts, params List<int>[] subs)
-    {
-        while (_white.Count < verts.Count) _white.Add(Color.white);
-        Set(mesh, verts, subs);
-        mesh.SetColors(_white, 0, verts.Count);
-    }
 
     static void Set(Mesh mesh, List<Vector3> verts, params List<int>[] subs)
     {

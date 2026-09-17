@@ -62,7 +62,7 @@ public class CandleTerrainTests
 
     static List<int> AllTris(CandleTerrain.Parts p)
     {
-        var t = new List<int>(p.TopGreen); t.AddRange(p.TopRed); t.AddRange(p.SideGreen); t.AddRange(p.SideRed);
+        var t = new List<int>(p.TopGreen); t.AddRange(p.TopRed); t.AddRange(p.SideGreen); t.AddRange(p.SideRed); t.AddRange(p.FormingTop);
         return t;
     }
 
@@ -110,26 +110,23 @@ public class CandleTerrainTests
                 Assert.LessOrEqual(Mathf.Abs(drawn - want), 0.1f, $"{kv.Key}: at {x:0.00},{z:0.00} the core stands on {want:0.000} m, drawn {drawn:0.000}");
                 n++;
             }
-            Debug.Log($"[candle-mesh] {kv.Key}: {n} core heights ({inBody} under a drawn top), worst {worst:0.0000} m, {p.Body.Count} body vertices, {p.Wick.Count / 4} wick quads");
+            Debug.Log($"[candle-mesh] {kv.Key}: {n} core heights ({inBody} under a drawn top), worst {worst:0.0000} m, {p.Body.Count} body vertices, {p.RidgeTriangles} wick-ridge triangles");
             Assert.Greater(n, 1000); Assert.Greater(inBody, 500);
         }
     }
 
     [Test]
-    public void ARibbonNoWallsGlowToSixMetresWicksFromLowToHighForming()
+    public void ARibbonNoWallsNothingAboveAMetreWicksAreRidgesTheFormingTopHasItsOwnMaterial()
     {
+        // 15:20 / 15:30 (§4.15): no glow and no column - nothing but ground. The body and its wick ridges are one height field:
+        // every triangle faces up, no steeper than the 25% ramps (per axis; a corner interpolates both, up to sqrt(2) x 25%),
+        // nothing more than 1 m over the ground, and the ridges stand beyond the bodies at 0.5 m.
         Load();
         var v = _views["one-sample"];
         var p = CandleTerrain.Build(v, Ground);
-        var mesh = new Mesh { indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
-        mesh.SetVertices(p.Body); mesh.subMeshCount = 4;
-        mesh.SetTriangles(p.SideGreen, 0); mesh.SetTriangles(p.SideRed, 1); mesh.SetTriangles(p.TopGreen, 2); mesh.SetTriangles(p.TopRed, 3);
-        // 492f128: nothing in the chart is a wall. Every triangle faces up and climbs no more than the 25% ramp along x and
-        // along z (the ground's own slope adds under 3%). Per axis, not the magnitude: a triangle over a corner where the
-        // ramp runs in x and in z at once interpolates both, up to sqrt(2) x 25% = 35.4% (measured 37.9% with the ground).
         var tris = AllTris(p);
-        int tops = p.TopGreen.Count / 3 + p.TopRed.Count / 3, ramps = 0;
-        float steepest = 0f, steepestAxis = 0f;
+        int tops = (p.TopGreen.Count + p.TopRed.Count + p.FormingTop.Count) / 3, ramps = 0;
+        float steepest = 0f, steepestAxis = 0f, highest = 0f;
         for (int t = 0; t < tris.Count; t += 3)
         {
             Vector3 a = p.Body[tris[t]], b = p.Body[tris[t + 1]], c = p.Body[tris[t + 2]];
@@ -140,27 +137,28 @@ public class CandleTerrainTests
             steepestAxis = Mathf.Max(steepestAxis, Mathf.Max(Mathf.Abs(nrm.x), Mathf.Abs(nrm.z)) / nrm.y);
             if (grade > 0.05f) ramps++;
         }
-        Debug.Log($"[candle-mesh] plateau triangles {tops}, ramp triangles {ramps}, steepest {steepest * 100f:0.0}% ({steepestAxis * 100f:0.0}% along an axis); forming slot {v[L.CV_FORMING]}, forming glow vertices {p.Forming.Count}, shift {v[L.CV_SHIFT] / 65536f:0.000} m");
+        foreach (var q in p.Body) highest = Mathf.Max(highest, q.y - CandleTerrain.Lift - Ground(q.x, q.z));
+        Debug.Log($"[candle-mesh] top triangles {tops}, ramp triangles {ramps}, wick-ridge triangles {p.RidgeTriangles}, steepest {steepest * 100f:0.0}% ({steepestAxis * 100f:0.0}% along an axis), highest {highest:0.000} m; forming slot {v[L.CV_FORMING]} top triangles {p.FormingTop.Count / 3}, shift {v[L.CV_SHIFT] / 65536f:0.000} m");
         Assert.LessOrEqual(steepestAxis, 0.25f + 0.035f, "steeper than the ribbon's 25% ramp along an axis");
         Assert.LessOrEqual(steepest, 0.25f * Mathf.Sqrt(2f) + 0.035f, "steeper than a corner of 25% ramps");
+        Assert.LessOrEqual(highest, L.CANDLE_H / 65536f + 1e-3f, "something stands above 1 m");
         Assert.Greater(tops, 0); Assert.Greater(ramps, 0);
-        // the glow: every vertex between the plateau it stands on and 6 m
-        foreach (var g in p.Glow)
-            Assert.LessOrEqual(g.y, Ground(g.x, g.z) + CandleTerrain.GlowTo + 0.05f, $"glow at {g} over 6 m");
-        // the wick: inside [low, high] of its candle, 9 m over the ground, where the slot stands after the scroll
+        Assert.Greater(p.RidgeTriangles, 0, "no wick ridge drawn on a staircase tape (the middle sample stands past most bodies)");
+        // a ridge top is 0.5 m: some drawn vertex beyond a body stands at it
+        int ridgeTop = 0;
         float shift = v[L.CV_SHIFT] / 65536f;
-        for (int c = 0; c < L.CANDLES; c++)
+        foreach (var q in p.Body)
         {
+            float over = q.y - CandleTerrain.Lift - Ground(q.x, q.z);
+            if (Mathf.Abs(over - L.WICK_RIDGE_H / 65536f) > 1e-3f) continue;
+            int c = Mathf.Clamp(Mathf.FloorToInt((q.x + shift - L.CANDLE_X0 / 65536f) / (L.CANDLE_SLOT / 65536f)), 0, L.CANDLES - 1);
             int b = L.CV_FIRST + c * L.CV_WORDS;
-            float cx = (v[b] + v[b + 1]) * 0.5f / 65536f - shift, low = v[b + 6] / 65536f, high = v[b + 7] / 65536f;
-            foreach (var w in p.Wick)
-                if (Mathf.Abs(w.x - cx) <= CandleTerrain.WickHalf + 1e-3f)
-                    Assert.IsTrue(w.z >= low - 1e-3f && w.z <= high + 1e-3f, $"candle {c}: wick vertex {w} outside {low:0.00}..{high:0.00}");
+            if (q.z < v[b + 2] / 65536f || q.z > v[b + 3] / 65536f) ridgeTop++;
         }
-        Assert.Greater(p.Wick.Count, 0, "no wick drawn on a staircase tape (the middle sample stands past most bodies)");
-        // the forming candle (one sample taken: the newest slot, half grown) glows in its own pulsing mesh
+        Assert.Greater(ridgeTop, 0, "no 0.5 m ridge top beyond a body");
+        // the forming candle (one sample taken: the newest slot) draws its top with the pulsing material
         Assert.AreEqual(L.CANDLES - 1, v[L.CV_FORMING]);
-        Assert.Greater(p.Forming.Count, 0);
+        Assert.Greater(p.FormingTop.Count, 0);
         Assert.AreEqual(CandleTerrain.Green, new Color(0x26 / 255f, 0xa6 / 255f, 0x9a / 255f));
         Assert.AreEqual(CandleTerrain.Red, new Color(0xef / 255f, 0x53 / 255f, 0x50 / 255f));
     }

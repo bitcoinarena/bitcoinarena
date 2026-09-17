@@ -636,10 +636,21 @@ namespace Blwp
                 _prevHeading = BlwpCore.TruckHeading;
                 _havePrev = true;
 
+                // THE LIVE PRICE, every 300 ticks, before the tick it belongs to (the owner 2026-09-17 16:01: the chart was
+                // frozen - no sample had ever reached the core). The feed's last price; none while it is not live.
+                if (BlwpCore.SampleDue(BlwpCore.State))
+                {
+                    if (_feed == null) _feed = FindFirstObjectByType<MarketFeed>();
+                    if (_feed != null && _feed.Fresh && BlwpCore.SubmitSample(_feed.Price)) SamplesSubmitted++;
+                }
                 BlwpCore.Step(Throttle(), Steer(), Brake(), Handbrake(), PracticeMode.Input);
             }
             Apply(Mathf.Clamp01(_accumulator / step));
         }
+
+        MarketFeed _feed;
+        /// <summary>Live price samples handed to the core this session.</summary>
+        public int SamplesSubmitted { get; private set; }
 
         /// <summary>The most core ticks one frame steps.</summary>
         public const int MostTicksPerFrame = 8;

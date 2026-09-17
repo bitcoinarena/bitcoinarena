@@ -36,6 +36,7 @@ namespace Blwp
         [DllImport("__Internal")] private static extern int BlwpTakeImpact();
         [DllImport("__Internal")] private static extern int BlwpReadImpact();
         [DllImport("__Internal")] private static extern int BlwpSubmitLoad(int feeSats, int btcHundredths);
+        [DllImport("__Internal")] private static extern int BlwpSubmitSample(int price);
         [DllImport("__Internal")] private static extern int BlwpChartView(int range, IntPtr ptr, int cap);
         [DllImport("__Internal")] private static extern int BlwpChartPoint(int range, int x, int z, IntPtr ptr);
         [DllImport("__Internal")] private static extern int BlwpCandleView(IntPtr ptr, int cap);
@@ -58,6 +59,7 @@ namespace Blwp
         private static int BlwpTakeImpact() => 0;
         private static int BlwpReadImpact() => 0;
         private static int BlwpSubmitLoad(int f, int b) => 0;
+        private static int BlwpSubmitSample(int price) => 0;
         private static int BlwpChartView(int r, IntPtr ptr, int cap) => 0;
         private static int BlwpChartPoint(int r, int x, int z, IntPtr ptr) => 0;
         private static int BlwpCandleView(IntPtr ptr, int cap) => 0;
@@ -320,6 +322,33 @@ namespace Blwp
         /// and the bridge publishes them, so a committee replaying the run -
         /// and every ghost drawn off one - is hunted exactly as the player was.
         /// </summary>
+        /// <summary>The tape's unit: 256 to a dollar (src/chart.js CHART_UNIT).</summary>
+        public const int PriceUnit = 256;
+
+        /// <summary>The ticks one price sample covers (§4.13: a sample every 5 s at 60 Hz).</summary>
+        public const int SampleTicks = 300;
+
+        /// <summary>
+        /// A price sample is due before the next tick: 300 ticks since the core's own last one (MK_SAMPLE_TICK, 0 at a
+        /// round's start). Asked of the state, so a restart or a new round needs nothing here.
+        /// </summary>
+        public static bool SampleDue(int[] state) =>
+            state[Layout.O_TICK] - state[Layout.O_TACTICS + Layout.TAC_MARKET + Layout.MK_SAMPLE_TICK] >= SampleTicks;
+
+        /// <summary>The tape word for a dollar price, rounded; 0 for no price.</summary>
+        public static int PriceWord(double usd) =>
+            usd > 0 && usd * PriceUnit < int.MaxValue ? (int)Math.Round(usd * PriceUnit) : 0;
+
+        /// <summary>
+        /// A LIVE PRICE SAMPLE into the core before the next tick, and into the run's transcript beside that tick (jslib
+        /// BlwpSubmitSample). the owner 2026-09-17 16:01: the chart was frozen - nothing had ever submitted one.
+        /// </summary>
+        public static bool SubmitSample(double usd)
+        {
+            int word = PriceWord(usd);
+            return Available && word > 0 && BlwpSubmitSample(word) == 1;
+        }
+
         public static bool SubmitLoad(long feeSats, int btcHundredths)
         {
             if (!Available) return false;

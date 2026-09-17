@@ -205,8 +205,7 @@ public class Bootstrap : MonoBehaviour
         BuildLighting();
         _terrain = BuildTerrain();
         // THE CANDLES ON IT (WAR_TACTICS.md §4.15): the core's candle bodies, meshed from its words.
-        // the glow and wicks clone a TRANSPARENT material the build ships (the flipbook fire): Fire.mat is opaque Lit and drew them white
-        new GameObject("CandleTerrain").AddComponent<CandleTerrain>().glowSource = fireParticleMaterial != null ? fireParticleMaterial : fireMaterial;
+        new GameObject("CandleTerrain").AddComponent<CandleTerrain>();
 
         // live tape first: the frontline is the price chart, so everything
         // downstream wants it already ticking

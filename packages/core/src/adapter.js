@@ -5,7 +5,7 @@
 // shows them, the same calls every core a seat can replay answers. It lives in core/src, so the
 // core's hash covers it: what a run came to is decided here, by the core, not by a seat. The page's
 // bundle does not carry it - the page drives sim.js itself, and nothing bundled imports this file.
-import { init, step, submitLiquidation, submitLoad, runScore } from './sim.js';
+import { init, step, submitLiquidation, submitLoad, submitSample, runScore } from './sim.js';
 import { hash, O_SCORE, S_STATE, S_HEAT, O_TRUCK, T_X, T_Z, T_HEADING } from './state.js';
 import { RUN_LIVE, RUN_DELIVERED, BLOCK_TICKS } from './rules/gate.js';
 
@@ -25,10 +25,13 @@ export const CORE = Object.freeze({
   eventsOf(transcript) {
     const due = new Map((transcript.liquidations || []).map(([at, size]) => [at, size]));
     const loaded = new Map((transcript.loads || []).map(([at, fee, btc]) => [at, [fee, btc]]));
+    // the live price, one sample at a tick (the page submits at most one per 300 ticks)
+    const priced = new Map((transcript.samples || []).map(([at, price]) => [at, price]));
     return {
-      count: { liquidations: due.size, loads: loaded.size },
+      count: { liquidations: due.size, loads: loaded.size, samples: priced.size },
       before(st, tick) {
         if (loaded.has(tick)) submitLoad(st, ...loaded.get(tick));
+        if (priced.has(tick)) submitSample(st, priced.get(tick));
         if (due.has(tick)) submitLiquidation(st, due.get(tick));
       },
     };

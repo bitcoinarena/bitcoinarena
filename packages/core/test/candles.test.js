@@ -98,16 +98,22 @@ test('the chart band is the pancake (apron + 0.15 x relief, within 2.2 m) away f
   }
 });
 
-test('a raised ribbon: 1 m plateaus, every candle grade at most 25%, no vertical face, nothing in the solids', () => {
+test('a raised ribbon: 1 m plateaus, 0.5 m wick ridges, every candle grade at most 25%, no vertical face, nothing in the solids', () => {
   const st = init(1), step = Q >> 3;
   const lay = (x, z) => C.candleHeightAt(st.candles, x, z, st.candleShift);
-  let maxH = 0, steep = 0;
+  let maxH = 0, steep = 0, ridge = 0;
   for (let x = -76 * Q; x < 108 * Q; x += step)
     for (let z = -46 * Q; z < 46 * Q; z += Q >> 1) {
       const h = lay(x, z); maxH = Math.max(maxH, h);
+      if (h === C.WICK_RIDGE_H) {
+        // a wick ridge top beyond its body's ends (15:30: the wick is ground, 0.5 m)
+        const c = Math.floor((x + st.candleShift - C.CANDLE_X0) / C.CANDLE_SLOT), k = body(st, c);
+        if (z < k.z0 || z > k.z1) ridge++;
+      }
       steep = Math.max(steep, Math.abs(lay(x + step, z) - h) / step, Math.abs(lay(x, z + step) - h) / step);
     }
-  console.log(`  plateau ${(maxH / Q).toFixed(3)} m, steepest candle grade ${(steep * 100).toFixed(1)}%`);
+  console.log(`  plateau ${(maxH / Q).toFixed(3)} m, steepest candle grade ${(steep * 100).toFixed(1)}%, ${ridge} wick-ridge top samples beyond the bodies`);
+  assert.ok(ridge > 100, `the wicks are not a 0.5 m ridge beyond the bodies (${ridge} samples)`);
   assert.equal(maxH, C.CANDLE_H);
   assert.ok(steep <= 0.25 + 1e-3, `a candle grade of ${(steep * 100).toFixed(1)}%`);
   assert.equal(C.candleWalls().n, 0, 'a candle part in the solids');
