@@ -118,6 +118,8 @@ export class Roster {
     // the answer carries `checkedAgainstChain`, and a caller that needs the
     // check can see whether it happened rather than assume it did.
     const view = this.chainFor({ contract, roundIdBytes });
+    if (view && view.pending)
+      return { ok: false, why: 'this node is still reading its chain view for that round' };
     let checkedAgainstChain = false;
     if (view && Array.isArray(view.blocks) && view.blocks.length) {
       const headers = { headers: view.blocks.map((b) => b.header), firstHeight: view.firstHeight };
@@ -176,6 +178,8 @@ export class Roster {
       return { ok: false, why: 'that round names a network this build has no genesis for' };
 
     const view = this.chainFor({ contract, roundIdBytes });
+    if (view && view.pending)
+      return { ok: false, why: 'this node is still reading its chain view for that round' };
     if (!view || !Array.isArray(view.blocks))
       return {
         ok: false,
@@ -241,7 +245,7 @@ export class Roster {
     const view = this.chainFor({ contract, roundIdBytes });
 
     const where = new Map();
-    for (const block of view.blocks) {
+    for (const block of (view && Array.isArray(view.blocks) ? view.blocks : [])) {
       let txids;
       try { txids = (block.transactions || []).map((raw) => parseTransaction(raw).txid); } catch { continue; }
       txids.forEach((t, position) => where.set(toHex(t), { block, txids, position }));
