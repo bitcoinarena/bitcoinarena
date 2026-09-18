@@ -315,6 +315,10 @@ export class Client {
     const client = new Client({
       base: seen.endpoint.replace(/^ws/, 'http'), core, sign, verify,
     });
+    // THE CHAIN THIS CALL PROVED, carried on the client so the page can open its NEXT round from it rather than
+    // proving the same headers again at a boundary where a starved tab misses the ten seconds (the owner 2026-09-18).
+    client.provedChain = seen.chain || null;
+    client.reusedChain = !!seen.reusedChain;
     // AND EVERY OTHER COMMITTEE NODE, for the checkpoints. Section 10: "a
     // checkpoint is accepted when enough nodes receive it"; section 11: "the
     // client periodically sends batches and checkpoints". The proven endpoint is

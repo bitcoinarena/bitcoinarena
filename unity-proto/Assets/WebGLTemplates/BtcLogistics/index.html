@@ -460,8 +460,19 @@
         const nodes = discovery.nodes || window.BLWP_NODES;
         // AND THE PLAYER'S STAKE LOCK, if this page made one (W1b): `join`
         // hands it to every signer node once the signer node holds the entry.
-        return at(Object.assign({}, discovery, { nodes: nodes }),
-          Object.assign({}, opts, { verify: verify, stakeLock: window.BLWP_STAKE_LOCK || undefined }));
+        // AND THE CHAIN THIS PAGE HAS ALREADY PROVED (the owner 2026-09-18 16:45). Measured in two browsers: on PLAY
+        // again both tabs joined the next round and neither got a client, because proving the headers afresh wants
+        // both signer nodes inside ten seconds and a busy tab took 8.7 s for 240 bytes. The headers do not change
+        // behind us, so the next round of this same page opens from what the last one proved; `discover` still reads
+        // afresh when there is nothing kept, and falls back to a read if the kept proof cannot carry the new bond.
+        return at(Object.assign({}, discovery, { nodes: nodes, proved: window.BLWP_PROVED_CHAIN || undefined }),
+          Object.assign({}, opts, { verify: verify, stakeLock: window.BLWP_STAKE_LOCK || undefined }))
+          .then(function (client) {
+            if (client && client.provedChain) window.BLWP_PROVED_CHAIN = client.provedChain;
+            console.log('[blwp] the chain was ' + (client && client.reusedChain ? 'REUSED from this page\'s last round'
+              : 'read afresh') + ' to open this session');
+            return client;
+          });
       };
     }
 
