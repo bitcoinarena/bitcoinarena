@@ -34,7 +34,14 @@ public class TouchControls : MonoBehaviour
     /// <summary>Show on touch devices, and on desktop only when asked (so it can be checked).</summary>
     public bool Visible => forceShow || TouchScreen;
 
-    /// <summary>A touch device: the pads are the controls. Otherwise a desktop (the HUD chart goes top right there).</summary>
+    /// <summary>
+    /// A touch device: the pads are the controls. Otherwise a desktop (the HUD chart goes top right there).
+    ///
+    /// THE OWNER'S DESKTOP REPORTS ONE and draws the pads - that is what the 20:22 letter is about, and where the pads
+    /// are drawn the mouse now drives them (AMouseOnTheGasPadDrivesTheTruck presses a real mouse device on the gas
+    /// pad). Drawing them on a screen that reports NO touch device is a layout question, not an input one: measured,
+    /// the HUD has no room for the score column beside the pads at 1024x768. Written down in TASKBOOK.
+    /// </summary>
     public static bool TouchScreen => Application.isMobilePlatform
 #if ENABLE_INPUT_SYSTEM
         || Touchscreen.current != null

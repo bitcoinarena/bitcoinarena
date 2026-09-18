@@ -1540,7 +1540,14 @@ public class DriveHud : MonoBehaviour
         return new Rect(left.x, bottom - height, width, height);
     }
 
-    /// <summary>The pads are on screen (a touch screen as far as Unity knows). Tests set <see cref="PadsOverride"/>.</summary>
+    /// <summary>
+    /// The pads are on screen (a touch screen as far as Unity knows). Tests set <see cref="PadsOverride"/>.
+    ///
+    /// MEASURED AND LEFT ALONE (2026-09-18 20:22): pointing this at "anything that can press a pad" is the honest
+    /// question, and it showed that on a screen that draws the pads the score column has 55 px at 1024x768 and 57 at
+    /// 1000x360 - it is squeezed between the model list and the handbrake pad, with nowhere else on the screen to go.
+    /// That is a layout letter with its own measurements (TASKBOOK), not this one, and the numbers are written down.
+    /// </summary>
     public static bool PadsShown => PadsOverride ?? TouchControls.TouchScreen;
     public static bool? PadsOverride;
 

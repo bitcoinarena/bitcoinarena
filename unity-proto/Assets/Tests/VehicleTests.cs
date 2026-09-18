@@ -265,6 +265,65 @@ public class VehicleTests
         Assert.Greater(travelled, 5f, $"touch gas moved the truck only {travelled:0.0} units");
     }
 
+    /// <summary>
+    /// THE MOUSE, ON THE PAD, ON A DESKTOP (the owner 2026-09-18 20:22, HARD: "on desktop the mobile pads are drawn but
+    /// do nothing ... Mouse / pointer on a pad = throttle, steer, handbrake").
+    ///
+    /// The two tests above hand TouchControls a list of points, which skips the part a desktop player uses: whether
+    /// the pads are shown at all without a touchscreen, whether the mouse is read, and whether its position - which
+    /// Unity gives with y up - lands in the pad rect, which is measured with y down. This presses a real mouse
+    /// device instead, so all three are in the measurement.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator AMouseOnTheGasPadDrivesTheTruck()
+    {
+        var pads = Object.FindFirstObjectByType<TouchControls>();
+        Assert.IsNotNull(pads, "the scene has no on-screen controls");
+
+        // A BATCHMODE EDITOR HAS NO GAME VIEW TO FOCUS, and by default the editor routes POINTER input to whichever
+        // EditorWindow has focus rather than to the game - so a mouse held on a pad is never seen by player code at
+        // all. Both settings are put back afterwards. The pads are not being changed to suit the test: the browser
+        // has neither of these rules, and the same press there drove the truck at 10.86 m/s.
+        var focus = UnityEngine.InputSystem.InputSystem.settings.backgroundBehavior;
+        var editorFocus = UnityEngine.InputSystem.InputSystem.settings.editorInputBehaviorInPlayMode;
+        UnityEngine.InputSystem.InputSystem.settings.backgroundBehavior =
+            UnityEngine.InputSystem.InputSettings.BackgroundBehavior.IgnoreFocus;
+        UnityEngine.InputSystem.InputSystem.settings.editorInputBehaviorInPlayMode =
+            UnityEngine.InputSystem.InputSettings.EditorInputBehaviorInPlayMode.AllDeviceInputAlwaysGoesToGameView;
+        var mouse = UnityEngine.InputSystem.InputSystem.AddDevice<UnityEngine.InputSystem.Mouse>();
+        try
+        {
+            // The pads are drawn where the browser reports a touch device - the owner's desktop does, a batchmode editor
+            // does not - so the test asks for them the way it is meant to be asked for. What is under test is what
+            // happens to a MOUSE once they are on the screen.
+            pads.forceShow = true;
+            Assert.IsTrue(pads.Visible, "the pads are not drawn, so there is nothing to press");
+
+            // The gas pad's own rectangle, flipped back into the input system's y-up screen space.
+            var gas = TouchPad.RectFor(TouchPad.Pad.Up, Screen.width, Screen.height).center;
+            var at = new Vector2(gas.x, Screen.height - gas.y);
+            Vector3 from = _rb.position;
+
+            for (float t = 0f; t < 3f; t += Time.deltaTime)
+            {
+                UnityEngine.InputSystem.InputSystem.QueueStateEvent(mouse,
+                    new UnityEngine.InputSystem.LowLevel.MouseState { position = at }
+                        .WithButton(UnityEngine.InputSystem.LowLevel.MouseButton.Left));
+                UnityEngine.InputSystem.InputSystem.Update();
+                yield return null;
+            }
+            float travelled = Vector3.Distance(from, _rb.position);
+            Assert.Greater(travelled, 5f, $"the mouse held on the gas pad moved the truck only {travelled:0.0} units");
+        }
+        finally
+        {
+            pads.forceShow = false;
+            UnityEngine.InputSystem.InputSystem.RemoveDevice(mouse);
+            UnityEngine.InputSystem.InputSystem.settings.backgroundBehavior = focus;
+            UnityEngine.InputSystem.InputSystem.settings.editorInputBehaviorInPlayMode = editorFocus;
+        }
+    }
+
     [UnityTest]
     public IEnumerator TouchSteerTurnsTheTruck()
     {
