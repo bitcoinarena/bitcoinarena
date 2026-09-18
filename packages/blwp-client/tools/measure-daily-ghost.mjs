@@ -27,7 +27,7 @@ import WebSocket from 'ws';
 
 import { Client } from '../src/client.js';
 import { joinFromQuery, tabSeed, playerFor, entryFor } from '../src/join.js';
-import { watchGhosts, SILENT_MS } from '../src/ghost-field.js';
+import { watchGhosts, SILENT_MS, tickClock } from '../src/ghost-field.js';
 import { fetchLobby } from '../src/lobby.js';
 import { feldmanGroup } from '../../blwp-node/src/curve.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
@@ -153,6 +153,14 @@ async function freeRound(until) {
 const until = Date.now() + MINUTES * 60000;
 const pings = NODES.map((n) => ({ node: n, held: pinger(n, until) }));
 const log = logTail(until);
+// THE TWO CLOCKS A PAIR OF TABS HAS (the owner 2026-09-18 04:05: print the overlay age beside the wire lag). The driver
+// stamps the tick it has just recorded, exactly as blwp.jslib does on every batch slot; the watcher reads those stamps
+// back over the same channel, exactly as the overlay does. One browser, two tabs.
+const driverClock = tickClock({ Channel: BroadcastChannel, name: 'blwp-daily-ghost' });
+const watcherClock = tickClock({ Channel: BroadcastChannel, name: 'blwp-daily-ghost' });
+const overlayAges = [];         // what the label would print
+const wireLags = [];            // now, less the moment the driver recorded that very tick
+let stamped = 0, guessed = 0;
 const pictures = [];            // { at, tick, session } of the driver, as the watcher was shown them
 const theirs = new Set();       // every driver entry this probe has had, so a picture of a round we left is counted
 const sessions = [];
@@ -168,9 +176,9 @@ while (Date.now() < until - 20000) {
   const field = watchGhosts(watcher.client, { roundId: watcher.rid, entryId: watcher.eid });
   await field.watching;
   const was = watcher.client.onGhost;
-  const mine = toHex(driver.eid);
   session++;
   const here = session;
+  const mine = toHex(driver.eid);
   // THE SECOND ROUND, ON THE WIRE (the owner 2026-09-17 19:15: "in the second round the ghost does not appear reliably -
   // sometimes missing, then at the wrong position"). For every round after the first: when the first picture of this
   // round's driver arrived, measured from the driver's first published tick, and how far behind the driver that
@@ -181,13 +189,20 @@ while (Date.now() < until - 20000) {
     if (toHex(g.entryId) === mine) {
       if (began.firstAt === null) { began.firstAt = Date.now(); began.firstTick = g.tick; }
       began.pictures++;
-      pictures.push({ at: Date.now(), tick: g.tick, session: here });
+      const now = Date.now();
+      // THE LABEL'S OWN NUMBER: the driver's clock for the tick this picture names, read back through the stamps.
+      const sent = watcherClock.sentMs(mine, g.tick);
+      if (sent === null) guessed++; else { stamped++; overlayAges.push(now - sent); }
+      // AND THE WIRE: the same picture against the moment the driver actually recorded that tick.
+      if (recordedAt[g.tick] !== undefined) wireLags.push(now - recordedAt[g.tick]);
+      pictures.push({ at: now, tick: g.tick, session: here });
     } else if (theirs.has(toHex(g.entryId))) began.stale++;
     was(g);
   };
   theirs.add(mine);
 
   const drivingFrom = Date.now();
+  const recordedAt = [];
   let tick = 0, ended = null;
   // THE PAGE'S OWN CADENCE: a tick every 1/60 s on the wall clock, `drain()` on every sixth, and nothing recorded once
   // the core's run is over - `blwp.jslib`'s `net.tick`.
@@ -196,8 +211,10 @@ while (Date.now() < until - 20000) {
     while (tick <= due) {
       if (driver.client.runOver()) { ended = 'the run reached its last tick'; break; }
       if (!driver.client.record([0, 0, 0, 0, 0])) { ended = driver.client.endedWhy || 'the client stopped recording'; break; }
+      recordedAt[tick] = Date.now();
       tick++;
-      if (tick % 6 === 0) driver.client.drain();
+      // The page's own cadence, and its stamp with it: the newest recorded tick and the clock at that moment.
+      if (tick % 6 === 0) { driverClock.post(mine, tick - 1); driver.client.drain(); }
     }
     if (driver.client.ended) ended = ended || 'the run ended';
     await wait(4);
@@ -250,6 +267,12 @@ say(`pictures of the driver: ${pictures.length} in ${MINUTES} min `
 say(`picture gaps: p50 ${ms(pct(sortedGaps, 0.5))}, p90 ${ms(pct(sortedGaps, 0.9))}, max ${ms(sortedGaps[sortedGaps.length - 1])}; `
   + `over ${FELT_MS} ms: ${sortedGaps.filter((g) => g > FELT_MS).length}; over ${RETIRE_MS} ms (a truck is retired): `
   + `${sortedGaps.filter((g) => g >= RETIRE_MS).length}`);
+const sortNum = (xs) => xs.slice().sort((a, b) => a - b);
+const oa = sortNum(overlayAges), wl = sortNum(wireLags);
+say(`the age the overlay would print: p50 ${ms(pct(oa, 0.5))}, p90 ${ms(pct(oa, 0.9))}, max ${ms(oa[oa.length - 1])} `
+  + `(${stamped} stamped, ${guessed} with no stamp - those print "~" and are time since arrival)`);
+say(`the same pictures on the wire: p50 ${ms(pct(wl, 0.5))}, p90 ${ms(pct(wl, 0.9))}, max ${ms(wl[wl.length - 1])} `
+  + `(the driver's own record of that tick to this watcher)`);
 for (const p of pings) {
   const r = p.held.rtts.slice().sort((a, b) => a - b);
   say(`${p.node.replace('https://', '')}: ${r.length} pings, median ${ms(pct(r, 0.5))}, p90 ${ms(pct(r, 0.9))}, `
