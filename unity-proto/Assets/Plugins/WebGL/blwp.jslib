@@ -596,8 +596,15 @@ mergeInto(LibraryManager.library, {
       // every 300 ticks, this run's own round tick against the newest picture of another truck - the same round clock.
       if (net.ghosts && net.seen % 300 === 0) {
         var pose = BLWPCLIENT.newestPose(net.ghosts), own = net.client.offered | 0;
+        // AND THE AGE THE PLAYER IS SHOWN, BESIDE THE LAG ON THE WIRE (the owner 2026-09-17 19:15: the truck reads
+        // 300-600 ms while the wire says ~100). The label's own number, computed the way the overlay computes it, so
+        // the two can be read against each other from one console. Nothing on screen changes.
+        var shown = BLWPCLIENT.ghostLabels ? BLWPCLIENT.ghostLabels(net.ghosts, { clock: Module.blwpTickClock }) : [];
+        var oldest = shown.reduce(function (a, l) { return a === null || l.ageMs > a.ageMs ? l : a; }, null);
         console.log('[ghost] own tick ' + own + ' newest other picture tick ' + (pose ? pose.tick : '-')
-          + (pose ? ' behind ' + (own - pose.tick) + ' ticks' : '') + ' others ' + net.ghosts.others
+          + (pose ? ' behind ' + (own - pose.tick) + ' ticks' : '')
+          + (oldest ? ' overlay age ' + (oldest.estimated ? '~' : '') + oldest.ageMs + ' ms' : '')
+          + ' others ' + net.ghosts.others
           + ' collapsed ' + (net.ghosts.collapsed | 0) + ' silenced ' + (net.ghosts.silenced | 0) + ' drawn ' + (net.ghosts.drawn | 0));
       }
       // THE CORE SAID DELIVERED, SO THE RUN ENDS HERE (the owner 2026-09-15 16:14). Measured before:
