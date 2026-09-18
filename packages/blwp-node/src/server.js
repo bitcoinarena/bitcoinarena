@@ -2996,6 +2996,48 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return sent;
   };
 
+  /**
+   * THE PICTURES ARE MADE AFTER THE PUBLISHER HAS BEEN ANSWERED, ONCE PER ROUND PER TURN OF THE LOOP.
+   *
+   * The store and its answer stay in the frame: the number a publisher gets back is its chain rule. What used to sit
+   * behind it - stepping that run's ghost forward and rebuilding every watcher's picture set - is queued here instead.
+   * Measured (the owner 2026-09-17 19:15, the ghost lag): of 35.0 s this thread spent in socket frames over a 390 s
+   * profile, the store was 22.5 s and the warm step and the picture set the rest, and stalls of 325-356 ms were the
+   * publish path's own work back to back.
+   *
+   * COALESCED, AND NOT DELAYED: `setImmediate` runs at the end of this turn, after the frames already waiting, so
+   * three batches that land together step once to the newest tick and push once. A run still steps on its OWN batches,
+   * so nothing is replayed from a run's start and no truck is left cold - the second-round rule stands.
+   */
+  const ghostDue = new Map();
+  const showSoon = (roundIdBytes, entryIdBytes) => {
+    const key = hexOf(roundIdBytes);
+    let due = ghostDue.get(key);
+    if (!due) { due = { roundId: roundIdBytes, entries: new Map(), queued: false }; ghostDue.set(key, due); }
+    due.entries.set(hexOf(entryIdBytes), entryIdBytes);
+    if (due.queued) return;
+    due.queued = true;
+    setImmediate(() => {
+      ghostDue.delete(key);
+      if (shuttingDown) return;
+      try {
+        // TO THE NEWEST TICK, not one budgeted slice of it: a turn that coalesced twenty batches has more ticks to
+        // walk than one call takes (STEP_BUDGET), and a truck left mid-way is the very fault this warm step exists to
+        // prevent. Bounded, so a cold run still cannot hold the loop: what is left over is walked on the next batch.
+        for (const eid of due.entries.values()) {
+          timed('ghost warm step', () => {
+            const published = ghosts.playedThrough(due.roundId, eid);
+            for (let slice = 0; slice < 8; slice++) {
+              const made = ghosts.latest(due.roundId, eid);
+              if (!made.ok || published === null || made.ghost.tick >= published) break;
+            }
+          });
+        }
+        timed('ghost push', () => showRound(due.roundId));
+      } catch (e) { console.error(`[ghosts] ${e.message}`); }
+    });
+  };
+
   wss.on('connection', (sock) => {
     sock.on('close', () => watching.delete(sock));
     // A FRAME OVER THE CAP IS AN ERROR EVENT, not a message, and an
@@ -3121,14 +3163,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (took > 0) {
           try {
             const landed = decodeInputBatch(bytes);
-            // AND THE PUBLISHER'S PICTURE IS KEPT WARM WHETHER OR NOT ANYBODY WATCHES YET (the owner 2026-09-17 19:15: "in
-            // the second round the ghost does not appear reliably - sometimes missing, then at the wrong position").
-            // A run was stepped only when a watcher asked, so a truck that drove alone for a minute before the other
-            // tab reached the round was pictured from its first tick, STEP_BUDGET ticks a push: missing, then racing
-            // along where it had been. Stepped here, its batch's own few ticks, it is at its newest tick when anybody
-            // arrives.
-            timed('ghost warm step', () => ghosts.latest(landed.roundId, landed.entryId));
-            timed('ghost push', () => showRound(landed.roundId));
+            showSoon(landed.roundId, landed.entryId);
           } catch (e) { console.error(`[ghosts] ${e.message}`); }
         }
       } catch (e) {
