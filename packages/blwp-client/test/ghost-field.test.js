@@ -572,6 +572,36 @@ test('through a real daemon\'s subscribe burst, the other player\'s abandoned en
   } finally { await node.close(); }
 });
 
+test('a truck of a round that is over goes, and one of a live round stays through any silence', () => {
+  // the owner 2026-09-18 12:02: "after 2nd round Truck 1 cannot see Truck 2. Age 6736ms on young-hawk-9551". Measured on
+  // the Daily with a watcher that kept its field across two round boundaries: it carried one truck of the round it had
+  // left into each new round, and of the new round it received nothing at all - first picture NEVER, superseded 0,
+  // pictures of a left round 0. Until 0.0.1591 the three-second silence took that truck away; nothing else ever did,
+  // so since then it stands for ever with its age climbing, which is the label in the shot.
+  const client = { watch: () => Promise.resolve('watching'), playerPubkey: b32(0xa1), ended: false, runOver: () => false };
+  let clock = 1000000;
+  const field = watchGhosts(client, { roundId: b32(1), entryId: b32(0xc0) }, { clock: () => clock });
+  for (let t = 1; t <= 20; t++) client.onGhost(entryPic(0x51, b32(0xe1), t, t * 65536, 0));
+  assert.equal(field.drain(24, clock).length, 1, 'the other truck was not drawn at all');
+  assert.equal(field.others, 1);
+
+  // A LIVE ROUND KEEPS ITS TRUCK through a silence far past the old retire age - that is the 10:42 rule.
+  clock += 9000;
+  assert.deepEqual(field.drain(24, clock).filter((g) => g.retire), [], 'a live round took a quiet truck away');
+  assert.equal(field.others, 1, 'a live round dropped its quiet truck');
+  assert.equal(field.roundEnded, 0);
+
+  // AND WHEN THIS PAGE'S OWN RUN IS OVER, the truck goes: no picture of that round can arrive again.
+  client.runOver = () => true;
+  const after = field.drain(24, clock);
+  assert.deepEqual(after.filter((g) => g.retire).map((g) => toHex(g.entryId).slice(0, 2)), ['51'],
+    'the truck of a finished round was left standing, which is the 6736 ms label in the shot');
+  assert.equal(field.others, 0, 'the finished round left a truck on the field');
+  assert.equal(field.roundEnded, 1);
+  // AND ONLY ONCE: a drain after that says nothing more about it.
+  assert.deepEqual(field.drain(24, clock + 1000).filter((g) => g.retire), [], 'the retire was sent twice');
+});
+
 test('realtime: a page that fell behind draws each truck at its newest picture, and a quiet truck stays where it stood', () => {
   // the owner 2026-09-17 17:05 / 17:12: the ghost stood where the other player had been a minute before, and after the next
   // round old trucks stayed. A drain hands over the newest picture per truck.
