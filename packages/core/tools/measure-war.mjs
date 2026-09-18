@@ -40,6 +40,7 @@ const A9WHY = process.argv.includes('--a9why');
 const a9gap = {}, a9all = {}, a9live = [], a9near = [];
 const a9x = [[], []], a9slot = [[], []];
 const a9slope = {}, a9slopeN = {};
+const B3WHY = process.argv.includes('--b3why');
 const SEEDS = arg('seeds', '1,2,3,4,5').split(',').map(Number);
 const TICKS = Number(arg('ticks', 3600));
 
@@ -345,9 +346,15 @@ for (const seed of SEEDS) {
       const sdev = (a) => { const m = mean(a); return Math.sqrt(mean(a.map((v) => (v - m) * (v - m)))); };
       add('B3 side-ticks'); const zsd = sdev(zs), xsd = sdev(xs);
       if (zsd < 4 || zsd > 12) add('B3 z out'); if (xsd < 20 || xsd > 60) add('B3 x out');
-      // WITHDRAWN (2026-09-19): a --b3why probe here counted about one qualifying side-tick per seed while the row
-      // itself reports z 52.44% / x 41.67% of them out of band, so the two were not counting the same thing and the
-      // probe's numbers said nothing. B3 is still unmeasured; whatever replaces this must first agree with the row.
+      // THE PROBE COUNTS THE ROW'S OWN EVENTS, and says so in the row's own counters (2026-09-19). The last attempt
+      // kept its numbers in an array of its own and disagreed with the row by three orders of magnitude; anything
+      // counted here goes through `add` beside the row, so the two cannot drift apart unseen.
+      if (B3WHY) { add('B3 probe events');
+        if (zsd < 4) add('B3 z tight'); else if (zsd > 12) add('B3 z loose');
+        if (xsd < 20) add('B3 x tight'); else if (xsd > 60) add('B3 x loose');
+        // and how far out, in buckets, so "too loose" carries a size
+        add(`B3 zsd ${zsd < 4 ? '<4' : zsd <= 12 ? '4-12' : zsd <= 20 ? '12-20' : zsd <= 40 ? '20-40' : '>40'}`);
+        add(`B3 xsd ${xsd < 10 ? '<10' : xsd < 20 ? '10-20' : xsd <= 60 ? '20-60' : '>60'}`); }
     }
     // B4 follow the push: squad pushNear and mean z (relative to seam) of its men on post
     const squadNow = new Map();
@@ -593,6 +600,18 @@ if (H1WHY && h1why.length) {
     + `bounding ${(100 * bounding / h1why.length).toFixed(0)}%; standing still ${(100 * still / h1why.length).toFixed(0)}%; `
     + `stepping toward the hold ${(100 * towards / h1why.length).toFixed(0)}%; `
     + `never yet stood on a post ${(100 * h1why.filter((r) => r.column).length / h1why.length).toFixed(0)}%`);
+}
+if (B3WHY) {
+  const n = (k) => r[k] || 0;
+  console.log(`B3 counts, probe against the row: side-ticks ${n('B3 side-ticks')}, probe events ${n('B3 probe events')}`
+    + ` (${n('B3 side-ticks') === n('B3 probe events') ? 'AGREE' : 'DISAGREE'}); row z out ${n('B3 z out')}, `
+    + `probe z tight ${n('B3 z tight')} + loose ${n('B3 z loose')} = ${n('B3 z tight') + n('B3 z loose')}; `
+    + `row x out ${n('B3 x out')}, probe x tight ${n('B3 x tight')} + loose ${n('B3 x loose')} = `
+    + `${n('B3 x tight') + n('B3 x loose')}`);
+  console.log(`B3 z spread buckets (band 4-12 m): <4 ${n('B3 zsd <4')}, 4-12 ${n('B3 zsd 4-12')}, 12-20 `
+    + `${n('B3 zsd 12-20')}, 20-40 ${n('B3 zsd 20-40')}, >40 ${n('B3 zsd >40')}`);
+  console.log(`B3 x spread buckets (band 20-60 m): <10 ${n('B3 xsd <10')}, 10-20 ${n('B3 xsd 10-20')}, 20-60 `
+    + `${n('B3 xsd 20-60')}, >60 ${n('B3 xsd >60')}`);
 }
 console.log(`${rows.length - red} of ${rows.length} rows pass (seeds ${SEEDS.join(',')}, ${TICKS} ticks)`);
 process.exit(red ? 1 : 0);
