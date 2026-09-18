@@ -21,6 +21,7 @@ import { readFileSync } from 'node:fs';
 import { fromHex } from '../../protocol/src/hash.js';
 import { HEADER_BYTES } from '../../protocol/src/chain.js';
 import { splitBlock } from '../../protocol/src/block.js';
+import { timed } from './slow.js';
 
 /** The most headers one call will ask for. A view is a window, not the chain. */
 export const MAX_HEADERS = 2016;
@@ -75,7 +76,11 @@ export async function blocksOver(call, from, to) {
   const blocks = [];
   for (let h = from; h <= to; h++) {
     const hash = await call('getblockhash', [h]);
-    blocks.push(splitBlock(fromHex(await call('getblock', [hash, 0]))));
+    // THE BLOCK, TURNED FROM HEX INTO BYTES, IS THIS THREAD'S WORK (the owner 2026-09-18 02:40: name the leftover). The
+    // read itself waits on bitcoind; what runs here is the answer's continuation - a megabyte of hex parsed and split -
+    // and it lands on the thread that draws the other players' trucks.
+    const answer = await call('getblock', [hash, 0]);
+    blocks.push(timed('chain block read', () => splitBlock(fromHex(answer)), { over: 20 }));
   }
   return { blocks, firstHeight: from };
 }
