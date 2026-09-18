@@ -496,7 +496,10 @@ for (const [name, got, ok] of rows) { if (!ok) red++; console.log(`${ok ? 'PASS'
       + `median ${live[Math.floor(live.length / 2)]}`);
     const near = a9near.slice().sort((a, b) => a - b);
     if (near.length) console.log(`and of those, within their own gun's reach of the seam: median `
-      + `${near[Math.floor(near.length / 2)]}, q1 ${near[Math.floor(near.length / 4)]}, q3 ${near[Math.floor(near.length * 3 / 4)]}`);
+      + `${near[Math.floor(near.length / 2)]}, q1 ${near[Math.floor(near.length / 4)]}, q3 ${near[Math.floor(near.length * 3 / 4)]}; `
+      + `short metres with NOBODY in reach ${(100 * near.filter((n) => n === 0).length / near.length).toFixed(0)}%, `
+      + `with one ${(100 * near.filter((n) => n === 1).length / near.length).toFixed(0)}%, `
+      + `with two or more ${(100 * near.filter((n) => n >= 2).length / near.length).toFixed(0)}%`);
   }
   if (VERDICTS && pushMoves.length) {
     const down = pushMoves.filter(([a, b]) => b < a), up = pushMoves.filter(([a, b]) => b > a);
