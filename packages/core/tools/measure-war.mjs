@@ -29,6 +29,7 @@ const walkOpen = new Map();
 const walkDone = [];
 const settledHold = new Map();
 const settledOff = [];
+const holdGap = [];
 const SEEDS = arg('seeds', '1,2,3,4,5').split(',').map(Number);
 const TICKS = Number(arg('ticks', 3600));
 
@@ -153,6 +154,12 @@ for (const seed of SEEDS) {
     // ================= HOLD IS THE DEFAULT (§0, re-ruled 2026-09-16 20:30) =================
     // On post = within 1.5 m of its hold: slot x, its line, the hull-down pick for an overwatch tank (§4.1).
     const seamAt = (x) => frontlineZ(st.tape, x, HX, HZ), groundOf = (x, z) => groundAt(st, x, z);
+    // WARNING, MEASURED 2026-09-19: this hold is NOT the hold the mover used. `seamAt` here is
+    // frontlineZ(st.tape, ...) while the core's own seam is the glided, scrolled, windowed reader in sim.js - so the
+    // line under both the crest scan and the bounding post is a different line from the rules'. The hook carries the
+    // mover's own hold, and against THAT the row reads 53.3% where this reads 31.2%; the two differ by a median
+    // 1.40 m against an on-post radius of 1.5 m. Swapping the fresh crest scan for the doctrine's held crest
+    // (T.crestHold) did not close it - 27.5% - because the crest is not what differs. The seam is.
     const holdOf = (i) => { const p = T.postOf(s, L.O_TACTICS, i, tick), sd = sideOf(i); const line = seamAt(p.x) + sd * p.depth;
       if (p.bounding) return [p.x, line];
       let best = line, br = -Infinity; for (let c = -2; c <= 2; c++) { const z = line + c * 2 * ONE; const rise = groundOf(p.x, z - sd * 6 * ONE) - groundOf(p.x, z); if (rise > br) { br = rise; best = z; } }
@@ -171,6 +178,19 @@ for (const seed of SEEDS) {
       // line; one that has not is still arriving. The row counts both, so this says which of the two it is failing on.
       const settled = ((s[base(i) + L.U_COOLDOWN] >> 7) & 1) === 1;
       if (settled) add('H1 settled tank-ticks'); else add('H1 column tank-ticks');
+      // THE ROW'S HOLD AGAINST THE MOVER'S OWN. This probe recomputes the hull-down crest fresh every tick; the core
+      // HOLDS a crest (tactics.js hysteresis, §4.1) and only switches for 0.3 m more rise. Where the two differ, H1
+      // is asking the tank to stand somewhere the rules never sent it. The hook carries the mover's own hold.
+      { const uh = hk.unit.get(i); if (uh && uh.hold !== undefined) {
+          const [, hzRow] = holdOf(i);
+          holdGap.push(Math.abs(hzRow - uh.hold) / ONE);
+          add('H1 hold compared');
+          if (Math.hypot(s[base(i)] - T.postOf(s, L.O_TACTICS, i, tick).x, s[base(i) + 1] - uh.hold) <= 1.5 * ONE)
+            add('H1 on the mover own hold');
+        } }
+      // EARLY vs LATE: every tank is a column in the opening drive, so a short run reads as a force permanently
+      // walking in. The last third of the run says what the steady state is.
+      if (tick >= TICKS - Math.floor(TICKS / 3)) { add('H1 late tank-ticks'); if (settled) add('H1 late settled'); if (settled && onPostNow(i)) add('H1 late settled on post'); }
       if (onPostNow(i)) { add('H1 on post'); if (settled) add('H1 settled on post'); }
       else if (settled) {
         // A SETTLED TANK OFF ITS POST is the gap this row really has: by role, and whether its hold moved under it
@@ -181,8 +201,14 @@ for (const seed of SEEDS) {
         if (was2 !== undefined && Math.abs(hz2 - was2) > ONE / 2) add(bd ? 'H1 hold jumped bounding' : 'H1 hold jumped overwatch');
         // HOW FAR IT STILL HAS TO GO, and whether it holds a budget grant (bit 6 of U_COOLDOWN). A tank two metres
         // out with no grant is a tank the half-line budget is holding, not one that cannot drive.
+        // WHAT THE RULES HELD IT WITH: the hook carries the unit's own step, its hold, its post and whether it was
+        // HALTED this tick - and only those. Asking that record for `crowded` or `tacWait` returns undefined, which
+        // reads as a tidy 0% and means nothing; this probe printed exactly that once before it was caught.
+        const u2 = hk.unit.get(i);
         settledOff.push({ far: Math.hypot(s[base(i)] - hx2, s[base(i) + 1] - hz2) / ONE,
-                          granted: ((s[base(i) + L.U_COOLDOWN] >> 6) & 1) === 1 });
+                          granted: ((s[base(i) + L.U_COOLDOWN] >> 6) & 1) === 1,
+                          halted: !!(u2 && u2.halted),
+                          still: !!(u2 && u2.dx === 0 && u2.dz === 0) });
       } else if (settled) settledHold.set(i, holdOf(i)[1]);
       // WHY A TANK IS NOT ON ITS HOLD: the row says 25% and nothing about the miss. This splits it into the two axes
       // and says whether the tank is short of its hold or past it, so a lane still walking in is not confused with
@@ -422,10 +448,24 @@ for (const [name, got, ok] of rows) { if (!ok) red++; console.log(`${ok ? 'PASS'
       + `${a[Math.floor(a.length / 4)].toFixed(1)} / ${a[Math.floor(a.length / 2)].toFixed(1)} / ${a[Math.floor(a.length * 3 / 4)].toFixed(1)} m; `
       + `within 4 m of the hold ${(100 * near.length / settledOff.length).toFixed(0)}%, and of those `
       + `${(100 * near.filter((x) => x.granted).length / Math.max(near.length, 1)).toFixed(0)}% held a budget grant`);
+    const sh = (k) => (100 * settledOff.filter((x) => x[k]).length / settledOff.length).toFixed(0) + '%';
+    console.log(`settled off post, what the rules held: halted ${sh('halted')}, standing still ${sh('still')}, `
+      + `holding a budget grant ${sh('granted')}`);
   }
   if (bo + oo > 0)
     console.log(`settled and off post: bounding ${bo} (hold jumped under it on ${(100 * bj / Math.max(bo, 1)).toFixed(1)}% of them), `
       + `overwatch ${oo} (hold jumped on ${(100 * oj / Math.max(oo, 1)).toFixed(1)}%)`);
+  if (holdGap.length) {
+    const g = holdGap.slice().sort((a, b) => a - b);
+    console.log(`the row's hold against the mover's own: median ${g[Math.floor(g.length / 2)].toFixed(2)} m, `
+      + `q3 ${g[Math.floor(g.length * 3 / 4)].toFixed(2)} m, max ${g[g.length - 1].toFixed(2)} m; `
+      + `measured against the MOVER'S hold, on post ${(100 * (r['H1 on the mover own hold'] || 0) / Math.max(r['H1 hold compared'] || 1, 1)).toFixed(1)}%`);
+  }
+  const lateAll = r['H1 late tank-ticks'] || 0, lateSet = r['H1 late settled'] || 0, lateOn = r['H1 late settled on post'] || 0;
+  if (lateAll > 0)
+    console.log(`last third of the run: ${(100 * lateSet / lateAll).toFixed(0)}% of pair tank-ticks are settled, `
+      + `and ${(100 * lateOn / Math.max(lateSet, 1)).toFixed(1)}% of those are on post `
+      + `(overall ${(100 * lateOn / lateAll).toFixed(1)}%)`);
   if (settled + col > 0)
     console.log(`H1 split: settled tank-ticks ${settled} of ${settled + col} (${(100 * settled / (settled + col)).toFixed(0)}%), `
       + `of which on post ${(100 * onSettled / Math.max(settled, 1)).toFixed(1)}%; walking in ${col} `
