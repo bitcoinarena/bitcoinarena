@@ -313,10 +313,33 @@ mergeInto(LibraryManager.library, {
     // is still running; one whose last publish is still on its way (finishing) is not ready yet.
     if (Module.blwpNet) {
       var was = Module.blwpNet.client;
-      if (!was || !was.over) return 1;                 // already running
-      // the owner 2026-09-16: hang after DELIVERED wasted seconds waiting for
-      // `ended` while the last publish drained. `over` is enough; finishing
-      // can drain on the old client in the background.
+      // A DIFFERENT ROUND IS A DIFFERENT RUN, AND THE OLD ONE IS CLOSED HERE (the owner 2026-09-18 18:00).
+      //
+      // Measured in two browsers: pressing PLAY again joined the next round at the page's level - both tabs on one
+      // round id, each with a client and a ghost field - while this guard kept the session of the round before,
+      // because that client had never said it was over. It sat in "opening", net.where went on naming the first
+      // round three and a half minutes later, and it kept publishing into a run that had already ended: 902 ticks of
+      // it. Neither tab was in the second round at all, which is why neither was ever shown the other.
+      //
+      // So a join of ANOTHER round closes what was open, whatever word that client was on. A client still opening is
+      // not a live run. What is NOT torn down is a session on the SAME round that is merely slow - a live round
+      // keeps its trucks through a stall, which is the 0.0.1595 rule.
+      var bound = Module.blwpNet.where && Module.blwpNet.where.roundId;
+      var joined = null;
+      try { joined = window.BLWP_ROUND ? BLWPCLIENT.roundId(window.BLWP_ROUND) : null; } catch (e) { joined = null; }
+      var elsewhere = !!(bound && joined && BLWPCLIENT.toHex(bound) !== BLWPCLIENT.toHex(joined));
+      if (!elsewhere) {
+        if (!was || !was.over) return 1;               // already running, on this same round
+        // the owner 2026-09-16: hang after DELIVERED wasted seconds waiting for
+        // `ended` while the last publish drained. `over` is enough; finishing
+        // can drain on the old client in the background.
+      } else {
+        console.log('[blwp] a different round was joined: closing the session on '
+          + BLWPCLIENT.toHex(bound).slice(0, 8) + ' before opening ' + BLWPCLIENT.toHex(joined).slice(0, 8));
+        try { if (was && was.close) was.close(); } catch (e) { /* already gone */ }
+        try { Module.blwpNet.ghosts = null; } catch (e) { /* nothing held */ }
+        Module.blwpNet.client = null;
+      }
     }
 
     var base = UTF8ToString(urlPtr);

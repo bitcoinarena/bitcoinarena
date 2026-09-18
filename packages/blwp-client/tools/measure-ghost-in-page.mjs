@@ -28,7 +28,7 @@ const arg = (name, fallback) => {
   return at > 0 && process.argv[at + 1] ? process.argv[at + 1] : fallback;
 };
 const PAGE = arg('page', 'https://btc-logistics-core.pages.dev/');
-const DRIVE_MS = Number(arg('drive', 120000));
+const DRIVE_MS = Number(arg('drive', 120000));   // of the FIRST round; the second is the one being measured
 const MINUTES = Number(arg('minutes', 14));
 const OUT = arg('out', '/tmp/claude-1000/-tmp-btc-phase0/3702e750-4ad9-4253-93e3-670b04a90b08/scratchpad/two-tabs');
 const CHROME = arg('chrome', '/home/arena/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome');
@@ -305,7 +305,7 @@ try {
 
   // WAIT FOR THE FIRST RUN TO END, which is what puts the lobby back in front of the player.
   let over = false;
-  for (let i = 0; i < 24 && !over; i++) {
+  for (let i = 0; i < 60 && !over; i++) {
     over = (await a.evaluate('!!window.BLWP_RUN_ENDED')) === true && (await b.evaluate('!!window.BLWP_RUN_ENDED')) === true;
     if (!over) await wait(5000);
   }
@@ -327,9 +327,18 @@ try {
     }
     return '';
   };
-  for (const t of tabs) say(`${t.name} PLAY again: ${(await playAgain(t)).slice(0, 8) || 'never took a round'}`);
-  for (const t of tabs) { await click(t, 486, 554); await wait(2500); }
-  for (const t of tabs) { await click(t, 303, 617); await wait(2000); await click(t, 660, 617); await wait(2000); }
+  // PLAY AGAIN ON THE PAGE THAT IS ALREADY RUNNING - and nothing else. Walking the splash and the bay again cost
+  // about three minutes here, and a round's entry window is about a minute and a half, so the tab joined a round
+  // that had closed before it could publish: "ended - not publishing - error the round is closed". An already-loaded
+  // page needs none of that walk; it joins in place and publishes from its session's first tick.
+  const played = {};
+  for (const t of tabs) {
+    const took = await playAgain(t);
+    played[t.name] = took;
+    say(`${t.name} PLAY again: ${took.slice(0, 8) || 'never took a round'}`
+      + `; client at that moment: ${await t.evaluate('(function(){var n=window.unityInstance&&window.unityInstance.Module'
+      + '&&window.unityInstance.Module.blwpNet;return n&&n.client?"yes":"NO";})()')}`);
+  }
 
   // AND WHETHER THE CHAIN WAS REUSED OR READ: the page logs which of the two opened this session.
   for (const t of tabs) {
@@ -359,7 +368,7 @@ try {
     + `f.present.forEach(function(g){who=hex(g.entryId);if(g.roundId&&hex(g.roundId)!==${JSON.stringify(mineRound)})old++;});`
     + `return {trucks:f.others|0,who:who,old:old,drawn:f.drawn|0,roundEnded:f.roundEnded|0};})()`;
   const first2 = { tabA: null, tabB: null };
-  for (let i = 0; i < 40; i++) {
+  for (let i = 0; i < 60; i++) {
     for (const t of tabs) {
       if (first2[t.name]) continue;
       const s = await t.evaluate(SEEN2(secondRound[t.name] || ''));
@@ -372,6 +381,13 @@ try {
     const f = first2[t.name];
     say(`${t.name} in round two: ${f ? `the other truck appeared ${f.at} ms after PLAY, entry ${String(f.who).slice(0, 8)}`
       + `, pictures naming the old round ${f.old}, drawn ${f.drawn}` : 'NEVER saw the other truck'}`);
+    // WHAT THE PAGE HOLDS WHEN IT IS NEVER: client, what it has published, and whether the round it joined is closed.
+    if (!f) say(`${t.name} holds: ${await t.evaluate('(function(){var m=window.unityInstance&&window.unityInstance.Module;'
+      + 'var n=m&&m.blwpNet;var c=n&&n.client;var hex=function(u){return Array.prototype.map.call(u,function(x){'
+      + 'return x.toString(16).padStart(2,"0");}).join("");};'
+      + 'return "client "+(c?"yes":"NO")+", published "+(c?(c.nextTick|0):"-")+" ticks, state "+String(n&&n.state||"")'
+      + '+", error "+String(n&&n.error||"")+", on "+(c?String(c.base||"").replace("https://","").slice(0,12):"-")'
+      + '+", round "+(n&&n.where?hex(n.where.roundId).slice(0,8):"-");})()')}`);
     await t.shot(`${t.name}-round2.png`);
   }
 
