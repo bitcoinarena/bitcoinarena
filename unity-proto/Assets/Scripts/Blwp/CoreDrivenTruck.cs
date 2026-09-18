@@ -622,8 +622,9 @@ namespace Blwp
             // between them; the simulation never sees a partial one.
             _accumulator += Time.deltaTime;
             float step = 1f / Mathf.Max(1, tickHz);
-            int due = TicksDue(ref _accumulator, step, MostTicksPerFrame, out float dropped);
-            if (dropped > 0f) SayBehind(dropped, step);
+            int due = TicksDue(ref _accumulator, step, MostTicksPerFrame, out float dropped, out int jumped);
+            _jumpedTicks += jumped;
+            if (dropped > 0f || jumped > 0) SayBehind(dropped, step);
             for (int n = 0; n < due; n++)
             {
                 // Remember where the truck was BEFORE this tick. Without it
@@ -722,20 +723,50 @@ namespace Blwp
         /// between ticks.
         /// </summary>
         public static int TicksDue(ref float accumulator, float step, int most, out float dropped)
+            => TicksDue(ref accumulator, step, most, out dropped, out _);
+
+        /// <summary>
+        /// AND A DEBT IS JUMPED, NOT WALKED AND NOT THROWN AWAY (the owner 2026-09-18 10:42: "TANKS are in completely
+        /// different places in the two sessions, as if each tab has its own game").
+        ///
+        /// Dropping the time kept one page's world slower than another's: two tabs of one round showed the same block
+        /// at 0:34 and at 0:20, and their tanks stood in different places, because each core was at its own tick. A
+        /// browser throttles a tab it is not showing, so the tab he is not looking at falls behind by as much as he
+        /// leaves it - and then stayed there, which is also why the other truck's pictures drifted further back the
+        /// longer it drove.
+        ///
+        /// Walking the debt off at `most` a frame is the racing war of 2026-09-16 12:26, and he said what he wanted
+        /// instead in that same report: "not instant". So a debt over `ResyncAfterS` is stepped in ONE frame - the
+        /// world is where the round says it is the moment the page looks again - and only what is past
+        /// `MostTicksAtOnce` is given up, which is a tab left alone for ten minutes rather than a hidden one.
+        /// </summary>
+        public static int TicksDue(ref float accumulator, float step, int most, out float dropped, out int jumped)
         {
             dropped = 0f;
+            jumped = 0;
             int due = 0;
             while (accumulator >= step && due < most) { accumulator -= step; due++; }
+            if (accumulator < ResyncAfterS) return due;
+
+            // BEHIND BY MORE THAN A SECOND: rejoin the round in this frame rather than live in the past.
+            while (accumulator >= step && jumped < MostTicksAtOnce) { accumulator -= step; jumped++; }
             if (accumulator >= step)
             {
                 float keep = Mathf.Repeat(accumulator, step);
                 dropped = accumulator - keep;
                 accumulator = keep;
             }
-            return due;
+            return due + jumped;
         }
 
+        /// <summary>How far behind the round a page may be before it stops walking and jumps: one second.</summary>
+        public const float ResyncAfterS = 1f;
+
+        /// <summary>The most ticks one frame jumps - ten seconds of world, so a hidden tab rejoins when it is shown.</summary>
+        public const int MostTicksAtOnce = 600;
+
         float _droppedS, _droppedSaidAt = -99f;
+        int _jumpedTicks;
 
         /// <summary>The time given up, said at most every ten seconds, so a slow page can be read off its console.</summary>
         void SayBehind(float dropped, float step)
@@ -744,7 +775,7 @@ namespace Blwp
             if (Time.unscaledTime - _droppedSaidAt < 10f) return;
             _droppedSaidAt = Time.unscaledTime;
             Debug.Log($"[blwp] the page is slower than the core: {_droppedS:F2} s ({Mathf.RoundToInt(_droppedS / step)} ticks) "
-                      + $"let go so far rather than raced through at {MostTicksPerFrame} ticks a frame; "
+                      + $"let go so far, {_jumpedTicks} ticks jumped to stay in the round's own time; "
                       + $"this frame {Time.deltaTime * 1000f:F0} ms");
         }
 

@@ -326,6 +326,15 @@ public class Bootstrap : MonoBehaviour
         // middle - while the truck itself is fitted across its four contact
         // points, and the two differ by 0.58 m at one measured pose on this map.
         ghosts.Rest = (x, z, headingDegrees) => driver.RideAt(x, z, headingDegrees);
+        // AND THE SAME TILT THE LOCAL TRUCK IS DRAWN WITH (the owner 2026-09-18 10:42): the four contact points at that
+        // pose, through the very function that lies the local truck on the ground. No physics is added by this - the
+        // local truck has none here either.
+        ghosts.Lie = (x, z, headingDegrees) =>
+        {
+            driver.Contacts(x, z, headingDegrees, out float fl, out float fr, out float rl, out float rr);
+            return Blwp.CoreDrivenTruck.Lie(headingDegrees, fl, fr, rl, rr,
+                                            Blwp.CoreDrivenTruck.HalfWheelbase, Blwp.CoreDrivenTruck.HalfTrack);
+        };
 
         // What a liquidation looks like: an aircraft, a bomb, and the ground it
         // leaves behind. Theatre - the core has no aircraft, and the hole is

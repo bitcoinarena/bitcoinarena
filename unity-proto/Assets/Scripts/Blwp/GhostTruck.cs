@@ -109,7 +109,18 @@ namespace Blwp
         /// divided gave 0.25 degrees: a truck driving east drawn pointing
         /// north, on a word the local truck has always read correctly.
         /// </summary>
-        public void Show(int x, int z, int heading, float? y)
+        public void Show(int x, int z, int heading, float? y) => Show(x, z, heading, y, null);
+
+        /// <summary>
+        /// The same picture, lying on the ground the way a truck of this shape lies on it.
+        ///
+        /// `lie` is `CoreDrivenTruck.Lie` at this pose - the pitch and roll of the four contact points, which is how
+        /// the LOCAL truck is drawn and carries no physics: there is no rigidbody here, no collider, and nothing is
+        /// simulated. Without it a ghost stood dead level on a hillside (the owner 2026-09-18 10:42, "ghosts have no
+        /// physics, they must climb hills the same as his own truck"). Null keeps the flat heading, which is what a
+        /// page with no ground of its own can say.
+        /// </summary>
+        public void Show(int x, int z, int heading, float? y, Quaternion? lie)
         {
             // THE WHOLE POSE IS THE PICTURE THAT JUST LANDED, IN THIS FRAME (the owner 2026-09-18 05:45).
             //
@@ -126,13 +137,18 @@ namespace Blwp
             _want = new Vector3(x / ONE, y ?? transform.position.y, z / ONE);
             _wantHeading = BlwpCore.Degrees(heading);
             _placed = true;
-            transform.SetPositionAndRotation(_want, Quaternion.Euler(0f, _wantHeading, 0f));
+            _lie = lie;
+            transform.SetPositionAndRotation(_want, Lying());
         }
+
+        /// <summary>The hull's rotation: the ground's lie at this pose when the page knows it, the flat heading otherwise.</summary>
+        Quaternion Lying() => _lie ?? Quaternion.Euler(0f, _wantHeading, 0f);
+        Quaternion? _lie;
 
         /// <summary>The newest picture, exactly - which is where `Show` already put it.</summary>
         public void SnapToPicture()
         {
-            if (_placed) transform.SetPositionAndRotation(_want, Quaternion.Euler(0f, _wantHeading, 0f));
+            if (_placed) transform.SetPositionAndRotation(_want, Lying());
         }
 
         /// <summary>
