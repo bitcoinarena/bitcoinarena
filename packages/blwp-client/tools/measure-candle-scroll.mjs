@@ -136,7 +136,8 @@ try {
   }
   if (!out) { await shot('00-never-left-the-bay.png'); throw new Error('the truck never left the bay, so no band is in view'); }
   // AND OUT ONTO THE MAP, where the ribbon is: the band is around the seam, not in the depot.
-  say(`driving out to the band: ${(await drove(12000)).toFixed(0)} m`);
+  const OUT_MS = Number(arg('out_ms', 5000));
+  say(`driving out to the band: ${(await drove(OUT_MS)).toFixed(0)} m`);
 
   const first = await evaluate(STATE);
   if (!first) throw new Error('the page core never came up');
@@ -173,6 +174,15 @@ try {
   const every = series.filter((_, i) => i % 10 === 0).map((s) => `${Math.round(s.ms / 1000)}s ${METRES(s.shift).toFixed(2)}m t${s.tick}`);
   say(`the series, every 5 s: ${every.join(' | ')}`);
   writeFileSync(join(OUT, 'series.json'), JSON.stringify(series, null, 1));
+
+  // AND THE DRAWN BAND, frame by frame, with the core's shift beside each one. A ribbon that scrolls redraws; a
+  // ribbon that is frozen gives two identical frames while the shift moves on.
+  for (let i = 0; i < 8; i++) {
+    const s2 = await evaluate(STATE);
+    await shot(`f${i}.png`);
+    say(`frame ${i}: shift ${METRES(s2 ? s2.shift : 0).toFixed(2)} m, tick ${s2 ? s2.tick : '-'}`);
+    await wait(1000);
+  }
   const said = logs.filter((l) => l.includes('[candles]')).slice(-4);
   for (const l of said) say(`page said: ${l.slice(0, 200)}`);
   say(`shots and series in ${OUT}`);
