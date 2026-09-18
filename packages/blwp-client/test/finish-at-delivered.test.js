@@ -139,7 +139,14 @@ test('when the core says the run is over, every held tick reaches the node, noth
     assert.equal(client.ended, true);
     assert.equal(client.ending, 'FINISHED', `ended ${client.ending}: ${client.endingReason}`);
     assert.equal(client.hold.length, 0);
-    assert.equal(client.sock, null, 'the socket was left open');
+    // AND THE LINE STAYS UP, FOR WATCHING (the owner 2026-09-18 19:30: "spectate after a round: no action in the world,
+    // as if no longer connected to the nodes"). It used to close here, and it is the only connection a page has, so a
+    // player who pressed SPECTATE after their run was shown a world with nothing moving in it. What must not happen
+    // is a tick going out past the end, and that is asserted below rather than bought by hanging up.
+    assert.notEqual(client.sock, null, 'the socket was closed, so a spectator would see a dead world');
+    assert.equal(client.record([0, 0, 0, 0, 0]), false, 'a tick was taken after the run ended');
+    const afterEnd = await onNode();
+    assert.equal(afterEnd.length, 107, 'the node took more ticks after the run had ended');
     assert.equal(/VOID|refused/.test(line), false, `the line says VOID or refused: ${line}`);
     // AND STILL NOTHING, a moment later.
     assert.equal(client.record([45875, 999, 0, 0, 0]), false);

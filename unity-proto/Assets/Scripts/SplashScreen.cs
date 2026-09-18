@@ -92,8 +92,12 @@ public class SplashScreen : MonoBehaviour
         else if (_wreckedAt < 0f) _wreckedAt = Time.unscaledTime;
         if (_health == null) _health = FindFirstObjectByType<TruckHealth>();
         float hold = _health != null ? _health.respawnSeconds : 5f;
+        // WHEN THIS RUN ENDED, so the outcome has its five seconds whatever ended it.
+        if (!Blwp.BlwpNet.Ended) _endedAt = -1f;
+        else if (_endedAt < 0f) _endedAt = Time.unscaledTime;
         if (!Showing && BackToLobby(Blwp.BlwpNet.Ended, _fromLobby, wrecked,
-                                    _wreckedAt < 0f ? 0f : Time.unscaledTime - _wreckedAt, hold)) ShowLobbyAgain();
+                                    _wreckedAt < 0f ? 0f : Time.unscaledTime - _wreckedAt, hold,
+                                    _endedAt < 0f ? 0f : Time.unscaledTime - _endedAt)) ShowLobbyAgain();
         if (!Showing && BackFromSpectating(_spectating, _spectator != null && _spectator.Active)) ShowLobbyAgain();
         if (!Showing)
         {
@@ -193,7 +197,25 @@ public class SplashScreen : MonoBehaviour
     public static bool BackToLobby(bool runEnded, bool fromLobby, bool wrecked, float sinceWreck, float hold) =>
         BackToLobby(runEnded, fromLobby) && (!wrecked || sinceWreck >= hold);
 
+    /// <summary>
+    /// AND EVERY RESULT IS READ BEFORE THE LOBBY TAKES THE SCREEN (the owner 2026-09-18 19:30: "lobby comes back too
+    /// fast when the truck reaches the goal - the player cannot read the result. Hold the result at least 5 seconds").
+    ///
+    /// A run ends in the tick the core says DELIVERED, and the page hands that word over in the same frame, so the
+    /// lobby came up on top of the outcome the player had just earned. The wreck already had this rule since the
+    /// 17:00 report - WASTED first, then the lobby - and a delivery is the same thing from the other end.
+    ///
+    /// `FINISH_WAIT_MS` in the client is not this: 300 ms is how long the last ticks have to reach the wire, which is
+    /// a network drain and was never a screen.
+    /// </summary>
+    public const float ResultHoldSeconds = 5f;
+
+    public static bool BackToLobby(bool runEnded, bool fromLobby, bool wrecked, float sinceWreck, float hold,
+                                   float sinceEnd) =>
+        BackToLobby(runEnded, fromLobby, wrecked, sinceWreck, hold) && sinceEnd >= ResultHoldSeconds;
+
     float _wreckedAt = -1f;
+    float _endedAt = -1f;
     TruckHealth _health;
 
     void ShowLobbyAgain()
