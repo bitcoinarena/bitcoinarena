@@ -174,13 +174,28 @@ namespace Blwp
         /// the Editor tests that make their own tagged camera. Measured in a PlayMode world built by `Bootstrap`: two
         /// cameras, neither of them `Camera.main`.
         /// </summary>
-        public static Camera LabelEye()
+        public static Camera LabelEye() => LabelEye(0);
+
+        /// <summary>
+        /// The same, for a truck on `layer` - and it must be a camera that can SEE that layer.
+        ///
+        /// The player's world has two cameras, and the second one is not a view of the world: `PackageYard` builds a
+        /// `YardCamera` 2000 m under the map, culling everything but the yard layer, and turns it on whenever the
+        /// loadout panel is open. `Camera.allCameras` is an enumeration, not a promise about which camera draws the
+        /// ground, so "the first enabled camera" could be that one - and then every label and every rim marker would
+        /// be placed from under the map while the panel was open.
+        ///
+        /// A camera that culls the truck's layer cannot draw the truck, so it cannot be the eye the truck is labelled
+        /// through. That is the whole rule, and it does not depend on depth, order or a tag.
+        /// </summary>
+        public static Camera LabelEye(int layer)
         {
-            var cam = Camera.main;
-            if (cam == null)
-                foreach (var c in Camera.allCameras)
-                    if (c != null && c.isActiveAndEnabled) { cam = c; break; }
-            return cam;
+            var mask = 1 << layer;
+            var main = Camera.main;
+            if (main != null && (main.cullingMask & mask) != 0) return main;
+            foreach (var c in Camera.allCameras)
+                if (c != null && c.isActiveAndEnabled && (c.cullingMask & mask) != 0) return c;
+            return null;
         }
 
         /// <summary>Where one truck's two lines go, and whether they are a marker at the screen's edge.</summary>
@@ -233,8 +248,6 @@ namespace Blwp
         void OnGUI()
         {
             if (labels.Count == 0) return;
-            var cam = LabelEye();
-            if (cam == null) return;
             if (labelStyle == null)
             {
                 labelStyle = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.LowerCenter, fontStyle = FontStyle.Bold };
@@ -247,6 +260,8 @@ namespace Blwp
             foreach (var kv in trucks)
             {
                 if (kv.Value == null || !labels.TryGetValue(kv.Key, out var label)) continue;
+                var cam = LabelEye(kv.Value.gameObject.layer);
+                if (cam == null) continue;
                 var spot = SpotFor(cam, kv.Value.transform.position + Vector3.up * 3.8f,
                                    Screen.width, Screen.height, 160f, size * 3f);
                 var rect = new Rect(spot.At.x - 160f, Screen.height - spot.At.y - size * 3f, 320f, size * 3f);

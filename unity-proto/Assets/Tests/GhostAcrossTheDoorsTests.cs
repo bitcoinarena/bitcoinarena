@@ -197,5 +197,29 @@ public class GhostAcrossTheDoorsTests
             "the ghost labels have no camera to be drawn through, so nothing is drawn over any truck");
         if (Camera.main == null)
             Assert.AreEqual(0, tagged, "Camera.main is null although a camera is tagged, so this measures something else");
+
+        // AND IT IS NOT THE YARD CAMERA. `PackageYard` builds one 2000 m under the map that culls everything but the
+        // yard layer, and turns it on whenever the loadout panel is open. It is a second enabled camera, so "the first
+        // enabled camera" could be it - and then every label and rim marker would be placed from under the map for as
+        // long as the panel was open. A camera that culls the truck's layer cannot be the eye it is labelled through.
+        var yard = Object.FindFirstObjectByType<PackageYard>();
+        Camera yardCam = null;
+        foreach (var c in Object.FindObjectsByType<Camera>(FindObjectsSortMode.None))
+            if (c.name == "YardCamera") yardCam = c;
+        if (yardCam != null)
+        {
+            yardCam.enabled = true;
+            yield return null;
+            var eye = GhostField.LabelEye(0);
+            TestContext.WriteLine($"with the yard camera on ({yardCam.transform.position.y:F0} m, mask "
+                                  + $"{yardCam.cullingMask}), the label eye is "
+                                  + $"{(eye == null ? "null" : eye.name)} at {(eye == null ? Vector3.zero : eye.transform.position)}");
+            Assert.IsNotNull(eye, "the loadout panel took the ghost labels' camera away");
+            Assert.AreNotEqual(yardCam, eye,
+                "the ghost labels are being placed from the yard camera, 2000 m under the map");
+            yardCam.enabled = false;
+        }
+        else TestContext.WriteLine("no yard camera in this world, so the second-camera case is not measured here");
+        Assert.IsNotNull(yard, "the player's world has no package yard, so the panel camera was never built");
     }
 }
