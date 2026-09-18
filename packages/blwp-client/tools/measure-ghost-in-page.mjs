@@ -87,9 +87,26 @@ async function wire(name, proc, target, trouble) {
   await new Promise((r) => ws.on('open', r));
   let id = 0;
   const pending = new Map();
+  const sent = new Map();          // requestId -> what the browser was asked for
+  const wire_ = [];                // one row per call the browser finished or failed
   ws.on('message', (raw) => {
     const m = JSON.parse(raw);
     if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
+    if (m.method === 'Network.requestWillBeSent') {
+      const r = m.params.request || {};
+      sent.set(m.params.requestId, { url: r.url || '', method: r.method || '', at: m.params.timestamp, wall: m.params.wallTime });
+    }
+    if (m.method === 'Network.responseReceived') {
+      const was = sent.get(m.params.requestId);
+      if (was) wire_.push({ ...was, how: `http ${m.params.response?.status}`, ms: Math.round((m.params.timestamp - was.at) * 1000) });
+    }
+    if (m.method === 'Network.loadingFailed') {
+      const was = sent.get(m.params.requestId) || { url: '?', method: '?', at: m.params.timestamp, wall: Date.now() / 1000 };
+      const why = [m.params.errorText, m.params.blockedReason ? `blocked ${m.params.blockedReason}` : '',
+                   m.params.corsErrorStatus ? `cors ${m.params.corsErrorStatus.corsError}` : '',
+                   m.params.canceled ? 'canceled' : ''].filter(Boolean).join(' / ');
+      wire_.push({ ...was, how: `FAILED ${why || 'no reason given'}`, ms: Math.round((m.params.timestamp - was.at) * 1000), failed: true });
+    }
     if (m.method === 'Runtime.consoleAPICalled') {
       const line = m.params.args.map((x) => x.value ?? x.description ?? '').join(' ');
       logs.push(line);
@@ -102,6 +119,12 @@ async function wire(name, proc, target, trouble) {
   });
   await send('Runtime.enable');
   await send('Page.enable');
+  // THE BROWSER'S OWN ACCOUNT OF EVERY CALL (the owner 2026-09-18 22:4x): "Failed to fetch" is the one string JavaScript
+  // has for a dozen refusals - a reset connection, a dead tunnel, a CORS rejection, a DNS failure - so the page can
+  // name the request and never the reason. The Network domain carries the reason: errorText, blockedReason,
+  // corsErrorStatus, the status where there was one, and the timestamps that say how long the call waited before it
+  // died. That last number is what separates a refusal from the 10 s chain timeout 0.0.1604 fixed.
+  await send('Network.enable');
   // EVERY ASK HAS AN END. The renderer draws about eleven frames a second here, and one `Runtime.evaluate` that never
   // came back ended the first run of this tool on an unsettled await rather than on a measurement.
   const evaluate = async (expression) => {
@@ -121,7 +144,7 @@ async function wire(name, proc, target, trouble) {
     type, code, key: text, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode,
     ...(type === 'keyDown' ? { text } : {}),
   });
-  return { name, proc, ws, send, evaluate, shot, key, logs, said, trouble, close: () => { try { ws.close(); } catch {} try { proc.kill('SIGKILL'); } catch {} } };
+  return { name, proc, ws, send, evaluate, shot, key, logs, said, trouble, wire: wire_, close: () => { try { ws.close(); } catch {} try { proc.kill('SIGKILL'); } catch {} } };
 }
 
 /** What one tab holds of the round and of the other trucks - asked of the page's own objects. */
@@ -433,8 +456,23 @@ try {
     const calls = await t.evaluate(CALLS);
     if (calls && calls.calls !== undefined) {
       say(`${t.name} made ${calls.calls} calls; refused or non-2xx: ${calls.refused.length ? '' : 'none'}`);
-      for (const r of calls.refused) say(`   ${t.name} refused: ${r}`);
-      for (const r of calls.last) say(`   ${t.name} last: ${r}`);
+      for (const r of calls.refused) say(`   ${t.name} refused (page): ${r}`);
+      for (const r of calls.last) say(`   ${t.name} last (page): ${r}`);
+    }
+    // THE SAME INSTANT, FROM THE BROWSER. Host is printed whole so the node is NAMED, not inferred, and the
+    // milliseconds are printed beside it: a refusal lands in tens or hundreds, the chain timeout waits 10000.
+    const bad = t.wire.filter((r) => r.failed);
+    say(`${t.name} browser saw ${t.wire.length} calls, ${bad.length} refused`);
+    for (const r of bad.slice(-12)) {
+      const host = (() => { try { return new URL(r.url).host; } catch { return r.url.slice(0, 40); } })();
+      const path = (() => { try { return new URL(r.url).pathname; } catch { return ''; } })();
+      say(`   ${t.name} REFUSED ${new Date(r.wall * 1000).toISOString().slice(11, 23)} ${r.method} ${host}${path}`
+          + ` -> ${r.how} after ${r.ms} ms`);
+    }
+    const slow = t.wire.filter((r) => !r.failed && r.ms >= 5000).slice(-5);
+    for (const r of slow) {
+      const host = (() => { try { return new URL(r.url).host; } catch { return r.url.slice(0, 40); } })();
+      say(`   ${t.name} SLOW ${new Date(r.wall * 1000).toISOString().slice(11, 23)} ${r.method} ${host} -> ${r.how} after ${r.ms} ms`);
     }
     if (!f) say(`${t.name} holds: ${await t.evaluate('(function(){var m=window.unityInstance&&window.unityInstance.Module;'
       + 'var n=m&&m.blwpNet;var c=n&&n.client;var hex=function(u){return Array.prototype.map.call(u,function(x){'
