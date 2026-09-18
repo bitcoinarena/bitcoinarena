@@ -222,7 +222,7 @@ while (Date.now() < until - 20000) {
   // round's driver arrived, measured from the driver's first published tick, and how far behind the driver that
   // picture was. A picture that names an entry of a round this pair has left is counted apart - that is the "wrong
   // place" a player sees when an old truck is still drawn.
-  const began = { pictures: 0, firstAt: null, firstTick: null, stale: 0 };
+  const began = { pictures: 0, firstAt: null, firstTick: null, stale: 0, wouldHaveRetired: 0 };
   lastPictureAt = null; lastPictureTick = null;   // a new round destroys every truck: nothing is walked from
   watcher.client.onGhost = (g) => {
     if (toHex(g.entryId) === mine) {
@@ -234,6 +234,8 @@ while (Date.now() < until - 20000) {
       if (sent === null) guessed++; else { stamped++; overlayAges.push(now - sent); }
       // AND THE WIRE: the same picture against the moment the driver actually recorded that tick.
       if (recordedAt[g.tick] !== undefined) wireLags.push(now - recordedAt[g.tick]);
+      // A SILENCE LONG ENOUGH THAT THE OLD RULE WOULD HAVE TAKEN THE TRUCK AWAY - the missing-then-wrong-place shot.
+      if (lastPictureAt !== null && now - lastPictureAt > RETIRE_MS) began.wouldHaveRetired++;
       // THE POSE ON SCREEN AT THE MOMENT THIS PICTURE LANDS: still the previous one, and the label still shows what it
       // read up to a refresh ago. Its age is that older picture's own age plus the ease and the refresh it is behind.
       // AT THE LAND INSTANT: what the hull is standing on in the frame this picture arrives. It is this picture's own
@@ -286,6 +288,10 @@ while (Date.now() < until - 20000) {
       tick++;
       // The page's own cadence, and its stamp with it: the newest recorded tick and the clock at that moment.
       if (tick % 6 === 0) { driverClock.post(mine, tick - 1); driver.client.drain(); }
+      // AND THE WATCHER'S FIELD IS DRAINED THE WAY UNITY DRAINS IT - every frame (the owner 2026-09-18 11:45). Without
+      // this the field's own silence rule never ran here at all, so this probe reported "retired for silence 0"
+      // whether the rule took a truck away or not, and that number said nothing about the page.
+      field.drain(24);
     }
     if (driver.client.ended) ended = ended || 'the run ended';
     await wait(4);
@@ -298,7 +304,8 @@ while (Date.now() < until - 20000) {
     stalePictures: began.stale,
     why: ended || 'the window closed', pictures: pictures.filter((x) => x.session === here).length,
     // WHAT THE PAGE'S OWN RULE DID: a truck silent for SILENT_MS is retired, and this counts the times it happened.
-    silenced: field.silenced | 0, retired: field.retired | 0, collapsed: field.collapsed | 0 });
+    silenced: field.silenced | 0, retired: field.retired | 0, collapsed: field.collapsed | 0,
+    wouldHaveRetired: began.wouldHaveRetired });
   try { driver.client.close(); } catch { /* gone */ }
   try { watcher.client.close(); } catch { /* gone */ }
   if (Date.now() < until - 20000) await wait(1000);
@@ -332,7 +339,8 @@ const byNode = (n) => attributed.filter((s) => s.node === n);
 say('');
 sessions.forEach((s, i) => say(`round ${i + 1} ${s.round}: ${s.ticks} ticks in ${s.seconds} s, ${s.pictures} pictures, `
   + `first picture ${s.firstPictureMs === null ? 'never' : `${s.firstPictureMs} ms in, ${s.firstPictureBehind} tick(s) behind the driver`}`
-  + `, pictures of a round this pair had left ${s.stalePictures}, retired for silence ${s.silenced} - ${s.why}`));
+  + `, pictures of a round this pair had left ${s.stalePictures}, taken away for silence ${s.retired}`
+  + `, silences past ${RETIRE_MS} ms that used to take it away ${s.wouldHaveRetired} - ${s.why}`));
 say(`pictures of the driver: ${pictures.length} in ${MINUTES} min `
   + `(${(pictures.length / (MINUTES * 60)).toFixed(1)}/s; a driving page publishes 10/s)`);
 say(`picture gaps: p50 ${ms(pct(sortedGaps, 0.5))}, p90 ${ms(pct(sortedGaps, 0.9))}, max ${ms(sortedGaps[sortedGaps.length - 1])}; `
