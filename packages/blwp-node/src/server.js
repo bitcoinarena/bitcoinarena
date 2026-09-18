@@ -3051,7 +3051,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (sock.readyState === sock.OPEN) sock.close(1009, 'frame too large');
     });
 
-    const handle = (data, isBinary) => timed(`play frame ${isBinary ? 'bytes' : 'text'}`, () => handled(data, isBinary), { over: 200 });
+    const handle = (data, isBinary) => timed(`play frame ${isBinary ? 'bytes' : 'text'}`, () => handled(data, isBinary), { over: 20 });
 
     const handled = (data, isBinary) => {
       try {
@@ -3150,11 +3150,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // decoder, answering "not an input batch", which says what the frame is
         // not. 0.10 needs the other sentence: a picture carries no authority,
         // and it is told that here, before a handler sees it.
-        const stands = bearsAuthority(bytes, 'an input');
+        // EACH PART OF THE PUBLISH FRAME, TIMED (the owner 2026-09-18 02:40: name the leftover, do not cut the store on a
+        // guess). The frame is what a player's batch costs this thread: the authority check on the bytes, the store,
+        // and the answer the publisher waits for. Each says its own milliseconds over 20 ms, so a stall names a part
+        // rather than a shape.
+        const stands = timed('frame authority', () => bearsAuthority(bytes, 'an input'), { over: 20 });
         if (!stands.ok) return sock.send('error ' + stands.why);
 
-        const took = timed('batch stored', () => round.batch(bytes), { over: 200 });
-        sock.send(String(took));
+        const took = timed('batch stored', () => round.batch(bytes), { over: 20 });
+        timed('frame answered', () => sock.send(String(took)), { over: 20 });
 
         // A NEW TICK IS A NEW PICTURE. The batch that just landed moved
         // somebody's truck, so everybody watching that round is shown the
