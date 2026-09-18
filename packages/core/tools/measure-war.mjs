@@ -16,6 +16,12 @@ import { pathToFileURL } from 'node:url';
 
 const arg = (k, d) => { const a = process.argv.find((x) => x.startsWith(`--${k}=`)); return a ? a.slice(k.length + 3) : d; };
 const CORE = arg('core', new URL('..', import.meta.url).pathname);
+// --h1why prints the shape of every H1 miss at the end: how far off in x and z, on which side of the hold, and
+// whether the tank was the bounding one. Off by default, so the table's own output does not change.
+const H1WHY = process.argv.includes('--h1why');
+const h1why = [];
+const holdWas = new Map();
+const holdDrift = [];
 const SEEDS = arg('seeds', '1,2,3,4,5').split(',').map(Number);
 const TICKS = Number(arg('ticks', 3600));
 
@@ -145,7 +151,27 @@ for (const seed of SEEDS) {
       let best = line, br = -Infinity; for (let c = -2; c <= 2; c++) { const z = line + c * 2 * ONE; const rise = groundOf(p.x, z - sd * 6 * ONE) - groundOf(p.x, z); if (rise > br) { br = rise; best = z; } }
       return [p.x, best]; };
     const onPostNow = (i) => { const [hx, hz] = holdOf(i); return Math.hypot(s[base(i)] - hx, s[base(i) + 1] - hz) <= 1.5 * ONE; };
-    for (const i of liveT) { const j = T.partnerOf(i); if (j < 0 || !alive(j)) continue; add('H1 pair tank-ticks'); if (onPostNow(i)) add('H1 on post'); }
+    for (const i of liveT) { const j = T.partnerOf(i); if (j < 0 || !alive(j)) continue; add('H1 pair tank-ticks');
+      if (onPostNow(i)) add('H1 on post');
+      // WHY A TANK IS NOT ON ITS HOLD: the row says 25% and nothing about the miss. This splits it into the two axes
+      // and says whether the tank is short of its hold or past it, so a lane still walking in is not confused with
+      // one that oscillates on the spot.
+      else if (H1WHY) { const [hx, hz] = holdOf(i); const dx = (s[base(i)] - hx) / ONE, dz = (s[base(i) + 1] - hz) / ONE;
+        // AND WHETHER IT WAS EVEN TRYING: the rules' own step for this tick, before the separation push. A tank
+        // standing still 11 m short of its hold is a different fault from one walking toward it.
+        const uu = hk.unit.get(i);
+        // HOW FAST THE HOLD ITSELF MOVES. The post is the seam at the slot plus a depth, and the seam scrolls with the
+        // tape - so a tank that stands perfectly still drifts off its own post. If that drift is quick, "hold is the
+        // default" and "no more than half the line moving" cannot both be met, and that is a ruling, not a bug.
+        const wasHold = holdWas.get(i); holdWas.set(i, hz);
+        if (wasHold !== undefined) holdDrift.push(Math.abs(hz - wasHold) / ONE);
+        h1why.push({ dx: Math.round(dx * 10) / 10, dz: Math.round(dz * 10) / 10, shortOf: sideOf(i) * dz > 0,
+                     bounding: T.postOf(s, L.O_TACTICS, i, tick).bounding,
+                     still: !!(uu && uu.dx === 0 && uu.dz === 0),
+                     // A COLUMN: bit 7 of the tank's U_COOLDOWN word - it has not yet stood on its post since it
+                     // spawned or respawned. A force whose misses are mostly columns is a force still walking in.
+                     column: ((s[base(i) + L.U_COOLDOWN] >> 7) & 1) === 0,
+                     towards: !!(uu && Math.sign(uu.dz) === -Math.sign(dz)) }); } }
     for (const i of liveT) { const j = T.partnerOf(i); if (j < i || !alive(j)) { legOpen.delete(i); roleWas.delete(i); continue; }
       const bi = T.isBounding(s, L.O_TACTICS, i, tick), was = roleWas.get(i); roleWas.set(i, bi);
       if (was !== undefined && was !== bi) { const o = legOpen.get(i); if (o) { add('H2 legs'); if (o.arrived) add('H2 arrived'); } legOpen.set(i, { fwd: bi ? i : j, arrived: false }); }
@@ -354,5 +380,23 @@ const rows = [
 ];
 let red = 0;
 for (const [name, got, ok] of rows) { if (!ok) red++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${name.padEnd(58)} ${got}`); }
+if (H1WHY && h1why.length) {
+  const q = (xs) => { const a = xs.slice().sort((p, r) => p - r); return [a[0], a[Math.floor(a.length / 4)], a[Math.floor(a.length / 2)], a[Math.floor(a.length * 3 / 4)], a[a.length - 1]]; };
+  const dzs = h1why.map((r) => Math.abs(r.dz)), dxs = h1why.map((r) => Math.abs(r.dx));
+  const shortOf = h1why.filter((r) => r.shortOf).length, bounding = h1why.filter((r) => r.bounding).length;
+  const still = h1why.filter((r) => r.still).length, towards = h1why.filter((r) => r.towards).length;
+  if (holdDrift.length) {
+    const d = holdDrift.slice().sort((a, b) => a - b);
+    const per = (v) => (v * 60).toFixed(2);
+    console.log(`the hold itself moves, per tick: median ${d[Math.floor(d.length / 2)].toFixed(3)} m `
+      + `(${per(d[Math.floor(d.length / 2)])} m/s), q3 ${d[Math.floor(d.length * 3 / 4)].toFixed(3)} m, `
+      + `max ${d[d.length - 1].toFixed(2)} m; samples ${d.length}`);
+  }
+  console.log(`H1 misses: ${h1why.length}; |dz| min/q1/med/q3/max ${q(dzs).map((v) => v.toFixed(1)).join(' / ')} m; `
+    + `|dx| ${q(dxs).map((v) => v.toFixed(1)).join(' / ')} m; short of the hold ${(100 * shortOf / h1why.length).toFixed(0)}%; `
+    + `bounding ${(100 * bounding / h1why.length).toFixed(0)}%; standing still ${(100 * still / h1why.length).toFixed(0)}%; `
+    + `stepping toward the hold ${(100 * towards / h1why.length).toFixed(0)}%; `
+    + `never yet stood on a post ${(100 * h1why.filter((r) => r.column).length / h1why.length).toFixed(0)}%`);
+}
 console.log(`${rows.length - red} of ${rows.length} rows pass (seeds ${SEEDS.join(',')}, ${TICKS} ticks)`);
 process.exit(red ? 1 : 0);
