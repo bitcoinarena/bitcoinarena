@@ -30,6 +30,12 @@ const walkDone = [];
 const settledHold = new Map();
 const settledOff = [];
 const holdGap = [];
+const VERDICTS = process.argv.includes('--verdicts');
+const verdictCount = {};
+const verdictWas = {};
+const pushSeen = [];
+const pushWasV = {};
+const pushMoves = [];
 const SEEDS = arg('seeds', '1,2,3,4,5').split(',').map(Number);
 const TICKS = Number(arg('ticks', 3600));
 
@@ -268,7 +274,19 @@ for (const seed of SEEDS) {
       if (h !== 0) { if (holderWas[o] !== 0 && holderWas[o] !== h) changedHands = true; holderWas[o] = h; }
     }
     const push = { '-1': [], '1': [] };
-    for (let w = 0; w < 12; w++) { const sd = w < 6 ? '-1' : '1'; const p = s[L.O_TACTICS + T.TAC_PUSH + w] / ONE; push[sd].push(p); if (p < 0) win.give[sd]++; add('A11c team-ticks'); if (p !== 0) add('A11c off default'); }
+    for (let w = 0; w < 12; w++) { const sd = w < 6 ? '-1' : '1'; const p = s[L.O_TACTICS + T.TAC_PUSH + w] / ONE; push[sd].push(p); if (p < 0) win.give[sd]++; add('A11c team-ticks'); if (p !== 0) add('A11c off default');
+      // WHAT THE TEAM DECIDED, not only where it ended up: §4.10's verdict word, and whether this reading agreed with
+      // the last one (a step needs two). A11b says no team ever gives ground; this says whether GIVE is never reached
+      // or only never confirmed.
+      if (VERDICTS) { pushSeen.push(p);
+        // THE STEPS THEMSELVES, not the verdict word - that word persists between re-reads, so counting its ticks
+        // counts waiting, not deciding. This counts every change of the push word and where it went.
+        const wasP = pushWasV[w]; pushWasV[w] = p;
+        if (wasP !== undefined && p !== wasP) { pushMoves.push([wasP, p]); }
+        const v = s[L.O_TACTICS + T.TAC_VERDICT + w];
+        verdictCount[v] = (verdictCount[v] || 0) + 1;
+        const was = verdictWas[w]; verdictWas[w] = v;
+        if (v === 2) { verdictCount.giveSeen = (verdictCount.giveSeen || 0) + 1; if (was === 2) verdictCount.giveConfirmed = (verdictCount.giveConfirmed || 0) + 1; } } }
     for (const i of liveT) { const p = T.postOf(s, L.O_TACTICS, i, tick); if ((s[base(i) + 1] - frontlineZ(st.tape, p.x, HX, HZ)) * sideOf(i) < 0) win.cross[String(sideOf(i))]++; }
     const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
     add('A13b ticks'); if (Math.abs(mean(push['-1']) - mean(push['1'])) >= 4) add('A13b differ');
@@ -462,6 +480,27 @@ for (const [name, got, ok] of rows) { if (!ok) red++; console.log(`${ok ? 'PASS'
   if (bo + oo > 0)
     console.log(`settled and off post: bounding ${bo} (hold jumped under it on ${(100 * bj / Math.max(bo, 1)).toFixed(1)}% of them), `
       + `overwatch ${oo} (hold jumped on ${(100 * oj / Math.max(oo, 1)).toFixed(1)}%)`);
+  if (VERDICTS && pushMoves.length) {
+    const down = pushMoves.filter(([a, b]) => b < a), up = pushMoves.filter(([a, b]) => b > a);
+    const belowZero = pushMoves.filter(([, b]) => b < 0);
+    const fromZeroDown = pushMoves.filter(([a, b]) => a === 0 && b < a);
+    console.log(`push steps: ${pushMoves.length} - down ${down.length}, up ${up.length}, landing below zero `
+      + `${belowZero.length}; steps taken FROM zero downward ${fromZeroDown.length}`);
+  }
+  if (VERDICTS && pushSeen.length) {
+    const a = pushSeen.slice().sort((x, y) => x - y);
+    const at = (f) => a[Math.floor(a.length * f)];
+    console.log(`the push word itself, over ${a.length} team-ticks: min ${a[0].toFixed(0)} m, `
+      + `p05 ${at(0.05).toFixed(0)}, median ${at(0.5).toFixed(0)}, p95 ${at(0.95).toFixed(0)}, max ${a[a.length - 1].toFixed(0)} m; `
+      + `below zero ${(100 * a.filter((v) => v < 0).length / a.length).toFixed(2)}%`);
+  }
+  if (VERDICTS) {
+    const n = (k) => verdictCount[k] || 0;
+    const tot = n(0) + n(1) + n(2) + n(3);
+    console.log(`team verdicts over ${tot} team-ticks: none ${(100 * n(0) / tot).toFixed(1)}%, take ${(100 * n(1) / tot).toFixed(1)}%, `
+      + `give ${(100 * n(2) / tot).toFixed(1)}%, drift ${(100 * n(3) / tot).toFixed(1)}%; give readings ${n('giveSeen')}, `
+      + `of which confirmed by the reading before ${n('giveConfirmed')}`);
+  }
   if (holdGap.length) {
     const g = holdGap.slice().sort((a, b) => a - b);
     console.log(`the row's hold against the mover's own: median ${g[Math.floor(g.length / 2)].toFixed(2)} m, `
