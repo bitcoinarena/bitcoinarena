@@ -12595,7 +12595,14 @@ class Client {
         this.endingReason = unsent ? `${why}; ${unsent} tick(s) could not be sent` : why;
         this.state = 'ended';
         if (this.onEnd) this.onEnd(this.ending, this.endingReason);
-        if (this.sock) { const s = this.sock; this.sock = null; try { s.close(); } catch { /* gone */ } }
+        // AND THE SOCKET STAYS UP, FOR WATCHING (the owner 2026-09-18 19:30: "spectate after a round: no action in the
+        // world, as if no longer connected to the nodes").
+        //
+        // This used to close here, and it is the only connection a page has: a player who pressed SPECTATE after
+        // their run saw a world with nothing in it, because every other truck reaches them over this socket. Nothing
+        // is SENT after a run ends - `ended` refuses every record, drain and mark above - so keeping the line open
+        // cannot publish a tick past the end, which is what the closing was for. The page closes it itself when it
+        // leaves the round: `close()`, which the bridge calls when another round is joined.
       }
       return { unsent, mark };
     })();
