@@ -22,7 +22,7 @@ import { fetchLobby } from '../src/lobby.js';
 import { feldmanGroup } from '../../blwp-node/src/curve.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 import { init as coreInit, step as coreStep } from '../../core/src/sim.js';
-import { O_TRUCK, T_X, T_Z, T_HEADING } from '../../core/src/state.js';
+import { O_TRUCK, T_X, T_Z, T_HEADING, O_TICK } from '../../core/src/state.js';
 
 const arg = (k, d) => { const a = process.argv.find((x) => x.startsWith(`--${k}=`)); return a ? a.slice(k.length + 3) : d; };
 const DAILY = arg('daily', process.env.BLWP_2OF2_DIR || '/mnt/bitcoin/blwp-2of2');
@@ -99,18 +99,34 @@ const mine = toHex(driver.eid);
 const world = await worldSeedFor({ entry: driver.entry, round: driver.rid, nodes: named.nodes });
 say(`the driver's world seed word is ${world.seedWord >>> 0}`);
 const st = coreInit(world.seedWord);
+say(`the run's first tick is ${driver.client.nextTick} (the entry's joinTick), and pictures name ticks of the run`);
 const poseAt = [];                       // what the driver's own core holds, per tick
 
 const apart = [];                        // metres between the picture and the core's pose at the same tick
+const atSameTick = [], atNextTick = [];  // the two conventions, both measured so neither has to be assumed
+const wide = [];                         // the pictures that sit far from the core, with their ticks
+let close = 0;                           // and how many sit on it, within a tenth of a metre
 const turned = [];                       // degrees between them
 let compared = 0, unknownTick = 0;
 watcher.client.onGhost = ((was) => (g) => {
   if (toHex(g.entryId) === mine) {
-    const held = poseAt[g.tick];
-    if (!held) unknownTick++;
+    const far = (held) => (held ? Math.hypot(METRES(g.x - held.x), METRES(g.z - held.z)) : null);
+    const same = far(poseAt[g.tick]);
+    const next = far(poseAt[g.tick + 1]);
+    if (same === null && next === null) unknownTick++;
     else {
       compared++;
-      apart.push(Math.hypot(METRES(g.x - held.x), METRES(g.z - held.z)));
+      if (same !== null) atSameTick.push(same);
+      if (next !== null) atNextTick.push(next);
+      const held = poseAt[g.tick + 1] || poseAt[g.tick];
+      const best = same === null ? next : (next === null ? same : Math.min(same, next));
+      apart.push(best);
+      // AND THE ONES THAT ARE FAR, NAMED: their tick, both poses, and how far. A median of nothing with a tail of
+      // eighty metres is two different things happening, and the tail is the one a player sees.
+      if (best > 0.1 && wide.length < 8)
+        wide.push(`tick ${g.tick}: picture (${METRES(g.x).toFixed(1)}, ${METRES(g.z).toFixed(1)}) `
+          + `core (${METRES(held.x).toFixed(1)}, ${METRES(held.z).toFixed(1)}) ${best.toFixed(1)} m apart`);
+      if (best <= 0.1) close++;
       const d = ((((g.heading - held.heading) % 65536) + 98304) % 65536) - 32768;
       turned.push(Math.abs(d) / 65536 * 360);
     }
@@ -129,9 +145,14 @@ while (Date.now() < until && !ended) {
     // so a disagreement there is a different world and a disagreement only when driving is this harness's own words.
     const steer = Math.sin(tick / 240) > 0 ? 16384 : -16384;
     const words = PARKED ? [0, 0, 0, 0, 0] : [65536, steer, 0, 0, 0];
+    // THE RUN'S OWN TICK NUMBER, not this loop's count. A run starts at the entry's joinTick and every picture names
+    // a tick of the run, so indexing by a counter of my own compared two different ticks - invisible while the truck
+    // was parked, because every tick of a parked truck looks alike, and 45 m wide the moment it drove.
     if (!driver.client.record(words)) { ended = driver.client.endedWhy || 'the client stopped recording'; break; }
     coreStep(st, ...words);
-    poseAt[tick] = { x: st.i32[O_TRUCK + T_X], z: st.i32[O_TRUCK + T_Z], heading: st.i32[O_TRUCK + T_HEADING] };
+    // KEYED BY THE CORE'S OWN TICK WORD, so nothing here has to believe a counter. Which offset a picture's tick
+    // means is then measured rather than assumed: both are compared below and the smaller one says the convention.
+    poseAt[st.i32[O_TICK]] = { x: st.i32[O_TRUCK + T_X], z: st.i32[O_TRUCK + T_Z], heading: st.i32[O_TRUCK + T_HEADING] };
     tick++;
     if (tick % 6 === 0) driver.client.drain();
   }
@@ -145,6 +166,10 @@ const deg = (x) => (x === null ? '-' : `${x.toFixed(2)} deg`);
 say(`${ended || 'the window closed'}: ${compared} pictures compared, ${unknownTick} at a tick this core had not reached`);
 say(`the picture against the driver's own core, same tick: p50 ${m(pct(apart, 0.5))}, p90 ${m(pct(apart, 0.9))}, `
   + `max ${m(apart.length ? Math.max(...apart) : null)}`);
+say(`by the core's own tick word: at the picture's tick p50 ${m(pct(atSameTick, 0.5))} (${atSameTick.length} of them), `
+  + `at the tick after it p50 ${m(pct(atNextTick, 0.5))} (${atNextTick.length})`);
+say(`pictures within 0.1 m of the core at their own tick: ${close} of ${compared}`);
+for (const line of wide) say(`  far: ${line}`);
 say(`and the heading: p50 ${deg(pct(turned, 0.5))}, p90 ${deg(pct(turned, 0.9))}, `
   + `max ${deg(turned.length ? Math.max(...turned) : null)}`);
 say(apart.length && Math.max(...apart) < 0.001
