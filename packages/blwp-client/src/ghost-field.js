@@ -100,6 +100,10 @@ export function watchGhosts(client, where, { limit = GHOST_BACKLOG, clock = Date
     // entries a player left, told to Unity to take away; and first pictures of
     // another entry while this player's drawn entry is live, never drawn
     retired: 0,
+    /** Trucks taken away because this page's own run ended: no picture of that round can arrive again. */
+    roundEnded: 0,
+    /** Set once the run is over and its trucks have been taken away, so it is done once and not every frame. */
+    roundDone: false,
     superseded: 0,
     // pictures dropped because a newer one of the same truck was already waiting, and trucks whose newest picture
     // is older than SILENT_MS (counted, not retired)
@@ -130,6 +134,19 @@ export function watchGhosts(client, where, { limit = GHOST_BACKLOG, clock = Date
       // wrong place" was: the next picture drew it again somewhere else.
       field.silenced = 0;
       for (const [, d] of drawnEntry) if (nowMs - d.at > SILENT_MS) field.silenced++;
+
+      // BUT A TRUCK OF A ROUND THAT IS OVER GOES (the owner 2026-09-18 12:02: "after 2nd round Truck 1 cannot see
+      // Truck 2. Age 6736ms"). Measured on the Daily with a watcher that kept its field across two boundaries: it
+      // carried one truck of the round it had left into each new round and never received a single picture of the
+      // new one - first picture NEVER, superseded 0, stale pictures 0 - so that truck stood for ever with its age
+      // climbing. Until 0.0.1591 the three-second silence took it away; nothing else ever did.
+      //
+      // This is not the silence rule coming back: a live round keeps its trucks through any stall. What ends them is
+      // the page's OWN run being over, because then no picture of that round can ever arrive again.
+      if (!field.roundDone && typeof client.runOver === 'function' && (client.ended || client.runOver())) {
+        field.roundDone = true;
+        for (const [who, d] of drawnEntry) { retire(d); drawnEntry.delete(who); present.delete(who); field.roundEnded++; }
+      }
       const retires = [], newest = new Map();
       for (const g of queue) {
         if (g.retire) { retires.push(g); newest.delete(toHex(g.entryId)); } else newest.set(toHex(g.entryId), g);
