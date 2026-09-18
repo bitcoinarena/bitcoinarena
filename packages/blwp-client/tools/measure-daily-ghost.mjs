@@ -154,6 +154,7 @@ const until = Date.now() + MINUTES * 60000;
 const pings = NODES.map((n) => ({ node: n, held: pinger(n, until) }));
 const log = logTail(until);
 const pictures = [];            // { at, tick, session } of the driver, as the watcher was shown them
+const theirs = new Set();       // every driver entry this probe has had, so a picture of a round we left is counted
 const sessions = [];
 let session = 0;                // a round change is this probe's own, not the nodes': its gap is not a ghost's
 
@@ -170,14 +171,28 @@ while (Date.now() < until - 20000) {
   const mine = toHex(driver.eid);
   session++;
   const here = session;
-  watcher.client.onGhost = (g) => { if (toHex(g.entryId) === mine) pictures.push({ at: Date.now(), tick: g.tick, session: here }); was(g); };
+  // THE SECOND ROUND, ON THE WIRE (the owner 2026-09-17 19:15: "in the second round the ghost does not appear reliably -
+  // sometimes missing, then at the wrong position"). For every round after the first: when the first picture of this
+  // round's driver arrived, measured from the driver's first published tick, and how far behind the driver that
+  // picture was. A picture that names an entry of a round this pair has left is counted apart - that is the "wrong
+  // place" a player sees when an old truck is still drawn.
+  const began = { pictures: 0, firstAt: null, firstTick: null, stale: 0 };
+  watcher.client.onGhost = (g) => {
+    if (toHex(g.entryId) === mine) {
+      if (began.firstAt === null) { began.firstAt = Date.now(); began.firstTick = g.tick; }
+      began.pictures++;
+      pictures.push({ at: Date.now(), tick: g.tick, session: here });
+    } else if (theirs.has(toHex(g.entryId))) began.stale++;
+    was(g);
+  };
+  theirs.add(mine);
 
-  const began = Date.now();
+  const drivingFrom = Date.now();
   let tick = 0, ended = null;
   // THE PAGE'S OWN CADENCE: a tick every 1/60 s on the wall clock, `drain()` on every sixth, and nothing recorded once
   // the core's run is over - `blwp.jslib`'s `net.tick`.
   while (Date.now() < until && !ended) {
-    const due = Math.floor((Date.now() - began) / (1000 / 60));
+    const due = Math.floor((Date.now() - drivingFrom) / (1000 / 60));
     while (tick <= due) {
       if (driver.client.runOver()) { ended = 'the run reached its last tick'; break; }
       if (!driver.client.record([0, 0, 0, 0, 0])) { ended = driver.client.endedWhy || 'the client stopped recording'; break; }
@@ -189,7 +204,10 @@ while (Date.now() < until - 20000) {
   }
   // LEAVING CLEANLY: what is held goes out, then the sockets close - a silent truck is retired by everybody watching.
   for (let i = 0; i < 20 && driver.client.hold.length && !driver.client.ended; i++) { try { await driver.client.drain(); } catch { break; } await wait(50); }
-  sessions.push({ round: roundIdHex.slice(0, 16), ticks: tick, seconds: ((Date.now() - began) / 1000).toFixed(0),
+  sessions.push({ round: roundIdHex.slice(0, 16), ticks: tick, seconds: ((Date.now() - drivingFrom) / 1000).toFixed(0),
+    firstPictureMs: began.firstAt === null ? null : began.firstAt - drivingFrom,
+    firstPictureBehind: began.firstTick === null ? null : Math.max(0, Math.round((began.firstAt - drivingFrom) / (1000 / 60)) - began.firstTick),
+    stalePictures: began.stale,
     why: ended || 'the window closed', pictures: pictures.filter((x) => x.session === here).length,
     // WHAT THE PAGE'S OWN RULE DID: a truck silent for SILENT_MS is retired, and this counts the times it happened.
     silenced: field.silenced | 0, retired: field.retired | 0, collapsed: field.collapsed | 0 });
@@ -224,8 +242,9 @@ const overRetire = attributed.filter((s) => s.ms >= RETIRE_MS);
 const byNode = (n) => attributed.filter((s) => s.node === n);
 
 say('');
-for (const s of sessions) say(`round ${s.round}: ${s.ticks} ticks in ${s.seconds} s, ${s.pictures} pictures, `
-  + `trucks retired for silence ${s.silenced} - ${s.why}`);
+sessions.forEach((s, i) => say(`round ${i + 1} ${s.round}: ${s.ticks} ticks in ${s.seconds} s, ${s.pictures} pictures, `
+  + `first picture ${s.firstPictureMs === null ? 'never' : `${s.firstPictureMs} ms in, ${s.firstPictureBehind} tick(s) behind the driver`}`
+  + `, pictures of a round this pair had left ${s.stalePictures}, retired for silence ${s.silenced} - ${s.why}`));
 say(`pictures of the driver: ${pictures.length} in ${MINUTES} min `
   + `(${(pictures.length / (MINUTES * 60)).toFixed(1)}/s; a driving page publishes 10/s)`);
 say(`picture gaps: p50 ${ms(pct(sortedGaps, 0.5))}, p90 ${ms(pct(sortedGaps, 0.9))}, max ${ms(sortedGaps[sortedGaps.length - 1])}; `
