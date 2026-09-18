@@ -41,6 +41,8 @@ const a9gap = {}, a9all = {}, a9live = [], a9near = [];
 const a9x = [[], []], a9slot = [[], []];
 const a9slope = {}, a9slopeN = {};
 const B3WHY = process.argv.includes('--b3why');
+const SHARE = process.argv.includes('--share');
+const b3OutNow = new Map();
 const SEEDS = arg('seeds', '1,2,3,4,5').split(',').map(Number);
 const TICKS = Number(arg('ticks', 3600));
 
@@ -335,9 +337,14 @@ for (const seed of SEEDS) {
     // B2: per squad, a 5 s window. A man's squad is his FIRE TEAM's: the squad drawn for its first man (§9.2, RULED
     // the owner 2026-09-16), which is the anchor he stands on - not the squad drawn at his own spawn.
     const squadOf = (i) => { const ft = T.rifleTeamOf(i); return s[base(T.firstManOf(ft.side, ft.team)) + L.U_TARGET]; };
-    for (const i of liveM) { const k = `${sideOf(i)}:${squadOf(i)}`; const w = w5.get(k) || { halted: false, moving: false, allOnPost: true };
+    for (const i of liveM) { const k = `${sideOf(i)}:${squadOf(i)}`; const w = w5.get(k) || { halted: false, moving: false, allOnPost: true, outTicks: 0, ticks: 0 };
       const u = hk.unit.get(i); if (u) { if (u.halted) w.halted = true; if (mvOf(i) > 0.02 && mvOf(i) < 5) w.moving = true; if (!(u.dx === 0 && u.dz === 0)) w.allOnPost = false; } w5.set(k, w); }
-    if ((t + 1) % 300 === 0) { for (const [, w] of w5) { add('B2 squad-windows'); if (!w.halted || (!w.allOnPost && !w.moving)) add('B2 fail'); } w5.clear(); }
+    for (const [k, w] of w5) { w.ticks++; if (b3OutNow.get(Number(k.split(':')[0]))) w.outTicks++; }
+    if ((t + 1) % 300 === 0) { for (const [, w] of w5) { add('B2 squad-windows'); const bad = !w.halted || (!w.allOnPost && !w.moving);
+      if (bad) add('B2 fail');
+      if (SHARE) { const share = w.ticks ? w.outTicks / w.ticks : 0;
+        add(bad ? 'B2 fail out-tick share x1000' : 'B2 pass out-tick share x1000', Math.round(share * 1000));
+        add(bad ? 'B2 fail windows' : 'B2 pass windows'); } } w5.clear(); }
     // B3 spread of men on post, per side
     for (const sd of [-1, 1]) {
       const on = liveM.filter((i) => sideOf(i) === sd && hk.unit.get(i) && hk.unit.get(i).dx === 0 && hk.unit.get(i).dz === 0);
@@ -346,6 +353,10 @@ for (const seed of SEEDS) {
       const sdev = (a) => { const m = mean(a); return Math.sqrt(mean(a.map((v) => (v - m) * (v - m)))); };
       add('B3 side-ticks'); const zsd = sdev(zs), xsd = sdev(xs);
       if (zsd < 4 || zsd > 12) add('B3 z out'); if (xsd < 20 || xsd > 60) add('B3 x out');
+      // KEPT FOR THE SHARE QUESTION (2026-09-19): whether THIS side was out of band on THIS tick, so a B2 window and
+      // a B4 follow can be counted against it. A row that fails on the same ticks as B3 is the same knot; one that
+      // fails just as often on the ticks B3 is in band is its own fault.
+      b3OutNow.set(sd, (zsd < 4 || zsd > 12 || xsd < 20 || xsd > 60));
       // THE PROBE COUNTS THE ROW'S OWN EVENTS, and says so in the row's own counters (2026-09-19). The last attempt
       // kept its numbers in an array of its own and disagreed with the row by three orders of magnitude; anything
       // counted here goes through `add` beside the row, so the two cannot drift apart unseen.
@@ -363,6 +374,7 @@ for (const seed of SEEDS) {
       const anchor = s[L.O_SQUADS + (sd < 0 ? 0 : L.SQUADS_PER_SIDE) + sq];
       const e = squadNow.get(k) || { push: T.pushNear(s, L.O_TACTICS, sd, anchor), z: [] };
       e.z.push((s[base(i) + 1] - seamOfCore(st, s[base(i)])) * -sd / ONE); squadNow.set(k, e); }
+    if (SHARE) for (const [k, e] of squadNow) e.b3Out = !!b3OutNow.get(Number(k.split(':')[0]));
     pushHist.push(squadNow);
     // B6 losses and arrivals of men
     for (const i of RIFLES) { const sd = String(sideOf(i)); if (aliveBefore.get(i) && !alive(i)) win.menLost[sd]++;
@@ -387,6 +399,13 @@ for (const seed of SEEDS) {
     const want = (e.push - prev.push) / ONE; const z0 = mean(prev.z); add('B4 changes');
     let ok = false; for (let u = t; u < Math.min(pushHist.length, t + 600); u++) { const f = pushHist[u].get(k); if (f && f.z.length && (mean(f.z) - z0) * Math.sign(want) >= Math.abs(want) / 2) { ok = true; break; } }
     if (!ok) add('B4 did not follow');
+    // THE SAME QUESTION AS B2's: was the line out of band while the squad was meant to be following? Counted over the
+    // window the follow was given, so a squad that never followed while its line was in band is its own fault.
+    if (SHARE) { let out = 0, seen = 0;
+      for (let u = t; u < Math.min(pushHist.length, t + 600); u++) { const f = pushHist[u].get(k); if (!f) continue; seen++; if (f.b3Out) out++; }
+      const share = seen ? Math.round(1000 * out / seen) : 0;
+      add(ok ? 'B4 followed windows' : 'B4 missed windows');
+      add(ok ? 'B4 followed out share x1000' : 'B4 missed out share x1000', share); }
   }
 }
 function mean(a) { return a.reduce((x, y) => x + y, 0) / a.length; }
@@ -612,6 +631,17 @@ if (B3WHY) {
     + `${n('B3 zsd 12-20')}, 20-40 ${n('B3 zsd 20-40')}, >40 ${n('B3 zsd >40')}`);
   console.log(`B3 x spread buckets (band 20-60 m): <10 ${n('B3 xsd <10')}, 10-20 ${n('B3 xsd 10-20')}, 20-60 `
     + `${n('B3 xsd 20-60')}, >60 ${n('B3 xsd >60')}`);
+}
+
+if (SHARE) {
+  const n = (k) => r[k] || 0;
+  const share = (kind) => { const w = n(`B2 ${kind} windows`); return w ? (n(`B2 ${kind} out-tick share x1000`) / w / 10).toFixed(1) + '%' : '-'; };
+  const b4 = (kind) => { const w = n(`B4 ${kind} windows`); return w ? (n(`B4 ${kind} out share x1000`) / w / 10).toFixed(1) + '%' : '-'; };
+  console.log(`B4 against B3: the ${n('B4 missed windows')} push changes the squads did not follow spent ${b4('missed')} `
+    + `of their window with that side's line out of band; the ${n('B4 followed windows')} they did follow spent ${b4('followed')}.`);
+  console.log(`B2 against B3: failing windows ${n('B2 fail windows')} spent ${share('fail')} of their ticks with that `
+    + `side's line out of band; passing windows ${n('B2 pass windows')} spent ${share('pass')}. A row that fails on the `
+    + `same ticks B3 fails is the same knot; one that does not is its own.`);
 }
 console.log(`${rows.length - red} of ${rows.length} rows pass (seeds ${SEEDS.join(',')}, ${TICKS} ticks)`);
 process.exit(red ? 1 : 0);
