@@ -191,8 +191,20 @@ public class PostOffice : MonoBehaviour
         StaticBatchingUtility.Combine(statics.ToArray(), _up);
     }
 
+    /// <summary>
+    /// Kept OUT of the static batch. Anything that carries drawn lettering belongs here, whether or not the words
+    /// change.
+    ///
+    /// THE WHITEPAPER IS ON THIS LIST BECAUSE OF WHAT BATCHING DOES TO A MEASUREMENT (the owner 2026-09-18 22:16,
+    /// photographed: the page sprawled across the depot). `StaticBatchingUtility.Combine` swaps every batched
+    /// renderer's mesh for the combined building, so after it runs the plate's own renderer reports the BUILDING's
+    /// box - 12.2 x 9.4 m - and so does the text hanging under it. `Fit` then measured one wrong box against another
+    /// and logged "94% x 92%" every five seconds while the lettering was drawn six times the size of its plaque.
+    /// That is the trap the comments in `Room` already name - the mesh the plate was authored with is not the object
+    /// on screen - one layer along: this time it was batching that swapped the mesh, not streaming.
+    /// </summary>
     static bool IsLive(string n) =>
-        n == "goggles_screen" || n == "unconf_count"
+        n == "goggles_screen" || n == "unconf_count" || n == "whitepaper_print"
         || n.StartsWith("fee_rate_") && !n.Contains("unit")
         || n.StartsWith("fee_usd_") && !n.Contains("unit")
         || n.StartsWith("next_face_") && !n.Contains("plate")
@@ -404,14 +416,26 @@ public class PostOffice : MonoBehaviour
     /// </summary>
     public static Vector2 Room(Transform plate)
     {
-        var mr = plate != null ? plate.GetComponent<Renderer>() : null;
-        if (mr == null)
+        if (plate == null) return new Vector2(4f, 1f);
+
+        // IN THE PLATE'S OWN AXES, not the world's. `Renderer.bounds` is a world-axis box round a plate that hangs on
+        // a building at an angle, so it grows with the angle and loses which way is up - and after
+        // StaticBatchingUtility.Combine it is the whole building. The plate's own mesh, scaled by what the plate is
+        // drawn at, is the face the camera sees: measured against the model file, whitepaper_print is a 9.4 x 12.2
+        // quad and that is what this now answers.
+        var mf = plate.GetComponent<MeshFilter>();
+        var mr0 = plate.GetComponent<MeshRenderer>();
+        if (mf != null && mf.sharedMesh != null && (mr0 == null || !mr0.isPartOfStaticBatch))
         {
-            var mf = plate != null ? plate.GetComponent<MeshFilter>() : null;
-            var s0 = mf != null && mf.sharedMesh != null ? mf.sharedMesh.bounds.size
-                                                         : new Vector3(4f, 1f, 0f);
-            return new Vector2(Mathf.Max(0.2f, s0.x), Mathf.Max(0.2f, s0.y));
+            var lossy = plate.lossyScale;
+            var local = mf.sharedMesh.bounds.size;
+            return Face(new Vector3(local.x * Mathf.Abs(lossy.x),
+                                    local.y * Mathf.Abs(lossy.y),
+                                    local.z * Mathf.Abs(lossy.z)));
         }
+
+        var mr = plate.GetComponent<Renderer>();
+        if (mr == null) return new Vector2(4f, 1f);
         return Face(mr.bounds.size);
     }
 
@@ -422,10 +446,15 @@ public class PostOffice : MonoBehaviour
     /// </summary>
     public static Vector2 Face(Vector3 size)
     {
-        float big = Mathf.Max(size.x, Mathf.Max(size.y, size.z));
+        // THE THIN AXIS IS THICKNESS; THE OTHER TWO KEEP THEIR ORDER (the owner 2026-09-18 22:16, photographed: the
+        // whitepaper spilling off its plaque). This used to return the biggest axis as the WIDTH and the middle one as
+        // the height, which silently turns every portrait plate into a landscape one: the whitepaper's plate is
+        // 9.4 wide x 12.2 tall and was read as 12.2 x 9.4, so the page was fitted to 11.4 m of width on a 9.4 m
+        // plaque and hung over both edges. Width is the first axis the face spans, height the second.
         float small = Mathf.Min(size.x, Mathf.Min(size.y, size.z));
-        float mid = size.x + size.y + size.z - big - small;
-        return new Vector2(Mathf.Max(0.001f, big), Mathf.Max(0.001f, mid));
+        if (size.z <= small) return new Vector2(Mathf.Max(0.001f, size.x), Mathf.Max(0.001f, size.y));
+        if (size.y <= small) return new Vector2(Mathf.Max(0.001f, size.x), Mathf.Max(0.001f, size.z));
+        return new Vector2(Mathf.Max(0.001f, size.z), Mathf.Max(0.001f, size.y));
     }
 
     readonly Dictionary<TextMesh, Vector2> _room = new();
@@ -461,7 +490,13 @@ public class PostOffice : MonoBehaviour
         if (tm.transform.parent == null) return;
 
         Vector2 plate = Room(tm.transform.parent);
-        Vector2 text = Face(mr.bounds.size);
+        // The lettering measured the same way: its own box, in its own axes, at the size it is drawn. A world-axis
+        // box round a text mesh on an angled wall is wider than the words are.
+        var lossyText = tm.transform.lossyScale;
+        var localText = mr.localBounds.size;
+        Vector2 text = Face(new Vector3(localText.x * Mathf.Abs(lossyText.x),
+                                        localText.y * Mathf.Abs(lossyText.y),
+                                        localText.z * Mathf.Abs(lossyText.z)));
         if (text.x < 0.001f || text.y < 0.001f) return;
 
         float f = Mathf.Min(plate.x * share.x / text.x, plate.y * share.y / text.y);
@@ -471,7 +506,11 @@ public class PostOffice : MonoBehaviour
         if (tm == _paper && Time.time - _saidPaper > 5f)
         {
             _saidPaper = Time.time;
-            var after = Face(mr.bounds.size);
+            var lossyAfter = tm.transform.lossyScale;
+            var localAfter = mr.localBounds.size;
+            var after = Face(new Vector3(localAfter.x * Mathf.Abs(lossyAfter.x),
+                                         localAfter.y * Mathf.Abs(lossyAfter.y),
+                                         localAfter.z * Mathf.Abs(lossyAfter.z)));
             Debug.Log($"[paper] drawn plate {plate.x:F1} x {plate.y:F1} m, "
                       + $"text {after.x:F1} x {after.y:F1} m, covering "
                       + $"{(100f * after.x / plate.x):F0}% x {(100f * after.y / plate.y):F0}%");
