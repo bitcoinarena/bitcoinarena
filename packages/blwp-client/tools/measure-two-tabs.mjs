@@ -108,6 +108,12 @@ const STATE = `(function () {
     var inst = window.unityInstance;
     var mod = (inst && inst.Module) || (typeof Module !== 'undefined' ? Module : window.Module);
     var n = mod && mod.blwpNet;
+    out.say = (function () {
+      var el = document.getElementById('blwp-players');
+      return el ? el.textContent.replace(/\s+/g, ' ').trim().slice(0, 120) : '';
+    })();
+    // WHAT THE RENDERER IS DRAWING OVER THE TRUCKS, left there by the jslib for exactly this.
+    out.drawn = (mod && mod.blwpGhostLabelText) || '';
     if (!n) { out.why = window.unityInstance ? 'unity up, no net yet' : 'unity not up'; return out; }
     if (n.where) { out.round = hex(n.where.roundId).slice(0, 16); out.entry = hex(n.where.entryId); }
     if (n.ghosts && n.ghosts.present) out.ghosts = n.ghosts.present.size;
@@ -229,7 +235,9 @@ try {
     const sb = await b.evaluate(STATE);
     const line = (n, s, other) => `${n} round ${s.round || '-'} join ${s.join || '-'} ghosts ${s.ghosts}`
       + (s.labels ? ` | ${s.labels.split('\n').map((l) => l.split('\t').slice(1).join(' ')).join(' ; ')}` : '')
-      + (s.why ? ` (${s.why})` : '');
+      + (s.why ? ` (${s.why})` : '')
+      + (s.say ? ` :: ${s.say}` : '')
+      + (s.drawn ? ` || DRAWN ${s.drawn.replace(/\n/g, ' ; ')}` : '');
     say(line('tabA', sa));
     say(line('tabB', sb));
     const holds = (s, otherEntry) => (s.labels || '').split('\n').find((l) => l.startsWith(String(otherEntry || 'x')));
