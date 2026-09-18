@@ -572,9 +572,14 @@ test('through a real daemon\'s subscribe burst, the other player\'s abandoned en
   } finally { await node.close(); }
 });
 
-test('realtime: a page that fell behind draws each truck at its newest picture, and a truck that stops sending is retired', () => {
+test('realtime: a page that fell behind draws each truck at its newest picture, and a quiet truck stays where it stood', () => {
   // the owner 2026-09-17 17:05 / 17:12: the ghost stood where the other player had been a minute before, and after the next
-  // round old trucks stayed. A drain hands over the newest picture per truck; a truck silent for SILENT_MS goes.
+  // round old trucks stayed. A drain hands over the newest picture per truck.
+  //
+  // AND A SILENCE NO LONGER TAKES A TRUCK AWAY (the owner 2026-09-18 10:42, the missing-then-wrong-place shot). Measured
+  // on the Daily that hour: 5231 pictures, gaps to 5131 ms, nine over three seconds - each one retired a truck and the
+  // next picture drew it again metres away, while the pose itself was never behind by more than 3 ticks at the
+  // ninetieth. A stall is the signer nodes, not a player leaving.
   const client = { watch: () => Promise.resolve('watching'), playerPubkey: b32(0xa1) };
   let clock = 1000000;
   const field = watchGhosts(client, { roundId: b32(1), entryId: b32(0xc0) }, { clock: () => clock });
@@ -588,12 +593,30 @@ test('realtime: a page that fell behind draws each truck at its newest picture, 
     'the first frame after the pause did not put both trucks at their newest picture');
   assert.equal(field.size, 0, 'a backlog was left to replay');
   assert.equal(field.drain(24, now + 1000).length, 0);
-  // one truck keeps sending, the other has stopped (its run ended)
+  // one truck keeps sending, the other has stopped: THREE SECONDS of silence, the old retire age.
   clock = now + SILENT_MS;
   client.onGhost(entryPic(0x41, b32(0xd1), 201, 0, 0));
   const later = field.drain(24, now + SILENT_MS + 500);
-  const retired = later.filter((g) => g.retire).map((g) => toHex(g.entryId).slice(0, 2));
-  assert.deepEqual(retired, ['42'], 'the silent truck was not retired, or the live one was');
+  assert.deepEqual(later.filter((g) => g.retire).map((g) => toHex(g.entryId).slice(0, 2)), [],
+    'a truck was taken off the screen for three seconds of silence: that is the missing-then-wrong-place shot');
   assert.ok(later.some((g) => !g.retire && toHex(g.entryId).startsWith('41') && g.tick === 201), 'the live truck was not drawn');
-  assert.equal(field.silenced, 1);
+  assert.equal(field.silenced, 1, 'the quiet truck is not counted as quiet');
+  assert.equal(field.others, 2, 'the quiet truck left the field instead of standing where its last picture put it');
+
+  // AND FIVE SECONDS, which is the worst gap measured on the Daily that day.
+  const five = field.drain(24, now + 5000);
+  assert.deepEqual(five.filter((g) => g.retire), [], 'five seconds of silence took the truck away');
+  assert.equal(field.others, 2, 'the truck went after five seconds of silence');
+
+  // AND WHEN A FRESH PICTURE COMES, the truck moves to it - no retire in between, so nothing vanishes and reappears.
+  client.onGhost(entryPic(0x42, b32(0xd2), 260, 9 * 65536, 0));
+  const back = field.drain(24, now + 5200);
+  assert.equal(back.filter((g) => g.retire).length, 0, 'the truck was retired on the way back');
+  assert.ok(back.some((g) => toHex(g.entryId).startsWith('42') && g.tick === 260), 'the quiet truck did not take its new picture');
+
+  // WHAT STILL TAKES A TRUCK AWAY is the page knowing it is gone: the player's next entry supersedes this one.
+  for (let t = 1; t <= 3; t++) client.onGhost(entryPic(0x43, b32(0xd2), t, 0, 0));
+  const swapped = field.drain(24, now + 5400);
+  assert.ok(swapped.some((g) => g.retire && toHex(g.entryId).startsWith('42')),
+    'a player who came back under a new entry left their old truck standing');
 });
