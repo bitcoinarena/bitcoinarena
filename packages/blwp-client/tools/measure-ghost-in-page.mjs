@@ -271,6 +271,77 @@ try {
       + `if(!n) return 'no net'; return 'net yes, client ' + (n.client?'yes':'NO') + ', ghosts ' + (n.ghosts?'yes':'NO')`
       + ` + ', state ' + String(n.state||'') + ', error ' + String(n.error||'');})()`)}`);
   }
+  // ROUND TWO, PRESSED IN THE PAGE (the owner 2026-09-18 12:02: "after 2nd round Truck 1 cannot see Truck 2, age
+  // 6736ms"). The page returns to its lobby when a run is over and its own PLAY joins the next round without a
+  // reload, which is exactly what a player does; a node client cannot press it.
+  const ROUND = `(function(){var n=window.unityInstance&&window.unityInstance.Module&&window.unityInstance.Module.blwpNet;`
+    + `var hex=function(u){return Array.prototype.map.call(u,function(x){return x.toString(16).padStart(2,'0');}).join('');};`
+    + `return n&&n.where?hex(n.where.roundId):'';})()`;
+  const firstRound = { tabA: await a.evaluate(ROUND), tabB: await b.evaluate(ROUND) };
+  say(`round one: tabA in ${String(firstRound.tabA).slice(0, 8)}, tabB in ${String(firstRound.tabB).slice(0, 8)}`);
+
+  // WAIT FOR THE FIRST RUN TO END, which is what puts the lobby back in front of the player.
+  let over = false;
+  for (let i = 0; i < 80 && !over; i++) {
+    over = (await a.evaluate('!!window.BLWP_RUN_ENDED')) === true && (await b.evaluate('!!window.BLWP_RUN_ENDED')) === true;
+    if (!over) await wait(5000);
+  }
+  say(over ? 'both runs are over; the lobby is back' : 'the first run did not end inside the window');
+  for (const t of tabs) await t.shot(`${t.name}-round1-over.png`);
+
+  // AND THE TRUCK OF THE FINISHED ROUND MUST GO, while the pictures of the new one must not name the old.
+  for (const t of tabs) say(`${t.name} between rounds: ${await t.evaluate(`(function(){var n=window.unityInstance&&`
+    + `window.unityInstance.Module&&window.unityInstance.Module.blwpNet;var f=n&&n.ghosts;`
+    + `return f?('trucks '+(f.others|0)+', roundEnded '+(f.roundEnded|0)+', retired '+(f.retired|0)):'no field';})()`)}`);
+
+  const playAgain = async (t) => {
+    for (let i = 0; i < 40; i++) {
+      const got = await t.evaluate(`(function(){var r=(window.BLWP_LOBBY||[]).filter(function(x){return x.free&&x.join;})[0];`
+        + `if(!r) return 'no free row'; var ok=window.BLWP_LOBBY_ACT&&window.BLWP_LOBBY_ACT.join(r.id);`
+        + `return (ok?'joined ':'refused ')+r.id;})()`);
+      if (String(got).startsWith('joined')) return String(got).slice(7);
+      await wait(5000);
+    }
+    return '';
+  };
+  for (const t of tabs) say(`${t.name} PLAY again: ${(await playAgain(t)).slice(0, 8) || 'never took a round'}`);
+  for (const t of tabs) { await click(t, 486, 554); await wait(2500); }
+  for (const t of tabs) { await click(t, 303, 617); await wait(2000); await click(t, 660, 617); await wait(2000); }
+
+  const began2 = Date.now();
+  const secondRound = {};
+  for (const t of tabs) {
+    for (let i = 0; i < 60; i++) {
+      const now = await t.evaluate(ROUND);
+      if (now && now !== firstRound[t.name]) { secondRound[t.name] = now; break; }
+      await wait(3000);
+    }
+    say(`${t.name} is now in round ${String(secondRound[t.name] || '').slice(0, 8) || 'NONE - it never left the first'}`);
+  }
+
+  // THE ANSWER: does each tab get a picture of the other in the second round, and how long after it began.
+  const SEEN2 = (mineRound) => `(function(){var n=window.unityInstance&&window.unityInstance.Module&&window.unityInstance.Module.blwpNet;`
+    + `var f=n&&n.ghosts;var hex=function(u){return Array.prototype.map.call(u,function(x){return x.toString(16).padStart(2,'0');}).join('');};`
+    + `if(!f||!f.present) return {trucks:0,who:'',old:0};var who='',old=0;`
+    + `f.present.forEach(function(g){who=hex(g.entryId);if(g.roundId&&hex(g.roundId)!==${JSON.stringify(mineRound)})old++;});`
+    + `return {trucks:f.others|0,who:who,old:old,drawn:f.drawn|0,roundEnded:f.roundEnded|0};})()`;
+  const first2 = { tabA: null, tabB: null };
+  for (let i = 0; i < 40; i++) {
+    for (const t of tabs) {
+      if (first2[t.name]) continue;
+      const s = await t.evaluate(SEEN2(secondRound[t.name] || ''));
+      if (s && s.trucks > 0) first2[t.name] = { at: Date.now() - began2, who: s.who, old: s.old, drawn: s.drawn };
+    }
+    if (first2.tabA && first2.tabB) break;
+    await wait(3000);
+  }
+  for (const t of tabs) {
+    const f = first2[t.name];
+    say(`${t.name} in round two: ${f ? `the other truck appeared ${f.at} ms after PLAY, entry ${String(f.who).slice(0, 8)}`
+      + `, pictures naming the old round ${f.old}, drawn ${f.drawn}` : 'NEVER saw the other truck'}`);
+    await t.shot(`${t.name}-round2.png`);
+  }
+
   const A = await a.evaluate(MINE);
   const B = await b.evaluate(MINE);
   for (const [who, got] of [['tabA', A], ['tabB', B]]) {
