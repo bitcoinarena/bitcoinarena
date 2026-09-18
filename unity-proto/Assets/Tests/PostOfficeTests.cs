@@ -313,6 +313,58 @@ public class PostOfficeTests
     }
 
     /// <summary>
+    /// THE WHITEPAPER IS ON ITS PLAQUE, NOT OVER THE LOT (the owner 2026-09-18 22:16, photographed from spectate: "the
+    /// Bitcoin whitepaper text on the MEMPOOL facade is TOO LARGE. It spills off the plaque").
+    ///
+    /// `TheLetteringFillsItsPlates` above could not catch this. It measures the text against the plate's renderer, and
+    /// static batching had replaced BOTH with the combined building - so the two agreed with each other, the running
+    /// build logged "94% x 92%", and the page was still drawn across the depot. This test refuses that shape of
+    /// answer: a plaque on a building is a small part of it, and the words have to be inside the plaque's own box.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator TheWhitepaperIsInsideItsPlaque()
+    {
+        yield return new WaitForSeconds(4f);
+
+        TextMesh paper = null;
+        foreach (var tm in Object.FindObjectsByType<TextMesh>(FindObjectsSortMode.None))
+            if (tm.name.StartsWith("whitepaper_print")) paper = tm;
+        Assert.IsNotNull(paper, "no whitepaper lettering in the scene");
+
+        var plate = paper.transform.parent;
+        Assert.IsNotNull(plate, "the whitepaper lettering hangs on nothing");
+        var plateR = plate.GetComponent<Renderer>();
+        Assert.IsNotNull(plateR, "the whitepaper plate draws nothing");
+
+        // The BUILDING it is a plaque on - not `plate.root`, which is the whole world and made this guard meaningless
+        // (it measured a 2120 m "building" and let anything through).
+        Transform model = plate;
+        while (model.parent != null && model.name != "MempoolPostOffice") model = model.parent;
+        var whole = new Bounds(plate.position, Vector3.zero);
+        foreach (var r in model.GetComponentsInChildren<Renderer>(true)) whole.Encapsulate(r.bounds);
+
+        var plateFace = PostOffice.Face(plateR.bounds.size);
+        var wholeFace = PostOffice.Face(whole.size);
+        Assert.Less(plateFace.x, wholeFace.x * 0.25f,
+            $"the whitepaper's plate is {plateFace.x:0.0} m across a {wholeFace.x:0.0} m building - that is not a "
+            + "plaque, it is the batched mesh of the whole thing");
+
+        // And the words are on it. Bounds are world-axis boxes, so a hair of tolerance for a plate at an angle.
+        var text = paper.GetComponent<MeshRenderer>();
+        var drawn = PostOffice.Face(text.bounds.size);
+        Assert.LessOrEqual(drawn.x, plateFace.x + 0.05f,
+            $"the whitepaper is {drawn.x:0.0} m wide on a {plateFace.x:0.0} m plaque");
+        Assert.LessOrEqual(drawn.y, plateFace.y + 0.05f,
+            $"the whitepaper is {drawn.y:0.0} m tall on a {plateFace.y:0.0} m plaque");
+
+        // Still worth reading from the yard: it fills the plaque it is on.
+        Assert.Greater(Mathf.Max(drawn.x / plateFace.x, drawn.y / plateFace.y), 0.55f,
+            $"the whitepaper fills only {Mathf.Max(drawn.x / plateFace.x, drawn.y / plateFace.y):0%} of its plaque");
+        Debug.Log($"[whitepaper] plaque {plateFace.x:0.00} x {plateFace.y:0.00} m on a {wholeFace.x:0.0} m building, "
+                  + $"text {drawn.x:0.00} x {drawn.y:0.00} m");
+    }
+
+    /// <summary>
     /// The block band reads as a block explorer: English, and every mined
     /// block carries its own height.
     /// </summary>
