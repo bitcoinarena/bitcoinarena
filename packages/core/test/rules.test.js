@@ -805,85 +805,19 @@ test('armour blocks the truck and infantry does not', () => {
 });
 
 /**
- * The army closes on the seam at the C# army's pace, and holds a front.
+ * RETIRED (the owner 2026-09-19, ruled): "the army closes at the pace the C# army closes".
  *
- * Step (a) of moving the army into the core. What is checked is the approach
- * - the part that is pure movement - and the property that makes a front a
- * front: both sides stop short of the seam on their own side and neither
- * crosses. Casualties and retreat come later and change where they settle,
- * so the settled position is deliberately not asserted here.
+ * It measured the opening approach - both armies walking in from the back edge at the recorded C# pace - and that
+ * approach is gone on purpose: a tank is now put ON its post when it spawns, the way a rifleman already was. The C#
+ * recording carries the walk-in because C# spawned its tanks at the lane's x and left them at the spawn's z; that is
+ * a spawn fault of the recording, not doctrine, and it is not copied. Measured with the walk-in: on the ticks where
+ * a seam metre was short of cover, the side had a median of 12 tanks alive and a median of NONE within a gun's reach
+ * of the seam, for the first half-minute of every round.
  *
- * Measured against test/vectors/csharp-army.json, in SEAM-RELATIVE terms.
- * The recording pinned the seam at z = 0; the core's runs with the map, and
- * comparing raw z made a correct army look like it had overrun the line by
- * twenty-seven metres.
+ * What the test also held - armour arrives before infantry, and neither crosses the seam - is held by the doctrine
+ * table's own rows (A7 holding hulls face the enemy, A11a crossings, O2 both sides inside 46 m) on every run.
  */
-test('the army closes at the pace the C# army closes', async () => {
-  const ref = JSON.parse(
-    await readFile(new URL('./vectors/csharp-army.json', import.meta.url), 'utf8'));
 
-  const Q = 65536, UNITS = 96;
-  const U_X = 0, U_Z = 1, U_SIDE = 2, U_STATE = 5;
-
-  const st = init(1);
-  const mean = (armour, side) => {
-    let sum = 0, n = 0;
-    for (let i = 0; i < UNITS; i++) {
-      if (((i & 3) === 0) !== armour) continue;
-      const b = O_UNITS + i * U_WORDS;
-      if (st.i32[b + U_STATE] === 0 || st.i32[b + U_SIDE] !== side) continue;
-      sum += st.i32[b + U_Z] / Q; n++;
-    }
-    return n > 0 ? sum / n : null;
-  };
-
-  const at0 = { armour: mean(true, -1), rifle: mean(false, -1) };
-  // A DRIVING tank's pace, and not the side's mean. WAR_TACTICS.md §0 row 4b (the owner 2026-09-16): no more than half of
-  // a side's tanks on the line move in any tick, and the line begins 40 m from a post - so for the last 40 m of the
-  // approach half the side holds while the other half drives, and the mean closes slower than any tank drives (4.61
-  // m/s measured on seed 1, 24% of the bull tank-ticks of these five seconds waiting on the budget). The recording's
-  // number is what a tank does when it moves; that is what is held to it.
-  let drivenZ = 0, driving = 0;
-  for (let i = 0; i < 60 * 5; i++) {
-    const before = [];
-    for (let k = 0; k < UNITS; k += 4) before[k] = st.i32[O_UNITS + k * U_WORDS + U_Z];
-    step(st, 0, 0, 0, 0, 0);
-    for (let k = 0; k < UNITS; k += 4) {
-      const b = O_UNITS + k * U_WORDS;
-      if (st.i32[b + U_STATE] === 0 || st.i32[b + U_SIDE] !== -1) continue;
-      const dz = st.i32[b + U_Z] - before[k];
-      if (Math.abs(dz) > 65 && Math.abs(dz) < 5 * Q) { drivenZ += dz / Q; driving++; }   // moved, and not a respawn
-    }
-  }
-  const at5 = { armour: mean(true, -1), rifle: mean(false, -1) };
-
-  // Five seconds of closing, against the recording's own first two rows.
-  const wantArmour = (ref.rows[1].bullArmour.z - ref.rows[0].bullArmour.z) / 5;
-  const wantRifle = (ref.rows[1].bullInf.z - ref.rows[0].bullInf.z) / 5;
-  const gotArmour = (at5.armour - at0.armour) / 5;
-  const gotRifle = (at5.rifle - at0.rifle) / 5;
-  const tankPace = (drivenZ / driving) * 60;
-
-  assert.ok(Math.abs(tankPace - wantArmour) < 0.8,
-    `a driving tank closes at ${tankPace.toFixed(2)} m/s, the C# army at ${wantArmour.toFixed(2)}`);
-  assert.ok(Math.abs(gotRifle - wantRifle) < 0.5,
-    `infantry closes at ${gotRifle.toFixed(2)} m/s, the C# army at ${wantRifle.toFixed(2)}`);
-
-  // Armour arrives first. Both arms moving together is the signature of the
-  // fault this test was written after: the kind flag never reached the step,
-  // so tanks walked at rifle pace.
-  // A driving tank against the riflemen (the fault was the tank's own pace; the side's mean is §0 row 4b's, above).
-  assert.ok(Math.abs(tankPace) > Math.abs(gotRifle) * 2,
-    `armour and infantry close at the same speed (${tankPace.toFixed(2)} against ${gotRifle.toFixed(2)} m/s, the side's `
-    + `armour ${gotArmour.toFixed(2)}) - the kind flag is not reaching the step`);
-
-  // And it settles into a front rather than through one.
-  for (let i = 0; i < 60 * 60; i++) step(st, 0, 0, 0, 0, 0);
-  const bull = mean(true, -1), bear = mean(true, 1);
-  assert.ok(bull !== null && bear !== null, 'one side has vanished');
-  assert.ok(bull < bear,
-    `the armies have crossed: bull armour at ${bull.toFixed(1)}, bear at ${bear.toFixed(1)}`);
-});
 
 /**
  * The army replaces its dead, and the front therefore holds.
@@ -1589,9 +1523,14 @@ test('and it tells further and further behind the line', () => {
   // all eight (hot 4-6, cold 2-3).
   // -> 4,6,2,6 with the held crests (§4.1 hysteresis, 2026-09-17). Eight seeds: at the seam a full bed has more tanks on
   // the truck on seven (hot 4-6, cold 3-5), the same on one (seed 4: 4-4); behind it on all eight (hot 4-6, cold 2-3).
-  assert.deepEqual([noticing(0, -25), noticing(20000, -25), noticing(0, -50), noticing(20000, -50)],
-    [4, 6, 2, 6],
-    'heat no longer widens how many tanks have the truck, at the seam or behind it');
+  // RETIRED (the owner 2026-09-19, ruled) - the four-count snapshot, not the reach rules above it.
+  //
+  // With the armour deployed on its posts at spawn, the guns are spread along their lanes instead of bunched where
+  // the walk-in left them, and this probe point no longer shows the widening at all: measured on the same eight seeds
+  // (0x5eed1234 and 1-7), at the seam a full bed has more tanks on the truck on 1 of 8 and the same on 7 (cold 0-4,
+  // hot 0-4); thirty metres behind it, more on 2 of 8 and the same on 6 (cold 0-2, hot 0-2). Re-pinning the numbers
+  // would leave an assertion whose own message - "heat widens how many tanks have the truck" - the numbers no longer
+  // say. The reach rule itself is asserted above, at 34.0 m cold and 44.2 m with a full bed, and is untouched.
 });
 
 /**

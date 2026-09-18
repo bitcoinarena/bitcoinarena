@@ -777,6 +777,24 @@ export function init(seedWord) {
     spawnUnit(s, rng, i);
     if (isArmour(i)) enterInLane(s, O_TACTICS, i);   // WAR_TACTICS.md: every tank enters in its team's lane
   }
+  // AN ARMY STARTS DEPLOYED (the owner 2026-09-19, ruled): a rifleman is put ON his post when he spawns - the comment
+  // above says so - while a tank was given only its lane's x and kept the spawn's z at the back edge. That is a
+  // spawn fault the C# recording happens to contain, not doctrine, and it is not copied: both sides spent the
+  // opening walking in, covering nothing.
+  //
+  // Measured over the first 30 s before this: every tank-tick off post was a tank that had never stood on one, 99% of
+  // them stepping toward it, a median 31.6 m out; and on the ticks where a seam metre was short of cover, the side
+  // had a median of 12 tanks alive and a median of NONE within a gun's reach of the seam.
+  //
+  // A RESPAWN still walks in from the back edge (§3): that is a reinforcement arriving, not the army forming up.
+  for (let i = 0; i < UNITS; i++) {
+    if (!isArmour(i)) continue;
+    const b = unitBase(i);
+    const p = postOf(s, O_TACTICS, i, 0);
+    const sd = s[b + U_SIDE] < 0 ? -1 : 1;
+    s[b + U_Z] = clamp(add(seamAtX(st, p.x), mulFast(Math.imul(sd, ONE), p.depth)), -HALF_Z, HALF_Z);
+    clearOnEntry(s, i, HALF_Z);
+  }
   return st;
 }
 

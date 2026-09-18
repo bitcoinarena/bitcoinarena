@@ -223,13 +223,13 @@ test('with nobody fighting and no assault running, a team rests at +8 m on an ob
 });
 
 test('the objective words are the same with the truck parked and driven through RIDGE, until the fight itself differs', () => {
-  // Seeds 21 and 109: the fight stays identical long enough (476 and 462 ticks) for holders to be written inside the
-  // compared stretch (201 and 296 holder-ticks). Re-picked with the candles (§4.15, seam +-45 m on the candle field):
-  // the worlds still part on RNG word 0 at the same ticks as before (seeds 9 / 10 at 352 / 361 - the truck's presence
-  // changes a draw, not the terrain), but an objective is first held later now (429 / 441), so 9 and 10 compared
-  // nothing. Of seeds 1-120, the qualifying ones (split past 300 with a holder written) were searched and these two
-  // hold the most of both.
-  for (const seedWord of [21, 109]) {
+  // Seeds 83 and 63. RE-PICKED with the army deployed at spawn (the owner 2026-09-19): a tank is now put on its post
+  // when it spawns, so the opening world is a different world and seeds 21 and 109 - picked against the walk-in -
+  // now part after 35 ticks and compare nothing. The same search as before over seeds 1-120 (the worlds identical
+  // past 300 ticks with a holder written inside that stretch) leaves 14 qualifying; these two hold the most of both,
+  // splitting at 606 and 352 ticks with 1169 and 838 holder-ticks. The assertion, its thresholds and what it holds
+  // are unchanged: the objective words must not read the truck.
+  for (const seedWord of [83, 63]) {
     const a = init(seedWord), b = init(seedWord);
     const ridgeX = T.slotX(T.objectiveLane(a.i32, L.O_TACTICS, T.OBJ_RIDGE));
     let compared = 0, written = 0;
