@@ -36,6 +36,8 @@ const verdictWas = {};
 const pushSeen = [];
 const pushWasV = {};
 const pushMoves = [];
+const A9WHY = process.argv.includes('--a9why');
+const a9gap = {}, a9all = {}, a9live = [], a9near = [];
 const SEEDS = arg('seeds', '1,2,3,4,5').split(',').map(Number);
 const TICKS = Number(arg('ticks', 3600));
 
@@ -111,12 +113,12 @@ for (const seed of SEEDS) {
     // not yet stood on its post (within 1.5 m, hull-down pick included) since it spawned or respawned.
     for (const i of liveT) {
       if (!aliveBefore.get(i) || mvOf(i) > 5) stood.delete(i);
-      const p = T.postOf(s, L.O_TACTICS, i, tick), sd = sideOf(i), line = frontlineZ(st.tape, p.x, HX, HZ) + sd * p.depth;
+      const p = T.postOf(s, L.O_TACTICS, i, tick), sd = sideOf(i), line = seamOfCore(st, p.x) + sd * p.depth;
       let hold = line;
       if (!p.bounding) { let br = -Infinity; for (let c = -2; c <= 2; c++) { const z = line + c * 2 * ONE; const rise = groundAt(st, p.x, z - sd * 6 * ONE) - groundAt(st, p.x, z); if (rise > br) { br = rise; hold = z; } } }
       if (Math.hypot(s[base(i)] - p.x, s[base(i) + 1] - hold) <= 1.5 * ONE) stood.add(i);
     }
-    const onLine = (i) => { if (!stood.has(i)) return false; const p = T.postOf(s, L.O_TACTICS, i, tick); const tz = frontlineZ(st.tape, p.x, HX, HZ) + sideOf(i) * p.depth; return Math.abs(s[base(i) + 1] - tz) <= 40 * ONE; };
+    const onLine = (i) => { if (!stood.has(i)) return false; const p = T.postOf(s, L.O_TACTICS, i, tick); const tz = seamOfCore(st, p.x) + sideOf(i) * p.depth; return Math.abs(s[base(i) + 1] - tz) <= 40 * ONE; };
     for (const i of liveT) {
       let n = 0; for (const j of liveT) if (j !== i && sideOf(j) === sideOf(i) && Math.hypot(s[base(i)] - s[base(j)], s[base(i) + 1] - s[base(j) + 1]) < 12 * ONE) n++;
       add('A1 tank-ticks'); if (n >= 2) add('A1 pile');
@@ -159,9 +161,13 @@ for (const seed of SEEDS) {
     for (const sd of [-1, 1]) {
       const ls = liveT.filter((i) => sideOf(i) === sd); if (ls.length < 6) continue;
       // RULED (the owner 2026-09-16): the share of seam-metre samples covered by >= 2, not a tick-union.
-      for (let xm = -81; xm <= 81; xm++) { const zx = frontlineZ(st.tape, xm * ONE, HX, HZ); let n = 0;
+      for (let xm = -81; xm <= 81; xm++) { const zx = seamOfCore(st, xm * ONE); let n = 0;
         for (const i of ls) if (Math.hypot(s[base(i)] - xm * ONE, s[base(i) + 1] - zx) < 46 * ONE) n++;
-        add('A9 samples'); if (n < 2) add('A9 gap'); }
+        add('A9 samples'); if (n < 2) { add('A9 gap'); if (A9WHY) { a9gap[xm] = (a9gap[xm] || 0) + 1; a9live.push(ls.length);
+          // HOW MANY OF THAT SIDE WERE NEAR THE SEAM AT ALL: a tank still walking in from the back edge is further
+          // than its gun reaches, so it covers nothing wherever it is pointed.
+          a9near.push(ls.filter((i) => Math.abs(s[base(i) + 1] - seamOfCore(st, s[base(i)])) < 46 * ONE).length); } }
+        if (A9WHY) a9all[xm] = (a9all[xm] || 0) + 1; }
     }
     // ================= HOLD IS THE DEFAULT (§0, re-ruled 2026-09-16 20:30) =================
     // On post = within 1.5 m of its hold: slot x, its line, the hull-down pick for an overwatch tank (§4.1).
@@ -267,7 +273,7 @@ for (const seed of SEEDS) {
       add(on ? 'O1 on n' : 'O1 off n'); add(on ? 'O1 on push' : 'O1 off push', pu);
     }
     for (let o = 0; o < 3; o++) {
-      const px = T.slotX(lanes[o]), pz = frontlineZ(st.tape, px, HX, HZ);
+      const px = T.slotX(lanes[o]), pz = seamOfCore(st, px);
       const near = (sd) => liveT.some((i) => sideOf(i) === sd && Math.hypot(s[base(i)] - px, s[base(i) + 1] - pz) < 46 * ONE);
       add(`O2 ticks ${o}`); if (near(-1) && near(1)) add(`O2 fought ${o}`);
       const h = T.objectiveHolder(s, L.O_TACTICS, o);
@@ -287,7 +293,7 @@ for (const seed of SEEDS) {
         verdictCount[v] = (verdictCount[v] || 0) + 1;
         const was = verdictWas[w]; verdictWas[w] = v;
         if (v === 2) { verdictCount.giveSeen = (verdictCount.giveSeen || 0) + 1; if (was === 2) verdictCount.giveConfirmed = (verdictCount.giveConfirmed || 0) + 1; } } }
-    for (const i of liveT) { const p = T.postOf(s, L.O_TACTICS, i, tick); if ((s[base(i) + 1] - frontlineZ(st.tape, p.x, HX, HZ)) * sideOf(i) < 0) win.cross[String(sideOf(i))]++; }
+    for (const i of liveT) { const p = T.postOf(s, L.O_TACTICS, i, tick); if ((s[base(i) + 1] - seamOfCore(st, p.x)) * sideOf(i) < 0) win.cross[String(sideOf(i))]++; }
     const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
     add('A13b ticks'); if (Math.abs(mean(push['-1']) - mean(push['1'])) >= 4) add('A13b differ');
     for (const sd of [-1, 1]) {
@@ -323,7 +329,7 @@ for (const seed of SEEDS) {
     for (const sd of [-1, 1]) {
       const on = liveM.filter((i) => sideOf(i) === sd && hk.unit.get(i) && hk.unit.get(i).dx === 0 && hk.unit.get(i).dz === 0);
       if (on.length < 6) continue;
-      const zs = on.map((i) => (s[base(i) + 1] - frontlineZ(st.tape, s[base(i)], HX, HZ)) / ONE), xs = on.map((i) => s[base(i)] / ONE);
+      const zs = on.map((i) => (s[base(i) + 1] - seamOfCore(st, s[base(i)])) / ONE), xs = on.map((i) => s[base(i)] / ONE);
       const sdev = (a) => { const m = mean(a); return Math.sqrt(mean(a.map((v) => (v - m) * (v - m)))); };
       add('B3 side-ticks'); const zsd = sdev(zs), xsd = sdev(xs);
       if (zsd < 4 || zsd > 12) add('B3 z out'); if (xsd < 20 || xsd > 60) add('B3 x out');
@@ -334,7 +340,7 @@ for (const seed of SEEDS) {
       const sd = sideOf(i), sq = squadOf(i), k = `${sd}:${sq}`;
       const anchor = s[L.O_SQUADS + (sd < 0 ? 0 : L.SQUADS_PER_SIDE) + sq];
       const e = squadNow.get(k) || { push: T.pushNear(s, L.O_TACTICS, sd, anchor), z: [] };
-      e.z.push((s[base(i) + 1] - frontlineZ(st.tape, s[base(i)], HX, HZ)) * -sd / ONE); squadNow.set(k, e); }
+      e.z.push((s[base(i) + 1] - seamOfCore(st, s[base(i)])) * -sd / ONE); squadNow.set(k, e); }
     pushHist.push(squadNow);
     // B6 losses and arrivals of men
     for (const i of RIFLES) { const sd = String(sideOf(i)); if (aliveBefore.get(i) && !alive(i)) win.menLost[sd]++;
@@ -480,6 +486,18 @@ for (const [name, got, ok] of rows) { if (!ok) red++; console.log(`${ok ? 'PASS'
   if (bo + oo > 0)
     console.log(`settled and off post: bounding ${bo} (hold jumped under it on ${(100 * bj / Math.max(bo, 1)).toFixed(1)}% of them), `
       + `overwatch ${oo} (hold jumped on ${(100 * oj / Math.max(oo, 1)).toFixed(1)}%)`);
+  if (A9WHY) {
+    const xs = Object.keys(a9all).map(Number).sort((a, b) => a - b);
+    const band = (lo, hi) => { let g = 0, t = 0; for (const x of xs) if (x >= lo && x <= hi) { g += a9gap[x] || 0; t += a9all[x] || 0; } return t ? (100 * g / t).toFixed(0) + '%' : '-'; };
+    console.log(`A9 gaps by where on the seam they are: |x|<=20 ${band(-20, 20)}, 20-45 ${band(20, 45)} / ${band(-45, -20)}, `
+      + `45-65 ${band(45, 65)} / ${band(-65, -45)}, 65-81 ${band(65, 81)} / ${band(-81, -65)}`);
+    const live = a9live.slice().sort((a, b) => a - b);
+    if (live.length) console.log(`when a metre was short, that side had ${live[0]} to ${live[live.length - 1]} tanks alive, `
+      + `median ${live[Math.floor(live.length / 2)]}`);
+    const near = a9near.slice().sort((a, b) => a - b);
+    if (near.length) console.log(`and of those, within their own gun's reach of the seam: median `
+      + `${near[Math.floor(near.length / 2)]}, q1 ${near[Math.floor(near.length / 4)]}, q3 ${near[Math.floor(near.length * 3 / 4)]}`);
+  }
   if (VERDICTS && pushMoves.length) {
     const down = pushMoves.filter(([a, b]) => b < a), up = pushMoves.filter(([a, b]) => b > a);
     const belowZero = pushMoves.filter(([, b]) => b < 0);
