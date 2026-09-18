@@ -161,10 +161,32 @@ namespace Blwp
             labels = ParseLabels(ReadLabels());
         }
 
+        /// <summary>
+        /// THE CAMERA THE PICTURE ACTUALLY CAME OUT OF, WHICH IS NOT `Camera.main`.
+        ///
+        /// `Camera.main` is the first camera tagged MainCamera, and nothing in this build tags one: `Bootstrap` makes
+        /// the chase camera in code and the tag is never set. `StrikeTheatre` found this twice and wrote it down both
+        /// times - "it returned null in the player, because the camera that renders this build is not tagged
+        /// MainCamera" - and it made the drone's distance and the crater's ring wrong before it was fixed there.
+        ///
+        /// Here it was worse than wrong: `OnGUI` returned on a null camera, so the debug label over each truck - the
+        /// one number a player has for the lag (the owner 2026-09-17 19:15) - was never drawn in a player at all, only in
+        /// the Editor tests that make their own tagged camera. Measured in a PlayMode world built by `Bootstrap`: two
+        /// cameras, neither of them `Camera.main`.
+        /// </summary>
+        public static Camera LabelEye()
+        {
+            var cam = Camera.main;
+            if (cam == null)
+                foreach (var c in Camera.allCameras)
+                    if (c != null && c.isActiveAndEnabled) { cam = c; break; }
+            return cam;
+        }
+
         void OnGUI()
         {
             if (labels.Count == 0) return;
-            var cam = Camera.main;
+            var cam = LabelEye();
             if (cam == null) return;
             if (labelStyle == null)
             {
