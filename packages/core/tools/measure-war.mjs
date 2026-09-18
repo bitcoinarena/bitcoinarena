@@ -38,6 +38,8 @@ const pushWasV = {};
 const pushMoves = [];
 const A9WHY = process.argv.includes('--a9why');
 const a9gap = {}, a9all = {}, a9live = [], a9near = [];
+const a9x = [[], []], a9slot = [[], []];
+const a9slope = {}, a9slopeN = {};
 const SEEDS = arg('seeds', '1,2,3,4,5').split(',').map(Number);
 const TICKS = Number(arg('ticks', 3600));
 
@@ -160,6 +162,16 @@ for (const seed of SEEDS) {
     }
     for (const sd of [-1, 1]) {
       const ls = liveT.filter((i) => sideOf(i) === sd); if (ls.length < 6) continue;
+      // WHERE THE GUNS ARE ALONG THE SEAM, and where the slots they were sent to are. A9's gap is now a spread
+      // problem - every short metre has two or more tanks within reach - so this asks whether one flank is simply
+      // not manned, and whether that is the slots' doing or the tanks'.
+      if (A9WHY && sd === -1) { for (let xm = -81; xm < 81; xm++) {
+        // HOW STEEP THE SEAM IS THERE. A sample is a metre of x, but the seam's z moves with it: where the line
+        // climbs, two neighbouring samples are far apart in the world and one tank covers fewer of them.
+        const slope = Math.abs(seamOfCore(st, (xm + 1) * ONE) - seamOfCore(st, xm * ONE)) / ONE;
+        a9slope[xm] = (a9slope[xm] || 0) + slope; a9slopeN[xm] = (a9slopeN[xm] || 0) + 1; } }
+      if (A9WHY) { for (const i of ls) a9x[sd < 0 ? 0 : 1].push(s[base(i)] / ONE);
+        for (let w = 0; w < 6; w++) a9slot[sd < 0 ? 0 : 1].push(T.slotX(s[L.O_TACTICS + T.TAC_SLOT + (sd < 0 ? w : w + 6)]) / ONE); }
       // RULED (the owner 2026-09-16): the share of seam-metre samples covered by >= 2, not a tick-union.
       for (let xm = -81; xm <= 81; xm++) { const zx = seamOfCore(st, xm * ONE); let n = 0;
         for (const i of ls) if (Math.hypot(s[base(i)] - xm * ONE, s[base(i) + 1] - zx) < 46 * ONE) n++;
@@ -494,6 +506,21 @@ for (const [name, got, ok] of rows) { if (!ok) red++; console.log(`${ok ? 'PASS'
     const live = a9live.slice().sort((a, b) => a - b);
     if (live.length) console.log(`when a metre was short, that side had ${live[0]} to ${live[live.length - 1]} tanks alive, `
       + `median ${live[Math.floor(live.length / 2)]}`);
+    for (const k of [0, 1]) {
+      const xs = a9x[k].slice().sort((a, b) => a - b), sl = a9slot[k].slice().sort((a, b) => a - b);
+      if (!xs.length) continue;
+      const at = (a, f) => a[Math.floor(a.length * f)];
+      console.log(`${k === 0 ? 'bull' : 'bear'} hulls along the seam: min ${xs[0].toFixed(0)}, q1 ${at(xs, 0.25).toFixed(0)}, `
+        + `median ${at(xs, 0.5).toFixed(0)}, q3 ${at(xs, 0.75).toFixed(0)}, max ${xs[xs.length - 1].toFixed(0)} m; `
+        + `past +40 ${(100 * xs.filter((v) => v > 40).length / xs.length).toFixed(0)}%, past -40 `
+        + `${(100 * xs.filter((v) => v < -40).length / xs.length).toFixed(0)}%; `
+        + `slots they were sent to: min ${sl[0].toFixed(0)}, max ${sl[sl.length - 1].toFixed(0)}, `
+        + `past +40 ${(100 * sl.filter((v) => v > 40).length / sl.length).toFixed(0)}%`);
+    }
+    { const band = (lo, hi) => { let sum = 0, n = 0; for (let x = lo; x <= hi; x++) { sum += a9slope[x] || 0; n += a9slopeN[x] || 0; } return n ? (sum / n).toFixed(2) : '-'; };
+      console.log(`the seam's own climb per metre of x: -81..-65 ${band(-81, -65)}, -65..-45 ${band(-65, -45)}, `
+        + `-45..-20 ${band(-45, -20)}, |x|<=20 ${band(-20, 20)}, +20..45 ${band(20, 45)}, +45..65 ${band(45, 65)}, `
+        + `+65..81 ${band(65, 81)} m`); }
     const near = a9near.slice().sort((a, b) => a - b);
     if (near.length) console.log(`and of those, within their own gun's reach of the seam: median `
       + `${near[Math.floor(near.length / 2)]}, q1 ${near[Math.floor(near.length / 4)]}, q3 ${near[Math.floor(near.length * 3 / 4)]}; `
