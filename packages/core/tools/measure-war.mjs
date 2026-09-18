@@ -345,6 +345,9 @@ for (const seed of SEEDS) {
       const sdev = (a) => { const m = mean(a); return Math.sqrt(mean(a.map((v) => (v - m) * (v - m)))); };
       add('B3 side-ticks'); const zsd = sdev(zs), xsd = sdev(xs);
       if (zsd < 4 || zsd > 12) add('B3 z out'); if (xsd < 20 || xsd > 60) add('B3 x out');
+      // WITHDRAWN (2026-09-19): a --b3why probe here counted about one qualifying side-tick per seed while the row
+      // itself reports z 52.44% / x 41.67% of them out of band, so the two were not counting the same thing and the
+      // probe's numbers said nothing. B3 is still unmeasured; whatever replaces this must first agree with the row.
     }
     // B4 follow the push: squad pushNear and mean z (relative to seam) of its men on post
     const squadNow = new Map();
