@@ -296,6 +296,10 @@ try {
   })()`;
   for (const t of tabs) say(`${t.name} chain providers at the moment the round ends: ${await t.evaluate(PROVIDERS)}`);
 
+  // DID THE FIRST SESSION LEAVE A PROOF TO REUSE? If this is false, the next round cannot open from it however well
+  // the reuse works, and that is a different fault from a chain read that is merely slow.
+  for (const t of tabs) say(`${t.name} kept a proved chain after round one: `
+    + `${await t.evaluate('(function(){var p=window.BLWP_PROVED_CHAIN;return p?("yes, "+((p.headers||[]).length)+" headers"):"NO";})()')}`);
   const firstRound = { tabA: await a.evaluate(ROUND), tabB: await b.evaluate(ROUND) };
   say(`round one: tabA in ${String(firstRound.tabA).slice(0, 8)}, tabB in ${String(firstRound.tabB).slice(0, 8)}`);
 
@@ -327,6 +331,11 @@ try {
   for (const t of tabs) { await click(t, 486, 554); await wait(2500); }
   for (const t of tabs) { await click(t, 303, 617); await wait(2000); await click(t, 660, 617); await wait(2000); }
 
+  // AND WHETHER THE CHAIN WAS REUSED OR READ: the page logs which of the two opened this session.
+  for (const t of tabs) {
+    const said = t.logs.filter((l) => /the chain was/.test(l)).slice(-2);
+    say(`${t.name} chain on opening: ${said.length ? said.join(' | ') : 'said nothing'}`);
+  }
   for (const t of tabs) say(`${t.name} right after PLAY again: ${await t.evaluate(`(function(){`
     + `var n=window.unityInstance&&window.unityInstance.Module&&window.unityInstance.Module.blwpNet;`
     + `var j=window.BLWP_JOIN||{};`
