@@ -147,6 +147,9 @@ function beaconFor(randomnessFor, contract, roundIdBytes, entry, entryId, chainF
  */
 export const NO_RANDOMNESS_SOURCE = () => undefined;
 
+/** How long a signer node waits on a peer's `/results` before it treats that peer as down for this pass. */
+const PEER_WAIT_MS = 2500;
+
 export class Verifier {
   constructor(round, {
     randomnessFor = NO_RANDOMNESS_SOURCE, chainFor = null, pool = new ReplayPool(), peers = [],
@@ -851,7 +854,11 @@ export class Verifier {
       let body;
       try {
         const url = `${peer}/results?round=${hex(roundIdBytes)}&entry=${hex(entryIdBytes)}`;
-        const answer = await fetch(url);
+        // A PEER THAT IS SLOW IS A PEER THAT IS DOWN, AFTER THIS LONG. The call had no deadline at all, and a close
+        // gather waits on it before it may move to the next entry - measured on the Daily, gathers running 2946 to
+        // 6140 ms each while a page's own calls were aborting at 8 s. "A peer that is down is not a fault" was
+        // already this function's rule; without a deadline it was a rule it could not keep.
+        const answer = await fetch(url, { signal: AbortSignal.timeout(PEER_WAIT_MS) });
         if (!answer.ok) { refused++; continue; }
         const said = answer.headers.get('x-no-quorum');
         if (said) noQuorumPeers.push({ peer, outcome: said });

@@ -1124,11 +1124,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     let timer = null;
     const tick = async () => timed(`finality ${toHex(roundIdBytes).slice(0, 8)}`, () => ticked(), { over: 100 });
 
+    // ONE ENTRY, THEN LET THE SERVER BREATHE (the owner 2026-09-18 22:5x, measured on the Daily). Each entry's close work
+    // holds the loop for its own synchronous share - 381 ms at the median, 1318 ms at the worst - and this watch ran
+    // them back to back: the node's own log caught a loop held 26151 ms with 134 phases totalling 64785 ms in it, and
+    // none of it waiting for the machine. Nothing is served in that window, so a page at the round boundary had its
+    // 8 s names call aborted and its next session starved. The work and its order are unchanged; what changes is that
+    // a queued request gets its turn between entries.
+    const breathe = () => new Promise((go) => setImmediate(go));
+
     const ticked = async () => {
       finalityTimers.delete(timer);
       if (shuttingDown) return;
       stretch();
       for (const u of [...unsigned]) {
+        await breathe();
         let r;
         try { r = await verifier.retryClose(roundIdBytes, u.entryId); } catch (e) { r = { stored: false, why: e.message }; }
         if (shuttingDown) return;
@@ -1173,6 +1182,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       let turned = false;
       for (const r of short) {
+        await breathe();
         let g;
         try { g = await verifier.gather(roundIdBytes, r.entryId); } catch { continue; }
         const at = gathered.findIndex((x) => x && toHex(x.entryId) === toHex(r.entryId));
