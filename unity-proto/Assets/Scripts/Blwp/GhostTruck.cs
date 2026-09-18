@@ -111,16 +111,24 @@ namespace Blwp
         /// </summary>
         public void Show(int x, int z, int heading, float? y)
         {
-            // WHERE IT IS NOW BECOMES WHERE IT IS COMING FROM.
+            // THE HULL STANDS ON THE PICTURE THAT JUST LANDED, IN THIS FRAME (the owner 2026-09-18 05:10).
+            //
+            // It used to start walking here and arrive later, so in the frame a picture landed the truck was still on
+            // the one before it: measured against the wire, the picture was 22 ms old at the median and the drawn pose
+            // 322 ms, then 171 ms when the walk was shortened. Ten pictures a second means a pose is at most a tenth of
+            // a second old before the next one is due; it does not mean the eye must be a whole picture behind.
+            //
+            // So the position is the newest picture's, now. Only the HEADING is walked round - a hull that spins to a
+            // new heading in one frame is the stutter the 17:05 report named, and a heading is not a place: the truck
+            // is standing where the node proved it stands either way. Nothing is extrapolated, no pose is invented
+            // between two pictures, and this reads no rigidbody, no collider and no clock.
             _from = _placed ? transform.position : new Vector3(x / ONE, y ?? transform.position.y, z / ONE);
             _fromHeading = _placed ? transform.rotation.eulerAngles.y : BlwpCore.Degrees(heading);
             _want = new Vector3(x / ONE, y ?? transform.position.y, z / ONE);
             _wantHeading = BlwpCore.Degrees(heading);
             _since = 0f;
-            // THE FIRST PICTURE IS NOT A MOVE. There is nowhere to come from,
-            // and easing in from wherever a fresh clone happened to be is a
-            // truck sliding out of the origin.
-            if (!_placed) { _placed = true; SnapToPicture(); }
+            _placed = true;
+            transform.position = _want;
         }
 
         /// <summary>
@@ -160,10 +168,10 @@ namespace Blwp
             if (dt <= 0f || Settled) return;
             _since += dt;
             var k = Mathf.Clamp01(_since / PictureSeconds);
+            // THE PLACE IS ALREADY THE NEWEST PICTURE'S; what walks is the hull's facing.
+            transform.position = _want;
             if (k >= 1f) { SnapToPicture(); return; }
-            transform.SetPositionAndRotation(
-                Vector3.Lerp(_from, _want, k),
-                Quaternion.Euler(0f, Mathf.LerpAngle(_fromHeading, _wantHeading, k), 0f));
+            transform.rotation = Quaternion.Euler(0f, Mathf.LerpAngle(_fromHeading, _wantHeading, k), 0f);
         }
 
         /// <summary>The newest picture, exactly - what a settled ghost is at.</summary>

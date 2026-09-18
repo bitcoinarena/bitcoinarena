@@ -180,12 +180,14 @@ public class GhostDrawnPoseTests
         TestContext.WriteLine($"one frame after a 6 m picture the ghost has moved "
                               + $"{Vector3.Distance(wasAt, oneFrameIn):F3} m of "
                               + $"{Vector3.Distance(wasAt, target):F3} m");
+        // AND IT STANDS ON THE PICTURE THAT LANDED, IN THAT FRAME (the owner 2026-09-18 05:10). It used to walk there over a
+        // whole interval and so was still on the picture before it when the next one arrived: measured against the wire,
+        // the picture was 22 ms old at the median while the drawn pose was 322 ms. The PLACE is the newest picture's at
+        // once; what is walked round is the hull's facing, which is not a place.
         Assert.Greater(Vector3.Distance(wasAt, oneFrameIn), 0.001f,
             "the ghost did not move at all on the frame after a new picture");
-        Assert.Less(Vector3.Distance(oneFrameIn, target), Vector3.Distance(wasAt, target),
-            "the ghost moved away from the picture it was given");
-        Assert.Greater(Vector3.Distance(oneFrameIn, target), 0.001f,
-            "the ghost snapped to the picture, which is the stutter this eases away");
+        Assert.Less(Vector3.Distance(oneFrameIn, target), 0.001f,
+            "the ghost is not standing on the picture that landed: it is still walking to it");
         for (var f = 0; f < 600 && !Settled(field); f++) yield return null;
         Assert.Less(Vector3.Distance(moving.transform.position, target), 0.001f,
             "the ghost never arrived on the picture it was given");
