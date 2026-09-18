@@ -153,7 +153,10 @@ namespace Blwp
 
         void LateUpdate()
         {
-            if (Time.unscaledTime - labelsReadAt < 0.1f) return;
+            // THE LABEL IS READ EVERY FRAME'S WORTH, NOT EVERY TENTH OF A SECOND. Read at 10 Hz it added up to another
+            // 100 ms to an age that is already the picture's own, and the age over a truck is the one number a player
+            // has for the lag (the owner 2026-09-17 19:15). The read is a bridge call and a split of a short string.
+            if (Time.unscaledTime - labelsReadAt < 0.016f) return;
             labelsReadAt = Time.unscaledTime;
             labels = ParseLabels(ReadLabels());
         }

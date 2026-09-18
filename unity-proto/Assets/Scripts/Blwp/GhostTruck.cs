@@ -191,11 +191,21 @@ namespace Blwp
         public Vector3 Wanted => _want;
 
         /// <summary>
-        /// `BlwpNet.BatchEvery` in seconds: a tenth. A truck that took longer
-        /// would be permanently behind its own picture; one that took less
-        /// would be a snap with extra steps.
+        /// HOW LONG THE HULL TAKES TO REACH THE PICTURE IT WAS JUST GIVEN.
+        ///
+        /// A tenth of a second - `BlwpNet.BatchEvery` - meant the truck arrived on a picture exactly as the next one
+        /// landed, so what a player saw was always the PREVIOUS pose. Measured against the wire (the owner 2026-09-17
+        /// 19:15, "ghosts still lag 300-600 ms"): the picture itself is 22 ms old at the median and 35 ms at the
+        /// ninetieth, while the drawn pose was 322 ms and 340 ms, and 3462 of 3483 poses were over 300 ms. The lag was
+        /// the walk, not the network.
+        ///
+        /// A THIRD OF THE INTERVAL: the hull still crosses the ground between two pictures rather than snapping - a
+        /// snap at 10 Hz is what the 17:05 report called stuttering - but it is standing on the newest picture for the
+        /// rest of the interval instead of forever walking to it. It is the same rule as before, with the trailing
+        /// removed; nothing here simulates driving, damage, scoring or arrival, and no pose is invented beyond the
+        /// picture: `k` is still clamped, so the truck stops on what the node proved and waits.
         /// </summary>
-        const float PictureSeconds = 0.1f;
+        const float PictureSeconds = 0.033f;
 
         Vector3 _from, _want;
         float _fromHeading, _wantHeading, _since;
