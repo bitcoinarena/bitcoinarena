@@ -183,6 +183,53 @@ namespace Blwp
             return cam;
         }
 
+        /// <summary>Where one truck's two lines go, and whether they are a marker at the screen's edge.</summary>
+        public readonly struct LabelSpot
+        {
+            /// <summary>Screen point, y up from the bottom, the way `Camera.WorldToScreenPoint` gives it.</summary>
+            public readonly Vector2 At;
+            /// <summary>True when the hull is not on screen and this is the marker that says where it is.</summary>
+            public readonly bool AtEdge;
+            public LabelSpot(Vector2 at, bool atEdge) { At = at; AtEdge = atEdge; }
+        }
+
+        /// <summary>
+        /// THE OTHER TRUCK IS MARKED AT THE EDGE WHEN IT IS OFF SCREEN (the owner 2026-09-18 06:45).
+        ///
+        /// The map parks one player per loading-bay door: 24 doors at a 6.8 m pitch, so two seats are a mean 54 m
+        /// apart along the frontage. Measured from the camera a player drives with - `ChaseCamera` in Follow, 11 m
+        /// behind the truck at fov 59 - that camera frames 3 of the 24 doors and puts a label on screen for 1. So two
+        /// parked tabs usually cannot see each other at all, which is what the 19:15 photograph shows, and it is not
+        /// lag. The doors are the map and stay; what was missing is a cue.
+        ///
+        /// A hull on screen keeps its label over the truck and gets nothing at the edge - one truck is one label. A
+        /// hull off screen, or behind the camera, is pinned to the rim of the screen in the direction it lies in,
+        /// with the same two lines and the same clock: nothing here invents a second age or a second pose.
+        ///
+        /// BEHIND THE CAMERA THE POINT IS MIRRORED. `WorldToScreenPoint` with a negative z gives a point reflected
+        /// through the centre, so a truck behind the player would be marked on the wrong side. It is reflected back
+        /// before the direction is taken.
+        /// </summary>
+        public static LabelSpot SpotFor(Camera cam, Vector3 world, float width, float height, float marginX, float marginY)
+        {
+            var p = cam.WorldToScreenPoint(world);
+            var behind = p.z <= 0f;
+            var at = new Vector2(p.x, p.y);
+            if (behind) at = new Vector2(width - at.x, height - at.y);
+            var inside = !behind
+                && at.x >= marginX && at.x <= width - marginX
+                && at.y >= marginY && at.y <= height - marginY;
+            if (inside) return new LabelSpot(at, false);
+
+            var centre = new Vector2(width * 0.5f, height * 0.5f);
+            var d = at - centre;
+            if (d.sqrMagnitude < 1e-4f) d = new Vector2(0f, 1f);
+            var halfX = Mathf.Max(1f, width * 0.5f - marginX);
+            var halfY = Mathf.Max(1f, height * 0.5f - marginY);
+            var k = Mathf.Min(halfX / Mathf.Max(Mathf.Abs(d.x), 1e-4f), halfY / Mathf.Max(Mathf.Abs(d.y), 1e-4f));
+            return new LabelSpot(centre + d * k, true);
+        }
+
         void OnGUI()
         {
             if (labels.Count == 0) return;
@@ -200,9 +247,9 @@ namespace Blwp
             foreach (var kv in trucks)
             {
                 if (kv.Value == null || !labels.TryGetValue(kv.Key, out var label)) continue;
-                var p = cam.WorldToScreenPoint(kv.Value.transform.position + Vector3.up * 3.8f);
-                if (p.z <= 0f) continue;
-                var rect = new Rect(p.x - 160f, Screen.height - p.y - size * 3f, 320f, size * 3f);
+                var spot = SpotFor(cam, kv.Value.transform.position + Vector3.up * 3.8f,
+                                   Screen.width, Screen.height, 160f, size * 3f);
+                var rect = new Rect(spot.At.x - 160f, Screen.height - spot.At.y - size * 3f, 320f, size * 3f);
                 var text = label[0] + "\n" + label[1];
                 GUI.Label(new Rect(rect.x + 1.5f, rect.y + 1.5f, rect.width, rect.height), text, labelShadow);
                 GUI.Label(rect, text, labelStyle);

@@ -98,10 +98,13 @@ public class GhostAcrossTheDoorsTests
         var framed = 0;
         var labelled = 0;
         var checkedDoors = 0;
+        var cued = 0;
+        var otherDoors = 0;
         var ownDoorFramed = false;
+        var ownDoorAtEdge = true;
         TestContext.WriteLine($"the player stands at ({me.x:F1}, {me.z:F1}), camera at "
                               + $"({eye.transform.position.x:F1}, {eye.transform.position.z:F1}) looking {eye.transform.forward}");
-        TestContext.WriteLine("door    where            apart     in frame   label on screen");
+        TestContext.WriteLine("door    where            apart     in frame   label on screen   cue");
 
         for (var bay = 0; bay < PostOffice.SoloBay + 11 && bay < 24; bay++)
         {
@@ -125,19 +128,41 @@ public class GhostAcrossTheDoorsTests
             var p = eye.WorldToScreenPoint(ghost.transform.position + Vector3.up * 3.8f);
             var onScreen = p.z > 0f && p.x > 0f && p.x < Screen.width && p.y > 0f && p.y < Screen.height;
 
+            // AND THE CUE THE PLAYER GETS EITHER WAY (the owner 2026-09-18 06:45, the named pick). The two lines are
+            // over the hull when the hull is on screen and pinned to the rim of the screen when it is not - the same
+            // rule `OnGUI` draws with, asked here as a function so it can be counted.
+            var size = Mathf.Max(13, Screen.height / 48);
+            var spot = GhostField.SpotFor(eye, ghost.transform.position + Vector3.up * 3.8f,
+                                          Screen.width, Screen.height, 160f, size * 3f);
+            var onTheScreen = spot.At.x >= 0f && spot.At.x <= Screen.width
+                              && spot.At.y >= 0f && spot.At.y <= Screen.height;
+
             var apart = Vector3.Distance(driver.transform.position, ghost.transform.position);
             TestContext.WriteLine($"{bay,4}    ({at.x,7:F1}, {at.z,7:F1})  {apart,6:F1} m   "
-                                  + $"{(inFrame ? "yes" : "no "),-9}  {(onScreen ? "yes" : "no")}");
+                                  + $"{(inFrame ? "yes" : "no "),-9}  {(onScreen ? "yes" : "no "),-16}  "
+                                  + $"{(onTheScreen ? (spot.AtEdge ? "edge marker" : "on the hull") : "NONE")} "
+                                  + $"at ({spot.At.x:F0}, {spot.At.y:F0})");
             checkedDoors++;
             if (inFrame) framed++;
             if (onScreen) labelled++;
-            if (apart < 3f) ownDoorFramed = inFrame;
+            if (onTheScreen) cued++;
+            if (apart >= 3f) otherDoors++;
+            if (apart < 3f) { ownDoorFramed = inFrame; ownDoorAtEdge = spot.AtEdge; }
         }
 
         TestContext.WriteLine($"of {checkedDoors} doors the player's own camera frames {framed} "
-                              + $"and puts a label on screen for {labelled}");
+                              + $"and puts a label on screen for {labelled}; every door with a cue: {cued} of {checkedDoors} "
+                              + $"({otherDoors} of them not the player's own)");
         Assert.Greater(checkedDoors, 0, "no door was measured");
         Assert.IsTrue(ownDoorFramed, "the player cannot even see a truck at their own door, so nothing here measures doors");
+
+        // EVERY OTHER DOOR IS FINDABLE. Three of the 24 are in frame; the rest were nothing at all before the marker,
+        // and a player cannot be asked to hunt for the truck they are supposed to be racing.
+        Assert.AreEqual(checkedDoors, cued,
+            $"only {cued} of {checkedDoors} doors give the player any cue, so a truck at one of the others is invisible");
+        Assert.AreEqual(23, otherDoors, "the table did not measure the other 23 doors");
+        // AND ONE TRUCK IS ONE LABEL: a hull on screen is named over the hull, not a second time at the rim.
+        Assert.IsFalse(ownDoorAtEdge, "a truck standing in front of the player was marked at the edge as well");
     }
 
     /// <summary>
