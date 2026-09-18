@@ -160,6 +160,15 @@ const driverClock = tickClock({ Channel: BroadcastChannel, name: 'blwp-daily-gho
 const watcherClock = tickClock({ Channel: BroadcastChannel, name: 'blwp-daily-ghost' });
 const overlayAges = [];         // what the label would print
 const wireLags = [];            // now, less the moment the driver recorded that very tick
+// AND WHERE THE DRAWN TRUCK ACTUALLY SITS (the owner 2026-09-18 04:30). `GhostTruck` walks from the pose it is standing on
+// to each new picture over one picture interval (PictureSeconds 0.1 s) and the label is re-read every 0.1 s, so the eye
+// is behind the number. The drawn truck is on the PREVIOUS picture when a new one lands and reaches the new one an
+// interval later: its age is the age of the pose it is standing on, which is this picture's age plus the gap it has not
+// yet crossed. Measured here from the same pictures, not asserted.
+const EASE_MS = 100;            // GhostTruck.PictureSeconds, in ms
+const LABEL_REFRESH_MS = 100;   // GhostField.LateUpdate re-reads the labels this often
+const easedAges = [];
+let lastPictureAt = null, lastPictureTick = null;
 let stamped = 0, guessed = 0;
 const pictures = [];            // { at, tick, session } of the driver, as the watcher was shown them
 const theirs = new Set();       // every driver entry this probe has had, so a picture of a round we left is counted
@@ -195,6 +204,12 @@ while (Date.now() < until - 20000) {
       if (sent === null) guessed++; else { stamped++; overlayAges.push(now - sent); }
       // AND THE WIRE: the same picture against the moment the driver actually recorded that tick.
       if (recordedAt[g.tick] !== undefined) wireLags.push(now - recordedAt[g.tick]);
+      // THE POSE ON SCREEN AT THE MOMENT THIS PICTURE LANDS: still the previous one, and the label still shows what it
+      // read up to a refresh ago. Its age is that older picture's own age plus the ease and the refresh it is behind.
+      if (lastPictureAt !== null && recordedAt[lastPictureTick] !== undefined) {
+        easedAges.push((now - recordedAt[lastPictureTick]) + EASE_MS + LABEL_REFRESH_MS);
+      }
+      lastPictureAt = now; lastPictureTick = g.tick;
       pictures.push({ at: now, tick: g.tick, session: here });
     } else if (theirs.has(toHex(g.entryId))) began.stale++;
     was(g);
@@ -273,6 +288,10 @@ say(`the age the overlay would print: p50 ${ms(pct(oa, 0.5))}, p90 ${ms(pct(oa, 
   + `(${stamped} stamped, ${guessed} with no stamp - those print "~" and are time since arrival)`);
 say(`the same pictures on the wire: p50 ${ms(pct(wl, 0.5))}, p90 ${ms(pct(wl, 0.9))}, max ${ms(wl[wl.length - 1])} `
   + `(the driver's own record of that tick to this watcher)`);
+const ea = sortNum(easedAges);
+say(`where the drawn truck sits, with the ease and the label refresh on top: p50 ${ms(pct(ea, 0.5))}, `
+  + `p90 ${ms(pct(ea, 0.9))}, max ${ms(ea[ea.length - 1])}; over 300 ms ${ea.filter((x) => x > 300).length} of ${ea.length}, `
+  + `over 600 ms ${ea.filter((x) => x > 600).length}`);
 for (const p of pings) {
   const r = p.held.rtts.slice().sort((a, b) => a - b);
   say(`${p.node.replace('https://', '')}: ${r.length} pings, median ${ms(pct(r, 0.5))}, p90 ${ms(pct(r, 0.9))}, `
