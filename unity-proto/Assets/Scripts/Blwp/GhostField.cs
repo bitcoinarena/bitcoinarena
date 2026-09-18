@@ -94,6 +94,17 @@ namespace Blwp
         /// </summary>
         public Func<float, float, float, float> Rest;
 
+        /// <summary>
+        /// HOW A TRUCK OF THIS SHAPE LIES AT A POSE - the pitch and roll of the ground under its four wheels.
+        ///
+        /// the owner 2026-09-18 10:42: "Ghosts have NO physics. They must climb hills the same as his own truck." A
+        /// ghost was given the ground's HEIGHT (`Rest`) and nothing else, so it stood dead level on a hillside while
+        /// the local truck, drawn from the same four contact points, tilted. The local truck has no physics here
+        /// either - `CoreDrivenTruck.Lie` is a drawing rule over the surface, not a rigidbody - so this is the same
+        /// rule for the same reason, handed in the same way the resting height is.
+        /// </summary>
+        public Func<float, float, float, Quaternion> Lie;
+
         public int Shown { get; private set; }
         public int Trucks => trucks.Count;
         /// <summary>Trucks taken away because their entry was left.</summary>
@@ -367,11 +378,12 @@ namespace Blwp
                 body.SetActive(true);
             }
 
-            var resting = Rest != null
-                ? Rest(picture.X / GhostTruck.ONE, picture.Z / GhostTruck.ONE,
-                       BlwpCore.Degrees(picture.Heading))
-                : (float?)null;
-            ghost.Show(picture.X, picture.Z, picture.Heading, resting);
+            var x = picture.X / GhostTruck.ONE;
+            var z = picture.Z / GhostTruck.ONE;
+            var heading = BlwpCore.Degrees(picture.Heading);
+            var resting = Rest != null ? Rest(x, z, heading) : (float?)null;
+            var lying = Lie != null ? Lie(x, z, heading) : (Quaternion?)null;
+            ghost.Show(picture.X, picture.Z, picture.Heading, resting, lying);
             pictures[picture.Entry] = picture;
             Shown++;
         }

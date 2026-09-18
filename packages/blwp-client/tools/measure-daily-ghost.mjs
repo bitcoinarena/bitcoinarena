@@ -189,6 +189,7 @@ const facingAges = [];
 // AND THE FIRST PICTURE OF A NEW ROUND, DRAWN (the owner's report: after PLAY the other truck missing, then in the wrong
 // place). The wire says when it arrived; this says how old the pose the hull stands in is at that frame.
 const firstDrawn = [];
+const behind = [];              // how many ticks the pictured pose trails the driver's own tick, per picture
 // The body of `Show(int, int, int, float?)` alone, so "the facing binds in the landing frame" is read where it would
 // happen and not off `Ease`, which sets the same fields every frame.
 const showBody = (cs) => {
@@ -256,6 +257,11 @@ while (Date.now() < until - 20000) {
       // AND THE FIRST PICTURE OF THIS ROUND, DRAWN: the hull was made this frame, so the place it stands in is this
       // picture's own. Recorded apart so PLAY-again is a number on screen and not only on the wire.
       if (began.pictures === 1 && drawnAge !== null) firstDrawn.push({ session: here, age: drawnAge });
+      // AND HOW FAR BEHIND THE DRIVER THE PICTURE ITSELF IS, ALL ROUND LONG (the owner 2026-09-18 10:42: "position is
+      // only correct at the start; the longer the other truck drives, the more the ghost is in the wrong place").
+      // The first picture of a round was already measured at 1-4 ticks; this asks whether that grows. A tick is
+      // 1/60 s, so the metres are the other truck's speed times this.
+      behind.push({ at: began.pictures, ticks: tick - g.tick });
       // AND ACROSS THE WHOLE INTERVAL: the pose ages until the next picture lands, so the eye's average is the age at
       // land plus half a gap.
       if (lastPictureAt !== null) acrossInterval.push((now - lastPictureAt) / 2);
@@ -345,6 +351,13 @@ say(`and it ages until the next picture lands: add p50 ${ms(pct(ai, 0.5))} acros
 say(`where the drawn truck sits at the moment a picture lands: p50 ${ms(pct(ea, 0.5))}, `
   + `p90 ${ms(pct(ea, 0.9))}, max ${ms(ea[ea.length - 1])}; over 300 ms ${ea.filter((x) => x > 300).length} of ${ea.length}, `
   + `over 600 ms ${ea.filter((x) => x > 600).length}`);
+// DOES IT GROW? The same list, cut in three by position in the round.
+if (behind.length > 30) {
+  const third = Math.floor(behind.length / 3);
+  const cut = (xs) => { const s = xs.map((b) => b.ticks).sort((a, b) => a - b); return `p50 ${pct(s, 0.5)}, p90 ${pct(s, 0.9)}, max ${s[s.length - 1]}`; };
+  say(`how far behind the driver each picture is, in ticks (1/60 s each): first third ${cut(behind.slice(0, third))}; `
+    + `middle ${cut(behind.slice(third, 2 * third))}; last third ${cut(behind.slice(2 * third))}`);
+}
 const fa = facingAges.slice().sort((a, b) => a - b);
 say(`where the hull is POINTING at that same moment: p50 ${ms(pct(fa, 0.5))}, p90 ${ms(pct(fa, 0.9))}, `
   + `max ${ms(fa[fa.length - 1])}; over 300 ms ${fa.filter((x) => x > 300).length} of ${fa.length}, `
