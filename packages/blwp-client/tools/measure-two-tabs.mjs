@@ -58,6 +58,7 @@ async function browser(name, port) {
   let id = 0;
   const pending = new Map();
   const logs = [];
+  const said = [];
   ws.on('message', (raw) => {
     const m = JSON.parse(raw);
     if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
@@ -65,6 +66,7 @@ async function browser(name, port) {
       const line = m.params.args.map((x) => x.value ?? x.description ?? '').join(' ');
       logs.push(line);
       if (/context lost|WebGL|out of memory|abort/i.test(line)) trouble.push(`console: ${line.slice(0, 200)}`);
+      if (/no session yet|session opening/.test(line)) said.push(`${name}: ${line.slice(0, 160)}`);
     }
   });
   const send = (method, params = {}) => new Promise((r) => {
@@ -91,7 +93,7 @@ async function browser(name, port) {
     type, code, key: text, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode,
     ...(type === 'keyDown' ? { text } : {}),
   });
-  return { name, proc, ws, send, evaluate, shot, key, logs, trouble, close: () => { try { ws.close(); } catch {} try { proc.kill('SIGKILL'); } catch {} } };
+  return { name, proc, ws, send, evaluate, shot, key, logs, said, trouble, close: () => { try { ws.close(); } catch {} try { proc.kill('SIGKILL'); } catch {} } };
 }
 
 /** What one tab holds of the round and of the other trucks - asked of the page's own objects. */
@@ -265,6 +267,7 @@ try {
   console.log(`tabA held a ghost of tabB in ${seenOfEachOther.a} looks; age p50 ${p50(ages.a) ?? '-'} ms`);
   console.log(`tabB held a ghost of tabA in ${seenOfEachOther.b} looks; age p50 ${p50(ages.b) ?? '-'} ms`);
   for (const t of tabs) {
+    console.log(`${t.name} on the session: ` + (t.said.length ? [...new Set(t.said)].join('\n  ') : 'said nothing'));
     if (t.trouble.length) console.log(`${t.name} trouble:\n  ` + [...new Set(t.trouble)].slice(0, 6).join('\n  '));
     else console.log(`${t.name}: no WebGL context loss, no out-of-memory`);
     console.log(`${t.name} last console lines:\n  ` + t.logs.slice(-6).join('\n  '));
