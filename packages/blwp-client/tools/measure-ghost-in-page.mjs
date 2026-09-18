@@ -32,6 +32,8 @@ const DRIVE_MS = Number(arg('drive', 120000));   // of the FIRST round; the seco
 const MINUTES = Number(arg('minutes', 14));
 const OUT = arg('out', '/tmp/claude-1000/-tmp-btc-phase0/3702e750-4ad9-4253-93e3-670b04a90b08/scratchpad/two-tabs');
 const CHROME = arg('chrome', '/home/arena/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome');
+// The test host's browsers are already running and forwarded here; this box only drives them.
+const ATTACH = process.argv.includes('--attach');
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const clock = () => new Date().toISOString().slice(11, 19);
 const say = (line) => console.log(`${clock()}  ${line}`);
@@ -39,6 +41,20 @@ mkdirSync(OUT, { recursive: true });
 
 /** One headless Chrome, and the few CDP calls this needs. */
 async function browser(name, port) {
+  // ATTACH, WHEN THE BROWSER IS SOMEBODY ELSE'S (the owner 2026-09-18 19:05, HARD): live Chrome playtests run on the
+  // test host, whose pages draw at a player's speed, and this box only drives them over a forwarded CDP port. Spawning
+  // is kept for the fallback the HARD names - if the test host is unreachable, the playtest runs here.
+  if (ATTACH) {
+    const proc = { pid: 0, kill() {} };
+    let target = null;
+    for (let i = 0; i < 30 && !target; i++) {
+      const list = await fetch(`http://127.0.0.1:${port}/json/list`).then((r) => r.json()).catch(() => []);
+      target = list.find((x) => x.type === 'page' && x.url.startsWith('http'));
+      if (!target) await wait(1000);
+    }
+    if (!target) throw new Error(`${name}: nothing to attach to on ${port}`);
+    return await wire(name, proc, target, []);
+  }
   const dir = mkdtempSync(join(tmpdir(), `blwp-${name}-`));
   const proc = spawn(CHROME, [
     '--headless=new', `--remote-debugging-port=${port}`, '--no-sandbox',
@@ -60,12 +76,17 @@ async function browser(name, port) {
     target = list.find((t) => t.type === 'page' && t.url.startsWith('http'));
   }
   if (!target) throw new Error(`${name}: chrome never opened the page`);
+  return await wire(name, proc, target, trouble);
+}
+
+/** The CDP wiring both paths share: one socket, the calls this probe makes, and the page's console. */
+async function wire(name, proc, target, trouble) {
+  const logs = [];
+  const said = [];
   const ws = new WebSocket(target.webSocketDebuggerUrl, { maxPayload: 64 * 1024 * 1024 });
   await new Promise((r) => ws.on('open', r));
   let id = 0;
   const pending = new Map();
-  const logs = [];
-  const said = [];
   ws.on('message', (raw) => {
     const m = JSON.parse(raw);
     if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
@@ -185,6 +206,28 @@ const RECORDER = `(function () {
   return 'recording';
 })()`;
 
+const FETCHLOG = `(function () {
+  if (window.__blwpFetchLog) return 'already logging';
+  var log = window.__blwpFetchLog = [];
+  var was = window.fetch;
+  window.fetch = function (input, init) {
+    var url = String(input && input.url ? input.url : input);
+    var method = (init && init.method) || (input && input.method) || 'GET';
+    var at = Date.now();
+    var keep = function (how) { log.push([at, Date.now() - at, method, url.slice(0, 140), how]); if (log.length > 400) log.splice(0, 100); };
+    return was.apply(this, arguments).then(function (r) { keep('http ' + r.status); return r; },
+      function (e) { keep('FAILED ' + String(e && e.name) + ': ' + String(e && e.message)); throw e; });
+  };
+  return 'logging every call';
+})()`;
+
+const CALLS = `(function () {
+  var log = window.__blwpFetchLog || [];
+  var bad = log.filter(function (r) { return String(r[4]).indexOf('FAILED') === 0 || String(r[4]).indexOf('http 2') !== 0; });
+  var line = function (r) { return new Date(r[0]).toISOString().slice(11, 23) + ' ' + r[2] + ' ' + r[3] + ' -> ' + r[4] + ' (' + r[1] + ' ms)'; };
+  return { calls: log.length, refused: bad.map(line).slice(-10), last: log.slice(-8).map(line) };
+})()`;
+
 const MINE = `(function () {
   var r = window.__blwpRec || { mine: [], ghosts: [] };
   var net = window.unityInstance && window.unityInstance.Module && window.unityInstance.Module.blwpNet;
@@ -252,6 +295,10 @@ try {
     }
     say(`${t.name}: the bridge is ${up ? 'up' : 'STILL NOT UP'}`);
     if (up) say(`${t.name}: ${await t.evaluate(RECORDER)}`);
+    // EVERY CALL THIS PAGE MAKES, from here on: one of them is the one that dies with "Failed to fetch" when the
+    // second session opens, and a refusal is a different fault from a timeout. Kept with the wall clock so the two
+    // tabs can be read against each other at the same instant.
+    if (up) say(`${t.name}: ${await t.evaluate(FETCHLOG)}`);
   }
 
   // BOTH TRUCKS DRIVE, so a pose at one tick is not a pose at the next.
@@ -382,6 +429,13 @@ try {
     say(`${t.name} in round two: ${f ? `the other truck appeared ${f.at} ms after PLAY, entry ${String(f.who).slice(0, 8)}`
       + `, pictures naming the old round ${f.old}, drawn ${f.drawn}` : 'NEVER saw the other truck'}`);
     // WHAT THE PAGE HOLDS WHEN IT IS NEVER: client, what it has published, and whether the round it joined is closed.
+    // AND THE CALLS THEMSELVES, both tabs, whatever the answer was.
+    const calls = await t.evaluate(CALLS);
+    if (calls && calls.calls !== undefined) {
+      say(`${t.name} made ${calls.calls} calls; refused or non-2xx: ${calls.refused.length ? '' : 'none'}`);
+      for (const r of calls.refused) say(`   ${t.name} refused: ${r}`);
+      for (const r of calls.last) say(`   ${t.name} last: ${r}`);
+    }
     if (!f) say(`${t.name} holds: ${await t.evaluate('(function(){var m=window.unityInstance&&window.unityInstance.Module;'
       + 'var n=m&&m.blwpNet;var c=n&&n.client;var hex=function(u){return Array.prototype.map.call(u,function(x){'
       + 'return x.toString(16).padStart(2,"0");}).join("");};'
