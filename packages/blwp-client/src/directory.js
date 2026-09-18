@@ -195,7 +195,7 @@ export const PROVIDERS_NEEDED = 2;
 export const PROVIDER_WAIT_MS = 10000;
 
 export async function discover({
-  headers, bonds, anchor, committee, signedAdvert, ask, least, timeoutMs,
+  headers, bonds, anchor, committee, signedAdvert, ask, least, timeoutMs, proved,
 }) {
   // THE RULES ARE THE CLIENT'S. THE PAGE SAYS WHERE TO ASK, AND NOTHING ELSE.
   //
@@ -279,15 +279,44 @@ export async function discover({
         + 'chosen by whoever handed over the chain is not a block the client knows',
     };
 
-  const chain = await agreedChain(headers, {
-    anchor: BITCOIN_MAINNET_GENESIS, ask,
-    least: PROVIDERS_NEEDED, timeoutMs: PROVIDER_WAIT_MS,
-  });
-  if (!chain.ok) return { ok: false, why: `no chain: ${chain.why}`, refused: chain.refused };
+  // A CHAIN THIS PAGE HAS ALREADY PROVED IS NOT PROVED AGAIN FOR THE NEXT ROUND (the owner 2026-09-18 16:45).
+  //
+  // Measured in two real browsers: on PLAY again both tabs joined the next round and neither got a client, because
+  // this read wants both signer nodes inside PROVIDER_WAIT_MS and a starved tab took 8746 ms for 240 bytes - where
+  // curl on the same host gets them in 0.52 s. The page then sat in a joined round with nothing publishing, and the
+  // other tab was shown no truck at all for the whole round.
+  //
+  // Headers do not change behind us: a chain proved a minute ago is the same chain, and the round that follows is
+  // played under it. So a caller may hand back what it proved, and only a page that has never proved one reads.
+  // WHAT IS NOT REUSED IS THE BOND: it is checked against the chain every time, and a bond in a block the old proof
+  // does not reach refuses here - which is the one case that falls back to a fresh read rather than failing.
+  let chain = proved && proved.ok && Array.isArray(proved.headers) && proved.headers.length ? proved : null;
+  let reusedChain = !!chain;
+  if (!chain) {
+    chain = await agreedChain(headers, {
+      anchor: BITCOIN_MAINNET_GENESIS, ask,
+      least: PROVIDERS_NEEDED, timeoutMs: PROVIDER_WAIT_MS,
+    });
+    if (!chain.ok) return { ok: false, why: `no chain: ${chain.why}`, refused: chain.refused };
+  }
 
-  const bond = await askForBond(bonds, {
+  let bond = await askForBond(bonds, {
     chain: chain.headers, ask, timeoutMs: PROVIDER_WAIT_MS,
   });
+  if (!bond.ok && reusedChain) {
+    // THE KEPT PROOF DID NOT CARRY THIS ROUND'S BOND: read the chain afresh once and try again, rather than playing
+    // under a chain that cannot reach it. IF THAT READ FAILS, the answer is still the BOND's own refusal: the kept
+    // proof was good enough to be asked, and replacing the reason with "no chain" would name the wrong fault.
+    const bondWhy = bond.why, bondRefused = bond.refused;
+    reusedChain = false;
+    const fresh = await agreedChain(headers, {
+      anchor: BITCOIN_MAINNET_GENESIS, ask,
+      least: PROVIDERS_NEEDED, timeoutMs: PROVIDER_WAIT_MS,
+    });
+    if (!fresh.ok) return { ok: false, why: `no bond: ${bondWhy}`, refused: bondRefused };
+    chain = fresh;
+    bond = await askForBond(bonds, { chain: chain.headers, ask, timeoutMs: PROVIDER_WAIT_MS });
+  }
   if (!bond.ok) return { ok: false, why: `no bond: ${bond.why}`, refused: bond.refused };
 
   const seen = reach({
@@ -305,5 +334,9 @@ export async function discover({
     agreed: chain.agreed,
     fromChain: chain.from,
     fromBond: bond.from,
+    // WHAT WAS PROVED, so the next round of this same page can be opened from it instead of reading the headers
+    // again, and whether this call read or reused.
+    chain,
+    reusedChain,
   };
 }
