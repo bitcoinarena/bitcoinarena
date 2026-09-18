@@ -114,17 +114,40 @@ public class SpectatorCamera : MonoBehaviour
     /// </summary>
     readonly System.Collections.Generic.List<Vector2> _fingers = new();
 
+    /// <summary>
+    /// The fingers AND the mouse: everything pressing the glass right now, which is what the flying pads are hit-tested
+    /// against.
+    ///
+    /// THE PADS DID NOTHING ON A DESKTOP (the owner 2026-09-18 21:52, photographed in spectate: "I can press it with the
+    /// mouse but it won't do anything ... and only on spectate"). The pad LIT UP under the pointer, because the pads
+    /// themselves read the mouse - but this mode collected touches only, so on a screen with no glass the list was
+    /// always empty and `Move` never saw the press. `Look` then read the same press as "on a control" and rightly
+    /// refused to turn the camera, which is why nothing at all happened.
+    ///
+    /// The two-finger height pinch stays with real fingers: one mouse is not two fingers.
+    /// </summary>
+    readonly System.Collections.Generic.List<Vector2> _pressed = new();
+
     void Fingers()
     {
         _fingers.Clear();
         var touch = UnityEngine.InputSystem.Touchscreen.current;
-        if (touch == null) return;
-        foreach (var t in touch.touches)
-            if (t.press.isPressed)
-            {
-                var p = t.position.ReadValue();
-                _fingers.Add(new Vector2(p.x, Screen.height - p.y));
-            }
+        if (touch != null)
+            foreach (var t in touch.touches)
+                if (t.press.isPressed)
+                {
+                    var p = t.position.ReadValue();
+                    _fingers.Add(new Vector2(p.x, Screen.height - p.y));
+                }
+
+        _pressed.Clear();
+        _pressed.AddRange(_fingers);
+        var mouse = UnityEngine.InputSystem.Mouse.current;
+        if (mouse != null && mouse.leftButton.isPressed)
+        {
+            var m = mouse.position.ReadValue();
+            _pressed.Add(new Vector2(m.x, Screen.height - m.y));
+        }
     }
 
     /// <summary>Is this finger on one of the on-screen controls?</summary>
@@ -202,16 +225,17 @@ public class SpectatorCamera : MonoBehaviour
         }
 
         // The driving pads double as movement while spectating, so the mode is
-        // usable on a phone. TouchPad has no held-state of its own - it
-        // resolves a list of live points - so the fingers collected above are
-        // handed to the same hit test the driving controls use.
-        if (_fingers.Count > 0)
+        // usable on a phone AND on a desktop with a mouse. TouchPad has no
+        // held-state of its own - it resolves a list of live points - so
+        // everything pressing the glass is handed to the same hit test the
+        // driving controls use.
+        if (_pressed.Count > 0)
         {
             int w = Screen.width, h = Screen.height;
-            if (TouchPad.Hit(TouchPad.Pad.Up, w, h, _fingers)) move += transform.forward;
-            if (TouchPad.Hit(TouchPad.Pad.Down, w, h, _fingers)) move -= transform.forward;
-            if (TouchPad.Hit(TouchPad.Pad.Left, w, h, _fingers)) move -= transform.right;
-            if (TouchPad.Hit(TouchPad.Pad.Right, w, h, _fingers)) move += transform.right;
+            if (TouchPad.Hit(TouchPad.Pad.Up, w, h, _pressed)) move += transform.forward;
+            if (TouchPad.Hit(TouchPad.Pad.Down, w, h, _pressed)) move -= transform.forward;
+            if (TouchPad.Hit(TouchPad.Pad.Left, w, h, _pressed)) move -= transform.right;
+            if (TouchPad.Hit(TouchPad.Pad.Right, w, h, _pressed)) move += transform.right;
         }
 
         if (move.sqrMagnitude > 0.0001f)
