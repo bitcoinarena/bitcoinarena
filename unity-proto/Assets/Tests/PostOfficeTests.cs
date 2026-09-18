@@ -291,7 +291,12 @@ public class PostOfficeTests
             // its plate, sprawled across the depot. One stale frame, twice.
             var mr = tm.GetComponent<MeshRenderer>();
             var room = PostOffice.Room(plate);
-            var drawn = PostOffice.Face(mr.bounds.size);
+            // ONE SPACE FOR BOTH SIDES. `Room` answers in the plate's own axes; this used to answer in WORLD ones,
+            // and measured plate by plate the two are not the same box - a fee plate is 5.2 x 1.5 of its own and
+            // 0.0 x 1.5 x 5.2 in the world, because it is turned a quarter round. The world box is never smaller
+            // than the drawn text, so the overflow check below was passing on luck, and the fill check underneath it
+            // was being fed a size larger than what is on the wall - this makes that one STRICTER, not looser.
+            var drawn = PostOffice.Face(PostOffice.Drawn(mr.localBounds.size, tm.transform.lossyScale));
             float w = drawn.x, h = drawn.y;
 
             Assert.LessOrEqual(w, room.x + 0.01f,
@@ -343,7 +348,9 @@ public class PostOfficeTests
         var whole = new Bounds(plate.position, Vector3.zero);
         foreach (var r in model.GetComponentsInChildren<Renderer>(true)) whole.Encapsulate(r.bounds);
 
-        var plateFace = PostOffice.Face(plateR.bounds.size);
+        // The plaque in its own axes, the BUILDING as a world box - deliberately: the question here is not a face but
+        // "how big is the thing this hangs on", and the ratio is what the answer rides on.
+        var plateFace = PostOffice.Room(plate);
         var wholeFace = PostOffice.Face(whole.size);
         Assert.Less(plateFace.x, wholeFace.x * 0.25f,
             $"the whitepaper's plate is {plateFace.x:0.0} m across a {wholeFace.x:0.0} m building - that is not a "
@@ -351,7 +358,7 @@ public class PostOfficeTests
 
         // And the words are on it. Bounds are world-axis boxes, so a hair of tolerance for a plate at an angle.
         var text = paper.GetComponent<MeshRenderer>();
-        var drawn = PostOffice.Face(text.bounds.size);
+        var drawn = PostOffice.Face(PostOffice.Drawn(text.localBounds.size, paper.transform.lossyScale));
         Assert.LessOrEqual(drawn.x, plateFace.x + 0.05f,
             $"the whitepaper is {drawn.x:0.0} m wide on a {plateFace.x:0.0} m plaque");
         Assert.LessOrEqual(drawn.y, plateFace.y + 0.05f,
