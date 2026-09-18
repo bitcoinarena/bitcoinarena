@@ -175,6 +175,8 @@ const csOf = (file, what) => {
 const EASE_MS = csOf('GhostTruck.cs', /PictureSeconds = ([0-9.]+)f/);
 const LABEL_REFRESH_MS = csOf('GhostField.cs', /labelsReadAt < ([0-9.]+)f/);
 const easedAges = [];
+const acrossInterval = [];
+const ghostTruckCs = readFileSync(new URL('../../../unity-proto/Assets/Scripts/Blwp/GhostTruck.cs', import.meta.url).pathname, 'utf8');
 let lastPictureAt = null, lastPictureTick = null;
 let stamped = 0, guessed = 0;
 const pictures = [];            // { at, tick, session } of the driver, as the watcher was shown them
@@ -213,9 +215,17 @@ while (Date.now() < until - 20000) {
       if (recordedAt[g.tick] !== undefined) wireLags.push(now - recordedAt[g.tick]);
       // THE POSE ON SCREEN AT THE MOMENT THIS PICTURE LANDS: still the previous one, and the label still shows what it
       // read up to a refresh ago. Its age is that older picture's own age plus the ease and the refresh it is behind.
-      if (lastPictureAt !== null && recordedAt[lastPictureTick] !== undefined) {
+      // AT THE LAND INSTANT: what the hull is standing on in the frame this picture arrives. It is this picture's own
+      // age once the pose binds at land; it was the previous picture's while the truck walked.
+      const bindsAtLand = /transform.position = _want;/.test(ghostTruckCs);
+      if (recordedAt[g.tick] !== undefined && (bindsAtLand || lastPictureTick === null)) {
+        easedAges.push((now - recordedAt[g.tick]) + LABEL_REFRESH_MS);
+      } else if (lastPictureAt !== null && recordedAt[lastPictureTick] !== undefined) {
         easedAges.push((now - recordedAt[lastPictureTick]) + EASE_MS + LABEL_REFRESH_MS);
       }
+      // AND ACROSS THE WHOLE INTERVAL: the pose ages until the next picture lands, so the eye's average is the age at
+      // land plus half a gap.
+      if (lastPictureAt !== null) acrossInterval.push((now - lastPictureAt) / 2);
       lastPictureAt = now; lastPictureTick = g.tick;
       pictures.push({ at: now, tick: g.tick, session: here });
     } else if (theirs.has(toHex(g.entryId))) began.stale++;
@@ -297,7 +307,9 @@ say(`the same pictures on the wire: p50 ${ms(pct(wl, 0.5))}, p90 ${ms(pct(wl, 0.
   + `(the driver's own record of that tick to this watcher)`);
 const ea = sortNum(easedAges);
 say(`the page eases over ${EASE_MS} ms and re-reads the label every ${LABEL_REFRESH_MS} ms`);
-say(`where the drawn truck sits, with the ease and the label refresh on top: p50 ${ms(pct(ea, 0.5))}, `
+const ai = sortNum(acrossInterval);
+say(`and it ages until the next picture lands: add p50 ${ms(pct(ai, 0.5))} across an interval`);
+say(`where the drawn truck sits at the moment a picture lands: p50 ${ms(pct(ea, 0.5))}, `
   + `p90 ${ms(pct(ea, 0.9))}, max ${ms(ea[ea.length - 1])}; over 300 ms ${ea.filter((x) => x > 300).length} of ${ea.length}, `
   + `over 600 ms ${ea.filter((x) => x > 600).length}`);
 for (const p of pings) {
