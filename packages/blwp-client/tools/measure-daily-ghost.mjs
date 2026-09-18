@@ -165,8 +165,15 @@ const wireLags = [];            // now, less the moment the driver recorded that
 // is behind the number. The drawn truck is on the PREVIOUS picture when a new one lands and reaches the new one an
 // interval later: its age is the age of the pose it is standing on, which is this picture's age plus the gap it has not
 // yet crossed. Measured here from the same pictures, not asserted.
-const EASE_MS = 100;            // GhostTruck.PictureSeconds, in ms
-const LABEL_REFRESH_MS = 100;   // GhostField.LateUpdate re-reads the labels this often
+// Read from the shipped C# rather than typed here, so this measures what the page does.
+const csOf = (file, what) => {
+  const text = readFileSync(new URL(`../../../unity-proto/Assets/Scripts/Blwp/${file}`, import.meta.url).pathname, 'utf8');
+  const found = text.match(what);
+  if (!found) throw new Error(`${file} no longer says ${what}`);
+  return Math.round(Number(found[1]) * 1000);
+};
+const EASE_MS = csOf('GhostTruck.cs', /PictureSeconds = ([0-9.]+)f/);
+const LABEL_REFRESH_MS = csOf('GhostField.cs', /labelsReadAt < ([0-9.]+)f/);
 const easedAges = [];
 let lastPictureAt = null, lastPictureTick = null;
 let stamped = 0, guessed = 0;
@@ -289,6 +296,7 @@ say(`the age the overlay would print: p50 ${ms(pct(oa, 0.5))}, p90 ${ms(pct(oa, 
 say(`the same pictures on the wire: p50 ${ms(pct(wl, 0.5))}, p90 ${ms(pct(wl, 0.9))}, max ${ms(wl[wl.length - 1])} `
   + `(the driver's own record of that tick to this watcher)`);
 const ea = sortNum(easedAges);
+say(`the page eases over ${EASE_MS} ms and re-reads the label every ${LABEL_REFRESH_MS} ms`);
 say(`where the drawn truck sits, with the ease and the label refresh on top: p50 ${ms(pct(ea, 0.5))}, `
   + `p90 ${ms(pct(ea, 0.9))}, max ${ms(ea[ea.length - 1])}; over 300 ms ${ea.filter((x) => x > 300).length} of ${ea.length}, `
   + `over 600 ms ${ea.filter((x) => x > 600).length}`);
