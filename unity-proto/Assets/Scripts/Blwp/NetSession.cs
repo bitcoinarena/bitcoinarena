@@ -46,6 +46,27 @@ namespace Blwp
         float _nextPoll;
 
         /// <summary>
+        /// WHY A TAB IS NOT IN A ROUND, IN ITS OWN WORDS (the owner 2026-09-18 09:00, the two-tab gate).
+        ///
+        /// Two headless players on this host drove for nine minutes with the page's line reading "play - not started"
+        /// and no session, and nothing on the screen or in the console said which of the three conditions was unmet.
+        /// The page could be asked whether it had named a node; it could not be asked what UNITY thought. So the rule
+        /// says so itself, once per reason rather than once per frame - a log line is the one thing a headless client
+        /// can already read.
+        /// </summary>
+        void SayWhyNotYet()
+        {
+            var why = string.IsNullOrEmpty(nodeUrl) ? "the page has named no node"
+                : !BlwpCore.Available ? "the core is not driving here"
+                : BlwpCore.Tick < settleTicks ? $"the world is still settling ({BlwpCore.Tick} of {settleTicks} ticks)"
+                : "nothing is left to wait for, and no session was asked for";
+            if (why == _saidWhy) return;
+            _saidWhy = why;
+            Debug.Log($"[blwp] no session yet: {why}");
+        }
+        string _saidWhy = "";
+
+        /// <summary>
         /// Whether a session should be asked for on this tick.
         ///
         /// Its own function because it is a RULE and rules here are measured:
@@ -86,6 +107,7 @@ namespace Blwp
             if (ShouldOpen(nodeUrl, BlwpCore.Available, BlwpNet.Live,
                            BlwpCore.Tick, settleTicks))
                 BlwpNet.Start(nodeUrl);
+            else if (!BlwpNet.Live) SayWhyNotYet();
 
             // Polled rather than pushed, and not every frame: the status is a
             // string built in the page, and building it sixty times a second to

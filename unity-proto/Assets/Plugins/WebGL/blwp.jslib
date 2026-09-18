@@ -687,6 +687,10 @@ mergeInto(LibraryManager.library, {
     var names = (typeof window !== 'undefined' && window.BLWP_NAMES_BY_PLAYER) || {};
     var text = BLWPCLIENT.ghostLabelText(BLWPCLIENT.ghostLabels(net.ghosts, {
       nameOf: function (player) { return names[player] || null; }, clock: Module.blwpTickClock }));
+    // AND THE SAME STRING IS LEFT WHERE A HEADLESS CLIENT CAN READ IT (the owner 2026-09-18 09:00, the two-tab gate).
+    // C# draws these two lines over each truck through OnGUI, and no browser automation can read a GUI back. This is
+    // the very text the renderer is handed - not a second copy built from something else a moment later.
+    Module.blwpGhostLabelText = text || '';
     if (!text) return 0;
     return stringToUTF8(text, ptr, cap | 0);
   },
