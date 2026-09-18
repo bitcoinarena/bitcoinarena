@@ -277,12 +277,31 @@ try {
   const ROUND = `(function(){var n=window.unityInstance&&window.unityInstance.Module&&window.unityInstance.Module.blwpNet;`
     + `var hex=function(u){return Array.prototype.map.call(u,function(x){return x.toString(16).padStart(2,'0');}).join('');};`
     + `return n&&n.where?hex(n.where.roundId):'';})()`;
+  // WHETHER THE CHAIN PROVIDERS ANSWER AT ALL, timed from inside the page, just before PLAY is pressed again. The
+  // page reads /headers from each node it was given, and `agreedChain` gives up on one after 10000 ms; the error at
+  // this boundary was that none of the two answered.
+  const PROVIDERS = `(function(){
+    var from = (window.BLWP_CHAIN_FROM || []).slice();
+    if (!from.length) {
+      var q = new URLSearchParams(location.search.replace(/^\\?/, ''));
+      from = (q.get('node') || '').split(',').filter(Boolean);
+    }
+    return Promise.all(from.map(function (u) {
+      var at = Date.now();
+      return fetch(u.replace(/\\/+$/, '') + '/headers', { method: 'GET' })
+        .then(function (r) { return r.arrayBuffer().then(function (b) {
+          return u.replace('https://', '').slice(0, 12) + ' http ' + r.status + ' ' + b.byteLength + ' bytes in ' + (Date.now() - at) + ' ms'; }); })
+        .catch(function (e) { return u.replace('https://', '').slice(0, 12) + ' FAILED after ' + (Date.now() - at) + ' ms: ' + (e && e.message); });
+    })).then(function (all) { return all.join(' | '); });
+  })()`;
+  for (const t of tabs) say(`${t.name} chain providers at the moment the round ends: ${await t.evaluate(PROVIDERS)}`);
+
   const firstRound = { tabA: await a.evaluate(ROUND), tabB: await b.evaluate(ROUND) };
   say(`round one: tabA in ${String(firstRound.tabA).slice(0, 8)}, tabB in ${String(firstRound.tabB).slice(0, 8)}`);
 
   // WAIT FOR THE FIRST RUN TO END, which is what puts the lobby back in front of the player.
   let over = false;
-  for (let i = 0; i < 80 && !over; i++) {
+  for (let i = 0; i < 24 && !over; i++) {
     over = (await a.evaluate('!!window.BLWP_RUN_ENDED')) === true && (await b.evaluate('!!window.BLWP_RUN_ENDED')) === true;
     if (!over) await wait(5000);
   }
@@ -308,6 +327,11 @@ try {
   for (const t of tabs) { await click(t, 486, 554); await wait(2500); }
   for (const t of tabs) { await click(t, 303, 617); await wait(2000); await click(t, 660, 617); await wait(2000); }
 
+  for (const t of tabs) say(`${t.name} right after PLAY again: ${await t.evaluate(`(function(){`
+    + `var n=window.unityInstance&&window.unityInstance.Module&&window.unityInstance.Module.blwpNet;`
+    + `var j=window.BLWP_JOIN||{};`
+    + `return 'join '+(j.state||'-')+(j.why?' ('+j.why+')':'')+', net '+(n?'yes':'no')+', client '+(n&&n.client?'yes':'NO')`
+    + `+', ghosts '+(n&&n.ghosts?'yes':'NO')+', state '+String(n&&n.state||'')+', error '+String(n&&n.error||'');})()`)}`);
   const began2 = Date.now();
   const secondRound = {};
   for (const t of tabs) {
