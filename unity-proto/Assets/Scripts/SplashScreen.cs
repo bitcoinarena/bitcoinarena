@@ -92,9 +92,13 @@ public class SplashScreen : MonoBehaviour
         else if (_wreckedAt < 0f) _wreckedAt = Time.unscaledTime;
         if (_health == null) _health = FindFirstObjectByType<TruckHealth>();
         float hold = _health != null ? _health.respawnSeconds : 5f;
-        // WHEN THIS RUN ENDED, so the outcome has its five seconds whatever ended it.
-        if (!Blwp.BlwpNet.Ended) _endedAt = -1f;
+        // WHEN THE CORE NAMED THE OUTCOME - the same instant the result card is drawn from, not the later one when
+        // the client has finished draining the wire.
+        bool named = Blwp.BlwpCore.Available && Blwp.BlwpCore.RunState != 0;
+        if (!named) _endedAt = -1f;
         else if (_endedAt < 0f) _endedAt = Time.unscaledTime;
+        // A page with no core of its own still ends: then the client's word is the only instant there is.
+        if (!Blwp.BlwpCore.Available && Blwp.BlwpNet.Ended && _endedAt < 0f) _endedAt = Time.unscaledTime;
         if (!Showing && BackToLobby(Blwp.BlwpNet.Ended, _fromLobby, wrecked,
                                     _wreckedAt < 0f ? 0f : Time.unscaledTime - _wreckedAt, hold,
                                     _endedAt < 0f ? 0f : Time.unscaledTime - _endedAt)) ShowLobbyAgain();
@@ -210,9 +214,18 @@ public class SplashScreen : MonoBehaviour
     /// </summary>
     public const float ResultHoldSeconds = 5f;
 
+    /// <summary>
+    /// AND THE HOLD IS TIMED FROM THE OUTCOME ITSELF, not from the wire (the owner 2026-09-18 20:00: "one clock").
+    ///
+    /// `sinceOutcome` is measured from the instant the CORE named the run - RUN_DELIVERED, WRECKED or MISSED - which
+    /// is the same instant `DriveHud` starts its result card from. Timing this from the client's `Ended` instead put
+    /// the two on different clocks: the card fades five seconds after the delivery and the lobby arrived five
+    /// seconds after `finish()` had drained the wire, so the player got a strip of plain world in between.
+    /// `FINISH_WAIT_MS` is that drain and is not a screen.
+    /// </summary>
     public static bool BackToLobby(bool runEnded, bool fromLobby, bool wrecked, float sinceWreck, float hold,
-                                   float sinceEnd) =>
-        BackToLobby(runEnded, fromLobby, wrecked, sinceWreck, hold) && sinceEnd >= ResultHoldSeconds;
+                                   float sinceOutcome) =>
+        BackToLobby(runEnded, fromLobby, wrecked, sinceWreck, hold) && sinceOutcome >= ResultHoldSeconds;
 
     float _wreckedAt = -1f;
     float _endedAt = -1f;

@@ -177,6 +177,23 @@ namespace Blwp
         public static bool Ended => Running && BlwpNetEnded() != 0;
 
         /// <summary>
+        /// WHETHER THE ROUND'S OWN LINE IS DOWN (the owner 2026-09-18 20:04, so the HUD can say what is broken).
+        ///
+        /// The page's status begins with the client's own word - opening, ready, ended - and a LIVE session whose
+        /// word is not `ready` is a player whose other trucks have stopped arriving. A run that has ended is not a
+        /// broken connection: that player finished, and the HUD says nothing.
+        /// </summary>
+        public static bool FeedDown()
+        {
+            if (!Live) return false;
+            var said = Status();
+            if (string.IsNullOrEmpty(said)) return true;
+            int space = said.IndexOf(' ');
+            var word = space < 0 ? said : said.Substring(0, space);
+            return word != "ready";
+        }
+
+        /// <summary>
         /// How many of this run's marks a node has receipted.
         ///
         /// The one number that says the round is being WITNESSED rather than

@@ -49,7 +49,9 @@ public class DriveHud : MonoBehaviour
     /// throws the moment it is called from outside a GUI pass, a test
     /// included.
     /// </summary>
-    static int SmallFont(int w, int h) =>
+    // Public because a test reads it: a spectator's market note must be the SMALL style, never the headline's, and
+    // that comparison is the difference between a note and the billboard the owner photographed on 2026-09-18 20:00.
+    public static int SmallFont(int w, int h) =>
         Mathf.RoundToInt(Mathf.Clamp(Mathf.Min(w, h) * 0.032f, 13f, 20f));
 
     void Styles()
@@ -487,9 +489,64 @@ public class DriveHud : MonoBehaviour
     /// anywhere a driver looks.
     /// </summary>
     public static string PriceSubline(double price, double changePct, string status)
-        => price > 0
-            ? $"{changePct:+0.00;-0.00;0.00}% 24h"
-            : $"connecting … ({status})";
+        => price > 0 ? $"{changePct:+0.00;-0.00;0.00}% 24h" : "";
+
+    /// <summary>
+    /// WHAT IS BROKEN, IN WORDS A PLAYER CAN ACT ON (the owner 2026-09-18 20:04).
+    ///
+    /// A socket's own vocabulary is not a message: "connecting … (error)" says nothing about which connection, what
+    /// it costs the player, or whether the game is still worth watching - and photographed at 20:00 it was the whole
+    /// sky over the mempool. Each line below names the thing and what the player will SEE go wrong:
+    ///
+    ///   the price socket   the chart stops moving, so it may be stale
+    ///   the round socket   the other trucks stop arriving, so they freeze where they last were
+    ///   spectating         there is nothing else on that screen: the live feed is the whole of it
+    ///
+    /// And a connection that comes back takes its line with it: an error left standing after the fault is gone is a
+    /// lie the player cannot tell from the truth. Empty means nothing is wrong that this line has to say.
+    /// </summary>
+    public const string PriceFeedDown = "Bitcoin price feed is down. Chart may be stale.";
+    public const string RoundFeedDown = "Lost the round feed. Other trucks may freeze.";
+    public const string SpectateFeedDown = "Spectate lost the live feed.";
+
+    public static string ConnectionTrouble(bool priceFeedOk, bool roundFeedOk, bool spectating)
+    {
+        if (!roundFeedOk) return spectating ? SpectateFeedDown : RoundFeedDown;
+        if (!priceFeedOk) return PriceFeedDown;
+        return "";
+    }
+
+    /// <summary>
+    /// The line itself, wherever the player is: nothing at all when every connection is well, so a recovered feed
+    /// takes its message with it.
+    /// </summary>
+    void DrawConnectionTrouble(int w, int h, GUIStyle style, bool spectating)
+    {
+        bool priceOk = market != null && PriceFeedOk(market.Price, market.Status);
+        bool roundOk = RoundFeedOk(Blwp.BlwpNet.Live, Blwp.BlwpNet.Ended, Blwp.BlwpNet.FeedDown());
+        string say = ConnectionTrouble(priceOk, roundOk, spectating);
+        if (say.Length == 0) return;
+        Shadowed(TroubleBox(w, h), say, style, new Color(1f, 0.72f, 0.3f, 0.95f));
+    }
+
+    /// <summary>The price feed is well when a price has arrived and its socket is not in error.</summary>
+    public static bool PriceFeedOk(double price, string status) => price > 0 && status != "error";
+
+    /// <summary>
+    /// The round feed is well while the page holds a live session, or the run is over and nothing was lost with it.
+    /// A run that ENDED is not a broken connection - the player finished - so it says nothing.
+    /// </summary>
+    public static bool RoundFeedOk(bool sessionLive, bool runEnded, bool socketDown)
+        => runEnded || !sessionLive || !socketDown;
+
+    /// <summary>
+    /// WHETHER A SPECTATOR IS SHOWN THE MARKET AT ALL (the owner 2026-09-18 20:00).
+    ///
+    /// Only when there is a price. Without one the driving HUD says "connecting ... (status)" under the dashes, which
+    /// is the market socket's own telemetry; with no price, no box and no chrome around it, a spectator got that line
+    /// alone across the sky. A spectator watches a world, and the socket's word is in the debug panel.
+    /// </summary>
+    public static bool MarketLineInSpectate(double price) => price > 0;
 
     /// <summary>
     /// THE DEBUG PANEL'S ROWS, as words rather than as inline strings.
@@ -1358,6 +1415,13 @@ public class DriveHud : MonoBehaviour
     /// </summary>
     public Rect LoadingPriceBox(int w, int h) =>
         new Rect(w * 0.02f, h * 0.012f, w * 0.4f, SmallFont(w, h) * 1.6f);
+
+    /// <summary>
+    /// WHERE A BROKEN CONNECTION IS SAID (the owner 2026-09-18 20:04): directly under the corner where the market note
+    /// sits, in the small style, on the HUD a player is already reading. Not the headline, and not the sky.
+    /// </summary>
+    public Rect TroubleBox(int w, int h) =>
+        new Rect(w * 0.02f, h * 0.012f + SmallFont(w, h) * 1.7f, w * 0.55f, SmallFont(w, h) * 1.6f);
 
     /// <summary>
     /// THE SCORE COLUMN - score, banked, cargo and their two lines of small
@@ -2539,6 +2603,24 @@ public class DriveHud : MonoBehaviour
         // into the corner rather than fighting the panel for the same pixels.
         bool loading = loadout != null && loadout.IsOpen;
 
+        if (market != null && !loading && spectating)
+        {
+            // SPECTATE IS NOT A BILLBOARD (the owner 2026-09-18 20:00, photographed): with no price yet, the headline
+            // drew "— — —" and under it the market's connection telemetry - "connecting ... (error)" - at 4.5% of the
+            // short side. Driving, that line sits under a price with the HUD's own chrome around it; spectating there
+            // is no price, no box and no chrome, so it stood alone across the sky over the mempool.
+            //
+            // A spectator gets the market as a corner note and only when there IS a market: a price and its day. The
+            // socket's own word belongs to the debug panel, which is where `market.Status` already lives.
+            var note = new GUIStyle(_small) { alignment = TextAnchor.UpperLeft, fontStyle = FontStyle.Bold };
+            if (market.Price > 0)
+                Shadowed(LoadingPriceBox(w, h),
+                         $"${market.Price:N0}   {market.DayChangePct:+0.00;-0.00;0.00}% 24h", note,
+                         market.Fresh ? Color.white : new Color(1f, 1f, 1f, 0.55f));
+            DrawConnectionTrouble(w, h, note, true);
+            return;
+        }
+
         if (market != null && !loading)
         {
             var head = HeadlineBox(w, h);
@@ -2561,8 +2643,12 @@ public class DriveHud : MonoBehaviour
 
             double chg = market.DayChangePct;
             string sub = PriceSubline(market.Price, chg, market.Status);
-            Shadowed(new Rect(head.x, HeadlineRowY(w, h, 1), head.width, _sub.fontSize * 1.6f),
-                     sub, _sub, chg >= 0 ? Up : Down);
+            if (sub.Length > 0)
+                Shadowed(new Rect(head.x, HeadlineRowY(w, h, 1), head.width, _sub.fontSize * 1.6f),
+                         sub, _sub, chg >= 0 ? Up : Down);
+            // AND WHAT IS BROKEN, NAMED, in the corner rather than across the headline.
+            var small = new GUIStyle(_small) { alignment = TextAnchor.UpperLeft, fontStyle = FontStyle.Bold };
+            DrawConnectionTrouble(w, h, small, false);
 
             if (spectating) return;
 

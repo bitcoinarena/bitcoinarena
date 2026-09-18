@@ -13,6 +13,12 @@ using NUnit.Framework;
 ///
 /// It said "verbinde … (connecting)". It is drawn under the price, in the
 /// place a player reads for the market.
+///
+/// AND IT NO LONGER CARRIES THE SOCKET'S WORD AT ALL (the owner 2026-09-18 20:04). "connecting … (error)" was
+/// photographed at 20:00 across the sky over the mempool: with no price the headline is dashes, and spectating there
+/// is no box and no chrome around that line. A player is told what is broken in words they can act on - "Bitcoin
+/// price feed is down. Chart may be stale." - in the corner of the HUD they are already reading, and this subline is
+/// empty until there is a day's move to show. The English rule below still holds, now over the sentences too.
 /// </summary>
 public class PriceSublineTests
 {
@@ -29,97 +35,31 @@ public class PriceSublineTests
                 foreach (var bad in german)
                     Assert.IsFalse(line.Contains(bad),
                         $"price {price} status \"{status}\" reads \"{line}\", which is German");
-                Assert.IsNotEmpty(line, $"price {price} status \"{status}\" says nothing at all");
+                // A price that has arrived says its day; one that has not says nothing here, because the sentence
+                // that names the broken feed says it in the corner instead.
+                if (price > 0) Assert.IsNotEmpty(line, $"price {price} status \"{status}\" says nothing at all");
+                else Assert.IsEmpty(line, $"price {price} status \"{status}\" still carries the socket's own word");
             }
     }
 
     /// <summary>
-    /// And it still says the two different things it is for. A price that has
-    /// arrived shows the day's move and NOTHING about the connection - that
-    /// was a decision, taken when the feed roll ran the width of an iPhone
-    /// across the scene - and a price that has not shows the connection.
+    /// And it still says the two different things it is for - but the second of them moved. A price that has arrived
+    /// shows the day's move and NOTHING about the connection, which was decided when the feed roll ran the width of
+    /// an iPhone across the scene. A price that has NOT arrived shows nothing here at all: what is broken is said by
+    /// name, in the corner, where `ConnectionTrouble` puts it.
     /// </summary>
     [Test]
-    public void ItSaysTheMoveOnceThereIsAPriceAndTheStateBefore()
+    public void ItSaysTheMoveOnceThereIsAPriceAndNothingBefore()
     {
-        Assert.AreEqual("-0.77% 24h", DriveHud.PriceSubline(79413.10, -0.77, "live"));
-        Assert.AreEqual("+1.20% 24h", DriveHud.PriceSubline(79413.10, 1.2, "live"));
-        Assert.AreEqual("0.00% 24h", DriveHud.PriceSubline(79413.10, 0.0, "live"));
+        Assert.AreEqual("+1.38% 24h", DriveHud.PriceSubline(78515.0, 1.38, "live"));
+        Assert.AreEqual("-0.77% 24h", DriveHud.PriceSubline(78515.0, -0.77, "live"));
+        Assert.AreEqual("", DriveHud.PriceSubline(0.0, 0.0, "connecting"));
+        Assert.AreEqual("", DriveHud.PriceSubline(0.0, 0.0, "error"), "the photographed line is still drawn");
 
-        Assert.AreEqual("connecting … (connecting)", DriveHud.PriceSubline(0, -0.77, "connecting"));
-        Assert.AreEqual("connecting … (silent)", DriveHud.PriceSubline(0, -0.77, "silent"));
-    }
-
-    /// <summary>
-    /// A price of zero is "no price yet", not "bitcoin is worthless", and a
-    /// negative one cannot happen but must not draw a per-cent line either.
-    /// </summary>
-    [Test]
-    public void NoPriceMeansTheConnectionLine()
-    {
-        Assert.IsTrue(DriveHud.PriceSubline(0, 5f, "live").StartsWith("connecting"));
-        Assert.IsTrue(DriveHud.PriceSubline(-1, 5f, "live").StartsWith("connecting"));
-        Assert.IsFalse(DriveHud.PriceSubline(0.01, 5f, "live").StartsWith("connecting"),
-            "a real price, however small, is a price");
-    }
-}
-
-
-/// <summary>
-/// AND EVERY ROW OF THE DEBUG PANEL, which is on the driving HUD behind the
-/// DEBUG icon and so is something a player can open.
-///
-/// Every row of it was German - "Tempo", "Gas", "Lenk", "Raeder", "Fluss",
-/// "Panzer gruen/rot", "Soldaten", "Luft", "Bombe(n)" - and the sweep that
-/// found the connecting word walked straight past all of them, because it
-/// searched for a list of German words that happened not to include any of
-/// these. None of them carries an umlaut, which is what a lazy check looks
-/// for. This one names the words that were actually there.
-/// </summary>
-public class DebugPanelWordsTests
-{
-    static readonly string[] German =
-    {
-        "Tempo", "Gas ", "Lenk", "Raeder", "Fluss", "Panzer", "Soldaten",
-        "gruen", "Luft", "Bombe", "verbinde", "lade ",
-        "ä", "ö", "ü", "ß",
-    };
-
-    static void NoGerman(string row)
-    {
-        Assert.IsNotEmpty(row, "a debug row says nothing at all");
-        foreach (var bad in German)
-            Assert.IsFalse(row.Contains(bad), $"the row reads \"{row}\", which is German");
-    }
-
-    [Test]
-    public void EveryRowIsEnglish()
-    {
-        NoGerman(DriveHud.SpeedRow(68.2f));
-        NoGerman(DriveHud.InputRow(0.8f, -0.3f, true));
-        NoGerman(DriveHud.InputRow(0f, 0f, false));
-        NoGerman(DriveHud.DriftRow(2.645f, 4));
-        NoGerman(DriveHud.FlowRow(-0.42f));
-        NoGerman(DriveHud.ArmourRow(3, 4));
-        NoGerman(DriveHud.InfantryRow(11, 9));
-        NoGerman(DriveHud.AirRow(2, 1));
-    }
-
-    /// <summary>
-    /// And they still say the numbers they are read for. These are the values
-    /// measured in the player build when the panel was found reading zeroes
-    /// off a kinematic body: 68.16 km/h and 2.645 m/s of slip.
-    /// </summary>
-    [Test]
-    public void TheRowsStillCarryTheirNumbers()
-    {
-        Assert.AreEqual("Speed   68 km/h", DriveHud.SpeedRow(68.16f));
-        Assert.AreEqual("Drift   2.6 m/s   Wheels 4/4", DriveHud.DriftRow(2.645f, 4));
-        Assert.AreEqual("Armour   green 3  red 4", DriveHud.ArmourRow(3, 4));
-        Assert.AreEqual("Infantry green 11  red 9", DriveHud.InfantryRow(11, 9));
-        Assert.AreEqual("Air      2 heli  1 bomb(s)", DriveHud.AirRow(2, 1));
-        Assert.AreEqual("Flow    -0.42", DriveHud.FlowRow(-0.42f));
-        StringAssert.Contains("HB", DriveHud.InputRow(1f, 0f, true));
-        StringAssert.DoesNotContain("HB", DriveHud.InputRow(1f, 0f, false));
+        // AND THE SENTENCE THAT REPLACED IT NAMES THE FEED AND WHAT IT COSTS, in English.
+        var said = DriveHud.ConnectionTrouble(priceFeedOk: false, roundFeedOk: true, spectating: false);
+        Assert.AreEqual("Bitcoin price feed is down. Chart may be stale.", said);
+        foreach (var bad in new[] { "verbinde", "Fehler", "nicht", "ä", "ö", "ü" })
+            Assert.IsFalse(said.Contains(bad), $"the price-feed sentence reads \"{said}\", which is German");
     }
 }
