@@ -426,17 +426,16 @@ public class PostOffice : MonoBehaviour
         var mf = plate.GetComponent<MeshFilter>();
         var mr0 = plate.GetComponent<MeshRenderer>();
         if (mf != null && mf.sharedMesh != null && (mr0 == null || !mr0.isPartOfStaticBatch))
-        {
-            var lossy = plate.lossyScale;
-            var local = mf.sharedMesh.bounds.size;
-            return Face(new Vector3(local.x * Mathf.Abs(lossy.x),
-                                    local.y * Mathf.Abs(lossy.y),
-                                    local.z * Mathf.Abs(lossy.z)));
-        }
+            return Face(Drawn(mf.sharedMesh.bounds.size, plate.lossyScale));
 
         var mr = plate.GetComponent<Renderer>();
         if (mr == null) return new Vector2(4f, 1f);
-        return Face(mr.bounds.size);
+
+        // THE FALLBACK STAYS IN THE PLATE'S AXES TOO. It used to hand `Renderer.bounds` - a WORLD-axis box - to
+        // `Face`, and measured plate by plate that box has swapped its axes: every fee plate on this building reads
+        // 5.2 x 1.5 x 0.0 as its own mesh and 0.0 x 1.5 x 5.2 as its world box, because the plate is turned a quarter
+        // round. `localBounds` is the same geometry in the space the plate is drawn in, so width stays width.
+        return Face(Drawn(mr.localBounds.size, plate.lossyScale));
     }
 
     /// <summary>
@@ -444,6 +443,10 @@ public class PostOffice : MonoBehaviour
     /// the smallest being its thickness - as (width, height) with width the
     /// larger of the two.
     /// </summary>
+    /// <summary>A local size at the scale it is drawn at. Sizes are never negative, whatever the scale's sign.</summary>
+    public static Vector3 Drawn(Vector3 size, Vector3 lossy) =>
+        new Vector3(size.x * Mathf.Abs(lossy.x), size.y * Mathf.Abs(lossy.y), size.z * Mathf.Abs(lossy.z));
+
     public static Vector2 Face(Vector3 size)
     {
         // THE THIN AXIS IS THICKNESS; THE OTHER TWO KEEP THEIR ORDER (the owner 2026-09-18 22:16, photographed: the
@@ -492,11 +495,7 @@ public class PostOffice : MonoBehaviour
         Vector2 plate = Room(tm.transform.parent);
         // The lettering measured the same way: its own box, in its own axes, at the size it is drawn. A world-axis
         // box round a text mesh on an angled wall is wider than the words are.
-        var lossyText = tm.transform.lossyScale;
-        var localText = mr.localBounds.size;
-        Vector2 text = Face(new Vector3(localText.x * Mathf.Abs(lossyText.x),
-                                        localText.y * Mathf.Abs(lossyText.y),
-                                        localText.z * Mathf.Abs(lossyText.z)));
+        Vector2 text = Face(Drawn(mr.localBounds.size, tm.transform.lossyScale));
         if (text.x < 0.001f || text.y < 0.001f) return;
 
         float f = Mathf.Min(plate.x * share.x / text.x, plate.y * share.y / text.y);
@@ -506,11 +505,7 @@ public class PostOffice : MonoBehaviour
         if (tm == _paper && Time.time - _saidPaper > 5f)
         {
             _saidPaper = Time.time;
-            var lossyAfter = tm.transform.lossyScale;
-            var localAfter = mr.localBounds.size;
-            var after = Face(new Vector3(localAfter.x * Mathf.Abs(lossyAfter.x),
-                                         localAfter.y * Mathf.Abs(lossyAfter.y),
-                                         localAfter.z * Mathf.Abs(lossyAfter.z)));
+            var after = Face(Drawn(mr.localBounds.size, tm.transform.lossyScale));
             Debug.Log($"[paper] drawn plate {plate.x:F1} x {plate.y:F1} m, "
                       + $"text {after.x:F1} x {after.y:F1} m, covering "
                       + $"{(100f * after.x / plate.x):F0}% x {(100f * after.y / plate.y):F0}%");
