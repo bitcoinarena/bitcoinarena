@@ -49,8 +49,14 @@ patch('sim.js', '  const groundOf = (x, z) => surfaceAt(st, x, z);\n',
   '  if (globalThis.__W) globalThis.__W.afterSep(s);\n', 'before');
 patch('sim.js', '  for (let i = 0; i < UNITS; i++) {\n    const b = unitBase(i);\n    u.x = s[b + U_X];',
   '  if (globalThis.__W) globalThis.__W.halted(halted);\n', 'before');
+// THE CORE'S OWN SEAM, hooked out of the copy (measured 2026-09-19): every hold hangs off the seam at the slot, and
+// this tool used to re-derive it as frontlineZ(st.tape, x) - a different reader from the core's glided, scrolled,
+// windowed one. The two disagreed by a median 1.37 m against a 1.5 m on-post radius, which is most of what H1 was
+// reporting. The copy exports the core's own reader instead, so the rows measure the line the rules used.
+patch('sim.js', 'export function surfaceAt(st, x, z) {',
+  'export function seamOfCore(st, x) { return seamAtX(st, x); }\n\n', 'before');
 const url = (rel) => pathToFileURL(join(tmp, 'src', rel)).href;
-const { init, step, teleport, groundAt, submitSample } = await import(url('sim.js'));
+const { init, step, teleport, groundAt, submitSample, seamOfCore } = await import(url('sim.js'));
 const L = await import(url('state.js'));
 const T = await import(url('rules/tactics.js'));
 const { frontlineZ } = await import(url('rules/frontline.js'));
@@ -153,7 +159,8 @@ for (const seed of SEEDS) {
     }
     // ================= HOLD IS THE DEFAULT (§0, re-ruled 2026-09-16 20:30) =================
     // On post = within 1.5 m of its hold: slot x, its line, the hull-down pick for an overwatch tank (§4.1).
-    const seamAt = (x) => frontlineZ(st.tape, x, HX, HZ), groundOf = (x, z) => groundAt(st, x, z);
+    // THE CORE'S OWN SEAM (hooked out of the copy above), not a second derivation of it.
+    const seamAt = (x) => seamOfCore(st, x), groundOf = (x, z) => groundAt(st, x, z);
     // WARNING, MEASURED 2026-09-19: this hold is NOT the hold the mover used. `seamAt` here is
     // frontlineZ(st.tape, ...) while the core's own seam is the glided, scrolled, windowed reader in sim.js - so the
     // line under both the crest scan and the bounding post is a different line from the rules'. The hook carries the
