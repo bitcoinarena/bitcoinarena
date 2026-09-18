@@ -6207,6 +6207,7 @@ const KNOWN_GOOD_CORE_HASHES = Object.freeze([
   'c27c490126eaa75dc7bf15c1d5d82ca1588d2db32ac3349220477f371d09d19e',
   '00c438e61c3cee92134dcfdb716414fbd99573e874bcff2a2f75839a15073e5b',
   '4b3537f59c4f60a99b9083d41c2f6d8e0368096acd3f0838b9deda5dffa20ab3',
+  '1c5765afbdce7c67fc67451f299e718be8283c77417d85d8d0fd5f9b5c4c9f4a',
 ]);
 
 // ---- protocol/src/known-core.js
@@ -13179,7 +13180,18 @@ function playerStoreRecord({ secretKey, displayName = null }) {
 
 /** How many pictures a page will hold before it starts dropping the oldest. */
 const GHOST_BACKLOG = 240;
-/** A drawn truck that has sent no picture for this long is retired (a live run sends ten a second). */
+/**
+ * HOW LONG A TRUCK MAY BE QUIET BEFORE ITS PICTURE IS CALLED STALE (a live run sends ten a second).
+ *
+ * It used to RETIRE the truck at this age, and that is what the owner photographed on 2026-09-18 10:42: the other truck
+ * missing, and then somewhere else. Measured on the Daily the same hour: 5231 pictures, gaps to 5131 ms, nine of them
+ * over three seconds - every one of those took a truck off the screen and the next picture put it back, metres away.
+ * The pose itself was never drifting (p50 2, p90 3 ticks behind the driver in every third of a round).
+ *
+ * So silence no longer takes a truck away. It stands where its last picture put it and the label's age grows, which is
+ * the truth and is readable; a truck leaves the screen only when the page KNOWS it is gone - the player's next entry
+ * supersedes it, or a new round clears the field.
+ */
 const SILENT_MS = 3000;
 
 /**
@@ -13249,7 +13261,8 @@ function watchGhosts(client, where, { limit = GHOST_BACKLOG, clock = Date.now } 
     // another entry while this player's drawn entry is live, never drawn
     retired: 0,
     superseded: 0,
-    // pictures dropped because a newer one of the same truck was already waiting, and trucks retired for silence
+    // pictures dropped because a newer one of the same truck was already waiting, and trucks whose newest picture
+    // is older than SILENT_MS (counted, not retired)
     collapsed: 0,
     silenced: 0,
     // HOW MANY PICTURES SOMEBODY ACTUALLY TOOK TO DRAW.
@@ -13272,8 +13285,11 @@ function watchGhosts(client, where, { limit = GHOST_BACKLOG, clock = Date.now } 
      * run that ended or a tab that left, and its truck must not stand frozen. Up to `max` are handed over; the rest stay.
      */
     drain(max = queue.length, nowMs = clock()) {
-      for (const [who, d] of drawnEntry)
-        if (nowMs - d.at > SILENT_MS) { retire(d); drawnEntry.delete(who); present.delete(who); field.silenced++; }
+      // A QUIET TRUCK IS COUNTED, NOT TAKEN AWAY (the owner 2026-09-18 10:42). A gap of three or five seconds is the
+      // signer nodes stalling, not a player leaving, and removing the truck for it is what "missing, then in the
+      // wrong place" was: the next picture drew it again somewhere else.
+      field.silenced = 0;
+      for (const [, d] of drawnEntry) if (nowMs - d.at > SILENT_MS) field.silenced++;
       const retires = [], newest = new Map();
       for (const g of queue) {
         if (g.retire) { retires.push(g); newest.delete(toHex(g.entryId)); } else newest.set(toHex(g.entryId), g);
