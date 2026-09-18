@@ -170,8 +170,10 @@ public class GhostDrawnPoseTests
         // like.
         var moving = field.GetComponentInChildren<GhostTruck>(true);
         var wasAt = moving.transform.position;
+        var wasFacing = moving.transform.rotation.eulerAngles.y;
         var jump = frames[frames.Length - 1].ToArray();
         jump[8] += Mathf.RoundToInt(6f * ONE);          // six metres down the map
+        jump[10] += Mathf.RoundToInt(ONE / 8f);         // and a forty-five degree turn with it
         next = frames.Length;                            // the source is spent
         field.Show(Picture(jump));
         yield return null;
@@ -188,6 +190,16 @@ public class GhostDrawnPoseTests
             "the ghost did not move at all on the frame after a new picture");
         Assert.Less(Vector3.Distance(oneFrameIn, target), 0.001f,
             "the ghost is not standing on the picture that landed: it is still walking to it");
+        // AND POINTING THE WAY IT SAYS, IN THE SAME FRAME (the owner 2026-09-18 05:45). The place bound here first and the
+        // facing was still turned from the pose before it over one ease, so the hull carried the whole-interval lag the
+        // place had just lost: measured on the Daily against the same land-frame clock over 5813 pictures, the place
+        // was 38 ms old at the median and the facing 138 ms, p90 52 against 156, 32 places over 300 ms against 67 facings.
+        var facingOneFrameIn = moving.transform.rotation.eulerAngles.y;
+        var wantedFacing = BlwpCore.Degrees(jump[10]);
+        TestContext.WriteLine($"one frame after a 45 deg picture the ghost points {facingOneFrameIn:F3} deg, "
+                              + $"from {wasFacing:F3}, wanted {wantedFacing:F3}");
+        Assert.AreEqual(0f, Mathf.DeltaAngle(wantedFacing, facingOneFrameIn), 0.01f,
+            "the ghost is not pointing the way the picture that landed says: it is still turning to it");
         for (var f = 0; f < 600 && !Settled(field); f++) yield return null;
         Assert.Less(Vector3.Distance(moving.transform.position, target), 0.001f,
             "the ghost never arrived on the picture it was given");

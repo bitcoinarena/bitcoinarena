@@ -111,112 +111,45 @@ namespace Blwp
         /// </summary>
         public void Show(int x, int z, int heading, float? y)
         {
-            // THE HULL STANDS ON THE PICTURE THAT JUST LANDED, IN THIS FRAME (the owner 2026-09-18 05:10).
+            // THE WHOLE POSE IS THE PICTURE THAT JUST LANDED, IN THIS FRAME (the owner 2026-09-18 05:45).
             //
-            // It used to start walking here and arrive later, so in the frame a picture landed the truck was still on
-            // the one before it: measured against the wire, the picture was 22 ms old at the median and the drawn pose
-            // 322 ms, then 171 ms when the walk was shortened. Ten pictures a second means a pose is at most a tenth of
-            // a second old before the next one is due; it does not mean the eye must be a whole picture behind.
+            // The place bound here first and the FACING was still walked from the pose before it over one ease - which
+            // left the facing carrying exactly the whole-interval lag the place had just lost: in the frame a picture
+            // landed the hull still pointed the way the PREVIOUS picture said. Measured against the same land-frame
+            // clock on the Daily over 5813 pictures, the place was 38 ms old at the median and the facing 138 ms - a
+            // whole publish interval more, which is the walk and nothing else.
             //
-            // So the position is the newest picture's, now. Only the HEADING is walked round - a hull that spins to a
-            // new heading in one frame is the stutter the 17:05 report named, and a heading is not a place: the truck
-            // is standing where the node proved it stands either way. Nothing is extrapolated, no pose is invented
-            // between two pictures, and this reads no rigidbody, no collider and no clock.
-            _from = _placed ? transform.position : new Vector3(x / ONE, y ?? transform.position.y, z / ONE);
-            _fromHeading = _placed ? transform.rotation.eulerAngles.y : BlwpCore.Degrees(heading);
+            // A heading is not a place, which is why it was walked - but at ten pictures a second a turn is a few
+            // degrees per picture, not a spin, and the 17:05 stutter was a hull crossing metres of ground in one frame.
+            // Nothing is extrapolated, no pose is invented between two pictures, and this reads no rigidbody, no
+            // collider and no clock: the hull stands and points where the node proved it did, and waits there.
             _want = new Vector3(x / ONE, y ?? transform.position.y, z / ONE);
             _wantHeading = BlwpCore.Degrees(heading);
-            _since = 0f;
             _placed = true;
-            transform.position = _want;
-        }
-
-        /// <summary>
-        /// BETWEEN PICTURES, BECAUSE THEY ARRIVE AT 10 Hz AND A SCREEN DOES NOT.
-        ///
-        /// `BlwpNet.BatchEvery` is a tenth of a second, so a picture of another
-        /// truck lands at most ten times a second while the page draws sixty
-        /// times a second. Placing it and then leaving it is a truck that
-        /// stands still for six frames and jumps - 1.5 m at 15 m/s - and that
-        /// is the stutter the 17:05 close-out reported, in arithmetic rather
-        /// than in impressions. The local truck has never looked like that: it
-        /// interpolates between its own last two ticks, every frame, and this
-        /// is the same rule for the same reason.
-        ///
-        /// IT WALKS FROM THE LAST PICTURE TO THIS ONE OVER ONE INTERVAL, and
-        /// then it is exactly on it. Not an exponential chase: that never
-        /// arrives, and how far it got would depend on the frame rate rather
-        /// than on the clock - which in a headless batch run, where frames are
-        /// a third of a millisecond apart, is the difference between arriving
-        /// and crawling.
-        ///
-        /// EASING IS PER FRAME AND NOT PER PICTURE. `Draw(PerFrame)` can take
-        /// several pictures in one frame - a backlog after a slow socket - and
-        /// there is no time between them to interpolate across, so `Show` only
-        /// says where the truck is going and this decides how far it got.
-        ///
-        /// IT ONLY EVER MOVES TOWARDS A PICTURE THAT ARRIVED. Nothing here
-        /// predicts where the other truck is going: a ghost is a picture (0.10)
-        /// and an extrapolated one would be this page inventing somebody else's
-        /// position. `k` is clamped at one, so the truck stops on the newest
-        /// picture and waits there for the next.
-        /// </summary>
-        void Update() { if (_placed) Ease(Time.deltaTime); }
-
-        void Ease(float dt)
-        {
-            if (dt <= 0f || Settled) return;
-            _since += dt;
-            var k = Mathf.Clamp01(_since / PictureSeconds);
-            // THE PLACE IS ALREADY THE NEWEST PICTURE'S; what walks is the hull's facing.
-            transform.position = _want;
-            if (k >= 1f) { SnapToPicture(); return; }
-            transform.rotation = Quaternion.Euler(0f, Mathf.LerpAngle(_fromHeading, _wantHeading, k), 0f);
-        }
-
-        /// <summary>The newest picture, exactly - what a settled ghost is at.</summary>
-        public void SnapToPicture()
-        {
-            _since = PictureSeconds;
             transform.SetPositionAndRotation(_want, Quaternion.Euler(0f, _wantHeading, 0f));
         }
 
-        /// <summary>
-        /// Whether this ghost has reached the picture it was last given, and
-        /// "reached" means ON it rather than near it.
-        ///
-        /// This was a distance - within a millimetre - and that is a second,
-        /// looser idea of arrival than the callers have: the drawn-pose tests
-        /// assert to a ten-thousandth of a metre, so a ghost could be settled
-        /// and still be 0.3 mm short of the picture, which is a red test that
-        /// comes and goes with the frame rate. The walk ENDS at one interval
-        /// and `SnapToPicture` puts the truck exactly on the words, so that
-        /// moment is the answer and there is no threshold to disagree about.
-        /// </summary>
-        public bool Settled => _placed && _since >= PictureSeconds;
+        /// <summary>The newest picture, exactly - which is where `Show` already put it.</summary>
+        public void SnapToPicture()
+        {
+            if (_placed) transform.SetPositionAndRotation(_want, Quaternion.Euler(0f, _wantHeading, 0f));
+        }
 
-        /// <summary>The picture this ghost is moving onto.</summary>
+        /// <summary>
+        /// Whether this ghost is on the picture it was last given - which is true the moment it is given one.
+        ///
+        /// This was a distance, then a walk that had to finish. Both were a second idea of arrival beside the
+        /// callers': the drawn-pose tests assert to a ten-thousandth of a metre, and the frame a picture lands in is
+        /// now the frame the hull stands and points at it. A ghost that was never shown anything is not settled, and
+        /// that is the only thing left to say no to.
+        /// </summary>
+        public bool Settled => _placed;
+
+        /// <summary>The picture this ghost is standing on.</summary>
         public Vector3 Wanted => _want;
 
-        /// <summary>
-        /// HOW LONG THE HULL TAKES TO REACH THE PICTURE IT WAS JUST GIVEN.
-        ///
-        /// A tenth of a second - `BlwpNet.BatchEvery` - meant the truck arrived on a picture exactly as the next one
-        /// landed, so what a player saw was always the PREVIOUS pose. Measured against the wire (the owner 2026-09-17
-        /// 19:15, "ghosts still lag 300-600 ms"): the picture itself is 22 ms old at the median and 35 ms at the
-        /// ninetieth, while the drawn pose was 322 ms and 340 ms, and 3462 of 3483 poses were over 300 ms. The lag was
-        /// the walk, not the network.
-        ///
-        /// A THIRD OF THE INTERVAL: the hull still crosses the ground between two pictures rather than snapping - a
-        /// snap at 10 Hz is what the 17:05 report called stuttering - but it is standing on the newest picture for the
-        /// rest of the interval instead of forever walking to it. It is the same rule as before, with the trailing
-        /// removed; nothing here simulates driving, damage, scoring or arrival, and no pose is invented beyond the
-        /// picture: `k` is still clamped, so the truck stops on what the node proved and waits.
-        /// </summary>
-        const float PictureSeconds = 0.033f;
-
-        Vector3 _from, _want;
-        float _fromHeading, _wantHeading, _since;
+        Vector3 _want;
+        float _wantHeading;
         bool _placed;
 
         /// <summary>

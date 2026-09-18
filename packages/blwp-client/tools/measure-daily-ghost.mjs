@@ -166,16 +166,35 @@ const wireLags = [];            // now, less the moment the driver recorded that
 // interval later: its age is the age of the pose it is standing on, which is this picture's age plus the gap it has not
 // yet crossed. Measured here from the same pictures, not asserted.
 // Read from the shipped C# rather than typed here, so this measures what the page does.
-const csOf = (file, what) => {
+const csOf = (file, what, orElse) => {
   const text = readFileSync(new URL(`../../../unity-proto/Assets/Scripts/Blwp/${file}`, import.meta.url).pathname, 'utf8');
   const found = text.match(what);
-  if (!found) throw new Error(`${file} no longer says ${what}`);
+  if (!found) {
+    if (orElse !== undefined) return orElse;
+    throw new Error(`${file} no longer says ${what}`);
+  }
   return Math.round(Number(found[1]) * 1000);
 };
-const EASE_MS = csOf('GhostTruck.cs', /PictureSeconds = ([0-9.]+)f/);
+// Zero once nothing walks: the page has no ease left to be behind by, and that is a fact about the shipped C# rather
+// than a number this file decided.
+const EASE_MS = csOf('GhostTruck.cs', /PictureSeconds = ([0-9.]+)f/, 0);
 const LABEL_REFRESH_MS = csOf('GhostField.cs', /labelsReadAt < ([0-9.]+)f/);
 const easedAges = [];
 const acrossInterval = [];
+// AND WHERE THE HULL IS POINTING (the owner 2026-09-18 05:45). The place binds in the landing frame; the facing was still
+// walked from the pose before it over one ease, so at land the hull still pointed the way the PREVIOUS picture said -
+// which is the whole-interval term the place has just lost. Measured the same way and against the same land-frame
+// clock, and decided by the shipped C# rather than by a number typed here.
+const facingAges = [];
+// AND THE FIRST PICTURE OF A NEW ROUND, DRAWN (the owner's report: after PLAY the other truck missing, then in the wrong
+// place). The wire says when it arrived; this says how old the pose the hull stands in is at that frame.
+const firstDrawn = [];
+// The body of `Show(int, int, int, float?)` alone, so "the facing binds in the landing frame" is read where it would
+// happen and not off `Ease`, which sets the same fields every frame.
+const showBody = (cs) => {
+  const at = cs.indexOf('public void Show(int x, int z, int heading, float? y)');
+  return at < 0 ? '' : cs.slice(at, cs.indexOf('/// <summary>', at) < 0 ? cs.length : cs.indexOf('/// <summary>', at));
+};
 const ghostTruckCs = readFileSync(new URL('../../../unity-proto/Assets/Scripts/Blwp/GhostTruck.cs', import.meta.url).pathname, 'utf8');
 let lastPictureAt = null, lastPictureTick = null;
 let stamped = 0, guessed = 0;
@@ -203,6 +222,7 @@ while (Date.now() < until - 20000) {
   // picture was. A picture that names an entry of a round this pair has left is counted apart - that is the "wrong
   // place" a player sees when an old truck is still drawn.
   const began = { pictures: 0, firstAt: null, firstTick: null, stale: 0 };
+  lastPictureAt = null; lastPictureTick = null;   // a new round destroys every truck: nothing is walked from
   watcher.client.onGhost = (g) => {
     if (toHex(g.entryId) === mine) {
       if (began.firstAt === null) { began.firstAt = Date.now(); began.firstTick = g.tick; }
@@ -217,12 +237,25 @@ while (Date.now() < until - 20000) {
       // read up to a refresh ago. Its age is that older picture's own age plus the ease and the refresh it is behind.
       // AT THE LAND INSTANT: what the hull is standing on in the frame this picture arrives. It is this picture's own
       // age once the pose binds at land; it was the previous picture's while the truck walked.
-      const bindsAtLand = /transform.position = _want;/.test(ghostTruckCs);
-      if (recordedAt[g.tick] !== undefined && (bindsAtLand || lastPictureTick === null)) {
-        easedAges.push((now - recordedAt[g.tick]) + LABEL_REFRESH_MS);
-      } else if (lastPictureAt !== null && recordedAt[lastPictureTick] !== undefined) {
-        easedAges.push((now - recordedAt[lastPictureTick]) + EASE_MS + LABEL_REFRESH_MS);
+      const bindsAtLand = /transform.position = _want;|transform.SetPositionAndRotation\(_want/.test(ghostTruckCs);
+      const drawnAge = recordedAt[g.tick] !== undefined && (bindsAtLand || lastPictureTick === null)
+        ? (now - recordedAt[g.tick]) + LABEL_REFRESH_MS
+        : (lastPictureAt !== null && recordedAt[lastPictureTick] !== undefined
+          ? (now - recordedAt[lastPictureTick]) + EASE_MS + LABEL_REFRESH_MS : null);
+      if (drawnAge !== null) easedAges.push(drawnAge);
+      // THE FACING IN THAT SAME FRAME. A truck the field has just made stands and points at its first picture at once
+      // (`_placed` is false, so there is no earlier pose to walk from, and a new round destroys every truck at tick
+      // -2). After that the facing either binds with the place or is still the one before it.
+      const facingBinds = /_wantHeading, 0f\)\);\s*$|SetPositionAndRotation\(_want, Quaternion.Euler\(0f, _wantHeading/m
+        .test(showBody(ghostTruckCs));
+      if (recordedAt[g.tick] !== undefined && (facingBinds || lastPictureTick === null)) {
+        facingAges.push((now - recordedAt[g.tick]) + LABEL_REFRESH_MS);
+      } else if (lastPictureTick !== null && recordedAt[lastPictureTick] !== undefined) {
+        facingAges.push((now - recordedAt[lastPictureTick]) + LABEL_REFRESH_MS);
       }
+      // AND THE FIRST PICTURE OF THIS ROUND, DRAWN: the hull was made this frame, so the place it stands in is this
+      // picture's own. Recorded apart so PLAY-again is a number on screen and not only on the wire.
+      if (began.pictures === 1 && drawnAge !== null) firstDrawn.push({ session: here, age: drawnAge });
       // AND ACROSS THE WHOLE INTERVAL: the pose ages until the next picture lands, so the eye's average is the age at
       // land plus half a gap.
       if (lastPictureAt !== null) acrossInterval.push((now - lastPictureAt) / 2);
@@ -312,6 +345,12 @@ say(`and it ages until the next picture lands: add p50 ${ms(pct(ai, 0.5))} acros
 say(`where the drawn truck sits at the moment a picture lands: p50 ${ms(pct(ea, 0.5))}, `
   + `p90 ${ms(pct(ea, 0.9))}, max ${ms(ea[ea.length - 1])}; over 300 ms ${ea.filter((x) => x > 300).length} of ${ea.length}, `
   + `over 600 ms ${ea.filter((x) => x > 600).length}`);
+const fa = facingAges.slice().sort((a, b) => a - b);
+say(`where the hull is POINTING at that same moment: p50 ${ms(pct(fa, 0.5))}, p90 ${ms(pct(fa, 0.9))}, `
+  + `max ${ms(fa[fa.length - 1])}; over 300 ms ${fa.filter((x) => x > 300).length} of ${fa.length}, `
+  + `over 600 ms ${fa.filter((x) => x > 600).length}`);
+say(`the first picture of each round, drawn: ${firstDrawn.map((f) => ms(f.age)).join(', ')} `
+  + `(the pose the hull stands in on the frame a new round's truck is made)`);
 for (const p of pings) {
   const r = p.held.rtts.slice().sort((a, b) => a - b);
   say(`${p.node.replace('https://', '')}: ${r.length} pings, median ${ms(pct(r, 0.5))}, p90 ${ms(pct(r, 0.9))}, `
