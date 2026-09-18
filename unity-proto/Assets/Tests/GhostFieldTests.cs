@@ -134,14 +134,32 @@ public class GhostFieldTests
             new GhostPicture("bbbbbbbb", 5 * ONE, 4 * ONE, 0, 100),
             new GhostPicture("cccccccc", 7 * ONE, 4 * ONE, 0, 100),
             new GhostPicture("00000000", 0, 0, 0, GhostField.ClearTick),
-            new GhostPicture("dddddddd", 9 * ONE, 4 * ONE, 0, 3));
+            new GhostPicture("dddddddd", 9 * ONE, 4 * ONE, QUARTER, 3));
         Assert.AreEqual(5, field.Draw(10));
         yield return null;
         Assert.AreEqual(1, field.Trucks, "trucks of the last round stayed after the new watch");
         Assert.AreEqual(1, field.Cleared);
         Assert.AreEqual(1, field.GetComponentsInChildren<GhostTruck>(true).Length);
         Assert.IsTrue(field.Pictures.ContainsKey("dddddddd") && field.Pictures.Count == 1);
+
+        // AND THE NEW ROUND'S TRUCK STANDS AND POINTS AT ITS FIRST PICTURE IN THE FRAME IT WAS DRAWN (the owner
+        // 2026-09-18 05:45). That is the half of "after PLAY the other truck is missing, then in the wrong place" the
+        // wire cannot answer: the wire says when the first picture arrived, this says the pose the hull is in when it
+        // does. The trucks above stood at 3, 5 and 7 m facing zero; this one is 9 m away and a quarter turn round, so a
+        // hull left over from the last round, or one walking out of the last round's pose, is a fact here and not an
+        // impression.
+        var made = field.GetComponentInChildren<GhostTruck>(true);
+        Assert.IsNotNull(made, "the new round drew no truck at all");
+        Assert.IsTrue(made.Settled, "the new round's truck is not on its own first picture");
+        Assert.AreEqual(9f, made.transform.position.x, 0.001f,
+            "the new round's truck is not at its first picture's x: it is where the last round left one");
+        Assert.AreEqual(4f, made.transform.position.z, 0.001f, "the new round's truck is not at its first picture's z");
+        Assert.AreEqual(0f, Mathf.DeltaAngle(BlwpCore.Degrees(QUARTER), made.transform.rotation.eulerAngles.y), 0.01f,
+            "the new round's truck is not pointing the way its first picture says");
     }
+
+    /// <summary>A quarter turn in the core's own word, the way a heading is carried.</summary>
+    const int QUARTER = 16384;
 
     [Test]
     public void APictureWithNoEntryDrawsNothing()
