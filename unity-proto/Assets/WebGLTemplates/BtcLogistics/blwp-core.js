@@ -1099,7 +1099,7 @@ const craterBase = (i) => O_CRATERS + Math.imul(i, C_WORDS);
  * last scoot, and role clock - rules/tactics.js reads and writes them. Appended, so no offset above moves.
  */
 const O_TACTICS = O_CRATERS + Math.imul(MAX_CRATERS, C_WORDS);
-const TACTICS_WORDS = 92;   // rules/tactics.js TAC_WORDS
+const TACTICS_WORDS = 140;   // rules/tactics.js TAC_WORDS
 
 const WORDS = O_TACTICS + TACTICS_WORDS;
 
@@ -2149,6 +2149,11 @@ const CREST_LOOK = Math.imul(6, ONE);            // how far toward the enemy the
  * with the largest ground rise 6 m toward the enemy; ties to the first in that scan. Exported because sim.js ranks
  * the half-line budget by how far a tank stands from the place it is really going to.
  */
+/** The rise toward the enemy in front of a hold at z (§4.1): the ground CREST_LOOK ahead less the ground under it. */
+function crestRise(z, side, x, ground) {
+  return sub(ground(x, add(z, Math.imul(-side, CREST_LOOK))), ground(x, z));
+}
+
 function hullDownHold(hold, side, x, ground) {
   const toward = Math.imul(-side, CREST_LOOK);
   let best = hold, bestRise = -2147483647;
@@ -2416,7 +2421,8 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, halfX, half
     // hull crept across kept it on the edge of its post.
     hold = add(u.tacSeam, mulFast(Math.imul(side, ONE), u.tacDepth));
     // HULL-DOWN, for the overwatch tank: the candidate with the highest ground between it and the enemy.
-    if (!u.tacBounding && ground) hold = hullDownHold(hold, side, u.tacX, ground);
+    // the crest the core holds for this tank (tactics.js crestHold, §4.1 hysteresis), handed in as an offset from the line
+    if (!u.tacBounding && ground) hold = add(hold, u.tacCrest | 0);
   }
 
   // Give ground when something is too close.
@@ -2960,7 +2966,10 @@ const PERIOD_MIN = 720, PERIOD_SPAN = 480;        // §2.6 a leg of the role swa
 // [64+w] the verdict of the team's last push re-read (§4.10: 0 none, 1 take, 2 give, 3 drift).
 const TAC_SEED = 0, TAC_SLOT = 1, TAC_SCOOT = 13, TAC_ROLE_START = 25, TAC_ROLE_MEMBER = 37, TAC_PUSH = 49;
 const TAC_OBJ = 61, TAC_VERDICT = 64, TAC_ASSAULT = 76, TAC_MARKET = 82;
-const TAC_WORDS = 92;
+// [92 + k] armour tank k's held crest (§4.1 hysteresis): its offset from the post's line in Q16.16 metres; [116 + k] the
+// post it was picked for (crestKey), or CREST_NONE.
+const TAC_CREST = 92, TAC_CREST_KEY = 116;
+const TAC_WORDS = 140;
 // [82] the round's open (§4.13 TAC_OPEN, in the tape's unit), [83] samples taken since init, [84] trend (+1 UP, -1 DOWN, 0
 // SIDEWAYS), [85] its strength 0-3, [86] lead (+1 BULLS, -1 BEARS, 0 FLAT), [87] the lead's momentum 0-3 (§4.14).
 const MK_OPEN = 0, MK_SAMPLES = 1, MK_TREND = 2, MK_STRENGTH = 3, MK_LEAD = 4, MK_MOMENTUM = 5;
@@ -3044,6 +3053,7 @@ function initTactics(s, base, seedWord) {
     s[base + TAC_PUSH + w] = 0;
   }
   for (let o = 0; o < OBJECTIVES; o++) s[base + TAC_OBJ + o] = 0;
+  for (let k = 0; k < ARMOUR_PER_BOTH_SIDES; k++) { s[base + TAC_CREST + k] = 0; s[base + TAC_CREST_KEY + k] = CREST_NONE; }
   for (let w = 0; w < Math.imul(2, TEAMS_PER_SIDE); w++) s[base + TAC_VERDICT + w] = VERDICT_NONE;
   for (let si = 0; si < 2; si++) {
     const a = base + TAC_ASSAULT + Math.imul(3, si);
@@ -3380,11 +3390,60 @@ function onRespawn(s, base, index, tick) {
 function onPost(s, base, index, tick, seamAt, ground) {
   const p = postOf(s, base, index, tick), side = teamOf(index).side;
   const line = add(seamAt(p.x) | 0, mulFast(Math.imul(side, ONE), p.depth));
-  const hold = p.bounding ? line : hullDownHold(line, side, p.x, ground);
+  const hold = p.bounding ? line : crestHold(s, base, index, p, line, side, ground);
   const b = O_UNITS + Math.imul(index, U_WORDS);
   const dx = sub(s[b], p.x), dz = sub(s[b + 1], hold);
   if (abs(dx) > ON_POST || abs(dz) > ON_POST) return false;
   return add(mulFast(dx, dx), mulFast(dz, dz)) <= mulFast(ON_POST, ON_POST);
+}
+
+/**
+ * HULL-DOWN HYSTERESIS (WAR_TACTICS.md §4.1, RULED 2026-09-17). The crest search picks, among the five candidates 2 m apart
+ * about the line, the one with the highest rise in front - and on a scrolling chart and a pancake of near-equal rises the
+ * pick changed on centimetres: measured on seeds 1-5 x 3600 (live-style samples), 3089 crest changes on unchanged posts,
+ * and 261 of the 400 fidgets of the §0 wiggle row were overwatch z reversals. So each overwatch tank HOLDS a crest: the
+ * search runs every CREST_EVERY ticks (and at once for a new post), and keeps the held candidate unless another's rise
+ * beats it by CREST_SWITCH. The held pick is an offset from the line, so between searches it moves with the line - the
+ * seam as the chart scrolls - which is a creep, not a new post.
+ */
+const CREST_EVERY = 60;
+const CREST_SWITCH = 19660;                  // 0.3 m
+const CREST_NONE = -2147483648;
+const ARMOUR_PER_BOTH_SIDES = 24;
+const HULL_STEP_M = Math.imul(2, ONE), HULL_SEARCH_N = 2;
+
+/** Which post a held crest belongs to: the slot x, the depth and the role. */
+const crestKey = (p) => (((p.x >> 4) ^ Math.imul(p.depth >> 4, 40503)) ^ (p.bounding ? 1 : 0)) | 0;
+
+/**
+ * The hold z of an overwatch tank on post `p`: the line plus the crest it holds when that crest was picked for this very
+ * post, else the plain search (a question about another tick's post - holdLegs reads the last tick's). Reads only.
+ */
+function crestHold(s, base, index, p, line, side, ground) {
+  const k = index >> 2;
+  if (s[base + TAC_CREST_KEY + k] === crestKey(p)) return add(line, s[base + TAC_CREST + k]);
+  return hullDownHold(line, side, p.x, ground);
+}
+
+/** Once a tick, before anything reads a post: every overwatch tank's held crest, searched on its schedule. */
+function updateCrests(s, base, tick, seamAt, ground) {
+  for (let i = 0; i < 96; i += 4) {
+    if (!aliveAt(s, i)) continue;
+    const p = postOf(s, base, i, tick);
+    if (p.bounding) continue;
+    const k = i >> 2, side = teamOf(i).side, key = crestKey(p);
+    const line = add(seamAt(p.x) | 0, mulFast(Math.imul(side, ONE), p.depth));
+    const fresh = s[base + TAC_CREST_KEY + k] !== key;
+    if (!fresh && mod(tick | 0, CREST_EVERY) !== 0) continue;
+    let bestOffset = 0, bestRise = -2147483647;
+    for (let c = -HULL_SEARCH_N; c <= HULL_SEARCH_N; c++) {
+      const off = Math.imul(c, HULL_STEP_M), rise = crestRise(add(line, off), side, p.x, ground);
+      if (rise > bestRise) { bestRise = rise; bestOffset = off; }
+    }
+    if (fresh) { s[base + TAC_CREST + k] = bestOffset; s[base + TAC_CREST_KEY + k] = key; continue; }
+    const heldRise = crestRise(add(line, s[base + TAC_CREST + k]), side, p.x, ground);
+    if (sub(bestRise, heldRise) >= CREST_SWITCH) s[base + TAC_CREST + k] = bestOffset;
+  }
 }
 
 /**
@@ -5947,6 +6006,8 @@ function step(st, throttle, steer, brake, handbrake, practice) {
   // the start of this one, and takes or gives ground.
   // The objectives' holders are re-read first, from the same positions; nothing in the odds reads them (§4.11).
   // A leg does not swap while a tank of its pair is off post (§2.6, §0 "Hold is the default"), read before anything moves.
+  // the held crests first (§4.1 hysteresis): every reader of a post below reads the same pick
+  updateCrests(s, O_TACTICS, s[O_TICK], (x) => seamAtX(st, x), (x, z) => surfaceAt(st, x, z));
   holdLegs(s, O_TACTICS, s[O_TICK], (x) => seamAtX(st, x), (x, z) => surfaceAt(st, x, z));
   objectiveHolders(s, O_TACTICS, s[O_TICK], (x) => seamAtX(st, x));
   pressure(s, O_TACTICS, s[O_TICK], (x) => seamAtX(st, x), (x, z) => surfaceAt(st, x, z));
@@ -6011,7 +6072,7 @@ function step(st, throttle, steer, brake, handbrake, practice) {
     if (stoodOnPost[i >> 2] && abs(sub(s[ib + U_Z], lineZ)) <= LINE_REACH) {
       lineBudget[sd < 0 ? 0 : 1]++; onTheLine[i >> 2] = true;
       grantedBefore[i >> 2] = ((s[ib + U_COOLDOWN] >> 6) & 1) === 1;
-      const holdZ = ip.bounding ? lineZ : hullDownHold(lineZ, sd, ip.x, groundOf);
+      const holdZ = ip.bounding ? lineZ : crestHold(s, O_TACTICS, i, ip, lineZ, sd, groundOf);
       offPost[i >> 2] = add(abs(sub(s[ib + U_X], ip.x)), abs(sub(s[ib + U_Z], holdZ)));
       if (ip.depth < 0 || ip.push < 0) offPost[i >> 2] = add(offPost[i >> 2], Math.imul(256, ONE));
     }
@@ -6133,6 +6194,10 @@ function step(st, throttle, steer, brake, handbrake, practice) {
       // ON the seam, depth 0 - read as "no tactics", that tank was sent to the old standoff and lost its memory word.
       u.tac = true; u.tacX = tac.x; u.tacDepth = tac.depth; u.tacBounding = tac.bounding;
       u.tacSeam = seamAtX(st, tac.x);
+      {
+        const sdc = u.side < 0 ? -1 : 1, lineC = add(u.tacSeam, mulFast(Math.imul(sdc, ONE), tac.depth));
+        u.tacCrest = tac.bounding ? 0 : sub(crestHold(s, O_TACTICS, i, tac, lineC, sdc, groundOf), lineC);
+      }
       u.tacPush = tac.push; u.tacForward = FORWARD_LINE - tac.push;
       // NO PARTNER WAIT. A bounding tank used to wait while its overwatch partner had moved the tick before; §2.6 rules
       // the swap simultaneous, and row 4b is the half-line budget below. Measured on seeds 1-15, that wait held a tank
@@ -6146,8 +6211,11 @@ function step(st, throttle, steer, brake, handbrake, practice) {
         }
         if (lineMoved[u.side < 0 ? 0 : 1] + ahead >= lineBudget[u.side < 0 ? 0 : 1]) u.tacWait = true;
       }
-    } else { u.tac = false; u.tacX = 0; u.tacDepth = 0; u.tacBounding = false; u.tacSeam = 0; u.tacPush = 0; u.tacForward = 0; u.tacWait = false; }
+    } else { u.tac = false; u.tacX = 0; u.tacDepth = 0; u.tacBounding = false; u.tacSeam = 0; u.tacPush = 0; u.tacForward = 0; u.tacWait = false; u.tacCrest = 0; }
     stepUnit(u, rng, unitSeam, tx, tz, s[T + T_HEADING], s[O_SCORE + S_HEAT], HALF_X, HALF_Z, TICK_DT, i, s[O_TICK], craters, groundOf);
+    // A PROBE'S VIEW OF THE TANK'S OWN STEP (§0 row 2 reads flips of the own step, outside separation, which ran before this
+    // loop): written only when a probe set `st.trace`, never read by a rule, outside the state and its hash.
+    if (st.trace && u.armour) { st.trace.dx[i >> 2] = sub(u.x, s[b + U_X]); st.trace.dz[i >> 2] = sub(u.z, s[b + U_Z]); }
     // OVERWATCH (the owner 2026-09-16 18:10): a tank that moved this tick is bounding, and does not fire in it.
     const movedThisTick = u.armour && u.tacBounding
       && (abs(sub(u.x, s[b + U_X])) + abs(sub(u.z, s[b + U_Z]))) > 1310;
