@@ -22,6 +22,13 @@ const H1WHY = process.argv.includes('--h1why');
 const h1why = [];
 const holdWas = new Map();
 const holdDrift = [];
+// --walkin: from the tick a tank appears to the tick it first stands on a post, and how much of that it spends
+// standing still. H1's misses are half walk-ins, so this is the number that says whether the walk is the lever.
+const WALKIN = process.argv.includes('--walkin');
+const walkOpen = new Map();
+const walkDone = [];
+const settledHold = new Map();
+const settledOff = [];
 const SEEDS = arg('seeds', '1,2,3,4,5').split(',').map(Number);
 const TICKS = Number(arg('ticks', 3600));
 
@@ -151,8 +158,32 @@ for (const seed of SEEDS) {
       let best = line, br = -Infinity; for (let c = -2; c <= 2; c++) { const z = line + c * 2 * ONE; const rise = groundOf(p.x, z - sd * 6 * ONE) - groundOf(p.x, z); if (rise > br) { br = rise; best = z; } }
       return [p.x, best]; };
     const onPostNow = (i) => { const [hx, hz] = holdOf(i); return Math.hypot(s[base(i)] - hx, s[base(i) + 1] - hz) <= 1.5 * ONE; };
+    if (WALKIN) for (const i of liveT) {
+      const on = onPostNow(i), uu = hk.unit.get(i);
+      let w = walkOpen.get(i);
+      if (!aliveBefore.get(i) || (mvOf(i) > 5)) { w = { from: tick, ticks: 0, standing: 0 }; walkOpen.set(i, w); }
+      if (!w) { if (!on) { w = { from: tick, ticks: 0, standing: 0 }; walkOpen.set(i, w); } else continue; }
+      if (on) { walkDone.push({ took: tick - w.from, ticks: w.ticks, standing: w.standing }); walkOpen.delete(i); continue; }
+      w.ticks++; if (uu && uu.dx === 0 && uu.dz === 0) w.standing++;
+    }
     for (const i of liveT) { const j = T.partnerOf(i); if (j < 0 || !alive(j)) continue; add('H1 pair tank-ticks');
-      if (onPostNow(i)) add('H1 on post');
+      // SETTLED vs WALKING IN: a tank that has stood on a post since it spawned (bit 7 of U_COOLDOWN) is holding the
+      // line; one that has not is still arriving. The row counts both, so this says which of the two it is failing on.
+      const settled = ((s[base(i) + L.U_COOLDOWN] >> 7) & 1) === 1;
+      if (settled) add('H1 settled tank-ticks'); else add('H1 column tank-ticks');
+      if (onPostNow(i)) { add('H1 on post'); if (settled) add('H1 settled on post'); }
+      else if (settled) {
+        // A SETTLED TANK OFF ITS POST is the gap this row really has: by role, and whether its hold moved under it
+        // since the last tick. An overwatch tank should simply be standing on its crest.
+        const bd = T.postOf(s, L.O_TACTICS, i, tick).bounding;
+        add(bd ? 'H1 settled bounding off' : 'H1 settled overwatch off');
+        const [hx2, hz2] = holdOf(i); const was2 = settledHold.get(i); settledHold.set(i, hz2);
+        if (was2 !== undefined && Math.abs(hz2 - was2) > ONE / 2) add(bd ? 'H1 hold jumped bounding' : 'H1 hold jumped overwatch');
+        // HOW FAR IT STILL HAS TO GO, and whether it holds a budget grant (bit 6 of U_COOLDOWN). A tank two metres
+        // out with no grant is a tank the half-line budget is holding, not one that cannot drive.
+        settledOff.push({ far: Math.hypot(s[base(i)] - hx2, s[base(i) + 1] - hz2) / ONE,
+                          granted: ((s[base(i) + L.U_COOLDOWN] >> 6) & 1) === 1 });
+      } else if (settled) settledHold.set(i, holdOf(i)[1]);
       // WHY A TANK IS NOT ON ITS HOLD: the row says 25% and nothing about the miss. This splits it into the two axes
       // and says whether the tank is short of its hold or past it, so a lane still walking in is not confused with
       // one that oscillates on the spot.
@@ -380,6 +411,34 @@ const rows = [
 ];
 let red = 0;
 for (const [name, got, ok] of rows) { if (!ok) red++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${name.padEnd(58)} ${got}`); }
+{
+  const settled = r['H1 settled tank-ticks'] || 0, onSettled = r['H1 settled on post'] || 0, col = r['H1 column tank-ticks'] || 0;
+  const bo = r['H1 settled bounding off'] || 0, oo = r['H1 settled overwatch off'] || 0;
+  const bj = r['H1 hold jumped bounding'] || 0, oj = r['H1 hold jumped overwatch'] || 0;
+  if (settledOff.length) {
+    const a = settledOff.map((x) => x.far).sort((p, q2) => p - q2);
+    const near = settledOff.filter((x) => x.far <= 4);
+    console.log(`settled off post: ${settledOff.length} ticks, distance q1/med/q3 `
+      + `${a[Math.floor(a.length / 4)].toFixed(1)} / ${a[Math.floor(a.length / 2)].toFixed(1)} / ${a[Math.floor(a.length * 3 / 4)].toFixed(1)} m; `
+      + `within 4 m of the hold ${(100 * near.length / settledOff.length).toFixed(0)}%, and of those `
+      + `${(100 * near.filter((x) => x.granted).length / Math.max(near.length, 1)).toFixed(0)}% held a budget grant`);
+  }
+  if (bo + oo > 0)
+    console.log(`settled and off post: bounding ${bo} (hold jumped under it on ${(100 * bj / Math.max(bo, 1)).toFixed(1)}% of them), `
+      + `overwatch ${oo} (hold jumped on ${(100 * oj / Math.max(oo, 1)).toFixed(1)}%)`);
+  if (settled + col > 0)
+    console.log(`H1 split: settled tank-ticks ${settled} of ${settled + col} (${(100 * settled / (settled + col)).toFixed(0)}%), `
+      + `of which on post ${(100 * onSettled / Math.max(settled, 1)).toFixed(1)}%; walking in ${col} `
+      + `(${(100 * col / (settled + col)).toFixed(0)}%), none of which can be on post by definition`);
+}
+if (WALKIN) {
+  const q = (xs) => { const a = xs.slice().sort((p, r) => p - r); return a.length ? [a[0], a[Math.floor(a.length / 4)], a[Math.floor(a.length / 2)], a[Math.floor(a.length * 3 / 4)], a[a.length - 1]] : [0, 0, 0, 0, 0]; };
+  const secs = walkDone.map((w) => w.took / 60);
+  const standShare = walkDone.filter((w) => w.ticks > 0).map((w) => w.standing / w.ticks);
+  console.log(`walk-ins that reached a post: ${walkDone.length}; seconds min/q1/med/q3/max `
+    + `${q(secs).map((v) => v.toFixed(1)).join(' / ')}; share of those ticks standing still `
+    + `${q(standShare).map((v) => (100 * v).toFixed(0) + '%').join(' / ')}; still walking at the end: ${walkOpen.size}`);
+}
 if (H1WHY && h1why.length) {
   const q = (xs) => { const a = xs.slice().sort((p, r) => p - r); return [a[0], a[Math.floor(a.length / 4)], a[Math.floor(a.length / 2)], a[Math.floor(a.length * 3 / 4)], a[a.length - 1]]; };
   const dzs = h1why.map((r) => Math.abs(r.dz)), dxs = h1why.map((r) => Math.abs(r.dx));
