@@ -500,14 +500,14 @@ const crestKey = (p) => (((p.x >> 4) ^ Math.imul(p.depth >> 4, 40503)) ^ (p.boun
  * The hold z of an overwatch tank on post `p`: the line plus the crest it holds when that crest was picked for this very
  * post, else the plain search (a question about another tick's post - holdLegs reads the last tick's). Reads only.
  */
-export function crestHold(s, base, index, p, line, side, ground) {
+export function crestHold(s, base, index, p, line, side, ground, wreckAt) {
   const k = index >> 2;
   if (s[base + TAC_CREST_KEY + k] === crestKey(p)) return add(line, s[base + TAC_CREST + k]);
-  return hullDownHold(line, side, p.x, ground);
+  return hullDownHold(line, side, p.x, ground, wreckAt);
 }
 
 /** Once a tick, before anything reads a post: every overwatch tank's held crest, searched on its schedule. */
-export function updateCrests(s, base, tick, seamAt, ground) {
+export function updateCrests(s, base, tick, seamAt, ground, wreckAt) {
   for (let i = 0; i < 96; i += 4) {
     if (!aliveAt(s, i)) continue;
     const p = postOf(s, base, i, tick);
@@ -518,11 +518,11 @@ export function updateCrests(s, base, tick, seamAt, ground) {
     if (!fresh && mod(tick | 0, CREST_EVERY) !== 0) continue;
     let bestOffset = 0, bestRise = -2147483647;
     for (let c = -HULL_SEARCH_N; c <= HULL_SEARCH_N; c++) {
-      const off = Math.imul(c, HULL_STEP_M), rise = crestRise(add(line, off), side, p.x, ground);
+      const off = Math.imul(c, HULL_STEP_M), rise = crestRise(add(line, off), side, p.x, ground, wreckAt);
       if (rise > bestRise) { bestRise = rise; bestOffset = off; }
     }
     if (fresh) { s[base + TAC_CREST + k] = bestOffset; s[base + TAC_CREST_KEY + k] = key; continue; }
-    const heldRise = crestRise(add(line, s[base + TAC_CREST + k]), side, p.x, ground);
+    const heldRise = crestRise(add(line, s[base + TAC_CREST + k]), side, p.x, ground, wreckAt);
     if (sub(bestRise, heldRise) >= CREST_SWITCH) s[base + TAC_CREST + k] = bestOffset;
   }
 }

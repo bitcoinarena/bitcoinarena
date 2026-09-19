@@ -467,3 +467,73 @@ test('hull-down hysteresis: a held crest changes only on a 60-tick search or for
   console.log(`  seeds 1-3 x 1800: ${switches} switches (each on a search, each for >= 0.3 m), ${keptForLess} searches kept a crest beaten by < 0.3 m, ${betweenKept} held between searches though beaten by >= 0.3 m, ${fresh} fresh picks`);
   assert.ok(switches > 0 && keptForLess > 0 && betweenKept > 0, 'the rule was not exercised both ways');
 });
+
+/**
+ * A TANK WRECK IS A CREST (§4.1, RULED 2026-09-19, the owner's item 2 first part).
+ *
+ * To the hull-down search a living-side or enemy TANK wreck counts as ground: a candidate whose 6 m toward the enemy
+ * crosses the wreck's 3 m hull circle reads a rise of 2 m - a hull to the turret ring, more than any plateau (1 m),
+ * so a hulk beats a candle edge. The 60-tick search and the 0.3 m hysteresis are unchanged.
+ *
+ * The two checks the ruling names are here: the truck's wreck is never read, and a respawn moves no tank before the
+ * next search.
+ */
+test('a tank wreck is a crest to the hull-down search, and the truck\'s wreck never is (§4.1)', async () => {
+  const { hullDownHold, crestRise, WRECK_RISE, WRECK_R } = await import('../src/rules/army.js');
+  const ONE_ = 65536, M = (m) => Math.round(m * ONE_);
+  const flat = () => 0;                       // dead flat: only a wreck can make a rise here
+  const side = -1;                            // the enemy is toward +z, so the search looks +6 m
+
+  // With no wreck the five candidates all read 0 and the scan keeps the first, -4 m.
+  assert.equal(hullDownHold(0, side, 0, flat, null), M(-4));
+
+  // A hulk 6 m in front of the +4 m candidate. Its 3 m circle also covers the +2 m candidate's look-ahead, and
+  // ties go to the first in the scan, so +2 m is the pick - not the terrain's -4 m.
+  const wreck = { x: 0, z: M(4) + Math.imul(-side, M(6)) };
+  const wreckAt = (x, z) => Math.abs(x - wreck.x) < WRECK_R && Math.abs(z - wreck.z) < WRECK_R;
+  assert.equal(hullDownHold(0, side, 0, flat, wreckAt), M(2));
+  assert.equal(crestRise(M(4), side, 0, flat, wreckAt), WRECK_RISE);
+  assert.equal(crestRise(M(4), side, 0, flat, null), 0);
+
+  // A WRECK BEATS A PLATEAU: §4.15's plateaus are 1 m and WRECK_RISE is 2 m, so a hulk outreads a candle edge.
+  assert.ok(WRECK_RISE > M(1));
+
+  // AND THE TRUCK'S WRECK IS NOT GROUND. The reader the core builds walks the ARMOUR only, so a wrecked truck
+  // standing exactly where the hulk stood reads nothing: a post that moved for it would differ between players'
+  // runs and with the truck present or absent, which §1.2 and A10 forbid.
+  const truckOnly = () => false;              // what the core's reader answers for a truck: it never sees one
+  assert.equal(hullDownHold(0, side, 0, flat, truckOnly), M(-4));
+});
+
+test('a wreck that respawns stops being a crest, and moves no tank before the next 60-tick search (§4.1, §3)', async () => {
+  const { hullDownHold, WRECK_R } = await import('../src/rules/army.js');
+  const ONE_ = 65536, M = (m) => Math.round(m * ONE_);
+  const flat = () => 0, side = -1;
+  const wreck = { x: 0, z: M(4) + Math.imul(-side, M(6)), gone: false };
+  const wreckAt = (x, z) => !wreck.gone && Math.abs(x - wreck.x) < WRECK_R && Math.abs(z - wreck.z) < WRECK_R;
+
+  const held = hullDownHold(0, side, 0, flat, wreckAt);
+  assert.equal(held, M(2));                   // the hulk holds the pick
+
+  // The id respawns: the hulk is gone and the search would pick the plain ground again.
+  wreck.gone = true;
+  assert.equal(hullDownHold(0, side, 0, flat, wreckAt), M(-4));
+
+  // BUT NOTHING MOVES UNTIL THE NEXT SEARCH. The held crest is state (TAC_CREST), read by crestHold between
+  // searches, so on the respawn tick itself the tank still stands on the crest the hulk gave it. That is the same
+  // 60-tick schedule and 0.3 m hysteresis any crest the chart scrolled away is subject to.
+  const st = init(7);
+  const s = st.i32;
+  for (let t = 0; t < 120; t++) step(st, 0, 0, 0, 65536, 0);
+  const i = 0, p = T.postOf(s, L.O_TACTICS, i, s[L.O_TICK]);
+  const before = s[L.O_TACTICS + T.TAC_CREST + (i >> 2)];
+  const key = s[L.O_TACTICS + T.TAC_CREST_KEY + (i >> 2)];
+  // a tick that is not a search tick changes neither the held offset nor its key
+  if (s[L.O_TICK] % 60 !== 0) {
+    step(st, 0, 0, 0, 65536, 0);
+    if (s[L.O_TICK] % 60 !== 0 && T.postOf(s, L.O_TACTICS, i, s[L.O_TICK]).depth === p.depth) {
+      assert.equal(s[L.O_TACTICS + T.TAC_CREST + (i >> 2)], before);
+      assert.equal(s[L.O_TACTICS + T.TAC_CREST_KEY + (i >> 2)], key);
+    }
+  }
+});
