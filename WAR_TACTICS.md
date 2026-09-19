@@ -114,7 +114,7 @@ Infantry rows (part B, §8-§12), same probe conditions:
 | Nobody flees the truck, the truck runs men down | §8.2 | a man's target post is identical with the truck present or absent, and no cover claim or posture rule takes a truck argument; a man inside 3.6 m of a truck at >= 2.5 m/s is dead that tick |
 | **Men hide** | posture §11.4 | of man-ticks of living men on the line (within 40 m of post) who did not step, >= 85% are PRONE or COVER; a man in the open who did not step while his fire team is under fire (§11.5) is PRONE on 100% of those man-ticks |
 | Wrecks and craters are used | cover places §11.3 | on >= 70% of the ticks on which a side has a free eligible place within 12 m of the post of one of its men on the line, at least one man of that side is on a place (within 0.5 m) |
-| Fire pins men down | suppression §11.5 | each side has at least one pinned fire team on 10% to 70% of ticks; a pinned man is never STAND and never steps more than 0.01 m in a tick (a crawl) |
+| Fire pins men down | suppression §11.5 | of each side's nine fire teams, 10% to 70% are pinned - the SHARE of teams, or the matching share of riflemen where the row is read on men; a pinned man is never STAND and never steps more than 0.01 m in a tick (a crawl). RULED 2026-09-20: this row read "each side has at least one pinned fire team on 10% to 70% of ticks" and the implementer measured 96.0% / 95.6% against it and called the rule over its ceiling. That figure is an OR of nine teams, not a share: at a per-team rate of 43.8% - comfortably inside the band - at-least-one-of-nine is 99.5% if the teams were independent, so the old wording could only be met by a front that is barely suppressed at all. The band is the share. No number moved: +60 a round, -1 a tick and the 120 pin line are untouched. RULED 2026-09-20: the 0.01 m is COMBINED Euclidean displacement, not a per-axis clamp - per axis lets a diagonal crawl travel 0.0167 m and so move faster than an axis crawl, which is the 2-D coupling this core has rejected elsewhere. |
 | **Tanks are feared by men** | coax §4.4 | coax kills are >= 20% of a side's rifle-side deaths per 60 s; a coax burst is never fired with an enemy tank inside 46 m or a fireable truck in reach |
 | **Men are feared by tanks** | AT man §11.7 | AT hits are 15% to 50% of a side's tank deaths per 60 s (below 15% the launcher is decoration, above 50% the tanks are the fodder); every AT shot is from PRONE or COVER at a tank inside 30 m; the §0 floor row (never below 4 tanks on more than 5% of ticks) is re-measured with both arms on and stands |
 | **The sky is not weather** | calls §12.3 | on 25% to 60% of ticks no gunship is aloft (was: airborne 69-93%, two at once); a gunship of the attacking side is aloft within 300 ticks of >= 90% of assault starts; no launch before the first call |
@@ -1595,7 +1595,12 @@ function of the state, a claim is a function of the seed and the unit id, no dra
 - Being pinned ends by decay: no round for 2 s (120 ticks) and the team is under fire but free to rush;
   no round for 10 s and it is clear. The bounding rule of §11.2 still holds for a pinned team's
   neighbour: it may halt when the pinned team's clock says halt, and it rushes when its own clock says
-  rush - the pinned team is the one covering, from the ground.
+  rush - the pinned team is the one covering, from the ground. **RULED 2026-09-20**, because the
+  implementer read that sentence the other way and called the core wrong: the clock sentence is
+  PERMISSION for the neighbour to halt during the covering phase, not an instruction to take the pin out
+  of the neighbour's reading. A pinned team must look HALTED to its neighbour even when its own timer
+  would have it rushing - it is lying in the open, not running. Measured: 426193 of 426193 pinned
+  team-ticks already look halted, and on 86.5% of them the timer says rush and the pin holds them down.
 - **Suppressing fire**: a man with **no** rifle target inside 26 m (§8.1) but a living enemy **man**
   inside **34 m** fires a **suppressing round** at the nearest such man: it takes the look-again draw
   (0.4 to 1.1 s, KEEP) and no other, never hits, kills nobody, and adds 60 to that man's fire team's
