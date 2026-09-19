@@ -422,10 +422,16 @@ public class VehicleTests
             var uv = mesh.uv;
             var vertsForUv = mesh.vertices;
             Assert.AreEqual(vertsForUv.Length, uv.Length, $"{lane}: UVs passen nicht zu den Eckpunkten");
+            // ALONG THE CENTRELINE, which is what the UVs are measured along (RoadNetwork.Rebuild's `run`). This
+            // walked the strip two vertices at a time, from when a station was two vertices wide; it has been five
+            // across since the ribbon was laid on the chart, so the walk was hopping sideways across the road and
+            // adding those hops to the length. It stayed inside the band by luck, and the luck ran out when the
+            // ribbon was cut back to the miner's door: 58.5 m a tile reported on a road that tiles every 4.
+            int across = RoadNetwork.Across, mid = across / 2;
             float span = 0f, length = 0f;
-            for (int i = 2; i < vertsForUv.Length; i += 2)
+            for (int i = mid + across; i < vertsForUv.Length; i += across)
             {
-                length += Vector3.Distance(vertsForUv[i - 2], vertsForUv[i]);
+                length += Vector3.Distance(vertsForUv[i - across], vertsForUv[i]);
                 span = Mathf.Max(span, uv[i].y);
             }
             // one tile every four metres, give or take the road's own curvature
