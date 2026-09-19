@@ -20,7 +20,10 @@ public class MempoolTerrain : MonoBehaviour
     // owns the number; this is the drawing following it.
     public float width = 370f;
     public float depth = 170f;
-    public int columns = 160;
+    // 228 COLUMNS SINCE THE MAP GREW EAST (2026-09-19): 160 columns drew a 260 m map at 1.63 m a cell, and the same
+    // 160 over 370 m would be 2.31 m - the drawn ground would sag between vertices where the core's surface does
+    // not, and the cab would see a hill the truck is not standing on. The cell keeps its size; only the count grows.
+    public int columns = 228;
     public int rows = 96;
 
     [Header("Relief")]
