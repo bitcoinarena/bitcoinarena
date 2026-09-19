@@ -28,6 +28,7 @@
  * the operator's own bitcoind, and no live node is touched from here.
  */
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
+import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { CORE_HASH } from './core-hash.mjs';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -401,11 +402,13 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // before committee_time and refuses a round whose entry window is shorter
   // than the protocol's own minimum.
   //
-  // `blockTicks` is how long the round IS, and this one is sized for a PERSON
-  // rather than for a harness: 9000 ticks is two and a half minutes at the
-  // core's own tick, and both tabs have to load a nineteen-megabyte player
-  // before either of them can drive. The browser harness uses a thirty-second
-  // round because nothing there waits on a human.
+  // `blockTicks` is how long the round IS, AND IT IS THE CORE'S OWN NUMBER, not one written here. It was 9000 - two
+  // and a half minutes - chosen when the core's own BLOCK_TICKS was 9000. The core went to 10800 with the
+  // three-minute ruling (WAR_TACTICS, c01cc65) and this literal stayed behind, so the Daily served rounds whose
+  // run length disagreed with the core they named: seen in the cab on 2026-09-19, "the node refuses this run's
+  // inputs at tick 8948 ... inputs past the end are inputs for a run that is over", and a node started on the new
+  // core then refused its own round outright. A contract that names a core may not disagree with it, so the number
+  // comes from the core.
   // COMMITTEE_TIME IS SET ON THE CHAIN'S OWN CLOCK, not on this machine's.
   //
   // Measured, and it is why the first attempt found no beacon: a median lags.
@@ -452,7 +455,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // it, and a round naming no relay could never settle a stake.
     publicationRelays: [`http://${host}:${portA}`, `http://${host}:${portB}`],
     donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight,
-    censusRoot: new Uint8Array(32), stakeMsat, bondMinSats: 50000n, blockTicks: 9000,
+    censusRoot: new Uint8Array(32), stakeMsat, bondMinSats: 50000n, blockTicks: BLOCK_TICKS,
     exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
     timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
     nodes: [a.round.pubkey, b.round.pubkey],
