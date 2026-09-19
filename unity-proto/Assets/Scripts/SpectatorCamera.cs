@@ -71,13 +71,18 @@ public class SpectatorCamera : MonoBehaviour
         Vector3 at, look;
         switch (spot)
         {
+            // 95 m OFF EACH BUILDING, NOT 140 AND 150 (2026-09-19, after the world grew east). Those stand-offs were
+            // chosen when the two buildings were 228.8 m apart, and they put both viewpoints in the middle of the
+            // map; at 283.4 m apart they landed 12 m from each other - PlayMode measured the jump to the miner
+            // moving the camera 12 m and called it, rightly, no jump at all. 95 m keeps each spot in front of its
+            // own building and 103 m from the other.
             case Spot.Miner:
-                look = new Vector3(gate != null ? gate.gateX : 114f, 30f, 0f);
-                at = look + new Vector3(-150f, 60f, 0f);
+                look = new Vector3(gate != null ? gate.gateX : Blwp.Layout.MINER_X / 65536f, 30f, 0f);
+                at = look + new Vector3(-95f, 60f, 0f);
                 break;
             case Spot.PostOffice:
-                look = new Vector3(post != null ? post.postX : -114f, 25f, 0f);
-                at = look + new Vector3(140f, 55f, 0f);
+                look = new Vector3(post != null ? post.postX : Blwp.Layout.POST_X / 65536f, 25f, 0f);
+                at = look + new Vector3(95f, 55f, 0f);
                 break;
             case Spot.Overview:
                 look = Vector3.zero;
