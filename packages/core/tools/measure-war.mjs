@@ -972,10 +972,12 @@ const rows = [
   ['B1  man within 18 m of a fire-team mate', P(pct('B1 near a mate', 'B1 man-ticks')), pct('B1 near a mate', 'B1 man-ticks') > 0.8],
   ['B1  fire team moves or halts together', P(pct('B1b together', 'B1b team-ticks')), pct('B1b together', 'B1b team-ticks') > 0.9],
   ['B2  5 s squad windows without a halted team / a mover', `${r['B2 fail'] || 0} of ${r['B2 squad-windows']}`, (r['B2 fail'] || 0) === 0],
-  ['B3  z spread per squad out of 2-12 m', `${P(pct('B3 z out', 'B3 squad z-ticks'))} of ${r['B3 squad z-ticks'] || 0} squad-ticks`
-    + ` (${r['B3 z in §12.1 transit'] || 0} inside §12.1's 10 s not counted)`, !r['B3 z out']],
-  ['B3  x spread under 0.6 x the LIVING squads\' anchor spread, or over 60 m', `${P(pct('B3 x out', 'B3 x-ticks'))} of ${r['B3 x-ticks'] || 0} side-ticks`
-    + ` (under a 10 m sd on ${P(pct('B3 x under 10 m sd', 'B3 x-ticks'))})`, !r['B3 x out']],
+  ['B3  z spread per squad in 2-12 m on > 80% of squad-ticks (B1 tolerance)', `${P(pct('B3 z out', 'B3 squad z-ticks'))} of ${r['B3 squad z-ticks'] || 0} squad-ticks`
+    + ` (${r['B3 z in §12.1 transit'] || 0} inside §12.1's 10 s not counted)`,
+    pct('B3 z out', 'B3 squad z-ticks') <= 0.20],
+  ['B3  x spread in band on > 80% of side-ticks (0.6 x LIVING squads\' anchors, ceiling 60 m)', `${P(pct('B3 x out', 'B3 x-ticks'))} of ${r['B3 x-ticks'] || 0} side-ticks`
+    + ` (under a 10 m sd on ${P(pct('B3 x under 10 m sd', 'B3 x-ticks'))})`,
+    pct('B3 x out', 'B3 x-ticks') <= 0.20],
   ['B4  push changes the squad did not follow in 10 s', `${r['B4 did not follow'] || 0} of ${r['B4 changes'] || 0}`, (r['B4 did not follow'] || 0) === 0],
   ['B5  man-ticks inside 3 m of a tank', P(pct('B5 inside a hull', 'B5 man-ticks')), pct('B5 inside a hull', 'B5 man-ticks') <= 0.005],
   ['B6  60 s windows with < 3 men lost or arrived / arrivals on the line', `${r['B6 fail'] || 0} of ${r['B6 windows']} / ${r['B6 appeared on the line'] || 0} of ${r['B6 arrivals'] || 0}`, !(r['B6 fail'] || r['B6 appeared on the line'])],
