@@ -2996,7 +2996,7 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, halfX, half
   u.x = clamp(add(u.x, stepX), neg(min(ARMOUR_WEST, halfX)), min(ARMOUR_EAST, halfX));
   u.z = clamp(add(u.z, stepZ), -halfZ, halfZ);
 
-  // OUT OF THE CRATERS.
+  // OUT OF THE CRATERS - A TANK, AND ONLY A TANK.
   //
   // C# has this rule already and it is not the wrecks: `Army.AvoidWrecks`
   // (`Army.cs:533-552`) pushes a unit out of a circle along the radius by
@@ -3006,12 +3006,24 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, halfX, half
   // stay out; what is taken is the shape of the rule, not the feature whose
   // share of the gap measured zero.
   //
+  // THE 0.6 m MAN IS GONE (the owner 2026-09-19, and §11.3's own sentence: the
+  // push "no longer applies to a man; it still applies to a tank (3.2 m)").
+  // Both sizes were carried across together because they sat on one line in
+  // C#, and that was the leftover: C# wrote them when a man in a hole was a
+  // man in the way, and §11.3 overrules exactly that. Kept, the two rules
+  // fought every tick - a crater place sits 1 m INSIDE the rim (tactics.js
+  // COVER_RIM_IN) and the shove put him 0.6 m outside it, so the claim was
+  // held and the post was never reached: measured 802 crater claims held and
+  // 0 reached, 901 wreck claims held and 3 reached. A man is not a hull; he
+  // has no size here, and he lies in the bowl unhurt (fallout is the truck's,
+  // §10).
+  //
   // A push, not a steer. It is the same class as the map edge two lines above
   // and as `resolveSolids` for the truck: a place a unit may not be, resolved
   // after the step rather than negotiated before it. The TRUCK is deliberately
   // not here - it drives through the bowl, which step 3 measured it can.
-  if (craters) {
-    const size = u.armour ? Math.imul(3, ONE) + 13107 : 39322;   // 3.2 m, 0.6 m
+  if (craters && u.armour) {
+    const size = Math.imul(3, ONE) + 13107;                      // 3.2 m, the hull's
     for (let i = 0; i < craters.n; i++) {
       const c = Math.imul(i, 3);
       const R = craters.r[c + 2];
@@ -3907,17 +3919,42 @@ function candleColour(open, close) {
 }
 
 /**
- * Re-read lead and trend from the tape (§4.14). A candle is two samples (open = the first, close = the second, §4.15's
- * bucket); the newest finished one ends at the newest sample when an even count of samples has been taken, else one
- * sample earlier. Green: close > open by 3 bp of the open or more; red: below by as much; else a doji, neither.
+ * THE COLOUR OF THE `c`th FINISHED CANDLE BACK, `c` = 0 the newest, counted from the tape index `end` that the newest
+ * finished candle closes on (`trendEnd` below).
+ *
+ * IT IS THE BODY THE PLAYER SEES, and until 2026-09-19 21:39 it was half of it (the owner,
+ * hud-sideways-five-red-2139.png: "SIDEWAYS is wrong - last five candles are RED"). A candle is TWO samples: §4.15's
+ * staircase opens each one on the previous candle's close (chart.js: `o = sample[a - 1]`, `c = sample[a + 1]`), and
+ * the world's bodies are built the same way (candles.js `candleLayout`). This read `tape[end - 2c - 1]` as the open -
+ * the sample in the MIDDLE of the candle, the one that draws its wick - so it graded the second half of each body and
+ * threw the first half away. Every body it scored was half the body on the screen.
+ *
+ * Measured (tools/measure-trend-vs-chart.mjs): a chart falling $5.20 a candle at $81,339 draws six red bodies and
+ * scored six bodies of $2.60. The doji band is $2.44, so a drawn body anywhere in ($2.44, $4.88] was RED on the
+ * screen and a DOJI to the trend - a factor of two wide, and the shot sits in it: five red candles, net 0, SIDEWAYS,
+ * and six dots that do not match the candles above them.
+ *
+ * The band is not what was wrong and does not move. One function now, used by the trend and by the HUD's six dots
+ * (chart.js), so the two cannot drift apart again.
+ */
+function trendCandle(tape, end, c) {
+  const close = end - Math.imul(c, 2);
+  return candleColour(tape[close - 2], tape[close]);
+}
+
+/** The tape index the newest FINISHED candle closes on: the newest sample on an even count, one earlier on an odd one
+ * (that one is still forming, §4.15's shift). */
+const trendEnd = (tape, count) => (tape.length - 1 - (count & 1)) | 0;
+
+/**
+ * Re-read lead and trend from the tape (§4.14). Six finished candles, newest first, each the body §4.15 draws.
+ * Green: close over open by more than the doji band; red: under by more than it; else a doji, neither.
  */
 function readMarket(s, base, tape) {
-  const last = tape.length - 1, count = s[base + TAC_MARKET + MK_SAMPLES];
-  const end = last - (count & 1);
+  const count = s[base + TAC_MARKET + MK_SAMPLES];
+  const last = tape.length - 1, end = trendEnd(tape, count);
   let net = 0;
-  for (let c = 0; c < 6; c++) {
-    net += candleColour(tape[end - Math.imul(c, 2) - 1], tape[end - Math.imul(c, 2)]);
-  }
+  for (let c = 0; c < 6; c++) net += trendCandle(tape, end, c);
   const a = net < 0 ? -net : net;
   s[base + TAC_MARKET + MK_TREND] = a < 2 ? 0 : (net > 0 ? 1 : -1);
   s[base + TAC_MARKET + MK_STRENGTH] = a < 2 ? 0 : a < 4 ? 1 : a < 6 ? 2 : 3;
@@ -7331,10 +7368,13 @@ function chartView(st, range, out) {
   const bp = idiv(abs(open), 10000);
   out[CH_LEAD_BP] = bp > 0 ? idiv((last - open) | 0, bp) : 0;
   // The six candles the trend is read from (§4.14), newest in bits 0-1: 1 green, 2 red, 0 doji.
+  // THE SAME FUNCTION THE TREND USES (tactics.js `trendCandle`), not a second copy of the indexing: this held its own
+  // copy, and when the copy graded half a body so did the dots - which is why the owner's 21:39 shot had six dots that
+  // disagreed with the five red candles drawn above them on the same HUD.
   let dots = 0;
-  const end = LAST - (count & 1);
+  const end = trendEnd(st.tape, count);
   for (let c = 0; c < 6; c++) {
-    const col = candleColour(st.tape[end - Math.imul(c, 2) - 1], st.tape[end - Math.imul(c, 2)]);
+    const col = trendCandle(st.tape, end, c);
     dots |= (col > 0 ? 1 : col < 0 ? 2 : 0) << Math.imul(c, 2);
   }
   out[CH_DOTS] = dots;
