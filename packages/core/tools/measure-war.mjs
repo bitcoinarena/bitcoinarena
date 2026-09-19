@@ -42,6 +42,13 @@ const a9x = [[], []], a9slot = [[], []];
 const a9slope = {}, a9slopeN = {};
 const B3WHY = process.argv.includes('--b3why');
 const CAUSE = process.argv.includes('--cause');
+// A4a NAMES ITS WINDOW. The row is "a side held the same posts for ten whole seconds", and at 1 of 60 it is one
+// window, not a tendency - so the aggregate cannot say which side of which seed stood still, or what it was holding
+// while it did. This records, per window, the seed, the side, the tick range, how many changes it saw, and what the
+// side had to change WITH: its live tanks, how many of them were bounding, and the scoot and slot words that a post
+// change comes out of.
+const A4AWHY = process.argv.includes('--a4awhy');
+const a4aWindows = [];
 const SHARE = process.argv.includes('--share');
 const b3OutNow = new Map();
 const haltSuppressedNow = new Set();
@@ -494,6 +501,15 @@ for (const seed of SEEDS) {
     for (let i = 0; i < 96; i++) aliveBefore.set(i, alive(i));
     if ((t + 1) % 600 === 0) { for (const sd of ['-1', '1']) { add('A4a windows'); if (w10[sd] === 0) add('A4a still');
       if (CAUSE) add(`A4a changes ${w10[sd] === 0 ? '0' : w10[sd] <= 2 ? '1-2' : w10[sd] <= 6 ? '3-6' : '7+'}`);
+      if (A4AWHY) {
+        const mine = ARMOUR.filter((i) => String(sideOf(i)) === sd);
+        const live = mine.filter(alive);
+        const bounding = live.filter((i) => T.isBounding(s, L.O_TACTICS, i, tick)).length;
+        const teams = sd === '-1' ? [0, 1, 2, 3, 4, 5] : [6, 7, 8, 9, 10, 11];
+        a4aWindows.push({ seed, sd, from: t + 1 - 600, to: t + 1, changes: w10[sd], live: live.length, bounding,
+          scoot: teams.map((w) => s[L.O_TACTICS + T.TAC_SCOOT + w]).join('/'),
+          slot: teams.map((w) => s[L.O_TACTICS + T.TAC_SLOT + w]).join('/') });
+      }
       w10[sd] = 0; } }
     if ((t + 1) % 3600 === 0) {
       for (const sd of ['-1', '1']) {
@@ -815,6 +831,17 @@ if (CAUSE) {
   console.log(`A4a's post changes: of slot ${n('A4a change of slot')}, of line ${n('A4a change of line')}; windows by `
     + `how many changes they held: none ${n('A4a changes 0')}, 1-2 ${n('A4a changes 1-2')}, 3-6 ${n('A4a changes 3-6')}, `
     + `7+ ${n('A4a changes 7+')}`);
+  if (A4AWHY) {
+    const sorted = a4aWindows.slice().sort((a, b) => a.changes - b.changes);
+    console.log(`A4a's quietest windows, named (seed/side, tick range, changes, live tanks, bounding, scoot words, slot words):`);
+    for (const w of sorted.slice(0, 6))
+      console.log(`  seed ${w.seed} side ${w.sd}  t${w.from}-${w.to}  changes ${w.changes}  live ${w.live}  `
+        + `bounding ${w.bounding}  scoot ${w.scoot}  slot ${w.slot}`);
+    const byWindow = {};
+    for (const w of a4aWindows) { const k = `${w.from}-${w.to}`; byWindow[k] = (byWindow[k] || 0) + w.changes; }
+    console.log(`  changes by window across all seeds and sides: `
+      + Object.entries(byWindow).map(([k, v]) => `${k} ${v}`).join(', '));
+  }
   console.log(`B2's failures: ${n('B2 fail')} of ${n('B2 squad-windows')} windows - no team halted in ${n('B2 no halt')}, `
     + `nobody moved while some were off post in ${n('B2 no mover')}`);
   console.log(`O1's lanes against the rest: an objective lane holds mean push `
