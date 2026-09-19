@@ -1029,6 +1029,13 @@ test('nothing but the truck reads the practice flag', async () => {
   const drive = (practice) => {
     const st = init(1);
     const pin = () => {
+      // AND THE AIR IS HELD OFF, the way `parkedUnderFire` holds it (2026-09-19). A bomb may hit the truck in a
+      // live run and may not in a practice one - that IS the flag doing its job - so a sortie reaching this pinned
+      // truck makes the two runs differ in the score block and the row reads it as somebody else peeking at the
+      // flag. It began to differ when §11.3's cover moved the men, which moved the targets the gunships are called
+      // onto. Holding the sorties off leaves the flag itself as the only difference, which is what is being tested.
+      st.i32[O_AIR + AIR_BULL] = 1 << 30;
+      st.i32[O_AIR + AIR_BEAR] = 1 << 30;
       st.i32[O_TRUCK + T_X] = 0;
       st.i32[O_TRUCK + T_Z] = 0;
       st.i32[O_TRUCK + T_VX] = 0;

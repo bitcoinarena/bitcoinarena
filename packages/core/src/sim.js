@@ -36,11 +36,11 @@ import {
 import { vehicleStep } from './rules/vehicle.js';
 import { flatGround, groundFromSeed, gradeAlong, heightAtWorld, DEFAULT_COLS, DEFAULT_ROWS } from './rules/ground.js';
 import { noSolids, resolveSolids, resolveArmour, BOX_WORDS } from './rules/solids.js';
-import { initTactics, postOf, scoot, onRespawn, enterInLane, pressure, partnerOf, FORWARD_LINE, rifleTeamOf, pushNear, mix, FIRE_TEAMS_PER_SIDE, TAC_SEED, firstManOf, initObjectives, objectiveHolders, clearOnEntry, holdLegs, onPost, updateCrests, crestHold, initMarket, readMarket, trendHit, supplyOf, TAC_MARKET, MK_OPEN, MK_SAMPLES, MK_SAMPLE_TICK, MK_PREV_LO, MK_PREV_HI, MK_PREV_OLDEST } from './rules/tactics.js';
+import { initTactics, postOf, scoot, onRespawn, enterInLane, pressure, partnerOf, FORWARD_LINE, rifleTeamOf, pushNear, mix, FIRE_TEAMS_PER_SIDE, TAC_SEED, firstManOf, initObjectives, objectiveHolders, clearOnEntry, holdLegs, onPost, updateCrests, crestHold, initMarket, readMarket, trendHit, supplyOf, TAC_MARKET, MK_OPEN, MK_SAMPLES, MK_SAMPLE_TICK, MK_PREV_LO, MK_PREV_HI, MK_PREV_OLDEST, coverClaims, coverPostOf, COVER_ON } from './rules/tactics.js';
 import { mapSolids } from './rules/map.js';
 import { CANDLES, CL_WORDS, candleLayout, candleHeightAt, writeCandleView, levelled } from './rules/candles.js';
 import { scrollOf, FIELD_SLOT } from './rules/frontline.js';
-import { ARMOUR_WEST, ARMOUR_EAST } from './rules/army.js';
+import { ARMOUR_WEST, ARMOUR_EAST, RIFLE_STANDOFF } from './rules/army.js';
 import { heat as heatForLoad } from './rules/cargo.js';
 import { stepUnit, standingStill, separatePair, clearOfTruck, runOver, truckSpeed, threatAt, pickTarget, pickRifleTarget, riflePost, RELOAD_MIN, RELOAD_SPAN, DAMAGE_MIN, DAMAGE_SPAN, BACKOFF_RANGE, HIT_PER_MIL, ARMOUR_RANGE, RIFLE_RANGE, RIFLE_HIT_PER_MIL, RIFLE_RELOAD_TICKS, RIFLE_RELOAD_TICKS_SPAN, RIFLE_LOOK_TICKS, RIFLE_LOOK_TICKS_SPAN, RIFLE_HP, RIFLE_DAMAGE, hullDownHold, WRECK_R, COURIER_RANGE, COURIER_DAMAGE_MIN, COURIER_DAMAGE_SPAN, COURIER_RIFLE_MIN, COURIER_RIFLE_SPAN, courierReach, outranksTheFoe, shellForHeat } from './rules/army.js';
 import { accrue, earning, scoreOf, frontWeight, APRON_RADIUS } from './rules/score.js';
@@ -1500,6 +1500,16 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
     s[ab + U_X] = clamp(s[ab + U_X], neg(min(ARMOUR_WEST, HALF_X)), min(ARMOUR_EAST, HALF_X));
   }
 
+  // §11.3 COVER: the claim pass, at the top of the infantry step - after the armour's separation above and before
+  // any man moves, which is where the section puts it. The men's posts are handed in because eligibility is
+  // measured from the post and not from where a man is standing, "so a man does not wander to cover".
+  coverClaims(s, O_TACTICS, s[O_TICK], (i) => {
+    const mb = unitBase(i);
+    const side = s[mb + U_SIDE] < 0 ? -1 : 1;
+    const x = riflePost(s[squadWord(s[mb + U_SIDE], s[mb + U_TARGET])], i);
+    return { x, z: add(seamAtX(st, x) | 0, Math.imul(side, RIFLE_STANDOFF)) };
+  }, (x) => seamAtX(st, x));
+
   const groundOf = (x, z) => surfaceAt(st, x, z);
   // NEVER MORE THAN HALF THE LINE MOVING (WAR_TACTICS.md §0 row 4b): at the start of the tick count each side's tanks on
   // the line (within 40 m of their post's depth; a respawn walking in is a column, not the line) and allow half of them
@@ -1593,6 +1603,13 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
     u.side = s[b + U_SIDE];
     // The post he is holding, read fresh every tick: the anchors walk.
     u.anchor = u.armour ? 0 : s[squadWord(u.side, s[b + U_TARGET])];
+    // §11.3: a man who holds a claim walks to it at his own gait, and the place is his post while he holds it.
+    // Handed in the way the armour's own post is: the step moves a unit to what is handed out here.
+    u.cover = null;
+    if (!u.armour) {
+      const place = coverPostOf(s, O_TACTICS, i, u.side < 0 ? -1 : 1);
+      if (place) u.cover = place;
+    }
     if (!u.armour) {
       const rt = rifleTeamOf(i);
       // A FIRE TEAM TAKES ITS POST FROM ITS FIRST MAN'S SQUAD (WAR_TACTICS.md §9.2, the owner 2026-09-16): the four stand

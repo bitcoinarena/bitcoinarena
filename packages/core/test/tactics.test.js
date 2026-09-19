@@ -450,7 +450,12 @@ test('the trend is the colour of the last six finished candles: six green is UP 
   // 300 the bears own all three by tick 1200, before their first clock is due at 1665, so nothing is ever checked.
   // So the bulls get their trend first and take ground with it, and the bear trend is imposed on that field.
   const word2 = (x) => [x[L.O_TACTICS + T.TAC_MARKET + T.MK_TREND], x[L.O_TACTICS + T.TAC_MARKET + T.MK_STRENGTH]];
-  const r = init(2), rs = r.i32, ro = r.tape[63], rb = Math.floor(ro / 10000);
+  // SEED 3, not 2 (re-measured 2026-09-19 after §11.3's cover moved the men and with them the objectives). On seed
+  // 2's world the bears now hold all three objectives before the bear trend lands, and a side that holds
+  // everything defends - the row checks nothing there. Measured across seeds 2 to 6 with the same legs: seed 2
+  // gives 0 bear assaults, seeds 3, 4, 5 and 6 each give 1, and the bulls start none on any of them. The row is
+  // the doctrine; the seed is the fixture, and it is picked to have a contested field rather than tuned to pass.
+  const r = init(3), rs = r.i32, ro = r.tape[63], rb = Math.floor(ro / 10000);
   let rp = ro, bullStarts = 0, bearStarts = 0; const was = { '-1': 0, '1': 0 };
   // The bulls' leg is twelve candles and the flip is at tick 3000 (re-measured 2026-09-19 after the world grew east:
   // on the wider map the bears took all three objectives before the shorter leg had given the bulls any, and a side

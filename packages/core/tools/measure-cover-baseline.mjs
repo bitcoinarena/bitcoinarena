@@ -23,6 +23,8 @@
 //
 //   node packages/core/tools/measure-cover-baseline.mjs
 import { init, step, submitLiquidation } from '../src/sim.js';
+import { riflePost, RIFLE_STANDOFF } from '../src/rules/army.js';
+import { coverClaim, COVER_NONE } from '../src/rules/tactics.js';
 import * as L from '../src/state.js';
 
 const ONE = 65536, Q = ONE;
@@ -50,7 +52,7 @@ const placesFor = (s, side) => {
   return out;
 };
 
-let fireDeaths = 0, fireWithPlace = 0, ticks = 0, ticksWithPlace = 0, ticksOnPlace = 0, placeTicks = 0;
+let fireDeaths = 0, fireWithPlace = 0, ticks = 0, ticksWithPlace = 0, ticksOnPlace = 0, placeTicks = 0, ticksWithPlaceAtPost = 0, claimTicks = 0, manTicks = 0;
 for (const seed of SEEDS) {
   const st = init(seed), s = st.i32;
   for (let t = 0; t < 900; t++) step(st, Q, 0, 0, 0, 0);
@@ -72,18 +74,24 @@ for (const seed of SEEDS) {
     }
     const placeBull = placesFor(s, -1), placeBear = placesFor(s, 1);
 
-    // the row's own question, on the state as it stands this tick
+    // the row's own question, on the state as it stands this tick. TWO READINGS, because they answer different
+    // things: from where the man STANDS (how much cover is around the fighting) and from his POST, which is what
+    // §11.3 actually measures eligibility by - "his post, not his position, so a man does not wander to cover".
     ticks++;
-    let near = false, on = false;
+    let near = false, on = false, nearPost = false;
     for (const m of before) {
       const mine = m.side < 0 ? placeBull : placeBear;
+      const px = riflePost(s[L.O_SQUADS + (m.side < 0 ? s[L.O_UNITS + m.i * L.U_WORDS + L.U_TARGET] : L.SQUADS_PER_SIDE + s[L.O_UNITS + m.i * L.U_WORDS + L.U_TARGET])], m.i) / Q;
+      const pz = m.z;                                   // the line he holds; his own scatter is metres, not tens
       for (const p of mine) {
         const d = Math.hypot(m.x - p.x, m.z - p.z);
         if (d <= REACH) near = true;
         if (d <= 0.5) on = true;
+        if (Math.hypot(px - p.x, pz - p.z) <= REACH) nearPost = true;
       }
     }
     if (near) ticksWithPlace++;
+    if (nearPost) ticksWithPlaceAtPost++;
     if (on) ticksOnPlace++;
     placeTicks += placeBull.length + placeBear.length;
 
@@ -96,6 +104,8 @@ for (const seed of SEEDS) {
     bombsBefore = bombs;
 
     for (const m of before) {
+      manTicks++;
+      if (coverClaim(s, L.O_TACTICS, m.i) !== COVER_NONE) claimTicks++;
       const b = L.O_UNITS + m.i * L.U_WORDS;
       if (s[b + L.U_HP] > 0 && s[b + L.U_STATE] !== 0) continue;         // alive, or a slot refilled: not a death
       if (nuked && Math.hypot(m.x - nx, m.z - nz) <= 40) continue;        // nuke: cover is no answer to it
@@ -114,5 +124,7 @@ console.log(`  ...with a free place within ${REACH} m of them    ${fireWithPlace
 console.log(`  ticks with a place within ${REACH} m of a man      ${ticksWithPlace} of ${ticks}  (${pc(ticksWithPlace, ticks)})`);
 console.log(`  ticks with a man ON a place (within 0.5 m) ${ticksOnPlace} of ${ticks}  (${pc(ticksOnPlace, ticks)})`);
 console.log(`  places standing, mean per tick             ${(placeTicks / Math.max(ticks, 1)).toFixed(1)}`);
+console.log(`  ticks with a place within ${REACH} m of a POST     ${ticksWithPlaceAtPost} of ${ticks}  (${pc(ticksWithPlaceAtPost, ticks)})   <- the row's own denominator`);
+console.log(`  man-ticks holding a claim                  ${claimTicks} of ${manTicks}  (${pc(claimTicks, manTicks)})`);
 console.log(`\n  §0's row wants a man on a place on >= 70% of the ticks where one is free within 12 m of a post.`);
 console.log(`  The core has no places and no claims, so the "on a place" number is what the GAP looks like.`);
