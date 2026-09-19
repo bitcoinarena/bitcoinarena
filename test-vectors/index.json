@@ -5,12 +5,12 @@
   {
    "name": "straight",
    "ticks": 3600,
-   "final": "fa9a448f8693bd10e92fff1752576edd32e73a2b47e79323cd8a7309ab190a8e"
+   "final": "9ba1421160730761c0f9714dd70fe549c7cc716b713b98501e5cf1481615cc8e"
   },
   {
    "name": "slalom",
    "ticks": 3600,
-   "final": "c2d8432a7fb7cf46a89d5240cf6088a8d042fd8fe7fdc671482a626721f48200"
+   "final": "54c056cf30b2778294ac0f99729b8c80e4c233818c66cb0389901411dddaa3f7"
   },
   {
    "name": "handbrake",
@@ -20,7 +20,7 @@
   {
    "name": "reverse",
    "ticks": 3600,
-   "final": "7c760b3a91a3a32ab4906e5ab8c8b1a003af7d8b81f83c21af2fcda3a3b5d84c"
+   "final": "cb5f04076bd28fa04f35615f705df7f0fb21aa4728dbd0ff88ac09676e9a3f71"
   },
   {
    "name": "idle",
@@ -30,7 +30,7 @@
   {
    "name": "practice",
    "ticks": 3600,
-   "final": "bb7bd080fbbd3e3528d9a44101f7d5caaa60e436b7cec340a03f7d3b91ee778a"
+   "final": "a22a609dfb4f679c121cb4c97abad6f8a812ec549a70e2be152bfb168e901964"
   },
   {
    "name": "liquidation",
@@ -40,7 +40,7 @@
   {
    "name": "fallout",
    "ticks": 3600,
-   "final": "66c0ba330d8a9275faa21ec00b1aa7049cb467906fa1eb58c39a356edb6d927d"
+   "final": "255a7ba0c4e9096030281db5f449408e55c3ac0cd341f6589a6b8b0e2115d64e"
   }
  ]
 }

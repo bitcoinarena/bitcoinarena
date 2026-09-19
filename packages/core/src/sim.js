@@ -774,7 +774,7 @@ export function init(seedWord) {
   // tick. Empty until it does.
   // Sized once for every armour slot there can be. Filled from the core's own
   // units at the top of each step; see `fillArmour`.
-  st.armour = { n: 0, xz: new Int32Array(Math.imul(UNITS >> 2, 2)) };
+  st.armour = { n: 0, xz: new Int32Array(Math.imul(UNITS >> 2, 2)), h: new Int32Array(UNITS >> 2) };
 
   // The squad anchors first, because a rifleman is put ON his post when he
   // spawns and cannot be if the post does not exist yet. C# reaches the same
@@ -1243,7 +1243,7 @@ const nextBelow = below;
  */
 function fillArmour(st) {
   const s = st.i32;
-  const xz = st.armour.xz;
+  const xz = st.armour.xz, hh = st.armour.h;
   let n = 0;
   for (let i = 0; i < UNITS; i++) {
     if (!isArmour(i)) continue;
@@ -1251,6 +1251,9 @@ function fillArmour(st) {
     if (s[b + U_STATE] === 0) continue;
     xz[Math.imul(n, 2)] = s[b + U_X];
     xz[Math.imul(n, 2) + 1] = s[b + U_Z];
+    // THE HULL IS A HULL, NOT A DISC (§1.2, 2026-09-19): the contact test needs the way the tank faces, because a
+    // tank is twice as long as it is wide and a circle cannot be both.
+    hh[n] = s[b + U_HEADING];
     n++;
   }
   st.armour.n = n;
@@ -1342,7 +1345,7 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
   // keeps the phase order exactly as it was.
   v.fx = sin(v.heading); v.fz = cos(v.heading);
   v.impact = 0;
-  const touchedArmour = resolveArmour(v, st.armour.xz, st.armour.n);
+  const touchedArmour = resolveArmour(v, st.armour.xz, st.armour.n, st.armour.h);
 
   // The hardest armour impact this tick, for whatever applies damage.
   if (v.impact > s[T + T_IMPACT]) s[T + T_IMPACT] = v.impact;
