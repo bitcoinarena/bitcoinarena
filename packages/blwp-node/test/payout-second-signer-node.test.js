@@ -58,8 +58,12 @@ const WINDOW_MS = 3000;
 const HTLC_EXPIRY = 901000;        // above the fake chain's tip, so no hold expires here
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const WINNER = { name: 'winner', key: b32(0x0a), worldSecret: fromHex(`01${'00'.repeat(30)}1d`), ticks: 1320 };
-const LOSER = { name: 'loser', key: b32(5), worldSecret: b32(0x16), ticks: 1000 };
+// THIS FILE KEEPS ITS OWN COPY of window-fixture.js's pair rather than importing it, so the 2026-09-19 re-pick had
+// to be made here too: the winner 1d stopped delivering at 1830888 (the 20:30 hold cadence) and by HEAD wrecked at
+// tick 192 with score 0, and the loser 0x16 stopped wrecking at all. With a winner that never delivers the payout
+// table answers NOTHING_OWED and the loser's hold stays HELD instead of SETTLED, which is what this test measured.
+const WINNER = { name: 'winner', key: b32(0x0a), worldSecret: fromHex(`01${'00'.repeat(30)}6d`), ticks: 1320 };
+const LOSER = { name: 'loser', key: b32(5), worldSecret: b32(0xc0), ticks: 1000 };
 
 function paidPort() {
   const amounts = new Map();
