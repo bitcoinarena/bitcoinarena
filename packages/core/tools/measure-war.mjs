@@ -42,6 +42,12 @@ const a9x = [[], []], a9slot = [[], []];
 const a9slope = {}, a9slopeN = {};
 const B3WHY = process.argv.includes('--b3why');
 const B3POP = process.argv.includes('--b3pop');
+// B3's REMAINING RED, SPLIT BEFORE ANY HYPOTHESIS (2026-09-19). Both halves are red and the ruling owns part of the
+// x miss through the anchor draw. This prints, per failing tick, WHICH clause failed and what the code was holding
+// when it did - the side's anchor spread and the floor it implies, the men's spread, and for z whether the squad
+// would have been inside the band if only its halted men were counted. No population is changed and no band moves.
+const B3SPLIT = process.argv.includes('--b3split');
+const b3x = [], b3z = [];
 const CAUSE = process.argv.includes('--cause');
 // A4a NAMES ITS WINDOW. The row is "a side held the same posts for ten whole seconds", and at 1 of 60 it is one
 // window, not a tendency - so the aggregate cannot say which side of which seed stood still, or what it was holding
@@ -672,7 +678,12 @@ for (const seed of SEEDS) {
       for (let sq = 0; sq < L.SQUADS_PER_SIDE; sq++) {
         const mine = on.filter((i) => squadOf(i) === sq); if (mine.length < 4) continue;
         const zq = sdev(mine.map((i) => (s[base(i) + 1] - seamOfCore(st, s[base(i)])) / ONE));
-        add('B3 squad z-ticks'); if (zq < 2 || zq > 12) add('B3 z out'); }
+        add('B3 squad z-ticks'); if (zq < 2 || zq > 12) add('B3 z out');
+        if (B3SPLIT) {
+          const still = mine.filter((i) => { const u = hk.unit.get(i); return u && u.dx === 0 && u.dz === 0; });
+          const zh = still.length >= 4 ? sdev(still.map((i) => (s[base(i) + 1] - seamOfCore(st, s[base(i)])) / ONE)) : null;
+          b3z.push({ seed, sd, sq, zq, men: mine.length, halted: still.length, zHalted: zh, tight: zq < 2, loose: zq > 12 });
+        } }
       // x, RELATIVE TO THE FRONTAGE THE SIDE WAS GIVEN. The absolute 20 m floor was a bar on a DRAW: three squad
       // anchors uniform on [-80, +80] (sim.js), a man within +-8 m of his, and over 200k draws the men's sd lands
       // below 20 m on 19.6% of rounds before a shot is fired. With the population corrected the measured rate is
@@ -682,6 +693,8 @@ for (const seed of SEEDS) {
       const anch = [0, 1, 2].map((k) => s[L.O_SQUADS + (sd < 0 ? 0 : L.SQUADS_PER_SIDE) + k] / ONE);
       const anchSd = sdev(anch);
       add('B3 x-ticks'); if (xsd < 0.6 * anchSd || xsd > 60) add('B3 x out');
+      if (B3SPLIT) b3x.push({ seed, sd, xsd, anchSd, floor: 0.6 * anchSd, men: on.length,
+        under: xsd < 0.6 * anchSd, over: xsd > 60, underOld20: xsd < 20 });
       if (xsd < 10) add('B3 x under 10 m sd');
       b3OutNow.set(sd, (zsd < 2 || zsd > 12 || xsd < 0.6 * anchSd || xsd > 60));
       // BEFORE AND AFTER IN ONE RUN (2026-09-19). The population correction's before/after has been quoted from two
@@ -1187,6 +1200,27 @@ if (A11AWHY) {
   for (const w of a11aWindows.filter((x) => x.cross > 0))
     console.log(`  seed ${w.seed} side ${w.sd} to t${w.to}: crossings ${w.cross}, highest push ${w.maxPush.toFixed(0)} m, `
       + `at 24 m ${w.at24}, by kind ${JSON.stringify(w.kinds)}`);
+}
+if (B3SPLIT) {
+  const q = (a) => { const b = a.slice().sort((u, v) => u - v); return b.length ? [b[0], b[b.length >> 2], b[b.length >> 1], b[Math.floor(b.length * 0.75)], b[b.length - 1]] : []; };
+  const F = (a) => a.map((v) => v.toFixed(1)).join(' / ');
+  const xf = b3x.filter((e) => e.under || e.over), xp = b3x.filter((e) => !e.under && !e.over);
+  console.log(`B3 x, split over ${b3x.length} side-ticks: ${xf.length} fail = ${(100 * xf.length / b3x.length).toFixed(2)}%`);
+  console.log(`   under the 0.6 x anchor floor ${xf.filter((e) => e.under).length}, over the 60 m ceiling ${xf.filter((e) => e.over).length}`);
+  console.log(`   of the failures, also under the OLD absolute 20 m floor: ${xf.filter((e) => e.underOld20).length}`
+    + ` = ${(100 * xf.filter((e) => e.underOld20).length / Math.max(xf.length, 1)).toFixed(1)}%; the rest fail ONLY because their own anchors were wide`);
+  console.log(`   anchor sd (min/q1/med/q3/max)  failing ${F(q(xf.map((e) => e.anchSd)))}   passing ${F(q(xp.map((e) => e.anchSd)))}`);
+  console.log(`   men's x sd                     failing ${F(q(xf.map((e) => e.xsd)))}   passing ${F(q(xp.map((e) => e.xsd)))}`);
+  console.log(`   the floor those anchors imply  failing ${F(q(xf.map((e) => e.floor)))}   passing ${F(q(xp.map((e) => e.floor)))}`);
+  const zf = b3z.filter((e) => e.tight || e.loose);
+  console.log(`B3 z, split over ${b3z.length} squad-ticks: ${zf.length} fail = ${(100 * zf.length / b3z.length).toFixed(2)}%`);
+  console.log(`   tighter than 2 m ${zf.filter((e) => e.tight).length}, looser than 12 m ${zf.filter((e) => e.loose).length}`);
+  const withH = zf.filter((e) => e.zHalted !== null);
+  const fixed = withH.filter((e) => e.zHalted >= 2 && e.zHalted <= 12);
+  console.log(`   of the ${withH.length} failures with 4+ halted men, ${fixed.length} = ${(100 * fixed.length / Math.max(withH.length, 1)).toFixed(1)}%`
+    + ` would be INSIDE the band counting halted men only - that share is transit depth, not the line standing wrong`);
+  console.log(`   squad z sd (min/q1/med/q3/max)  failing ${F(q(zf.map((e) => e.zq)))}   halted-only there ${F(q(withH.map((e) => e.zHalted)))}`);
+  console.log(`   men per squad on failing ticks ${F(q(zf.map((e) => e.men)))}, of them halted ${F(q(zf.map((e) => e.halted)))}`);
 }
 if (B3POP) {
   const n = (k) => r[k] || 0;
