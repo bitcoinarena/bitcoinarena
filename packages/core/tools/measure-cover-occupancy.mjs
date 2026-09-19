@@ -30,6 +30,9 @@ for (const k of KINDS) for (const g of ['halted', 'rushing']) { held[k + g] = 0;
 const fromPost = { claim: [], none: [] };
 const byAge = new Map(AGES.map((a) => [a, [0, 0]]));
 let ticks = 0, tickOn = 0;
+// §11.5's cost to §11.3, split: a claim-holder whose team is PINNED crawls at a sixth of a walk, so he cannot
+// cross what he was given. Counted apart from an unpinned holder, who walks as he always did.
+let heldPinned = 0, heldFree = 0, onPinned = 0, onFree = 0, livingManTicks = 0, pinnedManTicks = 0;
 
 for (const seed of [1, 2]) {
   const st = init(seed), s = st.i32;
@@ -52,6 +55,10 @@ for (const seed of [1, 2]) {
       if (!isMan(i)) continue;
       const b = L.O_UNITS + i * L.U_WORDS;
       if (s[b + L.U_STATE] === 0 || s[b + L.U_HP] <= 0) { openAt.delete(i); openId.delete(i); continue; }
+      livingManTicks++;
+      const rtPin = T.rifleTeamOf(i);
+      const pinnedNow = T.isPinned(s, L.O_TACTICS, rtPin.side, rtPin.team);
+      if (pinnedNow) pinnedManTicks++;
       const id = T.coverClaim(s, L.O_TACTICS, i);
       const rt = T.rifleTeamOf(i);
       if (t % 10 === 0) {
@@ -66,7 +73,8 @@ for (const seed of [1, 2]) {
       const g = halt[rt.side < 0 ? 0 : 1][rt.team] ? 'halted' : 'rushing';
       const k = kindOf(id), d = Math.hypot((s[b] - p.x) / Q, (s[b + 1] - p.z) / Q);
       held[k + g]++;
-      if (d <= 0.5) { on[k + g]++; any = true; }
+      if (pinnedNow) heldPinned++; else heldFree++;
+      if (d <= 0.5) { on[k + g]++; any = true; if (pinnedNow) onPinned++; else onFree++; }
       const age = (t - openAt.get(i)) / 60;
       for (const a of AGES) if (age >= a && age < a + 1) { const e = byAge.get(a); e[0] += d; e[1]++; }
     }
@@ -90,6 +98,14 @@ console.log('   one frozen short. The two rates being equal is what says the hal
 
 const stat = (a) => { const b = a.slice().sort((x, y) => x - y);
   return `mean ${(b.reduce((x, y) => x + y, 0) / b.length).toFixed(1)} m, median ${b[b.length >> 1].toFixed(1)}, p90 ${b[Math.floor(b.length * 0.9)].toFixed(1)}`; };
+console.log('\n1b. THE SAME CLAIMS, SPLIT BY WHETHER HIS TEAM IS PINNED (§11.5)');
+console.log(`   living man-ticks                 ${livingManTicks}   of them pinned ${pinnedManTicks} (${pc(pinnedManTicks, livingManTicks)})`);
+console.log(`   claim man-ticks, team PINNED     ${heldPinned}   reached ${onPinned}  (${pc(onPinned, heldPinned)})`);
+console.log(`   claim man-ticks, team FREE       ${heldFree}   reached ${onFree}  (${pc(onFree, heldFree)})`);
+console.log(`   A pinned holder crawls at 0.5 m/s; a free one walks at 2.788 m/s. The gap between those two rates`);
+console.log(`   is what the occupancy row lost, and the metric itself is posture-blind - it counts any living man`);
+console.log(`   within 0.5 m of a place, so nothing was excluded from the count by being down.`);
+
 console.log('\n2. HOW FAR A MAN STANDS FROM HIS OWN LINE POST (§9.2)');
 console.log(`   holding a claim   ${stat(fromPost.claim)}`);
 console.log(`   no claim          ${stat(fromPost.none)}`);
