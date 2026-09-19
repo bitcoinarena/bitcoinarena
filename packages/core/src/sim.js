@@ -41,7 +41,7 @@ import { mapSolids } from './rules/map.js';
 import { CANDLES, CL_WORDS, candleLayout, candleHeightAt, writeCandleView, levelled } from './rules/candles.js';
 import { scrollOf, FIELD_SLOT } from './rules/frontline.js';
 import { heat as heatForLoad } from './rules/cargo.js';
-import { stepUnit, standingStill, separatePair, clearOfTruck, runOver, truckSpeed, threatAt, pickTarget, pickRifleTarget, riflePost, RELOAD_MIN, RELOAD_SPAN, DAMAGE_MIN, DAMAGE_SPAN, BACKOFF_RANGE, HIT_PER_MIL, ARMOUR_RANGE, RIFLE_RANGE, RIFLE_HIT_PER_MIL, RIFLE_RELOAD_TICKS, RIFLE_RELOAD_TICKS_SPAN, RIFLE_LOOK_TICKS, RIFLE_LOOK_TICKS_SPAN, RIFLE_HP, RIFLE_DAMAGE, hullDownHold, COURIER_RANGE, COURIER_DAMAGE_MIN, COURIER_DAMAGE_SPAN, COURIER_RIFLE_MIN, COURIER_RIFLE_SPAN, courierReach, outranksTheFoe, shellForHeat } from './rules/army.js';
+import { stepUnit, standingStill, separatePair, clearOfTruck, runOver, truckSpeed, threatAt, pickTarget, pickRifleTarget, riflePost, RELOAD_MIN, RELOAD_SPAN, DAMAGE_MIN, DAMAGE_SPAN, BACKOFF_RANGE, HIT_PER_MIL, ARMOUR_RANGE, RIFLE_RANGE, RIFLE_HIT_PER_MIL, RIFLE_RELOAD_TICKS, RIFLE_RELOAD_TICKS_SPAN, RIFLE_LOOK_TICKS, RIFLE_LOOK_TICKS_SPAN, RIFLE_HP, RIFLE_DAMAGE, hullDownHold, WRECK_R, COURIER_RANGE, COURIER_DAMAGE_MIN, COURIER_DAMAGE_SPAN, COURIER_RIFLE_MIN, COURIER_RIFLE_SPAN, courierReach, outranksTheFoe, shellForHeat } from './rules/army.js';
 import { accrue, earning, scoreOf, frontWeight, APRON_RADIUS } from './rules/score.js';
 import { outcome, RUN_LIVE, RUN_DELIVERED, RUN_WRECKED, RUN_MISSED } from './rules/gate.js';
 import { frontlineZ, SAMPLES } from './rules/frontline.js';
@@ -1380,8 +1380,25 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
   // the start of this one, and takes or gives ground.
   // The objectives' holders are re-read first, from the same positions; nothing in the odds reads them (§4.11).
   // A leg does not swap while a tank of its pair is off post (§2.6, §0 "Hold is the default"), read before anything moves.
+  // A TANK WRECK IS A CREST (§4.1, RULED 2026-09-19). The one thing on this field that accumulates now shapes where
+  // the armour stands, as it already shapes where the men lie (§11.3). A dead tank keeps the x and z it died on -
+  // only its hit points and its state word are cleared - and loses them when its id respawns (§3), so the hulk is
+  // state like any other, identical on every node, and the crest goes when the wreck does.
+  // TANK WRECKS ONLY: the truck is never read here. A truck's wreck is one player's, so a post that read one would
+  // differ between runs and with the truck present or absent, which §1.2 and the A10 row forbid.
+  const wreckAt = (x, z) => {
+    for (let i = 0; i < UNITS; i++) {
+      if (!isArmour(i)) continue;
+      const b = unitBase(i);
+      if (s[b + U_STATE] !== 0) continue;                 // alive: a hull, not a hulk
+      const dx = sub(s[b + U_X], x), dz = sub(s[b + U_Z], z);
+      if (abs(dx) >= WRECK_R || abs(dz) >= WRECK_R) continue;
+      if (add(mulFast(dx, dx), mulFast(dz, dz)) < mulFast(WRECK_R, WRECK_R)) return true;
+    }
+    return false;
+  };
   // the held crests first (§4.1 hysteresis): every reader of a post below reads the same pick
-  updateCrests(s, O_TACTICS, s[O_TICK], (x) => seamAtX(st, x), (x, z) => surfaceAt(st, x, z));
+  updateCrests(s, O_TACTICS, s[O_TICK], (x) => seamAtX(st, x), (x, z) => surfaceAt(st, x, z), wreckAt);
   holdLegs(s, O_TACTICS, s[O_TICK], (x) => seamAtX(st, x), (x, z) => surfaceAt(st, x, z));
   objectiveHolders(s, O_TACTICS, s[O_TICK], (x) => seamAtX(st, x));
   pressure(s, O_TACTICS, s[O_TICK], (x) => seamAtX(st, x), (x, z) => surfaceAt(st, x, z));
@@ -1446,7 +1463,7 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
     if (stoodOnPost[i >> 2] && abs(sub(s[ib + U_Z], lineZ)) <= LINE_REACH) {
       lineBudget[sd < 0 ? 0 : 1]++; onTheLine[i >> 2] = true;
       grantedBefore[i >> 2] = ((s[ib + U_COOLDOWN] >> 6) & 1) === 1;
-      const holdZ = ip.bounding ? lineZ : crestHold(s, O_TACTICS, i, ip, lineZ, sd, groundOf);
+      const holdZ = ip.bounding ? lineZ : crestHold(s, O_TACTICS, i, ip, lineZ, sd, groundOf, wreckAt);
       offPost[i >> 2] = add(abs(sub(s[ib + U_X], ip.x)), abs(sub(s[ib + U_Z], holdZ)));
       if (ip.depth < 0 || ip.push < 0) offPost[i >> 2] = add(offPost[i >> 2], Math.imul(256, ONE));
     }

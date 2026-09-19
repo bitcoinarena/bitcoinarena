@@ -291,22 +291,38 @@ const LANE_LEASH = 0;                            // a slot is a position held: t
 const HULL_SEARCH = 2;                           // candidates either side of the post, HULL_STEP apart
 const HULL_STEP = Math.imul(2, ONE);
 const CREST_LOOK = Math.imul(6, ONE);            // how far toward the enemy the crest is looked for
+// A TANK WRECK IS A CREST (§4.1, RULED 2026-09-19). To the hull-down search a living-side or enemy TANK wreck counts
+// as ground: a candidate whose 6 m toward the enemy crosses the wreck's hull circle reads a rise of WRECK_RISE - a
+// hull to the turret ring, more than any plateau (1 m) or ramp, so a hulk beats a candle edge. The 60-tick search
+// and the 0.3 m hysteresis above are unchanged, so a wreck moves a tank at most once a second and only by two
+// metres. TANK WRECKS ONLY: a truck's wreck is one player's and differs between runs, and a post that read one
+// would differ with the truck present and absent, which §1.2 and the A10 row forbid.
+export const WRECK_RISE = Math.imul(2, ONE);     // §4.1 what a hulk reads as, hull to the turret ring
+export const WRECK_R = Math.imul(3, ONE);        // §1.2 the hull circle a wreck keeps
 /**
  * HULL-DOWN (WAR_TACTICS.md §4.1): of the five candidates about an overwatch hold line (-4, -2, 0, +2, +4 m), the one
  * with the largest ground rise 6 m toward the enemy; ties to the first in that scan. Exported because sim.js ranks
  * the half-line budget by how far a tank stands from the place it is really going to.
  */
-/** The rise toward the enemy in front of a hold at z (§4.1): the ground CREST_LOOK ahead less the ground under it. */
-export function crestRise(z, side, x, ground) {
-  return sub(ground(x, add(z, Math.imul(-side, CREST_LOOK))), ground(x, z));
+/**
+ * The rise toward the enemy in front of a hold at z (§4.1): the ground CREST_LOOK ahead less the ground under it,
+ * or WRECK_RISE when that point stands inside a tank wreck's hull circle. `wreckAt` is optional: without it this is
+ * the plain ground reading it has always been.
+ */
+export function crestRise(z, side, x, ground, wreckAt) {
+  const ahead = add(z, Math.imul(-side, CREST_LOOK));
+  if (wreckAt && wreckAt(x, ahead)) return WRECK_RISE;
+  return sub(ground(x, ahead), ground(x, z));
 }
 
-export function hullDownHold(hold, side, x, ground) {
+export function hullDownHold(hold, side, x, ground, wreckAt) {
   const toward = Math.imul(-side, CREST_LOOK);
   let best = hold, bestRise = -2147483647;
   for (let c = -HULL_SEARCH; c <= HULL_SEARCH; c++) {
     const z = add(hold, Math.imul(c, HULL_STEP));
-    const rise = sub(ground(x, add(z, toward)), ground(x, z));
+    const ahead = add(z, toward);
+    // A wreck in front of the candidate reads as WRECK_RISE, whatever the ground under it does (§4.1, 2026-09-19).
+    const rise = (wreckAt && wreckAt(x, ahead)) ? WRECK_RISE : sub(ground(x, ahead), ground(x, z));
     if (rise > bestRise) { bestRise = rise; best = z; }
   }
   return best;
