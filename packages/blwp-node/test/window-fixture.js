@@ -58,8 +58,20 @@ export const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 // front of the bay (§1.2: the outer slots are not moved away from the bay). Of the 255 last bytes 01..ff with
 // this drive, two deliver by 1320: 1d (tick 1173, score 367) and a9 (1156, 160); the first is taken. The
 // loser now wrecks at tick 956, score 420 (was 547, 128).
-export const WINNER = { name: 'winner', key: b32(0x0a), worldSecret: fromHex(`01${'00'.repeat(30)}1d`), ticks: 1320 };
-export const LOSER = { name: 'loser', key: b32(5), worldSecret: b32(0x16), ticks: 1000 };
+//
+// RE-MEASURED AGAIN 2026-09-19, and BOTH halves had to be re-picked. Bisected: the drive stopped delivering at
+// 1830888, the 20:30 hold cadence (§2.6 legs 12-20 s, §4.3 scoot 1200 ticks, §4.10 push only with both tanks on
+// post and only on a confirmed verdict) - armour inputs, not settlement. 1d went DELIVERED score 367 -> WRECKED
+// score 173 at tick 840 there, and by HEAD it wrecks at tick 192 with score 0, barely out of the bay; 0x16 stopped
+// wrecking at all and sat LIVE at tick 1000 with score 304. The cadence is kept and the fixture moves, the same
+// deliberate re-pick as before.
+// Of the 255 last bytes, TEN now deliver by 1320 and the best scores 34: 6d (tick 1182, score 34, hp 69.48) is
+// taken, ahead of d1 (1196, 32) and e6 (1245, 32). The army is simply harder than it was - 367 is not available at
+// any last byte, and no number was invented to keep it. For the loser, 129 of 255 wreck before 1000; c0 is taken
+// (wrecks at 865, score 24), which keeps the old shape of a run that earns something and then dies, with margin
+// before the batch's 1000 ticks.
+export const WINNER = { name: 'winner', key: b32(0x0a), worldSecret: fromHex(`01${'00'.repeat(30)}6d`), ticks: 1320 };
+export const LOSER = { name: 'loser', key: b32(5), worldSecret: b32(0xc0), ticks: 1000 };
 
 /** A Lightning node whose players have paid, and which writes down WHEN it was told to act. */
 export function paidPort() {

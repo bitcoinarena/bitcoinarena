@@ -58,7 +58,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 // delivers with a score over the round's minScore): DELIVERED by tick 1320,
 // score 12. The loser's is close-order's own, which wrecks at tick 547.
 // RE-SEARCHED with the armour doctrine (2026-09-16), window-fixture.js: last byte d1 now wrecks at tick 284;
-// 1d delivers at tick 1173, score 367. The loser wrecks at tick 956, score 420.
+// 6d delivers at tick 1182, score 34. The loser c0 wrecks at tick 865, score 24 (re-picked 2026-09-19).
 const WINNER = { name: 'winner', key: b32(0x0a), worldSecret: fromHex(`01${'00'.repeat(30)}1d`), ticks: 1320 };
 const LOSER = { name: 'loser', key: b32(5), worldSecret: b32(0x16), ticks: 1000 };
 
