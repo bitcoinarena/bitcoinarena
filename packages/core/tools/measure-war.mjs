@@ -78,6 +78,10 @@ let curSeed = 0, curSt = null, curTick = 0;
 // tool does not couple them into one.
 const A11GEOM = process.argv.includes('--a11geom');
 const a11geom = [];
+const O1RIDGE = process.argv.includes('--o1ridge');
+const o1ridge = {};
+const o1onWas = new Map(), o1since = new Map();
+const o1lag = { reached: 0, ticks: 0, lost: 0, lostTicks: 0, laneTicks: 0, belowRest: 0, deficit: 0 };
 const B4WHY = process.argv.includes('--b4why');
 const b4rows = [];
 const NOGATE_A = process.argv.includes('--nogate-a') || process.argv.includes('--nogates');
@@ -234,6 +238,7 @@ for (const seed of SEEDS) {
   curSeed = seed;
   const st = init(seed), s = st.i32;
   curSt = st;
+  o1onWas.clear(); o1since.clear();   // per seed: a tick of seed 2 is not a lag since seed 1
   const alive = (i) => s[base(i) + L.U_STATE] !== 0;
   add('13a seeds'); if (T.slotOrder(s[L.O_TACTICS], -1).join() !== T.slotOrder(s[L.O_TACTICS], 1).join()) add('13a orders differ');
   const lastDir = new Map(), lastFlip = new Map(), prevPost = new Map();
@@ -473,6 +478,34 @@ for (const seed of SEEDS) {
         add(on ? 'O1 lane rest sum' : 'O1 rest rest sum', (lt.rest / ONE) | 0);
         add(on ? 'O1 lane n2' : 'O1 rest n2'); }
       add(on ? 'O1 on n' : 'O1 off n'); add(on ? 'O1 on push' : 'O1 off push', pu);
+      // THE RIDGE CAP, PRICED (2026-09-19). `goalOf` gives RIDGE's own lane a ceiling of 16 m where every ordinary
+      // lane may reach 24 (PUSH_MAX), so one of the three lanes the row averages over is capped 8 m BELOW the ground
+      // it is compared against. Each team-tick is tagged with which of the three it is and the ceiling it sat under,
+      // so the row's 6 m difference can be split into what the cap costs and what is left.
+      if (O1RIDGE) {
+        const slot = s[L.O_TACTICS + T.TAC_SLOT + w];
+        const lt = T.laneTerms(s, L.O_TACTICS, w < 6 ? -1 : 1, slot);
+        const group = !on ? 'the rest' : slot === lanes[0] ? "RIDGE's lane" : 'the other two lanes';
+        const g = (o1ridge[group] = o1ridge[group] || { n: 0, push: 0, ceil: 0, at16: 0, atCeil: 0, rest: 0 });
+        g.n++; g.push += pu; g.ceil += lt.ceiling / ONE; g.rest += lt.rest / ONE;
+        if (Math.abs(lt.ceiling / ONE - 16) < 0.01) g.at16++;
+        if (Math.abs(pu - lt.ceiling / ONE) < 0.01) g.atCeil++;
+        // THE STEPPING LAG (§4.11, ruled 2026-09-19 to keep stepping): a lane that has just become an objective gets a
+        // rest of +8 but must WALK there in 8 m steps on the same 5 s clock the objective moves on. Timed from the
+        // tick the lane becomes an objective to the tick its push first reaches that rest - and counted as never
+        // arriving if the lane stops being an objective first.
+        const wasOn = o1onWas.get(w);
+        o1onWas.set(w, on);
+        if (on && wasOn === false) o1since.set(w, tick);
+        if (!on && wasOn === true) {
+          const t0 = o1since.get(w);
+          if (t0 !== undefined) { o1lag.lost++; o1lag.lostTicks += tick - t0; o1since.delete(w); }
+        }
+        if (on && o1since.has(w) && pu >= lt.rest / ONE - 0.01) {
+          o1lag.reached++; o1lag.ticks += tick - o1since.get(w); o1since.delete(w);
+        }
+        if (on) { o1lag.laneTicks++; if (pu < lt.rest / ONE - 0.01) { o1lag.belowRest++; o1lag.deficit += lt.rest / ONE - pu; } }
+      }
     }
     for (let o = 0; o < 3; o++) {
       const px = T.slotX(lanes[o]), pz = seamOfCore(st, px);
@@ -889,6 +922,39 @@ if (H1WHY && h1why.length) {
     + `bounding ${(100 * bounding / h1why.length).toFixed(0)}%; standing still ${(100 * still / h1why.length).toFixed(0)}%; `
     + `stepping toward the hold ${(100 * towards / h1why.length).toFixed(0)}%; `
     + `never yet stood on a post ${(100 * h1why.filter((r) => r.column).length / h1why.length).toFixed(0)}%`);
+}
+if (O1RIDGE) {
+  const G = (k) => o1ridge[k] || { n: 0, push: 0, ceil: 0, at16: 0, atCeil: 0, rest: 0 };
+  const ridge = G("RIDGE's lane"), other = G('the other two lanes'), rest = G('the rest');
+  const mean = (g, f) => g.n ? f(g) / g.n : NaN;
+  console.log(`O1's mean push, split by which lane and the ceiling it sat under:`);
+  for (const [label, g] of [["RIDGE's lane   ", ridge], ['the other two   ', other], ['the rest        ', rest]])
+    console.log(`  ${label} n ${String(g.n).padStart(6)}  mean push ${mean(g, (x) => x.push).toFixed(2).padStart(6)} m  `
+      + `mean ceiling ${mean(g, (x) => x.ceil).toFixed(1).padStart(5)} m  mean rest ${mean(g, (x) => x.rest).toFixed(2).padStart(5)} m  `
+      + `capped at 16 ${(100 * g.at16 / Math.max(g.n, 1)).toFixed(1)}%  sitting ON its ceiling ${(100 * g.atCeil / Math.max(g.n, 1)).toFixed(1)}%`);
+  const onN = ridge.n + other.n, onPush = ridge.push + other.push;
+  const meanOn = onPush / Math.max(onN, 1), meanRest = mean(rest, (x) => x.push);
+  const shown = meanOn - meanRest;
+  const withoutRidge = mean(other, (x) => x.push) - meanRest;
+  console.log(`  the row as it stands: ${meanOn.toFixed(2)} - ${meanRest.toFixed(2)} = ${shown.toFixed(2)} m against a 6 m bar`);
+  console.log(`  the same difference counting only the two UNCAPPED objective lanes: ${withoutRidge.toFixed(2)} m`);
+  console.log(`  so RIDGE's 16 m cap costs the row ${(withoutRidge - shown).toFixed(2)} m of its difference`);
+  const gap = 6 - shown, unheld = 0.73;
+  console.log(`  that is ${(100 * (withoutRidge - shown) / gap).toFixed(1)}% of the ${gap.toFixed(2)} m live shortfall`);
+  // WHERE THE DIFFERENCE GOES, in the row's own terms: what the rules PRICE a lane above the rest, minus what each
+  // group gives back by not sitting at its own rest.
+  const priced = mean(ridge, (x) => x.rest) * ridge.n / Math.max(onN, 1) + mean(other, (x) => x.rest) * other.n / Math.max(onN, 1);
+  console.log(`  the rules price a lane ${priced.toFixed(2)} m of rest against the rest's ${mean(rest, (x) => x.rest).toFixed(2)} m; `
+    + `lanes sit ${(priced - meanOn).toFixed(2)} m BELOW their own rest and the rest sits `
+    + `${(meanRest - mean(rest, (x) => x.rest)).toFixed(2)} m ABOVE its own`);
+  console.log(`  RIDGE's lane sits ${(mean(ridge, (x) => x.rest) - mean(ridge, (x) => x.push)).toFixed(2)} m below its rest, `
+    + `the other two ${(mean(other, (x) => x.rest) - mean(other, (x) => x.push)).toFixed(2)} m below theirs`);
+  console.log(`O1's stepping lag: a lane reached its +8 rest ${o1lag.reached} times, taking a mean `
+    + `${(o1lag.ticks / Math.max(o1lag.reached, 1) / 60).toFixed(1)} s; it stopped being an objective before reaching it `
+    + `${o1lag.lost} times, after a mean ${(o1lag.lostTicks / Math.max(o1lag.lost, 1) / 60).toFixed(1)} s. `
+    + `Lane team-ticks below their own rest ${o1lag.belowRest} of ${o1lag.laneTicks} = `
+    + `${(100 * o1lag.belowRest / Math.max(o1lag.laneTicks, 1)).toFixed(1)}%, mean deficit while below `
+    + `${(o1lag.deficit / Math.max(o1lag.belowRest, 1)).toFixed(2)} m`);
 }
 if (B4WHY) {
   const miss = b4rows.filter((r) => !r.ok), hit = b4rows.filter((r) => r.ok);
