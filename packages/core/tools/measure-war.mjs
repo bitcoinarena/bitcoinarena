@@ -47,6 +47,8 @@ const b3OutNow = new Map();
 const haltSuppressedNow = new Set();
 const winSteps = { give: {}, take: {} };
 const objLaneWas = new Map();
+const holdBefore = new Map(), holdBeforeNext = new Map();
+const branchNow = new Map();
 let pushWrittenMin = Infinity, pushWrittenMax = -Infinity, pushSeenMin = Infinity, pushSeenMax = -Infinity;
 const SEEDS = arg('seeds', '1,2,3,4,5').split(',').map(Number);
 const TICKS = Number(arg('ticks', 3600));
@@ -61,6 +63,13 @@ const patch = (rel, anchor, insert, where = 'after') => {
 };
 patch('rules/army.js', '  u.z = clamp(add(u.z, stepZ), -halfZ, halfZ);\n',
   '  if (globalThis.__W) globalThis.__W.unit(index, u, dx, dz, hold, post);\n');
+// WHICH BRANCH SET THE Z STEP (2026-09-19, A2): a tank that reverses beside a stationary hold is oscillating, and the
+// three branches - give ground, hold after giving, walk to the post - want different answers. Named, not guessed.
+patch('rules/army.js', '    gaveGround = 1;\n', '    if (globalThis.__W) globalThis.__W.branch(index, "backoff");\n');
+patch('rules/army.js', '    // ONLY A TANK THAT GAVE GROUND (bit 5 of its memory word, cleared once no enemy is inside 30 m). Read as "any tank',
+  '    if (globalThis.__W) globalThis.__W.branch(index, "heldAfterGiving");\n', 'before');
+patch('rules/army.js', '    const want = !crossing && abs(gap) > band ? (gap > 0 ? ONE : -ONE) : 0;',
+  '\n    if (globalThis.__W) globalThis.__W.branch(index, crossing ? "crossing" : (want === 0 ? "inBand" : (arrivingZ ? "arriving" : "walking")));');
 patch('sim.js', '  // Tanks are pushed out of each other BEFORE anything moves, which is where',
   '  if (globalThis.__W) globalThis.__W.beforeSep(s);\n', 'before');
 patch('sim.js', '  const groundOf = (x, z) => surfaceAt(st, x, z);\n',
@@ -115,6 +124,7 @@ globalThis.__W = {
   haltRaw(sd, f, raw, kept) { if (!mainPass) return;
     if (raw) { add('B2 raw halts'); if (!kept) add('B2 halts suppressed'); }
     if (raw && !kept) haltSuppressedNow.add(`${sd < 1 ? -1 : 1}:${f}`); },
+  branch(i, which) { if (mainPass) branchNow.set(i, which); },
   reread(w) { if (mainPass) add('P re-read due'); },
   onPostOk(w) { if (mainPass) add('P team on post'); },
   verdict(w, v, was, push, weight, rest, ceiling, own, foe, widow) { if (!mainPass) return;
@@ -184,6 +194,7 @@ for (const seed of SEEDS) {
       const mv = mvOf(i); if (mv > 5) continue;                       // a respawn, not a move
       const sd = String(sideOf(i)); const line = onLine(i); const sep = hk.sep.get(i) || 0;
       const own = !(u.dx === 0 && u.dz === 0);
+      if (CAUSE && u.hold !== undefined) { if (!holdBeforeNext.has(i)) holdBeforeNext.set(i, u.hold); }
       // A3: the separation push undoes the tank's own step
       if (own && sep > 0.005) add('A3 fights');
       add('A3 tank-ticks');
@@ -197,6 +208,16 @@ for (const seed of SEEDS) {
           // WHAT FLIPPED AND WHAT THE TANK WAS: the axis, its role, and whether it was on post. A row that trips on
           // 2.11% wants a cause, not a comparison with another seed set.
           if (CAUSE) { const bd = T.postOf(s, L.O_TACTICS, i, tick).bounding;
+            // WHAT MOVED UNDER A FIDGET: its own hold against the tick before, and how far it was from it. A tank
+            // that reverses because its hold jumped is obeying §4.1; one that reverses with a stationary hold is
+            // oscillating, and that would be the mover's own fault.
+            if (quick) { const hNow = u.hold, hWas = holdBefore.get(i);
+              const moved = hWas === undefined ? null : Math.abs(hNow - hWas) / ONE;
+              const gap = Math.abs(hNow - s[base(i) + 1]) / ONE;
+              add(moved === null ? 'A2 fidget hold unknown' : moved > 0.05 ? 'A2 fidget hold moved' : 'A2 fidget hold still');
+              add(`A2 fidget gap ${gap < 0.25 ? '<0.25' : gap < 1 ? '0.25-1' : gap < 4 ? '1-4' : '4+'}`);
+              add(`A2 fidget branch ${branchNow.get(i) || 'none'}`);
+              if (moved !== null && moved > 0.05) add(`A2 fidget hold jump ${moved < 1 ? '<1' : moved < 3 ? '1-3' : '3+'}`); }
             const axis = (pd[0] && dir[0] && pd[0] !== dir[0]) ? (pd[1] && dir[1] && pd[1] !== dir[1] ? 'both' : 'x') : 'z';
             add(`A2 flip axis ${axis}`); if (quick) add(`A2 fidget axis ${axis}`);
             add(`A2 flip ${bd ? 'bounding' : 'overwatch'}`); if (quick) add(`A2 fidget ${bd ? 'bounding' : 'overwatch'}`); }
@@ -469,6 +490,7 @@ for (const seed of SEEDS) {
     for (const i of RIFLES) { const sd = String(sideOf(i)); if (aliveBefore.get(i) && !alive(i)) win.menLost[sd]++;
       if (!aliveBefore.get(i) && alive(i)) { win.menIn[sd]++; add('B6 arrivals'); if (Math.abs(s[base(i) + 1]) < 60 * ONE) add('B6 appeared on the line'); } }
 
+    if (CAUSE) { for (const [i, h] of holdBeforeNext) holdBefore.set(i, h); holdBeforeNext.clear(); }
     for (let i = 0; i < 96; i++) aliveBefore.set(i, alive(i));
     if ((t + 1) % 600 === 0) { for (const sd of ['-1', '1']) { add('A4a windows'); if (w10[sd] === 0) add('A4a still');
       if (CAUSE) add(`A4a changes ${w10[sd] === 0 ? '0' : w10[sd] <= 2 ? '1-2' : w10[sd] <= 6 ? '3-6' : '7+'}`);
@@ -781,6 +803,15 @@ if (CAUSE) {
     + `bounding ${n('A2 flip bounding')}, overwatch ${n('A2 flip overwatch')}. The fidgets inside 2 s: axis x `
     + `${n('A2 fidget axis x')}, z ${n('A2 fidget axis z')}, both ${n('A2 fidget axis both')}; bounding `
     + `${n('A2 fidget bounding')}, overwatch ${n('A2 fidget overwatch')}`);
+  console.log(`A2's fidgets, what moved under them: hold moved ${n('A2 fidget hold moved')}, hold still `
+    + `${n('A2 fidget hold still')}, unknown ${n('A2 fidget hold unknown')}; the jump when it moved: <1 m `
+    + `${n('A2 fidget hold jump <1')}, 1-3 m ${n('A2 fidget hold jump 1-3')}, 3+ m ${n('A2 fidget hold jump 3+')}; `
+    + `distance to the hold at the flip: <0.25 ${n('A2 fidget gap <0.25')}, 0.25-1 ${n('A2 fidget gap 0.25-1')}, `
+    + `1-4 ${n('A2 fidget gap 1-4')}, 4+ ${n('A2 fidget gap 4+')}`);
+  console.log(`A2's fidgets, which branch stepped them: backoff ${n('A2 fidget branch backoff')}, heldAfterGiving `
+    + `${n('A2 fidget branch heldAfterGiving')}, crossing ${n('A2 fidget branch crossing')}, arriving `
+    + `${n('A2 fidget branch arriving')}, walking ${n('A2 fidget branch walking')}, inBand `
+    + `${n('A2 fidget branch inBand')}, none ${n('A2 fidget branch none')}`);
   console.log(`A4a's post changes: of slot ${n('A4a change of slot')}, of line ${n('A4a change of line')}; windows by `
     + `how many changes they held: none ${n('A4a changes 0')}, 1-2 ${n('A4a changes 1-2')}, 3-6 ${n('A4a changes 3-6')}, `
     + `7+ ${n('A4a changes 7+')}`);
