@@ -49,6 +49,14 @@ const CAUSE = process.argv.includes('--cause');
 // change comes out of.
 const A4AWHY = process.argv.includes('--a4awhy');
 const a4aWindows = [];
+// THE 20:30 GATES, TAKEN OFF IN THE COPY ONLY (2026-09-19). §4.10 as ruled has one cadence and no gates: "re-read
+// every 5 s (300 ticks) per team", then take, give or drift. The core adds two things the 2026-09-16 20:30 re-ruling
+// put there - (a) no re-read at all while a living tank of the team is off post, and (b) a step only when the reading
+// repeats the last one. Six rows ask the push to DO something, so the question "how much of those six is the cadence"
+// is answered by running them with the gates off and reading the same table. This changes NOTHING in the core: the
+// gates are removed from the temp copy this tool already patches, and only when asked for on the command line.
+const NOGATE_A = process.argv.includes('--nogate-a') || process.argv.includes('--nogates');
+const NOGATE_B = process.argv.includes('--nogate-b') || process.argv.includes('--nogates');
 const SHARE = process.argv.includes('--share');
 const b3OutNow = new Map();
 const haltSuppressedNow = new Set();
@@ -99,6 +107,17 @@ patch('rules/tactics.js', '    const confirmed = s[base + TAC_VERDICT + w] === v
   + 'weight, terms.rest, terms.ceiling, own, foe, widow);');
 patch('rules/tactics.js', '    s[base + TAC_PUSH + w] = push | 0;',
   '\n    if (globalThis.__W) globalThis.__W.stepped(w, push, verdict);');
+// The gates themselves, removed from the copy when asked. `swap` replaces a line rather than adding after it, and it
+// insists on finding it exactly once for the same reason `patch` does: a silently missed anchor would measure the
+// core unchanged and read as "the cadence costs nothing".
+const swap = (rel, from, to) => {
+  const p = join(tmp, 'src', rel); const s = readFileSync(p, 'utf8');
+  if (s.split(from).length !== 2) { console.error(`measure-war: line not found once in ${rel}:\n${from}`); process.exit(2); }
+  writeFileSync(p, s.replace(from, to));
+};
+if (NOGATE_A) swap('rules/tactics.js', '    if (!teamOnPost(s, base, side, team, tick, seamAt, ground)) continue;',
+  '    /* rule (a) off for this measurement */');
+if (NOGATE_B) swap('rules/tactics.js', '    if (!confirmed) continue;', '    /* rule (b) off for this measurement */');
 // THE CORE'S OWN SEAM, hooked out of the copy (measured 2026-09-19): every hold hangs off the seam at the slot, and
 // this tool used to re-derive it as frontlineZ(st.tape, x) - a different reader from the core's glided, scrolled,
 // windowed one. The two disagreed by a median 1.37 m against a 1.5 m on-post radius, which is most of what H1 was
