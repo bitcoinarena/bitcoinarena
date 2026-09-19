@@ -37,6 +37,7 @@ import { vehicleStep } from './rules/vehicle.js';
 import { flatGround, groundFromSeed, gradeAlong, heightAtWorld, DEFAULT_COLS, DEFAULT_ROWS } from './rules/ground.js';
 import { noSolids, resolveSolids, resolveArmour, BOX_WORDS } from './rules/solids.js';
 import { initTactics, postOf, scoot, onRespawn, enterInLane, pressure, partnerOf, FORWARD_LINE, rifleTeamOf, pushNear, mix, FIRE_TEAMS_PER_SIDE, TAC_SEED, firstManOf, initObjectives, objectiveHolders, clearOnEntry, holdLegs, onPost, updateCrests, crestHold, initMarket, readMarket, trendHit, supplyOf, TAC_MARKET, MK_OPEN, MK_SAMPLES, MK_SAMPLE_TICK, MK_PREV_LO, MK_PREV_HI, MK_PREV_OLDEST, coverClaims, coverPostOf, COVER_ON, coverClaim, coverPlace, coverPosture, setCoverPosture, rifleHitAt,
+  TAC_SUPP, decaySupp, addSupp, isPinned, SUPP_ROUND, SUPP_BOMB, SUPPRESS_REACH,
   POSTURE_STAND, POSTURE_PRONE, POSTURE_COVER, COVER_BOMB_REACH, COVER_NONE } from './rules/tactics.js';
 import { mapSolids } from './rules/map.js';
 import { CANDLES, CL_WORDS, candleLayout, candleHeightAt, writeCandleView, levelled } from './rules/candles.js';
@@ -1186,6 +1187,10 @@ function detonate(s, bx, bz, truckMayBeHit) {
     const b = unitBase(i);
     const d = blastReach(sub(s[b + U_X], bx), sub(s[b + U_Z], bz));
     if (d < 0) continue;
+    // §11.5: "A bomb blast adds 300 to every team with a living man inside 16 m of it: after a bomb, everybody
+    // is down." That is the blast, not the kill, so it lands on the survivors too and is added before the men in
+    // reach are removed.
+    { const rtB = rifleTeamOf(i); addSupp(s, O_TACTICS, rtB.side, rtB.team, SUPP_BOMB); }
     // §11.4: "A bomb reaches a COVER man only inside 8 m; a PRONE or STAND man at 16 m as before. A wreck or a
     // crater lip is what a bomb's splinters stop; the open is not." The blast is unchanged for everyone else.
     if (coverPosture(s, O_TACTICS, i) === POSTURE_COVER && d >= COVER_BOMB_REACH) continue;
@@ -1588,6 +1593,10 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
       grantedBefore[low >> 2] = false; lineMoved[sd]--;
     }
   }
+  // §11.5: the suppression word decays by 1 a tick and is READ at the top of a tick, so the decay runs here -
+  // before the halt clocks that read it and before any round this tick adds to it.
+  decaySupp(s, O_TACTICS);
+
   // FIRE TEAMS (WAR_TACTICS.md §11.2): each side's nine four-man teams share one halt clock hashed from (seed, side,
   // team); odd teams run half a rest (210 ticks) behind, and a team does not halt in a tick its lower neighbour halts,
   // so of two neighbouring teams one is always moving while the other covers.
@@ -1596,7 +1605,10 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
     for (let f = 0; f < FIRE_TEAMS_PER_SIDE; f++) {
       const key = mix(s[O_TACTICS + TAC_SEED], 500 + Math.imul(sd, 16) + f) & 0x7fffffff;
       const raw = standingStill(key, (s[O_TICK] - ((f & 1) === 1 ? HALF_REST_TICKS : 0)) | 0);
-      halted[sd][f] = raw && !(f > 0 && halted[sd][f - 1]);
+      // §11.5: "A pinned fire team does not rush. Its clock keeps ticking, but a rest leg moves nobody." The
+      // bounding rule still holds for its neighbour, which is why the pin is applied AFTER the neighbour test -
+      // a pinned team is the one covering, from the ground, and it must not free its neighbour to halt as well.
+      halted[sd][f] = (raw && !(f > 0 && halted[sd][f - 1])) || isPinned(s, O_TACTICS, sd === 0 ? -1 : 1, f);
     }
   }
   for (let i = 0; i < UNITS; i++) {
@@ -1625,6 +1637,11 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
       // on one anchor. His squad is the one drawn at his spawn, kept in his U_TARGET - no draw moves.
       u.anchor = s[squadWord(u.side, s[unitBase(firstManOf(rt.side, rt.team)) + U_TARGET])];
       u.halted = halted[rt.side < 0 ? 0 : 1][rt.team];
+      // §11.5: a pinned man does not walk, he CRAWLS - toward his claimed place if he has one, else toward his
+      // post. It is the same walk to the same target at a sixth of the pace, not a second movement path, and at
+      // 0.0083 m a tick it sits under §11.4's 0.01 m step probe, so a pinned man is never STAND by the number the
+      // core already has.
+      u.pinned = isPinned(s, O_TACTICS, rt.side, rt.team);
       u.infPush = pushNear(s, O_TACTICS, rt.side, u.anchor);   // §12.1 follow the push of the tank lanes here
     }
 
@@ -1835,9 +1852,30 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
         // army.js:417-421 already had written down.
         const foe = pickRifleTarget(peekAt, UNITS, i, u.x, u.z, u.side);
         if (foe < 0) {
+          // §11.5 SUPPRESSING FIRE: no rifle target inside 26 m (§8.1), but a living enemy MAN inside 34 m - he
+          // fires at the nearest such man. It never hits and kills nobody; it adds 60 to that man's fire team.
+          // THE DRAW DOES NOT MOVE: this takes the look-again draw he was already taking and no other, so the
+          // stream shifts only in what the round does, never in how many numbers were pulled from it.
           s[b + U_COOLDOWN] = (RIFLE_LOOK_TICKS + nextBelow(rng, RIFLE_LOOK_TICKS_SPAN)) | 0;
+          let near = -1, nearD = SUPPRESS_REACH;
+          for (let j = 0; j < UNITS; j++) {
+            if (isArmour(j) || j === i) continue;
+            const jb = unitBase(j);
+            if (s[jb + U_STATE] === 0 || s[jb + U_HP] <= 0) continue;
+            if ((s[jb + U_SIDE] < 0) === (u.side < 0)) continue;
+            const dx = sub(s[jb + U_X], u.x), dz = sub(s[jb + U_Z], u.z);
+            if (abs(dx) > nearD || abs(dz) > nearD) continue;
+            const d = length2(dx, dz);
+            if (d < nearD) { nearD = d; near = j; }
+          }
+          // A suppressing round is NEVER fired at a truck (§8.2 stands): this scan sees men only.
+          if (near >= 0) { const rt2 = rifleTeamOf(near); addSupp(s, O_TACTICS, rt2.side, rt2.team, SUPP_ROUND); }
         } else {
-          s[b + U_COOLDOWN] = (RIFLE_RELOAD_TICKS + nextBelow(rng, RIFLE_RELOAD_TICKS_SPAN)) | 0;
+          // §11.5: a pinned man FIRES AT HALF RATE - "his reload draw is taken as always and its value doubled",
+          // so the draw count does not move here either; only what it buys him does.
+          const reload = (RIFLE_RELOAD_TICKS + nextBelow(rng, RIFLE_RELOAD_TICKS_SPAN)) | 0;
+          const rtSelf = rifleTeamOf(i);
+          s[b + U_COOLDOWN] = isPinned(s, O_TACTICS, rtSelf.side, rtSelf.team) ? Math.imul(reload, 2) : reload;
           const rollR = nextBelow(rng, 1000);    // §4.14: 45 +- 5 x strength at a man; the plain 45 at the truck
           const fb = unitBase(foe);
 
@@ -1869,6 +1907,10 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
           // still one draw: the roll never moves, only the number it is compared against, so the stream keeps its
           // shape and every golden that changes does so because a man was harder to hit and for no other reason.
           // The truck is not a man and has no posture: a courier shot is unchanged.
+          // §11.5: "+60 per round aimed at one of the team's living men - a rifle round, HIT OR MISS". Added
+          // before the roll is judged, because it is the round that suppresses and not the wound. A round at the
+          // truck is not a round at a man and adds nothing.
+          if (!onCourier && !isArmour(foe)) { const rtFoe = rifleTeamOf(foe); addSupp(s, O_TACTICS, rtFoe.side, rtFoe.team, SUPP_ROUND); }
           const connects = rollR < (onCourier ? RIFLE_HIT_PER_MIL
             : rifleHitAt(trendHit(s, O_TACTICS, u.side, RIFLE_HIT_PER_MIL, 5), coverPosture(s, O_TACTICS, foe)));
           if (connects) {

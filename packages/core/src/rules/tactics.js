@@ -79,7 +79,46 @@ export const COVER_NONE = 0xffff;
 export const COVER_PLACE_MASK = 0xffff;
 export const COVER_POSTURE_SHIFT = 16;            // §11.4's, reserved and unwritten here
 
-export const TAC_WORDS = 212;
+/**
+ * §11.5 SUPPRESSION - one word per fire team, nine a side, appended after §11.3's cover words so nothing above
+ * moves. "+60 per round aimed at one of the team's living men (a rifle round, hit or miss; a coax burst, §4.4; a
+ * suppressing round), -1 per tick, clamped [0, 600]. Integers, written on the shooter's tick, read at the top of
+ * the next."
+ *
+ *   under fire   TAC_SUPP > 0        a round in the last second or so, decaying
+ *   pinned       TAC_SUPP >= 120     two rounds inside three seconds, or one heavy burst
+ *
+ * There is NOTHING TO PORT: `Army.cs` has no suppression, no pinning, no morale and no cower - zero occurrences of
+ * any of them. This is a declared GAP and the numbers below are this section's own.
+ */
+export const TAC_SUPP = 212;
+export const SUPP_WORDS = 18;
+export const SUPP_ROUND = 60, SUPP_MAX = 600, SUPP_PINNED = 120;
+export const SUPP_BOMB = 300;                      // §12.3's blast: after a bomb, everybody is down
+/** §11.5's own reach at an enemy MAN a rifleman cannot properly target. NOT `Army.cs`'s `CourierRange = 34f`,
+ *  which is the range at which a rifleman engages the TRUCK - a different quantity that happens to share a digit.
+ *  §8.1's 26 m rifle range is the one that genuinely agrees, and it stays where it is. */
+export const SUPPRESS_REACH = Math.imul(34, ONE);
+/** A pinned man crawls at 0.5 m/s. The gait lives with the other gaits in army.js (RIFLE_CRAWL) because this
+ *  module imports that one, not the other way round. §11.4's step probe is 0.01 m and a crawl step is 0.0083 m, so
+ *  a pinned man is never STAND by the number the core already has - there is no second crawl path. */
+
+export const suppWord = (base, side, team) => (base + TAC_SUPP + (side < 0 ? team : FIRE_TEAMS_PER_SIDE + team)) | 0;
+export const suppOf = (s, base, side, team) => s[suppWord(base, side, team)];
+export const isPinned = (s, base, side, team) => s[suppWord(base, side, team)] >= SUPP_PINNED;
+export const isUnderFire = (s, base, side, team) => s[suppWord(base, side, team)] > 0;
+/** A round lands on the team of the man it was aimed at. Clamped at 600 so a firefight cannot bank suppression. */
+export function addSupp(s, base, side, team, amount) {
+  const w = suppWord(base, side, team);
+  const v = (s[w] + amount) | 0;
+  s[w] = v > SUPP_MAX ? SUPP_MAX : v;
+}
+/** -1 a tick, read at the top of the next tick (§11.5). Never below zero. */
+export function decaySupp(s, base) {
+  for (let k = 0; k < SUPP_WORDS; k++) { const w = base + TAC_SUPP + k; if (s[w] > 0) s[w] = (s[w] - 1) | 0; }
+}
+
+export const TAC_WORDS = 230;
 // [82] the round's open (§4.13 TAC_OPEN, in the tape's unit), [83] samples taken since init, [84] trend (+1 UP, -1 DOWN, 0
 // SIDEWAYS), [85] its strength 0-3, [86] lead (+1 BULLS, -1 BEARS, 0 FLAT), [87] the lead's momentum 0-3 (§4.14).
 export const MK_OPEN = 0, MK_SAMPLES = 1, MK_TREND = 2, MK_STRENGTH = 3, MK_LEAD = 4, MK_MOMENTUM = 5;

@@ -444,17 +444,18 @@ test('an assault starts only on an objective the side does not hold, never while
   // ran freely. With §4.14 alive the trend's side runs its clock and the other side mounts none, and these five
   // seeds x 10800 ticks give 8 starts:
   //
-  //   seed 1: bulls 0, bears 2    seed 2: bulls 0, bears 0    seed 3: bulls 0, bears 3
-  //   seed 4: bulls 2, bears 0    seed 5: bulls 2, bears 1
+  //   seed 1: bulls 0, bears 2    seed 2: bulls 0, bears 1    seed 3: bulls 0, bears 2
+  //   seed 4: bulls 2, bears 0    seed 5: bulls 2, bears 2
   //
   // RE-MEASURED TWICE, and each time because the war underneath it changed rather than because the number was
   // inconvenient: 8 with §4.14's trend alive, 10 once §11.3's held claims stopped being re-clamped, 11 once
   // §11.4's posture made a man in cover harder to kill, and 10 once the claim pass stopped wiping the posture bits
-  // it writes over. Cover and posture move who survives, survivors decide who
+  // it writes over, and 11 again once §11.5 pinned teams that were rushing. Cover, posture and suppression move
+  // who survives and who advances, survivors decide who
   // holds an objective, and the holder is what an assault clock reads. Asserted exactly so it cannot drift without
   // a measurement beside it; the floor keeps the suite honest, since an assault path that never runs checks
   // nothing.
-  assert.equal(starts, 10, `${starts} assaults, not the measured 10`);
+  assert.equal(starts, 11, `${starts} assaults, not the measured 11`);
   assert.ok(starts > 0, 'no assault ran at all, so nothing above was checked');
 });
 
