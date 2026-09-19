@@ -10,7 +10,7 @@
 // transcript recorded today can still be replayed next year.
 
 import { TICK_DT } from './tick.js';
-import { ONE, HALF, add, sub, mulFast, div, idiv, clamp, min, max, abs, length2, cbrt } from './fixed.js';
+import { ONE, HALF, add, sub, neg, mulFast, div, idiv, clamp, min, max, abs, length2, cbrt } from './fixed.js';
 import { seed, spawnBay, SOLO_BAY, BAY_COUNT } from './rng.js';
 import { sin, cos } from './trig.js';
 import {
@@ -40,6 +40,7 @@ import { initTactics, postOf, scoot, onRespawn, enterInLane, pressure, partnerOf
 import { mapSolids } from './rules/map.js';
 import { CANDLES, CL_WORDS, candleLayout, candleHeightAt, writeCandleView, levelled } from './rules/candles.js';
 import { scrollOf, FIELD_SLOT } from './rules/frontline.js';
+import { ARMOUR_WEST, ARMOUR_EAST } from './rules/army.js';
 import { heat as heatForLoad } from './rules/cargo.js';
 import { stepUnit, standingStill, separatePair, clearOfTruck, runOver, truckSpeed, threatAt, pickTarget, pickRifleTarget, riflePost, RELOAD_MIN, RELOAD_SPAN, DAMAGE_MIN, DAMAGE_SPAN, BACKOFF_RANGE, HIT_PER_MIL, ARMOUR_RANGE, RIFLE_RANGE, RIFLE_HIT_PER_MIL, RIFLE_RELOAD_TICKS, RIFLE_RELOAD_TICKS_SPAN, RIFLE_LOOK_TICKS, RIFLE_LOOK_TICKS_SPAN, RIFLE_HP, RIFLE_DAMAGE, hullDownHold, WRECK_R, COURIER_RANGE, COURIER_DAMAGE_MIN, COURIER_DAMAGE_SPAN, COURIER_RIFLE_MIN, COURIER_RIFLE_SPAN, courierReach, outranksTheFoe, shellForHeat } from './rules/army.js';
 import { accrue, earning, scoreOf, frontWeight, APRON_RADIUS } from './rules/score.js';
@@ -103,7 +104,23 @@ export const TRUCK_ARMOUR = Math.imul(3, ONE) >> 1;   // 1.5, TruckHealth.armour
 // SUPERSEDED (the owner 2026-09-16 17:06): the speed-priced crash above - 4 m/s a write-off, 0.5 m/s the floor, 6 points
 // per m/s - is gone. Any touch with live armour writes the truck off; see the armour contact in `step`.
 
-export const HALF_X = Math.imul(130, ONE);
+// THE WORLD GREW EAST (the owner 2026-09-19 15:58, miner-entrance-still-covered-1558.jpg, ruled 16:0x). The drawn miner
+// reaches 60.6 m west of its own origin, so at an origin of 114.4 m the building stood on the battlefield from x
+// 53.8 m - over the chart's last nine slots, the road and the army. Moving the chart could not fix that without a
+// 4.05 m pitch, which is narrower than the corridors the 10:05 playtest already called a trap. So the world grows:
+// the miner's origin goes to 169 m, its west edge lands at 108.4 m, and the map's half width follows it to 185 m.
+export const HALF_X = Math.imul(185, ONE);
+
+/**
+ * AND THE LAND THE GAME IS PLAYED ON DOES NOT CHANGE WITH IT.
+ *
+ * The relief is a grid stretched between +-RELIEF_HALF_X, so widening that number moves every hill: measured, with
+ * the relief stretched to 185 m the two armies lost contact on the recording's own fixture - 0 tanks with an enemy
+ * inside the 46 m gun at t=90, against 7 before, the bulls pushed from z -65 to -73 by crests that had moved under
+ * them. The map grew; the ground did not. Beyond +-130 m `heightAtWorld` holds the edge row, which is the flat
+ * apron the miner stands on - new land, not the old land pulled wider.
+ */
+export const RELIEF_HALF_X = Math.imul(130, ONE);
 export const HALF_Z = Math.imul(85, ONE);
 // The tick itself lives in `tick.js`, which is what the protocol reads: one
 // definition of how long a tick is, not one here and another there.
@@ -674,8 +691,8 @@ export function surfaceAt(st, x, z) {
   // PASSABILITY (§4.15, the owner 2026-09-17 14:40 "make it so trucks and tanks get through"): nothing added in the band stands
   // over 1 m or climbs over 25% but a crater's bowl, so the 2.4 m hull-down berms (e0f4ed7) are withdrawn - a berm across
   // the hold band was a wall to a truck crossing the front. The candle ribbon (1 m, 25%) is the only layer added.
-  if (!st.candles) return sub(heightAtWorld(st.ground, x, z, HALF_X, HALF_Z), craterCut(st.i32, x, z));
-  const relief = levelled(heightAtWorld(st.ground, x, z, HALF_X, HALF_Z), st.apron, x, z, st.ground, HALF_X, HALF_Z);
+  if (!st.candles) return sub(heightAtWorld(st.ground, x, z, RELIEF_HALF_X, HALF_Z), craterCut(st.i32, x, z));
+  const relief = levelled(heightAtWorld(st.ground, x, z, RELIEF_HALF_X, HALF_Z), st.apron, x, z, st.ground, RELIEF_HALF_X, HALF_Z);
   return sub(add(relief, (st.noCandleField ? 0 : candleHeightAt(st.candles, x, z, st.candleShift))), craterCut(st.i32, x, z));
 }
 
@@ -689,7 +706,7 @@ function refreshCandles(st) {
   const w = scaleNow(st), g = glideTape(st), older = glideOlder(st);
   candleLayout(g, st.i32[O_TACTICS + TAC_MARKET + MK_SAMPLES], HALF_Z, st.candles, w.lo, w.hi, older, sampleLerp(st));
   st.candleShift = shiftNow(st);
-  st.apron = heightAtWorld(st.ground, START_X, 0, HALF_X, HALF_Z);
+  st.apron = heightAtWorld(st.ground, START_X, 0, RELIEF_HALF_X, HALF_Z);
   // the seam's scale, scroll and glided tape for this tick (seamAtX reads them hundreds of times a tick)
   st.seamScroll = scrollNow(st); st.seamLo = w.lo; st.seamHi = w.hi; st.seamOlder = older;
 }
@@ -751,9 +768,9 @@ export function init(seedWord) {
   // Generated from the seed, so the player and every node that replays them
   // arrive at the same hills by construction rather than by agreement. Unity
   // draws what this says now; it does not say what this should be.
-  st.ground = groundFromSeed(seedWord, DEFAULT_COLS, DEFAULT_ROWS, HALF_X, HALF_Z);
+  st.ground = groundFromSeed(seedWord, DEFAULT_COLS, DEFAULT_ROWS, RELIEF_HALF_X, HALF_Z);
   // OBJECTIVES (WAR_TACTICS.md §4.11): three lanes read from this ground, so from the seed alone - never a truck.
-  initObjectives(s, O_TACTICS, (x, z) => heightAtWorld(st.ground, x, z, HALF_X, HALF_Z));
+  initObjectives(s, O_TACTICS, (x, z) => heightAtWorld(st.ground, x, z, RELIEF_HALF_X, HALF_Z));
 
   // THE MAP'S OWN WALLS, AND THEY ARE THE CORE'S TOO.
   //
@@ -767,7 +784,7 @@ export function init(seedWord) {
   // The map's boxes are made here now, from the map's own geometry and the
   // relief this core generated, so the player and every replay walk the same
   // walls by construction. Unity draws them; it does not send them.
-  st.solids = mapSolids(st.ground, HALF_X, HALF_Z);
+  st.solids = mapSolids(st.ground, HALF_X, HALF_Z, RELIEF_HALF_X);
   refreshCandles(st);
 
   // The tanks the player can see are the host's, and it sends them every
@@ -1454,6 +1471,16 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
       if (s[bb + U_STATE] === 0) continue;
       separatePair(s, ab, bb, U_X, U_Z, U_SIDE);
     }
+  }
+  // AND THE SEPARATION MAY NOT PUT A TANK WHERE ITS OWN STEP MAY NOT GO (measured 2026-09-19 16:0x). The army clamps
+  // its step to the kerb west and the miner's door east (rules/army.js), and then this pass pushed hulls past it:
+  // measured on seed 1, the easternmost living tank stood at x 93.7 m against a clamp of 88, and 13434 of 68855
+  // tank-ticks were on the drawn miner's deck. A rule applied to the step and not to the push is half a rule.
+  for (let i = 0; i < UNITS; i++) {
+    if (!isArmour(i)) continue;
+    const ab = unitBase(i);
+    if (s[ab + U_STATE] === 0) continue;
+    s[ab + U_X] = clamp(s[ab + U_X], neg(min(ARMOUR_WEST, HALF_X)), min(ARMOUR_EAST, HALF_X));
   }
 
   const groundOf = (x, z) => surfaceAt(st, x, z);

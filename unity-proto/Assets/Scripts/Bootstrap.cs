@@ -274,7 +274,10 @@ public class Bootstrap : MonoBehaviour
         postGo.SetActive(false);
         var post = postGo.AddComponent<PostOffice>();
         post.terrain = _terrain;
-        post.postX = -_terrain.width * 0.44f;
+        // FROM THE CORE, not from the terrain's width (2026-09-19 16:0x). `width * 0.44` was a second world length
+        // in C#: it happened to give -114.4 on a 260 m map, and the moment the map grew east for the miner it would
+        // have walked the post office with it. The core owns where the buildings stand.
+        post.postX = Blwp.Layout.POST_X / 65536f;
         post.feed = Object.FindFirstObjectByType<MempoolFeed>();
         post.stats = _stats;
         postGo.SetActive(true);
@@ -452,7 +455,7 @@ public class Bootstrap : MonoBehaviour
         mark.loadout = loadout;
         gate.terrain = _terrain;
         gate.fx = Fx;
-        gate.gateX = _terrain.width * 0.44f;
+        gate.gateX = Blwp.Layout.MINER_X / 65536f;        // the core's miner, moved east so the model clears the field
         gate.postMaterial = gateMaterial;
         gate.minerModel = minerModel;
         gateGo.SetActive(true);
@@ -683,7 +686,7 @@ public class Bootstrap : MonoBehaviour
         // model behind the network does not exist until the object is active,
         // which is why this is a field on the component and not a property of
         // the model.
-        Roads.pavedTo = -_terrain.width * 0.44f + PostOffice.ApronReach;
+        Roads.pavedTo = Blwp.Layout.POST_X / 65536f + PostOffice.ApronReach;
         Roads.terrain = _terrain;
         Roads.field = Field;
         Roads.roadMaterial = roadMaterial;
@@ -916,7 +919,7 @@ public class Bootstrap : MonoBehaviour
 
     TruckController BuildTruck(MempoolTerrain terrain)
     {
-        float startX = -terrain.width * 0.44f;
+        float startX = Blwp.Layout.POST_X / 65536f;      // the core's post office, the same number the building took
         var root = new GameObject("Truck");
 
         // Parked in a loading bay, not on an empty apron. Bay 1 while nobody

@@ -202,12 +202,12 @@ namespace Blwp
         public const int WICK_RIDGE_TOP_HALF = 32768;
 
         // map landmarks (src/rules/map.js), Q16.16 metres: the buildings the world is laid between
-        public const int MINER_DOOR_X = 5924454;
+        public const int MINER_DOOR_X = 7098470;
         public const int MINER_MOUTH_HALF = 2621440;
         public const int MINER_MOUTH_HIGH = 1703936;
         public const int MINER_SHELL_HALF = 5531238;
         public const int MINER_SHELL_HIGH = 8729395;
-        public const int MINER_X = 7497318;
+        public const int MINER_X = 11075584;
         public const int POST_X = -7497318;
 
         /// <summary>Base word offset of unit <paramref name="i"/>.</summary>

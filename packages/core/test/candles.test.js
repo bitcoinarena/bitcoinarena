@@ -2,7 +2,10 @@
 // the truck and the tanks do on it - measured by driving the core, not by reading its constants back.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { init, step, teleport, surfaceAt, terrainAt, setGround, setCandleField, candleView, submitSample, frontAt, bayZ, START_X, HALF_X, HALF_Z } from '../src/sim.js';
+// RELIEF_HALF_X, not HALF_X: since the world grew east (2026-09-19) the map is 185 m from the middle and the relief
+// is still the 130 m grid it always was, held at its edge row beyond that. A test that samples the ground with the
+// map's number is reading a different hill from the one the core stands things on.
+import { init, step, teleport, surfaceAt, terrainAt, setGround, setCandleField, candleView, submitSample, frontAt, bayZ, START_X, HALF_X, RELIEF_HALF_X, HALF_Z } from '../src/sim.js';
 import * as T from '../src/rules/tactics.js';
 import { APRON_RADIUS } from '../src/rules/score.js';
 import { GATE_X } from '../src/rules/gate.js';
@@ -73,7 +76,7 @@ test('the chart band is the pancake (apron + 0.15 x relief, within 2.2 m) away f
       for (let z = -54 * Q; z <= 54 * Q; z += 2 * Q) {
         spots++;
         if (C.candleHeightAt(st.candles, x, z, st.candleShift) !== 0) continue;
-        const relief = heightAtWorld(st.ground, x, z, HALF_X, HALF_Z), got = surfaceAt(st, x, z);
+        const relief = heightAtWorld(st.ground, x, z, RELIEF_HALF_X, HALF_Z), got = surfaceAt(st, x, z);
         assert.equal(got, st.apron + mulFast(C.PANCAKE, relief - st.apron), `surface at ${x / Q},${z / Q}`);
         worst = Math.max(worst, Math.abs(got - st.apron));
         flat++;
@@ -89,7 +92,7 @@ test('the chart band is the pancake (apron + 0.15 x relief, within 2.2 m) away f
       for (let z = 54 * Q; z < 85 * Q; z += Q >> 2)
         for (const s of [1, -1]) {
           steepest = Math.max(steepest, Math.abs(bare(x, s * (z + (Q >> 2))) - bare(x, s * z)) / (Q >> 2));
-          const edge = st.apron + mulFast(C.PANCAKE, heightAtWorld(st.ground, x, s * 54 * Q, HALF_X, HALF_Z) - st.apron);
+          const edge = st.apron + mulFast(C.PANCAKE, heightAtWorld(st.ground, x, s * 54 * Q, RELIEF_HALF_X, HALF_Z) - st.apron);
           if (Math.abs(bare(x, s * z) - edge) > mulFast(C.CONE, z - 54 * Q) + 1) outside++;
         }
     console.log(`  pancake within ${(worst / Q).toFixed(3)} m of the apron on ${flat} of ${spots} spots; steepest cone grade ${steepest.toFixed(4)}${st.uploadedGround ? ' (uploaded grid)' : ''}`);

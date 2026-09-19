@@ -15,7 +15,10 @@ using UnityEngine.Networking;
 public class MempoolTerrain : MonoBehaviour
 {
     [Header("Extent (world units, matching the three.js build)")]
-    public float width = 260f;
+    // THE MAP IS 370 m ACROSS SINCE THE WORLD GREW EAST (2026-09-19 16:0x): the core's HALF_X is 185 m, and the
+    // terrain that draws it has to be the same size or the ground under the far end is not drawn at all. The core
+    // owns the number; this is the drawing following it.
+    public float width = 370f;
     public float depth = 170f;
     public int columns = 160;
     public int rows = 96;
