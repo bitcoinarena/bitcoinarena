@@ -642,69 +642,42 @@ for (const seed of SEEDS) {
         add(bad ? 'B2 fail windows' : 'B2 pass windows'); } } w5.clear(); }
     // B3 spread of men on post, per side
     for (const sd of [-1, 1]) {
-      // §0's READING RULE for men (RULED 2026-09-19): §12.1 clamps a man's post to at most 40 m behind the seam, so a
-      // man further back than that cannot be standing on any legal post - he is a column walking in (§10) and the
-      // line row does not count him. That is where the 20-40 m deep tail of the old z-miss came from.
-      const on = liveM.filter((i) => sideOf(i) === sd && hk.unit.get(i) && hk.unit.get(i).dx === 0 && hk.unit.get(i).dz === 0
+      // B3, RULED 2026-09-19, THE POPULATION FIRST. §11.1's row says "a side's men ON POST", and §11.1's own body
+      // uses that word for where a man IS ("whenever a man is on post AND his fire team's clock says halt") - two
+      // conditions, not one. The probe had implemented it as `dx === 0 && dz === 0`, which is §11.2's HALT clock,
+      // and §11.2 halts a fire team 0.4-1.8 s out of every 3-11 s. So the row was measuring the spread of whichever
+      // 8.3 of the side's 30.1 men on the line happened to be mid-halt on that tick, and a spread of eight men drawn
+      // from three squads is tight whatever the line is doing. Measured, same run, same seeds:
+      //     men counted per side-tick   8.3 -> 30.1      x out of 20-60 m   61.21% -> 25.84%
+      //     x under a 10 m sd          46.48% -> 9.02%   (the layout alone gives about 3%)
+      // The population is every living man of the side ON THE LINE (§0's reading rule, §12.1's 40 m trail clamp):
+      // a man walking to his post is still part of the line's shape; a man 40 m behind the seam cannot be on any
+      // legal post and is a column (§10).
+      const on = liveM.filter((i) => sideOf(i) === sd
         && (s[base(i) + 1] - seamOfCore(st, s[base(i)])) * -sd / ONE >= -44);
       if (on.length < 6) continue;
       const zs = on.map((i) => (s[base(i) + 1] - seamOfCore(st, s[base(i)])) / ONE), xs = on.map((i) => s[base(i)] / ONE);
-      const sdev = (a) => { const m = mean(a); return Math.sqrt(mean(a.map((v) => (v - m) * (v - m)))); };
+      const sdev = (a2) => { const m = mean(a2); return Math.sqrt(mean(a2.map((v) => (v - m) * (v - m)))); };
       add('B3 side-ticks'); const zsd = sdev(zs), xsd = sdev(xs);
-      // §11.1's OWN SCOPE (RULED 2026-09-19): the standoff scatter it writes is PER MAN inside a squad; the
-      // differences BETWEEN squads are §12.1's push doing its job, a different rule. A side-wide z sd adds the two
-      // together, so the row is measured per squad, which is the quantity §11.1 actually sets.
+      // z, PER SQUAD, which is §11.1's own scope: the standoff scatter it writes is per man inside a squad, while
+      // the differences BETWEEN squads are §12.1's push doing its job. A side-wide sd added the two together.
+      // The band 4-12 m was the standoff's own RANGE (RIFLE_STANDOFF 4 + RIFLE_SPREAD 8, "so 4 to 12") copied onto
+      // a STANDARD DEVIATION: the sd that generator makes is 2.98 m and 4.52 m on the two sides with nobody dead.
       for (let sq = 0; sq < L.SQUADS_PER_SIDE; sq++) {
         const mine = on.filter((i) => squadOf(i) === sq); if (mine.length < 4) continue;
         const zq = sdev(mine.map((i) => (s[base(i) + 1] - seamOfCore(st, s[base(i)])) / ONE));
         add('B3 squad z-ticks'); if (zq < 2 || zq > 12) add('B3 z out'); }
-      // RULED 2026-09-19. BOTH OLD NUMBERS WERE §11.1 GENERATOR RANGES COPIED ONTO A STANDARD DEVIATION.
-      //  z: the band 4-12 m is the STANDOFF's range (RIFLE_STANDOFF 4 + RIFLE_SPREAD 8). The sd that generator makes
-      //     is 2.98 m on one side's 36 posts and 4.52 m on the other, with nobody dead and no push on - so the old
-      //     floor could not be met by the rule that writes the posts. The floor is 2 m: not a fence, still a line.
-      //  x: the floor of 20 m was a bar on a DRAW. The three squad anchors are uniform on [-80, +80] (sim.js), and
-      //     over 200k draws the men's sd lands below 20 m on 19.6% of rounds before a shot is fired. So the bar is
-      //     relative to the frontage the side was actually given, which is the part the infantry controls.
+      // x, RELATIVE TO THE FRONTAGE THE SIDE WAS GIVEN. The absolute 20 m floor was a bar on a DRAW: three squad
+      // anchors uniform on [-80, +80] (sim.js), a man within +-8 m of his, and over 200k draws the men's sd lands
+      // below 20 m on 19.6% of rounds before a shot is fired. With the population corrected the measured rate is
+      // 25.8% against that predicted 19.6%, so the floor is very largely the draw and not the infantry. The bar is
+      // therefore the part the infantry controls - do the men cover the frontage their own anchors span - and it
+      // still fails a side that abandons a flank.
       const anch = [0, 1, 2].map((k) => s[L.O_SQUADS + (sd < 0 ? 0 : L.SQUADS_PER_SIDE) + k] / ONE);
       const anchSd = sdev(anch);
-      // THE X FLOOR IS **NOT** RULED and keeps its 20 m (see §11.1). The relative bar was tried and withdrawn: the
-      // measured tightness is not the anchor draw. Over 200k draws the layout puts a side's men under a 10 m sd on
-      // about 3% of rounds; the core does it on 36.1% of side-ticks, four times as often. Something concentrates
-      // the line beyond where the anchors fell, and that is a bug to find, not a bar to move. B3 stays red on x.
-      if (zsd < 2 || zsd > 12) add('B3 z side out'); if (xsd < 20 || xsd > 60) add('B3 x out');
+      add('B3 x-ticks'); if (xsd < 0.6 * anchSd || xsd > 60) add('B3 x out');
       if (xsd < 10) add('B3 x under 10 m sd');
-      // KEPT FOR THE SHARE QUESTION (2026-09-19): whether THIS side was out of band on THIS tick, so a B2 window and
-      // a B4 follow can be counted against it. A row that fails on the same ticks as B3 is the same knot; one that
-      // fails just as often on the ticks B3 is in band is its own fault.
-      b3OutNow.set(sd, (zsd < 4 || zsd > 12 || xsd < 20 || xsd > 60));
-      // THE PROBE COUNTS THE ROW'S OWN EVENTS, and says so in the row's own counters (2026-09-19). The last attempt
-      // kept its numbers in an array of its own and disagreed with the row by three orders of magnitude; anything
-      // counted here goes through `add` beside the row, so the two cannot drift apart unseen.
-      if (B3WHY) { add('B3 probe events');
-        add('B3 xsd sum x100', Math.round(xsd * 100)); add('B3 anchSd sum x100', Math.round(anchSd * 100));
-        // PER SQUAD, which is the quantity §11.1 actually rules: riflePost = anchor + offset(+-9), and the standoff
-        // scatter is per man. A side-wide sd mixes that with §12.1's BETWEEN-squad push differences, which are a
-        // different rule doing its job. This asks what the spread is inside one squad's own men.
-        for (let sq = 0; sq < L.SQUADS_PER_SIDE; sq++) {
-          const mine = on.filter((i) => squadOf(i) === sq); if (mine.length < 4) continue;
-          const zq = mine.map((i) => (s[base(i) + 1] - seamOfCore(st, s[base(i)])) / ONE);
-          const xq = mine.map((i) => s[base(i)] / ONE);
-          const zq2 = sdev(zq), xq2 = sdev(xq);
-          const a = s[L.O_SQUADS + (sd < 0 ? 0 : L.SQUADS_PER_SIDE) + sq] / ONE;
-          const off = Math.abs(mean(xq) - a);
-          add('B3 squad-ticks');
-          add(`B3 squad zsd ${zq2 < 2 ? '<2' : zq2 <= 12 ? '2-12' : zq2 <= 20 ? '12-20' : '>20'}`);
-          add(`B3 squad xsd ${xq2 < 2 ? '<2' : xq2 <= 12 ? '2-12' : xq2 <= 20 ? '12-20' : '>20'}`);
-          add(`B3 squad centre off anchor ${off <= 6 ? '<=6' : off <= 12 ? '6-12' : off <= 24 ? '12-24' : '>24'}`);
-        }
-        add('B3 men on line', on.length);
-        add(`B3 ratio ${xsd < 0.3 * anchSd ? '<0.3' : xsd < 0.6 * anchSd ? '0.3-0.6' : xsd < 1.0 * anchSd ? '0.6-1.0' : '>=1.0'}`);
-        add(`B3 anchSd ${anchSd < 10 ? '<10' : anchSd < 20 ? '10-20' : anchSd < 35 ? '20-35' : '35+'}`);
-        if (zsd < 4) add('B3 z tight'); else if (zsd > 12) add('B3 z loose');
-        if (xsd < 20) add('B3 x tight'); else if (xsd > 60) add('B3 x loose');
-        // and how far out, in buckets, so "too loose" carries a size
-        add(`B3 zsd ${zsd < 4 ? '<4' : zsd <= 12 ? '4-12' : zsd <= 20 ? '12-20' : zsd <= 40 ? '20-40' : '>40'}`);
-        add(`B3 xsd ${xsd < 10 ? '<10' : xsd < 20 ? '10-20' : xsd <= 60 ? '20-60' : '>60'}`); }
+      b3OutNow.set(sd, (zsd < 2 || zsd > 12 || xsd < 0.6 * anchSd || xsd > 60));
     }
     // B4 follow the push: squad pushNear and mean z (relative to seam) of its men on post
     const squadNow = new Map();
@@ -922,8 +895,9 @@ const rows = [
   ['B1  man within 18 m of a fire-team mate', P(pct('B1 near a mate', 'B1 man-ticks')), pct('B1 near a mate', 'B1 man-ticks') > 0.8],
   ['B1  fire team moves or halts together', P(pct('B1b together', 'B1b team-ticks')), pct('B1b together', 'B1b team-ticks') > 0.9],
   ['B2  5 s squad windows without a halted team / a mover', `${r['B2 fail'] || 0} of ${r['B2 squad-windows']}`, (r['B2 fail'] || 0) === 0],
-  ['B3  men on the line: z spread per squad out of 2-12 m (RULED)', `${P(pct('B3 z out', 'B3 squad z-ticks'))} of ${r['B3 squad z-ticks'] || 0} squad-ticks`, !r['B3 z out']],
-  ['B3  men on the line: x spread out of 20-60 m (NOT ruled, red)', `${P(pct('B3 x out', 'B3 side-ticks'))}, under a 10 m sd on ${P(pct('B3 x under 10 m sd', 'B3 side-ticks'))} (the layout alone gives ~3%)`, !r['B3 x out']],
+  ['B3  z spread per squad out of 2-12 m', `${P(pct('B3 z out', 'B3 squad z-ticks'))} of ${r['B3 squad z-ticks'] || 0} squad-ticks`, !r['B3 z out']],
+  ['B3  x spread under 0.6 x the side\'s own anchor spread, or over 60 m', `${P(pct('B3 x out', 'B3 x-ticks'))} of ${r['B3 x-ticks'] || 0} side-ticks`
+    + ` (under a 10 m sd on ${P(pct('B3 x under 10 m sd', 'B3 x-ticks'))})`, !r['B3 x out']],
   ['B4  push changes the squad did not follow in 10 s', `${r['B4 did not follow'] || 0} of ${r['B4 changes'] || 0}`, (r['B4 did not follow'] || 0) === 0],
   ['B5  man-ticks inside 3 m of a tank', P(pct('B5 inside a hull', 'B5 man-ticks')), pct('B5 inside a hull', 'B5 man-ticks') <= 0.005],
   ['B6  60 s windows with < 3 men lost or arrived / arrivals on the line', `${r['B6 fail'] || 0} of ${r['B6 windows']} / ${r['B6 appeared on the line'] || 0} of ${r['B6 arrivals'] || 0}`, !(r['B6 fail'] || r['B6 appeared on the line'])],
