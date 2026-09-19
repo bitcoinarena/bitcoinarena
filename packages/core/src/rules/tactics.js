@@ -19,8 +19,8 @@
 //   §1.2 THE TRUCK   nothing here reads the truck. The army shoots it; a touch wrecks it (sim.js).
 //
 // There is no road in the core: the kill zone every slot covers is the seam band the truck has to cross.
-import { ONE, idiv, abs, add, sub, mulFast, sqrt } from '../fixed.js';
-import { O_UNITS, U_WORDS, U_STATE, MAX_CRATERS, craterBase, C_X, C_Z, C_R, C_ROUNDS } from '../state.js';
+import { ONE, idiv, abs, add, sub, mulFast, sqrt, length2 } from '../fixed.js';
+import { O_UNITS, U_WORDS, U_STATE, U_HP, UNITS, ARMOUR_MASK, MAX_CRATERS, craterBase, C_X, C_Z, C_R, C_ROUNDS } from '../state.js';
 import { hullDownHold, crestRise, clearOfCraters } from './army.js';
 import { MINER_DOOR_X } from './map.js';
 
@@ -63,7 +63,22 @@ export const TAC_OBJ = 61, TAC_VERDICT = 64, TAC_ASSAULT = 76, TAC_MARKET = 82;
 // [92 + k] armour tank k's held crest (§4.1 hysteresis): its offset from the post's line in Q16.16 metres; [116 + k] the
 // post it was picked for (crestKey), or CREST_NONE.
 export const TAC_CREST = 92, TAC_CREST_KEY = 116;
-export const TAC_WORDS = 140;
+
+/**
+ * §11.3 COVER: one word per rifle index, 72 of them, appended so no offset above moves.
+ *
+ * The word carries the claimed place in its LOW 16 bits, or `COVER_NONE` for a man in the open. The HIGH bits are
+ * reserved for §11.4's posture (STAND / PRONE / COVER), which is not written by this letter: laying the word once
+ * with the room already in it is what keeps the next letter from reshaping O_TACTICS and regenerating every golden
+ * a second time.
+ */
+export const TAC_COVER = 140;
+export const COVER_WORDS = 72;
+export const COVER_NONE = 0xffff;
+export const COVER_PLACE_MASK = 0xffff;
+export const COVER_POSTURE_SHIFT = 16;            // §11.4's, reserved and unwritten here
+
+export const TAC_WORDS = 212;
 // [82] the round's open (§4.13 TAC_OPEN, in the tape's unit), [83] samples taken since init, [84] trend (+1 UP, -1 DOWN, 0
 // SIDEWAYS), [85] its strength 0-3, [86] lead (+1 BULLS, -1 BEARS, 0 FLAT), [87] the lead's momentum 0-3 (§4.14).
 export const MK_OPEN = 0, MK_SAMPLES = 1, MK_TREND = 2, MK_STRENGTH = 3, MK_LEAD = 4, MK_MOMENTUM = 5;
@@ -456,6 +471,171 @@ const PAIR_WEST_X = (-DOCK_X + PAIR_HALF) | 0;    // -77.4 m: the westernmost pa
 // army's own edge (FRONT_X - 4 = 88 m) is the nearer limit there, and a symmetric clamp would hold the east flank
 // 4.6 m short of where the doctrine puts it for no reason.
 const PAIR_EAST_X = (Math.min(5767168, MINER_DOOR_X - Math.imul(4, ONE)) - PAIR_HALF) | 0;   // 88 m less the pair's 6 m
+
+/* ------------------------------------------------------------------ §11.3 COVER: wrecks and craters ---------- */
+
+/**
+ * COVER IS A PLACE, AND A PLACE IS A FUNCTION OF THE STATE (WAR_TACTICS.md §11.3, the owner 2026-09-16 19:02:
+ * "they must not stay cannon fodder. They take cover, go prone, suppress, use wrecks and craters. Real infantry
+ * hides."). Nothing here is ported: the old army has no cover at all, and its one artefact in this ground -
+ * `AvoidWrecks`, which pushes a man OUT of a crater - is the inverse of this rule and stays where it belongs, on
+ * the armour. The core takes cover in its own units.
+ *
+ * Measured before any of it, on the tree deployed at 0.0.1739: a place stood free within 12 m of a man on 96.9% of
+ * ticks and a man was on one on 1.0%, which is accident - there were no claims to make. Of 54 men killed by fire,
+ * 21 had a place within 12 m when they died.
+ *
+ * A PLACE ID is one integer so the claim is one word: a wreck's two are `armour index x 2 + which`, 0..191, and a
+ * crater's four are `192 + slot x 4 + corner`, 192..223. `COVER_NONE` is a man in the open.
+ */
+export const COVER_PLACES_WRECK = 2, COVER_PLACES_CRATER = 4;
+const WRECK_PLACE_MAX = Math.imul(UNITS, COVER_PLACES_WRECK);          // ids below this are a wreck's
+const COVER_BEHIND = Math.imul(3, ONE) + 39322;   // 3.6 m: behind the hull, 0.6 m clear of its 3 m circle
+const COVER_ASIDE = Math.imul(2, ONE);            // 2 m either side of the wreck's centre
+const COVER_RIM_IN = ONE;                         // a crater's places sit 1 m inside its lip
+export const COVER_REACH = Math.imul(12, ONE);    // eligible within 12 m of his POST
+export const COVER_REACH_TREND = Math.imul(18, ONE);   // 18 m for the side the trend runs against (§4.14)
+export const COVER_ON = 32768;                    // on it, within 0.5 m
+const COVER_TANK_CLEAR = Math.imul(3, ONE);       // never a place inside 3 m of a LIVING tank (§8.3)
+const CLAMP_BACK = Math.imul(40, ONE), CLAMP_FRONT = Math.imul(8, ONE);   // §12.1's leash on a man
+
+// The four rim angles, Q16.16 sin and cos: -50, -20, +20, +50 degrees from the seam normal (§11.3's own list).
+const RIM_SIN = [-50204, -22417, 22417, 50204];
+const RIM_COS = [42126, 61584, 61584, 42126];
+
+/** Where place `id` stands for a man of `side`, or null if that place does not exist in this state. */
+export function coverPlace(s, id, side) {
+  if (id === COVER_NONE || id < 0) return null;
+  if (id < WRECK_PLACE_MAX) {
+    const unit = idiv(id, COVER_PLACES_WRECK), which = id - Math.imul(unit, COVER_PLACES_WRECK);
+    if ((unit & ARMOUR_MASK) !== 0) return null;                        // men leave no wreck
+    const b = O_UNITS + Math.imul(unit, U_WORDS);
+    if (s[b + U_STATE] !== 0) return null;                              // a live hull is not a wreck
+    return { x: add(s[b], which === 0 ? -COVER_ASIDE : COVER_ASIDE),
+             z: add(s[b + 1], Math.imul(side, COVER_BEHIND)) };
+  }
+  const k = id - WRECK_PLACE_MAX, slot = idiv(k, COVER_PLACES_CRATER), corner = k - Math.imul(slot, COVER_PLACES_CRATER);
+  if (slot >= MAX_CRATERS) return null;
+  const b = craterBase(slot);
+  const r = s[b + C_R];
+  if (r <= 0 || s[b + C_ROUNDS] <= 0) return null;
+  const reach = sub(r, COVER_RIM_IN);
+  return { x: add(s[b + C_X], mulFast(reach, RIM_SIN[corner])),
+           z: add(s[b + C_Z], Math.imul(side, mulFast(reach, RIM_COS[corner]))) };
+}
+
+/** Every place id this state holds, in the order §11.3 breaks ties by: wrecks by index, then craters by slot. */
+export function coverPlaceIds(s) {
+  const out = [];
+  for (let i = 0; i < UNITS; i++) {
+    if ((i & ARMOUR_MASK) !== 0) continue;
+    const b = O_UNITS + Math.imul(i, U_WORDS);
+    if (s[b + U_STATE] !== 0) continue;
+    for (let w = 0; w < COVER_PLACES_WRECK; w++) out.push(Math.imul(i, COVER_PLACES_WRECK) + w);
+  }
+  for (let k = 0; k < MAX_CRATERS; k++) {
+    const b = craterBase(k);
+    if (s[b + C_R] <= 0 || s[b + C_ROUNDS] <= 0) continue;
+    for (let c = 0; c < COVER_PLACES_CRATER; c++) out.push(WRECK_PLACE_MAX + Math.imul(k, COVER_PLACES_CRATER) + c);
+  }
+  return out;
+}
+
+/** The word a rifle index's claim lives in: 72 of them, the armour indices skipped. */
+export const coverWord = (base, index) => (base + TAC_COVER + (index - idiv(index, 4) - 1)) | 0;
+export const coverClaim = (s, base, index) => s[coverWord(base, index)] & COVER_PLACE_MASK;
+
+/**
+ * Is `place` one this man may take? §11.3: within 12 m of his POST - 18 m for the side the trend runs against -
+ * inside his clamp, and not inside 3 m of a living tank. His post, not his position, "so a man does not wander to
+ * cover".
+ */
+export function coverEligible(s, base, side, postX, postZ, seamZ, place, held = false) {
+  // A HELD PLACE IS NOT MEASURED FOR DISTANCE, because it IS his post: "it is his post while he holds the claim;
+  // the line's post is where he stands when he has no hole". Measuring a held claim against the line's post is
+  // what made claims flicker - measured, 132 taken and 123 dropped in a minute, a claim lasting 3.2 s, because a
+  // place a hair over 12 m from a post that drifts with its squad falls in and out of reach every few seconds and
+  // the man never arrives. The clamp and the living-tank rule still apply to it: those are about where the place
+  // is, not how far he would have to walk.
+  if (!held) {
+    const reach = trendFor(s, base, side) < 0 ? COVER_REACH_TREND : COVER_REACH;
+    const dx = sub(place.x, postX), dz = sub(place.z, postZ);
+    if (abs(dx) > reach || abs(dz) > reach) return false;
+    if (length2(dx, dz) > reach) return false;
+  }
+  const depth = Math.imul(sub(place.z, seamZ), side);                   // + is his own side of the seam
+  if (depth > CLAMP_FRONT || depth < -CLAMP_BACK) return false;
+  for (let i = 0; i < UNITS; i++) {
+    if ((i & ARMOUR_MASK) !== 0) continue;
+    const b = O_UNITS + Math.imul(i, U_WORDS);
+    if (s[b + U_STATE] === 0 || s[b + U_HP] <= 0) continue;
+    const tx = sub(place.x, s[b]), tz = sub(place.z, s[b + 1]);
+    if (abs(tx) > COVER_TANK_CLEAR || abs(tz) > COVER_TANK_CLEAR) continue;
+    if (length2(tx, tz) < COVER_TANK_CLEAR) return false;
+  }
+  return true;
+}
+
+/**
+ * THE CLAIM PASS (§11.3), once per tick at the top of the infantry step, after the armour's separation and before
+ * any man moves. Deterministic and draw-free: the living men of a side are visited in the order of
+ * `mix(seedHash, 600 + index)` ascending - a fixed order for the round, hashed from the seed and the unit id, "so
+ * the same eight men do not always get the holes" - and each keeps the claim it has while that place is still
+ * eligible and free, else takes the NEAREST free eligible place. Ties by the place's own order, which
+ * `coverPlaceIds` already gives: wrecks by index, then craters by slot, then place number.
+ *
+ * `postOfMan(index)` hands in where his line would put him, because eligibility is measured from the POST and not
+ * from where he is standing. A man with no place is in the open and his word is COVER_NONE.
+ */
+export function coverClaims(s, base, tick, postOfMan, seamAt) {
+  const hash = s[base + TAC_SEED];
+  const ids = coverPlaceIds(s);
+  for (let si = 0; si < 2; si++) {
+    const side = si === 0 ? -1 : 1;
+    const order = [];
+    for (let i = 0; i < UNITS; i++) {
+      if ((i & ARMOUR_MASK) === 0) continue;                       // armour takes no cover: §11.3 is the men's
+      const b = O_UNITS + Math.imul(i, U_WORDS);
+      if (s[b + U_STATE] === 0 || s[b + U_HP] <= 0) { s[coverWord(base, i)] = COVER_NONE; continue; }
+      if ((s[b + 2] < 0 ? -1 : 1) !== side) continue;
+      order.push({ i, key: mix(hash, 600 + i) >>> 1 });
+    }
+    order.sort((a, b2) => (a.key - b2.key) || (a.i - b2.i));
+
+    const taken = new Set();
+    for (const { i } of order) {                                    // a kept claim is not offered to anyone else
+      const held = coverClaim(s, base, i);
+      if (held === COVER_NONE) continue;
+      const post = postOfMan(i);
+      const place = coverPlace(s, held, side);
+      if (place && coverEligible(s, base, side, post.x, post.z, seamAt(post.x) | 0, place, true)) taken.add(held);
+      else s[coverWord(base, i)] = COVER_NONE;
+    }
+    for (const { i } of order) {
+      if (coverClaim(s, base, i) !== COVER_NONE) continue;           // keeps what it has
+      const post = postOfMan(i);
+      const seam = seamAt(post.x) | 0;
+      let best = COVER_NONE, bestD = 0;
+      for (const id of ids) {
+        if (taken.has(id)) continue;
+        const place = coverPlace(s, id, side);
+        if (!place) continue;
+        if (!coverEligible(s, base, side, post.x, post.z, seam, place)) continue;
+        const d = length2(sub(place.x, post.x), sub(place.z, post.z));
+        if (best === COVER_NONE || d < bestD) { best = id; bestD = d; }
+      }
+      if (best !== COVER_NONE) { taken.add(best); }
+      s[coverWord(base, i)] = best;
+    }
+  }
+}
+
+/** Where a man is going, if he holds a place: his claim is his post while he holds it (§11.3). */
+export function coverPostOf(s, base, index, side) {
+  const id = coverClaim(s, base, index);
+  if (id === COVER_NONE) return null;
+  return coverPlace(s, id, side);
+}
 
 /** A pair member's x on a slot: the pair's centre held off the paving, the member 6 m either side of it. */
 export const pairX = (slot, member) => {

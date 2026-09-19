@@ -242,7 +242,7 @@ const TURN_FLOOR = 437;
 const TURN_RATE = 2365;
 const WALK_FACING_FLOOR = 39322;
 
-const RIFLE_STANDOFF = Math.imul(4, ONE);
+export const RIFLE_STANDOFF = Math.imul(4, ONE);   // §11.3's claim pass measures a man's post from this too
 const RIFLE_SPREAD = Math.imul(8, ONE);      // + 0 to 8, so 4 to 12
 const RIFLE_SQUAD_Z = Math.imul(10, ONE);    // then -5 to +5
 const RIFLE_LEAD_MAX = Math.imul(-8, ONE);   // §12.1 a man's post leads the seam by at most 8 m
@@ -647,6 +647,7 @@ export function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, half
   // through a front that no longer existed.
   const side = u.side < 0 ? -1 : 1;
   let hold = add(seamZ, Math.imul(side, standoff));
+  if (!u.armour && u.cover) hold = u.cover.z;        // §11.3: the claimed place is his line as well as his lane
   let craterX = null;                                // the post's x after a crater projection, if one moved it
   if (u.armour && u.tac) {
     // Measured from the seam at the SLOT, not at the hull: the seam curves with x, and a target that moved as the
@@ -819,9 +820,13 @@ export function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, half
   // SHAPE was flat where the recording's is peaked.
   // FRONTAGE: a tank holds its team's slot (rules/tactics.js) and closes on its foe only inside LANE_LEASH.
   const lane = u.armour ? (craterX === null ? u.tacX : craterX) : 0;
+  // §11.3: a man holding a cover place walks to THE PLACE - it is his post while he holds the claim (tactics.js
+  // coverClaims hands it in on `u.cover`). No new speed and no new rule for getting there: it is the same walk to
+  // the same kind of target, at his own gait, which is what "the line's post is where he stands when he has no
+  // hole" means. Armour never has one: §11.3 is the men's, and the tanks' answer to a bowl is to go around it.
   const post = u.armour
     ? (u.engaged ? add(lane, clamp(sub(u.foeX, lane), neg(LANE_LEASH), LANE_LEASH)) : lane)
-    : riflePost(anchor, index);
+    : (u.cover ? u.cover.x : riflePost(anchor, index));
   const dxWant = sub(post, u.x);
   const dxCap = mulFast(walk, dt);
   // What the tank asks for before anything holds it: sim.js keeps a granted move granted until it arrives.
