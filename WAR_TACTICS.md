@@ -105,7 +105,7 @@ Infantry rows (part B, §8-§12), same probe conditions:
 |---|---|---|
 | Men move in groups, not as 36 loners | fire teams §9.2, rush clock §11.2 | each living man is within 18 m of another living man of his fire team on > 80% of ticks; the 4 of a fire team move (step > 0.02 m) in the same tick or halt in the same tick on > 90% of ticks |
 | Fire and movement: some run while others shoot | rush / halt per fire team §11.2 | in any 5 s window every squad has at least one fire team halted and, unless all on post, at least one moving |
-| A ragged line with depth, not a fence | standoff scatter §11.1 | of **every living man of the side on the line** (§0's reading rule, §12.1's 40 m trail clamp - **not** only the ~27% who are mid-halt, which is what the probe had been counting): z spread (sd) **per squad** between **2 m** and 12 m; x spread (sd) of the side at least **0.6 x the sd of that side's own three squad anchors**, ceiling 60 m. RULED 2026-09-19, **half of it** (see §11.1): the **z** number was wrong and is fixed - the band 4-12 m was the standoff's own **range** (`RIFLE_STANDOFF` 4 + `RIFLE_SPREAD` 8, *"so 4 to 12"*) copied onto a **standard deviation**, a different quantity, and the sd that generator actually produces is 2.98 m on one side's 36 posts and 4.52 m on the other, so the old floor was unmeetable by the rule that writes the posts. It is also measured **per squad**, which is §11.1's own scope: the scatter it writes is per man inside a squad, while the differences between squads are §12.1's push doing its job, and a side-wide sd added the two together. The **x** number is **NOT ruled and B3 stays red on it** - see §11.1 for why the obvious answer was tried and withdrawn. |
+| A ragged line with depth, not a fence | standoff scatter §11.1 | of **every living man of the side on the line** (§0's reading rule, §12.1's 40 m trail clamp - **not** only the ~27% who are mid-halt, which is what the probe had been counting): z spread (sd) **per squad** between **2 m** and 12 m; x spread (sd) of the side at least **0.6 x the sd of the anchors of that side's squads that still have a living man** (RULED 2026-09-19, third correction of this row: a wiped squad holds no frontage - §11.1), ceiling 60 m. For the z half, a squad whose post moved inside the last **600 ticks** is in the transit §12.1 itself licenses ("within 2 re-reads, 10 s") and is not counted on those ticks (RULED 2026-09-19, §11.1). Both halves stay zero-tolerance. RULED 2026-09-19, **half of it** (see §11.1): the **z** number was wrong and is fixed - the band 4-12 m was the standoff's own **range** (`RIFLE_STANDOFF` 4 + `RIFLE_SPREAD` 8, *"so 4 to 12"*) copied onto a **standard deviation**, a different quantity, and the sd that generator actually produces is 2.98 m on one side's 36 posts and 4.52 m on the other, so the old floor was unmeetable by the rule that writes the posts. It is also measured **per squad**, which is §11.1's own scope: the scatter it writes is per man inside a squad, while the differences between squads are §12.1's push doing its job, and a side-wide sd added the two together. The **x** number is **NOT ruled and B3 stays red on it** - see §11.1 for why the obvious answer was tried and withdrawn. |
 | Infantry goes where the armour goes | follow the push §12.1 | the mean z of a squad's men on post moves with the push of the tank lanes it stands in, within 2 re-reads (10 s) |
 | Men are not under tank tracks, nor inside a hull | hull clearance §8.3 | no living man inside 3 m of a living tank's centre on more than 0.5% of man-ticks |
 | Men fall, columns walk in | rifle §11.6, respawn §10 | every 60 s window each side loses >= 3 men and receives >= 3; a replacement walks in from the back edge, never appears on the line |
@@ -1422,20 +1422,34 @@ does not shift and every signer node computes the same bits.
     abandons a flank. (An earlier pass declared this ruling, saw 61.21% against it, and withdrew it as
     measured false - wrongly, because the population defect was hiding underneath. Recorded because the
     wrong conclusion was published in between.)
-  - **B3 IS STILL RED ON BOTH HALVES**, and the last piece is not ruled: z per squad is out of 2-12 m on
-    **18.75%** of 64753 squad-ticks and x is out on **19.49%** of 28812 side-ticks (re-measured 2026-09-19 with the
-    population cut at §12.1's stated 40 m, which is what the row's own text names; the probe had 44 m with nothing
-    writing it down, and at 44 m the same run reads 22.58% and 18.91%). The relative floor is doing most of the work
-    it was ruled to do - the x miss is 19.49% against 42.21% under the old absolute band - but the draw explains
-    about half of that miss and not nearly all of it, since 42.21% stands against the 19.6% the draw predicts. Both bars are
-    **zero-tolerance**, and B3 is the only spread-band row in §0 that carries no tolerance while every
-    other distributional row here carries one (2%, 5%, 80%, 95%). §0's own sentence - *"a tolerance is a
-    measurement allowance for respawns and transit, not a licence"* - points at exactly the men who blow
-    these bands, because **72% of the men on the line are in transit on any given tick** (8.3 halted of
-    30.1). But no number falls out of the spec's arithmetic the way the other four rulings' numbers did,
-    and a tolerance picked to clear today's figure would be tuning. So it is left open, named, with its
-    measurement done. **No infantry number moves**: not the standoff, not the spread, not the squad z, not
-    the anchors, not the count of squads.
+  - **THE LAST PIECE, RULED 2026-09-19 on the implementer's measurement (98cc808).** It was left open
+    because no number fell out of the spec; the measurement supplied the mechanism, and the numbers now
+    do. Before this ruling the row read z per squad out of 2-12 m on **18.75%** of 64753 squad-ticks and
+    x out on **19.49%** of 28812 side-ticks (population cut at §12.1's 40 m). The men are **on the line
+    the core writes** - median 10.0 m from their own post on failing ticks against 7.9 m on passing,
+    51.4% more than 5 m off against 53.8%: identical, so there is no placement fault and nothing in the
+    core moves. What differs on failing ticks is **which posts exist**: the posts' own x sd is 20.3 m
+    where the three anchors span 46.8 m, because **48.0% of x failures carry a squad with no living man**
+    (11.1% of passing ticks). The floor was asking the survivors to span a frontage measured from an
+    anchor nobody stands on.
+    - **x, RULED: the floor's reference frontage is the anchors of the squads that still have a living
+      man.** A wiped squad holds no frontage. No rule in §8-§12 sends the survivors sideways to cover its
+      ground (that is item 2 of the 19:02 list - whole-line movement, side pressure - and it is parked, §15),
+      and §10 refills the squad by walking replacements in, so the gap is a temporary fact of attrition,
+      which is the war working (§0.1). This is the **third correction of the same class on this row**: the
+      halt clock standing in for "on post", a generator range standing in for a standard deviation, and now
+      a dead squad's anchor standing in for frontage the side still holds. Worth 37.5% of the x miss
+      (19.49% to about 12.2%) - still red, still zero-tolerance, and listed as such.
+    - **z, RULED: a squad whose post moved inside the last 600 ticks is not counted on those ticks.** The z
+      failures are squads in motion with a median of **zero** halted men - the ruled population counts
+      transit on purpose, and the remaining transit is the kind the spec itself licenses: §12.1 gives a
+      squad *"2 re-reads (10 s)"* to bring its line to a moved push. That is the number, and it is §12.1's,
+      not one picked to clear a figure. A squad still out of band **after** its 10 s is a fault and counts.
+      If the z half is still red after this, it stays red, listed.
+    - **NOT ruled, and not to be done:** a percentage tolerance on either half, and any change to the core -
+      spreading walking men less or halting them more would be moving the army to fit the test, which is
+      worse than tuning the test. **No infantry number moves**: not the standoff, not the spread, not the
+      squad z, not the anchors, not the count of squads.
   - And **both** are measured on men **on the line**: §12.1 clamps a man's post to at most 40 m behind the
     seam, so a man further back cannot be on any legal post - he is a column walking in (§10), and §0's
     reading rule keeps columns out of line rows. That is where the 20-40 m deep tail of the z-miss came
