@@ -36,20 +36,22 @@ export const SHELL_HALF = 5514854;       // 84.15 m, half the post office
 export const SHELL_HIGH = 3407872;       //   52 m
 export const FOOTING = 1310720;          //   20 m of foundations under every shell
 
-export const MINER_X = 7497318;          // 114.4 m, the miner's own origin
+export const MINER_X = 11075584;         // 169 m, the miner's own origin (was 114.4; the world grew east)
 // 114 m was written here first, off `DeliveryGate.gateX`'s field initialiser,
 // and Bootstrap overwrites it: `gate.gateX = _terrain.width * 0.44f` on a 260 m
 // map is 114.4. The 0.4 m put every miner box - facade, lintel and both tunnel
 // sides - a wall's thickness off where Unity draws them.
 /**
- * WHERE THE MINER ACTUALLY BEGINS, which is not where its origin is placed (the owner 2026-09-19 13:09). MINER_X is the
- * facade, the delivery line, and the model's origin; the building itself stands on the ground from x 53.8 m and only
- * its entry corridor (|z| <= 34 m) is clear, from x 90.4 m east. Nothing the core lays down goes past this door: the
- * candle field ends here (frontline.js FIELD_SLOT, ruling B refitted) and so does the road ribbon Unity draws.
- * Measured per node out of bitcoin_miner_megastructure.glb - power cables 53.8, feet 62.8, lower mass 64.4, legs 66.9,
- * mass_behind_tunnel ending at 90.4.
+ * WHERE THE MINER ACTUALLY BEGINS - the west edge of the DRAWN building, not its origin and not its tunnel.
+ *
+ * The first cut of this (2026-09-19 13:09) put the door at the tunnel's mouth, 90.4 m, because that is where the
+ * entry corridor clears. the owner's 15:58 shot showed why that was the wrong edge: the building's legs, feet, cables
+ * and lower mass stand on the ground from 60.6 m west of its origin, so road, chart and tanks were still under it.
+ * The door is that edge. With the origin at 169 m it is 108.4 m, and nothing the world lays down goes past it: the
+ * candle field ends at 90.0 m, the road ribbon ends here, and the army's own east clamp is held short of it.
  */
-export const MINER_DOOR_X = 5924454;     // 90.4 m
+export const MINER_DOOR_X = 7098470;     // 108.3 m: MINER_X less the 60.60486 m the model reaches west of its
+                                         // origin (108.39514), and 9.5 cm of daylight inside that
 export const MINER_MOUTH_HALF = 2621440; //   40 m, the clear half-width of the tunnel
 export const MINER_MOUTH_HIGH = 1703936; //   26 m
 export const MINER_SHELL_HALF = 5531238; // 84.4 m
@@ -70,7 +72,7 @@ export const MAP_BOXES = 37;
  * long edges, the miner, east edge - and NOT the order Unity's
  * `FindObjectsByType` happens to return, which is not an order at all.
  */
-export function mapSolids(ground, halfX, halfZ) {
+export function mapSolids(ground, halfX, halfZ, reliefHalfX = halfX) {
   const box = new Int32Array(Math.imul(MAP_BOXES, BOX_WORDS));
   let n = 0;
   const put = (cx, cz, hx, hz, yLow, yHigh) => {
@@ -79,7 +81,7 @@ export function mapSolids(ground, halfX, halfZ) {
     box[b + 4] = yLow; box[b + 5] = yHigh;
     n++;
   };
-  const groundAt = (x, z) => heightAtWorld(ground, x, z, halfX, halfZ);
+  const groundAt = (x, z) => heightAtWorld(ground, x, z, reliefHalfX, halfZ);
   const half = (v) => v >> 1;
 
   // ---- THE FOUR EDGES OF THE WORLD ---------------------------------------

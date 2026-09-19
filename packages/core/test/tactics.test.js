@@ -452,13 +452,16 @@ test('the trend is the colour of the last six finished candles: six green is UP 
   const word2 = (x) => [x[L.O_TACTICS + T.TAC_MARKET + T.MK_TREND], x[L.O_TACTICS + T.TAC_MARKET + T.MK_STRENGTH]];
   const r = init(2), rs = r.i32, ro = r.tape[63], rb = Math.floor(ro / 10000);
   let rp = ro, bullStarts = 0, bearStarts = 0; const was = { '-1': 0, '1': 0 };
+  // The bulls' leg is twelve candles and the flip is at tick 3000 (re-measured 2026-09-19 after the world grew east:
+  // on the wider map the bears took all three objectives before the shorter leg had given the bulls any, and a side
+  // holding everything defends, so nothing was checked again).
   for (let t = 0; t < 9000; t++) {
-    if (t >= 100 && t < 700 && (t - 100) % 50 === 0) { rp += 5 * rb; submitSample(r, rp); }    // the bulls' trend
-    if (t >= 2400 && t < 3000 && (t - 2400) % 50 === 0) { rp -= 5 * rb; submitSample(r, rp); } // then the bears'
+    if (t >= 100 && t < 1300 && (t - 100) % 50 === 0) { rp += 5 * rb; submitSample(r, rp); }   // the bulls' trend
+    if (t >= 3000 && t < 3600 && (t - 3000) % 50 === 0) { rp -= 5 * rb; submitSample(r, rp); } // then the bears'
     step(r, 0, 0, 0, ONE, 0);
     for (const side of [-1, 1]) {
       const ph = T.assaultPhase(rs, L.O_TACTICS, side);
-      if (ph === T.ASSAULT_PUSH && was[side] !== T.ASSAULT_PUSH && t >= 3000) { if (side < 0) bullStarts++; else bearStarts++; }
+      if (ph === T.ASSAULT_PUSH && was[side] !== T.ASSAULT_PUSH && t >= 3600) { if (side < 0) bullStarts++; else bearStarts++; }
       was[side] = ph;
     }
   }

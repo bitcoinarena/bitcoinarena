@@ -35,7 +35,10 @@ public class RoadModel
         { Lane.BullRear, Lane.Bull, Lane.Bear, Lane.BearRear };
 
     public float PlazaX = -118f;
-    public float DepotX = 118f;
+    // THE LANES MERGE ONTO THE GATE LINE BEFORE THE DOOR (2026-09-19 16:0x). The merge completes at DepotX - GateX,
+    // and the ribbon now ends at the core's MINER_DOOR_X (108.3 m), so DepotX is that plus GateX: the lanes are one
+    // road pointing at the tunnel where the ribbon stops, not a stub cut mid-turn. The miner itself stands at 169 m.
+    public float DepotX = 142.3f;
 
     [Tooltip("Where the post office's own paving ends and the road may start. " +
              "The plaza end of every lane is INSIDE the building: its facade " +

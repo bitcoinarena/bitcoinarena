@@ -8,6 +8,7 @@
 // could sit on it and be scored as though under fire.
 
 import { ONE, add, sub, neg, mulFast, div, idiv, clamp, min, max, abs, length2, sqrt } from '../fixed.js';
+import { MINER_DOOR_X } from './map.js';
 import { sin, cos, atan2 } from '../trig.js';
 import { below } from '../rng.js';
 
@@ -261,9 +262,22 @@ const RIFLE_TRAIL_MAX = Math.imul(40, ONE);  // and trails it by at most 40 m
 const OVERRUN_DEPTH = Math.imul(14, ONE);   // Army.OverrunDepth
 const FALL_BACK = Math.imul(34, ONE);
 
+/** The post office's paving edge: the army's west kerb (the owner 2026-09-19 13:09, "no tank on the loading dock"). */
+export const DOCK_EDGE = 5465702;                  // 83.4 m
+
+
 /** Inside this, a tank gives ground rather than closing further. */
 /** The battlefield's half width, as Army.FrontX has it. */
 const FRONT_X = Math.imul(92, ONE);
+
+/**
+ * HOW FAR EAST AND WEST A TANK MAY BE, and they are not the same number (2026-09-19 15:58). The army's own edge is
+ * FRONT_X - 4 = 88 m. West the post office's paving is nearer, at 83.4 m, so the kerb wins; east the miner's drawn
+ * west edge is the door, 108.4 m since the world grew, so the army's own edge wins. Exported because the separation
+ * pass in sim.js has to hold the same line - it pushed hulls to 93.7 m while the step was clamped at 88.
+ */
+export const ARMOUR_WEST = min(sub(FRONT_X, Math.imul(4, ONE)), DOCK_EDGE);
+export const ARMOUR_EAST = min(sub(FRONT_X, Math.imul(4, ONE)), sub(MINER_DOOR_X, Math.imul(4, ONE)));
 
 /** Squad anchors along the front, and how wide a squad stands. */
 const SQUADS = 8;
@@ -921,12 +935,12 @@ export function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, half
     stepZ = mulFast(cos(u.heading), along);
   }
 
-  // AND NOT ONTO THE CONCRETE (the owner 2026-09-19 13:09): the army's own edge was FRONT_X - 4 = 88 m and the post
-  // office's paving reaches to 83.4 m, so a tank giving ground or bounding could stand 4.6 m inside the loading
-  // dock even with its post pulled back (tactics.js DOCK_X). The edge is the kerb.
-  const DOCK_EDGE = 5465702;                       // 83.4 m
-  const edge = min(sub(FRONT_X, Math.imul(4, ONE)), DOCK_EDGE);
-  u.x = clamp(add(u.x, stepX), neg(min(edge, halfX)), min(edge, halfX));
+  // AND NOT ONTO EITHER BUILDING (the owner 2026-09-19 13:09 and 15:58). The army's own edge is FRONT_X - 4 = 88 m.
+  // West, the post office's paving reaches to 83.4 m, so the kerb is nearer than the army's edge and it wins.
+  // East, the miner's drawn west edge is the door (map.js MINER_DOOR_X, 108.4 m since the world grew), so the
+  // army's own edge is the nearer one there. The clamp is therefore NOT symmetric, and writing it as one number
+  // was how tanks came to stand on the miner's deck.
+  u.x = clamp(add(u.x, stepX), neg(min(ARMOUR_WEST, halfX)), min(ARMOUR_EAST, halfX));
   u.z = clamp(add(u.z, stepZ), -halfZ, halfZ);
 
   // OUT OF THE CRATERS.
@@ -970,6 +984,11 @@ export function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, half
       u.z = add(u.z, div(mulFast(dz, sub(reach, d)), d));
     }
   }
+
+  // AND THE CLAMP IS THE LAST WORD (measured 2026-09-19): the crater push above runs after the step's own clamp, so
+  // a hull pushed off a bowl's edge could end up past the kerb or on the miner's deck - the easternmost tank stood
+  // at 92.0 m against an 88 m edge. A rule that other rules may step over is not a rule.
+  if (u.armour) u.x = clamp(u.x, neg(min(ARMOUR_WEST, halfX)), min(ARMOUR_EAST, halfX));
 
   // NOTHING OFF THE TRUCK (the owner 2026-09-16 17:00: "Tanks must NOT react to the truck except by shooting. No
   // dodge. No being pushed. They are much stronger than him; that must be obvious."). The ring that held armour

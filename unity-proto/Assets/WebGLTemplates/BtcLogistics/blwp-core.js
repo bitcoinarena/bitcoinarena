@@ -1897,6 +1897,155 @@ function resolveArmour(v, xz, count, headings) {
  */
 const CORRECTION_CAP = 39322;
 
+// ---- rules/map.js
+// THE MAP'S OWN COLLISION BOXES, AND THEY BELONG HERE.
+//
+// The world solids used to be Unity's: `WorldSolids.Gather` collected every
+// BoxCollider the player had BUILT AT RUNTIME and `CoreDrivenTruck.UploadSolids`
+// sent them to the core - re-sending whenever the count changed, so the world
+// the core resolved against moved mid-run as models streamed in. No replay set
+// any at all, so a committee resolved every drive against nothing. Measured:
+// one box on the path moves a 600-tick drive 40.233 m, more than the 33.500 m
+// the ground was worth.
+//
+// So the boxes are made here, from the map's own geometry, the same way the
+// relief is. THE NUMBERS ARE THE MAP'S and they were taken from a running
+// player rather than from a reading of the code: 37 boxes, four map edges, the
+// post office shell of twenty-five pillars on the bays' own 6.8 m pitch with
+// its two ends and its lintel, and the miner's facade, lintel and tunnel
+// sides. `SolidsInventoryTests` prints the set a real Bootstrap builds and
+// pins it against these.
+//
+// EVERY HEIGHT IS SAMPLED FROM THE GROUND THIS CORE GENERATED. A shell sits at
+// one terrain sample and the relief falls away to either side, which is why
+// each one is buried: twenty metres of footing, so a truck cannot drive under
+// a wall where the ground drops. That was Unity's reasoning and it is right;
+// what changes is that the sample is now the core's own.
+
+
+
+/** Q16.16 metres, written as the integer it is, with the metres beside it. */
+const POST_X = -7497318;          // -114.4 m, the post office's own origin
+const WALL_DEPTH = 524288;        //    8 m, the barrier runs back into the hall
+const PORT_PITCH = 445645;        //  6.8 m, one bay to the next
+const FIRST_PORT_Z = -5124915;    // -78.2 m, the middle of bay 0
+const MOUTH_HALF = 163840;        //  2.5 m, the clear half-width of a bay
+const MOUTH_HIGH = 602931;        //  9.2 m, the top of a bay mouth
+const SHELL_HALF = 5514854;       // 84.15 m, half the post office
+const SHELL_HIGH = 3407872;       //   52 m
+const FOOTING = 1310720;          //   20 m of foundations under every shell
+
+const MINER_X = 11075584;         // 169 m, the miner's own origin (was 114.4; the world grew east)
+// 114 m was written here first, off `DeliveryGate.gateX`'s field initialiser,
+// and Bootstrap overwrites it: `gate.gateX = _terrain.width * 0.44f` on a 260 m
+// map is 114.4. The 0.4 m put every miner box - facade, lintel and both tunnel
+// sides - a wall's thickness off where Unity draws them.
+/**
+ * WHERE THE MINER ACTUALLY BEGINS - the west edge of the DRAWN building, not its origin and not its tunnel.
+ *
+ * The first cut of this (2026-09-19 13:09) put the door at the tunnel's mouth, 90.4 m, because that is where the
+ * entry corridor clears. the owner's 15:58 shot showed why that was the wrong edge: the building's legs, feet, cables
+ * and lower mass stand on the ground from 60.6 m west of its origin, so road, chart and tanks were still under it.
+ * The door is that edge. With the origin at 169 m it is 108.4 m, and nothing the world lays down goes past it: the
+ * candle field ends at 90.0 m, the road ribbon ends here, and the army's own east clamp is held short of it.
+ */
+const MINER_DOOR_X = 7098470;     // 108.3 m: MINER_X less the 60.60486 m the model reaches west of its
+                                         // origin (108.39514), and 9.5 cm of daylight inside that
+const MINER_MOUTH_HALF = 2621440; //   40 m, the clear half-width of the tunnel
+const MINER_MOUTH_HIGH = 1703936; //   26 m
+const MINER_SHELL_HALF = 5531238; // 84.4 m
+const MINER_SHELL_HIGH = 8729395; // 133.2 m
+
+const EDGE_THICK = 196608;        //    3 m
+const EDGE_HIGH = 1703936;        //   26 m of blocker above the kerb
+const EDGE_SUNK = 393216;         //    6 m of it below the ground
+
+/** How many boxes the map has, so a caller can size a buffer. */
+const MAP_BOXES = 37;
+
+/**
+ * The map's solids for a world, as the six words a box carries:
+ * centre x, centre z, half x, half z, lowest y, highest y.
+ *
+ * Ordered the way the map is laid out - west edge, the post office, the two
+ * long edges, the miner, east edge - and NOT the order Unity's
+ * `FindObjectsByType` happens to return, which is not an order at all.
+ */
+function mapSolids(ground, halfX, halfZ, reliefHalfX = halfX) {
+  const box = new Int32Array(Math.imul(MAP_BOXES, BOX_WORDS));
+  let n = 0;
+  const put = (cx, cz, hx, hz, yLow, yHigh) => {
+    const b = Math.imul(n, BOX_WORDS);
+    box[b] = cx; box[b + 1] = cz; box[b + 2] = hx; box[b + 3] = hz;
+    box[b + 4] = yLow; box[b + 5] = yHigh;
+    n++;
+  };
+  const groundAt = (x, z) => heightAtWorld(ground, x, z, reliefHalfX, halfZ);
+  const half = (v) => v >> 1;
+
+  // ---- THE FOUR EDGES OF THE WORLD ---------------------------------------
+  //
+  // Tall and invisible, so a truck arriving airborne off a fee cliff still
+  // cannot clear the edge. Sunk six metres so a dip does not open a gap.
+  const edge = (cx, cz, hx, hz) => {
+    const g = groundAt(cx, cz);
+    put(cx, cz, hx, hz, sub(g, EDGE_SUNK), add(sub(g, EDGE_SUNK), EDGE_HIGH));
+  };
+  edge(-halfX, 0, half(EDGE_THICK), add(halfZ, EDGE_THICK));
+  edge(halfX, 0, half(EDGE_THICK), add(halfZ, EDGE_THICK));
+  edge(0, -halfZ, add(halfX, EDGE_THICK), half(EDGE_THICK));
+  edge(0, halfZ, add(halfX, EDGE_THICK), half(EDGE_THICK));
+
+  // ---- THE POST OFFICE ----------------------------------------------------
+  //
+  // The building spans the map, so the only way onto the road is out of a bay.
+  // The slabs run BACKWARDS into the hall - forwards would put a wall in front
+  // of the doors the truck is parked at.
+  const shellX = add(POST_X, sub(0, half(WALL_DEPTH)));   // FacadeX is the shell's own zero
+  const postG = groundAt(POST_X, 0);
+  const postLow = sub(postG, FOOTING);
+  const postHigh = add(postG, SHELL_HIGH);
+  const pillarHalf = half(sub(PORT_PITCH, Math.imul(MOUTH_HALF, 2)));
+  for (let i = 0; i <= 24; i++) {
+    const z = add(sub(FIRST_PORT_Z, half(PORT_PITCH)), Math.imul(PORT_PITCH, i));
+    put(shellX, z, half(WALL_DEPTH), pillarHalf, postLow, postHigh);
+  }
+  // The two ends, from the outermost pillar out to the edge of the shell.
+  const lastEdge = add(FIRST_PORT_Z, add(Math.imul(PORT_PITCH, 23), half(PORT_PITCH)));
+  const endHalf = half(sub(SHELL_HALF, lastEdge));
+  put(shellX, sub(0, add(lastEdge, endHalf)), half(WALL_DEPTH), endHalf, postLow, postHigh);
+  put(shellX, add(lastEdge, endHalf), half(WALL_DEPTH), endHalf, postLow, postHigh);
+  // Over every mouth.
+  put(shellX, 0, half(WALL_DEPTH), SHELL_HALF, add(postG, MOUTH_HIGH), postHigh);
+
+  // ---- THE MINER ----------------------------------------------------------
+  //
+  // Its shell faces the player, so its own x and z run the other way; what is
+  // written here is where the boxes STAND, which is the only thing a collision
+  // cares about.
+  const minerG = groundAt(MINER_X, 0);
+  const minerLow = sub(minerG, FOOTING);
+  const minerHigh = add(minerG, MINER_SHELL_HIGH);
+  const facadeX = sub(MINER_X, Math.imul(2, ONE));         // local x 2, faced about
+  const sideHalf = half(sub(MINER_SHELL_HALF, MINER_MOUTH_HALF));
+  const sideZ = add(MINER_MOUTH_HALF, sideHalf);
+  put(facadeX, sub(0, sideZ), Math.imul(4, ONE), sideHalf, minerLow, minerHigh);
+  put(facadeX, sideZ, Math.imul(4, ONE), sideHalf, minerLow, minerHigh);
+  put(facadeX, 0, Math.imul(4, ONE), MINER_MOUTH_HALF,
+      add(minerG, MINER_MOUTH_HIGH), minerHigh);
+  // The tunnel's own two sides, so the run-in is a corridor and not a doorway
+  // that can be clipped past at an angle.
+  const tunnelX = add(MINER_X, Math.imul(11, ONE));
+  const tunnelZ = add(MINER_MOUTH_HALF, Math.imul(2, ONE));
+  const tunnelLow = sub(minerG, FOOTING);
+  const tunnelHigh = add(minerG, MINER_MOUTH_HIGH);
+  put(tunnelX, sub(0, tunnelZ), Math.imul(14, ONE), Math.imul(2, ONE), tunnelLow, tunnelHigh);
+  put(tunnelX, tunnelZ, Math.imul(14, ONE), Math.imul(2, ONE), tunnelLow, tunnelHigh);
+
+  return { n, box };
+}
+
+
 // ---- rules/army.js
 // The two armies, ported from Army.cs.
 //
@@ -1906,6 +2055,7 @@ const CORRECTION_CAP = 39322;
 // means, and it replaced distance-to-a-line for good reason - the frontline is
 // defined across the whole map, so a truck on the empty run-in to the gate
 // could sit on it and be scored as though under fire.
+
 
 
 
@@ -2160,9 +2310,22 @@ const RIFLE_TRAIL_MAX = Math.imul(40, ONE);  // and trails it by at most 40 m
 const OVERRUN_DEPTH = Math.imul(14, ONE);   // Army.OverrunDepth
 const FALL_BACK = Math.imul(34, ONE);
 
+/** The post office's paving edge: the army's west kerb (the owner 2026-09-19 13:09, "no tank on the loading dock"). */
+const DOCK_EDGE = 5465702;                  // 83.4 m
+
+
 /** Inside this, a tank gives ground rather than closing further. */
 /** The battlefield's half width, as Army.FrontX has it. */
 const FRONT_X = Math.imul(92, ONE);
+
+/**
+ * HOW FAR EAST AND WEST A TANK MAY BE, and they are not the same number (2026-09-19 15:58). The army's own edge is
+ * FRONT_X - 4 = 88 m. West the post office's paving is nearer, at 83.4 m, so the kerb wins; east the miner's drawn
+ * west edge is the door, 108.4 m since the world grew, so the army's own edge wins. Exported because the separation
+ * pass in sim.js has to hold the same line - it pushed hulls to 93.7 m while the step was clamped at 88.
+ */
+const ARMOUR_WEST = min(sub(FRONT_X, Math.imul(4, ONE)), DOCK_EDGE);
+const ARMOUR_EAST = min(sub(FRONT_X, Math.imul(4, ONE)), sub(MINER_DOOR_X, Math.imul(4, ONE)));
 
 /** Squad anchors along the front, and how wide a squad stands. */
 const SQUADS = 8;
@@ -2820,12 +2983,12 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, halfX, half
     stepZ = mulFast(cos(u.heading), along);
   }
 
-  // AND NOT ONTO THE CONCRETE (the owner 2026-09-19 13:09): the army's own edge was FRONT_X - 4 = 88 m and the post
-  // office's paving reaches to 83.4 m, so a tank giving ground or bounding could stand 4.6 m inside the loading
-  // dock even with its post pulled back (tactics.js DOCK_X). The edge is the kerb.
-  const DOCK_EDGE = 5465702;                       // 83.4 m
-  const edge = min(sub(FRONT_X, Math.imul(4, ONE)), DOCK_EDGE);
-  u.x = clamp(add(u.x, stepX), neg(min(edge, halfX)), min(edge, halfX));
+  // AND NOT ONTO EITHER BUILDING (the owner 2026-09-19 13:09 and 15:58). The army's own edge is FRONT_X - 4 = 88 m.
+  // West, the post office's paving reaches to 83.4 m, so the kerb is nearer than the army's edge and it wins.
+  // East, the miner's drawn west edge is the door (map.js MINER_DOOR_X, 108.4 m since the world grew), so the
+  // army's own edge is the nearer one there. The clamp is therefore NOT symmetric, and writing it as one number
+  // was how tanks came to stand on the miner's deck.
+  u.x = clamp(add(u.x, stepX), neg(min(ARMOUR_WEST, halfX)), min(ARMOUR_EAST, halfX));
   u.z = clamp(add(u.z, stepZ), -halfZ, halfZ);
 
   // OUT OF THE CRATERS.
@@ -2869,6 +3032,11 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, halfX, half
       u.z = add(u.z, div(mulFast(dz, sub(reach, d)), d));
     }
   }
+
+  // AND THE CLAMP IS THE LAST WORD (measured 2026-09-19): the crater push above runs after the step's own clamp, so
+  // a hull pushed off a bowl's edge could end up past the kerb or on the miner's deck - the easternmost tank stood
+  // at 92.0 m against an 88 m edge. A rule that other rules may step over is not a rule.
+  if (u.armour) u.x = clamp(u.x, neg(min(ARMOUR_WEST, halfX)), min(ARMOUR_EAST, halfX));
 
   // NOTHING OFF THE TRUCK (the owner 2026-09-16 17:00: "Tanks must NOT react to the truck except by shooting. No
   // dodge. No being pushed. They are much stronger than him; that must be obvious."). The ring that held armour
@@ -3075,6 +3243,7 @@ function threatAt(units, count, x, z) {
 //   §1.2 THE TRUCK   nothing here reads the truck. The army shoots it; a touch wrecks it (sim.js).
 //
 // There is no road in the core: the kill zone every slot covers is the seam band the truck has to cross.
+
 
 
 
@@ -3503,13 +3672,18 @@ function isBounding(s, base, index, tick) {
  * the team stopped scooting (measured: "seed 2 tick 1396: team 3 scooted with a tank off post"). The pair's CENTRE
  * is clamped, so the two stay 12 m apart and the outer one stands on the kerb.
  */
-const DOCK_X = 5465702;                    // 83.4 m: the post office's paving edge, and the miner's by symmetry
-const PAIR_CENTRE_X = (DOCK_X - PAIR_HALF) | 0;   // 77.4 m
+const DOCK_X = 5465702;                    // 83.4 m: the post office's paving edge, west
+const PAIR_WEST_X = (-DOCK_X + PAIR_HALF) | 0;    // -77.4 m: the westernmost pair centre
+// EAST IS THE MINER'S DOOR, NOT THE SAME NUMBER (2026-09-19 15:58). While the world ended at 130 m the two kerbs
+// were both 83.4 m and one constant did for both; with the miner moved east its drawn west edge is 108.4 m, the
+// army's own edge (FRONT_X - 4 = 88 m) is the nearer limit there, and a symmetric clamp would hold the east flank
+// 4.6 m short of where the doctrine puts it for no reason.
+const PAIR_EAST_X = (Math.min(5767168, MINER_DOOR_X - Math.imul(4, ONE)) - PAIR_HALF) | 0;   // 88 m less the pair's 6 m
 
 /** A pair member's x on a slot: the pair's centre held off the paving, the member 6 m either side of it. */
 const pairX = (slot, member) => {
   const raw = slotX(slot);
-  const centre = raw < -PAIR_CENTRE_X ? -PAIR_CENTRE_X : raw > PAIR_CENTRE_X ? PAIR_CENTRE_X : raw;
+  const centre = raw < PAIR_WEST_X ? PAIR_WEST_X : raw > PAIR_EAST_X ? PAIR_EAST_X : raw;
   return (centre + (member === 0 ? -PAIR_HALF : PAIR_HALF)) | 0;
 };
 
@@ -3796,153 +3970,6 @@ function pushNear(s, base, side, anchorX) {
   if (n === 0) return 0;
   return Math.imul(idiv(idiv(sum, n), PUSH_STEP), PUSH_STEP) | 0;
 }
-
-// ---- rules/map.js
-// THE MAP'S OWN COLLISION BOXES, AND THEY BELONG HERE.
-//
-// The world solids used to be Unity's: `WorldSolids.Gather` collected every
-// BoxCollider the player had BUILT AT RUNTIME and `CoreDrivenTruck.UploadSolids`
-// sent them to the core - re-sending whenever the count changed, so the world
-// the core resolved against moved mid-run as models streamed in. No replay set
-// any at all, so a committee resolved every drive against nothing. Measured:
-// one box on the path moves a 600-tick drive 40.233 m, more than the 33.500 m
-// the ground was worth.
-//
-// So the boxes are made here, from the map's own geometry, the same way the
-// relief is. THE NUMBERS ARE THE MAP'S and they were taken from a running
-// player rather than from a reading of the code: 37 boxes, four map edges, the
-// post office shell of twenty-five pillars on the bays' own 6.8 m pitch with
-// its two ends and its lintel, and the miner's facade, lintel and tunnel
-// sides. `SolidsInventoryTests` prints the set a real Bootstrap builds and
-// pins it against these.
-//
-// EVERY HEIGHT IS SAMPLED FROM THE GROUND THIS CORE GENERATED. A shell sits at
-// one terrain sample and the relief falls away to either side, which is why
-// each one is buried: twenty metres of footing, so a truck cannot drive under
-// a wall where the ground drops. That was Unity's reasoning and it is right;
-// what changes is that the sample is now the core's own.
-
-
-
-/** Q16.16 metres, written as the integer it is, with the metres beside it. */
-const POST_X = -7497318;          // -114.4 m, the post office's own origin
-const WALL_DEPTH = 524288;        //    8 m, the barrier runs back into the hall
-const PORT_PITCH = 445645;        //  6.8 m, one bay to the next
-const FIRST_PORT_Z = -5124915;    // -78.2 m, the middle of bay 0
-const MOUTH_HALF = 163840;        //  2.5 m, the clear half-width of a bay
-const MOUTH_HIGH = 602931;        //  9.2 m, the top of a bay mouth
-const SHELL_HALF = 5514854;       // 84.15 m, half the post office
-const SHELL_HIGH = 3407872;       //   52 m
-const FOOTING = 1310720;          //   20 m of foundations under every shell
-
-const MINER_X = 7497318;          // 114.4 m, the miner's own origin
-// 114 m was written here first, off `DeliveryGate.gateX`'s field initialiser,
-// and Bootstrap overwrites it: `gate.gateX = _terrain.width * 0.44f` on a 260 m
-// map is 114.4. The 0.4 m put every miner box - facade, lintel and both tunnel
-// sides - a wall's thickness off where Unity draws them.
-/**
- * WHERE THE MINER ACTUALLY BEGINS, which is not where its origin is placed (the owner 2026-09-19 13:09). MINER_X is the
- * facade, the delivery line, and the model's origin; the building itself stands on the ground from x 53.8 m and only
- * its entry corridor (|z| <= 34 m) is clear, from x 90.4 m east. Nothing the core lays down goes past this door: the
- * candle field ends here (frontline.js FIELD_SLOT, ruling B refitted) and so does the road ribbon Unity draws.
- * Measured per node out of bitcoin_miner_megastructure.glb - power cables 53.8, feet 62.8, lower mass 64.4, legs 66.9,
- * mass_behind_tunnel ending at 90.4.
- */
-const MINER_DOOR_X = 5924454;     // 90.4 m
-const MINER_MOUTH_HALF = 2621440; //   40 m, the clear half-width of the tunnel
-const MINER_MOUTH_HIGH = 1703936; //   26 m
-const MINER_SHELL_HALF = 5531238; // 84.4 m
-const MINER_SHELL_HIGH = 8729395; // 133.2 m
-
-const EDGE_THICK = 196608;        //    3 m
-const EDGE_HIGH = 1703936;        //   26 m of blocker above the kerb
-const EDGE_SUNK = 393216;         //    6 m of it below the ground
-
-/** How many boxes the map has, so a caller can size a buffer. */
-const MAP_BOXES = 37;
-
-/**
- * The map's solids for a world, as the six words a box carries:
- * centre x, centre z, half x, half z, lowest y, highest y.
- *
- * Ordered the way the map is laid out - west edge, the post office, the two
- * long edges, the miner, east edge - and NOT the order Unity's
- * `FindObjectsByType` happens to return, which is not an order at all.
- */
-function mapSolids(ground, halfX, halfZ) {
-  const box = new Int32Array(Math.imul(MAP_BOXES, BOX_WORDS));
-  let n = 0;
-  const put = (cx, cz, hx, hz, yLow, yHigh) => {
-    const b = Math.imul(n, BOX_WORDS);
-    box[b] = cx; box[b + 1] = cz; box[b + 2] = hx; box[b + 3] = hz;
-    box[b + 4] = yLow; box[b + 5] = yHigh;
-    n++;
-  };
-  const groundAt = (x, z) => heightAtWorld(ground, x, z, halfX, halfZ);
-  const half = (v) => v >> 1;
-
-  // ---- THE FOUR EDGES OF THE WORLD ---------------------------------------
-  //
-  // Tall and invisible, so a truck arriving airborne off a fee cliff still
-  // cannot clear the edge. Sunk six metres so a dip does not open a gap.
-  const edge = (cx, cz, hx, hz) => {
-    const g = groundAt(cx, cz);
-    put(cx, cz, hx, hz, sub(g, EDGE_SUNK), add(sub(g, EDGE_SUNK), EDGE_HIGH));
-  };
-  edge(-halfX, 0, half(EDGE_THICK), add(halfZ, EDGE_THICK));
-  edge(halfX, 0, half(EDGE_THICK), add(halfZ, EDGE_THICK));
-  edge(0, -halfZ, add(halfX, EDGE_THICK), half(EDGE_THICK));
-  edge(0, halfZ, add(halfX, EDGE_THICK), half(EDGE_THICK));
-
-  // ---- THE POST OFFICE ----------------------------------------------------
-  //
-  // The building spans the map, so the only way onto the road is out of a bay.
-  // The slabs run BACKWARDS into the hall - forwards would put a wall in front
-  // of the doors the truck is parked at.
-  const shellX = add(POST_X, sub(0, half(WALL_DEPTH)));   // FacadeX is the shell's own zero
-  const postG = groundAt(POST_X, 0);
-  const postLow = sub(postG, FOOTING);
-  const postHigh = add(postG, SHELL_HIGH);
-  const pillarHalf = half(sub(PORT_PITCH, Math.imul(MOUTH_HALF, 2)));
-  for (let i = 0; i <= 24; i++) {
-    const z = add(sub(FIRST_PORT_Z, half(PORT_PITCH)), Math.imul(PORT_PITCH, i));
-    put(shellX, z, half(WALL_DEPTH), pillarHalf, postLow, postHigh);
-  }
-  // The two ends, from the outermost pillar out to the edge of the shell.
-  const lastEdge = add(FIRST_PORT_Z, add(Math.imul(PORT_PITCH, 23), half(PORT_PITCH)));
-  const endHalf = half(sub(SHELL_HALF, lastEdge));
-  put(shellX, sub(0, add(lastEdge, endHalf)), half(WALL_DEPTH), endHalf, postLow, postHigh);
-  put(shellX, add(lastEdge, endHalf), half(WALL_DEPTH), endHalf, postLow, postHigh);
-  // Over every mouth.
-  put(shellX, 0, half(WALL_DEPTH), SHELL_HALF, add(postG, MOUTH_HIGH), postHigh);
-
-  // ---- THE MINER ----------------------------------------------------------
-  //
-  // Its shell faces the player, so its own x and z run the other way; what is
-  // written here is where the boxes STAND, which is the only thing a collision
-  // cares about.
-  const minerG = groundAt(MINER_X, 0);
-  const minerLow = sub(minerG, FOOTING);
-  const minerHigh = add(minerG, MINER_SHELL_HIGH);
-  const facadeX = sub(MINER_X, Math.imul(2, ONE));         // local x 2, faced about
-  const sideHalf = half(sub(MINER_SHELL_HALF, MINER_MOUTH_HALF));
-  const sideZ = add(MINER_MOUTH_HALF, sideHalf);
-  put(facadeX, sub(0, sideZ), Math.imul(4, ONE), sideHalf, minerLow, minerHigh);
-  put(facadeX, sideZ, Math.imul(4, ONE), sideHalf, minerLow, minerHigh);
-  put(facadeX, 0, Math.imul(4, ONE), MINER_MOUTH_HALF,
-      add(minerG, MINER_MOUTH_HIGH), minerHigh);
-  // The tunnel's own two sides, so the run-in is a corridor and not a doorway
-  // that can be clipped past at an angle.
-  const tunnelX = add(MINER_X, Math.imul(11, ONE));
-  const tunnelZ = add(MINER_MOUTH_HALF, Math.imul(2, ONE));
-  const tunnelLow = sub(minerG, FOOTING);
-  const tunnelHigh = add(minerG, MINER_MOUTH_HIGH);
-  put(tunnelX, sub(0, tunnelZ), Math.imul(14, ONE), Math.imul(2, ONE), tunnelLow, tunnelHigh);
-  put(tunnelX, tunnelZ, Math.imul(14, ONE), Math.imul(2, ONE), tunnelLow, tunnelHigh);
-
-  return { n, box };
-}
-
 
 // ---- rules/frontline.js
 // Where the two armies meet, ported from PriceHistory.FrontlineZ.
@@ -4911,6 +4938,7 @@ const sortieWait = (rng) => mulFast(SORTIE_SECONDS, between(rng, JITTER_MIN, JIT
 
 
 
+
 var heatForLoad = heat;
 
 
@@ -4970,7 +4998,23 @@ const TRUCK_ARMOUR = Math.imul(3, ONE) >> 1;   // 1.5, TruckHealth.armour
 // SUPERSEDED (the owner 2026-09-16 17:06): the speed-priced crash above - 4 m/s a write-off, 0.5 m/s the floor, 6 points
 // per m/s - is gone. Any touch with live armour writes the truck off; see the armour contact in `step`.
 
-const HALF_X = Math.imul(130, ONE);
+// THE WORLD GREW EAST (the owner 2026-09-19 15:58, miner-entrance-still-covered-1558.jpg, ruled 16:0x). The drawn miner
+// reaches 60.6 m west of its own origin, so at an origin of 114.4 m the building stood on the battlefield from x
+// 53.8 m - over the chart's last nine slots, the road and the army. Moving the chart could not fix that without a
+// 4.05 m pitch, which is narrower than the corridors the 10:05 playtest already called a trap. So the world grows:
+// the miner's origin goes to 169 m, its west edge lands at 108.4 m, and the map's half width follows it to 185 m.
+const HALF_X = Math.imul(185, ONE);
+
+/**
+ * AND THE LAND THE GAME IS PLAYED ON DOES NOT CHANGE WITH IT.
+ *
+ * The relief is a grid stretched between +-RELIEF_HALF_X, so widening that number moves every hill: measured, with
+ * the relief stretched to 185 m the two armies lost contact on the recording's own fixture - 0 tanks with an enemy
+ * inside the 46 m gun at t=90, against 7 before, the bulls pushed from z -65 to -73 by crests that had moved under
+ * them. The map grew; the ground did not. Beyond +-130 m `heightAtWorld` holds the edge row, which is the flat
+ * apron the miner stands on - new land, not the old land pulled wider.
+ */
+const RELIEF_HALF_X = Math.imul(130, ONE);
 const HALF_Z = Math.imul(85, ONE);
 // The tick itself lives in `tick.js`, which is what the protocol reads: one
 // definition of how long a tick is, not one here and another there.
@@ -5541,8 +5585,8 @@ function surfaceAt(st, x, z) {
   // PASSABILITY (§4.15, the owner 2026-09-17 14:40 "make it so trucks and tanks get through"): nothing added in the band stands
   // over 1 m or climbs over 25% but a crater's bowl, so the 2.4 m hull-down berms (e0f4ed7) are withdrawn - a berm across
   // the hold band was a wall to a truck crossing the front. The candle ribbon (1 m, 25%) is the only layer added.
-  if (!st.candles) return sub(heightAtWorld(st.ground, x, z, HALF_X, HALF_Z), craterCut(st.i32, x, z));
-  const relief = levelled(heightAtWorld(st.ground, x, z, HALF_X, HALF_Z), st.apron, x, z, st.ground, HALF_X, HALF_Z);
+  if (!st.candles) return sub(heightAtWorld(st.ground, x, z, RELIEF_HALF_X, HALF_Z), craterCut(st.i32, x, z));
+  const relief = levelled(heightAtWorld(st.ground, x, z, RELIEF_HALF_X, HALF_Z), st.apron, x, z, st.ground, RELIEF_HALF_X, HALF_Z);
   return sub(add(relief, (st.noCandleField ? 0 : candleHeightAt(st.candles, x, z, st.candleShift))), craterCut(st.i32, x, z));
 }
 
@@ -5556,7 +5600,7 @@ function refreshCandles(st) {
   const w = scaleNow(st), g = glideTape(st), older = glideOlder(st);
   candleLayout(g, st.i32[O_TACTICS + TAC_MARKET + MK_SAMPLES], HALF_Z, st.candles, w.lo, w.hi, older, sampleLerp(st));
   st.candleShift = shiftNow(st);
-  st.apron = heightAtWorld(st.ground, START_X, 0, HALF_X, HALF_Z);
+  st.apron = heightAtWorld(st.ground, START_X, 0, RELIEF_HALF_X, HALF_Z);
   // the seam's scale, scroll and glided tape for this tick (seamAtX reads them hundreds of times a tick)
   st.seamScroll = scrollNow(st); st.seamLo = w.lo; st.seamHi = w.hi; st.seamOlder = older;
 }
@@ -5618,9 +5662,9 @@ function init(seedWord) {
   // Generated from the seed, so the player and every node that replays them
   // arrive at the same hills by construction rather than by agreement. Unity
   // draws what this says now; it does not say what this should be.
-  st.ground = groundFromSeed(seedWord, DEFAULT_COLS, DEFAULT_ROWS, HALF_X, HALF_Z);
+  st.ground = groundFromSeed(seedWord, DEFAULT_COLS, DEFAULT_ROWS, RELIEF_HALF_X, HALF_Z);
   // OBJECTIVES (WAR_TACTICS.md §4.11): three lanes read from this ground, so from the seed alone - never a truck.
-  initObjectives(s, O_TACTICS, (x, z) => heightAtWorld(st.ground, x, z, HALF_X, HALF_Z));
+  initObjectives(s, O_TACTICS, (x, z) => heightAtWorld(st.ground, x, z, RELIEF_HALF_X, HALF_Z));
 
   // THE MAP'S OWN WALLS, AND THEY ARE THE CORE'S TOO.
   //
@@ -5634,7 +5678,7 @@ function init(seedWord) {
   // The map's boxes are made here now, from the map's own geometry and the
   // relief this core generated, so the player and every replay walk the same
   // walls by construction. Unity draws them; it does not send them.
-  st.solids = mapSolids(st.ground, HALF_X, HALF_Z);
+  st.solids = mapSolids(st.ground, HALF_X, HALF_Z, RELIEF_HALF_X);
   refreshCandles(st);
 
   // The tanks the player can see are the host's, and it sends them every
@@ -6321,6 +6365,16 @@ function step(st, throttle, steer, brake, handbrake, practice) {
       if (s[bb + U_STATE] === 0) continue;
       separatePair(s, ab, bb, U_X, U_Z, U_SIDE);
     }
+  }
+  // AND THE SEPARATION MAY NOT PUT A TANK WHERE ITS OWN STEP MAY NOT GO (measured 2026-09-19 16:0x). The army clamps
+  // its step to the kerb west and the miner's door east (rules/army.js), and then this pass pushed hulls past it:
+  // measured on seed 1, the easternmost living tank stood at x 93.7 m against a clamp of 88, and 13434 of 68855
+  // tank-ticks were on the drawn miner's deck. A rule applied to the step and not to the push is half a rule.
+  for (let i = 0; i < UNITS; i++) {
+    if (!isArmour(i)) continue;
+    const ab = unitBase(i);
+    if (s[ab + U_STATE] === 0) continue;
+    s[ab + U_X] = clamp(s[ab + U_X], neg(min(ARMOUR_WEST, HALF_X)), min(ARMOUR_EAST, HALF_X));
   }
 
   const groundOf = (x, z) => surfaceAt(st, x, z);

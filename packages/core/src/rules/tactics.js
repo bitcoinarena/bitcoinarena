@@ -22,6 +22,7 @@
 import { ONE, idiv, abs, add, sub, mulFast, sqrt } from '../fixed.js';
 import { O_UNITS, U_WORDS, U_STATE, MAX_CRATERS, craterBase, C_X, C_Z, C_R, C_ROUNDS } from '../state.js';
 import { hullDownHold, crestRise, clearOfCraters } from './army.js';
+import { MINER_DOOR_X } from './map.js';
 
 /** The live craters as the army step sees them - the same flat list `stepUnit` is handed, built from the state. */
 export function cratersOf(s) {
@@ -448,13 +449,18 @@ export function isBounding(s, base, index, tick) {
  * the team stopped scooting (measured: "seed 2 tick 1396: team 3 scooted with a tank off post"). The pair's CENTRE
  * is clamped, so the two stay 12 m apart and the outer one stands on the kerb.
  */
-export const DOCK_X = 5465702;                    // 83.4 m: the post office's paving edge, and the miner's by symmetry
-const PAIR_CENTRE_X = (DOCK_X - PAIR_HALF) | 0;   // 77.4 m
+export const DOCK_X = 5465702;                    // 83.4 m: the post office's paving edge, west
+const PAIR_WEST_X = (-DOCK_X + PAIR_HALF) | 0;    // -77.4 m: the westernmost pair centre
+// EAST IS THE MINER'S DOOR, NOT THE SAME NUMBER (2026-09-19 15:58). While the world ended at 130 m the two kerbs
+// were both 83.4 m and one constant did for both; with the miner moved east its drawn west edge is 108.4 m, the
+// army's own edge (FRONT_X - 4 = 88 m) is the nearer limit there, and a symmetric clamp would hold the east flank
+// 4.6 m short of where the doctrine puts it for no reason.
+const PAIR_EAST_X = (Math.min(5767168, MINER_DOOR_X - Math.imul(4, ONE)) - PAIR_HALF) | 0;   // 88 m less the pair's 6 m
 
 /** A pair member's x on a slot: the pair's centre held off the paving, the member 6 m either side of it. */
 export const pairX = (slot, member) => {
   const raw = slotX(slot);
-  const centre = raw < -PAIR_CENTRE_X ? -PAIR_CENTRE_X : raw > PAIR_CENTRE_X ? PAIR_CENTRE_X : raw;
+  const centre = raw < PAIR_WEST_X ? PAIR_WEST_X : raw > PAIR_EAST_X ? PAIR_EAST_X : raw;
   return (centre + (member === 0 ? -PAIR_HALF : PAIR_HALF)) | 0;
 };
 
