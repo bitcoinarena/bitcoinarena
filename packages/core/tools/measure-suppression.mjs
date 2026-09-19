@@ -51,6 +51,7 @@ const teams = L.UNITS;                         // indexed by [sideBit][team]
 function run(withSuppressing) {
   let ticks = 0;
   const pinnedTicks = [0, 0], underTicks = [0, 0];
+  const pinnedTeamTicks = [0, 0], teamTicks = [0, 0];
   let rounds = 0, suppRounds = 0;
   let standPinned = 0, standAll = 0, downAll = 0;
   for (const seed of SEEDS) {
@@ -136,10 +137,15 @@ function run(withSuppressing) {
 
       ticks++;
       for (let sd = 0; sd < 2; sd++) {
+        // THE ROW IS THE SHARE OF TEAMS (ruled 2026-09-20). This tool first counted "at least one of nine teams
+        // pinned" and reported 96% as an overage; that is an OR, not a share, and at 43.8% per team an OR of nine
+        // is 99.5% by arithmetic alone. Both are printed now, the share as the row and the OR labelled as what it
+        // is, so the same misreading cannot be made from this output again.
         let anyPinned = false, anyUnder = false;
         for (let f = 0; f < T.FIRE_TEAMS_PER_SIDE; f++) {
-          if (supp[sd][f] >= SUPP_PINNED) anyPinned = true;
+          if (supp[sd][f] >= SUPP_PINNED) { anyPinned = true; pinnedTeamTicks[sd]++; }
           if (supp[sd][f] > 0) anyUnder = true;
+          teamTicks[sd]++;
         }
         if (anyPinned) pinnedTicks[sd]++;
         if (anyUnder) underTicks[sd]++;
@@ -156,22 +162,24 @@ function run(withSuppressing) {
       }
     }
   }
-  return { ticks, pinnedTicks, underTicks, rounds, suppRounds, standPinned, standAll, downAll };
+  return { ticks, pinnedTicks, underTicks, pinnedTeamTicks, teamTicks, rounds, suppRounds, standPinned, standAll, downAll };
 }
 
 const pc = (a, b) => `${((100 * a) / Math.max(b, 1)).toFixed(1)}%`;
 console.log(`§11.5 PINNED SHARE, DERIVED NOT WRITTEN - ${SEEDS.length} seeds x ${TICKS / 60} s, a nuke every 30 s, tape ${SCROLL ? 'SCROLLING' : 'FROZEN'}`);
-console.log(`  the row wants EACH SIDE pinned on 10% to 70% of ticks - it is a band, not a floor\n`);
+console.log(`  §0's row is the SHARE OF TEAMS pinned, 10% to 70% - a band, not a floor, and NOT the fraction of ticks`);
+console.log(`  on which at least one of nine teams is pinned (ruled 2026-09-20; that OR saturates by arithmetic)\n`);
 const cases = LIVE ? [['CLOSED LOOP - the core\'s own TAC_SUPP word', false]]
                    : [['(1) TODAY\'S RIFLE FIRE ALONE', false], ['(2) WITH §11.5 SUPPRESSING ROUNDS (34 m)', true]];
 for (const [name, withS] of cases) {
   const r = run(withS);
   console.log(`${name}`);
   console.log(`   rounds counted        ${r.rounds}${withS ? `   suppressing rounds ${r.suppRounds}` : ''}`);
-  console.log(`   bulls pinned          ${r.pinnedTicks[0]} of ${r.ticks}  (${pc(r.pinnedTicks[0], r.ticks)})    under fire ${pc(r.underTicks[0], r.ticks)}`);
-  console.log(`   bears pinned          ${r.pinnedTicks[1]} of ${r.ticks}  (${pc(r.pinnedTicks[1], r.ticks)})    under fire ${pc(r.underTicks[1], r.ticks)}`);
-  const lo = Math.min(...r.pinnedTicks.map((x) => (100 * x) / r.ticks));
-  const hi = Math.max(...r.pinnedTicks.map((x) => (100 * x) / r.ticks));
+  console.log(`   THE ROW - share of TEAMS pinned:  bulls ${pc(r.pinnedTeamTicks[0], r.teamTicks[0])}   bears ${pc(r.pinnedTeamTicks[1], r.teamTicks[1])}   (the 10-70 band)`);
+  console.log(`   for reference only, the OR of nine teams: bulls ${pc(r.pinnedTicks[0], r.ticks)}  bears ${pc(r.pinnedTicks[1], r.ticks)}  - NOT the row`);
+  console.log(`   under fire (any team)  bulls ${pc(r.underTicks[0], r.ticks)}   bears ${pc(r.underTicks[1], r.ticks)}`);
+  const lo = Math.min(...[0, 1].map((k) => (100 * r.pinnedTeamTicks[k]) / Math.max(r.teamTicks[k], 1)));
+  const hi = Math.max(...[0, 1].map((k) => (100 * r.pinnedTeamTicks[k]) / Math.max(r.teamTicks[k], 1)));
   console.log(`   -> ${lo >= 10 && hi <= 70 ? 'INSIDE the 10-70 band' : lo < 10 ? 'UNDER the band' : 'OVER the band'}`);
   console.log(`   STAND man-ticks on a PINNED team  ${r.standPinned} of ${r.standAll} standing (${pc(r.standPinned, r.standAll)})`);
   console.log(`     those would become PRONE or COVER under §11.5, moving both sides of §11.4's 2x ratio:`);
