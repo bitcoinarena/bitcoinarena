@@ -84,6 +84,10 @@ public class ChartHud : MonoBehaviour
         public Rect Window; public bool WindowShaded;
         public readonly List<Label> Ghosts = new List<Label>();
         public readonly List<Label> Objectives = new List<Label>();
+        /// <summary>Where each objective marker was DRAWN. Empty until the draw runs, which is what O4 reads.</summary>
+        public readonly List<Rect> ObjectiveBoxes = new List<Rect>();
+        /// <summary>Markers the placer could not fit clear of the chrome - drawn anyway, counted here.</summary>
+        public int ObjectivesUnplaced;
         /// <summary>The range's HIGH and LOW candles, from the core's words.</summary>
         public Label High, Low;
         public readonly List<Rect> AssaultColumns = new List<Rect>();
@@ -356,8 +360,13 @@ public class ChartHud : MonoBehaviour
     /// </summary>
     public const string PinArrow = ">";
 
+    /// <summary>
+    /// WAR_TACTICS.md §4.11 names the three objectives HIGH, LOW and OPEN - "the names are on the map" - and the
+    /// client rendered them RIDGE, HOLLOW and GAP, which are the core's own kind words, not the player's. The spec's
+    /// names win; the kinds keep theirs.
+    /// </summary>
     public static string ObjectiveName(int kind) =>
-        kind == L.OBJ_RIDGE ? "RIDGE" : kind == L.OBJ_HOLLOW ? "HOLLOW" : kind == L.OBJ_GAP ? "GAP" : "?";
+        kind == L.OBJ_RIDGE ? "HIGH" : kind == L.OBJ_HOLLOW ? "LOW" : kind == L.OBJ_GAP ? "OPEN" : "?";
 
     /// <summary>
     /// Whole dollars on the chart - axis, HIGH, LOW, the last price (the owner 2026-09-17 12:40: "decimals still overlap. Remove
@@ -438,6 +447,8 @@ public class ChartHud : MonoBehaviour
             $"lastTagBox={B(f.LastTagBox)}", $"gateLineBox={B(f.GateLineBox)}",
             $"ghostLabelBoxes={string.Join("|", f.GhostLabelBoxes.ConvertAll(B))}", $"ghostDotBoxes={string.Join("|", f.GhostDotBoxes.ConvertAll(B))}",
             $"ghostsUnplaced={f.GhostsUnplaced}", $"ghostSlots={string.Join(" || ", f.GhostSlots)}", $"ghostLabelShares={string.Join("|", f.GhostLabelBoxes.ConvertAll(r => GhostShares(r, f)))}", $"highLowBox={B(HighLowDrawn)}", $"highLow={HighLowLine(f).Replace(' ', '_')}", $"gateBox={B(f.GateBox)}",
+            $"objBox={string.Join("|", f.ObjectiveBoxes.ConvertAll(B))}", $"objNames={string.Join("+", f.Objectives.ConvertAll(o => o.Text))}",
+            $"objUnplaced={f.ObjectivesUnplaced}",
             $"openShares={OpenShares(f)}", $"openPlaced={f.OpenPlaced}",
             $"axisW={f.AxisWidth:0.0}", $"priceTextW={f.PriceTextWidth:0.0}", $"lowPlaced={f.LowPlaced}", $"timeBoxes={string.Join("|", f.TimeBoxes.ConvertAll(B))}",
         }));
@@ -773,6 +784,25 @@ public class ChartHud : MonoBehaviour
             taken.Add(label);
             Box(f.GhostDotBoxes[i], g.Colour);
             Text(label, g.Text, g.Colour, _text);
+        }
+
+        // 6. THE OBJECTIVES (WAR_TACTICS.md §4.11, §0 row O4: "the client draws HIGH, LOW and OPEN at the core's points
+        // in the holder's colour"). The list is built above from the core's own words - kind, point, holder - and was
+        // consumed by nothing at all: measured on the Daily, the core put three markers on the chart and the HUD drew
+        // none of them. This is that draw, and it is the ONLY one: nothing here recomputes a marker.
+        //
+        // Placed like a ghost's label, out of the chrome it would otherwise sit on, and under the truck, which stays
+        // on top of everything.
+        f.ObjectiveBoxes.Clear();
+        foreach (var o in f.Objectives)
+        {
+            float ow2 = _text.CalcSize(new GUIContent(o.Text)).x;
+            var box = PlaceGhostLabel(p, o.At, ow2, lh, taken.ToArray(), out bool placedObj);
+            f.ObjectiveBoxes.Add(box);
+            taken.Add(box);
+            Box(new Rect(o.At.x - 3f, o.At.y - 3f, 6f, 6f), o.Colour);
+            Text(box, o.Text, o.Colour, _text);
+            if (!placedObj) f.ObjectivesUnplaced++;
         }
 
         // 4. the truck, always on top: a faint line down to the time axis, the dot, its heading, YOU
