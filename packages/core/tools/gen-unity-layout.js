@@ -67,6 +67,12 @@ const candles = await import(new URL('../src/rules/candles.js', import.meta.url)
 out += '\n        // candle view (src/rules/candles.js): the candles the core stands everything on, for the renderer\n';
 for (const k of Object.keys(candles).filter((k) => /^(CV_|CANDLE_|CANDLES$|WICK_)/.test(k) && typeof candles[k] === 'number').sort())
   out += `        public const int ${k} = ${candles[k]};\n`;
+// THE MAP'S OWN LANDMARKS (src/rules/map.js), in the core's Q16.16 metres: where the post office and the miner
+// stand, and where the miner's door is. Unity draws the road ribbon between them and must not restate either end.
+const map = await import(new URL('../src/rules/map.js', import.meta.url));
+out += '\n        // map landmarks (src/rules/map.js), Q16.16 metres: the buildings the world is laid between\n';
+for (const k of Object.keys(map).filter((k) => /^(POST_|MINER_)/.test(k) && typeof map[k] === 'number').sort())
+  out += `        public const int ${k} = ${map[k]};\n`;
 out += '\n';
 out += '        /// <summary>Base word offset of unit <paramref name="i"/>.</summary>\n';
 out += '        public static int UnitBase(int i) => O_UNITS + i * U_WORDS;\n';

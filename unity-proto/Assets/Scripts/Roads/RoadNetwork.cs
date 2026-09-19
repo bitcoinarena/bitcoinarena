@@ -274,7 +274,13 @@ public class RoadNetwork : MonoBehaviour
         // doors, so a lane that begins at the plaza mark begins inside the
         // loading bays.
         float x0 = Mathf.Max(Model.PlazaX + 4f, Model.PlazaPavedTo);
-        float x1 = Model.DepotX - 4f;
+        // AND NOT INSIDE THE MINER EITHER (the owner 2026-09-19 13:09, miner-entrance-covered-1309.jpg). DepotX - 4 is
+        // x 114, which is the facade - the model's origin - and the building stands on the ground from x 53.8 m, so
+        // the last 24 m of ribbon was drawn inside it. The end is the core's own door now (Blwp.Layout
+        // MINER_DOOR_X, 90.4 m), the same number the candle field is refitted to: Unity draws what the core says and
+        // does not keep a second idea of where the world ends. The truck still reaches the miner - the approach past
+        // the door is the building's own apron, as the post office's is at the other end.
+        float x1 = Blwp.Layout.MINER_DOOR_X / 65536f;
         var verts = new List<Vector3>(n * 2 + 2);
         var uvs = new List<Vector2>(n * 2 + 2);
         var tris = new List<int>(n * 6);

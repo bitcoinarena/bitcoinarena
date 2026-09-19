@@ -41,6 +41,15 @@ export const MINER_X = 7497318;          // 114.4 m, the miner's own origin
 // and Bootstrap overwrites it: `gate.gateX = _terrain.width * 0.44f` on a 260 m
 // map is 114.4. The 0.4 m put every miner box - facade, lintel and both tunnel
 // sides - a wall's thickness off where Unity draws them.
+/**
+ * WHERE THE MINER ACTUALLY BEGINS, which is not where its origin is placed (the owner 2026-09-19 13:09). MINER_X is the
+ * facade, the delivery line, and the model's origin; the building itself stands on the ground from x 53.8 m and only
+ * its entry corridor (|z| <= 34 m) is clear, from x 90.4 m east. Nothing the core lays down goes past this door: the
+ * candle field ends here (frontline.js FIELD_SLOT, ruling B refitted) and so does the road ribbon Unity draws.
+ * Measured per node out of bitcoin_miner_megastructure.glb - power cables 53.8, feet 62.8, lower mass 64.4, legs 66.9,
+ * mass_behind_tunnel ending at 90.4.
+ */
+export const MINER_DOOR_X = 5924454;     // 90.4 m
 export const MINER_MOUTH_HALF = 2621440; //   40 m, the clear half-width of the tunnel
 export const MINER_MOUTH_HIGH = 1703936; //   26 m
 export const MINER_SHELL_HALF = 5531238; // 84.4 m

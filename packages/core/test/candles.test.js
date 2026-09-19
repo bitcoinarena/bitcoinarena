@@ -237,8 +237,9 @@ test('tanks cross the ribbon: up onto the plateaus and down, nothing pushes them
     // ON THE CHART per seed, ON A FULL BODY TOP over the three. MOVED 2026-09-19: §4.13's seeded init tape gives
     // every seed its own chart, so how high a tank gets in 60 s is the seed's, not the rule's - measured plateau /
     // slope tank-ticks 0 / 7899, 907 / 5097, 2278 / 9573 on seeds 1 / 2 / 3 (flat tape: 1825 / 23116, 1319 / 26450,
-    // 2858 / 21378). Crossings are the seed's too - 9 / 17 / 3 with the tank posts pulled off the loading dock
-    // (tactics.js DOCK_X), 14 / 9 / 13 before it, 26 / 58 / 16 on the flat tape - so the crossing bar is read over
+    // 2858 / 21378). Crossings are the seed's too - 17 / 18 / 1 with ruling B refitted to the miner's door, 9 / 17 /
+    // 3 with the tank posts pulled off the loading dock, 14 / 9 / 13 before that, 26 / 58 / 16 on the flat tape -
+    // so the crossing bar is read over
     // the three together and only "on the chart" is read per seed. Seed 1's tanks are on the chart the whole
     // minute and reach 0.72 m; nothing pushes them back, they just do not top a body inside the minute. The rule
     // is that the chart is ground, not a wall.

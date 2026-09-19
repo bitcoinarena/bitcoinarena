@@ -180,12 +180,12 @@ namespace Blwp
 
         // candle view (src/rules/candles.js): the candles the core stands everything on, for the renderer
         public const int CANDLES = 32;
-        public const int CANDLE_BODY_HALF = 188620;
-        public const int CANDLE_EAST = 7104085;
+        public const int CANDLE_BODY_HALF = 169779;
+        public const int CANDLE_EAST = 5898229;
         public const int CANDLE_H = 65536;
         public const int CANDLE_MIN_LENGTH = 65536;
         public const int CANDLE_RAMP = 262144;
-        public const int CANDLE_SLOT = 377241;
+        public const int CANDLE_SLOT = 339558;
         public const int CANDLE_WEST = -4967627;
         public const int CANDLE_X0 = -4967627;
         public const int CV_APRON = 1;
@@ -200,6 +200,15 @@ namespace Blwp
         public const int WICK_RIDGE_H = 32768;
         public const int WICK_RIDGE_RAMP = 131072;
         public const int WICK_RIDGE_TOP_HALF = 32768;
+
+        // map landmarks (src/rules/map.js), Q16.16 metres: the buildings the world is laid between
+        public const int MINER_DOOR_X = 5924454;
+        public const int MINER_MOUTH_HALF = 2621440;
+        public const int MINER_MOUTH_HIGH = 1703936;
+        public const int MINER_SHELL_HALF = 5531238;
+        public const int MINER_SHELL_HIGH = 8729395;
+        public const int MINER_X = 7497318;
+        public const int POST_X = -7497318;
 
         /// <summary>Base word offset of unit <paramref name="i"/>.</summary>
         public static int UnitBase(int i) => O_UNITS + i * U_WORDS;
