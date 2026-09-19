@@ -12,7 +12,7 @@ import { HALF_X, HALF_Z, frontAt, scrollNow, scaleNow } from './sim.js';
 import { SAMPLES, FRONT_DEPTH, tapeAtX, xAtTape } from './rules/frontline.js';
 import { GATE_X } from './rules/gate.js';
 import { TAC_MARKET, MK_OPEN, MK_SAMPLES, MK_TREND, MK_STRENGTH, MK_LEAD, MK_MOMENTUM, OBJECTIVES, objectiveLane,
-  objectiveHolder, assaultPhase, assaultTarget, slotX, candleColour } from './rules/tactics.js';
+  objectiveHolder, assaultPhase, assaultTarget, slotX, candleColour, trendCandle, trendEnd } from './rules/tactics.js';
 
 export const CHART_GROUND = 0, CHART_ROUND = 1;
 /** Header words of `chartView`'s output. Prices are in the tape's unit (CHART_UNIT per dollar); t is Q16.16 candles
@@ -112,10 +112,13 @@ export function chartView(st, range, out) {
   const bp = idiv(abs(open), 10000);
   out[CH_LEAD_BP] = bp > 0 ? idiv((last - open) | 0, bp) : 0;
   // The six candles the trend is read from (§4.14), newest in bits 0-1: 1 green, 2 red, 0 doji.
+  // THE SAME FUNCTION THE TREND USES (tactics.js `trendCandle`), not a second copy of the indexing: this held its own
+  // copy, and when the copy graded half a body so did the dots - which is why the owner's 21:39 shot had six dots that
+  // disagreed with the five red candles drawn above them on the same HUD.
   let dots = 0;
-  const end = LAST - (count & 1);
+  const end = trendEnd(st.tape, count);
   for (let c = 0; c < 6; c++) {
-    const col = candleColour(st.tape[end - Math.imul(c, 2) - 1], st.tape[end - Math.imul(c, 2)]);
+    const col = trendCandle(st.tape, end, c);
     dots |= (col > 0 ? 1 : col < 0 ? 2 : 0) << Math.imul(c, 2);
   }
   out[CH_DOTS] = dots;

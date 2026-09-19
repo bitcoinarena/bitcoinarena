@@ -144,3 +144,45 @@ test('GATE is the core gate, the objectives and the assault the core words, and 
   assert.ok(Math.abs(past - (GATE_X - (xAtTape(63 * ONE, 0, sc) + (CANDLE_SLOT >> 2))) / CANDLE_SLOT) < 1e-3 && past - 1 > 15.15 && past - 1 < 15.19,
     `the gate is ${past.toFixed(4)} of a candle past the last`);
 });
+
+// THE SIX DOTS ARE THE SIX CANDLES ABOVE THEM (the owner 2026-09-19 21:39, hud-sideways-five-red-2139.png: the HUD
+// printed SIDEWAYS over five red candles). §4.14 reads "the colour of the last six FINISHED candles" and a candle is
+// what §4.15 draws - two samples, opening on the previous candle's close. The trend read one sample of each body and
+// dropped the other, so it graded half the candle the player was looking at: a body of $2.44 to $4.88 at $81,339 was
+// red on the screen and a doji to the war.
+//
+// The test is the identity, not a number: every dot equals the colour of the drawn candle it sits under, and the
+// trend word equals the net of those same six. It holds at every price and both sample parities, so it cannot be
+// satisfied by moving the doji band.
+test('the trend and its six dots are the colours of the six finished candles the chart draws (§4.14, §4.15)', () => {
+  for (const seed of [1, 2, 3]) {
+    const st = init(seed);
+    // walk the tape through both parities, and through a fall steep enough to colour every body
+    for (let k = 0; k < 9; k++) {
+      const s = st.i32;
+      for (const range of [C.CHART_GROUND, C.CHART_ROUND]) {
+        const o = view(st, range), n = o[C.CH_CANDLES], count = o[C.CH_SAMPLES];
+        // the newest FINISHED drawn candle: the newest slot unless an odd sample count leaves it forming
+        const newest = n - 1 - (count & 1);
+        // ROUND starts one candle wide and grows; there is nothing to compare until it holds six finished ones with
+        // a candle before them (its slot 0 opens on its own first sample, having no previous close).
+        if (newest - 5 < 1) { assert.equal(range, C.CHART_ROUND, 'GROUND has fewer than six finished candles'); continue; }
+        let net = 0;
+        for (let c = 0; c < 6; c++) {
+          const drawn = candle(o, newest - c);            // open, high, low, close
+          const colour = T.candleColour(drawn[0], drawn[3]);
+          const dot = (o[C.CH_DOTS] >> (c * 2)) & 3;
+          assert.equal(dot, colour > 0 ? 1 : colour < 0 ? 2 : 0,
+            `seed ${seed} step ${k} ${range === C.CHART_GROUND ? 'GROUND' : 'ROUND'}: dot ${c} is ${dot} and the candle it sits under is ${colour}`);
+          net += colour;
+        }
+        const a = Math.abs(net);
+        assert.equal(o[C.CH_TREND], a < 2 ? 0 : net > 0 ? 1 : -1, `seed ${seed} step ${k}: the trend word is not the net of the six drawn candles`);
+        assert.equal(o[C.CH_STRENGTH], a < 2 ? 0 : a < 4 ? 1 : a < 6 ? 2 : 3, `seed ${seed} step ${k}: the strength is not the net's`);
+      }
+      // a fall of about $4 a candle - inside the band where the old reading said SIDEWAYS over red bodies
+      submitSample(st, (st.tape[st.tape.length - 1] - 512) | 0);
+      for (let t = 0; t < 300; t++) step(st, ONE, 0, 0, 0, 0);
+    }
+  }
+});

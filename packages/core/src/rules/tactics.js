@@ -299,17 +299,42 @@ export function candleColour(open, close) {
 }
 
 /**
- * Re-read lead and trend from the tape (§4.14). A candle is two samples (open = the first, close = the second, §4.15's
- * bucket); the newest finished one ends at the newest sample when an even count of samples has been taken, else one
- * sample earlier. Green: close > open by 3 bp of the open or more; red: below by as much; else a doji, neither.
+ * THE COLOUR OF THE `c`th FINISHED CANDLE BACK, `c` = 0 the newest, counted from the tape index `end` that the newest
+ * finished candle closes on (`trendEnd` below).
+ *
+ * IT IS THE BODY THE PLAYER SEES, and until 2026-09-19 21:39 it was half of it (the owner,
+ * hud-sideways-five-red-2139.png: "SIDEWAYS is wrong - last five candles are RED"). A candle is TWO samples: §4.15's
+ * staircase opens each one on the previous candle's close (chart.js: `o = sample[a - 1]`, `c = sample[a + 1]`), and
+ * the world's bodies are built the same way (candles.js `candleLayout`). This read `tape[end - 2c - 1]` as the open -
+ * the sample in the MIDDLE of the candle, the one that draws its wick - so it graded the second half of each body and
+ * threw the first half away. Every body it scored was half the body on the screen.
+ *
+ * Measured (tools/measure-trend-vs-chart.mjs): a chart falling $5.20 a candle at $81,339 draws six red bodies and
+ * scored six bodies of $2.60. The doji band is $2.44, so a drawn body anywhere in ($2.44, $4.88] was RED on the
+ * screen and a DOJI to the trend - a factor of two wide, and the shot sits in it: five red candles, net 0, SIDEWAYS,
+ * and six dots that do not match the candles above them.
+ *
+ * The band is not what was wrong and does not move. One function now, used by the trend and by the HUD's six dots
+ * (chart.js), so the two cannot drift apart again.
+ */
+export function trendCandle(tape, end, c) {
+  const close = end - Math.imul(c, 2);
+  return candleColour(tape[close - 2], tape[close]);
+}
+
+/** The tape index the newest FINISHED candle closes on: the newest sample on an even count, one earlier on an odd one
+ * (that one is still forming, §4.15's shift). */
+export const trendEnd = (tape, count) => (tape.length - 1 - (count & 1)) | 0;
+
+/**
+ * Re-read lead and trend from the tape (§4.14). Six finished candles, newest first, each the body §4.15 draws.
+ * Green: close over open by more than the doji band; red: under by more than it; else a doji, neither.
  */
 export function readMarket(s, base, tape) {
-  const last = tape.length - 1, count = s[base + TAC_MARKET + MK_SAMPLES];
-  const end = last - (count & 1);
+  const count = s[base + TAC_MARKET + MK_SAMPLES];
+  const last = tape.length - 1, end = trendEnd(tape, count);
   let net = 0;
-  for (let c = 0; c < 6; c++) {
-    net += candleColour(tape[end - Math.imul(c, 2) - 1], tape[end - Math.imul(c, 2)]);
-  }
+  for (let c = 0; c < 6; c++) net += trendCandle(tape, end, c);
   const a = net < 0 ? -net : net;
   s[base + TAC_MARKET + MK_TREND] = a < 2 ? 0 : (net > 0 ? 1 : -1);
   s[base + TAC_MARKET + MK_STRENGTH] = a < 2 ? 0 : a < 4 ? 1 : a < 6 ? 2 : 3;
