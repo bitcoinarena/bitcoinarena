@@ -46,6 +46,7 @@ const SHARE = process.argv.includes('--share');
 const b3OutNow = new Map();
 const haltSuppressedNow = new Set();
 const winSteps = { give: {}, take: {} };
+const objLaneWas = new Map();
 let pushWrittenMin = Infinity, pushWrittenMax = -Infinity, pushSeenMin = Infinity, pushSeenMax = -Infinity;
 const SEEDS = arg('seeds', '1,2,3,4,5').split(',').map(Number);
 const TICKS = Number(arg('ticks', 3600));
@@ -352,6 +353,19 @@ for (const seed of SEEDS) {
     for (let w = 0; w < 12; w++) {
       const pu = s[L.O_TACTICS + T.TAC_PUSH + w] / ONE, on = lanes.includes(s[L.O_TACTICS + T.TAC_SLOT + w]);
       if (pu >= 16) { add('O1 pushed team-ticks'); if (on) add('O1 pushed on a lane'); }
+      // WHAT THE LANE IS ALLOWED, not only what it holds: §4.11 gives an objective's lane a ceiling of its own, and
+      // O1 asks that lane to sit 6 m HIGHER than the rest. If the ceiling there is lower, the row cannot be met.
+      if (CAUSE) { const lt = T.laneTerms(s, L.O_TACTICS, w < 6 ? -1 : 1, s[L.O_TACTICS + T.TAC_SLOT + w]);
+        // AT ITS REST OR NOT: an ordinary lane's rest is 0, which is where every lane starts, so it is there for
+        // nothing. An objective lane's rest is +8 and it has to be STEPPED there. And an objective that moves takes
+        // the +8 with it, leaving the lane that climbed to drift back down.
+        if (Math.abs(pu - lt.rest / ONE) < 0.01) add(on ? 'O1 lane at rest' : 'O1 rest at rest');
+        if (on && pu >= 8) add('O1 lane at or above 8');
+        const okey = `${w}`; const was = objLaneWas.get(okey); objLaneWas.set(okey, on);
+        if (was !== undefined && was !== on) add('O1 lane changed hands');
+        add(on ? 'O1 lane ceiling sum' : 'O1 rest ceiling sum', (lt.ceiling / ONE) | 0);
+        add(on ? 'O1 lane rest sum' : 'O1 rest rest sum', (lt.rest / ONE) | 0);
+        add(on ? 'O1 lane n2' : 'O1 rest n2'); }
       add(on ? 'O1 on n' : 'O1 off n'); add(on ? 'O1 on push' : 'O1 off push', pu);
     }
     for (let o = 0; o < 3; o++) {
@@ -768,6 +782,18 @@ if (CAUSE) {
     + `7+ ${n('A4a changes 7+')}`);
   console.log(`B2's failures: ${n('B2 fail')} of ${n('B2 squad-windows')} windows - no team halted in ${n('B2 no halt')}, `
     + `nobody moved while some were off post in ${n('B2 no mover')}`);
+  console.log(`O1's lanes against the rest: an objective lane holds mean push `
+    + `${(n('O1 on push') / Math.max(n('O1 on n'), 1)).toFixed(2)} m with a mean ceiling of `
+    + `${(n('O1 lane ceiling sum') / Math.max(n('O1 lane n2'), 1)).toFixed(1)} m and a rest of `
+    + `${(n('O1 lane rest sum') / Math.max(n('O1 lane n2'), 1)).toFixed(1)} m; the rest of the line holds `
+    + `${(n('O1 off push') / Math.max(n('O1 off n'), 1)).toFixed(2)} m with a ceiling of `
+    + `${(n('O1 rest ceiling sum') / Math.max(n('O1 rest n2'), 1)).toFixed(1)} m and a rest of `
+    + `${(n('O1 rest rest sum') / Math.max(n('O1 rest n2'), 1)).toFixed(1)} m`);
+  console.log(`O1's lanes at their rest: an objective lane sits exactly at its +8 rest on `
+    + `${(100 * n('O1 lane at rest') / Math.max(n('O1 on n'), 1)).toFixed(1)}% of its team-ticks and at or above 8 m on `
+    + `${(100 * n('O1 lane at or above 8') / Math.max(n('O1 on n'), 1)).toFixed(1)}%; an ordinary lane sits at its `
+    + `0 rest on ${(100 * n('O1 rest at rest') / Math.max(n('O1 off n'), 1)).toFixed(1)}%. The objective moved lane `
+    + `${n('O1 lane changed hands')} times.`);
   console.log(`A11a's short windows: ${n('A11a no crossing')} - of them ${n('A11a no take step at all')} had NO take `
     + `step at all and ${n('A11a took steps but no crossing')} took steps that did not carry a team across`);
   console.log(`A11b's short windows: ${n('A11b no giving')} - of them ${n('A11b no give step at all')} had NO give `
