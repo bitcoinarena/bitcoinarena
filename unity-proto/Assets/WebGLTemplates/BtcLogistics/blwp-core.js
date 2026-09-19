@@ -2144,22 +2144,38 @@ const LANE_LEASH = 0;                            // a slot is a position held: t
 const HULL_SEARCH = 2;                           // candidates either side of the post, HULL_STEP apart
 const HULL_STEP = Math.imul(2, ONE);
 const CREST_LOOK = Math.imul(6, ONE);            // how far toward the enemy the crest is looked for
+// A TANK WRECK IS A CREST (§4.1, RULED 2026-09-19). To the hull-down search a living-side or enemy TANK wreck counts
+// as ground: a candidate whose 6 m toward the enemy crosses the wreck's hull circle reads a rise of WRECK_RISE - a
+// hull to the turret ring, more than any plateau (1 m) or ramp, so a hulk beats a candle edge. The 60-tick search
+// and the 0.3 m hysteresis above are unchanged, so a wreck moves a tank at most once a second and only by two
+// metres. TANK WRECKS ONLY: a truck's wreck is one player's and differs between runs, and a post that read one
+// would differ with the truck present and absent, which §1.2 and the A10 row forbid.
+const WRECK_RISE = Math.imul(2, ONE);     // §4.1 what a hulk reads as, hull to the turret ring
+const WRECK_R = Math.imul(3, ONE);        // §1.2 the hull circle a wreck keeps
 /**
  * HULL-DOWN (WAR_TACTICS.md §4.1): of the five candidates about an overwatch hold line (-4, -2, 0, +2, +4 m), the one
  * with the largest ground rise 6 m toward the enemy; ties to the first in that scan. Exported because sim.js ranks
  * the half-line budget by how far a tank stands from the place it is really going to.
  */
-/** The rise toward the enemy in front of a hold at z (§4.1): the ground CREST_LOOK ahead less the ground under it. */
-function crestRise(z, side, x, ground) {
-  return sub(ground(x, add(z, Math.imul(-side, CREST_LOOK))), ground(x, z));
+/**
+ * The rise toward the enemy in front of a hold at z (§4.1): the ground CREST_LOOK ahead less the ground under it,
+ * or WRECK_RISE when that point stands inside a tank wreck's hull circle. `wreckAt` is optional: without it this is
+ * the plain ground reading it has always been.
+ */
+function crestRise(z, side, x, ground, wreckAt) {
+  const ahead = add(z, Math.imul(-side, CREST_LOOK));
+  if (wreckAt && wreckAt(x, ahead)) return WRECK_RISE;
+  return sub(ground(x, ahead), ground(x, z));
 }
 
-function hullDownHold(hold, side, x, ground) {
+function hullDownHold(hold, side, x, ground, wreckAt) {
   const toward = Math.imul(-side, CREST_LOOK);
   let best = hold, bestRise = -2147483647;
   for (let c = -HULL_SEARCH; c <= HULL_SEARCH; c++) {
     const z = add(hold, Math.imul(c, HULL_STEP));
-    const rise = sub(ground(x, add(z, toward)), ground(x, z));
+    const ahead = add(z, toward);
+    // A wreck in front of the candidate reads as WRECK_RISE, whatever the ground under it does (§4.1, 2026-09-19).
+    const rise = (wreckAt && wreckAt(x, ahead)) ? WRECK_RISE : sub(ground(x, ahead), ground(x, z));
     if (rise > bestRise) { bestRise = rise; best = z; }
   }
   return best;
@@ -3428,14 +3444,14 @@ const crestKey = (p) => (((p.x >> 4) ^ Math.imul(p.depth >> 4, 40503)) ^ (p.boun
  * The hold z of an overwatch tank on post `p`: the line plus the crest it holds when that crest was picked for this very
  * post, else the plain search (a question about another tick's post - holdLegs reads the last tick's). Reads only.
  */
-function crestHold(s, base, index, p, line, side, ground) {
+function crestHold(s, base, index, p, line, side, ground, wreckAt) {
   const k = index >> 2;
   if (s[base + TAC_CREST_KEY + k] === crestKey(p)) return add(line, s[base + TAC_CREST + k]);
-  return hullDownHold(line, side, p.x, ground);
+  return hullDownHold(line, side, p.x, ground, wreckAt);
 }
 
 /** Once a tick, before anything reads a post: every overwatch tank's held crest, searched on its schedule. */
-function updateCrests(s, base, tick, seamAt, ground) {
+function updateCrests(s, base, tick, seamAt, ground, wreckAt) {
   for (let i = 0; i < 96; i += 4) {
     if (!aliveAt(s, i)) continue;
     const p = postOf(s, base, i, tick);
@@ -3446,11 +3462,11 @@ function updateCrests(s, base, tick, seamAt, ground) {
     if (!fresh && mod(tick | 0, CREST_EVERY) !== 0) continue;
     let bestOffset = 0, bestRise = -2147483647;
     for (let c = -HULL_SEARCH_N; c <= HULL_SEARCH_N; c++) {
-      const off = Math.imul(c, HULL_STEP_M), rise = crestRise(add(line, off), side, p.x, ground);
+      const off = Math.imul(c, HULL_STEP_M), rise = crestRise(add(line, off), side, p.x, ground, wreckAt);
       if (rise > bestRise) { bestRise = rise; bestOffset = off; }
     }
     if (fresh) { s[base + TAC_CREST + k] = bestOffset; s[base + TAC_CREST_KEY + k] = key; continue; }
-    const heldRise = crestRise(add(line, s[base + TAC_CREST + k]), side, p.x, ground);
+    const heldRise = crestRise(add(line, s[base + TAC_CREST + k]), side, p.x, ground, wreckAt);
     if (sub(bestRise, heldRise) >= CREST_SWITCH) s[base + TAC_CREST + k] = bestOffset;
   }
 }
@@ -4328,9 +4344,22 @@ const earning = (dx, dz, gainingGround) =>
 
 const GATE_X = Math.imul(114, ONE);
 const HALF_MOUTH = Math.imul(34, ONE);
-/** A compressed block: 150 s at 60 Hz. Bitcoin's ten minutes is far too long
- *  to wait for a score. */
-const BLOCK_TICKS = 9000;
+/**
+ * A compressed block: 180 s at 60 Hz. Bitcoin's ten minutes is far too long to wait for a score - that still
+ * stands - but 150 s was too short for the war the doctrine now runs, and the doctrine's own clocks decide it
+ * (WAR_TACTICS, RULED 2026-09-19): §4.12 starts a side's first assault at 20-40 s, runs it up to 30 s, consolidates
+ * 15 s and re-arms 45-90 s later, so 150 s holds ONE assault a side and cuts the second off mid-build; §4.14 needs
+ * six closed 10 s candles before a trend can exist at all, 40% of a 150 s round with no trend possible; and §4.13's
+ * seam is an SMA(21) of 5 s samples, which takes 105 s to turn, so in 150 s the market moves the front at most
+ * once. At 180 s each side gets two declared assaults, a trend for two thirds of the round, and a front that has
+ * visibly turned.
+ *
+ * AND IT IS A DEFAULT, NOT THE RULE. `player_run_duration` (T_run) is a RoundContract field, and the protocol
+ * already makes a round's length the round's core's - `runLengthIsTheCores(contract, coreTicks)` refuses a contract
+ * that disagrees with the core it names. So this number is what a round gets when no contract sets one (a SIM
+ * round, §4.13); a contract wins.
+ */
+const BLOCK_TICKS = 10800;
 
 const RUN_LIVE = 0;
 const RUN_DELIVERED = 1;
@@ -5748,7 +5777,7 @@ function release(s, rng, h, front, ground) {
   }
 }
 
-function stepBombs(s, groundAt) {
+function stepBombs(s, groundAt, truckMayBeHit) {
   const b = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
   for (let i = 0; i < MAX_BOMBS; i++) {
     const o = bombBase(i);
@@ -5762,7 +5791,7 @@ function stepBombs(s, groundAt) {
     if (!down) { s[o + B_Y] = b.y; continue; }
     s[o + B_Y] = groundAt(b.x, b.z);
     s[o + B_STATE] = 0;
-    detonate(s, b.x, b.z);
+    detonate(s, b.x, b.z, truckMayBeHit);
   }
 }
 
@@ -5783,7 +5812,22 @@ function stepBombs(s, groundAt) {
  * is invisible in this core in any case: taking damage off a corpse leaves it a
  * corpse.
  */
-function detonate(s, bx, bz) {
+function detonate(s, bx, bz, truckMayBeHit) {
+  // A BOMB HITS THE TRUCK (§12.3, RULED 2026-09-16 19:40; in the core 2026-09-19). A truck inside the blast takes
+  // `shell x (1 - d/16)`, `shell` being the courier damage of a hit at the truck's heat with NO DRAW - the 5 to 11
+  // band's midpoint - so the random stream does not shift and a run replays the same with a bomb as without.
+  // Divided by TRUCK_ARMOUR like every other hit on it: this file's own note says the 1.5 is plating "against a
+  // shell AND A BLAST", and only the fallout is deliberately outside it.
+  // After roll-out only, and never on a wreck: a truck idling in the bay is never wrecked by anything.
+  // The gunship still never aims at, follows or avoids the truck - the bomb was going there anyway.
+  if (truckMayBeHit) {
+    const d = blastReach(sub(s[O_TRUCK + T_X], bx), sub(s[O_TRUCK + T_Z], bz));
+    if (d >= 0) {
+      const shell = shellForHeat(add(COURIER_DAMAGE_MIN, COURIER_DAMAGE_SPAN >> 1), s[O_SCORE + S_HEAT]);
+      const hurt = mulFast(shell, sub(ONE, div(d, BOMB_RADIUS)));
+      s[O_TRUCK + T_HP] = max(0, sub(s[O_TRUCK + T_HP], div(hurt, TRUCK_ARMOUR)));
+    }
+  }
   for (let i = 0; i < UNITS; i++) {
     if (isArmour(i)) continue;
     const b = unitBase(i);
@@ -6033,8 +6077,25 @@ function step(st, throttle, steer, brake, handbrake, practice) {
   // the start of this one, and takes or gives ground.
   // The objectives' holders are re-read first, from the same positions; nothing in the odds reads them (§4.11).
   // A leg does not swap while a tank of its pair is off post (§2.6, §0 "Hold is the default"), read before anything moves.
+  // A TANK WRECK IS A CREST (§4.1, RULED 2026-09-19). The one thing on this field that accumulates now shapes where
+  // the armour stands, as it already shapes where the men lie (§11.3). A dead tank keeps the x and z it died on -
+  // only its hit points and its state word are cleared - and loses them when its id respawns (§3), so the hulk is
+  // state like any other, identical on every node, and the crest goes when the wreck does.
+  // TANK WRECKS ONLY: the truck is never read here. A truck's wreck is one player's, so a post that read one would
+  // differ between runs and with the truck present or absent, which §1.2 and the A10 row forbid.
+  const wreckAt = (x, z) => {
+    for (let i = 0; i < UNITS; i++) {
+      if (!isArmour(i)) continue;
+      const b = unitBase(i);
+      if (s[b + U_STATE] !== 0) continue;                 // alive: a hull, not a hulk
+      const dx = sub(s[b + U_X], x), dz = sub(s[b + U_Z], z);
+      if (abs(dx) >= WRECK_R || abs(dz) >= WRECK_R) continue;
+      if (add(mulFast(dx, dx), mulFast(dz, dz)) < mulFast(WRECK_R, WRECK_R)) return true;
+    }
+    return false;
+  };
   // the held crests first (§4.1 hysteresis): every reader of a post below reads the same pick
-  updateCrests(s, O_TACTICS, s[O_TICK], (x) => seamAtX(st, x), (x, z) => surfaceAt(st, x, z));
+  updateCrests(s, O_TACTICS, s[O_TICK], (x) => seamAtX(st, x), (x, z) => surfaceAt(st, x, z), wreckAt);
   holdLegs(s, O_TACTICS, s[O_TICK], (x) => seamAtX(st, x), (x, z) => surfaceAt(st, x, z));
   objectiveHolders(s, O_TACTICS, s[O_TICK], (x) => seamAtX(st, x));
   pressure(s, O_TACTICS, s[O_TICK], (x) => seamAtX(st, x), (x, z) => surfaceAt(st, x, z));
@@ -6099,7 +6160,7 @@ function step(st, throttle, steer, brake, handbrake, practice) {
     if (stoodOnPost[i >> 2] && abs(sub(s[ib + U_Z], lineZ)) <= LINE_REACH) {
       lineBudget[sd < 0 ? 0 : 1]++; onTheLine[i >> 2] = true;
       grantedBefore[i >> 2] = ((s[ib + U_COOLDOWN] >> 6) & 1) === 1;
-      const holdZ = ip.bounding ? lineZ : crestHold(s, O_TACTICS, i, ip, lineZ, sd, groundOf);
+      const holdZ = ip.bounding ? lineZ : crestHold(s, O_TACTICS, i, ip, lineZ, sd, groundOf, wreckAt);
       offPost[i >> 2] = add(abs(sub(s[ib + U_X], ip.x)), abs(sub(s[ib + U_Z], holdZ)));
       if (ip.depth < 0 || ip.push < 0) offPost[i >> 2] = add(offPost[i >> 2], Math.imul(256, ONE));
     }
@@ -6480,7 +6541,8 @@ function step(st, throttle, steer, brake, handbrake, practice) {
   const seamAt = (x) => seamAtX(st, x);
   const groundAt = (x, z) => surfaceAt(st, x, z);
   stepHelicopters(s, rng, seamAt, groundAt);
-  stepBombs(s, groundAt);
+  // the truck is only in a blast's way once it has rolled out, while the run is live, and not in practice
+  stepBombs(s, groundAt, !practice && rolledOut && s[O_SCORE + S_STATE] === RUN_LIVE);
 
   // Replacements walk on last, after everyone has moved and fired, which is
   // where C# Update puts it - RemoveAll, then Reinforce. Anything drawn here
