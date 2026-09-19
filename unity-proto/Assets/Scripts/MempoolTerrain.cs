@@ -271,15 +271,19 @@ public class MempoolTerrain : MonoBehaviour
     }
 
     /// <summary>Fee rate at a column, normalised so sub-sat markets still have relief.</summary>
-    [Tooltip("How much of each end of the map is levelled off into an apron, " +
-             "as a fraction of the width. The two buildings stand there and " +
-             "their approaches have to be flat.")]
-    public float apronFraction = 0.30f;
+    // THE APRONS ARE WORLD METRES, NOT A SHARE OF THE MAP (2026-09-19, after the world grew east).
+    //
+    // They were 0.30 and 0.19 of the width: on a 260 m map that made the ground dead level outside |x| 80.6 m and
+    // fully eased in outside |x| 52 m, with the post office at -114.4 standing 33.8 m inside its flat apron. The
+    // same fractions on 370 m move those lines to |x| 114.7 and 74, and the building fell off its own apron -
+    // PlayMode measured the forecourt 3.22 m above the terrain at (-108, -84), the building floating in the air.
+    // Neither building moved, so neither do the lines they stand on: they are world x now, and the fractions the
+    // mesh wants are computed from whatever width is in use.
+    public const float ApronLevelX = 80.6f;      // outside this the ground is one height exactly
+    public const float ApronEasedX = 52f;        // between the two the relief eases in, so there is no step
 
-    [Tooltip("How much of each end is DEAD level, as a fraction of the width. " +
-             "Inside this the ground is one height exactly; between it and " +
-             "apronFraction the relief eases in, so there is no step.")]
-    public float apronLevelFraction = 0.19f;
+    public float apronFraction => Mathf.Clamp01((width * 0.5f - ApronEasedX) / Mathf.Max(1f, width));
+    public float apronLevelFraction => Mathf.Clamp01((width * 0.5f - ApronLevelX) / Mathf.Max(1f, width));
 
     float HeightAt(float u, float v)
     {
