@@ -249,9 +249,23 @@ export function initMarket(s, base, tape) {
   readMarket(s, base, tape);
 }
 
-/** A finished candle's colour (§4.14): +1 green (close above open by 3 bp of the open or more), -1 red, 0 a doji. */
+/**
+ * A finished candle's colour (§4.14): +1 green, -1 red, 0 a doji.
+ *
+ * THE DOJI BAND IS 0.3 bp, NOT 3 (measured 2026-09-19 from the owner's 12:55 shot). §4.14 writes both numbers and they
+ * are not the same one: *"a candle whose body is under 3 bp of the open (a doji, $2.25 at $75,000)"* - but 3 bp of
+ * $75,000 is $22.50, and $2.25 is 0.3 bp. The worked example is the intent; the prose slipped a decimal and the core
+ * had copied the prose.
+ *
+ * What the wrong band did on the ground: at $81,300 a candle stayed a doji unless its body cleared $24.30, while the
+ * HUD's whole visible price range in that shot was about $50. So a chart climbing a third of its own height read six
+ * doji, net 0, SIDEWAYS. Measured live on the Daily, the six bodies were 2.47, 0.49, 0.24, 0.00, 0.25 and 0.68 bp -
+ * every one under 3, so the core said SIDEWAYS while the player watched candles climb from LOW into GATE. At 0.3 bp
+ * the same six read green, green, doji, doji, doji, green: net 3, UP strength 1, which is what the ground shows.
+ * No other §4.14 number moves - not the |net| < 2 sideways band, not the 2-3 / 4-5 / 6 strengths.
+ */
 export function candleColour(open, close) {
-  const doji = Math.imul(idiv(abs(open), 10000), 3);   // 3 bp of the open
+  const doji = idiv(Math.imul(abs(open), 3), 100000);   // 0.3 bp of the open: $2.25 at $75,000, §4.14's own example
   return close - open > doji ? 1 : open - close > doji ? -1 : 0;
 }
 

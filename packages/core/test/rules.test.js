@@ -35,11 +35,13 @@ import * as gate from '../src/rules/gate.js';
  * "Touch truck-tank = truck dies"). With nothing holding tanks off it, a truck pinned in the battle is rolled into and
  * written off by contact - measured, first touch at 95-1932 ticks wherever it stood on the field - which hides the
  * fire, the heat and the flag these tests exist for. Pinned the way `parkedUnderFire` pins the air: a live tank
- * nearer than 6.5 m (the nose and tail circles, 2.0 / 1.8 m out, plus 3 + 1.275 m) is set back out to 6.5 m along
- * the line from the truck. The contact rule itself is measured on its own, below.
+ * nearer than 7.0 m (the nose and tail circles, 2.0 / 1.8 m out, plus the hull's 3.6 m half-length + 1.275 m =
+ * 6.875 m) is set back out to 7.0 m along the line from the truck. MOVED 2026-09-19 from 6.5 m, which was the old
+ * 3 m armour circle's clearance: with §1.2's hull rectangle a tank pinned nose-on at 6.5 m is in contact, and all
+ * three seeds were written off inside 15 s. The contact rule itself is measured on its own, below.
  */
 function keepArmourOff(st) {
-  const s = st.i32, ONE_ = 65536, R = Math.round(6.5 * ONE_);
+  const s = st.i32, ONE_ = 65536, R = Math.round(7.0 * ONE_);
   const tx = s[layout.O_TRUCK + layout.T_X], tz = s[layout.O_TRUCK + layout.T_Z];
   for (let i = 0; i < layout.UNITS; i++) {
     if ((i & layout.ARMOUR_MASK) !== 0) continue;
@@ -47,7 +49,7 @@ function keepArmourOff(st) {
     if (s[b + layout.U_HP] <= 0) continue;
     const dx = (s[b + layout.U_X] - tx) / ONE_, dz = (s[b + layout.U_Z] - tz) / ONE_;
     const d = Math.hypot(dx, dz);
-    if (d >= 6.5) continue;
+    if (d >= 7.0) continue;
     const nx = d > 0.01 ? dx / d : 1, nz = d > 0.01 ? dz / d : 0;
     s[b + layout.U_X] = tx + Math.round(nx * R);
     s[b + layout.U_Z] = tz + Math.round(nz * R);
@@ -651,14 +653,16 @@ const parkedUnderFire = (seed, ticks) => {
 
 test('incoming fire costs the truck condition', () => {
   for (const seed of [20260901, 20268820, 20276739]) {
-    // Fifteen seconds: long enough for the army to reach it, short enough that
-    // none of the three has spent all hundred points yet. MOVED ON PURPOSE (WAR_TACTICS.md, 2026-09-16): with the
-    // doctrine's half-line budget (§0 row 4b) the armour reaches its posts later, and the first hit on the parked
-    // truck lands at 9.53 / 10.98 / 11.08 s (was 8.65 / 8.43 / 8.90), the write-off at 24.38 / 30.00 / 25.37 s (was
-    // 19.55 / 16.90 / 18.52). Ten seconds no longer reached the army on two of the three.
-    const r = parkedUnderFire(seed, 60 * 15);
-    assert.ok(r.hp < 100, `seed ${seed}: der Truck steht nach 15 s unbeschaedigt da`);
-    assert.ok(r.hp > 0, `seed ${seed}: nach 15 s schon zerstoert - hp ${r.hp.toFixed(2)}`);
+    // Ten seconds: long enough for the army to reach it, short enough that
+    // none of the three has spent all hundred points yet. MOVED ON PURPOSE twice. 2026-09-16: with the doctrine's
+    // half-line budget (§0 row 4b) the armour reached its posts later, first hit at 9.53 / 10.98 / 11.08 s and the
+    // write-off at 24.38 / 30.00 / 25.37 s, so the window went from ten seconds to fifteen. 2026-09-19: §4.13's
+    // seeded init tape opens the round already engaged instead of flat, so the armour is in range from the first
+    // tick - first hit now 0.20 / 0.45 / 2.17 s and the write-off 30.62 / 14.70 / 16.32 s, and fifteen seconds is
+    // past the write-off on one of the three. At ten the truck is hit and alive on all three: hp 46.2 / 41.4 / 39.3.
+    const r = parkedUnderFire(seed, 60 * 10);
+    assert.ok(r.hp < 100, `seed ${seed}: der Truck steht nach 10 s unbeschaedigt da`);
+    assert.ok(r.hp > 0, `seed ${seed}: nach 10 s schon zerstoert - hp ${r.hp.toFixed(2)}`);
   }
 });
 

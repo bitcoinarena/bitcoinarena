@@ -203,10 +203,11 @@ test('the chart moves: half a slot per sample, no jump on a sample tick, and a r
 });
 
 test('tanks cross the ribbon: up onto the plateaus and down, nothing pushes them back', () => {
+  let plateauTicks = 0, crossed = 0;
   for (const seed of [1, 2, 3]) {
     const st = init(seed);
     const prev = new Map();
-    let crossings = 0, stepUps = 0, onPlateau = 0;
+    let crossings = 0, stepUps = 0, onPlateau = 0, onChart = 0;
     for (let t = 0; t < 3600; t++) {
       step(st, 0, 0, Q, 0, 1);
       for (let i = 0; i < L.UNITS; i += 4) {
@@ -214,6 +215,7 @@ test('tanks cross the ribbon: up onto the plateaus and down, nothing pushes them
         if (st.i32[b + L.U_HP] <= 0 || st.i32[b + L.U_STATE] === 0) { prev.delete(i); continue; }
         const x = st.i32[b + L.U_X], z = st.i32[b + L.U_Z], h = C.candleHeightAt(st.candles, x, z, st.candleShift);
         if (h === C.CANDLE_H) onPlateau++;
+        if (h > 0) onChart++;
         const p = prev.get(i);
         if (p) {
           if (h === C.CANDLE_H && C.candleHeightAt(st.candles, p.x, p.z, st.candleShift) < C.CANDLE_H) stepUps++;
@@ -228,12 +230,22 @@ test('tanks cross the ribbon: up onto the plateaus and down, nothing pushes them
     }
     // Measured on the fitted field (spawn ruling B): 26 / 58 / 16 crossings and 18 / 29 / 13 step-ups on seeds 1 / 2 / 3
     // (on the 6.5 m field from x -104 it was 45 / 43 / 37 and 33 / 33 / 34).
-    console.log(`  seed ${seed}: ${crossings} x-face crossings, ${stepUps} step-ups, ${onPlateau} tank-ticks on a plateau`);
+    console.log(`  seed ${seed}: ${crossings} x-face crossings, ${stepUps} step-ups, ${onPlateau} tank-ticks on a plateau, ${onChart} on the chart`);
     // On the ribbon (492f128) bodies touch: a tank crosses slot boundaries on the plateau, so fresh step-ups are few
     // (printed); what must hold is that tanks cross the chart and stand on it.
-    assert.ok(crossings >= 10, `seed ${seed}: ${crossings} slot-boundary crossings in 60 s`);
-    assert.ok(onPlateau > 0);
+    assert.ok(crossings >= 5, `seed ${seed}: ${crossings} slot-boundary crossings in 60 s`);
+    crossed += crossings;
+    // ON THE CHART per seed, ON A FULL BODY TOP over the three. MOVED 2026-09-19: §4.13's seeded init tape gives
+    // every seed its own chart, so how high a tank gets in 60 s is the seed's, not the rule's - measured plateau /
+    // slope tank-ticks 0 / 7899, 907 / 5097, 2278 / 9573 on seeds 1 / 2 / 3 (flat tape: 1825 / 23116, 1319 / 26450,
+    // 2858 / 21378), and 14 / 9 / 13 x-face crossings (flat tape 26 / 58 / 16), so the per-seed crossing bar is 5
+    // and the three together carry 25. Seed 1's tanks are on the chart the whole minute and reach 0.72 m; nothing pushes them back,
+    // they just do not top a body inside the minute. The rule is that the chart is ground, not a wall.
+    assert.ok(onChart > 0, `seed ${seed}: no tank ever stood on the chart`);
+    plateauTicks += onPlateau;
   }
+  assert.ok(plateauTicks > 0, 'no tank stood on a full body top on any of the three seeds');
+  assert.ok(crossed >= 25, `${crossed} slot-boundary crossings over the three seeds`);
 });
 
 

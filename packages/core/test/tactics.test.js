@@ -434,24 +434,35 @@ test('the trend is the colour of the last six finished candles: six green is UP 
   // alternate: green, red, green, red, green, red
   for (let k = 0; k < 12; k++) { p += (k % 4 < 2 ? 1 : -1) * (k % 2 === 1 ? 5 * bp : 0); submitSample(st, p); }
   assert.deepEqual(word(), [0, 0], `alternating candles read ${word()}`);
-  // six dojis (2 bp bodies) are SIDEWAYS too
-  for (let k = 0; k < 12; k++) { p += k % 2 === 1 ? 2 * bp : 0; submitSample(st, p); }
+  // SIX DOJIS ARE SIDEWAYS TOO - and a doji is a fifth of a basis point now, not two. §4.14's band is 0.3 bp, its
+  // own worked example "$2.25 at $75,000"; the prose's "3 bp" was a decimal slip the core had copied, corrected
+  // 2026-09-19 from the owner's 12:55 shot where a chart climbing a third of its height read six doji. A 2 bp body is
+  // a real candle under the corrected band, so the fixture has to make a real doji to test one.
+  const fifth = Math.max(1, Math.floor(open / 50000));         // 0.2 bp, inside the 0.3 bp band
+  for (let k = 0; k < 12; k++) { p += k % 2 === 1 ? fifth : 0; submitSample(st, p); }
   assert.deepEqual(word(), [0, 0], 'doji candles counted as a colour');
-  // four red, two doji -> DOWN 2
-  for (let k = 0; k < 12; k++) { p += k % 2 === 1 ? (k < 8 ? -5 * bp : bp) : 0; submitSample(st, p); }
+  // four red, two doji -> DOWN 2. The doji leg is `fifth` for the same reason: at 1 bp it was making green candles.
+  for (let k = 0; k < 12; k++) { p += k % 2 === 1 ? (k < 8 ? -5 * bp : fifth) : 0; submitSample(st, p); }
   assert.deepEqual(word(), [-1, 2], `four red two doji read ${word()}`);
-  // the bears' trend: the bulls start no assault while it holds, from tick 900 of a run
+  // the bears' trend: the bulls start no assault while it holds, the bears do.
+  // The field has to be contested for that to mean anything: a side that holds all three objectives defends and
+  // re-arms instead of assaulting (assaultClock's `unheld === 0` leg). Driven straight into a bear trend from tick
+  // 300 the bears own all three by tick 1200, before their first clock is due at 1665, so nothing is ever checked.
+  // So the bulls get their trend first and take ground with it, and the bear trend is imposed on that field.
+  const word2 = (x) => [x[L.O_TACTICS + T.TAC_MARKET + T.MK_TREND], x[L.O_TACTICS + T.TAC_MARKET + T.MK_STRENGTH]];
   const r = init(2), rs = r.i32, ro = r.tape[63], rb = Math.floor(ro / 10000);
   let rp = ro, bullStarts = 0, bearStarts = 0; const was = { '-1': 0, '1': 0 };
-  for (let t = 0; t < 5400; t++) {
-    if (t >= 300 && t < 900 && (t - 300) % 50 === 0) { rp -= 5 * rb; submitSample(r, rp); }
+  for (let t = 0; t < 9000; t++) {
+    if (t >= 100 && t < 700 && (t - 100) % 50 === 0) { rp += 5 * rb; submitSample(r, rp); }    // the bulls' trend
+    if (t >= 2400 && t < 3000 && (t - 2400) % 50 === 0) { rp -= 5 * rb; submitSample(r, rp); } // then the bears'
     step(r, 0, 0, 0, ONE, 0);
     for (const side of [-1, 1]) {
       const ph = T.assaultPhase(rs, L.O_TACTICS, side);
-      if (ph === T.ASSAULT_PUSH && was[side] !== T.ASSAULT_PUSH && t >= 900) { if (side < 0) bullStarts++; else bearStarts++; }
+      if (ph === T.ASSAULT_PUSH && was[side] !== T.ASSAULT_PUSH && t >= 3000) { if (side < 0) bullStarts++; else bearStarts++; }
       was[side] = ph;
     }
   }
+  assert.deepEqual(word2(rs), [-1, 3], `the bear trend did not hold: ${word2(rs)}`);
   assert.equal(bullStarts, 0, `the bulls assaulted ${bullStarts} times under a bear trend`);
   assert.ok(bearStarts > 0, 'the bears mounted no assault under their own trend - nothing checked');
 });
