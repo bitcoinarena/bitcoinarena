@@ -36,7 +36,8 @@ import {
 import { vehicleStep } from './rules/vehicle.js';
 import { flatGround, groundFromSeed, gradeAlong, heightAtWorld, DEFAULT_COLS, DEFAULT_ROWS } from './rules/ground.js';
 import { noSolids, resolveSolids, resolveArmour, BOX_WORDS } from './rules/solids.js';
-import { initTactics, postOf, scoot, onRespawn, enterInLane, pressure, partnerOf, FORWARD_LINE, rifleTeamOf, pushNear, mix, FIRE_TEAMS_PER_SIDE, TAC_SEED, firstManOf, initObjectives, objectiveHolders, clearOnEntry, holdLegs, onPost, updateCrests, crestHold, initMarket, readMarket, trendHit, supplyOf, TAC_MARKET, MK_OPEN, MK_SAMPLES, MK_SAMPLE_TICK, MK_PREV_LO, MK_PREV_HI, MK_PREV_OLDEST, coverClaims, coverPostOf, COVER_ON } from './rules/tactics.js';
+import { initTactics, postOf, scoot, onRespawn, enterInLane, pressure, partnerOf, FORWARD_LINE, rifleTeamOf, pushNear, mix, FIRE_TEAMS_PER_SIDE, TAC_SEED, firstManOf, initObjectives, objectiveHolders, clearOnEntry, holdLegs, onPost, updateCrests, crestHold, initMarket, readMarket, trendHit, supplyOf, TAC_MARKET, MK_OPEN, MK_SAMPLES, MK_SAMPLE_TICK, MK_PREV_LO, MK_PREV_HI, MK_PREV_OLDEST, coverClaims, coverPostOf, COVER_ON, coverClaim, coverPlace, coverPosture, setCoverPosture, rifleHitAt,
+  POSTURE_STAND, POSTURE_PRONE, POSTURE_COVER, COVER_BOMB_REACH, COVER_NONE } from './rules/tactics.js';
 import { mapSolids } from './rules/map.js';
 import { CANDLES, CL_WORDS, candleLayout, candleHeightAt, writeCandleView, levelled } from './rules/candles.js';
 import { scrollOf, FIELD_SLOT } from './rules/frontline.js';
@@ -144,6 +145,9 @@ export { TICK_DT } from './tick.js';
 const CROWD_HOLD_RANGE = Math.imul(30, ONE);
 // A partner further than this from its post is still moving to it (the hull-down spot is within 4 m of the line).
 const WANTS_MOVE = Math.imul(2, ONE);            // off its hold by more than this, a tank on the line will move
+// §11.4: whether each man's OWN step this tick cleared 0.01 m, kept apart from every push that moves him after it
+const ownStepped = new Uint8Array(UNITS);
+const POSTURE_STEP = 655;                           // 0.01 m in Q16.16
 const SEP_MOVE = 1311;                              // 0.02 m: a separation push past this is a move (§0 row 2)
 const LINE_REACH = Math.imul(40, ONE);               // WAR_TACTICS.md §0: within 40 m of its post's depth, a tank is on the line
 const HALF_REST_TICKS = 210;                        // WAR_TACTICS.md §11.2 half of a mean 7 s rest
@@ -1180,7 +1184,11 @@ function detonate(s, bx, bz, truckMayBeHit) {
   for (let i = 0; i < UNITS; i++) {
     if (isArmour(i)) continue;
     const b = unitBase(i);
-    if (blastReach(sub(s[b + U_X], bx), sub(s[b + U_Z], bz)) < 0) continue;
+    const d = blastReach(sub(s[b + U_X], bx), sub(s[b + U_Z], bz));
+    if (d < 0) continue;
+    // §11.4: "A bomb reaches a COVER man only inside 8 m; a PRONE or STAND man at 16 m as before. A wreck or a
+    // crater lip is what a bomb's splinters stop; the open is not." The blast is unchanged for everyone else.
+    if (coverPosture(s, O_TACTICS, i) === POSTURE_COVER && d >= COVER_BOMB_REACH) continue;
     s[b + U_HP] = 0;
     s[b + U_STATE] = 0;
   }
@@ -1856,7 +1864,13 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
                 toTruck, length2(sub(u.x, s[fb + U_X]), sub(u.z, s[fb + U_Z])), heatR);
           }
 
-          const connects = rollR < (onCourier ? RIFLE_HIT_PER_MIL : trendHit(s, O_TACTICS, u.side, RIFLE_HIT_PER_MIL, 5));
+          // §11.4: the threshold is the VICTIM's, not the shooter's - half at a PRONE man, a quarter at a COVER
+          // man, applied after §4.14 has had its say ("posture multiplies after"). `rollR` is drawn above and is
+          // still one draw: the roll never moves, only the number it is compared against, so the stream keeps its
+          // shape and every golden that changes does so because a man was harder to hit and for no other reason.
+          // The truck is not a man and has no posture: a courier shot is unchanged.
+          const connects = rollR < (onCourier ? RIFLE_HIT_PER_MIL
+            : rifleHitAt(trendHit(s, O_TACTICS, u.side, RIFLE_HIT_PER_MIL, 5), coverPosture(s, O_TACTICS, foe)));
           if (connects) {
             // Rand(1.5, 3.5) at the truck, one point at a man. Drawn in
             // hundredths like every other damage in this file, so it is one
@@ -1886,6 +1900,9 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
       u.cooldown = ((u.x !== s[b + U_X] || u.z !== s[b + U_Z]) ? 1 : 0) | (granted ? 64 : 0) | (stoodOnPost[i >> 2] ? 128 : 0)
         | (u.tac ? (u.reverseMemory & ~193) : 0);
     }
+    // §11.4's STAND is HIS OWN step, read here where the step is his and nothing has pushed him yet: §8.3's
+    // hull clearance and the truck's clear-out both move a man AFTER this, and a shove is not a step.
+    if (!isArmour(i)) ownStepped[i] = (abs(sub(u.x, s[b + U_X])) + abs(sub(u.z, s[b + U_Z]))) > POSTURE_STEP ? 1 : 0;
     s[b + U_X] = u.x; s[b + U_Z] = u.z;
     s[b + U_HEADING] = u.heading; s[b + U_COOLDOWN] = u.cooldown;
   }
@@ -2020,6 +2037,29 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
       s[mb + U_X] = add(s[tb + U_X], div(mulFast(dx, HULL_CLEAR), d));
       s[mb + U_Z] = add(s[tb + U_Z], div(mulFast(dz, HULL_CLEAR), d));
     }
+  }
+
+  // §11.4 POSTURE, written into the high bits §11.3 reserved in TAC_COVER. Last thing in the movement pass, after
+  // §8.3's hull clearance and the truck's clear-out, so the man's final position decides COVER while his OWN step
+  // (captured at his write-back) decides STAND. Derived, never chosen; no draw is taken and no word grows.
+  //
+  // The rifle reads this word as it stands when it fires, which is the posture he held through the PREVIOUS tick.
+  // That is deliberate: men fire and move in the same pass, so reading a posture written mid-pass would make the
+  // outcome depend on unit order. A tick's lag is the price of an order-independent rule, and every node pays it
+  // identically.
+  for (let i = 0; i < UNITS; i++) {
+    if (isArmour(i)) continue;
+    const b = unitBase(i);
+    if (s[b + U_STATE] === 0 || s[b + U_HP] <= 0) { setCoverPosture(s, O_TACTICS, i, POSTURE_STAND); continue; }
+    if (ownStepped[i]) { setCoverPosture(s, O_TACTICS, i, POSTURE_STAND); continue; }
+    const id = coverClaim(s, O_TACTICS, i);
+    let onPlace = false;
+    if (id !== COVER_NONE) {
+      const p = coverPlace(s, id, s[b + U_SIDE] < 0 ? -1 : 1,
+                           st.candles && !st.noCandleField ? st.candles : null, st.candleShift | 0);
+      if (p) onPlace = length2(sub(s[b + U_X], p.x), sub(s[b + U_Z], p.z)) <= COVER_ON;
+    }
+    setCoverPosture(s, O_TACTICS, i, onPlace ? POSTURE_COVER : POSTURE_PRONE);
   }
 
   // ---- 3. score ----------------------------------------------------------

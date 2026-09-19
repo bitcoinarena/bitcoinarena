@@ -46,6 +46,11 @@ let onLine = 0, didNotStep = 0, stand = 0, prone = 0, cover = 0;
 let standRaw = 0, pushed = 0, openNotStepped = 0, openProne = 0;
 let manTicks = 0, allStand = 0, allProne = 0, allCover = 0;
 const deaths = { STAND: 0, PRONE: 0, COVER: 0 }, tickOf = { STAND: 0, PRONE: 0, COVER: 0 };
+// THE LETTER'S OWN "MEN HIDE": of man-ticks on which a man HOLDS a cover claim, how many are not STAND. Occupancy
+// closed in §11.3; what §11.4 owns is that a man who has a hole is written down as being in it.
+const heldBy = { STAND: 0, PRONE: 0, COVER: 0 };
+let heldTicks = 0, writtenAgrees = 0, writtenSeen = 0;
+const NAME = ['STAND', 'PRONE', 'COVER'];
 
 for (const seed of SEEDS) {
   const st = init(seed), s = st.i32;
@@ -111,6 +116,14 @@ for (const seed of SEEDS) {
       manTicks++;
       if (posture === 'STAND') allStand++; else if (posture === 'COVER') allCover++; else allProne++;
       tickOf[posture]++;
+      if (alive) {
+        // the word the core WROTE this tick, against the posture the rule derives - they should agree once the
+        // bits exist, and the share that disagrees is the tick of lag the rifle deliberately reads (see sim.js)
+        const w = NAME[T.coverPosture(s, L.O_TACTICS, i)] || 'STAND';
+        writtenSeen++;
+        if (w === posture) writtenAgrees++;
+      }
+      if (b4[2] !== T.COVER_NONE) { heldTicks++; heldBy[posture]++; }
 
       // on the line, as §0 reads it: within 40 m of his own post
       const px = riflePost(s[squadWord(s[b + L.U_SIDE], s[b + L.U_TARGET])], i);
@@ -140,6 +153,13 @@ const pc = (a, b) => `${((100 * a) / Math.max(b, 1)).toFixed(1)}%`;
 console.log(`§11.4 POSTURE, DERIVED NOT WRITTEN - ${SEEDS.length} seeds x ${TICKS / 60} s, a nuke every 30 s, tape ${SCROLL ? 'SCROLLING (a sample every 5 s)' : 'FROZEN (the §11.3 assert drive)'}`);
 console.log(`\n  every living man-tick                ${manTicks}`);
 console.log(`    STAND ${String(allStand).padStart(8)} (${pc(allStand, manTicks)})   PRONE ${String(allProne).padStart(8)} (${pc(allProne, manTicks)})   COVER ${String(allCover).padStart(8)} (${pc(allCover, manTicks)})`);
+console.log(`\n  THIS LETTER'S "MEN HIDE" - of man-ticks where a man HOLDS a cover claim, is he written down as in it?`);
+console.log(`    man-ticks holding a claim          ${heldTicks}`);
+console.log(`      STAND (the fault)                ${heldBy.STAND}  (${pc(heldBy.STAND, heldTicks)})`);
+console.log(`      PRONE                            ${heldBy.PRONE}  (${pc(heldBy.PRONE, heldTicks)})`);
+console.log(`      COVER                            ${heldBy.COVER}  (${pc(heldBy.COVER, heldTicks)})`);
+console.log(`      PRONE or COVER                   ${heldBy.PRONE + heldBy.COVER}  (${pc(heldBy.PRONE + heldBy.COVER, heldTicks)})`);
+console.log(`    the WRITTEN word agrees with the derived posture on ${writtenAgrees} of ${writtenSeen} (${pc(writtenAgrees, writtenSeen)}) - the rest is the rifle's deliberate one-tick lag`);
 console.log(`\n  §0 "MEN HIDE" - men ON THE LINE (within 40 m of post)`);
 console.log(`    man-ticks on the line              ${onLine}`);
 console.log(`    ...who did NOT step                ${didNotStep}  (${pc(didNotStep, onLine)})`);
