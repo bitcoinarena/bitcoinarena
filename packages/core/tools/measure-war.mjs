@@ -170,6 +170,7 @@ const { init, step, teleport, groundAt, submitSample, seamOfCore } = await impor
 const L = await import(url('state.js'));
 const T = await import(url('rules/tactics.js'));
 const { frontlineZ } = await import(url('rules/frontline.js'));
+const T2 = await import(url('rules/army.js'));
 
 const ONE = 65536, HX = 130 * ONE, HZ = 85 * ONE, TPS = 65536 / 1092;
 const ARMOUR = Array.from({ length: 24 }, (_, k) => k * 4);
@@ -693,8 +694,25 @@ for (const seed of SEEDS) {
       const anch = [0, 1, 2].map((k) => s[L.O_SQUADS + (sd < 0 ? 0 : L.SQUADS_PER_SIDE) + k] / ONE);
       const anchSd = sdev(anch);
       add('B3 x-ticks'); if (xsd < 0.6 * anchSd || xsd > 60) add('B3 x out');
-      if (B3SPLIT) b3x.push({ seed, sd, xsd, anchSd, floor: 0.6 * anchSd, men: on.length,
-        under: xsd < 0.6 * anchSd, over: xsd > 60, underOld20: xsd < 20 });
+      if (B3SPLIT) {
+        // AND WHERE THE LINE THE CORE WRITES ACTUALLY IS. A rifleman's post is his squad's anchor plus a fixed
+        // offset of +-9 m (army.js riflePost, SQUAD_OFFSET 18), so if the men stood on their posts the men's x sd
+        // would track the anchors' own sd. It measures 12.9 m against an anchor sd of 46.8 on failing ticks, which
+        // can only mean the men are not on them. This prints the posts' spread beside the men's, and how far each
+        // man is from his own, so the fix lands on whichever of the two is wrong.
+        const postX = on.map((i) => T2.riflePost(s[L.O_SQUADS + (sd < 0 ? 0 : L.SQUADS_PER_SIDE) + squadOf(i)], i) / ONE);
+        const off = on.map((i, k) => Math.abs(s[base(i)] / ONE - postX[k]));
+        // WHICH SQUADS STILL HAVE MEN. The floor is 0.6 x the sd of the side's THREE anchors, but the men counted
+        // are the living ones, and a squad that has been wiped leaves its anchor in the floor with nobody to stand
+        // on it. So the anchors of the squads that still have a living man are measured beside all three.
+        const liveSq = [0, 1, 2].filter((q) => on.some((i) => squadOf(i) === q));
+        const anchLive = liveSq.map((q) => s[L.O_SQUADS + (sd < 0 ? 0 : L.SQUADS_PER_SIDE) + q] / ONE);
+        b3x.push({ seed, sd, xsd, anchSd, floor: 0.6 * anchSd, men: on.length,
+          liveSquads: liveSq.length, anchLiveSd: anchLive.length > 1 ? sdev(anchLive) : 0,
+          under: xsd < 0.6 * anchSd, over: xsd > 60, underOld20: xsd < 20,
+          postSd: sdev(postX), offMean: mean(off), offMax: Math.max(...off),
+          offOver5: off.filter((v) => v > 5).length / off.length });
+      }
       if (xsd < 10) add('B3 x under 10 m sd');
       b3OutNow.set(sd, (zsd < 2 || zsd > 12 || xsd < 0.6 * anchSd || xsd > 60));
       // BEFORE AND AFTER IN ONE RUN (2026-09-19). The population correction's before/after has been quoted from two
@@ -1212,6 +1230,17 @@ if (B3SPLIT) {
   console.log(`   anchor sd (min/q1/med/q3/max)  failing ${F(q(xf.map((e) => e.anchSd)))}   passing ${F(q(xp.map((e) => e.anchSd)))}`);
   console.log(`   men's x sd                     failing ${F(q(xf.map((e) => e.xsd)))}   passing ${F(q(xp.map((e) => e.xsd)))}`);
   console.log(`   the floor those anchors imply  failing ${F(q(xf.map((e) => e.floor)))}   passing ${F(q(xp.map((e) => e.floor)))}`);
+  console.log(`   the POSTS' own x sd            failing ${F(q(xf.map((e) => e.postSd)))}   passing ${F(q(xp.map((e) => e.postSd)))}`);
+  console.log(`   mean |man - his own post| in x failing ${F(q(xf.map((e) => e.offMean)))}   passing ${F(q(xp.map((e) => e.offMean)))}`);
+  console.log(`   share of men more than 5 m off failing ${F(q(xf.map((e) => 100 * e.offOver5)))}   passing ${F(q(xp.map((e) => 100 * e.offOver5)))}`);
+  console.log(`   squads with a living man       failing ${F(q(xf.map((e) => e.liveSquads)))}   passing ${F(q(xp.map((e) => e.liveSquads)))}`);
+  console.log(`   sd of the LIVING squads' anchors failing ${F(q(xf.map((e) => e.anchLiveSd)))}   passing ${F(q(xp.map((e) => e.anchLiveSd)))}`);
+  const wouldPass = xf.filter((e) => e.xsd >= 0.6 * e.anchLiveSd && e.xsd <= 60);
+  console.log(`   of the ${xf.length} failures, ${wouldPass.length} = ${(100 * wouldPass.length / Math.max(xf.length, 1)).toFixed(1)}%`
+    + ` would PASS if the floor used only the anchors of squads that still have a living man`);
+  const dead = xf.filter((e) => e.liveSquads < 3);
+  console.log(`   failures with a wiped squad    ${dead.length} = ${(100 * dead.length / Math.max(xf.length, 1)).toFixed(1)}% of the failures`
+    + `; among passing ticks ${(100 * xp.filter((e) => e.liveSquads < 3).length / Math.max(xp.length, 1)).toFixed(1)}%`);
   const zf = b3z.filter((e) => e.tight || e.loose);
   console.log(`B3 z, split over ${b3z.length} squad-ticks: ${zf.length} fail = ${(100 * zf.length / b3z.length).toFixed(2)}%`);
   console.log(`   tighter than 2 m ${zf.filter((e) => e.tight).length}, looser than 12 m ${zf.filter((e) => e.loose).length}`);
