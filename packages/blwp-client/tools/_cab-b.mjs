@@ -53,7 +53,7 @@ for (let k = 0; k < 22; k++) {
   await key('keyDown', 'KeyW', 87, 'w'); await wait(2200); await key('keyUp', 'KeyW', 87, 'w'); await wait(200);
   const st = await ev(ST);
   if (st) { best = st; console.log(`leg ${k + 1}: truck x ${st.x?.toFixed(1)} z ${st.z?.toFixed(1)} hp ${st.hp?.toFixed(0)}`); }
-  if (st && st.x > 100 && st.x < 168) await shot(`approach-${Math.round(st.x)}.png`);
+  if (st && st.x > -80 && st.x < 95) await shot(`band-${Math.round(st.x)}.png`);
   // the core's own run word: 0 live, 1 delivered, 2 wrecked, 3 missed - and the tick it happened on
   const run = await ev(`(function(){var b=window.unityInstance&&window.unityInstance.Module&&window.unityInstance.Module.blwp;
     if(!b||!b.st)return null;var s=b.st.i32||b.st;return {state:s[23],tick:s[0]};})()`);
