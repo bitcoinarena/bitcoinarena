@@ -1405,8 +1405,14 @@ does not shift and every signer node computes the same bits.
     as `dx == 0 && dz == 0`, which is §11.2's **halt clock**, and §11.2 halts a fire team 0.4-1.8 s out of
     every 3-11 s. So the row was measuring the spread of whichever **8.3 of the side's 30.1 men on the
     line** happened to be mid-halt on that tick, and the spread of eight men drawn from three squads is
-    tight whatever the line is doing. Corrected to every living man on the line, same run, same seeds:
-    x out of the old 20-60 m band **61.21% -> 25.84%**, and x under a 10 m sd **46.48% -> 9.02%**.
+    tight whatever the line is doing. Corrected to every living man on the line. RE-MEASURED
+    2026-09-19 with BOTH populations counted on the same ticks of the same run, because this before/after had been
+    taken across a code change: the before reproduces exactly and the after does not. On the line, cut at §12.1's
+    40 m: x out of the old 20-60 m band **61.21% -> 42.21%**, x under a 10 m sd **46.48% -> 13.58%**, men counted
+    per side-tick **8.3 -> 23.6**. The figures first published here - 25.84%, 9.02%, 30.1 men - do not reproduce on
+    this tree by either cut (44 m gives 40.98%, 13.55%, 24.7). And the correction made the **z** half WORSE, which
+    was not said: z per squad out of 2-12 m **13.51% -> 18.75%**, because men in transit are spread in depth and
+    eight halted men are not.
   - **x.** With the population corrected the first suspicion is confirmed: the 20 m floor is very largely
     a bar on a **draw**. There are **three** squad anchors a side, `sim.js` draws each uniformly on
     [-80, +80], a man sits within ±8 m of his, and over 200k draws the men's sd lands below 20 m on
@@ -1417,7 +1423,11 @@ does not shift and every signer node computes the same bits.
     measured false - wrongly, because the population defect was hiding underneath. Recorded because the
     wrong conclusion was published in between.)
   - **B3 IS STILL RED ON BOTH HALVES**, and the last piece is not ruled: z per squad is out of 2-12 m on
-    **22.58%** of 69007 squad-ticks and x is out on **18.91%** of 29837 side-ticks. Both bars are
+    **18.75%** of 64753 squad-ticks and x is out on **19.49%** of 28812 side-ticks (re-measured 2026-09-19 with the
+    population cut at §12.1's stated 40 m, which is what the row's own text names; the probe had 44 m with nothing
+    writing it down, and at 44 m the same run reads 22.58% and 18.91%). The relative floor is doing most of the work
+    it was ruled to do - the x miss is 19.49% against 42.21% under the old absolute band - but the draw explains
+    about half of that miss and not nearly all of it, since 42.21% stands against the 19.6% the draw predicts. Both bars are
     **zero-tolerance**, and B3 is the only spread-band row in §0 that carries no tolerance while every
     other distributional row here carries one (2%, 5%, 80%, 95%). §0's own sentence - *"a tolerance is a
     measurement allowance for respawns and transit, not a licence"* - points at exactly the men who blow

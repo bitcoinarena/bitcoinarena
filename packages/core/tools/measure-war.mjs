@@ -41,6 +41,7 @@ const a9gap = {}, a9all = {}, a9live = [], a9near = [];
 const a9x = [[], []], a9slot = [[], []];
 const a9slope = {}, a9slopeN = {};
 const B3WHY = process.argv.includes('--b3why');
+const B3POP = process.argv.includes('--b3pop');
 const CAUSE = process.argv.includes('--cause');
 // A4a NAMES ITS WINDOW. The row is "a side held the same posts for ten whole seconds", and at 1 of 60 it is one
 // window, not a tendency - so the aggregate cannot say which side of which seed stood still, or what it was holding
@@ -653,8 +654,13 @@ for (const seed of SEEDS) {
       // The population is every living man of the side ON THE LINE (§0's reading rule, §12.1's 40 m trail clamp):
       // a man walking to his post is still part of the line's shape; a man 40 m behind the seam cannot be on any
       // legal post and is a column (§10).
+      // THE CUT IS §12.1's 40 m, which is the number the row's own text names ("§12.1's 40 m trail clamp"). The
+      // probe had 44 with nothing writing it down. Measured both on one run before changing it: at 44 m the row
+      // reads z 22.58% and x 18.91%; at 40 m it reads z 18.75% and x 19.49%. It moves a red number in both
+      // directions, which is why it is recorded here rather than quietly taken - the band is untouched and only the
+      // population's own ruled edge moves onto the metre the rule states.
       const on = liveM.filter((i) => sideOf(i) === sd
-        && (s[base(i) + 1] - seamOfCore(st, s[base(i)])) * -sd / ONE >= -44);
+        && (s[base(i) + 1] - seamOfCore(st, s[base(i)])) * -sd / ONE >= -40);
       if (on.length < 6) continue;
       const zs = on.map((i) => (s[base(i) + 1] - seamOfCore(st, s[base(i)])) / ONE), xs = on.map((i) => s[base(i)] / ONE);
       const sdev = (a2) => { const m = mean(a2); return Math.sqrt(mean(a2.map((v) => (v - m) * (v - m)))); };
@@ -678,6 +684,31 @@ for (const seed of SEEDS) {
       add('B3 x-ticks'); if (xsd < 0.6 * anchSd || xsd > 60) add('B3 x out');
       if (xsd < 10) add('B3 x under 10 m sd');
       b3OutNow.set(sd, (zsd < 2 || zsd > 12 || xsd < 0.6 * anchSd || xsd > 60));
+      // BEFORE AND AFTER IN ONE RUN (2026-09-19). The population correction's before/after has been quoted from two
+      // runs taken across a code change, which is how three other figures in this letter went stale. So both
+      // populations are measured on the SAME tick here: the old one - men whose own step was zero, which is §11.2's
+      // halt clock - and the ruled one, every living man of the side on the line. Same bands, same seeds, one pass.
+      if (B3POP) {
+        const halted = on.filter((i) => { const u = hk.unit.get(i); return u && u.dx === 0 && u.dz === 0; });
+        // and the same line population cut at §12.1's stated 40 m rather than the 44 the probe uses, because a
+        // published before/after for this row does not reproduce and the cut is the one thing that differs.
+        const line40 = liveM.filter((i) => sideOf(i) === sd
+          && (s[base(i) + 1] - seamOfCore(st, s[base(i)])) * -sd / ONE >= -40);
+        for (const [tag, pop] of [['halted', halted], ['line', on], ['line40', line40]]) {
+          if (pop.length < 6) continue;
+          const px = pop.map((i) => s[base(i)] / ONE);
+          const pxsd = sdev(px);
+          add(`B3POP ${tag} side-ticks`); add(`B3POP ${tag} men`, pop.length);
+          if (pxsd < 20 || pxsd > 60) add(`B3POP ${tag} x out of the old 20-60 band`);
+          if (pxsd < 0.6 * anchSd || pxsd > 60) add(`B3POP ${tag} x out of the ruled floor`);
+          if (pxsd < 10) add(`B3POP ${tag} x under a 10 m sd`);
+          for (let sq = 0; sq < L.SQUADS_PER_SIDE; sq++) {
+            const mine = pop.filter((i) => squadOf(i) === sq); if (mine.length < 4) continue;
+            const zq = sdev(mine.map((i) => (s[base(i) + 1] - seamOfCore(st, s[base(i)])) / ONE));
+            add(`B3POP ${tag} squad z-ticks`); if (zq < 2 || zq > 12) add(`B3POP ${tag} z out of 2-12`);
+            if (zq < 4 || zq > 12) add(`B3POP ${tag} z out of the old 4-12`); }
+        }
+      }
     }
     // B4 follow the push: squad pushNear and mean z (relative to seam) of its men on post
     const squadNow = new Map();
@@ -1156,6 +1187,21 @@ if (A11AWHY) {
   for (const w of a11aWindows.filter((x) => x.cross > 0))
     console.log(`  seed ${w.seed} side ${w.sd} to t${w.to}: crossings ${w.cross}, highest push ${w.maxPush.toFixed(0)} m, `
       + `at 24 m ${w.at24}, by kind ${JSON.stringify(w.kinds)}`);
+}
+if (B3POP) {
+  const n = (k) => r[k] || 0;
+  const pc = (a, b) => (n(b) ? `${(100 * n(a) / n(b)).toFixed(2)}%` : '-');
+  console.log(`B3's population, both counted on the same ticks of the same run:`);
+  for (const tag of ['halted', 'line', 'line40']) {
+    const st2 = n(`B3POP ${tag} side-ticks`);
+    console.log(`  ${tag === 'halted' ? 'mid-halt only (the old row)' : tag === 'line40' ? 'the line cut at 40 m (the spec\'s number)' : 'every man on the line (ruled, cut at 44 m)'}: `
+      + `${st2} side-ticks, mean men counted ${(n(`B3POP ${tag} men`) / Math.max(st2, 1)).toFixed(1)}`);
+    console.log(`     x out of the old 20-60 m band   ${pc(`B3POP ${tag} x out of the old 20-60 band`, `B3POP ${tag} side-ticks`)}`);
+    console.log(`     x out of the ruled 0.6x floor   ${pc(`B3POP ${tag} x out of the ruled floor`, `B3POP ${tag} side-ticks`)}`);
+    console.log(`     x under a 10 m sd               ${pc(`B3POP ${tag} x under a 10 m sd`, `B3POP ${tag} side-ticks`)}`);
+    console.log(`     z per squad out of 2-12 m       ${pc(`B3POP ${tag} z out of 2-12`, `B3POP ${tag} squad z-ticks`)} of ${n(`B3POP ${tag} squad z-ticks`)} squad-ticks`);
+    console.log(`     z per squad out of the old 4-12 ${pc(`B3POP ${tag} z out of the old 4-12`, `B3POP ${tag} squad z-ticks`)}`);
+  }
 }
 if (B3WHY) {
   const n = (k) => r[k] || 0;
