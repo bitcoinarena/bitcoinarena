@@ -7,8 +7,16 @@
 // it.
 
 import { ONE, add, sub, abs, mulFast, div } from '../fixed.js';
+import { MINER_X } from './map.js';
 
-export const GATE_X = Math.imul(114, ONE);
+/**
+ * THE DELIVERY LINE IS THE MINER'S OWN FACE, and it moves with it (measured 2026-09-19 in the cab, on the build
+ * that grew the world east). This was 114 m, written when the miner's origin was 114.4; when the origin went to
+ * 169 m the line stayed behind, so the truck delivered in open ground 53 m short of the building - measured, the
+ * run ended with the truck at x 115.7 and the lobby came back with 4,505 sat in the block. One number, taken from
+ * the map, so the two cannot drift again.
+ */
+export const GATE_X = sub(MINER_X, 26214);          // 168.6 m: 0.4 m inside the origin, where 114 sat against 114.4
 export const HALF_MOUTH = Math.imul(34, ONE);
 /**
  * A compressed block: 180 s at 60 Hz. Bitcoin's ten minutes is far too long to wait for a score - that still
