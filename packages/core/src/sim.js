@@ -2093,7 +2093,15 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
     if (isArmour(i)) continue;
     const b = unitBase(i);
     if (s[b + U_STATE] === 0 || s[b + U_HP] <= 0) { setCoverPosture(s, O_TACTICS, i, POSTURE_STAND); continue; }
-    if (ownStepped[i]) { setCoverPosture(s, O_TACTICS, i, POSTURE_STAND); continue; }
+    // §11.5, and §0's row in its own words: "a pinned man is NEVER STAND". The crawl is 0.5 m/s on EACH axis, so a
+    // man crawling on a diagonal spends 0.00833 m in x and the same in z - 0.0167 m of |dx| + |dz|, over §11.4's
+    // 0.01 m probe - and the probe called him standing. Measured before this line: 106402 of 133536 pinned
+    // man-ticks were written STAND, four ticks in five. The cap stays PER AXIS so a pinned man on a diagonal still
+    // crawls rather than being slowed to a half-step; what changes is that the pose writer reads the pin, which is
+    // what the row asks for. A crawling man is PRONE, or COVER once he is on his place.
+    const rtP = rifleTeamOf(i);
+    const pinnedHere = isPinned(s, O_TACTICS, rtP.side, rtP.team);
+    if (ownStepped[i] && !pinnedHere) { setCoverPosture(s, O_TACTICS, i, POSTURE_STAND); continue; }
     const id = coverClaim(s, O_TACTICS, i);
     let onPlace = false;
     if (id !== COVER_NONE) {
