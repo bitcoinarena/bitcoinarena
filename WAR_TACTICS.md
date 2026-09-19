@@ -20,7 +20,21 @@ the core does it.
 
 Revised 2026-09-16 19:20 (the owner: *"Do we have an absolutely dynamic war? Is it immersive? What is
 missing?"*): the verdict is §0.1 - **not yet** - with the four reasons and the sections that answer them:
-supply (§3), the assault (§4.12), the tape as the general (§4.13), the client's list (§0.2). Rulings only the owner can make are parked in §15. All of it GAP, all of it RULED HERE.
+supply (§3), the assault (§4.12), the tape as the general (§4.13), the client's list (§0.2). Rulings only the owner can make are parked in §15.
+
+**RULED 2026-09-19, the five open waits, on the owner's delegation** (*"Lies die war tactics specs und
+beantworte dir die Fragen - am besten was einem dynamischen Krieg entspricht"* / *"Entscheide"*). A9, the
+hold row (H1), B3, A4a and A11a are decided below and in §0's tables. **Every one of the five went against
+the ROW, not against the rule** - and that is not a convenience: each row was measured to a specific defect
+of its own, three of them arithmetic (a window sized for a leg length the doctrine replaced; two generator
+ranges copied onto a standard deviation; a coverage bar that assumes flat ground) and two of them a
+contradiction with a rule the owner had already ruled to keep (§4.10's give-ground, §0's own column rule).
+**No doctrine number moved**: not the 27 m slot pitch, not the 46 m gun, not the 14/26/30 m depths, not
+§2.6's 12-20 s leg, not §4.3's 20 s cool-down, not §3's respawn entry, not §11.1's standoff, not §4.10's
+gates, thresholds or ceilings. What moved is what the probe asks, and each change is written beside the
+measurement that forced it. The honest reading of all five together: the army the core builds was ahead of
+the tests written for it. Where a ruling makes a red go green it says so in its own line, so nobody reads
+a green table as the army having improved. All of it GAP, all of it RULED HERE.
 
 Implementation: `packages/core/src/rules/tactics.js` (assignment, roles, slots, scoot, push, objectives -
 armour and, per part B, the infantry's fire teams, rush clock, cover claims and suppression) and the army
@@ -45,7 +59,13 @@ How the rows are read (RULED HERE, after the first probe run, so two probes cann
 - **A direction flip** counts the tank's **own** step only, outside separation: the sign of dx or of
   dz reversing between two ticks in which the tank stepped.
 - **On the line** = a living tank within 40 m (z) of its post. A hull further than that - a respawn
-  walking in from the back edge - is a **column**, and rows about the line (2, 4b, 7) do not count it.
+  walking in from the back edge - is a **column**, and rows about the line (2, 4b, 7, and the hold row)
+  do not count it. **RULED 2026-09-19 (the owner's delegation, "whatever makes a dynamic war"):** this
+  applies to the **hold row** too, which had been counting columns, and it applies to **men**: a man
+  further from the seam than §12.1's own trail clamp (40 m) cannot be standing on any legal post, so he
+  is a column and the infantry line row (B3) does not count him either. A column is a reinforcement
+  walking in - §3 and §10 keep it, it is the war's visible resupply - it is simply not evidence about
+  how the line holds.
 - **Tolerances.** A row written "at no tick" / "every metre" is read at the tolerance given in the row;
   where none is given it is 100%. A tolerance is a measurement allowance for respawns and transit, not
   a licence: a row that fails at its tolerance is red.
@@ -55,15 +75,15 @@ How the rows are read (RULED HERE, after the first probe run, so two probes cann
 | A line of tanks, not a pile | frontage slots §2.4 | no 3 living tanks of one side all within 12 m of each other (the tank-tank minimum, §1.1), on more than 2% of tank-ticks. RULED (the owner 2026-09-16): §2.4 puts a pair's hulls 12 m apart and neighbouring inner hulls 15 m apart, so every interior tank is in a 20 m triple by design - that is formation, not a clump. Two tanks at 12 m is a legal pair; three inside 12 m is a pile. The geometry is not spread to suit a probe. (was: groups of 9 to 20 within 20 m) |
 | Hulls that hold still on a post, no wiggle | hold = stand, §4.1 | a tank on its post moves < 0.02 m/tick of its own step; a tank on the line reverses its own travel direction (x or z sign flip) at most once in any 2 s window - a second flip inside 2 s is a fidget, and fidgets are < 2% of all flips |
 | Nobody pressed against anybody | 12 m bubble §1.1 | the separation push undoes a tank's own step on < 5% of tank-ticks (was 42.5%) |
-| **Hold is the default** | §2.6, §4.3, §4.10 as re-ruled 20:30 | of tank-ticks with both of a pair alive, >= 50% have the tank within 1.5 m of its post (measured before: 27.4%); the new bounding tank reaches its forward post before the leg ends on >= 80% of legs (was 56.2%) |
-| Something is always happening | role swap §2.6 (a leg is 12 to 20 s) and scoot §4.3 | (a) in any 10 s window at least one tank per side changes post; (b) on >= 98% of ticks no more than half of a side's tanks on the line are moving (columns walking in do not count) |
+| **Hold is the default** | §2.6, §4.3, §4.10 as re-ruled 20:30 | of tank-ticks with both of a pair alive **and neither of them a column** (§0's reading rule), >= 50% have the tank within 1.5 m of its post (measured before: 27.4%); the new bounding tank reaches its forward post before the leg ends on >= 80% of legs (was 56.2%). RULED 2026-09-19 (see §3): the row was counting a pair as not-holding whenever **either** hull was still walking in from the back edge, so on a bloody seed it measured attrition rather than holding - the walk-in share climbs to 44-48% and the row falls to 49.77% / 48.15% while the settled hulls never leave their posts. §0's own reading rule already excluded columns from every other line row; it now excludes them here. §3's entry is **not** moved: a replacement still walks in from the back edge, 52-87 m, because that column is the war's visible resupply. |
+| Something is always happening | role swap §2.6 (a leg is 12 to 20 s) and scoot §4.3 | (a) in any **20 s** window at least one tank per side changes post; (b) on >= 98% of ticks no more than half of a side's tanks on the line are moving (columns walking in do not count). RULED 2026-09-19 (see §2.6): the window was **10 s** and that number was arithmetic under the **6-10 s** leg this row was written against - a leg of at most 600 ticks puts a boundary inside every 600-tick window, for every team. The 20:30 re-ruling doubled the leg to 12-20 s and the scoot cool-down to 20 s **on measurement**, and left this window behind: the row named a 12-20 s leg in its own middle column while demanding a change every 10 s. The window is restated to the leg the doctrine now has, so the guarantee is arithmetic again and not luck. The bar is still 0 windows. |
 | Leapfrog, in pairs | bounding overwatch §2.6 | of a pair, never both bounding; the bounding one is 14 m nearer the seam than its partner when both are on post |
 | Fire, then move - cause and effect | shoot-and-scoot §4.3 | after a team's shot, that team changes slot within 1 tick unless hemmed in (§4.3) or inside its 10 s scoot cool-down |
 | A tank faces what it fights | heading rule §4.5 | a holding tank on the line points its hull at the enemy side (heading within 30 degrees of the seam normal) on > 95% of holding ticks |
 | Relocation reads as a decision, not a drift | adjacent-slot rule §4.3 | a team never crosses another team's lane while relocating; a slot change moves a team exactly 27 m in x |
-| The kill zone is covered | slots and gun range §4.2 | on the ticks on which a side has >= 6 alive, >= 95% of the seam-metre samples (x in [-81, 81], every metre, every tick) are inside 46 m of at least 2 of that side's living tanks - a tank in transit counts if its gun reaches; a tank still walking in from the back edge does not reach. RULED (the owner 2026-09-16): coverage is the share of seam-metre samples, not "every metre covered on >= 95% of ticks"; that tick-union reading cannot coexist with bounding overwatch, scoot or respawn. The bar stays 95%. |
+| The kill zone is covered | slots and gun range §4.2 | of the seam-metre samples (x in [-81, 81], every metre, every tick): **at full strength** (12 living tanks of that side) >= 95% are inside 46 m of at least **2** of them; **at any strength** with >= 6 alive, >= 95% are inside 46 m of at least **1**. A tank in transit counts if its gun reaches; a column walking in does not. RULED (the owner 2026-09-16): coverage is the share of seam-metre samples, not "every metre covered on >= 95% of ticks"; that tick-union reading cannot coexist with bounding overwatch, scoot or respawn. RULED 2026-09-19 (see §4.2): the two-gun bar is read **at full strength**, which is the qualifier §4.1's own kill-zone sentence carries and this row had dropped. The old row admitted a side at half strength and then asked the kill zone to be double-covered anyway, which a 46 m gun on a 27 m pitch cannot do with six hulls. The one-gun floor is what holds at every strength: the line thins, it never goes blind. |
 | Nobody runs from the truck, nobody chases it | §1.2 | a tank's x and z targets are the same with the truck present and absent (bit-identical posts, truck parked vs truck driving) |
-| **A war, not a shooting gallery: ground changes hands** | pressure §4.10 | in every 60 s window at least one team of each side crosses the seam in its lane, and at least one team of each side gives ground; the forward line of some team differs from its 16 m default on > 30% of ticks |
+| **A war, not a shooting gallery: ground changes hands** | pressure §4.10 | in every 60 s window at least one team of **some** side crosses the seam in its lane, and a side that crossed in **no** window of the run is a red; in a window where a side did not cross, that side was **outnumbered** in its own contested stretches (the give-ground branch of §4.10 doing what it says) - a side at parity or ahead that crossed nothing is the red. At least one team of each side gives ground. The forward line of some team differs from its 16 m default on > 30% of ticks. RULED 2026-09-19 (see §4.10): the row asked a team of **each** side to cross every 60 s, which on a seed where one side is three hulls down is exactly what §4.10 **forbids** - and §4.10 was RULED on 2026-09-19 to stay as written. A row demanding both sides cross every minute is a front that oscillates symmetrically for ever, which is §0.1's own disease (point 2, the homeostatic war) written as a test. The restated row lets a beaten side **stay** beaten - that is ground changing hands - while the outnumbered clause keeps it biting: it now guards §4.10 rather than fighting it. |
 | Losses and replacements, both sides, all round | gun §4.4, reinforce §3 | neither side is at full 12 with zero losses over any 60 s window while the other side has a tank inside 46 m; neither side falls below 4 living tanks on more than 5% of ticks |
 | The two lines are not mirror images | §2.4, §4.10 | the two sides' slot orders differ on every seed; the two sides' mean push depth differs by >= 4 m on > 50% of ticks |
 | **An assault goes for something** | objectives §4.11 | of team-ticks with push >= 16 (forward hull on or across the seam), >= 60% are teams on an objective's own lane (by chance: 3 lanes of 7 slots); the mean push of teams on objective lanes exceeds the mean push of all other teams by >= 6 m |
@@ -85,7 +105,7 @@ Infantry rows (part B, §8-§12), same probe conditions:
 |---|---|---|
 | Men move in groups, not as 36 loners | fire teams §9.2, rush clock §11.2 | each living man is within 18 m of another living man of his fire team on > 80% of ticks; the 4 of a fire team move (step > 0.02 m) in the same tick or halt in the same tick on > 90% of ticks |
 | Fire and movement: some run while others shoot | rush / halt per fire team §11.2 | in any 5 s window every squad has at least one fire team halted and, unless all on post, at least one moving |
-| A ragged line with depth, not a fence | standoff scatter §11.1 | z spread (sd) of a side's men on post between 4 m and 12 m; x spread between 20 m and 60 m |
+| A ragged line with depth, not a fence | standoff scatter §11.1 | of a side's men **on the line** (§0's reading rule, §12.1's 40 m trail clamp): z spread (sd) **per squad** between **2 m** and 12 m; x spread (sd) of the side between 20 m and 60 m. RULED 2026-09-19, **half of it** (see §11.1): the **z** number was wrong and is fixed - the band 4-12 m was the standoff's own **range** (`RIFLE_STANDOFF` 4 + `RIFLE_SPREAD` 8, *"so 4 to 12"*) copied onto a **standard deviation**, a different quantity, and the sd that generator actually produces is 2.98 m on one side's 36 posts and 4.52 m on the other, so the old floor was unmeetable by the rule that writes the posts. It is also measured **per squad**, which is §11.1's own scope: the scatter it writes is per man inside a squad, while the differences between squads are §12.1's push doing its job, and a side-wide sd added the two together. The **x** number is **NOT ruled and B3 stays red on it** - see §11.1 for why the obvious answer was tried and withdrawn. |
 | Infantry goes where the armour goes | follow the push §12.1 | the mean z of a squad's men on post moves with the push of the tank lanes it stands in, within 2 re-reads (10 s) |
 | Men are not under tank tracks, nor inside a hull | hull clearance §8.3 | no living man inside 3 m of a living tank's centre on more than 0.5% of man-ticks |
 | Men fall, columns walk in | rifle §11.6, respawn §10 | every 60 s window each side loses >= 3 men and receives >= 3; a replacement walks in from the back edge, never appears on the line |
@@ -386,6 +406,21 @@ number on it is a core word or the client's memory of attested samples - nothing
 - At a leg change the roles **swap**: the new BOUNDING tank drives from the overwatch line to the forward
   line and the new OVERWATCH tank from the forward line back. They are 12 m apart in x while they pass,
   so the pass never enters the bubble. That is the leapfrog.
+- **A4a's quiet window - RULED 2026-09-19: the ROW's window, not this cadence.** The row reads *"in any
+  10 s window at least one tank per side changes post"*, and under the leg it was written against -
+  `360 + (h % 240)`, **6-10 s** - that was not a statistical claim at all but arithmetic: a leg of at most
+  600 ticks puts a leg boundary inside every 600-tick window, for every team. The 20:30 re-ruling above
+  doubled the leg to 12-20 s and §4.3's cool-down to 20 s, **on the implementer's measurement**, and left
+  the window at 10 s - so no rule obliged any team to change anything inside it, and what held the row up
+  was six teams' phases interleaving, which is luck. The row even carried the contradiction in its own
+  middle column: *"(a leg is 12 to 20 s)"* beside a demand for a change every 10 s. The window is
+  therefore restated to **20 s**, the leg's own maximum and the cool-down, which makes the guarantee
+  arithmetic again against the cadence the doctrine actually has. Measured before the change: 1 of 144
+  windows at one minute, 2 of 720 at five - and the widening to twelve seeds added no second failure, so
+  it was a tail of the phase interleaving and never a drift. **This cadence does not go back to 6-10 s:**
+  it was moved because at 6-10 s the new bounding tank reached its post on only 56% of legs and a pair was
+  on post together 17.5% of the time - the cadence was moving the tanks the spec calls "hold". Reverting
+  it to green a window would break H2, the hold row and §0's "Hold is the default" together.
 - **RULED HERE:** the swap is simultaneous (both move on the leg tick). It is 14 m at 6.8 m/s, about 2 s.
   The one going **back** is OVERWATCH from the leg tick and may fire while it goes; the one going
   **forward** is BOUNDING and does not fire until it stands. So at every tick of the swap one of the pair
@@ -428,6 +463,19 @@ number on it is a core word or the client's memory of attested samples - nothing
 - A new hull **never** steals another team's partner. There is no code path that changes `team` or
   `member` of an index.
 - A tank's slot does **not** change on death or respawn. What the team held, it holds.
+- **The hold row against §3's entry - RULED 2026-09-19: §3's entry stays; the ROW stops counting columns.**
+  A returning hull enters at the back edge, 52-87 m from its post, 137-176 times in five minutes. The hold
+  row counted a pair as not-holding whenever **either** hull was still walking in, so on a bloody seed it
+  measured attrition and not holding: measured by fifth of an 18000-tick run, the walk-in share and the row
+  move together and inversely on every seed - seed 7 settles near 30% walking in and the row **climbs** to
+  59.08%, seeds 1 and 8 climb to 44% and 48% walking in and the row falls to 49.77% and 48.15%. Nothing
+  else in the row moves: the hold is stationary, no post is abandoned, and the settled hulls keep holding.
+  §0's own reading rule already says what to do with those hulls - *"a respawn walking in from the back
+  edge is a **column**, and rows about the line do not count it"* - and it already excluded them from rows
+  2, 4b and 7. The hold row had simply missed it. So this is the spec applied to itself, not a bar moved.
+  **§3's entry is deliberately NOT changed**: entering nearer the post would lift the row on the bloody
+  seeds and cost the war the one thing that reads as resupply from the cab - a column of replacements
+  driving up the field while the line holds. That column is worth more than the row was.
 
 ---
 
@@ -464,6 +512,39 @@ number on it is a core word or the client's memory of attested samples - nothing
 - **Fires:** always; it is geometry, not a state. The two sides' slot permutations are independent
   (§2.4), so the lines are staggered against each other and a tank that stands on the seam is seen from
   both sides at angles.
+
+**A9's coverage bar - RULED 2026-09-19: the two-gun bar is read AT FULL STRENGTH, and a one-gun floor
+holds at every strength.** Measured, with the army deployed: every short seam metre already had two or
+more guns within reach of the seam (median 8), so the 12.27% was never absence. The cause is **attrition,
+and nothing else** - the shortfall is monotonic in how many hulls the side has left:
+
+  living hulls        12        10-11       8-9        6-7
+  seam metres under two guns    2.00%     9.70%     25.05%     33.20%
+  seam metres under one gun     0.15%     1.47%      5.20%      7.42%
+
+**At full strength the row passes outright, 2.00% against its own 5% bar.** A 46 m gun on a 27 m slot
+pitch covers 163 m of seam twice over with twelve hulls and arithmetically cannot with six; the row
+admitted any side with **>= 6 alive** and then demanded double cover anyway. §4.1's own sentence already
+carries the qualifier the row had dropped: *"every metre of the seam between the outer slots is inside the
+reach of at least 3 slots of a side **at full strength**"*. So the row contradicted the section it guards,
+and the fix is to read it as §4.1 words it.
+
+Every lever the row could otherwise have moved is pinned: the slot pitch is 27 m **in x** and A8 asserts
+every slot change is exactly that; the reach is 46 m and the depths 14/26/30 m, both spec. And a thinned
+army leaving holes in its own kill zone is not a fault to engineer away - it is **losses biting**, which
+§0.1 names as the thing the war was missing and §3's supply exists to make felt. A row that forbade it
+would forbid attrition from mattering. The **one-gun floor** is what still breaks loudly if a pitch, a
+reach or a depth is ever moved, or if a flank is simply not manned: 2.29% over all strengths.
+
+THE FIRST HYPOTHESIS WAS THE SEAM'S OWN CLIMB, AND IT IS ONLY A SECONDARY EFFECT. Recorded because it was
+measured, not because it carried the ruling. Per metre of x, the two-gun shortfall runs 9.72% where the
+seam climbs under 0.1 m/m, 6.03% at 0.2-0.3, 11.26% at 0.4-0.6 and 20.94% at 0.6-0.9 - so a steep stretch
+is about twice as thin as a flat one, for the geometric reason the earlier band table gave (a hull stands
+at its slot's x a depth **below** the seam, so on a stretch climbing 0.7 m/m a sample 40 m away in x is
+`sqrt(40^2 + (28+30)^2) = 70 m` off, past the gun). But the **flattest** ground is still 9.72%, nowhere
+near the 5% bar, and the full-strength bar is met across every stretch - so the climb was never the cause
+and a flat-stretch-only reading of the bar would have been the wrong ruling. It was tried, measured and
+withdrawn.
 
 ### 4.3 After a shot - shoot-and-scoot to the next hashed slot
 
@@ -587,6 +668,23 @@ no truck. **RULED HERE**, numbers included, so it can be built without guessing;
   odds at that stretch turn.
 - **Crowded** (§1.1: an enemy inside 24 m gives 6 m) stays and is what makes two pushing teams meet and
   stand off instead of driving through each other.
+- **A11a's crossing bar against this section - RULED 2026-09-19: the ROW, and §4.10 stays as written.**
+  the owner had already ruled (2026-09-19) that §4.10 stands: *a side three hulls down is losing its stretch,
+  so it gives ground*. A11a asked that in every 60 s window at least one team of **each** side crosses -
+  which on those seeds is exactly what this section **forbids**. The chain was measured to the bottom and
+  every link holds: no post across the seam in 3 of 3 failing windows <- no TAKE verdict (2 of 3
+  outnumbered, 1 of 3 level) <- fewer hulls alive on that side, 8.48 against 11.25, where the crossing
+  windows ran 10.81 against 9.86. Not the layout, not the seam's climb, not the spread, not the cadence,
+  not the gates - the layout print was run and is false, and the share of each side's living hulls inside
+  the 46 m disc is near enough equal in both groups (31.0% against 35.8%).
+  And the row was **anti-dynamic on its own terms**: a test demanding both sides cross every minute is a
+  front that oscillates symmetrically for ever, which is §0.1's point 2 - the homeostatic war, *"every
+  swing undone in 5 to 10 s, nothing accumulates, nothing is ever won or lost"* - written as a bar. A
+  beaten side must be allowed to **stay** beaten; that is what "ground changes hands" means. The restated
+  row asks that **some** side crossed in every window, that no side crossed in **no** window of its run,
+  and that a side which did not cross **was outnumbered while it did not**. That last clause is the row's
+  teeth: it now fails when a side at parity or ahead crosses nothing, which would be a real fault in this
+  section, instead of failing when this section does what it says.
 - Why this is enough for "dynamic": the two sides' slot orders are independent, so the local odds are
   never equal everywhere; some stretch is always being taken and some other given. The §0 rows above
   are the check that it actually happens; if they fail, the steps or the thresholds are retuned, not
@@ -1290,6 +1388,35 @@ does not shift and every signer node computes the same bits.
 - Holds his post (§9.2) - or his cover place, if he has a claim (§11.3) - facing the enemy side, **down**
   (§11.4), fires per §8.1. The ±5 m depth scatter is the "ragged line": men do not stand on a fence, and
   they do not stand at all when they are not running.
+- **B3's two numbers - RULED 2026-09-19: BOTH are wrong, and both are wrong the same way.** the owner's
+  question was which of the two is wrong - the line is too tight along the seam (1683 of 1705 x-misses)
+  and too loose in depth (1627 of 2146 z-misses). The answer is that each band was written by copying a
+  §11.1 **generator range** onto a **standard deviation**, and those are different quantities:
+  - **z.** The band "4 m to 12 m" is the standoff's own range - `RIFLE_STANDOFF` 4 m + `RIFLE_SPREAD` 8 m,
+    whose comment reads *"so 4 to 12"*. That is how far behind the seam a man stands, not how spread out
+    the men are. Computed from the constants that write the posts, over a side's 36 men, with nobody dead
+    and no push applied, the sd this rule produces is **2.98 m** on one side and **4.52 m** on the other.
+    The old floor was unmeetable by the rule that makes the posts - one side was under it on every tick of
+    every seed before a shot was fired. The floor becomes **2 m**: still "not a fence", now a number the
+    generator can reach. The ceiling of 12 m stays.
+  - **x. NOT RULED. B3 stays red on x, with a sharper cause and a named next probe.** The obvious answer
+    was that this floor is a bar on a **draw**: there are **three** squad anchors a side, `sim.js` draws
+    each uniformly on [-80, +80], and a man sits within ±8 m of his, so over 200k draws the resulting sd
+    of a side's men is below 20 m on **19.6%** of rounds (min 3.2 m, median 34.8 m) - a fifth of all
+    rounds failing at spawn with the infantry doing nothing wrong. A relative bar was written against that
+    and **measured false, so it was withdrawn**: the layout alone puts a side's men under a **10 m** sd on
+    about **3%** of rounds, and the core does it on **36.1% of side-ticks** - twelve times as often. The
+    anchor draw therefore does **not** explain the knot. Something concentrates the line beyond where the
+    anchors fell, and that is a bug to find, not a bar to move. What is measured and waiting for the next
+    probe: a squad's centre sits more than 12 m off its own anchor on **25.9%** of squad-ticks (>24 m on
+    2.3%), and per-squad x spread is outside 2-12 m on **24.3%** - so the squads are drifting off their
+    anchors, and the first question is whether that is §11.3's cover claims (12 m), §12.1's follow, or
+    casualties collapsing a side onto the surviving squad. The 20 m floor stays until that is answered.
+  - And **both** are measured on men **on the line**: §12.1 clamps a man's post to at most 40 m behind the
+    seam, so a man further back cannot be on any legal post - he is a column walking in (§10), and §0's
+    reading rule keeps columns out of line rows. That is where the 20-40 m deep tail of the z-miss came
+    from. **No infantry number moves**: not the standoff, not the spread, not the squad z, not the anchors,
+    not the count of squads.
 
 ### 11.2 Fire and movement - rush and halt by fire team (RULED HERE)
 
