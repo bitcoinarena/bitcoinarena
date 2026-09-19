@@ -28,11 +28,12 @@ const put = (name, st, step) => {
 // 184.2 m to 165.8 m and the tape now lands on different slots, so the bodies are shorter: at 0.5 m the fixture
 // dropped from 7238 sample lines to 3821 and the EditMode counts (a thousand samples, five hundred inside a body,
 // a hundred on a plateau) no longer had the points to make. The density is the fixture's business - what the tests
-// assert is the drawn height against the core's - so the step halves and the counts come back.
+// assert is the drawn height against the core's - so both views step 0.25 m and the counts come back (open: 138
+// plateau of 6039 samples at 0.25 m, worst 0.0002 m against the core; one-sample had 34 at 1 m).
 let st = init(1);
 put('open', st, ONE >> 2);
 submitSample(st, st.i32[L.O_TACTICS + T.TAC_MARKET + T.MK_OPEN] + 3000);
 // half a sample on: the chart has slid a quarter slot and the forming candle has grown half its glide (§4.15 movement)
 for (let t = 0; t < 150; t++) step(st, 0, 0, 0, 0, 1);
-put('one-sample', st, ONE);
+put('one-sample', st, ONE >> 2);
 process.stdout.write(lines.join('\n') + '\n');
