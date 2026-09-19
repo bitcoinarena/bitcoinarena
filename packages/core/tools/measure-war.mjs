@@ -41,6 +41,7 @@ const a9gap = {}, a9all = {}, a9live = [], a9near = [];
 const a9x = [[], []], a9slot = [[], []];
 const a9slope = {}, a9slopeN = {};
 const B3WHY = process.argv.includes('--b3why');
+const CAUSE = process.argv.includes('--cause');
 const SHARE = process.argv.includes('--share');
 const b3OutNow = new Map();
 let pushWrittenMin = Infinity, pushWrittenMax = -Infinity, pushSeenMin = Infinity, pushSeenMax = -Infinity;
@@ -176,13 +177,25 @@ for (const seed of SEEDS) {
       if (own && sep <= 0.005 && line) {
         const dir = [Math.sign(u.dx), Math.sign(u.dz)], pd = lastDir.get(i);
         if (pd && ((pd[0] && dir[0] && pd[0] !== dir[0]) || (pd[1] && dir[1] && pd[1] !== dir[1]))) {
-          add('A2 flips'); const lf = lastFlip.get(i); if (lf !== undefined && tick - lf < 120) add('A2 fidgets'); lastFlip.set(i, tick);
+          add('A2 flips'); const lf = lastFlip.get(i); const quick = lf !== undefined && tick - lf < 120;
+          if (quick) add('A2 fidgets'); lastFlip.set(i, tick);
+          // WHAT FLIPPED AND WHAT THE TANK WAS: the axis, its role, and whether it was on post. A row that trips on
+          // 2.11% wants a cause, not a comparison with another seed set.
+          if (CAUSE) { const bd = T.postOf(s, L.O_TACTICS, i, tick).bounding;
+            const axis = (pd[0] && dir[0] && pd[0] !== dir[0]) ? (pd[1] && dir[1] && pd[1] !== dir[1] ? 'both' : 'x') : 'z';
+            add(`A2 flip axis ${axis}`); if (quick) add(`A2 fidget axis ${axis}`);
+            add(`A2 flip ${bd ? 'bounding' : 'overwatch'}`); if (quick) add(`A2 fidget ${bd ? 'bounding' : 'overwatch'}`); }
+            // (on-post at the moment of a flip is not asked here: the row's own `onPostNow` is built later in the
+            // tick, and calling it from up here read as a ReferenceError rather than a number)
         }
         lastDir.set(i, dir);
       }
       if (!own && line) { add('A7 holding'); if (Math.abs(wrap(s[base(i) + L.U_HEADING] - (sideOf(i) < 0 ? 0 : 32768))) <= 5461) add('A7 facing'); }
       const p = T.postOf(s, L.O_TACTICS, i, tick); const pk = `${p.x},${p.depth}`;
-      if (prevPost.has(i) && prevPost.get(i) !== pk) w10[sd]++; prevPost.set(i, pk);
+      if (prevPost.has(i) && prevPost.get(i) !== pk) { w10[sd]++;
+        // A POST CHANGE IS EITHER A SLOT (x) OR A LINE (depth): the first is a scoot, the second a leg swap or a push.
+        if (CAUSE) { const was = prevPost.get(i).split(','); add(was[0] !== String(p.x) ? 'A4a change of slot' : 'A4a change of line'); } }
+      prevPost.set(i, pk);
     }
     for (const sd of ['-1', '1']) { add('A4b side-ticks'); if (countLine[sd] && movingLine[sd] > countLine[sd] / 2) add('A4b over half'); }
     for (const i of ARMOUR) { const j = T.partnerOf(i); if (j < i || !alive(i) || !alive(j)) continue;
@@ -377,6 +390,8 @@ for (const seed of SEEDS) {
     for (const [k, w] of w5) { w.ticks++; if (b3OutNow.get(Number(k.split(':')[0]))) w.outTicks++; }
     if ((t + 1) % 300 === 0) { for (const [, w] of w5) { add('B2 squad-windows'); const bad = !w.halted || (!w.allOnPost && !w.moving);
       if (bad) add('B2 fail');
+      // WHICH HALF FAILED: no team halted in the window, or nobody moved while not all were on post.
+      if (CAUSE && bad) { if (!w.halted) add('B2 no halt'); if (!w.allOnPost && !w.moving) add('B2 no mover'); }
       if (SHARE) { const share = w.ticks ? w.outTicks / w.ticks : 0;
         add(bad ? 'B2 fail out-tick share x1000' : 'B2 pass out-tick share x1000', Math.round(share * 1000));
         add(bad ? 'B2 fail windows' : 'B2 pass windows'); } } w5.clear(); }
@@ -416,7 +431,9 @@ for (const seed of SEEDS) {
       if (!aliveBefore.get(i) && alive(i)) { win.menIn[sd]++; add('B6 arrivals'); if (Math.abs(s[base(i) + 1]) < 60 * ONE) add('B6 appeared on the line'); } }
 
     for (let i = 0; i < 96; i++) aliveBefore.set(i, alive(i));
-    if ((t + 1) % 600 === 0) { for (const sd of ['-1', '1']) { add('A4a windows'); if (w10[sd] === 0) add('A4a still'); w10[sd] = 0; } }
+    if ((t + 1) % 600 === 0) { for (const sd of ['-1', '1']) { add('A4a windows'); if (w10[sd] === 0) add('A4a still');
+      if (CAUSE) add(`A4a changes ${w10[sd] === 0 ? '0' : w10[sd] <= 2 ? '1-2' : w10[sd] <= 6 ? '3-6' : '7+'}`);
+      w10[sd] = 0; } }
     if ((t + 1) % 3600 === 0) {
       for (const sd of ['-1', '1']) {
         add('A11 windows'); if (win.cross[sd] === 0) add('A11a no crossing'); if (win.give[sd] === 0) add('A11b no giving');
@@ -525,8 +542,15 @@ const rows = [
   ['H1  pair tank-ticks within 1.5 m of the hold', P(pct('H1 on post', 'H1 pair tank-ticks')), pct('H1 on post', 'H1 pair tank-ticks') >= 0.5],
   ['H2  legs whose new bounding tank reached its post', `${r['H2 arrived'] || 0} of ${r['H2 legs'] || 0} = ${P(pct('H2 arrived', 'H2 legs'))}`, pct('H2 arrived', 'H2 legs') >= 0.8],
   ['H3  push steps reversing the previous (information)', `${r['H3 push reversals'] || 0} of ${r['H3 push steps'] || 0} = ${P(pct('H3 push reversals', 'H3 push steps'))}, ${((r['H3 push steps'] || 0) / (SEEDS.length * 12 * TICKS / 3600)).toFixed(2)} steps per team-minute`, true],
-  ['O1  pushed >= 16 team-ticks on an objective lane', P(pct('O1 pushed on a lane', 'O1 pushed team-ticks')), pct('O1 pushed on a lane', 'O1 pushed team-ticks') >= 0.6],
-  ['O1  mean push on objective lanes minus the rest', `${(r['O1 on push'] / r['O1 on n'] - r['O1 off push'] / r['O1 off n']).toFixed(2)} m`, r['O1 on push'] / r['O1 on n'] - r['O1 off push'] / r['O1 off n'] >= 6],
+  // THE SAMPLE SIZE BESIDE THE SHARE. Seed 12 printed "0.00%" for a run whose pushed team-ticks were zero - 0 of 0
+  // read as an army that never pushed where nothing had been measured at all. The assert is untouched.
+  ['O1  pushed >= 16 team-ticks on an objective lane',
+    `${r['O1 pushed on a lane'] || 0} of ${r['O1 pushed team-ticks'] || 0} = ${P(pct('O1 pushed on a lane', 'O1 pushed team-ticks'))}`,
+    pct('O1 pushed on a lane', 'O1 pushed team-ticks') >= 0.6],
+  ['O1  mean push on objective lanes minus the rest',
+    `${(r['O1 on push'] / r['O1 on n'] - r['O1 off push'] / r['O1 off n']).toFixed(2)} m `
+    + `(on ${r['O1 on n'] || 0} team-ticks against ${r['O1 off n'] || 0})`,
+    r['O1 on push'] / r['O1 on n'] - r['O1 off push'] / r['O1 off n'] >= 6],
   ['O2  ticks with both sides inside 46 m (RIDGE/HOLLOW/GAP)', [0, 1, 2].map((o) => P(pct(`O2 fought ${o}`, `O2 ticks ${o}`))).join(' / '), [0, 1, 2].every((o) => pct(`O2 fought ${o}`, `O2 ticks ${o}`) >= 0.6)],
   ['O3  seeds on which an objective changed hands', `${r['O3 changed hands'] || 0} of ${r['O3 seeds']}`, (r['O3 changed hands'] || 0) >= 4],
   ['O4  client draws the markers (client test, not this probe)', 'not built', false],
@@ -700,6 +724,18 @@ if (SHARE) {
     + `objective lane ${n('O1 pushed on a lane')}; team-ticks on a lane ${n('O1 on n')}, off it ${n('O1 off n')}`);
   console.log(`the GIVE path: read ${n('P give read')} times, confirmed ${n('P give confirmed')}, of the reads `
     + `${n('P give at or below zero')} were at a push already <= 0; steps that landed below zero ${n('P stepped below zero')}`);
+}
+if (CAUSE) {
+  const n = (k) => r[k] || 0;
+  console.log(`A2's flips: axis x ${n('A2 flip axis x')}, z ${n('A2 flip axis z')}, both ${n('A2 flip axis both')}; `
+    + `bounding ${n('A2 flip bounding')}, overwatch ${n('A2 flip overwatch')}. The fidgets inside 2 s: axis x `
+    + `${n('A2 fidget axis x')}, z ${n('A2 fidget axis z')}, both ${n('A2 fidget axis both')}; bounding `
+    + `${n('A2 fidget bounding')}, overwatch ${n('A2 fidget overwatch')}`);
+  console.log(`A4a's post changes: of slot ${n('A4a change of slot')}, of line ${n('A4a change of line')}; windows by `
+    + `how many changes they held: none ${n('A4a changes 0')}, 1-2 ${n('A4a changes 1-2')}, 3-6 ${n('A4a changes 3-6')}, `
+    + `7+ ${n('A4a changes 7+')}`);
+  console.log(`B2's failures: ${n('B2 fail')} of ${n('B2 squad-windows')} windows - no team halted in ${n('B2 no halt')}, `
+    + `nobody moved while some were off post in ${n('B2 no mover')}`);
 }
 console.log(`${rows.length - red} of ${rows.length} rows pass (seeds ${SEEDS.join(',')}, ${TICKS} ticks)`);
 process.exit(red ? 1 : 0);
