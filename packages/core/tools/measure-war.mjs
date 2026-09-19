@@ -78,6 +78,8 @@ let curSeed = 0, curSt = null, curTick = 0;
 // tool does not couple them into one.
 const A11GEOM = process.argv.includes('--a11geom');
 const a11geom = [];
+const B4WHY = process.argv.includes('--b4why');
+const b4rows = [];
 const NOGATE_A = process.argv.includes('--nogate-a') || process.argv.includes('--nogates');
 const NOGATE_B = process.argv.includes('--nogate-b') || process.argv.includes('--nogates');
 const SHARE = process.argv.includes('--share');
@@ -634,6 +636,27 @@ for (const seed of SEEDS) {
     const want = (e.push - prev.push) / ONE; const z0 = mean(prev.z); add('B4 changes');
     let ok = false; for (let u = t; u < Math.min(pushHist.length, t + 600); u++) { const f = pushHist[u].get(k); if (f && f.z.length && (mean(f.z) - z0) * Math.sign(want) >= Math.abs(want) / 2) { ok = true; break; } }
     if (!ok) add('B4 did not follow');
+    // WHAT A MISS ACTUALLY WAS (2026-09-19). The row reads "the squad did not follow", but four different things
+    // produce that verdict and only one of them is the infantry. The squad snapshot above holds men who are STANDING
+    // STILL this tick, so a squad still walking is absent from it entirely: a miss with almost no readings is a squad
+    // that never stood, not a squad that stood in the wrong place. Counted here, not guessed.
+    if (B4WHY) {
+      const end = Math.min(pushHist.length, t + 600);
+      let seen = 0, best = -Infinity, men = 0, changedAgain = false, reversed = false;
+      for (let u = t; u < end; u++) {
+        const f = pushHist[u].get(k); if (!f) continue;
+        seen++; men += f.z.length;
+        const got = (mean(f.z) - z0) * Math.sign(want);
+        if (got > best) best = got;
+        // and WHICH WAY it moved again: a push that comes back toward where it started asks the squad for nothing,
+        // which is a different thing from a squad that would not go.
+        if (f.push !== e.push) { changedAgain = true;
+          if ((f.push - e.push) / ONE * Math.sign(want) < 0) reversed = true; }
+      }
+      const need = Math.abs(want) / 2;
+      const frac = best === -Infinity ? null : best / need;
+      b4rows.push({ seed, k, want, need, seen, ticks: end - t, men: seen ? men / seen : 0, frac, changedAgain, reversed, ok });
+    }
     // THE SAME QUESTION AS B2's: was the line out of band while the squad was meant to be following? Counted over the
     // window the follow was given, so a squad that never followed while its line was in band is its own fault.
     if (SHARE) { let out = 0, seen = 0;
@@ -866,6 +889,31 @@ if (H1WHY && h1why.length) {
     + `bounding ${(100 * bounding / h1why.length).toFixed(0)}%; standing still ${(100 * still / h1why.length).toFixed(0)}%; `
     + `stepping toward the hold ${(100 * towards / h1why.length).toFixed(0)}%; `
     + `never yet stood on a post ${(100 * h1why.filter((r) => r.column).length / h1why.length).toFixed(0)}%`);
+}
+if (B4WHY) {
+  const miss = b4rows.filter((r) => !r.ok), hit = b4rows.filter((r) => r.ok);
+  // A miss with almost nothing sampled is a squad that never stood still inside the window; the row cannot see such a
+  // squad move, so it is not evidence about following either way.
+  const THIN = 60;                                   // fewer than 1 s of readings out of the 10 s window
+  const kind = (r) => r.seen < THIN ? 'never stood still (unreadable)'
+    : r.reversed ? 'the push came back before the 10 s were up'
+    : r.changedAgain ? 'the push moved again inside the window'
+    : r.frac === null || r.frac <= 0 ? 'stood and did not follow at all'
+    : 'followed, but less than half';
+  const by = {};
+  for (const r of miss) by[kind(r)] = (by[kind(r)] || 0) + 1;
+  console.log(`B4's misses, by what the miss was (${miss.length} of ${b4rows.length} push changes):`);
+  for (const [k2, v] of Object.entries(by).sort((a, b) => b[1] - a[1]))
+    console.log(`  ${k2.padEnd(38)} ${v} of ${miss.length}`);
+  const show = (rs, label) => {
+    const m = (f) => rs.length ? (rs.reduce((a, r) => a + f(r), 0) / rs.length).toFixed(2) : '-';
+    console.log(`  ${label}: n ${rs.length}, mean ticks readable ${m((r) => r.seen)} of 600, mean men standing `
+      + `${m((r) => r.men)}, mean push change ${m((r) => r.want)} m, mean best follow as a share of the half it `
+      + `owes ${m((r) => (r.frac === null ? 0 : Math.max(-1, Math.min(2, r.frac))))}`);
+  };
+  show(miss, 'misses  '); show(hit, 'follows ');
+  console.log(`  every miss: ` + miss.map((r) => `seed ${r.seed} ${r.k} want ${r.want.toFixed(0)}m seen ${r.seen}`
+    + ` men ${r.men.toFixed(1)} best ${r.frac === null ? 'none' : r.frac.toFixed(2)}${r.changedAgain ? ' (push moved again)' : ''}`).join('; '));
 }
 if (A11GEOM) {
   const FAIL = new Set(['2|1', '4|1', '5|1']);
