@@ -185,7 +185,11 @@ test('push moves one 8 m step on its re-read only, on a confirmed verdict with t
           assert.ok(now <= 16 * ONE, `seed ${seedWord} tick ${tick}: team ${w} on RIDGE pushed ${now / ONE} m`);
         if (d === 0) continue;
         // a scoot onto RIDGE may cut a push to the crest's 16 m on the shooter's tick
-        const ontoRidge = s[L.O_TACTICS + T.TAC_SLOT + w] === lanes[T.OBJ_RIDGE] && now === 16 * ONE && d < 0;
+        // RIDGE's ceiling is not the literal 16 m once §4.14 is in it: the trend's side gets + 8 x strength and the
+        // side it runs against - 8 x strength (RULED 2026-09-19 with the seeded tape, which opens some rounds with a
+        // trend where the old flat tape never did). The exemption reads the lane's own ceiling, so it still exempts
+        // exactly the scoot that cuts a push to the crest and nothing else.
+        const ontoRidge = s[L.O_TACTICS + T.TAC_SLOT + w] === lanes[T.OBJ_RIDGE] && now === ceiling && d < 0;
         if (!ontoRidge) {
           assert.ok(pushTick(s, w, tick), `seed ${seedWord} tick ${tick}: team ${w} push moved off its re-read tick`);
           assert.equal(Math.abs(d), 8 * ONE, `seed ${seedWord} tick ${tick}: team ${w} push moved ${d / ONE} m`);
@@ -216,8 +220,21 @@ test('with nobody fighting and no assault running, a team rests at +8 m on an ob
     for (let tick = 1; tick <= 3000; tick++) T.pressure(s, L.O_TACTICS, tick, () => 0);
     for (let w = 0; w < 12; w++) {
       const slot = s[L.O_TACTICS + T.TAC_SLOT + w];
-      assert.equal(s[L.O_TACTICS + T.TAC_PUSH + w], lanes.includes(slot) ? 8 * ONE : 0,
-        `seed ${seedWord}: team ${w} on slot ${slot} rests at ${s[L.O_TACTICS + T.TAC_PUSH + w] / ONE} m`);
+      // §4.14 IS PART OF THE REST, and the seeded tape made that visible: the trend's side rests 8 m further on every
+      // lane and the side it runs against 8 m back, so the rest is the objective's +8 or 0 PLUS the trend's step.
+      // With the old flat tape the trend was 0 on every seed and the term was invisible; it is modelled here, and
+      // §4.14's own +8 is not touched.
+      const side = w < 6 ? -1 : 1;
+      const lt = T.laneTerms(s, L.O_TACTICS, side, slot);
+      // "NOBODY FIGHTING" IS NOT THE SAME AS "NO ODDS". §4.10 reads `own + weight >= foe + 3`, and with every tank
+      // dead own and foe are both 0, so a lane whose WEIGHT alone reaches the take lead is a lane the team takes
+      // ground on - to its ceiling - instead of drifting home. §4.11 gives an objective's lane weight 2 and §4.14
+      // gives the trend's side one more, which is 3: that is why the seeded tape made this visible, and it is the
+      // rule doing what it says rather than a fault. The expectation carries both terms; neither number is touched.
+      const want = lt.weight >= 3 ? lt.ceiling : lt.rest;
+      assert.equal(s[L.O_TACTICS + T.TAC_PUSH + w], want,
+        `seed ${seedWord}: team ${w} on slot ${slot} sits at ${s[L.O_TACTICS + T.TAC_PUSH + w] / ONE} m, `
+        + `§4.10/§4.11/§4.14 say ${want / ONE} (weight ${lt.weight}, rest ${lt.rest / ONE}, ceiling ${lt.ceiling / ONE})`);
     }
   }
 });
@@ -369,7 +386,14 @@ test('an assault starts only on an objective the side does not hold, never while
           assert.notEqual(holders[tg], mine, `seed ${seedWord} tick ${tick}: side ${side} assaulted objective ${tg}, which it held`);
           assert.ok(holders.some((h) => h !== mine), `seed ${seedWord} tick ${tick}: side ${side} assaulted while holding all three`);
           if (was.end === null) assert.ok(tick >= 1200, `seed ${seedWord}: first assault at tick ${tick}, before 20 s`);   // a side holding all three re-arms 20 s, so later than 40 s is legal
-          else assert.ok(tick - was.end >= 2700, `seed ${seedWord} tick ${tick}: side ${side} assaulted ${tick - was.end} ticks after its last one ended`);
+          else {
+            // §4.12's gap is 45 to 90 s, EXCEPT for the side the trend favours, which re-arms in 30 to 60 s
+            // (§4.14, tactics.js ASSAULT_GAP_FAVOURED; favoured is trendFor(side) > 0). With the old flat tape no
+            // side was ever favoured and 2700 was always the floor; the seeded tape opens some rounds with a trend,
+            // so the floor is the one the rule gives that side. Neither number is touched.
+            const floor = T.trendFor(s, L.O_TACTICS, side) > 0 ? 1800 : 2700;
+            assert.ok(tick - was.end >= floor, `seed ${seedWord} tick ${tick}: side ${side} assaulted ${tick - was.end} ticks after its last one ended, §4.12 floor ${floor}`);
+          }
           assert.equal(T.assaultCount(s, L.O_TACTICS, side), was.n + 1, 'the assault count did not step by one');
           was.start = tick; was.n++;
         }
@@ -384,8 +408,14 @@ test('an assault starts only on an objective the side does not hold, never while
           assert.ok(push <= 40 * ONE, `seed ${seedWord} tick ${tick}: team ${w} pushed ${push / ONE} m`);
           const terms = T.laneTerms(s, L.O_TACTICS, side, slot);
           if (ph !== T.ASSAULT_PUSH || Math.abs(slot - T.objectiveLane(s, L.O_TACTICS, tg)) > 1) {
-            assert.equal(terms.weight, T.objectiveWeight(s, L.O_TACTICS, slot), `seed ${seedWord} tick ${tick}: team ${w} outside the assault lanes has weight ${terms.weight}`);
-            assert.ok(terms.ceiling <= 24 * ONE, `seed ${seedWord} tick ${tick}: team ${w} outside the assault lanes has ceiling ${terms.ceiling / ONE}`);
+            // §4.14's terms are part of what a lane is worth, on EVERY lane and not only the assaulted ones: the
+            // trend's side reads +1 weight and its ceiling rises by 8 x strength. The seeded tape opens some rounds
+            // with a trend, so the expectation models it rather than assuming a flat market.
+            const t = T.trendFor(s, L.O_TACTICS, side), strength = T.trendStrength(s, L.O_TACTICS);
+            const wantWeight = T.objectiveWeight(s, L.O_TACTICS, slot) + (t > 0 ? 1 : 0);
+            assert.equal(terms.weight, wantWeight, `seed ${seedWord} tick ${tick}: team ${w} outside the assault lanes has weight ${terms.weight}, §4.14 says ${wantWeight}`);
+            const wantCeil = 24 * ONE + (t > 0 ? Math.imul(t * 8 * strength, ONE) : 0);
+            assert.ok(terms.ceiling <= wantCeil, `seed ${seedWord} tick ${tick}: team ${w} outside the assault lanes has ceiling ${terms.ceiling / ONE}, §4.14 allows ${wantCeil / ONE}`);
           }
         }
       }
