@@ -696,6 +696,8 @@ if (SHARE) {
     + `level ${n('P verdict read') - n('P odds ours') - n('P odds theirs')}; mean own `
     + `${(n('P own sum') / Math.max(n('P verdict read'), 1)).toFixed(1)}, mean foe `
     + `${(n('P foe sum') / Math.max(n('P verdict read'), 1)).toFixed(1)}`);
+  console.log(`O1's own denominators: pushed team-ticks (push >= 16) ${n('O1 pushed team-ticks')}, of them on an `
+    + `objective lane ${n('O1 pushed on a lane')}; team-ticks on a lane ${n('O1 on n')}, off it ${n('O1 off n')}`);
   console.log(`the GIVE path: read ${n('P give read')} times, confirmed ${n('P give confirmed')}, of the reads `
     + `${n('P give at or below zero')} were at a push already <= 0; steps that landed below zero ${n('P stepped below zero')}`);
 }
