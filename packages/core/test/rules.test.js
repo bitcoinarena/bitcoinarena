@@ -46,7 +46,10 @@ function keepArmourOff(st) {
   for (let i = 0; i < layout.UNITS; i++) {
     if ((i & layout.ARMOUR_MASK) !== 0) continue;
     const b = layout.O_UNITS + i * layout.U_WORDS;
-    if (s[b + layout.U_HP] <= 0) continue;
+    // HULKS TOO, not only live hulls (2026-09-19). A wreck is solid to the truck and this helper skipped anything
+    // with no hp, so a tank that died beside the parked truck stayed there and wrote it off by contact: measured on
+    // seed 20260901, hp 93.39 -> 0 in a single tick at t=87 with the nearest LIVE tank a pinned 7.00 m away. That is
+    // not incoming fire, which is what these two tests measure.
     const dx = (s[b + layout.U_X] - tx) / ONE_, dz = (s[b + layout.U_Z] - tz) / ONE_;
     const d = Math.hypot(dx, dz);
     if (d >= 7.0) continue;
@@ -649,7 +652,18 @@ const parkedUnderFire = (seed, ticks) => {
   const hold = () => {
     st.i32[O_AIR + AIR_BULL] = 1 << 30;
     st.i32[O_AIR + AIR_BEAR] = 1 << 30;
-    st.i32[O + T_X] = 0;
+    // PARKED JUST WEST OF THE CHART (2026-09-19), 2.2 m short of the first candle face at -75.79998 m.
+    //
+    // At x 0 the truck stands among the candle bodies. It got away with that while a body was 5.756 m wide; with
+    // ruling B refitted to the miner's measured door a body is 5.181 m and the tape lands differently, and on seed
+    // 20260901 the parked truck was inside one: hp 93.39 -> 0 in a single tick at t=87, with every hull and hulk
+    // held 7 m off. That is a crash, and these two tests measure incoming fire.
+    //
+    // The flanks are not the answer - measured at z 56 / 58 / 60 / 64 / 70 the three seeds disagree wildly, from
+    // untouched at 90 s to written off at 20. West of the chart the line still runs: at x -78, z 0 all three are hit
+    // and alive at 10 s (hp 89.7 / 43.5 / 88.7) and all three are written off inside 90 s. Two metres further west,
+    // at -80, nothing reaches the truck at all on any seed - that is the edge of the guns, not a tuning knob.
+    st.i32[O + T_X] = Math.round(-78 * Q);
     st.i32[O + T_Z] = 0;
   };
   hold();
@@ -664,8 +678,8 @@ test('incoming fire costs the truck condition', () => {
     // half-line budget (§0 row 4b) the armour reached its posts later, first hit at 9.53 / 10.98 / 11.08 s and the
     // write-off at 24.38 / 30.00 / 25.37 s, so the window went from ten seconds to fifteen. 2026-09-19: §4.13's
     // seeded init tape opens the round already engaged instead of flat, so the armour is in range from the first
-    // tick - first hit now 0.20 / 0.45 / 2.17 s and the write-off 30.62 / 14.70 / 16.32 s, and fifteen seconds is
-    // past the write-off on one of the three. At ten the truck is hit and alive on all three: hp 46.2 / 41.4 / 39.3.
+    // tick, and fifteen seconds was past the write-off on one of the three. At ten, parked west of the chart, all
+    // three are hit and alive: hp 89.7 / 43.5 / 88.7.
     const r = parkedUnderFire(seed, 60 * 10);
     assert.ok(r.hp < 100, `seed ${seed}: der Truck steht nach 10 s unbeschaedigt da`);
     assert.ok(r.hp > 0, `seed ${seed}: nach 10 s schon zerstoert - hp ${r.hp.toFixed(2)}`);

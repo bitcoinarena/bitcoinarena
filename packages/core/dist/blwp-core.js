@@ -3762,6 +3762,15 @@ const MINER_X = 7497318;          // 114.4 m, the miner's own origin
 // and Bootstrap overwrites it: `gate.gateX = _terrain.width * 0.44f` on a 260 m
 // map is 114.4. The 0.4 m put every miner box - facade, lintel and both tunnel
 // sides - a wall's thickness off where Unity draws them.
+/**
+ * WHERE THE MINER ACTUALLY BEGINS, which is not where its origin is placed (the owner 2026-09-19 13:09). MINER_X is the
+ * facade, the delivery line, and the model's origin; the building itself stands on the ground from x 53.8 m and only
+ * its entry corridor (|z| <= 34 m) is clear, from x 90.4 m east. Nothing the core lays down goes past this door: the
+ * candle field ends here (frontline.js FIELD_SLOT, ruling B refitted) and so does the road ribbon Unity draws.
+ * Measured per node out of bitcoin_miner_megastructure.glb - power cables 53.8, feet 62.8, lower mass 64.4, legs 66.9,
+ * mass_behind_tunnel ending at 90.4.
+ */
+const MINER_DOOR_X = 5924454;     // 90.4 m
 const MINER_MOUTH_HALF = 2621440; //   40 m, the clear half-width of the tunnel
 const MINER_MOUTH_HIGH = 1703936; //   26 m
 const MINER_SHELL_HALF = 5531238; // 84.4 m
@@ -3878,12 +3887,22 @@ const FRONT_DEPTH = 34734;
  * THE CHART'S X (WAR_TACTICS.md §4.15, seam remap ruled 2026-09-17): the tape is laid over the candle field, not the old
  * +-130 m map, so the fight line's price at an x is read from the samples of the candle standing at that x. 32 slots of
  * FIELD_SLOT from FIELD_X0 (spawn ruling B: first face 26 m past the spawn centre, last slot ending before the miner face);
+ *
+ * RULING B REFITTED TO THE MEASURED DOOR (the owner 2026-09-19 13:09 and his pick after the measurement). The "miner face"
+ * the ruling named is x 108.4, which is where the MODEL'S ORIGIN is placed - not where the building begins. Measured
+ * out of bitcoin_miner_megastructure.glb, through DeliveryGate's 180-degree turn and (1, 0.45, 1) scale, the miner
+ * stands on the ground from x 53.8 m (power cables), with feet at 62.8, legs at 66.9 and its lower mass from 64.4;
+ * its entry corridor, |z| <= 34 m, is clear of all of that from x 90.4 m east. So the old fit put the last nine
+ * slots and 24 m of road INSIDE the building (miner-entrance-covered-1309.jpg). The same fit, done against the
+ * measured door instead of the origin: the same 32 slots, the same west end, pitch 5.75624 -> 5.18124 m, the last
+ * slot ending at 89.99983 m. The miner does not move and the map's edges do not move. MINER_DOOR_X in map.js is the
+ * door itself, and the road ribbon ends there too - Unity draws what the core says.
  * slot k holds the round's candle whose samples are tape k*2 + (taken & 1) and the next, so its centre is that pair's middle.
  * Measured before: at a candle's centre the seam read the tape up to 9.7 samples away, and HUD YOU sat on the wrong candle
  * for 28-29 of 32.
  */
 const FIELD_X0 = -4967627;                  // -75.79998 m
-const FIELD_SLOT = 377241;                  // 5.75624 m
+const FIELD_SLOT = 339558;                  // 5.18124 m; 32 slots end at 89.99983 m, at the miner's door
 const TAPE_HALF = 32768, TAPE_LAST_Q = Math.imul(SAMPLES - 1, ONE);
 
 /**
@@ -4032,7 +4051,7 @@ const CANDLES = 32;
 // delivery line (x 114). 32 slots over 184.2 m: pitch 5.75625 m, the corridor kept at 2.8 m, the body what is left.
 // At 6.5 m (x -104..+104) the first face stood 2.2 m BEHIND the spawn and bays 9-12 started on candle 0.
 const CANDLE_X0 = FIELD_X0;                 // -75.79998 m: first face at -74.39998 m, 26.00001 m past START_X
-const CANDLE_SLOT = FIELD_SLOT;             // 5.75624 m; 32 slots end at 108.39969 m, before the miner face
+const CANDLE_SLOT = FIELD_SLOT;             // 5.18124 m; 32 slots end at 89.99983 m, at the miner's door
 const CANDLE_BODY_HALF = FIELD_SLOT >> 1;   // the full slot: bodies touch (492f128, no padding)
 const CANDLE_H = ONE;                       // 1 m plateau (was 2)
 const CANDLE_RAMP = 262144;                 // 4 m ramp: 1 m over 4 m is 25% (was 5 m at 40%)
@@ -4053,7 +4072,7 @@ const WICK_RIDGE_RAMP = Math.imul(2, ONE);  // 0.5 m over 2 m: 25%
  * end is the field's own: nothing stands past it at any scroll.
  */
 const CANDLE_WEST = FIELD_X0;
-const CANDLE_EAST = FIELD_X0 + Math.imul(32, FIELD_SLOT);   // 108.40 m, the miner face
+const CANDLE_EAST = FIELD_X0 + Math.imul(32, FIELD_SLOT);   // 90.00 m, the miner's door (MINER_DOOR_X 90.4)
 const BAND_X = 6815744;                     // |x| <= 104 m
 const BAND_Z = 3538944;                     // |z| <= 54 m: the seam's 45 m, the 5 m ramp, 4 m
 const CONE = 26214;                         // 0.4: the grade the relief may rise toward the band

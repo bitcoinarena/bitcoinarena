@@ -107,11 +107,13 @@ public class ChartHudTests
         float cw = parked.Plot.width / 32f;
         Assert.AreEqual(driven.Plot.x + Words("ground-driven")[L.CH_YOU_T] / 65536f * cw, driven.You.x, 0.01f);
         Assert.Greater(driven.You.x - parked.You.x, 10f, "driven +x, YOU moved right on the chart");
-        // The gate at x 114 is past the last candle: the core says off, t 0.97 of a candle past 32 plus the scroll - at the
-        // open the chart has slid one sample, half a candle (§4.15 movement) - so 1.47; the HUD pins GATE ›.
+        // The gate at x 114 is past the last candle: the core says off, t 4.632 of a candle past 32 plus the scroll -
+        // at the open the chart has slid one sample, half a candle (§4.15 movement) - so 5.132; the HUD pins GATE ›.
+        // It was 0.97 / 1.47 while the field ran to x 108.4; ruling B is refitted to the miner's measured door, so
+        // the field ends at 90.0 m and a candle is 5.181 m instead of 5.756. The gate did not move, the chart did.
         var w = Words("ground-open");
         Assert.AreEqual(0, w[L.CH_GATE_ON]);
-        Assert.AreEqual(1.4729f, (w[L.CH_GATE_T] - 32 * 65536) / 65536f, 0.0001f, "the gate stands 1.47 of a candle past the last");
+        Assert.AreEqual(5.1321f, (w[L.CH_GATE_T] - 32 * 65536) / 65536f, 0.0001f, "the gate stands 5.13 of a candle past the last");
         Assert.IsFalse(parked.GateOn);
         Assert.IsTrue(parked.GatePinned);
         Assert.AreEqual(parked.Plot.xMax, parked.GateX, 0.01f, "GATE › is pinned at the plot's right edge");
@@ -131,7 +133,13 @@ public class ChartHudTests
         for (int s = 0; s < 2; s++) if (w[L.CH_ASSAULT + s * L.CH_ASSAULT_WORDS] != L.ASSAULT_IDLE) running++;
         Assert.Greater(running, 0, "the fixture holds a running assault");
         Assert.AreEqual(running, loud.Banners.Count);
-        StringAssert.Contains("ASSAULT " + ChartHud.ObjectiveName(w[L.CH_ASSAULT + 1]), loud.Banners[0]);
+        // THE BANNER CARRIES NO OBJECTIVE NAME (the owner 2026-09-17 09:17, "only LOW and HIGH" - RIDGE / HOLLOW / GAP are
+        // off the HUD; and 2026-09-19 12:55, which asked for the banner itself). It says who is attacking, and the
+        // lane is already drawn as the tinted column under the candles, which the next line still counts.
+        StringAssert.IsMatch("^(BULLS|BEARS) (ASSAULT|CONSOLIDATE)$", loud.Banners[0]);
+        foreach (var b in loud.Banners)
+            foreach (var name in new[] { "RIDGE", "HOLLOW", "GAP" })
+                StringAssert.DoesNotContain(name, b, "an objective name is back on the HUD");
         Assert.AreEqual(running, loud.AssaultColumns.Count);
     }
 

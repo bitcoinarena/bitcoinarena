@@ -127,13 +127,17 @@ test('GATE is the core gate, the objectives and the assault the core words, and 
   const o = view(st, C.CHART_GROUND), p = [0, 0, 0];
   C.chartPoint(st, C.CHART_GROUND, 114 * ONE, 0, p);
   assert.equal(o[C.CH_GATE_T], p[0]);
-  // §4.15 G1: the chart is the candle field and the gate at x 114 stands past its last candle - off the chart, its true t
-  // 0.97 of a candle past the 32nd (the HUD pins GATE › at the right edge; ChartHudTests).
+  // §4.15 G1: the chart is the candle field and the gate at x 114 stands past its last candle - off the chart, its
+  // true t 4.632 of a candle past the 32nd (the HUD pins GATE › at the right edge; ChartHudTests). It was 0.97 of a
+  // candle while the field ran to 108.4 m; ruling B is refitted to the miner's measured door, so the field ends at
+  // 90.0 m and a candle is 5.181 m instead of 5.756 - the gate did not move, the chart did. The identity above it
+  // is the test: t is the gate's own distance past the newest candle in candles, and the band is what that
+  // arithmetic gives on this world.
   assert.equal(o[C.CH_GATE_ON], 0, 'the gate past the last candle is on the chart');
   assert.equal(p[2], 0);
   // The chart has scrolled (§4.15): 4800 ticks with no sample hold the slide at two samples, one candle further.
   const sc = scrollNow(st), past = (o[C.CH_GATE_T] - o[C.CH_CANDLES] * ONE) / ONE;
   assert.equal(sc, 2 * ONE, 'the slide holds at two samples when no sample comes');
-  assert.ok(Math.abs(past - (GATE_X - (xAtTape(63 * ONE, 0, sc) + (CANDLE_SLOT >> 2))) / CANDLE_SLOT) < 1e-3 && past - 1 > 0.97 && past - 1 < 0.98,
+  assert.ok(Math.abs(past - (GATE_X - (xAtTape(63 * ONE, 0, sc) + (CANDLE_SLOT >> 2))) / CANDLE_SLOT) < 1e-3 && past - 1 > 4.62 && past - 1 < 4.65,
     `the gate is ${past.toFixed(4)} of a candle past the last`);
 });

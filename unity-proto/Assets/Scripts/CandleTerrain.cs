@@ -144,7 +144,11 @@ public class CandleTerrain : MonoBehaviour
                 // the neighbours' z-ends where a face turns from covered to free, and the wick ridge's edges
                 float nb0 = c > 0 ? W(v, c - 1, 2) : z0, nb1 = c > 0 ? W(v, c - 1, 3) : z1;
                 float na0 = c + 1 < n ? W(v, c + 1, 2) : z0, na1 = c + 1 < n ? W(v, c + 1, 3) : z1;
-                Stations(xa, xb, XStation, xs, sx0 + R, sx1 - R, west + R, east - R, cx - rtop, cx + rtop, cx - rout, cx + rout);
+                // ...AND THE SLOT'S OWN CENTRE. With ruling B refitted to the miner's door a slot is 5.181 m and the
+                // 4 m ramps from its two ends CROSS: the body has no flat top in x any more, it has a peak at cx, and
+                // a 1 m station grid cut that peak off - measured against the core, 0.193 m out at -70.04,-14.60
+                // where the tolerance is 0.100. The kink is a station now, as every other kink already was.
+                Stations(xa, xb, XStation, xs, sx0 + R, sx1 - R, west + R, east - R, cx - rtop, cx + rtop, cx - rout, cx + rout, cx);
                 Stations(z0, z1, Station, zs, z0 + R, z1 - R, nb0, nb1, na0, na1, nb0 + R, nb1 - R, na0 + R, na1 - R, z0 + R - rr, z1 - R + rr);
                 Grid(p, v, ground, xs, zs, side, top, false);
             }

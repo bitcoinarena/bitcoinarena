@@ -20,7 +20,7 @@ export const CANDLES = 32;
 // delivery line (x 114). 32 slots over 184.2 m: pitch 5.75625 m, the corridor kept at 2.8 m, the body what is left.
 // At 6.5 m (x -104..+104) the first face stood 2.2 m BEHIND the spawn and bays 9-12 started on candle 0.
 export const CANDLE_X0 = FIELD_X0;                 // -75.79998 m: first face at -74.39998 m, 26.00001 m past START_X
-export const CANDLE_SLOT = FIELD_SLOT;             // 5.75624 m; 32 slots end at 108.39969 m, before the miner face
+export const CANDLE_SLOT = FIELD_SLOT;             // 5.18124 m; 32 slots end at 89.99983 m, at the miner's door
 export const CANDLE_BODY_HALF = FIELD_SLOT >> 1;   // the full slot: bodies touch (492f128, no padding)
 export const CANDLE_H = ONE;                       // 1 m plateau (was 2)
 export const CANDLE_RAMP = 262144;                 // 4 m ramp: 1 m over 4 m is 25% (was 5 m at 40%)
@@ -41,7 +41,7 @@ export const WICK_RIDGE_RAMP = Math.imul(2, ONE);  // 0.5 m over 2 m: 25%
  * end is the field's own: nothing stands past it at any scroll.
  */
 export const CANDLE_WEST = FIELD_X0;
-export const CANDLE_EAST = FIELD_X0 + Math.imul(32, FIELD_SLOT);   // 108.40 m, the miner face
+export const CANDLE_EAST = FIELD_X0 + Math.imul(32, FIELD_SLOT);   // 90.00 m, the miner's door (MINER_DOOR_X 90.4)
 export const BAND_X = 6815744;                     // |x| <= 104 m
 export const BAND_Z = 3538944;                     // |z| <= 54 m: the seam's 45 m, the 5 m ramp, 4 m
 export const CONE = 26214;                         // 0.4: the grade the relief may rise toward the band
