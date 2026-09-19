@@ -62,6 +62,14 @@ const a4aWindows = [];
 // standing off after giving ground. Classified from the code's own branch word, never from the row's name.
 const A11AWHY = process.argv.includes('--a11awhy');
 const a11aKind = {}, a11aWindows = [];
+// A11a's REMAINING HOLE (2026-09-19): why the side that never crossed never read TAKE. §4.10 decides on `own` and
+// `foe` - living tanks of each side inside 46 m of the team's slot centre on the seam - and the core only computes
+// them when the re-read survives gate (a), so these are every odds reading the code actually took, not a model of
+// them. Skipped re-reads are counted separately: there the code held no odds at all.
+const A11ODDS = process.argv.includes('--a11odds');
+const a11odds = [];                               // one row per odds reading the core took
+const a11due = {}, a11on = {};                    // per seed|side: re-reads due, and those that got past gate (a)
+let curSeed = 0;
 const NOGATE_A = process.argv.includes('--nogate-a') || process.argv.includes('--nogates');
 const NOGATE_B = process.argv.includes('--nogate-b') || process.argv.includes('--nogates');
 const SHARE = process.argv.includes('--share');
@@ -158,8 +166,10 @@ globalThis.__W = {
     if (raw) { add('B2 raw halts'); if (!kept) add('B2 halts suppressed'); }
     if (raw && !kept) haltSuppressedNow.add(`${sd < 1 ? -1 : 1}:${f}`); },
   branch(i, which) { if (mainPass) branchNow.set(i, which); },
-  reread(w) { if (mainPass) add('P re-read due'); },
-  onPostOk(w) { if (mainPass) add('P team on post'); },
+  reread(w) { if (!mainPass) return; add('P re-read due');
+    if (A11ODDS) { const k = `${curSeed}|${w < 6 ? '-1' : '1'}`; a11due[k] = (a11due[k] || 0) + 1; } },
+  onPostOk(w) { if (!mainPass) return; add('P team on post');
+    if (A11ODDS) { const k = `${curSeed}|${w < 6 ? '-1' : '1'}`; a11on[k] = (a11on[k] || 0) + 1; } },
   verdict(w, v, was, push, weight, rest, ceiling, own, foe, widow) { if (!mainPass) return;
     // §4.11's objective weight and §4.10's odds, at the moment the verdict is decided. O1 asks that pushes land on
     // objective lanes; if the weight never reaches here, that row is measuring a term the core is not applying.
@@ -167,6 +177,8 @@ globalThis.__W = {
     add('P rest sum', (rest / 65536) | 0); add('P own sum', own | 0); add('P foe sum', foe | 0);
     if (widow) add('P widow'); if ((own | 0) > (foe | 0)) add('P odds ours'); else if ((foe | 0) > (own | 0)) add('P odds theirs');
     add(`P verdict ${['none', 'take', 'give', 'drift'][v] || v}`);
+    if (A11ODDS) a11odds.push({ seed: curSeed, sd: w < 6 ? '-1' : '1', team: w % 6, own: own | 0, foe: foe | 0,
+      weight: weight | 0, widow: !!widow, v, push: push / ONE, ceiling: ceiling / ONE });
     if (v === was) add('P confirmed'); else add('P not confirmed');
     if (v === 2) { add('P give read'); if (v === was) add('P give confirmed'); if (push <= 0) add('P give at or below zero'); } },
   stepped(w, push, verdict) { if (!mainPass) return; add('P stepped');
@@ -183,6 +195,7 @@ globalThis.__W = {
 
 mainPass = true;
 for (const seed of SEEDS) {
+  curSeed = seed;
   const st = init(seed), s = st.i32;
   const alive = (i) => s[base(i) + L.U_STATE] !== 0;
   add('13a seeds'); if (T.slotOrder(s[L.O_TACTICS], -1).join() !== T.slotOrder(s[L.O_TACTICS], 1).join()) add('13a orders differ');
@@ -817,6 +830,40 @@ if (H1WHY && h1why.length) {
     + `bounding ${(100 * bounding / h1why.length).toFixed(0)}%; standing still ${(100 * still / h1why.length).toFixed(0)}%; `
     + `stepping toward the hold ${(100 * towards / h1why.length).toFixed(0)}%; `
     + `never yet stood on a post ${(100 * h1why.filter((r) => r.column).length / h1why.length).toFixed(0)}%`);
+}
+if (A11ODDS) {
+  // TAKE is `own + weight >= foe + 3`, GIVE is `foe >= own + 1 + weight` (tactics.js PUSH_TAKE_LEAD / PUSH_GIVE_LEAD).
+  const FAIL = new Set(['2|1', '4|1', '5|1']);              // the three windows with no crossing
+  const name = ['none', 'take', 'give', 'drift'];
+  const rows = (k) => a11odds.filter((o) => `${o.seed}|${o.sd}` === k);
+  const line = (k) => {
+    const rs = rows(k);
+    if (!rs.length) return `${k}: no odds reading was taken at all (due ${a11due[k] || 0}, past gate (a) ${a11on[k] || 0})`;
+    const mean = (f) => (rs.reduce((a, o) => a + f(o), 0) / rs.length).toFixed(2);
+    const takes = rs.filter((o) => !o.widow && o.own + o.weight >= o.foe + 3).length;
+    const gives = rs.filter((o) => !o.widow && o.foe >= o.own + 1 + o.weight).length;
+    const by = {}; for (const o of rs) by[name[o.v] || o.v] = (by[name[o.v] || o.v] || 0) + 1;
+    return `${k}: due ${a11due[k] || 0}, past gate (a) ${a11on[k] || 0}, odds read ${rs.length}; `
+      + `mean own ${mean((o) => o.own)} vs foe ${mean((o) => o.foe)} (own - foe ${mean((o) => o.own - o.foe)}), `
+      + `mean weight ${mean((o) => o.weight)}, widow readings ${rs.filter((o) => o.widow).length}; `
+      + `readings that MET take ${takes}, met give ${gives}; verdicts ${JSON.stringify(by)}`;
+  };
+  console.log(`A11a's odds at every re-read the core actually took (§4.10: own and foe inside 46 m of the slot centre):`);
+  console.log(`  --- the three windows with no crossing ---`);
+  for (const k of [...FAIL]) console.log(`  ${line(k)}`);
+  console.log(`  --- every other window, for contrast ---`);
+  for (const k of [...new Set(a11odds.map((o) => `${o.seed}|${o.sd}`))].filter((k) => !FAIL.has(k)).sort())
+    console.log(`  ${line(k)}`);
+  // and the own - foe spread on the failing side, which is the quantity TAKE is a threshold on
+  const spread = (ks) => {
+    const d = a11odds.filter((o) => ks.has(`${o.seed}|${o.sd}`) && !o.widow).map((o) => o.own + o.weight - o.foe).sort((a, b) => a - b);
+    return d.length ? `n ${d.length}, min ${d[0]}, median ${d[d.length >> 1]}, max ${d[d.length - 1]}, `
+      + `at or over the take lead of 3: ${d.filter((x) => x >= 3).length}` : 'none';
+  };
+  const other = new Set(a11odds.map((o) => `${o.seed}|${o.sd}`).filter((k) => !FAIL.has(k)));
+  console.log(`  own + weight - foe, the quantity TAKE is a threshold on:`);
+  console.log(`    failing windows: ${spread(FAIL)}`);
+  console.log(`    the rest:        ${spread(other)}`);
 }
 if (A11AWHY) {
   const tot = Object.values(a11aKind).reduce((a, b) => a + b, 0) || 1;
