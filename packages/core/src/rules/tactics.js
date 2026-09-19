@@ -608,8 +608,20 @@ export function coverEligible(s, base, side, postX, postZ, seamZ, place, held = 
     if (abs(dx) > reach || abs(dz) > reach) return false;
     if (length2(dx, dz) > reach) return false;
   }
+  // THE CLAMP PICKS A HOLE; IT DOES NOT TAKE ONE BACK (the owner 2026-09-19, on the measurement below). The clamp
+  // `[seam - side x 40, seam + side x 8]` says which places a man may be SENT to. Applied again every tick to a
+  // claim he already holds, it takes the hole away from under him while he is still walking to it - and it does so
+  // by a hair. Measured on the §11.3 drive, two seeds: 106 clamp deaths, 105 of them breaking the FRONT bound, by
+  // a mean of 0.08 m and a p90 of 0.13 m, after the seam had walked a mean 5.45 m. The place itself does not move
+  // at all (0.00 m over eight seconds). At the moment the hole is taken he still has 35.3 m to cover - 12.6 s at
+  // his own gait - so he never arrives, and 91 of 151 lip claims and 15 of 60 wreck claims end that way.
+  //
+  // So a HELD claim is not re-clamped: he is given the walk. Everything else about a held claim is unchanged - the
+  // living-tank rule below still takes it (§0's fault list names "a man holds ... one inside 3 m of a living
+  // tank"), and `coverPlace` returning null still ends it when the wreck respawns or the crater expires. A tank is
+  // not here at all: §11.3 is the men's, and armour keeps its own push and clamp in army.js.
   const depth = Math.imul(sub(place.z, seamZ), side);                   // + is his own side of the seam
-  if (depth > CLAMP_FRONT || depth < -CLAMP_BACK) return false;
+  if (!held && (depth > CLAMP_FRONT || depth < -CLAMP_BACK)) return false;
   for (let i = 0; i < UNITS; i++) {
     if ((i & ARMOUR_MASK) !== 0) continue;
     const b = O_UNITS + Math.imul(i, U_WORDS);
