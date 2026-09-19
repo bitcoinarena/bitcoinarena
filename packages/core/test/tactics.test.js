@@ -72,7 +72,7 @@ test('a widow does not rush: its partner dead, it holds overwatch on the team\'s
   const post = T.postOf(s, L.O_TACTICS, bounder, s[L.O_TICK]);
   assert.equal(post.bounding, false, 'the widow was still sent forward on the bound');
   assert.equal(post.depth, T.OVERWATCH_LINE - post.push, 'the widow was not given its team\'s (pushed) overwatch line');
-  assert.equal(post.x, T.slotX(s[L.O_TACTICS + T.TAC_SLOT + teamWord(bounder)]) + (T.teamOf(bounder).member === 0 ? -T.PAIR_HALF : T.PAIR_HALF),
+  assert.equal(post.x, T.pairX(s[L.O_TACTICS + T.TAC_SLOT + teamWord(bounder)], T.teamOf(bounder).member),
     'the widow left its team\'s slot');
   for (let t = 0; t < 900 && alive(s, bounder) && !alive(s, partner); t++) {
     step(st, 0, 0, 0, ONE, 0);
