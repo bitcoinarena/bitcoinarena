@@ -606,6 +606,18 @@ export const coverClaim = (s, base, index) => s[coverWord(base, index)] & COVER_
 export const POSTURE_STAND = 0, POSTURE_PRONE = 1, POSTURE_COVER = 2;
 const POSTURE_MASK = 3;
 export const coverPosture = (s, base, index) => (s[coverWord(base, index)] >>> COVER_POSTURE_SHIFT) & POSTURE_MASK;
+
+/**
+ * Set the CLAIM without touching the posture bits above it. The claim pass runs at the top of the infantry step
+ * and the posture pass at the end of the movement pass, with the rifle firing in between - so a claim written as
+ * a whole word wiped §11.4's posture to STAND (0) for exactly the men who had just taken a hole, and the rifle
+ * shot at them for the rest of that tick as if they were standing in the open. Measured as part of the 2.8% of
+ * man-ticks where the written word disagreed with the rule's own derivation.
+ */
+export function setCoverClaim(s, base, index, place) {
+  const w = coverWord(base, index);
+  s[w] = ((s[w] & ~COVER_PLACE_MASK) | (place & COVER_PLACE_MASK)) | 0;
+}
 export function setCoverPosture(s, base, index, posture) {
   const w = coverWord(base, index);
   s[w] = ((s[w] & ~(POSTURE_MASK << COVER_POSTURE_SHIFT)) | ((posture & POSTURE_MASK) << COVER_POSTURE_SHIFT)) | 0;
@@ -692,7 +704,7 @@ export function coverClaims(s, base, tick, postOfMan, seamAt, layout = null, shi
     for (let i = 0; i < UNITS; i++) {
       if ((i & ARMOUR_MASK) === 0) continue;                       // armour takes no cover: §11.3 is the men's
       const b = O_UNITS + Math.imul(i, U_WORDS);
-      if (s[b + U_STATE] === 0 || s[b + U_HP] <= 0) { s[coverWord(base, i)] = COVER_NONE; continue; }
+      if (s[b + U_STATE] === 0 || s[b + U_HP] <= 0) { setCoverClaim(s, base, i, COVER_NONE); continue; }
       if ((s[b + 2] < 0 ? -1 : 1) !== side) continue;
       order.push({ i, key: mix(hash, 600 + i) >>> 1 });
     }
@@ -705,7 +717,7 @@ export function coverClaims(s, base, tick, postOfMan, seamAt, layout = null, shi
       const post = postOfMan(i);
       const place = coverPlace(s, held, side, layout, shift);
       if (place && coverEligible(s, base, side, post.x, post.z, seamAt(post.x) | 0, place, true)) taken.add(held);
-      else s[coverWord(base, i)] = COVER_NONE;
+      else setCoverClaim(s, base, i, COVER_NONE);
     }
     for (const { i } of order) {
       if (coverClaim(s, base, i) !== COVER_NONE) continue;           // keeps what it has
@@ -721,7 +733,7 @@ export function coverClaims(s, base, tick, postOfMan, seamAt, layout = null, shi
         if (best === COVER_NONE || d < bestD) { best = id; bestD = d; }
       }
       if (best !== COVER_NONE) { taken.add(best); }
-      s[coverWord(base, i)] = best;
+      setCoverClaim(s, base, i, best);
     }
   }
 }
