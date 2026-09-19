@@ -94,6 +94,10 @@ export const RIFLE_HIT_PER_MIL = 45;        // 0.045 per shot
 // infantry. See test/vectors/csharp-army.json.
 const ARMOUR_WALK = 445645;      // 6.8 m/s
 const RIFLE_WALK = 182714;       // 2.788 m/s
+// §11.5: a pinned man crawls at 0.5 m/s - one sixth of a walk - toward his claimed place if he has one, else
+// toward his post. It is the SAME walk to the SAME target at a sixth of the pace, not a second movement path, and
+// at 0.0083 m a tick it sits under §11.4's 0.01 m step probe, so a pinned man is never STAND.
+export const RIFLE_CRAWL = 32768;   // 0.5 m/s: 0.0083 m a tick
 
 // A rifleman's own pace, as a factor on that.
 //
@@ -612,7 +616,10 @@ export function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, half
   // FIRE AND MOVEMENT (WAR_TACTICS.md §11.2): the halt clock is the FIRE TEAM's, handed in on `u.halted` by sim.js, so
   // four men rest and halt together. A caller that does not set it gets the man's own clock, as before.
   const still = !u.armour && (u.halted === undefined ? standingStill(index, tick | 0) : u.halted);
+  // §11.5: pinned beats the halt clock's zero and beats his own pace - he is going nowhere fast, but a man in the
+  // open still crawls toward cover rather than lying in the middle of it.
   const walk = u.armour ? ARMOUR_WALK
+             : u.pinned ? RIFLE_CRAWL
              : still ? 0 : mulFast(RIFLE_WALK, paceOf(index));
   // Each unit holds at its OWN distance, scattered about the mean.
   //

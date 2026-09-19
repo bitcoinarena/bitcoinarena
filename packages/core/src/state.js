@@ -232,7 +232,7 @@ export const craterBase = (i) => O_CRATERS + Math.imul(i, C_WORDS);
  * last scoot, and role clock - rules/tactics.js reads and writes them. Appended, so no offset above moves.
  */
 export const O_TACTICS = O_CRATERS + Math.imul(MAX_CRATERS, C_WORDS);
-export const TACTICS_WORDS = 212;   // rules/tactics.js TAC_WORDS: 140 plus §11.3's 72 cover words
+export const TACTICS_WORDS = 230;   // rules/tactics.js TAC_WORDS: 140, §11.3's 72 cover words, §11.5's 18 suppression words
 
 export const WORDS = O_TACTICS + TACTICS_WORDS;
 
