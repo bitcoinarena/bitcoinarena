@@ -68,7 +68,19 @@ try {
   if (!out) { await shot('00-never-left-the-bay.png'); throw new Error('never left the bay'); }
   say(`drove out ${(await drove(4000)).toFixed(0)} m`);
   await wait(1500);
-  for (let i = 0; i < 3; i++) { await shot(`cab-${i}.png`); await wait(1200); }
+  // THE CLIENT'S NUMBER AGAINST THE CORE'S, at the same instant, with the page's own chrome hidden so the shot is
+  // the canvas alone. chartView CH_LAST 4 / CH_UNIT 14: the last price the core's tape is actually running on.
+  await ev(`(function(){var c=document.querySelector('canvas');document.querySelectorAll('body *').forEach(function(el){
+    if(el===c||el.contains(c))return; el.style.setProperty('visibility','hidden','important');});})()`);
+  await wait(600);
+  for (let i = 0; i < 3; i++) {
+    const c = await ev(`(function(){var b=window.unityInstance.Module.blwp;var o=new Int32Array(4096);
+      b.core.chartView(b.st,0,o);return JSON.stringify({last:o[4],unit:o[14],samples:o[23],state:b.st.i32[23]});})()`);
+    const j = c ? JSON.parse(c) : null;
+    if (j) say(`core tape at shot ${i}: $${(j.last / j.unit).toFixed(2)}  samples ${j.samples}`);
+    await shot(`cab-${i}.png`);
+    await wait(1500);
+  }
   say(`shots in ${OUT}`);
   writeFileSync(join(OUT, 'geom.json'), JSON.stringify(geom, null, 1));
 } catch (e) { say(`FAILED ${e && e.message ? e.message : e}`); process.exitCode = 1; }
