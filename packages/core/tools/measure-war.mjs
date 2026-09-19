@@ -69,7 +69,15 @@ const a11aKind = {}, a11aWindows = [];
 const A11ODDS = process.argv.includes('--a11odds');
 const a11odds = [];                               // one row per odds reading the core took
 const a11due = {}, a11on = {};                    // per seed|side: re-reads due, and those that got past gate (a)
-let curSeed = 0;
+let curSeed = 0, curSt = null, curTick = 0;
+// A11a's LAYOUT PRINT (2026-09-19). Asked: do side +1's slots sit under the steep climb, where a 40 m gap in x is
+// 70 m in three dimensions past the 46 m reach? Printed with own and foe beside it. SAID PLAINLY IN THE NUMBERS:
+// §4.10's odds are a TWO-DIMENSIONAL test - pressure() compares dx and dz against `reach` and never reads a height -
+// so the climb cannot enter own or foe by any path in the code. The elevation columns are here because the question
+// was asked and because they are A9's quantity at these same slots; they are not a term in this verdict, and this
+// tool does not couple them into one.
+const A11GEOM = process.argv.includes('--a11geom');
+const a11geom = [];
 const NOGATE_A = process.argv.includes('--nogate-a') || process.argv.includes('--nogates');
 const NOGATE_B = process.argv.includes('--nogate-b') || process.argv.includes('--nogates');
 const SHARE = process.argv.includes('--share');
@@ -179,6 +187,32 @@ globalThis.__W = {
     add(`P verdict ${['none', 'take', 'give', 'drift'][v] || v}`);
     if (A11ODDS) a11odds.push({ seed: curSeed, sd: w < 6 ? '-1' : '1', team: w % 6, own: own | 0, foe: foe | 0,
       weight: weight | 0, widow: !!widow, v, push: push / ONE, ceiling: ceiling / ONE });
+    if (A11GEOM && curSt) {
+      const sg = curSt.i32, side = w < 6 ? -1 : 1, team = w % 6, M = (q) => q / ONE;
+      const px = T.slotX(sg[L.O_TACTICS + T.TAC_SLOT + w]);
+      const pz = seamOfCore(curSt, px);
+      const gSeam = groundAt(curSt, px, pz);
+      // the seam sample 40 m away in x, which is A9's own reader: the seam's z there, and the ground under it
+      const sx = px + Math.imul(40, ONE), sz = seamOfCore(curSt, sx), gS = groundAt(curSt, sx, sz);
+      const k0 = Math.imul(team, 2);
+      const i0 = (k0 << 3) | (side < 0 ? 0 : 4), i1 = ((k0 + 1) << 3) | (side < 0 ? 0 : 4);
+      const hull = sg[L.O_UNITS + Math.imul(i0, L.U_WORDS) + L.U_STATE] !== 0 ? i0 : i1;
+      const hb = L.O_UNITS + Math.imul(hull, L.U_WORDS);
+      const hx = sg[hb + L.U_X], hz = sg[hb + L.U_Z], hg = groundAt(curSt, hx, hz);
+      const d3 = Math.hypot(M(sx - hx), M(sz - hz), M(gS - hg));
+      // AND HOW MANY HULLS EACH SIDE HAD AT ALL, at this same tick. `own` counts living tanks inside 46 m, so a low
+      // `own` is either a thinner side or the same side spread wider. One column tells those two apart.
+      let liveOwn = 0, liveFoe = 0;
+      for (const i of ARMOUR) {
+        if (sg[L.O_UNITS + Math.imul(i, L.U_WORDS) + L.U_STATE] === 0) continue;
+        if (T.teamOf(i).side === side) liveOwn++; else liveFoe++;
+      }
+      a11geom.push({ seed: curSeed, sd: String(side), team, own: own | 0, foe: foe | 0, liveOwn, liveFoe,
+        slotX: M(px), seamZ: M(pz), seamG: M(gSeam), sampleG: M(gS),
+        slope: (M(gS) - M(gSeam)) / 40,                 // metres of rise per metre of x, over the 40 m sample
+        depthBelow: M(gSeam) - M(hg),                   // how far the hull stands below the seam it holds
+        d3, past46: d3 > 46 });
+    }
     if (v === was) add('P confirmed'); else add('P not confirmed');
     if (v === 2) { add('P give read'); if (v === was) add('P give confirmed'); if (push <= 0) add('P give at or below zero'); } },
   stepped(w, push, verdict) { if (!mainPass) return; add('P stepped');
@@ -197,6 +231,7 @@ mainPass = true;
 for (const seed of SEEDS) {
   curSeed = seed;
   const st = init(seed), s = st.i32;
+  curSt = st;
   const alive = (i) => s[base(i) + L.U_STATE] !== 0;
   add('13a seeds'); if (T.slotOrder(s[L.O_TACTICS], -1).join() !== T.slotOrder(s[L.O_TACTICS], 1).join()) add('13a orders differ');
   const lastDir = new Map(), lastFlip = new Map(), prevPost = new Map();
@@ -217,6 +252,7 @@ for (const seed of SEEDS) {
     haltSuppressedNow.clear();
     step(st, 0, 0, 0, ONE, 0);
     const tick = s[L.O_TICK];
+    curTick = tick;
     const liveT = ARMOUR.filter(alive), liveM = RIFLES.filter(alive);
     const mvOf = (i) => { const q = pre.get(i); return q ? Math.hypot(s[base(i)] - q[0], s[base(i) + 1] - q[1]) / ONE : 0; };
 
@@ -830,6 +866,37 @@ if (H1WHY && h1why.length) {
     + `bounding ${(100 * bounding / h1why.length).toFixed(0)}%; standing still ${(100 * still / h1why.length).toFixed(0)}%; `
     + `stepping toward the hold ${(100 * towards / h1why.length).toFixed(0)}%; `
     + `never yet stood on a post ${(100 * h1why.filter((r) => r.column).length / h1why.length).toFixed(0)}%`);
+}
+if (A11GEOM) {
+  const FAIL = new Set(['2|1', '4|1', '5|1']);
+  const mean = (rs, f) => rs.length ? (rs.reduce((a, o) => a + f(o), 0) / rs.length) : NaN;
+  const keys = [...new Set(a11geom.map((o) => `${o.seed}|${o.sd}`))].sort();
+  console.log(`A11a's slots at the same re-reads: where they stand, what the seam does there, and the odds beside it.`);
+  console.log(`  NOTE, from the code: §4.10 compares dx and dz against the 46 m reach and reads NO height, so the`);
+  console.log(`  climb columns cannot enter own or foe. They are A9's quantity at these slots, printed, not coupled.`);
+  console.log(`  window  n   slotX(m)  seamZ(m)  slope(m/m)  depth below seam(m)  3-D to the 40 m sample(m)  past 46 m  own  foe`);
+  for (const k of keys) {
+    const rs = a11geom.filter((o) => `${o.seed}|${o.sd}` === k);
+    console.log(`  ${FAIL.has(k) ? '*' : ' '}${k.padEnd(6)} ${String(rs.length).padStart(3)}  `
+      + `${mean(rs, (o) => o.slotX).toFixed(1).padStart(7)}  ${mean(rs, (o) => o.seamZ).toFixed(1).padStart(7)}  `
+      + `${mean(rs, (o) => o.slope).toFixed(3).padStart(9)}  ${mean(rs, (o) => o.depthBelow).toFixed(2).padStart(17)}  `
+      + `${mean(rs, (o) => o.d3).toFixed(1).padStart(23)}  ${String(rs.filter((o) => o.past46).length).padStart(8)}  `
+      + `${mean(rs, (o) => o.own).toFixed(2)}  ${mean(rs, (o) => o.foe).toFixed(2)}`);
+  }
+  const grp = (want) => a11geom.filter((o) => FAIL.has(`${o.seed}|${o.sd}`) === want);
+  for (const [label, rs] of [['the three failing windows', grp(true)], ['every other window    ', grp(false)]]) {
+    const steep = rs.filter((o) => Math.abs(o.slope) >= 0.57).length;
+    console.log(`  ${label}: n ${rs.length}, mean slope ${mean(rs, (o) => Math.abs(o.slope)).toFixed(3)} m/m, `
+      + `readings on a climb of 0.57 m/m or steeper ${steep} = ${(100 * steep / rs.length).toFixed(1)}%, `
+      + `mean depth below the seam ${mean(rs, (o) => o.depthBelow).toFixed(2)} m, `
+      + `mean 3-D to the sample ${mean(rs, (o) => o.d3).toFixed(1)} m, past 46 m `
+      + `${rs.filter((o) => o.past46).length} = ${(100 * rs.filter((o) => o.past46).length / rs.length).toFixed(1)}%, `
+      + `mean own ${mean(rs, (o) => o.own).toFixed(2)} foe ${mean(rs, (o) => o.foe).toFixed(2)}`);
+    console.log(`  ${label}: hulls ALIVE on the side at those same ticks ${mean(rs, (o) => o.liveOwn).toFixed(2)} `
+      + `against the enemy's ${mean(rs, (o) => o.liveFoe).toFixed(2)}; share of the side's living hulls that were `
+      + `inside the 46 m ${(100 * mean(rs, (o) => o.own) / mean(rs, (o) => o.liveOwn)).toFixed(1)}%, `
+      + `of the enemy's ${(100 * mean(rs, (o) => o.foe) / mean(rs, (o) => o.liveFoe)).toFixed(1)}%`);
+  }
 }
 if (A11ODDS) {
   // TAKE is `own + weight >= foe + 3`, GIVE is `foe >= own + 1 + weight` (tactics.js PUSH_TAKE_LEAD / PUSH_GIVE_LEAD).
