@@ -529,6 +529,65 @@ test('a tank posted in a crater goes around it: the post slides along its line, 
   assert.ok(worstStay < 60 * 60, `a tank worked one lip for ${(worstStay / 60).toFixed(1)} s`);
 });
 
+test('men take the cover that stands near the line: wrecks, craters and candle lips, claimed and walked to (§11.3)', async () => {
+  const { submitLiquidation } = await import('../src/sim.js');
+  const C = await import('../src/rules/candles.js');
+  const Q = ONE, isMan = (i) => (i & L.ARMOUR_MASK) !== 0;
+  const placesFor = (st, s, side) => {
+    const out = [];
+    for (let i = 0; i < L.UNITS; i++) {                       // a wreck keeps the place it died
+      if (isMan(i)) continue;
+      const b = L.O_UNITS + i * L.U_WORDS;
+      if (s[b + L.U_STATE] !== 0 || s[b + L.U_HP] > 0) continue;
+      out.push({ x: s[b] / Q - 2, z: s[b + 1] / Q + side * 3.6 }, { x: s[b] / Q + 2, z: s[b + 1] / Q + side * 3.6 });
+    }
+    for (let k = 0; k < L.MAX_CRATERS; k++) {                 // a crater's four, on the near lip
+      const b = L.craterBase(k);
+      if (s[b + L.C_R] <= 0 || s[b + L.C_ROUNDS] <= 0) continue;
+      const cx = s[b + L.C_X] / Q, cz = s[b + L.C_Z] / Q, r = s[b + L.C_R] / Q - 1;
+      for (const a of [-50, -20, 20, 50].map((d) => (d * Math.PI) / 180))
+        out.push({ x: cx + r * Math.sin(a), z: cz + side * r * Math.cos(a) });
+    }
+    const shift = st.candleShift / Q, ramp = C.CANDLE_RAMP / Q + 0.5;
+    for (let c = 0; c < C.CANDLES; c++) {                     // a candle lip, which scrolls with the chart
+      const b = c * C.CL_WORDS;
+      const z0 = st.candles[b + C.CL_Z0] / Q, z1 = st.candles[b + C.CL_Z1] / Q;
+      if (z1 - z0 <= 0) continue;
+      out.push({ x: st.candles[b + C.CL_X] / Q - shift, z: (side < 0 ? z0 : z1) - side * ramp });
+    }
+    return out;
+  };
+  let ticks = 0, onPlace = 0, held = 0, manTicks = 0;
+  for (const seedWord of [1, 2]) {
+    const st = init(seedWord), s = st.i32;
+    for (let t = 0; t < 900; t++) step(st, ONE, 0, 0, 0, 0);
+    for (let t = 0; t < 2400; t++) {
+      if (t % 1800 === 300) submitLiquidation(st, 4000000);
+      step(st, ONE, 0, 0, 0, 0);
+      ticks++;
+      const pb = placesFor(st, s, -1), pr = placesFor(st, s, 1);
+      let on = false;
+      for (let i = 0; i < L.UNITS; i++) {
+        if (!isMan(i)) continue;
+        const b = L.O_UNITS + i * L.U_WORDS;
+        if (s[b + L.U_STATE] === 0 || s[b + L.U_HP] <= 0) continue;
+        manTicks++;
+        if (T.coverClaim(s, L.O_TACTICS, i) !== T.COVER_NONE) held++;
+        const mine = s[b + L.U_SIDE] < 0 ? pb : pr;
+        if (mine.some((p) => Math.hypot(s[b] / Q - p.x, s[b + 1] / Q - p.z) <= 0.5)) on = true;
+      }
+      if (on) onPlace++;
+    }
+  }
+  const share = 100 * onPlace / Math.max(ticks, 1), holding = 100 * held / Math.max(manTicks, 1);
+  console.log(`  cover: a man on a place on ${share.toFixed(1)}% of ticks, ${holding.toFixed(1)}% of man-ticks holding a claim`);
+  // §0's row: >= 70% of the ticks on which a place is free within 12 m of a post. Measured before the letter: 1.0%
+  // with no places at all, 12.9% with wrecks and craters only, 89.8% once the candle lips - the places that stand
+  // where the line is - were counted too. The bar is the doctrine's, not the measurement's.
+  assert.ok(share >= 70, `men are on a cover place on only ${share.toFixed(1)}% of ticks`);
+  assert.ok(holding > 20, `only ${holding.toFixed(1)}% of man-ticks hold a claim`);
+});
+
 test('hull-down hysteresis: a held crest changes only on a 60-tick search or for a new post, and only for >= 0.3 m more rise (§4.1)', async () => {
   const { crestRise } = await import('../src/rules/army.js');
   let switches = 0, keptForLess = 0, fresh = 0, betweenKept = 0;

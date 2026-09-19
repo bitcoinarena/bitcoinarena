@@ -25,6 +25,7 @@
 import { init, step, submitLiquidation } from '../src/sim.js';
 import { riflePost, RIFLE_STANDOFF } from '../src/rules/army.js';
 import { coverClaim, COVER_NONE } from '../src/rules/tactics.js';
+import * as C from '../src/rules/candles.js';
 import * as L from '../src/state.js';
 
 const ONE = 65536, Q = ONE;
@@ -34,8 +35,19 @@ const REACH = 12;                        // §11.3's eligibility, metres from th
 const isMan = (i) => (i & L.ARMOUR_MASK) !== 0;
 const ANG = [-50, -20, 20, 50].map((d) => (d * Math.PI) / 180);
 
-const placesFor = (s, side) => {
+const placesFor = (s, side, st) => {
   const out = [];
+  // §11.3's third kind, added to this tool when the core got them: one place along each body's near edge, at the
+  // foot of the ramp on the man's side and half a metre out, scrolling with the chart.
+  if (st && st.candles && !st.noCandleField) {
+    const shift = st.candleShift / Q, ramp = C.CANDLE_RAMP / Q + 0.5;
+    for (let c = 0; c < C.CANDLES; c++) {
+      const b = c * C.CL_WORDS;
+      const z0 = st.candles[b + C.CL_Z0] / Q, z1 = st.candles[b + C.CL_Z1] / Q;
+      if (z1 - z0 <= 0) continue;
+      out.push({ x: st.candles[b + C.CL_X] / Q - shift, z: (side < 0 ? z0 : z1) - side * ramp });
+    }
+  }
   for (let i = 0; i < L.UNITS; i++) {                       // wrecks
     if (isMan(i)) continue;
     const b = L.O_UNITS + i * L.U_WORDS;
@@ -72,7 +84,7 @@ for (const seed of SEEDS) {
       const bb = L.O_BOMBS + k * L.B_WORDS;
       if (s[bb + L.B_STATE] !== 0) bombs.push({ k, x: s[bb + L.B_X] / Q, z: s[bb + L.B_Z] / Q });
     }
-    const placeBull = placesFor(s, -1), placeBear = placesFor(s, 1);
+    const placeBull = placesFor(s, -1, st), placeBear = placesFor(s, 1, st);
 
     // the row's own question, on the state as it stands this tick. TWO READINGS, because they answer different
     // things: from where the man STANDS (how much cover is around the fighting) and from his POST, which is what

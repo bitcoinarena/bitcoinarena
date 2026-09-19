@@ -3226,6 +3226,386 @@ function threatAt(units, count, x, z) {
   return clamp(div(threat, THREAT_FOR_FULL), 0, ONE);
 }
 
+// ---- rules/frontline.js
+// Where the two armies meet, ported from PriceHistory.FrontlineZ.
+//
+// The seam is the price tape laid across the map: the oldest sample sits at the
+// far -x end, the newest at +x, and the line's z is how far the price has moved
+// from the window's midpoint. A rising market pushes the bulls forward.
+
+
+const SAMPLES = 64;
+
+/**
+ * The seam's reach either side of z = 0 as a share of the half depth, Q16.16: 0.53, +-45 m (WAR_TACTICS.md §4.15, the owner
+ * 2026-09-17 09:40: a smaller static chart, so the relief outside the band stands behind the lines). It was 0.72 (C#'s
+ * +-61.2 m, see `frontlineZ`); 0.53 x 65536 = 34734.08.
+ */
+const FRONT_DEPTH = 34734;
+
+/**
+ * THE CHART'S X (WAR_TACTICS.md §4.15, seam remap ruled 2026-09-17): the tape is laid over the candle field, not the old
+ * +-130 m map, so the fight line's price at an x is read from the samples of the candle standing at that x. 32 slots of
+ * FIELD_SLOT from FIELD_X0 (spawn ruling B: first face 26 m past the spawn centre, last slot ending before the miner face);
+ *
+ * RULING B REFITTED TO THE MEASURED DOOR (the owner 2026-09-19 13:09 and his pick after the measurement). The "miner face"
+ * the ruling named is x 108.4, which is where the MODEL'S ORIGIN is placed - not where the building begins. Measured
+ * out of bitcoin_miner_megastructure.glb, through DeliveryGate's 180-degree turn and (1, 0.45, 1) scale, the miner
+ * stands on the ground from x 53.8 m (power cables), with feet at 62.8, legs at 66.9 and its lower mass from 64.4;
+ * its entry corridor, |z| <= 34 m, is clear of all of that from x 90.4 m east. So the old fit put the last nine
+ * slots and 24 m of road INSIDE the building (miner-entrance-covered-1309.jpg). The same fit, done against the
+ * measured door instead of the origin: the same 32 slots, the same west end, pitch 5.75624 -> 5.18124 m, the last
+ * slot ending at 89.99983 m. The miner does not move and the map's edges do not move. MINER_DOOR_X in map.js is the
+ * door itself, and the road ribbon ends there too - Unity draws what the core says.
+ * slot k holds the round's candle whose samples are tape k*2 + (taken & 1) and the next, so its centre is that pair's middle.
+ * Measured before: at a candle's centre the seam read the tape up to 9.7 samples away, and HUD YOU sat on the wrong candle
+ * for 28-29 of 32.
+ */
+const FIELD_X0 = -4967627;                  // -75.79998 m
+const FIELD_SLOT = 339558;                  // 5.18124 m; 32 slots end at 89.99983 m, at the miner's door
+const TAPE_HALF = 32768, TAPE_LAST_Q = Math.imul(SAMPLES - 1, ONE);
+
+/**
+ * THE SCROLL (§4.15 movement, the owner 2026-09-17 13:49), in samples, Q16.16: how far the chart has slid toward the post
+ * office since its slots last lined up. One sample is half a slot (2.878 m at the spawn-B pitch) over the 300 ticks a
+ * sample lasts, 0.576 m/s; held at a whole sample when the next one is late. The pairing moves a candle one whole slot
+ * every second sample, so the slide runs 0..2 samples between those moves - `(1 - taken & 1)` whole samples plus the
+ * fraction - and every sample tick lands exactly where the slide had got to: no jump.
+ */
+function scrollOf(taken, tick, sampleTick) {
+  const frac = clamp(div(sub(tick, sampleTick), 300), 0, ONE);      // ticks are whole: (tick - sampleTick) / 300 in Q16
+  return add(Math.imul(1 - (taken & 1), ONE), frac);
+}
+
+/** The tape position (Q16.16 samples, unclamped) a world x reads, with `taken` samples submitted and the chart `scroll`ed. */
+function tapeAtX(x, taken, scroll = 0) {
+  return add(add(add(Math.imul(taken & 1, ONE), Math.imul(divRound(sub(x, FIELD_X0), FIELD_SLOT), 2)), -TAPE_HALF), scroll);
+}
+
+/** The world x of a tape position (Q16.16 samples): the inverse of `tapeAtX`. */
+function xAtTape(q, taken, scroll = 0) {
+  return add(FIELD_X0, mulFast(sub(add(sub(q, scroll), TAPE_HALF), Math.imul(taken & 1, ONE)) >> 1, FIELD_SLOT));
+}
+
+/**
+ * Frontline z at a world x. `hist` is an Int32Array of SAMPLES prices in
+ * Q16.16 (scaled however the caller likes - only ratios matter), `halfX` and
+ * `halfZ` are the map's half extents in Q16.16.
+ */
+/**
+ * The tape, box-averaged over WINDOW samples, edges held.
+ *
+ * WHY THERE IS A FILTER HERE AT ALL. The tape is a price series and the raw
+ * function laid it across the map at one sample every 4.13 m, so the "front"
+ * was a price chart, not a line: measured across the map it ran +29.1, +2.6,
+ * +37.6, +5.8, +28.1, -8.6, +8.8, -40.5, -28.4 at 22 m steps. A man walking
+ * nine metres sideways saw his goal move sixty. Chasing it, nobody ever
+ * arrived - infantry sat 36.5 m behind a line whose own standoff is 8.
+ *
+ * THE WIDTH IS DERIVED, NOT PICKED. A rifleman closes in z at 3.4 m/s and
+ * moves in x at 2.4 m/s (`Army.cs:681`), so a goal that slides more than
+ * 3.4/2.4 = 1.42 metres per metre of x runs away faster than he can walk.
+ * Measured over five tapes, the raw slope is 6.00 mean and 14.21 at the 99th
+ * percentile, with 88% of the map above the limit. Box-averaged:
+ *
+ *     N     mean   p99    max   over the limit   amplitude
+ *      1    6.00  14.21  14.35      88.0%        +-56.7 m
+ *      9    0.93   2.66   2.80      22.9%        +-38.5 m
+ *     13    0.56   1.80   1.93       3.7%        +-42.7 m
+ *     21    0.42   1.20   1.27       0.0%        +-39.5 m
+ *
+ * 21 is the first width where the 99th percentile AND the maximum are both
+ * under 1.42 and no part of the map is above it. Wider only costs amplitude:
+ * the front must still move with the market, and at 21 it still swings
+ * +-39.5 m across the map.
+ *
+ * The normalisation below deliberately keeps the RAW window's low and high,
+ * not the smoothed one's. Renormalising against the smoothed range would
+ * re-expand the filtered curve to full scale and put the slope back: measured,
+ * that variant still leaves 9.9% of the map over the limit at N=21.
+ *
+ * C# has no filter. This is not a port of `PriceHistory.FrontlineZ` losing a
+ * term - it is the core refusing to copy a fault: a quantity used as a FRONT
+ * LINE cannot have 4 m resolution and 60 m steps, whatever it was called
+ * upstream.
+ */
+const WINDOW = 21;
+const HALFW = 10;
+
+function smooth(hist, j, older) {
+  let sum = 0;
+  for (let k = j - HALFW; k <= j + HALFW; k++) {
+    // west of the tape: the sample that left it last, fading into the oldest (§4.15 glide); east: the newest, held
+    sum += k < 0 ? older : hist[k > SAMPLES - 1 ? SAMPLES - 1 : k];
+  }
+  // `div`, not a bare `/`: the determinism guard allows the operator only
+  // inside the arithmetic file, and it is right to. Exact here with room to
+  // spare - the largest tape value measured over three seeds and a minute is
+  // 20,099,840, so `sum * ONE` peaks at 2.77e13 against the 9.01e15 where a
+  // double stops counting integers, a factor of 325.
+  return div(sum, Math.imul(WINDOW, ONE));
+}
+
+function frontlineZ(hist, x, halfX, halfZ, taken = 0, scroll = 0, scaleLo = null, scaleHi = null, older = hist[0]) {
+  if (SAMPLES < 2) return 0;
+
+  // position along the tape over the candle field (tapeAtX), held at the tape's ends beyond it
+  // Not clamped to the tape (§4.15 "nothing jumps"): a position clamped at an end reads a fixed tape index while the tape
+  // moves under it - 3.6 m at x 102 on every sample. Past the ends `smooth` holds the edges, flat by HALFW + 1 samples out.
+  const at = clamp(tapeAtX(x, taken, scroll), Math.imul(-HALFW - 1, ONE), Math.imul(SAMPLES + HALFW, ONE));
+  const i = at >> 16;
+  const f = at & 65535;
+
+  const a = smooth(hist, i, older), b = smooth(hist, i + 1, older);
+  const price = add(a, mulFast(sub(b, a), f));
+
+  // the window's own range decides the scale, so a quiet market still moves
+  let lo = hist[0], hi = hist[0];
+  for (let k = 1; k < SAMPLES; k++) { lo = min(lo, hist[k]); hi = max(hi, hist[k]); }
+  if (scaleLo !== null) { lo = scaleLo; hi = scaleHi; }   // the window lerped over the sample (§4.15 rescale)
+  const span = sub(hi, lo);
+  if (span <= 0) return 0;
+
+  // -1 .. +1 about the midpoint, then C#'s own share of the map's half depth.
+  //
+  // 43690 stood here - two thirds - and `PriceHistory.FrontlineZ:128` returns
+  // `(n - 0.5) * worldDepth * 0.72`. With `n` in [0, 1] that is +-0.36 of the
+  // FULL depth, and `MempoolTerrain` has width 260 and depth 170, which are
+  // exactly twice the core's HALF_X 130 and HALF_Z 85. So C#'s amplitude is
+  // 0.72 of the HALF depth and the core's was 0.6667 of it: the same quantity
+  // in the same units, off by 8%, and +-56.7 m where C# has +-61.2 m.
+  //
+  // That 3.1 m of amplitude is depth C# MEANS, not tape noise, so it comes
+  // back. The other 18.8 m of the gap to C# is the jag this file filters out
+  // on purpose - 86% of the difference - and it stays out: a front a man
+  // cannot close on is not a front, whatever its amplitude.
+  //
+  // It changes no envelope quantity. Both verdicts are measured under
+  // `--seam0`, where the tape is flat, `span` is zero and this function
+  // returns 0 before it ever reaches the scale - 68/72 air off and 65/72 air
+  // on, identical to the digit with either constant. This is a wrong number
+  // made right, not a number tuned to a test.
+  const t = sub(div(mulFast(sub(price, lo), Math.imul(2, ONE)), span), ONE);
+  return mulFast(t, mulFast(halfZ, FRONT_DEPTH));
+}
+
+// ---- rules/candles.js
+// THE CANDLES ARE TERRAIN - WAR_TACTICS.md §4.15, as a RAISED RIBBON (playtest fix 492f128, the owner 2026-09-17 13:51).
+//
+// The tape's candles as a height layer the surface reader adds (`surfaceAt = relief + candles - craters`),
+// on a static chart band levelled to a pancake of the relief. 32 slots of 5.756 m between the apron and the miner (spawn
+// ruling B); each body as wide as its slot, bodies touching; a body runs from its open (the previous candle's close - a
+// continuous staircase) to its close in z, at least 1 m long. The union of the bodies is a ribbon 1 m above the ground,
+// its every free edge a 4 m ramp at 25%: h = H x clamp(d / R, 0, 1), d the distance to the union's boundary. Nothing in
+// the chart is a solid - no wall, no wick collider (w1 withdrawn): the chart is the road. The wick and the glow are light.
+// It moves: the scroll slides it toward the post office half a slot per sample (frontline.js `scrollOf`), and a new
+// window high or low lerps the price-to-z scale over the 300 ticks after the sample. Derived, not hashed: the tape, the
+// samples taken and the market words make it.
+
+
+
+const CANDLES = 32;
+// SPAWN RULING B (the owner 2026-09-17): the truck leaves the apron, then meets the chart. The first x-face stands 26 m past
+// the spawn centre (START_X -100.4 m; the nose is 3.275 m ahead of it, so the nose meets it 22.7 m out, past the 22 m
+// apron), and the 32 slots end at the miner's face (x 108.4 m), so no body stands in the gate throat or across the
+// delivery line (x 114). 32 slots over 184.2 m: pitch 5.75625 m, the corridor kept at 2.8 m, the body what is left.
+// At 6.5 m (x -104..+104) the first face stood 2.2 m BEHIND the spawn and bays 9-12 started on candle 0.
+const CANDLE_X0 = FIELD_X0;                 // -75.79998 m: first face at -74.39998 m, 26.00001 m past START_X
+const CANDLE_SLOT = FIELD_SLOT;             // 5.18124 m; 32 slots end at 89.99983 m, at the miner's door
+const CANDLE_BODY_HALF = FIELD_SLOT >> 1;   // the full slot: bodies touch (492f128, no padding)
+const CANDLE_H = ONE;                       // 1 m plateau (was 2)
+const CANDLE_RAMP = 262144;                 // 4 m ramp: 1 m over 4 m is 25% (was 5 m at 40%)
+const CANDLE_MIN_LENGTH = ONE;              // a doji is built 1 m long
+/**
+ * THE WICK IS GROUND TOO (§4.15, the owner 2026-09-17 15:30: "can I drive through it? that would not be logical"): a ridge
+ * 0.5 m tall with a 1 m top along the slot's centre line, from the body's end out to the high (and from the low to the
+ * body's other end), its sides and far end ramped at 25% (2 m). It runs R into the body, where the body's own ramp is
+ * already past 0.5 m, so ridge and body meet without a step. Nothing stands above 1 m; nothing is passed through.
+ */
+const WICK_RIDGE_H = ONE >> 1;              // 0.5 m
+const WICK_RIDGE_TOP_HALF = ONE >> 1;       // the 1 m top
+const WICK_RIDGE_RAMP = Math.imul(2, ONE);  // 0.5 m over 2 m: 25%
+/**
+ * THE RIBBON'S WORLD ENDS (§4.15 "nothing jumps"): the chart scrolls under fixed edges, ramped like any free edge. On the
+ * whole-slot move (every second sample) slot 0's candle leaves at -x - west of X0 it has slid fully out, so it does not
+ * pop - and a new forming candle is born in slot 31 with no length (`grow`, below), so it does not pop either. The east
+ * end is the field's own: nothing stands past it at any scroll.
+ */
+const CANDLE_WEST = FIELD_X0;
+const CANDLE_EAST = FIELD_X0 + Math.imul(32, FIELD_SLOT);   // 90.00 m, the miner's door (MINER_DOOR_X 90.4)
+const BAND_X = 6815744;                     // |x| <= 104 m
+const BAND_Z = 3538944;                     // |z| <= 54 m: the seam's 45 m, the 5 m ramp, 4 m
+const CONE = 26214;                         // 0.4: the grade the relief may rise toward the band
+const PANCAKE = 9830;                       // 0.15: the relief inside the band, about the apron's height
+const WICK_HALF = 32768;                    // the wick's light column: 1 m wide
+const WICK_HEIGHT = 589824;                 // 9 m tall - light only, never a solid
+
+/** Per candle in `layout`: slot centre x, body z from and to (from < to), 1 when close >= open, the low's z and the high's z. */
+const CL_X = 0, CL_Z0 = 1, CL_Z1 = 2, CL_GREEN = 3, CL_LOW = 4, CL_HIGH = 5, CL_WORDS = 6;
+
+/**
+ * The renderer's view: count, apron height, the forming candle's slot (-1 when every slot is a whole candle; its glow
+ * pulses), the scroll as a shift toward -x in metres (Q16.16; the slots below are unshifted), then per candle x from, x to, z from, z to, plateau height, green, and the wick's
+ * collider past the body: low wick z from (= body z from when none), high wick z to (= body z to when none).
+ */
+const CV_COUNT = 0, CV_APRON = 1, CV_FORMING = 2, CV_SHIFT = 3, CV_FIRST = 4, CV_WORDS = 8;
+const CV_TOTAL = CV_FIRST + Math.imul(CANDLES, CV_WORDS);
+
+/** A price as a ground z, by the seam's own scale (frontlineZ): the window's low at -45 m, its high at +45 m. */
+function zOfPrice(p, lo, span, halfZ) {
+  if (span <= 0) return 0;
+  const t = sub(div(mulFast(sub(p, lo), Math.imul(2, ONE)), span), ONE);
+  return mulFast(t, mulFast(halfZ, FRONT_DEPTH));
+}
+
+/**
+ * The 32 bodies from the tape. Candles pair the round's samples (candle k = round samples 2k, 2k+1, as the HUD's chart
+ * does), so which tape sample starts slot 0 follows the parity of the samples taken: `taken` odd drops the oldest sample
+ * and leaves the newest slot the forming candle.
+ *
+ * A CONTINUOUS STAIRCASE (§4.15, the owner 2026-09-17 13:42; found on the live top-down: scattered pillars with gaps). The
+ * tape is a series of closes: candle c's open is the previous candle's close (sample 2c - 1; the first slot's open is its
+ * own first sample, the one before it has left the tape), its close sample 2c + 1, its low and high the min and max of
+ * those three samples. Every body starts where the last one ended.
+ */
+function candleLayout(tape, taken, halfZ, out, scaleLo = null, scaleHi = null, older = tape[0], grow = ONE) {
+  let lo = tape[0], hi = tape[0];
+  for (let k = 1; k < SAMPLES; k++) { lo = min(lo, tape[k]); hi = max(hi, tape[k]); }
+  if (scaleLo !== null) { lo = scaleLo; hi = scaleHi; }
+  const span = sub(hi, lo), shift = taken & 1;
+  for (let c = 0; c < CANDLES; c++) {
+    const first = min(add(Math.imul(c, 2), shift), SAMPLES - 1), k = min(first + 1, SAMPLES - 1);
+    // slot 0's open before the tape: the sample that left it last (the glide), so the open does not jump when it leaves
+    const zo = zOfPrice(first > 0 ? tape[first - 1] : older, lo, span, halfZ), zc = zOfPrice(tape[k], lo, span, halfZ);
+    const zm = zOfPrice(tape[first], lo, span, halfZ);
+    let z0 = min(zo, zc), z1 = max(zo, zc);
+    // A forming candle is born with its open and its (glided) close on one z: its doji length grows with the glide too,
+    // 0 to 1 m over the sample's 300 ticks, so a new body rises out of the ground instead of standing there at once.
+    const minLength = (shift === 1 && c === CANDLES - 1) ? mulFast(CANDLE_MIN_LENGTH, grow) : CANDLE_MIN_LENGTH;
+    if (sub(z1, z0) < minLength) { z0 = sub((z0 + z1) >> 1, minLength >> 1); z1 = add(z0, minLength); }
+    const b = Math.imul(c, CL_WORDS);
+    out[b + CL_X] = add(add(CANDLE_X0, Math.imul(c, CANDLE_SLOT)), CANDLE_SLOT >> 1);
+    out[b + CL_Z0] = z0;
+    out[b + CL_Z1] = z1;
+    out[b + CL_GREEN] = tape[k] >= (first > 0 ? tape[first - 1] : older) ? 1 : 0;
+    // The low and high over the three samples: the middle one stands past the body when the price went beyond both
+    // ends inside the candle - that is the wick (w1: a collider only there).
+    out[b + CL_LOW] = min(min(zo, zc), zm);
+    out[b + CL_HIGH] = max(max(zo, zc), zm);
+  }
+  return out;
+}
+
+/**
+ * The candle layer's height at a world point, Q16.16: the ribbon. `shift` is the scroll in metres toward -x (the layout's
+ * slots are unshifted). Inside a body: H, less the ramp within R of the union's boundary - its own z-ends, and the parts of
+ * its x-faces its neighbour does not cover (the distance to such a part's nearest end where the neighbour does cover the
+ * point's z). A slot is wider than R, so no boundary two slots away is within reach. 0 off the ribbon.
+ */
+function candleHeightAt(layout, x, z, shift = 0) {
+  if (x <= CANDLE_WEST || x >= CANDLE_EAST) return 0;
+  const xs = add(x, shift);
+  const dx = sub(xs, CANDLE_X0);
+  if (dx < 0 || dx >= Math.imul(CANDLES, CANDLE_SLOT)) return 0;
+  const c = idiv(dx, CANDLE_SLOT), b = Math.imul(c, CL_WORDS);
+  const z0 = layout[b + CL_Z0], z1 = layout[b + CL_Z1];
+  const clip = min(sub(x, CANDLE_WEST), sub(CANDLE_EAST, x));
+  const ridge = wickRidge(layout, b, sub(xs, add(CANDLE_X0, add(Math.imul(c, CANDLE_SLOT), CANDLE_SLOT >> 1))), z, clip);
+  if (z <= z0 || z >= z1) return ridge;
+  let d = min(min(sub(z, z0), sub(z1, z)), clip);
+  const left = sub(xs, add(CANDLE_X0, Math.imul(c, CANDLE_SLOT))), right = sub(Math.imul(CANDLE_SLOT, 1), left);
+  if (left < CANDLE_RAMP) d = min(d, faceDistance(layout, c - 1, z0, z1, z, left));
+  if (right < CANDLE_RAMP) d = min(d, faceDistance(layout, c + 1, z0, z1, z, right));
+  const body = d >= CANDLE_RAMP ? CANDLE_H : mulFast(CANDLE_H, div(d, CANDLE_RAMP));
+  return max(body, ridge);
+}
+
+/**
+ * The wick ridge of the candle at layout offset `b`, at `across` from the slot's centre line and `z`: 0.5 m on its 1 m
+ * top, down 25% to 0 over 2 m at its sides, at its far end (the high, the low) and at the field's fixed ends (`clip`).
+ */
+function wickRidge(layout, b, across, z, clip) {
+  const side = sub(add(WICK_RIDGE_TOP_HALF, WICK_RIDGE_RAMP), abs(across));
+  if (side <= 0) return 0;
+  const z0 = layout[b + CL_Z0], z1 = layout[b + CL_Z1], lo = layout[b + CL_LOW], hi = layout[b + CL_HIGH];
+  let along = -1;
+  // the low wick from the low into the body, the high wick from the body out to the high; each also ramps down toward its
+  // inner end R inside the body, which a short body (a doji) does not reach - no step where it stops
+  if (lo < z0 && z > lo && z < add(z0, CANDLE_RAMP)) along = min(sub(z, lo), sub(add(z0, CANDLE_RAMP), z));
+  if (hi > z1 && z < hi && z > sub(z1, CANDLE_RAMP)) along = max(along, min(sub(hi, z), sub(z, sub(z1, CANDLE_RAMP))));
+  if (along <= 0) return 0;
+  const d = min(min(side, along), clip);
+  return d >= WICK_RIDGE_RAMP ? WICK_RIDGE_H : mulFast(WICK_RIDGE_H, div(d, WICK_RIDGE_RAMP));
+}
+
+/**
+ * Distance from a point `across` metres inside a body's x-face (at height z, the body spanning z0..z1) to the free part of
+ * that face - where the neighbour in slot `n` does not cover. No neighbour: the whole face is free.
+ */
+function faceDistance(layout, n, z0, z1, z, across) {
+  if (n < 0 || n >= CANDLES) return across;
+  const nb = Math.imul(n, CL_WORDS), n0 = layout[nb + CL_Z0], n1 = layout[nb + CL_Z1];
+  if (z <= n0 || z >= n1) return across;                 // the neighbour does not cover this z: the face is free here
+  let best = 2147483647;
+  if (n0 > z0) best = min(best, length2(across, sub(z, n0)));   // the free part below the neighbour
+  if (n1 < z1) best = min(best, length2(across, sub(n1, z)));   // the free part above it
+  return best;
+}
+
+/**
+ * STATIC, NOT DYNAMIC (§4.15, the owner 2026-09-17 09:40): the band is fixed, so no ground moves under a wheel. Inside
+ * |x| <= 104, |z| <= 54 the relief is a pancake - `apron + 0.15 (relief - apron)`, the mempool's swells kept low. Outside
+ * it, within the band's x, the relief is held to a 40% cone from the pancake at the band's edge,
+ * `|h - edge| <= 0.4 (|z| - 54)` (12.4 m at the map's edge), so no ground rises (or falls) toward the band faster than a
+ * ramp does. The edge's pancake is read from `ground`, unlevelled. Beyond |x| = 104 the relief is untouched.
+ */
+function levelled(relief, apron, x, z, ground, halfX, halfZ) {
+  if (abs(x) > BAND_X) return relief;
+  const az = abs(z);
+  if (az <= BAND_Z) return add(apron, mulFast(PANCAKE, sub(relief, apron)));
+  const edgeRelief = heightAtWorld(ground, x, z < 0 ? -BAND_Z : BAND_Z, halfX, halfZ);
+  const edge = add(apron, mulFast(PANCAKE, sub(edgeRelief, apron)));
+  const lim = mulFast(CONE, sub(az, BAND_Z));
+  return clamp(relief, sub(edge, lim), add(edge, lim));
+}
+
+/**
+ * The wick's collider segments of candle `c` past its body, [z from, z to] each, or none: the low wick from the low's z to
+ * the body's low end, the high wick from the body's high end to the high's z. Written into `out` (4 words); returns how many.
+ */
+function wickSegments(layout, c, out) {
+  const l = Math.imul(c, CL_WORDS);
+  let n = 0;
+  if (layout[l + CL_LOW] < layout[l + CL_Z0]) { out[0] = layout[l + CL_LOW]; out[1] = layout[l + CL_Z0]; n = 1; }
+  if (layout[l + CL_HIGH] > layout[l + CL_Z1]) { out[Math.imul(n, 2)] = layout[l + CL_Z1]; out[Math.imul(n, 2) + 1] = layout[l + CL_HIGH]; n = n + 1; }
+  return n;
+}
+
+/** Nothing in the chart is a solid (492f128): no x-face walls, no wick collider. Kept so the caller has one shape. */
+function candleWalls() {
+  return { n: 0, box: new Int32Array(0) };
+}
+
+/** The renderer's words (CV_*): what CandleTerrain meshes. Returns the words written. */
+function writeCandleView(layout, apron, out, taken = 0, shift = 0) {
+  out[CV_COUNT] = CANDLES;
+  out[CV_APRON] = apron;
+  out[CV_SHIFT] = shift;
+  out[CV_FORMING] = (taken & 1) ? CANDLES - 1 : -1;       // odd: the newest slot has one sample
+  for (let c = 0; c < CANDLES; c++) {
+    const l = Math.imul(c, CL_WORDS), b = add(CV_FIRST, Math.imul(c, CV_WORDS));
+    out[b] = sub(layout[l + CL_X], CANDLE_BODY_HALF);
+    out[b + 1] = add(layout[l + CL_X], CANDLE_BODY_HALF);
+    out[b + 2] = layout[l + CL_Z0];
+    out[b + 3] = layout[l + CL_Z1];
+    out[b + 4] = CANDLE_H;
+    out[b + 5] = layout[l + CL_GREEN];
+    out[b + 6] = min(layout[l + CL_LOW], layout[l + CL_Z0]);
+    out[b + 7] = max(layout[l + CL_HIGH], layout[l + CL_Z1]);
+  }
+  return CV_TOTAL;
+}
+
 // ---- rules/tactics.js
 // ARMOUR TACTICS - WAR_TACTICS.md at the repo root is the spec (the owner 2026-09-16 18:20). This file is its
 // implementation; the army step (rules/army.js) only moves a tank to what is handed out here.
@@ -3248,6 +3628,7 @@ function threatAt(units, count, x, z) {
 //   §1.2 THE TRUCK   nothing here reads the truck. The army shoots it; a touch wrecks it (sim.js).
 //
 // There is no road in the core: the kill zone every slot covers is the seam band the truck has to cross.
+
 
 
 
@@ -3718,6 +4099,8 @@ const PAIR_EAST_X = (Math.min(5767168, MINER_DOOR_X - Math.imul(4, ONE)) - PAIR_
  */
 const COVER_PLACES_WRECK = 2, COVER_PLACES_CRATER = 4;
 const WRECK_PLACE_MAX = Math.imul(UNITS, COVER_PLACES_WRECK);          // ids below this are a wreck's
+const CRATER_PLACE_MAX = WRECK_PLACE_MAX + Math.imul(MAX_CRATERS, COVER_PLACES_CRATER);   // then the craters'
+const LIP_RAMP_OUT = add(CANDLE_RAMP, ONE >> 1);   // the foot of the ramp on his side, and 0.5 m out from it
 const COVER_BEHIND = Math.imul(3, ONE) + 39322;   // 3.6 m: behind the hull, 0.6 m clear of its 3 m circle
 const COVER_ASIDE = Math.imul(2, ONE);            // 2 m either side of the wreck's centre
 const COVER_RIM_IN = ONE;                         // a crater's places sit 1 m inside its lip
@@ -3732,7 +4115,7 @@ const RIM_SIN = [-50204, -22417, 22417, 50204];
 const RIM_COS = [42126, 61584, 61584, 42126];
 
 /** Where place `id` stands for a man of `side`, or null if that place does not exist in this state. */
-function coverPlace(s, id, side) {
+function coverPlace(s, id, side, layout = null, shift = 0) {
   if (id === COVER_NONE || id < 0) return null;
   if (id < WRECK_PLACE_MAX) {
     const unit = idiv(id, COVER_PLACES_WRECK), which = id - Math.imul(unit, COVER_PLACES_WRECK);
@@ -3741,6 +4124,19 @@ function coverPlace(s, id, side) {
     if (s[b + U_STATE] !== 0) return null;                              // a live hull is not a wreck
     return { x: add(s[b], which === 0 ? -COVER_ASIDE : COVER_ASIDE),
              z: add(s[b + 1], Math.imul(side, COVER_BEHIND)) };
+  }
+  if (id >= CRATER_PLACE_MAX) {
+    // A CANDLE LIP (§11.3's third kind of place, §4.15's geometry). One place along the plateau edge that stands
+    // between the man and the enemy, at the foot of the ramp on his side and half a metre out from it. A body is
+    // 5.18 m across since ruling B's refit, so "one every 4 m along the edge" is one place, at the body's middle.
+    // It scrolls with the chart: the layout's x is the unshifted slot and the world's is that less the shift.
+    const c = id - CRATER_PLACE_MAX;
+    if (!layout || c >= CANDLES) return null;
+    const b = Math.imul(c, CL_WORDS);
+    const z0 = layout[b + CL_Z0], z1 = layout[b + CL_Z1];
+    if (sub(z1, z0) <= 0) return null;                                  // a body with no length has no edge
+    const edge = side < 0 ? z0 : z1;
+    return { x: sub(layout[b + CL_X], shift | 0), z: sub(edge, Math.imul(side, LIP_RAMP_OUT)) };
   }
   const k = id - WRECK_PLACE_MAX, slot = idiv(k, COVER_PLACES_CRATER), corner = k - Math.imul(slot, COVER_PLACES_CRATER);
   if (slot >= MAX_CRATERS) return null;
@@ -3753,7 +4149,7 @@ function coverPlace(s, id, side) {
 }
 
 /** Every place id this state holds, in the order §11.3 breaks ties by: wrecks by index, then craters by slot. */
-function coverPlaceIds(s) {
+function coverPlaceIds(s, layout = null) {
   const out = [];
   for (let i = 0; i < UNITS; i++) {
     if ((i & ARMOUR_MASK) !== 0) continue;
@@ -3765,6 +4161,10 @@ function coverPlaceIds(s) {
     const b = craterBase(k);
     if (s[b + C_R] <= 0 || s[b + C_ROUNDS] <= 0) continue;
     for (let c = 0; c < COVER_PLACES_CRATER; c++) out.push(WRECK_PLACE_MAX + Math.imul(k, COVER_PLACES_CRATER) + c);
+  }
+  if (layout) for (let c = 0; c < CANDLES; c++) {
+    const b = Math.imul(c, CL_WORDS);
+    if (sub(layout[b + CL_Z1], layout[b + CL_Z0]) > 0) out.push(CRATER_PLACE_MAX + c);
   }
   return out;
 }
@@ -3815,9 +4215,9 @@ function coverEligible(s, base, side, postX, postZ, seamZ, place, held = false) 
  * `postOfMan(index)` hands in where his line would put him, because eligibility is measured from the POST and not
  * from where he is standing. A man with no place is in the open and his word is COVER_NONE.
  */
-function coverClaims(s, base, tick, postOfMan, seamAt) {
+function coverClaims(s, base, tick, postOfMan, seamAt, layout = null, shift = 0) {
   const hash = s[base + TAC_SEED];
-  const ids = coverPlaceIds(s);
+  const ids = coverPlaceIds(s, layout);
   for (let si = 0; si < 2; si++) {
     const side = si === 0 ? -1 : 1;
     const order = [];
@@ -3835,7 +4235,7 @@ function coverClaims(s, base, tick, postOfMan, seamAt) {
       const held = coverClaim(s, base, i);
       if (held === COVER_NONE) continue;
       const post = postOfMan(i);
-      const place = coverPlace(s, held, side);
+      const place = coverPlace(s, held, side, layout, shift);
       if (place && coverEligible(s, base, side, post.x, post.z, seamAt(post.x) | 0, place, true)) taken.add(held);
       else s[coverWord(base, i)] = COVER_NONE;
     }
@@ -3846,7 +4246,7 @@ function coverClaims(s, base, tick, postOfMan, seamAt) {
       let best = COVER_NONE, bestD = 0;
       for (const id of ids) {
         if (taken.has(id)) continue;
-        const place = coverPlace(s, id, side);
+        const place = coverPlace(s, id, side, layout, shift);
         if (!place) continue;
         if (!coverEligible(s, base, side, post.x, post.z, seam, place)) continue;
         const d = length2(sub(place.x, post.x), sub(place.z, post.z));
@@ -3859,10 +4259,10 @@ function coverClaims(s, base, tick, postOfMan, seamAt) {
 }
 
 /** Where a man is going, if he holds a place: his claim is his post while he holds it (§11.3). */
-function coverPostOf(s, base, index, side) {
+function coverPostOf(s, base, index, side, layout = null, shift = 0) {
   const id = coverClaim(s, base, index);
   if (id === COVER_NONE) return null;
-  return coverPlace(s, id, side);
+  return coverPlace(s, id, side, layout, shift);
 }
 
 /** A pair member's x on a slot: the pair's centre held off the paving, the member 6 m either side of it. */
@@ -4154,386 +4554,6 @@ function pushNear(s, base, side, anchorX) {
   }
   if (n === 0) return 0;
   return Math.imul(idiv(idiv(sum, n), PUSH_STEP), PUSH_STEP) | 0;
-}
-
-// ---- rules/frontline.js
-// Where the two armies meet, ported from PriceHistory.FrontlineZ.
-//
-// The seam is the price tape laid across the map: the oldest sample sits at the
-// far -x end, the newest at +x, and the line's z is how far the price has moved
-// from the window's midpoint. A rising market pushes the bulls forward.
-
-
-const SAMPLES = 64;
-
-/**
- * The seam's reach either side of z = 0 as a share of the half depth, Q16.16: 0.53, +-45 m (WAR_TACTICS.md §4.15, the owner
- * 2026-09-17 09:40: a smaller static chart, so the relief outside the band stands behind the lines). It was 0.72 (C#'s
- * +-61.2 m, see `frontlineZ`); 0.53 x 65536 = 34734.08.
- */
-const FRONT_DEPTH = 34734;
-
-/**
- * THE CHART'S X (WAR_TACTICS.md §4.15, seam remap ruled 2026-09-17): the tape is laid over the candle field, not the old
- * +-130 m map, so the fight line's price at an x is read from the samples of the candle standing at that x. 32 slots of
- * FIELD_SLOT from FIELD_X0 (spawn ruling B: first face 26 m past the spawn centre, last slot ending before the miner face);
- *
- * RULING B REFITTED TO THE MEASURED DOOR (the owner 2026-09-19 13:09 and his pick after the measurement). The "miner face"
- * the ruling named is x 108.4, which is where the MODEL'S ORIGIN is placed - not where the building begins. Measured
- * out of bitcoin_miner_megastructure.glb, through DeliveryGate's 180-degree turn and (1, 0.45, 1) scale, the miner
- * stands on the ground from x 53.8 m (power cables), with feet at 62.8, legs at 66.9 and its lower mass from 64.4;
- * its entry corridor, |z| <= 34 m, is clear of all of that from x 90.4 m east. So the old fit put the last nine
- * slots and 24 m of road INSIDE the building (miner-entrance-covered-1309.jpg). The same fit, done against the
- * measured door instead of the origin: the same 32 slots, the same west end, pitch 5.75624 -> 5.18124 m, the last
- * slot ending at 89.99983 m. The miner does not move and the map's edges do not move. MINER_DOOR_X in map.js is the
- * door itself, and the road ribbon ends there too - Unity draws what the core says.
- * slot k holds the round's candle whose samples are tape k*2 + (taken & 1) and the next, so its centre is that pair's middle.
- * Measured before: at a candle's centre the seam read the tape up to 9.7 samples away, and HUD YOU sat on the wrong candle
- * for 28-29 of 32.
- */
-const FIELD_X0 = -4967627;                  // -75.79998 m
-const FIELD_SLOT = 339558;                  // 5.18124 m; 32 slots end at 89.99983 m, at the miner's door
-const TAPE_HALF = 32768, TAPE_LAST_Q = Math.imul(SAMPLES - 1, ONE);
-
-/**
- * THE SCROLL (§4.15 movement, the owner 2026-09-17 13:49), in samples, Q16.16: how far the chart has slid toward the post
- * office since its slots last lined up. One sample is half a slot (2.878 m at the spawn-B pitch) over the 300 ticks a
- * sample lasts, 0.576 m/s; held at a whole sample when the next one is late. The pairing moves a candle one whole slot
- * every second sample, so the slide runs 0..2 samples between those moves - `(1 - taken & 1)` whole samples plus the
- * fraction - and every sample tick lands exactly where the slide had got to: no jump.
- */
-function scrollOf(taken, tick, sampleTick) {
-  const frac = clamp(div(sub(tick, sampleTick), 300), 0, ONE);      // ticks are whole: (tick - sampleTick) / 300 in Q16
-  return add(Math.imul(1 - (taken & 1), ONE), frac);
-}
-
-/** The tape position (Q16.16 samples, unclamped) a world x reads, with `taken` samples submitted and the chart `scroll`ed. */
-function tapeAtX(x, taken, scroll = 0) {
-  return add(add(add(Math.imul(taken & 1, ONE), Math.imul(divRound(sub(x, FIELD_X0), FIELD_SLOT), 2)), -TAPE_HALF), scroll);
-}
-
-/** The world x of a tape position (Q16.16 samples): the inverse of `tapeAtX`. */
-function xAtTape(q, taken, scroll = 0) {
-  return add(FIELD_X0, mulFast(sub(add(sub(q, scroll), TAPE_HALF), Math.imul(taken & 1, ONE)) >> 1, FIELD_SLOT));
-}
-
-/**
- * Frontline z at a world x. `hist` is an Int32Array of SAMPLES prices in
- * Q16.16 (scaled however the caller likes - only ratios matter), `halfX` and
- * `halfZ` are the map's half extents in Q16.16.
- */
-/**
- * The tape, box-averaged over WINDOW samples, edges held.
- *
- * WHY THERE IS A FILTER HERE AT ALL. The tape is a price series and the raw
- * function laid it across the map at one sample every 4.13 m, so the "front"
- * was a price chart, not a line: measured across the map it ran +29.1, +2.6,
- * +37.6, +5.8, +28.1, -8.6, +8.8, -40.5, -28.4 at 22 m steps. A man walking
- * nine metres sideways saw his goal move sixty. Chasing it, nobody ever
- * arrived - infantry sat 36.5 m behind a line whose own standoff is 8.
- *
- * THE WIDTH IS DERIVED, NOT PICKED. A rifleman closes in z at 3.4 m/s and
- * moves in x at 2.4 m/s (`Army.cs:681`), so a goal that slides more than
- * 3.4/2.4 = 1.42 metres per metre of x runs away faster than he can walk.
- * Measured over five tapes, the raw slope is 6.00 mean and 14.21 at the 99th
- * percentile, with 88% of the map above the limit. Box-averaged:
- *
- *     N     mean   p99    max   over the limit   amplitude
- *      1    6.00  14.21  14.35      88.0%        +-56.7 m
- *      9    0.93   2.66   2.80      22.9%        +-38.5 m
- *     13    0.56   1.80   1.93       3.7%        +-42.7 m
- *     21    0.42   1.20   1.27       0.0%        +-39.5 m
- *
- * 21 is the first width where the 99th percentile AND the maximum are both
- * under 1.42 and no part of the map is above it. Wider only costs amplitude:
- * the front must still move with the market, and at 21 it still swings
- * +-39.5 m across the map.
- *
- * The normalisation below deliberately keeps the RAW window's low and high,
- * not the smoothed one's. Renormalising against the smoothed range would
- * re-expand the filtered curve to full scale and put the slope back: measured,
- * that variant still leaves 9.9% of the map over the limit at N=21.
- *
- * C# has no filter. This is not a port of `PriceHistory.FrontlineZ` losing a
- * term - it is the core refusing to copy a fault: a quantity used as a FRONT
- * LINE cannot have 4 m resolution and 60 m steps, whatever it was called
- * upstream.
- */
-const WINDOW = 21;
-const HALFW = 10;
-
-function smooth(hist, j, older) {
-  let sum = 0;
-  for (let k = j - HALFW; k <= j + HALFW; k++) {
-    // west of the tape: the sample that left it last, fading into the oldest (§4.15 glide); east: the newest, held
-    sum += k < 0 ? older : hist[k > SAMPLES - 1 ? SAMPLES - 1 : k];
-  }
-  // `div`, not a bare `/`: the determinism guard allows the operator only
-  // inside the arithmetic file, and it is right to. Exact here with room to
-  // spare - the largest tape value measured over three seeds and a minute is
-  // 20,099,840, so `sum * ONE` peaks at 2.77e13 against the 9.01e15 where a
-  // double stops counting integers, a factor of 325.
-  return div(sum, Math.imul(WINDOW, ONE));
-}
-
-function frontlineZ(hist, x, halfX, halfZ, taken = 0, scroll = 0, scaleLo = null, scaleHi = null, older = hist[0]) {
-  if (SAMPLES < 2) return 0;
-
-  // position along the tape over the candle field (tapeAtX), held at the tape's ends beyond it
-  // Not clamped to the tape (§4.15 "nothing jumps"): a position clamped at an end reads a fixed tape index while the tape
-  // moves under it - 3.6 m at x 102 on every sample. Past the ends `smooth` holds the edges, flat by HALFW + 1 samples out.
-  const at = clamp(tapeAtX(x, taken, scroll), Math.imul(-HALFW - 1, ONE), Math.imul(SAMPLES + HALFW, ONE));
-  const i = at >> 16;
-  const f = at & 65535;
-
-  const a = smooth(hist, i, older), b = smooth(hist, i + 1, older);
-  const price = add(a, mulFast(sub(b, a), f));
-
-  // the window's own range decides the scale, so a quiet market still moves
-  let lo = hist[0], hi = hist[0];
-  for (let k = 1; k < SAMPLES; k++) { lo = min(lo, hist[k]); hi = max(hi, hist[k]); }
-  if (scaleLo !== null) { lo = scaleLo; hi = scaleHi; }   // the window lerped over the sample (§4.15 rescale)
-  const span = sub(hi, lo);
-  if (span <= 0) return 0;
-
-  // -1 .. +1 about the midpoint, then C#'s own share of the map's half depth.
-  //
-  // 43690 stood here - two thirds - and `PriceHistory.FrontlineZ:128` returns
-  // `(n - 0.5) * worldDepth * 0.72`. With `n` in [0, 1] that is +-0.36 of the
-  // FULL depth, and `MempoolTerrain` has width 260 and depth 170, which are
-  // exactly twice the core's HALF_X 130 and HALF_Z 85. So C#'s amplitude is
-  // 0.72 of the HALF depth and the core's was 0.6667 of it: the same quantity
-  // in the same units, off by 8%, and +-56.7 m where C# has +-61.2 m.
-  //
-  // That 3.1 m of amplitude is depth C# MEANS, not tape noise, so it comes
-  // back. The other 18.8 m of the gap to C# is the jag this file filters out
-  // on purpose - 86% of the difference - and it stays out: a front a man
-  // cannot close on is not a front, whatever its amplitude.
-  //
-  // It changes no envelope quantity. Both verdicts are measured under
-  // `--seam0`, where the tape is flat, `span` is zero and this function
-  // returns 0 before it ever reaches the scale - 68/72 air off and 65/72 air
-  // on, identical to the digit with either constant. This is a wrong number
-  // made right, not a number tuned to a test.
-  const t = sub(div(mulFast(sub(price, lo), Math.imul(2, ONE)), span), ONE);
-  return mulFast(t, mulFast(halfZ, FRONT_DEPTH));
-}
-
-// ---- rules/candles.js
-// THE CANDLES ARE TERRAIN - WAR_TACTICS.md §4.15, as a RAISED RIBBON (playtest fix 492f128, the owner 2026-09-17 13:51).
-//
-// The tape's candles as a height layer the surface reader adds (`surfaceAt = relief + candles - craters`),
-// on a static chart band levelled to a pancake of the relief. 32 slots of 5.756 m between the apron and the miner (spawn
-// ruling B); each body as wide as its slot, bodies touching; a body runs from its open (the previous candle's close - a
-// continuous staircase) to its close in z, at least 1 m long. The union of the bodies is a ribbon 1 m above the ground,
-// its every free edge a 4 m ramp at 25%: h = H x clamp(d / R, 0, 1), d the distance to the union's boundary. Nothing in
-// the chart is a solid - no wall, no wick collider (w1 withdrawn): the chart is the road. The wick and the glow are light.
-// It moves: the scroll slides it toward the post office half a slot per sample (frontline.js `scrollOf`), and a new
-// window high or low lerps the price-to-z scale over the 300 ticks after the sample. Derived, not hashed: the tape, the
-// samples taken and the market words make it.
-
-
-
-const CANDLES = 32;
-// SPAWN RULING B (the owner 2026-09-17): the truck leaves the apron, then meets the chart. The first x-face stands 26 m past
-// the spawn centre (START_X -100.4 m; the nose is 3.275 m ahead of it, so the nose meets it 22.7 m out, past the 22 m
-// apron), and the 32 slots end at the miner's face (x 108.4 m), so no body stands in the gate throat or across the
-// delivery line (x 114). 32 slots over 184.2 m: pitch 5.75625 m, the corridor kept at 2.8 m, the body what is left.
-// At 6.5 m (x -104..+104) the first face stood 2.2 m BEHIND the spawn and bays 9-12 started on candle 0.
-const CANDLE_X0 = FIELD_X0;                 // -75.79998 m: first face at -74.39998 m, 26.00001 m past START_X
-const CANDLE_SLOT = FIELD_SLOT;             // 5.18124 m; 32 slots end at 89.99983 m, at the miner's door
-const CANDLE_BODY_HALF = FIELD_SLOT >> 1;   // the full slot: bodies touch (492f128, no padding)
-const CANDLE_H = ONE;                       // 1 m plateau (was 2)
-const CANDLE_RAMP = 262144;                 // 4 m ramp: 1 m over 4 m is 25% (was 5 m at 40%)
-const CANDLE_MIN_LENGTH = ONE;              // a doji is built 1 m long
-/**
- * THE WICK IS GROUND TOO (§4.15, the owner 2026-09-17 15:30: "can I drive through it? that would not be logical"): a ridge
- * 0.5 m tall with a 1 m top along the slot's centre line, from the body's end out to the high (and from the low to the
- * body's other end), its sides and far end ramped at 25% (2 m). It runs R into the body, where the body's own ramp is
- * already past 0.5 m, so ridge and body meet without a step. Nothing stands above 1 m; nothing is passed through.
- */
-const WICK_RIDGE_H = ONE >> 1;              // 0.5 m
-const WICK_RIDGE_TOP_HALF = ONE >> 1;       // the 1 m top
-const WICK_RIDGE_RAMP = Math.imul(2, ONE);  // 0.5 m over 2 m: 25%
-/**
- * THE RIBBON'S WORLD ENDS (§4.15 "nothing jumps"): the chart scrolls under fixed edges, ramped like any free edge. On the
- * whole-slot move (every second sample) slot 0's candle leaves at -x - west of X0 it has slid fully out, so it does not
- * pop - and a new forming candle is born in slot 31 with no length (`grow`, below), so it does not pop either. The east
- * end is the field's own: nothing stands past it at any scroll.
- */
-const CANDLE_WEST = FIELD_X0;
-const CANDLE_EAST = FIELD_X0 + Math.imul(32, FIELD_SLOT);   // 90.00 m, the miner's door (MINER_DOOR_X 90.4)
-const BAND_X = 6815744;                     // |x| <= 104 m
-const BAND_Z = 3538944;                     // |z| <= 54 m: the seam's 45 m, the 5 m ramp, 4 m
-const CONE = 26214;                         // 0.4: the grade the relief may rise toward the band
-const PANCAKE = 9830;                       // 0.15: the relief inside the band, about the apron's height
-const WICK_HALF = 32768;                    // the wick's light column: 1 m wide
-const WICK_HEIGHT = 589824;                 // 9 m tall - light only, never a solid
-
-/** Per candle in `layout`: slot centre x, body z from and to (from < to), 1 when close >= open, the low's z and the high's z. */
-const CL_X = 0, CL_Z0 = 1, CL_Z1 = 2, CL_GREEN = 3, CL_LOW = 4, CL_HIGH = 5, CL_WORDS = 6;
-
-/**
- * The renderer's view: count, apron height, the forming candle's slot (-1 when every slot is a whole candle; its glow
- * pulses), the scroll as a shift toward -x in metres (Q16.16; the slots below are unshifted), then per candle x from, x to, z from, z to, plateau height, green, and the wick's
- * collider past the body: low wick z from (= body z from when none), high wick z to (= body z to when none).
- */
-const CV_COUNT = 0, CV_APRON = 1, CV_FORMING = 2, CV_SHIFT = 3, CV_FIRST = 4, CV_WORDS = 8;
-const CV_TOTAL = CV_FIRST + Math.imul(CANDLES, CV_WORDS);
-
-/** A price as a ground z, by the seam's own scale (frontlineZ): the window's low at -45 m, its high at +45 m. */
-function zOfPrice(p, lo, span, halfZ) {
-  if (span <= 0) return 0;
-  const t = sub(div(mulFast(sub(p, lo), Math.imul(2, ONE)), span), ONE);
-  return mulFast(t, mulFast(halfZ, FRONT_DEPTH));
-}
-
-/**
- * The 32 bodies from the tape. Candles pair the round's samples (candle k = round samples 2k, 2k+1, as the HUD's chart
- * does), so which tape sample starts slot 0 follows the parity of the samples taken: `taken` odd drops the oldest sample
- * and leaves the newest slot the forming candle.
- *
- * A CONTINUOUS STAIRCASE (§4.15, the owner 2026-09-17 13:42; found on the live top-down: scattered pillars with gaps). The
- * tape is a series of closes: candle c's open is the previous candle's close (sample 2c - 1; the first slot's open is its
- * own first sample, the one before it has left the tape), its close sample 2c + 1, its low and high the min and max of
- * those three samples. Every body starts where the last one ended.
- */
-function candleLayout(tape, taken, halfZ, out, scaleLo = null, scaleHi = null, older = tape[0], grow = ONE) {
-  let lo = tape[0], hi = tape[0];
-  for (let k = 1; k < SAMPLES; k++) { lo = min(lo, tape[k]); hi = max(hi, tape[k]); }
-  if (scaleLo !== null) { lo = scaleLo; hi = scaleHi; }
-  const span = sub(hi, lo), shift = taken & 1;
-  for (let c = 0; c < CANDLES; c++) {
-    const first = min(add(Math.imul(c, 2), shift), SAMPLES - 1), k = min(first + 1, SAMPLES - 1);
-    // slot 0's open before the tape: the sample that left it last (the glide), so the open does not jump when it leaves
-    const zo = zOfPrice(first > 0 ? tape[first - 1] : older, lo, span, halfZ), zc = zOfPrice(tape[k], lo, span, halfZ);
-    const zm = zOfPrice(tape[first], lo, span, halfZ);
-    let z0 = min(zo, zc), z1 = max(zo, zc);
-    // A forming candle is born with its open and its (glided) close on one z: its doji length grows with the glide too,
-    // 0 to 1 m over the sample's 300 ticks, so a new body rises out of the ground instead of standing there at once.
-    const minLength = (shift === 1 && c === CANDLES - 1) ? mulFast(CANDLE_MIN_LENGTH, grow) : CANDLE_MIN_LENGTH;
-    if (sub(z1, z0) < minLength) { z0 = sub((z0 + z1) >> 1, minLength >> 1); z1 = add(z0, minLength); }
-    const b = Math.imul(c, CL_WORDS);
-    out[b + CL_X] = add(add(CANDLE_X0, Math.imul(c, CANDLE_SLOT)), CANDLE_SLOT >> 1);
-    out[b + CL_Z0] = z0;
-    out[b + CL_Z1] = z1;
-    out[b + CL_GREEN] = tape[k] >= (first > 0 ? tape[first - 1] : older) ? 1 : 0;
-    // The low and high over the three samples: the middle one stands past the body when the price went beyond both
-    // ends inside the candle - that is the wick (w1: a collider only there).
-    out[b + CL_LOW] = min(min(zo, zc), zm);
-    out[b + CL_HIGH] = max(max(zo, zc), zm);
-  }
-  return out;
-}
-
-/**
- * The candle layer's height at a world point, Q16.16: the ribbon. `shift` is the scroll in metres toward -x (the layout's
- * slots are unshifted). Inside a body: H, less the ramp within R of the union's boundary - its own z-ends, and the parts of
- * its x-faces its neighbour does not cover (the distance to such a part's nearest end where the neighbour does cover the
- * point's z). A slot is wider than R, so no boundary two slots away is within reach. 0 off the ribbon.
- */
-function candleHeightAt(layout, x, z, shift = 0) {
-  if (x <= CANDLE_WEST || x >= CANDLE_EAST) return 0;
-  const xs = add(x, shift);
-  const dx = sub(xs, CANDLE_X0);
-  if (dx < 0 || dx >= Math.imul(CANDLES, CANDLE_SLOT)) return 0;
-  const c = idiv(dx, CANDLE_SLOT), b = Math.imul(c, CL_WORDS);
-  const z0 = layout[b + CL_Z0], z1 = layout[b + CL_Z1];
-  const clip = min(sub(x, CANDLE_WEST), sub(CANDLE_EAST, x));
-  const ridge = wickRidge(layout, b, sub(xs, add(CANDLE_X0, add(Math.imul(c, CANDLE_SLOT), CANDLE_SLOT >> 1))), z, clip);
-  if (z <= z0 || z >= z1) return ridge;
-  let d = min(min(sub(z, z0), sub(z1, z)), clip);
-  const left = sub(xs, add(CANDLE_X0, Math.imul(c, CANDLE_SLOT))), right = sub(Math.imul(CANDLE_SLOT, 1), left);
-  if (left < CANDLE_RAMP) d = min(d, faceDistance(layout, c - 1, z0, z1, z, left));
-  if (right < CANDLE_RAMP) d = min(d, faceDistance(layout, c + 1, z0, z1, z, right));
-  const body = d >= CANDLE_RAMP ? CANDLE_H : mulFast(CANDLE_H, div(d, CANDLE_RAMP));
-  return max(body, ridge);
-}
-
-/**
- * The wick ridge of the candle at layout offset `b`, at `across` from the slot's centre line and `z`: 0.5 m on its 1 m
- * top, down 25% to 0 over 2 m at its sides, at its far end (the high, the low) and at the field's fixed ends (`clip`).
- */
-function wickRidge(layout, b, across, z, clip) {
-  const side = sub(add(WICK_RIDGE_TOP_HALF, WICK_RIDGE_RAMP), abs(across));
-  if (side <= 0) return 0;
-  const z0 = layout[b + CL_Z0], z1 = layout[b + CL_Z1], lo = layout[b + CL_LOW], hi = layout[b + CL_HIGH];
-  let along = -1;
-  // the low wick from the low into the body, the high wick from the body out to the high; each also ramps down toward its
-  // inner end R inside the body, which a short body (a doji) does not reach - no step where it stops
-  if (lo < z0 && z > lo && z < add(z0, CANDLE_RAMP)) along = min(sub(z, lo), sub(add(z0, CANDLE_RAMP), z));
-  if (hi > z1 && z < hi && z > sub(z1, CANDLE_RAMP)) along = max(along, min(sub(hi, z), sub(z, sub(z1, CANDLE_RAMP))));
-  if (along <= 0) return 0;
-  const d = min(min(side, along), clip);
-  return d >= WICK_RIDGE_RAMP ? WICK_RIDGE_H : mulFast(WICK_RIDGE_H, div(d, WICK_RIDGE_RAMP));
-}
-
-/**
- * Distance from a point `across` metres inside a body's x-face (at height z, the body spanning z0..z1) to the free part of
- * that face - where the neighbour in slot `n` does not cover. No neighbour: the whole face is free.
- */
-function faceDistance(layout, n, z0, z1, z, across) {
-  if (n < 0 || n >= CANDLES) return across;
-  const nb = Math.imul(n, CL_WORDS), n0 = layout[nb + CL_Z0], n1 = layout[nb + CL_Z1];
-  if (z <= n0 || z >= n1) return across;                 // the neighbour does not cover this z: the face is free here
-  let best = 2147483647;
-  if (n0 > z0) best = min(best, length2(across, sub(z, n0)));   // the free part below the neighbour
-  if (n1 < z1) best = min(best, length2(across, sub(n1, z)));   // the free part above it
-  return best;
-}
-
-/**
- * STATIC, NOT DYNAMIC (§4.15, the owner 2026-09-17 09:40): the band is fixed, so no ground moves under a wheel. Inside
- * |x| <= 104, |z| <= 54 the relief is a pancake - `apron + 0.15 (relief - apron)`, the mempool's swells kept low. Outside
- * it, within the band's x, the relief is held to a 40% cone from the pancake at the band's edge,
- * `|h - edge| <= 0.4 (|z| - 54)` (12.4 m at the map's edge), so no ground rises (or falls) toward the band faster than a
- * ramp does. The edge's pancake is read from `ground`, unlevelled. Beyond |x| = 104 the relief is untouched.
- */
-function levelled(relief, apron, x, z, ground, halfX, halfZ) {
-  if (abs(x) > BAND_X) return relief;
-  const az = abs(z);
-  if (az <= BAND_Z) return add(apron, mulFast(PANCAKE, sub(relief, apron)));
-  const edgeRelief = heightAtWorld(ground, x, z < 0 ? -BAND_Z : BAND_Z, halfX, halfZ);
-  const edge = add(apron, mulFast(PANCAKE, sub(edgeRelief, apron)));
-  const lim = mulFast(CONE, sub(az, BAND_Z));
-  return clamp(relief, sub(edge, lim), add(edge, lim));
-}
-
-/**
- * The wick's collider segments of candle `c` past its body, [z from, z to] each, or none: the low wick from the low's z to
- * the body's low end, the high wick from the body's high end to the high's z. Written into `out` (4 words); returns how many.
- */
-function wickSegments(layout, c, out) {
-  const l = Math.imul(c, CL_WORDS);
-  let n = 0;
-  if (layout[l + CL_LOW] < layout[l + CL_Z0]) { out[0] = layout[l + CL_LOW]; out[1] = layout[l + CL_Z0]; n = 1; }
-  if (layout[l + CL_HIGH] > layout[l + CL_Z1]) { out[Math.imul(n, 2)] = layout[l + CL_Z1]; out[Math.imul(n, 2) + 1] = layout[l + CL_HIGH]; n = n + 1; }
-  return n;
-}
-
-/** Nothing in the chart is a solid (492f128): no x-face walls, no wick collider. Kept so the caller has one shape. */
-function candleWalls() {
-  return { n: 0, box: new Int32Array(0) };
-}
-
-/** The renderer's words (CV_*): what CandleTerrain meshes. Returns the words written. */
-function writeCandleView(layout, apron, out, taken = 0, shift = 0) {
-  out[CV_COUNT] = CANDLES;
-  out[CV_APRON] = apron;
-  out[CV_SHIFT] = shift;
-  out[CV_FORMING] = (taken & 1) ? CANDLES - 1 : -1;       // odd: the newest slot has one sample
-  for (let c = 0; c < CANDLES; c++) {
-    const l = Math.imul(c, CL_WORDS), b = add(CV_FIRST, Math.imul(c, CV_WORDS));
-    out[b] = sub(layout[l + CL_X], CANDLE_BODY_HALF);
-    out[b + 1] = add(layout[l + CL_X], CANDLE_BODY_HALF);
-    out[b + 2] = layout[l + CL_Z0];
-    out[b + 3] = layout[l + CL_Z1];
-    out[b + 4] = CANDLE_H;
-    out[b + 5] = layout[l + CL_GREEN];
-    out[b + 6] = min(layout[l + CL_LOW], layout[l + CL_Z0]);
-    out[b + 7] = max(layout[l + CL_HIGH], layout[l + CL_Z1]);
-  }
-  return CV_TOTAL;
 }
 
 // ---- rules/cargo.js
@@ -6595,7 +6615,7 @@ function step(st, throttle, steer, brake, handbrake, practice) {
     const side = s[mb + U_SIDE] < 0 ? -1 : 1;
     const x = riflePost(s[squadWord(s[mb + U_SIDE], s[mb + U_TARGET])], i);
     return { x, z: add(seamAtX(st, x) | 0, Math.imul(side, RIFLE_STANDOFF)) };
-  }, (x) => seamAtX(st, x));
+  }, (x) => seamAtX(st, x), st.candles && !st.noCandleField ? st.candles : null, st.candleShift | 0);
 
   const groundOf = (x, z) => surfaceAt(st, x, z);
   // NEVER MORE THAN HALF THE LINE MOVING (WAR_TACTICS.md §0 row 4b): at the start of the tick count each side's tanks on
@@ -6694,7 +6714,8 @@ function step(st, throttle, steer, brake, handbrake, practice) {
     // Handed in the way the armour's own post is: the step moves a unit to what is handed out here.
     u.cover = null;
     if (!u.armour) {
-      const place = coverPostOf(s, O_TACTICS, i, u.side < 0 ? -1 : 1);
+      const place = coverPostOf(s, O_TACTICS, i, u.side < 0 ? -1 : 1,
+                                st.candles && !st.noCandleField ? st.candles : null, st.candleShift | 0);
       if (place) u.cover = place;
     }
     if (!u.armour) {
