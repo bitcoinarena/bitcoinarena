@@ -10,7 +10,7 @@
   {
    "name": "slalom",
    "ticks": 3600,
-   "final": "54c056cf30b2778294ac0f99729b8c80e4c233818c66cb0389901411dddaa3f7"
+   "final": "654d69e1d34991c3069c1194c2e2ea98c7d25f62bdd85e61af7ee4d07e979cad"
   },
   {
    "name": "handbrake",
@@ -25,7 +25,7 @@
   {
    "name": "idle",
    "ticks": 3600,
-   "final": "d1fba2d42bba18f704f0bd7b0c98e2ec0219dd59fd3e3a12c9c0072499b8d636"
+   "final": "9df654266ba52f3e850c2eaade5500b11cfd1d2532fb4e77d4af47e795413660"
   },
   {
    "name": "practice",
