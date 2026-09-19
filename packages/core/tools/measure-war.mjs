@@ -55,6 +55,13 @@ const a4aWindows = [];
 // repeats the last one. Six rows ask the push to DO something, so the question "how much of those six is the cadence"
 // is answered by running them with the gates off and reading the same table. This changes NOTHING in the core: the
 // gates are removed from the temp copy this tool already patches, and only when asked for on the command line.
+// A11a: WHAT PUTS A HULL PAST THE SEAM (2026-09-19). The push gates do not move this row - 3 of 10 windows with them
+// on and 3 with both off - so the mechanism is elsewhere. A hull's POST is across the seam only when its depth is
+// negative, and the forward line is 16 - push, so only at push 24. Any other hull out there is there without its
+// post: overshooting a bound, still crossing in x to a new slot (army.js calls that `crossing`, the scoot), or
+// standing off after giving ground. Classified from the code's own branch word, never from the row's name.
+const A11AWHY = process.argv.includes('--a11awhy');
+const a11aKind = {}, a11aWindows = [];
 const NOGATE_A = process.argv.includes('--nogate-a') || process.argv.includes('--nogates');
 const NOGATE_B = process.argv.includes('--nogate-b') || process.argv.includes('--nogates');
 const SHARE = process.argv.includes('--share');
@@ -181,7 +188,8 @@ for (const seed of SEEDS) {
   add('13a seeds'); if (T.slotOrder(s[L.O_TACTICS], -1).join() !== T.slotOrder(s[L.O_TACTICS], 1).join()) add('13a orders differ');
   const lastDir = new Map(), lastFlip = new Map(), prevPost = new Map();
   const w10 = { '-1': 0, '1': 0 };
-  const w60 = () => ({ cross: { '-1': 0, '1': 0 }, give: { '-1': 0, '1': 0 }, lost: { '-1': 0, '1': 0 }, full: { '-1': true, '1': true }, contact: { '-1': false, '1': false }, menLost: { '-1': 0, '1': 0 }, menIn: { '-1': 0, '1': 0 } });
+  const w60 = () => ({ cross: { '-1': 0, '1': 0 }, crossKind: { '-1': {}, '1': {} },
+    maxPush: { '-1': -1e9, '1': -1e9 }, at24: { '-1': 0, '1': 0 }, give: { '-1': 0, '1': 0 }, lost: { '-1': 0, '1': 0 }, full: { '-1': true, '1': true }, contact: { '-1': false, '1': false }, menLost: { '-1': 0, '1': 0 }, menIn: { '-1': 0, '1': 0 } });
   let win = w60();
   const w5 = new Map();                            // squad key -> { halted, moving, allOnPost }
   const aliveBefore = new Map(Array.from({ length: 96 }, (_, i) => [i, alive(i)]));
@@ -438,6 +446,27 @@ for (const seed of SEEDS) {
         const was = verdictWas[w]; verdictWas[w] = v;
         if (v === 2) { verdictCount.giveSeen = (verdictCount.giveSeen || 0) + 1; if (was === 2) verdictCount.giveConfirmed = (verdictCount.giveConfirmed || 0) + 1; } } }
     for (const i of liveT) { const p = T.postOf(s, L.O_TACTICS, i, tick); if ((s[base(i) + 1] - seamOfCore(st, p.x)) * sideOf(i) < 0) win.cross[String(sideOf(i))]++; }
+    if (A11AWHY) {
+      for (const i of liveT) {
+        const sd = String(sideOf(i));
+        const p = T.postOf(s, L.O_TACTICS, i, tick);
+        if ((s[base(i) + 1] - seamOfCore(st, p.x)) * sideOf(i) >= 0) continue;
+        const br = branchNow.get(i) || 'none';
+        const kind = p.depth < 0 ? 'pushed post'
+          : br === 'crossing' ? 'scoot in x'
+          : (br === 'backoff' || br === 'heldAfterGiving') ? 'gave ground'
+          : (br === 'walking' || br === 'arriving') ? 'bound overshoot'
+          : `other (${br})`;
+        a11aKind[kind] = (a11aKind[kind] || 0) + 1;
+        win.crossKind[sd][kind] = (win.crossKind[sd][kind] || 0) + 1;
+      }
+      for (let w = 0; w < 12; w++) {
+        const sd = w < 6 ? '-1' : '1';
+        const pu = s[L.O_TACTICS + T.TAC_PUSH + w];
+        if (pu > win.maxPush[sd]) win.maxPush[sd] = pu;
+        if (pu >= Math.imul(24, ONE)) win.at24[sd]++;
+      }
+    }
     const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
     add('A13b ticks'); if (Math.abs(mean(push['-1']) - mean(push['1'])) >= 4) add('A13b differ');
     for (const sd of [-1, 1]) {
@@ -539,6 +568,8 @@ for (const seed of SEEDS) {
           if (win.cross[sd] === 0) add((winSteps.take[sd] || 0) === 0 ? 'A11a no take step at all' : 'A11a took steps but no crossing');
           if (win.give[sd] === 0) add((winSteps.give[sd] || 0) === 0 ? 'A11b no give step at all' : 'A11b gave steps but none below zero');
         }
+        if (A11AWHY) a11aWindows.push({ seed, sd, to: t + 1, cross: win.cross[sd], kinds: { ...win.crossKind[sd] },
+          maxPush: win.maxPush[sd] / ONE, at24: win.at24[sd], takeSteps: winSteps.take[sd] || 0 });
         winSteps.give[sd] = 0; winSteps.take[sd] = 0;
         if (win.full[sd] && win.lost[sd] === 0 && win.contact[sd]) add('A12a full lossless');
         add('B6 windows'); if (win.menLost[sd] < 3 || win.menIn[sd] < 3) add('B6 fail');
@@ -786,6 +817,21 @@ if (H1WHY && h1why.length) {
     + `bounding ${(100 * bounding / h1why.length).toFixed(0)}%; standing still ${(100 * still / h1why.length).toFixed(0)}%; `
     + `stepping toward the hold ${(100 * towards / h1why.length).toFixed(0)}%; `
     + `never yet stood on a post ${(100 * h1why.filter((r) => r.column).length / h1why.length).toFixed(0)}%`);
+}
+if (A11AWHY) {
+  const tot = Object.values(a11aKind).reduce((a, b) => a + b, 0) || 1;
+  console.log(`A11a's crossings by what put the hull there (${tot} tank-ticks past the seam):`);
+  for (const [k, v] of Object.entries(a11aKind).sort((a, b) => b[1] - a[1]))
+    console.log(`  ${k.padEnd(18)} ${String(v).padStart(7)} = ${(100 * v / tot).toFixed(1)}%`);
+  const bad = a11aWindows.filter((w) => w.cross === 0);
+  console.log(`A11a's failing windows (${bad.length} of ${a11aWindows.length}), and what the side had to cross with:`);
+  for (const w of bad)
+    console.log(`  seed ${w.seed} side ${w.sd} to t${w.to}: crossings 0, take steps ${w.takeSteps}, highest push on `
+      + `the side ${w.maxPush.toFixed(0)} m, team-ticks at the 24 m ceiling ${w.at24}`);
+  console.log(`A11a's passing windows, for contrast:`);
+  for (const w of a11aWindows.filter((x) => x.cross > 0))
+    console.log(`  seed ${w.seed} side ${w.sd} to t${w.to}: crossings ${w.cross}, highest push ${w.maxPush.toFixed(0)} m, `
+      + `at 24 m ${w.at24}, by kind ${JSON.stringify(w.kinds)}`);
 }
 if (B3WHY) {
   const n = (k) => r[k] || 0;
