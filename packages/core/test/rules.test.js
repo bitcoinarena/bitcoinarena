@@ -23,7 +23,7 @@ const OFF_CHART_Z = Math.round(70 * 65536);            // +70 m: past the band, 
 import {
   hash, WORDS, O_AIR, AIR_BULL, AIR_BEAR, S_PRACTICE as L_S_PRACTICE,
   O_TRUCK, T_X, T_Z, T_HP, O_SCORE, S_EXPOSURE, S_ELAPSED, S_BESTX, S_STATE,
-  O_UNITS, U_WORDS, U_X, U_Z, U_HP, U_STATE, T_VX, T_VZ,
+  O_UNITS, U_WORDS, U_X, U_Z, U_HP, U_STATE, T_VX, T_VZ, O_STRIKE, K_X, K_Z, K_SERIAL,
 } from '../src/state.js';
 import * as scoring from '../src/rules/score.js';
 import * as army from '../src/rules/army.js';
@@ -684,6 +684,47 @@ test('incoming fire costs the truck condition', () => {
     assert.ok(r.hp < 100, `seed ${seed}: der Truck steht nach 10 s unbeschaedigt da`);
     assert.ok(r.hp > 0, `seed ${seed}: nach 10 s schon zerstoert - hp ${r.hp.toFixed(2)}`);
   }
+});
+
+test('a nuke kills every unit in its blast, armour and men, either side (the owner 2026-09-19 15:55)', async () => {
+  const { submitLiquidation } = await import('../src/sim.js');
+  const Q = 65536, RADIUS = 16;                       // the smallest crater a load can dig
+  let inBlast = 0, lived = 0, strikes = 0;
+  for (const seed of [1, 2, 3]) {
+    const st = init(seed), s = st.i32;
+    for (let t = 0; t < 900; t++) step(st, Q, 0, 0, 0, 0);
+    let serial = s[O_STRIKE + K_SERIAL];
+    for (let t = 0; t < 3600; t++) {
+      if (t % 600 === 300) submitLiquidation(st, 4000000);
+      const before = [];
+      for (let i = 0; i < 96; i++) {
+        const b = O_UNITS + i * U_WORDS;
+        if (s[b + U_STATE] === 0 || s[b + U_HP] <= 0) continue;
+        before.push({ i, x: s[b + U_X] / Q, z: s[b + U_Z] / Q });
+      }
+      step(st, Q, 0, 0, 0, 0);
+      if (s[O_STRIKE + K_SERIAL] === serial) continue;
+      serial = s[O_STRIKE + K_SERIAL];
+      strikes++;
+      const bx = s[O_STRIKE + K_X] / Q, bz = s[O_STRIKE + K_Z] / Q;
+      for (const u of before) {
+        if (Math.hypot(u.x - bx, u.z - bz) > RADIUS) continue;
+        inBlast++;
+        // A SURVIVOR IS THE SAME UNIT STILL STANDING THERE. `reinforce` runs later in the same tick and can refill
+        // the slot that just died, and the replacement walks in from the back edge - counting the index alive was
+        // counting 2 of 280 replacements as survivors.
+        const b = O_UNITS + u.i * U_WORDS;
+        if (s[b + U_HP] <= 0 || s[b + U_STATE] === 0) continue;
+        if (Math.hypot(s[b + U_X] / Q - u.x, s[b + U_Z] / Q - u.z) > 1) continue;
+        lived++;
+      }
+    }
+  }
+  // Measured before the rule: 8 of 8, 6 of 6 and 9 of 9 living TANKS inside 16 m of a strike walked away on seeds
+  // 1 / 2 / 3 - the liquidation had no lethality at all, it only dug. The bar is the ruling, not the measurement.
+  assert.ok(strikes >= 9, `only ${strikes} strikes landed - nothing was checked`);
+  assert.ok(inBlast > 0, 'no unit was ever inside a blast - nothing was checked');
+  assert.equal(lived, 0, `${lived} of ${inBlast} units inside a blast walked away`);
 });
 
 test('enough fire writes the truck off', () => {

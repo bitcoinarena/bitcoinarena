@@ -6207,6 +6207,23 @@ function step(st, throttle, steer, brake, handbrake, practice) {
     // The hole is ARMED here, at the impact, and dug `CRATER_DELAY` ticks later: the slot keeps the
     // place and the load, and its radius stays zero until then. `craterOf` runs at the dig, so the
     // load is the only thing that has to be carried.
+    // AND NOTHING IN THE BLAST WALKS AWAY (the owner 2026-09-19 15:55: "nuke must kill EVERY tank in the blast. No
+    // survivors in range"). Measured before this rule, over three seeds and nine strikes each: 8 of 8, 6 of 6 and
+    // 9 of 9 living tanks inside 16 m of a strike survived it - the liquidation had no lethality at all, it only
+    // dug. The blast is the hole it is about to dig: every living unit, armour or man, either side, inside the
+    // crater's own radius dies on the tick the strike is consumed. The gunship's bomb keeps its own graded damage
+    // (rules/air.js bombDamage, 12 x (1 - d/16)); this is the nuke, and a nuke does not wound.
+    const blast = craterOf(s[O_LIQ + L_LAST]).r;
+    for (let i = 0; i < UNITS; i++) {
+      const ub = unitBase(i);
+      if (s[ub + U_STATE] === 0 || s[ub + U_HP] <= 0) continue;
+      const dx = sub(s[ub + U_X], at.x), dz = sub(s[ub + U_Z], at.z);
+      if (abs(dx) > blast || abs(dz) > blast) continue;
+      if (length2(dx, dz) > blast) continue;
+      s[ub + U_HP] = 0;
+      s[ub + U_STATE] = 0;
+    }
+
     const slot = craterBase(craterSlot(s));
     s[slot + C_X] = at.x;
     s[slot + C_Z] = at.z;
