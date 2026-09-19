@@ -604,7 +604,8 @@ public class DriveHud : MonoBehaviour
     /// it came off. Picture only - the core is handed each size on its own and
     /// decides the crater from the largest, which this does not touch.
     /// </summary>
-    void DrawLiquidations(int w, int h, float y)
+    /// <param name="rowToo">false in spectate: there is no headline stack there, so only the centre call-out is drawn.</param>
+    void DrawLiquidations(int w, int h, float y, bool rowToo = true)
     {
         // GATED ON THE CORE'S STRIKE, not on the feed's list, and both halves
         // of that were wrong in the first cut of this.
@@ -672,7 +673,7 @@ public class DriveHud : MonoBehaviour
                       + $"\"{was} · {n} order(s) · {string.Join(" ", seen)}\"; "
                       + $"the core says \"{line}\"");
         }
-        Shadowed(LiquidationBox(w, h), line, _sub, new Color(1f, 0.72f, 0.25f));
+        if (rowToo) Shadowed(LiquidationBox(w, h), line, _sub, new Color(1f, 0.72f, 0.25f));
 
         // AND ACROSS THE MIDDLE OF THE SCREEN, while the cloud stands (the owner 2026-09-19 13:10: "when a liquidation
         // nuke/bomb hits, show in the CENTER of the screen how much was liquidated, e.g. $305000 Short liquidated").
@@ -2699,6 +2700,12 @@ public class DriveHud : MonoBehaviour
                          $"${market.Price:N0}   {market.DayChangePct:+0.00;-0.00;0.00}% 24h", note,
                          market.Fresh ? Color.white : new Color(1f, 1f, 1f, 0.55f));
             DrawConnectionTrouble(w, h, note, true);
+            // AND WHAT A NUKE COST, ACROSS THE MIDDLE (the owner 2026-09-19 15:55: "liquidation text CENTER of screen,
+            // also in spectate"). Everything else on this branch is driving chrome and stays off, but the
+            // liquidation is the market hitting the battlefield the spectator is watching - it is the one thing on
+            // that screen that is not about the truck. The headline row is not drawn here: there is no headline
+            // stack in spectate, so the row would hang in the sky.
+            DrawLiquidations(w, h, 0f, false);
             return;
         }
 
