@@ -496,10 +496,12 @@ public class GunshipCorridorTests
     [Test]
     public void TheCorridorStopsShortOfBothDepots()
     {
-        // Measured off the harvested collision world: the miner's leading face
-        // is the nearer of the two, and everything has to fit inside it.
+        // 108.4 m is no longer the miner's face - the world grew east on 2026-09-19 and the building's origin stands
+        // at 169 m with its drawn west edge at 108.4. The bar keeps that number for a different and better reason:
+        // 108.4 m is now the DOOR, the westernmost metre of the drawn miner, and nothing the world lays down may go
+        // past it (core rules/map.js MINER_DOOR_X). The corridor at 104 m sits inside it, as it did before.
         Assert.Less(Army.AirCorridorX, 108.4f,
-            "der Korridor reicht in den Miner hinein");
+            "the air corridor reaches past the miner's door");
         Assert.Greater(Army.AirCorridorX, Army.FrontX,
             "der Korridor endet vor der Front - die Hubschrauber kaemen nie an");
     }
