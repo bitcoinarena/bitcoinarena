@@ -90,6 +90,11 @@ const SHARE = process.argv.includes('--share');
 const b3OutNow = new Map();
 const haltSuppressedNow = new Set();
 const winSteps = { give: {}, take: {} };
+// A11a RESTATED (RULED 2026-09-19): the row no longer asks a team of EACH side to cross every 60 s - on a seed
+// where one side is three hulls down §4.10 forbids exactly that. It asks that SOME side crossed in every window,
+// that no side crossed in no window of its run, and that a side which did not cross was outnumbered while it
+// did not - which is the give-ground branch doing what §4.10 says, and is the clause that keeps the row biting.
+const everCross = {};
 const objLaneWas = new Map();
 const holdBefore = new Map(), holdBeforeNext = new Map();
 const branchNow = new Map();
@@ -243,7 +248,8 @@ for (const seed of SEEDS) {
   add('13a seeds'); if (T.slotOrder(s[L.O_TACTICS], -1).join() !== T.slotOrder(s[L.O_TACTICS], 1).join()) add('13a orders differ');
   const lastDir = new Map(), lastFlip = new Map(), prevPost = new Map();
   const w10 = { '-1': 0, '1': 0 };
-  const w60 = () => ({ cross: { '-1': 0, '1': 0 }, crossKind: { '-1': {}, '1': {} },
+  const w60 = () => ({ own: { '-1': 0, '1': 0 }, ticks: { '-1': 0, '1': 0 },
+    cross: { '-1': 0, '1': 0 }, crossKind: { '-1': {}, '1': {} },
     maxPush: { '-1': -1e9, '1': -1e9 }, at24: { '-1': 0, '1': 0 }, give: { '-1': 0, '1': 0 }, lost: { '-1': 0, '1': 0 }, full: { '-1': true, '1': true }, contact: { '-1': false, '1': false }, menLost: { '-1': 0, '1': 0 }, menIn: { '-1': 0, '1': 0 } });
   let win = w60();
   const w5 = new Map();                            // squad key -> { halted, moving, allOnPost }
@@ -349,8 +355,37 @@ for (const seed of SEEDS) {
       if (A9WHY) { for (const i of ls) a9x[sd < 0 ? 0 : 1].push(s[base(i)] / ONE);
         for (let w = 0; w < 6; w++) a9slot[sd < 0 ? 0 : 1].push(T.slotX(s[L.O_TACTICS + T.TAC_SLOT + (sd < 0 ? w : w + 6)]) / ONE); }
       // RULED (the owner 2026-09-16): the share of seam-metre samples covered by >= 2, not a tick-union.
+      // RULED 2026-09-19: the two-gun bar is read AT FULL STRENGTH, which is the qualifier §4.1's own kill-zone
+      // sentence carries and this row had dropped ("a side at full strength"). The row admitted any side with >= 6
+      // alive and then asked the kill zone to be double-covered anyway. Measured, the shortfall is monotonic in
+      // attrition and nothing else: 2.00% at twelve hulls, 9.70% at ten or eleven, 25.05% at eight or nine, 33.20%
+      // at six or seven. A 46 m gun on a 27 m pitch covers 163 m of seam twice over with twelve hulls and
+      // arithmetically cannot with six, so below full strength the row was asking for something no lever in the
+      // spec can give. A thinned army leaving holes in its kill zone IS losses biting (§0.1, §3's supply); a row
+      // that forbade it would forbid attrition from mattering. At any strength the ONE-gun floor still holds: the
+      // line thins, it never goes blind, and that is what breaks if a pitch, a reach or a depth is ever moved.
+      // The seam's own climb was the first hypothesis and it is only a secondary effect: at 0.6-0.9 m/m the
+      // shortfall is 20.94% against 9.72% on the flattest ground, so the climb roughly doubles it - but the
+      // flattest ground is still 9.72% and the full-strength bar is met across every stretch, so the climb was
+      // never the cause. Recorded because it was measured, not because it carried the ruling.
       for (let xm = -81; xm <= 81; xm++) { const zx = seamOfCore(st, xm * ONE); let n = 0;
         for (const i of ls) if (Math.hypot(s[base(i)] - xm * ONE, s[base(i) + 1] - zx) < 46 * ONE) n++;
+        const climb = Math.abs(seamOfCore(st, (xm + 1) * ONE) - zx) / ONE;
+        if (ls.length >= 12) { add('A9 full samples'); if (n < 2) add('A9 full gap'); }
+        add('A9 floor samples'); if (n < 1) add('A9 floor gap');
+        const steep = climb > 0.40;
+        if (steep) { add('A9 steep samples'); if (n < 1) add('A9 steep gap'); }
+        else { add('A9 flat samples'); if (n < 2) add('A9 flat gap'); }
+        if (A9WHY) { const b = climb < 0.1 ? '0.0-0.1' : climb < 0.2 ? '0.1-0.2' : climb < 0.3 ? '0.2-0.3'
+            : climb < 0.4 ? '0.3-0.4' : climb < 0.6 ? '0.4-0.6' : climb < 0.9 ? '0.6-0.9' : '0.9+';
+          add(`A9 climb ${b} samples`); if (n < 2) add(`A9 climb ${b} gap2`); if (n < 1) add(`A9 climb ${b} gap1`);
+          // THE COMPETING HYPOTHESIS: not the climb at all but how many hulls that side has left. A 46 m gun and a
+          // 27 m pitch cover 163 m of seam twice over at twelve hulls; at the row's own floor of six they cannot.
+          const av = ls.length >= 12 ? '12' : ls.length >= 10 ? '10-11' : ls.length >= 8 ? '8-9' : '6-7';
+          add(`A9 alive ${av} samples`); if (n < 2) add(`A9 alive ${av} gap2`); if (n < 1) add(`A9 alive ${av} gap1`);
+          const e = Math.abs(xm) >= 65 ? 'edge 65-81' : Math.abs(xm) >= 45 ? 'mid 45-65' : 'inner <45';
+          add(`A9 ${e} samples`); if (n < 2) add(`A9 ${e} gap2`);
+          if (!steep) { add('A9 flat samples (why)'); if (n < 2) { add(`A9 flat gap at ${e}`); } } }
         add('A9 samples'); if (n < 2) { add('A9 gap'); if (A9WHY) { a9gap[xm] = (a9gap[xm] || 0) + 1; a9live.push(ls.length);
           // HOW MANY OF THAT SIDE WERE NEAR THE SEAM AT ALL: a tank still walking in from the back edge is further
           // than its gun reaches, so it covers nothing wherever it is pointed.
@@ -380,7 +415,15 @@ for (const seed of SEEDS) {
       if (on) { walkDone.push({ took: tick - w.from, ticks: w.ticks, standing: w.standing }); walkOpen.delete(i); continue; }
       w.ticks++; if (uu && uu.dx === 0 && uu.dz === 0) w.standing++;
     }
-    for (const i of liveT) { const j = T.partnerOf(i); if (j < 0 || !alive(j)) continue; add('H1 pair tank-ticks');
+    // §0's READING RULE, applied to the hold row (RULED 2026-09-19): "On the line = a living tank within 40 m (z) of
+    // its post. A hull further than that - a respawn walking in from the back edge - is a column." §0 already excluded
+    // columns from rows 2, 4b and 7; the hold row had been counting them, so on a bloody seed it measured attrition
+    // rather than holding. §3's entry is untouched: the column still walks in, it is just not evidence about the line.
+    const onLineTank = (i) => { const [, hz] = holdOf(i); return Math.abs(s[base(i) + 1] - hz) <= 40 * ONE; };
+    for (const i of liveT) { const j = T.partnerOf(i); if (j < 0 || !alive(j)) continue;
+      add('H1 pair tank-ticks (columns included)');
+      if (!onLineTank(i) || !onLineTank(j)) { add('H1 column tank-ticks (excluded)'); continue; }
+      add('H1 pair tank-ticks');
       // SETTLED vs WALKING IN: a tank that has stood on a post since it spawned (bit 7 of U_COOLDOWN) is holding the
       // line; one that has not is still arriving. The row counts both, so this says which of the two it is failing on.
       const settled = ((s[base(i) + L.U_COOLDOWN] >> 7) & 1) === 1;
@@ -555,6 +598,9 @@ for (const seed of SEEDS) {
     add('A13b ticks'); if (Math.abs(mean(push['-1']) - mean(push['1'])) >= 4) add('A13b differ');
     for (const sd of [-1, 1]) {
       const n = liveT.filter((i) => sideOf(i) === sd).length; add('A12b side-ticks'); if (n < 4) add('A12b below 4');
+      // A11a's outnumbered clause: the side's own living roster over the window, against its enemy's. Measured at the
+      // roster because that is what §4.10's `own`/`foe` counts track - the failing windows ran 8.48 against 11.25.
+      win.own[String(sd)] += n; win.ticks[String(sd)]++;
       if (n < 12) win.full[sd] = false;
       for (const i of ARMOUR) if (sideOf(i) === sd && aliveBefore.get(i) && !alive(i)) win.lost[sd]++;
       if (liveT.some((i) => sideOf(i) === -sd && liveT.some((j) => sideOf(j) === sd && Math.hypot(s[base(i)] - s[base(j)], s[base(i) + 1] - s[base(j) + 1]) < 46 * ONE))) win.contact[sd] = true;
@@ -596,12 +642,37 @@ for (const seed of SEEDS) {
         add(bad ? 'B2 fail windows' : 'B2 pass windows'); } } w5.clear(); }
     // B3 spread of men on post, per side
     for (const sd of [-1, 1]) {
-      const on = liveM.filter((i) => sideOf(i) === sd && hk.unit.get(i) && hk.unit.get(i).dx === 0 && hk.unit.get(i).dz === 0);
+      // §0's READING RULE for men (RULED 2026-09-19): §12.1 clamps a man's post to at most 40 m behind the seam, so a
+      // man further back than that cannot be standing on any legal post - he is a column walking in (§10) and the
+      // line row does not count him. That is where the 20-40 m deep tail of the old z-miss came from.
+      const on = liveM.filter((i) => sideOf(i) === sd && hk.unit.get(i) && hk.unit.get(i).dx === 0 && hk.unit.get(i).dz === 0
+        && (s[base(i) + 1] - seamOfCore(st, s[base(i)])) * -sd / ONE >= -44);
       if (on.length < 6) continue;
       const zs = on.map((i) => (s[base(i) + 1] - seamOfCore(st, s[base(i)])) / ONE), xs = on.map((i) => s[base(i)] / ONE);
       const sdev = (a) => { const m = mean(a); return Math.sqrt(mean(a.map((v) => (v - m) * (v - m)))); };
       add('B3 side-ticks'); const zsd = sdev(zs), xsd = sdev(xs);
-      if (zsd < 4 || zsd > 12) add('B3 z out'); if (xsd < 20 || xsd > 60) add('B3 x out');
+      // §11.1's OWN SCOPE (RULED 2026-09-19): the standoff scatter it writes is PER MAN inside a squad; the
+      // differences BETWEEN squads are §12.1's push doing its job, a different rule. A side-wide z sd adds the two
+      // together, so the row is measured per squad, which is the quantity §11.1 actually sets.
+      for (let sq = 0; sq < L.SQUADS_PER_SIDE; sq++) {
+        const mine = on.filter((i) => squadOf(i) === sq); if (mine.length < 4) continue;
+        const zq = sdev(mine.map((i) => (s[base(i) + 1] - seamOfCore(st, s[base(i)])) / ONE));
+        add('B3 squad z-ticks'); if (zq < 2 || zq > 12) add('B3 z out'); }
+      // RULED 2026-09-19. BOTH OLD NUMBERS WERE §11.1 GENERATOR RANGES COPIED ONTO A STANDARD DEVIATION.
+      //  z: the band 4-12 m is the STANDOFF's range (RIFLE_STANDOFF 4 + RIFLE_SPREAD 8). The sd that generator makes
+      //     is 2.98 m on one side's 36 posts and 4.52 m on the other, with nobody dead and no push on - so the old
+      //     floor could not be met by the rule that writes the posts. The floor is 2 m: not a fence, still a line.
+      //  x: the floor of 20 m was a bar on a DRAW. The three squad anchors are uniform on [-80, +80] (sim.js), and
+      //     over 200k draws the men's sd lands below 20 m on 19.6% of rounds before a shot is fired. So the bar is
+      //     relative to the frontage the side was actually given, which is the part the infantry controls.
+      const anch = [0, 1, 2].map((k) => s[L.O_SQUADS + (sd < 0 ? 0 : L.SQUADS_PER_SIDE) + k] / ONE);
+      const anchSd = sdev(anch);
+      // THE X FLOOR IS **NOT** RULED and keeps its 20 m (see §11.1). The relative bar was tried and withdrawn: the
+      // measured tightness is not the anchor draw. Over 200k draws the layout puts a side's men under a 10 m sd on
+      // about 3% of rounds; the core does it on 36.1% of side-ticks, four times as often. Something concentrates
+      // the line beyond where the anchors fell, and that is a bug to find, not a bar to move. B3 stays red on x.
+      if (zsd < 2 || zsd > 12) add('B3 z side out'); if (xsd < 20 || xsd > 60) add('B3 x out');
+      if (xsd < 10) add('B3 x under 10 m sd');
       // KEPT FOR THE SHARE QUESTION (2026-09-19): whether THIS side was out of band on THIS tick, so a B2 window and
       // a B4 follow can be counted against it. A row that fails on the same ticks as B3 is the same knot; one that
       // fails just as often on the ticks B3 is in band is its own fault.
@@ -610,6 +681,25 @@ for (const seed of SEEDS) {
       // kept its numbers in an array of its own and disagreed with the row by three orders of magnitude; anything
       // counted here goes through `add` beside the row, so the two cannot drift apart unseen.
       if (B3WHY) { add('B3 probe events');
+        add('B3 xsd sum x100', Math.round(xsd * 100)); add('B3 anchSd sum x100', Math.round(anchSd * 100));
+        // PER SQUAD, which is the quantity §11.1 actually rules: riflePost = anchor + offset(+-9), and the standoff
+        // scatter is per man. A side-wide sd mixes that with §12.1's BETWEEN-squad push differences, which are a
+        // different rule doing its job. This asks what the spread is inside one squad's own men.
+        for (let sq = 0; sq < L.SQUADS_PER_SIDE; sq++) {
+          const mine = on.filter((i) => squadOf(i) === sq); if (mine.length < 4) continue;
+          const zq = mine.map((i) => (s[base(i) + 1] - seamOfCore(st, s[base(i)])) / ONE);
+          const xq = mine.map((i) => s[base(i)] / ONE);
+          const zq2 = sdev(zq), xq2 = sdev(xq);
+          const a = s[L.O_SQUADS + (sd < 0 ? 0 : L.SQUADS_PER_SIDE) + sq] / ONE;
+          const off = Math.abs(mean(xq) - a);
+          add('B3 squad-ticks');
+          add(`B3 squad zsd ${zq2 < 2 ? '<2' : zq2 <= 12 ? '2-12' : zq2 <= 20 ? '12-20' : '>20'}`);
+          add(`B3 squad xsd ${xq2 < 2 ? '<2' : xq2 <= 12 ? '2-12' : xq2 <= 20 ? '12-20' : '>20'}`);
+          add(`B3 squad centre off anchor ${off <= 6 ? '<=6' : off <= 12 ? '6-12' : off <= 24 ? '12-24' : '>24'}`);
+        }
+        add('B3 men on line', on.length);
+        add(`B3 ratio ${xsd < 0.3 * anchSd ? '<0.3' : xsd < 0.6 * anchSd ? '0.3-0.6' : xsd < 1.0 * anchSd ? '0.6-1.0' : '>=1.0'}`);
+        add(`B3 anchSd ${anchSd < 10 ? '<10' : anchSd < 20 ? '10-20' : anchSd < 35 ? '20-35' : '35+'}`);
         if (zsd < 4) add('B3 z tight'); else if (zsd > 12) add('B3 z loose');
         if (xsd < 20) add('B3 x tight'); else if (xsd > 60) add('B3 x loose');
         // and how far out, in buckets, so "too loose" carries a size
@@ -631,14 +721,17 @@ for (const seed of SEEDS) {
 
     if (CAUSE) { for (const [i, h] of holdBeforeNext) holdBefore.set(i, h); holdBeforeNext.clear(); }
     for (let i = 0; i < 96; i++) aliveBefore.set(i, alive(i));
-    if ((t + 1) % 600 === 0) { for (const sd of ['-1', '1']) { add('A4a windows'); if (w10[sd] === 0) add('A4a still');
+    // RULED 2026-09-19: 1200 ticks, not 600. The 10 s window was arithmetic under the 6-10 s leg the row was written
+    // against; the 20:30 re-ruling doubled the leg to 12-20 s and the scoot cool-down to 20 s and left the window
+    // behind, so nothing obliged a change inside it any more and what held the row up was six teams' phases, i.e. luck.
+    if ((t + 1) % 1200 === 0) { for (const sd of ['-1', '1']) { add('A4a windows'); if (w10[sd] === 0) add('A4a still');
       if (CAUSE) add(`A4a changes ${w10[sd] === 0 ? '0' : w10[sd] <= 2 ? '1-2' : w10[sd] <= 6 ? '3-6' : '7+'}`);
       if (A4AWHY) {
         const mine = ARMOUR.filter((i) => String(sideOf(i)) === sd);
         const live = mine.filter(alive);
         const bounding = live.filter((i) => T.isBounding(s, L.O_TACTICS, i, tick)).length;
         const teams = sd === '-1' ? [0, 1, 2, 3, 4, 5] : [6, 7, 8, 9, 10, 11];
-        a4aWindows.push({ seed, sd, from: t + 1 - 600, to: t + 1, changes: w10[sd], live: live.length, bounding,
+        a4aWindows.push({ seed, sd, from: t + 1 - 1200, to: t + 1, changes: w10[sd], live: live.length, bounding,
           scoot: teams.map((w) => s[L.O_TACTICS + T.TAC_SCOOT + w]).join('/'),
           slot: teams.map((w) => s[L.O_TACTICS + T.TAC_SLOT + w]).join('/') });
       }
@@ -646,6 +739,15 @@ for (const seed of SEEDS) {
     if ((t + 1) % 3600 === 0) {
       for (const sd of ['-1', '1']) {
         add('A11 windows'); if (win.cross[sd] === 0) add('A11a no crossing'); if (win.give[sd] === 0) add('A11b no giving');
+        // THE RESTATED ROW (RULED 2026-09-19), three parts, all counted here:
+        //  (a) some side crossed in this window - a window in which NEITHER side crossed is a static front;
+        //  (b) a side that did not cross was outnumbered while it did not - §4.10's give-ground branch working;
+        //  (c) no side goes a whole run without crossing anywhere.
+        { const k = `${seed}:${sd}`; if (win.cross[sd] > 0) everCross[k] = true; else if (!(k in everCross)) everCross[k] = false;
+          const mine = win.ticks[sd] ? win.own[sd] / win.ticks[sd] : 0;
+          const theirs = win.ticks[String(-Number(sd))] ? win.own[String(-Number(sd))] / win.ticks[String(-Number(sd))] : 0;
+          if (win.cross[sd] === 0) { add('A11a windows a side did not cross');
+            if (mine < theirs) add('A11a not crossing while outnumbered'); else add('A11a not crossing at parity or ahead'); } }
         // WHY THE WINDOW WAS SHORT, with the instrument already here: no step of that kind at all, or steps that were
         // taken and still did not carry a team across the seam / below zero inside the window.
         if (CAUSE) {
@@ -656,6 +758,7 @@ for (const seed of SEEDS) {
           maxPush: win.maxPush[sd] / ONE, at24: win.at24[sd], takeSteps: winSteps.take[sd] || 0 });
         winSteps.give[sd] = 0; winSteps.take[sd] = 0;
         if (win.full[sd] && win.lost[sd] === 0 && win.contact[sd]) add('A12a full lossless');
+        if (sd === '1' && win.cross['-1'] === 0 && win.cross['1'] === 0) add('A11a no side crossed');
         add('B6 windows'); if (win.menLost[sd] < 3 || win.menIn[sd] < 3) add('B6 fail');
       }
       win = w60();
@@ -763,22 +866,36 @@ const rows = [
   ['A2  holding tank moved >= 0.02 m of its own', P(pct('A2 holding moved', 'A2 holding')), (r['A2 holding moved'] || 0) === 0],
   ['A2  fidgets (2nd flip inside 2 s) of all flips', `${r['A2 fidgets'] || 0} of ${r['A2 flips'] || 0} = ${P(pct('A2 fidgets', 'A2 flips'))}`, pct('A2 fidgets', 'A2 flips') < 0.02],
   ['A3  separation undoes a tank\'s own step', P(pct('A3 fights', 'A3 tank-ticks')), pct('A3 fights', 'A3 tank-ticks') < 0.05],
-  ['A4a 10 s windows with no post change on a side', `${r['A4a still'] || 0} of ${r['A4a windows']}`, (r['A4a still'] || 0) === 0],
+  ['A4a 20 s windows with no post change on a side', `${r['A4a still'] || 0} of ${r['A4a windows']}`, (r['A4a still'] || 0) === 0],
   ['A4b ticks with > half the line moving', P(pct('A4b over half', 'A4b side-ticks')), pct('A4b over half', 'A4b side-ticks') <= 0.02],
   ['A5  both of a pair bounding / gap not 14 m', `${r['A5 both bounding'] || 0} / ${r['A5 gap not 14 m'] || 0}`, !(r['A5 both bounding'] || r['A5 gap not 14 m'])],
   ['A6  scoot missed with a free slot beside', `${r['A6 missed'] || 0} (moved ${r['A6 moved'] || 0}, hemmed ${r['A6 hemmed'] || 0})`, (r['A6 missed'] || 0) === 0],
   ['A7  holding hulls on the line facing the enemy', P(pct('A7 facing', 'A7 holding')), pct('A7 facing', 'A7 holding') > 0.95],
   ['A8  slot changes not exactly 27 m', `${r['A8 not 27 m'] || 0}`, (r['A8 not 27 m'] || 0) === 0],
-  ['A9  seam-metre samples covered by < 2', P(pct('A9 gap', 'A9 samples')), pct('A9 gap', 'A9 samples') <= 0.05],
+  ['A9  seam metres covered by < 2, AT FULL STRENGTH (§4.1)', `${P(pct('A9 full gap', 'A9 full samples'))} of ${r['A9 full samples'] || 0}`, pct('A9 full gap', 'A9 full samples') <= 0.05],
+  ['A9  seam metres covered by < 1, at any strength (the floor)', `${P(pct('A9 floor gap', 'A9 floor samples'))} of ${r['A9 floor samples'] || 0}`, pct('A9 floor gap', 'A9 floor samples') <= 0.05],
+  ['A9  (old bar: two guns at >= 6 alive, information only)', P(pct('A9 gap', 'A9 samples')), true],
   ['A10 posts differing with the truck parked vs driven', `${r['X10 differ']} of ${r['X10 compared']}`, r['X10 differ'] === 0],
-  ['A11a 60 s windows with no team across the seam', `${r['A11a no crossing'] || 0} of ${r['A11 windows']}`, (r['A11a no crossing'] || 0) === 0],
+  ['A11a 60 s windows in which NEITHER side crossed the seam', `${r['A11a no side crossed'] || 0} of ${(r['A11 windows'] || 0) / 2}`, (r['A11a no side crossed'] || 0) === 0],
+  ['A11a a side that did not cross, and was not outnumbered', `${r['A11a not crossing at parity or ahead'] || 0} of ${r['A11a windows a side did not cross'] || 0} such windows`
+    + ` (outnumbered ${r['A11a not crossing while outnumbered'] || 0})`, (r['A11a not crossing at parity or ahead'] || 0) === 0],
+  // THIS CLAUSE NEEDS MORE THAN ONE WINDOW TO SAY ANYTHING. At TICKS = 3600 each side-run holds exactly one 60 s
+  // window, so "crossed in no window of its run" is the window clause restated and fails by construction with it.
+  // It is asserted only on a run long enough to have a second window, and says so otherwise.
+  ['A11a a side that crossed in no window of its whole run',
+    TICKS >= 7200 ? `${Object.values(everCross).filter((v) => !v).length} of ${Object.keys(everCross).length} side-runs`
+                  : `not asserted at ${TICKS} ticks (one window a side-run; needs >= 7200)`,
+    TICKS < 7200 || Object.values(everCross).every((v) => v)],
   ['A11b 60 s windows with no team giving ground', `${r['A11b no giving'] || 0} of ${r['A11 windows']}`, (r['A11b no giving'] || 0) === 0],
   ['A11c team-ticks off the 16 m default', P(pct('A11c off default', 'A11c team-ticks')), pct('A11c off default', 'A11c team-ticks') > 0.3],
   ['A12a side full and lossless 60 s in contact', `${r['A12a full lossless'] || 0}`, (r['A12a full lossless'] || 0) === 0],
   ['A12b side below 4 tanks', P(pct('A12b below 4', 'A12b side-ticks')), pct('A12b below 4', 'A12b side-ticks') <= 0.05],
   ['A13a slot orders differ', `${r['13a orders differ'] || 0} of ${r['13a seeds']}`, r['13a orders differ'] === r['13a seeds']],
   ['A13b sides\' mean push differs >= 4 m', P(pct('A13b differ', 'A13b ticks')), pct('A13b differ', 'A13b ticks') > 0.5],
-  ['H1  pair tank-ticks within 1.5 m of the hold', P(pct('H1 on post', 'H1 pair tank-ticks')), pct('H1 on post', 'H1 pair tank-ticks') >= 0.5],
+  ['H1  pair tank-ticks within 1.5 m of the hold (columns out)',
+    `${P(pct('H1 on post', 'H1 pair tank-ticks'))} of ${r['H1 pair tank-ticks'] || 0}`
+    + ` (columns excluded ${r['H1 column tank-ticks (excluded)'] || 0} of ${r['H1 pair tank-ticks (columns included)'] || 0})`,
+    pct('H1 on post', 'H1 pair tank-ticks') >= 0.5],
   ['H2  legs whose new bounding tank reached its post', `${r['H2 arrived'] || 0} of ${r['H2 legs'] || 0} = ${P(pct('H2 arrived', 'H2 legs'))}`, pct('H2 arrived', 'H2 legs') >= 0.8],
   ['H3  push steps reversing the previous (information)', `${r['H3 push reversals'] || 0} of ${r['H3 push steps'] || 0} = ${P(pct('H3 push reversals', 'H3 push steps'))}, ${((r['H3 push steps'] || 0) / (SEEDS.length * 12 * TICKS / 3600)).toFixed(2)} steps per team-minute`, true],
   // THE SAMPLE SIZE BESIDE THE SHARE. Seed 12 printed "0.00%" for a run whose pushed team-ticks were zero - 0 of 0
@@ -805,11 +922,16 @@ const rows = [
   ['B1  man within 18 m of a fire-team mate', P(pct('B1 near a mate', 'B1 man-ticks')), pct('B1 near a mate', 'B1 man-ticks') > 0.8],
   ['B1  fire team moves or halts together', P(pct('B1b together', 'B1b team-ticks')), pct('B1b together', 'B1b team-ticks') > 0.9],
   ['B2  5 s squad windows without a halted team / a mover', `${r['B2 fail'] || 0} of ${r['B2 squad-windows']}`, (r['B2 fail'] || 0) === 0],
-  ['B3  side-ticks with men-on-post spread out of band', `z ${P(pct('B3 z out', 'B3 side-ticks'))}, x ${P(pct('B3 x out', 'B3 side-ticks'))}`, !(r['B3 z out'] || r['B3 x out'])],
+  ['B3  men on the line: z spread per squad out of 2-12 m (RULED)', `${P(pct('B3 z out', 'B3 squad z-ticks'))} of ${r['B3 squad z-ticks'] || 0} squad-ticks`, !r['B3 z out']],
+  ['B3  men on the line: x spread out of 20-60 m (NOT ruled, red)', `${P(pct('B3 x out', 'B3 side-ticks'))}, under a 10 m sd on ${P(pct('B3 x under 10 m sd', 'B3 side-ticks'))} (the layout alone gives ~3%)`, !r['B3 x out']],
   ['B4  push changes the squad did not follow in 10 s', `${r['B4 did not follow'] || 0} of ${r['B4 changes'] || 0}`, (r['B4 did not follow'] || 0) === 0],
   ['B5  man-ticks inside 3 m of a tank', P(pct('B5 inside a hull', 'B5 man-ticks')), pct('B5 inside a hull', 'B5 man-ticks') <= 0.005],
   ['B6  60 s windows with < 3 men lost or arrived / arrivals on the line', `${r['B6 fail'] || 0} of ${r['B6 windows']} / ${r['B6 appeared on the line'] || 0} of ${r['B6 arrivals'] || 0}`, !(r['B6 fail'] || r['B6 appeared on the line'])],
 ];
+// --dump=<prefix>: every raw counter whose name starts with the prefix, for a diagnostic that has no print of its own.
+{ const d = arg('dump', null);
+  if (d !== null) { console.log(`--- raw counters, prefix ${JSON.stringify(d)} ---`);
+    for (const k of Object.keys(r).sort()) if (k.startsWith(d)) console.log(`  ${k.padEnd(46)} ${r[k]}`); } }
 let red = 0;
 for (const [name, got, ok] of rows) { if (!ok) red++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${name.padEnd(58)} ${got}`); }
 {
