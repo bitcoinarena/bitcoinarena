@@ -59,6 +59,14 @@ public class RoadNetwork : MonoBehaviour
     /// </summary>
     public const int Across = 5;
 
+    /// <summary>The live candle layer at a world point, metres - 0 where no candle stands.</summary>
+    static float CandleLayerAt(float x, float z) =>
+        CandleTerrain.LiveWords != null ? CandleTerrain.LayerAt(CandleTerrain.LiveWords, x, z) : 0f;
+
+    /// <summary>How far the chart has scrolled, metres: the holes in the ribbon move with it.</summary>
+    static float CandleShift() =>
+        CandleTerrain.LiveWords != null ? CandleTerrain.LiveWords[Blwp.Layout.CV_SHIFT] / 65536f : 0f;
+
     public float SurfaceHeight(float x, float z)
     {
         float bare = Ground(x, z);
@@ -258,6 +266,12 @@ public class RoadNetwork : MonoBehaviour
         // ends - a crater arriving, and a crater expiring after its 10-20 rounds.
         s += Blwp.BlwpCore.StrikeCount * 1e3f + Blwp.BlwpCore.CraterCount;
 
+        // AND THE CHART'S OWN SCROLL: the holes the ribbon leaves for the candles move with the bodies, so a lane
+        // whose shift has changed is stale. Rounded to a tenth of a metre, which is a third of the 0.576 m/s slide
+        // per rebuild tick - fine enough that a hole never lags a body by a visible amount, coarse enough that a
+        // lane is not rebuilt on float noise.
+        s += Mathf.Round(CandleShift() * 10f) * 0.017f;
+
         foreach (var d in Model.Cuts) if (d.lane == lane) s += 1000f + Mathf.Round(d.x) + Mathf.Round(d.t);
         foreach (var w in Model.Wears) if (w.lane == lane) s += 7f + Mathf.Round(w.x) + Mathf.Round(w.wear * 20f);
         return s;
@@ -284,6 +298,7 @@ public class RoadNetwork : MonoBehaviour
         var verts = new List<Vector3>(n * 2 + 2);
         var uvs = new List<Vector2>(n * 2 + 2);
         var tris = new List<int>(n * 6);
+        var onCandle = new List<bool>(n * 2 + 2);
 
         // One texture tile every TileMetres, measured along the road as it is
         // actually driven. Emitting UVs in tile units means the material needs
@@ -324,6 +339,7 @@ public class RoadNetwork : MonoBehaviour
                 p.y = DeckGround(p.x, p.z) + lift - broken * 0.55f + broken * 0.25f * a;
                 verts.Add(p);
                 uvs.Add(new Vector2(uWidth * a, v));
+                onCandle.Add(CandleLayerAt(p.x, p.z) > 0.01f);
                 if (k == Across / 2) centreY = p.y;
             }
             prev = new Vector3(x, centreY, z);
@@ -339,6 +355,12 @@ public class RoadNetwork : MonoBehaviour
             for (int k = 0; k + 1 < Across; k++)
             {
                 int v = i * Across + k, w = v + Across;
+                // NO ASPHALT WHERE A CANDLE STANDS (the owner 2026-09-19 13:09 and 15:56: "roads still cover the
+                // candles"). Laying the ribbon on the ground under the chart was not enough: the deck stands 0.45 m
+                // over the bare ground and a candle's ramp needs 1.80 m of its 2.59 m half to climb that high, so
+                // 69% of every ramp the road crossed was buried under asphalt. A quad with a candle under any of
+                // its four corners is not emitted - the road is whole between the bodies and absent under them.
+                if (onCandle[v] || onCandle[v + 1] || onCandle[w] || onCandle[w + 1]) continue;
                 tris.Add(v); tris.Add(v + 1); tris.Add(w);
                 tris.Add(v + 1); tris.Add(w + 1); tris.Add(w);
             }
