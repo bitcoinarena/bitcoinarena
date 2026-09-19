@@ -14,9 +14,11 @@ the line is marked **GAP**.
 Amended 2026-09-16 19:02-19:05 (the owner's order, items 1 and 3 of his list, nothing else): **objectives**
 (§4.11: HIGH, LOW, OPEN of the chart - no truck is an objective, §1.2) and **infantry that hides** (§11.3-§11.5:
 cover in craters and wrecks, prone, suppression; the earlier "no cover" ruling of §11.3 is **OVERRULED**).
-Item 2 of his list (wrecks as cover for tanks, side pressure, whole-line retreat) is **not** in this file:
-no rule below lets a tank, a gun or the truck read a wreck. Everything added by that order is **GAP** until
-the core does it.
+Item 2 of his list (wrecks as cover for tanks, side pressure, whole-line retreat) was parked until
+2026-09-19 11:14, when the owner sent it to this session to decide: **wrecks as cover for tanks is IN** (§4.1,
+GAP, tank wrecks only - never the truck's); **side pressure and whole-line retreat stay OUT**, the second
+because the game already has the only whole-line movement it is allowed, §4.14's, driven by the price. No
+rule lets the truck read a wreck. Everything added by that order is **GAP** until the core does it.
 
 Revised 2026-09-16 19:20 (the owner: *"Do we have an absolutely dynamic war? Is it immersive? What is
 missing?"*): the verdict is §0.1 - **not yet** - with the four reasons and the sections that answer them:
@@ -508,6 +510,21 @@ number on it is a core word or the client's memory of attested samples - nothing
   m**; between searches the held candidate scrolls with the chart (its x + offset, §4.15), which is a
   creep, not a new post. A hull-down tank therefore changes crest at most once a second and only for
   a visibly better one - the §0 wiggle row is measured with the ribbon on.
+- **A tank wreck is a crest (RULED 2026-09-19, the owner's item 2, first part; GAP).** To the hull-down
+  search a **living-side or enemy tank wreck** counts as ground: a candidate whose 6 m toward the enemy
+  crosses a wreck's hull circle (3.0 m, §1.2) reads a rise of **2 m** - a hull to the turret ring, more
+  than any plateau (1 m) or ramp, so a hulk beats a candle edge - and the 0.3 m hysteresis and the 60-tick
+  search above apply unchanged. The candidate itself is never inside the circle (`AvoidWrecks` pushes a
+  tank out, §11.3, and 6 m minus 3 m leaves the hull clear). When the wreck's id respawns (§3) the crest is
+  gone with it and the next search moves the tank, as it would for any crest the chart scrolled away.
+  **Tank wrecks only.** The truck's wrecks are one player's and differ between players' runs; a post that
+  read one would differ with the truck present and absent and break §1.2 and the A10 row. Why it is in:
+  §0.1's second point is that nothing on this field accumulates, and wrecks are the one thing that does -
+  the men already use them (§11.3), and a hull tucked behind a hulk is what "smart" looks like from the
+  cab. It is deterministic (a wreck is state, identical on every node), it reads nothing the search does
+  not already read, and it is no general: it moves one tank two metres. Test: a wreck's respawn tick
+  moves no tank before the next 60-tick search; no post reads a truck wreck (the A10 probe with a wrecked
+  ghost truck on the field).
 - **Reverse slope** is the same rule seen from the other side: sit behind the crest, gun just over. It is
   **not** a second behaviour in this core.
 - BOUNDING holds the forward line as given, no crest search: it is the one that moves.
@@ -1106,7 +1123,8 @@ a thing the truck drives on is settled state (multiplayer_p2p.md §0.5), so the 
   - **Objectives** (§4.11) are the chart's HIGH, LOW and OPEN and ride it (re-ruled 21:15). **Craters** cut into a plateau as into ground. **Air** flies at 19 m.
   - **The truck** (§1.2): a plateau under it is ground; a wick is a wall; nothing in the war changes for
     it. A wreck on a plateau is a wreck on a plateau.
-  - **Item 2** stays out: no rule here lets a tank read a wreck or move a whole line.
+  - **Item 2**: a tank wreck on a plateau is a crest to §4.1's search like any other (ruled 2026-09-19);
+    nothing here moves a whole line.
 - **Why 2 m and not 6**: a 6 m plateau needs a 15 m ramp at the same grade, which on a 3.7 m body is
   no plateau at all - the candle becomes a ridge. Two metres hides a hull (3 m) to the turret, hides a
   prone man entirely, keeps the ramp short enough that the body's edge is still a line, and the colour
@@ -1610,9 +1628,20 @@ function of the state, a claim is a function of the seed and the unit id, no dra
   240 ticks). Three draws in the same order as a tank's shot - hit, damage, reload - taken from the
   round's RNG in index order with the rifles' shots (§11.6). A hit's damage is a shell's for the
   crater/heat rules: none (it is a tank being hit, not the truck).
-- **Never at the truck** (RULED HERE): §8.2 stands as written for the rifle and the launcher fires at
-  tanks only. A 25% rocket of 20 to 35 against a 100 HP truck would end most runs that pass an AT man
-  at 30 m; not measured, because it is not allowed. the owner can overrule.
+- **Never at the truck - RULED 2026-09-19 (the owner sent it to this session to decide): it stays never,
+  and the reason is the balance, not caution.** The launcher is the infantry's anti-armour arm and the
+  whole of its role in §0: "men are feared by tanks" is a row on AT hits as a share of tank deaths (15 to
+  50%). Every gun in this game that fires at the truck does so by §1.2's **outranks** rule - the truck
+  beats the picked enemy when nearer - and a launcher under that rule would prefer a passing truck to the
+  tank it exists to stop, so nine AT men a side would turn from an anti-armour line into a truck-hunting
+  one, and the war would lean toward one player, which §1.2 forbids in every other line. The truck is
+  already answered by three arms - the gun (34 m), the rifle (26 m, with a rifle target), the bomb
+  (16 m) - and a fourth at 20 to 35 per hit, 25%, 8 to 12 s, from every infantry line the road crosses,
+  makes the first crossing a countdown rather than a run: not measured, and it does not need to be, since
+  the row it would break (the AT share) is measured and the line it would cross (§1.2) is ruled. **The one
+  form under which it could be allowed without either**, recorded and not taken: a launcher fires at the
+  truck only when **no** enemy tank is inside 30 m - no outranking, the tank always first. the owner can still
+  overrule with a word, and that is the form to use if he does.
 - Never at a man, never at a wreck (§11.3: a dead index is not a target). At an enemy **gunship** inside
   30 m when no enemy tank is inside 30 m: 15%, one hit drives it off (§12.3).
 - **State:** `TAC_AT`, one word per AT man (18 words, appended): the tick the launcher is loaded again,
@@ -1831,20 +1860,43 @@ Each one breaks a KEEP or decides what the game is; each has my recommendation s
 word.
 
 1. **Tanks fire on men.** RULED yes (the owner 2026-09-16 19:25) → §4.4 coax, §8.3.
-2. **Men hurt tanks.** RULED yes (the owner 2026-09-16 19:25) → §11.7 AT man, §8.1. Open inside it: the
-   launcher at the truck - RULED HERE never; one word from the owner changes it.
+2. **Men hurt tanks.** RULED yes (the owner 2026-09-16 19:25) → §11.7 AT man, §8.1. Inside it, the
+   launcher at the truck: **RULED 2026-09-19 never**, on the owner's delegation, for the balance - the
+   outranks rule would make the AT line a truck-hunting line (§11.7 has the reasoning and the one form
+   under which it could be allowed).
 3. **Bombs on the truck.** RULED yes (the owner 2026-09-16 19:40) → §1.2, §12.3.
 4. **A winner.** RULED (the owner 2026-09-16 19:40 and 20:00): **not from the war** - *"it is bears
    against bulls and we start no simulation of our own. The Bitcoin price decides"* - and **yes from the
    price**: the round's open against the newest sample, `THE BULLS WIN` / `THE BEARS WIN` on the end
    screen with the truck's score and sats → §4.14, §0.2, multiplayer_p2p.md §0.5A and §13.
-   Open inside it, the owner's: the round is **9000 ticks = 2 min 30 s** in the core (`BLOCK_TICKS`) and
-   **3 minutes** in the protocol's worked example (multiplayer_p2p.md §0.16, `T_run`). One of the two
-   is wrong; the core states the tick (tick.js), so the contract's `T_run` should read 150 s or
-   `BLOCK_TICKS` should be 10800.
-5. **Item 2 of the 19:02 list** - wrecks as cover for tanks, side pressure, whole-line retreat - stays
-   parked as the owner ordered. With §4.12 in, a whole-line retreat is not needed for movement; side
-   pressure would be a second general fighting the assault clock. **Recommend: leave out.**
+   Inside it, the round's length - **RULED 2026-09-19 (the owner's delegation): 3 minutes is right, and the
+   contract owns it.** The core had `BLOCK_TICKS = 9000` (150 s, gate.js: *"Bitcoin's ten minutes is far
+   too long to wait for a score"* - which stands) against `T_run` = 3 minutes in multiplayer_p2p.md
+   §0.16 and §27. The doctrine's own clocks decide it: §4.12 starts a side's first assault at 20-40 s,
+   runs it up to 30 s, consolidates 15 s and re-arms 45-90 s later, so a 150 s round holds **one**
+   assault a side and cuts the second off mid-build; §4.14 needs six closed 10 s candles before a trend
+   can exist at all, 40% of a 150 s round with no trend possible; §4.13's seam is an SMA(21) of 5 s
+   samples and takes 105 s to turn, so in 150 s the market moves the front at most once. At 180 s each
+   side gets two declared assaults, a trend for two thirds of the round, and a front that has visibly
+   turned - the minimum for §0.1's tempo and for the chart being the general. Longer would be better for
+   the war and worse for the score wait, and that is the contract's to set per round: `player_run_duration`
+   is already a `RoundContract` field, so the core's constant is a **default**, not the rule. **GAP:**
+   `BLOCK_TICKS` becomes **10800** and `RUN_TICKS` reads the contract's `T_run` when a contract is
+   present, the constant when none is (a SIM round, §4.13). The verdict, `sign(close - open)`, is
+   unchanged by any of it.
+5. **Item 2 of the 19:02 list** - wrecks as cover for tanks, side pressure, whole-line retreat -
+   **RULED 2026-09-19 on the owner's delegation (11:14), in three parts:**
+   - **Wrecks as cover for tanks: IN.** §4.1: a tank wreck is a crest to the hull-down search, 2 m of
+     rise, tank wrecks only, never the truck's. The one thing on the field that accumulates (§0.1, point
+     2) now shapes where the armour stands, as it already shapes where the men lie. GAP.
+   - **Side pressure: OUT.** It would be a second general reading the whole board against §4.12's assault
+     clock, and any war-wide "which side is winning" that moves a line is the winner-from-the-war that
+     item 4 forbids: *"the Bitcoin price decides"*.
+   - **Whole-line retreat: OUT as a war rule, because it is already IN as a market rule.** §4.14 gives the
+     trend's side +8 on every lane and the side it runs against -8, pauses that side's assault clock and
+     makes it die faster and get less (§3). That is the whole line falling back, and it is the only form
+     the game permits, since the war may not compute who is losing. A second, war-driven retreat would
+     fight the first.
 
 Implement part A in `packages/core/src/rules/tactics.js` and part B beside it; the army step moves what
 they hand out.
