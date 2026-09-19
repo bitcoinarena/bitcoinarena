@@ -948,7 +948,7 @@ export function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, half
   u.x = clamp(add(u.x, stepX), neg(min(ARMOUR_WEST, halfX)), min(ARMOUR_EAST, halfX));
   u.z = clamp(add(u.z, stepZ), -halfZ, halfZ);
 
-  // OUT OF THE CRATERS.
+  // OUT OF THE CRATERS - A TANK, AND ONLY A TANK.
   //
   // C# has this rule already and it is not the wrecks: `Army.AvoidWrecks`
   // (`Army.cs:533-552`) pushes a unit out of a circle along the radius by
@@ -958,12 +958,24 @@ export function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, half
   // stay out; what is taken is the shape of the rule, not the feature whose
   // share of the gap measured zero.
   //
+  // THE 0.6 m MAN IS GONE (the owner 2026-09-19, and §11.3's own sentence: the
+  // push "no longer applies to a man; it still applies to a tank (3.2 m)").
+  // Both sizes were carried across together because they sat on one line in
+  // C#, and that was the leftover: C# wrote them when a man in a hole was a
+  // man in the way, and §11.3 overrules exactly that. Kept, the two rules
+  // fought every tick - a crater place sits 1 m INSIDE the rim (tactics.js
+  // COVER_RIM_IN) and the shove put him 0.6 m outside it, so the claim was
+  // held and the post was never reached: measured 802 crater claims held and
+  // 0 reached, 901 wreck claims held and 3 reached. A man is not a hull; he
+  // has no size here, and he lies in the bowl unhurt (fallout is the truck's,
+  // §10).
+  //
   // A push, not a steer. It is the same class as the map edge two lines above
   // and as `resolveSolids` for the truck: a place a unit may not be, resolved
   // after the step rather than negotiated before it. The TRUCK is deliberately
   // not here - it drives through the bowl, which step 3 measured it can.
-  if (craters) {
-    const size = u.armour ? Math.imul(3, ONE) + 13107 : 39322;   // 3.2 m, 0.6 m
+  if (craters && u.armour) {
+    const size = Math.imul(3, ONE) + 13107;                      // 3.2 m, the hull's
     for (let i = 0; i < craters.n; i++) {
       const c = Math.imul(i, 3);
       const R = craters.r[c + 2];
