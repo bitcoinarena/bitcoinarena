@@ -1508,7 +1508,7 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
     const side = s[mb + U_SIDE] < 0 ? -1 : 1;
     const x = riflePost(s[squadWord(s[mb + U_SIDE], s[mb + U_TARGET])], i);
     return { x, z: add(seamAtX(st, x) | 0, Math.imul(side, RIFLE_STANDOFF)) };
-  }, (x) => seamAtX(st, x));
+  }, (x) => seamAtX(st, x), st.candles && !st.noCandleField ? st.candles : null, st.candleShift | 0);
 
   const groundOf = (x, z) => surfaceAt(st, x, z);
   // NEVER MORE THAN HALF THE LINE MOVING (WAR_TACTICS.md §0 row 4b): at the start of the tick count each side's tanks on
@@ -1607,7 +1607,8 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
     // Handed in the way the armour's own post is: the step moves a unit to what is handed out here.
     u.cover = null;
     if (!u.armour) {
-      const place = coverPostOf(s, O_TACTICS, i, u.side < 0 ? -1 : 1);
+      const place = coverPostOf(s, O_TACTICS, i, u.side < 0 ? -1 : 1,
+                                st.candles && !st.noCandleField ? st.candles : null, st.candleShift | 0);
       if (place) u.cover = place;
     }
     if (!u.armour) {

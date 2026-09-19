@@ -22,6 +22,7 @@
 import { ONE, idiv, abs, add, sub, mulFast, sqrt, length2 } from '../fixed.js';
 import { O_UNITS, U_WORDS, U_STATE, U_HP, UNITS, ARMOUR_MASK, MAX_CRATERS, craterBase, C_X, C_Z, C_R, C_ROUNDS } from '../state.js';
 import { hullDownHold, crestRise, clearOfCraters } from './army.js';
+import { CANDLES, CL_WORDS, CL_X, CL_Z0, CL_Z1, CANDLE_RAMP } from './candles.js';
 import { MINER_DOOR_X } from './map.js';
 
 /** The live craters as the army step sees them - the same flat list `stepUnit` is handed, built from the state. */
@@ -490,6 +491,8 @@ const PAIR_EAST_X = (Math.min(5767168, MINER_DOOR_X - Math.imul(4, ONE)) - PAIR_
  */
 export const COVER_PLACES_WRECK = 2, COVER_PLACES_CRATER = 4;
 const WRECK_PLACE_MAX = Math.imul(UNITS, COVER_PLACES_WRECK);          // ids below this are a wreck's
+const CRATER_PLACE_MAX = WRECK_PLACE_MAX + Math.imul(MAX_CRATERS, COVER_PLACES_CRATER);   // then the craters'
+const LIP_RAMP_OUT = add(CANDLE_RAMP, ONE >> 1);   // the foot of the ramp on his side, and 0.5 m out from it
 const COVER_BEHIND = Math.imul(3, ONE) + 39322;   // 3.6 m: behind the hull, 0.6 m clear of its 3 m circle
 const COVER_ASIDE = Math.imul(2, ONE);            // 2 m either side of the wreck's centre
 const COVER_RIM_IN = ONE;                         // a crater's places sit 1 m inside its lip
@@ -504,7 +507,7 @@ const RIM_SIN = [-50204, -22417, 22417, 50204];
 const RIM_COS = [42126, 61584, 61584, 42126];
 
 /** Where place `id` stands for a man of `side`, or null if that place does not exist in this state. */
-export function coverPlace(s, id, side) {
+export function coverPlace(s, id, side, layout = null, shift = 0) {
   if (id === COVER_NONE || id < 0) return null;
   if (id < WRECK_PLACE_MAX) {
     const unit = idiv(id, COVER_PLACES_WRECK), which = id - Math.imul(unit, COVER_PLACES_WRECK);
@@ -513,6 +516,19 @@ export function coverPlace(s, id, side) {
     if (s[b + U_STATE] !== 0) return null;                              // a live hull is not a wreck
     return { x: add(s[b], which === 0 ? -COVER_ASIDE : COVER_ASIDE),
              z: add(s[b + 1], Math.imul(side, COVER_BEHIND)) };
+  }
+  if (id >= CRATER_PLACE_MAX) {
+    // A CANDLE LIP (§11.3's third kind of place, §4.15's geometry). One place along the plateau edge that stands
+    // between the man and the enemy, at the foot of the ramp on his side and half a metre out from it. A body is
+    // 5.18 m across since ruling B's refit, so "one every 4 m along the edge" is one place, at the body's middle.
+    // It scrolls with the chart: the layout's x is the unshifted slot and the world's is that less the shift.
+    const c = id - CRATER_PLACE_MAX;
+    if (!layout || c >= CANDLES) return null;
+    const b = Math.imul(c, CL_WORDS);
+    const z0 = layout[b + CL_Z0], z1 = layout[b + CL_Z1];
+    if (sub(z1, z0) <= 0) return null;                                  // a body with no length has no edge
+    const edge = side < 0 ? z0 : z1;
+    return { x: sub(layout[b + CL_X], shift | 0), z: sub(edge, Math.imul(side, LIP_RAMP_OUT)) };
   }
   const k = id - WRECK_PLACE_MAX, slot = idiv(k, COVER_PLACES_CRATER), corner = k - Math.imul(slot, COVER_PLACES_CRATER);
   if (slot >= MAX_CRATERS) return null;
@@ -525,7 +541,7 @@ export function coverPlace(s, id, side) {
 }
 
 /** Every place id this state holds, in the order §11.3 breaks ties by: wrecks by index, then craters by slot. */
-export function coverPlaceIds(s) {
+export function coverPlaceIds(s, layout = null) {
   const out = [];
   for (let i = 0; i < UNITS; i++) {
     if ((i & ARMOUR_MASK) !== 0) continue;
@@ -537,6 +553,10 @@ export function coverPlaceIds(s) {
     const b = craterBase(k);
     if (s[b + C_R] <= 0 || s[b + C_ROUNDS] <= 0) continue;
     for (let c = 0; c < COVER_PLACES_CRATER; c++) out.push(WRECK_PLACE_MAX + Math.imul(k, COVER_PLACES_CRATER) + c);
+  }
+  if (layout) for (let c = 0; c < CANDLES; c++) {
+    const b = Math.imul(c, CL_WORDS);
+    if (sub(layout[b + CL_Z1], layout[b + CL_Z0]) > 0) out.push(CRATER_PLACE_MAX + c);
   }
   return out;
 }
@@ -587,9 +607,9 @@ export function coverEligible(s, base, side, postX, postZ, seamZ, place, held = 
  * `postOfMan(index)` hands in where his line would put him, because eligibility is measured from the POST and not
  * from where he is standing. A man with no place is in the open and his word is COVER_NONE.
  */
-export function coverClaims(s, base, tick, postOfMan, seamAt) {
+export function coverClaims(s, base, tick, postOfMan, seamAt, layout = null, shift = 0) {
   const hash = s[base + TAC_SEED];
-  const ids = coverPlaceIds(s);
+  const ids = coverPlaceIds(s, layout);
   for (let si = 0; si < 2; si++) {
     const side = si === 0 ? -1 : 1;
     const order = [];
@@ -607,7 +627,7 @@ export function coverClaims(s, base, tick, postOfMan, seamAt) {
       const held = coverClaim(s, base, i);
       if (held === COVER_NONE) continue;
       const post = postOfMan(i);
-      const place = coverPlace(s, held, side);
+      const place = coverPlace(s, held, side, layout, shift);
       if (place && coverEligible(s, base, side, post.x, post.z, seamAt(post.x) | 0, place, true)) taken.add(held);
       else s[coverWord(base, i)] = COVER_NONE;
     }
@@ -618,7 +638,7 @@ export function coverClaims(s, base, tick, postOfMan, seamAt) {
       let best = COVER_NONE, bestD = 0;
       for (const id of ids) {
         if (taken.has(id)) continue;
-        const place = coverPlace(s, id, side);
+        const place = coverPlace(s, id, side, layout, shift);
         if (!place) continue;
         if (!coverEligible(s, base, side, post.x, post.z, seam, place)) continue;
         const d = length2(sub(place.x, post.x), sub(place.z, post.z));
@@ -631,10 +651,10 @@ export function coverClaims(s, base, tick, postOfMan, seamAt) {
 }
 
 /** Where a man is going, if he holds a place: his claim is his post while he holds it (§11.3). */
-export function coverPostOf(s, base, index, side) {
+export function coverPostOf(s, base, index, side, layout = null, shift = 0) {
   const id = coverClaim(s, base, index);
   if (id === COVER_NONE) return null;
-  return coverPlace(s, id, side);
+  return coverPlace(s, id, side, layout, shift);
 }
 
 /** A pair member's x on a slot: the pair's centre held off the paving, the member 6 m either side of it. */
