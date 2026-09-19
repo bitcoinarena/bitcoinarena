@@ -44,6 +44,8 @@ const B3WHY = process.argv.includes('--b3why');
 const CAUSE = process.argv.includes('--cause');
 const SHARE = process.argv.includes('--share');
 const b3OutNow = new Map();
+const haltSuppressedNow = new Set();
+const winSteps = { give: {}, take: {} };
 let pushWrittenMin = Infinity, pushWrittenMax = -Infinity, pushSeenMin = Infinity, pushSeenMax = -Infinity;
 const SEEDS = arg('seeds', '1,2,3,4,5').split(',').map(Number);
 const TICKS = Number(arg('ticks', 3600));
@@ -64,6 +66,10 @@ patch('sim.js', '  const groundOf = (x, z) => surfaceAt(st, x, z);\n',
   '  if (globalThis.__W) globalThis.__W.afterSep(s);\n', 'before');
 patch('sim.js', '  for (let i = 0; i < UNITS; i++) {\n    const b = unitBase(i);\n    u.x = s[b + U_X];',
   '  if (globalThis.__W) globalThis.__W.halted(halted);\n', 'before');
+// §11.2's suppression, counted: a team whose halt was cancelled because its lower neighbour halted. B2's failures are
+// all the halt half, so this says how often the rule itself is what leaves a window with no halted team.
+patch('sim.js', '      halted[sd][f] = raw && !(f > 0 && halted[sd][f - 1]);',
+  '\n      if (globalThis.__W) globalThis.__W.haltRaw(sd, f, raw, halted[sd][f]);');
 // THE PUSH RE-READ ITSELF (§4.10): every team's scheduled tick, whether it was skipped for a tank off post, the
 // verdict it read, whether that verdict matched the last one, and the step it took. A11b, A13b and both O1 rows ask
 // the push to DO something, so what the re-read does is the one number under all four.
@@ -75,7 +81,7 @@ patch('rules/tactics.js', '    const confirmed = s[base + TAC_VERDICT + w] === v
   '\n    if (globalThis.__W) globalThis.__W.verdict(w, verdict, s[base + TAC_VERDICT + w], s[base + TAC_PUSH + w], '
   + 'weight, terms.rest, terms.ceiling, own, foe, widow);');
 patch('rules/tactics.js', '    s[base + TAC_PUSH + w] = push | 0;',
-  '\n    if (globalThis.__W) globalThis.__W.stepped(w, push);');
+  '\n    if (globalThis.__W) globalThis.__W.stepped(w, push, verdict);');
 // THE CORE'S OWN SEAM, hooked out of the copy (measured 2026-09-19): every hold hangs off the seam at the slot, and
 // this tool used to re-derive it as frontlineZ(st.tape, x) - a different reader from the core's glided, scrolled,
 // windowed one. The two disagreed by a median 1.37 m against a 1.5 m on-post radius, which is most of what H1 was
@@ -105,6 +111,9 @@ globalThis.__W = {
   beforeSep(s) { hk.pre = new Map(ARMOUR.map((i) => [i, [s[base(i)], s[base(i) + 1]]])); },
   afterSep(s) { hk.sep.clear(); for (const [i, q] of hk.pre) hk.sep.set(i, Math.hypot(s[base(i)] - q[0], s[base(i) + 1] - q[1]) / ONE); },
   unit(i, u, dx, dz, hold, post) { hk.unit.set(i, { dx, dz, hold, post, halted: u.halted }); },
+  haltRaw(sd, f, raw, kept) { if (!mainPass) return;
+    if (raw) { add('B2 raw halts'); if (!kept) add('B2 halts suppressed'); }
+    if (raw && !kept) haltSuppressedNow.add(`${sd < 1 ? -1 : 1}:${f}`); },
   reread(w) { if (mainPass) add('P re-read due'); },
   onPostOk(w) { if (mainPass) add('P team on post'); },
   verdict(w, v, was, push, weight, rest, ceiling, own, foe, widow) { if (!mainPass) return;
@@ -116,7 +125,11 @@ globalThis.__W = {
     add(`P verdict ${['none', 'take', 'give', 'drift'][v] || v}`);
     if (v === was) add('P confirmed'); else add('P not confirmed');
     if (v === 2) { add('P give read'); if (v === was) add('P give confirmed'); if (push <= 0) add('P give at or below zero'); } },
-  stepped(w, push) { if (!mainPass) return; add('P stepped'); if (push < 0) add('P stepped below zero');
+  stepped(w, push, verdict) { if (!mainPass) return; add('P stepped');
+    // per side, for the A11 windows: a step that was a give, and a step that was a take
+    { const sd = w < 6 ? '-1' : '1';
+      if (verdict === 2) winSteps.give[sd] = (winSteps.give[sd] || 0) + 1;
+      if (verdict === 1) winSteps.take[sd] = (winSteps.take[sd] || 0) + 1; } if (push < 0) add('P stepped below zero');
     // WHAT THE CODE IS HOLDING, in the same units the sampler reads: the lowest push this run ever WROTE, against the
     // lowest the per-tick sampler ever SAW. Those two disagreed once (72 steps below zero against a sampled minimum of
     // 0 m) and one of them is wrong.
@@ -143,6 +156,7 @@ for (const seed of SEEDS) {
     const slotsBefore = Array.from({ length: 12 }, (_, w) => s[L.O_TACTICS + T.TAC_SLOT + w]);
     const scootBefore = Array.from({ length: 12 }, (_, w) => s[L.O_TACTICS + T.TAC_SCOOT + w]);
     hk.unit.clear();
+    haltSuppressedNow.clear();
     step(st, 0, 0, 0, ONE, 0);
     const tick = s[L.O_TICK];
     const liveT = ARMOUR.filter(alive), liveM = RIFLES.filter(alive);
@@ -393,11 +407,16 @@ for (const seed of SEEDS) {
     const squadOf = (i) => { const ft = T.rifleTeamOf(i); return s[base(T.firstManOf(ft.side, ft.team)) + L.U_TARGET]; };
     for (const i of liveM) { const k = `${sideOf(i)}:${squadOf(i)}`; const w = w5.get(k) || { halted: false, moving: false, allOnPost: true, outTicks: 0, ticks: 0 };
       const u = hk.unit.get(i); if (u) { if (u.halted) w.halted = true; if (mvOf(i) > 0.02 && mvOf(i) < 5) w.moving = true; if (!(u.dx === 0 && u.dz === 0)) w.allOnPost = false; } w5.set(k, w); }
-    for (const [k, w] of w5) { w.ticks++; if (b3OutNow.get(Number(k.split(':')[0]))) w.outTicks++; }
+    for (const [k, w] of w5) { w.ticks++; if (b3OutNow.get(Number(k.split(':')[0]))) w.outTicks++;
+      // §11.2's suppression, per window: did any fire team of this side have a halt cancelled by its lower neighbour
+      // while this window ran? That is the rule's own collision, and B2's failures are all the halt half.
+      for (const key of haltSuppressedNow) if (key.split(':')[0] === k.split(':')[0]) w.suppressed = true; }
     if ((t + 1) % 300 === 0) { for (const [, w] of w5) { add('B2 squad-windows'); const bad = !w.halted || (!w.allOnPost && !w.moving);
       if (bad) add('B2 fail');
       // WHICH HALF FAILED: no team halted in the window, or nobody moved while not all were on post.
-      if (CAUSE && bad) { if (!w.halted) add('B2 no halt'); if (!w.allOnPost && !w.moving) add('B2 no mover'); }
+      if (CAUSE && bad) { if (!w.halted) add('B2 no halt'); if (!w.allOnPost && !w.moving) add('B2 no mover');
+        if (!w.halted) add(w.suppressed ? 'B2 no halt with a suppression' : 'B2 no halt with none'); }
+      if (CAUSE && !bad && w.suppressed) add('B2 passing window with a suppression');
       if (SHARE) { const share = w.ticks ? w.outTicks / w.ticks : 0;
         add(bad ? 'B2 fail out-tick share x1000' : 'B2 pass out-tick share x1000', Math.round(share * 1000));
         add(bad ? 'B2 fail windows' : 'B2 pass windows'); } } w5.clear(); }
@@ -443,6 +462,13 @@ for (const seed of SEEDS) {
     if ((t + 1) % 3600 === 0) {
       for (const sd of ['-1', '1']) {
         add('A11 windows'); if (win.cross[sd] === 0) add('A11a no crossing'); if (win.give[sd] === 0) add('A11b no giving');
+        // WHY THE WINDOW WAS SHORT, with the instrument already here: no step of that kind at all, or steps that were
+        // taken and still did not carry a team across the seam / below zero inside the window.
+        if (CAUSE) {
+          if (win.cross[sd] === 0) add((winSteps.take[sd] || 0) === 0 ? 'A11a no take step at all' : 'A11a took steps but no crossing');
+          if (win.give[sd] === 0) add((winSteps.give[sd] || 0) === 0 ? 'A11b no give step at all' : 'A11b gave steps but none below zero');
+        }
+        winSteps.give[sd] = 0; winSteps.take[sd] = 0;
         if (win.full[sd] && win.lost[sd] === 0 && win.contact[sd]) add('A12a full lossless');
         add('B6 windows'); if (win.menLost[sd] < 3 || win.menIn[sd] < 3) add('B6 fail');
       }
@@ -742,6 +768,14 @@ if (CAUSE) {
     + `7+ ${n('A4a changes 7+')}`);
   console.log(`B2's failures: ${n('B2 fail')} of ${n('B2 squad-windows')} windows - no team halted in ${n('B2 no halt')}, `
     + `nobody moved while some were off post in ${n('B2 no mover')}`);
+  console.log(`A11a's short windows: ${n('A11a no crossing')} - of them ${n('A11a no take step at all')} had NO take `
+    + `step at all and ${n('A11a took steps but no crossing')} took steps that did not carry a team across`);
+  console.log(`A11b's short windows: ${n('A11b no giving')} - of them ${n('A11b no give step at all')} had NO give `
+    + `step at all and ${n('A11b gave steps but none below zero')} gave steps that did not reach below zero`);
+  console.log(`§11.2's suppression: ${n('B2 halts suppressed')} of ${n('B2 raw halts')} raw halts were cancelled by a `
+    + `lower neighbour; of the ${n('B2 no halt')} halt-half failures, ${n('B2 no halt with a suppression')} had a `
+    + `suppression inside the window and ${n('B2 no halt with none')} had none; passing windows carrying a suppression `
+    + `${n('B2 passing window with a suppression')}`);
 }
 {
   const n = (k) => r[k] || 0;
