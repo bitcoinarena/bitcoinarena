@@ -99,15 +99,27 @@
     #blwp-lobby .refused { margin-top: 14px; white-space: pre-wrap; }
 
     /* Who is in this round. Hidden until a round is named. Pointer-events none
-       so it cannot steal the canvas. */
+       so it cannot steal the canvas.
+
+       NOT OVER THE PRICE (the owner 2026-09-19 13:05, hud-debug-overlap-price-1305.png: three lines of node debug
+       written across "$81,300" - the tunnel's whole hostname among them). Top centre is the headline's own room:
+       the price is the biggest thing on the screen and it is the thing the game is about, so the debug moves and
+       the price does not. It sits bottom left now, one size smaller, and playLine() prints a node letter or a
+       short host instead of a 46-character URL. On a phone in landscape the bottom left is the steering pad, so
+       there it goes above the pad row - the same 23.5% of the short side the wallet keeps off. */
     #blwp-players {
-      position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
-      z-index: 20; pointer-events: none; display: none;
-      font: 600 14px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      position: absolute; left: 10px; bottom: 10px; z-index: 20; pointer-events: none; display: none;
+      font: 600 12px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       color: #e8eaed; background: rgba(13, 16, 20, 0.78);
-      border-left: 3px solid #f7931a; padding: 8px 14px; border-radius: 4px;
-      letter-spacing: 0.01em;
-      white-space: pre; text-align: left;
+      border-left: 3px solid #f7931a; padding: 6px 10px; border-radius: 4px;
+      letter-spacing: 0.01em; max-width: min(46vw, 460px);
+      white-space: pre-wrap; text-align: left;
+    }
+    @media (orientation: landscape) and (max-height: 500px) {
+      #blwp-players {
+        bottom: calc(23.5vh + 8px); max-width: calc(100vw - 47vh - 20px);
+        font-size: 10px; padding: 4px 8px;
+      }
     }
 
     /* THE WALLET, and it takes pointer events because it is the one thing on
@@ -1243,7 +1255,16 @@
       const c = net.client;
       if (!c) return 'play · ' + (net.state || 'opening');
       const where = c.base || '';
-      const which = /blwp-b|:8091/.test(where) ? 'B' : /blwp-a|:8090/.test(where) ? 'A' : where;
+      // A NODE LETTER, or a short host - never the whole tunnel URL (13:05: it was 46 characters of it across
+      // the price). The letter is what a reader needs; the host, cut to its first label and 14 characters, is
+      // enough to tell two tunnels apart.
+      const shortHost = (u) => {
+        try {
+          const h = new URL(u).hostname.split('.')[0];
+          return h.length > 14 ? h.slice(0, 13) + '\u2026' : h;
+        } catch (e) { return String(u || '').slice(0, 14); }
+      };
+      const which = /blwp-b|:8091/.test(where) ? 'B' : /blwp-a|:8090/.test(where) ? 'A' : shortHost(where);
       const sock = c.sock && c.sock.readyState === 1 ? 'up' : (c.state || 'no socket');
       return 'play · ' + which + ' ' + sock;
     }
