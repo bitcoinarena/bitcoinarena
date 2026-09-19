@@ -467,6 +467,60 @@ test('the trend is the colour of the last six finished candles: six green is UP 
   assert.ok(bearStarts > 0, 'the bears mounted no assault under their own trend - nothing checked');
 });
 
+test('a tank posted in a crater goes around it: the post slides along its line, and no hull works the lip (§4.1, the owner 15:57)', async () => {
+  const { submitLiquidation } = await import('../src/sim.js');
+  const { clearOfCraters, CRATER_CLEAR } = await import('../src/rules/army.js');
+  const L2 = await import('../src/state.js');
+  const craters = (s) => { const out = { n: 0, r: [] };
+    for (let i = 0; i < L2.MAX_CRATERS; i++) { const b = L2.craterBase(i);
+      if (s[b + L2.C_R] <= 0 || s[b + L2.C_ROUNDS] <= 0) continue;
+      out.r.push(s[b + L2.C_X], s[b + L2.C_Z], s[b + L2.C_R]); out.n++; } return out; };
+  // the rule itself: a point inside a bowl comes out along ITS OWN LINE (z untouched), a hull-length clear of the
+  // push that AvoidWrecks applies at R + 3.2 m, so the two rules never meet and the tank drives around the hole.
+  const one = { n: 1, r: [0, 0, Math.imul(20, ONE)] };
+  for (const [x, z] of [[0, 0], [Math.imul(5, ONE), Math.imul(3, ONE)], [Math.imul(-18, ONE), 0]]) {
+    for (const side of [-1, 1]) {
+      const c = clearOfCraters(one, x, z, side);
+      assert.equal(c.z, z, 'the line moved: the post left its own depth');
+      assert.ok(Math.hypot(c.x / ONE, c.z / ONE) >= (Math.imul(20, ONE) + CRATER_CLEAR) / ONE - 0.02,
+        `the post is still in the bowl at ${(c.x / ONE).toFixed(2)}, ${(c.z / ONE).toFixed(2)}`);
+      assert.ok(Math.abs(c.x - x) <= Math.imul(27, ONE) + CRATER_CLEAR, 'the post slid further than the bowl is wide');
+    }
+  }
+  // and on a round with nukes landing: no tank works a lip for a minute, which is what the shot showed
+  let worstStay = 0, rimTicks = 0, tankTicks = 0;
+  for (const seedWord of [1, 2]) {
+    const st = init(seedWord), s = st.i32;
+    for (let t = 0; t < 900; t++) step(st, ONE, 0, 0, 0, 0);
+    const since = new Map();
+    for (let t = 0; t < 3600; t++) {
+      if (t % 600 === 300) submitLiquidation(st, 4000000);
+      step(st, ONE, 0, 0, 0, 0);
+      const cs = craters(s);
+      if (!cs.n) continue;
+      for (const i of ARMOUR) {
+        const b = base(i);
+        if (s[b + L.U_HP] <= 0 || s[b + L.U_STATE] === 0) { since.delete(i); continue; }
+        tankTicks++;
+        let onRim = false;
+        for (let k = 0; k < cs.n; k++) {
+          const c = k * 3, d = Math.hypot((s[b] - cs.r[c]) / ONE, (s[b + 1] - cs.r[c + 1]) / ONE);
+          if (Math.abs(d - (cs.r[c + 2] / ONE + 3.2)) <= 1.5) { onRim = true; break; }
+        }
+        if (onRim) { rimTicks++; const from = since.get(i) ?? s[L.O_TICK]; since.set(i, from);
+                     worstStay = Math.max(worstStay, s[L.O_TICK] - from); }
+        else since.delete(i);
+      }
+    }
+  }
+  const share = 100 * rimTicks / Math.max(tankTicks, 1);
+  console.log(`  crater rims: ${share.toFixed(1)}% of tank-ticks, longest unbroken stay ${(worstStay / 60).toFixed(1)} s`);
+  // Measured before the rule, over 90 s on seeds 1 / 2 / 3: 44.7 / 45.7 / 52.4% and 68.6 / 68.6 / 73.6 s. The bars
+  // are what the rule gives with room for the seed, not the measurement itself.
+  assert.ok(share < 30, `tanks spend ${share.toFixed(1)}% of their ticks on a crater rim`);
+  assert.ok(worstStay < 60 * 60, `a tank worked one lip for ${(worstStay / 60).toFixed(1)} s`);
+});
+
 test('hull-down hysteresis: a held crest changes only on a 60-tick search or for a new post, and only for >= 0.3 m more rise (§4.1)', async () => {
   const { crestRise } = await import('../src/rules/army.js');
   let switches = 0, keptForLess = 0, fresh = 0, betweenKept = 0;
