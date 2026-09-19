@@ -1336,7 +1336,10 @@ test('a second round starts where the first one did', () => {
   // z 10.2, so driving straight down the map it never comes inside anyone's reach - 3000 ticks of full throttle and
   // the exposure word is still 0. The claim here is that a restarted round hashes as a fresh one, and for that the
   // first round has to have accrued something. A steady steer toward the front does it: first exposure at tick 211.
-  for (let f = 0; f < 900; f++) step(a, ONE, -16000, 0, 0, 0);
+  // -20000 now, re-measured with §1.2's hull rectangle: the tanks stop the truck on their hulls rather than on a
+  // 3 m circle, so the old -16000 line slides past the front without coming into anyone's reach (900 ticks, exposure
+  // still 0). At -20000 the first exposure lands at tick 212. Setup, not claim.
+  for (let f = 0; f < 900; f++) step(a, ONE, -20000, 0, 0, 0);
   assert.ok(a.i32[O_SCORE + S_EXPOSURE] > 0, 'the fixture never got into danger');
 
   const b = restart(a, SEED);
@@ -1709,7 +1712,9 @@ test('nothing accrues while the truck is still on the apron', () => {
   // the round's candles are the round's own now, so the ground this run crosses is not the ground it crossed before
   // and the same throttle covers it more slowly - 16.8 m at tick 180 as ever, but 22 m with exposure only at tick
   // 276. The leg is lengthened to reach the boundary the test is about; neither assertion moves.
-  for (let t = 0; t < 100; t++) step(st, ONE, 0, 0, 0, 1);
+  // 110 now: RE-MEASURED again 2026-09-19 with §1.2's hull rectangle, which stops the truck where a tank's hull is
+  // rather than at a 3 m circle - 16.8 m at tick 180 as ever, 22 m with exposure at tick 287.
+  for (let t = 0; t < 110; t++) step(st, ONE, 0, 0, 0, 1);
   const outside = (s[O_TRUCK + T_X] - x0) / ONE;
   assert.ok(outside > 22, `the fixture never left the apron - ${outside.toFixed(1)} m`);
   assert.ok(s[O_SCORE + S_EXPOSURE] > 0,
