@@ -1095,7 +1095,7 @@ function release(s, rng, h, front, ground) {
   }
 }
 
-function stepBombs(s, groundAt) {
+function stepBombs(s, groundAt, truckMayBeHit) {
   const b = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
   for (let i = 0; i < MAX_BOMBS; i++) {
     const o = bombBase(i);
@@ -1109,7 +1109,7 @@ function stepBombs(s, groundAt) {
     if (!down) { s[o + B_Y] = b.y; continue; }
     s[o + B_Y] = groundAt(b.x, b.z);
     s[o + B_STATE] = 0;
-    detonate(s, b.x, b.z);
+    detonate(s, b.x, b.z, truckMayBeHit);
   }
 }
 
@@ -1130,7 +1130,22 @@ function stepBombs(s, groundAt) {
  * is invisible in this core in any case: taking damage off a corpse leaves it a
  * corpse.
  */
-function detonate(s, bx, bz) {
+function detonate(s, bx, bz, truckMayBeHit) {
+  // A BOMB HITS THE TRUCK (§12.3, RULED 2026-09-16 19:40; in the core 2026-09-19). A truck inside the blast takes
+  // `shell x (1 - d/16)`, `shell` being the courier damage of a hit at the truck's heat with NO DRAW - the 5 to 11
+  // band's midpoint - so the random stream does not shift and a run replays the same with a bomb as without.
+  // Divided by TRUCK_ARMOUR like every other hit on it: this file's own note says the 1.5 is plating "against a
+  // shell AND A BLAST", and only the fallout is deliberately outside it.
+  // After roll-out only, and never on a wreck: a truck idling in the bay is never wrecked by anything.
+  // The gunship still never aims at, follows or avoids the truck - the bomb was going there anyway.
+  if (truckMayBeHit) {
+    const d = blastReach(sub(s[O_TRUCK + T_X], bx), sub(s[O_TRUCK + T_Z], bz));
+    if (d >= 0) {
+      const shell = shellForHeat(add(COURIER_DAMAGE_MIN, COURIER_DAMAGE_SPAN >> 1), s[O_SCORE + S_HEAT]);
+      const hurt = mulFast(shell, sub(ONE, div(d, BOMB_RADIUS)));
+      s[O_TRUCK + T_HP] = max(0, sub(s[O_TRUCK + T_HP], div(hurt, TRUCK_ARMOUR)));
+    }
+  }
   for (let i = 0; i < UNITS; i++) {
     if (isArmour(i)) continue;
     const b = unitBase(i);
@@ -1844,7 +1859,8 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
   const seamAt = (x) => seamAtX(st, x);
   const groundAt = (x, z) => surfaceAt(st, x, z);
   stepHelicopters(s, rng, seamAt, groundAt);
-  stepBombs(s, groundAt);
+  // the truck is only in a blast's way once it has rolled out, while the run is live, and not in practice
+  stepBombs(s, groundAt, !practice && rolledOut && s[O_SCORE + S_STATE] === RUN_LIVE);
 
   // Replacements walk on last, after everyone has moved and fired, which is
   // where C# Update puts it - RemoveAll, then Reinforce. Anything drawn here

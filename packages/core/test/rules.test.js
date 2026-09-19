@@ -1802,3 +1802,58 @@ test('heat raises what a metre of ground is worth', () => {
   assert.equal(scoring.accrue(0, 0, gained, 0, ONE), 0,
     'a hot load earned something out of the fighting');
 });
+
+/**
+ * A BOMB HITS THE TRUCK (§12.3, RULED 2026-09-16 19:40; in the core 2026-09-19).
+ *
+ * A truck inside 16 m of a blast takes `shell x (1 - d/16)`, `shell` the courier damage of a hit at the truck's
+ * heat with NO DRAW - the 5 to 11 band's midpoint - divided by TRUCK_ARMOUR like every other hit on it. After
+ * roll-out only, never on a wreck, never in practice.
+ *
+ * Driven by putting a bomb one tick above the ground beside the truck and stepping once: the bomb's own fall and
+ * detonation are the core's, so this measures the rule and not a stand-in for it.
+ */
+test('a bomb inside 16 m costs the truck condition, falling off to nothing at the rim (§12.3)', async () => {
+  const air = await import('../src/rules/air.js');
+  const Q = 65536, O = 5, T_X = 0, T_Z = 1, T_HP = 6;
+  const B = await import('../src/state.js');
+
+  // The truck out of the bay and live, with a bomb dropped at `at` metres away along z.
+  const hitAt = (metres, { practice = false, rolledOut = true } = {}) => {
+    const st = init(4242);
+    const s = st.i32;
+    clearTheField(st);
+    s[O + T_X] = 0; s[O + T_Z] = 0;
+    // ROLL-OUT IS READ OFF BEST X, not off zero: `rolledOut` is `bestX - START_X >= APRON_RADIUS`, and START_X is
+    // -100.4 m, so a best x of 0 is already a long way out of the bay. In the bay means best x still at START_X.
+    s[O_SCORE + S_BESTX] = rolledOut ? Math.round(400 * Q) : START_X;
+    const o = B.bombBase(0);
+    s[o + B.B_STATE] = 1; s[o + B.B_SIDE] = -1;
+    s[o + B.B_X] = 0; s[o + B.B_Z] = Math.round(metres * Q);
+    s[o + B.B_Y] = Math.round(0.2 * Q);                            // one tick above the ground: it lands this step
+    s[o + B.B_VX] = 0; s[o + B.B_VY] = -Math.round(40 * Q); s[o + B.B_VZ] = 0;
+    const before = s[O + T_HP];
+    step(st, 0, 0, 0, 0, practice ? 1 : 0);
+    return { lost: (before - s[O + T_HP]) / Q, hp: s[O + T_HP] / Q, landed: s[o + B.B_STATE] === 0 };
+  };
+
+  const centre = hitAt(0);
+  assert.ok(centre.landed, 'the bomb has to reach the ground for this to measure anything');
+  assert.ok(centre.lost > 0, `a bomb at the truck's feet cost it nothing: ${JSON.stringify(centre)}`);
+
+  // The midpoint of the 5-11 band is 8, and at heat 0 shellForHeat leaves it alone; the truck's 1.5 plating divides
+  // it. So the centre of the blast is 8 / 1.5, and nothing here is drawn.
+  assert.ok(Math.abs(centre.lost - 8 / 1.5) < 0.05, `centre cost ${centre.lost}, expected about ${(8 / 1.5).toFixed(2)}`);
+
+  // IT FALLS OFF LINEARLY AND STOPS AT THE RIM: half the radius costs half, and past 16 m nothing at all.
+  const half = hitAt(8);
+  assert.ok(Math.abs(half.lost - centre.lost / 2) < 0.15, `at 8 m it cost ${half.lost}, half of ${centre.lost} expected`);
+  assert.equal(hitAt(17).lost, 0, 'a bomb outside the blast radius still cost the truck condition');
+
+  // NOT IN THE BAY, AND NOT IN PRACTICE.
+  assert.equal(hitAt(0, { rolledOut: false }).lost, 0, 'a truck still in the bay was hurt by a bomb');
+  assert.equal(hitAt(0, { practice: true }).lost, 0, 'a practice run was hurt by a bomb');
+
+  // AND NO DRAW: the same blast twice costs the same, so the random stream has not moved.
+  assert.equal(hitAt(4).lost, hitAt(4).lost);
+});
