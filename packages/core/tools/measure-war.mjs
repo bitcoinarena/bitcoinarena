@@ -43,6 +43,7 @@ const a9slope = {}, a9slopeN = {};
 const B3WHY = process.argv.includes('--b3why');
 const SHARE = process.argv.includes('--share');
 const b3OutNow = new Map();
+let pushWrittenMin = Infinity, pushWrittenMax = -Infinity, pushSeenMin = Infinity, pushSeenMax = -Infinity;
 const SEEDS = arg('seeds', '1,2,3,4,5').split(',').map(Number);
 const TICKS = Number(arg('ticks', 3600));
 
@@ -62,6 +63,17 @@ patch('sim.js', '  const groundOf = (x, z) => surfaceAt(st, x, z);\n',
   '  if (globalThis.__W) globalThis.__W.afterSep(s);\n', 'before');
 patch('sim.js', '  for (let i = 0; i < UNITS; i++) {\n    const b = unitBase(i);\n    u.x = s[b + U_X];',
   '  if (globalThis.__W) globalThis.__W.halted(halted);\n', 'before');
+// THE PUSH RE-READ ITSELF (§4.10): every team's scheduled tick, whether it was skipped for a tank off post, the
+// verdict it read, whether that verdict matched the last one, and the step it took. A11b, A13b and both O1 rows ask
+// the push to DO something, so what the re-read does is the one number under all four.
+patch('rules/tactics.js', '    if (mod((tick | 0) + mod(mix(hash, 300 + w) >>> 1, PUSH_TICKS), PUSH_TICKS) !== 0) continue;',
+  '\n    if (globalThis.__W) globalThis.__W.reread(w, tick);');
+patch('rules/tactics.js', '    if (!teamOnPost(s, base, side, team, tick, seamAt, ground)) continue;',
+  '\n    if (globalThis.__W) globalThis.__W.onPostOk(w);', 'after');
+patch('rules/tactics.js', '    const confirmed = s[base + TAC_VERDICT + w] === verdict;',
+  '\n    if (globalThis.__W) globalThis.__W.verdict(w, verdict, s[base + TAC_VERDICT + w], s[base + TAC_PUSH + w]);');
+patch('rules/tactics.js', '    s[base + TAC_PUSH + w] = push | 0;',
+  '\n    if (globalThis.__W) globalThis.__W.stepped(w, push);');
 // THE CORE'S OWN SEAM, hooked out of the copy (measured 2026-09-19): every hold hangs off the seam at the slot, and
 // this tool used to re-derive it as frontlineZ(st.tape, x) - a different reader from the core's glided, scrolled,
 // windowed one. The two disagreed by a median 1.37 m against a 1.5 m on-post radius, which is most of what H1 was
@@ -79,6 +91,10 @@ const ARMOUR = Array.from({ length: 24 }, (_, k) => k * 4);
 const RIFLES = Array.from({ length: 96 }, (_, i) => i).filter((i) => (i & 3) !== 0);
 const base = (i) => L.O_UNITS + i * L.U_WORDS;
 const wrap = (t) => (((t % 65536) + 98304) % 65536) - 32768;
+// THE MAIN PASS ONLY. This tool steps extra worlds for the parked-vs-driven rows, and the push hooks counted those
+// too: 1728 re-reads where twelve teams over two seeds can have 288. Anything hooked inside the core must say which
+// world it is in.
+let mainPass = false;
 const r = {};
 const add = (k, n = 1) => { r[k] = (r[k] || 0) + n; };
 const sideOf = (i) => (((i >> 2) & 1) === 0 ? -1 : 1);
@@ -87,9 +103,20 @@ globalThis.__W = {
   beforeSep(s) { hk.pre = new Map(ARMOUR.map((i) => [i, [s[base(i)], s[base(i) + 1]]])); },
   afterSep(s) { hk.sep.clear(); for (const [i, q] of hk.pre) hk.sep.set(i, Math.hypot(s[base(i)] - q[0], s[base(i) + 1] - q[1]) / ONE); },
   unit(i, u, dx, dz, hold, post) { hk.unit.set(i, { dx, dz, hold, post, halted: u.halted }); },
+  reread(w) { if (mainPass) add('P re-read due'); },
+  onPostOk(w) { if (mainPass) add('P team on post'); },
+  verdict(w, v, was, push) { if (!mainPass) return; add('P verdict read'); add(`P verdict ${['none', 'take', 'give', 'drift'][v] || v}`);
+    if (v === was) add('P confirmed'); else add('P not confirmed');
+    if (v === 2) { add('P give read'); if (v === was) add('P give confirmed'); if (push <= 0) add('P give at or below zero'); } },
+  stepped(w, push) { if (!mainPass) return; add('P stepped'); if (push < 0) add('P stepped below zero');
+    // WHAT THE CODE IS HOLDING, in the same units the sampler reads: the lowest push this run ever WROTE, against the
+    // lowest the per-tick sampler ever SAW. Those two disagreed once (72 steps below zero against a sampled minimum of
+    // 0 m) and one of them is wrong.
+    pushWrittenMin = Math.min(pushWrittenMin, push / ONE); pushWrittenMax = Math.max(pushWrittenMax, push / ONE); },
   halted(h) { hk.halted = h.map((a) => a.slice()); },
 };
 
+mainPass = true;
 for (const seed of SEEDS) {
   const st = init(seed), s = st.i32;
   const alive = (i) => s[base(i) + L.U_STATE] !== 0;
@@ -295,7 +322,8 @@ for (const seed of SEEDS) {
       if (h !== 0) { if (holderWas[o] !== 0 && holderWas[o] !== h) changedHands = true; holderWas[o] = h; }
     }
     const push = { '-1': [], '1': [] };
-    for (let w = 0; w < 12; w++) { const sd = w < 6 ? '-1' : '1'; const p = s[L.O_TACTICS + T.TAC_PUSH + w] / ONE; push[sd].push(p); if (p < 0) win.give[sd]++; add('A11c team-ticks'); if (p !== 0) add('A11c off default');
+    for (let w = 0; w < 12; w++) { const sd = w < 6 ? '-1' : '1'; const p = s[L.O_TACTICS + T.TAC_PUSH + w] / ONE; push[sd].push(p);
+      pushSeenMin = Math.min(pushSeenMin, p); pushSeenMax = Math.max(pushSeenMax, p); if (p < 0) win.give[sd]++; add('A11c team-ticks'); if (p !== 0) add('A11c off default');
       // WHAT THE TEAM DECIDED, not only where it ended up: §4.10's verdict word, and whether this reading agreed with
       // the last one (a step needs two). A11b says no team ever gives ground; this says whether GIVE is never reached
       // or only never confirmed.
@@ -410,6 +438,7 @@ for (const seed of SEEDS) {
 }
 function mean(a) { return a.reduce((x, y) => x + y, 0) / a.length; }
 
+mainPass = false;                 // everything below steps worlds of its own; the push hooks must not count them
 // Rows 10 (A) and 7 (B): posts with the truck parked vs driven through the line, same seed, until the worlds differ.
 {
   let diff = 0, compared = 0, objDiff = 0, objCompared = 0;
@@ -642,6 +671,20 @@ if (SHARE) {
   console.log(`B2 against B3: failing windows ${n('B2 fail windows')} spent ${share('fail')} of their ticks with that `
     + `side's line out of band; passing windows ${n('B2 pass windows')} spent ${share('pass')}. A row that fails on the `
     + `same ticks B3 fails is the same knot; one that does not is its own.`);
+}
+{
+  const n = (k) => r[k] || 0;
+  const pc = (a, b) => (n(b) ? (100 * n(a) / n(b)).toFixed(1) + '%' : '-');
+  console.log(`the push re-read (WAR_TACTICS §4.10): due ${n('P re-read due')}, of which the team was on post `
+    + `${n('P team on post')} (${pc('P team on post', 'P re-read due')}) - the rest skipped by rule (a); `
+    + `verdicts read ${n('P verdict read')}: take ${n('P verdict take')}, give ${n('P verdict give')}, `
+    + `drift ${n('P verdict drift')}, none ${n('P verdict none')}; confirmed ${n('P confirmed')} `
+    + `(${pc('P confirmed', 'P verdict read')}), steps taken ${n('P stepped')}`);
+  console.log(`the push word, written against seen: lowest written ${pushWrittenMin.toFixed(0)} m, highest written `
+    + `${pushWrittenMax.toFixed(0)} m; lowest seen by the per-tick sampler ${pushSeenMin.toFixed(0)} m, highest seen `
+    + `${pushSeenMax.toFixed(0)} m`);
+  console.log(`the GIVE path: read ${n('P give read')} times, confirmed ${n('P give confirmed')}, of the reads `
+    + `${n('P give at or below zero')} were at a push already <= 0; steps that landed below zero ${n('P stepped below zero')}`);
 }
 console.log(`${rows.length - red} of ${rows.length} rows pass (seeds ${SEEDS.join(',')}, ${TICKS} ticks)`);
 process.exit(red ? 1 : 0);
