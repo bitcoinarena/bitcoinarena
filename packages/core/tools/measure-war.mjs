@@ -48,6 +48,7 @@ const B3POP = process.argv.includes('--b3pop');
 // would have been inside the band if only its halted men were counted. No population is changed and no band moves.
 const B3SPLIT = process.argv.includes('--b3split');
 const b3x = [], b3z = [];
+const pushWasSq = new Map(), pushMovedAt = new Map();
 const CAUSE = process.argv.includes('--cause');
 // A4a NAMES ITS WINDOW. The row is "a side held the same posts for ten whole seconds", and at 1 of 60 it is one
 // window, not a tendency - so the aggregate cannot say which side of which seed stood still, or what it was holding
@@ -251,6 +252,7 @@ for (const seed of SEEDS) {
   curSeed = seed;
   const st = init(seed), s = st.i32;
   curSt = st;
+  pushWasSq.clear(); pushMovedAt.clear();
   o1onWas.clear(); o1since.clear();   // per seed: a tick of seed 2 is not a lag since seed 1
   const alive = (i) => s[base(i) + L.U_STATE] !== 0;
   add('13a seeds'); if (T.slotOrder(s[L.O_TACTICS], -1).join() !== T.slotOrder(s[L.O_TACTICS], 1).join()) add('13a orders differ');
@@ -678,6 +680,14 @@ for (const seed of SEEDS) {
       // a STANDARD DEVIATION: the sd that generator makes is 2.98 m and 4.52 m on the two sides with nobody dead.
       for (let sq = 0; sq < L.SQUADS_PER_SIDE; sq++) {
         const mine = on.filter((i) => squadOf(i) === sq); if (mine.length < 4) continue;
+        // §12.1 gives a squad two re-reads - 600 ticks - to bring its line to a push that moved. RULED 2026-09-19:
+        // a squad inside that window is in transit the spec itself licenses and is not counted on those ticks. A
+        // squad still out of band AFTER its 10 s is a fault and counts.
+        const key = `${sd}:${sq}`;
+        const pushNow = T.pushNear(s, L.O_TACTICS, sd, s[L.O_SQUADS + (sd < 0 ? 0 : L.SQUADS_PER_SIDE) + sq]);
+        if (pushWasSq.get(key) !== pushNow) { pushWasSq.set(key, pushNow); pushMovedAt.set(key, tick); }
+        const movedAt = pushMovedAt.get(key);
+        if (movedAt !== undefined && tick - movedAt < 600) { add('B3 z in §12.1 transit'); continue; }
         const zq = sdev(mine.map((i) => (s[base(i) + 1] - seamOfCore(st, s[base(i)])) / ONE));
         add('B3 squad z-ticks'); if (zq < 2 || zq > 12) add('B3 z out');
         if (B3SPLIT) {
@@ -691,8 +701,13 @@ for (const seed of SEEDS) {
       // 25.8% against that predicted 19.6%, so the floor is very largely the draw and not the infantry. The bar is
       // therefore the part the infantry controls - do the men cover the frontage their own anchors span - and it
       // still fails a side that abandons a flank.
-      const anch = [0, 1, 2].map((k) => s[L.O_SQUADS + (sd < 0 ? 0 : L.SQUADS_PER_SIDE) + k] / ONE);
-      const anchSd = sdev(anch);
+      // x's REFERENCE FRONTAGE, RULED 2026-09-19 (third correction of this row): a wiped squad holds no frontage,
+      // so the floor is measured from the anchors of the squads that still have a living man. Nothing in §8-§12
+      // sends the survivors sideways to cover its ground - that is the parked whole-line movement item (§15) - and
+      // §10 refills the squad by walking replacements in, so the gap is a temporary fact of attrition.
+      const liveSquads = [0, 1, 2].filter((k) => on.some((i) => squadOf(i) === k));
+      const anch = liveSquads.map((k) => s[L.O_SQUADS + (sd < 0 ? 0 : L.SQUADS_PER_SIDE) + k] / ONE);
+      const anchSd = anch.length > 1 ? sdev(anch) : 0;
       add('B3 x-ticks'); if (xsd < 0.6 * anchSd || xsd > 60) add('B3 x out');
       if (B3SPLIT) {
         // AND WHERE THE LINE THE CORE WRITES ACTUALLY IS. A rifleman's post is his squad's anchor plus a fixed
@@ -957,8 +972,9 @@ const rows = [
   ['B1  man within 18 m of a fire-team mate', P(pct('B1 near a mate', 'B1 man-ticks')), pct('B1 near a mate', 'B1 man-ticks') > 0.8],
   ['B1  fire team moves or halts together', P(pct('B1b together', 'B1b team-ticks')), pct('B1b together', 'B1b team-ticks') > 0.9],
   ['B2  5 s squad windows without a halted team / a mover', `${r['B2 fail'] || 0} of ${r['B2 squad-windows']}`, (r['B2 fail'] || 0) === 0],
-  ['B3  z spread per squad out of 2-12 m', `${P(pct('B3 z out', 'B3 squad z-ticks'))} of ${r['B3 squad z-ticks'] || 0} squad-ticks`, !r['B3 z out']],
-  ['B3  x spread under 0.6 x the side\'s own anchor spread, or over 60 m', `${P(pct('B3 x out', 'B3 x-ticks'))} of ${r['B3 x-ticks'] || 0} side-ticks`
+  ['B3  z spread per squad out of 2-12 m', `${P(pct('B3 z out', 'B3 squad z-ticks'))} of ${r['B3 squad z-ticks'] || 0} squad-ticks`
+    + ` (${r['B3 z in §12.1 transit'] || 0} inside §12.1's 10 s not counted)`, !r['B3 z out']],
+  ['B3  x spread under 0.6 x the LIVING squads\' anchor spread, or over 60 m', `${P(pct('B3 x out', 'B3 x-ticks'))} of ${r['B3 x-ticks'] || 0} side-ticks`
     + ` (under a 10 m sd on ${P(pct('B3 x under 10 m sd', 'B3 x-ticks'))})`, !r['B3 x out']],
   ['B4  push changes the squad did not follow in 10 s', `${r['B4 did not follow'] || 0} of ${r['B4 changes'] || 0}`, (r['B4 did not follow'] || 0) === 0],
   ['B5  man-ticks inside 3 m of a tank', P(pct('B5 inside a hull', 'B5 man-ticks')), pct('B5 inside a hull', 'B5 man-ticks') <= 0.005],
