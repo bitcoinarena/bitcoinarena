@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { init, step, restart, runScore, setGround, setSolids, groundAt, submitLoad, heatOf, HALF_X, teleport, bayZ, START_X, setCandleField } from '../src/sim.js';
+import { init, step, restart, runScore, setGround, setSolids, groundAt, submitLoad, heatOf, HALF_X, teleport, bayZ, START_X, setCandleField, frontAt } from '../src/sim.js';
 
 // WHERE THE CHART IS NOT (WAR_TACTICS.md §4.15). The candles stand on |z| <= 46.6 between x -74.4 and 107.0, the band
 // is |x| <= 104, |z| <= 54, and a fixture about the vehicle, the walls, the armour or the score that is not about the
@@ -1331,7 +1331,12 @@ test('a second round starts where the first one did', () => {
   setGround(a, 33, 33, relief);
   const solids = new Int32Array([0, 0, 4 * ONE, 4 * ONE, 0, 6 * ONE]);
   setSolids(a, 1, solids);
-  for (let f = 0; f < 900; f++) step(a, ONE, 0, 0, 0, 0);
+  // THE DRIVE STEERS NOW (setup, not claim). RE-MEASURED 2026-09-19 with §4.13's seeded init tape: every round has
+  // its own front, and this seed's seam runs from +25.8 m at x -60 to -31.0 m at x 120 while the truck starts at
+  // z 10.2, so driving straight down the map it never comes inside anyone's reach - 3000 ticks of full throttle and
+  // the exposure word is still 0. The claim here is that a restarted round hashes as a fresh one, and for that the
+  // first round has to have accrued something. A steady steer toward the front does it: first exposure at tick 211.
+  for (let f = 0; f < 900; f++) step(a, ONE, -16000, 0, 0, 0);
   assert.ok(a.i32[O_SCORE + S_EXPOSURE] > 0, 'the fixture never got into danger');
 
   const b = restart(a, SEED);
@@ -1698,10 +1703,13 @@ test('nothing accrues while the truck is still on the apron', () => {
     `gaining ground inside the apron banked ${s[O_SCORE + S_EXPOSURE]} of exposure`);
   assert.equal(runScore(st), 0, 'the apron paid a score');
 
-  // 60 ticks, not 40: past the apron something has to be in range for driving to bank anything. With the doctrine's
-  // posts (WAR_TACTICS.md, 2026-09-16) the nearest tank at tick 220 is 46.1 m off (gun 46 m; it was 45.5) and the
-  // first exposure lands at tick 222 (was 216), so a 40-tick leg ended two ticks short of measuring anything.
-  for (let t = 0; t < 60; t++) step(st, ONE, 0, 0, 0, 1);
+  // 100 ticks, not 60 and not 40: past the apron something has to be in range for driving to bank anything. With the
+  // doctrine's posts (WAR_TACTICS.md, 2026-09-16) the nearest tank at tick 220 was 46.1 m off and the first exposure
+  // landed at tick 222, so a 40-tick leg ended two ticks short. RE-MEASURED 2026-09-19 with §4.13's seeded init tape:
+  // the round's candles are the round's own now, so the ground this run crosses is not the ground it crossed before
+  // and the same throttle covers it more slowly - 16.8 m at tick 180 as ever, but 22 m with exposure only at tick
+  // 276. The leg is lengthened to reach the boundary the test is about; neither assertion moves.
+  for (let t = 0; t < 100; t++) step(st, ONE, 0, 0, 0, 1);
   const outside = (s[O_TRUCK + T_X] - x0) / ONE;
   assert.ok(outside > 22, `the fixture never left the apron - ${outside.toFixed(1)} m`);
   assert.ok(s[O_SCORE + S_EXPOSURE] > 0,
@@ -1766,7 +1774,15 @@ test('the seam banks more than the quiet lane for the same ground made good', ()
     return { exposure: s[O_SCORE + S_EXPOSURE], score: runScore(st) };
   };
 
-  const edge = lane(62), inner = lane(20), seam = lane(0);
+  // THE LANES ARE THE ROUND'S, NOT FIXED METRES (setup, not claim). RE-MEASURED 2026-09-19 with §4.13's seeded init
+  // tape: every round has its own front, and this seed's seam is at z -17.8 at x 0, not near 0 as it was when the
+  // numbers 0 / 20 / 62 were written. Measured across the field for this seed - exposure by lane, in metres:
+  //   z -80: 0.0   -60: 1.1   -40: 31.3   -18: 62.8   0: 45.9   20: 58.7   40: 37.7   62: 1.4   80: 0.0
+  // so the seam lane is still the busiest and the rim still banks nothing, but which z those are has moved. The
+  // lanes are taken from `frontAt` now and the rim from the field edge away from it, so this reads the round it is
+  // given. None of the three assertions below moves.
+  const seamZ = frontAt(init(0x5eed1234), 0) / ONE;
+  const edge = lane(seamZ > 0 ? -80 : 80), inner = lane(seamZ + 20), seam = lane(seamZ);
 
   assert.ok(edge.exposure < ONE,
     `the rim still banked ${(edge.exposure / ONE).toFixed(1)} m of exposure`);
