@@ -591,6 +591,45 @@ export const coverWord = (base, index) => (base + TAC_COVER + (index - idiv(inde
 export const coverClaim = (s, base, index) => s[coverWord(base, index)] & COVER_PLACE_MASK;
 
 /**
+ * §11.4 POSTURE, in the high bits §11.3 reserved. Three values, derived and never chosen:
+ *
+ *   STAND  his OWN step this tick was over 0.01 m (x + z) - a rush leg, a walk to his post or his place, a column
+ *          walking in. A push is not a step: §8.3 stands a man 3 m off a hull after he has moved, and §3's
+ *          replacement is a column; neither is his own gait, and counting them would have inflated STAND by 20189
+ *          man-ticks on the line (measured).
+ *   COVER  within 0.5 m of the place he claims (§11.3), not stepping.
+ *   PRONE  everything else that did not step. "A halt is a firing halt, and it is fired from the ground."
+ *
+ * STAND is 0 so an unwritten word reads as the most exposed posture: a tick before the first write behaves exactly
+ * as the core did before this letter, and no golden moves for a reason other than the rule.
+ */
+export const POSTURE_STAND = 0, POSTURE_PRONE = 1, POSTURE_COVER = 2;
+const POSTURE_MASK = 3;
+export const coverPosture = (s, base, index) => (s[coverWord(base, index)] >>> COVER_POSTURE_SHIFT) & POSTURE_MASK;
+export function setCoverPosture(s, base, index, posture) {
+  const w = coverWord(base, index);
+  s[w] = ((s[w] & ~(POSTURE_MASK << COVER_POSTURE_SHIFT)) | ((posture & POSTURE_MASK) << COVER_POSTURE_SHIFT)) | 0;
+}
+
+/**
+ * §11.4's worth: the rifle's threshold, and NOTHING about the draw. "The hit roll is one draw, `< 45` per mil; the
+ * threshold is what changes, the draw count never does, so the stream keeps its shape." A posture that added or
+ * skipped a draw would shift every golden and every replay.
+ *
+ * Half at a PRONE man and a quarter at a COVER man, as shifts of the value §4.14 has already adjusted - "posture
+ * multiplies after". At §4.14-neutral that is exactly the section's own 45 / 22 / 11 per mil, in per mil, and not
+ * a number carried over from C#, which has no posture at all and fires a flat 4.5% at everything.
+ */
+export function rifleHitAt(hit, posture) {
+  if (posture === POSTURE_COVER) return hit >> 2;
+  if (posture === POSTURE_PRONE) return hit >> 1;
+  return hit;
+}
+
+/** §11.4: a bomb reaches a COVER man only inside 8 m; a PRONE or STAND man at the full 16 m as before. */
+export const COVER_BOMB_REACH = Math.imul(8, ONE);
+
+/**
  * Is `place` one this man may take? §11.3: within 12 m of his POST - 18 m for the side the trend runs against -
  * inside his clamp, and not inside 3 m of a living tank. His post, not his position, "so a man does not wander to
  * cover".
