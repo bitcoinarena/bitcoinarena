@@ -599,7 +599,11 @@ const rows = [
     r['O1 on push'] / r['O1 on n'] - r['O1 off push'] / r['O1 off n'] >= 6],
   ['O2  ticks with both sides inside 46 m (RIDGE/HOLLOW/GAP)', [0, 1, 2].map((o) => P(pct(`O2 fought ${o}`, `O2 ticks ${o}`))).join(' / '), [0, 1, 2].every((o) => pct(`O2 fought ${o}`, `O2 ticks ${o}`) >= 0.6)],
   ['O3  seeds on which an objective changed hands', `${r['O3 changed hands'] || 0} of ${r['O3 seeds']}`, (r['O3 changed hands'] || 0) >= 4],
-  ['O4  client draws the markers (client test, not this probe)', 'not built', false],
+  // O4 is the CLIENT's row and this probe cannot run it: the test lives in packages/blwp-client
+  // (test/objective-markers.test.js) and drives a real page. Its verdict is not invented here - this row says where
+  // the answer comes from, and stays red in this table so nobody reads a core run as having answered it.
+  ['O4  client draws the markers (blwp-client test/objective-markers.test.js, not this probe)',
+    'run it there - passing on 0.0.1659', false],
   ['O5  objective words differing, truck parked vs driven', `${r['O5 differ']} of ${r['O5 compared']}`, r['O5 differ'] === 0],
   ['M1  lead/trend/momentum differing, truck parked vs driven', `${r['M1 differ']} of ${r['M1 compared']}`, r['M1 differ'] === 0],
   ['M1  lead/trend/momentum differing, two players (seeds) on the same samples', `${r['M1 across differ']} of ${r['M1 across']}`, r['M1 across differ'] === 0],
