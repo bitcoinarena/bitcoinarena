@@ -272,6 +272,12 @@ for (const seed of SEEDS) {
       // EARLY vs LATE: every tank is a column in the opening drive, so a short run reads as a force permanently
       // walking in. The last third of the run says what the steady state is.
       if (tick >= TICKS - Math.floor(TICKS / 3)) { add('H1 late tank-ticks'); if (settled) add('H1 late settled'); if (settled && onPostNow(i)) add('H1 late settled on post'); }
+      // H1 BY FIFTH OF THE RUN (2026-09-19): it passes on every seed over one minute and falls under its bar on two
+      // over five, so the question is whether it decays and how fast. Counted per fifth, with the walk-in share
+      // beside it, because a hull that has never reached a post cannot be on one.
+      { const fifth = Math.min(4, Math.floor(tick * 5 / TICKS));
+        add(`H1 fifth ${fifth} ticks`); if (onPostNow(i)) add(`H1 fifth ${fifth} on post`);
+        if (!settled) add(`H1 fifth ${fifth} walking in`); }
       if (onPostNow(i)) { add('H1 on post'); if (settled) add('H1 settled on post'); }
       else if (settled) {
         // A SETTLED TANK OFF ITS POST is the gap this row really has: by role, and whether its hold moved under it
@@ -736,6 +742,14 @@ if (CAUSE) {
     + `7+ ${n('A4a changes 7+')}`);
   console.log(`B2's failures: ${n('B2 fail')} of ${n('B2 squad-windows')} windows - no team halted in ${n('B2 no halt')}, `
     + `nobody moved while some were off post in ${n('B2 no mover')}`);
+}
+{
+  const n = (k) => r[k] || 0;
+  const line = [0, 1, 2, 3, 4].map((f) => {
+    const t = n(`H1 fifth ${f} ticks`);
+    return t ? `${(100 * n(`H1 fifth ${f} on post`) / t).toFixed(1)}% (walking in ${(100 * n(`H1 fifth ${f} walking in`) / t).toFixed(0)}%)` : '-';
+  });
+  console.log(`H1 by fifth of the run: ${line.join('  |  ')}`);
 }
 console.log(`${rows.length - red} of ${rows.length} rows pass (seeds ${SEEDS.join(',')}, ${TICKS} ticks)`);
 process.exit(red ? 1 : 0);
