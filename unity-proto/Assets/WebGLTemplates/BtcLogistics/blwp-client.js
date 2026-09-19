@@ -6213,6 +6213,7 @@ const KNOWN_GOOD_CORE_HASHES = Object.freeze([
   'dc77c6d2ce6fcdfbcc23fea78044578d09fa5431d0f309ccb4dab302265a0011',
   '41b4634aba55558d01765ba1bbde23247d3cf406572eeb894cb0f2bf196b640a',
   '22754f888015c357620df96a562729b3f87451e29e511c03a5b9beaac1efc058',
+  '2d48a05ade3a264ce5cbec21839249d88c204a60c10d982c11e5deea4b9a0013',
 ]);
 
 // ---- protocol/src/known-core.js
