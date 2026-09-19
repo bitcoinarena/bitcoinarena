@@ -171,7 +171,12 @@ test('push moves one 8 m step on its re-read only, on a confirmed verdict with t
         return [k0, k0 + 1].every((k) => { const i = (k << 3) | (side < 0 ? 0 : 4);
           return s[base(i) + L.U_STATE] === 0 || T.onPost(s, L.O_TACTICS, i, s[L.O_TICK] + 1, seamAt, ground); }); });
       const holders = [0, 1, 2].map((o) => T.objectiveHolder(s, L.O_TACTICS, o));
+      // whether each team had a tank walk back in this tick (§4.10 clears that team's verdict when it does)
+      const aliveBefore = Array.from({ length: 12 }, (_, w) => { const side = w < 6 ? -1 : 1, k0 = (w % 6) * 2;
+        return [k0, k0 + 1].map((k) => s[base((k << 3) | (side < 0 ? 0 : 4)) + L.U_STATE] !== 0); });
       step(st, 0, 0, 0, ONE, 0);
+      const respawned = Array.from({ length: 12 }, (_, w) => { const side = w < 6 ? -1 : 1, k0 = (w % 6) * 2;
+        return [k0, k0 + 1].some((k, n) => s[base((k << 3) | (side < 0 ? 0 : 4)) + L.U_STATE] !== 0 && !aliveBefore[w][n]); });
       const tick = s[L.O_TICK];
       for (let w = 0; w < 12; w++) {
         const now = s[L.O_TACTICS + T.TAC_PUSH + w], d = now - before[w];
@@ -194,7 +199,20 @@ test('push moves one 8 m step on its re-read only, on a confirmed verdict with t
           assert.ok(pushTick(s, w, tick), `seed ${seedWord} tick ${tick}: team ${w} push moved off its re-read tick`);
           assert.equal(Math.abs(d), 8 * ONE, `seed ${seedWord} tick ${tick}: team ${w} push moved ${d / ONE} m`);
           assert.ok(onPostAtRead[w], `seed ${seedWord} tick ${tick}: team ${w} pushed with a tank off post`);
-          assert.equal(s[L.O_TACTICS + T.TAC_VERDICT + w], verdictBefore[w], `seed ${seedWord} tick ${tick}: team ${w} stepped on an unconfirmed verdict`);
+          // CONFIRMED AT THE STEP, AND THEN THE RESET (ruled 2026-09-19). §4.10 steps only when this tick's reading
+          // agrees with the word already there, and the word is never NONE once a team has read once - so a step
+          // proves the verdict was confirmed, and `verdictBefore` is what confirmed it. Reading the word AFTER the
+          // step was reading past §4.10's own respawn clear ("a respawn clears the team's verdict"), which lands in
+          // the same tick: seed 4 tick 2668, team 7 stepped 8 -> 0 m on a confirmed DRIFT and a respawning tank then
+          // cleared the word to NONE. That case never arose while the trend was stuck SIDEWAYS, because team 7 is a
+          // bear under a bull trend at strength 2 and its ceiling is §4.14's 24 - 8 x 2 = 8 m, a lane the old
+          // reading never drove. The rule is right; the observation was one line late.
+          assert.notEqual(verdictBefore[w], T.VERDICT_NONE, `seed ${seedWord} tick ${tick}: team ${w} stepped on an unconfirmed verdict`);
+          const after = s[L.O_TACTICS + T.TAC_VERDICT + w];
+          if (after !== verdictBefore[w]) {
+            assert.equal(after, T.VERDICT_NONE, `seed ${seedWord} tick ${tick}: team ${w} verdict ${verdictBefore[w]} -> ${after} without a respawn`);
+            assert.ok(respawned[w], `seed ${seedWord} tick ${tick}: team ${w} verdict cleared with no tank respawning`);
+          }
           steps++;
         }
       }
@@ -421,7 +439,20 @@ test('an assault starts only on an objective the side does not hold, never while
       }
     }
   }
-  assert.ok(starts >= 10, `only ${starts} assaults - nothing checked`);
+  // THE QUOTA IS THE MEASURED COUNT, NOT A SIDEWAYS-FOREVER ONE (ruled 2026-09-19). `>= 10` was written when the
+  // trend was stuck SIDEWAYS by the half-candle reading, so neither side's assault clock was ever paused and both
+  // ran freely. With §4.14 alive the trend's side runs its clock and the other side mounts none, and these five
+  // seeds x 10800 ticks give 8 starts:
+  //
+  //   seed 1: bulls 0, bears 1    seed 2: bulls 0, bears 0    seed 3: bulls 0, bears 2
+  //   seed 4: bulls 1, bears 0    seed 5: bulls 2, bears 2
+  //
+  // Seed 2 mounts none at all in three minutes, which is §4.14 doing what it says on a tape that trends: the side
+  // it favours is the only one with a clock, and it has to want an objective it does not hold. The number is
+  // asserted exactly so it cannot drift without a measurement beside it, and the floor keeps the suite honest -
+  // an assault path that never runs would check nothing.
+  assert.equal(starts, 8, `${starts} assaults, not the measured 8`);
+  assert.ok(starts > 0, 'no assault ran at all, so nothing above was checked');
 });
 
 test('the trend is the colour of the last six finished candles: six green is UP 3, alternating is SIDEWAYS, a doji is neither; the side it runs against mounts no assault (§4.14)', () => {
