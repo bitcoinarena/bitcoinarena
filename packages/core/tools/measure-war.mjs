@@ -71,7 +71,8 @@ patch('rules/tactics.js', '    if (mod((tick | 0) + mod(mix(hash, 300 + w) >>> 1
 patch('rules/tactics.js', '    if (!teamOnPost(s, base, side, team, tick, seamAt, ground)) continue;',
   '\n    if (globalThis.__W) globalThis.__W.onPostOk(w);', 'after');
 patch('rules/tactics.js', '    const confirmed = s[base + TAC_VERDICT + w] === verdict;',
-  '\n    if (globalThis.__W) globalThis.__W.verdict(w, verdict, s[base + TAC_VERDICT + w], s[base + TAC_PUSH + w]);');
+  '\n    if (globalThis.__W) globalThis.__W.verdict(w, verdict, s[base + TAC_VERDICT + w], s[base + TAC_PUSH + w], '
+  + 'weight, terms.rest, terms.ceiling, own, foe, widow);');
 patch('rules/tactics.js', '    s[base + TAC_PUSH + w] = push | 0;',
   '\n    if (globalThis.__W) globalThis.__W.stepped(w, push);');
 // THE CORE'S OWN SEAM, hooked out of the copy (measured 2026-09-19): every hold hangs off the seam at the slot, and
@@ -105,7 +106,13 @@ globalThis.__W = {
   unit(i, u, dx, dz, hold, post) { hk.unit.set(i, { dx, dz, hold, post, halted: u.halted }); },
   reread(w) { if (mainPass) add('P re-read due'); },
   onPostOk(w) { if (mainPass) add('P team on post'); },
-  verdict(w, v, was, push) { if (!mainPass) return; add('P verdict read'); add(`P verdict ${['none', 'take', 'give', 'drift'][v] || v}`);
+  verdict(w, v, was, push, weight, rest, ceiling, own, foe, widow) { if (!mainPass) return;
+    // §4.11's objective weight and §4.10's odds, at the moment the verdict is decided. O1 asks that pushes land on
+    // objective lanes; if the weight never reaches here, that row is measuring a term the core is not applying.
+    add('P verdict read'); add(`P weight ${weight | 0}`); add(`P ceiling ${(ceiling / 65536) | 0}`);
+    add('P rest sum', (rest / 65536) | 0); add('P own sum', own | 0); add('P foe sum', foe | 0);
+    if (widow) add('P widow'); if ((own | 0) > (foe | 0)) add('P odds ours'); else if ((foe | 0) > (own | 0)) add('P odds theirs');
+    add(`P verdict ${['none', 'take', 'give', 'drift'][v] || v}`);
     if (v === was) add('P confirmed'); else add('P not confirmed');
     if (v === 2) { add('P give read'); if (v === was) add('P give confirmed'); if (push <= 0) add('P give at or below zero'); } },
   stepped(w, push) { if (!mainPass) return; add('P stepped'); if (push < 0) add('P stepped below zero');
@@ -683,6 +690,12 @@ if (SHARE) {
   console.log(`the push word, written against seen: lowest written ${pushWrittenMin.toFixed(0)} m, highest written `
     + `${pushWrittenMax.toFixed(0)} m; lowest seen by the per-tick sampler ${pushSeenMin.toFixed(0)} m, highest seen `
     + `${pushSeenMax.toFixed(0)} m`);
+  console.log(`§4.11's weight at the verdict: w0 ${n('P weight 0')}, w1 ${n('P weight 1')}, w2 ${n('P weight 2')}, `
+    + `w3 ${n('P weight 3')}; ceilings 16 ${n('P ceiling 16')}, 24 ${n('P ceiling 24')}, 32 ${n('P ceiling 32')}, `
+    + `40 ${n('P ceiling 40')}; widows ${n('P widow')}; odds ours ${n('P odds ours')}, theirs ${n('P odds theirs')}, `
+    + `level ${n('P verdict read') - n('P odds ours') - n('P odds theirs')}; mean own `
+    + `${(n('P own sum') / Math.max(n('P verdict read'), 1)).toFixed(1)}, mean foe `
+    + `${(n('P foe sum') / Math.max(n('P verdict read'), 1)).toFixed(1)}`);
   console.log(`the GIVE path: read ${n('P give read')} times, confirmed ${n('P give confirmed')}, of the reads `
     + `${n('P give at or below zero')} were at a push already <= 0; steps that landed below zero ${n('P stepped below zero')}`);
 }
