@@ -20,8 +20,20 @@
 //
 // There is no road in the core: the kill zone every slot covers is the seam band the truck has to cross.
 import { ONE, idiv, abs, add, sub, mulFast, sqrt } from '../fixed.js';
-import { O_UNITS, U_WORDS, U_STATE } from '../state.js';
-import { hullDownHold, crestRise } from './army.js';
+import { O_UNITS, U_WORDS, U_STATE, MAX_CRATERS, craterBase, C_X, C_Z, C_R, C_ROUNDS } from '../state.js';
+import { hullDownHold, crestRise, clearOfCraters } from './army.js';
+
+/** The live craters as the army step sees them - the same flat list `stepUnit` is handed, built from the state. */
+export function cratersOf(s) {
+  const out = { n: 0, r: [] };
+  for (let i = 0; i < MAX_CRATERS; i++) {
+    const b = craterBase(i);
+    if (s[b + C_R] <= 0 || s[b + C_ROUNDS] <= 0) continue;
+    out.r.push(s[b + C_X], s[b + C_Z], s[b + C_R]);
+    out.n++;
+  }
+  return out;
+}
 
 export const TEAMS_PER_SIDE = 6;
 export const SLOTS_PER_SIDE = 7;
@@ -509,9 +521,14 @@ export function onRespawn(s, base, index, tick) {
 export function onPost(s, base, index, tick, seamAt, ground) {
   const p = postOf(s, base, index, tick), side = teamOf(index).side;
   const line = add(seamAt(p.x) | 0, mulFast(Math.imul(side, ONE), p.depth));
-  const hold = p.bounding ? line : crestHold(s, base, index, p, line, side, ground);
+  const held = p.bounding ? line : crestHold(s, base, index, p, line, side, ground);
+  // THE SAME POINT THE STEP AIMS AT: a post inside a crater is on its rim (army.js clearOfCraters, the owner 15:57).
+  // Read here too, or a tank standing correctly on a rim would be measured as off post and its team would stop
+  // swapping roles and scooting.
+  const clear = clearOfCraters(cratersOf(s), p.x, held, side);
+  const hold = clear.z;
   const b = O_UNITS + Math.imul(index, U_WORDS);
-  const dx = sub(s[b], p.x), dz = sub(s[b + 1], hold);
+  const dx = sub(s[b], clear.x), dz = sub(s[b + 1], hold);
   if (abs(dx) > ON_POST || abs(dz) > ON_POST) return false;
   return add(mulFast(dx, dx), mulFast(dz, dz)) <= mulFast(ON_POST, ON_POST);
 }

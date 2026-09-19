@@ -2405,6 +2405,60 @@ const SIDE_BEAR = 1;
  * cooldown has expired - reload, then the hit roll. Nothing may be inserted
  * before the wobble or every recorded transcript stops replaying.
  */
+/**
+ * A POST INSIDE A CRATER IS ON ITS RIM INSTEAD, ON THE TANK'S OWN SIDE (the owner 2026-09-19 15:57,
+ * owner-screens/tanks-stuck-craters-1557.jpg: "tanks stuck in craters - they do not move away and cannot attack").
+ *
+ * Measured before this rule, over 90 s with nukes landing, seeds 1 / 2 / 3: 44.7% / 45.7% / 52.4% of all living
+ * tank-ticks were spent within 1.5 m of a crater rim, and 44131 of seed 1's 44193 of those had the tank's POST
+ * inside the bowl. The longest unbroken stay on one lip was 68.6 / 68.6 / 73.6 s - a third of a round, standing
+ * still. The cause is two rules pulling against each other every tick: the post may lie in a bowl, `AvoidWrecks`
+ * (rules/army.js) pushes the hull back out to R + 3.2 m, and the tank walks in again at its own gait. The push is
+ * not wrong - a tank does not sit in a hole - so what moves is the POST.
+ *
+ * The post SLIDES ALONG ITS OWN DEPTH LINE to the nearer edge of the bowl - x only, the line's z untouched - so the
+ * hull drives AROUND the hole and keeps its place in the front, instead of standing on the lip. Projecting it
+ * radially onto the rim was the first cut and it is not what the owner asked for: measured, it left the tank within
+ * 1.5 m of a rim on 36.0 / 29.3 / 26.9% of tank-ticks, because the rim was then the post. Craters are visited in
+ * index order and the point is re-checked, because bowls overlap (his shot has three); four passes, then it stands
+ * where it is - a bounded loop, so the tick cost cannot run away.
+ *
+ * Men are NOT projected: §11.3 rules that a man lies in a crater unhurt and is not pushed out of one. This is the
+ * armour's post only.
+ */
+const CRATER_CLEAR = 445645;               // 6.8 m: AvoidWrecks' 3.2 m push plus the hull's own 3.6 m length
+
+// WHY THE POST IS A HULL-LENGTH CLEAR OF THE PUSH, not level with it: at R + 3.2 m the post IS the push boundary,
+// so the tank stands with its constraint always touching - the smallest overshoot re-triggers the push and it
+// works its way along the lip. One hull length of daylight (§1.2's 3.6 m half-length) is the smallest distance at
+// which the two rules never meet.
+
+function clearOfCraters(craters, x, z, side) {
+  if (!craters || !craters.n) return { x: x | 0, z: z | 0 };
+  let px = x | 0;
+  for (let pass = 0; pass < 4; pass++) {
+    let moved = false;
+    for (let i = 0; i < craters.n; i++) {
+      const c = Math.imul(i, 3);
+      const R = craters.r[c + 2];
+      if (R <= 0) continue;
+      const cx = craters.r[c], cz = craters.r[c + 1], reach = add(R, CRATER_CLEAR);
+      const dz = sub(z, cz);
+      if (abs(dz) >= reach) continue;                       // the line passes clear of this bowl
+      const dx = sub(px, cx);
+      if (abs(dx) >= reach) continue;
+      // the bowl blocks this line between cx +- span; the post slides to the nearer free edge, so the hull goes
+      // AROUND the hole along its own depth line instead of standing on the lip
+      const span = sqrt(sub(mulFast(reach, reach), mulFast(dz, dz)));
+      if (span <= 0) continue;
+      px = dx >= 0 ? add(cx, span) : sub(cx, span);
+      moved = true;
+    }
+    if (!moved) break;
+  }
+  return { x: px | 0, z: z | 0 };
+}
+
 function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, halfX, halfZ, dt, index, tick, craters, ground) {
   if (u.hp <= 0) return 0;
 
@@ -2478,6 +2532,7 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, halfX, half
   // through a front that no longer existed.
   const side = u.side < 0 ? -1 : 1;
   let hold = add(seamZ, Math.imul(side, standoff));
+  let craterX = null;                                // the post's x after a crater projection, if one moved it
   if (u.armour && u.tac) {
     // Measured from the seam at the SLOT, not at the hull: the seam curves with x, and a target that moved as the
     // hull crept across kept it on the edge of its post.
@@ -2485,6 +2540,12 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, halfX, half
     // HULL-DOWN, for the overwatch tank: the candidate with the highest ground between it and the enemy.
     // the crest the core holds for this tank (tactics.js crestHold, §4.1 hysteresis), handed in as an offset from the line
     if (!u.tacBounding && ground) hold = add(hold, u.tacCrest | 0);
+    // AND NOT INTO A CRATER (the owner 2026-09-19 15:57). A post in a bowl and the AvoidWrecks push below pull against
+    // each other every tick, and the hull stands on the lip for as long as the crater lives: measured 44.7 / 45.7 /
+    // 52.4% of living tank-ticks within 1.5 m of a rim on seeds 1 / 2 / 3, longest stay 68.6 / 68.6 / 73.6 s. The
+    // post goes to the rim on this tank's own side (tactics.js clearOfCraters), so it paths around and keeps firing.
+    // `craters` here is the same list the push reads, so the two rules cannot disagree about where a bowl is.
+    { const c = clearOfCraters(craters, u.tacX, hold, side); craterX = c.x; hold = c.z; }
   }
 
   // Give ground when something is too close.
@@ -2642,7 +2703,7 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, halfX, half
   // recording's 71% - the spread was right (sd 46 against C#'s 36-45) and the
   // SHAPE was flat where the recording's is peaked.
   // FRONTAGE: a tank holds its team's slot (rules/tactics.js) and closes on its foe only inside LANE_LEASH.
-  const lane = u.armour ? u.tacX : 0;
+  const lane = u.armour ? (craterX === null ? u.tacX : craterX) : 0;
   const post = u.armour
     ? (u.engaged ? add(lane, clamp(sub(u.foeX, lane), neg(LANE_LEASH), LANE_LEASH)) : lane)
     : riflePost(anchor, index);
@@ -3016,6 +3077,18 @@ function threatAt(units, count, x, z) {
 // There is no road in the core: the kill zone every slot covers is the seam band the truck has to cross.
 
 
+
+/** The live craters as the army step sees them - the same flat list `stepUnit` is handed, built from the state. */
+function cratersOf(s) {
+  const out = { n: 0, r: [] };
+  for (let i = 0; i < MAX_CRATERS; i++) {
+    const b = craterBase(i);
+    if (s[b + C_R] <= 0 || s[b + C_ROUNDS] <= 0) continue;
+    out.r.push(s[b + C_X], s[b + C_Z], s[b + C_R]);
+    out.n++;
+  }
+  return out;
+}
 
 const TEAMS_PER_SIDE = 6;
 const SLOTS_PER_SIDE = 7;
@@ -3503,9 +3576,14 @@ function onRespawn(s, base, index, tick) {
 function onPost(s, base, index, tick, seamAt, ground) {
   const p = postOf(s, base, index, tick), side = teamOf(index).side;
   const line = add(seamAt(p.x) | 0, mulFast(Math.imul(side, ONE), p.depth));
-  const hold = p.bounding ? line : crestHold(s, base, index, p, line, side, ground);
+  const held = p.bounding ? line : crestHold(s, base, index, p, line, side, ground);
+  // THE SAME POINT THE STEP AIMS AT: a post inside a crater is on its rim (army.js clearOfCraters, the owner 15:57).
+  // Read here too, or a tank standing correctly on a rim would be measured as off post and its team would stop
+  // swapping roles and scooting.
+  const clear = clearOfCraters(cratersOf(s), p.x, held, side);
+  const hold = clear.z;
   const b = O_UNITS + Math.imul(index, U_WORDS);
-  const dx = sub(s[b], p.x), dz = sub(s[b + 1], hold);
+  const dx = sub(s[b], clear.x), dz = sub(s[b + 1], hold);
   if (abs(dx) > ON_POST || abs(dz) > ON_POST) return false;
   return add(mulFast(dx, dx), mulFast(dz, dz)) <= mulFast(ON_POST, ON_POST);
 }

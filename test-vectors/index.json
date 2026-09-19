@@ -35,12 +35,12 @@
   {
    "name": "liquidation",
    "ticks": 3600,
-   "final": "d8246e4b45a32a21e474f87361dea06bfa8e2b3c79a4cc1e48c1d2606753b080"
+   "final": "d69290a06f7948757ba26ffa8ace5ac95c48d1f910bc549f5f1185b59fc72f33"
   },
   {
    "name": "fallout",
    "ticks": 3600,
-   "final": "ffc301ed9d4aa78da6f75ee095ac265a2b4e8e324c265463eff02cf5cb4c771b"
+   "final": "356bb01362e8f718ca9007075e336332cf69039946839b11bbef3f3dad8b10f4"
   }
  ]
 }
