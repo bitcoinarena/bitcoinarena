@@ -1,3 +1,4 @@
+using System.Globalization;
 using UnityEngine;
 
 /// <summary>
@@ -672,6 +673,48 @@ public class DriveHud : MonoBehaviour
                       + $"the core says \"{line}\"");
         }
         Shadowed(LiquidationBox(w, h), line, _sub, new Color(1f, 0.72f, 0.25f));
+
+        // AND ACROSS THE MIDDLE OF THE SCREEN, while the cloud stands (the owner 2026-09-19 13:10: "when a liquidation
+        // nuke/bomb hits, show in the CENTER of the screen how much was liquidated, e.g. $305000 Short liquidated").
+        // The headline row is 13 px of orange in the corner of a screen with a mushroom cloud in the middle of it -
+        // the number belongs where the eye already is. Same clock as the line: it is up exactly while a cloud is.
+        var callBox = LiquidationCalloutBox(w, h);
+        var call = new GUIStyle(GUI.skin.label)
+        {
+            alignment = TextAnchor.MiddleCenter, fontStyle = FontStyle.Bold,
+            fontSize = Mathf.RoundToInt(callBox.height * 0.62f),
+        };
+        string callout = LiquidationCallout(dollars, strike != null ? strike.ArmedSide : null);
+        FitInto(call, callout, callBox.width - 16f, 12);
+        GUI.color = new Color(0.02f, 0.03f, 0.05f, 0.55f);
+        GUI.DrawTexture(callBox, _flat);
+        GUI.color = Color.white;
+        Shadowed(callBox, callout, call, new Color(1f, 0.78f, 0.30f));
+    }
+
+    /// <summary>
+    /// WHAT A NUKE JUST COST SOMEBODY, in the words the owner asked for: "$305,000 SHORT LIQUIDATED".
+    ///
+    /// The side is the position that was closed, not the side of the market that closed it: `Bootstrap` hands the
+    /// theatre `!l.Long`, so bear means a short was liquidated. A simulated strike has no submitter and no side, and
+    /// then the line says the money alone rather than inventing one.
+    /// </summary>
+    public static string LiquidationCallout(double dollars, bool? bear)
+    {
+        string money = "$" + dollars.ToString("N0", CultureInfo.InvariantCulture);
+        return bear == null ? money + "  LIQUIDATED"
+             : money + (bear.Value ? "  SHORT LIQUIDATED" : "  LONG LIQUIDATED");
+    }
+
+    /// <summary>
+    /// The call-out's box: across the middle of the screen, clear of the headline stack above it and of the touch
+    /// pads below. Its own method so the layout tests can walk it with everything else.
+    /// </summary>
+    public Rect LiquidationCalloutBox(int w, int h)
+    {
+        float height = Mathf.Clamp(Mathf.Min(w, h) * 0.075f, 26f, 76f);
+        float width = Mathf.Min(w * 0.72f, 720f);
+        return new Rect((w - width) * 0.5f, h * 0.42f - height * 0.5f, width, height);
     }
 
     void DrawBlockTimer(int w, int h, float y)
@@ -789,8 +832,8 @@ public class DriveHud : MonoBehaviour
         // to take, so a headline sized for the old width would be cut off at
         // both ends by the centring. Same shrink the price and the score
         // column use, floored at 11 px.
-        FitInto(big, $"DELIVERING  {loadout.ConfirmedSats:N0} sat  TO THE MINERS",
-                card.width - 16f, 11);
+        string sendOff = "DELIVERING  " + loadout.ConfirmedSats.ToString("N0", CultureInfo.InvariantCulture) + " sat  TO THE MINERS";
+        FitInto(big, sendOff, card.width - 16f, 11);
         FitInto(sub, "GOOD LUCK!", card.width - 16f, 10);
 
         GUI.color = new Color(0.02f, 0.03f, 0.05f, 0.8f * k);
@@ -801,8 +844,7 @@ public class DriveHud : MonoBehaviour
         GUI.color = Color.white;
 
         big.normal.textColor = new Color(1f, 0.86f, 0.35f, k);
-        GUI.Label(new Rect(card.x, card.y + padY, card.width, head * 1.4f),
-                  $"DELIVERING  {loadout.ConfirmedSats:N0} sat  TO THE MINERS", big);
+        GUI.Label(new Rect(card.x, card.y + padY, card.width, head * 1.4f), sendOff, big);
 
         sub.normal.textColor = new Color(Up.r, Up.g, Up.b, k);
         GUI.Label(new Rect(card.x, card.y + padY + head * 1.3f, card.width, sub.fontSize * 1.4f),
@@ -862,11 +904,21 @@ public class DriveHud : MonoBehaviour
         float padY = head * 0.55f;
         var card = ArrivalBox(w, h);
 
-        // The same fit as the send-off, on the longest line each style draws.
-        FitInto(big, "BLOCK MINED WITHOUT YOU", card.width - 16f, 11);
-        FitInto(mid, "SCORE  +000,000", card.width - 16f, 10);
-        FitInto(line, "those fees go to the miners — the score is what the run pays you",
-                card.width - 16f, 9);
+        // EVERY LINE IS FITTED ON THE LINE THAT IS DRAWN, not on a sample of it (the owner's 13:05 shot
+        // delivered-text-clip-1305.jpg: "DELIVERED  7.225 sat to the" - the headline ran off both sides of the card
+        // and "miners" was past the screen edge). The fit used "BLOCK MINED WITHOUT YOU", 23 characters; the
+        // delivered headline is 37 and grows with the fee, so the size that fitted the sample never fitted the line.
+        string headline = ArrivalHeadline(missed, gate.LastRun);
+        string scoreLine = ArrivalScoreLine(missed, runScore == null ? 0 : runScore.LastScore);
+        string workLine = runScore == null ? "" : ArrivalWorkLine(missed, runScore.LastCargo, runScore.LastExposure, runScore.LastTime);
+        string footLine = ArrivalFootLine(missed);
+        // WHO IS LEADING, on the run's end screen (§4.14, the owner 2026-09-19 12:55: "no who-won/who-leads"). The
+        // run ends inside the round, so the word is LEADING; THE BULLS WIN belongs to the round's own end.
+        string leadLine = ChartHud.LiveLeading;
+        FitInto(big, headline, card.width - 16f, 11);
+        FitInto(mid, scoreLine, card.width - 16f, 10);
+        FitInto(line, workLine.Length > footLine.Length ? workLine : footLine, card.width - 16f, 9);
+        if (leadLine != null) FitInto(mid, leadLine.Length > scoreLine.Length ? leadLine : scoreLine, card.width - 16f, 10);
 
         GUI.color = new Color(0.02f, 0.03f, 0.05f, 0.82f * k);
         GUI.DrawTexture(card, _flat);
@@ -879,41 +931,61 @@ public class DriveHud : MonoBehaviour
 
         big.normal.textColor = missed ? new Color(1f, 0.42f, 0.36f, k)
                                       : new Color(Up.r, Up.g, Up.b, k);
-        GUI.Label(new Rect(card.x, y, card.width, head * 1.5f),
-                  missed ? "BLOCK MINED WITHOUT YOU"
-                         : $"DELIVERED  {gate.LastRun:N0} sat to the miners", big);
+        GUI.Label(new Rect(card.x, y, card.width, head * 1.5f), headline, big);
         y += head * 1.35f;
 
         if (runScore == null) return;
 
         mid.normal.textColor = new Color(1f, 0.86f, 0.35f, k);
-        GUI.Label(new Rect(card.x, y, card.width, mid.fontSize * 1.4f),
-                  missed ? "SCORE  0" : $"SCORE  +{runScore.LastScore:N0}", mid);
+        GUI.Label(new Rect(card.x, y, card.width, mid.fontSize * 1.4f), scoreLine, mid);
         y += mid.fontSize * 1.3f;
+
+        if (leadLine != null)
+        {
+            mid.normal.textColor = new Color(1f, 1f, 1f, k * 0.85f);
+            GUI.Label(new Rect(card.x, y, card.width, mid.fontSize * 1.4f), leadLine, mid);
+            y += mid.fontSize * 1.3f;
+        }
 
         // The working, which is the whole point of showing a score at all: it
         // is where the player reads WHY a careful full run scored 40 and a
         // reckless half-empty one scored 700.
         line.normal.textColor = new Color(1f, 1f, 1f, k * 0.92f);
-        GUI.Label(new Rect(card.x, y, card.width, line.fontSize * 1.7f),
-                  missed ? "the freight never reached the block"
-                         : $"load {runScore.LastCargo:0.00}   ×   danger {runScore.LastExposure:0.00}" +
-                           $"   ×   speed {runScore.LastTime:0.00}   ×  1000", line);
+        GUI.Label(new Rect(card.x, y, card.width, line.fontSize * 1.7f), workLine, line);
         y += line.fontSize * 1.7f;
 
         line.normal.textColor = new Color(1f, 1f, 1f, k * 0.62f);
-        GUI.Label(new Rect(card.x, y, card.width, line.fontSize * 1.7f),
-                  // NOT "your stake came back". There is no stake in this
-                  // game: nobody deposits anything, so nothing returns. That
-                  // was multiplayer vocabulary imported into a build that has
-                  // no multiplayer, and it described a mechanic the player had
-                  // never taken part in. The sats are the FEES of the
-                  // transactions being hauled - they belong to the miner, which
-                  // is why the headline says delivered to the miners.
-                  missed ? "the fees never reached the block — beat the clock next time"
-                         : "those fees go to the miners — the score is what the run pays you",
-                  line);
+        GUI.Label(new Rect(card.x, y, card.width, line.fontSize * 1.7f), footLine, line);
     }
+
+    /// <summary>
+    /// THE FOUR LINES OF THE ARRIVAL CARD, as strings, so the fit is measured on what is drawn.
+    ///
+    /// Also the reason the separator is a hyphen and the numbers are invariant: the em dash drew as a blank in the
+    /// build's font (13:05 shot: "those fees go to the miners   the score is what the run pays you") and the
+    /// decimals came out under the browser's culture ("load 0,83" on a German machine) - this build speaks English.
+    /// </summary>
+    public static string ArrivalHeadline(bool missed, long sat) =>
+        missed ? "BLOCK MINED WITHOUT YOU"
+               : "DELIVERED  " + sat.ToString("N0", CultureInfo.InvariantCulture) + " sat to the miners";
+
+    public static string ArrivalScoreLine(bool missed, int score) =>
+        missed ? "SCORE  0" : "SCORE  +" + score.ToString("N0", CultureInfo.InvariantCulture);
+
+    public static string ArrivalWorkLine(bool missed, float cargo, float exposure, float time) =>
+        missed ? "the freight never reached the block"
+               : "load " + cargo.ToString("0.00", CultureInfo.InvariantCulture)
+                 + "   ×   danger " + exposure.ToString("0.00", CultureInfo.InvariantCulture)
+                 + "   ×   speed " + time.ToString("0.00", CultureInfo.InvariantCulture)
+                 + "   ×  1000";
+
+    // NOT "your stake came back". There is no stake in this game: nobody deposits anything, so nothing returns. That
+    // was multiplayer vocabulary imported into a build that has no multiplayer, and it described a mechanic the
+    // player had never taken part in. The sats are the FEES of the transactions being hauled - they belong to the
+    // miner, which is why the headline says delivered to the miners.
+    public static string ArrivalFootLine(bool missed) =>
+        missed ? "the fees never reached the block - beat the clock next time"
+               : "those fees go to the miners - the score is what the run pays you";
 
     /// <summary>
     /// The block being mined, its clock, and the best blocks so far.
@@ -1202,7 +1274,9 @@ public class DriveHud : MonoBehaviour
         float head = CardHead(w, h, true);
         float mid = Mathf.RoundToInt(head * 0.52f), line = Mathf.RoundToInt(head * 0.40f);
         float padY = head * 0.55f;
-        return CardIn(w, h, padY * 2f + head * 1.35f + mid * 1.3f + line * 3.4f);
+        // TWO mid rows now: SCORE and, under it, who is leading (§4.14). A row drawn in a box that was not sized
+        // for it is the fault the block board kept making.
+        return CardIn(w, h, padY * 2f + head * 1.35f + mid * 2.6f + line * 3.4f);
     }
 
     /// <summary>The streaming list, right-hand side, one row per model.</summary>

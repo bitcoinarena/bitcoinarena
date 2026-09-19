@@ -35,7 +35,6 @@ public class ChartHud : MonoBehaviour
     readonly List<Ghost> _ghosts = new List<Ghost>();
     Texture2D _flat;
     GUIStyle _text, _right;
-    Blwp.NetSession _session;
     DriveHud _drive;
     Rect _sim;
     SplashScreen _splash;
@@ -93,6 +92,8 @@ public class ChartHud : MonoBehaviour
         public readonly List<Rect> AssaultColumns = new List<Rect>();
         public readonly List<Color> AssaultColours = new List<Color>();
         public readonly List<string> Banners = new List<string>();
+        public readonly List<Color> BannerColours = new List<Color>();
+        public Rect BannerBox;
         /// <summary>
         /// Where the header rows and the plot's labels were drawn, as the painter laid them out (text width from the style):
         /// what the OPEN label is measured against.
@@ -219,8 +220,12 @@ public class ChartHud : MonoBehaviour
 
         f.Header = $"{Symbol} · {RangeName(f.Range)}";
         f.Price = Dollars(v[L.CH_LAST], unit);
+        // WHO IS LEADING, not just by how much (the owner 2026-09-19 12:55, from the cab: the header read
+        // "$81,330 +0.00% SIDEWAYS" and he could not tell who was ahead). §4.14: "BULLS +0.42%" / "BEARS -0.17%"
+        // against the round's open; level to the cent is LEVEL, and only the round's end says WIN.
         int bp = v[L.CH_LEAD_BP];
-        f.Lead = (bp >= 0 ? "+" : "-") + (Mathf.Abs(bp) / 100f).ToString("0.00", CultureInfo.InvariantCulture) + "%";
+        f.Lead = LeadWord(v[L.CH_LEAD], bp);
+        LiveLeading = LeadingWord(v[L.CH_LEAD], bp);          // the run's end screen reads this (§4.14)
         f.LeadColour = v[L.CH_LEAD] > 0 ? Green : v[L.CH_LEAD] < 0 ? Red : Axis;
         f.Dots = v[L.CH_DOTS];
         f.Trend = v[L.CH_TREND] > 0 ? $"UP {v[L.CH_STRENGTH]}" : v[L.CH_TREND] < 0 ? $"DOWN {v[L.CH_STRENGTH]}" : "SIDEWAYS";
@@ -286,8 +291,12 @@ public class ChartHud : MonoBehaviour
         {
             int b = L.CH_ASSAULT + s * L.CH_ASSAULT_WORDS, phase = v[b];
             if (phase == L.ASSAULT_IDLE) continue;
+            // NO OBJECTIVE NAME IN THE BANNER: RIDGE / HOLLOW / GAP are off the HUD (the owner 2026-09-17 09:17,
+            // "only LOW and HIGH"), and the banner the owner asks for on 2026-09-19 12:55 is who is attacking, not
+            // where. The lane is already drawn as the tinted column under the candles.
             string side = s == 0 ? "BULLS" : "BEARS";
-            f.Banners.Add($"{side} {(phase == L.ASSAULT_PUSH ? "ASSAULT" : "CONSOLIDATE")} {ObjectiveName(v[b + 1])}");
+            f.Banners.Add($"{side} {(phase == L.ASSAULT_PUSH ? "ASSAULT" : "CONSOLIDATE")}");
+            f.BannerColours.Add(s == 0 ? Bull : Bear);
             if (v[b + 3] == 0) continue;
             float x0 = Mathf.Clamp(X(v[b + 4]), plot.x, plot.xMax), x1 = Mathf.Clamp(X(v[b + 5]), plot.x, plot.xMax);
             f.AssaultColumns.Add(Rect.MinMaxRect(x0, plot.y, x1, plot.yMax));
@@ -351,6 +360,33 @@ public class ChartHud : MonoBehaviour
         new Rect(Mathf.Clamp(at.x - width * 0.5f, panel.x + 2f, plot.xMax - width), at.y, width, height);
 
     /// <summary>The gate's label: "GATE" on the chart, "GATE ›" pinned at the right edge past the last candle.</summary>
+    /// <summary>
+    /// WHO IS LEADING AND BY HOW MUCH (§4.14). The word is the side, the number is the round's open to the last
+    /// attested sample. "LEADING" and "WIN" are not the same claim: the round's end says WIN, a live chart says who
+    /// is ahead right now, and this is the live one - the run's end screen adds the word LEADING to it.
+    /// </summary>
+    public static string LeadWord(int lead, int bp)
+    {
+        string pct = (bp >= 0 ? "+" : "-") + (Mathf.Abs(bp) / 100f).ToString("0.00", CultureInfo.InvariantCulture) + "%";
+        return (lead > 0 ? "BULLS " : lead < 0 ? "BEARS " : "LEVEL ") + pct;
+    }
+
+    /// <summary>
+    /// THE LEAD AS THE RUN'S END SCREEN SAYS IT: "BULLS LEADING +0.42%". §4.14 is exact about the word - a run
+    /// ends inside the round, so its screen may say who is *leading* and never who won. Null until a chart is up.
+    /// </summary>
+    public static string LiveLeading { get; private set; }
+
+    public static string LeadingWord(int lead, int bp)
+    {
+        string pct = (bp >= 0 ? "+" : "-") + (Mathf.Abs(bp) / 100f).ToString("0.00", CultureInfo.InvariantCulture) + "%";
+        return (lead > 0 ? "BULLS LEADING " : lead < 0 ? "BEARS LEADING " : "LEVEL ") + pct;
+    }
+
+    /// <summary>The round's verdict, from its open and its close - the only winner there is (§4.14).</summary>
+    public static string RoundVerdict(long open, long close) =>
+        close > open ? "THE BULLS WIN" : close < open ? "THE BEARS WIN" : "NO MOVE";
+
     public static string GateWord(Frame f) => f.GatePinned ? "GATE " + PinArrow : "GATE";
 
     /// <summary>
@@ -413,7 +449,6 @@ public class ChartHud : MonoBehaviour
         // over the left third of the chart while the models streamed, and YOU was under it.
         GUI.depth = -1;
         Paint(f);
-        PaintHighLow(f);
         Last = f;
         if (Event.current.type == EventType.Repaint) { ChartsPainted++; Tell(f); }
     }
@@ -446,7 +481,7 @@ public class ChartHud : MonoBehaviour
             $"youLabelShares={Shares(f.YouBox, f)}", $"youMarkShares={Shares(f.YouMarkBox, f)}",
             $"lastTagBox={B(f.LastTagBox)}", $"gateLineBox={B(f.GateLineBox)}",
             $"ghostLabelBoxes={string.Join("|", f.GhostLabelBoxes.ConvertAll(B))}", $"ghostDotBoxes={string.Join("|", f.GhostDotBoxes.ConvertAll(B))}",
-            $"ghostsUnplaced={f.GhostsUnplaced}", $"ghostSlots={string.Join(" || ", f.GhostSlots)}", $"ghostLabelShares={string.Join("|", f.GhostLabelBoxes.ConvertAll(r => GhostShares(r, f)))}", $"highLowBox={B(HighLowDrawn)}", $"highLow={HighLowLine(f).Replace(' ', '_')}", $"gateBox={B(f.GateBox)}",
+            $"ghostsUnplaced={f.GhostsUnplaced}", $"ghostSlots={string.Join(" || ", f.GhostSlots)}", $"ghostLabelShares={string.Join("|", f.GhostLabelBoxes.ConvertAll(r => GhostShares(r, f)))}", $"highLow={HighLowLine(f).Replace(' ', '_')}", $"gateBox={B(f.GateBox)}",
             $"objBox={string.Join("|", f.ObjectiveBoxes.ConvertAll(B))}", $"objNames={string.Join("+", f.Objectives.ConvertAll(o => o.Text))}",
             $"objUnplaced={f.ObjectivesUnplaced}",
             $"openShares={OpenShares(f)}", $"openPlaced={f.OpenPlaced}",
@@ -702,8 +737,18 @@ public class ChartHud : MonoBehaviour
 
         // assault columns under the candles
         for (int i = 0; i < f.AssaultColumns.Count; i++) { var c = f.AssaultColours[i]; c.a = 0.16f; Box(f.AssaultColumns[i], c); }
-        // No assault banners: they name RIDGE / HOLLOW / GAP, and those names are off the HUD (the owner 2026-09-17, after 09:17:
-        // "RIDGE HOLLOW GAP must go, only LOW and HIGH").
+        // AND THE BANNERS ABOVE THEM (the owner 2026-09-19 12:55: "no BULLS/BEARS assaults" - the list was built every
+        // frame and never drawn, so an assault was a faint tint and nothing else). They carry no objective name.
+        f.BannerBox = new Rect();
+        for (int i = 0; i < f.Banners.Count; i++)
+        {
+            float bw = _text.CalcSize(new GUIContent(f.Banners[i])).x + 8f;
+            var box = new Rect(p.xMax - bw - 2f, p.y + 2f + i * (lh + 2f), bw, lh);
+            GUI.color = new Color(0f, 0f, 0f, 0.45f); GUI.DrawTexture(box, _flat); GUI.color = Color.white;
+            Text(new Rect(box.x + 4f, box.y, box.width, lh), f.Banners[i], f.BannerColours[i], _text);
+            f.BannerBox = f.BannerBox.width <= 0f ? box : Rect.MinMaxRect(Mathf.Min(f.BannerBox.x, box.x), f.BannerBox.y,
+                                                                         Mathf.Max(f.BannerBox.xMax, box.xMax), box.yMax);
+        }
 
         foreach (var c in f.Bars) { Box(c.Wick, c.Green ? Green : Red); Box(c.Body, c.Green ? Green : Red); }
 
@@ -721,7 +766,7 @@ public class ChartHud : MonoBehaviour
         else if (f.GatePinned) { float gw = _text.CalcSize(new GUIContent(GateWord(f))).x; f.GateBox = new Rect(f.GateX - gw - 2f, p.y, gw, lh); }
 
         // HIGH and LOW are not written on the chart (the owner 2026-09-17 12:55: "HIGH/LOW central on screen not on the chart"):
-        // their candles keep a 4 px tick; the words are PaintHighLow's, central on the screen.
+        // their candles keep a 4 px tick, and since 2026-09-19 13:10 the words are drawn nowhere at all.
         f.LowPlaced = false; f.LowBox = new Rect(); f.HighBox = new Rect();
         if (f.High.Text != null)
         {
@@ -813,36 +858,14 @@ public class ChartHud : MonoBehaviour
         GUI.color = old;
     }
 
-    /// <summary>Where the HIGH / LOW line was drawn last (empty when not drawn), for the log and the probe.</summary>
-    public Rect HighLowDrawn;
-
-    /// <summary>The words of the central HIGH / LOW line, whole dollars.</summary>
-    public static string HighLowLine(Frame f) => f.High.Text == null ? "" : f.High.Text + "   ·   " + f.Low.Text;
-
     /// <summary>
-    /// HIGH AND LOW, CENTRAL ON THE SCREEN (the owner 2026-09-17 12:55). One line in the headline stack's reserved run-stopped
-    /// row, at the screen's centre where that row allows, on a dark plate; not while the run-stopped line owns the row.
+    /// THE HIGH / LOW PLAQUE IS GONE (the owner 2026-09-19 13:10, remove-world-high-low-1310.png: "REMOVE the floating
+    /// world overlay HIGH $81,374 . LOW $81,288"). It was put central on 2026-09-17 12:55 to get the words off the
+    /// candles; central on a screen with a battlefield on it reads as a plaque floating over the world. The chart
+    /// keeps the 4 px ticks on the high and low candles - that is where a high and a low belong - and the words are
+    /// drawn nowhere. <see cref="HighLowLine"/> stays because the probe and the log still print what they would say.
     /// </summary>
-    void PaintHighLow(Frame f)
-    {
-        HighLowDrawn = new Rect();
-        string line = HighLowLine(f);
-        if (_drive == null || line.Length == 0) return;
-        if (_session == null) _session = FindFirstObjectByType<Blwp.NetSession>();
-        if (DriveHud.RunStoppedLine(_session != null ? _session.Ending : "").Length > 0) return;
-        int w = Screen.width, h = Screen.height;
-        // the one measured shape where the model list cannot fit under HIGH / LOW (DriveHud.HighLowYieldsToModelList)
-        if (_drive.ModelListShowing && _drive.HighLowYieldsToModelList(w, h, _drive.ModelListRows(w, h))) return;
-        _text.fontSize = HeaderFont(f.Panel.height);
-        float tw = _text.CalcSize(new GUIContent(line)).x, lh = _text.fontSize * 1.35f;
-        var box = _drive.HighLowBox(w, h, tw + 16f, lh + 4f);
-        if (box.width <= 0f) return;
-        HighLowDrawn = box;
-        var old = GUI.color;
-        Box(box, new Color(Background.r, Background.g, Background.b, 0.8f));
-        Text(new Rect(box.center.x - tw * 0.5f, box.y + 2f, tw + 2f, lh), line, Axis, _text);
-        GUI.color = old;
-    }
+    public static string HighLowLine(Frame f) => f.High.Text == null ? "" : f.High.Text + "   \u00b7   " + f.Low.Text;
 
     void Line(Vector2 a, Vector2 b, float width, Color c)
     {
