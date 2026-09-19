@@ -4832,11 +4832,25 @@ function bayZ(bay) {
 const isArmour = (i) => (i & ARMOUR_MASK) === 0;
 
 /** A price tape, so the frontline has something to follow. */
-function tape(rngWords) {
+/**
+ * THE SEEDED TAPE (§4.13 Rule 1, RULED 2026-09-16 19:20; in the core 2026-09-19).
+ *
+ * Every round has its own front. The walk's shape is unchanged - the same step magnitude, the same accumulate, the
+ * same starting level - and only where the step comes from moves. It was `(i + 1) * 2654435761 >>> 20`, a function
+ * of the SAMPLE INDEX alone, so every round of every seed drew the identical tape: measured, eight seeds all opened
+ * on the same front, and with no live feed the seam sat still for a whole 10800-tick round with the trend never
+ * leaving 0. §0.1's row is "every round is a different war", and a general who is the same general in every war is
+ * not the tape being the general.
+ *
+ * It is now `mix(seedHash, 0x7e5a1c3d + i)` per sample, which is the rule's own words. `mix` is the same hash the
+ * tactics use for every other per-round draw, so this reads nothing new and adds no state, and no doctrine number
+ * moves with it.
+ */
+function tape(seedHash) {
   const h = new Int32Array(SAMPLES);
   let p = Math.imul(78000, ONE >> 8);
   for (let i = 0; i < SAMPLES; i++) {
-    const step = ((Math.imul(i + 1, 2654435761) >>> 20) - 2048) | 0;
+    const step = ((mix(seedHash, (0x7e5a1c3d + i) | 0) >>> 20) - 2048) | 0;
     p = add(p, Math.imul(step, 64));
     h[i] = p;
   }
@@ -5401,7 +5415,7 @@ function init(seedWord) {
   s[O_SCORE + S_CARGO] = 45875;
   s[O_SCORE + S_STATE] = RUN_LIVE;
 
-  st.tape = tape(rng);
+  st.tape = tape(seedWord | 0);
   // THE ROUND'S OWN SAMPLES, for the chart's ROUND range (WAR_TACTICS.md §0.3): the open's candle, then every sample
   // taken. The tape keeps 64 and forgets; this keeps the round. A view, not state - nothing in a step reads it.
   st.roundTape = [st.tape[SAMPLES - 2], st.tape[SAMPLES - 1]];
