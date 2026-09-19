@@ -422,10 +422,34 @@ export function isBounding(s, base, index, tick) {
   return ((roleWord & 1) ^ leg) === member;
 }
 
+/**
+ * NO TANK ON A LOADING DOCK (the owner 2026-09-19 13:09, playtest: "tanks must not drive on the Post Office loading
+ * dock"). The post office stands at x -114.4 m and its paving reaches 31 m out, to -83.4 m; the outer slot is at
+ * -81 m and the pair's outer tank sits 6 m beyond it, at -87 m, which is 3.6 m of concrete. The slot pitch does not
+ * move - it is 27 m, pinned by the 46 m gun and the kill-zone row - and neither does the free slot or the pair's
+ * 12 m: what moves is the outer tank's own post, pulled back to the kerb. The pair stands 9 m apart there instead
+ * of 12, and both tanks still reach their posts, which a movement clamp alone would not have left true (a post
+ * outside the clamp is a tank permanently off post, and a team off post never swaps roles or scoots).
+ *
+ * THE PAIR MOVES TOGETHER, which the first attempt did not: clamping each tank on its own left the outer pair 9 m
+ * apart while the separation rule holds tanks 12 m apart, so both were pushed a metre and a half off their posts and
+ * the team stopped scooting (measured: "seed 2 tick 1396: team 3 scooted with a tank off post"). The pair's CENTRE
+ * is clamped, so the two stay 12 m apart and the outer one stands on the kerb.
+ */
+export const DOCK_X = 5465702;                    // 83.4 m: the post office's paving edge, and the miner's by symmetry
+const PAIR_CENTRE_X = (DOCK_X - PAIR_HALF) | 0;   // 77.4 m
+
+/** A pair member's x on a slot: the pair's centre held off the paving, the member 6 m either side of it. */
+export const pairX = (slot, member) => {
+  const raw = slotX(slot);
+  const centre = raw < -PAIR_CENTRE_X ? -PAIR_CENTRE_X : raw > PAIR_CENTRE_X ? PAIR_CENTRE_X : raw;
+  return (centre + (member === 0 ? -PAIR_HALF : PAIR_HALF)) | 0;
+};
+
 /** Where a tank goes this tick: its team's slot, its side of the pair, and its depth line. */
 export function postOf(s, base, index, tick) {
   const { side, team, member } = teamOf(index);
-  const x = (slotX(s[base + TAC_SLOT + teamWord(side, team)]) + (member === 0 ? -PAIR_HALF : PAIR_HALF)) | 0;
+  const x = pairX(s[base + TAC_SLOT + teamWord(side, team)], member);
   const bounding = isBounding(s, base, index, tick);
   const push = s[base + TAC_PUSH + teamWord(side, team)];
   return { x, depth: ((bounding ? FORWARD_LINE : OVERWATCH_LINE) - push) | 0, bounding, push };

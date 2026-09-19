@@ -499,7 +499,13 @@ test('a wall stops the truck and a lintel does not', () => {
     teleport(st, START_X, OFF_CHART_LANE, 16384);        // off the chart: the open run meets no candle face
     if (boxes) assert.ok(setSolids(st, boxes.length / 6, boxes), 'die Hindernisse wurden abgelehnt');
     const sx = st.i32[O + T_X] / Q;
-    for (let i = 0; i < 600; i++) { keepArmourOff(st); step(st, Q, 0, 0, 0, 0); }
+    // ON AN EMPTY FIELD, not merely with the armour held off (moved 2026-09-19). The obstacle this test sets is a
+    // map solid, and the army resolves against map solids too: with the tank posts pulled off the loading dock
+    // (tactics.js DOCK_X) a tank stands where the lintel is, so the lintel run and the open run stopped being the
+    // same army - the truck ended 0.4 m apart under different fire, and the lintel was blamed for it. What is
+    // measured here is a wall against a doorway for the TRUCK, which is what the driving references were recorded
+    // against: an empty battlefield.
+    for (let i = 0; i < 600; i++) stepAlone(st, Q, 0, 0);
     return { x: st.i32[O + T_X] / Q, v: st.i32[O + T_SPEED] / Q, from: sx };
   };
 

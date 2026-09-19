@@ -860,7 +860,11 @@ export function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, half
     stepZ = mulFast(cos(u.heading), along);
   }
 
-  const edge = sub(FRONT_X, Math.imul(4, ONE));
+  // AND NOT ONTO THE CONCRETE (the owner 2026-09-19 13:09): the army's own edge was FRONT_X - 4 = 88 m and the post
+  // office's paving reaches to 83.4 m, so a tank giving ground or bounding could stand 4.6 m inside the loading
+  // dock even with its post pulled back (tactics.js DOCK_X). The edge is the kerb.
+  const DOCK_EDGE = 5465702;                       // 83.4 m
+  const edge = min(sub(FRONT_X, Math.imul(4, ONE)), DOCK_EDGE);
   u.x = clamp(add(u.x, stepX), neg(min(edge, halfX)), min(edge, halfX));
   u.z = clamp(add(u.z, stepZ), -halfZ, halfZ);
 
