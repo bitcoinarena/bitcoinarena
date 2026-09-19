@@ -10,9 +10,22 @@ import { ONE, add, sub, abs, mulFast, div } from '../fixed.js';
 
 export const GATE_X = Math.imul(114, ONE);
 export const HALF_MOUTH = Math.imul(34, ONE);
-/** A compressed block: 150 s at 60 Hz. Bitcoin's ten minutes is far too long
- *  to wait for a score. */
-export const BLOCK_TICKS = 9000;
+/**
+ * A compressed block: 180 s at 60 Hz. Bitcoin's ten minutes is far too long to wait for a score - that still
+ * stands - but 150 s was too short for the war the doctrine now runs, and the doctrine's own clocks decide it
+ * (WAR_TACTICS, RULED 2026-09-19): §4.12 starts a side's first assault at 20-40 s, runs it up to 30 s, consolidates
+ * 15 s and re-arms 45-90 s later, so 150 s holds ONE assault a side and cuts the second off mid-build; §4.14 needs
+ * six closed 10 s candles before a trend can exist at all, 40% of a 150 s round with no trend possible; and §4.13's
+ * seam is an SMA(21) of 5 s samples, which takes 105 s to turn, so in 150 s the market moves the front at most
+ * once. At 180 s each side gets two declared assaults, a trend for two thirds of the round, and a front that has
+ * visibly turned.
+ *
+ * AND IT IS A DEFAULT, NOT THE RULE. `player_run_duration` (T_run) is a RoundContract field, and the protocol
+ * already makes a round's length the round's core's - `runLengthIsTheCores(contract, coreTicks)` refuses a contract
+ * that disagrees with the core it names. So this number is what a round gets when no contract sets one (a SIM
+ * round, §4.13); a contract wins.
+ */
+export const BLOCK_TICKS = 10800;
 
 export const RUN_LIVE = 0;
 export const RUN_DELIVERED = 1;
