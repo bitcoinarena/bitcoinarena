@@ -95,8 +95,18 @@ public class SplashScreen : MonoBehaviour
         // WHEN THE CORE NAMED THE OUTCOME - the same instant the result card is drawn from, not the later one when
         // the client has finished draining the wire.
         bool ended = RunHasEnded(Blwp.BlwpCore.Available, Blwp.BlwpCore.RunState, Blwp.BlwpNet.Ended);
-        if (!ended) _endedAt = -1f;
-        else if (_endedAt < 0f) _endedAt = Time.unscaledTime;
+        if (!ended) { _endedRawAt = -1f; _endedAt = -1f; }
+        else
+        {
+            if (_endedRawAt < 0f) _endedRawAt = Time.unscaledTime;
+            if (_endedAt < 0f)
+            {
+                bool coreNamed = Blwp.BlwpCore.Available && Blwp.BlwpCore.RunState != 0;
+                bool haveReason = !coreNamed && !string.IsNullOrEmpty(Blwp.BlwpNet.Ending());
+                if (HoldMayStart(coreNamed, haveReason, Time.unscaledTime - _endedRawAt))
+                    _endedAt = Time.unscaledTime;
+            }
+        }
         if (!Showing && BackToLobby(Blwp.BlwpNet.Ended, _fromLobby, wrecked,
                                     _wreckedAt < 0f ? 0f : Time.unscaledTime - _wreckedAt, hold,
                                     _endedAt < 0f ? 0f : Time.unscaledTime - _endedAt)) ShowLobbyAgain();
@@ -233,6 +243,26 @@ public class SplashScreen : MonoBehaviour
     public static bool RunHasEnded(bool coreAvailable, int runState, bool netEnded)
         => (coreAvailable && runState != 0) || netEnded;
 
+    /// <summary>How long a run with no core word waits for its reason before the hold starts without one.</summary>
+    public const float ReasonWaitSeconds = 2f;
+
+    /// <summary>
+    /// WHEN THE RESULT HOLD MAY START TICKING.
+    ///
+    /// For a run the core named, the instant it named it - unchanged. For a run that ended without a core word,
+    /// the instant the REASON is known, and this was measured the hard way. `BlwpNet.Ended` flips when the client
+    /// gives up, but the line that says why only arrives after it has resynced and been refused again. Timed from
+    /// the flip, the whole hold is spent before there is anything to show: in the BAY the gap between the VOID
+    /// and the lobby was 0.6 s, against a 0.5 s reason poll, so whether the player was told depended on which
+    /// landed first - bay-04.png has the line, bayok-27.png is the same state with nothing on screen.
+    ///
+    /// `sinceEnded` is the guard and it is the half that must never regress: a reason that never comes must NOT
+    /// hold the screen, because a stranded tab is the fault the behind-client fix closed. After
+    /// ReasonWaitSeconds the hold starts anyway - back to the lobby with no reason beats not going back.
+    /// </summary>
+    public static bool HoldMayStart(bool coreNamed, bool haveReason, float sinceEnded)
+        => coreNamed || haveReason || sinceEnded >= ReasonWaitSeconds;
+
     public const float ResultHoldSeconds = 5f;
 
     /// <summary>
@@ -250,6 +280,7 @@ public class SplashScreen : MonoBehaviour
 
     float _wreckedAt = -1f;
     float _endedAt = -1f;
+    float _endedRawAt = -1f;
     TruckHealth _health;
 
     void ShowLobbyAgain()
