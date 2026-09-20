@@ -1,0 +1,22 @@
+[Unit]
+# THE SECOND TESTNET4 GATEWAY (M3 inbound liquidity, the owner 2026-09-20).
+#
+# This node was started once by hand and left as a transient systemd-run unit, which does not survive a
+# reboot. It was down from 2026-09-16 14:26 until 2026-09-20, and because it is the counterparty on the only
+# channel node A has, A's 196530 sat of inbound sat unusable that whole time: active false, zero peers. A
+# gateway that does not come back is not a gateway, so this is a real enabled unit, the same shape as
+# lnd-testnet.service.
+Description=LND testnet4 b (the second BLWP gateway)
+After=bitcoind-testnet.service
+Wants=bitcoind-testnet.service
+
+[Service]
+Type=simple
+ExecStart=/mnt/bitcoin/lnd-linux-amd64-v0.21.3-beta/lnd --lnddir=/mnt/bitcoin/lnd-testnet4-b
+Restart=on-failure
+RestartSec=20
+TimeoutStopSec=120
+MemoryMax=2G
+
+[Install]
+WantedBy=default.target
