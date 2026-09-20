@@ -2681,19 +2681,10 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, halfX, half
   // Derived from the index rather than stored: it must not change from tick to
   // tick, and there is no spare word in the unit for it.
   const scatter = (Math.imul(index | 0, 2654435761) >>> 20) & 1023;
-  // A second slice of the same hash, so the rifleman's two offsets are
-  // independent of each other the way the C#'s two draws are. Same hash and a
-  // different window rather than a second constant: one magic number is enough
-  // to have to justify.
-  const scatter2 = (Math.imul(index | 0, 2654435761) >>> 8) & 1023;
   const standoff = u.armour
     ? add(ARMOUR_STANDOFF,
           sub(Math.imul(scatter, ARMOUR_SPREAD) >> 10, ARMOUR_SPREAD >> 1))
-    // FOLLOW THE PUSH (WAR_TACTICS.md §12.1): the man's stand-off less the mean push of the tank lanes his squad stands
-    // in, and never more than 8 m past the seam nor 40 m behind it.
-    : clamp(sub(add(add(RIFLE_STANDOFF, Math.imul(scatter, RIFLE_SPREAD) >> 10),
-                    sub(Math.imul(scatter2, RIFLE_SQUAD_Z) >> 10, RIFLE_SQUAD_Z >> 1)), u.infPush | 0),
-            RIFLE_LEAD_MAX, RIFLE_TRAIL_MAX);
+    : rifleStandoff(index, u.infPush);
   // The side a unit BELONGS to, not the side it happens to be standing on.
   //
   // Taken from the current position, a unit that stepped over the seam had its
@@ -3119,6 +3110,31 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, halfX, half
  * Shared, so that the post a man spawns on and the post he walks to cannot
  * drift apart.
  */
+/**
+ * A RIFLEMAN'S OWN STAND-OFF FROM THE SEAM (§11.3, §12.1) - the one number his WALK and §11.3's CLAIM PASS must
+ * agree on, which is why it lives here and is handed to both rather than written out twice.
+ *
+ * His post is not the bare RIFLE_STANDOFF: it is that, plus his own scatter, plus his squad's depth, less the mean
+ * push of the tank lanes his squad stands in (§12.1), and never more than 8 m past the seam nor 40 m behind it.
+ *
+ * MEASURED WITH THE TWO SPLIT (2026-09-20, 2 seeds x 40 s): the claim pass was handed a bare RIFLE_STANDOFF about
+ * the man's OWN squad anchor while the step walked him to his FIRE TEAM's anchor (§9.2) at this stand-off. The two
+ * points stood a median 46.3 m apart; 0.2% of man-ticks were ever within 2 m of the one §11.3 measured from, and
+ * 6 of 144 men came within 2 m of it once. So the holes it called "within 12 m of his post" were a median 38.9 m
+ * from his feet, and no one arrived: 60.2% of claims ended with the man dead and 27.8% with the place gone first.
+ *
+ * A second slice of the same hash gives the squad depth, so the man's two offsets are independent of each other
+ * the way the C#'s two draws are. Derived from the index and never stored: it must not change from tick to tick,
+ * there is no spare word in the unit for it, and it takes no draw.
+ */
+function rifleStandoff(index, infPush) {
+  const scatter = (Math.imul(index | 0, 2654435761) >>> 20) & 1023;
+  const scatter2 = (Math.imul(index | 0, 2654435761) >>> 8) & 1023;
+  return clamp(sub(add(add(RIFLE_STANDOFF, Math.imul(scatter, RIFLE_SPREAD) >> 10),
+                       sub(Math.imul(scatter2, RIFLE_SQUAD_Z) >> 10, RIFLE_SQUAD_Z >> 1)), infPush | 0),
+               RIFLE_LEAD_MAX, RIFLE_TRAIL_MAX);
+}
+
 function riflePost(anchor, index) {
   const offset = sub(Math.imul((Math.imul(index | 0, 2654435761) >>> 22) & 255,
                                div(SQUAD_OFFSET, Math.imul(255, ONE))),
@@ -6797,11 +6813,25 @@ function step(st, throttle, steer, brake, handbrake, practice) {
   // §11.3 COVER: the claim pass, at the top of the infantry step - after the armour's separation above and before
   // any man moves, which is where the section puts it. The men's posts are handed in because eligibility is
   // measured from the post and not from where a man is standing, "so a man does not wander to cover".
+  //
+  // THE POST §11.3 MEASURES FROM IS THE POST THE STEP WALKS HIM TO - the same anchor and the same stand-off, not a
+  // second reading of "his post" (measured, 2026-09-20, 2 seeds x 40 s). Split, this pass took his OWN squad
+  // anchor and a bare RIFLE_STANDOFF, while the step below walks him to his FIRE TEAM's anchor (§9.2) at his
+  // scattered stand-off less §12.1's push. A man stood a median 46.3 m from the point this pass called his post
+  // and was within 2 m of it on 0.2% of man-ticks, so "within 12 m of his post" handed him holes a median 38.9 m
+  // from his feet - a 14 to 28 s walk against a claim that lived 12.8 s. Nobody arrived: 91.7% of men never once
+  // reached a hole, 60.2% of claims ended with the man dead and 27.8% with the place gone from under him.
+  //
+  // So the anchor and the stand-off are read here exactly as the step reads them, and `rifleStandoff` is shared
+  // with the walk rather than copied into it. Do not split them again. Neither call takes a draw.
   coverClaims(s, O_TACTICS, s[O_TICK], (i) => {
     const mb = unitBase(i);
     const side = s[mb + U_SIDE] < 0 ? -1 : 1;
-    const x = riflePost(s[squadWord(s[mb + U_SIDE], s[mb + U_TARGET])], i);
-    return { x, z: add(seamAtX(st, x) | 0, Math.imul(side, RIFLE_STANDOFF)) };
+    const rt = rifleTeamOf(i);
+    const anchor = s[squadWord(s[mb + U_SIDE], s[unitBase(firstManOf(rt.side, rt.team)) + U_TARGET])];
+    const x = riflePost(anchor, i);
+    const push = pushNear(s, O_TACTICS, rt.side, anchor);
+    return { x, z: add(seamAtX(st, x) | 0, Math.imul(side, rifleStandoff(i, push))) };
   }, (x) => seamAtX(st, x), st.candles && !st.noCandleField ? st.candles : null, st.candleShift | 0);
 
   const groundOf = (x, z) => surfaceAt(st, x, z);
