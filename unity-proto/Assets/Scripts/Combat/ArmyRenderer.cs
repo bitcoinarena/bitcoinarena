@@ -939,6 +939,18 @@ public class ArmyRenderer : MonoBehaviour
             // ...and he lies along the way he was facing. Pitched forward about his own axis, not laid on the
             // terrain's normal: a man goes flat, he does not drape over a slope the way a hull does.
             if (down) t.localRotation = t.localRotation * Quaternion.Euler(soldierPronePitch, 0f, 0f);
+            // §11.4: WHERE A DOWNED MAN ACTUALLY ENDED UP, read back off the transform rather than restated from
+            // the arithmetic above - the fixture already knows what the formula says, and what is wanted here is
+            // what the screen holds. Negative is under the ground he stands on. Instrumentation only.
+            {
+                float over = t.position.y - Ground(at.x, at.z);
+                if (down)
+                {
+                    _downOverSum += over; _downOverN++;
+                    if (over < _downOverWorst) _downOverWorst = over;
+                }
+                else { _upOverSum += over; _upOverN++; }
+            }
 
             // Height per man is a core gap, listed as (q). One size until it
             // exists - guessing one here would be a second simulation of a
@@ -982,12 +994,27 @@ public class ArmyRenderer : MonoBehaviour
         {
             _lastDownDrawn = _downDrawn;
             Debug.Log($"[render] {_downDrawn} of {bull + bear} men drawn DOWN from the core's posture word");
+            // The height that goes with that count: a downed man must sit ON the ground, not under it. `prefab`
+            // says which anchor is in play, because the fallback box is centre-anchored and legitimately sits at
+            // +0.15 while a sole-anchored prefab man sits at +0.00.
+            if (_downOverN > 0)
+                Debug.Log($"[render] downed men sit {_downOverSum / _downOverN:F2} m over the ground, "
+                          + $"worst {_downOverWorst:F2} m; standing men "
+                          + $"{(_upOverN > 0 ? (_upOverSum / _upOverN).ToString("F2") : "n/a")} m; "
+                          + $"prefab {(soldierPrefab != null ? "yes" : "no")}");
         }
+        _downOverSum = 0f; _downOverN = 0; _downOverWorst = float.MaxValue;
+        _upOverSum = 0f; _upOverN = 0;
     }
 
     int _lastDrawn = -1;
     /// <summary>§11.4/§11.5: how many men the last frame laid on the ground. Instrumentation only.</summary>
     int _downDrawn, _lastDownDrawn = -1;
+    /// <summary>§11.4: how far over the ground the last frame's downed men sat. Instrumentation only.</summary>
+    float _downOverSum, _downOverWorst = float.MaxValue;
+    int _downOverN;
+    /// <summary>The same for men still on their feet, as the control the downed number is read against.</summary>
+    float _upOverSum; int _upOverN;
 
     /// <summary>The combat mixer, found once. Only ever told what the core did.</summary>
     public GameAudio audio;
