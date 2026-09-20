@@ -90,24 +90,34 @@ async function joinAndBuild(w, { lockAt = ['a', 'b'] } = {}) {
   const dealt = await dealHandout({ preimage, signerNodes: w.c.nodes, roundId: w.rid, playerPubkey: WINNER.key,
     ephemeralSecret: e, ephemeralPubkey: feldmanGroup.pointX(e), coefficients: [scalarFrom32(rand(32)) % FIELD], needed: 2, curve: feldmanGroup });
   const outpoint = { txid: rand(32), outIdx: 0n };
+  // AND IT BRINGS ITS FEE LOCK (2026-09-21). `lock-fixture`'s federation is legal now - no base fee, as §22A
+  // requires - so this round's gate mints fee locks, and pick (a)'s door refuses an entry that names none.
+  // That is the production shape: a staked entry arrives with the 2% already locked to H(F).
+  const feeSecret = rand(32);
+  const feeOutpoint = { txid: rand(32), outIdx: 1n };
   const entry = {
     roundId: w.rid, playerPubkey: WINNER.key, sessionPubkey: ed25519.getPublicKey(session),
     stakeCommitment: sha256(preimage), stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE), donationMsat: 0n,
     joinTick: 0, worldSecret: WINNER.worldSecret, vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0],
-    feePreimage: new Uint8Array(32), stakeLockOutpoint: outpoint, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n },
+    feePreimage: feeSecret, stakeLockOutpoint: outpoint, feeLockOutpoint: feeOutpoint,
     claimKeyAttestationRef: b32(0x9a),
   };
   const eid = entryId(entry);
   const fields = { paymentImage: { kind: 'point', bytes: entry.stakePoint }, amountMsat: netStakeMsat(entry), claimPk: w.claimPk,
     refundPk: refundKeyOf(WINNER.key), expiration: w.port.height + 200 };
   await w.port.put(outpoint, fields);
+  const feeFields = { paymentImage: { kind: 'hash', bytes: sha256(feeSecret) }, amountMsat: entry.feeMsat,
+    claimPk: w.claimPk, refundPk: refundKeyOf(WINNER.key), expiration: w.port.height + 200 };
+  await w.port.put(feeOutpoint, feeFields);
   const lockOn = async (d) => assert.equal((await fetch(`http://127.0.0.1:${d.port}/lock?entry=${toHex(eid)}`,
     { method: 'POST', body: JSON.stringify(lockFieldsToJson(fields)) })).status, 201);
+  const feeOn = async (d) => assert.equal((await fetch(`http://127.0.0.1:${d.port}/fee-lock?entry=${toHex(eid)}`,
+    { method: 'POST', body: JSON.stringify(lockFieldsToJson(feeFields)) })).status, 201);
   for (const [name, d] of [['a', w.a], ['b', w.b]]) {
     const base = `http://127.0.0.1:${d.port}`;
     assert.equal((await fetch(`${base}/handout`, { method: 'POST', body: encodeHandout(dealt.handout) })).status, 201);
     assert.equal((await fetch(`${base}/entry`, { method: 'POST', body: encodeEntryContract(entry) })).status, 201);
-    if (lockAt.includes(name)) await lockOn(d);
+    if (lockAt.includes(name)) { await lockOn(d); await feeOn(d); }
   }
   const sign = (m) => joinSigned(encodeCheckpoint(m), ed25519.sign(checkpointId(m), session));
   const batchOf = (from, to, previousHash) => ({ roundId: w.rid, entryId: eid, previousHash, firstTick: from,
@@ -130,7 +140,11 @@ async function joinAndBuild(w, { lockAt = ['a', 'b'] } = {}) {
   };
   const run = chain([60, END]);
   const alt = chain([90, 120]);
-  return { eid, outpoint, messages: run.messages, firstId: run.firstId, alt: alt.messages, altFirstId: alt.firstId, lockOn };
+  // THE HANDED-OUT `lockOn` HANDS BOTH LOCKS. Every call site means "let this signer node see the stake", and
+  // a stake is only seen when its stake lock AND its fee lock are in - so handing one alone left B with one
+  // receipt where the test asks for two. The suite's own choreography is unchanged.
+  return { eid, outpoint, messages: run.messages, firstId: run.firstId, alt: alt.messages, altFirstId: alt.firstId,
+    lockOn: async (d) => { await lockOn(d); await feeOn(d); } };
 }
 
 async function at(d, w, run) {

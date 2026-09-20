@@ -57,7 +57,14 @@ export function lockPort({ height = 1000 } = {}) {
     // always did; zero was no federation's rule, and under it the gate mints at 100 sat
     // and pick (a)'s door rightly refuses an entry that brings no fee lock. A test about
     // the fee arithmetic sets its own rule.
-    feeRule: { ppm: 0n, baseMsat: 1000n },
+    // A FEDERATION BLWP WOULD ACCEPT (2026-09-21). This said 1000 msat - fedimintd 0.12.0's measured default,
+    // kept in `protocol/test/lock-settlement.js` as REAL_RULE - and §22A requires the opposite: "Fedimint's own
+    // base fees are 0: the federation runs with `disable_base_fees`". Once the node enforced that at the entry
+    // door, every entry into a round on this port was 409 - 43 tests across five suites - because the fixture's
+    // own federation was one the money law refuses. It is legal AT REST now; a suite that wants fedimintd's
+    // default for settlement arithmetic sets `port.feeRule` after its entries are in, which is the mutation
+    // this file's own lock-settlement suite already used.
+    feeRule: { ppm: 0n, baseMsat: 0n },
     settlements: [],
     payouts: new Map(),
     async fees() { return port.feeRule; },
