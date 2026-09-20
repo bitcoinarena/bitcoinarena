@@ -9,6 +9,16 @@
 //
 // The port is injected, so none of this needs Lightning.
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
+// THE RUN LENGTH IS THE CORE'S, NOT A NUMBER TYPED HERE (2026-09-20).
+//
+// This fixture said 9000 and the core has ended a run at 10800 since c01cc655 ("a round is three minutes").
+// `Round.open` refuses a contract that disagrees with the core it names - "a second clock is not a shorter
+// round" - so POST /round was 400, there was no round, and every POST /entry after it answered "no such
+// round". Six of this file's nine tests died there, before a hold could be issued on a seat at all.
+//
+// The same stale 9000 was the HUD clock's bug on the same day and the same commit's fault: a number two
+// engines both need is not a number either of them may type. This reads the core's.
+import { BLOCK_TICKS as RUN_TICKS } from '../../core/src/rules/gate.js';
 import { PLANTED_FIRST_MARK_DEADLINE } from './planted-marks.js';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -74,7 +84,7 @@ const contractFor = (nodePubkey) => ({
   slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: ['http://127.0.0.1:9'] /* a paying round names a relay (§13A); never posted to here */, donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n,
   randomnessRule: 'bitcoin-block-hash', stakeMsat: 100000n, bondMinSats: 50000n,
-  blockTicks: 9000, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
+  blockTicks: RUN_TICKS, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
   timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
   nodes: [nodePubkey, schnorr.getPublicKey(peer)],
 });
