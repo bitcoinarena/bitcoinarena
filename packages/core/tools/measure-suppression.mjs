@@ -1,4 +1,7 @@
-// §11.5's PINNED SHARE, DERIVED AND NOT WRITTEN (2026-09-20, step one; no TAC_SUPP word exists yet).
+// §11.5's PINNED SHARE. Written 2026-09-20 as step one, when no TAC_SUPP word existed and the share had to be
+// DERIVED from the rounds the core already fired. Since 2383c95b the word EXISTS and --live reads it straight out
+// of the core, which is the closed-loop reading; without --live the tool still derives, which is what the
+// before-and-after comparison needs. It writes nothing either way.
 //
 // §0's row: "each side has at least one pinned fire team on 10% to 70% of ticks". It is a BAND - a bare chart
 // fails it and so does a front where everyone is permanently face-down - so the question is not "is there any
@@ -166,7 +169,7 @@ function run(withSuppressing) {
 }
 
 const pc = (a, b) => `${((100 * a) / Math.max(b, 1)).toFixed(1)}%`;
-console.log(`§11.5 PINNED SHARE, DERIVED NOT WRITTEN - ${SEEDS.length} seeds x ${TICKS / 60} s, a nuke every 30 s, tape ${SCROLL ? 'SCROLLING' : 'FROZEN'}`);
+console.log(`§11.5 PINNED SHARE - ${LIVE ? "READ from the core's own TAC_SUPP word" : 'DERIVED, the word not read'} - ${SEEDS.length} seeds x ${TICKS / 60} s, a nuke every 30 s, tape ${SCROLL ? 'SCROLLING' : 'FROZEN'}`);
 console.log(`  §0's row is the SHARE OF TEAMS pinned, 10% to 70% - a band, not a floor, and NOT the fraction of ticks`);
 console.log(`  on which at least one of nine teams is pinned (ruled 2026-09-20; that OR saturates by arithmetic)\n`);
 const cases = LIVE ? [['CLOSED LOOP - the core\'s own TAC_SUPP word', false]]

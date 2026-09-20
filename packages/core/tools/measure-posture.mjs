@@ -1,4 +1,7 @@
-// §11.4's POSTURE MIX, DERIVED AND NOT WRITTEN (2026-09-19, step 1 of the letter; no bit of TAC_COVER is touched).
+// §11.4's POSTURE MIX. Written 2026-09-19 as step one of the letter, when the core held no posture and the mix
+// had to be DERIVED from state. Since 7bc7c1f6 the core WRITES posture into TAC_COVER's high bits, so this tool
+// now derives the mix AND reads the written word, and prints how often the two agree - the gap being the rifle's
+// deliberate one-tick lag. It still writes nothing itself.
 //
 // §0's "Men hide" row grades man-ticks of living men ON THE LINE - within 40 m of their post - who did NOT step:
 // at least 85% of them must be PRONE or COVER. Nothing in the core writes a posture yet, so the row is undone; but
@@ -150,7 +153,7 @@ for (const seed of SEEDS) {
 function add(a) { return a; }
 
 const pc = (a, b) => `${((100 * a) / Math.max(b, 1)).toFixed(1)}%`;
-console.log(`§11.4 POSTURE, DERIVED NOT WRITTEN - ${SEEDS.length} seeds x ${TICKS / 60} s, a nuke every 30 s, tape ${SCROLL ? 'SCROLLING (a sample every 5 s)' : 'FROZEN (the §11.3 assert drive)'}`);
+console.log(`§11.4 POSTURE - derived here and compared against the word the core writes - ${SEEDS.length} seeds x ${TICKS / 60} s, a nuke every 30 s, tape ${SCROLL ? 'SCROLLING (a sample every 5 s)' : 'FROZEN (the §11.3 assert drive)'}`);
 console.log(`\n  every living man-tick                ${manTicks}`);
 console.log(`    STAND ${String(allStand).padStart(8)} (${pc(allStand, manTicks)})   PRONE ${String(allProne).padStart(8)} (${pc(allProne, manTicks)})   COVER ${String(allCover).padStart(8)} (${pc(allCover, manTicks)})`);
 console.log(`\n  THIS LETTER'S "MEN HIDE" - of man-ticks where a man HOLDS a cover claim, is he written down as in it?`);
