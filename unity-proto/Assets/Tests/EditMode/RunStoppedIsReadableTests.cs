@@ -111,4 +111,30 @@ public class RunStoppedIsReadableTests
         Assert.IsFalse(SplashScreen.HoldMayStart(false, false, SplashScreen.ReasonWaitSeconds - 0.01f));
         Assert.IsTrue(SplashScreen.HoldMayStart(false, false, SplashScreen.ReasonWaitSeconds));
     }
+
+    /// <summary>
+    /// AND IT STILL FITS ON A PHONE, which is where the Daily is actually played.
+    ///
+    /// The box is no longer a fixed multiple of the font - `CalcHeight` sizes it from the sentence - so a long
+    /// reason could in principle be pushed off the bottom of a small screen. At 390x844 the row starts at about
+    /// y 169 on the road and y 438 in the bay (the mempool panel ends at 0.51 x 844 = 430), leaving 675 px and
+    /// 406 px of screen under it, against the eight lines a long reason needs. This pins that room so a future
+    /// change cannot quietly push the reason off a phone.
+    /// </summary>
+    [Test]
+    public void OnAPhoneThereIsStillRoomForTheWholeReason()
+    {
+        const int PW = 390, PH = 844;
+        float font = Mathf.RoundToInt(Mathf.Min(PW, PH) * 0.030f);
+        foreach (var bay in new[] { false, true })
+        {
+            var hud = Hud(bayOpen: bay);
+            var box = hud.RunStoppedBox(PW, PH);
+            Assert.Less(box.y, PH, $"bay={bay}: the row starts off the bottom of the screen at y {box.y:0}");
+            Assert.GreaterOrEqual(PH - box.y, font * 8f,
+                $"bay={bay}: only {PH - box.y:0} px under the row at 390x844, and a long reason needs about "
+                + $"{font * 8f:0} - the last words would fall off a phone");
+            Object.DestroyImmediate(hud.gameObject);
+        }
+    }
 }
