@@ -531,6 +531,29 @@ export function roundWindowsAreValid(c) {
       why: `that round closes entry at ${c.entryCloseMs}, before its committee forms at ${opensAt}`,
     };
 
+  // AND IT MUST NAME A RESULT WINDOW THAT IS ACTUALLY A WINDOW (§13A, §13).
+  //
+  // "After a result is PROVISIONALLY_FINAL, the window W (reference: 10 minutes, contract-defined) runs", and
+  // "The result window equals the objection window - same duration, a field on the contract". A window of
+  // ZERO is not a short window, it is no window: finality is instant, so §13A's replay veto - which the spec
+  // calls the cheapest defence in the whole design - can never be exercised, and `verify.js`'s result-window
+  // test (`now >= closed_ms + objectionWindowMs`) is true the moment the round closes, so a seat that has not
+  // yet retrieved the transcript voids the entry immediately.
+  //
+  // NO FLOOR IS SPECIFIED AND NONE IS INVENTED HERE. §13A gives "reference: 10 minutes, contract-defined" -
+  // a reference, not a minimum - and no sentence in BLWP v4.6.1 states a floor or a ceiling for W. So this
+  // refuses only what the spec's own words rule out: a duration that is not positive. A contract naming any
+  // positive window, 10 minutes or otherwise, opens exactly as before, because the field is contract-defined.
+  if (typeof c.objectionWindowMs !== 'bigint')
+    return { ok: false, opensAt, why: 'that round names no objection window, so nothing says when a result may become final' };
+  if (c.objectionWindowMs <= 0n)
+    return {
+      ok: false,
+      opensAt,
+      why: `that round's objection window is ${c.objectionWindowMs}ms: a zero window is not a short one, it is `
+        + 'none at all - finality would be instant and §13A\'s replay veto could never be used',
+    };
+
   return { ok: true, opensAt, earliestStart };
 }
 
