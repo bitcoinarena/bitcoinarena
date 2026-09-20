@@ -94,11 +94,9 @@ public class SplashScreen : MonoBehaviour
         float hold = _health != null ? _health.respawnSeconds : 5f;
         // WHEN THE CORE NAMED THE OUTCOME - the same instant the result card is drawn from, not the later one when
         // the client has finished draining the wire.
-        bool named = Blwp.BlwpCore.Available && Blwp.BlwpCore.RunState != 0;
-        if (!named) _endedAt = -1f;
+        bool ended = RunHasEnded(Blwp.BlwpCore.Available, Blwp.BlwpCore.RunState, Blwp.BlwpNet.Ended);
+        if (!ended) _endedAt = -1f;
         else if (_endedAt < 0f) _endedAt = Time.unscaledTime;
-        // A page with no core of its own still ends: then the client's word is the only instant there is.
-        if (!Blwp.BlwpCore.Available && Blwp.BlwpNet.Ended && _endedAt < 0f) _endedAt = Time.unscaledTime;
         if (!Showing && BackToLobby(Blwp.BlwpNet.Ended, _fromLobby, wrecked,
                                     _wreckedAt < 0f ? 0f : Time.unscaledTime - _wreckedAt, hold,
                                     _endedAt < 0f ? 0f : Time.unscaledTime - _endedAt)) ShowLobbyAgain();
@@ -212,6 +210,29 @@ public class SplashScreen : MonoBehaviour
     /// `FINISH_WAIT_MS` in the client is not this: 300 ms is how long the last ticks have to reach the wire, which is
     /// a network drain and was never a screen.
     /// </summary>
+    /// <summary>
+    /// HAS THE RUN ENDED - whoever named it.
+    ///
+    /// The core names DELIVERED, WRECKED or MISSED and that is the usual instant. But a run can end without the
+    /// core ever naming one, and that case had no clock at all. MEASURED 2026-09-20, two reproductions on the
+    /// Daily at 0.0.1812 with two real browser tabs: one tab fell about 2000 ticks - 33 s - behind the other,
+    /// kept playing after its round had closed, and the node ANSWERED and refused those inputs ("the node refuses
+    /// this run's inputs at tick 8576: error the round is closed, and it still refused after resyncing"). The
+    /// client ended that run VOID while the core's word stayed 0 for ever, because the core never reached an
+    /// outcome.
+    ///
+    /// The old test was `core available AND RunState != 0`, with a second line for a page that has NO core. A
+    /// VOID is neither: the core is there and it is silent. So `_endedAt` was reset every frame, `sinceOutcome`
+    /// stayed 0, `BackToLobby` could never come true, and that tab sat on a dead screen - truck locked, nothing
+    /// to press - while the other player was already in the lobby choosing round two. That is why round two had
+    /// one invisible truck: the missing player never left round one.
+    ///
+    /// Nothing about settlement changes here and VOID is not made an escape hatch: the run is already over and
+    /// already VOID by the time this is asked, this only decides when the screen may be given back.
+    /// </summary>
+    public static bool RunHasEnded(bool coreAvailable, int runState, bool netEnded)
+        => (coreAvailable && runState != 0) || netEnded;
+
     public const float ResultHoldSeconds = 5f;
 
     /// <summary>
