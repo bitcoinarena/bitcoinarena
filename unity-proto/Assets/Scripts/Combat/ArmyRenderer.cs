@@ -926,10 +926,7 @@ public class ArmyRenderer : MonoBehaviour
             // decoration, computed where decoration belongs.
             // A man on the ground does not bob: the bob is a walking cue.
             float bob = down ? 0f : Mathf.Abs(Mathf.Sin(Blwp.BlwpCore.Tick * 0.08f + i)) * 0.16f;
-            float lift = soldierPrefab != null ? 0f : 0.9f;
-            // Down is down: he drops to the ground instead of standing on it. The drop is the same for PRONE and
-            // COVER - the core makes that distinction for the RIFLE's threshold, not for how a body lies.
-            if (down) lift -= soldierProneDrop;
+            float lift = SoldierLift(down, soldierPrefab != null, soldierProneDrop);
             var t = pool[idx];
             // A man stands UPRIGHT on a slope - he does not lean with the
             // ground the way a tank does - but he still has to stand on the
@@ -1094,6 +1091,31 @@ public class ArmyRenderer : MonoBehaviour
     /// ground. The deck sits 45 cm over the terrain, so sampling the terrain
     /// alone left everything driving through the road it was standing on.
     /// </summary>
+    /// <summary>The fallback box is centre-anchored, so it stands at half a 1.8 m man.</summary>
+    public const float BoxStandLift = 0.9f;
+
+    /// <summary>
+    /// §11.4/§11.5: how far above the ground under his feet a man is drawn, by posture.
+    ///
+    /// TWO ANCHORS, TWO ANSWERS, and conflating them is what put downed men under the dirt. The fallback BOX is
+    /// CENTRE-anchored: it stands at half its height, 0.9, and laid flat it sits at about half its thickness, so
+    /// `0.9 - soldierProneDrop` = 0.15 is right for it and is kept exactly as it was. The real PREFAB is
+    /// SOLE-anchored - `WrapOnItsSole` puts the origin at the man's soles - so a standing man is at +0 and a man
+    /// laid flat is ALSO at +0: the 82-degree pitch applied after this swings his body down about his own feet,
+    /// which is what lying down is. Subtracting the box's drop from a sole anchor instead drove his feet under
+    /// the ground and took the rest of him with them.
+    ///
+    /// MEASURED BEFORE THIS (2026-09-20, 2 seeds x 40 s): 20550 man-ticks standing on a hole, 98.9% of them DOWN,
+    /// each drawn 0.74 m below the surface his own feet stood on - the same 0.74 on candle lips, crater rims and
+    /// wrecks alike, which is how it was known not to be the crater bowl. Unity carves no bowl: MempoolTerrain's
+    /// HeightAt returns BlwpCore.TerrainAt, and the core has already cut it.
+    ///
+    /// Draw only. Nothing here reads combat, driving or scoring, and the core is not consulted - which is also
+    /// what lets EditMode assert it without a browser core behind BlwpCore.Available.
+    /// </summary>
+    public static float SoldierLift(bool down, bool hasPrefab, float proneDrop)
+        => hasPrefab ? 0f : (down ? BoxStandLift - proneDrop : BoxStandLift);
+
     float Ground(float x, float z) =>
         roads != null ? roads.SurfaceHeight(x, z)
                       : (Blwp.BlwpCore.HasSurface ? Blwp.BlwpCore.SurfaceAt(x, z)
