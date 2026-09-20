@@ -28,6 +28,9 @@ let rounds = 0;
 // WHAT ACTUALLY LIFTS THE WORD: a rifle/suppressing round is +60, a bomb is +300. If the word jumps by 300 or more
 // in one tick that was a blast, and a blast alone is two and a half times the pin line.
 let bumpRound = 0, bumpBomb = 0, pinStartedByBomb = 0, pinStartedByFire = 0;
+// THE SIZE OF A BLAST RISE. §11.5 gives a team 300 for a blast, once. If the same team takes 600 in one tick it
+// was charged twice, which is what the per-man version did when two of its men stood in the same circle.
+const blastRises = [];
 
 for (const seed of SEEDS) {
   const st = init(seed), s = st.i32;
@@ -68,7 +71,7 @@ for (const seed of SEEDS) {
         if (w > 0) underTeamTicks++;
         if (lastSupp) {
           const rise = suppNow[sd][f] - (lastSupp[sd][f] - 1);      // the -1 undoes this tick's decay
-          if (rise >= 300) bumpBomb++; else if (rise >= 60) bumpRound++;
+          if (rise >= 300) { bumpBomb++; blastRises.push(rise); } else if (rise >= 60) bumpRound++;
         }
         if (pinned) {
           pinnedTeamTicks++;
@@ -120,6 +123,12 @@ if (episodes.length) {
 console.log('\nWHAT LIFTS THE WORD');
 console.log(`  ticks a team's word rose by a round (+60..299)   ${bumpRound}`);
 console.log(`  ticks a team's word rose by a BLAST (+300 or more) ${bumpBomb}`);
+{
+  const at300 = blastRises.filter((r) => r < 600).length, at600 = blastRises.filter((r) => r >= 600).length;
+  console.log(`    of those, a rise under 600 (one blast charge)   ${at300}`);
+  console.log(`    of those, 600 or more (charged more than once)  ${at600}`);
+  console.log(`    largest single-tick rise                        ${blastRises.length ? Math.max(...blastRises) : 0}`);
+}
 console.log(`  pinned episodes opened by a blast                ${pinStartedByBomb}  (${pc(pinStartedByBomb, pinStartedByBomb + pinStartedByFire)})`);
 console.log(`  pinned episodes opened by rifle rounds           ${pinStartedByFire}  (${pc(pinStartedByFire, pinStartedByBomb + pinStartedByFire)})`);
 console.log(`  A blast is 300 - two and a half times the pin line - and from the 600 clamp the word needs 8.0 s to`);

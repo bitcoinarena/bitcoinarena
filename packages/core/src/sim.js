@@ -148,6 +148,8 @@ const CROWD_HOLD_RANGE = Math.imul(30, ONE);
 const WANTS_MOVE = Math.imul(2, ONE);            // off its hold by more than this, a tank on the line will move
 // §11.4: whether each man's OWN step this tick cleared 0.01 m, kept apart from every push that moves him after it
 const ownStepped = new Uint8Array(UNITS);
+// §11.5: which fire teams had a living man in a blast, so the 300 lands once per team and not once per man
+const blastTeams = new Uint8Array(FIRE_TEAMS_PER_SIDE * 2);
 const POSTURE_STEP = 655;                           // 0.01 m in Q16.16
 const SEP_MOVE = 1311;                              // 0.02 m: a separation push past this is a move (§0 row 2)
 const LINE_REACH = Math.imul(40, ONE);               // WAR_TACTICS.md §0: within 40 m of its post's depth, a tank is on the line
@@ -1182,15 +1184,31 @@ function detonate(s, bx, bz, truckMayBeHit) {
       s[O_TRUCK + T_HP] = max(0, sub(s[O_TRUCK + T_HP], div(hurt, TRUCK_ARMOUR)));
     }
   }
+  // §11.5: "A bomb blast adds 300 to every TEAM with a living man inside 16 m of it: after a bomb, everybody is
+  // down." ONCE PER TEAM, not once per man. It was added inside the kill loop below, so each man of a team inside
+  // the circle contributed his own 300 and a team with two men in one blast was slammed to the 600 clamp. By the
+  // decay that is 480 ticks (8.0 s) back under the pin line against 180 (3.0 s) from 300 - about three times the
+  // duration the section writes - on a path that opens a third of all pinned episodes.
+  //
+  // It is the BLAST, not the kill, so it is counted on the men who are alive when the bomb goes off and lands on
+  // the survivors too; that is why the scan runs before anything is removed.
+  blastTeams.fill(0);
+  for (let i = 0; i < UNITS; i++) {
+    if (isArmour(i)) continue;
+    const b = unitBase(i);
+    if (s[b + U_STATE] === 0 || s[b + U_HP] <= 0) continue;
+    if (blastReach(sub(s[b + U_X], bx), sub(s[b + U_Z], bz)) < 0) continue;
+    const rtB = rifleTeamOf(i);
+    blastTeams[(rtB.side < 0 ? 0 : FIRE_TEAMS_PER_SIDE) + rtB.team] = 1;
+  }
+  for (let k = 0; k < blastTeams.length; k++)
+    if (blastTeams[k]) addSupp(s, O_TACTICS, k < FIRE_TEAMS_PER_SIDE ? -1 : 1, k % FIRE_TEAMS_PER_SIDE, SUPP_BOMB);
+
   for (let i = 0; i < UNITS; i++) {
     if (isArmour(i)) continue;
     const b = unitBase(i);
     const d = blastReach(sub(s[b + U_X], bx), sub(s[b + U_Z], bz));
     if (d < 0) continue;
-    // §11.5: "A bomb blast adds 300 to every team with a living man inside 16 m of it: after a bomb, everybody
-    // is down." That is the blast, not the kill, so it lands on the survivors too and is added before the men in
-    // reach are removed.
-    { const rtB = rifleTeamOf(i); addSupp(s, O_TACTICS, rtB.side, rtB.team, SUPP_BOMB); }
     // §11.4: "A bomb reaches a COVER man only inside 8 m; a PRONE or STAND man at 16 m as before. A wreck or a
     // crater lip is what a bomb's splinters stop; the open is not." The blast is unchanged for everyone else.
     if (coverPosture(s, O_TACTICS, i) === POSTURE_COVER && d >= COVER_BOMB_REACH) continue;
