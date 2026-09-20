@@ -49,6 +49,10 @@ public class ArmyRenderer : MonoBehaviour
     public float soldierHeight = 1.8f;
     [Tooltip("Degrees to add so the model faces +Z, which is what the army logic assumes.")]
     public float soldierYawOffset;
+    /// <summary>§11.4/§11.5: how far a man drops when the core has him PRONE or COVER, in metres.</summary>
+    public float soldierProneDrop = 0.75f;
+    /// <summary>How far he pitches forward when down. 90 is flat on his face along the way he was facing.</summary>
+    public float soldierPronePitch = 82f;
     [Tooltip("Controller built from the pack's clips. Without it the model stands in its bind pose.")]
     public RuntimeAnimatorController soldierAnimator;
 
@@ -897,12 +901,24 @@ public class ArmyRenderer : MonoBehaviour
             var at = Blwp.BlwpCore.UnitPosition(i, 0f);
             float heading = Blwp.BlwpCore.UnitHeading(i) * Mathf.Deg2Rad;
 
+            // §11.4 / §11.5: A MAN THE CORE HAS PUT DOWN IS DRAWN DOWN. The core writes STAND / PRONE / COVER
+            // into TAC_COVER's high bits and pins a fire team in TAC_SUPP; until now this renderer read neither,
+            // so a man crawling on his belly at 0.5 m/s was drawn walking upright and the whole of suppression
+            // was invisible - the one moment the rule exists for, a shell landing beside him, looked like
+            // nothing. It READS those words and poses from them; it decides nothing and writes nothing back.
+            int posture = Blwp.BlwpCore.UnitPosture(i);
+            bool down = posture != Blwp.Layout.POSTURE_STAND;
+
             // A small bob, so a line of infantry does not read as fenceposts.
             // Derived from the tick and the slot, NOT from a gait the core
             // keeps - it keeps none, which is its own listed gap (q). This is
             // decoration, computed where decoration belongs.
-            float bob = Mathf.Abs(Mathf.Sin(Blwp.BlwpCore.Tick * 0.08f + i)) * 0.16f;
+            // A man on the ground does not bob: the bob is a walking cue.
+            float bob = down ? 0f : Mathf.Abs(Mathf.Sin(Blwp.BlwpCore.Tick * 0.08f + i)) * 0.16f;
             float lift = soldierPrefab != null ? 0f : 0.9f;
+            // Down is down: he drops to the ground instead of standing on it. The drop is the same for PRONE and
+            // COVER - the core makes that distinction for the RIFLE's threshold, not for how a body lies.
+            if (down) lift -= soldierProneDrop;
             var t = pool[idx];
             // A man stands UPRIGHT on a slope - he does not lean with the
             // ground the way a tank does - but he still has to stand on the
@@ -912,6 +928,9 @@ public class ArmyRenderer : MonoBehaviour
                 Mathf.Max(Ground(at.x, at.z + 0.3f), Ground(at.x, at.z - 0.3f)));
             Place(t, new Vector3(at.x, Mathf.Max(foot, Ground(at.x, at.z)) + lift + bob, at.z),
                   heading + soldierYawOffset * Mathf.Deg2Rad, null);
+            // ...and he lies along the way he was facing. Pitched forward about his own axis, not laid on the
+            // terrain's normal: a man goes flat, he does not drape over a slope the way a hull does.
+            if (down) t.localRotation = t.localRotation * Quaternion.Euler(soldierPronePitch, 0f, 0f);
 
             // Height per man is a core gap, listed as (q). One size until it
             // exists - guessing one here would be a second simulation of a
@@ -923,10 +942,11 @@ public class ArmyRenderer : MonoBehaviour
                 var anim = t.GetComponentInChildren<Animator>();
                 if (anim != null && anim.runtimeAnimatorController != null)
                 {
-                    // The core's infantry has no halt - (q) again - so it is
-                    // always walking, and saying so is the truth rather than a
-                    // guess made from position.
-                    anim.SetFloat("Speed", 1f);
+                    // The core's infantry HAS a halt now, and a crawl: §11.4 writes STAND / PRONE / COVER and
+                    // §11.5 pins a team. "Always walking" was true when the core kept no gait; it is not any
+                    // more, and a man the core has on the ground is not walking. Speed comes from the posture
+                    // word rather than from a guess made from position.
+                    anim.SetFloat("Speed", down ? 0f : 1f);
                     anim.SetBool("Shoot", false);
                 }
             }

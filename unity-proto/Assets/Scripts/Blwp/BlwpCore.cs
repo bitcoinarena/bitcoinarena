@@ -702,6 +702,34 @@ namespace Blwp
             Degrees(_state[Layout.UnitBase(i) + Layout.U_HEADING]);
 
         /// <summary>
+        /// §11.4's posture for a rifleman: 0 STAND, 1 PRONE, 2 COVER, out of the high bits of his TAC_COVER word.
+        /// READ ONLY, like everything else here. The client draws a man down or up from this; it decides nothing.
+        /// Armour has no posture and reads STAND.
+        /// </summary>
+        public static int UnitPosture(int i)
+        {
+            if (UnitIsArmour(i)) return Layout.POSTURE_STAND;
+            int w = Layout.O_TACTICS + Layout.TAC_COVER + (i - i / 4 - 1);
+            if (w < 0 || w >= _state.Length) return Layout.POSTURE_STAND;
+            return (_state[w] >> Layout.COVER_POSTURE_SHIFT) & 3;
+        }
+
+        /// <summary>
+        /// §11.5: is this man's fire team pinned? His team's suppression word at or past the pin line. Read only.
+        /// </summary>
+        public static bool UnitPinned(int i)
+        {
+            if (UnitIsArmour(i)) return false;
+            // rifleTeamOf, as rules/tactics.js has it: k = (i >> 3) & 15, j = i & 3, r = 3k + j - 1, team = r >> 2
+            int k = (i >> 3) & 15, j = i & 3, r = k * 3 + j - 1;
+            if (r < 0) return false;
+            int team = r >> 2, side = ((i >> 2) & 1) == 0 ? 0 : 1;
+            int w = Layout.O_TACTICS + Layout.TAC_SUPP + side * Layout.FIRE_TEAMS_PER_SIDE + team;
+            if (w < 0 || w >= _state.Length) return false;
+            return _state[w] >= Layout.SUPP_PINNED;
+        }
+
+        /// <summary>
         /// The air, on the same terms. Bombs map word for word; a helicopter
         /// does not, and the difference is named rather than papered over: the
         /// core carries `H_DIR`, the way it is flying, and has no yaw and no

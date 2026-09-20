@@ -178,6 +178,20 @@ namespace Blwp
         public const int OBJ_RIDGE = 0;
         public const int TAC_MARKET = 82;
 
+        // §11.4 posture in TAC_COVER's high bits and §11.5's suppression word, for the renderer
+        public const int COVER_NONE = 65535;
+        public const int COVER_PLACE_MASK = 65535;
+        public const int COVER_POSTURE_SHIFT = 16;
+        public const int COVER_WORDS = 72;
+        public const int FIRE_TEAMS_PER_SIDE = 9;
+        public const int POSTURE_COVER = 2;
+        public const int POSTURE_PRONE = 1;
+        public const int POSTURE_STAND = 0;
+        public const int SUPP_PINNED = 120;
+        public const int SUPP_WORDS = 18;
+        public const int TAC_COVER = 140;
+        public const int TAC_SUPP = 212;
+
         // candle view (src/rules/candles.js): the candles the core stands everything on, for the renderer
         public const int CANDLES = 32;
         public const int CANDLE_BODY_HALF = 169779;

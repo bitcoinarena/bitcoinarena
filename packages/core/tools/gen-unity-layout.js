@@ -62,6 +62,11 @@ for (const k of Object.keys(chart).filter((k) => /^(CH_|CHART_)/.test(k) && type
   out += `        public const int ${k} = ${chart[k]};\n`;
 for (const k of Object.keys(tactics).filter((k) => /^(OBJ_|HOLDER_|ASSAULT_|MK_|TAC_MARKET$)/.test(k) && typeof tactics[k] === 'number').sort())
   out += `        public const int ${k} = ${tactics[k]};\n`;
+// §11.4's posture and §11.5's suppression, so the renderer can draw a man on the ground instead of walking
+// upright while the core has him pinned. The client READS these; it decides nothing with them.
+out += '\n        // §11.4 posture in TAC_COVER\'s high bits and §11.5\'s suppression word, for the renderer\n';
+for (const k of Object.keys(tactics).filter((k) => /^(TAC_COVER$|COVER_WORDS$|COVER_NONE$|COVER_PLACE_MASK$|COVER_POSTURE_SHIFT$|POSTURE_|TAC_SUPP$|SUPP_WORDS$|SUPP_PINNED$|FIRE_TEAMS_PER_SIDE$)/.test(k) && typeof tactics[k] === 'number').sort())
+  out += `        public const int ${k} = ${tactics[k]};\n`;
 // THE CANDLES AS TERRAIN (WAR_TACTICS.md §4.15): `candleView`'s words and the geometry's numbers, for CandleTerrain.
 const candles = await import(new URL('../src/rules/candles.js', import.meta.url));
 out += '\n        // candle view (src/rules/candles.js): the candles the core stands everything on, for the renderer\n';
