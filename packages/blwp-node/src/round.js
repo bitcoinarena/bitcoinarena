@@ -10,8 +10,7 @@
 // something is the checkpoints in step 3.
 import {
   encodeRoundContract, roundId, encodeEntryContract, entryId, decodeEntryContract,
-  decodeRoundContract, roundWindowsAreValid, runLengthIsTheCores, lastTickOfRun,
-} from '../../protocol/src/contracts.js';
+  decodeRoundContract, roundWindowsAreValid, runLengthIsTheCores, lastTickOfRun, sittingSeatsFitTheSlots } from '../../protocol/src/contracts.js';
 import { decodeInputBatch, batchTicks, batchId } from '../../protocol/src/batch.js';
 import { encodeTranscript, transcriptHash, checkTranscript, GENESIS } from '../../protocol/src/transcript.js';
 import {
@@ -281,6 +280,14 @@ export class Round {
     if (!runs.ok) throw new Error(runs.why);
     const runLength = runLengthIsTheCores(contract, runTicksOf(runs.core, runs.config));
     if (!runLength.ok) throw new Error(runLength.why);
+
+    // AND IT MAY NOT SEAT MORE SIGNER NODES THAN IT HAS SLOTS (§22A: "Not seven census slots when the round
+    // is 2-of-2"). A fee lock is sized for the same seats the settlement pays, so a contract that names seven
+    // seats on a two-slot round mints a lock divided seven ways and pays seats that never sat. Measured before
+    // this line: `feeLockPays` read `contract.nodes` alone and answered `pays true, signerNodes 7` for exactly
+    // that contract. Refused here, with the round, rather than found later in the settlement.
+    const seats = sittingSeatsFitTheSlots(contract);
+    if (!seats.ok) throw new Error(seats.why);
 
     const bytes = encodeRoundContract(contract);
     const id = roundId(contract);

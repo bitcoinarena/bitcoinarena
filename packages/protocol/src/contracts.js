@@ -588,6 +588,36 @@ export function federationIsNamed(c) {
  * and were still provisionally final after the window. A free round moves no
  * money and may name none.
  */
+/**
+ * A ROUND MAY NOT NAME MORE SITTING SEATS THAN ITS OWN POOLS HAVE SLOTS (§22A).
+ *
+ * 22A pays the node fee to "the round's **sitting seats** - the seats the census seated for this round, its
+ * `nodes` - however many there are: two in a 2-of-2, seven in a 5-of-7", and says it again as a warning:
+ * "**Not seven census slots when the round is 2-of-2**". A fee lock is sized for the same seats the
+ * settlement pays, so a contract that names seven seats on a two-slot round mints a lock divided seven ways
+ * and a settlement that pays seven - from a committee of two. The extra shares go to seats that never sat.
+ *
+ * MEASURED BEFORE THIS EXISTED: `feeLockPays` reads `contract.nodes` and never looks at the slot counts, so a
+ * 2-of-2 round naming seven seats answered `pays true, signerNodes 7`. The lock was sized for seven.
+ *
+ * IT IS AN UPPER BOUND, NOT AN EQUALITY, and that is deliberate. The spec's number is "however many there
+ * are", and a slot a census left unfilled is a round with fewer seats than slots - legitimate, and not this
+ * rule's business. Only naming MORE seats than the round has slots is the fault 22A warns about, so that is
+ * all this refuses.
+ */
+export function sittingSeatsFitTheSlots(c) {
+  if (!c) return { ok: false, why: 'no contract' };
+  const seats = Array.isArray(c.nodes) ? c.nodes.length : 0;
+  const gv = Number.isInteger(c.gameVerifySlots) ? c.gameVerifySlots : 0;
+  const st = Number.isInteger(c.settlementSlots) ? c.settlementSlots : 0;
+  const slots = Math.max(gv, st);
+  if (seats > slots)
+    return { ok: false, seats, slots,
+      why: `that round seats ${seats} signer nodes on ${gv}/${st} slots: 22A pays the seats the census `
+        + 'seated, and a fee lock sized for more of them pays seats that never sat' };
+  return { ok: true, seats, slots, why: '' };
+}
+
 export function publicationRelaysAreValid(c) {
   if (!c) return { ok: false, why: 'no contract' };
   if (!Array.isArray(c.publicationRelays))
