@@ -942,6 +942,11 @@ public class ArmyRenderer : MonoBehaviour
             // §11.4: WHERE A DOWNED MAN ACTUALLY ENDED UP, read back off the transform rather than restated from
             // the arithmetic above - the fixture already knows what the formula says, and what is wanted here is
             // what the screen holds. Negative is under the ground he stands on. Instrumentation only.
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            // NOT A PLAYER-FACING LINE (ruled 2026-09-20). This fires whenever the down-count changes, which is
+            // most frames, and it is the instrumentation that PROVED the sole-anchor sink - not something a player
+            // needs beside "[render] drew N units". Compiled out of a release build; to re-measure, build with
+            // -Development. The 0.00 m result itself is kept in SoldierLiftTests and in TASKBOOK.
             {
                 float over = t.position.y - Ground(at.x, at.z);
                 if (down)
@@ -951,6 +956,7 @@ public class ArmyRenderer : MonoBehaviour
                 }
                 else { _upOverSum += over; _upOverN++; }
             }
+#endif
 
             // Height per man is a core gap, listed as (q). One size until it
             // exists - guessing one here would be a second simulation of a
@@ -997,24 +1003,30 @@ public class ArmyRenderer : MonoBehaviour
             // The height that goes with that count: a downed man must sit ON the ground, not under it. `prefab`
             // says which anchor is in play, because the fallback box is centre-anchored and legitimately sits at
             // +0.15 while a sole-anchored prefab man sits at +0.00.
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
             if (_downOverN > 0)
                 Debug.Log($"[render] downed men sit {_downOverSum / _downOverN:F2} m over the ground, "
                           + $"worst {_downOverWorst:F2} m; standing men "
                           + $"{(_upOverN > 0 ? (_upOverSum / _upOverN).ToString("F2") : "n/a")} m; "
                           + $"prefab {(soldierPrefab != null ? "yes" : "no")}");
+#endif
         }
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
         _downOverSum = 0f; _downOverN = 0; _downOverWorst = float.MaxValue;
         _upOverSum = 0f; _upOverN = 0;
+#endif
     }
 
     int _lastDrawn = -1;
     /// <summary>§11.4/§11.5: how many men the last frame laid on the ground. Instrumentation only.</summary>
     int _downDrawn, _lastDownDrawn = -1;
     /// <summary>§11.4: how far over the ground the last frame's downed men sat. Instrumentation only.</summary>
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
     float _downOverSum, _downOverWorst = float.MaxValue;
     int _downOverN;
     /// <summary>The same for men still on their feet, as the control the downed number is read against.</summary>
     float _upOverSum; int _upOverN;
+#endif
 
     /// <summary>The combat mixer, found once. Only ever told what the core did.</summary>
     public GameAudio audio;
