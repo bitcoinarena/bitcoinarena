@@ -113,6 +113,13 @@ namespace Blwp
             // string built in the page, and building it sixty times a second to
             // show it four times would be the kind of cost nobody notices until
             // it is everywhere.
+            // THE REASON IS NOT POLL-RATE NEWS (2026-09-20, measured twice in the BAY). Between a VOID and the
+            // lobby taking the screen there are about 0.6 s, and this poll refreshes every 0.5 s - so whether the
+            // player is told why depends on which lands first. Photographed both ways on one build: bay-04.png has
+            // the line, bayok-27.png and bayfull-29.png are the same state with nothing on screen.
+            // `DriveHud.DrawRunStopped` returns at its first line on an empty string, so a late poll is silence.
+            // Fetched once, the moment the run ends; the poll below carries on as before.
+            if (BlwpNet.Ended && string.IsNullOrEmpty(Ending)) Ending = BlwpNet.Ending();
             if (Time.unscaledTime < _nextPoll) return;
             _nextPoll = Time.unscaledTime + 0.5f;
             Status = BlwpNet.Running ? BlwpNet.Status() : "off";

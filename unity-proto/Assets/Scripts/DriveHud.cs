@@ -2232,11 +2232,34 @@ public class DriveHud : MonoBehaviour
         return new Rect(x, row.y, wd2, height);
     }
 
+    /// <summary>
+    /// UNDER THE BLOCK CLOCK - UNLESS THE CARGO PANEL IS OVER THAT BAND (the owner 2026-09-20).
+    ///
+    /// The bay is where this line is needed MOST: a truck still choosing cargo when the block closes is the
+    /// path that ends VOID, and it is the one the player cannot read. Measured at 1280x800, the two rects sat
+    /// inside each other: the mempool panel is `panelTop 0.10` to `panelBottom 0.51`, y 80 to 408, and this box
+    /// was y 326 to 393 - wholly behind it. Photographed both ways on one build: `ring-28.png` is the bay with
+    /// the run VOID and no line on screen, `ring-11.png` is the road with the same VOID and the line plainly
+    /// there. Same build, same state, different place.
+    ///
+    /// So when the panel is open the row drops just below it, and when it is not - the road, which is
+    /// `ring-11` - nothing moves and that frame is unchanged. One row, one draw, no second HUD.
+    ///
+    /// AND IT IS TALL ENOUGH FOR THE LAST WORDS. At 1280x800 the copy wraps to three lines, about 83 px, and
+    /// the box was `font * 2.8` = 67 px - so it cut at "error the round" and lost "is closed", which is the half
+    /// that answers WHY. `font * 4.4` = 106 px holds all three. The copy is not shortened to fit.
+    /// </summary>
     public Rect RunStoppedBox(int w, int h)
     {
         float font = Mathf.RoundToInt(Mathf.Min(w, h) * 0.030f);
         var clock = BlockTimerBox(w, h);
-        return new Rect(clock.x, clock.yMax + font * 0.8f, clock.width, font * 2.8f);
+        float y = clock.yMax + font * 0.8f;
+        if (loadout != null && loadout.IsOpen && loadout.yard != null)
+        {
+            float below = loadout.yard.PanelRect(w, h).yMax + font * 0.6f;
+            if (below > y) y = below;
+        }
+        return new Rect(clock.x, y, clock.width, font * 4.4f);
     }
 
     void DrawRunStopped(int w, int h)
@@ -2256,7 +2279,15 @@ public class DriveHud : MonoBehaviour
             fontSize = Mathf.RoundToInt(Mathf.Min(w, h) * 0.030f),
             wordWrap = true,
         };
-        Shadowed(RunStoppedBox(w, h), line, style, new Color(1f, 0.78f, 0.25f, 1f));
+        // THE BOX IS MEASURED FROM THE SENTENCE, not guessed at a multiple of the font. `font * 2.8` cut at
+        // "error the round" and lost "is closed"; `font * 4.4` reached "cannot publish" and cut there. The copy
+        // is the client's own and is not shortened to fit, so the box is the thing that gives - CalcHeight asks
+        // the style how tall this line actually wraps at this width, and the rect is at least that. The minimum
+        // in `RunStoppedBox` stays, so the geometry tests still have something fixed to hold.
+        var box = RunStoppedBox(w, h);
+        float need = style.CalcHeight(new GUIContent(line), box.width);
+        Shadowed(new Rect(box.x, box.y, box.width, Mathf.Max(box.height, need)), line, style,
+                 new Color(1f, 0.78f, 0.25f, 1f));
     }
 
     void DrawUnderFire(int w, int h)
@@ -2766,6 +2797,13 @@ public class DriveHud : MonoBehaviour
         if (loading)
         {
             DrawWasted(w, h);
+            // AND WHY THE RUN STOPPED, because the bay is where that matters most (the owner 2026-09-20). A truck
+            // still choosing cargo when the block closes is the path that ends VOID, and this branch returned
+            // before `DrawRunStopped` ever ran - so the line was not covered, it was never drawn. Measured on one
+            // build: `ring-28.png` is the bay with the run VOID and nothing on screen, `ring-11.png` is the road
+            // with the same VOID and the line plainly there. The SAME draw is called here; `RunStoppedBox` steps
+            // below the cargo panel so it has somewhere to be.
+            DrawRunStopped(w, h);
             return;
         }
 
