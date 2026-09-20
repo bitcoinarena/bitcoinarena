@@ -29,6 +29,7 @@ import * as scoring from '../src/rules/score.js';
 import * as army from '../src/rules/army.js';
 import * as layout from '../src/state.js';
 import * as gate from '../src/rules/gate.js';
+import * as tactics from '../src/rules/tactics.js';
 
 /**
  * KEEPS LIVE ARMOUR OUT OF TOUCH WITH THE TRUCK, for a test that measures something else (the owner 2026-09-16 17:06:
@@ -916,6 +917,14 @@ test('replacements keep both armies in contact for the whole round', async () =>
   // zero). The core's runs with the price tape, and comparing a fight offset by
   // twenty-seven metres against a symmetric one is not a comparison.
   st.tape.fill(st.tape[0]);
+  // AND THE TREND MUST BE READ OFF THE FLAT TAPE, or the fight is not symmetric either (the owner, 2026-09-20).
+  // Flattening the tape alone does not neutralise §4.14: `init` already read MK_TREND off the SEEDED tape, and
+  // this fixture steps with no market tick, so `readMarket` never runs again and the trend stays whatever it was
+  // born as - measured here, DOWN at strength 2 for all 90 s of the run. That favours the bears the whole way: a
+  // 30-60 s assault clock against 45-90, +1 lane weight, and a ceiling raised by 8 x strength. Measured on this
+  // seed, the bull side fell to 3 tanks against 12 with the trend frozen and stands at 6 against 12 once both
+  // sides see the same flat market. One read off the flat tape, and nothing this test asserts is touched.
+  tactics.readMarket(st.i32, layout.O_TACTICS, st.tape);
 
   const armour = () => {
     const out = [];
