@@ -224,6 +224,13 @@ namespace Blwp
         public const int MINER_X = 11075584;
         public const int POST_X = -7497318;
 
+        // the block (src/rules/gate.js): how long a run lasts and what the core calls its endings
+        public const int BLOCK_TICKS = 10800;
+        public const int RUN_DELIVERED = 1;
+        public const int RUN_LIVE = 0;
+        public const int RUN_MISSED = 3;
+        public const int RUN_WRECKED = 2;
+
         /// <summary>Base word offset of unit <paramref name="i"/>.</summary>
         public static int UnitBase(int i) => O_UNITS + i * U_WORDS;
 
