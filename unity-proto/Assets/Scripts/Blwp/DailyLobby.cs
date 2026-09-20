@@ -88,6 +88,7 @@ namespace Blwp
         [DllImport("__Internal")] static extern string BlwpLobbyEditName();
         [DllImport("__Internal")] static extern void BlwpLobbyKeyBackup();
         [DllImport("__Internal")] static extern void BlwpLobbyShown(string json);
+        [DllImport("__Internal")] static extern void BlwpAssaultShown(string json);
         [DllImport("__Internal")] static extern int BlwpQueryParam(IntPtr name, IntPtr outp, int cap);
         [DllImport("__Internal")] static extern float BlwpUiScale();
         public const bool Compiled = true;
@@ -98,6 +99,7 @@ namespace Blwp
         static string BlwpLobbyEditName() => "";
         static void BlwpLobbyKeyBackup() { }
         static void BlwpLobbyShown(string json) { }
+        static void BlwpAssaultShown(string json) { }
         static int BlwpQueryParam(IntPtr name, IntPtr outp, int cap) => 0;
         public const bool Compiled = false;
 #endif
@@ -237,6 +239,9 @@ namespace Blwp
 
         /// <summary>What Unity drew, told back to the page - so what a player sees can be measured, not assumed.</summary>
         public static void Shown(string json) { if (Compiled) BlwpLobbyShown(json); }
+
+        /// <summary>The same for the assault banner and the desktop log, so a browser run can be asked what the war said.</summary>
+        public static void AssaultShown(string json) { if (Compiled) BlwpAssaultShown(json); }
 
         /// <summary>
         /// The screen's pixels per CSS pixel, 1 outside a page. The title screen
