@@ -716,6 +716,15 @@ public class ArmyRenderer : MonoBehaviour
     /// visibility test can place and render inside a single frame, because
     /// batch mode never fires WaitForEndOfFrame.
     /// </summary>
+    /// <summary>
+    /// §11.4/§11.5, FOR TESTS ONLY: how many men the last Submit laid on the ground, and the transforms it placed.
+    /// Read-only seams. Nothing in the game reads them and they decide nothing - they exist so a suite can assert
+    /// that the renderer poses from the CORE's posture word rather than from a guess of its own.
+    /// </summary>
+    public int MenDrawnDown => _downDrawn;
+    public IReadOnlyList<Transform> SoldiersOf(Army.Side side) =>
+        side == Army.Side.Bull ? _soldiersBull : _soldiersBear;
+
     public void Submit()
     {
         if (!CoreReady) return;
