@@ -26,6 +26,7 @@ export const PLAYABLE = ['testnet4', 'regtest'];
  * had to be sized against a node's inbound before anybody had entered.
  */
 // One number with the fee-lock gate: protocol constants.js.
+import { gatewaysAreIndependent } from '../../protocol/src/gateways.js';
 import { MIN_PLAYERS_PER_ROUND } from '../../protocol/src/constants.js';
 export { MIN_PLAYERS_PER_ROUND };
 
@@ -48,8 +49,41 @@ export function askLnd({ lncli, lnddir, run = execFileSync, read = readFileSync 
   const ask = (...argv) => JSON.parse(run(lncli, [...args, ...argv], { encoding: 'utf8', timeout: 30000 }));
   let holdInvoices = false;
   try { run(lncli, ['addholdinvoice', '--help'], { stdio: 'ignore' }); holdInvoices = true; } catch { /* absent */ }
-  return { info: ask('getinfo'), channels: ask('listchannels').channels || [], holdInvoices };
+  return { info: ask('getinfo'), channels: ask('listchannels').channels || [], holdInvoices, rpc };
 }
+
+/**
+ * THE OPERATOR'S GATEWAYS AS `gatewaysAreIndependent` WANTS THEM, asked the same read-only way.
+ *
+ * One entry per node, each from that node's OWN `getinfo` and `listchannels` - never from a label and never
+ * from a list somebody typed. A node that will not answer is reported as unsynced with no channels rather
+ * than dropped, so a stopped gateway shows up as one that cannot receive instead of vanishing from the count.
+ *
+ * `lnddirs` defaults to the operator's pair on this machine. Same host is allowed by the ruling; what has to
+ * differ is the identity and the rpc, which is exactly what the predicate reads.
+ */
+export function askGateways({ lncli, lnddirs = TESTNET4_GATEWAYS, run = execFileSync, read = readFileSync }) {
+  return lnddirs.map((lnddir) => {
+    try {
+      const said = askLnd({ lncli, lnddir, run, read });
+      return {
+        identityPubkey: said.info && said.info.identity_pubkey,
+        rpc: said.rpc,
+        syncedToChain: said.info && said.info.synced_to_chain === true,
+        channels: (said.channels || []).map((c) => ({
+          active: c.active === true, remoteBalanceSat: BigInt(c.remote_balance || 0),
+        })),
+      };
+    } catch {
+      // A GATEWAY THAT WILL NOT ANSWER IS A GATEWAY THAT CANNOT RECEIVE. It keeps its place in the list with
+      // nothing in it, so the count is honest about how many were asked.
+      return { identityPubkey: '', rpc: lnddir, syncedToChain: false, channels: [] };
+    }
+  });
+}
+
+/** The operator's two testnet4 gateways on this machine (M3, RULED 2026-09-20). */
+export const TESTNET4_GATEWAYS = ['/mnt/bitcoin/lnd-testnet4', '/mnt/bitcoin/lnd-testnet4-b'];
 
 /**
  * THE SAME QUESTIONS OF A REGTEST LND, ASKED WITH ITS OWN READ-ONLY KEY.
@@ -77,25 +111,55 @@ export function askLndRegtest({ lncli, lnddir, rpc, run = execFileSync }) {
   return { info, channels: ask('listchannels').channels || [], holdInvoices };
 }
 
-/** The regtest preflight a daemon is given - the same verdict, a regtest lnd. */
-export const lndPreflightRegtest = ({ lncli, lnddir, rpc, run }) => async ({ contract }) => {
+/**
+ * The regtest preflight a daemon is given - the same verdict, a regtest lnd.
+ *
+ * `gateways` are the regtest nodes this operator will take deposits through, as `{ lnddir, rpc }`. §23.6 asks
+ * for at least two on any paying round, and regtest is not an exemption: a rehearsal that skips the gate
+ * rehearses the wrong thing. Declared none, the daemon offers only the node it was pointed at, which is one -
+ * and one is refused, loudly, rather than waved through.
+ */
+export const lndPreflightRegtest = ({ lncli, lnddir, rpc, run, gateways }) => async ({ contract }) => {
   const stakeMsat = contract.stakeMsat;
+  const declared = Array.isArray(gateways) && gateways.length ? gateways : [{ lnddir, rpc }];
   return lightningPreflight({
     ...askLndRegtest({ lncli, lnddir, rpc, ...(run ? { run } : {}) }), players: MIN_PLAYERS_PER_ROUND,
     entry: { stakeMsat, feeMsat: entryFeeMsat(stakeMsat), donationMsat: 0n },
+    gateways: askGatewaysRegtest({ lncli, gateways: declared, ...(run ? { run } : {}) }),
   });
 };
+
+/** The same gathering for regtest nodes, which are named by flags rather than by their own lnd.conf. */
+export function askGatewaysRegtest({ lncli, gateways, run = execFileSync }) {
+  return gateways.map(({ lnddir, rpc }) => {
+    try {
+      const said = askLndRegtest({ lncli, lnddir, rpc, run });
+      return {
+        identityPubkey: said.info && said.info.identity_pubkey,
+        rpc,
+        syncedToChain: said.info && said.info.synced_to_chain === true,
+        channels: (said.channels || []).map((c) => ({
+          active: c.active === true, remoteBalanceSat: BigInt(c.remote_balance || 0),
+        })),
+      };
+    } catch {
+      return { identityPubkey: '', rpc: rpc || lnddir, syncedToChain: false, channels: [] };
+    }
+  });
+}
 
 /**
  * THE PREFLIGHT A DAEMON IS GIVEN, for the round it is asked to open: the
  * fewest players a round opens for, each at the round's stake with the fee out
  * of it and no donation - the largest hold an entry can ask for.
  */
-export const lndPreflight = ({ lncli, lnddir }) => async ({ contract }) => {
+export const lndPreflight = ({ lncli, lnddir, lnddirs }) => async ({ contract }) => {
   const stakeMsat = contract.stakeMsat;
   return lightningPreflight({
     ...askLnd({ lncli, lnddir }), players: MIN_PLAYERS_PER_ROUND,
     entry: { stakeMsat, feeMsat: entryFeeMsat(stakeMsat), donationMsat: 0n },
+    // AND THE GATEWAYS, asked the same read-only way. Without them a staking round is refused (§23.6).
+    gateways: askGateways({ lncli, ...(lnddirs ? { lnddirs } : {}) }),
   });
 };
 
@@ -106,8 +170,12 @@ export const lndPreflight = ({ lncli, lnddir }) => async ({ contract }) => {
  * @param {boolean} o.holdInvoices whether this lnd offers `addholdinvoice`
  * @param {number} o.players       entries this node must hold at once
  * @param {object} o.entry         one entry's { stakeMsat, feeMsat, donationMsat }
+ * @param {object[]|null} o.gateways what the operator's OWN gateways reported - one entry per node, each from
+ *                                   that node's `getinfo` and `listchannels`. Null is not "no opinion": a
+ *                                   staking round is refused without them. See below.
  */
-export function lightningPreflight({ info, channels = [], holdInvoices = false, players, entry }) {
+export function lightningPreflight({ info, channels = [], holdInvoices = false, players, entry,
+                                     gateways = null }) {
   const network = (info && info.chains && info.chains[0] && info.chains[0].network) || 'unknown';
 
   // MAINNET IS REFUSED BEFORE ANYTHING IS COMPUTED. Nothing here should read as
@@ -158,6 +226,27 @@ export function lightningPreflight({ info, channels = [], holdInvoices = false, 
 
   if (!holdInvoices)
     missing.push('that lnd does not offer addholdinvoice, so it cannot hold a stake');
+
+  // AND A PAYING ROUND NEEDS SOMEWHERE FOR THE MONEY TO COME IN FROM - MORE THAN ONE (§23.6).
+  //
+  // Everything above this line asks ONE node about itself. That is not the law: "deposits and withdrawals
+  // through any of at least two gateways ... No gateway holds a round's money or is needed by it" - a round
+  // opened against a single endpoint is one outage away from a player who has paid and cannot be paid back,
+  // and §22 is explicit that a gateway may refuse but never keep. So the round does not open until two
+  // independent gateways are shown, and the operator does not get to skip the check by not answering it:
+  // `gateways` absent or unreadable is a REFUSAL, not a pass. Missing gateways are not an escape hatch.
+  //
+  // WHAT "INDEPENDENT" MEANS HERE IS NARROWER THAN THE LAW'S EVENTUAL TEST, and that is written down rather
+  // than blurred: §23.6 wants "different operators", and this M3 step (RULED 2026-09-20, named pick A) is the
+  // operator's own two testnet4 nodes, same host allowed. `gatewaysAreIndependent` therefore counts distinct
+  // identities at distinct rpc addresses that are synced and hold inbound, and does not read the host.
+  // Different-operator gateways are a later letter; nothing here claims otherwise.
+  if (!Array.isArray(gateways)) {
+    missing.push('this node was shown no gateways, so it cannot open a paying round (§23.6 wants at least two)');
+  } else {
+    const independent = gatewaysAreIndependent({ gateways });
+    if (!independent.ok) missing.push(`the gateways cannot take this round's money: ${independent.why}`);
+  }
 
   return {
     ready: !missing.length, network, missing,
