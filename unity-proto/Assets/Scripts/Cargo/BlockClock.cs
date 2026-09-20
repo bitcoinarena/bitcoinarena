@@ -37,8 +37,18 @@ public class BlockClock : MonoBehaviour
              "new block within a second of it being found.")]
     public ChainStats stats;
 
-    /// <summary>The ticks a core run lasts before it is MISSED: `BLOCK_TICKS`, packages/core/src/rules/gate.js.</summary>
-    public const int RunTicks = 9000;
+    /// <summary>
+    /// The ticks a core run lasts before it is MISSED - the core's own `BLOCK_TICKS`, GENERATED into
+    /// `Blwp.Layout` rather than written here.
+    ///
+    /// IT WAS WRITTEN HERE, AND IT DRIFTED. This was a hand-typed 9000 while `packages/core/src/rules/gate.js`
+    /// had moved to 10800 (c01cc655, "a round is three minutes"). Nothing threw: the HUD clock simply counted
+    /// down to 0:00 at elapsed 9000 and the run went on for another 1800 ticks - thirty seconds of a round with
+    /// a timer showing nothing left. That is the owner's 2026-09-20 16:21 report, and it is the SECOND time this
+    /// clock has told him the round should be over when it was not (2026-09-16 15:36, the comment below).
+    /// A number both engines need is not a number either of them may type.
+    /// </summary>
+    public const int RunTicks = Blwp.Layout.BLOCK_TICKS;
 
     /// <summary>
     /// Seconds of a core run left after `elapsed` of its ticks, at the core's own rate - 65536/1092 ticks a second

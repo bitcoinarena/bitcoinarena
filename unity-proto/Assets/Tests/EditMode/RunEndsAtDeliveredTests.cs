@@ -64,17 +64,24 @@ public class RunEndsAtDeliveredTests
     /// </summary>
     /// <summary>
     /// "0:00 LEFT" IS THE TICK THE CORE ENDS THE RUN ON (the owner 2026-09-16 15:36: "when time hits zero the round does
-    /// not end"). The HUD read a Unity stopwatch from scene load; the core ends a run MISSED after 9000 of its own
+    /// not end"). The HUD read a Unity stopwatch from scene load; the core ends a run MISSED after its block's own
     /// ticks from roll-out. With a core the clock is the core's count.
+    ///
+    /// THE LENGTH IS NO LONGER WRITTEN HERE, and that is the 2026-09-20 16:21 letter. This test pinned 9000 in
+    /// five places. The core moved to 10800 in c01cc655 ("a round is three minutes") and nothing here moved with
+    /// it, so a green test went on describing a round that had not existed for days while the HUD counted down
+    /// to 0:00 thirty seconds early and the run went on - the same symptom as 09-16, from the same cause a layer
+    /// down. Every assertion below means exactly what it meant; only the duplicated number is gone.
     /// </summary>
     [Test]
     public void TheRunClockIsTheCoresOwnCount()
     {
-        Assert.AreEqual(9000 * 1092f / 65536f, BlockClock.CoreSecondsLeft(0), 1e-3f, "a run that has not rolled out has all of it");
-        Assert.AreEqual(149.96f, BlockClock.CoreSecondsLeft(0), 0.01f, "9000 ticks at 65536/1092 a second");
-        Assert.AreEqual(0f, BlockClock.CoreSecondsLeft(9000), "the tick the core says MISSED shows 0:00");
-        Assert.AreEqual(0f, BlockClock.CoreSecondsLeft(9500), "never below zero");
-        Assert.AreEqual(1092f / 65536f * 60f, BlockClock.CoreSecondsLeft(8940), 1e-3f, "sixty ticks before the end is a second");
+        const int block = Blwp.Layout.BLOCK_TICKS;
+        Assert.AreEqual(block * 1092f / 65536f, BlockClock.CoreSecondsLeft(0), 1e-3f, "a run that has not rolled out has all of it");
+        Assert.AreEqual(179.96f, BlockClock.CoreSecondsLeft(0), 0.01f, "10800 ticks at 65536/1092 a second - three minutes");
+        Assert.AreEqual(0f, BlockClock.CoreSecondsLeft(block), "the tick the core says MISSED shows 0:00");
+        Assert.AreEqual(0f, BlockClock.CoreSecondsLeft(block + 500), "never below zero");
+        Assert.AreEqual(1092f / 65536f * 60f, BlockClock.CoreSecondsLeft(block - 60), 1e-3f, "sixty ticks before the end is a second");
     }
 
     /// <summary>

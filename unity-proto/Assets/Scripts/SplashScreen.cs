@@ -107,9 +107,10 @@ public class SplashScreen : MonoBehaviour
                     _endedAt = Time.unscaledTime;
             }
         }
-        if (!Showing && BackToLobby(Blwp.BlwpNet.Ended, _fromLobby, wrecked,
-                                    _wreckedAt < 0f ? 0f : Time.unscaledTime - _wreckedAt, hold,
-                                    _endedAt < 0f ? 0f : Time.unscaledTime - _endedAt)) ShowLobbyAgain();
+        if (!Showing && ShouldReturnToLobby(Blwp.BlwpCore.Available, Blwp.BlwpCore.RunState, Blwp.BlwpNet.Ended,
+                                           _fromLobby, wrecked,
+                                           _wreckedAt < 0f ? 0f : Time.unscaledTime - _wreckedAt, hold,
+                                           _endedAt < 0f ? 0f : Time.unscaledTime - _endedAt)) ShowLobbyAgain();
         if (!Showing && BackFromSpectating(_spectating, _spectator != null && _spectator.Active)) ShowLobbyAgain();
         if (!Showing)
         {
@@ -242,6 +243,24 @@ public class SplashScreen : MonoBehaviour
     /// </summary>
     public static bool RunHasEnded(bool coreAvailable, int runState, bool netEnded)
         => (coreAvailable && runState != 0) || netEnded;
+
+    /// <summary>
+    /// THE WHOLE RETURN-TO-LOBBY DECISION, in one place so it can be tested as one.
+    ///
+    /// THE TIMER MUST END THE ROUND (the owner 2026-09-20 16:21: "when the round timer hits 0 the game must end and
+    /// return to the lobby by itself. It used to. It no longer does."). The core does its half: measured, a run
+    /// braked from the start reaches RUN_MISSED at elapsed 10800 - `gate.js` returns RUN_MISSED once
+    /// `tickInBlock >= BLOCK_TICKS`. What failed was the client's half, and it was an asymmetry left here
+    /// earlier the same day: the hold CLOCK was started from `RunHasEnded` - the core's word OR the client's -
+    /// while this gate was still handed `BlwpNet.Ended` alone. So a round the CORE had ended, with no session
+    /// word to go with it, started its five seconds and then never took them: the truck sat in a finished world.
+    ///
+    /// Both halves now ask the same question. The result hold is unchanged and still separate, so a run that ends
+    /// is still read before the lobby takes the screen.
+    /// </summary>
+    public static bool ShouldReturnToLobby(bool coreAvailable, int runState, bool netEnded, bool fromLobby,
+                                           bool wrecked, float sinceWreck, float hold, float sinceOutcome)
+        => BackToLobby(RunHasEnded(coreAvailable, runState, netEnded), fromLobby, wrecked, sinceWreck, hold, sinceOutcome);
 
     /// <summary>How long a run with no core word waits for its reason before the hold starts without one.</summary>
     public const float ReasonWaitSeconds = 2f;
