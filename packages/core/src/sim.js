@@ -42,7 +42,7 @@ import { initTactics, postOf, scoot, onRespawn, enterInLane, pressure, partnerOf
 import { mapSolids } from './rules/map.js';
 import { CANDLES, CL_WORDS, candleLayout, candleHeightAt, writeCandleView, levelled } from './rules/candles.js';
 import { scrollOf, FIELD_SLOT } from './rules/frontline.js';
-import { ARMOUR_WEST, ARMOUR_EAST, RIFLE_STANDOFF } from './rules/army.js';
+import { ARMOUR_WEST, ARMOUR_EAST, RIFLE_STANDOFF, rifleStandoff } from './rules/army.js';
 import { heat as heatForLoad } from './rules/cargo.js';
 import { stepUnit, standingStill, separatePair, clearOfTruck, runOver, truckSpeed, threatAt, pickTarget, pickRifleTarget, riflePost, RELOAD_MIN, RELOAD_SPAN, DAMAGE_MIN, DAMAGE_SPAN, BACKOFF_RANGE, HIT_PER_MIL, ARMOUR_RANGE, RIFLE_RANGE, RIFLE_HIT_PER_MIL, RIFLE_RELOAD_TICKS, RIFLE_RELOAD_TICKS_SPAN, RIFLE_LOOK_TICKS, RIFLE_LOOK_TICKS_SPAN, RIFLE_HP, RIFLE_DAMAGE, hullDownHold, WRECK_R, COURIER_RANGE, COURIER_DAMAGE_MIN, COURIER_DAMAGE_SPAN, COURIER_RIFLE_MIN, COURIER_RIFLE_SPAN, courierReach, outranksTheFoe, shellForHeat } from './rules/army.js';
 import { accrue, earning, scoreOf, frontWeight, APRON_RADIUS } from './rules/score.js';
@@ -1544,11 +1544,25 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
   // §11.3 COVER: the claim pass, at the top of the infantry step - after the armour's separation above and before
   // any man moves, which is where the section puts it. The men's posts are handed in because eligibility is
   // measured from the post and not from where a man is standing, "so a man does not wander to cover".
+  //
+  // THE POST §11.3 MEASURES FROM IS THE POST THE STEP WALKS HIM TO - the same anchor and the same stand-off, not a
+  // second reading of "his post" (measured, 2026-09-20, 2 seeds x 40 s). Split, this pass took his OWN squad
+  // anchor and a bare RIFLE_STANDOFF, while the step below walks him to his FIRE TEAM's anchor (§9.2) at his
+  // scattered stand-off less §12.1's push. A man stood a median 46.3 m from the point this pass called his post
+  // and was within 2 m of it on 0.2% of man-ticks, so "within 12 m of his post" handed him holes a median 38.9 m
+  // from his feet - a 14 to 28 s walk against a claim that lived 12.8 s. Nobody arrived: 91.7% of men never once
+  // reached a hole, 60.2% of claims ended with the man dead and 27.8% with the place gone from under him.
+  //
+  // So the anchor and the stand-off are read here exactly as the step reads them, and `rifleStandoff` is shared
+  // with the walk rather than copied into it. Do not split them again. Neither call takes a draw.
   coverClaims(s, O_TACTICS, s[O_TICK], (i) => {
     const mb = unitBase(i);
     const side = s[mb + U_SIDE] < 0 ? -1 : 1;
-    const x = riflePost(s[squadWord(s[mb + U_SIDE], s[mb + U_TARGET])], i);
-    return { x, z: add(seamAtX(st, x) | 0, Math.imul(side, RIFLE_STANDOFF)) };
+    const rt = rifleTeamOf(i);
+    const anchor = s[squadWord(s[mb + U_SIDE], s[unitBase(firstManOf(rt.side, rt.team)) + U_TARGET])];
+    const x = riflePost(anchor, i);
+    const push = pushNear(s, O_TACTICS, rt.side, anchor);
+    return { x, z: add(seamAtX(st, x) | 0, Math.imul(side, rifleStandoff(i, push))) };
   }, (x) => seamAtX(st, x), st.candles && !st.noCandleField ? st.candles : null, st.candleShift | 0);
 
   const groundOf = (x, z) => surfaceAt(st, x, z);
