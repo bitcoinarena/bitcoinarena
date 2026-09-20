@@ -437,7 +437,6 @@ public class ChartHud : MonoBehaviour
         // ON IN SPECTATE (the owner 2026-09-17 16:38: "put the HUD back onto spectate"): the same chart as the drive, in the same
         // panel, over the free camera - the page's core keeps stepping while it flies, so the chart moves there too.
         if (_spectator != null && _spectator.Active) SpectateFrames++;
-        if (loadout != null && loadout.IsOpen) return;
         if (Blwp.BlwpCore.ChartView(Range, _view) == 0) return;
 
         // ONCE A FRAME, not once a GUI event: IMGUI runs OnGUI for layout and again for the repaint, and the
@@ -449,6 +448,15 @@ public class ChartHud : MonoBehaviour
             Watch.Observe(_view, System.DateTime.Now, Time.unscaledTime, Blwp.BlwpCore.Tick);
             if (Watch.Revision != said) Blwp.DailyLobby.AssaultShown(Watch.AsJson());
         }
+
+        // THE WAR DOES NOT PAUSE FOR THE CARGO BAY (2026-09-21, measured). This return used to sit ABOVE the
+        // watch, so while the player was choosing freight `Observe` never ran - and the watch only reacts to a
+        // TRANSITION, so by the time the bay closed the phase had already moved and the declaration was gone
+        // for good: no line, no banner, no chime, ever. Measured on Daily 0.0.1842 over four rounds: 8 of 12
+        // declarations were made with the bay open and 0 of those 8 reached the player, while 4 of 4 made on
+        // the road did. The chart itself still does not draw here - that is what the return is for - but the
+        // war is now recorded while it happens.
+        if (loadout != null && loadout.IsOpen) return;
 
         if (_field == null) _field = FindFirstObjectByType<Blwp.GhostField>();
         _ghosts.Clear();

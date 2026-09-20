@@ -411,6 +411,24 @@ public class LoadoutPanel : MonoBehaviour
     /// nothing about whether it is worth taking. Risk is what the load makes of
     /// the run, and the reward is what the whole thing is for.
     /// </summary>
+    /// <summary>
+    /// WHERE THE CAPACITY BAR SITS, derived rather than guessed (2026-09-21).
+    ///
+    /// The bay draws at `GUI.depth = -100`, in front of everything the driving HUD has; a box that overlaps
+    /// this one is not a faint box, it is no box at all. The assault log has to step clear of it while the
+    /// player is choosing cargo, so the rectangle is public and computed ONCE here - the same mistake
+    /// `PanelRect` was written to stop: deriving the same box twice is what puts things outside it.
+    /// </summary>
+    public Rect BottomBarRect(int w, int h)
+    {
+        int min = Mathf.Min(w, h);
+        float pad = Mathf.Max(10f, h * 0.022f);
+        float head = Mathf.RoundToInt(Mathf.Clamp(min * 0.034f, 15f, 26f));
+        float barW = Mathf.Min(w * 0.94f, 1040f);
+        float panelH = head * 1.6f * 5.1f;
+        return new Rect((w - barW) * 0.5f, h - panelH - pad, barW, panelH);
+    }
+
     void Bar(int w, int h, int min, float pad)
     {
         float barW = Mathf.Min(w * 0.94f, 1040f);
@@ -418,7 +436,7 @@ public class LoadoutPanel : MonoBehaviour
         // 5.1, not 4.4: the reward column gained a line spelling out that the
         // sats are a stake, and at 4.4 that line landed on the ROLL OUT button.
         float panelH = lh * 5.1f;
-        var panel = new Rect((w - barW) * 0.5f, h - panelH - pad, barW, panelH);
+        var panel = BottomBarRect(w, h);
 
         GUI.color = new Color(0.03f, 0.04f, 0.06f, 0.86f);
         GUI.DrawTexture(panel, _flat);
