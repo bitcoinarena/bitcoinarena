@@ -1099,7 +1099,7 @@ const craterBase = (i) => O_CRATERS + Math.imul(i, C_WORDS);
  * last scoot, and role clock - rules/tactics.js reads and writes them. Appended, so no offset above moves.
  */
 const O_TACTICS = O_CRATERS + Math.imul(MAX_CRATERS, C_WORDS);
-const TACTICS_WORDS = 212;   // rules/tactics.js TAC_WORDS: 140 plus §11.3's 72 cover words
+const TACTICS_WORDS = 230;   // rules/tactics.js TAC_WORDS: 140, §11.3's 72 cover words, §11.5's 18 suppression words
 
 const WORDS = O_TACTICS + TACTICS_WORDS;
 
@@ -2142,6 +2142,10 @@ const RIFLE_HIT_PER_MIL = 45;        // 0.045 per shot
 // infantry. See test/vectors/csharp-army.json.
 const ARMOUR_WALK = 445645;      // 6.8 m/s
 const RIFLE_WALK = 182714;       // 2.788 m/s
+// §11.5: a pinned man crawls at 0.5 m/s - one sixth of a walk - toward his claimed place if he has one, else
+// toward his post. It is the SAME walk to the SAME target at a sixth of the pace, not a second movement path, and
+// at 0.0083 m a tick it sits under §11.4's 0.01 m step probe, so a pinned man is never STAND.
+const RIFLE_CRAWL = 32768;   // 0.5 m/s: 0.0083 m a tick
 
 // A rifleman's own pace, as a factor on that.
 //
@@ -2660,7 +2664,10 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, halfX, half
   // FIRE AND MOVEMENT (WAR_TACTICS.md §11.2): the halt clock is the FIRE TEAM's, handed in on `u.halted` by sim.js, so
   // four men rest and halt together. A caller that does not set it gets the man's own clock, as before.
   const still = !u.armour && (u.halted === undefined ? standingStill(index, tick | 0) : u.halted);
+  // §11.5: pinned beats the halt clock's zero and beats his own pace - he is going nowhere fast, but a man in the
+  // open still crawls toward cover rather than lying in the middle of it.
   const walk = u.armour ? ARMOUR_WALK
+             : u.pinned ? RIFLE_CRAWL
              : still ? 0 : mulFast(RIFLE_WALK, paceOf(index));
   // Each unit holds at its OWN distance, scattered about the mean.
   //
@@ -2996,7 +3003,7 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, halfX, half
   u.x = clamp(add(u.x, stepX), neg(min(ARMOUR_WEST, halfX)), min(ARMOUR_EAST, halfX));
   u.z = clamp(add(u.z, stepZ), -halfZ, halfZ);
 
-  // OUT OF THE CRATERS.
+  // OUT OF THE CRATERS - A TANK, AND ONLY A TANK.
   //
   // C# has this rule already and it is not the wrecks: `Army.AvoidWrecks`
   // (`Army.cs:533-552`) pushes a unit out of a circle along the radius by
@@ -3006,12 +3013,24 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, halfX, half
   // stay out; what is taken is the shape of the rule, not the feature whose
   // share of the gap measured zero.
   //
+  // THE 0.6 m MAN IS GONE (the owner 2026-09-19, and §11.3's own sentence: the
+  // push "no longer applies to a man; it still applies to a tank (3.2 m)").
+  // Both sizes were carried across together because they sat on one line in
+  // C#, and that was the leftover: C# wrote them when a man in a hole was a
+  // man in the way, and §11.3 overrules exactly that. Kept, the two rules
+  // fought every tick - a crater place sits 1 m INSIDE the rim (tactics.js
+  // COVER_RIM_IN) and the shove put him 0.6 m outside it, so the claim was
+  // held and the post was never reached: measured 802 crater claims held and
+  // 0 reached, 901 wreck claims held and 3 reached. A man is not a hull; he
+  // has no size here, and he lies in the bowl unhurt (fallout is the truck's,
+  // §10).
+  //
   // A push, not a steer. It is the same class as the map edge two lines above
   // and as `resolveSolids` for the truck: a place a unit may not be, resolved
   // after the step rather than negotiated before it. The TRUCK is deliberately
   // not here - it drives through the bowl, which step 3 measured it can.
-  if (craters) {
-    const size = u.armour ? Math.imul(3, ONE) + 13107 : 39322;   // 3.2 m, 0.6 m
+  if (craters && u.armour) {
+    const size = Math.imul(3, ONE) + 13107;                      // 3.2 m, the hull's
     for (let i = 0; i < craters.n; i++) {
       const c = Math.imul(i, 3);
       const R = craters.r[c + 2];
@@ -3687,7 +3706,48 @@ const COVER_NONE = 0xffff;
 const COVER_PLACE_MASK = 0xffff;
 const COVER_POSTURE_SHIFT = 16;            // §11.4's, reserved and unwritten here
 
-const TAC_WORDS = 212;
+/**
+ * §11.5 SUPPRESSION - one word per fire team, nine a side, appended after §11.3's cover words so nothing above
+ * moves. "+60 per round aimed at one of the team's living men (a rifle round, hit or miss; a coax burst, §4.4; a
+ * suppressing round), -1 per tick, clamped [0, 600]. Integers, written on the shooter's tick, read at the top of
+ * the next."
+ *
+ *   under fire   TAC_SUPP > 0        a round in the last second or so, decaying
+ *   pinned       TAC_SUPP >= 120     two rounds inside three seconds, or one heavy burst
+ *
+ * There is NOTHING TO PORT: `Army.cs` has no suppression, no pinning, no morale and no cower - zero occurrences of
+ * any of them. This is a declared GAP and the numbers below are this section's own.
+ */
+const TAC_SUPP = 212;
+const SUPP_WORDS = 18;
+const SUPP_ROUND = 60, SUPP_MAX = 600, SUPP_PINNED = 120;
+const SUPP_BOMB = 300;                      // §12.3's blast: after a bomb, everybody is down
+/** §11.5's own reach at an enemy MAN a rifleman cannot properly target. NOT `Army.cs`'s `CourierRange = 34f`,
+ *  which is the range at which a rifleman engages the TRUCK - a different quantity that happens to share a digit.
+ *  §8.1's 26 m rifle range is the one that genuinely agrees, and it stays where it is. */
+const SUPPRESS_REACH = Math.imul(34, ONE);
+/** §11.5: a shell landing inside 8 m of a man adds 60 to his team. This core's own number, in metres. */
+const SHELL_PIN_REACH = Math.imul(8, ONE);
+/** A pinned man crawls at 0.5 m/s. The gait lives with the other gaits in army.js (RIFLE_CRAWL) because this
+ *  module imports that one, not the other way round. §11.4's step probe is 0.01 m and a crawl step is 0.0083 m, so
+ *  a pinned man is never STAND by the number the core already has - there is no second crawl path. */
+
+const suppWord = (base, side, team) => (base + TAC_SUPP + (side < 0 ? team : FIRE_TEAMS_PER_SIDE + team)) | 0;
+const suppOf = (s, base, side, team) => s[suppWord(base, side, team)];
+const isPinned = (s, base, side, team) => s[suppWord(base, side, team)] >= SUPP_PINNED;
+const isUnderFire = (s, base, side, team) => s[suppWord(base, side, team)] > 0;
+/** A round lands on the team of the man it was aimed at. Clamped at 600 so a firefight cannot bank suppression. */
+function addSupp(s, base, side, team, amount) {
+  const w = suppWord(base, side, team);
+  const v = (s[w] + amount) | 0;
+  s[w] = v > SUPP_MAX ? SUPP_MAX : v;
+}
+/** -1 a tick, read at the top of the next tick (§11.5). Never below zero. */
+function decaySupp(s, base) {
+  for (let k = 0; k < SUPP_WORDS; k++) { const w = base + TAC_SUPP + k; if (s[w] > 0) s[w] = (s[w] - 1) | 0; }
+}
+
+const TAC_WORDS = 230;
 // [82] the round's open (§4.13 TAC_OPEN, in the tape's unit), [83] samples taken since init, [84] trend (+1 UP, -1 DOWN, 0
 // SIDEWAYS), [85] its strength 0-3, [86] lead (+1 BULLS, -1 BEARS, 0 FLAT), [87] the lead's momentum 0-3 (§4.14).
 const MK_OPEN = 0, MK_SAMPLES = 1, MK_TREND = 2, MK_STRENGTH = 3, MK_LEAD = 4, MK_MOMENTUM = 5;
@@ -3907,17 +3967,42 @@ function candleColour(open, close) {
 }
 
 /**
- * Re-read lead and trend from the tape (§4.14). A candle is two samples (open = the first, close = the second, §4.15's
- * bucket); the newest finished one ends at the newest sample when an even count of samples has been taken, else one
- * sample earlier. Green: close > open by 3 bp of the open or more; red: below by as much; else a doji, neither.
+ * THE COLOUR OF THE `c`th FINISHED CANDLE BACK, `c` = 0 the newest, counted from the tape index `end` that the newest
+ * finished candle closes on (`trendEnd` below).
+ *
+ * IT IS THE BODY THE PLAYER SEES, and until 2026-09-19 21:39 it was half of it (the owner,
+ * hud-sideways-five-red-2139.png: "SIDEWAYS is wrong - last five candles are RED"). A candle is TWO samples: §4.15's
+ * staircase opens each one on the previous candle's close (chart.js: `o = sample[a - 1]`, `c = sample[a + 1]`), and
+ * the world's bodies are built the same way (candles.js `candleLayout`). This read `tape[end - 2c - 1]` as the open -
+ * the sample in the MIDDLE of the candle, the one that draws its wick - so it graded the second half of each body and
+ * threw the first half away. Every body it scored was half the body on the screen.
+ *
+ * Measured (tools/measure-trend-vs-chart.mjs): a chart falling $5.20 a candle at $81,339 draws six red bodies and
+ * scored six bodies of $2.60. The doji band is $2.44, so a drawn body anywhere in ($2.44, $4.88] was RED on the
+ * screen and a DOJI to the trend - a factor of two wide, and the shot sits in it: five red candles, net 0, SIDEWAYS,
+ * and six dots that do not match the candles above them.
+ *
+ * The band is not what was wrong and does not move. One function now, used by the trend and by the HUD's six dots
+ * (chart.js), so the two cannot drift apart again.
+ */
+function trendCandle(tape, end, c) {
+  const close = end - Math.imul(c, 2);
+  return candleColour(tape[close - 2], tape[close]);
+}
+
+/** The tape index the newest FINISHED candle closes on: the newest sample on an even count, one earlier on an odd one
+ * (that one is still forming, §4.15's shift). */
+const trendEnd = (tape, count) => (tape.length - 1 - (count & 1)) | 0;
+
+/**
+ * Re-read lead and trend from the tape (§4.14). Six finished candles, newest first, each the body §4.15 draws.
+ * Green: close over open by more than the doji band; red: under by more than it; else a doji, neither.
  */
 function readMarket(s, base, tape) {
-  const last = tape.length - 1, count = s[base + TAC_MARKET + MK_SAMPLES];
-  const end = last - (count & 1);
+  const count = s[base + TAC_MARKET + MK_SAMPLES];
+  const last = tape.length - 1, end = trendEnd(tape, count);
   let net = 0;
-  for (let c = 0; c < 6; c++) {
-    net += candleColour(tape[end - Math.imul(c, 2) - 1], tape[end - Math.imul(c, 2)]);
-  }
+  for (let c = 0; c < 6; c++) net += trendCandle(tape, end, c);
   const a = net < 0 ? -net : net;
   s[base + TAC_MARKET + MK_TREND] = a < 2 ? 0 : (net > 0 ? 1 : -1);
   s[base + TAC_MARKET + MK_STRENGTH] = a < 2 ? 0 : a < 4 ? 1 : a < 6 ? 2 : 3;
@@ -4174,6 +4259,57 @@ const coverWord = (base, index) => (base + TAC_COVER + (index - idiv(index, 4) -
 const coverClaim = (s, base, index) => s[coverWord(base, index)] & COVER_PLACE_MASK;
 
 /**
+ * §11.4 POSTURE, in the high bits §11.3 reserved. Three values, derived and never chosen:
+ *
+ *   STAND  his OWN step this tick was over 0.01 m (x + z) - a rush leg, a walk to his post or his place, a column
+ *          walking in. A push is not a step: §8.3 stands a man 3 m off a hull after he has moved, and §3's
+ *          replacement is a column; neither is his own gait, and counting them would have inflated STAND by 20189
+ *          man-ticks on the line (measured).
+ *   COVER  within 0.5 m of the place he claims (§11.3), not stepping.
+ *   PRONE  everything else that did not step. "A halt is a firing halt, and it is fired from the ground."
+ *
+ * STAND is 0 so an unwritten word reads as the most exposed posture: a tick before the first write behaves exactly
+ * as the core did before this letter, and no golden moves for a reason other than the rule.
+ */
+const POSTURE_STAND = 0, POSTURE_PRONE = 1, POSTURE_COVER = 2;
+const POSTURE_MASK = 3;
+const coverPosture = (s, base, index) => (s[coverWord(base, index)] >>> COVER_POSTURE_SHIFT) & POSTURE_MASK;
+
+/**
+ * Set the CLAIM without touching the posture bits above it. The claim pass runs at the top of the infantry step
+ * and the posture pass at the end of the movement pass, with the rifle firing in between - so a claim written as
+ * a whole word wiped §11.4's posture to STAND (0) for exactly the men who had just taken a hole, and the rifle
+ * shot at them for the rest of that tick as if they were standing in the open. Measured as part of the 2.8% of
+ * man-ticks where the written word disagreed with the rule's own derivation.
+ */
+function setCoverClaim(s, base, index, place) {
+  const w = coverWord(base, index);
+  s[w] = ((s[w] & ~COVER_PLACE_MASK) | (place & COVER_PLACE_MASK)) | 0;
+}
+function setCoverPosture(s, base, index, posture) {
+  const w = coverWord(base, index);
+  s[w] = ((s[w] & ~(POSTURE_MASK << COVER_POSTURE_SHIFT)) | ((posture & POSTURE_MASK) << COVER_POSTURE_SHIFT)) | 0;
+}
+
+/**
+ * §11.4's worth: the rifle's threshold, and NOTHING about the draw. "The hit roll is one draw, `< 45` per mil; the
+ * threshold is what changes, the draw count never does, so the stream keeps its shape." A posture that added or
+ * skipped a draw would shift every golden and every replay.
+ *
+ * Half at a PRONE man and a quarter at a COVER man, as shifts of the value §4.14 has already adjusted - "posture
+ * multiplies after". At §4.14-neutral that is exactly the section's own 45 / 22 / 11 per mil, in per mil, and not
+ * a number carried over from C#, which has no posture at all and fires a flat 4.5% at everything.
+ */
+function rifleHitAt(hit, posture) {
+  if (posture === POSTURE_COVER) return hit >> 2;
+  if (posture === POSTURE_PRONE) return hit >> 1;
+  return hit;
+}
+
+/** §11.4: a bomb reaches a COVER man only inside 8 m; a PRONE or STAND man at the full 16 m as before. */
+const COVER_BOMB_REACH = Math.imul(8, ONE);
+
+/**
  * Is `place` one this man may take? §11.3: within 12 m of his POST - 18 m for the side the trend runs against -
  * inside his clamp, and not inside 3 m of a living tank. His post, not his position, "so a man does not wander to
  * cover".
@@ -4191,8 +4327,20 @@ function coverEligible(s, base, side, postX, postZ, seamZ, place, held = false) 
     if (abs(dx) > reach || abs(dz) > reach) return false;
     if (length2(dx, dz) > reach) return false;
   }
+  // THE CLAMP PICKS A HOLE; IT DOES NOT TAKE ONE BACK (the owner 2026-09-19, on the measurement below). The clamp
+  // `[seam - side x 40, seam + side x 8]` says which places a man may be SENT to. Applied again every tick to a
+  // claim he already holds, it takes the hole away from under him while he is still walking to it - and it does so
+  // by a hair. Measured on the §11.3 drive, two seeds: 106 clamp deaths, 105 of them breaking the FRONT bound, by
+  // a mean of 0.08 m and a p90 of 0.13 m, after the seam had walked a mean 5.45 m. The place itself does not move
+  // at all (0.00 m over eight seconds). At the moment the hole is taken he still has 35.3 m to cover - 12.6 s at
+  // his own gait - so he never arrives, and 91 of 151 lip claims and 15 of 60 wreck claims end that way.
+  //
+  // So a HELD claim is not re-clamped: he is given the walk. Everything else about a held claim is unchanged - the
+  // living-tank rule below still takes it (§0's fault list names "a man holds ... one inside 3 m of a living
+  // tank"), and `coverPlace` returning null still ends it when the wreck respawns or the crater expires. A tank is
+  // not here at all: §11.3 is the men's, and armour keeps its own push and clamp in army.js.
   const depth = Math.imul(sub(place.z, seamZ), side);                   // + is his own side of the seam
-  if (depth > CLAMP_FRONT || depth < -CLAMP_BACK) return false;
+  if (!held && (depth > CLAMP_FRONT || depth < -CLAMP_BACK)) return false;
   for (let i = 0; i < UNITS; i++) {
     if ((i & ARMOUR_MASK) !== 0) continue;
     const b = O_UNITS + Math.imul(i, U_WORDS);
@@ -4224,7 +4372,7 @@ function coverClaims(s, base, tick, postOfMan, seamAt, layout = null, shift = 0)
     for (let i = 0; i < UNITS; i++) {
       if ((i & ARMOUR_MASK) === 0) continue;                       // armour takes no cover: §11.3 is the men's
       const b = O_UNITS + Math.imul(i, U_WORDS);
-      if (s[b + U_STATE] === 0 || s[b + U_HP] <= 0) { s[coverWord(base, i)] = COVER_NONE; continue; }
+      if (s[b + U_STATE] === 0 || s[b + U_HP] <= 0) { setCoverClaim(s, base, i, COVER_NONE); continue; }
       if ((s[b + 2] < 0 ? -1 : 1) !== side) continue;
       order.push({ i, key: mix(hash, 600 + i) >>> 1 });
     }
@@ -4237,7 +4385,7 @@ function coverClaims(s, base, tick, postOfMan, seamAt, layout = null, shift = 0)
       const post = postOfMan(i);
       const place = coverPlace(s, held, side, layout, shift);
       if (place && coverEligible(s, base, side, post.x, post.z, seamAt(post.x) | 0, place, true)) taken.add(held);
-      else s[coverWord(base, i)] = COVER_NONE;
+      else setCoverClaim(s, base, i, COVER_NONE);
     }
     for (const { i } of order) {
       if (coverClaim(s, base, i) !== COVER_NONE) continue;           // keeps what it has
@@ -4253,7 +4401,7 @@ function coverClaims(s, base, tick, postOfMan, seamAt, layout = null, shift = 0)
         if (best === COVER_NONE || d < bestD) { best = id; bestD = d; }
       }
       if (best !== COVER_NONE) { taken.add(best); }
-      s[coverWord(base, i)] = best;
+      setCoverClaim(s, base, i, best);
     }
   }
 }
@@ -5251,6 +5399,31 @@ const HALF_Z = Math.imul(85, ONE);
 const CROWD_HOLD_RANGE = Math.imul(30, ONE);
 // A partner further than this from its post is still moving to it (the hull-down spot is within 4 m of the line).
 const WANTS_MOVE = Math.imul(2, ONE);            // off its hold by more than this, a tank on the line will move
+// §11.4: whether each man's OWN step this tick cleared 0.01 m, kept apart from every push that moves him after it
+const ownStepped = new Uint8Array(UNITS);
+// §11.5: which fire teams had a living man in a blast, so the 300 lands once per team and not once per man
+const blastTeams = new Uint8Array(FIRE_TEAMS_PER_SIDE * 2);
+/**
+ * §11.5: add one round's worth of suppression to every fire team with a living man inside `reach` of (x, z).
+ * ONCE PER TEAM, not once per man - the bomb was charged per man until 2026-09-20 and a team with two men in one
+ * blast was slammed to the clamp. Both shell paths and the blast go through here so they cannot drift apart.
+ */
+function pinTeamsWithin(s, x, z, reach, amount = SUPP_ROUND) {
+  blastTeams.fill(0);
+  for (let k = 0; k < UNITS; k++) {
+    if (isArmour(k)) continue;
+    const mb = unitBase(k);
+    if (s[mb + U_STATE] === 0 || s[mb + U_HP] <= 0) continue;
+    const dx = sub(s[mb + U_X], x), dz = sub(s[mb + U_Z], z);
+    if (abs(dx) > reach || abs(dz) > reach) continue;
+    if (length2(dx, dz) > reach) continue;
+    const rt = rifleTeamOf(k);
+    blastTeams[(rt.side < 0 ? 0 : FIRE_TEAMS_PER_SIDE) + rt.team] = 1;
+  }
+  for (let k = 0; k < blastTeams.length; k++)
+    if (blastTeams[k]) addSupp(s, O_TACTICS, k < FIRE_TEAMS_PER_SIDE ? -1 : 1, k % FIRE_TEAMS_PER_SIDE, amount);
+}
+const POSTURE_STEP = 655;                           // 0.01 m in Q16.16
 const SEP_MOVE = 1311;                              // 0.02 m: a separation push past this is a move (§0 row 2)
 const LINE_REACH = Math.imul(40, ONE);               // WAR_TACTICS.md §0: within 40 m of its post's depth, a tank is on the line
 const HALF_REST_TICKS = 210;                        // WAR_TACTICS.md §11.2 half of a mean 7 s rest
@@ -6284,10 +6457,24 @@ function detonate(s, bx, bz, truckMayBeHit) {
       s[O_TRUCK + T_HP] = max(0, sub(s[O_TRUCK + T_HP], div(hurt, TRUCK_ARMOUR)));
     }
   }
+  // §11.5: "A bomb blast adds 300 to every TEAM with a living man inside 16 m of it: after a bomb, everybody is
+  // down." ONCE PER TEAM, not once per man. It was added inside the kill loop below, so each man of a team inside
+  // the circle contributed his own 300 and a team with two men in one blast was slammed to the 600 clamp. By the
+  // decay that is 480 ticks (8.0 s) back under the pin line against 180 (3.0 s) from 300 - about three times the
+  // duration the section writes - on a path that opens a third of all pinned episodes.
+  //
+  // It is the BLAST, not the kill, so it is counted on the men who are alive when the bomb goes off and lands on
+  // the survivors too; that is why the scan runs before anything is removed.
+  pinTeamsWithin(s, bx, bz, BOMB_RADIUS, SUPP_BOMB);
+
   for (let i = 0; i < UNITS; i++) {
     if (isArmour(i)) continue;
     const b = unitBase(i);
-    if (blastReach(sub(s[b + U_X], bx), sub(s[b + U_Z], bz)) < 0) continue;
+    const d = blastReach(sub(s[b + U_X], bx), sub(s[b + U_Z], bz));
+    if (d < 0) continue;
+    // §11.4: "A bomb reaches a COVER man only inside 8 m; a PRONE or STAND man at 16 m as before. A wreck or a
+    // crater lip is what a bomb's splinters stop; the open is not." The blast is unchanged for everyone else.
+    if (coverPosture(s, O_TACTICS, i) === POSTURE_COVER && d >= COVER_BOMB_REACH) continue;
     s[b + U_HP] = 0;
     s[b + U_STATE] = 0;
   }
@@ -6687,6 +6874,10 @@ function step(st, throttle, steer, brake, handbrake, practice) {
       grantedBefore[low >> 2] = false; lineMoved[sd]--;
     }
   }
+  // §11.5: the suppression word decays by 1 a tick and is READ at the top of a tick, so the decay runs here -
+  // before the halt clocks that read it and before any round this tick adds to it.
+  decaySupp(s, O_TACTICS);
+
   // FIRE TEAMS (WAR_TACTICS.md §11.2): each side's nine four-man teams share one halt clock hashed from (seed, side,
   // team); odd teams run half a rest (210 ticks) behind, and a team does not halt in a tick its lower neighbour halts,
   // so of two neighbouring teams one is always moving while the other covers.
@@ -6695,7 +6886,10 @@ function step(st, throttle, steer, brake, handbrake, practice) {
     for (let f = 0; f < FIRE_TEAMS_PER_SIDE; f++) {
       const key = mix(s[O_TACTICS + TAC_SEED], 500 + Math.imul(sd, 16) + f) & 0x7fffffff;
       const raw = standingStill(key, (s[O_TICK] - ((f & 1) === 1 ? HALF_REST_TICKS : 0)) | 0);
-      halted[sd][f] = raw && !(f > 0 && halted[sd][f - 1]);
+      // §11.5: "A pinned fire team does not rush. Its clock keeps ticking, but a rest leg moves nobody." The
+      // bounding rule still holds for its neighbour, which is why the pin is applied AFTER the neighbour test -
+      // a pinned team is the one covering, from the ground, and it must not free its neighbour to halt as well.
+      halted[sd][f] = (raw && !(f > 0 && halted[sd][f - 1])) || isPinned(s, O_TACTICS, sd === 0 ? -1 : 1, f);
     }
   }
   for (let i = 0; i < UNITS; i++) {
@@ -6724,6 +6918,11 @@ function step(st, throttle, steer, brake, handbrake, practice) {
       // on one anchor. His squad is the one drawn at his spawn, kept in his U_TARGET - no draw moves.
       u.anchor = s[squadWord(u.side, s[unitBase(firstManOf(rt.side, rt.team)) + U_TARGET])];
       u.halted = halted[rt.side < 0 ? 0 : 1][rt.team];
+      // §11.5: a pinned man does not walk, he CRAWLS - toward his claimed place if he has one, else toward his
+      // post. It is the same walk to the same target at a sixth of the pace, not a second movement path, and at
+      // 0.0083 m a tick it sits under §11.4's 0.01 m step probe, so a pinned man is never STAND by the number the
+      // core already has.
+      u.pinned = isPinned(s, O_TACTICS, rt.side, rt.team);
       u.infPush = pushNear(s, O_TACTICS, rt.side, u.anchor);   // §12.1 follow the push of the tank lanes here
     }
 
@@ -6872,10 +7071,29 @@ function step(st, throttle, steer, brake, handbrake, practice) {
               const shell = add(COURIER_DAMAGE_MIN,
                     idiv(Math.imul(nextBelow(rng, 100), COURIER_DAMAGE_SPAN), 100));
               courierDmg = add(courierDmg, shellForHeat(shell, heat));
+              // §11.5 AGAIN, AND THE TRUCK IS NOT AN EXCEPTION. A shell that connects on the courier lands at the
+              // courier, and the section pins "a man" within 8 m of where a shell lands without asking what it was
+              // aimed at. It names the truck once, to keep a SUPPRESSING ROUND off it - the opposite case - which
+              // is how it says so when it means it. Missing this left men standing beside a truck under tank fire
+              // completely unsuppressed, and no drive could show it: the 180 s runs pass zero input, so the truck
+              // never rolls out and this branch never runs.
+              pinTeamsWithin(s, tx, tz, SHELL_PIN_REACH);
             } else {
               const hurt = add(DAMAGE_MIN, idiv(Math.imul(nextBelow(rng, 100), DAMAGE_SPAN), 100));
               s[fb + U_HP] = max(0, sub(s[fb + U_HP], hurt));
               if (s[fb + U_HP] === 0) s[fb + U_STATE] = 0;
+              // §11.5: "A shell that lands - hit or miss - inside 8 m of a man adds 60 to his team's word too; a
+              // tank's fire pins infantry, which is what infantry hides from." A CONNECTING shell lands on the
+              // hull it hit, and that position is already in the state, so the hit half needs no new word and no
+              // draw. The MISS half needs a landing point the core does not model - a gun shot connects or it
+              // does not - and waits on §4.4, which owns the shell.
+              //
+              // NOT PORTED FROM C#: `Army.cs:631` has an impact point, but it exists so the tracer does not lie
+              // and is handed to a RENDER hook that touches no infantry. Its miss scatter is `Rand(-5, 5)` on
+              // EACH axis, which is both the 2-D coupling this core rejects and two draws the core does not take.
+              //
+              // Once per TEAM with a living man in reach, as the bomb is - not once per man.
+              pinTeamsWithin(s, s[fb + U_X], s[fb + U_Z], SHELL_PIN_REACH);
             }
           }
           s[b + U_TARGET] = (RELOAD_MIN + nextBelow(rng, RELOAD_SPAN)) | 0;
@@ -6934,9 +7152,30 @@ function step(st, throttle, steer, brake, handbrake, practice) {
         // army.js:417-421 already had written down.
         const foe = pickRifleTarget(peekAt, UNITS, i, u.x, u.z, u.side);
         if (foe < 0) {
+          // §11.5 SUPPRESSING FIRE: no rifle target inside 26 m (§8.1), but a living enemy MAN inside 34 m - he
+          // fires at the nearest such man. It never hits and kills nobody; it adds 60 to that man's fire team.
+          // THE DRAW DOES NOT MOVE: this takes the look-again draw he was already taking and no other, so the
+          // stream shifts only in what the round does, never in how many numbers were pulled from it.
           s[b + U_COOLDOWN] = (RIFLE_LOOK_TICKS + nextBelow(rng, RIFLE_LOOK_TICKS_SPAN)) | 0;
+          let near = -1, nearD = SUPPRESS_REACH;
+          for (let j = 0; j < UNITS; j++) {
+            if (isArmour(j) || j === i) continue;
+            const jb = unitBase(j);
+            if (s[jb + U_STATE] === 0 || s[jb + U_HP] <= 0) continue;
+            if ((s[jb + U_SIDE] < 0) === (u.side < 0)) continue;
+            const dx = sub(s[jb + U_X], u.x), dz = sub(s[jb + U_Z], u.z);
+            if (abs(dx) > nearD || abs(dz) > nearD) continue;
+            const d = length2(dx, dz);
+            if (d < nearD) { nearD = d; near = j; }
+          }
+          // A suppressing round is NEVER fired at a truck (§8.2 stands): this scan sees men only.
+          if (near >= 0) { const rt2 = rifleTeamOf(near); addSupp(s, O_TACTICS, rt2.side, rt2.team, SUPP_ROUND); }
         } else {
-          s[b + U_COOLDOWN] = (RIFLE_RELOAD_TICKS + nextBelow(rng, RIFLE_RELOAD_TICKS_SPAN)) | 0;
+          // §11.5: a pinned man FIRES AT HALF RATE - "his reload draw is taken as always and its value doubled",
+          // so the draw count does not move here either; only what it buys him does.
+          const reload = (RIFLE_RELOAD_TICKS + nextBelow(rng, RIFLE_RELOAD_TICKS_SPAN)) | 0;
+          const rtSelf = rifleTeamOf(i);
+          s[b + U_COOLDOWN] = isPinned(s, O_TACTICS, rtSelf.side, rtSelf.team) ? Math.imul(reload, 2) : reload;
           const rollR = nextBelow(rng, 1000);    // §4.14: 45 +- 5 x strength at a man; the plain 45 at the truck
           const fb = unitBase(foe);
 
@@ -6963,7 +7202,17 @@ function step(st, throttle, steer, brake, handbrake, practice) {
                 toTruck, length2(sub(u.x, s[fb + U_X]), sub(u.z, s[fb + U_Z])), heatR);
           }
 
-          const connects = rollR < (onCourier ? RIFLE_HIT_PER_MIL : trendHit(s, O_TACTICS, u.side, RIFLE_HIT_PER_MIL, 5));
+          // §11.4: the threshold is the VICTIM's, not the shooter's - half at a PRONE man, a quarter at a COVER
+          // man, applied after §4.14 has had its say ("posture multiplies after"). `rollR` is drawn above and is
+          // still one draw: the roll never moves, only the number it is compared against, so the stream keeps its
+          // shape and every golden that changes does so because a man was harder to hit and for no other reason.
+          // The truck is not a man and has no posture: a courier shot is unchanged.
+          // §11.5: "+60 per round aimed at one of the team's living men - a rifle round, HIT OR MISS". Added
+          // before the roll is judged, because it is the round that suppresses and not the wound. A round at the
+          // truck is not a round at a man and adds nothing.
+          if (!onCourier && !isArmour(foe)) { const rtFoe = rifleTeamOf(foe); addSupp(s, O_TACTICS, rtFoe.side, rtFoe.team, SUPP_ROUND); }
+          const connects = rollR < (onCourier ? RIFLE_HIT_PER_MIL
+            : rifleHitAt(trendHit(s, O_TACTICS, u.side, RIFLE_HIT_PER_MIL, 5), coverPosture(s, O_TACTICS, foe)));
           if (connects) {
             // Rand(1.5, 3.5) at the truck, one point at a man. Drawn in
             // hundredths like every other damage in this file, so it is one
@@ -6993,6 +7242,9 @@ function step(st, throttle, steer, brake, handbrake, practice) {
       u.cooldown = ((u.x !== s[b + U_X] || u.z !== s[b + U_Z]) ? 1 : 0) | (granted ? 64 : 0) | (stoodOnPost[i >> 2] ? 128 : 0)
         | (u.tac ? (u.reverseMemory & ~193) : 0);
     }
+    // §11.4's STAND is HIS OWN step, read here where the step is his and nothing has pushed him yet: §8.3's
+    // hull clearance and the truck's clear-out both move a man AFTER this, and a shove is not a step.
+    if (!isArmour(i)) ownStepped[i] = (abs(sub(u.x, s[b + U_X])) + abs(sub(u.z, s[b + U_Z]))) > POSTURE_STEP ? 1 : 0;
     s[b + U_X] = u.x; s[b + U_Z] = u.z;
     s[b + U_HEADING] = u.heading; s[b + U_COOLDOWN] = u.cooldown;
   }
@@ -7127,6 +7379,37 @@ function step(st, throttle, steer, brake, handbrake, practice) {
       s[mb + U_X] = add(s[tb + U_X], div(mulFast(dx, HULL_CLEAR), d));
       s[mb + U_Z] = add(s[tb + U_Z], div(mulFast(dz, HULL_CLEAR), d));
     }
+  }
+
+  // §11.4 POSTURE, written into the high bits §11.3 reserved in TAC_COVER. Last thing in the movement pass, after
+  // §8.3's hull clearance and the truck's clear-out, so the man's final position decides COVER while his OWN step
+  // (captured at his write-back) decides STAND. Derived, never chosen; no draw is taken and no word grows.
+  //
+  // The rifle reads this word as it stands when it fires, which is the posture he held through the PREVIOUS tick.
+  // That is deliberate: men fire and move in the same pass, so reading a posture written mid-pass would make the
+  // outcome depend on unit order. A tick's lag is the price of an order-independent rule, and every node pays it
+  // identically.
+  for (let i = 0; i < UNITS; i++) {
+    if (isArmour(i)) continue;
+    const b = unitBase(i);
+    if (s[b + U_STATE] === 0 || s[b + U_HP] <= 0) { setCoverPosture(s, O_TACTICS, i, POSTURE_STAND); continue; }
+    // §11.5, and §0's row in its own words: "a pinned man is NEVER STAND". The crawl is 0.5 m/s on EACH axis, so a
+    // man crawling on a diagonal spends 0.00833 m in x and the same in z - 0.0167 m of |dx| + |dz|, over §11.4's
+    // 0.01 m probe - and the probe called him standing. Measured before this line: 106402 of 133536 pinned
+    // man-ticks were written STAND, four ticks in five. The cap stays PER AXIS so a pinned man on a diagonal still
+    // crawls rather than being slowed to a half-step; what changes is that the pose writer reads the pin, which is
+    // what the row asks for. A crawling man is PRONE, or COVER once he is on his place.
+    const rtP = rifleTeamOf(i);
+    const pinnedHere = isPinned(s, O_TACTICS, rtP.side, rtP.team);
+    if (ownStepped[i] && !pinnedHere) { setCoverPosture(s, O_TACTICS, i, POSTURE_STAND); continue; }
+    const id = coverClaim(s, O_TACTICS, i);
+    let onPlace = false;
+    if (id !== COVER_NONE) {
+      const p = coverPlace(s, id, s[b + U_SIDE] < 0 ? -1 : 1,
+                           st.candles && !st.noCandleField ? st.candles : null, st.candleShift | 0);
+      if (p) onPlace = length2(sub(s[b + U_X], p.x), sub(s[b + U_Z], p.z)) <= COVER_ON;
+    }
+    setCoverPosture(s, O_TACTICS, i, onPlace ? POSTURE_COVER : POSTURE_PRONE);
   }
 
   // ---- 3. score ----------------------------------------------------------
@@ -7331,10 +7614,13 @@ function chartView(st, range, out) {
   const bp = idiv(abs(open), 10000);
   out[CH_LEAD_BP] = bp > 0 ? idiv((last - open) | 0, bp) : 0;
   // The six candles the trend is read from (§4.14), newest in bits 0-1: 1 green, 2 red, 0 doji.
+  // THE SAME FUNCTION THE TREND USES (tactics.js `trendCandle`), not a second copy of the indexing: this held its own
+  // copy, and when the copy graded half a body so did the dots - which is why the owner's 21:39 shot had six dots that
+  // disagreed with the five red candles drawn above them on the same HUD.
   let dots = 0;
-  const end = LAST - (count & 1);
+  const end = trendEnd(st.tape, count);
   for (let c = 0; c < 6; c++) {
-    const col = candleColour(st.tape[end - Math.imul(c, 2) - 1], st.tape[end - Math.imul(c, 2)]);
+    const col = trendCandle(st.tape, end, c);
     dots |= (col > 0 ? 1 : col < 0 ? 2 : 0) << Math.imul(c, 2);
   }
   out[CH_DOTS] = dots;

@@ -890,6 +890,7 @@ public class ArmyRenderer : MonoBehaviour
                       + $"closest pair {(closest < float.MaxValue ? closest.ToString("F2") : "n/a")} m");
 
         int bull = 0, bear = 0;
+        _downDrawn = 0;                     // per frame, like bull and bear above it
         for (int i = 0; i < Blwp.Layout.UNITS; i++)
         {
             if (Blwp.BlwpCore.UnitIsArmour(i) || !Blwp.BlwpCore.UnitAlive(i)) continue;
@@ -908,6 +909,7 @@ public class ArmyRenderer : MonoBehaviour
             // nothing. It READS those words and poses from them; it decides nothing and writes nothing back.
             int posture = Blwp.BlwpCore.UnitPosture(i);
             bool down = posture != Blwp.Layout.POSTURE_STAND;
+            if (down) _downDrawn++;
 
             // A small bob, so a line of infantry does not read as fenceposts.
             // Derived from the tick and the slot, NOT from a gait the core
@@ -967,9 +969,19 @@ public class ArmyRenderer : MonoBehaviour
             _lastDrawn = drawn;
             Debug.Log($"[render] drew {drawn} units from the core");
         }
+        // §11.4/§11.5, and for the same reason the line above exists: a screenshot cannot isolate the army, but a
+        // count can. This says how many of the men just placed were laid on the ground because the core has them
+        // PRONE or COVER. It decides nothing and only reports what the loop above did.
+        if (_downDrawn != _lastDownDrawn)
+        {
+            _lastDownDrawn = _downDrawn;
+            Debug.Log($"[render] {_downDrawn} of {bull + bear} men drawn DOWN from the core's posture word");
+        }
     }
 
     int _lastDrawn = -1;
+    /// <summary>§11.4/§11.5: how many men the last frame laid on the ground. Instrumentation only.</summary>
+    int _downDrawn, _lastDownDrawn = -1;
 
     /// <summary>The combat mixer, found once. Only ever told what the core did.</summary>
     public GameAudio audio;
