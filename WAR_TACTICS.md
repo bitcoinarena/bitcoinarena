@@ -1832,8 +1832,14 @@ A round at a man 26 to 34 m off: never hits, pins his team.
 - A wreck's places survive the tick its id respawns; a crater's the tick it expires; a dead man's claim
   survives his death tick (§11.3).
 - A man is pushed out of a crater by the `AvoidWrecks` rule, or a tank is not (§11.3).
-- A man's claim, posture or suppression word differs between the truck parked and the truck driven
-  through the line, seed equal (§8.2, §11.3-§11.5).
+- A man's claim or posture differs between the truck parked and the truck driven through the line, seed
+  equal (§8.2, §11.3, §11.4). His suppression word must not differ either - EXCEPT for a team sitting
+  inside the pin radius of a shell that CONNECTED ON THE TRUCK (§11.5). RULED 2026-09-20: §11.5 pins a
+  man within 8 m of where a shell lands and never asks what it was aimed at, and a connect on the cab
+  is an impact at a point like a connect on a hull. That is the geography of a blast, not the war
+  reading the truck: the truck has no suppression word of its own, posture still never reads it
+  (§11.4), and a suppressing round is still never fired at it (§11.5). The exception names §11.5 so
+  these two sentences cannot drift apart again.
 - A man who stepped is PRONE or COVER, or a man who did not step is STAND (§11.4).
 - The rifle's hit roll is taken a different number of times, or a shot at a PRONE man connects on a roll
   of 22 or more, or at a COVER man on 11 or more, or at a STAND man misses on a roll under 45 (§11.4).
