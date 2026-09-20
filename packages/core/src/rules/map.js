@@ -62,7 +62,7 @@ export const EDGE_HIGH = 1703936;        //   26 m of blocker above the kerb
 export const EDGE_SUNK = 393216;         //    6 m of it below the ground
 
 /** How many boxes the map has, so a caller can size a buffer. */
-export const MAP_BOXES = 82;   // 37 map boxes + 41 for the miner's corridor + 4 for the two coin stacks
+export const MAP_BOXES = 106;  // 37 map + 41 miner corridor + 4 coin stacks + 24 post office mouths
 
 /**
  * The map's solids for a world, as the six words a box carries:
@@ -118,6 +118,27 @@ export function mapSolids(ground, halfX, halfZ, reliefHalfX = halfX) {
   put(shellX, add(lastEdge, endHalf), half(WALL_DEPTH), endHalf, postLow, postHigh);
   // Over every mouth.
   put(shellX, 0, half(WALL_DEPTH), SHELL_HALF, add(postG, MOUTH_HIGH), postHigh);
+
+  // AND ACROSS EVERY MOUTH, WHICH WAS A HOLE RIGHT THROUGH THE BUILDING (the owner 2026-09-20 18:59,
+  // photographed: "the truck must not drive through that building ... Mempool collision must be exactly the
+  // yellow marked line on the facade").
+  //
+  // The wall above was pillars BETWEEN the mouths and a lintel OVER them, so each bay mouth stood open from the
+  // ground to MOUTH_HIGH - 2.5 m of clear half-width and 9.2 m of clear height, twenty-four times. MEASURED:
+  // the truck spawns at START_X -100.40, z 10.20, which is bay 13's own centre, so driving WEST it went
+  // straight out through the back of the post office and across the whole map to x -180.22, the west map edge.
+  // It never touched the building at all.
+  //
+  // These close the mouths on the SAME PLANE as the rest of the shell - shellX, half(WALL_DEPTH) - so the face
+  // a truck meets is the wall's own east face at POST_X, which is where the yellow marks stand: every part
+  // drawn in `bumper_guard_yellow` on this facade, the `port_guard_post_*` at each mouth, spans x -114.95 to
+  // -113.94. The line is not moved and the box is neither in front of it nor behind it.
+  //
+  // THE BAY IS STILL DRIVEABLE AND THE SPAWN DOES NOT MOVE: a run leaves the bay EASTWARD, and the spawn at
+  // x -100.40 stands 14 m east of this plane, outside the wall by more than the truck's own 6.35 m length.
+  for (let i = 0; i < 24; i++)
+    put(shellX, add(FIRST_PORT_Z, Math.imul(PORT_PITCH, i)), half(WALL_DEPTH), MOUTH_HALF,
+        postLow, add(postG, MOUTH_HIGH));
 
   // ---- THE MINER ----------------------------------------------------------
   //

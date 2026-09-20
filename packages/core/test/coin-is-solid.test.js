@@ -19,10 +19,12 @@ import { init, step, teleport } from '../src/sim.js';
 import { O_TRUCK, T_X, T_Z, O_SCORE, S_STATE } from '../src/state.js';
 import { RUN_DELIVERED } from '../src/rules/gate.js';
 import { MINER_X, MINER_MOUTH_HALF } from '../src/rules/map.js';
+import { START_X } from '../src/sim.js';
+import { BODY_FRONT, BODY_REAR, BODY_RADIUS } from '../src/rules/solids.js';
 
 const ONE = 65536, M = (q) => q / ONE;
 const NORTH = 0, SOUTH = 32768;                   // heading is turns: 0 is +z, a half turn is -z
-const EAST = 16384;
+const EAST = 16384, WEST = 49152;
 const COIN_N = 59.4, COIN_S = -59.4, COIN_X = 183;
 
 /** Full throttle from a placed pose, until it stops moving or runs out of ticks. */
@@ -76,4 +78,37 @@ test('the coin boxes stand clear of the gate and of the mouth (§do not grow the
     `the coin stack starts at x 173.6, which is west of the gate at ${M(MINER_X)} - it would cover the finish`);
   assert.ok(40.6 > M(MINER_MOUTH_HALF),
     `the coin stack starts at |z| 40.6, inside the ${M(MINER_MOUTH_HALF)} m mouth - it would narrow the way in`);
+});
+
+// ---------------------------------------------------------------- THE MEMPOOL FACADE
+//
+// THE BAY MOUTHS WERE HOLES RIGHT THROUGH THE POST OFFICE (the owner 2026-09-20 18:59, photographed: the truck
+// among the facade pillars). The shell was pillars BETWEEN the mouths and a lintel OVER them, so each mouth
+// stood open from the ground to 9.2 m. The truck spawns at START_X -100.40, z 10.20 - bay 13's own centre - so
+// driving WEST it went straight out of the back of the building and across the map to x -180.22, the west edge.
+//
+// The mouths are closed on the shell's own plane now, so the face a truck meets is the wall's east face at
+// POST_X -114.40. That is where the yellow marks stand: every part drawn in `bumper_guard_yellow` on this
+// facade, the `port_guard_post_*` at each mouth, spans x -114.95 .. -113.94. The line did not move.
+
+test('driving WEST from the spawn stops on the yellow line, not inside the building (§mempool facade)', () => {
+  const LINE = -114.40, POST_W = -114.95, POST_E = -113.94;
+  for (const z of [10.2, 3.4, -5.0, 30.0, -78.2]) {
+    const st = init(1);
+    const end = drive(st, M(START_X), z, WEST, 'x');
+    const nose = end.x - M(BODY_FRONT) - M(BODY_RADIUS);
+    assert.ok(nose > -120,
+      `at z ${z} the truck went through the post office to x ${end.x.toFixed(2)} (nose ${nose.toFixed(2)}) - the mouth is a hole`);
+    assert.ok(nose >= POST_W && nose <= POST_E + 0.6,
+      `at z ${z} the nose stopped at ${nose.toFixed(2)}, off the yellow marks at ${POST_W} .. ${POST_E}`);
+    assert.ok(Math.abs(nose - LINE) < 0.05,
+      `at z ${z} the nose stopped at ${nose.toFixed(2)}, not on the wall face ${LINE}`);
+  }
+});
+
+test('the spawn is still outside the wall, by more than the truck is long (§bay stays driveable)', () => {
+  const clear = M(START_X) - (-114.40);
+  const length = M(BODY_FRONT) - M(BODY_REAR) + 2 * M(BODY_RADIUS);
+  assert.ok(clear > length,
+    `the truck spawns ${clear.toFixed(2)} m east of the wall and is ${length.toFixed(2)} m long - it would start inside it`);
 });

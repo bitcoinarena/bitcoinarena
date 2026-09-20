@@ -432,7 +432,16 @@ test('a hill costs the core what it costs Unity', async () => {
     const st = init(1);
     clearTheField(st);
     assert.ok(setGround(st, COLS, ROWS, heights), 'the relief was refused');
-    st.i32[O + T_X] = Math.round(ref.startX * Q);
+    // THE RUN-UP STARTS OUTSIDE THE POST OFFICE, which the recording's own -120 no longer is.
+    //
+    // `physx-hills.json` was recorded when every bay mouth stood open from the ground to the lintel, so a truck
+    // could sit at x -120 on bay 0's lane - inside the shell - and drive out through the back of the building.
+    // That hole is what the owner photographed on 2026-09-20 18:59 and it is closed now, so -120 is inside a wall
+    // and the truck cannot move at all. The ASSERTIONS below are untouched: they compare core against the
+    // recording at x -110 .. 110 by world x, and both sides are sampled the same way. Only the run-up moved, to
+    // the first metre east of the wall face at POST_X -114.40 that fits the truck's own 6.35 m length.
+    const WALL_FACE = -114.40, CLEAR = 3.6;
+    st.i32[O + T_X] = Math.round(Math.max(ref.startX, WALL_FACE + CLEAR) * Q);
     // The recorded relief varies with x only, so the recorded line is laid on the bay 0 lane: off the chart band, where
     // the surface is the recorded relief to 0.000 m (on the recording's own lane z -20 the band flattens it by 4.995 m).
     st.i32[O + T_Z] = OFF_CHART_LANE;
