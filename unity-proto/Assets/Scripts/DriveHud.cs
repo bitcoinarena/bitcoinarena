@@ -1838,18 +1838,37 @@ public class DriveHud : MonoBehaviour
     public static float AssaultBannerFont(int w, int h) => Mathf.Round(Mathf.Clamp(Mathf.Min(w, h) * 0.046f, 18f, 40f));
 
     /// <summary>
-    /// THE DESKTOP ASSAULT LOG, under the banner (the owner 2026-09-20 16:26: "a small desktop-only debug log under
-    /// the HUD, clock times ... Not on phone. Do not overlap the $ price").
+    /// THE DESKTOP ASSAULT LOG, ON THE LEFT HUD STACK UNDER SIM (the owner 2026-09-20 16:26 for the log itself, and
+    /// 2026-09-20 18:0x for where it goes: "Left column. Under SIM, left-aligned, small font, same six assault
+    /// lines, colour still by side. Not the right column - that edge already carries WANTED and the touch
+    /// buttons, and the road has to stay clear").
     ///
-    /// Six lines of the small font in the headline gap. It starts below the banner's reserved row, so the lowest
-    /// thing it can touch is whatever is under the headline stack - never the price, which is two rows above the
-    /// clock.
+    /// IT WAS IN THE MIDDLE OF THE SCREEN AND THE ROAD IS THE GAME. Written first into the headline gap under the
+    /// block clock, it cleared the price as asked and then sat centred over the road the player is driving down -
+    /// photographed on Daily 0.0.1835. The left column is where the game's own switches already live: BLOCK,
+    /// CONDITION, DANGER, PRACTICE, SIM, and now this under them, on the same left edge and the same small font.
+    ///
+    /// The BANNER does not move. It is the loud thing and it is meant to be in front of the player; only the log,
+    /// which is a debug line, goes to the edge.
     /// </summary>
     public Rect AssaultLogBox(int w, int h)
     {
-        var banner = AssaultBannerBox(w, h);
-        return new Rect(banner.x, banner.yMax + h * 0.008f, banner.width, SmallFont(w, h) * 1.45f * AssaultWatch.Keep);
+        var sim = SimBox(w, h);
+        float lh = SmallFont(w, h) * 1.45f;
+        float top = sim.yMax + Mathf.Max(8f, h * 0.014f);
+        float height = lh * AssaultWatch.Keep;
+
+        // AND IT STAYS ON THE SCREEN. The left column already shrinks its switches when the room runs out
+        // (PracticeBox), so on a short window this can still be handed a top with less than six lines under it.
+        // It gives up lines from the TOP - the oldest - rather than running off the bottom edge.
+        float room = h - Mathf.Max(10f, h * 0.025f) - top;
+        if (height > room) height = Mathf.Max(lh, room);
+        return new Rect(sim.x, top, Mathf.Max(sim.width, Mathf.Min(w * 0.30f, 330f)), height);
     }
+
+    /// <summary>How many of the kept lines actually fit in the box, newest first when the column is short.</summary>
+    public int AssaultLogLines(int w, int h)
+        => Mathf.Clamp(Mathf.FloorToInt(AssaultLogBox(w, h).height / (SmallFont(w, h) * 1.45f)), 0, AssaultWatch.Keep);
 
     /// <summary>
     /// The IRRADIATED warning, in the gap for the reason UNDER FIRE is.
@@ -2385,14 +2404,16 @@ public class DriveHud : MonoBehaviour
         if (watch == null || watch.Log.Count == 0) return;
         var box = AssaultLogBox(w, h);
         float lh = SmallFont(w, h) * 1.45f;
-        var style = new GUIStyle(_small) { alignment = TextAnchor.UpperCenter };
-        for (int i = 0; i < watch.Log.Count; i++)
+        var style = new GUIStyle(_small) { alignment = TextAnchor.UpperLeft };
+        int room = AssaultLogLines(w, h);
+        int first = Mathf.Max(0, watch.Log.Count - room);          // the newest that fit, oldest dropped
+        for (int i = first; i < watch.Log.Count; i++)
         {
             var line = watch.Log[i];
             // The oldest lines fade rather than vanish, so the log reads newest-at-the-bottom at a glance.
             float fade = watch.Log.Count <= 1 ? 1f : 0.45f + 0.55f * i / (watch.Log.Count - 1);
             var c = line.Side == 0 ? Up : Down;
-            Shadowed(new Rect(box.x, box.y + i * lh, box.width, lh), line.Text, style,
+            Shadowed(new Rect(box.x, box.y + (i - first) * lh, box.width, lh), line.Text, style,
                      new Color(c.r, c.g, c.b, fade));
         }
     }
