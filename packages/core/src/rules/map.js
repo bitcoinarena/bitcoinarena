@@ -62,7 +62,7 @@ export const EDGE_HIGH = 1703936;        //   26 m of blocker above the kerb
 export const EDGE_SUNK = 393216;         //    6 m of it below the ground
 
 /** How many boxes the map has, so a caller can size a buffer. */
-export const MAP_BOXES = 78;   // 37 map boxes + 41 for the miner's corridor
+export const MAP_BOXES = 82;   // 37 map boxes + 41 for the miner's corridor + 4 for the two coin stacks
 
 /**
  * The map's solids for a world, as the six words a box carries:
@@ -208,6 +208,30 @@ export function mapSolids(ground, halfX, halfZ, reliefHalfX = halfX) {
     [170.10, -37.00, 1.30, 3.00, -0.43, 11.72],   // tunnel_jamb_r
     [169.35, 37.50, 0.35, 0.55, 2.72, 40.52],   // seam_v_3
     [169.35, -37.50, 0.35, 0.55, 2.72, 40.52],   // seam_v_9
+
+    // THE GOLD COIN STACKS (the owner 2026-09-20 18:56, photographed twice: "the gold coin construct at the miner
+    // blocks the finish ... the truck must not clip through this construct from either side"). They were left
+    // out of the corridor letter by ruling - "the coin beside the lane stays out" - and being drawn-but-unsolid
+    // is exactly what a player then drives into and through.
+    //
+    // Measured off the .glb through DeliveryGate's own turn and (1, 0.45, 1) height scale: two stacks, each a
+    // wide low plinth with four coin tiers on it.
+    //
+    //   coin_stack_plinth_l/r   x 173.6 .. 192.4   y 0.02 .. 0.65   |z| 40.6 .. 59.4
+    //   coin_stack_*_0          x 176.0 .. 190.0   y 0.07 .. 0.79   |z| 43.0 .. 57.0
+    //   coin_stack_*_3          x 177.5 .. 188.5   y 2.36 .. 3.08   |z| 44.5 .. 55.5
+    //
+    // The plinth is the footprint and the tiers are the height, so one box each is enough to stop a truck from
+    // any side: the plinth's own 0.02..0.65 m already overlaps the body, which rides from 0.36 m.
+    //
+    // THEY DO NOT GROW OVER THE GATE, and that is the whole care of this change. The delivery gate stands at
+    // MINER_X 169 on the centre line and the mouth is MINER_MOUTH_HALF 40 m either side of it; these start at
+    // x 173.6, which is PAST the gate, and at |z| 40.6, which is 0.6 m OUTSIDE the mouth. Nothing on the
+    // centre line moves and the run-in is untouched - `coin-is-solid.test.js` drives all three cases.
+    [183.00, 50.00, 9.40, 9.40, 0.02, 0.65],   // coin_stack_plinth_l
+    [183.00, -50.00, 9.40, 9.40, 0.02, 0.65],   // coin_stack_plinth_r
+    [183.00, 50.00, 7.00, 7.00, 0.07, 3.08],   // coin_stack_l_0 .. _3
+    [183.00, -50.00, 7.00, 7.00, 0.07, 3.08],   // coin_stack_r_0 .. _3
   ];
   const minerBase = groundAt(MINER_X, 0);
   for (const [cx, cz, hx, hz, y0, y1] of corridor)
