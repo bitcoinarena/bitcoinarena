@@ -2,8 +2,11 @@
 // measured on the tree that is deployed today, and the answer to the owner's own question: how many of today's
 // deaths happen where a place would have existed.
 //
-// §11.3 is a declared GAP - no TAC_COVER word, no places, no claims - so "is anyone on a place" is expected to be
-// nil. The numbers that decide what this letter is worth are the other two:
+// WRITTEN WHEN §11.3 WAS A DECLARED GAP - no TAC_COVER word, no places, no claims - so "is anyone on a place" was
+// expected to be nil and this tool computed the places itself to size what the letter could be worth. §11.3 has
+// been closed since cf0cb8b4: the core now holds the word, the places and the claims, so the "on a place" number
+// below is the real thing and no longer a picture of a gap. The tool still computes places independently, which
+// is what makes it a check on the core rather than a copy of it. The numbers that sized the letter were:
 //
 //   1. of the men killed BY FIRE, the share that had a free place within 12 m when they died
 //   2. of all ticks, the share on which a place existed at all within 12 m of a living man
@@ -139,4 +142,6 @@ console.log(`  places standing, mean per tick             ${(placeTicks / Math.m
 console.log(`  ticks with a place within ${REACH} m of a POST     ${ticksWithPlaceAtPost} of ${ticks}  (${pc(ticksWithPlaceAtPost, ticks)})   <- the row's own denominator`);
 console.log(`  man-ticks holding a claim                  ${claimTicks} of ${manTicks}  (${pc(claimTicks, manTicks)})`);
 console.log(`\n  §0's row wants a man on a place on >= 70% of the ticks where one is free within 12 m of a post.`);
-console.log(`  The core has no places and no claims, so the "on a place" number is what the GAP looks like.`);
+console.log(`  §11.3 has been closed since cf0cb8b4 - the core holds the word, the places and the claims - so the`);
+console.log(`  "on a place" number above is the real occupancy, not a picture of a gap. This tool still works the`);
+console.log(`  places out for itself, which is what keeps it a check on the core rather than a copy of it.`);
