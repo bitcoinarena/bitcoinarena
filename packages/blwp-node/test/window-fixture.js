@@ -4,6 +4,11 @@
 // keys the test holds. Moved here unchanged, except that a contract can name
 // publication relays.
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
+// THE RUN LENGTH IS THE CORE'S (2026-09-20). This fixture said 9000 and the core has ended a run at 10800
+// since c01cc655 ("a round is three minutes"). `Round.open` refuses a contract that disagrees with the core
+// it names, so every round built here was 400 at `POST /round` and every suite below it died before a stake
+// was dealt - twenty-three of them. A fixture must not carry its own copy of a number the core owns.
+import { BLOCK_TICKS as RUN_TICKS } from '../../core/src/rules/gate.js';
 import assert from 'node:assert/strict';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -103,7 +108,7 @@ export const contractFor = (nodes, objectionWindowMs, publicationRelays = []) =>
   slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays, donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n,
   randomnessRule: 'bitcoin-block-hash', stakeMsat: STAKE, bondMinSats: 50000n,
-  blockTicks: 9000, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
+  blockTicks: RUN_TICKS, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
   timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4, nodes,
 });
 
