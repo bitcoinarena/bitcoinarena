@@ -48,7 +48,6 @@ const REAL_FEES = { ppm: 0n, baseMsat: 1000n };
 
 async function lockRound({ minScore = 1, stakeMsat = STAKE } = {}) {
   const port = lockPort();
-  port.feeRule = REAL_FEES;
   const mk = () => serve(openStore(':memory:'), { port: 0, ...opts, stakeLocks: port, poolCurve: curve, finality: { everyMs: 100 } });
   const a = await mk();
   const b = await mk();
@@ -73,7 +72,10 @@ async function lockRound({ minScore = 1, stakeMsat = STAKE } = {}) {
   return { a, b, c, rid, port, claimPk: held.pool.groupPublicKey, close: async () => { await a.close(); await b.close(); } };
 }
 
-async function lockAndPlay(w, who, { feeLock = false, feeFirst = false } = {}) {
+// `feeLock` DEFAULTS TO TRUE (2026-09-21): on a federation that charges no base fee this round's gate mints
+// fee locks at every size measured, so an entry that brings none is refused at the door - which is pick (a)
+// working, not a failure. A test that is ABOUT that refusal builds its own entry below.
+async function lockAndPlay(w, who, { feeLock = true, feeFirst = false } = {}) {
   const session = ed25519.utils.randomSecretKey();
   const preimage = secretScalar();
   const e = rand(32);
@@ -167,7 +169,16 @@ async function joinWithout(w, who, { namesFeeLock }) {
 }
 
 const standing = async (d, w) => (await fetch(`http://127.0.0.1:${d.port}/lock-settlement?round=${toHex(w.rid)}`)).json();
-const closeRound = (w) => Promise.all([say(w.a.port, `close ${toHex(w.rid)}`), say(w.b.port, `close ${toHex(w.rid)}`)]);
+// FEDIMINTD'S MEASURED DEFAULT ARRIVES WITH THE CLOSE (2026-09-21), not with the round. The settlement
+// arithmetic this suite is about is still run against `REAL_FEES` - 1000 msat base, measured on fedimintd
+// 0.12.0 - but a round is no longer OPENED against a federation §22A forbids, so the node's own
+// `disable_base_fees` guard no longer refuses every entry before this suite can test anything. Every entry is
+// in by the time a round closes, so this is the first moment the real rule can apply without the door seeing
+// an illegal federation.
+const closeRound = (w) => {
+  w.port.feeRule = REAL_FEES;
+  return Promise.all([say(w.a.port, `close ${toHex(w.rid)}`), say(w.b.port, `close ${toHex(w.rid)}`)]);
+};
 async function untilSettled(w, ms = 30000) {
   let got;
   for (const stop = Date.now() + ms; Date.now() < stop; await wait(250)) {
@@ -255,7 +266,6 @@ test('the signer nodes list the rounds they settled since a time with the keys e
 async function lockRoundOnDisk() {
   const dir = mkdtempSync(join(tmpdir(), 'w6-'));
   const port = lockPort();
-  port.feeRule = REAL_FEES;
   const death = { mode: 'none' };
   const sent = [];
   const dying = (name) => ({ ...port, async settle(args) {

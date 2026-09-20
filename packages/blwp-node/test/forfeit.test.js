@@ -92,17 +92,26 @@ async function lockAndPlay(w, who) {
     ephemeralSecret: e, ephemeralPubkey: feldmanGroup.pointX(e), coefficients: [scalarFrom32(rand(32)) % FIELD], needed: 2, curve: feldmanGroup });
   assert.equal(dealt.ok, true, dealt.why);
   const outpoint = { txid: rand(32), outIdx: 0n };
+  // AND IT BRINGS ITS FEE LOCK (2026-09-21). The fixture's federation is legal now - no base fee - so this
+  // round's gate mints fee locks, and §23.1/pick (a)'s door refuses an entry that names none. That is the
+  // production shape: a staked entry arrives with the 2% already locked to H(F). Nothing about the forfeit
+  // changes; the stake lock below is still the one this suite is about.
+  const feeSecret = rand(32);
+  const feeOutpoint = { txid: rand(32), outIdx: 1n };
   const entry = {
     roundId: w.rid, playerPubkey: who.key, sessionPubkey: ed25519.getPublicKey(session),
     stakeCommitment: sha256(preimage), stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE), donationMsat: 0n,
     joinTick: 0, worldSecret: who.worldSecret, vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0],
-    feePreimage: new Uint8Array(32), stakeLockOutpoint: outpoint, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n },
+    feePreimage: feeSecret, stakeLockOutpoint: outpoint, feeLockOutpoint: feeOutpoint,
     claimKeyAttestationRef: b32(0x9a),
   };
   const eid = entryId(entry);
   const fields = { paymentImage: { kind: 'point', bytes: entry.stakePoint }, amountMsat: netStakeMsat(entry), claimPk: w.claimPk,
     refundPk: refundKeyOf(who.key), expiration: w.port.height + 200 };
   await w.port.put(outpoint, fields);
+  const feeFields = { paymentImage: { kind: 'hash', bytes: sha256(feeSecret) }, amountMsat: entry.feeMsat,
+    claimPk: w.claimPk, refundPk: refundKeyOf(who.key), expiration: w.port.height + 200 };
+  await w.port.put(feeOutpoint, feeFields);
   const input = { roundId: w.rid, entryId: eid, previousHash: GENESIS_HASH, firstTick: 0,
     ticks: Array.from({ length: who.ticks }, (_, t) => wordsAt(t)), liquidations: [] };
   const st = init(seedWordForEntry(entry, RANDOMNESS));
@@ -118,10 +127,12 @@ async function lockAndPlay(w, who) {
     assert.equal(joined.status, 201, await joined.text());
     const locked = await fetch(`${base}/lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(fields)) });
     assert.equal(locked.status, 201, await locked.text());
+    const fee = await fetch(`${base}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(feeFields)) });
+    assert.equal(fee.status, 201, await fee.text());
     assert.equal(await say(d.port, encodeInputBatch(input)), String(who.ticks));
     assert.equal((await say(d.port, signedMark)).length, SIGNED_RECEIPT_BYTES);
   }
-  return { eid, entry, fields, outpoint };
+  return { eid, entry, fields, outpoint, feeOutpoint };
 }
 
 const ask = async (d, w, eid) => {
