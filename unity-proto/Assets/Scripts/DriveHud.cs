@@ -1858,6 +1858,21 @@ public class DriveHud : MonoBehaviour
         float top = sim.yMax + Mathf.Max(8f, h * 0.014f);
         float height = lh * AssaultWatch.Keep;
 
+        // IN THE BAY IT STEPS BELOW THE CARGO PANEL, the same move `RunStoppedBox` makes and for the same
+        // reason: IMGUI gives the driving HUD a depth BEHIND the loading window, so a box that overlaps the
+        // panel is not a faint box, it is no box at all. The left column above is the panel's while it is open.
+        if (loadout != null && loadout.IsOpen && loadout.yard != null)
+        {
+            float below = loadout.yard.PanelRect(w, h).yMax + Mathf.Max(6f, h * 0.010f);
+            if (below > top) top = below;
+            // AND IT STOPS ABOVE THE CAPACITY BAR. At 1280x800 the panel ends at 408 and the bar starts at
+            // 570, so the column has 162 px - five lines, not six. The log keeps the NEWEST lines when it is
+            // short (`AssaultLogLines` drops from the top), which is the half that matters: the line the
+            // player has not read yet.
+            float floorY = loadout.BottomBarRect(w, h).y - Mathf.Max(4f, h * 0.006f);
+            if (floorY - top < height) height = Mathf.Max(lh, floorY - top);
+        }
+
         // AND IT STAYS ON THE SCREEN. The left column already shrinks its switches when the room runs out
         // (PracticeBox), so on a short window this can still be handed a top with less than six lines under it.
         // It gives up lines from the TOP - the oldest - rather than running off the bottom edge.
@@ -2957,6 +2972,13 @@ public class DriveHud : MonoBehaviour
             // with the same VOID and the line plainly there. The SAME draw is called here; `RunStoppedBox` steps
             // below the cargo panel so it has somewhere to be.
             DrawRunStopped(w, h);
+            // AND WHAT THE WAR SAID, for exactly the reason `DrawRunStopped` is here (2026-09-21, measured).
+            // This branch returned before `DrawAssaultLog` ever ran, so a declaration made while the player was
+            // choosing cargo was not covered by the panel - it was never drawn. Over four rounds on Daily
+            // 0.0.1842, 8 of 12 declarations were made with the bay open and the player was told about 0 of
+            // them; every one of the 5 whose armour was actually inside the camera's field was a bay one.
+            // `AssaultLogBox` steps below the cargo panel so it has somewhere to be.
+            DrawAssaultLog(w, h);
             return;
         }
 
