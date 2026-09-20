@@ -736,3 +736,88 @@ test('a wreck that respawns stops being a crest, and moves no tank before the ne
     }
   }
 });
+
+// §11.5's SHELL CLAUSE ON THE COURIER PATH. "A shell that lands - hit or miss - inside 8 m of a man adds 60 to
+// his team's word too." The section excludes the truck from the SUPPRESSING ROUND and from nothing else, so a tank
+// shell that happens to connect on the courier still lands in the ground beside whoever is standing there.
+//
+// THIS CASE CANNOT BE REACHED BY THE 180 s DRIVES: they pass zero input, the truck never rolls out, `rolledOut`
+// stays false and `onCourier` is never true. It has to be constructed.
+//
+// AND THE FIELD HAS TO BE CLEARED, or the test proves nothing. Written first with the men simply stood next to the
+// truck in the middle of the line, it PASSED WITHOUT THE RULE - the same men were inside 8 m of other tanks taking
+// shells and inside rifle range of the enemy, so +60 arrived from somewhere else every time. Here everything is
+// removed except the one firing tank, one distant foe to give its gun a target it will pass over for the truck,
+// and four men of one team: then the only thing that can lift their word is the shell that lands on the courier.
+test('a tank shell that connects on the courier pins the fire teams standing around it (§11.5)', async () => {
+  const { teleport } = await import('../src/sim.js');
+  const { APRON_RADIUS } = await import('../src/rules/score.js');
+  const { START_X } = await import('../src/sim.js');
+  const isMan = (i) => (i & L.ARMOUR_MASK) !== 0;
+  let sawConnect = false, pinnedSomeone = false, rises = [];
+
+  for (const seedWord of [1, 2, 3]) {
+    const st = init(seedWord), s = st.i32;
+    for (let t = 0; t < 900; t++) step(st, ONE, 0, 0, 0, 0);
+
+    // one living tank to fire, one living enemy tank far away to be its nominal target
+    let tank = -1, foe = -1;
+    for (let j = 0; j < L.UNITS; j += 4) {
+      const b = L.O_UNITS + j * L.U_WORDS;
+      if (s[b + L.U_STATE] === 0 || s[b + L.U_HP] <= 0) continue;
+      if (tank < 0) { tank = j; continue; }
+      if (foe < 0 && (s[b + L.U_SIDE] < 0) !== (s[L.O_UNITS + tank * L.U_WORDS + L.U_SIDE] < 0)) { foe = j; break; }
+    }
+    assert.ok(tank >= 0 && foe >= 0, 'need a tank and an enemy tank');
+    const tb = L.O_UNITS + tank * L.U_WORDS, fb = L.O_UNITS + foe * L.U_WORDS;
+
+    // four men of the firing tank's own side, and NOTHING else alive
+    const team = [];
+    for (let i = 0; i < L.UNITS; i++) {
+      if (!isMan(i)) continue;
+      const mb = L.O_UNITS + i * L.U_WORDS;
+      if (team.length < 4 && s[mb + L.U_STATE] !== 0 && s[mb + L.U_HP] > 0
+          && (s[mb + L.U_SIDE] < 0) === (s[tb + L.U_SIDE] < 0)) { team.push(i); continue; }
+      s[mb + L.U_STATE] = 0; s[mb + L.U_HP] = 0;
+    }
+    for (let j = 0; j < L.UNITS; j += 4) {
+      if (j === tank || j === foe) continue;
+      const b = L.O_UNITS + j * L.U_WORDS;
+      s[b + L.U_STATE] = 0; s[b + L.U_HP] = 0;
+    }
+    assert.equal(team.length, 4, 'need four men of the firing side');
+    // the foe well out of the way, so the gun prefers the truck at six metres
+    s[fb + L.U_X] = s[tb + L.U_X] + Math.imul(40, ONE);
+
+    for (let t = 0; t < 900 && !pinnedSomeone; t++) {
+      s[L.O_SCORE + L.S_BESTX] = START_X + APRON_RADIUS + ONE;      // latched as rolled out
+      teleport(st, s[tb + L.U_X] + Math.imul(6, ONE), s[tb + L.U_Z], 0);
+      s[L.O_TRUCK + L.T_HP] = ONE * 100;                            // it must survive being shot at
+      for (const i of team) {
+        const mb = L.O_UNITS + i * L.U_WORDS;
+        s[mb + L.U_X] = s[L.O_TRUCK + L.T_X] + Math.imul(2, ONE);
+        s[mb + L.U_Z] = s[L.O_TRUCK + L.T_Z] + Math.imul(2, ONE);
+      }
+      const rt0 = T.rifleTeamOf(team[0]);
+      const before = T.suppOf(s, L.O_TACTICS, rt0.side, rt0.team);
+      const hpBefore = s[L.O_TRUCK + L.T_HP];
+
+      step(st, ONE, 0, 0, 0, 0);
+
+      if (s[L.O_TRUCK + L.T_HP] < hpBefore) {
+        sawConnect = true;
+        const after = T.suppOf(s, L.O_TACTICS, rt0.side, rt0.team);
+        rises.push(after - before);
+        // EXACTLY ONE SHELL'S WORTH. Latching `rolledOut` also lets the gunships fly, and a blast is +300, so
+        // "the word went up" is not evidence: only a rise of one SUPP_ROUND, less the tick's own decay, can have
+        // come from the shell that just landed on the courier.
+        if (after - before === T.SUPP_ROUND - 1 || after - before === T.SUPP_ROUND) pinnedSomeone = true;
+      }
+    }
+    if (pinnedSomeone) break;
+  }
+
+  assert.ok(sawConnect, 'no shell ever connected on the courier, so the branch was never exercised');
+  assert.ok(pinnedSomeone,
+    `a shell connected on the courier and no team within 8 m of it took the pin word (§11.5); rises seen: ${rises.join(',')}`);
+});

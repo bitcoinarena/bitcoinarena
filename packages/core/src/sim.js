@@ -150,6 +150,26 @@ const WANTS_MOVE = Math.imul(2, ONE);            // off its hold by more than th
 const ownStepped = new Uint8Array(UNITS);
 // §11.5: which fire teams had a living man in a blast, so the 300 lands once per team and not once per man
 const blastTeams = new Uint8Array(FIRE_TEAMS_PER_SIDE * 2);
+/**
+ * §11.5: add one round's worth of suppression to every fire team with a living man inside `reach` of (x, z).
+ * ONCE PER TEAM, not once per man - the bomb was charged per man until 2026-09-20 and a team with two men in one
+ * blast was slammed to the clamp. Both shell paths and the blast go through here so they cannot drift apart.
+ */
+function pinTeamsWithin(s, x, z, reach, amount = SUPP_ROUND) {
+  blastTeams.fill(0);
+  for (let k = 0; k < UNITS; k++) {
+    if (isArmour(k)) continue;
+    const mb = unitBase(k);
+    if (s[mb + U_STATE] === 0 || s[mb + U_HP] <= 0) continue;
+    const dx = sub(s[mb + U_X], x), dz = sub(s[mb + U_Z], z);
+    if (abs(dx) > reach || abs(dz) > reach) continue;
+    if (length2(dx, dz) > reach) continue;
+    const rt = rifleTeamOf(k);
+    blastTeams[(rt.side < 0 ? 0 : FIRE_TEAMS_PER_SIDE) + rt.team] = 1;
+  }
+  for (let k = 0; k < blastTeams.length; k++)
+    if (blastTeams[k]) addSupp(s, O_TACTICS, k < FIRE_TEAMS_PER_SIDE ? -1 : 1, k % FIRE_TEAMS_PER_SIDE, amount);
+}
 const POSTURE_STEP = 655;                           // 0.01 m in Q16.16
 const SEP_MOVE = 1311;                              // 0.02 m: a separation push past this is a move (§0 row 2)
 const LINE_REACH = Math.imul(40, ONE);               // WAR_TACTICS.md §0: within 40 m of its post's depth, a tank is on the line
@@ -1192,17 +1212,7 @@ function detonate(s, bx, bz, truckMayBeHit) {
   //
   // It is the BLAST, not the kill, so it is counted on the men who are alive when the bomb goes off and lands on
   // the survivors too; that is why the scan runs before anything is removed.
-  blastTeams.fill(0);
-  for (let i = 0; i < UNITS; i++) {
-    if (isArmour(i)) continue;
-    const b = unitBase(i);
-    if (s[b + U_STATE] === 0 || s[b + U_HP] <= 0) continue;
-    if (blastReach(sub(s[b + U_X], bx), sub(s[b + U_Z], bz)) < 0) continue;
-    const rtB = rifleTeamOf(i);
-    blastTeams[(rtB.side < 0 ? 0 : FIRE_TEAMS_PER_SIDE) + rtB.team] = 1;
-  }
-  for (let k = 0; k < blastTeams.length; k++)
-    if (blastTeams[k]) addSupp(s, O_TACTICS, k < FIRE_TEAMS_PER_SIDE ? -1 : 1, k % FIRE_TEAMS_PER_SIDE, SUPP_BOMB);
+  pinTeamsWithin(s, bx, bz, BOMB_RADIUS, SUPP_BOMB);
 
   for (let i = 0; i < UNITS; i++) {
     if (isArmour(i)) continue;
@@ -1808,6 +1818,13 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
               const shell = add(COURIER_DAMAGE_MIN,
                     idiv(Math.imul(nextBelow(rng, 100), COURIER_DAMAGE_SPAN), 100));
               courierDmg = add(courierDmg, shellForHeat(shell, heat));
+              // §11.5 AGAIN, AND THE TRUCK IS NOT AN EXCEPTION. A shell that connects on the courier lands at the
+              // courier, and the section pins "a man" within 8 m of where a shell lands without asking what it was
+              // aimed at. It names the truck once, to keep a SUPPRESSING ROUND off it - the opposite case - which
+              // is how it says so when it means it. Missing this left men standing beside a truck under tank fire
+              // completely unsuppressed, and no drive could show it: the 180 s runs pass zero input, so the truck
+              // never rolls out and this branch never runs.
+              pinTeamsWithin(s, tx, tz, SHELL_PIN_REACH);
             } else {
               const hurt = add(DAMAGE_MIN, idiv(Math.imul(nextBelow(rng, 100), DAMAGE_SPAN), 100));
               s[fb + U_HP] = max(0, sub(s[fb + U_HP], hurt));
@@ -1823,19 +1840,7 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
               // EACH axis, which is both the 2-D coupling this core rejects and two draws the core does not take.
               //
               // Once per TEAM with a living man in reach, as the bomb is - not once per man.
-              blastTeams.fill(0);
-              for (let k = 0; k < UNITS; k++) {
-                if (isArmour(k)) continue;
-                const mb2 = unitBase(k);
-                if (s[mb2 + U_STATE] === 0 || s[mb2 + U_HP] <= 0) continue;
-                const sdx = sub(s[mb2 + U_X], s[fb + U_X]), sdz = sub(s[mb2 + U_Z], s[fb + U_Z]);
-                if (abs(sdx) > SHELL_PIN_REACH || abs(sdz) > SHELL_PIN_REACH) continue;
-                if (length2(sdx, sdz) > SHELL_PIN_REACH) continue;
-                const rtS = rifleTeamOf(k);
-                blastTeams[(rtS.side < 0 ? 0 : FIRE_TEAMS_PER_SIDE) + rtS.team] = 1;
-              }
-              for (let k = 0; k < blastTeams.length; k++)
-                if (blastTeams[k]) addSupp(s, O_TACTICS, k < FIRE_TEAMS_PER_SIDE ? -1 : 1, k % FIRE_TEAMS_PER_SIDE, SUPP_ROUND);
+              pinTeamsWithin(s, s[fb + U_X], s[fb + U_Z], SHELL_PIN_REACH);
             }
           }
           s[b + U_TARGET] = (RELOAD_MIN + nextBelow(rng, RELOAD_SPAN)) | 0;
