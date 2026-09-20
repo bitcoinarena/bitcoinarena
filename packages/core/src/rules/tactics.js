@@ -99,6 +99,8 @@ export const SUPP_BOMB = 300;                      // §12.3's blast: after a bo
  *  which is the range at which a rifleman engages the TRUCK - a different quantity that happens to share a digit.
  *  §8.1's 26 m rifle range is the one that genuinely agrees, and it stays where it is. */
 export const SUPPRESS_REACH = Math.imul(34, ONE);
+/** §11.5: a shell landing inside 8 m of a man adds 60 to his team. This core's own number, in metres. */
+export const SHELL_PIN_REACH = Math.imul(8, ONE);
 /** A pinned man crawls at 0.5 m/s. The gait lives with the other gaits in army.js (RIFLE_CRAWL) because this
  *  module imports that one, not the other way round. §11.4's step probe is 0.01 m and a crawl step is 0.0083 m, so
  *  a pinned man is never STAND by the number the core already has - there is no second crawl path. */

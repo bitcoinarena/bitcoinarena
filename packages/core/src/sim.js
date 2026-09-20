@@ -37,7 +37,7 @@ import { vehicleStep } from './rules/vehicle.js';
 import { flatGround, groundFromSeed, gradeAlong, heightAtWorld, DEFAULT_COLS, DEFAULT_ROWS } from './rules/ground.js';
 import { noSolids, resolveSolids, resolveArmour, BOX_WORDS } from './rules/solids.js';
 import { initTactics, postOf, scoot, onRespawn, enterInLane, pressure, partnerOf, FORWARD_LINE, rifleTeamOf, pushNear, mix, FIRE_TEAMS_PER_SIDE, TAC_SEED, firstManOf, initObjectives, objectiveHolders, clearOnEntry, holdLegs, onPost, updateCrests, crestHold, initMarket, readMarket, trendHit, supplyOf, TAC_MARKET, MK_OPEN, MK_SAMPLES, MK_SAMPLE_TICK, MK_PREV_LO, MK_PREV_HI, MK_PREV_OLDEST, coverClaims, coverPostOf, COVER_ON, coverClaim, coverPlace, coverPosture, setCoverPosture, rifleHitAt,
-  TAC_SUPP, decaySupp, addSupp, isPinned, SUPP_ROUND, SUPP_BOMB, SUPPRESS_REACH,
+  TAC_SUPP, decaySupp, addSupp, isPinned, SUPP_ROUND, SUPP_BOMB, SUPPRESS_REACH, SHELL_PIN_REACH,
   POSTURE_STAND, POSTURE_PRONE, POSTURE_COVER, COVER_BOMB_REACH, COVER_NONE } from './rules/tactics.js';
 import { mapSolids } from './rules/map.js';
 import { CANDLES, CL_WORDS, candleLayout, candleHeightAt, writeCandleView, levelled } from './rules/candles.js';
@@ -1812,6 +1812,30 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
               const hurt = add(DAMAGE_MIN, idiv(Math.imul(nextBelow(rng, 100), DAMAGE_SPAN), 100));
               s[fb + U_HP] = max(0, sub(s[fb + U_HP], hurt));
               if (s[fb + U_HP] === 0) s[fb + U_STATE] = 0;
+              // §11.5: "A shell that lands - hit or miss - inside 8 m of a man adds 60 to his team's word too; a
+              // tank's fire pins infantry, which is what infantry hides from." A CONNECTING shell lands on the
+              // hull it hit, and that position is already in the state, so the hit half needs no new word and no
+              // draw. The MISS half needs a landing point the core does not model - a gun shot connects or it
+              // does not - and waits on §4.4, which owns the shell.
+              //
+              // NOT PORTED FROM C#: `Army.cs:631` has an impact point, but it exists so the tracer does not lie
+              // and is handed to a RENDER hook that touches no infantry. Its miss scatter is `Rand(-5, 5)` on
+              // EACH axis, which is both the 2-D coupling this core rejects and two draws the core does not take.
+              //
+              // Once per TEAM with a living man in reach, as the bomb is - not once per man.
+              blastTeams.fill(0);
+              for (let k = 0; k < UNITS; k++) {
+                if (isArmour(k)) continue;
+                const mb2 = unitBase(k);
+                if (s[mb2 + U_STATE] === 0 || s[mb2 + U_HP] <= 0) continue;
+                const sdx = sub(s[mb2 + U_X], s[fb + U_X]), sdz = sub(s[mb2 + U_Z], s[fb + U_Z]);
+                if (abs(sdx) > SHELL_PIN_REACH || abs(sdz) > SHELL_PIN_REACH) continue;
+                if (length2(sdx, sdz) > SHELL_PIN_REACH) continue;
+                const rtS = rifleTeamOf(k);
+                blastTeams[(rtS.side < 0 ? 0 : FIRE_TEAMS_PER_SIDE) + rtS.team] = 1;
+              }
+              for (let k = 0; k < blastTeams.length; k++)
+                if (blastTeams[k]) addSupp(s, O_TACTICS, k < FIRE_TEAMS_PER_SIDE ? -1 : 1, k % FIRE_TEAMS_PER_SIDE, SUPP_ROUND);
             }
           }
           s[b + U_TARGET] = (RELOAD_MIN + nextBelow(rng, RELOAD_SPAN)) | 0;
