@@ -78,7 +78,7 @@ import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../protocol/src/po
 import { federationIsBonded } from '../../protocol/src/federation.js';
 import { installedCores, coreForRound } from './cores.js';
 import { SIGNED_RERUN_BYTES } from '../../protocol/src/rerun.js';
-import { verifyStakeLock, verifyFeeLock, lockFieldsFromJson, roundMintsFees } from './stake-lock-signer-node.js';
+import { verifyStakeLock, verifyFeeLock, lockFieldsFromJson, roundMintsFees, federationTakesNoBaseFee } from './stake-lock-signer-node.js';
 import { encodeClaimKeyAttestation, claimKeyAttestationId } from '../../protocol/src/claim-key.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { splitSlashEvidence, slashProofId, SLASH_EVIDENCE_BYTES } from '../../protocol/src/slash.js';
@@ -2040,6 +2040,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             let gate;
             try { gate = await roundMintsFees({ contract: rc, port: stakeLocks }); }
             catch (e) { return text(res, 503, `this node could not read the federation's fee rule, so it takes no entry in a round that may mint fee locks: ${e.message}`); }
+            // AND THE FEDERATION MUST CHARGE NO BASE FEE (FEDERATION.md item 4; §22A: "Fedimint's own base
+            // fees are 0: the federation runs with disable_base_fees"). A base fee comes out of every input
+            // and output of the round's locks - the players' own pool - so it is money taken from a stake
+            // somebody committed, for nothing the round asked for. `page-lock.js` refuses to lock against
+            // such a federation; this is the same refusal on the node, so no entry is taken either.
+            // An unknown rule is not a base fee, and is not refused here.
+            let noBase = { ok: true };
+            try { noBase = federationTakesNoBaseFee({ fees: stakeLocks && typeof stakeLocks.fees === 'function' ? await stakeLocks.fees() : null }); }
+            catch (e) { return text(res, 503, `this node could not read the federation's fee rule: ${e.message}`); }
+            if (!noBase.ok) return text(res, 409, `this node takes no entry in that round: ${noBase.why}`);
             const namesNone = contract.feeLockOutpoint.txid.every((x) => x === 0) || contract.feePreimage.every((x) => x === 0);
             if (gate.mints && namesNone)
               return text(res, 409, `this round mints fee locks (${gate.why}): an entry that brings no fee lock is not taken - `
