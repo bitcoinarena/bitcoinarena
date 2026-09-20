@@ -1961,7 +1961,7 @@ const EDGE_HIGH = 1703936;        //   26 m of blocker above the kerb
 const EDGE_SUNK = 393216;         //    6 m of it below the ground
 
 /** How many boxes the map has, so a caller can size a buffer. */
-const MAP_BOXES = 37;
+const MAP_BOXES = 78;   // 37 map boxes + 41 for the miner's corridor
 
 /**
  * The map's solids for a world, as the six words a box carries:
@@ -2041,6 +2041,77 @@ function mapSolids(ground, halfX, halfZ, reliefHalfX = halfX) {
   const tunnelHigh = add(minerG, MINER_MOUTH_HIGH);
   put(tunnelX, sub(0, tunnelZ), Math.imul(14, ONE), Math.imul(2, ONE), tunnelLow, tunnelHigh);
   put(tunnelX, tunnelZ, Math.imul(14, ONE), Math.imul(2, ONE), tunnelLow, tunnelHigh);
+
+  // ---- THE MINER'S CORRIDOR ------------------------------------------------
+  //
+  // MEASURED 2026-09-20: 452 of the miner's 904 drawn parts carried no box at all, 46 of them standing in the
+  // entry corridor below a truck's height, and a truck driven down the lane passed 1.27 m - its FULL body
+  // radius, through the middle and not a graze - through five of them on every one of five approaches. The five
+  // boxes above are the facade and the tunnel's outer walls; they leave the corridor itself unlined, which is
+  // why a tank can stand in a drawn cable.
+  //
+  // These are those parts, read from the model through Unity's own 180-degree turn and (1, 0.45, 1) scale and
+  // written here in the units the core keeps. They are NOT a mesh collider and nothing was copied from the C#:
+  // DeliveryGate's five Slab() calls still build the five above, and that agreement is left exactly as it was.
+  //
+  // WHAT IS DELIBERATELY ABSENT, and it is a ruling rather than an oversight (the owner 2026-09-20):
+  //   mass_behind_tunnel         hangs from y 2.7 m across the whole approach while the truck's body is 3.26 m,
+  //                              so its roof passes 0.56 m through it. The delivery gate is at x 169, PAST that
+  //                              mass at x 119..145, so a solid there closes the only route to the miner. The
+  //                              ceiling is passable BY RULING, and the 0.56 m is Unity's (1, 0.45, 1) height
+  //                              scale rather than a missing slab. Raising the miner is a later item.
+  //   tunnel_end_backglow, tunnel_grid_h_0 and _h_1, tunnel_grid_v_5/6/7, btc_medallion_tunnel_end
+  //                              the same thing at the tunnel mouth: measured, these seven span the driving lane
+  //                              at truck height, and the gate is beyond them. A box on any of them closes the
+  //                              route as surely as the mass does. Nothing solid stands within 6 m of the centre
+  //                              line at truck height, so the run-in is always open.
+  const corridor = [
+    [114.57, 28.28, 6.18, 5.91, 0.08, 9.32],   // power_cable_0
+    [114.62, -28.35, 6.18, 5.25, 0.09, 9.36],   // power_cable_1
+    [145.40, 31.00, 0.60, 0.55, 0.25, 9.70],   // tunnel_grid_v_0
+    [145.40, 25.80, 0.60, 0.55, 0.25, 9.70],   // tunnel_grid_v_1
+    [145.40, 20.60, 0.60, 0.55, 0.25, 9.70],   // tunnel_grid_v_2
+    [145.40, 15.40, 0.60, 0.55, 0.25, 9.70],   // tunnel_grid_v_3
+    [145.40, 10.20, 0.60, 0.55, 0.25, 9.70],   // tunnel_grid_v_4
+    [145.40, -10.60, 0.60, 0.55, 0.25, 9.70],   // tunnel_grid_v_8
+    [145.40, -15.80, 0.60, 0.55, 0.25, 9.70],   // tunnel_grid_v_9
+    [145.40, -21.00, 0.60, 0.55, 0.25, 9.70],   // tunnel_grid_v_10
+    [145.40, -26.20, 0.60, 0.55, 0.25, 9.70],   // tunnel_grid_v_11
+    [145.40, -31.40, 0.60, 0.55, 0.25, 9.70],   // tunnel_grid_v_12
+    [145.40, 0.00, 0.60, 33.00, 3.55, 4.05],   // tunnel_grid_h_1
+    [145.40, 0.00, 0.60, 33.00, 5.98, 6.48],   // tunnel_grid_h_2
+    [145.40, 0.00, 0.60, 33.00, 8.41, 8.91],   // tunnel_grid_h_3
+    [157.00, 35.20, 12.00, 1.20, 0.02, 9.92],   // tunnel_wall_l
+    [157.00, -35.20, 12.00, 1.20, 0.02, 9.92],   // tunnel_wall_r
+    [146.65, 33.40, 0.70, 0.60, 0.25, 9.70],   // tunnel_rib_l_9
+    [146.65, -33.40, 0.70, 0.60, 0.25, 9.70],   // tunnel_rib_r_9
+    [149.00, 33.40, 0.70, 0.60, 0.25, 9.70],   // tunnel_rib_l_8
+    [149.00, -33.40, 0.70, 0.60, 0.25, 9.70],   // tunnel_rib_r_8
+    [151.35, 33.40, 0.70, 0.60, 0.25, 9.70],   // tunnel_rib_l_7
+    [151.35, -33.40, 0.70, 0.60, 0.25, 9.70],   // tunnel_rib_r_7
+    [153.70, 33.40, 0.70, 0.60, 0.25, 9.70],   // tunnel_rib_l_6
+    [153.70, -33.40, 0.70, 0.60, 0.25, 9.70],   // tunnel_rib_r_6
+    [156.05, 33.40, 0.70, 0.60, 0.25, 9.70],   // tunnel_rib_l_5
+    [156.05, -33.40, 0.70, 0.60, 0.25, 9.70],   // tunnel_rib_r_5
+    [158.40, 33.40, 0.70, 0.60, 0.25, 9.70],   // tunnel_rib_l_4
+    [158.40, -33.40, 0.70, 0.60, 0.25, 9.70],   // tunnel_rib_r_4
+    [160.75, 33.40, 0.70, 0.60, 0.25, 9.70],   // tunnel_rib_l_3
+    [160.75, -33.40, 0.70, 0.60, 0.25, 9.70],   // tunnel_rib_r_3
+    [163.10, 33.40, 0.70, 0.60, 0.25, 9.70],   // tunnel_rib_l_2
+    [163.10, -33.40, 0.70, 0.60, 0.25, 9.70],   // tunnel_rib_r_2
+    [165.45, 33.40, 0.70, 0.60, 0.25, 9.70],   // tunnel_rib_l_1
+    [165.45, -33.40, 0.70, 0.60, 0.25, 9.70],   // tunnel_rib_r_1
+    [167.80, 33.40, 0.70, 0.60, 0.25, 9.70],   // tunnel_rib_l_0
+    [167.80, -33.40, 0.70, 0.60, 0.25, 9.70],   // tunnel_rib_r_0
+    [170.10, 37.00, 1.30, 3.00, -0.43, 11.72],   // tunnel_jamb_l
+    [170.10, -37.00, 1.30, 3.00, -0.43, 11.72],   // tunnel_jamb_r
+    [169.35, 37.50, 0.35, 0.55, 2.72, 40.52],   // seam_v_3
+    [169.35, -37.50, 0.35, 0.55, 2.72, 40.52],   // seam_v_9
+  ];
+  const minerBase = groundAt(MINER_X, 0);
+  for (const [cx, cz, hx, hz, y0, y1] of corridor)
+    put(Math.round(cx * ONE), Math.round(cz * ONE), Math.round(hx * ONE), Math.round(hz * ONE),
+        add(minerBase, Math.round(y0 * ONE)), add(minerBase, Math.round(y1 * ONE)));
 
   return { n, box };
 }
