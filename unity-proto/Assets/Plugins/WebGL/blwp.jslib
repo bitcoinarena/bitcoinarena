@@ -914,6 +914,13 @@ mergeInto(LibraryManager.library, {
     try { window.BLWP_UNITY_LOBBY = JSON.parse(UTF8ToString(jsonPtr)); } catch (e) { /* not JSON: nothing to keep */ }
   },
 
+  // AND WHAT THE WAR SAID, for the same reason: the assault banner and the desktop log are the whole of
+  // the owner's 16:22/16:26 letter, and "the owner cannot see them" is only answerable by asking the page what it
+  // drew. Same shape as BlwpLobbyShown - a picture of what was on screen, never an input to anything.
+  BlwpAssaultShown: function (jsonPtr) {
+    try { window.BLWP_UNITY_ASSAULT = JSON.parse(UTF8ToString(jsonPtr)); } catch (e) { /* not JSON: nothing to keep */ }
+  },
+
   BlwpQueryParam: function (namePtr, outPtr, cap) {
     var name = UTF8ToString(namePtr);
     var v = null;

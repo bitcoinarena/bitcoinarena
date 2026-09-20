@@ -28,6 +28,16 @@ public class ChartHud : MonoBehaviour
     /// <summary>The frame painted last, for the measurement tools and the tests.</summary>
     public Frame Last { get; private set; }
 
+    /// <summary>
+    /// THE ASSAULT ANNOUNCER (the owner 2026-09-20 16:22 / 16:26: "assaults are not perceptible").
+    ///
+    /// It lives here because this is the one place that already reads `CH_ASSAULT` every frame; a second reader
+    /// would mean a second `ChartView` call for two words. `DriveHud` draws what it collects - the banner over
+    /// the battlefield, the sound, and the desktop log under the HUD - so the watching and the drawing are not
+    /// the same object. Static because the log outlives a HUD that is switched off and on.
+    /// </summary>
+    public static readonly AssaultWatch Watch = new AssaultWatch();
+
     public LoadoutPanel loadout;
 
     readonly int[] _view = new int[L.CH_WORDS];
@@ -429,6 +439,16 @@ public class ChartHud : MonoBehaviour
         if (_spectator != null && _spectator.Active) SpectateFrames++;
         if (loadout != null && loadout.IsOpen) return;
         if (Blwp.BlwpCore.ChartView(Range, _view) == 0) return;
+
+        // ONCE A FRAME, not once a GUI event: IMGUI runs OnGUI for layout and again for the repaint, and the
+        // banner's clock would then start on whichever pass came first. The watch ignores an unchanged phase
+        // anyway, so this is about the stamp on the line, not about double-counting.
+        if (Event.current.type == EventType.Repaint)
+        {
+            int said = Watch.Revision;
+            Watch.Observe(_view, System.DateTime.Now, Time.unscaledTime, Blwp.BlwpCore.Tick);
+            if (Watch.Revision != said) Blwp.DailyLobby.AssaultShown(Watch.AsJson());
+        }
 
         if (_field == null) _field = FindFirstObjectByType<Blwp.GhostField>();
         _ghosts.Clear();

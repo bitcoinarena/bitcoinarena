@@ -31,6 +31,8 @@ public class DriveHud : MonoBehaviour
 
     GUIStyle _price, _sub, _small;
     Texture2D _flat;
+    AudioSource _horn;
+    int _hornsPlayed;
 
     static readonly Color Up = new Color(0.30f, 0.88f, 0.48f);
     static readonly Color Down = new Color(1f, 0.42f, 0.42f);
@@ -1819,6 +1821,37 @@ public class DriveHud : MonoBehaviour
     }
 
     /// <summary>
+    /// THE ASSAULT BANNER, under the block clock (the owner 2026-09-20 16:22: "a banner BULLS ASSAULT HIGH and a
+    /// sound when it starts ... then HIGH TAKEN or ASSAULT ON HIGH FAILS").
+    ///
+    /// UNDER the clock and not over the price: the headline stack owns the top of the gap and 16:26 says the log
+    /// must not overlap the price, which goes for the banner announcing the same war. It keeps its row whether or
+    /// not a banner is showing, so the log below does not jump up the screen every time one ends.
+    /// </summary>
+    public Rect AssaultBannerBox(int w, int h)
+    {
+        var head = HeadlineBox(w, h);
+        var timer = BlockTimerBox(w, h);
+        return new Rect(head.x, timer.yMax + h * 0.010f, head.width, AssaultBannerFont(w, h) * 1.4f);
+    }
+
+    public static float AssaultBannerFont(int w, int h) => Mathf.Round(Mathf.Clamp(Mathf.Min(w, h) * 0.046f, 18f, 40f));
+
+    /// <summary>
+    /// THE DESKTOP ASSAULT LOG, under the banner (the owner 2026-09-20 16:26: "a small desktop-only debug log under
+    /// the HUD, clock times ... Not on phone. Do not overlap the $ price").
+    ///
+    /// Six lines of the small font in the headline gap. It starts below the banner's reserved row, so the lowest
+    /// thing it can touch is whatever is under the headline stack - never the price, which is two rows above the
+    /// clock.
+    /// </summary>
+    public Rect AssaultLogBox(int w, int h)
+    {
+        var banner = AssaultBannerBox(w, h);
+        return new Rect(banner.x, banner.yMax + h * 0.008f, banner.width, SmallFont(w, h) * 1.45f * AssaultWatch.Keep);
+    }
+
+    /// <summary>
     /// The IRRADIATED warning, in the gap for the reason UNDER FIRE is.
     ///
     /// It was the fourth `Rect(0, y, w, ...)` with centred text in this file.
@@ -2318,6 +2351,96 @@ public class DriveHud : MonoBehaviour
     }
 
     /// <summary>
+    /// THE BANNER AND THE SOUND when an assault is declared, taken or lost.
+    ///
+    /// The words are `AssaultWatch`'s, which are the core's `CH_ASSAULT` words; nothing about the war is decided
+    /// here. Bulls green, bears red, the same two colours the chart gives the two sides.
+    /// </summary>
+    void DrawAssaultBanner(int w, int h)
+    {
+        var watch = ChartHud.Watch;
+        if (watch == null) return;
+        float a = watch.BannerAlpha(Time.unscaledTime);
+        if (a <= 0f) return;
+        var style = new GUIStyle(GUI.skin.label)
+        {
+            alignment = TextAnchor.MiddleCenter,
+            fontStyle = FontStyle.Bold,
+            fontSize = Mathf.RoundToInt(AssaultBannerFont(w, h)),
+        };
+        var c = watch.BannerSide == 0 ? Up : Down;
+        Shadowed(AssaultBannerBox(w, h), watch.Banner, style, new Color(c.r, c.g, c.b, a));
+    }
+
+    /// <summary>
+    /// THE DESKTOP LOG: the last few assault lines with the wall clock on them.
+    ///
+    /// DESKTOP ONLY, by the letter: "Not on phone." A phone in landscape has the same gap between the columns but
+    /// a third of the pixels, and this is a debug line, not part of the game.
+    /// </summary>
+    void DrawAssaultLog(int w, int h)
+    {
+        if (Mobile) return;
+        var watch = ChartHud.Watch;
+        if (watch == null || watch.Log.Count == 0) return;
+        var box = AssaultLogBox(w, h);
+        float lh = SmallFont(w, h) * 1.45f;
+        var style = new GUIStyle(_small) { alignment = TextAnchor.UpperCenter };
+        for (int i = 0; i < watch.Log.Count; i++)
+        {
+            var line = watch.Log[i];
+            // The oldest lines fade rather than vanish, so the log reads newest-at-the-bottom at a glance.
+            float fade = watch.Log.Count <= 1 ? 1f : 0.45f + 0.55f * i / (watch.Log.Count - 1);
+            var c = line.Side == 0 ? Up : Down;
+            Shadowed(new Rect(box.x, box.y + i * lh, box.width, lh), line.Text, style,
+                     new Color(c.r, c.g, c.b, fade));
+        }
+    }
+
+    /// <summary>
+    /// THE HORN. A short two-note call, built in code because the project carries no audio at all - there is no
+    /// AudioListener in the scene either, so one is put on the camera the first time a sound is wanted.
+    ///
+    /// Deterministic and tiny: one mono PCM clip, made once. Nothing about the war depends on it.
+    /// </summary>
+    void PlayAssaultHorn()
+    {
+        if (_horn == null)
+        {
+            if (Object.FindFirstObjectByType<AudioListener>() == null)
+            {
+                var cam = Camera.main;
+                if (cam != null) cam.gameObject.AddComponent<AudioListener>();
+            }
+            _horn = gameObject.AddComponent<AudioSource>();
+            _horn.playOnAwake = false;
+            _horn.spatialBlend = 0f;
+            _horn.volume = 0.5f;
+            _horn.clip = AssaultHorn();
+        }
+        if (_horn.clip != null) _horn.PlayOneShot(_horn.clip);
+    }
+
+    static AudioClip AssaultHorn()
+    {
+        const int rate = 44100;
+        int n = Mathf.RoundToInt(rate * 0.55f);
+        var data = new float[n];
+        float phase = 0f;
+        for (int i = 0; i < n; i++)
+        {
+            float t = i / (float)rate;
+            float freq = t < 0.16f ? 196f : 262f;                      // two notes, a call rather than a beep
+            phase += 2f * Mathf.PI * freq / rate;                      // carried across the change, so no click
+            float env = Mathf.Exp(-t * 3.2f) * Mathf.Min(1f, t * 80f);
+            data[i] = 0.45f * env * (Mathf.Sin(phase) * 0.75f + Mathf.Sin(phase * 2f) * 0.25f);
+        }
+        var clip = AudioClip.Create("assault-horn", n, 1, rate, false);
+        clip.SetData(data, 0);
+        return clip;
+    }
+
+    /// <summary>
     /// Where the gate is and how far.
     ///
     /// From the spawn the delivery gate is 230 m away and behind a battle -
@@ -2697,6 +2820,15 @@ public class DriveHud : MonoBehaviour
     {
         var kb = UnityEngine.InputSystem.Keyboard.current;
         if (kb != null && kb.f1Key.wasPressedThisFrame) showDiagnostics = !showDiagnostics;
+
+        // THE SOUND THE ASSAULT ASKED FOR. The watch counts the calls it wants; this plays one per call and
+        // never more, so a frame that sees two declarations is two horns and a frame that sees none is silent.
+        var watch = ChartHud.Watch;
+        if (watch != null && watch.Chimes != _hornsPlayed)
+        {
+            if (watch.Chimes > _hornsPlayed) PlayAssaultHorn();
+            _hornsPlayed = watch.Chimes;
+        }
     }
 
     void OnGUI()
@@ -2811,6 +2943,8 @@ public class DriveHud : MonoBehaviour
         DrawWanted(w, h);
         DrawExposure(w, h);
         DrawUnderFire(w, h);
+        DrawAssaultBanner(w, h);
+        DrawAssaultLog(w, h);
         DrawRunStopped(w, h);
         DrawWaypoint(w, h);
         DrawFallout(w, h);
