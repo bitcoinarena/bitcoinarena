@@ -38,6 +38,35 @@ export async function roundMintsFees({ contract, port }) {
   return { mints: gate.pays, why: gate.why };
 }
 
+/**
+ * A FEDERATION THAT CHARGES A BASE FEE TAKES MONEY THE OPERATOR DID NOT EARN.
+ *
+ * FEDERATION.md item 4, and the owner 2026-09-15 07:44: "Fedimint base fee is 0 - run the federation with
+ * `disable_base_fees`." §22A says it in the spec's own words: "The 2% stays. Fedimint's own base fees are 0:
+ * the federation runs with `disable_base_fees`. Lightning `min_htlc` / routing is not a federation fee."
+ *
+ * A base fee comes out of EVERY input and output of the round's locks - the players' own pool - so it is not
+ * a cost of the round, it is a deduction from the stake somebody already committed. The 2% node fee is
+ * inclusive and goes to the round's sitting seats for work they did; a base fee goes to the federation for
+ * nothing the round asked for, and the operator must not profit from it.
+ *
+ * `page-lock.js` already refuses to LOCK against such a federation. This is the same refusal on the node, so
+ * a signer node does not sit a round whose stakes would be shaved on the way in and out.
+ *
+ * AN UNKNOWN RULE IS NOT A BASE FEE. A port that answers nothing is the "no fee rule known: no lock" case the
+ * client already has - the round simply mints no fee lock - and is not turned into a refusal here.
+ */
+export function federationTakesNoBaseFee({ fees }) {
+  if (!fees || typeof fees.baseMsat !== 'bigint')
+    return { ok: true, why: 'no federation fee rule is known, so no base fee is claimed' };
+  if (fees.baseMsat > 0n)
+    return { ok: false, baseMsat: fees.baseMsat,
+      why: `that round's federation charges a base fee of ${fees.baseMsat} msat on every input and output - `
+        + 'a federation for BLWP runs with disable_base_fees (FEDERATION.md), and that fee would come out of '
+        + 'the players\' own pool' };
+  return { ok: true, why: 'that federation charges no base fee' };
+}
+
 const zero = (b) => !(b instanceof Uint8Array) || b.every((x) => x === 0);
 
 // The contract a player hands over, as JSON - one encoding, in protocol, which
