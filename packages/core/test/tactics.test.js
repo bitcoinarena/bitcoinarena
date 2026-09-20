@@ -821,3 +821,100 @@ test('a tank shell that connects on the courier pins the fire teams standing aro
   assert.ok(pinnedSomeone,
     `a shell connected on the courier and no team within 8 m of it took the pin word (§11.5); rises seen: ${rises.join(',')}`);
 });
+
+// §11.4's POSTURE WORD, GUARDED. Nothing asserted this until now: posture, the pin and the pose were held up by
+// tools run by hand, which is how the 18-word BlwpLayout.cs mismatch survived three letters. This derives the
+// posture §11.4 defines - STAND if his own step cleared 0.01 m, COVER if he is within 0.5 m of his claimed place
+// and not stepping, PRONE otherwise - and compares it with the word the core actually wrote, every living man,
+// every tick. A wrong shift, a wrong mask, a claim pass that wipes the bits, or a pose writer that forgets the
+// pin would all show here.
+test('the posture word the core writes is the posture §11.4 derives, for every man (§11.4)', async () => {
+  const { submitLiquidation } = await import('../src/sim.js');
+  const isMan = (i) => (i & L.ARMOUR_MASK) !== 0;
+  const STEP = 655;                                   // §11.4's 0.01 m
+  let checked = 0, standWhilePinned = 0, mismatched = 0, sawCover = 0, sawProne = 0, sawStand = 0;
+  for (const seedWord of [1, 2]) {
+    const st = init(seedWord), s = st.i32;
+    for (let t = 0; t < 900; t++) step(st, ONE, 0, 0, 0, 0);
+    for (let t = 0; t < 900; t++) {
+      if (t % 600 === 300) submitLiquidation(st, 4000000);
+      const was = new Map();
+      for (let i = 0; i < L.UNITS; i++) {
+        if (!isMan(i)) continue;
+        const b = L.O_UNITS + i * L.U_WORDS;
+        if (s[b + L.U_STATE] === 0 || s[b + L.U_HP] <= 0) continue;
+        was.set(i, [s[b + L.U_X], s[b + L.U_Z]]);
+      }
+      step(st, ONE, 0, 0, 0, 0);
+      for (const [i, b4] of was) {
+        const b = L.O_UNITS + i * L.U_WORDS;
+        if (s[b + L.U_STATE] === 0 || s[b + L.U_HP] <= 0) continue;
+        const rt = T.rifleTeamOf(i);
+        const pinned = T.isPinned(s, L.O_TACTICS, rt.side, rt.team);
+        const word = T.coverPosture(s, L.O_TACTICS, i);
+        checked++;
+        // §0: a pinned man is NEVER STAND. This is the row that had no guard at all.
+        if (pinned && word === T.POSTURE_STAND) standWhilePinned++;
+        // A MAN WHO WENT NOWHERE AND WAS NOT SHOVED CANNOT BE STAND. The first version of this line said simply
+        // "zero net movement cannot be STAND" and fired on 1872 man-ticks - every one of them a man standing
+        // exactly off a living hull, measured. §8.3's clearance push moves a man AFTER his own step and can
+        // cancel it exactly, and §11.4 defines STAND by his OWN step, which a push is not. So the core was right
+        // and the assert was wrong; it now excludes the men that push can explain and still catches the rest.
+        const moved = Math.abs(s[b + L.U_X] - b4[0]) + Math.abs(s[b + L.U_Z] - b4[1]);
+        if (moved === 0 && word === T.POSTURE_STAND) {
+          let shoved = false;
+          for (let j = 0; j < L.UNITS && !shoved; j += 4) {
+            const tb = L.O_UNITS + j * L.U_WORDS;
+            if (s[tb + L.U_STATE] === 0) continue;
+            if (Math.hypot((s[b + L.U_X] - s[tb + L.U_X]) / ONE, (s[b + L.U_Z] - s[tb + L.U_Z]) / ONE) <= 3.05) shoved = true;
+          }
+          if (!shoved) mismatched++;
+        }
+        // COVER must mean he really is on the place he claims
+        if (word === T.POSTURE_COVER) {
+          sawCover++;
+          const id = T.coverClaim(s, L.O_TACTICS, i);
+          assert.notEqual(id, T.COVER_NONE, `seed ${seedWord} tick ${t}: man ${i} is COVER with no claim`);
+          const p = T.coverPlace(s, id, s[b + L.U_SIDE] < 0 ? -1 : 1, st.candles, st.candleShift | 0);
+          assert.ok(p, `seed ${seedWord}: man ${i} is COVER on a place that does not exist`);
+          const d = Math.hypot((s[b + L.U_X] - p.x) / ONE, (s[b + L.U_Z] - p.z) / ONE);
+          assert.ok(d <= 0.5 + 1e-6, `seed ${seedWord} tick ${t}: man ${i} is written COVER ${d.toFixed(2)} m from his place`);
+        } else if (word === T.POSTURE_PRONE) sawProne++; else sawStand++;
+      }
+    }
+  }
+  assert.ok(checked > 50000, `only ${checked} man-ticks checked`);
+  assert.ok(sawCover > 0 && sawProne > 0 && sawStand > 0,
+    `all three postures must occur or this proves nothing: STAND ${sawStand}, PRONE ${sawProne}, COVER ${sawCover}`);
+  assert.equal(standWhilePinned, 0, `${standWhilePinned} of ${checked} man-ticks are written STAND while pinned (§0)`);
+  assert.equal(mismatched, 0, `${mismatched} man-ticks are written STAND without moving at all`);
+});
+
+// §11.5's PIN, GUARDED at the numbers the section names: a round is +60, the line is 120, decay is 1 a tick and
+// the clamp is 600, so two rounds pin from cold and 600 takes 8.0 s to fall back under the line. These are read
+// off the core's own word rather than from the constants, so a decay that stopped running or a clamp that moved
+// would fail here.
+test('the suppression word adds 60 a round, pins at 120 and decays one a tick (§11.5)', () => {
+  const st = init(1), s = st.i32;
+  const side = -1, team = 3;
+  assert.equal(T.suppOf(s, L.O_TACTICS, side, team), 0, 'a team starts clear');
+  T.addSupp(s, L.O_TACTICS, side, team, T.SUPP_ROUND);
+  assert.equal(T.suppOf(s, L.O_TACTICS, side, team), 60, 'one round is +60');
+  assert.ok(!T.isPinned(s, L.O_TACTICS, side, team), 'one round alone does not pin - the line is 120');
+  assert.ok(T.isUnderFire(s, L.O_TACTICS, side, team), 'but it is under fire');
+  T.addSupp(s, L.O_TACTICS, side, team, T.SUPP_ROUND);
+  assert.equal(T.suppOf(s, L.O_TACTICS, side, team), 120, 'two rounds is 120');
+  assert.ok(T.isPinned(s, L.O_TACTICS, side, team), 'two rounds inside the window pin a team from cold');
+  T.decaySupp(s, L.O_TACTICS);
+  assert.equal(T.suppOf(s, L.O_TACTICS, side, team), 119, 'the decay is one a tick, not more');
+  assert.ok(!T.isPinned(s, L.O_TACTICS, side, team), 'and one tick below the line is no longer pinned');
+  // the clamp, and the 8.0 s it implies
+  for (let k = 0; k < 20; k++) T.addSupp(s, L.O_TACTICS, side, team, T.SUPP_BOMB);
+  assert.equal(T.suppOf(s, L.O_TACTICS, side, team), T.SUPP_MAX, 'the word clamps at 600, however much lands');
+  let ticks = 0;
+  while (T.isPinned(s, L.O_TACTICS, side, team)) { T.decaySupp(s, L.O_TACTICS); ticks++; }
+  assert.equal(ticks, T.SUPP_MAX - T.SUPP_PINNED + 1, `from the clamp it took ${ticks} ticks to fall under the line`);
+  // a neighbouring team must not have moved: the word is per team
+  assert.equal(T.suppOf(s, L.O_TACTICS, side, team + 1), 0, 'suppression leaked into the next team');
+  assert.equal(T.suppOf(s, L.O_TACTICS, 1, team), 0, 'suppression leaked across the seam');
+});
