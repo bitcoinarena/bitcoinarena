@@ -51,25 +51,36 @@ async function lockRound({ minScore = 1 } = {}) {
   const mk = () => serve(openStore(':memory:'), { port: 0, ...opts, stakeLocks: port, poolCurve: curve, finality: { everyMs: 100 } });
   const a = await mk();
   const b = await mk();
-  for (const [d, o] of [[a, b], [b, a]]) {
-    const there = [`http://127.0.0.1:${o.port}`];
-    d.verifier.peers = there;
-    d.payouts.peers = there;
-    d.preimages.peers = there;
-    d.dkg.peers = there;
+  // ONCE A PORT IS BOUND, IT IS CLOSED WHATEVER HAPPENS NEXT (2026-09-20). Everything below can throw - the
+  // `POST /round` assert did, for a whole session - and the caller's `finally { await w.close() }` cannot
+  // help, because there is no `w` yet: the throw happens inside this function. Two listening servers then
+  // keep node alive and `node --test` never exits, so a suite that fails in 107ms looks like a suite that
+  // hangs. This is harness only; not one assertion is weakened, and a setup failure still fails.
+  try {
+    for (const [d, o] of [[a, b], [b, a]]) {
+      const there = [`http://127.0.0.1:${o.port}`];
+      d.verifier.peers = there;
+      d.payouts.peers = there;
+      d.preimages.peers = there;
+      d.dkg.peers = there;
+    }
+    const c = { ...contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
+      custody: 'FEDERATION', federationId: TEST_FEDERATION_ID, minScore };
+    const rid = roundId(c);
+    for (const d of [a, b]) {
+      const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
+      assert.equal(r.status, 201, await r.text());
+      assumeAssigned(d.round, rid, c.nodes);
+    }
+    for (let pass = 0; pass < 2; pass++) for (const d of [a, b]) await d.dkg.run(c.nodes);
+    const held = a.dkg.signerNodeFor(c.nodes);
+    assert.equal(held.ok, true, held.why);
+    return { a, b, c, rid, port, claimPk: held.pool.groupPublicKey, close: async () => { await a.close(); await b.close(); } };
+  } catch (e) {
+    await a.close().catch(() => {});
+    await b.close().catch(() => {});
+    throw e;
   }
-  const c = { ...contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
-    custody: 'FEDERATION', federationId: TEST_FEDERATION_ID, minScore };
-  const rid = roundId(c);
-  for (const d of [a, b]) {
-    const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
-    assert.equal(r.status, 201, await r.text());
-    assumeAssigned(d.round, rid, c.nodes);
-  }
-  for (let pass = 0; pass < 2; pass++) for (const d of [a, b]) await d.dkg.run(c.nodes);
-  const held = a.dkg.signerNodeFor(c.nodes);
-  assert.equal(held.ok, true, held.why);
-  return { a, b, c, rid, port, claimPk: held.pool.groupPublicKey, close: async () => { await a.close(); await b.close(); } };
 }
 
 /** One player staked by a lock both signer nodes verified, then played (as joinAndPlay plays). */
