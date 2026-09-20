@@ -17,6 +17,11 @@
 // the daemon's `fromTheCommittee`: its own share plus the other signer nodes', asked
 // for over HTTP once the run is final on them, opened at the round's number.
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
+// THE RUN LENGTH IS THE CORE'S (2026-09-20). This fixture said 9000 and the core has ended a run at 10800
+// since c01cc655, so `Round.open` refused the contract and every test here died with "this node holds no such
+// round" before a stake was dealt. These suites are the evidence that the round's own threshold is the one
+// that signs (§23.4/§23.6), so a stale number was hiding the proof.
+import { BLOCK_TICKS as RUN_TICKS } from '../../core/src/rules/gate.js';
 import { PLANTED_FIRST_MARK_DEADLINE } from './planted-marks.js';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -75,11 +80,11 @@ function paidPort() {
 const contractFor = (nodes, publicationRelays) => ({
   startDeadlineTicks: PLANTED_FIRST_MARK_DEADLINE, networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
   gameVerifySlots: nodes.length, settlementSlots: nodes.length, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n,
-  entryCloseMs: 2000n, objectionWindowMs: 0n, custody: 'THRESHOLD_LN',
+  entryCloseMs: 2000n, objectionWindowMs: 1n /* was 0n: a zero window is refused now (it erases §13A's veto); the spec sets no floor, so 1ms is the smallest legal one and it has passed by the time this suite asks */, custody: 'THRESHOLD_LN',
   slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays, donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n,
   randomnessRule: 'bitcoin-block-hash', stakeMsat: STAKE, bondMinSats: 50000n,
-  blockTicks: 9000, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
+  blockTicks: RUN_TICKS, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
   timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4, nodes,
 });
 
