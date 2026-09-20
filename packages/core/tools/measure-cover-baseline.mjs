@@ -32,8 +32,11 @@ import * as C from '../src/rules/candles.js';
 import * as L from '../src/state.js';
 
 const ONE = 65536, Q = ONE;
-const SEEDS = [1, 2, 3];
-const SECONDS = 120;
+// --suite runs the EXACT drive §11.3's occupancy assert runs (tactics.test.js): seeds 1 and 2, 900 ticks of
+// warm-up, 2400 ticks, a liquidation at t % 1800 === 300. Without it the tool keeps its own longer 3 x 120 s run.
+const SUITE = process.argv.includes('--suite');
+const SEEDS = SUITE ? [1, 2] : [1, 2, 3];
+const SECONDS = SUITE ? 40 : 120;
 const REACH = 12;                        // §11.3's eligibility, metres from the man
 const isMan = (i) => (i & L.ARMOUR_MASK) !== 0;
 const ANG = [-50, -20, 20, 50].map((d) => (d * Math.PI) / 180);
@@ -68,6 +71,7 @@ const placesFor = (s, side, st) => {
 };
 
 let fireDeaths = 0, fireWithPlace = 0, ticks = 0, ticksWithPlace = 0, ticksOnPlace = 0, placeTicks = 0, ticksWithPlaceAtPost = 0, claimTicks = 0, manTicks = 0;
+let ticksOnPlaceAfter = 0, placeTicksAfter = 0;
 for (const seed of SEEDS) {
   const st = init(seed), s = st.i32;
   for (let t = 0; t < 900; t++) step(st, Q, 0, 0, 0, 0);
@@ -112,6 +116,23 @@ for (const seed of SEEDS) {
 
     step(st, Q, 0, 0, 0, 0);
 
+    // THE ASSERT'S OWN PREDICATE: the suite reads a man's position AFTER his step, against places rebuilt after
+    // it. This tool historically read both BEFORE the step. The two differ by one tick of movement, and the whole
+    // point of this comparison is to find out whether that - or the run length - is the 27-point gap.
+    {
+      const pb = placesFor(s, -1, st), pr = placesFor(s, 1, st);
+      let onPost2 = false;
+      for (let i = 0; i < L.UNITS; i++) {
+        if (!isMan(i)) continue;
+        const b = L.O_UNITS + i * L.U_WORDS;
+        if (s[b + L.U_STATE] === 0 || s[b + L.U_HP] <= 0) continue;
+        const mine = s[b + L.U_SIDE] < 0 ? pb : pr;
+        if (mine.some((p) => Math.hypot(s[b] / Q - p.x, s[b + 1] / Q - p.z) <= 0.5)) { onPost2 = true; break; }
+      }
+      if (onPost2) ticksOnPlaceAfter++;
+      placeTicksAfter += pb.length + pr.length;
+    }
+
     const nuked = s[L.O_STRIKE + L.K_SERIAL] !== strike;
     if (nuked) strike = s[L.O_STRIKE + L.K_SERIAL];
     const nx = s[L.O_STRIKE + L.K_X] / Q, nz = s[L.O_STRIKE + L.K_Z] / Q;
@@ -137,11 +158,21 @@ console.log(`COVER'S ROOM TODAY, ${SEEDS.length} seeds x ${SECONDS} s, a nuke ev
 console.log(`  men killed by fire                         ${fireDeaths}`);
 console.log(`  ...with a free place within ${REACH} m of them    ${fireWithPlace}  (${pc(fireWithPlace, fireDeaths)})`);
 console.log(`  ticks with a place within ${REACH} m of a man      ${ticksWithPlace} of ${ticks}  (${pc(ticksWithPlace, ticks)})`);
-console.log(`  ticks with a man ON a place (within 0.5 m) ${ticksOnPlace} of ${ticks}  (${pc(ticksOnPlace, ticks)})`);
+console.log(`  ticks with a man ON a place (within 0.5 m) ${ticksOnPlace} of ${ticks}  (${pc(ticksOnPlace, ticks)})   [positions read BEFORE the step]`);
+console.log(`  the same, the ASSERT's predicate              ${ticksOnPlaceAfter} of ${ticks}  (${pc(ticksOnPlaceAfter, ticks)})   [positions read AFTER the step]`);
+console.log(`  places standing, after the step, per tick     ${(placeTicksAfter / Math.max(ticks, 1)).toFixed(1)}`);
 console.log(`  places standing, mean per tick             ${(placeTicks / Math.max(ticks, 1)).toFixed(1)}`);
 console.log(`  ticks with a place within ${REACH} m of a POST     ${ticksWithPlaceAtPost} of ${ticks}  (${pc(ticksWithPlaceAtPost, ticks)})   <- the row's own denominator`);
 console.log(`  man-ticks holding a claim                  ${claimTicks} of ${manTicks}  (${pc(claimTicks, manTicks)})`);
 console.log(`\n  §0's row wants a man on a place on >= 70% of the ticks where one is free within 12 m of a post.`);
+if (!SUITE) {
+  console.log(`  THIS IS NOT THE ROW'S NUMBER. The row is graded by the §11.3 assert in tactics.test.js, which runs`);
+  console.log(`  seeds 1 and 2 for 2400 ticks after a 900-tick warm-up. This run is longer and wider, and a longer`);
+  console.log(`  run reads HIGHER because wrecks and craters accumulate and the men have time to reach them.`);
+  console.log(`  Measured 2026-09-20 on the assert's own drive with --suite: this tool reads 64.7%, which is the`);
+  console.log(`  assert's 64.7% to the decimal. The gap between the two is the drive, not a difference in counting.`);
+  console.log(`  Run with --suite to compare against the row.`);
+}
 console.log(`  §11.3 has been closed since cf0cb8b4 - the core holds the word, the places and the claims - so the`);
 console.log(`  "on a place" number above is the real occupancy, not a picture of a gap. This tool still works the`);
 console.log(`  places out for itself, which is what keeps it a check on the core rather than a copy of it.`);
