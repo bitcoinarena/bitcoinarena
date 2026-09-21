@@ -710,6 +710,7 @@
           });
           if (!att.ok) {
             window.BLWP_JOIN_REFUSED = att.why;
+            console.error('[blwp] join refused: ' + window.BLWP_JOIN_REFUSED);
             console.error('[blwp] join refused: ' + att.why);
             return;
           }
@@ -731,6 +732,7 @@
         const use = BLWPCLIENT.keptLockUse(kept);
         if (use.use === 'staked') {
           window.BLWP_JOIN_REFUSED = use.why;
+          console.error('[blwp] join refused: ' + window.BLWP_JOIN_REFUSED);
           console.error('[blwp] join refused: ' + use.why);
           return;
         }
@@ -753,6 +755,7 @@
           : await BLWPCLIENT.postHandout(stake, named.nodes, { needed: BLWPCLIENT.sharesNeededFor(named.round) });
         if (!put.ok) {
           window.BLWP_JOIN_REFUSED = put.why;
+          console.error('[blwp] join refused: ' + window.BLWP_JOIN_REFUSED);
           console.error('[blwp] join refused: ' + put.why + ' — ' + put.refused.join('; '));
           return;
         }
@@ -1559,7 +1562,12 @@
                 return;
               }
               if (window.BLWP_ENTRY) join.state = 'joined';
-              else refuse(window.BLWP_JOIN_REFUSED || 'this page did not join that round');
+              // AND A REFUSAL IS SAID OUT LOUD (2026-09-21). Measured on the live Daily: PLAY on a paid round
+              // left `no session yet: the page has named no node` and NOTHING else - 98 console events, 0
+              // exceptions, and not one line naming why, because every refusal below the first set
+              // `BLWP_JOIN_REFUSED` and returned in silence. A headless client can only read a log line.
+              else { refuse(window.BLWP_JOIN_REFUSED || 'this page did not join that round');
+                     console.error('[blwp] join refused: ' + join.why); }
             })
             .catch((e) => { if (!join.cancelled) refuse(e && e.message ? e.message : e); });
           return true;
