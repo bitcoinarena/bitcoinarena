@@ -117,6 +117,27 @@ export class Custody {
     this.preimageFor = preimageFor;
   }
 
+  /**
+   * THE CHAIN'S PACE AT THE MOMENT THE HOLD IS MADE, not the one the launcher saw at start.
+   *
+   * Measured on the Daily, round 6deead16: the launcher timed 200 blocks at start and got 5.660 s a
+   * block; by the time the round was played the same chain was doing 0.770 s a block - 100 blocks in
+   * 77 s. The HTLC was bought for about a thousand seconds of wall clock and lasted about a hundred and
+   * forty, so both stakes EXPIRED back to the player at +626 s after the close while the objection
+   * window still had time to run, and a truck that DELIVERED was never paid. A pace sampled once is a
+   * guess about the future; this asks for it each time a hold is sized.
+   *
+   * A number is still accepted and still means what it meant, so a caller with a fixed chain - and every
+   * test - passes one. A function may be async, and one that throws or answers nothing leaves the hold on
+   * the contract's own `stakeExpiryBlocks`, which is what every hold had before any of this.
+   */
+  async pace() {
+    if (typeof this.secondsPerBlock !== 'function') return this.secondsPerBlock;
+    let said;
+    try { said = await this.secondsPerBlock(); } catch { return null; }
+    return Number.isFinite(said) && said > 0 ? said : null;
+  }
+
   get reaches() { return this.port !== null && this.port !== undefined; }
 
   /**
@@ -193,8 +214,9 @@ export class Custody {
       // AND THE HTLC IS SIZED FOR THIS ROUND ON THIS CHAIN. `stakeExpiryBlocks` is a floor, not an answer:
       // 144 blocks is a day where blocks take ten minutes and twelve minutes where they take five seconds.
       // Measured on the Daily: a hold of 144 lasted 730 s against a round that was not final for 830.
-      if (this.secondsPerBlock) {
-        cltvExpiryBlocks = cltvBlocksFor({ secondsPerBlock: this.secondsPerBlock, blockTicks: c.blockTicks,
+      const pace = await this.pace();
+      if (pace) {
+        cltvExpiryBlocks = cltvBlocksFor({ secondsPerBlock: pace, blockTicks: c.blockTicks,
           objectionWindowMs: c.objectionWindowMs, floorBlocks: c.stakeExpiryBlocks });
       }
     }
@@ -506,11 +528,12 @@ export class Custody {
     this.round.putFeeHold({ entryId, roundId: entry.roundId, paymentHash, amountMsat: entry.feeMsat,
       state: AWAITING_INVOICE, why: 'asking the endpoint for this fee\'s hold invoice' });
     let invoice;
+    const feePace = await this.pace();
     try {
       invoice = await this.port.createHeld({ paymentHash, amountMsat: entry.feeMsat, entryId,
-        ...(this.secondsPerBlock && this.round.get(entry.roundId) ? (() => {
+        ...(feePace && this.round.get(entry.roundId) ? (() => {
           const c = decodeRoundContract(new Uint8Array(this.round.get(entry.roundId).contract));
-          return { cltvExpiryBlocks: cltvBlocksFor({ secondsPerBlock: this.secondsPerBlock, blockTicks: c.blockTicks,
+          return { cltvExpiryBlocks: cltvBlocksFor({ secondsPerBlock: feePace, blockTicks: c.blockTicks,
             objectionWindowMs: c.objectionWindowMs, floorBlocks: c.stakeExpiryBlocks }) };
         })() : {}) });
     } catch (e) {
