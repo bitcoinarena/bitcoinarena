@@ -32,6 +32,7 @@ import {
   SETTLE, CANCEL, NOTHING, HELD, SETTLED, CANCELLED, EXPIRED,
 } from '../../protocol/src/payout.js';
 import { decodeEntryContract, entryId as entryIdOf, decodeRoundContract, publicationRelaysAreValid } from '../../protocol/src/contracts.js';
+import { cltvBlocksFor } from '../../protocol/src/hold-window.js';
 import { toHex, sha256 } from '../../protocol/src/hash.js';
 
 export { HELD, SETTLED, CANCELLED, EXPIRED, SETTLE, CANCEL, NOTHING };
@@ -83,9 +84,14 @@ export const NO_LIGHTNING = null;
  * - it does not pretend to.
  */
 export class Custody {
-  constructor(round, { port = NO_LIGHTNING, preimageFor = null } = {}) {
+  constructor(round, { port = NO_LIGHTNING, preimageFor = null, secondsPerBlock = null } = {}) {
     this.round = round;
     this.port = port;
+    // HOW FAST BLOCKS ARE COMING ON THE CHAIN THIS NODE WATCHES (RULED 2026-09-21). An HTLC dies at a
+    // HEIGHT and a round becomes final after a TIME, and only the chain's pace joins the two. Measured by
+    // the launcher from its own bitcoind and handed in; unknown, the hold keeps the contract's own
+    // `stakeExpiryBlocks`, which is what every hold had before this.
+    this.secondsPerBlock = secondsPerBlock;
     // WHERE THE PREIMAGE COMES FROM IS NOT THIS FILE'S BUSINESS. 23.4 needs
     // five of seven preimage shares before a stake can be settled, and letter
     // 29's Feldman handouts are what those shares are; reconstructing them is
@@ -162,9 +168,18 @@ export class Custody {
     // caller all meet it - and before an existing hold is looked up, so an
     // invoice kept from before the rule is not quoted again either.
     const into = this.round.get(entry.roundId);
+    let cltvExpiryBlocks = null;
     if (into) {
-      const relays = publicationRelaysAreValid(decodeRoundContract(new Uint8Array(into.contract)));
+      const c = decodeRoundContract(new Uint8Array(into.contract));
+      const relays = publicationRelaysAreValid(c);
       if (!relays.ok) return { ok: false, why: `no hold is issued in that round: ${relays.why}` };
+      // AND THE HTLC IS SIZED FOR THIS ROUND ON THIS CHAIN. `stakeExpiryBlocks` is a floor, not an answer:
+      // 144 blocks is a day where blocks take ten minutes and twelve minutes where they take five seconds.
+      // Measured on the Daily: a hold of 144 lasted 730 s against a round that was not final for 830.
+      if (this.secondsPerBlock) {
+        cltvExpiryBlocks = cltvBlocksFor({ secondsPerBlock: this.secondsPerBlock, blockTicks: c.blockTicks,
+          objectionWindowMs: c.objectionWindowMs, floorBlocks: c.stakeExpiryBlocks });
+      }
     }
 
     const entryId = entryIdOf(entry);
@@ -193,6 +208,7 @@ export class Custody {
       paymentHash: entry.stakeCommitment,
       amountMsat: netStakeMsat(entry),
       entryId,
+      ...(cltvExpiryBlocks ? { cltvExpiryBlocks } : {}),
     });
 
     // THE INVOICE IS CHECKED AGAINST THE ENTRY, even though this node asked

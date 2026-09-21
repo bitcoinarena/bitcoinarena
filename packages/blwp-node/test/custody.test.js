@@ -239,6 +239,50 @@ test('a stake whose hold already EXPIRED is not settled: a later close answers a
 // `settleHeldInvoices` will not touch it ("reconcile it against Lightning first") and `reconcile` only ever
 // runs on start; and because the throw came out of the loop, the winner's stake in the same round was never
 // acted on either.
+// THE HTLC IS SIZED FOR THE ROUND ON THIS CHAIN, NOT FOR A CONSTANT.
+//
+// Measured on the Daily: a hold of 144 blocks lasted 730 s while the round it secured was not final for
+// 830, so the loser's stake timed out before it could be settled into the pool and no payout formed. 144
+// blocks is a day where blocks take ten minutes and twelve minutes where they take five seconds; the
+// contract's `stakeExpiryBlocks` is the floor, and the chain's own pace decides the rest.
+test('a fast chain gets a longer HTLC than the contract\'s floor, and a slow one gets the floor', async () => {
+  const asked = [];
+  const port = fakePort();
+  port.createHeld = async ({ paymentHash, amountMsat, cltvExpiryBlocks }) => {
+    asked.push(cltvExpiryBlocks === undefined ? 'none' : cltvExpiryBlocks);
+    return { paymentHash, amountMsat, request: 'lnbcrt' };
+  };
+  const round = new Round(openStore(':memory:'), () => NOW + 1000);
+  const rid = round.open(contract);
+  const e = entryFor(rid, 1);
+  round.enter(e);
+
+  // A CHAIN WITH REAL BLOCKS: the arithmetic asks for a handful and the contract's floor is what it gets.
+  const slow = new Custody(round, { port, preimageFor: defaultPreimageFor, secondsPerBlock: 600 });
+  await slow.hold(e);
+  assert.equal(asked[0], contract.stakeExpiryBlocks,
+    `a ten-minute chain should get the contract's own floor, not ${asked[0]}`);
+
+  // THE DAILY'S OWN PACE: the floor is nowhere near enough and the hold is sized to the round.
+  const round2 = new Round(openStore(':memory:'), () => NOW + 1000);
+  const rid2 = round2.open(contract);
+  const e2 = entryFor(rid2, 2);
+  round2.enter(e2);
+  const fast = new Custody(round2, { port, preimageFor: defaultPreimageFor, secondsPerBlock: 1.74 });
+  await fast.hold(e2);
+  assert.ok(asked[1] > contract.stakeExpiryBlocks * 4,
+    `a chain at 1.74 s a block needs far more than ${contract.stakeExpiryBlocks} blocks, not ${asked[1]}`);
+  console.log(`  600 s a block -> ${asked[0]} blocks; 1.74 s a block -> ${asked[1]} blocks`);
+
+  // AND A NODE THAT HAS NOT TIMED ITS CHAIN CHANGES NOTHING: the hold is made as it always was.
+  const round3 = new Round(openStore(':memory:'), () => NOW + 1000);
+  const rid3 = round3.open(contract);
+  const e3 = entryFor(rid3, 3);
+  round3.enter(e3);
+  await new Custody(round3, { port, preimageFor: defaultPreimageFor }).hold(e3);
+  assert.equal(asked[2], 'none', 'a node that cannot time its chain invented a number');
+});
+
 test('a settle Lightning refuses writes down what Lightning says, and the rest of the round is still acted on', async () => {
   const port = fakePort();
   let looked = 0;

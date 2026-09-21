@@ -67,8 +67,11 @@ export function lndPort({ lncli, args = [], timeoutMs = 60000, expirySeconds = 3
      * nothing else, and an invoice this node believes in because it asked for
      * it is exactly what `invoiceMatchesEntry` exists to refuse.
      */
-    async createHeld({ paymentHash, amountMsat }) {
+    async createHeld({ paymentHash, amountMsat, cltvExpiryBlocks: forThisRound = null }) {
       const hash = toHex(paymentHash);
+      // THE ROUND'S OWN NUMBER WHEN THE CALLER SIZED ONE. `cltvExpiryBlocks` is this port's default; a
+      // caller that knows the round and the chain's pace hands a larger one (custody.js).
+      const blocks = forThisRound || cltvExpiryBlocks;
       // AN EXPIRY IS NOT OPTIONAL. A VOID round is refunded by nobody acting,
       // and "nobody acting" only ever ends if the invoice runs out - a hold
       // that never expires is one an operator can sit on forever.
@@ -96,7 +99,7 @@ export function lndPort({ lncli, args = [], timeoutMs = 60000, expirySeconds = 3
       let made;
       try {
         made = await json(['addholdinvoice', hash, '--amt_msat', String(amountMsat),
-          '--expiry', String(expirySeconds), '--cltv_expiry_delta', String(cltvExpiryBlocks)]);
+          '--expiry', String(expirySeconds), '--cltv_expiry_delta', String(blocks)]);
       } catch (err) {
         if (!/invoice with payment hash already exists/.test(err.message)) throw err;
         made = null;
@@ -113,7 +116,7 @@ export function lndPort({ lncli, args = [], timeoutMs = 60000, expirySeconds = 3
         expirySeconds,
         // AND THE BLOCKS THIS NODE ASKED THE HTLC TO LIVE, so a hold that came back on somebody else's
         // number is known here rather than at its expiry.
-        cltvExpiryBlocks,
+        cltvExpiryBlocks: blocks,
         ...(made ? {} : { already: true }),
       };
     },

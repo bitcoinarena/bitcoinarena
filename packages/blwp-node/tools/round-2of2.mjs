@@ -359,10 +359,26 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // settings, the same parse src/main.js uses, and the same port for both
   // daemons - the second takes up the hold the first issued. Unset, both hold
   // no stakes, exactly as before.
-  const ln = lightningFromEnv(process.env);
+  // HOW FAST BLOCKS ARE COMING HERE (RULED 2026-09-21). An HTLC dies at a height and a round is final after
+  // a time; the chain's own pace is the only thing that joins them, and it is read from this bitcoind
+  // rather than assumed. Measured on the Daily across one hour: between 1.74 and 3.85 s a block, so the
+  // FASTEST recent window is taken - fast blocks are the dangerous ones, since they burn the HTLC soonest.
+  let secondsPerBlock = null;
+  if (rpc) {
+    try {
+      const tip = Number(await rpc('getblockcount', []));
+      const span = Math.min(200, Math.max(1, tip - 1));
+      const at = async (h) => Number((await rpc('getblockheader', [await rpc('getblockhash', [h])])).time);
+      const [now, then] = [await at(tip), await at(tip - span)];
+      if (now > then) secondsPerBlock = (now - then) / span;
+      console.log(`[chain] ${span} blocks in ${now - then} s = ${secondsPerBlock.toFixed(3)} s a block`);
+    } catch (e) { console.error(`[chain] this node could not time its own chain: ${e.message}`); }
+  }
+  const ln = lightningFromEnv(process.env, { secondsPerBlock });
   if (!ln.ok) throw new Error(ln.why);
   const lightning = ln.given
-    ? { lightning: ln.lightning, ...(ln.preflight ? { preflight: ln.preflight } : {}) } : {};
+    ? { lightning: ln.lightning, ...(ln.preflight ? { preflight: ln.preflight } : {}),
+      ...(secondsPerBlock ? { secondsPerBlock } : {}) } : {};
   // THIS CHAIN'S HEIGHT, from the regtest bitcoind when there is one (M3.3-30):
   // a hold past its HTLC's expiry is written EXPIRED on it. Not `poolCall`,
   // which would also switch on the pool's spending.
