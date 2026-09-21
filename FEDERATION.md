@@ -242,6 +242,14 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
     unredeemed contracts, and show the same display name
 16. **testnet 2 of 2:** one guardian down halts; back up resumes; nothing
     lost - stated as the limit of what testnet can prove
+17. **liquidation on regtest:** a 4-guardian federation (3 of 4) with notes
+    in three wallets at 90% of its cap; two guardians abandon, attested and
+    slashed into the escrow; the federation halts for `abandon_blocks`; the
+    two seated guardians publish the spent set; each wallet's client
+    presents its notes on its own start and is paid at face from the
+    escrow; a note already spent is refused; the remainder goes 75% / 25%;
+    then the same with **no** spent set published, paid pro rata, the rate
+    shown
 
 ---
 
@@ -288,6 +296,15 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
 - **FEDERATION is the only custody** (§23.6): THRESHOLD_LN is withdrawn on
   every network; a round naming it is invalid; its records decode and that
   is all. This file is no longer "V1 of two"; it is the construction.
+- **Players cannot lose** (§23A.3, §23A.5): the exposure cap is `(f + 1)`
+  times the smallest seated guardian bond, so the smallest set that can
+  halt the federation forfeits enough to pay every note; slashed guardian
+  bonds wait in a per-federation escrow under the arbitration keys; a
+  federation HALTED for `abandon_blocks` is liquidated - the seated
+  guardians publish the spent-note set, the client presents every unspent
+  note on its own, each is paid at face - and only the remainder goes 75%
+  to the active census nodes and 25% to the developers, as it does whole
+  when a federation CLOSES with nothing lost.
 - **Serving a drain is paid** (§23A.6 step 5): the guardian pool of every
   round naming the successor is shared per seat with the draining
   predecessor's seated guardians until it is CLOSED, so staying is income

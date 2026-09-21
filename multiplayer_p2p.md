@@ -25,8 +25,13 @@
 > (§23A.5); every role is opt-in (§5A.1). And: **FEDERATION is the only
 > custody** - THRESHOLD_LN is withdrawn on every network, and **guardians
 > are not parked**: §23A is to be built now, on the testnet 2-of-2 that
-> runs (§23.6). Changed: §5A.1, §22A, §23.6, §23A (new), §24, §25.2,
-> §27A.6, `FEDERATION.md`, `IMPLEMENTATION.md` §9.
+> runs (§23.6). **Players cannot lose** (the owner, last): the exposure cap is
+> what the smallest halting set's bonds cover, slashed guardian bonds wait
+> in escrow until the federation is CLOSED or liquidated, and a halted
+> federation is **liquidated** - every unspent note paid at face from the
+> bonds of those who left - before 75% of the rest goes to the nodes and
+> 25% to the developers (§23A.3, §23A.5). Changed: §5A.1, §22A, §23.6,
+> §23A (new), §24, §25.2, §27A.6, `FEDERATION.md`, `IMPLEMENTATION.md` §9.
 
 > **Revision 4.6.3 — the player wallet (the owner 2026-09-21).** The round
 > wallet of §24 becomes the **player wallet**: one e-cash wallet per player
@@ -2882,12 +2887,20 @@ which anyone can read from the chain (Fedimint's wallet module, stock). Its
 collateral is public too: the bonds of its guardians. So:
 
 ```text
-exposure_cap = Σ bond of its seated guardians        (RULED HERE: 1:1)
+exposure_cap = (f + 1) × the smallest bond among its seated guardians
 load         = on-chain reserve / exposure_cap
 ```
 
-The cap of §22 and F9 is therefore no longer policy but a number every
-client computes from chain data. A deposit into a federation at
+**Why `f + 1` and the smallest (RULED, the owner 2026-09-21: players cannot
+lose).** `f + 1` gone is the smallest number of guardians that halts the
+federation (§23A.1). Their bonds are what §23A.5's liquidation pays the
+players from. So the reserve may never exceed what the smallest possible
+set of leavers forfeits: at ten guardians, four of the smallest bond. A
+federation that wants to hold more raises its guardians' bonds or the
+network founds another federation; it does not stretch the cover. The cap
+of §22 and F9 is therefore no longer policy but a number every client
+computes from chain data, and it is the number that makes "players cannot
+lose" arithmetic rather than a promise. A deposit into a federation at
 `load >= 1` is refused by the client; at 80% for `abandon_blocks` a new
 federation is founded (§23A.2); the seats show `load` beside every round.
 
@@ -2979,22 +2992,78 @@ cooperative). The offence is never *leaving*; it is leaving **without
 serving the notice**, because that is the one thing that turns a planned
 succession into an emergency.
 
-**Where a slashed guardian bond goes (RULED, the owner 2026-09-21).** §5A.3's
-rule for a round sends half of a slash to the round's affected players; a
-federation's players are exactly the people the federation cannot name -
-the notes are blind - so that half cannot be paid here. Instead:
+**Where a slashed guardian bond goes (RULED, the owner 2026-09-21: players
+cannot lose; the rest 75% to the nodes, 25% to the developers).** The
+slashing transaction (§5A.3B) does not pay anyone yet. It pays the whole
+bond into a **liquidation escrow** of that federation: an output under the
+arbitration set's k-of-m keys (§5A.3B), one per federation, that is spent
+only in one of two ways:
 
 ```text
-75%  evenly to every active census node at the slashing transaction's
-     height: bonded and eligible (§5A.3), minus the slashed node, and minus
-     every guardian of the federation concerned (RULED HERE, below)
-25%  to the donation set of §22A - the developers - by share_bps
+federation CLOSED (§23A.6)      nothing was lost, so nothing is owed:
+                                75%  evenly to every active census node at
+                                     that height - bonded and eligible
+                                     (§5A.3), minus the slashed nodes and
+                                     minus every guardian of the federation
+                                     concerned (RULED HERE, below)
+                                25%  to the donation set of §22A - the
+                                     developers - by share_bps
+
+federation HALTED (§23A.1)      liquidation, below: every unspent note of
+                                the federation paid at face value first;
+                                what is left after the claim window, 75% /
+                                25% as above
 ```
 
-Paid as outputs of the slashing transaction itself (§5A.3B), one per
-recipient, remainders in ascending `H(txid ‖ node_pubkey)` order; the
-recipient list is a function of chain state at that height, so every
-observer computes the same one.
+The escrow exists because a halt is rarely the first abandonment: a
+guardian who leaves in month one and three more in month three halt it
+together, and by then his bond must still be there. Slashing stays prompt
+(path A returns a bond at maturity if nobody slashes, §5A.3B); paying out
+waits for the federation's end. Recipients are a function of chain state
+at the spending height, remainders in ascending `H(txid ‖ node_pubkey)`
+order, so every observer computes the same list.
+
+**Liquidation (RULED, the owner 2026-09-21).** A federation that has been
+HALTED for `abandon_blocks` with no recovery is liquidated:
+
+1. The guardians still seated publish, signed, their copy of the
+   federation's **spent-note set** (the nonces the consensus has already
+   redeemed) as of the last session they hold. Any one copy suffices; the
+   newest session wins.
+2. The arbitration set opens a **claim window** of `drain_blocks` and
+   advertises where claims go (§5A.3B's endpoints; every seat mirrors them
+   at `GET /liquidations`). The client does the rest on its own: on every
+   start it presents each unspent note it holds for that federation, as it
+   would present them to the federation itself. A player who has only his
+   seed recovers his notes through any guardian that still answers the
+   stock backup query; a federation with no guardian left answering is the
+   one case this cannot reach, and it is named.
+3. A claim is valid if the note carries the federation's signature, its
+   nonce is not in the published spent set, and it has not been claimed
+   before. Valid claims are paid **at face value** from the escrow, which
+   §23A.3's cap sizes to cover the whole reserve; only if the escrow is
+   short - guardians whose bonds were never slashed because they never
+   left, and no spent set published at all - are claims paid pro rata,
+   and the client shows the rate.
+4. After the window, the remainder goes 75% to the nodes and 25% to the
+   developers as above. Notes never presented in the window are the
+   holder's loss, as they are in a CLOSED federation (§23A.6 step 6).
+
+What the liquidation does not do: it does not touch the federation's
+frozen reserve, which stays where it is (and is released to the same
+escrow if `2f + 1` guardians ever return); it does not need a single
+guardian's cooperation beyond publishing a spent set, and it survives none
+publishing at the cost of pro rata; it does not pay anyone who cannot
+present a note. Testnet at 2 of 2: `f = 0`, the cap is one bond, one
+leaver halts it, and his one bond pays every note.
+
+**The abandonment proof in a halt.** §23A.4's attestations need `2f + 1`
+guardians, which a halted federation no longer has. For a guardian gone
+while or after the federation halted, the proof is instead the halt
+itself - no new consensus session for `abandon_blocks`, which anyone can
+observe at every guardian's endpoint and which the seats attest - together
+with the attestations of however many guardians are still seated. The
+arbitration residual of §5A.3B is the same in both forms.
 
 **Why the witnesses are excluded (RULED HERE).** The abandonment proof is
 signed by `2f + 1` guardians of the very federation (§23A.4). If they were
@@ -3006,7 +3075,9 @@ fact that any seven who could frame a colleague could instead take the
 whole reserve. Excluding them makes it exactly zero: a slashed bond is paid
 to nodes that had no hand in proving it and to the developers, who sign
 nothing. Nothing ever goes to the successor's guardians for being the
-successor either, so a slash is not a reason to want a succession.
+successor either, so a slash is not a reason to want a succession. And
+nothing goes to anyone before the players are whole: the escrow pays a
+liquidation first, the nodes and the developers from what is left.
 
 **A guardian's bond is otherwise a normal census bond** (§5A.3B): path A
 returns it to him at maturity if nobody slashes; path B is the arbitration
