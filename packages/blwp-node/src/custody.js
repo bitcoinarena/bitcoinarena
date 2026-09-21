@@ -325,8 +325,41 @@ export class Custody {
           state: ends.state === SETTLED ? SETTLE_REQUESTED : CANCEL_REQUESTED,
           why: `about to ${ends.state === SETTLED ? 'settle' : 'cancel'}; if this node dies here, ask Lightning`,
         });
-        if (ends.state === SETTLED) await this.port.settle({ paymentHash: row.paymentHash, preimage, entryId });
-        else await this.port.cancel({ paymentHash: row.paymentHash, entryId });
+        // A REFUSED ACT IS AN ANSWER, AND IT IS WRITTEN DOWN LIKE ONE.
+        //
+        // Measured on the Daily: a loser's stake was due to settle into the pool, the objection window
+        // closed, and `lncli settleinvoice` came back "invoice already canceled" because lnd had given up
+        // on the HTLC seventeen blocks before its stated expiry. The throw left the row at
+        // SETTLE_REQUESTED on both seats, and `settleHeldInvoices` refuses to touch a mid-act row
+        // ("reconcile it against Lightning first"), while `reconcile` itself runs only on start. So the
+        // entry was unsettleable for as long as the node stayed up - and, worse, the throw left the rest
+        // of that round's entries unacted on, because it aborted the loop.
+        //
+        // Nothing is decided here. The one party that knows what happened is asked the same question
+        // `reconcile` asks, and its answer is the row's new state. A port that cannot be asked, or that
+        // answers something no hold can be in, leaves the row as it is: not knowing is not a verdict.
+        try {
+          if (ends.state === SETTLED) await this.port.settle({ paymentHash: row.paymentHash, preimage, entryId });
+          else await this.port.cancel({ paymentHash: row.paymentHash, entryId });
+        } catch (err) {
+          const act = ends.state === SETTLED ? 'settle' : 'cancel';
+          let seen = null;
+          if (typeof this.port.look === 'function') {
+            try { seen = await this.port.look({ paymentHash: row.paymentHash, entryId }); } catch { seen = null; }
+          }
+          const said = seen && seen.state;
+          const known = [HELD, SETTLED, CANCELLED, EXPIRED].includes(said);
+          this.round.putHold({
+            entryId, roundId: row.roundId, paymentHash: row.paymentHash, amountMsat: row.amountMsat,
+            state: known ? said : (ends.state === SETTLED ? SETTLE_REQUESTED : CANCEL_REQUESTED),
+            why: known
+              ? `Lightning refused the ${act} (${err.message}) and says the stake is ${said}`
+              : `Lightning refused the ${act} (${err.message}) and could not say what the stake is`,
+          });
+          done.push({ entryId, action, state: known ? said : row.state, final: isFinal, refused: true,
+            why: `Lightning refused the ${act}: ${err.message}` });
+          continue;
+        }
       }
       // EXPIRED and HELD are not acts. Nothing is sent, and that is the point.
 
