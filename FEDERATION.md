@@ -233,9 +233,10 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
     settles in the old federation and its payout moves; the old record goes
     CLOSED; nothing lost anywhere, and the amounts written down
 14. **abandonment to slash:** the attestation set of item 13 committed in a
-    slashing transaction by the arbitration keys, half to the serving
-    guardians, half burned, and a departure with notice that is *not*
-    slashed
+    slashing transaction by the arbitration keys, 75% evenly to the active
+    census nodes minus that federation's guardians, 25% to the donation
+    set; and a departure with notice that is *not* slashed and leaves the
+    bond and the census seat as they were
 15. **the seed alone, another device:** twelve words typed into a fresh
     browser find the federation among three, recover the notes and the
     unredeemed contracts, and show the same display name
@@ -272,6 +273,14 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
   the draining bands, several federations picked by load, abandonment and
   the bond, succession with automatic migration, and the channels are
   RULED HERE in §23A for the owner to overrule.
+- **Guardians earn from the 2%** (§22A): three equal pools, game/verify,
+  settlement, and the seated guardians of the round's federation, paid in
+  the settlement transaction. The 2% stays.
+- **A slashed guardian bond** goes 75% evenly to the active census nodes and
+  25% to the developers (§22A's donation set), never to the guardians who
+  attested the absence (§23A.5).
+- **Leaving is free.** A guardian who serves his departure notice keeps his
+  bond and his census seat; only leaving without notice is slashed (§23A.5).
 
 ## Security findings (Fable, 2026-09-11 15:00) — RESOLVED in spec v4.6.2 (the owner 15:10: "alles dokumentieren und lösen")
 
