@@ -2306,8 +2306,9 @@ is divided evenly among the guardians **seated** (§23A.1: not gone) at the
 round's `FINAL`, and paid as one payout contract per guardian in the round's
 settlement transaction (§23.2), to the `payout_pubkey` of the guardian's
 census advertisement. A guardian earns it only if seated; a gone guardian's
-share goes pro rata to the other seated ones. Testnet: 2/3 % over two
-guardians.
+share goes pro rata to the other seated ones. While the federation's
+predecessor is DRAINING, the pool is shared per seat with the predecessor's
+seated guardians (§23A.6 step 5). Testnet: 2/3 % over two guardians.
 
 Each pool's share is divided among the round's **sitting seats** - the seats
 the census seated for this round, its `nodes` - however many there are: two
@@ -3059,7 +3060,21 @@ upgrade, a change of `federation_nominal` by §27A).
    Its guardians MUST serve until CLOSED (§23A.5: stopping earlier is
    abandonment); after CLOSED they may stop, and their bonds mature as any
    node's.
-5. **What is left behind.** Notes in a CLOSED federation are lost to their
+5. **Serving the drain is paid (the owner 2026-09-21: "no incentive to stay
+   in a draining federation"; RULED HERE).** From DRAINING to CLOSED no
+   round names the old federation, so its guardian pool would be empty
+   while its guardians still hold every note not yet moved and every lock
+   not yet settled. Therefore the **guardian pool of every round that names
+   the successor is shared with the seated guardians of the draining
+   predecessor**: one share per seat across both federations, so a
+   guardian seated in both (the seated-first of step 1, which is most of
+   them) earns two shares, and a guardian seated only in the old one still
+   earns one, until the old record is CLOSED. The successor pays it because
+   it exists on the old federation's work, and the rounds pay it because
+   their players' balances came out of that drain. A drain is therefore a
+   paid service with a bond behind it, not a bond alone; and it ends the
+   sooner the more players move, which the client does on every start.
+6. **What is left behind.** Notes in a CLOSED federation are lost to their
    holder, and it is said here: the client migrates on every start for six
    months, the lobby says so from the first day, and a player who never
    opens the game in six months has kept a game balance for six months
