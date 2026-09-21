@@ -162,6 +162,11 @@
       #blwp-wallet input { width: calc(100% - 150px); margin-right: 8px; vertical-align: middle; }
       #blwp-wallet button { vertical-align: middle; }
     }
+    #blwp-backup-warn { display:flex; align-items:center; gap:12px; margin:0 0 8px 0; padding:12px 16px;
+      background:#3a2000; border:2px solid #ff9d2e; border-radius:6px; color:#ffcf8a;
+      font-size:17px; font-weight:600; line-height:1.3; }
+    #blwp-backup-cta { flex:none; font-size:16px; font-weight:700; padding:8px 16px; cursor:pointer;
+      background:#ff9d2e; color:#241400; border:0; border-radius:4px; }
   </style>
 </head>
 <body>
@@ -170,7 +175,13 @@
        round is being driven, so the balance, the federation and the pending line cannot follow a player
        into the game. -->
   <div id="blwp-money">
-    <div id="blwp-backup-notice"></div>
+    <!-- THE WARNING IS LARGE AND IT IS IN THE LOBBY (the owner 2026-09-21 20:01), with its own way out.
+         A line buried in Settings is a line nobody reads; PLAY is never refused, so the warning is the
+         only thing standing between a player and losing a wallet he never wrote down. -->
+    <div id="blwp-backup-warn" style="display:none">
+      <span id="blwp-backup-notice"></span>
+      <button id="blwp-backup-cta" type="button">Back up now</button>
+    </div>
     <div id="blwp-balance-line"></div>
     <div id="blwp-money-actions">
       <button id="blwp-deposit-go" type="button">Deposit</button>
@@ -688,26 +699,9 @@
       // carried its own could carry its own committee next - and the rule sits
       // where `node --test` can drive it.
       const pays = BLWPCLIENT.roundPays(named.round);
-      // §24B: A PAID ROUND IS MONEY, SO IT WAITS FOR THE BACKUP. A free round never asks - it stakes
-      // nothing, so a player with no backup cannot lose anything by driving one. The rule is
-      // `BLWPCLIENT.mayJoin`, tested in backup-gate.test.js; this only asks it and says the answer where
-      // the player is looking.
-      {
-        const st = (() => { try { return window.localStorage; } catch { return null; } })();
-        const seed = (() => { try {
-          return BLWPCLIENT.tabSeed({ storage: window.sessionStorage,
-            random: (n) => crypto.getRandomValues(new Uint8Array(n)) });
-        } catch { return null; } })();
-        const allowed = BLWPCLIENT.mayJoin({ paying: !!pays, storage: st, seed });
-        if (!allowed.ok) {
-          console.log('[blwp] join refused: ' + allowed.why);
-          const why = document.getElementById('blwp-money-why');
-          if (why) why.textContent = allowed.why;
-          const money = document.getElementById('blwp-money');
-          if (money) money.style.display = '';
-          return;
-        }
-      }
+      // PLAY IS NEVER REFUSED FOR WANT OF A BACKUP (the owner 2026-09-21 20:01). An earlier letter gated a
+      // paid join on the seed being written down; that is overridden. A player who has not backed up is
+      // WARNED, loudly and in the lobby, and plays anyway - free or paid. The warning is the whole of it.
       // WHAT THE JOIN IS WAITING ON, SAID OUT LOUD (2026-09-21). Measured on the live Daily: PLAY on a paid
       // round produced 99 console events, 0 exceptions and 0 refusals, and still "named no node" - so the
       // join was neither completing nor refusing, and `Runtime.evaluate` goes silent after a join, so the
@@ -1046,17 +1040,6 @@
       paying = true;
       walletWhy = 'asking the wallet…';
       paintWallet();
-      // §24B: the same gate on the money itself, not only on the join - a tab that got past the lobby
-      // some other way still cannot pay a stake it has no backup for.
-      {
-        const st = (() => { try { return window.localStorage; } catch { return null; } })();
-        const seed = (() => { try {
-          return BLWPCLIENT.tabSeed({ storage: window.sessionStorage,
-            random: (n) => crypto.getRandomValues(new Uint8Array(n)) });
-        } catch { return null; } })();
-        const allowed = BLWPCLIENT.mayPayStake(st, seed);
-        if (!allowed.ok) { paying = false; walletWhy = allowed.why; return paintWallet(); }
-      }
       const said = await client.payStake(client.joinedEntry, {
         connection: held, curve: window.BLWP_CURVE, log: spent,
         random: (n) => crypto.getRandomValues(new Uint8Array(n)),
@@ -1427,6 +1410,8 @@
       const st = backupStore(); const seed = walletSeed();
       const line = (st && seed) ? BLWPCLIENT.backupLine(st, seed) : BLWPCLIENT.NO_BACKUP_LINE;
       document.getElementById('blwp-backup-notice').textContent = line;
+      const warn = document.getElementById('blwp-backup-warn');
+      if (warn) warn.style.display = line ? 'flex' : 'none';
       document.getElementById('blwp-settings-backup').textContent = line || 'This wallet is backed up.';
       // THE BALANCE IS READ, NEVER COMPUTED HERE. Until the player wallet of §24A.1 exists this says what
       // it honestly knows - nothing yet - rather than inventing a number the page would then be trusted for.
@@ -1436,12 +1421,6 @@
         : `Balance: ${bal.sats} sat in ${bal.federation}${bal.pending ? ` - ${bal.pending} pending` : ''}`;
       const why = document.getElementById('blwp-money-why');
       if (why && !isBackedUp()) why.textContent = '';
-    }
-    /** The two money doors ask the gate and say the refusal where the player is looking. */
-    function askGate(which) {
-      const st = backupStore(); const seed = walletSeed();
-      if (!st || !seed) return { ok: false, why: 'this browser has no wallet yet' };
-      return which === 'deposit' ? BLWPCLIENT.mayDeposit(st, seed) : BLWPCLIENT.mayPayStake(st, seed);
     }
     for (const [id, which] of [['blwp-deposit-go', 'deposit'], ['blwp-move-go', 'deposit'],
       ['blwp-withdraw-lobby', 'withdraw']]) {
@@ -1454,15 +1433,20 @@
           document.getElementById('blwp-money-why').textContent = 'Withdraw is not wired to a wallet yet.';
           return;
         }
-        const said = askGate(which);
-        document.getElementById('blwp-money-why').textContent = said.ok
-          ? 'Deposit is not wired to a wallet yet.' : said.why;
+        // NOT GATED ANY MORE. A player who has not written the phrase down is warned, not stopped.
+        document.getElementById('blwp-money-why').textContent = 'Deposit is not wired to a wallet yet.';
       });
     }
     // SETTINGS: three things and a Close, and the phrase is only shown when asked for.
     const settingsPanel = () => document.getElementById('blwp-settings');
     document.getElementById('blwp-settings-go').addEventListener('click', () => {
       settingsPanel().style.display = ''; paintSettings();
+    });
+    // The lobby's own way out: one click to Settings with the words already on screen.
+    document.getElementById('blwp-backup-cta').addEventListener('click', () => {
+      settingsPanel().style.display = ''; paintSettings();
+      document.getElementById('blwp-phrase-show').click();
+      document.getElementById('blwp-phrase-typed').scrollIntoView({ block: 'center' });
     });
     document.getElementById('blwp-settings-close').addEventListener('click', () => {
       settingsPanel().style.display = 'none';
@@ -1504,7 +1488,7 @@
       const why = document.getElementById('blwp-verify-why');
       if (!made || !made.ok || !st) { why.textContent = 'no wallet to back up yet'; return; }
       const said = BLWPCLIENT.verifyAndRecord({ typed, phrase: made.phrase, storage: st, seed });
-      why.textContent = said.ok ? 'Backed up. Deposit and paid rounds are open.' : said.why;
+      why.textContent = said.ok ? 'Backed up. Keep those 24 words somewhere safe.' : said.why;
       if (said.ok) document.getElementById('blwp-phrase-typed').value = '';
       paintMoney();
     });
