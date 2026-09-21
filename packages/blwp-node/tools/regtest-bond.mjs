@@ -42,10 +42,24 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
   // without asking the mempool.
   const include = (hexes) => cli('generateblock', cli('getnewaddress'), JSON.stringify(hexes));
 
-  const carrierScript = (key) => Uint8Array.from([0x75, 0x20, ...key, 0xac]);
-  function carrierFor(secret) {
+  // THE BODY TRAVELS IN SEVERAL ITEMS, ONE `OP_DROP` EACH (RULED, the owner 2026-09-21).
+  //
+  // Measured on this node at d14fbec7: the spend is `witness_v1_taproot` and the stack was
+  // [64 sig, 266 body, 35 script, 33 control], and it was refused `bad-witness-nonstandard` - Bitcoin Core
+  // holds a TAPSCRIPT witness stack item to 80 bytes just as it does a P2WSH one, so the 266-byte body was
+  // the whole of the refusal. No advertisement field is cut and the signature keeps its own item: the body
+  // is simply split into pieces of at most 80 bytes, and the carrier script drops one per piece.
+  const CHUNK = 80;
+  const chunksOf = (body) => {
+    const out = [];
+    for (let at = 0; at < body.length; at += CHUNK) out.push(body.subarray(at, Math.min(at + CHUNK, body.length)));
+    return out;
+  };
+  const carrierScript = (key, drops = 1) =>
+    Uint8Array.from([...new Array(drops).fill(0x75), 0x20, ...key, 0xac]);
+  function carrierFor(secret, drops = 1) {
     const key = schnorr.getPublicKey(secret);
-    const script = carrierScript(key);
+    const script = carrierScript(key, drops);
     const leaf = tapLeafHash(script);
     const tweak = taggedHash('TapTweak', new Uint8Array([...key, ...leaf]));
     const { outputKey, parity } = tweakPoint(key, tweak);
@@ -91,7 +105,8 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
     const body = joinSignedAdvert(encodeAdvert(advert), schnorr.sign(id, nodeSecret));
 
     const carrierSecret = schnorr.utils.randomSecretKey();
-    const carrier = carrierFor(carrierSecret);
+    const pieces = chunksOf(body);
+    const carrier = carrierFor(carrierSecret, pieces.length);
     const utxo = fund(carrier.spk);
     const outputs = [
       { value: bondSats, script: fromHex('5120' + toHex(built.outputKey)) },
@@ -107,8 +122,10 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
     });
     const hex = toHex(serializeSpend({
       version: 2, locktime: 0, inputs, outputs,
+      // The stack is read bottom-up, so the signature goes in first and the pieces above it; the
+      // `OP_DROP`s take the pieces off in reverse and leave the signature for `OP_CHECKSIG`.
       witnesses: [scriptPathWitness({
-        stack: [schnorr.sign(sighash, carrierSecret), body],
+        stack: [schnorr.sign(sighash, carrierSecret), ...pieces],
         script: carrier.script, controlBlock: carrier.control,
       })],
     }));

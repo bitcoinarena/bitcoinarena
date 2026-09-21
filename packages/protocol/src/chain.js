@@ -24,7 +24,7 @@ import {
   bondInternalKey, bondOutputKeyMatches, BOND_SCRIPT_TEMPLATE_VERSION,
 } from './bond-script.js';
 import {
-  hash256, parseTransaction, commitmentsOf, witnessItemsOf,
+  hash256, parseTransaction, commitmentsOf, witnessRunsOf,
 } from './tx.js';
 import { fromHex } from './hash.js';
 import { bondMarker } from './constants.js';
@@ -488,7 +488,7 @@ export function acceptAdvert({
       offered.push({ advert: decodeAdvert(body), signature });
     } catch { /* not a signed body; most witness items are not */ }
   };
-  for (const item of witnessItemsOf(tx)) read(item);
+  for (const item of witnessRunsOf(tx)) read(item);
   if (signedAdvert) read(signedAdvert);
 
   const taken = offered.find((o) =>
