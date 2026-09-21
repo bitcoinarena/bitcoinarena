@@ -678,10 +678,28 @@
         else { window.BLWP_DONATION_SET_WHY = ds.why; console.error('[blwp] no donation: ' + ds.why); }
       }
       window.BLWP_DONATION_SET = donationSet;
-      const donation = pays && donationSet
+      // A DONATION NOBODY CAN PAY MUST NOT STAND IN FRONT OF THE STAKE (the owner 2026-09-21).
+      //
+      // `window.prompt` is SYNCHRONOUS: it stops the renderer's script thread until a player answers, so
+      // this one call held the entire money path - measured on the Daily, PLAY reached it and stopped, and
+      // /entry, /invoice, /stake and /handout stayed at 0 while the page looked merely slow. On the Daily the
+      // recipients are `http://127.0.0.1:18777/lnurlp/...` - a loopback payee no player's wallet can reach -
+      // so the overlay was asking for a donation that could never be paid, in front of a stake that could.
+      //
+      // The donation is NOT removed from the protocol: the round still names its set, the client still
+      // carries it, and a reachable set still asks. What is skipped is the ASKING when the answer could only
+      // be nothing: every recipient on loopback, or nothing to give.
+      const recipientsLine = donationSet ? BLWPCLIENT.donationRecipientsLine(donationSet) : '';
+      const onlyLoopback = /https?:\/\/(127\.0\.0\.1|localhost|\[::1\])/i.test(recipientsLine)
+        && !/https?:\/\/(?!127\.0\.0\.1|localhost|\[::1\])/i.test(recipientsLine);
+      const askForADonation = pays && donationSet && !onlyLoopback;
+      if (pays && donationSet && onlyLoopback)
+        console.log('[blwp] donation not asked: every recipient is loopback, which no wallet can reach - '
+          + recipientsLine);
+      const donation = askForADonation
         ? BLWPCLIENT.chooseDonation({ roundIdHex: named.roundIdHex, round: named.round,
           ask: (m, d) => window.prompt(m, d), confirm: (m) => window.confirm(m), storage: window.sessionStorage,
-          recipientsLine: BLWPCLIENT.donationRecipientsLine(donationSet) })
+          recipientsLine })
         : { bps: 0, donationMsat: 0n };
       window.BLWP_DONATION = { bps: donation.bps, donationMsat: String(donation.donationMsat), kept: !!donation.kept };
       let stake = null;
@@ -923,7 +941,10 @@
       // measured on the page, today's included.
       if (!client || !client.joinedEntry || owed) return;
       const said = await client.invoice(client.joinedEntry);
-      if (said.ok) owed = said;
+      // AND A QUOTE THAT ARRIVES CLEARS THE LAST COMPLAINT. Measured on the Daily: the panel showed a
+      // correct breakdown - 98 sat staked, HELD - with "no entry id to ask about: setRound was never called
+      // and none was given" still sitting beside it, left from an ask made before the entry existed.
+      if (said.ok) { owed = said; walletWhy = ''; }
       else if (said.status !== 404) walletWhy = said.why;
       paintWallet();
     }
