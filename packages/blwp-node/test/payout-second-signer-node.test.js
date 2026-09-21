@@ -23,6 +23,7 @@ import { WebSocket } from 'ws';
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { HELD, SETTLED, CANCELLED } from '../src/custody.js';
+import { WINNER, LOSER, wordsAt } from './window-fixture.js';
 import { PAID, PAID_IN_PART, PAYOUT_QUEUED } from '../src/payout.js';
 import { txidToRpc } from '../src/pool-watch.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
@@ -52,19 +53,20 @@ const RANDOMNESS = b32(0x9b);
 const BEACON_HEIGHT = 900001;
 const BEACON = { hash: RANDOMNESS, height: BEACON_HEIGHT, timeMs: 900n };
 const GENESIS_HASH = (await import('../../protocol/src/transcript.js')).GENESIS;
-const wordsAt = (t) => [45875, ((t * 977) % 30000) - 15000, (t % 700) < 40 ? 65536 : 0, 0, 0];
 const STAKE = 1000000n;            // 1000 sats: the winner's 980 is above the dust floor
 const POOL_SATS = 200000n;
 const WINDOW_MS = 3000;
 const HTLC_EXPIRY = 901000;        // above the fake chain's tip, so no hold expires here
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// THIS FILE KEEPS ITS OWN COPY of window-fixture.js's pair rather than importing it, so the 2026-09-19 re-pick had
-// to be made here too: the winner 1d stopped delivering at 1830888 (the 20:30 hold cadence) and by HEAD wrecked at
-// tick 192 with score 0, and the loser 0x16 stopped wrecking at all. With a winner that never delivers the payout
-// table answers NOTHING_OWED and the loser's hold stays HELD instead of SETTLED, which is what this test measured.
-const WINNER = { name: 'winner', key: b32(0x0a), worldSecret: fromHex(`01${'00'.repeat(30)}6d`), ticks: 1320 };
-const LOSER = { name: 'loser', key: b32(5), worldSecret: b32(0xc0), ticks: 1000 };
+// THE PAIR AND THE TAPE COME FROM window-fixture.js, and no longer from a copy kept here.
+//
+// The copy had to be re-picked by hand every time the world moved under it - the 2026-09-19 re-pick is in
+// the history - and its `wordsAt` was OPEN LOOP: a fixed throttle and a sine of a steer, which reaches the
+// gate only by luck. When the run length went from this file's 9000 to the core's own 10800 it stopped
+// reaching it, the winner never delivered, the payout table answered NOTHING_OWED and the loser's hold
+// stayed HELD instead of SETTLED - which is exactly the failure the old comment here described. The shared
+// tape steers AT the gate each tick, so it delivers whatever the round's length is.
 
 function paidPort() {
   const amounts = new Map();
