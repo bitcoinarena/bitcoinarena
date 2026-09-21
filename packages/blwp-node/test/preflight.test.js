@@ -16,6 +16,19 @@ import { serve } from '../src/server.js';
 import { encodeRoundContract } from '../../protocol/src/contracts.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
+import { BLOCK_TICKS as RUN_TICKS } from '../../core/src/rules/gate.js';   // `Round.open` refuses another
+
+// TWO GATEWAYS THAT CAN RECEIVE (§23.6) AND A CHAIN WITH REAL BLOCKS. Both rules landed after this file was
+// written, and both are refusals when unanswered: a paying round needs two independent gateways, and a hold
+// must outlive the round it secures. Neither is what these tests are about, so both are given.
+const GATEWAYS = [
+  { identityPubkey: '02'.padEnd(66, '1'), rpc: '127.0.0.1:1', syncedToChain: true, channels: [{ active: true, remoteBalanceSat: 1000000n }] },
+  { identityPubkey: '03'.padEnd(66, '2'), rpc: '127.0.0.1:2', syncedToChain: true, channels: [{ active: true, remoteBalanceSat: 1000000n }] },
+];
+const ROUND = { blockTicks: 10800, objectionWindowMs: 600000n, stakeExpiryBlocks: 144 };
+const CHAIN = { round: ROUND, secondsPerBlock: 600 };
+const able = (o) => ({ gateways: GATEWAYS, ...CHAIN, ...o });
+
 
 const STAKE = 100000n;
 const signerNode = (donationMsat = 0n, stakeMsat = STAKE) =>
@@ -28,9 +41,9 @@ const channel = (local, remote, reserve = 4000) => ({
 });
 
 test('the testnet4 node as measured cannot hold one stake, and says how short it is', () => {
-  const said = lightningPreflight({
+  const said = lightningPreflight(able({
     info: info(), channels: [channel(396530, 0)], holdInvoices: true, players: 2, entry: signerNode(),
-  });
+  }));
   assert.equal(said.ready, false);
   assert.equal(said.facts.heldPerSignerNodeMsat, 98000n, 'the hold is not the net of the 2% fee');
   assert.equal(said.facts.inboundMsat, 0n);
@@ -39,60 +52,60 @@ test('the testnet4 node as measured cannot hold one stake, and says how short it
 });
 
 test('a node with enough inbound, synced, offering holds, is ready - and the reserve is not inbound', () => {
-  const ok = lightningPreflight({
+  const ok = lightningPreflight(able({
     info: info(), channels: [channel(200000, 200000)], holdInvoices: true, players: 2, entry: signerNode(),
-  });
+  }));
   assert.equal(ok.ready, true, ok.why);
   assert.equal(ok.facts.inboundMsat, (200000n - 4000n) * 1000n, 'the peer\'s reserve was counted as spendable');
 
   // one msat short of two holds, once the reserve is taken off
-  const short = lightningPreflight({
+  const short = lightningPreflight(able({
     info: info(), channels: [channel(0, 4000 + 195)], holdInvoices: true, players: 2, entry: signerNode(),
-  });
+  }));
   assert.equal(short.ready, false);
   assert.match(short.why, /need 196000 msat of inbound, and the channels offer 195000/);
 });
 
 test('mainnet is refused by name before anything is computed', () => {
-  const said = lightningPreflight({
+  const said = lightningPreflight(able({
     info: info('mainnet'), channels: [channel(0, 10000000)], holdInvoices: true, players: 2, entry: signerNode(),
-  });
+  }));
   assert.equal(said.ready, false);
   assert.deepEqual(said.facts, {}, 'a mainnet node was measured as if it might be used');
   assert.match(said.why || said.missing[0], /MAINNET/);
-  const other = lightningPreflight({
+  const other = lightningPreflight(able({
     info: info('signet'), channels: [channel(0, 400000)], holdInvoices: true, players: 1, entry: signerNode(),
-  });
+  }));
   assert.equal(other.ready, false);
   assert.match(other.why, /on signet, and rounds hold stakes only on testnet4 or regtest/);
 });
 
 test('an unsynced node, a node with no channel and a node without holds are each named', () => {
-  const said = lightningPreflight({ info: info('testnet4', false), channels: [], holdInvoices: false, players: 1, entry: signerNode() });
+  const said = lightningPreflight(able({ info: info('testnet4', false), channels: [], holdInvoices: false, players: 1, entry: signerNode() }));
   assert.equal(said.ready, false);
   assert.match(said.why, /not synced/);
   assert.match(said.why, /no active channel/);
   assert.match(said.why, /does not offer addholdinvoice/);
   // an inactive channel is no channel
-  const idle = lightningPreflight({
+  const idle = lightningPreflight(able({
     info: info(), channels: [{ ...channel(0, 400000), active: false }], holdInvoices: true, players: 1, entry: signerNode(),
-  });
+  }));
   assert.match(idle.why, /no active channel/);
 });
 
 test('a round that asks no stake is ready with no channel at all (M3.3-19)', () => {
-  const said = lightningPreflight({ info: info(), channels: [], holdInvoices: false, players: 2, entry: signerNode(0n, 0n) });
+  const said = lightningPreflight(able({ info: info(), channels: [], holdInvoices: false, players: 2, entry: signerNode(0n, 0n) }));
   assert.equal(said.ready, true, said.why);
   assert.match(said.why, /needs no inbound and no channel/);
 });
 
 test('the inbound a round needs is the NET hold, so a donating signer node needs less', () => {
-  const plain = lightningPreflight({ info: info(), channels: [channel(0, 400000)], holdInvoices: true, players: 3, entry: signerNode() });
-  const giving = lightningPreflight({ info: info(), channels: [channel(0, 400000)], holdInvoices: true, players: 3, entry: signerNode(5000n) });
+  const plain = lightningPreflight(able({ info: info(), channels: [channel(0, 400000)], holdInvoices: true, players: 3, entry: signerNode() }));
+  const giving = lightningPreflight(able({ info: info(), channels: [channel(0, 400000)], holdInvoices: true, players: 3, entry: signerNode(5000n) }));
   assert.equal(plain.facts.neededMsat, 3n * 98000n);
   assert.equal(giving.facts.neededMsat, 3n * 93000n);
   // and a signer node whose fee and donation exceed its stake is refused, not measured
-  assert.throws(() => lightningPreflight({ info: info(), players: 1, entry: signerNode(200000n) }), /cannot come to more than it/);
+  assert.throws(() => lightningPreflight(able({ info: info(), players: 1, entry: signerNode(200000n) })), /cannot come to more than it/);
 });
 
 /* ---------------------------------------------------------------- the gate */
@@ -109,7 +122,7 @@ const contractFor = (nodes, stakeMsat) => ({
   startTimeMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS, entryCloseMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS + 200000n,
   objectionWindowMs: 600000n, custody: 'THRESHOLD_LN', slashMinimumServed: 20,
   slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: ['http://127.0.0.1:9'] /* a paying round names a relay (§13A); never posted to here */, donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,
-  censusRoot: b32g(2), stakeMsat, bondMinSats: 50000n, blockTicks: 9000,
+  censusRoot: b32g(2), stakeMsat, bondMinSats: 50000n, blockTicks: RUN_TICKS,
   exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
   timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
   nodes,
@@ -129,10 +142,10 @@ async function opener(opts) {
 }
 
 // The node as measured, fed to the same preflight the daemon runs.
-const asMeasured = async ({ contract }) => lightningPreflight({
+const asMeasured = async ({ contract }) => lightningPreflight(able({
   info: info(), channels: [channel(396530, 0)], holdInvoices: true, players: MIN_PLAYERS_PER_ROUND,
   entry: { stakeMsat: contract.stakeMsat, feeMsat: entryFeeMsat(contract.stakeMsat), donationMsat: 0n },
-});
+}));
 
 test('a node that cannot hold a stake refuses to open a round that asks one, and says how short it is', async () => {
   const asked = [];

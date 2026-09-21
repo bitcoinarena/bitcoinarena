@@ -175,6 +175,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // a read-only key. A node given a port and no preflight opens no paying
   // round: the gate fails closed.
   preflight = null,
+  // HOW FAST BLOCKS ARE COMING ON THE CHAIN THIS NODE WATCHES, measured by the launcher from its own
+  // bitcoind (RULED 2026-09-21). It sizes the stake's HTLC: an HTLC dies at a height and a round is final
+  // after a time, and 144 blocks is a day at ten minutes and twelve minutes at five seconds. Unknown, every
+  // hold keeps the contract's own `stakeExpiryBlocks`, exactly as before.
+  secondsPerBlock = null,
   // The pool's key material and something that can broadcast. A daemon given
   // neither still agrees on what the round owes; it just does not spend.
   // The default curve carries the taproot tweak: without it a daemon started
@@ -320,7 +325,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
 
   const custody = new Custody(round, {
-    port: lightning, preimageFor: preimageFor || fromTheCommittee,
+    port: lightning, preimageFor: preimageFor || fromTheCommittee, secondsPerBlock,
   });
 
   // TWO FIRST MARKS PROVEN HERE (§13B; M3.3-34, a signer node that stays down): ask

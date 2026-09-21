@@ -27,6 +27,7 @@ export const PLAYABLE = ['testnet4', 'regtest'];
  */
 // One number with the fee-lock gate: protocol constants.js.
 import { gatewaysAreIndependent } from '../../protocol/src/gateways.js';
+import { holdCoversRound, cltvBlocksFor } from '../../protocol/src/hold-window.js';
 import { MIN_PLAYERS_PER_ROUND } from '../../protocol/src/constants.js';
 export { MIN_PLAYERS_PER_ROUND };
 
@@ -153,13 +154,14 @@ export function askGatewaysRegtest({ lncli, gateways, run = execFileSync }) {
  * fewest players a round opens for, each at the round's stake with the fee out
  * of it and no donation - the largest hold an entry can ask for.
  */
-export const lndPreflight = ({ lncli, lnddir, lnddirs }) => async ({ contract }) => {
+export const lndPreflight = ({ lncli, lnddir, lnddirs, secondsPerBlock = null }) => async ({ contract }) => {
   const stakeMsat = contract.stakeMsat;
   return lightningPreflight({
     ...askLnd({ lncli, lnddir }), players: MIN_PLAYERS_PER_ROUND,
     entry: { stakeMsat, feeMsat: entryFeeMsat(stakeMsat), donationMsat: 0n },
     // AND THE GATEWAYS, asked the same read-only way. Without them a staking round is refused (§23.6).
     gateways: askGateways({ lncli, ...(lnddirs ? { lnddirs } : {}) }),
+    round: contract, secondsPerBlock,
   });
 };
 
@@ -175,7 +177,7 @@ export const lndPreflight = ({ lncli, lnddir, lnddirs }) => async ({ contract })
  *                                   staking round is refused without them. See below.
  */
 export function lightningPreflight({ info, channels = [], holdInvoices = false, players, entry,
-                                     gateways = null }) {
+                                     gateways = null, round = null, secondsPerBlock = null }) {
   const network = (info && info.chains && info.chains[0] && info.chains[0].network) || 'unknown';
 
   // MAINNET IS REFUSED BEFORE ANYTHING IS COMPUTED. Nothing here should read as
@@ -226,6 +228,28 @@ export function lightningPreflight({ info, channels = [], holdInvoices = false, 
 
   if (!holdInvoices)
     missing.push('that lnd does not offer addholdinvoice, so it cannot hold a stake');
+
+  // AND THE HOLD MUST OUTLIVE THE ROUND (RULED 2026-09-21).
+  //
+  // §23 already refuses a node whose Lightning "may never be seen settled" because it is behind its chain.
+  // This is the same sentence on the other clock: an HTLC dies at a HEIGHT, a result becomes FINAL after a
+  // TIME, and a round opened where the first comes before the second is a round whose stake goes home by
+  // timeout while its own verdict is still being waited for. Measured on the Daily: a DELIVERED run, signed
+  // 2 of 2, whose loser's stake could not be settled into the pool - "invoice already canceled" - so no
+  // payout formed and no sat moved between two players who had both paid.
+  //
+  // A round is not shortened to fit a short hold; the hold is sized to the round (custody.js) and the door
+  // refuses what still does not reach. A node that has not timed its chain cannot answer the question, and
+  // an unanswered question is a refusal, not a pass - the same rule the gateways get.
+  if (round) {
+    const blocks = secondsPerBlock
+      ? cltvBlocksFor({ secondsPerBlock, blockTicks: round.blockTicks,
+        objectionWindowMs: round.objectionWindowMs, floorBlocks: round.stakeExpiryBlocks })
+      : round.stakeExpiryBlocks;
+    const covers = holdCoversRound({ secondsPerBlock, cltvBlocks: blocks,
+      blockTicks: round.blockTicks, objectionWindowMs: round.objectionWindowMs });
+    if (!covers.ok) missing.push(covers.why);
+  }
 
   // AND A PAYING ROUND NEEDS SOMEWHERE FOR THE MONEY TO COME IN FROM - MORE THAN ONE (§23.6).
   //

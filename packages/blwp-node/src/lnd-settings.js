@@ -59,7 +59,7 @@ export function gatewaysFromEnv(env) {
  *   { ok: true, given: true, lightning, preflight, rpc, network } |
  *   { ok: false, why: string }}
  */
-export function lightningFromEnv(env) {
+export function lightningFromEnv(env, { secondsPerBlock = null } = {}) {
   const lnd = Object.fromEntries(LND_SETTINGS.map((k) => [k, env[k] || '']));
   const given = LND_SETTINGS.filter((k) => lnd[k]);
   if (!given.length) return { ok: true, given: false };
@@ -84,9 +84,11 @@ export function lightningFromEnv(env) {
     // Named none, neither is given any and each keeps the fallback it already had: testnet4 the operator's
     // two known dirs, regtest the one node it was pointed at - which is one, and one is refused.
     preflight: lnd.BLWP_LND_NETWORK === 'testnet4'
-      ? lndPreflight({ lncli: lnd.BLWP_LNCLI, lnddir: lnd.BLWP_LND_DIR,
+      ? lndPreflight({ lncli: lnd.BLWP_LNCLI, lnddir: lnd.BLWP_LND_DIR, secondsPerBlock,
         ...(gateways.length ? { lnddirs: gateways.map((g) => g.lnddir) } : {}) })
-      : lndPreflightRegtest({ lncli: lnd.BLWP_LNCLI, lnddir: lnd.BLWP_LND_DIR, rpc: lnd.BLWP_LND_RPC,
+      : lndPreflightRegtest({ lncli: lnd.BLWP_LNCLI, lnddir: lnd.BLWP_LND_DIR, rpc: lnd.BLWP_LND_RPC, secondsPerBlock,
         ...(gateways.length ? { gateways } : {}) }),
+    // AND THE PACE ITSELF, so the launcher can hand it to custody for sizing the HTLC.
+    secondsPerBlock,
   };
 }
