@@ -1735,6 +1735,29 @@ function roundWindowsAreValid(c) {
       why: `that round closes entry at ${c.entryCloseMs}, before its committee forms at ${opensAt}`,
     };
 
+  // AND IT MUST NAME A RESULT WINDOW THAT IS ACTUALLY A WINDOW (§13A, §13).
+  //
+  // "After a result is PROVISIONALLY_FINAL, the window W (reference: 10 minutes, contract-defined) runs", and
+  // "The result window equals the objection window - same duration, a field on the contract". A window of
+  // ZERO is not a short window, it is no window: finality is instant, so §13A's replay veto - which the spec
+  // calls the cheapest defence in the whole design - can never be exercised, and `verify.js`'s result-window
+  // test (`now >= closed_ms + objectionWindowMs`) is true the moment the round closes, so a seat that has not
+  // yet retrieved the transcript voids the entry immediately.
+  //
+  // NO FLOOR IS SPECIFIED AND NONE IS INVENTED HERE. §13A gives "reference: 10 minutes, contract-defined" -
+  // a reference, not a minimum - and no sentence in BLWP v4.6.1 states a floor or a ceiling for W. So this
+  // refuses only what the spec's own words rule out: a duration that is not positive. A contract naming any
+  // positive window, 10 minutes or otherwise, opens exactly as before, because the field is contract-defined.
+  if (typeof c.objectionWindowMs !== 'bigint')
+    return { ok: false, opensAt, why: 'that round names no objection window, so nothing says when a result may become final' };
+  if (c.objectionWindowMs <= 0n)
+    return {
+      ok: false,
+      opensAt,
+      why: `that round's objection window is ${c.objectionWindowMs}ms: a zero window is not a short one, it is `
+        + 'none at all - finality would be instant and §13A\'s replay veto could never be used',
+    };
+
   return { ok: true, opensAt, earliestStart };
 }
 
@@ -1792,6 +1815,36 @@ function federationIsNamed(c) {
  * and were still provisionally final after the window. A free round moves no
  * money and may name none.
  */
+/**
+ * A ROUND MAY NOT NAME MORE SITTING SEATS THAN ITS OWN POOLS HAVE SLOTS (§22A).
+ *
+ * 22A pays the node fee to "the round's **sitting seats** - the seats the census seated for this round, its
+ * `nodes` - however many there are: two in a 2-of-2, seven in a 5-of-7", and says it again as a warning:
+ * "**Not seven census slots when the round is 2-of-2**". A fee lock is sized for the same seats the
+ * settlement pays, so a contract that names seven seats on a two-slot round mints a lock divided seven ways
+ * and a settlement that pays seven - from a committee of two. The extra shares go to seats that never sat.
+ *
+ * MEASURED BEFORE THIS EXISTED: `feeLockPays` reads `contract.nodes` and never looks at the slot counts, so a
+ * 2-of-2 round naming seven seats answered `pays true, signerNodes 7`. The lock was sized for seven.
+ *
+ * IT IS AN UPPER BOUND, NOT AN EQUALITY, and that is deliberate. The spec's number is "however many there
+ * are", and a slot a census left unfilled is a round with fewer seats than slots - legitimate, and not this
+ * rule's business. Only naming MORE seats than the round has slots is the fault 22A warns about, so that is
+ * all this refuses.
+ */
+function sittingSeatsFitTheSlots(c) {
+  if (!c) return { ok: false, why: 'no contract' };
+  const seats = Array.isArray(c.nodes) ? c.nodes.length : 0;
+  const gv = Number.isInteger(c.gameVerifySlots) ? c.gameVerifySlots : 0;
+  const st = Number.isInteger(c.settlementSlots) ? c.settlementSlots : 0;
+  const slots = Math.max(gv, st);
+  if (seats > slots)
+    return { ok: false, seats, slots,
+      why: `that round seats ${seats} signer nodes on ${gv}/${st} slots: 22A pays the seats the census `
+        + 'seated, and a fee lock sized for more of them pays seats that never sat' };
+  return { ok: true, seats, slots, why: '' };
+}
+
 function publicationRelaysAreValid(c) {
   if (!c) return { ok: false, why: 'no contract' };
   if (!Array.isArray(c.publicationRelays))
@@ -6221,6 +6274,7 @@ const KNOWN_GOOD_CORE_HASHES = Object.freeze([
   '13175b55e1a8dc5750b19919ed516c8aa513b2f1bd85ff8a1254c21552124035',
   '76010a746193dce3ed94f29deffad95a58d48b3cf7dc101e58d869b7b9446019',
   '3fd9cda50f076d3a43fab5bcce349f7350a8f3afd982f3a4eee59c56dc4aa560',
+  '6cf38b8877a054173cb8d1004f3c6f0b1ed15fb85efa5a50379079451fa74fe4',
 ]);
 
 // ---- protocol/src/known-core.js
