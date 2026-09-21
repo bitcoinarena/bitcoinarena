@@ -281,6 +281,10 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
   attested the absence (§23A.5).
 - **Leaving is free.** A guardian who serves his departure notice keeps his
   bond and his census seat; only leaving without notice is slashed (§23A.5).
+- **Every role is opt-in** (§5A.1): a node advertises what it takes part in
+  - game/verify, settlement, guardian, any combination or none - and is
+  drawn for nothing else. A node that wants no custody leaves
+  `guardian_capable` off.
 
 ## Security findings (Fable, 2026-09-11 15:00) — RESOLVED in spec v4.6.2 (the owner 15:10: "alles dokumentieren und lösen")
 
