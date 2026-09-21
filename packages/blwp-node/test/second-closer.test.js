@@ -256,6 +256,24 @@ async function closedWithGap(gapMs, { bLateToAMs = 0 } = {}) {
 }
 
 const wantOf = (loser) => ({ paymentHash: toHex(loser.entry.stakeCommitment), preimage: toHex(loser.preimage) });
+
+/**
+ * WHAT A PORT RELEASED, WITH THE NODE FEES TAKEN OUT AND NAMED.
+ *
+ * Since the fee got its own hold at entry (§23.5), a close releases TWO kinds of preimage: the lost
+ * stake's, and each entry's fee. This file is about which stake moved and through whose close, so the fee
+ * releases are separated rather than ignored - `feesIn` is asserted on too, and a release that is neither
+ * this round's stake nor one of its fees would fail both.
+ */
+const feeHashOf = (p) => toHex(sha256(p.entry.feePreimage));
+const stakesIn = (settled, players) => {
+  const fees = new Set(players.map(feeHashOf));
+  return settled.filter((x) => !fees.has(x.paymentHash));
+};
+const feesIn = (settled, players) => {
+  const fees = new Set(players.map(feeHashOf));
+  return settled.filter((x) => fees.has(x.paymentHash));
+};
 const bigints = (k, v) => (typeof v === 'bigint' ? String(v) : v);
 
 // SINCE P2 (v4.6.2 §13A) NO SIGNER NODE IS FINAL AT ITS OWN CLOSE: final needs both
@@ -276,10 +294,13 @@ test('closed 800 ms apart: the second closer, refused its first share, ends SETT
     assert.ok(refused.length, `the race did not happen - A never refused B's ask for its share: ${JSON.stringify(w.answeredByA)}`);
     assert.ok(w.answeredByA.some((x) => x.ok && x.atMs > refused[0].atMs), 'A never handed B its share after refusing it');
     assert.equal(w.stateOf(w.a, w.loser.eid), SETTLED, 'the first closer never settled the lost stake');
-    assert.deepEqual(w.portA.settled, [wantOf(w.loser)], 'A released something other than the lost stake\'s own preimage');
+    assert.deepEqual(stakesIn(w.portA.settled, [w.loser, w.winner]), [wantOf(w.loser)],
+      'A released a stake preimage that is not the lost stake\'s own');
+    assert.ok(feesIn(w.portA.settled, [w.loser, w.winner]).length, 'A never took the node fees it served for');
     assert.equal(w.stateOf(w.b, w.loser.eid), SETTLED,
       `the second closer is still ${w.stateOf(w.b, w.loser.eid)} on a stake lnd settled through the first: ${(w.b.round.hold(w.loser.eid) || {}).why}`);
-    assert.deepEqual(w.portB.settled, [wantOf(w.loser)], 'B released something other than the lost stake\'s own preimage');
+    assert.deepEqual(stakesIn(w.portB.settled, [w.loser, w.winner]), [wantOf(w.loser)],
+      'B released a stake preimage that is not the lost stake\'s own');
     assert.equal(w.stateOf(w.a, w.winner.eid), CANCELLED);
     assert.equal(w.stateOf(w.b, w.winner.eid), CANCELLED);
   } finally { await w.close(); }
@@ -299,8 +320,8 @@ test('closed at the same moment: both daemons end SETTLED on the lost stake and 
     }
     assert.equal(w.stateOf(w.a, w.loser.eid), SETTLED, `A is ${w.stateOf(w.a, w.loser.eid)} on the lost stake`);
     assert.equal(w.stateOf(w.b, w.loser.eid), SETTLED, `B is ${w.stateOf(w.b, w.loser.eid)} on the lost stake`);
-    assert.deepEqual(w.portA.settled, [wantOf(w.loser)]);
-    assert.deepEqual(w.portB.settled, [wantOf(w.loser)]);
+    assert.deepEqual(stakesIn(w.portA.settled, [w.loser, w.winner]), [wantOf(w.loser)]);
+    assert.deepEqual(stakesIn(w.portB.settled, [w.loser, w.winner]), [wantOf(w.loser)]);
     assert.equal(w.stateOf(w.a, w.winner.eid), CANCELLED);
     assert.equal(w.stateOf(w.b, w.winner.eid), CANCELLED);
   } finally { await w.close(); }

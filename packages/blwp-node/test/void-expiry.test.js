@@ -59,10 +59,22 @@ const contractFor = (nodePubkey) => ({
  * not copy.
  */
 function paidPort() {
+  // AN AMOUNT PER INVOICE, NOT ONE FOR THE PORT. Since the node fee got its own hold at entry (§23.5) an
+  // entry opens TWO invoices, and a port with a single `amount` slot answered every look with whichever
+  // was made last - the fee. Measured: the stake door said "not paid and held: 2000 of 98000 msat" on a
+  // stake nothing was wrong with, because the fixture had forgotten the stake's own amount.
+  const amounts = new Map();
   const port = {
     looks: 0, label: HELD,
-    async createHeld({ paymentHash, amountMsat }) { port.amount = amountMsat; return { paymentHash, amountMsat, request: 'lnbcrt-x' }; },
-    async look() { port.looks++; return { state: port.label, amountMsat: port.amount, paidMsat: port.amount, expiryHeight: EXPIRY }; },
+    async createHeld({ paymentHash, amountMsat }) {
+      amounts.set(toHex(paymentHash), amountMsat);
+      return { paymentHash, amountMsat, request: 'lnbcrt-x' };
+    },
+    async look({ paymentHash }) {
+      port.looks++;
+      const a = amounts.get(toHex(paymentHash));
+      return { state: port.label, amountMsat: a, paidMsat: a, expiryHeight: EXPIRY };
+    },
     async settle() {}, async cancel() {},
   };
   return port;

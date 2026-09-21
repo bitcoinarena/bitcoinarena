@@ -1766,6 +1766,27 @@ export class Round {
       owedMs: Number(r.owed_ms), paidMs: r.paid_ms === null ? null : Number(r.paid_ms) } : null;
   }
 
+  /**
+   * WHERE A PLAYER'S WINNING GOES, NAMED ONCE AND KEPT (the owner 2026-09-21 13:54).
+   *
+   * "There is no Collect and no pasted invoice after the round." A Lightning address signed by the entry's
+   * session key is a standing instruction, not a claim: it is written the moment the player names it -
+   * before the round has settled, before anything is owed - so the settle pass can send the winning with
+   * no page open. Measured before this: the address lived only in the tab's sessionStorage, the probe's
+   * Chrome closed at DELIVERED, and the round reached FINAL owing 98000 msat with nobody left to ask.
+   */
+  putPayoutAddress({ entryId, roundId, address }) {
+    this.db.prepare('INSERT INTO payout_address (entry_id, round_id, address, named_ms) VALUES (?, ?, ?, ?) '
+      + 'ON CONFLICT(entry_id) DO UPDATE SET address = excluded.address, named_ms = excluded.named_ms')
+      .run(Buffer.from(entryId), Buffer.from(roundId), String(address), this.now());
+  }
+
+  payoutAddress(entryIdBytes) {
+    const r = this.db.prepare('SELECT * FROM payout_address WHERE entry_id = ?').get(Buffer.from(entryIdBytes));
+    return r ? { entryId: new Uint8Array(r.entry_id), roundId: new Uint8Array(r.round_id),
+      address: r.address, namedMs: Number(r.named_ms) } : null;
+  }
+
   winningsOf(roundIdBytes) {
     return this.db.prepare('SELECT entry_id FROM winnings WHERE round_id = ?').all(Buffer.from(roundIdBytes))
       .map((r) => this.winnings(new Uint8Array(r.entry_id)));

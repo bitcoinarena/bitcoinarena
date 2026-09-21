@@ -23,6 +23,7 @@ import { lobbyListingId } from '../../protocol/src/lobby-listing.js';
 import { decodeLobbyName, lobbyNameId } from '../../protocol/src/lobby-name.js';
 import { roundEndMs } from '../../protocol/src/first-mark.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
+import { lightningAddressEndpoint } from '../../protocol/src/lnurl-pay.js';
 import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN } from '../../protocol/src/constants.js';
 import { splitSigned, decodeCheckpoint, checkpointId } from '../../protocol/src/checkpoint.js';
 import { MAX_INPUT_BATCH_BYTES, decodeInputBatch } from '../../protocol/src/batch.js';
@@ -1451,6 +1452,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }, { over: 20 });
     for (const s of suspended)
       console.log(`[custody] ${s.slice(0, 16)} is SUSPENDED by a valid objection: nothing moves, and its hold expires to its player`);
+    // WHAT COMES BACK OUT OF A SETTLE IS JSON, AND JSON HAS NO BigInt.
+    //
+    // `settleHeldInvoices` counts money the way the rest of custody does, in BigInt - the pool, what is
+    // owed, the fees, every row of the table. Everything that reads `stakes()` hands it to
+    // JSON.stringify: a door, a log line, a test's assertion message. Measured: close-order's two
+    // ordering tests both died with "Do not know how to serialize a BigInt" in the MESSAGE of an
+    // assertion, so the answer they were checking was never looked at and the red said nothing about
+    // closing order at all. Out here the amounts are decimal strings, the way every other door says one.
+    const plain = (v) => {
+      if (typeof v === 'bigint') return String(v);
+      if (Array.isArray(v)) return v.map(plain);
+      if (v instanceof Uint8Array || v === null || typeof v !== 'object') return v;
+      return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, plain(x)]));
+    };
+    const told = plain(done);
     const said = {
       agreed: entries.filter((e) => agreed.has(toHex(e.entryId))).map((e) => toHex(e.entryId)),
       final: entries.filter((e) => isFinal(e.entryId)).map((e) => toHex(e.entryId)),
@@ -1465,7 +1481,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const why = `no payout while ${waiting.length} run(s) are inside their objection window`
         + ` and ${suspended.length} are suspended`;
       console.log(`[payout] ${why}`);
-      return { ...done, ...said, owed: { ok: false, why }, paid: null };
+      return { ...told, ...said, owed: { ok: false, why }, paid: null };
     }
 
     // ...AND WHAT THE ROUND OWES. The stakes moving is 23.2; who is owed what
@@ -1496,7 +1512,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // nothing still has to be able to say which runs the committee agreed on -
     // otherwise "nothing moved" and "nothing was agreed" are the same sentence
     // to an operator, and they are very different problems.
-    return { ...done, ...said, owed, paid };
+    return { ...told, ...said, owed, paid };
   }
 
   /**
@@ -2230,7 +2246,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // A player with an NWC wallet mints an invoice and sends that; one without names a Lightning
         // address (LUD-16) once, and this node LNURL-pays it exactly what is owed. Both are signed by the
         // entry's session key, both are paid once, and neither lets the sender choose the amount.
-        const paid = /^ln[a-z0-9]+$/i.test(request)
+        const isInvoice = /^ln[a-z0-9]+$/i.test(request);
+        // AN ADDRESS IS KEPT THE MOMENT IT IS NAMED, and the round may not owe anything yet.
+        //
+        // "Winnings are always sent. There is no Collect and no pasted invoice after the round" - so the
+        // address is a standing instruction, given while the player is still here, and the settle pass
+        // sends to it whether or not a page is open when FINAL comes. An invoice cannot be kept this way:
+        // it is minted for one amount and it expires, which is why only an address stands.
+        if (!isInvoice) {
+          const where = lightningAddressEndpoint(request);
+          if (!where.ok) return text(res, 400, where.why);
+          round.putPayoutAddress({ entryId: new Uint8Array(eid), roundId: entry.roundId, address: request });
+          if (!round.winnings(new Uint8Array(eid))) {
+            res.writeHead(202, { 'content-type': 'application/json', ...CORS });
+            return res.end(JSON.stringify({ entry: eid.toString('hex'), state: 'NAMED', address: request,
+              why: 'this node will send the winning here when the round settles; nothing is owed yet' }) + '\n');
+          }
+        }
+        const paid = isInvoice
           ? await custody.payWinnings({ entryId: new Uint8Array(eid), request })
           : await custody.payWinningsTo({ entryId: new Uint8Array(eid), address: request });
         if (!paid.ok) return text(res, paid.state === PAYING ? 409 : 402, paid.why);

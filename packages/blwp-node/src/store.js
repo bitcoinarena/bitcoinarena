@@ -350,6 +350,13 @@ export function openStore(path = ':memory:') {
       paid_ms   INTEGER
     );
 
+    CREATE TABLE IF NOT EXISTS payout_address (
+      entry_id  BLOB PRIMARY KEY REFERENCES entries(entry_id),
+      round_id  BLOB NOT NULL,
+      address   TEXT NOT NULL,
+      named_ms  INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS stake_seen_tick (
       entry_id  BLOB PRIMARY KEY REFERENCES entries(entry_id),
       tick      INTEGER NOT NULL,

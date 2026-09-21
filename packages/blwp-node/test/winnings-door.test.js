@@ -37,7 +37,8 @@ const signedInvoice = (request, key = session) => {
   return Buffer.from(out);
 };
 
-async function owedNode({ pay = async () => ({ preimage: 'ab'.repeat(32), feeMsat: 0n }), owed = 98000n } = {}) {
+async function owedNode({ pay = async () => ({ preimage: 'ab'.repeat(32), feeMsat: 0n }), owed = 98000n,
+  owe = true } = {}) {
   const paid = [];
   const port = {
     async createHeld({ paymentHash, amountMsat }) { return { paymentHash, amountMsat, request: 'lnbcrt-x' }; },
@@ -52,7 +53,7 @@ async function owedNode({ pay = async () => ({ preimage: 'ab'.repeat(32), feeMsa
   const entry = entryFor(rid);
   node.round.enter(entry);
   const eid = entryIdOf(entry);
-  node.round.putWinnings({ entryId: eid, roundId: rid, owedMsat: owed, state: 'OWED', why: 'the table owes it' });
+  if (owe) node.round.putWinnings({ entryId: eid, roundId: rid, owedMsat: owed, state: 'OWED', why: 'the table owes it' });
   return { node, eid, paid, at: `http://127.0.0.1:${node.port}` };
 }
 
@@ -150,7 +151,10 @@ test('an address that is not one, or whose endpoint asks for another amount, is 
   const w = await owedNode();
   try {
     const no = await fetch(`${w.at}/winnings?entry=${toHex(w.eid)}`, { method: 'POST', body: signedInvoice('not an address') });
-    assert.equal(no.status, 402);
+    // 400, NOT 402: since an address is kept the moment it is named, its shape is read before anything
+    // about money happens. A thing that is not an address is a bad request, not a payment this node
+    // declines - and either way nothing is paid and nothing is stored.
+    assert.equal(no.status, 400);
     assert.match(await no.text(), /name@host|not a host/);
     assert.deepEqual(w.paid, []);
   } finally { await w.node.close(); }
@@ -164,4 +168,35 @@ test('an entry this node never took is a 404, and one owed nothing says so', asy
     const paid = await fetch(`${w.at}/winnings?entry=${'aa'.repeat(32)}`, { method: 'POST', body: signedInvoice('lnbcrtright') });
     assert.equal(paid.status, 404);
   } finally { await w.node.close(); }
+});
+
+// AN ADDRESS IS TAKEN WHILE THE PLAYER IS STILL THERE, NOT WHEN THE MONEY IS OWED.
+//
+// the owner 2026-09-21 13:54: "there is no Collect and no pasted invoice after the round". Measured on the
+// Daily (ec9bd34e): the address lived only in the tab, the run's Chrome closed at DELIVERED, and FINAL
+// came ten minutes later with 98000 msat owed and nobody left to post it. So the door takes the address
+// early, keeps it as a standing instruction, and the settle sends to it with no page open.
+test('a Lightning address is kept the moment it is named, before the round owes anything', async () => {
+  const w = await owedNode({ owe: false });
+  const r = await fetch(`${w.at}/winnings?entry=${toHex(w.eid)}`, { method: 'POST', body: signedInvoice('win@example.test') });
+  const answer = await r.text();
+  assert.equal(r.status, 202, answer);
+  const said = JSON.parse(answer);
+  assert.equal(said.state, 'NAMED');
+  assert.equal(w.node.round.payoutAddress(w.eid).address, 'win@example.test');
+  assert.equal(w.paid.length, 0, 'something was paid for a round that owes nothing');
+  await w.node.close();
+});
+
+test('an address nobody signed for is not kept, and neither is a thing that is not an address', async () => {
+  const w = await owedNode({ owe: false });
+  const thief = ed25519.utils.randomSecretKey();
+  const bad = await fetch(`${w.at}/winnings?entry=${toHex(w.eid)}`,
+    { method: 'POST', body: signedInvoice('thief@example.test', thief) });
+  assert.equal(bad.status, 403);
+  assert.equal(w.node.round.payoutAddress(w.eid), null, 'an unsigned address was kept');
+  const junk = await fetch(`${w.at}/winnings?entry=${toHex(w.eid)}`, { method: 'POST', body: signedInvoice('not an address') });
+  assert.equal(junk.status, 400);
+  assert.equal(w.node.round.payoutAddress(w.eid), null, 'something that is not an address was kept');
+  await w.node.close();
 });
