@@ -827,7 +827,15 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
     // AND ITS FEE LOCK, ONLY WHEN THE PAGE MADE ONE (Pick b: a fee lock is minted
     // only when claiming it can pay a signer node): F handed over openly (F5) and the
     // lock's outpoint. Otherwise zeros, said here - no fee lock, nothing to claim.
-    feePreimage: feeLockOf(stakeLock, round) ? stakeLock.feeLock.preimage : new Uint8Array(32),
+    // AND ON A PAYING ROUND WITH NO FEE LOCK, THE FEE STILL NEEDS A SECRET (§23.5, 2026-09-21).
+    //
+    // The node fee travels in its own lock, and on Lightning custody that lock is its own hold invoice -
+    // claimed by this preimage, which is why the field is in the contract the player signs. Measured on the
+    // Daily when it was left at zeros: lnd answered "cannot use hash of all-zeroes preimage" and no fee
+    // invoice was ever made, so the 2% went on being uncollected. A free round still names zeros: there is
+    // no fee to claim.
+    feePreimage: feeLockOf(stakeLock, round) ? stakeLock.feeLock.preimage
+      : (roundPays(round) && random ? random(32) : new Uint8Array(32)),
     stakeLockOutpoint: stakeLock ? { txid: stakeLock.outpoint.txid, outIdx: BigInt(stakeLock.outpoint.outIdx) }
       : { txid: new Uint8Array(32), outIdx: 0n },
     feeLockOutpoint: feeLockOf(stakeLock, round)
