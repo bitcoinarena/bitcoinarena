@@ -1072,3 +1072,36 @@ test('a player still inside their window keeps their own fee and holds up nobody
   assert.equal(round.winnings(entryIdOf(early)), null, 'the pool was paid out with a stake still in flight');
   assert.equal(custody.stateOf(entryIdOf(late)).state, HELD);
 });
+
+// AND A NODE DOES NOT PAY A WINNING TWICE BY RACING ITSELF.
+//
+// A player with a wallet AND a named address has two paths into `payWinnings`: the door, when the page
+// posts a minted invoice, and the settle, when this node sends to the address. The row makes a winning
+// pay-once, but there is an `await` on the peers between reading the row and writing PAYING, and an await
+// is where the other path takes its turn: both read OWED, both are told no seat has paid, both pay. The
+// seats cover each other; nothing covered this node against itself.
+test('two paths that reach the pool at the same moment pay it once', async () => {
+  const port = fakePort();
+  port.decode = async () => ({ amountMsat: 98000n });
+  port.pay = async ({ request }) => { port.calls.push(['pay', request]); return { preimage: 'ab'.repeat(32), feeMsat: 0n }; };
+  const round = new Round(openStore(':memory:'), () => NOW + 1000);
+  const rid = round.open(contract);
+  // THE PEERS ARE SLOW, which is the whole point: the gap is where the second path used to get in.
+  let asked = 0;
+  const custody = new Custody(round, { port, preimageFor: defaultPreimageFor,
+    peersPaid: async () => { asked++; await new Promise((r) => setTimeout(r, 20)); return { ok: true, paid: false }; } });
+  const e = entryFor(rid, 1);
+  round.enter(e);
+  const eid = entryIdOf(e);
+  round.putWinnings({ entryId: eid, roundId: rid, owedMsat: 98000n, state: 'OWED', why: 'the table owes it' });
+
+  const [one, two] = await Promise.all([
+    custody.payWinnings({ entryId: eid, request: 'lnbcrt-98' }),
+    custody.payWinnings({ entryId: eid, request: 'lnbcrt-98-other' }),
+  ]);
+  assert.equal(port.calls.filter((c) => c[0] === 'pay').length, 1,
+    `the pool went out ${port.calls.filter((c) => c[0] === 'pay').length} times to one entry`);
+  assert.equal(round.winnings(eid).state, 'PAID');
+  assert.equal([one, two].filter((x) => x.ok && !x.already).length, 1, 'both paths believed they had paid it');
+  assert.equal(asked, 1, 'the losing path went on to ask the peers anyway');
+});

@@ -115,6 +115,8 @@ export class Custody {
     // its own letter. What settling needs is the 32 bytes, and a node that
     // cannot produce them cannot settle - which is the safe direction anyway.
     this.preimageFor = preimageFor;
+    // THE WINNINGS THIS NODE HAS A PAYMENT IN FLIGHT FOR, by entry id. See `payWinnings`.
+    this.paying = new Set();
   }
 
   /**
@@ -689,6 +691,22 @@ export class Custody {
 
   async payWinnings({ entryId, request }) {
     if (!this.reaches) return { ok: false, why: 'this node reaches no Lightning, so it pays nobody' };
+    // TWO PATHS INTO THIS FUNCTION, AND ONLY ONE OF THEM MAY BE INSIDE IT.
+    //
+    // A player with a wallet AND an address has both: the door, when the page posts a minted invoice, and
+    // the settle, when this node sends to the address it was given. The row is what makes a winning
+    // pay-once, and PAYING is written below - but there is an `await` on the peers between reading the row
+    // and writing it, and an await is where the other path gets its turn. Both would read OWED, both would
+    // be told no seat has paid, and both would pay. The seats cover each other; nothing covered a node
+    // against itself. This is that cover: one flight per entry in this process, released whatever happens.
+    const key = toHex(entryId);
+    if (this.paying.has(key))
+      return { ok: false, state: PAYING, why: 'a payment for that winning is already in flight on this node' };
+    this.paying.add(key);
+    try { return await this.#payWinnings({ entryId, request }); } finally { this.paying.delete(key); }
+  }
+
+  async #payWinnings({ entryId, request }) {
     const owed = this.round.winnings(entryId);
     if (!owed) return { ok: false, why: 'this node owes that entry nothing out of the pool' };
     if (owed.state === PAID) return { ok: true, already: true, state: PAID, why: 'that winning is already paid' };
