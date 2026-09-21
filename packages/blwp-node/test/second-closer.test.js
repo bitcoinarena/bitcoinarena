@@ -34,6 +34,7 @@
 // ("B is HELD on the lost stake") - the same race, which the fix also closes.
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { PLANTED_FIRST_MARK_DEADLINE } from './planted-marks.js';
+import { WINNER, LOSER, wordsAt } from './window-fixture.js';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
 import { test } from 'node:test';
@@ -69,7 +70,14 @@ const rand = (n) => new Uint8Array(randomBytes(n));
 const RANDOMNESS = b32(0x9b);
 const BEACON = { hash: RANDOMNESS, height: 900001, timeMs: 900n };
 const GENESIS_HASH = (await import('../../protocol/src/transcript.js')).GENESIS;
-const wordsAt = (t) => [45875, ((t * 977) % 30000) - 15000, (t % 700) < 40 ? 65536 : 0, 0, 0];
+// THE SHARED FIXTURE'S TAPE AND ITS TWO PLAYERS.
+//
+// This file carried its own copies: an open-loop tape - a sawtooth steer that arrived at the gate by luck -
+// and a WINNER whose world stopped delivering when the core's did. Measured with them in place, both runs
+// came back FAILED, so the round had two losers, and `holdSettlement` refused it exactly as it should: "a
+// pool of 196000 against 0 handed out". The shared fixture's tape is closed-loop in the winner's world and
+// then handed out as fixed words, which is what every signer node has to replay, and its own comment names
+// these two players. One tape, one pair, re-picked in one place when the world moves.
 const STAKE = 100000n;
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -79,8 +87,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 // score 12. The loser's is close-order's own, which wrecks at tick 547.
 // RE-SEARCHED with the armour doctrine (2026-09-16), window-fixture.js: last byte d1 now wrecks at tick 284;
 // 6d delivers at tick 1182, score 34. The loser c0 wrecks at tick 865, score 24 (re-picked 2026-09-19).
-const WINNER = { name: 'winner', key: b32(0x0a), worldSecret: fromHex(`01${'00'.repeat(30)}1d`), ticks: 1320 };
-const LOSER = { name: 'loser', key: b32(5), worldSecret: b32(0x16), ticks: 1000 };
+
 
 /** A Lightning node whose players have paid, and which remembers what it was told to do. */
 function paidPort() {

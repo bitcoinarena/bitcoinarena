@@ -1365,6 +1365,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const stateOf = (entryId) => (standing.get(toHex(entryId)) || {}).state;
     // A no-quorum FORFEIT is final on its own record (written only after the window).
     const isFinal = (entryId) => stateOf(entryId) === FINAL || noQuorumForfeits.has(toHex(entryId));
+    // ONE LINE PER SETTLE PASS, so a stake that does not move says why on the pass it did not move on.
+    // §13A means nothing is final AT the close, and this is where that shows: `agreed` is the close's own
+    // gather, `live` is what this node's store says right now, and when the two disagree the money is
+    // being decided on the older one.
+    {
+      const at = round.get(roundIdBytes);
+      const since = at && at.closed_ms !== null && at.closed_ms !== undefined ? round.now() - Number(at.closed_ms) : null;
+      const per = entries.map((e) => {
+        const k = toHex(e.entryId);
+        const live = resultFinality(round, roundIdBytes, e.entryId).state;
+        const held = (round.hold(e.entryId) || {}).state || '-';
+        return `${k.slice(0, 8)} ${e.outcome} agreed=${agreed.has(k) ? 'y' : 'n'} live=${live || '-'} `
+          + `settle=${isFinal(e.entryId) ? 'final' : 'not-final'} hold=${held}`;
+      });
+      console.log(`[money] ${toHex(roundIdBytes).slice(0, 8)} +${since === null ? '?' : since}ms after close, `
+        + `window ${contract.objectionWindowMs}ms | ${per.join(' | ')}`);
+    }
     // A RUN WHOSE TRANSCRIPT IS NOT POSTED YET waits too, with no window end:
     // its window has not opened (P2).
     const waiting = entries.filter((e) => stateOf(e.entryId) === PROVISIONALLY_FINAL)
