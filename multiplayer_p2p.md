@@ -34,7 +34,7 @@
 > note is paid; **nothing is ever burned**, in §5A.3 either (v4.6.5).
 > Timings are fast: 36 h for the
 > liquidation claim window, 48 h abandonment, 72 h notice and founding,
-> two weeks of drain (§23A.1). Changed: §5A.1, §22A, §23.6,
+> four weeks of drain (§23A.1). Changed: §5A.1, §22A, §23.6,
 > §23A (new), §24, §25.2, §27A.6, `FEDERATION.md`, `IMPLEMENTATION.md` §9.
 
 > **Revision 4.6.3 — the player wallet (the owner 2026-09-21).** The round
@@ -2830,7 +2830,7 @@ Everything in this chapter that waits, waits in blocks, and on mainnet:
 | absence that is abandonment; halt before liquidation; load before a founding | `abandon_blocks` | 288 | 48 h |
 | notice a guardian gives before leaving | `departure_notice` | 432 | 72 h |
 | time a drawn set has to finish its DKG | `founding_window` | 432 | 72 h |
-| how long a draining federation serves; late-claim tail | `drain_blocks` | 2016 | 14 d |
+| how long a draining federation serves; late-claim tail | `drain_blocks` | 4032 | 28 d |
 | the liquidation claim window (arbitration) | `claim_blocks` | 216 | **36 h** |
 
 The 36 h is the owner's; the others are RULED HERE to match it. Testnet and
@@ -3036,7 +3036,7 @@ federation CLOSED (§23A.6)      nothing was lost, so nothing is owed:
 federation HALTED (§23A.1)      liquidation, below: every unspent note of
                                 the federation paid at face value first,
                                 and a note shown late still paid from what
-                                is left until two weeks after the halt;
+                                is left until four weeks after the halt;
                                 only the remainder then, 75% / 25% as above
 ```
 
@@ -3072,16 +3072,16 @@ HALTED for `abandon_blocks` with no recovery is liquidated:
    and the client shows the rate.
 4. At the end of the window the arbitration set pays every valid claim.
    A note presented late is still paid from what is left, until
-   `drain_blocks` (two weeks) after the halt - the player who was offline
+   `drain_blocks` (four weeks) after the halt - the player who was offline
    for a weekend is not the one this rule is for. Only then is the
    remainder split, 75% to the nodes and 25% to the developers as above.
-   Notes never presented by two weeks after the halt are the holder's
+   Notes never presented by four weeks after the halt are the holder's
    loss, as they are in a CLOSED federation (§23A.6 step 6).
    **The ORDER is the whole of it**: a halted federation is liquidated
    note by note BEFORE a node or a developer sees a sat, so the people who
    run the network are paid only out of what no player claimed - never out
    of what a player could still have claimed. And no player's money is
-   ever burned: what is unclaimed after two weeks is paid out, not
+   ever burned: what is unclaimed after four weeks is paid out, not
    destroyed.
 
 What the liquidation does not do: it does not touch the federation's
@@ -3182,9 +3182,9 @@ upgrade, a change of `federation_nominal` by §27A).
    sooner the more players move, which the client does on every start.
 6. **What is left behind.** Notes in a CLOSED federation are lost to their
    holder, and it is said here: the client migrates on every start for
-   `drain_blocks` - two weeks (v4.6.5, the owner: fast) - the lobby says so
-   from the first day, and a player who never opens the game in two weeks
-   has kept a game balance for two weeks against the advice on every
+   `drain_blocks` - four weeks (the owner 2026-09-21) - the lobby says so
+   from the first day, and a player who never opens the game in four weeks
+   has kept a game balance for four weeks against the advice on every
    screen. The federation's guardians cannot
    sweep them to him; they do not know whose they are. That is the cost of
    blind notes and it is bounded by `drain_blocks` and the stake ceiling.
@@ -4052,7 +4052,7 @@ a state whose origin nobody can check.
 | minimum census | 10 | 3 | **2** |
 | guardians per federation (`federation_nominal`, v4.6.4) | **10** (7 of 10) | **2** (2 of 2, as run today) | 4 (3 of 4, the `FEDERATION.md` rehearsal) |
 | `federation_min` | 7 | 2 | 3 |
-| `abandon_blocks` / `departure_notice` / `founding_window` / `drain_blocks` / `claim_blocks` (v4.6.5, the owner: fast; 36 h arbitration) | 288 / 432 / 432 / 2016 / **216** (≈ 48 h / 72 h / 72 h / 14 d / **36 h**) | 72 / 72 / 72 / 288 / 36 | 10 / 10 / 10 / 100 / 10 |
+| `abandon_blocks` / `departure_notice` / `founding_window` / `drain_blocks` / `claim_blocks` (v4.6.5, the owner: fast; 36 h arbitration) | 288 / 432 / 432 / **4032** / **216** (≈ 48 h / 72 h / 72 h / **28 d** / **36 h**) | 72 / 72 / 72 / 576 / 36 | 10 / 10 / 10 / 100 / 10 |
 | confirmations | 6 | 2 | **1** |
 | `bond_maturity` | ~30 days | ~1 day | **100 blocks** |
 | `notice_period` | ~30 days | ~1 day | **10 blocks** |
