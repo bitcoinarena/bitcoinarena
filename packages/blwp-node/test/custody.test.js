@@ -1000,3 +1000,40 @@ test('a round whose objection window is still open settles no fee and owes nobod
   assert.equal(round.feeHold(entryIdOf(winner)).state, SETTLED);
   assert.equal(round.winnings(entryIdOf(winner)).owedMsat, 98000n);
 });
+
+// THE PACE IS ASKED WHEN THE HOLD IS MADE, NOT ONCE AT LAUNCH.
+//
+// Measured on the Daily, round 6deead16: the launcher timed 200 blocks at start and got 5.660 s a block;
+// while the round was played the same chain was doing 0.770 s (100 blocks in 77 s). The HTLC bought about
+// a thousand seconds of wall clock and lasted about a hundred and forty, so both stakes EXPIRED back to
+// their players at +626 s after the close, inside the objection window, and a truck that DELIVERED was
+// never paid. A pace sampled once is a guess about the future.
+test('a chain that speeds up between two entries buys the second one more blocks', async () => {
+  const port = fakePort();
+  let spb = 5.660;
+  const asked = [];
+  port.createHeld = async ({ paymentHash, amountMsat, cltvExpiryBlocks }) => {
+    asked.push(cltvExpiryBlocks);
+    return { paymentHash, amountMsat, request: 'lnbcrt-x' };
+  };
+  const round = new Round(openStore(':memory:'), () => NOW + 1000);
+  const rid = round.open(contract);
+  const custody = new Custody(round, { port, preimageFor: defaultPreimageFor, secondsPerBlock: () => spb });
+  const slow = entryFor(rid, 1);
+  round.enter(slow);
+  await custody.hold(slow);
+  spb = 0.770;                                          // the same chain, seven times faster
+  const fast = entryFor(rid, 2);
+  round.enter(fast);
+  await custody.hold(fast);
+  assert.equal(asked.length, 2, `two holds were made, ${asked.length} sizes were asked for`);
+  assert.ok(asked[1] > asked[0],
+    `the faster chain bought ${asked[1]} blocks and the slower one ${asked[0]} - the pace was read once`);
+  // AND A PACE THAT CANNOT BE READ LEAVES THE CONTRACT'S OWN FLOOR, which is what every hold had before.
+  const blind = new Custody(round, { port, preimageFor: defaultPreimageFor,
+    secondsPerBlock: () => { throw new Error('bitcoind said no'); } });
+  const third = entryFor(rid, 3);
+  round.enter(third);
+  await blind.hold(third);
+  assert.equal(asked[2], undefined, 'a pace that could not be read still asked for a size');
+});
