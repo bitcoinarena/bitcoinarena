@@ -36,8 +36,8 @@
 > liquidation claim window, 48 h abandonment, 72 h notice and founding,
 > four weeks of drain (§23A.1). The client: the balance always in the lobby
 > and never in the game, a settings screen (name, donation 0-5%, the seed
-> phrase with a full-phrase verification) behind an icon top right, and a
-> no-backup notice on every load until verified (§24B). Changed: §5A.1, §22A, §23.6,
+> phrase with a full-phrase **Backup**) behind an icon top right, and a
+> no-backup notice on every load until backed up, gating nothing (§24B). Changed: §5A.1, §22A, §23.6,
 > §23A (new), §24, §24B (new), §25.2, §27A.4, §27A.6, `FEDERATION.md`,
 > `IMPLEMENTATION.md` §9.
 
@@ -3231,9 +3231,10 @@ Nothing is typed, and no link decides it.
 twelve words by default, twenty-four on request (RULED HERE: twelve is the
 default because the balance is a game balance under a stake ceiling, and a
 seed that is written down beats one that is not) - to write down. It is
-shown from the settings screen (§24B), confirmed by the player typing **all**
-of its words back, in order, which the client checks (the owner 2026-09-21;
-three words in random positions is withdrawn), never leaves the browser, and is
+shown from the settings screen (§24B), backed up by the player typing **all**
+of its words back, in order, which the client checks - the button is named
+**Backup** (the owner 2026-09-21; three words in random positions is
+withdrawn) - never leaves the browser, and is
 never seen by any node, seat, guardian or gateway. On another device the
 player types it, and nothing else is needed (§23A.7).
 
@@ -3430,8 +3431,8 @@ nothing about a round. The binding of a stake to its round is still
 `stake_point` in the Entry Contract.
 
 **The seed is the wallet.** The client says on every load that no backup of
-the seed exists until the player has verified one (§24B), and MUST have it
-verified before the first deposit; a lost seed loses the notes
+the seed exists until the player has made one with the Backup button (§24B);
+nothing is gated on it; a lost seed loses the notes
 and every contract the seed's keys can refund (§24). The federation's stock
 backup and recovery (mint module, encrypted to the guardians under the seed)
 is what brings a wallet back on a new device; the rehearsal in
@@ -3547,9 +3548,10 @@ screen. It holds exactly:
   choice is the client's and the player's; no node may change it (§27A.4).
 - **Seed phrase.** A button that shows the player's twelve or twenty-four
   words (§23A.8), behind a screen that first says what they are (below),
-  and a **Verify** that asks the player to type every word back in order
-  and checks them. Until a verification has succeeded once, the settings
-  screen and the lobby both show that **no backup exists**.
+  and a button named **Backup** (the owner 2026-09-21) that asks the player to
+  type every word back in order and checks them. Until a Backup has
+  succeeded once, the settings screen and the lobby both show that **no
+  backup exists**.
 
 Nothing else is in settings. Federation, load and guardians are shown by
 the lobby (§23A.7); wallet actions are lobby actions (§24B.1).
@@ -3559,10 +3561,10 @@ the lobby (§23A.7); wallet actions are lobby actions (§24B.1).
 **RULED:** when the game loads and the seed has never been verified, the
 lobby says so before anything else: *no backup of your seed phrase exists;
 if this browser is lost, so is your balance; open settings to write it
-down.* The notice is a line, not a modal - the player may play free rounds
-past it - but the first deposit (§24A.1) and the first paying entry are
-refused until a verification has succeeded (RULED HERE: the notice
-the owner asked for is the warning; the deposit gate is what makes it true).
+down.* The notice is a line, not a modal, and it gates **nothing** (the owner
+2026-09-21: no lock): the player may deposit, enter and play with it
+standing. It stays until a Backup has succeeded once. The warning is the
+whole of it, and the balance the player risks by ignoring it is his.
 
 The screen that shows the words carries the usual rules, in this order, in
 those words or plainer:
@@ -3575,8 +3577,8 @@ those words or plainer:
    restore it; the federation does not know it is yours (§24A.1).
 4. On another device, type them in and everything comes back (§23A.7).
 
-Verification is the whole phrase: every word, in order, typed back and
-checked (§23A.8). A partial check is not a verification.
+Backup is the whole phrase: every word, in order, typed back and checked
+(§23A.8). A partial check is not a backup.
 
 ---
 

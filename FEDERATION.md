@@ -311,8 +311,8 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
   withdrawn.
 - **The client** (spec §24B): balance always in the lobby, never in the
   game; settings icon top right with name, donation 0-5% and the seed
-  phrase; a no-backup notice on every load until the player has typed the
-  whole phrase back once.
+  phrase behind a **Backup** button; a no-backup notice on every load until
+  the player has typed the whole phrase back once, gating nothing.
 - **Fast** (§23A.1): the liquidation claim window is 36 h (the owner);
   abandonment 48 h, notice and founding 72 h, drain and late-claim tail
   **four weeks** (the owner).
