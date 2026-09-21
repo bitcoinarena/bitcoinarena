@@ -305,6 +305,10 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
   note on its own, each is paid at face - and only the remainder goes 75%
   to the active census nodes and 25% to the developers, as it does whole
   when a federation CLOSES with nothing lost.
+- **Nothing is ever burned** (§5A.3, §23A.5): every slash remainder, a
+  round's or a federation's, after a halt too, goes 75% to the active
+  census nodes and 25% to the developers. `slashRemainder: BURN` is
+  withdrawn.
 - **Fast** (§23A.1): the liquidation claim window is 36 h (the owner);
   abandonment 48 h, notice and founding 72 h, drain and late-claim tail two
   weeks (RULED HERE to match).

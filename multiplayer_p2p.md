@@ -30,7 +30,9 @@
 > in escrow until the federation is CLOSED or liquidated, and a halted
 > federation is **liquidated** - every unspent note paid at face from the
 > bonds of those who left - before 75% of the rest goes to the nodes and
-> 25% to the developers (§23A.3, §23A.5). Timings are fast: 36 h for the
+> 25% to the developers (§23A.3, §23A.5), on a halt too, after every
+> note is paid; **nothing is ever burned**, in §5A.3 either (v4.6.5).
+> Timings are fast: 36 h for the
 > liquidation claim window, 48 h abandonment, 72 h notice and founding,
 > two weeks of drain (§23A.1). Changed: §5A.1, §22A, §23.6,
 > §23A (new), §24, §25.2, §27A.6, `FEDERATION.md`, `IMPLEMENTATION.md` §9.
@@ -802,9 +804,15 @@ a transaction is §5A.3B.
 | Claiming a fee share without meeting the availability rule (§22A) | Receipt record |
 | Withholding a settlement signature (v4.6.2): a seat that acknowledged the round's settlement transaction and did not sign it before the locks expired | The signed acknowledgement + the transaction + the expiry — a stall refunds losers and unpays winners, so it is an offence and not only a delay |
 
-Slashed bonds are distributed: half to the affected players of that round,
-half burned or to the remaining honest committee members of the round, as
-fixed by the Round Contract.
+Slashed bonds are distributed: half to the affected players of that round;
+the other half 75% evenly to the active census nodes at the slashing height
+minus the round's own seats (the witnesses) and 25% to the donation set of
+§22A - the developers. **Nothing is ever burned (RULED, the owner 2026-09-21),
+here or anywhere in this protocol**: a slash that destroys value pays
+nobody for the harm and makes the slashing itself worthless to prove, so
+every remainder in this document has a recipient. The Round Contract's
+`slashRemainder` therefore has one valid value, the split above; `BURN` is
+withdrawn.
 
 ## 5A.3B Bond construction and how a fraud proof becomes a slash
 *(new in 4.6.1 — blocker 2)*
