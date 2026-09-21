@@ -38,6 +38,9 @@ import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { SHARES_TOTAL, SHARES_NEEDED } from '../../protocol/src/shares.js';
 import { entryFeeMsat, feeMatchesEntry } from '../../protocol/src/fee.js';
+// THE CORE'S OWN RUN LENGTH: `Round.open` refuses a contract naming another, and this fixture still said
+// 9000, so the round never opened and every test here died on "no such round".
+import { BLOCK_TICKS as RUN_TICKS } from '../../core/src/rules/gate.js';
 
 const rand = (n) => new Uint8Array(randomBytes(n));
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -52,7 +55,7 @@ const contractFor = (nodes, stakeMsat) => ({
   entryCloseMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS + 200000n,
   objectionWindowMs: 600000n, custody: 'THRESHOLD_LN', slashMinimumServed: 20,
   slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,
-  censusRoot: b32(2), stakeMsat, bondMinSats: 50000n, blockTicks: 9000,
+  censusRoot: b32(2), stakeMsat, bondMinSats: 50000n, blockTicks: RUN_TICKS,
   exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
   timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
   nodes,

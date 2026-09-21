@@ -319,6 +319,26 @@ export function openStore(path = ':memory:') {
     -- round: the rule computed 98000 msat owed to the winner, the 98 sat sat in the committee's own
     -- channel, and the payouts table held no row because that path spends an on-chain pool this custody
     -- has none of. One row per qualifier, written when the money is worked out, moved through once.
+    -- THE NODE FEE'S OWN HOLD (§23.5: "the node fee travels in its own lock and leaves by the same
+    -- transaction, so a fee dispute never touches another player's stake").
+    --
+    -- Measured on the Daily before this table existed: across 41 paid entries the players committed
+    -- 4100000 msat and this node asked for 4016000 - the 2% was never invoiced at all, 82000 msat of it,
+    -- because createHeld quotes the NET stake. It cannot simply quote the gross instead: §23.2 cancels a
+    -- winner's hold whole, which would hand every winner their own fee back. So the fee is its own hold,
+    -- keyed on the entry's own feePreimage, and it settles to the committee that served the round
+    -- whatever the run came to.
+    CREATE TABLE IF NOT EXISTS fee_holds (
+      entry_id     BLOB PRIMARY KEY REFERENCES entries(entry_id),
+      round_id     BLOB NOT NULL,
+      payment_hash BLOB NOT NULL,
+      amount_msat  INTEGER NOT NULL,
+      state        TEXT NOT NULL,
+      why          TEXT NOT NULL,
+      updated_ms   INTEGER NOT NULL,
+      request      TEXT
+    );
+
     CREATE TABLE IF NOT EXISTS winnings (
       entry_id  BLOB PRIMARY KEY REFERENCES entries(entry_id),
       round_id  BLOB NOT NULL,

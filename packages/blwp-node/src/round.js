@@ -1724,6 +1724,33 @@ export class Round {
    * player's key; the client withdraws it over Lightning"). One row per qualifier: OWED when the money is
    * worked out, PAYING before the payment leaves, PAID when Lightning says it landed.
    */
+  /**
+   * THE FEE'S OWN HOLD (§23.5). Same shape as the stake's, a different object: it is keyed on the entry's
+   * `feePreimage` rather than its `stakeCommitment`, and it settles to the committee whatever the run came
+   * to - a fee is for serving the round, not for winning it.
+   */
+  putFeeHold({ entryId, roundId, paymentHash, amountMsat, state, why, request = null }) {
+    const had = this.db.prepare('SELECT request FROM fee_holds WHERE entry_id = ?').get(Buffer.from(entryId));
+    this.db.prepare(
+      'INSERT OR REPLACE INTO fee_holds (entry_id, round_id, payment_hash, amount_msat, '
+      + 'state, why, updated_ms, request) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(Buffer.from(entryId), Buffer.from(roundId), Buffer.from(paymentHash),
+        String(amountMsat), state, why, this.now(), request || (had && had.request) || null);
+    return state;
+  }
+
+  feeHold(entryIdBytes) {
+    const r = this.db.prepare('SELECT * FROM fee_holds WHERE entry_id = ?').get(Buffer.from(entryIdBytes));
+    return r ? { entryId: new Uint8Array(r.entry_id), roundId: new Uint8Array(r.round_id),
+      paymentHash: new Uint8Array(r.payment_hash), amountMsat: BigInt(r.amount_msat),
+      state: r.state, why: r.why, request: r.request, updatedMs: Number(r.updated_ms) } : null;
+  }
+
+  feeHoldsOf(roundIdBytes) {
+    return this.db.prepare('SELECT entry_id FROM fee_holds WHERE round_id = ?').all(Buffer.from(roundIdBytes))
+      .map((r) => this.feeHold(new Uint8Array(r.entry_id)));
+  }
+
   putWinnings({ entryId, roundId, owedMsat, state, request = null, why, paidMs = null }) {
     this.db.prepare('INSERT INTO winnings (entry_id, round_id, owed_msat, state, request, why, owed_ms, paid_ms) '
       + 'VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(entry_id) DO UPDATE SET '

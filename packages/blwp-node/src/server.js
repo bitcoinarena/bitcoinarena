@@ -2356,12 +2356,22 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           'content-type': 'application/json',
           ...CORS,
         });
+        // AND THE FEE'S OWN INVOICE BESIDE IT (§23.5). The player is asked twice on one commitment - the
+        // net stake and the 2% - because §23.2 cancels a winner's hold whole and a single gross hold would
+        // hand every winner their own fee back. Quoted here so one call to /invoice gives the page both.
+        let fee = null;
+        try { fee = await custody.holdFee(decodeEntryContract(stored)); }
+        catch (e) { fee = { ok: false, why: e.message }; }
         return res.end(JSON.stringify({
           entry: eid.toString('hex'),
           paymentHash: toHex(quoted.paymentHash),
           amountMsat: String(custody.stateOf(new Uint8Array(eid)).amountMsat),
           state: quoted.state,
           request: quoted.invoice,
+          fee: fee && fee.ok && fee.invoice
+            ? { paymentHash: toHex(fee.paymentHash), amountMsat: String(fee.amountMsat ?? 0n),
+              state: fee.state, request: fee.invoice }
+            : { state: fee && fee.state ? fee.state : 'NONE', why: (fee && fee.why) || '' },
         }) + '\n');
       }
 
