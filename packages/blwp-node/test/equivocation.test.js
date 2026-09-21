@@ -38,6 +38,9 @@ import { decodeEntryContract } from '../../protocol/src/contracts.js';
 // The node fee is 27A.7's 2% of the stake, and the door checks it now
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
+// THE CORE'S OWN RUN LENGTH: `Round.open` refuses a contract naming another, and this fixture still said
+// 9000, so every test here died in `played()` before a mark was ever offered (712bad8c, same fault).
+import { BLOCK_TICKS as RUN_TICKS } from '../../core/src/rules/gate.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const session = ed25519.utils.randomSecretKey();
 const sessionPubkey = ed25519.getPublicKey(session);
@@ -46,7 +49,7 @@ const verify = (s, m, k) => { try { return ed25519.verify(s, m, k); } catch { re
 const contract = (nodes) => ({
   networkId: b32(0x4e), configHash: TRUCK_CONFIG_HASH, censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'THRESHOLD_LN', slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
-  stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: 9000,
+  stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: RUN_TICKS,
   exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
   timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
   nodes,
