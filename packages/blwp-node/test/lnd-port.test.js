@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 
 import { lndPort, STATE_OF } from '../src/lnd-port.js';
 import { HELD, SETTLED, CANCELLED } from '../../protocol/src/payout.js';
+import { STAKE_EXPIRY_BLOCKS } from '../../protocol/src/constants.js';
 
 const hash = new Uint8Array(32).fill(0xab);
 const preimage = new Uint8Array(32).fill(0xcd);
@@ -30,7 +31,12 @@ test('a hold invoice is asked for by hash and amount, then read back', async () 
     : JSON.stringify({ r_hash: hex(hash), value_msat: '100000', state: 'OPEN', amt_paid_msat: '0' }));
 
   const made = await port.createHeld({ paymentHash: hash, amountMsat: 100000n });
-  assert.deepEqual(said[0], ['addholdinvoice', hex(hash), '--amt_msat', '100000', '--expiry', '3600']);
+  // `--expiry` is how long an UNPAID invoice stays open; `--cltv_expiry` is how long the STAKE's HTLC
+  // lives. Measured on the Daily before this line: every hold carried lnd's default cltv_expiry 80 while
+  // the round contract is refused unless it names STAKE_EXPIRY_BLOCKS, and a stake LOCK is refused unless
+  // it outlives height + STAKE_EXPIRY_BLOCKS. One stake, two custodies, two different protections.
+  assert.deepEqual(said[0], ['addholdinvoice', hex(hash), '--amt_msat', '100000', '--expiry', '3600',
+    '--cltv_expiry', String(STAKE_EXPIRY_BLOCKS)]);
   assert.deepEqual(said[1], ['lookupinvoice', hex(hash)]);
 
   // THE ANSWER COMES FROM THE LOOKUP, NOT FROM WHAT WAS ASKED FOR. An invoice
