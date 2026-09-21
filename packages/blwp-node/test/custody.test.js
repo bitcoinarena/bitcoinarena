@@ -329,6 +329,50 @@ test('the settle writes down what the pool owes the winner, and pays it to an in
   assert.equal(port.calls.filter((c) => c[0] === 'pay').length, 1, 'the pool went out more than once');
 });
 
+// AND THE POOL IS NOT PAID TWICE BY TWO SEATS.
+//
+// Measured on the Daily's first paid winning: seat a wrote PAID/98000 and seat b was still OWED/98000.
+// The seats share one Lightning node, so a player who asked the second seat with a DIFFERENT invoice would
+// be paid the pool twice, out of the operator's own channel. The seats are asked before the money leaves.
+test('a winning another seat has already paid is not paid again, and an unreachable committee pays nothing', async () => {
+  const port = fakePort();
+  port.decode = async () => ({ amountMsat: 98000n });
+  port.pay = async ({ request }) => { port.calls.push(['pay', request]); return { preimage: 'ab'.repeat(32), feeMsat: 0n }; };
+  const round = new Round(openStore(':memory:'), () => NOW + 1000);
+  const rid = round.open(contract);
+  const winner = entryFor(rid, 1);
+  const loser = entryFor(rid, 2);
+  const summary = (e, outcome, score = 0) =>
+    ({ entryId: entryIdOf(e), pubkey: e.playerPubkey, outcome, score, stakeMsat: e.stakeMsat, feeMsat: e.feeMsat, donationMsat: e.donationMsat });
+
+  // A SEAT WHOSE PEER SAYS IT IS PAID does not pay it again, and says so on its own row.
+  const said = new Custody(round, { port, preimageFor: defaultPreimageFor, peersPaid: async () => ({ ok: true, paid: true }) });
+  for (const e of [winner, loser]) { round.enter(e); await said.hold(e); }
+  await said.settleHeldInvoices({ roundId: rid, minScore: 1, finalFor: () => true,
+    entries: [summary(winner, DELIVERED, 9), summary(loser, FORFEIT)] });
+  const twice = await said.payWinnings({ entryId: entryIdOf(winner), request: 'lnbcrtright' });
+  assert.equal(twice.already, true, 'the pool was paid a second time');
+  assert.equal(port.calls.filter((c) => c[0] === 'pay').length, 0);
+  assert.equal(round.winnings(entryIdOf(winner)).state, 'PAID');
+  assert.match(round.winnings(entryIdOf(winner)).why, /another seat/);
+
+  // A SEAT THAT CANNOT ASK pays nothing: not knowing is not a no.
+  const round2 = new Round(openStore(':memory:'), () => NOW + 1000);
+  const rid2 = round2.open(contract);
+  const w2 = entryFor(rid2, 1);
+  const l2 = entryFor(rid2, 2);
+  const blind = new Custody(round2, { port, preimageFor: defaultPreimageFor,
+    peersPaid: async () => { throw new Error('connection refused'); } });
+  for (const e of [w2, l2]) { round2.enter(e); await blind.hold(e); }
+  await blind.settleHeldInvoices({ roundId: rid2, minScore: 1, finalFor: () => true,
+    entries: [summary(w2, DELIVERED, 9), summary(l2, FORFEIT)] });
+  const no = await blind.payWinnings({ entryId: entryIdOf(w2), request: 'lnbcrtright' });
+  assert.equal(no.ok, false);
+  assert.match(no.why, /could not ask the other seats.*connection refused/);
+  assert.equal(port.calls.filter((c) => c[0] === 'pay').length, 0, 'a seat paid without asking its committee');
+  assert.equal(round2.winnings(entryIdOf(w2)).state, 'OWED');
+});
+
 test('a payment Lightning refuses leaves the winning owed, not paid and not in flight for ever', async () => {
   const port = fakePort();
   port.decode = async () => ({ amountMsat: 98000n });
