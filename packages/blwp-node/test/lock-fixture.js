@@ -15,6 +15,7 @@ import { dealHandout, encodeHandout, handoutId } from '../../protocol/src/handou
 import { FIELD, scalarFrom32 } from '../../protocol/src/shares.js';
 import { netStakeMsat } from '../../protocol/src/payout.js';
 import { refundKeyOf } from '../../protocol/src/stake-lock.js';
+import { lockFieldsToJson } from '../src/stake-lock-signer-node.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { toHex, sha256 } from '../../protocol/src/hash.js';
 import { b32, rand, STAKE, WINDOW_MS, contractFor, opts } from './window-fixture.js';
@@ -131,11 +132,20 @@ export async function joinedWithLock(extra = {}, { federationId = TEST_FEDERATIO
   });
   assert.equal(dealt.ok, true, dealt.why);
   const outpoint = given || { txid: rand(32), outIdx: 0n };
+  // THE FEE LOCK THE ENTRY NAMES (§23.1 step 5, pick a). A round that mints fee locks
+  // takes no entry that brings none: the door refuses a zeroed `feePreimage` or a
+  // zeroed `feeLockOutpoint` by name, and the stake would stay verified-but-unseen
+  // behind it. `client.js:609` has always handed this lock right after the stake
+  // lock; this fixture named neither, so four tests here asked the node to accept
+  // the incomplete case. F is its own secret, never the stake's - claiming the fee
+  // with the stake's preimage would publish P (F5).
+  const feePreimage = rand(32);
+  const feeLockOutpoint = { txid: rand(32), outIdx: 0n };
   const entry = {
     roundId: rid, playerPubkey: player, sessionPubkey: ed25519.getPublicKey(ed25519.utils.randomSecretKey()),
     stakeCommitment: sha256(preimage), stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE), donationMsat: 0n,
     joinTick: 0, worldSecret: b32(0x16), vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0],
-    feePreimage: new Uint8Array(32), stakeLockOutpoint: outpoint, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n },
+    feePreimage, stakeLockOutpoint: outpoint, feeLockOutpoint,
     claimKeyAttestationRef: new Uint8Array(32),
   };
   assert.equal((await fetch(`http://127.0.0.1:${d.port}/handout`, { method: 'POST', body: encodeHandout(dealt.handout) })).status, 201);
@@ -148,6 +158,28 @@ export async function joinedWithLock(extra = {}, { federationId = TEST_FEDERATIO
     claimPk: CLAIM, refundPk: refundKeyOf(player), expiration: port.height + 200,
   };
   await port.put(outpoint, fields);
-  return { d, port, c, rid, entry, eid, fields, outpoint, close: () => d.close() };
+  // AND THE FEE LOCK BESIDE IT, put in the federation and handed over the same way
+  // the client hands it - so the stake is SEEN once its own lock is verified.
+  const feeFields = {
+    paymentImage: { kind: 'hash', bytes: sha256(entry.feePreimage) }, amountMsat: entry.feeMsat,
+    claimPk: CLAIM, refundPk: refundKeyOf(player), expiration: port.height + 200,
+  };
+  await port.put(feeLockOutpoint, feeFields);
+  // ONLY A FEDERATION ROUND HAS A FEE LOCK TO HAND, which is the client's own
+  // condition (`if (this.stakeLock.feeLock)`): a round that names no federation
+  // answers "its fee is not a lock" and there is nothing to verify.
+  if (custody === 'FEDERATION') {
+    const feeSaid = await fetch(`http://127.0.0.1:${d.port}/fee-lock?entry=${toHex(eid)}`,
+      { method: 'POST', body: JSON.stringify(lockFieldsToJson(feeFields)) });
+    assert.equal(feeSaid.status, 201, await feeSaid.text());
+  }
+  // THE COUNTER STARTS AT THE TEST, NOT AT THE SETUP. `port.asked` measures how often
+  // the NODE asks the federation, and the test that reads it wants the two asks the
+  // stake lock's own handover costs - status, then contract id. Before the fee lock
+  // was handed here the fixture asked nothing and the count was already 2 by that
+  // meaning; handing it adds two more of the fixture's own. Zeroing here keeps the
+  // number the test asserts the number it was written to assert.
+  port.asked = 0;
+  return { d, port, c, rid, entry, eid, fields, outpoint, feeFields, feeLockOutpoint, close: () => d.close() };
 }
 
