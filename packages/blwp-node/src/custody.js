@@ -91,9 +91,13 @@ export const NO_LIGHTNING = null;
  * - it does not pretend to.
  */
 export class Custody {
-  constructor(round, { port = NO_LIGHTNING, preimageFor = null, secondsPerBlock = null, peersPaid = null } = {}) {
+  constructor(round, { port = NO_LIGHTNING, preimageFor = null, secondsPerBlock = null, peersPaid = null,
+    fetch: get = null } = {}) {
     this.round = round;
     this.port = port;
+    // HOW THIS NODE ASKS A LIGHTNING ADDRESS FOR AN INVOICE. The global one on a daemon; a test hands
+    // its own, because reaching a real host is not what a settle is being measured for.
+    this.fetch = get || ((...a) => fetch(...a));
     // HOW FAST BLOCKS ARE COMING ON THE CHAIN THIS NODE WATCHES (RULED 2026-09-21). An HTLC dies at a
     // HEIGHT and a round becomes final after a TIME, and only the chain's pace joins the two. Measured by
     // the launcher from its own bitcoind and handed in; unknown, the hold keeps the contract's own
@@ -290,7 +294,14 @@ export class Custody {
     // computed - measured on the Daily, the common case is a round nobody finished, where `holdSettlement`
     // refuses and this function returns without moving a stake. The committee still served that round.
     // Its own object, so a dispute over it never touches another player's stake.
-    const fees = await this.settleFees({ roundId });
+    //
+    // AND NOT BEFORE THE OBJECTION WINDOW HAS CLOSED (§13A). Measured on the Daily, round ec9bd34e: the
+    // window was 600000 ms and the fees settled 12 s after the close, on a round still
+    // PROVISIONALLY_FINAL. FINAL is the window's word, and a fee taken before it is a fee taken for a
+    // result that could still be objected to.
+    const finalRound = entries.length > 0 && entries.every((e) => !!finalFor(e.entryId, e));
+    const fees = finalRound ? await this.settleFees({ roundId })
+      : { ok: false, msat: 0n, moved: [], why: 'this round is not final yet: its objection window is open' };
 
     let decided;
     try { decided = holdSettlement({ roundId, entries, minScore }); }
@@ -416,9 +427,46 @@ export class Custody {
     // AND WHAT THE POOL OWES ITS QUALIFIERS IS WRITTEN DOWN IN THE SAME BREATH. Measured before this: the
     // losers' stakes settled, the winner's was cancelled back, and the winnings existed nowhere at all.
     // `holdSettlement` hands back `computePayoutTable`'s whole answer, and the rows are its `table`.
-    const owes = this.oweWinnings({ roundId, table: (decided.table && decided.table.table) || decided.table, entries });
+    // AND THE POOL IS NOT OWED TO ANYBODY BEFORE THE STAKES THAT MAKE IT HAVE ARRIVED.
+    //
+    // Measured on the Daily, round ec9bd34e: the winner was written down as owed 98000 msat, and paid it,
+    // TWELVE SECONDS after the close - on a round whose objection window had 588 s left to run and whose
+    // two stakes were both still HELD, in flight and in nobody's balance. The 98 sat came out of the
+    // committee's own channel against money that had not arrived, for a result that could still be
+    // overturned. §13A: FINAL is the window's word; §23.5: the money leaves by the same transaction.
+    //
+    // So the pool is owed only once this node's own acts on this round are done: every stake that had an
+    // act to receive has had it. A stake that EXPIRED back to its player is not one of those, and a round
+    // holding one owes nobody the pool - there is no pool, and the operator does not make up the
+    // difference out of its own channel.
+    const acted = done.every((d) => d.action === NOTHING || d.state === SETTLED || d.state === CANCELLED);
+    const owes = finalRound && acted
+      ? this.oweWinnings({ roundId, table: (decided.table && decided.table.table) || decided.table, entries })
+      : { ok: false, owed: [], owedMsat: 0n,
+        why: finalRound ? 'a stake of this round has not reached the pool, so there is nothing to owe out of it'
+          : 'this round is not final yet: its objection window is open' };
+    // AND A WINNING WHOSE PLAYER ALREADY SAID WHERE IT GOES LEAVES HERE, WITH NO PAGE OPEN.
+    //
+    // the owner 2026-09-21 13:54: "winnings are always sent; there is no Collect and no pasted invoice after
+    // the round". A Lightning address named during the round is a standing instruction on disk, so the
+    // send is this node's own act at settle rather than something a tab must be alive to ask for.
+    // Measured before this on the Daily: round ec9bd34e, both stakes paid from a wallet with no NWC
+    // string, one truck DELIVERED, the address named in the page - and the page's Chrome closed at the
+    // end of the run, so FINAL came with 98000 msat owed and nobody there to collect it.
+    //
+    // A send that fails leaves the row OWED and is tried again on the next pass: the close runs until the
+    // round is done with, and `payWinnings` asks the peers and writes its intent before it pays, so a
+    // retry cannot pay twice.
+    const sentTo = [];
+    for (const row of owes.ok ? owes.owed : []) {
+      const named = this.round.payoutAddress(row.entryId);
+      if (!named) continue;
+      const paid = await this.payWinningsTo({ entryId: row.entryId, address: named.address });
+      sentTo.push({ entryId: row.entryId, address: named.address, ok: !!paid.ok,
+        already: !!paid.already, msat: paid.msat ?? 0n, why: paid.why });
+    }
     return { ok: true, actions: done, table: decided.table, poolMsat: decided.poolMsat,
-      owedTo: owes.ok ? owes.owed : [], owedMsat: owes.ok ? owes.owedMsat : 0n,
+      owedTo: owes.ok ? owes.owed : [], owedMsat: owes.ok ? owes.owedMsat : 0n, sentTo,
       feesMsat: fees.ok ? fees.msat : 0n, feesMoved: fees.ok ? fees.moved.length : 0 };
   }
 
@@ -569,7 +617,8 @@ export class Custody {
    * gets the same pay-once treatment: the peers are asked, the intent is on disk, the amount is this
    * node's own figure.
    */
-  async payWinningsTo({ entryId, address, fetch: get = fetch }) {
+  async payWinningsTo({ entryId, address, fetch: given = null }) {
+    const get = given || this.fetch;
     const owed = this.round.winnings(entryId);
     if (!owed) return { ok: false, why: 'this node owes that entry nothing out of the pool' };
     if (owed.state === PAID) return { ok: true, already: true, state: PAID, why: 'that winning is already paid' };

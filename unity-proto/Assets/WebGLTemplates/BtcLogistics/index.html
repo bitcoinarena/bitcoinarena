@@ -1058,11 +1058,44 @@
      * 98000 msat owed, `PAID` only because a probe posted the invoice by hand. A player had no way to
      * collect what they had won.
      */
+    /**
+     * THE ADDRESS IS LODGED WHILE THE PLAYER IS STILL HERE, NOT WHEN THE MONEY IS OWED.
+     *
+     * Measured on the Daily (round ec9bd34e): both stakes paid from a wallet with no NWC string, one truck
+     * DELIVERED, the address named in this field - and the run's Chrome closed at the end of the drive.
+     * FINAL came ten minutes later with 98000 msat owed and no tab left to post from. An address that only
+     * travels at payout time is a Collect that the player must sit and wait for.
+     *
+     * So it goes to the door as soon as it is known, signed by the same session key, and the node keeps it
+     * as a standing instruction. `202 NAMED` is the answer when nothing is owed yet.
+     */
+    let lodged = '';
+    async function lodgeTheAddress() {
+      const c = theClient();
+      const said = String(window.BLWP_PAYOUT_ADDRESS || '').trim();
+      if (!c || !c.base || !c.where || !c.where.entryId || !said) return;
+      const hex = Array.from(c.where.entryId).map((x) => x.toString(16).padStart(2, '0')).join('');
+      if (lodged === hex + ' ' + said) return;
+      if (!/^[^@\s]+@[^@\s]+$/.test(said)) return;
+      lodged = hex + ' ' + said;                               // one attempt per entry and address
+      try {
+        const bytes = new TextEncoder().encode(said);
+        const sig = await c.sign(bytes);
+        const body = new Uint8Array(bytes.length + sig.length);
+        body.set(bytes, 0); body.set(sig, bytes.length);
+        const r = await fetch(`${c.base}/winnings?entry=${hex}`, { method: 'POST', body });
+        const answer = (await r.text()).trim();
+        if (!r.ok) { lodged = ''; console.error('[blwp] address: ' + answer); }
+        else console.log('[blwp] address: ' + answer);
+      } catch (e) { lodged = ''; console.error('[blwp] address: ' + e.message); }
+    }
+
     let winningsAsking = false;
     async function askTheWinnings() {
       const c = theClient();
       if (winningsAsking || !c || !c.base || !c.where || !c.where.entryId) return;
       if (!window.BLWP_ROUND || !BLWPCLIENT.roundPays(window.BLWP_ROUND) || BLWPCLIENT.roundLocks(window.BLWP_ROUND)) return;
+      await lodgeTheAddress();
       const had = window.BLWP_WINNINGS;
       if (had && had.state === 'PAID') return;                 // paid is paid; the node says so once
       winningsAsking = true;

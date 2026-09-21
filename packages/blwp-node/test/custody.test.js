@@ -25,6 +25,7 @@ import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { toHex, sha256 } from '../../protocol/src/hash.js';
+import { bech32Encode, convertBits } from '../../protocol/src/bech32.js';
 
 // The node fee is 27A.7's 2% of the stake, and the door checks it now
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
@@ -78,10 +79,10 @@ function fakePort({ hash, amount } = {}) {
 // player in this file is `b32(n)`, so their own preimage is `preimageOf(n)`.
 const defaultPreimageFor = (entryId, entry) => preimageOf(entry.pubkey[0]);
 
-function joined(port, { preimageFor = defaultPreimageFor } = {}) {
+function joined(port, { preimageFor = defaultPreimageFor, fetch: get = null } = {}) {
   const round = new Round(openStore(':memory:'), () => NOW + 1000);
   const rid = round.open(contract);
-  const custody = new Custody(round, { port, preimageFor });
+  const custody = new Custody(round, { port, preimageFor, ...(get ? { fetch: get } : {}) });
   return { round, rid, custody };
 }
 
@@ -882,4 +883,120 @@ test('a round nobody finished moves no stake and keeps nothing for this node', a
   for (const e of [a, b]) assert.equal(custody.stateOf(entryIdOf(e)).state, HELD);
   assert.equal(port.calls.filter((c) => c[0] !== 'createHeld').length, 0,
     'a stake moved in a round that had nobody to pay');
+});
+
+
+/**
+ * A BOLT11 THIS FILE MINTS, so the LUD-06 check has something real to read: the amount in the prefix, the
+ * payment hash and the description hash in their tagged fields, and 104 words where a signature would be.
+ * Nothing verifies the signature here - `invoiceAnswersPayRequest` reads the invoice, and the wallet that
+ * pays is the one that checks who signed it.
+ */
+function bolt11For({ amountMsat, descriptionHash, paymentHash = b32(0xb1) }) {
+  const words = [];
+  for (let i = 0; i < 7; i++) words.push(0);                     // the timestamp
+  const field = (type, bytes) => {
+    const w = convertBits(Array.from(bytes), 8, 5, true);
+    words.push(type, Math.floor(w.length / 32), w.length % 32, ...w);
+  };
+  field(1, paymentHash);                                         // 'p'
+  field(23, descriptionHash);                                    // 'h'
+  for (let i = 0; i < 104; i++) words.push(0);                   // where a signature goes
+  return bech32Encode(`lnbcrt${amountMsat / 100n}n`, words);
+}
+
+// AND A WINNING WHOSE ADDRESS WAS NAMED DURING THE ROUND LEAVES WITH NO PAGE OPEN.
+//
+// the owner 2026-09-21 13:54: "winnings must leave without NWC. There is no Collect and no pasted invoice
+// after the round." Measured on the Daily before this: round ec9bd34e, both stakes paid from a wallet with
+// no NWC string, one truck DELIVERED, the Lightning address named in the tab - and the run's Chrome closed
+// at the end of the drive. FINAL arrived ten minutes later with 98000 msat owed and nobody left to post
+// from. An address that only travels at payout time is a Collect the player has to sit and wait for.
+//
+// So the address is a standing instruction on disk, and the send is this node's own act at settle.
+test('an address named during the round is paid by the settle itself, with nobody there to ask', async () => {
+  const asked = [];
+  const metadata = JSON.stringify([['text/plain', 'btc-logistics winnings']]);
+  const invoice = bolt11For({ amountMsat: 98000n, descriptionHash: sha256(new TextEncoder().encode(metadata)) });
+  const get = async (url) => {
+    asked.push(String(url));
+    if (String(url).includes('/.well-known/lnurlp/'))
+      return { ok: true, json: async () => ({ tag: 'payRequest', callback: 'https://host/cb',
+        minSendable: 1000, maxSendable: 1000000000, metadata }) };
+    return { ok: true, json: async () => ({ pr: invoice }) };
+  };
+  const port = fakePort();
+  port.decode = async ({ request }) => ({ amountMsat: request === invoice ? 98000n : 1n });
+  port.pay = async ({ request }) => { port.calls.push(['pay', request]); return { preimage: 'ab'.repeat(32), feeMsat: 0n }; };
+  const { round, rid, custody } = joined(port, { fetch: get });
+  const winner = entryFor(rid, 1);
+  const loser = entryFor(rid, 2);
+  for (const e of [winner, loser]) { round.enter(e); await custody.hold(e); }
+  const summary = (e, outcome, score = 0) =>
+    ({ entryId: entryIdOf(e), pubkey: e.playerPubkey, outcome, score, stakeMsat: e.stakeMsat, feeMsat: e.feeMsat, donationMsat: e.donationMsat });
+
+  // NAMED WHILE THE PLAYER IS STILL HERE - before the round has settled, before anything is owed.
+  round.putPayoutAddress({ entryId: entryIdOf(winner), roundId: rid, address: 'win@example.test' });
+  assert.equal(round.winnings(entryIdOf(winner)), null, 'the round owed something before it settled');
+
+  const out = await custody.settleHeldInvoices({
+    roundId: rid, minScore: 1, finalFor: () => true,
+    entries: [summary(winner, DELIVERED, 9), summary(loser, FORFEIT)],
+  });
+  assert.equal(out.ok, true, out.why);
+  // NOBODY POSTED ANYTHING. The settle asked the address itself and paid what it returned.
+  assert.equal(round.winnings(entryIdOf(winner)).state, 'PAID',
+    'the winning was left owed for a page to collect: ' + out.sentTo.map((x) => x.why).join('; '));
+  assert.equal(port.calls.filter((c) => c[0] === 'pay').length, 1, 'the pool did not go out exactly once');
+  assert.match(asked[0], /\/\.well-known\/lnurlp\/win$/);
+  assert.equal(out.sentTo.length, 1);
+  assert.equal(out.sentTo[0].msat, 98000n);
+  // THE LOSER NAMED NOTHING AND IS SENT NOTHING.
+  assert.equal(round.payoutAddress(entryIdOf(loser)), null);
+
+  // AND THE CLOSE RUNS AGAIN - the money moves once.
+  const twice = await custody.settleHeldInvoices({
+    roundId: rid, minScore: 1, finalFor: () => true,
+    entries: [summary(winner, DELIVERED, 9), summary(loser, FORFEIT)],
+  });
+  assert.equal(twice.ok, true, twice.why);
+  assert.equal(port.calls.filter((c) => c[0] === 'pay').length, 1, 'a second close paid the pool again');
+});
+
+// NOTHING LEAVES WHILE THE OBJECTION WINDOW IS OPEN (§13A).
+//
+// Measured on the Daily, round ec9bd34e: window 600000 ms, and TWELVE SECONDS after the close both fees
+// were SETTLED to the committee and the winner was written down as owed 98000 msat - which the page then
+// collected. The round was still PROVISIONALLY_FINAL and both stakes were still HELD, in flight and in
+// nobody's balance. The pool went out of the committee's own channel against money that had not arrived,
+// for a result that could still be objected to. FINAL is the window's word.
+test('a round whose objection window is still open settles no fee and owes nobody the pool', async () => {
+  const port = fakePort();
+  port.pay = async ({ request }) => { port.calls.push(['pay', request]); return { preimage: 'ab'.repeat(32), feeMsat: 0n }; };
+  const { round, rid, custody } = joined(port);
+  const winner = entryFor(rid, 1);
+  const loser = entryFor(rid, 2);
+  for (const e of [winner, loser]) { round.enter(e); await custody.hold(e); await custody.holdFee(e); }
+  const summary = (e, outcome, score = 0) =>
+    ({ entryId: entryIdOf(e), pubkey: e.playerPubkey, outcome, score, stakeMsat: e.stakeMsat, feeMsat: e.feeMsat, donationMsat: e.donationMsat });
+  const entries = [summary(winner, DELIVERED, 9), summary(loser, FORFEIT)];
+
+  const open = await custody.settleHeldInvoices({ roundId: rid, minScore: 1, finalFor: () => false, entries });
+  assert.equal(open.ok, true, open.why);
+  assert.equal(custody.stateOf(entryIdOf(loser)).state, HELD, 'a stake moved inside the objection window');
+  assert.equal(custody.stateOf(entryIdOf(winner)).state, HELD);
+  assert.equal(round.feeHold(entryIdOf(winner)).state, HELD, 'a fee was taken inside the objection window');
+  assert.equal(round.feeHold(entryIdOf(loser)).state, HELD);
+  assert.equal(open.feesMoved, 0, `${open.feesMoved} fees left a round that is not final`);
+  assert.equal(round.winnings(entryIdOf(winner)), null, 'the pool was owed to somebody inside the window');
+  assert.equal(open.owedTo.length, 0);
+  assert.equal(port.calls.filter((c) => c[0] === 'pay').length, 0);
+
+  // AND WHEN IT CLOSES, THE SAME CALL MOVES EVERYTHING, IN ORDER: the stakes first, then the pool.
+  const shut = await custody.settleHeldInvoices({ roundId: rid, minScore: 1, finalFor: () => true, entries });
+  assert.equal(shut.ok, true, shut.why);
+  assert.equal(custody.stateOf(entryIdOf(loser)).state, SETTLED, 'the loser\'s stake never reached the pool');
+  assert.equal(custody.stateOf(entryIdOf(winner)).state, CANCELLED);
+  assert.equal(round.feeHold(entryIdOf(winner)).state, SETTLED);
+  assert.equal(round.winnings(entryIdOf(winner)).owedMsat, 98000n);
 });

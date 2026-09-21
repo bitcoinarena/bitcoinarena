@@ -29,7 +29,11 @@ test('a signer node with closeAtEnd closes the round that is over and keeps the 
       committeeTimeMs: entryCloseMs - 120000n - WINDOW, startTimeMs: entryCloseMs - 120000n, entryCloseMs, stakeMsat: 0n });
     const facts = {};
     for (const [name, d] of [['withIt', withIt], ['without', without]]) {
-      const over = round(d, now - 200000n);            // its end, ~180 s after entry close, has passed
+      // ITS END HAS PASSED, and the end is 2 * the start deadline plus the run, which on this contract is
+      // 2 * 1400 + 10800 ticks = 226.6 s after the entry close - not the ~180 s this line once assumed.
+      // Measured: at 200 s back the round was still running by 26.6 s, so the fixture never built the
+      // round it is named after and the test failed before it asked the daemon anything.
+      const over = round(d, now - 400000n);
       const running = round(d, now + 60000n);
       assert.ok(roundEndMs(over) < now && roundEndMs(running) > now);
       for (const c of [over, running])
