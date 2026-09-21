@@ -2186,15 +2186,25 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'POST' && url.pathname === '/winnings') {
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
         if (eid.length !== 32) return text(res, 400, 'a winning is paid by entry id');
-        const entry = round.entry(eid);
-        if (!entry) return text(res, 404, 'this node holds no such entry');
+        // `round.entry` hands back the CONTRACT'S BYTES, so the session key is decoded from them.
+        const stored = round.entry(eid);
+        if (!stored) return text(res, 404, 'this node holds no such entry');
+        let entry;
+        try { entry = decodeEntryContract(stored); }
+        catch (e) { return text(res, 500, `this node cannot read the entry it stored: ${e.message}`); }
         const body = await read(req);
+        // THE ENVELOPE IS THE INVOICE'S BYTES AND A SIGNATURE OVER THEM. Not `splitSigned`, which is a
+        // checkpoint's fixed size; an invoice is whatever length it is, so the last 64 bytes are the
+        // signature and everything before them is what was signed.
         let request;
         try {
-          const split = splitSigned(new Uint8Array(body));
-          if (!ed25519.verify(split.signature, split.body, entry.sessionPubkey))
+          const all = new Uint8Array(body);
+          if (all.length <= 64) return text(res, 400, 'that is too short to be an invoice and a signature');
+          const sig = all.subarray(all.length - 64);
+          const signed = all.subarray(0, all.length - 64);
+          if (!ed25519.verify(sig, signed, entry.sessionPubkey))
             return text(res, 403, 'that invoice is not signed by the session key this entry was played with');
-          request = Buffer.from(split.body).toString('utf8').trim();
+          request = Buffer.from(signed).toString('utf8').trim();
         } catch (e) { return text(res, 400, `that is not a signed invoice: ${e.message}`); }
         if (!/^ln[a-z0-9]+$/i.test(request)) return text(res, 400, 'that is not a BOLT11 invoice');
         const paid = await custody.payWinnings({ entryId: new Uint8Array(eid), request });
