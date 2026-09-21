@@ -343,12 +343,13 @@ const qualifier = players.find((p) => p.outcome === DELIVERED);
 }
 
 // ---- 5. THE CORE'S WORD, AND A SETTLE BUILT FROM SHARES ----------------------------------------
-// THE VERDICT IS ASSERTED HERE, THE PREIMAGE IS NOT. `finalFor: () => true` says "treat this round as final",
-// exactly as the first version of this tool did: there is no census and no transcript on testnet4 to make it
-// final by itself, and driving a whole close is not what this letter is about. What is NOT asserted is the
-// one thing under test - `settleHeldInvoices` asks its `preimageFor`, and with no injection left that is
-// `fromTheCommittee` (server.js:309): A opens its own share, asks B over `GET /share`, and reconstructs P.
-// If B does not answer, there is no preimage and the hold stays in flight until it expires to its player.
+// NOTHING ABOUT THE VERDICT IS ASSERTED HERE. An earlier draft of this file drove the settle directly with
+// `settleHeldInvoices({ finalFor: () => true })` - "treat this round as final" - and this paragraph used to
+// say so. It is gone, and saying it still would understate the evidence: the round below is CLOSED at both
+// seats and each reaches its own verdict. The preimage was never asserted either - with no injection left,
+// custody's `preimageFor` is `fromTheCommittee` (server.js:309): A opens its own share, asks B over
+// `GET /share`, and reconstructs P. If B does not answer there is no preimage, and the hold stays in flight
+// until it expires back to its player.
 // A SEAT WILL NOT HAND OVER ITS SHARE FOR A RUN IT HAS NOT JUDGED, and that is the design working. Asserting
 // finality to A does not move B: asked for its share early, B answered "this node has replayed nothing for
 // that run" and A stopped at "1 of 2 shares: a stake nobody can open stays in flight". So the round is closed
