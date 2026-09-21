@@ -637,7 +637,7 @@ NodeAdvertisement {
   node_pubkey
   operator_id                  // SELF-DECLARED, not proof of identity (§5A.13)
   supported_protocol_versions
-  roles_supported              // game_verify | settlement | both
+  roles_supported              // game_verify | settlement | both | none - opt-in (v4.6.4, below)
   endpoint, region, capacity_class
   software_hash
   settlement_capabilities
@@ -646,7 +646,7 @@ NodeAdvertisement {
   bond_script_template_version
   payout_pubkey                // where fee shares are paid
   guardian_of[]                // v4.6.2: (federation_id, guardian peer key) this operator runs (§23.6)
-  guardian_capable             // v4.6.4: willing and able to be drawn as a guardian (§23A.2)
+  guardian_capable             // v4.6.4: the third role, opt-in: willing to hold custody as a guardian (§23A.2)
   guardian_endpoint            // v4.6.4: the fedimintd API endpoint the client and the seats use (§23A.4)
   timestamp
   signature                    // by node_pubkey over all of the above
@@ -656,6 +656,21 @@ NodeAdvertisement {
 The advertisement is **not** what makes a node eligible. The bond output is
 (§5A.2). The advertisement is the body that the bond output commits to, so
 that chain data alone identifies both the node and its terms.
+
+**Every role is opt-in (RULED, the owner 2026-09-21).** A node says in its
+advertisement what it takes part in, and is drawn for nothing else. The
+three roles are independent: `game_verify` (replay and sign results),
+`settlement` (hold a share of the preimages and sign the settlement
+transaction - signing, not holding money), and `guardian_capable` (hold
+custody as a guardian of a federation, §23A). Any combination is valid,
+including none, and an operator who wants no part of custody simply leaves
+`guardian_capable` off and is never in a guardian sortition. No role is
+implied by another, no role is implied by the bond, and no fee share is
+paid for a role a node did not take (§22A). A node changes its roles with a
+new bond-committed advertisement, effective at the next `census_height`;
+turning a role off while serving it is a departure and follows the notice
+of that role (§23A.5 for a guardian; a seat serves out the rounds it sits
+in). Nothing is slashed for a role a node never advertised.
 
 ## 5A.2 Census anchoring — the census is Bitcoin chain state
 *(rewritten in 4.6.1 — blocker 1)*
