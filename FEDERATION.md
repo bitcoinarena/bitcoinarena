@@ -285,6 +285,13 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
   - game/verify, settlement, guardian, any combination or none - and is
   drawn for nothing else. A node that wants no custody leaves
   `guardian_capable` off.
+- **FEDERATION is the only custody** (§23.6): THRESHOLD_LN is withdrawn on
+  every network; a round naming it is invalid; its records decode and that
+  is all. This file is no longer "V1 of two"; it is the construction.
+- **Guardians are not parked** (§23.6): §23A is built now - testnet on the
+  2-of-2 that runs, seated by its two bonded operators; regtest on the
+  4-guardian rehearsal; mainnet by founding once ten guardian-capable
+  operators are bonded. `federationIsBonded` stays on.
 
 ## Security findings (Fable, 2026-09-11 15:00) — RESOLVED in spec v4.6.2 (the owner 15:10: "alles dokumentieren und lösen")
 

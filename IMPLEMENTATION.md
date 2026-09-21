@@ -717,24 +717,19 @@ Built on `@noble/curves/secp256k1` for scalar and point arithmetic. Roughly
 Threshold signature implementations fail subtly, especially around nonce
 handling, and a green test suite is not a review.
 
-Operationally, the settlement wallet has two possible shapes:
+Operationally, the settlement wallet has **one** shape (the owner 2026-09-21,
+spec §23.6): a **Fedimint-class federation**. Guardians hold funds under
+threshold consensus; the daemon is a Fedimint client that reads locks,
+submits the settlement transaction and watches confirmations (spec §23A.4).
+The threshold-signed Lightning node (`threshold-lnd`) was measured, found
+not buildable on lnd, and withdrawn; the single-operator lnd (`lnd-single`)
+was the interim it hid behind and goes with it - the regtest federation
+(`FEDERATION.md`, four guardians on one laptop) is the development backend.
 
-1. **Threshold-signed Lightning node.** LND with a remote signer whose
-   signing is the FROST quorum above. Cleanest architecture; the least mature
-   technology; the interface the rest of the daemon codes against.
-2. **Federation with a Lightning gateway.** Guardians hold funds under
-   threshold consensus; the daemon is an RPC client. Mature today, and a
-   valid production shortcut with the same trust statement.
-
-The daemon exposes a `SettlementBackend` interface with implementations
-`threshold-lnd`, `federation`, and `lnd-single`. The last is for development
-only and must be labelled, in code and in logs, as **custodial** — a single
-operator holding the keys while a quorum votes is theatre, and the code
-should say so where someone will read it.
-
-Hold invoices come from LND's `invoicesrpc` — `AddHoldInvoice`,
-`SubscribeSingleInvoice`, `SettleInvoice`, `CancelInvoice` — over
-`@grpc/grpc-js` (pure JS) or `ln-service`.
+The daemon exposes a `SettlementBackend` interface with one implementation,
+`federation`. No hold invoices: a deposit is a stock LNv2 receive through a
+gateway into the player's wallet (spec §24A.1), a withdrawal a stock LNv2
+send, and the stake is a contract the client builds (spec §23.1).
 
 ### 9.4 Settlement state machine
 
