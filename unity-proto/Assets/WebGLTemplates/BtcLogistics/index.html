@@ -649,6 +649,17 @@
       // carried its own could carry its own committee next - and the rule sits
       // where `node --test` can drive it.
       const pays = BLWPCLIENT.roundPays(named.round);
+      // WHAT THE JOIN IS WAITING ON, SAID OUT LOUD (2026-09-21). Measured on the live Daily: PLAY on a paid
+      // round produced 99 console events, 0 exceptions and 0 refusals, and still "named no node" - so the
+      // join was neither completing nor refusing, and `Runtime.evaluate` goes silent after a join, so the
+      // page could not be asked. It has to say it. One line in, one line out, per await that can hold it.
+      const joinStep = async (name, f) => {
+        console.log('[blwp] join step -> ' + name);
+        try { const r = await f(); console.log('[blwp] join step <- ' + name); return r; }
+        catch (e) { console.error('[blwp] join step !! ' + name + ': ' + (e && e.message ? e.message : e)); throw e; }
+      };
+      console.log('[blwp] join: pays=' + !!pays + ' locks=' + !!BLWPCLIENT.roundLocks(named.round)
+        + ' round=' + String(named.roundIdHex).slice(0, 16));
       // THE PLAYER'S DONATION (M3.2 6e, §22A): asked here in the browser's own
       // prompt, like the name, and only for a round that asks a stake. Default 0
       // - pressing nothing or cancelling donates nothing - and above 5% it asks a
@@ -662,7 +673,7 @@
       // checks there is no donation to choose: it stays 0, and the page says why.
       let donationSet = null;
       if (pays) {
-        const ds = await BLWPCLIENT.fetchDonationSet({ round: named.round, nodes: named.nodes, verifyEd25519: pageEd25519Verify });
+        const ds = await joinStep('fetchDonationSet', () => BLWPCLIENT.fetchDonationSet({ round: named.round, nodes: named.nodes, verifyEd25519: pageEd25519Verify }));
         if (ds.ok) donationSet = ds.set;
         else { window.BLWP_DONATION_SET_WHY = ds.why; console.error('[blwp] no donation: ' + ds.why); }
       }
@@ -679,7 +690,7 @@
       if (pays) {
         let signerNodes = null;
         try {
-          signerNodes = await BLWPCLIENT.fetchSettlementSignerNodes(named.roundIdHex, named.nodes);
+          signerNodes = await joinStep('fetchSettlementSignerNodes', () => BLWPCLIENT.fetchSettlementSignerNodes(named.roundIdHex, named.nodes));
         } catch (e) {
           // REFUSED BY NAME rather than joined silently. A paying round whose
           // settlement committee this page cannot learn is a round whose stake
