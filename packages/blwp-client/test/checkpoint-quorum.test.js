@@ -24,7 +24,7 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { standUpRound } from '../../blwp-node/tools/round-2of2.mjs';
-import { Client, receiptsForLive } from '../src/client.js';
+import { Client, receiptsForLive, FEED_WINDOW } from '../src/client.js';
 import { joinFromQuery, tabSeed, playerFor, entryFor } from '../src/join.js';
 import { feldmanGroup } from '../../blwp-node/src/curve.js';
 import { toHex } from '../../protocol/src/hash.js';
@@ -315,6 +315,75 @@ test('a daemon that has not caught up refuses rather than signs, then signs once
       + `checkpoints A ${after[0]} B ${after[1]}`);
     assert.deepEqual(held, [180, 180]);
     assert.deepEqual(after, [2, 2]);
+  } finally {
+    if (t) { t.client.ended = true; t.client.close(); }
+    await round.close();
+  }
+});
+
+// A PEER THAT IS BEHIND IS CAUGHT UP IN ROUND TRIPS, NOT IN BATCHES.
+//
+// Measured on the Daily, a paid entry both seats served through quick tunnels: the peer round trip was
+// 65 ms (median of 2084), one batch is 6 ticks, so one batch per round trip closes a backlog at 92 ticks
+// a second against a player making 60 - 32 a second of surplus. A seat that started 2280 ticks behind
+// therefore needed 71 s, the run's first mark went out at tick 5940, and §13B judged it against a window
+// ending at 900: FORFEIT, on a player who had paid in 10 s.
+//
+// The window does not move and no node checks less. The client stops waiting for one answer before
+// asking the next question, which is what `FEED_WINDOW` is.
+test('a peer behind by a hundred batches is caught up in round trips, not one round trip per batch', async () => {
+  const round = await standUpRound({ host: '127.0.0.1', portA: 18276, portB: 18277 });
+  let t;
+  try {
+    const named = await joinFromQuery(new URL(round.url).search);
+    // THE BACKLOG, MADE THE WAY THE DAILY MADE IT: B is not in the page's node list, so everything the
+    // player does reaches A alone and B holds nothing at all.
+    t = await tab(round, named, { pageNodes: false });
+    const { client, rid, eid } = t;
+    const B = named.nodes.map((n) => String(n).replace(/\/+$/, '')).find((n) => n !== client.base);
+    // THE BRIDGE DRAINS EVERY `BatchEvery` TICKS (6, 10 Hz of a 60 Hz run), so the backlog is a hundred
+    // small batches and not one big one - which is the whole shape of the thing being measured.
+    const EVERY = 6, TICKS = 600;
+    for (let i = 0; i < TICKS / EVERY; i++) { drive(client, EVERY); await publishAll(client); }
+    const batches = client.published.length;
+    assert.ok(batches >= 90, `the backlog was meant to be about a hundred batches, it is ${batches}`);
+    assert.deepEqual([await heldTicks(client.base, rid, eid), await heldTicks(B, rid, eid)], [TICKS, 0]);
+
+    // EVERY FRAME TO B IS COUNTED, and so is how many were on the wire at once. A wave is one round trip's
+    // worth: the count goes up each time the wire goes from empty to busy.
+    let inFlight = 0, waves = 0, mostAtOnce = 0, frames = 0;
+    const was = client.sendPeer.bind(client);
+    client.sendPeer = async (base, bytes) => {
+      if (base !== B) return was(base, bytes);
+      if (inFlight === 0) waves++;
+      inFlight++; frames++;
+      if (inFlight > mostAtOnce) mostAtOnce = inFlight;
+      try { return await was(base, bytes); } finally { inFlight--; }
+    };
+
+    client.deliverTo(named.nodes);
+    client.pumpPeers();
+    await client.awaitPeers();
+    // B WAS NOT IN THE ROUND AT ALL, so the first wave is refused for the signer node and the entry is
+    // handed over; the feed then catches it up. Whatever it takes, it is counted here.
+    for (let i = 0; i < 10 && (await heldTicks(B, rid, eid)) < TICKS; i++) {
+      client.pumpPeers();
+      await client.awaitPeers();
+    }
+    const held = [await heldTicks(client.base, rid, eid), await heldTicks(B, rid, eid)];
+    const ceiling = Math.ceil(batches / FEED_WINDOW);
+    console.log(`  ${batches} batches of backlog: ${frames} frames in ${waves} waves, `
+      + `${mostAtOnce} at once, B holds ${held[1]} of ${held[0]}`);
+    assert.deepEqual(held, [TICKS, TICKS], 'B was not caught up across the whole backlog');
+    assert.ok(mostAtOnce > 1, 'the backlog still went one frame per round trip');
+    assert.ok(waves <= ceiling + 3,
+      `${batches} batches took ${waves} waves and ${ceiling} + the retry are what a window of ${FEED_WINDOW} allows`);
+    assert.equal(client.peerBatchesRefused, 1,
+      `a whole window of refusals was counted where one batch was refused: ${client.peerBatchesRefused}`);
+
+    // AND THE RUN GOES ON THROUGH THE PAGE'S OWN PATH, on both.
+    const mark = await client.markNow(driven(7, TICKS), TICKS);
+    assert.equal(mark.live, true, `the mark after the catch-up was not live: ${mark.refused.join('; ')}`);
   } finally {
     if (t) { t.client.ended = true; t.client.close(); }
     await round.close();
