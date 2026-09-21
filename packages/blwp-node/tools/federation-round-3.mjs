@@ -109,6 +109,20 @@ if (round) {
   // prints WHAT it counted, so a pass is a number and not a silence.
   say({ step: 'bonded', note: 'the round opened, so POST /round ran the §23.6 gate and it passed',
     threshold: fed.threshold, nodes: round.contract.nodes.length });
+  // AND THE CLAIM KEY, WATCHED. The signer nodes run their DKG in the background
+  // once the round is assigned; a stake cannot be locked until they hold it, so
+  // how long it takes with three peers is a number this letter needs.
+  const began = Date.now();
+  let held = null;
+  for (const stop = began + 240000; Date.now() < stop; ) {
+    const said = await Promise.all(round.nodes.map(async (b) => {
+      try { const r = await fetch(`${b}/claim-key?round=${round.id}`); return `${r.status}`; } catch (e) { return 'down'; }
+    }));
+    if (said.every((x) => x === '200')) { held = said; break; }
+    await new Promise((r) => setTimeout(r, 3000));
+    if ((Date.now() - began) % 30000 < 3100) say({ step: 'claim key waiting', ms: Date.now() - began, said });
+  }
+  say({ step: 'claim key', held: !!held, ms: Date.now() - began });
   await round.close();
 }
 process.exit(code);
