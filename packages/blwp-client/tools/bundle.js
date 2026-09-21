@@ -40,6 +40,11 @@ walk(SRC + 'client.js');
 // client that publishes a run should not depend on whether anybody is drawing
 // the others.
 walk(SRC + 'ghost-field.js');
+// AND THE BACKUP GATE AND THE PHRASE IT CHECKS (§24B). Nothing in the client imports them - the gate is
+// what the PAGE asks before a deposit or a paid join, and the phrase is what it shows in Settings - so
+// they are walked in here the same way `ghost-field.js` is.
+walk(SRC + 'backup-gate.js');
+walk(SRC + 'bip39.js');
 // AND THE WAY IN. `join.js` is what a page does with its own URL before the
 // client exists at all: nothing imports it, because a client that publishes a
 // run must not depend on how the page was told which round to publish to.
@@ -114,6 +119,10 @@ out += '         tickClock: tickClock, ghostLabels: ghostLabels, ghostLabelText:
 out += '         playersLine: playersLine, newestPose: newestPose,\n';
 out += '         stakeLine: stakeLine,\n';
 out += '         joinQuery: joinQuery, joinFromQuery: joinFromQuery,\n';
+out += '         verifyPhrase: verifyPhrase, verifyAndRecord: verifyAndRecord,\n';
+out += '         isVerified: isVerified, backupLine: backupLine, NO_BACKUP_LINE: NO_BACKUP_LINE,\n';
+out += '         mayDeposit: mayDeposit, mayPayStake: mayPayStake, mayJoin: mayJoin,\n';
+out += '         phraseFromSeed: phraseFromSeed, seedFromPhrase: seedFromPhrase, PHRASE_WORDS: PHRASE_WORDS,\n';
 out += '         fetchRound: fetchRound, bondProvider: bondProvider,\n';
 // THE SEED THE COMMITTEE WILL REPLAY THIS PLAYER WITH. Without it the page
 // cannot put its own core in the world its transcript is judged in, which is

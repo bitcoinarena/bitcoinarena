@@ -100,11 +100,11 @@ export function backupLine(storage, seed) {
 /**
  * THE GATE. `why` is what the player is told, and it names the way out.
  */
-function refuse() {
+function noBackupYet() {
   return { ok: false, why: 'Type your seed phrase back in Settings first - this wallet has no backup yet' };
 }
-export const mayDeposit = (storage, seed) => (isVerified(storage, seed) ? { ok: true } : refuse());
-export const mayPayStake = (storage, seed) => (isVerified(storage, seed) ? { ok: true } : refuse());
+export const mayDeposit = (storage, seed) => (isVerified(storage, seed) ? { ok: true } : noBackupYet());
+export const mayPayStake = (storage, seed) => (isVerified(storage, seed) ? { ok: true } : noBackupYet());
 /** A free round stakes nothing, so it never asks. */
 export const mayStartFreeRound = () => ({ ok: true });
 
