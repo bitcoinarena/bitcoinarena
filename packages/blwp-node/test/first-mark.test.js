@@ -159,7 +159,17 @@ async function joinAndBuild(w, { firstAt = 60 } = {}) {
   const ob = batchOf(0, 30, GENESIS_HASH);
   const om = markOf(30, Uint8Array.from(stateHash(otherSt).match(/../g).map((x) => parseInt(x, 16))), ob, NO_PREVIOUS);
   const other = [encodeInputBatch(ob), sign(om)];
-  return { entry, eid, outpoint, messages, firstId, late, other };
+  // AND THE SAME PLAYER MARKING AGAIN AFTER A LATE FIRST MARK WAS REFUSED (2026-09-21). Measured on the
+  // Daily: the first mark went out at 5940 against a window ending at 900, was refused as a late start and
+  // never carried, so the client's head stayed ZERO and it marked again every second - 80 times. This is
+  // one of those: past the line like the first one, a different tick, and its own inputs from nothing.
+  const againSt = init(seedWordForEntry(entry, RANDOMNESS));
+  const AGAIN_AT = 960;
+  for (let t = 0; t < AGAIN_AT; t++) step(againSt, ...wordsAt(t));
+  const gb = batchOf(0, AGAIN_AT, GENESIS_HASH);
+  const gm = markOf(AGAIN_AT, Uint8Array.from(stateHash(againSt).match(/../g).map((x) => parseInt(x, 16))), gb, NO_PREVIOUS);
+  const again = [encodeInputBatch(gb), sign(gm)];
+  return { entry, eid, outpoint, messages, firstId, late, other, again, againAt: AGAIN_AT };
 }
 
 const answer = (s) => (typeof s === 'string' ? (s.length > 30 && !s.startsWith('error') ? 'receipt' : s.slice(0, 90)) : 'receipt');
@@ -219,6 +229,47 @@ test('a first mark after join + deadline is FORFEIT at the signer node it reache
       a: { lateStart: 'FORFEIT at 1320 > 900', results: ['FORFEIT'], finality: 'FINAL', forfeit: 409 },
       b: { lateStart: 'FORFEIT at 1320 > 900', results: ['FORFEIT'], finality: 'FINAL', forfeit: 409 },
       aStoredTheMark: false });
+  } finally { await w.close(); }
+});
+
+// A REFUSED FIRST MARK NOBODY CARRIED IS NOT A SIGNED FIRST MARK (§13B).
+//
+// Measured on the Daily, one paid entry, both seats: the first mark went out at tick 5940 against a window
+// ending at 900 and was refused as a late start. Nothing was carried - `checkpoints` and `offered_marks`
+// held 0 rows for that entry on both seats - so the client's head was still ZERO and it marked again, the
+// way a client with no head does. All 80 of those were answered "the player signed another first mark for
+// this entry (§13B): two first marks are FORFEIT, never an outage refund".
+//
+// The player forked nothing. They were told no and asked again. 13B's clause is the one that forecloses
+// an outage refund, so charging it on the strength of this node's own refusal is the operator profiting
+// from a technical failure. The retry is answered the way the first one was.
+test('a late first mark refused and never carried: marking again past the line is that same late start, not two first marks', async () => {
+  const w = await signerNodes();
+  try {
+    const run = await joinAndBuild(w, { firstAt: END });
+    for (const m of run.messages) await say(w.a.port, m);
+    assert.equal(await untilForwarded(w.b, run), true, 'B never learned the late start');
+    assert.equal(holdsFirst(w.b, run), false, 'B carried the late mark, so this is not the measured case');
+
+    // THE RETRY, TO THE SIGNER NODE THAT REFUSED AND KEPT NOTHING.
+    const said = [];
+    for (const m of run.again) said.push(answer(await say(w.b.port, m)));
+    const pairs = await (await fetch(`http://127.0.0.1:${w.b.port}/equivocation?round=${toHex(w.rid)}&entry=${toHex(run.eid)}`)).text();
+    const facts = { said, twoFirstMarks: /two first marks/i.test(said.join(' ')),
+      pairKept: !/none|no proof/i.test(pairs) && pairs.length > 64, b: await outcomeAt(w.b, w, run) };
+    console.log('  FACTS (retry past the line):', JSON.stringify(facts).slice(0, 400));
+    assert.equal(facts.twoFirstMarks, false, `the retry was charged as a fork: ${said.join(' ')}`);
+    assert.match(said.join(' '), /after the start deadline/, 'the retry was not answered with the late start');
+    assert.equal(facts.pairKept, false, 'a fork pair was kept against a player who forked nothing');
+    assert.equal(facts.b.lateStart, 'FORFEIT at 1320 > 900', 'the late start this signer node already held moved');
+
+    // AND THE DOOR DOES NOT OPEN. A mark INSIDE the window after a late start was refused would claim a
+    // start this signer node said was missed - that is the second first mark 13B is for, and it still is.
+    const inside = [];
+    for (const m of run.other) inside.push(answer(await say(w.b.port, m)));
+    console.log(`  FACTS (retry inside the window): ${JSON.stringify(inside)}`);
+    assert.match(inside.join(' '), /two first marks/i,
+      `an on-time mark after a refused late start was not refused as a second first mark: ${inside.join(' ')}`);
   } finally { await w.close(); }
 });
 
