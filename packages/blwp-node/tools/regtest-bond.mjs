@@ -123,8 +123,19 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
    * One bond for one node's own key: the bond output 5A.3B builds, the
    * network's marker, the commitment, and the signed body in the witness.
    */
+  /**
+   * `guardianOf` IS WHAT MAKES A FEDERATION ROUND OPENABLE (§23.6 P3, the owner 2026-09-15 07:33).
+   *
+   * A round that takes a stake into a federation is assigned signer nodes only on a BONDED one:
+   * `federationIsBonded` wants the federation's threshold of its guardian keys advertised under
+   * `guardian_of[]` by distinct census nodes bonded at or above the round's `bond_min`. This posted
+   * `guardianOf: []` and nothing else, so the count was zero of the threshold and every paying FEDERATION
+   * round was refused "this signer node signer nodes no round on an unbonded federation" - correctly, and
+   * with no way for a harness to say otherwise. Now a caller that KNOWS its federation's guardians can
+   * name them, which is the only thing a local federation round was missing.
+   */
   function postBond(nodeSecret, { endpoint, roles = ['game', 'verify', 'settlement'],
-    bondSats = 50000000n } = {}) {
+    bondSats = 50000000n, guardianOf = [] } = {}) {
     const nodeKey = schnorr.getPublicKey(nodeSecret);
     const built = bondOutputKey({
       nodeKey, arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK,
@@ -139,7 +150,7 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
       softwareHash: new Uint8Array(32).fill(2),
       settlementCapabilities: 0, lightningCapabilities: 0,
       bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 1,
-      payoutPubkey: new Uint8Array(32).fill(3), guardianOf: [], timestamp: 1788700000000n,
+      payoutPubkey: new Uint8Array(32).fill(3), guardianOf, timestamp: 1788700000000n,
     };
     const id = advertId(advert);
     const body = joinSignedAdvert(encodeAdvert(advert), schnorr.sign(id, nodeSecret));
