@@ -181,6 +181,37 @@ export function witnessItemsOf(tx) {
 }
 
 /**
+ * EVERY WITNESS ITEM, AND EVERY RUN OF CONSECUTIVE ITEMS IN ONE STACK, JOINED.
+ *
+ * A signed advertisement is 266 bytes (`protocol/tools/advert-layout.mjs`) and Bitcoin Core holds a
+ * tapscript witness stack item to 80 - measured on a real node, the bond was refused
+ * `bad-witness-nonstandard` with the stack [64 sig, 266 body, 35 script, 33 control]. So §5A.2's body
+ * travels in pieces of at most 80 bytes with an `OP_DROP` each, and a reader that only looked at single
+ * items would see four fragments and no advertisement at all.
+ *
+ * Single items come FIRST, so a one-item body - every bond posted before this - is found exactly as it
+ * was and at the same cost. The runs are tried after, and a run is believed only if its bytes decode AND
+ * its `advertId` matches a commitment in the transaction's own outputs, so joining bytes that were never
+ * one body cannot invent an advertisement.
+ */
+export function witnessRunsOf(tx) {
+  const out = witnessItemsOf(tx);
+  for (const stack of tx.witnesses) {
+    for (let i = 0; i < stack.length; i++) {
+      let length = stack[i].length;
+      for (let j = i + 1; j < stack.length; j++) {
+        length += stack[j].length;
+        const run = new Uint8Array(length);
+        let at = 0;
+        for (let k = i; k <= j; k++) { run.set(stack[k], at); at += stack[k].length; }
+        out.push(run);
+      }
+    }
+  }
+  return out;
+}
+
+/**
  * THE MERKLE ROOT OF A BLOCK'S TRANSACTIONS, Bitcoin's way.
  *
  * An odd level DUPLICATES the last hash here, which is exactly the rule the

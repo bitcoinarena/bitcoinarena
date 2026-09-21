@@ -5,7 +5,7 @@
 import { Writer } from './encode.js';
 import { taggedHash, fromHex, toHex } from './hash.js';
 import { TAG, ROLES, PROTOCOL_VERSION, TYPE_CENSUS_LEAF, networkOf } from './constants.js';
-import { parseTransaction, commitmentsOf, witnessItemsOf, blockMerkleRoot } from './tx.js';
+import { parseTransaction, commitmentsOf, witnessRunsOf, blockMerkleRoot } from './tx.js';
 import {
   recognizeBond, isTaprootOutput, BOND_UNCHECKED, chainWork, merkleRootOf, blockHashOf,
   paysBondMarker,
@@ -594,7 +594,7 @@ export function chainFactsAt(blocks, censusHeight) {
 function committedAdvertIn(tx) {
   const commitments = commitmentsOf(tx);
   if (!commitments.length) return null;
-  for (const item of witnessItemsOf(tx)) {
+  for (const item of witnessRunsOf(tx)) {
     try {
       const { body } = splitSignedAdvert(item);
       const advert = decodeAdvert(body);
@@ -834,7 +834,7 @@ function resolveBody(seen, entry, verifyAdvert) {
       offered.push({ advert: decodeAdvert(body), signature });
     } catch { /* not a signed body; most witness items are not */ }
   };
-  for (const item of witnessItemsOf(tx)) read(item);
+  for (const item of witnessRunsOf(tx)) read(item);
   if (seen.signedAdvert) read(seen.signedAdvert);
 
   const taken = offered.find((o) =>
