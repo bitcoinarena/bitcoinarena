@@ -22,8 +22,11 @@
 > a slashed guardian bond goes **evenly to the active census nodes and 25%
 > to the developers**, never to the witnesses (§23A.5); and a guardian can
 > **leave a federation with notice and keep his bond** as a census node
-> (§23A.5). Changed: §5A.1, §22A, §23A (new), §24, §25.2, §27A.6,
-> `FEDERATION.md`.
+> (§23A.5); every role is opt-in (§5A.1). And: **FEDERATION is the only
+> custody** - THRESHOLD_LN is withdrawn on every network, and **guardians
+> are not parked**: §23A is to be built now, on the testnet 2-of-2 that
+> runs (§23.6). Changed: §5A.1, §22A, §23.6, §23A (new), §24, §25.2,
+> §27A.6, `FEDERATION.md`, `IMPLEMENTATION.md` §9.
 
 > **Revision 4.6.3 — the player wallet (the owner 2026-09-21).** The round
 > wallet of §24 becomes the **player wallet**: one e-cash wallet per player
@@ -2668,26 +2671,50 @@ seed - the player's money, not a pool.
 
 ## 23.6 Construction and maturity — stated honestly
 
-Two constructions satisfy the property "no single party can move funds":
+**RULED (the owner 2026-09-21): there is one custody construction, FEDERATION,
+on every network.** The Round Contract's `custody_rules` names it and
+nothing else; a round naming anything else is invalid, on regtest too,
+because the regtest federation of `FEDERATION.md` runs on one laptop and
+there is no reason left to test against something else.
 
-- **Threshold-signed Lightning node** (FROST-style Schnorr over channel
-  operations, VLS-style remote signing generalized): the cleanest fit on
-  paper, still **emerging technology**. Measured in this project: lnd's
-  remote signer asks for ECDSA by the node key and for MuSig2 shares, which
-  a FROST committee does not produce. Not used.
-- **Fedimint-class federation, stake lock inside it — V1.** Built from stock
-  parts, unpatched:
-  - the stake lock is Fedimint LNv2's `OutgoingContract`: claim by preimage
-    and claim key, forfeit by the claim key to the refund key, refund to the
-    refund key after expiry — enforced by the guardians' consensus;
-  - the claim key is a FROST (RFC 9591) BIP-340 key, which the federation
-    checks like any other key;
-  - Lightning only at the edges: deposits and withdrawals through any of at
-    least two gateways run by different operators, each payment atomic and
-    over in seconds. No gateway holds a round's money or is needed by it.
+**Fedimint-class federation, stake lock inside it.** Built from stock parts,
+unpatched:
 
-  Not used, by rule: a single-operator Lightning endpoint of any kind, a
-  patched federation, a Lightning node run by the committee.
+- the stake lock is Fedimint LNv2's `OutgoingContract`: claim by preimage
+  and claim key, forfeit by the claim key to the refund key, refund to the
+  refund key after expiry — enforced by the guardians' consensus;
+- the claim key is a FROST (RFC 9591) BIP-340 key, which the federation
+  checks like any other key;
+- Lightning only at the edges: deposits and withdrawals through any of at
+  least two gateways run by different operators, each payment atomic and
+  over in seconds. No gateway holds a round's money or is needed by it;
+- the player's balance between rounds is the federation's e-cash in the
+  player wallet (§24A.1), and the federation itself lives by §23A.
+
+Not used, by rule: a single-operator Lightning endpoint of any kind, a
+patched federation, a Lightning node run by the committee.
+
+**THRESHOLD_LN is withdrawn.** It named a threshold-signed Lightning node
+(FROST over channel operations) that was measured and found not buildable
+on lnd (its remote signer asks for ECDSA by the node key and for MuSig2
+shares, which a FROST committee does not produce), and in practice it
+labelled the interim of the committee's own lnd holding a hold invoice -
+custody by one operator, which the fee could not even ride on. Rounds that
+ran under it are regtest history; the value stays defined only so that
+their records still decode, and no new round may carry it. The door
+§23.6 once left open for a later migration is closed with it: if such a
+node ever hardens, that is a new revision, not a standing option.
+
+**Guardians are not parked (the owner 2026-09-21).** The parking of "which
+guardians" and `federationIsBonded` (PRIORITIES, 2026-09-16) is lifted.
+§23A is to be built now: on testnet with the 2-of-2 federation that runs
+today, seated by the two bonded operators it has (§23A.1's testnet column),
+`federationIsBonded` on as ruled (the owner 07:33); on regtest with the
+4-guardian rehearsal federation; on mainnet with a founding by §23A.2 once
+ten guardian-capable operators are in the census. A paying round on testnet
+is therefore a FEDERATION round with the fee lock, the stake lock and the
+player wallet, and nothing else counts toward "the federation holds the
+money".
 
 **The creator does not get to pick the custodian** *(v4.6.2, P3)*. The
 Round Contract names `federation_id`, and a creator could name a federation
