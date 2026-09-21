@@ -10180,6 +10180,33 @@ function donationKeysForNetworkId(networkId) {
 const COMMENT_KEY_CHARS = 64;
 
 /** Does this first answer stand as a pay request for `amountMsat`? `{ ok, callback, metadata, commentAllowed }` or why not. */
+/**
+ * A LIGHTNING ADDRESS IS AN LNURL-PAY ENDPOINT WITH A FRIENDLIER SPELLING (LUD-16).
+ *
+ * `name@host` means `https://host/.well-known/lnurlp/name`, and nothing else: no redirect is followed
+ * here, no scheme is guessed, and a host with a path or a port dressed into it is refused rather than
+ * normalised. It is where a player's winnings are sent when they have no NWC wallet connected (the owner
+ * 2026-09-21 13:54), so it is checked the way an address that money leaves for should be.
+ *
+ * `.onion` is allowed over http, because that is what LUD-16 says and a Tor host cannot hold a
+ * certificate; everything else is https.
+ */
+function lightningAddressEndpoint(address) {
+  const said = String(address || '').trim().toLowerCase();
+  if (!said) return { ok: false, why: 'there is no Lightning address here' };
+  const at = said.indexOf('@');
+  if (at <= 0 || said.indexOf('@', at + 1) !== -1)
+    return { ok: false, why: `${said} is not a Lightning address: it is name@host` };
+  const name = said.slice(0, at);
+  const host = said.slice(at + 1);
+  if (!/^[a-z0-9._-]+$/.test(name))
+    return { ok: false, why: 'the name of a Lightning address is letters, digits, dot, dash or underscore' };
+  if (!/^[a-z0-9.-]+(:[0-9]{1,5})?$/.test(host) || host.startsWith('.') || host.endsWith('.'))
+    return { ok: false, why: `${host} is not a host a Lightning address can name` };
+  const scheme = /\.onion(:[0-9]{1,5})?$/.test(host) ? 'http' : 'https';
+  return { ok: true, url: `${scheme}://${host}/.well-known/lnurlp/${name}`, name, host };
+}
+
 function payRequestStands(said, amountMsat) {
   if (!said || typeof said !== 'object') return { ok: false, why: 'the endpoint did not answer with a pay request' };
   if (said.status === 'ERROR') return { ok: false, why: `the endpoint refused: ${String(said.reason || '').slice(0, 120)}` };
