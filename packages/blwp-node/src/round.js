@@ -1388,6 +1388,15 @@ export class Round {
     const held = ticksForMs(seen.seenMs - startMs);
     // never before the join: a stake cannot be held before the entry that names it
     const originTick = Math.max(joined.joinTick, Number.isFinite(held) ? Math.floor(held) : joined.joinTick);
+    // THE MARK CANNOT BE JUDGED BY WHEN IT ARRIVED, and this is why the window's other side is not moved
+    // here. A checkpoint carries exactly ONE tick - `encodeCheckpoint` writes roundId, entryId, tick,
+    // stateHash, inputChainHash, previousHash - and that tick is the PLAYER'S CORE tick. The only round-clock
+    // stamp this node has for a mark is when it ARRIVED, and judging on that was tried and reverted: it broke
+    // 10 of 14 in `first-mark.test.js` ("A recorded no late start: not the case the test names"), and the
+    // suites are right. Arrival is LOCAL. Two seats receive the same mark at different moments, so they would
+    // reach different verdicts on the same transcript - identical inputs, different results - and a late
+    // start would depend on the network rather than on the player. Reconciling the clocks has to happen in
+    // what the mark CARRIES, which is a protocol decision, not a node-side patch.
     return { originTick, originName: 'stake held' };
   }
 
