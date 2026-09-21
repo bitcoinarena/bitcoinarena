@@ -214,6 +214,29 @@ function agrees(mine, theirs, what) {
 export const MARK_INPUT_WAIT_MS = 10000;
 
 /**
+ * HOW MANY BATCHES A BEHIND PEER IS CAUGHT UP WITH AT ONCE.
+ *
+ * A mark at tick T waits until every committee node holds the inputs before T, so a peer that starts late
+ * decides when the player's FIRST mark can go out - and §13B judges that mark against a 900-tick window.
+ * Measured on the Daily, one paid entry per line, both seats through the same quick tunnels:
+ *
+ *   peer round trip                  65 ms (median of 2084)
+ *   one batch                        6 ticks (BatchEvery, 10 Hz of a 60 Hz run)
+ *   one batch per round trip         92 ticks/s against a player making 60 - a surplus of 32 ticks/s
+ *   a seat 2280 ticks behind         71 s to close it, and the run's first mark went out at tick 5940
+ *                                    of a window ending at 900: FORFEIT, on a player who paid in 10 s
+ *
+ * The backlog was never the transport's fault - it was spent waiting for one answer before asking the next
+ * question. The frames on a socket are ORDERED, `sendPeer` matches answers to askers in the order they were
+ * sent, and the node's own handler queues each frame behind the one before it ("every frame on a socket
+ * waits for the one before it", server.js), so a window of them is taken in exactly the order one at a time
+ * would have been. Nothing here relaxes what a node checks; it only stops making the client wait a round
+ * trip per batch. 32 of them turn that 71 s into about 2 s, and a steady run - which has one new batch to
+ * send - is byte for byte what it was.
+ */
+export const FEED_WINDOW = 32;
+
+/**
  * THE WORD FOR NO CONNECTION, distinct from every word a node says.
  *
  * A node's own refusal arrives as `error ...`. A peer that could not be reached
@@ -664,36 +687,53 @@ export class Client {
       do {
         f.again = false;
         while (f.next < this.published.length) {
-          const one = this.published[f.next];
-          const a = await this.sendPeer(base, one.bytes);
-          // NO CONNECTION IS NOT A NO: counted as closed, and as one drop per
-          // time the peer went away, never as a refusal. The feed stops and
-          // the next batch or mark tries again, exactly as it did.
-          if (typeof a === 'string' && a.startsWith(CLOSED)) {
-            f.closed++;
-            this.peerInputsClosed++;
-            if (!f.down) { f.down = true; f.downs++; this.peerDowns++; }
-            f.why = a;
-            return;
+          // ASKED AS A WINDOW, READ AS A QUEUE (`FEED_WINDOW`). The frames go out back to back and the
+          // answers are read in the order they were asked for, which is the order the node takes them in.
+          // A steady run has one batch to send and this is one frame, as before; a peer that is behind
+          // stops costing a round trip per batch of it.
+          const window = this.published.slice(f.next, f.next + FEED_WINDOW);
+          const asked = window.map((one) => ({ one, said: this.sendPeer(base, one.bytes) }));
+          // EVERY ANSWER IS READ, INCLUDING THE ONES AFTER A REFUSAL. They are already on the wire, and a
+          // promise nobody reads would leave `sendPeer`'s queue matching the next batch to this one's
+          // answer. `stop` is what the old `return` said: the feed ends at the first batch that did not
+          // land, `f.next` stays on it, and the next batch or mark asks again from exactly there.
+          let stop = null;
+          for (const { one, said } of asked) {
+            const a = await said;
+            if (stop) continue;
+            // NO CONNECTION IS NOT A NO: counted as closed, and as one drop per
+            // time the peer went away, never as a refusal. The feed stops and
+            // the next batch or mark tries again, exactly as it did.
+            if (typeof a === 'string' && a.startsWith(CLOSED)) {
+              f.closed++;
+              this.peerInputsClosed++;
+              if (!f.down) { f.down = true; f.downs++; this.peerDowns++; }
+              f.why = a;
+              stop = 'closed';
+              continue;
+            }
+            // A PEER THAT HAS NOT SEEN THE STAKE YET is waiting too: the feed
+            // stops uncounted and the next batch or mark asks it again.
+            if (typeof a === 'string' && a.startsWith(`error ${STAKE_NOT_SEEN}`)) {
+              f.why = a;
+              stop = 'waiting';
+              continue;
+            }
+            if (typeof a !== 'string' || !/^[0-9]+$/.test(a)) {
+              f.refused++;
+              this.peerBatchesRefused++;
+              f.why = typeof a === 'string' ? a : `${a.length} bytes where a tick count was due`;
+              stop = /no such entry/.test(f.why) ? 'no entry' : 'refused';
+              continue;
+            }
+            f.down = false;
+            f.next++;
+            f.ticks = one.through;
+            this.#wakeMarks();
           }
-          // A PEER THAT HAS NOT SEEN THE STAKE YET is waiting too: the feed
-          // stops uncounted and the next batch or mark asks it again.
-          if (typeof a === 'string' && a.startsWith(`error ${STAKE_NOT_SEEN}`)) {
-            f.why = a;
-            return;
-          }
-          if (typeof a !== 'string' || !/^[0-9]+$/.test(a)) {
-            f.refused++;
-            this.peerBatchesRefused++;
-            f.why = typeof a === 'string' ? a : `${a.length} bytes where a tick count was due`;
-            // A NODE THAT LOST THE SIGNER NODE IS GIVEN IT AGAIN; the next feed retries.
-            if (/no such entry/.test(f.why) && this.joinedEntry) await this.joinOn(base);
-            return;
-          }
-          f.down = false;
-          f.next++;
-          f.ticks = one.through;
-          this.#wakeMarks();
+          // A NODE THAT LOST THE SIGNER NODE IS GIVEN IT AGAIN; the next feed retries.
+          if (stop === 'no entry' && this.joinedEntry) await this.joinOn(base);
+          if (stop) return;
         }
       } while (f.again);
     })().finally(() => { f.running = null; });
