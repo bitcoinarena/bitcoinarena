@@ -262,13 +262,16 @@ test('checkpoints cross the wire, and the refusals cross it too', async () => {
 test('the socket refuses a frame no protocol message could be', async () => {
   // `ws` defaults to a hundred megabytes: a stranger could ask this daemon to
   // allocate that before a byte was parsed. The cap is the longest message
-  // the protocol can encode - 2621509, the encoder's own u16 ceilings, up from
-  // 1835087 when letter 40 gave a batch its load vector - so nothing
-  // legitimate is refused and nothing larger is read.
+  // the protocol can encode - 3146053, the encoder's own u16 ceilings - so
+  // nothing legitimate is refused and nothing larger is read. It has grown with
+  // the transcript: 1835087, then 2621509 when letter 40 gave a batch its load
+  // vector, and 3146053 once a tick carried another eight bytes (65535 * 8 =
+  // 524280 of the 524544 it moved by). The number is pinned so that a transcript
+  // growing is a decision somebody writes down, not something a cap follows.
   const node = await serve(openStore(), { port: 0, ...FUNDED });
   try {
     assert.equal(MAX_FRAME_BYTES, MAX_INPUT_BATCH_BYTES);
-    assert.equal(MAX_FRAME_BYTES, 2621509);
+    assert.equal(MAX_FRAME_BYTES, 3146053);
 
     const closed = await new Promise((resolve) => {
       const sock = new WebSocket(`ws://127.0.0.1:${node.port}/play`);
