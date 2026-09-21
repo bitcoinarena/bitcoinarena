@@ -19,7 +19,7 @@ import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
 import { Custody, HELD, SETTLED, CANCELLED, EXPIRED, ACTING, SETTLE_REQUESTED } from '../src/custody.js';
 import * as custodyStates from '../src/custody.js';
-import { DELIVERED, FORFEIT, VOID, netStakeMsat } from '../../protocol/src/payout.js';
+import { DELIVERED, FORFEIT, VOID, FAILED, netStakeMsat } from '../../protocol/src/payout.js';
 import { entryId as entryIdOf } from '../../protocol/src/contracts.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
@@ -281,6 +281,76 @@ test('a fast chain gets a longer HTLC than the contract\'s floor, and a slow one
   round3.enter(e3);
   await new Custody(round3, { port, preimageFor: defaultPreimageFor }).hold(e3);
   assert.equal(asked[2], 'none', 'a node that cannot time its chain invented a number');
+});
+
+// THE NODE FEE TRAVELS IN ITS OWN HOLD (§23.5), AND IT IS FOR SERVING, NOT FOR WINNING (§5A.12).
+//
+// Measured on the Daily before this: 41 paid entries, 4100000 msat committed by the players, 4016000 asked
+// for by `createHeld`, and 82000 msat of fee never invoiced at all - because the stake hold quotes the NET.
+// It cannot quote the gross instead: §23.2 cancels a winner's hold WHOLE, which would hand every winner
+// their own fee back.
+test('the fee is its own hold, keyed on the entry\'s own preimage, and both amounts are asked for', async () => {
+  const port = fakePort();
+  const { round, rid, custody } = joined(port);
+  const e = entryFor(rid, 1);
+  round.enter(e);
+  const stake = await custody.hold(e);
+  const fee = await custody.holdFee(e);
+  assert.equal(stake.ok, true, stake.why);
+  assert.equal(fee.ok, true, fee.why);
+  // TWO HOLDS, TWO HASHES, TWO AMOUNTS - and together they are the commitment.
+  assert.equal(custody.stateOf(entryIdOf(e)).amountMsat, netStakeMsat(e));
+  assert.equal(round.feeHold(entryIdOf(e)).amountMsat, e.feeMsat);
+  assert.equal(toHex(round.feeHold(entryIdOf(e)).paymentHash), toHex(sha256(e.feePreimage)),
+    'the fee hold is not keyed on the entry\'s own feePreimage');
+  assert.notEqual(toHex(round.feeHold(entryIdOf(e)).paymentHash), toHex(e.stakeCommitment));
+  assert.equal(netStakeMsat(e) + e.feeMsat + e.donationMsat, e.stakeMsat,
+    'the two asks and the donation do not add up to what the player committed');
+  // ASKED FOR ONCE: a second seat asking takes up the invoice the first made.
+  const again = await custody.holdFee(e);
+  assert.equal(again.already, true);
+  assert.equal(port.calls.filter((c) => c[0] === 'createHeld').length, 2, 'a second fee invoice was made');
+});
+
+test('the fee settles to the committee whatever the run came to - a winner pays it too', async () => {
+  for (const [outcome, score] of [[DELIVERED, 9], [FORFEIT, 0]]) {
+    const port = fakePort();
+    const { round, rid, custody } = joined(port);
+    const e = entryFor(rid, 1);
+    const other = entryFor(rid, 2);
+    for (const x of [e, other]) { round.enter(x); await custody.hold(x); await custody.holdFee(x); }
+    const summary = (x, o, sc) => ({ entryId: entryIdOf(x), pubkey: x.playerPubkey, outcome: o, score: sc,
+      stakeMsat: x.stakeMsat, feeMsat: x.feeMsat, donationMsat: x.donationMsat });
+    await custody.settleHeldInvoices({ roundId: rid, minScore: 1, finalFor: () => true,
+      entries: [summary(e, outcome, score), summary(other, FORFEIT, 0)] });
+    assert.equal(round.feeHold(entryIdOf(e)).state, SETTLED,
+      `a ${outcome} entry's fee was not settled to the committee`);
+    assert.equal(round.feeHold(entryIdOf(other)).state, SETTLED);
+    // THE PREIMAGE RELEASED IS THE ENTRY'S OWN, not the stake's.
+    const released = port.calls.filter((c) => c[0] === 'settle').map((c) => c[1]);
+    assert.ok(released.includes(toHex(sha256(e.feePreimage))), `the fee's own hash was never settled: ${released}`);
+  }
+});
+
+test('a round nobody won still pays its fees: they are for serving, not for winning', async () => {
+  const port = fakePort();
+  const { round, rid, custody } = joined(port);
+  const a = entryFor(rid, 1);
+  const b = entryFor(rid, 2);
+  for (const x of [a, b]) { round.enter(x); await custody.hold(x); await custody.holdFee(x); }
+  const summary = (x) => ({ entryId: entryIdOf(x), pubkey: x.playerPubkey, outcome: FAILED, score: 0,
+    stakeMsat: x.stakeMsat, feeMsat: x.feeMsat, donationMsat: x.donationMsat });
+  // BOTH FAILED: `holdSettlement` refuses - a pool with nobody to hand it to - and no stake moves.
+  const out = await custody.settleHeldInvoices({ roundId: rid, minScore: 1, finalFor: () => true,
+    entries: [summary(a), summary(b)] });
+  assert.equal(out.ok, false);
+  assert.match(out.why, /no stake moves/);
+  assert.equal(custody.stateOf(entryIdOf(a)).state, HELD, 'a stake moved on a round nobody won');
+  // AND THE FEES WENT ANYWAY.
+  assert.equal(out.feesMoved, 2, `both fees should have settled, ${out.feesMoved} did`);
+  assert.equal(out.feesMsat, a.feeMsat + b.feeMsat);
+  assert.equal(round.feeHold(entryIdOf(a)).state, SETTLED);
+  assert.equal(round.feeHold(entryIdOf(b)).state, SETTLED);
 });
 
 // AND THE POOL REACHES THE PLAYER (§24A.2).

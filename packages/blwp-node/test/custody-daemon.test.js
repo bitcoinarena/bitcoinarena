@@ -152,11 +152,24 @@ test('a joined player is quoted the hold invoice their own entry names', async (
     assert.equal(quote.body.state, HELD);
     assert.match(quote.body.request, /^lnbcrt-/);
 
+    // AND THE FEE'S OWN INVOICE BESIDE IT (§23.5: the node fee travels in its own lock). The player is
+    // asked twice on one commitment - the net stake and the 2% - because §23.2 cancels a winner's hold
+    // WHOLE, so a single gross hold would hand every winner their own fee back.
+    assert.equal(quote.body.fee.paymentHash, toHex(sha256(entry.feePreimage)),
+      'the fee is not quoted against the entry\'s own fee preimage');
+    assert.equal(quote.body.fee.amountMsat, String(entry.feeMsat));
+    assert.equal(BigInt(quote.body.amountMsat) + BigInt(quote.body.fee.amountMsat) + entry.donationMsat,
+      entry.stakeMsat, 'the two quotes and the donation do not add up to the commitment');
+
     // ASKED TWICE, ANSWERED THE SAME. A reloaded page must not become a
-    // second claim on one stake.
+    // second claim on one stake - nor on one fee.
+    const made = port.calls.filter((c) => c[0] === 'createHeld').length;
+    assert.equal(made, 2, `one ask should make the stake's hold and the fee's, it made ${made}`);
     const again = await getJson(node.port, `/invoice?entry=${eid}`);
     assert.equal(again.body.request, quote.body.request);
-    assert.equal(port.calls.filter((c) => c[0] === 'createHeld').length, 1);
+    assert.equal(again.body.fee.request, quote.body.fee.request);
+    assert.equal(port.calls.filter((c) => c[0] === 'createHeld').length, made,
+      'asking again made another claim');
   } finally { await node.close(); }
 });
 

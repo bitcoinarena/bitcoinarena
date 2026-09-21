@@ -40,7 +40,7 @@ import {
   GENESIS, decodeTranscript, checkTranscript, transcriptBelongsToEntry,
 } from '../../protocol/src/transcript.js';
 import { encodeInputBatch, batchId, batchTicks } from '../../protocol/src/batch.js';
-import { fromHex, toHex } from '../../protocol/src/hash.js';
+import { fromHex, toHex, sha256 } from '../../protocol/src/hash.js';
 import {
   decodeCheckpointReceipt, receiptId, splitSignedReceipt, SIGNED_RECEIPT_BYTES,
 } from '../../protocol/src/receipt.js';
@@ -1260,6 +1260,26 @@ export class Client {
     const stands = invoiceMatchesEntry({ paymentHash, amountMsat, entry });
     if (!stands.ok) return { ok: false, why: stands.why, quoted: said };
 
+    // AND THE FEE'S OWN QUOTE, CHECKED THE SAME WAY (§23.5: the node fee travels in its own lock).
+    //
+    // The player is asked twice on one commitment - the net stake and the 2% - because §23.2 cancels a
+    // winner's hold WHOLE, so a single gross hold would hand every winner their own fee back. The safety
+    // property does not change: this quote is only accepted if its hash is sha256 of the entry's OWN
+    // `feePreimage` and its amount is the entry's own `feeMsat`, both off the contract the player signed.
+    let fee = null;
+    const quoted = said.fee;
+    if (quoted && typeof quoted.request === 'string' && quoted.request.length) {
+      let feeHash = null;
+      try { feeHash = fromHex(String(quoted.paymentHash)); } catch { feeHash = null; }
+      const feeMsat = (() => { try { return BigInt(quoted.amountMsat); } catch { return -1n; } })();
+      const want = sha256(entry.feePreimage);
+      if (!feeHash || toHex(feeHash) !== toHex(want))
+        return { ok: false, why: 'that fee quote is for another hash than this entry\'s own fee preimage' };
+      if (feeMsat !== entry.feeMsat)
+        return { ok: false, why: `that fee quote asks ${feeMsat} msat and this entry's fee is ${entry.feeMsat}` };
+      fee = { request: quoted.request, paymentHash: feeHash, amountMsat: feeMsat, state: quoted.state };
+    }
+
     return {
       ok: true,
       request: said.request,
@@ -1267,6 +1287,7 @@ export class Client {
       amountMsat,
       state: said.state,
       why: stands.why,
+      fee,
     };
   }
 
@@ -1363,8 +1384,36 @@ export class Client {
       });
     }
 
+    // AND THE FEE'S OWN HOLD, PAID FROM THE SAME WALLET IN THE SAME BREATH (§22A, §23.5).
+    //
+    // "Inclusive in the wallet commitment" is about the WALLET, not the HTLC: both amounts leave it up
+    // front, and they cannot share one hold because §23.2 hands a winner theirs back whole. The quote was
+    // checked against this entry's own `feePreimage` and `feeMsat` in `invoice()`, so this is the same
+    // safety property as the stake's - there is no argument here that could carry an arbitrary bolt11.
+    //
+    // A FEE THE WALLET WILL NOT PAY DOES NOT UNDO A HELD STAKE. The stake is already in flight and the
+    // node is already counting it; what the player is told is that the fee is outstanding.
+    let feePaid = null;
+    if (quote.fee && quote.fee.request) {
+      feePaid = await payInvoice(where, quote.fee.request, {
+        curve,
+        random: options.random || ((n) => crypto.getRandomValues(new Uint8Array(n))),
+        ...options,
+      }).catch((e) => ({ ok: false, why: e.message }));
+      if (feePaid && feePaid.ok && log && typeof log.record === 'function') {
+        log.record({
+          amountMsat: quote.fee.amountMsat,
+          paymentHash: quote.fee.paymentHash,
+          roundId: this.where && this.where.roundId,
+          kind: 'fee',
+        });
+      }
+    }
+
     return {
       ok: true, paid: true, asked: true,
+      fee: quote.fee ? { amountMsat: quote.fee.amountMsat, paid: !!(feePaid && feePaid.ok),
+        why: feePaid && !feePaid.ok ? feePaid.why : '' } : null,
       // HELD: the node saw it. The preimage is the wallet's and arrives only
       // with the wallet's answer, which for a hold may be minutes away.
       held: Boolean(seen),

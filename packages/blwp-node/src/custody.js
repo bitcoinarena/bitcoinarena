@@ -282,10 +282,19 @@ export class Custody {
     // move, so none does: every hold stays HELD and expires back to its own
     // player, which is 23.2's default and the only answer that keeps nothing
     // for this node.
+    // THE FEES GO FIRST, AND THEY DO NOT DEPEND ON THE POOL (§5A.12, §23.5).
+    //
+    // A fee is for SERVING the round, not for winning it, so it is settled before the table is even
+    // computed - measured on the Daily, the common case is a round nobody finished, where `holdSettlement`
+    // refuses and this function returns without moving a stake. The committee still served that round.
+    // Its own object, so a dispute over it never touches another player's stake.
+    const fees = await this.settleFees({ roundId });
+
     let decided;
     try { decided = holdSettlement({ roundId, entries, minScore }); }
     catch (err) {
       return { ok: false, actions: [], moved: 0,
+        feesMsat: fees.ok ? fees.msat : 0n, feesMoved: fees.ok ? fees.moved.length : 0,
         why: `no stake moves: ${err.message}. every hold stays in flight and expires to its player` };
     }
     const done = [];
@@ -407,7 +416,103 @@ export class Custody {
     // `holdSettlement` hands back `computePayoutTable`'s whole answer, and the rows are its `table`.
     const owes = this.oweWinnings({ roundId, table: (decided.table && decided.table.table) || decided.table, entries });
     return { ok: true, actions: done, table: decided.table, poolMsat: decided.poolMsat,
-      owedTo: owes.ok ? owes.owed : [], owedMsat: owes.ok ? owes.owedMsat : 0n };
+      owedTo: owes.ok ? owes.owed : [], owedMsat: owes.ok ? owes.owedMsat : 0n,
+      feesMsat: fees.ok ? fees.msat : 0n, feesMoved: fees.ok ? fees.moved.length : 0 };
+  }
+
+  /**
+   * THE NODE FEE'S OWN HOLD, ASKED FOR AT ENTRY (§23.5, RULED 2026-09-21).
+   *
+   * "The node fee travels in its own lock and leaves by the same transaction, so a fee dispute never
+   * touches another player's stake." On this custody the lock is a hold invoice, keyed on the entry's own
+   * `feePreimage` - the same secret the federation's fee lock is claimed by - so the committee can settle
+   * it without any threshold: the fee is not the pool and nobody's stake pays it.
+   *
+   * WHY NOT ONE INVOICE FOR THE COMMITMENT. §22A's "inclusive in the wallet commitment" means both amounts
+   * leave the wallet up front, not that they share one HTLC: §23.2 cancels a DELIVERED player's hold WHOLE,
+   * so a single gross hold would hand every winner their own fee back. Measured on the Daily before this:
+   * 41 paid entries, 4100000 msat committed, 4016000 asked for, and 82000 msat of fee never invoiced.
+   *
+   * The two seats share one Lightning endpoint, and this asks it the same way the stake does - the second
+   * daemon takes up the invoice the first made, so one entry has one fee invoice (measured: 41 entries at
+   * two seats, 41 invoices, no duplicate hashes).
+   */
+  async holdFee(entry) {
+    if (!entry || entry.feeMsat === undefined) return { ok: false, why: 'that is not an entry contract' };
+    if (entry.feeMsat === 0n) return { ok: true, state: FREE, why: 'that entry owes no fee, so none is held' };
+    if (!this.reaches) return { ok: false, why: 'this node reaches no Lightning, so it holds no fees' };
+    const entryId = entryIdOf(entry);
+    const had = this.round.feeHold(entryId);
+    if (had && had.state !== AWAITING_INVOICE)
+      return { ok: true, state: had.state, paymentHash: had.paymentHash, invoice: had.request,
+        why: 'this entry already has a fee hold', already: true };
+    // THE HASH IS THE ENTRY'S OWN. `feePreimage` is inside the entry contract, so every seat computes the
+    // same hash from the same bytes and a second seat asking for it takes up the first's invoice.
+    const paymentHash = sha256(entry.feePreimage);
+    this.round.putFeeHold({ entryId, roundId: entry.roundId, paymentHash, amountMsat: entry.feeMsat,
+      state: AWAITING_INVOICE, why: 'asking the endpoint for this fee\'s hold invoice' });
+    let invoice;
+    try {
+      invoice = await this.port.createHeld({ paymentHash, amountMsat: entry.feeMsat, entryId,
+        ...(this.secondsPerBlock && this.round.get(entry.roundId) ? (() => {
+          const c = decodeRoundContract(new Uint8Array(this.round.get(entry.roundId).contract));
+          return { cltvExpiryBlocks: cltvBlocksFor({ secondsPerBlock: this.secondsPerBlock, blockTicks: c.blockTicks,
+            objectionWindowMs: c.objectionWindowMs, floorBlocks: c.stakeExpiryBlocks }) };
+        })() : {}) });
+    } catch (e) {
+      this.round.putFeeHold({ entryId, roundId: entry.roundId, paymentHash, amountMsat: entry.feeMsat,
+        state: AWAITING_INVOICE, why: `the endpoint refused this fee's invoice: ${e.message}` });
+      return { ok: false, why: `no fee invoice: ${e.message}` };
+    }
+    if (toHex(invoice.paymentHash) !== toHex(paymentHash) || BigInt(invoice.amountMsat) !== entry.feeMsat)
+      return { ok: false, why: 'the endpoint answered with an invoice for another hash or another amount' };
+    this.round.putFeeHold({ entryId, roundId: entry.roundId, paymentHash, amountMsat: entry.feeMsat,
+      state: HELD, why: 'the fee is in flight until this round is served', request: invoice.request });
+    return { ok: true, state: HELD, paymentHash, invoice: invoice.request, amountMsat: entry.feeMsat };
+  }
+
+  /**
+   * AND SETTLING IT TO THE COMMITTEE THAT SERVED THE ROUND, whatever the run came to (§5A.12: "the 2% node
+   * fee goes only to the committee that actually serves the round"). A fee is for serving, not for winning:
+   * DELIVERED, FAILED, FORFEIT and VOID all pay it. The preimage is the entry's own, so no threshold and no
+   * share ceremony stands between the committee and a fee it has earned.
+   */
+  async settleFees({ roundId }) {
+    if (!this.reaches) return { ok: false, why: 'this node reaches no Lightning, so it settles no fees', moved: [] };
+    const moved = [];
+    for (const row of this.round.feeHoldsOf(roundId)) {
+      if (row.state !== HELD) continue;
+      const stored = this.round.entry(row.entryId);
+      if (!stored) continue;
+      let entry;
+      try { entry = decodeEntryContract(stored); } catch { continue; }
+      if (toHex(sha256(entry.feePreimage)) !== toHex(row.paymentHash)) {
+        this.round.putFeeHold({ ...row, state: row.state,
+          why: 'this fee hold was made for another preimage than the entry carries, so it is not settled' });
+        continue;
+      }
+      this.round.putFeeHold({ entryId: row.entryId, roundId, paymentHash: row.paymentHash,
+        amountMsat: row.amountMsat, state: SETTLE_REQUESTED, why: 'about to settle this fee; if this node dies here, ask Lightning' });
+      try {
+        await this.port.settle({ paymentHash: row.paymentHash, preimage: entry.feePreimage, entryId: row.entryId });
+        this.round.putFeeHold({ entryId: row.entryId, roundId, paymentHash: row.paymentHash,
+          amountMsat: row.amountMsat, state: SETTLED, why: 'paid to the committee that served this round' });
+        moved.push({ entryId: row.entryId, msat: row.amountMsat });
+      } catch (e) {
+        // A REFUSED FEE IS AN ANSWER, read the same way a refused stake is.
+        let seen = null;
+        if (typeof this.port.look === 'function') {
+          try { seen = await this.port.look({ paymentHash: row.paymentHash, entryId: row.entryId }); } catch { seen = null; }
+        }
+        const said = seen && seen.state;
+        const known = [HELD, SETTLED, CANCELLED, EXPIRED].includes(said);
+        this.round.putFeeHold({ entryId: row.entryId, roundId, paymentHash: row.paymentHash,
+          amountMsat: row.amountMsat, state: known ? said : SETTLE_REQUESTED,
+          why: known ? `Lightning refused the settle (${e.message}) and says the fee is ${said}`
+            : `Lightning refused the settle (${e.message}) and could not say what the fee is` });
+      }
+    }
+    return { ok: true, moved, msat: moved.reduce((a, m) => a + m.msat, 0n) };
   }
 
   /**
