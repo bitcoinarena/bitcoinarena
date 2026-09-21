@@ -444,8 +444,12 @@ export class Custody {
     const entryId = entryIdOf(entry);
     const had = this.round.feeHold(entryId);
     if (had && had.state !== AWAITING_INVOICE)
+      // THE AMOUNT COMES BACK TOO. Measured live: it did not, so every repeat quote - which is every quote
+      // after the first, because a page asks again on each paint - carried a fee of 0, the client refused
+      // it against the entry's own `feeMsat`, and `payStake` refused the WHOLE payment. The player paid
+      // nothing at all.
       return { ok: true, state: had.state, paymentHash: had.paymentHash, invoice: had.request,
-        why: 'this entry already has a fee hold', already: true };
+        amountMsat: had.amountMsat, why: 'this entry already has a fee hold', already: true };
     // THE HASH IS THE ENTRY'S OWN. `feePreimage` is inside the entry contract, so every seat computes the
     // same hash from the same bytes and a second seat asking for it takes up the first's invoice.
     const paymentHash = sha256(entry.feePreimage);

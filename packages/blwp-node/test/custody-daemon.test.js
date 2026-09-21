@@ -168,6 +168,13 @@ test('a joined player is quoted the hold invoice their own entry names', async (
     const again = await getJson(node.port, `/invoice?entry=${eid}`);
     assert.equal(again.body.request, quote.body.request);
     assert.equal(again.body.fee.request, quote.body.fee.request);
+    // AND THE REPEAT QUOTE CARRIES THE SAME AMOUNTS. Measured live when it did not: every quote after the
+    // first said the fee was 0 msat, the client refused it against the entry's own feeMsat, and payStake
+    // refused the WHOLE payment - the player paid nothing at all, stake included.
+    assert.equal(again.body.amountMsat, quote.body.amountMsat);
+    assert.equal(again.body.fee.amountMsat, quote.body.fee.amountMsat,
+      'the fee quote lost its amount on the second ask');
+    assert.equal(again.body.fee.amountMsat, String(entry.feeMsat));
     assert.equal(port.calls.filter((c) => c[0] === 'createHeld').length, made,
       'asking again made another claim');
   } finally { await node.close(); }
