@@ -86,3 +86,46 @@ export function abandonmentProofNeeds({ f, halted = false, seated = null }) {
   const left = Number.isInteger(seated) && seated >= 0 ? seated : 0;
   return { ok: true, attestations: left, needsHaltFact: true };
 }
+
+/**
+ * §23A.1's clocks, in blocks, as numbers a caller can run rather than a table somebody has to remember.
+ *
+ * Everything in that chapter that waits, waits in BLOCKS - a wall clock is not a thing a chain agrees on.
+ * The 36 h claim window is the owner's; the others are the spec's, matched to it.
+ *
+ *   abandon_blocks     absence that is abandonment; halt before liquidation; load before a founding
+ *   departure_notice   notice a guardian gives before leaving
+ *   founding_window    time a drawn set has to finish its DKG
+ *   drain_blocks       how long a draining federation serves, AND the late-claim tail
+ *   claim_blocks       the liquidation claim window the arbitration set opens
+ */
+export const MAINNET_CLOCKS = Object.freeze({
+  abandonBlocks: 288, departureNotice: 432, foundingWindow: 432, drainBlocks: 2016, claimBlocks: 216,
+});
+
+/**
+ * WHEN A HALTED FEDERATION'S REMAINDER MAY BE SPLIT, and not one block sooner.
+ *
+ * The claim window closes at `claim_blocks` and every valid claim filed in it is paid. A note shown LATE
+ * is still paid from what is left until `drain_blocks` after the halt - the player who was offline for a
+ * weekend is not the one the deadline is for. Only the remainder after THAT is split 75/25, and nothing
+ * a player could still have claimed is ever destroyed.
+ */
+export function liquidationSchedule({ haltHeight, clocks = MAINNET_CLOCKS }) {
+  if (!Number.isInteger(haltHeight) || haltHeight < 0)
+    return { ok: false, why: 'a halt happens at a block height' };
+  return {
+    ok: true,
+    claimWindowCloses: haltHeight + clocks.claimBlocks,
+    lateClaimsUntil: haltHeight + clocks.drainBlocks,
+    remainderSplitsAt: haltHeight + clocks.drainBlocks,
+  };
+}
+
+/** May the remainder be split yet? Never before the late-claim tail has run out. */
+export function remainderMaySplit({ haltHeight, atHeight, clocks = MAINNET_CLOCKS }) {
+  const when = liquidationSchedule({ haltHeight, clocks });
+  if (!when.ok) return when;
+  if (!Number.isInteger(atHeight)) return { ok: false, why: 'ask at a block height' };
+  return { ok: true, may: atHeight >= when.remainderSplitsAt, notBefore: when.remainderSplitsAt };
+}
