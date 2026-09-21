@@ -1,5 +1,6 @@
 // One process holds a round: open it, take an entry, store batches, close it.
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
+import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -18,7 +19,7 @@ const b32 = (n) => new Uint8Array(32).fill(n);
 const contract = () => ({
   networkId: b32(0x4e), configHash: TRUCK_CONFIG_HASH, censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'THRESHOLD_LN', slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
-  stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: 9000,
+  stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: BLOCK_TICKS,
   exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
   timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
   nodes: [b32(4)],
@@ -127,8 +128,12 @@ test('the node imports a core only in cores.js and steps one only in replay.js',
   const { readFileSync, readdirSync } = await import('node:fs');
   const imports = [];
   const steps = [];
+  // THE GUARD READS CODE, NOT PROSE. This file is written in long comments, and one of them in
+  // preflight.js says "this M3 step (RULED 2026-09-20...)" - which the bare regex read as a core being
+  // stepped inside the preflight. Comments are taken out first, so the rule is about what the node DOES.
+  const codeOf = (src) => src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
   for (const f of readdirSync(new URL('../src/', import.meta.url).pathname)) {
-    const src = readFileSync(new URL('../src/' + f, import.meta.url).pathname, 'utf8');
+    const src = codeOf(readFileSync(new URL('../src/' + f, import.meta.url).pathname, 'utf8'));
     if (/packages\/core|@blwp\/core|core\/src/.test(src)) imports.push(f);
     if (/\bstep\s*\(/.test(src)) steps.push(f);
   }
