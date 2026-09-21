@@ -589,7 +589,7 @@ test('a 1000 sat round\'s 20000 msat fee locks are claimed under the real guardi
   } finally { await w.close(); }
 });
 
-test('a round with a loser and no qualifier claims nothing: the hold path\'s verdict, and the lock expires back to its player', async () => {
+test('a round with a loser and no qualifier pays no stake and still pays the seats: both stake locks expire back, both fee locks settle the 2%', async () => {
   const w = await lockRound({ minScore: 1000000 });
   try {
     const one = await lockAndPlay(w, WINNER);
@@ -597,9 +597,43 @@ test('a round with a loser and no qualifier claims nothing: the hold path\'s ver
     await closeRound(w);
     await wait(WINDOW_MS + 3000);
     const got = await standing(w.a, w);
-    console.log(`  no qualifier: ${got.state}; locks held ${[one, two].filter((x) => w.port.locks.has(key(x.outpoint))).length} of 2; submissions ${w.port.settlements.length}`);
-    assert.equal(got.state, 'NONE');
-    assert.equal(w.port.settlements.length, 0, 'a settlement with nobody to pay was submitted');
-    assert.equal(w.port.locks.has(key(two.outpoint)), true);
+    const paidNQ = [...w.port.payouts.values()];
+    const claimedNQ = w.port.settlements.flatMap((x) => x.claims.map((c) => key(c.outpoint)));
+    console.log(`  no qualifier: ${got.state}; stake locks held ${[one, two].filter((x) => w.port.locks.has(key(x.outpoint))).length} of 2;`
+      + ` fee locks held ${[one, two].filter((x) => w.port.locks.has(key(x.feeOutpoint))).length} of 2;`
+      + ` submissions ${w.port.settlements.length}; claimed ${JSON.stringify(claimedNQ)};`
+      + ` payouts ${paidNQ.map((x) => `${x.msat} to ${toHex(x.payoutPk).slice(0, 10)}`).join(', ')};`
+      + ` seats ${w.c.nodes.map((k) => toHex(refundKeyOf(k)).slice(0, 10)).join(',')};`
+      + ` winner key ${toHex(refundKeyOf(WINNER.key)).slice(0, 10)} loser key ${toHex(refundKeyOf(LOSER.key)).slice(0, 10)}`);
+    // THE RULING (the owner 2026-09-21): §22A's 2% is SEAT COMPENSATION FOR A ROUND THAT ACTUALLY RAN. It is not
+    // a qualifier's prize and it is not operator profit. So a finished round with a loser and no qualifier
+    // settles: the stakes go back to their players and the seats are paid for the work. Only a VOID round -
+    // a technical failure - claims nothing at all, and the operator must not profit from that; that is the
+    // hold path's own case, not this one.
+    //
+    // This test asserted NONE and zero submissions, and that was true only while the fixture's entries
+    // brought no fee lock. On a federation BLWP would accept, the round MINTS them, so there is something to
+    // settle even with nobody to pay out of the stakes. The expectation moves because the fixture is the
+    // production shape now - not to match a leftover.
+    assert.equal(got.state, 'ACCEPTED', got.why);
+    assert.ok(w.port.settlements.length > 0, 'the round ran and the seats earned, but nothing was submitted');
+
+    // NO STAKE REACHES A QUALIFIER, because there is none: min_score is 1000000 and the delivered run scores
+    // 5. Neither lock is claimed - both expire back to the players who staked them.
+    const players = [refundKeyOf(WINNER.key), refundKeyOf(LOSER.key)].map(toHex);
+    assert.deepEqual(paidNQ.filter((x) => players.includes(toHex(x.payoutPk))), [],
+      'a stake was paid out although nobody qualified');
+    assert.equal(w.port.locks.has(key(two.outpoint)), true, 'the loser\'s stake lock was claimed, not expired back');
+    assert.equal(w.port.locks.has(key(one.outpoint)), true, 'the non-qualifier\'s stake lock was claimed');
+
+    // AND THE SEATS ARE PAID THEIR 2%, measured: two players staking 100000 msat each is 200000 gross, 2% of
+    // it is 4000 msat, and this round's two sitting seats take 2000 each - 1% GAME/VERIFY and 1% SETTLEMENT,
+    // both pools. Both fee locks are claimed to pay it.
+    const seatKeys = w.c.nodes.map((k) => toHex(refundKeyOf(k))).sort();
+    assert.deepEqual(paidNQ.filter((x) => seatKeys.includes(toHex(x.payoutPk)))
+      .map((x) => [toHex(x.payoutPk), x.msat]).sort(), seatKeys.map((k) => [k, 2000n]),
+      'the sitting seats were not paid their 2% of the round that ran');
+    assert.equal([one, two].filter((x) => w.port.locks.has(key(x.feeOutpoint))).length, 0,
+      'a fee lock was left held, so the seats were not paid from it');
   } finally { await w.close(); }
 });
