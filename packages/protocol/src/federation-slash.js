@@ -21,6 +21,8 @@
 // Amounts are msat as BigInt, like every other money number in this protocol.
 
 /** The smallest number of guardians whose loss halts a federation of `nominal` with threshold `2f + 1`. */
+import { splitNodesDevelopers } from './constants.js';
+
 export const haltsAt = (f) => f + 1;
 
 /**
@@ -51,15 +53,17 @@ export function reserveFits({ reserve, bonds, f }) {
  * §23A.5: where a slashed guardian bond goes.
  *
  * `halted` is the whole of the difference. A federation that kept running pays the census and the
- * developers; one that froze pays its note holders and burns the rest.
+ * developers; one that froze pays its note holders at face value FIRST and splits only what is left
+ * over the same way. Nothing is burned on either road - `burned` stays in the answer at 0n so a burn
+ * cannot come back unnoticed.
  */
 export function slashSplit({ amountMsat, halted = false, notesOwedMsat = 0n }) {
   if (typeof amountMsat !== 'bigint' || amountMsat < 0n)
     return { ok: false, why: 'a slashed bond is a number of msat' };
   if (!halted) {
     // The running case, unchanged: 75% to the active census nodes, 25% to the donation set.
-    const nodes = (amountMsat * 75n) / 100n;
-    return { ok: true, halted: false, notes: 0n, nodes, developers: amountMsat - nodes, burned: 0n };
+    const { nodes, developers } = splitNodesDevelopers(amountMsat);
+    return { ok: true, halted: false, notes: 0n, nodes, developers, burned: 0n };
   }
   if (typeof notesOwedMsat !== 'bigint' || notesOwedMsat < 0n)
     return { ok: false, why: 'the notes owed are a number of msat' };
@@ -68,8 +72,8 @@ export function slashSplit({ amountMsat, halted = false, notesOwedMsat = 0n }) {
   // pro rata and leaves nothing over, so nobody who runs the network is paid at all.
   const notes = notesOwedMsat < amountMsat ? notesOwedMsat : amountMsat;
   const rest = amountMsat - notes;
-  const nodes = (rest * 75n) / 100n;
-  return { ok: true, halted: true, notes, nodes, developers: rest - nodes, burned: 0n,
+  const { nodes, developers } = splitNodesDevelopers(rest);
+  return { ok: true, halted: true, notes, nodes, developers, burned: 0n,
     proRata: notesOwedMsat > amountMsat };
 }
 

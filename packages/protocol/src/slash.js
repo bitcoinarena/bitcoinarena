@@ -22,7 +22,8 @@
 // claim, and a bond taken on a claim is the arbitration set's own offence.
 //
 // WHAT IS DELIBERATELY NOT HERE. The distribution - "half to the affected
-// players of that round, half burned or to the remaining honest committee
+// players of that round; the other half 75% to the active census nodes at the
+// slashing height MINUS the round's own seats, and 25% to the developers
 // members, as fixed by the Round Contract" - needs a contract field that does
 // not exist yet, and adding one moves every round id. It is named and left.
 import { Writer, Reader } from './encode.js';
@@ -30,7 +31,7 @@ import { taggedHash, toHex } from './hash.js';
 import {
   PROTOCOL_VERSION, TYPE_SLASH_PROOF, TYPE_PAYOUT_TABLE, TYPE_SETTLEMENT_RECORD,
   TYPE_RESULT, TYPE_FEE_CLAIM, TYPE_SERVICE_RECORD, ROLES, roleByte,
-  SLASH_REMAINDERS, SLASH_TO_PLAYERS_BPS, TAG,
+  SLASH_REMAINDERS, SLASH_TO_PLAYERS_BPS, TAG, splitNodesDevelopers,
 } from './constants.js';
 import { entryId } from './contracts.js';
 import { feeOwed, feeTableId } from './fee.js';
@@ -1126,7 +1127,8 @@ export function slashHoldsOnFeeClaim({
  * WHERE A SLASHED BOND GOES, section 5A.3.
  *
  * "Slashed bonds are distributed: half to the affected players of that round,
- * half burned or to the remaining honest committee members of the round, as
+ * the other half 75% to the active census at the slashing height minus the
+ * round's own seats (the witnesses), and 25% to the donation set of §22A, as
  * fixed by the Round Contract."
  *
  * PURE, AND IT MOVES NOTHING. This says who is owed what out of a bond that
@@ -1137,7 +1139,7 @@ export function slashHoldsOnFeeClaim({
  * that could move the proportions would let an operator write itself the whole
  * bond, which is the fault a contract field exists to prevent rather than one
  * to import. So `SLASH_TO_PLAYERS_BPS` is a constant and `slashRemainder` is
- * the field - burned, or to the remaining honest committee.
+ * the field, and it has one value: the split above.
  *
  * THE ACCUSED IS NOT ONE OF THE REMAINING HONEST MEMBERS. "the REMAINING
  * honest committee members" - a node does not collect a share of its own
@@ -1151,7 +1153,11 @@ export function slashHoldsOnFeeClaim({
  * goes to the FEDERATION POOL, 75% nodes and 25% developers, never burned.
  */
 export function slashDistribution({
-  bondSats, roundId, contract, affectedPlayers = [], honestCommittee = [],
+  bondSats, roundId, contract, affectedPlayers = [],
+  // THE ACTIVE CENSUS AT THE SLASHING HEIGHT, and the round's own seats taken out
+  // of it. Not "the remaining honest committee": §5A.3 subtracts the witnesses
+  // from the set that is paid, so paying them is paying the set the rule excludes.
+  censusNodes = [], seats = [],
   slashed = [],
 }) {
   if (typeof bondSats !== 'bigint' || bondSats < 0n)
@@ -1177,8 +1183,8 @@ export function slashDistribution({
    * removing a slashed member and dividing among the rest pays the survivors
    * MORE the more of their colleagues were caught - measured while writing
    * this: one of two committee members excluded took the other from 25000 to
-   * 50000, which is a reward for a round going wrong. The excluded shares are
-   * burned instead.
+   * 50000, which is a reward for a round going wrong. An excluded share goes to
+   * the federation pool instead - never to the others, and never burned.
    */
   const hand = (who, amount, out = new Set()) => {
     const paid = who.filter((k) => !out.has(hex(k)));
@@ -1198,42 +1204,58 @@ export function slashDistribution({
     toPool += left;
   };
 
-  // "THE REMAINING HONEST COMMITTEE MEMBERS" IS A FILTER, NOT A COMMENT.
+  // THE WITNESSES ARE THE SET THE RULE TAKES OUT, NOT THE SET IT PAYS.
   //
-  // This said so and did not do it: `honestCommittee` was taken as given, so a
-  // caller could list the slashed node and hand it back half its own bond -
-  // measured at 25000 of 100000 satoshi before this line existed. A documented
-  // claim that is not a check is not a check, and this one let an operator
-  // write itself the bond by a door the halves constant does not cover.
-  //
-  // Every node slashed in the round is out, not only the accused: two nodes
-  // caught in one round would otherwise each collect from the other's bond,
-  // which is the same income by a longer route.
-  //
-  // AND THEIR SHARE GOES TO THE POOL RATHER THAN OVER THE REST. Redistributing
-  // it would pay the honest members MORE the more of their colleagues were
-  // slashed, which is a reward for a round going wrong. The pool is the one
-  // direction that is neither that reward nor a burn.
-  const out = new Set(slashed.map(hex));
-
+  // This paid `honestCommittee` - the round's own remaining seats - which is the
+  // withdrawn rule, and it is the exact set §5A.3 subtracts: "minus the round's
+  // own seats (the witnesses)". Measured on a clean 100000 sat bond before this
+  // line changed: the two seats took 25000 each and the census took nothing.
   hand(affectedPlayers, toPlayers);
+
+  // A NODE SLASHED AT THIS HEIGHT IS NOT IN THE ACTIVE CENSUS, BY DEFINITION: the
+  // slash SPENDS its bond output and `deriveCensus` filters spent bonds
+  // (census.js `.filter((e) => !e.spent)`). So no second exclusion is added here.
+  // If a caller hands one in anyway the set is wrong, and that is said rather
+  // than quietly patched - dropping it silently would hide a census that is
+  // counting a spent bond.
+  const outs = new Set(slashed.map(hex));
+  const stillIn = censusNodes.filter((k) => outs.has(hex(k)));
+  if (stillIn.length)
+    throw new Error(`a node slashed at this height is still inside the active census `
+      + `(${hex(stillIn[0]).slice(0, 16)}): its bond output is spent, so the census that counts it `
+      + `is wrong - this is not silently dropped`);
+
+  // THE SECOND HALF, TO THE CENSUS MINUS THE ROUND'S OWN SEATS (§5A.3, spec line 811):
+  // "the other half 75% evenly to the active census nodes at the slashing height
+  // minus the round's own seats (the witnesses) and 25% to the donation set".
+  const isSeat = new Set(seats.map(hex));
+  const eligible = censusNodes.filter((k) => !isSeat.has(hex(k)));
+  const { nodes: toNodes, developers: toDevelopers } = splitNodesDevelopers(rest);
+  // AN EMPTY ELIGIBLE SET HAS NO RECIPIENT IN THE SPEC, so it is not invented one:
+  // the seats are the set the rule excludes, a burn is withdrawn, and moving the
+  // 75% onto the developers would be a third recipient written here rather than
+  // ruled. The sats are named and the caller stops.
+  if (!eligible.length && toNodes > 0n)
+    throw new Error(`${toNodes} sat of a slashed bond have no recipient: the active census at the `
+      + `slashing height is empty once the round's ${seats.length} seat(s) are taken out, and §5A.3 `
+      + `names nobody else - not the seats, not a burn, not the donation set`);
+  hand(eligible, toNodes);
   // AND THE OTHER HALF IS ALWAYS HANDED OUT (RULED, the owner 2026-09-21). It used to depend on the
   // contract: BURN destroyed it, COMMITTEE paid it. Both are withdrawn - "nothing is ever burned, here
   // or anywhere in this protocol: a slash that destroys value pays nobody for the harm and makes the
   // slashing itself worthless to prove". `slashRemainder` has one value now and this line no longer
   // asks it anything, so no round can be written that burns its own remainder.
-  hand(honestCommittee, rest, out);
-
   const paid = [...shares.values()].reduce((a, b) => a + b, 0n);
-  if (paid + toPool !== bondSats)
-    throw new Error(`slash distribution broken: ${paid} paid and ${toPool} to the pool of ${bondSats}`);
+  if (paid + toDevelopers + toPool !== bondSats)
+    throw new Error(`slash distribution broken: ${paid} paid, ${toDevelopers} to the donation set `
+      + `and ${toPool} to the pool of ${bondSats}`);
 
   // AND THE POOL'S OWN SPLIT IS THE ONE ALREADY WRITTEN DOWN: 75% to the nodes,
   // 25% to the developers, the same rule `federation-slash.js` applies to a
   // slashed guardian bond. Split here rather than left as one number, so a caller
   // cannot pay it somewhere else by reading past it.
-  const nodes = (toPool * 75n) / 100n;
-  return { toPlayers, toPool, pool: { nodes, developers: toPool - nodes }, burned: 0n, shares };
+  return { toPlayers, toNodes, toDevelopers, toPool,
+    pool: splitNodesDevelopers(toPool), burned: 0n, shares };
 }
 
 /** Ascending `H(roundId || pubkey)`, the order 22A names and payout.js uses. */

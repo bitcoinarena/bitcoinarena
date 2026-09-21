@@ -323,9 +323,10 @@ export const TAG = {
  * WHERE THE OTHER HALF OF A SLASHED BOND GOES, and it is the one thing 5A.3
  * leaves to the contract.
  *
- * "Slashed bonds are distributed: half to the affected players of that round,
- * half burned or to the remaining honest committee members of the round, as
- * fixed by the Round Contract."
+ * "Slashed bonds are distributed: half to the affected players of that round;
+ * the other half 75% evenly to the active census nodes at the slashing height
+ * minus the round's own seats (the witnesses) and 25% to the donation set of
+ * §22A - the developers."
  *
  * BURN AND COMMITTEE ARE BOTH WITHDRAWN (RULED, the owner 2026-09-21). "Nothing is
  * ever burned, here or anywhere in this protocol: a slash that destroys value
@@ -515,6 +516,24 @@ export const OBJECTION_WINDOW_REFERENCE_MS = 600000n;
  * rehearsed on stock fedimintd 0.12.0 in blwp-node/tools, but this field and
  * its byte do not bring custody into the node or the client.
  */
+/**
+ * THE ONE 75/25, so two money paths cannot drift apart.
+ *
+ * §5A.3 for a slashed round bond and §23A.5 for a slashed guardian bond say the
+ * same thing in the same words: 75% to the nodes, 25% to the donation set of
+ * §22A - the developers. It was written out twice, once in `slash.js` and once
+ * in `federation-slash.js`, and two copies of a split are two chances to change
+ * one of them.
+ *
+ * FLOOR THE NODES AND GIVE THE REST TO THE DEVELOPERS, so the two always add
+ * back to the amount exactly and no satoshi can fall between them.
+ */
+export const NODE_SHARE_PCT = 75n;
+export const splitNodesDevelopers = (amount) => {
+  const nodes = (amount * NODE_SHARE_PCT) / 100n;
+  return { nodes, developers: amount - nodes };
+};
+
 export const CUSTODY = ['THRESHOLD_LN', 'FEDERATION'];
 export const custodyByte = (which) => {
   const at = CUSTODY.indexOf(which);
