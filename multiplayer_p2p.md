@@ -3026,9 +3026,10 @@ federation CLOSED (§23A.6)      nothing was lost, so nothing is owed:
                                      developers - by share_bps
 
 federation HALTED (§23A.1)      liquidation, below: every unspent note of
-                                the federation paid at face value first;
-                                what is left after the claim window, 75% /
-                                25% as above
+                                the federation paid at face value first,
+                                and a note shown late still paid from what
+                                is left until two weeks after the halt;
+                                only the remainder then, 75% / 25% as above
 ```
 
 The escrow exists because a halt is rarely the first abandonment: a
@@ -3063,13 +3064,17 @@ HALTED for `abandon_blocks` with no recovery is liquidated:
    and the client shows the rate.
 4. At the end of the window the arbitration set pays every valid claim.
    A note presented late is still paid from what is left, until
-   `drain_blocks` (two weeks) after the halt; then the remainder is
-   goes 75% to the nodes and 25% to the developers as above. Notes never
-   presented in the window are the holder's loss, as they are in a CLOSED
-   federation (§23A.6 step 6). **The ORDER is the whole of it**: a halted
-   federation is liquidated note by note BEFORE a node or a developer sees
-   a sat, so the people who run the network are paid only out of what no
-   player claimed - never out of what a player could still have claimed.
+   `drain_blocks` (two weeks) after the halt - the player who was offline
+   for a weekend is not the one this rule is for. Only then is the
+   remainder split, 75% to the nodes and 25% to the developers as above.
+   Notes never presented by two weeks after the halt are the holder's
+   loss, as they are in a CLOSED federation (§23A.6 step 6).
+   **The ORDER is the whole of it**: a halted federation is liquidated
+   note by note BEFORE a node or a developer sees a sat, so the people who
+   run the network are paid only out of what no player claimed - never out
+   of what a player could still have claimed. And no player's money is
+   ever burned: what is unclaimed after two weeks is paid out, not
+   destroyed.
 
 What the liquidation does not do: it does not touch the federation's
 frozen reserve, which stays where it is (and is released to the same

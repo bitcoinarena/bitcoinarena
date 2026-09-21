@@ -7,7 +7,8 @@
 // longer has. Each of these fails loudly if the old rule comes back.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { exposureCap, reserveFits, slashSplit, abandonmentProofNeeds, haltsAt } from '../src/federation-slash.js';
+import { exposureCap, reserveFits, slashSplit, abandonmentProofNeeds, haltsAt,
+  MAINNET_CLOCKS, liquidationSchedule, remainderMaySplit } from '../src/federation-slash.js';
 
 const SAT = 1000n;
 /** Ten guardians, 7 of 10, so f = 3. Nine at 1 000 000 sat and one at 400 000: the smallest is what counts. */
@@ -94,4 +95,26 @@ test('testnet at 2 of 2: f is 0, one leaver halts it, and his one bond pays ever
   assert.equal(haltsAt(0), 1);
   const two = exposureCap({ bonds: [50000n * SAT, 50000n * SAT], f: 0 });
   assert.equal(two.cap, 50000n * SAT, 'at 2 of 2 the cap is one bond');
+});
+
+test('the clocks are the ruled ones, in blocks', () => {
+  assert.equal(MAINNET_CLOCKS.claimBlocks, 216, '36 h of claim window');
+  assert.equal(MAINNET_CLOCKS.abandonBlocks, 288, '48 h to abandonment');
+  assert.equal(MAINNET_CLOCKS.departureNotice, 432, '72 h of notice');
+  assert.equal(MAINNET_CLOCKS.foundingWindow, 432, '72 h to finish a DKG');
+  assert.equal(MAINNET_CLOCKS.drainBlocks, 2016, 'two weeks of drain, and the late-claim tail');
+});
+
+test('a late note is still paid, and the remainder cannot be split before the tail runs out', () => {
+  const halt = 900000;
+  const when = liquidationSchedule({ haltHeight: halt });
+  assert.equal(when.claimWindowCloses, halt + 216);
+  assert.equal(when.lateClaimsUntil, halt + 2016, 'late claims run to two weeks after the halt');
+  assert.equal(when.remainderSplitsAt, halt + 2016);
+
+  // THE WHOLE POINT: the window closing is NOT when the nodes get paid.
+  assert.equal(remainderMaySplit({ haltHeight: halt, atHeight: halt + 216 }).may, false,
+    'the remainder was split the moment the claim window closed, with the late tail still running');
+  assert.equal(remainderMaySplit({ haltHeight: halt, atHeight: halt + 2015 }).may, false);
+  assert.equal(remainderMaySplit({ haltHeight: halt, atHeight: halt + 2016 }).may, true);
 });
