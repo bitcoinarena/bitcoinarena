@@ -324,8 +324,27 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return opened.preimage;
   };
 
+  // ASKING THE OTHER SEATS WHETHER A WINNING IS ALREADY PAID. Every seat writes the same `winnings` row and
+  // they share one Lightning node, so a player who asked the second seat with a different invoice would be
+  // paid the pool twice - out of the operator's own channel. Measured on the Daily's first paid winning:
+  // seat a PAID/98000 and seat b still OWED/98000. A seat that cannot reach its peers pays nothing.
+  const peersPaid = async (entryIdBytes, roundIdBytes) => {
+    const where = verifier.peersOf(roundIdBytes);
+    if (!where.length) return { ok: true, paid: false };
+    for (const peer of where) {
+      let said;
+      try {
+        const r = await fetch(`${String(peer).replace(/\/+$/, '')}/winnings?entry=${toHex(entryIdBytes)}`);
+        if (!r.ok) return { ok: false, why: `${peer} answered ${r.status}` };
+        said = await r.json();
+      } catch (e) { return { ok: false, why: `${peer}: ${e.message}` }; }
+      if (said && said.state === 'PAID') return { ok: true, paid: true };
+    }
+    return { ok: true, paid: false };
+  };
+
   const custody = new Custody(round, {
-    port: lightning, preimageFor: preimageFor || fromTheCommittee, secondsPerBlock,
+    port: lightning, preimageFor: preimageFor || fromTheCommittee, secondsPerBlock, peersPaid,
   });
 
   // TWO FIRST MARKS PROVEN HERE (§13B; M3.3-34, a signer node that stays down): ask

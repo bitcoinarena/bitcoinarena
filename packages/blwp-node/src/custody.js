@@ -89,7 +89,7 @@ export const NO_LIGHTNING = null;
  * - it does not pretend to.
  */
 export class Custody {
-  constructor(round, { port = NO_LIGHTNING, preimageFor = null, secondsPerBlock = null } = {}) {
+  constructor(round, { port = NO_LIGHTNING, preimageFor = null, secondsPerBlock = null, peersPaid = null } = {}) {
     this.round = round;
     this.port = port;
     // HOW FAST BLOCKS ARE COMING ON THE CHAIN THIS NODE WATCHES (RULED 2026-09-21). An HTLC dies at a
@@ -97,6 +97,12 @@ export class Custody {
     // the launcher from its own bitcoind and handed in; unknown, the hold keeps the contract's own
     // `stakeExpiryBlocks`, which is what every hold had before this.
     this.secondsPerBlock = secondsPerBlock;
+    // WHETHER ANOTHER SEAT HAS ALREADY PAID A WINNING. Every seat of the committee writes the same
+    // `winnings` row, and they share one Lightning node, so a player who asked the second seat with a
+    // DIFFERENT invoice would be paid the pool twice out of the operator's own channel. Measured on the
+    // Daily's first paid winning: seat a PAID/98000, seat b still OWED/98000. The seats are asked before
+    // the money leaves; a seat that cannot reach its peers pays nothing, because not knowing is not a no.
+    this.peersPaid = peersPaid;
     // WHERE THE PREIMAGE COMES FROM IS NOT THIS FILE'S BUSINESS. 23.4 needs
     // five of seven preimage shares before a stake can be settled, and letter
     // 29's Feldman handouts are what those shares are; reconstructing them is
@@ -449,6 +455,19 @@ export class Custody {
     if (owed.state === PAYING)
       return { ok: false, state: PAYING, why: 'a payment for that winning is already in flight; ask Lightning before making another' };
     if (owed.owedMsat <= 0n) return { ok: false, why: 'that entry is owed nothing' };
+    if (this.peersPaid) {
+      let said;
+      try { said = await this.peersPaid(entryId, owed.roundId); }
+      catch (e) { said = { ok: false, why: e.message }; }
+      if (!said.ok)
+        return { ok: false, why: `this node could not ask the other seats whether that winning is already `
+          + `paid, and a pool is not paid twice on a guess: ${said.why}` };
+      if (said.paid) {
+        this.round.putWinnings({ entryId, roundId: owed.roundId, owedMsat: owed.owedMsat, state: PAID,
+          why: 'another seat of this committee already paid this winning', paidMs: this.round.now() });
+        return { ok: true, already: true, state: PAID, why: 'another seat already paid this winning' };
+      }
+    }
     if (typeof this.port.decode !== 'function' || typeof this.port.pay !== 'function')
       return { ok: false, why: 'this node\'s Lightning cannot pay an invoice, so it cannot pay a winning' };
     let said;
