@@ -90,10 +90,12 @@ export function encodeRoundContract(c) {
   // and worse, because this one decides whether a bond is taken.
   w.u32(c.slashMinimumServed);
 
-  // AND WHERE THE OTHER HALF OF A SLASHED BOND GOES, section 5A.3: "half to
-  // the affected players of that round, half burned or to the remaining honest
-  // committee members of the round, as fixed by the Round Contract". The
-  // alternative is what a round fixes; the halves are the spec's own numbers
+  // AND WHERE THE OTHER HALF OF A SLASHED BOND GOES, section 5A.3: "half to the
+  // affected players of that round; the other half 75% evenly to the active
+  // census nodes at the slashing height minus the round's own seats (the
+  // witnesses) and 25% to the donation set of §22A - the developers". The
+  // witnesses are the set the rule SUBTRACTS, not one it pays. The halves are
+  // the spec's own numbers
   // and are a constant, because a contract that could move them would let an
   // operator write itself the whole bond.
   w.u8(slashRemainderByte(c.slashRemainder));
