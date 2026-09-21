@@ -899,8 +899,9 @@
     // sentence, and `payStake` refuses a quote this entry did not sign. This
     // page renders and calls; it computes nothing.
     //
-    // THERE IS NO BOLT11 ON THIS PAGE. `payStake` takes an ENTRY, so there is
-    // no argument here that could carry an invoice and no second way to pay.
+    // THE HOLD INVOICE IS ON THIS PAGE. NWC can pay it, but it is not required:
+    // without a connection the bolt11 is shown so any Lightning wallet can pay.
+    // `payStake` still takes an ENTRY, never a pasted bolt11 of our own making.
     const wallet = (typeof BLWPCLIENT !== 'undefined' && BLWPCLIENT.tabWallet)
       ? BLWPCLIENT.tabWallet({ storage: window.sessionStorage }) : null;
     // KEPT IN THE TAB (M3.2 6e): measured before, a reload said "nothing paid
@@ -939,7 +940,8 @@
       // passed BLWP_ENTRY, which carries neither, so every quote threw
       // "expected 32 bytes, got nothing" in entryId and the button never lit -
       // measured on the page, today's included.
-      if (!client || !client.joinedEntry || owed) return;
+      if (!client || !client.joinedEntry) return;
+      if (owed && ['HELD', 'SETTLED', 'CANCELLED', 'EXPIRED', 'ACCEPTED'].includes(String(owed.state || ''))) return;
       const said = await client.invoice(client.joinedEntry);
       // AND A QUOTE THAT ARRIVES CLEARS THE LAST COMPLAINT. Measured on the Daily: the panel showed a
       // correct breakdown - 98 sat staked, HELD - with "no entry id to ask about: setRound was never called
@@ -1379,9 +1381,33 @@
         wallet.connected ? BLWPCLIENT.budgetLine(budget) : '';
       document.getElementById('blwp-nwc').placeholder = wallet.connected
         ? 'wallet connected · paste another to replace it'
-        : 'nostr+walletconnect://…';
-      document.getElementById('blwp-pay').disabled = paying || !owed;
+        : 'optional · nostr+walletconnect://…';
+      const paid = owed && ['HELD', 'SETTLED', 'CANCELLED', 'EXPIRED', 'ACCEPTED'].includes(String(owed.state || ''));
+      document.getElementById('blwp-pay').disabled = paying || !owed || !wallet.connected;
+      document.getElementById('blwp-pay').style.display = (wallet.connected && owed && !paid) ? '' : 'none';
+      document.getElementById('blwp-nwc').style.display = paid ? 'none' : '';
       document.getElementById('blwp-why').textContent = walletWhy;
+      const depositEl = document.getElementById('blwp-deposit');
+      if (depositEl) {
+        if (owed && owed.ok && owed.request && !paid) {
+          const sat = (m) => String((BigInt(m) + 999n) / 1000n);
+          depositEl.replaceChildren();
+          depositEl.appendChild(document.createTextNode(
+            'Pay ' + sat(owed.amountMsat) + ' sat from any Lightning wallet to lock your stake:'));
+          const box = document.createElement('code');
+          box.textContent = owed.request;
+          depositEl.appendChild(box);
+          if (owed.fee && owed.fee.request) {
+            depositEl.appendChild(document.createTextNode(
+              'and ' + sat(owed.fee.amountMsat) + ' sat node fee:'));
+            const feeBox = document.createElement('code');
+            feeBox.textContent = owed.fee.request;
+            depositEl.appendChild(feeBox);
+          }
+        } else {
+          depositEl.replaceChildren();
+        }
+      }
     }
 
     const nodeHealth = {};
