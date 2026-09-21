@@ -20,7 +20,24 @@
 // was typed against it. That keeps the check honest about one thing only - did he write them down - and
 // keeps a wordlist's correctness where it belongs.
 
+import { sha256, toHex } from '../../protocol/src/hash.js';
+
 export const VERIFIED_KEY = 'blwp.backup.verified';
+
+/**
+ * THE FLAG IS BOUND TO THE SEED IT VERIFIED, AND THAT IS NOT A DETAIL.
+ *
+ * Measured on the first cut of this file: the seed lives in sessionStorage (`tabSeed` mints a fresh 32
+ * bytes when it finds none), so a new tab is a NEW WALLET - while a bare "verified" flag in localStorage
+ * outlives every tab. Verify once, open a second tab, and a wallet nobody has ever written down would
+ * have been allowed to deposit and to stake. The gate would have been answering about a wallet that no
+ * longer existed.
+ *
+ * So what is recorded is a digest of the seed that was verified, and the gate opens only when the seed in
+ * hand hashes to it. A new seed is unverified however many older ones were not.
+ */
+export const digestOf = (seed) => (seed instanceof Uint8Array && seed.length === 32
+  ? toHex(sha256(seed)) : null);
 
 /** One word, as a comparison sees it: case and stray spacing are the player's, not the phrase's. */
 const normalise = (word) => String(word || '').trim().toLowerCase();
@@ -50,30 +67,34 @@ export function verifyPhrase(typed, phrase) {
   return { ok: true };
 }
 
-/** Has one full-phrase verification ever succeeded in this browser? */
-export function isVerified(storage) {
-  try { return storage.getItem(VERIFIED_KEY) === '1'; } catch { return false; }
+/** Has THIS seed's phrase been typed back in full, once, in this browser? */
+export function isVerified(storage, seed) {
+  const want = digestOf(seed);
+  if (!want) return false;
+  try { return storage.getItem(VERIFIED_KEY) === want; } catch { return false; }
 }
 
-/** Record that it has. Only `verifyPhrase` saying ok should reach this. */
-export function recordVerified(storage) {
-  try { storage.setItem(VERIFIED_KEY, '1'); return true; } catch { return false; }
+/** Record that it has, against the seed it was. Only `verifyPhrase` saying ok should reach this. */
+export function recordVerified(storage, seed) {
+  const want = digestOf(seed);
+  if (!want) return false;
+  try { storage.setItem(VERIFIED_KEY, want); return true; } catch { return false; }
 }
 
 /**
  * The one call the page makes for a typed phrase: check it, and record it only if it was right.
  * A wrong word never sets the flag, so a near miss leaves the gate exactly where it was.
  */
-export function verifyAndRecord({ typed, phrase, storage }) {
+export function verifyAndRecord({ typed, phrase, storage, seed }) {
   const said = verifyPhrase(typed, phrase);
   if (!said.ok) return said;
-  return { ok: true, recorded: recordVerified(storage) };
+  return { ok: true, recorded: recordVerified(storage, seed) };
 }
 
 /** What the lobby's first line and the Settings screen say until a verification has succeeded. */
 export const NO_BACKUP_LINE = 'There is no backup of this wallet yet - write the phrase down in Settings';
-export function backupLine(storage) {
-  return isVerified(storage) ? '' : NO_BACKUP_LINE;
+export function backupLine(storage, seed) {
+  return isVerified(storage, seed) ? '' : NO_BACKUP_LINE;
 }
 
 /**
@@ -82,8 +103,8 @@ export function backupLine(storage) {
 function refuse() {
   return { ok: false, why: 'Type your seed phrase back in Settings first - this wallet has no backup yet' };
 }
-export const mayDeposit = (storage) => (isVerified(storage) ? { ok: true } : refuse());
-export const mayPayStake = (storage) => (isVerified(storage) ? { ok: true } : refuse());
+export const mayDeposit = (storage, seed) => (isVerified(storage, seed) ? { ok: true } : refuse());
+export const mayPayStake = (storage, seed) => (isVerified(storage, seed) ? { ok: true } : refuse());
 /** A free round stakes nothing, so it never asks. */
 export const mayStartFreeRound = () => ({ ok: true });
 
@@ -91,6 +112,6 @@ export const mayStartFreeRound = () => ({ ok: true });
  * MAY THIS ROUND BE JOINED? One door for the lobby, so a paid round and a free one cannot drift apart.
  * `paying` is the round's own answer (BLWPCLIENT.roundPays), never this file's guess.
  */
-export function mayJoin({ paying, storage }) {
-  return paying ? mayPayStake(storage) : mayStartFreeRound();
+export function mayJoin({ paying, storage, seed }) {
+  return paying ? mayPayStake(storage, seed) : mayStartFreeRound();
 }
