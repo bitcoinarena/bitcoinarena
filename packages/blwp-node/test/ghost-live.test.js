@@ -185,8 +185,11 @@ test('a run refuses to be stepped past the end of a round, and past a gap', () =
   assert.equal(run.ok, true, run.why);
 
   const whole = world.round.ticksFrom(world.rid, world.eid, 0);
-  assert.equal(run.stepTo(whole, 9999).ok, false);
-  assert.match(run.stepTo(whole, 9999).why, /that run ends at tick 8999/);
+  // THE END COMES FROM THE ROUND'S OWN LENGTH, not from a number typed once: 8999 was the last tick of a
+  // 9000-tick round, and the core's round is 10800 long.
+  const past = BLOCK_TICKS + 1000;
+  assert.equal(run.stepTo(whole, past).ok, false);
+  assert.match(run.stepTo(whole, past).why, new RegExp(`that run ends at tick ${BLOCK_TICKS - 1}`));
   assert.match(run.stepTo(whole, 600).why, /is not one the published inputs cover/);
 
   // A SLICE THAT SKIPS AHEAD IS NOT A LONGER RUN.
@@ -266,7 +269,9 @@ test('the load is what moves the picture, and by how much', () => {
   assert.equal(a.ok, true, a.why);
   assert.equal(b.ok, true, b.why);
   const apart = Math.hypot((a.ghost.x - b.ghost.x) / 65536, (a.ghost.z - b.ghost.z) / 65536);
-  console.log(`  at tick 899 the loaded run is drawn ${apart.toFixed(3)} m from the same inputs unloaded`);
+  console.log(`  at tick 899 the loaded run is drawn ${apart.toFixed(3)} m from the same inputs unloaded`
+    + ` | loaded x ${(a.ghost.x / 65536).toFixed(2)} z ${(a.ghost.z / 65536).toFixed(2)}`
+    + ` | empty x ${(b.ghost.x / 65536).toFixed(2)} z ${(b.ghost.z / 65536).toFixed(2)}`);
   assert.ok(apart > 1,
     `a load moved this drive ${apart.toFixed(3)} m, which is not enough to be the fault`);
 });
