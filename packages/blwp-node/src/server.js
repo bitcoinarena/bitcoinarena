@@ -535,7 +535,36 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (round.equivocation(c.roundId, c.entryId).length > 0) return true;
     const late = round.startForfeit(c.entryId);
     const voided = round.entryVoid(c.entryId);
-    const other = [late && late.mark, voided && voided.firstMark, orHeld && round.firstMarkHeld(c.roundId, c.entryId)]
+    // A REFUSED FIRST MARK NOBODY CARRIED IS NOT A SIGNED FIRST MARK (§13B).
+    //
+    // Measured on the Daily, one paid entry: the first mark went out at tick 5940 against a window ending
+    // at 900 and was refused as a late start (§15) - kept as evidence, never taken into the chain. The
+    // client's head was therefore still ZERO, so it did what a client with no head does and marked again;
+    // and every one of the 80 marks after it was answered "the player signed another first mark for this
+    // entry (§13B): two first marks are FORFEIT, never an outage refund", with `checkpoints` and
+    // `offered_marks` both holding 0 rows for that entry on both seats.
+    //
+    // 13B's fork is a player who got a first mark CARRIED and then signed a different one. A player whose
+    // only mark was refused has signed nothing the committee holds; they retried after being told no. The
+    // difference decides more than a word: that clause is the one that says "never an outage refund", so
+    // charging it here would close §13C and §16 against a player on the strength of the operator's own
+    // refusal. The operator must not profit from a technical failure. A start forfeit this signer node
+    // never took into the chain is therefore not the other mark of a pair, no pair is kept, and the retry
+    // is answered the way the first one was: the same late start, in the same words.
+    //
+    // AND ONLY A RETRY THAT IS ITSELF LATE. This is not an opening to mark again inside the window after
+    // being told the start was missed: a mark at or before the start line would claim a start this signer
+    // node refused, which is exactly the second first mark §13B is for. So the pair is skipped only while
+    // the new mark is past the same line the old one was past - where it can ask for nothing the first one
+    // was not already refused.
+    const carried = (m) => {
+      try { return round.holdsMark(checkpointId(decodeCheckpoint(splitSigned(m).body))); } catch { return false; }
+    };
+    const startLine = round.startLine(c.roundId, c.entryId);
+    const retryOfRefusedLateStart = !!late && !carried(late.mark)
+      && !!startLine && c.tick > startLine.lastTick && late.markTick > startLine.lastTick;
+    const other = [late && !retryOfRefusedLateStart && late.mark,
+      voided && voided.firstMark, orHeld && round.firstMarkHeld(c.roundId, c.entryId)]
       .find((m) => m && toHex(m) !== toHex(bytes));
     if (!other || !round.putFirstMarkPair({ a: other, b: bytes })) return false;
     // A VOID SIGNER NODE ALSO KEEPS THE PLAYER'S LATE FIRST MARK AS A LATE START (M3.3-34,
