@@ -30,7 +30,10 @@
 > in escrow until the federation is CLOSED or liquidated, and a halted
 > federation is **liquidated** - every unspent note paid at face from the
 > bonds of those who left - before 75% of the rest goes to the nodes and
-> 25% to the developers (§23A.3, §23A.5). Changed: §5A.1, §22A, §23.6,
+> 25% to the developers (§23A.3, §23A.5); on a halt they take nothing and
+> the remainder is burned (v4.6.5). Timings are fast: 36 h for the
+> liquidation claim window, 48 h abandonment, 72 h notice and founding,
+> two weeks of drain (§23A.1). Changed: §5A.1, §22A, §23.6,
 > §23A (new), §24, §25.2, §27A.6, `FEDERATION.md`, `IMPLEMENTATION.md` §9.
 
 > **Revision 4.6.3 — the player wallet (the owner 2026-09-21).** The round
@@ -2812,6 +2815,20 @@ handled while there is still margin for the ones that cannot.
 `federation_min = 2f + 1` is the CRITICAL line. Below it nothing moves and
 no rule here can help; §22 says so.
 
+**Timings (v4.6.5, RULED the owner 2026-09-21: fast; 36 h for arbitration).**
+Everything in this chapter that waits, waits in blocks, and on mainnet:
+
+| what | parameter | mainnet | ≈ |
+|---|---|---|---|
+| absence that is abandonment; halt before liquidation; load before a founding | `abandon_blocks` | 288 | 48 h |
+| notice a guardian gives before leaving | `departure_notice` | 432 | 72 h |
+| time a drawn set has to finish its DKG | `founding_window` | 432 | 72 h |
+| how long a draining federation serves; late-claim tail | `drain_blocks` | 2016 | 14 d |
+| the liquidation claim window (arbitration) | `claim_blocks` | 216 | **36 h** |
+
+The 36 h is the owner's; the others are RULED HERE to match it. Testnet and
+regtest values are in §27A.6.
+
 ## 23A.2 Who the guardians are: founding
 
 A guardian is a **bonded census node** (§5A.2), nothing else was ever
@@ -3031,8 +3048,8 @@ HALTED for `abandon_blocks` with no recovery is liquidated:
    federation's **spent-note set** (the nonces the consensus has already
    redeemed) as of the last session they hold. Any one copy suffices; the
    newest session wins.
-2. The arbitration set opens a **claim window** of `drain_blocks` and
-   advertises where claims go (§5A.3B's endpoints; every seat mirrors them
+2. The arbitration set opens a **claim window** of `claim_blocks` - **36
+   hours** on mainnet (RULED, the owner 2026-09-21) - and advertises where claims go (§5A.3B's endpoints; every seat mirrors them
    at `GET /liquidations`). The client does the rest on its own: on every
    start it presents each unspent note it holds for that federation, as it
    would present them to the federation itself. A player who has only his
@@ -3046,7 +3063,10 @@ HALTED for `abandon_blocks` with no recovery is liquidated:
    short - guardians whose bonds were never slashed because they never
    left, and no spent set published at all - are claims paid pro rata,
    and the client shows the rate.
-4. After the window, the remainder is **burned**. On a halt the census
+4. At the end of the window the arbitration set pays every valid claim.
+   A note presented late is still paid from what is left, until
+   `drain_blocks` (two weeks) after the halt; then the remainder is
+   **burned**. On a halt the census
    nodes take 0% and the developers take 0% (RULED, the owner 2026-09-21,
    v4.6.5) - the 75/25 of the row above is for a guardian who walked out of
    a federation that kept running, not for one that froze. **The operator
@@ -3157,10 +3177,11 @@ upgrade, a change of `federation_nominal` by §27A).
    paid service with a bond behind it, not a bond alone; and it ends the
    sooner the more players move, which the client does on every start.
 6. **What is left behind.** Notes in a CLOSED federation are lost to their
-   holder, and it is said here: the client migrates on every start for six
-   months, the lobby says so from the first day, and a player who never
-   opens the game in six months has kept a game balance for six months
-   against the advice on every screen. The federation's guardians cannot
+   holder, and it is said here: the client migrates on every start for
+   `drain_blocks` - two weeks (v4.6.5, the owner: fast) - the lobby says so
+   from the first day, and a player who never opens the game in two weeks
+   has kept a game balance for two weeks against the advice on every
+   screen. The federation's guardians cannot
    sweep them to him; they do not know whose they are. That is the cost of
    blind notes and it is bounded by `drain_blocks` and the stake ceiling.
 
@@ -3996,6 +4017,7 @@ genesis_parameters {
   departure_notice       v4.6.4: notice a guardian must give (§23A.5)
   founding_window        v4.6.4: time a drawn set has to finish DKG (§23A.2)
   drain_blocks           v4.6.4: how long a draining federation serves (§23A.6)
+  claim_blocks           v4.6.5: the liquidation claim window (§23A.5)
 }
 ```
 
@@ -4026,7 +4048,7 @@ a state whose origin nobody can check.
 | minimum census | 10 | 3 | **2** |
 | guardians per federation (`federation_nominal`, v4.6.4) | **10** (7 of 10) | **2** (2 of 2, as run today) | 4 (3 of 4, the `FEDERATION.md` rehearsal) |
 | `federation_min` | 7 | 2 | 3 |
-| `abandon_blocks` / `departure_notice` / `founding_window` / `drain_blocks` | 1008 / 2016 / 2016 / 26280 | 144 / 144 / 144 / 1008 | 10 / 10 / 10 / 100 |
+| `abandon_blocks` / `departure_notice` / `founding_window` / `drain_blocks` / `claim_blocks` (v4.6.5, the owner: fast; 36 h arbitration) | 288 / 432 / 432 / 2016 / **216** (≈ 48 h / 72 h / 72 h / 14 d / **36 h**) | 72 / 72 / 72 / 288 / 36 | 10 / 10 / 10 / 100 / 10 |
 | confirmations | 6 | 2 | **1** |
 | `bond_maturity` | ~30 days | ~1 day | **100 blocks** |
 | `notice_period` | ~30 days | ~1 day | **10 blocks** |
