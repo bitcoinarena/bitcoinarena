@@ -169,16 +169,21 @@ async function joinWithout(w, who, { namesFeeLock }) {
 }
 
 const standing = async (d, w) => (await fetch(`http://127.0.0.1:${d.port}/lock-settlement?round=${toHex(w.rid)}`)).json();
-// FEDIMINTD'S MEASURED DEFAULT ARRIVES WITH THE CLOSE (2026-09-21), not with the round. The settlement
-// arithmetic this suite is about is still run against `REAL_FEES` - 1000 msat base, measured on fedimintd
-// 0.12.0 - but a round is no longer OPENED against a federation §22A forbids, so the node's own
-// `disable_base_fees` guard no longer refuses every entry before this suite can test anything. Every entry is
-// in by the time a round closes, so this is the first moment the real rule can apply without the door seeing
-// an illegal federation.
-const closeRound = (w) => {
-  w.port.feeRule = REAL_FEES;
-  return Promise.all([say(w.a.port, `close ${toHex(w.rid)}`), say(w.b.port, `close ${toHex(w.rid)}`)]);
-};
+const closeRound = (w) => Promise.all([say(w.a.port, `close ${toHex(w.rid)}`), say(w.b.port, `close ${toHex(w.rid)}`)]);
+
+/**
+ * FEDIMINTD'S MEASURED DEFAULT, APPLIED AFTER THE ENTRIES ARE IN (2026-09-21).
+ *
+ * `REAL_FEES` is 1000 msat base, measured on fedimintd 0.12.0, and §22A forbids exactly that: a BLWP
+ * federation runs with `disable_base_fees`. The node enforces it at the entry door, so a round can no longer
+ * be OPENED against such a federation - that is what refused 43 entries across five suites. The arithmetic is
+ * still worth testing, so the rule arrives here instead: after every entry, before the close.
+ *
+ * It is called by the tests that are ABOUT the real rule, never blanket-applied - a test that chooses its own
+ * federation (the fee-lock claim test runs a zero-fee one, because its 98000/2000 arithmetic is what a legal
+ * federation pays) must keep the rule it chose.
+ */
+const federationChargesItsRealFee = (w) => { w.port.feeRule = REAL_FEES; };
 async function untilSettled(w, ms = 30000) {
   let got;
   for (const stop = Date.now() + ms; Date.now() < stop; await wait(250)) {
@@ -195,6 +200,7 @@ test('after the window the loser\'s lock is claimed by one committee signature, 
     const won = await lockAndPlay(w, WINNER);
     const lost = await lockAndPlay(w, LOSER);
     assert.equal((await standing(w.a, w)).state, 'NONE', 'a settlement before the round closed');
+    federationChargesItsRealFee(w);   // the arithmetic below is fedimintd's, and every entry is already in
     await closeRound(w);
     const got = await untilSettled(w);
     const paid = [...w.port.payouts.values()];
@@ -455,6 +461,7 @@ test('where the round mints fee locks (1000 sat, the federation\'s own rule) a s
     }
     const won = await lockAndPlay(w, WINNER, { feeLock: true });
     const lost = await lockAndPlay(w, LOSER, { feeLock: true });
+    federationChargesItsRealFee(w);   // this round's numbers are fedimintd's own deductions
     await closeRound(w);
     const got = await untilSettled(w);
     assert.equal(got.state, 'ACCEPTED', got.why);
@@ -483,6 +490,7 @@ test('where the round mints, an entry that names a fee lock and never hands it o
     assert.match(half.played, /stake not seen/);
     const won = await lockAndPlay(w, WINNER, { feeLock: true });
     const lost = await lockAndPlay(w, LOSER, { feeLock: true });
+    federationChargesItsRealFee(w);   // this round's numbers are fedimintd's own deductions
     await closeRound(w);
     const got = await untilSettled(w);
     assert.equal(got.state, 'ACCEPTED', got.why);
@@ -503,6 +511,7 @@ test('where the round mints, a fee lock handed before its stake lock counts the 
       assert.ok(d.round.stakeSeen(won.eid), 'the fee-lock-first stake was never counted');
       assert.ok(d.round.stakeSeen(lost.eid));
     }
+    federationChargesItsRealFee(w);   // this round's numbers are fedimintd's own deductions
     await closeRound(w);
     const got = await untilSettled(w);
     assert.equal(got.state, 'ACCEPTED', got.why);
@@ -541,6 +550,7 @@ test('under the real guardians\' 1000 msat per input and output the 2000 msat fe
   try {
     const won = await lockAndPlay(w, WINNER, { feeLock: true });
     const lost = await lockAndPlay(w, LOSER, { feeLock: true });
+    federationChargesItsRealFee(w);   // the arithmetic below is fedimintd's, and every entry is already in
     await closeRound(w);
     const got = await untilSettled(w);
     const paid = [...w.port.payouts.values()];
@@ -559,6 +569,7 @@ test('a 1000 sat round\'s 20000 msat fee locks are claimed under the real guardi
   try {
     const won = await lockAndPlay(w, WINNER, { feeLock: true });
     const lost = await lockAndPlay(w, LOSER, { feeLock: true });
+    federationChargesItsRealFee(w);   // the arithmetic below is fedimintd's, and every entry is already in
     await closeRound(w);
     const got = await untilSettled(w);
     const sent = w.port.settlements[0];

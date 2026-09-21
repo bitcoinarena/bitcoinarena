@@ -14,6 +14,9 @@ import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
 import { randomBytes } from 'node:crypto';
+// the driver below steers at the core's own gate, in the core's own units
+import { CORE } from '../../core/src/adapter.js';
+import { GATE_X } from '../../core/src/rules/gate.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -51,7 +54,43 @@ export const rand = (n) => new Uint8Array(randomBytes(n));
 export const RANDOMNESS = b32(0x9b);
 export const BEACON = { hash: RANDOMNESS, height: 900001, timeMs: 900n };
 export const GENESIS_HASH = (await import('../../protocol/src/transcript.js')).GENESIS;
-export const wordsAt = (t) => [45875, ((t * 977) % 30000) - 15000, (t % 700) < 40 ? 65536 : 0, 0, 0];
+// THE FIXTURE'S DRIVER AIMS AT THE CORE'S OWN GATE (2026-09-21).
+//
+// This was `[45875, ((t * 977) % 30000) - 15000, (t % 700) < 40 ? 65536 : 0, 0, 0]` - seven tenths throttle,
+// a steering wheel sawing back and forth, and the brake held for 40 ticks in every 700. It was written when
+// the drop-off was close; the world has since grown east and it never arrives. MEASURED off the core, with
+// no server and no federation: it reaches x 145.9 m at its furthest and ends FAILED with score 2, while
+// `arrived` wants `x >= GATE_X` (168.6 m) AND `|z| <= HALF_MOUTH` (34 m) - and the truck SPAWNS at z 71.4 m,
+// so the miss was never three metres of x, it was the mouth. Nineteen tests across five suites read
+// DELIVERED off this program.
+//
+// It is not re-tuned by hand. The driver steers at the gate the core publishes, in the core's own units -
+// heading is a fraction of a turn in Q16.16, 0.25 being +x - so the day the world moves again, this follows
+// it. `LEAD` aims past the gate rather than at it, because a truck that turns towards a point it is already
+// on steers into the doorframe; 20 m was the shortest lead measured that still arrives.
+//
+// The tape is closed-loop in the WINNER's world and then handed out as fixed words, which is what the
+// protocol needs: every signer node replays the same bytes. Measured on this tape - winner DELIVERED at tick
+// 1018 of its 1320, score 5, z -0.4 (the middle of the mouth); loser still running at its 1000, x 159.8,
+// z -54.0, outside the mouth, as a loser should be.
+const TAPE = [];
+let _tapeState = null;
+const LEAD_M = 20, STEER_GAIN = 6;
+export const wordsAt = (t) => {
+  while (TAPE.length <= t) {
+    if (_tapeState === null)
+      _tapeState = init(seedWordForEntry({ playerPubkey: WINNER.key, worldSecret: WINNER.worldSecret, joinTick: 0 }, RANDOMNESS));
+    const p = CORE.picture(_tapeState);
+    const x = p.x / 65536, z = p.z / 65536, heading = p.heading / 65536;
+    let off = Math.atan2(GATE_X / 65536 + LEAD_M - x, -z) / (2 * Math.PI) - heading;
+    off -= Math.round(off);                                   // the short way round, in turns
+    const steer = Math.max(-65536, Math.min(65536, Math.round(off * STEER_GAIN * 65536)));
+    const words = [65536, steer, 0, 0, 0];                    // throttle, steer, brake, handbrake, practice
+    TAPE.push(words);
+    step(_tapeState, ...words);
+  }
+  return TAPE[t];
+};
 export const STAKE = 100000n;
 export const WINDOW_MS = 3000;
 export const HTLC_EXPIRY = 500;   // the height the fake lnd says each paid HTLC expires at
