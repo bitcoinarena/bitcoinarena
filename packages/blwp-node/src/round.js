@@ -1719,6 +1719,31 @@ export class Round {
       mark: new Uint8Array(r.mark), why: r.why, decidedMs: r.decided_ms } : null;
   }
 
+  /**
+   * WHAT A QUALIFIER IS OWED OUT OF THE POOL, and how far it has got (§24A.2: "a payout contract to the
+   * player's key; the client withdraws it over Lightning"). One row per qualifier: OWED when the money is
+   * worked out, PAYING before the payment leaves, PAID when Lightning says it landed.
+   */
+  putWinnings({ entryId, roundId, owedMsat, state, request = null, why, paidMs = null }) {
+    this.db.prepare('INSERT INTO winnings (entry_id, round_id, owed_msat, state, request, why, owed_ms, paid_ms) '
+      + 'VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(entry_id) DO UPDATE SET '
+      + 'owed_msat = excluded.owed_msat, state = excluded.state, request = COALESCE(excluded.request, winnings.request), '
+      + 'why = excluded.why, paid_ms = COALESCE(excluded.paid_ms, winnings.paid_ms)')
+      .run(Buffer.from(entryId), Buffer.from(roundId), Number(owedMsat), state, request, why, this.now(), paidMs);
+  }
+
+  winnings(entryIdBytes) {
+    const r = this.db.prepare('SELECT * FROM winnings WHERE entry_id = ?').get(Buffer.from(entryIdBytes));
+    return r ? { entryId: new Uint8Array(r.entry_id), roundId: new Uint8Array(r.round_id),
+      owedMsat: BigInt(r.owed_msat), state: r.state, request: r.request, why: r.why,
+      owedMs: Number(r.owed_ms), paidMs: r.paid_ms === null ? null : Number(r.paid_ms) } : null;
+  }
+
+  winningsOf(roundIdBytes) {
+    return this.db.prepare('SELECT entry_id FROM winnings WHERE round_id = ?').all(Buffer.from(roundIdBytes))
+      .map((r) => this.winnings(new Uint8Array(r.entry_id)));
+  }
+
   /** Whether this signer node stores that mark in an entry's chain. */
   holdsMark(checkpointIdBytes) {
     return !!this.db.prepare('SELECT 1 k FROM checkpoints WHERE checkpoint_id = ?').get(checkpointIdBytes);

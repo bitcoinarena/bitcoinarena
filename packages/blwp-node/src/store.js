@@ -312,6 +312,24 @@ export function openStore(path = ':memory:') {
     -- It is the highest tick this node had ALREADY RECEIVED from that player when Lightning showed the hold:
     -- node-observed, never asserted by the client, and pinned by the same replay as every other tick. A
     -- table of its own so a store written before it existed gains it.
+    -- WHAT THE TABLE OWES A QUALIFIER, AND WHETHER IT HAS BEEN PAID (§24A.2).
+    --
+    -- The losing branch settles stakes into the pool and a delivered player's own stake is cancelled back,
+    -- but until this table existed nothing recorded the WINNINGS - measured on the Daily's first settled
+    -- round: the rule computed 98000 msat owed to the winner, the 98 sat sat in the committee's own
+    -- channel, and the payouts table held no row because that path spends an on-chain pool this custody
+    -- has none of. One row per qualifier, written when the money is worked out, moved through once.
+    CREATE TABLE IF NOT EXISTS winnings (
+      entry_id  BLOB PRIMARY KEY REFERENCES entries(entry_id),
+      round_id  BLOB NOT NULL,
+      owed_msat INTEGER NOT NULL,
+      state     TEXT NOT NULL,
+      request   TEXT,
+      why       TEXT NOT NULL,
+      owed_ms   INTEGER NOT NULL,
+      paid_ms   INTEGER
+    );
+
     CREATE TABLE IF NOT EXISTS stake_seen_tick (
       entry_id  BLOB PRIMARY KEY REFERENCES entries(entry_id),
       tick      INTEGER NOT NULL,

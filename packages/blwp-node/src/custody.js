@@ -33,6 +33,7 @@ import {
 } from '../../protocol/src/payout.js';
 import { decodeEntryContract, entryId as entryIdOf, decodeRoundContract, publicationRelaysAreValid } from '../../protocol/src/contracts.js';
 import { cltvBlocksFor } from '../../protocol/src/hold-window.js';
+import { winnings as winningsOf } from '../../protocol/src/payout-spend.js';
 import { toHex, sha256 } from '../../protocol/src/hash.js';
 
 export { HELD, SETTLED, CANCELLED, EXPIRED, SETTLE, CANCEL, NOTHING };
@@ -61,6 +62,10 @@ export const FREE = 'FREE';
 export const AWAITING_INVOICE = 'AWAITING_INVOICE';
 export const CANCEL_REQUESTED = 'CANCEL_REQUESTED';
 export const SETTLE_REQUESTED = 'SETTLE_REQUESTED';
+/** §24A.2's tail for a qualifier's winnings: what the table says, then the payment, then Lightning's word. */
+export const OWED = 'OWED';
+export const PAYING = 'PAYING';
+export const PAID = 'PAID';
 
 /**
  * THE LABEL BOTH ACTS WERE WRITTEN UNDER BEFORE 9.4'S NAMES, and nothing writes
@@ -391,7 +396,80 @@ export class Custody {
     // AND THE POOL 23.2's TABLE DECIDED (M3.2 6e): `holdSettlement`'s own sum of
     // the net stakes it settles - handed up so the signer node can say it, not worked
     // out a second time by anybody who wants to show it.
-    return { ok: true, actions: done, table: decided.table, poolMsat: decided.poolMsat };
+    // AND WHAT THE POOL OWES ITS QUALIFIERS IS WRITTEN DOWN IN THE SAME BREATH. Measured before this: the
+    // losers' stakes settled, the winner's was cancelled back, and the winnings existed nowhere at all.
+    // `holdSettlement` hands back `computePayoutTable`'s whole answer, and the rows are its `table`.
+    const owes = this.oweWinnings({ roundId, table: (decided.table && decided.table.table) || decided.table, entries });
+    return { ok: true, actions: done, table: decided.table, poolMsat: decided.poolMsat,
+      owedTo: owes.ok ? owes.owed : [], owedMsat: owes.ok ? owes.owedMsat : 0n };
+  }
+
+  /**
+   * WHAT THE POOL OWES EACH QUALIFIER, WRITTEN DOWN (§24A.2).
+   *
+   * The settle moves the losers' stakes in and cancels a delivered player's own stake back, and that was
+   * where the money stopped: measured on the Daily's first settled round, the rule computed 98000 msat owed
+   * to the winner, the 98 sat sat in the committee's own channel, and nothing recorded that anyone was
+   * owed it. `winnings` takes each qualifier's own net stake off their table row, so what is left is the
+   * pool's share and nothing else. Nothing is paid here - a payment needs somewhere to send it, and that is
+   * the player's to give.
+   */
+  oweWinnings({ roundId, table, entries }) {
+    const said = winningsOf({ table, stakes: entries });
+    if (!said.ok) return { ok: false, why: said.why, owed: [] };
+    const byKey = new Map(entries.map((e) => [toHex(e.pubkey), e]));
+    const owed = [];
+    for (const row of said.rows) {
+      const e = byKey.get(toHex(row.pubkey));
+      if (!e) continue;
+      const had = this.round.winnings(e.entryId);
+      // A ROW ALREADY PAID IS NOT RE-OWED. The close runs again and again; the money moves once.
+      if (had && had.state === PAID) continue;
+      this.round.putWinnings({ entryId: e.entryId, roundId, owedMsat: row.msat, state: OWED,
+        why: 'the table owes this qualifier the pool\'s share; it is paid to an invoice they present' });
+      owed.push({ entryId: e.entryId, msat: row.msat });
+    }
+    return { ok: true, owed, owedMsat: said.owedMsat };
+  }
+
+  /**
+   * AND PAYING IT, ONCE, TO AN INVOICE THE PLAYER PRESENTED.
+   *
+   * §24A.2: "a payout contract to the player's key; the client withdraws it over Lightning through any
+   * listed gateway". The amount is not taken from the invoice: it is what this node already wrote down as
+   * owed, and an invoice for anything else is refused rather than paid. The intent is on disk before the
+   * call, like every other act on this path, so a node that dies mid-payment comes back knowing one may be
+   * in flight rather than paying twice.
+   */
+  async payWinnings({ entryId, request }) {
+    if (!this.reaches) return { ok: false, why: 'this node reaches no Lightning, so it pays nobody' };
+    const owed = this.round.winnings(entryId);
+    if (!owed) return { ok: false, why: 'this node owes that entry nothing out of the pool' };
+    if (owed.state === PAID) return { ok: true, already: true, state: PAID, why: 'that winning is already paid' };
+    if (owed.state === PAYING)
+      return { ok: false, state: PAYING, why: 'a payment for that winning is already in flight; ask Lightning before making another' };
+    if (owed.owedMsat <= 0n) return { ok: false, why: 'that entry is owed nothing' };
+    if (typeof this.port.decode !== 'function' || typeof this.port.pay !== 'function')
+      return { ok: false, why: 'this node\'s Lightning cannot pay an invoice, so it cannot pay a winning' };
+    let said;
+    try { said = await this.port.decode({ request }); } catch (e) { return { ok: false, why: `that invoice could not be read: ${e.message}` }; }
+    const asks = BigInt((said && said.amountMsat) || 0n);
+    if (asks !== owed.owedMsat)
+      return { ok: false, why: `that invoice asks ${asks} msat and this entry is owed ${owed.owedMsat}: `
+        + 'a winning is paid for what the table says, not for what an invoice says' };
+    this.round.putWinnings({ entryId, roundId: owed.roundId, owedMsat: owed.owedMsat, state: PAYING,
+      request, why: 'about to pay this winning; if this node dies here, ask Lightning' });
+    try {
+      const paid = await this.port.pay({ request });
+      this.round.putWinnings({ entryId, roundId: owed.roundId, owedMsat: owed.owedMsat, state: PAID,
+        request, why: `paid over Lightning${paid && paid.feeMsat ? `, ${paid.feeMsat} msat of routing fee` : ''}`,
+        paidMs: this.round.now() });
+      return { ok: true, state: PAID, msat: owed.owedMsat, preimage: paid && paid.preimage };
+    } catch (e) {
+      this.round.putWinnings({ entryId, roundId: owed.roundId, owedMsat: owed.owedMsat, state: OWED,
+        request, why: `Lightning refused that payment: ${e.message}` });
+      return { ok: false, state: OWED, why: `Lightning refused that payment: ${e.message}` };
+    }
   }
 
   /**

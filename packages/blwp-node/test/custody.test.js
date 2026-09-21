@@ -283,6 +283,71 @@ test('a fast chain gets a longer HTLC than the contract\'s floor, and a slow one
   assert.equal(asked[2], 'none', 'a node that cannot time its chain invented a number');
 });
 
+// AND THE POOL REACHES THE PLAYER (§24A.2).
+//
+// Measured on the Daily's first settled round: the loser's stake SETTLED, the winner's was CANCELLED back,
+// and the 98 sat sat in the committee's own channel. The rule computed 98000 msat owed to the winner and
+// nothing carried it - `payouts` spends an on-chain pool this custody has none of. So the settle writes
+// down what each qualifier is owed, and a player presenting an invoice for exactly that is paid once.
+test('the settle writes down what the pool owes the winner, and pays it to an invoice for exactly that', async () => {
+  const port = fakePort();
+  port.decode = async ({ request }) => ({ amountMsat: request === 'lnbcrt-98' ? 98000n : 1n });
+  port.pay = async ({ request }) => { port.calls.push(['pay', request]); return { preimage: 'ab'.repeat(32), feeMsat: 0n }; };
+  const { round, rid, custody } = joined(port);
+  const winner = entryFor(rid, 1);
+  const loser = entryFor(rid, 2);
+  for (const e of [winner, loser]) { round.enter(e); await custody.hold(e); }
+  const summary = (e, outcome, score = 0) =>
+    ({ entryId: entryIdOf(e), pubkey: e.playerPubkey, outcome, score, stakeMsat: e.stakeMsat, feeMsat: e.feeMsat, donationMsat: e.donationMsat });
+
+  const out = await custody.settleHeldInvoices({
+    roundId: rid, minScore: 1, finalFor: () => true,
+    entries: [summary(winner, DELIVERED, 9), summary(loser, FORFEIT)],
+  });
+  assert.equal(out.ok, true, out.why);
+  assert.equal(custody.stateOf(entryIdOf(loser)).state, SETTLED, 'the loser\'s stake did not reach the pool');
+  assert.equal(custody.stateOf(entryIdOf(winner)).state, CANCELLED, 'the winner\'s own stake was not handed back');
+  // THE WINNINGS ARE THE POOL, the winner's own stake taken off - not the table row.
+  const owed = round.winnings(entryIdOf(winner));
+  assert.equal(owed.owedMsat, 98000n, `the winner is owed the loser's net stake, not ${owed && owed.owedMsat}`);
+  assert.equal(owed.state, 'OWED');
+  assert.equal(round.winnings(entryIdOf(loser)), null, 'the loser was written down as owed something');
+
+  // AN INVOICE FOR SOMETHING ELSE IS REFUSED, not paid and not part-paid.
+  const wrong = await custody.payWinnings({ entryId: entryIdOf(winner), request: 'lnbcrt-1' });
+  assert.equal(wrong.ok, false);
+  assert.match(wrong.why, /asks 1 msat and this entry is owed 98000/);
+  assert.equal(port.calls.filter((c) => c[0] === 'pay').length, 0, 'an invoice for the wrong amount was paid');
+
+  // AND THE RIGHT ONE IS PAID, ONCE.
+  const paid = await custody.payWinnings({ entryId: entryIdOf(winner), request: 'lnbcrt-98' });
+  assert.equal(paid.ok, true, paid.why);
+  assert.equal(paid.msat, 98000n);
+  assert.equal(round.winnings(entryIdOf(winner)).state, 'PAID');
+  const again = await custody.payWinnings({ entryId: entryIdOf(winner), request: 'lnbcrt-98' });
+  assert.equal(again.already, true, 'a winning was paid twice');
+  assert.equal(port.calls.filter((c) => c[0] === 'pay').length, 1, 'the pool went out more than once');
+});
+
+test('a payment Lightning refuses leaves the winning owed, not paid and not in flight for ever', async () => {
+  const port = fakePort();
+  port.decode = async () => ({ amountMsat: 98000n });
+  port.pay = async () => { throw new Error('no route to that node'); };
+  const { round, rid, custody } = joined(port);
+  const winner = entryFor(rid, 1);
+  const loser = entryFor(rid, 2);
+  for (const e of [winner, loser]) { round.enter(e); await custody.hold(e); }
+  const summary = (e, outcome, score = 0) =>
+    ({ entryId: entryIdOf(e), pubkey: e.playerPubkey, outcome, score, stakeMsat: e.stakeMsat, feeMsat: e.feeMsat, donationMsat: e.donationMsat });
+  await custody.settleHeldInvoices({ roundId: rid, minScore: 1, finalFor: () => true,
+    entries: [summary(winner, DELIVERED, 9), summary(loser, FORFEIT)] });
+  const failed = await custody.payWinnings({ entryId: entryIdOf(winner), request: 'lnbcrt-98' });
+  assert.equal(failed.ok, false);
+  assert.match(failed.why, /Lightning refused that payment: no route/);
+  assert.equal(round.winnings(entryIdOf(winner)).state, 'OWED', 'a refused payment left the winning stuck');
+  assert.match(round.winnings(entryIdOf(winner)).why, /no route/);
+});
+
 test('a settle Lightning refuses writes down what Lightning says, and the rest of the round is still acted on', async () => {
   const port = fakePort();
   let looked = 0;

@@ -68,7 +68,7 @@ import { receiptsNeeded as roundThreshold, donationKeysForNetworkId } from '../.
 import { authorityAt, donationSetSignedBy, encodeDonationSetBody, encodeAuthorityRotation } from '../../protocol/src/authority.js';
 import { donationSetId } from '../../protocol/src/donation.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
-import { Custody, NO_LIGHTNING, SETTLE, HELD } from './custody.js';
+import { Custody, NO_LIGHTNING, SETTLE, HELD, PAYING } from './custody.js';
 import { timed, watchLoop } from './slow.js';
 import { resultFinality } from './finality.js';
 import { outageOutcome } from '../../protocol/src/entry-void.js';
@@ -2158,6 +2158,52 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
        * the round settles or cancels it. So the page asks the node, which asks
        * its own Lightning once and remembers. A stranger's entry asks nobody.
        */
+      /**
+       * WHAT THE POOL OWES THIS ENTRY, AND THE DOOR THAT PAYS IT (§24A.2).
+       *
+       * "A payout contract to the player's key; the client withdraws it over Lightning through any listed
+       * gateway." On this custody the pool is the committee's own Lightning balance, so the withdrawal is
+       * an ordinary payment: the player presents a BOLT11 for exactly what this node has written down as
+       * owed, SIGNED BY THE ENTRY'S SESSION KEY, and the node pays it once.
+       *
+       * The signature is the whole of the authorisation. An entry id is public - it is in every mark and
+       * every receipt - so a door that paid any invoice quoted against one would pay a thief. The session
+       * key is the one the player signed their run with.
+       */
+      if (req.method === 'GET' && url.pathname === '/winnings') {
+        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
+        if (eid.length !== 32) return text(res, 400, 'a winning is asked for by entry id');
+        if (!round.entry(eid)) return text(res, 404, 'this node holds no such entry');
+        const w = round.winnings(new Uint8Array(eid));
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify(w
+          ? { entry: eid.toString('hex'), owedMsat: String(w.owedMsat), state: w.state, why: w.why,
+            paidMs: w.paidMs }
+          : { entry: eid.toString('hex'), owedMsat: '0', state: 'NOTHING',
+            why: 'the pool owes this entry nothing, or the round has not settled yet' }) + '\n');
+      }
+
+      if (req.method === 'POST' && url.pathname === '/winnings') {
+        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
+        if (eid.length !== 32) return text(res, 400, 'a winning is paid by entry id');
+        const entry = round.entry(eid);
+        if (!entry) return text(res, 404, 'this node holds no such entry');
+        const body = await read(req);
+        let request;
+        try {
+          const split = splitSigned(new Uint8Array(body));
+          if (!ed25519.verify(split.signature, split.body, entry.sessionPubkey))
+            return text(res, 403, 'that invoice is not signed by the session key this entry was played with');
+          request = Buffer.from(split.body).toString('utf8').trim();
+        } catch (e) { return text(res, 400, `that is not a signed invoice: ${e.message}`); }
+        if (!/^ln[a-z0-9]+$/i.test(request)) return text(res, 400, 'that is not a BOLT11 invoice');
+        const paid = await custody.payWinnings({ entryId: new Uint8Array(eid), request });
+        if (!paid.ok) return text(res, paid.state === PAYING ? 409 : 402, paid.why);
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ entry: eid.toString('hex'), state: paid.state,
+          paidMsat: String(paid.msat ?? 0n), already: !!paid.already }) + '\n');
+      }
+
       if (req.method === 'GET' && url.pathname === '/stake') {
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
         if (eid.length !== 32) return text(res, 400, 'a stake is asked for by entry id');
