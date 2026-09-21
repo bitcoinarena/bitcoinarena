@@ -5,6 +5,7 @@
 // of it later is a different network.
 import { Writer } from './encode.js';
 import { taggedHash } from './hash.js';
+import { TESTNET_CLOCKS, REGTEST_CLOCKS } from './federation-slash.js';
 import { bondMarker } from './constants.js';
 import {
   ARBITRATION_KEYS_REGTEST, ARBITRATION_KEYS_TESTNET4,
@@ -65,6 +66,13 @@ export function encodeGenesisParameters(p) {
   w.u16(p.censusMinNodes);
   w.u32(p.censusConfirmations);
   w.u32(p.bondMaturity);
+  // §27A.6's federation parameters, hashed here since v4.6.5 so the network id commits to them.
+  w.u16(p.federationNominal);
+  w.u32(p.abandonBlocks);
+  w.u32(p.departureNotice);
+  w.u32(p.foundingWindow);
+  w.u32(p.drainBlocks);
+  w.u32(p.claimBlocks);
 
   // WHO CAN SLASH, AND HOW MANY OF THEM. 5A.3B's script path B is
   // "<k-of-m arbitration keys> CHECKMULTISIG - the arbitration quorum, any
@@ -104,9 +112,19 @@ export function encodeGenesisParameters(p) {
   return w.finish();
 }
 
-export function testnetShape(chain, marker, arbitrationKeys) {
+export function testnetShape(chain, marker, arbitrationKeys, federation) {
   return {
     chain,
+    // THE FEDERATION'S OWN PARAMETERS ARE GENESIS PARAMETERS (§27A.6), so they are hashed into the
+    // network id like every other rule a player is held to. Without them two networks could share an id
+    // while one drains a federation in 24 h and the other in 28 d, and a contract naming that id would
+    // not say how long its holder's money can be frozen or how long he has to claim it.
+    federationNominal: federation.federationNominal,
+    abandonBlocks: federation.abandonBlocks,
+    departureNotice: federation.departureNotice,
+    foundingWindow: federation.foundingWindow,
+    drainBlocks: federation.drainBlocks,
+    claimBlocks: federation.claimBlocks,
     gameVerifySlots: 2,
     gameVerifyThreshold: 2,
     settlementSlots: 2,
@@ -158,9 +176,11 @@ export { receiptsNeeded } from './threshold.js';
 
 export function genesisFor(network) {
   if (network === 'regtest')
-    return testnetShape('bitcoin-regtest', bondMarker('regtest'), ARBITRATION_KEYS_REGTEST);
+    return testnetShape('bitcoin-regtest', bondMarker('regtest'), ARBITRATION_KEYS_REGTEST,
+      { federationNominal: 4, ...REGTEST_CLOCKS });
   if (network === 'testnet4' || network === 'testnet')
-    return testnetShape('bitcoin-testnet4', bondMarker('testnet'), ARBITRATION_KEYS_TESTNET4);
+    return testnetShape('bitcoin-testnet4', bondMarker('testnet'), ARBITRATION_KEYS_TESTNET4,
+      { federationNominal: 2, ...TESTNET_CLOCKS });
   throw new Error('no genesis for ' + network);
 }
 
