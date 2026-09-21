@@ -20,7 +20,10 @@ const honest = [b32(0x22), b32(0x23)];
 // ONE CONTRACT SHAPE NOW: the remainder has one destination and a round cannot name a burn.
 const split = { slashRemainder: 'SPLIT' };
 const toCommittee = split;
-const total = (r) => [...r.shares.values()].reduce((a, b) => a + b, 0n) + r.burned;
+// NOTHING IS BURNED, so the bond is accounted for as shares plus what went to the
+// federation pool. `burned` is kept in the return and asserted 0n everywhere -
+// a field that silently disappeared would let a later burn come back unnoticed.
+const total = (r) => [...r.shares.values()].reduce((a, b) => a + b, 0n) + r.toPool;
 
 test('half is the spec\'s number and not a field', () => {
   assert.equal(SLASH_TO_PLAYERS_BPS, 5000);
@@ -93,19 +96,24 @@ test('the remainder order is the round\'s, not the list\'s', () => {
  * NOBODY TO PAY MEANS BURNED, which is the only direction that cannot quietly
  * become somebody's income.
  */
-test('with nobody to pay, that half is burned rather than shared out', () => {
+test('with nobody to pay, that half goes to the federation pool rather than burning', () => {
   const noPlayers = slashDistribution({
     bondSats: 100000n, roundId: ROUND, contract: toCommittee,
     affectedPlayers: [], honestCommittee: honest,
   });
-  assert.equal(noPlayers.burned, 50000n, 'the players\' half went to the committee');
+  assert.equal(noPlayers.burned, 0n, 'nothing is ever burned');
+  assert.equal(noPlayers.toPool, 50000n, 'the players\' half went to the committee');
+  // AND THE POOL'S OWN SPLIT, the same 75/25 a slashed guardian bond takes.
+  assert.deepEqual(noPlayers.pool, { nodes: 37500n, developers: 12500n });
   assert.equal([...noPlayers.shares.values()].reduce((a, b) => a + b, 0n), 50000n);
 
   const nobody = slashDistribution({
     bondSats: 100000n, roundId: ROUND, contract: toCommittee,
     affectedPlayers: [], honestCommittee: [],
   });
-  assert.equal(nobody.burned, 100000n);
+  assert.equal(nobody.burned, 0n);
+  assert.equal(nobody.toPool, 100000n);
+  assert.deepEqual(nobody.pool, { nodes: 75000n, developers: 25000n });
   assert.equal(nobody.shares.size, 0);
 });
 
@@ -122,7 +130,7 @@ test('with nobody to pay, that half is burned rather than shared out', () => {
  * which is a reward for a round going wrong - measured while fixing this, one
  * of two members excluded took the other from 25000 to 50000.
  */
-test('a slashed node receives none of its own bond, and its share burns', () => {
+test('a slashed node receives none of its own bond, and its share goes to the pool', () => {
   const accused = honest[0];
   const seen = slashDistribution({
     bondSats: 100000n, roundId: ROUND, contract: toCommittee,
@@ -131,7 +139,8 @@ test('a slashed node receives none of its own bond, and its share burns', () => 
   assert.equal(seen.shares.get(toHex(accused)), undefined, 'it collected from its own slashing');
   assert.equal(seen.shares.get(toHex(honest[1])), 25000n,
     'and the survivor is not paid more for its colleague being caught');
-  assert.equal(seen.burned, 25000n, 'the excluded share must burn, not move');
+  assert.equal(seen.burned, 0n, 'nothing is ever burned');
+  assert.equal(seen.toPool, 25000n, 'the excluded share must go to the pool, not to the others');
   assert.equal(total(seen), 100000n);
 
   // two caught in one round: neither collects from the other's bond
@@ -141,7 +150,8 @@ test('a slashed node receives none of its own bond, and its share burns', () => 
   });
   assert.equal(both.shares.get(toHex(honest[0])), undefined);
   assert.equal(both.shares.get(toHex(honest[1])), undefined);
-  assert.equal(both.burned, 50000n);
+  assert.equal(both.burned, 0n);
+  assert.equal(both.toPool, 50000n);
   assert.equal(total(both), 100000n);
 
   // and with nobody slashed the committee half is untouched
@@ -151,9 +161,10 @@ test('a slashed node receives none of its own bond, and its share burns', () => 
   });
   assert.equal(clean.shares.get(toHex(honest[0])), 25000n);
   assert.equal(clean.burned, 0n);
+  assert.equal(clean.toPool, 0n);
 });
 
-test('an excluded member takes no leftover satoshi either', () => {
+test('an excluded member takes no leftover satoshi either - it goes to the pool', () => {
   // 101 does not divide by two, so somebody is rounded up; it must not be the
   // node whose bond this is.
   //
@@ -174,9 +185,10 @@ test('an excluded member takes no leftover satoshi either', () => {
   // 51 over two is 25 each with one over: the survivor takes its 25 plus the
   // leftover satoshi, and the excluded member's 25 burns.
   assert.equal(r.shares.get(toHex(honest[0])), 26n, 'and the survivor took the leftover');
-  // 75 burned: 50 because there are no affected players to pay, and 25 the
+  // 75 to the pool: 50 because there are no affected players to pay, and 25 the
   // excluded member's share. Both are burns, and neither becomes income.
-  assert.equal(r.burned, 75n, 'the excluded share burned rather than moving');
+  assert.equal(r.burned, 0n, 'nothing is ever burned');
+  assert.equal(r.toPool, 75n, 'the excluded share went to the pool rather than to the others');
   assert.equal(total(r), 101n);
 });
 

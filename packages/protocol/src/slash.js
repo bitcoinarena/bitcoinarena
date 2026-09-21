@@ -1142,13 +1142,13 @@ export function slashHoldsOnFeeClaim({
  * THE ACCUSED IS NOT ONE OF THE REMAINING HONEST MEMBERS. "the REMAINING
  * honest committee members" - a node does not collect a share of its own
  * slashing, and neither does any other node slashed in the same round. Pass
- * them in `slashed`; they are filtered out and their share is burned.
+ * them in `slashed`; they are filtered out and their share goes to the pool.
  *
  * REMAINDERS the way this repo already does them: floor each share, then hand
  * the leftover out one satoshi at a time in ascending `H(roundId || pubkey)`,
  * the rule 22A names for fees and `payout.js` already uses for the pool. With
- * nobody to pay - no affected players, or a burn - that half is burned, which
- * is the only direction that cannot quietly become somebody's income.
+ * nobody to pay - no affected players, or a set entirely slashed - that half
+ * goes to the FEDERATION POOL, 75% nodes and 25% developers, never burned.
  */
 export function slashDistribution({
   bondSats, roundId, contract, affectedPlayers = [], honestCommittee = [],
@@ -1163,7 +1163,12 @@ export function slashDistribution({
   const rest = bondSats - toPlayers;
 
   const shares = new Map();
-  let burned = 0n;
+  // WHAT NOBODY ON THE ROUND CAN BE PAID goes to the federation pool, and is not
+  // destroyed (RULED, the owner 2026-09-21; §5A.3 "every remainder in this document
+  // has a recipient"). Two structural holes used to burn here - a half with
+  // nobody at all to pay, and the share of a member excluded for being slashed -
+  // and both are income nobody receives, which is exactly what the rule forbids.
+  let toPool = 0n;
 
   /**
    * Splits `amount` over `who`, and pays only those not in `out`.
@@ -1177,11 +1182,11 @@ export function slashDistribution({
    */
   const hand = (who, amount, out = new Set()) => {
     const paid = who.filter((k) => !out.has(hex(k)));
-    if (!who.length || amount <= 0n) { burned += amount > 0n ? amount : 0n; return; }
+    if (!who.length || amount <= 0n) { toPool += amount > 0n ? amount : 0n; return; }
     const each = amount / BigInt(who.length);
     let left = amount - each * BigInt(who.length);
     for (const k of who) {
-      if (out.has(hex(k))) { burned += each; continue; }
+      if (out.has(hex(k))) { toPool += each; continue; }
       shares.set(hex(k), (shares.get(hex(k)) || 0n) + each);
     }
     // The leftover satoshis follow the same order and skip the same people.
@@ -1190,7 +1195,7 @@ export function slashDistribution({
       shares.set(hex(k), (shares.get(hex(k)) || 0n) + 1n);
       left -= 1n;
     }
-    burned += left;
+    toPool += left;
   };
 
   // "THE REMAINING HONEST COMMITTEE MEMBERS" IS A FILTER, NOT A COMMENT.
@@ -1205,10 +1210,10 @@ export function slashDistribution({
   // caught in one round would otherwise each collect from the other's bond,
   // which is the same income by a longer route.
   //
-  // AND THEIR SHARE IS BURNED RATHER THAN SPREAD OVER THE REST. Redistributing
+  // AND THEIR SHARE GOES TO THE POOL RATHER THAN OVER THE REST. Redistributing
   // it would pay the honest members MORE the more of their colleagues were
-  // slashed, which is a reward for a round going wrong. Burning is the only
-  // direction that cannot become somebody's income.
+  // slashed, which is a reward for a round going wrong. The pool is the one
+  // direction that is neither that reward nor a burn.
   const out = new Set(slashed.map(hex));
 
   hand(affectedPlayers, toPlayers);
@@ -1220,10 +1225,15 @@ export function slashDistribution({
   hand(honestCommittee, rest, out);
 
   const paid = [...shares.values()].reduce((a, b) => a + b, 0n);
-  if (paid + burned !== bondSats)
-    throw new Error(`slash distribution broken: ${paid} paid and ${burned} burned of ${bondSats}`);
+  if (paid + toPool !== bondSats)
+    throw new Error(`slash distribution broken: ${paid} paid and ${toPool} to the pool of ${bondSats}`);
 
-  return { toPlayers, burned, shares };
+  // AND THE POOL'S OWN SPLIT IS THE ONE ALREADY WRITTEN DOWN: 75% to the nodes,
+  // 25% to the developers, the same rule `federation-slash.js` applies to a
+  // slashed guardian bond. Split here rather than left as one number, so a caller
+  // cannot pay it somewhere else by reading past it.
+  const nodes = (toPool * 75n) / 100n;
+  return { toPlayers, toPool, pool: { nodes, developers: toPool - nodes }, burned: 0n, shares };
 }
 
 /** Ascending `H(roundId || pubkey)`, the order 22A names and payout.js uses. */
