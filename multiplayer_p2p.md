@@ -3011,8 +3011,9 @@ federation CLOSED (§23A.6)      nothing was lost, so nothing is owed:
 
 federation HALTED (§23A.1)      liquidation, below: every unspent note of
                                 the federation paid at face value first;
-                                what is left after the claim window, 75% /
-                                25% as above
+                                what is left after the claim window is
+                                BURNED - on a halt the census nodes and the
+                                developers take nothing (v4.6.5)
 ```
 
 The escrow exists because a halt is rarely the first abandonment: a
@@ -3045,9 +3046,19 @@ HALTED for `abandon_blocks` with no recovery is liquidated:
    short - guardians whose bonds were never slashed because they never
    left, and no spent set published at all - are claims paid pro rata,
    and the client shows the rate.
-4. After the window, the remainder goes 75% to the nodes and 25% to the
-   developers as above. Notes never presented in the window are the
-   holder's loss, as they are in a CLOSED federation (§23A.6 step 6).
+4. After the window, the remainder is **burned**. On a halt the census
+   nodes take 0% and the developers take 0% (RULED, the owner 2026-09-21,
+   v4.6.5) - the 75/25 of the row above is for a guardian who walked out of
+   a federation that kept running, not for one that froze. **The operator
+   must not profit from a technical freeze**: a halt is the case where
+   players cannot reach their own money, and there is no share of it that
+   the people who run the network may take for having been there. Burning
+   is the only recipient that cannot be gamed - paying the remaining
+   guardians would pay the witnesses of the very abandonment (below), and
+   paying the census would make a freeze worth something to somebody.
+   Notes never presented in the window are the holder's loss, as they are
+   in a CLOSED federation (§23A.6 step 6), and the developers have no share
+   of those either.
 
 What the liquidation does not do: it does not touch the federation's
 frozen reserve, which stays where it is (and is released to the same
