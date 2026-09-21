@@ -24,6 +24,20 @@
  */
 export const SETTLE_SAFETY_BLOCKS = 17;
 
+/**
+ * THE LONGEST HTLC A PAYER WILL ACCEPT. Lightning's own ceiling, not the protocol's: lnd refuses to pay an
+ * invoice whose final delta takes the route past its `--max-cltv-expiry`, and it says so in those words -
+ * measured on the Daily when this node first asked for 2044 blocks: "cltv limit 2016 should be greater
+ * than 2047". A hold longer than a payer will pay is not a hold; it is a round nobody can enter.
+ *
+ * The route's own deltas sit on top of what the invoice names, so the ask is kept clear of the ceiling.
+ */
+export const MAX_PAYABLE_CLTV_BLOCKS = 2016;
+export const ROUTE_CLTV_BLOCKS = 40;
+
+/** The most an invoice may ask for and still be payable. */
+export const askableCltvBlocks = () => MAX_PAYABLE_CLTV_BLOCKS - ROUTE_CLTV_BLOCKS;
+
 /** The core's pace. A run is `blockTicks` of these. */
 export const TICKS_PER_SECOND = 60;
 
@@ -64,7 +78,11 @@ export function cltvBlocksFor({ secondsPerBlock, blockTicks, objectionWindowMs =
   if (!Number.isInteger(floorBlocks) || floorBlocks <= 0)
     throw new Error('the floor is the protocol\'s own stakeExpiryBlocks, in whole blocks');
   const need = finalSeconds({ blockTicks, objectionWindowMs }) * HOLD_MARGIN;
-  return Math.max(floorBlocks, Math.ceil(need / secondsPerBlock) + safetyBlocks);
+  const want = Math.max(floorBlocks, Math.ceil(need / secondsPerBlock) + safetyBlocks);
+  // AND NEVER MORE THAN A PAYER WILL PAY. Asking past the ceiling does not buy a longer hold, it buys an
+  // invoice nobody can settle: the payment is refused before the stake is ever held. Whether what is left
+  // is enough is `holdCoversRound`'s question, and the door's.
+  return Math.min(want, askableCltvBlocks());
 }
 
 /**
