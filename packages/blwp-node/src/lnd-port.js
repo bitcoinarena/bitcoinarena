@@ -67,6 +67,21 @@ export function lndPort({ lncli, args = [], timeoutMs = 60000, expirySeconds = 3
      * nothing else, and an invoice this node believes in because it asked for
      * it is exactly what `invoiceMatchesEntry` exists to refuse.
      */
+    /**
+     * PAYING A QUALIFIER WHAT THE TABLE OWES THEM (§24A.2). The only outbound leg this custody has: the
+     * player presents a BOLT11 and the committee's own node pays it. `--amt_msat` is NOT passed - the
+     * invoice's own amount is what was agreed and checked before this call, and quoting a second number
+     * here would let a rounding or a stale read pay something else.
+     */
+    async pay({ request }) {
+      const said = await json(['payinvoice', '--force', '--json', '--timeout', '120s', request]);
+      const status = String(said.status || said.payment_error || '').toUpperCase();
+      if (status && status !== 'SUCCEEDED')
+        throw new Error(`that payment did not go through: ${status}${said.failure_reason ? ` (${said.failure_reason})` : ''}`);
+      return { preimage: said.payment_preimage || null, feeMsat: BigInt(said.fee_msat || 0),
+        paidMsat: BigInt(said.value_msat || 0) };
+    },
+
     async createHeld({ paymentHash, amountMsat, cltvExpiryBlocks: forThisRound = null }) {
       const hash = toHex(paymentHash);
       // THE ROUND'S OWN NUMBER WHEN THE CALLER SIZED ONE. `cltvExpiryBlocks` is this port's default; a
