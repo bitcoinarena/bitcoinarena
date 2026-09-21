@@ -64,7 +64,11 @@ function paidPort() {
 const contractFor = (nodes, publicationRelays) => ({
   startDeadlineTicks: PLANTED_FIRST_MARK_DEADLINE, networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
   gameVerifySlots: 2, settlementSlots: 2, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n,
-  entryCloseMs: 2000n, objectionWindowMs: 0n, custody: 'THRESHOLD_LN',
+  // THE SHORTEST WINDOW THAT IS STILL A WINDOW. `roundWindowsAreValid` refuses zero - "a zero window is not
+  // a short one, it is none at all - finality would be instant and §13A's replay veto could never be used" -
+  // and this file is about the ORDER two daemons close in, not about the window's length, so it names the
+  // smallest positive one, as two other suites already do.
+  entryCloseMs: 2000n, objectionWindowMs: 1n, custody: 'THRESHOLD_LN',
   slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays, donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n,
   randomnessRule: 'bitcoin-block-hash', stakeMsat: STAKE, bondMinSats: 50000n,
@@ -106,7 +110,10 @@ async function played({ finality } = {}) {
     inputChainHash: batchId(input), previousHash: NO_PREVIOUS, sessionPubkey: ed25519.getPublicKey(session) };
   const signedMark = joinSigned(encodeCheckpoint(mark), ed25519.sign(checkpointId(mark), session));
   for (const d of [a, b]) {
-    await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
+    // THE ROUND'S OWN ANSWER IS READ. It was not, and that is how a contract this daemon refuses showed up
+    // three steps later as "no such round" on the entry - the round never opened and nothing said so.
+    const opened = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
+    assert.equal(opened.status, 201, await opened.text());
     assumeAssigned(d.round, rid, c.nodes);
     const joined = await fetch(`http://127.0.0.1:${d.port}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
     assert.equal(joined.status, 201, await joined.text());

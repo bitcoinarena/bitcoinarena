@@ -43,6 +43,10 @@ import { hash as stateHash } from '../../core/src/state.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
+// THE CORE'S OWN RUN LENGTH, and the shortest window that is still a window: `Round.open` refuses a
+// contract naming another run length, and `roundWindowsAreValid` refuses a zero objection window. This
+// file is about two daemons closing at once, not about either number.
+import { BLOCK_TICKS as RUN_TICKS } from '../../core/src/rules/gate.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const rand = (n) => new Uint8Array(randomBytes(n));
@@ -84,11 +88,11 @@ function paidPort() {
 const contractFor = (nodes, publicationRelays) => ({
   startDeadlineTicks: PLANTED_FIRST_MARK_DEADLINE, networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
   gameVerifySlots: 2, settlementSlots: 2, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n,
-  entryCloseMs: 2000n, objectionWindowMs: 0n, custody: 'THRESHOLD_LN',
+  entryCloseMs: 2000n, objectionWindowMs: 1n, custody: 'THRESHOLD_LN',
   slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays, donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n,
   randomnessRule: 'bitcoin-block-hash', stakeMsat: STAKE, bondMinSats: 50000n,
-  blockTicks: 9000, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
+  blockTicks: RUN_TICKS, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
   timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4, nodes,
 });
 
