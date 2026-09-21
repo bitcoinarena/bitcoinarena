@@ -31,6 +31,7 @@
 import { execFile } from 'node:child_process';
 import { HELD, SETTLED, CANCELLED } from '../../protocol/src/payout.js';
 import { toHex } from '../../protocol/src/hash.js';
+import { STAKE_EXPIRY_BLOCKS } from '../../protocol/src/constants.js';
 
 /** lnd's invoice states, in 23.2's words. */
 export const STATE_OF = {
@@ -42,8 +43,11 @@ export const STATE_OF = {
  * @param {string} o.lncli    path to the lncli binary
  * @param {string[]} o.args   the flags that name ONE node: --lnddir, --rpcserver, --network
  * @param {number} o.timeoutMs
+ * @param {number} o.cltvExpiryBlocks  how many blocks the STAKE's HTLC lives - `STAKE_EXPIRY_BLOCKS`, the
+ *   number every round contract is already required to name (`contracts.js` refuses any other).
  */
-export function lndPort({ lncli, args = [], timeoutMs = 60000, expirySeconds = 3600, run = null }) {
+export function lndPort({ lncli, args = [], timeoutMs = 60000, expirySeconds = 3600,
+                          cltvExpiryBlocks = STAKE_EXPIRY_BLOCKS, run = null }) {
   const call = run || ((argv) => new Promise((resolve, reject) => {
     execFile(lncli, [...args, ...argv], { timeout: timeoutMs, maxBuffer: 8 << 20 },
       (err, stdout, stderr) => {
@@ -76,10 +80,18 @@ export function lndPort({ lncli, args = [], timeoutMs = 60000, expirySeconds = 3
       // the second daemon held nothing. It now takes up the endpoint's hold -
       // only while it is still a hold (OPEN or ACCEPTED), and read back like
       // any other, so `invoiceMatchesEntry` still checks what comes back.
+      //
+      // AND `--expiry` IS NOT THE STAKE'S EXPIRY. It is how long an UNPAID invoice stays open; the stake's
+      // own timeout is the HTLC's, `--cltv_expiry`, and this node never asked for it. Measured on the Daily:
+      // every hold carried lnd's default **cltv_expiry 80** while `contracts.js` refuses any round contract
+      // whose `stakeExpiryBlocks` is not STAKE_EXPIRY_BLOCKS (144) and `stake-lock.js` refuses any stake lock
+      // expiring before height + 144. The same stake was protected for 144 blocks as a lock and 80 as a hold,
+      // on the one custody a player actually pays. The number is not chosen here - it is the one the
+      // contract already names, finally asked for.
       let made;
       try {
         made = await json(['addholdinvoice', hash, '--amt_msat', String(amountMsat),
-          '--expiry', String(expirySeconds)]);
+          '--expiry', String(expirySeconds), '--cltv_expiry', String(cltvExpiryBlocks)]);
       } catch (err) {
         if (!/invoice with payment hash already exists/.test(err.message)) throw err;
         made = null;
@@ -94,6 +106,9 @@ export function lndPort({ lncli, args = [], timeoutMs = 60000, expirySeconds = 3
         // THE EXPIRY THIS NODE ASKED FOR (M3.3-30) - its own number, so an
         // invoice nobody pays is known to have run out without asking lnd.
         expirySeconds,
+        // AND THE BLOCKS THIS NODE ASKED THE HTLC TO LIVE, so a hold that came back on somebody else's
+        // number is known here rather than at its expiry.
+        cltvExpiryBlocks,
         ...(made ? {} : { already: true }),
       };
     },
