@@ -10,6 +10,13 @@ The Round Contract names `FEDERATION` (§23.6). Never single custody. No
 central gateway and no central node: **no single node is needed, and no
 single node can take money.**
 
+Amended 2026-09-21 (the owner: the **player wallet**, spec §24A.1, v4.6.3): the
+stake is spent from e-cash the player holds in the federation, winnings and
+refunds are redeemed into that wallet automatically and shown as pending
+until then, and Lightning is used only when the player deposits or
+withdraws. Steps 2, 3 and 6 below, the residuals, rehearsal items 8-11 and
+the rulings of that date carry it. Nothing about the lock changes.
+
 ---
 
 ## The one idea
@@ -59,15 +66,18 @@ collects it inclusive, from every player, not only from losers).
 1. The committees are known (§23.1 precondition). Alice picks `P`, puts
    `H(P)` in the Entry Contract, VSS-shares `P` to the settlement seats. As
    today.
-2. **Deposit.** Alice's wallet (NWC budget, QR, WebLN) pays a stock LNv2
-   receive invoice for this round, made through a gateway her client picks
-   at random from the federation's list. The gateway puts its own ecash into
-   an incoming contract *before* it learns the preimage, so it cannot keep
-   her money. If it fails, the HTLC returns to her wallet and her client
-   asks the next gateway.
-3. **Lock.** Her client spends that incoming contract into the stake lock and
-   the fee lock, in the same federation transaction where it can. No balance
-   is left standing between rounds (§24A.3).
+2. **Deposit.** Alice's player wallet (§24A.1, v4.6.3) holds e-cash in this
+   federation from an earlier deposit or an earlier win. If it holds less
+   than stake plus fee, her external wallet (NWC budget, QR, WebLN) pays a
+   stock LNv2 receive invoice, made through a gateway her client picks at
+   random from the federation's list, and the notes land in her player
+   wallet. The gateway puts its own ecash into an incoming contract *before*
+   it learns the preimage, so it cannot keep her money. If it fails, the
+   HTLC returns to her wallet and her client asks the next gateway.
+3. **Lock.** Her client spends e-cash from her player wallet into the stake
+   lock and the fee lock, in one federation transaction. No Lightning
+   payment and no gateway is in this step. What stays in her wallet stays
+   under her seed, in nobody's balance but hers (§24A.3).
 4. `STAKE_COMMITTED` when the round's threshold of settlement seats have
    seen the lock confirmed by the federation. Play starts only then.
 5. After `FINAL` + objection window:
@@ -84,11 +94,14 @@ collects it inclusive, from every player, not only from losers).
    - **VOID / ENTRY_VOID:** the committee forfeits the locks at once. If
      nobody acts, the lock expires and the player's client takes it back with
      its own key.
-6. **Payout.** Alice's client redeems her payout contract with her key
-   (`Refund`, open at once) and
-   withdraws over Lightning through any gateway. That is stock LNv2 send:
-   the gateway is paid only against the preimage; otherwise the contract
-   refunds her.
+6. **Payout.** Alice's client redeems her payout contract and her
+   forfeited stake lock with her round key (`Refund`, open at once) into
+   her player wallet, on its own, the moment they exist; her screen showed
+   both as pending until then. She plays the next round from the wallet, or
+   withdraws any part of it over Lightning through any gateway, to an
+   invoice her external wallet issues. That is stock LNv2 send: the gateway
+   is paid only against the preimage; otherwise the notes return to her
+   wallet.
 
 There is **no pool wallet**. §18's loser pool is per round, and it is
 exactly that one atomic transaction.
@@ -104,6 +117,7 @@ exactly that one atomic transaction.
 | settle | preimage 2 of 2, msat land in bob's lnd | `P` by threshold **and** FROST by threshold **and** guardian consensus |
 | cancel | one daemon alone | FROST by threshold (§23.2) |
 | pay | harness pool | payout contracts in the same transaction |
+| hold a balance | harness pool, or the wallet that paid | the player, as e-cash under the seed (§24A.1); no node, no gateway |
 
 ---
 
@@ -147,8 +161,13 @@ paths are the ones every LNv2 payment runs; this use of them is not.
   locks. Unchanged from §22.
 - **Gateways.** Can refuse or fail a deposit or withdrawal; cannot take it.
   Needs at least two gateways run by different operators.
-- **Player key.** A lost refund or payout key loses that lock. Keys come from
-  a seed the player backs up.
+- **Player wallet (v4.6.3).** Standing e-cash is the same claim on the
+  federation a lock is, for as long as the player leaves it there. Counted
+  in the exposure cap; shown beside the federation's name; Withdraw offered
+  wherever the balance is.
+- **Player key.** A lost seed loses the wallet's notes and every lock its
+  keys refund. The seed is backed up before the first deposit; the
+  federation's stock backup brings the notes back under it.
 
 ---
 
@@ -165,7 +184,8 @@ paths are the ones every LNv2 payment runs; this use of them is not.
 4. **Federation fees:** MUST `disable_base_fees` (`lnv2-server/src/lib.rs:298`)
    (the owner 2026-09-15). Base fees stay 0. The game's 22A node fee is 2% to
    sitting seats and is not a Fedimint fee.
-5. **Spec** §6, §9, §22, §23, §24A updated (v4.6.2, with this file).
+5. **Spec** §6, §9, §22, §23, §24A updated (v4.6.2, with this file); §24
+   and §24A.1 for the player wallet (v4.6.3).
 6. **The rehearsal below passes.**
 
 ---
@@ -183,6 +203,19 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
 5. gateway A down: deposit and withdrawal go through B
 6. one guardian down: everything still completes
 7. no single key and no macaroon moves a round's money
+8. deposit into the player wallet; a stake spent from it into a lock with no
+   Lightning payment between; the lock verified by the seats as in item 1
+9. a payout contract and a forfeit redeemed into the wallet by the client on
+   its own, with no press; two rounds played from the wallet with no
+   deposit; then one withdrawal of the whole balance through B while A is
+   down
+10. a fresh browser with the seed alone recovers the wallet's notes through
+    the federation's stock backup, and finds unredeemed round contracts
+    through `GET /settled?since=`; nothing is asked of a node that the node
+    does not already publish
+11. cleared browser storage with no backup made: what returns from the seed
+    and what does not, written down and shown to the player before the
+    first deposit
 
 ---
 
@@ -195,6 +228,19 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
 - **Donations:** the player's wallet pays the §27A.4 recipients directly,
   every game, at entry, outside the federation. Nothing of a donation is
   locked.
+
+## Rulings (the owner 2026-09-21)
+
+- **The player wallet** (§24A.1, v4.6.3): the round wallet is one wallet
+  per player seed and federation. The player deposits into it, stakes from
+  it, and withdraws from it over a Lightning invoice, any amount, any time.
+  No custody; no channel to any central server: the client speaks to the
+  guardians and, on deposit or withdrawal, to any of at least two
+  independent gateways, and holds no Lightning channel at all.
+- **Winnings arrive on their own.** The client redeems a payout contract
+  and a forfeit into the player wallet the moment it is available, with no
+  press; until then the stake and the winnings are shown as **pending**
+  (§24).
 
 ## Security findings (Fable, 2026-09-11 15:00) — RESOLVED in spec v4.6.2 (the owner 15:10: "alles dokumentieren und lösen")
 
