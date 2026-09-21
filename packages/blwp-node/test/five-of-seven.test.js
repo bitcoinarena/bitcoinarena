@@ -108,19 +108,32 @@ async function joinWithTwoFirstMarks(w, custody) {
     coefficients: Array.from({ length: NEEDED - 1 }, () => scalarFrom32(rand(32)) % FIELD), needed: NEEDED, curve: feldmanGroup });
   assert.equal(dealt.ok, true, dealt.why);
   const outpoint = { txid: rand(32), outIdx: 0n };
+  // AND ITS FEE LOCK (2026-09-21). The test federation is a legal one now - no base fee, as §22A requires -
+  // so a lock round's gate mints fee locks, and the entry door refuses an entry that brings none: "its stake
+  // would not be counted, and it would block the round's settlement". That refusal was this file's whole red
+  // (409 !== 201 at `/entry`, before a mark was ever made). The production shape is an entry arriving with
+  // the 2% already locked to H(F), which is what `first-mark.test.js` builds too.
+  const feeSecret = rand(32);
+  const feeOutpoint = { txid: rand(32), outIdx: 1n };
   const entry = {
     roundId: w.rid, playerPubkey: LOSER.key, sessionPubkey: ed25519.getPublicKey(session),
     stakeCommitment: sha256(preimage), stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE), donationMsat: 0n,
     joinTick: 0, worldSecret: LOSER.worldSecret, vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0],
-    feePreimage: new Uint8Array(32), stakeLockOutpoint: custody === 'lock' ? outpoint : { txid: new Uint8Array(32), outIdx: 0n },
-    feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: custody === 'lock' ? b32(0x9a) : new Uint8Array(32),
+    feePreimage: custody === 'lock' ? feeSecret : new Uint8Array(32),
+    stakeLockOutpoint: custody === 'lock' ? outpoint : { txid: new Uint8Array(32), outIdx: 0n },
+    feeLockOutpoint: custody === 'lock' ? feeOutpoint : { txid: new Uint8Array(32), outIdx: 0n },
+    claimKeyAttestationRef: custody === 'lock' ? b32(0x9a) : new Uint8Array(32),
   };
   const eid = entryId(entry);
-  let fields = null;
+  let fields = null, feeFields = null;
   if (custody === 'lock') {
     fields = { paymentImage: { kind: 'point', bytes: entry.stakePoint }, amountMsat: netStakeMsat(entry),
       claimPk: w.signerNodes[0].dkg.signerNodeFor(w.c.nodes).pool.groupPublicKey, refundPk: refundKeyOf(LOSER.key), expiration: w.locks.height + 200 };
     await w.locks.put(outpoint, fields);
+    feeFields = { paymentImage: { kind: 'hash', bytes: sha256(feeSecret) }, amountMsat: entry.feeMsat,
+      claimPk: w.signerNodes[0].dkg.signerNodeFor(w.c.nodes).pool.groupPublicKey, refundPk: refundKeyOf(LOSER.key),
+      expiration: w.locks.height + 200 };
+    await w.locks.put(feeOutpoint, feeFields);
   }
   for (const d of w.signerNodes) {
     const base = `http://127.0.0.1:${d.port}`;
@@ -134,6 +147,8 @@ async function joinWithTwoFirstMarks(w, custody) {
     } else {
       const l = await fetch(`${base}/lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(fields)) });
       assert.equal(l.status, 201, await l.text());
+      const fl = await fetch(`${base}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(feeFields)) });
+      assert.equal(fl.status, 201, await fl.text());
     }
   }
   const sign = (m) => joinSigned(encodeCheckpoint(m), ed25519.sign(checkpointId(m), session));

@@ -32,6 +32,9 @@ import { hash as stateHash } from '../../core/src/state.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { toHex, sha256 } from '../../protocol/src/hash.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
+// THE CORE'S OWN RUN LENGTH: `Round.open` refuses a contract naming another, and this fixture still said
+// 9000 - so this file could not open the round it is about, and never finished inside its timeout.
+import { BLOCK_TICKS as RUN_TICKS } from '../../core/src/rules/gate.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const RANDOMNESS = b32(0x9b);
@@ -65,7 +68,7 @@ const contractFor = (nodes, publicationRelays) => ({
   slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays, donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n,
   randomnessRule: 'bitcoin-block-hash', stakeMsat: STAKE, bondMinSats: 50000n,
-  blockTicks: 9000, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
+  blockTicks: RUN_TICKS, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
   timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4, nodes,
 });
 
