@@ -8,7 +8,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { exposureCap, reserveFits, slashSplit, abandonmentProofNeeds, haltsAt,
-  MAINNET_CLOCKS, liquidationSchedule, remainderMaySplit } from '../src/federation-slash.js';
+  MAINNET_CLOCKS, TESTNET_CLOCKS, REGTEST_CLOCKS, clocksFor, lifecycleBlocks,
+  liquidationSchedule, remainderMaySplit } from '../src/federation-slash.js';
 
 const SAT = 1000n;
 /** Ten guardians, 7 of 10, so f = 3. Nine at 1 000 000 sat and one at 400 000: the smallest is what counts. */
@@ -117,4 +118,37 @@ test('a late note is still paid, and the remainder cannot be split before the ta
     'the remainder was split the moment the claim window closed, with the late tail still running');
   assert.equal(remainderMaySplit({ haltHeight: halt, atHeight: halt + 4031 }).may, false);
   assert.equal(remainderMaySplit({ haltHeight: halt, atHeight: halt + 4032 }).may, true);
+});
+
+test('all three networks are pinned, and an unpinned one is refused rather than guessed', () => {
+  assert.deepEqual([MAINNET_CLOCKS.abandonBlocks, MAINNET_CLOCKS.departureNotice,
+    MAINNET_CLOCKS.foundingWindow, MAINNET_CLOCKS.drainBlocks, MAINNET_CLOCKS.claimBlocks],
+  [288, 432, 432, 4032, 216], 'mainnet: 48 h / 72 h / 72 h / 28 d / 36 h');
+  assert.deepEqual([TESTNET_CLOCKS.abandonBlocks, TESTNET_CLOCKS.departureNotice,
+    TESTNET_CLOCKS.foundingWindow, TESTNET_CLOCKS.drainBlocks, TESTNET_CLOCKS.claimBlocks],
+  [12, 18, 18, 144, 9], 'testnet: 2 h / 3 h / 3 h / 24 h / 1.5 h');
+  assert.deepEqual([REGTEST_CLOCKS.abandonBlocks, REGTEST_CLOCKS.drainBlocks],
+    [10, 100], 'regtest counts in tens of blocks');
+  assert.equal(clocksFor('testnet4').clocks, TESTNET_CLOCKS);
+  assert.equal(clocksFor('mainnet').clocks, MAINNET_CLOCKS);
+  assert.equal(clocksFor('signet').ok, false, 'a network nobody pinned was given clocks anyway');
+});
+
+test('testnet is about a twentieth of mainnet, clock for clock', () => {
+  for (const k of ['abandonBlocks', 'departureNotice', 'foundingWindow', 'drainBlocks', 'claimBlocks']) {
+    const ratio = MAINNET_CLOCKS[k] / TESTNET_CLOCKS[k];
+    assert.ok(ratio >= 20 && ratio <= 28,
+      `${k} is ${ratio.toFixed(1)}x, which is not about the twentieth the letter asks for`);
+  }
+});
+
+test('a guardian leaving costs more than a day on testnet, and the drain alone is the day', () => {
+  const t = lifecycleBlocks(TESTNET_CLOCKS);
+  // Ten minutes a block is what the 12 -> 2 h pinning assumes.
+  const hours = (blocks) => (blocks * 10) / 60;
+  assert.equal(t.serial, 174, 'abandonment + founding + drain, one after the other');
+  assert.equal(hours(t.serial), 29, 'which is 29 h, not a day');
+  assert.equal(t.overlapped, 156, 'and 156 with the founding started at the departure');
+  assert.equal(hours(t.overlapped), 26, 'still 26 h, not a day');
+  assert.equal(hours(TESTNET_CLOCKS.drainBlocks), 24, 'the DRAIN is the day; the cycle around it is not');
 });
