@@ -322,8 +322,13 @@ export class Custody {
     // PROVISIONALLY_FINAL. FINAL is the window's word, and a fee taken before it is a fee taken for a
     // result that could still be objected to.
     const finalRound = entries.length > 0 && entries.every((e) => !!finalFor(e.entryId, e));
-    const fees = finalRound ? await this.settleFees({ roundId })
-      : { ok: false, msat: 0n, moved: [], why: 'this round is not final yet: its objection window is open' };
+    // EACH FEE ON ITS OWN ENTRY'S FINALITY, not on the round's. §23.5 gave the fee its own lock so that
+    // "a fee dispute never touches another player's stake", and a round-wide gate would undo exactly
+    // that: one player inside their objection window would hold up every other player's fee on a round
+    // this committee had served in full, and a fee held long enough expires back.
+    const byId = new Map(entries.map((e) => [toHex(e.entryId), e]));
+    const fees = await this.settleFees({ roundId,
+      final: (entryId) => { const e = byId.get(toHex(entryId)); return !!e && !!finalFor(entryId, e); } });
 
     let decided;
     try { decided = holdSettlement({ roundId, entries, minScore }); }
@@ -554,11 +559,23 @@ export class Custody {
    * DELIVERED, FAILED, FORFEIT and VOID all pay it. The preimage is the entry's own, so no threshold and no
    * share ceremony stands between the committee and a fee it has earned.
    */
-  async settleFees({ roundId }) {
+  /**
+   * `final` is asked PER ENTRY, and an entry it says no to keeps its fee.
+   *
+   * §23.5: "the node fee travels in its own lock and leaves by the same transaction, so a fee dispute
+   * never touches another player's stake." That is what the separate lock is FOR, and a gate on the whole
+   * round undoes it: one player still inside their objection window, or suspended by an objection, would
+   * hold up every other player's fee on a round the committee had served in full - and a fee held long
+   * enough expires back. Left out, every fee of the round is settled, which is what the caller wants when
+   * it has already decided the round is done with.
+   */
+  async settleFees({ roundId, final = null }) {
     if (!this.reaches) return { ok: false, why: 'this node reaches no Lightning, so it settles no fees', moved: [] };
     const moved = [];
+    const waited = [];
     for (const row of this.round.feeHoldsOf(roundId)) {
       if (row.state !== HELD) continue;
+      if (final && !final(row.entryId)) { waited.push(row.entryId); continue; }
       const stored = this.round.entry(row.entryId);
       if (!stored) continue;
       let entry;
@@ -589,7 +606,7 @@ export class Custody {
             : `Lightning refused the settle (${e.message}) and could not say what the fee is` });
       }
     }
-    return { ok: true, moved, msat: moved.reduce((a, m) => a + m.msat, 0n) };
+    return { ok: true, moved, waited, msat: moved.reduce((a, m) => a + m.msat, 0n) };
   }
 
   /**

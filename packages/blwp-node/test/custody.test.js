@@ -1037,3 +1037,38 @@ test('a chain that speeds up between two entries buys the second one more blocks
   await blind.hold(third);
   assert.equal(asked[2], undefined, 'a pace that could not be read still asked for a size');
 });
+
+// AND ONE PLAYER'S OPEN WINDOW DOES NOT HOLD UP ANOTHER PLAYER'S FEE (§23.5).
+//
+// "The node fee travels in its own lock and leaves by the same transaction, so a fee dispute never
+// touches another player's stake" - which is what the separate lock is FOR. Gating the fees on the whole
+// round being final undid it: a single entry inside its objection window, or suspended by an objection,
+// would hold up every other entry's fee on a round this committee had served in full, and a fee held
+// long enough expires back to the payer. The pool still waits for the whole round, because a pool is
+// made of everyone's stakes; a fee is not.
+test('a player still inside their window keeps their own fee and holds up nobody else\'s', async () => {
+  const port = fakePort();
+  const { round, rid, custody } = joined(port);
+  const early = entryFor(rid, 1);
+  const late = entryFor(rid, 2);
+  for (const e of [early, late]) { round.enter(e); await custody.hold(e); await custody.holdFee(e); }
+  const summary = (e, outcome, score = 0) =>
+    ({ entryId: entryIdOf(e), pubkey: e.playerPubkey, outcome, score, stakeMsat: e.stakeMsat, feeMsat: e.feeMsat, donationMsat: e.donationMsat });
+  const lateId = toHex(entryIdOf(late));
+
+  const out = await custody.settleHeldInvoices({
+    roundId: rid, minScore: 1,
+    finalFor: (entryId) => toHex(entryId) !== lateId,        // one player is still inside their window
+    entries: [summary(early, DELIVERED, 9), summary(late, FORFEIT)],
+  });
+  assert.equal(out.ok, true, out.why);
+  assert.equal(round.feeHold(entryIdOf(early)).state, SETTLED,
+    'a settled player\'s fee was held up by somebody else\'s open window');
+  assert.equal(round.feeHold(entryIdOf(late)).state, HELD,
+    'a fee was taken from a player still inside their own window');
+  assert.equal(out.feesMoved, 1, `${out.feesMoved} fees moved where one was final`);
+
+  // AND THE POOL STILL WAITS FOR THE WHOLE ROUND: a pool is made of everyone's stakes.
+  assert.equal(round.winnings(entryIdOf(early)), null, 'the pool was paid out with a stake still in flight');
+  assert.equal(custody.stateOf(entryIdOf(late)).state, HELD);
+});
