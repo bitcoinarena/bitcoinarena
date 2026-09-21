@@ -104,6 +104,11 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
                                      // (`claimKeyFor`, `stakeLocks`). None by default: every
                                      // existing caller's round names no federation, as before.
                                      federationId = new Uint8Array(32), invite = null, signerNode = {},
+                                     // WHAT EACH SIGNER NODE'S BOND SAYS IT GUARDS: `[{federationId,
+                                     // guardianKey}]`, the same shape §5A.1 puts in an advertisement.
+                                     // A caller that stands its own federation knows these; none by
+                                     // default, and then no bond claims to guard anything.
+                                     guardianOf = [],
                                      // A SECOND KIND OF ROUND KEPT OPEN BESIDE THE FIRST (the owner
                                      // 2026-09-15 12:54, option B): `{ stakeMsat, custody:
                                      // 'THRESHOLD_LN' }` - a paying round on the same two signer nodes, its
@@ -250,7 +255,13 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     const rt = regtest(cli);
     onChain = rt;
     const posted = bonded.map((one, i) =>
-      rt.postBond(i === 0 ? idA.secret : idB.secret, { endpoint: `ws://${host}:${i === 0 ? portA : portB}` }));
+      rt.postBond(i === 0 ? idA.secret : idB.secret, {
+        endpoint: `ws://${host}:${i === 0 ? portA : portB}`,
+        // AND WHICH FEDERATION THIS SIGNER NODE GUARDS, when the caller named one. Without it
+        // `federationIsBonded` counts zero of the federation's threshold and every paying FEDERATION
+        // round is refused on a bonded-federation check the bonds could not satisfy.
+        ...(guardianOf.length ? { guardianOf } : {}),
+      }));
     rt.include(posted.map((p) => p.hex));
     // THE CENSUS HEIGHT IS ABOVE THE BONDS, NOT AT THEM. Depth is measured at
     // `census_height` - "spentness, height and depth off REAL BLOCKS with depth
