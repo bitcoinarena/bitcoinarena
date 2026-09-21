@@ -1,9 +1,10 @@
 // THE THREE WAYS THE HALT CASE GETS GOT WRONG, EACH HELD DOWN BY A TEST.
 //
-// the owner 2026-09-21: on a halt the slashed bonds pay the note holders and nothing is left for anyone who
-// runs the network; the exposure cap is four of the smallest bond and not the sum of ten; and a halt's
-// abandonment proof cannot ask for attestations a halted federation no longer has. Each of these fails
-// loudly if the old rule comes back.
+// the owner 2026-09-21, the law of bc05268f: a slashed bond waits in escrow and never goes straight to
+// anybody; on a halt every unspent note is paid at face value BEFORE a node or a developer sees a sat,
+// and only what no player claimed is split 75/25; the exposure cap is four of the smallest bond and not
+// the sum of ten; and a halt's abandonment proof cannot ask for attestations a halted federation no
+// longer has. Each of these fails loudly if the old rule comes back.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { exposureCap, reserveFits, slashSplit, abandonmentProofNeeds, haltsAt } from '../src/federation-slash.js';
@@ -38,25 +39,29 @@ test('a reserve above four of the smallest bond does not fit, however big the ot
     'a reserve only the sum-of-all-bonds rule would allow was accepted');
 });
 
-test('on a halt the note holders are paid and the census and the developers get nothing', () => {
+test('on a halt every note is paid at face value BEFORE a node or a developer sees a sat', () => {
   const bond = 1000000n * SAT;
   const said = slashSplit({ amountMsat: bond, halted: true, notesOwedMsat: 600000n * SAT });
   assert.equal(said.ok, true, said.why);
   assert.equal(said.notes, 600000n * SAT, 'the notes were not paid at face value first');
-  assert.equal(said.nodes, 0n, 'the census nodes took a share of a freeze');
-  assert.equal(said.developers, 0n, 'the developers took a share of a freeze');
-  assert.equal(said.burned, 400000n * SAT, 'what is left after the notes is burned');
+  // The order is the rule: only what no player claimed is split, and it is the REMAINDER that is split.
+  const rest = bond - said.notes;
+  assert.equal(said.nodes, (rest * 75n) / 100n, 'the nodes were not paid out of the remainder');
+  assert.equal(said.developers, rest - (rest * 75n) / 100n);
+  assert.equal(said.nodes + said.developers, rest, 'the split did not come out of the remainder');
+  assert.ok(said.nodes < (bond * 75n) / 100n,
+    'the nodes were paid as if the whole bond were theirs - the notes were not taken off first');
   assert.equal(said.notes + said.nodes + said.developers + said.burned, bond, 'the bond did not add up');
 });
 
-test('a short escrow pays the notes pro rata and still burns nothing and pays nobody', () => {
+test('a short escrow goes entirely to the notes, pro rata, and pays nobody else at all', () => {
   const bond = 500000n * SAT;
   const said = slashSplit({ amountMsat: bond, halted: true, notesOwedMsat: 900000n * SAT });
   assert.equal(said.proRata, true);
   assert.equal(said.notes, bond, 'every msat of a short escrow goes to the notes');
+  assert.equal(said.nodes, 0n, 'a node was paid while a player was still short');
+  assert.equal(said.developers, 0n, 'a developer was paid while a player was still short');
   assert.equal(said.burned, 0n);
-  assert.equal(said.nodes, 0n);
-  assert.equal(said.developers, 0n);
 });
 
 test('a federation that kept running still pays 75 to the nodes and 25 to the developers', () => {
