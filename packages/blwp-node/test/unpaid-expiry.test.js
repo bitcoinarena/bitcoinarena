@@ -16,6 +16,7 @@
 //
 // The tests do not wait an hour: the port says it set a 1 s expiry.
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
+import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -50,7 +51,7 @@ const contractFor = (nodePubkey) => ({
   slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: ['http://127.0.0.1:9'] /* a paying round names a relay (§13A); never posted to here */, donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n,
   randomnessRule: 'bitcoin-block-hash', stakeMsat: STAKE, bondMinSats: 50000n,
-  blockTicks: 9000, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
+  blockTicks: BLOCK_TICKS, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
   timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
   nodes: [nodePubkey, schnorr.getPublicKey(peer)],
 });
@@ -60,17 +61,23 @@ const contractFor = (nodePubkey) => ({
  * and pays it or not as the test says. It records every act it is asked for.
  */
 function invoicingPort({ expirySeconds = 1, paid = false } = {}) {
+  // AN AMOUNT PER INVOICE, NOT ONE FOR THE PORT. Since the node fee got its own hold at entry (§23.5) an
+  // entry opens TWO invoices, and a port with a single `amount` slot answered every look with whichever
+  // was made last - the fee. The stake then read as "2000 of 98000 msat", was never SEEN paid, and the
+  // invoice clock expired a hold that this test exists to prove the invoice clock must not touch.
+  const amounts = new Map();
   const port = {
     paid, settled: [], cancelled: [], looks: 0,
     async createHeld({ paymentHash, amountMsat }) {
-      port.amount = amountMsat;
+      amounts.set(toHex(paymentHash), amountMsat);
       return { paymentHash, amountMsat, request: 'lnbcrt-x', expirySeconds };
     },
-    async look() {
+    async look({ paymentHash }) {
       port.looks++;
+      const a = amounts.get(toHex(paymentHash));
       return port.paid
-        ? { state: HELD, amountMsat: port.amount, paidMsat: port.amount, expiryHeight: HTLC_EXPIRY }
-        : { state: HELD, amountMsat: port.amount, paidMsat: 0n };
+        ? { state: HELD, amountMsat: a, paidMsat: a, expiryHeight: HTLC_EXPIRY }
+        : { state: HELD, amountMsat: a, paidMsat: 0n };
     },
     async settle({ paymentHash }) { port.settled.push(toHex(paymentHash)); },
     async cancel({ paymentHash }) { port.cancelled.push(toHex(paymentHash)); },
