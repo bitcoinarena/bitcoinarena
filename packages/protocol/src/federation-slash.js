@@ -8,10 +8,12 @@
 //                         liquidation pays players from - so the reserve may never exceed what the
 //                         cheapest possible set of leavers forfeits. Summing all ten would let a
 //                         federation hold cover it can only produce if EVERY guardian is slashed.
-//   a slashed bond        goes 75% to the active census nodes and 25% to the developers while the
-//                         federation still runs - but on a HALT it goes to the note holders at face
-//                         value first, and whatever is left is BURNED. Nodes 0%, developers 0%.
-//                         The operator must not profit from a technical freeze.
+//   a slashed bond        never goes straight to anybody: it waits in the federation's liquidation
+//                         escrow under the arbitration keys, and spends only when the federation is
+//                         CLOSED (nothing was lost: 75% census nodes, 25% developers) or HALTED. On a
+//                         HALT the ORDER is the whole of it - every unspent note is paid at face value
+//                         FIRST, and only what no player claimed is split 75/25. The people who run the
+//                         network are never paid out of money a player could still have claimed.
 //   the abandonment proof needs `2f + 1` attestations normally, and on a halt cannot have them: the
 //                         federation no longer has that many guardians. Then it is whoever is left,
 //                         plus the halt itself, which anyone can see.
@@ -61,10 +63,13 @@ export function slashSplit({ amountMsat, halted = false, notesOwedMsat = 0n }) {
   }
   if (typeof notesOwedMsat !== 'bigint' || notesOwedMsat < 0n)
     return { ok: false, why: 'the notes owed are a number of msat' };
-  // THE HALT CASE. Notes at face value first; what is left is burned, and nobody who runs the network
-  // takes a share of a freeze. If the escrow is short the notes are paid pro rata and nothing is burned.
+  // THE HALT CASE, AND THE ORDER IS THE RULE. Every unspent note is paid at face value first; only the
+  // remainder - what no player claimed inside the window - is split 75/25. A short escrow pays the notes
+  // pro rata and leaves nothing over, so nobody who runs the network is paid at all.
   const notes = notesOwedMsat < amountMsat ? notesOwedMsat : amountMsat;
-  return { ok: true, halted: true, notes, nodes: 0n, developers: 0n, burned: amountMsat - notes,
+  const rest = amountMsat - notes;
+  const nodes = (rest * 75n) / 100n;
+  return { ok: true, halted: true, notes, nodes, developers: rest - nodes, burned: 0n,
     proRata: notesOwedMsat > amountMsat };
 }
 

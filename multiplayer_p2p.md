@@ -30,8 +30,7 @@
 > in escrow until the federation is CLOSED or liquidated, and a halted
 > federation is **liquidated** - every unspent note paid at face from the
 > bonds of those who left - before 75% of the rest goes to the nodes and
-> 25% to the developers (§23A.3, §23A.5); on a halt they take nothing and
-> the remainder is burned (v4.6.5). Timings are fast: 36 h for the
+> 25% to the developers (§23A.3, §23A.5). Timings are fast: 36 h for the
 > liquidation claim window, 48 h abandonment, 72 h notice and founding,
 > two weeks of drain (§23A.1). Changed: §5A.1, §22A, §23.6,
 > §23A (new), §24, §25.2, §27A.6, `FEDERATION.md`, `IMPLEMENTATION.md` §9.
@@ -3028,9 +3027,8 @@ federation CLOSED (§23A.6)      nothing was lost, so nothing is owed:
 
 federation HALTED (§23A.1)      liquidation, below: every unspent note of
                                 the federation paid at face value first;
-                                what is left after the claim window is
-                                BURNED - on a halt the census nodes and the
-                                developers take nothing (v4.6.5)
+                                what is left after the claim window, 75% /
+                                25% as above
 ```
 
 The escrow exists because a halt is rarely the first abandonment: a
@@ -3066,19 +3064,12 @@ HALTED for `abandon_blocks` with no recovery is liquidated:
 4. At the end of the window the arbitration set pays every valid claim.
    A note presented late is still paid from what is left, until
    `drain_blocks` (two weeks) after the halt; then the remainder is
-   **burned**. On a halt the census
-   nodes take 0% and the developers take 0% (RULED, the owner 2026-09-21,
-   v4.6.5) - the 75/25 of the row above is for a guardian who walked out of
-   a federation that kept running, not for one that froze. **The operator
-   must not profit from a technical freeze**: a halt is the case where
-   players cannot reach their own money, and there is no share of it that
-   the people who run the network may take for having been there. Burning
-   is the only recipient that cannot be gamed - paying the remaining
-   guardians would pay the witnesses of the very abandonment (below), and
-   paying the census would make a freeze worth something to somebody.
-   Notes never presented in the window are the holder's loss, as they are
-   in a CLOSED federation (§23A.6 step 6), and the developers have no share
-   of those either.
+   goes 75% to the nodes and 25% to the developers as above. Notes never
+   presented in the window are the holder's loss, as they are in a CLOSED
+   federation (§23A.6 step 6). **The ORDER is the whole of it**: a halted
+   federation is liquidated note by note BEFORE a node or a developer sees
+   a sat, so the people who run the network are paid only out of what no
+   player claimed - never out of what a player could still have claimed.
 
 What the liquidation does not do: it does not touch the federation's
 frozen reserve, which stays where it is (and is released to the same
