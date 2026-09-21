@@ -2,8 +2,29 @@
 ## Providerless P2P Multiplayer Protocol
 
 **Status:** architecture concept, security-hardened
-**Version:** 4.6.2 (supersedes v4.4/v4.5 and the earlier v1.x P2P drafts; all remain in git history)
-**Date:** 2026-09-11
+**Version:** 4.6.3 (supersedes v4.4/v4.5 and the earlier v1.x P2P drafts; all remain in git history)
+**Date:** 2026-09-21
+
+> **Revision 4.6.3 — the player wallet (the owner 2026-09-21).** The round
+> wallet of §24 becomes the **player wallet**: one e-cash wallet per player
+> seed and federation, kept in the browser, that the player deposits into
+> over Lightning, plays stakes from, receives winnings and refunds into
+> **automatically, the moment they are available** (shown as *pending*
+> until then), and withdraws from over a Lightning invoice whenever he
+> likes, in any amount. A stake is now spent from the wallet into the
+> round's stake lock; no Lightning payment and no gateway sits in the
+> per-round path. Nothing about the lock, the committees, the settlement
+> transaction or the expiry refund changes. What the wallet holds is
+> e-cash: bearer notes under the player's own seed that no node, seat,
+> committee or gateway holds or can move, blind-signed so the guardians
+> cannot tell whose they are. The trust statement is §22's, not a new one:
+> a standing balance is the same claim on the federation a stake lock is,
+> held for as long as the player chooses instead of for one round. §24A.3's
+> rejection of session balances stands for what it rejected — a balance
+> held in a committee's Lightning node — and is shown not to apply to notes
+> the player holds himself. Changed: §0.16, §0.18, §9, §22, §23.1, §23.5,
+> §24, §24A, the worked example, `FEDERATION.md` (flow, residuals,
+> rehearsal, rulings).
 
 > **Revision 4.6.2 — the custody construction is fixed (the owner 2026-09-11).**
 > A stake no longer waits as a held HTLC in a Lightning node. It waits as a
@@ -410,14 +431,17 @@ same inputs + same seed + same sim version = same score
 
 Alice opens the Unity WebGL game and sees an active round: 100 sat stake,
 49 players, late join open, entry closes 12:07, mission time 3 minutes. She
-picks a truck and cargo, commits 100 sat from her external Lightning wallet,
+picks a truck and cargo, commits 100 sat from her player wallet (topped up
+from her external Lightning wallet when it runs low, §24A.1),
 and rolls out. She steers, brakes, chooses her route, meets deterministic
 armies and fire, takes damage, sees competitors as ghosts, reaches the gate.
 Independent BLWP nodes replay her authenticated input history and confirm
 `DELIVERED, score 18,321, THE BULLS WIN (+0.42%)` - the price rose over the
 round, the bull line pressed while she drove, and the end screen says so
 beside her score and her sats. After membership and results are finalized, her
-rank determines her share of the loser pool, settled to her external wallet.
+rank determines her share of the loser pool, collected into her player
+wallet the moment it is available and withdrawn to her external wallet
+whenever she likes.
 
 ## 0.17 What changes technically
 
@@ -439,6 +463,9 @@ Central authoritative game server; central player ledger; persistent
 custodial balances; operator hot-wallet float as bankroll; house-backed
 multipliers; 90% RTP target; global operator calibration; mandatory 10%
 house fee; central withdrawal endpoint; one operator deciding results.
+
+A balance the player holds himself, as e-cash under his own seed (§24A.1,
+v4.6.3), is not a custodial balance: no operator holds it or can move it.
 
 ## 0.19 Deliberately preserved
 
@@ -1539,8 +1566,8 @@ committee (§23.1).
 3. committees selected + verified  client recomputes them itself (§5A.11)
 3b. settlement seats publish        claim_pk, signed by >=5 seats (§23.1 step 0)
 4. player builds Entry Contract    P generated, Feldman shares to THIS committee, A0 = P·G
-5. player's wallet pays a deposit  into the federation, via any listed gateway
-6. client locks the stake          stake lock in the federation (§23.1), not settled
+5. player wallet holds the stake   e-cash (§24A.1); if short, a Lightning deposit via any listed gateway
+6. client locks the stake          spent from the player wallet into a stake lock (§23.1), not settled
 7. >=5 EntryReceipts               STAKE_COMMITTED
 8. play
 ```
@@ -2178,6 +2205,10 @@ threshold of the round's federation guardians (v4.6.2, §23.6)
     -> can take the federation's reserves, every round's locks included
 federation halted below its threshold
     -> every lock freezes, refunds included; there is no unilateral exit
+
+player wallet balance (v4.6.3, §24A.1)
+    -> the two federation lines above, for as long as the player leaves
+       e-cash in the wallet instead of for one round; nothing is added
 ```
 
 5-of-7 GAME/VERIFY slots run by a PLAYER of the round (v4.6.2, P5)
@@ -2193,7 +2224,8 @@ federation halted below its threshold
 
 The first two require five bonded operators to collude and forfeit five
 bonds, in a round whose committee they could not choose (§5A.5) and in which
-they may not be playing (§5A.13). The last two are the federation's own
+they may not be playing (§5A.13). The federation lines - guardians, halt,
+and the player wallet's standing balance - are the federation's own
 trust statement, stated without cosmetics: they are why the guardians MUST
 be independent bonded census operators, why a round names its federation,
 and why a federation's exposure is capped alongside §5A.10's stake ceiling.
@@ -2492,16 +2524,20 @@ been removed from this document.
    Contract in clear: the fee is owed once the round is `FINAL`, whatever
    the result, and must never share `P` — claiming a winner's fee lock would
    otherwise publish the winner's `P`.
-3. The player's wallet pays a Lightning **deposit invoice** for the stake
-   into the round's federation (`federation_id`, §23.6), made through any
-   gateway the federation lists. The gateway pays the federation first and
-   learns the preimage only from its consensus, so it cannot keep the
-   payment. It can delay: the invoice's CLTV is short, and a client moves to
-   the next gateway after a timeout — a slow gateway costs the round, never
-   the money.
-4. The player's client locks the received amount — in the same federation
-   transaction where it can — as a **stake lock** and a **fee lock**,
-   contracts inside the federation:
+3. The stake and the fee come from the **player wallet** (§24A.1,
+   v4.6.3): e-cash the player already holds in the round's federation
+   (`federation_id`, §23.6). Only when the wallet holds less does the
+   client ask for a Lightning deposit of the shortfall: the player's
+   external wallet pays a **deposit invoice** into the federation, made
+   through any gateway the federation lists, and the notes land in the
+   player wallet. The gateway pays the federation first and learns the
+   preimage only from its consensus, so it cannot keep the payment. It can
+   delay: the invoice's CLTV is short, and a client moves to the next
+   gateway after a timeout — a slow gateway costs the round, never the
+   money.
+4. The player's client spends the stake and the fee from the player wallet
+   — in one federation transaction — into a **stake lock** and a **fee
+   lock**, contracts inside the federation:
 
    ```text
    stake lock                          fee lock
@@ -2575,7 +2611,10 @@ balance at any moment — there is none. The node fee travels in its own lock
 (§23.1) and leaves by the same transaction, so a fee dispute never touches
 another player's stake. Donations are not locked in the federation: the
 player's wallet pays the §27A.4 recipients directly, every game, at entry
-(ruled 2026-09-11).
+(ruled 2026-09-11); from v4.6.3 that payment may leave the player wallet
+through a gateway (§24A.1) and is still never locked. Winnings and refunds
+are redeemed into the player wallet (§24A.1) as notes under the player's own
+seed - the player's money, not a pool.
 
 ## 23.6 Construction and maturity — stated honestly
 
@@ -2654,43 +2693,62 @@ would show only a deposit. Therefore:
 A lost player seed loses the locks it can refund. That is the trade for
 having no node in the refund path.
 
-**A withdrawal survives the tab (the owner 2026-09-14).** Collecting a payout and
-a stake from the federation and paying them out over Lightning takes minutes
-(measured live: 414 s from the press to the player's invoice settled). A tab
-closed inside that time used to take the collected e-cash with it, because
-the round's wallet was kept in the tab. So:
+**The player wallet survives the tab (the owner 2026-09-14; generalized to
+the player wallet 2026-09-21).** Collecting a payout from the federation and
+paying it out over Lightning takes minutes (measured live: 414 s from the
+press to the player's invoice settled). A tab closed inside that time used
+to take the collected e-cash with it, because the round's wallet was kept in
+the tab. From v4.6.3 the wallet is the player's, not the round's (§24A.1),
+and the rules are:
 
-- **What a round's money needs is kept in the browser, not in the tab**: the
-  round's record (the round, the invite, the seats, the lock, and the seed the
-  round's key comes from) and the round wallet's database. The next start of
-  the client - a reload, another tab, a restarted browser - opens the same
-  wallet under the same key. The seed a *new* round is played under stays per
-  tab (two tabs are two players, §0.12); only a round already entered is kept.
-- **A withdrawal can be claimed later.** On every start the client looks at
-  every kept round that is not final - what the federation still holds for
-  the round's key, and what the round's wallet holds - and offers the
-  Withdraw for it. Looking collects nothing (§23.6); the Withdraw is still the
-  one action that collects and pays out.
-- **The game tells the player.** After start the lobby shows that a
-  withdrawal is available, with the amount, until it is withdrawn.
-- **One tab at a time uses a kept round's wallet** (a browser lock); another
-  tab shows the round as open elsewhere and takes over when that tab closes.
-- A kept round is dropped only once it is final with nothing left in its
-  wallet. Cleared browser storage loses the wallet's e-cash; what the
-  federation still holds for the key comes back only through the seed backup.
-- **On another device** (the owner 2026-09-14: alice plays on her desktop, forgets
-  to withdraw, and plays on her iPhone two hours later): the seed backup is
-  brought in, and on start the client asks each seat for the rounds it settled
-  in the last 24 hours (`GET /settled?since=`), each listed with the keys its
-  settlement pays and the refund keys of its verified locks - both public
-  already. The client derives its key per round from the seed and matches it
-  there; it asks nothing per round, so no seat learns which rounds it looks
-  for. A matched round's contract comes from `/round` and must hash to its id;
-  the round is then kept and withdrawn like one the device joined. The node
-  stores nothing new and never holds the seed. What another device's Withdraw
-  already collected into its own wallet stays on that device until it starts
-  again; a lock refused at the door, known to no seat, comes back only on the
-  device that made it.
+- **What the player's money needs is kept in the browser, not in the tab**:
+  the player wallet's database, and for every round entered its record (the
+  round, the invite, the seats, the lock, and the seed the round's key comes
+  from). The next start of the client - a reload, another tab, a restarted
+  browser - opens the same wallet under the same seed. A tab with no kept
+  player creates a fresh seed, which is a new player (§0.12: two tabs are
+  two players only while neither has deposited or entered); a browser with a
+  kept player opens that player, one tab at a time.
+- **Winnings and refunds arrive on their own (the owner 2026-09-21).** The
+  client redeems every forfeit and every payout contract for one of its
+  round keys into the player wallet the moment it is available: while the
+  tab is open, as soon as the committee's signature or the settlement
+  transaction is seen; otherwise on the next start, which looks at every
+  kept round that is not yet settled into the wallet and at what the
+  federation still holds for its keys. No press is needed. It is the
+  player's own key redeeming into the player's own notes, so nothing
+  changes hands. The Withdraw is the one action that pays out over
+  Lightning, and it is the player's.
+- **Pending, then in the wallet.** From `STAKE_COMMITTED` until the notes
+  are in the wallet the lobby and the end screen show the stake and, once
+  the payout table is final, the winnings as **pending**, with the amount
+  and what they wait on (result, objection window, settlement signature,
+  redemption). The moment the notes are in the wallet the pending line
+  clears and the balance shows them.
+- **The game tells the player.** The wallet balance is shown wherever the
+  player can enter a round or withdraw, beside the federation's name.
+- **One tab at a time uses the wallet** (a browser lock); another tab shows
+  the wallet as open elsewhere and takes over when that tab closes.
+- A kept round is dropped once it is settled with nothing left in the
+  federation for its key. The wallet is never dropped by the client.
+  Cleared browser storage loses the wallet's notes unless the federation's
+  stock backup restores them from the seed (FEDERATION.md rehearsal item
+  10); what the federation still holds in contracts for a round key comes
+  back from the seed alone.
+- **On another device** (the owner 2026-09-14: alice plays on her desktop,
+  forgets to withdraw, and plays on her iPhone two hours later): the seed
+  backup is brought in. The wallet's notes recover through the federation's
+  stock backup under that seed. For contracts not yet redeemed, the client
+  asks each seat for the rounds it settled in the last 24 hours
+  (`GET /settled?since=`), each listed with the keys its settlement pays and
+  the refund keys of its verified locks - both public already. The client
+  derives its key per round from the seed and matches it there; it asks
+  nothing per round, so no seat learns which rounds it looks for. A matched
+  round's contract comes from `/round` and must hash to its id; the round
+  is then kept and redeemed like one the device joined. The node stores
+  nothing new and never holds the seed. Notes a device holds without a
+  backup stay on that device until it starts again; a lock refused at the
+  door, known to no seat, comes back only on the device that made it.
 
 ---
 
@@ -2700,50 +2758,124 @@ A round is two minutes and a stake is 100 sats, so a player who sits down
 for half an hour signs fifteen payments. That is not a payments problem, it
 is the reason they stop playing.
 
-The fix is to remove the **approvals**, never the payments. Every round keeps
+The fix is to remove the **approvals**, never the locks. Every round keeps
 its own stake lock, its own `stake_point` bound to its own Entry Contract,
 its own VSS-shared preimage and its own expiry refund (§23). What changes is
-only how often the player is interrupted.
+where the stake comes from and where the winnings go.
 
-## 24A.1 Budgeted play
+## 24A.1 The player wallet *(v4.6.3)*
 
-Nostr Wallet Connect carries a budget — "1000 sats per hour to this
-connection" — and that is exactly the shape needed. The player grants it
-once; the client pays each round's deposit invoice inside it; no approval
-screen appears again until the budget is spent or its window closes.
+**RULED (the owner 2026-09-21):** the round wallet of §24 is the **player
+wallet**: one wallet per player seed and federation, kept in the browser,
+into which the player deposits, from which every stake is paid, into which
+every payout and refund is collected **automatically the moment it is
+available** (shown as *pending* until then, §24), and from which the player
+withdraws over a Lightning invoice whenever he likes, in any amount. No
+custody, and no channel to any central server.
 
-**Nothing about settlement changes.** No node holds a balance, because there
-is no balance — there are fifteen ordinary entries that happened not to
-interrupt anybody.
+What it holds is the federation's **e-cash**: bearer notes issued by the
+guardians under blind signatures (stock Fedimint mint module). Whoever holds
+a note can spend it; the guardians cannot tell whose it is; nobody else has
+it. The notes are derived from the player's seed, so the seed is the wallet.
 
-The caveat from §24 stands and matters more here, not less: **an NWC budget
-is wallet-side policy and encodes nothing about the round.** It bounds the
-loss if the client is compromised; it does not bind a payment to a contract.
-The binding is still `stake_point` in the Entry Contract. So a client MUST
-show the running total and what it was spent on, and a budget MUST be
-time-boxed rather than open-ended.
+```text
+deposit    the external wallet pays a BOLT11 invoice through any listed
+           gateway -> e-cash in the player wallet (LNv2 receive, atomic,
+           §23.1); any amount the player chooses
+stake      the client spends e-cash from the player wallet into the round's
+           stake lock and fee lock (§23.1 step 4): no invoice, no gateway,
+           no Lightning payment; the lock's refund_pk is a fresh per-round
+           key from the same seed (§24)
+result     a forfeit (DELIVERED, VOID) and a payout contract (§23.2) are
+           redeemed by the player's round key into the player wallet, by
+           the client, as soon as they exist; pending until then
+withdraw   the external wallet issues a BOLT11 invoice for any part of the
+           balance; the client pays it from e-cash through any listed
+           gateway (LNv2 send, paid only against the preimage, §23.6)
+```
+
+Why this is not custody, stated the way §22 states things:
+
+- **Nobody holds it.** No BLWP node, seat, committee or gateway holds a
+  note or can move one. The seats never see the wallet; a gateway sees one
+  payment at a time and is paid only against its preimage. A client that
+  is closed, deleted or offline keeps its notes; nothing needs anyone to
+  act.
+- **What it is a claim on** is the federation's reserves - exactly the
+  claim a stake lock is, and under the same residual (§22: a guardian
+  threshold, a halted federation). v4.6.2 accepted that residual for the
+  length of a round. v4.6.3 lets the player extend it for as long as he
+  leaves notes in the wallet. That is the whole change to the trust
+  statement, and the reason the client MUST show the balance beside the
+  federation's name and guardian count, and offer Withdraw wherever it
+  shows the balance. The federation exposure cap (§22, FEDERATION.md F9)
+  counts standing balances, not only locks.
+- **What a lying client can take** (§35A, F2) is the balance, no longer an
+  NWC budget per hour. The bounds are unchanged: a known-good client hash
+  for paying rounds (§5), the seed-derived keys with a visible fingerprint
+  (§24), and the balance itself, which is the player's choice. The client
+  says so where it asks for a deposit.
+- **Unlinkability improves.** Blind signatures cut the link between a
+  deposit and the stake it funds at the federation; refund keys stay fresh
+  per round (§24). A gateway sees deposits and withdrawals, never rounds.
+- **No channel anywhere.** The player holds no Lightning channel. The
+  client speaks to the federation's guardians (any of them, as a Fedimint
+  client does) and, only when the player deposits or withdraws, to any one
+  of at least two gateways run by different operators (§23.6). A gateway
+  down is a retry through the other, never a loss, never a wait for anyone.
+
+**Approval fatigue is solved by the wallet, not by wallet permissions.** A
+stake spent from e-cash the client already holds needs no external approval
+at all. Nostr Wallet Connect, QR, deep link and WebLN remain the ways to
+*deposit*, and an NWC budget remains a sensible bound on a top-up; the
+caveat of §24 stands: an NWC budget is wallet-side policy and encodes
+nothing about a round. The binding of a stake to its round is still
+`stake_point` in the Entry Contract.
+
+**The seed is the wallet.** Before the first deposit the client MUST show
+the seed backup and have the player confirm it; a lost seed loses the notes
+and every contract the seed's keys can refund (§24). The federation's stock
+backup and recovery (mint module, encrypted to the guardians under the seed)
+is what brings a wallet back on a new device; the rehearsal in
+`FEDERATION.md` (items 8-11) must prove it before real money.
+
+**Empty wallet, first round.** A player with no balance is asked for a
+Lightning deposit of at least the stake plus fee, and the client locks from
+the wallet the moment the notes arrive - the v4.6.2 per-round deposit is
+this case, not a second path (§23.1 step 3).
+
+**Donations** (§27A.4) are paid at entry from the player wallet through a
+gateway to each recipient's LNURL invoice, as a withdrawal is (RULED HERE).
+They are still never locked in the federation and still go to the
+recipient directly; the gateway is paid only against the preimage. A player
+who prefers may pay them from the external wallet as before.
 
 ## 24A.2 The payment surface, and all of it
 
 | Direction | Mechanism |
 |---|---|
-| Player pays a stake | BOLT11 deposit invoice per round through any listed gateway, locked at once (§23.1); NWC budget, QR, deep link or WebLN |
-| Player is paid a win | A payout contract to the player's key; the client withdraws it over Lightning through any listed gateway |
-| Donations are paid | LNURL per recipient, by share (§27A.4), from the player's wallet directly at entry — never through the federation |
+| Player deposits | BOLT11 invoice through any listed gateway into the player wallet, any amount; NWC budget, QR, deep link or WebLN |
+| Player pays a stake | E-cash from the player wallet into the round's stake lock and fee lock (§23.1); no Lightning payment |
+| Player is paid a win or refunded | A payout contract or a forfeited lock to the player's round key, redeemed into the player wallet by the client as soon as it exists; pending until then |
+| Player withdraws | Any part of the balance to a BOLT11 invoice from the external wallet, through any listed gateway |
+| Donations are paid | LNURL per recipient, by share (§27A.4), from the player wallet through a gateway or from the external wallet - never through a lock |
 
-Ordinary Lightning in both directions, one round at a time; the stake itself
-waits in the federation (§23.6).
+Lightning at the edges only, when the player chooses; stakes and winnings
+move inside the federation, under the player's own keys, and nothing waits
+in a Lightning node.
 
-## 24A.3 What was considered and rejected: session balances
+## 24A.3 What was considered and rejected: committee-held session balances
 
 A single 1000 sat deposit spent across ten rounds was specified and then
-**removed**. It is recorded here so it is not re-invented as a new idea.
+**removed** (v4.6). It is recorded here so it is not re-invented, and so the
+player wallet of v4.6.3 is not mistaken for it.
 
-It required a committee to hold the remainder between rounds, and that is
-custody. Three properties killed it, in order of severity:
+It required a **committee to hold the remainder between rounds** in its
+Lightning node, and that is custody. Three properties killed it, in order
+of severity:
 
 1. **No unilateral exit.** Once a deposit settles, the sats are inside the
-   committee's Lightning node — not in a script a timelock can open. An
+   committee's Lightning node - not in a script a timelock can open. An
    on-chain escrow would give the player a real way out on their own, and
    its closing fee exceeds a 100 sat stake. **The construction that fixes
    it is unaffordable at exactly the size that needs it.**
@@ -2751,23 +2883,39 @@ custody. Three properties killed it, in order of severity:
    leaves the player waiting. Slashing hurts the operator, returns no sats,
    and shortens the wait by not one day.
 3. **It inverts the default.** Under §23, total failure refunds the player
-   by expiry — *doing nothing returns the money*. A settled balance requires
+   by expiry - *doing nothing returns the money*. A settled balance requires
    somebody to act. No cap, schedule or penalty converts one into the other,
    because that is simply what "the payment settled" means.
 
-The problem it was meant to solve — approval fatigue — is solved by §24A.1
-at zero cost to the trust model. **Paying for a wallet limitation with a
-permanent protocol property is the wrong trade.**
-
 **The stake lock is not a session balance (v4.6.2).** Each round's deposit
 is locked the moment it arrives, with the player's own key as the refund
-key; nothing waits between rounds, and winnings are withdrawn to the
-player's wallet. Properties 2 and 3 above still hold: a committee that goes
-dark costs a wait until expiry, and expiry returns the stake to the player's
-own key with nobody else acting. Property 1 does not, and it is said here
-rather than hidden: a stake lock has no exit to Bitcoin, so a federation that
-halts freezes it. That is the price of having no single node in the stake
-path, bounded by the stake ceiling and the federation exposure cap (§22).
+key. Properties 2 and 3 hold: a committee that goes dark costs a wait until
+expiry, and expiry returns the stake to the player's own key with nobody
+else acting. Property 1 does not, and it is said here rather than hidden: a
+stake lock has no exit to Bitcoin, so a federation that halts freezes it.
+That is the price of having no single node in the stake path, bounded by
+the stake ceiling and the federation exposure cap (§22).
+
+**The player wallet is not a session balance either (v4.6.3).** Take the
+three properties against it:
+
+1. *No unilateral exit* - the same as the stake lock, already accepted
+   above, for as long as the player chooses to hold notes. A federation that
+   offers stock on-chain withdrawal gives an exit through the guardians;
+   that is a federation action, not a unilateral one, and is not claimed as
+   one.
+2. *Slashing is punishment, not restitution* - does not arise. No
+   committee and no node holds anything, so there is nobody to go dark
+   except the federation itself, which is §22's residual and applies to a
+   lock just the same.
+3. *It inverts the default* - it does not. The notes are in the player's
+   browser under the player's seed. Doing nothing leaves the money with the
+   player; nobody has to act for him to keep it, and short of §22's guardian
+   threshold nobody can act to take it.
+
+What was rejected was a balance somebody else holds. What v4.6.3 adds is a
+balance the player holds. The remaining difference from v4.6.2 is exposure
+in time, stated in §24A.1 and §22, and shown to the player.
 
 ---
 
@@ -2984,8 +3132,9 @@ opens. Between 11:55 and 12:00, 37 players enter. At 12:00 the round starts.
 
 Alice joins at 12:01. Because the committees have been known since 11:55,
 she can build a valid entry: she generates `P`, VSS-shares it to the seven
-settlement nodes, signs her Entry Contract, and her wallet pays a 100 sat
-deposit that her client locks in the federation. Five settlement nodes
+settlement nodes, signs her Entry Contract, and her client spends 100 sat
+from her player wallet into a stake lock in the federation (a Lightning
+deposit first, had the wallet been short). Five settlement nodes
 confirm the lock; five game/verify
 nodes issue EntryReceipts. She rolls out, publishes inputs and checkpoints,
 and delivers.
@@ -3002,9 +3151,11 @@ them, releases preimage shares for the losers, and signs one settlement
 transaction that moves the losers' locks straight into the qualifiers'
 rank-weighted payout contracts — every action a 5-of-7 threshold ceremony.
 
-Alice receives her 100 sat stake back plus her rank share. No central game
-server decided she won, and at no instant did any single party hold her
-money.
+Alice's client redeems her 100 sat stake and her rank share into her player
+wallet the moment the settlement transaction is seen; until then her end
+screen showed them as pending. She plays on from the wallet, or withdraws to
+her own Lightning wallet whenever she likes. No central game server decided
+she won, and at no instant did any single party hold her money.
 
 ---
 
