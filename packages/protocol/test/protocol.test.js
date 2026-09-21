@@ -342,7 +342,7 @@ test('a flat rank curve is flagged before anyone stakes', () => {
 
 function sampleContract() {
   return {
-    networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1), startTimeMs: 1788200000000n, entryCloseMs: 1788200060000n, objectionWindowMs: 600000n, custody: 'THRESHOLD_LN', slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
+    networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1), startTimeMs: 1788200000000n, entryCloseMs: 1788200060000n, objectionWindowMs: 600000n, custody: 'THRESHOLD_LN', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
     censusHeight: 964900, censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
     stakeMsat: 100000n, bondMinSats: 100000n, blockTicks: 9000,
     exposureReference: 12451840, corridorHalfWidth: 3014656, spawnFreeRadius: 1441792,
@@ -414,14 +414,16 @@ test('a round fixes where a slashed bond\'s other half goes, and it is in the id
   const c = sampleContract();
   const back = decodeRoundContract(encodeRoundContract(c));
   assert.equal(back.slashRemainder, c.slashRemainder);
-  assert.deepEqual(SLASH_REMAINDERS, ['BURN', 'COMMITTEE']);
+  // ONE VALID VALUE (RULED, the owner 2026-09-21): nothing is ever burned, so the remainder has one
+  // destination - the 75/25 split - and BURN and COMMITTEE are both withdrawn.
+  assert.deepEqual(SLASH_REMAINDERS, ['SPLIT']);
+  assert.equal(c.slashRemainder, 'SPLIT');
 
-  const other = { ...c, slashRemainder: c.slashRemainder === 'BURN' ? 'COMMITTEE' : 'BURN' };
-  assert.notDeepEqual(roundId(other), roundId(c));
-  assert.equal(decodeRoundContract(encodeRoundContract(other)).slashRemainder, other.slashRemainder);
-
+  assert.throws(() => encodeRoundContract({ ...c, slashRemainder: 'BURN' }),
+    /is not one of SPLIT/, 'a round could still name a burned remainder');
+  assert.throws(() => encodeRoundContract({ ...c, slashRemainder: 'COMMITTEE' }), /is not one of SPLIT/);
   assert.throws(() => encodeRoundContract({ ...c, slashRemainder: 'THE OPERATOR' }),
-    /is not one of BURN, COMMITTEE/);
+    /is not one of SPLIT/);
   assert.throws(() => encodeRoundContract({ ...c, slashRemainder: undefined }), /is not one of/);
 });
 

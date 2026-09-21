@@ -37,7 +37,7 @@ const contractFor = (nodes, stakeMsat) => ({
   committeeTimeMs: BigInt(NOW), randomnessRule: 'bitcoin-block-hash',
   startTimeMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS, entryCloseMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS + 200000n,
   objectionWindowMs: 600000n, custody: 'THRESHOLD_LN', slashMinimumServed: 20,
-  slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144,
+  slashRemainder: 'SPLIT', federationId: new Uint8Array(32), stakeExpiryBlocks: 144,
   // a paying round names a relay (§13A, else the door refuses it before the
   // preflight this measures); nothing here ever posts to it
   publicationRelays: ['http://127.0.0.1:9'], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,

@@ -73,7 +73,7 @@ try {
     networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
     gameVerifySlots: 2, settlementSlots: 2, simCoreHash: CORE_HASH, startTimeMs: now + MIN_ENTRY_WINDOW_MS,
     entryCloseMs: now + MIN_ENTRY_WINDOW_MS + 600000n, objectionWindowMs: 3000n, custody: 'FEDERATION',
-    slashMinimumServed: 20, slashRemainder: 'BURN', federationId: fromHex(LockClient.federationIdOf(process.env.INVITE)), stakeExpiryBlocks: 144,
+    slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: fromHex(LockClient.federationIdOf(process.env.INVITE)), stakeExpiryBlocks: 144,
     publicationRelays: [`http://127.0.0.1:${signerNode.port}`], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,
     censusRoot: b32(2), committeeTimeMs: now - 1000n, randomnessRule: 'bitcoin-block-hash', stakeMsat: STAKE,
     bondMinSats: 50000n, blockTicks: 9000, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,

@@ -225,7 +225,7 @@ const contract = {
   startTimeMs: COMMITTEE_MS + MIN_ENTRY_WINDOW_MS,
   entryCloseMs: BigInt(NOW) + 30000n,
   objectionWindowMs: 1n, custody: 'THRESHOLD_LN', slashMinimumServed: 20,
-  slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144,
+  slashRemainder: 'SPLIT', federationId: new Uint8Array(32), stakeExpiryBlocks: 144,
   publicationRelays: [at(a), at(b)],
   donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,
   censusRoot: b32(2), stakeMsat: STAKE_MSAT, bondMinSats: 50000n, blockTicks: BLOCK_TICKS,

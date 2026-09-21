@@ -96,11 +96,11 @@ export function abandonmentProofNeeds({ f, halted = false, seated = null }) {
  *   abandon_blocks     absence that is abandonment; halt before liquidation; load before a founding
  *   departure_notice   notice a guardian gives before leaving
  *   founding_window    time a drawn set has to finish its DKG
- *   drain_blocks       how long a draining federation serves, AND the late-claim tail
+ *   drain_blocks       how long a draining federation serves, AND the late-claim tail (four weeks)
  *   claim_blocks       the liquidation claim window the arbitration set opens
  */
 export const MAINNET_CLOCKS = Object.freeze({
-  abandonBlocks: 288, departureNotice: 432, foundingWindow: 432, drainBlocks: 2016, claimBlocks: 216,
+  abandonBlocks: 288, departureNotice: 432, foundingWindow: 432, drainBlocks: 4032, claimBlocks: 216,
 });
 
 /**
