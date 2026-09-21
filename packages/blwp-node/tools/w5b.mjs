@@ -19,7 +19,7 @@
 import { readFileSync, copyFileSync, mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
@@ -27,6 +27,7 @@ import WebSocket from 'ws';
 
 import { standUpRound } from './round-2of2.mjs';
 import { stakeLockPort } from '../src/stake-lock-port.js';
+import { bitcoindRpc } from '../src/chain-rpc.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { awaitAttestedClaimKey, stakeFor, postHandout, entryFor, playerFor, fetchRandomness } from '../../blwp-client/src/join.js';
 import { lockStake, handLock, redeemStake, findLock, forfeitOf } from '../../blwp-client/src/page-lock.js';
@@ -88,9 +89,51 @@ function runOf(entry, randomness, cap = 3000) {
   return { ended: RUN_LIVE, ticks: cap, st };
 }
 
-const round = await standUpRound({ host: '127.0.0.1', portA: 18571, portB: 18572, stakeMsat: 1000000n,
+// ON THE CHAIN, AND WITH THREE OPERATORS (NODES=3 with RPCPORT): §23.6's gate only
+// runs when the round is stood up against a real chain, and it wants the
+// federation's threshold in DISTINCT bonded census nodes - three, for the 3-of-4
+// fedimintd will build. Without these the run is the 2-of-2 fixture round as before.
+const howMany = Number(env.NODES || 2);
+const onChain = !!env.RPCPORT;
+let chain = {};
+let guardianOf = [];
+if (onChain) {
+  const RT = join(P, 'btc');
+  const BIN = env.BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli';
+  const base = ['-regtest', `-datadir=${RT}`, `-rpcport=${env.RPCPORT}`, '-rpcuser=blwp', '-rpcpassword=blwp'];
+  const cliRaw = (...a) => execFileSync(BIN, [...base, ...a], { encoding: 'utf8' }).trim();
+  const cli = (...a) => execFileSync(BIN, [...base, '-rpcwallet=blwp', ...a], { encoding: 'utf8' }).trim();
+  try { cliRaw('createwallet', 'blwp'); } catch { try { cliRaw('loadwallet', 'blwp'); } catch { /* loaded */ } }
+  cli('generatetoaddress', '101', cli('getnewaddress'));
+  chain = { cli, rpc: bitcoindRpc({ url: `http://127.0.0.1:${env.RPCPORT}/wallet/blwp`, readCookie: () => 'blwp:blwp' }) };
+  const fed = await port.guardians();
+  guardianOf = [...new Array(howMany).keys()].map((i) => [{ federationId, guardianKey: fed.keys[i] }]);
+  say({ step: 'federation', id: toHex(fed.federationId).slice(0, 16), guardians: fed.guardians, threshold: fed.threshold,
+    nodes: howMany, guardianPerNode: guardianOf.map((g, i) => `${String.fromCharCode(65 + i)} -> ${toHex(g[0].guardianKey).slice(0, 16)}`) });
+}
+// AND NO LIGHTNING PORT AT ALL, which is the shipping default (NO_LIGHTNING =
+// null) and is the proof that no hold invoice is on this path. `createHeld` sits
+// behind custody's `reaches`, so a daemon with no port cannot call it: "this node
+// reaches no Lightning, so it holds no stakes". A round that opens, locks its
+// stake in the federation and settles with every daemon in that state has shown
+// the hold-invoice stack unused, not been asserted to.
+//
+// Measured the other way first and worth keeping: installing a REFUSING port
+// instead made it worse - a port that exists means the node holds stakes, and it
+// then demanded the preflight it could not have ("this node holds stakes and has
+// no preflight"). The absence is the measurement; a stub is a second Lightning.
+const round = await standUpRound({ host: '127.0.0.1', portA: 18571, portB: 18572,
+  ...(howMany > 2 ? { portC: 18573 } : {}), stakeMsat: 1000000n, ...chain,
+  ...(guardianOf.length ? { guardianOf } : {}),
+  // THE LIVE DAILY OWNS 18777 on this machine; this harness binds its own.
+  ...(onChain ? { donationRecipients: { port: 18787 } } : {}),
   federationId, invite: env.INVITE, signerNode: { stakeLocks: port }, objectionWindowMs: 20000n });
 const rid = fromHex(round.id);
+// EVERY DAEMON THIS ROUND HAS, and how many must agree - the committee's size, not a 2.
+const daemons = [round.a, round.b, round.c].filter(Boolean);
+const needed = daemons.length;
+say({ step: 'no hold invoices', reachesLightning: daemons.map((d) => d.reachesLightning),
+  note: 'createHeld sits behind custody.reaches; with no port it cannot be called' });
 const contract = round.contract;
 const withId = { ...contract, id: rid };
 let code = 0;
@@ -105,8 +148,8 @@ try {
   for (const role of ['winner', 'loser']) {
     const seed = random(32);
     const player = playerFor(withId, { seed, curve: pageCurve });
-    const stake = await stakeFor(withId, { signerNodes: contract.nodes, curve: pageCurve, random, playerPubkey: player.pubkey, needed: 2 });
-    const put = await postHandout(stake, round.nodes, { needed: 2 });
+    const stake = await stakeFor(withId, { signerNodes: contract.nodes, curve: pageCurve, random, playerPubkey: player.pubkey, needed });
+    const put = await postHandout(stake, round.nodes, { needed });
     let paying = Promise.resolve(null);
     const lock = await lockStake({ round: contract, roundId: rid, invite: env.INVITE, seed, stake, claimKey,
       playerPubkey: player.pubkey, LockClient, storage: tab(), onDeposit: (d) => { paying = pay(d.invoice); } });
@@ -130,7 +173,7 @@ try {
     const eid = entryId(entry);
     const joined = [];
     for (const b of round.nodes) joined.push((await fetch(`${b}/entry`, { method: 'POST', body: encodeEntryContract(entry) })).status);
-    const handed = await handLock({ entryId: eid, fields: lock.fields, nodes: round.nodes, needed: 2 });
+    const handed = await handLock({ entryId: eid, fields: lock.fields, nodes: round.nodes, needed });
     // THE FIRST MARK WHERE THE PAGE PUTS IT (§16): at tick 60, inside the start
     // deadline the round omits (900) - then the rest of the run and its end mark,
     // chained. A single first mark at the run's end (this harness's 1197 before)
@@ -168,7 +211,7 @@ try {
   const early = forfeit.ok ? 'granted' : forfeit.why.slice(0, 200);
   for (const stop = Date.now() + 180000; !forfeit.ok && Date.now() < stop; await wait(1000))
     forfeit = await forfeitOf({ roundId: rid, entryId: toHex(w.eid), nodes: round.nodes });
-  const kept = [round.a, round.b].map((d) => { const f = d.round.forfeit(w.eid); return f ? toHex(f.signature) === forfeit.signature : false; });
+  const kept = daemons.map((d) => { const f = d.round.forfeit(w.eid); return f ? toHex(f.signature) === forfeit.signature : false; });
   say({ step: 'winner forfeit', firstAsk: early, ok: forfeit.ok, msAfterClose: Date.now() - closedAt,
     contractId: forfeit.contractId, claimPkIsTheRounds: forfeit.claimPk === toHex(claimKey.claimPk),
     verifies: forfeit.ok && schnorr.verify(fromHex(forfeit.signature), fromHex(forfeit.contractId), claimKey.claimPk.subarray(1)),
@@ -178,7 +221,7 @@ try {
   const l = players.loser;
   const lost = await forfeitOf({ roundId: rid, entryId: toHex(l.eid), nodes: round.nodes });
   const lstat = await port.status(l.lock.outpoint);
-  say({ step: 'loser forfeit', ok: lost.ok, refused: lost.refused, keptBySignerNodes: [round.a, round.b].map((d) => !!d.round.forfeit(l.eid)),
+  say({ step: 'loser forfeit', ok: lost.ok, refused: lost.refused, keptBySignerNodes: daemons.map((d) => !!d.round.forfeit(l.eid)),
     lockHeld: !!(lstat && lstat.stored) });
 
   // ONE SIGNER NODE'S SIGNATURE (harness: signer node A's share read from its own store): the guardians must refuse it.

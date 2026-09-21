@@ -62,6 +62,7 @@ import { bondSetFor, tweakPoint, combine } from '../src/curve.js';
 import { bondOutputKey, bondInternalKey } from '../../protocol/src/bond-script.js';
 import { genesisFor } from '../../protocol/src/genesis.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
+import { receiptsNeeded } from '../../protocol/src/threshold.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -489,11 +490,11 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   const optsC = portC ? { port: portC, host, funded, donationSets: [TEST_DONATION_SET_REGTEST], headerBytes, bondProof, chainFor,
     ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn,
     ...(federation ? { federation } : {}), ...signerNode } : null;
-  const c = optsC ? await serve(dbC, optsC) : null;
+  const nodeC = optsC ? await serve(dbC, optsC) : null;
   if (a.port !== portA)
     throw new Error(`node A came up on ${a.port} and the bond names ${portA}`);
-  if (c && c.port !== portC)
-    throw new Error(`node C came up on ${c.port} and the bond names ${portC}`);
+  if (nodeC && nodeC.port !== portC)
+    throw new Error(`node C came up on ${nodeC.port} and the bond names ${portC}`);
 
   // THE ROUND. Its times are real instants, because a node refuses an entry
   // before committee_time and refuses a round whose entry window is shorter
@@ -559,8 +560,23 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     censusRoot: new Uint8Array(32), stakeMsat, bondMinSats: 50000n, blockTicks: BLOCK_TICKS,
     exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
     timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
-    nodes: [a.round.pubkey, b.round.pubkey, ...(c ? [c.round.pubkey] : [])],
+    nodes: [a.round.pubkey, b.round.pubkey, ...(nodeC ? [nodeC.round.pubkey] : [])],
   };
+  // AND A COMMITTEE THE PROTOCOL HAS A THRESHOLD FOR, said here rather than
+  // discovered half an hour later. `dkg.deal` asks `receiptsNeeded(nodes.length)`
+  // and only 2 (2-of-2) and 7 (5-of-7) have an answer; for anything else it
+  // refuses, no claim key is ever dealt, and `makeClaimKey` retries in the
+  // background until entry close without logging a thing. Measured on the first
+  // three-node round: all three daemons answered "this signer node holds no
+  // claim key for that round yet" for 240 s and no stake could be locked.
+  try { receiptsNeeded(contract.nodes.length); }
+  catch (e) {
+    await a.close(); await b.close(); if (nodeC) await nodeC.close();
+    throw new Error(`${contract.nodes.length} signer nodes cannot hold a round's key: ${e.message}. `
+      + 'The committee sizes the protocol defines are 2 (2-of-2) and 7 (5-of-7); a round assigned any '
+      + 'other number opens and can never settle, because its claim key is never dealt.');
+  }
+
   // THE CENSUS ROOT IS THE CHAIN'S, NOT A NUMBER THIS TOOL LIKES.
   //
   // It was 32 bytes of 2, which is why joining could never have run here even
@@ -706,19 +722,24 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   async function postRound(c) {
     const body = encodeRoundContract(c);
     const opened = [];
-    for (const node of [a, b]) {
+    // EVERY DAEMON THIS ROUND HAS, not the first two. Measured after the third
+    // node was added and the round was posted to A and B alone: C answered
+    // "404 this node holds no such round" to the claim key, and the round could
+    // not be played at all. A committee member that was never told of the round
+    // is not a committee member.
+    for (const node of [a, b, ...(nodeC ? [nodeC] : [])]) {
       const r = await fetch(`http://${host}:${node.port}/round`, { method: 'POST', body });
       if (!r.ok) throw new Error(`${node.port} refused the round: ${await r.text()}`);
       opened.push(toHex(new Uint8Array(await r.arrayBuffer())));
     }
     const rid = toHex(roundId(c));
     if (opened.some((o) => o !== rid))
-      throw new Error('the two daemons named the round differently: ' + opened.join(' '));
+      throw new Error(`the ${opened.length} daemons named the round differently: ` + opened.join(' '));
     return rid;
   }
   let id;
   try { id = await postRound(contract); } catch (e) {
-    await a.close(); await b.close();
+    await a.close(); await b.close(); if (nodeC) await nodeC.close();
     throw e;
   }
 
@@ -747,7 +768,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   const reach = [
     publicFor(a.port, `http://${host}:${a.port}`),
     publicFor(portB, `http://${host}:${portB}`),
-    ...(c ? [publicFor(portC, `http://${host}:${portC}`)] : []),
+    ...(nodeC ? [publicFor(portC, `http://${host}:${portC}`)] : []),
   ];
 
   // `headers=` is not named: the client already forms `<node>/headers` from
@@ -852,7 +873,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   return {
     id, url, lobbyUrl, contract, openNext, keepOpen,
     rounds: () => held.map((c) => ({ id: toHex(roundId(c)), committeeTimeMs: c.committeeTimeMs, entryCloseMs: c.entryCloseMs })),
-    get a() { return a; }, get b() { return b; }, get c() { return c; }, beacon: beaconSeen,
+    get a() { return a; }, get b() { return b; }, get c() { return nodeC; }, beacon: beaconSeen,
     // AND DAEMON A, the same way (M3.3-34 path 2: a forward to A lost while A is down).
     async restartA() { await a.close(); a = await serve(dbA, optsA); return a; },
     // DAEMON B RESTARTS: the same store, identity, options and port, served
@@ -864,7 +885,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     bond: `${reach[0]}/bond`,
     advert: toHex(bonded[0].signature),
     donationRecipients: recipients,
-    async close() { if (keeper) keeper.stop(); await a.close(); await b.close(); if (c) await c.close(); if (recipients) await recipients.close(); },
+    async close() { if (keeper) keeper.stop(); await a.close(); await b.close(); if (nodeC) await nodeC.close(); if (recipients) await recipients.close(); },
   };
 }
 
