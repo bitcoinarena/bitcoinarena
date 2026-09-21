@@ -491,9 +491,11 @@ test('a run that ends mid-backoff is not resumed when the node returns', async (
 });
 
 test('nothing is offered to a wire that is not there', async () => {
-  // The page's own round length, so a 3000-tick outage fits inside it and this
-  // measures the wire and not the hold bound, which has its own test below.
-  const { node, client } = await rig(0, 9000);
+  // The ROUND'S own length, from the core - a 3000-tick outage fits inside 10800 as it fitted inside the
+  // 9000 that was typed here, and this measures the wire and not the hold bound, which has its own test
+  // below. Typed, it was a length the core stopped using, and the node refused the round by name: "that
+  // round says a run is 9000 ticks and this core ends one at 10800".
+  const { node, client } = await rig(0);
   try {
     for (let i = 0; i < 6; i++) client.record([45875, 0, 0, 0, 0]);
     client.close();
