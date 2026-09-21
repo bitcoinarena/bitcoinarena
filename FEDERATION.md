@@ -17,6 +17,13 @@ until then, and Lightning is used only when the player deposits or
 withdraws. Steps 2, 3 and 6 below, the residuals, rehearsal items 8-11 and
 the rulings of that date carry it. Nothing about the lock changes.
 
+Amended the same day (the owner: the federation's **life**, spec §23A, v4.6.4):
+at least ten guardians on mainnet (7 of 10), testnet stays 2 of 2, drawn by
+sortition from bonded guardian-capable census nodes, replaced by succession
+two losses before a halt with every player's notes migrating on their own,
+abandonment slashed through the bond, and the player's BIP39 seed. Rehearsal
+items 12-16 below are its acceptance.
+
 ---
 
 ## The one idea
@@ -216,6 +223,24 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
 11. cleared browser storage with no backup made: what returns from the seed
     and what does not, written down and shown to the player before the
     first deposit
+12. **can stock 0.12 reshare?** measure whether a running federation can
+    seat a new guardian or move a gone guardian's share; the answer decides
+    whether §23A.6's succession is the first path or the fallback
+13. **succession on regtest:** a 4-guardian federation with notes in three
+    wallets and one open lock; one guardian abandons (attested); a successor
+    of 4 is founded with the three seated first; every wallet's notes move
+    on their own through a gateway that serves both, with no press; the lock
+    settles in the old federation and its payout moves; the old record goes
+    CLOSED; nothing lost anywhere, and the amounts written down
+14. **abandonment to slash:** the attestation set of item 13 committed in a
+    slashing transaction by the arbitration keys, half to the serving
+    guardians, half burned, and a departure with notice that is *not*
+    slashed
+15. **the seed alone, another device:** twelve words typed into a fresh
+    browser find the federation among three, recover the notes and the
+    unredeemed contracts, and show the same display name
+16. **testnet 2 of 2:** one guardian down halts; back up resumes; nothing
+    lost - stated as the limit of what testnet can prove
 
 ---
 
@@ -241,6 +266,12 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
   and a forfeit into the player wallet the moment it is available, with no
   press; until then the stake and the winnings are shown as **pending**
   (§24).
+- **The federation's life** (§23A): the first mainnet federation has at
+  least ten guardians; testnet is the 2-of-2 that runs today; the player
+  gets a BIP39 seed of 12 or 24 words to write down. Founding by sortition,
+  the draining bands, several federations picked by load, abandonment and
+  the bond, succession with automatic migration, and the channels are
+  RULED HERE in §23A for the owner to overrule.
 
 ## Security findings (Fable, 2026-09-11 15:00) — RESOLVED in spec v4.6.2 (the owner 15:10: "alles dokumentieren und lösen")
 

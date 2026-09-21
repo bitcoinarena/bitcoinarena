@@ -2,8 +2,23 @@
 ## Providerless P2P Multiplayer Protocol
 
 **Status:** architecture concept, security-hardened
-**Version:** 4.6.3 (supersedes v4.4/v4.5 and the earlier v1.x P2P drafts; all remain in git history)
+**Version:** 4.6.4 (supersedes v4.4/v4.5 and the earlier v1.x P2P drafts; all remain in git history)
 **Date:** 2026-09-21
+
+> **Revision 4.6.4 — the federation has a life (the owner 2026-09-21).** A
+> federation now holds standing balances across many rounds (v4.6.3), so
+> §23A says what the spec never said: how a federation is founded and by
+> whom (bonded, guardian-capable census nodes drawn by sortition; **at least
+> ten guardians, 7 of 10, for the first mainnet federation**; the testnet
+> federation stays the 2-of-2 that runs today); how many outages it absorbs
+> and when it is declared draining; several federations at once and how a
+> player's client picks one by load, not per round; how a guardian leaves,
+> what abandonment is, and what its bond then pays; succession back to
+> nominal size with automatic migration of every player's notes; how
+> guardians, seats and clients talk; how a player finds his federation on
+> any device; and the **BIP39 seed of 12 or 24 words** every player writes
+> down, from which the wallet, the round keys and the identity key derive.
+> Changed: §5A.1, §23A (new), §24, §25.2, §27A.6, `FEDERATION.md`.
 
 > **Revision 4.6.3 — the player wallet (the owner 2026-09-21).** The round
 > wallet of §24 becomes the **player wallet**: one e-cash wallet per player
@@ -626,6 +641,8 @@ NodeAdvertisement {
   bond_script_template_version
   payout_pubkey                // where fee shares are paid
   guardian_of[]                // v4.6.2: (federation_id, guardian peer key) this operator runs (§23.6)
+  guardian_capable             // v4.6.4: willing and able to be drawn as a guardian (§23A.2)
+  guardian_endpoint            // v4.6.4: the fedimintd API endpoint the client and the seats use (§23A.4)
   timestamp
   signature                    // by node_pubkey over all of the above
 }
@@ -2666,6 +2683,362 @@ Lightning stays open for when it hardens.
 
 ---
 
+# 23A. Federation lifecycle *(new in v4.6.4, the owner 2026-09-21)*
+
+A federation was, until v4.6.2, something a round named and a stake sat in
+for one round. From v4.6.3 it holds the player wallet across many rounds.
+This chapter says what the spec had not said: how a federation comes to
+exist and who its guardians are, how many outages it absorbs, when it is
+replaced and how every player's notes follow, what a guardian's bond is for
+when he leaves, how guardians, seats and clients talk, how a player finds
+his federation on any device, and what the player writes down.
+
+the owner's rulings of 2026-09-21 are marked **RULED**. Everything else here is
+**RULED HERE** and he can overrule it. All of it is **GAP** until built; the
+`FEDERATION.md` rehearsal items 12-16 are its acceptance.
+
+## 23A.1 Size, and what an outage does
+
+Fedimint's consensus runs with `n` guardians and tolerates `f` faulty ones
+where `n = 3f + 1`; a transaction is accepted by `2f + 1`. Nothing in this
+chapter changes that; it chooses `n`.
+
+**RULED (the owner 2026-09-21): the first mainnet federation has at least ten
+guardians.** Ten is `f = 3`: seven of ten sign, three may be down at once
+and no player notices anything. `federation_nominal` is a genesis parameter
+(§27A.6), per network:
+
+| | mainnet | testnet | regtest |
+|---|---|---|---|
+| guardians `n` | **10** | **2** (as run today, the owner 2026-09-21) | 4 |
+| sign `2f + 1` | 7 | 2 | 3 |
+| down at once, no effect `f` | 3 | **0** | 1 |
+
+Testnet is stated as it is: two guardians, 2-of-2, no tolerance at all. One
+guardian down halts it and the halt ends when he is back; nothing is lost
+and nothing is decided by it. That is what a test network is for, and it is
+why no mainnet rule below is derived from what testnet survives.
+
+**Seated, absent, gone.** An outage is Fedimint's business and is absorbed
+up to `f`. This chapter counts something slower: guardians that are
+*gone* - abandoned (§23A.5) or departed - and calls the rest **seated**.
+
+```text
+reserve = seated - (2f + 1)          how many more may be gone before halt
+
+OPEN       reserve >= 2              rounds may name it; deposits accepted
+DRAINING   reserve == 1              no new round names it; the client
+                                     refuses deposits into it; succession
+                                     has begun (§23A.6); everything else
+                                     runs, withdrawals included
+CRITICAL   reserve == 0              one more loss halts it: the client
+                                     shows Withdraw and Move only
+HALTED     seated < 2f + 1           every note and lock frozen (§22)
+```
+
+At ten: nine seated is still OPEN; eight is DRAINING and the successor is
+being founded while a further momentary outage is still absorbed; seven is
+CRITICAL. A federation is replaced two losses before it can halt, and
+halting takes four guardians gone or down at the same moment. That is the
+sense in which no outage reaches the player: the ones that could are
+handled while there is still margin for the ones that cannot.
+
+`federation_min = 2f + 1` is the CRITICAL line. Below it nothing moves and
+no rule here can help; §22 says so.
+
+## 23A.2 Who the guardians are: founding
+
+A guardian is a **bonded census node** (§5A.2), nothing else was ever
+allowed (§23.6, the owner 2026-09-15: every guardian has his own bond). To be
+drawn it must also:
+
+- advertise `guardian_capable` and a `guardian_endpoint` (§5A.1): it runs
+  fedimintd and will answer the client and the seats there;
+- carry a bond of at least `bond_min_guardian`, the settlement floor of the
+  highest bracket the network offers, because a guardian's exposure is the
+  federation's whole reserve, not one round's;
+- be a distinct `operator_id` from every other guardian of the same
+  federation, one seat per operator (§5A.13), and guard **at most one OPEN
+  federation** at a time - a draining one does not count. Independence
+  between federations is what makes several of them worth having (§23A.3).
+
+**What starts a founding.** One of three events, each at a Bitcoin height
+that becomes the founding's `trigger_height`:
+
+1. **Genesis.** The network's first federation is drawn at the first height
+   after genesis at which the census holds at least `federation_nominal`
+   guardian-capable nodes of distinct operators. Not before: a network with
+   six willing operators has no mainnet federation and no paying round,
+   and says so rather than opening with six (RULED HERE, from the owner's
+   ten).
+2. **Succession** (§23A.6): a federation entered DRAINING or its guardians
+   decided by threshold signature to be replaced.
+3. **Load.** Every OPEN federation has been at or above 80% of its
+   exposure cap (§23A.3) for `abandon_blocks`.
+
+**Who is drawn.** Bond-weighted stateless sortition, §5A.6 unchanged, with
+the beacon block after `trigger_height` and the tag `'BLWP/v1/GUARDIAN'`,
+over the guardian-capable census minus operators already guarding an OPEN
+federation, one ticket per operator. `federation_nominal` are drawn, then
+three alternates in order. Nobody hand-picks (the owner 2026-09-16 08:23; that
+ruling named the sitting *seats* of a round, and the guardians of a
+federation are drawn the same way but **once**, at founding - a Fedimint
+federation's key set is fixed by its setup ceremony and cannot be redrawn
+per round).
+
+**The ceremony** is stock Fedimint setup - the guardians' distributed key
+generation, unpatched, `disable_base_fees` on (the owner 2026-09-15) - among
+the drawn, within `founding_window` blocks of the beacon. A drawn node that
+has not joined the ceremony within a fifth of the window is replaced by the
+next alternate; it is not slashed, because it held nothing. If the window
+passes without a federation, the founding is void and the next trigger
+draws again. The ceremony's output is the federation configuration;
+`federation_id` is its hash, exactly as §23.6 already verifies it.
+
+**Then, in this order:** every guardian re-advertises with `guardian_of[]`
+naming `(federation_id, peer key)` (a new bond-committed advertisement,
+§5A.1); the guardians sign the first **federation record** (§23A.4) with
+`status = OPEN`; the seats and relays carry it. Only from then on may a
+Round Contract name it (§23.6 unchanged: threshold of its guardians bonded
+census nodes at `census_height`).
+
+## 23A.3 Several federations, and which one a player is in
+
+**Yes, several** - and for two reasons that have nothing to do with
+balance. Succession (§23A.6) needs a second federation to exist while the
+first drains, and the exposure cap (§22, F9) only means something if a
+network can add capacity by founding another instead of stretching one.
+
+What balancing can and cannot be: a player's notes live in **one**
+federation, and a round settles in **one** federation, because its
+settlement transaction is one atomic transaction inside one (§23.2). So the
+choice is made **when a player first deposits and when a federation is
+founded or drained** - not per round, and not by splitting one player over
+several federations, which would only mean every second round needs a swap.
+
+**Custody held is public.** A federation's reserve is its on-chain wallet,
+which anyone can read from the chain (Fedimint's wallet module, stock). Its
+collateral is public too: the bonds of its guardians. So:
+
+```text
+exposure_cap = Σ bond of its seated guardians        (RULED HERE: 1:1)
+load         = on-chain reserve / exposure_cap
+```
+
+The cap of §22 and F9 is therefore no longer policy but a number every
+client computes from chain data. A deposit into a federation at
+`load >= 1` is refused by the client; at 80% for `abandon_blocks` a new
+federation is founded (§23A.2); the seats show `load` beside every round.
+
+**Picking, RULED HERE (the owner's question: the one holding least):**
+
+- **First deposit.** The client takes the OPEN federations of the census,
+  drops those not on its known-good list (§23.6; or shows them and asks),
+  and picks the one with the **lowest load**; ties by the newest beacon.
+  That is the owner's rule applied where it works: new custody goes where the
+  least sits against the most collateral.
+- **A returning player stays** in his federation. The client offers **Move**
+  when that federation is DRAINING or CRITICAL (then it is not an offer but
+  the automatic migration of §23A.6), or when its load is above 90% and
+  another OPEN federation is below 50%.
+- **A round names one federation** (§23.6). The lobby shows every round with
+  its federation and load; the player's own come first. Entering a round in
+  another federation is a **swap** (§23A.6 mechanics: the notes leave the
+  one and arrive in the other through a gateway that serves both, stock
+  LNv2, seconds, the routing fee shown) and the client does it on the press
+  with the fee shown - it is not refused, and it is not the default.
+- **A seat opening a round** names the OPEN federation with the lowest load
+  among those its own bond qualifies it to serve; a creator who names
+  another has the client show why.
+
+## 23A.4 How guardians, seats and clients talk
+
+Nothing here is a new protocol; it is which stock channel carries what.
+
+| Who | To whom | How |
+|---|---|---|
+| guardian | guardian | Fedimint's own consensus P2P, stock; BLWP never speaks it |
+| client | federation | Fedimint client API over WebSocket to **any** guardian's `guardian_endpoint`; answers are threshold-verified by the stock client; the invite is the census's (below), never a link somebody sent |
+| settlement seat | federation | the same API, from the Rust client crates: it reads locks to verify them (§23.1 step 5), submits the settlement transaction (§23.2), and watches confirmations |
+| gateway | federation | stock LNv2 gateway, registered with the federation; the client reads the gateway list from the federation itself |
+| guardian | seats, relays | signs and posts the federation record and absence attestations (below) |
+
+**The federation record.** Signed by at least `2f + 1` of its guardians,
+newest `height` with valid signatures wins:
+
+```text
+FederationRecord {
+  federation_id, network_id
+  invite                       the stock invite; its config hashes to federation_id
+  nominal, threshold           n, 2f + 1
+  guardians[]                  (peer key, node_pubkey, operator_id, bond_outpoint, guardian_endpoint)
+  status                       OPEN | DRAINING | CRITICAL | CLOSED
+  successor_id                 set from DRAINING on (§23A.6)
+  gone[]                       (peer key, since_height, DEPARTED | ABANDONED, proof_ref)
+  exposure_cap, reserve        as of height
+  height
+  signatures[]                 >= threshold guardian signatures over all of the above
+}
+```
+
+Every guardian serves the newest record at its endpoint; **every seat
+mirrors** the newest record of every federation its census knows at
+`GET /federations`; the record also goes to the round's
+`publication_relays[]` (§25.2) so a federation's own guardians cannot be
+the only source of the news that it is draining. A client verifies the
+signatures against the guardians' keys as the census commits them (bond
+output, §5A.2), checks that `invite` hashes to `federation_id`, and trusts
+nothing about a federation that has no record it can verify.
+
+**Absence attestations.** Each guardian signs, once a day while it lasts,
+`(federation_id, peer, last_seen_height, height)` for every peer it has
+not seen in consensus. `2f + 1` of them agreeing on a peer for at least
+`abandon_blocks` is an **abandonment proof**: portable, verifiable by
+anyone from the record's keys, and the fraud proof §5A.3B's arbitration set
+slashes on. The arbitration residual of §5A.3B applies to it unchanged:
+Bitcoin cannot check liveness either.
+
+## 23A.5 A guardian leaves, and what his bond then does
+
+| Case | What it is | What happens |
+|---|---|---|
+| **Down** for less than `abandon_blocks` | an outage | nothing; Fedimint absorbs up to `f`; not recorded |
+| **Departure with notice** | a signed `(federation_id, peer, leave_after_height)` with `leave_after >= now + departure_notice`, posted like a record | recorded `DEPARTED` at that height; if the federation would then be DRAINING, succession starts **now** (§23A.6) so the successor is OPEN before he goes; he serves until the earlier of the federation's CLOSED and the successor's OPEN, then his seat is gone with no offence; his bond is released at maturity as any node's |
+| **Abandonment** | absent for `abandon_blocks` (attested, §23A.4); or his bond output spent while seated (the census sees it, §5A.2); or a departure that stops serving before its `leave_after`; or any guardian of a DRAINING federation who stops before CLOSED | recorded `ABANDONED` with the proof; **slashed** through §5A.3B; the federation's reserve counts him gone at once |
+
+**Where a slashed guardian bond goes (RULED HERE).** §5A.3's rule sends half
+of a round's slash to the round's affected players. A federation's players
+are exactly the people the federation cannot name - the notes are blind -
+so that half cannot be paid to them. Instead: **half to the guardians who
+served the federation through to CLOSED**, pro rata by seat-time in the
+draining period, because they carried the migration he walked out of;
+**half burned**. Nothing of a slash ever goes to the successor's new
+guardians, so a slash is never a reason to want a succession.
+
+**A guardian's bond is otherwise a normal census bond** (§5A.3B): path A
+returns it to him at maturity if nobody slashes; path B is the arbitration
+slash on a committed proof; path C the cooperative close. He may not spend
+it while seated - that is the census's own definition of leaving without
+notice.
+
+What the bond is *not*: restitution. A slash does not refill a reserve and
+does not unfreeze a halt (§24A.3's second property, unchanged). It makes
+walking away cost more than staying, which is the whole and only job of a
+bond here.
+
+## 23A.6 Succession: back to nominal size
+
+Stock Fedimint 0.12 cannot, as far as this project has measured, add a
+guardian to a running federation or hand a gone guardian's key share to a
+new one (rehearsal item 12 measures it; if it can, that is the first path
+and the rest of this section is the fallback, unchanged as a rule).
+So a federation regains nominal size by being **succeeded**, and the
+player's notes follow on their own.
+
+**Trigger:** DRAINING (§23A.1); or a departure notice that would make it
+DRAINING; or a threshold-signed decision of its own guardians (a planned
+upgrade, a change of `federation_nominal` by §27A).
+
+**Steps:**
+
+1. **Found the successor** by §23A.2, with one change: the seated,
+   non-departing guardians of the old federation are **seated first** in
+   the new one - same operators, new key shares, continuity of who is
+   trusted - and only the missing seats up to `federation_nominal` are
+   drawn. If they are fewer than `f + 1`, everything is drawn.
+2. **Open it.** The successor's first record is `OPEN`. The old
+   federation's guardians sign a record with `status = DRAINING` and
+   `successor_id`; seats and relays carry both. From this record on no
+   Round Contract may name the old federation (§23.6 checks `status`), and
+   the client refuses deposits into it.
+3. **Migrate, automatically.** On its next start and at every settlement
+   it sees, a client whose notes are in a DRAINING federation moves them
+   to the successor: a stock LNv2 send from the old federation paying a
+   stock LNv2 receive invoice in the new one, through a gateway that
+   serves both (rehearsal item 13 demands one; a gateway that serves only
+   one routes over Lightning to one that serves the other, and the fee is
+   shown). In chunks, atomic each, no press; the balance shows **moving**
+   until it is done, then the new federation's name. Rounds already in
+   flight finish in the old federation; their payouts redeem there (§24)
+   and move by the same rule.
+4. **Close.** The old federation's record becomes `CLOSED` when no lock is
+   open in it and no round names it and either its reserve is below the
+   dust it cannot pay out or `drain_blocks` have passed since DRAINING.
+   Its guardians MUST serve until CLOSED (§23A.5: stopping earlier is
+   abandonment); after CLOSED they may stop, and their bonds mature as any
+   node's.
+5. **What is left behind.** Notes in a CLOSED federation are lost to their
+   holder, and it is said here: the client migrates on every start for six
+   months, the lobby says so from the first day, and a player who never
+   opens the game in six months has kept a game balance for six months
+   against the advice on every screen. The federation's guardians cannot
+   sweep them to him; they do not know whose they are. That is the cost of
+   blind notes and it is bounded by `drain_blocks` and the stake ceiling.
+
+**Testnet** (2 of 2) cannot drain: seated below `2f + 1` is the same as
+gone. A testnet federation that loses a guardian halts and resumes when he
+is back; a testnet federation to be replaced is closed by hand and a new one
+founded, and the players re-deposit test sats. That is written down so the
+mainnet rule is not tested against a network that cannot exercise it.
+
+## 23A.7 How a player finds his federation
+
+Nothing is typed, and no link decides it.
+
+- **First start, no seed kept.** The client reads the census (headers and
+  bond outputs, as it already does for committees), builds the federation
+  list from `guardian_of[]`, fetches each federation's record from any seat
+  or relay, verifies it (§23A.4), keeps the OPEN ones on its known-good list
+  (or shows the rest with their guardians and asks), and picks by §23A.3.
+  The lobby then shows: the federation's name, `seated / nominal`, its
+  status band, its load, and the guardians' operator names - before the
+  first deposit, and beside the balance always.
+- **Same browser.** The kept player (§24) names its federation.
+- **New device.** The player types his seed words (§23A.8). The client asks
+  every OPEN and DRAINING federation of the census for the stock backup
+  under that seed; the one that has it is his, and the stock recovery
+  rebuilds the notes. Unredeemed contracts are found through
+  `GET /settled?since=` as §24 already says. A federation that has since
+  CLOSED is shown as such with what §23A.6 step 5 says.
+- **Rounds elsewhere** are shown with their federation and entered by swap
+  (§23A.3), never silently.
+
+## 23A.8 The player seed: twelve or twenty-four words
+
+**RULED (the owner 2026-09-21):** the player receives a **BIP39 mnemonic** -
+twelve words by default, twenty-four on request (RULED HERE: twelve is the
+default because the balance is a game balance under a stake ceiling, and a
+seed that is written down beats one that is not) - to write down. It is
+shown before the first deposit (§24A.1), confirmed by the player re-entering
+three of its words in random positions, never leaves the browser, and is
+never seen by any node, seat, guardian or gateway. On another device the
+player types it, and nothing else is needed (§23A.7).
+
+Everything the player owns derives from it, with domain separation, so that
+one backup restores all of it and no key is ever reused across purposes:
+
+```text
+mnemonic (BIP39, English wordlist, 12 or 24 words)
+  -> root                        BIP39 seed
+  -> wallet                      the stock Fedimint client's root secret is
+                                 this root; it derives per-federation secrets
+                                 by federation_id itself, and its backup and
+                                 recovery run under it unchanged
+  -> identity key                taggedHash('BLWP/v1/IDENTITY', root)
+                                 (§0.12: the display name now follows the
+                                 player across devices, RULED HERE)
+  -> round key per round         taggedHash('BLWP/v1/ROUND_KEY', root ‖ round_id)
+                                 (§24: refund_pk, payout key; fresh per round)
+  -> fingerprint                 of the identity key, shown for §24's
+                                 out-of-page comparison
+```
+
+A lost seed loses the notes and every contract those keys can refund; a
+seed in someone else's hands is that person's wallet. Both are stated on
+the screen that shows the words, in those words.
+
+---
+
 # 24. Wallet integration
 
 Nostr Wallet Connect, BOLT11 QR, deep link, or WebLN where available.
@@ -2683,7 +3056,8 @@ paid. A lying client (§35A) would set it to an attacker's key and the wallet
 would show only a deposit. Therefore:
 
 - `player_pubkey` is derived from a **player seed** the player holds and
-  backs up, fresh per round (so locks are not linkable across rounds), and
+  backs up - from v4.6.4 a BIP39 mnemonic of 12 or 24 words, §23A.8 -
+  fresh per round (so locks are not linkable across rounds), and
   the client shows its fingerprint where the player can compare it outside
   the page;
 - a client whose hash is not on the known-good list (§5) cannot enter a
@@ -3035,6 +3409,10 @@ player -> node: inputs, checkpoints          direct WebSocket
 node <-> node: FROST, VSS, result assembly   direct, between endpoints
 equivocation proofs, objections, receipt     direct, AND any public
   gossip                                       broadcast channel
+guardian <-> guardian: consensus             Fedimint's own P2P, stock (§23A.4)
+client / seat -> federation                  Fedimint client API to any guardian
+federation records, absence attestations     every guardian and every seat,
+  (§23A.4)                                     AND publication_relays[]
 ```
 
 The split is by **delivery guarantee**, not by convenience. Relays have
@@ -3422,6 +3800,13 @@ genesis_parameters {
   bond_marker            the §25.1 discovery address
   randomness_source      the beacon (see below)
   genesis_config_hash    the game_config the network starts on
+  federation_nominal     v4.6.4: guardians per federation (§23A.1)
+  federation_min         v4.6.4: below this a federation is CRITICAL (§23A.1)
+  bond_min_guardian      v4.6.4: a guardian's bond floor (§23A.2)
+  abandon_blocks         v4.6.4: absence that is abandonment (§23A.5)
+  departure_notice       v4.6.4: notice a guardian must give (§23A.5)
+  founding_window        v4.6.4: time a drawn set has to finish DKG (§23A.2)
+  drain_blocks           v4.6.4: how long a draining federation serves (§23A.6)
 }
 ```
 
@@ -3450,6 +3835,9 @@ a state whose origin nobody can check.
 | committee slots | 7 | 3 | **2** |
 | threshold | 5 | 2 | **2** |
 | minimum census | 10 | 3 | **2** |
+| guardians per federation (`federation_nominal`, v4.6.4) | **10** (7 of 10) | **2** (2 of 2, as run today) | 4 (3 of 4, the `FEDERATION.md` rehearsal) |
+| `federation_min` | 7 | 2 | 3 |
+| `abandon_blocks` / `departure_notice` / `founding_window` / `drain_blocks` | 1008 / 2016 / 2016 / 26280 | 144 / 144 / 144 / 1008 | 10 / 10 / 10 / 100 |
 | confirmations | 6 | 2 | **1** |
 | `bond_maturity` | ~30 days | ~1 day | **100 blocks** |
 | `notice_period` | ~30 days | ~1 day | **10 blocks** |
