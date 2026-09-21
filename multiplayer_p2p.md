@@ -2833,8 +2833,9 @@ Everything in this chapter that waits, waits in blocks, and on mainnet:
 | how long a draining federation serves; late-claim tail | `drain_blocks` | 4032 | 28 d |
 | the liquidation claim window (arbitration) | `claim_blocks` | 216 | **36 h** |
 
-The 36 h is the owner's; the others are RULED HERE to match it. Testnet and
-regtest values are in §27A.6.
+The 36 h is the owner's; the others are RULED HERE to match it. Testnet runs
+the same clocks at about a twentieth (2 h / 3 h / 3 h / 24 h / 1.5 h,
+the owner: much shorter) and regtest in tens of blocks; both in §27A.6.
 
 ## 23A.2 Who the guardians are: founding
 
@@ -4052,7 +4053,7 @@ a state whose origin nobody can check.
 | minimum census | 10 | 3 | **2** |
 | guardians per federation (`federation_nominal`, v4.6.4) | **10** (7 of 10) | **2** (2 of 2, as run today) | 4 (3 of 4, the `FEDERATION.md` rehearsal) |
 | `federation_min` | 7 | 2 | 3 |
-| `abandon_blocks` / `departure_notice` / `founding_window` / `drain_blocks` / `claim_blocks` (v4.6.5, the owner: fast; 36 h arbitration) | 288 / 432 / 432 / **4032** / **216** (≈ 48 h / 72 h / 72 h / **28 d** / **36 h**) | 72 / 72 / 72 / 576 / 36 | 10 / 10 / 10 / 100 / 10 |
+| `abandon_blocks` / `departure_notice` / `founding_window` / `drain_blocks` / `claim_blocks` (v4.6.5, the owner: fast; 36 h arbitration) | 288 / 432 / 432 / **4032** / **216** (≈ 48 h / 72 h / 72 h / **28 d** / **36 h**) | **12 / 18 / 18 / 144 / 9** (≈ 2 h / 3 h / 3 h / 24 h / 1.5 h; the owner: much shorter) | 10 / 10 / 10 / 100 / 10 |
 | confirmations | 6 | 2 | **1** |
 | `bond_maturity` | ~30 days | ~1 day | **100 blocks** |
 | `notice_period` | ~30 days | ~1 day | **10 blocks** |
