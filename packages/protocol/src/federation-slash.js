@@ -104,6 +104,42 @@ export const MAINNET_CLOCKS = Object.freeze({
 });
 
 /**
+ * TESTNET RUNS THE SAME CLOCKS AT ABOUT A TWENTIETH (the owner 2026-09-21: much shorter), so a whole
+ * federation lifetime can be watched in a day instead of a month: 2 h / 3 h / 3 h / 24 h / 1.5 h.
+ * Regtest counts in tens of blocks, because its blocks come when somebody presses a button.
+ */
+export const TESTNET_CLOCKS = Object.freeze({
+  abandonBlocks: 12, departureNotice: 18, foundingWindow: 18, drainBlocks: 144, claimBlocks: 9,
+});
+export const REGTEST_CLOCKS = Object.freeze({
+  abandonBlocks: 10, departureNotice: 10, foundingWindow: 10, drainBlocks: 100, claimBlocks: 10,
+});
+export const CLOCKS = Object.freeze({
+  mainnet: MAINNET_CLOCKS, testnet4: TESTNET_CLOCKS, testnet: TESTNET_CLOCKS, regtest: REGTEST_CLOCKS,
+});
+
+/** The clocks a network runs, refused rather than guessed for a network nobody pinned. */
+export function clocksFor(network) {
+  const said = CLOCKS[network];
+  return said ? { ok: true, network, clocks: said }
+    : { ok: false, why: `${network} has no pinned federation clocks` };
+}
+
+/**
+ * HOW LONG A GUARDIAN LEAVING COSTS THE NETWORK, END TO END.
+ *
+ * Abandonment has to be proven before a succession can be drawn, and §23A.5 starts the succession AT the
+ * departure when the federation would otherwise be DRAINING - so the founding runs inside the drain
+ * rather than after it. Both are reported: the serial path for a guardian who simply vanishes, and the
+ * overlapped one for a departure with notice.
+ */
+export function lifecycleBlocks(clocks) {
+  const serial = clocks.abandonBlocks + clocks.foundingWindow + clocks.drainBlocks;
+  const overlapped = clocks.abandonBlocks + Math.max(clocks.foundingWindow, clocks.drainBlocks);
+  return { serial, overlapped };
+}
+
+/**
  * WHEN A HALTED FEDERATION'S REMAINDER MAY BE SPLIT, and not one block sooner.
  *
  * The claim window closes at `claim_blocks` and every valid claim filed in it is paid. A note shown LATE
