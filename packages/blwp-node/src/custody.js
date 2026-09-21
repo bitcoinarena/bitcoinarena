@@ -34,6 +34,8 @@ import {
 import { decodeEntryContract, entryId as entryIdOf, decodeRoundContract, publicationRelaysAreValid } from '../../protocol/src/contracts.js';
 import { cltvBlocksFor } from '../../protocol/src/hold-window.js';
 import { winnings as winningsOf } from '../../protocol/src/payout-spend.js';
+import { lightningAddressEndpoint, payRequestStands, callbackFor, invoiceAnswersPayRequest }
+  from '../../protocol/src/lnurl-pay.js';
 import { toHex, sha256 } from '../../protocol/src/hash.js';
 
 export { HELD, SETTLED, CANCELLED, EXPIRED, SETTLE, CANCEL, NOTHING };
@@ -556,6 +558,46 @@ export class Custody {
    * call, like every other act on this path, so a node that dies mid-payment comes back knowing one may be
    * in flight rather than paying twice.
    */
+  /**
+   * AND THE SAME WINNING SENT TO A LIGHTNING ADDRESS, for a player with no NWC wallet to mint with
+   * (the owner 2026-09-21 13:54: "winnings must leave without NWC").
+   *
+   * LUD-16 then LUD-06: the address names an endpoint, the endpoint's pay request is checked against what
+   * is owed, its callback is asked for an invoice of exactly that, and the invoice is checked against the
+   * request before a satoshi moves - `payRequestStands` and `invoiceAnswersPayRequest` are the protocol's
+   * rules, not this file's. What comes out is an ordinary bolt11, so it goes through `payWinnings` and
+   * gets the same pay-once treatment: the peers are asked, the intent is on disk, the amount is this
+   * node's own figure.
+   */
+  async payWinningsTo({ entryId, address, fetch: get = fetch }) {
+    const owed = this.round.winnings(entryId);
+    if (!owed) return { ok: false, why: 'this node owes that entry nothing out of the pool' };
+    if (owed.state === PAID) return { ok: true, already: true, state: PAID, why: 'that winning is already paid' };
+    const where = lightningAddressEndpoint(address);
+    if (!where.ok) return { ok: false, why: where.why };
+    let said;
+    try {
+      const r = await get(where.url);
+      if (!r.ok) return { ok: false, why: `${where.host} answered ${r.status} for that address` };
+      said = await r.json();
+    } catch (e) { return { ok: false, why: `that address could not be asked: ${e.message}` }; }
+    const stands = payRequestStands(said, owed.owedMsat);
+    if (!stands.ok) return { ok: false, why: stands.why };
+    let invoice;
+    try {
+      // `callbackFor` hands back the URL itself, not a verdict: the verdict was `payRequestStands`.
+      const cb = callbackFor({ callback: stands.callback, amountMsat: owed.owedMsat, commentAllowed: stands.commentAllowed });
+      const r = await get(cb);
+      if (!r.ok) return { ok: false, why: `that address's callback answered ${r.status}` };
+      const gave = await r.json();
+      invoice = gave && (gave.pr || gave.invoice);
+      if (!invoice) return { ok: false, why: 'that address returned no invoice to pay' };
+    } catch (e) { return { ok: false, why: `that address's callback could not be asked: ${e.message}` }; }
+    const answers = invoiceAnswersPayRequest({ invoice, amountMsat: owed.owedMsat, metadata: stands.metadata });
+    if (!answers.ok) return { ok: false, why: answers.why };
+    return this.payWinnings({ entryId, request: invoice });
+  }
+
   async payWinnings({ entryId, request }) {
     if (!this.reaches) return { ok: false, why: 'this node reaches no Lightning, so it pays nobody' };
     const owed = this.round.winnings(entryId);

@@ -2225,8 +2225,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             return text(res, 403, 'that invoice is not signed by the session key this entry was played with');
           request = Buffer.from(signed).toString('utf8').trim();
         } catch (e) { return text(res, 400, `that is not a signed invoice: ${e.message}`); }
-        if (!/^ln[a-z0-9]+$/i.test(request)) return text(res, 400, 'that is not a BOLT11 invoice');
-        const paid = await custody.payWinnings({ entryId: new Uint8Array(eid), request });
+        // AN INVOICE OR AN ADDRESS, AND THE SIGNATURE IS THE SAME EITHER WAY (the owner 2026-09-21 13:54).
+        //
+        // A player with an NWC wallet mints an invoice and sends that; one without names a Lightning
+        // address (LUD-16) once, and this node LNURL-pays it exactly what is owed. Both are signed by the
+        // entry's session key, both are paid once, and neither lets the sender choose the amount.
+        const paid = /^ln[a-z0-9]+$/i.test(request)
+          ? await custody.payWinnings({ entryId: new Uint8Array(eid), request })
+          : await custody.payWinningsTo({ entryId: new Uint8Array(eid), address: request });
         if (!paid.ok) return text(res, paid.state === PAYING ? 409 : 402, paid.why);
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ entry: eid.toString('hex'), state: paid.state,
