@@ -1069,19 +1069,49 @@
       } catch (e) { /* the node is asked again on the next pass */ }
       winningsAsking = false;
       paintWallet();
+      // AND SENT, WITHOUT BEING ASKED. Nobody presses anything: the moment the node says the pool owes
+      // this entry something, the wallet mints an invoice for it and the node pays. One at a time, and a
+      // failure is left to the next pass rather than retried in a tight loop.
+      const owed = window.BLWP_WINNINGS;
+      if (owed && owed.state === 'OWED' && BigInt(owed.owedMsat || 0) > 0n
+          && !window.BLWP_COLLECTING && wallet && wallet.connected) {
+        window.BLWP_COLLECT_WINNINGS(null)
+          .catch((e) => { window.BLWP_COLLECT_WHY = e.message; console.error('[blwp] winnings: ' + e.message); paintWallet(); });
+      }
     }
 
     /**
-     * THE COLLECT ITSELF. One door, and the node refuses a second payment - the page does not invent a
-     * way round that: a second click asks the same door and is answered `already`.
+     * WINNINGS ARE ALWAYS SENT, AND THERE IS NO COLLECT (the owner 2026-09-21 13:25, clarified 13:33).
+     *
+     * The player does not paste an invoice and does not press a button. Once the node says what the pool
+     * owes this entry, the page asks the wallet that is connected for an invoice of exactly that
+     * (NIP-47 `make_invoice`), signs it with the session key this run was played with, and posts it to the
+     * one door. The node pays once.
+     *
+     * NWC IS THE RETURN PATH ONLY. Paying the stake stays an ordinary hold invoice that any wallet can
+     * pay - `GET /invoice` asks nobody for NWC - and a paid join is never refused for want of a wallet
+     * that can mint. A player with no NWC connection simply has winnings waiting: the node keeps saying
+     * OWED, and the moment a wallet is connected this sends them.
      */
     window.BLWP_COLLECT_WINNINGS = async (invoice) => {
       const c = theClient();
       const owed = window.BLWP_WINNINGS;
       if (!c || !c.where || !c.where.entryId) throw new Error('this tab has no entry to collect for');
       if (!owed || !owed.owedMsat || BigInt(owed.owedMsat) <= 0n) throw new Error('the pool owes this entry nothing');
-      const request = String(invoice || '').trim();
-      if (!/^ln[a-z0-9]+$/i.test(request)) throw new Error('paste a Lightning invoice for exactly what is owed');
+      let request = String(invoice || '').trim();
+      if (!request) {
+        // THE WALLET MINTS IT, FOR EXACTLY WHAT IS OWED. Not a rounded figure and not the page's
+        // arithmetic: the node's own number, handed straight to `make_invoice`.
+        const conn = wallet && wallet.connected ? wallet.current() : null;
+        if (!conn || !conn.ok) throw new Error('no wallet is connected to send these winnings to yet');
+        const made = await BLWPCLIENT.makeInvoice(conn, BigInt(owed.owedMsat), {
+          curve: window.BLWP_CURVE, description: 'btc-logistics winnings',
+          random: (n) => crypto.getRandomValues(new Uint8Array(n)),
+        });
+        if (!made || !made.ok || !made.invoice) throw new Error((made && made.why) || 'the wallet minted no invoice');
+        request = String(made.invoice).trim();
+      }
+      if (!/^ln[a-z0-9]+$/i.test(request)) throw new Error('that is not a Lightning invoice');
       window.BLWP_COLLECTING = true;
       paintWallet();
       try {
@@ -1256,14 +1286,8 @@
     const withdrawGo = document.getElementById('blwp-withdraw-go');
     if (withdrawGo) withdrawGo.addEventListener('click', () => {
       const field = document.getElementById('blwp-withdraw-invoice');
-      const owed = window.BLWP_WINNINGS;
-      // ONE BUTTON, AND WHICH MONEY IT IS COMES FROM THE ROUND. A hold round's winnings are collected
-      // from the committee's own Lightning (§24A.2); a lock round's are withdrawn out of the federation.
-      if (owed && owed.owedMsat && BigInt(owed.owedMsat) > 0n && owed.state !== 'PAID') {
-        window.BLWP_COLLECT_WINNINGS(field ? field.value : null)
-          .catch((e) => { window.BLWP_COLLECT_WHY = e.message; console.error('[blwp] collect: ' + e.message); paintWallet(); });
-        return;
-      }
+      // THE BUTTON IS THE LOCK ROUND'S WITHDRAW AND NOTHING ELSE. A hold round's winnings are SENT
+      // (the owner 13:25): there is no Collect to press, so nothing here branches into them.
       window.BLWP_WITHDRAW(field ? field.value : null).catch((e) => console.error('[blwp] withdraw: ' + e.message));
     });
     // CLOSING THE TAB LOSES WHAT IS IN ITS WALLET (the notes are kept in this tab's
@@ -1332,19 +1356,20 @@
       {
         const won = window.BLWP_WINNINGS;
         const owedMsat = won && won.owedMsat ? BigInt(won.owedMsat) : 0n;
+        // NO COLLECT. The player is told what is happening and presses nothing; the field and the button
+        // stay hidden on a hold round, because winnings are sent, not collected.
         const line = document.getElementById('blwp-withdraw');
-        const offer = owedMsat > 0n && won.state !== 'PAID' && !window.BLWP_COLLECTING;
-        line.textContent = window.BLWP_COLLECTING ? 'Collecting your winnings - do not close this tab'
-          : won && won.state === 'PAID' ? `You won ${owedMsat / 1000n} sat, and it has been paid to your wallet`
-          : owedMsat > 0n ? `You won ${owedMsat / 1000n} sat: paste an invoice for exactly ${owedMsat} msat to collect it`
+        line.textContent = window.BLWP_COLLECTING ? 'Sending your winnings to your wallet…'
+          : won && won.state === 'PAID' ? `You won ${owedMsat / 1000n} sat, and it has been sent to your wallet`
+          : owedMsat > 0n ? (wallet && wallet.connected
+            ? `You won ${owedMsat / 1000n} sat - sending it to your wallet`
+            : `You won ${owedMsat / 1000n} sat - connect your wallet and it will be sent`)
           : '';
         if (window.BLWP_COLLECT_WHY) line.textContent += ` - ${window.BLWP_COLLECT_WHY}`;
         for (const id of ['blwp-withdraw-invoice', 'blwp-withdraw-go']) {
           const el = document.getElementById(id);
-          if (el) el.style.display = offer ? '' : 'none';
+          if (el) el.style.display = 'none';
         }
-        const go = document.getElementById('blwp-withdraw-go');
-        if (go) go.textContent = 'Collect my winnings';
       }
       // AND WHAT IS LEFT, in the wallet's own words. `budgetLine` says WHICH
       // number it is - a budget is this connection's allowance and a balance is
