@@ -181,6 +181,8 @@
     <div class="spent" id="blwp-budget"></div>
     <input id="blwp-nwc" type="password" autocomplete="off" spellcheck="false"
            placeholder="nostr+walletconnect://…">
+    <input id="blwp-payout-address" type="text" autocomplete="off" spellcheck="false"
+           placeholder="or a Lightning address to be paid winnings at, e.g. you@wallet.com">
     <button id="blwp-pay" type="button">Pay the stake</button>
     <div class="why" id="blwp-why"></div>
   </div>
@@ -1075,8 +1077,9 @@
       // this entry something, the wallet mints an invoice for it and the node pays. One at a time, and a
       // failure is left to the next pass rather than retried in a tight loop.
       const owed = window.BLWP_WINNINGS;
+      const canSend = (wallet && wallet.connected) || String(window.BLWP_PAYOUT_ADDRESS || '').trim();
       if (owed && owed.state === 'OWED' && BigInt(owed.owedMsat || 0) > 0n
-          && !window.BLWP_COLLECTING && wallet && wallet.connected) {
+          && !window.BLWP_COLLECTING && canSend) {
         window.BLWP_COLLECT_WINNINGS(null)
           .catch((e) => { window.BLWP_COLLECT_WHY = e.message; console.error('[blwp] winnings: ' + e.message); paintWallet(); });
       }
@@ -1102,18 +1105,26 @@
       if (!owed || !owed.owedMsat || BigInt(owed.owedMsat) <= 0n) throw new Error('the pool owes this entry nothing');
       let request = String(invoice || '').trim();
       if (!request) {
-        // THE WALLET MINTS IT, FOR EXACTLY WHAT IS OWED. Not a rounded figure and not the page's
-        // arithmetic: the node's own number, handed straight to `make_invoice`.
+        // A WALLET MINTS IT; WITHOUT ONE, THE ADDRESS THE PLAYER NAMED DOES (the owner 13:54).
+        //
+        // Either way the amount is the node's own figure and never this page's arithmetic, and either way
+        // what goes to the door is signed by the session key. NWC is one way for winnings to leave, not
+        // the only one - and neither is a Collect, because nothing here waits to be pressed.
         const conn = wallet && wallet.connected ? wallet.current() : null;
-        if (!conn || !conn.ok) throw new Error('no wallet is connected to send these winnings to yet');
-        const made = await BLWPCLIENT.makeInvoice(conn, BigInt(owed.owedMsat), {
-          curve: window.BLWP_CURVE, description: 'btc-logistics winnings',
-          random: (n) => crypto.getRandomValues(new Uint8Array(n)),
-        });
-        if (!made || !made.ok || !made.invoice) throw new Error((made && made.why) || 'the wallet minted no invoice');
-        request = String(made.invoice).trim();
+        if (conn && conn.ok) {
+          const made = await BLWPCLIENT.makeInvoice(conn, BigInt(owed.owedMsat), {
+            curve: window.BLWP_CURVE, description: 'btc-logistics winnings',
+            random: (n) => crypto.getRandomValues(new Uint8Array(n)),
+          });
+          if (!made || !made.ok || !made.invoice) throw new Error((made && made.why) || 'the wallet minted no invoice');
+          request = String(made.invoice).trim();
+        } else {
+          request = String(window.BLWP_PAYOUT_ADDRESS || '').trim();
+          if (!request) throw new Error('name a Lightning address to be paid at, or connect a wallet');
+        }
       }
-      if (!/^ln[a-z0-9]+$/i.test(request)) throw new Error('that is not a Lightning invoice');
+      if (!/^ln[a-z0-9]+$/i.test(request) && !/^[^@\s]+@[^@\s]+$/.test(request))
+        throw new Error('that is neither a Lightning invoice nor a Lightning address');
       window.BLWP_COLLECTING = true;
       paintWallet();
       try {
@@ -1285,6 +1296,23 @@
       paintWallet();
       return done.withdraw;
     };
+    // WHERE WINNINGS GO WHEN THERE IS NO WALLET TO MINT WITH (the owner 2026-09-21 13:54). Named once and
+    // kept for this tab, like the wallet is: nothing is pressed after the round, and nothing is pasted
+    // once it is over. A paid join never waits for this - it is only where money leaves FOR.
+    const PAYOUT_KEY = 'blwp.payout.address';
+    try { window.BLWP_PAYOUT_ADDRESS = sessionStorage.getItem(PAYOUT_KEY) || ''; } catch { window.BLWP_PAYOUT_ADDRESS = ''; }
+    const addressField = document.getElementById('blwp-payout-address');
+    if (addressField) {
+      if (window.BLWP_PAYOUT_ADDRESS) addressField.value = window.BLWP_PAYOUT_ADDRESS;
+      addressField.addEventListener('change', () => {
+        const said = String(addressField.value || '').trim();
+        window.BLWP_PAYOUT_ADDRESS = said;
+        try { sessionStorage.setItem(PAYOUT_KEY, said); } catch { /* a tab that keeps nothing still pays out */ }
+        console.log(`[blwp] winnings will be sent to ${said || 'nowhere yet'}`);
+        paintWallet();
+      });
+    }
+
     const withdrawGo = document.getElementById('blwp-withdraw-go');
     if (withdrawGo) withdrawGo.addEventListener('click', () => {
       const field = document.getElementById('blwp-withdraw-invoice');
@@ -1365,13 +1393,19 @@
           : won && won.state === 'PAID' ? `You won ${owedMsat / 1000n} sat, and it has been sent to your wallet`
           : owedMsat > 0n ? (wallet && wallet.connected
             ? `You won ${owedMsat / 1000n} sat - sending it to your wallet`
-            : `You won ${owedMsat / 1000n} sat - connect your wallet and it will be sent`)
+            : window.BLWP_PAYOUT_ADDRESS
+              ? `You won ${owedMsat / 1000n} sat - sending it to ${window.BLWP_PAYOUT_ADDRESS}`
+              : `You won ${owedMsat / 1000n} sat - name a Lightning address and it will be sent`)
           : '';
         if (window.BLWP_COLLECT_WHY) line.textContent += ` - ${window.BLWP_COLLECT_WHY}`;
         for (const id of ['blwp-withdraw-invoice', 'blwp-withdraw-go']) {
           const el = document.getElementById(id);
           if (el) el.style.display = 'none';
         }
+        // THE ADDRESS IS OFFERED WHILE THERE IS NO WALLET, and put away once there is one or once the
+        // winnings have gone. It is never a Collect: naming it is all the player does.
+        const addr = document.getElementById('blwp-payout-address');
+        if (addr) addr.style.display = (wallet && wallet.connected) || (won && won.state === 'PAID') ? 'none' : '';
       }
       // AND WHAT IS LEFT, in the wallet's own words. `budgetLine` says WHICH
       // number it is - a budget is this connection's allowance and a balance is

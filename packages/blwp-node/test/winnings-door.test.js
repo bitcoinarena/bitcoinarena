@@ -111,6 +111,51 @@ test('a payment Lightning refuses leaves the winning OWED with Lightning\'s word
   } finally { await w.node.close(); }
 });
 
+// AND WITHOUT NWC AT ALL: A LIGHTNING ADDRESS (the owner 2026-09-21 13:54, LUD-16 then LUD-06).
+//
+// A player with no wallet to mint with names an address once. The node asks it for a pay request, asks its
+// callback for an invoice of exactly what is owed, checks the invoice against the request, and pays. The
+// sender never chooses the amount and never hands over a bolt11.
+test('a signed Lightning address is asked for an invoice of exactly what is owed, and a bad one is refused', async () => {
+  const asked = [];
+  const bolt11 = 'lnbcrtaddresspaid';
+  // The player's own LNURL endpoint, as LUD-06 has it.
+  const endpoint = async (url) => {
+    asked.push(String(url));
+    if (String(url).endsWith('/.well-known/lnurlp/win')) return { ok: true, status: 200, json: async () => ({
+      tag: 'payRequest', callback: 'https://wallet.example/cb', minSendable: 1, maxSendable: 1000000,
+      metadata: JSON.stringify([['text/plain', 'winnings']]) }) };
+    if (String(url).startsWith('https://wallet.example/cb')) return { ok: true, status: 200, json: async () => ({ pr: bolt11 }) };
+    return { ok: false, status: 404, json: async () => ({}) };
+  };
+  const w = await owedNode();
+  try {
+    w.node.custody.payWinningsTo = ((real) => (a) => real({ ...a, fetch: endpoint }))(w.node.custody.payWinningsTo.bind(w.node.custody));
+    const r = await fetch(`${w.at}/winnings?entry=${toHex(w.eid)}`, { method: 'POST', body: signedInvoice('win@wallet.example') });
+    const body = await r.text();
+    // THE ADDRESS IS ASKED, AND ASKED FOR THE NODE'S OWN FIGURE - not the sender's, and not a rounding.
+    assert.ok(asked.some((u) => u.includes('/.well-known/lnurlp/win')), `the address was never asked: ${asked}`);
+    assert.ok(asked.some((u) => u.includes('amount=98000')), `the callback was asked for the wrong amount: ${asked}`);
+    // AND WHAT COMES BACK IS CHECKED BEFORE A SATOSHI MOVES. This endpoint answers with something that is
+    // not an invoice at all, and the refusal is LUD-06's own, not a shrug. A real endpoint's invoice is
+    // measured on the Daily, where one can actually be signed.
+    assert.equal(r.status, 402, body);
+    assert.match(body, /not an invoice|bech32/);
+    assert.deepEqual(w.paid, [], 'something was paid against an invoice nobody could read');
+    assert.equal(w.node.round.winnings(w.eid).state, 'OWED');
+  } finally { await w.node.close(); }
+});
+
+test('an address that is not one, or whose endpoint asks for another amount, is refused', async () => {
+  const w = await owedNode();
+  try {
+    const no = await fetch(`${w.at}/winnings?entry=${toHex(w.eid)}`, { method: 'POST', body: signedInvoice('not an address') });
+    assert.equal(no.status, 402);
+    assert.match(await no.text(), /name@host|not a host/);
+    assert.deepEqual(w.paid, []);
+  } finally { await w.node.close(); }
+});
+
 test('an entry this node never took is a 404, and one owed nothing says so', async () => {
   const w = await owedNode();
   try {
