@@ -88,10 +88,15 @@ export function lndPort({ lncli, args = [], timeoutMs = 60000, expirySeconds = 3
       // expiring before height + 144. The same stake was protected for 144 blocks as a lock and 80 as a hold,
       // on the one custody a player actually pays. The number is not chosen here - it is the one the
       // contract already names, finally asked for.
+      //
+      // AND THE FLAG IS `--cltv_expiry_delta`. `--cltv_expiry` is ACCEPTED BY lncli AND SILENTLY IGNORED -
+      // measured against the real binary twice on one hash: with `--cltv_expiry 144` the invoice came back
+      // `cltv_expiry: 80`, with `--cltv_expiry_delta 144` it came back 144. A unit test that pins the argv
+      // cannot see that, which is why this line is measured at lnd and not only in a suite.
       let made;
       try {
         made = await json(['addholdinvoice', hash, '--amt_msat', String(amountMsat),
-          '--expiry', String(expirySeconds), '--cltv_expiry', String(cltvExpiryBlocks)]);
+          '--expiry', String(expirySeconds), '--cltv_expiry_delta', String(cltvExpiryBlocks)]);
       } catch (err) {
         if (!/invoice with payment hash already exists/.test(err.message)) throw err;
         made = null;
