@@ -305,6 +305,9 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
   note on its own, each is paid at face - and only the remainder goes 75%
   to the active census nodes and 25% to the developers, as it does whole
   when a federation CLOSES with nothing lost.
+- **Fast** (§23A.1): the liquidation claim window is 36 h (the owner);
+  abandonment 48 h, notice and founding 72 h, drain and late-claim tail two
+  weeks (RULED HERE to match).
 - **Serving a drain is paid** (§23A.6 step 5): the guardian pool of every
   round naming the successor is shared per seat with the draining
   predecessor's seated guardians until it is CLOSED, so staying is income
