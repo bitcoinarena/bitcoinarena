@@ -71,7 +71,13 @@ const b32 = (n) => new Uint8Array(32).fill(n);
  * Exported so the test can drive exactly what an operator runs, rather than a
  * second arrangement that looks like it.
  */
-export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8081, bDownAtStart = false,
+export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8081,
+                                     // A THIRD SIGNER NODE, OPT-IN (§23.6). A 3-of-4 federation needs its
+                                     // threshold in DISTINCT bonded census nodes and two nodes cannot be
+                                     // three, so a paying FEDERATION round needs a third bonded operator.
+                                     // None by default: every existing caller stands the same 2-of-2.
+                                     portC = null,
+                                     bDownAtStart = false,
                                      store = ':memory:', rpc = null, cli = null,
                                      page = 'https://btc-logistics-core.pages.dev',
                                      // A PAYING ROUND, for a rehearsal with Lightning. Every
@@ -108,6 +114,13 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
                                      // guardianKey}]`, the same shape §5A.1 puts in an advertisement.
                                      // A caller that stands its own federation knows these; none by
                                      // default, and then no bond claims to guard anything.
+                                     //
+                                     // ONE LIST PER NODE, when the caller nests it: `[[g0], [g1], [g2]]`
+                                     // gives node A guardian 0, B guardian 1, C guardian 2. §23.6 counts
+                                     // DISTINCT nodes and "a node vouches for one guardian", so three
+                                     // operators each advertising the one key they actually run is the
+                                     // honest shape - not one list of every key repeated three times,
+                                     // which says each operator runs the whole federation.
                                      guardianOf = [],
                                      // A SECOND KIND OF ROUND KEPT OPEN BESIDE THE FIRST (the owner
                                      // 2026-09-15 12:54, option B): `{ stakeMsat, custody:
@@ -155,6 +168,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // it is built. It comes out of the store, which is where it lives.
   const dbA = openStore(store === ':memory:' ? ':memory:' : store + '/a.db');
   const dbB = openStore(store === ':memory:' ? ':memory:' : store + '/b.db');
+  const dbC = portC ? openStore(store === ':memory:' ? ':memory:' : store + '/c.db') : null;
   const idA = nodeIdentity(dbA);
 
   // THE ADVERTISEMENT IS SIGNED BY THE NODE IT NAMES. A stranger's signature
@@ -166,7 +180,21 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // nobody can put in a bond that is already mined.
   if (!portA || !portB)
     throw new Error('this needs fixed ports: a bond commits to the address it advertises');
+  if (portC && (portC === portA || portC === portB))
+    throw new Error('the third signer node needs its own port: two bonds cannot advertise one address');
   const idB = nodeIdentity(dbB);
+  const idC = dbC ? nodeIdentity(dbC) : null;
+
+  // EVERY SIGNER NODE THIS ROUND HAS, in the order their bonds are mined. Two
+  // unless the caller asked for a third.
+  const members = [
+    { id: idA, port: portA, db: dbA, name: 'A' },
+    { id: idB, port: portB, db: dbB, name: 'B' },
+    ...(portC ? [{ id: idC, port: portC, db: dbC, name: 'C' }] : []),
+  ];
+  // AND WHICH GUARDIAN EACH ONE SAYS IT RUNS. A flat list is every node's, as
+  // before; a nested one is read per node, so no two operators claim one key.
+  const guardianOfFor = (i) => (Array.isArray(guardianOf[0]) ? (guardianOf[i] || []) : guardianOf);
 
   // ONE BOND EACH, AND THAT IS NOT A DETAIL. `assignSignerNodes` compares the signer nodes
   // the census gives with the keys the contract names and refuses when they
@@ -174,10 +202,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // counts. A 2-of-2 whose chain bonded one of its two nodes would be refused
   // by its own daemons, which is exactly what should happen and is why both
   // are bonded here.
-  const bonded = [
-    { id: idA, port: portA, db: dbA },
-    { id: idB, port: portB, db: dbB },
-  ].map(({ id, port }) => {
+  const bonded = members.map(({ id, port }, at) => {
     const advert = {
       nodePubkey: id.pubkey, operatorId: '2of2', protocolVersions: [1],
       // ALL THREE ROLES, because this network's genesis asks for two nodes in
@@ -190,7 +215,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       region: 'eu-west', capacityClass: 2, softwareHash: b32(3),
       settlementCapabilities: 0, lightningCapabilities: 0,
       bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 1,
-      payoutPubkey: b32(4), guardianOf: [], timestamp: BigInt(Date.now()),
+      payoutPubkey: b32(4), guardianOf: guardianOfFor(at), timestamp: BigInt(Date.now()),
     };
     // BIP-340, because letter 26 made a node's identity ITS BOND KEY: every
     // signature a node makes is schnorr under the key its bond was posted
@@ -254,13 +279,14 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   if (cli) {
     const rt = regtest(cli);
     onChain = rt;
-    const posted = bonded.map((one, i) =>
-      rt.postBond(i === 0 ? idA.secret : idB.secret, {
-        endpoint: `ws://${host}:${i === 0 ? portA : portB}`,
+    const posted = members.map((m, i) =>
+      rt.postBond(m.id.secret, {
+        endpoint: `ws://${host}:${m.port}`,
         // AND WHICH FEDERATION THIS SIGNER NODE GUARDS, when the caller named one. Without it
         // `federationIsBonded` counts zero of the federation's threshold and every paying FEDERATION
-        // round is refused on a bonded-federation check the bonds could not satisfy.
-        ...(guardianOf.length ? { guardianOf } : {}),
+        // round is refused on a bonded-federation check the bonds could not satisfy. Per node, so
+        // three operators cover a 3-of-4 rather than one operator claiming it three times.
+        ...(guardianOfFor(i).length ? { guardianOf: guardianOfFor(i) } : {}),
       }));
     rt.include(posted.map((p) => p.hex));
     // THE CENSUS HEIGHT IS ABOVE THE BONDS, NOT AT THEM. Depth is measured at
@@ -457,8 +483,17 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // the bond, the relays and every peer say `portB` - only so the first round
   // can be posted to it; the caller closes it, and restartB serves it on portB.
   let b = await serve(dbB, bDownAtStart ? { ...optsB, port: 0 } : optsB);
+  // AND THE THIRD, WHEN THERE IS ONE. Served exactly like the other two - a
+  // bonded census node that is not also a running daemon would be a bond
+  // vouching for a guardian nobody can reach.
+  const optsC = portC ? { port: portC, host, funded, donationSets: [TEST_DONATION_SET_REGTEST], headerBytes, bondProof, chainFor,
+    ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn,
+    ...(federation ? { federation } : {}), ...signerNode } : null;
+  const c = optsC ? await serve(dbC, optsC) : null;
   if (a.port !== portA)
     throw new Error(`node A came up on ${a.port} and the bond names ${portA}`);
+  if (c && c.port !== portC)
+    throw new Error(`node C came up on ${c.port} and the bond names ${portC}`);
 
   // THE ROUND. Its times are real instants, because a node refuses an entry
   // before committee_time and refuses a round whose entry window is shorter
@@ -506,7 +541,11 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   }
   const contract = {
     networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations,
-    gameVerifySlots: 2, settlementSlots: 2, simCoreHash: CORE_HASH,
+    // ONE SLOT PER SIGNER NODE THERE IS. `assignSignerNodes` checks the census's
+    // assigned set against `nodes` EXACTLY, both ways, so with three bonded
+    // nodes and two slots the sortition would seat two of the three and the
+    // contract could not know which - it would be refused by its own daemons.
+    gameVerifySlots: members.length, settlementSlots: members.length, simCoreHash: CORE_HASH,
     committeeTimeMs, randomnessRule: 'bitcoin-block-hash',
     startTimeMs: committeeTimeMs + MIN_ENTRY_WINDOW_MS,
     entryCloseMs: committeeTimeMs + MIN_ENTRY_WINDOW_MS + BigInt(entryWindowMs),
@@ -515,12 +554,12 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // WHERE THE SIGNER NODES POST EACH RUN'S TRANSCRIPT (v4.6.2 §13A, P2): the two
     // daemons' own relay doors. A result is final only once both have posted
     // it, and a round naming no relay could never settle a stake.
-    publicationRelays: [`http://${host}:${portA}`, `http://${host}:${portB}`],
+    publicationRelays: members.map((m) => `http://${host}:${m.port}`),
     donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight,
     censusRoot: new Uint8Array(32), stakeMsat, bondMinSats: 50000n, blockTicks: BLOCK_TICKS,
     exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
     timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
-    nodes: [a.round.pubkey, b.round.pubkey],
+    nodes: [a.round.pubkey, b.round.pubkey, ...(c ? [c.round.pubkey] : [])],
   };
   // THE CENSUS ROOT IS THE CHAIN'S, NOT A NUMBER THIS TOOL LIKES.
   //
@@ -708,19 +747,20 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   const reach = [
     publicFor(a.port, `http://${host}:${a.port}`),
     publicFor(portB, `http://${host}:${portB}`),
+    ...(c ? [publicFor(portC, `http://${host}:${portC}`)] : []),
   ];
 
   // `headers=` is not named: the client already forms `<node>/headers` from
   // the nodes, and a URL that repeats what the default already says is a
   // second place to get it wrong.
   const url = `${page}/?round=${id}`
-    + `&node=${reach[0]},${reach[1]}`
+    + `&node=${reach.join(',')}`
     + `&bond=${reach[0]}/bond`
     + `&advert=${toHex(bonded[0].signature)}`
     + (invite ? `&federation=${invite}` : '');
   // THE LOBBY'S LINK (M3.3-34): the same names, and no round. The page asks the
   // named nodes what they hold and checks every round it is told of.
-  const lobbyUrl = `${page}/?node=${reach[0]},${reach[1]}`
+  const lobbyUrl = `${page}/?node=${reach.join(',')}`
     + `&bond=${reach[0]}/bond`
     + `&advert=${toHex(bonded[0].signature)}`
     + (invite ? `&federation=${invite}` : '');
@@ -812,7 +852,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   return {
     id, url, lobbyUrl, contract, openNext, keepOpen,
     rounds: () => held.map((c) => ({ id: toHex(roundId(c)), committeeTimeMs: c.committeeTimeMs, entryCloseMs: c.entryCloseMs })),
-    get a() { return a; }, get b() { return b; }, beacon: beaconSeen,
+    get a() { return a; }, get b() { return b; }, get c() { return c; }, beacon: beaconSeen,
     // AND DAEMON A, the same way (M3.3-34 path 2: a forward to A lost while A is down).
     async restartA() { await a.close(); a = await serve(dbA, optsA); return a; },
     // DAEMON B RESTARTS: the same store, identity, options and port, served
@@ -820,11 +860,11 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // across one. Nothing it held is lost, because the store is the same.
     async restartB() { await b.close(); b = await serve(dbB, optsB); return b; },
     nodes: reach,
-    headers: [`${reach[0]}/headers`, `${reach[1]}/headers`],
+    headers: reach.map((r) => `${r}/headers`),
     bond: `${reach[0]}/bond`,
     advert: toHex(bonded[0].signature),
     donationRecipients: recipients,
-    async close() { if (keeper) keeper.stop(); await a.close(); await b.close(); if (recipients) await recipients.close(); },
+    async close() { if (keeper) keeper.stop(); await a.close(); await b.close(); if (c) await c.close(); if (recipients) await recipients.close(); },
   };
 }
 
