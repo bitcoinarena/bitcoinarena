@@ -500,7 +500,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     startTimeMs: committeeTimeMs + MIN_ENTRY_WINDOW_MS,
     entryCloseMs: committeeTimeMs + MIN_ENTRY_WINDOW_MS + BigInt(entryWindowMs),
     objectionWindowMs, custody: 'FEDERATION', slashMinimumServed: 20,
-    slashRemainder: 'BURN', federationId, stakeExpiryBlocks: 144,
+    slashRemainder: 'SPLIT', federationId, stakeExpiryBlocks: 144,
     // WHERE THE SIGNER NODES POST EACH RUN'S TRANSCRIPT (v4.6.2 §13A, P2): the two
     // daemons' own relay doors. A result is final only once both have posted
     // it, and a round naming no relay could never settle a stake.

@@ -327,13 +327,26 @@ export const TAG = {
  * half burned or to the remaining honest committee members of the round, as
  * fixed by the Round Contract."
  *
- * The alternative in that sentence is BURNED or TO THE COMMITTEE, and that is
- * what a round fixes. THE HALVES ARE NOT A FIELD: the spec states them as
- * numbers, and a contract that could move them would let an operator write
- * itself the whole bond - which is the fault putting anything in the contract
- * is meant to stop, not one to import. Order is protocol: it indexes the byte.
+ * BURN AND COMMITTEE ARE BOTH WITHDRAWN (RULED, the owner 2026-09-21). "Nothing is
+ * ever burned, here or anywhere in this protocol: a slash that destroys value
+ * pays nobody for the harm and makes the slashing itself worthless to prove, so
+ * every remainder in this document has a recipient." The other half of a round's
+ * slash now goes 75% to the active census nodes at the slashing height MINUS the
+ * round's own seats - the witnesses - and 25% to the donation set of §22A. That
+ * is one rule, so `slashRemainder` has one valid value and a round naming
+ * anything else is invalid.
+ *
+ * THE HALVES ARE NOT A FIELD: the spec states them as numbers, and a contract
+ * that could move them would let an operator write itself the whole bond - which
+ * is the fault putting anything in the contract is meant to stop, not one to
+ * import. Order is protocol: it indexes the byte.
+ *
+ * SPLIT takes byte 0, which BURN used to hold. A contract stored before this
+ * therefore reads as SPLIT rather than as a burn, and that is the safe
+ * direction: the money it describes is paid out instead of destroyed. Byte 1,
+ * the old COMMITTEE, no longer decodes at all.
  */
-export const SLASH_REMAINDERS = ['BURN', 'COMMITTEE'];
+export const SLASH_REMAINDERS = ['SPLIT'];
 export const slashRemainderByte = (where) => {
   const at = SLASH_REMAINDERS.indexOf(where);
   if (at < 0) throw new Error(`${where} is not one of ${SLASH_REMAINDERS.join(', ')}`);

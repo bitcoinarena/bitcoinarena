@@ -1212,8 +1212,12 @@ export function slashDistribution({
   const out = new Set(slashed.map(hex));
 
   hand(affectedPlayers, toPlayers);
-  if (contract.slashRemainder === 'COMMITTEE') hand(honestCommittee, rest, out);
-  else burned += rest;
+  // AND THE OTHER HALF IS ALWAYS HANDED OUT (RULED, the owner 2026-09-21). It used to depend on the
+  // contract: BURN destroyed it, COMMITTEE paid it. Both are withdrawn - "nothing is ever burned, here
+  // or anywhere in this protocol: a slash that destroys value pays nobody for the harm and makes the
+  // slashing itself worthless to prove". `slashRemainder` has one value now and this line no longer
+  // asks it anything, so no round can be written that burns its own remainder.
+  hand(honestCommittee, rest, out);
 
   const paid = [...shares.values()].reduce((a, b) => a + b, 0n);
   if (paid + burned !== bondSats)

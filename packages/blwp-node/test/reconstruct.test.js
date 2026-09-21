@@ -109,7 +109,7 @@ const contractFor = (nodes) => ({
   // The spec sets NO FLOOR - "reference: 10 minutes, contract-defined" - so the smallest legal window is 1ms,
   // which has passed by the time these tests ask. Nothing asserted here is about the window's length.
   entryCloseMs: 2000n, objectionWindowMs: 1n, custody: 'THRESHOLD_LN',
-  slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: committeeRelays, donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
+  slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: committeeRelays, donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n,
   randomnessRule: 'bitcoin-block-hash', stakeMsat: 100000n, bondMinSats: 50000n,
   blockTicks: RUN_TICKS, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,

@@ -17,35 +17,29 @@ const b32 = (n) => new Uint8Array(32).fill(n);
 const ROUND = b32(0x01);
 const players = [b32(0xa1), b32(0xa2), b32(0xa3)];
 const honest = [b32(0x22), b32(0x23)];
-const burn = { slashRemainder: 'BURN' };
-const toCommittee = { slashRemainder: 'COMMITTEE' };
+// ONE CONTRACT SHAPE NOW: the remainder has one destination and a round cannot name a burn.
+const split = { slashRemainder: 'SPLIT' };
+const toCommittee = split;
 const total = (r) => [...r.shares.values()].reduce((a, b) => a + b, 0n) + r.burned;
 
 test('half is the spec\'s number and not a field', () => {
   assert.equal(SLASH_TO_PLAYERS_BPS, 5000);
-  assert.deepEqual(SLASH_REMAINDERS, ['BURN', 'COMMITTEE'],
-    'the contract fixes the destination, which is the alternative 5A.3 offers');
+  assert.deepEqual(SLASH_REMAINDERS, ['SPLIT'],
+    'the remainder has one destination now: nothing is ever burned, so a round cannot name a burn');
 });
 
-test('half goes to the affected players and the rest where the contract says', () => {
-  const burned = slashDistribution({
-    bondSats: 100000n, roundId: ROUND, contract: burn,
-    affectedPlayers: players, honestCommittee: honest,
-  });
-  assert.equal(burned.toPlayers, 50000n);
-  assert.equal(burned.burned, 50000n, 'a burn keeps the other half out of everybody\'s hands');
-  assert.equal(total(burned), 100000n, 'and nothing is created or lost');
-  assert.equal([...burned.shares.values()].reduce((a, b) => a + b, 0n), 50000n);
-
+test('half goes to the affected players and the other half is always handed out, never burned', () => {
   const shared = slashDistribution({
-    bondSats: 100000n, roundId: ROUND, contract: toCommittee,
+    bondSats: 100000n, roundId: ROUND, contract: split,
     affectedPlayers: players, honestCommittee: honest,
   });
   assert.equal(shared.toPlayers, 50000n);
-  assert.equal(shared.burned, 0n);
+  // THE RULE THAT CHANGED: no round can be written that keeps the other half out of everybody's hands.
+  // "Nothing is ever burned, here or anywhere in this protocol."
+  assert.equal(shared.burned, 0n, 'a round burned its own remainder');
   assert.equal(shared.shares.get(toHex(honest[0])), 25000n);
   assert.equal(shared.shares.get(toHex(honest[1])), 25000n);
-  assert.equal(total(shared), 100000n);
+  assert.equal(total(shared), 100000n, 'and nothing is created or lost');
 });
 
 /**
@@ -66,10 +60,10 @@ test('a bond that does not divide is still handed out to the last satoshi', () =
 
 test('the remainder order is the round\'s, not the list\'s', () => {
   const forwards = slashDistribution({
-    bondSats: 101n, roundId: ROUND, contract: burn, affectedPlayers: players,
+    bondSats: 101n, roundId: ROUND, contract: split, affectedPlayers: players,
   });
   const backwards = slashDistribution({
-    bondSats: 101n, roundId: ROUND, contract: burn, affectedPlayers: [...players].reverse(),
+    bondSats: 101n, roundId: ROUND, contract: split, affectedPlayers: [...players].reverse(),
   });
   assert.deepEqual([...forwards.shares.entries()].sort(),
                    [...backwards.shares.entries()].sort(),
@@ -82,10 +76,10 @@ test('the remainder order is the round\'s, not the list\'s', () => {
   // and a3. A survivor mutant found this - the first version only checked that
   // the total still added up, which it does whoever gets the satoshi.
   const here = slashDistribution({
-    bondSats: 101n, roundId: b32(0x01), contract: burn, affectedPlayers: players,
+    bondSats: 101n, roundId: b32(0x01), contract: split, affectedPlayers: players,
   });
   const elsewhere = slashDistribution({
-    bondSats: 101n, roundId: b32(0x02), contract: burn, affectedPlayers: players,
+    bondSats: 101n, roundId: b32(0x02), contract: split, affectedPlayers: players,
   });
   assert.equal(total(elsewhere), 101n);
   assert.equal(here.shares.get(toHex(players[0])), 17n);
@@ -187,12 +181,12 @@ test('an excluded member takes no leftover satoshi either', () => {
 });
 
 test('a bond of nothing pays nothing, and money is BigInt satoshi', () => {
-  const none = slashDistribution({ bondSats: 0n, roundId: ROUND, contract: burn,
+  const none = slashDistribution({ bondSats: 0n, roundId: ROUND, contract: split,
     affectedPlayers: players });
   assert.equal(total(none), 0n);
 
   for (const bad of [100000, '100000', -1n, undefined])
-    assert.throws(() => slashDistribution({ bondSats: bad, roundId: ROUND, contract: burn }),
+    assert.throws(() => slashDistribution({ bondSats: bad, roundId: ROUND, contract: split }),
       /BigInt satoshi/);
   for (const bad of [undefined, {}, { slashRemainder: 'SOMEWHERE' }])
     assert.throws(() => slashDistribution({ bondSats: 1n, roundId: ROUND, contract: bad }),
