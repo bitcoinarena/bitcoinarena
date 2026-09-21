@@ -32,7 +32,6 @@ import { receiptsNeeded } from '../../protocol/src/genesis.js';
 import { decodeHandout } from '../../protocol/src/handout.js';
 import { stakePointIsTheHandouts } from '../../protocol/src/contracts.js';
 import { firstMarkOutcome, startDeadlineOf } from '../../protocol/src/first-mark.js';
-import { ticksForMs } from '../../protocol/src/tick.js';
 import { coreForRound, installedCores, runTicksOf } from './cores.js';
 
 /**
@@ -1380,29 +1379,39 @@ export class Round {
    * join tick IS when it can drive: those keep the old origin exactly.
    */
   startWindowOrigin(entryIdBytes, joined, contract) {
-    const seen = this.stakeSeen(entryIdBytes);
-    if (!seen || typeof seen.seenMs !== 'number') return { originTick: joined.joinTick, originName: 'join' };
-    let startMs;
-    try { startMs = Number(contract.startTimeMs); } catch { return { originTick: joined.joinTick, originName: 'join' }; }
-    if (!Number.isFinite(startMs)) return { originTick: joined.joinTick, originName: 'join' };
-    const held = ticksForMs(seen.seenMs - startMs);
+    const reached = this.stakeSeenTick(entryIdBytes);
+    if (reached === null) return { originTick: joined.joinTick, originName: 'join' };
     // never before the join: a stake cannot be held before the entry that names it
-    const originTick = Math.max(joined.joinTick, Number.isFinite(held) ? Math.floor(held) : joined.joinTick);
-    // THE MARK CANNOT BE JUDGED BY WHEN IT ARRIVED, and this is why the window's other side is not moved
-    // here. A checkpoint carries exactly ONE tick - `encodeCheckpoint` writes roundId, entryId, tick,
-    // stateHash, inputChainHash, previousHash - and that tick is the PLAYER'S CORE tick. The only round-clock
-    // stamp this node has for a mark is when it ARRIVED, and judging on that was tried and reverted: it broke
-    // 10 of 14 in `first-mark.test.js` ("A recorded no late start: not the case the test names"), and the
-    // suites are right. Arrival is LOCAL. Two seats receive the same mark at different moments, so they would
-    // reach different verdicts on the same transcript - identical inputs, different results - and a late
-    // start would depend on the network rather than on the player. Reconciling the clocks has to happen in
-    // what the mark CARRIES, which is a protocol decision, not a node-side patch.
-    return { originTick, originName: 'stake held' };
+    return { originTick: Math.max(joined.joinTick, reached), originName: 'stake held' };
   }
+
 
   putStakeSeen({ entryId, paidMsat }) {
     this.db.prepare('INSERT OR IGNORE INTO stake_seen (entry_id, paid_msat, seen_ms) VALUES (?, ?, ?)')
       .run(Buffer.from(entryId), String(paidMsat), this.now());
+    // AND THE TICK THE PLAYER HAD REACHED BY THEN, which is where §15's start window opens. Written in the
+    // same breath and once, because it is a fact about this instant: any later reading would be a different
+    // tick. The highest tick already RECEIVED - not one the client asserts - so it is pinned by the same
+    // replay as the rest of the transcript. A player who has sent nothing yet gets 0, which is where its run
+    // begins anyway, so nothing changes for a free round or for an entry that never played.
+    let reached = 0;
+    try {
+      const last = this.db.prepare('SELECT bytes FROM batches WHERE entry_id = ? ORDER BY seq DESC LIMIT 1')
+        .get(Buffer.from(entryId));
+      if (last) {
+        const b = decodeInputBatch(new Uint8Array(last.bytes));
+        const ticks = batchTicks(b);
+        if (ticks.length) reached = ticks[ticks.length - 1];
+      }
+    } catch { reached = 0; }
+    this.db.prepare('INSERT OR IGNORE INTO stake_seen_tick (entry_id, tick, seen_ms) VALUES (?, ?, ?)')
+      .run(Buffer.from(entryId), reached, this.now());
+  }
+
+  /** The tick the player had reached when this node saw the stake held, or null if it never did. */
+  stakeSeenTick(entryIdBytes) {
+    const row = this.db.prepare('SELECT tick FROM stake_seen_tick WHERE entry_id = ?').get(Buffer.from(entryIdBytes));
+    return row ? row.tick : null;
   }
 
   stakeSeen(entryIdBytes) {
