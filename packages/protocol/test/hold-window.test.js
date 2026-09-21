@@ -7,7 +7,8 @@
 // no sat moved between the two players.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { holdCoversRound, cltvBlocksFor, finalSeconds, SETTLE_SAFETY_BLOCKS, CLOSE_SECONDS, HOLD_MARGIN }
+import { holdCoversRound, cltvBlocksFor, finalSeconds, SETTLE_SAFETY_BLOCKS, CLOSE_SECONDS, HOLD_MARGIN,
+  askableCltvBlocks, ROUTE_CLTV_BLOCKS, MAX_PAYABLE_CLTV_BLOCKS }
   from '../src/hold-window.js';
 import { STAKE_EXPIRY_BLOCKS } from '../src/constants.js';
 // The run length a round names, not the core's - this file is the protocol's, and the protocol names no game.
@@ -77,4 +78,30 @@ test('a longer objection window needs a longer hold', () => {
   const short = cltvBlocksFor({ secondsPerBlock: 2, blockTicks: BLOCK_TICKS, objectionWindowMs: 1000n, floorBlocks: STAKE_EXPIRY_BLOCKS });
   const long = cltvBlocksFor({ secondsPerBlock: 2, ...DAILY, floorBlocks: STAKE_EXPIRY_BLOCKS });
   assert.ok(long > short, `${long} against ${short}`);
+});
+
+// AND LIGHTNING'S OWN CEILING. Measured on the Daily the first time a hold was sized from the chain's pace:
+// the node asked for 2044 blocks and alice would not pay it - "cltv limit 2016 should be greater than
+// 2047" - so the stake was never held at all. An invoice nobody can pay is not a longer hold.
+test('the ask never goes past what a payer will pay', () => {
+  const blocks = cltvBlocksFor({ secondsPerBlock: 0.1, ...DAILY, floorBlocks: STAKE_EXPIRY_BLOCKS });
+  assert.equal(blocks, askableCltvBlocks());
+  assert.ok(blocks + ROUTE_CLTV_BLOCKS <= MAX_PAYABLE_CLTV_BLOCKS,
+    'the ask plus the route must stay under the ceiling a payer enforces');
+});
+
+test('a chain too fast for any payable hold is refused at the door, not sold a hold that cannot be paid', () => {
+  // 0.1 s a block: the ceiling buys 1976 * 0.1 = 198 s, and this round is not final for 1020.
+  const blocks = cltvBlocksFor({ secondsPerBlock: 0.1, ...DAILY, floorBlocks: STAKE_EXPIRY_BLOCKS });
+  const got = holdCoversRound({ secondsPerBlock: 0.1, cltvBlocks: blocks, ...DAILY });
+  assert.equal(got.ok, false);
+  assert.match(got.why, /is not opened/);
+});
+
+test('the Daily as it was measured: 0.755 s a block fits under the ceiling', () => {
+  const secondsPerBlock = 0.755;
+  const blocks = cltvBlocksFor({ secondsPerBlock, ...DAILY, floorBlocks: STAKE_EXPIRY_BLOCKS });
+  const got = holdCoversRound({ secondsPerBlock, cltvBlocks: blocks, ...DAILY });
+  console.log(`  0.755 s a block: ${blocks} blocks = ${Math.round(got.holdSeconds)} s of hold against ${Math.round(got.finalSeconds)} s to FINAL`);
+  assert.equal(got.ok, true, got.why);
 });
