@@ -17,7 +17,7 @@ import assert from 'node:assert/strict';
 
 import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
-import { Custody, HELD, SETTLED, CANCELLED, EXPIRED, ACTING } from '../src/custody.js';
+import { Custody, HELD, SETTLED, CANCELLED, EXPIRED, ACTING, SETTLE_REQUESTED } from '../src/custody.js';
 import * as custodyStates from '../src/custody.js';
 import { DELIVERED, FORFEIT, VOID, netStakeMsat } from '../../protocol/src/payout.js';
 import { entryId as entryIdOf } from '../../protocol/src/contracts.js';
@@ -231,6 +231,69 @@ test('a stake whose hold already EXPIRED is not settled: a later close answers a
   assert.equal(custody.stateOf(entryIdOf(winner)).state, CANCELLED, 'the winner\'s own stake was not handed back');
 });
 
+// A SETTLE LIGHTNING REFUSES IS AN ANSWER, NOT A HANG.
+//
+// Measured on the Daily: a loser's stake was due to settle into the pool, its objection window closed, and
+// `lncli settleinvoice` came back "invoice already canceled" - lnd gives up on a held HTLC about seventeen
+// blocks before its stated expiry. The throw left the row at SETTLE_REQUESTED on BOTH seats, where
+// `settleHeldInvoices` will not touch it ("reconcile it against Lightning first") and `reconcile` only ever
+// runs on start; and because the throw came out of the loop, the winner's stake in the same round was never
+// acted on either.
+test('a settle Lightning refuses writes down what Lightning says, and the rest of the round is still acted on', async () => {
+  const port = fakePort();
+  let looked = 0;
+  port.settle = async ({ paymentHash }) => {
+    port.calls.push(['settle', toHex(paymentHash)]);
+    throw new Error('lncli settleinvoice refused: invoice already canceled');
+  };
+  port.look = async ({ paymentHash }) => { looked++; port.calls.push(['look', toHex(paymentHash)]); return { state: CANCELLED }; };
+  const { round, rid, custody } = joined(port);
+  const winner = entryFor(rid, 1);
+  const loser = entryFor(rid, 2);
+  for (const e of [winner, loser]) { round.enter(e); await custody.hold(e); }
+  const summary = (e, outcome, score = 0) =>
+    ({ entryId: entryIdOf(e), pubkey: e.playerPubkey, outcome, score, stakeMsat: e.stakeMsat, feeMsat: e.feeMsat, donationMsat: e.donationMsat });
+
+  const out = await custody.settleHeldInvoices({
+    roundId: rid, minScore: 1, finalFor: () => true,
+    entries: [summary(loser, FORFEIT), summary(winner, DELIVERED, 9)],
+  });
+  assert.equal(out.ok, true, out.why);
+  assert.equal(looked, 1, 'Lightning was not asked what happened to the stake it refused');
+  // THE ROW SAYS WHAT LIGHTNING SAYS, and not the intent that never landed.
+  assert.equal(custody.stateOf(entryIdOf(loser)).state, CANCELLED,
+    'the refused settle left the row mid-act, where nothing running can clear it');
+  assert.match(custody.stateOf(entryIdOf(loser)).why, /refused the settle .*already canceled.*CANCELLED/);
+  const lost = out.actions.find((a) => toHex(a.entryId) === toHex(entryIdOf(loser)));
+  assert.equal(lost.refused, true);
+  // AND THE REFUSAL DID NOT TAKE THE REST OF THE ROUND WITH IT.
+  assert.equal(custody.stateOf(entryIdOf(winner)).state, CANCELLED,
+    'one refused stake stopped the round: the winner was never handed their own stake back');
+  assert.equal(port.calls.filter((c) => c[0] === 'cancel').length, 1);
+});
+
+// AND NOT KNOWING IS NOT A VERDICT: a port that cannot say what happened leaves the row where it was.
+test('a refused settle whose port cannot be asked leaves the row mid-act rather than guessing', async () => {
+  const port = fakePort();
+  port.settle = async () => { throw new Error('lncli settleinvoice refused: connection refused'); };
+  const { round, rid, custody } = joined(port);
+  const loser = entryFor(rid, 2);
+  round.enter(loser); await custody.hold(loser);
+  const winner = entryFor(rid, 1);
+  round.enter(winner); await custody.hold(winner);
+  const summary = (e, outcome, score = 0) =>
+    ({ entryId: entryIdOf(e), pubkey: e.playerPubkey, outcome, score, stakeMsat: e.stakeMsat, feeMsat: e.feeMsat, donationMsat: e.donationMsat });
+  const out = await custody.settleHeldInvoices({
+    roundId: rid, minScore: 1, finalFor: () => true,
+    entries: [summary(loser, FORFEIT), summary(winner, DELIVERED, 9)],
+  });
+  assert.equal(out.ok, true, out.why);
+  assert.equal(custody.stateOf(entryIdOf(loser)).state, SETTLE_REQUESTED,
+    'a port that said nothing was read as a verdict');
+  assert.match(custody.stateOf(entryIdOf(loser)).why, /could not say what the stake is/);
+  assert.equal(custody.stateOf(entryIdOf(winner)).state, CANCELLED);
+});
+
 test('a stake that has already moved is not moved twice', async () => {
   const port = fakePort();
   const { round, rid, custody } = joined(port);
@@ -296,6 +359,21 @@ test('the score the round asked for is the score the pool pays by', async () => 
 // refuses outright, so every interrupted-act test below closes a real round:
 // the loser first, so the settle is the act that gets interrupted, and a
 // winner behind it whose cancel never happens.
+// A CRASH IS NOT A THROW.
+//
+// A throw is an ANSWER: Lightning was asked and said no, and `settleHeldInvoices` writes that answer down
+// where the row can be seen (measured on the Daily - "invoice already canceled" left the row mid-act on
+// both seats, where nothing running could clear it). The window these tests are about is the other one,
+// and their own comment names it: one SIGKILL wide, the call gone out and nothing come back. So it is
+// simulated by a call that never answers and a promise nobody is left to await.
+function stoppedInside(round, close, id) {
+  const row = round.hold(id);
+  round.putHold({
+    entryId: id, roundId: close.roundId, paymentHash: row.paymentHash, amountMsat: row.amountMsat,
+    state: 'SETTLE_REQUESTED', why: 'about to settle; if this node dies here, ask Lightning',
+  });
+}
+
 async function midAct(port) {
   const { round, rid, custody } = joined(port);
   const loser = entryFor(rid, 2);
@@ -420,14 +498,10 @@ test('a node that died mid-act asks Lightning rather than acting again', async (
   // not written it down. `custody-crash.mjs` kills a real process inside it;
   // what is measured here is what the two sides say afterwards.
   const port = fakePort();
-  const { custody, id, close } = await midAct(port);
+  const { round, custody, id, close } = await midAct(port);
 
   // The settle reached Lightning and the answer never came back.
-  port.settle = async ({ paymentHash }) => {
-    port.calls.push(['settle', toHex(paymentHash)]);
-    throw new Error('the node stopped here');
-  };
-  await assert.rejects(() => custody.settleHeldInvoices(close));
+  stoppedInside(round, close, id);
   assert.equal(custody.stateOf(id).state, 'SETTLE_REQUESTED',
     'the intent was not on disk before the call, so a restart cannot know it was made');
   assert.match(custody.stateOf(id).why, /ask Lightning/);
@@ -436,7 +510,10 @@ test('a node that died mid-act asks Lightning rather than acting again', async (
   port.settle = async ({ paymentHash }) => { port.calls.push(['settle', toHex(paymentHash)]); };
   const blocked = await custody.settleHeldInvoices(close);
   assert.match(blocked.actions[0].why, /reconcile it against Lightning first/);
-  assert.equal(port.calls.filter((c) => c[0] === 'settle').length, 1);
+  // NOTHING AT ALL went to Lightning: the crash left the intent on disk without making the call, so a
+  // close that acted here would be making it for the first time on a row nobody has reconciled.
+  assert.equal(port.calls.filter((c) => c[0] === 'settle').length, 0,
+    'a close acted on a row nobody had reconciled');
 
   // ASKED, AND ANSWERED. Lightning holds the preimage, so the stake moved.
   port.look = async ({ paymentHash }) => { port.calls.push(['look', toHex(paymentHash)]); return { state: SETTLED }; };
@@ -444,16 +521,15 @@ test('a node that died mid-act asks Lightning rather than acting again', async (
   assert.equal(asked.ok, true, asked.why);
   assert.deepEqual(asked.asked.map((a) => a.state), [SETTLED]);
   assert.equal(custody.stateOf(id).state, SETTLED);
-  assert.equal(port.calls.filter((c) => c[0] === 'settle').length, 1,
-    'the stake was settled a second time');
+  assert.equal(port.calls.filter((c) => c[0] === 'settle').length, 0,
+    'reconcile settled the stake instead of asking what had happened to it');
 });
 
 test('an act that never reached Lightning is made again, once', async () => {
   const port = fakePort();
-  const { custody, id, close } = await midAct(port);
+  const { round, custody, id, close } = await midAct(port);
 
-  port.settle = async () => { throw new Error('the node stopped before the call left'); };
-  await assert.rejects(() => custody.settleHeldInvoices(close));
+  stoppedInside(round, close, id);
 
   // LIGHTNING STILL HOLDS IT, so the act never landed and the stake is HELD
   // again - not stuck, and not settled on a guess.
@@ -469,10 +545,9 @@ test('an act that never reached Lightning is made again, once', async () => {
 
 test('a port that cannot be asked what it did leaves an interrupted act alone', async () => {
   const port = fakePort();
-  const { custody, id, close } = await midAct(port);
+  const { round, custody, id, close } = await midAct(port);
 
-  port.settle = async () => { throw new Error('stopped'); };
-  await assert.rejects(() => custody.settleHeldInvoices(close));
+  stoppedInside(round, close, id);
 
   const asked = await custody.reconcile({ roundId: close.roundId });
   assert.equal(asked.ok, false);
@@ -482,10 +557,9 @@ test('a port that cannot be asked what it did leaves an interrupted act alone', 
 
 test('reconcile refuses an answer that is not a state a hold can be in', async () => {
   const port = fakePort();
-  const { custody, id, close } = await midAct(port);
+  const { round, custody, id, close } = await midAct(port);
 
-  port.settle = async () => { throw new Error('stopped'); };
-  await assert.rejects(() => custody.settleHeldInvoices(close));
+  stoppedInside(round, close, id);
 
   port.look = async () => ({ state: 'PROBABLY FINE' });
   const asked = await custody.reconcile({ roundId: close.roundId });
