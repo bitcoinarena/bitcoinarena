@@ -143,7 +143,7 @@ async function joinAndBuild(w, { lockAt = ['a', 'b'] } = {}) {
   // THE HANDED-OUT `lockOn` HANDS BOTH LOCKS. Every call site means "let this signer node see the stake", and
   // a stake is only seen when its stake lock AND its fee lock are in - so handing one alone left B with one
   // receipt where the test asks for two. The suite's own choreography is unchanged.
-  return { eid, outpoint, messages: run.messages, firstId: run.firstId, alt: alt.messages, altFirstId: alt.firstId,
+  return { eid, outpoint, feeOutpoint, messages: run.messages, firstId: run.firstId, alt: alt.messages, altFirstId: alt.firstId,
     lockOn: async (d) => { await lockOn(d); await feeOn(d); } };
 }
 
@@ -167,6 +167,7 @@ async function at(d, w, run) {
 }
 const until = async (fn, ms = 20000) => { for (let t = Date.now(); Date.now() - t < ms; await wait(200)) if (await fn()) return true; return false; };
 const lockHeld = (w, run) => w.port.locks.has(`${toHex(run.outpoint.txid)}:${run.outpoint.outIdx}`);
+const feeHeld = (w, run) => w.port.locks.has(`${toHex(run.feeOutpoint.txid)}:${run.feeOutpoint.outIdx}`);
 const brief = (x) => ({ results: x.results, finality: x.finality, noQuorum: x.noQuorum, entryVoid: x.entryVoid, closing: x.closing && x.closing.state,
   forfeit: x.forfeit.status, publicResults: x.publicResults, payoutTable: x.payoutTable });
 const VOIDED = { results: [], finality: 'VOID', noQuorum: 'VOID', entryVoid: false, closing: 'VOID', forfeit: 409,
@@ -192,6 +193,8 @@ test('one signer node refused (1): B is up and refuses the on-time first mark - 
     await wait(300);
     const after = { a: await at(w.a, w, run), b: await at(w.b, w, run), lockHeld: lockHeld(w, run) };
     console.log('  FACTS (refused, 1):', JSON.stringify({ saidB, offersAtA, inWindow, after }));
+    console.log('  VOID MONEY:', JSON.stringify({ stakeLockHeld: after.lockHeld, feeLockHeld: feeHeld(w, run),
+      settlements: w.port.settlements.length, payouts: [...w.port.payouts.values()].map((x) => String(x.msat)) }));
     assert.deepEqual(Object.values(offersAtA), ['refused']);
     assert.equal(inWindow.a.receipts, 1);
     for (const s of ['a', 'b']) {
@@ -203,6 +206,21 @@ test('one signer node refused (1): B is up and refuses the on-time first mark - 
     assert.equal(after.a.refusedHere, false);
     assert.equal(after.b.refusedHere, true);
     assert.equal(after.lockHeld, true);
+
+    // A VOID CLAIMS NOTHING - THE FEE LOCK UNWINDS WITH THE STAKE (§13C, and the owner 2026-09-21).
+    //
+    // This is the round that FAILED for a technical reason: B refused the on-time first mark, no quorum
+    // formed, and after the result window both signer nodes recorded VOID. §22A's 2% is compensation for a
+    // round that actually ran, so there is nothing to compensate here - and the operator must not profit
+    // from a failure of its own side. Both locks therefore go back to the player by expiry: neither is
+    // claimed, no settlement is submitted, and not one millisatoshi is paid to anybody.
+    //
+    // MEASURED on this path before it was asserted: stake lock held true, fee lock held true, settlements 0,
+    // payouts []. Nothing in the settler needed changing - what was missing was the evidence. It could only
+    // be written once the fixture's entries carried a fee lock at all, which is why it sits here.
+    assert.equal(feeHeld(w, run), true, 'the fee lock was claimed out of a VOID round');
+    assert.equal(w.port.settlements.length, 0, 'a VOID round submitted a settlement');
+    assert.deepEqual([...w.port.payouts.values()], [], 'a VOID round paid somebody - the seats take nothing');
   } finally { await w.close(); }
 });
 
