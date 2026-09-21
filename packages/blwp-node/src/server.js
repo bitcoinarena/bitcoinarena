@@ -1042,7 +1042,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         + `${toHex(contract.federationId).slice(0, 16)}, so it cannot count that federation's guardians` };
     const bonded = federationIsBonded({ federationId: contract.federationId, guardianKeys: g.keys, threshold: g.threshold,
       census: census.entries, bondMinSats: contract.bondMinSats });
-    return bonded.ok ? bonded : { ok: false, why: `this signer node signer nodes no round on an unbonded federation (§23.6): ${bonded.why}` };
+    return bonded.ok ? bonded : { ok: false, why: `this signer node assigns no round on an unbonded federation (§23.6): ${bonded.why}` };
   }
 
   const CLAIM_KEY_EVERY_MS = 1000;
