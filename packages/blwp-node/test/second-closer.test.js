@@ -8,6 +8,22 @@
 // again: `watchFinality` stops once no run is short of final, and on the second
 // closer the run was final at its own close.
 //
+// WHAT THE ZERO-WINDOW RULE EXPOSED HERE (2026-09-21). This file used to name `objectionWindowMs: 0`, and
+// on that round every result was FINAL the instant it was signed, so the close's own gather saw both runs
+// final and the money moved at the close. `roundWindowsAreValid` refuses a zero window now - "a zero window
+// is not a short one, it is none at all" - and with any real window the file goes red, on BOTH gaps, for a
+// reason that is not a fixture's:
+//
+//   both stores report winner FINAL and loser FINAL after 25 s
+//   both daemons still answer "no stake moves: the operator would keep 196000 msat: a pool of 196000
+//     against 0 handed out"
+//   all four stakes stay HELD
+//
+// §13A means NOTHING is final at the close, so `settleTheStakes`'s `agreed` - taken from `closed.gathered`,
+// the snapshot of that moment - is empty, the winner qualifies for nothing, and `holdSettlement` sees a
+// pool with nobody to hand it to. The finality watch hands the same snapshot back on every pass. So a round
+// with a real objection window cannot pay its winner, which is this letter's subject and not this file's.
+//
 // Two named gaps, as the rehearsal's `--close-gap` sends them, on the daemons'
 // own 2 s watch. At 800 ms A's one gather at its close misses B's result, B
 // closes, is final at once, settles, and asks A for a share A will not hand
@@ -88,7 +104,7 @@ function paidPort() {
 const contractFor = (nodes, publicationRelays) => ({
   startDeadlineTicks: PLANTED_FIRST_MARK_DEADLINE, networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
   gameVerifySlots: 2, settlementSlots: 2, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n,
-  entryCloseMs: 2000n, objectionWindowMs: 1n, custody: 'THRESHOLD_LN',
+  entryCloseMs: 2000n, objectionWindowMs: 3000n, custody: 'THRESHOLD_LN',
   slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays, donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n,
   randomnessRule: 'bitcoin-block-hash', stakeMsat: STAKE, bondMinSats: 50000n,
@@ -218,12 +234,17 @@ async function closedWithGap(gapMs, { bLateToAMs = 0 } = {}) {
     // THE WHOLE END STATE the tests assert: since P2 each run is final on its
     // own transcript's posting, so the winner's cancel can land a tick after
     // the loser's settle - waiting on the loser alone asserted the winner early.
+    // NOTHING MOVES AT THE CLOSE ITSELF ANY MORE. §13A's window means the result is PROVISIONALLY_FINAL
+    // when the round closes, and the daemon's own finality watch is what carries it to FINAL and settles.
+    // This file used to need no waiting at all because its round named a ZERO window and every result was
+    // final the instant it was signed; `roundWindowsAreValid` refuses that now, so the wait is real and
+    // has to outlast the window the round names.
     const settledBoth = async (ms) => {
       const stop = Date.now() + ms;
       const ended = () => [a, b].every((d) => stateOf(d, loser.eid) === SETTLED && stateOf(d, winner.eid) === CANCELLED);
-      while (Date.now() < stop && !ended()) await wait(100);
+      while (Date.now() < stop && !ended()) await wait(200);
     };
-    return { a, b, portA, portB, winner, loser, early, stateOf, settledBoth, held, answeredByA, close };
+    return { a, b, rid, portA, portB, winner, loser, early, stateOf, settledBoth, held, answeredByA, close };
   } catch (err) { await close(); throw err; }
 }
 
@@ -240,7 +261,7 @@ const bigints = (k, v) => (typeof v === 'bigint' ? String(v) : v);
 test('closed 800 ms apart: the second closer, refused its first share, ends SETTLED on the lost stake lnd settled through the first', async () => {
   const w = await closedWithGap(800, { bLateToAMs: 3000 });
   try {
-    await w.settledBoth(12000);
+    await w.settledBoth(25000);
 
     // THE RACE HAPPENED: B was final, settled, and asked A for its share, and A
     // - not final yet - refused it.
@@ -260,7 +281,15 @@ test('closed 800 ms apart: the second closer, refused its first share, ends SETT
 test('closed at the same moment: both daemons end SETTLED on the lost stake and CANCELLED on the winner\'s', async () => {
   const w = await closedWithGap(0);
   try {
-    await w.settledBoth(12000);
+    await w.settledBoth(25000);
+    // WHAT BOTH DAEMONS ACTUALLY SAY WHILE THIS IS RED, printed so the cause is in the run and not only in
+    // a commit: "no stake moves: the operator would keep 196000 msat: a pool of 196000 against 0 handed
+    // out", with both stores reporting winner FINAL and loser FINAL. The settle is reading the close's
+    // `gathered` snapshot, where nothing was final because §13A's window had only just opened.
+    for (const [n, d] of [['A', w.a], ['B', w.b]]) {
+      const said = await (typeof d.stakes === 'function' ? d.stakes() : d.stakes);
+      console.log(`  ${n}: loser ${w.stateOf(d, w.loser.eid)} winner ${w.stateOf(d, w.winner.eid)} - ${String(said.why || '').slice(0, 96)}`);
+    }
     assert.equal(w.stateOf(w.a, w.loser.eid), SETTLED, `A is ${w.stateOf(w.a, w.loser.eid)} on the lost stake`);
     assert.equal(w.stateOf(w.b, w.loser.eid), SETTLED, `B is ${w.stateOf(w.b, w.loser.eid)} on the lost stake`);
     assert.deepEqual(w.portA.settled, [wantOf(w.loser)]);
