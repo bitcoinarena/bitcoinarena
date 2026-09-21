@@ -36,7 +36,7 @@ test('a hold invoice is asked for by hash and amount, then read back', async () 
   // the round contract is refused unless it names STAKE_EXPIRY_BLOCKS, and a stake LOCK is refused unless
   // it outlives height + STAKE_EXPIRY_BLOCKS. One stake, two custodies, two different protections.
   assert.deepEqual(said[0], ['addholdinvoice', hex(hash), '--amt_msat', '100000', '--expiry', '3600',
-    '--cltv_expiry', String(STAKE_EXPIRY_BLOCKS)]);
+    '--cltv_expiry_delta', String(STAKE_EXPIRY_BLOCKS)]);
   assert.deepEqual(said[1], ['lookupinvoice', hex(hash)]);
 
   // THE ANSWER COMES FROM THE LOOKUP, NOT FROM WHAT WAS ASKED FOR. An invoice
