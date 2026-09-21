@@ -57,7 +57,7 @@ async function rig() {
     startTimeMs: 500n + MIN_ENTRY_WINDOW_MS, entryCloseMs: 200000n,
     objectionWindowMs: 600000n, custody: 'THRESHOLD_LN', slashMinimumServed: 20,
     slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,
-    censusRoot: b32(2), stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: 9000,
+    censusRoot: b32(2), stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: RUN_TICKS,
     exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
     timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
     nodes: [node.round.pubkey],
@@ -429,6 +429,9 @@ test('through the real client and daemon, this player\'s pre-reload entry is its
 
 import { RETIRE_TICK } from '../src/ghost-field.js';
 import { assumeStakeSeen } from '../../blwp-node/test/assignment.js';
+// THE CORE'S OWN RUN LENGTH: `Round.open` refuses a contract naming another, and this fixture still said
+// 9000, so every test here that stands up a real daemon died before it could watch anything.
+import { BLOCK_TICKS as RUN_TICKS } from '../../core/src/rules/gate.js';
 
 /**
  * WHAT `GhostField.Show` DOES WITH EACH DRAINED ITEM: make or move one truck per

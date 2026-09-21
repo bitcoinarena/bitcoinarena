@@ -27,6 +27,11 @@ import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../.
 import { toHex, sha256 } from '../../protocol/src/hash.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { assumeAssigned } from './assignment.js';
+// THE CORE'S OWN RUN LENGTH. `Round.open` refuses a contract that names another - "a contract
+// disagreeing with the network it names is invalid, and a second clock is not a shorter round" -
+// and this fixture still said 9000, so both of the daemon-backed tests here died before a hold was
+// ever made. Same fault as the three threshold suites (712bad8c) and the shared window fixture.
+import { BLOCK_TICKS as RUN_TICKS } from '../../core/src/rules/gate.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const READY = { preflight: async () => ({ ready: true, why: 'test port' }) };
@@ -43,7 +48,7 @@ const contractFor = (nodePubkey) => ({
   slashMinimumServed: 20, slashRemainder: 'BURN', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: ['http://127.0.0.1:9'] /* a paying round names a relay (§13A); never posted to here */, donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n,
   randomnessRule: 'bitcoin-block-hash', stakeMsat: STAKE, bondMinSats: 50000n,
-  blockTicks: 9000, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
+  blockTicks: RUN_TICKS, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
   timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
   nodes: [nodePubkey, schnorr.getPublicKey(peer)],
 });
