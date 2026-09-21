@@ -258,8 +258,13 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // one confirmation deep and a round asking for six excludes it. Measured:
     // "that census carries 0 game nodes where regtest was born needing 2".
     bondHeight = rt.height();
-    rt.mine(6);
-    censusHeight = rt.height();
+    // SIX DEEP, AND ON A REAL CHAIN THOSE ARE SOMEBODY ELSE'S BLOCKS (RULED, the owner 2026-09-21 17:01).
+    //
+    // `rt.bury(6)` mines on regtest, exactly as `rt.mine(6)` did, and WAITS everywhere else. The round's
+    // beacon is the first block after `committee_time`, so an operator who can make blocks on the round's
+    // own chain can make the beacon he wants - which is fine for a free regtest round and is not fine for
+    // one holding money. Measured on testnet4: 723.3 s a block, so six is about 72 minutes.
+    censusHeight = rt.bury(6);
     if (censusHeight - bondHeight + 1 < 7)
       throw new Error('the bonds are not deep enough at the census height');
     for (const [i, p] of posted.entries()) bonded[i].onChainTxid = p.txid;
