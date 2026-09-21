@@ -302,6 +302,22 @@ export function openStore(path = ':memory:') {
       seen_ms    INTEGER NOT NULL
     );
 
+    -- AND THE TICK THE PLAYER HAD REACHED WHEN IT WAS HELD (§15's start window, 2026-09-21).
+    --
+    -- The start deadline is 900 ticks of the player's OWN run, and the run starts at tick 0 when the session
+    -- opens - so a paid entry spent about 87 s of its own clock waiting for an invoice to be paid, and its
+    -- first mark landed at tick 5220 against a deadline of 900. MEASURED: 602 batches covering 0..10799 with
+    -- the first mark inside them, so marks and batches are one clock and this tick is in it too.
+    --
+    -- It is the highest tick this node had ALREADY RECEIVED from that player when Lightning showed the hold:
+    -- node-observed, never asserted by the client, and pinned by the same replay as every other tick. A
+    -- table of its own so a store written before it existed gains it.
+    CREATE TABLE IF NOT EXISTS stake_seen_tick (
+      entry_id  BLOB PRIMARY KEY REFERENCES entries(entry_id),
+      tick      INTEGER NOT NULL,
+      seen_ms   INTEGER NOT NULL
+    );
+
     -- THE HTLC'S EXPIRY HEIGHT, the one fact Lightning supplies when a hold is
     -- first seen paid (M3.3-30). A hold still HELD once this node's own chain
     -- is past it has gone back to its player, and the row says EXPIRED - the
