@@ -18,7 +18,12 @@
 > guardians, seats and clients talk; how a player finds his federation on
 > any device; and the **BIP39 seed of 12 or 24 words** every player writes
 > down, from which the wallet, the round keys and the identity key derive.
-> Changed: §5A.1, §23A (new), §24, §25.2, §27A.6, `FEDERATION.md`.
+> Later the same day: **guardians earn from the 2%** (§22A, three pools);
+> a slashed guardian bond goes **evenly to the active census nodes and 25%
+> to the developers**, never to the witnesses (§23A.5); and a guardian can
+> **leave a federation with notice and keep his bond** as a census node
+> (§23A.5). Changed: §5A.1, §22A, §23A (new), §24, §25.2, §27A.6,
+> `FEDERATION.md`.
 
 > **Revision 4.6.3 — the player wallet (the owner 2026-09-21).** The round
 > wallet of §24 becomes the **player wallet**: one e-cash wallet per player
@@ -2265,19 +2270,32 @@ gross_round_volume = Σ stake of every financially activated entry
 61 active players x 100 sat = 6,100 sat
 ```
 
-## Node fee: 2% mandatory, to the round's sitting seats
+## Node fee: 2% mandatory, to the round's sitting seats and its federation's guardians
 
 ```text
 node_fee = 2.00% of gross_round_volume
-1.00% -> GAME/VERIFY pool     (the round's sitting seats)
-1.00% -> SETTLEMENT pool      (the round's sitting seats)
+2/3 %   -> GAME/VERIFY pool     (the round's sitting seats)
+2/3 %   -> SETTLEMENT pool      (the round's sitting seats)
+2/3 %   -> GUARDIAN pool        (the seated guardians of the federation
+                                 the Round Contract names, §23A) v4.6.4
 ```
+
+**RULED (the owner 2026-09-21): guardians earn from the 2%.** They carry the
+reserve, the bond and the liability of every round the federation settles,
+and until this ruling had no income at all (Fedimint base fees are 0). The
+three-way equal split is RULED HERE; the 2% total stays. The guardian pool
+is divided evenly among the guardians **seated** (§23A.1: not gone) at the
+round's `FINAL`, and paid as one payout contract per guardian in the round's
+settlement transaction (§23.2), to the `payout_pubkey` of the guardian's
+census advertisement. A guardian earns it only if seated; a gone guardian's
+share goes pro rata to the other seated ones. Testnet: 2/3 % over two
+guardians.
 
 Each pool's share is divided among the round's **sitting seats** - the seats
 the census seated for this round, its `nodes` - however many there are: two
 in a 2-of-2, seven in a 5-of-7. Not seven census slots when the round is
 2-of-2 (the owner 2026-09-15). In a 5-of-7 each eligible seat receives
-`1.00% / 7 ≈ 0.1429%` of gross volume for its role; in a 2-of-2, `1.00% / 2`.
+`(2/3)% / 7 ≈ 0.0952%` of gross volume for its role; in a 2-of-2, `(2/3)% / 2`.
 An operator selected for both roles earns both shares, because it performs
 both services. A fee lock is sized for the same seats the settlement pays.
 The **2% stays** (the owner 2026-09-15). Fedimint's own base fees are **0**:
@@ -2903,17 +2921,49 @@ Bitcoin cannot check liveness either.
 | Case | What it is | What happens |
 |---|---|---|
 | **Down** for less than `abandon_blocks` | an outage | nothing; Fedimint absorbs up to `f`; not recorded |
-| **Departure with notice** | a signed `(federation_id, peer, leave_after_height)` with `leave_after >= now + departure_notice`, posted like a record | recorded `DEPARTED` at that height; if the federation would then be DRAINING, succession starts **now** (§23A.6) so the successor is OPEN before he goes; he serves until the earlier of the federation's CLOSED and the successor's OPEN, then his seat is gone with no offence; his bond is released at maturity as any node's |
+| **Departure with notice** | a signed `(federation_id, peer, leave_after_height)` with `leave_after >= now + departure_notice`, posted like a record | recorded `DEPARTED` at that height; if the federation would then be DRAINING, succession starts **now** (§23A.6) so the successor is OPEN before he goes; he serves until the earlier of the federation's CLOSED and the successor's OPEN, then his seat is gone with no offence and **his bond is untouched**: he stays a bonded census node, keeps sitting as a seat, and may be drawn as a guardian again (below) |
 | **Abandonment** | absent for `abandon_blocks` (attested, §23A.4); or his bond output spent while seated (the census sees it, §5A.2); or a departure that stops serving before its `leave_after`; or any guardian of a DRAINING federation who stops before CLOSED | recorded `ABANDONED` with the proof; **slashed** through §5A.3B; the federation's reserve counts him gone at once |
 
-**Where a slashed guardian bond goes (RULED HERE).** §5A.3's rule sends half
-of a round's slash to the round's affected players. A federation's players
-are exactly the people the federation cannot name - the notes are blind -
-so that half cannot be paid to them. Instead: **half to the guardians who
-served the federation through to CLOSED**, pro rata by seat-time in the
-draining period, because they carried the migration he walked out of;
-**half burned**. Nothing of a slash ever goes to the successor's new
-guardians, so a slash is never a reason to want a succession.
+**Leaving is legitimate, and costs nothing (RULED, the owner 2026-09-21).**
+Guarding a federation is a term of service, not a life sentence, and leaving
+it is not leaving the network. A guardian who posts his departure notice and
+serves it out keeps his bond exactly as it is: he remains an eligible census
+node, keeps earning as a seat (§22A), and is drawn as a guardian again when
+the sortition picks him - unless his advertisement drops `guardian_capable`,
+which is his to do at any time and costs nothing either. Only leaving the
+**network** touches the bond, by §5A.3B's own paths (A at maturity, C
+cooperative). The offence is never *leaving*; it is leaving **without
+serving the notice**, because that is the one thing that turns a planned
+succession into an emergency.
+
+**Where a slashed guardian bond goes (RULED, the owner 2026-09-21).** §5A.3's
+rule for a round sends half of a slash to the round's affected players; a
+federation's players are exactly the people the federation cannot name -
+the notes are blind - so that half cannot be paid here. Instead:
+
+```text
+75%  evenly to every active census node at the slashing transaction's
+     height: bonded and eligible (§5A.3), minus the slashed node, and minus
+     every guardian of the federation concerned (RULED HERE, below)
+25%  to the donation set of §22A - the developers - by share_bps
+```
+
+Paid as outputs of the slashing transaction itself (§5A.3B), one per
+recipient, remainders in ascending `H(txid ‖ node_pubkey)` order; the
+recipient list is a function of chain state at that height, so every
+observer computes the same one.
+
+**Why the witnesses are excluded (RULED HERE).** The abandonment proof is
+signed by `2f + 1` guardians of the very federation (§23A.4). If they were
+paid from the bond, the people who attest an absence would earn from
+attesting it, and the arbitration set cannot check liveness. With the owner's
+rule alone the gain is already small - a witness is one of every active
+census node, so his cut is `0.75 × bond / N` - and it is dominated by the
+fact that any seven who could frame a colleague could instead take the
+whole reserve. Excluding them makes it exactly zero: a slashed bond is paid
+to nodes that had no hand in proving it and to the developers, who sign
+nothing. Nothing ever goes to the successor's guardians for being the
+successor either, so a slash is not a reason to want a succession.
 
 **A guardian's bond is otherwise a normal census bond** (§5A.3B): path A
 returns it to him at maturity if nobody slashes; path B is the arbitration
