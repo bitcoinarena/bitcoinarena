@@ -27,6 +27,7 @@ import WebSocket from 'ws';
 
 import { standUpRound } from './round-2of2.mjs';
 import { stakeLockPort } from '../src/stake-lock-port.js';
+import { receiptsNeeded } from '../../protocol/src/threshold.js';
 import { bitcoindRpc } from '../src/chain-rpc.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { awaitAttestedClaimKey, stakeFor, postHandout, entryFor, playerFor, fetchRandomness } from '../../blwp-client/src/join.js';
@@ -107,9 +108,17 @@ if (onChain) {
   cli('generatetoaddress', '101', cli('getnewaddress'));
   chain = { cli, rpc: bitcoindRpc({ url: `http://127.0.0.1:${env.RPCPORT}/wallet/blwp`, readCookie: () => 'blwp:blwp' }) };
   const fed = await port.guardians();
-  guardianOf = [...new Array(howMany).keys()].map((i) => [{ federationId, guardianKey: fed.keys[i] }]);
-  say({ step: 'federation', id: toHex(fed.federationId).slice(0, 16), guardians: fed.guardians, threshold: fed.threshold,
-    nodes: howMany, guardianPerNode: guardianOf.map((g, i) => `${String.fromCharCode(65 + i)} -> ${toHex(g[0].guardianKey).slice(0, 16)}`) });
+  // THREE OPERATORS ADVERTISE A GUARDIAN, WHATEVER THE COMMITTEE'S SIZE. §23.6
+  // counts distinct bonded census nodes against the FEDERATION's threshold (3 of
+  // 4 here), which is a different number from the committee's (5 of 7). The rest
+  // of the seven are bonded census nodes that guard nothing, which is what most
+  // operators are.
+  const guards = Math.min(fed.threshold, howMany);
+  guardianOf = [...new Array(howMany).keys()].map((i) =>
+    (i < guards ? [{ federationId, guardianKey: fed.keys[i] }] : []));
+  say({ step: 'federation', id: toHex(fed.federationId).slice(0, 16), guardians: fed.guardians,
+    federationThreshold: fed.threshold, signerNodes: howMany,
+    guardianPerNode: guardianOf.map((g, i) => `${String.fromCharCode(65 + i)} -> ${g.length ? toHex(g[0].guardianKey).slice(0, 16) : 'guards nothing'}`) });
 }
 // AND NO LIGHTNING PORT AT ALL, which is the shipping default (NO_LIGHTNING =
 // null) and is the proof that no hold invoice is on this path. `createHeld` sits
@@ -123,15 +132,20 @@ if (onChain) {
 // then demanded the preflight it could not have ("this node holds stakes and has
 // no preflight"). The absence is the measurement; a stub is a second Lightning.
 const round = await standUpRound({ host: '127.0.0.1', portA: 18571, portB: 18572,
-  ...(howMany > 2 ? { portC: 18573 } : {}), stakeMsat: 1000000n, ...chain,
+  // 18571..18577. The live Daily holds 18080, 18081 and 18777 and is not touched.
+  ...(howMany > 2 ? { portC: 18573, extraPorts: [...new Array(howMany - 3).keys()].map((i) => 18574 + i) } : {}),
+  stakeMsat: 1000000n, ...chain,
   ...(guardianOf.length ? { guardianOf } : {}),
   // THE LIVE DAILY OWNS 18777 on this machine; this harness binds its own.
   ...(onChain ? { donationRecipients: { port: 18787 } } : {}),
   federationId, invite: env.INVITE, signerNode: { stakeLocks: port }, objectionWindowMs: 20000n });
 const rid = fromHex(round.id);
 // EVERY DAEMON THIS ROUND HAS, and how many must agree - the committee's size, not a 2.
-const daemons = [round.a, round.b, round.c].filter(Boolean);
-const needed = daemons.length;
+const daemons = round.daemons;
+// WHAT THE COMMITTEE OWES, from the protocol's own rule - 2 of 2, 5 of 7 - not
+// the number of daemons. A handout needs the threshold, not everybody.
+const needed = receiptsNeeded(daemons.length);
+say({ step: 'committee', signerNodes: daemons.length, receiptsNeeded: needed });
 say({ step: 'no hold invoices', reachesLightning: daemons.map((d) => d.reachesLightning),
   note: 'createHeld sits behind custody.reaches; with no port it cannot be called' });
 const contract = round.contract;
@@ -199,7 +213,7 @@ try {
     players[role] = { seed, player, lock, eid, entry };
     say({ step: 'locked and played', role, outpoint: `${toHex(lock.outpoint.txid)}:${lock.outpoint.outIdx}`,
       amountMsat: lock.fields.amountMsat, expiration: lock.fields.expiration, handouts: put.accepted, entries: joined,
-      locks: handed.said.map((s) => s.status), committed: handed.committed,
+      locks: handed.said.map((s) => `${s.status}${s.why ? ' ' + String(s.why).slice(0, 120) : ''}`), committed: handed.committed,
       harnessSearch: { tries, coreEnded: run.ended === RUN_DELIVERED ? 'DELIVERED' : 'FAILED', ticks: run.ticks }, played });
   }
 
@@ -226,6 +240,7 @@ try {
 
   // ONE SIGNER NODE'S SIGNATURE (harness: signer node A's share read from its own store): the guardians must refuse it.
   const heldA = round.a.dkg.signerNodeFor(contract.nodes);
+  if (!forfeit.ok) throw new Error(`the winner's lock was never forfeited, so nothing can settle: ${String(forfeit.why).slice(0, 300)}`);
   const message = fromHex(forfeit.contractId);
   const hiding = nonceGenerate340(random(32), heldA.signerNode.share);
   const binding = nonceGenerate340(random(32), heldA.signerNode.share);
