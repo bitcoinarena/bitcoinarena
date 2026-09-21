@@ -41,10 +41,21 @@ const firstMarkIsChainStart = (previousHash) =>
  *
  * @returns {{ outcome: 'FORFEIT' | null, lastTick: number, why: string }}
  */
-export function firstMarkOutcome({ joinTick, deadlineTicks, firstMark } = {}) {
-  if (!Number.isInteger(joinTick) || joinTick < 0) throw new Error('a join tick is a whole tick, not negative');
+export function firstMarkOutcome({ joinTick, originTick, originName = 'join', deadlineTicks, firstMark } = {}) {
+  // THE WINDOW COUNTS FROM WHEN THE PLAYER CAN ACTUALLY DRIVE (the owner 2026-09-21).
+  //
+  // It counted from the entry's `joinTick`, which a paying browser sets to 0 - so the 900 ticks were spent
+  // while the player was still waiting to pay. MEASURED on the live Daily: the first mark landed 4320 ticks
+  // late, and 3803 of those (88%) were the round's clock running through the invoice wait; only 188 fell
+  // after the stake was held. A window that opens before the money arrives is not a start deadline, it is a
+  // payment deadline, and it forfeited a stake that was paid and held.
+  //
+  // `originTick` is that origin. Callers that name none keep the old behaviour exactly, wording included -
+  // a free round has nothing to wait for, so its join tick IS when it can drive.
+  const origin = Number.isInteger(originTick) ? originTick : joinTick;
+  if (!Number.isInteger(origin) || origin < 0) throw new Error('a join tick is a whole tick, not negative');
   if (!Number.isInteger(deadlineTicks) || deadlineTicks < 1) throw new Error('a start deadline is a whole number of ticks, at least 1');
-  const lastTick = joinTick + deadlineTicks;
+  const lastTick = origin + deadlineTicks;
   if (firstMark == null)
     return { outcome: null, lastTick,
       why: 'no first mark yet: nothing is decided at the door - not ENTRY_VOID and not FORFEIT (a walk-away is §15\'s, decided at the round\'s close)' };
@@ -54,9 +65,9 @@ export function firstMarkOutcome({ joinTick, deadlineTicks, firstMark } = {}) {
     throw new Error('that mark chains to another: it is not the first mark');
   if (firstMark.tick <= lastTick)
     return { outcome: null, lastTick,
-      why: `the first mark at tick ${firstMark.tick} is inside the start deadline (join ${joinTick} + ${deadlineTicks} = ${lastTick})` };
+      why: `the first mark at tick ${firstMark.tick} is inside the start deadline (${originName} ${origin} + ${deadlineTicks} = ${lastTick})` };
   return { outcome: FORFEIT, lastTick,
-    why: `the first mark at tick ${firstMark.tick} is after the start deadline (join ${joinTick} + ${deadlineTicks} = ${lastTick}): `
+    why: `the first mark at tick ${firstMark.tick} is after the start deadline (${originName} ${origin} + ${deadlineTicks} = ${lastTick}): `
       + 'a late start is the player\'s own act, not a refund' };
 }
 

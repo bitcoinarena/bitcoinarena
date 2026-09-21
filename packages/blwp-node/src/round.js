@@ -32,6 +32,7 @@ import { receiptsNeeded } from '../../protocol/src/genesis.js';
 import { decodeHandout } from '../../protocol/src/handout.js';
 import { stakePointIsTheHandouts } from '../../protocol/src/contracts.js';
 import { firstMarkOutcome, startDeadlineOf } from '../../protocol/src/first-mark.js';
+import { ticksForMs } from '../../protocol/src/tick.js';
 import { coreForRound, installedCores, runTicksOf } from './cores.js';
 
 /**
@@ -648,8 +649,10 @@ export class Round {
       const joined = decodeEntryContract(new Uint8Array(entry.contract));
       let decided;
       try {
-        decided = firstMarkOutcome({ joinTick: joined.joinTick,
-          deadlineTicks: startDeadlineOf(decodeRoundContract(new Uint8Array(round.contract))),
+        const rc = decodeRoundContract(new Uint8Array(round.contract));
+        const origin = this.startWindowOrigin(c.entryId, joined, rc);
+        decided = firstMarkOutcome({ joinTick: joined.joinTick, ...origin,
+          deadlineTicks: startDeadlineOf(rc),
           firstMark: { tick: c.tick, previousHash: c.previousHash } });
       } catch (e) { throw new Error(`that first mark is refused: ${e.message}`); }
       if (decided.outcome) {
@@ -1364,6 +1367,30 @@ export class Round {
    * 23.1 STEP 5, THIS NODE'S HALF: the stake was seen paid and held. Written
    * once, the first time Lightning showed it, so later play does not ask again.
    */
+  /**
+   * WHEN THE 900-TICK START WINDOW OPENS: the tick this node saw the stake HELD (§23.1 step 5).
+   *
+   * MEASURED on the live Daily before this existed: a paid browser join reached its first mark 4320 ticks
+   * after `joinTick + 900`, and 3803 of those ticks - 88% - were the round's clock running while the player
+   * waited to pay the invoice. Only 188 fell after the stake was held. So the window was expiring on money,
+   * not on driving, and it forfeited a stake that had been paid.
+   *
+   * `stake_seen.seen_ms` is already written once, the first time Lightning showed the hold, so the origin is
+   * read rather than invented. A round with no stake to wait for - a free round - has no such row, and its
+   * join tick IS when it can drive: those keep the old origin exactly.
+   */
+  startWindowOrigin(entryIdBytes, joined, contract) {
+    const seen = this.stakeSeen(entryIdBytes);
+    if (!seen || typeof seen.seenMs !== 'number') return { originTick: joined.joinTick, originName: 'join' };
+    let startMs;
+    try { startMs = Number(contract.startTimeMs); } catch { return { originTick: joined.joinTick, originName: 'join' }; }
+    if (!Number.isFinite(startMs)) return { originTick: joined.joinTick, originName: 'join' };
+    const held = ticksForMs(seen.seenMs - startMs);
+    // never before the join: a stake cannot be held before the entry that names it
+    const originTick = Math.max(joined.joinTick, Number.isFinite(held) ? Math.floor(held) : joined.joinTick);
+    return { originTick, originName: 'stake held' };
+  }
+
   putStakeSeen({ entryId, paidMsat }) {
     this.db.prepare('INSERT OR IGNORE INTO stake_seen (entry_id, paid_msat, seen_ms) VALUES (?, ?, ?)')
       .run(Buffer.from(entryId), String(paidMsat), this.now());
@@ -1799,8 +1826,10 @@ export class Round {
     if (!ok) return null;
     let decided;
     try {
-      decided = firstMarkOutcome({ joinTick: joined.joinTick,
-        deadlineTicks: startDeadlineOf(decodeRoundContract(new Uint8Array(round.contract))),
+      const rc2 = decodeRoundContract(new Uint8Array(round.contract));
+      const origin2 = this.startWindowOrigin(c.entryId, joined, rc2);
+      decided = firstMarkOutcome({ joinTick: joined.joinTick, ...origin2,
+        deadlineTicks: startDeadlineOf(rc2),
         firstMark: { tick: c.tick, previousHash: c.previousHash } });
     } catch { return null; }
     return decided.outcome ? null : c;
