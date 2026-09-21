@@ -28,6 +28,8 @@ import WebSocket from 'ws';
 import { standUpRound } from './round-2of2.mjs';
 import { stakeLockPort } from '../src/stake-lock-port.js';
 import { receiptsNeeded } from '../../protocol/src/threshold.js';
+import { decodePlayerResult, splitSignedResult } from '../../protocol/src/result.js';
+import { runId as runIdOf } from '../src/verdict.js';
 import { bitcoindRpc } from '../src/chain-rpc.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { awaitAttestedClaimKey, stakeFor, postHandout, entryFor, playerFor, fetchRandomness } from '../../blwp-client/src/join.js';
@@ -188,6 +190,15 @@ try {
     const joined = [];
     for (const b of round.nodes) joined.push((await fetch(`${b}/entry`, { method: 'POST', body: encodeEntryContract(entry) })).status);
     const handed = await handLock({ entryId: eid, fields: lock.fields, nodes: round.nodes, needed });
+    // AND THE FEE LOCK, WHICH THE STAKE IS NOT COUNTED WITHOUT (§23.1 step 5, pick a).
+    // Measured without it: every node verified the stake lock and answered "counted once
+    // its fee lock is verified (this round mints fee locks)", so `stakeSeen` was never
+    // recorded, `custody.seenPaid` refused, and the play socket answered "stake not seen"
+    // to EVERY input batch - no transcript, no signed result, 0 of 5 agreeing, and both
+    // entries VOID. The stake was locked the whole time; the round just never saw it.
+    const handedFee = lock.feeLock
+      ? await handLock({ entryId: eid, fields: lock.feeLock.fields, nodes: round.nodes, needed, door: 'fee-lock' })
+      : null;
     // THE FIRST MARK WHERE THE PAGE PUTS IT (§16): at tick 60, inside the start
     // deadline the round omits (900) - then the rest of the run and its end mark,
     // chained. A single first mark at the run's end (this harness's 1197 before)
@@ -214,6 +225,8 @@ try {
     say({ step: 'locked and played', role, outpoint: `${toHex(lock.outpoint.txid)}:${lock.outpoint.outIdx}`,
       amountMsat: lock.fields.amountMsat, expiration: lock.fields.expiration, handouts: put.accepted, entries: joined,
       locks: handed.said.map((s) => `${s.status}${s.why ? ' ' + String(s.why).slice(0, 120) : ''}`), committed: handed.committed,
+      feeLocks: handedFee ? handedFee.said.map((s) => `${s.status}${s.why ? ' ' + String(s.why).slice(0, 90) : ''}`) : 'the round minted none',
+      feeCommitted: handedFee ? handedFee.committed : 0,
       harnessSearch: { tries, coreEnded: run.ended === RUN_DELIVERED ? 'DELIVERED' : 'FAILED', ticks: run.ticks }, played });
   }
 
@@ -221,11 +234,42 @@ try {
   const closedAt = Date.now();
   say({ step: 'close', said: await Promise.all(round.nodes.map((b) => ws(b, `close ${round.id}`))) });
   const w = players.winner;
+
+  // WHAT EACH OF THE SEVEN ACTUALLY HOLDS, before anything is tallied. The tally
+  // said "0 of 5 agree on any one run", which is not a split vote - it is no
+  // signed result at all - so the question is whether a result object exists on
+  // any node, and if not, what each one says instead.
+  // GROUPED BY runId, NOT resultId. `resultId` hashes the signing node in too, so
+  // seven nodes agreeing on one run still carry seven different resultIds - counting
+  // those says "all disagree" when they agree. `runId` is the same hash with the
+  // node zeroed, which is what the tally itself compares.
+  const look = (who, eid) => {
+    const per = daemons.map((d, i) => {
+      const rs = d.round.results(rid, eid);
+      const t = d.round.transcript(rid, eid);
+      const byRun = new Map();
+      for (const r of rs) {
+        try {
+          const run = toHex(runIdOf(decodePlayerResult(splitSignedResult(r.bytes).body))).slice(0, 8);
+          byRun.set(run, (byRun.get(run) || 0) + 1);
+        } catch { byRun.set('undecodable', (byRun.get('undecodable') || 0) + 1); }
+      }
+      return { n: String.fromCharCode(65 + i), results: rs.length,
+        signed: [...byRun.entries()].map(([run, n]) => `${run} x${n}`),
+        void: !!d.round.entryVoid(eid), ticks: t && t.ticks ? t.ticks.length : 0 };
+    });
+    // AND THE BEST-SUPPORTED RUN AS THE TALLY WOULD SEE IT, off the node that holds most.
+    const widest = per.reduce((best, p) => (p.results > best.results ? p : best), per[0]);
+    return { per, widest: widest.signed, needed };
+  };
+  say({ step: 'what the seven hold after close', winner: look('winner', w.eid), loser: look('loser', players.loser.eid) });
+
   let forfeit = await forfeitOf({ roundId: rid, entryId: toHex(w.eid), nodes: round.nodes });
   const early = forfeit.ok ? 'granted' : forfeit.why.slice(0, 200);
   for (const stop = Date.now() + 180000; !forfeit.ok && Date.now() < stop; await wait(1000))
     forfeit = await forfeitOf({ roundId: rid, entryId: toHex(w.eid), nodes: round.nodes });
   const kept = daemons.map((d) => { const f = d.round.forfeit(w.eid); return f ? toHex(f.signature) === forfeit.signature : false; });
+  say({ step: 'what the seven hold after the window', winner: look('winner', w.eid) });
   say({ step: 'winner forfeit', firstAsk: early, ok: forfeit.ok, msAfterClose: Date.now() - closedAt,
     contractId: forfeit.contractId, claimPkIsTheRounds: forfeit.claimPk === toHex(claimKey.claimPk),
     verifies: forfeit.ok && schnorr.verify(fromHex(forfeit.signature), fromHex(forfeit.contractId), claimKey.claimPk.subarray(1)),
@@ -262,6 +306,14 @@ try {
     error: one.error ? String(one.error).slice(0, 160) : null, federationBlockCount: one.block_count, expiration: one.expiration,
     lockBefore: one.stored_before ? 'held' : 'none', lockAfter: one.stored_after ? 'held' : 'none',
     creditedMsat: one.balance_after - one.balance_before, federationFeeMsat: Number(w.lock.fields.amountMsat) - (one.balance_after - one.balance_before) });
+  // AND WHAT EACH LOCK HELD, BEFORE AND AFTER. The winner's is redeemed above; the
+  // loser's is refused and stays held to its expiry, which is §23.2's own answer.
+  say({ step: 'the locks, before and after',
+    winner: { outpoint: `${toHex(w.lock.outpoint.txid).slice(0, 12)}:${w.lock.outpoint.outIdx}`,
+      lockedMsat: String(w.lock.fields.amountMsat), before: one.stored_before ? 'held' : 'none',
+      after: one.stored_after ? 'held' : 'none', creditedMsat: one.balance_after - one.balance_before },
+    loser: { outpoint: `${toHex(l.lock.outpoint.txid).slice(0, 12)}:${l.lock.outpoint.outIdx}`,
+      lockedMsat: String(l.lock.fields.amountMsat), after: (await port.status(l.lock.outpoint))?.stored ? 'held' : 'none' } });
   const withdrawable = BigInt(await r.client.withdrawableMsat());
   const inv = JSON.parse((await lncli('addinvoice', `--amt_msat=${withdrawable}`, '--memo=w5b')).out || '{}');
   const wd = JSON.parse(await r.client.withdraw(inv.payment_request));
