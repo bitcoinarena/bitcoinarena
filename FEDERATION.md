@@ -288,6 +288,10 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
 - **FEDERATION is the only custody** (§23.6): THRESHOLD_LN is withdrawn on
   every network; a round naming it is invalid; its records decode and that
   is all. This file is no longer "V1 of two"; it is the construction.
+- **Serving a drain is paid** (§23A.6 step 5): the guardian pool of every
+  round naming the successor is shared per seat with the draining
+  predecessor's seated guardians until it is CLOSED, so staying is income
+  and leaving is a slash, not a slash alone.
 - **Guardians are not parked** (§23.6): §23A is built now - testnet on the
   2-of-2 that runs, seated by its two bonded operators; regtest on the
   4-guardian rehearsal; mainnet by founding once ten guardian-capable
