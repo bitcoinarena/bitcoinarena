@@ -77,11 +77,21 @@ test('the core builds the map Unity draws, box for box', () => {
     assert.ok(found, `${what} is not among the core's boxes`);
   };
 
-  // The four edges, as the player gathered them.
-  has(-130, 0, 1.5, 88, 'Wall_West');
-  has(130, 0, 1.5, 88, 'Wall_East');
-  has(0, -85, 133, 1.5, 'Wall_North');
-  has(0, 85, 133, 1.5, 'Wall_South');
+  // THE FOUR EDGES ARE NOT BOXES ANY MORE (ruling 4, the owner 2026-09-22): "the map edge is a clamp, not
+  // a wall. The core owes no wall solids, and the client stops drawing walls the core does not build."
+  // This used to assert the four the player gathered - Wall_West/East at +-130 by 1.5 x 88, North/South
+  // at +-85 by 133 x 1.5. Asserting their ABSENCE rather than deleting the lines keeps the ruling
+  // pinned: a core that starts building edge walls again fails here, and so does a client that draws
+  // boxes this does not carry.
+  const none = (cx, cz, what) => {
+    const found = Array.from({ length: s.n }, (_, i) => at(i)).some((b) =>
+      Math.abs(b.cx - cx) < 0.001 && Math.abs(b.cz - cz) < 0.001);
+    assert.ok(!found, `${what} is still among the core's boxes: the edge is a clamp, not a wall`);
+  };
+  none(-130, 0, 'Wall_West');
+  none(130, 0, 'Wall_East');
+  none(0, -85, 'Wall_North');
+  none(0, 85, 'Wall_South');
 
   // The post office: 25 pillars from z -81.6 on a 6.8 m pitch, two ends, a lintel.
   for (let i = 0; i <= 24; i++) has(-118.4, -81.6 + 6.8 * i, 4, 0.9, `Pillar${i}`);
