@@ -108,6 +108,57 @@ export const OFFENCES = [
 ];
 
 /**
+ * §5A.3 (RULED 2026-09-22): WHO A SLASH HARMED, read off the offence and never judged.
+ *
+ * Two of the six name ONE entry - the player the contradicted or doubled result was about. The other
+ * four harmed the whole paying field, so they name every FINANCIALLY ACTIVATED entry (§22A's fee base),
+ * and `OPERATOR_PLAYED` drops the operator's own, which §5A.13 voids.
+ *
+ * `entries` are the round's, each `{ playerPubkey, netStakeMsat, activated, operatorOwn }`. The caller
+ * supplies them because only a node holding the round knows which entries paid; this decides nothing
+ * about them, it only selects.
+ */
+export const NAMES_ONE_ENTRY = [TWO_RESULTS, REPLAY_CONTRADICTS];
+export function affectedEntries({ offence, playerPubkey, entries = [] } = {}) {
+  if (!OFFENCES.includes(offence)) return { ok: false, why: `${offence} is not one of the six offences` };
+  if (NAMES_ONE_ENTRY.includes(offence)) {
+    const one = entries.find((e) => e && hex(e.playerPubkey) === hex(playerPubkey));
+    if (!one) return { ok: false, why: 'that proof names a player the round has no entry for' };
+    return { ok: true, affected: [one] };
+  }
+  const paying = entries.filter((e) => e && e.activated);
+  const affected = offence === OPERATOR_PLAYED ? paying.filter((e) => !e.operatorOwn) : paying;
+  return { ok: true, affected };
+}
+
+/**
+ * §5A.3: the players' half divided PRO RATA BY NET STAKE - §18 weights entitlement by net stake, and so
+ * does the harm. Floors each share and hands the leftover out one satoshi at a time in the round's own
+ * order, the rule 22A names for fees. With nothing to divide among, the caller is told so rather than
+ * given a silent zero.
+ */
+export function playersShares({ toPlayers, affected = [], roundId } = {}) {
+  if (typeof toPlayers !== 'bigint' || toPlayers < 0n)
+    return { ok: false, why: 'the players\' half is a number of satoshi' };
+  const total = affected.reduce((a, e) => a + (e.netStakeMsat || 0n), 0n);
+  if (!affected.length || total <= 0n)
+    return { ok: false, why: 'that offence harmed no entry with a net stake, so there is nobody to divide among' };
+  const shares = new Map();
+  let paid = 0n;
+  for (const e of affected) {
+    const share = (toPlayers * e.netStakeMsat) / total;
+    shares.set(hex(e.playerPubkey), share);
+    paid += share;
+  }
+  for (const k of remainderKeys(roundId, affected.map((e) => e.playerPubkey))) {
+    if (paid >= toPlayers) break;
+    shares.set(hex(k), shares.get(hex(k)) + 1n);
+    paid += 1n;
+  }
+  return { ok: true, shares, paid };
+}
+
+/**
  * The proof body. The signed result it accuses travels BESIDE it, like every
  * other signature in this protocol, so the proof's own id does not move when
  * the evidence is attached.
@@ -1154,6 +1205,28 @@ export function slashHoldsOnFeeClaim({
  * nobody to pay - no affected players, or a set entirely slashed - that half
  * goes to the FEDERATION POOL, 75% nodes and 25% developers, never burned.
  */
+/**
+ * §5A.3 (RULED 2026-09-22): the slashing height is one the ARBITRATION SET NAMES, not one the chain hands
+ * back. Valid iff `censusHeight <= slashHeight <= tipHeight` at the moment they sign. It goes into the
+ * slashing transaction's OP_RETURN and its nLockTime, so the transaction cannot confirm earlier than the
+ * height it names, and every observer recomputes the recipient list from chain data at a height the
+ * transaction itself commits to. The height at which a bond happens to be SPENT is not it: that height
+ * exists for spends that are not slashes at all.
+ */
+export function slashHeightIsValid({ slashHeight, censusHeight, tipHeight } = {}) {
+  if (!Number.isInteger(slashHeight) || slashHeight < 0)
+    return { ok: false, why: 'a slashing height is a block height' };
+  if (!Number.isInteger(censusHeight) || !Number.isInteger(tipHeight))
+    return { ok: false, why: 'the round census height and the chain tip are block heights' };
+  if (slashHeight < censusHeight)
+    return { ok: false, why: `that slashing height ${slashHeight} is below the round's census height `
+      + `${censusHeight}: the census it names would predate the round` };
+  if (slashHeight > tipHeight)
+    return { ok: false, why: `that slashing height ${slashHeight} is above the tip ${tipHeight} the `
+      + 'arbitration set signs at: a height nobody can read yet' };
+  return { ok: true, slashHeight };
+}
+
 export function slashDistribution({
   bondSats, roundId, contract, affectedPlayers = [],
   // THE ACTIVE CENSUS AT THE SLASHING HEIGHT, and the round's own seats taken out

@@ -37,4 +37,5 @@ export const KNOWN_GOOD_CORE_HASHES = Object.freeze([
   '76010a746193dce3ed94f29deffad95a58d48b3cf7dc101e58d869b7b9446019',
   '3fd9cda50f076d3a43fab5bcce349f7350a8f3afd982f3a4eee59c56dc4aa560',
   '6cf38b8877a054173cb8d1004f3c6f0b1ed15fb85efa5a50379079451fa74fe4',
+  'f253dc6dbdc305ea27460aa18be6eb78a3bdc125d2f4b3ab8418f084c3258c2e',
 ]);
