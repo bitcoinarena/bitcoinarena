@@ -257,7 +257,12 @@ public class Bootstrap : MonoBehaviour
         territory.target = _terrain.GetComponent<MeshRenderer>();
         territoryGo.SetActive(true);
         BuildArmies();
-        BuildBoundary(_terrain);
+        // THE EDGE IS A CLAMP, NOT A WALL (ruling 4, the owner 2026-09-22): "the core owes no wall solids,
+        // and the client stops drawing walls the core does not build." BuildBoundary is not called.
+        // The core clamps every unit and the truck to +-HALF_X / +-HALF_Z after its pushes, so there is
+        // nothing here for a collider to do, and a barrier drawn where the core has no solid is exactly
+        // the divergence `replay-solids` exists to catch. The method is left below, unreferenced and
+        // with its own note, because deleting it would lose why the walls were there.
         // The post office goes up FIRST, because the truck has to be parked in
         // one of its bays and the bay position is arithmetic, not geometry -
         // so it is known before the building has finished streaming.
@@ -695,6 +700,15 @@ public class Bootstrap : MonoBehaviour
     }
 
     /// <summary>
+    /// WITHDRAWN (ruling 4, the owner 2026-09-22). Not called: the map edge is a CLAMP, and the core owes
+    /// no wall solids. Kept unreferenced so the reasoning below is not lost - it is why the walls were
+    /// tall and sunk, and a future edge rule has to answer it.
+    ///
+    /// Measured when they went: the core built its own four at +-185 while these stood at +-130, so the
+    /// player and every replay walked different walls - which is the divergence, not a detail. With the
+    /// clamp the truck reaches the true edge: the vectors' maxZ went 80.24 -> 85.00 and slalom's maxX
+    /// 181.31 -> 185.00, and nothing ever leaves the map.
+    ///
     /// Walls round the edge of the world.
     ///
     /// The respawn in TruckController is a safety net, not a boundary - being

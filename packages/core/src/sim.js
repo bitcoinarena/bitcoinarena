@@ -2152,6 +2152,27 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
     }
   }
 
+  // ---- THE MAP EDGE IS A CLAMP (ruling 4, the owner 2026-09-22) --------------
+  //
+  // "The map edge is a clamp, not a wall. The core owes no wall solids." `rules/map.js` used to put four
+  // boxes at +-HALF_X / +-HALF_Z, 26 m tall and sunk 6 m, so that a truck arriving airborne could not
+  // clear the edge. They are gone, and this is what holds the world in instead.
+  //
+  // IT IS LAST, AND IT IS AFTER THE PUSHES. The armour clamp above says it in its own words - "a rule
+  // applied to the step and not to the push is half a rule" - and it is exactly as true here: the truck
+  // clear-out and §8.3's hull clearance both move a man AFTER his own step, and either can put him past
+  // the edge. So this runs after both, and before the posture pass, which only reads position. A wall
+  // was a thing to be pushed through; a clamp is not, whatever pushed.
+  //
+  // EVERY LIVING UNIT, armour included. The armour clamp above is tighter in x (ARMOUR_WEST/EAST) and
+  // says nothing about z, so this is not a repeat of it: it is the floor under both.
+  for (let i = 0; i < UNITS; i++) {
+    const b = unitBase(i);
+    if (s[b + U_STATE] === 0) continue;
+    s[b + U_X] = clamp(s[b + U_X], neg(HALF_X), HALF_X);
+    s[b + U_Z] = clamp(s[b + U_Z], neg(HALF_Z), HALF_Z);
+  }
+
   // §11.4 POSTURE, written into the high bits §11.3 reserved in TAC_COVER. Last thing in the movement pass, after
   // §8.3's hull clearance and the truck's clear-out, so the man's final position decides COVER while his OWN step
   // (captured at his write-back) decides STAND. Derived, never chosen; no draw is taken and no word grows.
