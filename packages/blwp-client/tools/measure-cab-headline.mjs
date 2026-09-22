@@ -9,7 +9,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 const arg = (n, d) => { const h = process.argv.find((a) => a.startsWith(`--${n}=`)); return h ? h.slice(n.length + 3) : d; };
 const PAGE = arg('page', 'https://btc-logistics-core.pages.dev/');
-const PORT = Number(arg('port', 9341));
+const PORT = Number(arg('port', 9351));
 const OUT = arg('out', '/tmp/claude-1000/-tmp-btc-phase0/3702e750-4ad9-4253-93e3-670b04a90b08/scratchpad/cab-headline');
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const say = (l) => console.log(`${new Date().toISOString().slice(11, 19)}  ${l}`);

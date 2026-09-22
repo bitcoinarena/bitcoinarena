@@ -7,7 +7,7 @@
 import { WebSocket } from 'ws';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-const PORT = Number(process.env.PORT || 9341);
+const PORT = Number(process.env.PORT || 9351);
 const PAGE = 'https://btc-logistics-core.pages.dev/';
 const OUT = '/tmp/claude-1000/-tmp-btc-phase0/3702e750-4ad9-4253-93e3-670b04a90b08/scratchpad/cab-headline/climb';
 const ONE = 65536;

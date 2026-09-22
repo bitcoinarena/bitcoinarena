@@ -130,9 +130,9 @@ const STATE = `(function () {
 const tabs = [];
 try {
   say(`page ${PAGE}`);
-  const a = await browser('tabA', 9341);
+  const a = await browser('tabA', 9351);
   tabs.push(a);
-  const b = await browser('tabB', 9342);
+  const b = await browser('tabB', 9352);
   tabs.push(b);
   say('two chromes are up');
 

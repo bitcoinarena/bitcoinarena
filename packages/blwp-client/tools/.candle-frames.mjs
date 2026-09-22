@@ -2,7 +2,7 @@ import { WebSocket } from 'ws';
 import { writeFileSync, mkdirSync } from 'node:fs';
 const OUT='/tmp/claude-1000/-tmp-btc-phase0/3702e750-4ad9-4253-93e3-670b04a90b08/scratchpad/candle-frames';
 mkdirSync(OUT,{recursive:true});
-const list = await fetch('http://127.0.0.1:9341/json/list').then(r=>r.json());
+const list = await fetch('http://127.0.0.1:9351/json/list').then(r=>r.json());
 const t = list.find(x=>x.type==='page'&&x.url.startsWith('http'));
 const ws = new WebSocket(t.webSocketDebuggerUrl,{maxPayload:64*1024*1024});
 await new Promise(r=>ws.on('open',r));

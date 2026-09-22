@@ -7,7 +7,7 @@
 //
 //   node packages/blwp-client/tools/measure-cover-on-page.mjs
 import { WebSocket } from 'ws';
-const list = await fetch('http://127.0.0.1:9341/json/list').then((r) => r.json());
+const list = await fetch('http://127.0.0.1:9351/json/list').then((r) => r.json());
 const t = list.find((x) => x.type === 'page');
 const ws = new WebSocket(t.webSocketDebuggerUrl, { maxPayload: 64 * 1024 * 1024 });
 await new Promise((r) => ws.on('open', r));

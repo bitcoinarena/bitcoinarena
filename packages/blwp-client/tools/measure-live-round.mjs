@@ -8,12 +8,12 @@
 //
 //   node packages/blwp-client/tools/measure-live-round.mjs
 //
-// The page is driven through the test host's CDP (monitoring/blwp_mac_playtest.sh), port 9341.
+// The page is driven through the the test host's playtest Chrome (HARD 2026-09-20 15:12: test host only), port 9351.
 import { WebSocket } from 'ws';
 import { writeFileSync } from 'node:fs';
 const DIR = process.env.DIR || '/tmp';
 const PAGE = 'https://btc-logistics-core.pages.dev/';
-const list = await fetch('http://127.0.0.1:9341/json/list').then((r) => r.json());
+const list = await fetch('http://127.0.0.1:9351/json/list').then((r) => r.json());
 const t = list.find((x) => x.type === 'page');
 const ws = new WebSocket(t.webSocketDebuggerUrl, { maxPayload: 256 * 1024 * 1024 });
 await new Promise((r) => ws.on('open', r));

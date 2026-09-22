@@ -3,7 +3,7 @@
 // computes CH_DOTS from the tape itself but takes CH_TREND/CH_STRENGTH from the market STATE word, so the two can
 // disagree - this reads both, plus the last six candle bodies, and applies §4.14's own rule to them.
 import { WebSocket } from 'ws';
-const PORT = Number(process.env.PORT || 9341);
+const PORT = Number(process.env.PORT || 9351);
 const list = await fetch(`http://127.0.0.1:${PORT}/json/list`).then((r) => r.json());
 const t = list.find((x) => x.type === 'page' && x.url.startsWith('http'));
 if (!t) throw new Error('no page on CDP');

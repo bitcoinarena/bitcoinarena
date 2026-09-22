@@ -5,7 +5,7 @@
 // read through chartView's CH_LAST and CH_UNIT. A HUD showing a price the core is not running on would be the
 // client holding its own outcome.
 import { WebSocket } from 'ws';
-const PORT = Number(process.env.PORT || 9341);
+const PORT = Number(process.env.PORT || 9351);
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const list = await fetch(`http://127.0.0.1:${PORT}/json/list`).then((r) => r.json());
 const t = list.find((x) => x.type === 'page' && x.url.startsWith('http'));
