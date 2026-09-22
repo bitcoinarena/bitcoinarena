@@ -50,6 +50,25 @@ import { encodeRerunResult, rerunResultId, joinSignedRerun } from '../../protoco
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 
 export const b32 = (n) => new Uint8Array(32).fill(n);
+
+/**
+ * THE ENTRY'S FEE SECRET (§23.5), WHICH IS NOT ZERO AND NOT SHARED.
+ *
+ * The node fee travels in its own lock, and on Lightning custody that lock is a hold invoice keyed on
+ * `sha256(entry.feePreimage)`. Fixtures used to leave F at thirty-two zero bytes, so every paying entry
+ * they built asked for a hold on `66687aad...` - not that entry's hash but every zero-F entry's, in
+ * every round. Measured on two players of one round: 2 fee holds, 1 payment hash, both settled on a
+ * preimage anybody can compute. Real lnd refuses it outright ("cannot use hash of all-zeroes
+ * preimage", `join.js:833`) and the shipped client mints a random one on a paying round.
+ *
+ * Derived from the player's own stake preimage rather than random, so entry ids stay deterministic.
+ */
+export const feeSecretOf = (preimage) => {
+  const seed = new Uint8Array(preimage.length + 2);
+  seed.set(preimage, 0);
+  seed.set([0x23, 0x05], preimage.length);
+  return sha256(seed);
+};
 export const rand = (n) => new Uint8Array(randomBytes(n));
 export const RANDOMNESS = b32(0x9b);
 export const BEACON = { hash: RANDOMNESS, height: 900001, timeMs: 900n };

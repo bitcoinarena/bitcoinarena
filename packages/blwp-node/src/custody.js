@@ -519,7 +519,29 @@ export class Custody {
   async holdFee(entry) {
     if (!entry || entry.feeMsat === undefined) return { ok: false, why: 'that is not an entry contract' };
     if (entry.feeMsat === 0n) return { ok: true, state: FREE, why: 'that entry owes no fee, so none is held' };
+
+    // AND AN ENTRY THAT HANDS OVER NO F HAS NO FEE HOLD (measured 2026-09-22).
+    //
+    // The hash below is `sha256(entry.feePreimage)`, so an entry whose F is thirty-two zero bytes asks
+    // for an invoice on `66687aad...` - and that is not this entry's hash, it is EVERY such entry's
+    // hash, in every round, on every node. Measured on two players of one round: 2 fee holds, 1 distinct
+    // payment hash, both HELD, both settled afterwards with a preimage anybody can compute. One HTLC
+    // carrying two players' fees, claimable by the world.
+    //
+    // Real Lightning already refuses it - `join.js:833` records lnd answering "cannot use hash of
+    // all-zeroes preimage" on the Daily, where the consequence was that the 2% was never collected at
+    // all - so this is not a new rule, it is the node saying the same thing before asking, instead of
+    // building a hold that only a stub endpoint would accept. `stake-lock-signer-node.js` refuses the
+    // same entry by name on the federation path; the hold-invoice path had no such check.
+    //
+    // AND IT IS ASKED AFTER THE LIGHTNING CHECK, not before. A node that reaches no Lightning holds no
+    // fee whatever the entry says, and asking about F first changed ITS answer too: measured,
+    // `lock-settlement` went 15/15 -> 13/2 on exactly that, because a FEDERATION round's seats reach no
+    // Lightning and were suddenly told their entry hands over no F instead of that this node holds no
+    // fees. The order is the node's own capability first, then the entry's.
     if (!this.reaches) return { ok: false, why: 'this node reaches no Lightning, so it holds no fees' };
+    if (!(entry.feePreimage instanceof Uint8Array) || entry.feePreimage.every((x) => x === 0))
+      return { ok: false, why: 'that entry hands over no F, so its fee could only be held on a hash that is every such entry\'s' };
     const entryId = entryIdOf(entry);
     const had = this.round.feeHold(entryId);
     if (had && had.state !== AWAITING_INVOICE)
@@ -585,6 +607,15 @@ export class Custody {
       if (toHex(sha256(entry.feePreimage)) !== toHex(row.paymentHash)) {
         this.round.putFeeHold({ ...row, state: row.state,
           why: 'this fee hold was made for another preimage than the entry carries, so it is not settled' });
+        continue;
+      }
+      // AND THE BELT FOR A ROW STORED BEFORE `holdFee` REFUSED ONE. The comparison above passes for an
+      // all-zero F - zeros hash to the hash the row carries - so without this a fee hold already in the
+      // store would still be settled on a preimage anybody can compute, against a hash it shares with
+      // every other such entry. Nothing is moved on a secret that is not a secret.
+      if (entry.feePreimage.every((x) => x === 0)) {
+        this.round.putFeeHold({ ...row, state: row.state,
+          why: 'that entry hands over no F, so this fee is not settled on a preimage anyone can compute' });
         continue;
       }
       this.round.putFeeHold({ entryId: row.entryId, roundId, paymentHash: row.paymentHash,

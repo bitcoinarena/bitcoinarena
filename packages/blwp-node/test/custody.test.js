@@ -49,11 +49,20 @@ const contract = {
 // the stake commitment IS sha256 of a secret the player chose, which is why a
 // node cannot settle a stake it has no shares for.
 const preimageOf = (n) => b32(n + 60);
+// AND THE FEE'S OWN SECRET, WHICH IS ALSO THE PLAYER'S AND ALSO PER ENTRY (§23.5).
+//
+// This was thirty-two zero bytes, and a zero F is not a secret and not this entry's: the fee hold is
+// keyed on `sha256(feePreimage)`, so every entry built here asked for an invoice on one hash -
+// `66687aad...`, which anybody can compute and which two players of one round therefore SHARE. The
+// assertion below that the hold is "keyed on the entry's own feePreimage" was true of zeros and said
+// nothing. The shipped client mints a random one on a paying round (`join.js:837`, whose comment
+// records lnd refusing "hash of all-zeroes preimage" on the Daily), so the fixture mints one too.
+const feePreimageOf = (n) => b32(n + 140);
 const entryFor = (rid, n) => ({
   roundId: rid, playerPubkey: b32(n), sessionPubkey: b32(n + 40),
   stakeCommitment: sha256(preimageOf(n)),
   stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n, joinTick: 0,
-  worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
+  worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: feePreimageOf(n), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
 });
 
 /** A Lightning node that keeps a log and no money. */
