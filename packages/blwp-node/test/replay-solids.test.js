@@ -56,8 +56,15 @@ test('no daemon hands a replay a collision world, and no page can send one', () 
 test('the core builds the map Unity draws, box for box', () => {
   const st = init(0x028b8279);
   const s = mapSolids(st.ground, HALF_X, HALF_Z);
+  // THE TOTAL IS THE CORE'S CONSTANT, AND 37 WAS NEVER THE TOTAL. `map.js` records
+  // the breakdown beside it: MAP_BOXES = 106 = "37 map + 41 miner corridor + 4 coin
+  // stacks + 24 post office mouths". The 37 that `SolidsInventoryTests` gathered off
+  // a running player is the MAP's own boxes - the four edges, the post office shell,
+  // the miner's facade - and those are still checked one by one below, by centre and
+  // extent to the millimetre. Asserting the whole count equals that subtotal compared
+  // a total against a part of itself, and went red the day the corridor, the stacks
+  // and the mouths were added on purpose.
   assert.equal(s.n, MAP_BOXES);
-  assert.equal(s.n, 37, 'a running player gathered 37 world boxes');
 
   const at = (i) => {
     const b = i * BOX_WORDS;
