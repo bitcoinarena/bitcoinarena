@@ -2789,7 +2789,13 @@ invalid, past rounds included**: a record from before this ruling that
 carries the old value is not a round of this network and is neither
 decoded, replayed, settled, listed nor counted; a node that holds such a
 record treats it as it treats bytes that do not parse. There is no
-decode-only label and no history exception. The door §23.6 once left open
+decode-only label and no history exception. **On the wire (RULED
+2026-09-22):** FEDERATION keeps the byte it has always had, and the byte
+the withdrawn value used is **undefined** - not a value, not a reserved
+slot, not a label; the decoder throws on it exactly as on a bad length or
+an unknown type byte. Renumbering FEDERATION onto the freed byte is
+forbidden, because every old record would then decode, silently, as
+FEDERATION, which is the one outcome this ruling names. The door §23.6 once left open
 for a later migration is closed with it: if such a node ever hardens, that
 is a new revision, not a standing option.
 
