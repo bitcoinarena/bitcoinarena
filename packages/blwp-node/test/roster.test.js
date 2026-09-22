@@ -745,6 +745,16 @@ test('the slash-owing door answers off the chain at a height above the round\'s 
     const evidence = joinSlashEvidence(encodeSlashProof(proof), new Uint8Array(SIGNED_RESULT_BYTES));
     node.round.putSlashProof(rid, eid, accused, slashProofId(proof), evidence);
 
+    // AND A SECOND PROOF, AGAINST A SECOND NODE, IN THE SAME RUN (ruling 3, 2026-09-22: "nothing
+    // pooled - each bond pays the players its own proof names"). The door loops over what it holds and
+    // that loop had never run past one: the census is read once and shared, and each proof takes its
+    // OWN accused out of it, so a second proof is where a shared list would show up as the first one's
+    // exclusion leaking into the second.
+    const second = keyFor(0x12);
+    const alsoProof = { ...proof, nodePubkey: second, bondTxid: parseTransaction(bonds[1]).txid };
+    node.round.putSlashProof(rid, eid, second,
+      slashProofId(alsoProof), joinSlashEvidence(encodeSlashProof(alsoProof), new Uint8Array(SIGNED_RESULT_BYTES)));
+
     // THE ROUND'S OWN CENSUS STILL CHECKS AGAINST ITS ROOT; the one at another height must not, which
     // is the bug this door found. Both read here, off the same node.
     const own = node.roster.censusFor(rid);
@@ -771,7 +781,9 @@ test('the slash-owing door answers off the chain at a height above the round\'s 
     assert.equal(facts.bondSatsAreBigInt, true, 'a census entry carries no bond value for the door to read');
     assert.equal(facts.status, 200, `the door did not answer: ${JSON.stringify(body)}`);
 
-    const owed = body.owing[0];
+    assert.equal(body.owing.length, 2, 'the door answered for one proof where the node holds two');
+    const owed = body.owing.find((o) => o.node === toHex(accused));
+    const also = body.owing.find((o) => o.node === toHex(second));
     // THE BOND'S VALUE IS THE CHAIN'S, off the funding output - not a number the proof carries.
     assert.equal(owed.bondSats, '100000000');
     assert.deepEqual([owed.toPlayers, owed.toNodes, owed.toDevelopers], ['50000000', '37500000', '12500000']);
@@ -784,8 +796,27 @@ test('the slash-owing door answers off the chain at a height above the round\'s 
       'the slashed node was paid a share of its own bond');
     // THE SEATS ARE SUBTRACTED, so of four bonded nodes only the one that is neither seat nor accused
     // is left - and it takes the whole 75%.
-    assert.deepEqual(owed.nodes, [{ node: toHex(keyFor(0x12)), sats: '37500000' }]);
+    assert.deepEqual(owed.nodes, [{ node: toHex(second), sats: '37500000' }]);
     assert.equal(owed.nodes.reduce((a, n) => a + BigInt(n.sats), 0n), BigInt(owed.toNodes),
       'the nodes\' half did not reach the nodes');
+
+    // THE SECOND PROOF IS COMPUTED OUT OF THE SAME CENSUS AND EXCLUDES ITS OWN ACCUSED, not the first's:
+    // it pays 0x11 and not 0x12. A census the loop mutated once would pay neither.
+    assert.deepEqual(also.nodes, [{ node: toHex(accused), sats: '37500000' }],
+      'the second proof did not pay out of a census holding the first proof\'s accused');
+    // NOTHING IS POOLED ACROSS THEM: the harmed player is paid the players' half out of EACH bond.
+    assert.deepEqual([owed.players, also.players].map((ps) => ps.map((p) => p.sats)),
+      [['50000000'], ['50000000']]);
+    // AND EVERY ANSWER ADDS UP TO ITS OWN BOND, so no satoshi of a slashed bond goes unreported.
+    for (const o of body.owing)
+      assert.equal(BigInt(o.toPlayers) + BigInt(o.toNodes) + BigInt(o.toDevelopers), BigInt(o.bondSats),
+        `the three amounts do not sum to the bond for ${o.node.slice(0, 16)}`);
+
+    // AND A HEIGHT BELOW THE ROUND'S OWN IS REFUSED WITHOUT DERIVING A CENSUS AT IT.
+    const low = await fetch(`http://127.0.0.1:${node.port}/slash-owing?round=${toHex(rid)}&entry=${toHex(eid)}&height=${HEIGHT - 1}`);
+    const lowSaid = await low.text();
+    console.log('  FACTS (a height below the round\'s own):', JSON.stringify([low.status, lowSaid.trim()]));
+    assert.equal(low.status, 409);
+    assert.match(lowSaid, /below the round's census height/);
   } finally { await node.close(); }
 });
