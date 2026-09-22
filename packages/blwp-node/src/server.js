@@ -82,7 +82,8 @@ import { SIGNED_RERUN_BYTES } from '../../protocol/src/rerun.js';
 import { verifyStakeLock, verifyFeeLock, lockFieldsFromJson, roundMintsFees, federationTakesNoBaseFee } from './stake-lock-signer-node.js';
 import { encodeClaimKeyAttestation, claimKeyAttestationId } from '../../protocol/src/claim-key.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { splitSlashEvidence, slashProofId, SLASH_EVIDENCE_BYTES } from '../../protocol/src/slash.js';
+import { splitSlashEvidence, slashProofId, SLASH_EVIDENCE_BYTES, REPLAY_CONTRADICTS } from '../../protocol/src/slash.js';
+import { slashOwing, entriesForSlash } from './slash-owing.js';
 import { Preimages, encodeShareAnswer, SEALED_ANSWER_BYTES } from './preimage.js';
 import { Payouts, PAYOUT_QUEUED, PAID, PAID_IN_PART, NOTHING_OWED } from './payout.js';
 import { PoolSigning } from './pool-signing.js';
@@ -2915,6 +2916,75 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
       // EVERY SLASH PROOF THIS NODE FILED FOR A RUN (5A.3B step 1), each with
       // the signed result it accuses, fixed-size records back to back.
+      // WHAT A FILED SLASH OWES, at a height the ARBITRATION SET NAMES (§5A.3, ruled 2026-09-22).
+      //
+      // The height is the caller's, not this node's: §5A.3 pays "the active census nodes at the
+      // slashing height", and that height is one the arbitration set names - at or below the tip when
+      // they sign, at or above the round's own census height. So the door takes it and refuses it out
+      // of range rather than choosing one, and `slashOwing` refuses it BEFORE any census is read at it.
+      //
+      // IT RECORDS NOTHING AND SPENDS NOTHING. Steps 3 and 5 of §5A.3B - the escrow output and MuSig2
+      // over the arbitration keys - are not in this tree and this door does not pretend they are. What
+      // it is for: every observer must be able to recompute the same recipient list from chain data
+      // before any money is built on it, and the first time those numbers are worked out should not be
+      // the first time money moves.
+      if (req.method === 'GET' && url.pathname === '/slash-owing') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
+        if (rid.length !== 32 || eid.length !== 32) return text(res, 400, 'a round id and an entry id are 32 bytes');
+        if (!url.searchParams.has('height')) return text(res, 400, 'a slash is owed at a height, and this node does not pick one');
+        const height = Number(url.searchParams.get('height'));
+        const row = round.get(rid);
+        if (!row) return text(res, 404, 'this node holds no such round');
+        const contract = decodeRoundContract(new Uint8Array(row.contract));
+        const held = round.slashProofs(rid, eid);
+        if (!held.length) return text(res, 404, 'this node filed no slash proof for that run');
+
+        // THE CENSUS AT THAT HEIGHT, read once for every proof: the recipients and, in the same rows,
+        // the bond values. A proof names `bondTxid`/`bondVout` and NEVER an amount, and the ruling puts
+        // the slashing height at or below the tip when the set signs, so the accused bond is still
+        // unspent there and the census entry still carries what the chain says it is worth.
+        const at = roster.censusAtHeight(rid, height);
+        if (!at.ok) return text(res, 409, at.why);
+        const censusKeys = at.entries.map((e) => e.pubkey);
+        const bondOf = (nodePubkey) => {
+          const e = at.entries.find((x) => toHex(x.pubkey) === toHex(nodePubkey));
+          return e && typeof e.bondSats === 'bigint' ? e.bondSats : 0n;
+        };
+        const entries = entriesForSlash(round, new Uint8Array(rid));
+
+        const owing = [];
+        for (const p of held) {
+          let proof;
+          try { proof = splitSlashEvidence(p.bytes).proof; }
+          catch (e) { owing.push({ node: toHex(p.nodePubkey), why: `unreadable proof: ${e.message}` }); continue; }
+
+          // THE OFFENCE IS NOT IN THE PROOF'S BYTES, and this node does not guess one. `encodeSlashProof`
+          // carries a transcript hash and a signed result id and no offence field, because the offence is
+          // what VERIFYING those two objects concludes. Every proof in this table was filed by
+          // `fileSlashProofs`, which files exactly one kind - a replay that contradicts a signed result -
+          // so that is the offence named here. A proof arriving by any other road would need its own
+          // verdict carried with it, and until one does, none is invented.
+          const said = await slashOwing({
+            proof, offence: REPLAY_CONTRADICTS, contract, roundIdBytes: new Uint8Array(rid), entries,
+            slashHeight: height, tipHeight: at.tipHeight,
+            censusAt: async () => censusKeys,
+            bondSatsOf: async () => bondOf(proof.nodePubkey),
+          });
+          if (!said.ok) { owing.push({ node: toHex(proof.nodePubkey), why: said.why }); continue; }
+          const o = said.owing;
+          owing.push({
+            node: o.node, bond: o.bond, offence: o.offence, bondSats: String(o.bondSats),
+            toPlayers: String(o.toPlayers), toNodes: String(o.toNodes), toDevelopers: String(o.toDevelopers),
+            players: [...o.players].map(([k, v]) => ({ player: k, sats: String(v) })),
+            nodes: [...o.nodes].filter(([, v]) => v > 0n).map(([k, v]) => ({ node: k, sats: String(v) })),
+            censusSeen: o.censusSeen, seatsOut: o.seatsOut,
+          });
+        }
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ slashHeight: height, tipHeight: at.tipHeight, owing }));
+      }
+
       if (req.method === 'GET' && url.pathname === '/slash-proofs') {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');

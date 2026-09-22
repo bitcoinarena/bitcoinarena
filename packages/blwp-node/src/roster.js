@@ -207,10 +207,36 @@ export class Roster {
    * chain needs nobody to serve it one, and a peer offering a different body
    * for the same outpoint has nothing to offer.
    */
-  censusFor(roundIdBytes) {
+  /**
+   * THE CENSUS AT A HEIGHT SOMEBODY ELSE NAMED (§5A.3, ruled 2026-09-22).
+   *
+   * A slash is paid to "the active census nodes at the slashing height", and that height is one the
+   * ARBITRATION SET names - at or below the tip when they sign, at or above the round's own
+   * `census_height`. Same view, same bond set, same derivation; only the height moves, and the node
+   * never picks it.
+   *
+   * AND THE ROUND'S CENSUS ROOT IS NOT CHECKED AGAINST IT, which is the whole reason this is not one
+   * line calling `censusFor`. That check is what makes a census THIS ROUND'S: the contract commits to
+   * one root, at one height, and a derivation that gives another is a round no honest node serves.
+   * At any other height the chain is SUPPOSED to give another root - bonds funded after the round
+   * opened are in it, bonds spent since are out - so reusing the check turns every slashing height
+   * above `census_height` into "that round names census root X and the chain gives Y", which is the
+   * measured behaviour of the first version of this method and is not a divergence at all. The set
+   * returned here is therefore a statement about the chain at a height, not about the round, and the
+   * height it was read at travels with it so no caller can mistake it for the round's own.
+   */
+  censusAtHeight(roundIdBytes, height) {
+    if (!Number.isInteger(height)) return { ok: false, why: 'a census is read at a block height' };
+    const derived = this.censusFor(roundIdBytes, height, { asRoundsOwn: false });
+    return derived.ok ? { ...derived, atHeight: height } : derived;
+  }
+
+  censusFor(roundIdBytes, atHeight = null, { asRoundsOwn = true } = {}) {
     const row = this.round.get(roundIdBytes);
     if (!row) return { ok: false, why: 'this node holds no such round' };
-    const contract = decodeRoundContract(new Uint8Array(row.contract));
+    const asStored = decodeRoundContract(new Uint8Array(row.contract));
+    // The only thing a named height changes is which height the census is read at.
+    const contract = atHeight === null ? asStored : { ...asStored, censusHeight: atHeight };
 
     const network = contract.networkId ? networkOf(contract.networkId) : null;
     if (network === null)
@@ -227,7 +253,7 @@ export class Roster {
 
     // THE ONE ALREADY DERIVED, if it was derived from a view that begins where this one does, for this round's own
     // census height. Nothing that arrives later is in it.
-    const kept = `${toHex(roundIdBytes)}:${view.firstHeight}:${contract.censusHeight}`;
+    const kept = `${toHex(roundIdBytes)}:${view.firstHeight}:${contract.censusHeight}:${asRoundsOwn ? 'round' : 'height'}`;
     const had = this.censuses.get(kept);
     if (had) return had;
 
@@ -248,7 +274,7 @@ export class Roster {
     });
     if (!census.ok) return census;
 
-    // AND IT HAS TO BE THIS ROUND'S CENSUS.
+    // AND IT HAS TO BE THIS ROUND'S CENSUS - when it is being asked for as this round's.
     //
     // Every contract names a `censusRoot`, and on this path nothing compared
     // it with what the chain actually gives. A round could name any
@@ -261,6 +287,7 @@ export class Roster {
     // The comparison is against the root DERIVED HERE, from blocks, at the
     // contract's own height - not against a list anybody presented, which is
     // what `censusRootMatchesRound` is for when somebody else brings entries.
+    if (!asRoundsOwn) return census;
     if (!(contract.censusRoot instanceof Uint8Array) || contract.censusRoot.length !== 32)
       return { ok: false, why: 'that round names no census root to check against the chain' };
     if (!census.root.every((b, i) => b === contract.censusRoot[i]))
