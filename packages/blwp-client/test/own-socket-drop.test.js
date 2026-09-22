@@ -60,7 +60,7 @@ async function rig() {
   const eid = await client.join(mine);
   assumeStakeSeen(node.round, mine);
   await client.connect();
-  client.setRound({ roundId: rid, entryId: eid, blockTicks: 9000 });
+  client.setRound({ roundId: rid, entryId: eid, blockTicks: BLOCK_TICKS });
   client.onDrop = () => { client.reconnect(client.where); };
   let recorded = 0;
   const rec = (n) => { for (let i = 0; i < n; i++) client.record([45875, recorded++, 0, 0, 0]); };

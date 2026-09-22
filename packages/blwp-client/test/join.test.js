@@ -8,6 +8,9 @@
 // for - and nothing here mints any of them.
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../blwp-node/src/cores.js';
 import { test } from 'node:test';
+// The run length is the core's; a literal 9000 is refused by the node as a contract
+// disagreeing with the network it names (WAR_TACTICS moved a run to 10800).
+import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
 import { readFileSync } from 'node:fs';
@@ -47,7 +50,7 @@ const contractOn = (a, b, seed = 0x43) => ({
   startTimeMs: 500n + MIN_ENTRY_WINDOW_MS, entryCloseMs: 200000n,
   objectionWindowMs: 600000n, custody: 'THRESHOLD_LN', slashMinimumServed: 20 + (seed - 0x43),
   slashRemainder: 'SPLIT', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,
-  censusRoot: b32(2), stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: 9000,
+  censusRoot: b32(2), stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: BLOCK_TICKS,
   exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
   timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
   nodes: [a, b],
@@ -220,7 +223,7 @@ test('a signer node carries the seed\'s key for the round, its fingerprint is th
 });
 
 test('the signer node a page takes carries the round\'s own amounts', () => {
-  const round = { id: b32(0x0c), stakeMsat: 100000n, blockTicks: 9000, simCoreHash: CORE };
+  const round = { id: b32(0x0c), stakeMsat: 100000n, blockTicks: BLOCK_TICKS, simCoreHash: CORE };
   let n = 0;
   const random = (len) => new Uint8Array(len).fill(++n);
   const me = { seed: b32(5), curve: feldmanGroup };
@@ -241,7 +244,7 @@ test('the signer node a page takes carries the round\'s own amounts', () => {
   assert.equal(signerNode.feeMsat, entryFeeMsat(100000n));
   assert.equal(signerNode.feeMsat, 2000n, 'a paying round is charged 2% of its stake');
   assert.equal(feeMatchesEntry(signerNode).ok, true);
-  const free = entryFor({ id: b32(0x0d), stakeMsat: 0n, blockTicks: 9000 }, { ...me, random });
+  const free = entryFor({ id: b32(0x0d), stakeMsat: 0n, blockTicks: BLOCK_TICKS }, { ...me, random });
   assert.equal(free.feeMsat, 0n, 'a round that asks no money is charged some');
   assert.equal(feeMatchesEntry(free).ok, true);
 
