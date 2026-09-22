@@ -890,6 +890,16 @@ export function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, half
   // C#'s own rate and drives forward - it cannot strafe, because there is no
   // longer a sideways component to strafe with.
   let stepX = dx, stepZ = dz;
+  // §11.5 / §4.16: A PINNED MAN CRAWLS 0.5 m/s ALONG HIS DIRECTION OF TRAVEL, not 0.5 m/s on each axis.
+  // The gait is a SPEED, so the step vector is scaled to it rather than each axis being capped at it -
+  // otherwise a diagonal crawl covers 0.0118 m a tick against an axis crawl's 0.00833, reads over §0's
+  // 0.01 m bar, and a pinned man is STAND (WAR_TACTICS §4.16, ruled 2026-09-22). Scaling here rather
+  // than slowing diagonals: 0.5 m/s does not move, and a man's speed must not depend on his heading.
+  if (!u.armour && u.pinned) {
+    const far = length2(stepX, stepZ);
+    const cap = mulFast(RIFLE_CRAWL, dt);
+    if (far > cap && far > 0) { stepX = div(mulFast(stepX, cap), far); stepZ = div(mulFast(stepZ, cap), far); }
+  }
   if (u.armour) {
     const far = length2(dx, dz);
     // WAR_TACTICS.md §4.5: moving, the hull points along its step; standing on its post, at the enemy side (the seam
