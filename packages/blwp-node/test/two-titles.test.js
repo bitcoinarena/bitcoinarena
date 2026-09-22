@@ -130,7 +130,14 @@ test('the truck and a second title, the second under two configs, run on the sam
     assert.equal(facts.truck.a[0].core, TRUCK.hash, 'the truck round\'s result names another core');
     for (const k of ['low', 'high']) {
       for (const s of ['a', 'b']) assert.equal(facts[k][s][0].core, COUNTER.hash, `${k} at ${s} names another core than the counter`);
-      assert.equal(facts[k].a[0].score, 120 * 45875, `${k}: the counter's sum`);
+      // THE SUM IS THE DRIVER'S, NOT A NUMBER WRITTEN HERE. The counter core adds
+      // `w[0]` for each of its 120 ticks, so its score is 120 throttles. This read
+      // `120 * 45875` - seven tenths throttle, the fixed program the fixture drove
+      // before 2026-09-21, when it started steering at the gate the core publishes
+      // and went to full throttle. The core did not change; the driver did, and this
+      // one expectation was left behind. Taken from `wordsAt` now, so the day the
+      // driver moves again this follows it instead of going red.
+      assert.equal(facts[k].a[0].score, 120 * wordsAt(0)[0], `${k}: the counter's sum`);
     }
     assert.equal(facts.low.a[0].outcome, 'DELIVERED', 'the low bar was not met by the same run');
     assert.equal(facts.high.a[0].outcome, 'FAILED', 'the high bar was met by the same run');
