@@ -1,5 +1,5 @@
 import { WebSocket } from 'ws';
-const PORT = Number(process.argv[2] || 9341);
+const PORT = Number(process.argv[2] || 9351);
 const PAGE = process.argv[3] || 'https://btc-logistics-core.pages.dev/';
 const wait = (ms) => new Promise(r => setTimeout(r, ms));
 const list = await fetch(`http://127.0.0.1:${PORT}/json/list`).then(r => r.json());

@@ -2,7 +2,7 @@
 // Attaches to the test host's browser, opens the daily page, presses SPECTATE, and photographs it.
 import WebSocket from 'ws';
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-const PORT = Number(process.argv[2] || 9341);
+const PORT = Number(process.argv[2] || 9351);
 const list = await fetch(`http://127.0.0.1:${PORT}/json/list`).then((r) => r.json());
 const target = list.find((t) => t.type === 'page' && t.url.startsWith('http'));
 const ws = new WebSocket(target.webSocketDebuggerUrl, { maxPayload: 64 * 1024 * 1024 });

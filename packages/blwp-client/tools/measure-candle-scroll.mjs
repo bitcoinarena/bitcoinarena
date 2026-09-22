@@ -19,7 +19,7 @@ const arg = (name, fallback) => {
   return hit ? hit.slice(name.length + 3) : fallback;
 };
 const PAGE = arg('page', 'https://btc-logistics-core.pages.dev/');
-const PORT = Number(arg('port', 9341));
+const PORT = Number(arg('port', 9351));
 const OUT = arg('out', '/tmp/claude-1000/-tmp-btc-phase0/3702e750-4ad9-4253-93e3-670b04a90b08/scratchpad/candle-scroll');
 const WATCH_MS = Number(arg('watch', 90000));
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));

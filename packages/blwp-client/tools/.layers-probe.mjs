@@ -1,5 +1,5 @@
 import { WebSocket } from 'ws';
-const port = process.argv[2] || 9341;
+const port = process.argv[2] || 9351;
 const list = await fetch(`http://127.0.0.1:${port}/json/list`).then(r => r.json());
 const t = list.find(x => x.type === 'page' && x.url.startsWith('http'));
 const ws = new WebSocket(t.webSocketDebuggerUrl); await new Promise(r => ws.on('open', r));
