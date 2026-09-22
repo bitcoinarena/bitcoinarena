@@ -77,7 +77,14 @@ test('the scanner reads string text and skips comments and template code', () =>
 test('no string the player can be shown says seat: the client library', () => {
   const dir = new URL('../src/', import.meta.url);
   const hits = [];
-  for (const f of readdirSync(dir).filter((x) => x.endsWith('.js'))) {
+  // THE BIP-39 WORDLIST IS NOT COPY. It is the standard English list, fixed by
+  // BIP-39 and verified against its published sha256, and one of its 2048 words
+  // is "seat". Nobody is shown it as a sentence about a signer node, and it
+  // cannot be reworded without breaking every seed phrase ever written down.
+  // Scanning it says "player-facing copy still says seat: bip39-wordlist.js:
+  // \"seat\"", which is the scanner reading a dictionary.
+  const NOT_COPY = new Set(['bip39-wordlist.js']);
+  for (const f of readdirSync(dir).filter((x) => x.endsWith('.js') && !NOT_COPY.has(x))) {
     for (const s of stringLiterals(readFileSync(new URL(f, dir), 'utf8'))) if (SEAT.test(s)) hits.push(`${f}: ${JSON.stringify(s.slice(0, 90))}`);
   }
   assert.deepEqual(hits, [], `player-facing copy still says seat:\n${hits.join('\n')}`);
