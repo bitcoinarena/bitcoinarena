@@ -12,7 +12,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { WebSocket } from 'ws';
 
-const PORT = Number(process.env.BLWP_CDP_PORT || 9341);
+// THE TEST HOST, NOT THE MACBOOK (HARD, the owner 2026-09-20 15:12: "Live Chrome
+// playtests run on the test host only. Do not use the test host."). This defaulted
+// to 9341, the test host's forwarded port from the 2026-09-18 HARD that ruling
+// replaced, so the suite answered "no page on CDP 9341" on the machine the
+// playtests actually run on. The the test host's two playtest Chromes are 9351 and
+// 9352; BLWP_CDP_PORT still overrides. Measured against 9351 with the Daily
+// open: 1 pass, 18.2 s.
+const PORT = Number(process.env.BLWP_CDP_PORT || 9351);
 const PAGE = process.env.BLWP_PAGE || 'https://btc-logistics-core.pages.dev/';
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
