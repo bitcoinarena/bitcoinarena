@@ -88,10 +88,15 @@ const contractFor = (nodePubkey) => ({
   timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
   nodes: [nodePubkey, schnorr.getPublicKey(peer)],
 });
+// THE FEE'S OWN SECRET, PER ENTRY (§23.5). It was thirty-two zero bytes, and the assertion below -
+// "the fee is not quoted against the entry's own fee preimage" - was then checking `66687aad...`,
+// which is not this entry's hash but every zero-F entry's, in every round. The shipped client mints a
+// random one on a paying round (`join.js:837`); this mints a fixed one, so the ids stay stable.
+const feePreimageOf = (n) => b32(n + 140);
 const entryFor = (rid, n = 5) => ({
   roundId: rid, playerPubkey: b32(n), sessionPubkey: ed25519.getPublicKey(session),
   stakeCommitment: sha256(preimageOf(n)), stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n),
-  donationMsat: 0n, joinTick: 0, worldSecret: b32(0x16), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
+  donationMsat: 0n, joinTick: 0, worldSecret: b32(0x16), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: feePreimageOf(n), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
 });
 
 /**
