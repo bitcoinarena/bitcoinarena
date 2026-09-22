@@ -18,7 +18,6 @@
 import {
   slashHeightIsValid, affectedEntries, playersShares, slashDistribution,
 } from '../../protocol/src/slash.js';
-import { decodeEntryContract } from '../../protocol/src/contracts.js';
 import { netStakeMsat } from '../../protocol/src/payout.js';
 import { toHex } from '../../protocol/src/hash.js';
 
@@ -89,12 +88,20 @@ export async function slashOwing({
   };
 }
 
-/** The entries of a round in the shape `affectedEntries` wants, off a node's own store. */
+/**
+ * The entries of a round in the shape `affectedEntries` wants, off a node's own store.
+ *
+ * `entriesOf` hands back the DECODED contract under `entry`; the first version of this read a
+ * `contract` column that row does not carry, decoded undefined, threw, and swallowed it - so every
+ * round looked like a round with no entries and every slash looked like it harmed nobody. A `continue`
+ * on a decode failure is the right shape for bytes off the wire and the wrong shape for a field name,
+ * which is why the field is now read as the store returns it and nothing is decoded twice.
+ */
 export function entriesForSlash(round, roundIdBytes, { operatorPlayer = null } = {}) {
   const out = [];
   for (const row of round.entriesOf ? round.entriesOf(roundIdBytes) : []) {
-    let c;
-    try { c = decodeEntryContract(new Uint8Array(row.contract)); } catch { continue; }
+    const c = row.entry;
+    if (!c || !(c.playerPubkey instanceof Uint8Array)) continue;
     out.push({
       playerPubkey: c.playerPubkey,
       netStakeMsat: netStakeMsat(c),

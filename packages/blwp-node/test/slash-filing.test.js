@@ -21,7 +21,9 @@ import { resultFinality } from '../src/finality.js';
 import { splitSlashEvidence, slashHolds, slashProofId, REPLAY_CONTRADICTS, SLASH_EVIDENCE_BYTES } from '../../protocol/src/slash.js';
 import { decodePlayerResult, splitSignedResult } from '../../protocol/src/result.js';
 import { toHex } from '../../protocol/src/hash.js';
-import { wait, sevenSignerNodes, object } from './window-fixture.js';
+import { wait, sevenSignerNodes, object, b32 } from './window-fixture.js';
+import { slashOwing, entriesForSlash } from '../src/slash-owing.js';
+import { decodeRoundContract } from '../../protocol/src/contracts.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
 const FAST = { finality: { everyMs: 100, rerunMs: 8000 } };
@@ -104,5 +106,80 @@ test('a contradicted signer whose advertisement this node does not hold is not a
     const filed = w.holder.round.slashProofs(w.rid, eid).map((p) => toHex(p.nodePubkey));
     assert.equal(filed.length, 4, `filed ${filed.length}`);
     assert.equal(filed.includes(missing), false, 'a signer node with no advertisement was accused');
+  } finally { await w.close(); }
+});
+
+// WHAT THOSE FILED PROOFS OWE (§5A.3, ruled 2026-09-22; door added 2026-09-22).
+//
+// The proofs above are real: five signers contradicted, each accused on the bond its own
+// advertisement names. §5A.3 says where a slashed bond goes, and `/slash-owing` says it for these -
+// out of the census at a height THE ASKER names, because the arbitration set names the slashing
+// height and a node that picked its own would pick the one that paid it best.
+//
+// NOTHING HERE SPENDS. Steps 3 and 5 of §5A.3B - the escrow output and MuSig2 over the arbitration
+// keys - do not exist in this tree, and the door answers with amounts and names only.
+test('the door will not pick the slashing height, and says what the five proofs owe out of the census at the one it is given', async () => {
+  const w = await sevenSignerNodes(800, undefined, FAST);
+  try {
+    const eid = await reranTo(w, 4);
+    const stop = Date.now() + 8000;
+    while (Date.now() < stop && w.holder.round.slashProofs(w.rid, eid).length < 5) await wait(100);
+    const filed = w.holder.round.slashProofs(w.rid, eid);
+    assert.equal(filed.length, 5, 'the fixture filed no proofs to owe anything');
+
+    const at = (entry, q) => fetch(`http://127.0.0.1:${w.holder.port}/slash-owing?round=${toHex(w.rid)}&entry=${entry}${q}`);
+    const noHeight = await at(toHex(eid), '');
+    const withHeight = await at(toHex(eid), '&height=964950');
+    const noProof = await at(toHex(b32(0xee)), '&height=964950');
+
+    // THE ENTRIES THE ROUND ACTUALLY HAS, off the node's own store. This is the arithmetic's input:
+    // an empty list here means every offence looks as if it harmed nobody.
+    const entries = entriesForSlash(w.holder.round, w.rid);
+
+    // AND THE SPLIT OVER ONE REAL FILED PROOF, with the census a node with a chain view would give:
+    // the round's seven seats and three other bonded nodes.
+    const seats = w.holder.round.signerNodes(w.rid);
+    const others = [b32(0x31), b32(0x32), b32(0x33)];
+    const proof = splitSlashEvidence(filed[0].bytes).proof;
+    const contract = decodeRoundContract(new Uint8Array(w.holder.round.get(w.rid).contract));
+    const said = await slashOwing({
+      proof, offence: REPLAY_CONTRADICTS, contract, roundIdBytes: w.rid, entries,
+      slashHeight: contract.censusHeight + 50, tipHeight: contract.censusHeight + 100,
+      censusAt: async () => [...seats, ...others],
+      bondSatsOf: async () => 100000n,
+    });
+
+    const facts = {
+      noHeight: [noHeight.status, await noHeight.text()],
+      withHeight: [withHeight.status, await withHeight.text()],
+      noProof: [noProof.status, await noProof.text()],
+      entriesSeen: entries.length,
+      entryPlayers: entries.every((e) => e.playerPubkey instanceof Uint8Array),
+      owed: said.ok && {
+        toPlayers: String(said.owing.toPlayers), toNodes: String(said.owing.toNodes),
+        toDevelopers: String(said.owing.toDevelopers),
+        // the seven seats are subtracted; the 75% reaches the three others
+        seatsPaid: seats.reduce((a, k) => a + (said.owing.nodes.get(toHex(k)) || 0n), 0n) === 0n,
+        othersPaid: others.map((k) => String(said.owing.nodes.get(toHex(k)) || 0n)),
+        players: said.owing.players.size, censusSeen: said.owing.censusSeen, seatsOut: said.owing.seatsOut,
+      },
+    };
+    console.log('  FACTS (what the five filed proofs owe):', JSON.stringify(facts, null, 1));
+    assert.deepEqual(facts.noHeight[0], 400);
+    assert.match(facts.noHeight[1], /this node does not pick one/);
+    // A RUN NOBODY FILED AGAINST OWES NOTHING, and is refused before a census is read for it.
+    assert.equal(facts.noProof[0], 404);
+    assert.match(facts.noProof[1], /filed no slash proof for that run/);
+    // AND THIS FIXTURE HAS NO CHAIN, so the door names that rather than inventing a census: the
+    // recipients of §5A.3 are read off the chain at the named height or they are not read at all.
+    assert.equal(facts.withHeight[0], 409);
+    assert.match(facts.withHeight[1], /no chain view for that round/);
+    // THE ROUND'S OWN TWO ENTRIES, which is the input the first version of `entriesForSlash` lost.
+    assert.equal(facts.entriesSeen, 2);
+    assert.deepEqual(facts.owed, {
+      toPlayers: '50000', toNodes: '37500', toDevelopers: '12500',
+      seatsPaid: true, othersPaid: ['12500', '12500', '12500'],
+      players: 1, censusSeen: 10, seatsOut: 7,
+    });
   } finally { await w.close(); }
 });
