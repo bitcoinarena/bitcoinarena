@@ -57,18 +57,39 @@ export async function slashOwing({
   catch (e) { return { ok: false, why: `no census at ${slashHeight}: ${e.message}` }; }
   if (!Array.isArray(census)) return { ok: false, why: `no census at ${slashHeight} to pay out of` };
 
-  // 5. THE TWO HALVES. `slashDistribution` refuses an empty eligible set by name rather than inventing
+  // 5. AND THE ACCUSED COMES OUT OF THAT CENSUS BEFORE THE SPLIT.
+  //
+  //    Measured on a real chain: without this the node the proof accuses was paid 18750000 sat out of
+  //    the very bond it is being slashed for - a refund of a fifth of its own penalty - because at
+  //    `slash_height` its bond is STILL UNSPENT and `deriveCensus` therefore counts it. That is not an
+  //    accident of this door: it is the same fact that lets step 2 above read the bond's value there.
+  //
+  //    `slashDistribution` already says "a node slashed at this height is NOT in the active census, by
+  //    definition: the slash SPENDS its bond output and deriveCensus filters spent bonds" - and it
+  //    THROWS if a caller hands one in, to catch a census counting a bond already spent. Both are
+  //    right about their own height and they disagree about this one: the ruled window is
+  //    `census_height <= slash_height <= tip when they sign`, and the spend happens in the slashing
+  //    transaction, which is signed AFTER that height is fixed. So at `slash_height` the bond is
+  //    unspent by construction and the "by definition" does not hold yet.
+  //
+  //    Taken out here rather than passed as `slashed`, which would trip that guard, and rather than
+  //    loosening the guard, which protects a different height. No recipient is invented: §5A.3's 75%
+  //    divides among the census nodes that are left.
+  const accused = toHex(proof.nodePubkey);
+  const payable = census.filter((k) => toHex(k) !== accused);
+
+  // 6. THE TWO HALVES. `slashDistribution` refuses an empty eligible set by name rather than inventing
   //    a recipient for it, and that refusal is passed on as it stands.
   let split;
   try {
     split = slashDistribution({
       bondSats, roundId: roundIdBytes, contract,
       affectedPlayers: harmed.affected.map((e) => e.playerPubkey),
-      censusNodes: census, seats: contract.nodes || [],
+      censusNodes: payable, seats: contract.nodes || [],
     });
   } catch (e) { return { ok: false, why: e.message }; }
 
-  // 6. AND THE PLAYERS' HALF PRO RATA BY NET STAKE, which `slashDistribution` divides evenly because it
+  // 7. AND THE PLAYERS' HALF PRO RATA BY NET STAKE, which `slashDistribution` divides evenly because it
   //    does not know the stakes. §5A.3 weights it, so the weighted split is what is recorded.
   const byStake = playersShares({ toPlayers: split.toPlayers, affected: harmed.affected, roundId: roundIdBytes });
   if (!byStake.ok) return { ok: false, why: byStake.why };
@@ -82,8 +103,12 @@ export async function slashOwing({
       toPlayers: split.toPlayers, toNodes: split.toNodes, toDevelopers: split.toDevelopers,
       // one payout contract per affected entry, §5A.3 - a map, never one pooled number
       players: byStake.shares,
-      nodes: split.shares,
+      // THE NODES' HALF ONLY. This was `split.shares`, the union of both hands, so the harmed player
+      // was reported among the census nodes owed the players' half a second time - measured on a real
+      // chain, 50000000 sat listed twice under one 100000000 sat bond.
+      nodes: split.nodeShares,
       censusSeen: census.length, seatsOut: (contract.nodes || []).length,
+      accusedOut: payable.length !== census.length,
     },
   };
 }

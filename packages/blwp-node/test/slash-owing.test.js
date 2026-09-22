@@ -95,6 +95,40 @@ test('nothing here spends: the answer is a statement of what is owed', async () 
   // No transaction, no signature, no outpoint spent - the owing carries amounts and names only.
   assert.deepEqual(Object.keys(got.owing).sort(), [
     'bond', 'bondSats', 'censusSeen', 'nodes', 'node', 'offence', 'players', 'seatsOut',
-    'slashHeight', 'toDevelopers', 'toNodes', 'toPlayers',
+    // `accusedOut` says whether the accused node was in the census it was paid out of and had to be
+    // taken out - true whenever the slashing height is one where its bond is still unspent, which the
+    // ruled window makes the normal case.
+    'accusedOut', 'slashHeight', 'toDevelopers', 'toNodes', 'toPlayers',
   ].sort());
+});
+
+// THE ACCUSED IS NOT PAID OUT OF THE BOND IT IS SLASHED FOR (measured on a real chain 2026-09-22).
+//
+// At `slash_height` the accused node's bond is STILL UNSPENT - that is the same fact step 2 relies on
+// to read its value - so `deriveCensus` counts it and §5A.3's "active census nodes at the slashing
+// height" includes it. Measured on the door before this: 18750000 sat of a 100000000 sat bond went
+// back to the node being slashed, a refund of a fifth of its own penalty.
+test('the node the proof accuses is taken out of the census it would be paid from', async () => {
+  // OUT_1 is an ordinary census node here, not one of the round's seats.
+  const asOut1 = { ...proof, nodePubkey: OUT_1 };
+  const got = await slashOwing({
+    proof: asOut1, offence: TABLE_IS_NOT_F, contract, roundIdBytes: ROUND, entries,
+    slashHeight: 900050, tipHeight: 900100,
+    censusAt: async () => census, bondSatsOf: async () => 100000n,
+  });
+  assert.equal(got.ok, true, got.why);
+  const facts = {
+    accusedPaid: String(got.owing.nodes.get(toHex(OUT_1)) || 0n),
+    accusedOut: got.owing.accusedOut,
+    others: [OUT_2, OUT_3].map((k) => String(got.owing.nodes.get(toHex(k)) || 0n)),
+    toNodes: String(got.owing.toNodes),
+    // AND THE HARMED PLAYERS ARE NOT IN THE NODES' MAP: the two halves used to share one.
+    playersAmongNodes: [...got.owing.nodes.keys()].filter((k) => got.owing.players.has(k)),
+  };
+  console.log('  FACTS (the accused is not paid from its own bond):', JSON.stringify(facts));
+  assert.deepEqual(facts, {
+    accusedPaid: '0', accusedOut: true,
+    // the census is 5, two seats and the accused come out, so two are left and split the 75%
+    others: ['18750', '18750'], toNodes: '37500', playersAmongNodes: [],
+  });
 });
