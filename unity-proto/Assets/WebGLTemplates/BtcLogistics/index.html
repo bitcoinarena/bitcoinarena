@@ -1394,7 +1394,12 @@
       try { return BLWPCLIENT.tabSeed({ storage: window.sessionStorage,
         random: (n) => crypto.getRandomValues(new Uint8Array(n)) }); } catch { return null; }
     };
-    const backupStore = () => { try { return window.localStorage; } catch { return null; } };
+    // THE PAGE NAMES THE BROWSER'S STORE ONCE, IN vault(). This reached for it a second time when
+    // §24B arrived, and join.test.js has flagged that ever since. Through the vault now, so the backup
+    // flag degrades the way everything else on this page does: where the durable store cannot be had,
+    // the vault hands back the tab's own and the flag lasts the session instead of vanishing. The flag
+    // is bound to the seed's digest either way, so a different wallet never reads another's mark.
+    const backupStore = () => { try { return vault(); } catch { return null; } };
     const isBackedUp = () => {
       const st = backupStore(); const seed = walletSeed();
       return !!(st && seed && BLWPCLIENT.isVerified(st, seed));
