@@ -23,7 +23,8 @@
 > to the developers**, never to the witnesses (§23A.5); and a guardian can
 > **leave a federation with notice and keep his bond** as a census node
 > (§23A.5); every role is opt-in (§5A.1). And: **FEDERATION is the only
-> custody** - THRESHOLD_LN is withdrawn on every network, and **guardians
+> custody** - THRESHOLD_LN does not exist, past rounds included, no decode-only
+> value (the owner 2026-09-22 22:59) - and **guardians
 > are not parked**: §23A is to be built now, on the testnet 2-of-2 that
 > runs (§23.6). **Players cannot lose** (the owner, last): the exposure cap is
 > what the smallest halting set's bonds cover, slashed guardian bonds wait
@@ -1592,7 +1593,7 @@ RoundContract {
   equivocation_rule_hash           // v4.6
   no_quorum_rule_hash              // v4.6
 
-  custody_rules                    // v4.6, see §23; names FEDERATION (§23.6)
+  custody_rules                    // v4.6, see §23; the one value is FEDERATION (§23.6); any other byte is an invalid contract
   federation_id                    // v4.6.2: the federation holding the stake locks;
                                    //   valid only if its guardians are bonded census nodes (§23.6)
   stake_expiry_blocks              // v4.6.2: replaces htlc_cltv_days; 144 (§23.1)
@@ -2775,16 +2776,22 @@ unpatched:
 Not used, by rule: a single-operator Lightning endpoint of any kind, a
 patched federation, a Lightning node run by the committee.
 
-**THRESHOLD_LN is withdrawn.** It named a threshold-signed Lightning node
-(FROST over channel operations) that was measured and found not buildable
-on lnd (its remote signer asks for ECDSA by the node key and for MuSig2
-shares, which a FROST committee does not produce), and in practice it
-labelled the interim of the committee's own lnd holding a hold invoice -
-custody by one operator, which the fee could not even ride on. Rounds that
-ran under it are regtest history; the value stays defined only so that
-their records still decode, and no new round may carry it. The door
-§23.6 once left open for a later migration is closed with it: if such a
-node ever hardens, that is a new revision, not a standing option.
+**THRESHOLD_LN does not exist (RULED, the owner 2026-09-22 22:59).** It once
+named a threshold-signed Lightning node (FROST over channel operations)
+that was measured and found not buildable on lnd (its remote signer asks
+for ECDSA by the node key and for MuSig2 shares, which a FROST committee
+does not produce), and in practice it labelled the interim of the
+committee's own lnd holding a hold invoice - custody by one operator, which
+the fee could not even ride on. It is disposed of **completely**: the
+custody field has **one** value, FEDERATION, and no other value is defined,
+reserved, or kept for decoding. **A round that names anything else is
+invalid, past rounds included**: a record from before this ruling that
+carries the old value is not a round of this network and is neither
+decoded, replayed, settled, listed nor counted; a node that holds such a
+record treats it as it treats bytes that do not parse. There is no
+decode-only label and no history exception. The door §23.6 once left open
+for a later migration is closed with it: if such a node ever hardens, that
+is a new revision, not a standing option.
 
 **Guardians are not parked (the owner 2026-09-21).** The parking of "which
 guardians" and `federationIsBonded` (PRIORITIES, 2026-09-16) is lifted.
