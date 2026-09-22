@@ -811,7 +811,59 @@ a transaction is §5A.3B.
 Slashed bonds are distributed: half to the affected players of that round;
 the other half 75% evenly to the active census nodes at the slashing height
 minus the round's own seats (the witnesses) and 25% to the donation set of
-§22A - the developers. **Nothing is ever burned (RULED, the owner 2026-09-21),
+§22A - the developers. Three words in that sentence are defined here
+(RULED 2026-09-22, on the implementer's three questions; the owner's order,
+"spec only"):
+
+- **The slashing height** is a height the arbitration set **names**, not
+  one the chain hands back. `slash_height` is any height at or below the
+  chain tip when the arbitration keys sign, and at or above the round's
+  `census_height`; it is written into the slashing transaction's own
+  `OP_RETURN` (§5A.3B step 4: `H(fraud_proof) ‖ slash_height ‖ hint`) and
+  the transaction's `nLockTime` is set to it, so it cannot confirm earlier
+  than the height it names. "The active census nodes at the slashing
+  height" is then the census **function of §5A.2 evaluated at
+  `slash_height`** - bond outputs confirmed `census_confirmations` deep and
+  unspent at that height, eligible under §5A.3 - exactly as a round reads
+  its census at `census_height`. Every observer recomputes the recipient
+  list from chain data at a height the transaction itself commits to;
+  nothing about the transaction's own confirmation enters it. The height
+  at which a bond output happens to be spent is **not** the slashing
+  height: that height exists for spends that are not slashes at all.
+- **The affected players** are the entries the offence harmed, and each
+  proof names them mechanically, so a recorder needs no judgement:
+
+  | Offence (table above) | `affected[]` |
+  |---|---|
+  | Two results for one (round, player) | that `playerPubkey` |
+  | A result contradicted by replay | that `playerPubkey` |
+  | Signing for a round the operator played | every financially activated entry of the round (§22A fee base) except the operator's own, which §5A.13 voids |
+  | A payout table that is not `F(contract, membership, results)` | every financially activated entry |
+  | Settlement action without the required signatures | every financially activated entry |
+  | A fee share claimed without the availability rule | every financially activated entry - they paid the fee |
+  | A withheld settlement signature | every financially activated entry - a stall refunds losers and unpays winners alike |
+
+  §13A's "the affected player, another player in the round" is the same
+  word: the one the offence names first, and the others after. The
+  players' half is divided among `affected[]` **pro rata by net stake**
+  (§18 weights entitlement by net stake, and so does the harm). It is paid
+  the only way a player can be paid: the slashing transaction's players'
+  output goes to an escrow under the arbitration keys (§23A.5's shape),
+  the arbitration set pegs it into the round's federation, and builds one
+  **payout contract per affected entry** to that entry's `player_pubkey`
+  (the refund key of its lock, §23.1 step 4; public in the lock). The
+  client collects it like any payout (§24): pending, then in the wallet, no
+  press. A bond's on-chain outputs are three - players' escrow, nodes,
+  developers - never one per player; sixty players' shares of half a bond
+  are federation amounts in msat, not dust on the chain.
+- **One round, several slashed nodes: each bond pays the players its own
+  proof names**, and nothing is pooled. A proof is stored per (round,
+  entry, node) and its `affected[]` is a function of its own offence; two
+  proofs against two nodes are two slashing transactions, two escrows, two
+  sets of payout contracts, and an entry named by both is paid from both.
+  The witnesses excluded from each bond's nodes' share are the round's
+  seats, all of them, the other slashed ones included - a slashed node is
+  not an active census node at any height after its spend in any case. **Nothing is ever burned (RULED, the owner 2026-09-21),
 here or anywhere in this protocol**: a slash that destroys value pays
 nobody for the harm and makes the slashing itself worthless to prove, so
 every remainder in this document has a recipient. The Round Contract's
@@ -903,9 +955,15 @@ serve hands its accusers the evidence itself.
    transcript + receipts + replay, or the payout table + its inputs.
 2. The proof is mechanically checkable — every offence in the table above is
    either a signature comparison or a deterministic replay. No judgement.
-3. k-of-m arbitration keys sign a slashing transaction spending path B.
-4. That transaction MUST carry OP_RETURN = H(fraud_proof) ‖ retrieval hint.
-5. Outputs pay the distribution fixed by the Round Contract.
+3. k-of-m arbitration keys sign a slashing transaction spending path B,
+   naming slash_height (§5A.3): <= the tip when they sign, >= the round's
+   census_height; nLockTime = slash_height.
+4. That transaction MUST carry OP_RETURN = H(fraud_proof) ‖ slash_height ‖
+   retrieval hint.
+5. Outputs pay the distribution of §5A.3, computed from the census at
+   slash_height: the players' escrow, the active nodes' share, the
+   developers' share. The height is an input the signers chose, never the
+   height the transaction later confirms at (RULED 2026-09-22).
 ```
 
 Because the slashing transaction commits to the proof, **every slash is
