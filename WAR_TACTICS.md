@@ -114,7 +114,7 @@ Infantry rows (part B, §8-§12), same probe conditions:
 | Nobody flees the truck, the truck runs men down | §8.2 | a man's target post is identical with the truck present or absent, and no cover claim or posture rule takes a truck argument; a man inside 3.6 m of a truck at >= 2.5 m/s is dead that tick |
 | **Men hide** | posture §11.4 | of man-ticks of living men on the line (within 40 m of post) who did not step, >= 85% are PRONE or COVER; a man in the open who did not step while his fire team is under fire (§11.5) is PRONE on 100% of those man-ticks |
 | Wrecks and craters are used | cover places §11.3 | on >= 70% of the ticks on which a side has a free eligible place within 12 m of the post of one of its men on the line, at least one man of that side is on a place (within 0.5 m) |
-| Fire pins men down | suppression §11.5 | of each side's nine fire teams, 10% to 70% are pinned - the SHARE of teams, or the matching share of riflemen where the row is read on men; a pinned man is never STAND and never steps more than 0.01 m in a tick (a crawl). RULED 2026-09-20: this row read "each side has at least one pinned fire team on 10% to 70% of ticks" and the implementer measured 96.0% / 95.6% against it and called the rule over its ceiling. That figure is an OR of nine teams, not a share: at a per-team rate of 43.8% - comfortably inside the band - at-least-one-of-nine is 99.5% if the teams were independent, so the old wording could only be met by a front that is barely suppressed at all. The band is the share. No number moved: +60 a round, -1 a tick and the 120 pin line are untouched. RULED 2026-09-20: the 0.01 m is COMBINED Euclidean displacement, not a per-axis clamp - per axis lets a diagonal crawl travel 0.0167 m and so move faster than an axis crawl, which is the 2-D coupling this core has rejected elsewhere. |
+| Fire pins men down | suppression §11.5 | of each side's nine fire teams, 10% to 70% are pinned - the SHARE of teams, or the matching share of riflemen where the row is read on men; a pinned man is never STAND and never steps more than 0.01 m in a tick (a crawl). RULED 2026-09-20: this row read "each side has at least one pinned fire team on 10% to 70% of ticks" and the implementer measured 96.0% / 95.6% against it and called the rule over its ceiling. That figure is an OR of nine teams, not a share: at a per-team rate of 43.8% - comfortably inside the band - at-least-one-of-nine is 99.5% if the teams were independent, so the old wording could only be met by a front that is barely suppressed at all. The band is the share. No number moved: +60 a round, -1 a tick and the 120 pin line are untouched. RULED 2026-09-20: the 0.01 m is COMBINED Euclidean displacement, not a per-axis clamp - per axis lets a diagonal crawl travel 0.0167 m and so move faster than an axis crawl, which is the 2-D coupling this core has rejected elsewhere. RULED 2026-09-22 (§4.16): the core and the probe both measured `|dx| + |dz|`, which is neither; the measure is Euclidean in both, compared on squares with no root, and the crawl is 0.5 m/s along its direction, so a diagonal crawl steps 0.00833 m like any other. |
 | **Tanks are feared by men** | coax §4.4 | coax kills are >= 20% of a side's rifle-side deaths per 60 s; a coax burst is never fired with an enemy tank inside 46 m or a fireable truck in reach |
 | **Men are feared by tanks** | AT man §11.7 | AT hits are 15% to 50% of a side's tank deaths per 60 s (below 15% the launcher is decoration, above 50% the tanks are the fodder); every AT shot is from PRONE or COVER at a tank inside 30 m; the §0 floor row (never below 4 tanks on more than 5% of ticks) is re-measured with both arms on and stands |
 | **The sky is not weather** | calls §12.3 | on 25% to 60% of ticks no gunship is aloft (was: airborne 69-93%, two at once); a gunship of the attacking side is aloft within 300 ticks of >= 90% of assault starts; no launch before the first call |
@@ -1132,6 +1132,51 @@ a thing the truck drives on is settled state (multiplayer_p2p.md §0.5), so the 
 
 ---
 
+### 4.16 Rulings of 2026-09-22: the world's edge, the step's measure, the candle's two levers
+
+HARD (the owner 2026-09-22 08:25, spec only). Three of his six questions are the war's; the other three
+(the slashing height, the affected players, one round with several slashed nodes) are ruled in
+multiplayer_p2p.md §5A.3. All three here are RULED; none moves a doctrine number.
+
+- **The world's edge is a clamp, not a wall (replay-solids).** The core holds every body inside the
+  world by clamping its position to `±HALF_X` (185 m) and `±HALF_Z` (85 m) each tick - the truck in
+  `sim.js`, every unit in `army.js`, the armour additionally to `ARMOUR_WEST / ARMOUR_EAST`. That is
+  the boundary, and it is already settled state. **The core owes no edge walls as solids**: a wall
+  box at the edge would be a second boundary on top of the first, it would make the edge a collision
+  (§1.1: a truck leaning on a solid is damage) where the clamp is a stop, and it would sit on a
+  coordinate the world has since outgrown - the four walls Unity gathered stand at `±130 / ±85`, the
+  old relief boundary, not the world's. Rule: the core's `mapSolids` is the list, box for box, and it
+  carries **no** wall; **the client stops drawing walls the core does not build** and removes their
+  colliders. It MAY mark the edge visually - a line, a fence, a berm the eye reads - with no collider
+  and no box in the inventory, as the candles' colour is the client's and their plateau is the core's.
+  Test: the client's solids inventory equals the core's 106 (or whatever `MAP_BOXES` says) with no
+  wall among them; the truck driven at the edge at full throttle stops at 185 m with no damage.
+- **The step is Euclidean, and the crawl is a speed along its direction (§0's 0.01 m row, §11.4,
+  §11.5).** The 2026-09-20 ruling stands: combined displacement. The core and the probe measured
+  `|dx| + |dz|`, which is neither the per-axis reading that was rejected nor the combined one that was
+  ruled, and is 41% larger on a diagonal. Rule: **both** places compare `dx² + dz²` against
+  `(0.01 m)²` in fixed point - squares, no root, bit-identical everywhere. And the gait: the crawl is
+  **0.5 m/s along the direction of travel** - the step vector is scaled so its length, not its axes,
+  is the speed - so a diagonal crawl steps 0.00833 m like an axis crawl and is under the bar in every
+  direction. Not chosen: slowing diagonals to 0.424 m/s, which makes a man's speed depend on his
+  heading. 0.5 m/s does not move; the bar does not move; the measure and the gait do. That is a core
+  change and travels with the fleet pin, as the implementer wrote. GAP.
+- **The candle: neither lever (the slab finding).** the owner's two words about the ground chart are
+  both kept as they were ruled: *"big enough to read from above and in 3D"* (2026-09-16 20:00) and
+  *"make it so trucks and tanks get through"* (2026-09-17, §4.15: nothing added over 1 m or 25%).
+  They do not collide, because **height is invisible from above**. A map, a minimap and a gunship
+  look straight down; what they read is the body's colour and length, and §4.15 already says height
+  must never encode price. Raising the plateau would change nothing in that view and would reopen
+  passability. Narrowing the slot would change the chart's span and count, both of which spawn ruling
+  B fixed between the apron and the miner, and would not make a 1 m body taller either. So: the
+  plateau stays **1 m**, the ramps **4 m at 25%**, the slot **spawn ruling B's**, bodies touching.
+  What reads from above is what §4.15's look rules already list - the colour, the 20% lighter top,
+  the 0.3 m darker seam line at every slot boundary, the 1 m wide wick ridge - and the one thing the
+  slab finding says is missing is **contrast between neighbouring bodies of the same colour**, which
+  the seam line is for. Rule: the client draws those look rules; the core's numbers do not move. If
+  after that the ground chart still does not read from the gunship, the finding comes back with a
+  picture and a number, and the lever is a new ruling, not this one.
+
 ## 5. Vocabulary (all required)
 
 **Frontage**
@@ -1556,7 +1601,8 @@ function of the state, a claim is a function of the seed and the unit id, no dra
 
 - Three postures, derived, not chosen, and written for the renderer into the `TAC_COVER` word's high
   bits each tick (the client draws the man down or up from it, §0 "Men hide"):
-  - **STAND**: the man stepped this tick - his own step over **0.01 m** (x + z), so a crawl (§11.5) is
+  - **STAND**: the man stepped this tick - his own step over **0.01 m** combined, `dx² + dz² > (0.01 m)²`,
+    never `x + z` (RULED 2026-09-22, §4.16), so a crawl (§11.5) is
     not a step - a rush leg, a walk to his post or his place, a column walking in. Running men run
     upright.
   - **COVER**: within 0.5 m of his claimed place, not stepping.
