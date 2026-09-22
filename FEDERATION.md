@@ -293,9 +293,10 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
   - game/verify, settlement, guardian, any combination or none - and is
   drawn for nothing else. A node that wants no custody leaves
   `guardian_capable` off.
-- **FEDERATION is the only custody** (§23.6): THRESHOLD_LN is withdrawn on
-  every network; a round naming it is invalid; its records decode and that
-  is all. This file is no longer "V1 of two"; it is the construction.
+- **FEDERATION is the only custody** (§23.6): THRESHOLD_LN does not exist,
+  on any network, for any round, past rounds included; a record naming it
+  is an invalid contract and is not decoded (the owner 2026-09-22 22:59). This
+  file is no longer "V1 of two"; it is the construction.
 - **Players cannot lose** (§23A.3, §23A.5): the exposure cap is `(f + 1)`
   times the smallest seated guardian bond, so the smallest set that can
   halt the federation forfeits enough to pay every note; slashed guardian
