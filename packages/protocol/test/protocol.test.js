@@ -402,13 +402,17 @@ test('the minimum service a fee is earned by is in the round, and in its id', ()
 
 /**
  * AND WHERE A SLASHED BOND'S OTHER HALF GOES, 5A.3: "half to the affected
- * players of that round, half burned or to the remaining honest committee
- * members of the round, AS FIXED BY THE ROUND CONTRACT."
+ * players of that round; the other half 75% evenly to the active census nodes
+ * at the slashing height MINUS THE ROUND'S OWN SEATS (the witnesses) and 25% to
+ * the donation set of §22A - the developers. Nothing is ever burned."
  *
- * The alternative is the field. The HALVES are not: the spec states them as
- * numbers, and a contract that could move them would let an operator write
- * itself the whole bond - the fault a contract field exists to prevent rather
- * than one to import.
+ * THE WITNESSES ARE SUBTRACTED, NOT PAID, and nothing is destroyed: the two
+ * alternatives this field used to carry - BURN and COMMITTEE - are both
+ * withdrawn, so `slashRemainder` now has ONE valid value and a round cannot
+ * name a burn or pay its own seats. The HALVES were never the field's to move:
+ * a contract that could shift them would let an operator write itself the whole
+ * bond, which is the fault a contract field exists to prevent rather than one
+ * to import.
  */
 test('a round fixes where a slashed bond\'s other half goes, and it is in the id', () => {
   const c = sampleContract();

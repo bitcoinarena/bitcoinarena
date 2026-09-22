@@ -1141,10 +1141,12 @@ export function slashHoldsOnFeeClaim({
  * to import. So `SLASH_TO_PLAYERS_BPS` is a constant and `slashRemainder` is
  * the field, and it has one value: the split above.
  *
- * THE ACCUSED IS NOT ONE OF THE REMAINING HONEST MEMBERS. "the REMAINING
- * honest committee members" - a node does not collect a share of its own
- * slashing, and neither does any other node slashed in the same round. Pass
- * them in `slashed`; they are filtered out and their share goes to the pool.
+ * A SLASHED IDENTITY IN THE CENSUS IS REFUSED, NOT FILTERED. The second half
+ * goes to the active census at the slashing height, and a slash SPENDS the bond
+ * output, so `deriveCensus` has already dropped that node - a census still
+ * listing it is wrong. Pass such a node in `slashed` and this THROWS. It is not
+ * quietly removed and its share is not moved anywhere, because silently
+ * patching the set would hide a census that is counting a spent bond.
  *
  * REMAINDERS the way this repo already does them: floor each share, then hand
  * the leftover out one satoshi at a time in ascending `H(roundId || pubkey)`,
@@ -1177,26 +1179,25 @@ export function slashDistribution({
   let toPool = 0n;
 
   /**
-   * Splits `amount` over `who`, and pays only those not in `out`.
+   * Splits `amount` evenly over `who`, floor each and hand the leftover out one
+   * satoshi at a time in ascending `H(roundId || pubkey)`.
    *
-   * THE DIVISOR IS THE WHOLE SET, which is the point of the exclusion. Simply
-   * removing a slashed member and dividing among the rest pays the survivors
-   * MORE the more of their colleagues were caught - measured while writing
-   * this: one of two committee members excluded took the other from 25000 to
-   * 50000, which is a reward for a round going wrong. An excluded share goes to
-   * the federation pool instead - never to the others, and never burned.
+   * NOBODY IS EXCLUDED HERE ANY MORE. Exclusion happens BEFORE this is called:
+   * the round's own seats are taken out of the census, and a slashed identity
+   * inside that census is refused outright. So `who` is exactly the set to be
+   * paid, and the divisor is its length - there is no share to set aside and
+   * nowhere for one to go.
+   *
+   * WITH NOBODY TO PAY, the amount goes to the federation pool rather than
+   * being destroyed: §5A.3, "every remainder in this document has a recipient".
    */
-  const hand = (who, amount, out = new Set()) => {
-    const paid = who.filter((k) => !out.has(hex(k)));
+  const hand = (who, amount) => {
     if (!who.length || amount <= 0n) { toPool += amount > 0n ? amount : 0n; return; }
     const each = amount / BigInt(who.length);
     let left = amount - each * BigInt(who.length);
-    for (const k of who) {
-      if (out.has(hex(k))) { toPool += each; continue; }
-      shares.set(hex(k), (shares.get(hex(k)) || 0n) + each);
-    }
-    // The leftover satoshis follow the same order and skip the same people.
-    for (const k of remainderKeys(roundId, paid)) {
+    for (const k of who) shares.set(hex(k), (shares.get(hex(k)) || 0n) + each);
+    // The leftover satoshis follow the round's own order.
+    for (const k of remainderKeys(roundId, who)) {
       if (left <= 0n) break;
       shares.set(hex(k), (shares.get(hex(k)) || 0n) + 1n);
       left -= 1n;
