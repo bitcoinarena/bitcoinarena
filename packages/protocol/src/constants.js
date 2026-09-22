@@ -527,6 +527,13 @@ export const OBJECTION_WINDOW_REFERENCE_MS = 600000n;
  *
  * FLOOR THE NODES AND GIVE THE REST TO THE DEVELOPERS, so the two always add
  * back to the amount exactly and no satoshi can fall between them.
+ *
+ * WHICH SIDE TAKES THE ODD SATOSHI IS A CHOICE MADE HERE, not a number the spec
+ * states: §5A.3 and §23A.5 say 75 and 25 and stop. `payout.js` names an order
+ * for leftovers WITHIN one set (`remainderOrder`, ascending H(roundId||pubkey))
+ * but says nothing about a 75/25, so there was no existing rule to reuse.
+ * Flooring the developers instead would be equally compliant; this direction is
+ * written down so nobody later reads 12501 as the spec's own figure.
  */
 export const NODE_SHARE_PCT = 75n;
 export const splitNodesDevelopers = (amount) => {
