@@ -12,6 +12,7 @@
 // result names the core that replayed it, and all three go final 2 of 2. A signer node that did not
 // install the counter refuses its round at the door.
 import { test } from 'node:test';
+import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import assert from 'node:assert/strict';
 import { ed25519 } from '@noble/curves/ed25519.js';
 
@@ -45,7 +46,12 @@ async function twoSignerNodes() {
 
 /** A free round on both signer nodes, naming the core and config given. */
 // A round shorter than the fixture's start deadline names its own (the protocol: the deadline is below the run length).
-async function open(w, simCoreHash, configHash, blockTicks = 9000, startDeadlineTicks) {
+// THE RUN LENGTH COMES FROM THE CORE, NOT A LITERAL. This defaulted to 9000, the
+// number before WAR_TACTICS moved a run to 10800, and the node refuses a contract
+// that disagrees with the core it names - "a contract disagreeing with the network
+// it names". The rest of this family was migrated when the core moved; this one
+// was missed, and the refusal was correct the whole time.
+async function open(w, simCoreHash, configHash, blockTicks = BLOCK_TICKS, startDeadlineTicks) {
   const c = { ...contractFor([w.a.round.pubkey, w.b.round.pubkey], BigInt(WINDOW_MS), [w.a, w.b].map((d) => `http://127.0.0.1:${d.port}`)),
     stakeMsat: 0n, federationId: new Uint8Array(32), simCoreHash, configHash, blockTicks, ...(startDeadlineTicks ? { startDeadlineTicks } : {}) };
   const rid = roundId(c);
