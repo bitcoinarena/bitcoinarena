@@ -1961,7 +1961,10 @@ const EDGE_HIGH = 1703936;        //   26 m of blocker above the kerb
 const EDGE_SUNK = 393216;         //    6 m of it below the ground
 
 /** How many boxes the map has, so a caller can size a buffer. */
-const MAP_BOXES = 106;  // 37 map + 41 miner corridor + 4 coin stacks + 24 post office mouths
+// 33 map + 41 miner corridor + 4 coin stacks + 24 post office mouths. It was 37 map and 106 total until
+// ruling 4 (2026-09-22) made the edge a clamp: the four edge walls are gone, and the core owes no wall
+// solids. Unity draws what this builds, so its own count moves with it.
+const MAP_BOXES = 102;
 
 /**
  * The map's solids for a world, as the six words a box carries:
@@ -1983,18 +1986,21 @@ function mapSolids(ground, halfX, halfZ, reliefHalfX = halfX) {
   const groundAt = (x, z) => heightAtWorld(ground, x, z, reliefHalfX, halfZ);
   const half = (v) => v >> 1;
 
-  // ---- THE FOUR EDGES OF THE WORLD ---------------------------------------
+  // ---- THE FOUR EDGES OF THE WORLD ARE NOT SOLIDS ------------------------
   //
-  // Tall and invisible, so a truck arriving airborne off a fee cliff still
-  // cannot clear the edge. Sunk six metres so a dip does not open a gap.
-  const edge = (cx, cz, hx, hz) => {
-    const g = groundAt(cx, cz);
-    put(cx, cz, hx, hz, sub(g, EDGE_SUNK), add(sub(g, EDGE_SUNK), EDGE_HIGH));
-  };
-  edge(-halfX, 0, half(EDGE_THICK), add(halfZ, EDGE_THICK));
-  edge(halfX, 0, half(EDGE_THICK), add(halfZ, EDGE_THICK));
-  edge(0, -halfZ, add(halfX, EDGE_THICK), half(EDGE_THICK));
-  edge(0, halfZ, add(halfX, EDGE_THICK), half(EDGE_THICK));
+  // RULED (the owner 2026-09-22, ruling 4 of `ef7af68c`, re-stated knowing these existed): the map edge is
+  // a CLAMP, not a wall. The core owes no wall solids, and the client stops drawing walls the core does
+  // not build.
+  //
+  // This used to put four boxes here - 3 m thick, 26 m tall, sunk 6 m - at +-halfX and +-halfZ, so that
+  // "a truck arriving airborne off a fee cliff still cannot clear the edge". A clamp holds that same
+  // truck at the edge without a solid to collide with, and it holds it whatever the arrival speed,
+  // which a 26 m box does not: a box is a thing to tunnel through at high enough speed, and a clamp is
+  // not. The clamp is in `sim.js`, applied after the pushes as well as the steps - see the note there.
+  //
+  // EDGE_THICK / EDGE_HIGH / EDGE_SUNK stay exported and unused by this file: the Unity side still
+  // reads them while it is being taught to stop drawing them, and deleting them would break that build
+  // before the draw is gone rather than after.
 
   // ---- THE POST OFFICE ----------------------------------------------------
   //
@@ -7545,6 +7551,27 @@ function step(st, throttle, steer, brake, handbrake, practice) {
       s[mb + U_X] = add(s[tb + U_X], div(mulFast(dx, HULL_CLEAR), d));
       s[mb + U_Z] = add(s[tb + U_Z], div(mulFast(dz, HULL_CLEAR), d));
     }
+  }
+
+  // ---- THE MAP EDGE IS A CLAMP (ruling 4, the owner 2026-09-22) --------------
+  //
+  // "The map edge is a clamp, not a wall. The core owes no wall solids." `rules/map.js` used to put four
+  // boxes at +-HALF_X / +-HALF_Z, 26 m tall and sunk 6 m, so that a truck arriving airborne could not
+  // clear the edge. They are gone, and this is what holds the world in instead.
+  //
+  // IT IS LAST, AND IT IS AFTER THE PUSHES. The armour clamp above says it in its own words - "a rule
+  // applied to the step and not to the push is half a rule" - and it is exactly as true here: the truck
+  // clear-out and §8.3's hull clearance both move a man AFTER his own step, and either can put him past
+  // the edge. So this runs after both, and before the posture pass, which only reads position. A wall
+  // was a thing to be pushed through; a clamp is not, whatever pushed.
+  //
+  // EVERY LIVING UNIT, armour included. The armour clamp above is tighter in x (ARMOUR_WEST/EAST) and
+  // says nothing about z, so this is not a repeat of it: it is the floor under both.
+  for (let i = 0; i < UNITS; i++) {
+    const b = unitBase(i);
+    if (s[b + U_STATE] === 0) continue;
+    s[b + U_X] = clamp(s[b + U_X], neg(HALF_X), HALF_X);
+    s[b + U_Z] = clamp(s[b + U_Z], neg(HALF_Z), HALF_Z);
   }
 
   // §11.4 POSTURE, written into the high bits §11.3 reserved in TAC_COVER. Last thing in the movement pass, after
