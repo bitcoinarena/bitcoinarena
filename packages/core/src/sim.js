@@ -171,6 +171,12 @@ function pinTeamsWithin(s, x, z, reach, amount = SUPP_ROUND) {
     if (blastTeams[k]) addSupp(s, O_TACTICS, k < FIRE_TEAMS_PER_SIDE ? -1 : 1, k % FIRE_TEAMS_PER_SIDE, amount);
 }
 const POSTURE_STEP = 655;                           // 0.01 m in Q16.16
+// §11.4's step is EUCLIDEAN, compared on SQUARES (WAR_TACTICS §4.16, ruled 2026-09-22). This was
+// `|dx| + |dz|`, which is neither the per-axis reading that was rejected nor the combined one that was
+// ruled, and is 41% larger on a diagonal. Squares, no root: bit-identical everywhere, and 655^2 fits an
+// i32 with room (429025), as does a step of 0.7 m (45875^2 overflows, so the compare is done in doubles
+// on values that are already integers - exact for anything under 2^26 m in Q16.16).
+const POSTURE_STEP2 = POSTURE_STEP * POSTURE_STEP;
 const SEP_MOVE = 1311;                              // 0.02 m: a separation push past this is a move (§0 row 2)
 const LINE_REACH = Math.imul(40, ONE);               // WAR_TACTICS.md §0: within 40 m of its post's depth, a tank is on the line
 const HALF_REST_TICKS = 210;                        // WAR_TACTICS.md §11.2 half of a mean 7 s rest
@@ -2005,7 +2011,11 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
     }
     // §11.4's STAND is HIS OWN step, read here where the step is his and nothing has pushed him yet: §8.3's
     // hull clearance and the truck's clear-out both move a man AFTER this, and a shove is not a step.
-    if (!isArmour(i)) ownStepped[i] = (abs(sub(u.x, s[b + U_X])) + abs(sub(u.z, s[b + U_Z]))) > POSTURE_STEP ? 1 : 0;
+    if (!isArmour(i)) {
+      // dx^2 + dz^2 against (0.01 m)^2 - the combined displacement, not the axes' sum.
+      const sdx = sub(u.x, s[b + U_X]); const sdz = sub(u.z, s[b + U_Z]);
+      ownStepped[i] = (sdx * sdx + sdz * sdz) > POSTURE_STEP2 ? 1 : 0;
+    }
     s[b + U_X] = u.x; s[b + U_Z] = u.z;
     s[b + U_HEADING] = u.heading; s[b + U_COOLDOWN] = u.cooldown;
   }

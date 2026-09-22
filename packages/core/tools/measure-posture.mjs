@@ -38,6 +38,9 @@ const long = process.argv.includes('--long');          // five seeds x 180 s, to
 const SEEDS = long ? [1, 2, 3, 4, 5] : [1, 2];
 const WARM = 900, TICKS = long ? 10800 : 2400;
 const STEP_MIN = Math.round(Q / 100);                  // §11.4's 0.01 m, so a crawl is not a step
+// EUCLIDEAN, ON SQUARES (WAR_TACTICS §4.16, ruled 2026-09-22) - the same compare the core makes, so the
+// probe and the rule cannot drift. This read |dx| + |dz|, 41% larger on a diagonal.
+const STEP_MIN2 = STEP_MIN * STEP_MIN;
 const ON_PLACE = Q >> 1;                               // 0.5 m
 const ON_LINE = Math.imul(40, Q);                      // §0's "on the line": within 40 m of his post
 const isMan = (i) => (i & L.ARMOUR_MASK) !== 0;
@@ -99,19 +102,20 @@ for (const seed of SEEDS) {
     for (const [i, b4] of was) {
       const b = L.O_UNITS + i * L.U_WORDS;
       const alive = s[b + L.U_STATE] !== 0 && s[b + L.U_HP] > 0;
-      const moved = Math.abs(s[b + L.U_X] - b4[0]) + Math.abs(s[b + L.U_Z] - b4[1]);
+      const mdx = s[b + L.U_X] - b4[0]; const mdz = s[b + L.U_Z] - b4[1];
+      const moved2 = mdx * mdx + mdz * mdz;
 
       // his own step, or someone else's push: §8.3 stands him 3 m off a hull after he has stepped
       let shoved = false;
-      if (moved > STEP_MIN) {
+      if (moved2 > STEP_MIN2) {
         for (let j = 0; j < L.UNITS; j += 4) {
           const tb = L.O_UNITS + j * L.U_WORDS;
           if (s[tb + L.U_STATE] === 0) continue;
           if (Math.hypot((s[b + L.U_X] - s[tb + L.U_X]) / Q, (s[b + L.U_Z] - s[tb + L.U_Z]) / Q) <= HULL_CLEAR) { shoved = true; break; }
         }
       }
-      const stepped = moved > STEP_MIN && !shoved;
-      if (moved > STEP_MIN && shoved) pushed++;
+      const stepped = moved2 > STEP_MIN2 && !shoved;
+      if (moved2 > STEP_MIN2 && shoved) pushed++;
 
       const id = b4[2], onPlace = b4[3];               // what he held while the tick ran, not after it killed him
       const posture = stepped ? 'STAND' : onPlace ? 'COVER' : 'PRONE';
@@ -134,7 +138,7 @@ for (const seed of SEEDS) {
       const far = Math.hypot((b4[0] - px) / Q, (b4[1] - pz) / Q) * Q;
       if (far <= ON_LINE) {
         onLine++;
-        if (moved > STEP_MIN) standRaw++;
+        if (moved2 > STEP_MIN2) standRaw++;
         if (!stepped) {
           didNotStep++;
           if (posture === 'COVER') cover++; else prone++;
