@@ -462,7 +462,13 @@ test('an assault starts only on an objective the side does not hold, never while
   // holds an objective, and the holder is what an assault clock reads. Asserted exactly so it cannot drift without
   // a measurement beside it; the floor keeps the suite honest, since an assault path that never runs checks
   // nothing.
-  assert.equal(starts, 10, `${starts} assaults, not the measured 10`);
+  // 14 once §4.16's step ruling landed (2026-09-22): the measure went from |dx| + |dz| to dx² + dz²
+  // against the bar squared, and the crawl became 0.5 m/s ALONG ITS DIRECTION instead of per axis. A
+  // diagonal crawl is 0.00833 m a tick now, not 0.0118, so it sits UNDER §0's 0.01 m bar and a pinned
+  // man on a diagonal no longer reads STAND - he reads COVER or PRONE, which is what he is doing. Fewer
+  // men are counted standing, fewer are exposed, more live, and survivors are what an assault clock
+  // reads - the same chain the 64.6% -> 91.7% cover move ran down when it took this number to 10.
+  assert.equal(starts, 14, `${starts} assaults, not the measured 14`);
   assert.ok(starts > 0, 'no assault ran at all, so nothing above was checked');
 });
 
