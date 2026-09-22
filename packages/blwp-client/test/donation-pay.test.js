@@ -10,6 +10,9 @@
 // bech32 or BOLT11 code existed, and pay_invoice had one call site, the stake.
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../blwp-node/src/cores.js';
 import { test } from 'node:test';
+// THE RUN LENGTH IS THE CORE'S. A literal 9000 here is refused by the node as "a
+// contract disagreeing with the network it names" - 400, not 201.
+import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
@@ -287,7 +290,16 @@ function paintThePage({ round, entry, donationPaid, settlement, spent = SHIPPED.
   const body = page.slice(page.indexOf('function paintWallet()'));
   const src = body.slice(0, body.indexOf('\n    }') + 6);
   const made = {};
-  const el = (id) => (made[id] = made[id] || { style: {}, textContent: '', placeholder: '', disabled: false });
+  // THE FAKE ELEMENT CARRIES WHAT THE PAGE ACTUALLY CALLS. The page clears the
+  // deposit box with `replaceChildren()` (index.html 1623 and 1637); without it
+  // five of these tests died on "depositEl.replaceChildren is not a function"
+  // before reaching a single assertion, so the settlement display they cover was
+  // not being checked at all. Appending is recorded the same way the page does it.
+  const el = (id) => (made[id] = made[id] || {
+    style: {}, textContent: '', placeholder: '', disabled: false, children: [],
+    replaceChildren(...kids) { this.children = kids; if (!kids.length) this.textContent = ''; },
+    appendChild(kid) { this.children.push(kid); return kid; },
+  });
   new Function('document', 'window', 'BLWPCLIENT', 'wallet', 'spent', 'owed', 'paying', 'walletWhy', 'budget',
     `${src}\n return paintWallet();`)(
     { getElementById: el }, { BLWP_ROUND: round, BLWP_ENTRY: entry, BLWP_DONATION_PAID: donationPaid, BLWP_SETTLEMENT: settlement },
@@ -603,7 +615,7 @@ const contractFor = (nodes) => ({
   committeeTimeMs: BigInt(NOW), randomnessRule: 'bitcoin-block-hash', startTimeMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS,
   entryCloseMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS + 200000n, objectionWindowMs: 600000n, custody: 'THRESHOLD_LN', slashMinimumServed: 20,
   slashRemainder: 'SPLIT', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: SET_ID,
-  censusHeight: 900000, censusRoot: b32(2), stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: 9000, exposureReference: 1000,
+  censusHeight: 900000, censusRoot: b32(2), stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: BLOCK_TICKS, exposureReference: 1000,
   corridorHalfWidth: 40, spawnFreeRadius: 20, timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4, nodes,
 });
 const signedBytes = (set) => { const body = encodeDonationSetBody(set); const out = new Uint8Array(body.length + 64); out.set(body); out.set(set.signature, body.length); return out; };
