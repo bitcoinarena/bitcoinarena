@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Collections;
 using NUnit.Framework;
 using UnityEngine;
@@ -346,17 +347,43 @@ public class VehicleTests
     }
 
     /// <summary>
-    /// Driving at the edge has to stop at the edge. The respawn is a safety
-    /// net; the wall is the actual boundary, and this checks the truck is held
-    /// by the wall rather than teleported by the net.
+    /// RE-STATED FOR RULING 4 (the owner 2026-09-22): "the map edge is a CLAMP, not a wall. The core owes
+    /// no wall solids, and the client stops drawing walls the core does not build."
+    ///
+    /// This test was named TheEdgeOfTheWorldIsAWall and it asserted exactly the rule that was
+    /// withdrawn: it buried the throttle at the south edge and failed with "die Wand haelt nicht" if
+    /// the truck got past terrain.depth/2 + 2. There is no wall now, and nothing in the CLIENT holds
+    /// the truck - `sim.js` clamps every unit and the truck to +-HALF_X / +-HALF_Z after its pushes,
+    /// which is the authority, and PhysX is never the simulator (multiplayer_p2p.md).
+    ///
+    /// So what is checked here is the client's half of the ruling: the four boundary colliders are
+    /// GONE from the scene. The clamp itself is the core's and is measured in `packages/core` - men
+    /// written to twice HALF come back inside in one step - because a PhysX rigidbody driven here has
+    /// no core behind it and proves nothing about a rule the core owns.
     /// </summary>
     [UnityTest]
-    public IEnumerator TheEdgeOfTheWorldIsAWall()
+    public IEnumerator TheEdgeOfTheWorldIsAClampAndNotAWall()
+    {
+        Assert.IsNotNull(Object.FindFirstObjectByType<Bootstrap>());
+        yield return null;
+
+        var named = Object.FindObjectsByType<BoxCollider>(FindObjectsSortMode.None)
+            .Select(c => c.name)
+            .Where(nm => nm.StartsWith("Wall_") || nm.StartsWith("Barrier_"))
+            .ToArray();
+        Assert.IsEmpty(named,
+            "die Begrenzungswaende stehen noch in der Szene: " + string.Join(", ", named)
+            + " - der Rand ist ein Clamp im Core, und der Client zeichnet keine Waende, "
+            + "die der Core nicht baut");
+    }
+
+    /// <summary>
+    /// WITHDRAWN with ruling 4 and kept as a body only - see the note above. It drove a PhysX rigidbody
+    /// at the edge and asked a collider to stop it.
+    /// </summary>
+    IEnumerator TheEdgeOfTheWorldIsAWall_Withdrawn()
     {
         var terrain = Object.FindFirstObjectByType<MempoolTerrain>();
-        Assert.IsNotNull(Object.FindFirstObjectByType<Bootstrap>());
-        Assert.Greater(Object.FindObjectsByType<BoxCollider>(FindObjectsSortMode.None).Length, 4,
-            "keine Begrenzungswaende in der Szene");
 
         // point it at the south edge and bury the throttle
         _truck.transform.rotation = Quaternion.LookRotation(Vector3.forward, Vector3.up);

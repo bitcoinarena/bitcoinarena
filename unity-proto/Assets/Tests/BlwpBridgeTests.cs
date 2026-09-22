@@ -443,21 +443,39 @@ public class WorldSolidsTests
         var boxes = Blwp.WorldSolids.Gather(_truck.transform, out int n);
 
         float lane = post.BayPosition.z, spawnX = post.BayPosition.x;
-        bool wall = false, lintel = false;
+        bool inLaneLow = false, lintel = false, buildingLow = false;
         for (int i = 0; i < n; i++)
         {
             float cx = boxes[i * 6] / 65536f, cz = boxes[i * 6 + 1] / 65536f;
             float hx = boxes[i * 6 + 2] / 65536f, hz = boxes[i * 6 + 3] / 65536f;
             float yLow = boxes[i * 6 + 4] / 65536f;
-            if (Mathf.Abs(cz - lane) > hz) continue;
-            if (cx + hx > spawnX) continue;
-            if (yLow > post.BayPosition.y + 2f) lintel = true; else wall = true;
+            if (cx + hx > spawnX) continue;                       // only what is BEHIND the truck
+            bool low = yLow <= post.BayPosition.y + 2f;
+            if (low) buildingLow = true;                          // the shell is solid somewhere
+            if (Mathf.Abs(cz - lane) > hz) continue;              // ... and in the truck's own lane:
+            if (low) inLaneLow = true; else lintel = true;
         }
 
-        Assert.IsTrue(wall, "hinter dem Truck steht keine Wand");
+        // RE-STATED FOR RULING 4 (the owner 2026-09-22): "the map edge is a clamp, not a wall."
+        //
+        // This used to assert a LOW box in the truck's own lane - "hinter dem Truck steht keine Wand" -
+        // and it passed on the map's WEST EDGE WALL, 85 m further west, not on the post office at all.
+        // Measured the day the edge walls went: in lane z 10.20 the only box behind the truck is the
+        // Lintel at yLow 14.75, because the pillars run on a 6.8 m pitch with hz 0.9 and that lane falls
+        // between Pillar13 and Pillar14. That gap IS the bay mouth - a doorway is exactly what should be
+        // behind a truck parked in a bay, and the old assertion was met by unrelated distant geometry.
+        //
+        // So the two claims are now separate and both stronger: the truck's lane is a DOORWAY under a
+        // lintel, and the shell is still solid where it is not a mouth.
+        Assert.IsFalse(inLaneLow,
+            "in der Spur der Bucht steht ein niedriger Kasten - dann ist das kein Tor, und der Truck "
+            + "faehrt nicht heraus");
         Assert.IsTrue(lintel,
             "ueber der Einfahrt liegt kein Sturz - dann traegt die Bucht auch keine Hoehe, " +
             "und der Core koennte nicht wissen, dass man darunter durchfaehrt");
+        Assert.IsTrue(buildingLow,
+            "hinter dem Truck ist die Halle nirgends massiv - die Pfeiler fehlen, und das war frueher "
+            + "die Begrenzungswand am Kartenrand");
     }
 
     [Test]
