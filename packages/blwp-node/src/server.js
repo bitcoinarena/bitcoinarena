@@ -2940,6 +2940,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const held = round.slashProofs(rid, eid);
         if (!held.length) return text(res, 404, 'this node filed no slash proof for that run');
 
+        // AND THE HEIGHT IS BOUNDED BEFORE ANY CENSUS IS DERIVED AT IT.
+        //
+        // `slashOwing` refuses an out-of-range height in its first step, and `slash-owing.test.js` pins
+        // that ORDER - "a height nobody can read yet must not send a node reading a census at it". The
+        // door was calling it second, after deriving, so a height below the round's own census height
+        // made the node scan and root a whole census before saying the height was never valid. The tip
+        // is not known without a view, so the bound that can be checked here is checked here and the
+        // other stays where it is.
+        if (height < contract.censusHeight)
+          return text(res, 409, `${height} is below the round's census height ${contract.censusHeight}`);
+
         // THE CENSUS AT THAT HEIGHT, read once for every proof: the recipients and, in the same rows,
         // the bond values. A proof names `bondTxid`/`bondVout` and NEVER an amount, and the ruling puts
         // the slashing height at or below the tip when the set signs, so the accused bond is still
