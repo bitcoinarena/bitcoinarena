@@ -688,3 +688,104 @@ test('the committee and the seed are kept per view, and a new header builds them
   assert.equal(blind.seeds.size, 0, 'a refusal was kept');
 });
 
+
+// WHAT THE SLASH-OWING DOOR ANSWERS OVER A REAL CHAIN (§5A.3, ruled 2026-09-22).
+//
+// The door went in measured only by its refusals: the fixture it was written against has no chain
+// view, so every height it was asked for came back 409 and the body it returns on 200 had never
+// executed. This is that body, over the census this file mines: real bonds, real `bondSats` off the
+// funding outputs, a height above the round's own `census_height`.
+test('the slash-owing door answers off the chain at a height above the round\'s own, and the census it reads there is not checked against the round\'s root', async () => {
+  const { encodeSlashProof, joinSlashEvidence, slashProofId } = await import('../../protocol/src/slash.js');
+  const { SIGNED_RESULT_BYTES } = await import('../../protocol/src/result.js');
+  const { entryId: entryIdOf } = await import('../../protocol/src/contracts.js');
+
+  // FOUR BONDED NODES, so the census at the slashing height still has somebody in it once §5A.3 takes
+  // the round's own seats out. The seats are not chosen here: `contract.nodes` must be EXACTLY what the
+  // census assigns or the door refuses the round, and the assignment is seeded from the round id, which
+  // the node list is part of - so the fixture settles it by iterating to a fixed point, the same way
+  // whoever opens a round has to.
+  const both = ['game', 'settlement'];
+  const bonds = [bondOf(0x11, both), bondOf(0x12, both), bondOf(0x13, both), bondOf(0x14, both)];
+  // TWO OF THE FOUR BONDED NODES ARE THE ROUND'S OWN SEATS, so the census at the slashing height still
+  // has two nodes in it once §5A.3 takes the witnesses out. The round is opened on the store rather
+  // than posted to `/round`: that door additionally requires `contract.nodes` to be EXACTLY the set the
+  // census assigns, which is seeded from the round id the node list is part of - a fixed point this
+  // test does not need, because the door under test reads the seats off the stored contract and never
+  // asks who was assigned.
+  const seats = [keyFor(0x13), keyFor(0x14)];
+  const over = { nodes: seats, gameVerifySlots: 2, settlementSlots: 2 };
+  const node = await serve(openStore(), {
+    port: 0, funded: () => true, chainFor: ({ contract } = {}) => chainWith(bonds, contract),
+    randomnessFor: ({ contract }) => beaconOf(chainWith(bonds, contract), contract),
+  });
+  try {
+    const c = contractFor({ ...over, censusRoot: rootFor(bonds, over) });
+    const rid = node.round.open(c);
+
+    // ONE PAYING ENTRY, so the offence has somebody to have harmed.
+    const entry = {
+      roundId: rid, playerPubkey: b32(5), sessionPubkey: b32(6), stakeCommitment: b32(7),
+      stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n, joinTick: 0,
+      worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33),
+      feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n },
+      feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
+    };
+    node.round.enter(entry);
+    const eid = entryIdOf(entry);
+
+    // AND ONE FILED PROOF against a node the chain really carries a bond for.
+    const accused = keyFor(0x11);
+    const accusedIsASeat = seats.some((k) => toHex(k) === toHex(accused));
+    const proof = {
+      roundId: rid, playerPubkey: entry.playerPubkey, nodePubkey: accused,
+      transcriptHash: b32(0x71), signedResultId: b32(0x72),
+      bondTxid: parseTransaction(bonds[0]).txid, bondVout: 0,
+    };
+    const evidence = joinSlashEvidence(encodeSlashProof(proof), new Uint8Array(SIGNED_RESULT_BYTES));
+    node.round.putSlashProof(rid, eid, accused, slashProofId(proof), evidence);
+
+    // THE ROUND'S OWN CENSUS STILL CHECKS AGAINST ITS ROOT; the one at another height must not, which
+    // is the bug this door found. Both read here, off the same node.
+    const own = node.roster.censusFor(rid);
+    const above = node.roster.censusAtHeight(rid, HEIGHT + 5);
+
+    const got = await fetch(`http://127.0.0.1:${node.port}/slash-owing?round=${toHex(rid)}&entry=${toHex(eid)}&height=${HEIGHT + 5}`);
+    const body = got.status === 200 ? await got.json() : await got.text();
+
+    const facts = {
+      ownCensus: [own.ok, own.ok ? own.entries.length : own.why],
+      aboveCensus: [above.ok, above.ok ? above.entries.length : above.why],
+      // THE BOND VALUE IS THE CHAIN'S, not the proof's - a proof names an outpoint and no amount.
+      bondSatsAreBigInt: above.ok && above.entries.every((e) => typeof e.bondSats === 'bigint'),
+      seats: seats.map((k) => toHex(k).slice(0, 8)),
+      accusedIsASeat,
+      accusedInCensus: above.ok && above.entries.some((e) => toHex(e.pubkey) === toHex(accused)),
+      status: got.status,
+      body,
+    };
+    console.log('  FACTS (the slash-owing door on a real chain):', JSON.stringify(facts, null, 1));
+
+    assert.equal(facts.ownCensus[0], true, `the round's own census stopped deriving: ${facts.ownCensus[1]}`);
+    assert.equal(facts.aboveCensus[0], true, `no census above the round's height: ${facts.aboveCensus[1]}`);
+    assert.equal(facts.bondSatsAreBigInt, true, 'a census entry carries no bond value for the door to read');
+    assert.equal(facts.status, 200, `the door did not answer: ${JSON.stringify(body)}`);
+
+    const owed = body.owing[0];
+    // THE BOND'S VALUE IS THE CHAIN'S, off the funding output - not a number the proof carries.
+    assert.equal(owed.bondSats, '100000000');
+    assert.deepEqual([owed.toPlayers, owed.toNodes, owed.toDevelopers], ['50000000', '37500000', '12500000']);
+    // THE HARMED PLAYER IS NOT A NODE. The two halves used to share one map, so he was listed here too.
+    assert.deepEqual(owed.players.map((p) => p.player), [toHex(entry.playerPubkey)]);
+    assert.equal(owed.nodes.some((n) => n.node === toHex(entry.playerPubkey)), false,
+      'the harmed player is listed among the census nodes, owed the players\' half a second time');
+    // AND THE ACCUSED IS NOT PAID OUT OF THE BOND IT IS SLASHED FOR.
+    assert.equal(owed.nodes.some((n) => n.node === toHex(accused)), false,
+      'the slashed node was paid a share of its own bond');
+    // THE SEATS ARE SUBTRACTED, so of four bonded nodes only the one that is neither seat nor accused
+    // is left - and it takes the whole 75%.
+    assert.deepEqual(owed.nodes, [{ node: toHex(keyFor(0x12)), sats: '37500000' }]);
+    assert.equal(owed.nodes.reduce((a, n) => a + BigInt(n.sats), 0n), BigInt(owed.toNodes),
+      'the nodes\' half did not reach the nodes');
+  } finally { await node.close(); }
+});

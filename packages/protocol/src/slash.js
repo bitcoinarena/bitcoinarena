@@ -1264,15 +1264,28 @@ export function slashDistribution({
    * WITH NOBODY TO PAY, the amount goes to the federation pool rather than
    * being destroyed: §5A.3, "every remainder in this document has a recipient".
    */
-  const hand = (who, amount) => {
+  // AND EACH HALF IS ALSO KEPT ON ITS OWN. `shares` is the union of both hands and stays exactly what
+  // it was, because it is what the sum below is checked against and what every existing caller reads.
+  // But a caller that wants "who was paid AS A NODE" cannot get it out of the union: measured on the
+  // slash-owing door over a real chain, the answer listed the harmed PLAYER among the census nodes,
+  // owed the players' half a second time, because the two hands share one map and a pubkey carries no
+  // mark saying which half put it there. A key can honestly be in both - a node operator's own entry -
+  // so the union cannot be split after the fact, and the only place that knows is here.
+  const playerShares = new Map();
+  const nodeShares = new Map();
+  const hand = (who, amount, into) => {
     if (!who.length || amount <= 0n) { toPool += amount > 0n ? amount : 0n; return; }
     const each = amount / BigInt(who.length);
     let left = amount - each * BigInt(who.length);
-    for (const k of who) shares.set(hex(k), (shares.get(hex(k)) || 0n) + each);
+    const put = (k, v) => {
+      shares.set(hex(k), (shares.get(hex(k)) || 0n) + v);
+      into.set(hex(k), (into.get(hex(k)) || 0n) + v);
+    };
+    for (const k of who) put(k, each);
     // The leftover satoshis follow the round's own order.
     for (const k of remainderKeys(roundId, who)) {
       if (left <= 0n) break;
-      shares.set(hex(k), (shares.get(hex(k)) || 0n) + 1n);
+      put(k, 1n);
       left -= 1n;
     }
     toPool += left;
@@ -1284,7 +1297,7 @@ export function slashDistribution({
   // withdrawn rule, and it is the exact set §5A.3 subtracts: "minus the round's
   // own seats (the witnesses)". Measured on a clean 100000 sat bond before this
   // line changed: the two seats took 25000 each and the census took nothing.
-  hand(affectedPlayers, toPlayers);
+  hand(affectedPlayers, toPlayers, playerShares);
 
   // A NODE SLASHED AT THIS HEIGHT IS NOT IN THE ACTIVE CENSUS, BY DEFINITION: the
   // slash SPENDS its bond output and `deriveCensus` filters spent bonds
@@ -1313,7 +1326,7 @@ export function slashDistribution({
     throw new Error(`${toNodes} sat of a slashed bond have no recipient: the active census at the `
       + `slashing height is empty once the round's ${seats.length} seat(s) are taken out, and §5A.3 `
       + `names nobody else - not the seats, not a burn, not the donation set`);
-  hand(eligible, toNodes);
+  hand(eligible, toNodes, nodeShares);
   // AND THE OTHER HALF IS ALWAYS HANDED OUT (RULED, the owner 2026-09-21). It used to depend on the
   // contract: BURN destroyed it, COMMITTEE paid it. Both are withdrawn - "nothing is ever burned, here
   // or anywhere in this protocol: a slash that destroys value pays nobody for the harm and makes the
@@ -1329,7 +1342,7 @@ export function slashDistribution({
   // slashed guardian bond. Split here rather than left as one number, so a caller
   // cannot pay it somewhere else by reading past it.
   return { toPlayers, toNodes, toDevelopers, toPool,
-    pool: splitNodesDevelopers(toPool), burned: 0n, shares };
+    pool: splitNodesDevelopers(toPool), burned: 0n, shares, playerShares, nodeShares };
 }
 
 /** Ascending `H(roundId || pubkey)`, the order 22A names and payout.js uses. */
