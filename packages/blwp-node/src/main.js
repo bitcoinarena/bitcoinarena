@@ -47,12 +47,11 @@ if (Boolean(url) !== Boolean(cookiePath)) {
   process.exit(2);
 }
 
-// LIGHTNING COMES FROM FOUR SETTINGS, ALL OR NONE - BLWP_LNCLI, BLWP_LND_DIR,
-// BLWP_LND_RPC, BLWP_LND_NETWORK - parsed in `lnd-settings.js`. With them the
-// daemon holds stakes, and on start asks that lnd about every stake it died in
-// the middle of settling or cancelling. Measured without them
-// (tools/custody-restart-lnd.mjs): a custodian killed inside a settle and
-// restarted as this file left the stake ACTING whatever lnd said.
+// LIGHTNING COMES FROM FOUR SETTINGS, ALL OR NONE - BLWP_LNCLI, BLWP_LND_DIR, BLWP_LND_RPC,
+// BLWP_LND_NETWORK - parsed in `lnd-settings.js`. It is used to READ an invoice (what the federation's
+// LNv2 invoice commits to) and nothing else. It no longer holds stakes, and there is no start-up ask
+// about a stake died inside a settle: the hold invoice was THRESHOLD_LN's, and the custody field has one
+// value, FEDERATION (§23.6, RULED 2026-09-22 22:59).
 const ln = lightningFromEnv(process.env);
 // AND THE ROUND'S FEDERATION, when this node takes stake-lock rounds (23.1
 // step 5): BLWP_STAKE_LOCK_BIN and BLWP_FEDERATION_CLIENT_DIR, both or neither.
@@ -67,10 +66,7 @@ const db = openStore(path);
 // WHAT THIS DAEMON FUNDS (M3.3-31): the paying rounds its operator names, and
 // entries into them - off by default, so an unnamed round is still 402.
 const options = { port, host, funded: fundingFromEnv(process.env), ...(fed.given ? { stakeLocks: fed.stakeLocks } : {}) };
-if (ln.given) {
-  options.lightning = ln.lightning;
-  if (ln.preflight) options.preflight = ln.preflight;
-}
+if (ln.given) options.lightning = ln.lightning;
 if (url) {
   const call = bitcoindRpc({ url, cookiePath });
   // A 400-header window, as the 2-of-2 tool reads one: the rule refuses a

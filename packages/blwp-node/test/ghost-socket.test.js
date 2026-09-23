@@ -59,7 +59,7 @@ const wordsAt = (n) => (t) => [45875, ((t * (977 + n)) % 30000) - 15000, (t % 70
 
 const post = async (port, path, body) => {
   const r = await fetch(`http://127.0.0.1:${port}${path}`, { method: 'POST', body });
-  return { status: r.status, hold: r.headers.get('x-hold'), bytes: new Uint8Array(await r.arrayBuffer()) };
+  return { status: r.status, bytes: new Uint8Array(await r.arrayBuffer()) };
 };
 
 /** A socket that KEEPS what it was sent, because pushes are the measurement. */
@@ -182,8 +182,6 @@ test('a round that asks no stake takes two players with no Lightning, and the gh
   try {
     const { rid, b, eidA, eidB, batchOf, joins } = await twoIdentities(node, 0n);
     assert.deepEqual(joins.map((s) => s.status), [201, 201], 'a free round was refused');
-    assert.deepEqual(joins.map((s) => s.hold), ['FREE', 'FREE'],
-      'a free round was reported as something other than free');
 
     const viewer = await talk(node.port);
     const other = await talk(node.port);

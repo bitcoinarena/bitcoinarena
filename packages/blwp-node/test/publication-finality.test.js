@@ -17,13 +17,12 @@ import { createServer } from 'node:http';
 
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
-import { HELD, SETTLED, CANCELLED } from '../src/custody.js';
 import { assumeAssigned } from './assignment.js';
 import { encodeRoundContract, roundId } from '../../protocol/src/contracts.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { transcriptBytesHash } from '../../protocol/src/posting.js';
 import {
-  b32, rand, WINDOW_MS, wait, WINNER, LOSER, paidPort, contractFor, say, joinAndPlay, opts, sevenSignerNodes,
+  b32, rand, WINDOW_MS, wait, WINNER, LOSER, contractFor, say, joinAndPlay, opts, sevenSignerNodes,
 } from './window-fixture.js';
 
 /** A relay that keeps whatever it is given and writes down every request; `lies` gives back other bytes. */
@@ -122,90 +121,3 @@ test('a daemon\'s relay door keeps a transcript only under the hash its bytes ha
     assert.equal(toHex(back), toHex(bytes));
   } finally { await d.close(); }
 });
-
-/** Two daemons, one relay the test runs, both runs played and the round closed on both. */
-async function twoDaemons(relay) {
-  const portA = paidPort();
-  const portB = paidPort();
-  const a = await serve(openStore(':memory:'), { port: 0, ...opts, lightning: portA, finality: { everyMs: 100 } });
-  const b = await serve(openStore(':memory:'), { port: 0, ...opts, lightning: portB, finality: { everyMs: 100 } });
-  for (const [d, other] of [[a, b], [b, a]]) {
-    const there = [`http://127.0.0.1:${other.port}`];
-    d.verifier.peers = there;
-    d.payouts.peers = there;
-    d.preimages.peers = there;
-  }
-  const c = contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [relay.url]);
-  const rid = roundId(c);
-  for (const d of [a, b]) {
-    assert.equal((await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) })).status, 201);
-    assumeAssigned(d.round, rid, c.nodes);
-  }
-  const winner = await joinAndPlay([a, b], c, rid, WINNER, 2);
-  const loser = await joinAndPlay([a, b], c, rid, LOSER, 2);
-  const closedAt = Date.now();
-  assert.deepEqual(await Promise.all([say(a.port, `close ${toHex(rid)}`), say(b.port, `close ${toHex(rid)}`)]), ['closed', 'closed']);
-  await a.verifier.settling;
-  await b.verifier.settling;
-  const stateOf = (d, eid) => (d.round.hold(eid) || {}).state;
-  return { a, b, portA, portB, rid, winner, loser, closedAt, stateOf, close: async () => { await a.close(); await b.close(); } };
-}
-
-test('two signer nodes: each posts both transcripts to the contract\'s relay, and only then, a window later, the loser settles, the winner cancels and a payout is queued', slice2(), async () => {
-  const relay = await countingRelay();
-  const t = await twoDaemons(relay);
-  try {
-    const { a, b, rid, winner, loser, stateOf } = t;
-    const moved = () => [a, b].every((d) => stateOf(d, loser.eid) === SETTLED && stateOf(d, winner.eid) === CANCELLED && d.round.payout(rid));
-    const done = Date.now() + WINDOW_MS + 8000;
-    while (Date.now() < done && !moved()) await wait(100);
-    const puts = relay.seen.filter((s) => s.method === 'PUT');
-    const facts = {
-      loserSettled: [a, b].map((d) => stateOf(d, loser.eid) === SETTLED),
-      winnerCancelled: [a, b].map((d) => stateOf(d, winner.eid) === CANCELLED),
-      payoutQueued: [a, b].map((d) => !!d.round.payout(rid)),
-      puts: puts.length,
-      relayHolds: relay.held.size,
-      heldUnderOwnHash: [...relay.held].every(([path, bytes]) => path === `/transcript/${toHex(transcriptBytesHash(new Uint8Array(bytes)))}`),
-    };
-    console.log('  FACTS (2 signer nodes, a relay):', JSON.stringify(facts));
-    assert.deepEqual(facts, {
-      loserSettled: [true, true], winnerCancelled: [true, true], payoutQueued: [true, true],
-      puts: 4,                   // two signer nodes, two runs
-      relayHolds: 2,             // one transcript per run: both signer nodes posted the same bytes
-      heldUnderOwnHash: true,
-    });
-    // AND NO ACT BEFORE A WHOLE WINDOW AFTER THE POSTING that completed 2 of 2
-    // on that signer node - each run against its OWN posting: the loser's settle
-    // against the loser's, the winner's cancel against the winner's.
-    for (const [name, d, p] of [['A', a, t.portA], ['B', b, t.portB]]) {
-      const postedAt = (eid) => Math.max(...d.round.postings(rid, eid).map((x) => x.seenMs));
-      for (const [acts, run, what] of [[p.settled, loser, 'settled the loser'], [p.cancelled, winner, 'cancelled the winner']])
-        for (const act of acts)
-          assert.ok(act.at >= postedAt(run.eid) + WINDOW_MS,
-            `${name} ${what} ${act.at - postedAt(run.eid)} ms after that run's posting, inside a ${WINDOW_MS} ms window`);
-    }
-  } finally { await t.close(); await relay.close(); }
-});
-
-test('two signer nodes whose only relay gives back other bytes: no signer node posts, and nothing moves after the window', slice2(), async () => {
-  const relay = await countingRelay({ lies: true });
-  const t = await twoDaemons(relay);
-  try {
-    const { a, b, rid, winner, loser, stateOf } = t;
-    await wait(Math.max(0, t.closedAt + WINDOW_MS + 1500 - Date.now()));
-    const facts = {
-      holds: [a, b].map((d) => [stateOf(d, loser.eid), stateOf(d, winner.eid)]),
-      postings: [a, b].map((d) => d.round.postings(rid, loser.eid).length),
-      payout: [a, b].map((d) => d.round.payout(rid)),
-      lightningActs: [t.portA, t.portB].map((p) => p.settled.length + p.cancelled.length),
-    };
-    console.log('  FACTS (2 signer nodes, a lying relay):', JSON.stringify(facts));
-    assert.deepEqual(facts, {
-      holds: [[HELD, HELD], [HELD, HELD]], postings: [0, 0], payout: [null, null], lightningActs: [0, 0],
-    });
-  } finally { await t.close(); await relay.close(); }
-});
-
-/** Why this test does not run in Step 1 of the THRESHOLD_LN disposal (see TASKBOOK). */
-function slice2() { return { skip: "slice 2: the subject is the hold path (hold invoices on a Lightning port). It still runs at HEAD on a FEDERATION round given a Lightning port, so it is skipped, not moved to FEDERATION (RULED 2026-09-23); slice 2 deletes this test with the code" }; }

@@ -39,9 +39,21 @@ import { coreForRound, installedCores, runTicksOf } from './cores.js';
  */
 export const RECEIPTS_FOR_CANONICAL = receiptsNeeded(7);
 
+/**
+ * A STORED ROUND THIS NETWORK CANNOT PARSE IS ABSENT (RULED, the owner 2026-09-22 22:59, §23.6): "a record
+ * from before this ruling that carries the old value is not a round of this network and is neither
+ * decoded, replayed, settled, listed nor counted; a node that holds such a record treats it as it treats
+ * bytes that do not parse." So every read of the `rounds` table goes through this, and a row whose
+ * contract does not decode - a past THRESHOLD_LN round, custody byte 0 - is answered as no row at all.
+ * Its bytes stay where they are: absent is not deleted, and nothing here writes to the store.
+ */
+const parses = (contract) => {
+  try { decodeRoundContract(new Uint8Array(contract)); return true; } catch { return false; }
+};
+
 function neededForRound(db, roundIdBytes) {
   const row = db.prepare('SELECT contract FROM rounds WHERE round_id = ?').get(roundIdBytes);
-  if (!row) return RECEIPTS_FOR_CANONICAL;
+  if (!row || !parses(row.contract)) return RECEIPTS_FOR_CANONICAL;
   return receiptsNeeded(decodeRoundContract(new Uint8Array(row.contract)).gameVerifySlots);
 }
 
@@ -298,7 +310,7 @@ export class Round {
 
   get(id) {
     const row = this.db.prepare('SELECT * FROM rounds WHERE round_id = ?').get(id);
-    return row || null;
+    return row && parses(row.contract) ? row : null;
   }
 
   /** Takes an entry. Refused after the round is closed, and refused twice. */
@@ -1227,6 +1239,7 @@ export class Round {
   openRounds() {
     return this.db.prepare('SELECT round_id, contract, opened_ms FROM rounds WHERE state = ? ORDER BY opened_ms')
       .all(OPEN)
+      .filter((r) => parses(r.contract))
       .map((r) => ({ roundId: new Uint8Array(r.round_id), contract: new Uint8Array(r.contract), openedMs: r.opened_ms }));
   }
 
@@ -1968,7 +1981,8 @@ export class Round {
   /** The entry's start line - join tick + the round's start deadline - and the round's threshold. */
   /** The rounds this node has closed. */
   closedRounds() {
-    return this.db.prepare('SELECT round_id FROM rounds WHERE state = ?').all(CLOSED).map((r) => new Uint8Array(r.round_id));
+    return this.db.prepare('SELECT round_id, contract FROM rounds WHERE state = ?').all(CLOSED)
+      .filter((r) => parses(r.contract)).map((r) => new Uint8Array(r.round_id));
   }
 
   /** Where this signer node's close of a run stands (M3.3-34), kept across a restart. */

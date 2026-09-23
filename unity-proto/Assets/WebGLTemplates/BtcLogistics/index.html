@@ -226,13 +226,8 @@
     <input id="blwp-withdraw-invoice" type="text" autocomplete="off" spellcheck="false"
            placeholder="connect your wallet to withdraw; an invoice pasted here pays only what is already in this tab" style="display:none">
     <button id="blwp-withdraw-go" type="button" style="display:none">Withdraw to my wallet</button>
-    <div class="spent" id="blwp-budget"></div>
     <input id="blwp-nwc" type="password" autocomplete="off" spellcheck="false"
            placeholder="nostr+walletconnect://…">
-    <input id="blwp-payout-address" type="text" autocomplete="off" spellcheck="false"
-           placeholder="or a Lightning address to be paid winnings at, e.g. you@wallet.com">
-    <button id="blwp-pay" type="button">Pay the stake</button>
-    <div class="why" id="blwp-why"></div>
   </div>
 
   <script>
@@ -918,9 +913,9 @@
           // keys and the node addresses this page holds.
           signerNodeKeys: signerNodes.signerNodes, nodes: named.nodes,
         };
-        // WHETHER IT IS PAID IS NOT SAID HERE. The node answers `x-hold` when it
-        // takes the entry and `Client.join` keeps it; the chip prints that
-        // rather than this page's assumption. Dealing is not funding, and a
+        // WHETHER IT IS PAID IS NOT SAID HERE. The signer nodes say whether they
+        // verified the stake lock (`Client` keeps their count as `stakeCount`); the
+        // chip prints that rather than this page's assumption. Dealing is not funding, and a
         // page that printed "not paid" as a constant would be reporting its
         // own guess as the player's balance.
         console.log('[blwp] stake dealt to ' + signerNodes.signerNodes.length + ' settlement signer node(s), '
@@ -961,11 +956,7 @@
     // this session" beside "1334 msat paid" - the log was page memory.
     const spent = (typeof BLWPCLIENT !== 'undefined' && BLWPCLIENT.spendLog)
       ? BLWPCLIENT.spendLog({ storage: window.sessionStorage }) : null;
-    let owed = null;          // the last quote, as the client checked it
-    let budget = null;        // what the WALLET said it will still let us spend
-    let paying = false;
     let donationPaying = false;       // the donation is paid once per entry
-    let walletWhy = '';
 
     function theClient() {
       const inst = window.unityInstance;
@@ -973,261 +964,11 @@
       return (mod && mod.blwpNet && mod.blwpNet.client) || null;
     }
 
-    /**
-     * WHAT THIS ENTRY OWES, asked of the client and never worked out here.
-     *
-     * `invoice()` refuses an amount, a hash or a signer node this entry did not sign,
-     * so a quote that reaches this page is one the player's own contract
-     * stands behind.
-     */
-    async function askWhatIsOwed() {
-      const client = theClient();
-      // A LOCK ROUND'S STAKE IS THE LOCK (W1b), not a hold invoice: no node
-      // quotes it, and asking would be a question with no answer.
-      if (window.BLWP_ROUND && BLWPCLIENT.roundLocks(window.BLWP_ROUND)) return;
-      // A FREE ROUND ASKS NOBODY FOR AN INVOICE (M3.3-34): there is no stake,
-      // no wallet and no Lightning in it. Measured before this: two free rounds
-      // asked GET /invoice 37 times in 55 s, each refused by the node.
-      if (window.BLWP_ROUND && !BLWPCLIENT.roundPays(window.BLWP_ROUND)) return;
-      // THE JOINED ENTRY, which carries its round id and session key. This
-      // passed BLWP_ENTRY, which carries neither, so every quote threw
-      // "expected 32 bytes, got nothing" in entryId and the button never lit -
-      // measured on the page, today's included.
-      if (!client || !client.joinedEntry) return;
-      if (owed && ['HELD', 'SETTLED', 'CANCELLED', 'EXPIRED', 'ACCEPTED'].includes(String(owed.state || ''))) return;
-      const said = await client.invoice(client.joinedEntry);
-      // AND A QUOTE THAT ARRIVES CLEARS THE LAST COMPLAINT. Measured on the Daily: the panel showed a
-      // correct breakdown - 98 sat staked, HELD - with "no entry id to ask about: setRound was never called
-      // and none was given" still sitting beside it, left from an ask made before the entry existed.
-      if (said.ok) { owed = said; walletWhy = ''; }
-      else if (said.status !== 404) walletWhy = said.why;
-      paintWallet();
-    }
-
-    /**
-     * WHAT THE WALLET WILL STILL LET THIS CONNECTION SPEND.
-     *
-     * ASKED, NEVER READ OFF THE CONNECTION STRING. NIP-47's URI carries no
-     * budget - the field that pretended it did is gone - so this is three
-     * read-only calls to the wallet, and a wallet that reports neither a budget
-     * nor a balance says so in words rather than showing an empty number.
-     */
-    async function askTheBudget() {
-      if (!wallet || !wallet.connected || budget) return;
-      const held = wallet.current();
-      if (!held.ok) return;
-      budget = await BLWPCLIENT.walletBudget(held, {
-        curve: window.BLWP_CURVE,
-        random: (n) => crypto.getRandomValues(new Uint8Array(n)),
-      });
-      paintWallet();
-    }
-
-    async function payTheStake() {
-      const client = theClient();
-      if (paying || !client || !client.joinedEntry
-          || (window.BLWP_ROUND && BLWPCLIENT.roundLocks(window.BLWP_ROUND))) return;
-      const pasted = document.getElementById('blwp-nwc').value.trim();
-      if (pasted) {
-        const took = wallet.connect(pasted);
-        if (!took.ok) { walletWhy = took.why; return paintWallet(); }
-        document.getElementById('blwp-nwc').value = '';
-        budget = null;                 // a different wallet has a different one
-      }
-      const held = wallet.current();
-      if (!held.ok) { walletWhy = held.why; return paintWallet(); }
-
-      paying = true;
-      walletWhy = 'asking the wallet…';
-      paintWallet();
-      const said = await client.payStake(client.joinedEntry, {
-        connection: held, curve: window.BLWP_CURVE, log: spent,
-        random: (n) => crypto.getRandomValues(new Uint8Array(n)),
-      });
-      paying = false;
-      // AND COUNT WHO HAS SEEN IT (23.1 step 5): every settlement signer node is asked,
-      // lightly, until enough have; the chip prints "seen by N of M". Nothing
-      // waits on it - the player is already driving. WHATEVER payStake SAID: a
-      // wallet can answer after it gave up and still have paid. The chip also
-      // starts it from the signer node; a second start joins the running count.
-      if (client.watchStake && window.BLWP_STAKE && window.BLWP_STAKE.signerNodeKeys) {
-        client.watchStake({
-          signerNodes: window.BLWP_STAKE.signerNodeKeys, nodes: window.BLWP_STAKE.nodes, contract: window.BLWP_ROUND,
-        }).catch((e) => console.error('[blwp] stake count: ' + e.message));
-      }
-      walletWhy = said.ok
-        ? 'paid — the stake is held for this round'
-        : said.why;
-      // The quote is asked again so the state a player is shown is the node's
-      // and not this page's memory of it - and so is the budget, which has
-      // just moved by exactly the amount that was paid.
-      owed = null;
-      budget = null;
-      await askWhatIsOwed();
-      await askTheBudget();
-      return paintWallet();
-    }
-
-    // WHERE THIS ENTRY'S STAKE WENT (M3.2 6e). Measured before: after a round
-    // settled the panel still said HELD - the quote is asked once and never
-    // again - and nothing on the page said what the pool took. Every settlement
-    // signer node is asked, lightly, until the hold has left HELD; the answer is the
-    // signer nodes' own (`settlementBy`), and the line is the client's.
-    let settlementAsking = false;
-    async function askTheSettlement() {
-      const c = theClient();
-      if (settlementAsking || !c || !c.joinedEntry || !c.where || !c.where.entryId) return;
-      if (!window.BLWP_ROUND || !BLWPCLIENT.roundPays(window.BLWP_ROUND) || BLWPCLIENT.roundLocks(window.BLWP_ROUND)) return;
-      if (!window.BLWP_STAKE || !window.BLWP_STAKE.signerNodeKeys) return;
-      const was = window.BLWP_SETTLEMENT;
-      if (was && ['SETTLED', 'CANCELLED', 'EXPIRED'].includes(was.hold)) return;
-      settlementAsking = true;
-      try {
-        window.BLWP_SETTLEMENT = await BLWPCLIENT.settlementBy({
-          entryId: c.where.entryId, signerNodes: window.BLWP_STAKE.signerNodeKeys, nodes: window.BLWP_STAKE.nodes,
-        });
-        // A STAKE THAT CAME BACK IS NOT SPENT (M3.2 6e): a hold the signer nodes say ended
-        // CANCELLED or EXPIRED is marked returned in the running total - the rule is
-        // the client's; the hash is the hold's (the entry's stake commitment).
-        if (spent && c.joinedEntry.stakeCommitment)
-          BLWPCLIENT.noteSettlement(spent, window.BLWP_SETTLEMENT, c.joinedEntry.stakeCommitment);
-      } catch (e) { console.error('[blwp] settlement: ' + e.message); }
-      settlementAsking = false;
-      paintWallet();
-    }
-
-    /**
-     * WHAT THE POOL OWES THIS ENTRY, AND COLLECTING IT (§24A.2).
-     *
-     * "A payout contract to the player's key; the client withdraws it over Lightning through any listed
-     * gateway." On a hold round the pool is the committee's own Lightning, so the withdrawal is an
-     * ordinary payment: the node says what it owes, and the player presents an invoice for exactly that,
-     * SIGNED BY THE SESSION KEY THIS RUN WAS PLAYED WITH. The signing happens here and the key never
-     * leaves the tab.
-     *
-     * Measured before this control existed: the money reached the committee's channel and stopped -
-     * 98000 msat owed, `PAID` only because a probe posted the invoice by hand. A player had no way to
-     * collect what they had won.
-     */
-    /**
-     * THE ADDRESS IS LODGED WHILE THE PLAYER IS STILL HERE, NOT WHEN THE MONEY IS OWED.
-     *
-     * Measured on the Daily (round ec9bd34e): both stakes paid from a wallet with no NWC string, one truck
-     * DELIVERED, the address named in this field - and the run's Chrome closed at the end of the drive.
-     * FINAL came ten minutes later with 98000 msat owed and no tab left to post from. An address that only
-     * travels at payout time is a Collect that the player must sit and wait for.
-     *
-     * So it goes to the door as soon as it is known, signed by the same session key, and the node keeps it
-     * as a standing instruction. `202 NAMED` is the answer when nothing is owed yet.
-     */
-    let lodged = '';
-    async function lodgeTheAddress() {
-      const c = theClient();
-      const said = String(window.BLWP_PAYOUT_ADDRESS || '').trim();
-      if (!c || !c.base || !c.where || !c.where.entryId || !said) return;
-      const hex = Array.from(c.where.entryId).map((x) => x.toString(16).padStart(2, '0')).join('');
-      if (lodged === hex + ' ' + said) return;
-      if (!/^[^@\s]+@[^@\s]+$/.test(said)) return;
-      lodged = hex + ' ' + said;                               // one attempt per entry and address
-      try {
-        const bytes = new TextEncoder().encode(said);
-        const sig = await c.sign(bytes);
-        const body = new Uint8Array(bytes.length + sig.length);
-        body.set(bytes, 0); body.set(sig, bytes.length);
-        const r = await fetch(`${c.base}/winnings?entry=${hex}`, { method: 'POST', body });
-        const answer = (await r.text()).trim();
-        if (!r.ok) { lodged = ''; console.error('[blwp] address: ' + answer); }
-        else console.log('[blwp] address: ' + answer);
-      } catch (e) { lodged = ''; console.error('[blwp] address: ' + e.message); }
-    }
-
-    let winningsAsking = false;
-    async function askTheWinnings() {
-      const c = theClient();
-      if (winningsAsking || !c || !c.base || !c.where || !c.where.entryId) return;
-      if (!window.BLWP_ROUND || !BLWPCLIENT.roundPays(window.BLWP_ROUND) || BLWPCLIENT.roundLocks(window.BLWP_ROUND)) return;
-      await lodgeTheAddress();
-      const had = window.BLWP_WINNINGS;
-      if (had && had.state === 'PAID') return;                 // paid is paid; the node says so once
-      winningsAsking = true;
-      try {
-        const hex = Array.from(c.where.entryId).map((x) => x.toString(16).padStart(2, '0')).join('');
-        const r = await fetch(`${c.base}/winnings?entry=${hex}`);
-        if (r.ok) window.BLWP_WINNINGS = await r.json();
-      } catch (e) { /* the node is asked again on the next pass */ }
-      winningsAsking = false;
-      paintWallet();
-      // AND SENT, WITHOUT BEING ASKED. Nobody presses anything: the moment the node says the pool owes
-      // this entry something, the wallet mints an invoice for it and the node pays. One at a time, and a
-      // failure is left to the next pass rather than retried in a tight loop.
-      const owed = window.BLWP_WINNINGS;
-      const canSend = (wallet && wallet.connected) || String(window.BLWP_PAYOUT_ADDRESS || '').trim();
-      if (owed && owed.state === 'OWED' && BigInt(owed.owedMsat || 0) > 0n
-          && !window.BLWP_COLLECTING && canSend) {
-        window.BLWP_COLLECT_WINNINGS(null)
-          .catch((e) => { window.BLWP_COLLECT_WHY = e.message; console.error('[blwp] winnings: ' + e.message); paintWallet(); });
-      }
-    }
-
-    /**
-     * WINNINGS ARE ALWAYS SENT, AND THERE IS NO COLLECT (the owner 2026-09-21 13:25, clarified 13:33).
-     *
-     * The player does not paste an invoice and does not press a button. Once the node says what the pool
-     * owes this entry, the page asks the wallet that is connected for an invoice of exactly that
-     * (NIP-47 `make_invoice`), signs it with the session key this run was played with, and posts it to the
-     * one door. The node pays once.
-     *
-     * NWC IS THE RETURN PATH ONLY. Paying the stake stays an ordinary hold invoice that any wallet can
-     * pay - `GET /invoice` asks nobody for NWC - and a paid join is never refused for want of a wallet
-     * that can mint. A player with no NWC connection simply has winnings waiting: the node keeps saying
-     * OWED, and the moment a wallet is connected this sends them.
-     */
-    window.BLWP_COLLECT_WINNINGS = async (invoice) => {
-      const c = theClient();
-      const owed = window.BLWP_WINNINGS;
-      if (!c || !c.where || !c.where.entryId) throw new Error('this tab has no entry to collect for');
-      if (!owed || !owed.owedMsat || BigInt(owed.owedMsat) <= 0n) throw new Error('the pool owes this entry nothing');
-      let request = String(invoice || '').trim();
-      if (!request) {
-        // A WALLET MINTS IT; WITHOUT ONE, THE ADDRESS THE PLAYER NAMED DOES (the owner 13:54).
-        //
-        // Either way the amount is the node's own figure and never this page's arithmetic, and either way
-        // what goes to the door is signed by the session key. NWC is one way for winnings to leave, not
-        // the only one - and neither is a Collect, because nothing here waits to be pressed.
-        const conn = wallet && wallet.connected ? wallet.current() : null;
-        if (conn && conn.ok) {
-          const made = await BLWPCLIENT.makeInvoice(conn, BigInt(owed.owedMsat), {
-            curve: window.BLWP_CURVE, description: 'btc-logistics winnings',
-            random: (n) => crypto.getRandomValues(new Uint8Array(n)),
-          });
-          if (!made || !made.ok || !made.invoice) throw new Error((made && made.why) || 'the wallet minted no invoice');
-          request = String(made.invoice).trim();
-        } else {
-          request = String(window.BLWP_PAYOUT_ADDRESS || '').trim();
-          if (!request) throw new Error('name a Lightning address to be paid at, or connect a wallet');
-        }
-      }
-      if (!/^ln[a-z0-9]+$/i.test(request) && !/^[^@\s]+@[^@\s]+$/.test(request))
-        throw new Error('that is neither a Lightning invoice nor a Lightning address');
-      window.BLWP_COLLECTING = true;
-      paintWallet();
-      try {
-        const bytes = new TextEncoder().encode(request);
-        const sig = await c.sign(bytes);
-        const body = new Uint8Array(bytes.length + sig.length);
-        body.set(bytes, 0); body.set(sig, bytes.length);
-        const hex = Array.from(c.where.entryId).map((x) => x.toString(16).padStart(2, '0')).join('');
-        const r = await fetch(`${c.base}/winnings?entry=${hex}`, { method: 'POST', body });
-        const said = await r.text();
-        if (!r.ok) { window.BLWP_COLLECT_WHY = said.trim(); console.error('[blwp] collect: ' + said.trim()); }
-        else {
-          window.BLWP_COLLECT_WHY = '';
-          console.log('[blwp] collect: ' + said.trim());
-        }
-      } finally { window.BLWP_COLLECTING = false; }
-      await askTheWinnings();
-      return window.BLWP_WINNINGS;
-    };
+    // (NO STAKE QUOTE, NO PAY BUTTON, NO SETTLEMENT ASK, NO WINNINGS: `askWhatIsOwed`, `askTheBudget`,
+    // `payTheStake`, `askTheSettlement`, `lodgeTheAddress`, `askTheWinnings` and `BLWP_COLLECT_WINNINGS`
+    // quoted a hold invoice, paid it through the wallet, read the hold's settlement, and sent the pool's
+    // winnings from the committee's own Lightning. Each already returned early on a lock round and on a
+    // free round - every round that can exist now. They were THRESHOLD_LN's: §23.6, RULED 2026-09-22 22:59.)
 
     // WHAT THE PLAYER IS OWED, LOOKED AT - NOTHING SPENT (W4 / 6d). Measured before (run 15):
     // this loop collected the payout and redeemed the stake into this tab's wallet every 5 s,
@@ -1499,20 +1240,6 @@
     });
     setInterval(paintMoney, 1000);
 
-    const PAYOUT_KEY = 'blwp.payout.address';
-    try { window.BLWP_PAYOUT_ADDRESS = sessionStorage.getItem(PAYOUT_KEY) || ''; } catch { window.BLWP_PAYOUT_ADDRESS = ''; }
-    const addressField = document.getElementById('blwp-payout-address');
-    if (addressField) {
-      if (window.BLWP_PAYOUT_ADDRESS) addressField.value = window.BLWP_PAYOUT_ADDRESS;
-      addressField.addEventListener('change', () => {
-        const said = String(addressField.value || '').trim();
-        window.BLWP_PAYOUT_ADDRESS = said;
-        try { sessionStorage.setItem(PAYOUT_KEY, said); } catch { /* a tab that keeps nothing still pays out */ }
-        console.log(`[blwp] winnings will be sent to ${said || 'nowhere yet'}`);
-        paintWallet();
-      });
-    }
-
     const withdrawGo = document.getElementById('blwp-withdraw-go');
     if (withdrawGo) withdrawGo.addEventListener('click', () => {
       const field = document.getElementById('blwp-withdraw-invoice');
@@ -1542,9 +1269,8 @@
       // client's line off the client's state - which on a reload is the tab's
       // notes - painted before the lock branch, so a lock round shows it too.
       document.getElementById('blwp-donation').textContent = BLWPCLIENT.donationPaidLine(window.BLWP_DONATION_PAID);
-      // AND WHERE THE STAKE WENT once the round settled (M3.2 6e): the signer nodes' own
-      // hold state, the hold's amount and the round's pool - read, not computed.
-      document.getElementById('blwp-settled').textContent = BLWPCLIENT.settledLine(window.BLWP_SETTLEMENT);
+      // (NO "WHERE THE STAKE WENT" LINE: it read the signer nodes' hold state, the hold's amount and the
+      // round's pool, which were THRESHOLD_LN's and are no longer reported - §23.6, RULED 2026-09-22 22:59.)
       // A LOCK ROUND'S STAKE GOES INTO ITS LOCK (W1b), from the deposit on the
       // loading screen: the panel says so, then where the lock is and when it
       // comes back - and never offers a hold invoice. Keyed on the ROUND, not on
@@ -1567,81 +1293,15 @@
           : BLWPCLIENT.withdrawLine(window.BLWP_WITHDRAWN, canWithdraw ? window.BLWP_WITHDRAWABLE : null);
         const offer = canWithdraw && !window.BLWP_WITHDRAWING && !window.BLWP_ELSEWHERE;
         for (const id of ['blwp-withdraw-invoice', 'blwp-withdraw-go']) document.getElementById(id).style.display = offer ? '' : 'none';
-        for (const id of ['blwp-spent', 'blwp-budget', 'blwp-why']) document.getElementById(id).textContent = '';
-        for (const id of ['blwp-nwc', 'blwp-pay']) document.getElementById(id).style.display = 'none';
+        document.getElementById('blwp-spent').textContent = '';
+        document.getElementById('blwp-nwc').style.display = 'none';
         return;
       }
 
-      // THE BREAKDOWN IS THE CLIENT'S. 22A: the commitment, the fee and the
-      // donation coming OUT of it, the net stake, and what the wallet is asked
-      // - all off the entry this player signed, none of it subtracted here.
-      document.getElementById('blwp-owed').textContent =
-        BLWPCLIENT.owedLine(window.BLWP_ENTRY, owed, window.BLWP_SETTLEMENT);
-      // THE TOTAL IS THE CLIENT'S. A page that added up its own payments would
-      // be showing a figure nobody checked.
-      document.getElementById('blwp-spent').textContent = BLWPCLIENT.spentLine(spent);
-      // AND WHAT THIS ENTRY WON, once the objection window has passed and the node has worked the money
-      // out. The field and the button only while there is something to collect: a player who won nothing
-      // is shown nothing to press.
-      {
-        const won = window.BLWP_WINNINGS;
-        const owedMsat = won && won.owedMsat ? BigInt(won.owedMsat) : 0n;
-        // NO COLLECT. The player is told what is happening and presses nothing; the field and the button
-        // stay hidden on a hold round, because winnings are sent, not collected.
-        const line = document.getElementById('blwp-withdraw');
-        line.textContent = window.BLWP_COLLECTING ? 'Sending your winnings to your wallet…'
-          : won && won.state === 'PAID' ? `You won ${owedMsat / 1000n} sat, and it has been sent to your wallet`
-          : owedMsat > 0n ? (wallet && wallet.connected
-            ? `You won ${owedMsat / 1000n} sat - sending it to your wallet`
-            : window.BLWP_PAYOUT_ADDRESS
-              ? `You won ${owedMsat / 1000n} sat - sending it to ${window.BLWP_PAYOUT_ADDRESS}`
-              : `You won ${owedMsat / 1000n} sat - name a Lightning address and it will be sent`)
-          : '';
-        if (window.BLWP_COLLECT_WHY) line.textContent += ` - ${window.BLWP_COLLECT_WHY}`;
-        for (const id of ['blwp-withdraw-invoice', 'blwp-withdraw-go']) {
-          const el = document.getElementById(id);
-          if (el) el.style.display = 'none';
-        }
-        // THE ADDRESS IS OFFERED WHILE THERE IS NO WALLET, and put away once there is one or once the
-        // winnings have gone. It is never a Collect: naming it is all the player does.
-        const addr = document.getElementById('blwp-payout-address');
-        if (addr) addr.style.display = (wallet && wallet.connected) || (won && won.state === 'PAID') ? 'none' : '';
-      }
-      // AND WHAT IS LEFT, in the wallet's own words. `budgetLine` says WHICH
-      // number it is - a budget is this connection's allowance and a balance is
-      // everything the player owns, and on a payment screen the two must never
-      // read alike.
-      document.getElementById('blwp-budget').textContent =
-        wallet.connected ? BLWPCLIENT.budgetLine(budget) : '';
-      document.getElementById('blwp-nwc').placeholder = wallet.connected
-        ? 'wallet connected · paste another to replace it'
-        : 'optional · nostr+walletconnect://…';
-      const paid = owed && ['HELD', 'SETTLED', 'CANCELLED', 'EXPIRED', 'ACCEPTED'].includes(String(owed.state || ''));
-      document.getElementById('blwp-pay').disabled = paying || !owed || !wallet.connected;
-      document.getElementById('blwp-pay').style.display = (wallet.connected && owed && !paid) ? '' : 'none';
-      document.getElementById('blwp-nwc').style.display = paid ? 'none' : '';
-      document.getElementById('blwp-why').textContent = walletWhy;
-      const depositEl = document.getElementById('blwp-deposit');
-      if (depositEl) {
-        if (owed && owed.ok && owed.request && !paid) {
-          const sat = (m) => String((BigInt(m) + 999n) / 1000n);
-          depositEl.replaceChildren();
-          depositEl.appendChild(document.createTextNode(
-            'Pay ' + sat(owed.amountMsat) + ' sat from any Lightning wallet to lock your stake:'));
-          const box = document.createElement('code');
-          box.textContent = owed.request;
-          depositEl.appendChild(box);
-          if (owed.fee && owed.fee.request) {
-            depositEl.appendChild(document.createTextNode(
-              'and ' + sat(owed.fee.amountMsat) + ' sat node fee:'));
-            const feeBox = document.createElement('code');
-            feeBox.textContent = owed.fee.request;
-            depositEl.appendChild(feeBox);
-          }
-        } else {
-          depositEl.replaceChildren();
-        }
-      }
+      // (NOTHING FOLLOWS THE LOCK BRANCH. Every paying round locks its stake in the federation, so the
+      // branch above is the whole wallet. What used to follow it painted a HOLD round - the hold invoice
+      // quoted as a deposit, the pay button, what the pool owed and the winnings being sent to a wallet or
+      // an address - and a hold round is THRESHOLD_LN's, which does not exist: §23.6, RULED 2026-09-22 22:59.)
     }
 
     const nodeHealth = {};
@@ -1747,7 +1407,6 @@
       }
       const stake = window.BLWP_STAKE
         ? Object.assign({}, window.BLWP_STAKE, {
-          hold: (net && net.client && net.client.joinHold) || null,
           seen: (net && net.client && net.client.stakeCount) || null,
         })
         : null;
@@ -1802,11 +1461,7 @@
     }
     setInterval(exchangeNames, 3000);
     setInterval(paintPlayers, 500);
-    const payButton = document.getElementById('blwp-pay');
-    if (payButton) payButton.addEventListener('click', payTheStake);
-    setInterval(() => { askWhatIsOwed(); askTheBudget(); paintWallet(); }, 1000);
-    setInterval(askTheSettlement, 5000);
-    setInterval(askTheWinnings, 5000);
+    setInterval(paintWallet, 1000);
     setInterval(lookThePayout, 5000);
     probeNodes();
     setInterval(probeNodes, 2000);

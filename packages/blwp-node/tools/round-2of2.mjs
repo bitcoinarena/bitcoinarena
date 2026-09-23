@@ -408,60 +408,14 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     }
     return { pending: true };
   };
-  // THE COMMITTEE'S ONE LIGHTNING ENDPOINT, OPT-IN (§23.1): the four BLWP_LND*
-  // settings, the same parse src/main.js uses, and the same port for both
-  // daemons - the second takes up the hold the first issued. Unset, both hold
-  // no stakes, exactly as before.
-  // HOW FAST BLOCKS ARE COMING HERE (RULED 2026-09-21). An HTLC dies at a height and a round is final after
-  // a time; the chain's own pace is the only thing that joins them, and it is read from this bitcoind
-  // rather than assumed. Measured on the Daily across one hour: between 1.74 and 3.85 s a block, so the
-  // FASTEST recent window is taken - fast blocks are the dangerous ones, since they burn the HTLC soonest.
-  //
-  // AND IT IS READ AGAIN EACH TIME A HOLD IS SIZED, over several windows, taking the fastest.
-  // Measured on the Daily, round 6deead16: ONE 200-block average at launch said 5.660 s a block; while
-  // the round was being played the same chain was doing 0.770 s a block (100 blocks in 77 s). The HTLC
-  // bought about a thousand seconds and lasted about a hundred and forty, so both stakes EXPIRED back to
-  // their players at +626 s after the close, inside the objection window, and a truck that DELIVERED was
-  // never paid. A long average hides a chain that has sped up; the short windows are what catch it.
-  const at = rpc ? async (h) => Number((await rpc('getblockheader', [await rpc('getblockhash', [h])])).time) : null;
-  const paceOver = async (tip, span) => {
-    if (span < 1 || tip - span < 0) return null;
-    const [now, then] = [await at(tip), await at(tip - span)];
-    return now > then ? (now - then) / span : null;
-  };
-  let secondsPerBlock = null;
-  if (rpc) {
-    try {
-      const tip = Number(await rpc('getblockcount', []));
-      const span = Math.min(200, Math.max(1, tip - 1));
-      secondsPerBlock = await paceOver(tip, span);
-      console.log(`[chain] ${span} blocks in ${(secondsPerBlock * span).toFixed(0)} s = ${secondsPerBlock.toFixed(3)} s a block`);
-    } catch (e) { console.error(`[chain] this node could not time its own chain: ${e.message}`); }
-  }
-  // THE PACE A HOLD IS SIZED WITH: the fastest of three windows, asked at most every 10 s. The fastest is
-  // the dangerous one - it burns the HTLC soonest - and a chain that has just sped up shows in the short
-  // window long before it shows in the long one.
-  let paceCache = { atMs: 0, spb: null };
-  const paceNow = rpc ? async () => {
-    if (Date.now() - paceCache.atMs < 10000 && paceCache.spb) return paceCache.spb;
-    try {
-      const tip = Number(await rpc('getblockcount', []));
-      const seen = (await Promise.all([6, 36, 144].map((n) => paceOver(tip, Math.min(n, Math.max(1, tip - 1))))))
-        .filter((x) => Number.isFinite(x) && x > 0);
-      if (!seen.length) return paceCache.spb;
-      const spb = Math.min(...seen);
-      if (paceCache.spb && Math.abs(spb - paceCache.spb) / paceCache.spb > 0.25)
-        console.log(`[chain] the pace a hold is sized with moved ${paceCache.spb.toFixed(3)} -> ${spb.toFixed(3)} s a block`);
-      paceCache = { atMs: Date.now(), spb };
-      return spb;
-    } catch (e) { console.error(`[chain] the pace could not be read: ${e.message}`); return paceCache.spb; }
-  } : null;
-  const ln = lightningFromEnv(process.env, { secondsPerBlock });
+  // A LIGHTNING INVOICE READER, OPT-IN: the four BLWP_LND* settings, the same parse src/main.js uses. It
+  // reads what a federation's LNv2 invoice commits to, and nothing else. There used to be far more here -
+  // the committee's one Lightning endpoint holding the stakes, a preflight asking whether it could, and the
+  // chain's block pace read and re-read to size each hold's HTLC - and all of it was THRESHOLD_LN's hold
+  // invoice, which does not exist (§23.6, RULED 2026-09-22 22:59).
+  const ln = lightningFromEnv(process.env);
   if (!ln.ok) throw new Error(ln.why);
-  const lightning = ln.given
-    ? { lightning: ln.lightning, ...(ln.preflight ? { preflight: ln.preflight } : {}),
-      // THE FUNCTION, not the number: custody asks it when it sizes each hold.
-      ...(paceNow ? { secondsPerBlock: paceNow } : secondsPerBlock ? { secondsPerBlock } : {}) } : {};
+  const lightning = ln.given ? { lightning: ln.lightning } : {};
   // THIS CHAIN'S HEIGHT, from the regtest bitcoind when there is one (M3.3-30):
   // a hold past its HTLC's expiry is written EXPIRED on it. Not `poolCall`,
   // which would also switch on the pool's spending.

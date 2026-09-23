@@ -72,16 +72,27 @@ test('one file asks the chain about outputs, and one calls the payer', () => {
   assert.equal(calls, 1, `payWithCommittee is called ${calls} times in payout.js`);
 
   // AND THE DAEMON CALLS IT. `settleQueued` with no caller would be the same
-  // fault one layer up, so the close path and the start-up sweep are pinned by
-  // name: a round that closes asks, and a node that was down when its round
-  // closed asks on start.
+  // fault one layer up, so the start-up sweep is pinned by name: a node that was
+  // down when its round closed asks on start. The close path's own call is the
+  // skipped test below (hole 2).
   const server = src.find((s) => s.f === 'server.js').text;
-  assert.match(server, /payouts\.settleQueued\(/, 'a closing round no longer asks for its spend');
   assert.match(server, /payouts\.settleAllQueued\(/, 'a node that starts no longer sweeps its queued payouts');
   assert.match(server, /new PoolWatch\(/, 'the daemon watches no pool, so it can name no output');
   console.log('  callers of payWithCommittee in src/: 1 (payout.js settleQueued)');
   console.log('  files in src/ that can find an output: 1 (pool-watch.js)');
-  console.log('  daemon call sites: closeRound and the start-up sweep');
+  console.log('  daemon call sites: the start-up sweep (the close path is hole 2, below)');
+});
+
+// HOLE 2 OF THE THRESHOLD_LN DISPOSAL (TASKBOOK, RULED 2026-09-23): the close path queued a pool payout and
+// asked for its spend only after `custody.settleHeldInvoices`, on a node that reached Lightning. Slice 2
+// retired that close with the hold path, so no closing round asks for its spend. Not solved here: making a
+// FEDERATION close queue an on-chain payout is the later commit of this disposal. Skipped, never passed.
+test('a closing round asks for its spend', {
+  skip: 'hole 2 of the THRESHOLD_LN disposal: slice 2 retired the hold close that queued the pool payout; '
+    + 'a FEDERATION close that asks for its spend is a later commit of this disposal',
+}, () => {
+  const server = readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
+  assert.match(server, /payouts\.settleQueued\(/, 'a closing round no longer asks for its spend');
 });
 
 /**

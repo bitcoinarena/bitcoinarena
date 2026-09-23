@@ -335,14 +335,12 @@ test('the page joins a named round and still invents none', () => {
   // THE SIGNER NODE'S FUNDING REACHES THE SCREEN, and this pin was weaker when it was
   // written: it asserted the page contained the words "THE STAKE IS NOT PAID",
   // which is a CONSTANT - the page asserting a funding state it never measured.
-  // The node answers `x-hold` when it takes the entry, so what is pinned now is
-  // that the page hands the chip the node's word and the refusal, and that
+  // The signer nodes count the stake lock they verified, so what is pinned now is
+  // that the page hands the chip their count and the refusal, and that
   // `playersLine` is what turns them into a line. Stronger, not looser:
   // `page-stake.test.js` drives the wording itself.
   assert.match(page, /joinRefused,\s*stake/,
     'the chip is never told why there is no signer node or what it cost');
-  assert.match(page, /net\.client\.joinHold/,
-    'the page invents the funding word instead of reading the node\'s');
   assert.ok(!page.includes('THE STAKE IS NOT PAID'),
     'the page asserts a funding state it did not measure');
 

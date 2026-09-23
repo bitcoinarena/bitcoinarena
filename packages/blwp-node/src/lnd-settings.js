@@ -24,42 +24,23 @@
 // Lightning node. Every launcher reads them through this, so a second one
 // cannot quietly accept half a node or a network the first refuses.
 //
-// The preflight that gates a paying round asks the lnd with its read-only key
-// and only knows testnet4; on regtest none is returned, so a regtest daemon
-// reconciles and settles but opens no paying round - the gate fails closed.
+// WHAT THIS LIGHTNING NODE IS FOR NOW: READING AN INVOICE, AND NOTHING ELSE (§23.6, RULED 2026-09-22
+// 22:59). `/federation-invoice` decodes the federation's LNv2 invoice with it. It holds no stake: the
+// hold invoice, the preflight that asked whether this lnd could receive a round's stakes, the gateways
+// that preflight counted and the block pace that sized an HTLC were all THRESHOLD_LN's, and are gone.
 import { lndPort } from './lnd-port.js';
-import { lndPreflight, lndPreflightRegtest, PLAYABLE } from './preflight.js';
+
+// The networks a round may run on here. The lnd is checked against them because an invoice read off
+// the wrong network would name an amount on a chain the round is not on.
+const PLAYABLE = ['testnet4', 'regtest'];
 
 export const LND_SETTINGS = ['BLWP_LNCLI', 'BLWP_LND_DIR', 'BLWP_LND_RPC', 'BLWP_LND_NETWORK'];
 
 /**
- * The gateways a launcher named, `lnddir@rpc,lnddir@rpc`. An entry may leave the rpc off (`lnddir`), which
- * is how a testnet4 node is named: its own lnd.conf says where it answers. Nothing here is checked against
- * a node - `askGateways` asks each one itself, and a gateway that will not answer keeps its place in the
- * list with nothing in it, so the count stays honest.
- *
- * @returns {{ ok: true, gateways: {lnddir: string, rpc: string}[] } | { ok: false, why: string }}
- */
-export function gatewaysFromEnv(env) {
-  const raw = (env.BLWP_LND_GATEWAYS || '').trim();
-  if (!raw) return { ok: true, gateways: [] };
-  const gateways = [];
-  for (const part of raw.split(',').map((s) => s.trim()).filter(Boolean)) {
-    const at = part.indexOf('@');
-    const lnddir = at === -1 ? part : part.slice(0, at);
-    const rpc = at === -1 ? '' : part.slice(at + 1);
-    if (!lnddir) return { ok: false, why: `BLWP_LND_GATEWAYS names a gateway with no lnd directory: "${part}"` };
-    gateways.push({ lnddir, rpc });
-  }
-  return { ok: true, gateways };
-}
-
-/**
- * @returns {{ ok: true, given: false } |
- *   { ok: true, given: true, lightning, preflight, rpc, network } |
+ * @returns {{ ok: true, given: false } | { ok: true, given: true, lightning, rpc, network } |
  *   { ok: false, why: string }}
  */
-export function lightningFromEnv(env, { secondsPerBlock = null } = {}) {
+export function lightningFromEnv(env) {
   const lnd = Object.fromEntries(LND_SETTINGS.map((k) => [k, env[k] || '']));
   const given = LND_SETTINGS.filter((k) => lnd[k]);
   if (!given.length) return { ok: true, given: false };
@@ -67,28 +48,11 @@ export function lightningFromEnv(env, { secondsPerBlock = null } = {}) {
     return { ok: false, why: 'BLWP_LNCLI, BLWP_LND_DIR, BLWP_LND_RPC and BLWP_LND_NETWORK go together: '
       + `set all four, or none (missing: ${LND_SETTINGS.filter((k) => !lnd[k]).join(', ')})` };
   if (!PLAYABLE.includes(lnd.BLWP_LND_NETWORK))
-    return { ok: false, why: `${lnd.BLWP_LND_NETWORK} is not a network a round may hold stakes on here `
+    return { ok: false, why: `${lnd.BLWP_LND_NETWORK} is not a network a round may run on here `
       + `(${PLAYABLE.join(', ')})` };
-  const named = gatewaysFromEnv(env);
-  if (!named.ok) return named;
-  const gateways = named.gateways;
   return {
     ok: true, given: true, rpc: lnd.BLWP_LND_RPC, network: lnd.BLWP_LND_NETWORK,
     lightning: lndPort({ lncli: lnd.BLWP_LNCLI, args: [`--lnddir=${lnd.BLWP_LND_DIR}`,
       `--rpcserver=${lnd.BLWP_LND_RPC}`, `--network=${lnd.BLWP_LND_NETWORK}`] }),
-    // TESTNET4 BY ITS lnd.conf; REGTEST BY THE SAME FLAGS THE PORT USES. Both
-    // with the read-only key. Measured before the regtest one: a paying round
-    // on a regtest daemon with Lightning -> 503 "no preflight".
-    //
-    // THE GATEWAYS THE LAUNCHER NAMED go to both, each in the shape that preflight asks its nodes with.
-    // Named none, neither is given any and each keeps the fallback it already had: testnet4 the operator's
-    // two known dirs, regtest the one node it was pointed at - which is one, and one is refused.
-    preflight: lnd.BLWP_LND_NETWORK === 'testnet4'
-      ? lndPreflight({ lncli: lnd.BLWP_LNCLI, lnddir: lnd.BLWP_LND_DIR, secondsPerBlock,
-        ...(gateways.length ? { lnddirs: gateways.map((g) => g.lnddir) } : {}) })
-      : lndPreflightRegtest({ lncli: lnd.BLWP_LNCLI, lnddir: lnd.BLWP_LND_DIR, rpc: lnd.BLWP_LND_RPC, secondsPerBlock,
-        ...(gateways.length ? { gateways } : {}) }),
-    // AND THE PACE ITSELF, so the launcher can hand it to custody for sizing the HTLC.
-    secondsPerBlock,
   };
 }

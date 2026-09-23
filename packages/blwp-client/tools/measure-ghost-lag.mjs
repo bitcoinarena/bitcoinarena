@@ -62,10 +62,12 @@ async function once(delay) {
     gameVerifySlots: 7, settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH,
     committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
     startTimeMs: 500n + MIN_ENTRY_WINDOW_MS, entryCloseMs: 200000n,
-    objectionWindowMs: 600000n, custody: 'THRESHOLD_LN', slashMinimumServed: 20,
+    // A FREE ROUND: this measures ghost lag, and money is nothing to it. FEDERATION, because the custody
+    // field has one value (§23.6, RULED 2026-09-22 22:59); a free round names no federation.
+    objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,
     slashRemainder: 'SPLIT', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [],
     donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,
-    censusRoot: b32(2), stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: 9000,
+    censusRoot: b32(2), stakeMsat: 0n, bondMinSats: 50000n, blockTicks: 9000,
     exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
     timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
     nodes: [node.round.pubkey],
@@ -73,7 +75,7 @@ async function once(delay) {
   const rid = await driver.openRound(c);
   const entry = (player) => ({
     roundId: rid, playerPubkey: b32(player), sessionPubkey: ed25519.getPublicKey(session),
-    stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n,
+    stakeCommitment: b32(7), stakeMsat: 0n, feeMsat: entryFeeMsat(0n), donationMsat: 0n,
     joinTick: 0, worldSecret: b32(player + 0x50), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33),
     feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n },
     feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),

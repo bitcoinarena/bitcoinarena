@@ -14,10 +14,8 @@ import { parse } from 'acorn';
 // `contracts.js` would misprice him.
 // `slash.js` is on it because a bond is money: what that file decides is
 // whether an output the node owns may be spent away from it.
-// `blwp-node/src/custody.js` is the first money path this guard has had to
-// reach outside the protocol package: it is what actually runs 23.2's table
-// against a Lightning node, and a float msat there would settle a hold for an
-// amount the player never signed.
+// (`blwp-node/src/custody.js` used to be on it - the hold-invoice custody that ran 23.2's table against a
+// Lightning node. It was THRESHOLD_LN's and is deleted: §23.6, RULED 2026-09-22 22:59.)
 const MONEY = ['payout.js', 'sortition.js', 'census.js', 'contracts.js', 'encode.js',
                'batch.js', 'transcript.js', 'chain.js', 'tx.js', 'slash.js', 'fee.js',
                'donation.js',
@@ -25,7 +23,7 @@ const MONEY = ['payout.js', 'sortition.js', 'census.js', 'contracts.js', 'encode
                // is the ordering a theft is undone by, and a serial that arrived
                // as a float is two nodes disagreeing about which publication is
                // the highest - at 2^53 silently, and the object is signed.
-               'authority.js', '../../blwp-node/src/custody.js',
+               'authority.js',
                // `frost.js` and `frost-bip340.js` are on it for `slash.js`'s
                // reason rather than for a stake's: what they decide is whether
                // an output may be spent away from the pool. A float in a

@@ -307,24 +307,6 @@ function paintThePage({ round, entry, donationPaid, settlement, spent = SHIPPED.
   return made;
 }
 
-test('a hold that has ended does not read HELD: the stake line takes the signer nodes\' end state - SETTLED, CANCELLED, EXPIRED - and stays HELD only while it is', slice2(), () => {
-  // BEFORE (bundle e9f22a89, live on the daily page): every one read "... · the wallet is
-  // asked 98 sat · HELD" - the quote is asked once, at payment - beside "Settled: ...".
-  const round = contractFor([b32(1), b32(2)]);
-  const entry = { stakeMsat: 100000n, feeMsat: 2000n, donationMsat: 0n };
-  const owed = { amountMsat: 98000n, state: 'HELD' };
-  const base = '100 sat round: 2 sat fee and 0 sat donation out of it, 98 sat staked · the wallet is asked 98 sat · ';
-  for (const [hold, finality, want] of [['SETTLED', 'FINAL', 'SETTLED'], ['CANCELLED', 'FINAL', 'CANCELLED'], ['EXPIRED', 'FINAL', 'EXPIRED'],
-    ['HELD', 'PROVISIONALLY_FINAL', 'HELD']]) {
-    const s = { answered: 2, of: 2, hold, holdMsat: 98000n, poolMsat: 98000n, finality };
-    const made = paintThePage({ round, entry, donationPaid: undefined, settlement: s, owed });
-    assert.equal(made['blwp-owed'].textContent, base + want, `signer nodes say ${hold}`);
-    console.log(`  signer nodes say ${hold.padEnd(9)} -> "${made['blwp-owed'].textContent.slice(-40)}" beside "${made['blwp-settled'].textContent.slice(0, 40)}…"`);
-  }
-  // NO ANSWER FROM THE SIGNER NODES YET: the quote's own state, as before.
-  assert.equal(paintThePage({ round, entry, donationPaid: undefined, settlement: undefined, owed })['blwp-owed'].textContent, base + 'HELD');
-});
-
 /**
  * Runs the shipping page's own settlement poll (askTheSettlement, with its flag) against
  * signer nodes that answer `hold`, then its paintWallet - both off the shipped bundle.
@@ -348,63 +330,6 @@ async function settleOnThePage({ hold, spent, stakeCommitment, round }) {
   return win.BLWP_SETTLEMENT;
 }
 
-test('a winner is shown what the round owes it: the signer nodes\' own payout-table row, 194000 msat beside its returned 96000 msat stake and the 98000 msat pool', slice2(), async () => {
-  // BEFORE (bundle 675d62d1): the signer nodes served hold and pool only, and a winner's line
-  // read "Returned: your 96000 msat stake was cancelled back to the wallet · the
-  // round's pool 98000 msat" - no winnings figure. Round 1's D2: hold 96000, row 194000.
-  const signerNodeKeys = [b32(0x71), b32(0x72)];
-  const nodes = ['http://127.0.0.1:1', 'http://127.0.0.1:2'];
-  const answers = (owed) => async (url) => {
-    const u = new URL(url);
-    const i = u.port === '1' ? 0 : 1;
-    if (u.pathname === '/identity') return new Response(signerNodeKeys[i], { status: 200 });
-    return new Response(JSON.stringify({ entry: 'ee'.repeat(32), hold: 'CANCELLED', holdMsat: '96000', poolMsat: '98000', owedMsat: owed[i], finality: 'FINAL' }), { status: 200 });
-  };
-  const won = await SHIPPED.settlementBy({ entryId: 'ee'.repeat(32), signerNodes: signerNodeKeys, nodes, fetcher: answers(['194000', '194000']) });
-  assert.deepEqual([won.hold, won.holdMsat, won.owedMsat, won.poolMsat], ['CANCELLED', 96000n, 194000n, 98000n]);
-  const made = paintThePage({ round: contractFor([b32(1), b32(2)]), entry: entryOf(2000n), donationPaid: undefined, settlement: won });
-  assert.equal(made['blwp-settled'].textContent,
-    'Returned: your 96000 msat stake was cancelled back to the wallet · the round\'s payout table: 194000 msat for your entry · the round\'s pool 98000 msat');
-  // SIGNER NODES THAT DISAGREE ON THE ROW SHOW NO ROW - the page never picks one.
-  const split = await SHIPPED.settlementBy({ entryId: 'ee'.repeat(32), signerNodes: signerNodeKeys, nodes, fetcher: answers(['194000', '193999']) });
-  assert.equal(split.owedMsat, null);
-  assert.doesNotMatch(SHIPPED.settledLine(split), /payout table/);
-  // A LOSER'S ROW IS 0 AND ADDS NOTHING: its line reads as before.
-  assert.equal(SHIPPED.settledLine({ answered: 2, hold: 'SETTLED', holdMsat: 98000n, poolMsat: 98000n, owedMsat: 0n }),
-    'Settled: your 98000 msat stake went into the pool · the round\'s pool 98000 msat');
-  console.log(`  winner: "${made['blwp-settled'].textContent}"`);
-});
-
-test('a stake that came back is not counted as spent: a cancelled winner and an expired refund read nothing spent, a settled loser still reads its stake', slice2(), async () => {
-  // BEFORE (measured on the bundle the daily page ran, 915f64c9): all three read
-  // "98 sat over 1 stake in 1 round", beside "Returned: ..." / "Expired: ..." / "Settled: ...".
-  const round = contractFor([b32(1), b32(2)]);
-  const want = {
-    CANCELLED: 'nothing spent this session · 98 sat came back (1 stake cancelled)',
-    EXPIRED: 'nothing spent this session · 98 sat came back (1 stake expired)',
-    SETTLED: '98 sat over 1 stake in 1 round',
-  };
-  for (const [hold, line] of Object.entries(want)) {
-    const storage = tabStorage();
-    const spent = SHIPPED.spendLog({ storage });
-    const stakeCommitment = b32(0x61);
-    spent.record({ amountMsat: 98000n, paymentHash: stakeCommitment, roundId: b32(0x21), kind: 'stake' });
-    const s = await settleOnThePage({ hold, spent, stakeCommitment, round });
-    assert.equal(s.hold, hold);
-    const made = paintThePage({ round, entry: entryOf(0n), donationPaid: undefined, settlement: s, spent });
-    assert.equal(made['blwp-spent'].textContent, line, `${hold}: the running total the page paints`);
-    assert.deepEqual([spent.totalMsat, spent.returnedMsat], hold === 'SETTLED' ? [98000n, 0n] : [0n, 98000n], `${hold}: what the log holds`);
-    // AND A RELOAD KEEPS IT: the tab's log reads the same after the page is gone.
-    assert.equal(SHIPPED.spentLine(SHIPPED.spendLog({ storage })), line, `${hold}: after a reload`);
-    console.log(`  ${hold.padEnd(9)}: "${made['blwp-spent'].textContent}" beside "${made['blwp-settled'].textContent.slice(0, 60)}…"`);
-  }
-  // A STAKE THE PAGE NEVER PAID, or a donation share, is not marked: only your stake.
-  const other = SHIPPED.spendLog();
-  other.record({ amountMsat: 1334n, paymentHash: b32(0x62), roundId: b32(0x21), kind: 'donation' });
-  assert.equal(SHIPPED.noteSettlement(other, { hold: 'CANCELLED' }, b32(0x62)), false);
-  assert.equal(SHIPPED.spentLine(other), '1334 msat over 1 donation share in 1 round');
-});
-
 /** What one page load shows, painted the way the page paints it after payDonation answers. */
 function shown(load, round, storage) {
   const state = SHIPPED.donationPaidState(SET, load.said);
@@ -416,86 +341,6 @@ function shown(load, round, storage) {
   const noted = state.shares.map((s) => NOTE_IS[notes.shares[s.lnurl].state]);
   return { state, text, rows, onScreen, noted };
 }
-
-test('the page shows each donation share as paid, unpaid or outcome unknown, matching the tab\'s notes, before and after a reload', slice2(), async () => {
-  const holdRound = contractFor([b32(1), b32(2)]);
-  const lockRound = { ...holdRound, custody: 'FEDERATION', federationId: TEST_FEDERATION_ID };
-  assert.equal(SHIPPED.roundLocks(holdRound), false);
-  assert.equal(SHIPPED.roundLocks(lockRound), true);
-  const report = [];
-
-  // 1. FULLY PAID, THEN A RELOAD.
-  {
-    const storage = tabStorage();
-    const endpoints = await recipients();
-    const wallet = await walletOnARelay();
-    try {
-      for (const [n, load] of [[1, await pageLoad({ storage, endpoints, wallet })], [2, await pageLoad({ storage, endpoints, wallet })]]) {
-        const s = shown(load, holdRound, storage);
-        assert.deepEqual(s.rows, [[A, 1334n, 'paid'], [B, 666n, 'paid']], `fully paid, load ${n}`);
-        assert.equal(s.onScreen, 2, `fully paid, load ${n}: the page shows ${s.onScreen} of 2 shares: "${s.text}"`);
-        assert.deepEqual(s.noted, ['paid', 'paid'], `fully paid, load ${n}: the screen and the notes disagree`);
-        assert.doesNotMatch(s.text, /unpaid stays/);
-        if (n === 2) assert.equal(load.asked.length, 0, 'the reload asked the wallet again');
-        report.push(`fully paid, load ${n}: "${s.text}"`);
-      }
-    } finally { await endpoints.close(); await wallet.close(); }
-  }
-
-  // 2. PART-PAID - the 666 msat share under a 1000 msat min_htlc - THEN A RELOAD,
-  // on a hold round and on a lock round (whose panel returns early).
-  {
-    const storage = tabStorage();
-    const endpoints = await recipients();
-    const wallet = await walletOnARelay({ refuseMsat: 666n });
-    try {
-      for (const [n, load] of [[1, await pageLoad({ storage, endpoints, wallet })], [2, await pageLoad({ storage, endpoints, wallet })]]) {
-        for (const round of [holdRound, lockRound]) {
-          const s = shown(load, round, storage);
-          const kind = round === lockRound ? 'lock round' : 'hold round';
-          assert.deepEqual(s.rows, [[A, 1334n, 'paid'], [B, 666n, 'unpaid']], `part-paid, load ${n}, ${kind}`);
-          assert.equal(s.onScreen, 2, `part-paid, load ${n}, ${kind}: the page shows ${s.onScreen} of 2 shares: "${s.text}"`);
-          assert.deepEqual(s.noted, ['paid', 'unpaid'], `part-paid, load ${n}: the screen and the notes disagree`);
-          assert.match(s.text, /666 msat UNPAID to \S+blwp-test-b \(.*NO_ROUTE\)/, 'the page does not say why the share is unpaid');
-          assert.match(s.text, /666 msat unpaid stays in your wallet, sent nowhere else/);
-          assert.equal(s.state.state, 'part');
-        }
-        if (n === 2) assert.equal(load.asked.length, 0, 'the reload asked the wallet again');
-        report.push(`part-paid, load ${n}: "${shown(load, holdRound, storage).text}"`);
-      }
-    } finally { await endpoints.close(); await wallet.close(); }
-  }
-
-  // 3. THE TAB CLOSED WHILE THE WALLET WAS ASKED FOR 1334: unknown, and only 666 is asked.
-  {
-    const storage = tabStorage();
-    const before = entryOf(2000n);
-    noteDonationShare(storage, { roundId: before.roundId, playerPubkey: before.playerPubkey }, SET.recipients[0].lnurl, { state: 'asked', amountMsat: 1334n });
-    const endpoints = await recipients();
-    const wallet = await walletOnARelay();
-    try {
-      const load = await pageLoad({ storage, endpoints, wallet });
-      assert.deepEqual(load.asked.map((pr) => decodeBolt11(pr).amountMsat), [666n], 'only the remaining share is asked');
-      const s = shown(load, holdRound, storage);
-      assert.deepEqual(s.rows, [[A, 1334n, 'unknown'], [B, 666n, 'paid']]);
-      assert.equal(s.onScreen, 2, `mid-ask: the page shows ${s.onScreen} of 2 shares: "${s.text}"`);
-      assert.deepEqual(s.noted, ['unknown', 'paid'], 'mid-ask: the screen and the notes disagree');
-      assert.doesNotMatch(s.text, /unpaid stays/, 'an unknown share was called unpaid');
-      report.push(`mid-ask reload: "${s.text}"`);
-    } finally { await endpoints.close(); await wallet.close(); }
-  }
-
-  // AND BEFORE AND WHILE: nothing before a donation is under way, "paying" while it is.
-  assert.equal((paintThePage({ round: holdRound, entry: entryOf(2000n), donationPaid: undefined })['blwp-donation'] || {}).textContent, '');
-  assert.match(paintThePage({ round: holdRound, entry: entryOf(2000n), donationPaid: { state: 'paying' } })['blwp-donation'].textContent, /paying/);
-
-  // AND THE PAGE STORES THE CLIENT'S STATE AND REPAINTS when payDonation answers.
-  const page = readFileSync(PAGE, 'utf8');
-  assert.match(page, /id="blwp-donation"/, 'the page has nowhere to show the donation');
-  assert.match(page, /window\.BLWP_DONATION_PAID = BLWPCLIENT\.donationPaidState\(window\.BLWP_DONATION_SET, said\);\s*paintWallet\(\);/,
-    'the page does not store the client\'s donation state and repaint when payDonation answers');
-  for (const line of report) console.log(`  ${line}`);
-});
 
 /** Runs the shipping page's own showNotedDonation - the failure path's - against a stubbed DOM. */
 function showNotedOnThePage({ search, storage }) {
@@ -566,35 +411,6 @@ test('the running total survives a reload and counts a donation share as a donat
     assert.equal(spentLine(only), '1334 msat over 1 donation share in 1 round');
     console.log(`  reload: "${spentLine(load2)}" (was "nothing paid this session"); wallet asked ${second.asked.length}`);
   } finally { await endpoints.close(); await wallet.close(); }
-});
-
-test('after settlement the page shows where the stake went and the round\'s pool, as the signer nodes say them', slice2(), async () => {
-  // THE SIGNER NODES' OWN ANSWERS, as /settlement serves them after a 2% donor lost:
-  // the hold settled, its amount, and custody's holdSettlement pool.
-  const signerNodeKeys = [b32(0x71), b32(0x72)];
-  const answers = (over = {}) => async (url) => {
-    const u = new URL(url);
-    const i = u.port === '1' ? 0 : 1;
-    if (u.pathname === '/identity') return new Response(signerNodeKeys[i], { status: 200 });
-    return new Response(JSON.stringify({ entry: 'ee'.repeat(32), hold: 'SETTLED', holdMsat: '96000', poolMsat: '96000',
-      finality: 'FINAL', windowClosesAtMs: null, refundHeight: null, ...(over[i] || {}) }), { status: 200 });
-  };
-  const nodes = ['http://127.0.0.1:1', 'http://127.0.0.1:2'];
-  const settled = await SHIPPED.settlementBy({ entryId: 'ee'.repeat(32), signerNodes: signerNodeKeys, nodes, fetcher: answers() });
-  assert.deepEqual([settled.hold, settled.holdMsat, settled.poolMsat, settled.finality], ['SETTLED', 96000n, 96000n, 'FINAL']);
-  const made = paintThePage({ round: contractFor([b32(1), b32(2)]), entry: entryOf(2000n), donationPaid: undefined, settlement: settled });
-  assert.equal(made['blwp-settled'].textContent, 'Settled: your 96000 msat stake went into the pool · the round\'s pool 96000 msat');
-
-  // SIGNER NODES THAT DISAGREE ON THE POOL SHOW NO POOL - the page never picks one.
-  const split = await SHIPPED.settlementBy({ entryId: 'ee'.repeat(32), signerNodes: signerNodeKeys, nodes, fetcher: answers({ 1: { poolMsat: '98000' } }) });
-  assert.equal(split.poolMsat, null);
-  assert.equal(SHIPPED.settledLine(split), 'Settled: your 96000 msat stake went into the pool');
-  // AND BEFORE SETTLEMENT: held, with the result's standing; nothing before anyone answered.
-  const held = await SHIPPED.settlementBy({ entryId: 'ee'.repeat(32), signerNodes: signerNodeKeys, nodes,
-    fetcher: answers({ 0: { hold: 'HELD', poolMsat: null, finality: 'PROVISIONALLY_FINAL' }, 1: { hold: 'HELD', poolMsat: null, finality: 'PROVISIONALLY_FINAL' } }) });
-  assert.equal(SHIPPED.settledLine(held), 'Settlement: your 96000 msat stake is held, the result PROVISIONALLY_FINAL');
-  assert.equal(SHIPPED.settledLine(undefined), '');
-  console.log(`  after settlement: "${made['blwp-settled'].textContent}"`);
 });
 
 test('a tab that cannot keep the record does not ask the wallet at all', async () => {
@@ -706,6 +522,3 @@ test('the page asks for the donation only once the signer nodes hold the stake',
   const guard = page.slice(page.lastIndexOf('if (c && c.joinedEntry', at), at);
   assert.match(guard, /c\.stakeCommitted/, `the page asks for the donation before the signer nodes hold the stake: ${guard.replace(/\s+/g, ' ').slice(0, 200)}`);
 });
-
-/** Why this test does not run in Step 1 of the THRESHOLD_LN disposal (see TASKBOOK). */
-function slice2() { return { skip: "slice 2: the subject is the hold path (hold invoices on a Lightning port). It still runs at HEAD on a FEDERATION round given a Lightning port, so it is skipped, not moved to FEDERATION (RULED 2026-09-23); slice 2 deletes this test with the code" }; }

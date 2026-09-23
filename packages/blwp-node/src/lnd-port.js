@@ -1,53 +1,30 @@
-// THE PORT THAT REACHES A REAL LIGHTNING NODE.
+// A READ-ONLY WINDOW ONTO A REAL LIGHTNING NODE: IT DECODES AN INVOICE, AND NOTHING ELSE.
 //
-// `custody.js` decides what should happen to a stake and this is the transport
-// that makes it happen, injected the same way `sign`, the curve and `chainFor`
-// are. Everything the rules say is measured against a fake port with no node
-// running; this file exists so that the same rules can be run against
-// `lnd v0.21.3-beta` and the answer compared.
+// This file used to be the port a signer node's custody drove - issue a hold invoice on the hash an
+// entry named, look it up, settle it with a preimage, cancel it - and its own header said what that was:
+// "SINGLE-NODE CUSTODY, NOT §23.5. One `lncli`, one macaroon, one operator who could run every one of
+// these commands by hand." That custody is THRESHOLD_LN, and it does not exist (§23.6, RULED 2026-09-22
+// 22:59): the custody field has one value, FEDERATION. Issuing, looking up, settling, cancelling and
+// paying are gone with it, and so is the table mapping lnd's invoice states onto 23.2's.
 //
-// FOUR OPERATIONS, AND THEY ARE NOT SYMMETRIC:
+// WHAT IS LEFT, AND NEITHER IS CUSTODY:
 //
-//   createHeld   `addholdinvoice <hash> --amt_msat` - the hash comes from the
-//                player's own Entry Contract, so this node commits money to a
-//                preimage it may not have
-//   look         `lookupinvoice <hash>` - the only party that knows what
-//                actually happened to an invoice is the node holding it
-//   settle       `settleinvoice <preimage>` - NOT the hash. Releasing the
-//                preimage IS the settlement, which is why 23.4 wants five of
-//                seven shares before it can be done
-//   cancel       `cancelinvoice <hash>` - the only act that returns money
-//
-// LND'S STATES ARE NOT 23.2'S, so they are mapped here and nowhere else. An
-// OPEN invoice and an ACCEPTED one are both HELD as far as the protocol is
-// concerned: money is in flight and in nobody's balance either way, and the
-// difference between them is whether the player has paid yet. lnd has no
-// EXPIRED for a hold - an invoice that runs out is CANCELED - so the state a
-// stake reaches by nobody acting reads back as CANCELLED, and this node's own
-// row is the only place the difference is recorded.
-//
-// SINGLE-NODE CUSTODY, NOT §23.5. One `lncli`, one macaroon, one operator who
-// could run every one of these commands by hand. FROST is what closes that.
+//   decode    `/federation-invoice` must say which hash and amount the federation's LNv2 invoice carries
+//             before a player commits to them, read off the invoice rather than the federation's word.
+//             `decodepayreq` is local and read-only.
+//   invoice   an ORDINARY invoice (`addinvoice`, no hold), which the donation recipients a launcher binds
+//             mint to be paid a §22A donation. No stake is in it; money arrives and stays. This was cut with
+//             the rest at first and restored: the caller is a tool, not `src/`, and only `src/` was checked.
 import { execFile } from 'node:child_process';
-import { HELD, SETTLED, CANCELLED } from '../../protocol/src/payout.js';
 import { toHex } from '../../protocol/src/hash.js';
-import { STAKE_EXPIRY_BLOCKS } from '../../protocol/src/constants.js';
-
-/** lnd's invoice states, in 23.2's words. */
-export const STATE_OF = {
-  OPEN: HELD, ACCEPTED: HELD, SETTLED, CANCELED: CANCELLED, CANCELLED,
-};
 
 /**
  * @param {object} o
  * @param {string} o.lncli    path to the lncli binary
  * @param {string[]} o.args   the flags that name ONE node: --lnddir, --rpcserver, --network
  * @param {number} o.timeoutMs
- * @param {number} o.cltvExpiryBlocks  how many blocks the STAKE's HTLC lives - `STAKE_EXPIRY_BLOCKS`, the
- *   number every round contract is already required to name (`contracts.js` refuses any other).
  */
-export function lndPort({ lncli, args = [], timeoutMs = 60000, expirySeconds = 3600,
-                          cltvExpiryBlocks = STAKE_EXPIRY_BLOCKS, run = null }) {
+export function lndPort({ lncli, args = [], timeoutMs = 60000, expirySeconds = 3600, run = null }) {
   const call = run || ((argv) => new Promise((resolve, reject) => {
     execFile(lncli, [...args, ...argv], { timeout: timeoutMs, maxBuffer: 8 << 20 },
       (err, stdout, stderr) => {
@@ -61,111 +38,16 @@ export function lndPort({ lncli, args = [], timeoutMs = 60000, expirySeconds = 3
   };
 
   return {
-    /**
-     * The invoice is read back after it is made, rather than assembled from
-     * what was asked for. `addholdinvoice` answers with a payment request and
-     * nothing else, and an invoice this node believes in because it asked for
-     * it is exactly what `invoiceMatchesEntry` exists to refuse.
-     */
-    /**
-     * PAYING A QUALIFIER WHAT THE TABLE OWES THEM (§24A.2). The only outbound leg this custody has: the
-     * player presents a BOLT11 and the committee's own node pays it. `--amt_msat` is NOT passed - the
-     * invoice's own amount is what was agreed and checked before this call, and quoting a second number
-     * here would let a rounding or a stale read pay something else.
-     */
-    async pay({ request }) {
-      const said = await json(['payinvoice', '--force', '--json', '--timeout', '120s', request]);
-      const status = String(said.status || said.payment_error || '').toUpperCase();
-      if (status && status !== 'SUCCEEDED')
-        throw new Error(`that payment did not go through: ${status}${said.failure_reason ? ` (${said.failure_reason})` : ''}`);
-      return { preimage: said.payment_preimage || null, feeMsat: BigInt(said.fee_msat || 0),
-        paidMsat: BigInt(said.value_msat || 0) };
-    },
-
-    async createHeld({ paymentHash, amountMsat, cltvExpiryBlocks: forThisRound = null }) {
-      const hash = toHex(paymentHash);
-      // THE ROUND'S OWN NUMBER WHEN THE CALLER SIZED ONE. `cltvExpiryBlocks` is this port's default; a
-      // caller that knows the round and the chain's pace hands a larger one (custody.js).
-      const blocks = forThisRound || cltvExpiryBlocks;
-      // AN EXPIRY IS NOT OPTIONAL. A VOID round is refunded by nobody acting,
-      // and "nobody acting" only ever ends if the invoice runs out - a hold
-      // that never expires is one an operator can sit on forever.
-      // ONE ENDPOINT, SEVERAL DAEMONS. §23.1: "the settlement committee's
-      // Lightning endpoint issues a hold invoice", and the client posts each
-      // entry to every daemon - so a second daemon asking this endpoint for
-      // the same hash is the design, not a fault. Measured on a real lnd
-      // before this: "invoice with payment hash already exists", thrown, and
-      // the second daemon held nothing. It now takes up the endpoint's hold -
-      // only while it is still a hold (OPEN or ACCEPTED), and read back like
-      // any other, so `invoiceMatchesEntry` still checks what comes back.
-      //
-      // AND `--expiry` IS NOT THE STAKE'S EXPIRY. It is how long an UNPAID invoice stays open; the stake's
-      // own timeout is the HTLC's, `--cltv_expiry`, and this node never asked for it. Measured on the Daily:
-      // every hold carried lnd's default **cltv_expiry 80** while `contracts.js` refuses any round contract
-      // whose `stakeExpiryBlocks` is not STAKE_EXPIRY_BLOCKS (144) and `stake-lock.js` refuses any stake lock
-      // expiring before height + 144. The same stake was protected for 144 blocks as a lock and 80 as a hold,
-      // on the one custody a player actually pays. The number is not chosen here - it is the one the
-      // contract already names, finally asked for.
-      //
-      // AND THE FLAG IS `--cltv_expiry_delta`. `--cltv_expiry` is ACCEPTED BY lncli AND SILENTLY IGNORED -
-      // measured against the real binary twice on one hash: with `--cltv_expiry 144` the invoice came back
-      // `cltv_expiry: 80`, with `--cltv_expiry_delta 144` it came back 144. A unit test that pins the argv
-      // cannot see that, which is why this line is measured at lnd and not only in a suite.
-      let made;
-      try {
-        made = await json(['addholdinvoice', hash, '--amt_msat', String(amountMsat),
-          '--expiry', String(expirySeconds), '--cltv_expiry_delta', String(blocks)]);
-      } catch (err) {
-        if (!/invoice with payment hash already exists/.test(err.message)) throw err;
-        made = null;
-      }
-      const back = await json(['lookupinvoice', hash]);
-      if (!made && back.state !== 'OPEN' && back.state !== 'ACCEPTED')
-        throw new Error(`this endpoint already had an invoice for that hash and it is ${back.state}, not a hold still in flight`);
-      return {
-        paymentHash: Buffer.from(back.r_hash, 'hex'),
-        amountMsat: BigInt(back.value_msat),
-        request: made ? made.payment_request : back.payment_request,
-        // THE EXPIRY THIS NODE ASKED FOR (M3.3-30) - its own number, so an
-        // invoice nobody pays is known to have run out without asking lnd.
-        expirySeconds,
-        // AND THE BLOCKS THIS NODE ASKED THE HTLC TO LIVE, so a hold that came back on somebody else's
-        // number is known here rather than at its expiry.
-        cltvExpiryBlocks: blocks,
-        ...(made ? {} : { already: true }),
-      };
-    },
-
-    async look({ paymentHash }) {
-      const back = await json(['lookupinvoice', toHex(paymentHash)]);
-      const state = STATE_OF[back.state];
-      if (!state) throw new Error(`lnd called that invoice ${back.state}, which is not a state a hold can be in`);
-      // AND WHEN IT EXPIRES (M3.3-30): the earliest expiry height among the
-      // HTLCs lnd has accepted for it - after that block nobody can claim it.
-      const heights = (back.htlcs || []).filter((h) => h.state === 'ACCEPTED')
-        .map((h) => Number(h.expiry_height)).filter((h) => Number.isInteger(h) && h > 0);
-      return { state, amountMsat: BigInt(back.value_msat), paidMsat: BigInt(back.amt_paid_msat || 0),
-        ...(heights.length ? { expiryHeight: Math.min(...heights) } : {}) };
-    },
-
-    // A PLAIN INVOICE, FOR A DONATION RECIPIENT (M3.2 6e): exactly the amount a
-    // donor's page asked, under the description hash the recipient's LNURL
-    // metadata hashes to (LUD-06) - the two things the page checks before its
-    // wallet pays. Not a hold: a donation is paid outright, outside the pool.
+    // AN ORDINARY INVOICE FOR A DONATION RECIPIENT (§22A), described by the LNURL metadata's hash.
     async invoice({ amountMsat, descriptionHash, expirySeconds: expiry = expirySeconds }) {
       const made = await json(['addinvoice', '--amt_msat', String(amountMsat),
         '--description_hash', toHex(descriptionHash), '--expiry', String(expiry)]);
       return { request: made.payment_request, paymentHash: Buffer.from(String(made.r_hash), 'hex') };
     },
 
-    async settle({ preimage }) { await call(['settleinvoice', '--preimage', toHex(preimage)]); },
-
-    async cancel({ paymentHash }) { await call(['cancelinvoice', toHex(paymentHash)]); },
-
-    // READ AN INVOICE THIS NODE DID NOT MAKE, and nothing more: a federation
-    // round's invoice comes from the federation (invoice first, the owner
-    // 2026-09-11), and the node has to say which hash and amount it carries
-    // before a player commits to them. `decodepayreq` is local and read-only.
+    // READ AN INVOICE THIS NODE DID NOT MAKE: a federation round's invoice comes from the federation
+    // (invoice first, the owner 2026-09-11), and the node has to say which hash and amount it carries
+    // before a player commits to them.
     async decode({ request }) {
       const d = await json(['decodepayreq', String(request)]);
       return { paymentHash: Buffer.from(d.payment_hash, 'hex'), amountMsat: BigInt(d.num_msat || 0) };

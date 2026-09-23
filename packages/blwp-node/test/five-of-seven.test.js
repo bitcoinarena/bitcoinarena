@@ -23,7 +23,7 @@ import { resultFinality } from '../src/finality.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { assumeAssigned } from './assignment.js';
 import { lockPort } from './lock-fixture.js';
-import { paidPort, contractFor, say, wait, opts, rand, b32, secretScalar, STAKE, joinAndPlay, WINNER, LOSER,
+import { contractFor, say, wait, opts, rand, b32, secretScalar, STAKE, joinAndPlay, WINNER, LOSER,
   RANDOMNESS, GENESIS_HASH, wordsAt, PLANTED_FIRST_MARK_DEADLINE } from './window-fixture.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
 import { dealHandout, encodeHandout, handoutId } from '../../protocol/src/handout.js';
@@ -46,13 +46,12 @@ const PAST = PLANTED_FIRST_MARK_DEADLINE + 100;          // past the round's sta
 const curve = { ...feldmanGroup, tweakPoint };
 const answer = (s) => (typeof s === 'string' ? (s.length > 30 && !s.startsWith('error') ? 'receipt' : s.slice(0, 90)) : 'receipt');
 
-/** Seven live signer nodes on one round: on holds (`hold`) or on stake locks with their own claim key (`lock`). */
+/** Seven live signer nodes on one round, on stake locks with their own claim key (`lock`: the one custody, §23.6). */
 async function sevenSignerNodes(custody) {
-  const holdPorts = Array.from({ length: 7 }, () => paidPort());
   const locks = custody === 'lock' ? lockPort() : null;
   const dbs = Array.from({ length: 7 }, () => openStore(':memory:'));
   const mk = (i, port = 0) => serve(dbs[i], { port, ...opts, finality: { everyMs: 100 },
-    ...(custody === 'hold' ? { lightning: holdPorts[i] } : { stakeLocks: locks, poolCurve: curve }) });
+    stakeLocks: locks, poolCurve: curve });
   const signerNodes = [];
   for (let i = 0; i < 7; i++) signerNodes.push(await mk(i));
   const ports = signerNodes.map((d) => d.port);
@@ -75,7 +74,7 @@ async function sevenSignerNodes(custody) {
   }
   if (custody === 'lock') for (let pass = 0; pass < 2; pass++) for (const d of signerNodes) await d.dkg.run(c.nodes);
   return {
-    signerNodes, holdPorts, locks, c, rid, up,
+    signerNodes, locks, c, rid, up,
     async down(...is) { for (const i of is) { await signerNodes[i].close(); up.delete(i); } },
     async back(...is) { for (const i of is) { signerNodes[i] = await mk(i, ports[i]); up.add(i); } wire(); },
     // A PARTITION BETWEEN SIGNER NODES THAT ARE UP: each named signer node's peers point where
@@ -140,16 +139,10 @@ async function joinWithTwoFirstMarks(w, custody) {
     assert.equal((await fetch(`${base}/handout`, { method: 'POST', body: encodeHandout(dealt.handout) })).status, 201);
     const joined = await fetch(`${base}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
     assert.equal(joined.status, 201, await joined.text());
-    if (custody === 'hold') {
-      assert.equal((await fetch(`${base}/invoice?entry=${toHex(eid)}`)).status, 200);
-      const seen = await fetch(`${base}/stake?entry=${toHex(eid)}`);
-      assert.equal(seen.status, 200, await seen.text());
-    } else {
-      const l = await fetch(`${base}/lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(fields)) });
-      assert.equal(l.status, 201, await l.text());
-      const fl = await fetch(`${base}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(feeFields)) });
-      assert.equal(fl.status, 201, await fl.text());
-    }
+    const l = await fetch(`${base}/lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(fields)) });
+    assert.equal(l.status, 201, await l.text());
+    const fl = await fetch(`${base}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(feeFields)) });
+    assert.equal(fl.status, 201, await fl.text());
   }
   const sign = (m) => joinSigned(encodeCheckpoint(m), ed25519.sign(checkpointId(m), session));
   const firstAt = (tick) => {
@@ -250,59 +243,6 @@ const stateAt = (w, run) => w.signerNodes.map((d, i) => {
   const nq = d.round.noQuorum(run.eid);
   return `${nq ? nq.outcome : 'none'}/${d.round.results(w.rid, run.eid).length}`;
 });
-const holds = (w, hash) => ({ settled: w.holdPorts.map((p) => p.settled.filter((s) => s.paymentHash === hash).length),
-  cancelled: w.holdPorts.map((p) => p.cancelled.filter((s) => s.paymentHash === hash).length) });
-
-test('5 of 7, a hold: two first marks, every signer node up at the close - FORFEIT at all seven with no signed result, and the hold SETTLED into the pool, never back to the player', slice2(), async () => {
-  const w = await sevenSignerNodes('hold');
-  try {
-    const run = await joinWithTwoFirstMarks(w, 'hold');
-    const before = await twoFirstMarks(w, run);
-    const winner = await playWinner(w);
-    const winnerHash = toHex(sha256(winner.preimage));
-    await Promise.all(w.signerNodes.map((d) => say(d.port, `close ${toHex(w.rid)}`)));
-    const decided = () => w.signerNodes.every((d) => d.round.noQuorum(run.eid))
-      && w.signerNodes.filter((d) => resultFinality(d.round, w.rid, winner.eid).state === 'FINAL').length >= NEEDED;
-    for (let t = Date.now(); Date.now() - t < 30000 && !decided(); await wait(250));
-    for (let t = Date.now(); Date.now() - t < 20000 && !holds(w, run.paymentHash).settled.some((n) => n); await wait(250));
-    await wait(1500);
-    const m = await w.signerNodes[0].stakes();
-    const row = ((m.table && m.table.table) || []).find((r) => toHex(r.pubkey) === toHex(WINNER.key));
-    const facts = { before, signerNodes: stateAt(w, run), hold: holds(w, run.paymentHash), winnerHold: holds(w, winnerHash),
-      winnerFinal: w.signerNodes.filter((d) => resultFinality(d.round, w.rid, winner.eid).state === 'FINAL').length,
-      tableAt0: { pool: m.table ? String(m.table.pool) : null, winnerMsat: row ? String(row.amountMsat) : null,
-        owed: m.owed ? (m.owed.ok ? m.owed.state : String(m.owed.why).slice(0, 80)) : (m.ok === false ? String(m.why).slice(0, 80) : null) } };
-    console.log('  FACTS (5 of 7, hold, all up):', JSON.stringify(facts));
-    assert.deepEqual(facts.signerNodes, Array(7).fill('FORFEIT/0'), 'not FORFEIT with no signed result at every signer node');
-    assert.deepEqual(facts.hold.cancelled, Array(7).fill(0), 'the two-first-marks hold was cancelled back to the player');
-    assert.ok(facts.hold.settled.some((n) => n > 0), 'no signer node settled the two-first-marks hold: it expires back to the player');
-    assert.ok(facts.winnerHold.cancelled.some((n) => n > 0), 'the winner\'s own hold was not cancelled back to it');
-    assert.equal(facts.tableAt0.winnerMsat, String(2n * (STAKE - entryFeeMsat(STAKE))), 'the forfeited stake does not reach the winner in the table');
-  } finally { await w.close(); }
-});
-
-test('5 of 7, a hold: two first marks, and signer nodes 4-6 down from before the close through the hold\'s expiry - the four signer nodes up still FORFEIT and SETTLE the hold, nothing goes back to the player', slice2(), async () => {
-  const w = await sevenSignerNodes('hold');
-  try {
-    const run = await joinWithTwoFirstMarks(w, 'hold');
-    const before = await twoFirstMarks(w, run);
-    await playWinner(w);
-    await w.down(4, 5, 6);                                                     // three signer nodes: only four shares are up
-    await Promise.all([0, 1, 2, 3].map((i) => say(w.signerNodes[i].port, `close ${toHex(w.rid)}`)));
-    await wait(3 * WINDOW + 3000);
-    for (let t = Date.now(); Date.now() - t < 20000 && !holds(w, run.paymentHash).settled.some((n) => n); await wait(250));
-    await wait(1500);
-    const opened = await w.signerNodes[0].preimages.open({ roundId: w.rid, entryId: run.eid, needed: NEEDED });
-    const facts = { before, signerNodes: stateAt(w, run), hold: holds(w, run.paymentHash),
-      custodyRows: w.signerNodes.map((d, i) => (w.up.has(i) ? ((d.round.hold(run.eid) || {}).state || null) : 'down')),
-      signerNode0Opens: opened.ok ? `OPENED with ${opened.held}` : String(opened.why).slice(0, 120) };
-    console.log('  FACTS (5 of 7, hold, 4-6 down through the expiry):', JSON.stringify(facts));
-    assert.deepEqual(facts.signerNodes.slice(0, 4), Array(4).fill('FORFEIT/0'), 'a signer node that is up did not FORFEIT with no signed result');
-    assert.deepEqual(facts.hold.cancelled, Array(7).fill(0), 'the two-first-marks hold was cancelled back to the player');
-    assert.ok(facts.hold.settled.slice(0, 4).some((n) => n > 0), 'no signer node that is up settled the hold: it expires back to the player');
-  } finally { await w.close(); }
-});
-
 test('5 of 7, a stake lock: two first marks - FORFEIT at all seven, no signer node signs the refund, no forfeit kept, the lock held (back only by the player\'s own expiry refund)', async () => {
   const w = await sevenSignerNodes('lock');
   try {
@@ -385,19 +325,6 @@ async function lockAfterClose(w, run) {
     lockHeld: w.locks.locks.has(`${toHex(run.outpoint.txid)}:${run.outpoint.outIdx}`) };
 }
 
-/** On a hold: every signer node closes, then what each decided, how many hold both marks, and where the hold went. */
-async function holdAfterClose(w, run, winner) {
-  await Promise.all(w.signerNodes.map((d) => say(d.port, `close ${toHex(w.rid)}`)));
-  for (let t = Date.now(); Date.now() - t < 30000 && !w.signerNodes.every((d) => d.round.noQuorum(run.eid)); await wait(250));
-  for (let t = Date.now(); Date.now() - t < 15000 && !holds(w, run.paymentHash).settled.some((n) => n); await wait(250));
-  await wait(1500);
-  const h = holds(w, run.paymentHash);
-  return { signerNodes: stateAt(w, run), ...recordsOf(w, run), voids: w.signerNodes.filter((d) => d.round.entryVoid(run.eid)).length,
-    both: w.signerNodes.filter((d) => d.round.provenTwoFirstMarks(w.rid, run.eid)).length, hold: h,
-    winnerHold: holds(w, toHex(sha256(winner.preimage))),
-    msatBack: h.settled.some((n) => n) ? '0' : h.cancelled.some((n) => n) ? String(NET) : `${NET} at the hold's expiry` };
-}
-
 test('5 of 7, a stake lock, path 1: signer nodes 0-3 record ENTRY_VOID on a real outage, then a different on-time first mark reaches signer node 4 - no five refund signatures form, no refund door answers 2xx, the lock held', async () => {
   const w = await sevenSignerNodes('lock');
   try {
@@ -456,79 +383,6 @@ test('5 of 7, a stake lock, path 2: signer nodes 0-3 record ENTRY_VOID, then a l
   } finally { await w.close(); }
 });
 
-test('5 of 7, a hold, path 1: signer nodes 0-3 record ENTRY_VOID, then a different on-time first mark reaches signer node 4 - FORFEIT, the hold SETTLED into the pool, 0 msat back', slice2(), async () => {
-  const w = await sevenSignerNodes('hold');
-  try {
-    const run = await joinWithTwoFirstMarks(w, 'hold');
-    const voidedFirst = await voidAtZeroToThree(w, run);
-    await w.back(4, 5, 6);
-    const said4 = [];
-    for (const m of run.other) said4.push(answer(await say(w.signerNodes[4].port, m)));
-    await wait(2000);
-    const winner = await playWinner(w);
-    const after = await holdAfterClose(w, run, winner);
-    console.log('  FACTS (5 of 7, hold, path 1):', JSON.stringify({ voidedFirst, said4, after }));
-    assert.equal(voidedFirst, 4, 'signer nodes 0-3 did not all record ENTRY_VOID: not the case the test names');
-    assert.deepEqual(after.hold.cancelled, Array(7).fill(0), 'the two-first-marks hold was cancelled back to the player');
-    assert.ok(after.hold.settled.some((n) => n > 0), `no signer node settled the hold: it expires back to the player - ${JSON.stringify(after.signerNodes)}`);
-  } finally { await w.close(); }
-});
-
-test('5 of 7, a hold, path 2: signer nodes 0-3 record ENTRY_VOID, then a late first mark reaches signer node 4 alone and its forward is lost - FORFEIT, the hold SETTLED into the pool, 0 msat back', slice2(), async () => {
-  const w = await sevenSignerNodes('hold');
-  try {
-    const run = await joinWithTwoFirstMarks(w, 'hold');
-    const voidedFirst = await voidAtZeroToThree(w, run);
-    await w.back(4);
-    await w.down(0, 1, 2, 3);
-    const said4 = [];
-    for (const m of run.late) said4.push(answer(await say(w.signerNodes[4].port, m)));
-    await wait(1000);
-    await w.back(0, 1, 2, 3, 5, 6);
-    await wait(1000);
-    const winner = await playWinner(w);
-    const after = await holdAfterClose(w, run, winner);
-    console.log('  FACTS (5 of 7, hold, path 2):', JSON.stringify({ voidedFirst, said4, lateAt4: !!w.signerNodes[4].round.startForfeit(run.eid), after }));
-    assert.equal(voidedFirst, 4, 'signer nodes 0-3 did not all record ENTRY_VOID: not the case the test names');
-    assert.deepEqual(after.hold.cancelled, Array(7).fill(0), 'the two-first-marks hold was cancelled back to the player');
-    assert.ok(after.hold.settled.some((n) => n > 0), `no signer node settled the hold: it expires back to the player - ${JSON.stringify(after.signerNodes)}`);
-  } finally { await w.close(); }
-});
-
-// PATH 1 ON A HOLD, AND THE ONE SIGNER NODE THAT DECIDED FORFEIT GOES DOWN. Measured
-// before this test: in path 1 six signer nodes sign a FAILED result (they took the first
-// mark late and carry a transcript) that never agrees 5 of 7, and only signer node 4 -
-// which refused the second mark - decides FORFEIT and settles. Here signer node 4 is
-// down from before the close through the hold's expiry: does any signer node still keep
-// the stake from going back to the player?
-test('5 of 7, a hold, path 1, and signer node 4 down from before the close through the hold\'s expiry - the hold still SETTLED into the pool, 0 msat back', slice2(), async () => {
-  const w = await sevenSignerNodes('hold');
-  try {
-    const run = await joinWithTwoFirstMarks(w, 'hold');
-    const voidedFirst = await voidAtZeroToThree(w, run);
-    await w.back(4, 5, 6);
-    const said4 = [];
-    for (const m of run.other) said4.push(answer(await say(w.signerNodes[4].port, m)));
-    await wait(2000);
-    const winner = await playWinner(w);
-    await w.down(4);                                                           // the signer node that refused the second mark
-    const up = [...w.up];
-    await Promise.all(up.map((i) => say(w.signerNodes[i].port, `close ${toHex(w.rid)}`)));
-    await wait(3 * WINDOW + 3000);
-    for (let t = Date.now(); Date.now() - t < 15000 && !holds(w, run.paymentHash).settled.some((n) => n); await wait(250));
-    await wait(1500);
-    const h = holds(w, run.paymentHash);
-    const facts = { voidedFirst, said4, signerNodes: stateAt(w, run), ...recordsOf(w, run),
-      both: up.filter((i) => w.signerNodes[i].round.provenTwoFirstMarks(w.rid, run.eid)).length, hold: h,
-      winnerHold: holds(w, toHex(sha256(winner.preimage))),
-      msatBack: h.settled.some((n) => n) ? '0' : h.cancelled.some((n) => n) ? String(NET) : `${NET} at the hold's expiry` };
-    console.log('  FACTS (5 of 7, hold, path 1, signer node 4 down through the expiry):', JSON.stringify(facts));
-    assert.equal(voidedFirst, 4, 'signer nodes 0-3 did not all record ENTRY_VOID: not the case the test names');
-    assert.deepEqual(h.cancelled, Array(7).fill(0), 'the two-first-marks hold was cancelled back to the player');
-    assert.ok(h.settled.some((n) => n > 0), `no signer node settled the hold: ${facts.msatBack} back to the player - ${JSON.stringify(facts.signed)}`);
-  } finally { await w.close(); }
-});
-
 // PATH 1 WITH SIGNER NODES 4-6 DOWN FROM BEFORE THE CLOSE THROUGH THE HOLD'S EXPIRY
 // (M3.3-34, measured before any change). The reading to test: the proof formed at
 // signer node 4; signer nodes 0-3 learned it by pulling and never gathered shares, so with 4-6
@@ -543,39 +397,6 @@ const signerNodeHolds = (w, run, i) => {
     decided: nq ? nq.outcome : null, signed: mine ? (() => { const p = decodePlayerResult(splitSignedResult(mine.bytes).body); return `${p.outcome}/${p.score}`; })() : null,
     voided: !!d.round.entryVoid(run.eid), custody: (d.round.hold(run.eid) || {}).state || null };
 };
-
-test('5 of 7, a hold, path 1, signer nodes 4-6 down from before the close through the hold\'s expiry - measured: where the stake goes', slice2(), async () => {
-  const w = await sevenSignerNodes('hold');
-  try {
-    const run = await joinWithTwoFirstMarks(w, 'hold');
-    const voidedFirst = await voidAtZeroToThree(w, run);
-    await w.back(4, 5, 6);
-    const said4 = [];
-    for (const m of run.other) said4.push(answer(await say(w.signerNodes[4].port, m)));
-    await wait(2000);
-    const winner = await playWinner(w);
-    const beforeDown = [0, 1, 2, 3, 4, 5, 6].map((i) => signerNodeHolds(w, run, i));
-    await w.down(4, 5, 6);                                                     // three signer nodes: from before the close through the expiry
-    await Promise.all([0, 1, 2, 3].map((i) => say(w.signerNodes[i].port, `close ${toHex(w.rid)}`)));
-    await wait(3 * WINDOW + 3000);
-    for (let t = Date.now(); Date.now() - t < 15000 && !holds(w, run.paymentHash).settled.some((n) => n); await wait(250));
-    await wait(1500);
-    const atClose = [0, 1, 2, 3].map((i) => signerNodeHolds(w, run, i));
-    const h = holds(w, run.paymentHash);
-    const m = await w.signerNodes[0].stakes();
-    const opened = await w.signerNodes[0].preimages.open({ roundId: w.rid, entryId: run.eid, needed: NEEDED });
-    const facts = { voidedFirst, said4, beforeDown, atClose, hold: h, winnerHold: holds(w, toHex(sha256(winner.preimage))),
-      poolAt0: { ok: m.ok, why: m.ok === false ? String(m.why).slice(0, 90) : null, pool: m.table ? String(m.table.pool) : null,
-        owed: m.owed ? (m.owed.ok ? m.owed.state : String(m.owed.why).slice(0, 80)) : null },
-      signerNode0OpensAfter: opened.ok ? `OPENED with ${opened.held}` : String(opened.why).slice(0, 160),
-      msatBack: h.settled.some((n) => n) ? '0' : h.cancelled.some((n) => n) ? String(NET) : `${NET} at the hold's expiry`,
-      msatToPool: h.settled.some((n) => n) ? String(NET) : '0' };
-    console.log('  FACTS (5 of 7, hold, path 1, signer nodes 4-6 down through the expiry):', JSON.stringify(facts));
-    assert.equal(voidedFirst, 4, 'signer nodes 0-3 did not all record ENTRY_VOID: not the case the test names');
-    assert.deepEqual(h.cancelled, Array(7).fill(0), 'the two-first-marks hold was cancelled back to the player');
-    assert.ok(h.settled.some((n) => n > 0), `no signer node settled the hold: ${facts.msatBack} back to the player`);
-  } finally { await w.close(); }
-});
 
 test('5 of 7, a stake lock, path 1, signer nodes 4-6 down from before the close through the lock\'s expiry - measured: no refund forms, the lock held', async () => {
   const w = await sevenSignerNodes('lock');
@@ -596,44 +417,6 @@ test('5 of 7, a stake lock, path 1, signer nodes 4-6 down from before the close 
     assert.ok(!now.doors.some((s) => s >= 200 && s < 300) && !closed.doors.some((s) => s >= 200 && s < 300), 'a refund door answered 2xx');
     assert.equal(now.kept + closed.kept, 0, 'a signer node keeps a refund of the lock');
     assert.equal(closed.lockHeld, true);
-  } finally { await w.close(); }
-});
-
-// PATH 1 WITH SIGNER NODES 3, 4 AND 5 DOWN FROM BEFORE THE CLOSE THROUGH THE EXPIRY
-// (M3.3-34, measured before any change). The signer nodes 4-6 order settled because
-// signer nodes 3 and 4 each held five shares; this down-set takes both of them down and
-// keeps the committee at three down: signer nodes 0, 1, 2 and 6 stay up.
-test('5 of 7, a hold, path 1, signer nodes 3-5 down from before the close through the hold\'s expiry - measured: where the stake goes', slice2(), async () => {
-  const w = await sevenSignerNodes('hold');
-  try {
-    const run = await joinWithTwoFirstMarks(w, 'hold');
-    const voidedFirst = await voidAtZeroToThree(w, run);
-    await w.back(4, 5, 6);
-    const said4 = [];
-    for (const m of run.other) said4.push(answer(await say(w.signerNodes[4].port, m)));
-    await wait(2000);
-    const winner = await playWinner(w);
-    const beforeDown = [0, 1, 2, 3, 4, 5, 6].map((i) => signerNodeHolds(w, run, i));
-    await w.down(3, 4, 5);                                                     // both five-share signer nodes and one more
-    const up = [0, 1, 2, 6];
-    await Promise.all(up.map((i) => say(w.signerNodes[i].port, `close ${toHex(w.rid)}`)));
-    await wait(3 * WINDOW + 3000);
-    for (let t = Date.now(); Date.now() - t < 15000 && !holds(w, run.paymentHash).settled.some((n) => n); await wait(250));
-    await wait(1500);
-    const atClose = up.map((i) => signerNodeHolds(w, run, i));
-    const h = holds(w, run.paymentHash);
-    const m = await w.signerNodes[0].stakes();
-    const opened = await w.signerNodes[0].preimages.open({ roundId: w.rid, entryId: run.eid, needed: NEEDED });
-    const facts = { voidedFirst, said4, beforeDown, atClose, hold: h, winnerHold: holds(w, toHex(sha256(winner.preimage))),
-      poolAt0: { ok: m.ok, why: m.ok === false ? String(m.why).slice(0, 90) : null, pool: m.table ? String(m.table.pool) : null,
-        owed: m.owed ? (m.owed.ok ? m.owed.state : String(m.owed.why).slice(0, 80)) : null },
-      signerNode0OpensAfter: opened.ok ? `OPENED with ${opened.held}` : String(opened.why).slice(0, 160),
-      msatBack: h.settled.some((n) => n) ? '0' : h.cancelled.some((n) => n) ? String(NET) : `${NET} at the hold's expiry`,
-      msatToPool: h.settled.some((n) => n) ? String(NET) : '0' };
-    console.log('  FACTS (5 of 7, hold, path 1, signer nodes 3-5 down through the expiry):', JSON.stringify(facts));
-    assert.equal(voidedFirst, 4, 'signer nodes 0-3 did not all record ENTRY_VOID: not the case the test names');
-    assert.deepEqual(h.cancelled, Array(7).fill(0), 'the two-first-marks hold was cancelled back to the player');
-    assert.ok(h.settled.some((n) => n > 0), `no signer node settled the hold: ${facts.msatBack} back to the player`);
   } finally { await w.close(); }
 });
 
@@ -678,44 +461,6 @@ async function pathTwoSignerNodeFourDown(w, run) {
   await wait(1000);
   return { voidedFirst, said4, lateAt4, signerNode4BeforeDown: signerNode4 };
 }
-
-test('5 of 7, a hold, path 2, signer node 4 down from its refusal through the hold\'s expiry - ruled limit: no signer node up holds the proof, the outage-VOID refund stands: the hold comes back to the player, 98000 msat, pool 0', slice2(), async () => {
-  const w = await sevenSignerNodes('hold');
-  try {
-    const run = await joinWithTwoFirstMarks(w, 'hold');
-    const setup = await pathTwoSignerNodeFourDown(w, run);
-    const up = [0, 1, 2, 3, 5, 6];
-    const winner = await playWinner(w, up);
-    const beforeClose = up.map((i) => signerNodeHolds(w, run, i));
-    await Promise.all(up.map((i) => say(w.signerNodes[i].port, `close ${toHex(w.rid)}`)));
-    await wait(3 * WINDOW + 3000);
-    for (let t = Date.now(); Date.now() - t < 15000 && !holds(w, run.paymentHash).settled.some((n) => n); await wait(250));
-    await wait(1500);
-    const atClose = up.map((i) => signerNodeHolds(w, run, i));
-    const h = holds(w, run.paymentHash);
-    const m = await w.signerNodes[0].stakes();
-    const opened = await w.signerNodes[0].preimages.open({ roundId: w.rid, entryId: run.eid, needed: NEEDED });
-    const facts = { ...setup, beforeClose, atClose, hold: h, winnerHold: holds(w, toHex(sha256(winner.preimage))),
-      poolAt0: { ok: m.ok, why: m.ok === false ? String(m.why).slice(0, 90) : null, pool: m.table ? String(m.table.pool) : null,
-        owed: m.owed ? (m.owed.ok ? m.owed.state : String(m.owed.why).slice(0, 80)) : null },
-      signerNode0OpensAfter: opened.ok ? `OPENED with ${opened.held}` : String(opened.why).slice(0, 160),
-      msatBack: h.settled.some((n) => n) ? '0' : h.cancelled.some((n) => n) ? String(NET) : `${NET} at the hold's expiry`,
-      msatToPool: h.settled.some((n) => n) ? String(NET) : '0' };
-    console.log('  FACTS (5 of 7, hold, path 2, signer node 4 down from its refusal):', JSON.stringify(facts));
-    assert.equal(setup.voidedFirst, 4, 'signer nodes 0-3 did not all record ENTRY_VOID: not the case the test names');
-    assert.equal(setup.lateAt4, true, 'signer node 4 kept no late first mark: not the case the test names');
-    // RULED (2026-09-13): the protocol's limit. A second first mark only the down
-    // signer node ever saw cannot be proven - no signer node up holds the proof, so no signer node can
-    // replay a FORFEIT; the lost forward and signer node 4 down are signer node-side, not the
-    // player's doing, and the operator must not profit from them. The outage-VOID
-    // refund stands: the hold comes back to the player, the pool gets nothing.
-    assert.ok(facts.atClose.every((x) => !x.proof), 'a signer node up holds the proof: not the case the ruling covers');
-    assert.deepEqual(h.settled, Array(7).fill(0), 'a signer node settled a hold no signer node up can prove forfeited');
-    assert.deepEqual(h.cancelled, Array(7).fill(0), 'a signer node cancelled the hold');
-    assert.equal(facts.msatBack, `${NET} at the hold's expiry`);
-    assert.equal(facts.msatToPool, '0');
-  } finally { await w.close(); }
-});
 
 test('5 of 7, a stake lock, path 2, signer node 4 down from its refusal through the lock\'s expiry - measured: no refund forms, the lock held', async () => {
   const w = await sevenSignerNodes('lock');
@@ -777,21 +522,6 @@ test('5 of 7, a stake lock, receipts lost between signer nodes that are up: sign
   } finally { await w.close(); }
 });
 
-test('5 of 7, a hold, receipts lost between signer nodes that are up: signer nodes 0-4 each record ENTRY_VOID, then a different on-time first mark reaches signer node 5 - measured: where the stake goes', slice2(), async () => {
-  const w = await sevenSignerNodes('hold');
-  try {
-    const run = await joinWithTwoFirstMarks(w, 'hold');
-    const setup = await voidAtZeroToFourCut(w, run);
-    const winner = await playWinner(w);
-    const after = await holdAfterClose(w, run, winner);
-    const facts = { ...setup, after, signerNodes: [0, 1, 2, 3, 4, 5, 6].map((i) => signerNodeHolds(w, run, i)) };
-    console.log('  FACTS (5 of 7, hold, receipts lost between up signer nodes):', JSON.stringify(facts));
-    assert.equal(setup.voided, 5, 'signer nodes 0-4 did not all record ENTRY_VOID: not the case the test names');
-    assert.deepEqual(after.hold.cancelled, Array(7).fill(0), 'the two-first-marks hold was cancelled back to the player');
-    assert.ok(after.hold.settled.some((n) => n > 0), `no signer node settled the hold: ${after.msatBack} back to the player`);
-  } finally { await w.close(); }
-});
-
 // RECEIPTS LOST, AND THE SIGNER NODE HOLDING THE PROOF UNREACHABLE FROM THE VOID SIGNER NODES
 // WHEN THE REFUND IS ASKED (M3.3-34, the variant left open by cb63823): the
 // receipts-lost order, then signer nodes 0-4 and signer node 5 cut off from each other (signer node 6
@@ -814,25 +544,6 @@ test('5 of 7, a stake lock, receipts lost, and signer node 5 (the proof) unreach
     assert.ok(!now.doors.some((s) => s >= 200 && s < 300) && !closed.doors.some((s) => s >= 200 && s < 300), 'a refund door answered 2xx - five signatures formed');
     assert.equal(now.kept + closed.kept, 0, 'a signer node keeps a refund of the lock');
     assert.equal(closed.lockHeld, true);
-  } finally { await w.close(); }
-});
-
-test('5 of 7, a hold, receipts lost, and signer node 5 (the proof) unreachable from the Void signer nodes for the same moment - measured: where the stake goes', slice2(), async () => {
-  const w = await sevenSignerNodes('hold');
-  try {
-    const run = await joinWithTwoFirstMarks(w, 'hold');
-    const setup = await voidAtZeroToFourCut(w, run);
-    w.partition([0, 1, 2, 3, 4], [5]);
-    await wait(3000);
-    const proofInPartition = w.signerNodes.map((d) => (d.round.provenTwoFirstMarks(w.rid, run.eid) ? 1 : 0));
-    w.heal();
-    const winner = await playWinner(w);
-    const after = await holdAfterClose(w, run, winner);
-    const facts = { ...setup, proofInPartition, after, signerNodes: [0, 1, 2, 3, 4, 5, 6].map((i) => signerNodeHolds(w, run, i)) };
-    console.log('  FACTS (5 of 7, hold, receipts lost, signer node 5 unreachable for the same moment):', JSON.stringify(facts));
-    assert.equal(setup.voided, 5, 'signer nodes 0-4 did not all record ENTRY_VOID: not the case the test names');
-    assert.deepEqual(after.hold.cancelled, Array(7).fill(0), 'the two-first-marks hold was cancelled back to the player');
-    assert.ok(after.hold.settled.some((n) => n > 0), `no signer node settled the hold: ${after.msatBack} back to the player`);
   } finally { await w.close(); }
 });
 
@@ -884,22 +595,6 @@ const signedOutcomes = (w, run) => w.signerNodes.map((d, i) => {
     .filter((o, k, a) => a.indexOf(o) === k).join('+') || null;
 });
 
-test('5 of 7, a hold, genuine outage-VOID: signer nodes 4-6 down, then caught up late - measured: what each signer node records, where the stake goes', slice2(), async () => {
-  const w = await sevenSignerNodes('hold');
-  try {
-    const run = await joinWithTwoFirstMarks(w, 'hold');
-    const setup = await outageCaughtUp(w, run);
-    const winner = await playWinner(w);
-    const after = await holdAfterClose(w, run, winner);
-    const facts = { ...setup, after, signedOutcomes: signedOutcomes(w, run), signerNodes: [0, 1, 2, 3, 4, 5, 6].map((i) => signerNodeHolds(w, run, i)) };
-    console.log('  FACTS (5 of 7, hold, genuine outage-VOID, caught up late):', JSON.stringify(facts));
-    assert.equal(setup.voidedFirst, 4, 'signer nodes 0-3 did not all record ENTRY_VOID: not the case the test names');
-    assert.deepEqual(setup.proof, Array(7).fill(0), 'a signer node holds a proof of two first marks: not the case the test names');
-    assert.ok(!facts.signedOutcomes.some((o) => o && /FAILED|DELIVERED/.test(o)), `a signer node signed a run for an entry that must VOID: ${JSON.stringify(facts.signedOutcomes)}`);
-    assert.deepEqual(after.hold.settled, Array(7).fill(0), 'the stake of an entry that must VOID was settled into the pool');
-  } finally { await w.close(); }
-});
-
 test('5 of 7, a stake lock, genuine outage-VOID: signer nodes 4-6 down, then caught up late - measured: what each signer node records, the refund doors', async () => {
   const w = await sevenSignerNodes('lock');
   try {
@@ -914,6 +609,3 @@ test('5 of 7, a stake lock, genuine outage-VOID: signer nodes 4-6 down, then cau
     assert.ok(!facts.signedOutcomes.some((o) => o && /FAILED|DELIVERED/.test(o)), `a signer node signed a run for an entry that must VOID: ${JSON.stringify(facts.signedOutcomes)}`);
   } finally { await w.close(); }
 });
-
-/** Why this test does not run in Step 1 of the THRESHOLD_LN disposal (see TASKBOOK). */
-function slice2() { return { skip: "slice 2: the subject is the hold path (hold invoices on a Lightning port). It still runs at HEAD on a FEDERATION round given a Lightning port, so it is skipped, not moved to FEDERATION (RULED 2026-09-23); slice 2 deletes this test with the code" }; }

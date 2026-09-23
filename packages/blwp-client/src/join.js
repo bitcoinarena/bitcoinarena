@@ -394,19 +394,19 @@ export const SETTLEMENT_OVER = ['SETTLED', 'CANCELLED', 'EXPIRED', 'FREE', 'none
 /**
  * WHERE THIS STAKE STANDS, asked of every settlement signer node (MF item 14).
  *
- * Each signer node answers `GET /settlement` for itself - its hold now, where the
- * run's result stands, when its objection window closes, the height its hold
- * refunds at - and the signer nodes are found at the page's addresses the way
- * `stakeSeenBy` finds them, one answer per signer node key. The answer is one word
- * per field:
+ * Each signer node answers `GET /settlement` for itself - whether it has seen the stake, where the
+ * run's result stands, and when its objection window closes - and the signer nodes are found at the
+ * page's addresses the way `stakeSeenBy` finds them, one answer per signer node key:
  *
- *   hold          the signer nodes' own word when they agree, HELD while any differs
  *   finality      SUSPENDED if any signer node says so, FINAL when all do,
  *                 PROVISIONALLY_FINAL when any has a result, else null
  *   windowClosesAtMs  the LATEST signer node's window end - nothing moves before it
- *   refundHeight  the lowest height any signer node names
  *
- *   { of, answered, hold, finality, windowClosesAtMs, refundHeight, per }
+ *   { of, answered, finality, windowClosesAtMs, per }
+ *
+ * The hold's state, its amount, the pool, the owed row and the refund height used to be read here too.
+ * All five were THRESHOLD_LN's hold invoice and its settle (§23.6, RULED 2026-09-22 22:59), and no
+ * signer node reports them any more.
  */
 export async function settlementBy({ entryId, signerNodes, nodes, fetcher = fetch } = {}) {
   const want = new Set((signerNodes || []).map((k) => toHex(k)));
@@ -432,52 +432,17 @@ export async function settlementBy({ entryId, signerNodes, nodes, fetcher = fetc
     } catch (e) { per.push({ node, key, why: e.message }); }
   }
   const all = [...answered.values()];
-  const holds = new Set(all.map((a) => a.hold));
   const states = all.map((a) => a.finality);
   const ends = all.map((a) => a.windowClosesAtMs).filter((v) => v !== null && v !== undefined).map(Number);
-  const refunds = all.map((a) => a.refundHeight).filter((v) => Number.isInteger(v));
-  // THE HOLD'S AMOUNT AND THE ROUND'S POOL (M3.2 6e), as the signer nodes say them:
-  // a number only when every signer node that answered says the same one.
-  const agreed = (field) => {
-    const said = all.map((a) => a[field]);
-    if (!said.length || said.some((v) => v === null || v === undefined)) return null;
-    return new Set(said.map(String)).size === 1 ? BigInt(said[0]) : null;
-  };
   return {
     of: want.size,
     answered: answered.size,
-    holdMsat: agreed('holdMsat'),
-    poolMsat: agreed('poolMsat'),
-    owedMsat: agreed('owedMsat'),
-    hold: !all.length ? null : (holds.size === 1 ? all[0].hold : 'HELD'),
     finality: states.includes('SUSPENDED') ? 'SUSPENDED'
       : (all.length && states.every((f) => f === 'FINAL')) ? 'FINAL'
         : states.some((f) => f === 'PROVISIONALLY_FINAL' || f === 'FINAL') ? 'PROVISIONALLY_FINAL' : null,
     windowClosesAtMs: ends.length ? Math.max(...ends) : null,
-    refundHeight: refunds.length ? Math.min(...refunds) : null,
     per,
   };
-}
-
-/**
- * WHERE THIS ENTRY'S STAKE WENT, AS ONE LINE (M3.2 6e), off `settlementBy` - the
- * signer nodes' own words and numbers, none worked out here. Measured before on the
- * daily page: after a round settled the panel still read "HELD" (the quote was
- * never asked again) and nothing anywhere showed the pool.
- */
-export function settledLine(s) {
-  if (!s || !s.answered) return '';
-  const held = s.holdMsat !== null && s.holdMsat !== undefined ? `${s.holdMsat} msat ` : '';
-  const pool = s.poolMsat !== null && s.poolMsat !== undefined ? ` · the round's pool ${s.poolMsat} msat` : '';
-  // WHAT THE ROUND OWES THIS ENTRY (M3.2 6e): its row of the payout table as the
-  // signer nodes serve it - shown when there is something owed; a loser's row is 0.
-  const owed = s.owedMsat !== null && s.owedMsat !== undefined && BigInt(s.owedMsat) > 0n
-    ? ` · the round's payout table: ${s.owedMsat} msat for your entry` : '';
-  if (s.hold === 'SETTLED') return `Settled: your ${held}stake went into the pool${owed}${pool}`;
-  if (s.hold === 'CANCELLED') return `Returned: your ${held}stake was cancelled back to the wallet${owed}${pool}`;
-  if (s.hold === 'EXPIRED') return `Expired: your ${held}stake came back to the wallet when its hold ran out`;
-  if (s.hold === 'HELD') return `Settlement: your ${held}stake is held${s.finality ? `, the result ${s.finality}` : ', no result yet'}`;
-  return '';
 }
 
 /**
@@ -824,18 +789,15 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
     // yet (parked), so it and a non-locking round's outpoint are zeros, said
     // here rather than defaulted.
     stakePoint: stake && stake.stakePoint ? stake.stakePoint : new Uint8Array(33),
-    // AND ITS FEE LOCK, ONLY WHEN THE PAGE MADE ONE (Pick b: a fee lock is minted
-    // only when claiming it can pay a signer node): F handed over openly (F5) and the
-    // lock's outpoint. Otherwise zeros, said here - no fee lock, nothing to claim.
-    // AND ON A PAYING ROUND WITH NO FEE LOCK, THE FEE STILL NEEDS A SECRET (§23.5, 2026-09-21).
+    // AND ITS FEE LOCK, ONLY WHEN THE PAGE MADE ONE (Pick b: a fee lock is minted only when claiming it
+    // can pay a signer node): F handed over openly (F5) and the lock's outpoint. Otherwise zeros, said
+    // here - no fee lock, nothing to claim.
     //
-    // The node fee travels in its own lock, and on Lightning custody that lock is its own hold invoice -
-    // claimed by this preimage, which is why the field is in the contract the player signs. Measured on the
-    // Daily when it was left at zeros: lnd answered "cannot use hash of all-zeroes preimage" and no fee
-    // invoice was ever made, so the 2% went on being uncollected. A free round still names zeros: there is
-    // no fee to claim.
-    feePreimage: feeLockOf(stakeLock, round) ? stakeLock.feeLock.preimage
-      : (roundPays(round) && random ? random(32) : new Uint8Array(32)),
+    // THERE IS NO SECOND BRANCH. A paying round with no fee lock used to mint a random F anyway, because
+    // "on Lightning custody that lock is its own hold invoice" and a hold on a zero preimage was refused.
+    // That hold was THRESHOLD_LN's, which does not exist (§23.6, RULED 2026-09-22 22:59): the only fee lock
+    // is the federation's, and a round that mints none has no fee secret to name.
+    feePreimage: feeLockOf(stakeLock, round) ? stakeLock.feeLock.preimage : new Uint8Array(32),
     stakeLockOutpoint: stakeLock ? { txid: stakeLock.outpoint.txid, outIdx: BigInt(stakeLock.outpoint.outIdx) }
       : { txid: new Uint8Array(32), outIdx: 0n },
     feeLockOutpoint: feeLockOf(stakeLock, round)

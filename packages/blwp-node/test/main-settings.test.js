@@ -37,9 +37,9 @@ test('half a Lightning node is refused by name, and each missing setting is name
   }
 });
 
-test('a Lightning network a round may not hold stakes on is refused', () => {
+test('a Lightning network a round may not run on is refused', () => {
   const got = launch({ BLWP_LNCLI: '/nowhere/lncli', BLWP_LND_DIR: '/nowhere',
     BLWP_LND_RPC: '127.0.0.1:1', BLWP_LND_NETWORK: 'mainnet' });
   assert.equal(got.status, 2, got.stderr);
-  assert.match(got.stderr, /mainnet is not a network a round may hold stakes on/);
+  assert.match(got.stderr, /mainnet is not a network a round may run on here/);
 });

@@ -1,19 +1,15 @@
-// WHAT THIS NODE ACTUALLY TYPES AT LIGHTNING.
+// WHAT THIS NODE STILL TYPES AT LIGHTNING: `addinvoice` and `decodepayreq`, and nothing that holds money.
 //
-// `custody-lnd.mjs` runs all of this against a real `lnd v0.21.3-beta` on an
-// isolated regtest, which is the measurement that matters and takes minutes.
-// What is pinned here is the shape of the commands and the translation of
-// lnd's vocabulary into 23.2's, because those are the two places a rename in
-// either project would go wrong silently.
+// This file used to pin the hold invoice's four acts - addholdinvoice, lookupinvoice, settleinvoice,
+// cancelinvoice - and the table mapping lnd's invoice states onto 23.2's. They were THRESHOLD_LN's
+// custody by one operator and are deleted with it (§23.6, RULED 2026-09-22 22:59). What the port does now
+// is read a federation's LNv2 invoice (`decode`) and mint an ordinary invoice for a donation recipient
+// (`invoice`), and both are pinned here against a fake `lncli`.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { lndPort, STATE_OF } from '../src/lnd-port.js';
-import { HELD, SETTLED, CANCELLED } from '../../protocol/src/payout.js';
-import { STAKE_EXPIRY_BLOCKS } from '../../protocol/src/constants.js';
+import { lndPort } from '../src/lnd-port.js';
 
-const hash = new Uint8Array(32).fill(0xab);
-const preimage = new Uint8Array(32).fill(0xcd);
 const hex = (b) => Buffer.from(b).toString('hex');
 
 function fakeLncli(answers) {
@@ -25,89 +21,32 @@ function fakeLncli(answers) {
   return { port, said };
 }
 
-test('a hold invoice is asked for by hash and amount, then read back', async () => {
-  const { port, said } = fakeLncli((argv) => argv[0] === 'addholdinvoice'
-    ? JSON.stringify({ payment_request: 'lnbcrt1' })
-    : JSON.stringify({ r_hash: hex(hash), value_msat: '100000', state: 'OPEN', amt_paid_msat: '0' }));
+test('the port holds nothing: it reads invoices and mints ordinary ones, and has no hold act left', () => {
+  const { port } = fakeLncli(() => '{}');
+  assert.deepEqual(Object.keys(port).sort(), ['decode', 'invoice']);
+  for (const act of ['createHeld', 'look', 'settle', 'cancel', 'pay'])
+    assert.equal(port[act], undefined, `${act} is still on the port`);
+});
 
-  const made = await port.createHeld({ paymentHash: hash, amountMsat: 100000n });
-  // `--expiry` is how long an UNPAID invoice stays open; `--cltv_expiry` is how long the STAKE's HTLC
-  // lives. Measured on the Daily before this line: every hold carried lnd's default cltv_expiry 80 while
-  // the round contract is refused unless it names STAKE_EXPIRY_BLOCKS, and a stake LOCK is refused unless
-  // it outlives height + STAKE_EXPIRY_BLOCKS. One stake, two custodies, two different protections.
-  assert.deepEqual(said[0], ['addholdinvoice', hex(hash), '--amt_msat', '100000', '--expiry', '3600',
-    '--cltv_expiry_delta', String(STAKE_EXPIRY_BLOCKS)]);
-  assert.deepEqual(said[1], ['lookupinvoice', hex(hash)]);
+test('an invoice is decoded to the hash and amount it commits to, read off the invoice', async () => {
+  const hash = new Uint8Array(32).fill(0xab);
+  const { port, said } = fakeLncli(() => JSON.stringify({ payment_hash: hex(hash), num_msat: '980000' }));
+  const read = await port.decode({ request: 'lnbcrt9800n1test' });
+  assert.deepEqual(said, [['decodepayreq', 'lnbcrt9800n1test']]);
+  assert.equal(hex(read.paymentHash), hex(hash));
+  assert.equal(read.amountMsat, 980000n);
+});
 
-  // THE ANSWER COMES FROM THE LOOKUP, NOT FROM WHAT WAS ASKED FOR. An invoice
-  // this node believes in because it asked for it is exactly what
-  // `invoiceMatchesEntry` exists to refuse.
-  assert.equal(hex(made.paymentHash), hex(hash));
-  assert.equal(made.amountMsat, 100000n);
+test('a donation invoice is an ordinary addinvoice, described by its metadata hash', async () => {
+  const d = new Uint8Array(32).fill(0x11);
+  const { port, said } = fakeLncli(() => JSON.stringify({ payment_request: 'lnbcrt1', r_hash: 'cd'.repeat(32) }));
+  const made = await port.invoice({ amountMsat: 2000n, descriptionHash: d, expirySeconds: 60 });
+  assert.deepEqual(said, [['addinvoice', '--amt_msat', '2000', '--description_hash', hex(d), '--expiry', '60']]);
   assert.equal(made.request, 'lnbcrt1');
-});
-
-// §23.1's one endpoint and several daemons. lnd's own words, measured on
-// regtest: "invoice with payment hash already exists".
-const DUP = new Error('lncli addholdinvoice refused: [lncli] rpc error: code = Unknown desc = invoice with payment hash already exists');
-
-test('a second daemon on the same endpoint takes up the hold it already has, read back', async () => {
-  for (const state of ['OPEN', 'ACCEPTED']) {
-    const { port, said } = fakeLncli((argv) => {
-      if (argv[0] === 'addholdinvoice') throw DUP;
-      return JSON.stringify({ r_hash: hex(hash), value_msat: '98000', state, payment_request: 'lnbcrt-first' });
-    });
-    const made = await port.createHeld({ paymentHash: hash, amountMsat: 98000n });
-    assert.deepEqual(said.map((a) => a[0]), ['addholdinvoice', 'lookupinvoice']);
-    assert.equal(made.request, 'lnbcrt-first', `${state}: not the endpoint's own invoice`);
-    assert.equal(made.amountMsat, 98000n, 'the amount must come from lnd, so the entry check can refuse it');
-    assert.equal(made.already, true);
-  }
-});
-
-test('an invoice for that hash that is no longer a hold is refused, and other errors still throw', async () => {
-  for (const state of ['SETTLED', 'CANCELED']) {
-    const { port } = fakeLncli((argv) => {
-      if (argv[0] === 'addholdinvoice') throw DUP;
-      return JSON.stringify({ r_hash: hex(hash), value_msat: '98000', state, payment_request: 'x' });
-    });
-    await assert.rejects(() => port.createHeld({ paymentHash: hash, amountMsat: 98000n }),
-      new RegExp(`it is ${state}, not a hold still in flight`));
-  }
-  const { port } = fakeLncli(() => { throw new Error('lncli addholdinvoice refused: connection refused'); });
-  await assert.rejects(() => port.createHeld({ paymentHash: hash, amountMsat: 1n }), /connection refused/);
-});
-
-test('a settle sends the preimage and a cancel sends the hash', async () => {
-  const { port, said } = fakeLncli(() => '{}');
-  await port.settle({ paymentHash: hash, preimage });
-  await port.cancel({ paymentHash: hash });
-
-  // Releasing the preimage IS the settlement, which is why 23.4 wants five of
-  // seven shares before it can happen. The hash would settle nothing.
-  assert.deepEqual(said[0], ['settleinvoice', '--preimage', hex(preimage)]);
-  assert.deepEqual(said[1], ['cancelinvoice', hex(hash)]);
-});
-
-test('lnd\'s words are read as 23.2\'s, and an unknown one is refused', async () => {
-  // OPEN and ACCEPTED are both HELD: money in flight is in nobody's balance
-  // whether or not the player has paid yet.
-  assert.equal(STATE_OF.OPEN, HELD);
-  assert.equal(STATE_OF.ACCEPTED, HELD);
-  assert.equal(STATE_OF.SETTLED, SETTLED);
-  assert.equal(STATE_OF.CANCELED, CANCELLED);
-
-  for (const [state, expected] of [['ACCEPTED', HELD], ['SETTLED', SETTLED], ['CANCELED', CANCELLED]]) {
-    const { port } = fakeLncli(() => JSON.stringify({ state, value_msat: '100000', amt_paid_msat: '100000' }));
-    assert.equal((await port.look({ paymentHash: hash })).state, expected);
-  }
-
-  const { port } = fakeLncli(() => JSON.stringify({ state: 'PROBABLY FINE', value_msat: '1', amt_paid_msat: '0' }));
-  await assert.rejects(() => port.look({ paymentHash: hash }), /not a state a hold can be in/);
+  assert.equal(hex(made.paymentHash), 'cd'.repeat(32));
 });
 
 test('an answer that is not JSON is named, not parsed into nothing', async () => {
   const { port } = fakeLncli(() => '[lncli] could not load TLS cert file');
-  await assert.rejects(() => port.createHeld({ paymentHash: hash, amountMsat: 1n }),
-    /did not answer JSON/);
+  await assert.rejects(() => port.decode({ request: 'lnbcrt1' }), /did not answer JSON/);
 });
