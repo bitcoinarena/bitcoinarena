@@ -30,6 +30,7 @@ import * as army from '../src/rules/army.js';
 import * as layout from '../src/state.js';
 import * as gate from '../src/rules/gate.js';
 import * as tactics from '../src/rules/tactics.js';
+import * as solids from '../src/rules/solids.js';
 
 /**
  * KEEPS LIVE ARMOUR OUT OF TOUCH WITH THE TRUCK, for a test that measures something else (the owner 2026-09-16 17:06:
@@ -41,8 +42,16 @@ import * as tactics from '../src/rules/tactics.js';
  * 3 m armour circle's clearance: with §1.2's hull rectangle a tank pinned nose-on at 6.5 m is in contact, and all
  * three seeds were written off inside 15 s. The contact rule itself is measured on its own, below.
  */
+// HOW FAR ARMOUR MUST BE TO BE OFF THE TRUCK, from the core's own contact shapes (solids.js), not a round number:
+// the truck's front body circle (BODY_FRONT + BODY_RADIUS) against a hull box whose corner is
+// hypot(ARMOUR_HALF_L, ARMOUR_HALF_W) from its centre - 2.0 + 1.275 + 4.025 = 7.30 m - and half a metre
+// beyond it. It was 7.0 m, inside that reach: measured on 087b707f (2026-09-23), a tank parked at exactly
+// 7.00 m touched the pinned truck at t=2625 and wrote it off, which is "Touch truck-tank = truck dies" and not
+// incoming fire. The harder fight put a tank there; the 7.0 had been inside contact all along.
+const ARMOUR_CLEAR_M = (solids.BODY_FRONT + solids.BODY_RADIUS) / 65536
+  + Math.hypot(solids.ARMOUR_HALF_L / 65536, solids.ARMOUR_HALF_W / 65536) + 0.5;
 function keepArmourOff(st) {
-  const s = st.i32, ONE_ = 65536, R = Math.round(7.0 * ONE_);
+  const s = st.i32, ONE_ = 65536, R = Math.round(ARMOUR_CLEAR_M * ONE_);
   const tx = s[layout.O_TRUCK + layout.T_X], tz = s[layout.O_TRUCK + layout.T_Z];
   for (let i = 0; i < layout.UNITS; i++) {
     if ((i & layout.ARMOUR_MASK) !== 0) continue;
@@ -53,7 +62,7 @@ function keepArmourOff(st) {
     // not incoming fire, which is what these two tests measure.
     const dx = (s[b + layout.U_X] - tx) / ONE_, dz = (s[b + layout.U_Z] - tz) / ONE_;
     const d = Math.hypot(dx, dz);
-    if (d >= 7.0) continue;
+    if (d >= ARMOUR_CLEAR_M) continue;
     const nx = d > 0.01 ? dx / d : 1, nz = d > 0.01 ? dz / d : 0;
     s[b + layout.U_X] = tx + Math.round(nx * R);
     s[b + layout.U_Z] = tz + Math.round(nz * R);

@@ -468,7 +468,10 @@ test('an assault starts only on an objective the side does not hold, never while
   // man on a diagonal no longer reads STAND - he reads COVER or PRONE, which is what he is doing. Fewer
   // men are counted standing, fewer are exposed, more live, and survivors are what an assault clock
   // reads - the same chain the 64.6% -> 91.7% cover move ran down when it took this number to 10.
-  assert.equal(starts, 14, `${starts} assaults, not the measured 14`);
+  // 12 once 087b707f raised fight difficulty (the owner 2026-09-23: FIRE_DAMAGE 11/13 -> 12/14, RIFLE_DAMAGE
+  // 10 -> 11): harder hits kill more of the men an assault needs, fewer survive to hold, and the clock reads
+  // the holders. Measured on this seed with every §4.12 clause above still passing; only the count moved.
+  assert.equal(starts, 12, `${starts} assaults, not the measured 12`);
   assert.ok(starts > 0, 'no assault ran at all, so nothing above was checked');
 });
 
