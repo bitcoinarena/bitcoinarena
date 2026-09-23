@@ -376,6 +376,14 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (entry_id, attempt)
     );
 
+    CREATE TABLE IF NOT EXISTS held_final_ask (
+      entry_id  BLOB PRIMARY KEY,
+      round_id  BLOB NOT NULL,
+      mark      BLOB NOT NULL,
+      tick      INTEGER NOT NULL,
+      held_ms   INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS payout_address (
       entry_id  BLOB PRIMARY KEY REFERENCES entries(entry_id),
       round_id  BLOB NOT NULL,
