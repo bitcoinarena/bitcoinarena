@@ -25,6 +25,7 @@ import { decodeLobbyName, lobbyNameId } from '../../protocol/src/lobby-name.js';
 import { roundEndMs } from '../../protocol/src/first-mark.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { lightningAddressEndpoint } from '../../protocol/src/lnurl-pay.js';
+import { WinningsSend, sendPlanToJson } from './winnings-send.js';
 import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN } from '../../protocol/src/constants.js';
 import { splitSigned, decodeCheckpoint, checkpointId } from '../../protocol/src/checkpoint.js';
 import { MAX_INPUT_BATCH_BYTES, decodeInputBatch } from '../../protocol/src/batch.js';
@@ -208,6 +209,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // `contractId(fields)`, the stock client's answers (blwp-stake-lock). Null:
   // this node verifies no stake lock.
   stakeLocks = null,
+  // HOW A WINNER'S LIGHTNING ADDRESS IS FETCHED (winnings-send.js), and the round network its invoices are for.
+  lnurlFetch = (u) => fetch(u),
+  winningsNetwork = 'regtest',
+  // HOW OFTEN THE WINNINGS SWEEP VISITS unpaid winnings; the finality back-off unless a harness names its own.
+  winningsEveryMs = null,
   // THE ROUND'S CLAIM KEY, by round (33 bytes). Defaults to this signer node's own
   // DKG committee key - the key the settlement signer nodes hold for that round.
   claimKeyFor = null,
@@ -688,8 +694,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // AND THE LOSERS' LOCKS, CLAIMED INTO THE ROUND'S ONE SETTLEMENT (W4, the owner
   // 2026-09-14): the same signer nodes, the same claim key, each loser's P opened by the
   // share conversation, one txid rebuilt by every signer node and signed once.
+  // WINNINGS ALWAYS SENT on a FEDERATION round (winnings-send.js): the same settlement committee, the same peers.
+  const winningsPeers = (rid) => {
+    const picked = roster.committeeFor(rid, 'settlement');
+    return picked.ok ? endpointsOf(picked.committee, round.pubkey) : (dkg.peers || []);
+  };
+  const winnings = stakeLocks ? new WinningsSend({ round, port: stakeLocks, curve: poolCurve,
+    random: (n) => new Uint8Array(randomBytes(n)), peersFor: winningsPeers, fetcher: (u, o) => fetch(u, o),
+    lnurlFetch, network: winningsNetwork }) : null;
   const settlements = new LockSettlement(round, {
-    dkg, port: stakeLocks, curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)), preimages,
+    dkg, port: stakeLocks, curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)), preimages, winnings,
     peersFor: (rid) => {
       const picked = roster.committeeFor(rid, 'settlement');
       return picked.ok ? endpointsOf(picked.committee, round.pubkey) : (dkg.peers || []);
@@ -1480,6 +1494,22 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // A BACKGROUND CHECK DOES NOT HOLD THE PROCESS UP: a running daemon's server does. Measured:
   // without this, a test that left a signer node open never let node --test exit.
   settleRecoverTimer.unref();
+
+  // WINNINGS ARE ALWAYS SENT, WITH NO PAGE OPEN: every round holding a winning that is not PAID is visited on the same
+  // clock - a send retried, an expired one re-sent through the next live gateway (winnings-send.js). Only the round's
+  // proposer acts; the others answer it.
+  let sweepingWinnings = false;
+  const winningsTimer = setInterval(async () => {
+    if (shuttingDown || sweepingWinnings || !winnings) return;
+    sweepingWinnings = true;
+    try {
+      for (const rid of round.roundsWithUnpaidSends()) {
+        const got = await settlements.sendWinnings(rid).catch((e) => [{ ok: false, why: e.message }]);
+        for (const g of got) if (!g.already) console.log(`[winnings] ${toHex(rid).slice(0, 16)} ${JSON.stringify(g).slice(0, 200)}`);
+      }
+    } finally { sweepingWinnings = false; }
+  }, winningsEveryMs ?? finality.maxEveryMs ?? 60000);
+  winningsTimer.unref();
 
   // AND EVERY ROUND THAT IS OVER, CLOSED BY THIS SIGNER NODE ITSELF (closeAtEnd).
   //
@@ -2465,6 +2495,101 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return got.ok ? text(res, 201, 'settlement signature kept') : text(res, got.status || 409, got.why);
       }
 
+      // WHERE A WINNING GOES, NAMED ONCE (the owner 2026-09-21: "winnings are always sent. There is no Collect").
+      // The body is the Lightning address and a 64-byte signature over it by the entry's session key: a standing
+      // instruction kept before anything is owed, so the settlement can send with no page open.
+      if (req.method === 'POST' && url.pathname === '/payout-address') {
+        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
+        if (eid.length !== 32) return text(res, 400, 'an address is named for an entry id');
+        const stored = round.entry(eid);
+        if (!stored) return text(res, 404, 'this node holds no such entry');
+        const entry = decodeEntryContract(stored);
+        const all = new Uint8Array(await read(req));
+        if (all.length <= 64) return text(res, 400, 'that is too short to be an address and a signature');
+        const signed = all.subarray(0, all.length - 64);
+        if (!ed25519.verify(all.subarray(all.length - 64), signed, entry.sessionPubkey))
+          return text(res, 403, 'that address is not signed by the session key this entry was played with');
+        const address = Buffer.from(signed).toString('utf8').trim();
+        const where = lightningAddressEndpoint(address);
+        if (!where.ok) return text(res, 400, where.why);
+        round.putPayoutAddress({ entryId: new Uint8Array(eid), roundId: entry.roundId, address });
+        res.writeHead(201, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ entry: eid.toString('hex'), address, state: 'NAMED',
+          why: 'the winning is sent here when the round settles; nothing more is asked of the player' }) + '\n');
+      }
+
+      // THE COORDINATOR'S SEND PLANS, between signer nodes: kept only if each stands here (winnings-send.js).
+      if (req.method === 'POST' && url.pathname === '/settle-sends') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (rid.length !== 32) return text(res, 400, 'send plans are for a round id');
+        let proposed;
+        try { proposed = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch (e) { return text(res, 400, `not JSON: ${e.message}`); }
+        if (!Array.isArray(proposed)) return text(res, 400, 'send plans are a list');
+        const got = await settlements.takeSends(new Uint8Array(rid), proposed);
+        return got.ok ? text(res, 201, `${got.rows.length} send plan(s) checked and kept`) : text(res, got.status || 409, got.why);
+      }
+
+      // THE AUTH OF A SEND, between signer nodes: a commitment and a share over the invoice's consensus hash, each
+      // signer node answering only for the message it rebuilt; and the preimage, kept only if it is the invoice's.
+      if (req.method === 'POST' && ['/send-commit', '/send-share', '/winnings-paid'].includes(url.pathname)) {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        const eHex = String(url.searchParams.get('entry') || '');
+        if (rid.length !== 32 || !/^[0-9a-f]{64}$/.test(eHex)) return text(res, 400, 'a send is asked for by a round id and an entry id');
+        if (!winnings) return text(res, 409, 'this signer node sends no winnings');
+        const r8 = new Uint8Array(rid);
+        if (url.pathname === '/winnings-paid') {
+          const pre = new Uint8Array(await read(req));
+          if (pre.length !== 32) return text(res, 400, 'a preimage is 32 bytes');
+          const got = winnings.paid(r8, eHex, pre);
+          return got.ok ? text(res, 201, 'the winning is kept as paid') : text(res, got.status || 409, got.why);
+        }
+        const built = await settlements.message(r8);
+        if (!built.ok) return text(res, built.status || 409, built.why);
+        const kind = url.searchParams.get('kind') === 'resend' ? 'resend' : 'auth';
+        const attempt = url.searchParams.has('attempt') ? Number(url.searchParams.get('attempt')) : null;
+        if (url.pathname === '/send-commit') {
+          const got = await winnings.commit(r8, eHex, built, kind, attempt);
+          if (!got.ok) return text(res, got.status || 409, got.why);
+          res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
+          return res.end(Buffer.from(encodeCommitments([got.commitment])));
+        }
+        let list;
+        try { list = decodeCommitments(new Uint8Array(await read(req))); } catch (e) { return text(res, 400, e.message); }
+        const got = await winnings.share(r8, eHex, built, list, kind, attempt);
+        if (!got.ok) return text(res, got.status || 409, got.why);
+        res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
+        return res.end(Buffer.from(encodeShare(got.share)));
+      }
+
+      // A RE-SEND OF AN EXPIRED WINNING, between signer nodes: kept only if the previous attempt expired here, the gateway
+      // is the next live key here, and the invoice stands here (winnings-send.js `checkResend`).
+      if (req.method === 'POST' && url.pathname === '/resend-sends') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (rid.length !== 32) return text(res, 400, 'a re-send is for a round id');
+        if (!winnings) return text(res, 409, 'this signer node sends no winnings');
+        let proposed;
+        try { proposed = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch (e) { return text(res, 400, `not JSON: ${e.message}`); }
+        const built = await settlements.message(new Uint8Array(rid));
+        if (!built.ok) return text(res, built.status || 409, built.why);
+        const got = await winnings.checkResend(new Uint8Array(rid), built, proposed);
+        return got.ok ? text(res, 201, 're-send checked and kept') : text(res, got.status || 409, got.why);
+      }
+
+      // AND IN PUBLIC: where an entry's winning stands - its plan, its contract, and the preimage once paid.
+      if (req.method === 'GET' && url.pathname === '/winnings') {
+        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
+        if (eid.length !== 32) return text(res, 400, 'a winning is asked for by entry id');
+        const stored = round.entry(eid);
+        if (!stored) return text(res, 404, 'this node holds no such entry');
+        const rid = decodeEntryContract(stored).roundId;
+        const send = round.sendPlansOf(rid).find((r) => toHex(r.entryId) === eid.toString('hex'));
+        const paid = round.winnings(new Uint8Array(eid));
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ entry: eid.toString('hex'),
+          send: send ? { ...sendPlanToJson(send), state: send.state, why: send.why, txid: send.txid, outIdx: send.outIdx, preimage: send.preimage } : null,
+          winnings: paid ? { state: paid.state, owedMsat: String(paid.owedMsat), request: paid.request, paidMs: paid.paidMs } : null }) + '\n');
+      }
+
       // AND IN PUBLIC: where the round's settlement of its losers' locks stands.
       if (req.method === 'GET' && url.pathname === '/lock-settlement') {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
@@ -3193,7 +3318,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   return new Promise((resolve) => {
     http.listen(port, host, () => resolve({
       http, wss, round, host, verifier, ghosts, roster, preimages,
-      payouts, reconcilingPayouts, signing, poolWatch, dkg,
+      payouts, reconcilingPayouts, signing, poolWatch, dkg, settlements, winnings,
       // What the last close did with the money, and the same door an operator
       // uses to run a settlement again by hand.
       stakes: () => stakes,
@@ -3209,6 +3334,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // NO RE-GATHER OUTLIVES THE DAEMON.
         shuttingDown = true;
         clearInterval(settleRecoverTimer);
+        clearInterval(winningsTimer);
         if (endTimer) clearInterval(endTimer);
         for (const t of finalityTimers) clearTimeout(t);
         finalityTimers.clear();

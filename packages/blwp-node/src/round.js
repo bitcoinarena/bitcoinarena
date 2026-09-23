@@ -1800,6 +1800,57 @@ export class Round {
       address: r.address, namedMs: Number(r.named_ms) } : null;
   }
 
+  /** A winning's send plan, as this signer node checked it (protocol/winnings-send.js). One row per attempt. */
+  putSendPlan({ entryId, roundId, attempt = 0, address, invoice, paymentHash, invoiceMsat, payoutMsat, owedMsat, gatewayUrl, gatewayPk,
+    expiration, state = 'PLANNED', why }) {
+    const now = this.now();
+    this.db.prepare('INSERT INTO winnings_sends (entry_id, attempt, round_id, address, invoice, payment_hash, invoice_msat, payout_msat, '
+      + 'owed_msat, gateway_url, gateway_pk, expiration, state, why, planned_ms, updated_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
+      + 'ON CONFLICT(entry_id, attempt) DO NOTHING')
+      .run(Buffer.from(entryId), attempt, Buffer.from(roundId), String(address), String(invoice), String(paymentHash).toLowerCase(),
+        Number(invoiceMsat), Number(payoutMsat), Number(owedMsat), String(gatewayUrl), String(gatewayPk).toLowerCase(), Number(expiration),
+        state, String(why), now, now);
+  }
+
+  /** Where a send stands: its contract (txid, output), its preimage once the gateway paid, and its state. */
+  markSend({ entryId, attempt = 0, state, why, txid = null, outIdx = null, preimage = null }) {
+    this.db.prepare('UPDATE winnings_sends SET state = ?, why = ?, txid = COALESCE(?, txid), out_idx = COALESCE(?, out_idx), '
+      + 'preimage = COALESCE(?, preimage), updated_ms = ? WHERE entry_id = ? AND attempt = ?')
+      .run(state, String(why), txid, outIdx === null ? null : Number(outIdx), preimage, this.now(), Buffer.from(entryId), attempt);
+  }
+
+  /** Every attempt of every send of a round, in entry then attempt order. */
+  sendAttemptsOf(roundIdBytes) {
+    return this.db.prepare('SELECT * FROM winnings_sends WHERE round_id = ? ORDER BY entry_id, attempt').all(Buffer.from(roundIdBytes))
+      .map((r) => ({ entryId: new Uint8Array(r.entry_id), attempt: r.attempt, roundId: new Uint8Array(r.round_id),
+        address: r.address, invoice: r.invoice, paymentHash: r.payment_hash, invoiceMsat: BigInt(r.invoice_msat), payoutMsat: BigInt(r.payout_msat),
+        owedMsat: BigInt(r.owed_msat), gatewayUrl: r.gateway_url, gatewayPk: r.gateway_pk, expiration: BigInt(r.expiration),
+        txid: r.txid, outIdx: r.out_idx === null ? null : Number(r.out_idx), preimage: r.preimage, state: r.state, why: r.why }));
+  }
+
+  /** Every send of a round, the latest attempt of each entry, in entry order. */
+  sendPlansOf(roundIdBytes) {
+    const rows = this.db.prepare('SELECT * FROM winnings_sends WHERE round_id = ? ORDER BY entry_id, attempt').all(Buffer.from(roundIdBytes));
+    const latest = new Map();
+    for (const r of rows) latest.set(Buffer.from(r.entry_id).toString('hex'), r);
+    return [...latest.values()].map((r) => ({ entryId: new Uint8Array(r.entry_id), attempt: r.attempt, roundId: new Uint8Array(r.round_id),
+      address: r.address, invoice: r.invoice, paymentHash: r.payment_hash, invoiceMsat: BigInt(r.invoice_msat), payoutMsat: BigInt(r.payout_msat),
+      owedMsat: BigInt(r.owed_msat), gatewayUrl: r.gateway_url, gatewayPk: r.gateway_pk, expiration: BigInt(r.expiration),
+      txid: r.txid, outIdx: r.out_idx === null ? null : Number(r.out_idx), preimage: r.preimage, state: r.state, why: r.why }));
+  }
+
+  /** Every round holding a send that is not PAID - what the winnings sweep visits. */
+  roundsWithUnpaidSends() {
+    const out = new Map();
+    for (const r of this.db.prepare('SELECT round_id, entry_id, attempt, state FROM winnings_sends ORDER BY entry_id, attempt').all()) {
+      const k = Buffer.from(r.entry_id).toString('hex');
+      out.set(k, { roundId: new Uint8Array(r.round_id), state: r.state });
+    }
+    const rounds = new Map();
+    for (const v of out.values()) if (v.state !== 'PAID') rounds.set(Buffer.from(v.roundId).toString('hex'), v.roundId);
+    return [...rounds.values()];
+  }
+
   winningsOf(roundIdBytes) {
     return this.db.prepare('SELECT entry_id FROM winnings WHERE round_id = ?').all(Buffer.from(roundIdBytes))
       .map((r) => this.winnings(new Uint8Array(r.entry_id)));

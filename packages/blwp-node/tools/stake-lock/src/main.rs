@@ -215,9 +215,64 @@ async fn main() -> anyhow::Result<()> {
         "status" => status(&a, &api).await,
         "fees" => fees(&client, lnv2).await,
         "guardians" => guardians(&client).await,
-        "gateways" => gateways(&client).await,
-        other => bail!("no mode {other}: lock, redeem, settle, status, fees, guardians, gateways or id"),
+        "gateways" => gateways(&client, &api).await,
+        "send" => send(&a, &client).await,
+        other => bail!("no mode {other}: lock, redeem, settle, status, fees, guardians, gateways, send or id"),
     }
+}
+
+/// WINNINGS SENT: A GATEWAY IS ASKED TO PAY ONE OUTGOING CONTRACT'S INVOICE (§23.6; "winnings are always sent",
+/// the owner 2026-09-21, ruled for FEDERATION 2026-09-23). The contract is the one the settlement funded, rebuilt from
+/// its fields; the gateway pays only with a BIP-340 signature by the contract's refund key over the invoice's
+/// consensus hash (gwv2-client: "Invalid auth signature for the invoice data"), and the refund key is the round's
+/// committee claim key - so without --auth this prints the message the committee must sign, and with it, the
+/// stock client's own send_payment is posted to --gateway: the preimage if the gateway paid, or its answer.
+async fn send(a: &Args, client: &ClientHandle) -> anyhow::Result<()> {
+    use fedimint_core::encoding::Encodable;
+    use fedimint_lnv2_common::gateway_api::{GatewayConnection, RealGatewayConnection};
+    let refund_pk = PublicKey::from_str(need(a, "refund-pk")?)?;
+    let contract = OutgoingContract {
+        payment_image: PaymentImage::Hash(sha256::Hash::from_str(need(a, "hash")?)?),
+        amount: Amount::from_msats(need(a, "amount-msat")?.parse()?),
+        expiration: need(a, "expiration")?.parse()?,
+        claim_pk: PublicKey::from_str(need(a, "claim-pk")?)?,
+        refund_pk,
+        ephemeral_pk: refund_pk,
+    };
+    let bolt11 = lightning_invoice::Bolt11Invoice::from_str(need(a, "invoice")?).map_err(|e| anyhow!("not a bolt11 invoice: {e:?}"))?;
+    if bolt11.payment_hash().to_byte_array() != match &contract.payment_image { PaymentImage::Hash(h) => h.to_byte_array(), PaymentImage::Point(_) => [0u8; 32] } {
+        bail!("the invoice's payment hash is not the contract's");
+    }
+    let invoice = fedimint_lnv2_common::LightningInvoice::Bolt11(bolt11);
+    let message = invoice.consensus_hash::<sha256::Hash>();
+    let mut report = serde_json::json!({
+        "mode": "send",
+        "contract_id": contract.contract_id().0.to_string(),
+        "auth_message_hex": hex(message.as_ref()),
+    });
+    let Some(auth_hex) = a.get("auth") else {
+        println!("{report}");
+        return Ok(());
+    };
+    let auth = Signature::from_slice(&hex_bytes(auth_hex)?)?;
+    if SECP256K1.verify_schnorr(&auth, &Message::from_digest(*message.as_ref()), &refund_pk.x_only_public_key().0).is_err() {
+        bail!("that auth signature is not the refund key's over this invoice");
+    }
+    let (txid, idx) = need(a, "outpoint")?.split_once(':').context("an outpoint is TXID:IDX")?;
+    let outpoint = OutPoint { txid: TransactionId::from_str(txid)?, out_idx: idx.parse()? };
+    let gateway = fedimint_core::util::SafeUrl::parse(need(a, "gateway")?)?;
+    let connectors = ConnectorRegistry::build_from_client_defaults().bind().await?;
+    let conn = RealGatewayConnection { api: fedimint_lnv2_common::GatewayApi::new(None, connectors) };
+    let said = conn.send_payment(gateway.clone(), client.federation_id(), outpoint, contract, invoice, auth).await;
+    match said {
+        Ok(Ok(preimage)) => { report["sent"] = true.into(); report["preimage"] = hex(&preimage).into(); }
+        Ok(Err(forfeit)) => { report["sent"] = false.into(); report["why"] = "the gateway cancelled: it forfeits its claim".into();
+            report["forfeit_signature"] = hex(&forfeit.serialize()).into(); }
+        Err(e) => { report["sent"] = false.into(); report["why"] = format!("{e:?}").into(); }
+    }
+    report["gateway"] = gateway.to_string().into();
+    println!("{report}");
+    Ok(())
 }
 
 /// THE FEDERATION'S GATEWAYS, AS ITS GUARDIANS LIST THEM AND AS EACH ANSWERS (§23.6: "deposits and
@@ -228,7 +283,7 @@ async fn main() -> anyhow::Result<()> {
 /// that does not answer, or answers that it does not serve this federation, is listed with `live: false`.
 /// Two URLs in front of one Lightning node carry one key and are one gateway; counting them is the
 /// caller's (`gatewaysAreIndependent`), not this tool's. Read-only: nothing is paid or registered.
-async fn gateways(client: &ClientHandle) -> anyhow::Result<()> {
+async fn gateways(client: &ClientHandle, api: &DynModuleApi) -> anyhow::Result<()> {
     let lnv2 = client.get_first_module::<fedimint_lnv2_client::LightningClientModule>()?;
     let urls = lnv2.list_gateways(None).await.map_err(|e| anyhow!("the guardians did not list gateways: {e:?}"))?;
     let mut listed = Vec::new();
@@ -239,6 +294,11 @@ async fn gateways(client: &ClientHandle) -> anyhow::Result<()> {
                 "url": url.to_string(), "live": true,
                 "lightning_public_key": info.lightning_public_key.to_string(),
                 "module_public_key": info.module_public_key.to_string(),
+                // ITS OWN TERMS FOR A LIGHTNING SEND: the fee it takes out of an outgoing contract and the
+                // expiration it wants - what a winnings contract is sized and dated by.
+                "send_fee_default": { "base_msat": info.send_fee_default.base.msats, "ppm": info.send_fee_default.parts_per_million },
+                "expiration_delta_default": info.expiration_delta_default,
+                "expiration_delta_minimum": info.expiration_delta_minimum,
             }),
             Ok(None) => serde_json::json!({ "url": url.to_string(), "live": false,
                 "why": "the gateway answered that it does not serve this federation" }),
@@ -248,6 +308,8 @@ async fn gateways(client: &ClientHandle) -> anyhow::Result<()> {
     println!("{}", serde_json::json!({
         "mode": "gateways",
         "federation_id": client.federation_id().to_string(),
+        // THE FEDERATION'S OWN HEIGHT, the consensus block count a contract's expiration is measured against.
+        "block_count": block_count(api).await?,
         "gateways": listed,
     }));
     Ok(())
@@ -456,7 +518,7 @@ async fn settle(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api: &D
     let mut inputs = Vec::new();
     let mut input_msats = 0u64;
     let mut input_fee_msats = 0u64;
-    for spec in need(a, "locks")?.split(',') {
+    for spec in a.get("locks").map(String::as_str).unwrap_or("").split(',').filter(|x| !x.is_empty()) {
         let parts: Vec<&str> = spec.split(':').collect();
         let [txid, idx, preimage, msat] = parts[..] else { bail!("a lock is TXID:IDX:PREIMAGE:MSAT") };
         let op = OutPoint { txid: TransactionId::from_str(txid)?, out_idx: idx.parse()? };
@@ -468,6 +530,23 @@ async fn settle(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api: &D
         locks.push(op);
     }
 
+    // AND EVERY EXPIRED PAYOUT CONTRACT OF THE COMMITTEE'S, AS Refund: a winnings contract whose gateway did not
+    // pay before its expiration returns to the refund key it names - the round's committee claim key - and is
+    // spent here into the payout that re-sends it (--refunds TXID:IDX:MSAT[,...]; the one signature covers it).
+    for spec in a.get("refunds").map(String::as_str).unwrap_or("").split(',').filter(|x| !x.is_empty()) {
+        let parts: Vec<&str> = spec.split(':').collect();
+        let [txid, idx, msat] = parts[..] else { bail!("a refund is TXID:IDX:MSAT") };
+        let op = OutPoint { txid: TransactionId::from_str(txid)?, out_idx: idx.parse()? };
+        let amount = Amount::from_msats(msat.parse()?);
+        input_msats += amount.msats;
+        input_fee_msats += fee.fee(amount).msats;
+        inputs.push(LightningInput::V0(LightningInputV0::Outgoing(op, OutgoingWitness::Refund)).into_dyn(lnv2));
+        locks.push(op);
+    }
+    if inputs.is_empty() {
+        bail!("a settlement spends at least one lock (--locks) or one expired payout (--refunds)");
+    }
+
     // THE PAYOUTS. With --payouts PK:MSAT[,...] exactly those, in that order -
     // the amounts are the seats' rule (blwp-node settlement), not this tool's -
     // and refused outright if they and their fees are more than the locks pay
@@ -475,11 +554,45 @@ async fn settle(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api: &D
     // largest the inputs pay for (out + fee(out) <= inputs - their fees),
     // stepped down from the top so the figure is the rule's.
     let spendable = input_msats - input_fee_msats;
+    // A PAYOUT IS ONE OF TWO SHAPES. `PK:MSAT` is the pre-expired contract only PK can move (the Collect shape).
+    // `invoice:HASH:GATEWAY_PK:REFUND_PK:EXPIRATION:MSAT` is WINNINGS ALWAYS SENT (the owner 2026-09-21, ruled for
+    // FEDERATION 2026-09-23): an outgoing contract the named gateway may claim only with the preimage of HASH -
+    // that is, only by paying the winner's invoice - and which, unpaid past EXPIRATION, refunds to REFUND_PK, the
+    // round's committee claim key, never the winner's. The fields are the signer node's, rebuilt byte for byte.
+    // ONE LIST, IN THE ORDER GIVEN: the txid is over the outputs in order, and the signer node sorts them.
     let mut payouts: Vec<(PublicKey, u64)> = Vec::new();
+    let mut ordered: Vec<OutgoingContract> = Vec::new();
     if let Some(list) = a.get("payouts") {
         for spec in list.split(',') {
+            if let Some(rest) = spec.strip_prefix("invoice:") {
+                let p: Vec<&str> = rest.split(':').collect();
+                let [hash, gateway, refund, expiration, msat] = p[..] else {
+                    bail!("an invoice payout is invoice:HASH:GATEWAY_PK:REFUND_PK:EXPIRATION:MSAT")
+                };
+                let refund_pk = PublicKey::from_str(refund)?;
+                ordered.push(OutgoingContract {
+                    payment_image: PaymentImage::Hash(sha256::Hash::from_str(hash)?),
+                    amount: Amount::from_msats(msat.parse()?),
+                    expiration: expiration.parse()?,
+                    claim_pk: PublicKey::from_str(gateway)?,
+                    refund_pk,
+                    ephemeral_pk: refund_pk,
+                });
+                continue;
+            }
             let (pk, msat) = spec.split_once(':').context("a payout is PK:MSAT")?;
-            payouts.push((PublicKey::from_str(pk)?, msat.parse()?));
+            let pk = PublicKey::from_str(pk)?;
+            payouts.push((pk, msat.parse()?));
+            ordered.push(OutgoingContract {
+                // Unused: the lock is pre-expired, so Claim is refused for everybody,
+                // and its claim key is the qualifier's anyway.
+                payment_image: PaymentImage::Hash(sha256::Hash::from_byte_array([0u8; 32])),
+                amount: Amount::from_msats(msat.parse()?),
+                expiration: 0,
+                claim_pk: pk,
+                refund_pk: pk,
+                ephemeral_pk: pk,
+            });
         }
     } else {
         let qualifier = PublicKey::from_str(need(a, "qualifier-pk")?)?;
@@ -489,31 +602,29 @@ async fn settle(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api: &D
         }
         payouts.push((qualifier, out));
     }
+    if a.get("payouts").is_none() {
+        for (pk, msat) in &payouts {
+            ordered.push(OutgoingContract {
+                payment_image: PaymentImage::Hash(sha256::Hash::from_byte_array([0u8; 32])),
+                amount: Amount::from_msats(*msat), expiration: 0, claim_pk: *pk, refund_pk: *pk, ephemeral_pk: *pk,
+            });
+        }
+    }
     let mut outputs = Vec::new();
     let mut contracts = Vec::new();
     let mut out = 0u64;
     let mut output_fee_msats = 0u64;
-    for (pk, msat) in &payouts {
-        let payout = OutgoingContract {
-            // Unused: the lock is pre-expired, so Claim is refused for everybody,
-            // and its claim key is the qualifier's anyway.
-            payment_image: PaymentImage::Hash(sha256::Hash::from_byte_array([0u8; 32])),
-            amount: Amount::from_msats(*msat),
-            expiration: 0,
-            claim_pk: *pk,
-            refund_pk: *pk,
-            ephemeral_pk: *pk,
-        };
-        out += msat;
-        output_fee_msats += fee.fee(Amount::from_msats(*msat)).msats;
-        outputs.push(LightningOutput::V0(LightningOutputV0::Outgoing(payout.clone())).into_dyn(lnv2));
-        contracts.push(payout);
+    for c in &ordered {
+        out += c.amount.msats;
+        output_fee_msats += fee.fee(c.amount).msats;
+        outputs.push(LightningOutput::V0(LightningOutputV0::Outgoing(c.clone())).into_dyn(lnv2));
+        contracts.push(c.clone());
     }
     if out + output_fee_msats > spendable {
         bail!("the payouts ({out} msat, {output_fee_msats} msat in fees) are more than the locks pay for ({spendable} msat after their own fees)");
     }
-    let payout = contracts[0].clone();
-    let qualifier = payouts[0].0;
+    let payout = contracts.first().cloned().context("a settlement pays at least one payout")?;
+    let qualifier = payout.refund_pk;
     let txid = Transaction::tx_hash_from_parts(&inputs, &outputs, nonce);
     let message_hex = hex(&txid[..]);
 
@@ -534,6 +645,8 @@ async fn settle(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api: &D
         "payouts": contracts.iter().enumerate().map(|(i, c)| serde_json::json!({
             "out_idx": i, "pk": c.refund_pk.to_string(), "msat": c.amount.msats,
             "contract_id": c.contract_id().0.to_string(),
+            "claim_pk": c.claim_pk.to_string(), "expiration": c.expiration,
+            "payment_hash": match &c.payment_image { PaymentImage::Hash(h) => h.to_string(), PaymentImage::Point(p) => p.to_string() },
         })).collect::<Vec<_>>(),
     });
     let Some(sig_hex) = a.get("signature") else {

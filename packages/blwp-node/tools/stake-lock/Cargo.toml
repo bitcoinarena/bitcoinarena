@@ -26,6 +26,7 @@ fedimint-core = { workspace = true }
 fedimint-ln-client = { workspace = true }
 fedimint-lnv2-client = { workspace = true }
 fedimint-lnv2-common = { workspace = true }
+lightning-invoice = { workspace = true }
 fedimint-meta-client = { workspace = true }
 fedimint-mint-client = { workspace = true }
 fedimint-mintv2-client = { workspace = true }
