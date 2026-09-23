@@ -28,11 +28,19 @@ const secretScalar = () => { let p = rand(32); while (scalarFrom32(p) >= FIELD) 
 export const CLAIM = Uint8Array.from([0x02, ...b32(0xc1)]);
 
 /** A federation port that holds locks by outpoint and counts every ask. */
-export function lockPort({ height = 1000 } = {}) {
+// TWO GATEWAYS ON TWO LIGHTNING NODES, both answering - what §23.6 asks of a paying round's federation, and
+// what the door counts through the port (`gateways()`). A test of that gate hands its own list.
+export const TWO_GATEWAYS = [
+  { url: 'http://gw-a.example/', live: true, lightningPublicKey: '02' + 'a1'.repeat(32) },
+  { url: 'http://gw-b.example/', live: true, lightningPublicKey: '03' + 'b2'.repeat(32) },
+];
+
+export function lockPort({ height = 1000, gateways = TWO_GATEWAYS } = {}) {
   const locks = new Map();
   const port = {
     // THE STAND-IN FEDERATION'S ID (W7): a round on this port names it, never an id of its own.
     federationId: TEST_FEDERATION_ID,
+    async gateways() { return { federationId: TEST_FEDERATION_ID, gateways }; },
     asked: 0, height, locks,
     async status(outpoint) {
       port.asked++;

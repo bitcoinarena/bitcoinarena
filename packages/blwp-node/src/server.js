@@ -14,6 +14,7 @@
 // One process, one player, no verification. There is no bond here, no quota
 // and no committee; those are M2.1 steps 4 and later, and each is refused
 // rather than half-built.
+import { federationGatewayCount } from '../../protocol/src/gateways.js';
 import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { WebSocketServer } from 'ws';
@@ -1595,6 +1596,31 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (contract.custody === 'FEDERATION' && contract.stakeMsat > 0n) {
           const custodyOk = custodyFieldsAreValid(contract);
           if (!custodyOk.ok) return text(res, 409, custodyOk.why);
+        }
+        // AND ITS FEDERATION HAS TWO GATEWAYS, OR IT TAKES NO STAKE HERE (§23.6: "deposits and withdrawals
+        // through any of at least two gateways ... run by different operators"; RULED the owner 2026-09-23).
+        // Counted through this signer node's own lock port, as the guardians are: distinct LIVE Lightning
+        // node keys among the names the guardians registered - two names on one node are one gateway, a name
+        // that does not answer is none. Under two, refused by name before anything of the round exists here.
+        // Inbound is not read and not claimed: the federation's API does not say it, and a deposit that
+        // commits through each gateway is where it is shown. A node with no lock port takes no stake in a
+        // FEDERATION round at all, and is not the one this asks.
+        if (contract.custody === 'FEDERATION' && contract.stakeMsat > 0n && stakeLocks) {
+          if (typeof stakeLocks.gateways !== 'function')
+            return text(res, 409, 'this signer node\'s lock port cannot list the federation\'s gateways, so it cannot count '
+              + 'two of them (§23.6): it opens no paying round');
+          let seen;
+          try { seen = await stakeLocks.gateways(); }
+          catch (e) { return text(res, 409, `this signer node could not list its federation's gateways: ${e.message}`); }
+          if (!(seen.federationId instanceof Uint8Array) || toHex(seen.federationId) !== toHex(contract.federationId))
+            return text(res, 409, `this signer node reaches federation ${seen.federationId instanceof Uint8Array
+              ? toHex(seen.federationId).slice(0, 16) : 'none'} and that round names ${toHex(contract.federationId).slice(0, 16)}, `
+              + 'so it cannot count that federation\'s gateways (§23.6)');
+          const n = federationGatewayCount(seen.gateways);
+          if (n.distinctLive < 2)
+            return text(res, 409, `that round's federation has ${n.distinctLive} distinct live gateway(s) `
+              + `(${n.registered} registered${n.notLive.length ? `, ${n.notLive.length} not answering` : ''}): a paying round `
+              + 'needs at least two, run by different operators (§23.6)');
         }
 
         const id = round.open(contract);

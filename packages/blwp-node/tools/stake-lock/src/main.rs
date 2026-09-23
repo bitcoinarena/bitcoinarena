@@ -215,8 +215,42 @@ async fn main() -> anyhow::Result<()> {
         "status" => status(&a, &api).await,
         "fees" => fees(&client, lnv2).await,
         "guardians" => guardians(&client).await,
-        other => bail!("no mode {other}: lock, redeem, settle, status, fees, guardians or id"),
+        "gateways" => gateways(&client).await,
+        other => bail!("no mode {other}: lock, redeem, settle, status, fees, guardians, gateways or id"),
     }
+}
+
+/// THE FEDERATION'S GATEWAYS, AS ITS GUARDIANS LIST THEM AND AS EACH ANSWERS (§23.6: "deposits and
+/// withdrawals through any of at least two gateways run by different operators"; FEDERATION.md condition 3).
+/// Every gateway URL the guardians have registered (lnv2 `list_gateways`, the union over peers), and for
+/// each one what it says for itself when asked (`routing_info` for this federation): its Lightning node's
+/// public key - which signs its invoices, so it IS the gateway's identity - and its module key. A gateway
+/// that does not answer, or answers that it does not serve this federation, is listed with `live: false`.
+/// Two URLs in front of one Lightning node carry one key and are one gateway; counting them is the
+/// caller's (`gatewaysAreIndependent`), not this tool's. Read-only: nothing is paid or registered.
+async fn gateways(client: &ClientHandle) -> anyhow::Result<()> {
+    let lnv2 = client.get_first_module::<fedimint_lnv2_client::LightningClientModule>()?;
+    let urls = lnv2.list_gateways(None).await.map_err(|e| anyhow!("the guardians did not list gateways: {e:?}"))?;
+    let mut listed = Vec::new();
+    for url in urls {
+        let said = lnv2.routing_info(&url).await;
+        listed.push(match said {
+            Ok(Some(info)) => serde_json::json!({
+                "url": url.to_string(), "live": true,
+                "lightning_public_key": info.lightning_public_key.to_string(),
+                "module_public_key": info.module_public_key.to_string(),
+            }),
+            Ok(None) => serde_json::json!({ "url": url.to_string(), "live": false,
+                "why": "the gateway answered that it does not serve this federation" }),
+            Err(e) => serde_json::json!({ "url": url.to_string(), "live": false, "why": format!("{e:?}") }),
+        });
+    }
+    println!("{}", serde_json::json!({
+        "mode": "gateways",
+        "federation_id": client.federation_id().to_string(),
+        "gateways": listed,
+    }));
+    Ok(())
 }
 
 /// THE FEDERATION'S GUARDIANS, OFF ITS OWN CONFIG (the owner 2026-09-15 07:33: every guardian
