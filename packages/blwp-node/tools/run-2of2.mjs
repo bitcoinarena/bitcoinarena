@@ -31,8 +31,12 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
+import { readFileSync } from 'node:fs';
 import { standUpRound } from './round-2of2.mjs';
 import { bitcoindRpc } from '../src/chain-rpc.js';
+import { stakeLockPort } from '../src/stake-lock-port.js';
+import { receiptsNeeded } from '../../protocol/src/threshold.js';
+import { toHex } from '../../protocol/src/hash.js';
 
 const env = process.env;
 const dir = env.BLWP_2OF2_DIR || '/mnt/bitcoin/blwp-2of2';
@@ -50,22 +54,57 @@ if (!env.RT) {
   console.error('the Daily opens its rounds on a regtest bitcoind: name its datadir as RT= (and its RPCPORT=)');
   process.exit(2);
 }
-// A PAYING 2-OF-2 ROUND BESIDE THE FREE ONE (the owner 2026-09-15 12:54, option B): BLWP_PAID_STAKE_MSAT
-// names its stake; its custody is THRESHOLD_LN - the committee's own Lightning (the four BLWP_LND*
-// settings, a regtest lnd on this chain) holds the stakes, no federation. The keeper keeps one of
-// each kind open. Refused here without the four settings: a signer node with no Lightning answers every
-// paying round 503, and a launcher asking every five seconds would only fill its log.
+// A PAYING ROUND BESIDE THE FREE ONE IS A FEDERATION ROUND (HARD, the owner 2026-09-23 10:19: "New paying
+// rounds are FEDERATION now"). BLWP_PAID_STAKE_MSAT names its stake, and the stake goes into a lock in the
+// round's federation - never into the committee's Lightning, which is THRESHOLD_LN and withdrawn (§23.6).
+//
+// IT IS ITS OWN COMMITTEE, SEVEN SIGNER NODES (ruled 2026-09-21: the fork is the 5-of-7 already in the
+// protocol). §23.6 wants the federation's threshold in DISTINCT bonded census nodes, the smallest federation
+// fedimintd builds is 3-of-4, and two signer nodes cannot be three; `receiptsNeeded` defines 2 and 7 and
+// nothing between. So the free round keeps its 2-of-2 on A and B, unchanged, and the paying round stands on
+// BLWP_PAID_PORTS - seven ports - whose first threshold-many nodes each advertise ONE guardian key of the
+// federation, the others guarding nothing. The federation is read through the same port a signer node
+// verifies a lock with: BLWP_STAKE_LOCK_BIN, BLWP_FEDERATION_CLIENT_DIR (a client joined to it), and its
+// invite in BLWP_FEDERATION_INVITE or the file BLWP_FEDERATION_INVITE_FILE. Refused here, by name, without
+// them: a paying round nobody can lock a stake into would only fill the lobby with rows nobody can pay.
 const paidStake = env.BLWP_PAID_STAKE_MSAT ? BigInt(env.BLWP_PAID_STAKE_MSAT) : 0n;
-if (paidStake > 0n && !['BLWP_LNCLI', 'BLWP_LND_DIR', 'BLWP_LND_RPC', 'BLWP_LND_NETWORK'].every((k) => env[k])) {
-  console.error('BLWP_PAID_STAKE_MSAT needs the committee\'s Lightning: set BLWP_LNCLI, BLWP_LND_DIR, BLWP_LND_RPC and BLWP_LND_NETWORK');
-  process.exit(2);
+let paidSetup = null;
+if (paidStake > 0n) {
+  const missing = ['BLWP_STAKE_LOCK_BIN', 'BLWP_FEDERATION_CLIENT_DIR', 'BLWP_PAID_PORTS'].filter((k) => !env[k]);
+  if (!env.BLWP_FEDERATION_INVITE && !env.BLWP_FEDERATION_INVITE_FILE) missing.push('BLWP_FEDERATION_INVITE');
+  if (missing.length) {
+    console.error(`BLWP_PAID_STAKE_MSAT opens FEDERATION rounds and needs their federation: set ${missing.join(', ')}`);
+    process.exit(2);
+  }
+  const ports = env.BLWP_PAID_PORTS.split(',').map((x) => Number(x.trim()));
+  if (ports.length !== 7 || ports.some((p) => !Number.isInteger(p) || p <= 0) || new Set(ports).size !== 7) {
+    console.error(`BLWP_PAID_PORTS names ${ports.length} port(s): a paying round's committee is seven signer nodes (5-of-7)`);
+    process.exit(2);
+  }
+  if (ports.includes(8080) || ports.includes(portA) || ports.includes(portB)) {
+    console.error('BLWP_PAID_PORTS names 8080 (signal-cli\'s) or a free round\'s port: the paying committee binds its own');
+    process.exit(2);
+  }
+  const invite = (env.BLWP_FEDERATION_INVITE || readFileSync(env.BLWP_FEDERATION_INVITE_FILE, 'utf8')).replace(/["\s]/g, '');
+  paidSetup = { ports, invite,
+    lock: stakeLockPort({ bin: env.BLWP_STAKE_LOCK_BIN, dataDir: env.BLWP_FEDERATION_CLIENT_DIR }) };
 }
-const paid = paidStake > 0n ? { stakeMsat: paidStake, custody: 'THRESHOLD_LN' } : null;
 mkdirSync(dir, { recursive: true, mode: 0o700 });
 const rpcport = env.RPCPORT || '30401';
-const rpc = bitcoindRpc({ url: `http://127.0.0.1:${rpcport}/`, cookiePath: `${env.RT}/regtest/.cookie` });
+// A CHAIN THAT ANSWERS TO A USER AND PASSWORD (RPCAUTH=user:password) rather than its cookie - a probe's
+// regtest is started that way. The Daily's own chain is read by its cookie, as before.
+// AND ONE WALLET NAMED (RPCWALLET) where more than one is loaded - "Multiple wallets are loaded" is what
+// such a chain answers a call that does not say which.
+const rpcUrl = `http://127.0.0.1:${rpcport}/${env.RPCWALLET ? `wallet/${env.RPCWALLET}` : ''}`;
+const rpc = env.RPCAUTH
+  ? bitcoindRpc({ url: rpcUrl, readCookie: () => env.RPCAUTH })
+  : bitcoindRpc({ url: rpcUrl, cookiePath: `${env.RT}/regtest/.cookie` });
+const auth = [
+  ...(env.RPCAUTH ? [`-rpcuser=${env.RPCAUTH.split(':')[0]}`, `-rpcpassword=${env.RPCAUTH.split(':').slice(1).join(':')}`] : []),
+  ...(env.RPCWALLET ? [`-rpcwallet=${env.RPCWALLET}`] : []),
+];
 const cli = (...a) => execFileSync(env.BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli',
-  ['-regtest', `-datadir=${env.RT}`, `-rpcport=${rpcport}`, ...a], { encoding: 'utf8' }).trim();
+  ['-regtest', `-datadir=${env.RT}`, `-rpcport=${rpcport}`, ...auth, ...a], { encoding: 'utf8' }).trim();
 
 // BOTH SIGNER NODES CLOSE EACH ROUND AT ITS END, by their own clocks (server closeAtEnd,
 // protocol roundEndMs), so every run is replayed, signed and made final.
@@ -74,23 +113,53 @@ const cli = (...a) => execFileSync(env.BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1
 // 9000 ticks - and the keeper opens the next with a minute to go. BLWP_ENTRY_WINDOW_MS names another.
 const entryWindowMs = BigInt(env.BLWP_ENTRY_WINDOW_MS || 150000);
 const round = await standUpRound({ host, portA, portB, store: dir, rpc, cli, page, signerNode: { closeAtEnd: true },
-  bDownAtStart: !!env.BLWP_START_B_DOWN, paid, entryWindowMs });
+  bDownAtStart: !!env.BLWP_START_B_DOWN, entryWindowMs });
 // SIGNER NODE B STARTS DOWN (BLWP_START_B_DOWN=1), for an operator's look at signer node A
 // restarted while it holds a close that needs B; SIGUSR2 brings B up.
 if (env.BLWP_START_B_DOWN) { await round.b.close(); say({ signerNodeB: 'down', atStart: true }); }
 say({ up: true, a: round.nodes[0], b: round.nodes[1], bound: [`${host}:${portA}`, `${host}:${portB}`],
   slots: 2, threshold: 2, firstRound: round.id,
   beacon: round.beacon && round.beacon.ok ? round.beacon.height : null, chain: `regtest at ${env.RT}` });
+// THE PAYING COMMITTEE, stood beside the free one on the same chain, with its own stores (BLWP_2OF2_DIR/paid).
+// The federation's own facts are read through the lock port - its id, its guardian keys, its threshold -
+// not written down here; §23.6 counts against them.
+let paidRound = null;
+if (paidSetup) {
+  const fed = await paidSetup.lock.guardians();
+  if (!fed.keys || fed.keys.length < fed.threshold)
+    throw new Error(`the federation names ${fed.keys ? fed.keys.length : 0} guardian key(s) under a threshold of ${fed.threshold}`);
+  receiptsNeeded(paidSetup.ports.length);
+  // ONE GUARDIAN PER NODE for the first threshold-many - a node vouches for the one key it runs - and none
+  // for the rest, which are bonded census nodes that guard nothing.
+  const guardianOf = paidSetup.ports.map((_, i) => (i < fed.threshold
+    ? [{ federationId: fed.federationId, guardianKey: fed.keys[i] }] : []));
+  const [pa, pb, pc, ...more] = paidSetup.ports;
+  mkdirSync(join(dir, 'paid'), { recursive: true, mode: 0o700 });
+  paidRound = await standUpRound({ host, portA: pa, portB: pb, portC: pc, extraPorts: more, store: join(dir, 'paid'),
+    rpc, cli, page, stakeMsat: paidStake, entryWindowMs, federationId: fed.federationId, invite: paidSetup.invite,
+    signerNode: { closeAtEnd: true, stakeLocks: paidSetup.lock }, guardianOf,
+    // THE DONATION SET'S TEST RECIPIENTS' DOOR: 18777, the port the signed test set names, unless an operator
+    // measuring beside the live Daily - which holds 18777 - names another.
+    ...(env.BLWP_RECIPIENT_PORT ? { donationRecipients: { port: Number(env.BLWP_RECIPIENT_PORT) } } : {}) });
+  say({ paid: 'up', custody: paidRound.contract.custody, stakeMsat: String(paidRound.contract.stakeMsat),
+    federation: toHex(fed.federationId).slice(0, 16), guardians: fed.keys.length, threshold: fed.threshold,
+    nodes: paidRound.nodes, firstRound: paidRound.id });
+}
 // THE LOBBY LINK, where an operator picks it up without reading the log.
 writeFileSync(join(dir, 'lobby-url.txt'), round.lobbyUrl + '\n');
 // AND THE SAME NAMES AS daily.json, which the Daily page deploys beside itself
 // so its bare root shows this lobby (lobby.js `dailyLobbySearch`). The public
 // addresses change with the tunnels, and then the page is deployed again.
+// The paying committee's nodes are listed beside the free pair, and its federation's invite goes with them,
+// so the lobby shows both kinds and a player can lock a stake into the federation the round names.
 writeFileSync(join(dir, 'daily.json'),
-  JSON.stringify({ node: round.nodes, bond: round.bond, advert: round.advert }, null, 2) + '\n');
+  JSON.stringify({ node: [...round.nodes, ...(paidRound ? paidRound.nodes : [])], bond: round.bond, advert: round.advert,
+    ...(paidRound ? { federation: paidSetup.invite } : {}) }, null, 2) + '\n');
 console.log(round.lobbyUrl);
-round.keepOpen({ onOpen: (id, kind) => say({ opened: id, stakeMsat: String(kind && kind.stakeMsat !== undefined ? kind.stakeMsat : 0n),
-  custody: (kind && kind.custody) || 'free' }), onError: (e) => say({ notOpened: e.message }) });
+round.keepOpen({ onOpen: (id) => say({ opened: id, stakeMsat: '0', custody: 'free' }),
+  onError: (e) => say({ notOpened: e.message }) });
+if (paidRound) paidRound.keepOpen({ onOpen: (id) => say({ opened: id, stakeMsat: String(paidStake), custody: 'FEDERATION' }),
+  onError: (e) => say({ paidNotOpened: e.message }) });
 
 // SIGNER NODE B DOWN AND BACK, for an operator's 2-of-2 look: SIGUSR1 closes signer node B,
 // SIGUSR2 serves it again on the same store and port (standUpRound's own
@@ -98,6 +167,6 @@ round.keepOpen({ onOpen: (id, kind) => say({ opened: id, stakeMsat: String(kind 
 process.on('SIGUSR1', async () => { await round.b.close(); say({ signerNodeB: 'down' }); });
 process.on('SIGUSR2', async () => { await round.restartB(); say({ signerNodeB: 'up' }); });
 
-const stop = async () => { say({ stopping: true }); await round.close(); process.exit(0); };
+const stop = async () => { say({ stopping: true }); await round.close(); if (paidRound) await paidRound.close(); process.exit(0); };
 process.on('SIGINT', stop);
 process.on('SIGTERM', stop);
