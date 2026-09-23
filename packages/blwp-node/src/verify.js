@@ -404,24 +404,10 @@ export class Verifier {
     // A HELD-BACK FINAL MARK (ruled 2026-09-23): a run that would be signed as a stopped transcript, while a peer
     // holds the run's final mark over inputs this signer node is short of, is not signed yet - its close does not
     // end the window; the settlement's combine does. Only this case; every other stopped run is signed as ever.
-    if (answer.outcome === null) {
-      const held = await this.#holdBack(roundIdBytes, entryId, entry);
-      if (held) return held;
-    } else {
-      // INPUTS WHOLE, BUT THE SAME MARK NOT YET TAKEN: still held - feed first, then the mark - so this node signs over
-      // the transcript its peers carry (measured on 5 of 7: B signed as its inputs completed, before the mark came, and
-      // every re-offer after met "the round is closed"). Until the combine; then the doors shut and it signs.
-      const held = this.round.heldFinalAsk(entryId);
-      if (held) {
-        const settled = this.round.lockSettlement ? this.round.lockSettlement(roundIdBytes) : null;
-        const combined = !!(settled && (settled.state === 'SUBMITTING' || settled.state === 'ACCEPTED'));
-        const markHere = this.round.holdsMark(checkpointId(decodeCheckpoint(splitSignedMark(held.mark).body)));
-        if (!markHere && !combined)
-          return { entryId, stored: false, waiting: true, heldBack: true,
-            why: `holding back the close: inputs whole through ${held.tick}, the run's final mark not yet taken here` };
-        this.round.dropHeldFinalAsk(entryId);        // whole now, mark and all (or combined): the doors shut
-      }
-    }
+    // ONE CHECK, WHATEVER THE REPLAY SAID (ruled 2026-09-24): a DELIVERED signature is over the transcript that holds
+    // the final mark, so a node short the mark - its inputs short or whole - does not sign until it has it.
+    const held = await this.#holdBack(roundIdBytes, entryId, entry);
+    if (held) return held;
     // AND THE SIGNER NODE THAT HOLDS THE FINAL MARK'S ASK, while that mark is not yet carried because a peer is short
     // of its inputs: its close does not end the window either, so both sign over the same transcript (measured: A
     // signed at its close without the final mark, B after its catch-up with it - two hashes, never 2 of 2). Only the
@@ -442,8 +428,9 @@ export class Verifier {
 
   /**
    * HOLD BACK THIS RUN'S CLOSE-TIME RESULT? Only when a peer's receipts named a mark this node has not got (the close's
-   * own pull), that mark is at a peer - signed by the entry's session key, chained onto a mark this node holds - and
-   * this node is short of the inputs before its tick. Then the mark is kept (`putHeldFinalAsk`) and the doors take
+   * own pull) and that mark is at a peer - signed by the entry's session key, chained onto a mark this node holds -
+   * whether this node is short of the inputs before its tick or short only the mark (ruled 2026-09-24: measured on
+   * 5 of 7, a node whose batches landed just before its close signed DELIVERED without the mark). Then the mark is kept (`putHeldFinalAsk`) and the doors take
    * its batches and it, feed first, until the run can be replayed whole. Not once the settlement is combined: then the
    * stopped transcript is signed and the doors shut. Answers the held answer, or null to sign as ever.
    */
@@ -461,15 +448,19 @@ export class Verifier {
       if (!ask) return null;
       this.round.putHeldFinalAsk({ roundId: roundIdBytes, entryId, mark: ask.mark, tick: ask.tick });
     }
+    // THE MARK IN, AND ITS INPUTS: the hold is done - the doors shut, and the run is signed over the transcript with it.
     const have = this.round.heldInputTicks(roundIdBytes, entryId);
+    if (this.round.holdsMark(checkpointId(decodeCheckpoint(splitSignedMark(ask.mark).body))) && have >= ask.tick) {
+      this.round.dropHeldFinalAsk(entryId);
+      return null;
+    }
     return { entryId, stored: false, waiting: true, heldBack: true,
-      why: `holding back the close: a peer holds the run's final mark at tick ${ask.tick} and this signer node holds inputs `
-        + `through ${have}${this.round.holdsMark(checkpointId(decodeCheckpoint(splitSignedMark(ask.mark).body))) ? ', the mark itself taken' : ''}` };
+      why: `holding back the close: a peer holds the run's final mark at tick ${ask.tick}; this signer node holds inputs `
+        + `through ${have}${have >= ask.tick ? ' (whole) and not the mark' : ''}` };
   }
 
-  /** The mark a peer holds past this node's chain, over inputs this node is short of - checked, never believed. */
+  /** The mark a peer holds past this node's chain - checked, never believed. */
   async #peerFinalMark(roundIdBytes, entryId, entry) {
-    const have = this.round.heldInputTicks(roundIdBytes, entryId);
     for (const peer of this.peersOf(roundIdBytes)) {
       let body;
       try {
@@ -484,7 +475,6 @@ export class Verifier {
         if (hex(c.entryId) !== hex(entryId) || hex(c.roundId) !== hex(roundIdBytes)) continue;
         const id = checkpointId(c);
         if (this.round.holdsMark(id) || !this.round.holdsMark(c.previousHash)) continue;
-        if (c.tick <= have) continue;
         let ok = false;
         try { ok = sessionCurve.verify(sig, id, entry.sessionPubkey); } catch { ok = false; }
         if (!ok) continue;

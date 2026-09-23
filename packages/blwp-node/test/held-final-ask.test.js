@@ -78,3 +78,17 @@ test('a node holding back its close for the final mark takes that mark\'s batche
   assert.equal(r.heldFinalAsk(eid), null);
   assert.throws(() => r.checkpoint(sign(other)), /the round is closed/);
 });
+
+// SHORT ONLY THE MARK (ruled 2026-09-24): the inputs landed before the close, the mark did not. The checkpoint door
+// takes that same mark after the close, byte for byte, and nothing else; no batch past its tick.
+test('a node holding back only for the mark - its inputs whole before the close - takes that same mark after it, and nothing else', () => {
+  const { r, rid, eid, b2, past, m120, other } = rig();
+  assert.equal(r.batch(encodeInputBatch(b2)), 60);                 // the inputs land while the round is open
+  r.close(rid);
+  r.putHeldFinalAsk({ roundId: rid, entryId: eid, mark: sign(m120), tick: 120 });
+  assert.equal(r.heldInputTicks(rid, eid), 120, 'the inputs were not whole');
+  assert.throws(() => r.batch(encodeInputBatch(past)), /the round is closed/);
+  assert.throws(() => r.checkpoint(sign(other)), /the round is closed/);
+  assert.ok(r.checkpoint(sign(m120)) instanceof Uint8Array, 'the same mark was not taken after the close');
+  assert.equal(r.checkpoints(rid, eid).count, 2);
+});
