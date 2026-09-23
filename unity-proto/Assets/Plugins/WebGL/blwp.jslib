@@ -382,6 +382,31 @@ mergeInto(LibraryManager.library, {
         .then(function (sig) { return new Uint8Array(sig); });
     };
 
+    // THE ONE OTHER THING THE SESSION KEY SIGNS (RULED 2026-09-23): the winner's Lightning address, its UTF-8 bytes and
+    // nothing else - no score, no payout, no round id - and only a string that IS a Lightning address. The key does not
+    // leave this closure; the page is handed this call, never `sign`.
+    // THE SHAPE IS CHECKED HERE, NOT BORROWED: a name@host string and nothing else (the full Lightning-address check is
+    // the page's `askForWinnings` before it asks, and every signer node's door after). Here only so the session key can
+    // never be made to sign bytes that are not an address - a checkpoint id is not one.
+    var ADDRESS_SHAPE = /^[A-Za-z0-9._+-]{1,64}@[A-Za-z0-9.-]{1,253}(:[0-9]{1,5})?$/;
+    var signAddress = function (address) {
+      if (typeof address !== 'string' || !ADDRESS_SHAPE.test(address))
+        return Promise.reject(new Error('that is not a Lightning address, so it is not signed'));
+      if (!keys) return Promise.reject(new Error('this run has no session key'));
+      return sign(new TextEncoder().encode(address));
+    };
+    // WHAT THE RUN-OVER HOOK IS HANDED: this run's round and entry, the page core's word and score, the round's
+    // min_score and signer nodes, and the address call. The page asks once, only a qualifier (`askForWinnings`).
+    net.winningsRun = function () {
+      var b = Module.blwp;
+      if (!b || !net.where || !net.contract) return null;
+      return {
+        roundHex: BLWPCLIENT.toHex(net.where.roundId), entryHex: BLWPCLIENT.toHex(net.where.entryId),
+        word: b.st.i32[18 + 5] | 0, score: b.st.i32[18 + 4] | 0, minScore: Number(net.contract.minScore || 0),
+        nodes: (typeof BLWP_NODES !== 'undefined' && BLWP_NODES) ? BLWP_NODES.slice() : [], signAddress: signAddress,
+      };
+    };
+
     crypto.subtle.generateKey({ name: 'Ed25519' }, false, ['sign', 'verify'])
       .then(function (pair) {
         keys = pair;
@@ -432,6 +457,7 @@ mergeInto(LibraryManager.library, {
         roundId: C.roundId(contract), sessionPubkey: net.sessionPubkey,
       });
       net.where = { roundId: C.roundId(contract), entryId: C.entryId(entry) };
+      net.contract = contract;
       var verify = function (sig, msg, key) {
         // NODE SIGNATURES ARE SCHNORR under the bond key (letter 26). The
         // session key below is still Ed25519. Mixing them was the 09:33 fault:
@@ -516,7 +542,7 @@ mergeInto(LibraryManager.library, {
       // client's: this prints them and picks neither.
       net.client.onEnd = function (word, why) {
         console.log('[blwp] run ended ' + word + ': ' + why);
-        if (typeof window !== 'undefined' && window.BLWP_RUN_OVER) window.BLWP_RUN_OVER(word);
+        if (typeof window !== 'undefined' && window.BLWP_RUN_OVER) window.BLWP_RUN_OVER(word, net.winningsRun ? net.winningsRun() : null);
       };
       net.client.onDrop = function () {
         net.client.reconnect(net.where).then(function (r) {
@@ -643,7 +669,7 @@ mergeInto(LibraryManager.library, {
       if (done) {
         net.finishing = done;
         // AND THE PAGE LETS GO OF THE ROUND (hole 2): the address is the lobby's again.
-        if (typeof window !== 'undefined' && window.BLWP_RUN_OVER) window.BLWP_RUN_OVER(net.client.endingLine());
+        if (typeof window !== 'undefined' && window.BLWP_RUN_OVER) window.BLWP_RUN_OVER(net.client.endingLine(), net.winningsRun ? net.winningsRun() : null);
         return;
       }
       if (net.client.state !== 'ready') return;

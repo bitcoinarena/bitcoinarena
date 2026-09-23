@@ -6,6 +6,7 @@
 //   B  the only qualifier unaddressed: no stake lock claimed, no invoice asked; the fee locks still settle.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { ed25519 } from '@noble/curves/ed25519.js';
 
 import { lockPort, TWO_GATEWAYS } from './lock-fixture.js';
 import { lockRound, lockAndPlay, closeRound, untilSettled, standing, lnurl as lnurlFixture, nameAddress as nameAddressAt } from './lock-round-fixture.js';
@@ -104,5 +105,38 @@ test('POOL B on the signer nodes: the only qualifier names no address - no stake
     assert.equal(addr.issued.length, 0);
     assert.equal(port.gatewayPayments.length, 0);
     assert.equal([won, lost].filter((x) => lockHeld(x.feeOutpoint)).length, 0, 'the seats were not paid their fee');
+  } finally { await w.close(); }
+});
+
+// THE FIRST ADDRESS STANDS (ruled 2026-09-23): the page posts the same signed bytes again to a node that did not answer,
+// and that is 201 and changes nothing; another address for the same entry is 409, so no second one splits the nodes.
+test('the first address stands at every signer node: the same bytes again are 201 and change nothing, another address is 409', async () => {
+  const port = lockPort();
+  const w = await lockRound({ port });
+  try {
+    const won = await lockAndPlay(w, WINNER);
+    const post = async (d, address) => {
+      const bytes = new TextEncoder().encode(address);
+      const r = await fetch(`http://127.0.0.1:${d.port}/payout-address?entry=${toHex(won.eid)}`,
+        { method: 'POST', body: Buffer.concat([Buffer.from(bytes), Buffer.from(ed25519.sign(bytes, won.session))]) });
+      return { status: r.status, text: (await r.text()).trim() };
+    };
+    const got = [];
+    for (const d of [w.a, w.b]) {
+      const first = await post(d, 'winner@pay.example');
+      const namedMs = d.round.payoutAddress(won.eid).namedMs;
+      await wait(20);
+      const same = await post(d, 'winner@pay.example');
+      const other = await post(d, 'thief@pay.example');
+      got.push({ first: first.status, same: same.status, other: other.status, why: other.text, held: d.round.payoutAddress(won.eid).address,
+        unchanged: d.round.payoutAddress(won.eid).namedMs === namedMs });
+    }
+    console.log('  FACTS (first stands):', JSON.stringify(got));
+    for (const g of got) {
+      assert.deepEqual([g.first, g.same, g.other], [201, 201, 409]);
+      assert.equal(g.held, 'winner@pay.example', 'a second address replaced the first');
+      assert.equal(g.unchanged, true, 'the same bytes again changed the row');
+      assert.match(g.why, /first one stands/);
+    }
   } finally { await w.close(); }
 });

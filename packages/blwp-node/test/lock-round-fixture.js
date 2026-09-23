@@ -9,6 +9,7 @@ import { serve } from '../src/server.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { assumeAssigned } from './assignment.js';
 import { lockPort } from './lock-fixture.js';
+import { askerOrder } from '../src/payout.js';
 import { testInvoice } from './bolt11-fixture.js';
 import { b32, rand, RANDOMNESS, STAKE, WINDOW_MS, GENESIS_HASH, wordsAt, contractFor, say, secretScalar, opts, wait } from './window-fixture.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
@@ -153,6 +154,13 @@ export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, ad
   return played;
 }
 
+// THE SIGNER NODE THAT COMBINES AND SUBMITS: the round's asker, seat 0 of M3.3-19's order (the keys sorted, rotated by
+// an index from the round id). Its row says what the settlement moved; the others say they found it in the federation.
+export const proposerOf = (w) => {
+  const nodes = [w.a, w.b].sort((x, y) => (toHex(x.round.pubkey) < toHex(y.round.pubkey) ? -1 : 1));
+  const first = askerOrder(w.rid, nodes.map((d) => d.round.pubkey)).order[0];
+  return nodes.find((d) => toHex(d.round.pubkey) === toHex(first));
+};
 export const standing = async (d, w) => (await fetch(`http://127.0.0.1:${d.port}/lock-settlement?round=${toHex(w.rid)}`)).json();
 export const closeRound = (w) => Promise.all([say(w.a.port, `close ${toHex(w.rid)}`), say(w.b.port, `close ${toHex(w.rid)}`)]);
 

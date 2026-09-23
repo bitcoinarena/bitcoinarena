@@ -28,7 +28,7 @@ import { serve } from '../src/server.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { assumeAssigned } from './assignment.js';
 import { lockPort } from './lock-fixture.js';
-import { lockRound, lockAndPlay, standing, closeRound, untilSettled, curve, lnurl } from './lock-round-fixture.js';
+import { lockRound, lockAndPlay, standing, closeRound, untilSettled, curve, lnurl, proposerOf } from './lock-round-fixture.js';
 import { b32, rand, RANDOMNESS, STAKE, WINDOW_MS, WINNER, LOSER, GENESIS_HASH, wordsAt, contractFor, say, secretScalar, opts, wait } from './window-fixture.js';
 import { encodeRoundContract, decodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
 import { dealHandout, encodeHandout, handoutId } from '../../protocol/src/handout.js';
@@ -276,7 +276,8 @@ test('under the real guardians\' 1000 msat per input and output the 2000 msat fe
     const lost = await lockAndPlay(w, LOSER, { feeLock: true });
     federationChargesItsRealFee(w);   // the arithmetic below is fedimintd's, and every entry is already in
     await closeRound(w);
-    const got = await untilSettled(w);
+    await untilSettled(w);
+    const got = await standing(proposerOf(w), w);   // the combining signer node's own account of what it moved
     const paid = [...w.port.payouts.values()];
     console.log(`  real fee rule with fee locks: ${got.state} - ${got.why}; payouts ${paid.map((p) => p.msat).join(', ')}`);
     assert.equal(got.state, 'ACCEPTED', got.why);
@@ -319,8 +320,11 @@ test('a round with a loser and no qualifier pays no stake and still pays the sea
     const one = await lockAndPlay(w, WINNER);
     const two = await lockAndPlay(w, LOSER);
     await closeRound(w);
-    await wait(WINDOW_MS + 3000);
-    const got = await standing(w.a, w);
+    // POLLED, NOT SLEPT (2026-09-23): a fixed WINDOW + 3 s raced finality at +5.7-6.0 s on origin (1 in 2 red), and one
+    // signer node - the proposer - now combines, offering its plan again each second while a peer is not final. The
+    // assertion is what settles, not how soon: the proposer's row, up to 30 s.
+    let got = await standing(proposerOf(w), w);
+    for (const stop = Date.now() + 30000; Date.now() < stop && got.state !== 'ACCEPTED'; await wait(250)) got = await standing(proposerOf(w), w);
     const paidNQ = [...w.port.payouts.values()];
     const claimedNQ = w.port.settlements.flatMap((x) => x.claims.map((c) => key(c.outpoint)));
     console.log(`  no qualifier: ${got.state}; stake locks held ${[one, two].filter((x) => w.port.locks.has(key(x.outpoint))).length} of 2;`

@@ -159,7 +159,12 @@ async function lockRoundOnDisk() {
 }
 const rowAt = (d, w) => (d ? d.round.lockSettlement(w.rid) : null);
 const heldAt = (w, o) => w.port.locks.has(key(o));
-const payoutAt = (w, txid, i = 0) => (txid ? w.port.locks.has(`${txid}:${i}`) : false);
+// A SETTLEMENT IS IN when an output of its txid is stored - or, for the winning sent to the winner's address, when the
+// send made from that txid's own output is PAID: a gateway claims that contract as it pays, so it is no longer stored
+// (measured: which output that is follows the payout keys' order, and the old check read only output 0).
+const payoutAt = (w, txid) => (txid ? [...Array(8).keys()].some((i) => w.port.locks.has(`${txid}:${i}`))
+  || [w.a, w.b].some((d) => d && d.round.sendAttemptsOf(w.rid).some((r) => r.attempt === 0 && String(r.txid) === txid && r.state === 'PAID'))
+  : false);
 async function until(pred, ms = 10000) { for (const stop = Date.now() + ms; Date.now() < stop; await wait(100)) if (pred()) return true; return pred(); }
 // WHAT EACH SIGNER NODE'S ROW AND THE FEDERATION HOLD, printed before any assertion.
 const standingOf = (w, lost, signedTxid) => ({
@@ -267,7 +272,11 @@ test('W6 (b)+(c): the signer nodes died before sending, and after the restart th
     assert.equal(after.a.state, 'ACCEPTED', after.a.why);
     assert.notEqual(now.txid.slice(0, 12), before.a.txid, 'the plan did not change, so this measures nothing');
     assert.equal(after.loserLockHeld, false);
-    assert.equal(after.payoutAtNewTxid, true);
+    // THE NEW SETTLEMENT WENT IN: its payout is stored at the new txid - or, since the winner named an address, it was the
+    // outgoing contract a gateway claimed by paying: the send made from the new txid's own output is PAID.
+    const sentFromNew = [w.a, w.b].some((d) => d && d.round.sendAttemptsOf(w.rid)
+      .some((r) => r.attempt === 0 && String(r.txid).slice(0, 12) === now.txid.slice(0, 12) && r.state === 'PAID'));
+    assert.ok(after.payoutAtNewTxid || sentFromNew, 'nothing of the new settlement is in the federation');
   } finally { await w.close(); }
 });
 

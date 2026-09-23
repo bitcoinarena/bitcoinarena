@@ -91,13 +91,20 @@ export class WinningsSend {
 
   /** A PEER'S CHECK of the coordinator's plans, each against this signer node's own payout, gateways, height and LNURL. */
   async check(roundIdBytes, base, proposed) {
-    // A PLAN ALREADY KEPT IS NOT REPLACED: the same plan again is taken, another one is refused by name.
+    // A PLAN ALREADY KEPT IS NOT REPLACED - the same plan again is taken, another is refused by name - with one
+    // exception that makes two askers converge: while nothing of the round is settled or sent, a plan whose payment
+    // hashes sort LOWER replaces the kept one. Measured on a 5-of-7 under M3.3-19's takeover: two askers each fetched
+    // their own invoice, the peers split 4 and 2, and neither plan ever reached the five a signature needs.
     this.dropIfStale(roundIdBytes, base);
-    const kept = this.round.sendAttemptsOf(roundIdBytes).filter((x) => x.attempt === 0);
+    let kept = this.round.sendAttemptsOf(roundIdBytes).filter((x) => x.attempt === 0);
     if (kept.length) {
       const same = kept.length === proposed.length && kept.every((k) => proposed.some((p) => String(p.entry) === toHex(k.entryId)
         && String(p.paymentHash).toLowerCase() === k.paymentHash && Number(p.attempt || 0) === k.attempt));
-      return same ? { ok: true, rows: kept } : refuse('this signer node keeps another send plan for that round, and does not replace it');
+      if (same) return { ok: true, rows: kept };
+      if (!(planKey(proposed) < planKey(kept) && this.replaceable(roundIdBytes)))
+        return refuse('this signer node keeps another send plan for that round, and does not replace it');
+      this.round.dropPlannedSends(roundIdBytes);
+      kept = [];
     }
     const wanting = new Map(this.qualifiersWithAddress(base).map((w) => [toHex(w.entryId), w]));
     if (proposed.length !== wanting.size)
@@ -137,6 +144,18 @@ export class WinningsSend {
     const same = kept.length === wanting.size && kept.every((k) => wanting.get(toHex(k.entryId)) === k.payoutMsat);
     if (same) return false;
     return this.round.dropPlannedSends(roundIdBytes) > 0;
+  }
+
+  /** Whether a kept first plan may still give way: nothing settled, nothing sent, no re-send made. */
+  replaceable(roundIdBytes) {
+    const settled = this.round.lockSettlement(roundIdBytes);
+    if (settled && settled.state === 'ACCEPTED') return false;
+    return this.round.sendAttemptsOf(roundIdBytes).every((r) => r.attempt === 0 && r.state === 'PLANNED');
+  }
+
+  /** The first plan this signer node keeps, as the peers' door hands it out (GET /settle-sends). */
+  keptPlan(roundIdBytes) {
+    return this.round.sendAttemptsOf(roundIdBytes).filter((x) => x.attempt === 0).map(plain);
   }
 
   /** Qualifier payouts of the base plan whose entry named an address, with that address. */
@@ -411,3 +430,8 @@ export class WinningsSend {
 }
 
 export { plain as sendPlanToJson };
+
+/** A plan's order key: its payment hashes, sorted and joined. Two plans for one round compare by it. */
+export function planKey(rows) {
+  return rows.map((r) => String(r.paymentHash).toLowerCase()).sort().join(':');
+}

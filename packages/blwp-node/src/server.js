@@ -708,6 +708,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const picked = roster.committeeFor(rid, 'settlement');
       return picked.ok ? endpointsOf(picked.committee, round.pubkey) : (dkg.peers || []);
     },
+    // WHOSE TURN IT IS TO COMBINE (M3.3-19): the round's beacon height and this node's chain tip, as the payout reads them.
+    turnClock: {
+      beaconHeight: async (rid, contract) => {
+        if (typeof randomnessFor !== 'function') return null;
+        const g = await randomnessFor({ contract, roundIdBytes: rid });
+        return g && Number.isInteger(g.height) ? g.height : null;
+      },
+      tip: typeof chainTip === 'function' ? async () => Number(await chainTip()) : null,
+    },
     // WHO THE FEE LOCKS PAY (Pick A): the round's sitting signer nodes, drawn from the
     // census by role - the contract's own nodes where there is no census.
     signerNodesFor: (rid, contract) => {
@@ -2476,7 +2485,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (rid.length !== 32) return text(res, 400, 'a settlement is asked for by a round id');
         const r8 = new Uint8Array(rid);
         if (url.pathname === '/settle-commit') {
-          const got = await settlements.commit(r8);
+          const got = await settlements.commit(r8, { txid: url.searchParams.get('txid') });
           if (!got.ok) return text(res, got.status || 409, got.why);
           res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
           return res.end(Buffer.from(encodeCommitments([got.commitment])));
@@ -2512,10 +2521,26 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const address = Buffer.from(signed).toString('utf8').trim();
         const where = lightningAddressEndpoint(address);
         if (!where.ok) return text(res, 400, where.why);
-        round.putPayoutAddress({ entryId: new Uint8Array(eid), roundId: entry.roundId, address });
+        // THE FIRST ADDRESS STANDS (ruled 2026-09-23): the same address again is taken and changes nothing - the page
+        // posts it again to a node that did not answer - and another one for this entry is refused, so no second
+        // address can make the signer nodes hold different ones.
+        const held = round.payoutAddress(new Uint8Array(eid));
+        if (held && held.address !== address)
+          return text(res, 409, 'this entry already named its Lightning address, and the first one stands');
+        if (!held) round.putPayoutAddress({ entryId: new Uint8Array(eid), roundId: entry.roundId, address });
         res.writeHead(201, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ entry: eid.toString('hex'), address, state: 'NAMED',
           why: 'the winning is sent here when the round settles; nothing more is asked of the player' }) + '\n');
+      }
+
+      // THE FIRST PLAN THIS SIGNER NODE KEEPS, for an asker that takes the round over: it adopts a kept plan that stands
+      // rather than fetching a second invoice.
+      if (req.method === 'GET' && url.pathname === '/settle-sends') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (rid.length !== 32) return text(res, 400, 'send plans are for a round id');
+        if (!winnings) return text(res, 409, 'this signer node sends no winnings');
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify(winnings.keptPlan(new Uint8Array(rid))));
       }
 
       // THE COORDINATOR'S SEND PLANS, between signer nodes: kept only if each stands here (winnings-send.js).
