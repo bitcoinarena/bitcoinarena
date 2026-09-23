@@ -63,8 +63,27 @@ export function stakeLockPort({ bin, dataDir, timeoutMs = 60000 }) {
     async gateways() {
       const j = await run(bin, ['--mode', 'gateways', '--data-dir', dataDir], timeoutMs);
       return { federationId: fromHex(String(j.federation_id)),
+        height: j.block_count === undefined ? null : Number(j.block_count),
         gateways: (j.gateways || []).map((g) => ({ url: String(g.url), live: g.live === true,
-          lightningPublicKey: g.lightning_public_key ? String(g.lightning_public_key) : null, why: g.why || null })) };
+          lightningPublicKey: g.lightning_public_key ? String(g.lightning_public_key) : null,
+          modulePublicKey: g.module_public_key ? String(g.module_public_key) : null,
+          sendFeeDefault: g.send_fee_default ? { baseMsat: BigInt(g.send_fee_default.base_msat), ppm: BigInt(g.send_fee_default.ppm) } : null,
+          expirationDeltaDefault: g.expiration_delta_default === undefined ? null : Number(g.expiration_delta_default),
+          expirationDeltaMinimum: g.expiration_delta_minimum === undefined ? null : Number(g.expiration_delta_minimum),
+          why: g.why || null })) };
+    },
+    /**
+     * A SENT WINNING, ASKED OF ITS GATEWAY (protocol/winnings-send.js). Without `auth`: the contract's id and the
+     * message the committee must sign - the invoice's consensus hash, which the gateway checks under the
+     * contract's refund key. With it: the stock client's send_payment to `gateway`, and the preimage if it paid.
+     */
+    async send({ gateway, outpoint = null, paymentHash, amountMsat, expiration, claimPk, refundPk, invoice, auth = null }) {
+      const args = ['--mode', 'send', '--data-dir', dataDir, '--hash', String(paymentHash), '--amount-msat', String(amountMsat),
+        '--expiration', String(expiration), '--claim-pk', String(claimPk), '--refund-pk', toHex(refundPk), '--invoice', String(invoice),
+        ...(auth ? ['--auth', toHex(auth), '--outpoint', outpointArg(outpoint), '--gateway', String(gateway)] : [])];
+      const j = await run(bin, args, timeoutMs);
+      return { contractId: String(j.contract_id), message: fromHex(String(j.auth_message_hex)),
+        sent: j.sent === true, preimage: j.preimage ? fromHex(String(j.preimage)) : null, why: j.why || null };
     },
     /** The guardians' own LNv2 fee rule, off the federation's config (W4). */
     async fees() {
@@ -77,10 +96,16 @@ export function stakeLockPort({ bin, dataDir, timeoutMs = 60000 }) {
      * and answers the 32 bytes to sign; with one it submits and says what the
      * guardians hold afterwards.
      */
-    async settle({ claimPk, claims, payouts, nonce, signature = null }) {
+    async settle({ claimPk, claims, payouts, nonce, signature = null, refunds = [] }) {
       const args = ['--mode', 'settle', '--data-dir', dataDir, '--claim-pk', toHex(claimPk),
         '--locks', claims.map((c) => `${outpointArg(c.outpoint)}:${toHex(c.preimage)}:${c.amountMsat}`).join(','),
-        '--payouts', payouts.map((p) => `${toHex(p.payoutPk)}:${p.msat}`).join(','),
+        // AN EXPIRED WINNINGS CONTRACT, spent back by the committee's refund key into its re-send (winnings-send.js).
+        ...(refunds.length ? ['--refunds', refunds.map((r) => `${outpointArg(r.outpoint)}:${r.amountMsat}`).join(',')] : []),
+        // A SENT WINNING (protocol/winnings-send.js) is the gateway's outgoing contract to the winner's invoice,
+        // refunding to the committee key; every other payout is the pre-expired contract to its key.
+        '--payouts', payouts.map((p) => (p.sent
+          ? `invoice:${p.sent.paymentHash}:${p.sent.gatewayPk}:${toHex(p.payoutPk)}:${p.sent.expiration}:${p.msat}`
+          : `${toHex(p.payoutPk)}:${p.msat}`)).join(','),
         '--nonce', toHex(nonce), ...(signature ? ['--signature', toHex(signature)] : [])];
       const j = await run(bin, args, timeoutMs);
       return { txid: String(j.txid), message: String(j.message_hex), accepted: j.accepted === true, error: j.error || null,

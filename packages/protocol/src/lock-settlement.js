@@ -76,7 +76,13 @@ export function settlementNonce(roundId) {
  *        every verified stake lock, keyed by the player's pubkey hex
  * @param {{ppm: bigint, baseMsat: bigint}} o.fees  the guardians' LNv2 fee rule
  */
-export function lockSettlement({ roundId, entries, minScore = 0, locks, fees, feeLocks = new Map(), signerNodes = null, contract = null }) {
+// `sends`: WINNINGS ALWAYS SENT (the owner 2026-09-21; ruled for FEDERATION 2026-09-23). A qualifier with an accepted
+// send plan (protocol/winnings-send.js) is paid by an outgoing contract the plan's gateway may claim only by paying
+// the winner's invoice, refunding to the round's committee claim key - not by the pre-expired contract only the
+// winner's key can move. Keyed by player key hex: { paymentHash, gatewayPk, refundPk, expiration }. A qualifier
+// with none is paid as before.
+export function lockSettlement({ roundId, entries, minScore = 0, locks, fees, feeLocks = new Map(), signerNodes = null, contract = null,
+  sends = new Map() }) {
   if (!(locks instanceof Map)) return refuse('the verified stake locks are a Map by player key');
   if (!(feeLocks instanceof Map)) return refuse('the verified fee locks are a Map by player key');
   if (!fees || typeof fees.ppm !== 'bigint' || typeof fees.baseMsat !== 'bigint' || fees.ppm < 0n || fees.baseMsat < 0n)
@@ -130,14 +136,24 @@ export function lockSettlement({ roundId, entries, minScore = 0, locks, fees, fe
     const target = (row.msat * spendableMsat) / poolMsat;
     const msat = largestPayoutMsat(fees, target);
     if (msat === 0n) { unpaid.push({ pubkey: row.pubkey, owedMsat: row.msat, why: 'its share does not pay its own output fee' }); continue; }
+    const send = sends instanceof Map ? sends.get(toHex(row.pubkey)) : null;
+    if (send) {
+      payouts.push({ pubkey: row.pubkey, payoutPk: send.refundPk, owedMsat: row.msat, msat, feeMsat: lnv2FeeMsat(fees, msat),
+        sent: { paymentHash: String(send.paymentHash).toLowerCase(), gatewayPk: String(send.gatewayPk).toLowerCase(),
+          expiration: BigInt(send.expiration) } });
+      continue;
+    }
     payouts.push({ pubkey: row.pubkey, payoutPk: lock.refundPk, owedMsat: row.msat, msat, feeMsat: lnv2FeeMsat(fees, msat) });
   }
-  return finish({ roundId, claims: claims.map((c) => ({ ...c, kind: 'stake' })), payouts: payouts.map((p) => ({ ...p, kind: 'qualifier' })),
+  return finish({ roundId, claims: claims.map((c) => ({ ...c, kind: 'stake' })), payouts: payouts.map((p) => ({ ...p, kind: p.sent ? 'sent' : 'qualifier' })),
     unpaid, forfeits, poolMsat, inputFeesMsat, spendableMsat, stakeWhy: null }, feePart);
 }
 
 const byOutpoint = (a, b) => (outpointKey(a.outpoint) < outpointKey(b.outpoint) ? -1 : outpointKey(a.outpoint) > outpointKey(b.outpoint) ? 1 : 0);
-const byPayoutPk = (a, b) => (toHex(a.payoutPk) < toHex(b.payoutPk) ? -1 : toHex(a.payoutPk) > toHex(b.payoutPk) ? 1 : 0);
+// BY PAYOUT KEY, and among sent winnings - which all refund to the one committee key - by payment hash, so every
+// signer node lists the same outputs in the same order.
+const payoutOrderKey = (p) => `${toHex(p.payoutPk)}:${p.sent ? p.sent.paymentHash : ''}`;
+const byPayoutPk = (a, b) => (payoutOrderKey(a) < payoutOrderKey(b) ? -1 : payoutOrderKey(a) > payoutOrderKey(b) ? 1 : 0);
 
 /** The stake part and the fee part as ONE transaction: inputs by outpoint, payouts by key, the round's nonce. */
 function finish(stake, fee) {

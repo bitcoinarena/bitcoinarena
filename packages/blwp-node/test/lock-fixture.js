@@ -30,9 +30,11 @@ export const CLAIM = Uint8Array.from([0x02, ...b32(0xc1)]);
 /** A federation port that holds locks by outpoint and counts every ask. */
 // TWO GATEWAYS ON TWO LIGHTNING NODES, both answering - what §23.6 asks of a paying round's federation, and
 // what the door counts through the port (`gateways()`). A test of that gate hands its own list.
+// Each with its own terms for a Lightning send, as routing_info answers them - what a winnings contract is sized by.
+const TERMS = { sendFeeDefault: { baseMsat: 4000n, ppm: 6000n }, expirationDeltaDefault: 1440, expirationDeltaMinimum: 144 };
 export const TWO_GATEWAYS = [
-  { url: 'http://gw-a.example/', live: true, lightningPublicKey: '02' + 'a1'.repeat(32) },
-  { url: 'http://gw-b.example/', live: true, lightningPublicKey: '03' + 'b2'.repeat(32) },
+  { url: 'http://gw-a.example/', live: true, lightningPublicKey: '02' + 'a1'.repeat(32), modulePublicKey: '02' + 'c3'.repeat(32), ...TERMS },
+  { url: 'http://gw-b.example/', live: true, lightningPublicKey: '03' + 'b2'.repeat(32), modulePublicKey: '03' + 'd4'.repeat(32), ...TERMS },
 ];
 
 export function lockPort({ height = 1000, gateways = TWO_GATEWAYS } = {}) {
@@ -40,7 +42,28 @@ export function lockPort({ height = 1000, gateways = TWO_GATEWAYS } = {}) {
   const port = {
     // THE STAND-IN FEDERATION'S ID (W7): a round on this port names it, never an id of its own.
     federationId: TEST_FEDERATION_ID,
-    async gateways() { return { federationId: TEST_FEDERATION_ID, gateways }; },
+    async gateways() { return { federationId: TEST_FEDERATION_ID, height: port.height, gateways }; },
+    // A SENT WINNING, as a gateway answers it: the message the committee signs (here the invoice's hash, as the real
+    // tool's consensus hash stands in), and - given the refund key's signature over it - the preimage it paid with.
+    // Asked twice for one contract it answers the one payment it made, as the stock gateway joins its operation.
+    preimages: new Map(),        // payment hash hex -> the preimage the recipient's invoice was made with
+    gatewayPayments: [],
+    async send({ gateway, paymentHash, amountMsat, expiration, claimPk, refundPk, invoice, auth = null }) {
+      const message = sha256(new TextEncoder().encode(`auth:${invoice}`));
+      const contractId = toHex(sha256(new TextEncoder().encode(JSON.stringify([paymentHash, String(amountMsat), String(expiration), claimPk, toHex(refundPk)]))));
+      const said = { contractId, message };
+      if (!auth) return said;
+      let good = false;
+      try { good = schnorr.verify(auth, message, refundPk.subarray(1)); } catch { good = false; }
+      if (!good) return { ...said, sent: false, why: 'Invalid auth signature for the invoice data' };
+      if (port.gatewayDown === gateway) return { ...said, sent: false, why: `${gateway} did not answer` };
+      const preimage = port.preimages.get(String(paymentHash));
+      if (!preimage) return { ...said, sent: false, why: 'the recipient knows no such invoice' };
+      if (!port.gatewayPayments.some((x) => x.contractId === contractId)) port.gatewayPayments.push({ contractId, gateway, paymentHash, amountMsat });
+      // AND THE GATEWAY CLAIMS THE CONTRACT with the preimage: it is no longer held.
+      for (const [k, v] of locks) if (v.fields.paymentHash === String(paymentHash)) locks.delete(k);
+      return { ...said, sent: true, preimage };
+    },
     asked: 0, height, locks,
     async status(outpoint) {
       port.asked++;
@@ -77,13 +100,14 @@ export function lockPort({ height = 1000, gateways = TWO_GATEWAYS } = {}) {
     settlements: [],
     payouts: new Map(),
     async fees() { return port.feeRule; },
-    async settle({ claimPk, claims, payouts, nonce, signature = null }) {
+    async settle({ claimPk, claims, payouts, nonce, signature = null, refunds = [] }) {
       const message = sha256(new TextEncoder().encode(JSON.stringify([
         claims.map((c) => [toHex(c.outpoint.txid), String(c.outpoint.outIdx), toHex(c.preimage), String(c.amountMsat)]),
-        payouts.map((p) => [toHex(p.payoutPk), String(p.msat)]), toHex(nonce)])));
+        ...(refunds.length ? [refunds.map((r) => ['refund', toHex(r.outpoint.txid), String(r.outpoint.outIdx), String(r.amountMsat)])] : []),
+        payouts.map((p) => [toHex(p.payoutPk), String(p.msat), ...(p.sent ? [p.sent.paymentHash, p.sent.gatewayPk, String(p.sent.expiration)] : [])]), toHex(nonce)])));
       const said = { txid: toHex(message), message: toHex(message), accepted: false, error: null };
       if (!signature) return said;
-      port.settlements.push({ claims, payouts, signature });
+      port.settlements.push({ claims, payouts, signature, refunds });
       // THE SAME BYTES AGAIN ARE ACCEPTED AGAIN, as the real guardians answered
       // (stake-lock-step3.sh, (c1)): two signer nodes submitting one txid is harmless.
       if (port.accepted.has(toHex(message))) return { ...said, accepted: true };
@@ -99,14 +123,26 @@ export function lockPort({ height = 1000, gateways = TWO_GATEWAYS } = {}) {
         try { good = schnorr.verify(signature, message, at.fields.claimPk.subarray(1)); } catch { good = false; }
         if (!good) return { ...said, error: 'a signature does not verify under the input\'s claim key' };
       }
-      const into = claims.reduce((t, c) => t + c.amountMsat - fee(c.amountMsat), 0n);
+      // AN EXPIRED CONTRACT SPENT BACK BY ITS REFUND KEY: only past its expiration, and only under that key.
+      for (const r of refunds) {
+        const at = locks.get(`${toHex(r.outpoint.txid)}:${r.outpoint.outIdx}`);
+        if (!at) return { ...said, error: 'no contract at that outpoint: already spent' };
+        if (port.height < at.fields.expiration) return { ...said, error: 'that contract has not expired: it cannot be refunded' };
+        let good = false;
+        try { good = schnorr.verify(signature, message, at.fields.refundPk.subarray(1)); } catch { good = false; }
+        if (!good) return { ...said, error: 'a refund is not signed by the contract\'s refund key' };
+      }
+      const into = claims.reduce((t, c) => t + c.amountMsat - fee(c.amountMsat), 0n)
+        + refunds.reduce((t, r) => t + r.amountMsat - fee(r.amountMsat), 0n);
       const out = payouts.reduce((t, p) => t + p.msat + fee(p.msat), 0n);
       if (out > into) return { ...said, error: 'the transaction is unbalanced' };
-      for (const c of claims) locks.delete(`${toHex(c.outpoint.txid)}:${c.outpoint.outIdx}`);
+      for (const c of [...claims, ...refunds]) locks.delete(`${toHex(c.outpoint.txid)}:${c.outpoint.outIdx}`);
       payouts.forEach((p, i) => {
-        port.payouts.set(`${toHex(message)}:${i}`, { payoutPk: p.payoutPk, msat: p.msat });
+        port.payouts.set(`${toHex(message)}:${i}`, { payoutPk: p.payoutPk, msat: p.msat, sent: p.sent || null });
         // A PAYOUT IS A PRE-EXPIRED LOCK, stored where the federation stores locks.
-        locks.set(`${toHex(message)}:${i}`, { fields: { amountMsat: p.msat, refundPk: p.payoutPk, claimPk: p.payoutPk, expiration: 0 }, id: `payout-${i}` });
+        // A SENT WINNING is the gateway's to claim until its expiration, then its refund key's (the committee's).
+        locks.set(`${toHex(message)}:${i}`, { fields: { amountMsat: p.msat, refundPk: p.payoutPk, claimPk: p.payoutPk,
+          expiration: p.sent ? Number(p.sent.expiration) : 0, paymentHash: p.sent ? p.sent.paymentHash : null }, id: `payout-${i}` });
       });
       port.accepted.add(toHex(message));
       void claimPk;
