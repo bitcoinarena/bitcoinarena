@@ -73,7 +73,7 @@ const post = async (port, path, body) => {
   return { status: r.status, text: (await r.text()).trim(), hold: r.headers.get('x-hold') };
 };
 
-test('the launcher\'s rule with nothing named refuses a paying round and an entry, 402 - as before', async () => {
+test('the launcher\'s rule with nothing named refuses a paying round and an entry, 402 - as before', slice2(), async () => {
   const node = await serve(openStore(':memory:'), { port: 0, ...READY, lightning: unpaidPort(), funded: fundingFromEnv({}) });
   try {
     const c = contractFor([node.round.pubkey, schnorr.getPublicKey(b32(9))]);
@@ -84,7 +84,7 @@ test('the launcher\'s rule with nothing named refuses a paying round and an entr
   } finally { await node.close(); }
 });
 
-test('once the operator names a paying round it is opened and its entry taken with a hold; an unheld round\'s entry, a free round and an unpaid batch stay refused', async () => {
+test('once the operator names a paying round it is opened and its entry taken with a hold; an unheld round\'s entry, a free round and an unpaid batch stay refused', slice2(), async () => {
   const peer = schnorr.getPublicKey(b32(9));
   // The round is named by id, and its id is the hash of a contract that names
   // this node - so the node comes up first and the setting is read per ask.
@@ -124,7 +124,7 @@ test('once the operator names a paying round it is opened and its entry taken wi
   } finally { await node.close(); }
 });
 
-test('a daemon that reaches no Lightning takes no entry, even into a named paying round', () => {
+test('a daemon that reaches no Lightning takes no entry, even into a named paying round', slice2(), () => {
   const c = contractFor([schnorr.getPublicKey(b32(1)), schnorr.getPublicKey(b32(9))]);
   const funded = fundingFromEnv({ BLWP_FUNDED_ROUNDS: toHex(roundId(c)) });
   const held = { contract: encodeRoundContract(c) };
@@ -138,7 +138,7 @@ test('a daemon that reaches no Lightning takes no entry, even into a named payin
 // such a stake is the federation, not Lightning. Measured before: a lock
 // round's entry on a node reaching only the federation was 402 by this rule,
 // so no page could be joined in one on a launched daemon.
-test('a lock round\'s entry is funded on a node that reaches its federation, and not on one that reaches only Lightning', () => {
+test('a lock round\'s entry is funded on a node that reaches its federation, and not on one that reaches only Lightning', slice2(), () => {
   const nodes = [schnorr.getPublicKey(b32(1)), schnorr.getPublicKey(b32(9))];
   const lockRound = { ...contractFor(nodes), custody: 'FEDERATION', federationId: TEST_FEDERATION_ID };
   const holdRound = contractFor(nodes);
@@ -157,7 +157,7 @@ test('a lock round\'s entry is funded on a node that reaches its federation, and
 // THE DAILY'S LAUNCHER WITH A FREE ROUND AND A PAYING ONE BESIDE IT (the owner 2026-09-15 12:54, option
 // B): the free round and its entries stay funded as `() => true` had them, and the paying rounds go
 // through the operator's rule unchanged - named, and their entries only where the stake can be held.
-test('beside a free round, the launcher funds the free round and its entries, and a paying round only as the operator\'s rule does', () => {
+test('beside a free round, the launcher funds the free round and its entries, and a paying round only as the operator\'s rule does', slice2(), () => {
   const nodes = [schnorr.getPublicKey(b32(1)), schnorr.getPublicKey(b32(9))];
   const free = contractFor(nodes, 0n, 0x46);
   const paying = contractFor(nodes, 100000n, 0x47);
@@ -177,7 +177,7 @@ test('beside a free round, the launcher funds the free round and its entries, an
     'an entry for a round this node does not hold was funded');
 });
 
-test('main.js itself wires the rule: an unnamed paying round is 402; a named one is opened, and with no lnd its entries are 402', async () => {
+test('main.js itself wires the rule: an unnamed paying round is 402; a named one is opened, and with no lnd its entries are 402', slice2(), async () => {
   const dir = mkdtempSync(join(tmpdir(), 'launcher-funded-'));
   const PORT = 18902;   // never 8080: main.js defaults to it and signal-cli owns it
   const c = contractFor([schnorr.getPublicKey(b32(1)), schnorr.getPublicKey(b32(9))]);
@@ -212,7 +212,7 @@ test('main.js itself wires the rule: an unnamed paying round is 402; a named one
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('a round named in BLWP_FUNDED_ROUNDS_FILE is funded without a restart - the file is read on every ask', async () => {
+test('a round named in BLWP_FUNDED_ROUNDS_FILE is funded without a restart - the file is read on every ask', slice2(), async () => {
   const { writeFileSync, appendFileSync } = await import('node:fs');
   const dir = mkdtempSync(join(tmpdir(), 'funded-file-'));
   const file = join(dir, 'rounds');
@@ -229,3 +229,6 @@ test('a round named in BLWP_FUNDED_ROUNDS_FILE is funded without a restart - the
     assert.equal(after.status, 201, `a round named in the file after start was refused: ${after.status} ${after.text}`);
   } finally { await node.close(); rmSync(dir, { recursive: true, force: true }); }
 });
+
+/** Why this test does not run in Step 1 of the THRESHOLD_LN disposal (see TASKBOOK). */
+function slice2() { return { skip: "slice 2: the subject is the hold path (hold invoices on a Lightning port). It still runs at HEAD on a FEDERATION round given a Lightning port, so it is skipped, not moved to FEDERATION (RULED 2026-09-23); slice 2 deletes this test with the code" }; }

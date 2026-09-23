@@ -283,7 +283,7 @@ const bigints = (k, v) => (typeof v === 'bigint' ? String(v) : v);
 // race needs is made here: B's posting reaches A 3 s after the close. B is final
 // first, asks A, and A - genuinely not final ("1 of 2 settlement signer nodes have
 // posted") - refuses: the second closer refused its first share, as before P2.
-test('closed 800 ms apart: the second closer, refused its first share, ends SETTLED on the lost stake lnd settled through the first', async () => {
+test('closed 800 ms apart: the second closer, refused its first share, ends SETTLED on the lost stake lnd settled through the first', slice2(), async () => {
   const w = await closedWithGap(800, { bLateToAMs: 3000 });
   try {
     await w.settledBoth(25000);
@@ -306,7 +306,7 @@ test('closed 800 ms apart: the second closer, refused its first share, ends SETT
   } finally { await w.close(); }
 });
 
-test('closed at the same moment: both daemons end SETTLED on the lost stake and CANCELLED on the winner\'s', async () => {
+test('closed at the same moment: both daemons end SETTLED on the lost stake and CANCELLED on the winner\'s', slice2(), async () => {
   const w = await closedWithGap(0);
   try {
     await w.settledBoth(25000);
@@ -326,3 +326,6 @@ test('closed at the same moment: both daemons end SETTLED on the lost stake and 
     assert.equal(w.stateOf(w.b, w.winner.eid), CANCELLED);
   } finally { await w.close(); }
 });
+
+/** Why this test does not run in Step 1 of the THRESHOLD_LN disposal (see TASKBOOK). */
+function slice2() { return { skip: "slice 2: the subject is the hold path (hold invoices on a Lightning port). It still runs at HEAD on a FEDERATION round given a Lightning port, so it is skipped, not moved to FEDERATION (RULED 2026-09-23); slice 2 deletes this test with the code" }; }

@@ -15,7 +15,7 @@ import { taggedHash } from './hash.js';
 // restating the number here would be the second clock letter 21 forbade.
 import {
   TAG, PROTOCOL_VERSION, TYPE_ROUND_CONTRACT, TYPE_ENTRY_CONTRACT, ROLES,
-  CUSTODY, custodyByte, slashRemainderByte, slashRemainderOf, MIN_ENTRY_WINDOW_MS,
+  CUSTODY, custodyByte, custodyName, slashRemainderByte, slashRemainderOf, MIN_ENTRY_WINDOW_MS,
   STAKE_EXPIRY_BLOCKS, START_DEADLINE_TICKS,
 } from './constants.js';
 
@@ -198,6 +198,27 @@ export function encodeRoundContract(c) {
   return w.finish();
 }
 
+/**
+ * A CUSTODY BYTE THIS NETWORK HAS, OR THE RECORD DOES NOT PARSE (RULED, the owner 2026-09-22 22:59).
+ *
+ * §23.6: "a record from before this ruling that carries the old value is not a round of this network
+ * and is neither decoded, replayed, settled, listed nor counted; a node that holds such a record treats
+ * it as it treats BYTES THAT DO NOT PARSE. There is no decode-only label and no history exception."
+ *
+ * So this throws, exactly as a bad length or an unknown type byte throws. It does not return a label,
+ * a null, or a flag a caller could choose to ignore - any of which would be the decode-only value the
+ * ruling refuses. Byte 0 is named in the message because that is the one a real record carries, and a
+ * node operator reading the error deserves to know which history just stopped being a round.
+ */
+function custodyOrRefuse(byte) {
+  const name = custodyName(byte);
+  if (name === null)
+    throw new Error(`custody byte ${byte} is not a custody of this network: the one value is FEDERATION`
+      + (byte === 0 ? ' (byte 0 was the withdrawn THRESHOLD_LN; a record carrying it is not a round, '
+        + 'past rounds included - RULED 2026-09-22)' : ''));
+  return name;
+}
+
 export function decodeRoundContract(bytes) {
   const r = new Reader(bytes);
   const type = r.u8();
@@ -217,7 +238,7 @@ export function decodeRoundContract(bytes) {
     startTimeMs: r.u64(),
     entryCloseMs: r.u64(),
     objectionWindowMs: r.u64(),
-    custody: CUSTODY[r.u8()],
+    custody: custodyOrRefuse(r.u8()),
     federationId: r.bytes32(),
     stakeExpiryBlocks: r.u32(),
     slashMinimumServed: r.u32(),
@@ -588,8 +609,8 @@ export function custodyFieldsAreValid(c) {
  * DOES A ROUND THAT TAKES A STAKE INTO A FEDERATION SAY WHICH ONE? (§23.6, M3 W7). A zero
  * federation_id on a paying FEDERATION round is unsigned custody - nothing says who holds its
  * stake locks - so such a contract is not a contract: encoding and decoding refuse it, for every
- * builder and for bytes from anywhere. A free round moves no money and a THRESHOLD_LN round names
- * no federation; both pass. Whether the named federation's guardians are bonded census nodes is
+ * builder and for bytes from anywhere. A free round moves no money and names no federation; it
+ * passes. Whether the named federation's guardians are bonded census nodes is
  * federationIsBonded, parked with "which guardians".
  */
 export function federationIsNamed(c) {

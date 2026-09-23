@@ -253,7 +253,7 @@ const stateAt = (w, run) => w.signerNodes.map((d, i) => {
 const holds = (w, hash) => ({ settled: w.holdPorts.map((p) => p.settled.filter((s) => s.paymentHash === hash).length),
   cancelled: w.holdPorts.map((p) => p.cancelled.filter((s) => s.paymentHash === hash).length) });
 
-test('5 of 7, a hold: two first marks, every signer node up at the close - FORFEIT at all seven with no signed result, and the hold SETTLED into the pool, never back to the player', async () => {
+test('5 of 7, a hold: two first marks, every signer node up at the close - FORFEIT at all seven with no signed result, and the hold SETTLED into the pool, never back to the player', slice2(), async () => {
   const w = await sevenSignerNodes('hold');
   try {
     const run = await joinWithTwoFirstMarks(w, 'hold');
@@ -281,7 +281,7 @@ test('5 of 7, a hold: two first marks, every signer node up at the close - FORFE
   } finally { await w.close(); }
 });
 
-test('5 of 7, a hold: two first marks, and signer nodes 4-6 down from before the close through the hold\'s expiry - the four signer nodes up still FORFEIT and SETTLE the hold, nothing goes back to the player', async () => {
+test('5 of 7, a hold: two first marks, and signer nodes 4-6 down from before the close through the hold\'s expiry - the four signer nodes up still FORFEIT and SETTLE the hold, nothing goes back to the player', slice2(), async () => {
   const w = await sevenSignerNodes('hold');
   try {
     const run = await joinWithTwoFirstMarks(w, 'hold');
@@ -456,7 +456,7 @@ test('5 of 7, a stake lock, path 2: signer nodes 0-3 record ENTRY_VOID, then a l
   } finally { await w.close(); }
 });
 
-test('5 of 7, a hold, path 1: signer nodes 0-3 record ENTRY_VOID, then a different on-time first mark reaches signer node 4 - FORFEIT, the hold SETTLED into the pool, 0 msat back', async () => {
+test('5 of 7, a hold, path 1: signer nodes 0-3 record ENTRY_VOID, then a different on-time first mark reaches signer node 4 - FORFEIT, the hold SETTLED into the pool, 0 msat back', slice2(), async () => {
   const w = await sevenSignerNodes('hold');
   try {
     const run = await joinWithTwoFirstMarks(w, 'hold');
@@ -474,7 +474,7 @@ test('5 of 7, a hold, path 1: signer nodes 0-3 record ENTRY_VOID, then a differe
   } finally { await w.close(); }
 });
 
-test('5 of 7, a hold, path 2: signer nodes 0-3 record ENTRY_VOID, then a late first mark reaches signer node 4 alone and its forward is lost - FORFEIT, the hold SETTLED into the pool, 0 msat back', async () => {
+test('5 of 7, a hold, path 2: signer nodes 0-3 record ENTRY_VOID, then a late first mark reaches signer node 4 alone and its forward is lost - FORFEIT, the hold SETTLED into the pool, 0 msat back', slice2(), async () => {
   const w = await sevenSignerNodes('hold');
   try {
     const run = await joinWithTwoFirstMarks(w, 'hold');
@@ -501,7 +501,7 @@ test('5 of 7, a hold, path 2: signer nodes 0-3 record ENTRY_VOID, then a late fi
 // which refused the second mark - decides FORFEIT and settles. Here signer node 4 is
 // down from before the close through the hold's expiry: does any signer node still keep
 // the stake from going back to the player?
-test('5 of 7, a hold, path 1, and signer node 4 down from before the close through the hold\'s expiry - the hold still SETTLED into the pool, 0 msat back', async () => {
+test('5 of 7, a hold, path 1, and signer node 4 down from before the close through the hold\'s expiry - the hold still SETTLED into the pool, 0 msat back', slice2(), async () => {
   const w = await sevenSignerNodes('hold');
   try {
     const run = await joinWithTwoFirstMarks(w, 'hold');
@@ -544,7 +544,7 @@ const signerNodeHolds = (w, run, i) => {
     voided: !!d.round.entryVoid(run.eid), custody: (d.round.hold(run.eid) || {}).state || null };
 };
 
-test('5 of 7, a hold, path 1, signer nodes 4-6 down from before the close through the hold\'s expiry - measured: where the stake goes', async () => {
+test('5 of 7, a hold, path 1, signer nodes 4-6 down from before the close through the hold\'s expiry - measured: where the stake goes', slice2(), async () => {
   const w = await sevenSignerNodes('hold');
   try {
     const run = await joinWithTwoFirstMarks(w, 'hold');
@@ -603,7 +603,7 @@ test('5 of 7, a stake lock, path 1, signer nodes 4-6 down from before the close 
 // (M3.3-34, measured before any change). The signer nodes 4-6 order settled because
 // signer nodes 3 and 4 each held five shares; this down-set takes both of them down and
 // keeps the committee at three down: signer nodes 0, 1, 2 and 6 stay up.
-test('5 of 7, a hold, path 1, signer nodes 3-5 down from before the close through the hold\'s expiry - measured: where the stake goes', async () => {
+test('5 of 7, a hold, path 1, signer nodes 3-5 down from before the close through the hold\'s expiry - measured: where the stake goes', slice2(), async () => {
   const w = await sevenSignerNodes('hold');
   try {
     const run = await joinWithTwoFirstMarks(w, 'hold');
@@ -679,7 +679,7 @@ async function pathTwoSignerNodeFourDown(w, run) {
   return { voidedFirst, said4, lateAt4, signerNode4BeforeDown: signerNode4 };
 }
 
-test('5 of 7, a hold, path 2, signer node 4 down from its refusal through the hold\'s expiry - ruled limit: no signer node up holds the proof, the outage-VOID refund stands: the hold comes back to the player, 98000 msat, pool 0', async () => {
+test('5 of 7, a hold, path 2, signer node 4 down from its refusal through the hold\'s expiry - ruled limit: no signer node up holds the proof, the outage-VOID refund stands: the hold comes back to the player, 98000 msat, pool 0', slice2(), async () => {
   const w = await sevenSignerNodes('hold');
   try {
     const run = await joinWithTwoFirstMarks(w, 'hold');
@@ -777,7 +777,7 @@ test('5 of 7, a stake lock, receipts lost between signer nodes that are up: sign
   } finally { await w.close(); }
 });
 
-test('5 of 7, a hold, receipts lost between signer nodes that are up: signer nodes 0-4 each record ENTRY_VOID, then a different on-time first mark reaches signer node 5 - measured: where the stake goes', async () => {
+test('5 of 7, a hold, receipts lost between signer nodes that are up: signer nodes 0-4 each record ENTRY_VOID, then a different on-time first mark reaches signer node 5 - measured: where the stake goes', slice2(), async () => {
   const w = await sevenSignerNodes('hold');
   try {
     const run = await joinWithTwoFirstMarks(w, 'hold');
@@ -817,7 +817,7 @@ test('5 of 7, a stake lock, receipts lost, and signer node 5 (the proof) unreach
   } finally { await w.close(); }
 });
 
-test('5 of 7, a hold, receipts lost, and signer node 5 (the proof) unreachable from the Void signer nodes for the same moment - measured: where the stake goes', async () => {
+test('5 of 7, a hold, receipts lost, and signer node 5 (the proof) unreachable from the Void signer nodes for the same moment - measured: where the stake goes', slice2(), async () => {
   const w = await sevenSignerNodes('hold');
   try {
     const run = await joinWithTwoFirstMarks(w, 'hold');
@@ -884,7 +884,7 @@ const signedOutcomes = (w, run) => w.signerNodes.map((d, i) => {
     .filter((o, k, a) => a.indexOf(o) === k).join('+') || null;
 });
 
-test('5 of 7, a hold, genuine outage-VOID: signer nodes 4-6 down, then caught up late - measured: what each signer node records, where the stake goes', async () => {
+test('5 of 7, a hold, genuine outage-VOID: signer nodes 4-6 down, then caught up late - measured: what each signer node records, where the stake goes', slice2(), async () => {
   const w = await sevenSignerNodes('hold');
   try {
     const run = await joinWithTwoFirstMarks(w, 'hold');
@@ -914,3 +914,6 @@ test('5 of 7, a stake lock, genuine outage-VOID: signer nodes 4-6 down, then cau
     assert.ok(!facts.signedOutcomes.some((o) => o && /FAILED|DELIVERED/.test(o)), `a signer node signed a run for an entry that must VOID: ${JSON.stringify(facts.signedOutcomes)}`);
   } finally { await w.close(); }
 });
+
+/** Why this test does not run in Step 1 of the THRESHOLD_LN disposal (see TASKBOOK). */
+function slice2() { return { skip: "slice 2: the subject is the hold path (hold invoices on a Lightning port). It still runs at HEAD on a FEDERATION round given a Lightning port, so it is skipped, not moved to FEDERATION (RULED 2026-09-23); slice 2 deletes this test with the code" }; }

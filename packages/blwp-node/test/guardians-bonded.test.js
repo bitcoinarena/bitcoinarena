@@ -150,15 +150,15 @@ test('a paying FEDERATION round is taken when its federation\'s threshold of gua
   } finally { for (const w of [a, b, c, d]) await w.node.close(); }
 });
 
-test('a THRESHOLD_LN round and a free round are assigned on a census that lists no guardian, and the federation is not asked', async () => {
+test('a free round is assigned on a census that lists no guardian and the federation is not asked; the withdrawn THRESHOLD_LN is no round', async () => {
   const port = federation({ keys: [guardianKey(1), guardianKey(2)], threshold: 2 });
   const w = await door({ port });
   try {
-    const lightning = await w.post({ custody: 'THRESHOLD_LN', federationId: new Uint8Array(32), configHash: TRUCK_CONFIG_HASH, slashMinimumServed: 21 });
+    // RULED 2026-09-22 22:59: THRESHOLD_LN does not exist - the codec refuses it before any door is asked.
+    await assert.rejects(w.post({ custody: 'THRESHOLD_LN', federationId: new Uint8Array(32), configHash: TRUCK_CONFIG_HASH, slashMinimumServed: 21 }),
+      /THRESHOLD_LN is not a custody this network has/);
     const free = await w.post({ stakeMsat: 0n, federationId: new Uint8Array(32), configHash: TRUCK_CONFIG_HASH, slashMinimumServed: 22 });
-    console.log('  FACTS:', JSON.stringify({ lightning, free, asked: port.asked }));
-    assert.equal(lightning.status, 201, lightning.why);
-    assert.equal(lightning.signerNodes, 2);
+    console.log('  FACTS:', JSON.stringify({ free, asked: port.asked }));
     assert.equal(free.status, 201, free.why);
     assert.equal(free.signerNodes, 2);
     assert.equal(port.asked, 0, 'the federation was asked about a round that takes no stake into it');

@@ -342,7 +342,7 @@ test('a flat rank curve is flagged before anyone stakes', () => {
 
 function sampleContract() {
   return {
-    networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1), startTimeMs: 1788200000000n, entryCloseMs: 1788200060000n, objectionWindowMs: 600000n, custody: 'THRESHOLD_LN', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
+    networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1), startTimeMs: 1788200000000n, entryCloseMs: 1788200060000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
     censusHeight: 964900, censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
     stakeMsat: 100000n, bondMinSats: 100000n, blockTicks: 9000,
     exposureReference: 12451840, corridorHalfWidth: 3014656, spawnFreeRadius: 1441792,
@@ -360,24 +360,22 @@ function sampleContract() {
  * to know which one they staked into, and a round settled under one cannot be
  * replayed as if it were the other. Naming it is not implementing it.
  */
-test('a round names which custody construction it uses, and it is in the id', () => {
-  // BOTH CONSTRUCTIONS NAME THE SAME FEDERATION, so custody is the one field that differs (M3 W7: a
-  // paying FEDERATION round naming none is not a contract; a THRESHOLD_LN round may carry an id).
+test('a round names its custody, it is in the id, and FEDERATION is the one value', () => {
+  // RULED 2026-09-22 22:59 (§23.6): THRESHOLD_LN does not exist, past rounds included. FEDERATION
+  // keeps byte 1; byte 0 is a hole, so the withdrawn name is refused, never encoded as some byte.
   const c = { ...sampleContract(), federationId: TEST_FEDERATION_ID };
   const back = decodeRoundContract(encodeRoundContract(c));
-  assert.equal(back.custody, c.custody);
+  assert.equal(back.custody, 'FEDERATION');
   assert.ok(CUSTODY.includes(back.custody));
-  assert.deepEqual(CUSTODY, ['THRESHOLD_LN', 'FEDERATION']);
+  assert.deepEqual(CUSTODY, [undefined, 'FEDERATION']);
 
-  // the other construction is a different round
-  const other = { ...c, custody: c.custody === 'FEDERATION' ? 'THRESHOLD_LN' : 'FEDERATION' };
-  assert.notDeepEqual(roundId(other), roundId(c));
-  assert.equal(decodeRoundContract(encodeRoundContract(other)).custody, other.custody);
+  // custody is in the id: the same round under no custody at all is not this round - it is no round
+  assert.throws(() => roundId({ ...c, custody: 'THRESHOLD_LN' }), /THRESHOLD_LN is not a custody this network has/);
 
   // and a construction nobody named is refused rather than encoded as zero
   assert.throws(() => encodeRoundContract({ ...c, custody: 'CUSTODIAN' }),
-    /CUSTODIAN is not one of THRESHOLD_LN, FEDERATION/);
-  assert.throws(() => encodeRoundContract({ ...c, custody: undefined }), /is not one of/);
+    /CUSTODIAN is not a custody this network has: the one value is FEDERATION/);
+  assert.throws(() => encodeRoundContract({ ...c, custody: undefined }), /is not a custody this network has/);
 });
 
 /**
@@ -488,20 +486,19 @@ test('the custody fields say what v4.6.2 rules, or the round is refused by name'
 // M3 W7: A ROUND THAT TAKES A STAKE INTO A FEDERATION NAMES WHICH ONE, OR IT IS NOT A CONTRACT.
 // Before: encodeRoundContract and decodeRoundContract took a paying FEDERATION round with a zero
 // federation_id, and nothing in node or client called the check. Now the codec refuses it - for
-// every builder and for bytes from anywhere - while a free round and a THRESHOLD_LN round pass.
-test('a paying FEDERATION round with a zero federation_id is refused when encoded and when decoded; a free round and a THRESHOLD_LN round pass', () => {
+// every builder and for bytes from anywhere - while a free round passes. THRESHOLD_LN is withdrawn
+// (RULED 2026-09-22 22:59): the codec refuses it outright, so it no longer passes as a round naming no federation.
+test('a paying FEDERATION round with a zero federation_id is refused when encoded and when decoded; a free round passes, and the withdrawn THRESHOLD_LN is refused', () => {
   const named = { ...sampleContract(), custody: 'FEDERATION', federationId: TEST_FEDERATION_ID, publicationRelays: ['wss://r.example'] };
   const zero = { ...named, federationId: new Uint8Array(32) };
   assert.deepEqual(federationIsNamed(named), { ok: true });
   assert.match(federationIsNamed(zero).why, /takes a stake into a FEDERATION and names no federation_id/);
   assert.deepEqual(federationIsNamed({ ...zero, stakeMsat: 0n }), { ok: true }, 'a free round needs no custodian');
-  assert.deepEqual(federationIsNamed({ ...zero, custody: 'THRESHOLD_LN' }), { ok: true }, 'a THRESHOLD_LN round names no federation');
 
   assert.throws(() => encodeRoundContract(zero), /takes a stake into a FEDERATION and names no federation_id/);
   const free = decodeRoundContract(encodeRoundContract({ ...zero, stakeMsat: 0n }));
   assert.equal(free.stakeMsat, 0n);
-  const held = decodeRoundContract(encodeRoundContract({ ...zero, custody: 'THRESHOLD_LN' }));
-  assert.equal(held.custody, 'THRESHOLD_LN');
+  assert.throws(() => encodeRoundContract({ ...zero, custody: 'THRESHOLD_LN' }), /THRESHOLD_LN is not a custody this network has/);
 
   // BYTES FROM ANYWHERE: the named round's bytes with its federation_id zeroed are not decoded.
   const bytes = encodeRoundContract(named);

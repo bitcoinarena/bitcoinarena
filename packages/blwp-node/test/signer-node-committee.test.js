@@ -10,6 +10,7 @@
 // that check, and the 2-of-2 built the honest way: two daemons whose OWN
 // identities are bonded on the chain and assigned from the census, which step 1
 // of this slice made possible by making a node's identity its bond key.
+import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { test } from 'node:test';
@@ -84,8 +85,8 @@ const contractWith = (nodes, censusRoot) => ({
   gameVerifySlots: 2, settlementSlots: 2, simCoreHash: TRUCK_CORE_HASH,
   startTimeMs: BigInt(FIRST_TIME + 15 * SPACING) * 1000n + 60500n,
   entryCloseMs: BigInt(FIRST_TIME + 15 * SPACING) * 1000n + 200000n,
-  objectionWindowMs: 600000n, custody: 'THRESHOLD_LN',
-  slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
+  objectionWindowMs: 600000n, custody: 'FEDERATION',
+  slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
   censusHeight: HEIGHT, censusRoot, committeeTimeMs: BigInt(FIRST_TIME + 15 * SPACING) * 1000n, randomnessRule: 'bitcoin-block-hash', stakeMsat: 100000n,
   bondMinSats: 50000n, blockTicks: BLOCK_TICKS, exposureReference: 1000, corridorHalfWidth: 40,
   spawnFreeRadius: 20, timeFloor: 30, timeCeil: 150, minScore: 1,
@@ -190,14 +191,16 @@ test('the round door refuses a chain-unsupported committee, and signer nodes a s
     port: 0, funded: () => true, chainFor: ({ contract } = {}) => chainWith(bonds, contract), randomnessFor: ({ contract }) => beaconOf(bonds, contract),
   });
   try {
-    const good = contractWith(keys, root);
+    // FREE, because this door reaches no federation: a paying FEDERATION round is signed for only where the
+    // signer node can read its guardians (§23.6), and the subject here is the chain's committee, not custody.
+    const good = { ...contractWith(keys, root), stakeMsat: 0n };
     const ok = await fetch(`http://127.0.0.1:${node.port}/round`,
       { method: 'POST', body: encodeRoundContract(good) });
     assert.equal(ok.status, 201, await ok.text());
     assert.equal(node.round.signerNodes(roundId(good)).length, 2,
       'the door stored a round it was never assigned');
 
-    const bad = contractWith([keys[0], b32(0xee)], root);
+    const bad = { ...contractWith([keys[0], b32(0xee)], root), stakeMsat: 0n };
     const refused = await fetch(`http://127.0.0.1:${node.port}/round`,
       { method: 'POST', body: encodeRoundContract(bad) });
     assert.equal(refused.status, 409, 'a chain-unsupported committee was accepted');

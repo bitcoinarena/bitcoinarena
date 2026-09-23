@@ -172,7 +172,7 @@ async function lostStake({ signerNodes, up }) {
   } catch (err) { await close(); throw err; }
 }
 
-test('each daemon\'s settle opens a 2-of-2 stake with its 2 shares - not "2 of 5"', async () => {
+test('each daemon\'s settle opens a 2-of-2 stake with its 2 shares - not "2 of 5"', slice2(), async () => {
   const w = await lostStake({ signerNodes: 2, up: 2 });
   try {
     for (const [name, d] of [['A', w.daemons[0]], ['B', w.daemons[1]]]) {
@@ -183,7 +183,7 @@ test('each daemon\'s settle opens a 2-of-2 stake with its 2 shares - not "2 of 5
   } finally { await w.close(); }
 });
 
-test('seven signer nodes, two of them down: the settle opens a 5-of-7 stake with the 5 shares that exist - not "5 of 7"', async () => {
+test('seven signer nodes, two of them down: the settle opens a 5-of-7 stake with the 5 shares that exist - not "5 of 7"', slice2(), async () => {
   const w = await lostStake({ signerNodes: 7, up: 5 });
   try {
     assert.equal(w.needed, 5);
@@ -192,3 +192,6 @@ test('seven signer nodes, two of them down: the settle opens a 5-of-7 stake with
     assert.equal(toHex(got), toHex(w.preimage), 'the settle opened a different preimage');
   } finally { await w.close(); }
 });
+
+/** Why this test does not run in Step 1 of the THRESHOLD_LN disposal (see TASKBOOK). */
+function slice2() { return { skip: "slice 2: the subject is the hold path (hold invoices on a Lightning port). It still runs at HEAD on a FEDERATION round given a Lightning port, so it is skipped, not moved to FEDERATION (RULED 2026-09-23); slice 2 deletes this test with the code" }; }

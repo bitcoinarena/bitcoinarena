@@ -80,7 +80,7 @@ function paidPort() {
   return port;
 }
 
-test('a paid hold turns EXPIRED once the daemon\'s own chain is past its HTLC\'s expiry height - and not before, and not on lnd\'s word', async () => {
+test('a paid hold turns EXPIRED once the daemon\'s own chain is past its HTLC\'s expiry height - and not before, and not on lnd\'s word', slice2(), async () => {
   const port = paidPort();
   let tip = 300;
   const node = await serve(openStore(':memory:'), {
@@ -126,7 +126,7 @@ test('a paid hold turns EXPIRED once the daemon\'s own chain is past its HTLC\'s
   } finally { await node.close(); }
 });
 
-test('only a HELD row with a recorded expiry height is expired: a settled, a cancelled or an unrecorded row is left alone', () => {
+test('only a HELD row with a recorded expiry height is expired: a settled, a cancelled or an unrecorded row is left alone', slice2(), () => {
   const round = new Round(openStore(':memory:'));
   const custody = new Custody(round, { port: { async look() { throw new Error('the sweep asked lnd'); } } });
   const rows = { held: b32(1), settled: b32(2), cancelled: b32(3), unrecorded: b32(4) };
@@ -146,7 +146,7 @@ test('only a HELD row with a recorded expiry height is expired: a settled, a can
   assert.equal(round.hold(rows.unrecorded).state, HELD, 'a row with no recorded expiry was guessed at');
 });
 
-test('a launcher that gives only its own bitcoind (poolCall, as main.js does) still expires the hold on that chain\'s height', async () => {
+test('a launcher that gives only its own bitcoind (poolCall, as main.js does) still expires the hold on that chain\'s height', slice2(), async () => {
   // `main.js` hands the daemon `poolCall` - its bitcoind - and no `chainTip`.
   // A daemon that read its height only from `chainTip` would never expire a
   // row in production while every test and rehearsal passed.
@@ -185,3 +185,6 @@ test('a launcher that gives only its own bitcoind (poolCall, as main.js does) st
     assert.ok(asked.includes('getblockcount'), 'the daemon never asked its own bitcoind for a height');
   } finally { await node.close(); }
 });
+
+/** Why this test does not run in Step 1 of the THRESHOLD_LN disposal (see TASKBOOK). */
+function slice2() { return { skip: "slice 2: the subject is the hold path (hold invoices on a Lightning port). It still runs at HEAD on a FEDERATION round given a Lightning port, so it is skipped, not moved to FEDERATION (RULED 2026-09-23); slice 2 deletes this test with the code" }; }

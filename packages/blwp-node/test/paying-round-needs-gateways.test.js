@@ -39,13 +39,13 @@ const ask = (gateways) => lightningPreflight({
   info: SYNCED, channels: CHANNELS, holdInvoices: true, players: 1, entry: ENTRY, gateways,
 });
 
-test('the live pair lets a paying round through this gate', () => {
+test('the live pair lets a paying round through this gate', slice2(), () => {
   const said = ask(LIVE_PAIR);
   assert.equal(said.ready, true, said.why);
   assert.equal(said.missing.length, 0);
 });
 
-test('one gateway dark: the round is refused, and the refusal names why', () => {
+test('one gateway dark: the round is refused, and the refusal names why', slice2(), () => {
   // B stopped - which is the state the operator was actually in from 2026-09-16 to 2026-09-20.
   const dark = [LIVE_PAIR[0], { ...LIVE_PAIR[1], syncedToChain: false, channels: [] }];
   const said = ask(dark);
@@ -54,7 +54,7 @@ test('one gateway dark: the round is refused, and the refusal names why', () => 
   assert.match(said.why, /1 of 2/);
 });
 
-test('a channel nobody is home for is not inbound, however much it holds', () => {
+test('a channel nobody is home for is not inbound, however much it holds', slice2(), () => {
   // A's channel carried 196530 sat while its only peer was down: active false, unreachable.
   const inactive = LIVE_PAIR.map((g) => ({ ...g, channels: g.channels.map((c) => ({ ...c, active: false })) }));
   const said = ask(inactive);
@@ -62,13 +62,13 @@ test('a channel nobody is home for is not inbound, however much it holds', () =>
   assert.match(said.why, /0 of 2/);
 });
 
-test('two labels on one node are one gateway, and that is refused', () => {
+test('two labels on one node are one gateway, and that is refused', slice2(), () => {
   const said = ask([LIVE_PAIR[0], { ...LIVE_PAIR[1], identityPubkey: A }]);
   assert.equal(said.ready, false);
   assert.match(said.why, /that is one node/);
 });
 
-test('MISSING GATEWAYS ARE NOT AN ESCAPE HATCH: shown none, the round is refused', () => {
+test('MISSING GATEWAYS ARE NOT AN ESCAPE HATCH: shown none, the round is refused', slice2(), () => {
   // The operator does not get to pass the check by declining to answer it.
   for (const nothing of [null, undefined, 'two, honest', 0]) {
     const said = ask(nothing);
@@ -77,7 +77,7 @@ test('MISSING GATEWAYS ARE NOT AN ESCAPE HATCH: shown none, the round is refused
   }
 });
 
-test('a round that asks no stake still needs no Lightning and no gateway (M3.3-19)', () => {
+test('a round that asks no stake still needs no Lightning and no gateway (M3.3-19)', slice2(), () => {
   // The free round must not be dragged down by this gate: it holds nothing, so it receives nothing.
   const free = lightningPreflight({
     info: SYNCED, channels: [], holdInvoices: false, players: 1,
@@ -87,7 +87,7 @@ test('a round that asks no stake still needs no Lightning and no gateway (M3.3-1
   assert.match(free.why, /needs no inbound and no channel/);
 });
 
-test('THE CALL SITE ITSELF: delete it and this goes red', () => {
+test('THE CALL SITE ITSELF: delete it and this goes red', slice2(), () => {
   // Everything the single node needs is true - synced, an active channel with enough inbound, hold invoices -
   // so the ONLY thing that can refuse this round is the gateway check. If `lightningPreflight` stops calling
   // `gatewaysAreIndependent`, `ready` becomes true and this fails. That is the point of it: the predicate was
@@ -98,3 +98,6 @@ test('THE CALL SITE ITSELF: delete it and this goes red', () => {
   assert.equal(onlyGatewaysCanRefuse.missing.length, 1, 'the gateway check is the only thing refusing here');
   assert.match(onlyGatewaysCanRefuse.missing[0], /gateways cannot take this round's money/);
 });
+
+/** Why this test does not run in Step 1 of the THRESHOLD_LN disposal (see TASKBOOK). */
+function slice2() { return { skip: "slice 2: the subject is the hold path (hold invoices on a Lightning port). It still runs at HEAD on a FEDERATION round given a Lightning port, so it is skipped, not moved to FEDERATION (RULED 2026-09-23); slice 2 deletes this test with the code" }; }

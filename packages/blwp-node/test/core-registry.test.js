@@ -27,7 +27,7 @@ test('the signer node door opens a round on the truck\'s own core and config, an
       const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
       return { status: r.status, why: (await r.text()).trim(), held: (await fetch(`http://127.0.0.1:${d.port}/round?id=${toHex(roundId(c))}`)).status };
     };
-    const truck = { ...contractFor(nodes, 3000n), simCoreHash: TRUCK_CORE_HASH, configHash: TRUCK_CONFIG_HASH };
+    const truck = { ...contractFor(nodes, 3000n, ['wss://r.example']), simCoreHash: TRUCK_CORE_HASH, configHash: TRUCK_CONFIG_HASH };
     const unknownCore = await post({ ...truck, simCoreHash: b32(1) });
     const otherConfig = await post({ ...truck, configHash: b32(0x43) });
     const opened = await post(truck);

@@ -133,7 +133,7 @@ async function committee() {
   };
 }
 
-test('after the close the chip names the objection window and the refund height, then says the stake settled - where it kept saying "committed"', async () => {
+test('after the close the chip names the objection window and the refund height, then says the stake settled - where it kept saying "committed"', slice2(), async () => {
   const c = await committee();
   try {
     await c.pay();
@@ -161,7 +161,7 @@ test('after the close the chip names the objection window and the refund height,
   } finally { await c.close(); }
 });
 
-test('the client asks by itself once the stake is committed, and stops once every signer node has moved the hold', async () => {
+test('the client asks by itself once the stake is committed, and stops once every signer node has moved the hold', slice2(), async () => {
   const c = await committee();
   const client = new Client({ base: c.bases[0], core, sign, verify });
   try {
@@ -186,7 +186,7 @@ test('the client asks by itself once the stake is committed, and stops once ever
   } finally { client.close(); await c.close(); }
 });
 
-test('every state has its words, and a result nobody has agreed on adds none', () => {
+test('every state has its words, and a result nobody has agreed on adds none', slice2(), () => {
   const at = 1_000_000;
   const base = { of: 2, answered: 2, refundHeight: 500, windowClosesAtMs: at + 61000 };
   assert.equal(settlementLine({ ...base, hold: HELD, finality: null }, at), '');
@@ -203,3 +203,6 @@ test('every state has its words, and a result nobody has agreed on adds none', (
     ' · waiting for the objection window, 1:01 left');
   assert.equal(settlementLine({ ...base, answered: 0, hold: null, finality: null }, at), '');
 });
+
+/** Why this test does not run in Step 1 of the THRESHOLD_LN disposal (see TASKBOOK). */
+function slice2() { return { skip: "slice 2: the subject is the hold path (hold invoices on a Lightning port). It still runs at HEAD on a FEDERATION round given a Lightning port, so it is skipped, not moved to FEDERATION (RULED 2026-09-23); slice 2 deletes this test with the code" }; }

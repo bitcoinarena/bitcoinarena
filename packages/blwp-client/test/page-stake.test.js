@@ -120,7 +120,7 @@ async function pageJoins(world, settlementSignerNodes, { reachable = world.nodes
  * THE NUMBER THAT CLOSES THE LETTER: an entry from the page's own sequence
  * carries a real commitment and shares the settlement signer nodes can open.
  */
-test('a paying-round entry from the page carries a real stake, not random bytes', async () => {
+test('a paying-round entry from the page carries a real stake, not random bytes', slice2(), async () => {
   const world = await daemons();
   try {
     // The settlement committee is FIVE of the seven, so this file measures the
@@ -168,7 +168,7 @@ test('a paying-round entry from the page carries a real stake, not random bytes'
  * open one. Measured on nine bonded nodes with 7 + 7 slots: game 7,
  * settlement 7, union 9, five in both and two settlement-only.
  */
-test('a stake dealt to the wrong committee is refused by the signer nodes that cannot open it', async () => {
+test('a stake dealt to the wrong committee is refused by the signer nodes that cannot open it', slice2(), async () => {
   const world = await daemons();
   try {
     // Two of the seven are strangers to the settlement committee - the shape a
@@ -191,7 +191,7 @@ test('a stake dealt to the wrong committee is refused by the signer nodes that c
  * AND A ROUND THAT ASKS NOTHING IS A FREE ROUND, SAID OUT LOUD RATHER THAN
  * DEALT.
  */
-test('a round that asks no stake deals none, and says so', async () => {
+test('a round that asks no stake deals none, and says so', slice2(), async () => {
   const world = await daemons(3, { stakeMsat: 0n });
   try {
     const joined = await pageJoins(world, []);
@@ -215,7 +215,7 @@ test('a round that asks no stake deals none, and says so', async () => {
  * silent refusal and a silent free round are the same fault this letter opened
  * on, on the other side of the glass.
  */
-test('the chip says why there is no signer node, and what the signer node cost', () => {
+test('the chip says why there is no signer node, and what the signer node cost', slice2(), () => {
   // A REFUSAL NAMES ITSELF, and it beats the bridge's own message: with no
   // entry the jslib throws "the page did not say which round to play", which
   // is a true sentence about the wrong cause.
@@ -265,7 +265,7 @@ test('the chip says why there is no signer node, and what the signer node cost',
  * player whether their stake was funded had to guess - and the first close of
  * this letter guessed, printing "the stake is not paid" as a constant.
  */
-test('joining keeps the hold the node reported', async () => {
+test('joining keeps the hold the node reported', slice2(), async () => {
   const world = await daemons(SHARES_NEEDED);
   try {
     const settlement = world.nodes.map((n) => n.round.pubkey);
@@ -302,7 +302,7 @@ test('joining keeps the hold the node reported', async () => {
  * ZERO CALLERS outside its own tests, and `entryFor` wrote `feeMsat: 0n`, so on
  * the fixture stake every paying entry was charged 0 where 2000 is owed.
  */
-test('a paying entry from the page is charged the fee the round asks', async () => {
+test('a paying entry from the page is charged the fee the round asks', slice2(), async () => {
   const world = await daemons(SHARES_NEEDED);
   try {
     const joined = await pageJoins(world, world.nodes.map((n) => n.round.pubkey));
@@ -319,7 +319,7 @@ test('a paying entry from the page is charged the fee the round asks', async () 
   } finally { await world.close(); }
 });
 
-test('a free round is charged 2% of nothing, and that stands too', async () => {
+test('a free round is charged 2% of nothing, and that stands too', slice2(), async () => {
   const world = await daemons(2, { stakeMsat: 0n });
   try {
     const joined = await pageJoins(world, []);
@@ -340,7 +340,7 @@ test('a free round is charged 2% of nothing, and that stands too', async () => {
  * 400 "that entry names shares this node has not accepted". Joined at a paying
  * round with a stake that can never be settled, and told nothing.
  */
-test('a handout too few signer nodes hold refuses the entry instead of taking it', async () => {
+test('a handout too few signer nodes hold refuses the entry instead of taking it', slice2(), async () => {
   const world = await daemons();
   try {
     const settlement = world.nodes.map((n) => n.round.pubkey);
@@ -365,9 +365,12 @@ test('a handout too few signer nodes hold refuses the entry instead of taking it
   } finally { await world.close(); }
 });
 
-test('the page acts on the count rather than logging it', () => {
+test('the page acts on the count rather than logging it', slice2(), () => {
   const page = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url), 'utf8');
   assert.match(page, /BLWPCLIENT\.postHandout\(/,
     'the page posts the handout itself, so the threshold lives where no test can reach it');
   assert.match(page, /if \(!put\.ok\)/, 'the page does not act on how many signer nodes took the handout');
 });
+
+/** Why this test does not run in Step 1 of the THRESHOLD_LN disposal (see TASKBOOK). */
+function slice2() { return { skip: "slice 2: the subject is the hold path (hold invoices on a Lightning port). It still runs at HEAD on a FEDERATION round given a Lightning port, so it is skipped, not moved to FEDERATION (RULED 2026-09-23); slice 2 deletes this test with the code" }; }

@@ -541,12 +541,32 @@ export const splitNodesDevelopers = (amount) => {
   return { nodes, developers: amount - nodes };
 };
 
-export const CUSTODY = ['THRESHOLD_LN', 'FEDERATION'];
+/**
+ * THE CUSTODY FIELD HAS ONE VALUE (RULED, the owner 2026-09-22 22:59, §23.6):
+ * "THRESHOLD_LN does not exist, past rounds included, no decode-only value ... the custody field has
+ * ONE value, FEDERATION, and no other value is defined, reserved, or kept for decoding. A round that
+ * names anything else is invalid, PAST ROUNDS INCLUDED: a record from before this ruling that carries
+ * the old value is not a round of this network and is neither decoded, replayed, settled, listed nor
+ * counted; a node that holds such a record treats it as it treats bytes that do not parse."
+ *
+ * SO FEDERATION KEEPS BYTE 1, AND BYTE 0 IS NOT A VALUE. This is the whole of the wire design and it
+ * follows from the ruling rather than from convenience: if FEDERATION were renumbered to 0 - the tidy
+ * reading of "one value" - then every record written under the old byte 0 would DECODE, silently, as
+ * FEDERATION. That is the one outcome the ruling forbids by name. Leaving 1 where it is makes the old
+ * byte undefined, so those records do not parse, which is exactly what they are owed.
+ *
+ * `CUSTODY` is therefore sparse: index 0 is a hole, not a label. Nothing may fill it.
+ */
+export const CUSTODY = Object.freeze([undefined, 'FEDERATION']);
+export const CUSTODY_VALUES = Object.freeze(['FEDERATION']);
 export const custodyByte = (which) => {
   const at = CUSTODY.indexOf(which);
-  if (at < 0) throw new Error(`${which} is not one of ${CUSTODY.join(', ')}`);
+  if (at < 0 || which === undefined)
+    throw new Error(`${which} is not a custody this network has: the one value is ${CUSTODY_VALUES.join(', ')}`);
   return at;
 };
+/** The name a custody byte carries, or null when the byte is not a value of this network. */
+export const custodyName = (byte) => (byte === 1 ? 'FEDERATION' : null);
 
 /**
  * HOW LONG A STAKE LOCK RUNS, in the federation's blocks: 144, one day (§23.1,

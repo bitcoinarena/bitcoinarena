@@ -1016,18 +1016,19 @@ test('the lock handed to a signer node that verifies it is committed; an entry n
   } finally { await good.close(); await none.close(); }
 });
 
-test('a lock round\'s entry names its lock\'s outpoint and is not built without one; a round naming no federation is handed none', () => {
+test('a lock round\'s entry names its lock\'s outpoint and is not built without one; a round naming no federation, or the withdrawn custody, is handed none', () => {
   const opts = { seed, curve: pageCurve, random: (n) => new Uint8Array(n).fill(7), claimKey };
   const outpoint = { txid: b32(0xab), outIdx: 3n };
   const entry = entryFor(round, { ...opts, stakeLock: { outpoint } });
   assert.equal(`${toHex(entry.stakeLockOutpoint.txid)}:${entry.stakeLockOutpoint.outIdx}`, `${toHex(b32(0xab))}:3`);
   assert.throws(() => entryFor(round, opts), /no lock was made: an entry naming no stake lock outpoint/);
   assert.throws(() => entryFor(round, { ...opts, stakeLock: { outpoint: { txid: new Uint8Array(32), outIdx: 0n } } }), /no lock was made/);
-  // A ROUND NAMING NO FEDERATION IS A THRESHOLD_LN ROUND (M3 W7): a paying FEDERATION round with a zero id is no contract.
+  // A ROUND NAMING NO FEDERATION IS NO CONTRACT (M3 W7): a paying FEDERATION round with a zero id is refused,
+  // and the withdrawn THRESHOLD_LN (RULED 2026-09-22 22:59) is no round at all - no entry is built for it.
   assert.throws(() => entryFor({ ...round, federationId: new Uint8Array(32) }, opts), /takes a stake into a FEDERATION and names no federation_id/);
-  const hold = { ...round, custody: 'THRESHOLD_LN', federationId: new Uint8Array(32) };
-  assert.throws(() => entryFor(hold, { ...opts, stakeLock: { outpoint } }), /names no federation, so there is no lock/);
-  assert.equal(entryFor(hold, opts).stakeLockOutpoint.txid.every((b) => b === 0), true);
+  const withdrawn = { ...round, custody: 'THRESHOLD_LN', federationId: new Uint8Array(32) };
+  assert.throws(() => entryFor(withdrawn, { ...opts, stakeLock: { outpoint } }), /THRESHOLD_LN is not a custody this network has/);
+  assert.throws(() => entryFor(withdrawn, opts), /THRESHOLD_LN is not a custody this network has/);
 });
 
 test('the refund from the seed alone: the signer nodes are asked by the seed\'s refund key, and the lock client refunds that lock with the player\'s key', async () => {

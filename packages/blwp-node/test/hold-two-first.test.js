@@ -105,7 +105,7 @@ async function joinWithTwoFirstMarks(w) {
   return { eid, paymentHash: toHex(sha256(preimage)), first: firstAt(60), other: firstAt(30) };
 }
 
-test('two first marks on a Lightning hold, beside a winner: FORFEIT at both signer nodes with no signed result, and the hold is SETTLED into the pool - never cancelled, never left to expire to the player', async () => {
+test('two first marks on a Lightning hold, beside a winner: FORFEIT at both signer nodes with no signed result, and the hold is SETTLED into the pool - never cancelled, never left to expire to the player', slice2(), async () => {
   const w = await twoSignerNodesOnHolds();
   try {
     const run = await joinWithTwoFirstMarks(w);
@@ -174,7 +174,7 @@ test('two first marks on a Lightning hold, beside a winner: FORFEIT at both sign
 // stake; two first marks is FORFEIT, the hold settled into the pool, never left
 // to expire back to the player. (The fake port has no clock: a hold neither
 // settled nor cancelled here is one lnd hands back to the player at its expiry.)
-test('two first marks on a hold, and signer node B down from before the close through the hold\'s expiry: the stake is settled into the pool, never left to expire back to the player', async () => {
+test('two first marks on a hold, and signer node B down from before the close through the hold\'s expiry: the stake is settled into the pool, never left to expire back to the player', slice2(), async () => {
   const w = await twoSignerNodesOnHolds();
   try {
     const run = await joinWithTwoFirstMarks(w);
@@ -232,3 +232,6 @@ test('two first marks on a hold, and signer node B down from before the close th
     assert.notEqual(back.b.noQuorum, 'VOID', 'B came back and voided the entry');
   } finally { await w.close(); }
 });
+
+/** Why this test does not run in Step 1 of the THRESHOLD_LN disposal (see TASKBOOK). */
+function slice2() { return { skip: "slice 2: the subject is the hold path (hold invoices on a Lightning port). It still runs at HEAD on a FEDERATION round given a Lightning port, so it is skipped, not moved to FEDERATION (RULED 2026-09-23); slice 2 deletes this test with the code" }; }

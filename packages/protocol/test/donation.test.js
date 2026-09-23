@@ -7,6 +7,7 @@
 // remainder to ascending H(round_id || node_pubkey) and gives the donation's
 // to "the first recipient in the set as published". Two rules, written down
 // separately; copying either onto the other would be inventing a third.
+import { TEST_FEDERATION_ID } from '../src/test-federation.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { toHex } from '../src/hash.js';
@@ -424,7 +425,7 @@ test('bytes that are not the set\'s own encoding are refused', () => {
 
 const roundWith = (donationSetId) => ({
   networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1), startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n,
-  custody: 'THRESHOLD_LN', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId,
+  custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: [], donationSetId,
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash', stakeMsat: 100000n,
   bondMinSats: 50000n, blockTicks: 600, exposureReference: 1000, corridorHalfWidth: 40,
   spawnFreeRadius: 20, timeFloor: 30, timeCeil: 150, minScore: 1,
