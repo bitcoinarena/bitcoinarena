@@ -10,6 +10,7 @@
 // 42"; tab 1's joined view read "2 players in this round · other at -76,-78 m ·
 // free round" and the round's lobby row read only signer node counts - fresh, after its
 // repaint and after a reload - so the other player never saw the chosen name.
+import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -134,7 +135,7 @@ test('the board, built by leaderboard.js from signed results, is drawn with each
     networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 6,
     gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1),
     startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n,
-    custody: 'THRESHOLD_LN', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [],
+    custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'],
     donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,
     censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash', stakeMsat: 100000n,
     bondMinSats: 50000n, blockTicks: 600, exposureReference: 1000,

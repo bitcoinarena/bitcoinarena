@@ -160,10 +160,11 @@ export const contractFor = (nodes, objectionWindowMs, publicationRelays = []) =>
   startDeadlineTicks: PLANTED_FIRST_MARK_DEADLINE,
   networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
   gameVerifySlots: nodes.length, settlementSlots: nodes.length, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n,
-  // NO FEDERATION IS NAMED, SO THE ROUND IS NOT A FEDERATION ROUND (W7): THRESHOLD_LN, the hold
-  // invoices these rounds run. A stake-lock test says FEDERATION and names TEST_FEDERATION_ID.
-  entryCloseMs: 2000n, objectionWindowMs, custody: 'THRESHOLD_LN',
-  slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays, donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
+  // FEDERATION, NAMING TEST_FEDERATION_ID: the one custody this network has (RULED 2026-09-22 22:59 -
+  // THRESHOLD_LN does not exist). A test whose subject is the hold path is skipped until slice 2
+  // retires it, never run here on FEDERATION: that path still runs when a round has a Lightning port.
+  entryCloseMs: 2000n, objectionWindowMs, custody: 'FEDERATION',
+  slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays, donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n,
   randomnessRule: 'bitcoin-block-hash', stakeMsat: STAKE, bondMinSats: 50000n,
   blockTicks: RUN_TICKS, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,

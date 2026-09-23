@@ -10,6 +10,7 @@
 //
 // Everything here goes through the daemons' own doors. Nothing hands a share
 // to anybody in this file.
+import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 // THE RUN LENGTH IS THE CORE'S (2026-09-20). This fixture said 9000 and the core has ended a run at 10800
 // since c01cc655, so `Round.open` refused the contract - "a second clock is not a shorter round" - and every
@@ -108,8 +109,8 @@ const contractFor = (nodes) => ({
   // did not have to wait; a zero window is now refused, because it erases §13A's replay veto (contracts.js).
   // The spec sets NO FLOOR - "reference: 10 minutes, contract-defined" - so the smallest legal window is 1ms,
   // which has passed by the time these tests ask. Nothing asserted here is about the window's length.
-  entryCloseMs: 2000n, objectionWindowMs: 1n, custody: 'THRESHOLD_LN',
-  slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: committeeRelays, donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
+  entryCloseMs: 2000n, objectionWindowMs: 1n, custody: 'FEDERATION',
+  slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: committeeRelays, donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n,
   randomnessRule: 'bitcoin-block-hash', stakeMsat: 100000n, bondMinSats: 50000n,
   blockTicks: RUN_TICKS, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
@@ -415,7 +416,7 @@ test('a delivered run never gives up its preimage, and neither does one that is 
   } finally { for (const n of nodes) await n.close(); }
 });
 
-test('a hold settles on a preimage five signer nodes opened, and on nothing less', async () => {
+test('a hold settles on a preimage five signer nodes opened, and on nothing less', slice2(), async () => {
   // (d) The hold path is unchanged and still follows the core's outcome word.
   // What changed is where the 32 bytes come from: no file, no injection - five
   // signer nodes, or the stake stays in flight.
@@ -472,7 +473,7 @@ test('a hold settles on a preimage five signer nodes opened, and on nothing less
   } finally { for (const n of nodes) await n.close(); }
 });
 
-test('with four signer nodes reachable the loser\'s stake stays in flight', async () => {
+test('with four signer nodes reachable the loser\'s stake stays in flight', slice2(), async () => {
   const nodes = await committee(7);
   const port = fakePort();
   try {
@@ -583,3 +584,6 @@ test('a signer node that never replayed the run hands over nothing', async () =>
     assert.match(may.why, /this node signed no result for that run, so it releases nothing/);
   } finally { for (const n of nodes) await n.close(); }
 });
+
+/** Why this test does not run in Step 1 of the THRESHOLD_LN disposal (see TASKBOOK). */
+function slice2() { return { skip: "slice 2: the subject is the hold path (hold invoices on a Lightning port). It still runs at HEAD on a FEDERATION round given a Lightning port, so it is skipped, not moved to FEDERATION (RULED 2026-09-23); slice 2 deletes this test with the code" }; }

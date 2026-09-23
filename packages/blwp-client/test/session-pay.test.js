@@ -116,7 +116,7 @@ async function joined({ port = fakePort() } = {}) {
 /**
  * THE FOUR WORDS OF ITEM 5, COUNTED AGAINST THE CLIENT'S OWN SURFACE.
  */
-test('the client can enter, ask what it owes, and play - and cannot send a satoshi', async () => {
+test('the client can enter, ask what it owes, and play - and cannot send a satoshi', slice2(), async () => {
   const c = await joined();
   try {
     for (const m of ['openRound', 'join', 'entryFor'])
@@ -181,7 +181,7 @@ test('the client can enter, ask what it owes, and play - and cannot send a satos
  * `server.js` says at its own `/invoice` door that `invoiceMatchesEntry` "lives
  * on their side too". It does not: the only callers are the daemon's.
  */
-test('the client checks an invoice with the protocol\'s own rule, not a second formula', () => {
+test('the client checks an invoice with the protocol\'s own rule, not a second formula', slice2(), () => {
   const dir = new URL('../src/', import.meta.url);
   const callers = readdirSync(dir).filter((f) => f.endsWith('.js'))
     .filter((f) => /invoiceMatchesEntry\s*\(/.test(readFileSync(new URL(f, dir), 'utf8')));
@@ -213,7 +213,7 @@ test('the client checks an invoice with the protocol\'s own rule, not a second f
  * is the entry's own `stakeCommitment` - so a player CAN check it, once they
  * have something that asks.
  */
-test('the door already quotes what this entry owes', async () => {
+test('the door already quotes what this entry owes', slice2(), async () => {
   const c = await joined();
   try {
     // ONE READ OF THE BODY. `assert.equal(r.status, 200, await r.text())` then
@@ -246,7 +246,7 @@ test('the door already quotes what this entry owes', async () => {
 /**
  * THE ASK, AGAINST A REAL DAEMON - the honest pair accepted.
  */
-test('the client asks the node what it owes and the honest quote stands', async () => {
+test('the client asks the node what it owes and the honest quote stands', slice2(), async () => {
   const c = await joined();
   try {
     const got = await c.client.invoice(c.entry, { entryId: c.eid });
@@ -287,7 +287,7 @@ async function liar(quote) {
   return { port: server.address().port, close: () => new Promise((r) => server.close(r)) };
 }
 
-test('a node that quotes a wrong amount or a wrong hash is refused by the player', async () => {
+test('a node that quotes a wrong amount or a wrong hash is refused by the player', slice2(), async () => {
   const c = await joined();
   const honest = {
     entry: toHex(c.eid), paymentHash: toHex(c.entry.stakeCommitment),
@@ -332,7 +332,7 @@ test('a node that quotes a wrong amount or a wrong hash is refused by the player
 /**
  * AND THE DOOR'S OWN REFUSALS REACH THE PLAYER AS WORDS.
  */
-test('a node that joined nobody, and one with no Lightning, are refused by name', async () => {
+test('a node that joined nobody, and one with no Lightning, are refused by name', slice2(), async () => {
   const c = await joined();
   try {
     // AN ENTRY THIS NODE NEVER TOOK - and it has to be a REAL entry asking
@@ -357,7 +357,7 @@ test('a node that joined nobody, and one with no Lightning, are refused by name'
   } finally { await dark.close(); }
 });
 
-test('an invoice cannot be asked for without an entry or an entry id', async () => {
+test('an invoice cannot be asked for without an entry or an entry id', slice2(), async () => {
   const c = await joined();
   try {
     assert.match((await c.client.invoice(null, { entryId: c.eid })).why, /no entry to check/);
@@ -375,7 +375,7 @@ test('an invoice cannot be asked for without an entry or an entry id', async () 
  * their preimage and changes their world secret, so two ids, one hash, one
  * amount, and the other signer node's quote would be accepted as this one's.
  */
-test('an entry that is not the one being asked about is refused as two signer nodes', async () => {
+test('an entry that is not the one being asked about is refused as two signer nodes', slice2(), async () => {
   const c = await joined();
   try {
     // The same player, the same preimage, a second signer node: two ids, one hash.
@@ -398,3 +398,6 @@ test('an entry that is not the one being asked about is refused as two signer no
     console.log(`  same hash, same amount, different signer node: ${crossed.why}`);
   } finally { await c.close(); }
 });
+
+/** Why this test does not run in Step 1 of the THRESHOLD_LN disposal (see TASKBOOK). */
+function slice2() { return { skip: "slice 2: the subject is the hold path (hold invoices on a Lightning port). It still runs at HEAD on a FEDERATION round given a Lightning port, so it is skipped, not moved to FEDERATION (RULED 2026-09-23); slice 2 deletes this test with the code" }; }

@@ -54,7 +54,7 @@ import {
 } from './window-fixture.js';
 
 
-test('two signer nodes, a 3 s window: nothing is settled, cancelled or handed out inside it, and the loser settles and the winner cancels after it', async () => {
+test('two signer nodes, a 3 s window: nothing is settled, cancelled or handed out inside it, and the loser settles and the winner cancels after it', slice2(), async () => {
   const portA = paidPort();
   const portB = paidPort();
   const a = await serve(openStore(':memory:'), { port: 0, ...opts, lightning: portA, finality: { everyMs: 100 } });
@@ -137,7 +137,7 @@ test('two signer nodes, a 3 s window: nothing is settled, cancelled or handed ou
 // objection window. `GET /settlement` answers, for an entry this node took,
 // what its hold is, where the run's result stands (13A), when the window
 // closes, and the height at which the hold refunds itself if nobody acts.
-test('a player can ask where their stake stands: inside the window HELD, provisionally final, the window\'s end and the refund height; after it SETTLED or CANCELLED and FINAL', async () => {
+test('a player can ask where their stake stands: inside the window HELD, provisionally final, the window\'s end and the refund height; after it SETTLED or CANCELLED and FINAL', slice2(), async () => {
   const a = await serve(openStore(':memory:'), { port: 0, ...opts, lightning: paidPort(), finality: { everyMs: 100 } });
   const b = await serve(openStore(':memory:'), { port: 0, ...opts, lightning: paidPort(), finality: { everyMs: 100 } });
   try {
@@ -221,7 +221,7 @@ test('a player can ask where their stake stands: inside the window HELD, provisi
 // custody ran it; /settlement serves it beside the hold's own amount. Measured
 // before: /settlement said only the hold's state, and no number anywhere a page
 // could read said what the pool took.
-test('a 2% donor who loses: the pool takes the loser\'s net stake, 96000 msat, and both signer nodes serve it beside the hold', async () => {
+test('a 2% donor who loses: the pool takes the loser\'s net stake, 96000 msat, and both signer nodes serve it beside the hold', slice2(), async () => {
   const a = await serve(openStore(':memory:'), { port: 0, ...opts, lightning: paidPort(), finality: { everyMs: 100 } });
   const b = await serve(openStore(':memory:'), { port: 0, ...opts, lightning: paidPort(), finality: { everyMs: 100 } });
   try {
@@ -276,7 +276,7 @@ test('a 2% donor who loses: the pool takes the loser\'s net stake, 96000 msat, a
 // said "the restart came after the window, so it tests nothing". The window is
 // what is restarted inside; every check below is unchanged.
 const RESTART_WINDOW_MS = 10000;
-test('two signer nodes restarted inside the objection window: after it the loser settles and the winner cancels on both', async () => {
+test('two signer nodes restarted inside the objection window: after it the loser settles and the winner cancels on both', slice2(), async () => {
   const WINDOW_MS = RESTART_WINDOW_MS;
   const dir = mkdtempSync(join(tmpdir(), 'window-restart-'));
   const portA = paidPort();
@@ -401,3 +401,6 @@ test('seven signer nodes: an objection against a run this node replayed differen
     assert.equal(after.ok, true, `an objection dated after the window un-finalised a FINAL run: ${after.why}`);
   } finally { await w.close(); }
 });
+
+/** Why this test does not run in Step 1 of the THRESHOLD_LN disposal (see TASKBOOK). */
+function slice2() { return { skip: "slice 2: the subject is the hold path (hold invoices on a Lightning port). It still runs at HEAD on a FEDERATION round given a Lightning port, so it is skipped, not moved to FEDERATION (RULED 2026-09-23); slice 2 deletes this test with the code" }; }

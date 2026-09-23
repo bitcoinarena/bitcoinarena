@@ -32,7 +32,7 @@ const countingPort = () => {
   return p;
 };
 
-test('a paying round naming no relay is refused where it is opened by a node that holds stakes, and nothing is stored; a node that holds none takes no stake and opens it', async () => {
+test('a paying round naming no relay is refused where it is opened by a node that holds stakes, and nothing is stored; a node that holds none takes no stake and opens it', slice2(), async () => {
   const port = countingPort();
   const withLn = await serve(openStore(':memory:'), { port: 0, ...opts, lightning: port });
   const without = await serve(openStore(':memory:'), { port: 0, ...opts });
@@ -50,7 +50,7 @@ test('a paying round naming no relay is refused where it is opened by a node tha
   } finally { await withLn.close(); await without.close(); }
 });
 
-test('a stake is not taken in a stored paying round that names no relay: refused before the entry is kept and before any hold', async () => {
+test('a stake is not taken in a stored paying round that names no relay: refused before the entry is kept and before any hold', slice2(), async () => {
   const port = countingPort();
   const d = await serve(openStore(':memory:'), { port: 0, ...opts, lightning: port });
   try {
@@ -97,7 +97,7 @@ const bareEntry = (rid) => ({
   joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
 });
 
-test('an entry kept before the rule, in a paying round naming no relay, is quoted no hold at /invoice, and Lightning is asked for none', async () => {
+test('an entry kept before the rule, in a paying round naming no relay, is quoted no hold at /invoice, and Lightning is asked for none', slice2(), async () => {
   const port = countingPort();
   const d = await serve(openStore(':memory:'), { port: 0, ...opts, lightning: port });
   try {
@@ -132,3 +132,6 @@ test('a stored paying round naming no relay is given no federation stake invoice
     assert.match(why, /no stake invoice is made for that round: that round takes a stake and names no publication relay/);
   } finally { await d.close(); }
 });
+
+/** Why this test does not run in Step 1 of the THRESHOLD_LN disposal (see TASKBOOK). */
+function slice2() { return { skip: "slice 2: the subject is the hold path (hold invoices on a Lightning port). It still runs at HEAD on a FEDERATION round given a Lightning port, so it is skipped, not moved to FEDERATION (RULED 2026-09-23); slice 2 deletes this test with the code" }; }

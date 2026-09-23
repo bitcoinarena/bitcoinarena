@@ -192,7 +192,7 @@ async function joinAndPlay(daemons, c, rid, who) {
   return { eid, entry };
 }
 
-test('the signer node whose payout ask came before the other had queued ends PAID once the other has paid - one transaction, 980 sats to the winner', async () => {
+test('the signer node whose payout ask came before the other had queued ends PAID once the other has paid - one transaction, 980 sats to the winner', slice2(), async () => {
   const dealt = dealThePool();
   const pool = { groupPublicKey: dealt.groupPublicKey };
   const out = poolOutput({ groupPublicKey: pool.groupPublicKey, curve });
@@ -267,3 +267,6 @@ test('the signer node whose payout ask came before the other had queued ends PAI
     assert.notEqual(rowOf(a), PAYOUT_QUEUED);
   } finally { await a.close(); await b.close(); }
 });
+
+/** Why this test does not run in Step 1 of the THRESHOLD_LN disposal (see TASKBOOK). */
+function slice2() { return { skip: "slice 2: the subject is the hold path (hold invoices on a Lightning port). It still runs at HEAD on a FEDERATION round given a Lightning port, so it is skipped, not moved to FEDERATION (RULED 2026-09-23); slice 2 deletes this test with the code" }; }

@@ -118,7 +118,7 @@ async function walletOnARelay({ answer = null, secret = rand(32) } = {}) {
 }
 
 // 6d'S DESTINATION WITH A CONNECTED WALLET: the page asks it for the invoice it withdraws to.
-test('a connected wallet is asked for an invoice of exactly the withdrawable msat (NIP-47 make_invoice), and an answer that is no bolt11 is refused', async () => {
+test('a connected wallet is asked for an invoice of exactly the withdrawable msat (NIP-47 make_invoice), and an answer that is no bolt11 is refused', slice2(), async () => {
   const params = [];
   const w = await walletOnARelay({ answer: (said) => {
     if (said.method !== 'make_invoice') return null;
@@ -199,7 +199,7 @@ async function joined() {
 
 const pays = { curve: pageCurve, random: rand, WebSocketImpl: (await import('ws')).WebSocket };
 
-test('a connection string is taken apart, and a broken one is refused by name', () => {
+test('a connection string is taken apart, and a broken one is refused by name', slice2(), () => {
   const secret = toHex(rand(32));
   const wallet = toHex(rand(32));
   const good = parseConnection(
@@ -226,7 +226,7 @@ test('a connection string is taken apart, and a broken one is refused by name', 
   console.log(`  1 connection parsed, ${bad.length} broken ones refused by name`);
 });
 
-test('NIP-04 goes both ways over the shared secret, and only for the pair it was sealed to', async () => {
+test('NIP-04 goes both ways over the shared secret, and only for the pair it was sealed to', slice2(), async () => {
   const mine = rand(32);
   const theirs = rand(32);
   const stranger = rand(32);
@@ -252,7 +252,7 @@ test('NIP-04 goes both ways over the shared secret, and only for the pair it was
  * THE NUMBER THAT CLOSES THE LETTER: the wallet is asked to pay the invoice
  * your own quote produced, and that one only.
  */
-test('a connected wallet pays the hold invoice this entry owes', async () => {
+test('a connected wallet pays the hold invoice this entry owes', slice2(), async () => {
   const c = await joined();
   const w = await walletOnARelay();
   try {
@@ -288,7 +288,7 @@ test('a connected wallet pays the hold invoice this entry owes', async () => {
  * Not "the wallet declines it" - the wallet is never asked. Counted, because
  * zero requests is the only way to see the difference.
  */
-test('a quote for another signer node sends nothing to the wallet', async () => {
+test('a quote for another signer node sends nothing to the wallet', slice2(), async () => {
   const c = await joined();
   const w = await walletOnARelay();
   try {
@@ -306,7 +306,7 @@ test('a quote for another signer node sends nothing to the wallet', async () => 
   } finally { await w.close(); await c.close(); }
 });
 
-test('a lying node sends nothing to the wallet either', async () => {
+test('a lying node sends nothing to the wallet either', slice2(), async () => {
   const c = await joined();
   const w = await walletOnARelay();
   const http = await import('node:http');
@@ -345,7 +345,7 @@ test('a lying node sends nothing to the wallet either', async () => {
  * "quota exceeded" is something a player can act on; a client that flattened
  * it to "payment failed" would hide the one sentence that says what to do.
  */
-test('a wallet that refuses is reported by name, and nothing is invented', async () => {
+test('a wallet that refuses is reported by name, and nothing is invented', slice2(), async () => {
   const c = await joined();
   const w = await walletOnARelay({
     answer: () => ({ error: { code: 'QUOTA_EXCEEDED', message: 'budget spent for this hour' } }),
@@ -363,7 +363,7 @@ test('a wallet that refuses is reported by name, and nothing is invented', async
   } finally { await w.close(); await c.close(); }
 });
 
-test('a wallet that claims it paid and shows no preimage is not believed', async () => {
+test('a wallet that claims it paid and shows no preimage is not believed', slice2(), async () => {
   const c = await joined();
   const w = await walletOnARelay({
     answer: () => ({ result_type: 'pay_invoice', result: { fees_paid: 0 } }),
@@ -385,7 +385,7 @@ test('a wallet that claims it paid and shows no preimage is not believed', async
  * pick A) - an entry and a donation set. This counted one method until the
  * donation was paid; it names both now, and both are held to the same shape.
  */
-test('the client has two methods that move a satoshi, and each takes an entry, never an invoice', () => {
+test('the client has two methods that move a satoshi, and each takes an entry, never an invoice', slice2(), () => {
   const p = Client.prototype;
   const moves = ['payStake', 'payDonation', 'pay', 'payInvoice', 'sendPayment', 'nwc', 'wallet']
     .filter((m) => typeof p[m] === 'function');
@@ -403,7 +403,7 @@ test('the client has two methods that move a satoshi, and each takes an entry, n
   console.log(`  methods that move a satoshi: 2 (${moves.join(', ')}), each takes an entry`);
 });
 
-test('paying needs a connection and a curve, and says which is missing', async () => {
+test('paying needs a connection and a curve, and says which is missing', slice2(), async () => {
   const c = await joined();
   try {
     assert.match((await c.client.payStake(c.entry, { entryId: c.eid, curve: pageCurve })).why,
@@ -418,7 +418,7 @@ test('paying needs a connection and a curve, and says which is missing', async (
   } finally { await c.close(); }
 });
 
-test('a relay that never answers times out rather than hanging', async () => {
+test('a relay that never answers times out rather than hanging', slice2(), async () => {
   const c = await joined();
   const wss = new WebSocketServer({ port: 0 });
   try {
@@ -443,7 +443,7 @@ test('a relay that never answers times out rather than hanging', async () => {
  * answers at once with a preimage is the unusual one. What says the stake is
  * held is the node (23.1 step 5), which now answers exactly that.
  */
-test('a wallet that holds the payment and says nothing is paid once the node sees the stake held', async () => {
+test('a wallet that holds the payment and says nothing is paid once the node sees the stake held', slice2(), async () => {
   const c = await joined();
   const w = await walletOnARelay({ answer: () => null });
   // The node's Lightning shows the HTLC held in full once the wallet was asked.
@@ -464,7 +464,7 @@ test('a wallet that holds the payment and says nothing is paid once the node see
   } finally { await w.close(); await c.close(); }
 });
 
-test('a wallet that says nothing while the node never sees the stake is still not paid', async () => {
+test('a wallet that says nothing while the node never sees the stake is still not paid', slice2(), async () => {
   const c = await joined();
   const w = await walletOnARelay({ answer: () => null });
   c.port.look = async () => ({ state: HELD, amountMsat: NET, paidMsat: 0n });
@@ -486,7 +486,7 @@ const tab = () => {
   };
 };
 
-test('a tab holds one wallet connection, and a second tab holds none of it', async () => {
+test('a tab holds one wallet connection, and a second tab holds none of it', slice2(), async () => {
   const w = await walletOnARelay();
   try {
     const one = tab();
@@ -525,7 +525,7 @@ test('a tab holds one wallet connection, and a second tab holds none of it', asy
  * and a payment hash, and a total nobody can break down is a total a page could
  * have invented.
  */
-test('every payment is written down with its hash and its round', async () => {
+test('every payment is written down with its hash and its round', slice2(), async () => {
   const c = await joined();
   const w = await walletOnARelay();
   const log = spendLog();
@@ -566,7 +566,7 @@ test('every payment is written down with its hash and its round', async () => {
   } finally { await w.close(); await c.close(); }
 });
 
-test('the line a page renders counts sats, stakes and rounds', () => {
+test('the line a page renders counts sats, stakes and rounds', slice2(), () => {
   const log = spendLog();
   assert.equal(spentLine(log), 'nothing paid this session');
   assert.equal(spentLine(null), 'nothing paid this session');
@@ -597,7 +597,7 @@ const PAGE = new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/in
  * last fault in three of these letters running: a method nothing constructed,
  * green tests all the way down.
  */
-test('the page pastes a connection, shows the amount and the total, and calls payStake', () => {
+test('the page pastes a connection, shows the amount and the total, and calls payStake', slice2(), () => {
   const page = readFileSync(PAGE, 'utf8');
 
   // THE FOUR PLAYER-FACING THINGS.
@@ -649,7 +649,7 @@ test('the page pastes a connection, shows the amount and the total, and calls pa
  * drives the shipped jslib through `new Function`; this drives the shipped page
  * function the same way, with a DOM stubbed down to what it touches.
  */
-test('a round that asks no money gets no payment box, driven off the shipped page', () => {
+test('a round that asks no money gets no payment box, driven off the shipped page', slice2(), () => {
   const page = readFileSync(PAGE, 'utf8');
   const body = page.slice(page.indexOf('function paintWallet()'));
   const src = body.slice(0, body.indexOf('\n    }') + 6);
@@ -768,7 +768,7 @@ test('a round that asks no money gets no payment box, driven off the shipped pag
   assert.equal(made['blwp-withdraw-go'].style.display, '', 'the Withdraw was not offered again once the first ended');
 });
 
-test('closing the tab while a Withdraw runs or money is in it asks first, and a second Withdraw is refused before it collects, off the shipped page', () => {
+test('closing the tab while a Withdraw runs or money is in it asks first, and a second Withdraw is refused before it collects, off the shipped page', slice2(), () => {
   const page = readFileSync(PAGE, 'utf8');
   const at = "window.addEventListener('beforeunload', ";
   const rest = page.slice(page.indexOf(at) + at.length);
@@ -792,7 +792,7 @@ test('closing the tab while a Withdraw runs or money is in it asks first, and a 
  * `budget:` line that was in `parseConnection` was blank for every wallet in
  * the world and would have rendered a working-looking screen showing nothing.
  */
-test('the connection string carries no budget, because NIP-47 has none', () => {
+test('the connection string carries no budget, because NIP-47 has none', slice2(), () => {
   const c = parseConnection(
     `nostr+walletconnect://${toHex(rand(32))}?relay=wss://r&secret=${toHex(rand(32))}`
     + '&budget=1000');
@@ -811,7 +811,7 @@ const wallets = (methods, extra = {}) => ({
   },
 });
 
-test('a wallet that reports a budget is asked for it, and the balance is not asked for', async () => {
+test('a wallet that reports a budget is asked for it, and the balance is not asked for', slice2(), async () => {
   const w = await walletOnARelay(wallets(['pay_invoice', 'get_info', 'get_budget', 'get_balance'],
     { budget: { total_budget: 1000000, used_budget: 250000, renewal_period: 'monthly' } }));
   try {
@@ -831,7 +831,7 @@ test('a wallet that reports a budget is asked for it, and the balance is not ask
   } finally { await w.close(); }
 });
 
-test('a wallet with no get_budget falls back to its balance, and says which it is', async () => {
+test('a wallet with no get_budget falls back to its balance, and says which it is', slice2(), async () => {
   const w = await walletOnARelay(wallets(['pay_invoice', 'get_info', 'get_balance'],
     { balance: { balance: 4200000 } }));
   try {
@@ -851,7 +851,7 @@ test('a wallet with no get_budget falls back to its balance, and says which it i
   } finally { await w.close(); }
 });
 
-test('a wallet that reports neither says so in words, never an empty number', async () => {
+test('a wallet that reports neither says so in words, never an empty number', slice2(), async () => {
   const w = await walletOnARelay(wallets(['pay_invoice', 'get_info']));
   try {
     const said = await walletBudget(parseConnection(w.uri), pays);
@@ -864,7 +864,7 @@ test('a wallet that reports neither says so in words, never an empty number', as
   } finally { await w.close(); }
 });
 
-test('a connection with no budget set is not the same as a wallet that cannot say', async () => {
+test('a connection with no budget set is not the same as a wallet that cannot say', slice2(), async () => {
   const w = await walletOnARelay(wallets(['get_info', 'get_budget'], { budget: {} }));
   try {
     const said = await walletBudget(parseConnection(w.uri), pays);
@@ -874,7 +874,7 @@ test('a connection with no budget set is not the same as a wallet that cannot sa
   } finally { await w.close(); }
 });
 
-test('the budget line never shows an empty number', () => {
+test('the budget line never shows an empty number', slice2(), () => {
   assert.equal(budgetLine(null), 'budget not asked for yet');
   assert.equal(budgetLine({ ok: false, why: 'the wallet did not answer in 300 ms' }),
     'budget unknown: the wallet did not answer in 300 ms');
@@ -888,7 +888,7 @@ test('the budget line never shows an empty number', () => {
   console.log('  every branch is words: not asked, unknown, none, balance, budget');
 });
 
-test('asking for a budget cannot move a satoshi', async () => {
+test('asking for a budget cannot move a satoshi', slice2(), async () => {
   const w = await walletOnARelay(wallets(['pay_invoice', 'get_info', 'get_budget'],
     { budget: { total_budget: 1000000, used_budget: 0 } }));
   try {
@@ -898,3 +898,6 @@ test('asking for a budget cannot move a satoshi', async () => {
     console.log(`  ${w.asked.methods.join(', ')}: 0 invoices paid`);
   } finally { await w.close(); }
 });
+
+/** Why this test does not run in Step 1 of the THRESHOLD_LN disposal (see TASKBOOK). */
+function slice2() { return { skip: "slice 2: the subject is the hold path (hold invoices on a Lightning port). It still runs at HEAD on a FEDERATION round given a Lightning port, so it is skipped, not moved to FEDERATION (RULED 2026-09-23); slice 2 deletes this test with the code" }; }

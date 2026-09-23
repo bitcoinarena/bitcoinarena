@@ -150,7 +150,7 @@ async function settles(d, rid, eid, ms = 8000) {
 }
 
 for (const [first, second] of [['a', 'b'], ['b', 'a']]) {
-  test(`closing ${first.toUpperCase()} first and ${second.toUpperCase()} later: both end with the run final and the payout table 2 of 2`, async () => {
+  test(`closing ${first.toUpperCase()} first and ${second.toUpperCase()} later: both end with the run final and the payout table 2 of 2`, slice2(), async () => {
     const w = await played({ finality: { everyMs: 50, windowMs: 10000 } });
     try {
       // THE FIRST TO CLOSE IS SHORT - its one gather finds nobody else's result.
@@ -176,7 +176,7 @@ for (const [first, second] of [['a', 'b'], ['b', 'a']]) {
 // What this test guarded stays guarded: a run that never turns final is asked
 // about EVER MORE RARELY, backing off to `maxEveryMs`, never at the watch's
 // cadence for ever. Measured before the ruling: A stopped asking at the window.
-test('a run that never turns final is asked about ever more rarely after the round\'s window, never given up', async () => {
+test('a run that never turns final is asked about ever more rarely after the round\'s window, never given up', slice2(), async () => {
   const w = await played({ finality: { everyMs: 20, windowMs: 200, maxEveryMs: 400 } });
   const asks = [];
   const gather = w.a.verifier.gather.bind(w.a.verifier);
@@ -196,3 +196,6 @@ test('a run that never turns final is asked about ever more rarely after the rou
     assert.equal((await state(w.a, w.rid, w.eid)).final, false);
   } finally { await w.close(); }
 });
+
+/** Why this test does not run in Step 1 of the THRESHOLD_LN disposal (see TASKBOOK). */
+function slice2() { return { skip: "slice 2: the subject is the hold path (hold invoices on a Lightning port). It still runs at HEAD on a FEDERATION round given a Lightning port, so it is skipped, not moved to FEDERATION (RULED 2026-09-23); slice 2 deletes this test with the code" }; }

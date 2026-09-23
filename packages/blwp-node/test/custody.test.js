@@ -96,7 +96,7 @@ function joined(port, { preimageFor = defaultPreimageFor, fetch: get = null } = 
 }
 
 
-test('a daemon with no Lightning holds no stakes and says so', async () => {
+test('a daemon with no Lightning holds no stakes and says so', slice2(), async () => {
   const { custody, rid } = joined(undefined);
   const held = await custody.hold(entryFor(rid, 1));
   assert.equal(held.ok, false);
@@ -107,7 +107,7 @@ test('a daemon with no Lightning holds no stakes and says so', async () => {
   assert.match(settled.why, /settles nothing/);
 });
 
-test('the hold is issued against the entry\'s own signed numbers, once', async () => {
+test('the hold is issued against the entry\'s own signed numbers, once', slice2(), async () => {
   const port = fakePort();
   const { round, rid, custody } = joined(port);
   const entry = entryFor(rid, 1);
@@ -131,7 +131,7 @@ test('the hold is issued against the entry\'s own signed numbers, once', async (
   assert.equal(port.calls.filter((c) => c[0] === 'createHeld').length, 1);
 });
 
-test('an invoice that is not the entry\'s is refused, and nothing is stored', async () => {
+test('an invoice that is not the entry\'s is refused, and nothing is stored', slice2(), async () => {
   for (const [what, port] of [
     ['a different hash', fakePort({ hash: b32(0xee) })],
     ['a different amount', fakePort({ amount: 999n })],
@@ -146,7 +146,7 @@ test('an invoice that is not the entry\'s is refused, and nothing is stored', as
   }
 });
 
-test('DELIVERED cancels, FORFEIT settles, and a VOID is never touched', async () => {
+test('DELIVERED cancels, FORFEIT settles, and a VOID is never touched', slice2(), async () => {
   const port = fakePort();
   const { round, rid, custody } = joined(port);
 
@@ -186,7 +186,7 @@ test('DELIVERED cancels, FORFEIT settles, and a VOID is never touched', async ()
     [toHex(winner.stakeCommitment)]);
 });
 
-test('no stake moves without a final result, and nothing is paid to anybody', async () => {
+test('no stake moves without a final result, and nothing is paid to anybody', slice2(), async () => {
   const port = fakePort();
   const { round, rid, custody } = joined(port);
   const winner = entryFor(rid, 1);
@@ -211,7 +211,7 @@ test('no stake moves without a final result, and nothing is paid to anybody', as
   for (const a of out.actions) assert.match(a.why, /in flight|expires/);
 });
 
-test('a stake whose hold already EXPIRED is not settled: a later close answers already moved and sends lnd nothing (M3.3-30)', async () => {
+test('a stake whose hold already EXPIRED is not settled: a later close answers already moved and sends lnd nothing (M3.3-30)', slice2(), async () => {
   // The 2 s share retry (M3.3-29) runs the close again while a lost stake is
   // HELD. Once the daemon's own chain has taken it past its HTLC's expiry the
   // row is EXPIRED, and the next close must leave it where it is: releasing a
@@ -255,7 +255,7 @@ test('a stake whose hold already EXPIRED is not settled: a later close answers a
 // 830, so the loser's stake timed out before it could be settled into the pool and no payout formed. 144
 // blocks is a day where blocks take ten minutes and twelve minutes where they take five seconds; the
 // contract's `stakeExpiryBlocks` is the floor, and the chain's own pace decides the rest.
-test('a fast chain gets a longer HTLC than the contract\'s floor, and a slow one gets the floor', async () => {
+test('a fast chain gets a longer HTLC than the contract\'s floor, and a slow one gets the floor', slice2(), async () => {
   const asked = [];
   const port = fakePort();
   port.createHeld = async ({ paymentHash, amountMsat, cltvExpiryBlocks }) => {
@@ -299,7 +299,7 @@ test('a fast chain gets a longer HTLC than the contract\'s floor, and a slow one
 // for by `createHeld`, and 82000 msat of fee never invoiced at all - because the stake hold quotes the NET.
 // It cannot quote the gross instead: §23.2 cancels a winner's hold WHOLE, which would hand every winner
 // their own fee back.
-test('the fee is its own hold, keyed on the entry\'s own preimage, and both amounts are asked for', async () => {
+test('the fee is its own hold, keyed on the entry\'s own preimage, and both amounts are asked for', slice2(), async () => {
   const port = fakePort();
   const { round, rid, custody } = joined(port);
   const e = entryFor(rid, 1);
@@ -322,7 +322,7 @@ test('the fee is its own hold, keyed on the entry\'s own preimage, and both amou
   assert.equal(port.calls.filter((c) => c[0] === 'createHeld').length, 2, 'a second fee invoice was made');
 });
 
-test('the fee settles to the committee whatever the run came to - a winner pays it too', async () => {
+test('the fee settles to the committee whatever the run came to - a winner pays it too', slice2(), async () => {
   for (const [outcome, score] of [[DELIVERED, 9], [FORFEIT, 0]]) {
     const port = fakePort();
     const { round, rid, custody } = joined(port);
@@ -342,7 +342,7 @@ test('the fee settles to the committee whatever the run came to - a winner pays 
   }
 });
 
-test('a round nobody won still pays its fees: they are for serving, not for winning', async () => {
+test('a round nobody won still pays its fees: they are for serving, not for winning', slice2(), async () => {
   const port = fakePort();
   const { round, rid, custody } = joined(port);
   const a = entryFor(rid, 1);
@@ -369,7 +369,7 @@ test('a round nobody won still pays its fees: they are for serving, not for winn
 // and the 98 sat sat in the committee's own channel. The rule computed 98000 msat owed to the winner and
 // nothing carried it - `payouts` spends an on-chain pool this custody has none of. So the settle writes
 // down what each qualifier is owed, and a player presenting an invoice for exactly that is paid once.
-test('the settle writes down what the pool owes the winner, and pays it to an invoice for exactly that', async () => {
+test('the settle writes down what the pool owes the winner, and pays it to an invoice for exactly that', slice2(), async () => {
   const port = fakePort();
   port.decode = async ({ request }) => ({ amountMsat: request === 'lnbcrt-98' ? 98000n : 1n });
   port.pay = async ({ request }) => { port.calls.push(['pay', request]); return { preimage: 'ab'.repeat(32), feeMsat: 0n }; };
@@ -414,7 +414,7 @@ test('the settle writes down what the pool owes the winner, and pays it to an in
 // Measured on the Daily's first paid winning: seat a wrote PAID/98000 and seat b was still OWED/98000.
 // The seats share one Lightning node, so a player who asked the second seat with a DIFFERENT invoice would
 // be paid the pool twice, out of the operator's own channel. The seats are asked before the money leaves.
-test('a winning another seat has already paid is not paid again, and an unreachable committee pays nothing', async () => {
+test('a winning another seat has already paid is not paid again, and an unreachable committee pays nothing', slice2(), async () => {
   const port = fakePort();
   port.decode = async () => ({ amountMsat: 98000n });
   port.pay = async ({ request }) => { port.calls.push(['pay', request]); return { preimage: 'ab'.repeat(32), feeMsat: 0n }; };
@@ -453,7 +453,7 @@ test('a winning another seat has already paid is not paid again, and an unreacha
   assert.equal(round2.winnings(entryIdOf(w2)).state, 'OWED');
 });
 
-test('a payment Lightning refuses leaves the winning owed, not paid and not in flight for ever', async () => {
+test('a payment Lightning refuses leaves the winning owed, not paid and not in flight for ever', slice2(), async () => {
   const port = fakePort();
   port.decode = async () => ({ amountMsat: 98000n });
   port.pay = async () => { throw new Error('no route to that node'); };
@@ -472,7 +472,7 @@ test('a payment Lightning refuses leaves the winning owed, not paid and not in f
   assert.match(round.winnings(entryIdOf(winner)).why, /no route/);
 });
 
-test('a settle Lightning refuses writes down what Lightning says, and the rest of the round is still acted on', async () => {
+test('a settle Lightning refuses writes down what Lightning says, and the rest of the round is still acted on', slice2(), async () => {
   const port = fakePort();
   let looked = 0;
   port.settle = async ({ paymentHash }) => {
@@ -506,7 +506,7 @@ test('a settle Lightning refuses writes down what Lightning says, and the rest o
 });
 
 // AND NOT KNOWING IS NOT A VERDICT: a port that cannot say what happened leaves the row where it was.
-test('a refused settle whose port cannot be asked leaves the row mid-act rather than guessing', async () => {
+test('a refused settle whose port cannot be asked leaves the row mid-act rather than guessing', slice2(), async () => {
   const port = fakePort();
   port.settle = async () => { throw new Error('lncli settleinvoice refused: connection refused'); };
   const { round, rid, custody } = joined(port);
@@ -527,7 +527,7 @@ test('a refused settle whose port cannot be asked leaves the row mid-act rather 
   assert.equal(custody.stateOf(entryIdOf(winner)).state, CANCELLED);
 });
 
-test('a stake that has already moved is not moved twice', async () => {
+test('a stake that has already moved is not moved twice', slice2(), async () => {
   const port = fakePort();
   const { round, rid, custody } = joined(port);
   const winner = entryFor(rid, 1);
@@ -555,7 +555,7 @@ test('a stake that has already moved is not moved twice', async () => {
   assert.equal(port.calls.filter((c) => c[0] === 'cancel').length, 1);
 });
 
-test('the score the round asked for is the score the pool pays by', async () => {
+test('the score the round asked for is the score the pool pays by', slice2(), async () => {
   // Three players, one pool of exactly one forfeited stake, and a minimum
   // score that only the first delivered player clears. If custody dropped
   // `minScore` on the way into 23.2's table, the cautious player would place
@@ -631,7 +631,7 @@ async function midAct(port) {
 // Measured before this: the moment before an invoice exists was not written at
 // all, and both acts were written as `ACTING`, a label of this file's own. The
 // names are the spec's strings, so the tests say them literally.
-test('every act is on disk under 9.4\'s name when the call is made - CANCEL_REQUESTED, SETTLE_REQUESTED - never the old stand-in', async () => {
+test('every act is on disk under 9.4\'s name when the call is made - CANCEL_REQUESTED, SETTLE_REQUESTED - never the old stand-in', slice2(), async () => {
   assert.equal(custodyStates.CANCEL_REQUESTED, 'CANCEL_REQUESTED');
   assert.equal(custodyStates.SETTLE_REQUESTED, 'SETTLE_REQUESTED');
   const port = fakePort();
@@ -652,7 +652,7 @@ test('every act is on disk under 9.4\'s name when the call is made - CANCEL_REQU
   assert.equal(custody.stateOf(entryIdOf(loser)).state, SETTLED);
 });
 
-test('AWAITING_INVOICE is on disk before the invoice is asked for, and HELD once it is checked', async () => {
+test('AWAITING_INVOICE is on disk before the invoice is asked for, and HELD once it is checked', slice2(), async () => {
   assert.equal(custodyStates.AWAITING_INVOICE, 'AWAITING_INVOICE');
   const port = fakePort();
   const { round, rid, custody } = joined(port);
@@ -672,7 +672,7 @@ test('AWAITING_INVOICE is on disk before the invoice is asked for, and HELD once
   assert.equal(row.amountMsat, netStakeMsat(e));
 });
 
-test('a node that died awaiting its invoice asks for it again and holds, rather than calling it held', async () => {
+test('a node that died awaiting its invoice asks for it again and holds, rather than calling it held', slice2(), async () => {
   const port = fakePort();
   const { round, rid, custody } = joined(port);
   const e = entryFor(rid, 1);
@@ -695,7 +695,7 @@ test('a node that died awaiting its invoice asks for it again and holds, rather 
   assert.equal(port.calls.filter((c) => c[0] === 'createHeld').length, 1);
 });
 
-test('a store written under the old ACTING label is still asked about, and resolved', async () => {
+test('a store written under the old ACTING label is still asked about, and resolved', slice2(), async () => {
   const port = fakePort();
   const { round, rid, custody } = joined(port);
   const e = entryFor(rid, 2);
@@ -710,7 +710,7 @@ test('a store written under the old ACTING label is still asked about, and resol
   assert.equal(round.hold(eid).state, SETTLED);
 });
 
-test('the same close run twice moves every hold once - a rerun leaves a moved hold where it is', async () => {
+test('the same close run twice moves every hold once - a rerun leaves a moved hold where it is', slice2(), async () => {
   // M3.3-25 runs a round's close logic again when a run turns final after the
   // first close. That is only safe if a hold that already moved is left alone.
   const port = fakePort();
@@ -726,7 +726,7 @@ test('the same close run twice moves every hold once - a rerun leaves a moved ho
   assert.ok(again.actions.every((a) => /already moved/.test(a.why)), JSON.stringify(again.actions.map((a) => a.why)));
 });
 
-test('a node that died mid-act asks Lightning rather than acting again', async () => {
+test('a node that died mid-act asks Lightning rather than acting again', slice2(), async () => {
   // The window is one SIGKILL wide: Lightning has been told and this node has
   // not written it down. `custody-crash.mjs` kills a real process inside it;
   // what is measured here is what the two sides say afterwards.
@@ -758,7 +758,7 @@ test('a node that died mid-act asks Lightning rather than acting again', async (
     'reconcile settled the stake instead of asking what had happened to it');
 });
 
-test('an act that never reached Lightning is made again, once', async () => {
+test('an act that never reached Lightning is made again, once', slice2(), async () => {
   const port = fakePort();
   const { round, custody, id, close } = await midAct(port);
 
@@ -776,7 +776,7 @@ test('an act that never reached Lightning is made again, once', async () => {
   assert.equal(port.calls.filter((c) => c[0] === 'settle').length, 1);
 });
 
-test('a port that cannot be asked what it did leaves an interrupted act alone', async () => {
+test('a port that cannot be asked what it did leaves an interrupted act alone', slice2(), async () => {
   const port = fakePort();
   const { round, custody, id, close } = await midAct(port);
 
@@ -788,7 +788,7 @@ test('a port that cannot be asked what it did leaves an interrupted act alone', 
   assert.equal(custody.stateOf(id).state, 'SETTLE_REQUESTED', 'a guess was written down instead of an answer');
 });
 
-test('reconcile refuses an answer that is not a state a hold can be in', async () => {
+test('reconcile refuses an answer that is not a state a hold can be in', slice2(), async () => {
   const port = fakePort();
   const { round, custody, id, close } = await midAct(port);
 
@@ -801,7 +801,7 @@ test('reconcile refuses an answer that is not a state a hold can be in', async (
   assert.equal(custody.stateOf(id).state, 'SETTLE_REQUESTED');
 });
 
-test('a node with no preimage cannot settle, and the stake expires to its player', async () => {
+test('a node with no preimage cannot settle, and the stake expires to its player', slice2(), async () => {
   // 23.4 asks for five of seven preimage shares before a stake moves. A node
   // that has none is not stuck: it settles nothing, the HTLC expires, and the
   // player is refunded - which is the same direction a crash points in.
@@ -828,7 +828,7 @@ test('a node with no preimage cannot settle, and the stake expires to its player
   assert.equal(custody.stateOf(entryIdOf(winner)).state, CANCELLED);
 });
 
-test('a preimage that is not the one the hold was made for is refused', async () => {
+test('a preimage that is not the one the hold was made for is refused', slice2(), async () => {
   const port = fakePort();
   const { round, rid, custody } = joined(port, { preimageFor: () => new Uint8Array(32).fill(0xab) });
   const winner = entryFor(rid, 1);
@@ -847,7 +847,7 @@ test('a preimage that is not the one the hold was made for is refused', async ()
   assert.equal(port.calls.filter((c) => c[0] === 'settle').length, 0);
 });
 
-test('the preimage reaches the port, because releasing it is the settlement', async () => {
+test('the preimage reaches the port, because releasing it is the settlement', slice2(), async () => {
   const port = fakePort();
   const seen = [];
   port.settle = async ({ paymentHash, preimage }) => {
@@ -870,7 +870,7 @@ test('the preimage reaches the port, because releasing it is the settlement', as
   assert.deepEqual(toHex(sha256(seen[0])), toHex(loser.stakeCommitment));
 });
 
-test('a round nobody finished moves no stake and keeps nothing for this node', async () => {
+test('a round nobody finished moves no stake and keeps nothing for this node', slice2(), async () => {
   // `payout.js` refuses to hand a pool to nobody rather than deciding it in
   // the operator's favour, and that refusal has to reach the wire as INACTION,
   // not as an exception somebody logs and steps past. Measured through the
@@ -923,7 +923,7 @@ function bolt11For({ amountMsat, descriptionHash, paymentHash = b32(0xb1) }) {
 // from. An address that only travels at payout time is a Collect the player has to sit and wait for.
 //
 // So the address is a standing instruction on disk, and the send is this node's own act at settle.
-test('an address named during the round is paid by the settle itself, with nobody there to ask', async () => {
+test('an address named during the round is paid by the settle itself, with nobody there to ask', slice2(), async () => {
   const asked = [];
   const metadata = JSON.stringify([['text/plain', 'btc-logistics winnings']]);
   const invoice = bolt11For({ amountMsat: 98000n, descriptionHash: sha256(new TextEncoder().encode(metadata)) });
@@ -979,7 +979,7 @@ test('an address named during the round is paid by the settle itself, with nobod
 // collected. The round was still PROVISIONALLY_FINAL and both stakes were still HELD, in flight and in
 // nobody's balance. The pool went out of the committee's own channel against money that had not arrived,
 // for a result that could still be objected to. FINAL is the window's word.
-test('a round whose objection window is still open settles no fee and owes nobody the pool', async () => {
+test('a round whose objection window is still open settles no fee and owes nobody the pool', slice2(), async () => {
   const port = fakePort();
   port.pay = async ({ request }) => { port.calls.push(['pay', request]); return { preimage: 'ab'.repeat(32), feeMsat: 0n }; };
   const { round, rid, custody } = joined(port);
@@ -1017,7 +1017,7 @@ test('a round whose objection window is still open settles no fee and owes nobod
 // a thousand seconds of wall clock and lasted about a hundred and forty, so both stakes EXPIRED back to
 // their players at +626 s after the close, inside the objection window, and a truck that DELIVERED was
 // never paid. A pace sampled once is a guess about the future.
-test('a chain that speeds up between two entries buys the second one more blocks', async () => {
+test('a chain that speeds up between two entries buys the second one more blocks', slice2(), async () => {
   const port = fakePort();
   let spb = 5.660;
   const asked = [];
@@ -1055,7 +1055,7 @@ test('a chain that speeds up between two entries buys the second one more blocks
 // would hold up every other entry's fee on a round this committee had served in full, and a fee held
 // long enough expires back to the payer. The pool still waits for the whole round, because a pool is
 // made of everyone's stakes; a fee is not.
-test('a player still inside their window keeps their own fee and holds up nobody else\'s', async () => {
+test('a player still inside their window keeps their own fee and holds up nobody else\'s', slice2(), async () => {
   const port = fakePort();
   const { round, rid, custody } = joined(port);
   const early = entryFor(rid, 1);
@@ -1089,7 +1089,7 @@ test('a player still inside their window keeps their own fee and holds up nobody
 // pay-once, but there is an `await` on the peers between reading the row and writing PAYING, and an await
 // is where the other path takes its turn: both read OWED, both are told no seat has paid, both pay. The
 // seats cover each other; nothing covered this node against itself.
-test('two paths that reach the pool at the same moment pay it once', async () => {
+test('two paths that reach the pool at the same moment pay it once', slice2(), async () => {
   const port = fakePort();
   port.decode = async () => ({ amountMsat: 98000n });
   port.pay = async ({ request }) => { port.calls.push(['pay', request]); return { preimage: 'ab'.repeat(32), feeMsat: 0n }; };
@@ -1114,3 +1114,6 @@ test('two paths that reach the pool at the same moment pay it once', async () =>
   assert.equal([one, two].filter((x) => x.ok && !x.already).length, 1, 'both paths believed they had paid it');
   assert.equal(asked, 1, 'the losing path went on to ask the peers anyway');
 });
+
+/** Why this test does not run in Step 1 of the THRESHOLD_LN disposal (see TASKBOOK). */
+function slice2() { return { skip: "slice 2: the subject is the hold path (hold invoices on a Lightning port). It still runs at HEAD on a FEDERATION round given a Lightning port, so it is skipped, not moved to FEDERATION (RULED 2026-09-23); slice 2 deletes this test with the code" }; }

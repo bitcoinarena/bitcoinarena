@@ -126,13 +126,8 @@ test('a round that names no federation takes no lock: its stake is not one', asy
   // M3 W7: a paying FEDERATION round naming no federation is no contract - it cannot be made at all.
   await assert.rejects(joinedWithLock(WITH_KEY, { federationId: new Uint8Array(32) }),
     /takes a stake into a FEDERATION and names no federation_id/);
-  // AND THE ROUND THAT NAMES NO FEDERATION - THRESHOLD_LN - STILL TAKES NO LOCK.
-  const s = await joinedWithLock(WITH_KEY, { custody: 'THRESHOLD_LN', federationId: new Uint8Array(32) });
-  try {
-    const r = await handOver(s, s.fields);
-    assert.equal(r.status, 409);
-    assert.match(await r.text(), /names no federation/);
-    assert.equal(s.d.round.stakeSeen(s.eid), null);
-    assert.equal(s.port.asked, 0, 'the federation was asked about a round that names none');
-  } finally { await s.close(); }
+  // AND THE WITHDRAWN THRESHOLD_LN (RULED 2026-09-22 22:59) IS NO ROUND AT ALL: the codec refuses it,
+  // and the signer node the fixture started is closed.
+  await assert.rejects(joinedWithLock(WITH_KEY, { custody: 'THRESHOLD_LN', federationId: new Uint8Array(32) }),
+    /THRESHOLD_LN is not a custody this network has/);
 });

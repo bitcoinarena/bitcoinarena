@@ -82,7 +82,7 @@ async function joinAndPlay(node, stakeMsat) {
   return { entry, ws, send, batch };
 }
 
-test('an input batch for a stake nobody paid is refused by name, and taken once lnd shows it held', async () => {
+test('an input batch for a stake nobody paid is refused by name, and taken once lnd shows it held', slice2(), async () => {
   const port = payablePort();
   const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, ...READY, lightning: port });
   const p = await joinAndPlay(node, 100000n);
@@ -106,7 +106,7 @@ test('an input batch for a stake nobody paid is refused by name, and taken once 
   } finally { p.ws.close(); await node.close(); }
 });
 
-test('GET /stake says whether this node has seen an entry\'s stake held, and asks nobody for a stranger', async () => {
+test('GET /stake says whether this node has seen an entry\'s stake held, and asks nobody for a stranger', slice2(), async () => {
   const port = payablePort();
   const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, ...READY, lightning: port });
   const p = await joinAndPlay(node, 100000n);
@@ -131,7 +131,7 @@ test('GET /stake says whether this node has seen an entry\'s stake held, and ask
   } finally { p.ws.close(); await node.close(); }
 });
 
-test('a free round plays with no Lightning at all, and a paying round on a node with none is refused', async () => {
+test('a free round plays with no Lightning at all, and a paying round on a node with none is refused', slice2(), async () => {
   const free = await serve(openStore(':memory:'), { port: 0, ...FUNDED });
   const f = await joinAndPlay(free, 0n);
   try { assert.equal(await f.send(f.batch(0)), '1'); }
@@ -142,3 +142,6 @@ test('a free round plays with no Lightning at all, and a paying round on a node 
   try { assert.match(await b.send(b.batch(0)), /^error .*reaches no Lightning/); }
   finally { b.ws.close(); await bare.close(); }
 });
+
+/** Why this test does not run in Step 1 of the THRESHOLD_LN disposal (see TASKBOOK). */
+function slice2() { return { skip: "slice 2: the subject is the hold path (hold invoices on a Lightning port). It still runs at HEAD on a FEDERATION round given a Lightning port, so it is skipped, not moved to FEDERATION (RULED 2026-09-23); slice 2 deletes this test with the code" }; }

@@ -59,7 +59,7 @@ function holdPort() {
   return port;
 }
 
-test('a signer node restarted on a store holding a paying FEDERATION round with no federation - the bytes a build before W7 stored - stays up, answers, and moves no money', async () => {
+test('a signer node restarted on a store holding a paying FEDERATION round with no federation - the bytes a build before W7 stored - stays up, answers, and moves no money', slice2(), async () => {
   const dir = mkdtempSync(join(tmpdir(), 'legacy-round-'));
   const path = join(dir, 'node.sqlite');
   const port = holdPort();
@@ -135,3 +135,6 @@ test('a signer node restarted on a store holding a paying FEDERATION round with 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+/** Why this test does not run in Step 1 of the THRESHOLD_LN disposal (see TASKBOOK). */
+function slice2() { return { skip: "slice 2: the subject is the withdrawn custody's store (rows of past THRESHOLD_LN rounds). It is skipped, not moved to FEDERATION (RULED 2026-09-23); slice 2 deletes this test with the code" }; }

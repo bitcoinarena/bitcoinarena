@@ -57,7 +57,7 @@ async function owedNode({ pay = async () => ({ preimage: 'ab'.repeat(32), feeMsa
   return { node, eid, paid, at: `http://127.0.0.1:${node.port}` };
 }
 
-test('what the pool owes is served, and a signed invoice for exactly that is paid once', async () => {
+test('what the pool owes is served, and a signed invoice for exactly that is paid once', slice2(), async () => {
   const w = await owedNode();
   try {
     const said = await (await fetch(`${w.at}/winnings?entry=${toHex(w.eid)}`)).json();
@@ -78,7 +78,7 @@ test('what the pool owes is served, and a signed invoice for exactly that is pai
   } finally { await w.node.close(); }
 });
 
-test('an invoice signed by anyone else is refused: an entry id is public', async () => {
+test('an invoice signed by anyone else is refused: an entry id is public', slice2(), async () => {
   const w = await owedNode();
   try {
     const thief = ed25519.utils.randomSecretKey();
@@ -90,7 +90,7 @@ test('an invoice signed by anyone else is refused: an entry id is public', async
   } finally { await w.node.close(); }
 });
 
-test('an invoice for the wrong amount is refused, not part-paid', async () => {
+test('an invoice for the wrong amount is refused, not part-paid', slice2(), async () => {
   const w = await owedNode();
   try {
     const no = await fetch(`${w.at}/winnings?entry=${toHex(w.eid)}`, { method: 'POST', body: signedInvoice('lnbcrtwrong') });
@@ -100,7 +100,7 @@ test('an invoice for the wrong amount is refused, not part-paid', async () => {
   } finally { await w.node.close(); }
 });
 
-test('a payment Lightning refuses leaves the winning OWED with Lightning\'s words on it', async () => {
+test('a payment Lightning refuses leaves the winning OWED with Lightning\'s words on it', slice2(), async () => {
   const w = await owedNode({ pay: async () => { throw new Error('no route to that node'); } });
   try {
     const no = await fetch(`${w.at}/winnings?entry=${toHex(w.eid)}`, { method: 'POST', body: signedInvoice('lnbcrtright') });
@@ -117,7 +117,7 @@ test('a payment Lightning refuses leaves the winning OWED with Lightning\'s word
 // A player with no wallet to mint with names an address once. The node asks it for a pay request, asks its
 // callback for an invoice of exactly what is owed, checks the invoice against the request, and pays. The
 // sender never chooses the amount and never hands over a bolt11.
-test('a signed Lightning address is asked for an invoice of exactly what is owed, and a bad one is refused', async () => {
+test('a signed Lightning address is asked for an invoice of exactly what is owed, and a bad one is refused', slice2(), async () => {
   const asked = [];
   const bolt11 = 'lnbcrtaddresspaid';
   // The player's own LNURL endpoint, as LUD-06 has it.
@@ -147,7 +147,7 @@ test('a signed Lightning address is asked for an invoice of exactly what is owed
   } finally { await w.node.close(); }
 });
 
-test('an address that is not one, or whose endpoint asks for another amount, is refused', async () => {
+test('an address that is not one, or whose endpoint asks for another amount, is refused', slice2(), async () => {
   const w = await owedNode();
   try {
     const no = await fetch(`${w.at}/winnings?entry=${toHex(w.eid)}`, { method: 'POST', body: signedInvoice('not an address') });
@@ -160,7 +160,7 @@ test('an address that is not one, or whose endpoint asks for another amount, is 
   } finally { await w.node.close(); }
 });
 
-test('an entry this node never took is a 404, and one owed nothing says so', async () => {
+test('an entry this node never took is a 404, and one owed nothing says so', slice2(), async () => {
   const w = await owedNode();
   try {
     const none = await fetch(`${w.at}/winnings?entry=${'aa'.repeat(32)}`);
@@ -176,7 +176,7 @@ test('an entry this node never took is a 404, and one owed nothing says so', asy
 // Daily (ec9bd34e): the address lived only in the tab, the run's Chrome closed at DELIVERED, and FINAL
 // came ten minutes later with 98000 msat owed and nobody left to post it. So the door takes the address
 // early, keeps it as a standing instruction, and the settle sends to it with no page open.
-test('a Lightning address is kept the moment it is named, before the round owes anything', async () => {
+test('a Lightning address is kept the moment it is named, before the round owes anything', slice2(), async () => {
   const w = await owedNode({ owe: false });
   const r = await fetch(`${w.at}/winnings?entry=${toHex(w.eid)}`, { method: 'POST', body: signedInvoice('win@example.test') });
   const answer = await r.text();
@@ -188,7 +188,7 @@ test('a Lightning address is kept the moment it is named, before the round owes 
   await w.node.close();
 });
 
-test('an address nobody signed for is not kept, and neither is a thing that is not an address', async () => {
+test('an address nobody signed for is not kept, and neither is a thing that is not an address', slice2(), async () => {
   const w = await owedNode({ owe: false });
   const thief = ed25519.utils.randomSecretKey();
   const bad = await fetch(`${w.at}/winnings?entry=${toHex(w.eid)}`,
@@ -200,3 +200,6 @@ test('an address nobody signed for is not kept, and neither is a thing that is n
   assert.equal(w.node.round.payoutAddress(w.eid), null, 'something that is not an address was kept');
   await w.node.close();
 });
+
+/** Why this test does not run in Step 1 of the THRESHOLD_LN disposal (see TASKBOOK). */
+function slice2() { return { skip: "slice 2: the subject is the hold path (hold invoices on a Lightning port). It still runs at HEAD on a FEDERATION round given a Lightning port, so it is skipped, not moved to FEDERATION (RULED 2026-09-23); slice 2 deletes this test with the code" }; }

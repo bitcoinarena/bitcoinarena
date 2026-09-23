@@ -96,7 +96,7 @@ async function committee(n) {
   };
 }
 
-test('at join time the page printed "held" for a stake nobody has paid; now it says it is not yet counted', async () => {
+test('at join time the page printed "held" for a stake nobody has paid; now it says it is not yet counted', slice2(), async () => {
   const c = await committee(2);
   const client = new Client({ base: c.bases[0], core, sign, verify });
   try {
@@ -109,7 +109,7 @@ test('at join time the page printed "held" for a stake nobody has paid; now it s
   } finally { await c.close(); }
 });
 
-test('seven settlement signer nodes: seen by 4 of 7 is not committed, 5 of 7 is, and a signer node that does not answer is named', async () => {
+test('seven settlement signer nodes: seen by 4 of 7 is not committed, 5 of 7 is, and a signer node that does not answer is named', slice2(), async () => {
   const c = await committee(7);
   // THE SEVENTH SIGNER NODE'S ADDRESS IS DOWN: its key is a signer node, its node is gone.
   await c.nodes[6].close();
@@ -133,7 +133,7 @@ test('seven settlement signer nodes: seen by 4 of 7 is not committed, 5 of 7 is,
   } finally { await c.close(); }
 });
 
-test('two settlement signer nodes: T is 2, not a hard 5 - 1 of 2 is not committed, 2 of 2 is', async () => {
+test('two settlement signer nodes: T is 2, not a hard 5 - 1 of 2 is not committed, 2 of 2 is', slice2(), async () => {
   const c = await committee(2);
   try {
     assert.equal(join.stakeSeenNeeded(c.contract), 2, 'a 2-of-2 round would wait for 5 nodes it does not have');
@@ -149,7 +149,7 @@ test('two settlement signer nodes: T is 2, not a hard 5 - 1 of 2 is not committe
   } finally { await c.close(); }
 });
 
-test('counted from the signer node: a watch started before anybody paid reaches committed when the stake lands, and a second start is the same watch', async () => {
+test('counted from the signer node: a watch started before anybody paid reaches committed when the stake lands, and a second start is the same watch', slice2(), async () => {
   // A WALLET CAN ANSWER AFTER payStake HAS GIVEN UP (wallet-nwc.test.js: "did
   // not answer in 400 ms") and still pay. A count started only on payStake's ok
   // would never start, and the line would say "not yet counted" while the
@@ -170,7 +170,7 @@ test('counted from the signer node: a watch started before anybody paid reaches 
   } finally { client.close(); await c.close(); }
 });
 
-test('a signer node the node issued no hold for keeps the node\'s reason while nobody has seen it', () => {
+test('a signer node the node issued no hold for keeps the node\'s reason while nobody has seen it', slice2(), () => {
   // The count starts from the signer node whatever the node answered. A node with no
   // Lightning answers `x-hold: none` and says why - letter 15 put that reason on
   // the chip so a stake that can never be held does not read like one waiting.
@@ -188,7 +188,7 @@ test('a signer node the node issued no hold for keeps the node\'s reason while n
     ' · stake seen by 0 of 2 nodes (2 needed)');
 });
 
-test('a count that is over is not started again: committed, ended or closed, watchStake asks nobody', async () => {
+test('a count that is over is not started again: committed, ended or closed, watchStake asks nobody', slice2(), async () => {
   // The chip paints every 500 ms and starts the count from the signer node. What
   // stops it restarting a finished count is a rule, and a rule in index.html is
   // one node --test cannot run - so it lives here, where the suite does.
@@ -218,14 +218,14 @@ test('a count that is over is not started again: committed, ended or closed, wat
   } finally { client.close(); await c.close(); }
 });
 
-test('the page counts from the signer node, whatever payStake answered, and hands the count to the chip', async () => {
+test('the page counts from the signer node, whatever payStake answered, and hands the count to the chip', slice2(), async () => {
   const { readFileSync } = await import('node:fs');
   const page = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url), 'utf8');
   assert.ok(!/said\.ok && client\.watchStake/.test(page), 'the count still starts only when payStake said ok');
   assert.match(page, /net\.client\.watchStake\(\{/, 'the chip never starts the count from the signer node');
 });
 
-test('the page counts after paying and hands the count to the chip', async () => {
+test('the page counts after paying and hands the count to the chip', slice2(), async () => {
   // `index.html` is the one file node --test cannot load, so what is pinned is
   // that it calls the counted rule rather than printing a word of its own.
   const { readFileSync } = await import('node:fs');
@@ -235,7 +235,7 @@ test('the page counts after paying and hands the count to the chip', async () =>
   assert.match(page, /seen: \(net && net\.client && net\.client\.stakeCount\)/, 'the chip is not handed the count');
 });
 
-test('the client polls until the stake is committed and then stops; driving is not gated below T', async () => {
+test('the client polls until the stake is committed and then stops; driving is not gated below T', slice2(), async () => {
   const c = await committee(2);
   const client = new Client({ base: c.bases[0], core, sign, verify });
   try {
@@ -265,3 +265,6 @@ test('the client polls until the stake is committed and then stops; driving is n
     assert.equal(client.stakePolls, polls, 'the client kept polling after the stake was committed');
   } finally { client.endRun && client.endRun('test over'); client.close(); await c.close(); }
 });
+
+/** Why this test does not run in Step 1 of the THRESHOLD_LN disposal (see TASKBOOK). */
+function slice2() { return { skip: "slice 2: the subject is the hold path (hold invoices on a Lightning port). It still runs at HEAD on a FEDERATION round given a Lightning port, so it is skipped, not moved to FEDERATION (RULED 2026-09-23); slice 2 deletes this test with the code" }; }

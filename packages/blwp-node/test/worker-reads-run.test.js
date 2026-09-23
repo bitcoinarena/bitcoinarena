@@ -4,6 +4,7 @@
 // pictured truck - and hand them across. Measured live: a close held that loop 554-1511 ms before it waited, with a
 // transcript read 21-31 ms of each of up to seven entries. Now the worker is given the store's path and the two ids
 // and reads them itself. What it must NOT change is the answer: same outcome, same state hash, same everything.
+import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -26,8 +27,8 @@ const b32 = (n) => new Uint8Array(32).fill(n);
 const contract = () => ({
   networkId: b32(0x4e), configHash: TRUCK_CONFIG_HASH, censusConfirmations: 6, gameVerifySlots: 7,
   settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n, entryCloseMs: 2000n,
-  objectionWindowMs: 600000n, custody: 'THRESHOLD_LN', slashMinimumServed: 20,
-  slashRemainder: 'SPLIT', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [],
+  objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,
+  slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'],
   donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000, censusRoot: b32(2),
   committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash', stakeMsat: 100000n,
   bondMinSats: 50000n, blockTicks: BLOCK_TICKS,

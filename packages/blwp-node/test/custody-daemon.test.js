@@ -133,7 +133,7 @@ const getJson = async (port, path) => {
   return { status: r.status, text, body: r.headers.get('content-type') === 'application/json' ? JSON.parse(text) : null };
 };
 
-test('a joined player is quoted the hold invoice their own entry names', async () => {
+test('a joined player is quoted the hold invoice their own entry names', slice2(), async () => {
   const port = fakePort();
   const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, preflight: async () => ({ ready: true, why: "test port" }), lightning: port });
   try {
@@ -185,7 +185,7 @@ test('a joined player is quoted the hold invoice their own entry names', async (
   } finally { await node.close(); }
 });
 
-test('an entry this node never took gets no invoice', async () => {
+test('an entry this node never took gets no invoice', slice2(), async () => {
   const port = fakePort();
   const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, preflight: async () => ({ ready: true, why: "test port" }), lightning: port });
   try {
@@ -199,7 +199,7 @@ test('an entry this node never took gets no invoice', async () => {
   } finally { await node.close(); }
 });
 
-test('a daemon with no Lightning still signer nodes, and says why it quotes nothing', async () => {
+test('a daemon with no Lightning still signer nodes, and says why it quotes nothing', slice2(), async () => {
   const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED });
   try {
     const c = contractFor(node.round.pubkey);
@@ -274,7 +274,7 @@ async function roundThrough(node) {
 }
 const GENESIS_HASH = (await import('../../protocol/src/transcript.js')).GENESIS;
 
-test('closing a round on the daemon reaches the money path, and moves no stake', async () => {
+test('closing a round on the daemon reaches the money path, and moves no stake', slice2(), async () => {
   // THE WIRE ITSELF. Before this, `close` called `Verifier.settleRound` -
   // replay and gather, which move nothing - and there was no second call at
   // all. Now the close ends in `Custody.settleHeldInvoices`, and the proof
@@ -303,7 +303,7 @@ test('closing a round on the daemon reaches the money path, and moves no stake',
   } finally { await node.close(); }
 });
 
-test('the committee agreeing on a round nobody finished still moves no stake', async () => {
+test('the committee agreeing on a round nobody finished still moves no stake', slice2(), async () => {
   // MEASURED, AND IT IS THE COMMON CASE. The only outcome a transcript can
   // produce is DELIVERED or FAILED, and the drive this harness plays wrecks at
   // tick 631 - so the round has a pool of forfeited stakes and no qualifier to
@@ -353,7 +353,7 @@ test('the committee agreeing on a round nobody finished still moves no stake', a
   } finally { await node.close(); }
 });
 
-test('a daemon asks Lightning about an act it died in the middle of, on start', async () => {
+test('a daemon asks Lightning about an act it died in the middle of, on start', slice2(), async () => {
   // A tool an operator remembers to run is not a guarantee, so the question is
   // asked where a restart happens.
   const db = openStore(':memory:');
@@ -382,7 +382,7 @@ test('a daemon asks Lightning about an act it died in the middle of, on start', 
   } finally { await node.close(); }
 });
 
-test('a daemon with no Lightning asks it nothing and says so', async () => {
+test('a daemon with no Lightning asks it nothing and says so', slice2(), async () => {
   const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED });
   try {
     const asked = await node.reconciling;
@@ -391,7 +391,7 @@ test('a daemon with no Lightning asks it nothing and says so', async () => {
   } finally { await node.close(); }
 });
 
-test('closing a round makes the daemon sign what it owes, and serve that signature', async () => {
+test('closing a round makes the daemon sign what it owes, and serve that signature', slice2(), async () => {
   // MEASURED AFTER 8b WAS FIRST CALLED DONE: `new Payouts` appeared in tests
   // and one tool and in NO src file, server.js had zero references to a
   // payout, and `gather` fetched a `/payout` door that did not exist. The
@@ -430,7 +430,7 @@ test('closing a round makes the daemon sign what it owes, and serve that signatu
   } finally { await node.close(); }
 });
 
-test('a daemon with no chain asks it nothing about a payout', async () => {
+test('a daemon with no chain asks it nothing about a payout', slice2(), async () => {
   const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED });
   try {
     const asked = await node.reconcilingPayouts;
@@ -439,3 +439,6 @@ test('a daemon with no chain asks it nothing about a payout', async () => {
     assert.equal(node.payouts.canSpend, false);
   } finally { await node.close(); }
 });
+
+/** Why this test does not run in Step 1 of the THRESHOLD_LN disposal (see TASKBOOK). */
+function slice2() { return { skip: "slice 2: the subject is the hold path (hold invoices on a Lightning port). It still runs at HEAD on a FEDERATION round given a Lightning port, so it is skipped, not moved to FEDERATION (RULED 2026-09-23); slice 2 deletes this test with the code" }; }

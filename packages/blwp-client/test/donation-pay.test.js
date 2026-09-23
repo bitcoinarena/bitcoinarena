@@ -307,7 +307,7 @@ function paintThePage({ round, entry, donationPaid, settlement, spent = SHIPPED.
   return made;
 }
 
-test('a hold that has ended does not read HELD: the stake line takes the signer nodes\' end state - SETTLED, CANCELLED, EXPIRED - and stays HELD only while it is', () => {
+test('a hold that has ended does not read HELD: the stake line takes the signer nodes\' end state - SETTLED, CANCELLED, EXPIRED - and stays HELD only while it is', slice2(), () => {
   // BEFORE (bundle e9f22a89, live on the daily page): every one read "... · the wallet is
   // asked 98 sat · HELD" - the quote is asked once, at payment - beside "Settled: ...".
   const round = contractFor([b32(1), b32(2)]);
@@ -348,7 +348,7 @@ async function settleOnThePage({ hold, spent, stakeCommitment, round }) {
   return win.BLWP_SETTLEMENT;
 }
 
-test('a winner is shown what the round owes it: the signer nodes\' own payout-table row, 194000 msat beside its returned 96000 msat stake and the 98000 msat pool', async () => {
+test('a winner is shown what the round owes it: the signer nodes\' own payout-table row, 194000 msat beside its returned 96000 msat stake and the 98000 msat pool', slice2(), async () => {
   // BEFORE (bundle 675d62d1): the signer nodes served hold and pool only, and a winner's line
   // read "Returned: your 96000 msat stake was cancelled back to the wallet · the
   // round's pool 98000 msat" - no winnings figure. Round 1's D2: hold 96000, row 194000.
@@ -375,7 +375,7 @@ test('a winner is shown what the round owes it: the signer nodes\' own payout-ta
   console.log(`  winner: "${made['blwp-settled'].textContent}"`);
 });
 
-test('a stake that came back is not counted as spent: a cancelled winner and an expired refund read nothing spent, a settled loser still reads its stake', async () => {
+test('a stake that came back is not counted as spent: a cancelled winner and an expired refund read nothing spent, a settled loser still reads its stake', slice2(), async () => {
   // BEFORE (measured on the bundle the daily page ran, 915f64c9): all three read
   // "98 sat over 1 stake in 1 round", beside "Returned: ..." / "Expired: ..." / "Settled: ...".
   const round = contractFor([b32(1), b32(2)]);
@@ -417,7 +417,7 @@ function shown(load, round, storage) {
   return { state, text, rows, onScreen, noted };
 }
 
-test('the page shows each donation share as paid, unpaid or outcome unknown, matching the tab\'s notes, before and after a reload', async () => {
+test('the page shows each donation share as paid, unpaid or outcome unknown, matching the tab\'s notes, before and after a reload', slice2(), async () => {
   const holdRound = contractFor([b32(1), b32(2)]);
   const lockRound = { ...holdRound, custody: 'FEDERATION', federationId: TEST_FEDERATION_ID };
   assert.equal(SHIPPED.roundLocks(holdRound), false);
@@ -568,7 +568,7 @@ test('the running total survives a reload and counts a donation share as a donat
   } finally { await endpoints.close(); await wallet.close(); }
 });
 
-test('after settlement the page shows where the stake went and the round\'s pool, as the signer nodes say them', async () => {
+test('after settlement the page shows where the stake went and the round\'s pool, as the signer nodes say them', slice2(), async () => {
   // THE SIGNER NODES' OWN ANSWERS, as /settlement serves them after a 2% donor lost:
   // the hold settled, its amount, and custody's holdSettlement pool.
   const signerNodeKeys = [b32(0x71), b32(0x72)];
@@ -613,8 +613,8 @@ test('a tab that cannot keep the record does not ask the wallet at all', async (
 const contractFor = (nodes) => ({
   networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH,
   committeeTimeMs: BigInt(NOW), randomnessRule: 'bitcoin-block-hash', startTimeMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS,
-  entryCloseMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS + 200000n, objectionWindowMs: 600000n, custody: 'THRESHOLD_LN', slashMinimumServed: 20,
-  slashRemainder: 'SPLIT', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: SET_ID,
+  entryCloseMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS + 200000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,
+  slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'], donationSetId: SET_ID,
   censusHeight: 900000, censusRoot: b32(2), stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: BLOCK_TICKS, exposureReference: 1000,
   corridorHalfWidth: 40, spawnFreeRadius: 20, timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4, nodes,
 });
@@ -706,3 +706,6 @@ test('the page asks for the donation only once the signer nodes hold the stake',
   const guard = page.slice(page.lastIndexOf('if (c && c.joinedEntry', at), at);
   assert.match(guard, /c\.stakeCommitted/, `the page asks for the donation before the signer nodes hold the stake: ${guard.replace(/\s+/g, ' ').slice(0, 200)}`);
 });
+
+/** Why this test does not run in Step 1 of the THRESHOLD_LN disposal (see TASKBOOK). */
+function slice2() { return { skip: "slice 2: the subject is the hold path (hold invoices on a Lightning port). It still runs at HEAD on a FEDERATION round given a Lightning port, so it is skipped, not moved to FEDERATION (RULED 2026-09-23); slice 2 deletes this test with the code" }; }

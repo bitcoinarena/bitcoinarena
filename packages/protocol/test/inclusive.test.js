@@ -14,6 +14,7 @@
 // and the fee rule took a donation of 200000 on a stake of 100000.
 //
 // Each test here is one of those, or the example 22A itself gives.
+import { TEST_FEDERATION_ID } from '../src/test-federation.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../src/donation.js';
@@ -37,7 +38,7 @@ const pools = { [GAME_VERIFY]: game, [SETTLEMENT]: settle };
 const all = new Set([...game, ...settle].map(toHex));
 const contract = {
   networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1), startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n,
-  custody: 'THRESHOLD_LN', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,
+  custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,
   censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash', stakeMsat: 100000n, bondMinSats: 50000n,
   blockTicks: 600, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
   timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,

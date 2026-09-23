@@ -40,7 +40,7 @@ const channel = (local, remote, reserve = 4000) => ({
   remote_balance: String(remote), remote_constraints: { chan_reserve_sat: String(reserve) },
 });
 
-test('the testnet4 node as measured cannot hold one stake, and says how short it is', () => {
+test('the testnet4 node as measured cannot hold one stake, and says how short it is', slice2(), () => {
   const said = lightningPreflight(able({
     info: info(), channels: [channel(396530, 0)], holdInvoices: true, players: 2, entry: signerNode(),
   }));
@@ -51,7 +51,7 @@ test('the testnet4 node as measured cannot hold one stake, and says how short it
   console.log(`  as measured: ${said.why}`);
 });
 
-test('a node with enough inbound, synced, offering holds, is ready - and the reserve is not inbound', () => {
+test('a node with enough inbound, synced, offering holds, is ready - and the reserve is not inbound', slice2(), () => {
   const ok = lightningPreflight(able({
     info: info(), channels: [channel(200000, 200000)], holdInvoices: true, players: 2, entry: signerNode(),
   }));
@@ -66,7 +66,7 @@ test('a node with enough inbound, synced, offering holds, is ready - and the res
   assert.match(short.why, /need 196000 msat of inbound, and the channels offer 195000/);
 });
 
-test('mainnet is refused by name before anything is computed', () => {
+test('mainnet is refused by name before anything is computed', slice2(), () => {
   const said = lightningPreflight(able({
     info: info('mainnet'), channels: [channel(0, 10000000)], holdInvoices: true, players: 2, entry: signerNode(),
   }));
@@ -80,7 +80,7 @@ test('mainnet is refused by name before anything is computed', () => {
   assert.match(other.why, /on signet, and rounds hold stakes only on testnet4 or regtest/);
 });
 
-test('an unsynced node, a node with no channel and a node without holds are each named', () => {
+test('an unsynced node, a node with no channel and a node without holds are each named', slice2(), () => {
   const said = lightningPreflight(able({ info: info('testnet4', false), channels: [], holdInvoices: false, players: 1, entry: signerNode() }));
   assert.equal(said.ready, false);
   assert.match(said.why, /not synced/);
@@ -93,13 +93,13 @@ test('an unsynced node, a node with no channel and a node without holds are each
   assert.match(idle.why, /no active channel/);
 });
 
-test('a round that asks no stake is ready with no channel at all (M3.3-19)', () => {
+test('a round that asks no stake is ready with no channel at all (M3.3-19)', slice2(), () => {
   const said = lightningPreflight(able({ info: info(), channels: [], holdInvoices: false, players: 2, entry: signerNode(0n, 0n) }));
   assert.equal(said.ready, true, said.why);
   assert.match(said.why, /needs no inbound and no channel/);
 });
 
-test('the inbound a round needs is the NET hold, so a donating signer node needs less', () => {
+test('the inbound a round needs is the NET hold, so a donating signer node needs less', slice2(), () => {
   const plain = lightningPreflight(able({ info: info(), channels: [channel(0, 400000)], holdInvoices: true, players: 3, entry: signerNode() }));
   const giving = lightningPreflight(able({ info: info(), channels: [channel(0, 400000)], holdInvoices: true, players: 3, entry: signerNode(5000n) }));
   assert.equal(plain.facts.neededMsat, 3n * 98000n);
@@ -147,7 +147,7 @@ const asMeasured = async ({ contract }) => lightningPreflight(able({
   entry: { stakeMsat: contract.stakeMsat, feeMsat: entryFeeMsat(contract.stakeMsat), donationMsat: 0n },
 }));
 
-test('a node that cannot hold a stake refuses to open a round that asks one, and says how short it is', async () => {
+test('a node that cannot hold a stake refuses to open a round that asks one, and says how short it is', slice2(), async () => {
   const asked = [];
   const o = await opener({ lightning: deadPort, preflight: async (x) => { asked.push(x); return asMeasured(x); } });
   try {
@@ -163,12 +163,12 @@ test('a node that cannot hold a stake refuses to open a round that asks one, and
   } finally { await o.close(); }
 });
 
-test('a READY node opens the paying round', async () => {
+test('a READY node opens the paying round', slice2(), async () => {
   const o = await opener({ lightning: deadPort, preflight: async () => ({ ready: true, why: 'enough inbound' }) });
   try { assert.equal((await o.open(STAKE)).status, 201); } finally { await o.close(); }
 });
 
-test('a node that holds stakes and was given no preflight opens no paying round - it fails closed', async () => {
+test('a node that holds stakes and was given no preflight opens no paying round - it fails closed', slice2(), async () => {
   const o = await opener({ lightning: deadPort });
   try {
     const paid = await o.open(STAKE);
@@ -178,7 +178,7 @@ test('a node that holds stakes and was given no preflight opens no paying round 
   } finally { await o.close(); }
 });
 
-test('a preflight that throws is a refusal, named', async () => {
+test('a preflight that throws is a refusal, named', slice2(), async () => {
   const o = await opener({ lightning: deadPort, preflight: async () => { throw new Error('lncli getinfo refused'); } });
   try {
     const paid = await o.open(STAKE);
@@ -187,12 +187,12 @@ test('a preflight that throws is a refusal, named', async () => {
   } finally { await o.close(); }
 });
 
-test('a node with no Lightning at all opens a paying round as before - it holds nothing', async () => {
+test('a node with no Lightning at all opens a paying round as before - it holds nothing', slice2(), async () => {
   const o = await opener({});
   try { assert.equal((await o.open(STAKE)).status, 201); } finally { await o.close(); }
 });
 
-test('askLnd refuses a node that is not testnet4 by its own lnd.conf, before any call, and never asks with a spending key', () => {
+test('askLnd refuses a node that is not testnet4 by its own lnd.conf, before any call, and never asks with a spending key', slice2(), () => {
   const calls = [];
   const run = (bin, argv) => { calls.push(argv); return argv.includes('listchannels') ? '{"channels":[]}' : '{"chains":[{"network":"testnet4"}]}'; };
   assert.throws(() => askLnd({ lncli: 'lncli', lnddir: '/x/lnd-mainnet', run, read: () => 'bitcoin.testnet4=true\n' }), /not a testnet4 lnd/);
@@ -208,7 +208,7 @@ test('askLnd refuses a node that is not testnet4 by its own lnd.conf, before any
   }
 });
 
-test('a regtest lnd is asked with its read-only key and the port\'s own flags, and refused if it answers as another network', () => {
+test('a regtest lnd is asked with its read-only key and the port\'s own flags, and refused if it answers as another network', slice2(), () => {
   // Before: a regtest daemon given Lightning had no preflight at all, and a
   // node with a port and no preflight opens no paying round (measured 503).
   const asked = [];
@@ -231,3 +231,6 @@ test('a regtest lnd is asked with its read-only key and the port\'s own flags, a
   assert.throws(() => askLndRegtest({ lncli: 'lncli', lnddir: '/x/bob', rpc: '127.0.0.1:1', run: answering('testnet4') }),
     /answers as testnet4, not regtest/);
 });
+
+/** Why this test does not run in Step 1 of the THRESHOLD_LN disposal (see TASKBOOK). */
+function slice2() { return { skip: "slice 2: the subject is the hold path (hold invoices on a Lightning port). It still runs at HEAD on a FEDERATION round given a Lightning port, so it is skipped, not moved to FEDERATION (RULED 2026-09-23); slice 2 deletes this test with the code" }; }

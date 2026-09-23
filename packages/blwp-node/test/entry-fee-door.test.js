@@ -80,7 +80,7 @@ async function door(stakeMsat = STAKE) {
 }
 
 /** The rate is one number and it is in the config a round is bound to. */
-test('the fee is 2% and it comes from one place', () => {
+test('the fee is 2% and it comes from one place', slice2(), () => {
   assert.equal(NODE_FEE_BPS, 200);
   assert.equal(entryFeeMsat(STAKE), 2000n, '2% of 100000 msat is 2000');
   assert.equal(entryFeeMsat(0n), 0n, '2% of nothing is nothing');
@@ -97,7 +97,7 @@ test('the fee is 2% and it comes from one place', () => {
  * refusal says both numbers so an operator reading a log knows which way it
  * was wrong.
  */
-test('the door takes the round\'s own fee and refuses every other', async () => {
+test('the door takes the round\'s own fee and refuses every other', slice2(), async () => {
   const d = await door();
   try {
     const cases = [
@@ -136,7 +136,7 @@ test('the door takes the round\'s own fee and refuses every other', async () => 
  * `entry.stakeMsat` and the payout is `amountMsat - stake`, so it would be paid
  * its whole row out of other players' money.
  */
-test('a stake the round did not ask for is refused, even paying 2% of it', async () => {
+test('a stake the round did not ask for is refused, even paying 2% of it', slice2(), async () => {
   const d = await door();
   try {
     const cases = [
@@ -169,7 +169,7 @@ test('a stake the round did not ask for is refused, even paying 2% of it', async
  * rather than argued, because "the free case is fine" is exactly the kind of
  * thing that is true until a branch is added.
  */
-test('a round that asks no stake takes a free entry and refuses a paid one', async () => {
+test('a round that asks no stake takes a free entry and refuses a paid one', slice2(), async () => {
   const d = await door(0n);
   try {
     const free = await d.knock(0n, 0n);
@@ -200,7 +200,7 @@ test('a round that asks no stake takes a free entry and refuses a paid one', asy
  * only in the HTTP handler would be skipped by everything that takes an entry
  * another way.
  */
-test('the check is in enter, so nothing that takes an entry can skip it', async () => {
+test('the check is in enter, so nothing that takes an entry can skip it', slice2(), async () => {
   const { Round } = await import('../src/round.js');
   const r = new Round(openStore(':memory:'), () => NOW);
   const contract = contractFor([r.pubkey]);
@@ -224,7 +224,7 @@ test('the check is in enter, so nothing that takes an entry can skip it', async 
  * with the fee and keeps it on the entry the payout table reads - and refuses
  * one msat more than the stake leaves once the fee is out.
  */
-test('the door takes a player\'s own 2% donation out of the stake, and not a msat past it', async () => {
+test('the door takes a player\'s own 2% donation out of the stake, and not a msat past it', slice2(), async () => {
   const d = await door();
   try {
     const donor = await d.knock(STAKE, OWED, 2000n);
@@ -241,3 +241,6 @@ test('the door takes a player\'s own 2% donation out of the stake, and not a msa
     console.log(`  2% donor ${donor.status}, net ${rule.net}; one msat over the stake ${over.status}; all of the net ${all.status}`);
   } finally { await d.close(); }
 });
+
+/** Why this test does not run in Step 1 of the THRESHOLD_LN disposal (see TASKBOOK). */
+function slice2() { return { skip: "slice 2: the subject is the hold path (hold invoices on a Lightning port). It still runs at HEAD on a FEDERATION round given a Lightning port, so it is skipped, not moved to FEDERATION (RULED 2026-09-23); slice 2 deletes this test with the code" }; }

@@ -151,7 +151,7 @@ async function twoDaemons(relay) {
   return { a, b, portA, portB, rid, winner, loser, closedAt, stateOf, close: async () => { await a.close(); await b.close(); } };
 }
 
-test('two signer nodes: each posts both transcripts to the contract\'s relay, and only then, a window later, the loser settles, the winner cancels and a payout is queued', async () => {
+test('two signer nodes: each posts both transcripts to the contract\'s relay, and only then, a window later, the loser settles, the winner cancels and a payout is queued', slice2(), async () => {
   const relay = await countingRelay();
   const t = await twoDaemons(relay);
   try {
@@ -188,7 +188,7 @@ test('two signer nodes: each posts both transcripts to the contract\'s relay, an
   } finally { await t.close(); await relay.close(); }
 });
 
-test('two signer nodes whose only relay gives back other bytes: no signer node posts, and nothing moves after the window', async () => {
+test('two signer nodes whose only relay gives back other bytes: no signer node posts, and nothing moves after the window', slice2(), async () => {
   const relay = await countingRelay({ lies: true });
   const t = await twoDaemons(relay);
   try {
@@ -206,3 +206,6 @@ test('two signer nodes whose only relay gives back other bytes: no signer node p
     });
   } finally { await t.close(); await relay.close(); }
 });
+
+/** Why this test does not run in Step 1 of the THRESHOLD_LN disposal (see TASKBOOK). */
+function slice2() { return { skip: "slice 2: the subject is the hold path (hold invoices on a Lightning port). It still runs at HEAD on a FEDERATION round given a Lightning port, so it is skipped, not moved to FEDERATION (RULED 2026-09-23); slice 2 deletes this test with the code" }; }

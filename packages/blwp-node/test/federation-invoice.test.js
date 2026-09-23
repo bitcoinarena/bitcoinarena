@@ -87,7 +87,7 @@ async function paying(node, c) {
   return rid;
 }
 
-test('a node with no federation makes no federation invoice', async () => {
+test('a node with no federation makes no federation invoice', slice2(), async () => {
   const { lightning } = federationAndEndpoint();
   const node = await serve(openStore(':memory:'), { port: 0, funded: () => true, ...READY, lightning });
   try {
@@ -97,7 +97,7 @@ test('a node with no federation makes no federation invoice', async () => {
   } finally { await node.close(); }
 });
 
-test('a paying round gets the federation\'s invoice for its net stake, and an entry committing to that hash - no shares dealt - is joined and quoted that same invoice', async () => {
+test('a paying round gets the federation\'s invoice for its net stake, and an entry committing to that hash - no shares dealt - is joined and quoted that same invoice', slice2(), async () => {
   const { fed, federation, lightning } = federationAndEndpoint();
   const node = await serve(openStore(':memory:'), { port: 0, funded: () => true, ...READY, lightning, federation });
   try {
@@ -129,7 +129,7 @@ test('a paying round gets the federation\'s invoice for its net stake, and an en
 // so a 2% donor's hold is the stake less the fee and the donation - `netStakeMsat`,
 // which every other door reads. Measured before: this door asked the federation
 // for the stake less the fee only, whatever the player donates.
-test('a 2% donor\'s federation invoice is for the stake less the fee and the donation, and the donor\'s entry is joined and quoted on it', async () => {
+test('a 2% donor\'s federation invoice is for the stake less the fee and the donation, and the donor\'s entry is joined and quoted on it', slice2(), async () => {
   const DONATION = STAKE * 2n / 100n;
   const { fed, federation, lightning } = federationAndEndpoint();
   const node = await serve(openStore(':memory:'), { port: 0, funded: () => true, ...READY, lightning, federation });
@@ -157,7 +157,7 @@ test('a 2% donor\'s federation invoice is for the stake less the fee and the don
   } finally { await node.close(); }
 });
 
-test('a donation this door cannot read, or one the stake cannot hold, gets no invoice and asks the federation nothing', async () => {
+test('a donation this door cannot read, or one the stake cannot hold, gets no invoice and asks the federation nothing', slice2(), async () => {
   const { fed, federation, lightning } = federationAndEndpoint();
   const node = await serve(openStore(':memory:'), { port: 0, funded: () => true, ...READY, lightning, federation });
   try {
@@ -173,7 +173,7 @@ test('a donation this door cannot read, or one the stake cannot hold, gets no in
   } finally { await node.close(); }
 });
 
-test('a free round, and an invoice for any other amount, are refused', async () => {
+test('a free round, and an invoice for any other amount, are refused', slice2(), async () => {
   const skewed = federationAndEndpoint({ skewMsat: 1000n });
   const node = await serve(openStore(':memory:'), {
     port: 0, funded: () => true, ...READY, lightning: skewed.lightning, federation: skewed.federation,
@@ -187,3 +187,6 @@ test('a free round, and an invoice for any other amount, are refused', async () 
     assert.equal((await get(node.port, `/federation-invoice?round=${'ab'.repeat(32)}`)).status, 404);
   } finally { await node.close(); }
 });
+
+/** Why this test does not run in Step 1 of the THRESHOLD_LN disposal (see TASKBOOK). */
+function slice2() { return { skip: "slice 2: the subject is the hold path (hold invoices on a Lightning port). It still runs at HEAD on a FEDERATION round given a Lightning port, so it is skipped, not moved to FEDERATION (RULED 2026-09-23); slice 2 deletes this test with the code" }; }
