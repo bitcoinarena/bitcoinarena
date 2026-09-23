@@ -27,6 +27,7 @@ import { serve } from '../src/server.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { assumeAssigned } from './assignment.js';
 import { lockPort } from './lock-fixture.js';
+import { lnurl, nameAddress } from './lock-round-fixture.js';
 import { b32, rand, RANDOMNESS, STAKE, WINDOW_MS, WINNER, LOSER, GENESIS_HASH, wordsAt, contractFor, say, secretScalar, opts, wait } from './window-fixture.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
 import { dealHandout, encodeHandout, handoutId } from '../../protocol/src/handout.js';
@@ -48,7 +49,10 @@ const curve = { ...feldmanGroup, tweakPoint };
 /** Two signer nodes of a paying lock round, their claim key made between them. */
 async function lockRound({ minScore = 1 } = {}) {
   const port = lockPort();
-  const mk = () => serve(openStore(':memory:'), { port: 0, ...opts, stakeLocks: port, poolCurve: curve, finality: { everyMs: 100 } });
+  // THE WINNER'S LIGHTNING ADDRESS (ruled 2026-09-23: only a qualifier who named one is paid, so only then is a loser's lock claimed).
+  const address = lnurl(port);
+  const mk = () => serve(openStore(':memory:'), { port: 0, ...opts, stakeLocks: port, poolCurve: curve, finality: { everyMs: 100 },
+    lnurlFetch: address.fetchLike });
   const a = await mk();
   const b = await mk();
   // ONCE A PORT IS BOUND, IT IS CLOSED WHATEVER HAPPENS NEXT (2026-09-20). Everything below can throw - the
@@ -132,7 +136,7 @@ async function lockAndPlay(w, who) {
     assert.equal(await say(d.port, encodeInputBatch(input)), String(who.ticks));
     assert.equal((await say(d.port, signedMark)).length, SIGNED_RECEIPT_BYTES);
   }
-  return { eid, entry, fields, outpoint, feeOutpoint };
+  return { eid, entry, fields, outpoint, feeOutpoint, session };
 }
 
 const ask = async (d, w, eid) => {
@@ -154,6 +158,7 @@ test('the qualifier\'s lock is forfeited by both signer nodes after the window -
   try {
     const winner = await lockAndPlay(w, WINNER);
     const loser = await lockAndPlay(w, LOSER);
+    await nameAddress([w.a, w.b], winner);
     const early = await ask(w.a, w, winner.eid);
     assert.deepEqual(await closeRound(w), ['closed', 'closed']);
     const got = await untilForfeit(w, winner.eid);

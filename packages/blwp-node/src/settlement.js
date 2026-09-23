@@ -68,6 +68,8 @@ export class LockSettlement {
     this.peersFor = peersFor;
     this.fetcher = fetcher;
     this.built = new Map();          // round id hex -> the settlement this signer node rebuilt
+    this.planRetries = new Map();    // round id hex -> how often a peer refused the send plan
+    this.retryTimers = new Set();
     this.pairs = new Map();          // round id hex -> { hiding, binding, commitment, list, share }
     this.fees = new Map();           // round id hex -> the guardians' fee rule, read once
   }
@@ -169,18 +171,22 @@ export class LockSettlement {
     }
     let fees = this.fees.get(key);
     if (!fees) { fees = await this.port.fees(); this.fees.set(key, fees); }
+    // THE POOL (RULED 2026-09-23): only a qualifier whose entry named a Lightning address at this signer node is paid;
+    // the others' shares are split over them, and with none nothing of the stakes is claimed. Every signer node reads
+    // its own rows; a peer holding another set rebuilds other amounts and refuses the proposer's plan by name.
+    const addressed = new Set();
+    for (const e of on.entries) if (this.round.payoutAddress && this.round.payoutAddress(e.entryId)) addressed.add(toHex(e.pubkey));
     const args = { roundId: roundIdBytes, entries: on.entries, minScore: contract.minScore, locks, fees,
-      feeLocks, signerNodes: feeLocks.size ? this.signerNodesFor(roundIdBytes, contract) : null, contract };
+      feeLocks, signerNodes: feeLocks.size ? this.signerNodesFor(roundIdBytes, contract) : null, contract, addressed };
     let plan = lockSettlement(args);
     if (!plan.ok) return refuse(`no lock is claimed: ${plan.why}`);
     if (plan.nothing) return refuse(`no lock is claimed: ${plan.why}`);
     const base = { plan, entryOf: lockEntry };
-    if (withSends && this.winnings) {
-      const sends = this.winnings.sendsFor(roundIdBytes, base, claimPk);
-      if (sends.size) {
-        plan = lockSettlement({ ...args, sends });
-        if (!plan.ok) return refuse(`no lock is claimed: ${plan.why}`);
-      }
+    // THE PLAN THAT IS SIGNED pays every addressed qualifier by its accepted send - never by a contract its key moves.
+    if (withSends && plan.payouts.some((p) => p.kind === 'qualifier')) {
+      if (!this.winnings) return refuse('this signer node sends no winnings, so it builds no payout to a named address');
+      plan = lockSettlement({ ...args, sends: this.winnings.sendsFor(roundIdBytes, base, claimPk), requireSends: true });
+      if (!plan.ok) return refuse(`no lock is claimed: ${plan.why}`);
     }
     return { ok: true, plan, base, contract, claimPk, held, locks, lockEntry };
   }
@@ -200,6 +206,9 @@ export class LockSettlement {
       claims: p.claims.map((c) => ({ kind: c.kind || 'stake', msat: String(c.amountMsat) })),
       payouts: p.payouts.map((x) => ({ kind: x.kind || 'qualifier', pk: toHex(x.payoutPk), msat: String(x.msat), feeMsat: String(x.feeMsat) })),
       poolMsat: String(p.poolMsat), inputFeesMsat: String(p.inputFeesMsat), paidMsat: String(p.paidMsat),
+      outputFeesMsat: String(p.outputFeesMsat || 0n), unspentMsat: String(p.unspentMsat || 0n), stakeWhy: p.stakeWhy || null,
+      // THE POOL: qualifiers not paid, each with why (no address - its share split over those who named one).
+      pooled: (p.unpaid || []).filter((u) => !/fee share/.test(u.why)).map((u) => ({ pk: toHex(u.pubkey), owedMsat: String(u.owedMsat), why: u.why })),
       feePoolMsat: String(p.feePoolMsat || 0n), feeInputFeesMsat: String(p.feeInputFeesMsat || 0n), feePaidMsat: String(p.feePaidMsat || 0n),
       feeHole: p.feeHole ? p.feeHole.why : null,
     };
@@ -310,11 +319,6 @@ export class LockSettlement {
       const sent = await this.sendWinnings(roundIdBytes);
       return { ok: true, kept: true, ...kept, sent };
     }
-    // THE SEND PLANS FIRST, before anything is rebuilt: proposed here, checked by every peer, or no settlement.
-    if (this.winnings && !(kept && kept.state === SUBMITTING)) {
-      const planned = await this.planSends(roundIdBytes);
-      if (!planned.ok) return planned;
-    }
     // A SETTLEMENT THIS SIGNER NODE WAS INSIDE (W6): the federation first. Measured before: a signer node
     // restarted inside one never asked again - its row stayed SUBMITTING whether the money had
     // moved or not.
@@ -330,6 +334,20 @@ export class LockSettlement {
         this.round.putLockSettlement({ roundId: roundIdBytes, txid: kept.txid, message: kept.message, signature: kept.signature, state: SUBMITTING, why });
         return refuse(why, 409);
       }
+    }
+    // THE SEND PLANS, before anything is rebuilt: proposed here, checked by every peer, or no settlement. After the
+    // federation was asked (W6) - a plan the money already moved on is not re-planned - and before the rebuild, so a
+    // kept plan the payout no longer matches is planned again (measured: a fee rule changed across a restart and every
+    // rebuild was refused against the old amount).
+    if (this.winnings) {
+      const planned = await this.planSends(roundIdBytes);
+      if (!planned.ok) {
+        // A PEER NOT YET READY FOR THE PLAN IS OFFERED IT AGAIN, a second later, a bounded number of times. Measured:
+        // a peer whose run was not yet final refused it, then became final and waited for a plan nobody offered again.
+        if (planned.peerRefused) this.retryPlan(roundIdBytes);
+        return planned;
+      }
+      this.planRetries.delete(toHex(roundIdBytes));
     }
     const m = await this.message(roundIdBytes);
     if (!m.ok) return m;
@@ -405,19 +423,40 @@ export class LockSettlement {
     }
     const proposed = await this.winnings.propose(roundIdBytes, got.base);
     if (!proposed.ok) return proposed;
-    if (!proposed.rows.length) return { ok: true, rows: [] };
+    // AN EMPTY PLAN IS HANDED OUT TOO: a peer that holds an address this signer node does not refuses it by name.
     const body = JSON.stringify(proposed.rows.map(sendPlanToJson));
     const refused = [];
-    for (const base of this.peersFor(roundIdBytes)) {
+    const peers = this.peersFor(roundIdBytes);
+    // A PLAN HANDED TO NOBODY IS NOT TAKEN. Measured: a signer node restarted inside a settlement asked again before it
+    // knew its peers, "handed" a new plan to none, and the peer went on refusing against the old one.
+    if (!peers.length && got.contract.nodes.length > 1)
+      return { ...refuse('this signer node knows no peer to hand the send plan to yet, so nothing is settled'), peerRefused: true };
+    for (const base of peers) {
       try {
         const r = await this.fetcher(`${base}/settle-sends?round=${toHex(roundIdBytes)}`, { method: 'POST', body });
         if (!r.ok) refused.push(`${base}: ${(await r.text()).trim()}`);
       } catch (e) { refused.push(`${base}: ${e.message}`); }
     }
-    if (refused.length) return refuse(`a signer node did not take the send plan, so nothing is settled: ${refused.join('; ')}`);
+    if (refused.length) return { ...refuse(`a signer node did not take the send plan, so nothing is settled: ${refused.join('; ')}`), peerRefused: true };
     this.built.delete(toHex(roundIdBytes));
     return { ok: true, rows: proposed.rows };
   }
+
+  retryPlan(roundIdBytes, { everyMs = 1000, most = 120 } = {}) {
+    const key = toHex(roundIdBytes);
+    const n = (this.planRetries.get(key) || 0) + 1;
+    if (n > most) return;
+    this.planRetries.set(key, n);
+    const t = setTimeout(() => {
+      this.retryTimers.delete(t);
+      this.settle(roundIdBytes).then((got) => console.log(`[settle] ${key.slice(0, 16)} plan offered again (${n}): ${got.state || (got.ok ? 'ok' : 'refused')} - ${got.why || ''}`))
+        .catch((e) => console.log(`[settle] ${key.slice(0, 16)} plan offered again (${n}): ${e.message}`));
+    }, everyMs);
+    if (t.unref) t.unref();
+    this.retryTimers.add(t);
+  }
+
+  stop() { for (const t of this.retryTimers) clearTimeout(t); this.retryTimers.clear(); }
 
   /** A PEER takes the coordinator's plans only if each stands here - and then rebuilds with them. */
   async takeSends(roundIdBytes, proposed) {
@@ -425,7 +464,13 @@ export class LockSettlement {
     const got = await this.planOf(roundIdBytes);
     if (!got.ok) return got;
     const checked = await this.winnings.check(roundIdBytes, got.base, proposed);
-    if (checked.ok) this.built.delete(toHex(roundIdBytes));
+    if (checked.ok) {
+      this.built.delete(toHex(roundIdBytes));
+      // AND THIS SIGNER NODE SETTLES NOW: its own attempt was refused while it waited for the plan, and its finality
+      // watch has nothing left to wait for. Measured: the proposer held ACCEPTED and this one NONE for 30 s.
+      const kept = this.round.lockSettlement(roundIdBytes);
+      if (!kept || kept.state !== ACCEPTED) setImmediate(() => { this.settle(roundIdBytes).catch(() => {}); });
+    }
     return checked;
   }
 

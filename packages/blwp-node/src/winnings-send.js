@@ -67,6 +67,7 @@ export class WinningsSend {
    * a round already planned is not planned again. A bad invoice is a refusal: no payout output is built on it.
    */
   async propose(roundIdBytes, base) {
+    this.dropIfStale(roundIdBytes, base);
     const kept = this.round.sendPlansOf(roundIdBytes);
     if (kept.length) return { ok: true, rows: kept };
     const wanting = this.qualifiersWithAddress(base);
@@ -91,6 +92,7 @@ export class WinningsSend {
   /** A PEER'S CHECK of the coordinator's plans, each against this signer node's own payout, gateways, height and LNURL. */
   async check(roundIdBytes, base, proposed) {
     // A PLAN ALREADY KEPT IS NOT REPLACED: the same plan again is taken, another one is refused by name.
+    this.dropIfStale(roundIdBytes, base);
     const kept = this.round.sendAttemptsOf(roundIdBytes).filter((x) => x.attempt === 0);
     if (kept.length) {
       const same = kept.length === proposed.length && kept.every((k) => proposed.some((p) => String(p.entry) === toHex(k.entryId)
@@ -120,6 +122,23 @@ export class WinningsSend {
     return { ok: true, rows: this.round.sendPlansOf(roundIdBytes) };
   }
 
+  /**
+   * A KEPT PLAN THE PAYOUT NO LONGER MATCHES IS DROPPED - while nothing of the round was settled or sent. Its invoices
+   * were sized for payouts this signer node no longer rebuilds (measured: the federation's fee rule changed between
+   * the plan and the submit, and every rebuild was refused against the old amount, the round held SUBMITTING). Once
+   * the settlement is ACCEPTED or a send went out, the kept plan is what the federation holds, and it stands.
+   */
+  dropIfStale(roundIdBytes, base) {
+    const kept = this.round.sendAttemptsOf(roundIdBytes).filter((x) => x.attempt === 0);
+    if (!kept.length) return false;
+    const settled = this.round.lockSettlement(roundIdBytes);
+    if (settled && settled.state === 'ACCEPTED') return false;
+    const wanting = new Map(this.qualifiersWithAddress(base).map((w) => [toHex(w.entryId), w.payout.msat]));
+    const same = kept.length === wanting.size && kept.every((k) => wanting.get(toHex(k.entryId)) === k.payoutMsat);
+    if (same) return false;
+    return this.round.dropPlannedSends(roundIdBytes) > 0;
+  }
+
   /** Qualifier payouts of the base plan whose entry named an address, with that address. */
   qualifiersWithAddress(base) {
     const out = [];
@@ -139,7 +158,7 @@ export class WinningsSend {
     // THE FIRST ATTEMPT ONLY: the settlement is what it was when it was signed; a re-send is its own transaction.
     for (const r of this.round.sendAttemptsOf(roundIdBytes).filter((x) => x.attempt === 0)) {
       const pk = byEntry.get(toHex(r.entryId));
-      if (pk) sends.set(pk, { paymentHash: r.paymentHash, gatewayPk: r.gatewayPk, refundPk: claimPk, expiration: r.expiration });
+      if (pk) sends.set(pk, { paymentHash: r.paymentHash, gatewayPk: r.gatewayPk, refundPk: claimPk, expiration: r.expiration, payoutMsat: r.payoutMsat });
     }
     return sends;
   }

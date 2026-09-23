@@ -3335,6 +3335,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         shuttingDown = true;
         clearInterval(settleRecoverTimer);
         clearInterval(winningsTimer);
+        settlements.stop();
         if (endTimer) clearInterval(endTimer);
         for (const t of finalityTimers) clearTimeout(t);
         finalityTimers.clear();
