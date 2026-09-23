@@ -1153,8 +1153,8 @@ const FIRE_RELOAD_SPAN = 108;    // up to 3.2 s
  */
 export const HIT_PER_MIL = 550;
 
-const FIRE_DAMAGE_MIN = Math.imul(11, ONE);
-const FIRE_DAMAGE_SPAN = Math.imul(13, ONE);
+const FIRE_DAMAGE_MIN = Math.imul(12, ONE);   // 11 -> 12, about 10% (the owner 2026-09-23)
+const FIRE_DAMAGE_SPAN = Math.imul(14, ONE);
 
 /**
  * One round of armour against armour.
@@ -1192,7 +1192,7 @@ export const RIFLE_RELOAD_TICKS_SPAN = RIFLE_RELOAD_SPAN;
 export const RIFLE_LOOK_TICKS = RIFLE_LOOK_MIN;
 export const RIFLE_LOOK_TICKS_SPAN = RIFLE_LOOK_SPAN;
 export const RIFLE_HP = Math.imul(10, ONE);
-export const RIFLE_DAMAGE = Math.imul(10, ONE);
+export const RIFLE_DAMAGE = Math.imul(11, ONE);   // 10 -> 11, about 10%
 
 export const BACKOFF_RANGE = BACK_OFF_RANGE;
 export const RELOAD_MIN = FIRE_RELOAD_MIN;
