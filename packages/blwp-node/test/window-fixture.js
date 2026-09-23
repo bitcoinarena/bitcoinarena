@@ -1,8 +1,7 @@
 // THE OBJECTION WINDOW'S DAEMONS AND PLAYERS, shared by objection-window.test.js
-// (M3.3-32) and publication-finality.test.js (P2): two signer nodes that settle on a
-// paid fake Lightning, and one daemon on a seven-signer node round whose other six
-// keys the test holds. Moved here unchanged, except that a contract can name
-// publication relays.
+// (M3.3-32) and publication-finality.test.js (P2): one daemon on a seven-signer node
+// round whose other six keys the test holds. Its rounds are FEDERATION, the one custody
+// (§23.6); the paid fake Lightning its hold-invoice tests ran on went with them.
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 // THE RUN LENGTH IS THE CORE'S (2026-09-20). This fixture said 9000 and the core has ended a run at 10800
 // since c01cc655 ("a round is three minutes"). `Round.open` refuses a contract that disagrees with the core
@@ -26,7 +25,6 @@ import { WebSocket } from 'ws';
 
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
-import { HELD, SETTLED, CANCELLED } from '../src/custody.js';
 import { feldmanGroup } from '../src/curve.js';
 import { assumeAssigned, assumeStakeSeen } from './assignment.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
@@ -112,7 +110,6 @@ export const wordsAt = (t) => {
 };
 export const STAKE = 100000n;
 export const WINDOW_MS = 3000;
-export const HTLC_EXPIRY = 500;   // the height the fake lnd says each paid HTLC expires at
 export const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // second-closer's two players: the winner DELIVERS by tick 1320, the loser
@@ -136,20 +133,6 @@ export const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 export const WINNER = { name: 'winner', key: b32(0x0a), worldSecret: fromHex(`01${'00'.repeat(30)}6d`), ticks: 1320 };
 export const LOSER = { name: 'loser', key: b32(5), worldSecret: b32(0xc0), ticks: 1000 };
 
-/** A Lightning node whose players have paid, and which writes down WHEN it was told to act. */
-export function paidPort() {
-  const amounts = new Map();
-  const settled = [];
-  const cancelled = [];
-  return {
-    settled, cancelled,
-    async createHeld({ paymentHash, amountMsat }) { amounts.set(toHex(paymentHash), amountMsat); return { paymentHash, amountMsat, request: 'lnbcrt-x' }; },
-    async look({ paymentHash }) { const a = amounts.get(toHex(paymentHash)) || 0n; return { state: HELD, amountMsat: a, paidMsat: a, expiryHeight: HTLC_EXPIRY }; },
-    async settle({ paymentHash, preimage }) { settled.push({ paymentHash: toHex(paymentHash), preimage: toHex(preimage), at: Date.now() }); },
-    async cancel({ paymentHash }) { cancelled.push({ paymentHash: toHex(paymentHash), at: Date.now() }); },
-  };
-}
-
 // THE START DEADLINE THESE ROUNDS NAME (§15, a late start): every player here
 // plants ONE first mark at the end of its run, so the round names a deadline
 // past it (planted-marks.js says why); the omitted default is not moved.
@@ -161,8 +144,7 @@ export const contractFor = (nodes, objectionWindowMs, publicationRelays = []) =>
   networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
   gameVerifySlots: nodes.length, settlementSlots: nodes.length, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n,
   // FEDERATION, NAMING TEST_FEDERATION_ID: the one custody this network has (RULED 2026-09-22 22:59 -
-  // THRESHOLD_LN does not exist). A test whose subject is the hold path is skipped until slice 2
-  // retires it, never run here on FEDERATION: that path still runs when a round has a Lightning port.
+  // THRESHOLD_LN does not exist).
   entryCloseMs: 2000n, objectionWindowMs, custody: 'FEDERATION',
   slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays, donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n,
@@ -218,12 +200,11 @@ export async function joinAndPlay(daemons, c, rid, who, needed, { direct = false
     } else {
       const joined = await fetch(`http://127.0.0.1:${d.port}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
       assert.equal(joined.status, 201, `${who.name}'s entry: ${await joined.text()}`);
-      const quote = await fetch(`http://127.0.0.1:${d.port}/invoice?entry=${toHex(eid)}`);
-      assert.equal(quote.status, 200, `${who.name}'s invoice: ${await quote.text()}`);
-      // SEEN THE WAY A PAGE SEES IT: `GET /stake` asks the node's own Lightning,
-      // which is also when the node learns the HTLC's expiry height.
-      const seen = await fetch(`http://127.0.0.1:${d.port}/stake?entry=${toHex(eid)}`);
-      assert.equal(seen.status, 200, `${who.name}'s stake was not seen: ${await seen.text()}`);
+      // THE STAKE IS A LOCK IN THE ROUND'S FEDERATION (§23.1 step 5), which a signer node verifies there;
+      // no federation runs here, and these tests are about what follows a paid entry, not the verifying -
+      // so the stake is taken as seen, as the lock fixtures do. The hold invoice this used to be asked for
+      // (`/invoice`, `/stake` on the node's own Lightning) went with THRESHOLD_LN (§23.6).
+      assumeStakeSeen(d.round, entry);
     }
     assert.equal(await say(d.port, encodeInputBatch(input)), String(who.ticks));
     assert.equal((await say(d.port, signedMark)).length, SIGNED_RECEIPT_BYTES);
@@ -231,7 +212,7 @@ export async function joinAndPlay(daemons, c, rid, who, needed, { direct = false
   return { eid, entry, preimage, mid: checkpointId(mark) };
 }
 
-export const opts = { funded: () => true, randomnessFor: () => BEACON, preflight: async () => ({ ready: true, why: 'test port' }) };
+export const opts = { funded: () => true, randomnessFor: () => BEACON };
 /**
  * ONE DAEMON ON A SEVEN-SIGNER NODE ROUND, the other six signer nodes' keys this test holds.
  * Two losers play on it and it signs its own result for each; then `sign` has
@@ -243,7 +224,7 @@ export async function sevenSignerNodes(windowMs, relays, { storedBeforeTheRule =
   // bond outpoint, which a slash proof must name (5A.3B). Filled once the keys exist.
   const adverts = new Map();
   const holder = await serve(openStore(':memory:'), {
-    port: 0, ...opts, lightning: paidPort(), advertsFor: () => adverts, ...(finality ? { finality } : {}) });
+    port: 0, ...opts, advertsFor: () => adverts, ...(finality ? { finality } : {}) });
   try {
     const others = Array.from({ length: 6 }, () => rand(32));
     [holder.round.pubkey, ...others.map((s) => schnorr.getPublicKey(s))].forEach((k, i) =>

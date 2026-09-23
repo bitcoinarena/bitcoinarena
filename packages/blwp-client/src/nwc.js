@@ -173,20 +173,6 @@ export const SPEND_LOG_KEY = 'blwp.spend.log';
 /** The hold end states in which a stake comes back to the payer. */
 const RETURNED = ['CANCELLED', 'EXPIRED'];
 
-/**
- * WHAT THE SIGNER NODES SAID HAPPENED TO THIS ENTRY'S STAKE, WRITTEN INTO THE LOG (M3.2 6e).
- * Measured before, on the bundle the daily page runs: a winner read "98 sat over 1
- * stake in 1 round" beside "Returned: ... cancelled back to the wallet", and a
- * refunded player the same beside "Expired: ... came back to the wallet". A hold
- * that ends CANCELLED or EXPIRED is money that came back; one that SETTLED left and
- * stays spent. `settlement` is `settlementBy`'s answer; `paymentHash` the stake's.
- */
-export function noteSettlement(log, settlement, paymentHash) {
-  if (!log || typeof log.markReturned !== 'function' || !settlement) return false;
-  if (!RETURNED.includes(settlement.hold)) return false;
-  return log.markReturned({ paymentHash, state: settlement.hold });
-}
-
 export function spendLog({ storage = null, key = SPEND_LOG_KEY } = {}) {
   const paid = [];
   const kindOf = (k) => (k === 'donation' ? 'donation' : 'stake');
@@ -283,36 +269,6 @@ export function spentLine(log) {
   return `${amount} over ${parts.join(' and ')}${inRounds}${cameBack}`;
 }
 
-/**
- * WHAT THIS ENTRY COSTS, AS ONE LINE, and it is 22A's Transparency list.
- *
- * "Before wallet approval the client MUST display: total wallet commitment,
- * the node fee and donation coming OUT of it, the resulting net game stake".
- * Every number is off the ENTRY the player signed; the only thing taken from
- * the quote is what the wallet is being asked for and the hold's state, and
- * the quote reaching here has already passed `invoiceMatchesEntry` - so the
- * amount asked IS the net stake, and the line shows both so a player can see
- * that it is.
- *
- * `netStakeMsat` does the subtraction. A page that took 2 from 100 itself
- * would be a second arithmetic for the one number a player parts with money
- * over.
- */
-export function owedLine(entry, quote, settlement = null) {
-  if (!entry) return 'your entry owes —';
-  let net;
-  try { net = netStakeMsat(entry); } catch (e) { return `your entry cannot be paid: ${e.message}`; }
-  const split = `${sats(entry.stakeMsat)} round: ${sats(entry.feeMsat)} fee and `
-    + `${sats(entry.donationMsat)} donation out of it, ${sats(net)} staked`;
-  // A HOLD THAT HAS ENDED IS NOT HELD (M3.2 6e). The quote is asked once, at
-  // payment, so its state stays HELD; measured on the daily page after settlement:
-  // "... · HELD" beside "Settled: ...". When the signer nodes say the hold ended (settled,
-  // cancelled, expired), that is the state this line reads.
-  const ended = settlement && ENDED_HOLDS.includes(settlement.hold) ? settlement.hold : null;
-  return quote
-    ? `${split} · the wallet is asked ${sats(quote.amountMsat)} · ${ended || quote.state}`
-    : `${split} · no quote yet`;
-}
 const ENDED_HOLDS = ['SETTLED', 'CANCELLED', 'EXPIRED'];
 
 /** Whole sats where they are whole, and the millisatoshi where they are not. */

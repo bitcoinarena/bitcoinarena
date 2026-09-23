@@ -10,6 +10,10 @@
 // wording; neither is a browser, and the jslib and the C# only take effect in
 // a WebGL build. This is that check.
 import { createServer } from 'node:http';
+// FEDERATION since §23.6's ruling (2026-09-22 22:59): the custody field has one value, and a paying round
+// names its federation and a publication relay. The page it renders shows the lock panel, the only wallet
+// a paying round has now.
+import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { extname, join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -88,7 +92,7 @@ const bondApi = await listen((req, res) => {
 // own length, which is the whole point of it.
 const contract = {
   simCoreHash: b32(1), startTimeMs: 60500n, entryCloseMs: 2000n,
-  objectionWindowMs: 600000n, custody: 'THRESHOLD_LN', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: new Uint8Array(32).fill(0xd0), censusHeight: 900000,
+  objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['http://127.0.0.1:1'], donationSetId: new Uint8Array(32).fill(0xd0), censusHeight: 900000,
   censusRoot: b32(2), committeeSeed: b32(3), stakeMsat: 100000n,
   bondMinSats: 50000n, blockTicks: 1800, exposureReference: 1000,
   corridorHalfWidth: 40, spawnFreeRadius: 20, timeFloor: 30, timeCeil: 150,

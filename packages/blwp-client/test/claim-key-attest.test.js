@@ -51,7 +51,7 @@ const ROGUE = Uint8Array.from([0x03, ...b32(0xe7)]);
 async function federationRound({ signerNodes = 2, keyOf = () => CLAIM, federationId = TEST_FEDERATION_ID } = {}) {
   const daemons = [];
   for (let i = 0; i < signerNodes; i++)
-    daemons.push(await serve(openStore(':memory:'), { port: 0, funded: () => true, preflight: async () => ({ ready: true, why: 'test' }), claimKeyFor: () => keyOf(i) }));
+    daemons.push(await serve(openStore(':memory:'), { port: 0, funded: () => true, claimKeyFor: () => keyOf(i) }));
   const now = BigInt(Date.now());
   const round = {
     networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,

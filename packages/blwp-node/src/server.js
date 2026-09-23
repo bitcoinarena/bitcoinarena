@@ -69,7 +69,6 @@ import { receiptsNeeded as roundThreshold, donationKeysForNetworkId } from '../.
 import { authorityAt, donationSetSignedBy, encodeDonationSetBody, encodeAuthorityRotation } from '../../protocol/src/authority.js';
 import { donationSetId } from '../../protocol/src/donation.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
-import { Custody, NO_LIGHTNING, SETTLE, HELD, PAYING } from './custody.js';
 import { timed, watchLoop } from './slow.js';
 import { resultFinality } from './finality.js';
 import { outageOutcome } from '../../protocol/src/entry-void.js';
@@ -146,11 +145,8 @@ const text = (res, code, msg) => {
  * it, and a default of yes is the kind of thing nobody notices until the disk
  * is full.
  *
- * THE PAYMENT LAYER IS HERE NOW, and it did not replace this. `lightning` is
- * the port that issues the hold; `funded` is still the operator's answer to
- * "may this entry cost me disk". They are different questions - an invoice
- * issued is not an invoice paid - and collapsing them would make the flood
- * lever depend on a Lightning node being up.
+ * THE PAYMENT LAYER DID NOT REPLACE THIS. `funded` is still the operator's answer to "may this entry
+ * cost me disk", and whether a stake is locked is a separate question answered by the federation.
  */
 const hexOf = (b) => Buffer.from(b).toString('hex');
 
@@ -167,21 +163,14 @@ export const NOTHING_IS_FUNDED = () => false;
 
 export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FUNDED,
   randomnessFor, chainFor, peers = [], headerBytes, bondProof,
-  lightning = NO_LIGHTNING, preimageFor = null,
-  // THE FEDERATION'S RECEIVING SIDE, when this node's rounds take their stakes
-  // through it (V1's pool is a FEDERATION, the owner 2026-09-11): `receive({
-  // amountMsat })` answers `{ request }`, an LNv2 invoice the federation's
-  // gateway holds. None by default: a node makes its own hold invoices.
+  // A LIGHTNING INVOICE READER, AND NOTHING MORE (§23.6, RULED 2026-09-22 22:59). `/federation-invoice`
+  // uses its `decode` to read what the federation's LNv2 invoice commits to. It no longer issues, looks up,
+  // settles or cancels holds, and it pays nothing: that was THRESHOLD_LN's custody by one operator.
+  // (`preimageFor`, `preflight` and `secondsPerBlock` served only that hold, and are gone with it.)
+  lightning = null,
+  // THE FEDERATION'S RECEIVING SIDE (V1's pool is a FEDERATION, the owner 2026-09-11): `receive({
+  // amountMsat })` answers `{ request }`, an LNv2 invoice the federation's gateway holds.
   federation = null,
-  // CAN THAT LIGHTNING NODE HOLD A ROUND'S STAKES? `lndPreflight` asks it with
-  // a read-only key. A node given a port and no preflight opens no paying
-  // round: the gate fails closed.
-  preflight = null,
-  // HOW FAST BLOCKS ARE COMING ON THE CHAIN THIS NODE WATCHES, measured by the launcher from its own
-  // bitcoind (RULED 2026-09-21). It sizes the stake's HTLC: an HTLC dies at a height and a round is final
-  // after a time, and 144 blocks is a day at ten minutes and twelve minutes at five seconds. Unknown, every
-  // hold keeps the contract's own `stakeExpiryBlocks`, exactly as before.
-  secondsPerBlock = null,
   // The pool's key material and something that can broadcast. A daemon given
   // neither still agrees on what the round owes; it just does not spend.
   // The default curve carries the taproot tweak: without it a daemon started
@@ -300,54 +289,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     peersFor: (roundIdBytes) => settlementPeers(roundIdBytes),
   });
 
-  /**
-   * WHERE A SETTLE'S 32 BYTES COME FROM, and it is not a file.
-   *
-   * 23.4 wants five of seven preimage shares before a stake moves, and that is
-   * now literally what happens: this node opens its own share and asks the
-   * other signer nodes for theirs, each answer sealed to this node's key. Fewer than
-   * five and there is no preimage, so `custody.js` leaves the hold in flight
-   * and it expires back to its player.
-   *
-   * An operator may still inject one - the regtest tool does - but the DEFAULT
-   * is the committee, because a default that settles alone is the custody this
-   * letter exists to end.
-   */
-  const fromTheCommittee = async (entryId, entry, roundIdBytes) => {
-    // AT THE ROUND'S THRESHOLD (M3.3-26), never the handout's own number - the
-    // door already refused any other. Measured before: the open asked for 5
-    // (SHARES_NEEDED) of a stake dealt 2-of-2 and stopped at "2 of 5".
-    const held = round.get(roundIdBytes);
-    let needed;
-    try { needed = roundThreshold(decodeRoundContract(new Uint8Array(held.contract)).settlementSlots); }
-    catch (e) { console.log(`[custody] ${e.message}`); return null; }
-    const opened = await preimages.open({ roundId: roundIdBytes, entryId, needed });
-    if (!opened.ok) { console.log(`[custody] ${opened.why}`); return null; }
-    return opened.preimage;
+  // THE ONE STAKE CHECK LEFT, AND IT IS THE FEDERATION'S (§23.1 step 5; §23.6, RULED 2026-09-22 22:59).
+  //
+  // A stake is SEEN when its round asks none, or when this signer node verified its lock - and, where the
+  // round mints fee locks, its fee lock too - which is the row `putStakeSeen` writes. There is no other
+  // way to see one. The half that used to ask this node's own Lightning whether a hold invoice was paid,
+  // and the committee share-gathering that fed its settle, were THRESHOLD_LN's and are gone with it.
+  const stakeSeen = async (entryId) => {
+    const stored = round.entry(entryId);
+    if (!stored) return { ok: false, why: 'this node holds no such entry' };
+    const entry = decodeEntryContract(stored);
+    if (entry.stakeMsat === 0n) return { ok: true, state: 'FREE' };
+    const seen = round.stakeSeen(entryId);
+    if (seen) return { ok: true, state: 'HELD', paidMsat: seen.paidMsat, already: true };
+    return { ok: false, why: 'its stake lock has not been verified by this signer node (§23.1 step 5)' };
   };
-
-  // ASKING THE OTHER SEATS WHETHER A WINNING IS ALREADY PAID. Every seat writes the same `winnings` row and
-  // they share one Lightning node, so a player who asked the second seat with a different invoice would be
-  // paid the pool twice - out of the operator's own channel. Measured on the Daily's first paid winning:
-  // seat a PAID/98000 and seat b still OWED/98000. A seat that cannot reach its peers pays nothing.
-  const peersPaid = async (entryIdBytes, roundIdBytes) => {
-    const where = verifier.peersOf(roundIdBytes);
-    if (!where.length) return { ok: true, paid: false };
-    for (const peer of where) {
-      let said;
-      try {
-        const r = await fetch(`${String(peer).replace(/\/+$/, '')}/winnings?entry=${toHex(entryIdBytes)}`);
-        if (!r.ok) return { ok: false, why: `${peer} answered ${r.status}` };
-        said = await r.json();
-      } catch (e) { return { ok: false, why: `${peer}: ${e.message}` }; }
-      if (said && said.state === 'PAID') return { ok: true, paid: true };
-    }
-    return { ok: true, paid: false };
-  };
-
-  const custody = new Custody(round, {
-    port: lightning, preimageFor: preimageFor || fromTheCommittee, secondsPerBlock, peersPaid,
-  });
 
   // TWO FIRST MARKS PROVEN HERE (§13B; M3.3-34, a signer node that stays down): ask
   // the other signer nodes for their shares NOW, while they are up, and keep the
@@ -376,49 +332,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     (async () => {
       if (pull && !round.provenTwoFirstMarks(rid, eid)) await verifier.pullFirstMarkProof(rid, eid);
       if (!round.provenTwoFirstMarks(rid, eid)) return;
-      await spreadProof(rid, eid);                              // every custody
-      if (custody.reaches && round.hold(eid)) await fromTheCommittee(eid, null, rid);   // a hold: the shares too
+      await spreadProof(rid, eid);
     })().catch((e) => console.error(`[shares] ${e.message}`)).finally(() => gathering.delete(key));
   }
 
-  // WHAT `funded` MAY KNOW OF THIS NODE (M3.3-31): whether it holds a round, and
-  // whether it reaches Lightning - the launcher's rule funds an entry only into
-  // a paying round this node holds and can hold the stake of.
+  // WHAT `funded` MAY KNOW OF THIS NODE (M3.3-31): whether it holds a round, and whether it reaches
+  // the federation that round's stake is locked in - the launcher's rule funds an entry only into a
+  // paying round this node holds and can verify the lock of. (Whether it reached Lightning was the
+  // hold-invoice question, THRESHOLD_LN's, and is not asked any more.)
   const fundingView = {
     holds: (roundIdBytes) => round.get(roundIdBytes),
-    get reachesLightning() { return custody.reaches; },
     // AND WHETHER IT REACHES A FEDERATION, which is how a lock round's stake is held (§23.1 step 5).
     get reachesFederation() { return !!stakeLocks; },
   };
 
-  /**
-   * A HOLD GONE PAST ITS HTLC'S EXPIRY IS WRITTEN EXPIRED (M3.3-30), on this
-   * node's own chain height - never on what Lightning later calls the invoice.
-   * Every `everyMs` while the node reaches both a chain and Lightning.
-   */
-  const tipOf = chainTip || (poolCall ? async () => Number(await poolCall('getblockcount', [])) : null);
-  let expiryTimer = null;
-  if (custody.reaches) {
-    let sweeping = false;
-    expiryTimer = setInterval(async () => timed('custody expiry sweep', async () => {
-      if (sweeping || shuttingDown) return;
-      sweeping = true;
-      try {
-        // AN INVOICE NOBODY PAID, on this node's clock and the expiry it set.
-        const unpaid = await custody.expireUnpaid();
-        for (const e of unpaid.expired || [])
-          console.log(`[custody] ${toHex(e).slice(0, 16)} HELD -> EXPIRED: its invoice ran out unpaid`);
-        // A PAID HOLD, on this node's chain and the HTLC expiry seen with it.
-        if (tipOf) {
-          const tipHeight = Number(await tipOf());
-          const out = custody.expire({ tipHeight });
-          for (const e of out.expired || [])
-            console.log(`[custody] ${toHex(e).slice(0, 16)} HELD -> EXPIRED: this node's chain is at ${tipHeight}, past its HTLC's expiry`);
-        }
-      } catch (e) { console.error(`[custody] expiry: ${e.message}`); } finally { sweeping = false; }
-    }, { over: 100 }), expiry.everyMs ?? 5000);
-    if (expiryTimer.unref) expiryTimer.unref();
-  }
 
   /**
    * WHAT THE ROUND OWES, AND WHETHER IT HAS BEEN PAID.
@@ -935,10 +862,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE POOL 23.2's TABLE DECIDED FOR A ROUND, as this signer node's custody last ran
   // it (M3.2 6e): `holdSettlement`'s own figure, served on /settlement so a
   // page can show it - nobody outside the committee works it out again.
-  const settledPools = new Map();     // round hex -> poolMsat
   // AND EACH SIGNER NODE'S ROW OF THAT TABLE (M3.2 6e): computePayoutTable's own rows,
   // by player key, so a winner's page can show what the round owes it.
-  const settledRows = new Map();      // round hex -> Map(player key hex -> amountMsat)
   for (const h of round.closeHolds())
     closing.set(`${toHex(h.roundId)}:${toHex(h.entryId)}`, { round: toHex(h.roundId), entry: toHex(h.entryId),
       // a run this signer node has signed is SIGNED, whatever an older build kept
@@ -1137,19 +1062,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (r && r.decided && r.entryId) holding(roundIdBytes, r.entryId, { why: r.why, decided: r.decided });
     let latest = money;
     const isFinal = (eid) => gathered.some((g) => g && g.ok && g.final && toHex(g.entryId) === toHex(eid));
-    const tableShort = () => !!(latest && latest.owed && latest.owed.ok === false
-      && typeof latest.owed.agreed === 'number');
-    const settleShort = () => !!(latest && (latest.actions || [])
-      .some((a) => a.action === SETTLE && a.state === HELD && a.final));
-    // A PAYOUT THIS SIGNER NODE QUEUED AND HAS NOT SEEN PAID IS SHORT TOO. Measured
-    // on the real-lnd rehearsal with the daemons' own 2-of-2 pool, 2 of 2
-    // runs: the signer node whose one ask came before the other had queued stopped at
-    // "1 of 2 signer nodes committed to this spend" and kept PAYOUT_QUEUED after the
-    // chain carried the other signer node's payment. Asked again on the same cadence,
-    // `settleQueued` reads the chain first and writes PAID. Only a signer node that
-    // can spend and watch the pool is ever short of this.
-    const payoutShort = () => !!(payouts.canSpend && poolWatch.reaches && latest && latest.owed
-      && latest.owed.ok && latest.owed.state === PAYOUT_QUEUED && !(latest.paid && latest.paid.ok));
+    // NO HOLD SETTLE, NO POOL TABLE, NO POOL PAYOUT TO BE SHORT OF (§23.6, RULED 2026-09-22 22:59). Three
+    // checks stood here - a settle action left HELD, a payout table short of agreement, a queued payout not
+    // seen paid - and all three read what the hold-invoice close used to return. A lock round's close
+    // returns none of it: its money moves in the one settlement, which has its own recovery below.
     const waitingOn = () => (latest && latest.waiting) || [];
     const windowDue = () => waitingOn().some((w) => w.closesAtMs !== null && round.now() >= w.closesAtMs);
     // A run whose transcript is not posted yet: the close logic runs again,
@@ -1214,7 +1130,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         }
       }
       const short = stored.filter((r) => !isFinal(r.entryId) && !decidedHere(r.entryId));
-      if (!short.length && !unsigned.length && !tableShort() && !settleShort() && !waitingOn().length && !payoutShort() && !suspendedShort()
+      if (!short.length && !unsigned.length && !waitingOn().length && !suspendedShort()
         && !notFinalYet() && !pendingShort()) return;
       if (Date.now() >= until && (unsigned.length || short.length || notFinalYet() || pendingShort())) {
         // THE WINDOW IS FOR OBJECTIONS, NOT FOR ABANDONING 2 OF 2 (M3.3-34).
@@ -1229,10 +1145,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         every = Math.min(every * 2, maxEveryMs);
       } else if (Date.now() >= until) {
         console.log(`[verify] ${toHex(roundIdBytes).slice(0, 16)} the objection window passed with `
-          + `${short.length} run(s) short of final${tableShort() ? ' and the table short' : ''}`
-          + `${settleShort() ? ' and a lost stake still unsettled' : ''}`
-          + `${waitingOn().length ? ' and a run still inside its objection window' : ''}`
-          + `${payoutShort() ? ' and a queued payout this signer node has not seen paid' : ''}`);
+          + `${short.length} run(s) short of final`
+          + `${waitingOn().length ? ' and a run still inside its objection window' : ''}`);
         return;
       }
       let turned = false;
@@ -1255,7 +1169,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         }
       }
       if (shuttingDown) return;
-      if (turned || tableShort() || settleShort() || windowDue() || payoutShort() || unposted() || suspendedShort() || pendingShort()
+      if (turned || windowDue() || unposted() || suspendedShort() || pendingShort()
         || (pastWindow && notFinalYet())) {
         stakes = settleTheStakes(roundIdBytes, { replayed: closed.replayed, gathered })
           .catch((e) => { console.error(`[verify] ${e.message}`); return { ok: false, why: e.message }; });
@@ -1412,108 +1326,27 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           closesAtMs: s.closesAtMs === undefined ? null : Number(s.closesAtMs), why: s.why };
       });
     const suspended = entries.filter((e) => stateOf(e.entryId) === SUSPENDED).map((e) => toHex(e.entryId));
-    // A SIGNER NODE THAT REACHES NO LIGHTNING - a lock round's signer node - holds no invoice
-    // to act on, and its runs still wait: to be posted, and for their window;
-    // the forfeit waits on FINAL. So what is waiting is handed back and the
-    // finality watch keeps posting and gathering. Measured before (W5b): this
-    // returned first, the watch ended after one pass, and the signer node that posted
-    // first never gathered the other's posting - "1 of 2 settlement signer nodes have
-    // posted", never FINAL, no forfeit.
-    if (!custody.reaches) {
-      // A LOCK ROUND'S LOSERS ARE CLAIMED (W4, the owner 2026-09-14 07:22: "a loser
-      // loses the stake. The lock is claimed into the pool. Winners are paid from
-      // that."): once nothing waits inside its window and nothing is suspended,
-      // the signer nodes' one settlement claims every loser's lock and pays each
-      // qualifier's payout contract. Measured before: nothing claimed a loser's
-      // lock, and it went back to the loser at its expiry.
-      let lockSettled = null;
-      if (locksStake(contract) && !waiting.length && !suspended.length) {
-        lockSettled = await settlements.settle(roundIdBytes).catch((e) => ({ ok: false, why: e.message }));
-        console.log(`[settle] ${toHex(roundIdBytes).slice(0, 16)} ${lockSettled.ok ? lockSettled.why : `nothing claimed: ${lockSettled.why}`}`);
-      }
-      return { ok: false, why: 'this node reaches no Lightning, so it settles nothing', waiting, suspended, lockSettled };
+    // EVERY ROUND SETTLES IN ITS FEDERATION (§23.6, RULED 2026-09-22 22:59: the custody field has ONE
+    // value, FEDERATION). This node holds no invoice to act on - the hold-invoice settle that used to
+    // follow here, and the on-chain pool payout that only ever ran after it, were THRESHOLD_LN's and
+    // are gone with it. What is waiting is handed back and the finality watch keeps posting and
+    // gathering; the forfeit waits on FINAL. Measured before (W5b): returning early here once ended
+    // the watch after one pass, and the signer node that posted first never gathered the other's.
+    // A LOCK ROUND'S LOSERS ARE CLAIMED (W4, the owner 2026-09-14 07:22: "a loser
+    // loses the stake. The lock is claimed into the pool. Winners are paid from
+    // that."): once nothing waits inside its window and nothing is suspended,
+    // the signer nodes' one settlement claims every loser's lock and pays each
+    // qualifier's payout contract. Measured before: nothing claimed a loser's
+    // lock, and it went back to the loser at its expiry.
+    let lockSettled = null;
+    if (locksStake(contract) && !waiting.length && !suspended.length) {
+      lockSettled = await settlements.settle(roundIdBytes).catch((e) => ({ ok: false, why: e.message }));
+      console.log(`[settle] ${toHex(roundIdBytes).slice(0, 16)} ${lockSettled.ok ? lockSettled.why : `nothing claimed: ${lockSettled.why}`}`);
     }
-    const done = await timed('custody settleHeldInvoices', () => custody.settleHeldInvoices({
-      roundId: roundIdBytes, entries, minScore: contract.minScore, finalFor: isFinal,
-    }));
-    // WHAT THE SETTLE MAKES OF ITS ANSWER, TIMED (the owner 2026-09-17 19:15, the ghost lag). The listed inventory: 856 of
-    // these lines in six minutes, and the five lines before every stall the sampler could not name carried them - the
-    // work has a voice in the log and no timer, so its share of the 190-210 ms was unknown. It is timed here, where it
-    // runs, on the thread the other players' trucks are drawn from.
-    timed('custody settle read', () => {
-      if (done && done.ok && typeof done.poolMsat === 'bigint') settledPools.set(toHex(roundIdBytes), done.poolMsat);
-      if (done && done.ok && done.table && Array.isArray(done.table.table))
-        settledRows.set(toHex(roundIdBytes), new Map(done.table.table.map((r) => [toHex(r.pubkey), r.amountMsat])));
-      for (const a of done.actions || [])
-        console.log(`[custody] ${toHex(a.entryId).slice(0, 16)} ${a.action} -> ${a.state}: ${a.why}`);
-      for (const w of waiting)
-        console.log(w.published
-          ? `[custody] ${w.entryId.slice(0, 16)} waits for its objection window, which closes at ${w.closesAtMs}`
-          : `[custody] ${w.entryId.slice(0, 16)} waits: ${w.why}`);
-    }, { over: 20 });
-    for (const s of suspended)
-      console.log(`[custody] ${s.slice(0, 16)} is SUSPENDED by a valid objection: nothing moves, and its hold expires to its player`);
-    // WHAT COMES BACK OUT OF A SETTLE IS JSON, AND JSON HAS NO BigInt.
-    //
-    // `settleHeldInvoices` counts money the way the rest of custody does, in BigInt - the pool, what is
-    // owed, the fees, every row of the table. Everything that reads `stakes()` hands it to
-    // JSON.stringify: a door, a log line, a test's assertion message. Measured: close-order's two
-    // ordering tests both died with "Do not know how to serialize a BigInt" in the MESSAGE of an
-    // assertion, so the answer they were checking was never looked at and the red said nothing about
-    // closing order at all. Out here the amounts are decimal strings, the way every other door says one.
-    const plain = (v) => {
-      if (typeof v === 'bigint') return String(v);
-      if (Array.isArray(v)) return v.map(plain);
-      if (v instanceof Uint8Array || v === null || typeof v !== 'object') return v;
-      return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, plain(x)]));
-    };
-    const told = plain(done);
-    const said = {
-      agreed: entries.filter((e) => agreed.has(toHex(e.entryId))).map((e) => toHex(e.entryId)),
-      final: entries.filter((e) => isFinal(e.entryId)).map((e) => toHex(e.entryId)),
-      waiting, suspended, considered: entries.length,
-    };
-
-    // ...AND THE POOL WAITS WITH THEM. Paying the winner out of the pool is
-    // money moving on these same results, so a round with a run still inside
-    // its window, or suspended, queues no payout yet; the finality watch runs
-    // this close logic again once the window has closed.
-    if (waiting.length || suspended.length) {
-      const why = `no payout while ${waiting.length} run(s) are inside their objection window`
-        + ` and ${suspended.length} are suspended`;
-      console.log(`[payout] ${why}`);
-      return { ...told, ...said, owed: { ok: false, why }, paid: null };
-    }
-
-    // ...AND WHAT THE ROUND OWES. The stakes moving is 23.2; who is owed what
-    // out of the pool is §20, and it needs its own five of seven. This node
-    // signs the table it computed and asks the other signer nodes for theirs.
-    await timed('payout gather', () => payouts.gather({ roundId: roundIdBytes })).catch((e) => console.error(`[payout] ${e.message}`));
-    const owed = timed('payout table', () => {
-      const said = payouts.queue({ roundId: roundIdBytes, entries, minScore: contract.minScore, contract });
-      console.log(`[payout] ${said.ok ? said.state : said.why}`);
-      return said;
-    }, { over: 20 });
-
-    // ...AND THE SPEND ITSELF, if this node is the signer node that asks for it.
-    //
-    // Every signer node closes the round, so exactly one of them asks: `askerFor`
-    // picks it out of the round id over the assigned keys, with no message and
-    // no election. The rest log why they are not asking, because "nothing
-    // happened" and "somebody else is doing it" must not look the same to an
-    // operator reading a log.
-    let paid = null;
-    if (owed.ok && owed.state === PAYOUT_QUEUED) {
-      paid = await timed('payout settleQueued', () => payouts.settleQueued({
-        roundId: roundIdBytes, contract, signing, watch: poolWatch,
-      })).catch((e) => ({ ok: false, why: e.message }));
-      console.log(`[payout] ${paid.ok ? `${paid.state} ${paid.txid ? toHex(paid.txid) : ''}` : paid.why}`);
-    }
-    // WHAT THIS CLOSE BELIEVED, whatever it did. A settlement that moves
-    // nothing still has to be able to say which runs the committee agreed on -
-    // otherwise "nothing moved" and "nothing was agreed" are the same sentence
-    // to an operator, and they are very different problems.
-    return { ...told, ...said, owed, paid };
+    // `ok: false` IS THE FINALITY WATCH'S SIGNAL TO KEEP GOING, as it always was on this path - a
+    // lock round is settled by `settlements.settle` above, in its federation, not by this return.
+    return { ok: false, why: 'a round settles in its federation: this node holds no invoice to act on',
+      waiting, suspended, lockSettled };
   }
 
   /**
@@ -1593,44 +1426,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       .catch((e) => { console.error(`[payout] ${e.message}`); return { ok: false, why: e.message }; })
     : Promise.resolve({ ok: false, why: 'this node reaches no chain, so it asks it nothing' });
 
-  const reconciling = custody.reaches
-    ? custody.reconcile()
-      .then((asked) => {
-        const n = (asked && asked.asked) ? asked.asked.length : 0;
-        if (n) console.log(`[custody] asked Lightning about ${n} stake(s) this node died in the middle of`);
-        return asked;
-      })
-      .catch((e) => { console.error(`[custody] ${e.message}`); return { ok: false, why: e.message }; })
-    : Promise.resolve({ ok: false, why: 'this node reaches no Lightning, so it asks it nothing' });
-
-  /**
-   * AND EVERY CLOSED ROUND THIS NODE STILL HOLDS A STAKE IN (M3.3-33).
-   *
-   * The finality watch lives in memory and a close starts it. Since M3.3-32 a
-   * close moves nothing until the objection window has closed - ten minutes at
-   * the reference - and a daemon restarted inside it came back with nothing
-   * to settle that round: measured, its holds stayed HELD past the window and
-   * would have expired back to the players, the loser's included. So a start
-   * runs the close logic again for every CLOSED round with a stake still
-   * HELD here, after `reconcile` has asked Lightning about any act it died in
-   * the middle of, one round at a time. A hold that moved is left alone.
-   */
-  const resuming = reconciling.then(async () => {
-    if (!custody.reaches) return [];
-    const rounds = new Map();
-    for (const h of round.holdsInState(HELD)) {
-      const row = h.roundId && round.get(h.roundId);
-      if (row && row.state === CLOSED) rounds.set(toHex(h.roundId), h.roundId);
-    }
-    const picked = [];
-    for (const [key, rid] of rounds) {
-      if (shuttingDown) break;
-      console.log(`[custody] ${key.slice(0, 16)} closed with a stake still HELD here: running its close logic again`);
-      picked.push(key);
-      await afterClose(rid);
-    }
-    return picked;
-  }).catch((e) => { console.error(`[custody] ${e.message}`); return []; });
+  // NOTHING TO ASK LIGHTNING ON START, AND NO HELD STAKE TO RESUME (§23.6, RULED 2026-09-22 22:59).
+  // Two steps used to run here first: `reconcile`, asking Lightning about any hold act this node died in
+  // the middle of, and a resume of every closed round with a stake still HELD in a hold invoice. Both
+  // were THRESHOLD_LN's and are gone with it. A lock round's restart is the two steps below: the closes
+  // of runs still short of final, then the lock settlements this signer node was inside.
 
   // AND EVERY CLOSED ROUND WITH A RUN STILL SHORT OF FINAL HERE (M3.3-34).
   //
@@ -1640,7 +1440,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // stayed there. Read off the store (results, entries), a start now runs the
   // close logic again for such a round, one at a time, after the stakes' own
   // pick-up. A run decided otherwise (ENTRY_VOID, a late start) does not count.
-  const resumingCloses = resuming.then(async (already) => {
+  const resumingCloses = Promise.resolve([]).then(async (already) => {
     const picked = [];
     for (const rid of round.closedRounds()) {
       if (shuttingDown) break;
@@ -1791,36 +1591,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         }
         // AND A ROUND THAT TAKES A STAKE INTO A FEDERATION IS HELD TO THE CUSTODY FIELDS IN FULL
         // (M3 W7, §23): which federation, the 144-block expiry, the relays - before anything of it
-        // exists on this signer node. A free round and a THRESHOLD_LN round are the checks below.
+        // exists on this signer node. A free round is the check below; no other custody parses (§23.6).
         if (contract.custody === 'FEDERATION' && contract.stakeMsat > 0n) {
           const custodyOk = custodyFieldsAreValid(contract);
           if (!custodyOk.ok) return text(res, 409, custodyOk.why);
         }
 
-        // A ROUND THAT ASKS A STAKE, ON A NODE THAT HOLDS STAKES, IS OPENED ONLY
-        // WHEN THAT NODE CAN HOLD THEM. A hold invoice is RECEIVED money; the
-        // operator's testnet4 lnd had 0 msat of inbound where two 100-sat signer nodes
-        // need 196000, and a player's payment would simply have failed after
-        // they had sat down. So the round is refused here, with both numbers.
-        // A round that asks nothing never asks (M3.3-19), and a node with no
-        // Lightning holds nothing and opens as it always did.
-        if (contract.stakeMsat > 0n && custody.reaches) {
-          // AND NAMES WHERE ITS TRANSCRIPTS ARE POSTED (§13A, P2). None of a
-          // paying round's results is final until they are, so a round naming
-          // no relay could never settle a stake this node took - measured: both
-          // stakes held, nothing final after the window. A node that holds no
-          // stakes takes none, and opens it as it always did.
-          const relays = publicationRelaysAreValid(contract);
-          if (!relays.ok) return text(res, 409, relays.why);
-          if (!preflight)
-            return text(res, 503, 'this node holds stakes and has no preflight: it opens a paying '
-              + 'round only once its Lightning node is shown able to hold one');
-          let said;
-          try { said = await preflight({ contract }); }
-          catch (e) { said = { ready: false, why: e.message }; }
-          if (!said || !said.ready)
-            return text(res, 503, `this node's Lightning cannot hold this round's stakes: ${said ? said.why : 'no answer'}`);
-        }
         const id = round.open(contract);
         // AND KEEP THE BEACON THIS SIGNER NODE CAN NAME FOR IT NOW (M3.3-34), through
         // the kept reader above: a signer node restarted before it ever replays a run
@@ -1869,7 +1645,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!c.previousHash.every((x) => x === 0)) return answer(400, { why: 'only a first mark is handed on' });
         if (!round.entry(c.entryId)) return answer(404, { why: 'this signer node holds no such entry' });
         let seen;
-        try { seen = await custody.seenPaid(c.entryId); } catch (e) { seen = { ok: false, why: e.message }; }
+        try { seen = await stakeSeen(c.entryId); } catch (e) { seen = { ok: false, why: e.message }; }
         // A SIGNER NODE THAT IS UP AND REFUSES keeps what it refused (M3.3-34): the
         // player's own on-time first mark, so it can reach §13C's VOID from its
         // own store as the signer node that took it does (round.putRefusedFirstMark
@@ -1997,7 +1773,6 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const id = toHex(held.roundId);
           const players = round.playersOf(held.roundId);
           const free = c.stakeMsat === 0n;
-          const locks = c.custody === 'FEDERATION' && !c.federationId.every((x) => x === 0);
           let watchers = 0;
           for (const w of watching.values()) if (toHex(w.roundId) === id) watchers++;
           // §5A.5: before committee_time the lobby shows "committee: pending"
@@ -2015,9 +1790,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             id, phase,
             committeeTimeMs: String(c.committeeTimeMs), startTimeMs: String(c.startTimeMs),
             entryCloseMs: String(c.entryCloseMs), stakeMsat: String(c.stakeMsat),
-            // WHAT JOINING ASKS OF THE PLAYER: nothing, a Lightning payment, or a
-            // federation stake lock. A free round needs no wallet and no Lightning.
-            free, wallet: free ? 'none' : (locks ? 'federation-lock' : 'lightning'),
+            // WHAT JOINING ASKS OF THE PLAYER: nothing, or a federation stake lock. There is no third
+            // answer - "a Lightning payment" was THRESHOLD_LN's hold invoice, which does not exist (§23.6).
+            free, wallet: free ? 'none' : 'federation-lock',
             assignedHere, joined: players.joined, playing: players.playing, watching: watchers,
             // AND WHAT ITS JOINED PLAYERS CHOSE TO BE CALLED - each record its
             // player's own signature (lobby-name.js), not this signer node's word.
@@ -2106,14 +1881,6 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const contract = decodeEntryContract(await read(req));
         if (!funded({ kind: 'entry', contract, node: fundingView }))
           return text(res, 402, 'this node stores nothing for an entry nobody has funded');
-        // AND NO STAKE IS JOINED IN A ROUND NONE OF WHOSE RESULTS CAN BE FINAL -
-        // the round's own contract, as stored, however it came to be stored:
-        // refused before the entry is kept and before any hold is issued.
-        const into = custody.reaches ? round.get(contract.roundId) : null;
-        if (into) {
-          const relays = publicationRelaysAreValid(decodeRoundContract(new Uint8Array(into.contract)));
-          if (!relays.ok) return text(res, 409, `this node takes no stake in that round: ${relays.why}`);
-        }
         // THE FEE-LOCK DOOR (the owner 2026-09-14, pick a). Where the round's gate mints fee locks,
         // an entry that brings none is not taken: its stake would not be counted, and in the
         // round's one settlement it would refuse everybody's claim (measured: "an entry's fee
@@ -2123,7 +1890,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const lockRow = round.get(contract.roundId);
         if (lockRow && contract.stakeMsat > 0n) {
           const rc = decodeRoundContract(new Uint8Array(lockRow.contract));
-          if (rc.custody === 'FEDERATION' && rc.federationId.some((x) => x !== 0)) {
+          // Every paying round is a FEDERATION round naming its federation: the custody field has one value
+          // and a paying round with a zero federation id does not encode (§23.6). No custody test is left here.
+          {
             let gate;
             try { gate = await roundMintsFees({ contract: rc, port: stakeLocks }); }
             catch (e) { return text(res, 503, `this node could not read the federation's fee rule, so it takes no entry in a round that may mint fee locks: ${e.message}`); }
@@ -2144,25 +1913,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           }
         }
         const joined = round.enter(contract);
-
-        // THE SIGNER NODE IS WHERE THE HOLD IS ISSUED. 23.1: the endpoint issues a
-        // hold invoice for the payment hash the entry already carries, so the
-        // moment there is an entry there is something to pay.
-        //
-        // A FAILURE HERE DOES NOT UNJOIN ANYBODY. The entry is stored and
-        // signed; a Lightning node that is down is this operator's problem,
-        // not a reason to throw away a player's contract. The reason travels
-        // in a header and `/invoice` will make the same idempotent attempt
-        // again, so a player whose first try found no node can simply ask.
-        let held = { ok: false, why: 'not attempted' };
-        try { held = await custody.hold(contract); }
-        catch (e) { held = { ok: false, why: e.message }; }
-        res.writeHead(201, {
-          'content-type': 'application/octet-stream',
-          'x-hold': held.ok ? held.state : 'none',
-          ...(held.ok ? {} : { 'x-hold-why': held.why.replace(/[^\x20-\x7e]/g, ' ') }),
-          ...CORS,
-        });
+        // NO HOLD IS ISSUED HERE ANY MORE. This door used to ask the signer node's Lightning for a hold
+        // invoice on the entry's payment hash, and said how that went in `x-hold`. That was THRESHOLD_LN's
+        // stake-in, which does not exist (§23.6, RULED 2026-09-22 22:59); a lock round's stake is locked by
+        // the player in the federation and handed to `/stake-lock`, where the signer node verifies it.
+        res.writeHead(201, { 'content-type': 'application/octet-stream', ...CORS });
         return res.end(Buffer.from(joined));
       }
 
@@ -2195,90 +1950,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
        * its own Lightning once and remembers. A stranger's entry asks nobody.
        */
       /**
-       * WHAT THE POOL OWES THIS ENTRY, AND THE DOOR THAT PAYS IT (§24A.2).
-       *
-       * "A payout contract to the player's key; the client withdraws it over Lightning through any listed
-       * gateway." On this custody the pool is the committee's own Lightning balance, so the withdrawal is
-       * an ordinary payment: the player presents a BOLT11 for exactly what this node has written down as
-       * owed, SIGNED BY THE ENTRY'S SESSION KEY, and the node pays it once.
-       *
-       * The signature is the whole of the authorisation. An entry id is public - it is in every mark and
-       * every receipt - so a door that paid any invoice quoted against one would pay a thief. The session
-       * key is the one the player signed their run with.
+       * NO WINNINGS DOOR (§23.6, RULED 2026-09-22 22:59). `GET`/`POST /winnings` said what "the pool" owed
+       * an entry and paid it - and their own note named the pool as "the committee's own Lightning
+       * balance", which is THRESHOLD_LN's custody by one operator. They went with it. A lock round pays its
+       * qualifiers' payout contracts inside the federation, in the one settlement (`settlements.settle`).
        */
-      if (req.method === 'GET' && url.pathname === '/winnings') {
-        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
-        if (eid.length !== 32) return text(res, 400, 'a winning is asked for by entry id');
-        if (!round.entry(eid)) return text(res, 404, 'this node holds no such entry');
-        const w = round.winnings(new Uint8Array(eid));
-        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
-        return res.end(JSON.stringify(w
-          ? { entry: eid.toString('hex'), owedMsat: String(w.owedMsat), state: w.state, why: w.why,
-            paidMs: w.paidMs }
-          : { entry: eid.toString('hex'), owedMsat: '0', state: 'NOTHING',
-            why: 'the pool owes this entry nothing, or the round has not settled yet' }) + '\n');
-      }
-
-      if (req.method === 'POST' && url.pathname === '/winnings') {
-        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
-        if (eid.length !== 32) return text(res, 400, 'a winning is paid by entry id');
-        // `round.entry` hands back the CONTRACT'S BYTES, so the session key is decoded from them.
-        const stored = round.entry(eid);
-        if (!stored) return text(res, 404, 'this node holds no such entry');
-        let entry;
-        try { entry = decodeEntryContract(stored); }
-        catch (e) { return text(res, 500, `this node cannot read the entry it stored: ${e.message}`); }
-        const body = await read(req);
-        // THE ENVELOPE IS THE INVOICE'S BYTES AND A SIGNATURE OVER THEM. Not `splitSigned`, which is a
-        // checkpoint's fixed size; an invoice is whatever length it is, so the last 64 bytes are the
-        // signature and everything before them is what was signed.
-        let request;
-        try {
-          const all = new Uint8Array(body);
-          if (all.length <= 64) return text(res, 400, 'that is too short to be an invoice and a signature');
-          const sig = all.subarray(all.length - 64);
-          const signed = all.subarray(0, all.length - 64);
-          if (!ed25519.verify(sig, signed, entry.sessionPubkey))
-            return text(res, 403, 'that invoice is not signed by the session key this entry was played with');
-          request = Buffer.from(signed).toString('utf8').trim();
-        } catch (e) { return text(res, 400, `that is not a signed invoice: ${e.message}`); }
-        // AN INVOICE OR AN ADDRESS, AND THE SIGNATURE IS THE SAME EITHER WAY (the owner 2026-09-21 13:54).
-        //
-        // A player with an NWC wallet mints an invoice and sends that; one without names a Lightning
-        // address (LUD-16) once, and this node LNURL-pays it exactly what is owed. Both are signed by the
-        // entry's session key, both are paid once, and neither lets the sender choose the amount.
-        const isInvoice = /^ln[a-z0-9]+$/i.test(request);
-        // AN ADDRESS IS KEPT THE MOMENT IT IS NAMED, and the round may not owe anything yet.
-        //
-        // "Winnings are always sent. There is no Collect and no pasted invoice after the round" - so the
-        // address is a standing instruction, given while the player is still here, and the settle pass
-        // sends to it whether or not a page is open when FINAL comes. An invoice cannot be kept this way:
-        // it is minted for one amount and it expires, which is why only an address stands.
-        if (!isInvoice) {
-          const where = lightningAddressEndpoint(request);
-          if (!where.ok) return text(res, 400, where.why);
-          round.putPayoutAddress({ entryId: new Uint8Array(eid), roundId: entry.roundId, address: request });
-          if (!round.winnings(new Uint8Array(eid))) {
-            res.writeHead(202, { 'content-type': 'application/json', ...CORS });
-            return res.end(JSON.stringify({ entry: eid.toString('hex'), state: 'NAMED', address: request,
-              why: 'this node will send the winning here when the round settles; nothing is owed yet' }) + '\n');
-          }
-        }
-        const paid = isInvoice
-          ? await custody.payWinnings({ entryId: new Uint8Array(eid), request })
-          : await custody.payWinningsTo({ entryId: new Uint8Array(eid), address: request });
-        if (!paid.ok) return text(res, paid.state === PAYING ? 409 : 402, paid.why);
-        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
-        return res.end(JSON.stringify({ entry: eid.toString('hex'), state: paid.state,
-          paidMsat: String(paid.msat ?? 0n), already: !!paid.already }) + '\n');
-      }
-
       if (req.method === 'GET' && url.pathname === '/stake') {
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
         if (eid.length !== 32) return text(res, 400, 'a stake is asked for by entry id');
         if (!round.entry(eid)) return text(res, 404, 'this node holds no such entry');
         let seen;
-        try { seen = await custody.seenPaid(new Uint8Array(eid)); }
+        try { seen = await stakeSeen(new Uint8Array(eid)); }
         catch (e) { seen = { ok: false, why: e.message }; }
         if (!seen.ok) return text(res, 409, STAKE_NOT_SEEN + seen.why);
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
@@ -2290,15 +1972,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       /**
        * WHERE THIS STAKE STANDS, for the player waiting on it (MF item 14).
        *
-       * "The player is waiting on other people's machines and must be told
-       * so, with the refund path visible the whole time." Since M3.3-32 that
-       * wait is a whole objection window, and the only question a page could
-       * ask was `/stake` - "has this node seen it held" - which keeps saying
-       * HELD after the stake has been settled or handed back, because that is
-       * what it was asked. This says what the hold IS now, where the run's
-       * result stands (13A), when the window closes on this node's clock, and
-       * the height at which the hold refunds itself if nobody acts. Read
-       * only; a stranger's entry is not answered for.
+       * "The player is waiting on other people's machines and must be told so, with the refund path
+       * visible the whole time." What this door can still say truthfully is two things: whether this
+       * signer node has SEEN the stake - free, or its federation lock verified here (§23.1 step 5) - and
+       * where the run's result stands (13A), with the window's close on this node's clock.
+       *
+       * IT USED TO SAY FAR MORE, AND ALL OF IT WAS THRESHOLD_LN's (§23.6, RULED 2026-09-22 22:59): the
+       * hold's state and amount off the Lightning hold row, the pool and the owed row off the hold
+       * settle, the refund height off the HTLC's expiry. None of those exist for a lock, so none is
+       * reported - an answer of `null` for a thing that no longer exists would itself be a claim.
        */
       if (req.method === 'GET' && url.pathname === '/settlement') {
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
@@ -2306,27 +1988,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const stored = round.entry(eid);
         if (!stored) return text(res, 404, 'this node holds no such entry');
         const entry = decodeEntryContract(stored);
-        const row = round.hold(eid);
         const standing = resultFinality(round, entry.roundId, new Uint8Array(eid));
-        const refund = round.holdExpiry(eid);
-        const pool = settledPools.get(toHex(entry.roundId));
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({
           entry: eid.toString('hex'),
-          hold: entry.stakeMsat === 0n ? 'FREE' : (row ? row.state : 'none'),
-          // WHAT THIS HOLD HOLDS and THE POOL THE TABLE DECIDED (M3.2 6e), both
-          // this signer node's own numbers: the hold's amount as Lightning was asked for
-          // it, and custody's `holdSettlement` pool - null until it has run.
-          holdMsat: row && row.amountMsat !== undefined && row.amountMsat !== null ? String(row.amountMsat) : null,
-          poolMsat: pool === undefined ? null : String(pool),
-          // THIS SIGNER NODE'S ROW OF THE PAYOUT TABLE (M3.2 6e) - what the round owes it,
-          // its own stake included; null until custody has run, or with no row.
-          owedMsat: (() => { const rows = settledRows.get(toHex(entry.roundId)); const v = rows && rows.get(toHex(entry.playerPubkey)); return v === undefined ? null : String(v); })(),
-          why: row ? row.why : null,
+          stake: entry.stakeMsat === 0n ? 'FREE' : (round.stakeSeen(eid) ? 'SEEN' : 'UNSEEN'),
           finality: standing.state,
           finalityWhy: standing.why || null,
           windowClosesAtMs: standing.closesAtMs === undefined ? null : String(standing.closesAtMs),
-          refundHeight: refund ?? null,
         }) + '\n');
       }
 
@@ -2382,38 +2051,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         }) + '\n');
       }
 
-      if (req.method === 'GET' && url.pathname === '/invoice') {
-        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
-        if (eid.length !== 32) return text(res, 400, 'an invoice is asked for by entry id');
-        const stored = round.entry(eid);
-        if (!stored) return text(res, 404, 'this node holds no such entry, and it does not invent invoices for strangers');
-        let quoted;
-        try { quoted = await custody.hold(decodeEntryContract(stored)); }
-        catch (e) { quoted = { ok: false, why: e.message }; }
-        if (!quoted.ok) return text(res, 503, quoted.why);
-        if (!quoted.invoice) return text(res, 409, `that stake is ${quoted.state}, and this node kept no request for it`);
-        res.writeHead(200, {
-          'content-type': 'application/json',
-          ...CORS,
-        });
-        // AND THE FEE'S OWN INVOICE BESIDE IT (§23.5). The player is asked twice on one commitment - the
-        // net stake and the 2% - because §23.2 cancels a winner's hold whole and a single gross hold would
-        // hand every winner their own fee back. Quoted here so one call to /invoice gives the page both.
-        let fee = null;
-        try { fee = await custody.holdFee(decodeEntryContract(stored)); }
-        catch (e) { fee = { ok: false, why: e.message }; }
-        return res.end(JSON.stringify({
-          entry: eid.toString('hex'),
-          paymentHash: toHex(quoted.paymentHash),
-          amountMsat: String(custody.stateOf(new Uint8Array(eid)).amountMsat),
-          state: quoted.state,
-          request: quoted.invoice,
-          fee: fee && fee.ok && fee.invoice
-            ? { paymentHash: toHex(fee.paymentHash), amountMsat: String(fee.amountMsat ?? 0n),
-              state: fee.state, request: fee.invoice }
-            : { state: fee && fee.state ? fee.state : 'NONE', why: (fee && fee.why) || '' },
-        }) + '\n');
-      }
+      // NO `/invoice` DOOR (§23.6, RULED 2026-09-22 22:59). It quoted a joined player the hold invoice
+      // their entry named, and the §23.5 fee's own hold beside it - both THRESHOLD_LN's stake-in, gone with
+      // it. A lock round's player locks the stake in the federation (`/federation-invoice` for the LNv2
+      // invoice that funds it) and hands the lock to `/stake-lock` and `/fee-lock`.
 
       // THE ENTRY CONTRACT, so 13B's proof is portable to somebody who was not
       // here. The two signed marks mean nothing without the session key they
@@ -3475,7 +3116,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const eid = playOf(data, isBinary);
         if (eid && round.entry(eid)) {
           let seen;
-          try { seen = await custody.seenPaid(eid); } catch (e) { seen = { ok: false, why: e.message }; }
+          try { seen = await stakeSeen(eid); } catch (e) { seen = { ok: false, why: e.message }; }
           // A WAIT, SAID AS ONE: the client holds the ticks and asks again.
           if (!seen.ok) {
             // A FIRST MARK REFUSED HERE IS KEPT (M3.3-34): the player's own
@@ -3525,7 +3166,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
   return new Promise((resolve) => {
     http.listen(port, host, () => resolve({
-      http, wss, round, host, verifier, ghosts, roster, custody, reconciling, resuming, preimages,
+      http, wss, round, host, verifier, ghosts, roster, preimages,
       payouts, reconcilingPayouts, signing, poolWatch, dkg,
       // What the last close did with the money, and the same door an operator
       // uses to run a settlement again by hand.
@@ -3543,7 +3184,6 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         shuttingDown = true;
         clearInterval(settleRecoverTimer);
         if (endTimer) clearInterval(endTimer);
-        if (expiryTimer) clearInterval(expiryTimer);
         for (const t of finalityTimers) clearTimeout(t);
         finalityTimers.clear();
         for (const t of rerunTimers) clearTimeout(t);

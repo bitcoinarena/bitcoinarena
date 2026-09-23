@@ -43,14 +43,12 @@ export function operatorFunding({ named = () => [] } = {}) {
         if (!held) return false;
         const round = decodeRoundContract(new Uint8Array(held.contract));
         if (BigInt(round.stakeMsat) <= 0n) return false;
-        // CAN THIS NODE HOLD THE STAKE, asked of the stake's own custody. A
-        // round naming a federation takes its stake as a lock in that
-        // federation, which the signer node VERIFIES there (§23.1 step 5) - so the
-        // node must reach the federation, and Lightning is not it. Any other
-        // paying round is a hold invoice, which needs Lightning, as before.
-        const locks = round.custody === 'FEDERATION' && round.federationId instanceof Uint8Array
-          && round.federationId.some((b) => b !== 0);
-        return locks ? !!node.reachesFederation : !!node.reachesLightning;
+        // CAN THIS NODE HOLD THE STAKE: a paying round takes it as a lock in the federation it names,
+        // which the signer node VERIFIES there (§23.1 step 5), so the node must reach that federation.
+        // There is no other branch. The custody field has one value (§23.6, RULED 2026-09-22 22:59):
+        // the hold invoice that "needed Lightning" was THRESHOLD_LN, which does not exist, and a record
+        // naming it does not parse - so no paying round reaches this line without a federation.
+        return !!node.reachesFederation;
       }
     } catch { return false; }
     return false;

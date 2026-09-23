@@ -50,7 +50,6 @@ import {
 // side too", and until M3.2 item 5 it did not: zero callers here. A second
 // formula in the client would be a second opinion about what the player owes,
 // which is the one number they are about to part with money over.
-import { invoiceMatchesEntry } from '../../protocol/src/payout.js';
 import { parseConnection, payInvoice } from './nwc.js';
 import { STAKE_NOT_SEEN } from '../../protocol/src/constants.js';
 import { stakeSeenBy, settlementBy, SETTLEMENT_OVER } from './join.js';
@@ -397,9 +396,8 @@ export class Client {
     this.stakeWaits = 0;
     this.stakeWhy = null;
     // How many settlement signer nodes have seen this entry's stake held (23.1 step 5).
-    // `stakeCommitted` is a label: it gates nothing. NOT `stakeSeen`, which is
-    // the method `payStake` asks one node with - a field of that name hid it
-    // and every payment threw "this.stakeSeen is not a function".
+    // `stakeCommitted` is a label: it gates nothing. NOT `stakeSeen`, which is a method of this class - a
+    // field of that name once hid it and every call threw "this.stakeSeen is not a function".
     this.stakeCount = null;
     this.stakeCommitted = false;
     this.stakePolls = 0;
@@ -416,9 +414,6 @@ export class Client {
     this.resynced = false;
     this.recovering = null;
     this.nextTick = 0;            // the tick the node is owed next
-    // What the node said about this entry's hold when it took the entry. NOT
-    // `hold`, which is the tick buffer below.
-    this.joinHold = null;
     this.loads = [];              // [tick, feeSats, btcHundredths], not yet published
     this.samples = [];            // [tick, price], the live price samples not yet published
     this.tapes = [];              // [tick, p0 .. p63], the live tape not yet published
@@ -558,27 +553,6 @@ export class Client {
     // and the chip named it because its frozen run had gone furthest.
     this.playerPubkey = entry.playerPubkey;
 
-    // AND WHETHER THERE IS A HOLD ON THIS ENTRY, WHICH THE NODE ALREADY SAID.
-    //
-    // 23.1 issues the hold invoice AT THE SIGNER NODE - `POST /entry` calls
-    // `custody.hold` and answers `x-hold` with the state, or `x-hold-why` with
-    // the reason there is none. Both headers were read by nothing, so a page
-    // that wanted to tell a player whether their stake was funded had to
-    // ASSUME, and letter 15's first wiring assumed: it printed "the stake is
-    // not paid" as a constant while the node was answering the question.
-    //
-    // Kept rather than returned, because every caller of `join` wants the
-    // entry id and none of them expected a second value.
-    //
-    // `joinHold` AND NOT `hold`, which is already the ticks waiting to go out.
-    // Written as `this.hold` first and every suite stayed green by luck of
-    // ordering: the jslib calls `setRound` after `join`, and `setRound` puts
-    // the array back. A page that joined and published without one in between
-    // would have called `.push` on an object and lost the run.
-    this.joinHold = {
-      state: r.headers.get('x-hold') || 'none',
-      why: r.headers.get('x-hold-why') || null,
-    };
     const joined = agrees(mine, new Uint8Array(await r.arrayBuffer()), 'entry');
 
     // AND ON EVERY OTHER COMMITTEE NODE, or it refuses this entry's checkpoints
@@ -1188,242 +1162,10 @@ export class Client {
     return { batch: b, answer, accepted: Number(answer) };
   }
 
-  /**
-   * WHAT THIS ENTRY OWES, ASKED OF THE NODE AND CHECKED AGAINST OUR OWN ENTRY.
-   *
-   * M3.2 item 5's PAY step, and it stops exactly where a satoshi would move.
-   * This asks and verifies; nothing here pays, and the client has no method
-   * that does - the wallet is item 6, and it is item 6 precisely because the
-   * client is what defines the question it will be asked.
-   *
-   * THE CHECK IS THE PROTOCOL'S OWN AND IT IS NOT OPTIONAL. A hold invoice
-   * names a payment hash and an amount; the entry the player SIGNED already
-   * names both - `stakeCommitment` is the hash, and the amount is the net
-   * stake: `stakeMsat` less the fee and the donation that come out of it
-   * (22A) - so a node quoting anything else is quoting somebody else's
-   * invoice, or one nobody could ever settle. `invoiceMatchesEntry` is that
-   * rule and it is imported rather than restated.
-   *
-   * THE ENTRY IS THE CALLER'S, NOT THE NODE'S. Asking the node for the entry
-   * and then checking the invoice against it would be asking one party both
-   * questions - it could answer them consistently and still be wrong. The
-   * client checks against the contract it built and signed.
-   */
-  async invoice(entry, { entryId: id } = {}) {
-    if (!entry || !(entry.stakeCommitment instanceof Uint8Array))
-      return { ok: false, why: 'there is no entry to check an invoice against' };
-    const eid = id || (this.where && this.where.entryId);
-    if (!(eid instanceof Uint8Array) || eid.length !== 32)
-      return { ok: false, why: 'no entry id to ask about: setRound was never called and none was given' };
-
-    // AND THE CONTRACT IS THE ONE BEING ASKED ABOUT.
-    //
-    // A crossed pair - one entry's contract, another entry's id - is refused
-    // below anyway, because the hashes differ. That is a correct refusal for
-    // the wrong reason, and it stops being correct the moment the two entries
-    // share a commitment: one player re-entering a round keeps their preimage
-    // and changes their world secret, so two ids, one hash, one amount, and
-    // the quote for the other signer node would be accepted as this one's. Checked
-    // here, where the answer is "these are two entries" and not "these are two
-    // hashes".
-    if (toHex(entryId(entry)) !== toHex(eid))
-      return {
-        ok: false,
-        why: `that entry is ${toHex(entryId(entry)).slice(0, 16)} and the invoice was asked `
-          + `for ${toHex(eid).slice(0, 16)}: they are two entries`,
-      };
-
-    let said;
-    try {
-      const r = await readWithOneRetry(fetch, `${this.base}/invoice?entry=${toHex(eid)}`);
-      const body = await r.text();
-      if (!r.ok) return { ok: false, status: r.status, why: body.trim() };
-      said = JSON.parse(body);
-    } catch (e) {
-      return { ok: false, why: `the node would not quote your entry: ${e.message}` };
-    }
-
-    // WHAT CAME BACK HAS TO BE THE SHAPE BEFORE IT CAN BE THE RIGHT VALUE. A
-    // missing field read as `undefined` would reach the rule as "not 32 bytes"
-    // and be refused for the wrong reason.
-    let paymentHash;
-    let amountMsat;
-    try {
-      paymentHash = fromHex(String(said.paymentHash || ''));
-      amountMsat = BigInt(said.amountMsat);
-    } catch {
-      return { ok: false, why: 'that node answered something that is not an invoice quote' };
-    }
-    if (typeof said.request !== 'string' || !said.request.length)
-      return { ok: false, why: 'that quote carries no payment request to pay' };
-
-    const stands = invoiceMatchesEntry({ paymentHash, amountMsat, entry });
-    if (!stands.ok) return { ok: false, why: stands.why, quoted: said };
-
-    // AND THE FEE'S OWN QUOTE, CHECKED THE SAME WAY (§23.5: the node fee travels in its own lock).
-    //
-    // The player is asked twice on one commitment - the net stake and the 2% - because §23.2 cancels a
-    // winner's hold WHOLE, so a single gross hold would hand every winner their own fee back. The safety
-    // property does not change: this quote is only accepted if its hash is sha256 of the entry's OWN
-    // `feePreimage` and its amount is the entry's own `feeMsat`, both off the contract the player signed.
-    let fee = null;
-    const quoted = said.fee;
-    if (quoted && typeof quoted.request === 'string' && quoted.request.length) {
-      let feeHash = null;
-      try { feeHash = fromHex(String(quoted.paymentHash)); } catch { feeHash = null; }
-      const feeMsat = (() => { try { return BigInt(quoted.amountMsat); } catch { return -1n; } })();
-      const want = sha256(entry.feePreimage);
-      if (!feeHash || toHex(feeHash) !== toHex(want))
-        return { ok: false, why: 'that fee quote is for another hash than this entry\'s own fee preimage' };
-      if (feeMsat !== entry.feeMsat)
-        return { ok: false, why: `that fee quote asks ${feeMsat} msat and this entry's fee is ${entry.feeMsat}` };
-      fee = { request: quoted.request, paymentHash: feeHash, amountMsat: feeMsat, state: quoted.state };
-    }
-
-    return {
-      ok: true,
-      request: said.request,
-      paymentHash,
-      amountMsat,
-      state: said.state,
-      why: stands.why,
-      fee,
-    };
-  }
-
-  /**
-   * PAY THE HOLD INVOICE THIS ENTRY OWES, AND NOTHING ELSE EVER.
-   *
-   * M3.2 item 6 - one of the two methods in this client that move a satoshi;
-   * the other is `payDonation` (6e), the player's donation.
-   *
-   * IT TAKES AN ENTRY, NOT AN INVOICE. That is the whole safety property and
-   * it is a signature, not a check: there is no argument here that could carry
-   * an arbitrary bolt11, so no caller - page, test or a script somebody pastes
-   * - can walk this into paying something. The invoice is fetched by
-   * `invoice()`, which refuses an amount, a hash or a signer node the entry did not
-   * sign, and only what survives that is handed to the wallet.
-   *
-   * THE BUDGET PROVES NOTHING AND IS NOT ASKED TO. §24A.1: "an NWC budget is
-   * wallet-side policy and encodes nothing about the round... The binding is
-   * still `payment_hash` in the Entry Contract." A budget bounds the loss if
-   * this client is compromised; what binds the payment to the round is that
-   * the hash came off the contract the player signed.
-   *
-   * WHAT COMES BACK IS THE WALLET'S PREIMAGE, and it is handed up rather than
-   * stored: a hold invoice's preimage is the wallet's proof it paid, and this
-   * client keeps no money state between rounds (§24A.3).
-   */
-  async payStake(entry, { connection, curve, entryId: id, log, ...options } = {}) {
-    const where = typeof connection === 'string' ? parseConnection(connection) : connection;
-    if (!where || !where.ok)
-      return { ok: false, why: (where && where.why) || 'there is no wallet connection to pay with' };
-    // THE CURVE IS INJECTED, like `sign` and `verify` on this class and like
-    // the one `stakeFor` takes: this bundle carries no crypto, and the page
-    // loads `blwp-curve.js` beside it.
-    if (!curve || typeof curve.ecdhShared !== 'function' || typeof curve.signSchnorr !== 'function')
-      return { ok: false, why: 'talking to a wallet needs a curve, and none was injected' };
-
-    // THE QUOTE FIRST, AND ITS REFUSAL IS THIS METHOD'S REFUSAL. A quote the
-    // entry did not sign never reaches the wallet at all - not as a request it
-    // declines, but as a request that is never sent.
-    const quote = await this.invoice(entry, { entryId: id });
-    if (!quote.ok) return { ...quote, paid: false, asked: false };
-
-    // THE WALLET'S ANSWER AND THE NODE'S, WHICHEVER COMES FIRST.
-    //
-    // A wallet answers `pay_invoice` when the payment completes, and a HOLD
-    // invoice completes only when the round settles or cancels it - minutes
-    // later, and as a failure for every winner. Measured before this: a wallet
-    // that took the payment and waited, as a real one does, was reported "did
-    // not answer in 3000 ms" while the node's Lightning showed the stake held.
-    // So the node is asked too (23.1 step 5, `GET /stake`), and a stake it has
-    // seen held IS paid, preimage or not. The last word before a failure is
-    // the node's as well: a wallet that timed out may have paid anyway.
-    const eid = id || (this.where && this.where.entryId) || entryId(entry);
-    let answered = false;
-    const asked = payInvoice(where, quote.request, {
-      curve,
-      random: options.random || ((n) => crypto.getRandomValues(new Uint8Array(n))),
-      ...options,
-    }).finally(() => { answered = true; });
-    const pollMs = options.pollMs || 500;
-    const watched = (async () => {
-      while (!answered) {
-        const s = await this.stakeSeen(eid);
-        if (s.ok) return s;
-        await new Promise((r) => setTimeout(r, pollMs));
-      }
-      return null;
-    })();
-    const first = await Promise.race([asked.then((p) => ({ p })), watched.then((s) => ({ s }))]);
-    let seen = first.s || null;
-    const paid = first.p || null;
-    if (!seen && paid && !paid.ok) {
-      const last = await this.stakeSeen(eid);
-      if (last.ok) seen = last;
-    }
-    answered = true;
-    if (!seen && (!paid || !paid.ok))
-      return { ...(paid || { ok: false, why: 'neither the wallet nor the node said the stake is held' }),
-        paid: false, asked: true, quoted: quote };
-
-    // WHAT WAS SPENT, WRITTEN DOWN WHERE THE SPENDING HAPPENS.
-    //
-    // §24A.1 is a requirement: "a client MUST show the running total and what
-    // it was spent on". The log is handed in rather than owned here, because a
-    // page runs one across many rounds and a Client is per round - but it is
-    // recorded HERE, next to the payment, so a page cannot show a total of its
-    // own arithmetic.
-    if (log && typeof log.record === 'function') {
-      log.record({
-        amountMsat: quote.amountMsat,
-        paymentHash: quote.paymentHash,
-        roundId: this.where && this.where.roundId,
-        kind: 'stake',
-      });
-    }
-
-    // AND THE FEE'S OWN HOLD, PAID FROM THE SAME WALLET IN THE SAME BREATH (§22A, §23.5).
-    //
-    // "Inclusive in the wallet commitment" is about the WALLET, not the HTLC: both amounts leave it up
-    // front, and they cannot share one hold because §23.2 hands a winner theirs back whole. The quote was
-    // checked against this entry's own `feePreimage` and `feeMsat` in `invoice()`, so this is the same
-    // safety property as the stake's - there is no argument here that could carry an arbitrary bolt11.
-    //
-    // A FEE THE WALLET WILL NOT PAY DOES NOT UNDO A HELD STAKE. The stake is already in flight and the
-    // node is already counting it; what the player is told is that the fee is outstanding.
-    let feePaid = null;
-    if (quote.fee && quote.fee.request) {
-      feePaid = await payInvoice(where, quote.fee.request, {
-        curve,
-        random: options.random || ((n) => crypto.getRandomValues(new Uint8Array(n))),
-        ...options,
-      }).catch((e) => ({ ok: false, why: e.message }));
-      if (feePaid && feePaid.ok && log && typeof log.record === 'function') {
-        log.record({
-          amountMsat: quote.fee.amountMsat,
-          paymentHash: quote.fee.paymentHash,
-          roundId: this.where && this.where.roundId,
-          kind: 'fee',
-        });
-      }
-    }
-
-    return {
-      ok: true, paid: true, asked: true,
-      fee: quote.fee ? { amountMsat: quote.fee.amountMsat, paid: !!(feePaid && feePaid.ok),
-        why: feePaid && !feePaid.ok ? feePaid.why : '' } : null,
-      // HELD: the node saw it. The preimage is the wallet's and arrives only
-      // with the wallet's answer, which for a hold may be minutes away.
-      held: Boolean(seen),
-      preimage: paid && paid.ok ? paid.preimage : null,
-      amountMsat: quote.amountMsat,
-      paymentHash: quote.paymentHash,
-      request: quote.request,
-      feesPaidMsat: paid && paid.ok ? paid.feesPaidMsat : undefined,
-    };
-  }
+  // NO `invoice()` AND NO `payStake()` (§23.6, RULED 2026-09-22 22:59). They quoted a joined player the
+  // hold invoice their entry named and paid it through the wallet - THRESHOLD_LN's stake-in, gone with it.
+  // A lock round's stake is locked in the federation by `page-lock.js`, and the page already refused
+  // to reach either of these for a lock round or a free one, which is every round that can exist now.
 
   /**
    * PAY THE ENTRY'S DONATION TO THE SET, SHARE BY SHARE. Takes an entry and a

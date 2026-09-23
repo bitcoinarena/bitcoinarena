@@ -27,7 +27,6 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 
 import { openStore } from '../src/store.js';
-import { Custody, HELD, SETTLED } from '../src/custody.js';
 import { FORFEIT, DELIVERED } from '../../protocol/src/payout.js';
 import { serve } from '../src/server.js';
 import { feldmanGroup } from '../src/curve.js';
@@ -64,20 +63,6 @@ import { entryFeeMsat } from '../../protocol/src/fee.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const rand = (n) => new Uint8Array(randomBytes(n));
 
-/** A Lightning node that keeps a call log and no money. */
-function fakePort() {
-  const calls = [];
-  return {
-    calls,
-    async createHeld({ paymentHash, amountMsat }) {
-      calls.push(['createHeld', toHex(paymentHash)]);
-      return { paymentHash, amountMsat, request: 'lnbcrt-fake' };
-    },
-    async look({ paymentHash }) { calls.push(['look', toHex(paymentHash)]); return { state: HELD }; },
-    async settle({ paymentHash, preimage }) { calls.push(['settle', toHex(paymentHash), preimage]); },
-    async cancel({ paymentHash }) { calls.push(['cancel', toHex(paymentHash)]); },
-  };
-}
 const RANDOMNESS = b32(0x9b);
 const BEACON = { hash: RANDOMNESS, height: 900001, timeMs: 900n };
 // THE FIXTURE'S OWN WORLD, RE-MEASURED. Letter 36 gave the round its relief
@@ -416,102 +401,6 @@ test('a delivered run never gives up its preimage, and neither does one that is 
   } finally { for (const n of nodes) await n.close(); }
 });
 
-test('a hold settles on a preimage five signer nodes opened, and on nothing less', slice2(), async () => {
-  // (d) The hold path is unchanged and still follows the core's outcome word.
-  // What changed is where the 32 bytes come from: no file, no injection - five
-  // signer nodes, or the stake stays in flight.
-  const nodes = await committee(7);
-  const port = fakePort();
-  try {
-    const stake = await dealTo(nodes, roundId(contractFor(nodes.map((n) => n.round.pubkey))));
-    const { rid, eid, entry } = await everyoneReplays(nodes, stake);
-
-    const asker = nodes[0];
-    const peers = nodes.slice(1).map((x) => `http://127.0.0.1:${x.port}`);
-    const preimages = new Preimages(asker.round, {
-      curve: feldmanGroup, peers, fetcher: (u) => fetch(u), random: rand,
-    });
-    const custody = new Custody(asker.round, {
-      port,
-      preimageFor: async (id, e, roundIdBytes) => {
-        const out = await preimages.open({ roundId: roundIdBytes, entryId: id });
-        return out.ok ? out.preimage : null;
-      },
-    });
-    const held = await custody.hold(entry);
-    assert.equal(held.ok, true, held.why);
-
-    const summary = (outcome, score) => ({
-      entryId: eid, pubkey: entry.playerPubkey, outcome, score, stakeMsat: entry.stakeMsat, feeMsat: entry.feeMsat, donationMsat: entry.donationMsat,
-    });
-
-    // A LOSER SETTLES, and the preimage that went to Lightning is the one the
-    // player committed to.
-    const out = await custody.settleHeldInvoices({
-      roundId: rid, minScore: 1, finalFor: () => true,
-      entries: [summary(FORFEIT, 0), { ...summary(DELIVERED, 9), entryId: eid }].slice(0, 1)
-        .concat([]),
-    });
-    assert.equal(out.ok, false, 'a round with one loser and nobody to pay should refuse');
-
-    // With a winner beside them the table balances and the loser settles.
-    const second = { ...entry, playerPubkey: b32(9), stakeCommitment: sha256(b32(0x79)),
-      vssSharesRef: new Uint8Array(32) };
-    const sid = entryId(second);
-    const paid = await custody.settleHeldInvoices({
-      roundId: rid, minScore: 1, finalFor: () => true,
-      entries: [summary(FORFEIT, 0), { entryId: sid, pubkey: second.playerPubkey,
-        outcome: DELIVERED, score: 9, stakeMsat: second.stakeMsat, feeMsat: second.feeMsat, donationMsat: second.donationMsat }],
-    });
-    assert.equal(paid.ok, true, paid.why);
-    assert.equal(custody.stateOf(eid).state, SETTLED, 'the loser did not settle');
-    const settled = port.calls.filter((c) => c[0] === 'settle');
-    assert.equal(settled.length, 1);
-    assert.deepEqual(settled[0][2], stake.preimage,
-      'the bytes that went to Lightning are not the ones five signer nodes opened');
-    assert.deepEqual(sha256(settled[0][2]), entry.stakeCommitment);
-  } finally { for (const n of nodes) await n.close(); }
-});
-
-test('with four signer nodes reachable the loser\'s stake stays in flight', slice2(), async () => {
-  const nodes = await committee(7);
-  const port = fakePort();
-  try {
-    const stake = await dealTo(nodes, roundId(contractFor(nodes.map((n) => n.round.pubkey))));
-    const { rid, eid, entry } = await everyoneReplays(nodes, stake);
-
-    const asker = nodes[0];
-    const preimages = new Preimages(asker.round, {
-      curve: feldmanGroup,
-      // THREE PEERS, so four shares with this node's own: one short.
-      peers: nodes.slice(1, 4).map((x) => `http://127.0.0.1:${x.port}`),
-      fetcher: (u) => fetch(u), random: rand,
-    });
-    const custody = new Custody(asker.round, {
-      port,
-      preimageFor: async (id, e, roundIdBytes) => {
-        const out = await preimages.open({ roundId: roundIdBytes, entryId: id });
-        return out.ok ? out.preimage : null;
-      },
-    });
-    await custody.hold(entry);
-
-    const second = { ...entry, playerPubkey: b32(9) };
-    const paid = await custody.settleHeldInvoices({
-      roundId: rid, minScore: 1, finalFor: () => true,
-      entries: [
-        { entryId: eid, pubkey: entry.playerPubkey, outcome: FORFEIT, score: 0, stakeMsat: entry.stakeMsat, feeMsat: entry.feeMsat, donationMsat: entry.donationMsat },
-        { entryId: entryId(second), pubkey: second.playerPubkey, outcome: DELIVERED, score: 9, stakeMsat: entry.stakeMsat, feeMsat: entry.feeMsat, donationMsat: entry.donationMsat },
-      ],
-    });
-    assert.equal(paid.ok, true, paid.why);
-    assert.equal(custody.stateOf(eid).state, HELD, 'four shares settled a stake');
-    assert.equal(port.calls.filter((c) => c[0] === 'settle').length, 0);
-    assert.match(paid.actions.find((a) => toHex(a.entryId) === toHex(eid)).why,
-      /no preimage for that stake/);
-  } finally { for (const n of nodes) await n.close(); }
-});
-
 test('a player who committed to one secret and dealt another opens nothing', async () => {
   // DECISION B, MEASURED. Feldman proves the dealer cut ONE polynomial; it
   // cannot prove that the polynomial's constant term is the preimage of the
@@ -584,6 +473,3 @@ test('a signer node that never replayed the run hands over nothing', async () =>
     assert.match(may.why, /this node signed no result for that run, so it releases nothing/);
   } finally { for (const n of nodes) await n.close(); }
 });
-
-/** Why this test does not run in Step 1 of the THRESHOLD_LN disposal (see TASKBOOK). */
-function slice2() { return { skip: "slice 2: the subject is the hold path (hold invoices on a Lightning port). It still runs at HEAD on a FEDERATION round given a Lightning port, so it is skipped, not moved to FEDERATION (RULED 2026-09-23); slice 2 deletes this test with the code" }; }

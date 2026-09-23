@@ -139,7 +139,7 @@ out += '         donationPaidState: donationPaidState, donationPaidLine: donatio
 out += '         donationNotedState: donationNotedState, notedDonationForLink: notedDonationForLink,\n';
 // WHERE THE STAKE WENT, AFTER SETTLEMENT: the signer nodes' hold state, the hold's
 // amount and the round's pool, asked of every settlement signer node, and its line.
-out += '         settlementBy: settlementBy, settledLine: settledLine,\n';
+out += '         settlementBy: settlementBy,\n';
 // THE STAKE THE PAGE DEALS, and the signer nodes it is dealt to. `stakeFor` was in
 // this bundle already and had ZERO CALLERS - the page joined with 32
 // random bytes where `sha256(P)` belongs and 32 zero bytes where the shares
@@ -192,11 +192,9 @@ out += '         boardNames: boardNames,\n';
 out += '         tabWallet: tabWallet, spendLog: spendLog, spentLine: spentLine,\n';
 // A STAKE THAT CAME BACK (its hold CANCELLED or EXPIRED) is written into the log as
 // returned, so the running total counts only what left the wallet and stayed gone.
-out += '         noteSettlement: noteSettlement,\n';
 // WHAT THE ENTRY COSTS, AS 22A's TRANSPARENCY LIST: the commitment, the fee and
 // the donation out of it, the net stake, and what the wallet is asked. The
 // page renders it; the subtraction is `netStakeMsat`'s.
-out += '         owedLine: owedLine,\n';
 out += '         parseConnection: parseConnection,\n';
 // WHAT THE WALLET WILL STILL LET THIS CONNECTION SPEND. Asked for, never read
 // off the connection string - NIP-47's URI carries no budget, and the field

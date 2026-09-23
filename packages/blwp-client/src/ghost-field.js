@@ -402,37 +402,27 @@ export function playersLine({ joined, others, stalled = false, at = null, refuse
 /**
  * WHAT THE ENTRY COST, IN THE WORDS THE NODE USED.
  *
- * `free round` is a round that asks no stake - there is nothing to pay and
- * nothing was dealt. `stake dealt, unpaid` is a paying round the page has
- * dealt a preimage and shares for and has no hold for, with the node's reason.
+ * `free round` is a round that asks no stake - there is nothing to pay and nothing was dealt.
  *
- * A HOLD IS COUNTED, NOT NAMED (23.1 step 5). The node's join-time `x-hold`
- * word used to be printed here, and it said "held" for an invoice nobody had
- * paid - lnd's OPEN and ACCEPTED both read as held. Now a hold reads "not yet
- * counted" until `stakeSeenBy` has asked the settlement entries, and then
- * "stake seen by N of M nodes (T needed)", with the entries that did not answer
- * named and "committed" only at N >= T.
+ * A STAKE IS COUNTED, NOT NAMED (23.1 step 5): "not yet counted" until `stakeSeenBy` has asked the
+ * settlement entries, then "stake seen by N of M nodes (T needed)", with the entries that did not answer
+ * named and "committed" only at N >= T. A signer node sees a stake when it has verified its federation
+ * lock. There used to be a second source here - the node's join-time `x-hold` word, which named a
+ * hold invoice's state and its reason for having none - and it went with the hold invoice, which was
+ * THRESHOLD_LN's (§23.6, RULED 2026-09-22 22:59).
  */
 export function stakeLine(stake, nowMs = Date.now()) {
   if (!stake) return '';
   if (stake.free) return ' · free round';
   if (!stake.dealt) return '';
   const s = stake.seen;
-  // AN ENTRY THE NODE ISSUED NO HOLD FOR, THAT NOBODY HAS SEEN, KEEPS THE NODE'S
-  // REASON. "0 of 2" there would hide why the stake can never be held - the
-  // thing letter 15 put on the chip. Once any entry has seen it (a hold issued
-  // later and paid), the count is the truth.
-  const noHold = stake.hold && stake.hold.state === 'none';
-  if (s && typeof s.seen === 'number' && !(noHold && s.seen === 0)) {
+  if (s && typeof s.seen === 'number') {
     return ` · stake seen by ${s.seen} of ${s.of} nodes (${s.needed} needed)`
       + (s.unanswered ? `, ${s.unanswered} did not answer` : '')
       + (s.committed ? ' · committed' : '')
       + settlementLine(s.settlement, nowMs);
   }
-  const held = stake.hold && stake.hold.state;
-  if (held && held !== 'none') return ' · stake dealt, not yet counted';
-  const why = stake.hold && stake.hold.why;
-  return ' · stake dealt, unpaid' + (why ? ` (${why})` : '');
+  return ' · stake dealt, not yet counted';
 }
 
 /**
@@ -447,15 +437,14 @@ export function stakeLine(stake, nowMs = Date.now()) {
  */
 export function settlementLine(s, nowMs = Date.now()) {
   if (!s || !s.answered) return '';
-  const refund = Number.isInteger(s.refundHeight) ? ` · refunds at block ${s.refundHeight} if nobody acts` : '';
-  if (s.hold === 'SETTLED') return ' · stake settled: this run lost it';
-  if (s.hold === 'CANCELLED') return ' · stake handed back';
-  if (s.hold === 'EXPIRED') return ' · stake refunded: its hold expired';
-  if (s.finality === 'SUSPENDED') return ' · suspended by an objection' + refund;
-  if (s.finality === 'FINAL') return ' · final: the committee is settling it' + refund;
+  // WHERE THE RUN'S RESULT STANDS, AND NOTHING ABOUT A HOLD. The hold's own states - SETTLED, CANCELLED,
+  // EXPIRED - and the height a hold refunded itself at were THRESHOLD_LN's, and the signer nodes no longer
+  // report them (§23.6). A lock's money moves in the one settlement, which this chip does not narrate.
+  if (s.finality === 'SUSPENDED') return ' · suspended by an objection';
+  if (s.finality === 'FINAL') return ' · final: the committee is settling it';
   if (s.finality === 'PROVISIONALLY_FINAL' && Number.isFinite(s.windowClosesAtMs)) {
     const left = Math.max(0, Math.ceil((s.windowClosesAtMs - nowMs) / 1000));
-    return ` · waiting for the objection window, ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} left` + refund;
+    return ` · waiting for the objection window, ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} left`;
   }
   return '';
 }
