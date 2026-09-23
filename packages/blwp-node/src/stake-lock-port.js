@@ -55,6 +55,17 @@ export function stakeLockPort({ bin, dataDir, timeoutMs = 60000 }) {
       return { federationId: fromHex(String(j.federation_id)), guardians: Number(j.guardians), threshold: Number(j.threshold),
         keys: (j.keys || []).map((k) => fromHex(String(k.key))) };
     },
+    /**
+     * THE FEDERATION'S GATEWAYS (§23.6): every name its guardians registered, and whether each answered
+     * `routing_info` for this federation - with the Lightning node key it answered with, which is its
+     * identity. Read-only. It says nothing about inbound, and nothing here pretends it does.
+     */
+    async gateways() {
+      const j = await run(bin, ['--mode', 'gateways', '--data-dir', dataDir], timeoutMs);
+      return { federationId: fromHex(String(j.federation_id)),
+        gateways: (j.gateways || []).map((g) => ({ url: String(g.url), live: g.live === true,
+          lightningPublicKey: g.lightning_public_key ? String(g.lightning_public_key) : null, why: g.why || null })) };
+    },
     /** The guardians' own LNv2 fee rule, off the federation's config (W4). */
     async fees() {
       const j = await run(bin, ['--mode', 'fees', '--data-dir', dataDir], timeoutMs);

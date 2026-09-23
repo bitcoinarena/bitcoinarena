@@ -88,3 +88,31 @@ export function gatewaysAreIndependent({ gateways, need = 2, minInboundSat = GAT
              why: `${usable} of ${gateways.length} gateways can actually receive; the round needs ${need}` };
   return { ok: true, usable, why: '' };
 }
+
+/**
+ * HOW MANY GATEWAYS A ROUND'S FEDERATION REALLY HAS, AS ITS LOCK PORT CAN SEE THEM (§23.6: "deposits and
+ * withdrawals through any of at least two gateways ... run by different operators"; RULED the owner 2026-09-23).
+ *
+ * `listed` is what the guardians registered and what each registered name said for itself when asked
+ * (`blwp-stake-lock --mode gateways`): `{ url, live, lightningPublicKey }`. IDENTITY IS THE LIGHTNING NODE KEY -
+ * it signs the gateway's invoices. A name that did not answer `routing_info` is not live and is not counted.
+ * Two registered names on one node key are ONE gateway: they are merged, and then counted - the set is not
+ * refused for containing them (that is `gatewaysAreIndependent`'s operator-side rule, not this one).
+ *
+ * INBOUND IS NOT HERE, AND IS NOT PRETENDED. The federation's API does not say what a gateway can receive,
+ * and routing info is not inbound. What a door can truthfully say at open is this count; inbound is proven
+ * by a deposit that commits through each gateway, and only there.
+ *
+ * @returns {{ distinctLive: number, registered: number, keys: string[], notLive: string[] }}
+ */
+export function federationGatewayCount(listed) {
+  const keys = new Set();
+  const notLive = [];
+  const all = Array.isArray(listed) ? listed : [];
+  for (const g of all) {
+    const key = g && typeof g.lightningPublicKey === 'string' ? g.lightningPublicKey.toLowerCase() : '';
+    if (!g || g.live !== true || !isHex33(key)) { notLive.push(g && g.url ? String(g.url) : '(unnamed)'); continue; }
+    keys.add(key);
+  }
+  return { distinctLive: keys.size, registered: all.length, keys: [...keys], notLive };
+}

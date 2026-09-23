@@ -12,6 +12,7 @@
 //
 // The census here is two bonded signer nodes, as in signer-node-committee.test.js; the federation's size and
 // threshold are the port's, which stands in for the federation's config.
+import { TWO_GATEWAYS } from './lock-fixture.js';
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { test } from 'node:test';
@@ -101,6 +102,8 @@ const federation = ({ id = TEST_FEDERATION_ID, keys, threshold }) => ({
   asked: 0,
   async guardians() { this.asked++; return { federationId: id, guardians: keys.length, threshold, keys }; },
   async fees() { return { ppm: 0n, baseMsat: 0n }; },
+  // its two gateways, so §23.6's gateway gate is met and the guardian count is what these tests measure
+  async gateways() { return { federationId: id, gateways: TWO_GATEWAYS }; },
 });
 
 /** Two signer nodes bonded on the chain - each advertising the guardian keys given - and one door. */
