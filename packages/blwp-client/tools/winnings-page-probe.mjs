@@ -63,11 +63,13 @@ import { netStakeMsat } from '../../protocol/src/payout.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { feeLockPays } from '../../protocol/src/lock-settlement.js';
 import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
+import { decodePlayerResult, splitSignedResult, SIGNED_RESULT_BYTES } from '../../protocol/src/result.js';
 
 const env = process.env;
 for (const k of ['PROBE', 'LOCK_BIN', 'WASM_PKG', 'INVITE', 'ALICE_RPC', 'BOB_RPC', 'CAROL_RPC', 'LND_BIN', 'BUNDLE'])
   if (!env[k]) { console.error(`${k} is needed`); process.exit(2); }
 const CASE = env.CASE || 'A';
+const W_LIKE = CASE === 'W' || CASE === 'WF';
 const P = env.PROBE;
 const require = createRequire(import.meta.url);
 const CLIENT = require(env.BUNDLE);
@@ -275,7 +277,7 @@ try {
     hookCalls.push({ word: String(word), run: runInfo && { word: runInfo.word, score: runInfo.score, minScore: runInfo.minScore } });
     // W: SIGNER NODE B STOPS THE MOMENT THE CORE SAYS DELIVERED - the finish's last batches and final mark still on
     // their way - and comes back 7 s later (§10's window, ruled 2026-09-23: a 7 s outage fits inside it).
-    if (CASE === 'W' && deliveredAt === null) {
+    if (W_LIKE && deliveredAt === null) {
       deliveredAt = Date.now(); round.b.close();
       setTimeout(() => { round.restartB().then(() => { bBackAt = Date.now(); }); }, 7000);
     }
@@ -307,6 +309,23 @@ try {
   for (let i = 0; i < 600 && !(Module.blwpNet.client && Module.blwpNet.client.where); i++) await wait(50);
   if (!Module.blwpNet.client) throw new Error(`the session never opened: ${Module.blwpNet.error}`);
   const eidHex = toHex(Module.blwpNet.where.entryId);
+  // WF: THE RUN'S FINAL MARK TO B WAITS UNTIL B HAS APPLIED ITS CLOSE (its round no longer OPEN, 0) - harness only; the
+  // page and the signer node run unchanged. Batches, and every mark of the run before it, pass as they do now.
+  const markGate = { held: 0, releasedAt: null };
+  if (CASE === 'WF') {
+    const cl0 = Module.blwpNet.client; const realSendPeer = cl0.sendPeer.bind(cl0); const bBase = nodeUrl(round.b);
+    const bOpen = () => { try { const r = round.b.round.get(fromHex(named.roundIdHex)); return !r || r.state === 0; } catch { return true; } };
+    cl0.sendPeer = async (base, bytes) => {
+      // ONLY THE RUN'S FINAL MARK, after the core said DELIVERED - the run's own marks go as they always did.
+      const fl = cl0.finalLink;
+      if (base === bBase && deliveredAt !== null && fl && bytes && bytes.length === fl.bytes.length && bytes.every((v, i) => v === fl.bytes[i])) {
+        markGate.held++;
+        while (bBackAt === null || bOpen()) await wait(50);
+        if (markGate.releasedAt === null) markGate.releasedAt = Date.now();
+      }
+      return realSendPeer(base, bytes);
+    };
+  }
   // THE PAGE'S TICK CLOCK: when (if ever) the page closes it, and when it last posted a tick.
   const clockSeen = { closedAt: null, lastPostAt: null, lastPostTick: null };
   if (Module.blwpTickClock) {
@@ -362,7 +381,7 @@ try {
     say_({ step: 'reload with B up', bDownForMs: bDownAt ? Date.now() - bDownAt : null, postsNow: doorPosts.slice(before), reload, prompts: prompts.length, held: heldAddress() });
   } else {
     // W: the page loads again once B is back, so the address reaches it as case C's reload does.
-    if (CASE === 'W') for (let i = 0; i < 40 && bBackAt === null; i++) await wait(250);
+    if (W_LIKE) for (let i = 0; i < 40 && bBackAt === null; i++) await wait(250);
     const before = doorPosts.length;
     const reload = await pageLoad();
     pageHook('FINISHED', Module.blwpNet.winningsRun());
@@ -375,6 +394,15 @@ try {
   // measured the two-of-two with (CLOSE_AFTER_BACK_MS=0 closes at once, as the first W did: every node then refuses the
   // re-offered mark "the round is closed").
   if (CASE === 'W') { const after = Number(env.CLOSE_AFTER_BACK_MS ?? 5000); while (bBackAt === null || Date.now() < bBackAt + after) await wait(100); }
+  // WF, THE FORCED MISS (ruled 2026-09-24): the close only once B's inputs are whole - the page's feed has landed - while
+  // the final mark to B is held back (the gate on sendPeer below) until B has applied its close. Every run is then a node
+  // whose inputs are whole and which is short only the mark when its close is applied.
+  if (CASE === 'WF') {
+    for (const stop = Date.now() + 60000; Date.now() < stop; await wait(100)) {
+      const t = await heldTicksNow();
+      if (bBackAt !== null && Number.isInteger(t[1]) && t[1] === t[0] && t[0] > 0) break;
+    }
+  }
   const closeSentAt = Date.now();
   await Promise.all(round.daemons.map((d) => tell(d.port, `close ${named.roundIdHex}`).catch((x) => x.message)));
   // THE CHAIN MOVES ON, as mainnet's does: past a minute with nothing settled, one block every 20 s, so the takeover
@@ -386,7 +414,36 @@ try {
     if (Date.now() - closedAt > 60000 && Date.now() - lastMine > 20000) { cli('generatetoaddress', '1', cli('getnewaddress')); mined++; lastMine = Date.now(); }
   }
   say_({ step: 'blocks mined while waiting', mined, seconds: Math.round((Date.now() - closedAt) / 1000) });
-  if (CASE === 'W') {
+  // AT EVERY SIGNER NODE: its OWN signed result (outcome, score, transcript hash), the ticks its transcript door holds,
+  // its checkpoints, and the receipts it holds for the run's final mark - each read from that node alone.
+  if (W_LIKE) {
+    for (let i = 0; i < 90; i++) {                                 // every node's own result in hand, or 90 s
+      const got = await Promise.all(round.daemons.map(async (d) => { try { return d.round.hasResult(fromHex(named.roundIdHex), fromHex(eidHex), d.round.pubkey); } catch { return false; } }));
+      if (got.every(Boolean)) break; await wait(1000);
+    }
+    const cl = Module.blwpNet.client;
+    const finalId = cl.finalLink ? cl.finalLink.id : null;
+    const atNodes = await Promise.all(round.daemons.map(async (d) => {
+      const own = toHex(d.round.pubkey);
+      const r = await realFetch(`${nodeUrl(d)}/results?round=${named.roundIdHex}&entry=${eidHex}`);
+      const b = new Uint8Array(await r.arrayBuffer());
+      let mine = null;
+      for (let i = 0; i + SIGNED_RESULT_BYTES <= b.length; i += SIGNED_RESULT_BYTES) {
+        const x = decodePlayerResult(splitSignedResult(b.subarray(i, i + SIGNED_RESULT_BYTES)).body);
+        if (toHex(x.nodePubkey) === own) mine = { outcome: x.outcome, score: x.score, transcript: toHex(x.transcriptHash).slice(0, 16) };
+      }
+      const t = await realFetch(`${nodeUrl(d)}/transcript?round=${named.roundIdHex}&entry=${eidHex}`); await t.arrayBuffer();
+      const c = await realFetch(`${nodeUrl(d)}/checkpoints?round=${named.roundIdHex}&entry=${eidHex}`); await c.arrayBuffer();
+      return { node: own.slice(0, 8), result: mine, ticks: Number(t.headers.get('x-ticks')), checkpoints: Number(c.headers.get('x-checkpoints')),
+        finalMarkReceipts: finalId ? d.round.receiptCount(finalId) : null };
+    }));
+    const same = (k) => new Set(atNodes.map((x) => JSON.stringify(x[k]))).size === 1;
+    say_({ step: 'at every node', markGate, finalMarkReceiptsOnClient: finalId ? cl.witnessed(finalId) : null, atNodes,
+      sameResult: same('result'), sameTicks: same('ticks'), sameCheckpoints: same('checkpoints'),
+      pass: same('result') && same('ticks') && same('checkpoints') && atNodes.every((x) => x.result && x.result.outcome === 'DELIVERED' && x.finalMarkReceipts === 7)
+        && finalId && cl.witnessed(finalId) === 7 });
+  }
+  if (W_LIKE) {
     clearInterval(sampler);
     const combinedAt = settled ? Date.now() : null;
     const rel = (t) => (t === null || deliveredAt === null ? null : t - deliveredAt);
@@ -436,7 +493,7 @@ try {
     say_({ step: 'restart', before, after, settledBeforeSends: settledBefore, rows: (await Promise.all(round.daemons.map(winningsAt))).map((r) => r.winnings && r.winnings.state) });
   }
   // ---- A DIFFERENT ADDRESS FOR THE SAME ENTRY: signed by the same session key, through the bridge's own call. ----
-  if (CASE === 'C' || CASE === 'W') {
+  if (CASE === 'C' || W_LIKE) {
     const other = `thief@127.0.0.1:${lnurlServer.address().port}`;
     const sig = await Module.blwpNet.winningsRun().signAddress(other);
     const body = new Uint8Array([...new TextEncoder().encode(other), ...sig]);

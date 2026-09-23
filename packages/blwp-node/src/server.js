@@ -413,6 +413,22 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       return c.previousHash.every((x) => x === 0) ? { bytes, c } : null;
     } catch { return null; }
   };
+  /** One receipt this signer node issued, offered to every peer of the round over its play socket, as a peer offers one. */
+  function offerReceipt(roundIdBytes, receiptBytes) {
+    for (const peer of verifier.peersOf(roundIdBytes)) {
+      try {
+        const ws = new WebSocket(`${String(peer).replace(/\/+$/, '').replace(/^http/, 'ws')}/play`);
+        ws.binaryType = 'arraybuffer';
+        const done = () => { try { ws.close(); } catch { /* gone */ } };
+        const t = setTimeout(done, 3000);
+        if (t.unref) t.unref();
+        ws.addEventListener('open', () => ws.send(receiptBytes));
+        ws.addEventListener('message', () => { clearTimeout(t); done(); });
+        ws.addEventListener('error', () => { clearTimeout(t); done(); });
+      } catch { /* a peer that cannot be reached keeps the receipts it has */ }
+    }
+  }
+
   async function forwardFirstMark({ bytes, c }, { ask = null } = {}) {
     const id = checkpointId(c);
     const held = round.holdsMark(id);
@@ -3212,7 +3228,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // the message says what it is and the client needs no second
         // connection and no envelope around it.
         const bytes = new Uint8Array(data);
-        if (bytes[0] === TYPE_CHECKPOINT) return sock.send(round.checkpoint(bytes));
+        if (bytes[0] === TYPE_CHECKPOINT) {
+          const answer = round.checkpoint(bytes);
+          // A MARK TAKEN AFTER THE CLOSE - only the held-back final mark gets through that door (ruled 2026-09-23/24) - has
+          // its receipt offered to every peer at once (§10's receipt exchange): they signed before it existed and pull no
+          // more. Measured on 5 of 7: the page counted 7 of 7, and the six other signer nodes held 6.
+          try {
+            const c = decodeCheckpoint(splitSigned(bytes).body);
+            const row = round.get(c.roundId);
+            if (row && row.state === CLOSED && answer instanceof Uint8Array) offerReceipt(c.roundId, answer);
+          } catch { /* the answer stands whatever the offer does */ }
+          return sock.send(answer);
+        }
         // A RECEIPT COMING IN is a peer offering one it issued - section 10's
         // gossip. The first byte says so, the same way it says a mark is a
         // mark, so gossip needs no second port and no envelope.
