@@ -3323,8 +3323,8 @@ const FIRE_RELOAD_SPAN = 108;    // up to 3.2 s
  */
 const HIT_PER_MIL = 550;
 
-const FIRE_DAMAGE_MIN = Math.imul(11, ONE);
-const FIRE_DAMAGE_SPAN = Math.imul(13, ONE);
+const FIRE_DAMAGE_MIN = Math.imul(12, ONE);   // 11 -> 12, about 10% (the owner 2026-09-23)
+const FIRE_DAMAGE_SPAN = Math.imul(14, ONE);
 
 /**
  * One round of armour against armour.
@@ -3362,7 +3362,7 @@ const RIFLE_RELOAD_TICKS_SPAN = RIFLE_RELOAD_SPAN;
 const RIFLE_LOOK_TICKS = RIFLE_LOOK_MIN;
 const RIFLE_LOOK_TICKS_SPAN = RIFLE_LOOK_SPAN;
 const RIFLE_HP = Math.imul(10, ONE);
-const RIFLE_DAMAGE = Math.imul(10, ONE);
+const RIFLE_DAMAGE = Math.imul(11, ONE);   // 10 -> 11, about 10%
 
 const BACKOFF_RANGE = BACK_OFF_RANGE;
 const RELOAD_MIN = FIRE_RELOAD_MIN;
@@ -4944,12 +4944,14 @@ const REFERENCE_TICKS = 3900;
 /** No danger is earned within this of the start. */
 const APRON_RADIUS = Math.imul(22, ONE);
 
-/** Metres off the seam at which a metre of ground pays nothing. */
-const FRONT_SCORE_SPAN = Math.imul(40, ONE);
+/** Metres off the seam at which a metre of ground pays nothing.
+ *  36, not 40: a 10% tighter band so a lane that skirts the front pays nothing
+ *  sooner (the owner 2026-09-23). */
+const FRONT_SCORE_SPAN = Math.imul(36, ONE);
 
 /**
  * How much of the local threat counts for the score, from distance to the
- * front. 1 on the seam, 0 at 40 m and beyond. Quadratic so a rim far from
+ * front. 1 on the seam, 0 at 36 m and beyond. Quadratic so a rim far from
  * the fighting is not a slightly quieter lane (the owner 2026-09-07).
  */
 const frontWeight = (z, seam) => {
