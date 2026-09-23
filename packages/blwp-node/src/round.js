@@ -1790,7 +1790,7 @@ export class Round {
    */
   putPayoutAddress({ entryId, roundId, address }) {
     this.db.prepare('INSERT INTO payout_address (entry_id, round_id, address, named_ms) VALUES (?, ?, ?, ?) '
-      + 'ON CONFLICT(entry_id) DO UPDATE SET address = excluded.address, named_ms = excluded.named_ms')
+      + 'ON CONFLICT(entry_id) DO NOTHING')   // the first address stands
       .run(Buffer.from(entryId), Buffer.from(roundId), String(address), this.now());
   }
 

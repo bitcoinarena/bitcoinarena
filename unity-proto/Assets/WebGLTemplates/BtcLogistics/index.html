@@ -572,7 +572,18 @@
     // behind it. Measured on 0.0.1386: DELIVERED, the banner, and no lobby, ever. So a page that has no
     // lobby goes back to the lobby its link names - the same query without the round and `play` - and
     // starts it here, without a reload.
-    window.BLWP_RUN_OVER = (word) => {
+    // AND THE ONE QUESTION A WINNER IS ASKED (ruled 2026-09-23): `run` is the bridge's - this run's round and entry,
+    // the page core's word and score, min_score, the round's signer nodes and the session key's address call. Asked
+    // once, only when the core said DELIVERED at or above min_score; the address signed and posted to every signer
+    // node (`askForWinnings`). Nothing named: nothing posted, the share pooled by the settlement.
+    const askForWinnings = (run) => {
+      if (!run || typeof BLWPCLIENT === 'undefined' || !BLWPCLIENT.askForWinnings) return;
+      BLWPCLIENT.askForWinnings({ run, prompt: (text) => window.prompt(text), storage: vault() })
+        .then((r) => console.log('[blwp] winnings: ' + (r.named ? r.address + ' taken by ' + r.acked.length + ' of '
+          + run.nodes.length + ' signer node(s)' : r.why)))
+        .catch((e) => console.error('[blwp] winnings: ' + e.message));
+    };
+    window.BLWP_RUN_OVER = (word, run) => {
       window.BLWP_CHAIN = undefined;
       window.BLWP_ADVERT = undefined;
       const noLobby = !window.BLWP_LOBBY_ACT;
@@ -591,6 +602,7 @@
           .then((shown) => console.log('[blwp] the run is over: ' + (shown ? 'the lobby is up' : 'this page names no lobby')))
           .catch((e) => console.error('[blwp] the run is over, and that lobby cannot be read: ' + e.message));
       }
+      askForWinnings(run);
     };
     async function joinTheRoundIfOneWasNamed() {
       if (typeof BLWPCLIENT === 'undefined') return;
@@ -1666,6 +1678,12 @@
 
     // UNITY LOADS IN THE LOBBY TOO: the lobby is its title screen. A lobby that
     // cannot be read leaves the offline game, never a dead page.
+    // A WINNER'S ADDRESS A SIGNER NODE HAS NOT TAKEN YET is posted again at every load - the same signed bytes, only to
+    // the nodes that did not answer 201 - and never asked for again.
+    if (typeof BLWPCLIENT !== 'undefined' && BLWPCLIENT.resendWinnings)
+      BLWPCLIENT.resendWinnings({ storage: vault() })
+        .then((sent) => { for (const x of sent) if (x.posted.length) console.log('[blwp] winnings address posted again to ' + x.posted.length + ' signer node(s); ' + x.acked.length + ' hold it'); })
+        .catch((e) => console.error('[blwp] winnings: ' + e.message));
     showTheLobbyIfOneWasNamed()
       .catch((e) => { console.error('[blwp] that lobby cannot be read: ' + e.message); return false; })
       .then((lobby) => (lobby ? null : joinTheRoundIfOneWasNamed()))

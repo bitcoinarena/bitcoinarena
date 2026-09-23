@@ -851,6 +851,8 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // again - what an operator's restart is, for measuring what a client does
     // across one. Nothing it held is lost, because the store is the same.
     async restartB() { await b.close(); b = await serve(dbB, optsB); return b; },
+    // AND ANY FURTHER ONE, by its place after A and B - the same store, identity, options and port.
+    async restartRest(i) { await rest[i].close(); rest[i] = await serve(members[2 + i].db, optsBeyond[i]); return rest[i]; },
     nodes: reach,
     headers: reach.map((r) => `${r}/headers`),
     bond: `${reach[0]}/bond`,

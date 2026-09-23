@@ -33,7 +33,8 @@ import { FINAL } from '../../protocol/src/objection.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 import { resultFinality } from './finality.js';
 import { encodeCommitments, decodeCommitments, encodeShare, decodeShare } from './pool-wire.js';
-import { sendPlanToJson } from './winnings-send.js';
+import { sendPlanToJson, planKey } from './winnings-send.js';
+import { askerOrder, eligibleAsker } from './payout.js';
 
 const listKey = (commitments) => commitments.map((c) => `${c.id}:${toHex(c.hiding)}:${toHex(c.binding)}`).sort().join('|');
 const refuse = (why, status = 409) => ({ ok: false, status, why });
@@ -54,8 +55,11 @@ export class LockSettlement {
    * signer nodes; `peersFor(rid)` names the other settlement signer nodes' bases.
    */
   constructor(round, { dkg, port, curve, random, preimages, peersFor = () => [], fetcher = (u, o) => fetch(u, o),
-    signerNodesFor = (rid, contract) => ({ gameVerify: contract.nodes, settlement: contract.nodes }), winnings = null } = {}) {
+    signerNodesFor = (rid, contract) => ({ gameVerify: contract.nodes, settlement: contract.nodes }), winnings = null,
+    turnClock = null } = {}) {
     this.round = round;
+    // WHOSE TURN IT IS TO COMBINE (M3.3-19's clock): the round's beacon height and this node's chain tip, or null.
+    this.turnClock = turnClock;
     // WINNINGS ALWAYS SENT (winnings-send.js): when given, a qualifier who named an address is paid by send, not collect.
     this.winnings = winnings;
     // THE ROUND'S SITTING SIGNER NODES BY POOL (Pick A): who the fee locks pay, §22A's weights.
@@ -215,9 +219,14 @@ export class LockSettlement {
   }
 
   /** ROUND ONE: this signer node's nonce commitment for the settlement it would sign. */
-  async commit(roundIdBytes) {
+  async commit(roundIdBytes, { txid = null } = {}) {
     const m = await this.message(roundIdBytes);
     if (!m.ok) return m;
+    // A COMMITMENT ONLY TO THE BYTES THE ASKER BUILT (measured on a 5-of-7): a signer node that rebuilt another
+    // settlement - it saw a run end differently - would otherwise commit, and its share over its own bytes spoils the
+    // combined signature for everyone. It refuses by name, and the threshold of the others decides.
+    if (txid && String(txid).toLowerCase() !== String(m.txid).toLowerCase())
+      return refuse(`this signer node rebuilt settlement ${String(m.txid).slice(0, 16)}, not ${String(txid).slice(0, 16)}: it commits to no other bytes`, 409);
     const key = toHex(roundIdBytes);
     let pair = this.pairs.get(key);
     if (!pair || toHex(pair.message) !== toHex(m.message)) {
@@ -255,11 +264,18 @@ export class LockSettlement {
     const m = await this.message(roundIdBytes);
     if (!m.ok) return m;
     if (!schnorr.verify(signature, m.message, m.claimPk.subarray(1))) return refuse('that settlement signature does not verify under the round\'s claim key');
-    if (!this.round.lockSettlement(roundIdBytes)) {
+    // A SIGNATURE OVER THE BYTES THIS SIGNER NODE REBUILDS NOW replaces a SUBMITTING row of other bytes: the proposer
+    // re-signs only after the federation answered that the old settlement is not in (measured: after a fee-rule change
+    // across a restart, the proposer held ACCEPTED on the new txid and this node SUBMITTING on the old one for good).
+    const held = this.round.lockSettlement(roundIdBytes);
+    if (!held || (held.state === SUBMITTING && held.txid !== m.txid)) {
       this.keepMoves(roundIdBytes, m);
       this.round.putLockSettlement({ roundId: roundIdBytes, txid: m.txid, message: m.message, signature, state: SUBMITTING,
         why: 'signed by the signer nodes; submitted by the signer node that combined it' });
     }
+    // AND IT ASKS THE FEDERATION SOON, not on the minute's sweep (measured: a non-proposer read NONE while the proposer
+    // held ACCEPTED): SUBMITTING becomes ACCEPTED when the settlement's payouts are stored.
+    this.confirmSoon(roundIdBytes);
     return { ok: true };
   }
 
@@ -290,6 +306,14 @@ export class LockSettlement {
     const paid = payoutsHeld.filter(Boolean).length;
     const seen = `${paid} of ${moves.payouts} payout contract(s) of ${kept.txid.slice(0, 12)} stored, ${locksGone} of ${moves.claims.length} claimed lock(s) gone`;
     if (paid > 0 && locksGone === moves.claims.length) return { verdict: 'in', why: seen };
+    // A SENT WINNING IS NOT STORED ONCE IT IS PAID: the gateway claims its contract (measured: every look read "0 of 1
+    // payout contract(s) stored" after the winner was paid). Its preimage, held here only if it hashes to the invoice
+    // the settlement's contract named, is the proof that contract was made - so every claimed lock gone and a paid
+    // winning of this round held is IN. A lock that left by its own refund, with nothing paid, is still neither.
+    if (paid === 0 && locksGone === moves.claims.length && this.winnings) {
+      const paidSends = this.round.sendAttemptsOf(roundIdBytes).filter((r) => r.state === 'PAID' && r.preimage);
+      if (paidSends.length) return { verdict: 'in', why: `${seen}; ${paidSends.length} sent winning(s) of this round paid, the preimage held here` };
+    }
     if (paid === 0 && locksGone === 0) return { verdict: 'out', why: seen };
     return { verdict: 'mixed', why: seen };
   }
@@ -332,7 +356,22 @@ export class LockSettlement {
       if (saw.verdict === 'mixed') {
         const why = `neither in nor out - not settled here, not submitted again: ${saw.why}`;
         this.round.putLockSettlement({ roundId: roundIdBytes, txid: kept.txid, message: kept.message, signature: kept.signature, state: SUBMITTING, why });
+        // A SIGNER NODE THAT ONLY ANSWERS asks again: it submits nothing, and "neither" is what it reads while the
+        // proposer's submit is landing (measured: its one look fell between the claim and the payout).
+        if (this.winnings && !(await this.turn(roundIdBytes)).mine) this.confirmSoon(roundIdBytes);
         return refuse(why, 409);
+      }
+    }
+    // ONE SIGNER NODE COMBINES AND SUBMITS AT A TIME: the round's asker, and after it the takeover order of M3.3-19 (seat
+    // k once the chain is k x TAKEOVER_BLOCKS past the round's beacon). Measured on a 5-of-7: every node that took the
+    // plan combined at once, each peer gives a share over one list only ("keeps no second pair"), and none completed;
+    // and a single fixed proposer that saw the run end otherwise stalled the round for good. The others answer, keep
+    // the signature they are handed (`take`), and ask the federation whether it went in.
+    if (this.winnings) {
+      const t = await this.turn(roundIdBytes);
+      if (!t.mine) {
+        if (kept && kept.state === SUBMITTING) this.confirmSoon(roundIdBytes);
+        return refuse(`not this signer node's turn to combine: ${t.why}`, 409);
       }
     }
     // THE SEND PLANS, before anything is rebuilt: proposed here, checked by every peer, or no settlement. After the
@@ -361,7 +400,7 @@ export class LockSettlement {
       const refused = [];
       for (const base of this.peersFor(roundIdBytes)) {
         try {
-          const r = await this.fetcher(`${base}/settle-commit?${q}`, { method: 'POST' });
+          const r = await this.fetcher(`${base}/settle-commit?${q}&txid=${m.txid}`, { method: 'POST' });
           if (!r.ok) { refused.push(`${base}: ${(await r.text()).trim()}`); continue; }
           signers.push({ base, commitment: decodeCommitments(new Uint8Array(await r.arrayBuffer()))[0] });
         } catch (e) { refused.push(`${base}: ${e.message}`); }
@@ -413,14 +452,17 @@ export class LockSettlement {
   async planSends(roundIdBytes) {
     const got = await this.planOf(roundIdBytes);
     if (!got.ok) return got;
-    // ONE PROPOSER PER ROUND: the round's signer node with the lowest key. Every signer node settles on its own clock,
-    // and two proposals would fetch two invoices and build two transactions that no signature joins (measured: "the
+    // ONE PROPOSER AT A TIME: whose turn it is (`turn`, M3.3-19's order). Every signer node settles on its own clock, and
+    // two proposals would fetch two invoices and build two transactions that no signature joins (measured: "the
     // combined settlement signature does not verify"). The others wait for its plan and check it.
-    const proposer = [...got.contract.nodes].map((k) => toHex(k)).sort()[0];
-    if (proposer !== toHex(this.round.pubkey)) {
+    const t = await this.turn(roundIdBytes);
+    if (!t.mine) {
       if (this.round.sendPlansOf(roundIdBytes).length || !this.winnings.qualifiersWithAddress(got.base).length) return { ok: true, rows: [] };
-      return refuse(`the send plan is proposed by signer node ${proposer.slice(0, 16)}; this signer node waits for it and checks it`);
+      return refuse(`the send plan is proposed by the signer node whose turn it is; this one waits for it and checks it (${t.why})`);
     }
+    // ADOPT BEFORE PROPOSING: a plan a peer already keeps, if it stands here, is this asker's plan too - a second invoice
+    // would be a second plan the peers split over. The lowest-keyed that stands wins (`check` gives way to it).
+    await this.adoptPeerPlan(roundIdBytes, got.base);
     const proposed = await this.winnings.propose(roundIdBytes, got.base);
     if (!proposed.ok) return proposed;
     // AN EMPTY PLAN IS HANDED OUT TOO: a peer that holds an address this signer node does not refuses it by name.
@@ -437,7 +479,14 @@ export class LockSettlement {
         if (!r.ok) refused.push(`${base}: ${(await r.text()).trim()}`);
       } catch (e) { refused.push(`${base}: ${e.message}`); }
     }
-    if (refused.length) return { ...refuse(`a signer node did not take the send plan, so nothing is settled: ${refused.join('; ')}`), peerRefused: true };
+    // THE ROUND'S SIGNING THRESHOLD TAKES IT, NOT EVERY PEER (measured on a 5-of-7: one signer node that saw the run end
+    // otherwise refused the plan, and nothing was ever settled). The settlement is signed by whoever rebuilt the same
+    // bytes; the plan needs as many as that signature does. A 2-of-2 still needs both.
+    const need = receiptsNeeded(got.contract.nodes.length);
+    const took = 1 + peers.length - refused.length;
+    if (took < need)
+      return { ...refuse(`${took} of the ${need} signer nodes the settlement needs took the send plan, so nothing is settled: ${refused.join('; ')}`), peerRefused: true };
+    if (refused.length) console.log(`[winnings] ${toHex(roundIdBytes).slice(0, 16)} the send plan was taken by ${took} of ${1 + peers.length} signer nodes; refused: ${refused.join('; ')}`);
     this.built.delete(toHex(roundIdBytes));
     return { ok: true, rows: proposed.rows };
   }
@@ -458,29 +507,91 @@ export class LockSettlement {
 
   stop() { for (const t of this.retryTimers) clearTimeout(t); this.retryTimers.clear(); }
 
+  /**
+   * WHOSE TURN IT IS TO PROPOSE THE SEND PLAN AND COMBINE THE SETTLEMENT - M3.3-19, the payout's own takeover, not a new
+   * rule: the round's signer nodes sorted by key and rotated by an index from the round id (`askerOrder`); seat 0 alone
+   * at the close, seat k once this node's chain is k x TAKEOVER_BLOCKS past the round's beacon. A node that reads no
+   * chain tip or no beacon never takes over; seat 0 still asks.
+   */
+  async turn(roundIdBytes) {
+    const row = this.round.get(roundIdBytes);
+    if (!row) return { mine: false, why: 'this node holds no such round' };
+    const contract = decodeRoundContract(new Uint8Array(row.contract));
+    const nodes = [...contract.nodes].sort((a, b) => (toHex(a) < toHex(b) ? -1 : 1));
+    const ring = askerOrder(roundIdBytes, nodes);
+    if (!ring.ok) return { mine: false, why: ring.why };
+    const place = ring.order.findIndex((k) => toHex(k) === toHex(this.round.pubkey));
+    if (place < 0) return { mine: false, place, why: 'this node is not one of the round\'s signer nodes' };
+    if (place === 0) return { mine: true, place, why: 'this node is the round\'s asker' };
+    const clock = this.turnClock;
+    let beacon = null; let tip = null;
+    try { beacon = clock && clock.beaconHeight ? await clock.beaconHeight(roundIdBytes, contract) : null; } catch { beacon = null; }
+    try { tip = clock && clock.tip ? await clock.tip() : null; } catch { tip = null; }
+    if (!Number.isInteger(beacon) || !Number.isInteger(tip))
+      return { mine: false, place, why: `this node is ${place} of ${ring.order.length} in the asker order and reads no chain to take over with` };
+    const e = eligibleAsker({ roundId: roundIdBytes, signerNodes: nodes, beaconHeight: beacon, tipHeight: tip });
+    if (!e.ok) return { mine: false, place, why: e.why };
+    return place < e.allowed.length ? { mine: true, place, why: `this node takes over at ${tip}, ${e.advanced} block(s) past the beacon` }
+      : { mine: false, place, why: `this node is ${place} of ${ring.order.length} in the asker order and may take over at height ${beacon + place * 2}; the chain is at ${tip}` };
+  }
+
+  /** A SIGNATURE THIS SIGNER NODE WAS HANDED, checked against the federation every 2 s until it is in, a bounded while. */
+  confirmSoon(roundIdBytes, { everyMs = 2000, most = 60 } = {}) {
+    const key = `confirm:${toHex(roundIdBytes)}`;
+    if (this.planRetries.get(`${key}:pending`)) return;
+    const n = (this.planRetries.get(key) || 0) + 1;
+    if (n > most) return;
+    this.planRetries.set(key, n);
+    this.planRetries.set(`${key}:pending`, 1);
+    const t = setTimeout(() => {
+      this.retryTimers.delete(t);
+      this.planRetries.delete(`${key}:pending`);
+      const kept = this.round.lockSettlement(roundIdBytes);
+      if (!kept || kept.state !== SUBMITTING) return;
+      this.settle(roundIdBytes)
+        .then((got) => console.log(`[settle] ${toHex(roundIdBytes).slice(0, 16)} asked the federation (${n}): ${got.state || (got.ok ? 'ok' : 'not yet')} - ${String(got.why || '').slice(0, 140)}`))
+        .catch(() => {});
+    }, everyMs);
+    if (t.unref) t.unref();
+    this.retryTimers.add(t);
+  }
+
+  /** The plans this asker's peers keep, lowest-keyed first; the first that stands here is kept (see `check`). */
+  async adoptPeerPlan(roundIdBytes, base) {
+    const plans = [];
+    for (const peer of this.peersFor(roundIdBytes)) {
+      try {
+        const r = await this.fetcher(`${peer}/settle-sends?round=${toHex(roundIdBytes)}`);
+        if (!r.ok) continue;
+        const rows = await r.json();
+        if (Array.isArray(rows) && rows.length && !plans.some((p) => planKey(p) === planKey(rows))) plans.push(rows);
+      } catch { /* a peer down: the others decide */ }
+    }
+    plans.sort((a, b) => (planKey(a) < planKey(b) ? -1 : 1));
+    const mine = this.round.sendAttemptsOf(roundIdBytes).filter((x) => x.attempt === 0);
+    for (const rows of plans) {
+      if (mine.length && !(planKey(rows) < planKey(mine))) break;
+      const took = await this.winnings.check(roundIdBytes, base, rows);
+      if (took.ok) { this.built.delete(toHex(roundIdBytes)); return took; }
+    }
+    return null;
+  }
+
   /** A PEER takes the coordinator's plans only if each stands here - and then rebuilds with them. */
   async takeSends(roundIdBytes, proposed) {
     if (!this.winnings) return refuse('this signer node sends no winnings');
     const got = await this.planOf(roundIdBytes);
     if (!got.ok) return got;
     const checked = await this.winnings.check(roundIdBytes, got.base, proposed);
-    if (checked.ok) {
-      this.built.delete(toHex(roundIdBytes));
-      // AND THIS SIGNER NODE SETTLES NOW: its own attempt was refused while it waited for the plan, and its finality
-      // watch has nothing left to wait for. Measured: the proposer held ACCEPTED and this one NONE for 30 s.
-      const kept = this.round.lockSettlement(roundIdBytes);
-      if (!kept || kept.state !== ACCEPTED) setImmediate(() => { this.settle(roundIdBytes).catch(() => {}); });
-    }
+    if (checked.ok) this.built.delete(toHex(roundIdBytes));
     return checked;
   }
 
   /** The settled round's winnings, sent (winnings-send.js `sendAll`). */
   async sendWinnings(roundIdBytes) {
     if (!this.winnings || !this.round.sendPlansOf(roundIdBytes).length) return [];
-    // THE ROUND'S PROPOSER DRIVES ITS SENDS; the others answer its signing rounds and keep its preimage.
-    const row = this.round.get(roundIdBytes);
-    const nodes = row ? decodeRoundContract(new Uint8Array(row.contract)).nodes : [];
-    if ([...nodes].map((k) => toHex(k)).sort()[0] !== toHex(this.round.pubkey)) return [];
+    // THE SIGNER NODE WHOSE TURN IT IS DRIVES THE SENDS; the others answer its signing rounds and keep its preimage.
+    if (!(await this.turn(roundIdBytes)).mine) return [];
     // PLANNED BUT NOT YET SETTLED: the settlement is made first - the kept plan offered again - and the send follows it.
     // Measured: the proposer's one attempt met a peer whose run was not yet FINAL, the finality watch had nothing left
     // to wait for, and nothing tried again; the round sat unsettled.

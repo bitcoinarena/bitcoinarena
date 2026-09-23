@@ -60,6 +60,9 @@ walk(SRC + 'donation-choice.js');
 // AND ITS SET (M3.2 6e): the round's donation set from its signer nodes, checked. The
 // donation itself is paid by the player's own Client (payDonation).
 walk(SRC + 'donation-pay.js');
+// AND WHERE A WINNER'S WINNINGS ARE SENT (ruled 2026-09-23): the one question at the run's end, and the signed
+// address posted to every signer node that has not taken it. Nothing in the client imports it; the page calls it.
+walk(SRC + 'winnings.js');
 
 // One scope, so a name declared twice would collide. EVERY top-level name is
 // checked, not only the exported ones: two files with a private helper of the
@@ -201,6 +204,10 @@ out += '         parseConnection: parseConnection,\n';
 // that pretended it did is gone.
 out += '         walletBudget: walletBudget, budgetLine: budgetLine,\n';
 out += '         decodeRoundContract: decodeRoundContract,\n';
+// WHERE A WINNER'S WINNINGS ARE SENT (ruled 2026-09-23): the run-over hook's one question, the resend at every load,
+// and the address check the bridge's signing call makes before it signs anything.
+out += '         askForWinnings: askForWinnings, resendWinnings: resendWinnings, winningsAddressOf: winningsAddressOf,\n';
+out += '         winningsQualify: winningsQualify,\n';
 out += '         toHex: toHex, fromHex: fromHex };\n})();\n';
 out += 'if (typeof module !== "undefined") module.exports = BLWPCLIENT;\n';
 
