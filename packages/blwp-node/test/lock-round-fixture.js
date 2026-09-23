@@ -9,6 +9,7 @@ import { serve } from '../src/server.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { assumeAssigned } from './assignment.js';
 import { lockPort } from './lock-fixture.js';
+import { testInvoice } from './bolt11-fixture.js';
 import { b32, rand, RANDOMNESS, STAKE, WINDOW_MS, GENESIS_HASH, wordsAt, contractFor, say, secretScalar, opts, wait } from './window-fixture.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
 import { dealHandout, encodeHandout, handoutId } from '../../protocol/src/handout.js';
@@ -24,10 +25,49 @@ import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { refundKeyOf, lockFieldsToJson } from '../../protocol/src/stake-lock.js';
 import { toHex, sha256 } from '../../protocol/src/hash.js';
 
+// A WINNER NAMES A LIGHTNING ADDRESS (ruled 2026-09-23: only a qualifier who named one is paid; the others' shares
+// are pooled over those who did). `lnurl` is that address: it answers LUD-16/LUD-06 with real-format invoices whose
+// preimages it hands the fake port's gateway - or lies about the amount or the description hash, when told to.
+export const ADDRESS = 'winner@pay.example';
+export const METADATA = JSON.stringify([['text/plain', 'a BLWP winning']]);
+export function lnurl(port, { lieAmount = false, lieHash = false } = {}) {
+  const issued = [];
+  const fetchLike = async (url) => {
+    const u = new URL(url);
+    if (u.pathname.startsWith('/.well-known/lnurlp/'))
+      return { json: async () => ({ tag: 'payRequest', callback: `https://${u.host}/cb`, metadata: METADATA, minSendable: 1000, maxSendable: 100000000000 }) };
+    if (u.pathname === '/cb') {
+      const amountMsat = BigInt(u.searchParams.get('amount'));
+      const preimage = new Uint8Array(32).map(() => Math.floor(Math.random() * 256));
+      const paymentHash = sha256(preimage);
+      const invoice = testInvoice({ amountMsat: lieAmount ? amountMsat + 1n : amountMsat, paymentHash,
+        descriptionHash: lieHash ? sha256(new TextEncoder().encode('another metadata')) : sha256(new TextEncoder().encode(METADATA)) });
+      port.preimages.set(toHex(paymentHash), preimage);
+      issued.push({ host: u.host, amountMsat, paymentHash: toHex(paymentHash), invoice });
+      return { json: async () => ({ pr: invoice, routes: [] }) };
+    }
+    throw new Error(`no such LNURL path ${u.pathname}`);
+  };
+  return { fetchLike, issued };
+}
+
+/** The address, signed by the entry's session key, POSTed to every signer node in `daemons`. */
+export async function nameAddress(daemons, played, address = ADDRESS) {
+  const signed = new TextEncoder().encode(address);
+  const sig = ed25519.sign(signed, played.session);
+  for (const d of daemons) {
+    const r = await fetch(`http://127.0.0.1:${d.port}/payout-address?entry=${toHex(played.eid)}`,
+      { method: 'POST', body: Buffer.concat([Buffer.from(signed), Buffer.from(sig)]) });
+    assert.equal(r.status, 201, await r.text());
+  }
+}
+
 export const curve = { ...feldmanGroup, tweakPoint };
 
 export async function lockRound({ minScore = 1, stakeMsat = STAKE, port = lockPort(), serveOpts = {} } = {}) {
-  const mk = () => serve(openStore(':memory:'), { port: 0, ...opts, stakeLocks: port, poolCurve: curve, finality: { everyMs: 100 }, ...serveOpts });
+  const address = lnurl(port);
+  const mk = () => serve(openStore(':memory:'), { port: 0, ...opts, stakeLocks: port, poolCurve: curve, finality: { everyMs: 100 },
+    lnurlFetch: address.fetchLike, ...serveOpts });
   const a = await mk();
   const b = await mk();
   for (const [d, o] of [[a, b], [b, a]]) {
@@ -48,13 +88,14 @@ export async function lockRound({ minScore = 1, stakeMsat = STAKE, port = lockPo
   for (let pass = 0; pass < 2; pass++) for (const d of [a, b]) await d.dkg.run(c.nodes);
   const held = a.dkg.signerNodeFor(c.nodes);
   assert.equal(held.ok, true, held.why);
-  return { a, b, c, rid, port, claimPk: held.pool.groupPublicKey, close: async () => { await a.close(); await b.close(); } };
+  return { a, b, c, rid, port, lnurl: address, claimPk: held.pool.groupPublicKey, close: async () => { await a.close(); await b.close(); } };
 }
 
 // `feeLock` DEFAULTS TO TRUE (2026-09-21): on a federation that charges no base fee this round's gate mints
 // fee locks at every size measured, so an entry that brings none is refused at the door - which is pick (a)
 // working, not a failure. A test that is ABOUT that refusal builds its own entry below.
-export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false } = {}) {
+// `address`: the entry names the fixture's Lightning address at every signer node once it has played.
+export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, address = false } = {}) {
   const session = ed25519.utils.randomSecretKey();
   const preimage = secretScalar();
   const e = rand(32);
@@ -107,7 +148,9 @@ export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false } =
     assert.equal(await say(d.port, encodeInputBatch(input)), String(who.ticks));
     assert.equal((await say(d.port, signedMark)).length, SIGNED_RECEIPT_BYTES);
   }
-  return { eid, entry, fields, outpoint, feeOutpoint, session };
+  const played = { eid, entry, fields, outpoint, feeOutpoint, session };
+  if (address) await nameAddress([w.a, w.b], played, address === true ? ADDRESS : address);
+  return played;
 }
 
 export const standing = async (d, w) => (await fetch(`http://127.0.0.1:${d.port}/lock-settlement?round=${toHex(w.rid)}`)).json();

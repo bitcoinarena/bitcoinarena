@@ -15,49 +15,15 @@
 //         to the committee's refund key and is re-sent, through the next live gateway, to a fresh invoice - paid once.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ed25519 } from '@noble/curves/ed25519.js';
 
 import { lockPort, TWO_GATEWAYS } from './lock-fixture.js';
-import { lockRound, lockAndPlay, closeRound, untilSettled, standing } from './lock-round-fixture.js';
-import { testInvoice } from './bolt11-fixture.js';
+import { lockRound, lockAndPlay, closeRound, untilSettled, standing, lnurl as lnurlFixture, nameAddress as nameAddressAt } from './lock-round-fixture.js';
 import { WINNER, LOSER, wait } from './window-fixture.js';
 import { sendableInvoiceMsat, lowestLiveGateway } from '../../protocol/src/winnings-send.js';
 import { toHex, sha256, fromHex } from '../../protocol/src/hash.js';
 
-const ADDRESS = 'winner@pay.example';
-const METADATA = JSON.stringify([['text/plain', 'a BLWP winning']]);
-
-/** A Lightning address that answers LUD-16/LUD-06 with invoices it knows the preimages of - or lies, when told to. */
-function lnurl(port, { lieAmount = false, lieHash = false } = {}) {
-  const issued = [];
-  const fetchLike = async (url) => {
-    const u = new URL(url);
-    if (u.pathname === '/.well-known/lnurlp/winner')
-      return { json: async () => ({ tag: 'payRequest', callback: 'https://pay.example/cb', metadata: METADATA, minSendable: 1000, maxSendable: 100000000 }) };
-    if (u.pathname === '/cb') {
-      const amountMsat = BigInt(u.searchParams.get('amount'));
-      const preimage = new Uint8Array(32).map(() => Math.floor(Math.random() * 256));
-      const paymentHash = sha256(preimage);
-      const invoice = testInvoice({ amountMsat: lieAmount ? amountMsat + 1n : amountMsat, paymentHash,
-        descriptionHash: lieHash ? sha256(new TextEncoder().encode('another metadata')) : sha256(new TextEncoder().encode(METADATA)) });
-      port.preimages.set(toHex(paymentHash), preimage);
-      issued.push({ amountMsat, paymentHash: toHex(paymentHash), invoice });
-      return { json: async () => ({ pr: invoice, routes: [] }) };
-    }
-    throw new Error(`no such LNURL path ${u.pathname}`);
-  };
-  return { fetchLike, issued };
-}
-
-async function nameAddress(w, played) {
-  const signed = new TextEncoder().encode(ADDRESS);
-  const sig = ed25519.sign(signed, played.session);
-  for (const d of [w.a, w.b]) {
-    const r = await fetch(`http://127.0.0.1:${d.port}/payout-address?entry=${toHex(played.eid)}`,
-      { method: 'POST', body: Buffer.concat([Buffer.from(signed), Buffer.from(sig)]) });
-    assert.equal(r.status, 201, await r.text());
-  }
-}
+const nameAddress = (w, played) => nameAddressAt([w.a, w.b], played);
+const lnurl = (port, lie) => lnurlFixture(port, lie);
 
 const winningsAt = async (d, eid) => (await fetch(`http://127.0.0.1:${d.port}/winnings?entry=${toHex(eid)}`)).json();
 async function untilPaid(w, eid, ms = 30000) {

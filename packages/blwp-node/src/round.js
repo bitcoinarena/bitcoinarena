@@ -1839,6 +1839,14 @@ export class Round {
       txid: r.txid, outIdx: r.out_idx === null ? null : Number(r.out_idx), preimage: r.preimage, state: r.state, why: r.why }));
   }
 
+  /** A round's first send plans, dropped - only while every send of that round is still PLANNED (nothing went out). */
+  dropPlannedSends(roundIdBytes) {
+    const rid = Buffer.from(roundIdBytes);
+    const moved = this.db.prepare("SELECT COUNT(*) AS n FROM winnings_sends WHERE round_id = ? AND (state != 'PLANNED' OR attempt != 0)").get(rid).n;
+    if (moved) return 0;
+    return this.db.prepare("DELETE FROM winnings_sends WHERE round_id = ? AND attempt = 0 AND state = 'PLANNED'").run(rid).changes;
+  }
+
   /** Every round holding a send that is not PAID - what the winnings sweep visits. */
   roundsWithUnpaidSends() {
     const out = new Map();

@@ -28,7 +28,7 @@ import { serve } from '../src/server.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { assumeAssigned } from './assignment.js';
 import { lockPort } from './lock-fixture.js';
-import { lockRound, lockAndPlay, standing, closeRound, untilSettled, curve } from './lock-round-fixture.js';
+import { lockRound, lockAndPlay, standing, closeRound, untilSettled, curve, lnurl } from './lock-round-fixture.js';
 import { b32, rand, RANDOMNESS, STAKE, WINDOW_MS, WINNER, LOSER, GENESIS_HASH, wordsAt, contractFor, say, secretScalar, opts, wait } from './window-fixture.js';
 import { encodeRoundContract, decodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
 import { dealHandout, encodeHandout, handoutId } from '../../protocol/src/handout.js';
@@ -102,7 +102,7 @@ const key = (o) => `${toHex(o.txid)}:${o.outIdx}`;
 test('after the window the loser\'s lock is claimed by one committee signature, and the winner is paid 96000 msat from it - the real guardians\' 1000 msat per input and output taken out', async () => {
   const w = await lockRound();
   try {
-    const won = await lockAndPlay(w, WINNER);
+    const won = await lockAndPlay(w, WINNER, { address: true });
     const lost = await lockAndPlay(w, LOSER);
     assert.equal((await standing(w.a, w)).state, 'NONE', 'a settlement before the round closed');
     federationChargesItsRealFee(w);   // the arithmetic below is fedimintd's, and every entry is already in
@@ -116,7 +116,10 @@ test('after the window the loser\'s lock is claimed by one committee signature, 
     assert.equal(w.port.locks.has(key(lost.outpoint)), false, 'the loser\'s lock was not claimed');
     assert.equal(w.port.locks.has(key(won.outpoint)), true, 'the settlement spent the winner\'s own lock - that comes back by its forfeit');
     assert.equal(paid.length, 1, 'one payout contract, to the one qualifier');
-    assert.equal(toHex(paid[0].payoutPk), toHex(refundKeyOf(WINNER.key)), 'the payout is not keyed to the winner\'s own lock key');
+    // SENT, NOT COLLECTED (ruled 2026-09-23): the winner named an address, so its payout is the outgoing contract to
+    // its invoice, refunding to the committee - never a contract only the winner's key can move.
+    assert.ok(paid[0].sent, 'the qualifier was paid by a contract its key moves, not sent');
+    assert.equal(toHex(paid[0].payoutPk), toHex(w.claimPk), 'the sent payout does not refund to the committee');
     assert.equal(netStakeMsat(lost.entry), 98000n);
     assert.equal(paid[0].msat, 96000n, '98000 in, 1000 on the input, 1000 on the output');
     const sent = w.port.settlements[0];
@@ -138,7 +141,7 @@ test('after the window the loser\'s lock is claimed by one committee signature, 
 test('the signer nodes list the rounds they settled since a time with the keys each pays and its locks\' refund keys, so a device holding only the seed finds what it is owed', async () => {
   const w = await lockRound();
   try {
-    const won = await lockAndPlay(w, WINNER);
+    const won = await lockAndPlay(w, WINNER, { address: true });
     const lost = await lockAndPlay(w, LOSER);
     const settled = (since) => fetch(`http://127.0.0.1:${w.a.port}/settled?since=${since}`);
     const before = await (await settled(0)).json();
@@ -150,7 +153,9 @@ test('the signer nodes list the rounds they settled since a time with the keys e
     const mine = listed.rounds.find((r) => r.id === toHex(w.rid));
     assert.ok(mine, 'the settled round is not listed');
     assert.equal(mine.state, 'ACCEPTED');
-    assert.deepEqual(mine.payouts, [toHex(refundKeyOf(WINNER.key))], 'the listed payout keys are not the qualifier\'s');
+    // THE WINNING WAS SENT to the address the winner named (ruled 2026-09-23): the list names the payouts a seed would
+    // collect, and a sent winning is not one - the outgoing contract refunds to the committee, never to the seed.
+    assert.deepEqual(mine.payouts, [], 'a sent winning is listed for the seed to collect');
     assert.deepEqual([...mine.refunds].sort(), [toHex(refundKeyOf(WINNER.key)), toHex(refundKeyOf(LOSER.key))].sort(), 'the listed refund keys are not the two locks\'');
     assert.equal('contract' in mine, false, 'every listed round carries its contract');
     // AND THE CONTRACT OF A ROUND A DEVICE MATCHED, FROM /round: its id.
@@ -166,192 +171,6 @@ test('the signer nodes list the rounds they settled since a time with the keys e
   } finally { await w.close(); }
 });
 
-// W6 (the owner 2026-09-15): A SIGNER NODE KILLED INSIDE A LOCK SETTLEMENT RECOVERS TO THE RIGHT STATE ON
-// RESTART. Two signer nodes on store files, each reaching the federation through a port that can die with
-// the signer node: after the guardians took the settlement (a) or before it went (b). The signer nodes are then
-// started again on their files - on the same ports, so the round's signer node addresses still hold - and
-// sometimes cannot rebuild what they signed (c): the federation's fee rule changed, or the other signer node
-// is down so no loser's P opens. Identical bytes sent again are ACCEPTED (stake-lock-step3.sh c1),
-// so that is not the failure; a rebuild that differs or refuses is. Each case prints what the row
-// and the federation held before and after the restart.
-async function lockRoundOnDisk() {
-  const dir = mkdtempSync(join(tmpdir(), 'w6-'));
-  const port = lockPort();
-  const death = { mode: 'none' };
-  const sent = [];
-  const dying = (name) => ({ ...port, async settle(args) {
-    if (!args.signature) return port.settle(args);
-    if (death.mode === 'before') throw new Error(`signer node ${name} died before its settlement reached the guardians`);
-    const r = await port.settle(args);
-    sent.push({ signerNode: name, txid: r.txid, accepted: r.accepted, error: r.error,
-      signatureOverItsBytes: schnorr.verify(args.signature, fromHex(r.message), args.claimPk.subarray(1)) });
-    if (death.mode === 'after') throw new Error(`signer node ${name} died after the guardians answered ${r.accepted ? 'accepted' : 'refused'}`);
-    return r;
-  } });
-  const start = (name, at = 0) => serve(openStore(join(dir, `${name}.sqlite`)),
-    { port: at, ...opts, stakeLocks: dying(name), poolCurve: curve, finality: { everyMs: 100 } });
-  const w = { dir, port, death, sent, a: await start('a'), b: await start('b') };
-  const wire = () => {
-    for (const [d, o] of [[w.a, w.b], [w.b, w.a]]) {
-      if (!d || !o) continue;
-      const there = [`http://127.0.0.1:${o.port}`];
-      d.verifier.peers = there; d.payouts.peers = there; d.preimages.peers = there; d.dkg.peers = there;
-    }
-  };
-  wire();
-  w.c = { ...contractFor([w.a.round.pubkey, w.b.round.pubkey], BigInt(WINDOW_MS), [w.a, w.b].map((d) => `http://127.0.0.1:${d.port}`)),
-    custody: 'FEDERATION', federationId: TEST_FEDERATION_ID, minScore: 1, stakeMsat: STAKE };
-  w.rid = roundId(w.c);
-  for (const d of [w.a, w.b]) {
-    const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(w.c) });
-    assert.equal(r.status, 201, await r.text());
-    assumeAssigned(d.round, w.rid, w.c.nodes);
-  }
-  for (let pass = 0; pass < 2; pass++) for (const d of [w.a, w.b]) await d.dkg.run(w.c.nodes);
-  const held = w.a.dkg.signerNodeFor(w.c.nodes);
-  assert.equal(held.ok, true, held.why);
-  w.claimPk = held.pool.groupPublicKey;
-  // STARTED AGAIN ON ITS FILE AND ITS PORT; a signer node named in `down` stays down.
-  w.restart = async ({ down = [] } = {}) => {
-    const at = { a: w.a && w.a.port, b: w.b && w.b.port };
-    for (const n of ['a', 'b']) if (w[n]) { await w[n].close(); w[n] = null; }
-    for (const n of ['a', 'b']) if (!down.includes(n)) w[n] = await start(n, at[n]);
-    wire();
-  };
-  w.close = async () => { for (const n of ['a', 'b']) if (w[n]) await w[n].close(); rmSync(dir, { recursive: true, force: true }); };
-  return w;
-}
-const rowAt = (d, w) => (d ? d.round.lockSettlement(w.rid) : null);
-const heldAt = (w, o) => w.port.locks.has(key(o));
-const payoutAt = (w, txid, i = 0) => (txid ? w.port.locks.has(`${txid}:${i}`) : false);
-async function until(pred, ms = 10000) { for (const stop = Date.now() + ms; Date.now() < stop; await wait(100)) if (pred()) return true; return pred(); }
-// WHAT EACH SIGNER NODE'S ROW AND THE FEDERATION HOLD, printed before any assertion.
-const standingOf = (w, lost, signedTxid) => ({
-  a: rowAt(w.a, w) && { state: rowAt(w.a, w).state, txid: rowAt(w.a, w).txid.slice(0, 12), why: rowAt(w.a, w).why.slice(0, 90) },
-  b: rowAt(w.b, w) && { state: rowAt(w.b, w).state, txid: rowAt(w.b, w).txid.slice(0, 12) },
-  loserLockHeld: heldAt(w, lost.outpoint), payoutAtSignedTxid: payoutAt(w, signedTxid), submissions: w.sent.length,
-});
-async function playAndDie(w, mode) {
-  const won = await lockAndPlay(w, WINNER);
-  const lost = await lockAndPlay(w, LOSER);
-  w.death.mode = mode;
-  await closeRound(w);
-  await until(() => { const r = rowAt(w.a, w); return !!r && r.state === 'SUBMITTING' && (mode === 'before' || w.sent.length > 0); }, 30000);
-  await wait(300);
-  const signedTxid = rowAt(w.a, w) && rowAt(w.a, w).txid;
-  w.death.mode = 'none';
-  return { won, lost, signedTxid };
-}
-
-test('W6 (a): the guardians took the settlement and the signer nodes died before saving it; started again on their stores with the same plan, the signer nodes hold ACCEPTED', async () => {
-  const w = await lockRoundOnDisk();
-  try {
-    const { lost, signedTxid } = await playAndDie(w, 'after');
-    const before = standingOf(w, lost, signedTxid);
-    await w.restart();
-    await until(() => ['a', 'b'].every((n) => (rowAt(w[n], w) || {}).state !== 'SUBMITTING'));
-    const after = standingOf(w, lost, signedTxid);
-    console.log(`  (a) before the restart ${JSON.stringify(before)}`);
-    console.log(`  (a) after it          ${JSON.stringify(after)}`);
-    assert.equal(before.payoutAtSignedTxid, true, 'the guardians did not take it before the signer nodes died');
-    assert.equal(before.a.state, 'SUBMITTING');
-    assert.equal(after.a.state, 'ACCEPTED', after.a.why);
-    assert.equal(after.b.state, 'ACCEPTED');
-    assert.equal(after.loserLockHeld, false);
-    assert.equal(after.payoutAtSignedTxid, true);
-  } finally { await w.close(); }
-});
-
-test('W6 (a)+(c): the guardians took it, the signer nodes died before saving, and after the restart the plan rebuilt differs (the federation\'s fee rule changed) - the signer nodes hold ACCEPTED from the federation, and no signature goes out over other bytes', async () => {
-  const w = await lockRoundOnDisk();
-  try {
-    const { lost, signedTxid } = await playAndDie(w, 'after');
-    const before = standingOf(w, lost, signedTxid);
-    w.port.feeRule = { ppm: 0n, baseMsat: 1500n };
-    await w.restart();
-    await until(() => ['a', 'b'].every((n) => (rowAt(w[n], w) || {}).state !== 'SUBMITTING'));
-    const after = standingOf(w, lost, signedTxid);
-    const overOther = w.sent.filter((x) => !x.signatureOverItsBytes).length;
-    console.log(`  (a)+(c) fee rule changed, before ${JSON.stringify(before)}`);
-    console.log(`  (a)+(c) fee rule changed, after  ${JSON.stringify(after)}; signatures sent over other bytes: ${overOther}`);
-    assert.equal(before.payoutAtSignedTxid, true, 'the guardians did not take it before the signer nodes died');
-    assert.equal(after.a.state, 'ACCEPTED', `the money moved and signer node A holds ${after.a.state}: ${after.a.why}`);
-    assert.equal(after.b.state, 'ACCEPTED', `the money moved and signer node B holds ${after.b.state}`);
-    assert.equal(overOther, 0, 'a signature went out over bytes it does not sign');
-  } finally { await w.close(); }
-});
-
-test('W6 (a)+(c): the guardians took it, the signer nodes died before saving, and after the restart signer node B stays down so no loser\'s P opens - signer node A holds ACCEPTED from the federation', async () => {
-  const w = await lockRoundOnDisk();
-  try {
-    const { lost, signedTxid } = await playAndDie(w, 'after');
-    const before = standingOf(w, lost, signedTxid);
-    await w.restart({ down: ['b'] });
-    await until(() => (rowAt(w.a, w) || {}).state !== 'SUBMITTING', 8000);
-    const after = standingOf(w, lost, signedTxid);
-    console.log(`  (a)+(c) signer node B down, before ${JSON.stringify(before)}`);
-    console.log(`  (a)+(c) signer node B down, after  ${JSON.stringify(after)}`);
-    assert.equal(before.payoutAtSignedTxid, true, 'the guardians did not take it before the signer nodes died');
-    assert.equal(after.a.state, 'ACCEPTED', `the money moved and signer node A holds ${after.a.state}: ${after.a.why}`);
-  } finally { await w.close(); }
-});
-
-test('W6 (b): the signer nodes died before their settlement reached the guardians; started again, they submit it - the same txid - and hold ACCEPTED', async () => {
-  const w = await lockRoundOnDisk();
-  try {
-    const { lost, signedTxid } = await playAndDie(w, 'before');
-    const before = standingOf(w, lost, signedTxid);
-    await w.restart();
-    await until(() => ['a', 'b'].every((n) => (rowAt(w[n], w) || {}).state !== 'SUBMITTING'));
-    const after = standingOf(w, lost, signedTxid);
-    console.log(`  (b) before the restart ${JSON.stringify(before)}`);
-    console.log(`  (b) after it          ${JSON.stringify(after)}`);
-    assert.equal(before.loserLockHeld, true, 'the loser\'s lock was claimed before any submit');
-    assert.equal(before.payoutAtSignedTxid, false);
-    assert.equal(after.a.state, 'ACCEPTED', after.a.why);
-    assert.equal(after.loserLockHeld, false);
-    assert.equal(after.payoutAtSignedTxid, true, 'the settlement that went in is not the one signed');
-  } finally { await w.close(); }
-});
-
-test('W6 (b)+(c): the signer nodes died before sending, and after the restart the plan rebuilt differs - the signer nodes sign it afresh and hold ACCEPTED; no signature goes out over other bytes', async () => {
-  const w = await lockRoundOnDisk();
-  try {
-    const { lost, signedTxid } = await playAndDie(w, 'before');
-    const before = standingOf(w, lost, signedTxid);
-    w.port.feeRule = { ppm: 0n, baseMsat: 1500n };
-    await w.restart();
-    await until(() => ['a', 'b'].every((n) => (rowAt(w[n], w) || {}).state !== 'SUBMITTING'));
-    const now = rowAt(w.a, w);
-    const after = { ...standingOf(w, lost, signedTxid), payoutAtNewTxid: payoutAt(w, now && now.txid) };
-    const overOther = w.sent.filter((x) => !x.signatureOverItsBytes).length;
-    console.log(`  (b)+(c) fee rule changed, before ${JSON.stringify(before)}`);
-    console.log(`  (b)+(c) fee rule changed, after  ${JSON.stringify(after)}; signatures sent over other bytes: ${overOther}`);
-    assert.equal(overOther, 0, 'a signature went out over bytes it does not sign');
-    assert.equal(after.a.state, 'ACCEPTED', after.a.why);
-    assert.notEqual(now.txid.slice(0, 12), before.a.txid, 'the plan did not change, so this measures nothing');
-    assert.equal(after.loserLockHeld, false);
-    assert.equal(after.payoutAtNewTxid, true);
-  } finally { await w.close(); }
-});
-
-test('W6 mixed: the signer nodes died before sending and the loser\'s lock then left the federation by itself (a refund after expiry) with no payout stored - the signer nodes keep SUBMITTING with the reason and do not retry', async () => {
-  const w = await lockRoundOnDisk();
-  try {
-    const { lost, signedTxid } = await playAndDie(w, 'before');
-    const before = standingOf(w, lost, signedTxid);
-    w.port.locks.delete(key(lost.outpoint));
-    await w.restart();
-    await wait(3000);
-    const after = standingOf(w, lost, signedTxid);
-    console.log(`  mixed, before the restart ${JSON.stringify(before)}`);
-    console.log(`  mixed, after it          ${JSON.stringify(after)}`);
-    assert.equal(after.a.state, 'SUBMITTING', `a picture the federation does not settle was written ${after.a.state}`);
-    assert.match(after.a.why, /gone|payout/, 'the row does not say why it waits');
-    assert.equal(after.submissions, before.submissions, 'a settlement was retried over a picture that is neither in nor out');
-  } finally { await w.close(); }
-});
-
 // PICK (a) (the owner 2026-09-14): REFUSE AT THE DOOR - where the round's gate mints.
 test('where the round mints fee locks (1000 sat, the federation\'s own rule) a signer node refuses at the door an entry that brings none - not joined, no stake counted - and the round of those who brought theirs settles as before', async () => {
   const w = await lockRound({ stakeMsat: 1000000n });
@@ -364,14 +183,14 @@ test('where the round mints fee locks (1000 sat, the federation\'s own rule) a s
       assert.equal(s.stored, false);
       assert.equal(s.seen, false);
     }
-    const won = await lockAndPlay(w, WINNER, { feeLock: true });
+    const won = await lockAndPlay(w, WINNER, { feeLock: true, address: true });
     const lost = await lockAndPlay(w, LOSER, { feeLock: true });
     federationChargesItsRealFee(w);   // this round's numbers are fedimintd's own deductions
     await closeRound(w);
     const got = await untilSettled(w);
     assert.equal(got.state, 'ACCEPTED', got.why);
     const paid = [...w.port.payouts.values()];
-    const winner = paid.find((p) => toHex(p.payoutPk) === toHex(refundKeyOf(WINNER.key)));
+    const winner = paid.find((p) => p.sent);
     console.log(`  the round of those who brought theirs: ${got.why}; payouts ${paid.map((p) => String(p.msat)).join(', ')}`);
     assert.equal(winner.msat, 978000n);
     assert.deepEqual(paid.filter((p) => p !== winner).map((p) => p.msat), [18000n, 18000n]);
@@ -393,7 +212,7 @@ test('where the round mints, an entry that names a fee lock and never hands it o
       assert.equal(s.seen, false, 'a stake counted without its fee lock');
     }
     assert.match(half.played, /stake not seen/);
-    const won = await lockAndPlay(w, WINNER, { feeLock: true });
+    const won = await lockAndPlay(w, WINNER, { feeLock: true, address: true });
     const lost = await lockAndPlay(w, LOSER, { feeLock: true });
     federationChargesItsRealFee(w);   // this round's numbers are fedimintd's own deductions
     await closeRound(w);
@@ -410,7 +229,7 @@ test('where the round mints, an entry that names a fee lock and never hands it o
 test('where the round mints, a fee lock handed before its stake lock counts the stake once the stake lock comes: either order commits it, and the round settles as before', async () => {
   const w = await lockRound({ stakeMsat: 1000000n });
   try {
-    const won = await lockAndPlay(w, WINNER, { feeLock: true, feeFirst: true });
+    const won = await lockAndPlay(w, WINNER, { feeLock: true, feeFirst: true, address: true });
     const lost = await lockAndPlay(w, LOSER, { feeLock: true });
     for (const d of [w.a, w.b]) {
       assert.ok(d.round.stakeSeen(won.eid), 'the fee-lock-first stake was never counted');
@@ -420,7 +239,7 @@ test('where the round mints, a fee lock handed before its stake lock counts the 
     await closeRound(w);
     const got = await untilSettled(w);
     assert.equal(got.state, 'ACCEPTED', got.why);
-    const winner = [...w.port.payouts.values()].find((p) => toHex(p.payoutPk) === toHex(refundKeyOf(WINNER.key)));
+    const winner = [...w.port.payouts.values()].find((p) => p.sent);
     console.log(`  fee lock first: ${got.why}; the winner ${winner && winner.msat}`);
     assert.equal(winner.msat, 978000n);
   } finally { await w.close(); }
@@ -431,7 +250,7 @@ test('each player\'s fee lock is verified by both signer nodes and claimed in th
   const w = await lockRound();
   w.port.feeRule = { ppm: 0n, baseMsat: 0n };
   try {
-    const won = await lockAndPlay(w, WINNER, { feeLock: true });
+    const won = await lockAndPlay(w, WINNER, { feeLock: true, address: true });
     const lost = await lockAndPlay(w, LOSER, { feeLock: true });
     await closeRound(w);
     const got = await untilSettled(w);
@@ -444,7 +263,7 @@ test('each player\'s fee lock is verified by both signer nodes and claimed in th
     const signerNodeKeys = w.c.nodes.map((k) => toHex(refundKeyOf(k))).sort();
     assert.deepEqual(paid.filter((p) => signerNodeKeys.includes(toHex(p.payoutPk))).map((p) => [toHex(p.payoutPk), p.msat]).sort(),
       signerNodeKeys.map((k) => [k, 2000n]), 'each sitting signer node is not paid its 2000 msat (1% + 1% of 200000, both pools)');
-    assert.deepEqual(paid.filter((p) => toHex(p.payoutPk) === toHex(refundKeyOf(WINNER.key))).map((p) => p.msat), [98000n]);
+    assert.deepEqual(paid.filter((p) => p.sent).map((p) => p.msat), [98000n], 'the winner is not sent its 98000');
     assert.equal([won.feeOutpoint, lost.feeOutpoint, lost.outpoint].some((o) => w.port.locks.has(key(o))), false, 'a claimed lock is still held');
     assert.equal(w.port.locks.has(key(won.outpoint)), true, 'the winner\'s own stake lock was spent - it comes back by its forfeit');
   } finally { await w.close(); }
@@ -453,7 +272,7 @@ test('each player\'s fee lock is verified by both signer nodes and claimed in th
 test('under the real guardians\' 1000 msat per input and output the 2000 msat fee locks cannot reach a signer node: none is claimed, both stay held, the winner is still paid 96000', async () => {
   const w = await lockRound();
   try {
-    const won = await lockAndPlay(w, WINNER, { feeLock: true });
+    const won = await lockAndPlay(w, WINNER, { feeLock: true, address: true });
     const lost = await lockAndPlay(w, LOSER, { feeLock: true });
     federationChargesItsRealFee(w);   // the arithmetic below is fedimintd's, and every entry is already in
     await closeRound(w);
@@ -472,7 +291,7 @@ test('under the real guardians\' 1000 msat per input and output the 2000 msat fe
 test('a 1000 sat round\'s 20000 msat fee locks are claimed under the real guardians\' fees and every sitting signer node nets more than nothing', async () => {
   const w = await lockRound({ stakeMsat: 1000000n });
   try {
-    const won = await lockAndPlay(w, WINNER, { feeLock: true });
+    const won = await lockAndPlay(w, WINNER, { feeLock: true, address: true });
     const lost = await lockAndPlay(w, LOSER, { feeLock: true });
     federationChargesItsRealFee(w);   // the arithmetic below is fedimintd's, and every entry is already in
     await closeRound(w);
@@ -484,7 +303,7 @@ test('a 1000 sat round\'s 20000 msat fee locks are claimed under the real guardi
     const feeIn = sent ? sent.claims.filter((c) => [key(won.feeOutpoint), key(lost.feeOutpoint)].includes(key(c.outpoint))) : [];
     console.log(`  1000 sat: ${got.state} - ${got.why}`);
     console.log(`  stake 1000000 msat, fee lock ${won.entry.feeMsat} msat x ${feeIn.length}, input fees ${feeIn.length * 1000} msat, `
-      + `output fees ${signerNodeNets.length * 1000} msat, per-signer node net [${signerNodeNets.join(', ')}] msat; winner paid ${paid.filter((p) => toHex(p.payoutPk) === toHex(refundKeyOf(WINNER.key))).map((p) => p.msat).join(', ')}`);
+      + `output fees ${signerNodeNets.length * 1000} msat, per-signer node net [${signerNodeNets.join(', ')}] msat; winner sent ${paid.filter((p) => p.sent).map((p) => p.msat).join(', ')}`);
     assert.equal(got.state, 'ACCEPTED', got.why);
     assert.equal(won.entry.feeMsat, 20000n);
     assert.equal(feeIn.length, 2, 'both fee locks are claimed');

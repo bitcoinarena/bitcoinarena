@@ -3,7 +3,8 @@
  * WINNINGS ALWAYS SENT, ON A REAL FEDERATION (the owner 2026-09-21; ruled for FEDERATION 2026-09-23).
  *
  *   PROBE=<federation-hold-probe dir, SECOND_GATEWAY=1> LOCK_BIN=<blwp-stake-lock with gateways/send> WASM_PKG=<dir>
- *   INVITE=<invite> ALICE_RPC=<host:port> BOB_RPC=<host:port> CAROL_RPC=<host:port> LND_BIN=<dir> [PHASE=pass|fail|expiry]
+ *   INVITE=<invite> ALICE_RPC=<host:port> BOB_RPC=<host:port> CAROL_RPC=<host:port> LND_BIN=<dir> [PHASE=pass|fail|expiry|poolA|poolB|poolC]
+ *   [PLAYERS_FILE=<find-players.mjs lines: 5 delivered, distinct scores, then 1 wrecked>]   (poolA/poolC; else searched here)
  *   [BTC_RPCPORT=<the probe chain's rpc port> BTC_WALLET=<its wallet>]   (expiry only: blocks are mined past the contract)
  *     node packages/blwp-node/tools/winnings-probe.mjs
  *
@@ -21,6 +22,15 @@
  * (its outbound to the winner drained beforehand, by an ordinary payment), so it does not pay. Blocks are mined past the
  * contract's expiration; the signer nodes refund it to the committee and re-send it through the next live gateway to a
  * fresh invoice. Printed: both attempts, the first invoice never settled, the second SETTLED, one row each.
+ * THE POOL (ruled 2026-09-23: (ii), with (iii); never (i)). Only a qualifier who named an address is paid.
+ * POOL A: five qualifiers (two paying ranks) and a loser; every qualifier names the address but the TOP scorer. Its
+ * share is split over the addressed rows by the table's weights; printed: each qualifier's score, whether it named
+ * an address, what the settlement paid it, the pot claimed against the payouts, their fees and the input fees (no
+ * remainder), each addressed payout's invoice SETTLED once on alice, one PAID row per signer node; then a restart.
+ * POOL B: one qualifier and a loser, nobody names an address - no stake lock claimed, no invoice asked, both stake
+ * locks still in the federation, the fee locks settled.
+ * POOL C: as A with every qualifier addressed - the table's own split, one send per paying qualifier through the
+ * lowest-key live gateway, each SETTLED once.
  * It prints what it measured and decides nothing.
  */
 import { execFile, execFileSync } from 'node:child_process';
@@ -54,6 +64,7 @@ import { refundKeyOf } from '../../protocol/src/stake-lock.js';
 import { netStakeMsat } from '../../protocol/src/payout.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { feeLockPays } from '../../protocol/src/lock-settlement.js';
+import { lowestLiveGateway } from '../../protocol/src/winnings-send.js';
 import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
 
 const env = process.env;
@@ -144,7 +155,8 @@ if (typeof globalThis.window === 'undefined') globalThis.window = globalThis;
 const mem = new Map();
 const lc = await LockClient.join(env.INVITE, LockClient.federationIdOf(env.INVITE), toHex(rand(32)),
   { entries: () => JSON.stringify([...mem]), put: (k, v) => { mem.set(k, v); }, remove: (k) => { mem.delete(k); } });
-const rcv = JSON.parse(await lc.receive('2300000', ''));
+const POOL = /^pool[AC]$/.test(PHASE);
+const rcv = JSON.parse(await lc.receive(POOL ? '6600000' : '2300000', ''));
 await lncli('alice', 'payinvoice', '--force', rcv.invoice).catch(() => null);
 say_({ step: 'deposit', final: await lc.awaitReceive(rcv.operation), balanceMsat: await lc.balanceMsat() });
 const rule = JSON.parse(await lc.feeRule());
@@ -211,18 +223,36 @@ const playerLike = (who, want) => {
     }
   }
 };
-const W = await lockAndPlay(playerLike(WINNER, RUN_DELIVERED));
-const L = await lockAndPlay(playerLike(LOSER, RUN_WRECKED));
-say_({ step: 'played', W: { entry: toHex(W.eid).slice(0, 16), lock: W.locked }, L: { entry: toHex(L.eid).slice(0, 16), lock: L.locked } });
-
-// W NAMES THE ADDRESS ONCE, signed with W's session key - and nothing of the player's runs from here.
-const signed = new TextEncoder().encode(ADDRESS);
-const sig = ed25519.sign(signed, W.session);
-for (const d of [a, b]) {
-  const r = await fetch(`http://127.0.0.1:${d.port}/payout-address?entry=${toHex(W.eid)}`, { method: 'POST', body: Buffer.concat([Buffer.from(signed), Buffer.from(sig)]) });
-  if (r.status !== 201) throw new Error(`address: ${r.status} ${await r.text()}`);
+const nameAddress = async (played) => {
+  const signed = new TextEncoder().encode(ADDRESS);
+  const sig = ed25519.sign(signed, played.session);
+  for (const d of [a, b]) {
+    const r = await fetch(`http://127.0.0.1:${d.port}/payout-address?entry=${toHex(played.eid)}`, { method: 'POST', body: Buffer.concat([Buffer.from(signed), Buffer.from(sig)]) });
+    if (r.status !== 201) throw new Error(`address: ${r.status} ${await r.text()}`);
+  }
+};
+let W; let L; let Q = [];
+if (POOL) {
+  // FIVE QUALIFIERS WITH DISTINCT SCORES AND A LOSER: from find-players.mjs lines, or searched here.
+  const lines = env.PLAYERS_FILE ? readFileSync(env.PLAYERS_FILE, 'utf8').split('\n').filter(Boolean).map((x) => JSON.parse(x)) : [];
+  const asWho = (x) => ({ name: x.state, key: fromHex(x.key), worldSecret: fromHex(x.worldSecret), ticks: x.ticks, score: x.score });
+  const winners = lines.filter((x) => x.state === 'DELIVERED').map(asWho);
+  while (winners.length < 5) winners.push(playerLike(WINNER, RUN_DELIVERED));
+  const loser = lines.find((x) => x.state === 'WRECKED');
+  for (const who of winners.slice(0, 5)) Q.push({ ...(await lockAndPlay(who)), key: who.key, score: who.score });
+  L = await lockAndPlay(loser ? asWho(loser) : playerLike(LOSER, RUN_WRECKED));
+  const top = [...Q].sort((x, y) => y.score - x.score)[0];
+  for (const q of Q) { q.addressed = PHASE === 'poolC' || q !== top; if (q.addressed) await nameAddress(q); }
+  say_({ step: 'played', qualifiers: Q.map((q) => ({ entry: toHex(q.eid).slice(0, 16), score: q.score, addressed: q.addressed, lock: q.locked })),
+    L: { entry: toHex(L.eid).slice(0, 16), lock: L.locked } });
+  W = Q.find((q) => q.addressed);
+} else {
+  W = await lockAndPlay(playerLike(WINNER, RUN_DELIVERED));
+  L = await lockAndPlay(playerLike(LOSER, RUN_WRECKED));
+  say_({ step: 'played', W: { entry: toHex(W.eid).slice(0, 16), lock: W.locked }, L: { entry: toHex(L.eid).slice(0, 16), lock: L.locked } });
+  // W NAMES THE ADDRESS ONCE, signed with W's session key - and nothing of the player's runs from here. Not in POOL B.
+  if (PHASE !== 'poolB') { await nameAddress(W); say_({ step: 'address named', address: ADDRESS }); }
 }
-say_({ step: 'address named', address: ADDRESS });
 
 // EXPIRY: GATEWAY A STAYS LIVE AND CANNOT CARRY THE WINNING. Drained here, after every deposit of this round (a deposit
 // through A pays bob and refills his outbound - measured: it did, and A paid attempt 0), by an ordinary payment from bob
@@ -329,6 +359,51 @@ if (PHASE === 'pass') {
     secondInvoiceOnAlice: inv2 && { state: inv2.state, amtPaidMsat: inv2.amt_paid_msat, settleDate: inv2.settle_date },
     preimageHashesToSecondInvoice: rows && rows[0].send && rows[0].send.preimage ? toHex(sha256(fromHex(rows[0].send.preimage))) === second.paymentHash : null,
     rows: rows && rows.map((r) => r.winnings && r.winnings.state), addressAsked: asked.length });
+} else if (POOL) {
+  // EVERY ADDRESSED QUALIFIER WITH A PAYOUT, PAID ONCE; what the settlement moved, against the pot it claimed.
+  const moved = settled && settled.moved;
+  const paidAll = async () => {
+    const out = [];
+    for (const q of Q) out.push({ q, rows: await rowsOn(q.eid) });
+    return out;
+  };
+  let rows = await paidAll();
+  for (const stop = Date.now() + 240000; Date.now() < stop; await wait(2000)) {
+    rows = await paidAll();
+    // EVERY SENT PAYOUT OF THE SETTLEMENT PAID ON BOTH SIGNER NODES (measured: a row not yet made read as done).
+    const sent = moved ? moved.payouts.filter((p) => p.kind === 'sent').length : 0;
+    if (rows.filter(({ rows: r }) => r.every((x) => x.winnings && x.winnings.state === 'PAID')).length >= sent) break;
+  }
+  const settledOnAlice = async () => (await lncli('alice', 'listinvoices', '--max_invoices', '1000')).invoices.filter((i) => i.state === 'SETTLED').length;
+  const perQ = [];
+  for (const { q, rows: r } of rows) {
+    const send = r.map((x) => x.send).find((x) => x && x.txid) || r[0].send;
+    const inv = send ? await invoiceOf(send.paymentHash) : null;
+    perQ.push({ entry: toHex(q.eid).slice(0, 16), score: q.score, addressed: q.addressed, payoutMsat: send && send.payoutMsat,
+      owedMsat: send && send.owedMsat, invoiceMsat: send && send.invoiceMsat, gateway: send && send.gatewayUrl,
+      alice: inv && { state: inv.state, amtPaidMsat: inv.amt_paid_msat, htlcs: (inv.htlcs || []).length },
+      preimageHashes: send && send.preimage ? toHex(sha256(fromHex(send.preimage))) === send.paymentHash : null,
+      rows: r.map((x) => x.winnings && x.winnings.state), attempts: a.round.sendAttemptsOf(rid).filter((x) => toHex(x.entryId) === toHex(q.eid)).length,
+      ownLockInFederation: await port.status(q.outpoint) });
+  }
+  const g = await port.gateways();
+  say_({ step: 'pool', phase: PHASE, moved, qualifiers: perQ, lowestLiveGateway: (lowestLiveGateway(g.gateways) || {}).url,
+    loserLockInFederationAfter: await port.status(L.outpoint), addressAsked: asked.length });
+  // RESTART both signer nodes on their stores; nothing may be paid twice.
+  const before = { asked: asked.length, settled: await settledOnAlice() };
+  await a.close(); await b.close();
+  [a, b] = await up();
+  await wait(30000);
+  const after = { asked: asked.length, settled: await settledOnAlice() };
+  say_({ step: 'restart', before, after, settlement: (await standing(a)).state,
+    rows: await Promise.all(Q.map(async (q) => (await rowsOn(q.eid)).map((r) => r.winnings && r.winnings.state))) });
+} else if (PHASE === 'poolB') {
+  await wait(20000);
+  const s = await standing(a);
+  const g = await port.gateways();
+  say_({ step: 'pool B', settlement: s.state, why: s.why, moved: s.moved, addressAsked: asked.length,
+    rows: (await rowsOn(W.eid)).map((r) => r.winnings), stakeLocksStillStored: { W: await port.status(W.outpoint), L: await port.status(L.outpoint) },
+    liveGateways: g.gateways.filter((x) => x.live).length });
 } else {
   await wait(20000);
   const rows = await rowsOn(W.eid);

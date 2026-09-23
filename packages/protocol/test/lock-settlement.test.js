@@ -17,6 +17,8 @@ const NO_FEES = { ppm: 0n, baseMsat: 0n };
 
 /** An entry at 100 sat, 2% fee, and the given donation. */
 const entry = (n, outcome, score, donationMsat = 0n) => ({ pubkey: pk(n), stakeMsat: 100000n, feeMsat: 2000n, donationMsat, outcome, score });
+// THE QUALIFIERS WHO NAMED A LIGHTNING ADDRESS (ruled 2026-09-23): only they are paid.
+const named = (...es) => new Set(es.map((e) => toHex(e.pubkey)));
 const lockFor = (e, n, amountMsat = 100000n - 2000n - e.donationMsat) =>
   [toHex(e.pubkey), { outpoint: { txid: b32(0x40 + n), outIdx: BigInt(n) }, amountMsat, refundPk: refund(n) }];
 
@@ -25,7 +27,7 @@ test('round 5\'s outcomes on locks: the 0% loser\'s 98000 msat is claimed, the 0
   const Z0 = entry(2, DELIVERED, 3);
   const PAGE = entry(3, FAILED, 0);
   const locks = new Map([lockFor(D2, 1), lockFor(Z0, 2), lockFor(PAGE, 3)]);
-  const s = lockSettlement({ roundId: RID, entries: [D2, Z0, PAGE], minScore: 1, locks, fees: NO_FEES });
+  const s = lockSettlement({ roundId: RID, entries: [D2, Z0, PAGE], minScore: 1, locks, fees: NO_FEES, addressed: named(D2, Z0) });
   assert.equal(s.ok, true, s.why);
   assert.deepEqual(s.claims.map((c) => [toHex(c.pubkey), c.amountMsat]), [[toHex(PAGE.pubkey), 98000n]]);
   assert.deepEqual(s.payouts.map((p) => [toHex(p.payoutPk), p.owedMsat, p.msat]), [[toHex(refund(2)), 98000n, 98000n]]);
@@ -39,7 +41,7 @@ test('the guardians\' fees come out of the pool: 0.1% on the claimed lock and on
   assert.equal(largestPayoutMsat(fees, 97902n), 97805n, '97805 + 97 = 97902, and 97806 + 97 is one too many');
   const W = entry(1, DELIVERED, 3);
   const L = entry(2, FAILED, 0);
-  const s = lockSettlement({ roundId: RID, entries: [W, L], minScore: 1, locks: new Map([lockFor(W, 1), lockFor(L, 2)]), fees });
+  const s = lockSettlement({ roundId: RID, entries: [W, L], minScore: 1, locks: new Map([lockFor(W, 1), lockFor(L, 2)]), fees, addressed: named(W) });
   assert.equal(s.ok, true, s.why);
   assert.deepEqual([s.poolMsat, s.inputFeesMsat, s.spendableMsat], [98000n, 98n, 97902n]);
   assert.deepEqual(s.payouts.map((p) => [p.owedMsat, p.msat, p.feeMsat]), [[98000n, 97805n, 97n]]);
@@ -55,7 +57,7 @@ test('two paying ranks share the fees pro rata to what each is owed, and every m
   const losers = [6, 7, 8].map((n) => entry(n, FAILED, 0));
   const all = [...qualifiers, ...losers];
   const locks = new Map(all.map((e, i) => lockFor(e, i + 1)));
-  const s = lockSettlement({ roundId: RID, entries: all, minScore: 1, locks, fees });
+  const s = lockSettlement({ roundId: RID, entries: all, minScore: 1, locks, fees, addressed: named(...qualifiers) });
   assert.equal(s.ok, true, s.why);
   assert.equal(s.claims.length, 3);
   assert.equal(s.poolMsat, 3n * 98000n);
@@ -63,10 +65,12 @@ test('two paying ranks share the fees pro rata to what each is owed, and every m
   assert.equal(s.forfeits.length, 5, 'every qualifier\'s own lock is forfeited back');
   assert.equal(s.payouts.reduce((t, p) => t + p.owedMsat, 0n), s.poolMsat, 'the table hands out exactly the claimed pool');
   assert.equal(s.inputFeesMsat + s.paidMsat + s.outputFeesMsat + s.unspentMsat, s.poolMsat, 'a millisatoshi was created or lost');
+  // THE DUST GOES TO THE FIRST ROW (ruled 2026-09-23): what the floors leave is paid, never left to the guardians -
+  // up to the one msat a proportional fee's step can make unplaceable in any output.
   assert.ok(s.unspentMsat >= 0n && s.unspentMsat < 2n, `the floors left ${s.unspentMsat} msat`);
   const [a, b] = [...s.payouts].sort((x, y) => (x.owedMsat > y.owedMsat ? -1 : 1));
   assert.ok(a.msat > b.msat, 'the higher rank is not paid more');
-  for (const p of s.payouts) assert.ok(p.msat + p.feeMsat <= (p.owedMsat * s.spendableMsat) / s.poolMsat, 'a payout took more than its part');
+  assert.ok(b.msat + b.feeMsat <= (b.owedMsat * s.spendableMsat) / s.poolMsat, 'the second row took more than its part');
   console.log(`  two qualifiers: pool ${s.poolMsat}, input fees ${s.inputFeesMsat}, payouts ${s.payouts.map((p) => `${p.msat}+${p.feeMsat}`).join(', ')}, unspent ${s.unspentMsat}`);
 });
 
@@ -85,7 +89,7 @@ test('a VOID entry\'s lock is never claimed, and a FORFEIT loser\'s is', () => {
   const W = entry(1, DELIVERED, 3);
   const F = entry(2, FORFEIT, 0);
   const V = entry(3, VOID, 0);
-  const s = lockSettlement({ roundId: RID, entries: [W, F, V], minScore: 1, locks: new Map([lockFor(W, 1), lockFor(F, 2), lockFor(V, 3)]), fees: NO_FEES });
+  const s = lockSettlement({ roundId: RID, entries: [W, F, V], minScore: 1, locks: new Map([lockFor(W, 1), lockFor(F, 2), lockFor(V, 3)]), fees: NO_FEES, addressed: named(W) });
   assert.equal(s.ok, true, s.why);
   assert.deepEqual(s.claims.map((c) => toHex(c.pubkey)), [toHex(F.pubkey)]);
   assert.deepEqual(s.payouts.map((p) => p.msat), [98000n]);
@@ -95,8 +99,9 @@ test('every signer node rebuilds the same transaction: the order of the entries 
   const fees = { ppm: 1000n, baseMsat: 3n };
   const all = [entry(1, DELIVERED, 900), entry(2, DELIVERED, 50), entry(3, FAILED, 0), entry(4, FORFEIT, 0)];
   const locks = new Map(all.map((e, i) => lockFor(e, i + 1)));
-  const one = lockSettlement({ roundId: RID, entries: all, minScore: 1, locks, fees });
-  const two = lockSettlement({ roundId: RID, entries: [...all].reverse(), minScore: 1, locks, fees });
+  const one = lockSettlement({ roundId: RID, entries: all, minScore: 1, locks, fees, addressed: named(all[0], all[1]) });
+  const two = lockSettlement({ roundId: RID, entries: [...all].reverse(), minScore: 1, locks, fees, addressed: named(all[1], all[0]) });
+  assert.equal(one.claims.length, 2, 'nothing was claimed, so nothing was compared');
   const shape = (s) => JSON.stringify({ c: s.claims.map((c) => [toHex(c.outpoint.txid), String(c.outpoint.outIdx), String(c.amountMsat)]),
     p: s.payouts.map((p) => [toHex(p.payoutPk), String(p.msat)]), n: toHex(s.nonce) });
   assert.equal(shape(two), shape(one));
@@ -124,7 +129,7 @@ test('every counted entry\'s 2000 msat fee lock is claimed in the same settlemen
   const V = entry(3, VOID, 0);
   const signerNodes = [SIGNER_NODE(1), SIGNER_NODE(2)];
   const s = lockSettlement({ roundId: RID, entries: [W, L, V], minScore: 1, fees: NO_FEES, contract: contractOf(signerNodes),
-    signerNodes: { gameVerify: signerNodes, settlement: signerNodes },
+    signerNodes: { gameVerify: signerNodes, settlement: signerNodes }, addressed: named(W),
     locks: new Map([lockFor(W, 1), lockFor(L, 2), lockFor(V, 3)]), feeLocks: new Map([feeLockFor(W, 1), feeLockFor(L, 2), feeLockFor(V, 3)]) });
   assert.equal(s.ok, true, s.why);
   assert.deepEqual(s.feeClaims.map((c) => toHex(c.pubkey)).sort(), [toHex(W.pubkey), toHex(L.pubkey)].sort(), 'the fee locks claimed are not exactly the counted entries\'');
@@ -144,7 +149,7 @@ test('under the real guardians\' 1000 msat per input and output, 100 sat rounds\
   const signerNodes = [SIGNER_NODE(1), SIGNER_NODE(2)];
   const s = lockSettlement({ roundId: RID, entries: [W, L], minScore: 1, fees: { ppm: 0n, baseMsat: 1000n }, contract: contractOf(signerNodes),
     signerNodes: { gameVerify: signerNodes, settlement: signerNodes }, locks: new Map([lockFor(W, 1), lockFor(L, 2)]),
-    feeLocks: new Map([feeLockFor(W, 1), feeLockFor(L, 2)]) });
+    feeLocks: new Map([feeLockFor(W, 1), feeLockFor(L, 2)]), addressed: named(W) });
   console.log(`  real fee rule: fee claims ${s.feeClaims.length}; hole ${s.feeHole && `${s.feeHole.poolMsat} msat pool, ${s.feeHole.inputFeesMsat} input fees, ${s.feeHole.owedMsat} owed`}; `
     + `signer nodes owed ${s.unpaid.filter((u) => /fee share/.test(u.why)).map((u) => u.owedMsat).join(', ')}; the winner still paid ${s.payouts.filter((p) => p.kind === 'qualifier').map((p) => p.msat).join(', ')}`);
   assert.equal(s.ok, true, s.why);
@@ -275,4 +280,117 @@ test('a round with losers and no qualifier: what the hold verdict decides, the l
   console.log(`  no qualifier: ok ${s.ok}, why ${s.why || '-'}`);
   assert.equal(s.ok, false, 'a settlement with nobody to pay was built');
   assert.match(s.why, /operator would keep 196000 msat: a pool of 196000 against 0 handed out/);
+});
+
+// THE POOL (RULED 2026-09-23, (ii) with (iii) - never (i)). Only a qualifier who named a Lightning address is paid;
+// an unaddressed qualifier's share is split over the addressed ones by the table's own weights renormalised over that
+// set, the dust to the first addressed row of the table; with nobody addressed no stake lock is claimed.
+const POOL_FEES = { ppm: 0n, baseMsat: 1000n };   // the guardians' measured rule
+const nineAndThree = () => {
+  const qualifiers = [900, 800, 700, 600, 500, 400, 300, 200, 100].map((score, i) => entry(i + 1, DELIVERED, score));
+  const losers = [10, 11, 12].map((n) => entry(n, FAILED, 0));
+  return { qualifiers, losers, all: [...qualifiers, ...losers] };
+};
+
+test('POOL A: an unaddressed qualifier\'s share is in the addressed payouts, by the table\'s weights renormalised; payouts and fees are the whole claimed pot; each addressed qualifier is paid once', () => {
+  const { qualifiers, all } = nineAndThree();
+  const locks = new Map(all.map((e, i) => lockFor(e, i + 1)));
+  const full = lockSettlement({ roundId: RID, entries: all, minScore: 1, locks, fees: POOL_FEES, addressed: named(...qualifiers) });
+  assert.equal(full.ok, true, full.why);
+  const rows = full.payouts.map((p) => toHex(p.pubkey));
+  assert.ok(rows.length >= 3, `the table pays ${rows.length} rows; case A needs an unaddressed one between two addressed`);
+  // THE TABLE'S OWN ORDER is the order of `winnings` rows: the highest score first.
+  const tableOrder = qualifiers.map((q) => toHex(q.pubkey)).filter((k) => rows.includes(k));
+  const [first, second, third] = tableOrder;
+  const addressed = new Set([first, third]);
+  const s = lockSettlement({ roundId: RID, entries: all, minScore: 1, locks, fees: POOL_FEES, addressed });
+  assert.equal(s.ok, true, s.why);
+  const owedOf = new Map(full.payouts.map((p) => [toHex(p.pubkey), p.owedMsat]));
+  const pooled = tableOrder.filter((k) => !addressed.has(k));
+  console.log(`  A: pool ${s.poolMsat}, input fees ${s.inputFeesMsat}; paid ${s.payouts.map((p) => `${toHex(p.pubkey).slice(0, 4)} ${p.msat}+${p.feeMsat}`).join(', ')}; `
+    + `pooled ${pooled.map((k) => `${k.slice(0, 4)} owed ${owedOf.get(k)}`).join(', ')}; unspent ${s.unspentMsat}`);
+  assert.deepEqual(s.payouts.map((p) => toHex(p.pubkey)).sort(), [first, third].sort(), 'someone other than the addressed qualifiers was paid');
+  assert.equal(new Set(s.payouts.map((p) => toHex(p.pubkey))).size, s.payouts.length, 'an addressed qualifier was paid twice');
+  assert.ok(pooled.includes(second));
+  for (const k of pooled) assert.ok(s.unpaid.some((u) => toHex(u.pubkey) === k && /named no Lightning address/.test(u.why)), 'an unaddressed qualifier is not named as pooled');
+  // THE SUM IS THE CLAIMED POT: every msat claimed is a payout, its fee, or an input fee - no guardian remainder.
+  assert.equal(s.inputFeesMsat + s.paidMsat + s.outputFeesMsat, s.poolMsat, 'the payouts and fees are not the claimed pot');
+  assert.equal(s.unspentMsat, 0n, 'a remainder was left for the guardians');
+  // THE UNADDRESSED SHARES ARE IN THE ADDRESSED PAYOUTS: each is paid more than its own table share, by the renormalised weights.
+  const w = owedOf.get(first) + owedOf.get(third);
+  const pay = new Map(s.payouts.map((p) => [toHex(p.pubkey), p]));
+  const ownShare = (k) => largestPayoutMsat(POOL_FEES, (owedOf.get(k) * full.spendableMsat) / full.poolMsat);
+  for (const k of [first, third]) assert.ok(pay.get(k).msat > ownShare(k), 'an addressed qualifier was not given the pooled shares');
+  assert.equal(pay.get(third).msat, largestPayoutMsat(POOL_FEES, (owedOf.get(third) * s.spendableMsat) / w), 'the second addressed row is not its renormalised weight');
+  const dust = s.spendableMsat - [...pay.values()].reduce((t, p) => t + p.msat + p.feeMsat, 0n);
+  assert.equal(dust, 0n);
+  assert.equal(pay.get(first).msat, largestPayoutMsat(POOL_FEES, (owedOf.get(first) * s.spendableMsat) / w)
+    + (s.spendableMsat - (owedOf.get(first) * s.spendableMsat) / w - (owedOf.get(third) * s.spendableMsat) / w), 'the dust did not go to the first addressed row');
+});
+
+test('POOL A, the dust: an uneven split\'s indivisible msat goes to the first addressed row of the table, never to a fee', () => {
+  const { qualifiers, all } = nineAndThree();
+  const locks = new Map(all.map((e, i) => lockFor(e, i + 1)));
+  const full = lockSettlement({ roundId: RID, entries: all, minScore: 1, locks, fees: NO_FEES, addressed: named(...qualifiers) });
+  const owed = new Map(full.payouts.map((p) => [toHex(p.pubkey), p.owedMsat]));
+  const [W1, , W3] = qualifiers.filter((q) => owed.has(toHex(q.pubkey)));
+  const s = lockSettlement({ roundId: RID, entries: all, minScore: 1, locks, fees: NO_FEES, addressed: named(W1, W3) });
+  assert.equal(s.ok, true, s.why);
+  const w = owed.get(toHex(W1.pubkey)) + owed.get(toHex(W3.pubkey));
+  const floor1 = (owed.get(toHex(W1.pubkey)) * s.poolMsat) / w;
+  const floor3 = (owed.get(toHex(W3.pubkey)) * s.poolMsat) / w;
+  const dust = s.poolMsat - floor1 - floor3;
+  const pay = new Map(s.payouts.map((p) => [toHex(p.pubkey), p.msat]));
+  console.log(`  dust: pool ${s.poolMsat} over weights ${owed.get(toHex(W1.pubkey))}:${owed.get(toHex(W3.pubkey))}; floors ${floor1}+${floor3}, dust ${dust} -> first row paid ${pay.get(toHex(W1.pubkey))}`);
+  assert.ok(dust > 0n, 'this split divides evenly, so it pins no dust');
+  assert.equal(pay.get(toHex(W1.pubkey)), floor1 + dust, 'the dust did not go to the first addressed row');
+  assert.equal(pay.get(toHex(W3.pubkey)), floor3);
+  assert.equal(s.paidMsat, s.poolMsat);
+  assert.equal(s.unspentMsat, 0n);
+});
+
+test('POOL B: no qualifier named an address - no stake lock is claimed, nothing to the guardians, each expires back; the fee locks still settle', () => {
+  const W = entry(1, DELIVERED, 3);
+  const L = entry(2, FAILED, 0);
+  const signerNodes = [SIGNER_NODE(1), SIGNER_NODE(2)];
+  const s = lockSettlement({ roundId: RID, entries: [W, L], minScore: 1, fees: NO_FEES, contract: contractOf(signerNodes),
+    signerNodes: { gameVerify: signerNodes, settlement: signerNodes }, locks: new Map([lockFor(W, 1), lockFor(L, 2)]),
+    feeLocks: new Map([feeLockFor(W, 1), feeLockFor(L, 2)]), addressed: new Set() });
+  console.log(`  B: stake claims ${s.claims.filter((c) => c.kind === 'stake').length}, qualifier payouts ${s.payouts.filter((p) => p.kind !== 'signer node').length}, fee claims ${s.feeClaims.length}; ${s.stakeWhy}`);
+  assert.equal(s.ok, true, s.why);
+  assert.equal(s.claims.filter((c) => c.kind === 'stake').length, 0, 'a loser\'s stake lock was claimed with nobody to send to');
+  assert.equal(s.payouts.filter((p) => p.kind !== 'signer node').length, 0);
+  assert.deepEqual([s.poolMsat, s.inputFeesMsat, s.unspentMsat], [0n, 0n, 0n], 'the guardians were left something of the stakes');
+  assert.match(s.stakeWhy, /no qualifier with a paying rank named a Lightning address/);
+  assert.equal(s.feeClaims.length, 2, 'the fee is owed whatever the winners named');
+  // AND WITHOUT FEE LOCKS: nothing at all is built.
+  const bare = lockSettlement({ roundId: RID, entries: [W, L], minScore: 1, fees: NO_FEES, locks: new Map([lockFor(W, 1), lockFor(L, 2)]) });
+  assert.equal(bare.ok, true, bare.why);
+  assert.equal(bare.claims.length, 0);
+  assert.equal(bare.payouts.length, 0);
+});
+
+test('POOL C: every qualifier named an address - the table is unchanged, each is one outgoing contract, and a signed plan refuses an addressed qualifier with no send', () => {
+  const { qualifiers, all } = nineAndThree();
+  const locks = new Map(all.map((e, i) => lockFor(e, i + 1)));
+  const addressed = named(...qualifiers);
+  const base = lockSettlement({ roundId: RID, entries: all, minScore: 1, locks, fees: POOL_FEES, addressed });
+  assert.equal(base.ok, true, base.why);
+  // THE TABLE UNCHANGED: every row but the first is exactly the pre-ruling split of the table's own share.
+  const inOrder = qualifiers.map((q) => base.payouts.find((p) => toHex(p.pubkey) === toHex(q.pubkey))).filter(Boolean);
+  for (const p of inOrder.slice(1)) assert.equal(p.msat, largestPayoutMsat(POOL_FEES, (p.owedMsat * base.spendableMsat) / base.poolMsat));
+  assert.equal(base.unspentMsat, 0n);
+  const COMMITTEE = refund(0xcc);
+  const sends = new Map(inOrder.map((p, i) => [toHex(p.pubkey), { paymentHash: toHex(b32(0x70 + i)), gatewayPk: toHex(refund(0x6a)).slice(2),
+    refundPk: COMMITTEE, expiration: 3000n }]));
+  const s = lockSettlement({ roundId: RID, entries: all, minScore: 1, locks, fees: POOL_FEES, addressed, sends, requireSends: true });
+  assert.equal(s.ok, true, s.why);
+  console.log(`  C: ${s.payouts.length} sent contracts, ${s.payouts.map((p) => p.msat).join(', ')}; unspent ${s.unspentMsat}`);
+  assert.deepEqual(s.payouts.map((p) => p.kind), inOrder.map(() => 'sent'));
+  assert.deepEqual(s.payouts.map((p) => [toHex(p.pubkey), p.msat]).sort(), base.payouts.map((p) => [toHex(p.pubkey), p.msat]).sort(), 'a send changed an amount');
+  for (const p of s.payouts) assert.equal(toHex(p.payoutPk), toHex(COMMITTEE), 'a winnings contract refunds to someone other than the committee');
+  const missing = new Map([...sends].slice(1));
+  const refused = lockSettlement({ roundId: RID, entries: all, minScore: 1, locks, fees: POOL_FEES, addressed, sends: missing, requireSends: true });
+  assert.equal(refused.ok, false);
+  assert.match(refused.why, /no accepted send/);
 });
