@@ -202,7 +202,9 @@ test('a Delivered run below the round\'s min_score is not a qualifier: its forfe
   // 1000, not 100: the fixture's winner delivers with score 5 since its driver started aiming at the core's own
   // GATE_X (window-fixture.js; the score was 12, then 367, then 34, and each number is the driver of its day -
   // MEASURED, never chosen). What this test pins is unchanged: a DELIVERED run under the round's minimum is
-  // not a qualifier, and the refusal says the score and the minimum out loud.
+  // not a qualifier, and the refusal says the score and the minimum out loud. Score 2 since 087b707f tightened the
+  // paying front (the owner 2026-09-23: FRONT_SCORE_SPAN 40 -> 36 m) - the same run, measured here in the node's own
+  // score, not a figure carried over from a core test.
   // it was 12, then 367), and the claim is about a DELIVERED run under the minimum.
   const w = await lockRound({ minScore: 1000 });
   try {
@@ -213,9 +215,9 @@ test('a Delivered run below the round\'s min_score is not a qualifier: its forfe
       got = await ask(w.a, w, winner.eid);
       if (!/before the result is final/.test(String(got.body))) break;
     }
-    console.log(`  a Delivered run, score 5, min_score 1000: ${got.status} ${String(got.body).slice(0, 120)}`);
+    console.log(`  a Delivered run, score 2, min_score 1000: ${got.status} ${String(got.body).slice(0, 120)}`);
     assert.equal(got.status, 409);
-    assert.match(String(got.body), /DELIVERED with score 5 and this round's minimum is 1000: not a qualifier/);
+    assert.match(String(got.body), /DELIVERED with score 2 and this round's minimum is 1000: not a qualifier/);
     assert.equal(w.a.round.forfeit(winner.eid), null);
   } finally { await w.close(); }
 });
