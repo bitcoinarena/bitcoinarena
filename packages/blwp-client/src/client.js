@@ -249,6 +249,9 @@ const CLOSED = 'closed: ';
 
 /** How long `finish` waits for the held ticks to go out before it ends the run anyway. */
 const FINISH_WAIT_MS = 300;
+// HOW OFTEN THE FINAL MARK IS OFFERED AGAIN to a signer node that has not receipted it - a cadence, not a timeout: the
+// window is the ruled one (from the ask until the settlement is combined, or the page leaves), and nothing ends it early.
+const FINAL_RELINK_EVERY_MS = 1000;
 /** The core's own words for a run that is over (core rules/gate.js RUN_DELIVERED 1, RUN_WRECKED 2, RUN_MISSED 3), as they read off the state. */
 const RUN_ENDING_WORDS = Object.freeze({ 1: 'DELIVERED', 2: 'WRECKED', 3: 'MISSED' });
 
@@ -714,6 +717,42 @@ export class Client {
     return f.running;
   }
 
+  /**
+   * THE FINAL MARK, RE-OFFERED (ruled 2026-09-23): the same object - its parent and tick the ones `finish` asked - to
+   * every signer node that has not receipted it, feed first, once a second, from the ask until every signer node
+   * holds it, the page leaves, or the round's settlement is combined. Never a second mark; never after the combine.
+   */
+  async #catchUpFinal() {
+    if (this.catchingUp) return this.catchingUp;
+    this.catchingUp = (async () => {
+      for (;;) {
+        const link = this.finalLink;
+        if (!link || this.leftPage) return 'left';
+        if (this.witnessed(link.id) >= this.nodes.length) return 'receipted';
+        if (await this.#combined()) return 'combined';
+        try {
+          const got = await this.#relink(link);
+          // WHAT A SIGNER NODE THAT HAS NOT RECEIPTED IT SAID, kept for the status line and a reader.
+          this.finalRelinkWhy = [...got.refused, ...got.unreached].join('; ') || null;
+        } catch (e) { this.finalRelinkWhy = e.message; }
+        this.finalRelinks = (this.finalRelinks || 0) + 1;
+        if (this.witnessed(link.id) >= this.nodes.length) return 'receipted';
+        await new Promise((r) => { const t = setTimeout(r, FINAL_RELINK_EVERY_MS); if (t.unref) t.unref(); });
+      }
+    })().then((why) => { this.finalCatchUp = why; this.catchingUp = null; return why; });
+    return this.catchingUp;
+  }
+
+  /** Whether the round's settlement is combined, as this client's own node answers it (none for a free round). */
+  async #combined() {
+    try {
+      const r = await fetch(`${this.base}/lock-settlement?round=${toHex(this.where.roundId)}`);
+      if (!r.ok) return false;
+      const s = await r.json();
+      return s && (s.state === 'SUBMITTING' || s.state === 'ACCEPTED');
+    } catch { return false; }
+  }
+
   /** Every peer's feed settled - for tests and for measuring the lag. */
   async awaitPeers() {
     for (;;) {
@@ -756,11 +795,18 @@ export class Client {
    * Each receipt is checked the way every receipt is, and when the committee
    * carries it `readReceipt` moves the head onto it.
    */
-  async #relink() {
-    const link = this.pendingLink;
-    const bases = [this.base, ...this.peers];
+  async #relink(link = this.pendingLink) {
+    // FEED FIRST, FOR THE FINAL MARK (ruled 2026-09-23): a peer behind on the inputs that mark commits to is fed from
+    // the first batch it never answered - its feed restarts here, not only on a new batch that will never come - and
+    // is offered the same mark only once it holds them. Nothing past the mark's tick exists to send: recording stopped.
+    let peers = this.peers;
+    if (link.final) {
+      for (const b of this.peers) if (this.peerFeed(b).ticks < link.tick) await this.#feed(b);
+      peers = this.peers.filter((b) => this.peerFeed(b).ticks >= link.tick);
+    }
+    const bases = [this.base, ...peers];
     const answers = await Promise.all([
-      this.send(link.bytes), ...this.peers.map((b) => this.sendPeer(b, link.bytes))]);
+      this.send(link.bytes), ...peers.map((b) => this.sendPeer(b, link.bytes))]);
     const refused = [];
     const unreached = [];
     answers.forEach((a, i) => {
@@ -771,8 +817,8 @@ export class Client {
       try { this.readReceipt(a, link.id); } catch (e) { refused.push(`${bases[i]}: ${e.message}`); }
     });
     const live = this.live(link.id);
-    if (live) { this.pendingLink = null; this.marksRelinked++; }
-    return { live, refused, unreached, tick: link.tick };
+    if (live && this.pendingLink && this.pendingLink.id === link.id) { this.pendingLink = null; this.marksRelinked++; }
+    return { live, refused, unreached, tick: link.tick, witnessed: this.witnessed(link.id) };
   }
 
   /** Sends every waiting mark whose inputs every node now holds. */
@@ -780,7 +826,7 @@ export class Client {
     if (!this.inputWaiters.length) return;
     const still = [];
     for (const w of this.inputWaiters) {
-      if (this.#holdsThrough(w.tick)) { clearTimeout(w.timer); w.resolve(true); } else still.push(w);
+      if (w.final ? this.nextTick >= w.tick : this.#holdsThrough(w.tick)) { clearTimeout(w.timer); w.resolve(true); } else still.push(w);
     }
     this.inputWaiters = still;
   }
@@ -956,20 +1002,22 @@ export class Client {
    * that had nothing to do with it.
    */
   /** A mark from a hash already taken - see `markHashed`. */
-  async mark(hex, { roundId, entryId, tick, inputChainHash = GENESIS }) {
+  async mark(hex, { roundId, entryId, tick, inputChainHash = GENESIS, final = false }) {
     const built = await markHashed(hex, {
       roundId, entryId, tick, previousHash: this.head, inputChainHash,
     }, this.sign);
+    // A FINAL MARK GOES ONLY TO THE PEERS THAT HOLD ITS INPUTS; the others get it, feed first, when they catch up.
+    const to = final ? this.peers.filter((b) => this.peerFeed(b).ticks >= tick) : this.peers;
     // TO EVERY COMMITTEE NODE AT ONCE, and each receipt checked on its own.
     // `readReceipt` counts the signer and moves the head only when the mark is
     // LIVE, so the next checkpoint names this one exactly when enough of the
     // committee holds it - on the Daily's 2-of-2, both.
     const [answer, ...theirs] = await Promise.all([
-      this.send(built.bytes), ...this.peers.map((b) => this.sendPeer(b, built.bytes))]);
+      this.send(built.bytes), ...to.map((b) => this.sendPeer(b, built.bytes))]);
     // A PEER THAT NEVER GOT IT IS `unreached`, NOT `refused` - see CLOSED.
     const refused = [];
     const unreached = [];
-    this.peers.forEach((base, i) => {
+    to.forEach((base, i) => {
       const a = theirs[i];
       if (typeof a === 'string') { (a.startsWith(CLOSED) ? unreached : refused).push(`${base}: ${a}`); return; }
       try { this.readReceipt(a, built.id); } catch (e) { refused.push(`${base}: ${e.message}`); }
@@ -991,8 +1039,14 @@ export class Client {
     // any node holds is remembered until the committee carries it, and no new
     // mark goes out before then - see `markNow`.
     if (live) this.pendingLink = null;
-    else if (this.witnessed(built.id) > 0) this.pendingLink = { id: built.id, bytes: built.bytes, tick };
-    return { ...built, answer: receipt ? 'receipted' : answer, receipt, refused, unreached, live };
+    else if (this.witnessed(built.id) > 0) this.pendingLink = { id: built.id, bytes: built.bytes, tick, final };
+    // THE FINAL MARK IS RE-OFFERED UNTIL EVERY SIGNER NODE HAS RECEIPTED IT - five of seven ends the ask, not the
+    // catch-up of a signer node still behind on its inputs - or the page leaves, or the settlement is combined.
+    if (final && this.witnessed(built.id) > 0) {
+      this.finalLink = { id: built.id, bytes: built.bytes, tick, final: true };
+      if (this.witnessed(built.id) < this.nodes.length) this.#catchUpFinal();
+    }
+    return { ...built, answer: receipt ? 'receipted' : answer, receipt, refused, unreached, live, sentTo: to.length + 1 };
   }
 
   async checkpoint(st, { roundId, entryId, tick, inputChainHash = GENESIS }) {
@@ -1642,7 +1696,9 @@ export class Client {
       }
       await this.awaitPublishes();
       let mark = null;
-      if (!this.ended && stateHash) { try { mark = await this.markNow(stateHash, tick); } catch { mark = null; } }
+      // THE RUN'S FINAL MARK (ruled 2026-09-23): sent to the nodes that already hold its inputs, not held for every
+      // peer - it has no successor, so no second child of its parent can follow it. See `markNow` and `#catchUpFinal`.
+      if (!this.ended && stateHash) { try { mark = await this.markNow(stateHash, tick, GENESIS, { final: true }); } catch { mark = null; } }
       const unsent = this.hold.length;
       if (!this.ended) {
         this.ended = true;
@@ -1990,7 +2046,7 @@ export class Client {
    * opposite and are never dropped while there is room: they are the
    * transcript.
    */
-  markNow(stateHash, tick, inputChainHash = GENESIS) {
+  markNow(stateHash, tick, inputChainHash = GENESIS, { final = false } = {}) {
     // A PEER WHOSE FEED STOPPED ON A REFUSAL IS TRIED AGAIN once a second,
     // here, so a peer that was briefly down catches up without a batch of its own.
     this.pumpPeers();
@@ -2023,9 +2079,14 @@ export class Client {
     // link would name a head the rest of the committee never had. The mark is
     // counted ("timed out N", naming who was behind and how far), the head
     // stays where every node has it, and the next mark tries again.
+    // THE RUN'S FINAL MARK IS THE ONE EXCEPTION (ruled 2026-09-23): it waits only for this client's own node to hold its
+    // inputs and goes to the nodes that hold them. Every other mark keeps the all-peers wait above and its timeout - it
+    // exists so two marks cannot name the same parent, and a final mark has no successor to be that second child. A
+    // peer that is behind is caught up afterwards, feed first, on the re-offer of this same mark (`#catchUpFinal`).
     const where = this.where;
-    const ready = this.#holdsThrough(tick) ? true : new Promise((resolve) => {
-      const w = { tick, resolve };
+    const holds = () => (final ? this.nextTick >= tick : this.#holdsThrough(tick));
+    const ready = holds() ? true : new Promise((resolve) => {
+      const w = { tick, final, resolve };
       w.timer = setTimeout(() => {
         this.inputWaiters = this.inputWaiters.filter((x) => x !== w);
         resolve(false);
@@ -2071,7 +2132,7 @@ export class Client {
           }
         }
         return this.mark(stateHash, {
-          roundId: where.roundId, entryId: where.entryId, tick, inputChainHash,
+          roundId: where.roundId, entryId: where.entryId, tick, inputChainHash, final,
         });
       }
       return {
@@ -2145,6 +2206,7 @@ export class Client {
 
   close() {
     this.stakeWatchStopped = true;
+    this.leftPage = true;              // the page left: the final mark is not re-offered any more
     if (this.sock) this.sock.close();
     for (const link of this.peerLinks.values()) if (link.sock) link.sock.close();
   }

@@ -438,7 +438,12 @@ export class Round {
     const b = decodeInputBatch(bytes);
     const round = this.get(b.roundId);
     if (!round) throw new Error('no such round');
-    if (round.state !== OPEN) throw new Error('the round is closed');
+    // AFTER THE CLOSE ONLY FOR A HELD-BACK FINAL MARK (ruled 2026-09-23): the batches that mark commits to - ticks
+    // before its tick - and nothing else. Any other batch after the close is refused as ever.
+    if (round.state !== OPEN) {
+      const held = this.heldFinalAsk(b.entryId);
+      if (!held || b.firstTick + b.ticks.length - 1 >= held.tick) throw new Error('the round is closed');
+    }
     const entry = this.db.prepare('SELECT round_id FROM entries WHERE entry_id = ?').get(b.entryId);
     if (!entry) throw new Error('no such entry');
     if (!same(new Uint8Array(entry.round_id), b.roundId)) throw new Error('entry is not in this round');
@@ -617,7 +622,11 @@ export class Round {
     const c = decodeCheckpoint(body);
     const round = this.get(c.roundId);
     if (!round) throw new Error('no such round');
-    if (round.state !== OPEN) throw new Error('the round is closed');
+    // AFTER THE CLOSE ONLY THE HELD-BACK FINAL MARK ITSELF, byte for byte (ruled 2026-09-23) - never another mark.
+    if (round.state !== OPEN) {
+      const held = this.heldFinalAsk(c.entryId);
+      if (!held || !same(new Uint8Array(held.mark), bytes)) throw new Error('the round is closed');
+    }
     const entry = this.db.prepare('SELECT round_id, contract FROM entries WHERE entry_id = ?')
       .get(c.entryId);
     if (!entry) throw new Error('no such entry');
@@ -1865,6 +1874,46 @@ export class Round {
   }
 
   /** Whether this signer node stores that mark in an entry's chain. */
+  /**
+   * THE RUN'S FINAL MARK THIS SIGNER NODE HOLDS BACK ITS CLOSE FOR (ruled 2026-09-23): a mark a peer holds and this node
+   * does not, over inputs this node is short of. While it is kept, the batch and checkpoint doors take, after the
+   * close, only that mark's batches and then that mark; dropped when the run is signed or the settlement is combined.
+   */
+  putHeldFinalAsk({ roundId, entryId, mark, tick }) {
+    this.db.prepare('INSERT INTO held_final_ask (entry_id, round_id, mark, tick, held_ms) VALUES (?, ?, ?, ?, ?) '
+      + 'ON CONFLICT(entry_id) DO NOTHING').run(Buffer.from(entryId), Buffer.from(roundId), Buffer.from(mark), Number(tick), this.now());
+  }
+
+  heldFinalAsk(entryIdBytes) {
+    const r = this.db.prepare('SELECT * FROM held_final_ask WHERE entry_id = ?').get(Buffer.from(entryIdBytes));
+    return r ? { entryId: new Uint8Array(r.entry_id), roundId: new Uint8Array(r.round_id), mark: new Uint8Array(r.mark), tick: r.tick } : null;
+  }
+
+  dropHeldFinalAsk(entryIdBytes) {
+    this.db.prepare('DELETE FROM held_final_ask WHERE entry_id = ?').run(Buffer.from(entryIdBytes));
+  }
+
+  /**
+   * THE RUN'S FINAL MARK, HELD HERE AND NOT YET CARRIED: this node's last mark of the run, at the end of the inputs it
+   * holds (so no input follows it - a mid-run mark never qualifies), with fewer receipts than the round needs. Its tick
+   * and id, or null. What a signer node that holds the final mark's ask waits on before its close signs (ruled 2026-09-23).
+   */
+  pendingFinalMark(roundIdBytes, entryIdBytes) {
+    const last = this.db.prepare('SELECT checkpoint_id, tick FROM checkpoints WHERE round_id = ? AND entry_id = ? ORDER BY tick DESC LIMIT 1')
+      .get(Buffer.from(roundIdBytes), Buffer.from(entryIdBytes));
+    if (!last) return null;
+    if (last.tick !== this.heldInputTicks(roundIdBytes, entryIdBytes)) return null;
+    const need = neededForRound(this.db, Buffer.from(roundIdBytes));
+    const have = this.receiptCount(last.checkpoint_id);
+    return have < need ? { tick: last.tick, receipts: have, need } : null;
+  }
+
+  /** The inputs this node holds for a run: one past its highest tick, 0 when none. */
+  heldInputTicks(roundIdBytes, entryIdBytes) {
+    const r = this.db.prepare('SELECT MAX(tick) AS t FROM ticks WHERE round_id = ? AND entry_id = ?').get(Buffer.from(roundIdBytes), Buffer.from(entryIdBytes));
+    return r && r.t !== null ? r.t + 1 : 0;
+  }
+
   holdsMark(checkpointIdBytes) {
     return !!this.db.prepare('SELECT 1 k FROM checkpoints WHERE checkpoint_id = ?').get(checkpointIdBytes);
   }

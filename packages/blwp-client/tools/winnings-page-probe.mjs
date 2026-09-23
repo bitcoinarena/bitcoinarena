@@ -270,8 +270,15 @@ try {
   const promptStub = (text) => { prompts.push(text); onPrompt(); return answer; };
   const hookCalls = [];
   const asks = [];
+  let deliveredAt = null;
   const pageHook = (word, runInfo) => {                       // index.html's BLWP_RUN_OVER, its winnings half
     hookCalls.push({ word: String(word), run: runInfo && { word: runInfo.word, score: runInfo.score, minScore: runInfo.minScore } });
+    // W: SIGNER NODE B STOPS THE MOMENT THE CORE SAYS DELIVERED - the finish's last batches and final mark still on
+    // their way - and comes back 7 s later (§10's window, ruled 2026-09-23: a 7 s outage fits inside it).
+    if (CASE === 'W' && deliveredAt === null) {
+      deliveredAt = Date.now(); round.b.close();
+      setTimeout(() => { round.restartB().then(() => { bBackAt = Date.now(); }); }, 7000);
+    }
     if (!runInfo) return;
     asks.push(CLIENT.askForWinnings({ run: runInfo, prompt: (t) => promptStub(t), storage: tab }));
   };
@@ -294,11 +301,28 @@ try {
   const first = load({}); const helpers = {};
   for (const k of Object.keys(first)) if (k.startsWith('$')) helpers[k.slice(1)] = first[k];
   const library = load(helpers);
+  let bBackAt = null;
   library.BlwpInit(0x5eed1234);
   if (library.BlwpNetStart(0, 6, 60) !== 1) throw new Error('the bridge would not start');
   for (let i = 0; i < 600 && !(Module.blwpNet.client && Module.blwpNet.client.where); i++) await wait(50);
   if (!Module.blwpNet.client) throw new Error(`the session never opened: ${Module.blwpNet.error}`);
   const eidHex = toHex(Module.blwpNet.where.entryId);
+  // THE PAGE'S TICK CLOCK: when (if ever) the page closes it, and when it last posted a tick.
+  const clockSeen = { closedAt: null, lastPostAt: null, lastPostTick: null };
+  if (Module.blwpTickClock) {
+    const c0 = Module.blwpTickClock.close.bind(Module.blwpTickClock); const p0 = Module.blwpTickClock.post.bind(Module.blwpTickClock);
+    Module.blwpTickClock.close = () => { if (clockSeen.closedAt === null) clockSeen.closedAt = Date.now(); return c0(); };
+    Module.blwpTickClock.post = (e, t, ms) => { clockSeen.lastPostAt = Date.now(); clockSeen.lastPostTick = t; return p0(e, t, ms); };
+  }
+  // EACH SIGNER NODE'S HELD CHECKPOINTS FOR THIS ENTRY, sampled: the final mark reached a node when its count reaches A's.
+  const heldMarks = async () => Promise.all(round.daemons.map(async (d) => {
+    try { const r = await realFetch(`${nodeUrl(d)}/checkpoints?round=${named.roundIdHex}&entry=${eidHex}`); return Number(r.headers.get('x-checkpoints')); }
+    catch { return 'down'; } }));
+  const marksTrace = [];
+  const heldTicksNow = async () => Promise.all(round.daemons.map(async (d) => {
+    try { const r = await realFetch(`${nodeUrl(d)}/transcript?round=${named.roundIdHex}&entry=${eidHex}`); await r.arrayBuffer(); return Number(r.headers.get('x-ticks')); }
+    catch { return 'down'; } }));
+  const sampler = setInterval(async () => { marksTrace.push({ ms: Date.now(), held: await heldMarks(), ticks: await heldTicksNow() }); }, 500);
   say_({ step: 'session', entry: eidHex.slice(0, 16), sessionKeyExtractable: false });
 
   // C: SIGNER NODE B GOES DOWN AS THE PLAYER ANSWERS - before the page signs and posts.
@@ -337,6 +361,8 @@ try {
     for (const a of asks.slice(1)) await a;
     say_({ step: 'reload with B up', bDownForMs: bDownAt ? Date.now() - bDownAt : null, postsNow: doorPosts.slice(before), reload, prompts: prompts.length, held: heldAddress() });
   } else {
+    // W: the page loads again once B is back, so the address reaches it as case C's reload does.
+    if (CASE === 'W') for (let i = 0; i < 40 && bBackAt === null; i++) await wait(250);
     const before = doorPosts.length;
     const reload = await pageLoad();
     pageHook('FINISHED', Module.blwpNet.winningsRun());
@@ -345,6 +371,11 @@ try {
   }
 
   // ---- CLOSE, FINAL, SETTLE, SEND. ----
+  // W: THE CLOSE COMES AFTER B'S CATCH-UP HAS HAD ITS CHANCE - 5 s after B is back, the spacing last-mark-window-probe.mjs
+  // measured the two-of-two with (CLOSE_AFTER_BACK_MS=0 closes at once, as the first W did: every node then refuses the
+  // re-offered mark "the round is closed").
+  if (CASE === 'W') { const after = Number(env.CLOSE_AFTER_BACK_MS ?? 5000); while (bBackAt === null || Date.now() < bBackAt + after) await wait(100); }
+  const closeSentAt = Date.now();
   await Promise.all(round.daemons.map((d) => tell(d.port, `close ${named.roundIdHex}`).catch((x) => x.message)));
   // THE CHAIN MOVES ON, as mainnet's does: past a minute with nothing settled, one block every 20 s, so the takeover
   // order (M3.3-19: seat k once the chain is k x 2 blocks past the round's beacon) can hand the round on.
@@ -355,6 +386,23 @@ try {
     if (Date.now() - closedAt > 60000 && Date.now() - lastMine > 20000) { cli('generatetoaddress', '1', cli('getnewaddress')); mined++; lastMine = Date.now(); }
   }
   say_({ step: 'blocks mined while waiting', mined, seconds: Math.round((Date.now() - closedAt) / 1000) });
+  if (CASE === 'W') {
+    clearInterval(sampler);
+    const combinedAt = settled ? Date.now() : null;
+    const rel = (t) => (t === null || deliveredAt === null ? null : t - deliveredAt);
+    const finalCount = Math.max(...marksTrace.flatMap((x) => x.held.filter(Number.isInteger)));
+    const bReached = marksTrace.find((x) => x.held[1] === finalCount);
+    say_({ step: 'window', deliveredAt: 0, bDownMs: 7000, bBackMs: rel(bBackAt), combinedMs: rel(combinedAt),
+      tickClock: { closedMs: rel(clockSeen.closedAt), lastPostMs: rel(clockSeen.lastPostAt), lastPostTick: clockSeen.lastPostTick },
+      finalMarkCount: finalCount, bReachedFinalMs: bReached ? rel(bReached.ms) : null,
+      reofferLandedBeforeCombine: !!(bReached && combinedAt && bReached.ms <= combinedAt),
+      heldAtBack: (marksTrace.find((x) => bBackAt && x.ms >= bBackAt) || {}).held || null, heldAtEnd: (marksTrace.at(-1) || {}).held || null,
+      bInputsCaughtUpMs: (() => { const top = Math.max(...marksTrace.flatMap((x) => (x.ticks || []).filter(Number.isInteger))); const hit = marksTrace.find((x) => x.ticks && x.ticks[1] === top); return hit ? rel(hit.ms) : null; })(),
+      closeSentMs: rel(closeSentAt),
+      clientView: (() => { const cl = Module.blwpNet.client; return { finalLink: cl.finalLink ? { tick: cl.finalLink.tick, witnessed: cl.witnessed(cl.finalLink.id), of: cl.nodes.length } : null,
+        finalRelinks: cl.finalRelinks || 0, finalRelinkWhy: String(cl.finalRelinkWhy || '').slice(0, 300), finalCatchUp: cl.finalCatchUp || (cl.catchingUp ? 'still running' : null), pendingLink: cl.pendingLink && cl.pendingLink.tick,
+        peers: cl.peerBatches().map((x) => ({ base: x.base.slice(-5), ticks: x.ticks, down: x.down, closed: x.closed, refused: x.refused, why: String(x.why || '').slice(0, 90) })) }; })() });
+  }
   const settledBefore = await settledOnAlice();
   let rows = null;
   if (CASE !== 'B') for (const stop = Date.now() + 180000; Date.now() < stop; await wait(2000)) {
@@ -388,7 +436,7 @@ try {
     say_({ step: 'restart', before, after, settledBeforeSends: settledBefore, rows: (await Promise.all(round.daemons.map(winningsAt))).map((r) => r.winnings && r.winnings.state) });
   }
   // ---- A DIFFERENT ADDRESS FOR THE SAME ENTRY: signed by the same session key, through the bridge's own call. ----
-  if (CASE === 'C') {
+  if (CASE === 'C' || CASE === 'W') {
     const other = `thief@127.0.0.1:${lnurlServer.address().port}`;
     const sig = await Module.blwpNet.winningsRun().signAddress(other);
     const body = new Uint8Array([...new TextEncoder().encode(other), ...sig]);
