@@ -191,6 +191,9 @@ test('nothing on a live round reads the constant seed, and the core is in the ro
       try {
       const cl = Module.blwpNet && Module.blwpNet.client;
       if (cl) { cl.ended = true; cl.close(); }  // ended, then closed: a plain close reads as a drop and reconnects for ever
+      // AND THE PAGE'S TICK CLOCK: a BroadcastChannel the bridge keeps for the page's life, which in Node is a live
+      // MessagePort - measured: all five tests passed in 3.3 s and the file never exited, held by three of them.
+      if (Module && Module.blwpTickClock) Module.blwpTickClock.close();
       } catch { /* gone */ }
     }
   } finally { await round.close(); }
@@ -270,6 +273,9 @@ test('once a round is joined, a later Init from C# cannot put the core back in t
     try {
         const cl = Module?.blwpNet?.client;
         if (cl) { cl.ended = true; cl.close(); }  // ended, then closed: a plain close reads as a drop and reconnects for ever
+        // AND THE PAGE'S TICK CLOCK: a BroadcastChannel the bridge keeps for the page's life, which in Node is a live
+        // MessagePort - measured: all five tests passed in 3.3 s and the file never exited, held by three of them.
+        if (Module && Module.blwpTickClock) Module.blwpTickClock.close();
     } catch { /* gone */ }
     await round.close();
   }
@@ -442,6 +448,9 @@ test('a join held open while the game steps publishes from the tick the core is 
     try {
       const cl = Module?.blwpNet?.client;
       if (cl) { cl.ended = true; cl.close(); }
+      // AND THE PAGE'S TICK CLOCK: a BroadcastChannel the bridge keeps for the page's life, which in Node is a live
+      // MessagePort - measured: all five tests passed in 3.3 s and the file never exited, held by three of them.
+      if (Module && Module.blwpTickClock) Module.blwpTickClock.close();
     } catch { /* gone */ }
     await round.close();
   }
