@@ -1889,7 +1889,7 @@ test('the seam banks more than the quiet lane for the same ground made good', ()
 
 test('ground far from the front pays nothing', () => {
   assert.equal(scoring.frontWeight(0, 0), ONE);
-  assert.equal(scoring.frontWeight(40 * ONE, 0), 0);
+  assert.equal(scoring.frontWeight(36 * ONE, 0), 0);
   assert.equal(scoring.frontWeight(62 * ONE, 0), 0);
   const at20 = scoring.frontWeight(20 * ONE, 0);
   assert.ok(at20 > ONE / 8 && at20 < ONE / 2, `20 m off the seam weighted ${at20 / ONE}`);
