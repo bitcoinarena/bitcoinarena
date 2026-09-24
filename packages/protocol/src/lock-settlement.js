@@ -216,8 +216,8 @@ export function lateSettlementNonce(roundId, entryId) {
  * returns at expiry); a late qualifier is not claimed (its stake comes back by its own forfeit, no share); and when
  * the first settlement paid nobody, nothing is claimed.
  */
-export function lateLockSettlement({ roundId, entryId, entry, lock, feeLock = null, shares, winnerLocks, fees,
-  signerNodes = null, contract = null }) {
+export function lateLockSettlement({ roundId, entryId, entry, lock, feeLock = null, shares, winnerLocks = new Map(), fees,
+  signerNodes = null, contract = null, sends = new Map(), requireSends = false }) {
   if (!fees || typeof fees.ppm !== 'bigint' || typeof fees.baseMsat !== 'bigint' || fees.ppm < 0n || fees.baseMsat < 0n)
     return refuse('the guardians\' fee rule is BigInt ppm and base msat, 0 or more');
   if (!entry) return refuse('there is no late entry to settle');
@@ -232,8 +232,6 @@ export function lateLockSettlement({ roundId, entryId, entry, lock, feeLock = nu
   const net = netStakeMsat(entry);
   if (lock.amountMsat !== net) return refuse(`the late loser's lock holds ${lock.amountMsat} msat and its entry's net stake is ${net}`);
   if (!(winnerLocks instanceof Map)) return refuse('the winners\' stake locks are a Map by player key');
-  for (const x of shares)
-    if (!winnerLocks.get(toHex(x.pubkey))) return refuse(`a winner's stake lock was never verified, so there is no key to pay: ${toHex(x.pubkey).slice(0, 16)}`);
 
   const inputFeesMsat = lnv2FeeMsat(fees, net);
   const spendableMsat = net - inputFeesMsat;
@@ -253,8 +251,25 @@ export function lateLockSettlement({ roundId, entryId, entry, lock, feeLock = nu
   const gross = (msat) => msat + lnv2FeeMsat(fees, msat);
   const dust = spendableMsat - split.reduce((t, x) => t + gross(x.msat), 0n);
   if (dust > 0n) split[0].msat = largestPayoutMsat(fees, gross(split[0].msat) + dust);
-  const payouts = split.map(({ row, msat }) => ({ pubkey: row.pubkey, payoutPk: winnerLocks.get(toHex(row.pubkey)).refundPk,
-    owedMsat: row.msat, msat, feeMsat: lnv2FeeMsat(fees, msat), kind: 'qualifier' }));
+  // SENT, WHERE A LATE SEND PLAN STANDS (slice C3b-2a): an outgoing contract to the winner's invoice, refunding to the
+  // committee claim key - so no winner's lock key is needed to pay it - for exactly the payout the split gives.
+  // Otherwise the base plan's pre-expired payout contract to the winner's own lock key (C3b-1), never signed where
+  // `requireSends` says the sends are required.
+  const payouts = [];
+  for (const { row, msat } of split) {
+    const send = sends instanceof Map ? sends.get(toHex(row.pubkey)) : null;
+    if (send && send.payoutMsat !== undefined && BigInt(send.payoutMsat) !== msat)
+      return refuse(`a send was planned for a ${send.payoutMsat} msat payout and this signer node's late payout is ${msat}: ${toHex(row.pubkey).slice(0, 16)}`);
+    if (send) {
+      payouts.push({ pubkey: row.pubkey, payoutPk: send.refundPk, owedMsat: row.msat, msat, feeMsat: lnv2FeeMsat(fees, msat), kind: 'sent',
+        sent: { paymentHash: String(send.paymentHash).toLowerCase(), gatewayPk: String(send.gatewayPk).toLowerCase(), expiration: BigInt(send.expiration) } });
+      continue;
+    }
+    if (requireSends) return refuse(`a winner the first settlement paid has no accepted late send, so nothing is built: ${toHex(row.pubkey).slice(0, 16)}`);
+    const wl = winnerLocks.get(toHex(row.pubkey));
+    if (!wl) return refuse(`a winner's stake lock was never verified, so there is no key to pay: ${toHex(row.pubkey).slice(0, 16)}`);
+    payouts.push({ pubkey: row.pubkey, payoutPk: wl.refundPk, owedMsat: row.msat, msat, feeMsat: lnv2FeeMsat(fees, msat), kind: 'qualifier' });
+  }
 
   const feePart = feeLock
     ? feeSettlement({ entries: [entry], feeLocks: new Map([[toHex(entry.pubkey), feeLock]]), signerNodes, contract, fees })

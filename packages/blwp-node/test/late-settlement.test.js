@@ -19,7 +19,9 @@ import { b32, WINNER, LOSER, wait } from './window-fixture.js';
 import { lateLockSettlement } from '../../protocol/src/lock-settlement.js';
 import { netStakeMsat, FAILED, FORFEIT } from '../../protocol/src/payout.js';
 import { refundKeyOf } from '../../protocol/src/stake-lock.js';
-import { toHex } from '../../protocol/src/hash.js';
+import { toHex, sha256 } from '../../protocol/src/hash.js';
+import { sendableInvoiceMsat, lowestLiveGateway } from '../../protocol/src/winnings-send.js';
+import { readFileSync, readdirSync } from 'node:fs';
 
 const LATE = { name: 'late', key: b32(6), worldSecret: b32(0xc1), ticks: 1000 };
 const key = (o) => `${toHex(o.txid)}:${o.outIdx}`;
@@ -83,7 +85,8 @@ async function claimedLate(outcome) {
       lateLockGone: !w.port.locks.has(key(late.outpoint)),
       stakeClaims: second ? second.claims.filter((c) => c.kind !== 'fee').map((c) => key(c.outpoint)) : null,
       feeClaims: second ? second.claims.filter((c) => c.kind === 'fee').map((c) => key(c.outpoint)) : null,
-      winnerPaid: second ? second.payouts.filter((p) => p.kind === 'qualifier').map((p) => [toHex(p.payoutPk), p.msat]) : null,
+      winnerPaid: second ? second.payouts.filter((p) => p.kind !== 'signer node').map((p) => [toHex(p.payoutPk), p.msat]) : null,
+      winnerSent: second ? second.payouts.filter((p) => p.kind !== 'signer node').map((p) => !!p.sent) : null,
       signerNodePayouts: second ? second.payouts.filter((p) => p.kind === 'signer node').length : null,
       firstUnchanged: JSON.stringify(w.port.settlements[0].payouts.map((p) => [toHex(p.payoutPk), p.msat]), (k, v) => (typeof v === 'bigint' ? String(v) : v))
         === JSON.stringify(firstPayouts, (k, v) => (typeof v === 'bigint' ? String(v) : v)),
@@ -97,8 +100,39 @@ async function claimedLate(outcome) {
     assert.equal(facts.lateLockGone, true);
     assert.deepEqual(facts.stakeClaims, [key(late.outpoint)]);
     assert.deepEqual(facts.feeClaims, [key(late.feeOutpoint)], 'the late fee lock was not claimed with it');
-    assert.deepEqual(facts.winnerPaid, want.payouts.map((p) => [toHex(p.payoutPk), p.msat]));
-    assert.equal(facts.winnerPaid[0][0], toHex(refundKeyOf(won.entry.playerPubkey)), 'not a payout contract to the winner\'s own key');
+    // SENT, NOT COLLECTED (RULED 2026-09-24, slice C3b-2a): exactly the base payout's msat, as an outgoing contract to the
+    // winner's invoice refunding to the committee claim key. (C3b-1 paid it by a contract to the winner's own lock key.)
+    assert.deepEqual(facts.winnerPaid, want.payouts.map((p) => [toHex(w.claimPk), p.msat]));
+    assert.deepEqual(facts.winnerSent, [true], 'the late winner was not paid by a send');
+    assert.equal(want.payouts[0].msat, 98000n, 'the late payout on the zero-fee federation is not the whole net stake');
+    // THE LATE SEND: invoice = 98000 less the lowest live gateway's own fee; PAID with the invoice's preimage; the first
+    // round's send still PAID at attempt 0; the winner paid exactly twice, once per transaction.
+    // THE SENDS FOLLOW THE ACCEPTED LATE SETTLEMENT: waited on until both signer nodes hold them PAID, a bounded while.
+    for (const stop = Date.now() + 15000; Date.now() < stop; await wait(200)) {
+      const rows = [w.a, w.b].map((d) => d.round.lateSendScope(late.eid).sendAttemptsOf(w.rid));
+      if (rows.every((r) => r.length && r.every((x) => x.state === 'PAID'))) break;
+    }
+    const gw = lowestLiveGateway((await w.port.gateways()).gateways);
+    const lateRows = [w.a, w.b].map((d) => d.round.lateSendScope(late.eid).sendAttemptsOf(w.rid));
+    const firstRows = [w.a, w.b].map((d) => d.round.sendAttemptsOf(w.rid).filter((r) => toHex(r.entryId) === toHex(won.eid)));
+    const sendFacts = {
+      invoiceMsat: lateRows[0].map((r) => r.invoiceMsat),
+      wantInvoiceMsat: sendableInvoiceMsat(98000n, gw.sendFeeDefault),
+      latePaid: lateRows.map((rows) => rows.map((r) => `${r.state}:${r.attempt}:${r.preimage && toHex(sha256(Uint8Array.from(Buffer.from(r.preimage, 'hex')))) === r.paymentHash}`)),
+      firstPaid: firstRows.map((rows) => rows.map((r) => `${r.state}:${r.attempt}`)),
+      paidRowsForWinner: firstRows[0].filter((r) => r.state === 'PAID').length + lateRows[0].filter((r) => toHex(r.entryId) === toHex(won.eid) && r.state === 'PAID').length,
+      lateHashIsTheOutput: lateRows[0].length === 1 && second.payouts.some((p) => p.sent && p.sent.paymentHash === lateRows[0][0].paymentHash),
+    };
+    console.log(`  FACTS (late ${outcome} send):`, JSON.stringify(sendFacts, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
+    assert.deepEqual(sendFacts.invoiceMsat, [sendFacts.wantInvoiceMsat]);
+    // 98000 LESS THE LOWEST LIVE GATEWAY'S OWN FEE (4000 msat + 6000 ppm): the largest invoice whose fee still fits.
+    const gwFee = (a) => 4000n + (a * 6000n) / 1000000n;
+    const inv = sendFacts.wantInvoiceMsat;
+    assert.ok(inv + gwFee(inv) <= 98000n && inv + 1n + gwFee(inv + 1n) > 98000n, `the invoice ${inv} is not 98000 less the gateway's own fee`);
+    assert.deepEqual(sendFacts.latePaid, [['PAID:0:true'], ['PAID:0:true']], 'the late send is not PAID with the invoice\'s preimage at both signer nodes');
+    assert.deepEqual(sendFacts.firstPaid, [['PAID:0'], ['PAID:0']], 'the first round\'s send changed');
+    assert.equal(sendFacts.paidRowsForWinner, 2, 'the winner is not paid exactly twice, once per transaction');
+    assert.equal(sendFacts.lateHashIsTheOutput, true, 'the late transaction does not commit to the late plan\'s payment hash');
     assert.ok(facts.signerNodePayouts > 0, 'the late fee lock paid no signer node');
     assert.equal(facts.firstUnchanged, true, 'the first settlement changed');
     assert.deepEqual(facts.after, ['claimed in the round\'s second settlement', 'claimed in the round\'s second settlement']);
@@ -107,6 +141,7 @@ async function claimedLate(outcome) {
     assert.equal(again.kept, true);
     await wait(600);
     assert.equal(w.port.settlements.length, 2, 'a second attempt submitted again');
+    assert.equal(w.a.round.lateSendScope(late.eid).sendAttemptsOf(w.rid).length, 1, 'a second sweep added a second late send row');
   } finally { await w.close(); }
 }
 
@@ -157,4 +192,24 @@ test('a late DELIVERED qualifier is in no second transaction: its stake comes ba
     assert.equal(forfeit.status, 200, forfeitSaid);
     assert.equal(w.a.settlements.lockAfterSettlement(w.rid, late.eid).why, 'a qualifier: its stake comes back by its own forfeit - stake back only, no share');
   } finally { await w.close(); }
+});
+
+// `finalityOf` IS A SERVE TEST AID ONLY (RULED the owner 2026-09-24): in blwp-node/src it is server.js's option, defaulting to
+// resultFinality, handed only to the LockSettlement it makes; LockSettlement's own option defaults to resultFinality too;
+// main.js - the daemon - never names it, and no other source passes one. A SOURCE-LEVEL PIN, named as such.
+test('finalityOf is an option only of server.js and settlement.js, each defaulting to resultFinality, and never named by main.js', () => {
+  const dir = new URL('../src/', import.meta.url);
+  const naming = readdirSync(dir).filter((f) => f.endsWith('.js') && readFileSync(new URL(f, dir), 'utf8').includes('finalityOf')).sort();
+  const server = readFileSync(new URL('server.js', dir), 'utf8');
+  const settlement = readFileSync(new URL('settlement.js', dir), 'utf8');
+  console.log('  FACTS (finalityOf):', JSON.stringify({ naming }));
+  // verify.js names it only as its own local alias of resultFinality itself - an import, not the option.
+  assert.deepEqual(naming, ['server.js', 'settlement.js', 'verify.js']);
+  const verify = readFileSync(new URL('verify.js', dir), 'utf8');
+  assert.match(verify, /import \{ resultFinality as finalityOf \} from '\.\/finality\.js';/);
+  assert.equal(/finalityOf\s*[:=]/.test(verify), false, 'verify.js takes or passes a finalityOf of its own');
+  assert.match(server, /\n  finalityOf = resultFinality,\n/);
+  assert.match(settlement, /finalityOf = resultFinality \} = \{\}\) \{/);
+  assert.equal((server.match(/finalityOf/g) || []).length, 3, 'server.js names finalityOf beyond its default, the settle pass and the LockSettlement it makes');
+  assert.equal(readFileSync(new URL('main.js', dir), 'utf8').includes('finalityOf'), false);
 });
