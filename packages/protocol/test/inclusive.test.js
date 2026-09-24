@@ -21,9 +21,10 @@ import { donationSetId as idOfDonationSet } from '../src/donation.js';
 import assert from 'node:assert/strict';
 import { toHex } from '../src/hash.js';
 import {
-  computePayoutTable, holdSettlement, invoiceMatchesEntry, netStakeMsat,
-  DELIVERED, FAILED, SETTLE, CANCEL,
+  computePayoutTable, netStakeMsat,
+  DELIVERED, FAILED,
 } from '../src/payout.js';
+import { lockActions, CLAIM, RETURN } from '../src/lock-action.js';
 import {
   nodeFeeTable, entryFeeMsat, feeMatchesEntry, GAME_VERIFY, SETTLEMENT,
 } from '../src/fee.js';
@@ -95,18 +96,11 @@ test("22A's 61-player round: 6,100 committed, 122 fee, 122 donated, 5,856 to the
  * would hand every winner their own fee back, and a loser's settle would put
  * the donation in the pool. Before 6e the net was the invoice refused.
  */
-test('100 committed, 2 fee, 2 donated: the hold is for 96, and nothing else is', () => {
+// (The hold invoice's own check - an invoice for exactly the net stake - is deleted with the hold (cut 6b, RULED
+// 2026-09-24); the stake lock carries the net stake, which is what is left of this test.)
+test('100 committed, 2 fee, 2 donated: the stake is 96, and nothing else is', () => {
   const entry = { stakeCommitment: b32(0x7a), stakeMsat: STAKE, feeMsat: FEE, donationMsat: 2000n };
   assert.equal(netStakeMsat(entry), 96000n);
-
-  const held = invoiceMatchesEntry({ paymentHash: b32(0x7a), amountMsat: 96000n, entry });
-  assert.equal(held.ok, true, held.why);
-
-  for (const amountMsat of [100000n, 98000n, 102000n, 104000n]) {
-    const said = invoiceMatchesEntry({ paymentHash: b32(0x7a), amountMsat, entry });
-    assert.equal(said.ok, false, `an invoice for ${amountMsat} stood against a 96000 hold`);
-    assert.match(said.why, /this entry holds 96000/);
-  }
 });
 
 /**
@@ -118,8 +112,8 @@ test('a loser settles 96 into the pool, and the winner is paid exactly that', ()
   const winner = entryOf(1, DELIVERED, { score: 500, donationMsat: 2000n });
   const loser = entryOf(2, FAILED, { donationMsat: 2000n });
 
-  const s = holdSettlement({ roundId: b32(9), minScore: 1, entries: [winner, loser] });
-  assert.deepEqual(s.actions.map((a) => a.action), [CANCEL, SETTLE]);
+  const s = lockActions({ roundId: b32(9), minScore: 1, entries: [winner, loser] });
+  assert.deepEqual(s.actions.map((a) => a.action), [RETURN, CLAIM]);
   assert.equal(s.poolMsat, 96000n, 'the pool took the fee or the donation with the stake');
   assert.equal(s.refundedMsat, 96000n, 'the winner s hold is their net stake');
   assert.equal(s.sharesMsat, 96000n);
@@ -154,10 +148,10 @@ test('qualifiers who staked different nets are paid by rank weight times net sta
 
   // AND THE HOLDS FOLLOW IT: the loser's net is settled into the pool, the
   // qualifiers' holds come back - no longer a refund of everybody.
-  const held = holdSettlement({ roundId: b32(9), minScore: 1, entries: [donor, ...others, loser] });
+  const held = lockActions({ roundId: b32(9), minScore: 1, entries: [donor, ...others, loser] });
   assert.equal(held.poolMsat, 98000n, 'the loser s net enters the pool');
   assert.equal(held.sharesMsat, 98000n);
-  assert.deepEqual(held.actions.map((a) => a.action), ['CANCEL', 'CANCEL', 'CANCEL', 'CANCEL', 'SETTLE']);
+  assert.deepEqual(held.actions.map((a) => a.action), ['RETURN', 'RETURN', 'RETURN', 'RETURN', 'CLAIM']);
 
   // TWO PAYING RANKS (five qualifiers): rank weights 4 and 3, times the nets
   // 93000 (the donor, first) and 98000 (second) - 372000 and 294000 of 666000.
@@ -216,7 +210,7 @@ test('every money path refuses an entry that names only its stake', () => {
   const bare = { pubkey: b32(1), outcome: DELIVERED, score: 1, stakeMsat: STAKE };
   assert.throws(() => computePayoutTable({ roundId: b32(9), entries: [bare] }),
     /names its stake, its fee and its donation/);
-  assert.throws(() => holdSettlement({ roundId: b32(9), entries: [bare] }),
+  assert.throws(() => lockActions({ roundId: b32(9), entries: [bare] }),
     /names its stake, its fee and its donation/);
   const w = winnings({ table: [{ pubkey: b32(1), amountMsat: STAKE }], stakes: [bare] });
   assert.equal(w.ok, false);

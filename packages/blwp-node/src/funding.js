@@ -46,7 +46,7 @@ export function operatorFunding({ named = () => [] } = {}) {
         // CAN THIS NODE HOLD THE STAKE: a paying round takes it as a lock in the federation it names,
         // which the signer node VERIFIES there (§23.1 step 5), so the node must reach that federation.
         // There is no other branch. The custody field has one value (§23.6, RULED 2026-09-22 22:59):
-        // the hold invoice that "needed Lightning" was THRESHOLD_LN, which does not exist, and a record
+        // the hold invoice that "needed Lightning" was the withdrawn Lightning custody, which does not exist, and a record
         // naming it does not parse - so no paying round reaches this line without a federation.
         return !!node.reachesFederation;
       }

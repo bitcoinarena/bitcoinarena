@@ -16,8 +16,9 @@ import {
   shareCommitment, shareOpensTo, checkHandout, FIELD, SHARES_NEEDED, SHARES_TOTAL,
 } from '../src/shares.js';
 import {
-  holdSettlement, SETTLE, CANCEL, DELIVERED, FORFEIT, VOID,
+  DELIVERED, FORFEIT, VOID,
 } from '../src/payout.js';
+import { lockActions, CLAIM, RETURN } from '../src/lock-action.js';
 import { toHex } from '../src/hash.js';
 
 const preimage = new Uint8Array(randomBytes(32));
@@ -317,11 +318,11 @@ test('the saboteur s stake pays the winner, and the operator takes none of it', 
   const winner = { entryId: b(1), pubkey: b(1), outcome: DELIVERED, score: 100, stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n };
   const saboteur = { entryId: b(2), pubkey: b(2), outcome: FORFEIT, score: 0, stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n };
 
-  const s = holdSettlement({ roundId: b(9), minScore: 1, entries: [winner, saboteur] });
+  const s = lockActions({ roundId: b(9), minScore: 1, entries: [winner, saboteur] });
   const said = new Map(s.actions.map((a) => [a.entry, a.action]));
 
-  assert.equal(said.get(saboteur), SETTLE, 'the saboteur s stake was handed back');
-  assert.equal(said.get(winner), CANCEL, 'the winner s stake entered the pool');
+  assert.equal(said.get(saboteur), CLAIM, 'the saboteur s stake was handed back');
+  assert.equal(said.get(winner), RETURN, 'the winner s stake entered the pool');
   assert.equal(s.poolMsat, 100000n);
   assert.equal(s.refundedMsat, 100000n, 'only the winner s own stake goes home');
   assert.equal(s.sharesMsat, 100000n);
@@ -330,7 +331,7 @@ test('the saboteur s stake pays the winner, and the operator takes none of it', 
 
   // and had it been VOID, the dealer would have had it back and the winner
   // nothing - which is the escape this classification closes
-  const asVoid = holdSettlement({
+  const asVoid = lockActions({
     roundId: b(9), minScore: 1, entries: [winner, { ...saboteur, outcome: VOID }],
   });
   assert.equal(asVoid.poolMsat, 0n);

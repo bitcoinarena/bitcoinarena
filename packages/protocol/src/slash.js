@@ -37,10 +37,8 @@ import {
 import { entryId } from './contracts.js';
 import { feeOwed, feeTableId } from './fee.js';
 import { decodePlayerResult, resultId, splitSignedResult, SIGNED_RESULT_BYTES } from './result.js';
-import {
-  computePayoutTable, payoutTableId, decodePayoutTable,
-  settlementAction, actionByte, actionOf, NOTHING,
-} from './payout.js';
+import { computePayoutTable, payoutTableId, decodePayoutTable } from './payout.js';
+import { lockAction, lockActionByte, lockActionOf, EXPIRE } from './lock-action.js';
 import { outcomeByte, outcomeOf } from './result.js';
 
 const hex = (b) => toHex(b);
@@ -74,7 +72,7 @@ export const TABLE_IS_NOT_F = 'TABLE_IS_NOT_F';
  * 5A.3 row 4: "Settlement action without the required 5-of-7 result and payout
  * signatures", proof "the settlement record".
  *
- * 23.2's table is the law and `settlementAction` is that table, so like row 3
+ * 23.2's table is the law and `lockAction` (lock-action.js) is that table, so like row 3
  * this needs no attesting party: the record's own published conditions are
  * recomputed and compared with what was done.
  */
@@ -582,9 +580,11 @@ export function payoutInputsId({ roundId, entries, minScore = 0 }) {
 /**
  * THE SETTLEMENT RECORD, 5A.3 row 4's proof.
  *
- * 23.2's table is the law: DELIVERED cancels on 5-of-7 settlement signatures,
- * FAILED and FORFEIT settle only on a FINAL result with 5 preimage shares and
- * 5-of-7 settlement signatures, and VOID needs nobody to act at all. The
+ * 23.2's table is the law (lock-action.js): DELIVERED returns its lock on 5-of-7
+ * settlement signatures, FAILED and FORFEIT are claimed only on a FINAL result
+ * with 5 preimage shares and 5-of-7 settlement signatures, and VOID needs nobody
+ * to act at all - the lock expires back. The action byte is LOCK_ACTIONS' order
+ * (CLAIM, RETURN, EXPIRE), the same bytes the hold invoice's names had (cut 6b). The
  * record is what a settlement node DID and the conditions it published for
  * having done it - the same shape row 3 uses, where the accusation is measured
  * against what the accused itself put its name to.
@@ -592,7 +592,7 @@ export function payoutInputsId({ roundId, entries, minScore = 0 }) {
  * The spec names no encoding for it, so this fills the type reserved above the
  * way the objection and the payout table did.
  *
- * THE ENTRY IS IN IT. A settlement action is about one player's hold invoice,
+ * THE ENTRY IS IN IT. A settlement action is about one player's stake lock,
  * and a record without the entry would be an action against no particular
  * money - and its signature would carry to any entry of the round.
  */
@@ -603,7 +603,7 @@ export function encodeSettlementRecord(r) {
   w.bytes32(r.roundId);
   w.bytes32(r.entryId);
   w.bytes32(r.nodePubkey);
-  w.u8(actionByte(r.action));
+  w.u8(lockActionByte(r.action));
 
   // WHAT THE NODE SAID IT HAD. Every one of 23.2's conditions, as the node
   // published them: the outcome it acted on, whether that player qualified,
@@ -624,7 +624,7 @@ export function decodeSettlementRecord(bytes) {
     roundId: r.bytes32(),
     entryId: r.bytes32(),
     nodePubkey: r.bytes32(),
-    action: actionOf(r.u8()),
+    action: lockActionOf(r.u8()),
     outcome: outcomeOf(r.u8()),
     qualifies: r.u8() === 1,
     state: r.str(),
@@ -644,7 +644,7 @@ export const settlementRecordId = (r) =>
  * "Settlement action without the required 5-of-7 result and payout signatures.
  * Proof: the settlement record."
  *
- * NOTHING IS INJECTED, as in row 3: `settlementAction` is 23.2's table and it
+ * NOTHING IS INJECTED, as in row 3: `lockAction` is 23.2's table and it
  * is in this package, so the check recomputes what the record's own published
  * conditions authorised and compares it with what was done. No attester, and
  * so no attester who could slash without cause.
@@ -652,13 +652,13 @@ export const settlementRecordId = (r) =>
  * TWO WAYS TO BE WRONG, and they are different offences of the same row:
  *   - the action was not authorised at all - the counts the node itself
  *     published do not meet 23.2's requirements
- *   - the action was not the one those conditions call for - settling where
- *     23.2 cancels, or acting at all on a VOID, which "needs nobody to act"
+ *   - the action was not the one those conditions call for - claiming where
+ *     23.2 returns, or acting at all on a VOID, which "needs nobody to act"
  *
  * AND ONLY MONEY LEAVING IS AN OFFENCE. A node that did LESS than it was
  * entitled to has taken nothing from anybody: 23.2's whole safety property is
  * that "the default path - nobody acting - is always the refund", so inaction
- * cannot be the thing a bond is taken for. NOTHING where a cancel was due
+ * cannot be the thing a bond is taken for. EXPIRE where a return was due
  * leaves the player their money by expiry, and slashing it would invert the
  * one direction the design is built to keep safe.
  */
@@ -695,7 +695,7 @@ export function slashHoldsOnSettlement({ proof, signedRecord, advert, committee 
   // victim.
   //
   // `transcriptHash` means "the object this offence is measured against", and
-  // for a settlement that is the entry whose hold invoice was acted on. The
+  // for a settlement that is the entry whose stake lock was acted on. The
   // player is left to the entry rather than repeated: this row names no player
   // directly, so the field is required to be empty instead of plausible.
   if (hex(proof.transcriptHash) !== hex(record.entryId))
@@ -711,7 +711,7 @@ export function slashHoldsOnSettlement({ proof, signedRecord, advert, committee 
     };
 
   // 23.2, recomputed from the node's OWN published conditions.
-  const due = settlementAction({
+  const due = lockAction({
     outcome: record.outcome,
     qualifies: record.qualifies,
     state: record.state,
@@ -719,7 +719,7 @@ export function slashHoldsOnSettlement({ proof, signedRecord, advert, committee 
     signatures: record.signatures,
   });
 
-  if (record.action === NOTHING)
+  if (record.action === EXPIRE)
     return {
       slashed: false,
       why: 'the node did nothing, and nobody acting is 23.2\'s refund path: '

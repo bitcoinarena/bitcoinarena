@@ -129,7 +129,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
                                      guardianOf = [],
                                      // A SECOND KIND OF ROUND KEPT OPEN BESIDE THE FIRST (the owner
                                      // 2026-09-15 12:54, option B): `{ stakeMsat, custody:
-                                     // 'THRESHOLD_LN' }` - a paying round on the same two signer nodes, its
+                                     // the withdrawn Lightning custody }` - a paying round on the same two signer nodes, its
                                      // stakes held by the committee's Lightning, no federation. None
                                      // by default: one kind of round, as before.
                                      paid = null,
@@ -411,7 +411,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // A LIGHTNING INVOICE READER, OPT-IN: the four BLWP_LND* settings, the same parse src/main.js uses. It
   // reads what a federation's LNv2 invoice commits to, and nothing else. There used to be far more here -
   // the committee's one Lightning endpoint holding the stakes, a preflight asking whether it could, and the
-  // chain's block pace read and re-read to size each hold's HTLC - and all of it was THRESHOLD_LN's hold
+  // chain's block pace read and re-read to size each hold's HTLC - and all of it was the withdrawn Lightning custody's hold
   // invoice, which does not exist (§23.6, RULED 2026-09-22 22:59).
   const ln = lightningFromEnv(process.env);
   if (!ln.ok) throw new Error(ln.why);

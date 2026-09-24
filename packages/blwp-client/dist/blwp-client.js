@@ -2646,8 +2646,8 @@ const isRefund = (outcome) => REFUNDS.includes(outcome);
  * sat, node fee 2, donation 2, "net game stake 96 sat -> the pool". "'Play for
  * 100' now means 100 leaves the wallet." So `stakeMsat` is the commitment -
  * the one number the player approves - and the fee and the donation come OUT
- * of it. What is left is what the hold invoice holds, what a loser's settle
- * puts in the pool, what a qualifier's cancel hands back, and what a
+ * of it. What is left is what the stake lock holds, what a loser's claim
+ * puts in the pool, what a qualifier's returned lock hands back, and what a
  * qualifier's share is weighted by.
  *
  * Until 6e this repo read 18's older sentence instead - fees "charged on top
@@ -2773,9 +2773,9 @@ function computePayoutTable({ roundId, entries, minScore = 0 }) {
   // and the table paid them ZERO, which with a settled hold is the operator
   // keeping it. With no loser in the round the pool is empty, the check below
   // was skipped, and nothing noticed. They are excluded from the pot instead:
-  // their hold is cancelled and the money never leaves them.
+  // their lock returns to them and the money never leaves them.
   //
-  // This set is returned, so `holdSettlement` cannot decide it differently.
+  // This set is returned, so `lockActions` (lock-action.js) cannot decide it differently.
   // Two places deciding which stakes move is two places to get it wrong.
   const keepsTheirStake = (e) => e.outcome === DELIVERED && e.score < minScore;
   const settling = activated.filter((e) => !keepsTheirStake(e));
@@ -2972,274 +2972,13 @@ function noQuorumOutcome({ signatures, needed, equivocationProven, state }) {
   };
 }
 
-/** What must happen to a hold invoice, section 23.2. */
-const SETTLE = 'SETTLE';       // release the preimage; the stake enters the pool
-const CANCEL = 'CANCEL';       // hand it back; can only return money to its owner
-const NOTHING = 'NOTHING';     // let it expire; the wallet is refunded automatically
-
-/** 5-of-7, the threshold on both preimage shares and settlement signatures. */
+/**
+ * 5-of-7, the threshold on both preimage shares and settlement signatures. What each outcome does to its stake lock
+ * under it is lock-action.js (§23.2): the hold invoice's vocabulary that stood here - its three actions and their wire
+ * bytes, its settle-or-cancel split, its state machine and its invoice check - is deleted with the custody it served
+ * (§23.6, RULED 2026-09-22 22:59; cut 6b, RULED 2026-09-24).
+ */
 const SETTLEMENT_THRESHOLD = 5;
-
-/**
- * The three actions on the wire. Order is protocol: it indexes `actionByte`,
- * and a record that encoded them by name would let two implementations spell
- * one action two ways.
- */
-const ACTIONS = [SETTLE, CANCEL, NOTHING];
-const actionByte = (action) => {
-  const i = ACTIONS.indexOf(action);
-  if (i < 0) throw new Error('unknown settlement action: ' + action);
-  return i;
-};
-const actionOf = (byte) => {
-  if (!ACTIONS[byte]) throw new Error('unknown settlement action byte: ' + byte);
-  return ACTIONS[byte];
-};
-
-/**
- * WHAT EACH OUTCOME DOES TO ITS HOLD INVOICE, AND WHAT IT TAKES TO DO IT.
- *
- * Section 23.2, and the shape of the table is the safety property:
- *
- *   DELIVERED (qualifying)  Cancel the HTLC -> the stake returns to the player
- *                           Requires 5-of-7 settlement signatures; "cancelling
- *                           can only return money to its owner"
- *   FAILED / FORFEIT        Settle the HTLC -> the stake enters the pool wallet
- *                           Requires a FINAL result, an elapsed window, no
- *                           valid objection, at least 5 preimage shares, and
- *                           5-of-7 settlement signatures
- *   VOID                    DO NOTHING. "The HTLC expires and the wallet is
- *                           refunded automatically."
- *
- * "The default path - nobody acting - is always the refund. That is what makes
- * infrastructure failure safe." So VOID is not a cancel: a cancel needs five
- * of seven signatures, and a refund that needed somebody to act would be a
- * refund an operator could withhold by doing nothing. Inaction has to be the
- * safe direction, and only SETTLE moves money away from the player.
- *
- * The conditions come in as facts already established elsewhere - `finality`
- * answers the first three, and the share and signature counts belong to the
- * settlement committee. Nothing is assumed true: a missing one is named.
- */
-function settlementAction({
-  outcome, qualifies = false, state, shares = 0, signatures = 0,
-  needed = SETTLEMENT_THRESHOLD,
-}) {
-  if (isRefund(outcome))
-    return {
-      action: NOTHING,
-      authorised: true,
-      missing: [],
-      why: 'the HTLC expires and the wallet is refunded automatically; nobody has to act',
-    };
-
-  if (outcome === DELIVERED) {
-    const missing = signatures >= needed
-      ? [] : [`${signatures} of ${needed} settlement signatures`];
-    return {
-      action: CANCEL,
-      authorised: !missing.length,
-      missing,
-      why: qualifies
-        ? 'the stake returns to the player, and cancelling can only return money to its owner'
-        : 'below the score, the stake was never at risk and returns to its owner',
-    };
-  }
-
-  // FAILED and FORFEIT: the only direction that takes money from a player, and
-  // the only one with five conditions on it.
-  const missing = [];
-  if (state !== 'FINAL') missing.push(`the result is ${state || 'not final'}`);
-  if (shares < needed) missing.push(`${shares} of ${needed} preimage shares`);
-  if (signatures < needed) missing.push(`${signatures} of ${needed} settlement signatures`);
-  return {
-    action: SETTLE,
-    authorised: !missing.length,
-    missing,
-    why: missing.length
-      ? 'the stake stays where it is until every condition is met'
-      : 'the stake enters the pool wallet',
-  };
-}
-
-/**
- * WHAT HAPPENS TO EACH PLAYER'S HELD STAKE, AND WHAT THE POOL IS MADE OF.
- *
- * Section 13C sends a VOID stake back "by letting the HTLC expire"; 23.2 says
- * which of the three things each outcome does. Only losers' stakes move: the
- * pool wallet is exactly the settled ones, and a qualifier's own stake never
- * leaves them - it comes back by cancelling their own invoice, and what they
- * are PAID from the pool is their winnings on top.
- *
- * That is why the equality below is over SHARES and not over amounts. The
- * table hands a qualifier `stake + share`; the stake half is their own money
- * returning, and only the share half comes out of the pool.
- */
-function holdSettlement({ roundId, entries, minScore = 0 }) {
-  const table = computePayoutTable({ roundId, entries, minScore });
-  const settles = new Set(table.settling);
-  const paidTo = new Map(table.table.map((r, i) => [i, r.amountMsat]));
-
-  const actions = entries.map((e) => {
-    const said = settlementAction({
-      outcome: e.outcome,
-      qualifies: e.outcome === DELIVERED && e.score >= minScore,
-      // the conditions themselves are the caller's to establish; this says
-      // which action each entry is FOR, which is what the pool depends on
-      state: 'FINAL', shares: SETTLEMENT_THRESHOLD, signatures: SETTLEMENT_THRESHOLD,
-    });
-    // A delivered player never has their stake settled, whatever the table's
-    // pot arithmetic says: 23.2 cancels it back to them.
-    const action = settles.has(e) && e.outcome !== DELIVERED ? SETTLE : said.action;
-    return { entry: e, action, why: said.why };
-  });
-
-  // WHAT EACH HOLD HOLDS is the net stake, so that is what a settle moves and
-  // what a cancel or an expiry hands back. The fee and the donation were never
-  // in a hold (23.5).
-  const poolMsat = actions
-    .filter((a) => a.action === SETTLE)
-    .reduce((s, a) => s + netStakeMsat(a.entry), 0n);
-  const refundedMsat = actions
-    .filter((a) => a.action !== SETTLE)
-    .reduce((s, a) => s + netStakeMsat(a.entry), 0n);
-
-  // What the pool actually hands out: each row's amount less the entry's own
-  // net stake, since that half never entered the pool.
-  //
-  // THE ROWS COME FROM THE TABLE, not from a second filter over the entries.
-  // They are matched to amounts BY INDEX, so a filter here that disagreed with
-  // the one there would line the wrong amount up against the wrong entry - and
-  // a mutant that changed only this one proved the two could drift without any
-  // test noticing.
-  const rows = table.activated;
-  let sharesMsat = 0n;
-  rows.forEach((e, i) => {
-    const amount = paidTo.get(i) || 0n;
-    const held = netStakeMsat(e);
-    sharesMsat += amount > held ? amount - held : 0n;
-  });
-
-  if (rows.length && poolMsat !== sharesMsat)
-    throw new Error(
-      `the operator would keep ${poolMsat - sharesMsat} msat: a pool of ${poolMsat} `
-      + `against ${sharesMsat} handed out`);
-
-  return {
-    actions, poolMsat, refundedMsat, sharesMsat, table,
-    settledMsat: poolMsat, paidMsat: sharesMsat,
-  };
-}
-
-/** Where a hold invoice can end up. */
-const HELD = 'HELD';           // in flight: accepted, in nobody's balance
-const SETTLED = 'SETTLED';     // the preimage was released; the pool has it
-const CANCELLED = 'CANCELLED'; // handed back on purpose; the payer has it
-const EXPIRED = 'EXPIRED';     // nobody acted; the payer has it
-
-/**
- * WHERE A HOLD ENDS UP, AS STATE RATHER THAN AS A WORD.
- *
- * 23.1: the HTLC is "in flight - accepted but not settled. It is in nobody's
- * balance." 23.2 gives each outcome one of three things to do to it, and 23.2
- * ends: "The default path - nobody acting - is always the refund. That is what
- * makes infrastructure failure safe."
- *
- * So the state machine has exactly one shape and it leans one way:
- *
- *   nobody acts            EXPIRED, whatever the outcome was. This is the
- *                          default and it returns the money.
- *   NOTHING (a VOID)       EXPIRED. Not CANCELLED - a cancel is an ACT, and it
- *                          needs five of seven; a refund that needed an act is
- *                          one an operator could withhold.
- *   SETTLE, authorised     SETTLED, and the pool has it
- *   CANCEL, authorised     CANCELLED, and the payer has it
- *   anything unauthorised  HELD - and a hold nobody may act on expires, which
- *                          is the same refund by another road
- *
- * NO INVOICE IS ISSUED HERE and none is settled: this says which end a hold
- * must reach. Reaching it is a Lightning endpoint, and everything about
- * `invoice` and `htlc` in this package was a comment until now.
- */
-function holdAfter({ action, authorised = false, nobodyActs = false }) {
-  if (![SETTLE, CANCEL, NOTHING].includes(action))
-    throw new Error(`${action} is not something that can be done to a hold`);
-
-  if (action === NOTHING || nobodyActs)
-    return {
-      state: EXPIRED,
-      hasIt: 'the payer',
-      why: action === NOTHING
-        ? 'the HTLC expires and the wallet is refunded: nobody has to act'
-        : 'nobody acted, and the default path is always the refund',
-    };
-
-  if (!authorised)
-    return {
-      state: HELD,
-      hasIt: 'nobody',
-      why: 'in flight, in nobody\'s balance, until every condition is met - and '
-        + 'if they never are, it expires back to the payer',
-    };
-
-  return action === SETTLE
-    ? { state: SETTLED, hasIt: 'the pool', why: 'the preimage was released' }
-    : { state: CANCELLED, hasIt: 'the payer', why: 'handed back to its owner' };
-}
-
-/**
- * SHOULD A PLAYER PAY THIS INVOICE?
- *
- * The last thing a player does before their money is in flight, and until now
- * nothing checked it. 23.1: the endpoint "issues a hold invoice for
- * `payment_hash`", the player's wallet pays it, and from that moment the stake
- * is committed - so an invoice for the wrong hash or the wrong amount is a
- * mistake that cannot be taken back.
- *
- *   the payment hash   must be the `stakeCommitment` the entry contract
- *                      already carries. An invoice for any other hash commits
- *                      the money to a preimage the committee's shares do not
- *                      reconstruct, so nobody can ever settle it and nobody
- *                      can prove why.
- *   the amount         must be the NET stake exactly - `stakeMsat` less the
- *                      fee and the donation that come out of it (22A). Over,
- *                      and the hold carries money that belongs to the fee or
- *                      the donation and would be cancelled back to a winner
- *                      with it; under, and the pool the winner is paid from
- *                      is short.
- *
- * ALL OF IT COMES OFF THE SIGNED ENTRY CONTRACT, so this needs nothing from a
- * node and takes nobody's word: the player is checking an invoice against the
- * thing they themselves signed. The comparison is exact rather than a floor.
- *
- * IT DOES NOT ISSUE, SETTLE OR CANCEL ANYTHING. There is no Lightning here.
- */
-function invoiceMatchesEntry({ paymentHash, amountMsat, entry }) {
-  if (!entry || !(entry.stakeCommitment instanceof Uint8Array))
-    return { ok: false, why: 'no entry contract to check the invoice against' };
-  if (!(paymentHash instanceof Uint8Array) || paymentHash.length !== 32)
-    return { ok: false, why: 'a payment hash is 32 bytes' };
-  if (typeof amountMsat !== 'bigint')
-    return { ok: false, why: 'an amount is BigInt millisatoshi' };
-
-  const hex = (u8) => [...u8].map((b) => b.toString(16).padStart(2, '0')).join('');
-  if (hex(paymentHash) !== hex(entry.stakeCommitment))
-    return {
-      ok: false,
-      why: `that invoice is for ${hex(paymentHash)}, and this entry commits to `
-        + `${hex(entry.stakeCommitment)}: nobody could ever settle it`,
-    };
-  let held;
-  try { held = netStakeMsat(entry); }
-  catch (e) { return { ok: false, why: e.message }; }
-  if (amountMsat !== held)
-    return {
-      ok: false,
-      why: `that invoice asks ${amountMsat} msat and this entry holds ${held}: a stake of `
-        + `${entry.stakeMsat} less a fee of ${entry.feeMsat} and a donation of ${entry.donationMsat}`,
-    };
-  return { ok: true, why: 'the hash and the amount are the ones this entry signed' };
-}
 
 // ---- blwp-client/src/nwc.js
 // THE PLAYER'S WALLET, REACHED OVER NOSTR WALLET CONNECT (NIP-47).
@@ -7765,6 +7504,142 @@ function lockFromClient(answer, { point, hash, claimPk, refundPk }) {
   };
 }
 
+// ---- protocol/src/lock-action.js
+// WHAT EACH OUTCOME DOES TO ITS STAKE LOCK, AND WHAT IT TAKES TO DO IT (§23.1, §23.2 - the federation's custody, the one
+// this network has: §23.6, RULED the owner 2026-09-22 22:59).
+//
+// A player's stake is a lock in the round's federation: LNv2's OutgoingContract, claimed by the preimage and the claim
+// key, forfeited by the claim key to the refund key, refunded after its expiry by the refund key alone. So a lock has
+// three ends, and each outcome sends it to one of them:
+//
+//   CLAIM    a loser's lock (FAILED, FORFEIT, a DELIVERED run below the score does not lose it) is claimed into the
+//            round's settlement: the preimage (five of seven shares, §23.4) and the claim key's signature. The only
+//            end that takes money from a player, and the only one with five conditions on it.
+//   RETURN   a qualifier's own lock is forfeited back to its refund key (forfeit.js, W5b) on 5-of-7 settlement
+//            signatures - returning a stake can only return it to its owner.
+//   EXPIRE   a VOID: nobody acts, and the lock refunds at its expiry. "The default path - nobody acting - is always the
+//            refund. That is what makes infrastructure failure safe."
+//
+// CUT 6b (RULED 2026-09-24) moved this here from payout.js, where it was written for a hold invoice - SETTLE, CANCEL,
+// NOTHING - and deleted that vocabulary. The rule, its conditions, its order on the wire and the pool arithmetic are the
+// same; only the names are the lock's. LOCK_ACTIONS keeps the byte order the settlement record (slash.js) was encoded in.
+
+const CLAIM = 'CLAIM';     // claimed into the settlement by the preimage and the claim key
+const RETURN = 'RETURN';   // forfeited back to its refund key: can only return money to its owner
+const EXPIRE = 'EXPIRE';   // nobody acts; the lock refunds at its expiry
+
+/** The three ends on the wire. Order is protocol: it indexes `lockActionByte`. */
+const LOCK_ACTIONS = [CLAIM, RETURN, EXPIRE];
+const lockActionByte = (action) => {
+  const i = LOCK_ACTIONS.indexOf(action);
+  if (i < 0) throw new Error('unknown lock action: ' + action);
+  return i;
+};
+const lockActionOf = (byte) => {
+  if (!LOCK_ACTIONS[byte]) throw new Error('unknown lock action byte: ' + byte);
+  return LOCK_ACTIONS[byte];
+};
+
+/**
+ * THE END ONE OUTCOME SENDS ITS LOCK TO, AND WHAT IS STILL MISSING FOR IT (§23.2). The conditions come in as facts
+ * established elsewhere - `finality` answers the state, and the share and signature counts belong to the settlement
+ * committee. Nothing is assumed true: a missing one is named.
+ */
+function lockAction({
+  outcome, qualifies = false, state, shares = 0, signatures = 0,
+  needed = SETTLEMENT_THRESHOLD,
+}) {
+  if (isRefund(outcome))
+    return {
+      action: EXPIRE,
+      authorised: true,
+      missing: [],
+      why: 'the lock refunds at its expiry; nobody has to act',
+    };
+
+  if (outcome === DELIVERED) {
+    const missing = signatures >= needed
+      ? [] : [`${signatures} of ${needed} settlement signatures`];
+    return {
+      action: RETURN,
+      authorised: !missing.length,
+      missing,
+      why: qualifies
+        ? 'the stake returns to the player, and returning a lock can only return money to its owner'
+        : 'below the score, the stake was never at risk and returns to its owner',
+    };
+  }
+
+  // FAILED and FORFEIT: the only direction that takes money from a player, and the only one with five conditions on it.
+  const missing = [];
+  if (state !== 'FINAL') missing.push(`the result is ${state || 'not final'}`);
+  if (shares < needed) missing.push(`${shares} of ${needed} preimage shares`);
+  if (signatures < needed) missing.push(`${signatures} of ${needed} settlement signatures`);
+  return {
+    action: CLAIM,
+    authorised: !missing.length,
+    missing,
+    why: missing.length
+      ? 'the stake stays locked until every condition is met'
+      : 'the stake is claimed into the settlement',
+  };
+}
+
+/**
+ * WHAT HAPPENS TO EACH PLAYER'S LOCK, AND WHAT THE POOL IS MADE OF. Only losers' locks are claimed: the pool is exactly
+ * the claimed ones, and a qualifier's own lock never leaves them - it returns to its refund key, and what they are PAID
+ * from the pool is their winnings on top. So the equality below is over SHARES and not over amounts: the table hands a
+ * qualifier `stake + share`, the stake half is their own money returning, and only the share half comes out of the pool.
+ */
+function lockActions({ roundId, entries, minScore = 0 }) {
+  const table = computePayoutTable({ roundId, entries, minScore });
+  const claims = new Set(table.settling);
+  const paidTo = new Map(table.table.map((r, i) => [i, r.amountMsat]));
+
+  const actions = entries.map((e) => {
+    const said = lockAction({
+      outcome: e.outcome,
+      qualifies: e.outcome === DELIVERED && e.score >= minScore,
+      // the conditions themselves are the caller's to establish; this says which end each lock is FOR, which is what
+      // the pool depends on
+      state: 'FINAL', shares: SETTLEMENT_THRESHOLD, signatures: SETTLEMENT_THRESHOLD,
+    });
+    // A delivered player's lock is never claimed, whatever the table's pot arithmetic says: it returns to them.
+    const action = claims.has(e) && e.outcome !== DELIVERED ? CLAIM : said.action;
+    return { entry: e, action, why: said.why };
+  });
+
+  // WHAT EACH LOCK HOLDS is the net stake, so that is what a claim moves and what a return or an expiry hands back. The
+  // fee and the donation were never in the stake lock (§23.5).
+  const poolMsat = actions
+    .filter((a) => a.action === CLAIM)
+    .reduce((s, a) => s + netStakeMsat(a.entry), 0n);
+  const refundedMsat = actions
+    .filter((a) => a.action !== CLAIM)
+    .reduce((s, a) => s + netStakeMsat(a.entry), 0n);
+
+  // What the pool actually hands out: each row's amount less the entry's own net stake, since that half never entered
+  // the pool. THE ROWS COME FROM THE TABLE, not from a second filter over the entries: they are matched to amounts BY
+  // INDEX, so a filter here that disagreed with the one there would line the wrong amount up against the wrong entry.
+  const rows = table.activated;
+  let sharesMsat = 0n;
+  rows.forEach((e, i) => {
+    const amount = paidTo.get(i) || 0n;
+    const held = netStakeMsat(e);
+    sharesMsat += amount > held ? amount - held : 0n;
+  });
+
+  if (rows.length && poolMsat !== sharesMsat)
+    throw new Error(
+      `the operator would keep ${poolMsat - sharesMsat} msat: a pool of ${poolMsat} `
+      + `against ${sharesMsat} handed out`);
+
+  return {
+    actions, poolMsat, refundedMsat, sharesMsat, table,
+    settledMsat: poolMsat, paidMsat: sharesMsat,
+  };
+}
+
 // ---- protocol/src/payout-spend.js
 // WHAT THE POOL PAYS OUT, AND TO WHOM, AS OUTPUTS.
 //
@@ -7780,7 +7655,7 @@ function lockFromClient(answer, { point, hash, claimPk, refundPk }) {
 // Lightning when the hold was cancelled - so paying the row would pay it twice,
 // once by cancel and once out of other players' money. What the pool owes is
 // the part ABOVE the stake, and the sum of those is exactly the pool.
-// `holdSettlement` already asserts that equality and throws when it fails; this
+// `lockActions` (lock-action.js) already asserts that equality and throws when it fails; this
 // file computes the same difference rather than a second opinion of it.
 //
 // AND MILLISATOSHI DO NOT FIT ON A CHAIN. A row is msat and an output is sats,
@@ -7931,17 +7806,17 @@ const payableKey = (pubkey) => {
 // W4 - the owner 2026-09-14 07:22: "a loser loses the stake. The lock is claimed
 // into the pool. Winners are paid from that.").
 //
-// THE VERDICT IS THE HOLD PATH'S OWN. `holdSettlement` over one payout table
-// decides each entry, so a lock round and a hold round cannot decide the same
-// round differently:
-//   SETTLE   a loser's stake lock, claimed as an input (`Claim(P)`)
-//   CANCEL   a qualifier's own lock, forfeited back to them (forfeit.js, W5b)
-//   NOTHING  the lock is left to expire back to its player (VOID, a Delivered run
+// THE VERDICT IS THE LOCK'S OWN. `lockActions` (lock-action.js) over one payout
+// table decides each entry - the federation's three ends (cut 6b, RULED 2026-09-24:
+// the hold invoice's SETTLE/CANCEL/NOTHING are deleted, the outputs unchanged):
+//   CLAIM    a loser's stake lock, claimed as an input (`Claim(P)`)
+//   RETURN   a qualifier's own lock, forfeited back to them (forfeit.js, W5b)
+//   EXPIRE   the lock is left to expire back to its player (VOID, a Delivered run
 //            below the score)
 // The outputs are one PRE-EXPIRED payout contract per qualifier owed a share:
 // `refund_pk` = the key that qualifier's own stake lock names, so only they can
 // ever move it (FEDERATION.md source audit, point 2). A qualifier's own stake is
-// not in it - that half comes back by the forfeit (`winnings`, as on a hold).
+// not in it - that half comes back by the forfeit (`winnings`).
 //
 // THE GUARDIANS' FEES, AND WHO BEARS THEM. Every input and every output pays
 // `base + amount * ppm / 1e6` (lnv2-common config.rs), read from the federation
@@ -7962,6 +7837,7 @@ const payableKey = (pubkey) => {
 // the round's order), each signer node one pre-expired payout contract to its own key -
 // never to the donation recipients, and no split invented here. A VOID or
 // ENTRY_VOID entry's fee lock is not claimed: §22A's fee base leaves it out.
+
 
 
 
@@ -8025,11 +7901,11 @@ function lockSettlement({ roundId, entries, minScore = 0, locks, fees, feeLocks 
     return refuse('the guardians\' fee rule is BigInt ppm and base msat, 0 or more');
   const feePart = feeSettlement({ entries, feeLocks, signerNodes, contract, fees });
   if (!feePart.ok) return feePart;
-  // THE STAKE PART'S VERDICT IS THE HOLD PATH'S. A round with losers and nobody to
+  // THE STAKE PART'S VERDICT IS `lockActions`'. A round with losers and nobody to
   // pay is refused there ("the operator would keep ..."), and so its stakes are not
   // claimed here either - but its fee locks still are: the fee is owed.
   let h;
-  try { h = holdSettlement({ roundId, entries, minScore }); } catch (e) {
+  try { h = lockActions({ roundId, entries, minScore }); } catch (e) {
     if (!feePart.claims.length) return refuse(e.message);
     return finish({ roundId, claims: [], payouts: [], unpaid: [], forfeits: [], poolMsat: 0n, inputFeesMsat: 0n, spendableMsat: 0n, stakeWhy: e.message }, feePart);
   }
@@ -8037,7 +7913,7 @@ function lockSettlement({ roundId, entries, minScore = 0, locks, fees, feeLocks 
   const lockOf = (e) => locks.get(toHex(e.pubkey));
   const claims = [];
   for (const a of h.actions) {
-    if (a.action !== SETTLE) continue;
+    if (a.action !== CLAIM) continue;
     const lock = lockOf(a.entry);
     if (!lock) return refuse(`a loser's stake lock was never verified, so it cannot be claimed: ${toHex(a.entry.pubkey).slice(0, 16)}`);
     const net = netStakeMsat(a.entry);
@@ -8045,7 +7921,7 @@ function lockSettlement({ roundId, entries, minScore = 0, locks, fees, feeLocks 
       return refuse(`a loser's lock holds ${lock.amountMsat} msat and its entry's net stake is ${net}`);
     claims.push({ pubkey: a.entry.pubkey, outpoint: lock.outpoint, amountMsat: net });
   }
-  const forfeits = h.actions.filter((a) => a.action === CANCEL).map((a) => a.entry.pubkey);
+  const forfeits = h.actions.filter((a) => a.action === RETURN).map((a) => a.entry.pubkey);
   if (!claims.length && !feePart.claims.length)
     return { ok: true, nothing: true, why: 'no loser\'s lock is claimed in this round', claims, payouts: [], unpaid: [], forfeits,
       poolMsat: 0n, inputFeesMsat: 0n, spendableMsat: 0n, paidMsat: 0n, outputFeesMsat: 0n, unspentMsat: 0n,

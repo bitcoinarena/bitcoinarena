@@ -50,7 +50,7 @@ if (Boolean(url) !== Boolean(cookiePath)) {
 // LIGHTNING COMES FROM FOUR SETTINGS, ALL OR NONE - BLWP_LNCLI, BLWP_LND_DIR, BLWP_LND_RPC,
 // BLWP_LND_NETWORK - parsed in `lnd-settings.js`. It is used to READ an invoice (what the federation's
 // LNv2 invoice commits to) and nothing else. It no longer holds stakes, and there is no start-up ask
-// about a stake died inside a settle: the hold invoice was THRESHOLD_LN's, and the custody field has one
+// about a stake died inside a settle: the hold invoice was the withdrawn Lightning custody's, and the custody field has one
 // value, FEDERATION (§23.6, RULED 2026-09-22 22:59).
 const ln = lightningFromEnv(process.env);
 // AND THE ROUND'S FEDERATION, when this node takes stake-lock rounds (23.1
