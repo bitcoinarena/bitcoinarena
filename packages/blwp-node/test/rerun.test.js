@@ -191,6 +191,32 @@ test('a FORFEIT with a stored no-quorum record is listed once', async () => {
   } finally { await w.close(); }
 });
 
+// THE RE-RUN'S OWN OBJECTION WINDOW (§13A, RULED the owner 2026-09-24, slice C2a). A re-run at 5 of 7 is provisionally
+// final and gets one objection window of its own, opened when this node held it at threshold - the seenMs of the fifth
+// agreeing re-run record - and objection_window_ms long. One millisecond before it closes the entry is
+// PROVISIONALLY_FINAL and no share leaves; at its close, FINAL. Before this slice the agreed re-run was FINAL at once.
+test('an agreed re-run is PROVISIONALLY_FINAL until its own objection window closes, then FINAL', async () => {
+  const w = await sevenSignerNodes(WINDOW_MS);
+  try {
+    const s = await suspended(w);
+    assert.ok(await holdersRerun(w, s.eid), 'the holder never re-ran the suspended result');
+    w.rerunBy('dissents', 4);
+    const seen = w.holder.round.reruns(w.rid, s.eid).map((r) => r.seenMs).sort((a, b) => a - b);
+    assert.equal(seen.length, 5);
+    const agreed = seen[4];
+    assert.ok(agreed < s.filed + WINDOW_MS, `the fifth re-run landed at ${agreed - s.filed} ms, outside the re-run window`);
+    const before = resultFinality(at(w, agreed + WINDOW_MS - 1), w.rid, s.eid);
+    const may = new (w.holder.preimages.constructor)(at(w, agreed + WINDOW_MS - 1), {}).mayRelease(w.rid, s.eid);
+    const closed = resultFinality(at(w, agreed + WINDOW_MS), w.rid, s.eid);
+    console.log('  FACTS:', JSON.stringify({ agreedAfterFiling: agreed - s.filed, before: before.state, released: may.ok, closed: closed.state }),
+      '|', before.why);
+    assert.equal(before.state, 'PROVISIONALLY_FINAL', before.why);
+    assert.equal(may.ok, false, 'a share left an agreed re-run inside its own objection window');
+    assert.equal(closed.state, 'FINAL', closed.why);
+    assert.match(closed.why, /re-run by 5 of 7 committee signer nodes: the replay outcome is authoritative/);
+  } finally { await w.close(); }
+});
+
 test('re-runs from keys that are not assigned, about another contradicted run, or to another outcome count for nothing', async () => {
   const w = await sevenSignerNodes(WINDOW_MS);
   try {
