@@ -23,7 +23,7 @@
 // nothing: it would let anybody hold every stake past its window and hand it
 // back to its player.
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { finality, objectionHolds, FINAL, SUSPENDED } from '../../protocol/src/objection.js';
+import { finality, objectionHolds, FINAL, SUSPENDED, PROVISIONALLY_FINAL } from '../../protocol/src/objection.js';
 import { rerunIsAgreed } from '../../protocol/src/rerun.js';
 import { noQuorumOutcome } from '../../protocol/src/payout.js';
 import { decodeRoundContract } from '../../protocol/src/contracts.js';
@@ -130,16 +130,15 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
   // end is the answer from then on. No threshold by then is §13C's no-quorum rule, as at the end of an ordinary
   // result window: FORFEIT if the player's equivocation is proven (§13B), VOID otherwise - never a SUSPENDED
   // that outlives its window. (Filed is this node's seen_ms, not a block timestamp: a gap flagged, not fixed.)
-  // Until C2, a re-run agreed inside the window is FINAL at once, with no objection window of its own: short
-  // of the spec, and inside its three-window cap.
   if (f.state === SUSPENDED) {
     const verify = (s, m, k) => schnorr.verify(s, m, k);
     const rerunEndsAtMs = filedMs + Number(contract.objectionWindowMs);
-    const rerun = rerunIsAgreed({
+    const inWindow = round.reruns(roundIdBytes, entryIdBytes).filter((r) => r.seenMs < rerunEndsAtMs);
+    const agreedOn = (records) => rerunIsAgreed({
       roundId: roundIdBytes, playerPubkey: agreeing[0].playerPubkey, contradictedRunId: agreeing[0].run,
-      records: round.reruns(roundIdBytes, entryIdBytes).filter((r) => r.seenMs < rerunEndsAtMs),
-      signerNodes: committee, slots: contract.gameVerifySlots, verify,
+      records, signerNodes: committee, slots: contract.gameVerifySlots, verify,
     });
+    const rerun = agreedOn(inWindow);
     if (!rerun.ok && Number(now) >= rerunEndsAtMs) {
       const proven = typeof round.provenTwoFirstMarks === 'function' && round.provenTwoFirstMarks(roundIdBytes, entryIdBytes) === true;
       const d = noQuorumOutcome({ signatures: rerun.agreed || 0, needed: rerun.needed || seen.needed,
@@ -156,6 +155,23 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
     }
     const said = { agreed: rerun.agreed || 0, needed: rerun.needed };
     if (rerun.ok) {
+      // THE RE-RUN'S OWN OBJECTION WINDOW (§13A, RULED the owner 2026-09-24, slice C2a): a re-run at the threshold is
+      // provisionally final and gets one objection window of its own, opened when this node held it at threshold -
+      // the seenMs of the record that first made the count - and objection_window_ms long. That start is inside the
+      // re-run window, so it closes before filed + 2W and before P + 3W. FINAL after it, and only once posted (P2),
+      // as before; a transcript still unposted at the close stays not-FINAL (an open edge, not a rule).
+      const bySeen = [...inWindow].sort((x, y) => x.seenMs - y.seenMs);
+      let agreedAtMs = bySeen[bySeen.length - 1].seenMs;
+      for (let k = 1; k <= bySeen.length; k++)
+        if (agreedOn(bySeen.slice(0, k)).ok) { agreedAtMs = bySeen[k - 1].seenMs; break; }
+      const rerunClosesAtMs = agreedAtMs + Number(contract.objectionWindowMs);
+      if (Number(now) < rerunClosesAtMs)
+        return {
+          state: PROVISIONALLY_FINAL, rerun: { ...said, runId: hex(rerun.runId) }, closesAtMs: BigInt(rerunClosesAtMs),
+          why: `re-run by ${rerun.agreed} of ${committee.length} committee signer nodes at ${agreedAtMs}: its own objection `
+            + `window closes at ${rerunClosesAtMs} and it is ${now} (13A)`,
+          provisionalAtMs, runId: hex(rerun.runId), contradictedRunId: seen.runId, objection: objection && objection.why,
+        };
       const posted = transcriptIsPublished({
         roundId: roundIdBytes, playerPubkey: agreeing[0].playerPubkey, transcriptHash: rerun.result.transcriptHash,
         postings: round.postings(roundIdBytes, entryIdBytes), signerNodes: committee,
