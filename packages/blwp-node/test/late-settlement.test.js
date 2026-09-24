@@ -206,7 +206,7 @@ test('finalityOf is an option only of server.js and settlement.js, each defaulti
   // verify.js names it only as its own local alias of resultFinality itself - an import, not the option.
   assert.deepEqual(naming, ['server.js', 'settlement.js', 'verify.js']);
   const verify = readFileSync(new URL('verify.js', dir), 'utf8');
-  assert.match(verify, /import \{ resultFinality as finalityOf(, chainIndex)? \} from '\.\/finality\.js';/);
+  assert.match(verify, /import \{ resultFinality as finalityOf(, chainIndex)?(, resultWindow)? \} from '\.\/finality\.js';/);
   assert.equal(/finalityOf\s*[:=]/.test(verify), false, 'verify.js takes or passes a finalityOf of its own');
   assert.match(server, /\n  finalityOf = resultFinality,\n/);
   assert.match(settlement, /finalityOf = resultFinality \} = \{\}\) \{/);

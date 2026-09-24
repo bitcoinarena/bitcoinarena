@@ -21,7 +21,7 @@ import {
   decodeCheckpoint as decodeMark, checkpointId as markIdOf,
 } from '../../protocol/src/checkpoint.js';
 import { ed25519 as sessionCurve } from '@noble/curves/ed25519.js';
-import { resultFinality as finalityOf, chainIndex } from './finality.js';
+import { resultFinality as finalityOf, chainIndex, resultWindow } from './finality.js';
 
 let retryJobs = 0;                     // each re-tried close is its own pool job
 import { encodeTranscript, transcriptHash as hashOfTranscript } from '../../protocol/src/transcript.js';
@@ -580,9 +580,9 @@ export class Verifier {
    * M3.3-34 hold "past the window, keep asking" for a signer node that cannot retrieve the transcript.
    */
   #unretrievedPastWindow(roundIdBytes, entryId, contract, why) {
-    const row = this.round.get(roundIdBytes);
-    const closedMs = row && row.closed_ms !== null && row.closed_ms !== undefined ? Number(row.closed_ms) : null;
-    if (closedMs === null || this.round.now() < closedMs + Number(contract.objectionWindowMs)) return null;
+    // PAST THE RESULT WINDOW ON THE CHAIN (RULED 2026-09-24): its end block, not this node's close + W on its clock.
+    const rw = resultWindow(this.round, roundIdBytes, contract);
+    if (!rw.ok) return null;
     const had = this.round.noQuorum(entryId);
     if (had) return { entryId, stored: false, decided: had.outcome, why: had.why };
     const line = this.round.startLine(roundIdBytes, entryId);
@@ -593,7 +593,7 @@ export class Verifier {
       state: finalityOf(this.round, roundIdBytes, entryId).state });
     if (!d.outcome) return null;
     const reason = `${d.why} - this signer node could not retrieve the transcript within the result window `
-      + `(objection_window_ms ${contract.objectionWindowMs} after its close): ${why}`;
+      + `[${rw.open.height}, ${rw.end.height}) on the chain: ${why}`;
     this.round.putNoQuorum({ entryId, roundId: roundIdBytes, outcome: d.outcome, why: reason });
     return { entryId, stored: false, decided: d.outcome, why: reason };
   }
@@ -611,8 +611,9 @@ export class Verifier {
     const row = this.round.get(roundIdBytes);
     if (!row) return null;
     const contract = decodeRoundContract(new Uint8Array(row.contract));
-    const closedMs = row.closed_ms !== null && row.closed_ms !== undefined ? Number(row.closed_ms) : null;
-    if (closedMs === null || this.round.now() < closedMs + Number(contract.objectionWindowMs)) return null;
+    // PAST THE RESULT WINDOW ON THE CHAIN (RULED 2026-09-24): its end block, not this node's close + W on its clock.
+    const rw = resultWindow(this.round, roundIdBytes, contract);
+    if (!rw.ok) return null;
     const had = this.round.noQuorum(entryIdBytes);
     if (had) return { entryId: entryIdBytes, stored: false, decided: had.outcome, why: had.why };
     const line = this.round.startLine(roundIdBytes, entryIdBytes);
@@ -625,7 +626,7 @@ export class Verifier {
       equivocationProven: this.round.provenTwoFirstMarks(roundIdBytes, entryIdBytes),
       state: finalityOf(this.round, roundIdBytes, entryIdBytes).state });
     if (!d.outcome) return null;
-    const why = `${d.why} - past this signer node's result window with ${signers} of ${line.needed} signatures, and `
+    const why = `${d.why} - past the result window [${rw.open.height}, ${rw.end.height}) with ${signers} of ${line.needed} signatures, and `
       + `${declined} of ${signerNodes} signer nodes decided it by §13C, so no quorum can form`;
     this.round.putNoQuorum({ entryId: entryIdBytes, roundId: roundIdBytes, outcome: d.outcome, why });
     return { entryId: entryIdBytes, stored: false, decided: d.outcome, why };
@@ -699,12 +700,11 @@ export class Verifier {
         ? `this signer node was up, refused the player's on-time first mark (${String(r.why).slice(0, 90)}) and holds none`
         : `${shown.length} signer node(s) that were up refused the player's on-time first mark (${shown[0].why.slice(0, 80)}), and no signer node holds it`;
     }
-    const row = this.round.get(roundIdBytes);
-    const closedMs = row && row.closed_ms !== null && row.closed_ms !== undefined ? Number(row.closed_ms) : null;
-    const due = closedMs === null ? null : closedMs + Number(contract.objectionWindowMs);
-    if (due === null || this.round.now() < due)
+    // ONLY ONCE THE RESULT WINDOW HAS ENDED ON THE CHAIN (RULED 2026-09-24): its end block, the same for every holder.
+    const rw = resultWindow(this.round, roundIdBytes, contract);
+    if (!rw.ok)
       return { entryId, stored: false, waiting: true, noQuorumPending: true,
-        why: `no quorum yet: ${evidence} - VOID only once the result window passes${due === null ? '' : ` at ${due}`}` };
+        why: `no quorum yet: ${evidence} - decided only once the result window ends on the chain: ${rw.why}` };
     const signers = new Set(this.round.results(roundIdBytes, entryId).map((r) => hex(r.nodePubkey))).size;
     const d = noQuorumRule({ signatures: signers, needed: line.needed,
       equivocationProven: await this.#equivocationProven(roundIdBytes, entryId),

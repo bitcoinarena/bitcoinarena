@@ -17,14 +17,19 @@ import assert from 'node:assert/strict';
 import {
   FIELD, GENESIS_HASH, LOSER, NEEDED, NET, NO_PREVIOUS, PAST, PLANTED_FIRST_MARK_DEADLINE, RANDOMNESS, SIGNED_RECEIPT_BYTES, STAKE, TEST_FEDERATION_ID, WINDOW, WINNER, answer, assumeAssigned, b32, batchId, checkpointId, contractFor, curve, dealHandout, decodePlayerResult, ed25519, encodeCheckpoint, encodeEntryContract, encodeHandout, encodeInputBatch, encodeRoundContract, entryFeeMsat, entryId, feldmanGroup, handoutId, init, joinAndPlay, joinSigned, joinWithTwoFirstMarks, lockAfterClose, lockFieldsToJson, lockPort, netStakeMsat, openStore, opts, outageCaughtUp, pathTwoSignerNodeFourDown, playWinner, rand, receiptsAt, recordsOf, refundKeyOf, refundNow, resultFinality, roundId, say, scalarFrom32, secretScalar, seedWordForEntry, serve, sevenSignerNodes, sha256, signedOutcomes, signerNodeHolds, splitSignedResult, stateAt, stateHash, step, toHex, tweakPoint, twoFirstMarks, voidAtZeroToFourCut, voidAtZeroToThree, wait, wordsAt,
 } from './five-of-seven-fixture.js';
+import { CLOCK } from './block-clock.js';
+import { roundEndMs } from '../../protocol/src/first-mark.js';
 
 test('5 of 7, a stake lock: two first marks - FORFEIT at all seven, no signer node signs the refund, no forfeit kept, the lock held (back only by the player\'s own expiry refund)', async () => {
-  const w = await sevenSignerNodes('lock');
+  const w = await sevenSignerNodes('lock', { endIn: 15000 });
   try {
     const run = await joinWithTwoFirstMarks(w, 'lock');
     const before = await twoFirstMarks(w, run);
+    const endMs = CLOCK.endAt(Math.ceil(Number(roundEndMs(w.c)) / 1000) * 1000, WINDOW);
+    const closedAt = Date.now() - endMs;
     await Promise.all(w.signerNodes.map((d) => say(d.port, `close ${toHex(w.rid)}`)));
     for (let t = Date.now(); Date.now() - t < 30000 && !w.signerNodes.every((d) => d.round.noQuorum(run.eid)); await wait(250));
+    console.log('  TIMING (5 of 7, lock; ms after the result window\'s end block):', JSON.stringify({ closedAt, decidedAt: Date.now() - endMs }));
     await wait(1000);
     const signerNodesAfter = stateAt(w, run);
     const doors = [];
@@ -41,7 +46,7 @@ test('5 of 7, a stake lock: two first marks - FORFEIT at all seven, no signer no
 
 
 test('5 of 7, a stake lock, path 1: signer nodes 0-3 record ENTRY_VOID on a real outage, then a different on-time first mark reaches signer node 4 - no five refund signatures form, no refund door answers 2xx, the lock held', async () => {
-  const w = await sevenSignerNodes('lock');
+  const w = await sevenSignerNodes('lock', { endIn: 10000 });
   try {
     const run = await joinWithTwoFirstMarks(w, 'lock');
     const voidedFirst = await voidAtZeroToThree(w, run);
@@ -66,7 +71,7 @@ test('5 of 7, a stake lock, path 1: signer nodes 0-3 record ENTRY_VOID on a real
 
 
 test('5 of 7, a stake lock, path 2: signer nodes 0-3 record ENTRY_VOID, then a late first mark reaches signer node 4 alone and its forward is lost - no five refund signatures form, no refund door answers 2xx, the lock held', async () => {
-  const w = await sevenSignerNodes('lock');
+  const w = await sevenSignerNodes('lock', { endIn: 10000 });
   try {
     const run = await joinWithTwoFirstMarks(w, 'lock');
     const voidedFirst = await voidAtZeroToThree(w, run);
@@ -101,7 +106,7 @@ test('5 of 7, a stake lock, path 2: signer nodes 0-3 record ENTRY_VOID, then a l
 
 
 test('5 of 7, a stake lock, path 1, signer nodes 4-6 down from before the close through the lock\'s expiry - measured: no refund forms, the lock held', async () => {
-  const w = await sevenSignerNodes('lock');
+  const w = await sevenSignerNodes('lock', { endIn: 10000 });
   try {
     const run = await joinWithTwoFirstMarks(w, 'lock');
     const voidedFirst = await voidAtZeroToThree(w, run);
@@ -124,7 +129,7 @@ test('5 of 7, a stake lock, path 1, signer nodes 4-6 down from before the close 
 
 
 test('5 of 7, a stake lock, path 1, signer nodes 3-5 down from before the close through the lock\'s expiry - measured: no refund forms, the lock held', async () => {
-  const w = await sevenSignerNodes('lock');
+  const w = await sevenSignerNodes('lock', { endIn: 10000 });
   try {
     const run = await joinWithTwoFirstMarks(w, 'lock');
     const voidedFirst = await voidAtZeroToThree(w, run);
@@ -148,7 +153,7 @@ test('5 of 7, a stake lock, path 1, signer nodes 3-5 down from before the close 
 
 
 test('5 of 7, a stake lock, path 2, signer node 4 down from its refusal through the lock\'s expiry - measured: no refund forms, the lock held', async () => {
-  const w = await sevenSignerNodes('lock');
+  const w = await sevenSignerNodes('lock', { endIn: 10000 });
   try {
     const run = await joinWithTwoFirstMarks(w, 'lock');
     const setup = await pathTwoSignerNodeFourDown(w, run);

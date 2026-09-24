@@ -72,7 +72,7 @@ import { authorityAt, donationSetSignedBy, encodeDonationSetBody, encodeAuthorit
 import { donationSetId } from '../../protocol/src/donation.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { timed, watchLoop } from './slow.js';
-import { resultFinality } from './finality.js';
+import { resultFinality, resultWindow } from './finality.js';
 import { outageOutcome } from '../../protocol/src/entry-void.js';
 import { ENTRY_VOID, netStakeMsat } from '../../protocol/src/payout.js';
 import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../protocol/src/objection.js';
@@ -600,8 +600,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const voidStands = (rid, eid) => {
     if (!round.entryVoid(eid) || round.twoFirstMarks(rid, eid)) return false;
     const row = round.get(rid);
-    if (!row || row.closed_ms === null || row.closed_ms === undefined) return true;
-    return round.now() >= Number(row.closed_ms) + Number(decodeRoundContract(new Uint8Array(row.contract)).objectionWindowMs);
+    if (!row) return true;
+    // PAST THE RESULT WINDOW ON THE CHAIN (RULED 2026-09-24): its end block - opened at the first block at or after the
+    // round's contract end - not this node's close + W. Without that block the Void does not stand yet.
+    return resultWindow(round, rid, decodeRoundContract(new Uint8Array(row.contract))).ok;
   };
   function decideOutage(rid, eid, { evidenceKind, evidence = null }) {
     const had = round.entryVoid(eid);
