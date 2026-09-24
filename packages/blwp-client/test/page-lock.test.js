@@ -22,7 +22,7 @@ import { bech32Encode, convertBits } from '../../protocol/src/bech32.js';
 import { decodeBolt11 } from '../../protocol/src/bolt11.js';
 
 import { lockStake, handLock, lockSecretFor, lockAmountMsat, lockLine, saveLock, savedLock, markLockCommitted,
-  refundStake, redeemStake, redeemPayout, payoutLine, returnStake, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, withdrawLine, refundKept, refundLine, lookOwed, owedToLine as owedLine, collectAndWithdraw, tabLockWallet, findOwedRounds, LOCK_EXPIRY_MARGIN_BLOCKS, feeSecretFor } from '../src/page-lock.js';
+  refundStake, redeemStake, redeemPayout, payoutLine, returnStake, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, withdrawLine, refundKept, refundLine, lookOwed, owedToLine as owedLine, collectAndWithdraw, tabLockWallet, findOwedRounds, feeSecretFor } from '../src/page-lock.js';
 import { sha256 } from '../../protocol/src/hash.js';
 import { entryFor, joinQuery, stakeFor, playerFor } from '../src/join.js';
 import { lockFieldsToJson } from '../../protocol/src/stake-lock.js';
@@ -142,7 +142,7 @@ test('the page asks the lock client for the round\'s own federation, under the s
     // grossed up by the gateway's fee: the empty client cannot be quoted.
     deposits: [['lnbcrt1page', String(lockAmountMsat(round) + 4940n + 16064n)]],
     lock: { point: toHex(POINT), amount: String(lockAmountMsat(round)), claim: toHex(CLAIM),
-      refund: toHex(refundKeyOf(player)), delta: 144 + LOCK_EXPIRY_MARGIN_BLOCKS },
+      refund: toHex(refundKeyOf(player)), delta: 144 },
     outpoint: `${'ab'.repeat(32)}:0`,
   });
   assert.equal(lockAmountMsat(round), 980000n, 'the net stake of 1000000 msat less the 2% fee');
@@ -195,7 +195,7 @@ test('a 1000 sat round: the page mints one 20000 msat fee lock to H(F), names F 
   console.log(`  1000 sat: fee locks minted ${minted.length} (${minted.map((m) => `${m.amount} msat to ${m.hash.slice(0, 12)}`).join(', ')}); deposits ${deposits.map((d) => String(d.amountMsat)).join(', ')} msat; `
     + `gate: stake ${got.feeGate.stakeMsat}, lock ${got.feeGate.lockMsat}, input fees ${got.feeGate.inputFeesMsat}, output fees ${got.feeGate.outputFeesMsat}, per-signer node net [${got.feeGate.perSignerNodeNetMsat.join(', ')}]`);
   assert.equal(minted.length, 1);
-  assert.deepEqual(minted[0], { hash: toHex(sha256(F)), amount: '20000', claim: toHex(CLAIM), refund: toHex(refundKeyOf(player)), delta: 144 + LOCK_EXPIRY_MARGIN_BLOCKS });
+  assert.deepEqual(minted[0], { hash: toHex(sha256(F)), amount: '20000', claim: toHex(CLAIM), refund: toHex(refundKeyOf(player)), delta: 144 });
   assert.equal(got.feeGate.pays, true);
   assert.equal(toHex(got.feeLock.preimage), toHex(F));
   assert.equal(got.feeLock.fields.paymentImage.kind, 'hash');

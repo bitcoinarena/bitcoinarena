@@ -5,9 +5,21 @@
 // stake_lock_outpoint (and the fee lock's) equals the hash of a contract whose
 // payment_image is the entry's stake_point (resp. H(F)), whose amount is the
 // entry's net stake (resp. fee), whose claim_pk is the attested key, whose
-// refund_pk is player_pubkey, and whose expiration is >= current height +
-// stake_expiry_blocks. Seeing the lock is not enough: the player built it, and
-// a short expiry alone would let a loser refund before settlement."
+// refund_pk is player_pubkey, and whose expiration is >= lock_height +
+// stake_expiry_blocks, where lock_height is the federation's consensus height at
+// which the transaction creating the lock was accepted ... and lock_height is no
+// more than stake_lock_freshness_blocks (12) below the height at which the seat
+// verifies. Seeing the lock is not enough: the player built it, and a short
+// expiry alone would let a loser refund before settlement."
+//
+// THE LOCK'S OWN HEIGHT (RULED the owner 2026-09-24, option (a)). The stock federation
+// stores an outgoing contract with no creation height and answers only
+// (contract_id, blocks_left), so lock_height is the federation-held expiration less
+// stake_expiry_blocks - the expiration the signer node already checked against
+// blockCount + blocksLeft, never the player's number. expiration >= lock_height + 144
+// then holds by construction, and the check that bites is freshness: refused when
+// expiration < verify height + 132. The old check, expiration >= verify height + 144,
+// refused a lock built exactly as step 4 says one block later (450 against 316 + 144).
 //
 // THE FIELDS, NOT THE ID. A contract id is Fedimint's hash of the whole
 // contract (FEDERATION.md, audit point 8), and the signer node's stock federation
@@ -22,7 +34,7 @@
 // can still be caught is F = P while the entry also carries H(P).
 import { sha256, toHex, fromHex } from './hash.js';
 import { netStakeMsat } from './payout.js';
-import { STAKE_EXPIRY_BLOCKS } from './constants.js';
+import { STAKE_EXPIRY_BLOCKS, STAKE_LOCK_FRESHNESS_BLOCKS } from './constants.js';
 
 /**
  * THE CONTRACT A PLAYER HANDS A SIGNER NODE (POST /lock), as JSON: hex bytes, the
@@ -89,10 +101,13 @@ export function lockMatchesEntry({ lock, entry, kind, claimPk, height } = {}) {
     return { ok: false, why: `that ${kind} lock's claim_pk is not this round's attested claim key` };
   if (!eq(lock.refundPk, refundKeyOf(entry.playerPubkey)))
     return { ok: false, why: `that ${kind} lock's refund_pk is not the entry's player key` };
-  if (!Number.isInteger(lock.expiration) || lock.expiration < height + STAKE_EXPIRY_BLOCKS)
+  if (!Number.isInteger(lock.expiration)) return { ok: false, why: `that ${kind} lock names no expiration height` };
+  const lockHeight = lock.expiration - STAKE_EXPIRY_BLOCKS;
+  if (lockHeight < height - STAKE_LOCK_FRESHNESS_BLOCKS)
     return {
       ok: false,
-      why: `that ${kind} lock expires at ${lock.expiration}, before ${height} + ${STAKE_EXPIRY_BLOCKS}: `
+      why: `that ${kind} lock's lock height ${lockHeight} (its expiration ${lock.expiration} less ${STAKE_EXPIRY_BLOCKS}) `
+        + `is more than ${STAKE_LOCK_FRESHNESS_BLOCKS} blocks below the height ${height} it is verified at: `
         + 'a loser could refund before settlement',
     };
   return { ok: true };

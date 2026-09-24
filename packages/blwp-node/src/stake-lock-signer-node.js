@@ -4,8 +4,12 @@
 // locks: the contract id at stake_lock_outpoint (and the fee lock's) equals
 // the hash of a contract whose payment_image is the entry's stake_point,
 // whose amount is the entry's net stake, whose claim_pk is the attested key,
-// whose refund_pk is player_pubkey, and whose expiration is >= current height
-// + stake_expiry_blocks. Seeing the lock is not enough: the player built it."
+// whose refund_pk is player_pubkey, and whose expiration is >= lock_height
+// + stake_expiry_blocks", lock_height no more than 12 blocks below the height the
+// seat verifies at. Seeing the lock is not enough: the player built it. (RULED
+// 2026-09-24, option (a): lock_height is the federation-held expiration less 144 -
+// the one checked below against blockCount + blocksLeft - and blockCount is the
+// verify height handed to lockMatchesEntry.)
 //
 // This is one signer node's half. The player hands the signer node the contract it locked;
 // the signer node asks the federation what it holds at the entry's outpoint (the

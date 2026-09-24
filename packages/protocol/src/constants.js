@@ -575,3 +575,11 @@ export const custodyName = (byte) => (byte === 1 ? 'FEDERATION' : null);
  * player's key alone refunds, so delay is never loss.
  */
 export const STAKE_EXPIRY_BLOCKS = 144;
+
+/**
+ * HOW FAR BELOW THE VERIFYING HEIGHT A LOCK'S OWN HEIGHT MAY BE, in the federation's blocks: 12
+ * (§23.1 step 5, `stake_lock_freshness_blocks`, RULED the owner 2026-09-24). A lock verified within 12
+ * blocks of its creation still has at least 132 blocks - 22 hours on mainnet - to cover the round, the
+ * objection window and the settlement transaction.
+ */
+export const STAKE_LOCK_FRESHNESS_BLOCKS = 12;
