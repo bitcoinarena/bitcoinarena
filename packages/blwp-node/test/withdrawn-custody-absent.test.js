@@ -19,16 +19,17 @@ import { encodeRoundContract, roundId } from '../../protocol/src/contracts.js';
 import { toHex, taggedHash } from '../../protocol/src/hash.js';
 import { TAG } from '../../protocol/src/constants.js';
 
-/** The FEDERATION round's bytes with custody byte 0 - the byte just before federation_id on the wire. */
-function underByteZero(c) {
+/** The FEDERATION round's bytes with another custody byte - the byte just before federation_id on the wire. */
+function underByte(c, byte) {
   const bytes = encodeRoundContract(c);
   const at = Buffer.from(bytes).toString('hex').indexOf(Buffer.from(c.federationId).toString('hex'));
   assert.ok(at > 0 && at % 2 === 0, 'the federation_id is not in the encoding');
   const old = Uint8Array.from(bytes);
   assert.equal(old[at / 2 - 1], 1, 'the custody byte of a FEDERATION round is not 1');
-  old[at / 2 - 1] = 0;
+  old[at / 2 - 1] = byte;
   return old;
 }
+const underByteZero = (c) => underByte(c, 0);
 
 const count = (db) => db.prepare('SELECT COUNT(*) AS n FROM rounds').get().n;
 
@@ -140,6 +141,77 @@ test('a stored byte-0 round is never replayed, settled or counted: not in the lo
       assert.equal(settled.rounds.length, 0, '/settled names a byte-0 round');
       for (const s of settle) { assert.equal(s.ok, false); assert.match(s.why, /no such round/); }
       for (const r of close) { assert.equal(r.stored, false); assert.match(r.why, /no such round/); }
+    } finally { await d.close(); }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// BYTE 0 IS BYTE 2 (RULED the owner 2026-09-24, the enum slice's second cut): no door answers the withdrawn custody's byte any
+// differently from a byte this network never had. The same contract posted under each is one refusal with only the
+// digit changed, naming nothing.
+test('a byte-0 and a byte-2 post of the same contract are one refusal, only the digit changed; nothing stored, nothing named', async () => {
+  const d = await serve(openStore(':memory:'), { port: 0, ...opts });
+  try {
+    const c = contractFor([d.round.pubkey, b32(0x33)], 3000n, ['wss://r.example']);
+    const post = async (b) => { const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: underByte(c, b) }); return [r.status, (await r.text()).trim()]; };
+    const [[s0, w0], [s2, w2]] = [await post(0), await post(2)];
+    console.log('  FACTS:', JSON.stringify({ byte0: [s0, w0], byte2: [s2, w2], stored: count(d.round.db) }));
+    assert.deepEqual([s0, s2], [400, 400]);
+    assert.equal(w0, 'that is not a round this signer node opens: custody byte 0 is not a custody of this network: the one value is FEDERATION');
+    assert.equal(w2, w0.replace('byte 0', 'byte 2'), 'the two bodies differ beyond the digit');
+    for (const w of [w0, w2]) assert.equal(w.includes('THRESHOLD_LN'), false, `the refusal names the withdrawn custody: ${w}`);
+    assert.equal(count(d.round.db), 0, 'something of either post was stored');
+  } finally { await d.close(); }
+});
+
+test('a restart on a store holding byte-0 and byte-2 rows answers every one the same: unlisted, unsettled, 404, no such round, counted nowhere', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'blwp-withdrawn-'));
+  const path = join(dir, 'node.db');
+  try {
+    const first = openStore(path);
+    const fed = contractFor([b32(0x11), b32(0x33)], 3000n, ['wss://r.example']);
+    const put = first.prepare('INSERT INTO rounds (round_id, contract, state, opened_ms) VALUES (?, ?, ?, ?)');
+    put.run(roundId(fed), encodeRoundContract(fed), OPEN, 1);
+    const rows = [];
+    for (const [byte, state, served] of [[0, OPEN, 31], [0, CLOSED, 32], [2, OPEN, 33], [2, CLOSED, 34]]) {
+      const bytes = underByte({ ...fed, slashMinimumServed: served }, byte);
+      const id = taggedHash(TAG.roundContract, bytes);
+      put.run(id, bytes, state, served);
+      rows.push({ byte, state, id });
+    }
+    first.close();
+    const d = await serve(openStore(path), { port: 0, ...opts });
+    try {
+      const lobby = await (await fetch(`http://127.0.0.1:${d.port}/rounds`)).text();
+      const settled = await (await fetch(`http://127.0.0.1:${d.port}/settled?since=0`)).json();
+      const listed = [...d.round.openRounds(), ...d.round.closedRounds()].map((x) => toHex(x.roundId ?? x.id ?? x));
+      const answers = [];
+      for (const r of rows) {
+        const hex = toHex(r.id);
+        answers.push({
+          byte: r.byte, state: r.state,
+          lobby: lobby.includes(hex), listed: listed.some((x) => x.includes(hex)),
+          get: (await fetch(`http://127.0.0.1:${d.port}/round?id=${hex}`)).status,
+          read: d.round.get(r.id),
+          settle: (await d.settlements.settle(r.id)).why,
+          close: (await d.verifier.retryClose(r.id, b32(1))).why,
+        });
+      }
+      const fedAsked = (await fetch(`http://127.0.0.1:${d.port}/round?id=${toHex(roundId(fed))}`)).status;
+      console.log('  FACTS:', JSON.stringify({ answers, settledRounds: settled.rounds.length, listedCount: listed.length, fedAsked, rowsAfter: count(d.round.db) }));
+      const shape = ({ lobby: l, listed: li, get, read, settle, close }) => JSON.stringify({ l, li, get, read, settle, close });
+      for (const a of answers) {
+        assert.equal(a.lobby, false, `the lobby lists the byte-${a.byte} ${a.state} round`);
+        assert.equal(a.listed, false, `the store lists the byte-${a.byte} ${a.state} round`);
+        assert.equal(a.get, 404);
+        assert.equal(a.read, null);
+        assert.match(a.settle, /no such round/);
+        assert.match(a.close, /no such round/);
+        assert.equal(shape(a), shape(answers[0]), 'a byte-0 row and a byte-2 row are answered differently');
+      }
+      assert.equal(settled.rounds.length, 0, '/settled counts a withdrawn-byte round');
+      assert.equal(listed.length, 1, 'the store counts a round beyond the FEDERATION one');
+      assert.equal(fedAsked, 200);
+      assert.equal(count(d.round.db), 5, 'a row was deleted');
     } finally { await d.close(); }
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
