@@ -694,6 +694,26 @@ export function openStore(path = ':memory:') {
       claims       TEXT NOT NULL,
       payouts      INTEGER NOT NULL
     );
+    -- A LATE LOSER'S SECOND SETTLEMENT (§13A, RULED 2026-09-24, slice C3b-1): one per (round, entry), never a second
+    -- row under the round's key - an entry the round's settlement left out while it was in its re-run window, which
+    -- then ended FAILED or FORFEIT. The same intent and state as the round's own settlement row.
+    CREATE TABLE IF NOT EXISTS late_lock_settlements (
+      round_id  BLOB NOT NULL,
+      entry_id  BLOB NOT NULL,
+      txid      TEXT NOT NULL,
+      message   BLOB NOT NULL,
+      signature BLOB NOT NULL,
+      state     TEXT NOT NULL,
+      why       TEXT,
+      made_ms   INTEGER NOT NULL,
+      PRIMARY KEY (round_id, entry_id)
+    );
+    -- AND THE SHARES IT IS SPLIT BY: what the round's settlement paid each winner, in the table's order (JSON), kept
+    -- when that settlement is signed, so a late loser's stake is split the same way at every signer node, restart or not.
+    CREATE TABLE IF NOT EXISTS lock_settlement_shares (
+      round_id BLOB PRIMARY KEY,
+      shares   TEXT NOT NULL
+    );
 
     CREATE TABLE IF NOT EXISTS forfeits (
       entry_id     BLOB PRIMARY KEY,

@@ -23,7 +23,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { decodeRoundContract } from '../../protocol/src/contracts.js';
 import { decodePlayerResult, splitSignedResult } from '../../protocol/src/result.js';
-import { lockSettlement } from '../../protocol/src/lock-settlement.js';
+import { lockSettlement, lateLockSettlement } from '../../protocol/src/lock-settlement.js';
 import { FORFEIT, VOID, ENTRY_VOID, isQualifier } from '../../protocol/src/payout.js';
 import { signShare340, aggregate340, nonceGenerate340 } from '../../protocol/src/frost-bip340.js';
 import { receiptsNeeded } from '../../protocol/src/threshold.js';
@@ -56,8 +56,11 @@ export class LockSettlement {
    */
   constructor(round, { dkg, port, curve, random, preimages, peersFor = () => [], fetcher = (u, o) => fetch(u, o),
     signerNodesFor = (rid, contract) => ({ gameVerify: contract.nodes, settlement: contract.nodes }), winnings = null,
-    turnClock = null } = {}) {
+    turnClock = null, finalityOf = resultFinality } = {}) {
     this.round = round;
+    // HOW THIS SIGNER NODE READS A RUN'S FINALITY - `resultFinality`; a test may hand another view (a test aid, as
+    // `finality.rerunMs` is), since two signer nodes that agree on a run cannot hold a valid objection against it.
+    this.finalityOf = finalityOf;
     // WHOSE TURN IT IS TO COMBINE (M3.3-19's clock): the round's beacon height and this node's chain tip, or null.
     this.turnClock = turnClock;
     // WINNINGS ALWAYS SENT (winnings-send.js): when given, a qualifier who named an address is paid by send, not collect.
@@ -93,7 +96,7 @@ export class LockSettlement {
       const nq = this.round.noQuorum ? this.round.noQuorum(entryId) : null;
       if (nq && nq.outcome === FORFEIT) { entries.push({ ...base, outcome: FORFEIT, score: 0 }); continue; }
       if (nq && nq.outcome === VOID) { entries.push({ ...base, outcome: VOID, score: 0 }); continue; }
-      const standing = resultFinality(this.round, roundIdBytes, entryId);
+      const standing = this.finalityOf(this.round, roundIdBytes, entryId);
       if (standing.state === VOID) { entries.push({ ...base, outcome: VOID, score: 0 }); continue; }
       // A RE-RUN WINDOW THAT CLOSED ON PROVEN EQUIVOCATION (§13A, §13C, RULED 2026-09-24): FORFEIT on the finality
       // itself, as VOID is above - no stored no-quorum record needed. A stored one was already taken, once, above.
@@ -130,7 +133,9 @@ export class LockSettlement {
     const lock = this.round.stakeLock(entryIdBytes);
     if (!lock) return { claimed: false, why: 'this signer node verified no stake lock for that entry' };
     if ((moves.claims || []).includes(String(lock.outpoint))) return { claimed: true, why: 'claimed in the round\'s settlement' };
-    const standing = resultFinality(this.round, roundIdBytes, entryIdBytes);
+    const late = this.round.lateLockSettlement ? this.round.lateLockSettlement(roundIdBytes, entryIdBytes) : null;
+    if (late && late.state === ACCEPTED) return { claimed: true, why: 'claimed in the round\'s second settlement' };
+    const standing = this.finalityOf(this.round, roundIdBytes, entryIdBytes);
     if (standing.state === SUSPENDED || (standing.state === PROVISIONALLY_FINAL && standing.rerun))
       return { claimed: false, why: 'left out of the round\'s settlement: still in its re-run window' };
     if (standing.state === VOID || standing.state === ENTRY_VOID)
@@ -146,6 +151,162 @@ export class LockSettlement {
       return { claimed: false, why: 'claimed in the round\'s second settlement, not built yet' };
     }
     return { claimed: false, why: `not decided: ${standing.state || 'without a result'}` };
+  }
+
+  /**
+   * A LATE LOSER'S SECOND SETTLEMENT, AS THIS SIGNER NODE REBUILDS IT (§13A; RULED the owner 2026-09-24, slice C3b-1): only
+   * after the round's own settlement is ACCEPTED, for an entry it did not claim that has since ended FINAL and FAILED, or
+   * FORFEIT - never while it is still in its re-run window. The plan is `lateLockSettlement` over the shares that
+   * settlement kept; the P opened as for any loser; one transaction per (round, entry), its own nonce.
+   */
+  async lateMessage(roundIdBytes, entryIdBytes) {
+    const key = `${toHex(roundIdBytes)}:${toHex(entryIdBytes)}`;
+    const kept = this.built.get(key);
+    if (kept) return kept;
+    const row = this.round.get(roundIdBytes);
+    if (!row) return refuse('this node holds no such round', 404);
+    const contract = decodeRoundContract(new Uint8Array(row.contract));
+    if (!locksStake(contract)) return refuse('that round\'s stake is not a federation lock, so there is no lock to claim');
+    if (!this.port || typeof this.port.settle !== 'function') return refuse('this signer node reaches no federation, so it settles nothing');
+    const first = this.round.lockSettlement(roundIdBytes);
+    if (!first || first.state !== ACCEPTED) return refuse('the round\'s own settlement is not accepted here yet, so no entry is late');
+    const shares = this.round.lockSettlementShares ? this.round.lockSettlementShares(roundIdBytes) : null;
+    if (!shares) return refuse('this signer node kept no shares of the round\'s settlement, so it cannot split a late stake');
+    const lockRow = this.round.stakeLock(entryIdBytes);
+    if (!lockRow) return refuse('this signer node verified no stake lock for that entry');
+    const moves = this.round.lockSettlementMoves(roundIdBytes);
+    if (moves && (moves.claims || []).includes(String(lockRow.outpoint))) return refuse('that lock was claimed in the round\'s settlement');
+    const standing = this.finalityOf(this.round, roundIdBytes, entryIdBytes);
+    if (standing.state === SUSPENDED || (standing.state === PROVISIONALLY_FINAL && standing.rerun))
+      return refuse('that entry is still in its re-run window: no second settlement yet');
+    const found = this.round.entriesOf(roundIdBytes).find((x) => toHex(x.entryId) === toHex(entryIdBytes));
+    if (!found) return refuse('no such entry in that round', 404);
+    let outcome = standing.state; let score = 0;
+    if (standing.state === FINAL) {
+      const mine = this.round.results(roundIdBytes, entryIdBytes).find((r) => toHex(r.nodePubkey) === toHex(this.round.pubkey));
+      if (!mine) return refuse('this signer node signed no result for that entry, so it settles nothing');
+      const r = decodePlayerResult(splitSignedResult(mine.bytes).body);
+      outcome = r.outcome; score = r.score;
+    } else if (standing.state !== FORFEIT && standing.state !== VOID) {
+      return refuse(`that entry is not decided: ${standing.state || 'without a result'}`);
+    }
+    const held = this.dkg.signerNodeFor(contract.nodes);
+    if (!held.ok) return refuse(`this signer node holds no share of the round's claim key: ${held.why}`);
+    const claimPk = held.pool.groupPublicKey;
+    const e = found.entry;
+    const entry = { pubkey: e.playerPubkey, stakeMsat: e.stakeMsat, feeMsat: e.feeMsat, donationMsat: e.donationMsat, outcome, score };
+    const fields = lockFieldsFromJson(lockRow.fields);
+    if (toHex(fields.claimPk) !== toHex(claimPk)) return refuse('that lock names another claim key than the round\'s');
+    const lock = { outpoint: outpointOf(lockRow.outpoint), amountMsat: fields.amountMsat, refundPk: fields.refundPk };
+    const byPlayer = new Map(this.round.entriesOf(roundIdBytes).map((x) => [toHex(x.entry.playerPubkey), x.entryId]));
+    const winnerLocks = new Map();
+    for (const x of shares) {
+      const eid = byPlayer.get(toHex(x.pubkey));
+      const wl = eid ? this.round.stakeLock(eid) : null;
+      if (wl) winnerLocks.set(toHex(x.pubkey), { refundPk: lockFieldsFromJson(wl.fields).refundPk });
+    }
+    const fl = this.round.feeLock ? this.round.feeLock(entryIdBytes) : null;
+    const feeLock = fl ? { outpoint: outpointOf(fl.outpoint), amountMsat: lockFieldsFromJson(fl.fields).amountMsat, preimage: e.feePreimage } : null;
+    let fees = this.fees.get(toHex(roundIdBytes));
+    if (!fees) { fees = await this.port.fees(); this.fees.set(toHex(roundIdBytes), fees); }
+    const plan = lateLockSettlement({ roundId: roundIdBytes, entryId: entryIdBytes, entry, lock, feeLock, shares, winnerLocks, fees,
+      signerNodes: feeLock ? this.signerNodesFor(roundIdBytes, contract) : null, contract });
+    if (!plan.ok) return refuse(`no late lock is claimed: ${plan.why}`);
+    const claims = [];
+    for (const c of plan.claims) {
+      if (c.kind === 'fee') { claims.push(c); continue; }
+      const opened = await this.preimages.open({ roundId: roundIdBytes, entryId: entryIdBytes, needed: receiptsNeeded(contract.nodes.length) });
+      if (!opened.ok) return refuse(`the late loser's P could not be opened: ${opened.why}`);
+      if (fields.paymentImage.kind === 'point') {
+        const point = this.curve.pointFromScalar(scalarFrom32(opened.preimage) % FIELD);
+        if (toHex(point) !== toHex(fields.paymentImage.bytes)) return refuse('the P the signer nodes opened is not the scalar of the point the late lock names');
+      }
+      claims.push({ ...c, preimage: opened.preimage });
+    }
+    const tx = await this.port.settle({ claimPk, claims, payouts: plan.payouts, nonce: plan.nonce });
+    const built = { ok: true, message: fromHex(tx.message), txid: tx.txid, plan, claims, claimPk,
+      signerNode: held.signerNode, needed: receiptsNeeded(contract.nodes.length) };
+    this.built.set(key, built);
+    return built;
+  }
+
+  /**
+   * SETTLE A LATE LOSER (slice C3b-1): the round's asker combines and submits, as for the round's own settlement; a
+   * second attempt on an ACCEPTED one builds nothing. A signer node whose turn it is not, holding a signature it was
+   * handed, asks the federation whether it went in: every claimed lock gone and a payout of that txid stored.
+   */
+  async settleLate(roundIdBytes, entryIdBytes) {
+    const kept = this.round.lateLockSettlement(roundIdBytes, entryIdBytes);
+    if (kept && kept.state === ACCEPTED) return { ok: true, kept: true, ...kept };
+    const t = await this.turn(roundIdBytes);
+    if (!t.mine) {
+      if (kept && kept.state === SUBMITTING) {
+        const m = await this.lateMessage(roundIdBytes, entryIdBytes);
+        if (m.ok && m.txid === kept.txid && this.port && typeof this.port.status === 'function') {
+          const held = async (o) => !!(await this.port.status(o)).stored;
+          let gone = 0;
+          for (const c of m.claims) if (!(await held(c.outpoint))) gone++;
+          let paid = 0;
+          for (let i = 0; i < m.plan.payouts.length; i++) if (await held({ txid: fromHex(kept.txid), outIdx: BigInt(i) })) paid++;
+          if (gone === m.claims.length && paid > 0) {
+            const why = `found in the federation: ${gone} claimed lock(s) gone, ${paid} payout contract(s) stored`;
+            this.round.putLateLockSettlement({ roundId: roundIdBytes, entryId: entryIdBytes, txid: kept.txid, message: kept.message,
+              signature: kept.signature, state: ACCEPTED, why });
+            return { ok: true, state: ACCEPTED, why, txid: kept.txid };
+          }
+        }
+      }
+      return refuse(`not this signer node's turn to combine: ${t.why}`, 409);
+    }
+    const m = await this.lateMessage(roundIdBytes, entryIdBytes);
+    if (!m.ok) return m;
+    let signature = kept && kept.signature && kept.txid === m.txid ? kept.signature : null;
+    if (!signature) {
+      const q = `round=${toHex(roundIdBytes)}&entry=${toHex(entryIdBytes)}`;
+      const own = await this.commit(roundIdBytes, { entry: entryIdBytes });
+      if (!own.ok) return own;
+      const signers = [{ base: null, commitment: own.commitment }];
+      const refused = [];
+      for (const base of this.peersFor(roundIdBytes)) {
+        try {
+          const r = await this.fetcher(`${base}/settle-commit?${q}&txid=${m.txid}`, { method: 'POST' });
+          if (!r.ok) { refused.push(`${base}: ${(await r.text()).trim()}`); continue; }
+          signers.push({ base, commitment: decodeCommitments(new Uint8Array(await r.arrayBuffer()))[0] });
+        } catch (e) { refused.push(`${base}: ${e.message}`); }
+      }
+      if (signers.length < m.needed)
+        return refuse(`${signers.length} of the ${m.needed} signer nodes the late settlement needs committed to it: ${refused.join('; ')}`);
+      const commitments = signers.map((x) => x.commitment).sort((a, b) => a.id - b.id);
+      const shares = [];
+      for (const x of signers) {
+        if (x.base === null) {
+          const mine = await this.share(roundIdBytes, commitments, { entry: entryIdBytes });
+          if (!mine.ok) return mine;
+          shares.push(mine.share);
+          continue;
+        }
+        const r = await this.fetcher(`${x.base}/settle-share?${q}`, { method: 'POST', body: encodeCommitments(commitments) });
+        if (!r.ok) return refuse(`${x.base} gave no share: ${(await r.text()).trim()}`);
+        shares.push(decodeShare(new Uint8Array(await r.arrayBuffer())));
+      }
+      ({ signature } = aggregate340({ commitments, message: m.message, groupPublicKey: m.claimPk, shares, curve: this.curve }));
+      if (!schnorr.verify(signature, m.message, m.claimPk.subarray(1)))
+        return refuse('the combined late settlement signature does not verify under the round\'s claim key', 500);
+      for (const x of signers) {
+        if (x.base === null) continue;
+        try { await this.fetcher(`${x.base}/settle-signature?${q}`, { method: 'POST', body: signature }); } catch { /* it asks again */ }
+      }
+    }
+    this.round.putLateLockSettlement({ roundId: roundIdBytes, entryId: entryIdBytes, txid: m.txid, message: m.message, signature, state: SUBMITTING,
+      why: 'about to submit; if this signer node dies here, ask the federation for the claimed lock' });
+    const sent = await this.port.settle({ claimPk: m.claimPk, claims: m.claims, payouts: m.plan.payouts, nonce: m.plan.nonce, signature });
+    const state = sent.accepted ? ACCEPTED : REFUSED;
+    const why = sent.accepted
+      ? `claimed the late loser's lock, ${m.plan.poolMsat} msat; paid ${m.plan.payouts.filter((p) => p.kind === 'qualifier').length} winner(s) ${m.plan.paidMsat} msat`
+        + `${m.plan.feeClaims && m.plan.feeClaims.length ? `; its fee lock ${m.plan.feePoolMsat} msat to ${m.plan.signerNodePayouts.length} signer node(s)` : ''}`
+      : `the guardians refused it: ${sent.error}`;
+    this.round.putLateLockSettlement({ roundId: roundIdBytes, entryId: entryIdBytes, txid: m.txid, message: m.message, signature, state, why });
+    return { ok: sent.accepted, state, why, txid: m.txid, signature, plan: m.plan, answer: sent };
   }
 
   /** WHAT THIS SIGNER NODE WILL SIGN, rebuilt from its own store and the stock client - or the refusal. */
@@ -261,15 +422,15 @@ export class LockSettlement {
   }
 
   /** ROUND ONE: this signer node's nonce commitment for the settlement it would sign. */
-  async commit(roundIdBytes, { txid = null } = {}) {
-    const m = await this.message(roundIdBytes);
+  async commit(roundIdBytes, { txid = null, entry = null } = {}) {
+    const m = entry ? await this.lateMessage(roundIdBytes, entry) : await this.message(roundIdBytes);
     if (!m.ok) return m;
     // A COMMITMENT ONLY TO THE BYTES THE ASKER BUILT (measured on a 5-of-7): a signer node that rebuilt another
     // settlement - it saw a run end differently - would otherwise commit, and its share over its own bytes spoils the
     // combined signature for everyone. It refuses by name, and the threshold of the others decides.
     if (txid && String(txid).toLowerCase() !== String(m.txid).toLowerCase())
       return refuse(`this signer node rebuilt settlement ${String(m.txid).slice(0, 16)}, not ${String(txid).slice(0, 16)}: it commits to no other bytes`, 409);
-    const key = toHex(roundIdBytes);
+    const key = entry ? `${toHex(roundIdBytes)}:${toHex(entry)}` : toHex(roundIdBytes);
     let pair = this.pairs.get(key);
     if (!pair || toHex(pair.message) !== toHex(m.message)) {
       const hiding = nonceGenerate340(this.random(32), m.signerNode.share);
@@ -282,10 +443,10 @@ export class LockSettlement {
   }
 
   /** ROUND TWO: this signer node's signature share over the txid it rebuilt, for ONE commitment list. */
-  async share(roundIdBytes, commitments) {
-    const m = await this.message(roundIdBytes);
+  async share(roundIdBytes, commitments, { entry = null } = {}) {
+    const m = entry ? await this.lateMessage(roundIdBytes, entry) : await this.message(roundIdBytes);
     if (!m.ok) return m;
-    const pair = this.pairs.get(toHex(roundIdBytes));
+    const pair = this.pairs.get(entry ? `${toHex(roundIdBytes)}:${toHex(entry)}` : toHex(roundIdBytes));
     if (!pair || toHex(pair.message) !== toHex(m.message)) return refuse('this signer node committed to no settlement of that round');
     const own = commitments.find((c) => String(c.id) === String(pair.commitment.id));
     if (!own || toHex(own.hiding) !== toHex(pair.commitment.hiding) || toHex(own.binding) !== toHex(pair.commitment.binding))
@@ -302,10 +463,17 @@ export class LockSettlement {
   }
 
   /** A combined signature handed over by a peer: kept only if it verifies over what THIS signer node rebuilt. */
-  async take(roundIdBytes, signature) {
-    const m = await this.message(roundIdBytes);
+  async take(roundIdBytes, signature, { entry = null } = {}) {
+    const m = entry ? await this.lateMessage(roundIdBytes, entry) : await this.message(roundIdBytes);
     if (!m.ok) return m;
     if (!schnorr.verify(signature, m.message, m.claimPk.subarray(1))) return refuse('that settlement signature does not verify under the round\'s claim key');
+    if (entry) {
+      const held = this.round.lateLockSettlement(roundIdBytes, entry);
+      if (!held || (held.state === SUBMITTING && held.txid !== m.txid))
+        this.round.putLateLockSettlement({ roundId: roundIdBytes, entryId: entry, txid: m.txid, message: m.message, signature, state: SUBMITTING,
+          why: 'signed by the signer nodes; submitted by the signer node that combined it' });
+      return { ok: true };
+    }
     // A SIGNATURE OVER THE BYTES THIS SIGNER NODE REBUILDS NOW replaces a SUBMITTING row of other bytes: the proposer
     // re-signs only after the federation answered that the old settlement is not in (measured: after a fee-rule change
     // across a restart, the proposer held ACCEPTED on the new txid and this node SUBMITTING on the old one for good).
@@ -325,6 +493,8 @@ export class LockSettlement {
   keepMoves(roundIdBytes, m) {
     this.round.putLockSettlementMoves({ roundId: roundIdBytes, txid: m.txid,
       claims: m.claims.map((c) => `${toHex(c.outpoint.txid)}:${c.outpoint.outIdx}`), payouts: m.plan.payouts.length });
+    // AND WHAT IT PAID EACH WINNER, in the table's order: a late loser's second settlement is split by these (C3b-1).
+    if (this.round.putLockSettlementShares) this.round.putLockSettlementShares(roundIdBytes, m.plan.stakeShares || []);
   }
 
   /**

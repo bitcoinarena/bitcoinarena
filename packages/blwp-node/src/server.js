@@ -240,6 +240,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   winningsNetwork = 'regtest',
   // HOW OFTEN THE WINNINGS SWEEP VISITS unpaid winnings; the finality back-off unless a harness names its own.
   winningsEveryMs = null,
+  // HOW THE SETTLEMENT READS A RUN'S FINALITY - `resultFinality`. A TEST AID, as `finality.rerunMs` is: two signer nodes
+  // that agree on a run cannot hold a valid objection against it, so a lock round's late-loser tests hand another view.
+  finalityOf = resultFinality,
   // THE ROUND'S CLAIM KEY, by round (33 bytes). Defaults to this signer node's own
   // DKG committee key - the key the settlement signer nodes hold for that round.
   claimKeyFor = null,
@@ -745,7 +748,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     random: (n) => new Uint8Array(randomBytes(n)), peersFor: winningsPeers, fetcher: (u, o) => fetch(u, o),
     lnurlFetch, network: winningsNetwork }) : null;
   const settlements = new LockSettlement(round, {
-    dkg, port: stakeLocks, curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)), preimages, winnings,
+    dkg, port: stakeLocks, curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)), preimages, winnings, finalityOf,
     peersFor: (rid) => {
       const picked = roster.committeeFor(rid, 'settlement');
       return picked.ok ? endpointsOf(picked.committee, round.pubkey) : (dkg.peers || []);
@@ -1393,7 +1396,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // round whose contract named 3000 ms. Only a run the gather agreed on is
     // asked, so a run nobody agreed on is still simply not final.
     const standing = new Map(entries.map((e) => [toHex(e.entryId),
-      agreed.has(toHex(e.entryId)) ? resultFinality(round, roundIdBytes, e.entryId) : { state: null }]));
+      agreed.has(toHex(e.entryId)) ? finalityOf(round, roundIdBytes, e.entryId) : { state: null }]));
     const stateOf = (entryId) => (standing.get(toHex(entryId)) || {}).state;
     // A no-quorum FORFEIT is final on its own record (written only after the window).
     const isFinal = (entryId) => stateOf(entryId) === FINAL || noQuorumForfeits.has(toHex(entryId));
@@ -1596,6 +1599,25 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     } finally { sweepingWinnings = false; }
   }, winningsEveryMs ?? finality.maxEveryMs ?? 60000);
   winningsTimer.unref();
+
+  // AND EVERY LATE LOSER (§13A, RULED the owner 2026-09-24, slice C3b-1): an entry the round's settlement left out while it
+  // was in its re-run window, which has since ended FINAL and FAILED, or FORFEIT, is claimed in its own second
+  // settlement. Visited on a slow clock over the objected entries of rounds whose own settlement is ACCEPTED; only the
+  // round's asker combines (settleLate), and an entry still in its window, VOID or a qualifier is refused there by name.
+  let sweepingLate = false;
+  const lateTimer = setInterval(async () => {
+    if (shuttingDown || sweepingLate) return;
+    sweepingLate = true;
+    try {
+      for (const { roundId: rid, entryId: eid } of round.lateSettlementCandidates()) {
+        const after = settlements.lockAfterSettlement(rid, eid);
+        if (after.why !== 'claimed in the round\'s second settlement, not built yet' && !(round.lateLockSettlement(rid, eid) || {}).state) continue;
+        const got = await settlements.settleLate(rid, eid).catch((e) => ({ ok: false, why: e.message }));
+        if (got.ok && !got.kept) console.log(`[settle] ${toHex(rid).slice(0, 16)} late ${toHex(eid).slice(0, 16)}: ${got.state} - ${got.why}`);
+      }
+    } finally { sweepingLate = false; }
+  }, finality.lateEveryMs ?? finality.maxEveryMs ?? 60000);
+  lateTimer.unref();
 
   // AND EVERY ROUND THAT IS OVER, CLOSED BY THIS SIGNER NODE ITSELF (closeAtEnd).
   //
@@ -2561,8 +2583,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         if (rid.length !== 32) return text(res, 400, 'a settlement is asked for by a round id');
         const r8 = new Uint8Array(rid);
+        // A LATE LOSER'S SECOND SETTLEMENT (C3b-1) is asked for by its entry as well: one per (round, entry).
+        const lateHex = url.searchParams.get('entry');
+        const entry = lateHex ? new Uint8Array(Buffer.from(lateHex, 'hex')) : null;
+        if (entry && entry.length !== 32) return text(res, 400, 'a late settlement is asked for by a 32-byte entry id');
         if (url.pathname === '/settle-commit') {
-          const got = await settlements.commit(r8, { txid: url.searchParams.get('txid') });
+          const got = await settlements.commit(r8, { txid: url.searchParams.get('txid'), entry });
           if (!got.ok) return text(res, got.status || 409, got.why);
           res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
           return res.end(Buffer.from(encodeCommitments([got.commitment])));
@@ -2570,14 +2596,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (url.pathname === '/settle-share') {
           let list;
           try { list = decodeCommitments(new Uint8Array(await read(req))); } catch (e) { return text(res, 400, e.message); }
-          const got = await settlements.share(r8, list);
+          const got = await settlements.share(r8, list, { entry });
           if (!got.ok) return text(res, got.status || 409, got.why);
           res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
           return res.end(Buffer.from(encodeShare(got.share)));
         }
         const signature = new Uint8Array(await read(req));
         if (signature.length !== 64) return text(res, 400, 'a settlement signature is 64 bytes');
-        const got = await settlements.take(r8, signature);
+        const got = await settlements.take(r8, signature, { entry });
         return got.ok ? text(res, 201, 'settlement signature kept') : text(res, got.status || 409, got.why);
       }
 
@@ -3469,6 +3495,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         shuttingDown = true;
         clearInterval(settleRecoverTimer);
         clearInterval(winningsTimer);
+        clearInterval(lateTimer);
         settlements.stop();
         if (endTimer) clearInterval(endTimer);
         for (const t of finalityTimers) clearTimeout(t);

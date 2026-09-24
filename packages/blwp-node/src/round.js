@@ -2222,6 +2222,42 @@ export class Round {
     return r ? { txid: r.txid, claims: JSON.parse(r.claims), payouts: Number(r.payouts) } : null;
   }
 
+  /** What the round's settlement paid each winner, in the table's order (slice C3b-1): [{ pubkey, msat }] or null. */
+  putLockSettlementShares(roundIdBytes, shares) {
+    this.db.prepare('INSERT OR REPLACE INTO lock_settlement_shares (round_id, shares) VALUES (?, ?)')
+      .run(Buffer.from(roundIdBytes), JSON.stringify(shares.map((x) => ({ pubkey: Buffer.from(x.pubkey).toString('hex'), msat: String(x.msat) }))));
+  }
+
+  lockSettlementShares(roundIdBytes) {
+    const r = this.db.prepare('SELECT shares FROM lock_settlement_shares WHERE round_id = ?').get(Buffer.from(roundIdBytes));
+    return r ? JSON.parse(r.shares).map((x) => ({ pubkey: new Uint8Array(Buffer.from(x.pubkey, 'hex')), msat: BigInt(x.msat) })) : null;
+  }
+
+  /** A late loser's second settlement (slice C3b-1): its intent, then where it stands. One per (round, entry). */
+  putLateLockSettlement({ roundId, entryId, txid, message, signature, state, why }) {
+    this.db.prepare('INSERT OR REPLACE INTO late_lock_settlements (round_id, entry_id, txid, message, signature, state, why, made_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(Buffer.from(roundId), Buffer.from(entryId), String(txid), Buffer.from(message), Buffer.from(signature), state, why, this.now());
+  }
+
+  lateLockSettlement(roundIdBytes, entryIdBytes) {
+    const r = this.db.prepare('SELECT txid, message, signature, state, why, made_ms FROM late_lock_settlements WHERE round_id = ? AND entry_id = ?')
+      .get(Buffer.from(roundIdBytes), Buffer.from(entryIdBytes));
+    return r ? { txid: r.txid, message: new Uint8Array(r.message), signature: new Uint8Array(r.signature), state: r.state, why: r.why, madeMs: Number(r.made_ms) } : null;
+  }
+
+  /**
+   * THE LATE LOSERS TO ASK ABOUT (slice C3b-1): every objected entry of a round whose own settlement is ACCEPTED and
+   * which holds no ACCEPTED second settlement. An entry is left out of the round's settlement only while an objection
+   * holds it in its re-run window, so nothing else can be one.
+   */
+  lateSettlementCandidates() {
+    return this.db.prepare(`SELECT o.round_id, o.entry_id FROM objections o
+      JOIN lock_settlements s ON s.round_id = o.round_id AND s.state = 'ACCEPTED'
+      LEFT JOIN late_lock_settlements l ON l.round_id = o.round_id AND l.entry_id = o.entry_id
+      WHERE l.state IS NULL OR l.state <> 'ACCEPTED'`).all()
+      .map((r) => ({ roundId: new Uint8Array(r.round_id), entryId: new Uint8Array(r.entry_id) }));
+  }
+
   /**
    * THE ROUNDS WHOSE LOCKS WERE SETTLED SINCE `sinceMs`, oldest first, with their locks' refund keys
    * (spec §24, the owner 2026-09-14: a withdrawal claimed on another device). Public, as the
