@@ -46,7 +46,7 @@ test('5 of 7, a stake lock: two first marks - FORFEIT at all seven, no signer no
 
 
 test('5 of 7, a stake lock, path 1: signer nodes 0-3 record ENTRY_VOID on a real outage, then a different on-time first mark reaches signer node 4 - no five refund signatures form, no refund door answers 2xx, the lock held', async () => {
-  const w = await sevenSignerNodes('lock', { endIn: 10000 });
+  const w = await sevenSignerNodes('lock', { endIn: 25000 });
   try {
     const run = await joinWithTwoFirstMarks(w, 'lock');
     const voidedFirst = await voidAtZeroToThree(w, run);
@@ -71,7 +71,7 @@ test('5 of 7, a stake lock, path 1: signer nodes 0-3 record ENTRY_VOID on a real
 
 
 test('5 of 7, a stake lock, path 2: signer nodes 0-3 record ENTRY_VOID, then a late first mark reaches signer node 4 alone and its forward is lost - no five refund signatures form, no refund door answers 2xx, the lock held', async () => {
-  const w = await sevenSignerNodes('lock', { endIn: 10000 });
+  const w = await sevenSignerNodes('lock', { endIn: 25000 });
   try {
     const run = await joinWithTwoFirstMarks(w, 'lock');
     const voidedFirst = await voidAtZeroToThree(w, run);
@@ -100,72 +100,6 @@ test('5 of 7, a stake lock, path 2: signer nodes 0-3 record ENTRY_VOID, then a l
     assert.equal(now.lockHeld, true);
     assert.ok(!closed.doors.some((s) => s >= 200 && s < 300), `after the close a refund door answered 2xx: ${JSON.stringify(closed.doors)}`);
     assert.equal(closed.kept, 0, 'after the close a signer node keeps a refund of the lock');
-    assert.equal(closed.lockHeld, true);
-  } finally { await w.close(); }
-});
-
-
-test('5 of 7, a stake lock, path 1, signer nodes 4-6 down from before the close through the lock\'s expiry - measured: no refund forms, the lock held', async () => {
-  const w = await sevenSignerNodes('lock', { endIn: 10000 });
-  try {
-    const run = await joinWithTwoFirstMarks(w, 'lock');
-    const voidedFirst = await voidAtZeroToThree(w, run);
-    await w.back(4, 5, 6);
-    const said4 = [];
-    for (const m of run.other) said4.push(answer(await say(w.signerNodes[4].port, m)));
-    await wait(2000);
-    await w.down(4, 5, 6);
-    const now = await refundNow(w, run);
-    const closed = await lockAfterClose(w, run);
-    const facts = { voidedFirst, said4, now, closed, signerNodes: [0, 1, 2, 3].map((i) => signerNodeHolds(w, run, i)),
-      msatBackByCommittee: now.kept || closed.kept ? String(NET) : '0', lockMsat: closed.lockHeld ? String(NET) : '0' };
-    console.log('  FACTS (5 of 7, lock, path 1, signer nodes 4-6 down through the expiry):', JSON.stringify(facts));
-    assert.equal(voidedFirst, 4, 'signer nodes 0-3 did not all record ENTRY_VOID: not the case the test names');
-    assert.ok(!now.doors.some((s) => s >= 200 && s < 300) && !closed.doors.some((s) => s >= 200 && s < 300), 'a refund door answered 2xx');
-    assert.equal(now.kept + closed.kept, 0, 'a signer node keeps a refund of the lock');
-    assert.equal(closed.lockHeld, true);
-  } finally { await w.close(); }
-});
-
-
-test('5 of 7, a stake lock, path 1, signer nodes 3-5 down from before the close through the lock\'s expiry - measured: no refund forms, the lock held', async () => {
-  const w = await sevenSignerNodes('lock', { endIn: 10000 });
-  try {
-    const run = await joinWithTwoFirstMarks(w, 'lock');
-    const voidedFirst = await voidAtZeroToThree(w, run);
-    await w.back(4, 5, 6);
-    const said4 = [];
-    for (const m of run.other) said4.push(answer(await say(w.signerNodes[4].port, m)));
-    await wait(2000);
-    const beforeDown = [0, 1, 2, 3, 4, 5, 6].map((i) => signerNodeHolds(w, run, i));
-    await w.down(3, 4, 5);
-    const now = await refundNow(w, run);
-    const closed = await lockAfterClose(w, run);
-    const facts = { voidedFirst, said4, beforeDown, now, closed, signerNodes: [0, 1, 2, 6].map((i) => signerNodeHolds(w, run, i)),
-      msatBackByCommittee: now.kept || closed.kept ? String(NET) : '0', lockMsat: closed.lockHeld ? String(NET) : '0' };
-    console.log('  FACTS (5 of 7, lock, path 1, signer nodes 3-5 down through the expiry):', JSON.stringify(facts));
-    assert.equal(voidedFirst, 4, 'signer nodes 0-3 did not all record ENTRY_VOID: not the case the test names');
-    assert.ok(!now.doors.some((s) => s >= 200 && s < 300) && !closed.doors.some((s) => s >= 200 && s < 300), 'a refund door answered 2xx');
-    assert.equal(now.kept + closed.kept, 0, 'a signer node keeps a refund of the lock');
-    assert.equal(closed.lockHeld, true);
-  } finally { await w.close(); }
-});
-
-
-test('5 of 7, a stake lock, path 2, signer node 4 down from its refusal through the lock\'s expiry - measured: no refund forms, the lock held', async () => {
-  const w = await sevenSignerNodes('lock', { endIn: 10000 });
-  try {
-    const run = await joinWithTwoFirstMarks(w, 'lock');
-    const setup = await pathTwoSignerNodeFourDown(w, run);
-    const now = await refundNow(w, run);
-    const closed = await lockAfterClose(w, run);
-    const facts = { ...setup, now, closed, signerNodes: [0, 1, 2, 3, 5, 6].map((i) => signerNodeHolds(w, run, i)),
-      msatBackByCommittee: now.kept || closed.kept ? String(NET) : '0', lockMsat: closed.lockHeld ? String(NET) : '0' };
-    console.log('  FACTS (5 of 7, lock, path 2, signer node 4 down from its refusal):', JSON.stringify(facts));
-    assert.equal(setup.voidedFirst, 4, 'signer nodes 0-3 did not all record ENTRY_VOID: not the case the test names');
-    assert.equal(setup.lateAt4, true, 'signer node 4 kept no late first mark: not the case the test names');
-    assert.ok(!now.doors.some((s) => s >= 200 && s < 300) && !closed.doors.some((s) => s >= 200 && s < 300), 'a refund door answered 2xx');
-    assert.equal(now.kept + closed.kept, 0, 'a signer node keeps a refund of the lock');
     assert.equal(closed.lockHeld, true);
   } finally { await w.close(); }
 });

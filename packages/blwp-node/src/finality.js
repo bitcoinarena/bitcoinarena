@@ -179,7 +179,10 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
     if (!rerunWindow.end)
       return { ...suspended, blockPending: true,
         why: `a valid objection suspends finality: the committee re-runs the canonical transcript, and 13C applies only if that re-run cannot reach five of seven; re-run so far: ${rerun.why}; the re-run window's end block - the first at or after ${filedAtMs + W} - is not in this chain yet` };
-    const proven = typeof round.provenTwoFirstMarks === 'function' && round.provenTwoFirstMarks(roundIdBytes, entryIdBytes) === true;
+    // §13C'S EVIDENCE IN THIS WINDOW (RULED 2026-09-24): a pair counts only if both its marks sit strictly before the re-run
+    // window's end block.
+    const proven = typeof round.provenTwoFirstMarks === 'function'
+      && round.provenTwoFirstMarks(roundIdBytes, entryIdBytes, { chain, end: rerunWindow.end }) === true;
     const d = noQuorumOutcome({ signatures: rerun.agreed || 0, needed: rerun.needed || seen.needed, equivocationProven: proven, state: SUSPENDED });
     if (d.outcome)
       return { ...base, state: d.outcome, noQuorum: true, rerun: said, filedAtMs, windows, provisionalAtMs,
@@ -323,5 +326,5 @@ export function resultWindow(round, roundIdBytes, contract) {
   const W = Number(contract.objectionWindowMs);
   const end = windowEnd(chain, open, W);
   if (!end) return { ok: false, open, why: `the result window opened at block ${open.height} (${open.mtp}) and its end block - the first at or after ${open.mtp + W} - is not in this node's chain yet` };
-  return { ok: true, open, end };
+  return { ok: true, open, end, chain };
 }

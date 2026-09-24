@@ -223,7 +223,13 @@ export async function joinAndPlay(daemons, c, rid, who, needed, { direct = false
     assert.equal(await say(d.port, encodeInputBatch(input)), String(who.ticks));
     assert.equal((await say(d.port, signedMark)).length, SIGNED_RECEIPT_BYTES);
   }
-  return { eid, entry, preimage, mid: checkpointId(mark) };
+  // `otherFirstMark`: the player's SECOND first mark of this entry - the same tick, another state - signed by its session
+  // key: with the first, §13B's portable proof of two first marks.
+  const otherFirstMark = () => {
+    const other = { ...mark, stateHash: sha256(mark.stateHash) };
+    return joinSigned(encodeCheckpoint(other), ed25519.sign(checkpointId(other), session));
+  };
+  return { eid, entry, preimage, mid: checkpointId(mark), signedMark, otherFirstMark };
 }
 
 // AND THE CHAIN §13A'S WINDOWS ARE READ FROM (RULED 2026-09-24): every daemon started with these opts reads the block clock.

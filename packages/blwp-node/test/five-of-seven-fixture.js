@@ -284,17 +284,17 @@ export const recordsOf = (w, run) => ({
 /** A lock round after every signer node that is up closes and the window passes: each signer node's record, and every refund door again. */
 export async function lockAfterClose(w, run) {
   const up = [...w.up].sort((a, b) => a - b);
+  // EVERY MARK OF THE PATH IS PLAY-TIME EVIDENCE: made before the result window's end block (RULED 2026-09-24: evidence
+  // counts strictly before it). A path that ran past it would test a late pair, not the path it names.
+  const endAtClose = CLOCK.endAt(Math.ceil(Number(roundEndMs(w.c)) / 1000) * 1000, WINDOW);
+  assert.ok(Date.now() < endAtClose, `the path ran ${Date.now() - endAtClose} ms past the result window's end block before its close`);
   await Promise.all(up.map((i) => say(w.signerNodes[i].port, `close ${toHex(w.rid)}`)));
   // PAST THE RESULT WINDOW ON THE CHAIN (RULED 2026-09-24): its end block - opened at the first block at or after the
   // round's contract end - before any §13C decision can be; then each signer node's next pass.
   const endMs = CLOCK.endAt(Math.ceil(Number(roundEndMs(w.c)) / 1000) * 1000, WINDOW);
   for (const stop = Date.now() + 30000; Date.now() < stop && Date.now() < endMs; await wait(100));
-  // A VOID THAT STANDS past the end block (server.js voidStands: an ENTRY_VOID and no pair) is that node's answer: its
-  // close does not hold the entry, so no §13C decision follows it.
-  const stands = (d) => !!d.round.entryVoid(run.eid) && !d.round.twoFirstMarks(w.rid, run.eid) && Date.now() >= endMs;
   for (let t = Date.now(); Date.now() - t < 20000
-    && !up.every((i) => w.signerNodes[i].round.noQuorum(run.eid) || w.signerNodes[i].round.results(w.rid, run.eid).length
-      || stands(w.signerNodes[i])); await wait(250));
+    && !up.every((i) => w.signerNodes[i].round.noQuorum(run.eid) || w.signerNodes[i].round.results(w.rid, run.eid).length); await wait(250));
   await wait(WINDOW + 1500);
   const q = `round=${toHex(w.rid)}&entry=${toHex(run.eid)}`;
   const doors = [];

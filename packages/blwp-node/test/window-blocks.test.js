@@ -31,7 +31,7 @@ import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { resultFinality } from '../src/finality.js';
 import { CLOCK } from './block-clock.js';
-import { sevenSignerNodes, object, WINDOW_MS, wait, opts } from './window-fixture.js';
+import { sevenSignerNodes, object, WINDOW_MS, wait, opts, say } from './window-fixture.js';
 import { rerunIsAgreed, decodeRerunResult, splitSignedRerun } from '../../protocol/src/rerun.js';
 import { decodeRoundContract } from '../../protocol/src/contracts.js';
 import { toHex } from '../../protocol/src/hash.js';
@@ -145,6 +145,96 @@ test('two holder daemons with the same blocks through the end block name the sam
     assert.deepEqual(withEndFiling.map((x) => `${x.state}:${x.rerun.agreed}`), ['VOID:4', 'VOID:4'], 'the end-block filing was counted inside');
     assert.deepEqual(withInside.map((x) => `${x.state}:${x.rerun.agreed}`), ['FINAL:5', 'FINAL:5']);
     assert.equal(withInside[0].why, withInside[1].why);
+  } finally {
+    if (b) await b.close();
+    await w.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// §13C'S EVIDENCE ON THE RE-RUN WINDOW (RULED the owner 2026-09-24): a pair counts only if both its marks sit strictly before
+// the re-run window's end block, the same at every holder. THE LATE PAIR: the objection, the holder's re-run and three
+// others - short of five, so §13C decides at the re-run window's end. Past that end block the player's second first mark
+// reaches node A only. Both holders must name the same outcome and file the same first-result slash set.
+test('a pair made after the re-run window\'s end block is outside at both holders: the same §13C outcome and the same first-result slash set', async () => {
+  const w = await sevenSignerNodes(WINDOW_MS);
+  const dir = mkdtempSync(join(tmpdir(), 'evidenceblocks-'));
+  let b = null;
+  try {
+    w.sign('dissents', (r) => ({ score: r.score + 1 }));
+    const eid = w.runs.dissents.eid;
+    w.holder.round.db.exec(`VACUUM INTO '${join(dir, 'b.sqlite')}'`);
+    b = await serve(openStore(join(dir, 'b.sqlite')), { port: 0, ...opts, advertsFor: () => w.adverts });
+    b.round.chainView = CLOCK.chainView();
+    const B = { holder: b, rid: w.rid };
+    const t = Date.now();
+    const objectionBlock = CLOCK.tipAt(t);
+    assert.equal((await object(w, eid, objectionBlock)).status, 201);
+    assert.equal((await object(B, eid, objectionBlock)).status, 201);
+    const ownOf = (d) => d.round.reruns(w.rid, eid).find((r) => toHex(r.signerNodePubkey) === toHex(d.round.pubkey));
+    assert.ok(await until(() => ownOf(w.holder)), 'node A never re-ran');
+    const holderRerun = ownOf(w.holder);
+    b.round.putRerun(w.rid, eid, holderRerun.signerNodePubkey, holderRerun.bytes);
+    w.rerunBy('dissents', 3);
+    for (const r of w.holder.round.reruns(w.rid, eid)) b.round.putRerun(w.rid, eid, r.signerNodePubkey, r.bytes);
+    const endTs = CLOCK.endAt(CLOCK.mtpOf(objectionBlock), WINDOW_MS);
+    await until(() => Date.now() >= endTs + 1000, 15000);
+    const pairAfterEnd = Date.now() >= endTs;
+    const said = await say(w.holder.port, w.runs.dissents.otherFirstMark());          // to A only, past the end block
+    await wait(300);
+    const read = (d) => resultFinality(d.round, w.rid, eid);
+    const states = [w.holder, b].map((d) => { const f = read(d); return { state: f.state, noQuorum: !!f.noQuorum, proof: d.round.provenTwoFirstMarks(w.rid, eid) }; });
+    // THE FIRST-RESULT SLASH FOLLOWS THE §13C RECORD: whatever each holder's watch filed, and a filing asked for now.
+    for (const d of [w.holder, b]) await d.verifier.fileFirstResultSlashProofs(w.rid, eid);
+    const slashes = [w.holder, b].map((d) => d.round.slashProofs(w.rid, eid).map((p) => toHex(p.nodePubkey)).sort().join(','));
+    console.log('  FACTS (late pair, re-run window):', JSON.stringify({ pairAfterEnd, said: String(said).slice(0, 80), states, slashes: slashes.map((s) => s.split(',').filter(Boolean).length), sameSlash: slashes[0] === slashes[1] }));
+    assert.equal(pairAfterEnd, true, 'the second first mark was not sent after the end block: not the case the test names');
+    assert.equal(states[0].proof, true, 'A holds no pair: not the case the test names');
+    assert.equal(states[1].state, 'VOID', `B: ${JSON.stringify(states[1])}`);
+    assert.equal(states[0].state, states[1].state, `the holders split on a pair after the end block: A ${states[0].state}, B ${states[1].state}`);
+    assert.equal(slashes[0], slashes[1], 'the holders file different first-result slash sets');
+  } finally {
+    if (b) await b.close();
+    await w.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// AND THE SAME PAIR INSIDE: the player's second first mark reaches both holders before the re-run window's end block - it
+// counts at both, and both name FORFEIT and hold the same first-result slash set.
+test('a pair made before the re-run window\'s end block counts at both holders: FORFEIT at both, the same first-result slash set', async () => {
+  const w = await sevenSignerNodes(WINDOW_MS);
+  const dir = mkdtempSync(join(tmpdir(), 'evidenceblocks-'));
+  let b = null;
+  try {
+    w.sign('dissents', (r) => ({ score: r.score + 1 }));
+    const eid = w.runs.dissents.eid;
+    w.holder.round.db.exec(`VACUUM INTO '${join(dir, 'b.sqlite')}'`);
+    b = await serve(openStore(join(dir, 'b.sqlite')), { port: 0, ...opts, advertsFor: () => w.adverts });
+    b.round.chainView = CLOCK.chainView();
+    const B = { holder: b, rid: w.rid };
+    const objectionBlock = CLOCK.tipAt(Date.now());
+    assert.equal((await object(w, eid, objectionBlock)).status, 201);
+    assert.equal((await object(B, eid, objectionBlock)).status, 201);
+    const second = w.runs.dissents.otherFirstMark();
+    for (const d of [w.holder, b]) await say(d.port, second);                        // to both, inside the window
+    const endTs = CLOCK.endAt(CLOCK.mtpOf(objectionBlock), WINDOW_MS);
+    const pairBeforeEnd = Date.now() < endTs;
+    const ownOf = (d) => d.round.reruns(w.rid, eid).find((r) => toHex(r.signerNodePubkey) === toHex(d.round.pubkey));
+    assert.ok(await until(() => ownOf(w.holder)), 'node A never re-ran');
+    const holderRerun = ownOf(w.holder);
+    b.round.putRerun(w.rid, eid, holderRerun.signerNodePubkey, holderRerun.bytes);
+    w.rerunBy('dissents', 3);
+    for (const r of w.holder.round.reruns(w.rid, eid)) b.round.putRerun(w.rid, eid, r.signerNodePubkey, r.bytes);
+    await until(() => Date.now() >= endTs + 1000, 15000);
+    const states = [w.holder, b].map((d) => { const f = resultFinality(d.round, w.rid, eid); return { state: f.state, noQuorum: !!f.noQuorum }; });
+    for (const d of [w.holder, b]) await d.verifier.fileFirstResultSlashProofs(w.rid, eid);
+    const slashes = [w.holder, b].map((d) => d.round.slashProofs(w.rid, eid).map((p) => toHex(p.nodePubkey)).sort().join(','));
+    console.log('  FACTS (pair inside, re-run window):', JSON.stringify({ pairBeforeEnd, states, slashes: slashes.map((s) => s.split(',').filter(Boolean).length), sameSlash: slashes[0] === slashes[1] }));
+    assert.equal(pairBeforeEnd, true, 'the second first mark was not sent before the end block: not the case the test names');
+    assert.deepEqual(states.map((x) => x.state), ['FORFEIT', 'FORFEIT']);
+    assert.equal(slashes[0], slashes[1], 'the holders file different first-result slash sets');
+    assert.ok(slashes[0].split(',').filter(Boolean).length > 0, 'no first-result signer was slashed');
   } finally {
     if (b) await b.close();
     await w.close();
