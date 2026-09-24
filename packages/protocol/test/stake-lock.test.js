@@ -38,7 +38,7 @@ test('each field the player could get wrong is refused by name', () => {
     [{ amountMsat: netStakeMsat(entry) - 1n }, /holds 97999 msat, and the entry's net stake is 98000/],
     [{ claimPk: Uint8Array.from([0x02, ...b32(0x45)]) }, /claim_pk is not this round's attested claim key/],
     [{ refundPk: Uint8Array.from([0x03, ...b32(0x05)]) }, /refund_pk is not the entry's player key/],
-    [{ expiration: HEIGHT + 143 }, /expires at 1143, before 1000 \+ 144: a loser could refund/],
+    [{ expiration: HEIGHT + 131 }, /lock height 987 \(its expiration 1131 less 144\) is more than 12 blocks below the height 1000 it is verified at: a loser could refund/],
   ];
   for (const [over, why] of cases) assert.match(check({ ...stakeLock(), ...over }).why, why);
   assert.match(check(stakeLock(), 'stake', { height: undefined }).why, /no federation height/);
@@ -57,4 +57,19 @@ test('an entry with no stake point matches no stake lock', () => {
   const none = { ...entry, stakePoint: new Uint8Array(33) };
   assert.match(lockMatchesEntry({ lock: stakeLock(), entry: none, kind: 'stake', claimPk: CLAIM, height: HEIGHT }).why,
     /names no stake point/);
+});
+
+// THE LOCK'S OWN HEIGHT, NOT THE VERIFIER'S CLOCK (§23.1 step 5, RULED the owner 2026-09-24, option (a)). Step 4 builds a
+// lock at "height + stake_expiry_blocks"; the old check wanted "current height + stake_expiry_blocks" at verification,
+// so a lock built exactly as step 4 says was refused one block later (measured: 450 against 316 + 144). The federation
+// holds no creation height, so lock_height is the federation-held expiration less 144, and what bites is freshness:
+// lock_height no more than stake_lock_freshness_blocks (12) below the height the seat verifies at.
+test('a lock built at 306 to expire at 450 is counted when verified at 316, and refused as stale at 319', () => {
+  const built = { ...stakeLock(), expiration: 450 };
+  assert.deepEqual(check(built, 'stake', { height: 316 }), { ok: true });
+  assert.deepEqual(check({ ...feeLock(), expiration: 450 }, 'fee', { height: 316 }), { ok: true });
+  assert.deepEqual(check(built, 'stake', { height: 318 }), { ok: true }, 'twelve blocks below is still fresh');
+  const stale = check(built, 'stake', { height: 319 });
+  assert.equal(stale.ok, false);
+  assert.match(stale.why, /^that stake lock's lock height 306 \(its expiration 450 less 144\) is more than 12 blocks below the height 319 it is verified at: a loser could refund before settlement$/);
 });

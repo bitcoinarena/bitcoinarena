@@ -27,13 +27,6 @@ import { roundLocks, playerFor } from './join.js';
 import { encodeRoundContract, decodeRoundContract, roundId as roundIdOf, custodyFieldsAreValid } from '../../protocol/src/contracts.js';
 import { decodeBolt11 } from '../../protocol/src/bolt11.js';
 
-// THE BLOCKS OVER stake_expiry_blocks A LOCK IS MADE FOR. The signer node requires
-// expiration >= its federation height + 144 when it verifies, and the chain
-// moves between the lock and the check; W1a locked with 150 and both signer nodes
-// committed. How large this margin must be is a parked ruling (the expiry
-// margin, §23.1 step 4 vs step 5) - it is W1a's number, named, not a choice.
-export const LOCK_EXPIRY_MARGIN_BLOCKS = 6;
-
 const namesNothing = (b) => !(b instanceof Uint8Array) || b.every((x) => x === 0);
 
 /**
@@ -205,7 +198,11 @@ export async function lockStake({ round, roundId, invite, seed, stake, claimKey,
   onStep(`holding ${await client.balanceMsat()} msat before locking ${amount} msat (and ${feeMsat} msat of node fee after it)`);
   onStep('locking the stake');
   const refundPk = refundKeyOf(playerPubkey);
-  const delta = Number(round.stakeExpiryBlocks) + LOCK_EXPIRY_MARGIN_BLOCKS;
+  // A LOCK IS MADE FOR EXACTLY stake_expiry_blocks (§23.1 step 4, RULED the owner 2026-09-24: no margin). The signer
+  // node checks it against its own height - the federation-held expiration less 144 - no more than 12 blocks below
+  // the height it verifies at, so the chain moving between the lock and the check costs nothing. W1a's 6-block
+  // margin only hid the old check's off-by-the-wait.
+  const delta = Number(round.stakeExpiryBlocks);
   const answer = await client.lock(toHex(stake.stakePoint), String(amount), toHex(claimKey.claimPk), toHex(refundPk), delta);
   const lock = lockFromClient(answer, { point: stake.stakePoint, claimPk: claimKey.claimPk, refundPk });
   if (lock.fields.amountMsat !== amount)
