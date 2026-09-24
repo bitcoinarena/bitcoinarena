@@ -71,7 +71,11 @@ test('two holder daemons with the same blocks through the end block name the sam
     const B = { holder: b, rid: w.rid };
     const nodes = [w.holder, b];
 
-    // ONE OBJECTION, NAMING ONE BLOCK: A has it at t, B at t + 1500.
+    // ONE OBJECTION, NAMING ONE BLOCK: A has it at t, B at t + 1500. JUST AFTER A SECOND BOUNDARY, as objection-window
+    // does: the clock is one block a second, so t + 3500 (the fifth re-run) must land in the block the reads below are
+    // written for - measured under load with t late in its second: the fifth re-run named the block after the end block
+    // and the inside re-run's own window had not closed at the read (PROVISIONALLY_FINAL at both, the same outcome).
+    while (Date.now() % 1000 > 300) await wait(20);
     const t = Date.now();
     const objectionBlock = CLOCK.tipAt(t);
     assert.equal((await object(w, eid, objectionBlock)).status, 201);
