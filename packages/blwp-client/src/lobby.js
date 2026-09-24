@@ -25,7 +25,7 @@
 // AND WHO IS JOINED, BY THE NAMES THEY CHOSE: each signer node serves the name records
 // its joined players signed (lobby-name.js); a row carries the ones that check
 // (identity.js `checkedNames`) - never a key in place of a name.
-import { joinQuery, fetchRound, roundPays, roundLocks } from './join.js';
+import { joinQuery, fetchRound, roundPays } from './join.js';
 import { checkedNames } from './identity.js';
 import { lobbyListingId } from '../../protocol/src/lobby-listing.js';
 import { receiptsNeeded } from '../../protocol/src/threshold.js';
@@ -177,7 +177,7 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
     rows.push({
       id, phase,
       free: !pays,
-      wallet: !pays ? 'none' : (roundLocks(contract) ? 'federation-lock' : 'lightning'),
+      wallet: pays ? 'federation-lock' : 'none',
       stakeMsat: contract.stakeMsat,
       committeeTimeMs: Number(contract.committeeTimeMs), startTimeMs: Number(contract.startTimeMs),
       entryCloseMs: Number(contract.entryCloseMs),
@@ -226,7 +226,7 @@ const lobbyClock = (ms) => {
 /** One row as the page shows it; the page draws this string and adds nothing. */
 export function lobbyLine(row, nowMs = Date.now()) {
   const money = row.free ? 'free - no wallet, no Lightning'
-    : `stake ${String(row.stakeMsat / 1000n)} sat - ${row.wallet === 'federation-lock' ? 'a federation stake lock' : 'a Lightning payment'}`;
+    : `stake ${String(row.stakeMsat / 1000n)} sat - a federation stake lock`;
   const when = row.phase === 'pending'
     ? `committee: pending, entry opens in ${lobbyClock(row.committeeTimeMs - nowMs)}`
     : `entry open, closes in ${lobbyClock(row.entryCloseMs - nowMs)}`;

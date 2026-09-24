@@ -261,8 +261,8 @@ export async function postHandout(stake, nodes, { fetcher = fetch, needed: asked
 export const roundPays = (round) => !!round && BigInt(round.stakeMsat || 0n) > 0n;
 
 /**
- * DOES THIS ROUND'S STAKE GO INTO A FEDERATION LOCK? A paying round that names
- * its federation (§6 federation_id, §23.6). A hold-invoice round names none.
+ * DOES THIS ROUND'S STAKE GO INTO A FEDERATION LOCK? A paying round that names a
+ * non-zero federation_id (§6, §23.6).
  */
 export const roundLocks = (round) => roundPays(round)
   && round.federationId instanceof Uint8Array && round.federationId.some((b) => b !== 0);
@@ -755,6 +755,10 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
     throw new Error('that is not a dealt stake: it names no commitment or no shares');
   if (stake && stake.vssSharesRef.some((b) => b !== 0) && !stake.stakePoint)
     throw new Error('that stake publishes shares and names no stake point, so no signer node could check them');
+  // A PAYING ROUND LOCKS ITS STAKE, OR IT IS NO ROUND (§23.6, RULED 2026-09-24): one that takes a stake and names
+  // no federation was the withdrawn hold invoice's, and no entry is built for it.
+  if (roundPays(round) && !roundLocks(round))
+    throw new Error('this round takes a stake and names no federation, so it is not a round of this network (§23.6)');
   // A LOCKING ROUND'S ENTRY NAMES THE ATTESTED CLAIM KEY (§23.1 step 0): with
   // no attestation the page refuses the signer node - "a client MUST refuse to lock
   // to a key without them" - rather than name a key nobody vouched for.
