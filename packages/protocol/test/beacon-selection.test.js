@@ -12,10 +12,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { beaconFromChain, beaconIsTheChains, beaconIsAfterRound, medianTimePast,
-  MEDIAN_TIME_SPAN, committeeSeedFromBeacon } from '../src/beacon.js';
+  MEDIAN_TIME_SPAN, committeeSeedFromBeacon, committeeSeedFrom } from '../src/beacon.js';
 import { blockOf } from '../tools/bond.js';
 import { hash256, blockHashOf, blockTimeOf } from '../src/chain.js';
-import { toHex } from '../src/hash.js';
+import { toHex, fromHex } from '../src/hash.js';
 import { NETWORK_ID_REGTEST } from '../src/genesis-ids.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -258,4 +258,22 @@ test('a view that begins after committee_time says so instead of answering', () 
   assert.equal(also.ok, true, also.why);
   assert.equal(also.height, named.height);
   assert.deepEqual(also.hash, named.hash);
+});
+
+// ROUND_RANDOMNESS IS THE BLOCK HASH ITSELF, IN INTERNAL ORDER (§5A.5 and §12, RULED the owner 2026-09-24, ruling B). A PIN,
+// NOT A RED-FIRST TEST: the code never mixed in a height, the spec now says so, and nothing measured here changed. It
+// fixes the bytes: a height term, or the reversed hex a block explorer prints, would move every committee and world.
+test('round_randomness is the beacon block\'s hash in internal order, and the committee seed is built on it alone', () => {
+  const genesis = fromHex('01000000' + '00'.repeat(32)
+    + '3ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a' + '29ab5f49' + 'ffff001d' + '1dac2b7c');
+  assert.equal(genesis.length, 80);
+  const hash = blockHashOf(genesis);
+  assert.equal(toHex(hash), '6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000');
+  const seedOf = (roundRandomness) => toHex(committeeSeedFrom({
+    censusRootGameVerify: b32(2), censusRootSettlement: b32(2), roundId: b32(0x11), roundRandomness }));
+  assert.equal(seedOf(hash), '89bcdfa54f3fd95285a230736281bd2e1c78ff0cf1bbeeae2300826787a2fbbd');
+  const explorer = Uint8Array.from(hash).reverse();
+  assert.equal(toHex(explorer), '000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f');
+  assert.equal(seedOf(explorer), '9c282f0c64f8c99489b8567e09c2bf9e3149ec0c33d6ba31e585b18e7839732a');
+  assert.notEqual(seedOf(explorer), seedOf(hash));
 });
