@@ -11,7 +11,9 @@ import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { assumeAssigned } from './assignment.js';
 import { lockPort } from './lock-fixture.js';
 import { contractFor, say, wait, opts, rand, b32, secretScalar, STAKE, joinAndPlay, WINNER, LOSER,
-  RANDOMNESS, GENESIS_HASH, wordsAt, PLANTED_FIRST_MARK_DEADLINE } from './window-fixture.js';
+  RANDOMNESS, GENESIS_HASH, wordsAt, PLANTED_FIRST_MARK_DEADLINE, presentDay } from './window-fixture.js';
+import { CLOCK } from './block-clock.js';
+import { roundEndMs } from '../../protocol/src/first-mark.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
 import { dealHandout, encodeHandout, handoutId } from '../../protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../protocol/src/shares.js';
@@ -33,7 +35,7 @@ export const curve = { ...feldmanGroup, tweakPoint };
 export const answer = (s) => (typeof s === 'string' ? (s.length > 30 && !s.startsWith('error') ? 'receipt' : s.slice(0, 90)) : 'receipt');
 
 /** Seven live signer nodes on one round, on stake locks with their own claim key (`lock`: the one custody, §23.6). */
-export async function sevenSignerNodes(custody) {
+export async function sevenSignerNodes(custody, { endIn = null } = {}) {
   const locks = custody === 'lock' ? lockPort() : null;
   const dbs = Array.from({ length: 7 }, () => openStore(':memory:'));
   const mk = (i, port = 0) => serve(dbs[i], { port, ...opts, finality: { everyMs: 100 },
@@ -50,8 +52,10 @@ export async function sevenSignerNodes(custody) {
     }
   };
   wire();
-  const c = { ...contractFor(signerNodes.map((d) => d.round.pubkey), BigInt(WINDOW), ports.map((p) => `http://127.0.0.1:${p}`)),
+  const base = { ...contractFor(signerNodes.map((d) => d.round.pubkey), BigInt(WINDOW), ports.map((p) => `http://127.0.0.1:${p}`)),
     ...(custody === 'lock' ? { custody: 'FEDERATION', federationId: TEST_FEDERATION_ID } : {}) };
+  // `endIn`: THE ROUND IN THE PRESENT, its contract end this many ms from now (§13C's result window opens at it).
+  const c = endIn === null ? base : presentDay(base, Date.now() + endIn);
   const rid = roundId(c);
   for (const d of signerNodes) {
     const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
@@ -281,8 +285,16 @@ export const recordsOf = (w, run) => ({
 export async function lockAfterClose(w, run) {
   const up = [...w.up].sort((a, b) => a - b);
   await Promise.all(up.map((i) => say(w.signerNodes[i].port, `close ${toHex(w.rid)}`)));
+  // PAST THE RESULT WINDOW ON THE CHAIN (RULED 2026-09-24): its end block - opened at the first block at or after the
+  // round's contract end - before any §13C decision can be; then each signer node's next pass.
+  const endMs = CLOCK.endAt(Math.ceil(Number(roundEndMs(w.c)) / 1000) * 1000, WINDOW);
+  for (const stop = Date.now() + 30000; Date.now() < stop && Date.now() < endMs; await wait(100));
+  // A VOID THAT STANDS past the end block (server.js voidStands: an ENTRY_VOID and no pair) is that node's answer: its
+  // close does not hold the entry, so no §13C decision follows it.
+  const stands = (d) => !!d.round.entryVoid(run.eid) && !d.round.twoFirstMarks(w.rid, run.eid) && Date.now() >= endMs;
   for (let t = Date.now(); Date.now() - t < 20000
-    && !up.every((i) => w.signerNodes[i].round.noQuorum(run.eid) || w.signerNodes[i].round.results(w.rid, run.eid).length); await wait(250));
+    && !up.every((i) => w.signerNodes[i].round.noQuorum(run.eid) || w.signerNodes[i].round.results(w.rid, run.eid).length
+      || stands(w.signerNodes[i])); await wait(250));
   await wait(WINDOW + 1500);
   const q = `round=${toHex(w.rid)}&entry=${toHex(run.eid)}`;
   const doors = [];

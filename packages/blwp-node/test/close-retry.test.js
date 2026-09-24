@@ -23,7 +23,9 @@ import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { resultFinality } from '../src/finality.js';
 import { assumeAssigned } from './assignment.js';
-import { rand, WINDOW_MS, WINNER, GENESIS_HASH, wordsAt, contractFor, say, opts, wait, RANDOMNESS } from './window-fixture.js';
+import { rand, WINDOW_MS, WINNER, GENESIS_HASH, wordsAt, contractFor, say, opts, wait, RANDOMNESS, presentDay } from './window-fixture.js';
+import { CLOCK } from './block-clock.js';
+import { roundEndMs } from '../../protocol/src/first-mark.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
 import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../protocol/src/checkpoint.js';
@@ -33,7 +35,7 @@ import { hash as stateHash } from '../../core/src/state.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { toHex } from '../../protocol/src/hash.js';
 
-async function signerNodes({ finality = {} } = {}) {
+async function signerNodes({ finality = {}, endIn = null } = {}) {
   const mk = (db, port = 0, more = {}) => serve(db, { port, ...opts, finality: { everyMs: 100, ...finality }, ...more });
   const dbA = openStore(':memory:');
   const dbB = openStore(':memory:');
@@ -48,8 +50,10 @@ async function signerNodes({ finality = {} } = {}) {
     }
   };
   wire();
-  const c = { ...contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
+  const base = { ...contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
     stakeMsat: 0n, federationId: new Uint8Array(32) };
+  // `endIn`: THE ROUND IN THE PRESENT, its contract end this many ms from now (§13C's result window opens at it).
+  const c = endIn === null ? base : presentDay(base, Date.now() + endIn);
   const rid = roundId(c);
   for (const d of [a, b]) {
     assert.equal((await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) })).status, 201);
@@ -157,7 +161,7 @@ test('a signer node whose peer is down at the close holds - no result, no Void -
 // runs went final 2 of 2 when its peer came back - measured this morning, the test this replaces.
 test('past the result window a signer node that cannot retrieve the transcript decides VOID (§13C), and no run it voided is FINAL anywhere after its peer is back', async () => {
   // The watch's window is 800 ms here, its back-off capped at 400 ms.
-  const w = await signerNodes({ finality: { windowMs: 800, maxEveryMs: 400 } });
+  const w = await signerNodes({ finality: { windowMs: 800, maxEveryMs: 400 }, endIn: 4000 });
   try {
     const { P, W } = await playedAndJoined(w);
     await w.downB();
@@ -166,20 +170,27 @@ test('past the result window a signer node that cannot retrieve the transcript d
     await wait(700);
     const inWindowAt = await until(10000, () => closingAt(w, w.a, W));
     const inWindow = { state: inWindowAt.state, attempts: inWindowAt.attempts };
-    await wait(Math.max(2800, closedAt + 3500 - Date.now()));
+    // PAST THE RESULT WINDOW ON THE CHAIN (RULED 2026-09-24): its end block - opened at the first block at or after the
+    // round's contract end - not W past this node's close.
+    const endMs = CLOCK.endAt(Math.ceil(Number(roundEndMs(w.c)) / 1000) * 1000, WINDOW_MS);
+    const insideAt = Date.now();
+    await until(30000, () => Date.now() >= endMs);
+    await until(15000, () => ['W', 'P'].every((k) => resultFinality(w.a.round, w.rid, { W, P }[k].eid).state === 'VOID'));
+    await wait(500);
     const pastWindow = { W: brief(await closingAt(w, w.a, W)), P: brief(await closingAt(w, w.a, P)),
       atA: { W: look(w, w.a, W), P: look(w, w.a, P) } };
-    // B BACK, and closed: it signs what it replays (1 of 2), and once ITS OWN window has passed with A
-    // saying it decided the entry by §13C - so no quorum can form - it decides the same. Measured
-    // before that follow-up: B signed 1 of 2 and its watch asked with no end.
+    // B BACK, and closed: it signs what it replays (1 of 2), and - the result window's end block already in its chain,
+    // with A saying it decided the entry by §13C, so no quorum can form - it decides the same. Measured before that
+    // follow-up: B signed 1 of 2 and its watch asked with no end. Its own close + W no longer matters (RULED 2026-09-24).
     await w.upB();
     const bClosedAt = Date.now();
     assert.equal(await say(w.b.port, `close ${toHex(w.rid)}`), 'closed');
     await until(15000, () => ['W', 'P'].every((k) => resultFinality(w.b.round, w.rid, { W, P }[k].eid).state === 'VOID'));
     const bDecidedAfterMs = Date.now() - bClosedAt;
     const after = { P: { a: look(w, w.a, P), b: look(w, w.b, P) }, W: { a: look(w, w.a, W), b: look(w, w.b, W) } };
-    console.log('  FACTS (past the window):', JSON.stringify({ inWindow, pastWindow, after, bDecidedAfterMs }));
-    assert.ok(bDecidedAfterMs >= 3000, `B decided ${bDecidedAfterMs} ms after its close - inside its own window of 3000`);
+    console.log('  FACTS (past the window):', JSON.stringify({ inWindow, pastWindow, after, bDecidedAfterMs, endBlockAfterCloseA: endMs - closedAt }));
+    assert.ok(insideAt < endMs, 'the in-window read was not inside the result window');
+    assert.ok(bClosedAt >= endMs, 'B closed before the end block: B deciding would say nothing about the chain window');
     assert.equal(inWindow.state, 'HOLDING', 'inside the window the signer node waits, as before');
     assert.ok(pastWindow.W.attempts > inWindow.attempts, `no retry after the window: ${inWindow.attempts} then ${pastWindow.W.attempts}`);
     for (const run of ['W', 'P']) {

@@ -32,7 +32,9 @@ import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { resultFinality } from '../src/finality.js';
 import { assumeAssigned } from './assignment.js';
 import { lockPort } from './lock-fixture.js';
-import { b32, rand, RANDOMNESS, STAKE, WINDOW_MS, WINNER, GENESIS_HASH, wordsAt, contractFor, say, secretScalar, opts, wait } from './window-fixture.js';
+import { b32, rand, RANDOMNESS, STAKE, WINDOW_MS, WINNER, GENESIS_HASH, wordsAt, contractFor, say, secretScalar, opts, wait, presentDay } from './window-fixture.js';
+import { CLOCK } from './block-clock.js';
+import { roundEndMs } from '../../protocol/src/first-mark.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
 import { START_DEADLINE_TICKS } from '../../protocol/src/constants.js';
 import { dealHandout, encodeHandout, handoutId } from '../../protocol/src/handout.js';
@@ -51,7 +53,7 @@ import { toHex, sha256 } from '../../protocol/src/hash.js';
 const curve = { ...feldmanGroup, tweakPoint };
 const END = WINNER.ticks;                      // 1320: the run delivers here
 
-async function signerNodes() {
+async function signerNodes({ endIn = null } = {}) {
   const port = lockPort();
   const mk = (db, p = 0) => serve(db, { port: p, ...opts, stakeLocks: port, poolCurve: curve, finality: { everyMs: 100 } });
   const dbA = openStore(':memory:');
@@ -69,8 +71,10 @@ async function signerNodes() {
   wire();
   // THIS ROUND NAMES NO START DEADLINE: it gets the page's own window, 900 -
   // not the 1400 the fixture's settling rounds name past their planted marks.
-  const c = { ...contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
+  const base = { ...contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
     custody: 'FEDERATION', federationId: TEST_FEDERATION_ID, startDeadlineTicks: undefined };
+  // `endIn`: THE ROUND IN THE PRESENT, its contract end this many ms from now (§13C's result window opens at it).
+  const c = endIn === null ? base : presentDay(base, Date.now() + endIn);
   const rid = roundId(c);
   for (const d of [a, b]) {
     const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
@@ -188,6 +192,14 @@ async function closeAndSettle(w, run) {
     if (f.ok || !/before the result is final/.test(await f.text())) break;
   }
 }
+// PAST THE RESULT WINDOW ON THE CHAIN (RULED 2026-09-24): its end block - opened at the first block at or after the
+// round's contract end - and then each node's next pass that decides; not W past the close.
+async function pastResultWindow(w, decided) {
+  const endMs = CLOCK.endAt(Math.ceil(Number(roundEndMs(w.c)) / 1000) * 1000, WINDOW_MS);
+  for (const stop = Date.now() + 30000; Date.now() < stop && Date.now() < endMs; await wait(100));
+  for (const stop = Date.now() + 30000; Date.now() < stop && !decided(); await wait(100));
+}
+const decidedBoth = (w, run) => () => [w.a, w.b].every((d) => d.round.noQuorum(run.eid));
 const untilForwarded = async (d, run) => { for (let t = Date.now(); Date.now() - t < 5000; await wait(100)) if (holdsFirst(d, run) || d.round.startForfeit(run.eid)) return true; return false; };
 
 test('a first mark in time decides nothing - at both signer nodes with the player at both, and at B by forward when the player reaches only A', async () => {
@@ -462,7 +474,7 @@ test('late start at close (5): an on-time first mark at B and a late one at A, B
 // FORFEIT - never ENTRY_VOID, which would refund a stake the player chose to
 // split (§13C: "a player cannot manufacture a refund").
 test('late start at close (5b): an on-time first mark at B and a late one at A, both signer nodes up at the close - FORFEIT, never ENTRY_VOID or a refund', async () => {
-  const w = await signerNodes();
+  const w = await signerNodes({ endIn: 12000 });
   try {
     const run = await joinAndBuild(w);
     await w.downA();
@@ -473,7 +485,7 @@ test('late start at close (5b): an on-time first mark at B and a late one at A, 
     const before = { bOnTime: holdsFirst(w.b, run), aLate: !!w.a.round.startForfeit(run.eid), bLate: !!w.b.round.startForfeit(run.eid),
       offersAtB: w.b.round.firstMarkOffers(run.eid) };
     await Promise.all([say(w.a.port, `close ${toHex(w.rid)}`), say(w.b.port, `close ${toHex(w.rid)}`)]);
-    await wait(WINDOW_MS + 3000);
+    await pastResultWindow(w, () => [w.a, w.b].every((d) => d.round.noQuorum(run.eid) || d.round.results(w.rid, run.eid).length));
     const at2 = async (d) => {
       const s = await signedAt(d, w, run);
       const nq = d.round.noQuorum(run.eid);
@@ -500,7 +512,7 @@ test('late start at close (5b): an on-time first mark at B and a late one at A, 
 // MEASURED BEFORE: A 409 when asked first, then B's forfeit showed A the Void,
 // A recorded it, and B's door answered 200 - a refund signed 2 of 2.
 test('late start at close (5c): B records ENTRY_VOID on a real outage, then the player sends A a late first mark - FORFEIT at both, no refund signed, the lock held', async () => {
-  const w = await signerNodes();
+  const w = await signerNodes({ endIn: 12000 });
   try {
     const run = await joinAndBuild(w);
     await w.downA();
@@ -513,7 +525,7 @@ test('late start at close (5c): B records ENTRY_VOID on a real outage, then the 
     const before = { bVoidFirst, aLate: !!w.a.round.startForfeit(run.eid), aHoldsOnTime: holdsFirst(w.a, run),
       aVoid: !!w.a.round.entryVoid(run.eid), proofAtA: w.a.round.equivocation(w.rid, run.eid).length, proofAtB: w.b.round.equivocation(w.rid, run.eid).length };
     await Promise.all([say(w.a.port, `close ${toHex(w.rid)}`), say(w.b.port, `close ${toHex(w.rid)}`)]);
-    await wait(WINDOW_MS + 3000);
+    await pastResultWindow(w, decidedBoth(w, run));
     const at2 = async (d) => {
       const s = await signedAt(d, w, run);
       const nq = d.round.noQuorum(run.eid);
@@ -547,7 +559,7 @@ test('late start at close (5c): B records ENTRY_VOID on a real outage, then the 
 // a DIFFERENT on-time first mark. Same-mark Void evidence only: B refuses it and
 // keeps the pair; FORFEIT at both, no refund signed, the lock held.
 test('late start at close (5d): A records ENTRY_VOID on a real outage, then the player sends B a different on-time first mark - FORFEIT at both, no refund signed, the lock held', async () => {
-  const w = await signerNodes();
+  const w = await signerNodes({ endIn: 12000 });
   try {
     const run = await joinAndBuild(w);
     await w.downB();
@@ -564,7 +576,7 @@ test('late start at close (5d): A records ENTRY_VOID on a real outage, then the 
       bPeers: w.b.verifier.peersOf(w.rid).length,
       proofAtA: w.a.round.equivocation(w.rid, run.eid).length, proofAtB: w.b.round.equivocation(w.rid, run.eid).length };
     await Promise.all([say(w.a.port, `close ${toHex(w.rid)}`), say(w.b.port, `close ${toHex(w.rid)}`)]);
-    await wait(WINDOW_MS + 3000);
+    await pastResultWindow(w, decidedBoth(w, run));
     const at2 = async (d) => {
       const s = await signedAt(d, w, run);
       const nq = d.round.noQuorum(run.eid);
@@ -599,7 +611,7 @@ test('late start at close (5d): A records ENTRY_VOID on a real outage, then the 
 // show a signer node the Void and make the pair there), both signer nodes hold the pair and
 // close FORFEIT; then no door signs a refund, and the lock is held.
 test('late start at close (5e): B records ENTRY_VOID, the late first mark reaches only A and its forward to B is lost - pulled at the close, FORFEIT at both, no refund', async () => {
-  const w = await signerNodes();
+  const w = await signerNodes({ endIn: 12000 });
   try {
     const run = await joinAndBuild(w);
     await w.downA();
@@ -615,7 +627,7 @@ test('late start at close (5e): B records ENTRY_VOID, the late first mark reache
     const before = { bVoidFirst, aLate: !!w.a.round.startForfeit(run.eid), aVoid: !!w.a.round.entryVoid(run.eid),
       proofAtA: w.a.round.equivocation(w.rid, run.eid).length, proofAtB: w.b.round.equivocation(w.rid, run.eid).length };
     await Promise.all([say(w.a.port, `close ${toHex(w.rid)}`), say(w.b.port, `close ${toHex(w.rid)}`)]);
-    await wait(WINDOW_MS + 3000);
+    await pastResultWindow(w, decidedBoth(w, run));
     const state = (d) => {
       const nq = d.round.noQuorum(run.eid);
       return { entryVoid: !!d.round.entryVoid(run.eid), noQuorum: nq ? nq.outcome : null, finality: resultFinality(d.round, w.rid, run.eid).state,

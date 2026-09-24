@@ -17,6 +17,8 @@
 // B "refused"; at the close both signer nodes HOLDING - 3 attempts at 2 s, 12 and 11 at
 // 10 s - no result, finality null, no Void, forfeit 409 at both, lock held: a
 // hold for ever.
+import { roundEndMs } from '../../protocol/src/first-mark.js';
+import { CLOCK } from './block-clock.js';
 import { test } from 'node:test';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import assert from 'node:assert/strict';
@@ -25,10 +27,10 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
-import { resultFinality } from '../src/finality.js';
+import { resultFinality, resultWindow } from '../src/finality.js';
 import { assumeAssigned } from './assignment.js';
 import { lockPort } from './lock-fixture.js';
-import { b32, rand, RANDOMNESS, STAKE, WINDOW_MS, WINNER, GENESIS_HASH, wordsAt, contractFor, say, secretScalar, opts, wait } from './window-fixture.js';
+import { b32, rand, RANDOMNESS, STAKE, WINDOW_MS, WINNER, GENESIS_HASH, wordsAt, contractFor, say, secretScalar, opts, wait, presentDay } from './window-fixture.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
 import { dealHandout, encodeHandout, handoutId } from '../../protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../protocol/src/shares.js';
@@ -46,13 +48,16 @@ import { toHex, sha256 } from '../../protocol/src/hash.js';
 const curve = { ...feldmanGroup, tweakPoint };
 const END = WINNER.ticks;                      // 1320
 
-async function signerNodes() {
+async function signerNodes({ endIn = 9000, lagB = 0 } = {}) {
   const port = lockPort();
   const mk = (db, p = 0) => serve(db, { port: p, ...opts, stakeLocks: port, poolCurve: curve, finality: { everyMs: 100 } });
   const dbA = openStore(':memory:');
   const dbB = openStore(':memory:');
   let a = await mk(dbA);
-  let b = await mk(dbB);
+  // `lagB`: B's chain view runs this many ms behind the clock - a node that has not got the latest blocks yet.
+  const mkB = (db, p = 0) => serve(db, { port: p, ...opts, stakeLocks: port, poolCurve: curve, finality: { everyMs: 100 },
+    ...(lagB ? { windowChain: function lagging() { return CLOCK.viewAt(this.now() - lagB); } } : {}) });
+  let b = await mkB(dbB);
   const bPort = b.port;
   const wire = () => {
     for (const [d, o] of [[a, b], [b, a]]) {
@@ -61,8 +66,10 @@ async function signerNodes() {
     }
   };
   wire();
-  const c = { ...contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
+  const base = { ...contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
     custody: 'FEDERATION', federationId: TEST_FEDERATION_ID, startDeadlineTicks: undefined };
+  // `endIn`: THE ROUND IN THE PRESENT, its contract end this many ms from now (§13C's window opens at it).
+  const c = endIn === null ? base : presentDay(base, Date.now() + endIn);
   const rid = roundId(c);
   for (const d of [a, b]) {
     assert.equal((await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) })).status, 201);
@@ -72,7 +79,7 @@ async function signerNodes() {
   return {
     get a() { return a; }, get b() { return b; }, c, rid, port, claimPk: a.dkg.signerNodeFor(c.nodes).pool.groupPublicKey,
     async downB() { await b.close(); },
-    async upB() { b = await mk(dbB, bPort); wire(); },
+    async upB() { b = await mkB(dbB, bPort); wire(); },
     async close() { try { await a.close(); } catch { /* down */ } try { await b.close(); } catch { /* down */ } },
   };
 }
@@ -265,7 +272,11 @@ test('one signer node refused (4): the refusing signer node is unreachable at th
     await until(() => w.b.round.refusedFirstMark(run.eid) && Object.values(w.a.round.firstMarkOffers(run.eid)).includes('refused'));
     await w.downB();
     assert.equal(await say(w.a.port, `close ${toHex(w.rid)}`), 'closed');
-    await wait(WINDOW_MS + 2000);
+    // PAST THE RESULT WINDOW ON THE CHAIN (RULED 2026-09-24): two seconds past its end block - opened at the first block at
+    // or after the round's contract end - not W past this node's close.
+    const endMs = CLOCK.endAt(Math.ceil(Number(roundEndMs(w.c)) / 1000) * 1000, WINDOW_MS);
+    await until(() => Date.now() >= endMs, 30000);
+    await until(() => w.a.round.noQuorum(run.eid), 30000);                // A decides on its next pass past the end block
     const pastWindowBDown = await at(w.a, w, run);
     await w.upB();
     assert.equal(await say(w.b.port, `close ${toHex(w.rid)}`), 'closed');
@@ -337,5 +348,91 @@ test('one signer node refused (5, 6): B refuses, then sees the stake and takes t
       assert.equal(after[s].publicResults.signed, 2, s);
       assert.equal(after[s].publicResults.noQuorum, null, s);
     }
+  } finally { await w.close(); }
+});
+
+// §13C'S RESULT WINDOW ON THE CHAIN (RULED the owner 2026-09-24): it opens at the first block at or after the round's contract
+// end (roundEndMs - the same instant at every holder) and ends at the first later block at or after open + W. Two
+// holders that close seconds apart write their §13C outcome at the same end block - not each at its own close + W, where
+// the first could freeze a refund or a forfeit the other, still inside its local window, could still contradict.
+async function writesOf(w, run, ms = 25000) {
+  const at_ = { a: null, b: null };
+  for (const stop = Date.now() + ms; Date.now() < stop && !(at_.a && at_.b); await wait(50))
+    for (const s of ['a', 'b']) if (!at_[s] && w[s].round.noQuorum(run.eid)) at_[s] = { ms: Date.now(), outcome: w[s].round.noQuorum(run.eid).outcome };
+  return at_;
+}
+
+test('§13C on the chain (VOID): two holders closing three seconds apart write VOID, both only once the result window\'s end block is there - not each at its own close + W', async () => {
+  const w = await signerNodes({ endIn: 9000 });
+  try {
+    const run = await joinAndBuild(w, { lockAt: ['a'] });
+    for (const m of run.messages) { await say(w.a.port, m); await say(w.b.port, m); }
+    await until(() => w.b.round.refusedFirstMark(run.eid) && Object.values(w.a.round.firstMarkOffers(run.eid)).includes('refused'));
+    const closeA = Date.now();
+    await say(w.a.port, `close ${toHex(w.rid)}`);
+    await wait(3000);
+    const closeB = Date.now();
+    await say(w.b.port, `close ${toHex(w.rid)}`);
+    const wrote = await writesOf(w, run);
+    const endMs = CLOCK.endAt(Math.ceil(Number(roundEndMs(w.c)) / 1000) * 1000, WINDOW_MS);
+    console.log('  FACTS (13C VOID timing):', JSON.stringify({ closesApart: closeB - closeA, wroteA: wrote.a && wrote.a.ms - closeA,
+      wroteB: wrote.b && wrote.b.ms - closeA, gap: wrote.a && wrote.b ? wrote.b.ms - wrote.a.ms : null, endBlockAfterCloseA: endMs - closeA,
+      outcomes: [wrote.a && wrote.a.outcome, wrote.b && wrote.b.outcome] }));
+    assert.deepEqual([wrote.a && wrote.a.outcome, wrote.b && wrote.b.outcome], ['VOID', 'VOID']);
+    assert.ok(wrote.a.ms >= endMs && wrote.b.ms >= endMs, 'a holder wrote before the result window\'s end block');
+  } finally { await w.close(); }
+});
+
+test('§13C on the chain (FORFEIT): the player\'s two first marks, two holders closing three seconds apart - FORFEIT at both, both only once the end block is there', async () => {
+  const w = await signerNodes({ endIn: 12000 });
+  try {
+    const run = await joinAndBuild(w);
+    await w.downB();
+    for (const m of run.messages.slice(0, 2)) await say(w.a.port, m);
+    await w.upB();
+    for (const m of run.alt) await say(w.b.port, m);
+    for (const m of run.messages.slice(0, 2)) await say(w.a.port, m);
+    await wait(1000);
+    const closeA = Date.now();
+    await say(w.a.port, `close ${toHex(w.rid)}`);
+    await wait(3000);
+    await say(w.b.port, `close ${toHex(w.rid)}`);
+    const wrote = await writesOf(w, run);
+    const endMs = CLOCK.endAt(Math.ceil(Number(roundEndMs(w.c)) / 1000) * 1000, WINDOW_MS);
+    console.log('  FACTS (13C FORFEIT timing):', JSON.stringify({ wroteA: wrote.a && wrote.a.ms - closeA, wroteB: wrote.b && wrote.b.ms - closeA,
+      gap: wrote.a && wrote.b ? wrote.b.ms - wrote.a.ms : null, endBlockAfterCloseA: endMs - closeA, outcomes: [wrote.a && wrote.a.outcome, wrote.b && wrote.b.outcome] }));
+    assert.deepEqual([wrote.a && wrote.a.outcome, wrote.b && wrote.b.outcome], ['FORFEIT', 'FORFEIT']);
+    assert.ok(wrote.a.ms >= endMs && wrote.b.ms >= endMs, 'a holder wrote before the result window\'s end block');
+  } finally { await w.close(); }
+});
+
+test('§13C on the chain: a holder whose chain has not got the end block writes nothing, and a decision taken with the end block as tip is past the window at both', async () => {
+  const LAG = 4000;
+  const w = await signerNodes({ endIn: 9000, lagB: LAG });
+  try {
+    const run = await joinAndBuild(w, { lockAt: ['a'] });
+    for (const m of run.messages) { await say(w.a.port, m); await say(w.b.port, m); }
+    await until(() => w.b.round.refusedFirstMark(run.eid) && Object.values(w.a.round.firstMarkOffers(run.eid)).includes('refused'));
+    await Promise.all([say(w.a.port, `close ${toHex(w.rid)}`), say(w.b.port, `close ${toHex(w.rid)}`)]);
+    const endMs = CLOCK.endAt(Math.ceil(Number(roundEndMs(w.c)) / 1000) * 1000, WINDOW_MS);
+    // A writes once the end block is there; at that moment B's chain, LAG behind, does not hold it yet.
+    let atAWrote = null;
+    for (const stop = Date.now() + 25000; Date.now() < stop && !atAWrote; await wait(50))
+      if (w.a.round.noQuorum(run.eid)) atAWrote = { ms: Date.now(), bWrote: !!w.b.round.noQuorum(run.eid), bWindow: resultWindow(w.b.round, w.rid, w.c).ok };
+    const wrote = await writesOf(w, run);
+    const edge = (d, now) => resultWindow(Object.assign(Object.create(d.round), { now: () => now }), w.rid, w.c).ok;
+    console.log('  FACTS (13C lagging):', JSON.stringify({ endMs, aWroteAfterEnd: atAWrote && atAWrote.ms - endMs, bHadNotWritten: atAWrote && !atAWrote.bWrote,
+      bSawNoEnd: atAWrote && !atAWrote.bWindow, bWroteAfterEnd: wrote.b && wrote.b.ms - endMs, outcomes: [wrote.a && wrote.a.outcome, wrote.b && wrote.b.outcome],
+      tipAtEnd: [edge(w.a, endMs), edge(w.b, endMs + LAG)], tipBeforeEnd: [edge(w.a, endMs - 1), edge(w.b, endMs + LAG - 1)] }));
+    assert.ok(atAWrote && atAWrote.ms >= endMs, 'A wrote before the end block');
+    if (atAWrote.ms < endMs + LAG - 200) {
+      assert.equal(atAWrote.bWindow, false, 'B, lagging, already held the end block');
+      assert.equal(atAWrote.bWrote, false, 'B wrote without the end block');
+    }
+    assert.ok(wrote.b.ms >= endMs + LAG, 'B wrote before its chain held the end block');
+    assert.deepEqual([wrote.a.outcome, wrote.b.outcome], ['VOID', 'VOID']);
+    // THE END BLOCK AS TIP IS PAST THE WINDOW; ONE BLOCK BEFORE IT, NOT - at both.
+    assert.deepEqual([edge(w.a, endMs), edge(w.b, endMs + LAG)], [true, true]);
+    assert.deepEqual([edge(w.a, endMs - 1), edge(w.b, endMs + LAG - 1)], [false, false]);
   } finally { await w.close(); }
 });

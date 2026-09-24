@@ -27,7 +27,8 @@ import { objectionHolds, FINAL, SUSPENDED, PROVISIONALLY_FINAL } from '../../pro
 import { rerunIsAgreed, runOf, decodeRerunResult, splitSignedRerun } from '../../protocol/src/rerun.js';
 import { noQuorumOutcome, VOID } from '../../protocol/src/payout.js';
 import { decodeRoundContract } from '../../protocol/src/contracts.js';
-import { medianTimePast } from '../../protocol/src/beacon.js';
+import { medianTimePast, beaconFromChain } from '../../protocol/src/beacon.js';
+import { roundEndMs } from '../../protocol/src/first-mark.js';
 import { blockHashOf } from '../../protocol/src/chain.js';
 import { splitSignedResult, decodePlayerResult, resultId } from '../../protocol/src/result.js';
 import {
@@ -255,7 +256,7 @@ export function chainIndex(round, roundIdBytes, contract) {
       if (!mtps.has(h)) { const m = medianTimePast(headers, view.firstHeight, h); mtps.set(h, m === null ? null : m * 1000); }
       return mtps.get(h);
     };
-    idx = { n: view.blocks.length, tip: view.firstHeight + headers.length - 1, firstHeight: view.firstHeight, mtpAt,
+    idx = { n: view.blocks.length, tip: view.firstHeight + headers.length - 1, firstHeight: view.firstHeight, mtpAt, headers,
       heightOf: (hash) => (hash ? byHash.get(hex(hash)) ?? null : null),
       tipHash: () => blockHashOf(headers[headers.length - 1]) };
     idx.orderOf = (hash) => { const h = idx.heightOf(hash); return h === null ? Infinity : h; };
@@ -300,4 +301,27 @@ function openAt(chain, blocks, needed, W) {
   const open = { height: h, mtp: chain.mtpAt(h) };
   if (open.mtp === null) return { ok: false, why: 'the posting\'s block has no median time past in this node\'s view' };
   return { ok: true, window: { open, end: windowEnd(chain, open, W) } };
+}
+
+/**
+ * §13C'S RESULT WINDOW ON THE CHAIN (RULED the owner 2026-09-24): it opens at the first block at or after the round's contract
+ * end - protocol `roundEndMs`: entry close, two start deadlines and the run length, the instant every run on the contract
+ * has ended, the same at every holder and not this node's close - asked of the chain exactly as the beacon block is
+ * (`beaconFromChain`), and it ends at the first later block whose median time past is at or after open + W, as every §13A
+ * window does. `ok: true` only once this node holds that end block: a node without it decides no §13C outcome, and a
+ * holder that closed earlier or later does not move either end.
+ */
+export function resultWindow(round, roundIdBytes, contract) {
+  const chain = chainIndex(round, roundIdBytes, contract);
+  if (!chain.ok) return { ok: false, why: `the result window cannot open or end: ${chain.why}` };
+  let endOfRound;
+  try { endOfRound = roundEndMs(contract); } catch (e) { return { ok: false, why: e.message }; }
+  const picked = beaconFromChain({ committeeTimeMs: endOfRound - 1n, censusConfirmations: contract.censusConfirmations },
+    { headers: chain.headers, firstHeight: chain.firstHeight });
+  if (!picked.ok) return { ok: false, why: `the result window has not opened in this node's chain (the first block at or after the round's end ${endOfRound}): ${picked.why}` };
+  const open = { height: picked.height, mtp: Number(picked.timeMs) };
+  const W = Number(contract.objectionWindowMs);
+  const end = windowEnd(chain, open, W);
+  if (!end) return { ok: false, open, why: `the result window opened at block ${open.height} (${open.mtp}) and its end block - the first at or after ${open.mtp + W} - is not in this node's chain yet` };
+  return { ok: true, open, end };
 }

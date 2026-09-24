@@ -2,6 +2,7 @@
 // (M3.3-32) and publication-finality.test.js (P2): one daemon on a seven-signer node
 // round whose other six keys the test holds. Its rounds are FEDERATION, the one custody
 // (§23.6); the paid fake Lightning its hold-invoice tests ran on went with them.
+import { roundEndMs } from '../../protocol/src/first-mark.js';
 import { CLOCK } from './block-clock.js';
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 // THE RUN LENGTH IS THE CORE'S (2026-09-20). This fixture said 9000 and the core has ended a run at 10800
@@ -140,6 +141,18 @@ export const LOSER = { name: 'loser', key: b32(5), worldSecret: b32(0xc0), ticks
 import { PLANTED_FIRST_MARK_DEADLINE } from './planted-marks.js';
 export { PLANTED_FIRST_MARK_DEADLINE };
 
+/**
+ * A FIXTURE ROUND IN THE PRESENT (§13C, RULED the owner 2026-09-24): the result window opens at the first block at or after
+ * the round's contract end (protocol roundEndMs) - so a round whose times sit in 1970 has no block on the fixtures' chain
+ * and nothing is ever decided. This shifts committee time, start and entry close by one offset so that roundEndMs lands at
+ * `endMs`; every interval between them is kept. Harness only: the protocol is not changed to keep the old times.
+ */
+export function presentDay(contract, endMs) {
+  const shift = BigInt(endMs) - roundEndMs(contract);
+  return { ...contract, committeeTimeMs: contract.committeeTimeMs + shift, startTimeMs: contract.startTimeMs + shift,
+    entryCloseMs: contract.entryCloseMs + shift };
+}
+
 export const contractFor = (nodes, objectionWindowMs, publicationRelays = []) => ({
   startDeadlineTicks: PLANTED_FIRST_MARK_DEADLINE,
   networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
@@ -214,7 +227,10 @@ export async function joinAndPlay(daemons, c, rid, who, needed, { direct = false
 }
 
 // AND THE CHAIN §13A'S WINDOWS ARE READ FROM (RULED 2026-09-24): every daemon started with these opts reads the block clock.
-export const opts = { funded: () => true, randomnessFor: () => BEACON, windowChain: CLOCK.chainView() };
+// THE BEACON AFTER THE ROUND'S OWN COMMITTEE TIME: the same hash and height, timed 400 ms after it - for the fixtures'
+// 1970 contracts that is the 900 it always was; a round moved to the present (`presentDay`) gets one after its own time.
+const beaconFor = (q) => ({ ...BEACON, timeMs: q && q.contract && typeof q.contract.committeeTimeMs === 'bigint' ? q.contract.committeeTimeMs + 400n : BEACON.timeMs });
+export const opts = { funded: () => true, randomnessFor: beaconFor, windowChain: CLOCK.chainView() };
 /**
  * ONE DAEMON ON A SEVEN-SIGNER NODE ROUND, the other six signer nodes' keys this test holds.
  * Two losers play on it and it signs its own result for each; then `sign` has
