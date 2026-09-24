@@ -16,7 +16,8 @@ import { openStore, OPEN, CLOSED } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { contractFor, opts, b32 } from './window-fixture.js';
 import { encodeRoundContract, roundId } from '../../protocol/src/contracts.js';
-import { toHex } from '../../protocol/src/hash.js';
+import { toHex, taggedHash } from '../../protocol/src/hash.js';
+import { TAG } from '../../protocol/src/constants.js';
 
 /** The FEDERATION round's bytes with custody byte 0 - the byte just before federation_id on the wire. */
 function underByteZero(c) {
@@ -83,6 +84,62 @@ test('a store holding byte-0 rows from before the ruling answers them as absent 
       assert.equal(d.round.get(b32(0xa1)), null);
       // ABSENT, NOT DELETED: every row and every byte is where it was.
       assert.deepEqual(after, before, 'the store was written to');
+    } finally { await d.close(); }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// THE SAME CONTRACT, TWO CUSTODY BYTES (the enum slice's first cut, 2026-09-24): a new paying round is FEDERATION, byte
+// 1, and is taken; the same fields under byte 0 are bytes that do not parse, nothing of them is stored, and the id those
+// bytes would have is absent.
+test('the same contract is taken under byte 1 (201) and refused under byte 0 as unparseable; nothing of it is stored and its id is absent', async () => {
+  const d = await serve(openStore(':memory:'), { port: 0, ...opts });
+  try {
+    const c = contractFor([d.round.pubkey, b32(0x33)], 3000n, ['wss://r.example']);
+    const zero = underByteZero(c);
+    const zeroId = taggedHash(TAG.roundContract, zero);
+    const refused = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: zero });
+    const refusedWhy = (await refused.text()).trim();
+    const zeroAsked = (await fetch(`http://127.0.0.1:${d.port}/round?id=${toHex(zeroId)}`)).status;
+    const storedAfterZero = count(d.round.db);
+    const taken = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
+    const takenStatus = taken.status; await taken.text();
+    const oneAsked = (await fetch(`http://127.0.0.1:${d.port}/round?id=${toHex(roundId(c))}`)).status;
+    console.log('  FACTS:', JSON.stringify({ byte0: [refused.status, refusedWhy.slice(0, 80)], byte0Id: zeroAsked, storedAfterZero, byte1: takenStatus, byte1Id: oneAsked, stored: count(d.round.db) }));
+    assert.equal(refused.status, 400);
+    assert.match(refusedWhy, /custody byte 0 is not a custody of this network/);
+    assert.equal(zeroAsked, 404, 'the id of the byte-0 bytes is answered as a round');
+    assert.equal(storedAfterZero, 0);
+    assert.equal(takenStatus, 201, 'the same contract under FEDERATION was not taken');
+    assert.equal(oneAsked, 200);
+    assert.equal(count(d.round.db), 1);
+  } finally { await d.close(); }
+});
+
+// A STORED BYTE-0 ROUND IS NEVER REPLAYED, SETTLED OR COUNTED (§23.6, past rounds included): the lobby's list, the
+// settled list and the rounds a restart settles again do not name it, and a settle or a close asked of it is "no such
+// round" - the answer bytes that do not parse get.
+test('a stored byte-0 round is never replayed, settled or counted: not in the lobby list, not in /settled, and a settle or close of it is no such round', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'blwp-withdrawn-'));
+  const path = join(dir, 'node.db');
+  try {
+    const first = openStore(path);
+    const fed = contractFor([b32(0x11), b32(0x33)], 3000n, ['wss://r.example']);
+    const put = first.prepare('INSERT INTO rounds (round_id, contract, state, opened_ms) VALUES (?, ?, ?, ?)');
+    put.run(b32(0xa2), underByteZero({ ...fed, slashMinimumServed: 23 }), OPEN, 2);
+    put.run(b32(0xa3), underByteZero({ ...fed, slashMinimumServed: 24 }), CLOSED, 3);
+    first.close();
+    const d = await serve(openStore(path), { port: 0, ...opts });
+    try {
+      const lobby = await (await fetch(`http://127.0.0.1:${d.port}/rounds`)).text();
+      const settled = await (await fetch(`http://127.0.0.1:${d.port}/settled?since=0`)).json();
+      const settle = [await d.settlements.settle(b32(0xa2)), await d.settlements.settle(b32(0xa3))];
+      const close = [await d.verifier.retryClose(b32(0xa2), b32(1)), await d.verifier.retryClose(b32(0xa3), b32(1))];
+      const named = (s) => s.includes(toHex(b32(0xa2))) || s.includes(toHex(b32(0xa3)));
+      console.log('  FACTS:', JSON.stringify({ lobbyNames: named(lobby), settledRounds: settled.rounds.length, settle: settle.map((x) => x.why), close: close.map((x) => x.why) }));
+      assert.equal(named(lobby), false, 'the lobby lists a byte-0 round');
+      assert.equal(settled.rounds.length, 0, '/settled names a byte-0 round');
+      for (const s of settle) { assert.equal(s.ok, false); assert.match(s.why, /no such round/); }
+      for (const r of close) { assert.equal(r.stored, false); assert.match(r.why, /no such round/); }
     } finally { await d.close(); }
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
