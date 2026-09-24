@@ -12,7 +12,7 @@
 // Lightning when the hold was cancelled - so paying the row would pay it twice,
 // once by cancel and once out of other players' money. What the pool owes is
 // the part ABOVE the stake, and the sum of those is exactly the pool.
-// `holdSettlement` already asserts that equality and throws when it fails; this
+// `lockActions` (lock-action.js) already asserts that equality and throws when it fails; this
 // file computes the same difference rather than a second opinion of it.
 //
 // AND MILLISATOSHI DO NOT FIT ON A CHAIN. A row is msat and an output is sats,

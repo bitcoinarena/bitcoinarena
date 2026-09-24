@@ -32,10 +32,11 @@ import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
 import { serve } from '../src/server.js';
 import {
-  noQuorumOutcome, computePayoutTable, holdSettlement, settlementAction,
-  holdAfter, isRefund, REFUNDS, SETTLE, CANCEL, NOTHING, EXPIRED,
+  noQuorumOutcome, computePayoutTable,
+  isRefund, REFUNDS,
   DELIVERED, FORFEIT, VOID, ENTRY_VOID,
 } from '../../protocol/src/payout.js';
+import { lockActions, lockAction, CLAIM, RETURN, EXPIRE } from '../../protocol/src/lock-action.js';
 import { resultId } from '../../protocol/src/result.js';
 import { finality, FINAL, PROVISIONALLY_FINAL } from '../../protocol/src/objection.js';
 import {
@@ -220,7 +221,7 @@ test('a result that is already FINAL is not voided by a later low count', () => 
     { entryId: b32(1), pubkey: b32(1), outcome: DELIVERED, score: 100, stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n },
     { entryId: b32(2), pubkey: b32(2), outcome: FORFEIT, score: 0, stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n },
   ];
-  const s = holdSettlement({ roundId: b32(9), minScore: 1, entries });
+  const s = lockActions({ roundId: b32(9), minScore: 1, entries });
   assert.equal(s.refundedMsat, 100000n, 'only the winner s own stake goes home');
   assert.equal(s.poolMsat, 100000n);
 
@@ -250,13 +251,13 @@ test('an entry that never activated is ENTRY_VOID, and neither word touches the 
   const voided = { entryId: b32(3), pubkey: b32(3), outcome: VOID, score: 0, stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n };
   const never = { entryId: b32(4), pubkey: b32(4), outcome: ENTRY_VOID, score: 0, stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n };
 
-  const s = holdSettlement({ roundId: b32(9), minScore: 1, entries: [winner, loser, voided, never] });
+  const s = lockActions({ roundId: b32(9), minScore: 1, entries: [winner, loser, voided, never] });
   const said = new Map(s.actions.map((a) => [a.entry, a.action]));
 
-  assert.equal(said.get(never), NOTHING, 'a never-activated entry was made to act');
-  assert.equal(said.get(voided), NOTHING);
-  assert.equal(said.get(loser), SETTLE);
-  assert.equal(said.get(winner), CANCEL);
+  assert.equal(said.get(never), EXPIRE, 'a never-activated entry was made to act');
+  assert.equal(said.get(voided), EXPIRE);
+  assert.equal(said.get(loser), CLAIM);
+  assert.equal(said.get(winner), RETURN);
 
   assert.equal(s.poolMsat, 100000n, 'a refunded entry contributed to the pool');
   assert.equal(s.refundedMsat, 300000n, 'the winner s, the void and the never-activated');
@@ -273,8 +274,7 @@ test('an entry that never activated is ENTRY_VOID, and neither word touches the 
   assert.equal(isRefund(FORFEIT), false);
 
   // and it needs nothing to refund, exactly as VOID does
-  const said2 = settlementAction({ outcome: ENTRY_VOID, state: 'SUSPENDED', shares: 0, signatures: 0 });
-  assert.equal(said2.action, NOTHING);
+  const said2 = lockAction({ outcome: ENTRY_VOID, state: 'SUSPENDED', shares: 0, signatures: 0 });
+  assert.equal(said2.action, EXPIRE);
   assert.equal(said2.authorised, true);
-  assert.equal(holdAfter({ action: said2.action }).state, EXPIRED);
 });

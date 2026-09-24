@@ -45,7 +45,7 @@ export const RECEIPTS_FOR_CANONICAL = receiptsNeeded(7);
  * from before this ruling that carries the old value is not a round of this network and is neither
  * decoded, replayed, settled, listed nor counted; a node that holds such a record treats it as it treats
  * bytes that do not parse." So every read of the `rounds` table goes through this, and a row whose
- * contract does not decode - a past THRESHOLD_LN round, custody byte 0 - is answered as no row at all.
+ * contract does not decode - a past round of the withdrawn Lightning custody, custody byte 0 - is answered as no row at all.
  * Its bytes stay where they are: absent is not deleted, and nothing here writes to the store.
  */
 const parses = (contract) => {

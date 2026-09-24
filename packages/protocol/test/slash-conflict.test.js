@@ -117,7 +117,7 @@ test('all three of 5A.13\'s signatures are the offence, not just results', () =>
   assert.equal(onTable.signed, 'payout table');
 
   const record = {
-    roundId: ROUND, entryId: b32(0x0e), nodePubkey: NODE, action: 'SETTLE',
+    roundId: ROUND, entryId: b32(0x0e), nodePubkey: NODE, action: 'CLAIM',
     outcome: 'FAILED', qualifies: false, state: 'FINAL', shares: 5, signatures: 5,
   };
   const onRecord = slashHoldsOnConflict({

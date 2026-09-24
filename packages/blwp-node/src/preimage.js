@@ -1,7 +1,7 @@
 // FIVE SIGNER NODES, AND ONLY FIVE SIGNER NODES, CAN OPEN A STAKE.
 //
-// 23.4: "Settling a loser's HTLC requires reconstructing the preimage from at
-// least 5 preimage shares." Everything that sentence needs existed before this
+// 23.4: a loser's stake lock is claimed with its preimage, reconstructed "from at
+// least 5 preimage shares". Everything that sentence needs existed before this
 // file and none of it ran: `reconstruct` and `openStake` had zero callers, and
 // the one thing that ever produced 32 bytes for a settle handed them over
 // directly. This is what asks.
@@ -17,10 +17,10 @@
 //   the asker is a signer node   `round.signer nodes` is the census's list, not the
 //                         contract's, so a stranger cannot make itself one by
 //                         asking
-//   the run settles       FINAL, and an outcome 23.2 settles. A DELIVERED run
-//                         is CANCELLED - its preimage must never be released,
-//                         because releasing it lets anyone settle the invoice
-//                         and take the player's stake
+//   the lock is claimed   FINAL, and an outcome 23.2 claims (lock-action.js). A
+//                         DELIVERED run's lock RETURNS - its preimage must never
+//                         be released, because releasing it lets anyone claim
+//                         the lock and take the player's stake
 //
 // AND THE ANSWER IS SEALED TO THE ASKER, with a fresh one-time key, exactly as
 // the handout was. The two checks together are what makes this sound without a
@@ -31,7 +31,8 @@ import { openMyShare, decodeHandout } from '../../protocol/src/handout.js';
 import { sealShare, openShare } from '../../protocol/src/seal.js';
 
 import { decodePlayerResult, splitSignedResult } from '../../protocol/src/result.js';
-import { settlementAction, SETTLE, isQualifier } from '../../protocol/src/payout.js';
+import { isQualifier } from '../../protocol/src/payout.js';
+import { lockAction, CLAIM } from '../../protocol/src/lock-action.js';
 import { resultFinality } from './finality.js';
 import { FINAL } from '../../protocol/src/objection.js';
 import { decodeRoundContract, decodeEntryContract } from '../../protocol/src/contracts.js';
@@ -119,7 +120,7 @@ export class Preimages {
     // A NO-QUORUM FORFEIT (§13C; M3.3-34, ruled 2026-09-13, path 3): no run was
     // carried, so there is no result to read - this signer node's own no-quorum record,
     // written only after the result window with the player's equivocation
-    // proven, says FORFEIT, and a FORFEIT settles its hold into the pool (23.2).
+    // proven, says FORFEIT, and a FORFEIT's lock is claimed into the settlement (23.2).
     // Measured before: "this node has replayed nothing for that run" at both
     // signer nodes, so the hold could never settle and expired to the player.
     // A PROOF OF TWO FIRST MARKS HELD HERE RELEASES FIRST - even over a result
@@ -157,16 +158,16 @@ export class Preimages {
     const result = decodePlayerResult(splitSignedResult(mine.bytes).body);
     // A QUALIFIER IS DELIVERED AND AT THE SCORE (§18), the payout table's own
     // rule - not the word Delivered alone. A Delivered run below it still
-    // cancels its hold (`settlementAction`): its stake was never at risk.
-    const said = settlementAction({
+    // returns its lock (`lockAction`): its stake was never at risk.
+    const said = lockAction({
       outcome: result.outcome, qualifies: isQualifier(result, decodeRoundContract(new Uint8Array(row.contract)).minScore),
       state: 'FINAL', shares: SHARES_NEEDED, signatures: SHARES_NEEDED,
     });
-    if (said.action !== SETTLE)
+    if (said.action !== CLAIM)
       return {
         ok: false,
-        why: `that run is ${result.outcome}, which ${said.action}s the hold: releasing its preimage `
-          + 'would let anyone settle an invoice that has to go back to its player',
+        why: `that run is ${result.outcome}, whose lock ${said.action === 'RETURN' ? 'returns to its player' : 'expires back to its player'}: `
+          + 'releasing its preimage would let anyone claim a lock that has to go back to its player',
       };
     return { ok: true, outcome: result.outcome };
   }
@@ -266,7 +267,7 @@ export class Preimages {
 
     // AND IT HAS TO BE THE PREIMAGE THE ENTRY NAMES. A dealer who committed to
     // one secret and hashed another is caught HERE - five signer nodes open it, the
-    // hash does not match, and nothing settles. The hold expires and the
+    // hash does not match, and nothing is claimed. The lock expires and the
     // player is refunded, so the cheat gains nothing and needs no proof system.
     let preimage;
     try {

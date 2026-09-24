@@ -195,7 +195,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   randomnessFor, chainFor, peers = [], headerBytes, bondProof,
   // A LIGHTNING INVOICE READER, AND NOTHING MORE (§23.6, RULED 2026-09-22 22:59). `/federation-invoice`
   // uses its `decode` to read what the federation's LNv2 invoice commits to. It no longer issues, looks up,
-  // settles or cancels holds, and it pays nothing: that was THRESHOLD_LN's custody by one operator.
+  // settles or cancels holds, and it pays nothing: that was the withdrawn Lightning custody's custody by one operator.
   // (`preimageFor`, `preflight` and `secondsPerBlock` served only that hold, and are gone with it.)
   lightning = null,
   // THE FEDERATION'S RECEIVING SIDE (V1's pool is a FEDERATION, the owner 2026-09-11): `receive({
@@ -340,7 +340,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // A stake is SEEN when its round asks none, or when this signer node verified its lock - and, where the
   // round mints fee locks, its fee lock too - which is the row `putStakeSeen` writes. There is no other
   // way to see one. The half that used to ask this node's own Lightning whether a hold invoice was paid,
-  // and the committee share-gathering that fed its settle, were THRESHOLD_LN's and are gone with it.
+  // and the committee share-gathering that fed its settle, were the withdrawn Lightning custody's and are gone with it.
   const stakeSeen = async (entryId) => {
     const stored = round.entry(entryId);
     if (!stored) return { ok: false, why: 'this node holds no such entry' };
@@ -385,7 +385,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // WHAT `funded` MAY KNOW OF THIS NODE (M3.3-31): whether it holds a round, and whether it reaches
   // the federation that round's stake is locked in - the launcher's rule funds an entry only into a
   // paying round this node holds and can verify the lock of. (Whether it reached Lightning was the
-  // hold-invoice question, THRESHOLD_LN's, and is not asked any more.)
+  // hold-invoice question, the withdrawn Lightning custody's, and is not asked any more.)
   const fundingView = {
     holds: (roundIdBytes) => round.get(roundIdBytes),
     // AND WHETHER IT REACHES A FEDERATION, which is how a lock round's stake is held (§23.1 step 5).
@@ -954,7 +954,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // run it was holding or how long it had been asking.
   const closing = new Map();          // `${round}:${entry}` -> state
   // THE POOL 23.2's TABLE DECIDED FOR A ROUND, as this signer node's custody last ran
-  // it (M3.2 6e): `holdSettlement`'s own figure, served on /settlement so a
+  // it (M3.2 6e): `lockActions`' own figure, served on /settlement so a
   // page can show it - nobody outside the committee works it out again.
   // AND EACH SIGNER NODE'S ROW OF THAT TABLE (M3.2 6e): computePayoutTable's own rows,
   // by player key, so a winner's page can show what the round owes it.
@@ -1448,7 +1448,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const waitsFor = settleWaitsOn(entries.map((e) => ({ entryId: toHex(e.entryId), ...(standing.get(toHex(e.entryId)) || {}) })));
     // EVERY ROUND SETTLES IN ITS FEDERATION (§23.6, RULED 2026-09-22 22:59: the custody field has ONE
     // value, FEDERATION). This node holds no invoice to act on - the hold-invoice settle that used to
-    // follow here, and the on-chain pool payout that only ever ran after it, were THRESHOLD_LN's and
+    // follow here, and the on-chain pool payout that only ever ran after it, were the withdrawn Lightning custody's and
     // are gone with it. What is waiting is handed back and the finality watch keeps posting and
     // gathering; the forfeit waits on FINAL. Measured before (W5b): returning early here once ended
     // the watch after one pass, and the signer node that posted first never gathered the other's.
@@ -1549,7 +1549,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // NOTHING TO ASK LIGHTNING ON START, AND NO HELD STAKE TO RESUME (§23.6, RULED 2026-09-22 22:59).
   // Two steps used to run here first: `reconcile`, asking Lightning about any hold act this node died in
   // the middle of, and a resume of every closed round with a stake still HELD in a hold invoice. Both
-  // were THRESHOLD_LN's and are gone with it. A lock round's restart is the two steps below: the closes
+  // were the withdrawn Lightning custody's and are gone with it. A lock round's restart is the two steps below: the closes
   // of runs still short of final, then the lock settlements this signer node was inside.
 
   // AND EVERY CLOSED ROUND WITH A RUN STILL SHORT OF FINAL HERE (M3.3-34).
@@ -1987,7 +1987,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             committeeTimeMs: String(c.committeeTimeMs), startTimeMs: String(c.startTimeMs),
             entryCloseMs: String(c.entryCloseMs), stakeMsat: String(c.stakeMsat),
             // WHAT JOINING ASKS OF THE PLAYER: nothing, or a federation stake lock. There is no third
-            // answer - "a Lightning payment" was THRESHOLD_LN's hold invoice, which does not exist (§23.6).
+            // answer - "a Lightning payment" was the withdrawn Lightning custody's hold invoice, which does not exist (§23.6).
             free, wallet: free ? 'none' : 'federation-lock',
             assignedHere, joined: players.joined, playing: players.playing, watching: watchers,
             // AND WHAT ITS JOINED PLAYERS CHOSE TO BE CALLED - each record its
@@ -2110,7 +2110,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         }
         const joined = round.enter(contract);
         // NO HOLD IS ISSUED HERE ANY MORE. This door used to ask the signer node's Lightning for a hold
-        // invoice on the entry's payment hash, and said how that went in `x-hold`. That was THRESHOLD_LN's
+        // invoice on the entry's payment hash, and said how that went in `x-hold`. That was the withdrawn Lightning custody's
         // stake-in, which does not exist (§23.6, RULED 2026-09-22 22:59); a lock round's stake is locked by
         // the player in the federation and handed to `/stake-lock`, where the signer node verifies it.
         res.writeHead(201, { 'content-type': 'application/octet-stream', ...CORS });
@@ -2124,8 +2124,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
        * IT IS AN INPUT DEVICE AND NOTHING ELSE. The answer is a payment
        * request and the amount this node holds for that entry - no outcome, no
        * arrival, nothing a browser could report about a run. The player's
-       * wallet checks the invoice against their own contract before paying;
-       * `invoiceMatchesEntry` is that rule and it lives on their side too.
+       * wallet checks the invoice against their own contract before paying: the
+       * hash and the net stake the entry signed.
        *
        * ASKED TWICE, ANSWERED THE SAME. The request is kept beside the hold,
        * so a reloaded page gets the invoice that exists rather than a second
@@ -2148,7 +2148,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       /**
        * NO WINNINGS DOOR (§23.6, RULED 2026-09-22 22:59). `GET`/`POST /winnings` said what "the pool" owed
        * an entry and paid it - and their own note named the pool as "the committee's own Lightning
-       * balance", which is THRESHOLD_LN's custody by one operator. They went with it. A lock round pays its
+       * balance", which is the withdrawn Lightning custody's custody by one operator. They went with it. A lock round pays its
        * qualifiers' payout contracts inside the federation, in the one settlement (`settlements.settle`).
        */
       if (req.method === 'GET' && url.pathname === '/stake') {
@@ -2173,7 +2173,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
        * signer node has SEEN the stake - free, or its federation lock verified here (§23.1 step 5) - and
        * where the run's result stands (13A), with the window's close on this node's clock.
        *
-       * IT USED TO SAY FAR MORE, AND ALL OF IT WAS THRESHOLD_LN's (§23.6, RULED 2026-09-22 22:59): the
+       * IT USED TO SAY FAR MORE, AND ALL OF IT WAS the withdrawn Lightning custody's (§23.6, RULED 2026-09-22 22:59): the
        * hold's state and amount off the Lightning hold row, the pool and the owed row off the hold
        * settle, the refund height off the HTLC's expiry. None of those exist for a lock, so none is
        * reported - an answer of `null` for a thing that no longer exists would itself be a claim.
@@ -2204,8 +2204,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
        * commits to THIS invoice's hash instead. Asked for exactly the entry's
        * net stake - the stake less the fee and the donation the player names
        * (`&donation=`, msat, none is 0) - because `/entry` then takes the
-       * gateway's hold invoice up (lnd-port.js) and `invoiceMatchesEntry`
-       * refuses any other amount. Measured before (M3.2 6e): the donation was
+       * gateway's invoice up (lnd-port.js) and any other amount is not the
+       * entry's net stake. Measured before (M3.2 6e): the donation was
        * left out, so a 2% donor was joined on a 980000 msat invoice and its
        * quote refused it (the entry holds 960000). The hash and the amount
        * are read off the invoice, not taken from the federation's word.
@@ -2248,7 +2248,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
 
       // NO `/invoice` DOOR (§23.6, RULED 2026-09-22 22:59). It quoted a joined player the hold invoice
-      // their entry named, and the §23.5 fee's own hold beside it - both THRESHOLD_LN's stake-in, gone with
+      // their entry named, and the §23.5 fee's own hold beside it - both the withdrawn Lightning custody's stake-in, gone with
       // it. A lock round's player locks the stake in the federation (`/federation-invoice` for the LNv2
       // invoice that funds it) and hands the lock to `/stake-lock` and `/fee-lock`.
 
@@ -2374,9 +2374,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
        * ONE SIGNER NODE'S SHARE OF ONE STAKE, FOR ANOTHER SIGNER NODE. 23.4's five.
        *
        * Refused unless the asker is a signer node of this round AND the run is final
-       * with an outcome 23.2 settles - a DELIVERED run's preimage must never
-       * leave, because releasing it lets anyone settle an invoice that has to
-       * go back to its player.
+       * with an outcome whose lock 23.2 claims (lock-action.js) - a DELIVERED run's
+       * preimage must never leave, because releasing it lets anyone claim a lock
+       * that has to go back to its player.
        *
        * The answer is SEALED TO THE ASKER. Those two together are what make
        * this sound with no signature on the request: claiming a signer node's key

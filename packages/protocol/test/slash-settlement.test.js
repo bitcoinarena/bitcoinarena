@@ -13,7 +13,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { toHex } from '../src/hash.js';
-import { SETTLE, CANCEL, NOTHING, SETTLEMENT_THRESHOLD } from '../src/payout.js';
+import { SETTLEMENT_THRESHOLD } from '../src/payout.js';
+import { CLAIM, RETURN, EXPIRE } from '../src/lock-action.js';
 import {
   encodeSettlementRecord, decodeSettlementRecord, settlementRecordId,
   slashHoldsOnSettlement, slashCommitment, SETTLED_WITHOUT_AUTHORITY,
@@ -29,7 +30,7 @@ const advert = { nodePubkey: NODE, bondTxid: BOND, bondVout: 3 };
 
 /** A loser settled with everything 23.2 asks for. */
 const lawful = (over = {}) => ({
-  roundId: ROUND, entryId: ENTRY, nodePubkey: NODE, action: SETTLE,
+  roundId: ROUND, entryId: ENTRY, nodePubkey: NODE, action: CLAIM,
   outcome: 'FAILED', qualifies: false, state: 'FINAL',
   shares: SETTLEMENT_THRESHOLD, signatures: SETTLEMENT_THRESHOLD, ...over,
 });
@@ -59,7 +60,7 @@ test('settling a loser without the signatures slashes the named bond', () => {
   const before = ask(lawful());
   assert.equal(before.slashed, false, 'a lawful settlement was slashed');
   assert.equal(before.bond, undefined, 'and no bond may even be NAMED for one');
-  assert.match(before.why, /authorised SETTLE/);
+  assert.match(before.why, /authorised CLAIM/);
 
   const after = ask(lawful({ signatures: 4 }));
   assert.equal(after.slashed, true, after.why);
@@ -101,7 +102,7 @@ test('a forfeited stake is settled on the same five conditions', () => {
  */
 test('a node that did nothing is not slashed, whatever it could have done', () => {
   for (const outcome of ['FAILED', 'FORFEIT', 'DELIVERED', 'VOID']) {
-    const seen = ask(lawful({ outcome, action: NOTHING, qualifies: outcome === 'DELIVERED' }));
+    const seen = ask(lawful({ outcome, action: EXPIRE, qualifies: outcome === 'DELIVERED' }));
     assert.equal(seen.slashed, false, `doing nothing on ${outcome} was slashed`);
     assert.match(seen.why, /nobody acting is 23.2's refund path/);
   }
@@ -116,30 +117,30 @@ test('a node that did nothing is not slashed, whatever it could have done', () =
  */
 test('settling where 23.2 cancels is the offence even with every signature', () => {
   const seen = ask(lawful({
-    outcome: 'DELIVERED', qualifies: true, action: SETTLE,
+    outcome: 'DELIVERED', qualifies: true, action: CLAIM,
     shares: 7, signatures: 7,
   }));
   assert.equal(seen.slashed, true, 'a qualifier\'s stake was taken with a full committee');
-  assert.equal(seen.due, CANCEL);
-  assert.match(seen.why, /calls for CANCEL .* and the node did SETTLE/);
+  assert.equal(seen.due, RETURN);
+  assert.match(seen.why, /calls for RETURN .* and the node did CLAIM/);
 });
 
 test('cancelling a VOID entry is acting where nobody should have', () => {
-  const seen = ask(lawful({ outcome: 'VOID', action: CANCEL, signatures: 7 }));
+  const seen = ask(lawful({ outcome: 'VOID', action: RETURN, signatures: 7 }));
   assert.equal(seen.slashed, true);
-  assert.equal(seen.due, NOTHING);
-  assert.match(seen.why, /calls for NOTHING/);
+  assert.equal(seen.due, EXPIRE);
+  assert.match(seen.why, /calls for EXPIRE/);
 });
 
 test('a lawful cancel is not an offence, and one without the signatures is', () => {
-  const ok = ask(lawful({ outcome: 'DELIVERED', qualifies: true, action: CANCEL, shares: 0 }));
+  const ok = ask(lawful({ outcome: 'DELIVERED', qualifies: true, action: RETURN, shares: 0 }));
   assert.equal(ok.slashed, false, ok.why);
 
   const short = ask(lawful({
-    outcome: 'DELIVERED', qualifies: true, action: CANCEL, signatures: 4, shares: 0,
+    outcome: 'DELIVERED', qualifies: true, action: RETURN, signatures: 4, shares: 0,
   }));
   assert.equal(short.slashed, true);
-  assert.match(short.why, /CANCEL needed 4 of 5 settlement signatures/);
+  assert.match(short.why, /RETURN needed 4 of 5 settlement signatures/);
 });
 
 test('the evidence has to be the record the proof names', () => {
@@ -244,7 +245,7 @@ test('the record survives the round trip and every field is inside its id', () =
 
   const was = toHex(settlementRecordId(r));
   for (const over of [{ roundId: b32(9) }, { entryId: b32(9) }, { nodePubkey: b32(9) },
-                      { action: CANCEL }, { outcome: 'FORFEIT' }, { qualifies: true },
+                      { action: RETURN }, { outcome: 'FORFEIT' }, { qualifies: true },
                       { state: 'SUSPENDED' }, { shares: 4 }, { signatures: 4 }])
     assert.notEqual(toHex(settlementRecordId(lawful(over))), was, JSON.stringify(over));
 

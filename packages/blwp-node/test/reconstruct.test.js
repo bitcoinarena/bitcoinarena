@@ -353,7 +353,7 @@ test('a delivered run never gives up its preimage, and neither does one that is 
     // and every signer node's result for it says the player got through. The outcome
     // is not computed here - what is under test is what a signer node DOES with the
     // word - and 23.2 cancels a delivered stake, so its preimage must never
-    // leave: releasing it would let anyone settle an invoice that has to go
+    // leave: releasing it would let anyone claim a lock that has to go
     // back to its player.
     // A ROUND OF ITS OWN, because every signer node's round above is closed and a
     // closed round takes no new entries.
@@ -388,7 +388,7 @@ test('a delivered run never gives up its preimage, and neither does one that is 
     const may = holder.preimages.mayRelease(orid, wid);
     assert.equal(may.ok, false);
     assert.match(may.why, /that run is DELIVERED/);
-    assert.match(may.why, /would let anyone settle an invoice that has to go back to its player/);
+    assert.match(may.why, /would let anyone claim a lock that has to go back to its player/);
 
     // AND A RUN NOBODY AGREED ON. Four of seven signer nodes signed the same FAILED
     // run, which is one short - and one short is not a threshold, so no share

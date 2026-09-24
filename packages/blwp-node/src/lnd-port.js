@@ -3,7 +3,7 @@
 // This file used to be the port a signer node's custody drove - issue a hold invoice on the hash an
 // entry named, look it up, settle it with a preimage, cancel it - and its own header said what that was:
 // "SINGLE-NODE CUSTODY, NOT §23.5. One `lncli`, one macaroon, one operator who could run every one of
-// these commands by hand." That custody is THRESHOLD_LN, and it does not exist (§23.6, RULED 2026-09-22
+// these commands by hand." That custody is the withdrawn Lightning custody, and it does not exist (§23.6, RULED 2026-09-22
 // 22:59): the custody field has one value, FEDERATION. Issuing, looking up, settling, cancelling and
 // paying are gone with it, and so is the table mapping lnd's invoice states onto 23.2's.
 //

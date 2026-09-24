@@ -27,7 +27,7 @@
 // WHAT THIS LIGHTNING NODE IS FOR NOW: READING AN INVOICE, AND NOTHING ELSE (§23.6, RULED 2026-09-22
 // 22:59). `/federation-invoice` decodes the federation's LNv2 invoice with it. It holds no stake: the
 // hold invoice, the preflight that asked whether this lnd could receive a round's stakes, the gateways
-// that preflight counted and the block pace that sized an HTLC were all THRESHOLD_LN's, and are gone.
+// that preflight counted and the block pace that sized an HTLC were all the withdrawn Lightning custody's, and are gone.
 import { lndPort } from './lnd-port.js';
 
 // The networks a round may run on here. The lnd is checked against them because an invoice read off

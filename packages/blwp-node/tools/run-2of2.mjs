@@ -56,7 +56,7 @@ if (!env.RT) {
 }
 // A PAYING ROUND BESIDE THE FREE ONE IS A FEDERATION ROUND (HARD, the owner 2026-09-23 10:19: "New paying
 // rounds are FEDERATION now"). BLWP_PAID_STAKE_MSAT names its stake, and the stake goes into a lock in the
-// round's federation - never into the committee's Lightning, which is THRESHOLD_LN and withdrawn (§23.6).
+// round's federation - never into the committee's Lightning, which is the withdrawn Lightning custody and withdrawn (§23.6).
 //
 // IT IS ITS OWN COMMITTEE, SEVEN SIGNER NODES (ruled 2026-09-21: the fork is the 5-of-7 already in the
 // protocol). §23.6 wants the federation's threshold in DISTINCT bonded census nodes, the smallest federation

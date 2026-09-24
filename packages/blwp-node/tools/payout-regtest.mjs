@@ -16,6 +16,8 @@
 // It touches no mainnet and no testnet4 datadir. The coins are worthless.
 //
 //   node packages/blwp-node/tools/payout-regtest.mjs [--keep]
+// THE ONE CUSTODY (§23.6, RULED 2026-09-22 22:59; cut 6b): a round names FEDERATION and its federation.
+import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { CORE_HASH } from './core-hash.mjs';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -106,8 +108,8 @@ async function main() {
       committeeTimeMs: BigInt(NOW), randomnessRule: 'bitcoin-block-hash',
       startTimeMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS,
       entryCloseMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS + 200000n,
-      objectionWindowMs: 600000n, custody: 'THRESHOLD_LN', slashMinimumServed: 20,
-      slashRemainder: 'SPLIT', federationId: new Uint8Array(32), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,
+      objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,
+      slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,
       censusRoot: b32(2), stakeMsat: STAKE_MSAT, bondMinSats: 50000n, blockTicks: 9000,
       exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
       timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
