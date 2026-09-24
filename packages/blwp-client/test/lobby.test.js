@@ -24,7 +24,9 @@ import { encodeLobbyName, lobbyNameId } from '../../protocol/src/lobby-name.js';
 import { generatedName } from '../src/identity.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
-import { toHex, fromHex } from '../../protocol/src/hash.js';
+import { toHex, fromHex, taggedHash } from '../../protocol/src/hash.js';
+import { TAG } from '../../protocol/src/constants.js';
+import { readFileSync } from 'node:fs';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const A = 'http://127.0.0.1:18581';
@@ -290,4 +292,39 @@ test('the lobby lists one free round and one paying round, never two of either, 
   assert.equal(lobbyStakeSats(row('pay', false, 500)), 100);
   assert.equal(lobbyStakeSats(row('free', true, 500)), 0);
   assert.equal(lobbyStakeSats({ free: false, stakeMsat: 2_100_000_000_000_000_000n }), 2_100_000_000_000_000);
+});
+
+// THE LOBBY HAS ONE PAYING WORD (RULED the owner 2026-09-24, the enum slice's fifth cut): a paying round's stake goes into a
+// federation lock, as the node's own list says. "a Lightning payment" and the 'lightning' wallet were THRESHOLD_LN's
+// hold invoice - no decodable round reached them, and they are not kept as a name for the withdrawn custody.
+test('a paying row is only ever a federation stake lock, whatever its wallet field; the lobby source names no hold-invoice wallet', async () => {
+  const { contracts, id } = roundsOf({ p: contractAt(BigInt(NOW) - 1000n, { stakeMsat: 100000n }) });
+  const net = network({ nodes: { [A]: { secret: signerNodeA, rounds: [listing(signerNodeA, id.p, { free: false })] },
+    [B]: { secret: signerNodeB, rounds: [listing(signerNodeB, id.p, { free: false })] } }, contracts });
+  const { rows } = await fetchLobby({ nodes: [A, B], fetcher: net.fetcher, nowMs: NOW, verify });
+  const lines = ['federation-lock', 'lightning', undefined].map((wallet) => lobbyLine({ ...rows[0], wallet }, NOW));
+  const src = readFileSync(new URL('../src/lobby.js', import.meta.url), 'utf8');
+  console.log('  FACTS:', JSON.stringify({ wallet: rows[0].wallet, lines: lines.map((l) => l.split(' · ')[0]),
+    srcLightning: src.includes("'lightning'"), srcPayment: src.includes('a Lightning payment') }));
+  assert.equal(rows[0].wallet, 'federation-lock');
+  for (const l of lines) assert.match(l, /^stake 100 sat - a federation stake lock · /);
+  assert.equal(src.includes("'lightning'"), false, 'the lobby still names a lightning wallet');
+  assert.equal(src.includes('a Lightning payment'), false, 'the lobby still draws a Lightning payment');
+});
+
+// AND A STORED THRESHOLD_LN ROUND IS NO ROW (§23.6): even a node that lists its id and serves its bytes gets it only a
+// line in the refusals - not a row, not a label, not a renamed hold.
+test('a node that lists a custody-byte-0 round and serves its bytes gets no row for it; the lobby names it refused', async () => {
+  const bytes = encodeRoundContract(contractAt(BigInt(NOW) - 1000n, { stakeMsat: 100000n }));
+  const at = Buffer.from(bytes).toString('hex').indexOf(Buffer.from(TEST_FEDERATION_ID).toString('hex')) / 2 - 1;
+  assert.equal(bytes[at], 1);
+  const old = Uint8Array.from(bytes); old[at] = 0;
+  const oldId = toHex(taggedHash(TAG.roundContract, old));
+  const net = network({ nodes: { [A]: { secret: signerNodeA, rounds: [listing(signerNodeA, oldId, { free: false })] },
+    [B]: { secret: signerNodeB, rounds: [listing(signerNodeB, oldId, { free: false })] } }, contracts: { [oldId]: old } });
+  const got = await fetchLobby({ nodes: [A, B], fetcher: net.fetcher, nowMs: NOW, verify });
+  console.log('  FACTS:', JSON.stringify({ rows: got.rows.length, refused: got.refused }));
+  assert.equal(got.rows.length, 0, 'a byte-0 round became a row');
+  assert.ok(got.refused.some((r) => r.startsWith(oldId.slice(0, 16)) && /custody byte 0 is not a custody of this network/.test(r)));
+  assert.equal(got.refused.some((r) => r.includes('THRESHOLD_LN')), false);
 });

@@ -47,9 +47,17 @@ const sha256 = (s) => new Uint8Array(createHash('sha256').update(s).digest());
 const SET = TEST_DONATION_SET_REGTEST;
 const SET_ID = donationSetId(SET.recipients);
 const NOW = 1788700000000;
-const paying = { id: b32(0x21), stakeMsat: 100000n, settlementSlots: 7, simCoreHash: fromHex(coreHashHex()) };
+// A PAYING ROUND NAMES ITS FEDERATION, AND ITS ENTRY ITS LOCK (RULED the owner 2026-09-24, the enum slice's fifth cut, as
+// join.test's fixtures): this paying fixture used to be hold-shaped - a stake and no federation - and entryFor now refuses
+// that shape. It keeps measuring what it measured, on a real FEDERATION entry: an attested claim key and a stake lock with
+// a non-zero outpoint, paying to the dealt stake's point where one is dealt.
+const lockedFor = (stakePoint = Uint8Array.of(2, ...new Uint8Array(32).fill(0x6c))) => ({
+  claimKey: { ok: true, ref: new Uint8Array(32).fill(0x9a) },
+  stakeLock: { outpoint: { txid: new Uint8Array(32).fill(0xd8), outIdx: 0 }, fields: { paymentImage: { kind: 'point', bytes: stakePoint } } },
+});
+const paying = { id: b32(0x21), stakeMsat: 100000n, settlementSlots: 7, simCoreHash: fromHex(coreHashHex()), federationId: TEST_FEDERATION_ID };
 const seed = b32(0x5e);
-const entryOf = (donationMsat) => ({ ...entryFor(paying, { seed, curve: feldmanGroup, random: rand, donationMsat }), roundId: b32(0x21) });
+const entryOf = (donationMsat) => ({ ...entryFor(paying, { seed, curve: feldmanGroup, random: rand, donationMsat, ...lockedFor() }), roundId: b32(0x21) });
 const verifyEd25519 = async (sig, msg, pub) => { try { return ed25519.verify(sig, msg, pub); } catch { return false; } };
 
 /** A BOLT11 invoice for tests: the real encoding, an all-zero signature (the wallet checks that, not the page). */

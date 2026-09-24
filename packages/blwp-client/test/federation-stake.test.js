@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { federationStakeFor } from '../src/client.js';
+import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { entryFor } from '../src/join.js';
 import { NO_SHARES } from '../../protocol/src/handout.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
@@ -14,7 +15,15 @@ import { toHex, fromHex } from '../../protocol/src/hash.js';
 import { coreHashHex } from '../../core/tools/hash-core.js';
 import { feldmanGroup } from '../../blwp-node/src/curve.js';
 
-const round = { id: new Uint8Array(32).fill(7), stakeMsat: 1000000n, simCoreHash: fromHex(coreHashHex()) };
+// A PAYING ROUND NAMES ITS FEDERATION, AND ITS ENTRY ITS LOCK (RULED the owner 2026-09-24, the enum slice's fifth cut, as
+// join.test's fixtures): this paying fixture used to be hold-shaped - a stake and no federation - and entryFor now refuses
+// that shape. It keeps measuring what it measured, on a real FEDERATION entry: an attested claim key and a stake lock with
+// a non-zero outpoint, paying to the dealt stake's point where one is dealt.
+const lockedFor = (stakePoint = Uint8Array.of(2, ...new Uint8Array(32).fill(0x6c))) => ({
+  claimKey: { ok: true, ref: new Uint8Array(32).fill(0x9a) },
+  stakeLock: { outpoint: { txid: new Uint8Array(32).fill(0xd8), outIdx: 0 }, fields: { paymentImage: { kind: 'point', bytes: stakePoint } } },
+});
+const round = { id: new Uint8Array(32).fill(7), stakeMsat: 1000000n, simCoreHash: fromHex(coreHashHex()), federationId: TEST_FEDERATION_ID };
 const NET = round.stakeMsat - entryFeeMsat(round.stakeMsat);
 const HASH = 'aa'.repeat(32);
 
@@ -40,7 +49,7 @@ test('the stake commits to the node\'s federation invoice hash, deals no shares,
   assert.equal(toHex(stake.stakeCommitment), HASH);
   assert.equal(toHex(stake.vssSharesRef), toHex(NO_SHARES), 'a federation stake dealt shares');
   assert.equal(stake.request, 'lnbcrt-fed');
-  const entry = entryFor(round, { seed: new Uint8Array(32).fill(5), curve: feldmanGroup, random: (n) => new Uint8Array(n).fill(9), stake });
+  const entry = entryFor(round, { seed: new Uint8Array(32).fill(5), curve: feldmanGroup, random: (n) => new Uint8Array(n).fill(9), stake, ...lockedFor() });
   assert.equal(toHex(entry.stakeCommitment), HASH);
   assert.equal(toHex(entry.vssSharesRef), toHex(NO_SHARES));
 });
@@ -70,7 +79,7 @@ test('a 2% donor asks for the stake less the fee and the donation, refuses the f
   assert.equal(asked[0], `http://a/federation-invoice?round=${toHex(round.id)}&donation=${DONATION}`);
   assert.equal(stake.request, 'lnbcrt-donor', 'the fee-only net was taken for a donor');
   assert.equal(stake.amountMsat, NET - DONATION);
-  const entry = entryFor(round, { seed: new Uint8Array(32).fill(5), curve: feldmanGroup, random: (n) => new Uint8Array(n).fill(9), stake, donationMsat: DONATION });
+  const entry = entryFor(round, { seed: new Uint8Array(32).fill(5), curve: feldmanGroup, random: (n) => new Uint8Array(n).fill(9), stake, donationMsat: DONATION, ...lockedFor() });
   assert.equal(toHex(entry.stakeCommitment), 'bb'.repeat(32));
   assert.equal(entry.donationMsat, DONATION);
   await assert.rejects(federationStakeFor(round, { nodes: ['http://a'], fetcher, donationMsat: DONATION }), /net stake is/);

@@ -190,9 +190,18 @@ test('two tabs are two players, and one tab is one player twice', () => {
  * round - and a stake dealt under any key. A payout and a refund go to that
  * key, and the player had nothing to check it against.
  */
+// A PAYING ROUND NAMES ITS FEDERATION, AND ITS ENTRY ITS LOCK (RULED the owner 2026-09-24, the enum slice's fifth cut): the
+// three paying fixtures below used to be hold-shaped - a stake and no federation - and entryFor now refuses that shape.
+// They keep measuring what they measured, on a real FEDERATION entry: page-lock.test's lock inputs, an attested claim key
+// and a stake lock with a non-zero outpoint, paying to the dealt stake's point where one is dealt.
+const lockedFor = (stakePoint = Uint8Array.of(2, ...b32(0x6c))) => ({
+  claimKey: { ok: true, ref: b32(0x9a) },
+  stakeLock: { outpoint: { txid: b32(0xd8), outIdx: 0 }, fields: { paymentImage: { kind: 'point', bytes: stakePoint } } },
+});
+
 test('a signer node carries the seed\'s key for the round, its fingerprint is the player\'s to check, and any other key is refused', async () => {
   const seed = b32(0x5e);
-  const round = { id: b32(0x11), stakeMsat: 100000n, settlementSlots: 7, simCoreHash: CORE };
+  const round = { id: b32(0x11), stakeMsat: 100000n, settlementSlots: 7, simCoreHash: CORE, federationId: TEST_FEDERATION_ID };
   const random = (n) => new Uint8Array(n).fill(9);
   const player = playerFor(round, { seed, curve: feldmanGroup });
 
@@ -201,9 +210,9 @@ test('a signer node carries the seed\'s key for the round, its fingerprint is th
   assert.equal(player.fingerprint, refundFingerprint(player.pubkey));
   assert.match(player.fingerprint, /^[0-9a-f]{4}(-[0-9a-f]{4}){3}$/);
 
-  const signerNode = entryFor(round, { seed, curve: feldmanGroup, random });
+  const signerNode = entryFor(round, { seed, curve: feldmanGroup, random, ...lockedFor() });
   assert.deepEqual(signerNode.playerPubkey, player.pubkey, 'the signer node is not the seed\'s key');
-  assert.deepEqual(entryFor(round, { seed, curve: feldmanGroup, playerPubkey: player.pubkey, random }).playerPubkey,
+  assert.deepEqual(entryFor(round, { seed, curve: feldmanGroup, playerPubkey: player.pubkey, random, ...lockedFor() }).playerPubkey,
     player.pubkey);
 
   // ANOTHER KEY IS REFUSED: a stranger's, and this seed's key for another round.
@@ -224,11 +233,11 @@ test('a signer node carries the seed\'s key for the round, its fingerprint is th
 });
 
 test('the signer node a page takes carries the round\'s own amounts', () => {
-  const round = { id: b32(0x0c), stakeMsat: 100000n, blockTicks: BLOCK_TICKS, simCoreHash: CORE };
+  const round = { id: b32(0x0c), stakeMsat: 100000n, blockTicks: BLOCK_TICKS, simCoreHash: CORE, federationId: TEST_FEDERATION_ID };
   let n = 0;
   const random = (len) => new Uint8Array(len).fill(++n);
   const me = { seed: b32(5), curve: feldmanGroup };
-  const signerNode = entryFor(round, { ...me, random });
+  const signerNode = entryFor(round, { ...me, random, ...lockedFor() });
 
   assert.equal(signerNode.stakeMsat, 100000n, 'the page asked for a stake the round does not name');
 
@@ -428,7 +437,7 @@ test('a page deals its own stake: the commitment is a hash and the ref is a hand
 
   const secrets = Array.from({ length: 7 }, () => rand(32));
   const signerNodes = secrets.map((s) => schnorr.getPublicKey(s));
-  const round = { id: b32(0x11), stakeMsat: 100000n, settlementSlots: 7, simCoreHash: CORE };
+  const round = { id: b32(0x11), stakeMsat: 100000n, settlementSlots: 7, simCoreHash: CORE, federationId: TEST_FEDERATION_ID };
 
   const me = { seed: b32(5), curve: feldmanGroup };
   const stake = await stakeFor(round, {
@@ -457,10 +466,10 @@ test('a page deals its own stake: the commitment is a hash and the ref is a hand
 
   // AND THE ENTRY CARRIES IT. Without a dealt stake the signer node is still the M2
   // one: a commitment to nothing, and no shares.
-  const signerNode = entryFor(round, { ...me, random: rand, stake });
+  const signerNode = entryFor(round, { ...me, random: rand, stake, ...lockedFor(stake.stakePoint) });
   assert.deepEqual(signerNode.stakeCommitment, stake.stakeCommitment);
   assert.deepEqual(signerNode.vssSharesRef, stake.vssSharesRef);
-  const plain = entryFor(round, { ...me, random: rand });
+  const plain = entryFor(round, { ...me, random: rand, ...lockedFor() });
   assert.deepEqual(plain.vssSharesRef, NO_SHARES);
 });
 

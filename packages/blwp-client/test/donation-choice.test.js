@@ -8,6 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
+import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { entryFor } from '../src/join.js';
 import { lockAmountMsat } from '../src/page-lock.js';
 import { donationChoice, chooseDonation, DONATION_CONFIRM_BPS } from '../src/donation-choice.js';
@@ -20,8 +21,16 @@ import { netStakeMsat } from '../../protocol/src/payout.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const rand = (n) => new Uint8Array(randomBytes(n));
 const STAKE = 100000n;
-const paying = { id: b32(0x21), stakeMsat: STAKE, settlementSlots: 7, simCoreHash: fromHex(coreHashHex()) };
+const paying = { id: b32(0x21), stakeMsat: STAKE, settlementSlots: 7, simCoreHash: fromHex(coreHashHex()), federationId: TEST_FEDERATION_ID };
 const free = { id: b32(0x22), stakeMsat: 0n, simCoreHash: b32(1) };
+// A PAYING ROUND NAMES ITS FEDERATION, AND ITS ENTRY ITS LOCK (RULED the owner 2026-09-24, the enum slice's fifth cut, as
+// join.test's fixtures): this paying fixture used to be hold-shaped - a stake and no federation - and entryFor now refuses
+// that shape. It keeps measuring what it measured, on a real FEDERATION entry: an attested claim key and a stake lock with
+// a non-zero outpoint, paying to the dealt stake's point where one is dealt.
+const lockedFor = (stakePoint = Uint8Array.of(2, ...new Uint8Array(32).fill(0x6c))) => ({
+  claimKey: { ok: true, ref: new Uint8Array(32).fill(0x9a) },
+  stakeLock: { outpoint: { txid: new Uint8Array(32).fill(0xd8), outIdx: 0 }, fields: { paymentImage: { kind: 'point', bytes: stakePoint } } },
+});
 const seed = b32(0x5e);
 const memory = () => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), m }; };
 const counted = (answer) => { const f = (msg) => { f.asked.push(msg); return answer; }; f.asked = []; return f; };
@@ -102,17 +111,17 @@ test('an unconfirmed answer above 5% is asked again, and three that do not stand
 });
 
 test('the entry carries the donation into the field the payout table reads, and the lock holds the net', () => {
-  const before = entryFor(paying, { seed, curve: feldmanGroup, random: rand });
+  const before = entryFor(paying, { seed, curve: feldmanGroup, random: rand, ...lockedFor() });
   assert.equal(before.donationMsat, 0n, 'no donation chosen is 0, as before');
-  const donor = entryFor(paying, { seed, curve: feldmanGroup, random: rand, donationMsat: 2000n });
+  const donor = entryFor(paying, { seed, curve: feldmanGroup, random: rand, donationMsat: 2000n, ...lockedFor() });
   assert.equal(donor.donationMsat, 2000n);
   assert.equal(donor.feeMsat, entryFeeMsat(STAKE));
   assert.equal(feeMatchesEntry(donor).ok, true, 'the signer node s own rule takes it');
   assert.equal(netStakeMsat(donor), 96000n);
   assert.equal(lockAmountMsat(paying, donor.donationMsat), 96000n, 'a donor s lock holds the net the signer node wants');
   assert.equal(lockAmountMsat(paying), 98000n);
-  assert.throws(() => entryFor(paying, { seed, curve: feldmanGroup, random: rand, donationMsat: 98001n }), /cannot come to more than it/);
-  assert.throws(() => entryFor(paying, { seed, curve: feldmanGroup, random: rand, donationMsat: 2000 }), /BigInt/);
+  assert.throws(() => entryFor(paying, { seed, curve: feldmanGroup, random: rand, donationMsat: 98001n, ...lockedFor() }), /cannot come to more than it/);
+  assert.throws(() => entryFor(paying, { seed, curve: feldmanGroup, random: rand, donationMsat: 2000, ...lockedFor() }), /BigInt/);
   assert.throws(() => entryFor(free, { seed, curve: feldmanGroup, random: rand, donationMsat: 1n }), /cannot come to more than it/,
     'a free round has nothing to donate out of');
 });

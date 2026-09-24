@@ -150,13 +150,16 @@ test('a stranger\'s signed claim key counts for nothing, and a node not assigned
   } finally { await f.close(); }
 });
 
-test('a round whose stake goes into a lock gets no entry without an attested key; a hold-invoice round keeps a zero attestation', async () => {
+// NO HOLD ROUND (RULED the owner 2026-09-24, the enum slice's fifth cut): a paying round that names no federation was the
+// hold invoice's, and the page used to build its entry - a stake, no lock, no attestation. It is not a round of this
+// network: entryFor refuses it before any key is asked, and zero attestations are a free round's only.
+test('a round whose stake goes into a lock gets no entry without an attested key; a paying round naming no federation gets no entry at all', async () => {
   const f = await federationRound();
   try {
     assert.throws(() => entryWith(f), /no claim key has its signer nodes' attestation: a client must refuse to lock to a key without it/);
-    const hold = { ...f.round, federationId: new Uint8Array(32) };
-    assert.equal(roundLocks(hold), false);
-    assert.equal(entryFor(hold, { seed: b32(0x51), curve: pageCurve, random: (n) => new Uint8Array(n).fill(7) })
-      .claimKeyAttestationRef.every((b) => b === 0), true);
+    const unnamed = { ...f.round, federationId: new Uint8Array(32) };
+    assert.equal(roundLocks(unnamed), false);
+    assert.throws(() => entryFor(unnamed, { seed: b32(0x51), curve: pageCurve, random: (n) => new Uint8Array(n).fill(7) }),
+      /^Error: this round takes a stake and names no federation, so it is not a round of this network \(§23\.6\)$/);
   } finally { await f.close(); }
 });
