@@ -24,12 +24,12 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { decodeRoundContract } from '../../protocol/src/contracts.js';
 import { decodePlayerResult, splitSignedResult } from '../../protocol/src/result.js';
 import { lockSettlement } from '../../protocol/src/lock-settlement.js';
-import { FORFEIT, VOID, ENTRY_VOID } from '../../protocol/src/payout.js';
+import { FORFEIT, VOID, ENTRY_VOID, isQualifier } from '../../protocol/src/payout.js';
 import { signShare340, aggregate340, nonceGenerate340 } from '../../protocol/src/frost-bip340.js';
 import { receiptsNeeded } from '../../protocol/src/threshold.js';
 import { lockFieldsFromJson } from '../../protocol/src/stake-lock.js';
 import { scalarFrom32, FIELD } from '../../protocol/src/shares.js';
-import { FINAL } from '../../protocol/src/objection.js';
+import { FINAL, SUSPENDED, PROVISIONALLY_FINAL } from '../../protocol/src/objection.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 import { resultFinality } from './finality.js';
 import { encodeCommitments, decodeCommitments, encodeShare, decodeShare } from './pool-wire.js';
@@ -81,6 +81,7 @@ export class LockSettlement {
   /** EVERY ENTRY OF THE ROUND, AS THIS SIGNER NODE HOLDS IT - or why the round still waits. */
   entriesOnRecord(roundIdBytes, contract) {
     const entries = [];
+    const leftOut = [];
     for (const { entryId, entry } of this.round.entriesOf(roundIdBytes)) {
       // A STAKE THIS SIGNER NODE NEVER SAW COMMITTED IS NOT IN THE ROUND (§23.1 step 5: play begins
       // only after it). With pick (a), a round whose gate mints counts a stake only with its
@@ -97,6 +98,13 @@ export class LockSettlement {
       // A RE-RUN WINDOW THAT CLOSED ON PROVEN EQUIVOCATION (§13A, §13C, RULED 2026-09-24): FORFEIT on the finality
       // itself, as VOID is above - no stored no-quorum record needed. A stored one was already taken, once, above.
       if (standing.state === FORFEIT) { entries.push({ ...base, outcome: FORFEIT, score: 0 }); continue; }
+      // AN ENTRY STILL IN ITS RE-RUN WINDOW IS LEFT OUT, AND THE ROUND SETTLES WITHOUT IT (§13A, RULED the owner 2026-09-24,
+      // slice C3a): SUSPENDED, or PROVISIONALLY_FINAL on a re-run. It is not in the payout table, and its lock is neither
+      // claimed nor forfeited here; what becomes of it after is `lockAfterSettlement`'s to say.
+      if (standing.state === SUSPENDED || (standing.state === PROVISIONALLY_FINAL && standing.rerun)) {
+        leftOut.push({ entryId, why: 'left out of the round\'s settlement: still in its re-run window' });
+        continue;
+      }
       if (standing.state !== FINAL)
         return refuse(`nothing is claimed while a run is not final with its window closed: ${toHex(entryId).slice(0, 16)} is `
           + `${standing.state || 'without a result'}${standing.why ? ` (${standing.why})` : ''}`);
@@ -106,7 +114,38 @@ export class LockSettlement {
       entries.push({ ...base, outcome: r.outcome, score: r.score });
     }
     void contract;
-    return { ok: true, entries };
+    return { ok: true, entries, leftOut };
+  }
+
+  /**
+   * WHAT BECOMES OF ONE ENTRY'S LOCK ONCE THE ROUND HAS SETTLED (slice C3a), from what is kept: the outpoints the round's
+   * settlement claimed, and the entry's finality now. Claimed there, it was a loser at the close. Left out, it was still
+   * in its re-run window, and: VOID returns to the player at its expiry - nobody acts; FORFEIT, or FINAL and not a
+   * qualifier, is claimed in the round's second settlement (C3b, not built); a qualifier gets its stake back by its own
+   * forfeit - stake back only, no share of the pool (RULED 2026-09-24).
+   */
+  lockAfterSettlement(roundIdBytes, entryIdBytes) {
+    const moves = this.round.lockSettlementMoves(roundIdBytes);
+    if (!moves) return { claimed: false, why: 'the round has not settled its locks yet' };
+    const lock = this.round.stakeLock(entryIdBytes);
+    if (!lock) return { claimed: false, why: 'this signer node verified no stake lock for that entry' };
+    if ((moves.claims || []).includes(String(lock.outpoint))) return { claimed: true, why: 'claimed in the round\'s settlement' };
+    const standing = resultFinality(this.round, roundIdBytes, entryIdBytes);
+    if (standing.state === SUSPENDED || (standing.state === PROVISIONALLY_FINAL && standing.rerun))
+      return { claimed: false, why: 'left out of the round\'s settlement: still in its re-run window' };
+    if (standing.state === VOID || standing.state === ENTRY_VOID)
+      return { claimed: false, why: 'VOID: nothing acts, and the lock returns to the player at its expiry' };
+    if (standing.state === FORFEIT) return { claimed: false, why: 'claimed in the round\'s second settlement, not built yet' };
+    if (standing.state === FINAL) {
+      const row = this.round.get(roundIdBytes);
+      const mine = this.round.results(roundIdBytes, entryIdBytes).find((r) => toHex(r.nodePubkey) === toHex(this.round.pubkey));
+      const r = mine ? decodePlayerResult(splitSignedResult(mine.bytes).body) : null;
+      const minScore = row ? decodeRoundContract(new Uint8Array(row.contract)).minScore : Infinity;
+      if (r && isQualifier(r, minScore))
+        return { claimed: false, why: 'a qualifier: its stake comes back by its own forfeit - stake back only, no share' };
+      return { claimed: false, why: 'claimed in the round\'s second settlement, not built yet' };
+    }
+    return { claimed: false, why: `not decided: ${standing.state || 'without a result'}` };
   }
 
   /** WHAT THIS SIGNER NODE WILL SIGN, rebuilt from its own store and the stock client - or the refusal. */
