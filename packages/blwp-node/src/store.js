@@ -708,6 +708,32 @@ export function openStore(path = ':memory:') {
       made_ms   INTEGER NOT NULL,
       PRIMARY KEY (round_id, entry_id)
     );
+    -- A LATE SETTLEMENT'S SENDS (§13A, RULED 2026-09-24, slice C3b-2a): the winnings_sends rows of one late
+    -- (round, entry), in a table of their own, so a winner's late send and its first-round send never share a key -
+    -- a first-round PAID row is never overwritten or re-sent by a late one.
+    CREATE TABLE IF NOT EXISTS late_winnings_sends (
+      round_id      BLOB NOT NULL,
+      late_entry_id BLOB NOT NULL,
+      entry_id      BLOB NOT NULL,
+      attempt       INTEGER NOT NULL,
+      address       TEXT NOT NULL,
+      invoice       TEXT NOT NULL,
+      payment_hash  TEXT NOT NULL,
+      invoice_msat  INTEGER NOT NULL,
+      payout_msat   INTEGER NOT NULL,
+      owed_msat     INTEGER NOT NULL,
+      gateway_url   TEXT NOT NULL,
+      gateway_pk    TEXT NOT NULL,
+      expiration    INTEGER NOT NULL,
+      txid          TEXT,
+      out_idx       INTEGER,
+      preimage      TEXT,
+      state         TEXT NOT NULL,
+      why           TEXT NOT NULL,
+      planned_ms    INTEGER NOT NULL,
+      updated_ms    INTEGER NOT NULL,
+      PRIMARY KEY (round_id, late_entry_id, entry_id, attempt)
+    );
     -- AND THE SHARES IT IS SPLIT BY: what the round's settlement paid each winner, in the table's order (JSON), kept
     -- when that settlement is signed, so a late loser's stake is split the same way at every signer node, restart or not.
     CREATE TABLE IF NOT EXISTS lock_settlement_shares (

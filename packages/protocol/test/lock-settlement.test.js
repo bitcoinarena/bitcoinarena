@@ -453,3 +453,40 @@ test('a late VOID or qualifier is never claimed, a first table that paid nobody 
   assert.deepEqual(withFee.payouts.filter((p) => p.kind === 'qualifier').map((p) => p.msat), plain.payouts.map((p) => p.msat));
   assert.deepEqual(withFee.signerNodePayouts.map((p) => p.msat), [1000n, 1000n]);
 });
+
+// THE LATE WINNERS SENT, NOT COLLECTED (RULED the owner 2026-09-24, slice C3b-2a): with the late send plans, each winner's
+// late payout is an outgoing contract to its invoice, refunding to the committee claim key - exactly the base payout's msat.
+test('with send plans a late payout is sent for exactly the base payout\'s msat, and a send for another amount or none at all is refused', async () => {
+  const { lateLockSettlement } = await import('../src/lock-settlement.js');
+  const A = entry(1, DELIVERED, 3); const B = entry(2, DELIVERED, 2);
+  const shares = [{ pubkey: A.pubkey, msat: 60001n }, { pubkey: B.pubkey, msat: 35999n }];
+  const FEES = { ppm: 0n, baseMsat: 1000n };
+  const L = entry(9, FAILED, 0);
+  const COMMITTEE = refund(0xcc);
+  const base = lateLockSettlement({ roundId: RID, entryId: b32(0x77), entry: L, lock: lockFor(L, 9)[1], shares,
+    winnerLocks: new Map([lockFor(A, 1), lockFor(B, 2)]), fees: FEES });
+  assert.equal(base.ok, true, base.why);
+  const sendOf = (p, over = {}) => ({ paymentHash: toHex(b32(p.pubkey[0] + 0x20)), gatewayPk: '02' + 'ab'.repeat(32), refundPk: COMMITTEE,
+    expiration: 1500n, payoutMsat: p.msat, ...over });
+  const sends = new Map(base.payouts.filter((p) => p.kind === 'qualifier').map((p) => [toHex(p.pubkey), sendOf(p)]));
+  // NO LOCK ROW NEEDED FOR A SEND: the refund is the committee's.
+  const sent = lateLockSettlement({ roundId: RID, entryId: b32(0x77), entry: L, lock: lockFor(L, 9)[1], shares, winnerLocks: new Map(),
+    fees: FEES, sends, requireSends: true });
+  assert.equal(sent.ok, true, sent.why);
+  const byKey = (s) => new Map(s.payouts.filter((p) => p.kind !== 'signer node').map((p) => [toHex(p.pubkey), p]));
+  for (const [k, p] of byKey(base)) {
+    const s = byKey(sent).get(k);
+    assert.equal(s.kind, 'sent');
+    assert.equal(s.msat, p.msat, 'the sent payout is not the base payout');
+    assert.equal(toHex(s.payoutPk), toHex(COMMITTEE), 'a sent late payout does not refund to the committee');
+    assert.equal(s.sent.paymentHash, sends.get(k).paymentHash);
+  }
+  assert.deepEqual([sent.paidMsat, sent.inputFeesMsat, sent.outputFeesMsat], [base.paidMsat, base.inputFeesMsat, base.outputFeesMsat]);
+  const k0 = toHex(A.pubkey);
+  const wrong = new Map(sends); wrong.set(k0, { ...sends.get(k0), payoutMsat: sends.get(k0).payoutMsat + 1n });
+  assert.match(lateLockSettlement({ roundId: RID, entryId: b32(0x77), entry: L, lock: lockFor(L, 9)[1], shares, winnerLocks: new Map(),
+    fees: FEES, sends: wrong, requireSends: true }).why, /^a send was planned for a \d+ msat payout and this signer node's late payout is \d+: /);
+  const short = new Map(sends); short.delete(k0);
+  assert.match(lateLockSettlement({ roundId: RID, entryId: b32(0x77), entry: L, lock: lockFor(L, 9)[1], shares, winnerLocks: new Map(),
+    fees: FEES, sends: short, requireSends: true }).why, /^a winner the first settlement paid has no accepted late send, so nothing is built: /);
+});

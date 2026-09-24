@@ -2246,6 +2246,67 @@ export class Round {
   }
 
   /**
+   * THIS ROUND STORE, SEEN THROUGH ONE LATE SETTLEMENT'S SENDS (slice C3b-2a): the send-row methods `WinningsSend` uses
+   * read and write late_winnings_sends for that (round, late entry); its settlement row is the late one; and a paid
+   * late send records nothing in `winnings`, whose one row per entry is the first round's. Everything else is this store.
+   */
+  lateSendScope(lateEntryIdBytes) {
+    const late = Buffer.from(lateEntryIdBytes);
+    const base = this;
+    const rowOf = (r) => ({ entryId: new Uint8Array(r.entry_id), attempt: r.attempt, roundId: new Uint8Array(r.round_id),
+      address: r.address, invoice: r.invoice, paymentHash: r.payment_hash, invoiceMsat: BigInt(r.invoice_msat), payoutMsat: BigInt(r.payout_msat),
+      owedMsat: BigInt(r.owed_msat), gatewayUrl: r.gateway_url, gatewayPk: r.gateway_pk, expiration: BigInt(r.expiration),
+      txid: r.txid, outIdx: r.out_idx === null ? null : Number(r.out_idx), preimage: r.preimage, state: r.state, why: r.why });
+    const all = (roundIdBytes) => base.db.prepare('SELECT * FROM late_winnings_sends WHERE round_id = ? AND late_entry_id = ? ORDER BY entry_id, attempt')
+      .all(Buffer.from(roundIdBytes), late);
+    return Object.assign(Object.create(base), {
+      lateEntryId: new Uint8Array(late),
+      putSendPlan({ entryId, roundId, attempt = 0, address, invoice, paymentHash, invoiceMsat, payoutMsat, owedMsat, gatewayUrl, gatewayPk,
+        expiration, state = 'PLANNED', why }) {
+        const now = base.now();
+        base.db.prepare('INSERT INTO late_winnings_sends (round_id, late_entry_id, entry_id, attempt, address, invoice, payment_hash, invoice_msat, '
+          + 'payout_msat, owed_msat, gateway_url, gateway_pk, expiration, state, why, planned_ms, updated_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
+          + 'ON CONFLICT(round_id, late_entry_id, entry_id, attempt) DO NOTHING')
+          .run(Buffer.from(roundId), late, Buffer.from(entryId), attempt, String(address), String(invoice), String(paymentHash).toLowerCase(),
+            Number(invoiceMsat), Number(payoutMsat), Number(owedMsat), String(gatewayUrl), String(gatewayPk).toLowerCase(), Number(expiration),
+            state, String(why), now, now);
+      },
+      markSend({ entryId, attempt = 0, state, why, txid = null, outIdx = null, preimage = null }) {
+        base.db.prepare('UPDATE late_winnings_sends SET state = ?, why = ?, txid = COALESCE(?, txid), out_idx = COALESCE(?, out_idx), '
+          + 'preimage = COALESCE(?, preimage), updated_ms = ? WHERE late_entry_id = ? AND entry_id = ? AND attempt = ?')
+          .run(state, String(why), txid, outIdx === null ? null : Number(outIdx), preimage, base.now(), late, Buffer.from(entryId), attempt);
+      },
+      sendAttemptsOf(roundIdBytes) { return all(roundIdBytes).map(rowOf); },
+      sendPlansOf(roundIdBytes) {
+        const latest = new Map();
+        for (const r of all(roundIdBytes)) latest.set(Buffer.from(r.entry_id).toString('hex'), r);
+        return [...latest.values()].map(rowOf);
+      },
+      dropPlannedSends(roundIdBytes) {
+        const rid = Buffer.from(roundIdBytes);
+        const moved = base.db.prepare("SELECT COUNT(*) AS n FROM late_winnings_sends WHERE round_id = ? AND late_entry_id = ? AND (state != 'PLANNED' OR attempt != 0)")
+          .get(rid, late).n;
+        if (moved) return 0;
+        return base.db.prepare("DELETE FROM late_winnings_sends WHERE round_id = ? AND late_entry_id = ? AND attempt = 0 AND state = 'PLANNED'").run(rid, late).changes;
+      },
+      putWinnings() { /* the first round's row stands; the late payment is its late_winnings_sends row */ },
+      lockSettlement(roundIdBytes) { return base.lateLockSettlement(roundIdBytes, late); },
+    });
+  }
+
+  /** Every late settlement holding a send that is not PAID - what the late sweep visits for its sends. */
+  lateSettlementsWithUnpaidSends() {
+    const latest = new Map();
+    for (const r of this.db.prepare('SELECT round_id, late_entry_id, entry_id, attempt, state FROM late_winnings_sends ORDER BY entry_id, attempt').all())
+      latest.set(`${Buffer.from(r.round_id).toString('hex')}:${Buffer.from(r.late_entry_id).toString('hex')}:${Buffer.from(r.entry_id).toString('hex')}`, r);
+    const out = new Map();
+    for (const r of latest.values()) if (r.state !== 'PAID')
+      out.set(`${Buffer.from(r.round_id).toString('hex')}:${Buffer.from(r.late_entry_id).toString('hex')}`,
+        { roundId: new Uint8Array(r.round_id), entryId: new Uint8Array(r.late_entry_id) });
+    return [...out.values()];
+  }
+
+  /**
    * THE LATE LOSERS TO ASK ABOUT (slice C3b-1): every objected entry of a round whose own settlement is ACCEPTED and
    * which holds no ACCEPTED second settlement. An entry is left out of the round's settlement only while an objection
    * holds it in its re-run window, so nothing else can be one.

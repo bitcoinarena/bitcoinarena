@@ -1609,6 +1609,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (shuttingDown || sweepingLate) return;
     sweepingLate = true;
     try {
+      // THE ACCEPTED LATE SETTLEMENTS' UNPAID SENDS FIRST (C3b-2a): the asker carries each to PAID; a PAID one is left alone.
+      for (const { roundId: rid, entryId: eid } of round.lateSettlementsWithUnpaidSends()) {
+        if ((round.lateLockSettlement(rid, eid) || {}).state !== 'ACCEPTED') continue;
+        const got = await settlements.sendLate(rid, eid).catch((e) => [{ ok: false, why: e.message }]);
+        for (const g of got) if (!g.already) console.log(`[winnings] late ${toHex(eid).slice(0, 16)} ${JSON.stringify(g).slice(0, 200)}`);
+      }
       for (const { roundId: rid, entryId: eid } of round.lateSettlementCandidates()) {
         const after = settlements.lockAfterSettlement(rid, eid);
         if (after.why !== 'claimed in the round\'s second settlement, not built yet' && !(round.lateLockSettlement(rid, eid) || {}).state) continue;
@@ -2642,8 +2648,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         if (rid.length !== 32) return text(res, 400, 'send plans are for a round id');
         if (!winnings) return text(res, 409, 'this signer node sends no winnings');
+        // A LATE SETTLEMENT'S PLANS (C3b-2a), asked for by its late entry as well.
+        const lateHex = url.searchParams.get('late');
+        const sender = lateHex ? settlements.lateWinningsFor(new Uint8Array(rid), new Uint8Array(Buffer.from(lateHex, 'hex'))) : winnings;
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
-        return res.end(JSON.stringify(winnings.keptPlan(new Uint8Array(rid))));
+        return res.end(JSON.stringify(sender.keptPlan(new Uint8Array(rid))));
       }
 
       // THE COORDINATOR'S SEND PLANS, between signer nodes: kept only if each stands here (winnings-send.js).
@@ -2653,7 +2662,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         let proposed;
         try { proposed = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch (e) { return text(res, 400, `not JSON: ${e.message}`); }
         if (!Array.isArray(proposed)) return text(res, 400, 'send plans are a list');
-        const got = await settlements.takeSends(new Uint8Array(rid), proposed);
+        const lateHex = url.searchParams.get('late');
+        if (lateHex && !/^[0-9a-f]{64}$/.test(lateHex)) return text(res, 400, 'a late settlement is named by a 32-byte entry id');
+        const got = lateHex
+          ? await settlements.takeLateSends(new Uint8Array(rid), new Uint8Array(Buffer.from(lateHex, 'hex')), proposed)
+          : await settlements.takeSends(new Uint8Array(rid), proposed);
         return got.ok ? text(res, 201, `${got.rows.length} send plan(s) checked and kept`) : text(res, got.status || 409, got.why);
       }
 
@@ -2665,25 +2678,30 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (rid.length !== 32 || !/^[0-9a-f]{64}$/.test(eHex)) return text(res, 400, 'a send is asked for by a round id and an entry id');
         if (!winnings) return text(res, 409, 'this signer node sends no winnings');
         const r8 = new Uint8Array(rid);
+        // A LATE SETTLEMENT'S SEND (C3b-2a): `late` names it; its rows, its sender and its rebuilt transaction answer.
+        const lateHex = url.searchParams.get('late');
+        if (lateHex && !/^[0-9a-f]{64}$/.test(lateHex)) return text(res, 400, 'a late settlement is named by a 32-byte entry id');
+        const late8 = lateHex ? new Uint8Array(Buffer.from(lateHex, 'hex')) : null;
+        const sender = late8 ? settlements.lateWinningsFor(r8, late8) : winnings;
         if (url.pathname === '/winnings-paid') {
           const pre = new Uint8Array(await read(req));
           if (pre.length !== 32) return text(res, 400, 'a preimage is 32 bytes');
-          const got = winnings.paid(r8, eHex, pre);
+          const got = sender.paid(r8, eHex, pre);
           return got.ok ? text(res, 201, 'the winning is kept as paid') : text(res, got.status || 409, got.why);
         }
-        const built = await settlements.message(r8);
+        const built = late8 ? await settlements.lateMessage(r8, late8) : await settlements.message(r8);
         if (!built.ok) return text(res, built.status || 409, built.why);
         const kind = url.searchParams.get('kind') === 'resend' ? 'resend' : 'auth';
         const attempt = url.searchParams.has('attempt') ? Number(url.searchParams.get('attempt')) : null;
         if (url.pathname === '/send-commit') {
-          const got = await winnings.commit(r8, eHex, built, kind, attempt, { hash: url.searchParams.get('hash') });
+          const got = await sender.commit(r8, eHex, built, kind, attempt, { hash: url.searchParams.get('hash') });
           if (!got.ok) return text(res, got.status || 409, got.why);
           res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
           return res.end(Buffer.from(encodeCommitments([got.commitment])));
         }
         let list;
         try { list = decodeCommitments(new Uint8Array(await read(req))); } catch (e) { return text(res, 400, e.message); }
-        const got = await winnings.share(r8, eHex, built, list, kind, attempt);
+        const got = await sender.share(r8, eHex, built, list, kind, attempt);
         if (!got.ok) return text(res, got.status || 409, got.why);
         res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
         return res.end(Buffer.from(encodeShare(got.share)));

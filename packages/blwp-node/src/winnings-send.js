@@ -35,8 +35,10 @@ export class WinningsSend {
    * @param lnurlFetch how an address's LNURL endpoint is fetched (a test hands its own)
    * @param peersFor   (roundIdBytes) => [base URL] - the round's other settlement signer nodes
    */
-  constructor({ round, port, curve, random, peersFor, fetcher, lnurlFetch = fetch, network = 'regtest' }) {
-    Object.assign(this, { round, port, curve, random, peersFor, fetcher, lnurlFetch, network });
+  constructor({ round, port, curve, random, peersFor, fetcher, lnurlFetch = fetch, network = 'regtest', scopeParam = '' }) {
+    // `scopeParam`: A LATE SETTLEMENT'S SENDS (slice C3b-2a) - `&late=<entry>` on every signing and paid call to a peer,
+    // so the peer answers from that late settlement's rows; empty for the round's own sends.
+    Object.assign(this, { round, port, curve, random, peersFor, fetcher, lnurlFetch, network, scopeParam });
     this.pairs = new Map();      // `${round}:${entry}:${attempt}` -> nonce pair for the auth signature
   }
 
@@ -263,7 +265,7 @@ export class WinningsSend {
     const refused = [];
     for (const base of this.peersFor(roundIdBytes)) {
       try {
-        const r = await this.fetcher(`${base}/resend-sends?round=${toHex(roundIdBytes)}`, { method: 'POST', body: JSON.stringify(plain(row)) });
+        const r = await this.fetcher(`${base}/resend-sends?round=${toHex(roundIdBytes)}${this.scopeParam}`, { method: 'POST', body: JSON.stringify(plain(row)) });
         if (!r.ok) refused.push(`${base}: ${(await r.text()).trim()}`);
       } catch (e) { refused.push(`${base}: ${e.message}`); }
     }
@@ -352,7 +354,7 @@ export class WinningsSend {
   /** The committee's signature of `kind` over one attempt, made here with the peers. */
   async sign(roundIdBytes, row, built, kind) {
     const entryHex = toHex(row.entryId);
-    const q = `round=${toHex(roundIdBytes)}&entry=${entryHex}&kind=${kind}&attempt=${row.attempt}&hash=${row.paymentHash}`;
+    const q = `round=${toHex(roundIdBytes)}&entry=${entryHex}&kind=${kind}&attempt=${row.attempt}&hash=${row.paymentHash}${this.scopeParam}`;
     const own = await this.commit(roundIdBytes, entryHex, built, kind, row.attempt);
     if (!own.ok) return own;
     const signers = [{ base: null, commitment: own.commitment }];
@@ -423,7 +425,7 @@ export class WinningsSend {
       if (said.sent && said.preimage && toHex(sha256(said.preimage)) === row.paymentHash) {
         this.keepPaid(row, said.preimage, `the gateway at ${row.gatewayUrl} paid the winner's invoice; its preimage checked`);
         for (const base of this.peersFor(roundIdBytes)) {
-          try { await this.fetcher(`${base}/winnings-paid?round=${toHex(roundIdBytes)}&entry=${entryHex}`, { method: 'POST', body: said.preimage }); } catch { /* it asks again */ }
+          try { await this.fetcher(`${base}/winnings-paid?round=${toHex(roundIdBytes)}&entry=${entryHex}${this.scopeParam}`, { method: 'POST', body: said.preimage }); } catch { /* it asks again */ }
         }
         out.push({ entry: entryHex, attempt: row.attempt, ok: true, state: PAID, preimage: toHex(said.preimage), gateway: row.gatewayUrl });
         continue;

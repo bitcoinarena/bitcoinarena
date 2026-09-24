@@ -159,9 +159,9 @@ export class LockSettlement {
    * FORFEIT - never while it is still in its re-run window. The plan is `lateLockSettlement` over the shares that
    * settlement kept; the P opened as for any loser; one transaction per (round, entry), its own nonce.
    */
-  async lateMessage(roundIdBytes, entryIdBytes) {
+  async lateMessage(roundIdBytes, entryIdBytes, { onlyBase = false } = {}) {
     const key = `${toHex(roundIdBytes)}:${toHex(entryIdBytes)}`;
-    const kept = this.built.get(key);
+    const kept = onlyBase ? null : this.built.get(key);
     if (kept) return kept;
     const row = this.round.get(roundIdBytes);
     if (!row) return refuse('this node holds no such round', 404);
@@ -200,8 +200,10 @@ export class LockSettlement {
     const lock = { outpoint: outpointOf(lockRow.outpoint), amountMsat: fields.amountMsat, refundPk: fields.refundPk };
     const byPlayer = new Map(this.round.entriesOf(roundIdBytes).map((x) => [toHex(x.entry.playerPubkey), x.entryId]));
     const winnerLocks = new Map();
+    const entryOf = new Map();
     for (const x of shares) {
       const eid = byPlayer.get(toHex(x.pubkey));
+      if (eid) entryOf.set(toHex(x.pubkey), eid);
       const wl = eid ? this.round.stakeLock(eid) : null;
       if (wl) winnerLocks.set(toHex(x.pubkey), { refundPk: lockFieldsFromJson(wl.fields).refundPk });
     }
@@ -209,8 +211,20 @@ export class LockSettlement {
     const feeLock = fl ? { outpoint: outpointOf(fl.outpoint), amountMsat: lockFieldsFromJson(fl.fields).amountMsat, preimage: e.feePreimage } : null;
     let fees = this.fees.get(toHex(roundIdBytes));
     if (!fees) { fees = await this.port.fees(); this.fees.set(toHex(roundIdBytes), fees); }
-    const plan = lateLockSettlement({ roundId: roundIdBytes, entryId: entryIdBytes, entry, lock, feeLock, shares, winnerLocks, fees,
-      signerNodes: feeLock ? this.signerNodesFor(roundIdBytes, contract) : null, contract });
+    const args = { roundId: roundIdBytes, entryId: entryIdBytes, entry, lock, feeLock, shares, fees,
+      signerNodes: feeLock ? this.signerNodesFor(roundIdBytes, contract) : null, contract };
+    // THE BASE PLAN the late sends are sized from (C3b-2a). With a winnings sender it is never signed, so a winner whose
+    // lock row is missing here does not block it: its payout goes by send, refunding to the committee key.
+    const baseLocks = this.winnings ? new Map(shares.map((x) => [toHex(x.pubkey), winnerLocks.get(toHex(x.pubkey)) || { refundPk: claimPk }])) : winnerLocks;
+    const basePlan = lateLockSettlement({ ...args, winnerLocks: baseLocks });
+    if (!basePlan.ok) return refuse(`no late lock is claimed: ${basePlan.why}`);
+    const base = { plan: basePlan, entryOf };
+    if (onlyBase) return { ok: true, base, contract, claimPk };
+    // THE PLAN THAT IS SIGNED pays every winner by its accepted late send (slice C3b-2a): a winner the first settlement
+    // paid with no address or no accepted send is refused by name - never paid by a contract only its key can move.
+    const plan = this.winnings
+      ? lateLockSettlement({ ...args, winnerLocks, sends: this.lateWinningsFor(roundIdBytes, entryIdBytes).sendsFor(roundIdBytes, base, claimPk), requireSends: true })
+      : basePlan;
     if (!plan.ok) return refuse(`no late lock is claimed: ${plan.why}`);
     const claims = [];
     for (const c of plan.claims) {
@@ -237,7 +251,7 @@ export class LockSettlement {
    */
   async settleLate(roundIdBytes, entryIdBytes) {
     const kept = this.round.lateLockSettlement(roundIdBytes, entryIdBytes);
-    if (kept && kept.state === ACCEPTED) return { ok: true, kept: true, ...kept };
+    if (kept && kept.state === ACCEPTED) return { ok: true, kept: true, ...kept, sent: await this.sendLate(roundIdBytes, entryIdBytes) };
     const t = await this.turn(roundIdBytes);
     if (!t.mine) {
       if (kept && kept.state === SUBMITTING) {
@@ -257,6 +271,11 @@ export class LockSettlement {
         }
       }
       return refuse(`not this signer node's turn to combine: ${t.why}`, 409);
+    }
+    // THE LATE SEND PLANS FIRST, as for the round's own settlement: proposed here, checked by every peer, or nothing.
+    if (this.winnings && !(kept && kept.state === SUBMITTING)) {
+      const planned = await this.planLateSends(roundIdBytes, entryIdBytes);
+      if (!planned.ok) return planned;
     }
     const m = await this.lateMessage(roundIdBytes, entryIdBytes);
     if (!m.ok) return m;
@@ -302,11 +321,73 @@ export class LockSettlement {
     const sent = await this.port.settle({ claimPk: m.claimPk, claims: m.claims, payouts: m.plan.payouts, nonce: m.plan.nonce, signature });
     const state = sent.accepted ? ACCEPTED : REFUSED;
     const why = sent.accepted
-      ? `claimed the late loser's lock, ${m.plan.poolMsat} msat; paid ${m.plan.payouts.filter((p) => p.kind === 'qualifier').length} winner(s) ${m.plan.paidMsat} msat`
+      ? `claimed the late loser's lock, ${m.plan.poolMsat} msat; paid ${m.plan.payouts.filter((p) => p.kind !== 'signer node').length} winner(s) ${m.plan.paidMsat} msat`
         + `${m.plan.feeClaims && m.plan.feeClaims.length ? `; its fee lock ${m.plan.feePoolMsat} msat to ${m.plan.signerNodePayouts.length} signer node(s)` : ''}`
       : `the guardians refused it: ${sent.error}`;
     this.round.putLateLockSettlement({ roundId: roundIdBytes, entryId: entryIdBytes, txid: m.txid, message: m.message, signature, state, why });
-    return { ok: sent.accepted, state, why, txid: m.txid, signature, plan: m.plan, answer: sent };
+    const winnings = sent.accepted ? await this.sendLate(roundIdBytes, entryIdBytes) : null;
+    return { ok: sent.accepted, state, why, txid: m.txid, signature, plan: m.plan, answer: sent, winnings };
+  }
+
+  /** THE LATE SETTLEMENT'S OWN WINNINGS SENDER (slice C3b-2a): the round's sender, over that late (round, entry)'s rows. */
+  lateWinningsFor(roundIdBytes, entryIdBytes) {
+    if (!this.winnings) return null;
+    const key = `${toHex(roundIdBytes)}:${toHex(entryIdBytes)}`;
+    if (!this.lateSenders) this.lateSenders = new Map();
+    let w = this.lateSenders.get(key);
+    if (!w) {
+      const o = this.winnings;
+      w = new o.constructor({ round: this.round.lateSendScope(entryIdBytes), port: o.port, curve: o.curve, random: o.random,
+        peersFor: o.peersFor, fetcher: o.fetcher, lnurlFetch: o.lnurlFetch, network: o.network, scopeParam: `&late=${toHex(entryIdBytes)}` });
+      this.lateSenders.set(key, w);
+    }
+    return w;
+  }
+
+  /** THE ASKER'S LATE SEND PLANS: proposed from the late base plan and handed to every peer, which checks them itself. */
+  async planLateSends(roundIdBytes, entryIdBytes) {
+    const got = await this.lateMessage(roundIdBytes, entryIdBytes, { onlyBase: true });
+    if (!got.ok) return got;
+    const w = this.lateWinningsFor(roundIdBytes, entryIdBytes);
+    const proposed = await w.propose(roundIdBytes, got.base);
+    if (!proposed.ok) return proposed;
+    const body = JSON.stringify(proposed.rows.map(sendPlanToJson));
+    const peers = this.peersFor(roundIdBytes);
+    if (!peers.length && got.contract.nodes.length > 1) return refuse('this signer node knows no peer to hand the late send plan to yet');
+    const refused = [];
+    for (const base of peers) {
+      try {
+        const r = await this.fetcher(`${base}/settle-sends?round=${toHex(roundIdBytes)}&late=${toHex(entryIdBytes)}`, { method: 'POST', body });
+        if (!r.ok) refused.push(`${base}: ${(await r.text()).trim()}`);
+      } catch (e) { refused.push(`${base}: ${e.message}`); }
+    }
+    const need = receiptsNeeded(got.contract.nodes.length);
+    const took = 1 + peers.length - refused.length;
+    if (took < need) return refuse(`${took} of the ${need} signer nodes the late settlement needs took its send plan: ${refused.join('; ')}`);
+    this.built.delete(`${toHex(roundIdBytes)}:${toHex(entryIdBytes)}`);
+    return { ok: true, rows: proposed.rows };
+  }
+
+  /** A PEER'S TAKE of the asker's late send plans, checked against its own late base plan. */
+  async takeLateSends(roundIdBytes, entryIdBytes, proposed) {
+    if (!this.winnings) return refuse('this signer node sends no winnings');
+    const got = await this.lateMessage(roundIdBytes, entryIdBytes, { onlyBase: true });
+    if (!got.ok) return got;
+    const checked = await this.lateWinningsFor(roundIdBytes, entryIdBytes).check(roundIdBytes, got.base, proposed);
+    if (checked.ok) this.built.delete(`${toHex(roundIdBytes)}:${toHex(entryIdBytes)}`);
+    return checked;
+  }
+
+  /** The accepted late settlement's winnings, sent - by the round's asker; the others answer and keep the preimage. */
+  async sendLate(roundIdBytes, entryIdBytes) {
+    const w = this.lateWinningsFor(roundIdBytes, entryIdBytes);
+    if (!w || !w.round.sendPlansOf(roundIdBytes).length) return [];
+    if (!(await this.turn(roundIdBytes)).mine) return [];
+    const kept = this.round.lateLockSettlement(roundIdBytes, entryIdBytes);
+    if (!kept || kept.state !== ACCEPTED) return [];
+    const m = await this.lateMessage(roundIdBytes, entryIdBytes);
+    if (!m.ok) return [{ ok: false, why: m.why }];
+    return w.sendAll(roundIdBytes, m);
   }
 
   /** WHAT THIS SIGNER NODE WILL SIGN, rebuilt from its own store and the stock client - or the refusal. */
