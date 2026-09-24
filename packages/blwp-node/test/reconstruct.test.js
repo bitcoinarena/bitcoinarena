@@ -10,6 +10,7 @@
 //
 // Everything here goes through the daemons' own doors. Nothing hands a share
 // to anybody in this file.
+import { CLOCK } from './block-clock.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 // THE RUN LENGTH IS THE CORE'S (2026-09-20). This fixture said 9000 and the core has ended a run at 10800
@@ -105,9 +106,13 @@ const contractFor = (nodes) => ({
 
 /** One signer node's signed posting of the transcript a result names (P2). */
 const postedBy = (who, rid, result) => {
-  const p = { roundId: rid, playerPubkey: result.playerPubkey, transcriptHash: result.transcriptHash, signerNodePubkey: who.round.pubkey };
+  const p = { roundId: rid, playerPubkey: result.playerPubkey, transcriptHash: result.transcriptHash, signerNodePubkey: who.round.pubkey,
+    blockHash: CLOCK.tipAt(Date.now()) };   // the block it sits in (§13A, RULED 2026-09-24)
   return joinSignedPosting(encodeTranscriptPosting(p), schnorr.sign(transcriptPostingId(p), who.round.identity.secret));
 };
+
+/** Until the fixtures' chain has a block after the one of now (a window of 1 ms ends there). */
+const untilNextBlock = async () => { const s = Math.floor(Date.now() / 1000); while (Math.floor(Date.now() / 1000) <= s) await new Promise((r) => setTimeout(r, 50)); };
 
 /** Seven daemons, and the round they all hold. */
 async function committee(n = 7) {
@@ -116,6 +121,8 @@ async function committee(n = 7) {
     nodes.push(await serve(openStore(':memory:'), {
       port: 0, funded: () => true, randomnessFor: () => BEACON,
     }));
+  // THE CHAIN §13A'S WINDOWS ARE READ FROM (RULED 2026-09-24): the block clock every fixture daemon reads.
+  for (const d of nodes) d.round.chainView = CLOCK.chainView();
   committeeRelays = nodes.map((d) => `http://127.0.0.1:${d.port}`);
   return nodes;
 }
@@ -221,6 +228,9 @@ async function everyoneReplays(nodes, stake) {
   for (const node of nodes) posted.push(...node.round.postings(rid, out.eid));
   for (const node of nodes)
     for (const p of posted) node.round.putPosting(rid, out.eid, p.signerNodePubkey, p.bytes);
+  // THE WINDOW ENDS AT A BLOCK (RULED 2026-09-24): even this fixture's 1 ms window closes only at the next block of the
+  // chain, a second away on the fixtures' block clock - waited for here, as a node waits for it.
+  await untilNextBlock();
 
   const outcome = decodePlayerResult(splitSignedResult(
     nodes[0].round.results(rid, out.eid)[0].bytes).body).outcome;
@@ -373,6 +383,7 @@ test('a delivered run never gives up its preimage, and neither does one that is 
         joinSignedResult(encodePlayerResult(delivered), schnorr.sign(id, who.round.identity.secret)));
       holder.round.putPosting(orid, wid, who.round.pubkey, postedBy(who, orid, delivered));
     }
+    await untilNextBlock();
 
     const may = holder.preimages.mayRelease(orid, wid);
     assert.equal(may.ok, false);
@@ -467,6 +478,7 @@ test('a signer node that never replayed the run hands over nothing', async () =>
         joinSignedResult(encodePlayerResult(failed), schnorr.sign(id, who.round.identity.secret)));
       quiet.round.putPosting(orid, wid, who.round.pubkey, postedBy(who, orid, failed));
     }
+    await untilNextBlock();
 
     const may = quiet.preimages.mayRelease(orid, wid);
     assert.equal(may.ok, false);

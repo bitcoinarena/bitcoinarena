@@ -25,8 +25,8 @@ import { taggedHash, toHex } from './hash.js';
 import { PROTOCOL_VERSION, TYPE_TRANSCRIPT_POSTING, TAG } from './constants.js';
 import { receiptsNeeded } from './threshold.js';
 
-/** 1 type + 2 version + 32 round + 32 player + 32 transcript + 32 signer node. */
-export const POSTING_BYTES = 131;
+/** 1 type + 2 version + 32 round + 32 player + 32 transcript + 32 signer node + 32 block. */
+export const POSTING_BYTES = 163;
 export const POSTING_SIGNATURE_BYTES = 64;
 export const SIGNED_POSTING_BYTES = POSTING_BYTES + POSTING_SIGNATURE_BYTES;
 
@@ -42,6 +42,10 @@ export function encodeTranscriptPosting(p) {
   // WHO SAYS SO is in the signed bytes, so a signature cannot be moved from one
   // signer node's record to another's.
   w.bytes32(p.signerNodePubkey);
+  // THE BLOCK THE POSTING SITS IN (§13A, RULED the owner 2026-09-24): the hash of a block of the chain, named by the signer
+  // node when it posts. The first objection window opens at the block of the posting that completes the threshold, so
+  // it is a chain fact every holder reads the same, not the moment a posting reached one node.
+  w.bytes32(p.blockHash);
   return w.finish();
 }
 
@@ -50,7 +54,7 @@ export function decodeTranscriptPosting(bytes) {
   if (r.u8() !== TYPE_TRANSCRIPT_POSTING) throw new Error('not a transcript posting');
   const version = r.u16();
   if (version !== PROTOCOL_VERSION) throw new Error('protocol version ' + version);
-  const p = { roundId: r.bytes32(), playerPubkey: r.bytes32(), transcriptHash: r.bytes32(), signerNodePubkey: r.bytes32() };
+  const p = { roundId: r.bytes32(), playerPubkey: r.bytes32(), transcriptHash: r.bytes32(), signerNodePubkey: r.bytes32(), blockHash: r.bytes32() };
   r.end();
   return p;
 }
@@ -113,7 +117,7 @@ export function transcriptIsPublished({
     if ([toHex(p.roundId), toHex(p.playerPubkey), toHex(p.transcriptHash)].join(':') !== want) continue;
     let good = false;
     try { good = !!verify(signature, transcriptPostingId(p), p.signerNodePubkey); } catch { good = false; }
-    if (good) counted.set(who, Number(rec.seenMs));
+    if (good) counted.set(who, { seenMs: Number(rec.seenMs), blockHash: p.blockHash });
   }
 
   if (counted.size < needed)
@@ -121,6 +125,8 @@ export function transcriptIsPublished({
       ok: false, posted: counted.size, needed,
       why: `${counted.size} of ${needed} settlement signer nodes have posted this run's transcript to the round's publication relays`,
     };
-  const atMs = [...counted.values()].sort((a, b) => a - b)[needed - 1];
-  return { ok: true, posted: counted.size, needed, atMs };
+  const atMs = [...counted.values()].map((c) => c.seenMs).sort((a, b) => a - b)[needed - 1];
+  // THE BLOCKS THE COUNTED POSTINGS NAME: which of them opens the first objection window is the chain's to say (the
+  // node orders them by that chain; the threshold's one opens it).
+  return { ok: true, posted: counted.size, needed, atMs, blocks: [...counted.values()].map((c) => c.blockHash) };
 }

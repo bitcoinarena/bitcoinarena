@@ -16,6 +16,7 @@
 // MEASURED BEFORE (W5b, TASKBOOK): nothing claimed a loser's lock - its forfeit
 // was 409, the lock stayed held and went back to the loser at its expiry.
 // HARNESS: lockRound and lockAndPlay as forfeit.test.js has them (file-local there).
+import { CLOCK } from './block-clock.js';
 import { test } from 'node:test';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -124,8 +125,12 @@ async function lockRoundOnDisk() {
     return r;
   } });
   const address = lnurl(port);
-  const start = (name, at = 0) => serve(openStore(join(dir, `${name}.sqlite`)),
-    { port: at, ...opts, stakeLocks: dying(name), poolCurve: curve, finality: { everyMs: 100 }, lnurlFetch: address.fetchLike });
+  const start = async (name, at = 0) => {
+    const d = await serve(openStore(join(dir, `${name}.sqlite`)),
+      { port: at, ...opts, stakeLocks: dying(name), poolCurve: curve, finality: { everyMs: 100 }, lnurlFetch: address.fetchLike });
+    d.round.chainView = CLOCK.chainView();
+    return d;
+  };
   const w = { dir, port, death, sent, lnurl: address, a: await start('a'), b: await start('b') };
   const wire = () => {
     for (const [d, o] of [[w.a, w.b], [w.b, w.a]]) {

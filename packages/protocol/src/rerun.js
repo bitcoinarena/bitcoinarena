@@ -23,8 +23,8 @@ import { PROTOCOL_VERSION, TYPE_RERUN_RESULT, TAG } from './constants.js';
 import { encodePlayerResult, decodePlayerResult, resultId, RESULT_BYTES } from './result.js';
 import { receiptsNeeded } from './threshold.js';
 
-/** 1 type + 2 version + 32 contradicted run + the 168-byte PlayerResult. */
-export const RERUN_BYTES = 1 + 2 + 32 + RESULT_BYTES;
+/** 1 type + 2 version + 32 contradicted run + 32 block + the 168-byte PlayerResult. */
+export const RERUN_BYTES = 1 + 2 + 32 + 32 + RESULT_BYTES;
 export const RERUN_SIGNATURE_BYTES = 64;
 export const SIGNED_RERUN_BYTES = RERUN_BYTES + RERUN_SIGNATURE_BYTES;
 
@@ -33,11 +33,14 @@ export const runOf = (result) => resultId({ ...result, nodePubkey: new Uint8Arra
 
 const is32 = (b) => b instanceof Uint8Array && b.length === 32;
 
-export function encodeRerunResult({ contradictedRunId, result }) {
+export function encodeRerunResult({ contradictedRunId, blockHash, result }) {
   const w = new Writer();
   w.u8(TYPE_RERUN_RESULT);
   w.u16(PROTOCOL_VERSION);
   w.bytes32(contradictedRunId);
+  // THE BLOCK THE RE-RUN SITS IN (§13A, RULED the owner 2026-09-24): named by its signer when it signs; the re-run window
+  // counts it inside or outside by this block, never by when it reached a holder.
+  w.bytes32(blockHash);
   w.bytes(encodePlayerResult(result), RESULT_BYTES);
   return w.finish();
 }
@@ -48,9 +51,10 @@ export function decodeRerunResult(bytes) {
   const version = r.u16();
   if (version !== PROTOCOL_VERSION) throw new Error('protocol version ' + version);
   const contradictedRunId = r.bytes32();
+  const blockHash = r.bytes32();
   const result = decodePlayerResult(r.bytes(RESULT_BYTES));
   r.end();
-  return { contradictedRunId, result };
+  return { contradictedRunId, blockHash, result };
 }
 
 /** What one signer node signs; the signer node is the embedded result's node_pubkey. */

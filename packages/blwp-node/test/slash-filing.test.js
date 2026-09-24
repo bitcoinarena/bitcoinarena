@@ -14,6 +14,7 @@
 //
 // MEASURED BEFORE (TASKBOOK, b311e15): FINAL, 5 contradicted signers, 0 slash
 // proofs filed, no door (404). Now the node files one per contradicted signer.
+import { CLOCK } from './block-clock.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -90,7 +91,8 @@ test('a re-run short of five files no slash proof: the result is still SUSPENDED
     const eid = await reranTo(w, 3);
     // Inside the re-run window, on the node's own clock stubbed (RULED 2026-09-24, slice C1): SUSPENDED is legal only
     // until the filing plus one objection window; past it this is §13C's VOID, not a leftover SUSPENDED.
-    const inside = Object.assign(Object.create(w.holder.round), { now: () => w.holder.round.objectedAt(w.rid, eid) + WINDOW_MS - 1 });
+    // (RULED 2026-09-24, windows are blocks): one millisecond before the re-run window's end block - the objection's block plus W.
+    const inside = Object.assign(Object.create(w.holder.round), { now: () => CLOCK.mtpOf(w.holder.round.objectedBlock(w.rid, eid)) + WINDOW_MS - 1 });
     assert.equal(resultFinality(inside, w.rid, eid).state, 'SUSPENDED');
     assert.equal(w.holder.round.slashProofs(w.rid, eid).length, 0, 'a proof was filed on a re-run that is not authoritative');
   } finally { await w.close(); }

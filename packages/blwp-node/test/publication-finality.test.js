@@ -11,6 +11,8 @@
 // MEASURED BEFORE (TASKBOOK): seven signer nodes, five signatures and nothing posted
 // anywhere - FINAL after the window; two daemons whose contract named a relay -
 // loser settled, winner cancelled, payout queued, the relay asked 0 times.
+import { resultFinality } from '../src/finality.js';
+import { CLOCK } from './block-clock.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
@@ -70,14 +72,19 @@ test('seven signer nodes: four postings are not enough; the fifth opens the wind
     assert.equal(four.ok, false, 'four postings made the run final');
     assert.match(four.why, /4 of 5 settlement signer nodes have posted/);
 
-    w.post('agrees', 5);                    // the fifth signer node's posting arrives now
-    await wait(700);
-    const inside = mayRelease(w, 'agrees');
+    w.post('agrees', 5);                    // the fifth signer node's posting, naming the block of now
+    // THE WINDOW IS BLOCKS (RULED 2026-09-24): it opens at the block the threshold's posting names and ends at the first
+    // block at or after that plus W - read on the node's own clock stubbed at those blocks, not by waiting on the wall.
+    const eid = w.runs.agrees.eid;
+    const open = resultFinality(w.holder.round, w.rid, eid).provisionalAtMs;
+    const signedAt = CLOCK.mtpOf(CLOCK.tipAt(Date.now() - 1200));
+    const stubAt = (now) => new (w.holder.preimages.constructor)(Object.assign(Object.create(w.holder.round), { now: () => now }), {});
+    assert.ok(open > signedAt, `the window opened at ${open}, not after the signatures' block ${signedAt}`);
+    const inside = stubAt(CLOCK.endAt(open, 1000) - 1).mayRelease(w.rid, eid);
     assert.equal(inside.ok, false, 'the window was counted from the signatures, not from the posting');
     assert.match(inside.why, /objection window/);
-    await wait(600);
-    const after = mayRelease(w, 'agrees');
-    assert.equal(after.ok, true, `the run was not final a whole window after its fifth posting: ${after.why}`);
+    const after = stubAt(CLOCK.endAt(open, 1000)).mayRelease(w.rid, eid);
+    assert.equal(after.ok, true, `the run was not final at its window's end block after its fifth posting: ${after.why}`);
   } finally { await w.close(); }
 });
 

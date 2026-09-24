@@ -892,6 +892,11 @@ export function openStore(path = ':memory:') {
   // every row it already holds was attempt 0.
   if (!db.prepare('PRAGMA table_info(pool_nonces)').all().some((c) => c.name === 'attempt'))
     db.exec('ALTER TABLE pool_nonces ADD COLUMN attempt INTEGER NOT NULL DEFAULT 0');
+  // AN OBJECTION NAMES ITS BLOCK (§13A, RULED the owner 2026-09-24): the window places it by that block, not by when it came.
+  // A store made before the ruling gets the column; a row there names none, and counts nowhere.
+  for (const t of ['objections', 'rerun_objections'])
+    if (!db.prepare(`PRAGMA table_info(${t})`).all().some((c) => c.name === 'block_hash'))
+      db.exec(`ALTER TABLE ${t} ADD COLUMN block_hash BLOB`);
   // AND BEFORE AN ENTRY_VOID SAID HOW THIS SIGNER NODE LEARNED IT (M3.3-34): every row
   // it already holds was decided on its own record.
   if (!db.prepare('PRAGMA table_info(entry_voids)').all().some((c) => c.name === 'learned'))
