@@ -2,6 +2,7 @@
 // (M3.3-32) and publication-finality.test.js (P2): one daemon on a seven-signer node
 // round whose other six keys the test holds. Its rounds are FEDERATION, the one custody
 // (§23.6); the paid fake Lightning its hold-invoice tests ran on went with them.
+import { CLOCK } from './block-clock.js';
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 // THE RUN LENGTH IS THE CORE'S (2026-09-20). This fixture said 9000 and the core has ended a run at 10800
 // since c01cc655 ("a round is three minutes"). `Round.open` refuses a contract that disagrees with the core
@@ -212,7 +213,8 @@ export async function joinAndPlay(daemons, c, rid, who, needed, { direct = false
   return { eid, entry, preimage, mid: checkpointId(mark) };
 }
 
-export const opts = { funded: () => true, randomnessFor: () => BEACON };
+// AND THE CHAIN §13A'S WINDOWS ARE READ FROM (RULED 2026-09-24): every daemon started with these opts reads the block clock.
+export const opts = { funded: () => true, randomnessFor: () => BEACON, windowChain: CLOCK.chainView() };
 /**
  * ONE DAEMON ON A SEVEN-SIGNER NODE ROUND, the other six signer nodes' keys this test holds.
  * Two losers play on it and it signs its own result for each; then `sign` has
@@ -225,6 +227,8 @@ export async function sevenSignerNodes(windowMs, relays, { storedBeforeTheRule =
   const adverts = new Map();
   const holder = await serve(openStore(':memory:'), {
     port: 0, ...opts, advertsFor: () => adverts, ...(finality ? { finality } : {}) });
+  // THE CHAIN §13A'S WINDOWS ARE READ FROM (RULED 2026-09-24): the block clock every fixture daemon reads.
+  holder.round.chainView = CLOCK.chainView();
   try {
     const others = Array.from({ length: 6 }, () => rand(32));
     [holder.round.pubkey, ...others.map((s) => schnorr.getPublicKey(s))].forEach((k, i) =>
@@ -262,7 +266,7 @@ export async function sevenSignerNodes(windowMs, relays, { storedBeforeTheRule =
       const shape = decodePlayerResult(splitSignedResult(mine.bytes).body);
       for (const secret of keys.slice(0, count)) {
         const p = { roundId: rid, playerPubkey: shape.playerPubkey, transcriptHash: shape.transcriptHash,
-          signerNodePubkey: schnorr.getPublicKey(secret), ...over };
+          signerNodePubkey: schnorr.getPublicKey(secret), blockHash: CLOCK.tipAt(Date.now()), ...over };
         holder.round.putPosting(rid, eid, p.signerNodePubkey,
           joinSignedPosting(encodeTranscriptPosting(p), schnorr.sign(transcriptPostingId(p), secret)));
       }
@@ -285,12 +289,13 @@ export async function sevenSignerNodes(windowMs, relays, { storedBeforeTheRule =
     // OTHER SIGNER NODES' RE-RUNS OF A SUSPENDED RESULT (13A): the first `count` of the
     // six re-run the holder's own replay - the same run - unless `over` says
     // otherwise, each tied to the run the five signed (or `contradicted`).
-    const rerunBy = (name, count, { keys = others, over = {}, contradicted = runs[name].contradicted } = {}) => {
+    // `block`: the block the re-run names (§13A, RULED 2026-09-24) - by default the chain's tip as it is made.
+    const rerunBy = (name, count, { keys = others, over = {}, contradicted = runs[name].contradicted, block = null } = {}) => {
       const eid = runs[name].eid;
       const mine = holder.round.results(rid, eid).find((r) => toHex(r.nodePubkey) === toHex(holder.round.pubkey));
       const shape = decodePlayerResult(splitSignedResult(mine.bytes).body);
       for (const secret of keys.slice(0, count)) {
-        const x = { contradictedRunId: contradicted, result: { ...shape, ...over, nodePubkey: schnorr.getPublicKey(secret) } };
+        const x = { contradictedRunId: contradicted, blockHash: block || CLOCK.tipAt(Date.now()), result: { ...shape, ...over, nodePubkey: schnorr.getPublicKey(secret) } };
         holder.round.putRerun(rid, eid, x.result.nodePubkey,
           joinSignedRerun(encodeRerunResult(x), schnorr.sign(rerunResultId(x), secret)));
       }
@@ -299,4 +304,5 @@ export async function sevenSignerNodes(windowMs, relays, { storedBeforeTheRule =
   } catch (err) { await holder.close(); throw err; }
 }
 
-export const object = (w, eid) => fetch(`http://127.0.0.1:${w.holder.port}/objection?round=${toHex(w.rid)}&entry=${toHex(eid)}`, { method: 'POST' });
+// AN OBJECTION NAMES THE BLOCK IT IS FILED IN (§13A, RULED 2026-09-24): by default the chain's tip as it is filed.
+export const object = (w, eid, block = CLOCK.tipAt(Date.now())) => fetch(`http://127.0.0.1:${w.holder.port}/objection?round=${toHex(w.rid)}&entry=${toHex(eid)}&block=${toHex(block)}`, { method: 'POST' });

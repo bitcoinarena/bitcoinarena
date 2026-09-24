@@ -17,6 +17,7 @@
 // replay a daemon has is its own, so an objection filed against a run holds on
 // a node whose own result is not the one the quorum signed - and on a node
 // that agrees with the quorum it is a claim, which the window exists to outlast.
+import { CLOCK } from './block-clock.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
@@ -56,29 +57,34 @@ import {
 test('seven signer nodes: an objection filed in the window against a run this node replayed differently SUSPENDS it - no share, before or after the window; one against a run it agrees with does not', async () => {
   const w = await sevenSignerNodes(1500);
   try {
+    // BOTH RUNS POSTED IN ONE BLOCK: signed just after a second turns on the fixtures' one-second block clock.
+    while (Date.now() % 1000 > 300) await wait(20);
     w.sign('agrees', () => ({}));
     w.sign('dissents', (r) => ({ score: r.score + 1 }));
-    const may = (name) => w.holder.preimages.mayRelease(w.rid, w.runs[name].eid);
-
-    for (const name of ['agrees', 'dissents']) {
-      const before = may(name);
-      assert.equal(before.ok, false, `${name}: a share was released inside the window`);
-      assert.match(before.why, /objection window/, `${name}: refused for another reason: ${before.why}`);
-      assert.equal((await object(w, w.runs[name].eid)).status, 201);
-    }
-    const dissent = may('dissents');
-    assert.equal(dissent.ok, false);
-    assert.match(dissent.why, /suspend/i, `a valid objection did not suspend the run: ${dissent.why}`);
-
-    // THE WINDOW HAS CLOSED - read on the node's own clock, stubbed, at the objection windows' close (RULED 2026-09-24,
-    // slice C1): that instant is inside the dissent's re-run window, the only span where SUSPENDED is still legal. A
-    // real-clock wait of 1700 ms overshot it, and past it the dissent is §13C's VOID.
+    // ALL ON BLOCKS (RULED 2026-09-24): the first window is [the posting's block, the first block at or after it + W). Every
+    // read below is at a stubbed moment of the node's clock - the chain as of then - and each objection names the block
+    // one after the open: inside the window, and later than the block it opened at, whatever the machine's speed.
     const eidOf = (name) => w.runs[name].eid;
     const clockAt = (now) => Object.assign(Object.create(w.holder.round), { now: () => now });
     const mayAt = (now, name) => new (w.holder.preimages.constructor)(clockAt(now), {}).mayRelease(w.rid, eidOf(name));
-    const closes = ['agrees', 'dissents'].map((n) => Number(resultFinality(w.holder.round, w.rid, eidOf(n)).closesAtMs));
+    const opens = ['agrees', 'dissents'].map((n) => resultFinality(w.holder.round, w.rid, eidOf(n)).provisionalAtMs);
+    assert.equal(opens[0], opens[1], 'the two runs\' windows did not open at one block');
+    const open = opens[0];
+    const mid = open + 1000;
+    for (const name of ['agrees', 'dissents']) {
+      const before = mayAt(mid, name);
+      assert.equal(before.ok, false, `${name}: a share was released inside the window`);
+      assert.match(before.why, /objection window/, `${name}: refused for another reason: ${before.why}`);
+      assert.equal((await object(w, eidOf(name), CLOCK.tipAt(mid))).status, 201);
+    }
+    const dissent = mayAt(mid, 'dissents');
+    assert.equal(dissent.ok, false);
+    assert.match(dissent.why, /suspend/i, `a valid objection did not suspend the run: ${dissent.why}`);
+
+    // EACH WINDOW ENDS AT ITS END BLOCK: the first block at or after its open block's time plus W (RULED 2026-09-24).
+    const closes = ['agrees', 'dissents'].map((n) => CLOCK.endAt(resultFinality(clockAt(mid), w.rid, eidOf(n)).provisionalAtMs, 1500));
     const closed = Math.max(...closes);
-    const rerunEnds = w.holder.round.objectedAt(w.rid, eidOf('dissents')) + 1500;
+    const rerunEnds = CLOCK.endAt(resultFinality(clockAt(mid), w.rid, eidOf('dissents')).filedAtMs, 1500);
     assert.ok(closed < rerunEnds, `the objection windows close at ${closed}, not inside the re-run window ending at ${rerunEnds}`);
     const agreed = mayAt(closed, 'agrees');
     assert.equal(agreed.ok, true, `an objection this node's own replay does not back held the run past the window: ${agreed.why}`);
@@ -97,16 +103,21 @@ test('seven signer nodes: the window opens when this node held the threshold, no
   try {
     // Its own result is stored at its replay; the other five arrive a second
     // later, and that is when five agree.
+    const ownAt = Date.now();
     await wait(1000);
     w.sign('agrees', () => ({}));
-    const may = () => w.holder.preimages.mayRelease(w.rid, w.runs.agrees.eid);
-    await wait(900);   // past 1500 ms after its own result, inside 1500 ms after the threshold
-    const inside = may();
+    // ON BLOCKS (RULED 2026-09-24): the window is [the threshold's posting block, the first block at or after it + W), read
+    // at its end block on the node's own clock stubbed - not by waiting on the wall, which a one-second block makes a race.
+    const eid = w.runs.agrees.eid;
+    const at = (now) => new (w.holder.preimages.constructor)(Object.assign(Object.create(w.holder.round), { now: () => now }), {});
+    const open = resultFinality(w.holder.round, w.rid, eid).provisionalAtMs;
+    assert.ok(open > CLOCK.mtpOf(CLOCK.tipAt(ownAt)), 'the window opened at this node\'s own result\'s block, before five agreed');
+    const end = CLOCK.endAt(open, 1500);
+    const inside = at(end - 1).mayRelease(w.rid, eid);
     assert.equal(inside.ok, false, 'the window was counted from this node\'s own result, before five agreed');
     assert.match(inside.why, /objection window/, inside.why);
-    await wait(800);
-    const after = may();
-    assert.equal(after.ok, true, `the run was not FINAL a whole window after the threshold: ${after.why}`);
+    const after = at(end).mayRelease(w.rid, eid);
+    assert.equal(after.ok, true, `the run was not FINAL at its window's end block after the threshold: ${after.why}`);
   } finally { await w.close(); }
 });
 

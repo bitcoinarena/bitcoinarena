@@ -230,7 +230,7 @@ test('slashHoldsOnRerun takes the accused\'s own signed re-run of the agreed out
   const THEIRS = new Uint8Array(64).fill(7);
   const verify = (sig) => toHex(sig) === toHex(THEIRS);
   const rerunBy = (node, over = {}, sig = THEIRS) => {
-    const x = { contradictedRunId: b32(0x66), result: resultBy(node, over) };
+    const x = { contradictedRunId: b32(0x66), blockHash: b32(0x5b), result: resultBy(node, over) };
     return { x, bytes: joinSignedRerun(encodeRerunResult(x), sig) };
   };
   const agreed = rerunBy(NODE);

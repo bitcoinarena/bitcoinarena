@@ -5,6 +5,7 @@
 // FILE-BACKED stores, as lock-settlement-restart.test.js has them, so a signer node can die and start again on its own
 // records. The late sweep is slowed out of the way and every step is driven by the round's asker, so each kill point is
 // exactly where the pin says. `finalityOf` is the same test aid as late-settlement.test.js's.
+import { CLOCK } from './block-clock.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -36,8 +37,12 @@ async function settledOnDisk() {
   const address = lnurl(port);
   const view = new Map();
   const finalityOf = (round, rid, eid) => (view.has(toHex(eid)) ? view.get(toHex(eid))(round, rid, eid) : resultFinality(round, rid, eid));
-  const start = (name, at = 0) => serve(openStore(join(dir, `${name}.sqlite`)), { port: at, ...opts, stakeLocks: port, poolCurve: curve,
-    finality: { everyMs: 100, lateEveryMs: 3600000 }, lnurlFetch: address.fetchLike, finalityOf });
+  const start = async (name, at = 0) => {
+    const d = await serve(openStore(join(dir, `${name}.sqlite`)), { port: at, ...opts, stakeLocks: port, poolCurve: curve,
+      finality: { everyMs: 100, lateEveryMs: 3600000 }, lnurlFetch: address.fetchLike, finalityOf });
+    d.round.chainView = CLOCK.chainView();
+    return d;
+  };
   const w = { dir, port, view, lnurl: address, a: await start('a'), b: await start('b') };
   const wire = () => {
     for (const [d, o] of [[w.a, w.b], [w.b, w.a]]) {

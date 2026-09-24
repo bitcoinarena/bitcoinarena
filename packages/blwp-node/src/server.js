@@ -176,14 +176,16 @@ export const NOTHING_IS_FUNDED = () => false;
  */
 export const settleWaitsOn = (standing) => standing.filter((x) => x.state === PROVISIONALLY_FINAL && !x.rerun);
 
-export function objectionIntake(round, rid, eid) {
+export function objectionIntake(round, rid, eid, blockHash = null) {
   try {
-    if (round.object(rid, eid)) return { status: 201, text: 'objected' };
+    // AN OBJECTION NAMES THE BLOCK IT IS FILED IN (§13A, RULED 2026-09-24): the window places it by that block.
+    if (!(blockHash instanceof Uint8Array) || blockHash.length !== 32) return { status: 400, text: 'an objection names the 32-byte hash of the block it is filed in' };
+    if (round.object(rid, eid, blockHash)) return { status: 201, text: 'objected' };
     if (round.rerunObjectedAt(rid, eid) !== null) return { status: 200, text: 'already objected' };
     const f = resultFinality(round, rid, eid);
     const agreedRerun = !!(f.rerun && f.rerun.runId);
     if (f.state === PROVISIONALLY_FINAL && agreedRerun)
-      return round.objectRerun(rid, eid) ? { status: 201, text: 'objected' } : { status: 200, text: 'already objected' };
+      return round.objectRerun(rid, eid, blockHash) ? { status: 201, text: 'objected' } : { status: 200, text: 'already objected' };
     if (agreedRerun) return { status: 409, text: 'the re-run\'s objection window has closed' };
     return { status: 200, text: 'already objected' };
   } catch (err) { return { status: 404, text: err.message }; }
@@ -243,6 +245,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // HOW THE SETTLEMENT READS A RUN'S FINALITY - `resultFinality`. A TEST AID, as `finality.rerunMs` is: two signer nodes
   // that agree on a run cannot hold a valid objection against it, so a lock round's late-loser tests hand another view.
   finalityOf = resultFinality,
+  // THE CHAIN §13A'S WINDOWS ARE READ FROM (RULED the owner 2026-09-24): `(roundId, contract) => { firstHeight, blocks }`,
+  // defaulting to this daemon's own `chainFor`. Given apart from `chainFor` so a harness can hand its daemons a block
+  // clock without also making the verifier check its fixed beacon against that chain.
+  windowChain = null,
   // THE ROUND'S CLAIM KEY, by round (33 bytes). Defaults to this signer node's own
   // DKG committee key - the key the settlement signer nodes hold for that round.
   claimKeyFor = null,
@@ -262,6 +268,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // the replay and the ghosts resolve each round's core through the same registry.
   const installed = installedCores(cores);
   const round = new Round(db, undefined, { cores: installed });
+  // THE CHAIN §13A'S WINDOWS ARE READ FROM (RULED the owner 2026-09-24): this node's own chain view - blocks at both ends of
+  // every window, and the block its own postings and re-runs name. A node given no chain decides no window.
+  if (windowChain) round.chainView = windowChain;
+  else if (chainFor) round.chainView = (rid, contract) => chainFor({ contract, roundIdBytes: rid });
 
   // THE DONATION SET A ROUND NAMES, AS THIS SIGNER NODE CAN STAND BEHIND IT (M3.2 6e):
   // one of the handed sets whose recipients hash to the id the round's contract
@@ -1120,11 +1130,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const filedMs = round.objectedAt(rid, eid) ?? Date.now();
     const until = finality.rerunMs !== undefined ? Date.now() + finality.rerunMs
       : filedMs + 2 * Number(contract.objectionWindowMs) + everyMs;
+    // THE WINDOWS END AT BLOCKS (RULED 2026-09-24), which can come well after the clock's filed + 2W (a median time past
+    // runs behind the clock): while this node still waits for a block it keeps asking, a bounded day.
+    const waitsForBlock = () => { try { return !!resultFinality(round, rid, eid).blockPending; } catch { return false; } };
     const tick = async () => {
       if (shuttingDown) return;
       let done = false;
       try { done = await rerunAndFile(rid, eid); } catch (e) { console.error(`[rerun] ${e.message}`); }
-      if (done || shuttingDown || Date.now() >= until) return;
+      if (done || shuttingDown) return;
+      if (Date.now() >= until && !(waitsForBlock() && Date.now() < filedMs + 24 * 3600 * 1000)) return;
       const t = setTimeout(() => { rerunTimers.delete(t); tick(); }, everyMs);
       rerunTimers.add(t);
     };
@@ -3011,7 +3025,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'POST' && url.pathname === '/objection') {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
-        const taken = objectionIntake(round, rid, eid);
+        const blockHex = url.searchParams.get('block') || '';
+        const taken = objectionIntake(round, rid, eid, /^[0-9a-f]{64}$/.test(blockHex) ? new Uint8Array(Buffer.from(blockHex, 'hex')) : null);
         // AN OBJECTION THAT HOLDS SUSPENDS THE RESULT, AND THE COMMITTEE
         // RE-RUNS IT (13A): this signer node starts its own re-run at once.
         const after = taken.status === 201 ? resultFinality(round, rid, eid) : null;

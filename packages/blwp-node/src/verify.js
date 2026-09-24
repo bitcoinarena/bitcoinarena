@@ -21,7 +21,7 @@ import {
   decodeCheckpoint as decodeMark, checkpointId as markIdOf,
 } from '../../protocol/src/checkpoint.js';
 import { ed25519 as sessionCurve } from '@noble/curves/ed25519.js';
-import { resultFinality as finalityOf } from './finality.js';
+import { resultFinality as finalityOf, chainIndex } from './finality.js';
 
 let retryJobs = 0;                     // each re-tried close is its own pool job
 import { encodeTranscript, transcriptHash as hashOfTranscript } from '../../protocol/src/transcript.js';
@@ -1045,8 +1045,11 @@ export class Verifier {
           report.relays.push(relay);
         } catch (e) { report.refused.push(`${relay}: ${e.message}`); }
       }
-      if (readBack) {
-        const posting = { roundId: roundIdBytes, playerPubkey, transcriptHash, signerNodePubkey: this.round.pubkey };
+      // THE POSTING NAMES THE BLOCK IT SITS IN (§13A, RULED 2026-09-24): this node's chain tip when it posts.
+      const tip = chainIndex(this.round, roundIdBytes, contract);
+      if (readBack && !tip.ok) report.refused.push(`this signer node names no block for its posting: ${tip.why}`);
+      if (readBack && tip.ok) {
+        const posting = { roundId: roundIdBytes, playerPubkey, transcriptHash, signerNodePubkey: this.round.pubkey, blockHash: tip.tipHash() };
         const body = encodeTranscriptPosting(posting);
         const signature = schnorr.sign(transcriptPostingId(posting), this.round.identity.secret);
         this.round.putPosting(roundIdBytes, entryIdBytes, this.round.pubkey, joinSignedPosting(body, signature));
@@ -1124,8 +1127,11 @@ export class Verifier {
           nodePubkey: this.round.pubkey, stopped: true,
         });
         if (built && !built.ok) report.refused.push(built.why);
-        if (built && built.ok) {
-          const x = { contradictedRunId, result: built.result };
+        // THE RE-RUN NAMES THE BLOCK IT SITS IN (§13A, RULED 2026-09-24): this node's chain tip when it signs.
+        const tip = chainIndex(this.round, roundIdBytes, contract);
+        if (built && built.ok && !tip.ok) report.refused.push(`this signer node names no block for its re-run: ${tip.why}`);
+        if (built && built.ok && tip.ok) {
+          const x = { contradictedRunId, blockHash: tip.tipHash(), result: built.result };
           const signature = schnorr.sign(rerunResultId(x), this.round.identity.secret);
           this.round.putRerun(roundIdBytes, entryIdBytes, this.round.pubkey, joinSignedRerun(encodeRerunResult(x), signature));
         }

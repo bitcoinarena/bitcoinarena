@@ -6,6 +6,7 @@
 // event. Here the close goes over the socket, the way a real one does, and
 // what is checked afterwards is what the node has WRITTEN DOWN - not anything
 // this test handed it.
+import { CLOCK } from './block-clock.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { PLANTED_FIRST_MARK_DEADLINE } from './planted-marks.js';
@@ -204,7 +205,7 @@ async function roundThrough(node, {
   }
 
   if (objectFirst) {
-    const r = await post(node.port, `/objection?round=${toHex(rid)}&entry=${toHex(eid)}`);
+    const r = await post(node.port, `/objection?round=${toHex(rid)}&entry=${toHex(eid)}&block=${toHex(CLOCK.tipAt(Date.now()))}`);
     assert.equal(r.status, 201);
   }
 
@@ -312,12 +313,12 @@ test('an objection recorded over the wire reaches the pool as an objected job', 
     assert.equal((await results(node.port, rid, eid)).count, 1);
 
     // a second objection against the same run is not a second objection
-    const again = await post(node.port, `/objection?round=${toHex(rid)}&entry=${toHex(eid)}`);
+    const again = await post(node.port, `/objection?round=${toHex(rid)}&entry=${toHex(eid)}&block=${toHex(CLOCK.tipAt(Date.now()))}`);
     assert.equal(again.status, 200);
     assert.equal((await again.text()).trim(), 'already objected');
 
     // and one against a run this node has never heard of is refused
-    const nowhere = await post(node.port, `/objection?round=${toHex(rid)}&entry=${toHex(b32(0x99))}`);
+    const nowhere = await post(node.port, `/objection?round=${toHex(rid)}&entry=${toHex(b32(0x99))}&block=${toHex(CLOCK.tipAt(Date.now()))}`);
     assert.equal(nowhere.status, 404);
   } finally { await node.close(); }
 });

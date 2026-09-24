@@ -25,7 +25,7 @@ const PLAYER = b32(0x22);
 const HASH = b32(0x23);
 
 const signed = (secret, over = {}) => {
-  const p = { roundId: ROUND, playerPubkey: PLAYER, transcriptHash: HASH, signerNodePubkey: schnorr.getPublicKey(secret), ...over };
+  const p = { roundId: ROUND, playerPubkey: PLAYER, transcriptHash: HASH, signerNodePubkey: schnorr.getPublicKey(secret), blockHash: b32(0x5b), ...over };
   return joinSignedPosting(encodeTranscriptPosting(p), schnorr.sign(transcriptPostingId(p), secret));
 };
 const count = (postings, settlementSlots = 7, onSignerNodes = signerNodes) => transcriptIsPublished({
@@ -34,11 +34,11 @@ const count = (postings, settlementSlots = 7, onSignerNodes = signerNodes) => tr
 const at = (bytes, seenMs) => ({ bytes, seenMs });
 
 test('a posting survives the wire at a fixed size, and every field is in its id', () => {
-  const p = { roundId: ROUND, playerPubkey: PLAYER, transcriptHash: HASH, signerNodePubkey: signerNodes[0] };
+  const p = { roundId: ROUND, playerPubkey: PLAYER, transcriptHash: HASH, signerNodePubkey: signerNodes[0], blockHash: b32(0x5b) };
   const bytes = encodeTranscriptPosting(p);
   assert.equal(bytes.length, POSTING_BYTES);
   assert.deepEqual(decodeTranscriptPosting(bytes), p);
-  for (const over of [{ roundId: b32(9) }, { playerPubkey: b32(9) }, { transcriptHash: b32(9) }, { signerNodePubkey: signerNodes[1] }])
+  for (const over of [{ roundId: b32(9) }, { playerPubkey: b32(9) }, { transcriptHash: b32(9) }, { signerNodePubkey: signerNodes[1] }, { blockHash: b32(9) }])
     assert.notEqual(toHex(transcriptPostingId({ ...p, ...over })), toHex(transcriptPostingId(p)), JSON.stringify(Object.keys(over)));
   const whole = signed(keys[0]);
   assert.equal(whole.length, SIGNED_POSTING_BYTES);

@@ -15,6 +15,7 @@
 // re-runs are counted, and 5 of 7 on one outcome replace SUSPENDED. Short of
 // that by the end of the re-run window - one objection window from the filing -
 // §13C decides (RULED 2026-09-24): VOID, or FORFEIT on proven equivocation.
+import { CLOCK } from './block-clock.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -48,7 +49,8 @@ async function suspended(w) {
   const eid = w.runs.dissents.eid;
   assert.equal((await object(w, eid)).status, 201);
   const mine = w.holder.round.results(w.rid, eid).find((r) => toHex(r.nodePubkey) === toHex(w.holder.round.pubkey));
-  return { eid, replay: decodePlayerResult(splitSignedResult(mine.bytes).body), filed: w.holder.round.objectedAt(w.rid, eid) };
+  // FILED AT ITS BLOCK (RULED 2026-09-24): the time of the block the objection names - every window of this entry counts from blocks.
+  return { eid, replay: decodePlayerResult(splitSignedResult(mine.bytes).body), filed: resultFinality(w.holder.round, w.rid, eid).filedAtMs };
 }
 
 /**
@@ -169,7 +171,7 @@ test('a suspended entry is SUSPENDED one millisecond before its re-run window en
     assert.ok(lag.every((ms) => ms < WINDOW_MS), `a re-run landed outside its window: ${lag}`);
     assert.equal(inside.state, 'SUSPENDED', inside.why);
     assert.equal(ended.state, 'VOID', ended.why);
-    assert.match(ended.why, /the re-run window closed at \d+ .* with 4 of 5 re-runs on one outcome \(§13A, §13C\)/);
+    assert.match(ended.why, /the re-run window \[\d+, \d+\) closed with 4 of 5 re-runs on one outcome \(§13A, §13C\)/);
     assert.equal(twoLater.state, 'VOID');
     assert.equal(released.ok, false, 'a share left a VOID entry');
     assert.deepEqual(outcomes(onRecord), ['VOID/0']);
@@ -208,7 +210,7 @@ test('an agreed re-run is PROVISIONALLY_FINAL until its own objection window clo
     w.rerunBy('dissents', 4);
     const seen = w.holder.round.reruns(w.rid, s.eid).map((r) => r.seenMs).sort((a, b) => a - b);
     assert.equal(seen.length, 5);
-    const agreed = seen[4];
+    const agreed = resultFinality(w.holder.round, w.rid, s.eid).agreedAtMs;   // the block the agreed re-run first sits at threshold in
     assert.ok(agreed < s.filed + WINDOW_MS, `the fifth re-run landed at ${agreed - s.filed} ms, outside the re-run window`);
     const before = resultFinality(at(w, agreed + WINDOW_MS - 1), w.rid, s.eid);
     const may = new (w.holder.preimages.constructor)(at(w, agreed + WINDOW_MS - 1), {}).mayRelease(w.rid, s.eid);
@@ -232,7 +234,7 @@ async function agreedWithoutTheHolder(w) {
   w.rerunBy('dissents', 5, { over: { score: s.replay.score + 2 } });
   const agreeing = w.holder.round.reruns(w.rid, s.eid).filter((r) => toHex(r.signerNodePubkey) !== toHex(w.holder.round.pubkey))
     .map((r) => r.seenMs).sort((a, b) => a - b);
-  return { ...s, agreed: agreeing[4] };
+  return { ...s, agreed: resultFinality(w.holder.round, w.rid, s.eid).agreedAtMs };
 }
 
 test('a second valid objection inside the re-run\'s own objection window makes the entry VOID, and the VOID reaches the money', async () => {
@@ -242,7 +244,8 @@ test('a second valid objection inside the re-run\'s own objection window makes t
     assert.equal(resultFinality(at(w, s.agreed + WINDOW_MS - 1), w.rid, s.eid).state, 'PROVISIONALLY_FINAL');
     const second = await object(w, s.eid);
     assert.equal(second.status, 201, `the second objection was not taken: ${await second.text()}`);
-    const filedSecond = w.holder.round.rerunObjectedAt(w.rid, s.eid);
+    const filedSecondLocal = w.holder.round.rerunObjectedAt(w.rid, s.eid);
+    const filedSecond = CLOCK.mtpOf(w.holder.round.rerunObjectedBlock(w.rid, s.eid));
     const inside = resultFinality(at(w, s.agreed + WINDOW_MS - 1), w.rid, s.eid);
     const closed = resultFinality(at(w, s.agreed + WINDOW_MS), w.rid, s.eid);
     const threeLater = resultFinality(at(w, s.filed + 3 * WINDOW_MS), w.rid, s.eid);
@@ -256,7 +259,7 @@ test('a second valid objection inside the re-run\'s own objection window makes t
     assert.ok(filedSecond !== null && filedSecond >= s.agreed && filedSecond < s.agreed + WINDOW_MS,
       `the second objection was stored at ${filedSecond}, not inside ${s.agreed}..${s.agreed + WINDOW_MS}`);
     assert.equal(inside.state, 'VOID', inside.why);
-    assert.match(inside.why, /a second valid objection, filed at \d+ inside the agreed re-run's own objection window .* VOID, no third run \(13A\)/);
+    assert.match(inside.why, /a second valid objection, in block \d+ inside the agreed re-run's own objection window .* VOID, no third run \(13A\)/);
     assert.equal(closed.state, 'VOID', closed.why);
     assert.equal(threeLater.state, 'VOID', threeLater.why);
     assert.equal(released.ok, false, 'a share left an entry two objections voided');
@@ -268,7 +271,7 @@ test('a second valid objection inside the re-run\'s own objection window makes t
     const third = await object(w, s.eid);
     assert.equal(third.status, 200);
     assert.equal((await third.text()).trim(), 'already objected');
-    assert.equal(w.holder.round.rerunObjectedAt(w.rid, s.eid), filedSecond);
+    assert.equal(w.holder.round.rerunObjectedAt(w.rid, s.eid), filedSecondLocal);
   } finally { await w.close(); }
 });
 
@@ -278,10 +281,10 @@ test('a second objection at the re-run\'s window close counts for nothing, and t
   try {
     const s = await agreedWithoutTheHolder(w);
     const close = at(w, s.agreed + WINDOW_MS);
-    const intake = objectionIntake(close, w.rid, s.eid);
+    const intake = objectionIntake(close, w.rid, s.eid, CLOCK.tipAt(s.agreed + WINDOW_MS));
     assert.deepEqual(intake, { status: 409, text: 'the re-run\'s objection window has closed' });
     assert.equal(w.holder.round.rerunObjectedAt(w.rid, s.eid), null, 'the intake stored an objection after the window');
-    assert.equal(close.objectRerun(w.rid, s.eid), true);                  // written straight to the store at the close
+    assert.equal(close.objectRerun(w.rid, s.eid, CLOCK.tipAt(s.agreed + WINDOW_MS)), true);                  // written straight to the store at the close
     assert.equal(w.holder.round.rerunObjectedAt(w.rid, s.eid), s.agreed + WINDOW_MS);
     const read = resultFinality(close, w.rid, s.eid);
     assert.equal(read.state, 'FINAL', read.why);
@@ -298,12 +301,12 @@ test('while SUSPENDED an objection is the first again, and a missing or foreign 
     assert.equal(again.status, 200);
     assert.equal((await again.text()).trim(), 'already objected');
     assert.equal(w.holder.round.rerunObjectedAt(w.rid, s.eid), null, 'an objection while SUSPENDED was stored as the second');
-    const missing = await fetch(`http://127.0.0.1:${w.holder.port}/objection?round=${toHex(w.rid)}&entry=${toHex(rand(32))}`, { method: 'POST' });
+    const missing = await fetch(`http://127.0.0.1:${w.holder.port}/objection?round=${toHex(w.rid)}&entry=${toHex(rand(32))}&block=${toHex(CLOCK.tipAt(Date.now()))}`, { method: 'POST' });
     assert.equal(missing.status, 404);
-    const foreign = await fetch(`http://127.0.0.1:${w.holder.port}/objection?round=${toHex(rand(32))}&entry=${toHex(s.eid)}`, { method: 'POST' });
+    const foreign = await fetch(`http://127.0.0.1:${w.holder.port}/objection?round=${toHex(rand(32))}&entry=${toHex(s.eid)}&block=${toHex(CLOCK.tipAt(Date.now()))}`, { method: 'POST' });
     assert.equal(foreign.status, 404);
     assert.equal(w.holder.round.rerunObjectedAt(w.rid, s.eid), null);
-    assert.equal(w.holder.round.objectedAt(w.rid, s.eid), s.filed);
+    assert.equal(CLOCK.mtpOf(w.holder.round.objectedBlock(w.rid, s.eid)), s.filed);
     assert.equal(resultFinality(at(w, s.filed + 1), w.rid, s.eid).state, 'SUSPENDED');
     // AND NO RE-RUN SIGNER IS FILED AGAINST WHILE SUSPENDED (C2c): no re-run is agreed.
     const none = await new Verifier(at(w, s.filed + 1), { advertsFor: () => w.adverts, pool: {} }).fileRerunSlashProofs(w.rid, s.eid);
@@ -379,7 +382,7 @@ test('re-run slash proofs are filed only on a second-objection VOID, refused by 
     assert.match(cleanFinal.refused[0], /no second objection has made that entry VOID \(it is FINAL\)/);
     assert.equal(rerunProofsOf(w, s.eid).length, 0);
 
-    assert.equal(at(w, s.agreed + 100).objectRerun(w.rid, s.eid), true);   // the second objection, inside the window
+    assert.equal(at(w, s.agreed + 100).objectRerun(w.rid, s.eid, CLOCK.tipAt(s.agreed + 100)), true);   // the second objection, inside the window
     const mine = { stakeSeen: (eid) => toHex(eid) === toHex(s.eid) };
     const money = async () => ({
       state: resultFinality(at(w, inside), w.rid, s.eid).state,
@@ -482,7 +485,7 @@ test('first-result proofs on a second-objection VOID: refused by name, deduped, 
     const verifierAt = (now, over = {}) => new Verifier(at(w, now, over), { advertsFor: () => w.adverts, pool: {} });
     const early = await firstFiling(verifierAt(inside), w.rid, s.eid);
     assert.equal(w.holder.round.slashProofs(w.rid, s.eid).length, 0, 'a proof was filed while the re-run was PROVISIONALLY_FINAL');
-    assert.equal(at(w, s.agreed + 100).objectRerun(w.rid, s.eid), true);
+    assert.equal(at(w, s.agreed + 100).objectRerun(w.rid, s.eid, CLOCK.tipAt(s.agreed + 100)), true);
     const stake = { stakeSeen: (eid) => toHex(eid) === toHex(s.eid) };
     const money = async () => ({
       state: resultFinality(at(w, inside), w.rid, s.eid).state,
@@ -583,6 +586,9 @@ const lockAfter = (settlement, rid, eid) => (typeof settlement.lockAfterSettleme
 
 async function settledWithOneObjected(w, reruns) {
   w.sign('agrees', () => ({}));
+  // A BLOCK APART (RULED 2026-09-24, windows are blocks): the decided run's window and the objected run's re-run window
+  // would otherwise open, and so end, at one block, and no moment has the one closed and the other open.
+  await wait(1100);
   const s = await suspended(w);
   assert.ok(await holdersRerun(w, s.eid), 'the holder never re-ran the suspended result');
   w.rerunBy('dissents', reruns);
@@ -636,7 +642,7 @@ test('C3a: an entry PROVISIONALLY_FINAL on its re-run is left out too, and once 
   try {
     const s = await settledWithOneObjected(w, 4);                               // five of seven: an agreed re-run
     const seen = w.holder.round.reruns(w.rid, s.eid).map((r) => r.seenMs).sort((a, b) => a - b);
-    const agreed = seen[4];
+    const agreed = resultFinality(w.holder.round, w.rid, s.eid).agreedAtMs;   // the block the agreed re-run first sits at threshold in
     const inWindow = at(w, agreed + WINDOW_MS - 1, s.settledWith([s.agreesId]));
     const standing = [s.agreesId, s.eid].map((eid) => ({ entryId: toHex(eid), ...resultFinality(inWindow, w.rid, eid) }));
     const on = new LockSettlement(inWindow, {}).entriesOnRecord(w.rid, null);

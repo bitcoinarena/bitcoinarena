@@ -1,6 +1,7 @@
 // A PAYING FEDERATION ROUND ON TWO SIGNER NODES AND A FAKE LOCK PORT, PLAYED TO ITS CLOSE (moved out of
 // lock-settlement.test.js so the winnings test drives the very same round): `lockRound` stands it, `lockAndPlay`
 // locks a player's stake and fee and plays their run, `closeRound`, `standing` and `untilSettled` watch it settle.
+import { CLOCK } from './block-clock.js';
 import assert from 'node:assert/strict';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
@@ -69,8 +70,9 @@ export async function lockRound({ minScore = 1, stakeMsat = STAKE, port = lockPo
   const address = lnurl(port);
   const mk = () => serve(openStore(':memory:'), { port: 0, ...opts, stakeLocks: port, poolCurve: curve, finality: { everyMs: 100 },
     lnurlFetch: address.fetchLike, ...serveOpts });
-  const a = await mk();
-  const b = await mk();
+  // THE CHAIN §13A'S WINDOWS ARE READ FROM (RULED 2026-09-24): one block clock both signer nodes read.
+  const a = await mk(); a.round.chainView = CLOCK.chainView();
+  const b = await mk(); b.round.chainView = CLOCK.chainView();
   for (const [d, o] of [[a, b], [b, a]]) {
     const there = [`http://127.0.0.1:${o.port}`];
     d.verifier.peers = there;

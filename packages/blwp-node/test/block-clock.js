@@ -1,17 +1,15 @@
-// A CHAIN THAT KEEPS TIME WITH THE TEST (RULED the owner 2026-09-24: every finality window counts from a block instant -
-// the median time past of the first block at or after the moment - read from the node's own chain view, failing closed
-// without one). The fixtures' signer nodes read no bitcoind, so they are handed this: one mined header per second of the
-// wall clock, each carrying the second five ahead of its own, so the median time past of the block for second s is s.
-// A moment a thus has the instant ceil(a / 1000) * 1000 at every signer node that reads the one chain - which is the
-// point: two nodes that saw the same thing at different moments inside one second place it at one instant. The chain is
-// mined a minute ahead of the clock so a block at the round's confirmation depth (the fixtures ask for 1) is there.
+// A CHAIN THAT KEEPS TIME WITH THE TEST (§13A, RULED the owner 2026-09-24: every objection window is blocks at both ends,
+// read from the node's own chain view, and every posting, objection and re-run names the block it sits in). The fixtures'
+// signer nodes read no bitcoind, so they are handed this: one mined header per `spacingS` seconds of the wall clock, each
+// carrying the time five blocks ahead of its own, so the median time past of the block for second s is s. A view is the
+// chain AS OF a moment - never a block after it - so a node's tip is the block of that moment: `chainView()` reads the
+// real clock (live daemons), `viewAt(ms)` a stubbed one.
 //
-// Set on a Round as `round.chainView` - never through `chainFor`, which would also make the verifier check the
-// fixtures' beacon against this chain.
+// Set on a Round as `round.chainView` - never through `chainFor`, which would also make the verifier check the fixtures'
+// beacon against this chain.
 import { blockHashOf, meetsTarget } from '../../protocol/src/chain.js';
 
 const EASY = 0x207fffff;
-const AHEAD_S = 60;
 const FIRST_HEIGHT = 500000;
 
 function mine(previous, timeS) {
@@ -28,27 +26,46 @@ function mine(previous, timeS) {
   throw new Error('no nonce found at the easy target');
 }
 
-/** One shared chain; `view()` extends it to the clock and returns the same object, its blocks grown in place. */
-// `spacingS`: one block per that many seconds (default 1). A coarser clock - real chains are - is how two moments a
-// second or two apart fall under one block and get one instant.
-export function blockClock({ now = () => Date.now(), spacingS = 1, startS = null } = {}) {
+/** One shared chain. `spacingS`: one block per that many seconds (default 1). */
+export function blockClock({ spacingS = 1, startS = null } = {}) {
   const blocks = [];
-  const first = startS ?? (Math.floor(Date.now() / 1000 / spacingS) * spacingS - 12 * spacingS);
+  const first = startS ?? (Math.floor(Date.now() / 1000 / spacingS) * spacingS - 30 * spacingS);
   let at = first - spacingS;
-  const view = { firstHeight: FIRST_HEIGHT, blocks, pending: false };
-  const grow = () => {
-    const to = Math.floor(now() / 1000) + Math.max(AHEAD_S, 2 * spacingS);
-    while (at < to) {
+  const views = new Map();
+  const growTo = (s) => {
+    while (at + spacingS <= s) {
       at += spacingS;
       blocks.push({ header: mine(blocks.length ? blocks[blocks.length - 1].header : null, at + 5 * spacingS), second: at });
     }
   };
+  /** The chain as of `ms`: every block whose own second is at or before it. One view object per tip. */
+  const viewAt = (ms) => {
+    const s = Math.floor(ms / 1000);
+    growTo(s);
+    let n = blocks.length;
+    while (n > 0 && blocks[n - 1].second > s) n--;
+    if (!views.has(n)) views.set(n, { firstHeight: FIRST_HEIGHT, blocks: blocks.slice(0, n), pending: false });
+    return views.get(n);
+  };
   return {
-    view: () => { grow(); return view; },
-    /** The instant a moment gets on this chain: the first block time at or after it. */
-    instantOf: (ms) => Math.ceil(ms / (spacingS * 1000)) * spacingS * 1000,
-    /** `round.chainView` for a Round. */
-    chainView() { return () => { grow(); return view; }; },
+    viewAt,
+    view: () => viewAt(Date.now()),
+    /**
+     * `round.chainView` for a Round: the chain AS OF THE ROUND'S OWN CLOCK - `this.now()`, the wall clock for a daemon's
+     * Round and the stubbed moment for a test's view of it - so a read at a moment sees exactly the blocks of that moment.
+     */
+    chainView: () => function chainAsOfNow() { return viewAt(this && typeof this.now === 'function' ? this.now() : Date.now()); },
+    /** The tip's hash as of `ms`: the block a filing made then names. */
+    tipAt: (ms) => { const v = viewAt(ms); return blockHashOf(v.blocks[v.blocks.length - 1].header); },
+    /** A block's median time past (ms) by its hash, as a node reads it. */
+    mtpOf: (hash) => {
+      const hex = Buffer.from(hash).toString('hex');
+      const b = blocks.find((x) => Buffer.from(blockHashOf(x.header)).toString('hex') === hex);
+      return b ? b.second * 1000 : null;
+    },
+    /** The end block's time of a window opened at `openMs`: the first block time at or after open + W. */
+    endAt: (openMs, W) => Math.ceil((openMs + Number(W)) / (spacingS * 1000)) * spacingS * 1000,
+    spacingS,
   };
 }
 

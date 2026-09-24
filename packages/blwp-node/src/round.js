@@ -2374,14 +2374,20 @@ export class Round {
    * exists, because the replay queue puts objected runs first and a priority
    * nothing can ever set is a priority that does not exist.
    */
-  object(roundIdBytes, entryIdBytes) {
+  object(roundIdBytes, entryIdBytes, blockHash = null) {
     if (!this.get(roundIdBytes)) throw new Error('no such round');
     const e = this.db.prepare('SELECT round_id FROM entries WHERE entry_id = ?').get(entryIdBytes);
     if (!e) throw new Error('no such entry');
     if (!same(new Uint8Array(e.round_id), roundIdBytes)) throw new Error('entry is not in this round');
     return this.db.prepare(
-      'INSERT OR IGNORE INTO objections (round_id, entry_id, seen_ms) VALUES (?, ?, ?)')
-      .run(roundIdBytes, entryIdBytes, this.now()).changes === 1;
+      'INSERT OR IGNORE INTO objections (round_id, entry_id, seen_ms, block_hash) VALUES (?, ?, ?, ?)')
+      .run(roundIdBytes, entryIdBytes, this.now(), blockHash ? Buffer.from(blockHash) : null).changes === 1;
+  }
+
+  /** The block the objection against this run names (§13A, RULED 2026-09-24), or null. */
+  objectedBlock(roundIdBytes, entryIdBytes) {
+    const row = this.db.prepare('SELECT block_hash FROM objections WHERE round_id = ? AND entry_id = ?').get(roundIdBytes, entryIdBytes);
+    return row && row.block_hash ? new Uint8Array(row.block_hash) : null;
   }
 
   /** Is there an objection against this run? */
@@ -2403,14 +2409,20 @@ export class Round {
    * RECORD THE OBJECTION AGAINST AN AGREED RE-RUN (§13A, slice C2b), the same intake as `object` for the second
    * window: one per entry, when it arrived here. Whether it is in time and holds is `resultFinality`'s to say.
    */
-  objectRerun(roundIdBytes, entryIdBytes) {
+  objectRerun(roundIdBytes, entryIdBytes, blockHash = null) {
     if (!this.get(roundIdBytes)) throw new Error('no such round');
     const e = this.db.prepare('SELECT round_id FROM entries WHERE entry_id = ?').get(entryIdBytes);
     if (!e) throw new Error('no such entry');
     if (!same(new Uint8Array(e.round_id), roundIdBytes)) throw new Error('entry is not in this round');
     return this.db.prepare(
-      'INSERT OR IGNORE INTO rerun_objections (round_id, entry_id, seen_ms) VALUES (?, ?, ?)')
-      .run(roundIdBytes, entryIdBytes, this.now()).changes === 1;
+      'INSERT OR IGNORE INTO rerun_objections (round_id, entry_id, seen_ms, block_hash) VALUES (?, ?, ?, ?)')
+      .run(roundIdBytes, entryIdBytes, this.now(), blockHash ? Buffer.from(blockHash) : null).changes === 1;
+  }
+
+  /** The block the objection against this run's agreed re-run names, or null. */
+  rerunObjectedBlock(roundIdBytes, entryIdBytes) {
+    const row = this.db.prepare('SELECT block_hash FROM rerun_objections WHERE round_id = ? AND entry_id = ?').get(roundIdBytes, entryIdBytes);
+    return row && row.block_hash ? new Uint8Array(row.block_hash) : null;
   }
 
   /** When the objection against this run's agreed re-run arrived here, or null if none did. */
