@@ -48,6 +48,7 @@ import { hash as stateHash } from '../../core/src/state.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
+import { resultFinality } from '../src/finality.js';
 import {
   b32, rand, RANDOMNESS, BEACON, STAKE, WINDOW_MS, wait, WINNER, LOSER, contractFor, say, joinAndPlay, opts, sevenSignerNodes, object,
 } from './window-fixture.js';
@@ -69,12 +70,25 @@ test('seven signer nodes: an objection filed in the window against a run this no
     assert.equal(dissent.ok, false);
     assert.match(dissent.why, /suspend/i, `a valid objection did not suspend the run: ${dissent.why}`);
 
-    await wait(1700);   // the window has closed
-    const agreed = may('agrees');
+    // THE WINDOW HAS CLOSED - read on the node's own clock, stubbed, at the objection windows' close (RULED 2026-09-24,
+    // slice C1): that instant is inside the dissent's re-run window, the only span where SUSPENDED is still legal. A
+    // real-clock wait of 1700 ms overshot it, and past it the dissent is §13C's VOID.
+    const eidOf = (name) => w.runs[name].eid;
+    const clockAt = (now) => Object.assign(Object.create(w.holder.round), { now: () => now });
+    const mayAt = (now, name) => new (w.holder.preimages.constructor)(clockAt(now), {}).mayRelease(w.rid, eidOf(name));
+    const closes = ['agrees', 'dissents'].map((n) => Number(resultFinality(w.holder.round, w.rid, eidOf(n)).closesAtMs));
+    const closed = Math.max(...closes);
+    const rerunEnds = w.holder.round.objectedAt(w.rid, eidOf('dissents')) + 1500;
+    assert.ok(closed < rerunEnds, `the objection windows close at ${closed}, not inside the re-run window ending at ${rerunEnds}`);
+    const agreed = mayAt(closed, 'agrees');
     assert.equal(agreed.ok, true, `an objection this node's own replay does not back held the run past the window: ${agreed.why}`);
-    const still = may('dissents');
+    const still = mayAt(closed, 'dissents');
     assert.equal(still.ok, false, 'a suspended run was released once the window closed');
     assert.match(still.why, /suspend/i, still.why);
+    // AND AT THE RE-RUN WINDOW'S END: still no share, and the run is VOID - SUSPENDED is legal only until filed + W.
+    const ended = mayAt(rerunEnds, 'dissents');
+    assert.equal(ended.ok, false, 'a share left the dissent at its re-run window\'s end');
+    assert.equal(resultFinality(clockAt(rerunEnds), w.rid, eidOf('dissents')).state, 'VOID');
   } finally { await w.close(); }
 });
 

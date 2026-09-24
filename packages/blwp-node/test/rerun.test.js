@@ -13,16 +13,18 @@
 //
 // Now the holder re-runs by itself when the objection holds, the other signer nodes'
 // re-runs are counted, and 5 of 7 on one outcome replace SUSPENDED. Short of
-// that it stays SUSPENDED: 13C is timed from the result window, which the
-// contract does not carry yet (PRIORITIES, parked).
+// that by the end of the re-run window - one objection window from the filing -
+// §13C decides (RULED 2026-09-24): VOID, or FORFEIT on proven equivocation.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { resultFinality } from '../src/finality.js';
+import { LockSettlement } from '../src/settlement.js';
+import { Forfeit } from '../src/forfeit.js';
 import { decodePlayerResult, splitSignedResult } from '../../protocol/src/result.js';
 import { runOf, decodeRerunResult, splitSignedRerun } from '../../protocol/src/rerun.js';
 import { toHex } from '../../protocol/src/hash.js';
-import { b32, rand, wait, sevenSignerNodes, object, WINNER } from './window-fixture.js';
+import { b32, rand, wait, sevenSignerNodes, object, WINNER, WINDOW_MS } from './window-fixture.js';
 
 /** Wait until the holder has signed its own re-run of `eid`, and return it. */
 async function holdersRerun(w, eid, ms = 8000) {
@@ -41,20 +43,27 @@ async function suspended(w) {
   const eid = w.runs.dissents.eid;
   assert.equal((await object(w, eid)).status, 201);
   const mine = w.holder.round.results(w.rid, eid).find((r) => toHex(r.nodePubkey) === toHex(w.holder.round.pubkey));
-  return { eid, replay: decodePlayerResult(splitSignedResult(mine.bytes).body), filedAt: Date.now() };
+  return { eid, replay: decodePlayerResult(splitSignedResult(mine.bytes).body), filed: w.holder.round.objectedAt(w.rid, eid) };
 }
 
+/**
+ * THE HOLDER'S STORE READ AT A CLOCK THE TEST NAMES, not a sleep (RULED the owner 2026-09-24, slice C1). The re-run
+ * window is WINDOW_MS from the filing, and the re-runs land 0.66-0.94 s after it (measured), so the fixture's 800 ms
+ * window made whether they counted a matter of luck; every state below is read on the node's own clock, stubbed.
+ */
+const at = (w, now, over = {}) => Object.assign(Object.create(w.holder.round), { now: () => now }, over);
+
 test('the committee re-runs a suspended result: the holder re-runs by itself, four signer nodes agree, and two windows later the re-run\'s outcome is FINAL and its share is released', async () => {
-  const w = await sevenSignerNodes(800);
+  const w = await sevenSignerNodes(WINDOW_MS);
   try {
     const s = await suspended(w);
     const state = resultFinality(w.holder.round, w.rid, s.eid).state;
     const own = await holdersRerun(w, s.eid);
     assert.ok(own, 'the holder never re-ran the suspended result');
     w.rerunBy('dissents', 4);
-    await wait(Math.max(0, s.filedAt + 1700 - Date.now()));      // two windows, as measured before
-    const after = resultFinality(w.holder.round, w.rid, s.eid);
-    const may = w.holder.preimages.mayRelease(w.rid, s.eid);
+    const later = at(w, s.filed + 2 * WINDOW_MS);                     // two windows, as measured before
+    const after = resultFinality(later, w.rid, s.eid);
+    const may = new (w.holder.preimages.constructor)(later, {}).mayRelease(w.rid, s.eid);
     const facts = {
       suspendedByTheObjection: state,
       holderReranItsReplay: toHex(runOf(own.result)) === toHex(runOf(s.replay)),
@@ -81,15 +90,14 @@ test('the committee re-runs a suspended result: the holder re-runs by itself, fo
 // the same rule - FAILED at that checkpoint, the same score, the same run - and
 // five of seven re-runs make that FINAL.
 test('an objected stopped run is re-run under the same rule: FAILED at its last receipted checkpoint, the same run, FINAL at five of seven', async () => {
-  const w = await sevenSignerNodes(800, undefined, { play: { dissents: { ...WINNER, ticks: 600 } } });
+  const w = await sevenSignerNodes(WINDOW_MS, undefined, { play: { dissents: { ...WINNER, ticks: 600 } } });
   try {
     const s = await suspended(w);
     const state = resultFinality(w.holder.round, w.rid, s.eid).state;
     const own = await holdersRerun(w, s.eid);
     assert.ok(own, 'the holder never re-ran the suspended stopped run');
     w.rerunBy('dissents', 4);
-    await wait(Math.max(0, s.filedAt + 1700 - Date.now()));
-    const after = resultFinality(w.holder.round, w.rid, s.eid);
+    const after = resultFinality(at(w, s.filed + 2 * WINDOW_MS), w.rid, s.eid);
     const facts = {
       replay: `${s.replay.outcome}/${s.replay.score}`, suspendedByTheObjection: state,
       rerun: `${own.result.outcome}/${own.result.score}`, sameRun: toHex(runOf(own.result)) === toHex(runOf(s.replay)),
@@ -103,24 +111,88 @@ test('an objected stopped run is re-run under the same rule: FAILED at its last 
   } finally { await w.close(); }
 });
 
-test('four re-runs are not five: two windows later the result is still SUSPENDED and no share leaves (13C, timed from the parked result window, is not applied)', async () => {
-  const w = await sevenSignerNodes(800);
+// RULED the owner 2026-09-24 (§13A, ruling C, slice C1): this test said "two windows later the result is still SUSPENDED
+// ... (13C, timed from the parked result window, is not applied)". The re-run window is one objection window from the
+// filing, and no 5 of 7 by its end is §13C's rule - here VOID, no fork proof. Four re-runs two windows later are VOID.
+test('four re-runs are not five: two windows later the result is VOID by §13C and no share leaves', async () => {
+  const w = await sevenSignerNodes(WINDOW_MS);
   try {
     const s = await suspended(w);
     assert.ok(await holdersRerun(w, s.eid), 'the holder never re-ran the suspended result');
     w.rerunBy('dissents', 3);
-    await wait(Math.max(0, s.filedAt + 1700 - Date.now()));
-    const after = resultFinality(w.holder.round, w.rid, s.eid);
-    const may = w.holder.preimages.mayRelease(w.rid, s.eid);
-    assert.equal(after.state, 'SUSPENDED', `four re-runs replaced SUSPENDED: ${after.why}`);
-    assert.match(after.why, /4 of 5 committee signer nodes have re-run/);
+    const later = at(w, s.filed + 2 * WINDOW_MS);
+    const after = resultFinality(later, w.rid, s.eid);
+    const may = new (w.holder.preimages.constructor)(later, {}).mayRelease(w.rid, s.eid);
+    assert.equal(after.state, 'VOID', `four re-runs, two windows later: ${after.why}`);
+    assert.match(after.why, /with 4 of 5 re-runs on one outcome/);
     assert.equal(may.ok, false, 'a share left a result four signer nodes re-ran');
-    assert.match(may.why, /suspend/i);
+    assert.equal(may.state, 'VOID');
+  } finally { await w.close(); }
+});
+
+// THE RE-RUN WINDOW'S EDGE, ON THE NODE'S OWN CLOCK AND NO SLEEP (§13A, §13C, RULED the owner 2026-09-24, slice C1). The
+// objection is filed inside the first window; the re-run window is objection_window_ms from the filing, so its end is
+// never later than the third window. One millisecond before it the entry is SUSPENDED; at it, with four re-runs of
+// five, VOID - and the VOID reaches the money: no share leaves (mayRelease), the lock settlement lists it as VOID
+// rather than waiting on it, and the forfeit refuses to act, so the lock returns to the player at its expiry.
+// Equivocation proven on this node's store makes the same instant FORFEIT: its share is released and the lock
+// settlement lists it FORFEIT, score 0, on the finality alone - no stored no-quorum record.
+test('a suspended entry is SUSPENDED one millisecond before its re-run window ends and VOID at it, and VOID and FORFEIT both reach the money', async () => {
+  const w = await sevenSignerNodes(WINDOW_MS);
+  try {
+    const s = await suspended(w);
+    assert.ok(await holdersRerun(w, s.eid), 'the holder never re-ran the suspended result');
+    w.rerunBy('dissents', 3);
+    const lag = w.holder.round.reruns(w.rid, s.eid).map((r) => r.seenMs - s.filed);
+    const edge = s.filed + WINDOW_MS;
+    // Only this entry's stake is counted seen: the fixture's other runs are short of a quorum and not what is measured.
+    const mine = { stakeSeen: (eid) => toHex(eid) === toHex(s.eid) };
+    const inside = resultFinality(at(w, edge - 1), w.rid, s.eid);
+    const ended = resultFinality(at(w, edge), w.rid, s.eid);
+    const twoLater = resultFinality(at(w, s.filed + 2 * WINDOW_MS), w.rid, s.eid);
+    const released = new (w.holder.preimages.constructor)(at(w, edge), {}).mayRelease(w.rid, s.eid);
+    const onRecord = new LockSettlement(at(w, edge, mine), {}).entriesOnRecord(w.rid, null);
+    const forfeit = await new Forfeit(at(w, edge, { stakeLock: () => ({ fields: {} }) }), {}).message(w.rid, s.eid);
+    const proven = at(w, edge, { ...mine, provenTwoFirstMarks: () => true, noQuorum: () => null });
+    const forfeited = resultFinality(proven, w.rid, s.eid);
+    const provenRelease = new (w.holder.preimages.constructor)(proven, {}).mayRelease(w.rid, s.eid);
+    const provenRecord = new LockSettlement(proven, {}).entriesOnRecord(w.rid, null);
+    const outcomes = (r) => (r.ok ? r.entries.map((e) => `${e.outcome}/${e.score}`) : r.why);
+    console.log('  FACTS:', JSON.stringify({ lag, inside: inside.state, ended: ended.state, twoLater: twoLater.state,
+      released: released.ok, table: outcomes(onRecord), forfeit: forfeit.why,
+      proven: forfeited.state, provenRelease, provenTable: outcomes(provenRecord) }));
+    assert.ok(lag.every((ms) => ms < WINDOW_MS), `a re-run landed outside its window: ${lag}`);
+    assert.equal(inside.state, 'SUSPENDED', inside.why);
+    assert.equal(ended.state, 'VOID', ended.why);
+    assert.match(ended.why, /the re-run window closed at \d+ .* with 4 of 5 re-runs on one outcome \(§13A, §13C\)/);
+    assert.equal(twoLater.state, 'VOID');
+    assert.equal(released.ok, false, 'a share left a VOID entry');
+    assert.deepEqual(outcomes(onRecord), ['VOID/0']);
+    assert.equal(forfeit.ok, false);
+    assert.match(forfeit.why, /that entry is VOID \(§13C\): nothing is forfeited - nobody acts, and the lock returns to the player at its expiry/);
+    assert.equal(forfeited.state, 'FORFEIT', forfeited.why);
+    assert.deepEqual(provenRelease, { ok: true, outcome: 'FORFEIT', proven: true });
+    assert.deepEqual(outcomes(provenRecord), ['FORFEIT/0'], 'a FORFEIT on the finality alone is not in the table');
+  } finally { await w.close(); }
+});
+
+// A STORED §13C RECORD AND THE FINALITY'S OWN FORFEIT ARE ONE ENTRY IN THE TABLE, NOT TWO, and never the "not final" refusal.
+test('a FORFEIT with a stored no-quorum record is listed once', async () => {
+  const w = await sevenSignerNodes(WINDOW_MS);
+  try {
+    const s = await suspended(w);
+    assert.ok(await holdersRerun(w, s.eid), 'the holder never re-ran the suspended result');
+    w.rerunBy('dissents', 3);
+    const both = at(w, s.filed + WINDOW_MS, { stakeSeen: (eid) => toHex(eid) === toHex(s.eid), provenTwoFirstMarks: () => true,
+      noQuorum: (eid) => (toHex(eid) === toHex(s.eid) ? { outcome: 'FORFEIT', why: 'stored' } : null) });
+    const r = new LockSettlement(both, {}).entriesOnRecord(w.rid, null);
+    assert.equal(r.ok, true, r.why);
+    assert.deepEqual(r.entries.map((e) => `${toHex(e.entryId) === toHex(s.eid)}:${e.outcome}/${e.score}`), ['true:FORFEIT/0']);
   } finally { await w.close(); }
 });
 
 test('re-runs from keys that are not assigned, about another contradicted run, or to another outcome count for nothing', async () => {
-  const w = await sevenSignerNodes(800);
+  const w = await sevenSignerNodes(WINDOW_MS);
   try {
     const s = await suspended(w);
     assert.ok(await holdersRerun(w, s.eid), 'the holder never re-ran the suspended result');
@@ -128,8 +200,7 @@ test('re-runs from keys that are not assigned, about another contradicted run, o
     w.rerunBy('dissents', 2, { keys: [rand(32), rand(32)] });                           // two strangers
     w.rerunBy('dissents', 1, { keys: w.others.slice(2), contradicted: b32(0x66) });     // another contradicted run
     w.rerunBy('dissents', 1, { keys: w.others.slice(3), over: { score: s.replay.score + 2 } }); // another outcome
-    await wait(Math.max(0, s.filedAt + 1700 - Date.now()));
-    const after = resultFinality(w.holder.round, w.rid, s.eid);
+    const after = resultFinality(at(w, s.filed + WINDOW_MS - 1), w.rid, s.eid);   // inside the re-run window (RULED 2026-09-24)
     assert.equal(after.state, 'SUSPENDED', `strangers, another run or another outcome made five: ${after.why}`);
     assert.match(after.why, /3 of 5 committee signer nodes have re-run/);
   } finally { await w.close(); }

@@ -94,6 +94,9 @@ export class LockSettlement {
       if (nq && nq.outcome === VOID) { entries.push({ ...base, outcome: VOID, score: 0 }); continue; }
       const standing = resultFinality(this.round, roundIdBytes, entryId);
       if (standing.state === VOID) { entries.push({ ...base, outcome: VOID, score: 0 }); continue; }
+      // A RE-RUN WINDOW THAT CLOSED ON PROVEN EQUIVOCATION (§13A, §13C, RULED 2026-09-24): FORFEIT on the finality
+      // itself, as VOID is above - no stored no-quorum record needed. A stored one was already taken, once, above.
+      if (standing.state === FORFEIT) { entries.push({ ...base, outcome: FORFEIT, score: 0 }); continue; }
       if (standing.state !== FINAL)
         return refuse(`nothing is claimed while a run is not final with its window closed: ${toHex(entryId).slice(0, 16)} is `
           + `${standing.state || 'without a result'}${standing.why ? ` (${standing.why})` : ''}`);

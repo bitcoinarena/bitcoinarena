@@ -29,11 +29,23 @@ test('the reference ten minutes opens', () => {
   assert.equal(r.ok, true, r.why);
 });
 
-test('ANY positive window opens, because the field is contract-defined', () => {
+// RULED the owner 2026-09-24 (§13A, ruling C): a window over six hours is an invalid contract, so 86400000n left this list.
+test('ANY positive window up to six hours opens, because the field is contract-defined', () => {
   // The spec gives a reference, not a value. A round that wants one second gets one second.
-  for (const w of [1n, 1000n, 60000n, 600000n, 3600000n, 86400000n]) {
+  for (const w of [1n, 1000n, 60000n, 600000n, 3600000n, 21_600_000n]) {
     const r = roundWindowsAreValid(round(w));
     assert.equal(r.ok, true, `a ${w}ms window was refused: ${r.why}`);
+  }
+});
+
+// SIX HOURS AT MOST (§13A, RULED the owner 2026-09-24): a suspended entry ends at most three windows after it was
+// provisionally final, and the stake lock's 144 blocks must hold those three, the round and the settlement.
+test('a window of 21600000 ms opens and 21600001 ms is refused, naming the 6-hour cap', () => {
+  assert.equal(roundWindowsAreValid(round(21_600_000n)).ok, true);
+  for (const w of [21_600_001n, 86_400_000n]) {
+    const r = roundWindowsAreValid(round(w));
+    assert.equal(r.ok, false, `a ${w}ms window opened`);
+    assert.match(r.why, new RegExp(`^that round's objection window is ${w}ms, over the 6-hour cap of 21600000ms: `));
   }
 });
 

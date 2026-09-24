@@ -490,6 +490,14 @@ export function genesisConfigHash() {
 export const OBJECTION_WINDOW_REFERENCE_MS = 600000n;
 
 /**
+ * THE LONGEST OBJECTION WINDOW A ROUND CONTRACT MAY NAME: six hours, in milliseconds (§13A, RULED the owner
+ * 2026-09-24). An objected entry is decided at the latest three windows after it was provisionally final - the
+ * objection window, the re-run window, the re-run's own objection window - and the stake lock's 144 blocks must
+ * cover that plus the round and the settlement: three windows and a round inside a day, with room to settle.
+ */
+export const MAX_OBJECTION_WINDOW_MS = 21_600_000n;
+
+/**
  * WHICH CUSTODY CONSTRUCTION A ROUND USES. Section 23.6 (spec v4.6.2) names
  * two and says "The Round Contract names which construction it uses":
  *

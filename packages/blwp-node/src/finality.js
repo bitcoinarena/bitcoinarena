@@ -25,6 +25,7 @@
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { finality, objectionHolds, FINAL, SUSPENDED } from '../../protocol/src/objection.js';
 import { rerunIsAgreed } from '../../protocol/src/rerun.js';
+import { noQuorumOutcome } from '../../protocol/src/payout.js';
 import { decodeRoundContract } from '../../protocol/src/contracts.js';
 import { splitSignedResult, decodePlayerResult, resultId } from '../../protocol/src/result.js';
 import {
@@ -121,14 +122,38 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
   // A SUSPENDED RESULT IS DECIDED BY THE COMMITTEE'S RE-RUN (v4.6.2 §13A): once
   // the round's threshold of signer nodes have re-run the contradicted result to one
   // outcome, that outcome is authoritative - FINAL, once its transcript is
-  // posted (P2). Short of the threshold it stays SUSPENDED: what 13C does then
-  // is timed from the result window, which the contract does not carry yet.
+  // posted (P2).
+  //
+  // AND ONLY INSIDE THE RE-RUN WINDOW (§13A, RULED the owner 2026-09-24): the valid objection opens a re-run
+  // window of one result window - the contract's objection_window_ms, the same field - counted from when the
+  // objection was filed. A re-run this node took after that counts for nothing, so the answer at the window's
+  // end is the answer from then on. No threshold by then is §13C's no-quorum rule, as at the end of an ordinary
+  // result window: FORFEIT if the player's equivocation is proven (§13B), VOID otherwise - never a SUSPENDED
+  // that outlives its window. (Filed is this node's seen_ms, not a block timestamp: a gap flagged, not fixed.)
+  // Until C2, a re-run agreed inside the window is FINAL at once, with no objection window of its own: short
+  // of the spec, and inside its three-window cap.
   if (f.state === SUSPENDED) {
     const verify = (s, m, k) => schnorr.verify(s, m, k);
+    const rerunEndsAtMs = filedMs + Number(contract.objectionWindowMs);
     const rerun = rerunIsAgreed({
       roundId: roundIdBytes, playerPubkey: agreeing[0].playerPubkey, contradictedRunId: agreeing[0].run,
-      records: round.reruns(roundIdBytes, entryIdBytes), signerNodes: committee, slots: contract.gameVerifySlots, verify,
+      records: round.reruns(roundIdBytes, entryIdBytes).filter((r) => r.seenMs < rerunEndsAtMs),
+      signerNodes: committee, slots: contract.gameVerifySlots, verify,
     });
+    if (!rerun.ok && Number(now) >= rerunEndsAtMs) {
+      const proven = typeof round.provenTwoFirstMarks === 'function' && round.provenTwoFirstMarks(roundIdBytes, entryIdBytes) === true;
+      const d = noQuorumOutcome({ signatures: rerun.agreed || 0, needed: rerun.needed || seen.needed,
+        equivocationProven: proven, state: SUSPENDED });
+      if (d.outcome)
+        return {
+          state: d.outcome, noQuorum: true, rerunWindowClosedAtMs: rerunEndsAtMs,
+          rerun: { agreed: rerun.agreed || 0, needed: rerun.needed },
+          why: `${d.why} - the re-run window closed at ${rerunEndsAtMs} (the objection filed at ${filedMs} plus `
+            + `objection_window_ms ${contract.objectionWindowMs}) with ${rerun.agreed || 0} of ${rerun.needed || seen.needed} `
+            + 're-runs on one outcome (§13A, §13C)',
+          provisionalAtMs, runId: seen.runId, objection: objection && objection.why,
+        };
+    }
     const said = { agreed: rerun.agreed || 0, needed: rerun.needed };
     if (rerun.ok) {
       const posted = transcriptIsPublished({

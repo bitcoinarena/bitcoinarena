@@ -16,7 +16,7 @@ import { taggedHash } from './hash.js';
 import {
   TAG, PROTOCOL_VERSION, TYPE_ROUND_CONTRACT, TYPE_ENTRY_CONTRACT, ROLES,
   CUSTODY, custodyByte, custodyName, slashRemainderByte, slashRemainderOf, MIN_ENTRY_WINDOW_MS,
-  STAKE_EXPIRY_BLOCKS, START_DEADLINE_TICKS,
+  STAKE_EXPIRY_BLOCKS, START_DEADLINE_TICKS, MAX_OBJECTION_WINDOW_MS,
 } from './constants.js';
 
 /**
@@ -565,9 +565,8 @@ export function roundWindowsAreValid(c) {
   // yet retrieved the transcript voids the entry immediately.
   //
   // NO FLOOR IS SPECIFIED AND NONE IS INVENTED HERE. §13A gives "reference: 10 minutes, contract-defined" -
-  // a reference, not a minimum - and no sentence in BLWP v4.6.1 states a floor or a ceiling for W. So this
-  // refuses only what the spec's own words rule out: a duration that is not positive. A contract naming any
-  // positive window, 10 minutes or otherwise, opens exactly as before, because the field is contract-defined.
+  // a reference, not a minimum. So this refuses a duration that is not positive, and - since the 2026-09-24
+  // ruling - one over six hours; any window in between opens, because the field is contract-defined.
   if (typeof c.objectionWindowMs !== 'bigint')
     return { ok: false, opensAt, why: 'that round names no objection window, so nothing says when a result may become final' };
   if (c.objectionWindowMs <= 0n)
@@ -576,6 +575,16 @@ export function roundWindowsAreValid(c) {
       opensAt,
       why: `that round's objection window is ${c.objectionWindowMs}ms: a zero window is not a short one, it is `
         + 'none at all - finality would be instant and §13A\'s replay veto could never be used',
+    };
+  // AND NO LONGER THAN SIX HOURS (§13A, RULED the owner 2026-09-24). A suspended entry ends at most three windows after
+  // it was provisionally final, and the stake lock's 144 blocks must cover those three and the round and the
+  // settlement - so a longer window is a contract whose locks can expire before its entries are decided.
+  if (c.objectionWindowMs > MAX_OBJECTION_WINDOW_MS)
+    return {
+      ok: false,
+      opensAt,
+      why: `that round's objection window is ${c.objectionWindowMs}ms, over the 6-hour cap of ${MAX_OBJECTION_WINDOW_MS}ms: `
+        + 'three windows and a round must fit inside the stake lock\'s 144 blocks with room for the settlement',
     };
 
   return { ok: true, opensAt, earliestStart };

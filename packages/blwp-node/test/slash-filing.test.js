@@ -21,7 +21,7 @@ import { resultFinality } from '../src/finality.js';
 import { splitSlashEvidence, slashHolds, slashProofId, REPLAY_CONTRADICTS, SLASH_EVIDENCE_BYTES } from '../../protocol/src/slash.js';
 import { decodePlayerResult, splitSignedResult } from '../../protocol/src/result.js';
 import { toHex } from '../../protocol/src/hash.js';
-import { wait, sevenSignerNodes, object, b32 } from './window-fixture.js';
+import { wait, sevenSignerNodes, object, b32, WINDOW_MS } from './window-fixture.js';
 import { slashOwing, entriesForSlash } from '../src/slash-owing.js';
 import { decodeRoundContract } from '../../protocol/src/contracts.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
@@ -44,7 +44,7 @@ const contradictedSigners = (w, eid) => w.holder.round.results(w.rid, eid)
   .map((r) => toHex(r.nodePubkey)).sort();
 
 test('the re-run makes the result FINAL, and the node files and publishes a REPLAY_CONTRADICTS proof against each of the five who signed the contradicted result - each one slashHolds accepts', async () => {
-  const w = await sevenSignerNodes(800, undefined, FAST);
+  const w = await sevenSignerNodes(WINDOW_MS, undefined, FAST);
   try {
     const eid = await reranTo(w, 4);
     const stop = Date.now() + 8000;
@@ -85,17 +85,19 @@ test('the re-run makes the result FINAL, and the node files and publishes a REPL
 });
 
 test('a re-run short of five files no slash proof: the result is still SUSPENDED and nobody has been contradicted yet', async () => {
-  const w = await sevenSignerNodes(800, undefined, FAST);
+  const w = await sevenSignerNodes(WINDOW_MS, undefined, FAST);
   try {
     const eid = await reranTo(w, 3);
-    await wait(1700);
-    assert.equal(resultFinality(w.holder.round, w.rid, eid).state, 'SUSPENDED');
+    // Inside the re-run window, on the node's own clock stubbed (RULED 2026-09-24, slice C1): SUSPENDED is legal only
+    // until the filing plus one objection window; past it this is §13C's VOID, not a leftover SUSPENDED.
+    const inside = Object.assign(Object.create(w.holder.round), { now: () => w.holder.round.objectedAt(w.rid, eid) + WINDOW_MS - 1 });
+    assert.equal(resultFinality(inside, w.rid, eid).state, 'SUSPENDED');
     assert.equal(w.holder.round.slashProofs(w.rid, eid).length, 0, 'a proof was filed on a re-run that is not authoritative');
   } finally { await w.close(); }
 });
 
 test('a contradicted signer whose advertisement this node does not hold is not accused on a guessed bond', async () => {
-  const w = await sevenSignerNodes(800, undefined, FAST);
+  const w = await sevenSignerNodes(WINDOW_MS, undefined, FAST);
   try {
     const missing = toHex(schnorr.getPublicKey(w.others[0]));     // one of the five who signed the contradicted result
     w.adverts.delete(missing);
@@ -119,7 +121,7 @@ test('a contradicted signer whose advertisement this node does not hold is not a
 // NOTHING HERE SPENDS. Steps 3 and 5 of §5A.3B - the escrow output and MuSig2 over the arbitration
 // keys - do not exist in this tree, and the door answers with amounts and names only.
 test('the door will not pick the slashing height, and says what the five proofs owe out of the census at the one it is given', async () => {
-  const w = await sevenSignerNodes(800, undefined, FAST);
+  const w = await sevenSignerNodes(WINDOW_MS, undefined, FAST);
   try {
     const eid = await reranTo(w, 4);
     const stop = Date.now() + 8000;
