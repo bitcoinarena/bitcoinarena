@@ -24,8 +24,8 @@
 // back to its player.
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { finality, objectionHolds, FINAL, SUSPENDED, PROVISIONALLY_FINAL } from '../../protocol/src/objection.js';
-import { rerunIsAgreed } from '../../protocol/src/rerun.js';
-import { noQuorumOutcome } from '../../protocol/src/payout.js';
+import { rerunIsAgreed, runOf, decodeRerunResult, splitSignedRerun } from '../../protocol/src/rerun.js';
+import { noQuorumOutcome, VOID } from '../../protocol/src/payout.js';
 import { decodeRoundContract } from '../../protocol/src/contracts.js';
 import { splitSignedResult, decodePlayerResult, resultId } from '../../protocol/src/result.js';
 import {
@@ -87,14 +87,18 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
   const objections = [];
   let objection = null;
   const filedMs = round.objectedAt(roundIdBytes, entryIdBytes);
-  if (filedMs !== null) {
+  const receiptsHeld = () => {
     const { bytes } = round.receipts(roundIdBytes, entryIdBytes);
-    const receipts = [];
+    const out = [];
     for (let at = 0; at + SIGNED_RECEIPT_BYTES <= bytes.length; at += SIGNED_RECEIPT_BYTES) {
       try {
-        receipts.push(decodeCheckpointReceipt(splitSignedReceipt(bytes.subarray(at, at + SIGNED_RECEIPT_BYTES)).body));
+        out.push(decodeCheckpointReceipt(splitSignedReceipt(bytes.subarray(at, at + SIGNED_RECEIPT_BYTES)).body));
       } catch { /* a record that does not decode backs nothing */ }
     }
+    return out;
+  };
+  if (filedMs !== null) {
+    const receipts = receiptsHeld();
     objection = objectionHolds({
       objection: { roundId: roundIdBytes, signedResultId, atMs: BigInt(filedMs) },
       receipts, committee, roundId: roundIdBytes, signedResultId,
@@ -165,6 +169,28 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
       for (let k = 1; k <= bySeen.length; k++)
         if (agreedOn(bySeen.slice(0, k)).ok) { agreedAtMs = bySeen[k - 1].seenMs; break; }
       const rerunClosesAtMs = agreedAtMs + Number(contract.objectionWindowMs);
+      // A SECOND VALID OBJECTION INSIDE THAT WINDOW VOIDS THE ENTRY AT ONCE (§13A, RULED the owner 2026-09-24, slice C2b):
+      // two contradicted quorums in one entry is the operator side failing, refunded as §13C pays it - no third run.
+      // Valid as the first one is: about this round and the agreed re-run's run, backed by the committee's receipts,
+      // and this node's own re-run contradicts it. Stored before the window closed, after the re-run was agreed.
+      const secondMs = typeof round.rerunObjectedAt === 'function' ? round.rerunObjectedAt(roundIdBytes, entryIdBytes) : null;
+      if (secondMs !== null && secondMs >= agreedAtMs && secondMs < rerunClosesAtMs) {
+        const own = round.reruns(roundIdBytes, entryIdBytes).find((r) => hex(r.signerNodePubkey) === hex(round.pubkey));
+        let ownRun = null;
+        try { ownRun = own ? runOf(decodeRerunResult(splitSignedRerun(own.bytes).body).result) : null; } catch { ownRun = null; }
+        const second = objectionHolds({
+          objection: { roundId: roundIdBytes, signedResultId: rerun.runId, atMs: BigInt(secondMs) },
+          receipts: receiptsHeld(), committee, roundId: roundIdBytes, signedResultId: rerun.runId,
+          replayDiffers: ownRun !== null && hex(ownRun) !== hex(rerun.runId),
+        });
+        if (second.holds)
+          return {
+            state: VOID, secondObjection: true, rerun: { ...said, runId: hex(rerun.runId) },
+            why: `a second valid objection, filed at ${secondMs} inside the agreed re-run's own objection window (closing at `
+              + `${rerunClosesAtMs}), contradicts the re-run too: two contradicted quorums in one entry - VOID, no third run (13A)`,
+            provisionalAtMs, runId: hex(rerun.runId), contradictedRunId: seen.runId, objection: second.why,
+          };
+      }
       if (Number(now) < rerunClosesAtMs)
         return {
           state: PROVISIONALLY_FINAL, rerun: { ...said, runId: hex(rerun.runId) }, closesAtMs: BigInt(rerunClosesAtMs),

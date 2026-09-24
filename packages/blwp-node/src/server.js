@@ -163,6 +163,26 @@ export const GHOST_BACKLOG_BYTES = 262144;
 
 export const NOTHING_IS_FUNDED = () => false;
 
+/**
+ * THE OBJECTION INTAKE (13A), one function so the HTTP door and a test on a stubbed clock take the same path. The first
+ * objection against a run is stored as before. A SECOND one is taken only against an agreed re-run while its own
+ * objection window is open (RULED the owner 2026-09-24, slice C2b) - this node answering PROVISIONALLY_FINAL on the
+ * re-run - and stored once; whether it holds is `resultFinality`'s to say. One while the run is still SUSPENDED is the
+ * first objection again, and one after that window closed changes nothing: 409, nothing stored.
+ */
+export function objectionIntake(round, rid, eid) {
+  try {
+    if (round.object(rid, eid)) return { status: 201, text: 'objected' };
+    if (round.rerunObjectedAt(rid, eid) !== null) return { status: 200, text: 'already objected' };
+    const f = resultFinality(round, rid, eid);
+    const agreedRerun = !!(f.rerun && f.rerun.runId);
+    if (f.state === PROVISIONALLY_FINAL && agreedRerun)
+      return round.objectRerun(rid, eid) ? { status: 201, text: 'objected' } : { status: 200, text: 'already objected' };
+    if (agreedRerun) return { status: 409, text: 'the re-run\'s objection window has closed' };
+    return { status: 200, text: 'already objected' };
+  } catch (err) { return { status: 404, text: err.message }; }
+}
+
 export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FUNDED,
   randomnessFor, chainFor, peers = [], headerBytes, bondProof,
   // A LIGHTNING INVOICE READER, AND NOTHING MORE (§23.6, RULED 2026-09-22 22:59). `/federation-invoice`
@@ -2905,13 +2925,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'POST' && url.pathname === '/objection') {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
-        try {
-          const fresh = round.object(rid, eid);
-          // AN OBJECTION THAT HOLDS SUSPENDS THE RESULT, AND THE COMMITTEE
-          // RE-RUNS IT (13A): this signer node starts its own re-run at once.
-          if (resultFinality(round, rid, eid).state === SUSPENDED) watchRerun(new Uint8Array(rid), new Uint8Array(eid));
-          return text(res, fresh ? 201 : 200, fresh ? 'objected' : 'already objected');
-        } catch (err) { return text(res, 404, err.message); }
+        const taken = objectionIntake(round, rid, eid);
+        // AN OBJECTION THAT HOLDS SUSPENDS THE RESULT, AND THE COMMITTEE
+        // RE-RUNS IT (13A): this signer node starts its own re-run at once.
+        if (taken.status === 201 && resultFinality(round, rid, eid).state === SUSPENDED) watchRerun(new Uint8Array(rid), new Uint8Array(eid));
+        return text(res, taken.status, taken.text);
       }
 
       if (req.method === 'GET' && url.pathname === '/checkpoints') {

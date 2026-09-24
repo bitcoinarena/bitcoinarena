@@ -21,6 +21,7 @@ import assert from 'node:assert/strict';
 import { resultFinality } from '../src/finality.js';
 import { LockSettlement } from '../src/settlement.js';
 import { Forfeit } from '../src/forfeit.js';
+import { objectionIntake } from '../src/server.js';
 import { decodePlayerResult, splitSignedResult } from '../../protocol/src/result.js';
 import { runOf, decodeRerunResult, splitSignedRerun } from '../../protocol/src/rerun.js';
 import { toHex } from '../../protocol/src/hash.js';
@@ -214,6 +215,92 @@ test('an agreed re-run is PROVISIONALLY_FINAL until its own objection window clo
     assert.equal(may.ok, false, 'a share left an agreed re-run inside its own objection window');
     assert.equal(closed.state, 'FINAL', closed.why);
     assert.match(closed.why, /re-run by 5 of 7 committee signer nodes: the replay outcome is authoritative/);
+  } finally { await w.close(); }
+});
+
+// A SECOND VALID OBJECTION INSIDE THE RE-RUN'S OWN WINDOW VOIDS THE ENTRY (§13A, RULED the owner 2026-09-24, slice C2b).
+// Five of the other six keys re-run the objected result to another score, so the re-run is agreed at 5 of 7 without the
+// holder, whose own re-run keeps the old score: a second objection holds here. Filed inside agreed + W, the entry is VOID
+// at once - no third run - and the VOID goes the suspended entry's way to the money.
+async function agreedWithoutTheHolder(w) {
+  const s = await suspended(w);
+  assert.ok(await holdersRerun(w, s.eid), 'the holder never re-ran the suspended result');
+  w.rerunBy('dissents', 5, { over: { score: s.replay.score + 2 } });
+  const agreeing = w.holder.round.reruns(w.rid, s.eid).filter((r) => toHex(r.signerNodePubkey) !== toHex(w.holder.round.pubkey))
+    .map((r) => r.seenMs).sort((a, b) => a - b);
+  return { ...s, agreed: agreeing[4] };
+}
+
+test('a second valid objection inside the re-run\'s own objection window makes the entry VOID, and the VOID reaches the money', async () => {
+  const w = await sevenSignerNodes(WINDOW_MS);
+  try {
+    const s = await agreedWithoutTheHolder(w);
+    assert.equal(resultFinality(at(w, s.agreed + WINDOW_MS - 1), w.rid, s.eid).state, 'PROVISIONALLY_FINAL');
+    const second = await object(w, s.eid);
+    assert.equal(second.status, 201, `the second objection was not taken: ${await second.text()}`);
+    const filedSecond = w.holder.round.rerunObjectedAt(w.rid, s.eid);
+    const inside = resultFinality(at(w, s.agreed + WINDOW_MS - 1), w.rid, s.eid);
+    const closed = resultFinality(at(w, s.agreed + WINDOW_MS), w.rid, s.eid);
+    const threeLater = resultFinality(at(w, s.filed + 3 * WINDOW_MS), w.rid, s.eid);
+    const edge = s.agreed + WINDOW_MS - 1;
+    const released = new (w.holder.preimages.constructor)(at(w, edge), {}).mayRelease(w.rid, s.eid);
+    const onRecord = new LockSettlement(at(w, edge, { stakeSeen: (eid) => toHex(eid) === toHex(s.eid) }), {}).entriesOnRecord(w.rid, null);
+    const forfeit = await new Forfeit(at(w, edge, { stakeLock: () => ({ fields: {} }) }), {}).message(w.rid, s.eid);
+    console.log('  FACTS:', JSON.stringify({ agreedAfterFiling: s.agreed - s.filed, secondAfterAgreed: filedSecond - s.agreed,
+      inside: inside.state, closed: closed.state, threeLater: threeLater.state, released: released.ok,
+      table: onRecord.ok ? onRecord.entries.map((e) => `${e.outcome}/${e.score}`) : onRecord.why }), '|', inside.why);
+    assert.ok(filedSecond !== null && filedSecond >= s.agreed && filedSecond < s.agreed + WINDOW_MS,
+      `the second objection was stored at ${filedSecond}, not inside ${s.agreed}..${s.agreed + WINDOW_MS}`);
+    assert.equal(inside.state, 'VOID', inside.why);
+    assert.match(inside.why, /a second valid objection, filed at \d+ inside the agreed re-run's own objection window .* VOID, no third run \(13A\)/);
+    assert.equal(closed.state, 'VOID', closed.why);
+    assert.equal(threeLater.state, 'VOID', threeLater.why);
+    assert.equal(released.ok, false, 'a share left an entry two objections voided');
+    assert.equal(released.state, 'VOID');
+    assert.deepEqual(onRecord.ok ? onRecord.entries.map((e) => `${e.outcome}/${e.score}`) : onRecord.why, ['VOID/0']);
+    assert.equal(forfeit.ok, false);
+    assert.match(forfeit.why, /that entry is VOID \(§13C\): nothing is forfeited - nobody acts, and the lock returns to the player at its expiry/);
+    // A THIRD OBJECTION IS THE SECOND AGAIN: no third run, nothing more stored.
+    const third = await object(w, s.eid);
+    assert.equal(third.status, 200);
+    assert.equal((await third.text()).trim(), 'already objected');
+    assert.equal(w.holder.round.rerunObjectedAt(w.rid, s.eid), filedSecond);
+  } finally { await w.close(); }
+});
+
+// AND OUTSIDE IT: a second objection at the re-run's window close is not counted, and the intake takes none (C2b).
+test('a second objection at the re-run\'s window close counts for nothing, and the intake answers 409 and stores nothing', async () => {
+  const w = await sevenSignerNodes(WINDOW_MS);
+  try {
+    const s = await agreedWithoutTheHolder(w);
+    const close = at(w, s.agreed + WINDOW_MS);
+    const intake = objectionIntake(close, w.rid, s.eid);
+    assert.deepEqual(intake, { status: 409, text: 'the re-run\'s objection window has closed' });
+    assert.equal(w.holder.round.rerunObjectedAt(w.rid, s.eid), null, 'the intake stored an objection after the window');
+    assert.equal(close.objectRerun(w.rid, s.eid), true);                  // written straight to the store at the close
+    assert.equal(w.holder.round.rerunObjectedAt(w.rid, s.eid), s.agreed + WINDOW_MS);
+    const read = resultFinality(close, w.rid, s.eid);
+    assert.equal(read.state, 'FINAL', read.why);
+  } finally { await w.close(); }
+});
+
+// THE INTAKE'S REJECTS (C2b): while the run is still SUSPENDED an objection is the first one again; a missing entry or a
+// round the entry is not in is 404, and this entry is unchanged.
+test('while SUSPENDED an objection is the first again, and a missing or foreign entry is 404 with this entry unchanged', async () => {
+  const w = await sevenSignerNodes(WINDOW_MS);
+  try {
+    const s = await suspended(w);
+    const again = await object(w, s.eid);
+    assert.equal(again.status, 200);
+    assert.equal((await again.text()).trim(), 'already objected');
+    assert.equal(w.holder.round.rerunObjectedAt(w.rid, s.eid), null, 'an objection while SUSPENDED was stored as the second');
+    const missing = await fetch(`http://127.0.0.1:${w.holder.port}/objection?round=${toHex(w.rid)}&entry=${toHex(rand(32))}`, { method: 'POST' });
+    assert.equal(missing.status, 404);
+    const foreign = await fetch(`http://127.0.0.1:${w.holder.port}/objection?round=${toHex(rand(32))}&entry=${toHex(s.eid)}`, { method: 'POST' });
+    assert.equal(foreign.status, 404);
+    assert.equal(w.holder.round.rerunObjectedAt(w.rid, s.eid), null);
+    assert.equal(w.holder.round.objectedAt(w.rid, s.eid), s.filed);
+    assert.equal(resultFinality(at(w, s.filed + 1), w.rid, s.eid).state, 'SUSPENDED');
   } finally { await w.close(); }
 });
 

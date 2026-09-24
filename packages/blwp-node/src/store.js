@@ -820,6 +820,15 @@ export function openStore(path = ':memory:') {
       seen_ms  INTEGER NOT NULL,
       PRIMARY KEY (round_id, entry_id)
     );
+
+    -- AND THE ONE OBJECTION AGAINST AN AGREED RE-RUN (§13A, RULED 2026-09-24, slice C2b): the same shape as the
+    -- first, one per entry - a second valid objection voids the entry, and there is no third run to object to.
+    CREATE TABLE IF NOT EXISTS rerun_objections (
+      round_id BLOB NOT NULL,
+      entry_id BLOB NOT NULL REFERENCES entries(entry_id),
+      seen_ms  INTEGER NOT NULL,
+      PRIMARY KEY (round_id, entry_id)
+    );
   `);
   // A STORE MADE BEFORE A NONCE ROW CARRIED ITS SIGNING ATTEMPT gets the column:
   // every row it already holds was attempt 0.
