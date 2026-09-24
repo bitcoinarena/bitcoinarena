@@ -198,10 +198,12 @@ export function medianTimePast(headers, firstHeight, at) {
  * 5A.5 (spec v4.6.2) names a beacon by TIME - the first Bitcoin block whose
  * median-time-past is after committee_time - so that every node lands on the
  * same value without anybody naming it (`genesis.randomnessSource` is
- * `bitcoin-block-hash`). The spec then takes round_randomness =
- * H(hash(beacon_block) || height(beacon_block)); the callers here still seed
- * with the block hash itself, which this function does not change. But a
- * source is not a selection: two honest nodes
+ * `bitcoin-block-hash`). round_randomness is hash(beacon_block) itself - the
+ * double SHA-256 of its 80-byte header in internal order, `blockHashOf` below -
+ * and the callers seed with that block hash and nothing else (§5A.5 and §12,
+ * RULED 2026-09-24: no height term; BIP34 already commits the height, and both
+ * uses re-hash it under their own tag). The height only chooses and checks the
+ * block. But a source is not a selection: two honest nodes
  * polling at different moments would take different tips, derive different
  * seeds and signer node different committees. This is the missing half.
  *
