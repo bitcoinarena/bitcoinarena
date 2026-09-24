@@ -22,9 +22,12 @@ import { resultFinality } from '../src/finality.js';
 import { LockSettlement } from '../src/settlement.js';
 import { Forfeit } from '../src/forfeit.js';
 import { objectionIntake } from '../src/server.js';
+import { Verifier } from '../src/verify.js';
+import { slashHoldsOnRerun, splitRerunSlashEvidence, slashProofId, REPLAY_CONTRADICTS } from '../../protocol/src/slash.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 import { decodePlayerResult, splitSignedResult } from '../../protocol/src/result.js';
 import { runOf, decodeRerunResult, splitSignedRerun } from '../../protocol/src/rerun.js';
-import { toHex } from '../../protocol/src/hash.js';
+import { toHex, fromHex } from '../../protocol/src/hash.js';
 import { b32, rand, wait, sevenSignerNodes, object, WINNER, WINDOW_MS } from './window-fixture.js';
 
 /** Wait until the holder has signed its own re-run of `eid`, and return it. */
@@ -301,6 +304,118 @@ test('while SUSPENDED an objection is the first again, and a missing or foreign 
     assert.equal(w.holder.round.rerunObjectedAt(w.rid, s.eid), null);
     assert.equal(w.holder.round.objectedAt(w.rid, s.eid), s.filed);
     assert.equal(resultFinality(at(w, s.filed + 1), w.rid, s.eid).state, 'SUSPENDED');
+    // AND NO RE-RUN SIGNER IS FILED AGAINST WHILE SUSPENDED (C2c): no re-run is agreed.
+    const none = await new Verifier(at(w, s.filed + 1), { advertsFor: () => w.adverts, pool: {} }).fileRerunSlashProofs(w.rid, s.eid);
+    assert.deepEqual(none.filed, []);
+    assert.match(none.refused[0], /no second objection has made that entry VOID \(it is SUSPENDED\)/);
+    assert.equal(rerunProofsOf(w, s.eid).length, 0);
+  } finally { await w.close(); }
+});
+
+// SLASH PROOFS AGAINST THE AGREEING RE-RUN'S SIGNERS (§13A, §5A.3B, RULED the owner 2026-09-24, slice C2c). When a second
+// valid objection has made the entry VOID, "the signers of that result are slashed as well": the 201 that takes the
+// second objection starts the filing, one REPLAY_CONTRADICTS proof per agreeing re-run signer - the accused's own signed
+// re-run result as evidence, checked by slashHoldsOnRerun - and none against the holder, whose re-run dissented, or the
+// first result's signers (the next cut). The money does not move with them.
+const rerunProofsOf = (w, eid) => (typeof w.holder.round.rerunSlashProofs === 'function' ? w.holder.round.rerunSlashProofs(w.rid, eid) : []);
+const agreeingRerunSigners = (w, eid, agreedRun) => w.holder.round.reruns(w.rid, eid)
+  .map((r) => decodeRerunResult(splitSignedRerun(r.bytes).body).result)
+  .filter((r) => toHex(runOf(r)) === agreedRun).map((r) => toHex(r.nodePubkey)).sort();
+
+test('the second objection\'s 201 files one slash proof per agreeing re-run signer, each slashHoldsOnRerun accepts, and none against the holder', async () => {
+  const w = await sevenSignerNodes(WINDOW_MS);
+  try {
+    const s = await agreedWithoutTheHolder(w);
+    assert.equal(rerunProofsOf(w, s.eid).length, 0);
+    assert.equal((await object(w, s.eid)).status, 201);
+    const filed = rerunProofsOf(w, s.eid);
+    console.log('  FACTS (C2c):', JSON.stringify({ proofs: filed.length }));
+    assert.equal(filed.length, 5, 'the second objection filed no slash proof against the re-run\'s signers');
+    const agreedRun = resultFinality(at(w, s.agreed + WINDOW_MS - 1), w.rid, s.eid).runId;
+    const canonical = w.holder.round.canonicalTranscript(w.rid, s.eid).hash;
+    const committee = w.holder.round.signerNodes(w.rid);
+    const checks = filed.map((p) => {
+      const got = splitRerunSlashEvidence(p.bytes);
+      return slashHoldsOnRerun({ proof: got.proof, signedRerun: got.signedRerun, advert: w.adverts.get(toHex(got.proof.nodePubkey)),
+        committee, canonicalTranscriptHash: canonical, agreedRunId: fromHex(agreedRun), replayDiffers: true,
+        verify: (sig, m, k) => schnorr.verify(sig, m, k) });
+    });
+    const relayed = [];
+    for (const p of filed) {
+      const r = await fetch(`http://127.0.0.1:${w.holder.port}/slash/${toHex(slashProofId(splitRerunSlashEvidence(p.bytes).proof))}`);
+      relayed.push(r.status === 200 && toHex(new Uint8Array(await r.arrayBuffer())) === toHex(p.bytes));
+    }
+    const facts = {
+      accusedAreTheAgreeing: filed.map((p) => toHex(p.nodePubkey)).sort().join() === agreeingRerunSigners(w, s.eid, agreedRun).join(),
+      holderAccused: filed.some((p) => toHex(p.nodePubkey) === toHex(w.holder.round.pubkey)),
+      eachSlashes: checks.every((c) => c.slashed && c.offence === REPLAY_CONTRADICTS),
+      firstResultProofs: w.holder.round.slashProofs(w.rid, s.eid).length,
+      relayKeepsEach: relayed.length === 5 && relayed.every(Boolean),
+    };
+    console.log('  FACTS (C2c proofs):', JSON.stringify(facts));
+    assert.deepEqual(facts, { accusedAreTheAgreeing: true, holderAccused: false, eachSlashes: true, firstResultProofs: 0, relayKeepsEach: true });
+  } finally { await w.close(); }
+});
+
+// THE FILING ITSELF, ON THE NODE'S OWN CLOCK STUBBED (C2c): nothing before the second objection - PROVISIONALLY_FINAL or
+// a clean FINAL - and once it holds, one proof per agreeing signer; the holder, a stranger, a key whose re-run is another
+// outcome and a signer with no advertisement refused by name and nothing stored for them; a second filing adds no row and
+// publishes nothing; and the entry's money reads the same before the proofs and after them.
+test('re-run slash proofs are filed only on a second-objection VOID, refused by name, deduped, and move no money', async () => {
+  const w = await sevenSignerNodes(WINDOW_MS);
+  try {
+    const s = await agreedWithoutTheHolder(w);
+    w.rerunBy('dissents', 1, { keys: [rand(32)], over: { score: s.replay.score + 2 } });           // a stranger, the agreed outcome
+    w.rerunBy('dissents', 1, { keys: w.others.slice(5), over: { score: s.replay.score + 3 } });    // a signer, another outcome
+    const inside = s.agreed + WINDOW_MS - 1;
+    const verifierAt = (now) => new Verifier(at(w, now), { advertsFor: () => w.adverts, pool: {} });
+    const provisional = await verifierAt(inside).fileRerunSlashProofs(w.rid, s.eid);
+    const cleanFinal = await verifierAt(s.agreed + WINDOW_MS).fileRerunSlashProofs(w.rid, s.eid);
+    assert.deepEqual([provisional.filed, cleanFinal.filed], [[], []]);
+    assert.match(provisional.refused[0], /no second objection has made that entry VOID \(it is PROVISIONALLY_FINAL\)/);
+    assert.match(cleanFinal.refused[0], /no second objection has made that entry VOID \(it is FINAL\)/);
+    assert.equal(rerunProofsOf(w, s.eid).length, 0);
+
+    assert.equal(at(w, s.agreed + 100).objectRerun(w.rid, s.eid), true);   // the second objection, inside the window
+    const mine = { stakeSeen: (eid) => toHex(eid) === toHex(s.eid) };
+    const money = async () => ({
+      state: resultFinality(at(w, inside), w.rid, s.eid).state,
+      released: new (w.holder.preimages.constructor)(at(w, inside), {}).mayRelease(w.rid, s.eid).ok,
+      table: (({ ok, entries, why }) => (ok ? entries.map((e) => `${e.outcome}/${e.score}`) : why))(
+        new LockSettlement(at(w, inside, mine), {}).entriesOnRecord(w.rid, null)),
+      forfeit: (await new Forfeit(at(w, inside, { stakeLock: () => ({ fields: {} }) }), {}).message(w.rid, s.eid)).why,
+    });
+    const before = await money();
+
+    const agreedRun = resultFinality(at(w, inside), w.rid, s.eid).runId;
+    const onCommittee = new Set(w.holder.round.signerNodes(w.rid).map(toHex));
+    const signers = agreeingRerunSigners(w, s.eid, agreedRun).filter((k) => onCommittee.has(k));   // the stranger is not one
+    assert.equal(signers.length, 5);
+    const withheld = signers[0];
+    const advert = w.adverts.get(withheld);
+    w.adverts.delete(withheld);
+    const first = await verifierAt(inside).fileRerunSlashProofs(w.rid, s.eid);
+    w.adverts.set(withheld, advert);
+    const second = await verifierAt(inside).fileRerunSlashProofs(w.rid, s.eid);
+    const third = await verifierAt(inside + 10 * WINDOW_MS).fileRerunSlashProofs(w.rid, s.eid);   // after the window
+    const after = await money();
+    const rows = rerunProofsOf(w, s.eid).map((p) => toHex(p.nodePubkey)).sort();
+    const refusedOf = (who) => first.refused.find((r) => r.startsWith(who.slice(0, 16))) || '';
+    console.log('  FACTS (C2c filing):', JSON.stringify({ first: first.filed.length, second: second.filed.length, third: third.filed.length,
+      published: [first.published, second.published, third.published], rows: rows.length, before, after }));
+    assert.equal(first.filed.length, 4);
+    assert.match(refusedOf(toHex(w.holder.round.pubkey)), /this node's own re-run, which dissented/);
+    assert.ok(first.refused.some((r) => /is not on this round's committee/.test(r)), 'the stranger was not refused by name');
+    assert.match(refusedOf(toHex(schnorr.getPublicKey(w.others[5]))), /is not among the agreeing re-runs/);
+    assert.match(refusedOf(withheld), /no advertisement from the accused node to name its bond/);
+    assert.deepEqual(second.filed, [withheld]);
+    assert.deepEqual([third.filed, third.published], [[], 0]);
+    assert.deepEqual([first.published, second.published], [4, 1]);
+    assert.deepEqual(rows, signers);
+    assert.equal(w.holder.round.slashProofs(w.rid, s.eid).length, 0, 'a proof was filed against the first result\'s signers');
+    assert.deepEqual(after, before);
+    assert.deepEqual(before, { state: 'VOID', released: false, table: ['VOID/0'],
+      forfeit: 'that entry is VOID (§13C): nothing is forfeited - nobody acts, and the lock returns to the player at its expiry' });
   } finally { await w.close(); }
 });
 

@@ -31,9 +31,9 @@ import {
 } from '../../protocol/src/posting.js';
 import {
   encodeRerunResult, rerunResultId, joinSignedRerun, splitSignedRerun, decodeRerunResult, rerunIsAgreed,
-  SIGNED_RERUN_BYTES,
+  SIGNED_RERUN_BYTES, runOf,
 } from '../../protocol/src/rerun.js';
-import { encodeSlashProof, slashProofId, slashHolds, joinSlashEvidence } from '../../protocol/src/slash.js';
+import { encodeSlashProof, slashProofId, slashHolds, joinSlashEvidence, slashHoldsOnRerun, joinRerunSlashEvidence } from '../../protocol/src/slash.js';
 import {
   joinSignedResult, splitSignedResult, decodePlayerResult, resultId, SIGNED_RESULT_BYTES,
 } from '../../protocol/src/result.js';
@@ -1210,6 +1210,71 @@ export class Verifier {
         try {
           const put = await fetch(`${String(relay).replace(/\/+$/, '')}/slash/${hex(id)}`, { method: 'PUT', body: record });
           if (!put.ok) report.refused.push(`${relay}: kept no proof (${put.status})`);
+        } catch (e) { report.refused.push(`${relay}: ${e.message}`); }
+      }
+    }
+    return report;
+  }
+
+  /**
+   * SLASH PROOFS AGAINST THE AGREED RE-RUN'S SIGNERS (§13A, §5A.3B; RULED the owner 2026-09-24, slice C2c). Only once a
+   * second valid objection has made the entry VOID - "the signers of that result are slashed as well" - and never
+   * before: a re-run still PROVISIONALLY_FINAL, FINAL or not yet agreed has contradicted nobody. One REPLAY_CONTRADICTS
+   * proof per agreeing re-run signer, the accused's own signed re-run beside it, checked by `slashHoldsOnRerun` with
+   * this node's own re-run as the replay; stored once per signer and published to the round's relays once. Anyone
+   * else - this node itself, a stranger, a key whose re-run is another outcome, a signer with no advertisement - is
+   * refused by name and nothing is stored. The first result's signers are not filed against here (the next cut).
+   */
+  async fileRerunSlashProofs(roundIdBytes, entryIdBytes) {
+    const report = { filed: [], refused: [], published: 0 };
+    const row = this.round.get(roundIdBytes);
+    if (!row) { report.refused.push('no such round'); return report; }
+    const contract = decodeRoundContract(new Uint8Array(row.contract));
+    const standing = finalityOf(this.round, roundIdBytes, entryIdBytes);
+    if (standing.state !== 'VOID' || !standing.secondObjection || !standing.runId) {
+      report.refused.push(`no second objection has made that entry VOID (it is ${standing.state || 'without a result'}), so no re-run signer is contradicted`);
+      return report;
+    }
+    const agreedRunId = Buffer.from(standing.runId, 'hex');
+    let canonical;
+    try { canonical = this.round.canonicalTranscript(roundIdBytes, entryIdBytes); }
+    catch (e) { report.refused.push(e.message); return report; }
+    const signerNodes = this.round.signerNodes(roundIdBytes);
+    const records = this.round.reruns(roundIdBytes, entryIdBytes);
+    const own = records.find((r) => hex(r.signerNodePubkey) === hex(this.round.pubkey));
+    let ownRun = null;
+    try { ownRun = own ? runOf(decodeRerunResult(splitSignedRerun(own.bytes).body).result) : null; } catch { ownRun = null; }
+    const replayDiffers = ownRun !== null && hex(ownRun) !== hex(agreedRunId);
+
+    let adverts = null;
+    try { adverts = this.advertsFor ? this.advertsFor(roundIdBytes) : null; } catch { adverts = null; }
+    const filed = new Set(this.round.rerunSlashProofs(roundIdBytes, entryIdBytes).map((p) => hex(p.nodePubkey)));
+    for (const r of records) {
+      let x;
+      try { x = decodeRerunResult(splitSignedRerun(r.bytes).body); } catch { continue; }
+      const who = hex(x.result.nodePubkey);
+      if (who === hex(this.round.pubkey)) { report.refused.push(`${who.slice(0, 16)}: this node's own re-run, which dissented`); continue; }
+      if (filed.has(who)) continue;
+      const advert = adverts instanceof Map ? adverts.get(who) : null;
+      const proof = {
+        roundId: roundIdBytes, playerPubkey: x.result.playerPubkey, nodePubkey: x.result.nodePubkey,
+        transcriptHash: canonical.hash, signedResultId: rerunResultId(x),
+        bondTxid: advert ? advert.bondTxid : new Uint8Array(32), bondVout: advert ? advert.bondVout : 0,
+      };
+      const check = slashHoldsOnRerun({
+        proof, signedRerun: r.bytes, advert, committee: signerNodes, canonicalTranscriptHash: canonical.hash,
+        agreedRunId, replayDiffers, verify: (sig, m, k) => schnorr.verify(sig, m, k),
+      });
+      if (!check.slashed) { report.refused.push(`${who.slice(0, 16)}: ${check.why}`); continue; }
+      const id = slashProofId(proof);
+      const record = joinRerunSlashEvidence(encodeSlashProof(proof), r.bytes);
+      if (!this.round.putRerunSlashProof(roundIdBytes, entryIdBytes, x.result.nodePubkey, id, record)) continue;
+      report.filed.push(who);
+      for (const relay of contract.publicationRelays || []) {
+        try {
+          const put = await fetch(`${String(relay).replace(/\/+$/, '')}/slash/${hex(id)}`, { method: 'PUT', body: record });
+          if (put.ok) report.published += 1;
+          else report.refused.push(`${relay}: kept no proof (${put.status})`);
         } catch (e) { report.refused.push(`${relay}: ${e.message}`); }
       }
     }

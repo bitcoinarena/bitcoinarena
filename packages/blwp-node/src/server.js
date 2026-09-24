@@ -79,11 +79,11 @@ import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../protocol/src/object
 import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../protocol/src/posting.js';
 import { federationIsBonded } from '../../protocol/src/federation.js';
 import { installedCores, coreForRound } from './cores.js';
-import { SIGNED_RERUN_BYTES } from '../../protocol/src/rerun.js';
+import { SIGNED_RERUN_BYTES, rerunResultId, decodeRerunResult, splitSignedRerun } from '../../protocol/src/rerun.js';
 import { verifyStakeLock, verifyFeeLock, lockFieldsFromJson, roundMintsFees, federationTakesNoBaseFee } from './stake-lock-signer-node.js';
 import { encodeClaimKeyAttestation, claimKeyAttestationId } from '../../protocol/src/claim-key.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { splitSlashEvidence, slashProofId, SLASH_EVIDENCE_BYTES, REPLAY_CONTRADICTS } from '../../protocol/src/slash.js';
+import { splitSlashEvidence, slashProofId, SLASH_EVIDENCE_BYTES, REPLAY_CONTRADICTS, splitRerunSlashEvidence, RERUN_SLASH_EVIDENCE_BYTES } from '../../protocol/src/slash.js';
 import { slashOwing, entriesForSlash } from './slash-owing.js';
 import { Preimages, encodeShareAnswer, SEALED_ANSWER_BYTES } from './preimage.js';
 import { Payouts, PAYOUT_QUEUED, PAID, PAID_IN_PART, NOTHING_OWED } from './payout.js';
@@ -2884,6 +2884,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const slashed = /^\/slash\/([0-9a-f]{64})$/.exec(url.pathname);
       if (slashed && req.method === 'PUT') {
         const bytes = await read(req);
+        // A PROOF AGAINST A RE-RUN SIGNER (slice C2c) travels with the signed re-run it names, at its own size.
+        if (bytes.length === RERUN_SLASH_EVIDENCE_BYTES) {
+          let rr;
+          try { rr = splitRerunSlashEvidence(new Uint8Array(bytes)); } catch (e) { return text(res, 400, e.message); }
+          if (toHex(slashProofId(rr.proof)) !== slashed[1]) return text(res, 409, 'that is not the proof that id names');
+          let rerunNamed;
+          try { rerunNamed = toHex(rerunResultId(decodeRerunResult(splitSignedRerun(rr.signedRerun).body))); }
+          catch (e) { return text(res, 409, `the evidence is not a signed re-run result: ${e.message}`); }
+          if (rerunNamed !== toHex(rr.proof.signedResultId)) return text(res, 409, 'the evidence is not the re-run the proof names');
+          round.relayPut(Buffer.from(slashed[1], 'hex'), bytes);
+          return text(res, 201, 'kept');
+        }
         let got;
         try { got = splitSlashEvidence(new Uint8Array(bytes)); } catch (e) { return text(res, 400, e.message); }
         if (toHex(slashProofId(got.proof)) !== slashed[1]) return text(res, 409, 'that is not the proof that id names');
@@ -2928,7 +2940,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const taken = objectionIntake(round, rid, eid);
         // AN OBJECTION THAT HOLDS SUSPENDS THE RESULT, AND THE COMMITTEE
         // RE-RUNS IT (13A): this signer node starts its own re-run at once.
-        if (taken.status === 201 && resultFinality(round, rid, eid).state === SUSPENDED) watchRerun(new Uint8Array(rid), new Uint8Array(eid));
+        const after = taken.status === 201 ? resultFinality(round, rid, eid) : null;
+        if (after && after.state === SUSPENDED) watchRerun(new Uint8Array(rid), new Uint8Array(eid));
+        // AND A SECOND ONE THAT VOIDS THE ENTRY SLASHES THE RE-RUN'S SIGNERS AS WELL (13A, slice C2c): this node files
+        // its proofs before it answers, so what it took and what it filed are one step.
+        if (after && after.state === 'VOID' && after.secondObjection) {
+          const f = await verifier.fileRerunSlashProofs(new Uint8Array(rid), new Uint8Array(eid));
+          for (const who of f.filed) console.log(`[slash] ${toHex(eid).slice(0, 16)} filed REPLAY_CONTRADICTS against re-run signer ${who.slice(0, 16)}`);
+          for (const why of f.refused) console.log(`[slash] ${toHex(eid).slice(0, 16)} ${why}`);
+        }
         return text(res, taken.status, taken.text);
       }
 
