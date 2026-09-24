@@ -149,7 +149,10 @@ export class WinningsSend {
   /** Whether a kept first plan may still give way: nothing settled, nothing sent, no re-send made. */
   replaceable(roundIdBytes) {
     const settled = this.round.lockSettlement(roundIdBytes);
-    if (settled && settled.state === 'ACCEPTED') return false;
+    // SIGNED IS SETTLED: a node that holds the combined settlement (SUBMITTING - it signed or was handed the signature -
+    // or ACCEPTED) keeps the plan that settlement pays. Measured on 5 of 7: a later asker's lower plan replaced it at
+    // three signer nodes after the combine, and the auth never reached its five ("3 of 5 signer nodes committed").
+    if (settled && (settled.state === 'SUBMITTING' || settled.state === 'ACCEPTED')) return false;
     return this.round.sendAttemptsOf(roundIdBytes).every((r) => r.attempt === 0 && r.state === 'PLANNED');
   }
 
@@ -302,9 +305,15 @@ export class WinningsSend {
   }
 
   /** ROUND ONE: this signer node's commitment for the message of `kind` it rebuilt. */
-  async commit(roundIdBytes, entryHex, built, kind = 'auth', attempt = null) {
+  async commit(roundIdBytes, entryHex, built, kind = 'auth', attempt = null, { hash = null } = {}) {
     const row = this.rowOf(roundIdBytes, entryHex, attempt);
     if (!row) return refuse('this signer node holds no send plan for that entry', 404);
+    // A COMMITMENT ONLY TO THE PLAN THE ASKER SIGNS FOR - the settlement's own guard (settlement.js `commit`), here for a
+    // send: a signer node keeping another plan would otherwise commit, and its share over its own invoice spoils the
+    // combined auth for everyone (measured on 5 of 7: 5 nodes took one plan, 2 kept another, and 34 auths came back
+    // "does not verify under the claim key"; the winner was never paid).
+    if (hash && String(hash).toLowerCase() !== String(row.paymentHash).toLowerCase())
+      return refuse('this signer node keeps another send plan for that winning: it commits to no other bytes', 409);
     const message = await this.messageFor(kind, roundIdBytes, row, built);
     if (!message) return refuse('this signer node cannot rebuild that message');
     const key = `${kind}:${toHex(roundIdBytes)}:${entryHex}:${row.attempt}`;
@@ -343,7 +352,7 @@ export class WinningsSend {
   /** The committee's signature of `kind` over one attempt, made here with the peers. */
   async sign(roundIdBytes, row, built, kind) {
     const entryHex = toHex(row.entryId);
-    const q = `round=${toHex(roundIdBytes)}&entry=${entryHex}&kind=${kind}&attempt=${row.attempt}`;
+    const q = `round=${toHex(roundIdBytes)}&entry=${entryHex}&kind=${kind}&attempt=${row.attempt}&hash=${row.paymentHash}`;
     const own = await this.commit(roundIdBytes, entryHex, built, kind, row.attempt);
     if (!own.ok) return own;
     const signers = [{ base: null, commitment: own.commitment }];

@@ -69,7 +69,7 @@ const env = process.env;
 for (const k of ['PROBE', 'LOCK_BIN', 'WASM_PKG', 'INVITE', 'ALICE_RPC', 'BOB_RPC', 'CAROL_RPC', 'LND_BIN', 'BUNDLE'])
   if (!env[k]) { console.error(`${k} is needed`); process.exit(2); }
 const CASE = env.CASE || 'A';
-const W_LIKE = CASE === 'W' || CASE === 'WF';
+const W_LIKE = CASE === 'W' || CASE === 'WF' || CASE === 'WC';
 const P = env.PROBE;
 const require = createRequire(import.meta.url);
 const CLIENT = require(env.BUNDLE);
@@ -246,11 +246,21 @@ try {
     vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0], feePreimage: F,
     stakeLockOutpoint: lk.outpoint, feeLockOutpoint: feeOut, claimKeyAttestationRef: claimKey.ref };
   const lEid = entryId(lEntry);
-  const input = { roundId: rid, entryId: lEid, previousHash: GENESIS_HASH, firstTick: 0, ticks: Array.from({ length: LOSER.ticks }, (_, t) => wordsAt(t)), liquidations: [] };
+  // THE LOSER PLAYS AN ON-TIME FIRST MARK (tick 60), then its last (ruled 2026-09-24, case WC): a run whose only mark is
+  // a late first one is a late start (M3.3-34), which waits on every unreachable signer node - measured: with B down
+  // past a 3 s result window the loser went VOID under §13C, no stake was claimed and nothing was paid. Both marks are
+  // posted to every node while all are up, so its close depends on nobody.
+  const FIRST = 60;
+  const b1 = { roundId: rid, entryId: lEid, previousHash: GENESIS_HASH, firstTick: 0, ticks: Array.from({ length: FIRST }, (_, t) => wordsAt(t)), liquidations: [] };
+  const input = { roundId: rid, entryId: lEid, previousHash: batchId(b1), firstTick: FIRST, ticks: Array.from({ length: LOSER.ticks - FIRST }, (_, t) => wordsAt(FIRST + t)), liquidations: [] };
   const lst = init(seedWordForEntry(lEntry, beacon.randomness));
-  for (let t = 0; t < LOSER.ticks; t++) step(lst, ...wordsAt(t));
-  const mark = { roundId: rid, entryId: lEid, tick: LOSER.ticks, stateHash: Uint8Array.from(stateHash(lst).match(/../g).map((x) => parseInt(x, 16))),
-    inputChainHash: batchId(input), previousHash: NO_PREVIOUS, sessionPubkey: lEntry.sessionPubkey };
+  for (let t = 0; t < FIRST; t++) step(lst, ...wordsAt(t));
+  const hashOf = (st) => Uint8Array.from(stateHash(st).match(/../g).map((x) => parseInt(x, 16)));
+  const mark60 = { roundId: rid, entryId: lEid, tick: FIRST, stateHash: hashOf(lst), inputChainHash: batchId(b1), previousHash: NO_PREVIOUS, sessionPubkey: lEntry.sessionPubkey };
+  const signedMark60 = joinSigned(encodeCheckpoint(mark60), ed25519.sign(checkpointId(mark60), session));
+  for (let t = FIRST; t < LOSER.ticks; t++) step(lst, ...wordsAt(t));
+  const mark = { roundId: rid, entryId: lEid, tick: LOSER.ticks, stateHash: hashOf(lst),
+    inputChainHash: batchId(input), previousHash: checkpointId(mark60), sessionPubkey: lEntry.sessionPubkey };
   const signedMark = joinSigned(encodeCheckpoint(mark), ed25519.sign(checkpointId(mark), session));
   const lSaid = [];
   for (const d of round.daemons) {
@@ -260,6 +270,8 @@ try {
     const l = await realFetch(`${base}/lock?entry=${toHex(lEid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(lk.fields)) });
     if (feeFields) await realFetch(`${base}/fee-lock?entry=${toHex(lEid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(feeFields)) });
     lSaid.push([j.status, l.status, j.status === 201 ? '' : (await j.text()).trim().slice(0, 160), l.status === 201 ? '' : (await l.text()).trim().slice(0, 200)]);
+    await tell(d.port, encodeInputBatch(b1));
+    await tell(d.port, signedMark60);
     await tell(d.port, encodeInputBatch(input));
     await tell(d.port, signedMark);
   }
@@ -279,7 +291,8 @@ try {
     // their way - and comes back 7 s later (§10's window, ruled 2026-09-23: a 7 s outage fits inside it).
     if (W_LIKE && deliveredAt === null) {
       deliveredAt = Date.now(); round.b.close();
-      setTimeout(() => { round.restartB().then(() => { bBackAt = Date.now(); }); }, 7000);
+      // WC: B STAYS DOWN until the other six have combined the settlement (below), not 7 s.
+      if (CASE !== 'WC') setTimeout(() => { round.restartB().then(() => { bBackAt = Date.now(); }); }, 7000);
     }
     if (!runInfo) return;
     asks.push(CLIENT.askForWinnings({ run: runInfo, prompt: (t) => promptStub(t), storage: tab }));
@@ -381,7 +394,7 @@ try {
     say_({ step: 'reload with B up', bDownForMs: bDownAt ? Date.now() - bDownAt : null, postsNow: doorPosts.slice(before), reload, prompts: prompts.length, held: heldAddress() });
   } else {
     // W: the page loads again once B is back, so the address reaches it as case C's reload does.
-    if (W_LIKE) for (let i = 0; i < 40 && bBackAt === null; i++) await wait(250);
+    if (W_LIKE && CASE !== 'WC') for (let i = 0; i < 40 && bBackAt === null; i++) await wait(250);
     const before = doorPosts.length;
     const reload = await pageLoad();
     pageHook('FINISHED', Module.blwpNet.winningsRun());
@@ -414,6 +427,32 @@ try {
     if (Date.now() - closedAt > 60000 && Date.now() - lastMine > 20000) { cli('generatetoaddress', '1', cli('getnewaddress')); mined++; lastMine = Date.now(); }
   }
   say_({ step: 'blocks mined while waiting', mined, seconds: Math.round((Date.now() - closedAt) / 1000) });
+  // WC: THE COMBINE CAME WITH B DOWN. Only now is B served again, closed as its operator's restart would, and the page
+  // loads again (its address posted to B). Then: B's own signed result, whether B keeps a held-back ask, B's answer to
+  // the run's final mark, and whether the page re-offered anything after the combine.
+  let wc = null;
+  if (CASE === 'WC') {
+    const cl = Module.blwpNet.client;
+    const combinedAtWC = settled ? Date.now() : null;
+    const relinksAtCombine = cl.finalRelinks || 0;
+    await round.restartB();
+    bBackAt = Date.now();
+    const closeB = await tell(round.b.port, `close ${named.roundIdHex}`).catch((x) => x.message);
+    await pageLoad();
+    let bResult = null;
+    for (let i = 0; i < 180 && !bResult; i++) {
+      try { if (round.b.round.hasResult(fromHex(named.roundIdHex), fromHex(eidHex), round.b.round.pubkey)) bResult = true; } catch { /* not yet */ }
+      if (!bResult) await wait(1000);
+    }
+    const heldAsk = round.b.round.heldFinalAsk(fromHex(eidHex));
+    const markReply = cl.finalLink ? await tell(round.b.port, cl.finalLink.bytes).catch((x) => x.message) : 'no final link';
+    await wait(5000);
+    wc = { combinedAtMs: combinedAtWC && deliveredAt ? combinedAtWC - deliveredAt : null, bBackAfterCombineMs: combinedAtWC ? bBackAt - combinedAtWC : null,
+      closeB: String(closeB).slice(0, 60), bSignedWithin180s: !!bResult, bHeldAsk: heldAsk ? { tick: heldAsk.tick } : null,
+      markReply: typeof markReply === 'string' ? markReply.slice(0, 80) : `${markReply.length} bytes (a receipt)`,
+      catchUp: cl.finalCatchUp || (cl.catchingUp ? 'still running' : null), relinksAtCombine, relinksAfter: (cl.finalRelinks || 0) - relinksAtCombine };
+    say_({ step: 'combine first', ...wc });
+  }
   // AT EVERY SIGNER NODE: its OWN signed result (outcome, score, transcript hash), the ticks its transcript door holds,
   // its checkpoints, and the receipts it holds for the run's final mark - each read from that node alone.
   if (W_LIKE) {
@@ -438,6 +477,15 @@ try {
         finalMarkReceipts: finalId ? d.round.receiptCount(finalId) : null };
     }));
     const same = (k) => new Set(atNodes.map((x) => JSON.stringify(x[k]))).size === 1;
+    if (CASE === 'WC') {
+      const bKey = toHex(round.b.round.pubkey).slice(0, 8);
+      const six = atNodes.filter((x) => x.node !== bKey); const b = atNodes.find((x) => x.node === bKey);
+      const one = (xs, k) => new Set(xs.map((x) => JSON.stringify(x[k]))).size === 1;
+      say_({ step: 'combine first, at every node', atNodes, finalMarkReceiptsOnClient: finalId ? cl.witnessed(finalId) : null,
+        pass: one(six, 'result') && six.every((x) => x.result && x.result.outcome === 'DELIVERED' && x.finalMarkReceipts === 6)
+          && !!(b && b.result && b.result.outcome === 'FAILED' && b.result.transcript !== six[0].result.transcript)
+          && wc && wc.bHeldAsk === null && /the round is closed/.test(wc.markReply) && wc.catchUp === 'combined' && wc.relinksAfter === 0 });
+    }
     say_({ step: 'at every node', markGate, finalMarkReceiptsOnClient: finalId ? cl.witnessed(finalId) : null, atNodes,
       sameResult: same('result'), sameTicks: same('ticks'), sameCheckpoints: same('checkpoints'),
       pass: same('result') && same('ticks') && same('checkpoints') && atNodes.every((x) => x.result && x.result.outcome === 'DELIVERED' && x.finalMarkReceipts === 7)

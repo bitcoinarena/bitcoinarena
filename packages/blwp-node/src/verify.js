@@ -407,7 +407,13 @@ export class Verifier {
     // ONE CHECK, WHATEVER THE REPLAY SAID (ruled 2026-09-24): a DELIVERED signature is over the transcript that holds
     // the final mark, so a node short the mark - its inputs short or whole - does not sign until it has it.
     const held = await this.#holdBack(roundIdBytes, entryId, entry);
-    if (held) return held;
+    if (held && !held.signStopped) return held;
+    // THE COMBINE CAME FIRST while this node still lacked the final mark: the stopped transcript is signed - never a
+    // DELIVERED over a transcript without the mark (ruled 2026-09-23/24).
+    if (held && held.signStopped) {
+      const stoppedAt = await this.#atLastMark(roundIdBytes, entryId, entry, { ...answer, outcome: null }, canonical, options);
+      return this.#sign({ roundIdBytes, entryId, entry, contract, answer: stoppedAt, transcript: canonical, stopped: true });
+    }
     // AND THE SIGNER NODE THAT HOLDS THE FINAL MARK'S ASK, while that mark is not yet carried because a peer is short
     // of its inputs: its close does not end the window either, so both sign over the same transcript (measured: A
     // signed at its close without the final mark, B after its catch-up with it - two hashes, never 2 of 2). Only the
@@ -416,8 +422,7 @@ export class Verifier {
     // a run it lost (§15: closing the browser does not escape a losing stake).
     const pendingFinal = answer.outcome === 'DELIVERED' ? this.round.pendingFinalMark(roundIdBytes, entryId) : null;
     if (pendingFinal) {
-      const settled = this.round.lockSettlement ? this.round.lockSettlement(roundIdBytes) : null;
-      if (!(settled && (settled.state === 'SUBMITTING' || settled.state === 'ACCEPTED')))
+      if (!(await this.#combined(roundIdBytes)))
         return { entryId, stored: false, waiting: true, heldBack: true,
           why: `holding back the close: the run's final mark at tick ${pendingFinal.tick} is carried by ${pendingFinal.receipts} of the ${pendingFinal.need} it needs` };
     }
@@ -435,10 +440,12 @@ export class Verifier {
    * stopped transcript is signed and the doors shut. Answers the held answer, or null to sign as ever.
    */
   async #holdBack(roundIdBytes, entryId, entry) {
-    const settled = this.round.lockSettlement ? this.round.lockSettlement(roundIdBytes) : null;
-    if (settled && (settled.state === 'SUBMITTING' || settled.state === 'ACCEPTED')) {
-      if (this.round.heldFinalAsk(entryId)) this.round.dropHeldFinalAsk(entryId);
-      return null;
+    if (await this.#combined(roundIdBytes)) {
+      const kept = this.round.heldFinalAsk(entryId);
+      if (!kept) return null;
+      this.round.dropHeldFinalAsk(entryId);            // the window ended: the doors shut
+      const markHere = this.round.holdsMark(checkpointId(decodeCheckpoint(splitSignedMark(kept.mark).body)));
+      return markHere ? null : { signStopped: true };
     }
     let ask = this.round.heldFinalAsk(entryId);
     if (!ask) {
@@ -457,6 +464,19 @@ export class Verifier {
     return { entryId, stored: false, waiting: true, heldBack: true,
       why: `holding back the close: a peer holds the run's final mark at tick ${ask.tick}; this signer node holds inputs `
         + `through ${have}${have >= ask.tick ? ' (whole) and not the mark' : ''}` };
+  }
+
+  /**
+   * IS THE ROUND'S SETTLEMENT COMBINED? This node's own row - or, for a node that was down across it (measured: B came
+   * back after the combine, held its close for ever and never signed), a peer's row whose combined signature verifies
+   * under the round's claim key over the message it names (`combinedElsewhere`, the server's): only a threshold of the
+   * round's signer nodes can make one, so a peer's word alone ends nothing.
+   */
+  async #combined(roundIdBytes) {
+    const s = this.round.lockSettlement ? this.round.lockSettlement(roundIdBytes) : null;
+    if (s && (s.state === 'SUBMITTING' || s.state === 'ACCEPTED')) return true;
+    if (typeof this.combinedElsewhere !== 'function') return false;
+    try { return !!(await this.combinedElsewhere(roundIdBytes)); } catch { return false; }
   }
 
   /** The mark a peer holds past this node's chain - checked, never believed. */
