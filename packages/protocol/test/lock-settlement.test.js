@@ -394,3 +394,62 @@ test('POOL C: every qualifier named an address - the table is unchanged, each is
   assert.equal(refused.ok, false);
   assert.match(refused.why, /no accepted send/);
 });
+
+// THE SECOND SETTLEMENT OF A LATE LOSER (§13A, RULED the owner 2026-09-24, slice C3b-1). An entry left out of the round's
+// settlement while still in its re-run window, which then ends FINAL and FAILED, or FORFEIT, is claimed in its own
+// transaction. Its lock's net stake, less that transaction's own guardian fees, goes to the winners the first
+// transaction paid, each by its first payout's fraction of the first pool, integer msat, the dust to the first row in
+// the first table's order - and nobody already paid is reduced. Its fee lock, where minted, pays the signer nodes, not
+// the pool. VOID and a late qualifier are never claimed; a first table that paid nobody claims nothing.
+test('a late FAILED or FORFEIT lock is claimed alone and its net stake, less the fees, is split by the first table\'s shares', async () => {
+  const { lateLockSettlement, lateSettlementNonce } = await import('../src/lock-settlement.js');
+  const A = entry(1, DELIVERED, 3); const B = entry(2, DELIVERED, 2);
+  const first = lockSettlement({ roundId: RID, entries: [A, B, entry(3, FAILED, 0), entry(4, FAILED, 0)], minScore: 1, fees: { ppm: 0n, baseMsat: 1000n },
+    locks: new Map([lockFor(A, 1), lockFor(B, 2), lockFor(entry(3, FAILED, 0), 3), lockFor(entry(4, FAILED, 0), 4)]), addressed: named(A, B) });
+  assert.equal(first.ok, true, first.why);
+  // THE FIRST PLAN'S SHARES are exactly what it paid each winner.
+  assert.deepEqual(first.stakeShares.map((x) => [toHex(x.pubkey), x.msat]),
+    first.payouts.filter((p) => p.kind === 'qualifier').map((p) => [toHex(p.pubkey), p.msat]));
+  // TWO PAID WINNERS, in the first table's order, to show the split and where the dust goes.
+  const shares = [{ pubkey: A.pubkey, msat: 60001n }, { pubkey: B.pubkey, msat: 35999n }];
+  const winnerLocks = new Map([lockFor(A, 1), lockFor(B, 2)]);
+  const LATE = b32(0x77);
+  for (const outcome of [FAILED, FORFEIT]) {
+    const L = entry(9, outcome, 0);
+    const s = lateLockSettlement({ roundId: RID, entryId: LATE, entry: L, lock: lockFor(L, 9)[1], shares, winnerLocks, fees: { ppm: 0n, baseMsat: 1000n } });
+    assert.equal(s.ok, true, s.why);
+    assert.deepEqual(s.claims.map((c) => [toHex(c.pubkey), c.amountMsat, c.kind]), [[toHex(L.pubkey), 98000n, 'stake']]);
+    const weight = shares.reduce((t, x) => t + x.msat, 0n);
+    const spendable = 98000n - 1000n;
+    const want = shares.map((x) => largestPayoutMsat({ ppm: 0n, baseMsat: 1000n }, (x.msat * spendable) / weight));
+    const dust = spendable - want.reduce((t, m) => t + m + 1000n, 0n);
+    want[0] = largestPayoutMsat({ ppm: 0n, baseMsat: 1000n }, want[0] + 1000n + dust);
+    const byKey = new Map(s.payouts.map((p) => [toHex(p.pubkey), p]));
+    assert.deepEqual(shares.map((x) => byKey.get(toHex(x.pubkey)).msat), want);
+    assert.deepEqual(shares.map((x) => toHex(byKey.get(toHex(x.pubkey)).payoutPk)), [toHex(refund(1)), toHex(refund(2))], 'not paid by a contract to the winner\'s own key');
+    assert.equal(s.paidMsat + s.outputFeesMsat + s.inputFeesMsat, 98000n, 'the late stake is not wholly accounted for');
+    assert.equal(toHex(s.nonce), toHex(lateSettlementNonce(RID, LATE)));
+    assert.notEqual(toHex(s.nonce), toHex(settlementNonce(RID)), 'the second transaction reuses the round\'s nonce');
+  }
+});
+
+test('a late VOID or qualifier is never claimed, a first table that paid nobody claims nothing, and a late fee lock pays the signer nodes, not the pool', async () => {
+  const { lateLockSettlement } = await import('../src/lock-settlement.js');
+  const A = entry(1, DELIVERED, 3);
+  const shares = [{ pubkey: A.pubkey, msat: 98000n }];
+  const winnerLocks = new Map([lockFor(A, 1)]);
+  const ask = (L, over = {}) => lateLockSettlement({ roundId: RID, entryId: b32(0x77), entry: L, lock: lockFor(L, 9)[1], shares, winnerLocks, fees: NO_FEES, ...over });
+  assert.match(ask(entry(9, VOID, 0)).why, /^a late VOID is not claimed: nothing acts, and the lock returns to its player at its expiry$/);
+  assert.match(ask(entry(9, DELIVERED, 3)).why, /^a late DELIVERED run is not claimed: a qualifier's stake comes back by its own forfeit - stake back only, no share$/);
+  assert.match(ask(entry(9, FAILED, 0), { shares: [] }).why, /^the first settlement paid nobody, so the late lock is not claimed: it returns to its player at its expiry$/);
+  assert.match(ask(entry(9, FAILED, 0), { lock: lockFor(entry(9, FAILED, 0), 9, 97000n)[1] }).why, /holds 97000 msat and its entry's net stake is 98000/);
+  // THE FEE LOCK, WHERE MINTED: claimed in the same transaction and paid to the sitting signer nodes - the winner's amount unchanged.
+  const signerNodes = [SIGNER_NODE(1), SIGNER_NODE(2)];
+  const L = entry(9, FAILED, 0);
+  const plain = ask(L);
+  const withFee = ask(L, { feeLock: feeLockFor(L, 9)[1], contract: contractOf(signerNodes), signerNodes: { gameVerify: signerNodes, settlement: signerNodes } });
+  assert.equal(withFee.ok, true, withFee.why);
+  assert.deepEqual(withFee.claims.map((c) => c.kind).sort(), ['fee', 'stake']);
+  assert.deepEqual(withFee.payouts.filter((p) => p.kind === 'qualifier').map((p) => p.msat), plain.payouts.map((p) => p.msat));
+  assert.deepEqual(withFee.signerNodePayouts.map((p) => p.msat), [1000n, 1000n]);
+});

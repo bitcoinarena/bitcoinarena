@@ -33,7 +33,7 @@
 // the round's order), each signer node one pre-expired payout contract to its own key -
 // never to the donation recipients, and no split invented here. A VOID or
 // ENTRY_VOID entry's fee lock is not claimed: §22A's fee base leaves it out.
-import { holdSettlement, netStakeMsat, isRefund, SETTLE, CANCEL, FAILED } from './payout.js';
+import { holdSettlement, netStakeMsat, isRefund, SETTLE, CANCEL, FAILED, FORFEIT, VOID, DELIVERED } from './payout.js';
 import { winnings } from './payout-spend.js';
 import { nodeFeeTable, entryFeeMsat, GAME_VERIFY, SETTLEMENT } from './fee.js';
 import { MIN_PLAYERS_PER_ROUND } from './constants.js';
@@ -186,8 +186,84 @@ export function lockSettlement({ roundId, entries, minScore = 0, locks, fees, fe
     const e = h.table.activated.find((x) => toHex(x.pubkey) === toHex(row.pubkey));
     payouts.push({ pubkey: row.pubkey, payoutPk: lockOf(e).refundPk, owedMsat: row.msat, msat, feeMsat: lnv2FeeMsat(fees, msat) });
   }
-  return finish({ roundId, claims: claims.map((c) => ({ ...c, kind: 'stake' })), payouts: payouts.map((p) => ({ ...p, kind: p.sent ? 'sent' : 'qualifier' })),
-    unpaid, forfeits, poolMsat, inputFeesMsat, spendableMsat, stakeWhy: null }, feePart);
+  // THE SHARES A LATE LOSER'S SECOND SETTLEMENT IS SPLIT BY (C3b-1): what each paid winner got, in the table's order.
+  const stakeShares = split.map(({ row, msat }) => ({ pubkey: row.pubkey, msat }));
+  return { ...finish({ roundId, claims: claims.map((c) => ({ ...c, kind: 'stake' })), payouts: payouts.map((p) => ({ ...p, kind: p.sent ? 'sent' : 'qualifier' })),
+    unpaid, forfeits, poolMsat, inputFeesMsat, spendableMsat, stakeWhy: null }, feePart), stakeShares };
+}
+
+const LATE_NONCE_TAG = new TextEncoder().encode('blwp late lock settlement v1');
+
+/** A late loser's second settlement's 8-byte nonce: one per (round, entry), never the round's own. */
+export function lateSettlementNonce(roundId, entryId) {
+  if (!(roundId instanceof Uint8Array) || roundId.length !== 32) throw new Error('a round id is 32 bytes');
+  if (!(entryId instanceof Uint8Array) || entryId.length !== 32) throw new Error('an entry id is 32 bytes');
+  const m = new Uint8Array(LATE_NONCE_TAG.length + 64);
+  m.set(LATE_NONCE_TAG); m.set(roundId, LATE_NONCE_TAG.length); m.set(entryId, LATE_NONCE_TAG.length + 32);
+  return sha256(m).subarray(0, 8);
+}
+
+/**
+ * THE SECOND SETTLEMENT OF A LATE LOSER (§13A; RULED the owner 2026-09-24, slice C3b-1). An entry the round's settlement left
+ * out while it was still in its re-run window, which then ended FINAL and FAILED, or FORFEIT, is claimed in its own
+ * transaction, one per (round, entry). Its lock's net stake, less this transaction's own guardian fees, goes to the
+ * winners the first transaction paid - `shares`, that settlement's `stakeShares`: each winner's first payout, in the
+ * first table's order - each by its first payout's fraction of the first pool, integer msat, a share too small to pay
+ * its own output fee folded back and split again, the dust to the first row, as the first table does. Paid by a
+ * pre-expired payout contract to the winner's own lock key (`winnerLocks`), as the base plan does. Nobody already paid
+ * is reduced; the first transaction is not touched. The late entry's fee lock, where minted, is claimed in the same
+ * transaction and pays the round's sitting signer nodes by §22A, never the pool. A late VOID is not claimed (its lock
+ * returns at expiry); a late qualifier is not claimed (its stake comes back by its own forfeit, no share); and when
+ * the first settlement paid nobody, nothing is claimed.
+ */
+export function lateLockSettlement({ roundId, entryId, entry, lock, feeLock = null, shares, winnerLocks, fees,
+  signerNodes = null, contract = null }) {
+  if (!fees || typeof fees.ppm !== 'bigint' || typeof fees.baseMsat !== 'bigint' || fees.ppm < 0n || fees.baseMsat < 0n)
+    return refuse('the guardians\' fee rule is BigInt ppm and base msat, 0 or more');
+  if (!entry) return refuse('there is no late entry to settle');
+  if (entry.outcome === VOID || isRefund(entry.outcome))
+    return refuse(`a late ${entry.outcome} is not claimed: nothing acts, and the lock returns to its player at its expiry`);
+  if (entry.outcome === DELIVERED)
+    return refuse('a late DELIVERED run is not claimed: a qualifier\'s stake comes back by its own forfeit - stake back only, no share');
+  if (entry.outcome !== FAILED && entry.outcome !== FORFEIT) return refuse(`a late ${entry.outcome} is not a loser, so nothing is claimed`);
+  if (!Array.isArray(shares) || !shares.length)
+    return refuse('the first settlement paid nobody, so the late lock is not claimed: it returns to its player at its expiry');
+  if (!lock) return refuse('the late loser\'s stake lock was never verified, so it cannot be claimed');
+  const net = netStakeMsat(entry);
+  if (lock.amountMsat !== net) return refuse(`the late loser's lock holds ${lock.amountMsat} msat and its entry's net stake is ${net}`);
+  if (!(winnerLocks instanceof Map)) return refuse('the winners\' stake locks are a Map by player key');
+  for (const x of shares)
+    if (!winnerLocks.get(toHex(x.pubkey))) return refuse(`a winner's stake lock was never verified, so there is no key to pay: ${toHex(x.pubkey).slice(0, 16)}`);
+
+  const inputFeesMsat = lnv2FeeMsat(fees, net);
+  const spendableMsat = net - inputFeesMsat;
+  if (spendableMsat <= 0n) return refuse(`the guardians' fee on the late lock (${inputFeesMsat} msat) takes its whole ${net}`);
+  const unpaid = [];
+  let paying = [...shares];
+  let split;
+  for (;;) {
+    const weight = paying.reduce((t, x) => t + x.msat, 0n);
+    split = paying.map((x) => ({ row: x, msat: largestPayoutMsat(fees, (x.msat * spendableMsat) / weight) }));
+    const small = split.filter((x) => x.msat === 0n);
+    if (!small.length) break;
+    for (const x of small) unpaid.push({ pubkey: x.row.pubkey, owedMsat: x.row.msat, why: 'its share of the late stake does not pay its own output fee' });
+    paying = paying.filter((x) => !small.some((y) => y.row === x));
+    if (!paying.length) return refuse('no winner\'s share of the late stake pays its own output fee, so the late lock is not claimed');
+  }
+  const gross = (msat) => msat + lnv2FeeMsat(fees, msat);
+  const dust = spendableMsat - split.reduce((t, x) => t + gross(x.msat), 0n);
+  if (dust > 0n) split[0].msat = largestPayoutMsat(fees, gross(split[0].msat) + dust);
+  const payouts = split.map(({ row, msat }) => ({ pubkey: row.pubkey, payoutPk: winnerLocks.get(toHex(row.pubkey)).refundPk,
+    owedMsat: row.msat, msat, feeMsat: lnv2FeeMsat(fees, msat), kind: 'qualifier' }));
+
+  const feePart = feeLock
+    ? feeSettlement({ entries: [entry], feeLocks: new Map([[toHex(entry.pubkey), feeLock]]), signerNodes, contract, fees })
+    : feeSettlement({ entries: [entry], feeLocks: new Map(), signerNodes, contract, fees });
+  if (!feePart.ok) return feePart;
+  const done = finish({ roundId, claims: [{ pubkey: entry.pubkey, outpoint: lock.outpoint, amountMsat: net, kind: 'stake' }], payouts,
+    unpaid, forfeits: [], poolMsat: net, inputFeesMsat, spendableMsat, stakeWhy: null }, feePart);
+  if (!done.ok) return done;
+  return { ...done, nonce: lateSettlementNonce(roundId, entryId), late: true };
 }
 
 const byOutpoint = (a, b) => (outpointKey(a.outpoint) < outpointKey(b.outpoint) ? -1 : outpointKey(a.outpoint) > outpointKey(b.outpoint) ? 1 : 0);
