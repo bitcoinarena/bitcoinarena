@@ -1667,7 +1667,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // AND A ROUND THAT TAKES A STAKE INTO A FEDERATION IS HELD TO THE CUSTODY FIELDS IN FULL
         // (M3 W7, §23): which federation, the 144-block expiry, the relays - before anything of it
         // exists on this signer node. A free round is the check below; no other custody parses (§23.6).
-        if (contract.custody === 'FEDERATION' && contract.stakeMsat > 0n) {
+        if (contract.stakeMsat > 0n) {
           const custodyOk = custodyFieldsAreValid(contract);
           if (!custodyOk.ok) return text(res, 409, custodyOk.why);
         }
@@ -1679,7 +1679,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // Inbound is not read and not claimed: the federation's API does not say it, and a deposit that
         // commits through each gateway is where it is shown. A node with no lock port takes no stake in a
         // FEDERATION round at all, and is not the one this asks.
-        if (contract.custody === 'FEDERATION' && contract.stakeMsat > 0n && stakeLocks) {
+        if (contract.stakeMsat > 0n && stakeLocks) {
           if (typeof stakeLocks.gateways !== 'function')
             return text(res, 409, 'this signer node\'s lock port cannot list the federation\'s gateways, so it cannot count '
               + 'two of them (§23.6): it opens no paying round');
@@ -1716,7 +1716,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           // AND A ROUND THAT TAKES A STAKE INTO A FEDERATION IS ASSIGNED SIGNER NODES ONLY ON A BONDED ONE (§23.6, P3;
           // the owner 2026-09-15 07:33): refused here like a committee the chain did not assign - stored,
           // no signer nodes, so no claim key and no lock can name it.
-          if (contract.custody === 'FEDERATION' && contract.stakeMsat > 0n) {
+          if (contract.stakeMsat > 0n) {
             const bonded = await guardiansBonded(id, contract);
             if (!bonded.ok) return text(res, 409, bonded.why);
           }

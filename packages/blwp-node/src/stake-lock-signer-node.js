@@ -81,7 +81,7 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
   const row = round.get(entry.roundId);
   if (!row) return { ok: false, why: 'this node holds no such round' };
   const contract = decodeRoundContract(new Uint8Array(row.contract));
-  if (contract.custody !== 'FEDERATION' || zero(contract.federationId))
+  if (zero(contract.federationId))
     return { ok: false, why: 'that round names no federation, so its stake is not a lock' };
   if (!port) return { ok: false, why: 'this node reaches no federation, so it cannot verify a stake lock' };
   const outpoint = entry.stakeLockOutpoint;
@@ -129,7 +129,7 @@ export async function verifyFeeLock({ round, port, entryIdBytes, fields, claimPk
   const row = round.get(entry.roundId);
   if (!row) return { ok: false, why: 'this node holds no such round' };
   const contract = decodeRoundContract(new Uint8Array(row.contract));
-  if (contract.custody !== 'FEDERATION' || zero(contract.federationId))
+  if (zero(contract.federationId))
     return { ok: false, why: 'that round names no federation, so its fee is not a lock' };
   if (!port) return { ok: false, why: 'this node reaches no federation, so it cannot verify a fee lock' };
   const outpoint = entry.feeLockOutpoint;
