@@ -1166,11 +1166,55 @@ export class Verifier {
    * contradicted one. Steps 3 and 5 are the arbitration set's.
    */
   async fileSlashProofs(roundIdBytes, entryIdBytes, contradictedRunId, authoritativeRunId) {
+    return this.#fileFirstResultProofs(roundIdBytes, entryIdBytes, contradictedRunId,
+      (myRun) => myRun !== hex(contradictedRunId) && myRun === hex(authoritativeRunId));
+  }
+
+  /**
+   * THE FIRST RESULT'S SIGNERS, WHEN THE ENTRY ENDS VOID - OR FORFEIT BY §13C (§13A; RULED the owner 2026-09-24, ruling C
+   * steps 2 and 3: "the slashing of the first result's signers stands, because the objection that proved them wrong
+   * already exists"). The same proof, evidence (the signer's own signed player result), check (`slashHolds`) and table
+   * (slash_proofs) as `fileSlashProofs`, and the same dedupe. What differs is the verdict: there is no authoritative
+   * re-run to agree with, so it is this node's own replay differing from the contradicted run - the fact the first
+   * objection held on. Filed only when this node answers VOID by a second objection, or VOID or FORFEIT by §13C at the
+   * re-run window's end; never while SUSPENDED or PROVISIONALLY_FINAL. Money is not touched.
+   */
+  async fileFirstResultSlashProofs(roundIdBytes, entryIdBytes) {
+    const standing = finalityOf(this.round, roundIdBytes, entryIdBytes);
+    const ended = (standing.state === 'VOID' && (standing.secondObjection || standing.noQuorum))
+      || (standing.state === 'FORFEIT' && standing.noQuorum);
+    if (!ended || !standing.runId)
+      return { filed: [], refused: [`that entry has not ended VOID or FORFEIT after an objection (it is ${standing.state || 'without a result'}), so its first result's signers are not slashed yet`], published: 0 };
+    const contradicted = Buffer.from(standing.secondObjection ? standing.contradictedRunId : standing.runId, 'hex');
+    const report = await this.#fileFirstResultProofs(roundIdBytes, entryIdBytes, contradicted, (myRun) => myRun !== hex(contradicted));
+    // AND BY NAME, THE ONES WHO ARE NOT FILED AGAINST: this node, whose own result is the replay; and a re-run signer
+    // who never signed the contradicted result.
+    const signedFirst = new Set();
+    for (const r of this.round.results(roundIdBytes, entryIdBytes)) {
+      try {
+        const body = decodePlayerResult(splitSignedResult(r.bytes).body);
+        if (hex(runId(body)) === hex(contradicted)) signedFirst.add(hex(body.nodePubkey));
+      } catch { /* a record that does not decode signed nothing */ }
+    }
+    const me = hex(this.round.pubkey);
+    report.refused.unshift(`${me.slice(0, 16)}: this node's own result, which is the replay`);
+    const named = new Set([me]);
+    for (const r of this.round.reruns(roundIdBytes, entryIdBytes)) {
+      const who = hex(r.signerNodePubkey);
+      if (named.has(who) || signedFirst.has(who)) continue;
+      named.add(who);
+      report.refused.push(`${who.slice(0, 16)}: signed the re-run, not the contradicted result`);
+    }
+    return report;
+  }
+
+  /** The body both first-result filings share: one proof per signer of `contradictedRunId`, on `differs(myRun)`. */
+  async #fileFirstResultProofs(roundIdBytes, entryIdBytes, contradictedRunId, differs) {
     const row = this.round.get(roundIdBytes);
-    if (!row) return { filed: [], refused: ['no such round'] };
+    if (!row) return { filed: [], refused: ['no such round'], published: 0 };
     const contract = decodeRoundContract(new Uint8Array(row.contract));
     const signerNodes = this.round.signerNodes(roundIdBytes);
-    const report = { filed: [], refused: [] };
+    const report = { filed: [], refused: [], published: 0 };
     let canonical;
     try { canonical = this.round.canonicalTranscript(roundIdBytes, entryIdBytes); }
     catch (e) { report.refused.push(e.message); return report; }
@@ -1179,7 +1223,7 @@ export class Verifier {
     const mine = held.find((r) => hex(r.nodePubkey) === hex(this.round.pubkey));
     if (!mine) { report.refused.push('this node signed no result for that run, so it has no replay to accuse with'); return report; }
     const myRun = hex(runId(decodePlayerResult(splitSignedResult(mine.bytes).body)));
-    const replayDiffers = myRun !== hex(contradictedRunId) && myRun === hex(authoritativeRunId);
+    const replayDiffers = differs(myRun);
 
     let adverts = null;
     try { adverts = this.advertsFor ? this.advertsFor(roundIdBytes) : null; } catch { adverts = null; }
@@ -1190,6 +1234,7 @@ export class Verifier {
       if (hex(runId(body)) !== hex(contradictedRunId)) continue;
       const who = hex(body.nodePubkey);
       if (filed.has(who)) continue;
+      if (!signerNodes.some((k) => hex(k) === who)) { report.refused.push(`${who.slice(0, 16)}: ${who} is not on this round's committee`); continue; }
       const advert = adverts instanceof Map ? adverts.get(who) : null;
       if (!advert) { report.refused.push(`${who.slice(0, 16)}: no advertisement names its bond`); continue; }
       const proof = {
@@ -1209,7 +1254,8 @@ export class Verifier {
       for (const relay of contract.publicationRelays || []) {
         try {
           const put = await fetch(`${String(relay).replace(/\/+$/, '')}/slash/${hex(id)}`, { method: 'PUT', body: record });
-          if (!put.ok) report.refused.push(`${relay}: kept no proof (${put.status})`);
+          if (put.ok) report.published += 1;
+          else report.refused.push(`${relay}: kept no proof (${put.status})`);
         } catch (e) { report.refused.push(`${relay}: ${e.message}`); }
       }
     }

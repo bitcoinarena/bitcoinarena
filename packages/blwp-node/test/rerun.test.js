@@ -23,9 +23,9 @@ import { LockSettlement } from '../src/settlement.js';
 import { Forfeit } from '../src/forfeit.js';
 import { objectionIntake } from '../src/server.js';
 import { Verifier } from '../src/verify.js';
-import { slashHoldsOnRerun, splitRerunSlashEvidence, slashProofId, REPLAY_CONTRADICTS } from '../../protocol/src/slash.js';
+import { slashHoldsOnRerun, splitRerunSlashEvidence, slashProofId, REPLAY_CONTRADICTS, slashHolds, splitSlashEvidence } from '../../protocol/src/slash.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { decodePlayerResult, splitSignedResult } from '../../protocol/src/result.js';
+import { decodePlayerResult, splitSignedResult, resultId, joinSignedResult, encodePlayerResult } from '../../protocol/src/result.js';
 import { runOf, decodeRerunResult, splitSignedRerun } from '../../protocol/src/rerun.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 import { b32, rand, wait, sevenSignerNodes, object, WINNER, WINDOW_MS } from './window-fixture.js';
@@ -353,7 +353,9 @@ test('the second objection\'s 201 files one slash proof per agreeing re-run sign
       relayKeepsEach: relayed.length === 5 && relayed.every(Boolean),
     };
     console.log('  FACTS (C2c proofs):', JSON.stringify(facts));
-    assert.deepEqual(facts, { accusedAreTheAgreeing: true, holderAccused: false, eachSlashes: true, firstResultProofs: 0, relayKeepsEach: true });
+    // RULED the owner 2026-09-24 (the first-result slash cut): the same 201 now files the first result's five signers too -
+    // this said 0 while that was the next cut.
+    assert.deepEqual(facts, { accusedAreTheAgreeing: true, holderAccused: false, eachSlashes: true, firstResultProofs: 5, relayKeepsEach: true });
   } finally { await w.close(); }
 });
 
@@ -416,6 +418,153 @@ test('re-run slash proofs are filed only on a second-objection VOID, refused by 
     assert.deepEqual(after, before);
     assert.deepEqual(before, { state: 'VOID', released: false, table: ['VOID/0'],
       forfeit: 'that entry is VOID (§13C): nothing is forfeited - nobody acts, and the lock returns to the player at its expiry' });
+  } finally { await w.close(); }
+});
+
+// THE FIRST RESULT'S SIGNERS ARE SLASHED WHEN THE ENTRY ENDS VOID - OR FORFEIT BY §13C (§13A, RULED the owner 2026-09-24,
+// ruling C steps 2 and 3: "the slashing of the first result's signers stands, because the objection that proved them wrong
+// already exists"). The evidence is the existing one - the proof and the signer's own signed player result, slashHolds -
+// in the existing slash_proofs table; the verdict is this node's own replay differing from the contradicted run. Filed by
+// the 201 that takes a second objection, and by the re-run watch when it sees §13C's VOID or FORFEIT.
+const firstFiling = async (v, rid, eid) => (typeof v.fileFirstResultSlashProofs === 'function'
+  ? v.fileFirstResultSlashProofs(rid, eid) : { filed: [], refused: [], published: 0 });
+const firstResultSigners = (w, eid) => w.holder.round.results(w.rid, eid)
+  .map((r) => decodePlayerResult(splitSignedResult(r.bytes).body))
+  .filter((r) => toHex(runOf(r)) === toHex(w.runs.dissents.contradicted)).map((r) => toHex(r.nodePubkey)).sort();
+const slashesEach = (w, eid, rows) => {
+  const canonical = w.holder.round.canonicalTranscript(w.rid, eid).hash;
+  const committee = w.holder.round.signerNodes(w.rid);
+  return rows.every((p) => {
+    const got = splitSlashEvidence(p.bytes);
+    const c = slashHolds({ proof: got.proof, signedResult: got.signedResult, advert: w.adverts.get(toHex(got.proof.nodePubkey)),
+      committee, canonicalTranscriptHash: canonical, replayDiffers: true });
+    return c.slashed && c.offence === REPLAY_CONTRADICTS;
+  });
+};
+
+test('the second objection\'s 201 also files one slash proof per first-result signer, and a signer of both results has a row in each table', async () => {
+  const w = await sevenSignerNodes(WINDOW_MS);
+  try {
+    const s = await agreedWithoutTheHolder(w);
+    w.rerunBy('dissents', 1, { keys: w.others.slice(5), over: { score: s.replay.score + 2 } });   // agreed, never signed the first
+    assert.equal(w.holder.round.slashProofs(w.rid, s.eid).length, 0);
+    assert.equal((await object(w, s.eid)).status, 201);
+    const rows = w.holder.round.slashProofs(w.rid, s.eid);
+    const firsts = firstResultSigners(w, s.eid);
+    const both = rerunProofsOf(w, s.eid).map((p) => toHex(p.nodePubkey)).filter((k) => firsts.includes(k)).sort();
+    console.log('  FACTS (first-result slash, 201):', JSON.stringify({ rows: rows.length, rerunRows: rerunProofsOf(w, s.eid).length, both: both.length }));
+    assert.deepEqual(rows.map((p) => toHex(p.nodePubkey)).sort(), firsts);
+    assert.equal(firsts.length, 5);
+    assert.ok(slashesEach(w, s.eid, rows), 'a first-result proof slashHolds does not accept');
+    assert.deepEqual(both, firsts, 'a signer of both results is missing a row in one table');
+    assert.equal(rerunProofsOf(w, s.eid).length, 6);
+    assert.ok(!rows.some((p) => toHex(p.nodePubkey) === toHex(schnorr.getPublicKey(w.others[5]))), 'the re-run-only signer got a first-result row');
+  } finally { await w.close(); }
+});
+
+test('first-result proofs on a second-objection VOID: refused by name, deduped, and no money moves', async () => {
+  const w = await sevenSignerNodes(WINDOW_MS);
+  try {
+    const s = await agreedWithoutTheHolder(w);
+    w.rerunBy('dissents', 1, { keys: w.others.slice(5), over: { score: s.replay.score + 2 } });
+    // A STRANGER'S signature on the contradicted run, beside the five.
+    const stranger = rand(32);
+    const mine = decodePlayerResult(splitSignedResult(w.holder.round.results(w.rid, s.eid)
+      .find((r) => toHex(r.nodePubkey) === toHex(w.holder.round.pubkey)).bytes).body);
+    const five = decodePlayerResult(splitSignedResult(w.holder.round.results(w.rid, s.eid)
+      .find((r) => toHex(r.nodePubkey) === firstResultSigners(w, s.eid)[0]).bytes).body);
+    const forged = { ...five, nodePubkey: schnorr.getPublicKey(stranger) };
+    const fid = resultId(forged);
+    w.holder.round.putResult(w.rid, s.eid, forged.nodePubkey, fid, joinSignedResult(encodePlayerResult(forged), schnorr.sign(fid, stranger)));
+    assert.notEqual(toHex(runOf(mine)), toHex(w.runs.dissents.contradicted));
+    const inside = s.agreed + WINDOW_MS - 1;
+    const verifierAt = (now, over = {}) => new Verifier(at(w, now, over), { advertsFor: () => w.adverts, pool: {} });
+    const early = await firstFiling(verifierAt(inside), w.rid, s.eid);
+    assert.equal(w.holder.round.slashProofs(w.rid, s.eid).length, 0, 'a proof was filed while the re-run was PROVISIONALLY_FINAL');
+    assert.equal(at(w, s.agreed + 100).objectRerun(w.rid, s.eid), true);
+    const stake = { stakeSeen: (eid) => toHex(eid) === toHex(s.eid) };
+    const money = async () => ({
+      state: resultFinality(at(w, inside), w.rid, s.eid).state,
+      released: new (w.holder.preimages.constructor)(at(w, inside), {}).mayRelease(w.rid, s.eid).ok,
+      table: (({ ok, entries, why }) => (ok ? entries.map((e) => `${e.outcome}/${e.score}`) : why))(
+        new LockSettlement(at(w, inside, stake), {}).entriesOnRecord(w.rid, null)),
+      forfeit: (await new Forfeit(at(w, inside, { stakeLock: () => ({ fields: {} }) }), {}).message(w.rid, s.eid)).why,
+    });
+    const before = await money();
+    const firsts = firstResultSigners(w, s.eid).filter((k) => k !== toHex(forged.nodePubkey));
+    const withheld = firsts[0];
+    const advert = w.adverts.get(withheld);
+    w.adverts.delete(withheld);
+    const first = await firstFiling(verifierAt(inside), w.rid, s.eid);
+    w.adverts.set(withheld, advert);
+    const second = await firstFiling(verifierAt(inside), w.rid, s.eid);
+    const third = await firstFiling(verifierAt(inside + 10 * WINDOW_MS), w.rid, s.eid);
+    const after = await money();
+    const refusedOf = (who) => first.refused.find((r) => r.startsWith(who.slice(0, 16))) || '';
+    console.log('  FACTS (first-result filing):', JSON.stringify({ early: early.filed.length, first: first.filed.length,
+      second: second.filed, third: third.filed, published: [first.published, second.published, third.published], refused: first.refused }));
+    assert.equal(early.filed.length, 0);
+    assert.equal(first.filed.length, 4);
+    assert.match(refusedOf(toHex(w.holder.round.pubkey)), /this node's own result, which is the replay/);
+    assert.match(refusedOf(toHex(forged.nodePubkey)), /is not on this round's committee/);
+    assert.match(refusedOf(toHex(schnorr.getPublicKey(w.others[5]))), /signed the re-run, not the contradicted result/);
+    assert.match(refusedOf(withheld), /no advertisement names its bond/);
+    assert.deepEqual(second.filed, [withheld]);
+    assert.deepEqual([third.filed, third.published, third.refused.some((r) => r.startsWith(withheld.slice(0, 16)))], [[], 0, false]);
+    assert.deepEqual([first.published, second.published], [4, 1]);
+    assert.deepEqual(w.holder.round.slashProofs(w.rid, s.eid).map((p) => toHex(p.nodePubkey)).sort(), firsts);
+    assert.deepEqual(after, before);
+    assert.deepEqual(before, { state: 'VOID', released: false, table: ['VOID/0'],
+      forfeit: 'that entry is VOID (§13C): nothing is forfeited - nobody acts, and the lock returns to the player at its expiry' });
+  } finally { await w.close(); }
+});
+
+test('§13C VOID at the re-run window\'s end files the five first-result signers on the stubbed clock, and FORFEIT with proven equivocation does too', async () => {
+  const w = await sevenSignerNodes(WINDOW_MS);
+  try {
+    const s = await suspended(w);
+    assert.ok(await holdersRerun(w, s.eid), 'the holder never re-ran the suspended result');
+    w.rerunBy('dissents', 3);                                                   // four of five: §13C at filed + W
+    const verifierAt = (now, over = {}) => new Verifier(at(w, now, over), { advertsFor: () => w.adverts, pool: {} });
+    const suspendedStill = await firstFiling(verifierAt(s.filed + WINDOW_MS - 1), w.rid, s.eid);
+    assert.equal(w.holder.round.slashProofs(w.rid, s.eid).length, 0, 'a proof was filed while SUSPENDED');
+    const proven = { provenTwoFirstMarks: () => true };
+    const forfeitState = resultFinality(at(w, s.filed + WINDOW_MS, proven), w.rid, s.eid).state;
+    const forfeitReleased = new (w.holder.preimages.constructor)(at(w, s.filed + WINDOW_MS, proven), {}).mayRelease(w.rid, s.eid);
+    const forfeited = await firstFiling(verifierAt(s.filed + WINDOW_MS, proven), w.rid, s.eid);
+    const forfeitRows = w.holder.round.slashProofs(w.rid, s.eid).length;
+    const forfeitAfter = new (w.holder.preimages.constructor)(at(w, s.filed + WINDOW_MS, proven), {}).mayRelease(w.rid, s.eid);
+    console.log('  FACTS (13C first-result slash):', JSON.stringify({ suspended: suspendedStill.filed.length, forfeitState,
+      forfeitFiled: forfeited.filed.length, forfeitRows }));
+    assert.equal(suspendedStill.filed.length, 0);
+    assert.equal(forfeitState, 'FORFEIT');
+    assert.equal(forfeited.filed.length, 5);
+    assert.equal(forfeitRows, 5);
+    assert.deepEqual(forfeitAfter, forfeitReleased, 'the FORFEIT filing moved the money');
+    assert.ok(slashesEach(w, s.eid, w.holder.round.slashProofs(w.rid, s.eid)));
+    // AND THE SAME ROWS ON VOID: already stored, the VOID filing dedupes and files nothing more.
+    const voided = await firstFiling(verifierAt(s.filed + WINDOW_MS), w.rid, s.eid);
+    assert.equal(resultFinality(at(w, s.filed + WINDOW_MS), w.rid, s.eid).state, 'VOID');
+    assert.deepEqual([voided.filed, voided.published], [[], 0]);
+    assert.deepEqual(w.holder.round.slashProofs(w.rid, s.eid).map((p) => toHex(p.nodePubkey)).sort(), firstResultSigners(w, s.eid));
+  } finally { await w.close(); }
+});
+
+test('§13C VOID on the real clock: the re-run watch, on its default budget, files the first-result signers itself', async () => {
+  const w = await sevenSignerNodes(WINDOW_MS);                                   // no rerunMs shortcut
+  try {
+    const s = await suspended(w);
+    assert.ok(await holdersRerun(w, s.eid), 'the holder never re-ran the suspended result');
+    w.rerunBy('dissents', 3);
+    const stop = s.filed + 2 * WINDOW_MS + 4000;                                  // filed + 2W, a tick, and margin
+    while (Date.now() < stop && w.holder.round.slashProofs(w.rid, s.eid).length < 5) await wait(100);
+    const rows = w.holder.round.slashProofs(w.rid, s.eid);
+    console.log('  FACTS (13C watch):', JSON.stringify({ rows: rows.length, afterFilingMs: rows.length ? Math.max(...rows.map((p) => p.seenMs)) - s.filed : null,
+      state: resultFinality(w.holder.round, w.rid, s.eid).state }));
+    assert.equal(rows.length, 5, 'the watch stopped before §13C and filed no first-result proof');
+    assert.deepEqual(rows.map((p) => toHex(p.nodePubkey)).sort(), firstResultSigners(w, s.eid));
+    assert.ok(slashesEach(w, s.eid, rows));
+    assert.ok(rows.every((p) => p.seenMs >= s.filed + WINDOW_MS), 'a proof was filed before the re-run window ended');
   } finally { await w.close(); }
 });
 

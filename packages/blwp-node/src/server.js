@@ -977,6 +977,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       console.log(`[rerun] ${toHex(eid).slice(0, 16)} ${r.ok ? `agreed ${r.agreed} of ${r.needed}` : r.why}`);
     }
     const now = resultFinality(round, rid, eid);
+    // AN ENTRY THAT ENDED VOID OR FORFEIT AFTER THE OBJECTION - §13C at the re-run window's end, or a second objection -
+    // still slashes the first result's signers (ruling C steps 2 and 3, RULED the owner 2026-09-24); the watch files them
+    // and stops. Already stored, they dedupe.
+    if ((now.state === 'VOID' || now.state === 'FORFEIT') && (now.noQuorum || now.secondObjection)) {
+      const f = await verifier.fileFirstResultSlashProofs(rid, eid);
+      for (const who of f.filed) console.log(`[slash] ${toHex(eid).slice(0, 16)} filed REPLAY_CONTRADICTS against first-result signer ${who.slice(0, 16)} (${now.state})`);
+      return true;
+    }
     if (now.state !== FINAL || !now.contradictedRunId) return false;
     const f = await verifier.fileSlashProofs(rid, eid, Buffer.from(now.contradictedRunId, 'hex'), Buffer.from(now.runId, 'hex'));
     for (const who of f.filed) console.log(`[slash] ${toHex(eid).slice(0, 16)} filed REPLAY_CONTRADICTS against ${who.slice(0, 16)}`);
@@ -987,9 +995,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   /**
    * AND A WATCH FOR IT, started when an objection suspends a run: the other
    * signer nodes' re-runs arrive over time, so it asks again every `everyMs` until the
-   * run is decided or its budget - `finality.rerunMs`, else the contract's own
-   * objection window - runs out. How long 13C should wait is the parked result
-   * window; a re-run that lands later is acted on at the next close logic.
+   * run is decided or its budget runs out: filed + 2W and one tick, which covers §13C at
+   * filed + W and the latest FINAL before filed + 2W (`finality.rerunMs` is a test aid).
    */
   const rerunTimers = new Set();
 
@@ -1098,7 +1105,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (!row) return;
     const contract = decodeRoundContract(new Uint8Array(row.contract));
     const everyMs = finality.everyMs ?? 2000;
-    const until = Date.now() + (finality.rerunMs ?? Number(contract.objectionWindowMs));
+    // THE WATCH RUNS TO FILED + 2W AND ONE TICK (RULED the owner 2026-09-24): §13C decides at filed + W, and an agreed
+    // re-run is FINAL at the latest before filed + 2W (its own window, slice C2a). It used to stop at the objection plus
+    // one window - before both, so without the `rerunMs` test aid neither the §13C slash nor the FINAL one was filed.
+    const filedMs = round.objectedAt(rid, eid) ?? Date.now();
+    const until = finality.rerunMs !== undefined ? Date.now() + finality.rerunMs
+      : filedMs + 2 * Number(contract.objectionWindowMs) + everyMs;
     const tick = async () => {
       if (shuttingDown) return;
       let done = false;
@@ -2948,6 +2960,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const f = await verifier.fileRerunSlashProofs(new Uint8Array(rid), new Uint8Array(eid));
           for (const who of f.filed) console.log(`[slash] ${toHex(eid).slice(0, 16)} filed REPLAY_CONTRADICTS against re-run signer ${who.slice(0, 16)}`);
           for (const why of f.refused) console.log(`[slash] ${toHex(eid).slice(0, 16)} ${why}`);
+          // AND THE FIRST RESULT'S SIGNERS, AS WELL (ruling C step 2): the objection that proved them wrong already exists.
+          const g = await verifier.fileFirstResultSlashProofs(new Uint8Array(rid), new Uint8Array(eid));
+          for (const who of g.filed) console.log(`[slash] ${toHex(eid).slice(0, 16)} filed REPLAY_CONTRADICTS against first-result signer ${who.slice(0, 16)}`);
         }
         return text(res, taken.status, taken.text);
       }
