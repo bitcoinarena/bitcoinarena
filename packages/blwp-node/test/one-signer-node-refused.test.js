@@ -436,3 +436,40 @@ test('§13C on the chain: a holder whose chain has not got the end block writes 
     assert.deepEqual([edge(w.a, endMs - 1), edge(w.b, endMs + LAG - 1)], [false, false]);
   } finally { await w.close(); }
 });
+
+// §13C'S EVIDENCE IS TIED TO ITS BLOCK (RULED the owner 2026-09-24): a refusal counts only when its block is strictly before
+// the result window's end block, at every holder. THE LATE REFUSAL: A closes before the end block holding nothing of the
+// entry; past the end block the player's on-time first mark reaches B, which refuses it (it does not see the stake), and
+// B closes. The refusal sits at or after the end block - outside at both holders: they write the same record.
+test('a refusal after the result window\'s end block is outside at both holders: A that closed before it and B that refused after it write the same record', async () => {
+  const w = await signerNodes({ endIn: 12000 });
+  try {
+    const run = await joinAndBuild(w, { lockAt: ['a'] });
+    const endMs = CLOCK.endAt(Math.ceil(Number(roundEndMs(w.c)) / 1000) * 1000, WINDOW_MS);
+    const aClosedBeforeEnd = Date.now() < endMs;
+    await say(w.a.port, `close ${toHex(w.rid)}`);
+    await until(() => Date.now() >= endMs + 1000, 30000);
+    const refusedAfterEnd = Date.now() >= endMs;
+    const saidB = [];
+    for (const m of run.messages.slice(0, 2)) saidB.push(String(await say(w.b.port, m)).slice(0, 40));   // to B only, late
+    await until(() => !!w.b.round.refusedFirstMark(run.eid), 5000);
+    await say(w.b.port, `close ${toHex(w.rid)}`);
+    await until(() => [w.a, w.b].every((d) => d.round.noQuorum(run.eid) || d.round.results(w.rid, run.eid).some((r) => toHex(r.nodePubkey) === toHex(d.round.pubkey))), 20000);
+    await wait(500);
+    const rec = (d) => {
+      const nq = d.round.noQuorum(run.eid);
+      const mine = d.round.results(w.rid, run.eid).find((r) => toHex(r.nodePubkey) === toHex(d.round.pubkey));
+      const p = mine && decodePlayerResult(splitSignedResult(mine.bytes).body);
+      return { record: nq ? nq.outcome : p ? `${p.outcome}/${p.score}` : null, finality: resultFinality(d.round, w.rid, run.eid).state,
+        refusedHere: !!d.round.refusedFirstMark(run.eid) };
+    };
+    const after = { a: rec(w.a), b: rec(w.b) };
+    console.log('  FACTS (late refusal):', JSON.stringify({ aClosedBeforeEnd, refusedAfterEnd, saidB, after }));
+    assert.equal(aClosedBeforeEnd, true, 'A did not close before the end block: not the case the test names');
+    assert.equal(refusedAfterEnd, true, 'B did not refuse after the end block: not the case the test names');
+    assert.equal(after.b.refusedHere, true, 'B kept no refusal: not the case the test names');
+    assert.equal(after.a.record, after.b.record, `the holders split on a refusal after the end block: A ${after.a.record}, B ${after.b.record}`);
+    // THE REFUSAL, OUTSIDE, IS NO EVIDENCE: no §13C VOID at either - the same record the player's walk-away gets.
+    assert.ok([after.a, after.b].every((x) => x.record !== 'VOID'), 'a refusal after the end block was counted');
+  } finally { await w.close(); }
+});

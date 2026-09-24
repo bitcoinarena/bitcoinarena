@@ -33,6 +33,7 @@ import { decodeHandout } from '../../protocol/src/handout.js';
 import { stakePointIsTheHandouts } from '../../protocol/src/contracts.js';
 import { firstMarkOutcome, startDeadlineOf } from '../../protocol/src/first-mark.js';
 import { coreForRound, installedCores, runTicksOf } from './cores.js';
+import { chainIndex } from './finality.js';
 
 /**
  * 5-of-7 unless the round's contract is the 2-slot test genesis.
@@ -790,6 +791,7 @@ export class Round {
       'INSERT INTO checkpoints (round_id, entry_id, tick, checkpoint_id, bytes, received_ms) '
       + 'VALUES (?, ?, ?, ?, ?, ?)')
       .run(c.roundId, c.entryId, c.tick, id, bytes, Date.now());
+    this.noteEvidenceBlock(c.roundId, c.entryId, id);
     return this.receiptFor(id);
   }
 
@@ -1069,6 +1071,8 @@ export class Round {
     const [x, y] = Buffer.compare(Buffer.from(a), Buffer.from(b)) < 0 ? [a, b] : [b, a];
     this.db.prepare('INSERT OR IGNORE INTO first_mark_pairs (round_id, entry_id, first_a, first_b, seen_ms) VALUES (?, ?, ?, ?, ?)')
       .run(ca.roundId, ca.entryId, x, y, this.now());
+    this.noteEvidenceBlock(ca.roundId, ca.entryId, checkpointId(ca));
+    this.noteEvidenceBlock(cb.roundId, cb.entryId, checkpointId(cb));
     return true;
   }
 
@@ -1078,7 +1082,7 @@ export class Round {
    * its session key - checked here, synchronously, from this signer node's own store.
    * That pair forfeits the entry with no quorum, no replay and no window.
    */
-  provenTwoFirstMarks(roundIdBytes, entryIdBytes) {
+  provenTwoFirstMarks(roundIdBytes, entryIdBytes, window = null) {
     const pairs = this.equivocation(roundIdBytes, entryIdBytes).map((f) => [f.stored, f.offered]);
     const voided = this.entryVoid(entryIdBytes);
     const late = this.startForfeit(entryIdBytes);
@@ -1086,6 +1090,8 @@ export class Round {
     for (const [a, b] of pairs) {
       try {
         if (same(a, b)) continue;
+        // IN A WINDOW (`window`: { chain, end }; RULED 2026-09-24): the pair counts only if both its marks do.
+        if (window && !(this.markCounts(entryIdBytes, a, window.chain, window.end) && this.markCounts(entryIdBytes, b, window.chain, window.end))) continue;
         const ca = this.playerSigned(a);
         const cb = this.playerSigned(b);
         if (same(ca.entryId, entryIdBytes) && same(cb.entryId, entryIdBytes)
@@ -1145,6 +1151,7 @@ export class Round {
       'INSERT OR IGNORE INTO offered_marks '
       + '(round_id, entry_id, tick, checkpoint_id, bytes, seen_ms) VALUES (?, ?, ?, ?, ?, ?)')
       .run(c.roundId, c.entryId, c.tick, id, bytes, this.now());
+    this.noteEvidenceBlock(c.roundId, c.entryId, id);
   }
 
   /** Signed marks this node refused and kept, beside the chain it did accept. */
@@ -1749,6 +1756,7 @@ export class Round {
   putStartForfeit({ entryId, roundId, markTick, lastTick, mark, why }) {
     this.db.prepare('INSERT OR IGNORE INTO start_forfeits (entry_id, round_id, mark_tick, last_tick, mark, why, decided_ms) '
       + 'VALUES (?, ?, ?, ?, ?, ?, ?)').run(entryId, roundId, markTick, lastTick, mark, why, this.now());
+    this.noteEvidenceBlock(roundId, entryId, mark);
   }
 
   startForfeit(entryIdBytes) {
@@ -1971,10 +1979,75 @@ export class Round {
   /** §16's evidence: what a peer answered when this signer node offered it the on-time first mark. */
   putFirstMarkOffer({ entryId, peer, answer }) {
     this.db.prepare(
-      'INSERT INTO first_mark_offers (entry_id, peer, answer, at_ms) VALUES (?, ?, ?, ?) '
-      + 'ON CONFLICT (entry_id, peer) DO UPDATE SET answer = excluded.answer, at_ms = excluded.at_ms '
+      'INSERT INTO first_mark_offers (entry_id, peer, answer, at_ms, block_hash) VALUES (?, ?, ?, ?, ?) '
+      + 'ON CONFLICT (entry_id, peer) DO UPDATE SET answer = excluded.answer, at_ms = excluded.at_ms, '
+      // THE SAME ANSWER AGAIN keeps the block it was first recorded in: a refusal sits where it was first given.
+      + 'block_hash = CASE WHEN first_mark_offers.answer = excluded.answer AND first_mark_offers.block_hash IS NOT NULL '
+      + 'THEN first_mark_offers.block_hash ELSE excluded.block_hash END '
       + "WHERE first_mark_offers.answer != 'receipted'")
-      .run(entryId, peer, answer, this.now());
+      .run(entryId, peer, answer, this.now(), this.#tipForEntry(entryId));
+  }
+
+  /** Each peer's answer to the offered first mark with the block this node recorded it in (null: none named). */
+  firstMarkOfferBlocks(entryIdBytes) {
+    const out = {};
+    for (const r of this.db.prepare('SELECT peer, answer, block_hash FROM first_mark_offers WHERE entry_id = ?').all(entryIdBytes))
+      out[r.peer] = { answer: r.answer, block: r.block_hash ? new Uint8Array(r.block_hash) : null };
+    return out;
+  }
+
+  /**
+   * §13C'S EVIDENCE NAMES ITS BLOCK (RULED the owner 2026-09-24). THIS NODE'S TIP for a round, or null when it reads no chain
+   * for it: the block an evidence record made now sits in.
+   */
+  tipOf(roundIdBytes) {
+    const row = this.get(roundIdBytes);
+    if (!row) return null;
+    let contract;
+    try { contract = decodeRoundContract(new Uint8Array(row.contract)); } catch { return null; }
+    const chain = chainIndex(this, roundIdBytes, contract);
+    return chain.ok ? chain.tipHash() : null;
+  }
+
+  #tipForEntry(entryIdBytes) {
+    const e = this.db.prepare('SELECT round_id FROM entries WHERE entry_id = ?').get(entryIdBytes);
+    return e ? this.tipOf(new Uint8Array(e.round_id)) : null;
+  }
+
+  /**
+   * A RECORD OF A PLAYER'S MARK AS EVIDENCE, AND THE BLOCK IT SITS IN: this node's tip now, or (`blockHash`) the block a
+   * peer named for its own record of that mark - kept as the peer named it. `mark` is the signed mark or its id. Every
+   * record is kept; the mark is placed at the earliest of them. No block (no chain here): nothing is kept.
+   */
+  noteEvidenceBlock(roundIdBytes, entryIdBytes, mark, blockHash = undefined) {
+    let id = mark;
+    if (mark && mark.length !== 32) {
+      try { id = checkpointId(decodeCheckpoint(splitSigned(mark).body)); } catch { return; }
+    }
+    const block = blockHash === undefined ? this.tipOf(roundIdBytes) : blockHash;
+    if (!id || !block || block.length !== 32) return;
+    this.db.prepare('INSERT OR IGNORE INTO evidence_blocks (entry_id, mark_id, block_hash) VALUES (?, ?, ?)').run(entryIdBytes, id, block);
+  }
+
+  /** Every evidence record this node holds for an entry's marks: [{ markId, block }]. */
+  evidenceBlocks(entryIdBytes) {
+    return this.db.prepare('SELECT mark_id, block_hash FROM evidence_blocks WHERE entry_id = ?').all(entryIdBytes)
+      .map((r) => ({ markId: new Uint8Array(r.mark_id), block: new Uint8Array(r.block_hash) }));
+  }
+
+  /**
+   * DOES A MARK COUNT IN A WINDOW (RULED 2026-09-24)? Placed at the earliest block among this node's records of it that is
+   * in `chain`, it counts when that block is strictly before `end` - the open is not a floor. A mark with no such record
+   * counts nowhere. `mark` is the signed mark or its id.
+   */
+  markCounts(entryIdBytes, mark, chain, end) {
+    let id = mark;
+    if (mark && mark.length !== 32) {
+      try { id = checkpointId(decodeCheckpoint(splitSigned(mark).body)); } catch { return false; }
+    }
+    const heights = this.db.prepare('SELECT block_hash FROM evidence_blocks WHERE entry_id = ? AND mark_id = ?').all(entryIdBytes, id)
+      .map((r) => chain.heightOf(new Uint8Array(r.block_hash))).filter((h) => h !== null);
+    return heights.length > 0 && Math.min(...heights) < end.height;
   }
 
   firstMarkOffers(entryIdBytes) {
@@ -1994,6 +2067,7 @@ export class Round {
   putEntryVoid({ entryId, roundId, firstMark, evidenceKind, evidence = null, why, learned = 'own' }) {
     this.db.prepare('INSERT OR IGNORE INTO entry_voids (entry_id, round_id, first_mark, evidence_kind, evidence, why, decided_ms, learned) '
       + 'VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(entryId, roundId, firstMark, evidenceKind, evidence, why, this.now(), learned);
+    this.noteEvidenceBlock(roundId, entryId, firstMark);
   }
 
   entryVoid(entryIdBytes) {
@@ -2029,8 +2103,10 @@ export class Round {
   putRefusedFirstMark({ bytes, why }) {
     const c = this.onTimeFirstMark(bytes);
     if (!c || this.firstMarkHeld(c.roundId, c.entryId)) return false;
-    return this.db.prepare('INSERT OR IGNORE INTO refused_first_marks (entry_id, round_id, mark, why, at_ms) VALUES (?, ?, ?, ?, ?)')
+    const kept = this.db.prepare('INSERT OR IGNORE INTO refused_first_marks (entry_id, round_id, mark, why, at_ms) VALUES (?, ?, ?, ?, ?)')
       .run(c.entryId, c.roundId, bytes, String(why || 'refused').slice(0, 300), this.now()).changes > 0;
+    this.noteEvidenceBlock(c.roundId, c.entryId, checkpointId(c));
+    return kept;
   }
 
   /**

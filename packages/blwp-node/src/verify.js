@@ -308,7 +308,7 @@ export class Verifier {
         if (r.status !== 200) continue;
         const got = await r.json();
         const c = this.round.onTimeFirstMark(Uint8Array.from(Buffer.from(String(got.mark || ''), 'hex')));
-        if (c && hex(c.entryId) === hex(entryIdBytes)) report.refusedMarks.push({ peer, why: String(got.why || '').slice(0, 120) });
+        if (c && hex(c.entryId) === hex(entryIdBytes)) report.refusedMarks.push({ peer, why: String(got.why || '').slice(0, 120), markId: markIdOf(c) });
       } catch { /* a signer node that cannot answer shows nothing */ }
     }
     this.carried.set(`${hex(roundIdBytes)}:${hex(entryIdBytes)}`, report);
@@ -365,7 +365,7 @@ export class Verifier {
       const why = `waiting on ${down} signer node(s): ${(carried && carried.down.length ? carried.down.join('; ') : 'none of them answered').slice(0, 160)}`
         + `${noCanonical ? ` - ${noCanonical}` : ''}`;
       // PAST THE RESULT WINDOW, still unable to retrieve the transcript: §13C decides (07:49).
-      return this.#unretrievedPastWindow(roundIdBytes, entryId, contract, why) || { entryId, stored: false, waiting: true, why };
+      return (await this.#unretrievedPastWindow(roundIdBytes, entryId, contract, why)) || { entryId, stored: false, waiting: true, why };
     }
 
     // §13C, ONE SIGNER NODE REFUSED (M3.3-34): no mark carried at the threshold, every
@@ -579,7 +579,7 @@ export class Verifier {
    * outcomes. Inside the window it answers null and the signer node waits, as before. This ends the
    * M3.3-34 hold "past the window, keep asking" for a signer node that cannot retrieve the transcript.
    */
-  #unretrievedPastWindow(roundIdBytes, entryId, contract, why) {
+  async #unretrievedPastWindow(roundIdBytes, entryId, contract, why) {
     // PAST THE RESULT WINDOW ON THE CHAIN (RULED 2026-09-24): its end block, not this node's close + W on its clock.
     const rw = resultWindow(this.round, roundIdBytes, contract);
     if (!rw.ok) return null;
@@ -588,8 +588,10 @@ export class Verifier {
     const line = this.round.startLine(roundIdBytes, entryId);
     if (!line) return null;
     const signers = new Set(this.round.results(roundIdBytes, entryId).map((r) => hex(r.nodePubkey))).size;
+    // THE PROOF COUNTS ONLY BEFORE THE END BLOCK (RULED 2026-09-24), after asking the peers for theirs.
+    const proven = await this.#equivocationProven(roundIdBytes, entryId, null, { chain: rw.chain, end: rw.end });
     const d = noQuorumRule({ signatures: signers, needed: line.needed,
-      equivocationProven: this.round.provenTwoFirstMarks(roundIdBytes, entryId),
+      equivocationProven: proven,
       state: finalityOf(this.round, roundIdBytes, entryId).state });
     if (!d.outcome) return null;
     const reason = `${d.why} - this signer node could not retrieve the transcript within the result window `
@@ -623,7 +625,7 @@ export class Verifier {
     if (signerNodes - declined >= line.needed) return null;          // a quorum can still form
     const signers = new Set(this.round.results(roundIdBytes, entryIdBytes).map((r) => hex(r.nodePubkey))).size;
     const d = noQuorumRule({ signatures: signers, needed: line.needed,
-      equivocationProven: this.round.provenTwoFirstMarks(roundIdBytes, entryIdBytes),
+      equivocationProven: await this.#equivocationProven(roundIdBytes, entryIdBytes, null, { chain: rw.chain, end: rw.end }),
       state: finalityOf(this.round, roundIdBytes, entryIdBytes).state });
     if (!d.outcome) return null;
     const why = `${d.why} - past the result window [${rw.open.height}, ${rw.end.height}) with ${signers} of ${line.needed} signatures, and `
@@ -648,15 +650,24 @@ export class Verifier {
   async #noQuorum(roundIdBytes, entryId, contract, down) {
     const had = this.round.noQuorum(entryId);
     if (had) return { entryId, stored: false, decided: had.outcome, why: had.why };
+    // THE RESULT WINDOW, AND THE EVIDENCE IN IT (RULED the owner 2026-09-24): once its end block is here, every piece of evidence
+    // - a late start, a pair, a refusal - counts only if it sits strictly before that block, at every holder. Before it,
+    // nothing is decided, and what evidence there is only says the decision is pending.
+    const rw = resultWindow(this.round, roundIdBytes, contract);
+    const win = rw.ok ? { chain: rw.chain, end: rw.end } : null;
+    if (win) await this.#pullEvidenceBlocks(roundIdBytes, entryId);
+    const counts = (m) => !win || this.round.markCounts(entryId, m, win.chain, win.end);
+    // AN OUTAGE-VOID, THEN THE PLAYER'S SECOND FIRST MARK (ruled 2026-09-12): the
+    // Void stays as history and the entry is decided here like any two first
+    // marks - FORFEIT after the window. A Void with no such proof is decided VOID past the end block: NO FREE STAND
+    // (RULED 2026-09-24) - a late closer holding a peer's Void writes the §13C record every holder writes.
+    const voided = !!this.round.entryVoid(entryId);
     // A signer node down stops the rule - unless this signer node holds the proof of two first
     // marks itself: that FORFEIT needs no quorum (§13B). Measured before: signer node B
     // down through the hold's expiry, A holding the proof decided nothing and
-    // the hold stayed in flight to expire back to the player.
-    if (down && !this.round.provenTwoFirstMarks(roundIdBytes, entryId)) return null;
-    // AN OUTAGE-VOID, THEN THE PLAYER'S SECOND FIRST MARK (ruled 2026-09-12): the
-    // Void stays as history and the entry is decided here like any two first
-    // marks - FORFEIT after the window. A Void with no such proof stands.
-    const voided = !!this.round.entryVoid(entryId);
+    // the hold stayed in flight to expire back to the player. Nor, past the end block, a Void: a pair only a down
+    // signer node holds is the ruled residual, not a reason to write nothing.
+    if (down && !this.round.provenTwoFirstMarks(roundIdBytes, entryId, win) && !(voided && win)) return null;
     const line = this.round.startLine(roundIdBytes, entryId);
     if (!line) return null;
     // A LATE START IS FORFEIT 0 AT THE CLOSE (a390ca0) - unless the player also
@@ -664,8 +675,9 @@ export class Verifier {
     // player's equivocation (§13B). Then no quorum is reachable and the rule's
     // answer is FORFEIT, decided here after the window like every no-quorum
     // outcome - never ENTRY_VOID (measured before: ENTRY_VOID and the lock
-    // forfeited to the player at both signer nodes).
-    const lateHere = !!this.round.startForfeit(entryId);
+    // forfeited to the player at both signer nodes). A late start at or after the end block is outside.
+    const late = this.round.startForfeit(entryId);
+    const lateHere = !!late && counts(late.mark);
     // ...or a proof this signer node holds itself (it refused a second first mark) - or
     // a first mark this signer node holds that no quorum carried: the other signer nodes may
     // hold the player's other first mark, and the proof is portable, so it is
@@ -673,45 +685,103 @@ export class Verifier {
     // mark by forward never saw the first, asked nobody, and decided nothing.
     const suspect = lateHere || voided || this.round.equivocation(roundIdBytes, entryId).length > 0
       || !!this.round.firstMarkHeld(roundIdBytes, entryId);
-    const twoFirst = suspect ? await this.#equivocationProven(roundIdBytes, entryId) : false;
-    if ((lateHere || voided) && !twoFirst) return null;
+    const twoFirst = suspect ? await this.#equivocationProven(roundIdBytes, entryId, null, win) : false;
+    if (lateHere && !twoFirst) return null;
+    if (voided && !twoFirst && !win) return null;
     const held = this.round.firstMarkHeld(roundIdBytes, entryId);
+    // A PEER'S ENTRY_VOID, PAST THE END BLOCK (RULED 2026-09-24): a holder with no first mark of its own reads the Void a peer
+    // holds - its on-time first mark placed at the block that peer named - as the same evidence, and writes the same VOID.
+    // Not recorded here as an ENTRY_VOID: only the §13C record every holder writes.
+    const peerVoid = win && !voided && !twoFirst && !held ? await this.#peerVoidBefore(roundIdBytes, entryId, counts) : null;
     let evidence;
     if (twoFirst) {
       evidence = 'the player signed two first marks for this entry - one of them late (§13B)';
+    } else if (voided) {
+      evidence = 'this signer node holds the entry ENTRY_VOID and no pair of first marks sits before the result window\'s end block';
+    } else if (peerVoid) {
+      evidence = `signer node ${peerVoid} holds the entry ENTRY_VOID on a first mark before the result window's end block, and no pair of first marks sits before it`;
     } else if (held) {
       let c;
       try { c = decodeMark(splitMark(held).body); } catch { return null; }
       if (c.tick > line.lastTick || !c.previousHash.every((x) => x === 0)) return null;
       const receipts = this.round.receiptCount(markIdOf(c));
       if (receipts >= line.needed) return null;
-      const refused = Object.values(this.round.firstMarkOffers(entryId)).filter((a) => a === 'refused').length;
+      // A REFUSAL COUNTS WHERE THIS NODE RECORDED IT (RULED 2026-09-24): strictly before the end block.
+      const offers = this.round.firstMarkOfferBlocks(entryId);
+      const refused = Object.values(offers).filter((o) => o.answer === 'refused'
+        && (!win || (o.block && win.chain.heightOf(o.block) !== null && win.chain.heightOf(o.block) < win.end.height))).length;
       if (refused < line.needed - receipts) return null;
       evidence = `the on-time first mark here has ${receipts} of ${line.needed} receipts and ${refused} signer node(s) that were up refused it`;
     } else {
       // THIS SIGNER NODE REFUSED IT, or ANOTHER SIGNER NODE SHOWS IT REFUSED IT (checked in
       // this close's pull): the first mark reached only a signer node that refused it,
-      // and no signer node holds it. Measured before: FORFEIT 0 at both signer nodes.
-      const r = this.round.refusedFirstMark(entryId);
+      // and no signer node holds it. Measured before: FORFEIT 0 at both signer nodes. Each refusal counts where its
+      // refusing node recorded it (RULED 2026-09-24).
+      const own = this.round.refusedFirstMark(entryId);
+      const r = own && counts(own.mark) ? own : null;
       const carried = this.carried.get(`${hex(roundIdBytes)}:${hex(entryId)}`);
-      const shown = carried && carried.refusedMarks && carried.refusedMarks.length ? carried.refusedMarks : null;
+      const shownAll = carried && carried.refusedMarks && carried.refusedMarks.length ? carried.refusedMarks : [];
+      const shownCounted = shownAll.filter((x) => !x.markId || counts(x.markId));
+      const shown = shownCounted.length ? shownCounted : null;
       if (!r && !shown) return null;
       evidence = r
         ? `this signer node was up, refused the player's on-time first mark (${String(r.why).slice(0, 90)}) and holds none`
         : `${shown.length} signer node(s) that were up refused the player's on-time first mark (${shown[0].why.slice(0, 80)}), and no signer node holds it`;
     }
     // ONLY ONCE THE RESULT WINDOW HAS ENDED ON THE CHAIN (RULED 2026-09-24): its end block, the same for every holder.
-    const rw = resultWindow(this.round, roundIdBytes, contract);
     if (!rw.ok)
       return { entryId, stored: false, waiting: true, noQuorumPending: true,
         why: `no quorum yet: ${evidence} - decided only once the result window ends on the chain: ${rw.why}` };
     const signers = new Set(this.round.results(roundIdBytes, entryId).map((r) => hex(r.nodePubkey))).size;
     const d = noQuorumRule({ signatures: signers, needed: line.needed,
-      equivocationProven: await this.#equivocationProven(roundIdBytes, entryId),
+      equivocationProven: twoFirst || await this.#equivocationProven(roundIdBytes, entryId, null, win),
       state: finalityOf(this.round, roundIdBytes, entryId).state });
     if (!d.outcome) return null;
     this.round.putNoQuorum({ entryId, roundId: roundIdBytes, outcome: d.outcome, why: `${d.why} - ${evidence}` });
     return { entryId, stored: false, decided: d.outcome, why: d.why };
+  }
+
+  /**
+   * EVERY PEER'S EVIDENCE RECORDS FOR AN ENTRY'S MARKS AND THE BLOCKS THEY NAME (§13C, RULED the owner 2026-09-24): kept here as
+   * the peer named them (`/evidence-blocks`), so a mark is placed at the earliest block among the records this node holds.
+   * A peer that cannot answer shows nothing - an earlier record it alone holds is the ruled residual.
+   */
+  async #pullEvidenceBlocks(roundIdBytes, entryId) {
+    for (const peer of this.peersOf(roundIdBytes)) {
+      try {
+        const r = await fetch(`${peer}/evidence-blocks?entry=${hex(entryId)}`);
+        if (r.status !== 200) continue;
+        const got = await r.json();
+        for (const x of (got && got.marks) || []) {
+          if (!/^[0-9a-f]{64}$/.test(String(x.mark)) || !/^[0-9a-f]{64}$/.test(String(x.block))) continue;
+          this.round.noteEvidenceBlock(roundIdBytes, entryId, Uint8Array.from(Buffer.from(x.mark, 'hex')), Uint8Array.from(Buffer.from(x.block, 'hex')));
+        }
+      } catch { /* a signer node that cannot answer shows nothing */ }
+    }
+  }
+
+  /** A peer that holds the entry ENTRY_VOID on an on-time first mark of it that counts in the window (`counts`), or null. */
+  async #peerVoidBefore(roundIdBytes, entryId, counts) {
+    for (const peer of this.peersOf(roundIdBytes)) {
+      try {
+        const r = await fetch(`${peer}/entry-void?entry=${hex(entryId)}`);
+        if (r.status !== 200) continue;
+        const got = await r.json();
+        const mark = Uint8Array.from(Buffer.from(String(got.firstMark || ''), 'hex'));
+        const c = this.round.onTimeFirstMark(mark);
+        if (c && hex(c.entryId) === hex(entryId) && counts(mark)) return peer;
+      } catch { /* a signer node that cannot answer shows nothing */ }
+    }
+    return null;
+  }
+
+  /**
+   * BEFORE A §13C OUTCOME IS READ FROM THE RE-RUN WINDOW (RULED 2026-09-24): the peers' evidence records and their pairs,
+   * kept here, so the window's proof is read off the same records a holder that asked would hold.
+   */
+  async pullEvidence(roundIdBytes, entryIdBytes) {
+    await this.#pullEvidenceBlocks(roundIdBytes, entryIdBytes);
+    await this.#equivocationProven(roundIdBytes, entryIdBytes);
   }
 
   /**
@@ -738,9 +808,13 @@ export class Verifier {
     return { proven, peers: report.peers, reached: report.reached };
   }
 
-  async #equivocationProven(roundIdBytes, entryId, report = null) {
+  async #equivocationProven(roundIdBytes, entryId, report = null, window = null) {
     const found = this.round.entriesOf(roundIdBytes).find((e) => hex(e.entryId) === hex(entryId));
     if (!found) return false;
+    // IN A WINDOW (RULED 2026-09-24): the peers' own records of the marks and the blocks they name come first, so each mark
+    // is placed at the earliest block this node then holds; a pair counts only if both its marks sit before the end block.
+    if (window) await this.#pullEvidenceBlocks(roundIdBytes, entryId);
+    const counts = (m) => !window || this.round.markCounts(entryId, m, window.chain, window.end);
     const verify = (sig, msg, pub) => { try { return sessionCurve.verify(sig, msg, pub); } catch { return false; } };
     const pairs = this.round.equivocation(roundIdBytes, entryId).map((f) => [f.stored, f.offered]);
     // The on-time first mark this signer node voided and the late one it kept: one parent, two chains.
@@ -783,7 +857,7 @@ export class Verifier {
           // A PULLED PAIR OF FIRST MARKS IS KEPT HERE TOO, so this signer node's own
           // record (its forfeit door, its close) says two first marks from now on.
           this.round.putFirstMarkPair({ a, b });
-          return true;
+          if (counts(a) && counts(b)) return true;
         }
       } catch { /* not a proof */ }
     }
@@ -906,7 +980,7 @@ export class Verifier {
       && (noMarkHere || this.#mightGrow(roundIdBytes, entryIdBytes, down))) {
       const why = `waiting on ${down} signer node(s): ${(carried.down.length ? carried.down.join('; ') : 'none of them answered').slice(0, 160)}`;
       // PAST THE RESULT WINDOW, still unable to retrieve the transcript: §13C decides (07:49).
-      return this.#unretrievedPastWindow(roundIdBytes, entryIdBytes, contract, why)
+      return (await this.#unretrievedPastWindow(roundIdBytes, entryIdBytes, contract, why))
         || { entryId: entryIdBytes, stored: false, waiting: true, why };
     }
     const options = { roundRandomness: beacon.hash };

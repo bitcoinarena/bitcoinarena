@@ -21,7 +21,7 @@ import {
 
 
 test('5 of 7, a stake lock, receipts lost between signer nodes that are up: signer nodes 0-4 each record ENTRY_VOID, then a different on-time first mark reaches signer node 5 - measured: refund signatures, whether a committee refund forms, the lock', async () => {
-  const w = await sevenSignerNodes('lock');
+  const w = await sevenSignerNodes('lock', { endIn: 25000 });
   try {
     const run = await joinWithTwoFirstMarks(w, 'lock');
     const setup = await voidAtZeroToFourCut(w, run);
@@ -43,7 +43,7 @@ test('5 of 7, a stake lock, receipts lost between signer nodes that are up: sign
 // receipts-lost order, then signer nodes 0-4 and signer node 5 cut off from each other (signer node 6
 // reaches all) while the lock refund is asked; healed after.
 test('5 of 7, a stake lock, receipts lost, and signer node 5 (the proof) unreachable from the Void signer nodes when the refund is asked - measured: refund signatures, whether a committee refund forms', async () => {
-  const w = await sevenSignerNodes('lock');
+  const w = await sevenSignerNodes('lock', { endIn: 25000 });
   try {
     const run = await joinWithTwoFirstMarks(w, 'lock');
     const setup = await voidAtZeroToFourCut(w, run);
@@ -69,7 +69,7 @@ test('5 of 7, a stake lock, receipts lost, and signer node 5 (the proof) unreach
 // and the player signs NO second first mark. No signer node holds a proof; the fast
 // committee refund of the lock must still form.
 test('5 of 7, a stake lock, receipts lost between signer nodes that are up, and no second first mark - a genuine outage-VOID: the fast committee refund still forms', async () => {
-  const w = await sevenSignerNodes('lock');
+  const w = await sevenSignerNodes('lock', { endIn: 25000 });
   try {
     const run = await joinWithTwoFirstMarks(w, 'lock');
     const setup = await voidAtZeroToFourCut(w, run, { second: false });
@@ -85,7 +85,7 @@ test('5 of 7, a stake lock, receipts lost between signer nodes that are up, and 
 
 
 test('5 of 7, a stake lock, genuine outage-VOID: signer nodes 4-6 down, then caught up late - measured: what each signer node records, the refund doors', async () => {
-  const w = await sevenSignerNodes('lock');
+  const w = await sevenSignerNodes('lock', { endIn: 25000 });
   try {
     const run = await joinWithTwoFirstMarks(w, 'lock');
     const setup = await outageCaughtUp(w, run);

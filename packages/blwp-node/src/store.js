@@ -879,6 +879,17 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (round_id, entry_id)
     );
 
+    -- §13C'S EVIDENCE NAMES ITS BLOCK (RULED the owner 2026-09-24): for each player mark this node holds as evidence - a
+    -- checkpoint, a refused or offered mark, a pair's mark, a late start, the Void's first mark, a refused first mark -
+    -- the block of each record of it: this node's tip when it recorded it, or the block a peer named for its own record.
+    -- The mark is placed at the earliest of them; it counts when that is strictly before the window's end block.
+    CREATE TABLE IF NOT EXISTS evidence_blocks (
+      entry_id   BLOB NOT NULL,
+      mark_id    BLOB NOT NULL,
+      block_hash BLOB NOT NULL,
+      PRIMARY KEY (entry_id, mark_id, block_hash)
+    );
+
     -- AND THE ONE OBJECTION AGAINST AN AGREED RE-RUN (§13A, RULED 2026-09-24, slice C2b): the same shape as the
     -- first, one per entry - a second valid objection voids the entry, and there is no third run to object to.
     CREATE TABLE IF NOT EXISTS rerun_objections (
@@ -897,6 +908,10 @@ export function openStore(path = ':memory:') {
   for (const t of ['objections', 'rerun_objections'])
     if (!db.prepare(`PRAGMA table_info(${t})`).all().some((c) => c.name === 'block_hash'))
       db.exec(`ALTER TABLE ${t} ADD COLUMN block_hash BLOB`);
+  // A PEER'S ANSWER TO AN OFFERED FIRST MARK NAMES ITS BLOCK (§13C, RULED 2026-09-24): this node's tip when it recorded
+  // the answer. A store made before the ruling gets the column; a row there names none, and its refusal counts nowhere.
+  if (!db.prepare('PRAGMA table_info(first_mark_offers)').all().some((c) => c.name === 'block_hash'))
+    db.exec('ALTER TABLE first_mark_offers ADD COLUMN block_hash BLOB');
   // AND BEFORE AN ENTRY_VOID SAID HOW THIS SIGNER NODE LEARNED IT (M3.3-34): every row
   // it already holds was decided on its own record.
   if (!db.prepare('PRAGMA table_info(entry_voids)').all().some((c) => c.name === 'learned'))

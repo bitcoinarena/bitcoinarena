@@ -72,7 +72,7 @@ import { authorityAt, donationSetSignedBy, encodeDonationSetBody, encodeAuthorit
 import { donationSetId } from '../../protocol/src/donation.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { timed, watchLoop } from './slow.js';
-import { resultFinality, resultWindow } from './finality.js';
+import { resultFinality } from './finality.js';
 import { outageOutcome } from '../../protocol/src/entry-void.js';
 import { ENTRY_VOID, netStakeMsat } from '../../protocol/src/payout.js';
 import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../protocol/src/objection.js';
@@ -593,18 +593,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
     return true;
   };
-  // AN ENTRY_VOID THAT STANDS: no second first mark here, and the result window
-  // has passed without one pulled from a peer. Until then the close keeps
-  // asking (a peer may hold the pair); one that does not stand is decided by
-  // the close's no-quorum rule (FORFEIT), so the close keeps it.
-  const voidStands = (rid, eid) => {
-    if (!round.entryVoid(eid) || round.twoFirstMarks(rid, eid)) return false;
-    const row = round.get(rid);
-    if (!row) return true;
-    // PAST THE RESULT WINDOW ON THE CHAIN (RULED 2026-09-24): its end block - opened at the first block at or after the
-    // round's contract end - not this node's close + W. Without that block the Void does not stand yet.
-    return resultWindow(round, rid, decodeRoundContract(new Uint8Array(row.contract))).ok;
-  };
+  // NO FREE STAND (RULED the owner 2026-09-24): an ENTRY_VOID never ends the close by itself. The close keeps it until §13C
+  // writes the record every holder writes once the result window's end block is here - VOID, or FORFEIT on a pair that
+  // sits before that block - and a node that closes after the end block writes it at its first pass. Measured before: two
+  // holders shown a peer's Void by the forfeit doors closed after the end block and wrote nothing, while the four that
+  // closed before it wrote VOID. Only a Void of a round this node does not hold stands.
+  const voidStands = (rid, eid) => !!round.entryVoid(eid) && !round.get(rid);
   function decideOutage(rid, eid, { evidenceKind, evidence = null }) {
     const had = round.entryVoid(eid);
     if (had) return had;
@@ -997,7 +991,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const r = await verifier.rerun(rid, eid, Buffer.from(s.runId, 'hex'));
       console.log(`[rerun] ${toHex(eid).slice(0, 16)} ${r.ok ? `agreed ${r.agreed} of ${r.needed}` : r.why}`);
     }
-    const now = resultFinality(round, rid, eid);
+    let now = resultFinality(round, rid, eid);
+    // §13C AT THE RE-RUN WINDOW'S END READS THE PAIR THE PEERS HOLD TOO (RULED 2026-09-24): their records and blocks are
+    // asked for first, and the outcome read again - a pair counts only if both marks sit before the window's end block.
+    if (now.noQuorum && !now.secondObjection) {
+      try { await verifier.pullEvidence(rid, eid); } catch { /* a peer that cannot answer shows nothing */ }
+      now = resultFinality(round, rid, eid);
+    }
     // AN ENTRY THAT ENDED VOID OR FORFEIT AFTER THE OBJECTION - §13C at the re-run window's end, or a second objection -
     // still slashes the first result's signers (ruling C steps 2 and 3, RULED the owner 2026-09-24); the watch files them
     // and stops. Already stored, they dedupe.
@@ -1931,6 +1931,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!r) return text(res, 404, 'this signer node refused no first mark of that entry');
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ mark: toHex(r.mark), why: r.why }));
+      }
+
+      // §13C'S EVIDENCE AND ITS BLOCKS (RULED the owner 2026-09-24): every record this node holds of an entry's marks as
+      // evidence, each with the block it names - this node's tip when it recorded it, or the block a peer named. A holder
+      // deciding places each mark at the earliest block among the records it then holds.
+      if (req.method === 'GET' && url.pathname === '/evidence-blocks') {
+        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
+        if (eid.length !== 32) return text(res, 400, 'an entry is asked for by its id');
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ marks: round.evidenceBlocks(new Uint8Array(eid)).map((x) => ({ mark: toHex(x.markId), block: toHex(x.block) })) }));
       }
 
       if (req.method === 'GET' && url.pathname === '/start-forfeit') {
