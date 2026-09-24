@@ -22,6 +22,7 @@ import { resultFinality } from '../src/finality.js';
 import { LockSettlement } from '../src/settlement.js';
 import { Forfeit } from '../src/forfeit.js';
 import { objectionIntake } from '../src/server.js';
+import * as serverModule from '../src/server.js';
 import { Verifier } from '../src/verify.js';
 import { slashHoldsOnRerun, splitRerunSlashEvidence, slashProofId, REPLAY_CONTRADICTS, slashHolds, splitSlashEvidence } from '../../protocol/src/slash.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
@@ -565,6 +566,94 @@ test('§13C VOID on the real clock: the re-run watch, on its default budget, fil
     assert.deepEqual(rows.map((p) => toHex(p.nodePubkey)).sort(), firstResultSigners(w, s.eid));
     assert.ok(slashesEach(w, s.eid, rows));
     assert.ok(rows.every((p) => p.seenMs >= s.filed + WINDOW_MS), 'a proof was filed before the re-run window ended');
+  } finally { await w.close(); }
+});
+
+// THE ROUND SETTLES WITHOUT AN ENTRY STILL IN ITS RE-RUN WINDOW (§13A, RULED the owner 2026-09-24, slice C3a). Today the
+// settle gate (server.js) waits while any entry is SUSPENDED or PROVISIONALLY_FINAL, and entriesOnRecord refuses the
+// whole round. Now: an entry still SUSPENDED, or PROVISIONALLY_FINAL on a re-run, is left out of the payout table and
+// its lock is neither claimed nor forfeited; the rest settle as today. What its lock does after the round settled is
+// read from the round's recorded claims and the entry's finality - VOID returns at expiry, FORFEIT or FAILED waits for
+// the second settlement (C3b, not built), a qualifier's stake comes back by its own forfeit.
+// TODAY'S GATE, literally (server.js before C3a): the settlement waited on every PROVISIONALLY_FINAL and SUSPENDED entry.
+const settleWaitsOnToday = (standing) => standing.filter((x) => x.state === 'PROVISIONALLY_FINAL' || x.state === 'SUSPENDED');
+const waitsOn = (standing) => (serverModule.settleWaitsOn || settleWaitsOnToday)(standing);
+const lockAfter = (settlement, rid, eid) => (typeof settlement.lockAfterSettlement === 'function'
+  ? settlement.lockAfterSettlement(rid, eid) : { claimed: false, why: 'lockAfterSettlement does not exist' });
+
+async function settledWithOneObjected(w, reruns) {
+  w.sign('agrees', () => ({}));
+  const s = await suspended(w);
+  assert.ok(await holdersRerun(w, s.eid), 'the holder never re-ran the suspended result');
+  w.rerunBy('dissents', reruns);
+  const agreesId = w.runs.agrees.eid;
+  // Each entry's verified lock, as the round's settlement names them; only these two stakes are counted seen.
+  const lockOf = (eid) => ({ outpoint: `${toHex(eid)}:0`, fields: {} });
+  const seen = new Set([toHex(agreesId), toHex(s.eid)]);
+  const settledWith = (claimed) => ({ stakeSeen: (eid) => seen.has(toHex(eid)), stakeLock: (eid) => lockOf(eid),
+    lockSettlementMoves: () => ({ txid: 'aa', claims: claimed.map((eid) => lockOf(eid).outpoint), payouts: 0 }) });
+  return { ...s, agreesId, settledWith };
+}
+
+test('C3a: an entry still SUSPENDED is left out and the round settles without it; SUSPENDED, then VOID, then FORFEIT', async () => {
+  const w = await sevenSignerNodes(WINDOW_MS);
+  try {
+    const s = await settledWithOneObjected(w, 3);                               // four of five: §13C at filed + W
+    const inWindow = at(w, s.filed + WINDOW_MS - 1, s.settledWith([s.agreesId]));
+    const standing = [s.agreesId, s.eid].map((eid) => ({ entryId: toHex(eid), ...resultFinality(inWindow, w.rid, eid) }));
+    const gate = waitsOn(standing);
+    const on = new LockSettlement(inWindow, {}).entriesOnRecord(w.rid, null);
+    console.log('  FACTS (C3a gate):', JSON.stringify({ states: standing.map((x) => x.state), waitsOn: gate.map((x) => x.state),
+      onRecord: on.ok ? on.entries.map((e) => `${toHex(e.entryId).slice(0, 8)}:${e.outcome}`) : on.why }));
+    assert.deepEqual(standing.map((x) => x.state), ['FINAL', 'SUSPENDED']);
+    assert.deepEqual(gate, [], 'the settlement still waits on the suspended entry');
+    assert.equal(on.ok, true, on.why);
+    assert.deepEqual(on.entries.map((e) => toHex(e.entryId)), [toHex(s.agreesId)]);
+    assert.ok(on.leftOut.some((x) => toHex(x.entryId) === toHex(s.eid) && /still in its re-run window/.test(x.why)));
+    const settlement = new LockSettlement(inWindow, {});
+    assert.match(lockAfter(settlement, w.rid, s.eid).why, /left out of the round's settlement: still in its re-run window/);
+    assert.equal(lockAfter(settlement, w.rid, s.agreesId).claimed, true);
+    const forfeitNow = await new Forfeit(at(w, s.filed + WINDOW_MS - 1, { stakeLock: () => ({ fields: {} }) }), {}).message(w.rid, s.eid);
+    assert.match(forfeitNow.why, /no forfeit before the result is final/);
+    assert.equal(new (w.holder.preimages.constructor)(inWindow, {}).mayRelease(w.rid, s.eid).ok, false);
+    // THEN VOID (§13C at filed + W): nothing claims or forfeits it; the lock returns at expiry, the forfeit refuses.
+    const voided = at(w, s.filed + WINDOW_MS, s.settledWith([s.agreesId]));
+    assert.equal(resultFinality(voided, w.rid, s.eid).state, 'VOID');
+    const afterVoid = lockAfter(new LockSettlement(voided, {}), w.rid, s.eid);
+    assert.deepEqual([afterVoid.claimed, afterVoid.why], [false, 'VOID: nothing acts, and the lock returns to the player at its expiry']);
+    assert.match((await new Forfeit(at(w, s.filed + WINDOW_MS, { stakeLock: () => ({ fields: {} }) }), {}).message(w.rid, s.eid)).why,
+      /that entry is VOID \(§13C\): nothing is forfeited/);
+    // THEN FORFEIT (§13C with proven equivocation): not claimed in C3a, by name.
+    const forfeited = at(w, s.filed + WINDOW_MS, { ...s.settledWith([s.agreesId]), provenTwoFirstMarks: () => true });
+    assert.equal(resultFinality(forfeited, w.rid, s.eid).state, 'FORFEIT');
+    const afterForfeit = lockAfter(new LockSettlement(forfeited, {}), w.rid, s.eid);
+    assert.deepEqual([afterForfeit.claimed, afterForfeit.why], [false, 'claimed in the round\'s second settlement, not built yet']);
+  } finally { await w.close(); }
+});
+
+test('C3a: an entry PROVISIONALLY_FINAL on its re-run is left out too, and once FINAL and FAILED its lock waits for the second settlement', async () => {
+  const w = await sevenSignerNodes(WINDOW_MS);
+  try {
+    const s = await settledWithOneObjected(w, 4);                               // five of seven: an agreed re-run
+    const seen = w.holder.round.reruns(w.rid, s.eid).map((r) => r.seenMs).sort((a, b) => a - b);
+    const agreed = seen[4];
+    const inWindow = at(w, agreed + WINDOW_MS - 1, s.settledWith([s.agreesId]));
+    const standing = [s.agreesId, s.eid].map((eid) => ({ entryId: toHex(eid), ...resultFinality(inWindow, w.rid, eid) }));
+    const on = new LockSettlement(inWindow, {}).entriesOnRecord(w.rid, null);
+    assert.deepEqual(standing.map((x) => x.state), ['FINAL', 'PROVISIONALLY_FINAL']);
+    assert.deepEqual(waitsOn(standing), [], 'the settlement still waits on the re-run inside its own window');
+    assert.equal(on.ok, true, on.why);
+    assert.deepEqual(on.entries.map((e) => toHex(e.entryId)), [toHex(s.agreesId)]);
+    // AN ORDINARY PROVISIONALLY_FINAL - inside its first objection window, no re-run - is still waited on.
+    assert.deepEqual(waitsOn([{ entryId: 'x', state: 'PROVISIONALLY_FINAL' }]).length, 1);
+    // THEN FINAL, the replay FAILED: not claimed in C3a, by name; not a qualifier, so no forfeit either.
+    const final = at(w, agreed + WINDOW_MS, s.settledWith([s.agreesId]));
+    const f = resultFinality(final, w.rid, s.eid);
+    assert.equal(f.state, 'FINAL', f.why);
+    const afterFinal = lockAfter(new LockSettlement(final, {}), w.rid, s.eid);
+    assert.deepEqual([afterFinal.claimed, afterFinal.why], [false, 'claimed in the round\'s second settlement, not built yet']);
+    assert.match((await new Forfeit(at(w, agreed + WINDOW_MS, { stakeLock: () => ({ fields: {} }) }), {}).message(w.rid, s.eid)).why,
+      /not a qualifier, so its stake lock is not forfeited|this signer node verified no stake lock|no share of the round's claim key/);
   } finally { await w.close(); }
 });
 

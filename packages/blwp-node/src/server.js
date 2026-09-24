@@ -170,6 +170,12 @@ export const NOTHING_IS_FUNDED = () => false;
  * re-run - and stored once; whether it holds is `resultFinality`'s to say. One while the run is still SUSPENDED is the
  * first objection again, and one after that window closed changes nothing: 409, nothing stored.
  */
+/**
+ * WHAT THE ROUND'S ONE SETTLEMENT STILL WAITS ON (slice C3a): a run PROVISIONALLY_FINAL inside its first objection
+ * window. Not a SUSPENDED entry and not one PROVISIONALLY_FINAL on a re-run - those are left out and settle on their own.
+ */
+export const settleWaitsOn = (standing) => standing.filter((x) => x.state === PROVISIONALLY_FINAL && !x.rerun);
+
 export function objectionIntake(round, rid, eid) {
   try {
     if (round.object(rid, eid)) return { status: 201, text: 'objected' };
@@ -1417,6 +1423,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           closesAtMs: s.closesAtMs === undefined ? null : Number(s.closesAtMs), why: s.why };
       });
     const suspended = entries.filter((e) => stateOf(e.entryId) === SUSPENDED).map((e) => toHex(e.entryId));
+    // THE SETTLEMENT NO LONGER WAITS ON AN ENTRY STILL IN ITS RE-RUN WINDOW (§13A, RULED the owner 2026-09-24, slice C3a):
+    // SUSPENDED, or PROVISIONALLY_FINAL on a re-run, is left out of the table (`entriesOnRecord`) and the round settles
+    // without it. A run inside its first objection window is still waited on.
+    const waitsFor = settleWaitsOn(entries.map((e) => ({ entryId: toHex(e.entryId), ...(standing.get(toHex(e.entryId)) || {}) })));
     // EVERY ROUND SETTLES IN ITS FEDERATION (§23.6, RULED 2026-09-22 22:59: the custody field has ONE
     // value, FEDERATION). This node holds no invoice to act on - the hold-invoice settle that used to
     // follow here, and the on-chain pool payout that only ever ran after it, were THRESHOLD_LN's and
@@ -1425,12 +1435,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // the watch after one pass, and the signer node that posted first never gathered the other's.
     // A LOCK ROUND'S LOSERS ARE CLAIMED (W4, the owner 2026-09-14 07:22: "a loser
     // loses the stake. The lock is claimed into the pool. Winners are paid from
-    // that."): once nothing waits inside its window and nothing is suspended,
+    // that."): once nothing waits inside its first objection window (an entry in its re-run window is left out, C3a),
     // the signer nodes' one settlement claims every loser's lock and pays each
     // qualifier's payout contract. Measured before: nothing claimed a loser's
     // lock, and it went back to the loser at its expiry.
     let lockSettled = null;
-    if (locksStake(contract) && !waiting.length && !suspended.length) {
+    if (locksStake(contract) && !waitsFor.length) {
       lockSettled = await settlements.settle(roundIdBytes).catch((e) => ({ ok: false, why: e.message }));
       console.log(`[settle] ${toHex(roundIdBytes).slice(0, 16)} ${lockSettled.ok ? lockSettled.why : `nothing claimed: ${lockSettled.why}`}`);
     }
