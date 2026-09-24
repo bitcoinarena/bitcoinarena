@@ -1217,7 +1217,7 @@ export class Client {
   }
 
   // NO `invoice()` AND NO `payStake()` (§23.6, RULED 2026-09-22 22:59). They quoted a joined player the
-  // hold invoice their entry named and paid it through the wallet - THRESHOLD_LN's stake-in, gone with it.
+  // hold invoice their entry named and paid it through the wallet - the withdrawn Lightning custody's stake-in, gone with it.
   // A lock round's stake is locked in the federation by `page-lock.js`, and the page already refused
   // to reach either of these for a lock round or a free one, which is every round that can exist now.
 
