@@ -26,6 +26,7 @@
 // slashing height MINUS the round's own seats, and 25% to the developers
 // members, as fixed by the Round Contract" - needs a contract field that does
 // not exist yet, and adding one moves every round id. It is named and left.
+import { SIGNED_RERUN_BYTES, splitSignedRerun, decodeRerunResult, rerunResultId, runOf } from './rerun.js';
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
 import {
@@ -231,6 +232,30 @@ export function splitSlashEvidence(bytes) {
 }
 
 /**
+ * A PROOF AGAINST A RE-RUN SIGNER, AS IT IS PUBLISHED (§13A, RULED the owner 2026-09-24, slice C2c): the same proof body,
+ * and beside it the accused's own signed RE-RUN result `{ contradictedRunId, result }` - what a re-run signer signed,
+ * over `rerunResultId` - never a signed player result, so it does not go through `joinSlashEvidence`. Its own fixed
+ * size, so neither shape can be read as the other.
+ */
+export const RERUN_SLASH_EVIDENCE_BYTES = SLASH_PROOF_BYTES + SIGNED_RERUN_BYTES;
+
+export function joinRerunSlashEvidence(proofBytes, signedRerun) {
+  if (proofBytes.length !== SLASH_PROOF_BYTES) throw new Error(`a slash proof is ${SLASH_PROOF_BYTES} bytes, got ${proofBytes.length}`);
+  if (signedRerun.length !== SIGNED_RERUN_BYTES) throw new Error(`a signed re-run result is ${SIGNED_RERUN_BYTES} bytes, got ${signedRerun.length}`);
+  const out = new Uint8Array(RERUN_SLASH_EVIDENCE_BYTES);
+  out.set(proofBytes, 0);
+  out.set(signedRerun, SLASH_PROOF_BYTES);
+  return out;
+}
+
+export function splitRerunSlashEvidence(bytes) {
+  if (!(bytes instanceof Uint8Array) || bytes.length !== RERUN_SLASH_EVIDENCE_BYTES)
+    throw new Error(`a published re-run slash proof is ${RERUN_SLASH_EVIDENCE_BYTES} bytes`);
+  const proofBytes = bytes.subarray(0, SLASH_PROOF_BYTES);
+  return { proof: decodeSlashProof(proofBytes), proofBytes, signedRerun: bytes.subarray(SLASH_PROOF_BYTES) };
+}
+
+/**
  * WHAT THE SLASHING TRANSACTION HAS TO CARRY, 5A.3B step 4:
  * `OP_RETURN = H(fraud_proof) ‖ retrieval hint`.
  *
@@ -335,6 +360,65 @@ export function slashHolds({
     bond: { txid: proof.bondTxid, vout: proof.bondVout },
     commitment: slashCommitment(proof),
     why: 'the node signed a result the canonical transcript does not replay to',
+  };
+}
+
+/**
+ * DOES THIS PROOF SLASH A RE-RUN SIGNER'S BOND? (§13A: once a second valid objection has made the entry VOID, "the
+ * signers of that result are slashed as well"; RULED the owner 2026-09-24, slice C2c.) The offence is the same,
+ * REPLAY_CONTRADICTS, and so are the comparisons, on the record a re-run signer signed: the accused is on the committee;
+ * the evidence is their own signature - `verify` is injected, no curve lives in this package - over `rerunResultId`,
+ * about this round, this player and the canonical transcript, and it is the agreed re-run's run (`agreedRunId`), not
+ * another outcome; the bond is the one their own advertisement names; and the one judgement is handed in, as in
+ * `slashHolds`: this node's own re-run differs from the agreed one - the difference that made the second objection hold.
+ */
+export function slashHoldsOnRerun({
+  proof, signedRerun, advert, committee, canonicalTranscriptHash, agreedRunId, replayDiffers, verify,
+}) {
+  if (!Array.isArray(committee) || !committee.length)
+    return { slashed: false, why: 'no committee, so nobody was serving this round' };
+  if (!committee.some((k) => hex(k) === hex(proof.nodePubkey)))
+    return { slashed: false, why: `${hex(proof.nodePubkey)} is not on this round's committee, so it signed nothing it owed` };
+  if (typeof verify !== 'function') return { slashed: false, why: 'checking a re-run signature needs a verifier, and none was injected' };
+
+  let x, signature;
+  try { const split = splitSignedRerun(signedRerun); signature = split.signature; x = decodeRerunResult(split.body); }
+  catch (e) { return { slashed: false, why: `the evidence is not a signed re-run result: ${e.message}` }; }
+  const signed = rerunResultId(x);
+  if (hex(signed) !== hex(proof.signedResultId))
+    return { slashed: false, why: 'the signed re-run result attached is not the one this proof names' };
+  if (hex(x.result.nodePubkey) !== hex(proof.nodePubkey))
+    return { slashed: false, why: 'the re-run result attached names a different signer' };
+  let theirs = false;
+  try { theirs = verify(signature, signed, x.result.nodePubkey) === true; } catch { theirs = false; }
+  if (!theirs) return { slashed: false, why: 'the signature on the re-run result attached is not the accused node\'s' };
+  if (hex(x.result.roundId) !== hex(proof.roundId))
+    return { slashed: false, why: 'the re-run result attached is for a different round' };
+  if (hex(x.result.playerPubkey) !== hex(proof.playerPubkey))
+    return { slashed: false, why: 'the re-run result attached is for a different player' };
+  if (!(canonicalTranscriptHash instanceof Uint8Array))
+    return { slashed: false, why: 'no canonical transcript to have replayed' };
+  if (hex(proof.transcriptHash) !== hex(canonicalTranscriptHash))
+    return { slashed: false, why: 'the proof names a transcript that is not the canonical one' };
+  if (hex(x.result.transcriptHash) !== hex(canonicalTranscriptHash))
+    return { slashed: false, why: 'the re-run result attached was signed about a different transcript, so no replay of this one contradicts it' };
+  if (!(agreedRunId instanceof Uint8Array) || hex(runOf(x.result)) !== hex(agreedRunId))
+    return { slashed: false, why: `${hex(proof.nodePubkey)} is not among the agreeing re-runs: its re-run is another outcome` };
+  if (!advert || hex(advert.nodePubkey) !== hex(proof.nodePubkey))
+    return { slashed: false, why: 'no advertisement from the accused node to name its bond' };
+  if (hex(advert.bondTxid) !== hex(proof.bondTxid) || advert.bondVout !== proof.bondVout)
+    return {
+      slashed: false,
+      why: `the proof names bond ${hex(proof.bondTxid)}:${proof.bondVout} and the node advertised ${hex(advert.bondTxid)}:${advert.bondVout}`,
+    };
+  if (replayDiffers !== true)
+    return { slashed: false, why: 'no replay has contradicted the agreed re-run' };
+  return {
+    slashed: true,
+    offence: REPLAY_CONTRADICTS,
+    bond: { txid: proof.bondTxid, vout: proof.bondVout },
+    commitment: slashCommitment(proof),
+    why: 'the node signed a re-run the canonical transcript does not replay to, and a second valid objection proved it',
   };
 }
 

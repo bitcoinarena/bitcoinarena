@@ -1704,6 +1704,22 @@ export class Round {
         bytes: new Uint8Array(r.bytes), seenMs: Number(r.seen_ms) }));
   }
 
+  /** A slash proof against one signer of an agreed re-run (slice C2c); one per signer, a second is ignored. */
+  putRerunSlashProof(roundIdBytes, entryIdBytes, nodePubkey, proofId, bytes) {
+    return this.db.prepare(
+      'INSERT OR IGNORE INTO rerun_slash_proofs (round_id, entry_id, node_pubkey, proof_id, bytes, seen_ms) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(roundIdBytes, entryIdBytes, nodePubkey, proofId, bytes, this.now()).changes;
+  }
+
+  /** Every slash proof this node filed against the signers of a run's agreed re-run. */
+  rerunSlashProofs(roundIdBytes, entryIdBytes) {
+    return this.db.prepare(
+      'SELECT node_pubkey, proof_id, bytes, seen_ms FROM rerun_slash_proofs WHERE round_id = ? AND entry_id = ? ORDER BY node_pubkey')
+      .all(roundIdBytes, entryIdBytes)
+      .map((r) => ({ nodePubkey: new Uint8Array(r.node_pubkey), proofId: new Uint8Array(r.proof_id),
+        bytes: new Uint8Array(r.bytes), seenMs: Number(r.seen_ms) }));
+  }
+
   /** A stake lock this signer node verified: the handed contract (JSON), its id, its outpoint. */
   putStakeLock({ entryId, roundId, outpoint, fields, contractId }) {
     this.db.prepare('INSERT OR REPLACE INTO stake_locks (entry_id, round_id, outpoint, fields, contract_id, verified_ms) VALUES (?, ?, ?, ?, ?, ?)')

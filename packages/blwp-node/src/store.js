@@ -632,6 +632,18 @@ export function openStore(path = ':memory:') {
       seen_ms     INTEGER NOT NULL,
       PRIMARY KEY (round_id, entry_id, node_pubkey)
     );
+    -- AND THE PROOFS AGAINST AN AGREED RE-RUN'S SIGNERS (§13A, RULED 2026-09-24, slice C2c): their own table, one row
+    -- per (round, entry, signer), so a node that signed both the first result and the re-run is filed against once
+    -- in each and never collides with its first-result row. The bytes are the proof and the signed re-run beside it.
+    CREATE TABLE IF NOT EXISTS rerun_slash_proofs (
+      round_id    BLOB NOT NULL,
+      entry_id    BLOB NOT NULL,
+      node_pubkey BLOB NOT NULL,
+      proof_id    BLOB NOT NULL,
+      bytes       BLOB NOT NULL,
+      seen_ms     INTEGER NOT NULL,
+      PRIMARY KEY (round_id, entry_id, node_pubkey)
+    );
 
     -- A STAKE LOCK THIS SIGNER NODE VERIFIED (23.1 step 5): the contract the player
     -- handed over, the federation's id for it, and where it sits.

@@ -218,3 +218,51 @@ test('rubbish is refused as evidence rather than decoded into an offence', () =>
     assert.match(no.why, /not a signed result|not the one this proof names/);
   }
 });
+
+// A PROOF AGAINST A RE-RUN SIGNER (§13A, RULED the owner 2026-09-24, slice C2c): the evidence is the accused's own signed
+// re-run result, checked over rerunResultId, with the verifier injected (no curve lives in this package) - so a test
+// verifier that knows one signature stands in for the curve. Each refusal is by name; the two evidence shapes have
+// their own sizes, so neither reads as the other.
+test('slashHoldsOnRerun takes the accused\'s own signed re-run of the agreed outcome, and refuses everything else by name', async () => {
+  const { encodeRerunResult, joinSignedRerun, rerunResultId, runOf } = await import('../src/rerun.js');
+  const { slashHoldsOnRerun, joinRerunSlashEvidence, splitRerunSlashEvidence, splitSlashEvidence, RERUN_SLASH_EVIDENCE_BYTES,
+    SLASH_EVIDENCE_BYTES } = await import('../src/slash.js');
+  const THEIRS = new Uint8Array(64).fill(7);
+  const verify = (sig) => toHex(sig) === toHex(THEIRS);
+  const rerunBy = (node, over = {}, sig = THEIRS) => {
+    const x = { contradictedRunId: b32(0x66), result: resultBy(node, over) };
+    return { x, bytes: joinSignedRerun(encodeRerunResult(x), sig) };
+  };
+  const agreed = rerunBy(NODE);
+  const agreedRunId = runOf(agreed.x.result);
+  const proofOf = (rr, over = {}) => ({ ...proofFor(rr.x.result), signedResultId: rerunResultId(rr.x), ...over });
+  const check = (rr, over = {}) => slashHoldsOnRerun({
+    proof: proofOf(rr), signedRerun: rr.bytes, advert: advertFor(NODE), committee, canonicalTranscriptHash: CANON,
+    agreedRunId, replayDiffers: true, verify, ...over,
+  });
+
+  const held = check(agreed);
+  assert.equal(held.slashed, true, held.why);
+  assert.equal(held.offence, REPLAY_CONTRADICTS);
+  const refusals = [
+    [check(agreed, { committee: committee.slice(1) }), /is not on this round's committee/],
+    [check(rerunBy(NODE, {}, new Uint8Array(64).fill(8))), /the signature on the re-run result attached is not the accused node's/],
+    [check(agreed, { verify: undefined }), /needs a verifier/],
+    [check(agreed, { proof: proofOf(agreed, { signedResultId: b32(0x99) }) }), /is not the one this proof names/],
+    [check(rerunBy(NODE, { score: 1 })), /is not among the agreeing re-runs/],
+    [(() => { const other = rerunBy(NODE, { transcriptHash: b32(0x45) });
+      return check(other, { proof: proofOf(other, { transcriptHash: CANON }) }); })(), /signed about a different transcript/],
+    [check(agreed, { proof: proofOf(agreed, { transcriptHash: b32(0x45) }) }), /names a transcript that is not the canonical one/],
+    [check(agreed, { advert: undefined }), /no advertisement from the accused node/],
+    [check(agreed, { advert: advertFor(NODE, { bondVout: 4 }) }), /the proof names bond .* and the node advertised/],
+    [check(agreed, { replayDiffers: false }), /no replay has contradicted the agreed re-run/],
+    [check(agreed, { replayDiffers: undefined }), /no replay has contradicted the agreed re-run/],
+  ];
+  for (const [r, why] of refusals) { assert.equal(r.slashed, false); assert.match(r.why, why); }
+
+  const evidence = joinRerunSlashEvidence(encodeSlashProof(proofOf(agreed)), agreed.bytes);
+  assert.equal(evidence.length, RERUN_SLASH_EVIDENCE_BYTES);
+  assert.notEqual(RERUN_SLASH_EVIDENCE_BYTES, SLASH_EVIDENCE_BYTES);
+  assert.deepEqual(splitRerunSlashEvidence(evidence).proof, decodeSlashProof(encodeSlashProof(proofOf(agreed))));
+  assert.throws(() => splitSlashEvidence(evidence), /a published slash proof is/);
+});
