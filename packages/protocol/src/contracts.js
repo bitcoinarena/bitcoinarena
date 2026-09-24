@@ -207,15 +207,13 @@ export function encodeRoundContract(c) {
  *
  * So this throws, exactly as a bad length or an unknown type byte throws. It does not return a label,
  * a null, or a flag a caller could choose to ignore - any of which would be the decode-only value the
- * ruling refuses. Byte 0 is named in the message because that is the one a real record carries, and a
- * node operator reading the error deserves to know which history just stopped being a round.
+ * ruling refuses. Every byte but FEDERATION's throws the same sentence, byte 0 as byte 2: a message
+ * that named what byte 0 once was would be that label.
  */
 function custodyOrRefuse(byte) {
   const name = custodyName(byte);
   if (name === null)
-    throw new Error(`custody byte ${byte} is not a custody of this network: the one value is FEDERATION`
-      + (byte === 0 ? ' (byte 0 was the withdrawn THRESHOLD_LN; a record carrying it is not a round, '
-        + 'past rounds included - RULED 2026-09-22)' : ''));
+    throw new Error(`custody byte ${byte} is not a custody of this network: the one value is FEDERATION`);
   return name;
 }
 

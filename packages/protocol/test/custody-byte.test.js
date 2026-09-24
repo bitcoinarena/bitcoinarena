@@ -73,3 +73,16 @@ test('a record that carries byte 0 does not parse: it throws, it is not read as 
   unknown[at] = 2;
   assert.throws(() => decodeRoundContract(unknown), /custody byte 2 is not a custody of this network/);
 });
+
+// NO LABEL IN THE THROW EITHER (RULED the owner 2026-09-24, the enum slice's second cut): byte 0 throws the sentence byte 2
+// throws, with only the digit changed. A message that named what byte 0 once was would be the decode-only label.
+test('decoding byte 0 and byte 2 throws one sentence, only the digit changed, and neither names the withdrawn custody', () => {
+  const fed = encodeRoundContract(sample());
+  const at = custodyOffset(fed);
+  const thrown = (b) => { const x = Uint8Array.from(fed); x[at] = b; try { decodeRoundContract(x); } catch (e) { return e.message; } return null; };
+  const [zero, two] = [thrown(0), thrown(2)];
+  console.log('  FACTS:', JSON.stringify({ zero, two }));
+  assert.equal(zero, 'custody byte 0 is not a custody of this network: the one value is FEDERATION');
+  assert.equal(two, zero.replace('byte 0', 'byte 2'), 'byte 0 and byte 2 do not throw one sentence');
+  for (const m of [zero, two]) assert.equal(m.includes('THRESHOLD_LN'), false, `the throw names the withdrawn custody: ${m}`);
+});
