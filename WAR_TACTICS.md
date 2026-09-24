@@ -198,6 +198,14 @@ the owner ordered is in the state and not on the screen. Each is a client test.
 - **An assault is announced.** On the tick the core's assault word is set: a banner - `BEARS ASSAULT
   HIGH` - and a sound; on the flip, `HIGH TAKEN`; on the end without a flip, `ASSAULT ON HIGH
   FAILS`. Nothing else in the HUD may be louder than this while it runs (§4.12).
+  **It is announced whether or not anything of it is in view (RULED 2026-09-24; the owner: resolve every
+  parked question).** The finding on Daily 0.0.1842 - three of four road declarations announced with no
+  on-lane armour in the camera - is the rule working, not a defect: an assault is the war's news, the
+  market's move turned into a fight over a named place, and the player hears the news where he is,
+  as a driver hears the radio. The banner already names the side and the place, which is what tells
+  him where to look or whether to route around it. Tying it to the camera would make the same event
+  news for one player and silence for another, and would teach the player that turning the camera is
+  how the war happens. **It stays, unconditioned on the view**, and the in-view figure is not a row.
 - **The front is a line the player can see** - the seam drawn on the ground, and when the tape moves
   it, the line moves and the armies drive after it (§4.13). That is the market on the ground and it is
   the picture the game is named for.
@@ -1176,6 +1184,9 @@ multiplayer_p2p.md §5A.3. All three here are RULED; none moves a doctrine numbe
   the seam line is for. Rule: the client draws those look rules; the core's numbers do not move. If
   after that the ground chart still does not read from the gunship, the finding comes back with a
   picture and a number, and the lever is a new ruling, not this one.
+  **Confirmed 2026-09-24 (the owner: resolve every parked question; the 5.18 m : 1.00 m, 5.2 : 1 slab
+  finding):** the width does not change and the look stays - no more candles, no narrower slot, no
+  gaps. The finding is the same one ruled here on 2026-09-22 and it is closed.
 
 ## 5. Vocabulary (all required)
 

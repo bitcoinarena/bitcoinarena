@@ -1073,8 +1073,21 @@ with the hard rule:
 ```text
 beacon_block     = the first Bitcoin block whose median-time-past is after
                    committee_time, at the round's confirmation depth
-round_randomness = H(hash(beacon_block) || height(beacon_block))
+round_randomness = hash(beacon_block)
+                   the 32 bytes of the double SHA-256 of its 80-byte header,
+                   in the order the hash produces them (internal order, not
+                   the reversed hex a block explorer prints)
 ```
+
+**RULED 2026-09-24: the block hash itself, as the code has it.** The
+earlier text read `H(hash(beacon_block) || height(beacon_block))`; the code
+seeds the committee and the world with the block hash, and every seed in
+every test, fixture and live round is built on that. The height adds
+nothing: the block's hash already commits to its height (BIP34 puts it in
+the coinbase), and both uses pass the value through a tagged hash again -
+`committee_seed` here, `player_seed` in §12 - so no domain is shared with
+anything else. Changing the code to the old formula would move every seed
+and buy no security. The spec follows the code.
 
 **Bitcoin is the mainnet source** *(ruled, the owner 2026-09-11; drand
 removed)*. The beacon is a value that **does not exist yet** when the
@@ -1783,7 +1796,7 @@ never chooses the price; he can only replay it or not play.
 # 12. Randomness
 
 ```text
-round_randomness = H(beacon_block hash || height)   // §5A.5; also the committee seed source
+round_randomness = hash(beacon_block)                // §5A.5 (ruled 2026-09-24); also the committee seed source
 player_seed      = H(round_randomness || player_pubkey || player_secret)
 ```
 
@@ -1876,6 +1889,37 @@ no judgement involved, only replay.
 the canonical transcript; the replay outcome is authoritative. Every node
 that signed the contradicted result is slashed (§5A.3). If the committee
 cannot reach 5-of-7 on the re-run, §13C applies.
+
+**How SUSPENDED ends (RULED 2026-09-24; it was parked on the result-window
+field, which the owner ruled 2026-09-15 equal to the objection window).**
+Suspension is bounded, by the same contract field, twice at most:
+
+1. The valid objection opens a **re-run window** of one result window,
+   counted from the block-timestamped moment the objection was filed.
+2. A re-run result with 5-of-7 inside that window is provisionally final
+   and gets **one** objection window of its own. If none is valid, it is
+   `FINAL`. If one is valid, the signers of that result are slashed as
+   well and the entry is **`VOID`** at once - refunded by forfeit or by the
+   lock's expiry (§23.2) - with no third run: two contradicted quorums in
+   one entry is the operator side failing, which §13C already pays by
+   refund.
+3. No 5-of-7 by the end of the re-run window: **§13C's no-quorum rule
+   decides** as at the end of an ordinary result window - `FORFEIT` if the
+   disagreement is proven player equivocation (§13B), `VOID` and refunded
+   otherwise - and the slashing of the first result's signers stands,
+   because the objection that proved them wrong already exists.
+
+So an objected entry is decided at the latest three windows after it was
+provisionally final. The stake lock's 144 blocks (§23.1) must cover
+that plus the round and the settlement, so a Round Contract whose objection
+window exceeds **6 hours** is invalid (three windows and a round inside a
+day with room for settlement); at the 10-minute reference it is half an
+hour.
+The settlement transaction does not wait on an entry that is SUSPENDED:
+the round settles without it, and a suspended entry's lock is settled on
+its own when it ends - forfeited to the player if `VOID` or `DELIVERED`,
+claimed in a second settlement transaction if `FAILED` or `FORFEIT`,
+paying the same payout table's recomputation (§18).
 
 **Client duty:** on delivery, the reference client uploads its complete
 transcript to at least two committee nodes and, if configured, to an
@@ -2690,10 +2734,26 @@ been removed from this document.
    equals the hash of a contract whose `payment_image` is the entry's
    `stake_point` (resp. `H(F)`), whose `amount` is the entry's net stake
    (resp. fee), whose `claim_pk` is the attested key, whose `refund_pk` is
-   `player_pubkey`, and whose `expiration` is ≥ current height +
-   `stake_expiry_blocks`. Seeing the lock is not enough: the player built
-   it, and a short expiry alone would let a loser refund before settlement.
-   Play begins only after this.
+   `player_pubkey`, and whose `expiration` is ≥ **`lock_height` +
+   `stake_expiry_blocks`**, where `lock_height` is the federation's
+   consensus height at which the transaction creating the lock was
+   accepted - read from the federation, never from the client - and
+   `lock_height` is no more than `stake_lock_freshness_blocks` (**12**)
+   below the height at which the seat verifies. Seeing the lock is not
+   enough: the player built it, and a short expiry alone would let a loser
+   refund before settlement. Play begins only after this.
+
+   **RULED 2026-09-24 (the owner: resolve every parked question).** The old
+   check read "≥ current height + `stake_expiry_blocks`" while step 4
+   builds the lock at "height + `stake_expiry_blocks`", so a lock built
+   exactly as step 4 says was refused one block later (measured: 450
+   against 316 + 144). The check is against the lock's own height, not
+   against the verifier's clock, and the freshness bound is what the
+   comparison with "current" was trying to buy: a lock verified within 12
+   blocks of its creation still has at least 132 blocks - 22 hours on
+   mainnet - to cover the round, the objection window and the settlement
+   transaction. No margin is added to step 4; a margin would only move the
+   same off-by-the-wait to a larger number.
 
 `stake_expiry_blocks` is **144** — one day of blocks (ruled 2026-09-11).
 It needs to cover only round + objection window + the settlement
@@ -2799,8 +2859,14 @@ FEDERATION, which is the one outcome this ruling names. The door §23.6 once lef
 for a later migration is closed with it: if such a node ever hardens, that
 is a new revision, not a standing option.
 
-**Guardians are not parked (the owner 2026-09-21).** The parking of "which
-guardians" and `federationIsBonded` (PRIORITIES, 2026-09-16) is lifted.
+**Guardians are not parked (the owner 2026-09-21; released again, the owner
+2026-09-24 morning).** The parking of "which
+guardians" and `federationIsBonded` (PRIORITIES, 2026-09-16) is lifted. The
+fleet pin's move to HEAD is released the same morning (the owner 2026-09-24),
+so no rule in this chapter waits on the pin any more. The three slash
+rulings - the slashing height, the affected players, several slashed nodes
+- are closed at `e554dad2` (§5A.3); any "blocked on three rulings" note
+elsewhere is stale.
 §23A is to be built now: on testnet with the 2-of-2 federation that runs
 today, seated by the two bonded operators it has (§23A.1's testnet column),
 `federationIsBonded` on as ruled (the owner 07:33); on regtest with the
