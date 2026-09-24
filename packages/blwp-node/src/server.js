@@ -844,6 +844,25 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       return endpointsOf(picked.committee, round.pubkey);
     },
   });
+  // A SETTLEMENT COMBINED WHILE THIS NODE WAS DOWN (ruled window, 2026-09-23/24): a peer's settlement row counts only if
+  // its combined signature verifies under the round's claim key over the message it names.
+  verifier.combinedElsewhere = async (rid) => {
+    const row = round.get(rid);
+    if (!row) return false;
+    const held = dkg.signerNodeFor(decodeRoundContract(new Uint8Array(row.contract)).nodes);
+    if (!held.ok) return false;
+    const claimPk = held.pool.groupPublicKey;
+    for (const peer of verifier.peersOf(rid)) {
+      try {
+        const r = await fetch(`${String(peer).replace(/\/+$/, '')}/lock-settlement?round=${toHex(rid)}`, { signal: AbortSignal.timeout(3000) });
+        const j = await r.json();
+        if ((j.state === 'SUBMITTING' || j.state === 'ACCEPTED') && j.signature && j.message
+          && schnorr.verify(fromHex(j.signature), fromHex(j.message), claimPk.subarray(1))) return true;
+      } catch { /* the next peer */ }
+    }
+    return false;
+  };
+
 
   /**
    * WHAT A CLOSED ROUND MEANS FOR THE MONEY.
@@ -2589,7 +2608,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const kind = url.searchParams.get('kind') === 'resend' ? 'resend' : 'auth';
         const attempt = url.searchParams.has('attempt') ? Number(url.searchParams.get('attempt')) : null;
         if (url.pathname === '/send-commit') {
-          const got = await winnings.commit(r8, eHex, built, kind, attempt);
+          const got = await winnings.commit(r8, eHex, built, kind, attempt, { hash: url.searchParams.get('hash') });
           if (!got.ok) return text(res, got.status || 409, got.why);
           res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
           return res.end(Buffer.from(encodeCommitments([got.commitment])));
