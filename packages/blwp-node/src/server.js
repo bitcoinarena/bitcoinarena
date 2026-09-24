@@ -2682,6 +2682,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const lateHex = url.searchParams.get('late');
         if (lateHex && !/^[0-9a-f]{64}$/.test(lateHex)) return text(res, 400, 'a late settlement is named by a 32-byte entry id');
         const late8 = lateHex ? new Uint8Array(Buffer.from(lateHex, 'hex')) : null;
+        if (late8 && !round.lateLockSettlement(r8, late8)) return text(res, 409, 'no late settlement for that entry');
         const sender = late8 ? settlements.lateWinningsFor(r8, late8) : winnings;
         if (url.pathname === '/winnings-paid') {
           const pre = new Uint8Array(await read(req));
@@ -2715,9 +2716,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!winnings) return text(res, 409, 'this signer node sends no winnings');
         let proposed;
         try { proposed = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch (e) { return text(res, 400, `not JSON: ${e.message}`); }
-        const built = await settlements.message(new Uint8Array(rid));
+        // A LATE SETTLEMENT'S RE-SEND (slice C3b-2b): `late` names it; its rows and its rebuilt transaction answer, and a
+        // `late` that names no late settlement of this round - a first-round entry, say - is refused by name.
+        const lateHex = url.searchParams.get('late');
+        if (lateHex && !/^[0-9a-f]{64}$/.test(lateHex)) return text(res, 400, 'a late settlement is named by a 32-byte entry id');
+        const late8 = lateHex ? new Uint8Array(Buffer.from(lateHex, 'hex')) : null;
+        if (late8 && !round.lateLockSettlement(new Uint8Array(rid), late8)) return text(res, 409, 'no late settlement for that entry');
+        const built = late8 ? await settlements.lateMessage(new Uint8Array(rid), late8) : await settlements.message(new Uint8Array(rid));
         if (!built.ok) return text(res, built.status || 409, built.why);
-        const got = await winnings.checkResend(new Uint8Array(rid), built, proposed);
+        const sender = late8 ? settlements.lateWinningsFor(new Uint8Array(rid), late8) : winnings;
+        const got = await sender.checkResend(new Uint8Array(rid), built, proposed);
         return got.ok ? text(res, 201, 're-send checked and kept') : text(res, got.status || 409, got.why);
       }
 

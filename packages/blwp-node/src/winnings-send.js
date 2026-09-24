@@ -224,8 +224,7 @@ export class WinningsSend {
     if (!prev) return null;
     const from = await this.contractOf(roundIdBytes, prev, built);
     if (!from) return null;
-    const nonce = sha256(new Uint8Array([...new TextEncoder().encode('blwp winnings resend v1'), ...roundIdBytes, ...row.entryId,
-      (row.attempt >>> 24) & 255, (row.attempt >>> 16) & 255, (row.attempt >>> 8) & 255, row.attempt & 255])).subarray(0, 8);
+    const nonce = resendNonce({ roundId: roundIdBytes, lateEntryId: this.round.lateEntryId || null, entryId: row.entryId, attempt: row.attempt });
     return this.port.settle({ claimPk: built.claimPk, claims: [], refunds: [{ outpoint: from, amountMsat: prev.payoutMsat }],
       payouts: [{ payoutPk: built.claimPk, msat: row.payoutMsat,
         sent: { paymentHash: row.paymentHash, gatewayPk: row.gatewayPk, expiration: row.expiration } }], nonce, signature });
@@ -441,6 +440,17 @@ export class WinningsSend {
 }
 
 export { plain as sendPlanToJson };
+
+/**
+ * A RE-SEND'S NONCE: the round's, the entry's and the attempt's, so every signer node rebuilds the same txid - and, for a
+ * late settlement's send (slice C3b-2b), its late entry's too, under its own tag, so a late re-send of a winner's attempt
+ * 1 never shares a nonce with that winner's first-round attempt 1.
+ */
+export function resendNonce({ roundId, lateEntryId = null, entryId, attempt }) {
+  const tag = new TextEncoder().encode(lateEntryId ? 'blwp late winnings resend v1' : 'blwp winnings resend v1');
+  return sha256(new Uint8Array([...tag, ...roundId, ...(lateEntryId || []), ...entryId,
+    (attempt >>> 24) & 255, (attempt >>> 16) & 255, (attempt >>> 8) & 255, attempt & 255])).subarray(0, 8);
+}
 
 /** A plan's order key: its payment hashes, sorted and joined. Two plans for one round compare by it. */
 export function planKey(rows) {
