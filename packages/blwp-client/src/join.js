@@ -264,7 +264,7 @@ export const roundPays = (round) => !!round && BigInt(round.stakeMsat || 0n) > 0
  * DOES THIS ROUND'S STAKE GO INTO A FEDERATION LOCK? A paying round that names
  * its federation (§6 federation_id, §23.6). A hold-invoice round names none.
  */
-export const roundLocks = (round) => roundPays(round) && round.custody === 'FEDERATION'
+export const roundLocks = (round) => roundPays(round)
   && round.federationId instanceof Uint8Array && round.federationId.some((b) => b !== 0);
 
 /** 1 type + 2 version + 32 round + 33 claim key + 32 signer node, then a 64-byte signature. */

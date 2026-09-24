@@ -25,6 +25,9 @@ import {
  * safe route is +EV, and a client has to be able to see that before entering.
  */
 export function encodeRoundContract(c) {
+  // A CUSTODY THIS NETWORK HAS FIRST (§23.6): anything but FEDERATION throws that it is not one - before any
+  // question that only a FEDERATION round is asked.
+  custodyByte(c.custody);
   // A PAYING FEDERATION ROUND NAMES ITS FEDERATION, or it is not a contract (M3 W7).
   const named = federationIsNamed(c);
   if (!named.ok) throw new Error(named.why);
@@ -613,7 +616,7 @@ export function custodyFieldsAreValid(c) {
  */
 export function federationIsNamed(c) {
   if (!c) return { ok: false, why: 'no contract' };
-  if (c.custody !== 'FEDERATION' || !(typeof c.stakeMsat === 'bigint' && c.stakeMsat > 0n)) return { ok: true };
+  if (!(typeof c.stakeMsat === 'bigint' && c.stakeMsat > 0n)) return { ok: true };
   if (!is32(c.federationId) || c.federationId.every((b) => b === 0))
     return {
       ok: false,

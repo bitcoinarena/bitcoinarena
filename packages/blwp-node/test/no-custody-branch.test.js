@@ -10,11 +10,13 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const src = join(dirname(fileURLToPath(import.meta.url)), '..', 'src');
+const here = dirname(fileURLToPath(import.meta.url));
+// The node's src, and since the fourth cut (RULED 2026-09-24) the codec's and the page's too.
+const SRCS = [join(here, '..', 'src'), join(here, '..', '..', 'protocol', 'src'), join(here, '..', '..', 'blwp-client', 'src')];
 
-test('no file in the node\'s src compares a round\'s custody to anything', () => {
+test('no file in the node\'s, the codec\'s or the page\'s src compares a round\'s custody to anything', () => {
   const found = [];
-  for (const f of readdirSync(src).filter((n) => /\.m?js$/.test(n))) {
+  for (const src of SRCS) for (const f of readdirSync(src).filter((n) => /\.m?js$/.test(n))) {
     readFileSync(join(src, f), 'utf8').split('\n').forEach((line, i) => {
       if (/\.custody\s*[!=]==?|[!=]==?\s*[\w.]*\.custody\b/.test(line)) found.push(`${f}:${i + 1}: ${line.trim()}`);
     });
