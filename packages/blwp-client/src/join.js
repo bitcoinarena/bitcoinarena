@@ -405,7 +405,7 @@ export const SETTLEMENT_OVER = ['SETTLED', 'CANCELLED', 'EXPIRED', 'FREE', 'none
  *   { of, answered, finality, windowClosesAtMs, per }
  *
  * The hold's state, its amount, the pool, the owed row and the refund height used to be read here too.
- * All five were THRESHOLD_LN's hold invoice and its settle (§23.6, RULED 2026-09-22 22:59), and no
+ * All five were the withdrawn Lightning custody's hold invoice and its settle (§23.6, RULED 2026-09-22 22:59), and no
  * signer node reports them any more.
  */
 export async function settlementBy({ entryId, signerNodes, nodes, fetcher = fetch } = {}) {
@@ -799,7 +799,7 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
     //
     // THERE IS NO SECOND BRANCH. A paying round with no fee lock used to mint a random F anyway, because
     // "on Lightning custody that lock is its own hold invoice" and a hold on a zero preimage was refused.
-    // That hold was THRESHOLD_LN's, which does not exist (§23.6, RULED 2026-09-22 22:59): the only fee lock
+    // That hold was the withdrawn Lightning custody's, which does not exist (§23.6, RULED 2026-09-22 22:59): the only fee lock
     // is the federation's, and a round that mints none has no fee secret to name.
     feePreimage: feeLockOf(stakeLock, round) ? stakeLock.feeLock.preimage : new Uint8Array(32),
     stakeLockOutpoint: stakeLock ? { txid: stakeLock.outpoint.txid, outIdx: BigInt(stakeLock.outpoint.outIdx) }

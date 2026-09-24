@@ -409,7 +409,7 @@ export function playersLine({ joined, others, stalled = false, at = null, refuse
  * named and "committed" only at N >= T. A signer node sees a stake when it has verified its federation
  * lock. There used to be a second source here - the node's join-time `x-hold` word, which named a
  * hold invoice's state and its reason for having none - and it went with the hold invoice, which was
- * THRESHOLD_LN's (§23.6, RULED 2026-09-22 22:59).
+ * the withdrawn Lightning custody's (§23.6, RULED 2026-09-22 22:59).
  */
 export function stakeLine(stake, nowMs = Date.now()) {
   if (!stake) return '';
@@ -438,7 +438,7 @@ export function stakeLine(stake, nowMs = Date.now()) {
 export function settlementLine(s, nowMs = Date.now()) {
   if (!s || !s.answered) return '';
   // WHERE THE RUN'S RESULT STANDS, AND NOTHING ABOUT A HOLD. The hold's own states - SETTLED, CANCELLED,
-  // EXPIRED - and the height a hold refunded itself at were THRESHOLD_LN's, and the signer nodes no longer
+  // EXPIRED - and the height a hold refunded itself at were the withdrawn Lightning custody's, and the signer nodes no longer
   // report them (§23.6). A lock's money moves in the one settlement, which this chip does not narrate.
   if (s.finality === 'SUSPENDED') return ' · suspended by an objection';
   if (s.finality === 'FINAL') return ' · final: the committee is settling it';

@@ -498,15 +498,10 @@ export const OBJECTION_WINDOW_REFERENCE_MS = 600000n;
 export const MAX_OBJECTION_WINDOW_MS = 21_600_000n;
 
 /**
- * WHICH CUSTODY CONSTRUCTION A ROUND USES. Section 23.6 (spec v4.6.2) names
- * two and says "The Round Contract names which construction it uses":
+ * WHICH CUSTODY CONSTRUCTION A ROUND USES. Section 23.6 says "The Round Contract names which construction it
+ * uses", and it has one (the other it once named, a threshold-signed Lightning node, is withdrawn - RULED
+ * 2026-09-22 22:59, below):
  *
- *   THRESHOLD_LN   a threshold-signed Lightning node - FROST-style Schnorr
- *                  over channel operations - "the cleanest fit on paper,
- *                  still emerging technology". Measured in this project and
- *                  NOT USED: lnd's remote signer asks for ECDSA by the node
- *                  key and for MuSig2 shares, which a FROST committee does
- *                  not produce.
  *   FEDERATION     V1. A Fedimint-class federation with the STAKE LOCK inside
  *                  it - LNv2's OutgoingContract, claimed by preimage and the
  *                  claim key, forfeited by the claim key to the refund key,
@@ -551,7 +546,7 @@ export const splitNodesDevelopers = (amount) => {
 
 /**
  * THE CUSTODY FIELD HAS ONE VALUE (RULED, the owner 2026-09-22 22:59, §23.6):
- * "THRESHOLD_LN does not exist, past rounds included, no decode-only value ... the custody field has
+ * "[the threshold-signed Lightning custody] does not exist, past rounds included, no decode-only value ... the custody field has
  * ONE value, FEDERATION, and no other value is defined, reserved, or kept for decoding. A round that
  * names anything else is invalid, PAST ROUNDS INCLUDED: a record from before this ruling that carries
  * the old value is not a round of this network and is neither decoded, replayed, settled, listed nor
