@@ -2286,6 +2286,28 @@ export class Round {
     return row ? row.seen_ms : null;
   }
 
+  /**
+   * RECORD THE OBJECTION AGAINST AN AGREED RE-RUN (§13A, slice C2b), the same intake as `object` for the second
+   * window: one per entry, when it arrived here. Whether it is in time and holds is `resultFinality`'s to say.
+   */
+  objectRerun(roundIdBytes, entryIdBytes) {
+    if (!this.get(roundIdBytes)) throw new Error('no such round');
+    const e = this.db.prepare('SELECT round_id FROM entries WHERE entry_id = ?').get(entryIdBytes);
+    if (!e) throw new Error('no such entry');
+    if (!same(new Uint8Array(e.round_id), roundIdBytes)) throw new Error('entry is not in this round');
+    return this.db.prepare(
+      'INSERT OR IGNORE INTO rerun_objections (round_id, entry_id, seen_ms) VALUES (?, ?, ?)')
+      .run(roundIdBytes, entryIdBytes, this.now()).changes === 1;
+  }
+
+  /** When the objection against this run's agreed re-run arrived here, or null if none did. */
+  rerunObjectedAt(roundIdBytes, entryIdBytes) {
+    const row = this.db.prepare(
+      'SELECT seen_ms FROM rerun_objections WHERE round_id = ? AND entry_id = ?')
+      .get(roundIdBytes, entryIdBytes);
+    return row ? row.seen_ms : null;
+  }
+
   /** Which tick numbers are missing between the first and the last stored. */
   gaps(roundIdBytes, entryIdBytes) {
     const rows = this.db.prepare(
