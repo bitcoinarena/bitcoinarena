@@ -45,8 +45,8 @@ export const ACCEPTED = 'ACCEPTED';
 export const REFUSED = 'REFUSED';
 
 /** Whether a round's stake is a federation stake lock (and so settled here). */
-export const locksStake = (contract) => contract.custody === 'FEDERATION'
-  && contract.federationId instanceof Uint8Array && contract.federationId.some((b) => b !== 0) && contract.stakeMsat > 0n;
+export const locksStake = (contract) => contract.federationId instanceof Uint8Array
+  && contract.federationId.some((b) => b !== 0) && contract.stakeMsat > 0n;
 
 export class LockSettlement {
   /**
