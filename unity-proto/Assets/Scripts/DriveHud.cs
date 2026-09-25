@@ -776,13 +776,20 @@ public class DriveHud : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// HOW LONG THE RESULT CARD STANDS: 8 s (the owner 2026-09-25 21:53: "The result screen stays up 3 seconds longer. It
+    /// holds 5 s now ... Make that 8 s"). Full strength for most of it, the last 28% a fade. The lobby's own hold,
+    /// SplashScreen.ResultHoldSeconds, is this same number - one clock - and the lobby waits for the card in any case.
+    /// </summary>
+    public const float ArrivalHoldSeconds = 8f;
+
     /// <summary>Is the arrival card on screen this frame?</summary>
     public bool ArrivalShowing
     {
         get
         {
             if (gate == null || ArrivalIsHiddenBy(SendOffShowing)) return false;
-            const float Hold = 5f;
+            const float Hold = ArrivalHoldSeconds;
             bool missed = Time.unscaledTime - gate.MissedAt < Hold;
             return missed || gate.SinceDelivery < Hold;
         }
@@ -872,7 +879,7 @@ public class DriveHud : MonoBehaviour
     {
         if (ArrivalIsHiddenBy(SendOffShowing)) return;
 
-        const float Hold = 5f;
+        const float Hold = ArrivalHoldSeconds;
         bool missed = Time.unscaledTime - gate.MissedAt < Hold;
         float since = missed ? Time.unscaledTime - gate.MissedAt : gate.SinceDelivery;
         if (!missed && gate.SinceDelivery >= Hold) return;

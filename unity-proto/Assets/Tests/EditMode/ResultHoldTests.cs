@@ -44,4 +44,33 @@ public class ResultHoldTests
         Assert.IsFalse(SplashScreen.BackToLobby(true, false, false, 0f, Wreck, 60f),
             "a run that did not start from the lobby was sent back to it");
     }
+
+    // THE LOBBY IS NOT DRAWN OVER THE RESULT CARD (the owner 2026-09-25): coverage, not the clock.
+    [Test]
+    public void TheLobbyNeverCoversTheResultCard()
+    {
+        Assert.IsFalse(SplashScreen.LobbyMayCover(resultCardUp: true), "the lobby may be drawn while the result card is up");
+        Assert.IsTrue(SplashScreen.LobbyMayCover(resultCardUp: false), "the lobby never comes back once the card is down");
+    }
+
+    [Test]
+    public void TheLobbyAsksTheCardBeforeItComesBackAndBeforeItDraws()
+    {
+        string src = System.IO.File.ReadAllText(System.IO.Path.Combine(UnityEngine.Application.dataPath, "Scripts/SplashScreen.cs"));
+        int back = src.IndexOf("LobbyMayCover(cardUp) && ShouldReturnToLobby(");
+        Assert.GreaterOrEqual(back, 0, "the lobby's return after a run does not wait for the result card");
+        int gui = src.IndexOf("void OnGUI()");
+        int gate = src.IndexOf("if (!LobbyMayCover(_hud != null && _hud.ArrivalShowing)) return;", gui);
+        int depth = src.IndexOf("GUI.depth = -200", gui);
+        Assert.IsTrue(gui >= 0 && gate > gui && gate < depth, "OnGUI draws the lobby before asking whether the result card is up");
+    }
+
+    // THE RESULT SCREEN HOLDS 8 s (the owner 2026-09-25 21:53: "stays up 3 seconds longer. It holds 5 s now ... Make that 8 s").
+    [Test]
+    public void TheResultCardAndTheLobbysHoldAreEightSeconds()
+    {
+        Assert.AreEqual(8f, DriveHud.ArrivalHoldSeconds);
+        Assert.AreEqual(DriveHud.ArrivalHoldSeconds, SplashScreen.ResultHoldSeconds, "the card and the lobby on two clocks again");
+        Assert.IsFalse(SplashScreen.BackToLobby(true, true, false, 0f, 5f, 7.9f), "the lobby came back before the card's 8 s");
+    }
 }
