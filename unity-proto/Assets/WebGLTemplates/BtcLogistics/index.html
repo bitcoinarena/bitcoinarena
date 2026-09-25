@@ -583,7 +583,35 @@
           + run.nodes.length + ' signer node(s)' : r.why)))
         .catch((e) => console.error('[blwp] winnings: ' + e.message));
     };
+    // COPY GAME REPLAY (the owner 2026-09-25 18:39): the result card's control hands this page the run (the bridge's
+    // BlwpCopyReplay); the page copies ONE https link - a random committee node of the round, from its advertisement
+    // endpoints (a node's /replay/nodes), ws made https - to /replay?round=<hex>&entry=<hex>. The endpoints are fetched
+    // when the run ends, so the click itself only builds the link and writes it: the clipboard wants the click's
+    // activation, and a fetch between the two could outlive it.
+    const replayNodes = new Map();
+    const prefetchReplayNodes = (roundHex, nodes) => {
+      if (!roundHex || replayNodes.has(roundHex)) return replayNodes.get(roundHex);
+      const asked = (async () => {
+        for (const n of nodes || []) {
+          try { const r = await fetch(`${String(n).replace(/\/+$/, '')}/replay/nodes?round=${roundHex}`); if (r.ok) return (await r.json()).endpoints || []; }
+          catch (e) { /* the next node */ }
+        }
+        return [];
+      })();
+      replayNodes.set(roundHex, asked);
+      return asked;
+    };
+    window.BLWP_COPY_REPLAY = async (roundHex, entryHex, nodes) => {
+      const endpoints = await prefetchReplayNodes(roundHex, nodes);
+      const link = BLWPCLIENT.replayLinkFor({ endpoints, roundHex, entryHex });
+      if (!link.ok) { console.error('[blwp] copy game replay: ' + link.why); return link; }
+      window.BLWP_REPLAY_URL = link.url;
+      try { await navigator.clipboard.writeText(link.url); console.log('[blwp] copy game replay: copied ' + link.url); }
+      catch (e) { console.error('[blwp] copy game replay: the clipboard refused (' + e.message + '); the link is ' + link.url); }
+      return link;
+    };
     window.BLWP_RUN_OVER = (word, run) => {
+      if (run) prefetchReplayNodes(run.roundHex, run.nodes);
       window.BLWP_CHAIN = undefined;
       window.BLWP_ADVERT = undefined;
       const noLobby = !window.BLWP_LOBBY_ACT;

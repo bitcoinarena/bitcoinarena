@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BLWP game replay</title>
+<style>
+  :root { --bg: #0b0f14; --panel: #12181f; --ink: #e8e8e8; --dim: #8a96a3; --bull: #4caf50; --bear: #e05252; --truck: #ffd54f; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.4 system-ui, sans-serif; }
+  #bar { display: flex; gap: 10px; align-items: center; padding: 8px 12px; flex-wrap: wrap; }
+  #bar button { font: inherit; padding: 6px 14px; background: #1e2833; color: var(--ink); border: 1px solid #33414f; border-radius: 4px; cursor: pointer; }
+  #scrub { flex: 1; min-width: 160px; }
+  #at, #status { color: var(--dim); font-variant-numeric: tabular-nums; }
+  #status { padding: 0 12px 8px; }
+  canvas { display: block; width: 100%; background: var(--panel); }
+  #legend { padding: 6px 12px; color: var(--dim); font-size: 12px; }
+  #legend b { font-weight: 600; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <button id="play" disabled>play</button>
+  <input id="scrub" type="range" min="0" max="0" value="0" step="1" disabled>
+  <span id="at">tick 0</span>
+</div>
+<div id="status">loading the run…</div>
+<canvas id="map" width="1480" height="680"></canvas>
+<div id="legend"><b style="color:var(--truck)">▲</b> your truck · <b style="color:var(--bull)">■</b>/<b style="color:var(--bear)">■</b> tanks ·
+  <b style="color:var(--bull)">•</b>/<b style="color:var(--bear)">•</b> infantry · ◆ helicopters · <b style="color:#ff8a65">●</b> bombs · the gate is the dashed line</div>
+<!-- THE PROTOCOL'S OWN DECODERS AND SEED (the client bundle), from this node. -->
+<script src="/replay/client.js"></script>
+<script>
+// A GAME REPLAY (the owner 2026-09-25 18:39). Everything is fetched from a node that holds the run - this one, or the
+// round's other committee endpoints when it has no transcript - and the run is replayed by stepping the core the round
+// names (/replay/core.js, served only for that round's own core). The page draws what that core stepped; it simulates
+// nothing of its own. Not a live socket: the whole run is stepped once, then played like a video.
+(async function () {
+  const q = new URLSearchParams(location.search);
+  const round = (q.get('round') || '').toLowerCase(), entry = (q.get('entry') || '').toLowerCase();
+  const say = (s) => { document.getElementById('status').textContent = s; };
+  if (!/^[0-9a-f]{64}$/.test(round) || !/^[0-9a-f]{64}$/.test(entry)) { say('the link names no round and entry (?round=<hex>&entry=<hex>)'); return; }
+  const here = location.origin;
+  const tryJson = async (url) => { try { const r = await fetch(url); return r.ok ? await r.json() : null; } catch (e) { return null; } };
+  const bytesOf = async (url) => { const r = await fetch(url); if (!r.ok) throw new Error(`${url}: ${r.status} ${await r.text()}`); return new Uint8Array(await r.arrayBuffer()); };
+
+  // THE NODE THAT HOLDS THE RUN: this one first, then the round's committee endpoints.
+  const others = ((await tryJson(`${here}/replay/nodes?round=${round}`)) || { endpoints: [] }).endpoints.filter((u) => u !== here);
+  let base = null, transcript = null;
+  for (const n of [here, ...others]) {
+    say(`asking ${n} for the run…`);
+    transcript = await tryJson(`${n}/replay/transcript?round=${round}&entry=${entry}`);
+    if (transcript) { base = n; break; }
+  }
+  if (!transcript) { say(`no committee node holds that run (asked ${1 + others.length})`); return; }
+
+  // THE ROUND, THE ENTRY AND THE BEACON FROM THAT NODE, AND ITS CORE.
+  let contract, ent, beacon;
+  try {
+    contract = BLWPCLIENT.decodeRoundContract(await bytesOf(`${base}/round?id=${round}`));
+    ent = BLWPCLIENT.decodeEntryContract(await bytesOf(`${base}/entry?id=${entry}`));
+    beacon = await bytesOf(`${base}/randomness?round=${round}`);
+  } catch (e) { say(`the run cannot be read: ${e.message}`); return; }
+  await new Promise((ok, no) => { const s = document.createElement('script'); s.src = `${base}/replay/core.js?round=${round}`; s.onload = ok; s.onerror = () => no(new Error('the core that round names')); document.head.appendChild(s); })
+    .catch((e) => { say(`${base} serves no ${e.message}`); throw e; });
+  const R = window.BLWP_REPLAY, CORE = R.CORE, L = R.layout, ONE = R.ONE;
+
+  // STEP THE WHOLE RUN ONCE, keeping what the map draws at every tick.
+  const seedWord = BLWPCLIENT.seedWordForEntry(ent, beacon);
+  const st = CORE.start(seedWord);
+  const events = CORE.eventsOf(transcript);
+  const PER = 3 + L.UNITS * 5 + L.MAX_HELIS * 4 + L.MAX_BOMBS * 3;
+  const frames = new Int32Array(PER * transcript.ticks.length);
+  const take = (f) => {
+    const s = st.i32; let o = f * PER;
+    frames[o++] = s[L.O_TRUCK + L.T_X]; frames[o++] = s[L.O_TRUCK + L.T_Z]; frames[o++] = s[L.O_TRUCK + L.T_HEADING];
+    for (let i = 0; i < L.UNITS; i++) {
+      const b = L.O_UNITS + i * L.U_WORDS;
+      frames[o++] = s[b + L.U_X]; frames[o++] = s[b + L.U_Z]; frames[o++] = s[b + L.U_SIDE];
+      frames[o++] = s[b + L.U_STATE] !== 0 && s[b + L.U_HP] > 0 ? 1 : 0; frames[o++] = (i & L.ARMOUR_MASK) === 0 ? 1 : 0;
+    }
+    for (let i = 0; i < L.MAX_HELIS; i++) {
+      const b = L.O_HELIS + i * L.H_WORDS;
+      frames[o++] = s[b + L.H_X]; frames[o++] = s[b + L.H_Z]; frames[o++] = s[b + L.H_SIDE]; frames[o++] = s[b + L.H_STATE];
+    }
+    for (let i = 0; i < L.MAX_BOMBS; i++) {
+      const b = L.O_BOMBS + i * L.B_WORDS;
+      frames[o++] = s[b + L.B_X]; frames[o++] = s[b + L.B_Z]; frames[o++] = s[b + L.B_STATE];
+    }
+  };
+  transcript.ticks.forEach((t, f) => { events.before(st, t.tick); CORE.step(st, t.words); take(f); });
+  const result = CORE.result(st);
+  const ended = `${result.outcome || 'LIVE'}${result.outcome ? `, score ${result.score}` : ''}`;
+  const from = transcript.ticks.length ? transcript.ticks[0].tick : 0;
+
+  // THE MAP, top down: x across, z up, in the core's own metres.
+  const cv = document.getElementById('map'), g = cv.getContext('2d');
+  const hx = R.HALF_X / ONE, hz = R.HALF_Z / ONE;
+  const sx = (x) => ((x / ONE + hx) / (2 * hx)) * cv.width, sz = (z) => ((hz - z / ONE) / (2 * hz)) * cv.height;
+  const side = (v) => (v < 0 ? '#4caf50' : '#e05252');
+  function draw(f) {
+    let o = f * PER;
+    g.clearRect(0, 0, cv.width, cv.height);
+    if (R.GATE_X !== undefined) { g.setLineDash([8, 6]); g.strokeStyle = '#6fa8dc'; g.beginPath(); g.moveTo(sx(R.GATE_X), 0); g.lineTo(sx(R.GATE_X), cv.height); g.stroke(); g.setLineDash([]); }
+    const tx = frames[o++], tz = frames[o++], th = frames[o++];
+    for (let i = 0; i < L.UNITS; i++) {
+      const x = frames[o++], z = frames[o++], sd = frames[o++], alive = frames[o++], armour = frames[o++];
+      if (!alive) continue;
+      g.fillStyle = side(sd);
+      if (armour) g.fillRect(sx(x) - 5, sz(z) - 5, 10, 10);
+      else { g.beginPath(); g.arc(sx(x), sz(z), 2.2, 0, 7); g.fill(); }
+    }
+    for (let i = 0; i < L.MAX_HELIS; i++) {
+      const x = frames[o++], z = frames[o++], sd = frames[o++], on = frames[o++];
+      if (!on) continue;
+      g.fillStyle = side(sd); g.beginPath(); g.moveTo(sx(x), sz(z) - 8); g.lineTo(sx(x) + 8, sz(z)); g.lineTo(sx(x), sz(z) + 8); g.lineTo(sx(x) - 8, sz(z)); g.fill();
+    }
+    for (let i = 0; i < L.MAX_BOMBS; i++) {
+      const x = frames[o++], z = frames[o++], on = frames[o++];
+      if (!on) continue;
+      g.fillStyle = '#ff8a65'; g.beginPath(); g.arc(sx(x), sz(z), 4, 0, 7); g.fill();
+    }
+    // the truck: heading is a fraction of a turn in Q16.16, 0.25 being +x
+    const a = (th / ONE) * 2 * Math.PI;
+    g.save(); g.translate(sx(tx), sz(tz)); g.rotate(a); g.fillStyle = '#ffd54f';
+    g.beginPath(); g.moveTo(0, -12); g.lineTo(8, 9); g.lineTo(-8, 9); g.closePath(); g.fill(); g.restore();
+    document.getElementById('at').textContent = `tick ${from + f + 1} of ${from + transcript.ticks.length}`;
+  }
+
+  // PLAYED LIKE A VIDEO, at the core's own tick rate (ONE / TICK_DT ticks a second).
+  const rate = ONE / R.TICK_DT;
+  const scrub = document.getElementById('scrub'), play = document.getElementById('play');
+  scrub.max = String(transcript.ticks.length - 1); scrub.disabled = false; play.disabled = false;
+  let at = 0, playing = false, last = 0;
+  const show = (f) => { at = Math.max(0, Math.min(transcript.ticks.length - 1, f)); scrub.value = String(Math.floor(at)); draw(Math.floor(at)); };
+  scrub.addEventListener('input', () => show(Number(scrub.value)));
+  play.addEventListener('click', () => { playing = !playing; play.textContent = playing ? 'pause' : 'play'; if (playing && at >= transcript.ticks.length - 1) show(0); last = performance.now(); if (playing) requestAnimationFrame(tick); });
+  function tick(now) {
+    if (!playing) return;
+    show(at + ((now - last) / 1000) * rate); last = now;
+    if (at >= transcript.ticks.length - 1) { playing = false; play.textContent = 'play'; return; }
+    requestAnimationFrame(tick);
+  }
+  say(`round ${round.slice(0, 16)}…, entry ${entry.slice(0, 16)}… from ${base} - ${transcript.ticks.length} ticks, ended ${ended}; core ${Array.from(contract.simCoreHash.slice(0, 6), (b) => b.toString(16).padStart(2, '0')).join('')}…`);
+  show(0);
+})();
+</script>
+</body>
+</html>
