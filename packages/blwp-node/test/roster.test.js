@@ -80,13 +80,13 @@ const contractFor = (over = {}) => ({
   nodes: [b32(4)], ...over,
 });
 
-const advertFor = (n, roles) => ({
+const advertFor = (n, roles, guardianOf = []) => ({
   nodePubkey: keyFor(n), operatorId: 'operator', protocolVersions: [1], roles,
   endpoint: `ws://node${n}`, region: 'eu-west', capacityClass: 1, softwareHash: b32(2),
   settlementCapabilities: 0, lightningCapabilities: 0, bondTxid: new Uint8Array(32),
-  bondVout: 0, bondScriptTemplateVersion: 1, payoutPubkey: b32(3), guardianOf: [], timestamp: 1788700000000n,
+  bondVout: 0, bondScriptTemplateVersion: 1, payoutPubkey: b32(3), guardianOf, timestamp: 1788700000000n,
 });
-const bondOf = (n, roles = ['game']) => bondTransaction(advertFor(n, roles), {
+const bondOf = (n, roles = ['game'], guardianOf = []) => bondTransaction(advertFor(n, roles, guardianOf), {
   previousTxid: b32(0xa0 + n), previousVout: 0, outputKey: bondFor(keyFor(n)),
 });
 
@@ -229,15 +229,28 @@ test('a node with no chain view holds no round, and says which it is missing', (
   assert.match(blind.censusFor(b32(0x99)).why, /holds no such round/);
 });
 
+// A BONDED FEDERATION (RULED 2026-09-25: a paying round on an unbonded one is refused before round.open, nothing stored):
+// each bond advertises one of the fixture federation's guardian keys, and the lock fixture's port answers guardians() with
+// them - the same shape as guardians-bonded's fixture - so the paying round opens, is stored, and the committee door reads it.
+const guardianKey = (n) => Uint8Array.from([0x02, ...b32(0x60 + n)]);
+const guardingPort = (keys, threshold) => Object.assign(lockPort(), {
+  async guardians() { return { federationId: TEST_FEDERATION_ID, guardians: keys.length, threshold, keys }; },
+});
+const guarding = (g) => [{ federationId: TEST_FEDERATION_ID, guardianKey: g }];
+
 test('the committee door answers off the chain, and refuses a short census by name', async () => {
-  const bonds = [bondOf(0x11), bondOf(0x12)];
+  const bonds = [bondOf(0x11, ['game'], guarding(guardianKey(1))), bondOf(0x12, ['game'], guarding(guardianKey(2)))];
   const node = await serve(openStore(), {
-    port: 0, funded: () => true, stakeLocks: lockPort(), chainFor: ({ contract } = {}) => chainWith(bonds, contract),
+    port: 0, funded: () => true, stakeLocks: guardingPort([guardianKey(1), guardianKey(2)], 2), chainFor: ({ contract } = {}) => chainWith(bonds, contract),
     randomnessFor: ({ contract }) => beaconOf(chainWith(bonds, contract), contract),
   });
   try {
     const c = contractFor({ censusRoot: rootFor(bonds) });
     await fetch(`http://127.0.0.1:${node.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
+    // STORED BEFORE THE DOOR IS READ: its federation is bonded, so the bond check before round.open lets it in. (The
+    // answer to the POST is not what this measures: its signer nodes are refused at assignment afterwards - the fixture
+    // contract names one key and the census assigns two - and the round is kept, as it always was.)
+    assert.ok(node.round.get(roundId(c)), 'the round on a bonded federation was not stored');
     const rid = toHex(roundId(c));
 
     const got = await fetch(`http://127.0.0.1:${node.port}/committee?round=${rid}&role=game`);
@@ -251,13 +264,18 @@ test('the committee door answers off the chain, and refuses a short census by na
       [keyFor(0x11), keyFor(0x12)].map(toHex).sort());
   } finally { await node.close(); }
 
+  // THE SHORT CENSUS: one bond, on a one-guardian federation it bonds - so the round opens and is stored, and the refusal
+  // measured is the committee door's own.
+  const thinBonds = [bondOf(0x11, ['game'], guarding(guardianKey(1)))];
   const thin = await serve(openStore(), {
-    port: 0, funded: () => true, stakeLocks: lockPort(), chainFor: ({ contract } = {}) => chainWith([bondOf(0x11)], contract),
-    randomnessFor: ({ contract }) => beaconOf(chainWith([bondOf(0x11)], contract), contract),
+    port: 0, funded: () => true, stakeLocks: guardingPort([guardianKey(1)], 1), chainFor: ({ contract } = {}) => chainWith(thinBonds, contract),
+    randomnessFor: ({ contract }) => beaconOf(chainWith(thinBonds, contract), contract),
   });
   try {
-    const c = contractFor({ censusRoot: rootFor([bondOf(0x11)]) });
+    const c = contractFor({ censusRoot: rootFor(thinBonds) });
     await fetch(`http://127.0.0.1:${thin.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
+    // THE ROUND IS STORED - its federation is bonded - and its short census is refused at assignment and at the door.
+    assert.ok(thin.round.get(roundId(c)), 'the round on a bonded federation was not stored');
     const got = await fetch(`http://127.0.0.1:${thin.port}/committee?round=${toHex(roundId(c))}&role=game`);
     assert.equal(got.status, 409, 'a short census was served as a committee');
     assert.match(await got.text(), /carries 1 game node where regtest was born needing 2/);

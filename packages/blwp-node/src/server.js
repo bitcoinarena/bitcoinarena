@@ -18,7 +18,7 @@ import { federationGatewayCount } from '../../protocol/src/gateways.js';
 import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { WebSocketServer } from 'ws';
-import { decodeRoundContract, decodeEntryContract, publicationRelaysAreValid, custodyFieldsAreValid } from '../../protocol/src/contracts.js';
+import { decodeRoundContract, decodeEntryContract, publicationRelaysAreValid, custodyFieldsAreValid, roundId as roundIdOf } from '../../protocol/src/contracts.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 import { lobbyListingId } from '../../protocol/src/lobby-listing.js';
 import { decodeLobbyName, lobbyNameId } from '../../protocol/src/lobby-name.js';
@@ -981,7 +981,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   async function guardiansBonded(rid, contract) {
     if (!stakeLocks || typeof stakeLocks.guardians !== 'function')
       return { ok: false, why: REACHES_NO_FEDERATION };
-    const census = roster.censusFor(rid);
+    // THE POSTED CONTRACT, stored or not: POST /round asks this before round.open (RULED 2026-09-25).
+    const census = roster.censusFor(rid, null, { posted: contract });
     if (!census.ok) return census;
     let g;
     try { g = await stakeLocks.guardians(); }
@@ -1643,6 +1644,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           if (!noBase.ok) return text(res, 409, noBase.why);
         }
 
+        // AND ITS FEDERATION IS BONDED, WHEN THIS NODE CAN SEE A CENSUS (§23.6, P3; RULED the owner 2026-09-25): asked here,
+        // before round.open, with guardiansBonded's own refusal - measured before: under threshold and none bonded were 409
+        // with the round already stored and listed, because this was asked after round.open. A node with no chain view
+        // cannot count guardians and does not ask (not this slice).
+        if (chainFor && contract.stakeMsat > 0n) {
+          const bonded = await guardiansBonded(roundIdOf(contract), contract);
+          if (!bonded.ok) return text(res, 409, bonded.why);
+        }
+
         const id = round.open(contract);
         // AND KEEP THE BEACON THIS SIGNER NODE CAN NAME FOR IT NOW (M3.3-34), through
         // the kept reader above: a signer node restarted before it ever replays a run
@@ -1659,13 +1669,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // check the list, so it does not pretend to. What it must not do is
         // fall back to the author's list, and it does not.
         if (chainFor) {
-          // AND A ROUND THAT TAKES A STAKE INTO A FEDERATION IS ASSIGNED SIGNER NODES ONLY ON A BONDED ONE (§23.6, P3;
-          // the owner 2026-09-15 07:33): refused here like a committee the chain did not assign - stored,
-          // no signer nodes, so no claim key and no lock can name it.
-          if (contract.stakeMsat > 0n) {
-            const bonded = await guardiansBonded(id, contract);
-            if (!bonded.ok) return text(res, 409, bonded.why);
-          }
+          // (A ROUND THAT TAKES A STAKE INTO A FEDERATION IS ASSIGNED SIGNER NODES ONLY ON A BONDED ONE - §23.6, P3; the owner
+          // 2026-09-15 07:33 - and that is asked before round.open now, above: an unbonded one is not stored at all.)
           const assigned = roster.assignSignerNodes(id);
           if (!assigned.ok) return text(res, 409, assigned.why);
           // AND ITS SIGNER NODES MAKE ITS CLAIM KEY, in the background (see makeClaimKey).
