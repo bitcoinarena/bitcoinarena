@@ -79,6 +79,8 @@ import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../protocol/src/object
 import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../protocol/src/posting.js';
 import { federationIsBonded } from '../../protocol/src/federation.js';
 import { installedCores, coreForRound } from './cores.js';
+import { readFileSync } from 'node:fs';
+import { readTranscript } from './transcript-read.js';
 import { SIGNED_RERUN_BYTES, rerunResultId, decodeRerunResult, splitSignedRerun } from '../../protocol/src/rerun.js';
 import { verifyStakeLock, verifyFeeLock, lockFieldsFromJson, roundMintsFees, federationTakesNoBaseFee } from './stake-lock-signer-node.js';
 import { encodeClaimKeyAttestation, claimKeyAttestationId } from '../../protocol/src/claim-key.js';
@@ -2219,6 +2221,57 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           ...CORS,
         });
         return res.end(Buffer.from(c.bytes));
+      }
+
+      // A GAME REPLAY (the owner 2026-09-25 18:39): a page, not the Unity build, that fetches the transcript, the entry and
+      // the round from this node - or from the round's other committee endpoints when this one has no transcript - and
+      // steps the core the round names. The path is the same on every node, so the link plays on any that holds the run.
+      if (req.method === 'GET' && url.pathname === '/replay') {
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', ...CORS });
+        return res.end(readFileSync(new URL('../pages/replay.html', import.meta.url)));
+      }
+      // THE CORE THE ROUND NAMES, and no other: served only when that round's sim hash is this node's own core - the core
+      // this node replays it with (packages/core/dist/blwp-replay-core.js, the bundle of core/src's adapter).
+      if (req.method === 'GET' && url.pathname === '/replay/core.js') {
+        const id = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (id.length !== 32) return text(res, 400, 'that is not a round id');
+        const row = round.get(id);
+        if (!row) return text(res, 404, 'this node holds no such round');
+        const runs = coreForRound(decodeRoundContract(new Uint8Array(row.contract)), installed);
+        if (!runs.ok) return text(res, 409, runs.why);
+        res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', ...CORS });
+        return res.end(readFileSync(new URL('../../core/dist/blwp-replay-core.js', import.meta.url)));
+      }
+      // THE PROTOCOL'S DECODERS AND SEED for the page: the client bundle, as the game page carries it.
+      if (req.method === 'GET' && url.pathname === '/replay/client.js') {
+        res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', ...CORS });
+        return res.end(readFileSync(new URL('../../blwp-client/dist/blwp-client.js', import.meta.url)));
+      }
+      // THE RUN AS THIS NODE REPLAYS IT: the same object replay.js steps (ticks and their five words, liquidations,
+      // loads, samples, tapes), as JSON. 404 when this node holds no ticks of it - the page then asks the others.
+      if (req.method === 'GET' && url.pathname === '/replay/transcript') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
+        if (rid.length !== 32 || eid.length !== 32) return text(res, 400, 'a replay names a round and an entry');
+        const t = readTranscript(round.db, rid, eid);
+        if (!t.ticks.length) return text(res, 404, 'this node holds no transcript of that run');
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify(t));
+      }
+      // THE ROUND'S COMMITTEE ENDPOINTS, from the advertisements its census carries: where else the run is held. ws
+      // becomes https (the link a player copies names one of these at random).
+      if (req.method === 'GET' && url.pathname === '/replay/nodes') {
+        const id = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (id.length !== 32) return text(res, 400, 'that is not a round id');
+        const found = new Set();
+        for (const role of ['game', 'settlement']) {
+          const c = roster.committeeFor(id, role);
+          if (!c.ok) continue;
+          for (const e of c.committee) if (e && e.advert && e.advert.endpoint)
+            found.add(String(e.advert.endpoint).replace(/^wss?:/, 'https:').replace(/\/+$/, ''));
+        }
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ endpoints: [...found] }));
       }
 
       if (req.method === 'GET' && url.pathname === '/transcript') {

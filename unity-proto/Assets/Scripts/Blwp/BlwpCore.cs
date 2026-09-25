@@ -42,6 +42,7 @@ namespace Blwp
         [DllImport("__Internal")] private static extern int BlwpChartPoint(int range, int x, int z, IntPtr ptr);
         [DllImport("__Internal")] private static extern int BlwpCandleView(IntPtr ptr, int cap);
         [DllImport("__Internal")] private static extern int BlwpTerrainAt(int x, int z);
+        [DllImport("__Internal")] private static extern int BlwpCopyReplay();
         public const bool Compiled = true;
 #else
         private static int BlwpInit(int seed) => 0;
@@ -58,6 +59,7 @@ namespace Blwp
         private static int BlwpReliefEpoch() => 0;
         private static int BlwpTeleport(int x, int z, int h) => 0;
         private static int BlwpTakeImpact() => 0;
+        private static int BlwpCopyReplay() => 0;
         private static int BlwpReadImpact() => 0;
         private static int BlwpSubmitLoad(int f, int b) => 0;
         private static int BlwpSubmitSample(int price) => 0;
@@ -208,6 +210,13 @@ namespace Blwp
         }
 
         public static int RunScore() => Available ? BlwpRunScore() : 0;
+
+        /// <summary>
+        /// COPY GAME REPLAY (the owner 2026-09-25 18:39): the page copies one https link to this run's replay - a random
+        /// committee node of the round, from its advertisement endpoints, /replay?round=&lt;hex&gt;&amp;entry=&lt;hex&gt;. 1 when the
+        /// page was handed the run, 0 when there is no networked run (or no page) to copy a replay of.
+        /// </summary>
+        public static int CopyReplay() => BlwpCopyReplay();
 
         // SetGround IS GONE. It was the host's door - Unity uploaded the relief
         // it was drawing and the core felt those hills, while every committee

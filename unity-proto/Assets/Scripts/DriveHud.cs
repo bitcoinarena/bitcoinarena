@@ -902,7 +902,9 @@ public class DriveHud : MonoBehaviour
         };
         var probe = CardIn(w, h, 10f);
         float stoppedHeight = stopped.Length == 0 ? 0f : stopStyle.CalcHeight(new GUIContent(stopped), probe.width - 16f) + stopStyle.fontSize * 0.4f;
-        float scale = ArrivalScale(w, h, head0, stoppedHeight, leadLine != null);
+        // COPY GAME REPLAY, on a networked run's card (its session ended it - that is where a replay is held).
+        bool replay = runScore != null && _session != null && stopped.Length > 0;
+        float scale = ArrivalScale(w, h, head0, stoppedHeight, leadLine != null, replay);
         int head = Mathf.RoundToInt(head0 * scale);
         if (stopped.Length > 0)
         {
@@ -925,7 +927,7 @@ public class DriveHud : MonoBehaviour
 
         // THE ROWS FROM THE FONTS THAT ARE DRAWN, and the card from the rows.
         float padY = head * 0.55f;
-        float[] heights = ArrivalRowHeights(big.fontSize, mid.fontSize, line.fontSize, stoppedHeight, leadLine != null);
+        float[] heights = ArrivalRowHeights(big.fontSize, mid.fontSize, line.fontSize, stoppedHeight, leadLine != null, replay);
         var card = CardIn(w, h, ArrivalHeight(padY, heights));
         var rows = ArrivalRows(card, padY, heights);
 
@@ -961,7 +963,22 @@ public class DriveHud : MonoBehaviour
         GUI.Label(Inset(rows[r++]), workLine, line);
         line.normal.textColor = new Color(1f, 1f, 1f, k * 0.62f);
         GUI.Label(Inset(rows[r++]), footLine, line);
+
+        if (replay)
+        {
+            var row = rows[r++];
+            var button = new GUIStyle(GUI.skin.button) { fontSize = line.fontSize, fontStyle = FontStyle.Bold };
+            float bw = Mathf.Min(row.width - 16f, button.CalcSize(new GUIContent(CopyReplayLabel)).x + line.fontSize * 2f);
+            var rect = new Rect(row.x + (row.width - bw) * 0.5f, row.y + row.height * 0.15f, bw, row.height * 0.7f);
+            if (GUI.Button(rect, CopyReplayLabel, button))
+            {
+                _replayCopied = Blwp.BlwpCore.CopyReplay() == 1;
+                Debug.Log("[blwp] copy game replay: " + (_replayCopied ? "handed to the page" : "no networked run to copy"));
+            }
+        }
     }
+
+    bool _replayCopied;
 
     static Rect Inset(Rect row) => new Rect(row.x + 8f, row.y, row.width - 16f, row.height);
 
@@ -1290,7 +1307,13 @@ public class DriveHud : MonoBehaviour
     public static float ArrivalLineFont(float head) => Mathf.RoundToInt(head * 0.48f);
     public static float RunStoppedFont(int w, int h) => Mathf.RoundToInt(Mathf.Min(w, h) * 0.030f);
 
+    /// <summary>COPY GAME REPLAY (the owner 2026-09-25 18:39): the control's label, exactly.</summary>
+    public const string CopyReplayLabel = "copy game replay";
+
     public static float[] ArrivalRowHeights(float head, float mid, float line, float stoppedHeight, bool lead)
+        => ArrivalRowHeights(head, mid, line, stoppedHeight, lead, false);
+
+    public static float[] ArrivalRowHeights(float head, float mid, float line, float stoppedHeight, bool lead, bool replay)
     {
         var rows = new System.Collections.Generic.List<float>();
         if (stoppedHeight > 0f) rows.Add(stoppedHeight);
@@ -1299,6 +1322,7 @@ public class DriveHud : MonoBehaviour
         if (lead) rows.Add(mid * 1.3f);         // who is leading
         rows.Add(line * 1.7f);                  // the factors
         rows.Add(line * 1.7f);                  // the foot line
+        if (replay) rows.Add(line * 2.4f);      // copy game replay: a networked run's
         return rows.ToArray();
     }
 
@@ -1322,24 +1346,25 @@ public class DriveHud : MonoBehaviour
     /// The card at a font scale that keeps its bottom on screen: when the rows are taller than the room under the block
     /// clock, every font shrinks by the same factor - the copy is not shortened.
     /// </summary>
-    public float ArrivalScale(int w, int h, float head, float stoppedHeight, bool lead)
+    public float ArrivalScale(int w, int h, float head, float stoppedHeight, bool lead, bool replay = false)
     {
         float padY = head * 0.55f;
-        float height = ArrivalHeight(padY, ArrivalRowHeights(head, ArrivalMidFont(head), ArrivalLineFont(head), stoppedHeight, lead));
+        float height = ArrivalHeight(padY, ArrivalRowHeights(head, ArrivalMidFont(head), ArrivalLineFont(head), stoppedHeight, lead, replay));
         float room = h - Mathf.Max(8f, h * 0.02f) - CardIn(w, h, height).y;
         return height <= room || height <= 1f ? 1f : Mathf.Max(0.4f, room / height);
     }
 
-    /// <summary>The arrival card as the shot had it: a one-line run-stopped row and who is leading.</summary>
-    public Rect ArrivalBox(int w, int h) => ArrivalBox(w, h, RunStoppedFont(w, h) * 1.4f, true);
+    /// <summary>The arrival card as the shot had it: a networked run - a one-line run-stopped row, who is leading, and
+    /// the copy-game-replay control.</summary>
+    public Rect ArrivalBox(int w, int h) => ArrivalBox(w, h, RunStoppedFont(w, h) * 1.4f, true, true);
 
-    public Rect ArrivalBox(int w, int h, float stoppedHeight, bool lead)
+    public Rect ArrivalBox(int w, int h, float stoppedHeight, bool lead, bool replay = false)
     {
         float head = CardHead(w, h, true);
-        float k = ArrivalScale(w, h, head, stoppedHeight, lead);
+        float k = ArrivalScale(w, h, head, stoppedHeight, lead, replay);
         head *= k;
         return CardIn(w, h, ArrivalHeight(head * 0.55f,
-            ArrivalRowHeights(head, ArrivalMidFont(head), ArrivalLineFont(head), stoppedHeight * k, lead)));
+            ArrivalRowHeights(head, ArrivalMidFont(head), ArrivalLineFont(head), stoppedHeight * k, lead, replay)));
     }
 
     /// <summary>The streaming list, right-hand side, one row per model.</summary>
