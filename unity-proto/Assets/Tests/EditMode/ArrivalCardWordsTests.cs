@@ -74,4 +74,47 @@ public class ArrivalCardWordsTests
                        DriveHud.ArrivalHeadline(false, 7225).Length,
                        "a bigger fee does not make a longer headline");
     }
+    [Test]
+    public void TheResultCardsRowsDoNotCrossAndStayInsideTheCardOnScreen()
+    {
+        var hud = new GameObject("hud-under-test").AddComponent<DriveHud>();
+        try
+        {
+            foreach (var f in Frames)
+            {
+                int w = (int)f.x, h = (int)f.y;
+                float head0 = DriveHud.CardHead(w, h, true);
+                float stopped = DriveHud.RunStoppedFont(w, h) * 1.4f;          // one line of "RUN STOPPED - the core said DELIVERED at tick 4596"
+                float k = hud.ArrivalScale(w, h, head0, stopped, true);
+                float head = head0 * k;
+                float[] heights = DriveHud.ArrivalRowHeights(head, DriveHud.ArrivalMidFont(head), DriveHud.ArrivalLineFont(head), stopped * k, true);
+                var card = hud.ArrivalBox(w, h);
+                var rows = DriveHud.ArrivalRows(card, head * 0.55f, heights);
+                Debug.Log($"[result card] {w}x{h}: card {card.x:0},{card.y:0} {card.width:0}x{card.height:0} (bottom {card.yMax:0} of {h}), "
+                          + $"{rows.Length} rows, font scale {k:0.00}");
+                Assert.LessOrEqual(card.yMax, h, $"the card runs off the bottom at {w}x{h}");
+                Assert.GreaterOrEqual(card.x, 0f); Assert.LessOrEqual(card.xMax, w);
+                Assert.AreEqual(6, rows.Length, "run stopped, headline, score, leading, factors, foot");
+                for (int i = 0; i < rows.Length; i++)
+                {
+                    Assert.GreaterOrEqual(rows[i].y, card.y, $"row {i} starts above the card at {w}x{h}");
+                    Assert.LessOrEqual(rows[i].yMax, card.yMax + 0.01f, $"row {i} runs out under the card at {w}x{h} (the foot line did)");
+                    for (int j = i + 1; j < rows.Length; j++)
+                        Assert.LessOrEqual(rows[i].yMax, rows[j].y + 0.01f, $"row {i} crosses row {j} at {w}x{h}");
+                }
+                // the run-stopped sentence is the card's own FIRST row, above the headline - never drawn across it
+                Assert.Less(rows[0].yMax, rows[1].y + 0.01f);
+            }
+        }
+        finally { Object.DestroyImmediate(hud.gameObject); }
+    }
+
+    [Test]
+    public void WhileTheCardIsUpNothingElseIsDrawnThroughIt()
+    {
+        Assert.IsTrue(DriveHud.RunStoppedRowHiddenBy(arrivalCarriesIt: true), "the separate run-stopped row is still drawn across the card");
+        Assert.IsFalse(DriveHud.RunStoppedRowHiddenBy(arrivalCarriesIt: false), "the run-stopped row is gone when there is no card to carry it");
+        Assert.IsTrue(DriveHud.WaypointHiddenBy(arrivalShowing: true), "the DROP-OFF marker is still drawn through the card");
+        Assert.IsFalse(DriveHud.WaypointHiddenBy(arrivalShowing: false), "the DROP-OFF marker is gone on the road");
+    }
 }
