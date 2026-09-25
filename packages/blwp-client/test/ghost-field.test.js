@@ -9,6 +9,8 @@
 // This file is the half a page can be tested on. The jslib is the one file
 // `node --test` cannot load, so the rule that decides whether a player ever
 // sees a competitor lives here instead of there.
+// A FREE ROUND (RULED the owner 2026-09-25): nothing this file asserts depends on the stake, and a paying round opens only
+// on a signer node that reaches a federation now.
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../blwp-node/src/cores.js';
 import { test } from 'node:test';
@@ -58,7 +60,7 @@ async function rig() {
     startTimeMs: 500n + MIN_ENTRY_WINDOW_MS, entryCloseMs: 200000n,
     objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,
     slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,
-    censusRoot: b32(2), stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: RUN_TICKS,
+    censusRoot: b32(2), stakeMsat: 0n, bondMinSats: 50000n, blockTicks: RUN_TICKS,
     exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
     timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
     nodes: [node.round.pubkey],
@@ -66,7 +68,7 @@ async function rig() {
   const rid = await client.openRound(c);
   const mine = {
     roundId: rid, playerPubkey: b32(5), sessionPubkey: ed25519.getPublicKey(session),
-    stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n,
+    stakeCommitment: b32(7), stakeMsat: 0n, feeMsat: 0n, donationMsat: 0n,
     joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
   };
   const eid = await client.join(mine);
@@ -401,7 +403,7 @@ test('through the real client and daemon, this player\'s pre-reload entry is its
     // another entry - the daemon's own-entry filter does not know it is us.
     const before = {
       roundId: rid, playerPubkey: b32(5), sessionPubkey: b32(0x55), stakeCommitment: b32(7),
-      stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n,
+      stakeMsat: 0n, feeMsat: 0n, donationMsat: 0n,
       joinTick: 0, worldSecret: b32(0x5d), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
     };
     await fetch(`http://127.0.0.1:${node.port}/entry`, { method: 'POST', body: encodeEntryContract(before) });
@@ -538,7 +540,7 @@ test('through a real daemon\'s subscribe burst, the other player\'s abandoned en
     // leaves one. The daemon sends the latest picture of every entry on watch.
     const abandoned = [0x61, 0x62, 0x63].map((w) => ({
       roundId: rid, playerPubkey: b32(9), sessionPubkey: b32(w), stakeCommitment: b32(7),
-      stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n,
+      stakeMsat: 0n, feeMsat: 0n, donationMsat: 0n,
       joinTick: 0, worldSecret: b32(w), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
     }));
     for (const entryKey of abandoned) {

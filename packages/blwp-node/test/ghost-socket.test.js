@@ -9,6 +9,8 @@
 // 0.10 is the rule the whole thing exists under: another player's truck is a
 // PICTURE. It is never an input to my simulation, and every one of these
 // frames came out of `ghosts.js` -> `replay.js`, the one door.
+// A FREE ROUND (RULED the owner 2026-09-25): nothing this file asserts depends on the stake, and a paying round opens only
+// on a signer node that reaches a federation now.
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
@@ -34,7 +36,7 @@ import { O_TRUCK, T_X, T_Z, T_HEADING } from '../../core/src/state.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { assumeStakeSeen } from './assignment.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
-const contract = (stakeMsat = 100000n) => ({
+const contract = (stakeMsat = 0n) => ({
   networkId: b32(0x4e), configHash: TRUCK_CONFIG_HASH, censusConfirmations: 6, gameVerifySlots: 7,
   settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n, entryCloseMs: 2000n,
   objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,
@@ -44,7 +46,7 @@ const contract = (stakeMsat = 100000n) => ({
   timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
   nodes: [b32(4)],
 });
-const entryFor = (rid, n, stakeMsat = 100000n) => ({
+const entryFor = (rid, n, stakeMsat = 0n) => ({
   roundId: rid, playerPubkey: b32(n), sessionPubkey: b32(n + 1), stakeCommitment: b32(7),
   stakeMsat, feeMsat: entryFeeMsat(stakeMsat), donationMsat: 0n, joinTick: 0, worldSecret: b32(0x50 + n), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
 });
@@ -102,7 +104,7 @@ function drove(entry, ticks, n) {
   return at;
 }
 
-async function twoIdentities(node, stakeMsat = 100000n) {
+async function twoIdentities(node, stakeMsat = 0n) {
   const c = contract(stakeMsat);
   const rid = (await post(node.port, '/round', encodeRoundContract(c))).bytes;
   const a = entryFor(rid, 5, stakeMsat);

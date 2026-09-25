@@ -6,6 +6,9 @@
 // way in, and it is the same family as `?practice=0`: the URL NAMES things -
 // a round id, the daemons holding it, where headers and the bond are asked
 // for - and nothing here mints any of them.
+// A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED the owner 2026-09-25): this file's paying-round
+// daemons get the lock fixture's port - the test federation, two gateways, zero base fee. Contracts unchanged.
+import { lockPort } from '../../blwp-node/test/lock-fixture.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../blwp-node/src/cores.js';
 import { test } from 'node:test';
@@ -84,8 +87,8 @@ test('every way of naming a round badly is refused by name', () => {
 });
 
 test('two daemons hold the round, and the page joins the one the URL names', async () => {
-  const a = await serve(openStore(':memory:'), { port: 0, ...FUNDED });
-  const b = await serve(openStore(':memory:'), { port: 0, ...FUNDED });
+  const a = await serve(openStore(':memory:'), { port: 0, stakeLocks: lockPort(), ...FUNDED });
+  const b = await serve(openStore(':memory:'), { port: 0, stakeLocks: lockPort(), ...FUNDED });
   try {
     const contract = contractOn(a.round.pubkey, b.round.pubkey);
     const client = new Client({ base: `http://127.0.0.1:${a.port}`, sign, verify });
@@ -115,7 +118,7 @@ test('two daemons hold the round, and the page joins the one the URL names', asy
 });
 
 test('a node answering with a different round is refused, not played', async () => {
-  const a = await serve(openStore(':memory:'), { port: 0, ...FUNDED });
+  const a = await serve(openStore(':memory:'), { port: 0, stakeLocks: lockPort(), ...FUNDED });
   try {
     const wanted = contractOn(a.round.pubkey, b32(9));
     const other = contractOn(a.round.pubkey, b32(9), 0x44);

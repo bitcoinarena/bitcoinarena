@@ -12,6 +12,9 @@
 //
 // MEASURED BEFORE (TASKBOOK, M3.3-34): GET /rounds was 404 - no door listed
 // rounds, and a page with no `round=` in its link could only be the offline game.
+// A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED the owner 2026-09-25): this file's paying-round
+// daemons get the lock fixture's port - the test federation, two gateways, zero base fee. Contracts unchanged.
+import { lockPort } from './lock-fixture.js';
 import { test } from 'node:test';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import assert from 'node:assert/strict';
@@ -32,7 +35,7 @@ const WINDOW = 60000n;          // MIN_ENTRY_WINDOW_MS: committee -> start
 const ENTRY = 120000n;          // start -> entry close, as round-2of2 opens them
 
 test('the node lists the rounds a player can still join - free or paying, open or pending - with its own signer node counts', async () => {
-  const d = await serve(openStore(':memory:'), { port: 0, funded: () => true });
+  const d = await serve(openStore(':memory:'), { port: 0, stakeLocks: lockPort(), funded: () => true });
   const base = `http://127.0.0.1:${d.port}`;
   try {
     const now = BigInt(Date.now());

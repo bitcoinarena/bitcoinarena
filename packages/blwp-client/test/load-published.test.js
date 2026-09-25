@@ -10,6 +10,8 @@
 // The client's half is here: `submitLoad` holds the declaration against the
 // tick the run has reached and publishes it with the batch that covers that
 // tick. A real node, so what is measured is what the node ended up storing.
+// A FREE ROUND (RULED the owner 2026-09-25): nothing this file asserts depends on the stake, and a paying round opens only
+// on a signer node that reaches a federation now.
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../blwp-node/src/cores.js';
 import { test } from 'node:test';
@@ -49,7 +51,7 @@ async function rig() {
     objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,
     slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,
     censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
-    stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: BLOCK_TICKS,
+    stakeMsat: 0n, bondMinSats: 50000n, blockTicks: BLOCK_TICKS,
     exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
     timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
     nodes: [node.round.pubkey],
@@ -57,7 +59,7 @@ async function rig() {
   const rid = await client.openRound(c);
   const entry = {
     roundId: rid, playerPubkey: b32(5), sessionPubkey: ed25519.getPublicKey(session),
-    stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n,
+    stakeCommitment: b32(7), stakeMsat: 0n, feeMsat: 0n, donationMsat: 0n,
     joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
   };
   const eid = await client.join(entry);

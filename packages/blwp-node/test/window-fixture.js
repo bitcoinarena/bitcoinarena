@@ -48,6 +48,8 @@ import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
 import { encodeTranscriptPosting, transcriptPostingId, joinSignedPosting } from '../../protocol/src/posting.js';
 import { encodeRerunResult, rerunResultId, joinSignedRerun } from '../../protocol/src/rerun.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
+import { netStakeMsat } from '../../protocol/src/payout.js';
+import { refundKeyOf } from '../../protocol/src/stake-lock.js';
 
 export const b32 = (n) => new Uint8Array(32).fill(n);
 
@@ -177,7 +179,7 @@ export const say = (port, message) => new Promise((resolve, reject) => {
 export const secretScalar = () => { let p = rand(32); while (scalarFrom32(p) >= FIELD) p = rand(32); return p; };
 
 /** One player's stake dealt at `needed` to every signer node, joined, paid and played on `daemons`. */
-export async function joinAndPlay(daemons, c, rid, who, needed, { direct = false, donationMsat = 0n } = {}) {
+export async function joinAndPlay(daemons, c, rid, who, needed, { direct = false, donationMsat = 0n, port = null } = {}) {
   const session = ed25519.utils.randomSecretKey();
   const preimage = secretScalar();
   const e = rand(32);
@@ -193,6 +195,18 @@ export async function joinAndPlay(daemons, c, rid, who, needed, { direct = false
     stakeCommitment: sha256(preimage), stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE), donationMsat,
     joinTick: 0, worldSecret: who.worldSecret, vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0], feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
   };
+  // ON A SIGNER NODE THAT REACHES A FEDERATION (`port`, the lock fixture's; RULED 2026-09-25) the entry arrives as production
+  // shapes it: its stake locked to its point and its 2% fee locked to H(F), both in that federation - the round mints fee
+  // locks, and the entry door takes no staked entry that names none.
+  if (port) {
+    const feeSecret = rand(32);
+    Object.assign(entry, { feePreimage: feeSecret, stakeLockOutpoint: { txid: rand(32), outIdx: 0n }, feeLockOutpoint: { txid: rand(32), outIdx: 1n } });
+    const claimPk = new Uint8Array(33).fill(2);
+    await port.put(entry.stakeLockOutpoint, { paymentImage: { kind: 'point', bytes: entry.stakePoint }, amountMsat: netStakeMsat(entry),
+      claimPk, refundPk: refundKeyOf(who.key), expiration: port.height + 200 });
+    await port.put(entry.feeLockOutpoint, { paymentImage: { kind: 'hash', bytes: sha256(feeSecret) }, amountMsat: entry.feeMsat,
+      claimPk, refundPk: refundKeyOf(who.key), expiration: port.height + 200 });
+  }
   const eid = entryId(entry);
   const input = { roundId: rid, entryId: eid, previousHash: GENESIS_HASH, firstTick: 0,
     ticks: Array.from({ length: who.ticks }, (_, t) => wordsAt(t)), liquidations: [] };
@@ -247,8 +261,13 @@ export async function sevenSignerNodes(windowMs, relays, { storedBeforeTheRule =
   // EVERY SIGNER NODE'S ADVERTISEMENT, as a census would give it: each names its own
   // bond outpoint, which a slash proof must name (5A.3B). Filled once the keys exist.
   const adverts = new Map();
+  // A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED 2026-09-25): the lock fixture's port - the
+  // test federation, two gateways, zero base fee - and its entries lock their stake and fee in it (joinAndPlay).
+  // (Imported here, not at the top: lock-fixture imports this file and uses it as it loads.)
+  const { lockPort } = await import('./lock-fixture.js');
+  const port = lockPort();
   const holder = await serve(openStore(':memory:'), {
-    port: 0, ...opts, advertsFor: () => adverts, ...(finality ? { finality } : {}) });
+    port: 0, ...opts, stakeLocks: port, advertsFor: () => adverts, ...(finality ? { finality } : {}) });
   // THE CHAIN §13A'S WINDOWS ARE READ FROM (RULED 2026-09-24): the block clock every fixture daemon reads.
   holder.round.chainView = CLOCK.chainView();
   try {
@@ -267,7 +286,7 @@ export async function sevenSignerNodes(windowMs, relays, { storedBeforeTheRule =
     for (const [name, key] of [['agrees', 5], ['dissents', 6]]) {
       // `play` names who plays a run instead of the loser - a run that stops while
       // still LIVE, for one (M3.3-34 walk-away step 7).
-      runs[name] = await joinAndPlay([holder], c, rid, { ...(play[name] || LOSER), name, key: b32(key) }, 5, { direct: storedBeforeTheRule });
+      runs[name] = await joinAndPlay([holder], c, rid, { ...(play[name] || LOSER), name, key: b32(key) }, 5, { direct: storedBeforeTheRule, port });
       // FIVE OF SEVEN RECEIPTS MAKE THE TRANSCRIPT CANONICAL: its own and four signer nodes'.
       for (const secret of others.slice(0, 4)) {
         const receipt = { checkpointId: runs[name].mid, receivedAtMs: 1234n, nodePubkey: schnorr.getPublicKey(secret) };

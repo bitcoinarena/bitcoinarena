@@ -10,6 +10,7 @@
 //
 // Everything here goes through the daemons' own doors. Nothing hands a share
 // to anybody in this file.
+import { lockPort, lockedEntry } from './lock-fixture.js';
 import { CLOCK } from './block-clock.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
@@ -87,6 +88,7 @@ const session = ed25519.utils.randomSecretKey();
 // P2 (v4.6.2 §13A): the relays each run's transcript is posted to - the
 // committee's own doors, set when `committee` stands the daemons up, so every
 // contract this file builds for them names the same ones and has the same id.
+let committeePort = null;
 let committeeRelays = [];
 const contractFor = (nodes) => ({
   startDeadlineTicks: PLANTED_FIRST_MARK_DEADLINE, networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
@@ -117,9 +119,12 @@ const untilNextBlock = async () => { const s = Math.floor(Date.now() / 1000); wh
 /** Seven daemons, and the round they all hold. */
 async function committee(n = 7) {
   const nodes = [];
+  // THE COMMITTEE REACHES ONE FEDERATION (RULED 2026-09-25: a paying round opens only on a signer node that reaches one):
+  // the lock fixture's port, shared, and an entry's stake and fee are locked in it (playedRound).
+  committeePort = lockPort();
   for (let i = 0; i < n; i++)
     nodes.push(await serve(openStore(':memory:'), {
-      port: 0, funded: () => true, randomnessFor: () => BEACON,
+      port: 0, funded: () => true, randomnessFor: () => BEACON, stakeLocks: committeePort,
     }));
   // THE CHAIN §13A'S WINDOWS ARE READ FROM (RULED 2026-09-24): the block clock every fixture daemon reads.
   for (const d of nodes) d.round.chainView = CLOCK.chainView();
@@ -140,6 +145,11 @@ async function playedRound(node, c, stake, signerNodes) {
     stakeCommitment: stake.stakeCommitment, stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n),
     donationMsat: 0n, joinTick: 0, worldSecret: b32(0x16), vssSharesRef: stake.ref, stakePoint: stake.stakePoint, feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
   };
+  // ONE ENTRY ON EVERY NODE: its locks are made once per stake and named the same everywhere, so its id is one id.
+  if (!stake.locked) {
+    await lockedEntry(committeePort, entry, b32(5));
+    stake.locked = { feePreimage: entry.feePreimage, stakeLockOutpoint: entry.stakeLockOutpoint, feeLockOutpoint: entry.feeLockOutpoint };
+  } else Object.assign(entry, stake.locked);
   const eid = entryId(entry);
   const joined = await fetch(`http://127.0.0.1:${node.port}/entry`,
     { method: 'POST', body: encodeEntryContract(entry) });

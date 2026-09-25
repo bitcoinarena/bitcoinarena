@@ -10,6 +10,9 @@
 // after the close every stake was still HELD and every result provisional,
 // with 0 Lightning acts. Now the round is refused where it is opened, and a
 // stake is refused where it would be joined - before any hold is issued.
+// A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED the owner 2026-09-25): this file's paying-round
+// daemons get the lock fixture's port - the test federation, two gateways, zero base fee. Contracts unchanged.
+import { lockPort } from './lock-fixture.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -22,7 +25,7 @@ import { b32, WINDOW_MS, contractFor, opts } from './window-fixture.js';
 const open = (d, c) => fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
 
 test('the same paying round naming a relay opens, and a free round naming none opens', async () => {
-  const d = await serve(openStore(':memory:'), { port: 0, ...opts });
+  const d = await serve(openStore(':memory:'), { port: 0, stakeLocks: lockPort(), ...opts });
   try {
     const paying = contractFor([d.round.pubkey, b32(0x33)], BigInt(WINDOW_MS), [`http://127.0.0.1:${d.port}`]);
     assert.equal((await open(d, paying)).status, 201, 'a paying round naming a relay was refused');

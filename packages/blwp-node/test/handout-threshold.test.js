@@ -11,6 +11,9 @@
 // refuses any other by name. An honest dealer cannot even make the bad ones
 // (`dealHandout` refuses), so the bad ones here are crafted, the way a
 // cheating player would send them.
+// A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED the owner 2026-09-25): this file's paying-round
+// daemons get the lock fixture's port - the test federation, two gateways, zero base fee. Contracts unchanged.
+import { lockPort } from './lock-fixture.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 // THE RUN LENGTH IS THE CORE'S (2026-09-20). This fixture said 9000 and the core has ended a run at 10800
@@ -99,7 +102,7 @@ async function door(node, signerNodes) {
 }
 
 test('two signer nodes: the door takes 2-of-2 and refuses a crafted 3-of-2 and a crafted 1-of-2 by name', async () => {
-  const a = await serve(openStore(':memory:'), { port: 0, ...FUNDED });
+  const a = await serve(openStore(':memory:'), { port: 0, ...FUNDED, stakeLocks: lockPort() });
   try {
     const signerNodes = [a.round.pubkey, schnorr.getPublicKey(rand(32))];
     const { rid, post } = await door(a, signerNodes);
@@ -115,7 +118,7 @@ test('two signer nodes: the door takes 2-of-2 and refuses a crafted 3-of-2 and a
 });
 
 test('seven signer nodes: the door takes 5-of-7 and refuses 7-of-7 - what the page used to deal - by name', async () => {
-  const a = await serve(openStore(':memory:'), { port: 0, ...FUNDED });
+  const a = await serve(openStore(':memory:'), { port: 0, ...FUNDED, stakeLocks: lockPort() });
   try {
     const signerNodes = [a.round.pubkey, ...Array.from({ length: 6 }, () => schnorr.getPublicKey(rand(32)))];
     const { rid, post } = await door(a, signerNodes);
