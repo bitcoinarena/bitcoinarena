@@ -162,11 +162,24 @@
       #blwp-wallet input { width: calc(100% - 150px); margin-right: 8px; vertical-align: middle; }
       #blwp-wallet button { vertical-align: middle; }
     }
-    #blwp-backup-warn { display:flex; align-items:center; gap:12px; margin:0 0 8px 0; padding:12px 16px;
-      background:#3a2000; border:2px solid #ff9d2e; border-radius:6px; color:#ffcf8a;
-      font-size:17px; font-weight:600; line-height:1.3; }
-    #blwp-backup-cta { flex:none; font-size:16px; font-weight:700; padding:8px 16px; cursor:pointer;
+    /* THE LOBBY'S STRIP: positioned over the top edge, never in the page's flow, so it can never be the page. */
+    #blwp-money { position: fixed; top: 6px; left: 8px; right: 8px; z-index: 30; display: flex; gap: 8px;
+      align-items: flex-start; justify-content: flex-end; pointer-events: none; }
+    #blwp-money > * { pointer-events: auto; }
+    #blwp-backup-warn { display:flex; align-items:center; gap:10px; flex: 1 1 auto; max-width: 560px; padding:6px 10px;
+      background:rgba(58,32,0,0.94); border:2px solid #ff9d2e; border-radius:6px; color:#ffcf8a;
+      font-size:13px; font-weight:600; line-height:1.25; }
+    #blwp-backup-cta { flex:none; font-size:13px; font-weight:700; padding:6px 10px; cursor:pointer;
       background:#ff9d2e; color:#241400; border:0; border-radius:4px; }
+    #blwp-settings-go { flex: none; font-size: 20px; line-height: 1; padding: 6px 10px; cursor: pointer;
+      background: rgba(13,16,20,0.9); color: #e8eaed; border: 1px solid #3a4452; border-radius: 6px; }
+    /* SETTINGS IS ITS OWN SCREEN, over everything while it is open. */
+    #blwp-settings { position: fixed; inset: 0; z-index: 40; overflow-y: auto; background: #0d1014;
+      padding: 16px; box-sizing: border-box; }
+    #blwp-settings .settings-row { margin: 0 0 18px 0; max-width: 720px; }
+    #blwp-settings label { display: block; font-weight: 700; margin-bottom: 6px; color: #f7931a; }
+    #blwp-settings button { font: inherit; padding: 6px 12px; margin: 4px 6px 4px 0; cursor: pointer;
+      background: #1e2833; color: #e8eaed; border: 1px solid #33414f; border-radius: 4px; }
   </style>
 </head>
 <body>
@@ -174,25 +187,33 @@
   <!-- §24B: the wallet's own line, in the LOBBY and never over the drive. `blwp-money` is hidden while a
        round is being driven, so the balance, the federation and the pending line cannot follow a player
        into the game. -->
-  <div id="blwp-money">
-    <!-- THE WARNING IS LARGE AND IT IS IN THE LOBBY (the owner 2026-09-21 20:01), with its own way out.
-         A line buried in Settings is a line nobody reads; PLAY is never refused, so the warning is the
-         only thing standing between a player and losing a wallet he never wrote down. -->
+  <!-- THE LOBBY'S STRIP, AND NOTHING MORE (the owner 2026-09-25 21:11-21:16, phone: the wallet page stood where the lobby
+       should be). After the loading screen the lobby is the only screen: this is a small strip over its top edge - the
+       backup warning with its way out, and the gear to Settings - and never the page. The wallet itself (balance,
+       Deposit, Withdraw, Move) is in Settings. Hidden while the loading screen is up and while a round is driven. -->
+  <div id="blwp-money" style="display:none">
+    <!-- THE WARNING IS IN THE LOBBY (the owner 2026-09-21 20:01), with its own way out. PLAY is never refused, so the
+         warning is the only thing standing between a player and losing a wallet he never wrote down. -->
     <div id="blwp-backup-warn" style="display:none">
       <span id="blwp-backup-notice"></span>
       <button id="blwp-backup-cta" type="button">Back up now</button>
     </div>
-    <div id="blwp-balance-line"></div>
-    <div id="blwp-money-actions">
-      <button id="blwp-deposit-go" type="button">Deposit</button>
-      <button id="blwp-withdraw-lobby" type="button">Withdraw</button>
-      <button id="blwp-move-go" type="button">Move</button>
-      <button id="blwp-settings-go" type="button" title="Settings">&#9881;</button>
-    </div>
-    <div id="blwp-money-why"></div>
+    <button id="blwp-settings-go" type="button" title="Settings">&#9881;</button>
   </div>
-  <!-- SETTINGS: exactly three things (§24B) - the name, the donation, and the seed with Verify. -->
+  <!-- SETTINGS, ITS OWN SCREEN (the owner 2026-09-25 21:16: "The wallet page belongs in the settings screen. Deposit,
+       withdraw, the seed, the backup warning: that is Settings"): the wallet, the name, the donation, and the seed with
+       Verify. -->
   <div id="blwp-settings" style="display:none">
+    <div class="settings-row">
+      <label>Wallet</label>
+      <div id="blwp-balance-line"></div>
+      <div id="blwp-money-actions">
+        <button id="blwp-deposit-go" type="button">Deposit</button>
+        <button id="blwp-withdraw-lobby" type="button">Withdraw</button>
+        <button id="blwp-move-go" type="button">Move</button>
+      </div>
+      <div id="blwp-money-why"></div>
+    </div>
     <div class="settings-row">
       <label for="blwp-name-field">Name</label>
       <input id="blwp-name-field" type="text" autocomplete="off" spellcheck="false" maxlength="32">
@@ -1406,7 +1427,10 @@
       const settings = document.getElementById('blwp-settings');
       if (!money) return;
       if (drivingNow()) { money.style.display = 'none'; if (settings) settings.style.display = 'none'; return; }
-      money.style.display = '';
+      // THE LOBBY'S STRIP, ONLY OVER THE LOBBY: not over the loading screen, and not over a round's own screens (the
+      // cargo panel, the drive) - Unity says what it draws (BLWP_UNITY_LOBBY), and the strip follows the lobby.
+      const u = window.BLWP_UNITY_LOBBY;
+      money.style.display = window.unityInstance && !document.getElementById('boot') && u && u.showing && u.lobby ? '' : 'none';
       const st = backupStore(); const seed = walletSeed();
       const line = (st && seed) ? BLWPCLIENT.backupLine(st, seed) : BLWPCLIENT.NO_BACKUP_LINE;
       document.getElementById('blwp-backup-notice').textContent = line;
@@ -2006,9 +2030,36 @@
 
     // UNITY LOADS IN THE LOBBY TOO: the lobby is its title screen. A lobby that
     // cannot be read leaves the offline game, never a dead page.
+    // A ROUND LINK THAT CANNOT BE JOINED GOES BACK TO THE LOBBY (the owner 2026-09-25 21:13, phone: build 0.0.1866 put the
+    // old title screen up under "the node refused the entry: the round is closed" - a tab brought back on a round's
+    // address after that round had closed). A closed round is a line in the lobby, not a reason to leave it: the
+    // address loses the round and `play`, the round this page half-named is dropped, and the lobby that address - or
+    // daily.json beside this page - names is shown with the refusal as its join line. Only a page that names no lobby
+    // at all still fails as before.
+    const joinOrBackToTheLobby = async () => {
+      const onARound = /(^|[?&])round=/.test(location.search);
+      try {
+        await joinTheRoundIfOneWasNamed();
+        if (!onARound || window.BLWP_ENTRY) return;
+        throw new Error(window.BLWP_JOIN_REFUSED || 'this page did not join that round');
+      } catch (e) {
+        if (!onARound) throw e;
+        const why = e && e.message ? e.message : String(e);
+        window.BLWP_ROUND = undefined; window.BLWP_ENTRY = undefined; window.BLWP_CHAIN = undefined; window.BLWP_ADVERT = undefined;
+        window.BLWP_JOIN = { state: 'refused', why, stage: '' };
+        console.error('[blwp] that round link cannot be joined (' + why + '): back to the lobby');
+        const q = new URLSearchParams(location.search.replace(/^\?/, ''));
+        q.delete('round'); q.delete('play');
+        history.replaceState(null, '', location.pathname + (q.toString() ? '?' + q.toString() : ''));
+        if (await showTheLobbyIfOneWasNamed()) return;
+        history.replaceState(null, '', location.pathname);
+        if (await showTheLobbyIfOneWasNamed()) return;
+        throw e;
+      }
+    };
     showTheLobbyIfOneWasNamed()
       .catch((e) => { console.error('[blwp] that lobby cannot be read: ' + e.message); return false; })
-      .then((lobby) => (lobby ? null : joinTheRoundIfOneWasNamed()))
+      .then((lobby) => (lobby ? null : joinOrBackToTheLobby()))
       .then(() => document.body.appendChild(script))
       .catch((e) => { fail('That round link cannot be used: ' + e.message); showNotedDonation(); });
   </script>
