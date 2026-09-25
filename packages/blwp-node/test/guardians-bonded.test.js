@@ -198,16 +198,23 @@ test('the page counts the guardians on the bonds a signer node serves: 2 of 2 pr
       bondedGuardians({ guardians: guardiansOf(answerOf(keys, threshold)), round: s.c, chain: s.chain, offers, verify });
 
     const sa = await served(a);
-    const sb = await served(b);
+    // THE UNBONDED FEDERATION'S ROUND IS NOT STORED (RULED 2026-09-25: the bond check runs before round.open), so the
+    // signer node serves no guardian bonds for that round id - 404. The page counts federation B (4 keys, threshold 3)
+    // against the guardian bonds served for the stored bonded round of (a): both doors' bonds advertise the same two
+    // guardian keys, so what the page can prove about B's guardians is what the signer node counted when it refused.
+    const bJoined = await b.post();
+    const bRound = bJoined.round();
+    const bBonds = await fetch(`http://127.0.0.1:${b.node.port}/guardian-bonds?round=${toHex(roundId(bRound))}`);
+    const sb = { joined: bJoined, bondsStatus: bBonds.status, bondsWhy: (await bBonds.text()).trim() };
     const whole = await count(sa, two, 2);
     const omitted = await count(sa, two, 2, offersFrom(sa.body).slice(0, 1));
     const altered = offersFrom(sa.body);
     altered[1] = { ...altered[1], branch: altered[1].branch.map(() => new Uint8Array(32)) };
     const forged = await count(sa, two, 2, altered);
-    const unbonded = await count(sb, four, 3);
+    const unbonded = await count(sa, four, 3);
     console.log('  FACTS:', JSON.stringify({
       a: { signerNode: sa.joined.status, served: JSON.parse(sa.body).bonds.length, whole, omitted: omitted.why, forged: { why: forged.why, refused: forged.refused } },
-      b: { signerNode: sb.joined.status, joinWhy: sb.joined.why.slice(0, 120), served: JSON.parse(sb.body).bonds.length, page: unbonded.why },
+      b: { signerNode: sb.joined.status, joinWhy: sb.joined.why.slice(0, 120), bondsDoor: `${sb.bondsStatus} ${sb.bondsWhy.slice(0, 40)}`, page: unbonded.why },
     }));
 
     assert.equal(sa.joined.status, 201, sa.joined.why);
@@ -221,6 +228,7 @@ test('the page counts the guardians on the bonds a signer node serves: 2 of 2 pr
     assert.match(forged.refused.join(';'), /bond 1: the transaction is not in any block of that chain/);
 
     assert.equal(sb.joined.status, 409);
+    assert.equal(sb.bondsStatus, 404, 'the refused round was stored: its guardian bonds were served');
     assert.equal(unbonded.ok, false);
     const said = /2 of that federation's 4 guardians are bonded census nodes, and its threshold is 3/;
     assert.match(unbonded.why, said);

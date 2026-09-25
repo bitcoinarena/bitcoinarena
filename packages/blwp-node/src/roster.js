@@ -231,10 +231,15 @@ export class Roster {
     return derived.ok ? { ...derived, atHeight: height } : derived;
   }
 
-  censusFor(roundIdBytes, atHeight = null, { asRoundsOwn = true } = {}) {
-    const row = this.round.get(roundIdBytes);
-    if (!row) return { ok: false, why: 'this node holds no such round' };
-    const asStored = decodeRoundContract(new Uint8Array(row.contract));
+  // `posted`: the contract of a round being posted, not yet stored (RULED 2026-09-25: POST /round asks whether the round's
+  // federation is bonded BEFORE round.open, so nothing of a refused round exists). The census derived is the same.
+  censusFor(roundIdBytes, atHeight = null, { asRoundsOwn = true, posted = null } = {}) {
+    let asStored = posted;
+    if (!asStored) {
+      const row = this.round.get(roundIdBytes);
+      if (!row) return { ok: false, why: 'this node holds no such round' };
+      asStored = decodeRoundContract(new Uint8Array(row.contract));
+    }
     // The only thing a named height changes is which height the census is read at.
     const contract = atHeight === null ? asStored : { ...asStored, censusHeight: atHeight };
 
