@@ -901,13 +901,13 @@ public class DriveHud : MonoBehaviour
         string stopped = RunStoppedLine(_session != null ? _session.Ending : "");
 
         // Sized off the WIDTH, not the smaller dimension, and scaled together to keep the card's bottom on screen.
-        float head0 = CardHead(w, h, true);
+        float head0 = ArrivalHead(w, h);
         var stopStyle = new GUIStyle(GUI.skin.label)
         {
             alignment = TextAnchor.UpperCenter, fontStyle = FontStyle.Bold, wordWrap = true,
             fontSize = Mathf.RoundToInt(RunStoppedFont(w, h)),
         };
-        var probe = CardIn(w, h, 10f);
+        var probe = ArrivalCardIn(w, h, 10f);
         float stoppedHeight = stopped.Length == 0 ? 0f : stopStyle.CalcHeight(new GUIContent(stopped), probe.width - 16f) + stopStyle.fontSize * 0.4f;
         // COPY GAME REPLAY, on a networked run's card (its session ended it - that is where a replay is held).
         bool replay = runScore != null && _session != null && stopped.Length > 0;
@@ -935,7 +935,7 @@ public class DriveHud : MonoBehaviour
         // THE ROWS FROM THE FONTS THAT ARE DRAWN, and the card from the rows.
         float padY = head * 0.55f;
         float[] heights = ArrivalRowHeights(big.fontSize, mid.fontSize, line.fontSize, stoppedHeight, leadLine != null, replay);
-        var card = CardIn(w, h, ArrivalHeight(padY, heights));
+        var card = ArrivalCardIn(w, h, ArrivalHeight(padY, heights));
         var rows = ArrivalRows(card, padY, heights);
 
         // OPAQUE ENOUGH TO READ (18:39: the truck's cab and the road showed through "BULLS LEADING" and the factors).
@@ -1287,6 +1287,28 @@ public class DriveHud : MonoBehaviour
     /// it, and stands below the block clock. It is narrower than it was; the
     /// alternative is wider and on top of the numbers.
     /// </summary>
+    /// <summary>
+    /// THE ARRIVAL CARD ON A PORTRAIT PHONE (the owner 2026-09-25, pick B: measured at 390x844 CSS, DPR 3). There the gap
+    /// between the columns is about a third of the screen, so the card stood 115 CSS px wide: the run-stopped sentence
+    /// wrapped to four lines, every other row shrank to fit, and "copy game replay" was a 44x5 px target that two presses
+    /// in three missed. After the run the card needs no gap - the drive is over - so on a portrait screen with a narrow
+    /// gap it spans the screen, below the left column (27% down, clear of the condition, danger, practice and sim boxes
+    /// that end at 24.7% in the shot), with its headline sized off the width. Landscape and desktop are unchanged.
+    /// </summary>
+    public static bool ArrivalSpansTheScreen(int w, int h, float gapWidth) => h > w && gapWidth < w * 0.6f;
+
+    public const float ArrivalPortraitTop = 0.27f;
+
+    Rect ArrivalCardIn(int w, int h, float height)
+    {
+        if (!ArrivalSpansTheScreen(w, h, HeadlineBox(w, h).width)) return CardIn(w, h, height);
+        float pad = Mathf.Max(10f, w * 0.03f);
+        return new Rect(pad, h * ArrivalPortraitTop, w - 2f * pad, height);
+    }
+
+    float ArrivalHead(int w, int h) =>
+        ArrivalSpansTheScreen(w, h, HeadlineBox(w, h).width) ? Mathf.RoundToInt(w * 0.055f) : CardHead(w, h, true);
+
     Rect CardIn(int w, int h, float height)
     {
         float pad = Mathf.Max(10f, h * 0.022f);
@@ -1357,7 +1379,7 @@ public class DriveHud : MonoBehaviour
     {
         float padY = head * 0.55f;
         float height = ArrivalHeight(padY, ArrivalRowHeights(head, ArrivalMidFont(head), ArrivalLineFont(head), stoppedHeight, lead, replay));
-        float room = h - Mathf.Max(8f, h * 0.02f) - CardIn(w, h, height).y;
+        float room = h - Mathf.Max(8f, h * 0.02f) - ArrivalCardIn(w, h, height).y;
         return height <= room || height <= 1f ? 1f : Mathf.Max(0.4f, room / height);
     }
 
@@ -1367,10 +1389,10 @@ public class DriveHud : MonoBehaviour
 
     public Rect ArrivalBox(int w, int h, float stoppedHeight, bool lead, bool replay = false)
     {
-        float head = CardHead(w, h, true);
+        float head = ArrivalHead(w, h);
         float k = ArrivalScale(w, h, head, stoppedHeight, lead, replay);
         head *= k;
-        return CardIn(w, h, ArrivalHeight(head * 0.55f,
+        return ArrivalCardIn(w, h, ArrivalHeight(head * 0.55f,
             ArrivalRowHeights(head, ArrivalMidFont(head), ArrivalLineFont(head), stoppedHeight * k, lead, replay)));
     }
 

@@ -173,6 +173,14 @@
       background:#ff9d2e; color:#241400; border:0; border-radius:4px; }
     #blwp-settings-go { flex: none; font-size: 20px; line-height: 1; padding: 6px 10px; cursor: pointer;
       background: rgba(13,16,20,0.9); color: #e8eaed; border: 1px solid #3a4452; border-radius: 6px; }
+    /* ON A NARROW SCREEN THE STRIP STAYS ABOVE THE LOBBY'S TITLE (the owner 2026-09-25, pick B: at 390x844 it ran 6..79 CSS
+       px and covered "BTC LOGISTICS"). Smaller type and padding, the same words; the lobby is not touched. */
+    @media (max-width: 600px) {
+      #blwp-money { top: 3px; left: 4px; right: 4px; gap: 4px; }
+      #blwp-backup-warn { font-size: 11px; line-height: 1.2; padding: 3px 6px; gap: 6px; border-width: 1px; }
+      #blwp-backup-cta { font-size: 11px; padding: 3px 7px; }
+      #blwp-settings-go { font-size: 16px; padding: 3px 7px; }
+    }
     /* SETTINGS IS ITS OWN SCREEN, over everything while it is open. */
     #blwp-settings { position: fixed; inset: 0; z-index: 40; overflow-y: auto; background: #0d1014;
       padding: 16px; box-sizing: border-box; }
