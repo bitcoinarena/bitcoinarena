@@ -292,7 +292,11 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     onChain = rt;
     const posted = members.map((m, i) =>
       rt.postBond(m.id.secret, {
-        endpoint: `ws://${host}:${m.port}`,
+        // THE PUBLIC ENDPOINT, THE SAME ONE THE ADVERT NAMES (the owner 2026-09-25 21:41: the replay link a player copies
+        // is built from these, and "a copied link that only opens on 127.0.0.1 does not count"). The bond said
+        // ws://<host>:<port> - on the Daily 198.51.100.7, a tailnet address no phone off this machine can open -
+        // while the advert already said BLWP_WSS_<port>; the census reads the bond.
+        endpoint: process.env[`BLWP_WSS_${m.port}`] || `ws://${host}:${m.port}`,
         // AND WHICH FEDERATION THIS SIGNER NODE GUARDS, when the caller named one. Without it
         // `federationIsBonded` counts zero of the federation's threshold and every paying FEDERATION
         // round is refused on a bonded-federation check the bonds could not satisfy. Per node, so
