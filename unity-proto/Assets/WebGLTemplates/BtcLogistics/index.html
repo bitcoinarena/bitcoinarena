@@ -1135,6 +1135,11 @@
           canInvoice: !!(maker || pasted || (conn && conn.ok)),
           onStep: (step) => { console.log('[blwp] withdraw: ' + step); window.BLWP_WITHDRAW_STEP = step; paintWallet(); } }));
         window.BLWP_WITHDRAWN = done.withdraw;
+        // AND THE PLAYER WALLET (§24A.1, RULED 2026-09-25): the one wallet per seed and federation the stakes are
+        // spent from - its whole withdrawable balance to the player's own invoice, in this press and nowhere else.
+        window.BLWP_WITHDRAWN_WALLET = await BLWPCLIENT.withdrawPlayerWallet({ round: r.round, invite: r.invite, seed: r.seed,
+          LockClient: own.LockClient, storage: vault(), invoiceFor,
+          onStep: (step) => { console.log('[blwp] withdraw, player wallet: ' + step); window.BLWP_WITHDRAW_STEP = step; paintWallet(); } });
         window.BLWP_OWED = await BLWPCLIENT.lookOwed(Object.assign({}, ask, { client: own.client }));
         window.BLWP_WITHDRAWABLE = window.BLWP_OWED.inTabMsat;
       } finally { payoutAsking = false; window.BLWP_WITHDRAWING = false; }

@@ -21,7 +21,7 @@ import assert from 'node:assert/strict';
 import { bech32Encode, convertBits } from '../../protocol/src/bech32.js';
 import { decodeBolt11 } from '../../protocol/src/bolt11.js';
 
-import { lockStake, fundPlayerWallet, walletSecretFor, handLock, lockSecretFor, lockAmountMsat, lockLine, saveLock, savedLock, markLockCommitted,
+import { lockStake, fundPlayerWallet, walletSecretFor, withdrawPlayerWallet, handLock, lockSecretFor, lockAmountMsat, lockLine, saveLock, savedLock, markLockCommitted,
   refundStake, redeemStake, redeemPayout, payoutLine, returnStake, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, withdrawLine, refundKept, refundLine, lookOwed, owedToLine as owedLine, collectAndWithdraw, tabLockWallet, findOwedRounds, feeSecretFor } from '../src/page-lock.js';
 import { sha256 } from '../../protocol/src/hash.js';
 import { entryFor, joinQuery, stakeFor, playerFor } from '../src/join.js';
@@ -99,6 +99,7 @@ function lockClient({ idsMatch = true, lockedMsat, lockFee = 2528n, feeRule = nu
     async lock(point, amount, claim, refund, delta) {
       log.push({ lock: { point, amount, claim, refund, delta } });
       this.balance -= BigInt(amount) + lockFee;
+      if (this.store) this.store.put('ba', this.balance.toString(16).padStart(2, '0'));   // kept, as the real database keeps it
       const expiration = 1000 + delta;
       return JSON.stringify({ txid: 'ab'.repeat(32), out_idx: 0, computed_contract_id: 'c1', stored_contract_id: idsMatch ? 'c1' : 'c2',
         ids_match: idsMatch, computed_expiration: expiration, stored_expiration: expiration, amount_msat: Number(lockedMsat ?? amount) });
@@ -108,9 +109,18 @@ function lockClient({ idsMatch = true, lockedMsat, lockFee = 2528n, feeRule = nu
       if (!feeRule) throw new Error('this stand-in names no fee rule');
       return JSON.stringify({ fee_ppm: Number(feeRule.ppm), fee_base_msat: Number(feeRule.baseMsat) });
     }
+    // THE WITHDRAW (§24A.1): the whole balance less the stand-in's send fee, to the invoice it is handed.
+    async withdrawableMsat() { if (this.balance <= 3000n) throw new Error('Balance is too low to send any amount after fees'); return String(this.balance - 3000n); }
+    async withdraw(invoice) {
+      log.push({ withdraw: { invoice } });
+      const before = this.balance; this.balance = 0n;
+      if (this.store) this.store.put('ba', '00');
+      return JSON.stringify({ state: 'Success', invoice_msat: Number(before - 3000n), gateway: 'http://gw-b', balance_before: Number(before), balance_after: 0 });
+    }
     async lockHash(hash, amount, claim, refund, delta) {
       log.push({ lockHash: { hash, amount, claim, refund, delta } });
       this.balance -= BigInt(amount) + lockFee;
+      if (this.store) this.store.put('ba', this.balance.toString(16).padStart(2, '0'));
       const expiration = 1000 + delta;
       return JSON.stringify({ txid: 'cd'.repeat(32), out_idx: 1, computed_contract_id: 'f1', stored_contract_id: 'f1',
         ids_match: true, computed_expiration: expiration, stored_expiration: expiration, amount_msat: Number(amount) });
@@ -158,6 +168,31 @@ test('the page tops up the player wallet - under the seed\'s secret for this FED
     leftTheWallet: String(lockAmountMsat(round) + 2528n),
   });
   assert.equal(lockAmountMsat(round), 980000n, 'the net stake of 1000000 msat less the 2% fee');
+});
+
+test('the Withdraw spends the player wallet - the same wallet the stakes left, its whole withdrawable balance to the player\'s invoice - and a wallet with nothing in it spends nothing', async () => {
+  const { LockClient, log } = lockClient({ lockFee: 0n });   // so the stake leaves the allowance behind to withdraw
+  const tab = tabStorage();
+  await fundPlayerWallet({ round, invite: INVITE, seed, LockClient, storage: tab });
+  const staked = await ask({ LockClient, storage: tab });
+  const invoices = [];
+  const invoiceFor = async (msat) => { invoices.push(msat); return { ok: true, invoice: `lnbcrt${msat}n1player` }; };
+  const out = await withdrawPlayerWallet({ round, invite: INVITE, seed, LockClient, storage: tab, invoiceFor });
+  const joins = log.filter((l) => l.join).map((l) => l.join.secret);
+  console.log(`  withdraw from the player wallet: ${out.state} ${out.invoiceMsat} msat through ${out.gateway}; balance ${out.balance_before} -> ${out.balance_after}`);
+  assert.equal(out.ok, true);
+  assert.equal(out.from, 'the player wallet');
+  assert.ok(joins.every((j) => j === toHex(walletSecretFor(seed, TEST_FEDERATION_ID))), 'the withdraw opened another wallet than the stakes left');
+  assert.equal(BigInt(out.balance_before), staked.walletAfterMsat, 'the withdraw did not start from what the stakes left');
+  assert.equal(out.balance_after, 0);
+  assert.deepEqual(invoices, [staked.walletAfterMsat - 3000n]);
+  assert.equal(log.filter((l) => l.withdraw).length, 1);
+  // AND AN EMPTY WALLET: nothing to spend, no invoice asked, said by name.
+  const empty = await withdrawPlayerWallet({ round, invite: INVITE, seed, LockClient, storage: tab, invoiceFor });
+  assert.equal(empty.ok, false);
+  assert.match(empty.why, /nothing in the player wallet to withdraw after the send's fees/);
+  assert.equal(log.filter((l) => l.withdraw).length, 1, 'an empty wallet was spent');
+  assert.equal(invoices.length, 1);
 });
 
 test('a player wallet short of the round\'s locks is refused by name, and the stake asks for no deposit', async () => {
@@ -788,7 +823,7 @@ function bolt11For(amountMsat) {
 test('the page spends nothing on a timer: its interval functions only look, and collect-and-withdraw is called from the Withdraw action alone', async () => {
   const { readFileSync } = await import('node:fs');
   const page = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url), 'utf8');
-  const spends = /redeemPayout|returnStake|refundKept|withdrawCollected|collectOwed|collectAndWithdraw|\.refund\(|\.redeem\(|\.withdraw\(/;
+  const spends = /redeemPayout|returnStake|refundKept|withdrawCollected|withdrawPlayerWallet|collectOwed|collectAndWithdraw|\.refund\(|\.redeem\(|\.withdraw\(/;
   const timed = [...page.matchAll(/setInterval\((\w+), \d+\)/g)].map((m) => m[1]);
   assert.ok(timed.includes('lookThePayout'), `the look is not on a timer (${timed.join(', ')})`);
   for (const name of timed) {
@@ -803,6 +838,10 @@ test('the page spends nothing on a timer: its interval functions only look, and 
   const withdrawAt = page.indexOf('window.BLWP_WITHDRAW = async function');
   assert.equal(calls.length, 1);
   assert.ok(calls[0] > withdrawAt && calls[0] < page.indexOf('\n    };\n', withdrawAt), 'collect-and-withdraw is called outside the Withdraw action');
+  // AND THE PLAYER WALLET'S WITHDRAW (§24A.1) is called once, inside the Withdraw action alone.
+  const fromWallet = [...page.matchAll(/BLWPCLIENT\.withdrawPlayerWallet\(/g)].map((m) => m.index);
+  assert.equal(fromWallet.length, 1);
+  assert.ok(fromWallet[0] > withdrawAt && fromWallet[0] < page.indexOf('\n    };\n', withdrawAt), 'the player wallet is withdrawn outside the Withdraw action');
 });
 
 // W4 / 6d: A LOCK NO SIGNER NODE WILL SETTLE COMES BACK BY THE PLAYER'S OWN KEY AFTER ITS EXPIRY.
