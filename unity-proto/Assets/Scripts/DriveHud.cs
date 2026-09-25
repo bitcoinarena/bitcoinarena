@@ -890,7 +890,7 @@ public class DriveHud : MonoBehaviour
 
         string headline = ArrivalHeadline(missed, gate.LastRun);
         string scoreLine = ArrivalScoreLine(missed, runScore == null ? 0 : runScore.LastScore);
-        string workLine = runScore == null ? "" : ArrivalWorkLine(missed, runScore.LastCargo, runScore.LastExposure, runScore.LastTime);
+        string workLine = runScore == null ? "" : ArrivalWorkLine(missed, runScore.LastCargo, runScore.LastExposure, runScore.LastTime, runScore.LastScore);
         string footLine = ArrivalFootLine(missed);
         // WHO IS LEADING, on the run's end screen (§4.14, the owner 2026-09-19 12:55: "no who-won/who-leads"). The
         // run ends inside the round, so the word is LEADING; THE BULLS WIN belongs to the round's own end.
@@ -1003,12 +1003,22 @@ public class DriveHud : MonoBehaviour
     public static string ArrivalScoreLine(bool missed, int score) =>
         missed ? "SCORE  0" : "SCORE  +" + score.ToString("N0", CultureInfo.InvariantCulture);
 
+    /// <summary>
+    /// THE CORE'S FACTORS AND THEIR PRODUCT (the owner 2026-09-25: "load C x danger E x speed T x 1000 = S"). C, E and T to
+    /// FIVE decimals (RULED): at four, lanes 10.2 and -10.2 printed C 0.7000 and E 0.2662 for an exact product of 279.461,
+    /// and 1000 x 0.7000 x 0.2662 x 1.5 rounds to 280 against the core's 279; at five the printing error is about 0.02
+    /// point. S is the core's own S_DELIVERED integer, the same number as the SCORE line. A missed run prints no product:
+    /// its C x E x T is not its 0.
+    /// </summary>
     public static string ArrivalWorkLine(bool missed, float cargo, float exposure, float time) =>
+        ArrivalWorkLine(missed, cargo, exposure, time, null);
+
+    public static string ArrivalWorkLine(bool missed, float cargo, float exposure, float time, int? score) =>
         missed ? "the freight never reached the block"
-               : "load " + cargo.ToString("0.00", CultureInfo.InvariantCulture)
-                 + "   ×   danger " + exposure.ToString("0.00", CultureInfo.InvariantCulture)
-                 + "   ×   speed " + time.ToString("0.00", CultureInfo.InvariantCulture)
-                 + "   ×  1000";
+               : "load " + cargo.ToString("0.00000", CultureInfo.InvariantCulture)
+                 + "   ×   danger " + exposure.ToString("0.00000", CultureInfo.InvariantCulture)
+                 + "   ×   speed " + time.ToString("0.00000", CultureInfo.InvariantCulture)
+                 + "   ×  1000" + (score.HasValue ? "  =  " + score.Value.ToString("N0", CultureInfo.InvariantCulture) : "");
 
     // NOT "your stake came back". There is no stake in this game: nobody deposits anything, so nothing returns. That
     // was multiplayer vocabulary imported into a build that has no multiplayer, and it described a mechanic the
