@@ -30,7 +30,10 @@ test('the replay doors: a page, the run as the node replays it, the round\'s own
     const page = await get(A, `/replay?round=${rid}&entry=${eid}`);
     assert.equal(page.status, 200);
     assert.match(page.type, /text\/html/);
-    assert.match(text(page.body), /<script src="\/replay\/client\.js"><\/script>/);
+    // RELATIVE, and this node is origin plus the path it is published under: an endpoint may carry a path
+    // (https://host/blwp-a), and a root-absolute fetch would ask the host's root, not this node.
+    assert.match(text(page.body), /<script src="replay\/client\.js"><\/script>/);
+    assert.match(text(page.body), /const here = location\.origin \+ location\.pathname\.replace\(/);
     assert.match(text(page.body), /\/replay\/core\.js\?round=/);
 
     const t = await get(A, `/replay/transcript?round=${rid}&entry=${eid}`);
