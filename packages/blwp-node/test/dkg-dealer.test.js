@@ -23,7 +23,25 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
-import { dealThePool, curve } from './pool-fixture.js';
+import { randomBytes } from 'node:crypto';
+import { trustedDealerSplit } from '../../protocol/src/frost.js';
+import { evenGroupSecret } from '../../protocol/src/frost-bip340.js';
+import { FIELD } from '../../protocol/src/shares.js';
+import { feldmanGroup, tweakPoint } from '../src/curve.js';
+
+// THE TRUSTED DEALER, as the deleted pool fixture dealt it (moved here with the on-chain pool payout's tests, RULED
+// 2026-09-25): one call returns every share - which is this file's point.
+const curve = { ...feldmanGroup, tweakPoint };
+function dealThePool() {
+  let secret;
+  do { secret = scalarFrom32(new Uint8Array(randomBytes(32))); } while (secret === 0n || secret >= FIELD);
+  const even = evenGroupSecret(secret, curve);
+  return trustedDealerSplit({
+    secret: even.secret, max: SHARES_TOTAL, min: SHARES_NEEDED,
+    coefficients: Array.from({ length: SHARES_NEEDED - 1 }, () => scalarFrom32(new Uint8Array(randomBytes(32)))),
+    curve,
+  });
+}
 import { SHARES_NEEDED, SHARES_TOTAL } from '../../protocol/src/shares.js';
 import { reconstruct, scalarFrom32 } from '../../protocol/src/shares.js';
 
@@ -86,9 +104,8 @@ test('nothing that ships deals the pool key, and no launch path holds a share', 
     'something that ships now deals the pool key - letter 14 has moved, update this pin');
   console.log('  files under src/ that call the trusted dealer: 0');
 
-  // AND THE DAEMON MAKES ONE. `poolSignerNode` is still accepted - a fixture may
-  // hand a share in, the way `seedWord` may be handed to a replay - but the
-  // daemon has its own now, and a call site rather than a mention is what is
+  // AND THE DAEMON MAKES ONE (a handed-in `poolSignerNode` went with the on-chain
+  // pool payout, RULED 2026-09-25) - and a call site rather than a mention is what is
   // checked. Written as a bare /dkg|dealerless/i first and it matched the
   // COMMENT saying a dealerless DKG is its own letter: a sentence caught by
   // its own regex.
@@ -107,13 +124,11 @@ test('nothing that ships deals the pool key, and no launch path holds a share', 
   const tools = readdirSync(new URL('../tools/', import.meta.url))
     .filter((f) => f.endsWith('.mjs'))
     .filter((f) => /trustedDealerSplit\s*\(/.test(readFileSync(new URL(`../tools/${f}`, import.meta.url), 'utf8')));
-  assert.deepEqual(tools.sort(), ['payout-regtest.mjs', 'pool-regtest.mjs', 'swap-into-pool.mjs'],
+  // (payout-regtest.mjs was deleted with the on-chain pool payout, RULED 2026-09-25.)
+  assert.deepEqual(tools.sort(), ['pool-regtest.mjs', 'swap-into-pool.mjs'],
     'a launch path deals the pool key again, or one that measures a transaction stopped');
-  for (const f of ['payout-committee-regtest.mjs', 'settle-regtest.mjs']) {
-    const text = readFileSync(new URL(`../tools/${f}`, import.meta.url), 'utf8');
-    assert.match(text, /dkg\.run\(/, `${f} stands a committee up without making a key`);
-    assert.equal(/trustedDealerSplit\s*\(/.test(text), false, `${f} deals the pool key again`);
-  }
+  // (The two launch paths that stood a committee up with the daemon's own DKG, payout-committee-regtest.mjs and
+  // settle-regtest.mjs, were deleted with the on-chain pool payout they drove - RULED 2026-09-25.)
   console.log(`  launch paths that deal all ${SHARES_TOTAL} shares: 0`);
   console.log(`  harnesses that still split in one process, and are about a transaction: `
     + `${tools.length} (${tools.join(', ')})`);

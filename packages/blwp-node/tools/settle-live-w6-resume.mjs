@@ -45,7 +45,7 @@ for (const i of [0, 1])
   signerNodes.push(await serve(openStore(`${P}/signer node-${i}.sqlite`), { port: kill.ports[i], ...opts, stakeLocks: ports[i], poolCurve: curve, finality: { everyMs: 250 } }));
 for (const [d, o] of [[signerNodes[0], signerNodes[1]], [signerNodes[1], signerNodes[0]]]) {
   const there = [`http://127.0.0.1:${o.port}`];
-  d.verifier.peers = there; d.payouts.peers = there; d.preimages.peers = there; d.dkg.peers = there;
+  d.verifier.peers = there; d.preimages.peers = there; d.dkg.peers = there;
 }
 const rowsNow = () => signerNodes.map((d) => { const r = d.round.lockSettlement(rid); return r ? { state: r.state, txid: r.txid.slice(0, 12), why: r.why.slice(0, 140) } : null; });
 for (const stop = Date.now() + 90000; Date.now() < stop; await wait(500))

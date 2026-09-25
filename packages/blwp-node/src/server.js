@@ -86,14 +86,10 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { splitSlashEvidence, slashProofId, SLASH_EVIDENCE_BYTES, REPLAY_CONTRADICTS, splitRerunSlashEvidence, RERUN_SLASH_EVIDENCE_BYTES } from '../../protocol/src/slash.js';
 import { slashOwing, entriesForSlash } from './slash-owing.js';
 import { Preimages, encodeShareAnswer, SEALED_ANSWER_BYTES } from './preimage.js';
-import { Payouts, PAYOUT_QUEUED, PAID, PAID_IN_PART, NOTHING_OWED } from './payout.js';
-import { PoolSigning } from './pool-signing.js';
-import { PoolWatch } from './pool-watch.js';
 import { Dkg } from './dkg.js';
 import { Forfeit } from './forfeit.js';
 import { LockSettlement, locksStake, SUBMITTING } from './settlement.js';
-import { decodeUtxo, decodeCommitments, encodeCommitments, encodeShare, UTXO_BYTES } from './pool-wire.js';
-import { SIGNED_TABLE_BYTES } from './payout-table.js';
+import { decodeCommitments, encodeCommitments, encodeShare } from './pool-wire.js';
 
 const read = (req) => new Promise((resolve, reject) => {
   const parts = [];
@@ -201,25 +197,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE FEDERATION'S RECEIVING SIDE (V1's pool is a FEDERATION, the owner 2026-09-11): `receive({
   // amountMsat })` answers `{ request }`, an LNv2 invoice the federation's gateway holds.
   federation = null,
-  // The pool's key material and something that can broadcast. A daemon given
-  // neither still agrees on what the round owes; it just does not spend.
-  // The default curve carries the taproot tweak: without it a daemon started
-  // with no curve of its own could not even name the pool's output.
-  poolKey = null, chainSpend = null, poolCurve = { ...feldmanGroup, tweakPoint },
-  // THIS NODE'S OWN SHARE OF THE POOL, and nobody else's. `{ id, share }`,
-  // dealt today because a dealerless DKG is its own letter. Absent, the
-  // daemon runs exactly as it did and answers the two signing doors with a
-  // refusal rather than a signature.
-  poolSignerNode = null,
-  // EVERY SIGNER NODE'S PUBLIC SHARE (Map signer node id -> point) for a DEALT pool, so a bad
-  // signature share can be named. A DKG committee's come from its commitments.
-  poolPublicShares = null,
+  // THE CURVE THE COMMITTEE'S KEY CEREMONY RUNS ON (the DKG: a round's claim key). It carries the taproot tweak.
+  // The on-chain pool payout that also read it - its key, its broadcaster, its handed share - is gone with the
+  // withdrawn custody (§23.6; RULED 2026-09-25): a round's winners are paid by its lock settlement.
+  poolCurve = { ...feldmanGroup, tweakPoint },
   // AND SOMETHING THAT CAN ASK THE CHAIN WHICH OUTPUT HOLDS THE POOL.
   // `bitcoindRpc`'s `call`, injected the way everything else that reaches the
   // network is. Without it a close still queues the payout and stops - which
   // is exactly where item 18 found it - and says so rather than guessing at an
   // outpoint.
-  poolCall = null,
   // HOW LONG A CLOSED ROUND KEEPS ASKING ITS PEERS FOR THE RESULTS IT IS SHORT
   // OF (M3.3-25): every `everyMs`, until final or `windowMs` has passed -
   // the round's own objection window unless a test names another, counted
@@ -393,42 +379,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
 
 
-  /**
-   * WHAT THE ROUND OWES, AND WHETHER IT HAS BEEN PAID.
-   *
-   * 20's threshold and 9.4's qualifying tail. `chain` and `pool` are injected
-   * the way the Lightning port is: a daemon given neither still signs the
-   * table and serves its signature, because agreeing on what is owed is
-   * something every signer node does whether or not it is the one that broadcasts.
-   */
-  const payouts = new Payouts(round, {
-    curve: poolCurve, chain: chainSpend, pool: poolKey,
-    random: (n) => new Uint8Array(randomBytes(n)),
-    peers, fetcher: (u, o) => fetch(u, o),
-    // THE ROUND'S BEACON, and it is the same door the roster and the verifier
-    // read. Item 19's takeover waits a number of BLOCKS past this height, so a
-    // node that seeds on one beacon cannot wait on another.
-    ...(randomnessFor ? { randomnessFor } : {}),
-    // AND THE OTHER SETTLEMENT SIGNER NODES AT A LIVE CLOSE: the table's signatures are
-    // theirs. Measured before: "1 of 2 signer nodes signed this table" on both daemons,
-    // because the census peers were read only at start, for rounds already owing.
-    peersFor: (roundIdBytes) => settlementPeers(roundIdBytes),
-  });
 
-  // AND THIS NODE'S HALF OF A SIGNING ROUND. `Payouts` decides which
-  // transaction is right; this decides whether THIS signer node will put its own
-  // share behind it, and it rebuilds the transaction itself before it does.
-  const signing = new PoolSigning(round, {
-    curve: poolCurve, signerNode: poolSignerNode, pool: poolKey, publicShares: poolPublicShares,
-  });
-
-  // AND THIS NODE'S HALF OF MAKING THE COMMITTEE'S KEY.
-  //
-  // `poolSignerNode` above is a share this daemon was HANDED, which means somebody
-  // dealt it and therefore held every one. A committee that runs this makes
-  // its own: one contribution each, one share kept, and a group key every signer node
-  // computes from public data. The share it ends with has the same shape
-  // `PoolSigning` already takes, so nothing about the signing changes.
+  // THIS NODE'S HALF OF MAKING THE COMMITTEE'S KEY: one contribution each, one share kept, and a group key every
+  // signer node computes from public data - the round's claim key.
   const dkg = new Dkg(round, {
     curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)),
     peers, fetcher: (u, o) => fetch(u, o),
@@ -778,43 +731,6 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     },
   });
 
-  // AND WHICH OUTPUT THE POOL IS IN, asked of the chain rather than
-  // remembered. This is what a close was missing: `payWithCommittee` names an
-  // output, and until this the daemon had no way to produce one, so every
-  // closed round stopped at PAYOUT_QUEUED with the winner unpaid.
-  const poolWatch = new PoolWatch({ call: poolCall, pool: poolKey, curve: poolCurve });
-
-  // THE SIGNER NODE AND THE POOL KEY, READ BACK FROM THIS NODE'S OWN STORE.
-  //
-  // Measured 2026-09-10 on an isolated regtest: a signer node SIGKILLed mid-settlement
-  // and started again as `src/main.js` starts a daemon recovered nothing at any
-  // of four kill points - the share it made in the key ceremony was on disk,
-  // and nothing read it back, so `canSpend` was false and neither the
-  // reconcile nor the sweep ran. The committee of a round this node still owes
-  // a payout on comes first; otherwise the newest committee it holds a share
-  // of. A signer node and key the caller passed in are never replaced.
-  if (!poolSignerNode || !poolKey) {
-    const held = (() => {
-      for (const row of round.payoutsInState(PAYOUT_QUEUED)) {
-        const r = round.get(row.roundId);
-        if (!r) continue;
-        const got = dkg.signerNodeFor(decodeRoundContract(new Uint8Array(r.contract)).nodes);
-        if (got.ok) return { ...got, signerNodes: decodeRoundContract(new Uint8Array(r.contract)).nodes };
-      }
-      const signerNodes = round.latestSharedEpochSignerNodes();
-      return signerNodes ? { ...dkg.signerNodeFor(signerNodes), signerNodes } : null;
-    })();
-    if (held && held.ok) {
-      if (!signing.signerNode) signing.signerNode = held.signerNode;
-      if (!signing.pool) signing.pool = held.pool;
-      if (!signing.publicShares && held.signerNodes) {
-        const pub = dkg.publicSharesFor(held.signerNodes);
-        if (pub.ok) signing.publicShares = pub.shares;
-      }
-      if (!payouts.pool) payouts.pool = held.pool;
-      if (!poolWatch.pool) poolWatch.pool = held.pool;
-    }
-  }
 
   // WHO MAY HOLD A ROUND, from the chain. The census stopped being library
   // code here: this is the daemon's only caller of it, and `chainFor` is the
@@ -1469,82 +1385,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       waiting, suspended, lockSettled };
   }
 
-  /**
-   * ASK LIGHTNING ABOUT ANYTHING THIS NODE DIED IN THE MIDDLE OF.
-   *
-   * A daemon that starts is usually a daemon that stopped, and the one window
-   * where its store and Lightning can disagree is between telling and writing
-   * down. `reconcile` closes it - and it has to run HERE, on start, because a
-   * tool an operator remembers to run is not a guarantee. It is kept as a
-   * promise for the same reason the verifier's is: a caller that cannot await
-   * it cannot tell "not asked yet" from "not asked".
-   */
-  // THE OTHER SIGNER NODES' ADDRESSES, READ OFF THE CHAIN.
-  //
-  // Measured 2026-09-10 on an isolated regtest: a signer node restarted as
-  // `src/main.js` with only its two chain settings reached the committee step
-  // of a payout that still needed signatures and stopped - "1 of 5 signer nodes
-  // committed to this spend" - because it knew no other signer node's address. The
-  // spec's record of where a node lives is the signed advertisement in its
-  // bond, and signer node selection already reads those out of the same blocks. So a
-  // node handed no peers takes the settlement committee's endpoints from the
-  // census of every round it still owes a payout on, the same way it assigned
-  // them. A peers list the caller passed in is never replaced.
-  if (chainFor && (!payouts.peers || !payouts.peers.length)) {
-    const found = new Set();
-    for (const row of round.payoutsInState(PAYOUT_QUEUED)) {
-      const picked = roster.committeeFor(row.roundId, 'settlement');
-      if (!picked.ok) {
-        console.error(`[payout] ${toHex(row.roundId).slice(0, 16)} reads no signer node addresses: ${picked.why}`);
-        continue;
-      }
-      for (const u of endpointsOf(picked.committee, round.pubkey)) found.add(u);
-    }
-    if (found.size) payouts.peers = [...found];
-  }
-
-  /**
-   * AND ANY PAYOUT THIS NODE DIED IN THE MIDDLE OF SENDING. Same reason as the
-   * hold's: the only party that knows whether a transaction went out is the
-   * network, and a node that assumed it did not would build a second spend of
-   * one pool output.
-   */
-  const reconcilingPayouts = payouts.canSpend
-    ? payouts.reconcile()
-      .then((asked) => {
-        // A table that leaves rows owed under the floor reconciles to
-        // PAID_IN_PART, and that is a payout this node recovered too.
-        const list = ((asked && asked.asked) || [])
-          .filter((a) => a.state === PAID || a.state === PAID_IN_PART);
-        const had = list.filter((a) => !a.sent).length;
-        const sent = list.filter((a) => a.sent).length;
-        if (had) console.log(`[payout] the chain already had ${had} payout(s) this node died sending`);
-        if (sent) console.log(`[payout] sent ${sent} payout(s) this node had signed and written but not sent`);
-        return asked;
-      })
-      // AND THE ROUNDS THAT NEVER GOT A TRANSACTION BUILT AT ALL.
-      //
-      // `reconcile` answers "did a spend this node had already built go out",
-      // which leaves a round that never got that far exactly where it was. A
-      // node down when its round closed - or one whose pool had no confirmed
-      // output yet - would sit at PAYOUT_QUEUED for ever with nobody to
-      // notice. Run AFTER the reconcile, so a round the chain already paid is
-      // PAID before this looks at it and is not asked for a second spend.
-      .then(async (asked) => {
-        const swept = await payouts.settleAllQueued({
-          contractFor: (rid) => {
-            const row = round.get(rid);
-            return row ? decodeRoundContract(new Uint8Array(row.contract)) : null;
-          },
-          signing, watch: poolWatch,
-        }).catch((e) => ({ ok: false, why: e.message, settled: [] }));
-        for (const one of swept.settled || [])
-          console.log(`[payout] ${toHex(one.roundId).slice(0, 16)} `
-            + `${one.ok ? one.state : one.why}`);
-        return { ...asked, swept };
-      })
-      .catch((e) => { console.error(`[payout] ${e.message}`); return { ok: false, why: e.message }; })
-    : Promise.resolve({ ok: false, why: 'this node reaches no chain, so it asks it nothing' });
+  // NO POOL PAYOUT TO RECONCILE OR SWEEP ON START (§23.6; RULED 2026-09-25). A committee pool output on chain, its
+  // census peers, the reconcile of a spend this node died sending and the sweep of every round queued for one were the
+  // withdrawn Lightning custody's payout, which only ever ran after its hold settle; nothing queues one any more. A
+  // round's winners are paid by its lock settlement (and the winnings sends below).
 
   // NOTHING TO ASK LIGHTNING ON START, AND NO HELD STAKE TO RESUME (§23.6, RULED 2026-09-22 22:59).
   // Two steps used to run here first: `reconcile`, asking Lightning about any hold act this node died in
@@ -2412,79 +2256,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return res.end(Buffer.from(encodeShareAnswer(said.answer)));
       }
 
-      /**
-       * WHAT THIS NODE SIGNED ABOUT A ROUND'S PAYOUT. §20's five of seven are
-       * only countable on a node holding more than its own signature, so this
-       * is the door `gather` reads - the same shape as `/results`, and public
-       * for the same reason: a signature over a table id proves nothing about
-       * anything except that table.
-       */
-      if (req.method === 'GET' && url.pathname === '/payout') {
-        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
-        if (rid.length !== 32) return text(res, 400, 'that is not a round id');
-        const held = payouts.records(new Uint8Array(rid));
-        const out = new Uint8Array(held.length * SIGNED_TABLE_BYTES);
-        held.forEach((b, i) => out.set(b, i * SIGNED_TABLE_BYTES));
-        res.writeHead(200, {
-          'content-type': 'application/octet-stream',
-          'x-payout-signatures': String(held.length),
-          'x-payout-state': (payouts.stateOf(new Uint8Array(rid)) || {}).state || 'none',
-          ...CORS,
-        });
-        return res.end(Buffer.from(out));
-      }
-
-      // ROUND ONE OF A SIGNING ROUND: this signer node's nonce commitment.
-      //
-      // The body is the OUTPUT the asker wants spent and nothing else. There is
-      // no sighash on this door and there must not be: a signer node that signed what
-      // it was handed would make five of seven decorative, because five
-      // signatures over an attacker's bytes spend the pool just as well.
-      if (req.method === 'POST' && url.pathname === '/pool/commit') {
-        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
-        const held = round.get(rid);
-        if (!held) return text(res, 404, 'this node holds no such round');
-        let utxo;
-        try { utxo = decodeUtxo(await read(req)); }
-        catch (e) { return text(res, 400, 'that is not an output: ' + e.message); }
-
-        const got = signing.commit({
-          roundId: new Uint8Array(rid), utxo,
-          contract: decodeRoundContract(new Uint8Array(held.contract)),
-          random: (n) => new Uint8Array(randomBytes(n)),
-          attempt: Number(url.searchParams.get('attempt') || 0),
-        });
-        if (!got.ok) return text(res, 409, got.why);
-        res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
-        return res.end(Buffer.from(encodeCommitments([got.commitment])));
-      }
-
-      // ROUND TWO: this signer node's signature share, over the spend it built itself.
-      //
-      // The commitment list is what changes between the rounds, and it is part
-      // of the message - it is hashed into the binding factors. A signer node that
-      // already signed under one list hands the same bytes back and refuses a
-      // second, because two challenges under one nonce pair publish the share.
-      if (req.method === 'POST' && url.pathname === '/pool/share') {
-        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
-        const held = round.get(rid);
-        if (!held) return text(res, 404, 'this node holds no such round');
-        const body = await read(req);
-        let utxo, commitments;
-        try {
-          utxo = decodeUtxo(body.subarray(0, UTXO_BYTES));
-          commitments = decodeCommitments(body.subarray(UTXO_BYTES));
-        } catch (e) { return text(res, 400, 'that is not an output and a commitment list: ' + e.message); }
-
-        const got = signing.signatureShare({
-          roundId: new Uint8Array(rid), utxo, commitments,
-          contract: decodeRoundContract(new Uint8Array(held.contract)),
-          attempt: Number(url.searchParams.get('attempt') || 0),
-        });
-        if (!got.ok) return text(res, 409, got.why);
-        res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
-        return res.end(Buffer.from(encodeShare(got.share)));
-      }
+      // NO POOL PAYOUT DOORS (§23.6; RULED 2026-09-25): /payout (the signed payout table of a pool spend), /pool/commit
+      // and /pool/share (a signer node's nonce and signature share of one) were the withdrawn custody's on-chain payout.
 
       // WHERE THIS SIGNER NODE'S CLOSE OF EACH RUN STANDS (M3.3-34): only runs it could
       // not sign at its close - HOLDING while a peer is down or unreachable and
@@ -3531,7 +3304,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   return new Promise((resolve) => {
     http.listen(port, host, () => resolve({
       http, wss, round, host, verifier, ghosts, roster, preimages,
-      payouts, reconcilingPayouts, signing, poolWatch, dkg, settlements, winnings,
+      dkg, settlements, winnings,
       // What the last close did with the money, and the same door an operator
       // uses to run a settlement again by hand.
       stakes: () => stakes,

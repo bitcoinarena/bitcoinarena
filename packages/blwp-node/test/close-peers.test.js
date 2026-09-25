@@ -1,4 +1,5 @@
-// AT A LIVE CLOSE, THE PREIMAGE ASK AND THE PAYOUT GATHER REACH THE OTHER SIGNER NODES (M3.3-24).
+// AT A LIVE CLOSE, THE PREIMAGE ASK REACHES THE OTHER SIGNER NODES (M3.3-24; the payout gather beside it went with the
+// on-chain pool payout, §23.6, RULED 2026-09-25).
 //
 // Measured on the regtest rehearsal through the real daemons, after M3.3-22:
 // the loser's settle on the daemon where its run was final said "1 of 5
@@ -21,7 +22,6 @@ import { serve } from '../src/server.js';
 import { Round } from '../src/round.js';
 import { Roster } from '../src/roster.js';
 import { Preimages } from '../src/preimage.js';
-import { Payouts } from '../src/payout.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { encodeRoundContract, decodeRoundContract } from '../../protocol/src/contracts.js';
 import { toHex } from '../../protocol/src/hash.js';
@@ -74,22 +74,7 @@ test('the preimage ask reaches the round\'s census peers when none were given, a
   assert.ok(given.asked.every((u) => u.startsWith('http://operator:2/')), `asked ${given.asked}`);
 });
 
-test('the payout gather asks the round\'s census peers for the table signatures when none were given', async () => {
-  const asked = [];
-  const round = { putPayoutSignature() {} };
-  const pay = new Payouts(round, { peers: [], fetcher: async (url) => { asked.push(url); return new Response('', { status: 404 }); },
-    peersFor: (rid) => (toHex(rid) === toHex(RID) ? ['http://signer-node-b:1'] : []) });
-  assert.equal(typeof pay.peersOf, 'function', 'the payout path has no per-round peer list');
-  const got = await pay.gather({ roundId: RID });
-  assert.deepEqual(asked, [`http://signer-node-b:1/payout?round=${toHex(RID)}`], 'the other signer node was not asked for its signature');
-  assert.equal(got.refused, 1);
-
-  const given = [];
-  const q = new Payouts(round, { peers: ['http://operator:2'], fetcher: async (u) => { given.push(u); return new Response('', { status: 404 }); },
-    peersFor: () => ['http://signer-node-b:1'] });
-  await q.gather({ roundId: RID });
-  assert.deepEqual(given, [`http://operator:2/payout?round=${toHex(RID)}`], 'a given peers list was replaced');
-});
+// (The payout gather's own census peers went with the on-chain pool payout - §23.6, RULED 2026-09-25.)
 
 // THE DAEMON'S OWN WIRING: a daemon assigned from a census, given no peers.
 const HEIGHT = 900000;
@@ -125,7 +110,7 @@ const contractFor = (nodes, censusRoot) => ({
   spawnFreeRadius: 20, timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4, nodes,
 });
 
-test('a daemon given no peers asks the other settlement signer node, off the census, for its share and its table signature', async () => {
+test('a daemon given no peers asks the other settlement signer node, off the census, for its share', async () => {
   const a = await serve(openStore(':memory:'), { port: 0, ...FUNDED });
   const b = await serve(openStore(':memory:'), { port: 0, ...FUNDED });
   try {
@@ -153,7 +138,6 @@ test('a daemon given no peers asks the other settlement signer node, off the cen
       assert.equal(joined.ok, true, joined.why);
       const other = [`http://127.0.0.1:${b.port}`];
       assert.deepEqual(again.preimages.peersOf(rid), other, 'the preimage ask does not reach the other settlement signer node');
-      assert.deepEqual(again.payouts.peersOf(rid), other, 'the payout gather does not reach the other settlement signer node');
     } finally { await again.close(); }
   } finally { await b.close(); }
 });
