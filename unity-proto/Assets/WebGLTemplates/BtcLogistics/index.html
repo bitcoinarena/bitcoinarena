@@ -854,7 +854,10 @@
         // to write zeros there and every signer node could only refuse it. The lock
         // client is the stock fedimint client built to wasm; what it is asked is
         // decided in `@blwp/client` (`lockStake`), where `node --test` drives it.
-        // The deposit invoice is shown here for the player's own wallet to pay.
+        // THE STAKE IS SPENT FROM THE PLAYER WALLET (§24A.1, RULED 2026-09-25): one wallet per seed and
+        // federation. When it is short, a deposit INTO THE PLAYER WALLET is asked first, as its own act
+        // (`fundPlayerWallet`) - the invoice shown here for the player's own Lightning wallet to pay - and
+        // then the stake leaves the player wallet with nothing Lightning in between.
         if (BLWPCLIENT.roundLocks(named.round)) {
           const depositEl = document.getElementById('blwp-deposit');
           // ON THE LOADING SCREEN, which is all a player sees while this waits:
@@ -875,28 +878,34 @@
           } else try {
             const wasm = await import('./blwp_lock_client.js');
             await wasm.default();
-            const made = await BLWPCLIENT.lockStake({
-              round: named.round, roundId: BLWPCLIENT.fromHex(named.roundIdHex), invite: named.federation,
-              seed, stake, claimKey, playerPubkey: player.pubkey, LockClient: wasm.LockClient,
-              donationMsat: donation.donationMsat,
-              storage: vault(),
-              onStep: (step) => {
-                if (stageEl) stageEl.textContent = 'Stake lock: ' + step + ' …';
-                if (window.BLWP_JOIN) window.BLWP_JOIN.stage = 'stake lock: ' + step;
-                console.log('[blwp] stake lock: ' + step);
-              },
+            const onStep = (step) => {
+              if (stageEl) stageEl.textContent = 'Stake lock: ' + step + ' …';
+              if (window.BLWP_JOIN) window.BLWP_JOIN.stage = 'stake lock: ' + step;
+              console.log('[blwp] stake lock: ' + step);
+            };
+            const wallet = {
+              round: named.round, invite: named.federation, seed, LockClient: wasm.LockClient,
+              donationMsat: donation.donationMsat, storage: vault(), onStep,
+            };
+            // THE TOP-UP, ONLY IF THE PLAYER WALLET IS SHORT: into the wallet, not into the round.
+            await BLWPCLIENT.fundPlayerWallet(Object.assign({}, wallet, {
               onDeposit: (d) => {
                 window.BLWP_DEPOSIT = { invoice: d.invoice, amountMsat: String(d.amountMsat) };
                 if (depositEl) {
-                  depositEl.textContent = 'Pay ' + String((d.amountMsat + 999n) / 1000n) + ' sat into the round\'s federation '
-                    + 'from any Lightning wallet to lock your stake:';
+                  depositEl.textContent = 'Pay ' + String((d.amountMsat + 999n) / 1000n) + ' sat into your player wallet '
+                    + 'from any Lightning wallet; your stake is then spent from it:';
                   const box = document.createElement('code');
                   box.textContent = d.invoice;
                   depositEl.appendChild(box);
                 }
-                console.log('[blwp] stake lock deposit: ' + String(d.amountMsat) + ' msat, ' + d.invoice);
+                console.log('[blwp] player wallet deposit: ' + String(d.amountMsat) + ' msat, ' + d.invoice);
               },
-            });
+            }));
+            if (depositEl) depositEl.textContent = '';
+            // THE STAKE, FROM THE PLAYER WALLET: it asks for no deposit.
+            const made = await BLWPCLIENT.lockStake(Object.assign({}, wallet, {
+              roundId: BLWPCLIENT.fromHex(named.roundIdHex), stake, claimKey, playerPubkey: player.pubkey,
+            }));
             // AND ITS FEE LOCK, ONLY WHEN THE GATE SAID IT CAN PAY A SIGNER NODE (Pick b):
             // a 100 sat round makes none, so the player is charged no lock that expires unused.
             stakeLock = { outpoint: made.outpoint, fields: made.fields, feeLock: made.feeLock || null,

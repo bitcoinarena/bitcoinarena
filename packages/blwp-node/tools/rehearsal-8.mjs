@@ -2,10 +2,11 @@
 // it into a lock with no Lightning payment between; the lock verified by the seats as in item 1". Run by
 // rehearsal-8-regtest.sh after the federation is up (stock fedimintd 0.12.0, 4 guardians, 3 of 4).
 //
-// One player, a paying round naming the federation on seven bonded signer nodes, the seats making their own claim key. The stake is locked
-// by page-lock.js's lockStake - the page's own code - and every Lightning payment the player's lnd makes while it runs
-// is counted. Recorded: the wallet the stake is funded from (its key and balance before), each deposit invoice lockStake
-// asks lnd to pay, the msat leaving that wallet and the msat arriving in the lock, and the seats' verdict on the lock.
+// One player, a paying round naming the federation on seven bonded signer nodes, the seats making their own claim key.
+// REMEASURED ON THE PLAYER WALLET (§24A.1, 2026-09-25): first a deposit into the player wallet (fundPlayerWallet, its own
+// act, paid by the player's lnd), then the stake by page-lock.js's lockStake from that wallet - and every Lightning
+// payment the player's lnd makes between the two is counted. Recorded: which wallet the stake left (keyed by seed and
+// federation, not round), the deposit into it, the msat leaving it and arriving in the locks, and the seats' verdict.
 // Item 8 passes only with ZERO Lightning payments between the deposit into the player wallet and the lock.
 import { readFileSync, copyFileSync, mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
@@ -18,10 +19,10 @@ import { standUpRound } from './round-2of2.mjs';
 import { stakeLockPort } from '../src/stake-lock-port.js';
 import { bitcoindRpc } from '../src/chain-rpc.js';
 import { awaitAttestedClaimKey, stakeFor, postHandout, entryFor, playerFor, sharesNeededFor } from '../../blwp-client/src/join.js';
-import { lockStake, handLock } from '../../blwp-client/src/page-lock.js';
+import { lockStake, fundPlayerWallet, handLock, walletSecretFor, lockSecretFor } from '../../blwp-client/src/page-lock.js';
 import { pageCurve } from '../../blwp-client/src/page-curve.js';
 import { encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
-import { toHex, fromHex } from '../../protocol/src/hash.js';
+import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
 
 const env = process.env;
 const P = env.PROBE;
@@ -82,39 +83,51 @@ try {
   const put = await postHandout(stake, round.nodes);
   say({ step: 'handout', ok: put.ok, accepted: put.accepted, needed });
 
+  // 1. THE DEPOSIT INTO THE PLAYER WALLET (§24A.1): its own act, paid by the player's lnd - counted apart.
+  const tabStore = tab();
   const before = await payments();
   const steps = [];
   const deposits = [];
   let paying = Promise.resolve();
-  const lock = await lockStake({ round: contract, roundId: rid, invite: env.INVITE, seed, stake, claimKey,
-    playerPubkey: player.pubkey, LockClient, storage: tab(),
-    onStep: (s) => steps.push(s),
+  const topUp = await fundPlayerWallet({ round: contract, invite: env.INVITE, seed, LockClient, storage: tabStore,
+    onStep: (s) => steps.push(`top-up: ${s}`),
     onDeposit: (d) => {
       paying = paying.then(async () => {
         const paid = await lncli('payinvoice', '--force', d.invoice);
         deposits.push({ invoiceMsat: d.amountMsat, creditsMsat: d.creditsMsat,
-          lnd: (paid.out.match(/Payment status: [A-Z_]+/) || [paid.err || '?'])[0] });
+          lnd: (paid.out.match(/Payment status: [A-Z_]+/g) || [paid.err || '?']).pop() });
       });
     } });
   await paying;
-  const after = await payments();
-  const heldBefore = steps.filter((s) => /^holding \d+ msat$/.test(s)).map((s) => s.match(/\d+/)[0]);
-  const heldAtLock = (steps.find((s) => s.startsWith('holding ') && s.includes('before locking')) || '').match(/holding (\d+) msat/);
-  const leftAfter = BigInt(await lock.client.balanceMsat());
+  const afterDeposit = await payments();
+  // 2. THE STAKE, FROM THE PLAYER WALLET: every Lightning payment the player's lnd makes from here to the lock is counted.
+  const lock = await lockStake({ round: contract, roundId: rid, invite: env.INVITE, seed, stake, claimKey,
+    playerPubkey: player.pubkey, LockClient, storage: tabStore, onStep: (s) => steps.push(`stake: ${s}`) });
+  const afterLock = await payments();
+  const lightningBetween = afterLock.length - afterDeposit.length;
+  const keys = [];
+  for (let i = 0; i < tabStore.length; i++) keys.push(tabStore.key(i));
+  const walletId = toHex(sha256(walletSecretFor(seed, contract.federationId))).slice(0, 16);
+  const roundWalletId = toHex(sha256(lockSecretFor(seed, rid))).slice(0, 16);
   const entry = { roundId: rid, sessionPubkey: ed25519.getPublicKey(ed25519.utils.randomSecretKey()),
     ...entryFor(withId, { seed, curve: pageCurve, random, stake, claimKey, stakeLock: lock }) };
   const joined = [];
   for (const base of round.nodes) joined.push((await fetch(`${base}/entry`, { method: 'POST', body: encodeEntryContract(entry) })).status);
   const handed = await handLock({ entryId: entryId(entry), fields: lock.fields, nodes: round.nodes, needed });
-  const lightningBetween = after.length - before.length;
-  say({ step: 'item 8', wallet: 'the lock client lockStake joins, keyed by lockSecretFor(seed, roundId): one per round',
-    walletBalanceBeforeMsat: heldBefore[0] ?? null, deposits, lightningPaymentsDuringStake: lightningBetween,
-    heldAtLockMsat: heldAtLock ? heldAtLock[1] : null, leftAfterLocksMsat: leftAfter,
-    stakeLockMsat: lock.fields.amountMsat, feeLockMsat: lock.feeLock ? lock.feeLock.fields.amountMsat : 0n,
-    outpoint: `${toHex(lock.outpoint.txid)}:${lock.outpoint.outIdx}`, entries: joined,
-    seatsVerify: handed.said.map((s) => s.status), committed: handed.committed,
-    verdict: lightningBetween === 0 ? 'PASS: no Lightning payment between the deposit and the lock'
-      : `RED: ${lightningBetween} Lightning payment(s) made inside the stake path` });
+  say({ step: 'item 8',
+    wallet: { keyedBy: 'seed and federation (walletSecretFor)', walletId, perRoundWalletId: roundWalletId,
+      tabKeysPlayerWallet: keys.filter((k) => k.startsWith(`blwp.walletdb.${toHex(contract.federationId).slice(0, 16)}.${walletId}.`)).length,
+      tabKeysPerRoundWallet: keys.filter((k) => k.startsWith('blwp.lockdb.')).length },
+    deposit: { into: 'the player wallet', paymentsByLnd: afterDeposit.length - before.length, deposits, walletHeldAfterMsat: topUp.heldMsat },
+    stake: { walletBeforeMsat: lock.walletBeforeMsat, walletAfterMsat: lock.walletAfterMsat,
+      leftThePlayerWalletMsat: lock.walletBeforeMsat - lock.walletAfterMsat,
+      stakeLockMsat: lock.fields.amountMsat, feeLockMsat: lock.feeLock ? lock.feeLock.fields.amountMsat : 0n,
+      outpoint: `${toHex(lock.outpoint.txid)}:${lock.outpoint.outIdx}`, contract: 'stock OutgoingContract to claim_pk (§23 stake lock)' },
+    lightningBetweenDepositAndLock: lightningBetween,
+    entries: joined, seatsVerify: handed.said.map((s) => ({ status: s.status, why: String(s.why || '').slice(0, 200) })), committed: handed.committed,
+    verdict: (lightningBetween === 0 && lock.walletBeforeMsat > lock.walletAfterMsat && handed.committed >= needed)
+      ? 'PASS: the stake left the player wallet, no Lightning payment sat between the deposit and the lock, and the seats verified it'
+      : `RED: ${lightningBetween} Lightning payment(s) between the deposit and the lock; left the player wallet ${lock.walletBeforeMsat - lock.walletAfterMsat} msat; seats committed ${handed.committed} of ${needed}` });
   say({ step: 'page steps', steps });
 } catch (e) {
   say({ error: e.message, stack: String(e.stack).split('\n').slice(1, 4).join(' | ') });
