@@ -26,7 +26,7 @@ import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { assumeAssigned } from './assignment.js';
-import { lockPort } from './lock-fixture.js';
+import { lockPort, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
 import { lnurl, nameAddress } from './lock-round-fixture.js';
 import { b32, rand, RANDOMNESS, STAKE, WINDOW_MS, WINNER, LOSER, GENESIS_HASH, wordsAt, contractFor, say, secretScalar, opts, wait } from './window-fixture.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
@@ -48,11 +48,14 @@ const curve = { ...feldmanGroup, tweakPoint };
 
 /** Two signer nodes of a paying lock round, their claim key made between them. */
 async function lockRound({ minScore = 1 } = {}) {
-  const port = lockPort();
+  // A CHAIN THAT BONDS THE ROUND'S TWO SIGNER NODES (RULED 2026-09-25), as lockRound in lock-round-fixture.js: both are
+  // running daemons, so the claim key is their own live DKG; the round's beacon is that chain's.
+  const slot = bondedChainSlot(lockPort());
+  const port = slot.port;
   // THE WINNER'S LIGHTNING ADDRESS (ruled 2026-09-23: only a qualifier who named one is paid, so only then is a loser's lock claimed).
   const address = lnurl(port);
   const mk = () => serve(openStore(':memory:'), { port: 0, ...opts, stakeLocks: port, poolCurve: curve, finality: { everyMs: 100 },
-    lnurlFetch: address.fetchLike });
+    chainFor: slot.chainFor, randomnessFor: slot.randomnessFor, lnurlFetch: address.fetchLike });
   const a = await mk();
   const b = await mk();
   // ONCE A PORT IS BOUND, IT IS CLOSED WHATEVER HAPPENS NEXT (2026-09-20). Everything below can throw - the
@@ -68,8 +71,10 @@ async function lockRound({ minScore = 1 } = {}) {
       d.preimages.peers = there;
       d.dkg.peers = there;
     }
-    const c = { ...contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
+    const drafted = { ...contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
       custody: 'FEDERATION', federationId: TEST_FEDERATION_ID, minScore };
+    const c = { ...drafted, censusRoot: bondedChainFor(drafted.nodes, drafted, slot,
+      { endpoints: [a, b].map((d) => `ws://127.0.0.1:${d.port}`) }).censusRoot };
     const rid = roundId(c);
     for (const d of [a, b]) {
       const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
@@ -79,7 +84,9 @@ async function lockRound({ minScore = 1 } = {}) {
     for (let pass = 0; pass < 2; pass++) for (const d of [a, b]) await d.dkg.run(c.nodes);
     const held = a.dkg.signerNodeFor(c.nodes);
     assert.equal(held.ok, true, held.why);
-    return { a, b, c, rid, port, claimPk: held.pool.groupPublicKey, close: async () => { await a.close(); await b.close(); } };
+    const beacon = slot.randomnessFor({ contract: c });
+    return { a, b, c, rid, port, claimPk: held.pool.groupPublicKey, randomness: beacon && beacon.hash,
+      close: async () => { await a.close(); await b.close(); } };
   } catch (e) {
     await a.close().catch(() => {});
     await b.close().catch(() => {});
@@ -118,7 +125,7 @@ async function lockAndPlay(w, who) {
   await w.port.put(feeOutpoint, feeFields);
   const input = { roundId: w.rid, entryId: eid, previousHash: GENESIS_HASH, firstTick: 0,
     ticks: Array.from({ length: who.ticks }, (_, t) => wordsAt(t)), liquidations: [] };
-  const st = init(seedWordForEntry(entry, RANDOMNESS));
+  const st = init(seedWordForEntry(entry, w.randomness || RANDOMNESS));
   for (let t = 0; t < who.ticks; t++) step(st, ...wordsAt(t));
   const mark = { roundId: w.rid, entryId: eid, tick: who.ticks,
     stateHash: Uint8Array.from(stateHash(st).match(/../g).map((x) => parseInt(x, 16))),

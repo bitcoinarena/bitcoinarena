@@ -10,7 +10,7 @@
 // bech32 or BOLT11 code existed, and pay_invoice had one call site, the stake.
 // A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED the owner 2026-09-25): this file's paying-round
 // daemons get the lock fixture's port - the test federation, two gateways, zero base fee. Contracts unchanged.
-import { lockPort } from '../../blwp-node/test/lock-fixture.js';
+import { lockPort, bondedChainSlot, bondedChainFor } from '../../blwp-node/test/lock-fixture.js';
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../blwp-node/src/cores.js';
 import { test } from 'node:test';
 // THE RUN LENGTH IS THE CORE'S. A literal 9000 here is refused by the node as "a
@@ -449,9 +449,15 @@ const signedBytes = (set) => { const body = encodeDonationSetBody(set); const ou
 
 test('the page takes the set from every signer node of the round, checked under the network\'s Ed25519 authority', async () => {
   const signerNodes = [];
-  for (let i = 0; i < 2; i++) signerNodes.push(await serve(openStore(':memory:'), { port: 0, stakeLocks: lockPort(), funded: () => true, now: () => NOW, donationSets: [SET] }));
+  // ON A CHAIN THAT BONDS THE ROUND'S TWO SIGNER NODES (RULED 2026-09-25): one chain both daemons read. Only the round's
+  // censusRoot changes.
+  const slot = bondedChainSlot(lockPort());
+  for (let i = 0; i < 2; i++) signerNodes.push(await serve(openStore(':memory:'), { port: 0, stakeLocks: slot.port, chainFor: slot.chainFor,
+    randomnessFor: slot.randomnessFor, funded: () => true, now: () => NOW, donationSets: [SET] }));
   try {
-    const round = contractFor(signerNodes.map((s) => s.round.pubkey));
+    const drafted = contractFor(signerNodes.map((s) => s.round.pubkey));
+    const round = { ...drafted, censusRoot: bondedChainFor(drafted.nodes, drafted, slot,
+      { endpoints: signerNodes.map((s) => `ws://127.0.0.1:${s.port}`) }).censusRoot };
     for (const s of signerNodes) assert.equal((await fetch(`http://127.0.0.1:${s.port}/round`, { method: 'POST', body: encodeRoundContract(round) })).status, 201);
     const nodes = signerNodes.map((s) => `http://127.0.0.1:${s.port}`);
     const got = await fetchDonationSet({ round, nodes, verifyEd25519 });

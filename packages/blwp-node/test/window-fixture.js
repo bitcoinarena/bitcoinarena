@@ -179,7 +179,7 @@ export const say = (port, message) => new Promise((resolve, reject) => {
 export const secretScalar = () => { let p = rand(32); while (scalarFrom32(p) >= FIELD) p = rand(32); return p; };
 
 /** One player's stake dealt at `needed` to every signer node, joined, paid and played on `daemons`. */
-export async function joinAndPlay(daemons, c, rid, who, needed, { direct = false, donationMsat = 0n, port = null } = {}) {
+export async function joinAndPlay(daemons, c, rid, who, needed, { direct = false, donationMsat = 0n, port = null, randomness = RANDOMNESS } = {}) {
   const session = ed25519.utils.randomSecretKey();
   const preimage = secretScalar();
   const e = rand(32);
@@ -210,7 +210,8 @@ export async function joinAndPlay(daemons, c, rid, who, needed, { direct = false
   const eid = entryId(entry);
   const input = { roundId: rid, entryId: eid, previousHash: GENESIS_HASH, firstTick: 0,
     ticks: Array.from({ length: who.ticks }, (_, t) => wordsAt(t)), liquidations: [] };
-  const st = init(seedWordForEntry(entry, RANDOMNESS));
+  // THE SEED IS THE ROUND'S BEACON when the caller names it (a bonded chain's), the fixtures' RANDOMNESS otherwise.
+  const st = init(seedWordForEntry(entry, randomness || RANDOMNESS));
   for (let t = 0; t < who.ticks; t++) step(st, ...wordsAt(t));
   const mark = { roundId: rid, entryId: eid, tick: who.ticks,
     stateHash: Uint8Array.from(stateHash(st).match(/../g).map((x) => parseInt(x, 16))),
@@ -264,19 +265,28 @@ export async function sevenSignerNodes(windowMs, relays, { storedBeforeTheRule =
   // A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED 2026-09-25): the lock fixture's port - the
   // test federation, two gateways, zero base fee - and its entries lock their stake and fee in it (joinAndPlay).
   // (Imported here, not at the top: lock-fixture imports this file and uses it as it loads.)
-  const { lockPort } = await import('./lock-fixture.js');
-  const port = lockPort();
+  const { lockPort, bondedChainSlot, bondedChainFor } = await import('./lock-fixture.js');
+  // AND A CHAIN THAT BONDS THE ROUND'S SEVEN (RULED 2026-09-25: a paying round opens only on a signer node that reads the
+  // chain; the round's beacon is that chain's). Six of the seven are keys no daemon stands behind, so the claim key is
+  // handed - never a DKG toward a key that is not there.
+  const slot = bondedChainSlot(lockPort());
+  const port = slot.port;
   const holder = await serve(openStore(':memory:'), {
-    port: 0, ...opts, stakeLocks: port, advertsFor: () => adverts, ...(finality ? { finality } : {}) });
+    port: 0, ...opts, stakeLocks: port, chainFor: slot.chainFor, randomnessFor: slot.randomnessFor,
+    claimKeyFor: () => new Uint8Array(33).fill(2), advertsFor: () => adverts, ...(finality ? { finality } : {}) });
   // THE CHAIN §13A'S WINDOWS ARE READ FROM (RULED 2026-09-24): the block clock every fixture daemon reads.
   holder.round.chainView = CLOCK.chainView();
   try {
     const others = Array.from({ length: 6 }, () => rand(32));
     [holder.round.pubkey, ...others.map((s) => schnorr.getPublicKey(s))].forEach((k, i) =>
       adverts.set(toHex(k), { nodePubkey: k, bondTxid: b32(0xb0 + i), bondVout: i }));
-    const c = contractFor([holder.round.pubkey, ...others.map((s) => schnorr.getPublicKey(s))], BigInt(windowMs),
+    const drafted = contractFor([holder.round.pubkey, ...others.map((s) => schnorr.getPublicKey(s))], BigInt(windowMs),
       relays === undefined ? [`http://127.0.0.1:${holder.port}`] : relays);
+    // ONLY THE FIELD THE CHAIN DICTATES (RULED 2026-09-25): the census root its bonds derive to; the committee time stands.
+    const c = { ...drafted, censusRoot: bondedChainFor(drafted.nodes, drafted, slot, { endpoints: [`ws://127.0.0.1:${holder.port}`] }).censusRoot };
     const rid = roundId(c);
+    // THE ROUND'S OWN BEACON: the players seed their marks from it, as the node replays them.
+    const beacon = slot.randomnessFor({ contract: c });
     // A PAYING ROUND NAMING NO RELAY is refused at the door now; a test about
     // one stored before that rule stores it the way such a round was kept.
     if (storedBeforeTheRule) holder.round.open(c);
@@ -286,7 +296,8 @@ export async function sevenSignerNodes(windowMs, relays, { storedBeforeTheRule =
     for (const [name, key] of [['agrees', 5], ['dissents', 6]]) {
       // `play` names who plays a run instead of the loser - a run that stops while
       // still LIVE, for one (M3.3-34 walk-away step 7).
-      runs[name] = await joinAndPlay([holder], c, rid, { ...(play[name] || LOSER), name, key: b32(key) }, 5, { direct: storedBeforeTheRule, port });
+      runs[name] = await joinAndPlay([holder], c, rid, { ...(play[name] || LOSER), name, key: b32(key) }, 5,
+        { direct: storedBeforeTheRule, port, randomness: beacon && beacon.hash });
       // FIVE OF SEVEN RECEIPTS MAKE THE TRANSCRIPT CANONICAL: its own and four signer nodes'.
       for (const secret of others.slice(0, 4)) {
         const receipt = { checkpointId: runs[name].mid, receivedAtMs: 1234n, nodePubkey: schnorr.getPublicKey(secret) };

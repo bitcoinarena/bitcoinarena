@@ -13,7 +13,7 @@
 // cheating player would send them.
 // A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED the owner 2026-09-25): this file's paying-round
 // daemons get the lock fixture's port - the test federation, two gateways, zero base fee. Contracts unchanged.
-import { lockPort } from './lock-fixture.js';
+import { lockPort, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 // THE RUN LENGTH IS THE CORE'S (2026-09-20). This fixture said 9000 and the core has ended a run at 10800
@@ -41,6 +41,16 @@ import { FIELD, scalarFrom32 } from '../../protocol/src/shares.js';
 const rand = (n) => new Uint8Array(randomBytes(n));
 const b32 = (n) => new Uint8Array(32).fill(n);
 const FUNDED = { funded: () => true };
+
+// ON A CHAIN THAT BONDS THE ROUND'S NODES (RULED 2026-09-25): the daemon under test and keyless strangers, so the claim key
+// is claimKeyFor's. Only censusRoot changes in the contract.
+async function onChain() {
+  const slot = bondedChainSlot(lockPort());
+  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, stakeLocks: slot.port, chainFor: slot.chainFor,
+    randomnessFor: slot.randomnessFor, claimKeyFor: () => new Uint8Array(33).fill(2) });
+  node.slot = slot;
+  return node;
+}
 
 const contractFor = (nodes) => ({
   networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
@@ -90,7 +100,9 @@ async function oneOfTwo(signerNodes, rid) {
 }
 
 async function door(node, signerNodes) {
-  const c = contractFor(signerNodes);
+  const drafted = contractFor(signerNodes);
+  const c = { ...drafted, censusRoot: bondedChainFor(drafted.nodes, drafted, node.slot,
+    { endpoints: [`ws://127.0.0.1:${node.port}`] }).censusRoot };
   const rid = roundId(c);
   await fetch(`http://127.0.0.1:${node.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
   assumeAssigned(node.round, rid, signerNodes);
@@ -102,7 +114,7 @@ async function door(node, signerNodes) {
 }
 
 test('two signer nodes: the door takes 2-of-2 and refuses a crafted 3-of-2 and a crafted 1-of-2 by name', async () => {
-  const a = await serve(openStore(':memory:'), { port: 0, ...FUNDED, stakeLocks: lockPort() });
+  const a = await onChain();
   try {
     const signerNodes = [a.round.pubkey, schnorr.getPublicKey(rand(32))];
     const { rid, post } = await door(a, signerNodes);
@@ -118,7 +130,7 @@ test('two signer nodes: the door takes 2-of-2 and refuses a crafted 3-of-2 and a
 });
 
 test('seven signer nodes: the door takes 5-of-7 and refuses 7-of-7 - what the page used to deal - by name', async () => {
-  const a = await serve(openStore(':memory:'), { port: 0, ...FUNDED, stakeLocks: lockPort() });
+  const a = await onChain();
   try {
     const signerNodes = [a.round.pubkey, ...Array.from({ length: 6 }, () => schnorr.getPublicKey(rand(32)))];
     const { rid, post } = await door(a, signerNodes);

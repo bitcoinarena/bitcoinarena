@@ -174,10 +174,11 @@ test('the door will not pick the slashing height, and says what the five proofs 
     // A RUN NOBODY FILED AGAINST OWES NOTHING, and is refused before a census is read for it.
     assert.equal(facts.noProof[0], 404);
     assert.match(facts.noProof[1], /filed no slash proof for that run/);
-    // AND THIS FIXTURE HAS NO CHAIN, so the door names that rather than inventing a census: the
-    // recipients of §5A.3 are read off the chain at the named height or they are not read at all.
+    // AND THIS FIXTURE'S CHAIN DOES NOT REACH THAT HEIGHT, so the door names that rather than inventing a census: the
+    // recipients of §5A.3 are read off the chain at the named height or they are not read at all. (The fixture had no
+    // chain at all until a paying round needed one - RULED 2026-09-25 - and the door then said "no chain view".)
     assert.equal(facts.withHeight[0], 409);
-    assert.match(facts.withHeight[1], /no chain view for that round/);
+    assert.match(facts.withHeight[1], /that census cannot be scanned: that chain ends at height \d+, before this round's census height 964950/);
     // THE ROUND'S OWN TWO ENTRIES, which is the input the first version of `entriesForSlash` lost.
     assert.equal(facts.entriesSeen, 2);
     assert.deepEqual(facts.owed, {

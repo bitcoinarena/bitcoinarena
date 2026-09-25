@@ -8,7 +8,7 @@
 // for - and nothing here mints any of them.
 // A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED the owner 2026-09-25): this file's paying-round
 // daemons get the lock fixture's port - the test federation, two gateways, zero base fee. Contracts unchanged.
-import { lockPort } from '../../blwp-node/test/lock-fixture.js';
+import { lockPort, bondedChainSlot, bondedChainFor } from '../../blwp-node/test/lock-fixture.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../blwp-node/src/cores.js';
 import { test } from 'node:test';
@@ -41,10 +41,13 @@ const CORE = fromHex(coreHashHex());
 const session = ed25519.utils.randomSecretKey();
 const sign = (id) => ed25519.sign(id, session);
 const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
-const FUNDED = {
-  funded: () => true,
-  randomnessFor: () => ({ hash: b32(0xbe), height: 900005, timeMs: 900n }),
-};
+const FUNDED = { funded: () => true };
+// ON A CHAIN THAT BONDS THE ROUND'S TWO NODES (RULED 2026-09-25): one slot the round's daemons share, its beacon the
+// chain's; a keyless committee member's claim key is claimKeyFor's. Only the round's censusRoot changes.
+const onChain = (slot) => ({ ...FUNDED, stakeLocks: slot.port, chainFor: slot.chainFor, randomnessFor: slot.randomnessFor,
+  claimKeyFor: () => new Uint8Array(33).fill(2) });
+const bonded = (c, slot, daemons) => ({ ...c, censusRoot: bondedChainFor(c.nodes, c, slot,
+  { endpoints: daemons.map((d) => `ws://127.0.0.1:${d.port}`) }).censusRoot });
 const ADVERT = 'ab'.repeat(64);
 
 const contractOn = (a, b, seed = 0x43) => ({
@@ -87,10 +90,11 @@ test('every way of naming a round badly is refused by name', () => {
 });
 
 test('two daemons hold the round, and the page joins the one the URL names', async () => {
-  const a = await serve(openStore(':memory:'), { port: 0, stakeLocks: lockPort(), ...FUNDED });
-  const b = await serve(openStore(':memory:'), { port: 0, stakeLocks: lockPort(), ...FUNDED });
+  const slot = bondedChainSlot(lockPort());
+  const a = await serve(openStore(':memory:'), { port: 0, ...onChain(slot) });
+  const b = await serve(openStore(':memory:'), { port: 0, ...onChain(slot) });
   try {
-    const contract = contractOn(a.round.pubkey, b.round.pubkey);
+    const contract = bonded(contractOn(a.round.pubkey, b.round.pubkey), slot, [a, b]);
     const client = new Client({ base: `http://127.0.0.1:${a.port}`, sign, verify });
     const rid = await client.openRound(contract);
     // the SAME round on the second daemon, which is what a 2-of-2 is
@@ -118,10 +122,11 @@ test('two daemons hold the round, and the page joins the one the URL names', asy
 });
 
 test('a node answering with a different round is refused, not played', async () => {
-  const a = await serve(openStore(':memory:'), { port: 0, stakeLocks: lockPort(), ...FUNDED });
+  const slot = bondedChainSlot(lockPort());
+  const a = await serve(openStore(':memory:'), { port: 0, ...onChain(slot) });
   try {
-    const wanted = contractOn(a.round.pubkey, b32(9));
-    const other = contractOn(a.round.pubkey, b32(9), 0x44);
+    const wanted = bonded(contractOn(a.round.pubkey, b32(9)), slot, [a]);
+    const other = bonded(contractOn(a.round.pubkey, b32(9), 0x44), slot, [a]);
     const client = new Client({ base: `http://127.0.0.1:${a.port}`, sign, verify });
     const rid = await client.openRound(wanted);
     assert.notEqual(toHex(roundId(other)), toHex(rid), 'the two rounds are the same round');

@@ -9,7 +9,7 @@ import { serve } from '../src/server.js';
 import { resultFinality } from '../src/finality.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { assumeAssigned } from './assignment.js';
-import { lockPort } from './lock-fixture.js';
+import { lockPort, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
 import { contractFor, say, wait, opts, rand, b32, secretScalar, STAKE, joinAndPlay, WINNER, LOSER,
   RANDOMNESS, GENESIS_HASH, wordsAt, PLANTED_FIRST_MARK_DEADLINE, presentDay } from './window-fixture.js';
 import { CLOCK } from './block-clock.js';
@@ -36,10 +36,13 @@ export const answer = (s) => (typeof s === 'string' ? (s.length > 30 && !s.start
 
 /** Seven live signer nodes on one round, on stake locks with their own claim key (`lock`: the one custody, §23.6). */
 export async function sevenSignerNodes(custody, { endIn = null } = {}) {
-  const locks = custody === 'lock' ? lockPort() : null;
+  // A CHAIN THAT BONDS THE ROUND'S SEVEN (RULED 2026-09-25: a paying round opens only on a signer node that reads the
+  // chain, and its beacon is that chain's). All seven are running daemons, so the round's claim key is their own live DKG.
+  const slot = custody === 'lock' ? bondedChainSlot(lockPort()) : null;
+  const locks = slot ? slot.port : null;
   const dbs = Array.from({ length: 7 }, () => openStore(':memory:'));
   const mk = (i, port = 0) => serve(dbs[i], { port, ...opts, finality: { everyMs: 100 },
-    stakeLocks: locks, poolCurve: curve });
+    stakeLocks: locks, poolCurve: curve, ...(slot ? { chainFor: slot.chainFor, randomnessFor: slot.randomnessFor } : {}) });
   const signerNodes = [];
   for (let i = 0; i < 7; i++) signerNodes.push(await mk(i));
   const ports = signerNodes.map((d) => d.port);
@@ -55,8 +58,13 @@ export async function sevenSignerNodes(custody, { endIn = null } = {}) {
   const base = { ...contractFor(signerNodes.map((d) => d.round.pubkey), BigInt(WINDOW), ports.map((p) => `http://127.0.0.1:${p}`)),
     ...(custody === 'lock' ? { custody: 'FEDERATION', federationId: TEST_FEDERATION_ID } : {}) };
   // `endIn`: THE ROUND IN THE PRESENT, its contract end this many ms from now (§13C's result window opens at it).
-  const c = endIn === null ? base : presentDay(base, Date.now() + endIn);
+  const drafted = endIn === null ? base : presentDay(base, Date.now() + endIn);
+  // ONLY THE FIELD THE CHAIN DICTATES (RULED 2026-09-25): the census root its bonds derive to; the round's times stand.
+  const c = slot ? { ...drafted, censusRoot: bondedChainFor(drafted.nodes, drafted, slot,
+    { endpoints: ports.map((p) => `ws://127.0.0.1:${p}`) }).censusRoot } : drafted;
   const rid = roundId(c);
+  // THE ROUND'S OWN BEACON: the players seed their marks from it, as the signer nodes replay them.
+  const beacon = slot ? slot.randomnessFor({ contract: c }) : null;
   for (const d of signerNodes) {
     const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
     assert.equal(r.status, 201, await r.text());
@@ -64,7 +72,7 @@ export async function sevenSignerNodes(custody, { endIn = null } = {}) {
   }
   if (custody === 'lock') for (let pass = 0; pass < 2; pass++) for (const d of signerNodes) await d.dkg.run(c.nodes);
   return {
-    signerNodes, locks, c, rid, up,
+    signerNodes, locks, c, rid, up, randomness: beacon ? beacon.hash : RANDOMNESS,
     async down(...is) { for (const i of is) { await signerNodes[i].close(); up.delete(i); } },
     async back(...is) { for (const i of is) { signerNodes[i] = await mk(i, ports[i]); up.add(i); } wire(); },
     // A PARTITION BETWEEN SIGNER NODES THAT ARE UP: each named signer node's peers point where
@@ -136,7 +144,7 @@ export async function joinWithTwoFirstMarks(w, custody) {
   }
   const sign = (m) => joinSigned(encodeCheckpoint(m), ed25519.sign(checkpointId(m), session));
   const firstAt = (tick) => {
-    const st = init(seedWordForEntry(entry, RANDOMNESS));
+    const st = init(seedWordForEntry(entry, w.randomness || RANDOMNESS));
     for (let t = 0; t < tick; t++) step(st, ...wordsAt(t));
     const b = { roundId: w.rid, entryId: eid, previousHash: GENESIS_HASH, firstTick: 0,
       ticks: Array.from({ length: tick }, (_, t) => wordsAt(t)), liquidations: [] };
@@ -149,7 +157,7 @@ export async function joinWithTwoFirstMarks(w, custody) {
   // its receipts, the signer nodes it was offered to down, records ENTRY_VOID. And a LATE
   // first mark at PAST, from nothing.
   const hashAt = (tick) => {
-    const st = init(seedWordForEntry(entry, RANDOMNESS));
+    const st = init(seedWordForEntry(entry, w.randomness || RANDOMNESS));
     for (let t = 0; t < tick; t++) step(st, ...wordsAt(t));
     return Uint8Array.from(stateHash(st).match(/../g).map((x) => parseInt(x, 16)));
   };
@@ -212,7 +220,7 @@ export async function playWinner(w, signerNodesUp = null) {
   }
   const input = { roundId: w.rid, entryId: eid, previousHash: GENESIS_HASH, firstTick: 0,
     ticks: Array.from({ length: WINNER.ticks }, (_, t) => wordsAt(t)), liquidations: [] };
-  const st = init(seedWordForEntry(entry, RANDOMNESS));
+  const st = init(seedWordForEntry(entry, w.randomness || RANDOMNESS));
   for (let t = 0; t < WINNER.ticks; t++) step(st, ...wordsAt(t));
   const mark = { roundId: w.rid, entryId: eid, tick: WINNER.ticks,
     stateHash: Uint8Array.from(stateHash(st).match(/../g).map((x) => parseInt(x, 16))),

@@ -14,7 +14,7 @@ import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { operatorFunding, freeOrOperatorFunding } from '../src/funding.js';
 import { contractFor, opts, b32, presentDay } from './window-fixture.js';
-import { lockPort } from './lock-fixture.js';
+import { lockPort, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
 import { encodeRoundContract, roundId } from '../../protocol/src/contracts.js';
 import { toHex } from '../../protocol/src/hash.js';
 
@@ -26,12 +26,17 @@ async function opened({ stakeMsat, port = null, launcher = false, daily = false 
   const pk = d0.round.pubkey;
   await d0.close();
   const base = contractFor([pk, b32(0x33)], 3000n, ['wss://r.example']);
-  const c = presentDay({ ...base, ...(stakeMsat !== undefined ? { stakeMsat } : {}) }, Date.now() + 300000);
+  const drafted = presentDay({ ...base, ...(stakeMsat !== undefined ? { stakeMsat } : {}) }, Date.now() + 300000);
+  // WITH A LOCK PORT, A CHAIN THAT BONDS THE ROUND'S TWO NODES (RULED 2026-09-25: every paying-round test gets a bonded
+  // chain view); with none, no chain either - the refusal asked here comes first.
+  const slot = port ? bondedChainSlot(port) : null;
+  const c = slot ? { ...drafted, censusRoot: bondedChainFor(drafted.nodes, drafted, slot).censusRoot } : drafted;
   const rid = roundId(c);
   // `launcher`: the operator's rule (a paying round only when named); `daily`: the Daily's, a free round beside it.
   const funded = daily ? freeOrOperatorFunding({ named: () => [toHex(rid)] })
     : launcher ? operatorFunding({ named: () => [toHex(rid)] }) : opts.funded;
-  const d = await serve(openStore(':memory:'), { port: 0, ...opts, funded, ...(port ? { stakeLocks: port } : {}) });
+  const d = await serve(openStore(':memory:'), { port: 0, ...opts, funded, ...(slot ? { stakeLocks: slot.port, chainFor: slot.chainFor,
+    randomnessFor: slot.randomnessFor, claimKeyFor: () => new Uint8Array(33).fill(2) } : {}) });
   try {
     const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
     const why = (await r.text()).trim();

@@ -17,7 +17,7 @@ import { serve } from '../src/server.js';
 import { resultFinality } from '../src/finality.js';
 import { resendNonce } from '../src/winnings-send.js';
 import { assumeAssigned } from './assignment.js';
-import { lockPort } from './lock-fixture.js';
+import { lockPort, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
 import { lockAndPlay, closeRound, untilSettled, curve, lnurl } from './lock-round-fixture.js';
 import { b32, WINDOW_MS, STAKE, WINNER, LOSER, contractFor, opts, wait } from './window-fixture.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
@@ -33,13 +33,17 @@ const LOWEST = 'http://gw-a.example/';
 /** The lock round on disk, settled without the late loser, the winner's first-round send PAID, the late loser now FAILED. */
 async function settledOnDisk() {
   const dir = mkdtempSync(join(tmpdir(), 'late-'));
-  const port = lockPort();
+  // A CHAIN THAT BONDS THE ROUND'S TWO SIGNER NODES (RULED 2026-09-25), as lockRound in lock-round-fixture.js: both are
+  // running daemons, so the claim key is their own live DKG; the round's beacon is that chain's, and players seed from it.
+  const slot = bondedChainSlot(lockPort());
+  const port = slot.port;
   const address = lnurl(port);
   const view = new Map();
   const finalityOf = (round, rid, eid) => (view.has(toHex(eid)) ? view.get(toHex(eid))(round, rid, eid) : resultFinality(round, rid, eid));
   const start = async (name, at = 0) => {
     const d = await serve(openStore(join(dir, `${name}.sqlite`)), { port: at, ...opts, stakeLocks: port, poolCurve: curve,
-      finality: { everyMs: 100, lateEveryMs: 3600000 }, lnurlFetch: address.fetchLike, finalityOf });
+      finality: { everyMs: 100, lateEveryMs: 3600000 }, lnurlFetch: address.fetchLike, finalityOf,
+      chainFor: slot.chainFor, randomnessFor: slot.randomnessFor });
     d.round.chainView = CLOCK.chainView();
     return d;
   };
@@ -53,7 +57,10 @@ async function settledOnDisk() {
   wire();
   w.c = { ...contractFor([w.a.round.pubkey, w.b.round.pubkey], BigInt(WINDOW_MS), [w.a, w.b].map((d) => `http://127.0.0.1:${d.port}`)),
     custody: 'FEDERATION', federationId: TEST_FEDERATION_ID, minScore: 1, stakeMsat: STAKE };
+  w.c = { ...w.c, censusRoot: bondedChainFor(w.c.nodes, w.c, slot,
+    { endpoints: [w.a, w.b].map((d) => `ws://127.0.0.1:${d.port}`) }).censusRoot };
   w.rid = roundId(w.c);
+  w.randomness = slot.randomnessFor({ contract: w.c }).hash;
   for (const d of [w.a, w.b]) {
     const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(w.c) });
     assert.equal(r.status, 201, await r.text());

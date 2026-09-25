@@ -16,7 +16,7 @@
 // door and is stopped at that signer node's. Both are measured below.
 // A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED the owner 2026-09-25): each daemon here gets the
 // lock fixture's port, and each entry arrives with its stake and fee locked in it (lockedEntry). Contracts unchanged.
-import { lockPort, lockedEntry } from './lock-fixture.js';
+import { lockPort, lockedEntry, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
@@ -44,10 +44,18 @@ import { entryFeeMsat } from '../../protocol/src/fee.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const sha256 = (b) => new Uint8Array(createHash('sha256').update(Buffer.from(b)).digest());
 const coefficients = [1n, 2n, 3n, 4n].map((n) => n * 0x1234567890abcdefn + 7n);
-const FUNDED = { funded: () => true,
-  randomnessFor: () => ({ hash: b32(0xbe), height: 900005, timeMs: 900n }) };
+const FUNDED = { funded: () => true };
 
-const contractFor = (node) => ({
+// ON A CHAIN THAT BONDS THE ROUND'S TWO NODES (RULED 2026-09-25): the daemon under test and a keyless placeholder, so the
+// claim key is claimKeyFor's; the beacon is that chain's, not a fixed hash. Only censusRoot changes in the contract.
+async function onChain() {
+  const slot = bondedChainSlot(lockPort());
+  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, stakeLocks: slot.port, chainFor: slot.chainFor,
+    randomnessFor: slot.randomnessFor, claimKeyFor: () => new Uint8Array(33).fill(2) });
+  return { lp: slot.port, node, slot };
+}
+
+const drafted = (node) => ({
   networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 6,
   // SEVEN SETTLEMENT SIGNER NODES, because the handouts below are dealt 5-of-7 to
   // seven: the door now asks the round what its stakes open at (M3.3-26).
@@ -61,6 +69,10 @@ const contractFor = (node) => ({
   timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
   nodes: [node.round.pubkey, b32(9)],
 });
+const contractFor = (node, slot) => {
+  const c = drafted(node);
+  return { ...c, censusRoot: bondedChainFor(c.nodes, c, slot, { endpoints: [`ws://127.0.0.1:${node.port}`] }).censusRoot };
+};
 
 const entryOn = (roundId, ref, stakePoint = new Uint8Array(33)) => ({
   roundId, playerPubkey: b32(5), sessionPubkey: b32(6), stakeCommitment: b32(7),
@@ -124,10 +136,9 @@ const post = async (port, path, body) => {
 };
 
 test('an honest handout is accepted, and the entry that names it joins', async () => {
-  const lp = lockPort();
-  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, stakeLocks: lp });
+  const { lp, node, slot } = await onChain();
   try {
-    const contract = contractFor(node);
+    const contract = contractFor(node, slot);
     const rid = (await post(node.port, '/round', encodeRoundContract(contract))).bytes;
 
     const handout = await handoutOf(rid, sha256(b32(3)).slice(0, 32), { signerNodes: signerNodesFor(node) });
@@ -157,10 +168,9 @@ test('an honest handout is accepted, and the entry that names it joins', async (
  * this check both entries below joined 201.
  */
 test('an entry whose stake point is not its handout\'s A0 is refused, and so is one naming none', async () => {
-  const lp = lockPort();
-  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, stakeLocks: lp });
+  const { lp, node, slot } = await onChain();
   try {
-    const contract = contractFor(node);
+    const contract = contractFor(node, slot);
     const rid = (await post(node.port, '/round', encodeRoundContract(contract))).bytes;
     const handout = await handoutOf(rid, sha256(b32(6)).slice(0, 32), { signerNodes: signerNodesFor(node) });
     const accepted = await post(node.port, '/handout', encodeHandout(handout));
@@ -179,10 +189,9 @@ test('an entry whose stake point is not its handout\'s A0 is refused, and so is 
 });
 
 test('a two-polynomial dealer is refused at the door, and so is the entry naming it', async () => {
-  const lp = lockPort();
-  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, stakeLocks: lp });
+  const { lp, node, slot } = await onChain();
   try {
-    const contract = contractFor(node);
+    const contract = contractFor(node, slot);
     const rid = (await post(node.port, '/round', encodeRoundContract(contract))).bytes;
 
     // CHEATED AT THIS NODE'S OWN SIGNER NODE, which is the one it can see.
@@ -204,10 +213,9 @@ test('a two-polynomial dealer is refused at the door, and so is the entry naming
 });
 
 test('an entry naming shares nobody published is refused, and one naming none joins', async () => {
-  const lp = lockPort();
-  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, stakeLocks: lp });
+  const { lp, node, slot } = await onChain();
   try {
-    const contract = contractFor(node);
+    const contract = contractFor(node, slot);
     const rid = (await post(node.port, '/round', encodeRoundContract(contract))).bytes;
 
     const nobody = await post(node.port, '/entry',
@@ -225,10 +233,9 @@ test('an entry naming shares nobody published is refused, and one naming none jo
 });
 
 test('a handout published for another round does not let an entry in', async () => {
-  const lp = lockPort();
-  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, stakeLocks: lp });
+  const { lp, node, slot } = await onChain();
   try {
-    const one = contractFor(node);
+    const one = contractFor(node, slot);
     const two = { ...one, configHash: TRUCK_CONFIG_HASH, slashMinimumServed: 21 };
     const ridOne = (await post(node.port, '/round', encodeRoundContract(one))).bytes;
     const ridTwo = (await post(node.port, '/round', encodeRoundContract(two))).bytes;

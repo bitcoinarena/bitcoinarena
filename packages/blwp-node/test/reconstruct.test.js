@@ -10,7 +10,7 @@
 //
 // Everything here goes through the daemons' own doors. Nothing hands a share
 // to anybody in this file.
-import { lockPort, lockedEntry } from './lock-fixture.js';
+import { lockPort, lockedEntry, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
 import { CLOCK } from './block-clock.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
@@ -65,8 +65,6 @@ import { entryFeeMsat } from '../../protocol/src/fee.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const rand = (n) => new Uint8Array(randomBytes(n));
 
-const RANDOMNESS = b32(0x9b);
-const BEACON = { hash: RANDOMNESS, height: 900001, timeMs: 900n };
 // THE FIXTURE'S OWN WORLD, RE-MEASURED. Letter 36 gave the round its relief
 // from its own seed, so this drive is on hills now and it DELIVERED where it
 // used to wreck - and these tests are about a run that came to nothing. The
@@ -90,7 +88,15 @@ const session = ed25519.utils.randomSecretKey();
 // contract this file builds for them names the same ones and has the same id.
 let committeePort = null;
 let committeeRelays = [];
-const contractFor = (nodes) => ({
+// THE COMMITTEE'S BONDED CHAIN (RULED 2026-09-25): every contract this file builds for the committee names its census,
+// and the round's beacon is that chain's - the player seeds from it (playedRound). Only censusRoot changes.
+let committeeSlot = null;
+const contractFor = (nodes) => {
+  const c = drafted(nodes);
+  return committeeSlot ? { ...c, censusRoot: bondedChainFor(c.nodes, c, committeeSlot,
+    { endpoints: committeeRelays.map((u) => u.replace('http://', 'ws://')) }).censusRoot } : c;
+};
+const drafted = (nodes) => ({
   startDeadlineTicks: PLANTED_FIRST_MARK_DEADLINE, networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
   gameVerifySlots: 7, settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n,
   // A WINDOW OF 1ms, NOT 0. This fixture named a zero objection window so finality was instant and the suite
@@ -121,10 +127,12 @@ async function committee(n = 7) {
   const nodes = [];
   // THE COMMITTEE REACHES ONE FEDERATION (RULED 2026-09-25: a paying round opens only on a signer node that reaches one):
   // the lock fixture's port, shared, and an entry's stake and fee are locked in it (playedRound).
-  committeePort = lockPort();
+  committeeSlot = bondedChainSlot(lockPort());
+  committeePort = committeeSlot.port;
   for (let i = 0; i < n; i++)
     nodes.push(await serve(openStore(':memory:'), {
-      port: 0, funded: () => true, randomnessFor: () => BEACON, stakeLocks: committeePort,
+      port: 0, funded: () => true, stakeLocks: committeePort, chainFor: committeeSlot.chainFor,
+      randomnessFor: committeeSlot.randomnessFor,
     }));
   // THE CHAIN §13A'S WINDOWS ARE READ FROM (RULED 2026-09-24): the block clock every fixture daemon reads.
   for (const d of nodes) d.round.chainView = CLOCK.chainView();
@@ -175,7 +183,7 @@ async function playedRound(node, c, stake, signerNodes) {
   const input = { roundId: rid, entryId: eid, previousHash: GENESIS, firstTick: 0, ticks: rows, liquidations: [] };
   assert.equal(await say(encodeInputBatch(input)), String(TICKS));
 
-  const st = init(seedWordForEntry(entry, RANDOMNESS));
+  const st = init(seedWordForEntry(entry, committeeSlot.randomnessFor({ contract: c }).hash));
   for (let t = 0; t < TICKS; t++) step(st, ...wordsAt(t));
   const mark = {
     roundId: rid, entryId: eid, tick: TICKS,

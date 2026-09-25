@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { contractFor, opts, b32 } from './window-fixture.js';
-import { lockPort } from './lock-fixture.js';
+import { lockPort, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
 import { encodeRoundContract, roundId } from '../../protocol/src/contracts.js';
 import { toHex } from '../../protocol/src/hash.js';
 
@@ -21,11 +21,16 @@ const KEY_B = '03' + 'b2'.repeat(32);
 const gw = (url, key, live = true) => ({ url, live, lightningPublicKey: live ? key : null });
 
 async function opened(gateways, { stakeMsat } = {}) {
-  const port = lockPort({ gateways });
-  const d = await serve(openStore(':memory:'), { port: 0, ...opts, stakeLocks: port });
+  // ON A CHAIN THAT BONDS THE ROUND'S TWO NODES (RULED 2026-09-25): the one daemon and a keyless placeholder, so the claim
+  // key is claimKeyFor's. Only the round's censusRoot changes.
+  const slot = bondedChainSlot(lockPort({ gateways }));
+  const d = await serve(openStore(':memory:'), { port: 0, ...opts, stakeLocks: slot.port, chainFor: slot.chainFor,
+    randomnessFor: slot.randomnessFor, claimKeyFor: () => new Uint8Array(33).fill(2) });
   try {
-    const c = { ...contractFor([d.round.pubkey, b32(0x33)], 3000n, ['wss://r.example']),
+    const drafted = { ...contractFor([d.round.pubkey, b32(0x33)], 3000n, ['wss://r.example']),
       ...(stakeMsat !== undefined ? { stakeMsat } : {}) };
+    const c = { ...drafted, censusRoot: bondedChainFor(drafted.nodes, drafted, slot,
+      { endpoints: [`ws://127.0.0.1:${d.port}`] }).censusRoot };
     const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
     const why = (await r.text()).trim();
     const held = (await fetch(`http://127.0.0.1:${d.port}/round?id=${toHex(roundId(c))}`)).status;

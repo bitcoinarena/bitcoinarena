@@ -8,7 +8,7 @@
 // bytes stay where they are (absent, not deleted).
 // A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED the owner 2026-09-25): this file's paying-round
 // daemons get the lock fixture's port - the test federation, two gateways, zero base fee. Contracts unchanged.
-import { lockPort } from './lock-fixture.js';
+import { lockPort, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -96,9 +96,13 @@ test('a store holding byte-0 rows from before the ruling answers them as absent 
 // 1, and is taken; the same fields under byte 0 are bytes that do not parse, nothing of them is stored, and the id those
 // bytes would have is absent.
 test('the same contract is taken under byte 1 (201) and refused under byte 0 as unparseable; nothing of it is stored and its id is absent', async () => {
-  const d = await serve(openStore(':memory:'), { port: 0, stakeLocks: lockPort(), ...opts });
+  // ON A CHAIN THAT BONDS THE ROUND'S TWO NODES (RULED 2026-09-25): the one daemon and a keyless placeholder, so the claim
+  // key is claimKeyFor's. A node with a chain view checks every round's census; only censusRoot changes.
+  const slot = bondedChainSlot(lockPort());
+  const d = await serve(openStore(':memory:'), { port: 0, ...opts, stakeLocks: slot.port, chainFor: slot.chainFor, randomnessFor: slot.randomnessFor, claimKeyFor: () => new Uint8Array(33).fill(2) });
   try {
-    const c = contractFor([d.round.pubkey, b32(0x33)], 3000n, ['wss://r.example']);
+    const bonded = (c) => ({ ...c, censusRoot: bondedChainFor(c.nodes, c, slot, { endpoints: [`ws://127.0.0.1:${d.port}`] }).censusRoot });
+    const c = bonded(contractFor([d.round.pubkey, b32(0x33)], 3000n, ['wss://r.example']));
     const zero = underByteZero(c);
     const zeroId = taggedHash(TAG.roundContract, zero);
     const refused = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: zero });

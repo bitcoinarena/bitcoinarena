@@ -9,7 +9,7 @@
 // so the door answers it as it answers any bytes that do not decode (400), and no encoder makes it.
 // A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED the owner 2026-09-25): this file's paying-round
 // daemons get the lock fixture's port - the test federation, two gateways, zero base fee. Contracts unchanged.
-import { lockPort } from './lock-fixture.js';
+import { lockPort, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -44,13 +44,19 @@ function zeroedFederation(c) {
 }
 
 test('the signer node door refuses a paying FEDERATION round naming no federation (400) or failing the custody fields (409), refuses a record carrying the withdrawn custody byte 0 (400), and opens a named one and a free one', async () => {
-  const d = await serve(openStore(':memory:'), { port: 0, stakeLocks: lockPort(), ...opts });
+  // AND ON A CHAIN THAT BONDS THE ROUND'S TWO NODES (RULED 2026-09-25): the one daemon and a keyless placeholder, so the
+  // claim key is claimKeyFor's. Only the named round's censusRoot changes.
+  const slot = bondedChainSlot(lockPort());
+  const d = await serve(openStore(':memory:'), { port: 0, stakeLocks: slot.port, ...opts, chainFor: slot.chainFor,
+    randomnessFor: slot.randomnessFor, claimKeyFor: () => new Uint8Array(33).fill(2) });
   try {
     const base = `http://127.0.0.1:${d.port}`;
     const post = async (body) => { const r = await fetch(`${base}/round`, { method: 'POST', body }); return { status: r.status, text: (await r.text()).trim() }; };
     const held = async (c) => (await fetch(`${base}/round?id=${toHex(roundId(c))}`)).status;
     const nodes = [d.round.pubkey, b32(0x33)];
-    const named = { ...contractFor(nodes, 3000n, ['wss://r.example']), custody: 'FEDERATION', federationId: TEST_FEDERATION_ID };
+    const drafted = { ...contractFor(nodes, 3000n, ['wss://r.example']), custody: 'FEDERATION', federationId: TEST_FEDERATION_ID };
+    const named = { ...drafted, censusRoot: bondedChainFor(drafted.nodes, drafted, slot,
+      { endpoints: [`ws://127.0.0.1:${d.port}`] }).censusRoot };
 
     const zero = await post(zeroedFederation(named));
     const noRelay = { ...named, publicationRelays: [] };

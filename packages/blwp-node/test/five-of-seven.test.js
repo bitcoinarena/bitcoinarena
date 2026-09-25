@@ -21,7 +21,7 @@ import { CLOCK } from './block-clock.js';
 import { roundEndMs } from '../../protocol/src/first-mark.js';
 
 test('5 of 7, a stake lock: two first marks - FORFEIT at all seven, no signer node signs the refund, no forfeit kept, the lock held (back only by the player\'s own expiry refund)', async () => {
-  const w = await sevenSignerNodes('lock', { endIn: 15000 });
+  const w = await sevenSignerNodes('lock', { endIn: 25000 });   // as its siblings: setup on a bonded chain takes longer
   try {
     const run = await joinWithTwoFirstMarks(w, 'lock');
     const before = await twoFirstMarks(w, run);

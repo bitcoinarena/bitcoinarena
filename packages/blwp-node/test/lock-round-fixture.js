@@ -9,7 +9,7 @@ import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { assumeAssigned } from './assignment.js';
-import { lockPort } from './lock-fixture.js';
+import { lockPort, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
 import { askerOrder } from '../src/payout.js';
 import { testInvoice } from './bolt11-fixture.js';
 import { b32, rand, RANDOMNESS, STAKE, WINDOW_MS, GENESIS_HASH, wordsAt, contractFor, say, secretScalar, opts, wait } from './window-fixture.js';
@@ -68,8 +68,11 @@ export const curve = { ...feldmanGroup, tweakPoint };
 
 export async function lockRound({ minScore = 1, stakeMsat = STAKE, port = lockPort(), serveOpts = {} } = {}) {
   const address = lnurl(port);
-  const mk = () => serve(openStore(':memory:'), { port: 0, ...opts, stakeLocks: port, poolCurve: curve, finality: { everyMs: 100 },
-    lnurlFetch: address.fetchLike, ...serveOpts });
+  // A CHAIN THAT BONDS THE ROUND'S TWO SIGNER NODES (RULED 2026-09-25: a paying round opens only on a node that reads the
+  // chain). Both signer nodes are running daemons, so the round's claim key is their own live DKG, as before.
+  const slot = bondedChainSlot(port);
+  const mk = () => serve(openStore(':memory:'), { port: 0, ...opts, stakeLocks: slot.port, poolCurve: curve, finality: { everyMs: 100 },
+    chainFor: slot.chainFor, randomnessFor: slot.randomnessFor, lnurlFetch: address.fetchLike, ...serveOpts });
   // THE CHAIN §13A'S WINDOWS ARE READ FROM (RULED 2026-09-24): one block clock both signer nodes read.
   const a = await mk(); a.round.chainView = CLOCK.chainView();
   const b = await mk(); b.round.chainView = CLOCK.chainView();
@@ -80,8 +83,12 @@ export async function lockRound({ minScore = 1, stakeMsat = STAKE, port = lockPo
     d.preimages.peers = there;
     d.dkg.peers = there;
   }
-  const c = { ...contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
+  const drafted = { ...contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
     custody: 'FEDERATION', federationId: TEST_FEDERATION_ID, minScore, stakeMsat };
+  // ONLY THE TWO FIELDS THE CHAIN DICTATES (RULED 2026-09-25): the census root its bonds derive to, and a committee time
+  // among its blocks. The round id follows from them.
+  const bonded = bondedChainFor(drafted.nodes, drafted, slot, { endpoints: [a, b].map((d) => `ws://127.0.0.1:${d.port}`) });
+  const c = { ...drafted, censusRoot: bonded.censusRoot, committeeTimeMs: bonded.committeeTimeMs };
   const rid = roundId(c);
   for (const d of [a, b]) {
     const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
@@ -91,7 +98,13 @@ export async function lockRound({ minScore = 1, stakeMsat = STAKE, port = lockPo
   for (let pass = 0; pass < 2; pass++) for (const d of [a, b]) await d.dkg.run(c.nodes);
   const held = a.dkg.signerNodeFor(c.nodes);
   assert.equal(held.ok, true, held.why);
-  return { a, b, c, rid, port, lnurl: address, claimPk: held.pool.groupPublicKey, close: async () => { await a.close(); await b.close(); } };
+  // THE ROUND'S OWN BEACON (RULED 2026-09-25): the block of the bonded chain the node replays from - the players seed their
+  // marks from the same one, not from the fixtures' constant RANDOMNESS.
+  const beacon = slot.randomnessFor({ contract: c });
+  assert.ok(beacon && beacon.hash, 'the bonded chain names no beacon for the round');
+  console.log(`  BEACON (lockRound): ${toHex(beacon.hash)} at ${beacon.height}`);
+  return { a, b, c, rid, port, slot, lnurl: address, claimPk: held.pool.groupPublicKey, randomness: beacon.hash,
+    close: async () => { await a.close(); await b.close(); } };
 }
 
 // `feeLock` DEFAULTS TO TRUE (2026-09-21): on a federation that charges no base fee this round's gate mints
@@ -125,7 +138,7 @@ export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, ad
   if (feeLock) await w.port.put(feeOutpoint, feeFields);
   const input = { roundId: w.rid, entryId: eid, previousHash: GENESIS_HASH, firstTick: 0,
     ticks: Array.from({ length: who.ticks }, (_, t) => wordsAt(t)), liquidations: [] };
-  const st = init(seedWordForEntry(entry, RANDOMNESS));
+  const st = init(seedWordForEntry(entry, w.randomness || RANDOMNESS));
   for (let t = 0; t < who.ticks; t++) step(st, ...wordsAt(t));
   const mark = { roundId: w.rid, entryId: eid, tick: who.ticks,
     stateHash: Uint8Array.from(stateHash(st).match(/../g).map((x) => parseInt(x, 16))),
