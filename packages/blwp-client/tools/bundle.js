@@ -202,7 +202,7 @@ out += '         parseConnection: parseConnection,\n';
 // off the connection string - NIP-47's URI carries no budget, and the field
 // that pretended it did is gone.
 out += '         walletBudget: walletBudget, budgetLine: budgetLine,\n';
-out += '         decodeRoundContract: decodeRoundContract,\n';
+out += '         decodeRoundContract: decodeRoundContract, decodeEntryContract: decodeEntryContract,\n';
 out += '         toHex: toHex, fromHex: fromHex };\n})();\n';
 out += 'if (typeof module !== "undefined") module.exports = BLWPCLIENT;\n';
 
