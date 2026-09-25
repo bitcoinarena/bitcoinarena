@@ -27,7 +27,9 @@ test('CoreScoreFactors carries the core\'s own constants', () => {
 });
 
 test('the 18:29 shot: the core scores 137, the card now reads load 0.70 x danger 0.23 x speed 0.85, and a danger of 1.00 would have paid 594', () => {
-  const exposure = 4819968, ticks = 4596, cargo = 45875;
+  // THE CORE'S WORDS OF THAT RUN, measured: round 6f2d00c2..., entry 66d99bb6..., the pinned fleet core stepped over the
+  // transcript and beacon in a copy of the Daily's store (its state hash equal to the pinned replay's, DELIVERED 137).
+  const exposure = 4842601, ticks = 4596, cargo = 45875;
   const facts = { score: scoreOf(exposure, ticks, cargo), card: [C(cargo), E(exposure), T(ticks)].map((x) => x.toFixed(2)),
     product: Math.round(1000 * C(cargo) * E(exposure) * T(ticks)), atReference: scoreOf(EXPOSURE_REFERENCE, ticks, cargo) };
   console.log('  FACTS (18:29):', JSON.stringify(facts));
