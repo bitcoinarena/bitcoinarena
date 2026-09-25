@@ -886,6 +886,41 @@ buffer growth, SQLite write throughput.
 
 ---
 
+### 12.1 A scripted winner and the round's own beacon (RULED 2026-09-25, B)
+
+the owner 2026-09-25 10:52, spec only. A paying round is now seeded from the
+round's own beacon (multiplayer_p2p.md §5A.5: the block hash of the bonded
+chain), and that hash differs in every round of every run. So a winner's
+**recorded** inputs, captured against one run's world, do not deliver in
+another's: measured, the scripted winner fails against a different beacon.
+
+**Ruling: B, re-scope.** The slice that moved the seed to the round's own
+beacon is the **seed slice** and nothing more:
+
+- it lands the node and the fixtures reading the beacon from the bonded
+  chain, and the players and the node seeding the world from that same
+  hash;
+- it measures what does not depend on who delivers: that every holder
+  names the same beacon, that the seed and the committee derive from it,
+  and that a round on a fixed beacon replays bit-identically;
+- a test whose assertion needs a **specific scripted entry to deliver** on
+  a beacon-seeded round is **listed by name as red with this cause** -
+  "recorded inputs, another run's beacon" - for the span of this one
+  slice. It is not tuned, not skipped silently, not pointed at a fixed
+  beacon to make it pass, and its expectation does not change.
+
+**The recompute is the next slice, directly after, and no other slice goes
+between.** Its content: the scripted winner's inputs are **derived per run
+from that run's replayed world**, never recorded once and reused - a
+closed-loop driver that reads the core's own published state each tick
+(the gate, the truck, the surface) and steers to the gate, starting from the
+gate-steering driver the window fixture already has. It is measured to
+deliver on at least ten consecutive runs with ten different beacons, and it
+turns every test listed red above green without changing one expectation.
+Searching a seed space for a delivering drive is **not** chosen: it is
+slower, it tests the search instead of the round, and a seed with no
+delivering drive would read as a product failure.
+
 ## 13. Operations
 
 - **Runtime:** Node 24 LTS, systemd unit per role,
