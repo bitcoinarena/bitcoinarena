@@ -30,12 +30,12 @@
   {
    "name": "practice",
    "ticks": 3600,
-   "final": "b439272908d57a1444746ebe8618a463f5a7ca5847f9a4963f7e14a8c65b033c"
+   "final": "fcec04aaa5024ae370db200d5b704deb124e050bf10d00b9eddea9913e6a6171"
   },
   {
    "name": "liquidation",
    "ticks": 3600,
-   "final": "ee57a8e92ab5ad235d3b106cf8015d22d777a2e47ed6c3c728ce7639203ef869"
+   "final": "3ddaf4647b3b28403169347cff284cb296f666a0d6e92c00b2a2b795891d1ab7"
   },
   {
    "name": "fallout",

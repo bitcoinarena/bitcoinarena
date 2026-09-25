@@ -62,10 +62,11 @@ export const EDGE_HIGH = 1703936;        //   26 m of blocker above the kerb
 export const EDGE_SUNK = 393216;         //    6 m of it below the ground
 
 /** How many boxes the map has, so a caller can size a buffer. */
-// 33 map + 41 miner corridor + 4 coin stacks + 24 post office mouths. It was 37 map and 106 total until
+// 33 map + 26 miner corridor + 4 coin stacks + 24 post office mouths. It was 37 map and 106 total until
 // ruling 4 (2026-09-22) made the edge a clamp: the four edge walls are gone, and the core owes no wall
-// solids. Unity draws what this builds, so its own count moves with it.
-export const MAP_BOXES = 102;
+// solids; then 102 until the finish straight was cleared (2026-09-25 21:19): the corridor lost the fifteen
+// boxes that stood in the passage. Unity draws what this builds, so its own count moves with it.
+export const MAP_BOXES = 87;
 
 /**
  * The map's solids for a world, as the six words a box carries:
@@ -193,22 +194,20 @@ export function mapSolids(ground, halfX, halfZ, reliefHalfX = halfX) {
   //                              at truck height, and the gate is beyond them. A box on any of them closes the
   //                              route as surely as the mass does. Nothing solid stands within 6 m of the centre
   //                              line at truck height, so the run-in is always open.
+  // THE FINISH STRAIGHT IS FREE (the owner 2026-09-25 21:19: "The finish-straight passage must be completely free. A
+  // truck at speed crosses it with no hit and no slowdown from a collider ... Whatever is now in that passage, in the
+  // core or in Unity, comes out. Do not add a box to keep the mesh honest if it stands in the passage").
+  //   MEASURED before (straight.mjs, 20 seeds, full throttle from x 60): on the spawn bay's own lane, z 10.2, 17 of
+  //   20 runs never delivered, stopped on tunnel_grid_v_4; on the centre line 3 of 20, on tunnel_grid_v_9 and _v_4;
+  //   at z -6, 9 of 20 on tunnel_grid_v_8. The mouth's ten grid columns (x 145.4, |z| 10.2 .. 31.4, 4 m apart) were a
+  //   fence across the finish, and its three bars (z +-33, from 3.55 m) were a ceiling 0.29 m over the truck that any
+  //   rise in the run-in brought down onto it.
+  //   OUT, and not to come back: tunnel_grid_v_0 .. _4 and _8 .. _12, tunnel_grid_h_1 .. _3, and power_cable_0 / _1
+  //   (x 108.4 .. 120.8, |z| 22.4 .. 34.2), which stood inside the mouth where a truck from an outer bay funnels in.
+  //   The passage is the tunnel between its ribs, |z| < 32.8, from the miner's door to the gate: nothing in it is
+  //   solid at any height. The walls, ribs, jambs and seams line it and stay; the coin stacks are past the gate and
+  //   outside the mouth, and stay.
   const corridor = [
-    [114.57, 28.28, 6.18, 5.91, 0.08, 9.32],   // power_cable_0
-    [114.62, -28.35, 6.18, 5.25, 0.09, 9.36],   // power_cable_1
-    [145.40, 31.00, 0.60, 0.55, 0.25, 9.70],   // tunnel_grid_v_0
-    [145.40, 25.80, 0.60, 0.55, 0.25, 9.70],   // tunnel_grid_v_1
-    [145.40, 20.60, 0.60, 0.55, 0.25, 9.70],   // tunnel_grid_v_2
-    [145.40, 15.40, 0.60, 0.55, 0.25, 9.70],   // tunnel_grid_v_3
-    [145.40, 10.20, 0.60, 0.55, 0.25, 9.70],   // tunnel_grid_v_4
-    [145.40, -10.60, 0.60, 0.55, 0.25, 9.70],   // tunnel_grid_v_8
-    [145.40, -15.80, 0.60, 0.55, 0.25, 9.70],   // tunnel_grid_v_9
-    [145.40, -21.00, 0.60, 0.55, 0.25, 9.70],   // tunnel_grid_v_10
-    [145.40, -26.20, 0.60, 0.55, 0.25, 9.70],   // tunnel_grid_v_11
-    [145.40, -31.40, 0.60, 0.55, 0.25, 9.70],   // tunnel_grid_v_12
-    [145.40, 0.00, 0.60, 33.00, 3.55, 4.05],   // tunnel_grid_h_1
-    [145.40, 0.00, 0.60, 33.00, 5.98, 6.48],   // tunnel_grid_h_2
-    [145.40, 0.00, 0.60, 33.00, 8.41, 8.91],   // tunnel_grid_h_3
     [157.00, 35.20, 12.00, 1.20, 0.02, 9.92],   // tunnel_wall_l
     [157.00, -35.20, 12.00, 1.20, 0.02, 9.92],   // tunnel_wall_r
     [146.65, 33.40, 0.70, 0.60, 0.25, 9.70],   // tunnel_rib_l_9
