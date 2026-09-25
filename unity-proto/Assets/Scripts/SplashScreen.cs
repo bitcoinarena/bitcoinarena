@@ -125,7 +125,10 @@ public class SplashScreen : MonoBehaviour
         if (Time.unscaledTime - _polledAt > 0.75f)
         {
             _polledAt = Time.unscaledTime;
-            _lobby = Blwp.DailyLobby.Poll();
+            _lobby = LobbyOrReading(Blwp.DailyLobby.Poll(), Blwp.DailyLobby.Compiled);
+            // A ROUND LINK THE PAGE COULD NOT JOIN comes back to this lobby with its reason (the page's BLWP_JOIN).
+            if (_lobby != null && !_joining && string.IsNullOrEmpty(_joinWhy) && _lobby.join.state == "refused")
+                _joinWhy = _lobby.join.why;
             if (_lobby != null)
             {
                 // THE PLAYER'S TAP IS KEPT, A DEFAULT IS NOT (the owner 2026-09-15, free first): keeping
@@ -285,6 +288,20 @@ public class SplashScreen : MonoBehaviour
     public const float ResultHoldSeconds = 5f;
 
     /// <summary>
+    /// ONLY THE LOBBY AFTER THE LOADING SCREEN (the owner 2026-09-25 21:11/21:13, phone, btc-logistics-core.pages.dev: "the
+    /// old splash is still there ... That splash must not draw. A closed round is not a reason to show it").
+    ///
+    /// In a browser build this screen is the lobby and nothing else: while the page has no lobby to hand over - before its
+    /// first read, or a round link it could not join on its way back to the lobby - it is the lobby still being read, not
+    /// the title screen (LOAD / DRIVE / DELIVER), which is left for the editor and a build with no page.
+    /// </summary>
+    public static Blwp.LobbyState LobbyOrReading(Blwp.LobbyState polled, bool inAPage) =>
+        polled != null || !inAPage ? polled : new Blwp.LobbyState { mode = "lobby", from = Reading };
+
+    /// <summary>The lobby's `from` while the page has none to hand over yet.</summary>
+    public const string Reading = "reading";
+
+    /// <summary>
     /// AND THE HOLD IS TIMED FROM THE OUTCOME ITSELF, not from the wire (the owner 2026-09-18 20:00: "one clock").
     ///
     /// `sinceOutcome` is measured from the instant the CORE named the run - RUN_DELIVERED, WRECKED or MISSED - which
@@ -439,6 +456,7 @@ public class SplashScreen : MonoBehaviour
     void OnGUI()
     {
         if (!Showing) return;
+        _lobby = LobbyOrReading(_lobby, Blwp.DailyLobby.Compiled);     // never the title screen in a page, not even a frame
         // LAID OUT IN CSS PIXELS, DRAWN AT THE SCREEN'S SCALE. A phone's canvas is
         // 2-3x its CSS size, and a title screen laid out in device pixels showed an
         // iPhone text about 8 points high (measured, M3.3-34). IMGUI's matrix
@@ -635,7 +653,8 @@ public class SplashScreen : MonoBehaviour
         {
             var none = new GUIStyle(_body) { fontSize = Mathf.RoundToInt(font), wordWrap = true };
             none.normal.textColor = new Color(1f, 1f, 1f, 0.7f);
-            GUI.Label(l.list, "No round is open for entry right now. The signer nodes are asked again every 5 seconds."
+            GUI.Label(l.list, _lobby.from == Reading ? "Reading the rounds from the signer nodes …"
+                : "No round is open for entry right now. The signer nodes are asked again every 5 seconds."
                 + (_lobby.refused.Length > 0 ? $"\nNot listed: {_lobby.refused.Length}" : ""), none);
         }
     }
