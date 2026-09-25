@@ -1625,6 +1625,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             return text(res, 409, `that round's federation has ${n.distinctLive} distinct live gateway(s) `
               + `(${n.registered} registered${n.notLive.length ? `, ${n.notLive.length} not answering` : ''}): a paying round `
               + 'needs at least two, run by different operators (§23.6)');
+          // AND ITS FEDERATION CHARGES NO BASE FEE - the same rule `/entry` enforces (FEDERATION.md item 4; §22A; RULED
+          // the owner 2026-09-25): a round whose every entry would be refused is not opened, stored or listed. The same
+          // refusal sentence; an unknown rule is not a base fee.
+          let noBase = { ok: true };
+          try { noBase = federationTakesNoBaseFee({ fees: typeof stakeLocks.fees === 'function' ? await stakeLocks.fees() : null }); }
+          catch (e) { return text(res, 503, `this node could not read the federation's fee rule: ${e.message}`); }
+          if (!noBase.ok) return text(res, 409, noBase.why);
         }
 
         const id = round.open(contract);
