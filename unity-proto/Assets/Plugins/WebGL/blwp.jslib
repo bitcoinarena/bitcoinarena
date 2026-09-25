@@ -190,6 +190,18 @@ mergeInto(LibraryManager.library, {
     return b ? (b.core.runScore(b.st) | 0) : 0;
   },
 
+  // THE COLLISION BOXES THE CORE RESOLVES THE TRUCK AGAINST (the owner 2026-09-25 20:56/20:57: visible collisions), as
+  // it holds them - st.solids, six words a box (cx, cz, hx, hz, yLow, yHigh) - copied, not rebuilt. Returns the
+  // core's count; writes at most cap / 6 boxes.
+  BlwpSolids: function (ptr, cap) {
+    var b = Module.blwp;
+    if (!b || !b.st || !b.st.solids) return 0;
+    var s = b.st.solids;
+    var n = Math.min(s.n | 0, Math.floor((cap | 0) / 6));
+    new Int32Array(Module.HEAP32.buffer, ptr, n * 6).set(s.box.subarray(0, n * 6));
+    return s.n | 0;
+  },
+
   BlwpStateWords: function () {
     return (typeof BLWP === 'undefined') ? 0 : (BLWP.WORDS | 0);
   },
