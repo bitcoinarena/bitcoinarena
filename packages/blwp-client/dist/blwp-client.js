@@ -817,9 +817,10 @@ const TAG = {
  * WHERE THE OTHER HALF OF A SLASHED BOND GOES, and it is the one thing 5A.3
  * leaves to the contract.
  *
- * "Slashed bonds are distributed: half to the affected players of that round,
- * half burned or to the remaining honest committee members of the round, as
- * fixed by the Round Contract."
+ * "Slashed bonds are distributed: half to the affected players of that round;
+ * the other half 75% evenly to the active census nodes at the slashing height
+ * minus the round's own seats (the witnesses) and 25% to the donation set of
+ * §22A - the developers."
  *
  * BURN AND COMMITTEE ARE BOTH WITHDRAWN (RULED, the owner 2026-09-21). "Nothing is
  * ever burned, here or anywhere in this protocol: a slash that destroys value
@@ -1008,6 +1009,31 @@ const OBJECTION_WINDOW_REFERENCE_MS = 600000n;
  * rehearsed on stock fedimintd 0.12.0 in blwp-node/tools, but this field and
  * its byte do not bring custody into the node or the client.
  */
+/**
+ * THE ONE 75/25, so two money paths cannot drift apart.
+ *
+ * §5A.3 for a slashed round bond and §23A.5 for a slashed guardian bond say the
+ * same thing in the same words: 75% to the nodes, 25% to the donation set of
+ * §22A - the developers. It was written out twice, once in `slash.js` and once
+ * in `federation-slash.js`, and two copies of a split are two chances to change
+ * one of them.
+ *
+ * FLOOR THE NODES AND GIVE THE REST TO THE DEVELOPERS, so the two always add
+ * back to the amount exactly and no satoshi can fall between them.
+ *
+ * WHICH SIDE TAKES THE ODD SATOSHI IS A CHOICE MADE HERE, not a number the spec
+ * states: §5A.3 and §23A.5 say 75 and 25 and stop. `payout.js` names an order
+ * for leftovers WITHIN one set (`remainderOrder`, ascending H(roundId||pubkey))
+ * but says nothing about a 75/25, so there was no existing rule to reuse.
+ * Flooring the developers instead would be equally compliant; this direction is
+ * written down so nobody later reads 12501 as the spec's own figure.
+ */
+const NODE_SHARE_PCT = 75n;
+const splitNodesDevelopers = (amount) => {
+  const nodes = (amount * NODE_SHARE_PCT) / 100n;
+  return { nodes, developers: amount - nodes };
+};
+
 const CUSTODY = ['THRESHOLD_LN', 'FEDERATION'];
 const custodyByte = (which) => {
   const at = CUSTODY.indexOf(which);
@@ -1329,10 +1355,12 @@ function encodeRoundContract(c) {
   // and worse, because this one decides whether a bond is taken.
   w.u32(c.slashMinimumServed);
 
-  // AND WHERE THE OTHER HALF OF A SLASHED BOND GOES, section 5A.3: "half to
-  // the affected players of that round, half burned or to the remaining honest
-  // committee members of the round, as fixed by the Round Contract". The
-  // alternative is what a round fixes; the halves are the spec's own numbers
+  // AND WHERE THE OTHER HALF OF A SLASHED BOND GOES, section 5A.3: "half to the
+  // affected players of that round; the other half 75% evenly to the active
+  // census nodes at the slashing height minus the round's own seats (the
+  // witnesses) and 25% to the donation set of §22A - the developers". The
+  // witnesses are the set the rule SUBTRACTS, not one it pays. The halves are
+  // the spec's own numbers
   // and are a constant, because a contract that could move them would let an
   // operator write itself the whole bond.
   w.u8(slashRemainderByte(c.slashRemainder));
@@ -6341,6 +6369,7 @@ const KNOWN_GOOD_CORE_HASHES = Object.freeze([
   '76010a746193dce3ed94f29deffad95a58d48b3cf7dc101e58d869b7b9446019',
   '3fd9cda50f076d3a43fab5bcce349f7350a8f3afd982f3a4eee59c56dc4aa560',
   '6cf38b8877a054173cb8d1004f3c6f0b1ed15fb85efa5a50379079451fa74fe4',
+  'f84bd76c49abd1f7ec9d1d55e5c7e29f01d818dc614c238abc40ab96b5f7c090',
 ]);
 
 // ---- protocol/src/known-core.js
@@ -13352,6 +13381,33 @@ class Client {
   }
 }
 
+// ---- blwp-client/src/replay-link.js
+// COPY GAME REPLAY (the owner 2026-09-25 18:39): the one https link a player copies from the result screen.
+//
+// The host is a RANDOM committee node of the round, taken from that round's advertisement endpoints (the node's
+// /replay/nodes answers them); ws becomes https. The path is the same on every node - /replay?round=<hex>&entry=<hex>
+// - so the link plays on any node that holds the run, and the page asks the others when the named one does not.
+
+/** An advertisement endpoint as the https origin a browser opens: ws and wss become https, no trailing slash. */
+function httpsOfEndpoint(endpoint) {
+  const s = String(endpoint || '').trim().replace(/\/+$/, '');
+  if (!/^(wss?|https?):\/\//i.test(s)) return null;
+  return s.replace(/^(wss?|https?):/i, 'https:');
+}
+
+/**
+ * The replay link: `random()` in [0, 1) picks the host among the endpoints. Refused - null, and why - when there is no
+ * endpoint or the ids are not 32-byte hex.
+ */
+function replayLinkFor({ endpoints, roundHex, entryHex, random = Math.random } = {}) {
+  const hosts = [...new Set((endpoints || []).map(httpsOfEndpoint).filter(Boolean))];
+  if (!/^[0-9a-f]{64}$/i.test(String(roundHex || '')) || !/^[0-9a-f]{64}$/i.test(String(entryHex || '')))
+    return { ok: false, why: 'a replay link names a round and an entry' };
+  if (!hosts.length) return { ok: false, why: 'the round names no committee endpoint to replay it from' };
+  const host = hosts[Math.min(hosts.length - 1, Math.floor(random() * hosts.length))];
+  return { ok: true, host, url: `${host}/replay?round=${String(roundHex).toLowerCase()}&entry=${String(entryHex).toLowerCase()}` };
+}
+
 // ---- protocol/src/display-name.js
 // 0.12 DISPLAY NAME. Identity is the player key. The name is presentation.
 //
@@ -15045,7 +15101,8 @@ return { Client: Client, markState: markState,
          owedLine: owedLine,
          parseConnection: parseConnection,
          walletBudget: walletBudget, budgetLine: budgetLine,
-         decodeRoundContract: decodeRoundContract,
+         decodeRoundContract: decodeRoundContract, decodeEntryContract: decodeEntryContract,
+         replayLinkFor: replayLinkFor, httpsOfEndpoint: httpsOfEndpoint,
          toHex: toHex, fromHex: fromHex };
 })();
 if (typeof module !== "undefined") module.exports = BLWPCLIENT;
