@@ -130,4 +130,28 @@ public class ArrivalCardWordsTests
     {
         Assert.AreEqual("copy game replay", DriveHud.CopyReplayLabel);
     }
+
+    // THE CARD ON A PORTRAIT PHONE (pick B, measured live at 390x844 CSS, DPR 3: 115 CSS px wide, the copy control a
+    // 44x5 px target two presses in three missed). It spans the screen below the left column; landscape keeps its gap.
+    [Test]
+    public void OnAPortraitPhoneTheCardSpansTheScreenBelowTheLeftColumn()
+    {
+        var hud = new GameObject("hud-under-test").AddComponent<DriveHud>();
+        try
+        {
+            foreach (var f in new[] { new Vector2(1170, 2532), new Vector2(390, 844), new Vector2(1080, 2340) })
+            {
+                int w = (int)f.x, h = (int)f.y;
+                var card = hud.ArrivalBox(w, h);
+                Debug.Log($"[result card, portrait] {w}x{h}: card {card.x:0},{card.y:0} {card.width:0}x{card.height:0} (bottom {card.yMax:0} of {h})");
+                Assert.GreaterOrEqual(card.width, w * 0.9f, $"the card is not the screen's width at {w}x{h}");
+                Assert.GreaterOrEqual(card.y, h * DriveHud.ArrivalPortraitTop - 0.5f, $"the card starts over the left column at {w}x{h}");
+                Assert.LessOrEqual(card.yMax, h, $"the card runs off the bottom at {w}x{h}");
+            }
+            Assert.IsTrue(DriveHud.ArrivalSpansTheScreen(1170, 2532, 400f));
+            Assert.IsFalse(DriveHud.ArrivalSpansTheScreen(2048, 887, 700f), "a landscape screen keeps the card in its gap");
+            Assert.IsFalse(DriveHud.ArrivalSpansTheScreen(1170, 2532, 1100f), "a portrait screen with a wide gap keeps it too");
+        }
+        finally { Object.DestroyImmediate(hud.gameObject); }
+    }
 }
