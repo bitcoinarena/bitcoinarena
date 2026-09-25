@@ -27,8 +27,9 @@
 <canvas id="map" width="1480" height="680"></canvas>
 <div id="legend"><b style="color:var(--truck)">▲</b> your truck · <b style="color:var(--bull)">■</b>/<b style="color:var(--bear)">■</b> tanks ·
   <b style="color:var(--bull)">•</b>/<b style="color:var(--bear)">•</b> infantry · ◆ helicopters · <b style="color:#ff8a65">●</b> bombs · the gate is the dashed line</div>
-<!-- THE PROTOCOL'S OWN DECODERS AND SEED (the client bundle), from this node. -->
-<script src="/replay/client.js"></script>
+<!-- THE PROTOCOL'S OWN DECODERS AND SEED (the client bundle), from this node - RELATIVE, so a node published under a
+     path (https://host/blwp-a/replay) loads its own and not the root's. -->
+<script src="replay/client.js"></script>
 <script>
 // A GAME REPLAY (the owner 2026-09-25 18:39). Everything is fetched from a node that holds the run - this one, or the
 // round's other committee endpoints when it has no transcript - and the run is replayed by stepping the core the round
@@ -39,7 +40,9 @@
   const round = (q.get('round') || '').toLowerCase(), entry = (q.get('entry') || '').toLowerCase();
   const say = (s) => { document.getElementById('status').textContent = s; };
   if (!/^[0-9a-f]{64}$/.test(round) || !/^[0-9a-f]{64}$/.test(entry)) { say('the link names no round and entry (?round=<hex>&entry=<hex>)'); return; }
-  const here = location.origin;
+  // THIS NODE is the origin AND the path it is published under: an advertised endpoint may carry one
+  // (wss://host/blwp-a), and location.origin alone would ask the host's root, which is not this node.
+  const here = location.origin + location.pathname.replace(/\/replay\/?$/, '');
   const tryJson = async (url) => { try { const r = await fetch(url); return r.ok ? await r.json() : null; } catch (e) { return null; } };
   const bytesOf = async (url) => { const r = await fetch(url); if (!r.ok) throw new Error(`${url}: ${r.status} ${await r.text()}`); return new Uint8Array(await r.arrayBuffer()); };
 
