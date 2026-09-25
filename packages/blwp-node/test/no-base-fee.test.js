@@ -70,7 +70,7 @@ test('THE CALL SITE ITSELF: delete it from server.js and this goes red', () => {
 
   // and it is asked on the ENTRY path, where a player's money is committed
   const entryDoor = src.indexOf("url.pathname === '/entry'");
-  const call = src.indexOf('federationTakesNoBaseFee({ fees:');
+  const call = src.indexOf('federationTakesNoBaseFee({ fees:', entryDoor);   // from the entry door: POST /round's own call is earlier
   const entered = src.indexOf('round.enter(contract)');
   assert.ok(entryDoor > 0 && call > entryDoor, 'the guard is not on the POST /entry path');
   assert.ok(call < entered, 'the guard is asked after the entry is already taken');
