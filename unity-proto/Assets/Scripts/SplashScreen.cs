@@ -107,7 +107,9 @@ public class SplashScreen : MonoBehaviour
                     _endedAt = Time.unscaledTime;
             }
         }
-        if (!Showing && ShouldReturnToLobby(Blwp.BlwpCore.Available, Blwp.BlwpCore.RunState, Blwp.BlwpNet.Ended,
+        if (_hud == null) _hud = FindFirstObjectByType<DriveHud>();
+        bool cardUp = _hud != null && _hud.ArrivalShowing;
+        if (!Showing && LobbyMayCover(cardUp) && ShouldReturnToLobby(Blwp.BlwpCore.Available, Blwp.BlwpCore.RunState, Blwp.BlwpNet.Ended,
                                            _fromLobby, wrecked,
                                            _wreckedAt < 0f ? 0f : Time.unscaledTime - _wreckedAt, hold,
                                            _endedAt < 0f ? 0f : Time.unscaledTime - _endedAt)) ShowLobbyAgain();
@@ -285,7 +287,7 @@ public class SplashScreen : MonoBehaviour
     public static bool HoldMayStart(bool coreNamed, bool haveReason, float sinceEnded)
         => coreNamed || haveReason || sinceEnded >= ReasonWaitSeconds;
 
-    public const float ResultHoldSeconds = 5f;
+    public const float ResultHoldSeconds = DriveHud.ArrivalHoldSeconds;   // 8 s (the owner 2026-09-25 21:53), the card's own
 
     /// <summary>
     /// ONLY THE LOBBY AFTER THE LOADING SCREEN (the owner 2026-09-25 21:11/21:13, phone, btc-logistics-core.pages.dev: "the
@@ -300,6 +302,19 @@ public class SplashScreen : MonoBehaviour
 
     /// <summary>The lobby's `from` while the page has none to hand over yet.</summary>
     public const string Reading = "reading";
+
+    /// <summary>
+    /// THE LOBBY IS NOT DRAWN OVER THE RESULT CARD (the owner 2026-09-25, playtest 18:39 follow-up: "while the result card
+    /// is up, the lobby is not drawn over it ... The check is coverage, not the clock").
+    ///
+    /// The card (DriveHud.ArrivalShowing) and the lobby's hold (ResultHoldSeconds) are both five seconds, but on two
+    /// clocks started a frame apart - the gate's MissedAt / delivery and this screen's _endedAt - so on a slow frame the
+    /// lobby could come up while the card was still drawn, over its "copy game replay" button. The lobby now waits for
+    /// the card itself: it neither comes back nor draws while the card is up. Once the card is down it draws as before.
+    /// </summary>
+    public static bool LobbyMayCover(bool resultCardUp) => !resultCardUp;
+
+    DriveHud _hud;
 
     /// <summary>
     /// AND THE HOLD IS TIMED FROM THE OUTCOME ITSELF, not from the wire (the owner 2026-09-18 20:00: "one clock").
@@ -457,6 +472,7 @@ public class SplashScreen : MonoBehaviour
     {
         if (!Showing) return;
         _lobby = LobbyOrReading(_lobby, Blwp.DailyLobby.Compiled);     // never the title screen in a page, not even a frame
+        if (!LobbyMayCover(_hud != null && _hud.ArrivalShowing)) return;   // the result card is up: not over it
         // LAID OUT IN CSS PIXELS, DRAWN AT THE SCREEN'S SCALE. A phone's canvas is
         // 2-3x its CSS size, and a title screen laid out in device pixels showed an
         // iPhone text about 8 points high (measured, M3.3-34). IMGUI's matrix
