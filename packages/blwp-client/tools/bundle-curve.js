@@ -19,8 +19,14 @@ const r = spawnSync(bin, [
   src, '--bundle', '--format=iife', '--platform=browser',
   '--global-name=BLWP_CURVE_EXPORTS',
   '--footer:js=globalThis.BLWP_CURVE=BLWP_CURVE_EXPORTS.pageCurve;',
+  // THE SAME BYTES WHEREVER THE CHECKOUT IS (2026-09-25): esbuild writes each module's path, relative to its working
+  // directory, into the bundle - so it runs from this package, and keeps a symlinked node_modules' own path. Measured
+  // before: dist was built from the repository root ("packages/blwp-client/src/..."), bundle-fresh builds from this
+  // package ("src/..."), and a worktree whose node_modules is a symlink wrote a path through it - three different bundles
+  // of one source, and bundle-fresh red on the curve whatever was committed.
+  '--preserve-symlinks',
   `--outfile=${out}`,
-], { stdio: 'inherit' });
+], { stdio: 'inherit', cwd: resolve(here, '..') });
 if (r.status) process.exit(r.status || 1);
 
 const kb = (statSync(out).size / 1024).toFixed(1);
