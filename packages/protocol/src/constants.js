@@ -270,6 +270,9 @@ export const TAG = {
   // The player's lock client's root, per round, from their seed (W1b). Its own
   // tag: it must never be the player key the same seed makes for the round.
   lockClientSecret: 'BLWP/v1/LockClientSecret',
+  // The player wallet's root (§24A.1, v4.6.3): one per seed and FEDERATION - never per round. Its own tag, so it is
+  // neither a round's lock client secret nor a player key over the same bytes.
+  playerWalletSecret: 'BLWP/v1/PlayerWalletSecret',
   // A picture of another player's truck. Its own tag so a ghost's id can never
   // collide with a checkpoint's or a batch's over the same bytes: 0.10 says a
   // ghost is never an input, and a shared tag would be one way to forget it.

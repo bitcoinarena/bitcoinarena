@@ -21,7 +21,7 @@ import assert from 'node:assert/strict';
 import { bech32Encode, convertBits } from '../../protocol/src/bech32.js';
 import { decodeBolt11 } from '../../protocol/src/bolt11.js';
 
-import { lockStake, handLock, lockSecretFor, lockAmountMsat, lockLine, saveLock, savedLock, markLockCommitted,
+import { lockStake, fundPlayerWallet, walletSecretFor, handLock, lockSecretFor, lockAmountMsat, lockLine, saveLock, savedLock, markLockCommitted,
   refundStake, redeemStake, redeemPayout, payoutLine, returnStake, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, withdrawLine, refundKept, refundLine, lookOwed, owedToLine as owedLine, collectAndWithdraw, tabLockWallet, findOwedRounds, feeSecretFor } from '../src/page-lock.js';
 import { sha256 } from '../../protocol/src/hash.js';
 import { entryFor, joinQuery, stakeFor, playerFor } from '../src/join.js';
@@ -122,30 +122,70 @@ function lockClient({ idsMatch = true, lockedMsat, lockFee = 2528n, feeRule = nu
 const ask = (extra = {}) => lockStake({ round, roundId: rid, invite: INVITE, seed, stake: { stakePoint: POINT },
   claimKey, playerPubkey: player, ...extra });
 
-test('the page asks the lock client for the round\'s own federation, under the seed\'s secret for this round, for the net stake, to the attested key and the player\'s refund key', async () => {
+// THE PLAYER WALLET (§24A.1, RULED the owner 2026-09-25): the stake is spent from one wallet per seed and FEDERATION. The
+// top-up is its own act (`fundPlayerWallet`); the stake asks for no deposit. Measured before (rehearsal item 8,
+// 27e1fbb9): lockStake joined a wallet keyed by seed and ROUND and paid a Lightning invoice inside the stake.
+test('the page tops up the player wallet - under the seed\'s secret for this FEDERATION, not this round - then spends the stake from it with no deposit, to the attested key and the player\'s refund key', async () => {
   const { LockClient, log } = lockClient();
+  const tab = tabStorage();
   const deposits = [];
-  const got = await ask({ LockClient, onDeposit: (d) => deposits.push(d) });
-  const joined = log.find((l) => l.join).join;
+  await fundPlayerWallet({ round, invite: INVITE, seed, LockClient, storage: tab, onDeposit: (d) => deposits.push(d) });
+  const receivesBefore = log.filter((l) => l.receive).length;
+  const got = await ask({ LockClient, storage: tab });
+  const joins = log.filter((l) => l.join).map((l) => l.join);
   const locked = log.find((l) => l.lock).lock;
   const facts = {
-    federation: joined.federationId, invite: joined.invite,
-    secretIsTheSeedsForThisRound: joined.secret === toHex(lockSecretFor(seed, rid)),
-    secretIsNotThePlayerKey: joined.secret !== toHex(playerSecretFor(seed, rid)),
+    federation: joins[0].federationId, invite: joins[0].invite,
+    secretIsTheSeedsForThisFederation: joins.every((j) => j.secret === toHex(walletSecretFor(seed, TEST_FEDERATION_ID))),
+    secretIsNotTheRounds: joins.every((j) => j.secret !== toHex(lockSecretFor(seed, rid))),
+    secretIsNotThePlayerKey: joins.every((j) => j.secret !== toHex(playerSecretFor(seed, rid))),
     deposits: deposits.map((d) => [d.invoice, String(d.amountMsat)]),
+    depositsAskedByTheStake: log.filter((l) => l.receive).length - receivesBefore,
     lock: locked, outpoint: `${toHex(got.outpoint.txid)}:${got.outpoint.outIdx}`,
+    leftTheWallet: String(got.walletBeforeMsat - got.walletAfterMsat),
   };
   console.log('  FACTS (the page\'s lock):', JSON.stringify(facts));
   assert.deepEqual(facts, {
-    federation: toHex(TEST_FEDERATION_ID), invite: INVITE, secretIsTheSeedsForThisRound: true, secretIsNotThePlayerKey: true,
-    // THE NET STAKE AND THE STOCK ALLOWANCE (2000 + 980000 x 3000 ppm = 4940),
-    // grossed up by the gateway's fee: the empty client cannot be quoted.
+    federation: toHex(TEST_FEDERATION_ID), invite: INVITE, secretIsTheSeedsForThisFederation: true, secretIsNotTheRounds: true,
+    secretIsNotThePlayerKey: true,
+    // THE NET STAKE AND THE STOCK ALLOWANCE (2000 + 980000 x 3000 ppm = 4940), grossed up by the gateway's fee: the
+    // empty wallet cannot be quoted. Into the player wallet, before the stake.
     deposits: [['lnbcrt1page', String(lockAmountMsat(round) + 4940n + 16064n)]],
+    depositsAskedByTheStake: 0,
     lock: { point: toHex(POINT), amount: String(lockAmountMsat(round)), claim: toHex(CLAIM),
       refund: toHex(refundKeyOf(player)), delta: 144 },
     outpoint: `${'ab'.repeat(32)}:0`,
+    leftTheWallet: String(lockAmountMsat(round) + 2528n),
   });
   assert.equal(lockAmountMsat(round), 980000n, 'the net stake of 1000000 msat less the 2% fee');
+});
+
+test('a player wallet short of the round\'s locks is refused by name, and the stake asks for no deposit', async () => {
+  const { LockClient, log } = lockClient();
+  await assert.rejects(() => ask({ LockClient, storage: tabStorage() }),
+    /no stake is locked to this round: the player wallet holds 0 msat and this round's locks need at least \d+ msat - top the player wallet up first; the stake itself asks for no deposit/);
+  assert.equal(log.filter((l) => l.receive).length, 0, 'the stake asked for a deposit');
+  assert.equal(log.filter((l) => l.lock || l.lockHash).length, 0, 'something was locked from a wallet that could not pay for it');
+});
+
+test('one player wallet per seed and federation: two rounds of one federation open the same wallet; another federation, or another seed, opens another', async () => {
+  const other = { ...round, slashMinimumServed: 21 };
+  assert.notEqual(toHex(roundId(other)), toHex(rid));
+  const fed2 = { ...round, federationId: b32(0x77) };
+  const { LockClient, log } = lockClient();
+  const tab = tabStorage();
+  await fundPlayerWallet({ round, invite: INVITE, seed, LockClient, storage: tab });
+  const joined = async (r, s = seed) => { const n = log.length; await fundPlayerWallet({ round: r, invite: INVITE, seed: s, LockClient, storage: tab }).catch(() => {}); return log.slice(n).find((l) => l.join).join; };
+  const same = await joined(other);
+  const fedOther = await joined(fed2);
+  const seedOther = await joined(round, b32(0x52));
+  console.log(`  wallets: another round of the federation kept ${same.kept}; another federation kept ${fedOther.kept}; another seed kept ${seedOther.kept}`);
+  assert.equal(same.secret, toHex(walletSecretFor(seed, TEST_FEDERATION_ID)));
+  assert.ok(same.kept > 0, 'another round of the same federation did not reopen the player wallet');
+  assert.notEqual(fedOther.secret, same.secret);
+  assert.equal(fedOther.kept, 0, 'another federation opened this federation\'s wallet');
+  assert.equal(seedOther.kept, 0, 'another seed opened this seed\'s wallet');
+  assert.throws(() => walletSecretFor(seed, new Uint8Array(32)), /per federation, and no federation id was given/);
 });
 
 // PICK (b), THE GATE ON THE PAGE (the owner 2026-09-14), UNDER THE RULED FEE (07:44: "Fedimint base fee is
@@ -159,9 +199,10 @@ test('a federation that still charges a base fee gets no stake: the page refuses
   const round100 = { ...round, stakeMsat: 100000n };
   const { LockClient, log } = lockClient({ feeRule: BASE_FEE_RULE });
   const deposits = [];
+  const why = /its federation charges a base fee of 1000 msat on every input and output - a federation for BLWP runs with disable_base_fees/;
+  await assert.rejects(() => fundPlayerWallet({ round: round100, invite: INVITE, seed, LockClient, onDeposit: (d) => deposits.push(d) }), why);
   await assert.rejects(() => lockStake({ round: round100, roundId: roundId(round100), invite: INVITE, seed, stake: { stakePoint: POINT }, claimKey,
-    playerPubkey: player, LockClient, onDeposit: (d) => deposits.push(d) }),
-  /its federation charges a base fee of 1000 msat on every input and output - a federation for BLWP runs with disable_base_fees/);
+    playerPubkey: player, LockClient }), why);
   const locks = log.filter((l) => l.lock || l.lockHash).length;
   console.log(`  base fee 1000: refused; deposits ${deposits.length}, locks ${locks}`);
   assert.equal(deposits.length, 0, 'the player was asked to deposit into a federation the page refuses');
@@ -173,8 +214,10 @@ test('a 100 sat round under the ruled fee: its 2000 msat fee lock pays the signe
   const rid100 = roundId(round100);
   const { LockClient, log } = lockClient({ feeRule: RULE });
   const deposits = [];
+  const tab = tabStorage();
+  await fundPlayerWallet({ round: round100, invite: INVITE, seed, LockClient, storage: tab, onDeposit: (d) => deposits.push(d) });
   const got = await lockStake({ round: round100, roundId: rid100, invite: INVITE, seed, stake: { stakePoint: POINT }, claimKey, playerPubkey: player,
-    LockClient, onDeposit: (d) => deposits.push(d) });
+    LockClient, storage: tab });
   const minted = log.filter((l) => l.lockHash).map((l) => l.lockHash);
   console.log(`  100 sat: fee locks minted ${minted.length} (${minted.map((m) => `${m.amount} msat`).join(', ')}); deposits ${deposits.map((d) => String(d.amountMsat)).join(', ')} msat; gate: ${got.feeGate.why}`);
   assert.equal(got.feeGate.pays, true, got.feeGate.why);
@@ -189,7 +232,9 @@ test('a 100 sat round under the ruled fee: its 2000 msat fee lock pays the signe
 test('a 1000 sat round: the page mints one 20000 msat fee lock to H(F), names F and its outpoint in the entry, and hands it to each signer node\'s /fee-lock', async () => {
   const { LockClient, log } = lockClient({ feeRule: RULE });
   const deposits = [];
-  const got = await ask({ LockClient, onDeposit: (d) => deposits.push(d) });
+  const walletTab = tabStorage();
+  await fundPlayerWallet({ round, invite: INVITE, seed, LockClient, storage: walletTab, onDeposit: (d) => deposits.push(d) });
+  const got = await ask({ LockClient, storage: walletTab });
   const minted = log.filter((l) => l.lockHash).map((l) => l.lockHash);
   const F = feeSecretFor(seed, rid);
   console.log(`  1000 sat: fee locks minted ${minted.length} (${minted.map((m) => `${m.amount} msat to ${m.hash.slice(0, 12)}`).join(', ')}); deposits ${deposits.map((d) => String(d.amountMsat)).join(', ')} msat; `
@@ -894,15 +939,18 @@ test('what the tab still has to collect is kept per round across a reload: the r
   assert.deepEqual(savedCollects(null), []);
 });
 
-test('a lock whose fee the allowance does not cover is topped up after the quote, and one that never funds is refused', async () => {
+test('a player wallet whose lock fee the allowance does not cover is topped up after the quote, and one that never funds is refused', async () => {
   const { LockClient, log } = lockClient({ lockFee: 6000n });
   const deposits = [];
-  await ask({ LockClient, onDeposit: (d) => deposits.push(String(d.creditsMsat)) });
-  // 984940 credited; the lock costs 986000, so the quote still fails on the
-  // funds held (a dry run names no shortfall) and the allowance goes in again.
+  const tab = tabStorage();
+  await fundPlayerWallet({ round, invite: INVITE, seed, LockClient, storage: tab, onDeposit: (d) => deposits.push(String(d.creditsMsat)) });
+  // 984940 credited; the lock costs 986000, so the quote still fails on the funds held (a dry run names no
+  // shortfall) and the allowance goes in again - into the player wallet, before the stake.
   assert.deepEqual(deposits, [String(lockAmountMsat(round) + 4940n), '4940']);
+  await ask({ LockClient, storage: tab });
   assert.equal(log.filter((l) => l.lock).length, 1);
-  await assert.rejects(() => ask({ LockClient: lockClient({ lockFee: 10n ** 12n }).LockClient }), /after 3 deposits the lock client/);
+  await assert.rejects(() => fundPlayerWallet({ round, invite: INVITE, seed, LockClient: lockClient({ lockFee: 10n ** 12n }).LockClient }),
+    /after 3 deposits the player wallet/);
 });
 
 /** The tab's storage, as the page has it (sessionStorage's shape). */
@@ -912,30 +960,31 @@ function tabStorage() {
     setItem: (k, v) => { m.set(k, String(v)); }, removeItem: (k) => { m.delete(k); }, m };
 }
 
-test('a tab reloaded between the deposit and the lock reopens the wallet that holds the deposit, and is not asked to pay again', async () => {
+test('a tab reloaded between the top-up and the stake reopens the player wallet that holds it, and is not asked to pay again', async () => {
   const tab = tabStorage();
-  // THE FIRST LOAD: pays the deposit, and the tab goes away before the lock.
+  // THE FIRST LOAD: tops the player wallet up, and the tab goes away before the stake is locked.
   const first = lockClient();
   const deposits = [];
-  await assert.rejects(() => ask({ LockClient: first.LockClient, storage: tab, onDeposit: (d) => deposits.push(d),
+  await fundPlayerWallet({ round, invite: INVITE, seed, LockClient: first.LockClient, storage: tab, onDeposit: (d) => deposits.push(d) });
+  await assert.rejects(() => ask({ LockClient: first.LockClient, storage: tab,
     onStep: (s) => { if (s === 'locking the stake') throw new Error('the tab closed'); } }), /the tab closed/);
   assert.equal(deposits.length, 1);
-  assert.ok([...tab.m.keys()].some((k) => k.startsWith('blwp.lockdb.')), 'the wallet was kept nowhere');
-  assert.ok(![...tab.m.keys()].some((k) => k.includes(toHex(lockSecretFor(seed, rid)))), 'the lock client\'s secret is in the tab\'s keys');
-  // THE RELOAD: the same seed's wallet for this round is reopened, deposit and all.
+  assert.ok([...tab.m.keys()].some((k) => k.startsWith('blwp.walletdb.')), 'the player wallet was kept nowhere');
+  assert.ok(![...tab.m.keys()].some((k) => k.startsWith('blwp.lockdb.')), 'a per-round wallet was kept for the stake');
+  assert.ok(![...tab.m.keys()].some((k) => k.includes(toHex(walletSecretFor(seed, TEST_FEDERATION_ID)))), 'the wallet\'s secret is in the tab\'s keys');
+  // THE RELOAD: the same seed's player wallet for this federation is reopened, top-up and all.
   const again = lockClient();
-  const more = [];
   const steps = [];
-  const got = await ask({ LockClient: again.LockClient, storage: tab, onDeposit: (d) => more.push(d), onStep: (s) => steps.push(s) });
+  const got = await ask({ LockClient: again.LockClient, storage: tab, onStep: (s) => steps.push(s) });
   const joined = again.log.find((l) => l.join).join;
   assert.ok(joined.kept > 0, 'the reloaded page joined an empty wallet');
-  assert.equal(more.length, 0, 'the reloaded page asked the player to pay again');
-  assert.ok(steps.includes('reopening the wallet this tab kept for this round'));
-  assert.ok(steps.includes(`holding ${lockAmountMsat(round) + 4940n} msat`));
+  assert.equal(again.log.filter((l) => l.receive).length, 0, 'the reloaded page asked the player to pay again');
+  assert.ok(steps.includes('reopening the player wallet this tab keeps for this federation'));
+  assert.ok(steps.some((x) => x.startsWith(`the player wallet holds ${lockAmountMsat(round) + 4940n} msat; locking`)));
   assert.equal(`${toHex(got.outpoint.txid)}:${got.outpoint.outIdx}`, `${'ab'.repeat(32)}:0`);
   // AND ANOTHER SEED IN THE SAME TAB DOES NOT OPEN THAT WALLET.
   const other = lockClient();
-  await ask({ LockClient: other.LockClient, storage: tab, seed: b32(0x52) });
+  await assert.rejects(() => ask({ LockClient: other.LockClient, storage: tab, seed: b32(0x52) }), /the player wallet holds 0 msat/);
   assert.equal(other.log.find((l) => l.join).join.kept, 0, 'another seed opened this seed\'s wallet');
 });
 
@@ -998,8 +1047,10 @@ test('no lock is made for a link naming no federation, a key without its attesta
 });
 
 test('an answer that is not the lock asked for is refused: another contract at the outpoint, or another amount', async () => {
-  await assert.rejects(() => ask({ LockClient: lockClient({ idsMatch: false }).LockClient }), /another contract at that outpoint/);
-  await assert.rejects(() => ask({ LockClient: lockClient({ lockedMsat: 979999 }).LockClient }), /locked 979999 msat, and this entry's net stake is 980000/);
+  // EACH FROM A TOPPED-UP PLAYER WALLET: the stake is spent from it, and a wallet that cannot pay is refused before any lock.
+  const funded = async (c) => { const tab = tabStorage(); await fundPlayerWallet({ round, invite: INVITE, seed, LockClient: c, storage: tab }); return ask({ LockClient: c, storage: tab }); };
+  await assert.rejects(() => funded(lockClient({ idsMatch: false }).LockClient), /another contract at that outpoint/);
+  await assert.rejects(() => funded(lockClient({ lockedMsat: 979999 }).LockClient), /locked 979999 msat, and this entry's net stake is 980000/);
 });
 
 test('the lock handed to a signer node that verifies it is committed; an entry naming no lock is refused, and the hand-over says so', async () => {

@@ -24,10 +24,14 @@ import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { standUpRound } from './round-2of2.mjs';
 import { stakeLockPort } from '../src/stake-lock-port.js';
 import { awaitAttestedClaimKey, stakeFor, postHandout, entryFor, playerFor } from '../../blwp-client/src/join.js';
-import { lockStake, handLock, refundStake } from '../../blwp-client/src/page-lock.js';
+import { lockStake, fundPlayerWallet, handLock, refundStake } from '../../blwp-client/src/page-lock.js';
 import { pageCurve } from '../../blwp-client/src/page-curve.js';
 import { encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
+
+// THE STAKE FROM THE PLAYER WALLET (§24A.1, RULED 2026-09-25): the top-up into the player wallet is its own act,
+// then the stake is spent from it - the same arguments, the same tab, the same onDeposit.
+const fundedLockStake = async (a) => { await fundPlayerWallet(a); return lockStake(a); };
 
 const env = process.env;
 const P = env.PROBE;
@@ -92,7 +96,7 @@ try {
     const stake = await stakeFor(withId, { signerNodes: contract.nodes, curve: pageCurve, random, playerPubkey: player.pubkey, needed: 2 });
     const put = await postHandout(stake, round.nodes, { needed: 2 });
     let paying = Promise.resolve(null);
-    const lock = await lockStake({ round: contract, roundId: rid, invite: env.INVITE, seed, stake, claimKey,
+    const lock = await fundedLockStake({ round: contract, roundId: rid, invite: env.INVITE, seed, stake, claimKey,
       playerPubkey: player.pubkey, LockClient, storage: tab(), onDeposit: (d) => { paying = pay(d.invoice); } });
     const paid = await paying;
     const entry = { roundId: rid, sessionPubkey: ed25519.getPublicKey(ed25519.utils.randomSecretKey()),

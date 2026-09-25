@@ -96,18 +96,45 @@ export const lockAmountMsat = (round, donationMsat = 0n) => {
 };
 
 /**
- * JOIN THE ROUND'S FEDERATION, FUND THE LOCK, AND MAKE IT.
- *
- * `LockClient` is the wasm class; `storage` the tab's (the wallet is kept
- * there); `onDeposit({ invoice, amountMsat })` is told each invoice the
- * player's wallet must pay - the page shows it. Returns the outpoint and the
- * contract (`lockFromClient`), and the client that holds it.
+ * THE PLAYER WALLET'S SECRET (§24A.1, v4.6.3; RULED the owner 2026-09-25): one e-cash wallet per player seed and
+ * FEDERATION, kept in the browser, that stakes are spent from. A function of the seed and the federation id only -
+ * never of a round: the per-round wallet (`lockSecretFor`) funded each stake with its own Lightning invoice, which is
+ * the red of rehearsal item 8 (27e1fbb9).
  */
-export async function lockStake({ round, roundId, invite, seed, stake, claimKey, playerPubkey, LockClient,
-  storage, donationMsat = 0n, onDeposit = () => {}, onStep = () => {} } = {}) {
+export function walletSecretFor(seed, federationId) {
+  if (!(seed instanceof Uint8Array) || seed.length !== 32)
+    throw new Error('the player wallet\'s secret comes from the player\'s 32-byte seed, and none was given');
+  if (!(federationId instanceof Uint8Array) || federationId.length !== 32 || namesNothing(federationId))
+    throw new Error('the player wallet is per federation, and no federation id was given');
+  const msg = new Uint8Array(64);
+  msg.set(seed, 0);
+  msg.set(federationId, 32);
+  return taggedHash(TAG.playerWalletSecret, msg);
+}
+
+/** WHERE THE PLAYER WALLET IS KEPT: the tab's storage, under the federation and the secret's hash, never the secret. */
+export function walletStoreFor(storage, federationId, secret) {
+  const prefix = `blwp.walletdb.${toHex(federationId).slice(0, 16)}.${toHex(sha256(secret)).slice(0, 16)}.`;
+  return {
+    entries() {
+      const out = [];
+      for (let i = 0; i < storage.length; i++) {
+        const k = storage.key(i);
+        if (k && k.startsWith(prefix)) out.push([k.slice(prefix.length), storage.getItem(k)]);
+      }
+      return JSON.stringify(out);
+    },
+    put(k, v) { storage.setItem(prefix + k, v); },
+    remove(k) { storage.removeItem(prefix + k); },
+  };
+}
+
+/**
+ * THE CHECKS A PAYING ROUND'S STAKE IS HELD TO, before the player wallet is even opened: a round that names a
+ * federation, custody fields in full (M3 W7, §23), an invite to reach it, a lock client to reach it with.
+ */
+function paysIntoALock(round, invite, LockClient) {
   if (!round || !roundLocks(round)) throw new Error('this round names no federation, so its stake is not a lock');
-  // THE CUSTODY FIELDS IN FULL BEFORE ANYTHING IS LOCKED (M3 W7, §23): which federation, the
-  // 144-block expiry, the relays - a round that fails them is one this page puts no stake into.
   const custody = custodyFieldsAreValid(round);
   if (!custody.ok) throw new Error(`no stake is locked to this round: ${custody.why}`);
   if (!invite)
@@ -115,93 +142,121 @@ export async function lockStake({ round, roundId, invite, seed, stake, claimKey,
       + 'to make it in - add federation=<invite code>');
   if (!LockClient || typeof LockClient.join !== 'function')
     throw new Error('a stake lock is made by the lock client, and none was loaded');
+}
+
+/**
+ * THE PLAYER WALLET FOR THIS ROUND'S FEDERATION: joined under `walletSecretFor(seed, federationId)`, kept in the tab
+ * per federation. Two paying rounds of one federation open the same wallet. Returns the lock client over it.
+ */
+export async function playerWallet({ round, invite, seed, LockClient, storage, onStep = () => {} } = {}) {
+  paysIntoALock(round, invite, LockClient);
+  const secret = walletSecretFor(seed, round.federationId);
+  const store = storage ? walletStoreFor(storage, round.federationId, secret) : unkeptLockStore();
+  const kept = JSON.parse(store.entries()).length;
+  onStep(kept ? 'reopening the player wallet this tab keeps for this federation' : 'joining the federation with the player wallet');
+  return LockClient.join(invite, toHex(round.federationId), toHex(secret), store);
+}
+
+/**
+ * WHAT THIS ROUND'S LOCKS ARE, off the federation the wallet joined: the net stake, the fee lock when Pick b's gate says
+ * it pays a sitting signer node, and a refusal of a federation that charges a base fee (FEDERATION.md item 4; §22A) -
+ * before anything is deposited or locked. An unknown rule is not a base fee (the gate then mints no fee lock).
+ */
+async function locksFor(round, client, donationMsat) {
+  const amount = lockAmountMsat(round, donationMsat);
+  let feeRule = null;
+  if (typeof client.feeRule === 'function') {
+    try { const r = JSON.parse(await client.feeRule()); feeRule = { ppm: BigInt(r.fee_ppm), baseMsat: BigInt(r.fee_base_msat) }; }
+    catch { feeRule = null; }
+  }
+  if (feeRule && feeRule.baseMsat > 0n)
+    throw new Error(`no stake is locked to this round: its federation charges a base fee of ${feeRule.baseMsat} msat `
+      + 'on every input and output - a federation for BLWP runs with disable_base_fees (FEDERATION.md)');
+  const feeGate = feeLockPays({ contract: round, fees: feeRule });
+  return { amount, feeGate, feeMsat: feeGate.pays ? feeGate.lockMsat : 0n };
+}
+
+/**
+ * WHAT THE PLAYER WALLET MUST HOLD FOR THIS ROUND'S LOCKS, each quoted on its own (two locks are two transactions, each
+ * with its own fees), and the fee lock's stock allowance again as its margin: the fee lock is quoted a second time over
+ * the notes the stake lock leaves (measured in a real browser, 0.0.1236: 21504 msat left for a 20000 msat fee lock that
+ * then cost more). `null` quotes: the wallet holds too little to be quoted at all (the stock dry run).
+ */
+async function needFor(client, LockClient, { amount, feeMsat }) {
+  const locks = feeMsat > 0n ? [amount, feeMsat] : [amount];
+  let quoted = 0n;
+  for (const m of locks) {
+    try { quoted += BigInt(await client.lockCostMsat(String(m))); } catch (e) {
+      if (!/insufficient funds/i.test(String((e && e.message) || e))) throw e;
+      quoted = null;
+      break;
+    }
+  }
+  const margin = feeMsat > 0n ? BigInt(LockClient.lockAllowanceMsat(String(feeMsat))) : 0n;
+  const allowance = locks.reduce((t, m) => t + BigInt(LockClient.lockAllowanceMsat(String(m))), 0n);
+  return { locks, need: quoted === null ? null : quoted + margin, floor: locks.reduce((t, m) => t + m, 0n) + allowance + margin };
+}
+
+/**
+ * THE TOP-UP: a Lightning deposit INTO THE PLAYER WALLET, its own act and never inside a stake (§24A.1: "if short, a
+ * Lightning deposit via any listed gateway"; RULED 2026-09-25: no Lightning between the players). Deposits only what
+ * the wallet is short of this round's locks - nothing when it already holds them. `onDeposit({ invoice, amountMsat,
+ * creditsMsat })` is told each invoice the player's own Lightning wallet must pay. Returns the deposits made.
+ */
+export async function fundPlayerWallet({ round, invite, seed, LockClient, storage, donationMsat = 0n,
+  onDeposit = () => {}, onStep = () => {} } = {}) {
+  const client = await playerWallet({ round, invite, seed, LockClient, storage, onStep });
+  const locks = await locksFor(round, client, donationMsat);
+  const deposits = [];
+  for (let tries = 0; ; tries++) {
+    const have = BigInt(await client.balanceMsat());
+    const n = await needFor(client, LockClient, locks);
+    onStep(`the player wallet holds ${have} msat; this round's locks need ${n.need === null ? 'more than that' : `${n.need} msat`}`);
+    if (n.need !== null && have >= n.need) break;
+    if (tries >= 3) throw new Error(`after ${tries} deposits the player wallet holds ${have} msat and cannot fund this round's locks`);
+    const shortBy = n.need !== null ? n.need - have : n.floor - have;
+    // NEVER A DEPOSIT SMALLER THAN THE LOCKS' ALLOWANCE: a Lightning receive that small is refused (measured, 556 msat).
+    const least = n.locks.reduce((t, m) => t + BigInt(LockClient.lockAllowanceMsat(String(m))), 0n);
+    const plan = JSON.parse(await client.depositFor(String(shortBy > least ? shortBy : least)));
+    const invoice = JSON.parse(await client.receive(String(plan.invoice_msat), String(plan.gateway || '')));
+    const d = { invoice: invoice.invoice, amountMsat: BigInt(plan.invoice_msat), creditsMsat: BigInt(plan.credited_msat) };
+    deposits.push(d);
+    onDeposit(d);
+    onStep('waiting for the deposit into the player wallet');
+    const final = await client.awaitReceive(invoice.operation);
+    if (final !== 'Claimed') throw new Error(`the deposit into the player wallet was not claimed: ${final}`);
+  }
+  return { client, deposits, heldMsat: BigInt(await client.balanceMsat()) };
+}
+
+/**
+ * THE STAKE, SPENT FROM THE PLAYER WALLET INTO THE ROUND'S LOCK (§24A.1, §23.1 steps 3-5). Opens the player wallet for
+ * the round's federation - never a per-round wallet - and locks the net stake (and the fee lock, when Pick b's gate
+ * says it pays) from its notes. It asks for NO deposit: a wallet short of the round's locks is refused by name, and
+ * the top-up is `fundPlayerWallet`, before. Returns the outpoint and the contract (`lockFromClient`), the client that
+ * holds it, and the wallet's balance before and after.
+ */
+export async function lockStake({ round, roundId, invite, seed, stake, claimKey, playerPubkey, LockClient,
+  storage, donationMsat = 0n, onStep = () => {} } = {}) {
+  paysIntoALock(round, invite, LockClient);
   if (!stake || namesNothing(stake.stakePoint)) throw new Error('a lock is to the stake\'s point, and this stake names none');
   if (!claimKey || !claimKey.ok || namesNothing(claimKey.claimPk))
     throw new Error('no claim key has its signer nodes\' attestation: a client must refuse to lock to a key without it (23.1 step 0)');
   if (!(playerPubkey instanceof Uint8Array) || playerPubkey.length !== 32)
     throw new Error('a lock refunds to the player\'s key, and that is 32 bytes');
 
-  const amount = lockAmountMsat(round, donationMsat);
-  const secret = lockSecretFor(seed, roundId);
-  const store = storage ? lockStoreFor(storage, roundId, secret) : unkeptLockStore();
-  const kept = JSON.parse(store.entries()).length;
-  onStep(kept ? 'reopening the wallet this tab kept for this round' : 'joining the federation');
-  const client = await LockClient.join(invite, toHex(round.federationId), toHex(secret), store);
-  onStep(`holding ${await client.balanceMsat()} msat`);
+  const client = await playerWallet({ round, invite, seed, LockClient, storage, onStep });
+  const { amount, feeGate, feeMsat } = await locksFor(round, client, donationMsat);
+  const before = BigInt(await client.balanceMsat());
+  const n = await needFor(client, LockClient, { amount, feeMsat });
+  if (n.need === null || before < n.need)
+    throw new Error(`no stake is locked to this round: the player wallet holds ${before} msat and this round's locks need `
+      + `${n.need === null ? `at least ${n.floor}` : n.need} msat - top the player wallet up first; the stake itself asks for no deposit`);
 
-  // FUNDED FROM THE PLAYER'S OWN DEPOSIT. The federation's fee for the lock is
-  // quoted as a dry run over the notes the client holds, so an empty client
-  // cannot be quoted - measured on regtest, the first page rehearsal refused
-  // its signer node with "Insufficient funds" before asking for any deposit. So the
-  // first deposit is the net stake and the stock fee allowance
-  // (`LockClient.lockAllowanceMsat`); after it the quote decides, and a quote
-  // that still finds the funds short is topped up by the allowance again.
-  // THE FEE LOCK'S GATE (Pick b, the owner 2026-09-14): a fee lock is minted only
-  // when claiming it can pay every entitled sitting signer node something after the
-  // federation's own fee on every input and output - read from the federation
-  // this client joined, not a signer node's word. Under the ruled rule - no base fee,
-  // below - a 100 sat round's 2000 msat fee lock pays its signer nodes and a 1000 sat
-  // round's 20000 msat lock does; under the old 1000 msat base fee the 100 sat
-  // one could not. No fee rule known: no lock.
-  let feeRule = null;
-  if (typeof client.feeRule === 'function') {
-    try { const r = JSON.parse(await client.feeRule()); feeRule = { ppm: BigInt(r.fee_ppm), baseMsat: BigInt(r.fee_base_msat) }; }
-    catch { feeRule = null; }
-  }
-  // AND THE FEDERATION CHARGES NO BASE FEE (FEDERATION.md item 4; the owner 2026-09-15 07:44: "Fedimint base
-  // fee is 0 - run the federation with disable_base_fees"). A base fee comes out of every input and output
-  // of the round's locks - the players' pool - so a federation that still charges one gets no stake from
-  // this page: refused here, before anything is deposited or locked. An unknown rule is not a base fee
-  // (the gate below then mints no fee lock, as before). Measured before: the page locked under any rule.
-  if (feeRule && feeRule.baseMsat > 0n)
-    throw new Error(`no stake is locked to this round: its federation charges a base fee of ${feeRule.baseMsat} msat `
-      + 'on every input and output - a federation for BLWP runs with disable_base_fees (FEDERATION.md)');
-  const feeGate = feeLockPays({ contract: round, fees: feeRule });
-  const feeMsat = feeGate.pays ? feeGate.lockMsat : 0n;
-
-  // FUNDED FOR EVERY LOCK ABOUT TO BE MADE, each quoted on its own. Measured in a real browser
-  // (0.0.1236): the page quoted one 1000000 msat lock (1004544), held 1005056, made the 980000
-  // stake lock (983552 with its fees), was left 21504 for a 20000 fee lock that costs more,
-  // and the 556 msat top-up was refused - "Amount is too small to cover fees" - with the stake
-  // already locked and no signer node. Two locks are two transactions, each with its own fees.
-  const fund = async (msats) => {
-    const total = msats.reduce((t, m) => t + m, 0n);
-    const allowance = msats.reduce((t, m) => t + BigInt(LockClient.lockAllowanceMsat(String(m))), 0n);
-    for (let tries = 0; ; tries++) {
-      const have = BigInt(await client.balanceMsat());
-      let cost = 0n;
-      for (const m of msats) {
-        try { cost += BigInt(await client.lockCostMsat(String(m))); } catch (e) {
-          if (!/insufficient funds/i.test(String((e && e.message) || e))) throw e;
-          cost = null;
-          break;
-        }
-      }
-      onStep(`funding ${msats.map(String).join(' + ')} msat of lock: holding ${have} msat, the locks cost ${cost === null ? 'more than that' : `${cost} msat`}`);
-      if (cost !== null && have >= cost) break;
-      if (tries >= 3) throw new Error(`after ${tries} deposits the lock client holds ${have} msat and cannot fund ${total} msat of lock`);
-      const short = cost !== null ? cost - have : total + allowance - have;
-      // NEVER A DEPOSIT SMALLER THAN THE LOCKS' ALLOWANCE: a Lightning receive that small is
-      // refused (measured, 556 msat), and the lock waiting for it is never made.
-      const plan = JSON.parse(await client.depositFor(String(short > allowance ? short : allowance)));
-      const invoice = JSON.parse(await client.receive(String(plan.invoice_msat), String(plan.gateway || '')));
-      onDeposit({ invoice: invoice.invoice, amountMsat: BigInt(plan.invoice_msat), creditsMsat: BigInt(plan.credited_msat) });
-      onStep('waiting for the deposit');
-      const final = await client.awaitReceive(invoice.operation);
-      if (final !== 'Claimed') throw new Error(`the deposit was not claimed: ${final}`);
-    }
-  };
-  // ONE DEPOSIT FOR BOTH LOCKS, the stake lock's and the fee lock's costs quoted apart; a
-  // fee lock still short when its turn comes is topped up (by at least the allowance).
-  await fund(feeMsat > 0n ? [amount, feeMsat] : [amount]);
-
-  onStep(`holding ${await client.balanceMsat()} msat before locking ${amount} msat (and ${feeMsat} msat of node fee after it)`);
+  onStep(`the player wallet holds ${before} msat; locking ${amount} msat (and ${feeMsat} msat of node fee after it) from it`);
   onStep('locking the stake');
   const refundPk = refundKeyOf(playerPubkey);
-  // A LOCK IS MADE FOR EXACTLY stake_expiry_blocks (§23.1 step 4, RULED the owner 2026-09-24: no margin). The signer
-  // node checks it against its own height - the federation-held expiration less 144 - no more than 12 blocks below
-  // the height it verifies at, so the chain moving between the lock and the check costs nothing. W1a's 6-block
-  // margin only hid the old check's off-by-the-wait.
+  // A LOCK IS MADE FOR EXACTLY stake_expiry_blocks (§23.1 step 4, RULED the owner 2026-09-24: no margin).
   const delta = Number(round.stakeExpiryBlocks);
   const answer = await client.lock(toHex(stake.stakePoint), String(amount), toHex(claimKey.claimPk), toHex(refundPk), delta);
   const lock = lockFromClient(answer, { point: stake.stakePoint, claimPk: claimKey.claimPk, refundPk });
@@ -210,7 +265,6 @@ export async function lockStake({ round, roundId, invite, seed, stake, claimKey,
 
   let feeLock = null;
   if (feeGate.pays) {
-    await fund([feeMsat]);
     onStep('locking the node fee');
     const preimage = feeSecretFor(seed, roundId);
     const image = sha256(preimage);
@@ -220,7 +274,7 @@ export async function lockStake({ round, roundId, invite, seed, stake, claimKey,
       throw new Error(`the lock client locked ${made.fields.amountMsat} msat as the fee, and this entry's fee is ${feeMsat}`);
     feeLock = { ...made, preimage };
   }
-  return { ...lock, client, feeLock, feeGate };
+  return { ...lock, client, feeLock, feeGate, walletBeforeMsat: before, walletAfterMsat: BigInt(await client.balanceMsat()) };
 }
 
 const FEE_SECRET_TAG = new TextEncoder().encode('blwp fee preimage v1');

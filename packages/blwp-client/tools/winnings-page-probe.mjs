@@ -195,11 +195,14 @@ try {
   if (!worldSecret) throw new Error(`no delivering world in ${tries} rolls`);
   say_({ step: 'world rolled', tries, expected });
   // THE STAKE LOCK, through the stock lock client; its deposit is paid by alice, as a player's wallet would.
-  const made = await CLIENT.lockStake({ round: named.round, roundId: rid, invite: named.federation, seed, stake, claimKey,
+  // THE STAKE FROM THE PLAYER WALLET (§24A.1, RULED 2026-09-25): the top-up is its own act, then the stake.
+  const stakeArgs = { round: named.round, roundId: rid, invite: named.federation, seed, stake, claimKey,
     playerPubkey: player.pubkey, LockClient, donationMsat: 0n, storage: tab,
     onStep: (s) => say_({ step: 'stake lock', at: s }),
     onDeposit: (d) => { run(`${env.LND_BIN}/lncli`, [`--lnddir=${P}/alice`, `--rpcserver=${env.ALICE_RPC}`, '--network=regtest', 'payinvoice', '--force', d.invoice])
-      .then((r) => say_({ step: 'deposit paid by alice', ok: /SUCCEEDED/.test(r.out), amountMsat: d.amountMsat })); } });
+      .then((r) => say_({ step: 'deposit paid by alice', ok: /SUCCEEDED/.test(r.out), amountMsat: d.amountMsat })); } };
+  await CLIENT.fundPlayerWallet(stakeArgs);
+  const made = await CLIENT.lockStake(stakeArgs);
   const stakeLock = { outpoint: made.outpoint, fields: made.fields, feeLock: made.feeLock || null, needed, onCommitted: () => {} };
   let rolled = false;
   const pageRandom = (n) => { if (n === 32 && !rolled) { rolled = true; return worldSecret; } return random(n); };
