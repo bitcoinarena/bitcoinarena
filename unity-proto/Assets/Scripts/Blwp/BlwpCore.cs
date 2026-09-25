@@ -43,6 +43,7 @@ namespace Blwp
         [DllImport("__Internal")] private static extern int BlwpCandleView(IntPtr ptr, int cap);
         [DllImport("__Internal")] private static extern int BlwpTerrainAt(int x, int z);
         [DllImport("__Internal")] private static extern int BlwpCopyReplay();
+        [DllImport("__Internal")] private static extern int BlwpSolids(IntPtr ptr, int cap);
         public const bool Compiled = true;
 #else
         private static int BlwpInit(int seed) => 0;
@@ -60,6 +61,7 @@ namespace Blwp
         private static int BlwpTeleport(int x, int z, int h) => 0;
         private static int BlwpTakeImpact() => 0;
         private static int BlwpCopyReplay() => 0;
+        private static int BlwpSolids(IntPtr ptr, int cap) => 0;
         private static int BlwpReadImpact() => 0;
         private static int BlwpSubmitLoad(int f, int b) => 0;
         private static int BlwpSubmitSample(int price) => 0;
@@ -185,6 +187,19 @@ namespace Blwp
         /// `Layout.CV_TOTAL`): the apron height and each body's x span, z span, plateau height and colour, as the core stands
         /// everything on them. Returns the words written, 0 without a core.
         /// </summary>
+        /// <summary>
+        /// THE CORE'S COLLISION BOXES, the ones it resolves the truck against (st.solids): six words a box - cx, cz, hx,
+        /// hz, yLow, yHigh in Q16.16 metres. Returns the core's count (boxes written: at most into.Length / 6), 0 without
+        /// a core.
+        /// </summary>
+        public static int Solids(int[] into)
+        {
+            if (!Available || into == null || into.Length < 6) return 0;
+            var handle = GCHandle.Alloc(into, GCHandleType.Pinned);
+            try { return BlwpSolids(handle.AddrOfPinnedObject(), into.Length); }
+            finally { handle.Free(); }
+        }
+
         public static int CandleView(int[] into)
         {
             if (!Available || into == null || into.Length < Layout.CV_TOTAL) return 0;
