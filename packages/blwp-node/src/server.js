@@ -1342,9 +1342,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const per = entries.map((e) => {
         const k = toHex(e.entryId);
         const live = resultFinality(round, roundIdBytes, e.entryId).state;
-        const held = (round.hold(e.entryId) || {}).state || '-';
+        // (No hold= here: a hold invoice's state was the withdrawn Lightning custody's - cut 2b, RULED 2026-09-25.)
         return `${k.slice(0, 8)} ${e.outcome} agreed=${agreed.has(k) ? 'y' : 'n'} live=${live || '-'} `
-          + `settle=${isFinal(e.entryId) ? 'final' : 'not-final'} hold=${held}`;
+          + `settle=${isFinal(e.entryId) ? 'final' : 'not-final'}`;
       });
       console.log(`[money] ${toHex(roundIdBytes).slice(0, 8)} +${since === null ? '?' : since}ms after close, `
         + `window ${contract.objectionWindowMs}ms | ${per.join(' | ')}`);

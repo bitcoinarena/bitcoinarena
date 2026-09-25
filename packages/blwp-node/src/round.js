@@ -1321,75 +1321,8 @@ export class Round {
       .get(roundIdBytes, entryIdBytes, nodePubkey);
   }
 
-  /**
-   * WHAT THIS NODE KNOWS ABOUT ONE ENTRY'S STAKE, and how it changed.
-   *
-   * A row appears when the hold is created and its STATE moves once: 23.1's
-   * "in flight, in nobody's balance" until a final result authorises an act.
-   * The reason is kept beside it because a stake that moved and cannot say why
-   * is the thing 23 exists to prevent.
-   */
-  putHold({ entryId, roundId, paymentHash, amountMsat, state, why, request = null }) {
-    // THE REQUEST IS NOT OVERWRITTEN WITH NOTHING. Every later write is a
-    // state change - held, acting, settled - and none of them knows the
-    // invoice string, so a plain REPLACE would erase the one thing a player
-    // comes back for.
-    const had = this.db.prepare('SELECT request FROM holds WHERE entry_id = ?')
-      .get(Buffer.from(entryId));
-    this.db.prepare(
-      'INSERT OR REPLACE INTO holds (entry_id, round_id, payment_hash, amount_msat, '
-      + 'state, why, updated_ms, request) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(Buffer.from(entryId), Buffer.from(roundId), Buffer.from(paymentHash),
-        String(amountMsat), state, why, this.now(),
-        request || (had && had.request) || null);
-    return state;
-  }
-
-  /**
-   * FORGET A HOLD THAT NEVER WAS. Only for a row still AWAITING_INVOICE whose
-   * invoice came back and was refused: no invoice was ever confirmed, so there
-   * is nothing to keep, and the entry stands exactly as it did before it asked.
-   */
-  dropHold(entryIdBytes) {
-    this.db.prepare('DELETE FROM holds WHERE entry_id = ?').run(Buffer.from(entryIdBytes));
-  }
-
-  /** The hold for one entry, or nothing. */
-  hold(entryIdBytes) {
-    const row = this.db.prepare(
-      'SELECT round_id, payment_hash, amount_msat, state, why, updated_ms, request FROM holds '
-      + 'WHERE entry_id = ?').get(Buffer.from(entryIdBytes));
-    if (!row) return null;
-    return {
-      roundId: new Uint8Array(row.round_id),
-      paymentHash: new Uint8Array(row.payment_hash),
-      amountMsat: BigInt(row.amount_msat),
-      state: row.state,
-      why: row.why,
-      updatedMs: row.updated_ms,
-      request: row.request,
-    };
-  }
-
-  /** Every hold of a round, so a close can act on all of them. */
-  holdsOf(roundIdBytes) {
-    return this.db.prepare('SELECT entry_id FROM holds WHERE round_id = ? ORDER BY entry_id')
-      .all(Buffer.from(roundIdBytes))
-      .map((r) => ({ entryId: new Uint8Array(r.entry_id), ...this.hold(new Uint8Array(r.entry_id)) }));
-  }
-
-  /**
-   * EVERY HOLD IN ONE STATE, ACROSS EVERY ROUND.
-   *
-   * A daemon that has just started does not know which round it died in the
-   * middle of - that is what dying means - so the question it can actually ask
-   * is "what was I doing", not "what was I doing in round X".
-   */
-  holdsInState(state) {
-    return this.db.prepare('SELECT entry_id FROM holds WHERE state = ? ORDER BY entry_id')
-      .all(state)
-      .map((r) => ({ entryId: new Uint8Array(r.entry_id), ...this.hold(new Uint8Array(r.entry_id)) }));
-  }
+  // (NO HOLD STORE: putHold, dropHold, hold, holdsOf and holdsInState were the hold invoice's record of a stake - the
+  // withdrawn Lightning custody's, §23.6; cut 2b RULED 2026-09-25. A store from before keeps its `holds` table, unread.)
 
   /**
    * 23.1 STEP 5, THIS NODE'S HALF: the stake was seen paid and held. Written

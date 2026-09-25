@@ -268,33 +268,12 @@ export function openStore(path = ':memory:') {
       accepted_ms INTEGER NOT NULL
     );
 
-    -- THE STAKE OF ONE ENTRY, WHILE IT IS IN FLIGHT. 23.1: the endpoint issues
-    -- a hold invoice for the entry's payment hash, the player's wallet pays it,
-    -- and from that moment the money is "accepted but not settled ... in
-    -- nobody's balance". This is what this node knows about that hold.
-    --
-    -- The STATE is the whole point: HELD until a final result says otherwise,
-    -- then SETTLED or CANCELLED by an act, or EXPIRED because nobody acted -
-    -- and 23.2 makes that last one the default, which is why a VOID has no row
-    -- to write rather than a cancel to issue.
-    CREATE TABLE IF NOT EXISTS holds (
-      entry_id     BLOB PRIMARY KEY REFERENCES entries(entry_id),
-      round_id     BLOB NOT NULL,
-      payment_hash BLOB NOT NULL,
-      amount_msat  INTEGER NOT NULL,
-      state        TEXT NOT NULL,
-      why          TEXT NOT NULL,
-      updated_ms   INTEGER NOT NULL,
-      -- The payment request itself, because a player asks for their invoice
-      -- more than once: a page reloaded, a wallet reopened, a second device.
-      -- Making a second invoice for one stake would be a second claim on it,
-      -- so the one that exists is kept and handed back.
-      request      TEXT
-    );
+    -- (NO HOLDS TABLE IN A NEW STORE: it was the hold invoice's record of a stake in flight - the withdrawn Lightning
+    -- custody's, §23.6; cut 2b RULED 2026-09-25. A store from before keeps its own, untouched and unread: a store is
+    -- not rewritten.)
 
-    -- 23.1 STEP 5, THIS NODE'S HALF: the stake was seen PAID and held. HELD in
-    -- the holds table also covers an invoice nobody has paid yet, so play is gated on
-    -- this row, written once when Lightning first showed the full amount. A
+    -- 23.1 STEP 5, THIS NODE'S HALF: the stake was seen - play is gated on
+    -- this row, written once when the stake was first verified. A
     -- table of its own so a store written before it existed gains it.
     CREATE TABLE IF NOT EXISTS stake_seen (
       entry_id   BLOB PRIMARY KEY REFERENCES entries(entry_id),

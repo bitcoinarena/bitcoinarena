@@ -315,7 +315,7 @@ export const signerNodeHolds = (w, run, i) => {
   const mine = d.round.results(w.rid, run.eid).find((r) => toHex(r.nodePubkey) === toHex(d.round.pubkey));
   return { signerNode: i, shares: 1 + d.round.heldShares(run.eid).length, proof: d.round.provenTwoFirstMarks(w.rid, run.eid),
     decided: nq ? nq.outcome : null, signed: mine ? (() => { const p = decodePlayerResult(splitSignedResult(mine.bytes).body); return `${p.outcome}/${p.score}`; })() : null,
-    voided: !!d.round.entryVoid(run.eid), custody: (d.round.hold(run.eid) || {}).state || null };
+    voided: !!d.round.entryVoid(run.eid) };
 };
 
 // PATH 2 WITH SIGNER NODE 4 DOWN FROM ITS REFUSAL THROUGH THE EXPIRY (M3.3-34, the order
