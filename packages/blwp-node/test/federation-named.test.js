@@ -7,6 +7,9 @@
 // (409): its federation, the 144-block expiry, its relays. A free round opens as before. A record
 // carrying custody byte 0 - the withdrawn THRESHOLD_LN (RULED 2026-09-22 22:59) - does not parse,
 // so the door answers it as it answers any bytes that do not decode (400), and no encoder makes it.
+// A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED the owner 2026-09-25): this file's paying-round
+// daemons get the lock fixture's port - the test federation, two gateways, zero base fee. Contracts unchanged.
+import { lockPort } from './lock-fixture.js';
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -41,7 +44,7 @@ function zeroedFederation(c) {
 }
 
 test('the signer node door refuses a paying FEDERATION round naming no federation (400) or failing the custody fields (409), refuses a record carrying the withdrawn custody byte 0 (400), and opens a named one and a free one', async () => {
-  const d = await serve(openStore(':memory:'), { port: 0, ...opts });
+  const d = await serve(openStore(':memory:'), { port: 0, stakeLocks: lockPort(), ...opts });
   try {
     const base = `http://127.0.0.1:${d.port}`;
     const post = async (body) => { const r = await fetch(`${base}/round`, { method: 'POST', body }); return { status: r.status, text: (await r.text()).trim() }; };

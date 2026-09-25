@@ -980,7 +980,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
    */
   async function guardiansBonded(rid, contract) {
     if (!stakeLocks || typeof stakeLocks.guardians !== 'function')
-      return { ok: false, why: 'this signer node reaches no federation to read the guardians of, so it signer nodes no round that takes a stake into one (§23.6)' };
+      return { ok: false, why: REACHES_NO_FEDERATION };
     const census = roster.censusFor(rid);
     if (!census.ok) return census;
     let g;
@@ -993,6 +993,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       census: census.entries, bondMinSats: contract.bondMinSats });
     return bonded.ok ? bonded : { ok: false, why: `this signer node assigns no round on an unbonded federation (§23.6): ${bonded.why}` };
   }
+
+  // THE ONE REFUSAL A SIGNER NODE THAT REACHES NO FEDERATION GIVES A PAYING ROUND: guardiansBonded's, and POST /round's
+  // before anything of the round exists (RULED 2026-09-25).
+  const REACHES_NO_FEDERATION = 'this signer node reaches no federation to read the guardians of, so it signer nodes no round that takes a stake into one (§23.6)';
 
   const CLAIM_KEY_EVERY_MS = 1000;
   const CLAIM_KEY_MIN_TRIES = 30;
@@ -1601,6 +1605,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const custodyOk = custodyFieldsAreValid(contract);
           if (!custodyOk.ok) return text(res, 409, custodyOk.why);
         }
+        // AND A SIGNER NODE THAT REACHES NO FEDERATION OPENS NO PAYING ROUND (RULED the owner 2026-09-25). Measured before: on a
+        // node with no lock port the gateway count and the base-fee guard below never ran, so a named paying round was
+        // opened, stored and listed - and every entry into it was refused, the node taking no stake. Refused here, before
+        // round.open, with guardiansBonded's own sentence: nothing stored, nothing listed.
+        if (contract.stakeMsat > 0n && !stakeLocks) return text(res, 409, REACHES_NO_FEDERATION);
         // AND ITS FEDERATION HAS TWO GATEWAYS, OR IT TAKES NO STAKE HERE (§23.6: "deposits and withdrawals
         // through any of at least two gateways ... run by different operators"; RULED the owner 2026-09-23).
         // Counted through this signer node's own lock port, as the guardians are: distinct LIVE Lightning

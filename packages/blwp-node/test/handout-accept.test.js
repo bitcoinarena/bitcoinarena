@@ -14,6 +14,9 @@
 // catches a crooked dealer: a node sees only its own share, so it refuses when
 // IT is the one cheated, and a dealer who cheated somebody else gets past this
 // door and is stopped at that signer node's. Both are measured below.
+// A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED the owner 2026-09-25): each daemon here gets the
+// lock fixture's port, and each entry arrives with its stake and fee locked in it (lockedEntry). Contracts unchanged.
+import { lockPort, lockedEntry } from './lock-fixture.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
@@ -121,7 +124,8 @@ const post = async (port, path, body) => {
 };
 
 test('an honest handout is accepted, and the entry that names it joins', async () => {
-  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED });
+  const lp = lockPort();
+  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, stakeLocks: lp });
   try {
     const contract = contractFor(node);
     const rid = (await post(node.port, '/round', encodeRoundContract(contract))).bytes;
@@ -132,7 +136,7 @@ test('an honest handout is accepted, and the entry that names it joins', async (
     const id = answer.bytes;
     assert.equal(toHex(id), toHex(handoutId(handout)), 'the node named a different handout');
 
-    const entry = entryOn(rid, id, handout.commitments[0]);
+    const entry = (await lockedEntry(lp, entryOn(rid, id, handout.commitments[0]), b32(5)));
     const joined = await post(node.port, '/entry', encodeEntryContract(entry));
     assert.equal(joined.status, 201, joined.text);
     assert.equal(toHex(joined.bytes), toHex(entryId(entry)));
@@ -153,7 +157,8 @@ test('an honest handout is accepted, and the entry that names it joins', async (
  * this check both entries below joined 201.
  */
 test('an entry whose stake point is not its handout\'s A0 is refused, and so is one naming none', async () => {
-  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED });
+  const lp = lockPort();
+  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, stakeLocks: lp });
   try {
     const contract = contractFor(node);
     const rid = (await post(node.port, '/round', encodeRoundContract(contract))).bytes;
@@ -163,18 +168,19 @@ test('an entry whose stake point is not its handout\'s A0 is refused, and so is 
 
     const elsewhere = new Uint8Array(handout.commitments[1]);
     const wrong = await post(node.port, '/entry',
-      encodeEntryContract(entryOn(rid, accepted.bytes, elsewhere)));
+      encodeEntryContract((await lockedEntry(lp, entryOn(rid, accepted.bytes, elsewhere), b32(5)))));
     assert.notEqual(wrong.status, 201, 'an entry whose shares open to another secret joined');
     assert.match(wrong.text, /A0 is not the entry's stake point/);
 
-    const none = await post(node.port, '/entry', encodeEntryContract(entryOn(rid, accepted.bytes)));
+    const none = await post(node.port, '/entry', encodeEntryContract((await lockedEntry(lp, entryOn(rid, accepted.bytes), b32(5)))));
     assert.notEqual(none.status, 201, 'an entry with shares and no stake point joined');
     assert.match(none.text, /names no stake point/);
   } finally { await node.close(); }
 });
 
 test('a two-polynomial dealer is refused at the door, and so is the entry naming it', async () => {
-  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED });
+  const lp = lockPort();
+  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, stakeLocks: lp });
   try {
     const contract = contractFor(node);
     const rid = (await post(node.port, '/round', encodeRoundContract(contract))).bytes;
@@ -190,7 +196,7 @@ test('a two-polynomial dealer is refused at the door, and so is the entry naming
     // AND THE ENTRY GOES NOWHERE. Nothing was stored, so the reference names
     // shares this node never accepted - which is the refusal that matters,
     // because it is the one a player cannot route around by not asking.
-    const entry = entryOn(rid, handoutId(crooked));
+    const entry = (await lockedEntry(lp, entryOn(rid, handoutId(crooked)), b32(5)));
     const joined = await post(node.port, '/entry', encodeEntryContract(entry));
     assert.notEqual(joined.status, 201, 'the entry naming a refused handout was accepted');
     assert.match(joined.text, /shares this node has not accepted/);
@@ -198,27 +204,29 @@ test('a two-polynomial dealer is refused at the door, and so is the entry naming
 });
 
 test('an entry naming shares nobody published is refused, and one naming none joins', async () => {
-  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED });
+  const lp = lockPort();
+  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, stakeLocks: lp });
   try {
     const contract = contractFor(node);
     const rid = (await post(node.port, '/round', encodeRoundContract(contract))).bytes;
 
     const nobody = await post(node.port, '/entry',
-      encodeEntryContract(entryOn(rid, b32(0xaa))));
+      encodeEntryContract((await lockedEntry(lp, entryOn(rid, b32(0xaa)), b32(5)))));
     assert.notEqual(nobody.status, 201);
     assert.match(nobody.text, /shares this node has not accepted/);
 
     // M2's ordinary entry: no stake behind the preimage, so no shares. The
     // field is still in the signed bytes, which is why this is a different
     // entry id and not an entry that forgot it.
-    const plain = entryOn(rid, NO_SHARES);
+    const plain = (await lockedEntry(lp, entryOn(rid, NO_SHARES), b32(5)));
     const joined = await post(node.port, '/entry', encodeEntryContract(plain));
     assert.equal(joined.status, 201, joined.text);
   } finally { await node.close(); }
 });
 
 test('a handout published for another round does not let an entry in', async () => {
-  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED });
+  const lp = lockPort();
+  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, stakeLocks: lp });
   try {
     const one = contractFor(node);
     const two = { ...one, configHash: TRUCK_CONFIG_HASH, slashMinimumServed: 21 };
@@ -232,7 +240,7 @@ test('a handout published for another round does not let an entry in', async () 
     const id = accepted.bytes;
 
     const wrongRound = await post(node.port, '/entry',
-      encodeEntryContract(entryOn(ridOne, id)));
+      encodeEntryContract((await lockedEntry(lp, entryOn(ridOne, id), b32(5)))));
     assert.notEqual(wrongRound.status, 201);
     assert.match(wrongRound.text, /published for another round/);
   } finally { await node.close(); }

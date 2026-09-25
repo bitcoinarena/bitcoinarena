@@ -37,6 +37,23 @@ export const TWO_GATEWAYS = [
   { url: 'http://gw-b.example/', live: true, lightningPublicKey: '03' + 'b2'.repeat(32), modulePublicKey: '03' + 'd4'.repeat(32), ...TERMS },
 ];
 
+/**
+ * AN ENTRY AS PRODUCTION SHAPES IT, ON THIS PORT'S FEDERATION (RULED 2026-09-25: a paying round opens only on a signer node
+ * that reaches a federation, and its entry door takes no staked entry that names no fee lock): the stake locked to the
+ * entry's stake point, the 2% fee locked to H(F), both stored in `port`. Returns the entry with its fee preimage and both
+ * outpoints named - call it before the entry's id is taken. `playerKey` is the key the refunds go to.
+ */
+export async function lockedEntry(port, entry, playerKey) {
+  const feeSecret = rand(32);
+  Object.assign(entry, { feePreimage: feeSecret, stakeLockOutpoint: { txid: rand(32), outIdx: 0n }, feeLockOutpoint: { txid: rand(32), outIdx: 1n } });
+  const claimPk = new Uint8Array(33).fill(2);
+  await port.put(entry.stakeLockOutpoint, { paymentImage: { kind: 'point', bytes: entry.stakePoint }, amountMsat: netStakeMsat(entry),
+    claimPk, refundPk: refundKeyOf(playerKey), expiration: port.height + 200 });
+  await port.put(entry.feeLockOutpoint, { paymentImage: { kind: 'hash', bytes: sha256(feeSecret) }, amountMsat: entry.feeMsat,
+    claimPk, refundPk: refundKeyOf(playerKey), expiration: port.height + 200 });
+  return entry;
+}
+
 export function lockPort({ height = 1000, gateways = TWO_GATEWAYS } = {}) {
   const locks = new Map();
   const port = {

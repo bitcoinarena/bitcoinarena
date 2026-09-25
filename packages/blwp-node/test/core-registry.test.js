@@ -8,6 +8,8 @@
 // installs) resolves the round's (simCoreHash, configHash); a pair it does not hold is refused at
 // the door (27A.7.5: not selectable - it serves nothing there, and is not slashed); and resultFrom
 // refuses a replay that ran another core than the round names.
+// A FREE ROUND (RULED the owner 2026-09-25): nothing this file asserts depends on the stake, and a paying round opens only
+// on a signer node that reaches a federation now.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -27,7 +29,7 @@ test('the signer node door opens a round on the truck\'s own core and config, an
       const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
       return { status: r.status, why: (await r.text()).trim(), held: (await fetch(`http://127.0.0.1:${d.port}/round?id=${toHex(roundId(c))}`)).status };
     };
-    const truck = { ...contractFor(nodes, 3000n, ['wss://r.example']), simCoreHash: TRUCK_CORE_HASH, configHash: TRUCK_CONFIG_HASH };
+    const truck = { ...contractFor(nodes, 3000n, ['wss://r.example']), simCoreHash: TRUCK_CORE_HASH, configHash: TRUCK_CONFIG_HASH, stakeMsat: 0n };
     const unknownCore = await post({ ...truck, simCoreHash: b32(1) });
     const otherConfig = await post({ ...truck, configHash: b32(0x43) });
     const opened = await post(truck);

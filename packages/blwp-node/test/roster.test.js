@@ -7,6 +7,9 @@
 // that closed 15 was exactly this.
 //
 // `src/roster.js` is that caller, and the guard below keeps it the only one.
+// A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED the owner 2026-09-25): this file's paying-round
+// daemons get the lock fixture's port - the test federation, two gateways, zero base fee. Contracts unchanged.
+import { lockPort } from './lock-fixture.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
@@ -229,7 +232,7 @@ test('a node with no chain view holds no round, and says which it is missing', (
 test('the committee door answers off the chain, and refuses a short census by name', async () => {
   const bonds = [bondOf(0x11), bondOf(0x12)];
   const node = await serve(openStore(), {
-    port: 0, funded: () => true, chainFor: ({ contract } = {}) => chainWith(bonds, contract),
+    port: 0, funded: () => true, stakeLocks: lockPort(), chainFor: ({ contract } = {}) => chainWith(bonds, contract),
     randomnessFor: ({ contract }) => beaconOf(chainWith(bonds, contract), contract),
   });
   try {
@@ -249,7 +252,7 @@ test('the committee door answers off the chain, and refuses a short census by na
   } finally { await node.close(); }
 
   const thin = await serve(openStore(), {
-    port: 0, funded: () => true, chainFor: ({ contract } = {}) => chainWith([bondOf(0x11)], contract),
+    port: 0, funded: () => true, stakeLocks: lockPort(), chainFor: ({ contract } = {}) => chainWith([bondOf(0x11)], contract),
     randomnessFor: ({ contract }) => beaconOf(chainWith([bondOf(0x11)], contract), contract),
   });
   try {

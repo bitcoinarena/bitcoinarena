@@ -7,6 +7,9 @@
 // use this file as it stands"), and the hold invoice made it true.
 //
 // What is measured here is the closing number: a stranger opens ZERO.
+// A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED the owner 2026-09-25): this file's paying-round
+// daemons get the lock fixture's port - the test federation, two gateways, zero base fee. Contracts unchanged.
+import { lockPort } from './lock-fixture.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
@@ -128,7 +131,7 @@ test('a stranger with the whole handout opens nothing at all', async () => {
 
 test('the daemon serves the handout to anyone and it is still worth nothing', async () => {
   const node = await serve(openStore(':memory:'), {
-    port: 0, funded: () => true, randomnessFor: () => ({ hash: b32(0xbe), height: 900005, timeMs: 900n }),
+    port: 0, stakeLocks: lockPort(), funded: () => true, randomnessFor: () => ({ hash: b32(0xbe), height: 900005, timeMs: 900n }),
   });
   try {
     const contract = contractFor(node);

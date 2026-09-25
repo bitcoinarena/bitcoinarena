@@ -11,6 +11,9 @@
 // MEASURED BEFORE (TASKBOOK, aed31be): GET /claim-key 404 on every signer node, the
 // page's bundle had no way to check a key, entryFor wrote a zero attestation,
 // claimKeyIsAttested had 0 callers in node and client.
+// A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED the owner 2026-09-25): this file's paying-round
+// daemons get the lock fixture's port - the test federation, two gateways, zero base fee. Contracts unchanged.
+import { lockPort } from '../../blwp-node/test/lock-fixture.js';
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../blwp-node/src/cores.js';
 import { test } from 'node:test';
 // The run length is the core's; a literal 9000 is refused by the node as a contract
@@ -51,7 +54,7 @@ const ROGUE = Uint8Array.from([0x03, ...b32(0xe7)]);
 async function federationRound({ signerNodes = 2, keyOf = () => CLAIM, federationId = TEST_FEDERATION_ID } = {}) {
   const daemons = [];
   for (let i = 0; i < signerNodes; i++)
-    daemons.push(await serve(openStore(':memory:'), { port: 0, funded: () => true, claimKeyFor: () => keyOf(i) }));
+    daemons.push(await serve(openStore(':memory:'), { port: 0, stakeLocks: lockPort(), funded: () => true, claimKeyFor: () => keyOf(i) }));
   const now = BigInt(Date.now());
   const round = {
     networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
@@ -140,7 +143,7 @@ test('a stranger\'s signed claim key counts for nothing, and a node not assigned
     assert.equal(got.ok, false, 'a stranger\'s signature made up the threshold');
     assert.match(got.why, /1 of 2 signer nodes attest this claim key/);
     // AND A NODE THAT IS NOT A SIGNER NODE OF THIS ROUND SIGNS NOTHING FOR IT.
-    const outsider = await serve(openStore(':memory:'), { port: 0, funded: () => true, claimKeyFor: () => CLAIM });
+    const outsider = await serve(openStore(':memory:'), { port: 0, stakeLocks: lockPort(), funded: () => true, claimKeyFor: () => CLAIM });
     try {
       await fetch(`http://127.0.0.1:${outsider.port}/round`, { method: 'POST', body: encodeRoundContract(f.round) });
       const r = await fetch(`http://127.0.0.1:${outsider.port}/claim-key?round=${toHex(f.rid)}`);

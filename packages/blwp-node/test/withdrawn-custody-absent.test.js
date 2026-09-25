@@ -6,6 +6,9 @@
 // as bytes that do not parse - not a custody-specific 409 - and nothing of it is stored; and a store that
 // already holds byte-0 rows, from before the ruling, answers them as absent after a restart, while the
 // bytes stay where they are (absent, not deleted).
+// A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED the owner 2026-09-25): this file's paying-round
+// daemons get the lock fixture's port - the test federation, two gateways, zero base fee. Contracts unchanged.
+import { lockPort } from './lock-fixture.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -93,7 +96,7 @@ test('a store holding byte-0 rows from before the ruling answers them as absent 
 // 1, and is taken; the same fields under byte 0 are bytes that do not parse, nothing of them is stored, and the id those
 // bytes would have is absent.
 test('the same contract is taken under byte 1 (201) and refused under byte 0 as unparseable; nothing of it is stored and its id is absent', async () => {
-  const d = await serve(openStore(':memory:'), { port: 0, ...opts });
+  const d = await serve(openStore(':memory:'), { port: 0, stakeLocks: lockPort(), ...opts });
   try {
     const c = contractFor([d.round.pubkey, b32(0x33)], 3000n, ['wss://r.example']);
     const zero = underByteZero(c);
