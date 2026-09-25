@@ -74,6 +74,13 @@ public class ArrivalCardWordsTests
                        DriveHud.ArrivalHeadline(false, 7225).Length,
                        "a bigger fee does not make a longer headline");
     }
+
+    // THE OWNER'S 18:39 PLAYTEST (2026-09-25): two shots of the same result screen, 2048x887. The run-stopped line was drawn
+    // across the headline, the DROP-OFF / DELIVERED marker through it, the foot line ran out under the card's bottom edge
+    // and the truck showed through the plate. Measured here on the rects the card draws, at the shot's own frame and at
+    // the frames the layout tests already hold.
+    static readonly Vector2[] Frames = { new Vector2(2048, 887), new Vector2(1920, 1080), new Vector2(844, 390), new Vector2(1000, 360) };
+
     [Test]
     public void TheResultCardsRowsDoNotCrossAndStayInsideTheCardOnScreen()
     {
