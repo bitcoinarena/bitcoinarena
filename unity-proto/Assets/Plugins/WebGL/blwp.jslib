@@ -732,6 +732,17 @@ mergeInto(LibraryManager.library, {
 
   // The status line, as ASCII, for the debug panel. A status nobody can read is
   // a status nobody checks.
+  // COPY GAME REPLAY (the owner 2026-09-25 18:39): this run's round and entry, and the nodes it was played on, handed to
+  // the page's own copy (window.BLWP_COPY_REPLAY builds the https link and writes it to the clipboard).
+  BlwpCopyReplay: function () {
+    // THIS PIN'S RUN: the session's own round and entry (net.where), and the nodes the page reached (BLWP_NODES).
+    var net = Module.blwpNet;
+    var w = net && net.where;
+    if (!w || typeof window === 'undefined' || typeof window.BLWP_COPY_REPLAY !== 'function' || typeof BLWPCLIENT === 'undefined') return 0;
+    try { window.BLWP_COPY_REPLAY(BLWPCLIENT.toHex(w.roundId), BLWPCLIENT.toHex(w.entryId), window.BLWP_NODES || []); } catch (e) { console.error('[blwp] copy game replay: ' + e); return 0; }
+    return 1;
+  },
+
   BlwpNetStatus: function (ptr, cap) {
     var net = Module.blwpNet;
     var c = net && net.client;

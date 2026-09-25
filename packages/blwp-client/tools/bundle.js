@@ -35,6 +35,8 @@ function walk(file) {
   order.push(file);
 }
 walk(SRC + 'client.js');
+// COPY GAME REPLAY (2026-09-25 18:39): the link a player copies from the result screen.
+walk(SRC + 'replay-link.js');
 // AND THE PAGE'S OWN HALF. `ghost-field.js` is what a page does with a picture
 // once the client has decoded one; the client does not import it, because a
 // client that publishes a run should not depend on whether anybody is drawing
@@ -203,6 +205,8 @@ out += '         parseConnection: parseConnection,\n';
 // that pretended it did is gone.
 out += '         walletBudget: walletBudget, budgetLine: budgetLine,\n';
 out += '         decodeRoundContract: decodeRoundContract, decodeEntryContract: decodeEntryContract,\n';
+// COPY GAME REPLAY: the link, and the endpoint as the https origin it names.
+out += '         replayLinkFor: replayLinkFor, httpsOfEndpoint: httpsOfEndpoint,\n';
 out += '         toHex: toHex, fromHex: fromHex };\n})();\n';
 out += 'if (typeof module !== "undefined") module.exports = BLWPCLIENT;\n';
 
