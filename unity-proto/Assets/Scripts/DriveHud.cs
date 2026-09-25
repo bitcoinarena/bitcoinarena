@@ -887,86 +887,90 @@ public class DriveHud : MonoBehaviour
         // Full strength for most of it, then fade. A linear fade from the first
         // frame spends the whole time getting harder to read.
         float k = Mathf.Clamp01((Hold - since) / (Hold * 0.28f));
-        int min = Mathf.Min(w, h);
 
-        // Sized off the WIDTH, not the smaller dimension.
-        //
-        // On a wide window min is the height, so the headline was scaled for a
-        // square and ran off both sides - "…to the miner" with the s missing.
-        // It is also drawn on a dark plate: the card lands over sky and
-        // explosions, and pale text on a fireball is unreadable however large.
-        int head = Mathf.RoundToInt(CardHead(w, h, true));
-        var big = new GUIStyle(GUI.skin.label)
-        {
-            alignment = TextAnchor.UpperCenter, fontStyle = FontStyle.Bold, fontSize = head,
-        };
-        var mid = new GUIStyle(GUI.skin.label)
-        {
-            alignment = TextAnchor.UpperCenter, fontStyle = FontStyle.Bold,
-            fontSize = Mathf.RoundToInt(head * 0.82f),
-        };
-        var line = new GUIStyle(GUI.skin.label)
-        {
-            alignment = TextAnchor.UpperCenter,
-            fontSize = Mathf.RoundToInt(head * 0.48f),
-        };
-
-        float padY = head * 0.55f;
-        var card = ArrivalBox(w, h);
-
-        // EVERY LINE IS FITTED ON THE LINE THAT IS DRAWN, not on a sample of it (the owner's 13:05 shot
-        // delivered-text-clip-1305.jpg: "DELIVERED  7.225 sat to the" - the headline ran off both sides of the card
-        // and "miners" was past the screen edge). The fit used "BLOCK MINED WITHOUT YOU", 23 characters; the
-        // delivered headline is 37 and grows with the fee, so the size that fitted the sample never fitted the line.
         string headline = ArrivalHeadline(missed, gate.LastRun);
         string scoreLine = ArrivalScoreLine(missed, runScore == null ? 0 : runScore.LastScore);
         string workLine = runScore == null ? "" : ArrivalWorkLine(missed, runScore.LastCargo, runScore.LastExposure, runScore.LastTime);
         string footLine = ArrivalFootLine(missed);
         // WHO IS LEADING, on the run's end screen (§4.14, the owner 2026-09-19 12:55: "no who-won/who-leads"). The
         // run ends inside the round, so the word is LEADING; THE BULLS WIN belongs to the round's own end.
-        string leadLine = ChartHud.LiveLeading;
-        FitInto(big, headline, card.width - 16f, 11);
-        FitInto(mid, scoreLine, card.width - 16f, 10);
-        FitInto(line, workLine.Length > footLine.Length ? workLine : footLine, card.width - 16f, 9);
-        if (leadLine != null) FitInto(mid, leadLine.Length > scoreLine.Length ? leadLine : scoreLine, card.width - 16f, 10);
+        string leadLine = runScore == null ? null : ChartHud.LiveLeading;
+        // AND WHY THE RUN STOPPED, as the card's own first row while the card is up (18:39: the separate row was drawn
+        // across the headline). DrawRunStopped leaves it to the card for exactly as long as the card carries it.
+        if (_session == null) _session = Object.FindFirstObjectByType<Blwp.NetSession>();
+        string stopped = RunStoppedLine(_session != null ? _session.Ending : "");
 
-        GUI.color = new Color(0.02f, 0.03f, 0.05f, 0.82f * k);
+        // Sized off the WIDTH, not the smaller dimension, and scaled together to keep the card's bottom on screen.
+        float head0 = CardHead(w, h, true);
+        var stopStyle = new GUIStyle(GUI.skin.label)
+        {
+            alignment = TextAnchor.UpperCenter, fontStyle = FontStyle.Bold, wordWrap = true,
+            fontSize = Mathf.RoundToInt(RunStoppedFont(w, h)),
+        };
+        var probe = CardIn(w, h, 10f);
+        float stoppedHeight = stopped.Length == 0 ? 0f : stopStyle.CalcHeight(new GUIContent(stopped), probe.width - 16f) + stopStyle.fontSize * 0.4f;
+        float scale = ArrivalScale(w, h, head0, stoppedHeight, leadLine != null);
+        int head = Mathf.RoundToInt(head0 * scale);
+        if (stopped.Length > 0)
+        {
+            stopStyle.fontSize = Mathf.Max(9, Mathf.RoundToInt(stopStyle.fontSize * scale));
+            stoppedHeight = stopStyle.CalcHeight(new GUIContent(stopped), probe.width - 16f) + stopStyle.fontSize * 0.4f;
+        }
+        var big = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.UpperCenter, fontStyle = FontStyle.Bold, fontSize = head };
+        var mid = new GUIStyle(GUI.skin.label)
+        {
+            alignment = TextAnchor.UpperCenter, fontStyle = FontStyle.Bold, fontSize = Mathf.RoundToInt(ArrivalMidFont(head)),
+        };
+        var line = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.UpperCenter, fontSize = Mathf.RoundToInt(ArrivalLineFont(head)) };
+
+        // EVERY LINE IS FITTED ON THE LINE THAT IS DRAWN, not on a sample of it (the owner's 13:05 shot
+        // delivered-text-clip-1305.jpg: the headline ran off both sides of the card).
+        FitInto(big, headline, probe.width - 16f, 11);
+        FitInto(mid, scoreLine, probe.width - 16f, 10);
+        FitInto(line, workLine.Length > footLine.Length ? workLine : footLine, probe.width - 16f, 9);
+        if (leadLine != null) FitInto(mid, leadLine.Length > scoreLine.Length ? leadLine : scoreLine, probe.width - 16f, 10);
+
+        // THE ROWS FROM THE FONTS THAT ARE DRAWN, and the card from the rows.
+        float padY = head * 0.55f;
+        float[] heights = ArrivalRowHeights(big.fontSize, mid.fontSize, line.fontSize, stoppedHeight, leadLine != null);
+        var card = CardIn(w, h, ArrivalHeight(padY, heights));
+        var rows = ArrivalRows(card, padY, heights);
+
+        // OPAQUE ENOUGH TO READ (18:39: the truck's cab and the road showed through "BULLS LEADING" and the factors).
+        GUI.color = new Color(0.02f, 0.03f, 0.05f, 0.96f * k);
         GUI.DrawTexture(card, _flat);
         GUI.color = new Color(1f, 0.86f, 0.35f, 0.5f * k);
         GUI.DrawTexture(new Rect(card.x, card.y, card.width, 2f), _flat);
         GUI.DrawTexture(new Rect(card.x, card.yMax - 2f, card.width, 2f), _flat);
         GUI.color = Color.white;
 
-        float y = card.y + padY;
-
-        big.normal.textColor = missed ? new Color(1f, 0.42f, 0.36f, k)
-                                      : new Color(Up.r, Up.g, Up.b, k);
-        GUI.Label(new Rect(card.x, y, card.width, head * 1.5f), headline, big);
-        y += head * 1.35f;
+        int r = 0;
+        if (stopped.Length > 0)
+        {
+            stopStyle.normal.textColor = new Color(1f, 0.78f, 0.25f, k);
+            GUI.Label(Inset(rows[r++]), stopped, stopStyle);
+        }
+        big.normal.textColor = missed ? new Color(1f, 0.42f, 0.36f, k) : new Color(Up.r, Up.g, Up.b, k);
+        GUI.Label(Inset(rows[r++]), headline, big);
 
         if (runScore == null) return;
 
         mid.normal.textColor = new Color(1f, 0.86f, 0.35f, k);
-        GUI.Label(new Rect(card.x, y, card.width, mid.fontSize * 1.4f), scoreLine, mid);
-        y += mid.fontSize * 1.3f;
-
+        GUI.Label(Inset(rows[r++]), scoreLine, mid);
         if (leadLine != null)
         {
             mid.normal.textColor = new Color(1f, 1f, 1f, k * 0.85f);
-            GUI.Label(new Rect(card.x, y, card.width, mid.fontSize * 1.4f), leadLine, mid);
-            y += mid.fontSize * 1.3f;
+            GUI.Label(Inset(rows[r++]), leadLine, mid);
         }
-
-        // The working, which is the whole point of showing a score at all: it
-        // is where the player reads WHY a careful full run scored 40 and a
-        // reckless half-empty one scored 700.
+        // The working, which is the whole point of showing a score at all: it is where the player reads WHY a careful
+        // full run scored 40 and a reckless half-empty one scored 700.
         line.normal.textColor = new Color(1f, 1f, 1f, k * 0.92f);
-        GUI.Label(new Rect(card.x, y, card.width, line.fontSize * 1.7f), workLine, line);
-        y += line.fontSize * 1.7f;
-
+        GUI.Label(Inset(rows[r++]), workLine, line);
         line.normal.textColor = new Color(1f, 1f, 1f, k * 0.62f);
-        GUI.Label(new Rect(card.x, y, card.width, line.fontSize * 1.7f), footLine, line);
+        GUI.Label(Inset(rows[r++]), footLine, line);
     }
+
+    static Rect Inset(Rect row) => new Rect(row.x + 8f, row.y, row.width - 16f, row.height);
 
     /// <summary>
     /// THE FOUR LINES OF THE ARRIVAL CARD, as strings, so the fit is measured on what is drawn.
@@ -1278,15 +1282,71 @@ public class DriveHud : MonoBehaviour
         return new Rect(head.x, BlockTimerBox(w, h).yMax + pad, head.width, height);
     }
 
-    /// <summary>The arrival card, in the same place and a little taller.</summary>
-    public Rect ArrivalBox(int w, int h)
+    /// <summary>
+    /// THE ARRIVAL CARD'S ROWS, IN ONE PLACE (the owner's playtest 2026-09-25 18:39, two shots at 2048x887).
+    ///
+    /// Measured on the shot: "RUN STOPPED - the core said DELIVERED at tick 4596" was drawn across the headline (the
+    /// row stood under the block clock, and so did the card), and the foot line ran out under the card's bottom edge -
+    /// the box was sized with mid = 0.52 x head and line = 0.40 x head while the draw used 0.82 and 0.48, so the card was
+    /// shorter than what was drawn in it. Now the box and the draw read the same fonts and the same rows: the run-stopped
+    /// sentence is the card's first row (the card owns the centre while it is up; the sentence is not shortened), then
+    /// the headline, the score, who leads, the factors and the foot line - each row as tall as the line drawn in it, one
+    /// under another, none crossing the next.
+    /// </summary>
+    public static float ArrivalMidFont(float head) => Mathf.RoundToInt(head * 0.82f);
+    public static float ArrivalLineFont(float head) => Mathf.RoundToInt(head * 0.48f);
+    public static float RunStoppedFont(int w, int h) => Mathf.RoundToInt(Mathf.Min(w, h) * 0.030f);
+
+    public static float[] ArrivalRowHeights(float head, float mid, float line, float stoppedHeight, bool lead)
+    {
+        var rows = new System.Collections.Generic.List<float>();
+        if (stoppedHeight > 0f) rows.Add(stoppedHeight);
+        rows.Add(head * 1.35f);                 // the headline
+        rows.Add(mid * 1.3f);                   // SCORE
+        if (lead) rows.Add(mid * 1.3f);         // who is leading
+        rows.Add(line * 1.7f);                  // the factors
+        rows.Add(line * 1.7f);                  // the foot line
+        return rows.ToArray();
+    }
+
+    public static float ArrivalHeight(float padY, float[] rows)
+    {
+        float sum = padY * 2f;
+        foreach (float r in rows) sum += r;
+        return sum;
+    }
+
+    /// <summary>Each row's rect, top to bottom inside the card: the rect a label is drawn in is the row it owns.</summary>
+    public static Rect[] ArrivalRows(Rect card, float padY, float[] rows)
+    {
+        var out_ = new Rect[rows.Length];
+        float y = card.y + padY;
+        for (int i = 0; i < rows.Length; i++) { out_[i] = new Rect(card.x, y, card.width, rows[i]); y += rows[i]; }
+        return out_;
+    }
+
+    /// <summary>
+    /// The card at a font scale that keeps its bottom on screen: when the rows are taller than the room under the block
+    /// clock, every font shrinks by the same factor - the copy is not shortened.
+    /// </summary>
+    public float ArrivalScale(int w, int h, float head, float stoppedHeight, bool lead)
+    {
+        float padY = head * 0.55f;
+        float height = ArrivalHeight(padY, ArrivalRowHeights(head, ArrivalMidFont(head), ArrivalLineFont(head), stoppedHeight, lead));
+        float room = h - Mathf.Max(8f, h * 0.02f) - CardIn(w, h, height).y;
+        return height <= room || height <= 1f ? 1f : Mathf.Max(0.4f, room / height);
+    }
+
+    /// <summary>The arrival card as the shot had it: a one-line run-stopped row and who is leading.</summary>
+    public Rect ArrivalBox(int w, int h) => ArrivalBox(w, h, RunStoppedFont(w, h) * 1.4f, true);
+
+    public Rect ArrivalBox(int w, int h, float stoppedHeight, bool lead)
     {
         float head = CardHead(w, h, true);
-        float mid = Mathf.RoundToInt(head * 0.52f), line = Mathf.RoundToInt(head * 0.40f);
-        float padY = head * 0.55f;
-        // TWO mid rows now: SCORE and, under it, who is leading (§4.14). A row drawn in a box that was not sized
-        // for it is the fault the block board kept making.
-        return CardIn(w, h, padY * 2f + head * 1.35f + mid * 2.6f + line * 3.4f);
+        float k = ArrivalScale(w, h, head, stoppedHeight, lead);
+        head *= k;
+        return CardIn(w, h, ArrivalHeight(head * 0.55f,
+            ArrivalRowHeights(head, ArrivalMidFont(head), ArrivalLineFont(head), stoppedHeight * k, lead)));
     }
 
     /// <summary>The streaming list, right-hand side, one row per model.</summary>
@@ -2336,8 +2396,19 @@ public class DriveHud : MonoBehaviour
         return new Rect(clock.x, y, clock.width, font * 4.4f);
     }
 
-    void DrawRunStopped(int w, int h)
+    /// <summary>The arrival card is up and draws the run-stopped sentence as its own first row (DrawManifest runs).</summary>
+    bool ArrivalCarriesRunStopped => ArrivalShowing && bay != null;
+
+    /// <summary>
+    /// Nothing else is drawn through the result card while it is up (18:39: the DROP-OFF / DELIVERED marker sat in the
+    /// headline). Static so the rule is asserted without a scene.
+    /// </summary>
+    public static bool WaypointHiddenBy(bool arrivalShowing) => arrivalShowing;
+    public static bool RunStoppedRowHiddenBy(bool arrivalCarriesIt) => arrivalCarriesIt;
+
+    void DrawRunStopped(int w, int h, bool cardCarriesIt = false)
     {
+        if (RunStoppedRowHiddenBy(cardCarriesIt)) return;
         // Found once and kept. A session that never existed leaves this null
         // for the life of the scene, which is a player who was given no node
         // to play against: they see exactly the HUD that shipped before any of
@@ -2995,8 +3066,8 @@ public class DriveHud : MonoBehaviour
         DrawUnderFire(w, h);
         DrawAssaultBanner(w, h);
         DrawAssaultLog(w, h);
-        DrawRunStopped(w, h);
-        DrawWaypoint(w, h);
+        DrawRunStopped(w, h, ArrivalCarriesRunStopped);
+        if (!WaypointHiddenBy(ArrivalShowing)) DrawWaypoint(w, h);
         DrawFallout(w, h);
         DrawHealth(w, h);
         DrawWasted(w, h);
