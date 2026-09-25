@@ -302,6 +302,8 @@ public class Bootstrap : MonoBehaviour
         // node named it does nothing at all, which is every build that has
         // shipped so far.
         gameObject.AddComponent<Blwp.NetSession>();
+        // THE COLLISION, VISIBLE (the owner 2026-09-25 20:56): the core's own boxes, coloured over the miner and the post office.
+        new GameObject("CollisionBoxes").AddComponent<Blwp.CollisionBoxView>();
 
         var driver = truck.gameObject.AddComponent<Blwp.CoreDrivenTruck>();
         driver.terrain = _terrain;
