@@ -679,6 +679,14 @@ namespace Blwp
         public static int Tick => _state[Layout.O_TICK];
         public static int RunState => _state[Layout.O_SCORE + Layout.S_STATE];
         public static float Exposure => Metres(_state[Layout.O_SCORE + Layout.S_EXPOSURE]);
+        // THE CORE'S THREE SCORE WORDS, raw (Q16.16 exposure and cargo, whole ticks): what scoreOf multiplies. The arrival
+        // card prints the factors formed from these (CoreScoreFactors), never Unity's own meters (playtest 2026-09-25 18:29).
+        public static int ExposureWord => _state[Layout.O_SCORE + Layout.S_EXPOSURE];
+        public static int ElapsedTicks => _state[Layout.O_SCORE + Layout.S_ELAPSED];
+        public static int CargoWord => _state[Layout.O_SCORE + Layout.S_CARGO];
+        /// <summary>THE CORE'S SCORE, as it latched it at the delivery tick (S_DELIVERED, whole points: scoreOf of the three
+        /// words above). The arrival card prints this integer as-is; nothing in C# recomputes it.</summary>
+        public static int DeliveredScore => _state[Layout.O_SCORE + Layout.S_DELIVERED];
 
         public static Vector3 UnitPosition(int i, float y)
         {

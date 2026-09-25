@@ -154,4 +154,40 @@ public class ArrivalCardWordsTests
         }
         finally { Object.DestroyImmediate(hud.gameObject); }
     }
+
+    // THE CARD'S PRODUCT IS THE CORE'S SCORE (the owner 2026-09-25: "load C x danger E x speed T x 1000 = S"). The 72
+    // DELIVERED runs of packages/core/test/fixtures/arrival-card-runs.json - the core's own words, kept current by
+    // core/test/arrival-card-runs.test.js - go through the real formatter; the four decimals are read back off the
+    // printed row and their product must round to the printed S, which must be the core's S_DELIVERED and the SCORE line's.
+    [System.Serializable] class CardRun { public float lane; public int seed, state, exposure, elapsed, cargo, delivered; }
+    [System.Serializable] class CardRuns { public CardRun[] runs; }
+
+    [Test]
+    public void TheCardsProductIsTheCoresScore()
+    {
+        string path = System.IO.Path.Combine(Application.dataPath, "../../packages/core/test/fixtures/arrival-card-runs.json");
+        var runs = JsonUtility.FromJson<CardRuns>(System.IO.File.ReadAllText(path)).runs;
+        Assert.AreEqual(72, runs.Length);
+        // T and C both move in the fixture (its cargo word is a FIXTURE WRITE, not a player input - this core has none)
+        Assert.IsTrue(System.Array.Exists(runs, r => CoreScoreFactors.Time(r.elapsed) < 1.5f), "no run has T below 1.5");
+        Assert.IsTrue(System.Array.Exists(runs, r => r.cargo != 45875), "every run carries the default cargo 0.70");
+        var row = new System.Text.RegularExpressions.Regex(
+            @"^load (\d\.\d{5})\s+×\s+danger (\d\.\d{5})\s+×\s+speed (\d\.\d{5})\s+×\s+1000\s+=\s+([\d,]+)$");
+        foreach (var r in runs)
+        {
+            float c = CoreScoreFactors.Cargo(r.cargo), e = CoreScoreFactors.Exposure(r.exposure), t = CoreScoreFactors.Time(r.elapsed);
+            string line = DriveHud.ArrivalWorkLine(false, c, e, t, r.delivered);
+            var m = row.Match(line);
+            Assert.IsTrue(m.Success, $"lane {r.lane} seed {r.seed}: the row does not read 'load C x danger E x speed T x 1000 = S': {line}");
+            double pc = double.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+            double pe = double.Parse(m.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture);
+            double pt = double.Parse(m.Groups[3].Value, System.Globalization.CultureInfo.InvariantCulture);
+            int printed = int.Parse(m.Groups[4].Value.Replace(",", ""), System.Globalization.CultureInfo.InvariantCulture);
+            Assert.AreEqual(r.delivered, printed, $"lane {r.lane} seed {r.seed}: the printed S is not the core's S_DELIVERED");
+            Assert.AreEqual(printed, (int)System.Math.Round(1000.0 * pc * pe * pt, System.MidpointRounding.AwayFromZero),
+                $"lane {r.lane} seed {r.seed}: {line} - the printed product is {1000.0 * pc * pe * pt:0.000}, not the printed S");
+            StringAssert.Contains("+" + printed.ToString("N0", System.Globalization.CultureInfo.InvariantCulture),
+                DriveHud.ArrivalScoreLine(false, r.delivered), "the SCORE line and the product row name different numbers");
+        }
+    }
 }
