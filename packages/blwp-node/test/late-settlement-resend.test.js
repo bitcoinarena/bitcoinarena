@@ -47,7 +47,7 @@ async function settledOnDisk() {
   const wire = () => {
     for (const [d, o] of [[w.a, w.b], [w.b, w.a]]) {
       const there = [`http://127.0.0.1:${o.port}`];
-      d.verifier.peers = there; d.payouts.peers = there; d.preimages.peers = there; d.dkg.peers = there;
+      d.verifier.peers = there; d.preimages.peers = there; d.dkg.peers = there;
     }
   };
   wire();

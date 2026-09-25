@@ -474,7 +474,7 @@ async function round(stakeMsat) {
   try {
     for (const [d, o] of [[a, b], [b, a]]) {
       const there = [`http://127.0.0.1:${o.port}`];
-      d.verifier.peers = there; d.payouts.peers = there; d.preimages.peers = there; d.dkg.peers = there;
+      d.verifier.peers = there; d.preimages.peers = there; d.dkg.peers = there;
     }
     const c = { ...contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
       custody: 'FEDERATION', federationId: fromHex(LockClient.federationIdOf(env.INVITE)), minScore: 1, stakeMsat };

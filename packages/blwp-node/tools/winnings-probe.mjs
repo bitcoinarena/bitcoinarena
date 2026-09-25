@@ -121,7 +121,7 @@ const up = async () => {
     finality: { everyMs: 500 }, lnurlFetch, winningsEveryMs: 3000 }));
   for (const [d, o] of [[nodes[0], nodes[1]], [nodes[1], nodes[0]]]) {
     const there = [`http://127.0.0.1:${o.port}`];
-    d.verifier.peers = there; d.payouts.peers = there; d.preimages.peers = there; d.dkg.peers = there;
+    d.verifier.peers = there; d.preimages.peers = there; d.dkg.peers = there;
   }
   return nodes;
 };

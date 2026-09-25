@@ -64,7 +64,7 @@ async function lockRound({ minScore = 1 } = {}) {
     for (const [d, o] of [[a, b], [b, a]]) {
       const there = [`http://127.0.0.1:${o.port}`];
       d.verifier.peers = there;
-      d.payouts.peers = there;
+     
       d.preimages.peers = there;
       d.dkg.peers = there;
     }

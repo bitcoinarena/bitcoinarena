@@ -14,12 +14,9 @@
 //     BLWP_STAKE_LOCK_BIN    blwp-stake-lock (tools/stake-lock), for stake-lock rounds
 //     BLWP_FEDERATION_CLIENT_DIR  the data dir of a client joined to the round's federation
 //
-// Both or neither. With them the daemon can find the pool's output, send and
-// look up a payout, read each round's beacon, and derive each round's census -
-// which is where it learns the other signer nodes' addresses, from the advertisements
-// in their bonds. So a daemon that died in the middle of settling, started
-// again on its store, finishes what it owed. Measured without them: it
-// recovered nothing at any kill point.
+// Both or neither. With them the daemon can read each round's beacon and derive each round's census - which is where it
+// learns the other signer nodes' addresses, from the advertisements in their bonds. (It no longer finds a pool output or
+// sends a pool payout: that was the withdrawn custody's, §23.6, RULED 2026-09-25.)
 //
 // HOW FAR BACK A CENSUS IS READ: CENSUS_LOOKBACK blocks before a round's
 // census height. A bond funded earlier than that is not seen by a restarted
@@ -27,15 +24,11 @@
 const CENSUS_LOOKBACK = 2016;
 import { openStore } from './store.js';
 import { serve } from './server.js';
-import { Round } from './round.js';
 import { bitcoindRpc, blocksOver } from './chain-rpc.js';
-import { chainSpendOver } from './pool-watch.js';
 import { chainBeacon } from './beacon-source.js';
-import { PAYOUT_QUEUED } from './payout.js';
 import { lightningFromEnv } from './lnd-settings.js';
 import { stakeLocksFromEnv } from './stake-lock-port.js';
 import { fundingFromEnv } from './funding.js';
-import { decodeRoundContract } from '../../protocol/src/contracts.js';
 
 const port = Number(process.argv[2] || 8080);
 const path = process.argv[3] || 'round.db';
@@ -91,25 +84,15 @@ if (url) {
     const to = Math.min(tip, Math.max(contract.censusHeight, deep));
     return blocksOver(call, Math.max(0, contract.censusHeight - CENSUS_LOOKBACK), to);
   };
-  const round = new Round(db);
-  for (const row of round.payoutsInState(PAYOUT_QUEUED)) {
-    const r = round.get(row.roundId);
-    if (!r) continue;
-    const contract = decodeRoundContract(new Uint8Array(r.contract));
-    const seen = await beacon.refresh(contract);
-    if (!seen.ok) console.error(`[beacon] ${seen.why}`);
-    try { views.set(Buffer.from(row.roundId).toString('hex'), await viewOf(contract)); }
-    catch (e) { console.error(`[census] ${e.message}`); }
-  }
+  // (No census is read ahead for rounds owing an on-chain pool payout: that payout is gone with the withdrawn custody -
+  // §23.6, RULED 2026-09-25. A round's view is read the first time it is asked for, below.)
   Object.assign(options, {
-    poolCall: call,
     chainFor: ({ contract, roundIdBytes } = {}) => {
       const key = roundIdBytes ? Buffer.from(roundIdBytes).toString('hex') : null;
       if (key && views.has(key)) return views.get(key);
       if (key && contract) viewOf(contract).then((v) => views.set(key, v)).catch(() => {});
       return undefined;
     },
-    chainSpend: chainSpendOver(call),
     // A round seen for the first time is read now and answered from then on.
     randomnessFor: (q) => {
       const got = beacon.for(q);
