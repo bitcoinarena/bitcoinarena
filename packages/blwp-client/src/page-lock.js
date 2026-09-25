@@ -723,6 +723,23 @@ export async function withdrawCollected({ client, invoiceFor, onStep = () => {} 
 }
 
 /**
+ * THE WITHDRAW FROM THE PLAYER WALLET (§24A.1: the player "withdraws from over a Lightning invoice whenever he likes, in
+ * any amount"; RULED the owner 2026-09-25). The one wallet per seed and federation, opened as the stake opens it, handed to
+ * the same withdraw the round's wallet uses (`withdrawCollected`): its whole withdrawable balance to an invoice from the
+ * player's own Lightning wallet. A spend - called from the Withdraw press alone, never on a timer.
+ */
+export async function withdrawPlayerWallet({ round, invite, seed, LockClient, storage, invoiceFor, onStep = () => {} } = {}) {
+  const client = await playerWallet({ round, invite, seed, LockClient, storage, onStep });
+  let out;
+  try { out = await withdrawCollected({ client, invoiceFor, onStep }); } catch (e) {
+    // THE STOCK CLIENT'S ANSWER FOR A BALANCE ITS OWN SEND FEES WOULD EAT: nothing to withdraw, and nothing spent.
+    if (!/too low to send any amount after fees/i.test(String((e && e.message) || e))) throw e;
+    out = { ok: false, final: true, withdrawableMsat: 0n, why: 'nothing in the player wallet to withdraw after the send\'s fees' };
+  }
+  return { ...out, from: 'the player wallet' };
+}
+
+/**
  * A LOCK NO SIGNER NODE WILL SETTLE, BACK BY THE PLAYER'S OWN KEY AFTER ITS EXPIRY (§23.2's default
  * path: nobody acts, the lock expires, the player's key takes it back). W4 / 6d: a player the
  * fee-lock door refused, or a round that never settles - no signer node verified the lock or will

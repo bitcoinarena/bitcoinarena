@@ -161,6 +161,7 @@ out += '         lockStake: lockStake, handLock: handLock, lockSecretFor: lockSe
 // AND THE PLAYER WALLET (§24A.1, RULED 2026-09-25): one per seed and federation; the top-up is its own act, before the
 // stake, and the stake is spent from it.
 out += '         playerWallet: playerWallet, fundPlayerWallet: fundPlayerWallet, walletSecretFor: walletSecretFor,\n';
+out += '         withdrawPlayerWallet: withdrawPlayerWallet,\n';
 out += '         saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, keptLockUse: keptLockUse,\n';
 out += '         findLock: findLock, refundStake: refundStake, forfeitOf: forfeitOf, redeemStake: redeemStake,\n';
 // AND THE WINNER'S PAYOUT (6d, W4): the signer nodes' accepted settlement, the payout
