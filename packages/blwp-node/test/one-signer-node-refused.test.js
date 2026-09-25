@@ -29,7 +29,7 @@ import { serve } from '../src/server.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { resultFinality, resultWindow } from '../src/finality.js';
 import { assumeAssigned } from './assignment.js';
-import { lockPort } from './lock-fixture.js';
+import { lockPort, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
 import { b32, rand, RANDOMNESS, STAKE, WINDOW_MS, WINNER, GENESIS_HASH, wordsAt, contractFor, say, secretScalar, opts, wait, presentDay } from './window-fixture.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
 import { dealHandout, encodeHandout, handoutId } from '../../protocol/src/handout.js';
@@ -49,13 +49,16 @@ const curve = { ...feldmanGroup, tweakPoint };
 const END = WINNER.ticks;                      // 1320
 
 async function signerNodes({ endIn = 9000, lagB = 0 } = {}) {
-  const port = lockPort();
-  const mk = (db, p = 0) => serve(db, { port: p, ...opts, stakeLocks: port, poolCurve: curve, finality: { everyMs: 100 } });
+  // A CHAIN THAT BONDS THE ROUND'S TWO SIGNER NODES (RULED 2026-09-25), as lockRound in lock-round-fixture.js: both are
+  // running daemons, so the claim key is their own live DKG; the round's beacon is that chain's, and the player seeds from it.
+  const slot = bondedChainSlot(lockPort());
+  const port = slot.port;
+  const mk = (db, p = 0) => serve(db, { port: p, ...opts, stakeLocks: port, poolCurve: curve, finality: { everyMs: 100 }, chainFor: slot.chainFor, randomnessFor: slot.randomnessFor });
   const dbA = openStore(':memory:');
   const dbB = openStore(':memory:');
   let a = await mk(dbA);
   // `lagB`: B's chain view runs this many ms behind the clock - a node that has not got the latest blocks yet.
-  const mkB = (db, p = 0) => serve(db, { port: p, ...opts, stakeLocks: port, poolCurve: curve, finality: { everyMs: 100 },
+  const mkB = (db, p = 0) => serve(db, { port: p, ...opts, stakeLocks: port, poolCurve: curve, finality: { everyMs: 100 }, chainFor: slot.chainFor, randomnessFor: slot.randomnessFor,
     ...(lagB ? { windowChain: function lagging() { return CLOCK.viewAt(this.now() - lagB); } } : {}) });
   let b = await mkB(dbB);
   const bPort = b.port;
@@ -69,15 +72,18 @@ async function signerNodes({ endIn = 9000, lagB = 0 } = {}) {
   const base = { ...contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
     custody: 'FEDERATION', federationId: TEST_FEDERATION_ID, startDeadlineTicks: undefined };
   // `endIn`: THE ROUND IN THE PRESENT, its contract end this many ms from now (§13C's window opens at it).
-  const c = endIn === null ? base : presentDay(base, Date.now() + endIn);
+  const drafted = endIn === null ? base : presentDay(base, Date.now() + endIn);
+  const c = { ...drafted, censusRoot: bondedChainFor(drafted.nodes, drafted, slot,
+    { endpoints: [a, b].map((d) => `ws://127.0.0.1:${d.port}`) }).censusRoot };
   const rid = roundId(c);
+  const randomness = slot.randomnessFor({ contract: c }).hash;
   for (const d of [a, b]) {
     assert.equal((await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) })).status, 201);
     assumeAssigned(d.round, rid, c.nodes);
   }
   for (let pass = 0; pass < 2; pass++) for (const d of [a, b]) await d.dkg.run(c.nodes);
   return {
-    get a() { return a; }, get b() { return b; }, c, rid, port, claimPk: a.dkg.signerNodeFor(c.nodes).pool.groupPublicKey,
+    get a() { return a; }, get b() { return b; }, c, rid, port, randomness, claimPk: a.dkg.signerNodeFor(c.nodes).pool.groupPublicKey,
     async downB() { await b.close(); },
     async upB() { b = await mkB(dbB, bPort); wire(); },
     async close() { try { await a.close(); } catch { /* down */ } try { await b.close(); } catch { /* down */ } },
@@ -132,7 +138,7 @@ async function joinAndBuild(w, { lockAt = ['a', 'b'] } = {}) {
   const markOf = (tick, h, input, previousHash) => ({ roundId: w.rid, entryId: eid, tick, stateHash: h,
     inputChainHash: batchId(input), previousHash, sessionPubkey: entry.sessionPubkey });
   const chain = (ticks) => {
-    const st = init(seedWordForEntry(entry, RANDOMNESS));
+    const st = init(seedWordForEntry(entry, w.randomness || RANDOMNESS));
     const out = [];
     let from = 0; let prevBatch = GENESIS_HASH; let prevMark = NO_PREVIOUS; let first = null;
     for (const to of ticks) {

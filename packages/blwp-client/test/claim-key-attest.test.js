@@ -13,7 +13,7 @@
 // claimKeyIsAttested had 0 callers in node and client.
 // A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED the owner 2026-09-25): this file's paying-round
 // daemons get the lock fixture's port - the test federation, two gateways, zero base fee. Contracts unchanged.
-import { lockPort } from '../../blwp-node/test/lock-fixture.js';
+import { lockPort, bondedChainSlot, bondedChainFor } from '../../blwp-node/test/lock-fixture.js';
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../blwp-node/src/cores.js';
 import { test } from 'node:test';
 // The run length is the core's; a literal 9000 is refused by the node as a contract
@@ -53,10 +53,14 @@ const ROGUE = Uint8Array.from([0x03, ...b32(0xe7)]);
  */
 async function federationRound({ signerNodes = 2, keyOf = () => CLAIM, federationId = TEST_FEDERATION_ID } = {}) {
   const daemons = [];
+  // ON A CHAIN THAT BONDS THE ROUND'S SIGNER NODES (RULED 2026-09-25): one chain every daemon reads; the claim keys stay the
+  // harness's (claimKeyFor), which is what this file stages. Only the round's censusRoot changes.
+  const slot = bondedChainSlot(lockPort());
   for (let i = 0; i < signerNodes; i++)
-    daemons.push(await serve(openStore(':memory:'), { port: 0, stakeLocks: lockPort(), funded: () => true, claimKeyFor: () => keyOf(i) }));
+    daemons.push(await serve(openStore(':memory:'), { port: 0, stakeLocks: slot.port, chainFor: slot.chainFor,
+      randomnessFor: slot.randomnessFor, funded: () => true, claimKeyFor: () => keyOf(i) }));
   const now = BigInt(Date.now());
-  const round = {
+  const drafted = {
     networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
     gameVerifySlots: signerNodes, settlementSlots: signerNodes, simCoreHash: CORE_HASH, startTimeMs: now + MIN_ENTRY_WINDOW_MS,
     entryCloseMs: now + MIN_ENTRY_WINDOW_MS + 600000n, objectionWindowMs: 3000n, custody: 'FEDERATION',
@@ -67,6 +71,8 @@ async function federationRound({ signerNodes = 2, keyOf = () => CLAIM, federatio
     timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
     nodes: daemons.map((d) => d.round.pubkey),
   };
+  const round = { ...drafted, censusRoot: bondedChainFor(drafted.nodes, drafted, slot,
+    { endpoints: daemons.map((d) => `ws://127.0.0.1:${d.port}`) }).censusRoot };
   const rid = roundId(round);
   for (const d of daemons) {
     const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(round) });
@@ -74,7 +80,7 @@ async function federationRound({ signerNodes = 2, keyOf = () => CLAIM, federatio
     assumeAssigned(d.round, rid, round.nodes);
   }
   const nodes = daemons.map((d) => `http://127.0.0.1:${d.port}`);
-  return { daemons, round: { ...round, id: rid }, rid, nodes, signerNodes: round.nodes,
+  return { daemons, slot, round: { ...round, id: rid }, rid, nodes, signerNodes: round.nodes,
     ask: (asked = nodes) => attestedClaimKey({ round: { ...round, id: rid }, signerNodes: round.nodes, nodes: asked, curve: pageCurve }),
     close: async () => { for (const d of daemons) await d.close(); } };
 }
@@ -143,7 +149,9 @@ test('a stranger\'s signed claim key counts for nothing, and a node not assigned
     assert.equal(got.ok, false, 'a stranger\'s signature made up the threshold');
     assert.match(got.why, /1 of 2 signer nodes attest this claim key/);
     // AND A NODE THAT IS NOT A SIGNER NODE OF THIS ROUND SIGNS NOTHING FOR IT.
-    const outsider = await serve(openStore(':memory:'), { port: 0, stakeLocks: lockPort(), funded: () => true, claimKeyFor: () => CLAIM });
+    // ON THE SAME CHAIN: it reads the round's census, and its key is not in it.
+    const outsider = await serve(openStore(':memory:'), { port: 0, stakeLocks: f.slot.port, chainFor: f.slot.chainFor,
+      randomnessFor: f.slot.randomnessFor, funded: () => true, claimKeyFor: () => CLAIM });
     try {
       await fetch(`http://127.0.0.1:${outsider.port}/round`, { method: 'POST', body: encodeRoundContract(f.round) });
       const r = await fetch(`http://127.0.0.1:${outsider.port}/claim-key?round=${toHex(f.rid)}`);

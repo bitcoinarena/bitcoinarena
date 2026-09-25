@@ -66,7 +66,7 @@ import { CLOSED } from './store.js';
 import { Round } from './round.js';
 import { Verifier } from './verify.js';
 import { Ghosts } from './ghosts.js';
-import { Roster, endpointsOf } from './roster.js';
+import { Roster, endpointsOf, NO_CHAIN_VIEW_WHY } from './roster.js';
 import { receiptsNeeded as roundThreshold, donationKeysForNetworkId } from '../../protocol/src/genesis.js';
 import { authorityAt, donationSetSignedBy, encodeDonationSetBody, encodeAuthorityRotation } from '../../protocol/src/authority.js';
 import { donationSetId } from '../../protocol/src/donation.js';
@@ -1611,6 +1611,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // opened, stored and listed - and every entry into it was refused, the node taking no stake. Refused here, before
         // round.open, with guardiansBonded's own sentence: nothing stored, nothing listed.
         if (contract.stakeMsat > 0n && !stakeLocks) return text(res, 409, REACHES_NO_FEDERATION);
+        // AND A SIGNER NODE THAT CANNOT READ THE CHAIN OPENS NO PAYING ROUND (RULED the owner 2026-09-25). Measured before: on a
+        // node with a lock port and no chain view a paying round was 201, stored and listed with 0 signer nodes and no claim
+        // key ("this node is not assigned to that round") - nobody could stake into it. Refused here with the census's own
+        // sentence: it cannot count the federation's guardians, assign the round's signer nodes or name its beacon.
+        if (contract.stakeMsat > 0n && !chainFor) return text(res, 409, NO_CHAIN_VIEW_WHY);
         // AND ITS FEDERATION HAS TWO GATEWAYS, OR IT TAKES NO STAKE HERE (§23.6: "deposits and withdrawals
         // through any of at least two gateways ... run by different operators"; RULED the owner 2026-09-23).
         // Counted through this signer node's own lock port, as the guardians are: distinct LIVE Lightning
@@ -1644,10 +1649,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           if (!noBase.ok) return text(res, 409, noBase.why);
         }
 
-        // AND ITS FEDERATION IS BONDED, WHEN THIS NODE CAN SEE A CENSUS (§23.6, P3; RULED the owner 2026-09-25): asked here,
-        // before round.open, with guardiansBonded's own refusal - measured before: under threshold and none bonded were 409
-        // with the round already stored and listed, because this was asked after round.open. A node with no chain view
-        // cannot count guardians and does not ask (not this slice).
+        // AND ITS FEDERATION IS BONDED (§23.6, P3; RULED the owner 2026-09-25): asked here, before round.open, with
+        // guardiansBonded's own refusal - measured before: under threshold and none bonded were 409 with the round already
+        // stored and listed, because this was asked after round.open. A paying round reaching here has a chain view (above).
         if (chainFor && contract.stakeMsat > 0n) {
           const bonded = await guardiansBonded(roundIdOf(contract), contract);
           if (!bonded.ok) return text(res, 409, bonded.why);

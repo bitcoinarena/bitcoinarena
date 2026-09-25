@@ -20,6 +20,14 @@ import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { toHex, sha256 } from '../../protocol/src/hash.js';
 import { b32, rand, STAKE, WINDOW_MS, contractFor, opts } from './window-fixture.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
+import { chainOf, publicationOf } from '../../protocol/tools/chainview.js';
+import { bondTransaction } from '../../protocol/tools/bond.js';
+import { deriveCensus } from '../../protocol/src/census.js';
+import { parseTransaction } from '../../protocol/src/tx.js';
+import { beaconFromChain } from '../../protocol/src/beacon.js';
+import { decodeRoundContract } from '../../protocol/src/contracts.js';
+import { bondSetFor } from '../src/curve.js';
+import { bondFor } from './curve.js';
 
 const secretScalar = () => { let p = rand(32); while (scalarFrom32(p) >= FIELD) p = rand(32); return p; };
 // HARNESS KEY: a claim key the tests hand a signer node (`claimKeyFor`), to measure the
@@ -36,6 +44,86 @@ export const TWO_GATEWAYS = [
   { url: 'http://gw-a.example/', live: true, lightningPublicKey: '02' + 'a1'.repeat(32), modulePublicKey: '02' + 'c3'.repeat(32), ...TERMS },
   { url: 'http://gw-b.example/', live: true, lightningPublicKey: '03' + 'b2'.repeat(32), modulePublicKey: '03' + 'd4'.repeat(32), ...TERMS },
 ];
+
+/**
+ * A CHAIN THAT BONDS A ROUND'S COMMITTEE (RULED the owner 2026-09-25: a paying round opens only on a signer node that reads the
+ * chain - it counts the federation's guardians on the census, assigns its signer nodes from it, and seeds from its beacon).
+ *
+ * Two steps, because a daemon is made before its key - the contract's `nodes` - is known:
+ *   bondedChainSlot(port)   made first: the `chainFor` / `randomnessFor` pair a daemon is served with, and `port` (the lock
+ *                           fixture's, by default) answering guardians() for the federation the round names.
+ *   bondedChainFor(nodes, contract, slot)   once the keys exist: one bond per node - exactly the contract's nodes, the
+ *                           keyless ones and placeholders included - each for game and settlement and each advertising
+ *                           one guardian key of that federation; the round's publication; the census it derives. Returns
+ *                           the two fields the chain dictates and nothing else: `censusRoot` (what the bonds derive to)
+ *                           and `committeeTimeMs` (the contract's own: the chain is mined around it). The fixture
+ *                           spreads those two into its contract before it takes the round id (RULED 2026-09-25).
+ */
+const CENSUS_HEIGHT = 900000;
+export function bondedChainSlot(port = lockPort()) {
+  const slot = { bonds: null, guardianKeys: [], views: new Map() };
+  // ONE MINED VIEW PER ROUND (its publication is the only thing that differs), kept: the node asks for its chain on every
+  // census, beacon and settlement read, and mining 31 headers each time slowed every daemon - measured, a five-of-seven
+  // round closed eight seconds past its result window's end block.
+  const chainWith = (contract) => {
+    const key = contract ? toHex(roundId(contract)) : '';
+    if (!slot.views.has(key)) slot.views.set(key, mined(contract));
+    return slot.views.get(key);
+  };
+  const mined = (contract) => {
+    const blocks = [];
+    for (let h = CENSUS_HEIGHT - 20; h <= CENSUS_HEIGHT + 10; h++) blocks.push({ transactions: h === CENSUS_HEIGHT - 20 ? slot.bonds || [] : [] });
+    if (contract) blocks[1] = { transactions: [publicationOf(contract)] };
+    // MINED AT THE ROUND'S OWN CLOCK: the first eleven blocks at its committee second, then one second a block - so the
+    // view's earliest median time past is not after the committee time, and the beacon (the first block whose median time
+    // reaches it) comes after the publication in block 1. The contract's times stand.
+    return chainOf(blocks, CENSUS_HEIGHT - 20, { timeOf: (at) => slot.committeeSec + Math.max(0, at - 10) });
+  };
+  slot.chainWith = chainWith;
+  slot.chainFor = ({ contract } = {}) => (slot.bonds ? chainWith(contract) : undefined);
+  slot.randomnessFor = ({ contract } = {}) => {
+    if (!slot.bonds || !contract) return undefined;
+    const view = chainWith(contract);
+    const named = beaconFromChain(contract, { headers: view.blocks.map((b) => b.header), firstHeight: view.firstHeight });
+    return named.ok ? { hash: named.hash, height: named.height, timeMs: named.timeMs } : undefined;
+  };
+  slot.port = Object.assign(port, {
+    async guardians() {
+      return { federationId: slot.federationId || TEST_FEDERATION_ID, guardians: slot.guardianKeys.length,
+        threshold: slot.guardianKeys.length, keys: slot.guardianKeys };
+    },
+  });
+  return slot;
+}
+
+// `endpoints`: where each node is reached - a running daemon's own address (the census is where its peers learn it), a
+// placeholder for a key no daemon stands behind.
+export function bondedChainFor(nodes, contract, slot = bondedChainSlot(), { endpoints = [] } = {}) {
+  slot.federationId = contract.federationId;
+  slot.committeeSec = Math.floor(Number(contract.committeeTimeMs) / 1000);
+  slot.views.clear();
+  slot.guardianKeys = nodes.map((_, i) => Uint8Array.from([0x02, ...new Uint8Array(32).fill(0x60 + i)]));
+  slot.bonds = nodes.map((key, i) => bondTransaction({
+    nodePubkey: key, operatorId: `operator${i}`, protocolVersions: [1], roles: ['game', 'settlement'],
+    endpoint: endpoints[i] || `ws://node${i}`, region: 'eu-west', capacityClass: 1, softwareHash: b32(2), settlementCapabilities: 0,
+    lightningCapabilities: 0, bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 1, payoutPubkey: b32(3),
+    guardianOf: [{ federationId: contract.federationId, guardianKey: slot.guardianKeys[i] }], timestamp: 1788700000000n,
+  }, { previousTxid: b32(0xa0 + i), previousVout: 0, outputKey: bondFor(key) }));
+  // THE ROUND'S OWN COMMITTEE TIME: the chain is mined around it (above), so it stands - the entry window it opens is the
+  // contract's, unchanged. Returned so the fixture spreads exactly the fields the ruling names.
+  const committeeTimeMs = contract.committeeTimeMs;
+  const view = chainWith(null);
+  const byTxid = new Map();
+  for (const block of view.blocks) for (const raw of block.transactions) byTxid.set(toHex(parseTransaction(raw).txid), raw);
+  const census = deriveCensus(view, {
+    contract: decodeRoundContract(encodeRoundContract({ ...contract, censusHeight: CENSUS_HEIGHT, committeeTimeMs })),
+    bond: bondSetFor('regtest'),
+    resolve: (e) => { const raw = byTxid.get(toHex(e.txid)); return raw ? { transaction: raw } : null; },
+  });
+  if (!census.ok) throw new Error(`the bonded chain derives no census: ${census.why}`);
+  return { censusRoot: census.root, committeeTimeMs, chainFor: slot.chainFor, randomnessFor: slot.randomnessFor, port: slot.port };
+  function chainWith(c) { return slot.chainWith(c); }
+}
 
 /**
  * AN ENTRY AS PRODUCTION SHAPES IT, ON THIS PORT'S FEDERATION (RULED 2026-09-25: a paying round opens only on a signer node
@@ -172,13 +260,18 @@ export function lockPort({ height = 1000, gateways = TWO_GATEWAYS } = {}) {
 
 /** One signer node of a paying FEDERATION round, a player's stake dealt and joined, the entry naming its lock. */
 export async function joinedWithLock(extra = {}, { federationId = TEST_FEDERATION_ID, custody = 'FEDERATION', outpoint: given } = {}) {
-  const port = lockPort();
-  const d = await serve(openStore(':memory:'), { port: 0, ...opts, stakeLocks: port, ...extra });
+  // A CHAIN THAT BONDS THE ROUND'S COMMITTEE (RULED 2026-09-25): this signer node and a placeholder no daemon stands
+  // behind - so the claim key is handed (CLAIM, the key the locks below name), never a DKG toward a key that is not there.
+  const slot = bondedChainSlot(lockPort());
+  const port = slot.port;
+  const d = await serve(openStore(':memory:'), { port: 0, ...opts, stakeLocks: port, chainFor: slot.chainFor,
+    randomnessFor: slot.randomnessFor, claimKeyFor: () => CLAIM, ...extra });
   let c; let rid;
   // A ROUND THE CODEC OR THE DOOR REFUSES (M3 W7) CLOSES THE SIGNER NODE IT STARTED: measured, a refused
   // contract left this signer node open and the test file never exited.
   try {
-    c = { ...contractFor([d.round.pubkey, b32(0x33)], BigInt(WINDOW_MS), [`http://127.0.0.1:${d.port}`]), custody, federationId };
+    const drafted = { ...contractFor([d.round.pubkey, b32(0x33)], BigInt(WINDOW_MS), [`http://127.0.0.1:${d.port}`]), custody, federationId };
+    c = { ...drafted, censusRoot: bondedChainFor(drafted.nodes, drafted, slot, { endpoints: [`ws://127.0.0.1:${d.port}`] }).censusRoot };
     rid = roundId(c);
     assert.equal((await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) })).status, 201);
   } catch (e) { await d.close(); throw e; }

@@ -69,6 +69,9 @@ export function endpointsOf(committee, selfPubkey) {
   return [...found];
 }
 
+/** THE ONE REFUSAL A NODE THAT READS NO CHAIN GIVES FOR A ROUND'S CENSUS - and POST /round's for a paying round (RULED 2026-09-25). */
+export const NO_CHAIN_VIEW_WHY = 'this node has no chain view for that round, so it cannot say who is bonded';
+
 export class Roster {
   constructor(round, { chainFor = NO_CHAIN_VIEW, randomnessFor = NO_BEACON } = {}) {
     this.round = round;
@@ -253,7 +256,7 @@ export class Roster {
     if (!view || !Array.isArray(view.blocks))
       return {
         ok: false,
-        why: 'this node has no chain view for that round, so it cannot say who is bonded',
+        why: NO_CHAIN_VIEW_WHY,
       };
 
     // THE ONE ALREADY DERIVED, if it was derived from a view that begins where this one does, for this round's own

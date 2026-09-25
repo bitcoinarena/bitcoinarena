@@ -10,7 +10,7 @@ import { serve } from '../src/server.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { resultFinality } from '../src/finality.js';
 import { assumeAssigned } from './assignment.js';
-import { lockPort } from './lock-fixture.js';
+import { lockPort, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
 import { b32, rand, RANDOMNESS, STAKE, WINDOW_MS, WINNER, GENESIS_HASH, wordsAt, contractFor, say, secretScalar, opts, wait, presentDay } from './window-fixture.js';
 import { CLOCK } from './block-clock.js';
 import { roundEndMs } from '../../protocol/src/first-mark.js';
@@ -33,8 +33,12 @@ export const curve = { ...feldmanGroup, tweakPoint };
 export const END = WINNER.ticks;                      // 1320: the run delivers here
 
 export async function signerNodes({ endIn = null } = {}) {
-  const port = lockPort();
-  const mk = (db, p = 0) => serve(db, { port: p, ...opts, stakeLocks: port, poolCurve: curve, finality: { everyMs: 100 } });
+  // A CHAIN THAT BONDS THE ROUND'S TWO SIGNER NODES (RULED 2026-09-25: a paying round opens only on a signer node that
+  // reads the chain, and its beacon is that chain's). Both are running daemons: the claim key is their own live DKG.
+  const slot = bondedChainSlot(lockPort());
+  const port = slot.port;
+  const mk = (db, p = 0) => serve(db, { port: p, ...opts, stakeLocks: port, poolCurve: curve, finality: { everyMs: 100 },
+    chainFor: slot.chainFor, randomnessFor: slot.randomnessFor });
   const dbA = openStore(':memory:');
   const dbB = openStore(':memory:');
   let a = await mk(dbA);
@@ -53,7 +57,12 @@ export async function signerNodes({ endIn = null } = {}) {
   const base = { ...contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
     custody: 'FEDERATION', federationId: TEST_FEDERATION_ID, startDeadlineTicks: undefined };
   // `endIn`: THE ROUND IN THE PRESENT, its contract end this many ms from now (§13C's result window opens at it).
-  const c = endIn === null ? base : presentDay(base, Date.now() + endIn);
+  const drafted = endIn === null ? base : presentDay(base, Date.now() + endIn);
+  // ONLY THE FIELD THE CHAIN DICTATES (RULED 2026-09-25): the census root its bonds derive to; the round's times stand.
+  const c = { ...drafted, censusRoot: bondedChainFor(drafted.nodes, drafted, slot,
+    { endpoints: [a, b].map((d) => `ws://127.0.0.1:${d.port}`) }).censusRoot };
+  // THE ROUND'S OWN BEACON: the players seed their marks from it, as the signer nodes replay them.
+  const beacon = slot.randomnessFor({ contract: c });
   const rid = roundId(c);
   for (const d of [a, b]) {
     const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
@@ -62,7 +71,7 @@ export async function signerNodes({ endIn = null } = {}) {
   }
   for (let pass = 0; pass < 2; pass++) for (const d of [a, b]) await d.dkg.run(c.nodes);
   return {
-    get a() { return a; }, get b() { return b; }, c, rid, port, claimPk: a.dkg.signerNodeFor(c.nodes).pool.groupPublicKey,
+    get a() { return a; }, get b() { return b; }, c, rid, port, randomness: beacon && beacon.hash, claimPk: a.dkg.signerNodeFor(c.nodes).pool.groupPublicKey,
     async downA() { await a.close(); },
     async upA() { a = await mk(dbA, aPort); wire(); },
     async downB() { await b.close(); },
@@ -105,7 +114,7 @@ export async function joinAndBuild(w, { firstAt = 60 } = {}) {
     assert.equal((await fetch(`${base}/lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(fields)) })).status, 201);
     assert.equal((await fetch(`${base}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(feeFields)) })).status, 201);
   }
-  const st = init(seedWordForEntry(entry, RANDOMNESS));
+  const st = init(seedWordForEntry(entry, w.randomness || RANDOMNESS));
   const hashAt = (upTo, from) => { for (let t = from; t < upTo; t++) step(st, ...wordsAt(t)); return Uint8Array.from(stateHash(st).match(/../g).map((x) => parseInt(x, 16))); };
   const sign = (m) => joinSigned(encodeCheckpoint(m), ed25519.sign(checkpointId(m), session));
   const batchOf = (from, to, previousHash) => ({ roundId: w.rid, entryId: eid, previousHash, firstTick: from,
@@ -130,14 +139,14 @@ export async function joinAndBuild(w, { firstAt = 60 } = {}) {
   // AND A LATE FIRST MARK FOR THE SAME ENTRY, under the same session key: its
   // first batch 0..1319 and a first mark at 1320 - the other half of a player
   // who sent an on-time first mark to one signer node and a late one to another.
-  const lateSt = init(seedWordForEntry(entry, RANDOMNESS));
+  const lateSt = init(seedWordForEntry(entry, w.randomness || RANDOMNESS));
   for (let t = 0; t < END; t++) step(lateSt, ...wordsAt(t));
   const lb = batchOf(0, END, GENESIS_HASH);
   const lm = markOf(END, Uint8Array.from(stateHash(lateSt).match(/../g).map((x) => parseInt(x, 16))), lb, NO_PREVIOUS);
   const late = [encodeInputBatch(lb), sign(lm)];
   // AND A SECOND ON-TIME FIRST MARK (tick 30, from nothing): the other half of a
   // player who sent one on-time first mark to one signer node and a different one to another.
-  const otherSt = init(seedWordForEntry(entry, RANDOMNESS));
+  const otherSt = init(seedWordForEntry(entry, w.randomness || RANDOMNESS));
   for (let t = 0; t < 30; t++) step(otherSt, ...wordsAt(t));
   const ob = batchOf(0, 30, GENESIS_HASH);
   const om = markOf(30, Uint8Array.from(stateHash(otherSt).match(/../g).map((x) => parseInt(x, 16))), ob, NO_PREVIOUS);
@@ -146,7 +155,7 @@ export async function joinAndBuild(w, { firstAt = 60 } = {}) {
   // Daily: the first mark went out at 5940 against a window ending at 900, was refused as a late start and
   // never carried, so the client's head stayed ZERO and it marked again every second - 80 times. This is
   // one of those: past the line like the first one, a different tick, and its own inputs from nothing.
-  const againSt = init(seedWordForEntry(entry, RANDOMNESS));
+  const againSt = init(seedWordForEntry(entry, w.randomness || RANDOMNESS));
   const AGAIN_AT = 960;
   for (let t = 0; t < AGAIN_AT; t++) step(againSt, ...wordsAt(t));
   const gb = batchOf(0, AGAIN_AT, GENESIS_HASH);

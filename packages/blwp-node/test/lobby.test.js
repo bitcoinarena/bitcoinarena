@@ -14,7 +14,7 @@
 // rounds, and a page with no `round=` in its link could only be the offline game.
 // A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED the owner 2026-09-25): this file's paying-round
 // daemons get the lock fixture's port - the test federation, two gateways, zero base fee. Contracts unchanged.
-import { lockPort } from './lock-fixture.js';
+import { lockPort, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
 import { test } from 'node:test';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import assert from 'node:assert/strict';
@@ -35,7 +35,12 @@ const WINDOW = 60000n;          // MIN_ENTRY_WINDOW_MS: committee -> start
 const ENTRY = 120000n;          // start -> entry close, as round-2of2 opens them
 
 test('the node lists the rounds a player can still join - free or paying, open or pending - with its own signer node counts', async () => {
-  const d = await serve(openStore(':memory:'), { port: 0, stakeLocks: lockPort(), funded: () => true });
+  // ON A CHAIN THAT BONDS THE ROUND'S TWO NODES (RULED 2026-09-25): the one daemon and a keyless placeholder, so the claim
+  // key is claimKeyFor's. A node with a chain view checks every round's census, free ones too: each round's censusRoot is
+  // bonded just before it is posted, and nothing else in it changes.
+  const slot = bondedChainSlot(lockPort());
+  const d = await serve(openStore(':memory:'), { port: 0, stakeLocks: slot.port, funded: () => true, chainFor: slot.chainFor,
+    randomnessFor: slot.randomnessFor, claimKeyFor: () => new Uint8Array(33).fill(2) });
   const base = `http://127.0.0.1:${d.port}`;
   try {
     const now = BigInt(Date.now());
@@ -44,6 +49,7 @@ test('the node lists the rounds a player can still join - free or paying, open o
       committeeTimeMs, startTimeMs: committeeTimeMs + WINDOW, entryCloseMs: committeeTimeMs + WINDOW + ENTRY,
       stakeMsat: 0n, ...extra,
     });
+    const bonded = (c) => ({ ...c, censusRoot: bondedChainFor(c.nodes, c, slot, { endpoints: [`ws://127.0.0.1:${d.port}`] }).censusRoot });
     const rounds = {
       freeOpen: round(now - 1000n),
       freePending: round(now + 600000n),
@@ -52,7 +58,8 @@ test('the node lists the rounds a player can still join - free or paying, open o
       freeClosed: round(now - 3000n),
     };
     const ids = {};
-    for (const [name, c] of Object.entries(rounds)) {
+    for (const [name, drafted] of Object.entries(rounds)) {
+      const c = rounds[name] = bonded(drafted);
       const r = await fetch(`${base}/round`, { method: 'POST', body: encodeRoundContract(c) });
       assert.equal(r.status, 201, `${name}: ${await r.text()}`);
       ids[name] = toHex(roundId(c));
@@ -93,8 +100,11 @@ test('the node lists the rounds a player can still join - free or paying, open o
       // payingOpen's committee came 1 s before freeOpen's, so its entry closes first
       order: ['payingOpen', 'freeOpen', 'freePending'],
       freeOpen: { phase: 'open', free: true, wallet: 'none', joined: 1, playing: 1, assignedHere: true },
-      freePending: { phase: 'pending', free: true, wallet: 'none', joined: 0, playing: 0, assignedHere: false },
-      payingOpen: { phase: 'open', free: false, wallet: 'federation-lock', joined: 0, playing: 0, assignedHere: false },
+      // ASSIGNED HERE BY THE CHAIN (2026-09-25): the bonded census names this daemon and the round has a slot for each of
+      // its two nodes, so the node is assigned to every round it opened. Measured before the chain view: false, because a
+      // node with no chain view assigned nobody and only freeOpen was forced by assumeAssigned.
+      freePending: { phase: 'pending', free: true, wallet: 'none', joined: 0, playing: 0, assignedHere: true },
+      payingOpen: { phase: 'open', free: false, wallet: 'federation-lock', joined: 0, playing: 0, assignedHere: true },
     });
     // The times the page needs to say "entry closes in 1:42", as the contract has them.
     assert.equal(byId[ids.freeOpen].entryCloseMs, String(rounds.freeOpen.entryCloseMs));

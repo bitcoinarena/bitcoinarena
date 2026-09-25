@@ -12,7 +12,7 @@
 // stake is refused where it would be joined - before any hold is issued.
 // A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED the owner 2026-09-25): this file's paying-round
 // daemons get the lock fixture's port - the test federation, two gateways, zero base fee. Contracts unchanged.
-import { lockPort } from './lock-fixture.js';
+import { lockPort, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -25,11 +25,15 @@ import { b32, WINDOW_MS, contractFor, opts } from './window-fixture.js';
 const open = (d, c) => fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
 
 test('the same paying round naming a relay opens, and a free round naming none opens', async () => {
-  const d = await serve(openStore(':memory:'), { port: 0, stakeLocks: lockPort(), ...opts });
+  // ON A CHAIN THAT BONDS THE ROUND'S TWO NODES (RULED 2026-09-25): the one daemon and a keyless placeholder, so the claim
+  // key is claimKeyFor's. A node with a chain view checks every round's census; only censusRoot changes.
+  const slot = bondedChainSlot(lockPort());
+  const d = await serve(openStore(':memory:'), { port: 0, ...opts, stakeLocks: slot.port, chainFor: slot.chainFor, randomnessFor: slot.randomnessFor, claimKeyFor: () => new Uint8Array(33).fill(2) });
   try {
-    const paying = contractFor([d.round.pubkey, b32(0x33)], BigInt(WINDOW_MS), [`http://127.0.0.1:${d.port}`]);
+    const bonded = (c) => ({ ...c, censusRoot: bondedChainFor(c.nodes, c, slot, { endpoints: [`ws://127.0.0.1:${d.port}`] }).censusRoot });
+    const paying = bonded(contractFor([d.round.pubkey, b32(0x33)], BigInt(WINDOW_MS), [`http://127.0.0.1:${d.port}`]));
     assert.equal((await open(d, paying)).status, 201, 'a paying round naming a relay was refused');
-    const free = { ...contractFor([d.round.pubkey, b32(0x33)], BigInt(WINDOW_MS), []), stakeMsat: 0n };
+    const free = bonded({ ...contractFor([d.round.pubkey, b32(0x33)], BigInt(WINDOW_MS), []), stakeMsat: 0n });
     const r = await open(d, free);
     assert.equal(r.status, 201, `a free round naming no relay was refused: ${await r.text()}`);
   } finally { await d.close(); }

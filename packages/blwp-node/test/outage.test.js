@@ -28,7 +28,7 @@ import { serve } from '../src/server.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { resultFinality } from '../src/finality.js';
 import { assumeAssigned } from './assignment.js';
-import { lockPort } from './lock-fixture.js';
+import { lockPort, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
 import { b32, rand, RANDOMNESS, STAKE, WINDOW_MS, WINNER, GENESIS_HASH, wordsAt, contractFor, say, secretScalar, opts, wait } from './window-fixture.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
 import { dealHandout, encodeHandout, handoutId } from '../../protocol/src/handout.js';
@@ -48,8 +48,11 @@ const curve = { ...feldmanGroup, tweakPoint };
 const END = WINNER.ticks;                      // 1320: past the 900 line; the run delivers here
 
 async function signerNodes() {
-  const port = lockPort();
-  const mk = (db, p = 0) => serve(db, { port: p, ...opts, stakeLocks: port, poolCurve: curve, finality: { everyMs: 100 } });
+  // A CHAIN THAT BONDS THE ROUND'S TWO SIGNER NODES (RULED 2026-09-25), as lockRound in lock-round-fixture.js: both are
+  // running daemons, so the claim key is their own live DKG; the round's beacon is that chain's, and the player seeds from it.
+  const slot = bondedChainSlot(lockPort());
+  const port = slot.port;
+  const mk = (db, p = 0) => serve(db, { port: p, ...opts, stakeLocks: port, poolCurve: curve, finality: { everyMs: 100 }, chainFor: slot.chainFor, randomnessFor: slot.randomnessFor });
   const dbB = openStore(':memory:');
   const a = await mk(openStore(':memory:'));
   let b = await mk(dbB);
@@ -62,9 +65,12 @@ async function signerNodes() {
   };
   wire();
   // THIS ROUND NAMES NO START DEADLINE: the page's own window, 900.
-  const c = { ...contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
+  const drafted = { ...contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
     custody: 'FEDERATION', federationId: TEST_FEDERATION_ID, startDeadlineTicks: undefined };
+  const c = { ...drafted, censusRoot: bondedChainFor(drafted.nodes, drafted, slot,
+    { endpoints: [a, b].map((d) => `ws://127.0.0.1:${d.port}`) }).censusRoot };
   const rid = roundId(c);
+  const randomness = slot.randomnessFor({ contract: c }).hash;
   for (const d of [a, b]) {
     const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
     assert.equal(r.status, 201, await r.text());
@@ -72,7 +78,7 @@ async function signerNodes() {
   }
   for (let pass = 0; pass < 2; pass++) for (const d of [a, b]) await d.dkg.run(c.nodes);
   return {
-    a, get b() { return b; }, c, rid, port, claimPk: a.dkg.signerNodeFor(c.nodes).pool.groupPublicKey,
+    a, get b() { return b; }, c, rid, port, randomness, claimPk: a.dkg.signerNodeFor(c.nodes).pool.groupPublicKey,
     async downB() { await b.close(); },
     async upB() { b = await mk(dbB, bPort); wire(); },
     async close() { await a.close(); try { await b.close(); } catch { /* down */ } },
@@ -112,7 +118,7 @@ async function joinAndBuild(w, { firstAt = 60 } = {}) {
     assert.equal((await fetch(`${base}/lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(fields)) })).status, 201);
     assert.equal((await fetch(`${base}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(feeFields)) })).status, 201);
   }
-  const st = init(seedWordForEntry(entry, RANDOMNESS));
+  const st = init(seedWordForEntry(entry, w.randomness || RANDOMNESS));
   const hashAt = (upTo, from) => { for (let t = from; t < upTo; t++) step(st, ...wordsAt(t)); return Uint8Array.from(stateHash(st).match(/../g).map((x) => parseInt(x, 16))); };
   const sign = (m) => joinSigned(encodeCheckpoint(m), ed25519.sign(checkpointId(m), session));
   const batchOf = (from, to, previousHash) => ({ roundId: w.rid, entryId: eid, previousHash, firstTick: from,

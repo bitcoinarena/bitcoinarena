@@ -16,17 +16,23 @@ import { readFileSync } from 'node:fs';
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { contractFor, opts, b32, presentDay } from './window-fixture.js';
-import { lockPort } from './lock-fixture.js';
+import { lockPort, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
 import { encodeRoundContract, roundId } from '../../protocol/src/contracts.js';
 import { toHex } from '../../protocol/src/hash.js';
 
+// A CHAIN THAT BONDS THE ROUND'S TWO NODES (RULED 2026-09-25: every paying-round test gets a bonded chain view): the one
+// daemon and a placeholder key, keyless, so the claim key is claimKeyFor's.
 async function opened(feeRule, { noFees = false } = {}) {
-  const port = lockPort();
+  const slot = bondedChainSlot(lockPort());
+  const port = slot.port;
   if (noFees) delete port.fees; else port.feeRule = feeRule;
-  const d = await serve(openStore(':memory:'), { port: 0, ...opts, stakeLocks: port });
+  const d = await serve(openStore(':memory:'), { port: 0, ...opts, stakeLocks: port, chainFor: slot.chainFor,
+    randomnessFor: slot.randomnessFor, claimKeyFor: () => new Uint8Array(33).fill(2) });
   try {
     const base = contractFor([d.round.pubkey, b32(0x33)], 3000n, ['wss://r.example']);
-    const c = presentDay(base, Date.now() + 300000);                       // entry closes ~74 s from now
+    const drafted = presentDay(base, Date.now() + 300000);                 // entry closes ~74 s from now
+    const c = { ...drafted, censusRoot: bondedChainFor(drafted.nodes, drafted, slot,
+      { endpoints: [`ws://127.0.0.1:${d.port}`] }).censusRoot };
     const rid = roundId(c);
     const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
     const why = (await r.text()).trim();

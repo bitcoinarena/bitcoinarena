@@ -34,14 +34,14 @@ const FIRST_TIME = 1788700000;
 const SPACING = 600;
 
 /** One mined header over these transactions, following `previous`. */
-function mine(transactions, previous, bits, at = 0) {
+function mine(transactions, previous, bits, at = 0, timeOf = (i) => FIRST_TIME + i * SPACING) {
   const h = new Uint8Array(80);
   const view = new DataView(h.buffer);
   view.setUint32(0, 1, true);
   if (previous) h.set(blockHashOf(previous), 4);
   if (transactions.length)
     h.set(blockMerkleRoot(transactions.map((raw) => parseTransaction(raw).txid)), 36);
-  view.setUint32(68, FIRST_TIME + at * SPACING, true);
+  view.setUint32(68, timeOf(at), true);
   view.setUint32(72, bits, true);
   for (let nonce = 0; nonce < 1e8; nonce++) {
     view.setUint32(76, nonce, true);
@@ -53,13 +53,14 @@ function mine(transactions, previous, bits, at = 0) {
 /**
  * A chain view over `blocks`, each `{ transactions }`, starting at
  * `firstHeight`. `bits` picks how much work every header carries, so two
- * views can compete.
+ * views can compete. `timeOf(at)` (seconds) mines it at another clock - around a round's own committee time (the
+ * bonded-chain fixture, 2026-09-25); unset, every header is where it always was.
  */
-export function chainOf(blocks, firstHeight, { bits = EASY } = {}) {
+export function chainOf(blocks, firstHeight, { bits = EASY, timeOf = (i) => FIRST_TIME + i * SPACING } = {}) {
   const out = [];
   let previous = null;
   for (const [at, block] of blocks.entries()) {
-    const header = mine(block.transactions || [], previous, bits, at);
+    const header = mine(block.transactions || [], previous, bits, at, timeOf);
     out.push({ header, transactions: block.transactions || [] });
     previous = header;
   }
