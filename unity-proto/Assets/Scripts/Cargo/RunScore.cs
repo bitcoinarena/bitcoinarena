@@ -345,9 +345,23 @@ public class RunScore : MonoBehaviour
 
     void OnDelivered(long _)
     {
-        LastExposure = Exposure;
-        LastTime = TimeFactor;
-        LastCargo = CargoFactor;
+        // THE CARD'S THREE FACTORS ARE THE CORE'S (the owner's playtest 2026-09-25 18:29: DELIVERED at tick 4596, SCORE +137,
+        // and the card read "load 0.85 x danger 1.00 x speed 1.50 x 1000" - 1275). Those were Unity's own meters: danger
+        // was Clamp01 of the raw exposure METRES (anything past 1 m printed 1.00), speed Unity's wall-clock cap, load
+        // Unity's bed. The score is the core's (Projected), so its factors are read from the same words at the same moment
+        // and formed as scoreOf forms them: E = exposure / 320 m, T = 3900 / ticks, C = the core's cargo word.
+        if (Blwp.BlwpCore.Available)
+        {
+            LastExposure = CoreScoreFactors.Exposure(Blwp.BlwpCore.ExposureWord);
+            LastTime = CoreScoreFactors.Time(Blwp.BlwpCore.ElapsedTicks);
+            LastCargo = CoreScoreFactors.Cargo(Blwp.BlwpCore.CargoWord);
+        }
+        else
+        {
+            LastExposure = Exposure;
+            LastTime = TimeFactor;
+            LastCargo = CargoFactor;
+        }
         LastScore = Projected;
         Total += LastScore;
         if (LastScore > Best) Best = LastScore;
@@ -368,3 +382,27 @@ public class RunScore : MonoBehaviour
         Running = false;
     }
 }
+
+/// <summary>
+/// THE CORE'S SCORE FACTORS, formed from its three score words exactly as packages/core/src/rules/score.js's scoreOf forms
+/// them - so their product, times 1000, is the core's score (to its rounding). Read by the arrival card; nothing here
+/// scores. The constants are the core's, and packages/core/test/arrival-card-factors.test.js fails if they drift.
+/// </summary>
+public static class CoreScoreFactors
+{
+    public const float ExposureReferenceMetres = 320f;   // score.js EXPOSURE_REFERENCE
+    public const int ReferenceTicks = 3900;               // score.js REFERENCE_TICKS
+    public const int TicksMin = 2600;                     // score.js T_TICKS_MIN (T = 1.5)
+    public const int TicksMax = 15600;                    // score.js T_TICKS_MAX (T = 0.25)
+    const float One = 65536f;                             // Q16.16
+
+    /// <summary>E: the exposure word in metres over the 320 m reference, held to 0..1.</summary>
+    public static float Exposure(int exposureWord) => Mathf.Clamp01(exposureWord / One / ExposureReferenceMetres);
+
+    /// <summary>T: 3900 over the elapsed ticks, the ticks held to 2600..15600 (so T to 1.5..0.25).</summary>
+    public static float Time(int elapsedTicks) => (float)ReferenceTicks / Mathf.Clamp(elapsedTicks, TicksMin, TicksMax);
+
+    /// <summary>C: the core's cargo word, held to 0..1.</summary>
+    public static float Cargo(int cargoWord) => Mathf.Clamp01(cargoWord / One);
+}
+
