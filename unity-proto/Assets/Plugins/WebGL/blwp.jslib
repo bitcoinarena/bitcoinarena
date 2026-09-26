@@ -766,6 +766,15 @@ mergeInto(LibraryManager.library, {
   // the page's own copy (window.BLWP_COPY_REPLAY builds the https link and writes it to the clipboard).
   // 1 once the page's clipboard write of this press's link has resolved (BLWP_REPLAY_COPIED is that link), else 0: the
   // card's "copied!" is the clipboard's answer, not the press (the owner 2026-09-26 07:12).
+  // THE CARGO PANEL IS OPEN (the owner 2026-09-26 14:02): the page's node strip is hidden at once and stays hidden
+  // (paintPlayers reads BLWP_LOADOUT_OPEN) until the panel closes.
+  BlwpLoadoutOpen: function (open) {
+    if (typeof window === 'undefined') return;
+    window.BLWP_LOADOUT_OPEN = open !== 0;
+    var el = document.getElementById('blwp-players');
+    if (el && open !== 0) el.style.display = 'none';
+  },
+
   BlwpReplayCopied: function () {
     if (typeof window === 'undefined') return 0;
     var c = window.BLWP_REPLAY_COPIED;

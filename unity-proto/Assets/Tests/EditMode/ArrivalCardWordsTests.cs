@@ -274,6 +274,6 @@ public class ArrivalCardWordsTests
         StringAssert.Contains("if (ArrivalShowing) return;", hud);
         string page = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "WebGLTemplates/BtcLogistics/index.html"));
         StringAssert.Contains("window.BLWP_CARD_UP = true;", page);
-        StringAssert.Contains("if (!window.BLWP_ROUND || window.BLWP_CARD_UP) { el.style.display = 'none'; return; }", page);
+        StringAssert.Contains("if (!window.BLWP_ROUND || window.BLWP_CARD_UP || window.BLWP_LOADOUT_OPEN) { el.style.display = 'none'; return; }", page);
     }
 }
