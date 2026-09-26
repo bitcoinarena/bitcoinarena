@@ -46,6 +46,7 @@ namespace Blwp
         [DllImport("__Internal")] private static extern int BlwpCopyReplay();
         [DllImport("__Internal")] private static extern int BlwpReplayCopied();
         [DllImport("__Internal")] private static extern void BlwpLoadoutOpen(int open);
+        [DllImport("__Internal")] private static extern int BlwpReplayForThisRun();
         public const bool Compiled = true;
 #else
         private static int BlwpInit(int seed) => 0;
@@ -66,6 +67,7 @@ namespace Blwp
         private static int BlwpCopyReplay() => 0;
         private static int BlwpReplayCopied() => 0;
         private static void BlwpLoadoutOpen(int open) { }
+        private static int BlwpReplayForThisRun() => 0;
         private static int BlwpReadImpact() => 0;
         private static int BlwpSubmitLoad(int f, int b) => 0;
         private static int BlwpSubmitSample(int price) => 0;
@@ -208,6 +210,12 @@ namespace Blwp
 
         /// <summary>Tells the page the cargo panel opened or closed, so it hides its node strip meanwhile.</summary>
         public static void LoadoutOpen(bool open) => BlwpLoadoutOpen(open ? 1 : 0);
+
+        /// <summary>
+        /// Whether the session on hand was opened for the run on screen (the owner 2026-09-26 14:08): a session kept from the
+        /// run before names the run before, and its replay is not this card's.
+        /// </summary>
+        public static bool ReplayForThisRun => BlwpReplayForThisRun() == 1;
 
         public static int Solids(int[] into)
         {
