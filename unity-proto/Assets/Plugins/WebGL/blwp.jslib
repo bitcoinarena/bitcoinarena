@@ -340,14 +340,22 @@ mergeInto(LibraryManager.library, {
       var joined = null;
       try { joined = window.BLWP_ROUND ? BLWPCLIENT.roundId(window.BLWP_ROUND) : null; } catch (e) { joined = null; }
       var elsewhere = !!(bound && joined && BLWPCLIENT.toHex(bound) !== BLWPCLIENT.toHex(joined));
+      // AND A NEW JOIN IS A NEW RUN, on this round or another (the owner 2026-09-26 14:08, reproduced: a run that never rolled
+      // out left its session open and not over; the next PLAY joined again, no session could open beside it, and that
+      // run's card copied the session before's link). A session is its page join's (BLWP_ENTRY); another join replaces it.
+      if (!elsewhere && typeof window !== 'undefined' && window.BLWP_ENTRY && Module.blwpNet.pageEntry
+          && window.BLWP_ENTRY !== Module.blwpNet.pageEntry) {
+        elsewhere = true;
+        bound = bound || joined;
+      }
       if (!elsewhere) {
         if (!was || !was.over) return 1;               // already running, on this same round
         // the owner 2026-09-16: hang after DELIVERED wasted seconds waiting for
         // `ended` while the last publish drained. `over` is enough; finishing
         // can drain on the old client in the background.
       } else {
-        console.log('[blwp] a different round was joined: closing the session on '
-          + BLWPCLIENT.toHex(bound).slice(0, 8) + ' before opening ' + BLWPCLIENT.toHex(joined).slice(0, 8));
+        console.log('[blwp] another join: closing the session on '
+          + (bound ? BLWPCLIENT.toHex(bound).slice(0, 8) : '?') + ' before opening ' + (joined ? BLWPCLIENT.toHex(joined).slice(0, 8) : '?'));
         try { if (was && was.close) was.close(); } catch (e) { /* already gone */ }
         try { Module.blwpNet.ghosts = null; } catch (e) { /* nothing held */ }
         Module.blwpNet.client = null;
@@ -361,6 +369,7 @@ mergeInto(LibraryManager.library, {
       try { Module.blwpTickClock = BLWPCLIENT.tickClock({ Channel: typeof BroadcastChannel !== 'undefined' ? BroadcastChannel : null }); } catch (e) { Module.blwpTickClock = null; }
     }
     var net = Module.blwpNet = {
+      pageEntry: (typeof window !== 'undefined' && window.BLWP_ENTRY) || null,
       // `state` here is ONLY the word before a client exists - opening, or
       // error if the session never got off the ground. Once there is a client
       // the session's word is `client.state`, in a file `node --test` can
@@ -755,9 +764,24 @@ mergeInto(LibraryManager.library, {
     return (typeof c === 'string' && c.length > 0 && c === window.BLWP_REPLAY_URL) ? 1 : 0;
   },
 
-  BlwpCopyReplay: function () {
-    // THIS PIN'S RUN: the session's own round and entry (net.where), and the nodes the page reached (BLWP_NODES).
+  // WHETHER THE SESSION ON HAND IS THE CURRENT JOIN'S (the owner 2026-09-26 14:08): 1 or 0. A session opened for an earlier
+  // page join names the run before - its link is not this card's. (The page's join is the run: one BLWP_ENTRY each.)
+  BlwpReplayForThisRun: function () {
     var net = Module.blwpNet;
+    if (!net || !net.where) return 0;
+    var now = (typeof window !== 'undefined') ? window.BLWP_ENTRY : null;
+    return (!now || !net.pageEntry || net.pageEntry === now) ? 1 : 0;
+  },
+
+  BlwpCopyReplay: function () {
+    // THIS PIN'S RUN: the session's own round and entry (net.where), and the nodes the page reached (BLWP_NODES) -
+    // and only when that session was opened for the run on screen, never the run before's (the owner 2026-09-26 14:08).
+    var net = Module.blwpNet;
+    var now = (typeof window !== 'undefined') ? window.BLWP_ENTRY : null;
+    if (net && now && net.pageEntry && net.pageEntry !== now) {
+      console.error('[blwp] copy game replay: the session on hand is an earlier join\'s - not copied');
+      return 0;
+    }
     var w = net && net.where;
     if (!w || typeof window === 'undefined' || typeof window.BLWP_COPY_REPLAY !== 'function' || typeof BLWPCLIENT === 'undefined') return 0;
     try { window.BLWP_COPY_REPLAY(BLWPCLIENT.toHex(w.roundId), BLWPCLIENT.toHex(w.entryId), window.BLWP_NODES || []); } catch (e) { console.error('[blwp] copy game replay: ' + e); return 0; }
@@ -884,6 +908,9 @@ mergeInto(LibraryManager.library, {
   // Measured live on 0.0.1334: waiting for `ended` put the lobby 2241 ms after DELIVERED.
   BlwpNetEnded: function () {
     var n = Module.blwpNet;
+    // A SESSION ANOTHER JOIN HAS REPLACED IS OVER (the owner 2026-09-26 14:08): the page joined again, so this session's run
+    // will not be played - the game may open the new join's session (NetSession opens one only when none is live).
+    if (n && n.pageEntry && typeof window !== 'undefined' && window.BLWP_ENTRY && window.BLWP_ENTRY !== n.pageEntry) return 1;
     // A SESSION THE NODE REFUSED IS OVER (the owner 2026-09-26, the 21:13 case, second patch): the open failed, the bridge
     // is in error with no client - nothing is live, so the game's running mark ends here and the lobby can come back.
     if (n && !n.client && n.state === 'error') return 1;

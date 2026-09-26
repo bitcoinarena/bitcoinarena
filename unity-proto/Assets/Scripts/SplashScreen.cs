@@ -87,21 +87,26 @@ public class SplashScreen : MonoBehaviour
     {
         // WASTED FIRST, THEN THE LOBBY (the owner 2026-09-16 17:00). A wreck ends the run in the same tick, so the lobby
         // came up in the frame the truck blew and covered the whole death sequence.
-        bool wrecked = Blwp.BlwpCore.Available && Blwp.BlwpCore.RunState == 2;       // RUN_WRECKED
+        // WHILE THE CARGO IS CHOSEN THE CORE STILL HOLDS THE RUN BEFORE (the owner 2026-09-26 14:08, measured: after a finished
+        // run the next PLAY opened the cargo panel and the lobby came straight back over it - the core's word, left from
+        // the run before until roll-out restarts it, read as this run's end and its hold long spent; a WRECKED before read
+        // as this run's wreck). Until roll-out this run has no core word of its own; its session's end still counts.
+        int runStateNow = RunStateOfThisRun(Blwp.BlwpCore.RunState, loadout != null && loadout.IsOpen);
+        bool wrecked = Blwp.BlwpCore.Available && runStateNow == 2;       // RUN_WRECKED
         if (!wrecked) _wreckedAt = -1f;
         else if (_wreckedAt < 0f) _wreckedAt = Time.unscaledTime;
         if (_health == null) _health = FindFirstObjectByType<TruckHealth>();
         float hold = _health != null ? _health.respawnSeconds : 5f;
         // WHEN THE CORE NAMED THE OUTCOME - the same instant the result card is drawn from, not the later one when
         // the client has finished draining the wire.
-        bool ended = RunHasEnded(Blwp.BlwpCore.Available, Blwp.BlwpCore.RunState, Blwp.BlwpNet.Ended);
+        bool ended = RunHasEnded(Blwp.BlwpCore.Available, runStateNow, Blwp.BlwpNet.Ended);
         if (!ended) { _endedRawAt = -1f; _endedAt = -1f; }
         else
         {
             if (_endedRawAt < 0f) _endedRawAt = Time.unscaledTime;
             if (_endedAt < 0f)
             {
-                bool coreNamed = Blwp.BlwpCore.Available && Blwp.BlwpCore.RunState != 0;
+                bool coreNamed = Blwp.BlwpCore.Available && runStateNow != 0;
                 bool haveReason = !coreNamed && !string.IsNullOrEmpty(Blwp.BlwpNet.Ending());
                 if (HoldMayStart(coreNamed, haveReason, Time.unscaledTime - _endedRawAt))
                     _endedAt = Time.unscaledTime;
@@ -109,7 +114,7 @@ public class SplashScreen : MonoBehaviour
         }
         if (_hud == null) _hud = FindFirstObjectByType<DriveHud>();
         bool cardUp = _hud != null && _hud.ArrivalShowing;
-        if (!Showing && LobbyMayCover(cardUp) && ShouldReturnToLobby(Blwp.BlwpCore.Available, Blwp.BlwpCore.RunState, Blwp.BlwpNet.Ended,
+        if (!Showing && LobbyMayCover(cardUp) && ShouldReturnToLobby(Blwp.BlwpCore.Available, runStateNow, Blwp.BlwpNet.Ended,
                                            _fromLobby, wrecked,
                                            _wreckedAt < 0f ? 0f : Time.unscaledTime - _wreckedAt, hold,
                                            _endedAt < 0f ? 0f : Time.unscaledTime - _endedAt)) ShowLobbyAgain();
@@ -356,8 +361,13 @@ public class SplashScreen : MonoBehaviour
     float _endedRawAt = -1f;
     TruckHealth _health;
 
+    /// <summary>The core's run word as this run's: none while the cargo panel is open - the core holds the run before.</summary>
+    public static int RunStateOfThisRun(int coreRunState, bool loadoutOpen) => loadoutOpen ? 0 : coreRunState;
+
     void ShowLobbyAgain()
     {
+        // a run that ends at the ramp takes its open cargo panel with it
+        if (loadout != null && loadout.IsOpen) loadout.Dismiss();
         _spectating = false;
         _fromLobby = false;
         _joining = false;
