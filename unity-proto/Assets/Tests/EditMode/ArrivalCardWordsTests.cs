@@ -240,4 +240,22 @@ public class ArrivalCardWordsTests
         string page = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "WebGLTemplates/BtcLogistics/index.html"));
         StringAssert.Contains("await navigator.clipboard.writeText(link.url); window.BLWP_REPLAY_COPIED = link.url;", page);
     }
+
+    // THE CARD STANDS AT FULL STRENGTH AND NOTHING IS UNDER IT (PRIORITIES item 3: "nothing overlaps", "stays up ... 8 s";
+    // measured 2026-09-26: it faded from 5.76 s, and at 1280x720 the score block, the HIGH TAKEN banner and the players
+    // panel crossed it).
+    [Test]
+    public void TheCardStandsWholeAndNothingIsUnderIt()
+    {
+        string hud = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "Scripts/DriveHud.cs"));
+        StringAssert.Contains("float k = 1f;", hud, "the card fades again");
+        StringAssert.DoesNotContain("(Hold * 0.28f)", hud);
+        StringAssert.Contains("        if (!ArrivalShowing)\n        {\n            string tail = runScore == null", hud.Replace("\r\n", "\n"),
+            "the score block draws under the card");
+        StringAssert.Contains("if (watch == null) return;\n        // not under the result card", hud.Replace("\r\n", "\n"));
+        StringAssert.Contains("if (ArrivalShowing) return;", hud);
+        string page = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "WebGLTemplates/BtcLogistics/index.html"));
+        StringAssert.Contains("window.BLWP_CARD_UP = true;", page);
+        StringAssert.Contains("if (!window.BLWP_ROUND || window.BLWP_CARD_UP) { el.style.display = 'none'; return; }", page);
+    }
 }
