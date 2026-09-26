@@ -286,6 +286,7 @@
     return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())} ${z(d.getHours())}:${z(d.getMinutes())}:${z(d.getSeconds())}.${z(d.getMilliseconds(), 3)} UTC${sign}${z(Math.floor(Math.abs(off) / 60))}:${z(Math.abs(off) % 60)}`; };
   const startMs = clock ? clock.firstMs - usOf(clock.firstTick - from) / 1000 : null;
   const endMs = clock ? clock.lastMs + usOf(from + transcript.ticks.length - clock.lastTick) / 1000 : null;
+  const dl = document.getElementById('details');
   const rows = [['Round', round], ['Entry', entry], ['Host', here]];
   if (clock) rows.push(['Start', stamp(startMs)], ['End', stamp(endMs)]);
   rows.push(['Core', hexOf(contract.simCoreHash)]);
