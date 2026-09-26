@@ -121,6 +121,17 @@
         font-size: 10px; padding: 4px 8px;
       }
     }
+    /* A PORTRAIT PHONE: BETWEEN THE PADS, NOT ON THEM (the owner 2026-09-26 11:10, phone, portrait: the strip lay on the
+       steering pads). TouchPad.RectFor's own rule, in CSS: a pad is 20vmin, the margin 3.5vmin. The steering pads end at
+       3.5 + 20 + 1.75 + 20 = 45.25vmin from the left; the throttle / brake column starts 23.5vmin from the right; the
+       price chart sits above the steering pads. The strip takes the gap between them, level with the pads' bottom, and
+       wraps rather than losing a word. */
+    @media (orientation: portrait) and (max-width: 600px) {
+      #blwp-players {
+        left: calc(45.25vmin + 6px); right: calc(23.5vmin + 6px); bottom: 3.5vmin;
+        max-width: none; font-size: 11px; padding: 5px 7px;
+      }
+    }
 
     /* THE WALLET, and it takes pointer events because it is the one thing on
        this page a player types into. Hidden until a round that asks for money
