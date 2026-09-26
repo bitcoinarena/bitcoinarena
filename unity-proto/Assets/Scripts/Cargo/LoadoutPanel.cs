@@ -20,7 +20,18 @@ public class LoadoutPanel : MonoBehaviour
     public MarketFeed market;
 
     /// <summary>True while the bay is open and the truck is held.</summary>
-    public bool IsOpen { get; private set; }
+    public bool IsOpen
+    {
+        get => _isOpen;
+        private set
+        {
+            // THE PAGE IS TOLD (the owner 2026-09-26 14:02: the node strip lay across the truck and LOAD while the cargo
+            // was being chosen) - it keeps its node strip hidden while this panel is open.
+            if (_isOpen != value) Blwp.BlwpCore.LoadoutOpen(value);
+            _isOpen = value;
+        }
+    }
+    bool _isOpen;
 
     GUIStyle _head, _small, _btn, _cap, _capSub;
     Texture2D _flat;

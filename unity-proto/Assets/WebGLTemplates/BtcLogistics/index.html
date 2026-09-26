@@ -1723,11 +1723,16 @@
     }
 
     const nodeHealth = {};
+    // A NODE'S NAME ON THE STRIP IS ITS PLACE IN THIS PAGE'S NODE LIST - A, B, then 3, 4 ... (the owner 2026-09-26 14:02:
+    // "A ...", "B ...", "silly-rocket-..." - do not cut a name with three dots). It was read off a /blwp-a path, which a
+    // quick tunnel's name never has, so both nodes read "..." for as long as the page ran.
+    const nodeLetter = (i) => (i === 0 ? 'A' : i === 1 ? 'B' : String(i + 1));
+    const pageNodes = () => (new URLSearchParams(location.search).get('node') || '').split(',').map((s) => s.trim()).filter(Boolean);
     async function probeNodes() {
       const nodes = (new URLSearchParams(location.search).get('node') || '')
         .split(',').map((s) => s.trim()).filter(Boolean);
       await Promise.all(nodes.map(async (u, i) => {
-        const name = /blwp-b|:8091/.test(u) ? 'B' : /blwp-a|:8090/.test(u) ? 'A' : String(i + 1);
+        const name = nodeLetter(i);
         try {
           const r = await fetch(u.replace(/\/+$/, '') + '/identity');
           nodeHealth[name] = r.ok ? 'ok' : 'http ' + r.status;
@@ -1745,13 +1750,10 @@
       // A NODE LETTER, or a short host - never the whole tunnel URL (13:05: it was 46 characters of it across
       // the price). The letter is what a reader needs; the host, cut to its first label and 14 characters, is
       // enough to tell two tunnels apart.
-      const shortHost = (u) => {
-        try {
-          const h = new URL(u).hostname.split('.')[0];
-          return h.length > 14 ? h.slice(0, 13) + '\u2026' : h;
-        } catch (e) { return String(u || '').slice(0, 14); }
-      };
-      const which = /blwp-b|:8091/.test(where) ? 'B' : /blwp-a|:8090/.test(where) ? 'A' : shortHost(where);
+      // the node's letter from this page's list; a host not in it by its whole first label, never cut
+      const hostOf = (u) => { try { return new URL(u).host + new URL(u).pathname.replace(/\/+$/, ''); } catch (e) { return String(u || ''); } };
+      const at = pageNodes().findIndex((n) => hostOf(n) === hostOf(String(where).replace(/^ws/, 'http')));
+      const which = at >= 0 ? nodeLetter(at) : (() => { try { return new URL(where).hostname.split('.')[0]; } catch (e) { return String(where || 'node'); } })();
       const sock = c.sock && c.sock.readyState === 1 ? 'up' : (c.state || 'no socket');
       return 'play · ' + which + ' ' + sock;
     }
@@ -1759,7 +1761,8 @@
       const el = document.getElementById('blwp-players');
       if (!el) return;
       if (window.BLWP_CARD_UP && window.BLWP_UNITY_LOBBY && window.BLWP_UNITY_LOBBY.showing) window.BLWP_CARD_UP = false;
-      if (!window.BLWP_ROUND || window.BLWP_CARD_UP) { el.style.display = 'none'; return; }
+      // hidden while the cargo panel is open (the owner 2026-09-26 14:02) - the pads and TRUCK FULL stay; this line does not
+      if (!window.BLWP_ROUND || window.BLWP_CARD_UP || window.BLWP_LOADOUT_OPEN) { el.style.display = 'none'; return; }
       el.style.display = 'block';
       const inst = window.unityInstance;
       const mod = (inst && inst.Module) || (typeof Module !== 'undefined' ? Module : window.Module);
@@ -1776,7 +1779,7 @@
       // mean the picture is right and the camera is pointed elsewhere.
       const at = (typeof BLWPCLIENT !== 'undefined' && BLWPCLIENT.newestPose && net)
         ? BLWPCLIENT.newestPose(net.ghosts) : null;
-      const ab = ['A', 'B'].map((n) => n + ' ' + (nodeHealth[n] || '…')).join(' · ');
+      const ab = ['A', 'B'].map((n) => n + ' ' + (nodeHealth[n] || 'checking')).join(' · ');
       // AND WHETHER THIS TAB'S OWN INPUTS ARE LANDING. A tab whose batches the
       // node refuses keeps its socket, its player count and its driving, and
       // loses only every watcher's picture of it - frozen at the last tick that

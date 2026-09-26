@@ -45,6 +45,7 @@ namespace Blwp
         [DllImport("__Internal")] private static extern int BlwpSolids(IntPtr ptr, int cap);
         [DllImport("__Internal")] private static extern int BlwpCopyReplay();
         [DllImport("__Internal")] private static extern int BlwpReplayCopied();
+        [DllImport("__Internal")] private static extern void BlwpLoadoutOpen(int open);
         public const bool Compiled = true;
 #else
         private static int BlwpInit(int seed) => 0;
@@ -64,6 +65,7 @@ namespace Blwp
         private static int BlwpSolids(IntPtr ptr, int cap) => 0;
         private static int BlwpCopyReplay() => 0;
         private static int BlwpReplayCopied() => 0;
+        private static void BlwpLoadoutOpen(int open) { }
         private static int BlwpReadImpact() => 0;
         private static int BlwpSubmitLoad(int f, int b) => 0;
         private static int BlwpSubmitSample(int price) => 0;
@@ -203,6 +205,9 @@ namespace Blwp
 
         /// <summary>Whether the page's clipboard now holds the link the last copy was handed (its write resolved).</summary>
         public static bool ReplayCopied => BlwpReplayCopied() == 1;
+
+        /// <summary>Tells the page the cargo panel opened or closed, so it hides its node strip meanwhile.</summary>
+        public static void LoadoutOpen(bool open) => BlwpLoadoutOpen(open ? 1 : 0);
 
         public static int Solids(int[] into)
         {
