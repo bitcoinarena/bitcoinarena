@@ -10,7 +10,7 @@
    "exposure": 4153530,
    "elapsed": 412,
    "cargo": 13107,
-   "delivered": 59
+   "delivered": 5941800
   },
   {
    "lane": -30,
@@ -34,7 +34,7 @@
    "exposure": 6847498,
    "elapsed": 6145,
    "cargo": 45875,
-   "delivered": 145
+   "delivered": 14505599
   },
   {
    "lane": -30,
@@ -46,7 +46,7 @@
    "exposure": 9321952,
    "elapsed": 7892,
    "cargo": 62259,
-   "delivered": 209
+   "delivered": 20868033
   },
   {
    "lane": -30,
@@ -58,7 +58,7 @@
    "exposure": 3762419,
    "elapsed": 6412,
    "cargo": 13107,
-   "delivered": 22
+   "delivered": 2182451
   },
   {
    "lane": -30,
@@ -82,7 +82,7 @@
    "exposure": 491281,
    "elapsed": 10712,
    "cargo": 45875,
-   "delivered": 6
+   "delivered": 597128
   },
   {
    "lane": -30,
@@ -94,7 +94,7 @@
    "exposure": 1737917,
    "elapsed": 10712,
    "cargo": 62259,
-   "delivered": 29
+   "delivered": 2866274
   },
   {
    "lane": -20,
@@ -106,7 +106,7 @@
    "exposure": 5322106,
    "elapsed": 3412,
    "cargo": 29491,
-   "delivered": 131
+   "delivered": 13053403
   },
   {
    "lane": -20,
@@ -118,7 +118,7 @@
    "exposure": 6235,
    "elapsed": 4270,
    "cargo": 45875,
-   "delivered": 0
+   "delivered": 19180
   },
   {
    "lane": -20,
@@ -130,7 +130,7 @@
    "exposure": 3571930,
    "elapsed": 9145,
    "cargo": 62259,
-   "delivered": 69
+   "delivered": 6900293
   },
   {
    "lane": -20,
@@ -142,7 +142,7 @@
    "exposure": 4154567,
    "elapsed": 9145,
    "cargo": 13107,
-   "delivered": 17
+   "delivered": 1689720
   },
   {
    "lane": -20,
@@ -154,7 +154,7 @@
    "exposure": 1572586,
    "elapsed": 10712,
    "cargo": 29491,
-   "delivered": 12
+   "delivered": 1228606
   },
   {
    "lane": -20,
@@ -178,7 +178,7 @@
    "exposure": 2960398,
    "elapsed": 3145,
    "cargo": 62259,
-   "delivered": 166
+   "delivered": 16629453
   },
   {
    "lane": -20,
@@ -190,7 +190,7 @@
    "exposure": 3371685,
    "elapsed": 4892,
    "cargo": 13107,
-   "delivered": 26
+   "delivered": 2563381
   },
   {
    "lane": -10.2,
@@ -202,7 +202,7 @@
    "exposure": 2959527,
    "elapsed": 6412,
    "cargo": 45875,
-   "delivered": 60
+   "delivered": 6008339
   },
   {
    "lane": -10.2,
@@ -214,7 +214,7 @@
    "exposure": 201545,
    "elapsed": 7270,
    "cargo": 62259,
-   "delivered": 5
+   "delivered": 489752
   },
   {
    "lane": -10.2,
@@ -226,7 +226,7 @@
    "exposure": 372193,
    "elapsed": 10712,
    "cargo": 13107,
-   "delivered": 1
+   "delivered": 129248
   },
   {
    "lane": -10.2,
@@ -238,7 +238,7 @@
    "exposure": 2416242,
    "elapsed": 10712,
    "cargo": 29491,
-   "delivered": 19
+   "delivered": 1887718
   },
   {
    "lane": -10.2,
@@ -250,7 +250,7 @@
    "exposure": 253139,
    "elapsed": 412,
    "cargo": 45875,
-   "delivered": 13
+   "delivered": 1267350
   },
   {
    "lane": -10.2,
@@ -262,7 +262,7 @@
    "exposure": 110539,
    "elapsed": 1270,
    "cargo": 62259,
-   "delivered": 8
+   "delivered": 750975
   },
   {
    "lane": -10.2,
@@ -274,7 +274,7 @@
    "exposure": 3610890,
    "elapsed": 6145,
    "cargo": 13107,
-   "delivered": 22
+   "delivered": 2185515
   },
   {
    "lane": -10.2,
@@ -286,7 +286,7 @@
    "exposure": 7425445,
    "elapsed": 7892,
    "cargo": 29491,
-   "delivered": 79
+   "delivered": 7873685
   },
   {
    "lane": -6,
@@ -298,7 +298,7 @@
    "exposure": 1877229,
    "elapsed": 10712,
    "cargo": 62259,
-   "delivered": 31
+   "delivered": 3095936
   },
   {
    "lane": -6,
@@ -310,7 +310,7 @@
    "exposure": 376950,
    "elapsed": 10712,
    "cargo": 13107,
-   "delivered": 1
+   "delivered": 130850
   },
   {
    "lane": -6,
@@ -322,7 +322,7 @@
    "exposure": 168822,
    "elapsed": 3145,
    "cargo": 29491,
-   "delivered": 4
+   "delivered": 449212
   },
   {
    "lane": -6,
@@ -334,7 +334,7 @@
    "exposure": 1407608,
    "elapsed": 4892,
    "cargo": 45875,
-   "delivered": 37
+   "delivered": 3745658
   },
   {
    "lane": -6,
@@ -346,7 +346,7 @@
    "exposure": 50644,
    "elapsed": 3412,
    "cargo": 62259,
-   "delivered": 3
+   "delivered": 261694
   },
   {
    "lane": -6,
@@ -358,7 +358,7 @@
    "exposure": 321159,
    "elapsed": 4270,
    "cargo": 13107,
-   "delivered": 3
+   "delivered": 279668
   },
   {
    "lane": -6,
@@ -370,7 +370,7 @@
    "exposure": 5991680,
    "elapsed": 9145,
    "cargo": 29491,
-   "delivered": 55
+   "delivered": 5482975
   },
   {
    "lane": -6,
@@ -382,7 +382,7 @@
    "exposure": 6208548,
    "elapsed": 9145,
    "cargo": 45875,
-   "delivered": 88
+   "delivered": 8837744
   },
   {
    "lane": 0,
@@ -394,7 +394,7 @@
    "exposure": 693170,
    "elapsed": 412,
    "cargo": 13107,
-   "delivered": 10
+   "delivered": 991500
   },
   {
    "lane": 0,
@@ -406,7 +406,7 @@
    "exposure": 1285164,
    "elapsed": 1270,
    "cargo": 29491,
-   "delivered": 41
+   "delivered": 4136400
   },
   {
    "lane": 0,
@@ -418,7 +418,7 @@
    "exposure": 2553,
    "elapsed": 6145,
    "cargo": 45875,
-   "delivered": 0
+   "delivered": 5331
   },
   {
    "lane": 0,
@@ -430,7 +430,7 @@
    "exposure": 735517,
    "elapsed": 7892,
    "cargo": 62259,
-   "delivered": 16
+   "delivered": 1646401
   },
   {
    "lane": 0,
@@ -454,7 +454,7 @@
    "exposure": 1372097,
    "elapsed": 7270,
    "cargo": 29491,
-   "delivered": 16
+   "delivered": 1579497
   },
   {
    "lane": 0,
@@ -466,7 +466,7 @@
    "exposure": 9199093,
    "elapsed": 10712,
    "cargo": 45875,
-   "delivered": 112
+   "delivered": 11179258
   },
   {
    "lane": 0,
@@ -478,7 +478,7 @@
    "exposure": 5513102,
    "elapsed": 10712,
    "cargo": 62259,
-   "delivered": 91
+   "delivered": 9092734
   },
   {
    "lane": 6,
@@ -490,7 +490,7 @@
    "exposure": 371832,
    "elapsed": 3412,
    "cargo": 29491,
-   "delivered": 9
+   "delivered": 911959
   },
   {
    "lane": 6,
@@ -502,7 +502,7 @@
    "exposure": 2987077,
    "elapsed": 4270,
    "cargo": 45875,
-   "delivered": 91
+   "delivered": 9106191
   },
   {
    "lane": 6,
@@ -526,7 +526,7 @@
    "exposure": 163011,
    "elapsed": 9145,
    "cargo": 13107,
-   "delivered": 1
+   "delivered": 66272
   },
   {
    "lane": 6,
@@ -550,7 +550,7 @@
    "exposure": 2987730,
    "elapsed": 10712,
    "cargo": 45875,
-   "delivered": 36
+   "delivered": 3630933
   },
   {
    "lane": 6,
@@ -562,7 +562,7 @@
    "exposure": 9613690,
    "elapsed": 3145,
    "cargo": 62259,
-   "delivered": 540
+   "delivered": 54004489
   },
   {
    "lane": 6,
@@ -574,7 +574,7 @@
    "exposure": 2130326,
    "elapsed": 4892,
    "cargo": 13107,
-   "delivered": 16
+   "delivered": 1619632
   },
   {
    "lane": 10.2,
@@ -586,7 +586,7 @@
    "exposure": 164117,
    "elapsed": 6412,
    "cargo": 45875,
-   "delivered": 3
+   "delivered": 333371
   },
   {
    "lane": 10.2,
@@ -598,7 +598,7 @@
    "exposure": 6023787,
    "elapsed": 7270,
    "cargo": 62259,
-   "delivered": 146
+   "delivered": 14638540
   },
   {
    "lane": 10.2,
@@ -622,7 +622,7 @@
    "exposure": 18461,
    "elapsed": 10712,
    "cargo": 29491,
-   "delivered": 0
+   "delivered": 14418
   },
   {
    "lane": 10.2,
@@ -646,7 +646,7 @@
    "exposure": 6326555,
    "elapsed": 1270,
    "cargo": 62259,
-   "delivered": 430
+   "delivered": 42987975
   },
   {
    "lane": 10.2,
@@ -658,7 +658,7 @@
    "exposure": 5341079,
    "elapsed": 6145,
    "cargo": 13107,
-   "delivered": 32
+   "delivered": 3232704
   },
   {
    "lane": 10.2,
@@ -670,7 +670,7 @@
    "exposure": 1856544,
    "elapsed": 7892,
    "cargo": 29491,
-   "delivered": 20
+   "delivered": 1968699
   },
   {
    "lane": 20,
@@ -694,7 +694,7 @@
    "exposure": 6461996,
    "elapsed": 10712,
    "cargo": 13107,
-   "delivered": 22
+   "delivered": 2243679
   },
   {
    "lane": 20,
@@ -742,7 +742,7 @@
    "exposure": 7544489,
    "elapsed": 4270,
    "cargo": 13107,
-   "delivered": 66
+   "delivered": 6571553
   },
   {
    "lane": 20,
@@ -754,7 +754,7 @@
    "exposure": 2846840,
    "elapsed": 9145,
    "cargo": 29491,
-   "delivered": 26
+   "delivered": 2605138
   },
   {
    "lane": 20,
@@ -766,7 +766,7 @@
    "exposure": 694304,
    "elapsed": 9145,
    "cargo": 45875,
-   "delivered": 10
+   "delivered": 988406
   },
   {
    "lane": 30,
@@ -790,7 +790,7 @@
    "exposure": 8793936,
    "elapsed": 1270,
    "cargo": 29491,
-   "delivered": 283
+   "delivered": 28304775
   },
   {
    "lane": 30,
@@ -838,7 +838,7 @@
    "exposure": 6213123,
    "elapsed": 7270,
    "cargo": 29491,
-   "delivered": 72
+   "delivered": 7151790
   },
   {
    "lane": 30,
@@ -850,7 +850,7 @@
    "exposure": 568981,
    "elapsed": 10712,
    "cargo": 45875,
-   "delivered": 7
+   "delivered": 691424
   },
   {
    "lane": 30,
@@ -862,7 +862,7 @@
    "exposure": 53115,
    "elapsed": 10712,
    "cargo": 62259,
-   "delivered": 1
+   "delivered": 87507
   }
  ]
 }

@@ -93,33 +93,35 @@ export const timeFactor = (ticks) =>
                      T_FLOOR, T_CEIL);
 
 /**
- * The score itself, in whole points.
+ * THE FACTORS ON THE GRID THE CARD PRINTS, AND THE SCORE THEIR PRODUCT (the owner 2026-09-25: "Their product is the score,
+ * so the core's score is that product"; multiplayer_p2p.md §18A.3: score = 1000 · E · T · C).
  *
- * `cargo` is bed fill in Q16.16. Returned as an integer because a score is
- * counted, not measured, and because a fractional score would be one more
- * thing two implementations could round differently.
+ * Each factor is an integer count of 1e-5 (FACTOR_SCALE), formed from the core's own word and rounded once, half up:
+ *   E5 = S_EXPOSURE held to the 320 m reference, over that reference     0 .. 100000
+ *   T5 = 3900 over S_ELAPSED held to 2600 .. 15600 ticks                 25000 .. 150000
+ *   C5 = S_CARGO held to 0 .. ONE, over ONE                              0 .. 100000
+ * and the score is 1000 · E · T · C of those, kept as an integer count of 1e-5 points (SCORE_SCALE): E5·T5·C5 / 1e7,
+ * rounded once, half up. So the product of the factors as the card prints them, to five decimals, IS the score to five
+ * decimals - one number, not a product beside a rounded one.
+ *
+ * WHAT MOVED, AND WHY: this returned whole points - 1000·E·T·C carried in Q16.16 and rounded to an integer at the end -
+ * so a run whose exact product was 7.49984 scored 7 while its factors, printed to five decimals (E 0.02500, T 1.50000,
+ * C 0.20000), multiplied to 7.50000: two numbers for one score. The factors now live on the printed grid and the score
+ * is their product; nothing is floored or rounded to a whole point.
+ *
+ * Exact in JS numbers: E5·T5·C5 <= 1e5 · 1.5e5 · 1e5 = 1.5e15 < 2^53, and every quotient is an integer division of
+ * integers under 2^53 whose fractional parts are at least 1/D apart - far wider than the division's own rounding.
+ * A score of 1500 points is 150000000 in these units, well inside the i32 word and the result's u32.
  */
+export const FACTOR_SCALE = 100000;
+export const SCORE_SCALE = 100000;
+const divRoundInt = (n, d) => Math.floor((2 * n + d) / (2 * d));
+export const exposure5 = (exposure) => divRoundInt(clamp(exposure, 0, EXPOSURE_REFERENCE) * FACTOR_SCALE, EXPOSURE_REFERENCE);
+export const time5 = (ticks) => divRoundInt(REFERENCE_TICKS * FACTOR_SCALE, clamp(ticks | 0, T_TICKS_MIN, T_TICKS_MAX));
+export const cargo5 = (cargo) => divRoundInt(clamp(cargo, 0, ONE) * FACTOR_SCALE, ONE);
+
 export function scoreOf(exposure, ticks, cargo) {
-  // NO FACTOR IS EVER FORMED ON ITS OWN. `exposureFactor` and `timeFactor`
-  // below are the readable statement of the rule and stay the tested ones, but
-  // each returns a fraction of at most 1.0 in Q16.16, quantised to 1.5e-5 -
-  // and this score multiplies by a thousand, which scales that error to 0.015
-  // points. Carrying the thousand from the first step instead, and rounding
-  // only at the end of each divide, leaves a grid of 1/65536 of a point.
-  //
-  // Both clamps survive the move. Exposure is clamped to the reference before
-  // dividing, which is the same as clamping the ratio at 1. Time is clamped on
-  // the TICKS, not the factor: T is 3900/ticks held to [0.25, 1.5], so ticks
-  // held to [2600, 15600] says the identical thing exactly, and it also gives
-  // an instant run its 1.5 without a separate branch.
-  //
-  // Magnitudes, since `mulDivRound` is only exact under 2^53: the largest
-  // intermediate is 1000 ONE * 190 ONE = 8.2e14, and no result passes 1500 ONE.
-  const ex = clamp(exposure, 0, EXPOSURE_REFERENCE);
-  const tk = clamp(ticks | 0, T_TICKS_MIN, T_TICKS_MAX);
-  const c = clamp(cargo, 0, ONE);
-  const scaled = mulDivRound(Math.imul(1000, ONE), ex, EXPOSURE_REFERENCE);
-  return toIntRound(mulRound(mulDivRound(scaled, REFERENCE_TICKS, tk), c));
+  return divRoundInt(exposure5(exposure) * time5(ticks) * cargo5(cargo), 10000000);
 }
 
 /**

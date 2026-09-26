@@ -57,7 +57,7 @@ public class ArrivalCardWordsTests
             StringAssert.Contains("load 0.83", DriveHud.ArrivalWorkLine(false, 0.83f, 1f, 1.5f));
             StringAssert.Contains("speed 1.50", DriveHud.ArrivalWorkLine(false, 0.83f, 1f, 1.5f));
             StringAssert.Contains("4,123,456 sat", DriveHud.ArrivalHeadline(false, 4123456));
-            StringAssert.Contains("+1,234", DriveHud.ArrivalScoreLine(false, 1234));
+            StringAssert.Contains("+1,234.00000", DriveHud.ArrivalScoreLine(false, 123400000));
         }
         finally { Thread.CurrentThread.CurrentCulture = was; }
     }
@@ -155,6 +155,12 @@ public class ArrivalCardWordsTests
         finally { Object.DestroyImmediate(hud.gameObject); }
     }
 
+    // THE CORE'S SCORE IS THE PRODUCT OF ITS FACTORS (the owner 2026-09-25): 1000 x C x E x T of the factors as printed, in
+    // exact decimal arithmetic, rounded to five decimals half up - score.js's divRoundInt - is the score.
+    static decimal Product5(string c, string e, string t) =>
+        decimal.Round(1000m * decimal.Parse(c, CultureInfo.InvariantCulture) * decimal.Parse(e, CultureInfo.InvariantCulture)
+                      * decimal.Parse(t, CultureInfo.InvariantCulture), 5, System.MidpointRounding.AwayFromZero);
+
     // THE CARD'S PRODUCT IS THE CORE'S SCORE (the owner 2026-09-25: "load C x danger E x speed T x 1000 = S"). The 72
     // DELIVERED runs of packages/core/test/fixtures/arrival-card-runs.json - the core's own words, kept current by
     // core/test/arrival-card-runs.test.js - go through the real formatter; the four decimals are read back off the
@@ -172,22 +178,19 @@ public class ArrivalCardWordsTests
         Assert.IsTrue(System.Array.Exists(runs, r => CoreScoreFactors.Time(r.elapsed) < 1.5f), "no run has T below 1.5");
         Assert.IsTrue(System.Array.Exists(runs, r => r.cargo != 45875), "every run carries the default cargo 0.70");
         var row = new System.Text.RegularExpressions.Regex(
-            @"^load (\d\.\d{5})\s+×\s+danger (\d\.\d{5})\s+×\s+speed (\d\.\d{5})\s+×\s+1000\s+=\s+([\d,]+)$");
+            @"^load (\d\.\d{5})\s+×\s+danger (\d\.\d{5})\s+×\s+speed (\d\.\d{5})\s+×\s+1000\s+=\s+([\d,]+\.\d{5})$");
         foreach (var r in runs)
         {
             float c = CoreScoreFactors.Cargo(r.cargo), e = CoreScoreFactors.Exposure(r.exposure), t = CoreScoreFactors.Time(r.elapsed);
             string line = DriveHud.ArrivalWorkLine(false, c, e, t, r.delivered);
             var m = row.Match(line);
             Assert.IsTrue(m.Success, $"lane {r.lane} seed {r.seed}: the row does not read 'load C x danger E x speed T x 1000 = S': {line}");
-            double pc = double.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
-            double pe = double.Parse(m.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture);
-            double pt = double.Parse(m.Groups[3].Value, System.Globalization.CultureInfo.InvariantCulture);
-            int printed = int.Parse(m.Groups[4].Value.Replace(",", ""), System.Globalization.CultureInfo.InvariantCulture);
-            Assert.AreEqual(r.delivered, printed, $"lane {r.lane} seed {r.seed}: the printed S is not the core's S_DELIVERED");
-            Assert.AreEqual(printed, (int)System.Math.Round(1000.0 * pc * pe * pt, System.MidpointRounding.AwayFromZero),
-                $"lane {r.lane} seed {r.seed}: {line} - the printed product is {1000.0 * pc * pe * pt:0.000}, not the printed S");
-            StringAssert.Contains("+" + printed.ToString("N0", System.Globalization.CultureInfo.InvariantCulture),
-                DriveHud.ArrivalScoreLine(false, r.delivered), "the SCORE line and the product row name different numbers");
+            decimal printed = decimal.Parse(m.Groups[4].Value.Replace(",", ""), CultureInfo.InvariantCulture);
+            Assert.AreEqual(r.delivered / 100000m, printed, $"lane {r.lane} seed {r.seed}: the printed S is not the core's S_DELIVERED");
+            Assert.AreEqual(printed, Product5(m.Groups[1].Value, m.Groups[2].Value, m.Groups[3].Value),
+                $"lane {r.lane} seed {r.seed}: {line} - the product of the printed factors is not the printed S");
+            StringAssert.Contains("+" + CoreScoreFactors.Points(r.delivered), DriveHud.ArrivalScoreLine(false, r.delivered),
+                "the SCORE line and the product row name different numbers");
         }
     }
 }

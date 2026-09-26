@@ -180,11 +180,11 @@ public class DriveHud : MonoBehaviour
                 ? $"CARGO  {bay.Count} parcels  ·  {bay.FeeCarried:N0} sat" : "CARGO  empty";
             string tailNow = runScore == null
                 ? $"{gate.Runs} runs delivered"
-                : $"best {runScore.Best:N0}  ·  {gate.Runs} runs  ·  {gate.SatsDelivered:N0} sat";
+                : $"best {CoreScoreFactors.Points(runScore.Best)}  ·  {gate.Runs} runs  ·  {gate.SatsDelivered:N0} sat";
             float widest = Mathf.Max(under.CalcSize(new GUIContent(longest)).x,
                                      under.CalcSize(new GUIContent(tailNow)).x);
-            widest = Mathf.Max(widest, banked.CalcSize(new GUIContent("BANKED  000,000")).x);
-            widest = Mathf.Max(widest, score.CalcSize(new GUIContent("SCORE  000,000")).x);
+            widest = Mathf.Max(widest, banked.CalcSize(new GUIContent("BANKED  0,000.00000")).x);
+            widest = Mathf.Max(widest, score.CalcSize(new GUIContent("SCORE  0,000.00000")).x);
             if (widest > width && widest > 1f)
             {
                 float k = width / widest;
@@ -196,7 +196,7 @@ public class DriveHud : MonoBehaviour
 
         string tail = runScore == null
             ? $"{gate.Runs} runs delivered"
-            : $"best {runScore.Best:N0}  ·  {gate.Runs} runs  ·  {gate.SatsDelivered:N0} sat";
+            : $"best {CoreScoreFactors.Points(runScore.Best)}  ·  {gate.Runs} runs  ·  {gate.SatsDelivered:N0} sat";
         Shadowed(Row(under.fontSize * 1.5f), tail, under, new Color(1f, 1f, 1f, 0.7f));
 
         // The condition, in small type, directly under the two figures it
@@ -209,13 +209,13 @@ public class DriveHud : MonoBehaviour
 
         // BANKED: what is actually yours. Green, and it never goes down.
         if (runScore != null)
-            Shadowed(Row(banked.fontSize * 1.3f), $"BANKED  {runScore.Total:N0}", banked, Up);
+            Shadowed(Row(banked.fontSize * 1.3f), $"BANKED  {CoreScoreFactors.Points(runScore.Total)}", banked, Up);
 
         // SCORE: what the current run would add. Amber, because a wreck takes
         // all of it - the colour is the warning, the line beneath says why.
         var tint = live ? new Color(1f, 0.82f, 0.30f) : new Color(1f, 1f, 1f, 0.45f);
         if (live && runScore.Projected <= 0) tint = new Color(1f, 0.45f, 0.40f);
-        Shadowed(Row(score.fontSize * 1.25f), $"SCORE  {pending:N0}", score, tint);
+        Shadowed(Row(score.fontSize * 1.25f), $"SCORE  {CoreScoreFactors.Points(pending)}", score, tint);
 
         Shadowed(Row(under.fontSize * 1.5f), bay.IsLoaded
                      ? $"CARGO  {bay.Count} parcels  ·  {bay.FeeCarried:N0} sat"
@@ -1001,7 +1001,7 @@ public class DriveHud : MonoBehaviour
                : "DELIVERED  " + sat.ToString("N0", CultureInfo.InvariantCulture) + " sat to the miners";
 
     public static string ArrivalScoreLine(bool missed, int score) =>
-        missed ? "SCORE  0" : "SCORE  +" + score.ToString("N0", CultureInfo.InvariantCulture);
+        missed ? "SCORE  0" : "SCORE  +" + CoreScoreFactors.Points(score);
 
     /// <summary>
     /// THE CORE'S FACTORS AND THEIR PRODUCT (the owner 2026-09-25: "load C x danger E x speed T x 1000 = S"). C, E and T to
@@ -1018,7 +1018,7 @@ public class DriveHud : MonoBehaviour
                : "load " + cargo.ToString("0.00000", CultureInfo.InvariantCulture)
                  + "   ×   danger " + exposure.ToString("0.00000", CultureInfo.InvariantCulture)
                  + "   ×   speed " + time.ToString("0.00000", CultureInfo.InvariantCulture)
-                 + "   ×  1000" + (score.HasValue ? "  =  " + score.Value.ToString("N0", CultureInfo.InvariantCulture) : "");
+                 + "   ×  1000" + (score.HasValue ? "  =  " + CoreScoreFactors.Points(score.Value) : "");
 
     // NOT "your stake came back". There is no stake in this game: nobody deposits anything, so nothing returns. That
     // was multiplayer vocabulary imported into a build that has no multiplayer, and it described a mechanic the
