@@ -240,11 +240,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // directory outside the checkout, <hash>.js per core (tools/archive-replay-cores.mjs fills it from history). This node
   // writes its own core there when it starts, so the next tree it runs keeps this one.
   replayCores = process.env.BLWP_REPLAY_CORES_DIR || null,
-  // THE STABLE NAMES A COPIED REPLAY LINK USES (the owner 2026-09-26 13:28: a quick tunnel's name changes on every start,
-  // so a link on it dies; "the button must copy the stable Funnel name ... https://seat.example.com/blwp-a or
-  // /blwp-b, the path the page is published under"): the https bases of the nodes that hold these rounds, comma-separated
-  // in BLWP_REPLAY_PUBLIC. /replay/nodes answers them first, as `stable`; the page copies from them when there are any.
-  replayPublic = (process.env.BLWP_REPLAY_PUBLIC || '').split(',').map((u) => u.trim().replace(/\/+$/, '')).filter((u) => /^https:\/\//.test(u)) } = {}) {
+  // THE BASE A COPIED REPLAY LINK NAMES (the owner 2026-09-26 13:28 and 13:44): this node's public address under the one
+  // setting that says how it is reached (src/reach.js, BLWP_REACH - direct, trycloudflare or tailscale), handed in by
+  // its launcher. /replay/nodes answers it first, as `stable`; the page copies from it when there is one.
+  replayPublic = [] } = {}) {
   // THE CORES THIS SIGNER NODE RUNS (M3 R1), made once: the round store opens only rounds on them, and the door,
   // the replay and the ghosts resolve each round's core through the same registry.
   const installed = installedCores(cores);

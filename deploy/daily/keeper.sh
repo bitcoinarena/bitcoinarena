@@ -63,7 +63,15 @@ auth() {
   WHY=""
 }
 
+# HOW THE SIGNER NODES ARE REACHED (the owner 2026-09-26 13:44): BLWP_REACH in $D/reach.env - direct, trycloudflare or
+# tailscale - the file the signer nodes' unit reads too. Only a quick tunnel's name changes on a restart, so only in
+# trycloudflare mode does the keeper follow the tunnels (unset keeps the old behaviour, which was that mode).
+REACHF="$D/reach.env"
+reach_mode() { sed -n 's/^BLWP_REACH=//p' "$REACHF" 2>/dev/null | tail -1; }
+
 while true; do
+  M=$(reach_mode)
+  if [ -n "$M" ] && [ "$M" != trycloudflare ]; then sleep 30; continue; fi
   A=$(tunnel a); B=$(tunnel b)
   if [ -n "$A" ] && [ -n "$B" ]; then
     WANT="BLWP_WSS_18080=wss://${A#https://}
