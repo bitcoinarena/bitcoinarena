@@ -44,6 +44,7 @@ namespace Blwp
         [DllImport("__Internal")] private static extern int BlwpTerrainAt(int x, int z);
         [DllImport("__Internal")] private static extern int BlwpSolids(IntPtr ptr, int cap);
         [DllImport("__Internal")] private static extern int BlwpCopyReplay();
+        [DllImport("__Internal")] private static extern int BlwpReplayCopied();
         public const bool Compiled = true;
 #else
         private static int BlwpInit(int seed) => 0;
@@ -62,6 +63,7 @@ namespace Blwp
         private static int BlwpTakeImpact() => 0;
         private static int BlwpSolids(IntPtr ptr, int cap) => 0;
         private static int BlwpCopyReplay() => 0;
+        private static int BlwpReplayCopied() => 0;
         private static int BlwpReadImpact() => 0;
         private static int BlwpSubmitLoad(int f, int b) => 0;
         private static int BlwpSubmitSample(int price) => 0;
@@ -198,6 +200,9 @@ namespace Blwp
         /// page was handed the run, 0 when there is no networked run (or no page) to copy a replay of.
         /// </summary>
         public static int CopyReplay() => BlwpCopyReplay();
+
+        /// <summary>Whether the page's clipboard now holds the link the last copy was handed (its write resolved).</summary>
+        public static bool ReplayCopied => BlwpReplayCopied() == 1;
 
         public static int Solids(int[] into)
         {
