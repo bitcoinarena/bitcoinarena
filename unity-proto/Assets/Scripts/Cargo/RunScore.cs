@@ -362,7 +362,10 @@ public class RunScore : MonoBehaviour
             LastTime = TimeFactor;
             LastCargo = CargoFactor;
         }
-        LastScore = Projected;
+        // THE SCORE IS THE CORE'S OWN WORD (the arrival card, the owner 2026-09-25: "S on the card is the S_DELIVERED integer
+        // as-is"): measured, S_EXPOSURE, S_ELAPSED, S_CARGO and S_DELIVERED do not move after DELIVERED (72 runs, 600 ticks
+        // each, throttle, idle and steering), so the words read here are the delivery tick's.
+        LastScore = Blwp.BlwpCore.Available ? Blwp.BlwpCore.DeliveredScore : Projected;
         Total += LastScore;
         if (LastScore > Best) Best = LastScore;
         SinceDelivery = 0f;
@@ -396,13 +399,33 @@ public static class CoreScoreFactors
     public const int TicksMax = 15600;                    // score.js T_TICKS_MAX (T = 0.25)
     const float One = 65536f;                             // Q16.16
 
-    /// <summary>E: the exposure word in metres over the 320 m reference, held to 0..1.</summary>
-    public static float Exposure(int exposureWord) => Mathf.Clamp01(exposureWord / One / ExposureReferenceMetres);
+    // THE FACTORS ON THE CORE'S GRID (the owner 2026-09-25: "Their product is the score, so the core's score is that product"):
+    // score.js forms each factor as an integer count of 1e-5 - exposure5, time5, cargo5 - rounded once, half up, and the
+    // score as their product in 1e-5 points. These are the same integer rules, so the card prints the core's factors
+    // exactly and does not round a factor of its own; nothing here scores.
+    public const int FactorScale = 100000;               // score.js FACTOR_SCALE
+    public const int ScoreScale = 100000;                // score.js SCORE_SCALE: the score is kept in 1e-5 points
+    const long ReferenceWord = 320L * 65536;
+    static long DivRound(long n, long d) => (2 * n + d) / (2 * d);          // n, d >= 0: score.js divRoundInt
 
-    /// <summary>T: 3900 over the elapsed ticks, the ticks held to 2600..15600 (so T to 1.5..0.25).</summary>
-    public static float Time(int elapsedTicks) => (float)ReferenceTicks / Mathf.Clamp(elapsedTicks, TicksMin, TicksMax);
+    /// <summary>E, as score.js exposure5: the exposure word held to the 320 m reference, over it, in 1e-5.</summary>
+    public static int Exposure5(int exposureWord) => (int)DivRound(System.Math.Min(System.Math.Max(exposureWord, 0L), ReferenceWord) * FactorScale, ReferenceWord);
+    /// <summary>T, as score.js time5: 3900 over the elapsed ticks held to 2600..15600, in 1e-5.</summary>
+    public static int Time5(int elapsedTicks) => (int)DivRound((long)ReferenceTicks * FactorScale, Mathf.Clamp(elapsedTicks, TicksMin, TicksMax));
+    /// <summary>C, as score.js cargo5: the core's cargo word held to 0..ONE, over ONE, in 1e-5.</summary>
+    public static int Cargo5(int cargoWord) => (int)DivRound(System.Math.Min(System.Math.Max(cargoWord, 0L), 65536L) * FactorScale, 65536L);
 
-    /// <summary>C: the core's cargo word, held to 0..1.</summary>
-    public static float Cargo(int cargoWord) => Mathf.Clamp01(cargoWord / One);
+    /// <summary>E: the exposure word in metres over the 320 m reference, held to 0..1, on the core's 1e-5 grid.</summary>
+    public static float Exposure(int exposureWord) => Exposure5(exposureWord) / (float)FactorScale;
+
+    /// <summary>T: 3900 over the elapsed ticks, the ticks held to 2600..15600 (so T to 1.5..0.25), on the 1e-5 grid.</summary>
+    public static float Time(int elapsedTicks) => Time5(elapsedTicks) / (float)FactorScale;
+
+    /// <summary>C: the core's cargo word, held to 0..1, on the 1e-5 grid.</summary>
+    public static float Cargo(int cargoWord) => Cargo5(cargoWord) / (float)FactorScale;
+
+    /// <summary>A score in points as the core keeps it (1e-5 points), printed to its five decimals: 13715869 is "137.15869".</summary>
+    public static string Points(long scoreUnits) =>
+        (scoreUnits / (decimal)ScoreScale).ToString("#,0.00000", System.Globalization.CultureInfo.InvariantCulture);
 }
 
