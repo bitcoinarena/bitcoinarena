@@ -28,6 +28,14 @@
   #score-big { margin: 8px 0 4px; font-weight: 800; color: #ffd24d; font-size: clamp(30px, 9vw, 56px); line-height: 1.1; }
   #score-big small { font-size: 0.45em; letter-spacing: 0.06em; margin-right: 0.4em; }
   #work { color: var(--dim); }
+  /* THE RESULT FIRST, THE DETAILS BELOW (the owner 2026-09-26 14:14): a glance says whether the round succeeded; the round,
+     the entry, the host, the ticks, the score's working and the core follow as a list - whole, wrapped, never cut */
+  #result { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+  #result .word { font-weight: 800; font-size: clamp(26px, 8vw, 44px); letter-spacing: 0.03em; }
+  #result .word.ok { color: #4ade80; } #result .word.fail { color: #ff6b6b; } #result .word.live { color: var(--dim); }
+  #result .then { color: var(--dim); font-size: 15px; }
+  #details { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 14px 0 0; font-size: 13px; }
+  #details dt { color: var(--dim); } #details dd { margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
   @media (max-width: 600px) {       /* the phone's band under the map: meters full width, larger */
     #meters { grid-template-columns: 1fr; gap: 10px; }
     .meter .label { font-size: 18px; } .meter .bar { height: 22px; }
@@ -44,15 +52,17 @@
 <div id="status">loading the run…</div>
 <canvas id="map" width="1480" height="680"></canvas>
 <div id="readout">
+  <div id="result"></div>
   <div id="meters">
-    <div class="meter"><div class="label" id="hp-label">CONDITION</div><div class="bar"><i id="hp-bar"></i></div></div>
+    <div class="meter"><div class="label" id="hp-label">HEALTH</div><div class="bar"><i id="hp-bar"></i></div></div>
     <div class="meter"><div class="label" id="danger-label">DANGER</div><div class="bar"><i id="danger-bar"></i></div></div>
   </div>
   <div id="score-big"><small>SCORE</small><span id="score-num">0.00000</span></div>
   <div id="line1">&nbsp;</div><div id="work">&nbsp;</div>
+  <dl id="details"></dl>
 </div>
 <div id="legend"><b style="color:var(--truck)">▲</b> your truck · <b style="color:var(--bull)">■</b>/<b style="color:var(--bear)">■</b> tanks ·
-  <b style="color:var(--bull)">•</b>/<b style="color:var(--bear)">•</b> infantry · ◆ helicopters · <b style="color:#ff8a65">●</b> bombs · the gate is the dashed line</div>
+  <b style="color:var(--bull)">•</b>/<b style="color:var(--bear)">•</b> infantry · ◆ helicopters · <b style="color:#ff8a65">●</b> bombs</div>
 <!-- THE PROTOCOL'S OWN DECODERS AND SEED (the client bundle), from this node - RELATIVE, so a node published under a
      path (https://host/blwp-a/replay) loads its own and not the root's. -->
 <script src="replay/client.js"></script>
@@ -225,8 +235,8 @@
     const hp = frames[o], exposure = frames[o + 1], elapsed = frames[o + 2], cargo = frames[o + 3], practice = frames[o + 4];
     const danger = five(Sc.exposure5(exposure)), speed = five(Sc.time5(elapsed)), load = five(Sc.cargo5(cargo));
     const score = points(Sc.scoreOf(exposure, elapsed, cargo));
-    const hpPct = Math.ceil(Math.max(0, hp) / ONE);   // hp is 100 at full, as the HUD's CONDITION reads it
-    document.getElementById('hp-label').textContent = `CONDITION ${hpPct}%`;
+    const hpPct = Math.ceil(Math.max(0, hp) / ONE);   // hp is 100 at full, as the HUD's HEALTH reads it
+    document.getElementById('hp-label').textContent = `HEALTH ${hpPct}%`;
     document.getElementById('hp-bar').style.width = `${Math.min(100, hpPct)}%`;
     const dangerF = Sc.exposure5(exposure) / Sc.FACTOR_SCALE;
     document.getElementById('danger-label').textContent = `DANGER \u00d7${dangerF.toFixed(2)}`;
@@ -251,7 +261,26 @@
     if (at >= transcript.ticks.length - 1) { playing = false; play.textContent = 'play'; return; }
     requestAnimationFrame(tick);
   }
-  say(`round ${round.slice(0, 16)}…, entry ${entry.slice(0, 16)}… from ${base} - ${transcript.ticks.length} ticks, ended ${ended}; core ${Array.from(contract.simCoreHash.slice(0, 6), (b) => b.toString(16).padStart(2, '0')).join('')}…`);
+  // THE RESULT, THEN THE DETAILS (the owner 2026-09-26 14:14): no one truncated paragraph, no name cut with an ellipsis
+  say('');
+  document.getElementById('status').style.display = 'none';
+  const hexOf = (u8) => Array.from(u8, (b) => b.toString(16).padStart(2, '0')).join('');
+  const res = document.getElementById('result');
+  const word = document.createElement('span');
+  word.className = 'word ' + (result.outcome === 'DELIVERED' ? 'ok' : result.outcome ? 'fail' : 'live');
+  word.textContent = result.outcome || 'LIVE';
+  const then = document.createElement('span');
+  then.className = 'then';
+  then.textContent = `score ${points(result.score)} · tick ${from + transcript.ticks.length}`;
+  res.append(word, then);
+  const lastWork = (() => { const o = (transcript.ticks.length - 1) * PER + MAP; if (!hasFactors) return ended;
+    const e = frames[o + 1], t = frames[o + 2], c = frames[o + 3];
+    return `load ${five(Sc.cargo5(c))} × danger ${five(Sc.exposure5(e))} × speed ${five(Sc.time5(t))} × 1000 = ${points(Sc.scoreOf(e, t, c))}`; })();
+  const dl = document.getElementById('details');
+  for (const [k, v] of [['Round', round], ['Entry', entry], ['Host', base], ['Ticks', `${transcript.ticks.length} (tick ${from + 1} to ${from + transcript.ticks.length})`],
+    ['Score', lastWork], ['Core', hexOf(contract.simCoreHash)]]) {
+    const dt = document.createElement('dt'); dt.textContent = k; const dd = document.createElement('dd'); dd.textContent = v; dl.append(dt, dd);
+  }
   show(0);
 })();
 </script>
