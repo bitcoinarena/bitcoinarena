@@ -496,8 +496,13 @@ public class LoadoutPanel : MonoBehaviour
         // sense. LOAD, DANGER and SPEED say the same thing and need no glossary.
         GUI.Label(new Rect(rx, top - _small.fontSize * 1.35f, rw, _small.fontSize * 1.4f),
                   "LOAD", lbl);
-        GUI.Label(new Rect(rx, top - reward.fontSize * 0.1f, rw, reward.fontSize * 1.3f),
-                  $"×{Mathf.Clamp01(bay.Fill):0.00}", reward);
+        // THE LOAD FACTOR IS THE CORE'S C (RULED 2026-09-26, A): this printed Unity's bed fill (x0.83..0.90) under
+        // LOAD x DANGER x SPEED, while the score multiplies the core's cargo word - set once, at init, to 0.70 on this
+        // core, whatever is loaded. The bed fill stays on the gauge as TRUCK FULL %, which does not enter the score. That
+        // the loadout choice does not move the score is what this core does, and the panel now says so.
+        string load = LoadLabel(Blwp.BlwpCore.CargoWord);
+        while (reward.fontSize > 12 && reward.CalcSize(new GUIContent(load)).x > rw) reward.fontSize--;
+        GUI.Label(new Rect(rx, top - reward.fontSize * 0.1f, rw, reward.fontSize * 1.3f), load, reward);
 
         // The formula, drawn in pieces so LOAD can be lit and the other two
         // left grey.
@@ -539,4 +544,8 @@ public class LoadoutPanel : MonoBehaviour
                        bay.IsLoaded ? "ROLL OUT" : "NOTHING LOADED", _btn)) Confirm();
         GUI.enabled = true;
     }
+
+    /// <summary>The panel's LOAD number: the core's C (S_CARGO on the 1e-5 grid), to the five decimals the card prints.</summary>
+    public static string LoadLabel(int cargoWord) =>
+        "×" + CoreScoreFactors.Cargo(cargoWord).ToString("0.00000", System.Globalization.CultureInfo.InvariantCulture);
 }
