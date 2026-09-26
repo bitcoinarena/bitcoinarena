@@ -46,6 +46,11 @@ if (portA === 8080 || portB === 8080) {
   console.error('8080 is signal-cli\'s port on this host: the Daily signer nodes never bind it');
   process.exit(2);
 }
+// HOW THE SIGNER NODES ARE REACHED (the owner 2026-09-26 13:44): one parameter, three values, nothing else (src/reach.js).
+if (!['direct', 'trycloudflare', 'tailscale'].includes(env.BLWP_REACH)) {
+  console.error(`BLWP_REACH names how the signer nodes are reached: direct, trycloudflare or tailscale (it is ${env.BLWP_REACH ? `"${env.BLWP_REACH}"` : 'unset'})`);
+  process.exit(2);
+}
 if (!env.RT) {
   console.error('the Daily opens its rounds on a regtest bitcoind: name its datadir as RT= (and its RPCPORT=)');
   process.exit(2);

@@ -48,6 +48,7 @@ import { bitcoindRpc, blocksOver } from '../src/chain-rpc.js';
 import { timed } from '../src/slow.js';
 import { operatorFunding, freeOrOperatorFunding } from '../src/funding.js';
 import { serve } from '../src/server.js';
+import { reachFor } from '../src/reach.js';
 import { lightningFromEnv } from '../src/lnd-settings.js';
 import { serveDonationRecipients, TEST_RECIPIENT_PORT } from '../src/lnurl-recipients.js';
 import { toHex } from '../../protocol/src/hash.js';
@@ -213,6 +214,16 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // counts. A 2-of-2 whose chain bonded one of its two nodes would be refused
   // by its own daemons, which is exactly what should happen and is why both
   // are bonded here.
+  // HOW EACH SIGNER NODE IS REACHED (the owner 2026-09-26 13:44): BLWP_REACH - direct, trycloudflare or tailscale - names
+  // every public address a node gives out: the socket its advert and bond name, its http doors in the lobby link, and
+  // the base a copied replay link names (src/reach.js). Unset, a probe keeps the old rule: BLWP_WSS_<port>, else
+  // ws://<host>:<port>.
+  const reachMode = process.env.BLWP_REACH;
+  const reachOf = (port) => {
+    if (reachMode) return reachFor({ mode: reachMode, host, port });
+    const ws = process.env[`BLWP_WSS_${port}`] || `ws://${host}:${port}`;
+    return { ws, https: ws.replace(/^wss:/, 'https:').replace(/^ws:/, 'http:').replace(/\/+$/, '') };
+  };
   const bonded = members.map(({ id, port }, at) => {
     const advert = {
       nodePubkey: id.pubkey, operatorId: '2of2', protocolVersions: [1],
@@ -222,7 +233,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       // committees of one. Measured: with 'game' and 'verify' alone the census
       // carried 0 settlement nodes where regtest was born needing 2.
       roles: ['game', 'verify', 'settlement'],
-      endpoint: process.env[`BLWP_WSS_${port}`] || `ws://${host}:${port}`,
+      endpoint: reachOf(port).ws,
       region: 'eu-west', capacityClass: 2, softwareHash: b32(3),
       settlementCapabilities: 0, lightningCapabilities: 0,
       bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 1,
@@ -296,7 +307,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
         // is built from these, and "a copied link that only opens on 127.0.0.1 does not count"). The bond said
         // ws://<host>:<port> - on the Daily 198.51.100.7, a tailnet address no phone off this machine can open -
         // while the advert already said BLWP_WSS_<port>; the census reads the bond.
-        endpoint: process.env[`BLWP_WSS_${m.port}`] || `ws://${host}:${m.port}`,
+        endpoint: reachOf(m.port).ws,
         // AND WHICH FEDERATION THIS SIGNER NODE GUARDS, when the caller named one. Without it
         // `federationIsBonded` counts zero of the federation's threshold and every paying FEDERATION
         // round is refused on a bonded-federation check the bonds could not satisfy. Per node, so
@@ -486,11 +497,11 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       },
     },
   } : {};
-  const optsA = { port: portA, host, funded, donationSets: [TEST_DONATION_SET_REGTEST], headerBytes, bondProof, chainFor,
+  const optsA = { port: portA, host, funded, replayPublic: [reachOf(portA).https], donationSets: [TEST_DONATION_SET_REGTEST], headerBytes, bondProof, chainFor,
     ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn,
     ...(federation ? { federation } : {}), ...signerNode };
   let a = await serve(dbA, optsA);
-  const optsB = { port: portB, host, funded, donationSets: [TEST_DONATION_SET_REGTEST], headerBytes, bondProof, chainFor,
+  const optsB = { port: portB, host, funded, replayPublic: [reachOf(portB).https], donationSets: [TEST_DONATION_SET_REGTEST], headerBytes, bondProof, chainFor,
     ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn,
     ...(federation ? { federation } : {}), ...signerNode };
   // B DOWN AT START (`bDownAtStart`, an operator's look at signer node A restarted
@@ -501,7 +512,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // AND THE THIRD, WHEN THERE IS ONE. Served exactly like the other two - a
   // bonded census node that is not also a running daemon would be a bond
   // vouching for a guardian nobody can reach.
-  const optsBeyond = members.slice(2).map((m) => ({ port: m.port, host, funded,
+  const optsBeyond = members.slice(2).map((m) => ({ port: m.port, host, funded, replayPublic: [reachOf(m.port).https],
     donationSets: [TEST_DONATION_SET_REGTEST], headerBytes, bondProof, chainFor,
     ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn,
     ...(federation ? { federation } : {}), ...signerNode }));
@@ -776,6 +787,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // reverse proxy differ by their first path segment, which is exactly what
   // the client's own two-source rule was taught to count.
   const publicFor = (port, fallback) => {
+    if (reachMode) return reachOf(port).https;
     const wss = process.env[`BLWP_WSS_${port}`];
     if (!wss) return fallback;
     try {
