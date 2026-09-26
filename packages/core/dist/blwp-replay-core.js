@@ -7731,14 +7731,14 @@ const CORE = Object.freeze({
   picture: (st) => ({ x: st.i32[O_TRUCK + T_X], z: st.i32[O_TRUCK + T_Z], heading: st.i32[O_TRUCK + T_HEADING] }),
 });
 
-return { CORE: CORE, TICK_DT: TICK_DT, HALF_X: HALF_X, HALF_Z: HALF_Z, GATE_X: GATE_X, ONE: 65536,
-  score: { exposure5: exposure5, time5: time5, cargo5: cargo5, scoreOf: scoreOf, FACTOR_SCALE: FACTOR_SCALE, SCORE_SCALE: SCORE_SCALE },
-  map: { POST_X: POST_X, WALL_DEPTH: WALL_DEPTH, SHELL_HALF: SHELL_HALF, MINER_X: MINER_X, MINER_DOOR_X: MINER_DOOR_X,
-    MINER_MOUTH_HALF: MINER_MOUTH_HALF, MINER_SHELL_HALF: MINER_SHELL_HALF },
-  layout: { O_TRUCK: O_TRUCK, T_X: T_X, T_Z: T_Z, T_HEADING: T_HEADING, T_HP: T_HP,
-    O_SCORE: O_SCORE, S_STATE: S_STATE, S_EXPOSURE: S_EXPOSURE, S_ELAPSED: S_ELAPSED, S_CARGO: S_CARGO, S_PRACTICE: S_PRACTICE,
-    O_UNITS: O_UNITS, U_WORDS: U_WORDS, UNITS: UNITS, ARMOUR_MASK: ARMOUR_MASK, U_X: U_X, U_Z: U_Z, U_SIDE: U_SIDE, U_HP: U_HP, U_STATE: U_STATE,
-    O_HELIS: O_HELIS, MAX_HELIS: MAX_HELIS, H_WORDS: H_WORDS, H_STATE: H_STATE, H_SIDE: H_SIDE, H_X: H_X, H_Z: H_Z,
-    O_BOMBS: O_BOMBS, MAX_BOMBS: MAX_BOMBS, B_WORDS: B_WORDS, B_STATE: B_STATE, B_SIDE: B_SIDE, B_X: B_X, B_Z: B_Z } };
+return { CORE: (typeof CORE === "undefined" ? undefined : CORE), TICK_DT: (typeof TICK_DT === "undefined" ? undefined : TICK_DT), HALF_X: (typeof HALF_X === "undefined" ? undefined : HALF_X), HALF_Z: (typeof HALF_Z === "undefined" ? undefined : HALF_Z), GATE_X: (typeof GATE_X === "undefined" ? undefined : GATE_X), ONE: 65536,
+  score: { exposure5: (typeof exposure5 === "undefined" ? undefined : exposure5), time5: (typeof time5 === "undefined" ? undefined : time5), cargo5: (typeof cargo5 === "undefined" ? undefined : cargo5), scoreOf: (typeof scoreOf === "undefined" ? undefined : scoreOf), FACTOR_SCALE: (typeof FACTOR_SCALE === "undefined" ? undefined : FACTOR_SCALE), SCORE_SCALE: (typeof SCORE_SCALE === "undefined" ? undefined : SCORE_SCALE) },
+  map: { POST_X: (typeof POST_X === "undefined" ? undefined : POST_X), WALL_DEPTH: (typeof WALL_DEPTH === "undefined" ? undefined : WALL_DEPTH), SHELL_HALF: (typeof SHELL_HALF === "undefined" ? undefined : SHELL_HALF), MINER_X: (typeof MINER_X === "undefined" ? undefined : MINER_X), MINER_DOOR_X: (typeof MINER_DOOR_X === "undefined" ? undefined : MINER_DOOR_X),
+    MINER_MOUTH_HALF: (typeof MINER_MOUTH_HALF === "undefined" ? undefined : MINER_MOUTH_HALF), MINER_SHELL_HALF: (typeof MINER_SHELL_HALF === "undefined" ? undefined : MINER_SHELL_HALF) },
+  layout: { O_TRUCK: (typeof O_TRUCK === "undefined" ? undefined : O_TRUCK), T_X: (typeof T_X === "undefined" ? undefined : T_X), T_Z: (typeof T_Z === "undefined" ? undefined : T_Z), T_HEADING: (typeof T_HEADING === "undefined" ? undefined : T_HEADING), T_HP: (typeof T_HP === "undefined" ? undefined : T_HP),
+    O_SCORE: (typeof O_SCORE === "undefined" ? undefined : O_SCORE), S_STATE: (typeof S_STATE === "undefined" ? undefined : S_STATE), S_EXPOSURE: (typeof S_EXPOSURE === "undefined" ? undefined : S_EXPOSURE), S_ELAPSED: (typeof S_ELAPSED === "undefined" ? undefined : S_ELAPSED), S_CARGO: (typeof S_CARGO === "undefined" ? undefined : S_CARGO), S_PRACTICE: (typeof S_PRACTICE === "undefined" ? undefined : S_PRACTICE),
+    O_UNITS: (typeof O_UNITS === "undefined" ? undefined : O_UNITS), U_WORDS: (typeof U_WORDS === "undefined" ? undefined : U_WORDS), UNITS: (typeof UNITS === "undefined" ? undefined : UNITS), ARMOUR_MASK: (typeof ARMOUR_MASK === "undefined" ? undefined : ARMOUR_MASK), U_X: (typeof U_X === "undefined" ? undefined : U_X), U_Z: (typeof U_Z === "undefined" ? undefined : U_Z), U_SIDE: (typeof U_SIDE === "undefined" ? undefined : U_SIDE), U_HP: (typeof U_HP === "undefined" ? undefined : U_HP), U_STATE: (typeof U_STATE === "undefined" ? undefined : U_STATE),
+    O_HELIS: (typeof O_HELIS === "undefined" ? undefined : O_HELIS), MAX_HELIS: (typeof MAX_HELIS === "undefined" ? undefined : MAX_HELIS), H_WORDS: (typeof H_WORDS === "undefined" ? undefined : H_WORDS), H_STATE: (typeof H_STATE === "undefined" ? undefined : H_STATE), H_SIDE: (typeof H_SIDE === "undefined" ? undefined : H_SIDE), H_X: (typeof H_X === "undefined" ? undefined : H_X), H_Z: (typeof H_Z === "undefined" ? undefined : H_Z),
+    O_BOMBS: (typeof O_BOMBS === "undefined" ? undefined : O_BOMBS), MAX_BOMBS: (typeof MAX_BOMBS === "undefined" ? undefined : MAX_BOMBS), B_WORDS: (typeof B_WORDS === "undefined" ? undefined : B_WORDS), B_STATE: (typeof B_STATE === "undefined" ? undefined : B_STATE), B_SIDE: (typeof B_SIDE === "undefined" ? undefined : B_SIDE), B_X: (typeof B_X === "undefined" ? undefined : B_X), B_Z: (typeof B_Z === "undefined" ? undefined : B_Z) } };
 })();
 if (typeof module !== "undefined") module.exports = BLWP_REPLAY;
