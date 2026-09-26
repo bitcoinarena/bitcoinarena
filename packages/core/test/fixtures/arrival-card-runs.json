@@ -10,7 +10,10 @@
    "exposure": 3918229,
    "elapsed": 412,
    "cargo": 13107,
-   "delivered": 5605200
+   "delivered": 5605200,
+   "e5": 18684,
+   "t5": 150000,
+   "c5": 20000
   },
   {
    "lane": -30,
@@ -22,7 +25,10 @@
    "exposure": 0,
    "elapsed": 1270,
    "cargo": 29491,
-   "delivered": 0
+   "delivered": 0,
+   "e5": 0,
+   "t5": 150000,
+   "c5": 45000
   },
   {
    "lane": -30,
@@ -34,7 +40,10 @@
    "exposure": 6411900,
    "elapsed": 6145,
    "cargo": 45875,
-   "delivered": 13582866
+   "delivered": 13582866,
+   "e5": 30574,
+   "t5": 63466,
+   "c5": 70000
   },
   {
    "lane": -30,
@@ -46,7 +55,10 @@
    "exposure": 9136308,
    "elapsed": 7892,
    "cargo": 62259,
-   "delivered": 20452090
+   "delivered": 20452090,
+   "e5": 43565,
+   "t5": 49417,
+   "c5": 95000
   },
   {
    "lane": -30,
@@ -58,7 +70,10 @@
    "exposure": 3424387,
    "elapsed": 6412,
    "cargo": 13107,
-   "delivered": 1986358
+   "delivered": 1986358,
+   "e5": 16329,
+   "t5": 60823,
+   "c5": 20000
   },
   {
    "lane": -30,
@@ -70,7 +85,10 @@
    "exposure": 0,
    "elapsed": 7270,
    "cargo": 29491,
-   "delivered": 0
+   "delivered": 0,
+   "e5": 0,
+   "t5": 53645,
+   "c5": 45000
   },
   {
    "lane": -30,
@@ -82,7 +100,10 @@
    "exposure": 209131,
    "elapsed": 10712,
    "cargo": 45875,
-   "delivered": 254091
+   "delivered": 254091,
+   "e5": 997,
+   "t5": 36408,
+   "c5": 70000
   },
   {
    "lane": -30,
@@ -94,7 +115,10 @@
    "exposure": 1328734,
    "elapsed": 10712,
    "cargo": 62259,
-   "delivered": 2191470
+   "delivered": 2191470,
+   "e5": 6336,
+   "t5": 36408,
+   "c5": 95000
   },
   {
    "lane": -20,
@@ -106,7 +130,10 @@
    "exposure": 5182018,
    "elapsed": 3412,
    "cargo": 29491,
-   "delivered": 12709811
+   "delivered": 12709811,
+   "e5": 24710,
+   "t5": 114302,
+   "c5": 45000
   },
   {
    "lane": -20,
@@ -118,7 +145,10 @@
    "exposure": 1129,
    "elapsed": 4270,
    "cargo": 45875,
-   "delivered": 3197
+   "delivered": 3197,
+   "e5": 5,
+   "t5": 91335,
+   "c5": 70000
   },
   {
    "lane": -20,
@@ -130,7 +160,10 @@
    "exposure": 2844373,
    "elapsed": 9145,
    "cargo": 62259,
-   "delivered": 5494873
+   "delivered": 5494873,
+   "e5": 13563,
+   "t5": 42646,
+   "c5": 95000
   },
   {
    "lane": -20,
@@ -142,7 +175,10 @@
    "exposure": 3922498,
    "elapsed": 9145,
    "cargo": 13107,
-   "delivered": 1595302
+   "delivered": 1595302,
+   "e5": 18704,
+   "t5": 42646,
+   "c5": 20000
   },
   {
    "lane": -20,
@@ -154,7 +190,10 @@
    "exposure": 1040316,
    "elapsed": 10712,
    "cargo": 29491,
-   "delivered": 812790
+   "delivered": 812790,
+   "e5": 4961,
+   "t5": 36408,
+   "c5": 45000
   },
   {
    "lane": -20,
@@ -166,7 +205,10 @@
    "exposure": 0,
    "elapsed": 10712,
    "cargo": 45875,
-   "delivered": 0
+   "delivered": 0,
+   "e5": 0,
+   "t5": 36408,
+   "c5": 70000
   },
   {
    "lane": -20,
@@ -178,7 +220,10 @@
    "exposure": 2215897,
    "elapsed": 3145,
    "cargo": 62259,
-   "delivered": 12447350
+   "delivered": 12447350,
+   "e5": 10566,
+   "t5": 124006,
+   "c5": 95000
   },
   {
    "lane": -20,
@@ -190,7 +235,10 @@
    "exposure": 3076706,
    "elapsed": 4892,
    "cargo": 13107,
-   "delivered": 2339203
+   "delivered": 2339203,
+   "e5": 14671,
+   "t5": 79722,
+   "c5": 20000
   },
   {
    "lane": -10.2,
@@ -202,7 +250,10 @@
    "exposure": 2605366,
    "elapsed": 6412,
    "cargo": 45875,
-   "delivered": 5289229
+   "delivered": 5289229,
+   "e5": 12423,
+   "t5": 60823,
+   "c5": 70000
   },
   {
    "lane": -10.2,
@@ -214,7 +265,10 @@
    "exposure": 33642,
    "elapsed": 7270,
    "cargo": 62259,
-   "delivered": 81540
+   "delivered": 81540,
+   "e5": 160,
+   "t5": 53645,
+   "c5": 95000
   },
   {
    "lane": -10.2,
@@ -226,7 +280,10 @@
    "exposure": 181324,
    "elapsed": 10712,
    "cargo": 13107,
-   "delivered": 62986
+   "delivered": 62986,
+   "e5": 865,
+   "t5": 36408,
+   "c5": 20000
   },
   {
    "lane": -10.2,
@@ -238,7 +295,10 @@
    "exposure": 2020211,
    "elapsed": 10712,
    "cargo": 29491,
-   "delivered": 1578232
+   "delivered": 1578232,
+   "e5": 9633,
+   "t5": 36408,
+   "c5": 45000
   },
   {
    "lane": -10.2,
@@ -250,7 +310,10 @@
    "exposure": 71185,
    "elapsed": 412,
    "cargo": 45875,
-   "delivered": 355950
+   "delivered": 355950,
+   "e5": 339,
+   "t5": 150000,
+   "c5": 70000
   },
   {
    "lane": -10.2,
@@ -262,7 +325,10 @@
    "exposure": 1767,
    "elapsed": 1270,
    "cargo": 62259,
-   "delivered": 11400
+   "delivered": 11400,
+   "e5": 8,
+   "t5": 150000,
+   "c5": 95000
   },
   {
    "lane": -10.2,
@@ -274,7 +340,10 @@
    "exposure": 3559309,
    "elapsed": 6145,
    "cargo": 13107,
-   "delivered": 2154290
+   "delivered": 2154290,
+   "e5": 16972,
+   "t5": 63466,
+   "c5": 20000
   },
   {
    "lane": -10.2,
@@ -286,7 +355,10 @@
    "exposure": 7302637,
    "elapsed": 7892,
    "cargo": 29491,
-   "delivered": 7743594
+   "delivered": 7743594,
+   "e5": 34822,
+   "t5": 49417,
+   "c5": 45000
   },
   {
    "lane": -6,
@@ -298,7 +370,10 @@
    "exposure": 1818347,
    "elapsed": 10712,
    "cargo": 62259,
-   "delivered": 2999091
+   "delivered": 2999091,
+   "e5": 8671,
+   "t5": 36408,
+   "c5": 95000
   },
   {
    "lane": -6,
@@ -310,7 +385,10 @@
    "exposure": 121688,
    "elapsed": 10712,
    "cargo": 13107,
-   "delivered": 42233
+   "delivered": 42233,
+   "e5": 580,
+   "t5": 36408,
+   "c5": 20000
   },
   {
    "lane": -6,
@@ -322,7 +400,10 @@
    "exposure": 34959,
    "elapsed": 3145,
    "cargo": 29491,
-   "delivered": 93191
+   "delivered": 93191,
+   "e5": 167,
+   "t5": 124006,
+   "c5": 45000
   },
   {
    "lane": -6,
@@ -334,7 +415,10 @@
    "exposure": 1065746,
    "elapsed": 4892,
    "cargo": 45875,
-   "delivered": 2836030
+   "delivered": 2836030,
+   "e5": 5082,
+   "t5": 79722,
+   "c5": 70000
   },
   {
    "lane": -6,
@@ -346,7 +430,10 @@
    "exposure": 5917,
    "elapsed": 3412,
    "cargo": 62259,
-   "delivered": 30404
+   "delivered": 30404,
+   "e5": 28,
+   "t5": 114302,
+   "c5": 95000
   },
   {
    "lane": -6,
@@ -358,7 +445,10 @@
    "exposure": 116131,
    "elapsed": 4270,
    "cargo": 13107,
-   "delivered": 101199
+   "delivered": 101199,
+   "e5": 554,
+   "t5": 91335,
+   "c5": 20000
   },
   {
    "lane": -6,
@@ -370,7 +460,10 @@
    "exposure": 5740686,
    "elapsed": 9145,
    "cargo": 29491,
-   "delivered": 5253262
+   "delivered": 5253262,
+   "e5": 27374,
+   "t5": 42646,
+   "c5": 45000
   },
   {
    "lane": -6,
@@ -382,7 +475,10 @@
    "exposure": 5631410,
    "elapsed": 9145,
    "cargo": 45875,
-   "delivered": 8016211
+   "delivered": 8016211,
+   "e5": 26853,
+   "t5": 42646,
+   "c5": 70000
   },
   {
    "lane": 0,
@@ -394,7 +490,10 @@
    "exposure": 524285,
    "elapsed": 412,
    "cargo": 13107,
-   "delivered": 750000
+   "delivered": 750000,
+   "e5": 2500,
+   "t5": 150000,
+   "c5": 20000
   },
   {
    "lane": 0,
@@ -406,7 +505,10 @@
    "exposure": 902016,
    "elapsed": 1270,
    "cargo": 29491,
-   "delivered": 2903175
+   "delivered": 2903175,
+   "e5": 4301,
+   "t5": 150000,
+   "c5": 45000
   },
   {
    "lane": 0,
@@ -418,7 +520,10 @@
    "exposure": 0,
    "elapsed": 6145,
    "cargo": 45875,
-   "delivered": 0
+   "delivered": 0,
+   "e5": 0,
+   "t5": 63466,
+   "c5": 70000
   },
   {
    "lane": 0,
@@ -430,7 +535,10 @@
    "exposure": 420099,
    "elapsed": 7892,
    "cargo": 62259,
-   "delivered": 940331
+   "delivered": 940331,
+   "e5": 2003,
+   "t5": 49417,
+   "c5": 95000
   },
   {
    "lane": 0,
@@ -442,7 +550,10 @@
    "exposure": 0,
    "elapsed": 6412,
    "cargo": 13107,
-   "delivered": 0
+   "delivered": 0,
+   "e5": 0,
+   "t5": 60823,
+   "c5": 20000
   },
   {
    "lane": 0,
@@ -454,7 +565,10 @@
    "exposure": 900264,
    "elapsed": 7270,
    "cargo": 29491,
-   "delivered": 1036341
+   "delivered": 1036341,
+   "e5": 4293,
+   "t5": 53645,
+   "c5": 45000
   },
   {
    "lane": 0,
@@ -466,7 +580,10 @@
    "exposure": 9193531,
    "elapsed": 10712,
    "cargo": 45875,
-   "delivered": 11172377
+   "delivered": 11172377,
+   "e5": 43838,
+   "t5": 36408,
+   "c5": 70000
   },
   {
    "lane": 0,
@@ -478,7 +595,10 @@
    "exposure": 4623948,
    "elapsed": 10712,
    "cargo": 62259,
-   "delivered": 7626220
+   "delivered": 7626220,
+   "e5": 22049,
+   "t5": 36408,
+   "c5": 95000
   },
   {
    "lane": 6,
@@ -490,7 +610,10 @@
    "exposure": 176198,
    "elapsed": 3412,
    "cargo": 29491,
-   "delivered": 432062
+   "delivered": 432062,
+   "e5": 840,
+   "t5": 114302,
+   "c5": 45000
   },
   {
    "lane": 6,
@@ -502,7 +625,10 @@
    "exposure": 2609356,
    "elapsed": 4270,
    "cargo": 45875,
-   "delivered": 7954730
+   "delivered": 7954730,
+   "e5": 12442,
+   "t5": 91335,
+   "c5": 70000
   },
   {
    "lane": 6,
@@ -514,7 +640,10 @@
    "exposure": 0,
    "elapsed": 9145,
    "cargo": 62259,
-   "delivered": 0
+   "delivered": 0,
+   "e5": 0,
+   "t5": 42646,
+   "c5": 95000
   },
   {
    "lane": 6,
@@ -526,7 +655,10 @@
    "exposure": 29656,
    "elapsed": 9145,
    "cargo": 13107,
-   "delivered": 12026
+   "delivered": 12026,
+   "e5": 141,
+   "t5": 42646,
+   "c5": 20000
   },
   {
    "lane": 6,
@@ -538,7 +670,10 @@
    "exposure": 0,
    "elapsed": 10712,
    "cargo": 29491,
-   "delivered": 0
+   "delivered": 0,
+   "e5": 0,
+   "t5": 36408,
+   "c5": 45000
   },
   {
    "lane": 6,
@@ -550,7 +685,10 @@
    "exposure": 2527660,
    "elapsed": 10712,
    "cargo": 45875,
-   "delivered": 3071779
+   "delivered": 3071779,
+   "e5": 12053,
+   "t5": 36408,
+   "c5": 70000
   },
   {
    "lane": 6,
@@ -562,7 +700,10 @@
    "exposure": 9244174,
    "elapsed": 3145,
    "cargo": 62259,
-   "delivered": 51928753
+   "delivered": 51928753,
+   "e5": 44080,
+   "t5": 124006,
+   "c5": 95000
   },
   {
    "lane": 6,
@@ -574,7 +715,10 @@
    "exposure": 1903854,
    "elapsed": 4892,
    "cargo": 13107,
-   "delivered": 1447433
+   "delivered": 1447433,
+   "e5": 9078,
+   "t5": 79722,
+   "c5": 20000
   },
   {
    "lane": 10.2,
@@ -586,7 +730,10 @@
    "exposure": 168003,
    "elapsed": 6412,
    "cargo": 45875,
-   "delivered": 341035
+   "delivered": 341035,
+   "e5": 801,
+   "t5": 60823,
+   "c5": 70000
   },
   {
    "lane": 10.2,
@@ -598,7 +745,10 @@
    "exposure": 5299211,
    "elapsed": 7270,
    "cargo": 62259,
-   "delivered": 12877777
+   "delivered": 12877777,
+   "e5": 25269,
+   "t5": 53645,
+   "c5": 95000
   },
   {
    "lane": 10.2,
@@ -610,7 +760,10 @@
    "exposure": 0,
    "elapsed": 10712,
    "cargo": 13107,
-   "delivered": 0
+   "delivered": 0,
+   "e5": 0,
+   "t5": 36408,
+   "c5": 20000
   },
   {
    "lane": 10.2,
@@ -622,7 +775,10 @@
    "exposure": 0,
    "elapsed": 10712,
    "cargo": 29491,
-   "delivered": 0
+   "delivered": 0,
+   "e5": 0,
+   "t5": 36408,
+   "c5": 45000
   },
   {
    "lane": 10.2,
@@ -634,7 +790,10 @@
    "exposure": 0,
    "elapsed": 412,
    "cargo": 45875,
-   "delivered": 0
+   "delivered": 0,
+   "e5": 0,
+   "t5": 150000,
+   "c5": 70000
   },
   {
    "lane": 10.2,
@@ -646,7 +805,10 @@
    "exposure": 5533901,
    "elapsed": 1270,
    "cargo": 62259,
-   "delivered": 37602900
+   "delivered": 37602900,
+   "e5": 26388,
+   "t5": 150000,
+   "c5": 95000
   },
   {
    "lane": 10.2,
@@ -658,7 +820,10 @@
    "exposure": 4972626,
    "elapsed": 6145,
    "cargo": 13107,
-   "delivered": 3009685
+   "delivered": 3009685,
+   "e5": 23711,
+   "t5": 63466,
+   "c5": 20000
   },
   {
    "lane": 10.2,
@@ -670,7 +835,10 @@
    "exposure": 1547498,
    "elapsed": 7892,
    "cargo": 29491,
-   "delivered": 1640916
+   "delivered": 1640916,
+   "e5": 7379,
+   "t5": 49417,
+   "c5": 45000
   },
   {
    "lane": 20,
@@ -682,7 +850,10 @@
    "exposure": 5661,
    "elapsed": 10712,
    "cargo": 62259,
-   "delivered": 9339
+   "delivered": 9339,
+   "e5": 27,
+   "t5": 36408,
+   "c5": 95000
   },
   {
    "lane": 20,
@@ -694,7 +865,10 @@
    "exposure": 6015618,
    "elapsed": 10712,
    "cargo": 13107,
-   "delivered": 2088727
+   "delivered": 2088727,
+   "e5": 28685,
+   "t5": 36408,
+   "c5": 20000
   },
   {
    "lane": 20,
@@ -706,7 +880,10 @@
    "exposure": 0,
    "elapsed": 3145,
    "cargo": 29491,
-   "delivered": 0
+   "delivered": 0,
+   "e5": 0,
+   "t5": 124006,
+   "c5": 45000
   },
   {
    "lane": 20,
@@ -718,7 +895,10 @@
    "exposure": 0,
    "elapsed": 4892,
    "cargo": 45875,
-   "delivered": 0
+   "delivered": 0,
+   "e5": 0,
+   "t5": 79722,
+   "c5": 70000
   },
   {
    "lane": 20,
@@ -730,7 +910,10 @@
    "exposure": 0,
    "elapsed": 3412,
    "cargo": 62259,
-   "delivered": 0
+   "delivered": 0,
+   "e5": 0,
+   "t5": 114302,
+   "c5": 95000
   },
   {
    "lane": 20,
@@ -742,7 +925,10 @@
    "exposure": 7172334,
    "elapsed": 4270,
    "cargo": 13107,
-   "delivered": 6247314
+   "delivered": 6247314,
+   "e5": 34200,
+   "t5": 91335,
+   "c5": 20000
   },
   {
    "lane": 20,
@@ -754,7 +940,10 @@
    "exposure": 2296153,
    "elapsed": 9145,
    "cargo": 29491,
-   "delivered": 2101190
+   "delivered": 2101190,
+   "e5": 10949,
+   "t5": 42646,
+   "c5": 45000
   },
   {
    "lane": 20,
@@ -766,7 +955,10 @@
    "exposure": 358857,
    "elapsed": 9145,
    "cargo": 45875,
-   "delivered": 510771
+   "delivered": 510771,
+   "e5": 1711,
+   "t5": 42646,
+   "c5": 70000
   },
   {
    "lane": 30,
@@ -778,7 +970,10 @@
    "exposure": 0,
    "elapsed": 412,
    "cargo": 13107,
-   "delivered": 0
+   "delivered": 0,
+   "e5": 0,
+   "t5": 150000,
+   "c5": 20000
   },
   {
    "lane": 30,
@@ -790,7 +985,10 @@
    "exposure": 8462800,
    "elapsed": 1270,
    "cargo": 29491,
-   "delivered": 27238950
+   "delivered": 27238950,
+   "e5": 40354,
+   "t5": 150000,
+   "c5": 45000
   },
   {
    "lane": 30,
@@ -802,7 +1000,10 @@
    "exposure": 0,
    "elapsed": 6145,
    "cargo": 45875,
-   "delivered": 0
+   "delivered": 0,
+   "e5": 0,
+   "t5": 63466,
+   "c5": 70000
   },
   {
    "lane": 30,
@@ -814,7 +1015,10 @@
    "exposure": 0,
    "elapsed": 7892,
    "cargo": 62259,
-   "delivered": 0
+   "delivered": 0,
+   "e5": 0,
+   "t5": 49417,
+   "c5": 95000
   },
   {
    "lane": 30,
@@ -826,7 +1030,10 @@
    "exposure": 0,
    "elapsed": 6412,
    "cargo": 13107,
-   "delivered": 0
+   "delivered": 0,
+   "e5": 0,
+   "t5": 60823,
+   "c5": 20000
   },
   {
    "lane": 30,
@@ -838,7 +1045,10 @@
    "exposure": 6411793,
    "elapsed": 7270,
    "cargo": 29491,
-   "delivered": 7380640
+   "delivered": 7380640,
+   "e5": 30574,
+   "t5": 53645,
+   "c5": 45000
   },
   {
    "lane": 30,
@@ -850,7 +1060,10 @@
    "exposure": 252828,
    "elapsed": 10712,
    "cargo": 45875,
-   "delivered": 307356
+   "delivered": 307356,
+   "e5": 1206,
+   "t5": 36408,
+   "c5": 70000
   },
   {
    "lane": 30,
@@ -862,7 +1075,10 @@
    "exposure": 27079,
    "elapsed": 10712,
    "cargo": 62259,
-   "delivered": 44618
+   "delivered": 44618,
+   "e5": 129,
+   "t5": 36408,
+   "c5": 95000
   }
  ]
 }

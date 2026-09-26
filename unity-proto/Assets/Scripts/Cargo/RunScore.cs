@@ -87,7 +87,11 @@ public class RunScore : MonoBehaviour
     /// danger, over different positions, at different rates. Whichever one the
     /// HUD happened to read was the score the player saw, and it was not the
     /// one the round would eventually be settled on.
-    public float Exposure => Mathf.Clamp01(Blwp.BlwpCore.Exposure);
+    //
+    // AND AS THE CORE'S FACTOR, NOT ITS METRES (2026-09-26): this was Clamp01 of the exposure in METRES - the fault the
+    // arrival card had at 18:29 - so the HUD's DANGER meter read x1.00 past the first metre while the core's E was, on
+    // the live run of round 14bff641, 0.31721. E is the exposure word over the 320 m reference on the core's 1e-5 grid.
+    public float Exposure => CoreScoreFactors.Exposure(Blwp.BlwpCore.ExposureWord);
 
     /// <summary>
     /// The instantaneous rate, unnormalised. Zero at the map edge, 1 on the

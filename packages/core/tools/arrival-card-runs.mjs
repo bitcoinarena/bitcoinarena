@@ -19,6 +19,7 @@
 import { writeFileSync } from 'node:fs';
 import { init, step, teleport } from '../src/sim.js';
 import { O_SCORE, S_EXPOSURE, S_ELAPSED, S_CARGO, S_DELIVERED, S_STATE } from '../src/state.js';
+import { exposure5, time5, cargo5 } from '../src/rules/score.js';
 
 const ONE = 65536, EAST = 16384;
 export const LANES = [-30, -20, -10.2, -6, 0, 6, 10.2, 20, 30];
@@ -44,7 +45,9 @@ export function arrivalCardRuns() {
       for (let t = 0; t < 10800 && st.i32[O_SCORE + S_STATE] === 0; t++) step(st, Math.round(throttle * ONE), 0, 0, 0, ONE);
       const s = st.i32;
       runs.push({ lane, seed: k, hold, throttle, fixtureCargo: cargo, state: s[O_SCORE + S_STATE], exposure: s[O_SCORE + S_EXPOSURE],
-        elapsed: s[O_SCORE + S_ELAPSED], cargo: s[O_SCORE + S_CARGO], delivered: s[O_SCORE + S_DELIVERED] });
+        elapsed: s[O_SCORE + S_ELAPSED], cargo: s[O_SCORE + S_CARGO], delivered: s[O_SCORE + S_DELIVERED],
+        // the core's own factors of those words (score.js), so the C# card's are checked factor by factor, not only as a product
+        e5: exposure5(s[O_SCORE + S_EXPOSURE]), t5: time5(s[O_SCORE + S_ELAPSED]), c5: cargo5(s[O_SCORE + S_CARGO]) });
     }
   });
   return runs;
