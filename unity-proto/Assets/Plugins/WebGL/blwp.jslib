@@ -738,6 +738,14 @@ mergeInto(LibraryManager.library, {
   // a status nobody checks.
   // COPY GAME REPLAY (the owner 2026-09-25 18:39): this run's round and entry, and the nodes it was played on, handed to
   // the page's own copy (window.BLWP_COPY_REPLAY builds the https link and writes it to the clipboard).
+  // 1 once the page's clipboard write of this press's link has resolved (BLWP_REPLAY_COPIED is that link), else 0: the
+  // card's "copied!" is the clipboard's answer, not the press (the owner 2026-09-26 07:12).
+  BlwpReplayCopied: function () {
+    if (typeof window === 'undefined') return 0;
+    var c = window.BLWP_REPLAY_COPIED;
+    return (typeof c === 'string' && c.length > 0 && c === window.BLWP_REPLAY_URL) ? 1 : 0;
+  },
+
   BlwpCopyReplay: function () {
     // THIS PIN'S RUN: the session's own round and entry (net.where), and the nodes the page reached (BLWP_NODES).
     var net = Module.blwpNet;
