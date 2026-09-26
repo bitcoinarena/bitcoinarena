@@ -128,6 +128,11 @@ public class LoadoutPanel : MonoBehaviour
         // ghost it drew hunted a run the player was not driving. Two integers
         // cross now, the bridge publishes them, and the core decides the cost.
         if (bay != null) Blwp.BlwpCore.SubmitLoad(bay.FeeCarried, bay.BtcHundredths);
+
+        // THE DRIVE STARTS BEHIND THE TRUCK (the owner 2026-09-26 14:08): PLAY's fly-in ran on under this panel, and a quick
+        // ROLL OUT drove off beneath it, high over the field and facing away from the miner. Rolling out ends it.
+        var chase = FindFirstObjectByType<ChaseCamera>();
+        if (chase != null) chase.EndFlyIn();
     }
 
     [Tooltip("How full AUTO will load the bed. Deliberately short of full: " +
