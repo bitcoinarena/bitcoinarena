@@ -62,8 +62,9 @@ if (!env.RT) {
 // protocol). §23.6 wants the federation's threshold in DISTINCT bonded census nodes, the smallest federation
 // fedimintd builds is 3-of-4, and two signer nodes cannot be three; `receiptsNeeded` defines 2 and 7 and
 // nothing between. So the free round keeps its 2-of-2 on A and B, unchanged, and the paying round stands on
-// BLWP_PAID_PORTS - seven ports - whose first threshold-many nodes each advertise ONE guardian key of the
-// federation, the others guarding nothing. The federation is read through the same port a signer node
+// BLWP_PAID_PORTS - seven ports - whose first nodes each advertise ONE guardian key of the federation, every key
+// on its own node (testnet 3 of 4: four guardian nodes, one node one guardian, the owner 2026-09-26), the others
+// guarding nothing. The federation is read through the same port a signer node
 // verifies a lock with: BLWP_STAKE_LOCK_BIN, BLWP_FEDERATION_CLIENT_DIR (a client joined to it), and its
 // invite in BLWP_FEDERATION_INVITE or the file BLWP_FEDERATION_INVITE_FILE. Refused here, by name, without
 // them: a paying round nobody can lock a stake into would only fill the lobby with rows nobody can pay.
@@ -129,9 +130,12 @@ if (paidSetup) {
   if (!fed.keys || fed.keys.length < fed.threshold)
     throw new Error(`the federation names ${fed.keys ? fed.keys.length : 0} guardian key(s) under a threshold of ${fed.threshold}`);
   receiptsNeeded(paidSetup.ports.length);
-  // ONE GUARDIAN PER NODE for the first threshold-many - a node vouches for the one key it runs - and none
-  // for the rest, which are bonded census nodes that guard nothing.
-  const guardianOf = paidSetup.ports.map((_, i) => (i < fed.threshold
+  // ONE NODE IS ONE GUARDIAN (the owner 2026-09-26 22:54, spec §23A.2): every guardian key of the federation is advertised
+  // by its own node - all four of a 3-of-4, not the first threshold-many - and the rest are bonded census nodes that
+  // guard nothing. A federation with more guardians than the committee has nodes cannot be seated one to a node.
+  if (fed.keys.length > paidSetup.ports.length)
+    throw new Error(`the federation has ${fed.keys.length} guardians and the committee ${paidSetup.ports.length} nodes: one node is one guardian`);
+  const guardianOf = paidSetup.ports.map((_, i) => (i < fed.keys.length
     ? [{ federationId: fed.federationId, guardianKey: fed.keys[i] }] : []));
   const [pa, pb, pc, ...more] = paidSetup.ports;
   mkdirSync(join(dir, 'paid'), { recursive: true, mode: 0o700 });
