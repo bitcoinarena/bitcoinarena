@@ -113,7 +113,7 @@ const drive = (st, ticks, throttle, steer) => {
 
 test('the score is multiplicative - any factor at zero collapses it', () => {
   const full = scoring.EXPOSURE_REFERENCE;
-  assert.equal(scoring.scoreOf(full, scoring.REFERENCE_TICKS, ONE), 1000);
+  assert.equal(scoring.scoreOf(full, scoring.REFERENCE_TICKS, ONE), 1000 * scoring.SCORE_SCALE);   // 1000 points, in 1e-5 points
   assert.equal(scoring.scoreOf(full, scoring.REFERENCE_TICKS, 0), 0, 'empty bed must score nothing');
   assert.equal(scoring.scoreOf(0, scoring.REFERENCE_TICKS, ONE), 0, 'no danger must score nothing');
 });

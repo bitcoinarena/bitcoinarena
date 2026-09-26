@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { arrivalCardRuns } from '../tools/arrival-card-runs.mjs';
-import { scoreOf } from '../src/rules/score.js';
+import { scoreOf, exposure5, time5, cargo5 } from '../src/rules/score.js';
 
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/arrival-card-runs.json', import.meta.url), 'utf8')).runs;
 
@@ -28,3 +28,15 @@ test('1. the fixture is the 72 DELIVERED runs the core produces now, with T and 
 test('2. each run\'s S_DELIVERED is scoreOf of its own three words', () => {
   for (const r of fixture) assert.equal(r.delivered, scoreOf(r.exposure, r.elapsed, r.cargo), `lane ${r.lane} seed ${r.seed}`);
 });
+
+test('3. on every run the product of the factors, to five decimals, IS the score (lane 0 seed 0 on this core: 9.91500)', () => {
+  for (const r of fixture) {
+    const e = exposure5(r.exposure), t = time5(r.elapsed), c = cargo5(r.cargo);
+    assert.equal(Math.floor((2 * e * t * c + 1e7) / 2e7), r.delivered,
+      `lane ${r.lane} seed ${r.seed}: ${(c / 1e5).toFixed(5)} x ${(e / 1e5).toFixed(5)} x ${(t / 1e5).toFixed(5)} x 1000 is not ${(r.delivered / 1e5).toFixed(5)}`);
+  }
+  const l0 = fixture.find((r) => r.lane === 0 && r.seed === 0);
+  // this core's world (the fleet pin, its four edge walls kept): lane 0 seed 0 is C 0.20000 x E 0.03305 x T 1.50000 x 1000
+  assert.equal(l0.delivered, 991500, 'lane 0 seed 0 scores 9.91500');
+});
+

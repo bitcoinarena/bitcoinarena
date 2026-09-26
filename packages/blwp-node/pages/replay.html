@@ -92,7 +92,9 @@
   };
   transcript.ticks.forEach((t, f) => { events.before(st, t.tick); CORE.step(st, t.words); take(f); });
   const result = CORE.result(st);
-  const ended = `${result.outcome || 'LIVE'}${result.outcome ? `, score ${result.score}` : ''}`;
+  // THE SCORE IN POINTS, as the card prints it: the core keeps it in 1e-5 points (score.js SCORE_SCALE), 13715869 is 137.15869
+  const points = (u) => (u / 100000).toLocaleString('en-US', { minimumFractionDigits: 5, maximumFractionDigits: 5 });
+  const ended = `${result.outcome || 'LIVE'}${result.outcome ? `, score ${points(result.score)}` : ''}`;
   const from = transcript.ticks.length ? transcript.ticks[0].tick : 0;
 
   // THE MAP, top down: x across, z up, in the core's own metres.

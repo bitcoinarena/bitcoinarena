@@ -578,7 +578,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight,
     censusRoot: new Uint8Array(32), stakeMsat, bondMinSats: 50000n, blockTicks: BLOCK_TICKS,
     exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
-    timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
+    timeFloor: 30, timeCeil: 150, minScore: 100000, rankNumerator: 3, rankDenominator: 4,   // min_score 1 point, in the score's 1e-5 points
     nodes: [a.round.pubkey, b.round.pubkey, ...rest.map((d) => d.round.pubkey)],
   };
   // AND A COMMITTEE THE PROTOCOL HAS A THRESHOLD FOR, said here rather than

@@ -555,3 +555,12 @@ export const custodyByte = (which) => {
  * player's key alone refunds, so delay is never loss.
  */
 export const STAKE_EXPIRY_BLOCKS = 144;
+
+/**
+ * THE SCORE'S UNIT: an integer count of 1e-5 points (the owner 2026-09-25: "Their product is the score, so the core's score
+ * is that product"). The core's score is 1000 · E · T · C with each factor on a 1e-5 grid (core/src/rules/score.js,
+ * SCORE_SCALE there is this number and core/test/score-scale.test.js pins the two together); a PlayerResult's u32 score
+ * carries it as-is. A round contract's min_score is compared with it directly - multiplayer_p2p.md §18A.5, "score >=
+ * min_score" - so min_score is in the same unit: the spec's reference value of 1 point is 100000.
+ */
+export const SCORE_SCALE = 100000;

@@ -10,7 +10,7 @@
   {
    "name": "slalom",
    "ticks": 3600,
-   "final": "aea9374591ad6fbb6f1310817f2c3372bae3e6a5c425272a09790e4a6857dacd"
+   "final": "9761121dc2084ff2b1d8d173bf6bdfbf13ac2fffe2418d13c106c64cd29f9ed6"
   },
   {
    "name": "handbrake",
@@ -30,12 +30,12 @@
   {
    "name": "practice",
    "ticks": 3600,
-   "final": "7f6db1ed67b29206f22a10189b2727f3628fa7b2bc54424b5d9315ccf0e7b5fb"
+   "final": "bd217dcb9a84f7c4bdddb2503adcce3368fa83c7327c8cff2f7e97d6351287cc"
   },
   {
    "name": "liquidation",
    "ticks": 3600,
-   "final": "ffdcac08bf48dff023ceb984dd69c835833025516ed5915be82e623667f0201c"
+   "final": "b352c1774090e939c0e2688089057429395898e766f395e0cf81502effc6bc42"
   },
   {
    "name": "fallout",
