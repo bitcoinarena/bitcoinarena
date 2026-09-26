@@ -2938,8 +2938,8 @@ public class DriveHud : MonoBehaviour
                  health.IsDestroyed
                      ? $"WRECKED — back in {Mathf.CeilToInt(health.RespawnIn)}s"
                      : health.IsInvulnerable
-                         ? "CONDITION 100%  ·  protected"
-                         : $"CONDITION {Mathf.CeilToInt(health.Fraction * 100f)}%",
+                         ? "HEALTH 100%  ·  protected"
+                         : $"HEALTH {Mathf.CeilToInt(health.Fraction * 100f)}%",
                  label,
                  health.IsDestroyed ? Down
                                     : health.IsInvulnerable ? new Color(0.55f, 0.8f, 1f)
