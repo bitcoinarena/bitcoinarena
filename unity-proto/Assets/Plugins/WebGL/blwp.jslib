@@ -439,6 +439,10 @@ mergeInto(LibraryManager.library, {
         // not "stake dealt, unpaid" (measured: the reason reached only the console). The
         // page's own earlier refusal, when there is one, is kept.
         if (typeof window !== 'undefined' && !window.BLWP_JOIN_REFUSED) window.BLWP_JOIN_REFUSED = net.error;
+        // AND BACK TO THE LOBBY (the owner 2026-09-26, the 21:13 case): a round link reopened after its round closed builds
+        // its entry fine and is refused only here, by the node, so the page's join fallback never saw it and the cargo
+        // chooser stood over a round nobody can play. The page takes the same fallback from this word.
+        if (typeof window !== 'undefined' && typeof window.BLWP_ENTRY_REFUSED === 'function') window.BLWP_ENTRY_REFUSED(net.error);
       });
 
     // THE THREE THINGS A SESSION DOES, as closures rather than as helpers on
@@ -888,6 +892,9 @@ mergeInto(LibraryManager.library, {
   // Measured live on 0.0.1334: waiting for `ended` put the lobby 2241 ms after DELIVERED.
   BlwpNetEnded: function () {
     var n = Module.blwpNet;
+    // A SESSION THE NODE REFUSED IS OVER (the owner 2026-09-26, the 21:13 case, second patch): the open failed, the bridge
+    // is in error with no client - nothing is live, so the game's running mark ends here and the lobby can come back.
+    if (n && !n.client && n.state === 'error') return 1;
     return (n && n.client && n.client.over) ? 1 : 0;
   },
 

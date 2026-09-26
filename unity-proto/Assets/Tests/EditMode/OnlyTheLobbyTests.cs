@@ -36,4 +36,22 @@ public class OnlyTheLobbyTests
         int depth = src.IndexOf("GUI.depth = -200", gui);
         Assert.IsTrue(gui >= 0 && made > gui && made < depth, "OnGUI can draw the title before the lobby is made");
     }
+
+    // THE 21:13 CASE (the owner 2026-09-26, measured live): a closed round's link with play=1 - the node refuses the entry
+    // after the join, and the lobby must come back with the run stopped.
+    [Test]
+    public void ARefusedEntryBeforeTheRunIsLiveGoesBackToTheLobby()
+    {
+        Assert.IsTrue(SplashScreen.JoinRefusedBeforeLive("refused", sessionLive: false, atTheRamp: true));
+        Assert.IsFalse(SplashScreen.JoinRefusedBeforeLive("refused", sessionLive: true, atTheRamp: true), "a live run is not taken away");
+        Assert.IsFalse(SplashScreen.JoinRefusedBeforeLive("refused", sessionLive: false, atTheRamp: false), "a rolled-out truck is not taken away");
+        Assert.IsFalse(SplashScreen.JoinRefusedBeforeLive("joined", sessionLive: false, atTheRamp: true));
+        Assert.IsFalse(SplashScreen.JoinRefusedBeforeLive("", sessionLive: false, atTheRamp: true), "no page lobby, no refusal");
+        string lib = File.ReadAllText(Path.Combine(Application.dataPath, "Plugins/WebGL/blwp.jslib"));
+        StringAssert.Contains("window.BLWP_ENTRY_REFUSED(net.error)", lib);
+        StringAssert.Contains("if (n && !n.client && n.state === 'error') return 1;", lib);
+        string page = File.ReadAllText(Path.Combine(Application.dataPath, "WebGLTemplates/BtcLogistics/index.html"));
+        StringAssert.Contains("window.BLWP_ENTRY_REFUSED = async (why) =>", page);
+    }
 }
+
