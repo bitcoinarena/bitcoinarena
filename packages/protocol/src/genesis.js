@@ -180,7 +180,7 @@ export function genesisFor(network) {
       { federationNominal: 4, ...REGTEST_CLOCKS });
   if (network === 'testnet4' || network === 'testnet')
     return testnetShape('bitcoin-testnet4', bondMarker('testnet'), ARBITRATION_KEYS_TESTNET4,
-      { federationNominal: 2, ...TESTNET_CLOCKS });
+      { federationNominal: 4, ...TESTNET_CLOCKS });
   throw new Error('no genesis for ' + network);
 }
 
