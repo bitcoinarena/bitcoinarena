@@ -60,3 +60,24 @@ test('2. every lane from z -30 to 30 delivers at full throttle and never loses s
   }
   assert.deepEqual(failed, []);
 });
+
+// NOTHING LEFT OR RIGHT OF IT EITHER (the owner 2026-09-26 07:18: "The collisions left and right of the finish straight are
+// wrong. They come out ... A truck on the centre line is not stopped and not slowed by a side box"). The 26-box corridor
+// lining stood at |z| 32.8 .. 40 between x 145 and 171 where nothing is drawn; out to the 40 m mouth, from the door to
+// the gate, no box the truck can reach is left.
+test('3. no map box the truck can reach stands anywhere inside the mouth, door to gate', () => {
+  const st = init(0x51eed);
+  const MOUTH = 40;
+  let high = -Infinity;
+  for (let x = Math.ceil(M(MINER_DOOR_X)); x <= M(MINER_X); x += 1)
+    for (let z = -MOUTH; z <= MOUTH; z += 1) high = Math.max(high, surfaceAt(st, x * ONE, Math.round(z * ONE)));
+  const inside = [];
+  for (let i = 0; i < st.solids.n; i++) {
+    const [cx, cz, hx, hz, yLow] = st.solids.box.subarray(i * 6, i * 6 + 5);
+    if (yLow > high + BODY_HEIGHT) continue;
+    const x0 = M(cx - hx), x1 = M(cx + hx), z0 = M(cz - hz), z1 = M(cz + hz);
+    if (x1 > M(MINER_DOOR_X) && x0 < M(MINER_X) && z1 > -MOUTH + 1e-3 && z0 < MOUTH - 1e-3)
+      inside.push(`box ${i} x ${x0.toFixed(2)}..${x1.toFixed(2)} z ${z0.toFixed(2)}..${z1.toFixed(2)}`);
+  }
+  assert.deepEqual(inside, []);
+});

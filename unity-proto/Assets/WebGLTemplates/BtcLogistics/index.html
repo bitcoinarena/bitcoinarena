@@ -623,11 +623,13 @@
       return asked;
     };
     window.BLWP_COPY_REPLAY = async (roundHex, entryHex, nodes) => {
+      // "copied!" on the card only once the clipboard holds the link (the owner 2026-09-26 07:12): the bridge reads this
+      window.BLWP_REPLAY_COPIED = '';
       const endpoints = await prefetchReplayNodes(roundHex, nodes);
       const link = BLWPCLIENT.replayLinkFor({ endpoints, roundHex, entryHex });
       if (!link.ok) { console.error('[blwp] copy game replay: ' + link.why); return link; }
       window.BLWP_REPLAY_URL = link.url;
-      try { await navigator.clipboard.writeText(link.url); console.log('[blwp] copy game replay: copied ' + link.url); }
+      try { await navigator.clipboard.writeText(link.url); window.BLWP_REPLAY_COPIED = link.url; console.log('[blwp] copy game replay: copied ' + link.url); }
       catch (e) { console.error('[blwp] copy game replay: the clipboard refused (' + e.message + '); the link is ' + link.url); }
       return link;
     };

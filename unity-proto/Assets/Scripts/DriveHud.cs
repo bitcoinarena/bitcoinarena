@@ -877,6 +877,8 @@ public class DriveHud : MonoBehaviour
     /// </summary>
     void DrawArrivalCard(int w, int h)
     {
+        // a card that is gone takes its "copied!" with it: the next card starts unpressed
+        if (!ArrivalShowing) { _copyPressedAt = -1f; _copiedAt = -1f; }
         if (ArrivalIsHiddenBy(SendOffShowing)) return;
 
         const float Hold = ArrivalHoldSeconds;
@@ -981,11 +983,38 @@ public class DriveHud : MonoBehaviour
             {
                 _replayCopied = Blwp.BlwpCore.CopyReplay() == 1;
                 Debug.Log("[blwp] copy game replay: " + (_replayCopied ? "handed to the page" : "no networked run to copy"));
+                if (_replayCopied) { _copyPressedAt = Time.unscaledTime; _copiedAt = -1f; }
+            }
+            // "copied!" (the owner 2026-09-26 07:12): once the page says the clipboard holds the link - its write resolved -
+            // not on the press. Beside the button on its own row, so it covers no other line of the card.
+            if (_copyPressedAt >= 0f && _copiedAt < 0f && Blwp.BlwpCore.ReplayCopied)
+            {
+                _copiedAt = Time.unscaledTime;
+                Debug.Log("[blwp] copy game replay: copied! shown");
+            }
+            if (CopiedTooltipShows(_copiedAt, Time.unscaledTime))
+            {
+                var tip = new GUIStyle(line) { fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter };
+                tip.normal.textColor = new Color(0.45f, 1f, 0.55f, 1f);
+                var size = tip.CalcSize(new GUIContent(CopiedLabel));
+                float tw = size.x + line.fontSize, th = rect.height;
+                float tx = Mathf.Min(rect.xMax + line.fontSize * 0.5f, row.xMax - tw);
+                var tipRect = new Rect(tx, rect.y, tw, th);
+                PanelSkin.Gradient(tipRect, new Color(0.08f, 0.20f, 0.10f, 0.96f), new Color(0.05f, 0.14f, 0.07f, 0.96f));
+                PanelSkin.Border(tipRect, new Color(0.45f, 1f, 0.55f, 0.9f));
+                GUI.Label(tipRect, CopiedLabel, tip);
             }
         }
     }
 
     bool _replayCopied;
+    float _copyPressedAt = -1f, _copiedAt = -1f;
+
+    /// <summary>The tooltip's word, shown once the clipboard holds the replay link.</summary>
+    public const string CopiedLabel = "copied!";
+    /// <summary>How long "copied!" stands after the clipboard answered (the card may go first).</summary>
+    public const float CopiedTooltipSeconds = 3f;
+    public static bool CopiedTooltipShows(float copiedAt, float now) => copiedAt >= 0f && now - copiedAt < CopiedTooltipSeconds;
 
     static Rect Inset(Rect row) => new Rect(row.x + 8f, row.y, row.width - 16f, row.height);
 

@@ -15,6 +15,11 @@
   canvas { display: block; width: 100%; background: var(--panel); }
   #legend { padding: 6px 12px; color: var(--dim); font-size: 12px; }
   #legend b { font-weight: 600; }
+  /* THE TICK'S OWN NUMBERS, at the bottom on every tick (the owner 2026-09-26 07:12) */
+  body { padding-bottom: 120px; }                 /* room for the readout, so it covers none of the page */
+  #readout { position: fixed; left: 0; right: 0; bottom: 0; padding: 8px 12px; background: rgba(11, 15, 20, 0.94);
+    border-top: 1px solid #33414f; font-variant-numeric: tabular-nums; line-height: 1.5; overflow-wrap: anywhere; }
+  #work { color: var(--dim); }
 </style>
 </head>
 <body>
@@ -27,6 +32,7 @@
 <canvas id="map" width="1480" height="680"></canvas>
 <div id="legend"><b style="color:var(--truck)">▲</b> your truck · <b style="color:var(--bull)">■</b>/<b style="color:var(--bear)">■</b> tanks ·
   <b style="color:var(--bull)">•</b>/<b style="color:var(--bear)">•</b> infantry · ◆ helicopters · <b style="color:#ff8a65">●</b> bombs · the gate is the dashed line</div>
+<div id="readout"><div id="line1">&nbsp;</div><div id="work">&nbsp;</div></div>
 <!-- THE PROTOCOL'S OWN DECODERS AND SEED (the client bundle), from this node - RELATIVE, so a node published under a
      path (https://host/blwp-a/replay) loads its own and not the root's. -->
 <script src="replay/client.js"></script>
@@ -71,7 +77,9 @@
   const seedWord = BLWPCLIENT.seedWordForEntry(ent, beacon);
   const st = CORE.start(seedWord);
   const events = CORE.eventsOf(transcript);
-  const PER = 3 + L.UNITS * 5 + L.MAX_HELIS * 4 + L.MAX_BOMBS * 3;
+  // the map's words, then the tick's own numbers: the truck's hp and the words scoreOf reads (exposure, elapsed ticks,
+  // cargo), and the core's practice flag
+  const MAP = 3 + L.UNITS * 5 + L.MAX_HELIS * 4 + L.MAX_BOMBS * 3, PER = MAP + 5;
   const frames = new Int32Array(PER * transcript.ticks.length);
   const take = (f) => {
     const s = st.i32; let o = f * PER;
@@ -89,6 +97,9 @@
       const b = L.O_BOMBS + i * L.B_WORDS;
       frames[o++] = s[b + L.B_X]; frames[o++] = s[b + L.B_Z]; frames[o++] = s[b + L.B_STATE];
     }
+    frames[o++] = s[L.O_TRUCK + L.T_HP];
+    frames[o++] = s[L.O_SCORE + L.S_EXPOSURE]; frames[o++] = s[L.O_SCORE + L.S_ELAPSED]; frames[o++] = s[L.O_SCORE + L.S_CARGO];
+    frames[o++] = s[L.O_SCORE + L.S_PRACTICE];
   };
   transcript.ticks.forEach((t, f) => { events.before(st, t.tick); CORE.step(st, t.words); take(f); });
   const result = CORE.result(st);
@@ -127,6 +138,22 @@
     g.save(); g.translate(sx(tx), sz(tz)); g.rotate(a); g.fillStyle = '#ffd54f';
     g.beginPath(); g.moveTo(0, -12); g.lineTo(8, 9); g.lineTo(-8, 9); g.closePath(); g.fill(); g.restore();
     document.getElementById('at').textContent = `tick ${from + f + 1} of ${from + transcript.ticks.length}`;
+    readout(f);
+  }
+
+  // THE TICK'S NUMBERS (the owner 2026-09-26 07:12), on every tick, playing or scrubbed. The factors are the ones scoreOf
+  // multiplies - score.js's own exposure5 (danger), time5 (speed) and cargo5 (load), from the core this page stepped -
+  // and the score is the core's scoreOf of the same words: what this tick would pay, delivered or not. Line 2 is the
+  // arrival card's working for this tick.
+  const Sc = R.score, five = (n) => (n / Sc.FACTOR_SCALE).toFixed(5);
+  function readout(f) {
+    const o = f * PER + MAP;
+    const hp = frames[o], exposure = frames[o + 1], elapsed = frames[o + 2], cargo = frames[o + 3], practice = frames[o + 4];
+    const danger = five(Sc.exposure5(exposure)), speed = five(Sc.time5(elapsed)), load = five(Sc.cargo5(cargo));
+    const score = points(Sc.scoreOf(exposure, elapsed, cargo));
+    document.getElementById('line1').textContent =
+      `health ${(hp / ONE).toFixed(2)} · danger ${danger} · speed ${speed} · practice ${practice ? 'on' : 'off'} · score ${score}`;
+    document.getElementById('work').textContent = `load ${load} × danger ${danger} × speed ${speed} × 1000 = ${score}`;
   }
 
   // PLAYED LIKE A VIDEO, at the core's own tick rate (ONE / TICK_DT ticks a second).
