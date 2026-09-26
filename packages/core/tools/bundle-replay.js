@@ -18,6 +18,10 @@ let { out, order } = concatBundle(SRC, ['adapter.js', 'state.js', 'tick.js', 'si
 // words the arrival card prints): score.js's exposure5, time5, cargo5 and scoreOf, and the practice flag's word.
 out += '\nreturn { CORE: CORE, TICK_DT: TICK_DT, HALF_X: HALF_X, HALF_Z: HALF_Z, GATE_X: GATE_X, ONE: 65536,\n';
 out += '  score: { exposure5: exposure5, time5: time5, cargo5: cargo5, scoreOf: scoreOf, FACTOR_SCALE: FACTOR_SCALE, SCORE_SCALE: SCORE_SCALE },\n';
+// THE MAP'S OWN LANDMARKS (the owner 2026-09-26 11:04: "the map is only dots"): where the post office and the miner stand
+// and where the finish straight runs, so the replay can draw and label them from the core's words.
+out += '  map: { POST_X: POST_X, WALL_DEPTH: WALL_DEPTH, SHELL_HALF: SHELL_HALF, MINER_X: MINER_X, MINER_DOOR_X: MINER_DOOR_X,\n';
+out += '    MINER_MOUTH_HALF: MINER_MOUTH_HALF, MINER_SHELL_HALF: MINER_SHELL_HALF },\n';
 out += '  layout: { O_TRUCK: O_TRUCK, T_X: T_X, T_Z: T_Z, T_HEADING: T_HEADING, T_HP: T_HP,\n';
 out += '    O_SCORE: O_SCORE, S_STATE: S_STATE, S_EXPOSURE: S_EXPOSURE, S_ELAPSED: S_ELAPSED, S_CARGO: S_CARGO, S_PRACTICE: S_PRACTICE,\n';
 out += '    O_UNITS: O_UNITS, U_WORDS: U_WORDS, UNITS: UNITS, ARMOUR_MASK: ARMOUR_MASK, U_X: U_X, U_Z: U_Z, U_SIDE: U_SIDE, U_HP: U_HP, U_STATE: U_STATE,\n';
