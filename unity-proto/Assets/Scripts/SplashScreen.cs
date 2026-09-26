@@ -54,6 +54,7 @@ public class SplashScreen : MonoBehaviour
     string _lastNotice = "";
     string _lastSilent = "";
     Rect _lastSilentRect;
+    string _lastHint = "";
     readonly System.Collections.Generic.List<(Blwp.LobbyRow row, Rect rect, string words)> _drawnRows =
         new System.Collections.Generic.List<(Blwp.LobbyRow row, Rect rect, string words)>();
 
@@ -660,6 +661,9 @@ public class SplashScreen : MonoBehaviour
         _drawnRows.Clear();
         var rowStyle = new GUIStyle(_body)
             { fontSize = Mathf.RoundToInt(font), alignment = TextAnchor.MiddleLeft, wordWrap = false, clipping = TextClipping.Clip };
+        // WHILE A REFUSAL NAMES A ROUND, EVERY ROW SAYS ITS OWN NAME (the owner 2026-09-26 16:56): the next paid round read exactly
+        // as the closed one had, under "the round is closed".
+        bool namedRows = !_joining && !string.IsNullOrEmpty(_joinWhy) && _lobby.join != null && !string.IsNullOrEmpty(_lobby.join.round);
         for (int i = 0; i < l.rows && _offset + i < rows.Length; i++)
         {
             var r = rows[_offset + i];
@@ -672,7 +676,7 @@ public class SplashScreen : MonoBehaviour
             rowStyle.fontSize = Mathf.RoundToInt(font);
             rowStyle.normal.textColor = r.joinable ? (picked ? PanelSkin.Gold : Color.white) : new Color(1f, 1f, 1f, 0.5f);
             var inner = new Rect(rect.x + 8f, rect.y, rect.width - 16f, rect.height);
-            string words = FitWords(rowStyle, Blwp.DailyLobby.RowWords(r), inner.width);
+            string words = FitWords(rowStyle, Blwp.DailyLobby.RowWords(r, namedRows), inner.width);
             GUI.Label(inner, words, rowStyle);
             if (r.joinable && GUI.Button(rect, GUIContent.none, GUIStyle.none)) { _tapId = r.id; _pickId = r.id; }
             _drawnRows.Add((r, rect, words));
@@ -689,9 +693,11 @@ public class SplashScreen : MonoBehaviour
             var said = new GUIContent(_lastSilent);
             float inner = l.list.width - 20f;
             float top = l.list.y + drawn * l.rowH;
-            while (red.fontSize > 10 && red.CalcHeight(said, inner) + 12f > Mathf.Max(l.list.yMax - top, l.list.height * 0.5f)) red.fontSize--;
+            // UNDER THE ROWS, NEVER OVER ONE (the owner 2026-09-26 16:56: "Covering the row is not removing the offer"): set smaller
+            // until it fits the list below its rows, and past the list's foot rather than on a row when even 10 does not.
+            float room = Mathf.Max(l.list.yMax - top, 0f);
+            while (red.fontSize > 10 && red.CalcHeight(said, inner) + 12f > room) red.fontSize--;
             float height = red.CalcHeight(said, inner) + 12f;
-            if (top + height > l.list.yMax) top = l.list.yMax - height;       // over the last row rather than off the list
             _lastSilentRect = new Rect(l.list.x, top, l.list.width, height);
             PanelSkin.Gradient(_lastSilentRect, new Color(0.24f, 0.05f, 0.05f, 0.96f), new Color(0.16f, 0.03f, 0.03f, 0.96f));
             PanelSkin.Border(_lastSilentRect, new Color(1f, 0.42f, 0.42f, 0.9f));
@@ -707,11 +713,16 @@ public class SplashScreen : MonoBehaviour
         }
     }
 
+    /// <summary>A refused join that only the hint line can say: the list drew no red box for it.</summary>
+    bool RefusalHere => !_joining && !string.IsNullOrEmpty(_joinWhy) && _lastSilentRect.width <= 0f;
+
     /// <summary>What PLAY will do, on the hint line - short enough for a phone.</summary>
     string LobbyHint()
     {
         if (_joining) return string.IsNullOrEmpty(_lobby.join.stage) ? "joining the round …" : $"joining the round - {_lobby.join.stage} …";
-        if (!string.IsNullOrEmpty(_joinWhy)) return $"not joined: {_joinWhy}";
+        // SAID ONCE (the owner 2026-09-26 16:56: "The same sentence is repeated under the card"): a refusal the red box on the
+        // list says is not said again here - this line says what PLAY does now.
+        if (RefusalHere) return $"not joined: {_joinWhy}";
         int k = Blwp.DailyLobby.Keep(_lobby.rows, _pickId);
         if (k >= 0)
         {
@@ -791,7 +802,7 @@ public class SplashScreen : MonoBehaviour
               .Append(",\"howToShown\":[").Append(string.Join(",", _howToShown)).Append(']')
               .Append(",\"howToCarousel\":").Append(_lastHowToCarousel ? "true" : "false").Append(",\"howToPage\":").Append(_howToPage)
               .Append(",\"howToPrev\":").Append(R(_lastHowToPrev)).Append(",\"howToNext\":").Append(R(_lastHowToNext))
-              .Append(",\"silent\":").Append(J(_lastSilent)).Append(",\"silentRect\":").Append(R(_lastSilentRect))
+              .Append(",\"silent\":").Append(J(_lastSilent)).Append(",\"hintText\":").Append(J(_lastHint)).Append(",\"silentRect\":").Append(R(_lastSilentRect))
               .Append(",\"picked\":").Append(J(_pickId))
               .Append(",\"listed\":").Append(_lobby.rows.Length).Append(",\"rows\":[");
             for (int i = 0; i < _drawnRows.Count; i++)
@@ -893,8 +904,9 @@ public class SplashScreen : MonoBehaviour
             hint.normal.textColor = new Color(1f, 1f, 1f, 0.6f);
             // A REFUSED JOIN IS AN ERROR AND READS AS ONE: red and bold on the line above PLAY, not the hint's grey (2026-09-17,
             // "the tiny grey fetch line is not enough").
-            if (!_joining && !string.IsNullOrEmpty(_joinWhy)) { hint.normal.textColor = new Color(1f, 0.50f, 0.46f); hint.fontStyle = FontStyle.Bold; }
-            GUI.Label(f.hint, Fit(hint, LobbyHint(), f.hint.width), hint);
+            if (RefusalHere) { hint.normal.textColor = new Color(1f, 0.50f, 0.46f); hint.fontStyle = FontStyle.Bold; }
+            _lastHint = LobbyHint();
+            GUI.Label(f.hint, Fit(hint, _lastHint, f.hint.width), hint);
         }
         else GUI.Label(f.hint, Hint, _sub);
 
