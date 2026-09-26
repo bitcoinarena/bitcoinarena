@@ -194,33 +194,39 @@ public class DriveHud : MonoBehaviour
             }
         }
 
-        string tail = runScore == null
-            ? $"{gate.Runs} runs delivered"
-            : $"best {CoreScoreFactors.Points(runScore.Best)}  ·  {gate.Runs} runs  ·  {gate.SatsDelivered:N0} sat";
-        Shadowed(Row(under.fontSize * 1.5f), tail, under, new Color(1f, 1f, 1f, 0.7f));
+        // NOTHING UNDER THE RESULT CARD (the owner 2026-09-25, PRIORITIES item 3: "nothing overlaps"; measured 2026-09-26 at
+        // 1280x720: CARGO / SCORE / BANKED ran under the card's bottom-right corner). The card carries the run's score and
+        // its working while it stands, so this block steps aside until it is gone.
+        if (!ArrivalShowing)
+        {
+            string tail = runScore == null
+                ? $"{gate.Runs} runs delivered"
+                : $"best {CoreScoreFactors.Points(runScore.Best)}  ·  {gate.Runs} runs  ·  {gate.SatsDelivered:N0} sat";
+            Shadowed(Row(under.fontSize * 1.5f), tail, under, new Color(1f, 1f, 1f, 0.7f));
 
-        // The condition, in small type, directly under the two figures it
-        // explains. Above them it read as a heading for the whole block; the
-        // sentence is about the top number only.
-        string caption = runScore == null ? ""
-            : live ? "yours only if you reach the drop-off" : "last run";
-        Shadowed(Row(under.fontSize * 1.5f), caption, under,
-                 live ? new Color(1f, 0.82f, 0.30f, 0.8f) : new Color(1f, 1f, 1f, 0.5f));
+            // The condition, in small type, directly under the two figures it
+            // explains. Above them it read as a heading for the whole block; the
+            // sentence is about the top number only.
+            string caption = runScore == null ? ""
+                : live ? "yours only if you reach the drop-off" : "last run";
+            Shadowed(Row(under.fontSize * 1.5f), caption, under,
+                     live ? new Color(1f, 0.82f, 0.30f, 0.8f) : new Color(1f, 1f, 1f, 0.5f));
 
-        // BANKED: what is actually yours. Green, and it never goes down.
-        if (runScore != null)
-            Shadowed(Row(banked.fontSize * 1.3f), $"BANKED  {CoreScoreFactors.Points(runScore.Total)}", banked, Up);
+            // BANKED: what is actually yours. Green, and it never goes down.
+            if (runScore != null)
+                Shadowed(Row(banked.fontSize * 1.3f), $"BANKED  {CoreScoreFactors.Points(runScore.Total)}", banked, Up);
 
-        // SCORE: what the current run would add. Amber, because a wreck takes
-        // all of it - the colour is the warning, the line beneath says why.
-        var tint = live ? new Color(1f, 0.82f, 0.30f) : new Color(1f, 1f, 1f, 0.45f);
-        if (live && runScore.Projected <= 0) tint = new Color(1f, 0.45f, 0.40f);
-        Shadowed(Row(score.fontSize * 1.25f), $"SCORE  {CoreScoreFactors.Points(pending)}", score, tint);
+            // SCORE: what the current run would add. Amber, because a wreck takes
+            // all of it - the colour is the warning, the line beneath says why.
+            var tint = live ? new Color(1f, 0.82f, 0.30f) : new Color(1f, 1f, 1f, 0.45f);
+            if (live && runScore.Projected <= 0) tint = new Color(1f, 0.45f, 0.40f);
+            Shadowed(Row(score.fontSize * 1.25f), $"SCORE  {CoreScoreFactors.Points(pending)}", score, tint);
 
-        Shadowed(Row(under.fontSize * 1.5f), bay.IsLoaded
-                     ? $"CARGO  {bay.Count} parcels  ·  {bay.FeeCarried:N0} sat"
-                     : "CARGO  empty",
-                 under, bay.IsLoaded ? Color.white : new Color(1f, 1f, 1f, 0.6f));
+            Shadowed(Row(under.fontSize * 1.5f), bay.IsLoaded
+                         ? $"CARGO  {bay.Count} parcels  ·  {bay.FeeCarried:N0} sat"
+                         : "CARGO  empty",
+                     under, bay.IsLoaded ? Color.white : new Color(1f, 1f, 1f, 0.6f));
+        }
 
         DrawArrivalCard(w, h);
         DrawSendOff(w, h);
@@ -886,9 +892,10 @@ public class DriveHud : MonoBehaviour
         float since = missed ? Time.unscaledTime - gate.MissedAt : gate.SinceDelivery;
         if (!missed && gate.SinceDelivery >= Hold) return;
 
-        // Full strength for most of it, then fade. A linear fade from the first
-        // frame spends the whole time getting harder to read.
-        float k = Mathf.Clamp01((Hold - since) / (Hold * 0.28f));
+        // FULL STRENGTH FOR THE WHOLE HOLD (PRIORITIES item 3: "it stays up ... 8 s"). It faded over the last 28% -
+        // from 5.76 s, nearly gone by 7.5 s, measured live 2026-09-26 - so the readable card stood about 6 s of the 8.
+        // The lobby takes over at 8 s; until then nothing about the card gets harder to read.
+        float k = 1f;
 
         string headline = ArrivalHeadline(missed, gate.LastRun);
         string scoreLine = ArrivalScoreLine(missed, runScore == null ? 0 : runScore.LastScore);
@@ -2561,6 +2568,8 @@ public class DriveHud : MonoBehaviour
     {
         var watch = ChartHud.Watch;
         if (watch == null) return;
+        // not under the result card ("HIGH TAKEN" read through it at 1280x720, measured 2026-09-26): nothing overlaps
+        if (ArrivalShowing) return;
         float a = watch.BannerAlpha(Time.unscaledTime);
         if (a <= 0f) return;
         var style = new GUIStyle(GUI.skin.label)
