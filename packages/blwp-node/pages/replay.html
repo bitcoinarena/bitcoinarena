@@ -96,7 +96,8 @@
   // STEP THE WHOLE RUN ONCE, keeping what the map draws at every tick.
   const seedWord = BLWPCLIENT.seedWordForEntry(ent, beacon);
   const st = CORE.start(seedWord);
-  const solids = { n: st.solids.n, box: Int32Array.from(st.solids.box.subarray(0, st.solids.n * 6)) };
+  // an older core a stored round names may keep no map solids of its own (its host set them): draw none then
+  const solids = st.solids && st.solids.box ? { n: st.solids.n, box: Int32Array.from(st.solids.box.subarray(0, st.solids.n * 6)) } : { n: 0, box: new Int32Array(0) };
   const events = CORE.eventsOf(transcript);
   // the map's words, then the tick's own numbers: the truck's hp and the words scoreOf reads (exposure, elapsed ticks,
   // cargo), and the core's practice flag
@@ -138,10 +139,12 @@
   // the truck was). Drawn once from the core this page stepped - its solids as it built them at the start, and the map's
   // own constants - not a second scene: the post office's shell (teal, MEMPOOL), the miner's (magenta, MINER), and the
   // finish straight, the open corridor from the miner's door to the gate.
-  const Mp = R.map;
+  const Mp = R.map || {};
+  const hasMap = [Mp.POST_X, Mp.SHELL_HALF, Mp.MINER_X, Mp.MINER_DOOR_X, Mp.MINER_MOUTH_HALF, Mp.MINER_SHELL_HALF].every((v) => typeof v === 'number');
   const landmarks = document.createElement('canvas'); landmarks.width = cv.width; landmarks.height = cv.height;
   (function drawLandmarks() {
     const l = landmarks.getContext('2d');
+    if (!hasMap) return;   // an older core names no landmarks: the units, the truck and the gate are drawn as before
     const rect = (x0, z0, x1, z1) => [sx(Math.min(x0, x1)), sz(Math.max(z0, z1)), Math.abs(sx(x1) - sx(x0)), Math.abs(sz(z1) - sz(z0))];
     // the buildings' ground, faint, so each end reads as a place
     l.fillStyle = 'rgba(26, 217, 255, 0.10)'; l.fillRect(...rect(-R.HALF_X, -Mp.SHELL_HALF, Mp.POST_X, Mp.SHELL_HALF));
@@ -209,8 +212,15 @@
   // multiplies - score.js's own exposure5 (danger), time5 (speed) and cargo5 (load), from the core this page stepped -
   // and the score is the core's scoreOf of the same words: what this tick would pay, delivered or not. Line 2 is the
   // arrival card's working for this tick.
-  const Sc = R.score, five = (n) => (n / Sc.FACTOR_SCALE).toFixed(5);
+  const Sc = R.score || {}, five = (n) => (n / Sc.FACTOR_SCALE).toFixed(5);
+  // an older core a stored round names may not carry score.js's factors: its line then says so and no bar is drawn
+  const hasFactors = ['exposure5', 'time5', 'cargo5', 'scoreOf'].every((k) => typeof Sc[k] === 'function') && typeof Sc.FACTOR_SCALE === 'number';
   function readout(f) {
+    if (!hasFactors) {
+      document.getElementById('line1').textContent = `this round's core (${ended}) does not name its score factors`;
+      document.getElementById('work').textContent = '';
+      return;
+    }
     const o = f * PER + MAP;
     const hp = frames[o], exposure = frames[o + 1], elapsed = frames[o + 2], cargo = frames[o + 3], practice = frames[o + 4];
     const danger = five(Sc.exposure5(exposure)), speed = five(Sc.time5(elapsed)), load = five(Sc.cargo5(cargo));
