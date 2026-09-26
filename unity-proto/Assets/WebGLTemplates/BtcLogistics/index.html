@@ -647,6 +647,10 @@
       }
       if (location.search !== back) history.replaceState(null, '', location.pathname + back);
       window.BLWP_RUN_ENDED = String(word || '');
+      // THE RESULT CARD IS UP FROM HERE UNTIL THE LOBBY (PRIORITIES item 3, "nothing overlaps"; measured 2026-09-26 at
+      // 1280x720: this panel's top edge crossed the card's bottom border). It steps aside until Unity reports the lobby.
+      window.BLWP_CARD_UP = true;
+      { const pl = document.getElementById('blwp-players'); if (pl) pl.style.display = 'none'; }
       if (noLobby && !window.BLWP_LOBBY_STARTING) {
         window.BLWP_LOBBY_STARTING = true;
         showTheLobbyIfOneWasNamed()
@@ -1420,7 +1424,8 @@
     function paintPlayers() {
       const el = document.getElementById('blwp-players');
       if (!el) return;
-      if (!window.BLWP_ROUND) { el.style.display = 'none'; return; }
+      if (window.BLWP_CARD_UP && window.BLWP_UNITY_LOBBY && window.BLWP_UNITY_LOBBY.showing) window.BLWP_CARD_UP = false;
+      if (!window.BLWP_ROUND || window.BLWP_CARD_UP) { el.style.display = 'none'; return; }
       el.style.display = 'block';
       const inst = window.unityInstance;
       const mod = (inst && inst.Module) || (typeof Module !== 'undefined' ? Module : window.Module);
