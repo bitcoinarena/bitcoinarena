@@ -18,6 +18,7 @@ import { federationGatewayCount } from '../../protocol/src/gateways.js';
 import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { WebSocketServer } from 'ws';
+import { connect as netConnect } from 'node:net';
 import { decodeRoundContract, decodeEntryContract, publicationRelaysAreValid, custodyFieldsAreValid, roundId as roundIdOf } from '../../protocol/src/contracts.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 import { lobbyListingId } from '../../protocol/src/lobby-listing.js';
@@ -197,6 +198,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // settles or cancels holds, and it pays nothing: that was the withdrawn Lightning custody's custody by one operator.
   // (`preimageFor`, `preflight` and `secondsPerBlock` served only that hold, and are gone with it.)
   lightning = null,
+  // THIS NODE'S OWN GUARDIAN (§23A.2, RULED 2026-09-26 22:54): `{ apiPort, endpoint }` when the node started one
+  // (guardian.js). Its websocket is carried on this server at /guardian, so the guardian's endpoint is the node's own
+  // public address; null for a node that is not a guardian.
+  guardian = null,
   // THE FEDERATION'S RECEIVING SIDE (V1's pool is a FEDERATION, the owner 2026-09-11): `receive({
   // amountMsat })` answers `{ request }`, an LNv2 invoice the federation's gateway holds.
   federation = null,
@@ -1560,6 +1565,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // simple. Answered and nothing else: there is no state to change here.
       if (req.method === 'OPTIONS') { res.writeHead(204, CORS); return res.end(); }
 
+      // WHETHER THIS NODE IS A GUARDIAN, and the endpoint a phone opens for it (its own public address).
+      if (req.method === 'GET' && url.pathname === '/guardian') {
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify(guardian ? { guardian: true, endpoint: guardian.endpoint } : { guardian: false }));
+      }
       if (req.method === 'GET' && url.pathname === '/identity') {
         return bytes(res, 200, round.pubkey);
       }
@@ -3083,10 +3093,27 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // that ran inside it, the garbage collection in it, or - when there was neither - that nothing named held it.
   watchLoop({ say: (line) => console.log(line) });
 
-  const wss = new WebSocketServer({
-    server: http,
-    path: '/play',
-    maxPayload: MAX_FRAME_BYTES,
+  const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_BYTES });
+  // TWO SOCKETS ON ONE ADDRESS: /play is the game's, /guardian is this node's guardian, carried byte for byte to its
+  // local API (the guardian's endpoint is the node's own public address, §23A.2). Anything else is refused as before.
+  const guardianPipes = new Set();
+  http.on('upgrade', (req, socket, head) => {
+    const at = new URL(req.url, 'http://node').pathname;
+    if (at === '/play') { wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req)); return; }
+    if (at === '/guardian' && guardian && guardian.apiPort) {
+      const up = netConnect({ host: '127.0.0.1', port: guardian.apiPort }, () => {
+        const lines = [`${req.method} / HTTP/${req.httpVersion}`];
+        for (let i = 0; i < req.rawHeaders.length; i += 2) lines.push(`${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}`);
+        up.write(lines.join('\r\n') + '\r\n\r\n');
+        if (head && head.length) up.write(head);
+        socket.pipe(up); up.pipe(socket);
+      });
+      guardianPipes.add(socket);
+      const done = () => { guardianPipes.delete(socket); up.destroy(); socket.destroy(); };
+      up.on('error', done); socket.on('error', done); up.on('close', done); socket.on('close', done);
+      return;
+    }
+    socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n');
   });
   // WHO IS ON THE OTHER END OF A CONNECTION, and nothing is pushed to one that
   // has not said. A socket used to be anonymous - it took input batches and
@@ -3440,6 +3467,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         for (const t of rerunTimers) clearTimeout(t);
         rerunTimers.clear();
         for (const sock of wss.clients) sock.terminate();
+        for (const sock of guardianPipes) sock.destroy();
         wss.close();
         http.closeAllConnections();
         http.close(r);
