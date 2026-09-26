@@ -57,7 +57,7 @@ public class ArrivalCardWordsTests
             StringAssert.Contains("load 0.83", DriveHud.ArrivalWorkLine(false, 0.83f, 1f, 1.5f));
             StringAssert.Contains("speed 1.50", DriveHud.ArrivalWorkLine(false, 0.83f, 1f, 1.5f));
             StringAssert.Contains("4,123,456 sat", DriveHud.ArrivalHeadline(false, 4123456));
-            StringAssert.Contains("+1,234", DriveHud.ArrivalScoreLine(false, 1234));
+            StringAssert.Contains("+1,234.00000", DriveHud.ArrivalScoreLine(false, 123400000));
         }
         finally { Thread.CurrentThread.CurrentCulture = was; }
     }
@@ -83,26 +83,33 @@ public class ArrivalCardWordsTests
     // the cargo word the core still holds from init, 45875 (0.70).
     const int ShotExposureWord = 4842601, ShotTicks = 4596, ShotCargoWord = 45875;
 
-    static int ProductTimes1000(float c, float e, float t) => Mathf.RoundToInt(1000f * c * e * t);
+    // THE CORE'S SCORE IS THE PRODUCT OF ITS FACTORS (the owner 2026-09-25): 1000 x C x E x T of the factors as printed, in
+    // exact decimal arithmetic, rounded to five decimals half up - score.js's divRoundInt - is the score.
+    static decimal Product5(string c, string e, string t) =>
+        decimal.Round(1000m * decimal.Parse(c, CultureInfo.InvariantCulture) * decimal.Parse(e, CultureInfo.InvariantCulture)
+                      * decimal.Parse(t, CultureInfo.InvariantCulture), 5, System.MidpointRounding.AwayFromZero);
 
     [Test]
     public void TheCardsFactorsAreTheCoresAndTheirProductIsTheScoreOnTheLineAbove()
     {
         float e = CoreScoreFactors.Exposure(ShotExposureWord), t = CoreScoreFactors.Time(ShotTicks), c = CoreScoreFactors.Cargo(ShotCargoWord);
-        string line = DriveHud.ArrivalWorkLine(false, c, e, t);
-        Debug.Log($"playtest 18:29 card, from the core's words: {line}  -> product {1000f * c * e * t:0.0}");
-        Assert.AreEqual("load 0.70   ×   danger 0.23   ×   speed 0.85   ×  1000", line);
-        Assert.AreEqual(137, ProductTimes1000(c, e, t), "the card's factors do not multiply to the core's 137");
+        // the core's score of that run, now the product itself (score.js scoreOf: 13715869 in 1e-5 points)
+        string line = DriveHud.ArrivalWorkLine(false, c, e, t, 13715869);
+        Debug.Log($"playtest 18:29 card, from the core's words: {line}");
+        Assert.AreEqual("load 0.70000   ×   danger 0.23091   ×   speed 0.84856   ×  1000  =  137.15869", line);
+        Assert.AreEqual(137.15869m, Product5("0.70000", "0.23091", "0.84856"));
+        Assert.AreEqual("SCORE  +137.15869", DriveHud.ArrivalScoreLine(false, 13715869));
     }
 
     [Test]
-    public void ADangerOf100OnThatSameRunWouldHavePaid594()
+    public void ADangerOf100OnThatSameRunWouldHavePaid593_992()
     {
-        // The card said 1.00; a real 1.00 is the 320 m reference. On the same run it pays the core's 594 (scoreOf with
-        // exposure 320 m, 4596 ticks, cargo 45875) - not 137, and not the card's 1275.
-        float e = CoreScoreFactors.Exposure(320 * 65536), t = CoreScoreFactors.Time(ShotTicks), c = CoreScoreFactors.Cargo(ShotCargoWord);
+        // The card said 1.00; a real 1.00 is the 320 m reference. On the same run it pays the product 593.99200 (scoreOf with
+        // exposure 320 m, 4596 ticks, cargo 45875: 59399200) - not 137.15869, and not the old card's 1275.
+        float e = CoreScoreFactors.Exposure(320 * 65536);
         Assert.AreEqual(1f, e);
-        Assert.AreEqual(594, ProductTimes1000(c, e, t));
+        Assert.AreEqual(593.99200m, Product5("0.70000", "1.00000", "0.84856"));
+        Assert.AreEqual("593.99200", CoreScoreFactors.Points(59399200));
     }
 
     [Test]
@@ -110,9 +117,10 @@ public class ArrivalCardWordsTests
     {
         // The two faults the shot named: speed was a wall-clock cap, danger was Clamp01 of raw metres.
         Assert.Less(CoreScoreFactors.Time(ShotTicks), 1f, "a run past the 3900-tick par read a speed factor of 1 or more");
-        Assert.AreEqual(1.5f, CoreScoreFactors.Time(1), 1e-6f, "an instant run is held to the core's 1.5");
-        Assert.AreEqual(0.25f, CoreScoreFactors.Time(100000), 1e-6f, "a very slow run is held to the core's 0.25");
-        Assert.AreEqual(1f / 320f, CoreScoreFactors.Exposure(65536), 1e-6f, "one metre of exposure is not danger 1.00");
+        Assert.AreEqual(150000, CoreScoreFactors.Time5(1), "an instant run is held to the core's 1.5");
+        Assert.AreEqual(25000, CoreScoreFactors.Time5(100000), "a very slow run is held to the core's 0.25");
+        // one metre is 1/320 = 0.003125, on the core's five-decimal grid 0.00313 (rounded once, half up) - not danger 1.00
+        Assert.AreEqual(313, CoreScoreFactors.Exposure5(65536));
     }
 
     // THE OWNER'S 18:39 PLAYTEST (2026-09-25): two shots of the same result screen, 2048x887. The run-stopped line was drawn
@@ -170,5 +178,37 @@ public class ArrivalCardWordsTests
     {
         Assert.AreEqual("copy game replay", DriveHud.CopyReplayLabel);
     }
-}
 
+    // THE CARD'S PRODUCT IS THE CORE'S SCORE (the owner 2026-09-25: "load C x danger E x speed T x 1000 = S"). The 72
+    // DELIVERED runs of packages/core/test/fixtures/arrival-card-runs.json - the core's own words, kept current by
+    // core/test/arrival-card-runs.test.js - go through the real formatter; the four decimals are read back off the
+    // printed row and their product must round to the printed S, which must be the core's S_DELIVERED and the SCORE line's.
+    [System.Serializable] class CardRun { public float lane; public int seed, state, exposure, elapsed, cargo, delivered; }
+    [System.Serializable] class CardRuns { public CardRun[] runs; }
+
+    [Test]
+    public void TheCardsProductIsTheCoresScore()
+    {
+        string path = System.IO.Path.Combine(Application.dataPath, "../../packages/core/test/fixtures/arrival-card-runs.json");
+        var runs = JsonUtility.FromJson<CardRuns>(System.IO.File.ReadAllText(path)).runs;
+        Assert.AreEqual(72, runs.Length);
+        // T and C both move in the fixture (its cargo word is a FIXTURE WRITE, not a player input - this core has none)
+        Assert.IsTrue(System.Array.Exists(runs, r => CoreScoreFactors.Time(r.elapsed) < 1.5f), "no run has T below 1.5");
+        Assert.IsTrue(System.Array.Exists(runs, r => r.cargo != 45875), "every run carries the default cargo 0.70");
+        var row = new System.Text.RegularExpressions.Regex(
+            @"^load (\d\.\d{5})\s+×\s+danger (\d\.\d{5})\s+×\s+speed (\d\.\d{5})\s+×\s+1000\s+=\s+([\d,]+\.\d{5})$");
+        foreach (var r in runs)
+        {
+            float c = CoreScoreFactors.Cargo(r.cargo), e = CoreScoreFactors.Exposure(r.exposure), t = CoreScoreFactors.Time(r.elapsed);
+            string line = DriveHud.ArrivalWorkLine(false, c, e, t, r.delivered);
+            var m = row.Match(line);
+            Assert.IsTrue(m.Success, $"lane {r.lane} seed {r.seed}: the row does not read 'load C x danger E x speed T x 1000 = S': {line}");
+            decimal printed = decimal.Parse(m.Groups[4].Value.Replace(",", ""), CultureInfo.InvariantCulture);
+            Assert.AreEqual(r.delivered / 100000m, printed, $"lane {r.lane} seed {r.seed}: the printed S is not the core's S_DELIVERED");
+            Assert.AreEqual(printed, Product5(m.Groups[1].Value, m.Groups[2].Value, m.Groups[3].Value),
+                $"lane {r.lane} seed {r.seed}: {line} - the product of the printed factors is not the printed S");
+            StringAssert.Contains("+" + CoreScoreFactors.Points(r.delivered), DriveHud.ArrivalScoreLine(false, r.delivered),
+                "the SCORE line and the product row name different numbers");
+        }
+    }
+}

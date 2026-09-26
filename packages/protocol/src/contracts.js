@@ -17,6 +17,7 @@ import {
   TAG, PROTOCOL_VERSION, TYPE_ROUND_CONTRACT, TYPE_ENTRY_CONTRACT, ROLES,
   CUSTODY, custodyByte, custodyName, slashRemainderByte, slashRemainderOf, MIN_ENTRY_WINDOW_MS,
   STAKE_EXPIRY_BLOCKS, START_DEADLINE_TICKS, MAX_OBJECTION_WINDOW_MS,
+  SCORE_SCALE,
 } from './constants.js';
 
 /**
@@ -706,6 +707,7 @@ export function contractWarnings(c) {
     out.push('flat_rank_curve');
   if (c.exposureReference === 0) out.push('exposure_ignored');
   if (c.timeFloor >= c.timeCeil) out.push('time_factor_degenerate');
-  if (c.minScore > 0 && c.minScore > 100) out.push('minimum_score_is_a_danger_rule');
+  // min_score is in the score's unit, 1e-5 points (constants.js SCORE_SCALE): a floor above 100 points is a danger rule
+  if (c.minScore > 0 && c.minScore > 100 * SCORE_SCALE) out.push('minimum_score_is_a_danger_rule');
   return out;
 }

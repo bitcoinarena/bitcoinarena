@@ -1092,6 +1092,15 @@ const STAKE_EXPIRY_BLOCKS = 144;
  */
 const STAKE_LOCK_FRESHNESS_BLOCKS = 12;
 
+/**
+ * THE SCORE'S UNIT: an integer count of 1e-5 points (the owner 2026-09-25: "Their product is the score, so the core's score
+ * is that product"). The core's score is 1000 · E · T · C with each factor on a 1e-5 grid (core/src/rules/score.js,
+ * SCORE_SCALE there is this number and core/test/score-scale.test.js pins the two together); a PlayerResult's u32 score
+ * carries it as-is. A round contract's min_score is compared with it directly - multiplayer_p2p.md §18A.5, "score >=
+ * min_score" - so min_score is in the same unit: the spec's reference value of 1 point is 100000.
+ */
+const SCORE_SCALE = 100000;
+
 // ---- protocol/src/checkpoint.js
 // A checkpoint: where the player says the world was, at a tick both sides
 // named beforehand.
@@ -2014,7 +2023,8 @@ function contractWarnings(c) {
     out.push('flat_rank_curve');
   if (c.exposureReference === 0) out.push('exposure_ignored');
   if (c.timeFloor >= c.timeCeil) out.push('time_factor_degenerate');
-  if (c.minScore > 0 && c.minScore > 100) out.push('minimum_score_is_a_danger_rule');
+  // min_score is in the score's unit, 1e-5 points (constants.js SCORE_SCALE): a floor above 100 points is a danger rule
+  if (c.minScore > 0 && c.minScore > 100 * SCORE_SCALE) out.push('minimum_score_is_a_danger_rule');
   return out;
 }
 
@@ -6157,6 +6167,7 @@ const KNOWN_GOOD_CORE_HASHES = Object.freeze([
   '7db2e423ddf4443ea0b4f3642ce4cc21398e4082095f9cbc75a81c6d4a701a12',
   '2a68e8d4abf1c4ef57e64e8a30b1541a92cdfee886094423e0fb09e0eb4412b9',
   'f326d9229ab0013552c01615423933c435bbbc0dac157fffe6ac114a3a25f7a6',
+  'a5eaa7aa94f66cd4e0305c45e4c7f4059a0fd807be3d4ff146a0d4a7f2451274',
 ]);
 
 // ---- protocol/src/known-core.js

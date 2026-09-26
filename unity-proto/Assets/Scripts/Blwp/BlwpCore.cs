@@ -684,6 +684,9 @@ namespace Blwp
         public static int ExposureWord => _state[Layout.O_SCORE + Layout.S_EXPOSURE];
         public static int ElapsedTicks => _state[Layout.O_SCORE + Layout.S_ELAPSED];
         public static int CargoWord => _state[Layout.O_SCORE + Layout.S_CARGO];
+        /// <summary>THE CORE'S SCORE, as it latched it at the delivery tick (S_DELIVERED, whole points: scoreOf of the three
+        /// words above). The arrival card prints this integer as-is; nothing in C# recomputes it.</summary>
+        public static int DeliveredScore => _state[Layout.O_SCORE + Layout.S_DELIVERED];
 
         public static Vector3 UnitPosition(int i, float y)
         {
