@@ -114,6 +114,22 @@ public class SplashScreen : MonoBehaviour
                                            _wreckedAt < 0f ? 0f : Time.unscaledTime - _wreckedAt, hold,
                                            _endedAt < 0f ? 0f : Time.unscaledTime - _endedAt)) ShowLobbyAgain();
         if (!Showing && BackFromSpectating(_spectating, _spectator != null && _spectator.Active)) ShowLobbyAgain();
+        // A NODE REFUSED THE ENTRY BEFORE THE RUN WAS LIVE (the owner 2026-09-26, the 21:13 case): the page has taken the
+        // join fallback and reports the join refused; with no live session and the truck still at the ramp, this round is
+        // not played - the chooser closes and the lobby comes back, its "Not joined" line the page's.
+        if (!Showing && Time.unscaledTime - _refusedPolledAt > 0.5f)
+        {
+            _refusedPolledAt = Time.unscaledTime;
+            var page = Blwp.DailyLobby.Poll();
+            if (JoinRefusedBeforeLive(page != null && page.join != null ? page.join.state : "", Blwp.BlwpNet.Live,
+                                      loadout != null && loadout.IsOpen))
+            {
+                if (loadout != null) loadout.Dismiss();
+                ShowLobbyAgain();
+                _lobby = page;
+                _joinWhy = page.join.why;
+            }
+        }
         if (!Showing)
         {
             if (!_hiddenTold && Blwp.DailyLobby.Compiled) { _hiddenTold = true; Blwp.DailyLobby.Shown("{\"showing\":false}"); }
@@ -286,6 +302,12 @@ public class SplashScreen : MonoBehaviour
     /// </summary>
     public static bool HoldMayStart(bool coreNamed, bool haveReason, float sinceEnded)
         => coreNamed || haveReason || sinceEnded >= ReasonWaitSeconds;
+
+    /// <summary>The page reports the join refused, no session is live, and the truck is still at the ramp: back to the lobby.</summary>
+    public static bool JoinRefusedBeforeLive(string joinState, bool sessionLive, bool atTheRamp) =>
+        joinState == "refused" && !sessionLive && atTheRamp;
+
+    float _refusedPolledAt = -10f;
 
     public const float ResultHoldSeconds = DriveHud.ArrivalHoldSeconds;   // 8 s (the owner 2026-09-25 21:53), the card's own
 
