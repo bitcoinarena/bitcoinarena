@@ -43,6 +43,7 @@ namespace Blwp
         [DllImport("__Internal")] private static extern int BlwpCandleView(IntPtr ptr, int cap);
         [DllImport("__Internal")] private static extern int BlwpTerrainAt(int x, int z);
         [DllImport("__Internal")] private static extern int BlwpCopyReplay();
+        [DllImport("__Internal")] private static extern int BlwpReplayCopied();
         [DllImport("__Internal")] private static extern int BlwpSolids(IntPtr ptr, int cap);
         public const bool Compiled = true;
 #else
@@ -61,6 +62,7 @@ namespace Blwp
         private static int BlwpTeleport(int x, int z, int h) => 0;
         private static int BlwpTakeImpact() => 0;
         private static int BlwpCopyReplay() => 0;
+        private static int BlwpReplayCopied() => 0;
         private static int BlwpSolids(IntPtr ptr, int cap) => 0;
         private static int BlwpReadImpact() => 0;
         private static int BlwpSubmitLoad(int f, int b) => 0;
@@ -232,6 +234,9 @@ namespace Blwp
         /// page was handed the run, 0 when there is no networked run (or no page) to copy a replay of.
         /// </summary>
         public static int CopyReplay() => BlwpCopyReplay();
+
+        /// <summary>Whether the page's clipboard now holds the link the last copy was handed (its write resolved).</summary>
+        public static bool ReplayCopied => BlwpReplayCopied() == 1;
 
         // SetGround IS GONE. It was the host's door - Unity uploaded the relief
         // it was drawing and the core felt those hills, while every committee

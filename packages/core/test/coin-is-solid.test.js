@@ -10,9 +10,11 @@
 //   2. a truck driving east into a stack stops west of it
 //   3. a truck driving west into the same stack stops east of it
 //
-// The stacks stand at x 173.6 .. 192.4 and |z| 40.6 .. 59.4, measured off the .glb through DeliveryGate's own
-// turn and height scale. The gate is at MINER_X 169 on the centre line with a 40 m mouth either side, so the
-// boxes begin PAST the gate and 0.6 m OUTSIDE the mouth: test 1 is what proves they did not grow over it.
+// THE STACKS STAND WHERE THEY ARE DRAWN (the owner 2026-09-26 07:18: "The box is where that drawn stack stands, not where
+// an old measurement put coin_stack. A truck driven into the stack stops and does not pass through it. Do not put that
+// box in the driving lane"). Measured in a real Bootstrap world: x 145.6 .. 164.4, |z| 40.6 .. 59.4 - against the
+// facade (x 163), outside the passage (|z| 32.8) and 30 m off the lane at z 10.2. The 2026-09-20 boxes at x 173.6 ..
+// 192.4 were the model's mirror image about x 169, where nothing is drawn.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { init, step, teleport } from '../src/sim.js';
@@ -25,7 +27,8 @@ import { BODY_FRONT, BODY_REAR, BODY_RADIUS } from '../src/rules/solids.js';
 const ONE = 65536, M = (q) => q / ONE;
 const NORTH = 0, SOUTH = 32768;                   // heading is turns: 0 is +z, a half turn is -z
 const EAST = 16384, WEST = 49152;
-const COIN_N = 59.4, COIN_S = -59.4, COIN_X = 183;
+const COIN_W = 145.6, COIN_E = 164.4, COIN_IN = 40.6, COIN_OUT = 59.4, COIN_X = 155, COIN_Z = 50;
+const PASSAGE_HALF = 32.8;
 
 /** Full throttle from a placed pose, until it stops moving or runs out of ticks. */
 function drive(st, x, z, heading, axis, ticks = 900) {
@@ -42,11 +45,9 @@ function drive(st, x, z, heading, axis, ticks = 900) {
   return { x: M(s[O_TRUCK + T_X]), z: M(s[O_TRUCK + T_Z]), state: s[O_SCORE + S_STATE] };
 }
 
-// WHICH SIDES ARE ACTUALLY REACHABLE, because two of these tests were first written against poses a truck can
-// never hold and passed for the wrong reason. Measured: the WEST approach at z 50 is stopped 10 m earlier by
-// the miner's own facade (x 163..171, z 40..84.4), and x 171..173.6 is a 2.6 m gap the truck does not fit
-// through; EAST of the stack is past HALF_X 185, where a placed truck is clamped and drives off the other way.
-// The open faces are NORTH of the left stack and SOUTH of the right one, and those are what these drive.
+// WHICH FACES A PLAYER REACHES: the WEST face, driving east along |z| 50 from the open ground before the miner, and
+// the face toward the passage (|z| 40.6), driving out of the finish straight toward the stack. The east face is
+// against the facade and the outer face is outside the mouth; both are driven here too where a truck can stand.
 
 test('the centre line still runs to the gate and still DELIVERS (§coin must not cover the finish)', () => {
   const st = init(1);
@@ -55,29 +56,37 @@ test('the centre line still runs to the gate and still DELIVERS (§coin must not
     `the centre line no longer delivers - it ended at x ${end.x.toFixed(2)} z ${end.z.toFixed(2)} in state ${end.state}`);
 });
 
-test('a truck driving SOUTH into the north coin stack is stopped short of it (§not air)', () => {
-  const st = init(1);
-  const end = drive(st, COIN_X, 72, SOUTH, 'z');
-  assert.ok(end.z > COIN_N,
-    `the truck drove into the coin stack: it reached z ${end.z.toFixed(2)}, and the stack starts at ${COIN_N}`);
-  assert.ok(end.z < 72 - 2,
-    `the truck never set off at all - it is still at z ${end.z.toFixed(2)}`);
-});
+for (const [name, side] of [['the circled (right, z -50) stack', -1], ['the left (z +50) stack', 1]]) {
+  test(`a truck driving EAST into ${name} stops west of it (§not air)`, () => {
+    const st = init(1);
+    const end = drive(st, 110, side * COIN_Z, EAST, 'x');
+    const nose = end.x + M(BODY_FRONT) + M(BODY_RADIUS);
+    assert.ok(nose <= COIN_W + 0.05, `the truck drove into the stack: its nose reached x ${nose.toFixed(2)}, the stack starts at ${COIN_W}`);
+    assert.ok(nose > COIN_W - 0.6, `the truck stopped at nose x ${nose.toFixed(2)}, short of the stack's face ${COIN_W}`);
+    assert.notEqual(end.state, RUN_DELIVERED);
+  });
+  test(`a truck driving out of the straight into ${name} stops at its face (§not air)`, () => {
+    const st = init(1);
+    const end = drive(st, COIN_X, side * 20, side > 0 ? NORTH : SOUTH, 'z');
+    const nose = Math.abs(end.z) + M(BODY_FRONT) + M(BODY_RADIUS);
+    assert.ok(nose <= COIN_IN + 0.05, `the truck drove into the stack: its nose reached |z| ${nose.toFixed(2)}, the stack starts at ${COIN_IN}`);
+    assert.ok(nose > COIN_IN - 0.6, `the truck stopped at nose |z| ${nose.toFixed(2)}, short of the stack's face ${COIN_IN} - something else stands between`);
+  });
+}
 
-test('a truck driving NORTH into the south coin stack is stopped short of it (§from either side)', () => {
+test('the coin boxes stand out of the driving lane and the passage (§do not put that box in the driving lane)', () => {
   const st = init(1);
-  const end = drive(st, COIN_X, -72, NORTH, 'z');
-  assert.ok(end.z < COIN_S,
-    `the truck drove into the south coin stack: it reached z ${end.z.toFixed(2)}, the stack starts at ${COIN_S}`);
-  assert.ok(end.z > -72 + 2,
-    `the truck never set off at all - it is still at z ${end.z.toFixed(2)}`);
-});
-
-test('the coin boxes stand clear of the gate and of the mouth (§do not grow the box over the gate)', () => {
-  assert.ok(173.6 > M(MINER_X),
-    `the coin stack starts at x 173.6, which is west of the gate at ${M(MINER_X)} - it would cover the finish`);
-  assert.ok(40.6 > M(MINER_MOUTH_HALF),
-    `the coin stack starts at |z| 40.6, inside the ${M(MINER_MOUTH_HALF)} m mouth - it would narrow the way in`);
+  const coins = [];
+  for (let i = 0; i < st.solids.n; i++) {
+    const [cx, cz, hx, hz] = st.solids.box.subarray(i * 6, i * 6 + 4);
+    if (Math.abs(M(cx) - COIN_X) < 0.01 && Math.abs(Math.abs(M(cz)) - COIN_Z) < 0.01) coins.push([M(cx - hx), M(cx + hx), M(Math.abs(cz) - hz), M(Math.abs(cz) + hz)]);
+  }
+  assert.equal(coins.length, 4, 'two stacks, a plinth and a tier box each');
+  for (const [x0, x1, zIn, zOut] of coins) {
+    assert.ok(zIn >= COIN_IN - 1e-3 && zIn > PASSAGE_HALF, `a coin box reaches |z| ${zIn.toFixed(2)}, into the passage`);
+    assert.ok(x0 >= COIN_W - 1e-3 && x1 <= COIN_E + 1e-3 && zOut <= COIN_OUT + 1e-3, 'a coin box stands outside the drawn stack');
+  }
+  assert.ok(COIN_IN > M(MINER_MOUTH_HALF), 'the stacks start outside the 40 m mouth');
 });
 
 // ---------------------------------------------------------------- THE MEMPOOL FACADE

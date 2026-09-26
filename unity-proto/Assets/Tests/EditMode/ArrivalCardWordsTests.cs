@@ -240,5 +240,22 @@ public class ArrivalCardWordsTests
         StringAssert.DoesNotContain("$\"×{Mathf.Clamp01(bay.Fill):0.00}\"", src, "the bed fill is printed as the LOAD factor again");
         StringAssert.Contains("TRUCK FULL", src);
     }
-}
 
+    // "copied!" ON THE CARD (the owner 2026-09-26 07:12): shown once the page's clipboard write resolved - not on the press,
+    // and not as a log line - and only while it is fresh.
+    [Test]
+    public void CopiedShowsOnlyOnceTheClipboardAnswered()
+    {
+        Assert.AreEqual("copied!", DriveHud.CopiedLabel);
+        Assert.IsFalse(DriveHud.CopiedTooltipShows(-1f, 10f), "pressed, the clipboard not yet answered");
+        Assert.IsTrue(DriveHud.CopiedTooltipShows(10f, 10f));
+        Assert.IsTrue(DriveHud.CopiedTooltipShows(10f, 12.9f));
+        Assert.IsFalse(DriveHud.CopiedTooltipShows(10f, 13f));
+        string hud = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "Scripts/DriveHud.cs"));
+        StringAssert.Contains("_copiedAt < 0f && Blwp.BlwpCore.ReplayCopied", hud);
+        string lib = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "Plugins/WebGL/blwp.jslib"));
+        StringAssert.Contains("c === window.BLWP_REPLAY_URL", lib);
+        string page = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "WebGLTemplates/BtcLogistics/index.html"));
+        StringAssert.Contains("await navigator.clipboard.writeText(link.url); window.BLWP_REPLAY_COPIED = link.url;", page);
+    }
+}
