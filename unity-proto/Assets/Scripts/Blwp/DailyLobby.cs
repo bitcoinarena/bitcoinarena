@@ -39,6 +39,11 @@ namespace Blwp
         public string state = "";
         public string why = "";
         public string stage = "";
+        /// <summary>The round the join was for (64 hex), "" when the page did not say; and its kind when the lobby listed it.</summary>
+        public string round = "";
+        public bool kindKnown;
+        public bool free;
+        public long stakeSats;
     }
 
     /// <summary>What the page hands Unity to draw: the lobby, or nothing.</summary>
@@ -166,8 +171,32 @@ namespace Blwp
         {
             string silent = UnansweredLine(s);
             if (string.IsNullOrEmpty(joinWhy)) return silent;
-            return $"Not joined: {joinWhy}." + (string.IsNullOrEmpty(silent) ? "" : "\n" + silent);
+            return RefusedLine(s != null ? s.join : null, joinWhy) + (string.IsNullOrEmpty(silent) ? "" : "\n" + silent);
         }
+
+        /// <summary>
+        /// A REFUSED JOIN NAMES ITS ROUND (the owner 2026-09-26 16:56, phone: "Not joined: the node refused the entry: the round is
+        /// closed" lay on the next paid round's row, which read exactly as the closed one had - "Say which round is closed, by the
+        /// name the lobby already has for it, not 'the round'"). The name is the one a row and the PLAY line give a round: its kind
+        /// and "round" and the first 8 of its id.
+        /// </summary>
+        public static string RefusedLine(LobbyJoin join, string why)
+        {
+            string id = join != null ? join.round : "";
+            if (string.IsNullOrEmpty(id)) return $"Not joined: {why}.";
+            string name = (join.kindKnown ? Kind(join.free, join.stakeSats) + " " : "") + $"round {ShortId(id)}";
+            if (Closed(why)) return $"Not joined: {name} is closed - the node refused its entry.";
+            return $"Not joined {name}: {why}.";
+        }
+
+        /// <summary>The node's word for a round that is over.</summary>
+        public static bool Closed(string why) => !string.IsNullOrEmpty(why) && why.Contains("the round is closed");
+
+        /// <summary>A round's name in the lobby: the first 8 of its id.</summary>
+        public static string ShortId(string id) => string.IsNullOrEmpty(id) ? "" : (id.Length > 8 ? id.Substring(0, 8) : id);
+
+        /// <summary>What a round is: FREE, or PAID and what it costs (the owner 2026-09-15 16:08: "PAID · 100 sats").</summary>
+        public static string Kind(bool free, long stakeSats) => free ? "FREE" : $"PAID · {stakeSats} {(stakeSats == 1 ? "sat" : "sats")}";
 
         /// <summary>An address as the player reads it: no scheme, no trailing slash.</summary>
         public static string Host(string url)
@@ -558,9 +587,16 @@ namespace Blwp
         /// row says what it costs in every form (the owner 2026-09-15 16:08: "Paid must read like
         /// 'PAID · 100 sats'") - measured before, it said PAID and never how much.
         /// </summary>
-        public static string[] RowWords(LobbyRow r)
+        public static string[] RowWords(LobbyRow r) => RowWords(r, false);
+
+        /// <summary>
+        /// And with `named`, while a refusal names a round, every row says its own name right after its kind, so the round
+        /// the lobby still offers is told apart from the one that was refused (the owner 2026-09-26 16:56); the joined count and
+        /// then the signer nodes go first to fit.
+        /// </summary>
+        public static string[] RowWords(LobbyRow r, bool named)
         {
-            string kind = r.free ? "FREE" : $"PAID · {r.stakeSats} {(r.stakeSats == 1 ? "sat" : "sats")}";
+            string kind = Kind(r.free, r.stakeSats);
             string left = r.leftS >= 0 ? $"closes {r.leftS / 60}:{r.leftS % 60:00}" : "entry open";
             // THE PLAYER IS NEVER TOLD "SIGNER NODE" (the owner 2026-09-15 16:22): the nodes that sign the
             // round are signer nodes, and the players in it have joined.
@@ -569,7 +605,14 @@ namespace Blwp
             string signers = r.joinable ? $"{r.agree} of {r.needed} signer nodes"
                 : r.leftS == 0 ? $"{r.agree} of {r.needed} signer nodes - entry closed"
                 : $"{r.agree} of {r.needed} signer nodes - waiting";
-            string id = string.IsNullOrEmpty(r.id) ? "" : (r.id.Length > 8 ? r.id.Substring(0, 8) : r.id);
+            string id = ShortId(r.id);
+            if (named && id.Length > 0)
+                return new[]
+                {
+                    $"{kind} · round {id} · {left} · {signers} · {r.joined} joined",
+                    $"{kind} · round {id} · {left} · {signers}",
+                    $"{kind} · round {id} · {left}",
+                };
             return new[]
             {
                 $"{kind} · {left} · {signers} · {r.joined} joined · {id}",
