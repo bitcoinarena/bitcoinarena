@@ -2576,8 +2576,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (rid.length !== 32 || eid.length !== 32) return text(res, 400, 'a replay names a round and an entry');
         const t = readTranscript(round.db, rid, eid);
         if (!t.ticks.length) return text(res, 404, 'this node holds no transcript of that run');
+        // WHEN THE RUN WAS PLAYED (the owner 2026-09-26 14:25: Start and End are absolute timestamps): the first and the last
+        // checkpoint this node received of it - its tick and when it arrived. Beside the transcript, not in it: the
+        // transcript is what a seat replays and hashes; this is only when the node saw it.
+        const cp = (order) => round.db.prepare(`SELECT tick, received_ms FROM checkpoints WHERE round_id = ? AND entry_id = ? ORDER BY tick ${order} LIMIT 1`).get(rid, eid);
+        const first = cp('ASC'), last = cp('DESC');
+        const clock = first && last ? { firstTick: first.tick, firstMs: Number(first.received_ms), lastTick: last.tick, lastMs: Number(last.received_ms) } : null;
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
-        return res.end(JSON.stringify(t));
+        return res.end(JSON.stringify({ ...t, clock }));
       }
       // THE ROUND'S COMMITTEE ENDPOINTS, from the advertisements its census carries: where else the run is held. ws
       // becomes https (the link a player copies names one of these at random).

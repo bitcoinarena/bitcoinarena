@@ -214,7 +214,7 @@
     g.strokeStyle = 'rgba(255, 213, 79, 0.9)'; g.lineWidth = 4; g.beginPath(); g.arc(0, 0, 34, 0, 7); g.stroke();
     g.rotate(a); g.fillStyle = '#ffd54f'; g.strokeStyle = '#0b0f14'; g.lineWidth = 4;
     g.beginPath(); g.moveTo(0, -26); g.lineTo(17, 18); g.lineTo(-17, 18); g.closePath(); g.stroke(); g.fill(); g.restore();
-    document.getElementById('at').textContent = `tick ${from + f + 1} of ${from + transcript.ticks.length}`;
+    document.getElementById('at').textContent = `${clockOf(f + 1)} of ${clockOf(transcript.ticks.length)}`;
     readout(f);
   }
 
@@ -242,11 +242,16 @@
     document.getElementById('danger-label').textContent = `DANGER \u00d7${dangerF.toFixed(2)}`;
     document.getElementById('danger-bar').style.width = `${(dangerF * 100).toFixed(1)}%`;
     document.getElementById('score-num').textContent = score;
-    document.getElementById('line1').textContent =
-      `health ${(hp / ONE).toFixed(2)} · danger ${danger} · speed ${speed} · practice ${practice ? 'on' : 'off'} · score ${score}`;
+    // health, danger and score are on the bars above (the owner 2026-09-26 14:25: the line repeating them is the duplicate);
+    // speed and practice are on no bar, so they stand here once
+    document.getElementById('line1').textContent = `speed ${speed} · practice ${practice ? 'on' : 'off'}`;
     document.getElementById('work').textContent = `load ${load} × danger ${danger} × speed ${speed} × 1000 = ${score}`;
   }
 
+  // THE CORE'S OWN TIME, as seconds:microseconds (the owner 2026-09-26 14:25: the scrubber shows time, not a tick number):
+  // a tick is TICK_DT seconds in Q16.16
+  const usOf = (ticks) => Math.round((ticks * R.TICK_DT * 1e6) / ONE);
+  const clockOf = (ticks) => { const us = usOf(ticks); return `${Math.floor(us / 1e6)}:${String(us % 1e6).padStart(6, '0')}`; };
   // PLAYED LIKE A VIDEO, at the core's own tick rate (ONE / TICK_DT ticks a second).
   const rate = ONE / R.TICK_DT;
   const scrub = document.getElementById('scrub'), play = document.getElementById('play');
@@ -271,14 +276,20 @@
   word.textContent = result.outcome || 'LIVE';
   const then = document.createElement('span');
   then.className = 'then';
-  then.textContent = `score ${points(result.score)} · tick ${from + transcript.ticks.length}`;
+  then.textContent = `score ${points(result.score)} · ${clockOf(transcript.ticks.length)}`;
   res.append(word, then);
-  const lastWork = (() => { const o = (transcript.ticks.length - 1) * PER + MAP; if (!hasFactors) return ended;
-    const e = frames[o + 1], t = frames[o + 2], c = frames[o + 3];
-    return `load ${five(Sc.cargo5(c))} × danger ${five(Sc.exposure5(e))} × speed ${five(Sc.time5(t))} × 1000 = ${points(Sc.scoreOf(e, t, c))}`; })();
-  const dl = document.getElementById('details');
-  for (const [k, v] of [['Round', round], ['Entry', entry], ['Host', base], ['Ticks', `${transcript.ticks.length} (tick ${from + 1} to ${from + transcript.ticks.length})`],
-    ['Score', lastWork], ['Core', hexOf(contract.simCoreHash)]]) {
+  // WHEN, from the node's own receipt of the run's checkpoints (clock, beside the transcript): the first one projected
+  // back to the run's first tick, the last one forward to its end. Absolute, in the viewer's own zone.
+  const clock = transcript.clock;
+  const stamp = (ms) => { const d = new Date(ms), z = (n, w = 2) => String(n).padStart(w, '0');
+    const off = -d.getTimezoneOffset(), sign = off >= 0 ? '+' : '-';
+    return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())} ${z(d.getHours())}:${z(d.getMinutes())}:${z(d.getSeconds())}.${z(d.getMilliseconds(), 3)} UTC${sign}${z(Math.floor(Math.abs(off) / 60))}:${z(Math.abs(off) % 60)}`; };
+  const startMs = clock ? clock.firstMs - usOf(clock.firstTick - from) / 1000 : null;
+  const endMs = clock ? clock.lastMs + usOf(from + transcript.ticks.length - clock.lastTick) / 1000 : null;
+  const rows = [['Round', round], ['Entry', entry], ['Host', here]];
+  if (clock) rows.push(['Start', stamp(startMs)], ['End', stamp(endMs)]);
+  rows.push(['Core', hexOf(contract.simCoreHash)]);
+  for (const [k, v] of rows) {
     const dt = document.createElement('dt'); dt.textContent = k; const dd = document.createElement('dd'); dd.textContent = v; dl.append(dt, dd);
   }
   show(0);
