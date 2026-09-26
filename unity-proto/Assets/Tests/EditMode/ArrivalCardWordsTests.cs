@@ -276,4 +276,21 @@ public class ArrivalCardWordsTests
         StringAssert.Contains("window.BLWP_CARD_UP = true;", page);
         StringAssert.Contains("if (!window.BLWP_ROUND || window.BLWP_CARD_UP || window.BLWP_LOADOUT_OPEN) { el.style.display = 'none'; return; }", page);
     }
+
+    // THE COPIED REPLAY IS THE CARD'S RUN (the owner 2026-09-26 14:08): a session is its page join's (BLWP_ENTRY); another
+    // join replaces it, and the card offers and makes the copy only from the current join's session.
+    [Test]
+    public void TheCopiedReplayIsTheRunOnScreen()
+    {
+        string lib = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "Plugins/WebGL/blwp.jslib"));
+        StringAssert.Contains("return (!now || !net.pageEntry || net.pageEntry === now) ? 1 : 0;", lib);
+        StringAssert.Contains("if (net && now && net.pageEntry && net.pageEntry !== now) {", lib);
+        string hud = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "Scripts/DriveHud.cs"));
+        StringAssert.Contains("stopped.Length > 0 && Blwp.BlwpCore.ReplayForThisRun;", hud);
+        // and the root: a session another page join has replaced is over, and the next start replaces it
+        StringAssert.Contains("pageEntry: (typeof window !== 'undefined' && window.BLWP_ENTRY) || null,", lib);
+        StringAssert.Contains("if (n && n.pageEntry && typeof window !== 'undefined' && window.BLWP_ENTRY && window.BLWP_ENTRY !== n.pageEntry) return 1;", lib);
+        StringAssert.Contains("&& window.BLWP_ENTRY !== Module.blwpNet.pageEntry) {", lib);
+    }
 }
+

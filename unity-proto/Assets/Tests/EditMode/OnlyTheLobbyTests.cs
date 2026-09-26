@@ -81,5 +81,16 @@ public class OnlyTheLobbyTests
         StringAssert.DoesNotContain("\"CONDITION", hud);
         StringAssert.DoesNotContain("$\"CONDITION", hud);
     }
+
+    // THE SECOND PLAY STARTS ITS RUN (the owner 2026-09-26 14:08, measured): while the cargo panel is open the core's word is
+    // the run before's, so it does not send the lobby back over the panel.
+    [Test]
+    public void TheRunBeforesWordDoesNotEndTheNextRunAtTheRamp()
+    {
+        Assert.AreEqual(0, SplashScreen.RunStateOfThisRun(1, loadoutOpen: true), "DELIVERED from the run before ended this run at the ramp");
+        Assert.AreEqual(2, SplashScreen.RunStateOfThisRun(2, loadoutOpen: false));
+        Assert.IsFalse(SplashScreen.ShouldReturnToLobby(true, SplashScreen.RunStateOfThisRun(1, true), false, true, false, 0f, 5f, 99f),
+            "a finished run before sends the lobby back over the next run's cargo panel");
+    }
 }
 
