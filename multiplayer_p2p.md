@@ -10,7 +10,7 @@
 > §23A says what the spec never said: how a federation is founded and by
 > whom (bonded, guardian-capable census nodes drawn by sortition; **at least
 > ten guardians, 7 of 10, for the first mainnet federation**; the testnet
-> federation stays the 2-of-2 that runs today); how many outages it absorbs
+> federation is **3 of 4**, one guardian per node, the owner 2026-09-26); how many outages it absorbs
 > and when it is declared draining; several federations at once and how a
 > player's client picks one by load, not per round; how a guardian leaves,
 > what abandonment is, and what its bond then pays; succession back to
@@ -25,8 +25,8 @@
 > (§23A.5); every role is opt-in (§5A.1). And: **FEDERATION is the only
 > custody** - THRESHOLD_LN does not exist, past rounds included, no decode-only
 > value (the owner 2026-09-22 22:59) - and **guardians
-> are not parked**: §23A is to be built now, on the testnet 2-of-2 that
-> runs (§23.6). **Players cannot lose** (the owner, last): the exposure cap is
+> are not parked**: §23A is to be built now, on a testnet federation of
+> four guardians, 3 of 4 (§23.6, §23A.1). **Players cannot lose** (the owner, last): the exposure cap is
 > what the smallest halting set's bonds cover, slashed guardian bonds wait
 > in escrow until the federation is CLOSED or liquidated, and a halted
 > federation is **liquidated** - every unspent note paid at face from the
@@ -2430,7 +2430,7 @@ settlement transaction (§23.2), to the `payout_pubkey` of the guardian's
 census advertisement. A guardian earns it only if seated; a gone guardian's
 share goes pro rata to the other seated ones. While the federation's
 predecessor is DRAINING, the pool is shared per seat with the predecessor's
-seated guardians (§23A.6 step 5). Testnet: 2/3 % over two guardians.
+seated guardians (§23A.6 step 5). Testnet: 2/3 % over four guardians.
 
 Each pool's share is divided among the round's **sitting seats** - the seats
 the census seated for this round, its `nodes` - however many there are: two
@@ -2867,8 +2867,9 @@ so no rule in this chapter waits on the pin any more. The three slash
 rulings - the slashing height, the affected players, several slashed nodes
 - are closed at `e554dad2` (§5A.3); any "blocked on three rulings" note
 elsewhere is stale.
-§23A is to be built now: on testnet with the 2-of-2 federation that runs
-today, seated by the two bonded operators it has (§23A.1's testnet column),
+§23A is to be built now: on testnet with a federation of **four guardians,
+3 of 4** (the owner 2026-09-26; it replaces the 2-of-2 that ran), one per
+bonded node (§23A.1's testnet column, §23A.2),
 `federationIsBonded` on as ruled (the owner 07:33); on regtest with the
 4-guardian rehearsal federation; on mainnet with a founding by §23A.2 once
 ten guardian-capable operators are in the census. A paying round on testnet
@@ -2930,14 +2931,17 @@ and no player notices anything. `federation_nominal` is a genesis parameter
 
 | | mainnet | testnet | regtest |
 |---|---|---|---|
-| guardians `n` | **10** | **2** (as run today, the owner 2026-09-21) | 4 |
-| sign `2f + 1` | 7 | 2 | 3 |
-| down at once, no effect `f` | 3 | **0** | 1 |
+| guardians `n` | **10** | **4** (the owner 2026-09-26) | 4 |
+| sign `2f + 1` | 7 | **3** | 3 |
+| down at once, no effect `f` | 3 | **1** | 1 |
 
-Testnet is stated as it is: two guardians, 2-of-2, no tolerance at all. One
-guardian down halts it and the halt ends when he is back; nothing is lost
-and nothing is decided by it. That is what a test network is for, and it is
-why no mainnet rule below is derived from what testnet survives.
+**RULED (the owner 2026-09-26 22:54): the testnet federation is 3 of 4**, not
+the 2-of-2 that ran until then. One guardian may be down and nothing stops,
+so testnet exercises the same fault path mainnet runs - a guardian lost,
+the federation still signing - instead of only the halt. It is the
+smallest federation Fedimint's `n = 3f + 1` allows with any tolerance at
+all. Mainnet stays at least ten, 7 of 10. The committee sizes of the game
+and of settlement are not this ruling.
 
 **Seated, absent, gone.** An outage is Fedimint's business and is absorbed
 up to `f`. This chapter counts something slower: guardians that are
@@ -2946,7 +2950,7 @@ up to `f`. This chapter counts something slower: guardians that are
 ```text
 reserve = seated - (2f + 1)          how many more may be gone before halt
 
-OPEN       reserve >= 2              rounds may name it; deposits accepted
+OPEN       reserve >= min(2, f)      rounds may name it; deposits accepted
 DRAINING   reserve == 1              no new round names it; the client
                                      refuses deposits into it; succession
                                      has begun (§23A.6); everything else
@@ -2962,6 +2966,11 @@ CRITICAL. A federation is replaced two losses before it can halt, and
 halting takes four guardians gone or down at the same moment. That is the
 sense in which no outage reaches the player: the ones that could are
 handled while there is still margin for the ones that cannot.
+
+At four (`f = 1`, testnet and regtest): four seated is OPEN; three is
+CRITICAL at once - there is no DRAINING band, because a federation of four
+has only one loss of margin - and CRITICAL starts the succession of
+§23A.6 exactly as DRAINING does at ten; two seated is HALTED.
 
 `federation_min = 2f + 1` is the CRITICAL line. Below it nothing moves and
 no rule here can help; §22 says so.
@@ -2989,6 +2998,14 @@ drawn it must also:
 
 - advertise `guardian_capable` and a `guardian_endpoint` (§5A.1): it runs
   fedimintd and will answer the client and the seats there;
+- **one node is one guardian, and the node runs it (RULED, the owner
+  2026-09-26).** A node that advertises `guardian_capable` starts its own
+  guardian inside itself with **zero configuration**: the node creates the
+  guardian's keys from its own, takes part in the founding ceremony when
+  drawn, serves `guardian_endpoint` itself, and stops the guardian when the
+  role is turned off (§5A.1). The operator sees one thing - the node - and
+  never a second service, a second config file or a second process to
+  keep up. A node is never two guardians of one federation;
 - carry a bond of at least `bond_min_guardian`, the settlement floor of the
   highest bracket the network offers, because a guardian's exposure is the
   federation's whole reserve, not one round's;
@@ -3234,8 +3251,8 @@ frozen reserve, which stays where it is (and is released to the same
 escrow if `2f + 1` guardians ever return); it does not need a single
 guardian's cooperation beyond publishing a spent set, and it survives none
 publishing at the cost of pro rata; it does not pay anyone who cannot
-present a note. Testnet at 2 of 2: `f = 0`, the cap is one bond, one
-leaver halts it, and his one bond pays every note.
+present a note. Testnet at 3 of 4: `f = 1`, the cap is two of the smallest
+bond, two leavers halt it, and their two bonds pay every note.
 
 **The abandonment proof in a halt.** §23A.4's attestations need `2f + 1`
 guardians, which a halted federation no longer has. For a guardian gone
@@ -3334,11 +3351,10 @@ upgrade, a change of `federation_nominal` by §27A).
    sweep them to him; they do not know whose they are. That is the cost of
    blind notes and it is bounded by `drain_blocks` and the stake ceiling.
 
-**Testnet** (2 of 2) cannot drain: seated below `2f + 1` is the same as
-gone. A testnet federation that loses a guardian halts and resumes when he
-is back; a testnet federation to be replaced is closed by hand and a new one
-founded, and the players re-deposit test sats. That is written down so the
-mainnet rule is not tested against a network that cannot exercise it.
+**Testnet** (3 of 4) drains like mainnet, on its own clocks (§27A.6): one
+guardian gone makes it CRITICAL, a successor of four is founded with the
+three seated first, and every wallet migrates on its own. That is the point
+of four: the succession path is exercised on testnet before mainnet needs it.
 
 ## 23A.7 How a player finds his federation
 
@@ -4262,8 +4278,8 @@ a state whose origin nobody can check.
 | committee slots | 7 | 3 | **2** |
 | threshold | 5 | 2 | **2** |
 | minimum census | 10 | 3 | **2** |
-| guardians per federation (`federation_nominal`, v4.6.4) | **10** (7 of 10) | **2** (2 of 2, as run today) | 4 (3 of 4, the `FEDERATION.md` rehearsal) |
-| `federation_min` | 7 | 2 | 3 |
+| guardians per federation (`federation_nominal`, v4.6.4) | **10** (7 of 10) | **4** (3 of 4, the owner 2026-09-26) | 4 (3 of 4, the `FEDERATION.md` rehearsal) |
+| `federation_min` | 7 | 3 | 3 |
 | `abandon_blocks` / `departure_notice` / `founding_window` / `drain_blocks` / `claim_blocks` (v4.6.5, the owner: fast; 36 h arbitration) | 288 / 432 / 432 / **4032** / **216** (≈ 48 h / 72 h / 72 h / **28 d** / **36 h**) | **12 / 18 / 18 / 144 / 9** (≈ 2 h / 3 h / 3 h / 24 h / 1.5 h; the owner: much shorter) | 10 / 10 / 10 / 100 / 10 |
 | confirmations | 6 | 2 | **1** |
 | `bond_maturity` | ~30 days | ~1 day | **100 blocks** |
