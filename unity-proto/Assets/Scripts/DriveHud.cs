@@ -1000,6 +1000,9 @@ public class DriveHud : MonoBehaviour
         missed ? "BLOCK MINED WITHOUT YOU"
                : "DELIVERED  " + sat.ToString("N0", CultureInfo.InvariantCulture) + " sat to the miners";
 
+    /// <summary>The live DANGER meter's words: the core's E (RunScore.Exposure), to two decimals.</summary>
+    public static string DangerLabel(float coreE) => "DANGER  ×" + coreE.ToString("0.00", CultureInfo.InvariantCulture);
+
     public static string ArrivalScoreLine(bool missed, int score) =>
         missed ? "SCORE  0" : "SCORE  +" + CoreScoreFactors.Points(score);
 
@@ -2234,7 +2237,7 @@ public class DriveHud : MonoBehaviour
 
         var label = new GUIStyle(_small) { alignment = TextAnchor.UpperRight, fontStyle = FontStyle.Bold };
         Shadowed(new Rect(box.x, box.y, box.width, lh),
-                 $"DANGER  ×{e:0.00}", label,
+                 DangerLabel(e), label,
                  cold ? new Color(1f, 0.45f, 0.40f)
                       : Color.Lerp(new Color(1f, 0.86f, 0.35f), new Color(0.45f, 1f, 0.62f), e));
 
