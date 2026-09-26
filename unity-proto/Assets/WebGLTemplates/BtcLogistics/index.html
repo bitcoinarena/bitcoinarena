@@ -1976,7 +1976,11 @@
         const now = Date.now();
         // ONE FREE ROUND AND ONE PAYING ROUND, never two of either (the owner 2026-09-15 16:08), and
         // what the paying one costs.
-        window.BLWP_LOBBY = BLWPCLIENT.lobbyOnePerKind(got.rows).map((r) => ({ id: r.id, phase: r.phase, free: r.free, wallet: r.wallet,
+        // NO 2-OF-2 PAYING ROUND IS OFFERED (the owner 2026-09-26 22:54/22:57): a paying round is a federation round - its
+        // stake locked in the testnet federation of four guardians, 3 of 4 - or it is not a row. A paying round whose
+        // stake is a Lightning payment to the 2-of-2 that ran is not that federation, so it is not offered at all.
+        const offered = got.rows.filter((r) => r.free || r.wallet === 'federation-lock');
+        window.BLWP_LOBBY = BLWPCLIENT.lobbyOnePerKind(offered).map((r) => ({ id: r.id, phase: r.phase, free: r.free, wallet: r.wallet,
           signerNodesAgree: r.signerNodesAgree, needed: r.needed, joinable: r.joinable, stakeSats: BLWPCLIENT.lobbyStakeSats(r),
           line: BLWPCLIENT.lobbyLine(r, now), raw: r, join: r.joinable ? BLWPCLIENT.lobbyJoinSearch(search, r.id) : null }));
         refused = got.refused || [];
