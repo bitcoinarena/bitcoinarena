@@ -165,7 +165,7 @@ public class ArrivalCardWordsTests
     // DELIVERED runs of packages/core/test/fixtures/arrival-card-runs.json - the core's own words, kept current by
     // core/test/arrival-card-runs.test.js - go through the real formatter; the four decimals are read back off the
     // printed row and their product must round to the printed S, which must be the core's S_DELIVERED and the SCORE line's.
-    [System.Serializable] class CardRun { public float lane; public int seed, state, exposure, elapsed, cargo, delivered; }
+    [System.Serializable] class CardRun { public float lane; public int seed, state, exposure, elapsed, cargo, delivered, e5, t5, c5; }
     [System.Serializable] class CardRuns { public CardRun[] runs; }
 
     [Test]
@@ -181,6 +181,10 @@ public class ArrivalCardWordsTests
             @"^load (\d\.\d{5})\s+×\s+danger (\d\.\d{5})\s+×\s+speed (\d\.\d{5})\s+×\s+1000\s+=\s+([\d,]+\.\d{5})$");
         foreach (var r in runs)
         {
+            // THE C# FACTORS ARE THE CORE'S, FACTOR BY FACTOR - not only their product
+            Assert.AreEqual(r.e5, CoreScoreFactors.Exposure5(r.exposure), $"lane {r.lane} seed {r.seed}: E is not the core's");
+            Assert.AreEqual(r.t5, CoreScoreFactors.Time5(r.elapsed), $"lane {r.lane} seed {r.seed}: T is not the core's");
+            Assert.AreEqual(r.c5, CoreScoreFactors.Cargo5(r.cargo), $"lane {r.lane} seed {r.seed}: C is not the core's");
             float c = CoreScoreFactors.Cargo(r.cargo), e = CoreScoreFactors.Exposure(r.exposure), t = CoreScoreFactors.Time(r.elapsed);
             string line = DriveHud.ArrivalWorkLine(false, c, e, t, r.delivered);
             var m = row.Match(line);
@@ -192,5 +196,16 @@ public class ArrivalCardWordsTests
             StringAssert.Contains("+" + CoreScoreFactors.Points(r.delivered), DriveHud.ArrivalScoreLine(false, r.delivered),
                 "the SCORE line and the product row name different numbers");
         }
+    }
+
+    // THE LIVE DANGER METER IS THE CORE'S E (2026-09-26): it printed Clamp01 of the exposure in METRES, x1.00 past the
+    // first metre, while the card beside it said the core's E. The 18:29 shot's word (73.892 m) reads x0.23, not x1.00.
+    [Test]
+    public void TheDangerMeterReadsTheCoresFactorNotMetres()
+    {
+        Assert.AreEqual("DANGER  ×0.23", DriveHud.DangerLabel(CoreScoreFactors.Exposure(4842601)));
+        Assert.AreEqual("DANGER  ×0.32", DriveHud.DangerLabel(CoreScoreFactors.Exposure(6652286)), "the live run of round 14bff641");
+        string src = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "Scripts/Cargo/RunScore.cs"));
+        StringAssert.Contains("public float Exposure => CoreScoreFactors.Exposure(Blwp.BlwpCore.ExposureWord);", src);
     }
 }
