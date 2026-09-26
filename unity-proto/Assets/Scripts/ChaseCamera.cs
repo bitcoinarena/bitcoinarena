@@ -164,6 +164,29 @@ public class ChaseCamera : MonoBehaviour
     /// <summary>True while a scripted approach is running.</summary>
     public bool Flying => _flyLeft > 0f;
 
+    /// <summary>
+    /// THE FLIGHT ENDS AT ROLL OUT (the owner 2026-09-26, playtest 14:08: "on drive start the camera goes top-down"). PLAY
+    /// starts a 4.2 s fly-in from 52 m over the middle of the field, looking west at the post office, and the cargo panel
+    /// did not stop it: a ROLL OUT inside those seconds drove off under a camera still high over the field and facing away
+    /// from the miner. This ends it and puts the camera where the follow rests - the truck's position, `distance` back
+    /// along its heading, `height` up, looking down the road ahead - so the next frame is the ordinary behind-the-truck
+    /// view, not a glide down from the flight's height. Any look-around left over is dropped with it; after this only a
+    /// swipe moves the view.
+    /// </summary>
+    public void EndFlyIn()
+    {
+        _flyLeft = 0f;
+        _orbitYaw = 0f; _orbitPitch = 0f;
+        _dragging = false; _dragIdle = 0f;
+        if (target == null) return;
+        _yaw = target.eulerAngles.y * Mathf.Deg2Rad;
+        _lastHeading = target.eulerAngles.y;
+        _pos = target.position + new Vector3(-Mathf.Sin(_yaw), 0f, -Mathf.Cos(_yaw)) * distance + Vector3.up * height;
+        transform.position = _pos;
+        transform.rotation = Quaternion.LookRotation(
+            target.position + target.forward * (lookAhead * 0.4f) + Vector3.up * 1.2f - _pos, Vector3.up);
+    }
+
     float _shake;
     float _lastHeading;
     Camera _cam;
