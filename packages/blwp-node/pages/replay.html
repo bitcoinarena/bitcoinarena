@@ -246,10 +246,15 @@
     document.getElementById('work').textContent = `load ${load} × danger ${danger} × speed ${speed} × 1000 = ${score}`;
   }
 
-  // THE CORE'S OWN TIME, as seconds:microseconds (the owner 2026-09-26 14:25: the scrubber shows time, not a tick number):
-  // a tick is TICK_DT seconds in Q16.16
+  // THE CORE'S OWN TIME, AS A CLOCK (the owner 2026-09-26 14:25 and 14:35): mm:ss.ffff - two digits of minutes, two of
+  // seconds, a dot, four digits of the fraction - not a tick number and not seconds jammed against microseconds.
+  // A tick is TICK_DT seconds in Q16.16.
   const usOf = (ticks) => Math.round((ticks * R.TICK_DT * 1e6) / ONE);
-  const clockOf = (ticks) => { const us = usOf(ticks); return `${Math.floor(us / 1e6)}:${String(us % 1e6).padStart(6, '0')}`; };
+  const clockOf = (ticks) => {
+    const tenth = Math.floor(usOf(ticks) / 100);                       // ten-thousandths of a second
+    const sec = Math.floor(tenth / 10000), frac = tenth % 10000;
+    return `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}.${String(frac).padStart(4, '0')}`;
+  };
   // PLAYED LIKE A VIDEO, at the core's own tick rate (ONE / TICK_DT ticks a second).
   const rate = ONE / R.TICK_DT;
   const scrub = document.getElementById('scrub'), play = document.getElementById('play');
