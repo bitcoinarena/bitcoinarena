@@ -226,4 +226,19 @@ public class ArrivalCardWordsTests
         string src = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "Scripts/Cargo/RunScore.cs"));
         StringAssert.Contains("public float Exposure => CoreScoreFactors.Exposure(Blwp.BlwpCore.ExposureWord);", src);
     }
+
+    // THE LOADOUT PANEL'S LOAD IS THE CORE'S C (RULED 2026-09-26, A): the same C the card prints, not the bed fill. On
+    // this core S_CARGO is 45875 from init, so the panel reads x0.70000 whatever is loaded; the bed fill is TRUCK FULL %.
+    [Test]
+    public void TheLoadoutsLoadIsTheCoresCargoFactorNotTheBedFill()
+    {
+        Assert.AreEqual("×0.70000", LoadoutPanel.LoadLabel(45875));
+        Assert.AreEqual("0.70000", CoreScoreFactors.Cargo(45875).ToString("0.00000", CultureInfo.InvariantCulture),
+            "the panel and the card print C to the same decimals");
+        string src = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "Scripts/Cargo/LoadoutPanel.cs"));
+        StringAssert.Contains("string load = LoadLabel(Blwp.BlwpCore.CargoWord);", src);
+        StringAssert.DoesNotContain("$\"×{Mathf.Clamp01(bay.Fill):0.00}\"", src, "the bed fill is printed as the LOAD factor again");
+        StringAssert.Contains("TRUCK FULL", src);
+    }
 }
+
