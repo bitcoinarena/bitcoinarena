@@ -919,7 +919,8 @@ public class DriveHud : MonoBehaviour
         var probe = CardIn(w, h, 10f);
         float stoppedHeight = stopped.Length == 0 ? 0f : stopStyle.CalcHeight(new GUIContent(stopped), probe.width - 16f) + stopStyle.fontSize * 0.4f;
         // COPY GAME REPLAY, on a networked run's card (its session ended it - that is where a replay is held).
-        bool replay = runScore != null && _session != null && stopped.Length > 0;
+        // ...and only when that session was opened for THIS run (the owner 2026-09-26 14:08: the button copied the run before)
+        bool replay = runScore != null && _session != null && stopped.Length > 0 && Blwp.BlwpCore.ReplayForThisRun;
         float scale = ArrivalScale(w, h, head0, stoppedHeight, leadLine != null, replay);
         int head = Mathf.RoundToInt(head0 * scale);
         if (stopped.Length > 0)

@@ -46,6 +46,7 @@ namespace Blwp
         [DllImport("__Internal")] private static extern int BlwpReplayCopied();
         [DllImport("__Internal")] private static extern void BlwpLoadoutOpen(int open);
         [DllImport("__Internal")] private static extern int BlwpSolids(IntPtr ptr, int cap);
+        [DllImport("__Internal")] private static extern int BlwpReplayForThisRun();
         public const bool Compiled = true;
 #else
         private static int BlwpInit(int seed) => 0;
@@ -66,6 +67,7 @@ namespace Blwp
         private static int BlwpReplayCopied() => 0;
         private static void BlwpLoadoutOpen(int open) { }
         private static int BlwpSolids(IntPtr ptr, int cap) => 0;
+        private static int BlwpReplayForThisRun() => 0;
         private static int BlwpReadImpact() => 0;
         private static int BlwpSubmitLoad(int f, int b) => 0;
         private static int BlwpSubmitSample(int price) => 0;
@@ -196,6 +198,12 @@ namespace Blwp
         /// hz, yLow, yHigh in Q16.16 metres. Returns the core's count (boxes written: at most into.Length / 6), 0 without
         /// a core.
         /// </summary>
+        /// <summary>
+        /// Whether the session on hand was opened for the run on screen (the owner 2026-09-26 14:08): a session kept from the
+        /// run before names the run before, and its replay is not this card's.
+        /// </summary>
+        public static bool ReplayForThisRun => BlwpReplayForThisRun() == 1;
+
         public static int Solids(int[] into)
         {
             if (!Available || into == null || into.Length < 6) return 0;
