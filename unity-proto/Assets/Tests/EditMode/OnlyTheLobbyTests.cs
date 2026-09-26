@@ -53,5 +53,33 @@ public class OnlyTheLobbyTests
         string page = File.ReadAllText(Path.Combine(Application.dataPath, "WebGLTemplates/BtcLogistics/index.html"));
         StringAssert.Contains("window.BLWP_ENTRY_REFUSED = async (why) =>", page);
     }
+
+    // THE NODE STRIP IS NOT ON THE CARGO PANEL, AND IT CUTS NO NAME (the owner 2026-09-26 14:02): hidden while the panel is
+    // open; nodes are A and B by their place in the page's list, and no host is cut with an ellipsis.
+    [Test]
+    public void TheNodeStripHidesDuringLoadoutAndCutsNoName()
+    {
+        string panel = File.ReadAllText(Path.Combine(Application.dataPath, "Scripts/Cargo/LoadoutPanel.cs"));
+        StringAssert.Contains("if (_isOpen != value) Blwp.BlwpCore.LoadoutOpen(value);", panel);
+        string lib = File.ReadAllText(Path.Combine(Application.dataPath, "Plugins/WebGL/blwp.jslib"));
+        StringAssert.Contains("window.BLWP_LOADOUT_OPEN = open !== 0;", lib);
+        string page = File.ReadAllText(Path.Combine(Application.dataPath, "WebGLTemplates/BtcLogistics/index.html"));
+        StringAssert.Contains("|| window.BLWP_LOADOUT_OPEN) { el.style.display = 'none'; return; }", page);
+        int a = page.IndexOf("const nodeHealth = {};"), b = page.IndexOf("function paintPlayers()");
+        int c = page.IndexOf("const ab = ['A', 'B']");
+        string strip = page.Substring(a, b - a) + page.Substring(c, page.IndexOf('\n', c) - c);
+        StringAssert.DoesNotContain("\\u2026", strip, "a node's name is cut with an ellipsis again");
+        StringAssert.DoesNotContain("\u2026", strip, "a node's name is cut with an ellipsis again");
+    }
+
+    // HEALTH, NOT CONDITION (the owner 2026-09-26 14:14): the word condition is on no screen of the game.
+    [Test]
+    public void TheTrucksBarIsCalledHealth()
+    {
+        string hud = File.ReadAllText(Path.Combine(Application.dataPath, "Scripts/DriveHud.cs"));
+        StringAssert.Contains("$\"HEALTH {Mathf.CeilToInt(health.Fraction * 100f)}%\"", hud);
+        StringAssert.DoesNotContain("\"CONDITION", hud);
+        StringAssert.DoesNotContain("$\"CONDITION", hud);
+    }
 }
 
