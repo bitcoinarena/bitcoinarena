@@ -29,6 +29,7 @@ import { chainBeacon } from './beacon-source.js';
 import { lightningFromEnv } from './lnd-settings.js';
 import { stakeLocksFromEnv } from './stake-lock-port.js';
 import { fundingFromEnv } from './funding.js';
+import { startGuardian } from './guardian.js';
 
 const port = Number(process.argv[2] || 8080);
 const path = process.argv[3] || 'round.db';
@@ -101,6 +102,22 @@ if (url) {
     },
   });
 }
+// THE NODE'S GUARDIAN STARTS WITH IT (§23A.2, RULED the owner 2026-09-26 22:54): nothing here is guardian config - the
+// network, bitcoind, data, ports and public endpoint are all read off what this node already has (guardian.js).
+const guardian = await startGuardian({ nodePort: port, host, storePath: path, bitcoindUrl: url, cookiePath,
+  call: url ? bitcoindRpc({ url, cookiePath }) : null });
+if (guardian.running) options.guardian = { apiPort: guardian.apiPort, endpoint: guardian.endpoint };
 const node = await serve(db, options);
+// AND STOPS WITH IT: a signal closes the node and then its guardian, never one without the other.
+let stopping = false;
+for (const sig of ['SIGINT', 'SIGTERM']) {
+  process.on(sig, async () => {
+    if (stopping) return;
+    stopping = true;
+    await node.close().catch(() => {});
+    await guardian.stop();
+    process.exit(0);
+  });
+}
 console.log(`blwp-node on http://${host}:${node.port}  (${path})${url ? `, chain ${url}` : ''}`
   + `${ln.given ? `, lnd ${ln.rpc} (${ln.network})` : ''}`);
