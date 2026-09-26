@@ -1777,6 +1777,29 @@
         throw e;
       }
     };
+    // A NODE REFUSING THE ENTRY AFTER THE JOIN (the owner 2026-09-26, the 21:13 case measured live: a closed round's link
+    // with play=1 builds its entry, the session is refused by the node - "the round is closed" - and the run's cargo
+    // chooser stood there). The bridge reports it here (BLWP_ENTRY_REFUSED); while the address still names a round this
+    // is the join fallback's own: the round leaves the address, the half-named round is dropped, the lobby shows
+    // "Not joined: <why>", and Unity, seeing the join refused with no live session, shows the lobby and stops the run.
+    window.BLWP_ENTRY_REFUSED = async (why) => {
+      if (!/(^|[?&])round=/.test(location.search)) return;
+      why = String(why || 'the node refused the entry');
+      window.BLWP_ROUND = undefined; window.BLWP_ENTRY = undefined; window.BLWP_CHAIN = undefined; window.BLWP_ADVERT = undefined;
+      const lobbyUp = !!window.BLWP_LOBBY_ACT;
+      if (window.BLWP_JOIN) { window.BLWP_JOIN.state = 'refused'; window.BLWP_JOIN.why = why; }
+      else window.BLWP_JOIN = { state: 'refused', why, stage: '' };
+      console.error('[blwp] the node refused the entry (' + why + '): back to the lobby');
+      const q = new URLSearchParams(location.search.replace(/^\?/, ''));
+      q.delete('round'); q.delete('play');
+      if (lobbyUp) { history.replaceState(null, '', location.pathname + (typeof window.BLWP_LOBBY_BACK === 'string' ? window.BLWP_LOBBY_BACK : (q.toString() ? '?' + q.toString() : ''))); return; }
+      history.replaceState(null, '', location.pathname + (q.toString() ? '?' + q.toString() : ''));
+      try {
+        if (await showTheLobbyIfOneWasNamed()) return;
+        history.replaceState(null, '', location.pathname);
+        await showTheLobbyIfOneWasNamed();
+      } catch (e) { console.error('[blwp] the run is refused, and that lobby cannot be read: ' + e.message); }
+    };
     showTheLobbyIfOneWasNamed()
       .catch((e) => { console.error('[blwp] that lobby cannot be read: ' + e.message); return false; })
       .then((lobby) => (lobby ? null : joinOrBackToTheLobby()))

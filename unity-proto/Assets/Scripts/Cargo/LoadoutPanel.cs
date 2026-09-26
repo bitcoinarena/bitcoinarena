@@ -57,6 +57,18 @@ public class LoadoutPanel : MonoBehaviour
         if (truck != null) truck.controlsLocked = true;
     }
 
+    /// <summary>
+    /// CLOSE WITHOUT ROLLING OUT (the owner 2026-09-26, the 21:13 case): the node refused the entry before the run was live,
+    /// so the round is not played - the chooser closes, the bed is cleared, and the truck stays locked for the lobby.
+    /// </summary>
+    public void Dismiss()
+    {
+        IsOpen = false;
+        if (yard != null) yard.Close();
+        if (bay != null) bay.Clear();
+        if (truck != null) truck.controlsLocked = true;
+    }
+
     /// <summary>Shut the yard and let the player go.</summary>
     /// <summary>Unscaled time of the last roll-out, or a long time ago.</summary>
     public float ConfirmedAt { get; private set; } = -99f;
