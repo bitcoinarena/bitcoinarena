@@ -77,9 +77,10 @@ import { ENTRY_VOID, netStakeMsat } from '../../protocol/src/payout.js';
 import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../protocol/src/objection.js';
 import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../protocol/src/posting.js';
 import { federationIsBonded } from '../../protocol/src/federation.js';
-import { installedCores, coreForRound } from './cores.js';
+import { installedCores, coreForRound, TRUCK } from './cores.js';
 import { SIGNED_RERUN_BYTES } from '../../protocol/src/rerun.js';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join as joinPath } from 'node:path';
 import { readTranscript } from './transcript-read.js';
 import { verifyStakeLock, verifyFeeLock, lockFieldsFromJson, roundMintsFees, federationTakesNoBaseFee } from './stake-lock-signer-node.js';
 import { encodeClaimKeyAttestation, claimKeyAttestationId } from '../../protocol/src/claim-key.js';
@@ -233,10 +234,28 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // WHERE THIS NODE'S OWN CHAIN IS (M3.3-30): a height, asked of its own
   // bitcoind. Given none, the pool's chain call answers it when there is one.
   chainTip = null,
-  expiry = {} } = {}) {
+  expiry = {},
+  // WHERE EVERY CORE A STORED ROUND NAMES IS KEPT FOR ITS REPLAY (the owner 2026-09-26 13:28: "the copied replay link must
+  // keep working. Always ... Keep every core a stored round names, and serve it. Do not drop it when HEAD moves"): a
+  // directory outside the checkout, <hash>.js per core (tools/archive-replay-cores.mjs fills it from history). This node
+  // writes its own core there when it starts, so the next tree it runs keeps this one.
+  replayCores = process.env.BLWP_REPLAY_CORES_DIR || null,
+  // THE STABLE NAMES A COPIED REPLAY LINK USES (the owner 2026-09-26 13:28: a quick tunnel's name changes on every start,
+  // so a link on it dies; "the button must copy the stable Funnel name ... https://seat.example.com/blwp-a or
+  // /blwp-b, the path the page is published under"): the https bases of the nodes that hold these rounds, comma-separated
+  // in BLWP_REPLAY_PUBLIC. /replay/nodes answers them first, as `stable`; the page copies from them when there are any.
+  replayPublic = (process.env.BLWP_REPLAY_PUBLIC || '').split(',').map((u) => u.trim().replace(/\/+$/, '')).filter((u) => /^https:\/\//.test(u)) } = {}) {
   // THE CORES THIS SIGNER NODE RUNS (M3 R1), made once: the round store opens only rounds on them, and the door,
   // the replay and the ghosts resolve each round's core through the same registry.
   const installed = installedCores(cores);
+  const replayCoreFile = (hex) => (replayCores && /^[0-9a-f]{64}$/.test(hex) ? joinPath(replayCores, `${hex}.js`) : null);
+  if (replayCores) {
+    try {
+      mkdirSync(replayCores, { recursive: true });
+      const own = replayCoreFile(TRUCK.hash);
+      if (!existsSync(own)) writeFileSync(own, readFileSync(new URL('../../core/dist/blwp-replay-core.js', import.meta.url)));
+    } catch (e) { console.error(`[replay] cannot keep this node's core in ${replayCores}: ${e.message}`); }
+  }
   const round = new Round(db, undefined, { cores: installed });
 
   // THE DONATION SET A ROUND NAMES, AS THIS SIGNER NODE CAN STAND BEHIND IT (M3.2 6e):
@@ -2530,8 +2549,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (id.length !== 32) return text(res, 400, 'that is not a round id');
         const row = round.get(id);
         if (!row) return text(res, 404, 'this node holds no such round');
-        const runs = coreForRound(decodeRoundContract(new Uint8Array(row.contract)), installed);
-        if (!runs.ok) return text(res, 409, runs.why);
+        const contract = decodeRoundContract(new Uint8Array(row.contract));
+        const runs = coreForRound(contract, installed);
+        if (!runs.ok) {
+          // A CORE THIS NODE NO LONGER RUNS IS STILL SERVED FOR THE REPLAY of a round it stored: refusing it deleted the
+          // replay (the morning's links 409'd on d12e7abc once the tree moved).
+          const kept = replayCoreFile(toHex(contract.simCoreHash));
+          if (!kept || !existsSync(kept)) return text(res, 409, runs.why);
+          res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', ...CORS });
+          return res.end(readFileSync(kept));
+        }
         res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', ...CORS });
         return res.end(readFileSync(new URL('../../core/dist/blwp-replay-core.js', import.meta.url)));
       }
@@ -2565,7 +2592,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             found.add(String(e.advert.endpoint).replace(/^wss?:/, 'https:').replace(/\/+$/, ''));
         }
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
-        return res.end(JSON.stringify({ endpoints: [...found] }));
+        return res.end(JSON.stringify({ stable: replayPublic, endpoints: [...found] }));
       }
 
       if (req.method === 'GET' && url.pathname === '/transcript') {
