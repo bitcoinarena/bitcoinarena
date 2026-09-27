@@ -129,10 +129,16 @@ public class LoadoutPanel : MonoBehaviour
         // cross now, the bridge publishes them, and the core decides the cost.
         if (bay != null) Blwp.BlwpCore.SubmitLoad(bay.FeeCarried, bay.BtcHundredths);
 
-        // THE DRIVE STARTS BEHIND THE TRUCK (the owner 2026-09-26 14:08): PLAY's fly-in ran on under this panel, and a quick
-        // ROLL OUT drove off beneath it, high over the field and facing away from the miner. Rolling out ends it.
+        // THE DRIVE STARTS TOP-DOWN, THE MINER IN FRAME (the owner 2026-09-26 14:08, 2026-09-27 11:31): PLAY's fly-in ran on
+        // under this panel, and a quick ROLL OUT drove off beneath it facing away from the miner. Rolling out ends it and
+        // puts the camera over the truck with the gate it is driving to held in view until the player swipes.
         var chase = FindFirstObjectByType<ChaseCamera>();
-        if (chase != null) chase.EndFlyIn();
+        if (chase != null)
+        {
+            var gate = FindFirstObjectByType<DeliveryGate>();
+            chase.destination = gate != null ? gate.Mouth : (Vector3?)null;
+            chase.EndFlyIn();
+        }
     }
 
     [Tooltip("How full AUTO will load the bed. Deliberately short of full: " +

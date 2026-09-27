@@ -7,7 +7,7 @@ using UnityEngine;
 /// </summary>
 public class ChaseCamera : MonoBehaviour
 {
-    public enum Mode { Follow, God }
+    public enum Mode { Follow, God, Overhead }
 
     public Transform target;
     public Rigidbody targetBody;
@@ -44,7 +44,35 @@ public class ChaseCamera : MonoBehaviour
     public float recentreRate = 2f;
 
     public Mode View { get; private set; } = Mode.Follow;
-    public void Toggle() => View = View == Mode.Follow ? Mode.God : Mode.Follow;
+    Mode _driveView = Mode.Follow;
+    /// <summary>The overview and back to whichever drive view was on - behind the truck, or the top-down.</summary>
+    public void Toggle()
+    {
+        if (View == Mode.God) View = _driveView;
+        else { _driveView = View; View = Mode.God; }
+    }
+
+    // THE DRIVE IS SEEN FROM ABOVE, WITH ITS DESTINATION IN IT (the owner 2026-09-27 11:31: "On drive start it goes
+    // top-down. The destination stays in focus unless he swipes away himself"). From ROLL OUT the camera looks steeply
+    // down on the truck and on where the run is going - the miner's mouth - and frames both, the truck at the bottom of
+    // the screen and the mouth above it, coming down as the gap closes. A swipe hands the view to the player: while he
+    // looks, the camera follows the truck from above at the angle he dragged it to and the mouth is not held; the look
+    // then comes back as it does behind the truck (`recentreAfter`, `recentreRate`), and the mouth is in focus again.
+    [Header("Top-down")]
+    [Tooltip("Where the run is going: the miner's gate. Set at ROLL OUT.")]
+    public Vector3? destination;
+    [Tooltip("Tilt of the drive view from the horizon, in degrees. 90 is straight down.")]
+    public float overheadPitch = 72f;
+    [Tooltip("Closest the top-down comes to what it frames, in metres along its line of sight.")]
+    public float overheadMinDistance = 32f;
+    [Tooltip("Where the truck sits on the screen while the top-down holds the destination, from the bottom (0) to the top (1): " +
+             "clear of the pads and the HUD along the bottom edge.")]
+    public float overheadTruckAt = 0.25f;
+    [Tooltip("Where the destination sits on the screen, from the bottom (0) to the top (1).")]
+    public float overheadGateAt = 0.85f;
+    bool _ownView;
+    /// <summary>True while the top-down holds the destination in frame: from ROLL OUT until the player swipes.</summary>
+    public bool DestinationInFocus => View == Mode.Overhead && !_ownView && destination.HasValue;
 
     [Header("Framing")]
     public float distance = 9f;
@@ -178,13 +206,67 @@ public class ChaseCamera : MonoBehaviour
         _flyLeft = 0f;
         _orbitYaw = 0f; _orbitPitch = 0f;
         _dragging = false; _dragIdle = 0f;
+        _ownView = false;
+        if (View == Mode.God) _driveView = Mode.Overhead; else View = Mode.Overhead;
         if (target == null) return;
         _yaw = target.eulerAngles.y * Mathf.Deg2Rad;
         _lastHeading = target.eulerAngles.y;
-        _pos = target.position + new Vector3(-Mathf.Sin(_yaw), 0f, -Mathf.Cos(_yaw)) * distance + Vector3.up * height;
+        if (View != Mode.Overhead) return;
+        OverheadGoal(out var goal, out var look);
+        _pos = goal;                                   // at once: the drive starts top-down, no glide into it
         transform.position = _pos;
-        transform.rotation = Quaternion.LookRotation(
-            target.position + target.forward * (lookAhead * 0.4f) + Vector3.up * 1.2f - _pos, Vector3.up);
+        transform.rotation = Quaternion.LookRotation(look - _pos, Vector3.up);
+        LogFrame("roll out");
+        _nextFrameLog = Time.unscaledTime + 2f;
+    }
+
+    float _nextFrameLog;
+    /// <summary>Where the truck and the gate sit in the frame, for a measure read off the browser's console.</summary>
+    void LogFrame(string when)
+    {
+        var cam = _cam != null ? _cam : (_cam = GetComponent<Camera>());
+        if (cam == null || target == null) return;
+        var t = cam.WorldToViewportPoint(target.position);
+        string gate = destination.HasValue ? cam.WorldToViewportPoint(destination.Value).ToString("F2") : "none";
+        Debug.Log($"[camera] top-down {when}: pitch {Vector3.Angle(transform.forward, Vector3.ProjectOnPlane(transform.forward, Vector3.up)):F0} deg, "
+                  + $"height {transform.position.y - target.position.y:F0} m, truck {t.ToString("F2")}, gate {gate}, focus {DestinationInFocus}");
+    }
+
+    /// <summary>
+    /// Where the top-down sits and what it looks at. Holding the destination: along the line from the truck to the gate,
+    /// `overheadPitch` below the horizon, with the truck at `overheadTruckAt` of the screen's height and the gate at
+    /// `overheadGateAt`. After a swipe: the truck alone, turned and tilted by the drag.
+    ///
+    /// A ground point u metres beyond the look point, seen from D back along the sight line, sits at
+    /// tan = u sin(p) / (D + u cos(p)) off the middle of the screen. Asking the truck (u = -c) for kt tan(fov/2) below and
+    /// the gate (u = L - c) for kg tan(fov/2) above gives c and D in closed form - no margin in metres, which vanishes
+    /// when the camera is 250 m out (measured: the truck at 5 per cent of the screen, under the pads).
+    /// </summary>
+    void OverheadGoal(out Vector3 goal, out Vector3 look)
+    {
+        var cam = _cam != null ? _cam : (_cam = GetComponent<Camera>());
+        float vFov = (cam != null ? cam.fieldOfView : fovIdle) * Mathf.Deg2Rad;
+        Vector3 truck = target.position;
+        Vector3 toGate = destination.HasValue ? destination.Value - truck : Vector3.zero;
+        toGate.y = 0f;
+        bool hold = DestinationInFocus && toGate.magnitude > 1f;
+        float bearing = hold ? Mathf.Atan2(toGate.x, toGate.z) : _yaw;
+        float yaw = bearing + (hold ? 0f : _orbitYaw * Mathf.Deg2Rad);
+        float pitch = Mathf.Clamp(overheadPitch + (hold ? 0f : _orbitPitch), 30f, 89f) * Mathf.Deg2Rad;
+        float reach = overheadMinDistance;
+        look = truck;
+        if (hold)
+        {
+            float T = Mathf.Tan(vFov * 0.5f), sp = Mathf.Sin(pitch), cp = Mathf.Cos(pitch);
+            float kt = Mathf.Clamp(1f - 2f * overheadTruckAt, 0.05f, 0.95f);
+            float kg = Mathf.Clamp(2f * overheadGateAt - 1f, 0.05f, 0.95f);
+            float a = kt / (sp + kt * T * cp);
+            float b = kg / Mathf.Max(0.05f, sp - kg * T * cp);
+            reach = Mathf.Max(overheadMinDistance, toGate.magnitude / (T * (a + b)));
+            look = truck + toGate.normalized * (kt * T * reach / (sp + kt * T * cp));
+        }
+        var sight = new Vector3(Mathf.Sin(yaw) * Mathf.Cos(pitch), -Mathf.Sin(pitch), Mathf.Cos(yaw) * Mathf.Cos(pitch));
+        goal = look - sight * reach;
     }
 
     float _shake;
@@ -266,6 +348,18 @@ public class ChaseCamera : MonoBehaviour
             // travel was swallowed. A finger moving a few pixels a frame would
             // never have shown it, and a slow phone would.
             _lastPointer = _downAt + (at - _downAt).normalized * DeadZonePixels;
+            // HE SWIPED AWAY HIMSELF: from here the top-down is his - it drops the gate and turns from where it was
+            if (View == Mode.Overhead && !_ownView)
+            {
+                _ownView = true;
+                if (destination.HasValue && target != null)
+                {
+                    var g = destination.Value - target.position;
+                    if (new Vector2(g.x, g.z).magnitude > 1f) _yaw = Mathf.Atan2(g.x, g.z);
+                }
+                _orbitYaw = 0f; _orbitPitch = 0f;
+                Debug.Log("[look] top-down: the player swiped away from the destination");
+            }
         }
 
         if (held && _dragging)
@@ -288,6 +382,13 @@ public class ChaseCamera : MonoBehaviour
             _orbitYaw = Mathf.Lerp(_orbitYaw, 0f, k);
             _orbitPitch = Mathf.Lerp(_orbitPitch, 0f, k);
 
+            // AND THE TOP-DOWN HOLDS THE GATE AGAIN once the look has come back: a swipe is his for as long as he
+            // looks, as behind the truck (the owner 2026-09-07: the view comes back after a look)
+            if (_ownView && View == Mode.Overhead && Mathf.Abs(_orbitYaw) < 0.5f && Mathf.Abs(_orbitPitch) < 0.5f)
+            {
+                _ownView = false;
+                Debug.Log("[look] top-down: the destination is back in focus");
+            }
             // once, when it has actually come back
             if (!_reported && Mathf.Abs(_orbitYaw) < 0.5f && _releasedAt > 0f)
             {
@@ -384,6 +485,36 @@ public class ChaseCamera : MonoBehaviour
 
             _yaw = head;
             _lastHeading = target.eulerAngles.y;
+            return;
+        }
+
+        if (View == Mode.Overhead)
+        {
+            OverheadGoal(out var over, out var overLook);
+            _pos = Vector3.Lerp(_pos, over, 1f - Mathf.Exp(-positionDamp * Time.deltaTime));
+            _shake = Mathf.Max(0f, _shake - Time.deltaTime * 3.2f);
+            if (_shake > 0.001f)
+            {
+                float ts = Time.time * 47f;
+                _pos += new Vector3(Mathf.PerlinNoise(ts, 0f) - 0.5f,
+                                    Mathf.PerlinNoise(0f, ts) - 0.5f,
+                                    Mathf.PerlinNoise(ts, ts) - 0.5f) * (_shake * 1.6f);
+            }
+            transform.position = _pos;
+            transform.rotation = Quaternion.LookRotation(overLook - _pos, Vector3.up);
+            // THE LENS STILL OPENS WITH SPEED, as it does behind the truck: the framing above reads the lens it is given,
+            // so a wider one brings the camera in rather than pushing the gate out of the frame.
+            if (_cam == null) _cam = GetComponent<Camera>();
+            if (_cam != null)
+            {
+                Vector3 vo = Blwp.BlwpCore.Available ? Blwp.BlwpCore.Velocity
+                           : (targetBody != null ? targetBody.linearVelocity : Vector3.zero);
+                vo.y = 0f;
+                float lensO = Mathf.Pow(Mathf.Clamp01(vo.magnitude / Mathf.Max(1f, fovAtSpeed)), 1.3f);
+                _cam.fieldOfView = Mathf.Lerp(_cam.fieldOfView, Mathf.Lerp(fovIdle, fovFlatOut, lensO),
+                                              1f - Mathf.Exp(-2.4f * Time.deltaTime));
+            }
+            if (Time.unscaledTime >= _nextFrameLog) { _nextFrameLog = Time.unscaledTime + 2f; LogFrame("drive"); }
             return;
         }
 
