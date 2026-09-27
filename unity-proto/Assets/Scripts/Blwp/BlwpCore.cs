@@ -47,6 +47,7 @@ namespace Blwp
         [DllImport("__Internal")] private static extern void BlwpLoadoutOpen(int open);
         [DllImport("__Internal")] private static extern int BlwpSolids(IntPtr ptr, int cap);
         [DllImport("__Internal")] private static extern int BlwpReplayForThisRun();
+        [DllImport("__Internal")] private static extern void BlwpRunStarts();
         public const bool Compiled = true;
 #else
         private static int BlwpInit(int seed) => 0;
@@ -68,6 +69,7 @@ namespace Blwp
         private static void BlwpLoadoutOpen(int open) { }
         private static int BlwpSolids(IntPtr ptr, int cap) => 0;
         private static int BlwpReplayForThisRun() => 0;
+        private static void BlwpRunStarts() { }
         private static int BlwpReadImpact() => 0;
         private static int BlwpSubmitLoad(int f, int b) => 0;
         private static int BlwpSubmitSample(int price) => 0;
@@ -203,6 +205,13 @@ namespace Blwp
         /// run before names the run before, and its replay is not this card's.
         /// </summary>
         public static bool ReplayForThisRun => BlwpReplayForThisRun() == 1;
+
+        /// <summary>
+        /// ROLL OUT: the bridge notes the session this run is played on and forgets the run before (the owner 2026-09-27
+        /// 13:19: copy game replay copies the run that just ended, never the one before). Only that session's end is kept
+        /// as the run to copy.
+        /// </summary>
+        public static void RunStarts() => BlwpRunStarts();
 
         public static int Solids(int[] into)
         {

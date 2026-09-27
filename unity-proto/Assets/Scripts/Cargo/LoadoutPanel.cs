@@ -129,6 +129,9 @@ public class LoadoutPanel : MonoBehaviour
         // cross now, the bridge publishes them, and the core decides the cost.
         if (bay != null) Blwp.BlwpCore.SubmitLoad(bay.FeeCarried, bay.BtcHundredths);
 
+        // AND THE RUN'S SESSION IS NOTED, so the replay the result offers is this run's and not the one before
+        Blwp.BlwpCore.RunStarts();
+
         // THE DRIVE STARTS TOP-DOWN, THE MINER IN FRAME (the owner 2026-09-26 14:08, 2026-09-27 11:31): PLAY's fly-in ran on
         // under this panel, and a quick ROLL OUT drove off beneath it facing away from the miner. Rolling out ends it and
         // puts the camera over the truck with the gate it is driving to held in view until the player swipes.

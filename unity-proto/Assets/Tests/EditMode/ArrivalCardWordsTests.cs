@@ -283,10 +283,16 @@ public class ArrivalCardWordsTests
     public void TheCopiedReplayIsTheRunOnScreen()
     {
         string lib = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "Plugins/WebGL/blwp.jslib"));
-        StringAssert.Contains("return (!now || !net.pageEntry || net.pageEntry === now) ? 1 : 0;", lib);
-        StringAssert.Contains("if (net && now && net.pageEntry && net.pageEntry !== now) {", lib);
+        // THE RUN THAT ENDED, kept at its end from the session ROLL OUT found for it (the owner 2026-09-27 13:19); the
+        // button and the copy read that run and nothing the page has on hand at the click
+        StringAssert.Contains("Module.blwpRunNet = (net && !(net.client && net.client.ended)) ? net : null;", lib);
+        StringAssert.Contains("var mine = n === Module.blwpRunNet", lib);
+        StringAssert.Contains("return Module.blwpEndedRun ? 1 : 0;", lib);
+        StringAssert.Contains("var run = Module.blwpEndedRun;", lib);
         string hud = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "Scripts/DriveHud.cs"));
-        StringAssert.Contains("stopped.Length > 0 && Blwp.BlwpCore.ReplayForThisRun;", hud);
+        StringAssert.Contains("bool replay = runScore != null && Blwp.BlwpCore.ReplayForThisRun;", hud);
+        string panel = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "Scripts/Cargo/LoadoutPanel.cs"));
+        StringAssert.Contains("Blwp.BlwpCore.RunStarts();", panel);
         // and the root: a session another page join has replaced is over, and the next start replaces it
         StringAssert.Contains("pageEntry: (typeof window !== 'undefined' && window.BLWP_ENTRY) || null,", lib);
         StringAssert.Contains("if (n && n.pageEntry && typeof window !== 'undefined' && window.BLWP_ENTRY && window.BLWP_ENTRY !== n.pageEntry) return 1;", lib);

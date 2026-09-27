@@ -918,9 +918,10 @@ public class DriveHud : MonoBehaviour
         };
         var probe = CardIn(w, h, 10f);
         float stoppedHeight = stopped.Length == 0 ? 0f : stopStyle.CalcHeight(new GUIContent(stopped), probe.width - 16f) + stopStyle.fontSize * 0.4f;
-        // COPY GAME REPLAY, on a networked run's card (its session ended it - that is where a replay is held).
-        // ...and only when that session was opened for THIS run (the owner 2026-09-26 14:08: the button copied the run before)
-        bool replay = runScore != null && _session != null && stopped.Length > 0 && Blwp.BlwpCore.ReplayForThisRun;
+        // COPY GAME REPLAY, on the card whenever the run that just ended is one the bridge kept (the owner 2026-09-27 13:19:
+        // every ending, the run that just ended and not the one before - `BlwpCore.ReplayForThisRun`, taken at the end
+        // from the session ROLL OUT found for this run). No longer waiting for the session's closing word as well.
+        bool replay = runScore != null && Blwp.BlwpCore.ReplayForThisRun;
         float scale = ArrivalScale(w, h, head0, stoppedHeight, leadLine != null, replay);
         int head = Mathf.RoundToInt(head0 * scale);
         if (stopped.Length > 0)
@@ -981,11 +982,19 @@ public class DriveHud : MonoBehaviour
         line.normal.textColor = new Color(1f, 1f, 1f, k * 0.62f);
         GUI.Label(Inset(rows[r++]), footLine, line);
 
-        if (replay)
+        if (replay) DrawCopyReplay(rows[r++], line.fontSize, line);
+    }
+
+    /// <summary>
+    /// THE ONE "copy game replay" CONTROL, on whatever says the run is over: the result card's own row, or - on the
+    /// endings with no card, WASTED and a run the timer or a VOID stopped, and an empty truck - its own row under the
+    /// WASTED band (the owner 2026-09-27 13:19: "After every round end he must be able to copy a replay").
+    /// </summary>
+    void DrawCopyReplay(Rect row, int fontSize, GUIStyle line)
+    {
         {
-            var row = rows[r++];
-            var button = new GUIStyle(GUI.skin.button) { fontSize = line.fontSize, fontStyle = FontStyle.Bold };
-            float bw = Mathf.Min(row.width - 16f, button.CalcSize(new GUIContent(CopyReplayLabel)).x + line.fontSize * 2f);
+            var button = new GUIStyle(GUI.skin.button) { fontSize = fontSize, fontStyle = FontStyle.Bold };
+            float bw = Mathf.Min(row.width - 16f, button.CalcSize(new GUIContent(CopyReplayLabel)).x + fontSize * 2f);
             var rect = new Rect(row.x + (row.width - bw) * 0.5f, row.y + row.height * 0.15f, bw, row.height * 0.7f);
             if (GUI.Button(rect, CopyReplayLabel, button))
             {
@@ -1017,6 +1026,39 @@ public class DriveHud : MonoBehaviour
 
     bool _replayCopied;
     float _copyPressedAt = -1f, _copiedAt = -1f;
+    SplashScreen _splash;
+
+    /// <summary>WHETHER THE LONE CONTROL IS DRAWN: a kept run to copy, no result card carrying it, the lobby not up.</summary>
+    public static bool CopyReplayAlone(bool replayForThisRun, bool cardShowing, bool lobbyShowing)
+        => replayForThisRun && !cardShowing && !lobbyShowing;
+
+    /// <summary>The control's row where no card is up: under the WASTED band, centred, clear of the pads.</summary>
+    public static Rect CopyReplayAloneRow(int w, int h)
+    {
+        float font = Mathf.Max(12f, Mathf.Min(w, h) * 0.034f);
+        float rw = Mathf.Min(w - 32f, font * 16f);
+        // just under the WASTED band (DrawWasted: h * 0.34, 1.5 of a font a sixth of the smaller side), wherever that is
+        float bandBottom = h * 0.34f + Mathf.Min(w, h) * 0.17f * 1.5f;
+        return new Rect((w - rw) * 0.5f, bandBottom + font * 0.6f, rw, font * 2.6f);
+    }
+
+    void DrawCopyReplayAlone(int w, int h)
+    {
+        if (_splash == null) _splash = Object.FindFirstObjectByType<SplashScreen>();
+        bool lobby = _splash != null && _splash.Showing;
+        if (!CopyReplayAlone(Blwp.BlwpCore.ReplayForThisRun, ArrivalShowing, lobby))
+        {
+            if (!ArrivalShowing) { _copyPressedAt = -1f; _copiedAt = -1f; }
+            return;
+        }
+        var row = CopyReplayAloneRow(w, h);
+        var line = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.UpperCenter,
+            fontSize = Mathf.RoundToInt(Mathf.Max(12f, Mathf.Min(w, h) * 0.034f)) };
+        GUI.color = new Color(0.02f, 0.03f, 0.05f, 0.85f);
+        GUI.DrawTexture(row, _flat);
+        GUI.color = Color.white;
+        DrawCopyReplay(row, line.fontSize, line);
+    }
 
     /// <summary>The tooltip's word, shown once the clipboard holds the replay link.</summary>
     public const string CopiedLabel = "copied!";
@@ -3150,6 +3192,7 @@ public class DriveHud : MonoBehaviour
         DrawFallout(w, h);
         DrawHealth(w, h);
         DrawWasted(w, h);
+        DrawCopyReplayAlone(w, h);
         DrawManifest(w, h);
         DrawStreamingPanel(w, h);
 
