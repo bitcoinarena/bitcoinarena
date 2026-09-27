@@ -55,9 +55,9 @@ public class ChaseCamera : MonoBehaviour
     // THE DRIVE IS SEEN FROM ABOVE, WITH ITS DESTINATION IN IT (the owner 2026-09-27 11:31: "On drive start it goes
     // top-down. The destination stays in focus unless he swipes away himself"). From ROLL OUT the camera looks steeply
     // down on the truck and on where the run is going - the miner's mouth - and frames both, the truck at the bottom of
-    // the screen and the mouth above it, coming down as the gap closes. A swipe hands the view to the player: while he
-    // looks, the camera follows the truck from above at the angle he dragged it to and the mouth is not held; the look
-    // then comes back as it does behind the truck (`recentreAfter`, `recentreRate`), and the mouth is in focus again.
+    // the screen and the mouth above it, coming down as the gap closes. A swipe hands the view to the player: from then
+    // until the next ROLL OUT the camera follows the truck from above at the angle he dragged it to, the mouth is not
+    // held, and nothing brings it back - no timed return (the owner 2026-09-27: the 11:31 letter over the look-return).
     [Header("Top-down")]
     [Tooltip("Where the run is going: the miner's gate. Set at ROLL OUT.")]
     public Vector3? destination;
@@ -376,19 +376,15 @@ public class ChaseCamera : MonoBehaviour
         // Everything else eases back - including a finger resting inside the
         // dead zone, which is a tap in progress and not a held view.
         _dragIdle += Time.unscaledDeltaTime;
+        // THE TOP-DOWN HOLDS THE SWIPE (the owner 2026-09-27, over the older look-return ruling): after the finger lifts,
+        // the dragged angle stays and the mouth is not pulled back into frame. The next ROLL OUT holds it again.
+        if (View == Mode.Overhead) return;
         if (recentreAfter > 0f && _dragIdle > recentreAfter)
         {
             float k = 1f - Mathf.Exp(-recentreRate * Time.unscaledDeltaTime);
             _orbitYaw = Mathf.Lerp(_orbitYaw, 0f, k);
             _orbitPitch = Mathf.Lerp(_orbitPitch, 0f, k);
 
-            // AND THE TOP-DOWN HOLDS THE GATE AGAIN once the look has come back: a swipe is his for as long as he
-            // looks, as behind the truck (the owner 2026-09-07: the view comes back after a look)
-            if (_ownView && View == Mode.Overhead && Mathf.Abs(_orbitYaw) < 0.5f && Mathf.Abs(_orbitPitch) < 0.5f)
-            {
-                _ownView = false;
-                Debug.Log("[look] top-down: the destination is back in focus");
-            }
             // once, when it has actually come back
             if (!_reported && Mathf.Abs(_orbitYaw) < 0.5f && _releasedAt > 0f)
             {
