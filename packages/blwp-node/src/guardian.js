@@ -17,10 +17,12 @@
 // every other chain as Regtest, "custom/private networks". So a guardian configured `testnet4` sees its own chain as
 // Regtest and stops - walletv2 at the ceremony (lib.rs:425, left Regtest right Testnet4), the wallet module at start
 // ("Wrong Network", wallet-server lib.rs:1280) - measured 2026-09-26 on both the node's bitcoind and mempool.space's
-// Esplora, and still so in v0.12.1 and on master. Fedimint is not patched (§23A.2: stock, unpatched), so a guardian on
-// testnet4 carries Fedimint's own label for that chain, `regtest`, on the real testnet4 chain. The paying path is
-// unaffected: a deposit is an LNv2 receive through the gateway (no currency check), and winnings are the gateway's
-// send_payment (no currency check there either); only on-chain peg addresses print as bcrt1. The federation runs
+// Esplora, and still so in v0.12.1 and on master. The `regtest` label that let a guardian run left no stock gateway able
+// to join (gateway lib.rs:1057, LN testnet4 vs gateway regtest), so Fedimint is patched (the owner 2026-09-27 07:35/07:51,
+// the smallest change): network_from_chain_id names testnet4 by its block-1 hash 0000000012982b6d...
+// (tools/fedimint-testnet4.patch). A guardian on testnet4 is labelled testnet4, the gateway too. The same patch gives
+// testnet4 the fee rate the Regtest label had (1 sat/vB) when its bitcoind has no estimate - measured: the guardians
+// otherwise stop at consensus start, "No connection to bitcoin rpc", on estimatesmartfee's "Insufficient data". The federation runs
 // Fedimint's stock `wallet` module, not walletv2 (RULED 2026-09-26). Base fees off (§23A.2). Founding - which four nodes are drawn and run that ceremony - is §23A.2's
 // sortition, not this file: a guardian started here waits in Fedimint's setup until it is drawn.
 import { spawn, execFile } from 'node:child_process';
@@ -37,8 +39,8 @@ export function guardianPorts(nodePort) {
 
 /** Fedimint's name for the network bitcoind reports. */
 export function fedimintNetwork(chain) {
-  // testnet4 -> 'regtest': Fedimint 0.12's own label for a chain it does not know (see the header)
-  const n = { test: 'testnet', testnet4: 'regtest', regtest: 'regtest', main: 'bitcoin', signet: 'signet' }[chain];
+  // testnet4 -> 'testnet4': the patched fedimintd names this chain by its block-1 hash (see the header)
+  const n = { test: 'testnet', testnet4: 'testnet4', regtest: 'regtest', main: 'bitcoin', signet: 'signet' }[chain];
   if (!n) throw new Error(`guardian: bitcoind reports chain "${chain}", which a guardian does not run on`);
   return n;
 }
