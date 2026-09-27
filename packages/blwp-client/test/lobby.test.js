@@ -55,6 +55,11 @@ const contractAt = (committeeTimeMs, extra = {}) => ({
   ...extra,
 });
 
+// A PAYING ROUND IS SEVEN SIGNER NODES, EACH ONE GUARDIAN (PRIORITIES item 5; the owner 2026-09-27 10:04): A and B and five more.
+const SEVEN = [signerNodeA, signerNodeB, ...Array.from({ length: 5 }, () => schnorr.utils.randomSecretKey())];
+const paying = (extra = {}, at = BigInt(NOW) - 1000n) => contractAt(at,
+  { stakeMsat: 100000n, gameVerifySlots: 7, settlementSlots: 7, nodes: SEVEN.map(keyOf), ...extra });
+
 /** A signer node's listing of one round, signed as the node signs it (or tampered after). */
 function listing(secret, id, { phase = 'open', assignedHere = true, joined = 0, playing = 0, free = true, at = NOW, tamper = null } = {}) {
   const signed = { roundId: fromHex(id), nodePubkey: keyOf(secret), nowMs: BigInt(at), phase, assignedHere, joined, playing };
@@ -109,7 +114,7 @@ test('2 of 2: Join only where both of the round\'s signer nodes signed it open a
     oneSignerNode: contractAt(now - 6000n),
     freePending: contractAt(now + 90000n),
     freeOver: contractAt(now - 400000n),
-    payingOpen: contractAt(now - 8000n, { stakeMsat: 100000n, custody: 'FEDERATION', federationId: TEST_FEDERATION_ID }),
+    payingOpen: paying({ custody: 'FEDERATION', federationId: TEST_FEDERATION_ID }, now - 8000n),   // seven signer nodes, A and B two of them
   });
   const forged = 'ee'.repeat(32);
   contracts[forged] = contracts[id.freeOpen];        // a listed id whose contract is another round's
@@ -150,8 +155,8 @@ test('2 of 2: Join only where both of the round\'s signer nodes signed it open a
     rows: ['payingOpen', 'oneSignerNode', 'freeOpen', 'freePending'],
     phases: ['open', 'open', 'open', 'pending'],
     free: [false, true, true, true],
-    agree: ['2/2', '1/2', '2/2', '0/2'],
-    joinable: [true, false, true, false],
+    agree: ['2/5', '1/2', '2/2', '0/2'],       // the paying round needs 5 of its 7; A and B are two
+    joinable: [false, false, true, false],
     disagrees: [1, 0, 0, 0],
     refusedForged: true, refusedJunk: true,
   });
@@ -297,8 +302,9 @@ test('the lobby lists one free round and one paying round, never two of either, 
 // THE LOBBY HAS ONE PAYING WORD (RULED the owner 2026-09-24, the enum slice's fifth cut): a paying round's stake goes into a
 // federation lock, as the node's own list says. "a Lightning payment" and the 'lightning' wallet were THRESHOLD_LN's
 // hold invoice - no decodable round reached them, and they are not kept as a name for the withdrawn custody.
+
 test('a paying row is only ever a federation stake lock, whatever its wallet field; the lobby source names no hold-invoice wallet', async () => {
-  const { contracts, id } = roundsOf({ p: contractAt(BigInt(NOW) - 1000n, { stakeMsat: 100000n }) });
+  const { contracts, id } = roundsOf({ p: paying() });
   const net = network({ nodes: { [A]: { secret: signerNodeA, rounds: [listing(signerNodeA, id.p, { free: false })] },
     [B]: { secret: signerNodeB, rounds: [listing(signerNodeB, id.p, { free: false })] } }, contracts });
   const { rows } = await fetchLobby({ nodes: [A, B], fetcher: net.fetcher, nowMs: NOW, verify });
@@ -327,4 +333,24 @@ test('a node that lists a custody-byte-0 round and serves its bytes gets no row 
   assert.equal(got.rows.length, 0, 'a byte-0 round became a row');
   assert.ok(got.refused.some((r) => r.startsWith(oldId.slice(0, 16)) && /custody byte 0 is not a custody of this network/.test(r)));
   assert.equal(got.refused.some((r) => r.includes('THRESHOLD_LN')), false);
+});
+
+// NO 2-OF-2 PAYING FEDERATION IS OFFERED (PRIORITIES item 5: "The UI offers no 2-of-2 paying federation"; one node is one
+// guardian, and a paying round's committee is the federation's seven). A paying round whose committee is two signer
+// nodes gets no row, however both sign it open - the lobby names it refused. The free 2-of-2 is untouched.
+test('a paying round on a 2-of-2 committee is not offered: no row, named refused; the free 2-of-2 and a paying 5-of-7 are listed', async () => {
+  const { contracts, id } = roundsOf({
+    two: contractAt(BigInt(NOW) - 1000n, { stakeMsat: 100000n }),
+    free: contractAt(BigInt(NOW) - 1000n, { slashMinimumServed: 21 }),
+    seven: paying(),
+  });
+  const said = (k) => [listing(k, id.two, { free: false }), listing(k, id.free), listing(k, id.seven, { free: false })];
+  const net = network({ nodes: { [A]: { secret: signerNodeA, rounds: said(signerNodeA) }, [B]: { secret: signerNodeB, rounds: said(signerNodeB) } }, contracts });
+  const got = await fetchLobby({ nodes: [A, B], fetcher: net.fetcher, nowMs: NOW, verify });
+  console.log('  FACTS:', JSON.stringify({ rows: got.rows.map((r) => ({ id: r.id.slice(0, 8), free: r.free, signerNodes: r.signerNodes, needed: r.needed })), refused: got.refused }));
+  assert.equal(got.rows.some((r) => r.id === id.two), false, 'a 2-of-2 paying round was offered');
+  assert.ok(got.refused.some((r) => r.startsWith(id.two.slice(0, 16)) && /2-of-2/.test(r)), 'the refusal names it');
+  assert.ok(got.rows.some((r) => r.id === id.free && r.free && r.needed === 2), 'the free 2-of-2 is listed');
+  const seven = got.rows.find((r) => r.id === id.seven);
+  assert.ok(seven && !seven.free && seven.signerNodes === 7 && seven.needed === 5, 'the paying 5-of-7 is listed');
 });
