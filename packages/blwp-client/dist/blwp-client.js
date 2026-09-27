@@ -3589,6 +3589,18 @@ const guardianBytesOrder = (a, b) => {
 const compareGuardian = (a, b) =>
   guardianBytesOrder(a.federationId, b.federationId) || guardianBytesOrder(a.guardianKey, b.guardianKey);
 
+// A GUARDIAN IS SAID BY ITS NODE (§5A.1 v4.6.4; §23A.2, one node is one guardian - RULED the owner 2026-09-26 22:54): whether
+// this node is willing to hold custody as a guardian, and the fedimintd API endpoint the client and the seats use. Both
+// or neither: capable needs a ws:// or wss:// endpoint, not capable needs the empty string. An advert that says nothing
+// about it (the field left out) is a node that is not a guardian.
+function guardianRole(capable, endpoint) {
+  if (capable !== 0 && capable !== 1) throw new Error(`guardian_capable is 0 or 1, not ${capable}`);
+  if (typeof endpoint !== 'string') throw new Error('guardian_endpoint is a string');
+  if (capable === 1 && !/^wss?:\/\/\S+$/.test(endpoint))
+    throw new Error(`a guardian-capable node names a ws:// or wss:// guardian_endpoint, not "${endpoint}"`);
+  if (capable === 0 && endpoint !== '') throw new Error('a node that is not guardian-capable names no guardian_endpoint');
+}
+
 function encodeAdvert(a) {
   const w = new Writer();
   w.u8(TYPE_ADVERT);
@@ -3636,6 +3648,12 @@ function encodeAdvert(a) {
   // bond or not at all. Added before the first bond outside regtest exists.
   w.vec(a.guardianOf, (g, ww) => { ww.bytes32(g.federationId); ww.bytes(g.guardianKey, GUARDIAN_KEY_BYTES); },
     { sortedBy: compareGuardian });
+  // WHETHER THIS NODE IS A GUARDIAN, AND WHERE (§5A.1 v4.6.4), in the signed body - so under the node's signature.
+  const capable = a.guardianCapable === undefined ? 0 : a.guardianCapable === true ? 1 : a.guardianCapable === false ? 0 : a.guardianCapable;
+  const guardianEndpoint = a.guardianEndpoint === undefined ? '' : a.guardianEndpoint;
+  guardianRole(capable, guardianEndpoint);
+  w.u8(capable);
+  w.str(guardianEndpoint);
   w.u64(a.timestamp);
   return w.finish();
 }
@@ -3667,8 +3685,13 @@ function decodeAdvert(bytes) {
     bondScriptTemplateVersion: r.u16(),
     payoutPubkey: r.bytes32(),
     guardianOf: r.vec((rr) => ({ federationId: rr.bytes32(), guardianKey: rr.bytes(GUARDIAN_KEY_BYTES) })),
-    timestamp: r.u64(),
   };
+  const capable = r.u8();
+  const guardianEndpoint = r.str();
+  guardianRole(capable, guardianEndpoint);
+  a.guardianCapable = capable === 1;
+  a.guardianEndpoint = guardianEndpoint;
+  a.timestamp = r.u64();
   if (r.at !== bytes.length) throw new Error('trailing bytes after the advertisement');
   return a;
 }

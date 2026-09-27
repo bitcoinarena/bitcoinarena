@@ -251,7 +251,8 @@ out.tagged = {
     roles: ['game', 'verify'], endpoint: 'wss://node.example:443', region: 'eu-west',
     capacityClass: 2, softwareHash: b32(0x33), settlementCapabilities: 0,
     lightningCapabilities: 0, bondTxid: b32(0x44), bondVout: 0,
-    bondScriptTemplateVersion: 1, payoutPubkey: b32(0x55), guardianOf: [], timestamp: 1788700000000n,
+    bondScriptTemplateVersion: 1, payoutPubkey: b32(0x55), guardianOf: [],
+    guardianCapable: false, guardianEndpoint: '', timestamp: 1788700000000n,
   };
   const moved = { ...one, endpoint: 'wss://somewhere-else.example:443' };
   out.advert = {
@@ -262,7 +263,8 @@ out.tagged = {
       'protocolVersions vec<u16>', 'roles vec<u8>', 'endpoint str', 'region str',
       'capacityClass u8', 'softwareHash 32', 'settlementCapabilities u32',
       'lightningCapabilities u32', 'bondTxid 32', 'bondVout u32',
-      'bondScriptTemplateVersion u16', 'payoutPubkey 32', 'timestamp u64',
+      'bondScriptTemplateVersion u16', 'payoutPubkey 32', 'guardianOf vec<(federationId 32, guardianKey 33)>',
+      'guardianCapable u8 (0 or 1)', 'guardianEndpoint str (ws:// or wss:// when capable, empty when not)', 'timestamp u64',
     ],
     signatureBytes: ADVERT_SIGNATURE_BYTES,
     advert: { hex: toHex(encodeAdvert(one)), advertId: toHex(advertId(one)) },

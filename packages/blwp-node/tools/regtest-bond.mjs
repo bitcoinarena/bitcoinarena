@@ -150,7 +150,9 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
       softwareHash: new Uint8Array(32).fill(2),
       settlementCapabilities: 0, lightningCapabilities: 0,
       bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 1,
-      payoutPubkey: new Uint8Array(32).fill(3), guardianOf, timestamp: 1788700000000n,
+      payoutPubkey: new Uint8Array(32).fill(3), guardianOf,
+      // NOT A GUARDIAN unless a caller says so (§5A.1 v4.6.4): no guardian_capable, no guardian_endpoint
+      guardianCapable: false, guardianEndpoint: '', timestamp: 1788700000000n,
     };
     const id = advertId(advert);
     const body = joinSignedAdvert(encodeAdvert(advert), schnorr.sign(id, nodeSecret));
