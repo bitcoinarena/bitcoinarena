@@ -18,7 +18,7 @@ withdraws. Steps 2, 3 and 6 below, the residuals, rehearsal items 8-11 and
 the rulings of that date carry it. Nothing about the lock changes.
 
 Amended the same day (the owner: the federation's **life**, spec §23A, v4.6.4):
-at least ten guardians on mainnet (7 of 10), testnet 3 of 4 (the owner 2026-09-26), drawn by
+at least ten guardians on mainnet (7 of 10), testnet 5 of 7 (the owner 2026-09-27), drawn by
 sortition from bonded guardian-capable census nodes, replaced by succession
 two losses before a halt with every player's notes migrating on their own,
 abandonment slashed through the bond, and the player's BIP39 seed. Rehearsal
@@ -240,9 +240,10 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
 15. **the seed alone, another device:** twelve words typed into a fresh
     browser find the federation among three, recover the notes and the
     unredeemed contracts, and show the same display name
-16. **testnet 3 of 4:** one guardian down, everything still completes; a
-    second down halts, back up resumes, nothing lost; one guardian gone
-    starts a succession to four that every wallet follows on its own
+16. **testnet 5 of 7:** two guardians down, everything still completes; a
+    third down halts, back up resumes, nothing lost; one guardian gone
+    starts a succession to seven that every wallet follows on its own; a
+    phone opens every one of the seven `wss://` endpoints
 17. **liquidation on regtest:** a 4-guardian federation (3 of 4) with notes
     in three wallets at 90% of its cap; two guardians abandon, attested and
     slashed into the escrow; the federation halts for `abandon_blocks`; the
@@ -277,8 +278,8 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
   press; until then the stake and the winnings are shown as **pending**
   (§24).
 - **The federation's life** (§23A): the first mainnet federation has at
-  least ten guardians; testnet is 3 of 4, one guardian per node (the owner
-  2026-09-26); the player
+  least ten guardians; testnet is 5 of 7, seven nodes, one guardian per
+  node (the owner 2026-09-27); the player
   gets a BIP39 seed of 12 or 24 words to write down. Founding by sortition,
   the draining bands, several federations picked by load, abandonment and
   the bond, succession with automatic migration, and the channels are
@@ -324,14 +325,27 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
   predecessor's seated guardians until it is CLOSED, so staying is income
   and leaving is a slash, not a slash alone.
 - **Guardians are not parked** (§23.6): §23A is built now - testnet on a
-  federation of four guardians, 3 of 4, one per bonded node; regtest on the
+  federation of seven guardians, 5 of 7, one per node; regtest on the
   4-guardian rehearsal; mainnet by founding once ten guardian-capable
   operators are bonded. `federationIsBonded` stays on.
+
+## Rulings (the owner 2026-09-27 10:04)
+
+- **Testnet is seven nodes and seven guardians, 5 of 7** (stock threshold
+  `n - floor((n - 1) / 3)`), one guardian per node. It replaces the 3-of-4
+  ruling of 2026-09-26 22:54. Mainnet stays 7 of 10.
+- **Every guardian endpoint is a public `wss://` a phone can open.**
+  Testnet's seven: `wss://seat.example.com/guardian-1` to
+  `/guardian-7`, local ports 31221, 31231, 31241, 31251, 31261, 31271,
+  31281 (spec §23A.1).
+- **Zero config**: a node starts its own guardian; the operator sees one
+  thing.
 
 ## Rulings (the owner 2026-09-26 22:54)
 
 - **Testnet federation is 3 of 4**, not the 2-of-2 that ran. Mainnet stays
-  at least ten, 7 of 10. Committee sizes are not this ruling.
+  at least ten, 7 of 10. Committee sizes are not this ruling. *Replaced by
+  5 of 7 on 2026-09-27.*
 - **One node is one guardian**, started by the node itself with zero
   configuration; the operator sees one thing, never a second service
   (spec §23A.2).
