@@ -362,6 +362,10 @@ public class DeliveryGate : MonoBehaviour
     /// the gate used to leave the miner standing on a lid over the hole.
     /// The terrain is the fallback where no core answers - the Editor.
     /// </summary>
+    /// <summary>The miner's mouth, where a run is delivered: `gateX` on the lane's centre line, on the ground. The
+    /// GameObject itself stays at the origin, so its transform is not where the run is going.</summary>
+    public Vector3 Mouth => new Vector3(gateX, GateGround(), 0f);
+
     float GateGround() =>
         Blwp.BlwpCore.HasSurface ? Blwp.BlwpCore.SurfaceAt(gateX, 0f)
                                  : (terrain != null ? terrain.SampleSurface(gateX, 0f) : 0f);

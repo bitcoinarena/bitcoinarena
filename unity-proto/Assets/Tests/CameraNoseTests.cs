@@ -462,9 +462,16 @@ public class CameraNoseTests
         Assert.Less(Mathf.Abs(_chase.OrbitYaw), 0.5f,
             $"the view held {_chase.OrbitYaw:F1} degrees of the look "
             + $"{w.Window:F1} s after the finger came off");
-        Assert.IsFalse(w.NeverSettled,
-            $"the view never came back to the nose - still {OffNose():F1} degrees off "
-            + $"{w.Window:F1} s after the look was released");
+        // IN THE TOP-DOWN THE VIEW COMES BACK TO THE DESTINATION, not to the hull (the owner 2026-09-27 11:31): it faces the
+        // bearing to the miner's mouth, which the truck is driving towards but not exactly along. Behind the truck it
+        // comes back to the nose, as before. Either way the road stays on screen (below).
+        if (_chase.View == ChaseCamera.Mode.Overhead)
+            Assert.IsTrue(_chase.DestinationInFocus,
+                $"the top-down did not hold the destination again {w.Window:F1} s after the look was released");
+        else
+            Assert.IsFalse(w.NeverSettled,
+                $"the view never came back to the nose - still {OffNose():F1} degrees off "
+                + $"{w.Window:F1} s after the look was released");
         Assert.GreaterOrEqual(NoseOnScreen(), Margin, "the road is off the left of the frame");
         Assert.LessOrEqual(NoseOnScreen(), 1f - Margin, "the road is off the right of the frame");
     }

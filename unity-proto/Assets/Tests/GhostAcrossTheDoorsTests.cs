@@ -70,6 +70,10 @@ public class GhostAcrossTheDoorsTests
         // (0.01, -0.88, 0.47) - and an overview frames all 24 doors, which is why the first run of this said 24 of 24
         // and meant nothing. `Toggle` is the same call the camera key makes.
         if (chase.View == ChaseCamera.Mode.God) chase.Toggle();
+        // AND THE DRIVE VIEW IS THE TOP-DOWN ROLL OUT PUTS UP (the owner 2026-09-27 11:31): the same call LoadoutPanel makes
+        var gateForView = Object.FindFirstObjectByType<DeliveryGate>();
+        chase.destination = gateForView != null ? gateForView.Mouth : (Vector3?)null;
+        chase.EndFlyIn();
         for (var settle = 0; settle < 150; settle++) yield return null;
 
         // WHICH CAMERA IS WHICH, PRINTED RATHER THAN ASSUMED. Two runs put the eye 221 and 219 m out with the same
@@ -90,8 +94,12 @@ public class GhostAcrossTheDoorsTests
         var fromTruck = Vector3.Distance(eye.transform.position, driver.transform.position);
         TestContext.WriteLine($"camera {fromTruck:F1} m from the truck, forward {eye.transform.forward}, "
                               + $"fov {eye.fieldOfView:F0}");
-        Assert.Less(fromTruck, 20f,
-            $"the camera is {fromTruck:F0} m from the truck, so this is an overview and not the view a player drives from");
+        // THE VIEW A PLAYER DRIVES IN IS THE TOP-DOWN (the owner 2026-09-27 11:31), not the overview: the drive view's mode,
+        // looking at this truck - not at the middle of the field
+        Assert.AreEqual(ChaseCamera.Mode.Overhead, chase.View, "this is not the view a player drives from");
+        var truckInView = eye.WorldToViewportPoint(driver.transform.position);
+        Assert.IsTrue(truckInView.z > 0f && truckInView.x is > 0f and < 1f && truckInView.y is > 0f and < 1f,
+            $"the drive view does not have the truck in it ({fromTruck:F0} m away, at {truckInView})");
 
         field.Source = () => (GhostPicture?)null;
         var me = driver.transform.position;
