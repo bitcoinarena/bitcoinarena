@@ -12,7 +12,7 @@ const b32 = (n) => new Uint8Array(32).fill(n);
 
 // an advert as the tools build it today (regtest-bond.mjs postBond), and node 1's own guardian endpoint (GET /guardian)
 const advert = () => ({
-  nodePubkey: b32(1), operatorId: '2of2', protocolVersions: [1], roles: ['game', 'verify', 'settlement'],
+  nodePubkey: b32(1), operatorId: '2of2', protocolVersions: [1], roles: ['game', 'settlement', 'verify'],   // the order the encoder writes
   endpoint: 'wss://seat.example.com/guardian-1', region: 'eu-west', capacityClass: 1,
   softwareHash: b32(2), settlementCapabilities: 0, lightningCapabilities: 0,
   bondTxid: b32(0), bondVout: 0, bondScriptTemplateVersion: 1,
@@ -28,7 +28,7 @@ test('an advert carries guardian_capable and guardian_endpoint through encode an
 
 test('guardian_capable and guardian_endpoint are under the advert id, so under the node signature', () => {
   const a = advert();
-  const notCapable = { ...a, guardianCapable: false };
+  const notCapable = { ...a, guardianCapable: false, guardianEndpoint: '' };   // not capable names no endpoint
   const elsewhere = { ...a, guardianEndpoint: 'wss://seat.example.com/guardian-2/guardian' };
   const id = Buffer.from(advertId(a)).toString('hex');
   assert.notEqual(Buffer.from(advertId(notCapable)).toString('hex'), id, 'guardian_capable is not in the id');
