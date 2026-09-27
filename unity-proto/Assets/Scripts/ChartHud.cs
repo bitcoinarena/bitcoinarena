@@ -430,6 +430,7 @@ public class ChartHud : MonoBehaviour
     void OnGUI()
     {
         if (Event.current.type == EventType.Repaint) ChartsPainted = 0;
+        if (CleanHud.On) return;
         if (!Blwp.BlwpCore.Available) return;
         if (_splash == null) _splash = FindFirstObjectByType<SplashScreen>();
         if (_spectator == null) _spectator = FindFirstObjectByType<SpectatorCamera>();

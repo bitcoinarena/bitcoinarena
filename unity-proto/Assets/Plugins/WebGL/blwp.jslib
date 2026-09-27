@@ -1034,6 +1034,12 @@ mergeInto(LibraryManager.library, {
   // AND WHAT THE WAR SAID, for the same reason: the assault banner and the desktop log are the whole of
   // the owner's 16:22/16:26 letter, and "the owner cannot see them" is only answerable by asking the page what it
   // drew. Same shape as BlwpLobbyShown - a picture of what was on screen, never an input to anything.
+  // CLEAN SCREEN (CleanHud.cs, Shift+H): the page's own overlays go with the Unity HUD.
+  BlwpHudClean: function (on) {
+    window.BLWP_HUD_CLEAN = !!on;
+    try { document.body.classList.toggle('blwp-clean', !!on); } catch (e) { /* no body yet */ }
+  },
+
   BlwpAssaultShown: function (jsonPtr) {
     try { window.BLWP_UNITY_ASSAULT = JSON.parse(UTF8ToString(jsonPtr)); } catch (e) { /* not JSON: nothing to keep */ }
   },

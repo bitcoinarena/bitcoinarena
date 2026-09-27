@@ -258,7 +258,7 @@ namespace Blwp
 
         void OnGUI()
         {
-            if (labels.Count == 0) return;
+            if (labels.Count == 0 || CleanHud.On) return;
             if (labelStyle == null)
             {
                 labelStyle = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.LowerCenter, fontStyle = FontStyle.Bold };

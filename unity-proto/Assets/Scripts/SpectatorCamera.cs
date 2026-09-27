@@ -259,7 +259,7 @@ public class SpectatorCamera : MonoBehaviour
     /// </summary>
     void OnGUI()
     {
-        if (!Active) return;
+        if (!Active || CleanHud.On) return;
         if (_flat == null)
         {
             _flat = new Texture2D(1, 1);

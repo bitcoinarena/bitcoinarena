@@ -126,7 +126,7 @@ public class TouchControls : MonoBehaviour
 
     void OnGUI()
     {
-        if (!Visible) return;
+        if (!Visible || CleanHud.On) return;
         int w = Screen.width, h = Screen.height;
 
         foreach (TouchPad.Pad pad in System.Enum.GetValues(typeof(TouchPad.Pad)))
