@@ -163,6 +163,13 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
     const now = BigInt(Math.floor(nowMs));
     if (now >= contract.entryCloseMs) continue;
     const pays = roundPays(contract);
+    // NO 2-OF-2 PAYING FEDERATION IS OFFERED (PRIORITIES item 5; the owner 2026-09-27 10:04). One node is one guardian, so
+    // a paying round's committee is its federation's guardians - seven, 5 of 7 - and two signer nodes cannot be that.
+    // Such a round gets no row, however its nodes list it; it is named with the refusals. The free 2-of-2 stays.
+    if (pays && contract.nodes.length === 2) {
+      refused.push(`${id.slice(0, 16)}: a paying round on a 2-of-2 committee is not offered - a paying round's signer nodes are its federation's guardians, one node one guardian`);
+      continue;
+    }
     const phase = now < contract.committeeTimeMs ? 'pending' : 'open';
     // WHO COUNTS: a signer node of THIS round (its key in the verified contract), its
     // own signature, recent, saying open and assigned. Each key once.
