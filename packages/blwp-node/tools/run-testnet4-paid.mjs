@@ -2,11 +2,11 @@
 /**
  * THE PAYING TESTNET4 ROUND (the owner 2026-09-27 07:51: "A paid testnet4 round must be open and testable"). Seven signer
  * nodes, 5-of-7, on the testnet4 bitcoind - bonds broadcast and six deep in somebody else's blocks, the round published
- * and joined under the first block past its committee_time, nothing mined. The first four are the four testnet nodes
- * that each hold one guardian key of the 3-of-4 federation (tools/testnet4-found.mjs), on their own stores and ports,
- * so each starts its own guardian (node-start.js) and says so on GET /guardian; the other three guard nothing. The stake
- * goes into a lock in that federation, read through the stake-lock port. The Daily is not touched: its own stores,
- * ports, chain and pin are elsewhere.
+ * and joined under the first block past its committee_time, nothing mined. The seven are the seven testnet nodes, each
+ * holding one guardian key of the 5-of-7 federation (tools/testnet4-found.mjs; the owner 2026-09-27 10:04: "7 nodes and 7
+ * guardians, one each"), on their own stores and ports, so each starts its own guardian (node-start.js) and says so on
+ * GET /guardian. The stake goes into a lock in that federation, read through the stake-lock port. The Daily is not
+ * touched: its own stores, ports, chain and pin are elsewhere.
  *
  *   PATH=<patched fedimintd, fedimint-cli>:$PATH HOME=<fedimint bundle home> \
  *   BLWP_BITCOIND_URL=http://127.0.0.1:48332 BLWP_BITCOIND_COOKIE=/mnt/bitcoin/tn4/testnet4/.cookie \
@@ -25,8 +25,9 @@ import { toHex } from '../../protocol/src/hash.js';
 const env = process.env;
 const say = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o }));
 const home = env.BLWP_TESTNET4_DIR || `${env.HOME}/blwp-testnet4`;
-const guardianPorts = [31221, 31231, 31241, 31251];
-const plainPorts = (env.BLWP_PLAIN_PORTS || '31261,31291,31301').split(',').map(Number);
+// SEVEN NODES, SEVEN GUARDIANS, ONE EACH (the owner 2026-09-27 10:04): /guardian-1..7 on the Funnel, 127.0.0.1:31221..31281
+const guardianPorts = [31221, 31231, 31241, 31251, 31261, 31271, 31281];
+const plainPorts = [];
 const ports = [...guardianPorts, ...plainPorts];
 if (ports.length !== 7 || ports.includes(8080)) throw new Error('seven signer nodes, never 8080');
 const missing = ['BLWP_STAKE_LOCK_BIN', 'BLWP_FEDERATION_CLIENT_DIR', 'BLWP_FEDERATION_INVITE_FILE', 'BLWP_BITCOIND_URL',
@@ -47,7 +48,7 @@ const chainCall = bitcoindRpc({ url: env.BLWP_BITCOIND_URL, cookiePath: env.BLWP
 // the lock port, and which one is this node's is its guardian's own peer id (<store>.guardian/local.json), not the
 // order the ports are written in - and it must be one the federation's own config names.
 const fed = await lock.guardians();
-if (fed.keys.length !== 4 || fed.threshold !== 3) throw new Error(`the federation is ${fed.threshold} of ${fed.keys.length}, not 3 of 4`);
+if (fed.keys.length !== 7 || fed.threshold !== 5) throw new Error(`the federation is ${fed.threshold} of ${fed.keys.length}, not 5 of 7`);
 const storePaths = [...guardianPorts.map((_, i) => `${home}/node-${i + 1}.db`), ...plainPorts.map((p) => `${home}/paid/${p}.db`)];
 mkdirSync(join(home, 'paid'), { recursive: true, mode: 0o700 });
 const guardianOf = ports.map((_, i) => {

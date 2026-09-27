@@ -1,5 +1,6 @@
-// THE TESTNET FEDERATION FOUNDED, 3 OF 4, ON FOUR NODES THAT ARE EACH ONE GUARDIAN (spec §23A.2; the owner 2026-09-26
-// 22:54 and 2026-09-27 07:35/07:51: re-found on the same four nodes and Funnel paths, labelled testnet4).
+// THE TESTNET FEDERATION FOUNDED, 5 OF 7, ON SEVEN NODES THAT ARE EACH ONE GUARDIAN (spec §23A.2; the owner 2026-09-27
+// 10:04: "Testnet is 7 nodes and 7 guardians, one each ... Stock threshold is 5 of 7" - the seven Funnel paths
+// /guardian-1..7 on 127.0.0.1:31221..31281; labelled testnet4).
 //
 // A node starts its guardian only once it holds a guardian key (node-start.js), and the key is what this ceremony
 // writes. So the nodes are stopped, each node's guardian is started here in setup through the node's own startGuardian
@@ -22,9 +23,9 @@ import { bitcoindRpc } from '../src/chain-rpc.js';
 const env = process.env;
 const say = (s) => console.log(`[found] ${s}`);
 const nodes = (process.argv.slice(2).length ? process.argv.slice(2)
-  : [1, 2, 3, 4].map((n) => `${31211 + n * 10}:${env.HOME}/blwp-testnet4/node-${n}.db`))
+  : [1, 2, 3, 4, 5, 6, 7].map((n) => `${31211 + n * 10}:${env.BLWP_TESTNET4_DIR || `${env.HOME}/blwp-testnet4`}/node-${n}.db`))
   .map((s) => ({ port: Number(s.split(':')[0]), store: s.slice(s.indexOf(':') + 1) }));
-if (nodes.length !== 4) throw new Error(`a testnet federation is four guardians (3 of 4); got ${nodes.length}`);
+if (nodes.length !== 7) throw new Error(`the testnet federation is seven guardians (5 of 7); got ${nodes.length}`);
 const url = env.BLWP_BITCOIND_URL, cookiePath = env.BLWP_BITCOIND_COOKIE;
 if (!url || !cookiePath) throw new Error('BLWP_BITCOIND_URL and BLWP_BITCOIND_COOKIE: the chain the guardians run on');
 const call = bitcoindRpc({ url, cookiePath });
@@ -66,11 +67,11 @@ try {
   const codes = [];
   for (const [i, x] of guardians.entries())
     codes.push((await cli(['admin', 'setup', x.api, 'set-local-params', `node-${i + 1}`,
-      ...(i === 0 ? ['--federation-name', 'blwp-testnet4', '--federation-size', '4'] : [])], x.password)).replace(/["\s]/g, ''));
+      ...(i === 0 ? ['--federation-name', 'blwp-testnet4', '--federation-size', '7'] : [])], x.password)).replace(/["\s]/g, ''));
   say('every guardian set its local params');
   for (const [i, x] of guardians.entries())
     for (const [j, code] of codes.entries()) if (i !== j) await cli(['admin', 'setup', x.api, 'add-peer', code], x.password);
-  say('every guardian holds the other three; the ceremony starts');
+  say('every guardian holds the other six; the ceremony starts');
   await Promise.all(guardians.map((x) => cli(['admin', 'setup', x.api, 'start-dkg'], x.password).catch(() => '')));
   for (let i = 0; !guardians.every((x) => holdsGuardianKey(x.store)); i++) {
     if (i > 300) throw new Error('the ceremony wrote no keys in 300 s');
