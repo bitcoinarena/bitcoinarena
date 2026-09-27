@@ -79,6 +79,7 @@ public class WastedSequence : MonoBehaviour
         if (health == null) return;
         health.Wrecked += Begin;
         health.Respawned += End;
+        health.Revived += End;
         _bound = true;
     }
 
@@ -88,6 +89,7 @@ public class WastedSequence : MonoBehaviour
         {
             health.Wrecked -= Begin;
             health.Respawned -= End;
+            health.Revived -= End;
             _bound = false;
         }
         Restore();
@@ -119,7 +121,10 @@ public class WastedSequence : MonoBehaviour
 
         // in over the first moment, back out just before he is up again
         float rise = Mathf.Clamp01(dead / Mathf.Max(0.01f, fadeIn));
-        float fall = Mathf.Clamp01(health.RespawnIn / Mathf.Max(0.01f, recover));
+        // IN A LIVE ROUND NOTHING COMES BACK, so nothing fades back out: WASTED holds until the lobby, and PLAY ends it
+        // (the owner 2026-09-27 13:25: "He must not see the truck without WASTED")
+        float fall = DeliveryGate.BackToTheBay(Blwp.BlwpNet.RoundSeed)
+            ? Mathf.Clamp01(health.RespawnIn / Mathf.Max(0.01f, recover)) : 1f;
         Intensity = Mathf.Min(rise, fall);
 
         float k = Intensity;

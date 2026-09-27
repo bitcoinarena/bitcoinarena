@@ -35,6 +35,7 @@ public class GameAudio : MonoBehaviour
     public AudioClip StrikeClip => _detonation;
 
     AudioSource _engine, _tyres, _shots, _war, _rotor, _blast;
+    float _overSince = -1f, _overLogAt, _engineGain = 1f;
     AudioClip _impact, _explosion, _chime, _blip, _thud;
     AudioClip _cannon, _rifle, _ricochet, _boom, _detonation, _whistle;
     AudioSource _drone;
@@ -135,7 +136,26 @@ public class GameAudio : MonoBehaviour
         _rpm = Mathf.Lerp(_rpm, Mathf.Clamp01(wanted), 1f - Mathf.Exp(-3.5f * Time.deltaTime));
 
         _engine.pitch = Mathf.Lerp(0.55f, 2.15f, _rpm);
-        _engine.volume = engineVolume * Mathf.Lerp(0.45f, 1f, _rpm);
+        // NO DRIVE SOUND ONCE THE RUN IS OVER (the owner 2026-09-27 13:25): the idle floor was still a running engine -
+        // measured after a MISSED run's end, rpm 0.00 and volume 0.135 - so the note fades out with the run, in about
+        // half a second, and comes back with the next one
+        _engineGain = Mathf.MoveTowards(_engineGain, DriveInput.RunOver ? 0f : 1f, Time.unscaledDeltaTime * 2f);
+        _engine.volume = engineVolume * Mathf.Lerp(0.45f, 1f, _rpm) * _engineGain;
+
+        // AFTER THE RUN, SAID (the owner 2026-09-27 13:25: the drive sound played after WASTED and after a delivery): for
+        // twelve seconds after the end, every two, what the keys hold against what the truck is given and the engine
+        if (DriveInput.RunOver)
+        {
+            if (_overSince < 0f) _overSince = Time.unscaledTime;
+            if (Time.unscaledTime - _overSince < 12f && Time.unscaledTime >= _overLogAt)
+            {
+                _overLogAt = Time.unscaledTime + 2f;
+                Debug.Log($"[drive] after the end: held throttle {DriveInput.HeldThrottle:F0} steer {DriveInput.HeldSteer:F0}, "
+                          + $"given throttle {DriveInput.Throttle:F0} steer {DriveInput.Steer:F0}, "
+                          + $"speed {speed:F1}, engine rpm {_rpm:F2} volume {_engine.volume:F3}");
+            }
+        }
+        else _overSince = -1f;
 
         // Tyre noise is the sideways slip, so it comes up in a corner and on
         // the handbrake rather than simply with speed.
@@ -149,7 +169,7 @@ public class GameAudio : MonoBehaviour
         float across = Blwp.BlwpCore.Available ? Blwp.BlwpCore.TruckSlip : truck.Slip;
         float slip = Mathf.Clamp01(across / 6f) * Mathf.Clamp01(speed / 6f);
         _tyres.pitch = Mathf.Lerp(0.8f, 1.5f, slip);
-        _tyres.volume = Mathf.Lerp(_tyres.volume, effectVolume * 0.5f * slip,
+        _tyres.volume = Mathf.Lerp(_tyres.volume, effectVolume * 0.5f * slip * _engineGain,
                                    1f - Mathf.Exp(-8f * Time.deltaTime));
     }
 
