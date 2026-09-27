@@ -125,7 +125,7 @@ test('nothing that ships deals the pool key, and no launch path holds a share', 
     .filter((f) => f.endsWith('.mjs'))
     .filter((f) => /trustedDealerSplit\s*\(/.test(readFileSync(new URL(`../tools/${f}`, import.meta.url), 'utf8')));
   // (payout-regtest.mjs was deleted with the on-chain pool payout, RULED 2026-09-25.)
-  assert.deepEqual(tools.sort(), ['pool-regtest.mjs', 'swap-into-pool.mjs'],
+  assert.deepEqual(tools.sort(), ['pool-regtest.mjs'],
     'a launch path deals the pool key again, or one that measures a transaction stopped');
   // (The two launch paths that stood a committee up with the daemon's own DKG, payout-committee-regtest.mjs and
   // settle-regtest.mjs, were deleted with the on-chain pool payout they drove - RULED 2026-09-25.)

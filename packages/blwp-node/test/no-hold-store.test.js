@@ -22,7 +22,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { openStore } from '../src/store.js';
 
 const HERE = new URL('../', import.meta.url).pathname;
-const HOLD_INVOICE_TOOLS = ['tools/round-rehearsal-lnd.mjs', 'tools/remote-signer-probe.sh', 'tools/swap-into-pool-probe.sh'];
+const HOLD_INVOICE_TOOLS = ['tools/round-rehearsal-lnd.mjs', 'tools/remote-signer-probe.sh', 'tools/swap-into-pool-probe.sh',
+  'tools/swap-into-pool.mjs'];
 
 test('round.js has no hold store: no putHold, hold, holdsOf or holdsInState', () => {
   const round = readFileSync(HERE + 'src/round.js', 'utf8');
@@ -41,6 +42,7 @@ test('no tool classed hold-invoice still calls addholdinvoice, settleinvoice or 
     && /\b(addholdinvoice|settleinvoice|cancelinvoice)\b/.test(readFileSync(HERE + t, 'utf8')));
   const dead = HOLD_INVOICE_TOOLS.filter((t) => existsSync(HERE + t) && /\b(poolWatch|\.payouts\.|\.signing\.)/.test(readFileSync(HERE + t, 'utf8')));
   assert.deepEqual({ calling, dead }, { calling: [], dead: [] });
+  assert.deepEqual(HOLD_INVOICE_TOOLS.filter((t) => existsSync(HERE + t)), []);
 });
 
 test('a new store has no holds table; a store from before keeps its own, rows and all', () => {
