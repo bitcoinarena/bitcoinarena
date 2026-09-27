@@ -30,7 +30,7 @@
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { CORE_HASH } from './core-hash.mjs';
-import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
+import { TEST_DONATION_SET_REGTEST, TEST_DONATION_SET_TESTNET4 } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
 import { execFileSync } from 'node:child_process';
 import { schnorr } from '@noble/curves/secp256k1.js';
@@ -63,7 +63,7 @@ import { bondOutputKey, bondInternalKey } from '../../protocol/src/bond-script.j
 import { genesisFor } from '../../protocol/src/genesis.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { receiptsNeeded } from '../../protocol/src/threshold.js';
-import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
+import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../protocol/src/genesis-ids.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 /**
@@ -155,6 +155,12 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
                                      // (node-start.js): { bitcoindUrl, cookiePath, call }. A node without a key starts
                                      // no guardian whatever this says; the Daily's nodes hold none.
                                      guardianChain = {},
+                                     // THE CHAIN THE BONDS AND THE ROUND ARE ON. Regtest, which the opener mines, unless
+                                     // the caller names testnet4 (the owner 2026-09-27 07:51: the paying round on testnet4):
+                                     // then `cli` is that bitcoind's, `wallet` the one that pays the bonds, and every
+                                     // block is somebody else's - waited for, never mined. A member's store may be named
+                                     // outright (`storePaths`, in member order), for nodes that already hold their key.
+                                     network = 'regtest', wallet = undefined, storePaths = [],
                                      donationRecipients = stakeMsat > 0n || (paid && BigInt(paid.stakeMsat) > 0n)
                                        ? { port: TEST_RECIPIENT_PORT } : null } = {}) {
   // WHAT THESE DAEMONS FUND (M3.3-31): a PAYING round goes through the
@@ -190,13 +196,16 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // the bond commits to the advertisement, and the daemon serves the chain
   // that bond is mined into - so the identity has to be in hand before any of
   // it is built. It comes out of the store, which is where it lives.
-  const pathOf = (name) => (store === ':memory:' ? ':memory:' : `${store}/${name}.db`);
-  const pathA = pathOf('a'), pathB = pathOf('b');
+  if (network !== 'regtest' && network !== 'testnet4') throw new Error(`no round is stood on ${network}`);
+  const NETWORK_ID = network === 'regtest' ? NETWORK_ID_REGTEST : NETWORK_ID_TESTNET4;
+  const DONATION_SET = network === 'regtest' ? TEST_DONATION_SET_REGTEST : TEST_DONATION_SET_TESTNET4;
+  const pathOf = (name, i) => storePaths[i] || (store === ':memory:' ? ':memory:' : `${store}/${name}.db`);
+  const pathA = pathOf('a', 0), pathB = pathOf('b', 1);
   const dbA = openStore(pathA);
   const dbB = openStore(pathB);
   // EVERY SIGNER NODE BEYOND THE FIRST TWO, in the order their bonds are mined.
   const beyond = [...(portC ? [portC] : []), ...extraPorts];
-  const pathsBeyond = beyond.map((_, i) => pathOf(String.fromCharCode(99 + i)));
+  const pathsBeyond = beyond.map((_, i) => pathOf(String.fromCharCode(99 + i), 2 + i));
   const dbsBeyond = pathsBeyond.map((p) => openStore(p));
   const idA = nodeIdentity(dbA);
 
@@ -272,7 +281,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // so a bond paying 0x77 repeated is a bond the census counts as nothing.
     // Measured: with the filler the census carried 0 game nodes where regtest
     // was born needing 2.
-    const g = genesisFor('regtest');
+    const g = genesisFor(network);
     const built = bondOutputKey({
       nodeKey: id.pubkey,
       arbitrationKeys: g.arbitrationKeys,
@@ -322,7 +331,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   let localChain = null;
   let localBlocks = null;
   if (cli) {
-    const rt = regtest(cli);
+    const rt = regtest(cli, { network, ...(wallet ? { wallet } : {}) });
     onChain = rt;
     const posted = members.map((m, i) =>
       rt.postBond(m.id.secret, {
@@ -338,6 +347,9 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
         ...(guardianOfFor(i).length ? { guardianOf: guardianOfFor(i) } : {}),
         // AND WHETHER IT IS A GUARDIAN, as the node itself answered (above)
         ...m.guardian,
+        // ON TESTNET4 THE BOND IS THE ROUND'S MINIMUM, not regtest's half a coin: 50 000 sats, the contract's
+        // bond_min_sats, out of a 55 000-sat funding output (the rest is the marker, the fee and the change).
+        ...(rt.minable ? {} : { bondSats: 50000n, fundBtc: '0.00055' }),
       }));
     rt.include(posted.map((p) => p.hex));
     // THE CENSUS HEIGHT IS ABOVE THE BONDS, NOT AT THEM. Depth is measured at
@@ -476,11 +488,11 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       },
     },
   } : {};
-  const optsA = { port: portA, host, funded, donationSets: [TEST_DONATION_SET_REGTEST], headerBytes, bondProof, chainFor,
+  const optsA = { port: portA, host, funded, donationSets: [DONATION_SET], headerBytes, bondProof, chainFor,
     ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn,
     ...(federation ? { federation } : {}), ...signerNode };
   let a = await startNode({ db: dbA, path: pathA }, optsA, guardianChain);
-  const optsB = { port: portB, host, funded, donationSets: [TEST_DONATION_SET_REGTEST], headerBytes, bondProof, chainFor,
+  const optsB = { port: portB, host, funded, donationSets: [DONATION_SET], headerBytes, bondProof, chainFor,
     ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn,
     ...(federation ? { federation } : {}), ...signerNode };
   // B DOWN AT START (`bDownAtStart`, an operator's look at signer node A restarted
@@ -492,7 +504,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // bonded census node that is not also a running daemon would be a bond
   // vouching for a guardian nobody can reach.
   const optsBeyond = members.slice(2).map((m) => ({ port: m.port, host, funded,
-    donationSets: [TEST_DONATION_SET_REGTEST], headerBytes, bondProof, chainFor,
+    donationSets: [DONATION_SET], headerBytes, bondProof, chainFor,
     ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn,
     ...(federation ? { federation } : {}), ...signerNode }));
   const rest = [];
@@ -553,7 +565,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     censusView = onChain.blocksFrom(Math.max(0, bondHeight - 20), onChain.height());
   }
   const contract = {
-    networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations,
+    networkId: NETWORK_ID, configHash: TRUCK_CONFIG_HASH, censusConfirmations,
     // ONE SLOT PER SIGNER NODE THERE IS. `assignSignerNodes` checks the census's
     // assigned set against `nodes` EXACTLY, both ways, so with three bonded
     // nodes and two slots the sortition would seat two of the three and the
@@ -568,7 +580,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // daemons' own relay doors. A result is final only once both have posted
     // it, and a round naming no relay could never settle a stake.
     publicationRelays: members.map((m) => `http://${host}:${m.port}`),
-    donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight,
+    donationSetId: idOfDonationSet(DONATION_SET.recipients), censusHeight,
     censusRoot: new Uint8Array(32), stakeMsat, bondMinSats: 50000n, blockTicks: BLOCK_TICKS,
     exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
     timeFloor: 30, timeCeil: 150, minScore: 100000, rankNumerator: 3, rankDenominator: 4,   // min_score 1 point, in the score's 1e-5 points
@@ -614,7 +626,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   const asSeen = decodeRoundContract(encodeRoundContract(c));
   const census = deriveCensus(censusView, {
     contract: asSeen,
-    bond: bondSetFor('regtest'),
+    bond: bondSetFor(network),
     // RESOLVED FROM THE VIEW ITSELF, the way `roster.censusFor` does it: 5A.2
     // puts the advertisement body in the witness of the funding transaction,
     // so a holder of the blocks needs nobody to serve it one. Doing it the same
@@ -688,8 +700,23 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
 
   async function publishOnChain(c) {
     const raw = await chainRpc('createrawtransaction', [[], [{ data: toHex(publicationPayload(roundId(c))) }]]);
-    const paid = (await chainRpc('fundrawtransaction', [raw])).hex;
+    const paid = (await chainRpc('fundrawtransaction', onChain.minable ? [raw] : [raw, { fee_rate: 2 }])).hex;
     const signed = (await chainRpc('signrawtransactionwithwallet', [paid])).hex;
+    // ON TESTNET4 IT IS BROADCAST, and the chain's own blocks carry it and then pass committee_time: nothing is
+    // mined, so nothing here can choose the beacon. Waited for, a minute between looks, for up to four hours.
+    if (!onChain.minable) {
+      const txid = await chainRpc('sendrawtransaction', [signed]);
+      console.log(`[publish] round ${toHex(roundId(c)).slice(0, 16)} published in ${txid}; waiting for its beacon on ${network}`);
+      for (let tries = 0; ; tries++) {
+        censusView = await viewToTip();
+        const named = beaconFromChain(c,
+          { headers: censusView.blocks.map((b) => b.header), firstHeight: censusView.firstHeight });
+        if (named.ok) return named;
+        if (tries > 240) throw new Error(`${network} named no beacon in four hours: ${named.why}`);
+        if (tries % 10 === 0) console.log(`[publish] no beacon yet at ${censusView.firstHeight + censusView.blocks.length - 1}: ${named.why}`);
+        await new Promise((r) => setTimeout(r, 60000));
+      }
+    }
     await chainRpc('generateblock', [await chainRpc('getnewaddress', []), [signed]]);
     let tries = 0;
     for (;;) {

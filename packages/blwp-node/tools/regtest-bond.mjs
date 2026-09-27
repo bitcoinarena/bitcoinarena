@@ -70,14 +70,21 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
     if (minable) { mine(n); return height(); }
     return waitForHeight(height() + n);
   };
-  if (height() < 101) mine(101 - height());
+  if (minable && height() < 101) mine(101 - height());
 
   // A BLOCK WITH THESE TRANSACTIONS IN IT. The funding spend carries the
   // advertisement body as a witness item, which consensus allows and mempool
   // policy does not ("bad-witness-nonstandard"). 5A.2 requires the body to
   // travel in the witness, so `generateblock` is what measures consensus
   // without asking the mempool.
-  const include = (hexes) => cli('generateblock', cli('getnewaddress'), JSON.stringify(hexes));
+  // ON A CHAIN THAT IS NOT OURS TO MINE (testnet4): the chunked witness is standard, so the transactions are broadcast
+  // and this waits until each is in a block - somebody else's.
+  const include = (hexes) => {
+    if (minable) return cli('generateblock', cli('getnewaddress'), JSON.stringify(hexes));
+    const ids = hexes.map((h) => cli('sendrawtransaction', h));
+    for (const id of ids) waitConfirmed(id);
+    return ids;
+  };
 
   // THE BODY TRAVELS IN SEVERAL ITEMS, ONE `OP_DROP` EACH (RULED, the owner 2026-09-21).
   //
@@ -105,13 +112,15 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
       control: Uint8Array.from([TAPLEAF_VERSION | parity, ...key]) };
   }
 
-  function fund(spk, btc = '1.0') {
+  function fund(spk, btc = minable ? '1.0' : '0.001') {
     const address = JSON.parse(cli('decodescript', toHex(spk))).address;
-    const txid = cli('sendtoaddress', address, btc);
-    // The funding output needs one confirmation before it is spent. Ours to mine on regtest; on a real
-    // chain it is somebody else's block and this waits for it rather than pretending.
+    // ON TESTNET4 AT A NAMED FEE: its bitcoind often has no estimate ("Fee estimation failed"), and 2 sat/vB is
+    // what that chain's blocks take.
+    const txid = minable ? cli('sendtoaddress', address, btc) : cli('-named', 'sendtoaddress', `address=${address}`, `amount=${btc}`, 'fee_rate=2');
+    // Ours to mine on regtest, so it is mined. On a real chain the bond spends it from the mempool: seven funding
+    // confirmations waited one after another were seven blocks (~70 min on testnet4) before the six the bonds need,
+    // and the bond's own confirmation (`include`) and its depth (`bury`) are what the census reads.
     if (minable) mine(1);
-    else waitConfirmed(txid);
     const decoded = JSON.parse(cli('gettransaction', txid, 'true', 'true')).decoded;
     const vout = decoded.vout.find((o) => o.scriptPubKey.hex === toHex(spk)).n;
     return { txid, vout, value: BigInt(Math.round(Number(btc) * 1e8)) };
@@ -135,7 +144,7 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
    * name them, which is the only thing a local federation round was missing.
    */
   function postBond(nodeSecret, { endpoint, roles = ['game', 'verify', 'settlement'],
-    bondSats = 50000000n, guardianOf = [], guardianCapable = false, guardianEndpoint = '' } = {}) {
+    bondSats = 50000000n, guardianOf = [], guardianCapable = false, guardianEndpoint = '', fundBtc } = {}) {
     const nodeKey = schnorr.getPublicKey(nodeSecret);
     const built = bondOutputKey({
       nodeKey, arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK,
@@ -160,7 +169,7 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
     const carrierSecret = schnorr.utils.randomSecretKey();
     const pieces = chunksOf(body);
     const carrier = carrierFor(carrierSecret, pieces.length);
-    const utxo = fund(carrier.spk);
+    const utxo = fundBtc ? fund(carrier.spk, fundBtc) : fund(carrier.spk);
     const outputs = [
       { value: bondSats, script: fromHex('5120' + toHex(built.outputKey)) },
       { value: 330n, script: fromHex('5120' + toHex(bondMarker(network))) },

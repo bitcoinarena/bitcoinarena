@@ -27,15 +27,15 @@ const TS = {
 
 test('the guardian is derived from the node: ports, network, and the testnet4 wallet module', () => {
   assert.deepEqual(guardianPorts(31221), { api: 32221, p2p: 33221, ui: 34221, metrics: 35221 });
-  assert.equal(fedimintNetwork('testnet4'), 'regtest', "Fedimint 0.12's own label for a chain it does not know");
+  assert.equal(fedimintNetwork('testnet4'), 'testnet4', 'the patched fedimintd names testnet4 by its block-1 hash');
   assert.equal(fedimintNetwork('regtest'), 'regtest');
   assert.equal(fedimintNetwork('main'), 'bitcoin');
   assert.throws(() => fedimintNetwork('nonsense'), /does not run on/);
-  const t4 = guardianEnv({ nodePort: 31221, dataDir: '/d', network: 'regtest', chain: 'testnet4', bitcoindUrl: 'http://127.0.0.1:48332',
+  const t4 = guardianEnv({ nodePort: 31221, dataDir: '/d', network: 'testnet4', chain: 'testnet4', bitcoindUrl: 'http://127.0.0.1:48332',
     cookieSecret: 's', password: 'p', endpoint: 'wss://x/guardian-1/guardian' });
   assert.equal(t4.FM_API_URL, 'wss://x/guardian-1/guardian');
   assert.equal(t4.FM_BIND_API, '127.0.0.1:32221', 'the guardian binds locally; the public side is the node');
-  assert.equal(t4.FM_BITCOIN_NETWORK, 'regtest', 'the label Fedimint itself gives testnet4');
+  assert.equal(t4.FM_BITCOIN_NETWORK, 'testnet4');
   assert.equal(t4.FM_ENABLE_MODULE_WALLETV2, 'false', 'walletv2 panics on testnet4 (RULED 2026-09-26)');
   assert.equal(t4.FM_ENABLE_MODULE_WALLET, 'true', "Fedimint's stock wallet module on testnet4");
   assert.equal(t4.FM_DISABLE_BASE_FEES, '1');
@@ -109,7 +109,7 @@ test('starting the node starts its guardian with nothing configured for it, and 
     for (let i = 0; i < 50 && !existsSync(seen); i++) await new Promise((r) => setTimeout(r, 100));
     const env = Object.fromEntries(readFileSync(seen, 'utf8').trim().split('\n').map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]));
     assert.equal(env.FM_API_URL, 'wss://seat.example.com/guardian-1/guardian');
-    assert.equal(env.FM_BITCOIN_NETWORK, 'regtest', "testnet4, read off the node's own bitcoind, under Fedimint's own label");
+    assert.equal(env.FM_BITCOIN_NETWORK, 'testnet4', "read off the node's own bitcoind");
     assert.equal(env.FM_ENABLE_MODULE_WALLET, 'true', "the stock wallet module on the testnet4 chain");
     assert.equal(env.FM_BITCOIND_PASSWORD, 'sekrit', "the node's own cookie");
     assert.equal(env.FM_DATA_DIR, join(dir, 'a.db.guardian'), "beside the node's store");
