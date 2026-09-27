@@ -177,6 +177,9 @@
     #blwp-money { position: fixed; top: 6px; left: 8px; right: 8px; z-index: 30; display: flex; gap: 8px;
       align-items: flex-start; justify-content: flex-end; pointer-events: none; }
     #blwp-money > * { pointer-events: auto; }
+    /* CleanHud.cs (Shift+H): a clean screen for the trailer - the page's overlays go with the Unity HUD. */
+    body.blwp-clean #blwp-money, body.blwp-clean #blwp-players, body.blwp-clean #blwp-wallet,
+    body.blwp-clean #blwp-deposit, body.blwp-clean #blwp-refund { display: none !important; }
     #blwp-backup-warn { display:flex; align-items:center; gap:10px; flex: 1 1 auto; max-width: 560px; padding:6px 10px;
       background:rgba(58,32,0,0.94); border:2px solid #ff9d2e; border-radius:6px; color:#ffcf8a;
       font-size:13px; font-weight:600; line-height:1.25; }

@@ -270,6 +270,7 @@ public class LoadoutPanel : MonoBehaviour
     {
         if (!IsOpen || bay == null) return;
         if (splash != null && splash.Showing) return;
+        if (CleanHud.On) return;
         Styles();
 
         // In front of everything the game HUD draws. IMGUI depth is inverted:

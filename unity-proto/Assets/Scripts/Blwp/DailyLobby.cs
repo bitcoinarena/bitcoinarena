@@ -94,6 +94,7 @@ namespace Blwp
         [DllImport("__Internal")] static extern void BlwpLobbyKeyBackup();
         [DllImport("__Internal")] static extern void BlwpLobbyShown(string json);
         [DllImport("__Internal")] static extern void BlwpAssaultShown(string json);
+        [DllImport("__Internal")] static extern void BlwpHudClean(int on);
         [DllImport("__Internal")] static extern int BlwpQueryParam(IntPtr name, IntPtr outp, int cap);
         [DllImport("__Internal")] static extern float BlwpUiScale();
         public const bool Compiled = true;
@@ -105,6 +106,7 @@ namespace Blwp
         static void BlwpLobbyKeyBackup() { }
         static void BlwpLobbyShown(string json) { }
         static void BlwpAssaultShown(string json) { }
+        static void BlwpHudClean(int on) { }
         static int BlwpQueryParam(IntPtr name, IntPtr outp, int cap) => 0;
         public const bool Compiled = false;
 #endif
@@ -271,6 +273,9 @@ namespace Blwp
 
         /// <summary>The same for the assault banner and the desktop log, so a browser run can be asked what the war said.</summary>
         public static void AssaultShown(string json) { if (Compiled) BlwpAssaultShown(json); }
+
+        /// <summary>CleanHud's half in the page: hides the HTML overlays that sit over the canvas.</summary>
+        public static void HudClean(bool on) { if (Compiled) BlwpHudClean(on ? 1 : 0); }
 
         /// <summary>
         /// The screen's pixels per CSS pixel, 1 outside a page. The title screen

@@ -3055,6 +3055,7 @@ public class DriveHud : MonoBehaviour
     {
         var kb = UnityEngine.InputSystem.Keyboard.current;
         if (kb != null && kb.f1Key.wasPressedThisFrame) showDiagnostics = !showDiagnostics;
+        CleanHud.Poll();
 
         // THE SOUND THE ASSAULT ASKED FOR. The watch counts the calls it wants; this plays one per call and
         // never more, so a frame that sees two declarations is two horns and a frame that sees none is silent.
@@ -3068,6 +3069,7 @@ public class DriveHud : MonoBehaviour
 
     void OnGUI()
     {
+        if (CleanHud.On) return;
         Styles();
         int w = Screen.width, h = Screen.height;
 
