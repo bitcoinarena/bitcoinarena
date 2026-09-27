@@ -116,7 +116,12 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
     const address = JSON.parse(cli('decodescript', toHex(spk))).address;
     // ON TESTNET4 AT A NAMED FEE: its bitcoind often has no estimate ("Fee estimation failed"), and 2 sat/vB is
     // what that chain's blocks take.
-    const txid = minable ? cli('sendtoaddress', address, btc) : cli('-named', 'sendtoaddress', `address=${address}`, `amount=${btc}`, 'fee_rate=2');
+    // AND FROM COINS STILL IN THE MEMPOOL (the owner 2026-09-27 17:24, the 23:00 gate): bitcoind's `send` with
+    // include_unsafe spends a deposit an outside sender made that has not confirmed yet, so the deposit, the funding
+    // and the bond can be mined in one block instead of each waiting on the one before.
+    const txid = minable ? cli('sendtoaddress', address, btc)
+      : JSON.parse(cli('-named', 'send', `outputs=${JSON.stringify({ [address]: Number(btc) })}`, 'fee_rate=2',
+        `options=${JSON.stringify({ include_unsafe: true })}`)).txid;
     // Ours to mine on regtest, so it is mined. On a real chain the bond spends it from the mempool: seven funding
     // confirmations waited one after another were seven blocks (~70 min on testnet4) before the six the bonds need,
     // and the bond's own confirmation (`include`) and its depth (`bury`) are what the census reads.
