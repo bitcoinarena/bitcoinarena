@@ -368,8 +368,20 @@ mergeInto(LibraryManager.library, {
     if (!Module.blwpTickClock && BLWPCLIENT.tickClock) {
       try { Module.blwpTickClock = BLWPCLIENT.tickClock({ Channel: typeof BroadcastChannel !== 'undefined' ? BroadcastChannel : null }); } catch (e) { Module.blwpTickClock = null; }
     }
+    // THE RUN THAT ENDED, kept when it is this run's session that ended it (see BlwpRunStarts)
+    var keepEndedRun = function (n) {
+      var run = n && n.winningsRun ? n.winningsRun() : null;
+      var mine = n === Module.blwpRunNet
+        || (!Module.blwpRunNet && n === Module.blwpNet && n.openedAt >= (Module.blwpRolledOutAt || 0));
+      if (run && mine) {
+        Module.blwpEndedRun = run;
+        if (typeof window !== 'undefined') window.BLWP_ENDED_RUN = { roundHex: run.roundHex, entryHex: run.entryHex, at: Date.now() };
+      }
+      return run;
+    };
     var net = Module.blwpNet = {
       pageEntry: (typeof window !== 'undefined' && window.BLWP_ENTRY) || null,
+      openedAt: Date.now(),
       // `state` here is ONLY the word before a client exists - opening, or
       // error if the session never got off the ground. Once there is a client
       // the session's word is `client.state`, in a file `node --test` can
@@ -567,7 +579,8 @@ mergeInto(LibraryManager.library, {
       // client's: this prints them and picks neither.
       net.client.onEnd = function (word, why) {
         console.log('[blwp] run ended ' + word + ': ' + why);
-        if (typeof window !== 'undefined' && window.BLWP_RUN_OVER) window.BLWP_RUN_OVER(word, net.winningsRun ? net.winningsRun() : null);
+        var ended = keepEndedRun(net);
+        if (typeof window !== 'undefined' && window.BLWP_RUN_OVER) window.BLWP_RUN_OVER(word, ended);
       };
       net.client.onDrop = function () {
         net.client.reconnect(net.where).then(function (r) {
@@ -694,7 +707,8 @@ mergeInto(LibraryManager.library, {
       if (done) {
         net.finishing = done;
         // AND THE PAGE LETS GO OF THE ROUND (hole 2): the address is the lobby's again.
-        if (typeof window !== 'undefined' && window.BLWP_RUN_OVER) window.BLWP_RUN_OVER(net.client.endingLine(), net.winningsRun ? net.winningsRun() : null);
+        var endedRun = keepEndedRun(net);
+        if (typeof window !== 'undefined' && window.BLWP_RUN_OVER) window.BLWP_RUN_OVER(net.client.endingLine(), endedRun);
         return;
       }
       if (net.client.state !== 'ready') return;
@@ -792,22 +806,26 @@ mergeInto(LibraryManager.library, {
 
   // WHETHER THE SESSION ON HAND IS THE CURRENT JOIN'S (the owner 2026-09-26 14:08): 1 or 0. A session opened for an earlier
   // page join names the run before - its link is not this card's. (The page's join is the run: one BLWP_ENTRY each.)
-  BlwpReplayForThisRun: function () {
+  // THE RUN THAT JUST ENDED, AND ONLY IT (the owner 2026-09-27 13:19: "It copies the run that just ended, not the one
+  // before"; round 5b4bae6c entry 6b0a7e8b, a MISSED run, was copied under another run's card). The copy used to ask
+  // the session on hand at the click - `winningsRun()` of whatever `Module.blwpNet` was - and guarded it with
+  // window.BLWP_ENTRY, which a run with no fresh entry does not set: an earlier join's session then answered. Now the
+  // run is taken at the moment it ends, from the session that ROLL OUT found for it (`BlwpRunStarts`), and kept; the
+  // button and the copy read that and nothing else. No such run - nothing to copy, and no button.
+  BlwpRunStarts: function () {
     var net = Module.blwpNet;
-    if (!net || !net.where) return 0;
-    var now = (typeof window !== 'undefined') ? window.BLWP_ENTRY : null;
-    return (!now || !net.pageEntry || net.pageEntry === now) ? 1 : 0;
+    Module.blwpRolledOutAt = Date.now();
+    Module.blwpRunNet = (net && !(net.client && net.client.ended)) ? net : null;
+    Module.blwpEndedRun = null;
+    if (typeof window !== 'undefined') window.BLWP_ENDED_RUN = null;
+  },
+
+  BlwpReplayForThisRun: function () {
+    return Module.blwpEndedRun ? 1 : 0;
   },
 
   BlwpCopyReplay: function () {
-    var net = Module.blwpNet;
-    // and only when that session was opened for the run on screen, never the run before's (the owner 2026-09-26 14:08)
-    var now = (typeof window !== 'undefined') ? window.BLWP_ENTRY : null;
-    if (net && now && net.pageEntry && net.pageEntry !== now) {
-      console.error('[blwp] copy game replay: the session on hand is an earlier join\'s - not copied');
-      return 0;
-    }
-    var run = net && net.winningsRun ? net.winningsRun() : null;
+    var run = Module.blwpEndedRun;
     if (!run || typeof window === 'undefined' || typeof window.BLWP_COPY_REPLAY !== 'function') return 0;
     try { window.BLWP_COPY_REPLAY(run.roundHex, run.entryHex, run.nodes); } catch (e) { console.error('[blwp] copy game replay: ' + e); return 0; }
     return 1;
