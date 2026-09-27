@@ -7,8 +7,8 @@ using UnityEngine;
 /// top-down"; 2026-09-27 11:31, "The destination stays in focus unless he swipes away himself"). PLAY starts a 4.2 s
 /// fly-in from 52 m over the field, and ROLL OUT ends it: the camera is at once over the truck, looking steeply down,
 /// with the truck and the miner's gate both inside the frame - on a phone held upright and on a desktop - and it keeps
-/// them there as the truck drives. A swipe hands the view over: the gate is no longer held while he looks. (That the look
-/// then comes back is CameraNoseTests' in PlayMode, where the clock runs.)
+/// them there as the truck drives. A swipe hands the view over: the gate is no longer held, and nothing brings it back
+/// until the next ROLL OUT (held past the look-return's delay: CameraNoseTests in PlayMode, where the clock runs).
 /// </summary>
 public class RollOutEndsFlyInTests
 {
@@ -97,7 +97,9 @@ public class RollOutEndsFlyInTests
             Assert.That(Mathf.Abs(yaw), Is.GreaterThan(20f), $"the drag turned the view: {yaw}");
 
             for (int f = 0; f < 60; f++) Frame(chase);
-            AssertInFrame(cam, truck.transform.position, "the truck is what the view follows while he looks");
+            Assert.AreEqual(yaw, chase.OrbitYaw, 0.001f, "the dragged angle holds after the finger lifts");
+            Assert.IsFalse(chase.DestinationInFocus, "the gate is not pulled back");
+            AssertInFrame(cam, truck.transform.position, "the truck is what the view follows");
 
             // the next drive starts top-down on the gate again
             chase.EndFlyIn();
