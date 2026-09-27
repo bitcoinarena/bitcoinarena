@@ -47,7 +47,7 @@ import { chainOf, publicationOf } from '../../protocol/tools/chainview.js';
 import { bitcoindRpc, blocksOver } from '../src/chain-rpc.js';
 import { timed } from '../src/slow.js';
 import { operatorFunding, freeOrOperatorFunding } from '../src/funding.js';
-import { serve } from '../src/server.js';
+import { startNode } from '../src/node-start.js';
 import { lightningFromEnv } from '../src/lnd-settings.js';
 import { serveDonationRecipients, TEST_RECIPIENT_PORT } from '../src/lnurl-recipients.js';
 import { toHex } from '../../protocol/src/hash.js';
@@ -151,6 +151,10 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
                                      // THE DONATION SET'S TWO LOCAL TEST RECIPIENTS (M3.2 6e): bound
                                      // for a paid round, at the address the signed set names. A
                                      // free round asks no donation and binds nothing.
+                                     // WHAT A NODE THAT HOLDS A GUARDIAN KEY READS THE CHAIN WITH, for its guardian
+                                     // (node-start.js): { bitcoindUrl, cookiePath, call }. A node without a key starts
+                                     // no guardian whatever this says; the Daily's nodes hold none.
+                                     guardianChain = {},
                                      donationRecipients = stakeMsat > 0n || (paid && BigInt(paid.stakeMsat) > 0n)
                                        ? { port: TEST_RECIPIENT_PORT } : null } = {}) {
   // WHAT THESE DAEMONS FUND (M3.3-31): a PAYING round goes through the
@@ -186,12 +190,14 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // the bond commits to the advertisement, and the daemon serves the chain
   // that bond is mined into - so the identity has to be in hand before any of
   // it is built. It comes out of the store, which is where it lives.
-  const dbA = openStore(store === ':memory:' ? ':memory:' : store + '/a.db');
-  const dbB = openStore(store === ':memory:' ? ':memory:' : store + '/b.db');
+  const pathOf = (name) => (store === ':memory:' ? ':memory:' : `${store}/${name}.db`);
+  const pathA = pathOf('a'), pathB = pathOf('b');
+  const dbA = openStore(pathA);
+  const dbB = openStore(pathB);
   // EVERY SIGNER NODE BEYOND THE FIRST TWO, in the order their bonds are mined.
   const beyond = [...(portC ? [portC] : []), ...extraPorts];
-  const dbsBeyond = beyond.map((_, i) =>
-    openStore(store === ':memory:' ? ':memory:' : `${store}/${String.fromCharCode(99 + i)}.db`));
+  const pathsBeyond = beyond.map((_, i) => pathOf(String.fromCharCode(99 + i)));
+  const dbsBeyond = pathsBeyond.map((p) => openStore(p));
   const idA = nodeIdentity(dbA);
 
   // THE ADVERTISEMENT IS SIGNED BY THE NODE IT NAMES. A stranger's signature
@@ -213,21 +219,22 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // EVERY SIGNER NODE THIS ROUND HAS, in the order their bonds are mined. Two
   // unless the caller asked for more.
   const members = [
-    { id: idA, port: portA, db: dbA, name: 'A' },
-    { id: idB, port: portB, db: dbB, name: 'B' },
-    ...beyond.map((port, i) => ({ id: nodeIdentity(dbsBeyond[i]), port, db: dbsBeyond[i],
+    { id: idA, port: portA, db: dbA, path: pathA, name: 'A' },
+    { id: idB, port: portB, db: dbB, path: pathB, name: 'B' },
+    ...beyond.map((port, i) => ({ id: nodeIdentity(dbsBeyond[i]), port, db: dbsBeyond[i], path: pathsBeyond[i],
       name: String.fromCharCode(67 + i) })),
   ];
   // AND WHICH GUARDIAN EACH ONE SAYS IT RUNS. A flat list is every node's, as
   // before; a nested one is read per node, so no two operators claim one key.
   const guardianOfFor = (i) => (Array.isArray(guardianOf[0]) ? (guardianOf[i] || []) : guardianOf);
 
-  // WHETHER EACH ONE IS A GUARDIAN, ASKED OF THE NODE ITSELF BEFORE ITS ADVERT IS SIGNED. The node is served on its own
+  // WHETHER EACH ONE IS A GUARDIAN, ASKED OF THE NODE ITSELF BEFORE ITS ADVERT IS SIGNED. The node is started on its own
   // port and store - nothing else: no chain, no funding, no closing, so it touches no round it holds - asked its
-  // GET /guardian, and closed; the advert and the bond are built from that answer, and the node is served in full below,
-  // once the census is there. This tool starts no guardian, so its nodes answer {guardian: false}.
+  // GET /guardian, and closed; the advert and the bond are built from that answer, and the node is started in full
+  // below, once the census is there. The node decides whether it is a guardian (node-start.js: the key beside its
+  // store); this tool starts nodes only, and the Daily's nodes hold no key, so they answer {guardian: false}.
   for (const m of members) {
-    const probe = await serve(m.db, { port: m.port, host });
+    const probe = await startNode({ db: m.db, path: m.path }, { port: m.port, host }, guardianChain);
     try { m.guardian = await guardianFieldsFromNode(`http://${host}:${probe.port}`); }
     finally { await probe.close(); }
   }
@@ -472,7 +479,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   const optsA = { port: portA, host, funded, donationSets: [TEST_DONATION_SET_REGTEST], headerBytes, bondProof, chainFor,
     ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn,
     ...(federation ? { federation } : {}), ...signerNode };
-  let a = await serve(dbA, optsA);
+  let a = await startNode({ db: dbA, path: pathA }, optsA, guardianChain);
   const optsB = { port: portB, host, funded, donationSets: [TEST_DONATION_SET_REGTEST], headerBytes, bondProof, chainFor,
     ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn,
     ...(federation ? { federation } : {}), ...signerNode };
@@ -480,7 +487,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // while it holds a close that needs B): B is served on a port nobody names -
   // the bond, the relays and every peer say `portB` - only so the first round
   // can be posted to it; the caller closes it, and restartB serves it on portB.
-  let b = await serve(dbB, bDownAtStart ? { ...optsB, port: 0 } : optsB);
+  let b = await startNode({ db: dbB, path: pathB }, bDownAtStart ? { ...optsB, port: 0 } : optsB, guardianChain);
   // AND THE THIRD, WHEN THERE IS ONE. Served exactly like the other two - a
   // bonded census node that is not also a running daemon would be a bond
   // vouching for a guardian nobody can reach.
@@ -489,7 +496,10 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn,
     ...(federation ? { federation } : {}), ...signerNode }));
   const rest = [];
-  for (const o of optsBeyond) rest.push(await serve(members[2 + rest.length].db, o));
+  for (const o of optsBeyond) {
+    const m = members[2 + rest.length];
+    rest.push(await startNode({ db: m.db, path: m.path }, o, guardianChain));
+  }
   const nodeC = rest[0] || null;
   if (a.port !== portA)
     throw new Error(`node A came up on ${a.port} and the bond names ${portA}`);
@@ -881,13 +891,17 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // EVERY DAEMON, so a caller does not have to know how many there are.
     get daemons() { return [a, b, ...rest]; }, beacon: beaconSeen,
     // AND DAEMON A, the same way (M3.3-34 path 2: a forward to A lost while A is down).
-    async restartA() { await a.close(); a = await serve(dbA, optsA); return a; },
+    async restartA() { await a.close(); a = await startNode({ db: dbA, path: pathA }, optsA, guardianChain); return a; },
     // DAEMON B RESTARTS: the same store, identity, options and port, served
     // again - what an operator's restart is, for measuring what a client does
     // across one. Nothing it held is lost, because the store is the same.
-    async restartB() { await b.close(); b = await serve(dbB, optsB); return b; },
+    async restartB() { await b.close(); b = await startNode({ db: dbB, path: pathB }, optsB, guardianChain); return b; },
     // AND ANY FURTHER ONE, by its place after A and B - the same store, identity, options and port.
-    async restartRest(i) { await rest[i].close(); rest[i] = await serve(members[2 + i].db, optsBeyond[i]); return rest[i]; },
+    async restartRest(i) {
+      await rest[i].close();
+      rest[i] = await startNode({ db: members[2 + i].db, path: members[2 + i].path }, optsBeyond[i], guardianChain);
+      return rest[i];
+    },
     nodes: reach,
     headers: reach.map((r) => `${r}/headers`),
     bond: `${reach[0]}/bond`,
