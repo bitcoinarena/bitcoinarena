@@ -23,13 +23,12 @@
 // daemon, and a round whose committee holds one is refused by name.
 const CENSUS_LOOKBACK = 2016;
 import { openStore } from './store.js';
-import { serve } from './server.js';
 import { bitcoindRpc, blocksOver } from './chain-rpc.js';
 import { chainBeacon } from './beacon-source.js';
 import { lightningFromEnv } from './lnd-settings.js';
 import { stakeLocksFromEnv } from './stake-lock-port.js';
 import { fundingFromEnv } from './funding.js';
-import { startGuardian } from './guardian.js';
+import { startNode } from './node-start.js';
 
 const port = Number(process.argv[2] || 8080);
 const path = process.argv[3] || 'round.db';
@@ -102,20 +101,18 @@ if (url) {
     },
   });
 }
-// THE NODE'S GUARDIAN STARTS WITH IT (§23A.2, RULED the owner 2026-09-26 22:54): nothing here is guardian config - the
+// THE NODE, AND ITS GUARDIAN WHEN IT HOLDS A GUARDIAN KEY (node-start.js; §23A.2, RULED the owner 2026-09-26 22:54 and
+// 2026-09-27): nothing here is guardian config - whether this node is a guardian is the key beside its store, and the
 // network, bitcoind, data, ports and public endpoint are all read off what this node already has (guardian.js).
-const guardian = await startGuardian({ nodePort: port, host, storePath: path, bitcoindUrl: url, cookiePath,
-  call: url ? bitcoindRpc({ url, cookiePath }) : null });
-if (guardian.running) options.guardian = { apiPort: guardian.apiPort, endpoint: guardian.endpoint };
-const node = await serve(db, options);
-// AND STOPS WITH IT: a signal closes the node and then its guardian, never one without the other.
+const node = await startNode({ db, path }, options,
+  { bitcoindUrl: url, cookiePath, call: url ? bitcoindRpc({ url, cookiePath }) : null });
+// AND STOPS WITH IT: a signal closes the node, and its close() stops its guardian - never one without the other.
 let stopping = false;
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, async () => {
     if (stopping) return;
     stopping = true;
     await node.close().catch(() => {});
-    await guardian.stop();
     process.exit(0);
   });
 }
