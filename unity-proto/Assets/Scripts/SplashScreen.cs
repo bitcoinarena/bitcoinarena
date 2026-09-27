@@ -405,6 +405,10 @@ public class SplashScreen : MonoBehaviour
                                      : new Vector3(-114f, 20f, 0f),
                         4.2f);
 
+        // THE LAST ROUND'S WRECK GOES NOW, behind the lobby as it closes (the owner 2026-09-27 13:25): in a live round it
+        // was held under WASTED rather than brought back into the bay
+        var wreck = FindFirstObjectByType<TruckHealth>();
+        if (wreck != null) wreck.Revive();
         _spectating = false;                      // a run is not spectating, whatever the camera does later
         _fromLobby = StartedFromLobby(_lobby != null, fromAddress);
         Showing = false;

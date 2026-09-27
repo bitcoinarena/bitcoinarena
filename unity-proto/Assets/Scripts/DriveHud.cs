@@ -2915,7 +2915,9 @@ public class DriveHud : MonoBehaviour
         label.normal.textColor = Color.white;
         Shadowed(new Rect(box.x, box.y, box.width, lh),
                  health.IsDestroyed
-                     ? $"WRECKED — back in {Mathf.CeilToInt(health.RespawnIn)}s"
+                     ? (DeliveryGate.BackToTheBay(Blwp.BlwpNet.RoundSeed)
+                        ? $"WRECKED — back in {Mathf.CeilToInt(health.RespawnIn)}s"
+                        : "WRECKED")      // a live round's wreck does not come back (the owner 2026-09-27 13:25)
                      : health.IsInvulnerable
                          ? "HEALTH 100%  ·  protected"
                          : $"HEALTH {Mathf.CeilToInt(health.Fraction * 100f)}%",

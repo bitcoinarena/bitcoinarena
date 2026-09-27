@@ -25,8 +25,31 @@ public static class DriveInput
 
     static float Merge(float key, float touch) => Mathf.Abs(touch) > Mathf.Abs(key) ? touch : key;
 
-    /// <summary>-1 reverse / brake, +1 throttle.</summary>
-    public static float Throttle
+    /// <summary>
+    /// NO DRIVING AFTER THE RUN (the owner 2026-09-27 13:25: after WASTED and after a delivery "WASD still steers and the
+    /// drive sound plays ... No partial control after the round ends. No throttle, no steer, no drive sound"). Once the
+    /// core has named the run - DELIVERED, WRECKED, MISSED latch in `S_STATE` - or the session says it ended, throttle,
+    /// steer and handbrake read nothing, for every reader: the core's inputs, the wheels, the engine note. A roll-out
+    /// that restarts the core (off a live round) makes the state live again, and the inputs with it.
+    /// </summary>
+    public static bool RunIsOver(bool coreAvailable, int runState, bool sessionEnded)
+        => (coreAvailable && runState != 0) || sessionEnded;
+
+    static bool Over => RunIsOver(Blwp.BlwpCore.Available, Blwp.BlwpCore.Available ? Blwp.BlwpCore.RunState : 0, Blwp.BlwpNet.Ended);
+
+    /// <summary>Whether the run is over now, as the inputs read it.</summary>
+    public static bool RunOver => Over;
+    /// <summary>What the keys and pads hold, before the end of the run is applied - for the after-the-end log.</summary>
+    public static float HeldThrottle => RawThrottle;
+    public static float HeldSteer => RawSteer;
+
+    /// <summary>-1 reverse / brake, +1 throttle; nothing once the run is over.</summary>
+    public static float Throttle => Over ? 0f : RawThrottle;
+
+    /// <summary>-1 left, +1 right; nothing once the run is over.</summary>
+    public static float Steer => Over ? 0f : RawSteer;
+
+    static float RawThrottle
     {
         get
         {
@@ -43,8 +66,7 @@ public static class DriveInput
         }
     }
 
-    /// <summary>-1 left, +1 right.</summary>
-    public static float Steer
+    static float RawSteer
     {
         get
         {
@@ -96,6 +118,7 @@ public static class DriveInput
     {
         get
         {
+            if (Over) return false;
 #if ENABLE_INPUT_SYSTEM
             return TouchHandbrake || (Keyboard.current != null && Keyboard.current.spaceKey.isPressed);
 #else
