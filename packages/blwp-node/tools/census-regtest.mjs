@@ -117,19 +117,22 @@ function fund(spk, btc = '1.0') {
 
 const payTo = fromHex(JSON.parse(cli('getaddressinfo', cli('getnewaddress'))).scriptPubKey);
 
-const advertFor = (nodeKey, endpoint) => ({
+const advertFor = (nodeKey, endpoint, guardian = {}) => ({
   nodePubkey: nodeKey, operatorId: 'operator', protocolVersions: [1], roles: ['game'],
   endpoint, region: 'eu-west', capacityClass: 1, softwareHash: new Uint8Array(32).fill(2),
   settlementCapabilities: 0, lightningCapabilities: 0,
   bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 1,
-  payoutPubkey: new Uint8Array(32).fill(3), guardianOf: [], timestamp: 1788700000000n,
+  payoutPubkey: new Uint8Array(32).fill(3), guardianOf: [],
+  // WHETHER THIS NODE IS A GUARDIAN (§5A.1 v4.6.4): not, unless the bond below says so
+  guardianCapable: guardian.guardianCapable || false, guardianEndpoint: guardian.guardianEndpoint || '',
+  timestamp: 1788700000000n,
 });
 
 /**
  * A REAL BOND FUNDING TRANSACTION: the bond output, the round's marker, the
  * commitment, and the signed body in the witness of the carrier it spends.
  */
-function postBond(nodeSecret, { network = 'regtest', endpoint = 'ws://node' } = {}) {
+function postBond(nodeSecret, { network = 'regtest', endpoint = 'ws://node', guardian = {} } = {}) {
   const nodeKey = schnorr.getPublicKey(nodeSecret);
   const built = bondOutputKey({
     nodeKey, arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK,
@@ -137,7 +140,7 @@ function postBond(nodeSecret, { network = 'regtest', endpoint = 'ws://node' } = 
     internalKey: bondInternalKey({ nodeKey, arbitrationKeys: g.arbitrationKeys }, { combine }).internalKey,
   }, { tweakPoint, combine });
 
-  const advert = advertFor(nodeKey, endpoint);
+  const advert = advertFor(nodeKey, endpoint, guardian);
   const id = advertId(advert);
   const body = joinSignedAdvert(encodeAdvert(advert), schnorr.sign(id, nodeSecret));
 
@@ -197,7 +200,10 @@ function slash(bond) {
 }
 
 // ---- FOUR BONDS ON A REAL CHAIN
-const honest = postBond(schnorr.utils.randomSecretKey(), { endpoint: 'ws://honest' });
+// THE HONEST NODE IS A GUARDIAN (§23A.2, one node is one guardian): its bond says so, with its own endpoint; the others
+// are not, so a census over these blocks shows one of each.
+const honest = postBond(schnorr.utils.randomSecretKey(), { endpoint: 'ws://honest',
+  guardian: { guardianCapable: true, guardianEndpoint: 'ws://honest/guardian' } });
 const doomed = postBond(schnorr.utils.randomSecretKey(), { endpoint: 'ws://doomed' });
 const elsewhere = postBond(schnorr.utils.randomSecretKey(), { network: 'testnet', endpoint: 'ws://elsewhere' });
 include([honest.hex, doomed.hex, elsewhere.hex]);

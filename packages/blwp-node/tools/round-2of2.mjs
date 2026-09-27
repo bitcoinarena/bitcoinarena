@@ -72,6 +72,21 @@ const b32 = (n) => new Uint8Array(32).fill(n);
  * Exported so the test can drive exactly what an operator runs, rather than a
  * second arrangement that looks like it.
  */
+// WHETHER A NODE IS A GUARDIAN, AS ITS ADVERT SAYS IT (§5A.1 v4.6.4; §23A.2, one node is one guardian - RULED the owner
+// 2026-09-26 22:54): read ONLY off the running node's own HTTP GET /guardian (the slice accepted 2026-09-27). Its
+// {guardian: true, endpoint} is guardian_capable 1 with that endpoint; {guardian: false} is 0 and no endpoint. Nothing an
+// operator types sets either, and a node that does not answer is refused by name rather than guessed at.
+export async function guardianFieldsFromNode(url) {
+  // NOT KEPT ALIVE: the launcher asks a node served only for this question and then closed, and a pooled socket to it
+  // would be reused for the next request to the same port and find the other side gone.
+  const r = await fetch(`${url}/guardian`, { headers: { connection: 'close' } });
+  if (!r.ok) throw new Error(`${url}/guardian answered ${r.status}: a node that cannot say whether it is a guardian gets no advert`);
+  const body = await r.json();
+  return body && body.guardian === true && typeof body.endpoint === 'string'
+    ? { guardianCapable: true, guardianEndpoint: body.endpoint }
+    : { guardianCapable: false, guardianEndpoint: '' };
+}
+
 export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8081,
                                      // A THIRD SIGNER NODE, OPT-IN (§23.6). A 3-of-4 federation needs its
                                      // threshold in DISTINCT bonded census nodes and two nodes cannot be
@@ -207,6 +222,16 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // before; a nested one is read per node, so no two operators claim one key.
   const guardianOfFor = (i) => (Array.isArray(guardianOf[0]) ? (guardianOf[i] || []) : guardianOf);
 
+  // WHETHER EACH ONE IS A GUARDIAN, ASKED OF THE NODE ITSELF BEFORE ITS ADVERT IS SIGNED. The node is served on its own
+  // port and store - nothing else: no chain, no funding, no closing, so it touches no round it holds - asked its
+  // GET /guardian, and closed; the advert and the bond are built from that answer, and the node is served in full below,
+  // once the census is there. This tool starts no guardian, so its nodes answer {guardian: false}.
+  for (const m of members) {
+    const probe = await serve(m.db, { port: m.port, host });
+    try { m.guardian = await guardianFieldsFromNode(`http://${host}:${probe.port}`); }
+    finally { await probe.close(); }
+  }
+
   // ONE BOND EACH, AND THAT IS NOT A DETAIL. `assignSignerNodes` compares the signer nodes
   // the census gives with the keys the contract names and refuses when they
   // differ - letter 26's ruling that the assigned set is the only list that
@@ -227,7 +252,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       settlementCapabilities: 0, lightningCapabilities: 0,
       bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 1,
       payoutPubkey: b32(4), guardianOf: guardianOfFor(at),
-      guardianCapable: false, guardianEndpoint: '',   // §5A.1 v4.6.4: these launcher nodes are not guardians
+      ...members[at].guardian,   // the node's own GET /guardian, above
       timestamp: BigInt(Date.now()),
     };
     // BIP-340, because letter 26 made a node's identity ITS BOND KEY: every
@@ -304,6 +329,8 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
         // round is refused on a bonded-federation check the bonds could not satisfy. Per node, so
         // three operators cover a 3-of-4 rather than one operator claiming it three times.
         ...(guardianOfFor(i).length ? { guardianOf: guardianOfFor(i) } : {}),
+        // AND WHETHER IT IS A GUARDIAN, as the node itself answered (above)
+        ...m.guardian,
       }));
     rt.include(posted.map((p) => p.hex));
     // THE CENSUS HEIGHT IS ABOVE THE BONDS, NOT AT THEM. Depth is measured at
@@ -847,6 +874,8 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
 
   return {
     id, url, lobbyUrl, contract, openNext, keepOpen,
+    // THE ADVERTS THIS START BONDED, one per signer node, in member order.
+    adverts: bonded.map((m) => m.advert),
     rounds: () => held.map((c) => ({ id: toHex(roundId(c)), committeeTimeMs: c.committeeTimeMs, entryCloseMs: c.entryCloseMs })),
     get a() { return a; }, get b() { return b; }, get c() { return nodeC; },
     // EVERY DAEMON, so a caller does not have to know how many there are.

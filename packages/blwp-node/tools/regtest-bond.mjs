@@ -135,7 +135,7 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
    * name them, which is the only thing a local federation round was missing.
    */
   function postBond(nodeSecret, { endpoint, roles = ['game', 'verify', 'settlement'],
-    bondSats = 50000000n, guardianOf = [] } = {}) {
+    bondSats = 50000000n, guardianOf = [], guardianCapable = false, guardianEndpoint = '' } = {}) {
     const nodeKey = schnorr.getPublicKey(nodeSecret);
     const built = bondOutputKey({
       nodeKey, arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK,
@@ -151,8 +151,8 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
       settlementCapabilities: 0, lightningCapabilities: 0,
       bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 1,
       payoutPubkey: new Uint8Array(32).fill(3), guardianOf,
-      // NOT A GUARDIAN unless a caller says so (§5A.1 v4.6.4): no guardian_capable, no guardian_endpoint
-      guardianCapable: false, guardianEndpoint: '', timestamp: 1788700000000n,
+      // NOT A GUARDIAN unless the caller passes what the node answered (§5A.1 v4.6.4)
+      guardianCapable, guardianEndpoint, timestamp: 1788700000000n,
     };
     const id = advertId(advert);
     const body = joinSignedAdvert(encodeAdvert(advert), schnorr.sign(id, nodeSecret));
