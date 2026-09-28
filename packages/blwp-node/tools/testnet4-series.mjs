@@ -6,9 +6,9 @@
  * The series is the live paying round's committee, carried forward: its contract - network, core, federation, stake,
  * signer nodes, census - read from a signer node, and the series' own times set by the spec's clock (§5A.5, HORIZON72):
  *
- *   series_start   = MTP(census_height) + 120 h + 1 s - so that census_height IS "the highest block whose MTP <=
- *                    series_start - 120 h", the census the round already names (the reused bonds, 5A.2)
- *   committee_time = series_start - 84 h        (its beacon at depth before series_start - 72 h)
+ *   series_start   = MTP(census_height) + census lead + 1 s   (testnet4 36 h, mainnet 72 h) - so that census_height IS "the highest block whose MTP <=
+ *                    series_start - census lead", the census the round already names (the reused bonds, 5A.2)
+ *   committee_time = series_start - committee lead   (testnet4 24 h, mainnet 72 h)
  *
  * The publication spends ONE wallet output chosen here, never a bond: a 50000-sat bond or a 1670-sat marker is never an
  * input, and nothing else is added (`add_inputs: false`). It is broadcast and its txid written beside the series.
@@ -23,7 +23,7 @@ import { decodeRoundContract, encodeRoundContract, roundId } from '../../protoco
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 import {
   seriesTemplate, seriesLeadIsValid, seriesId, seriesPublicationPayload, seriesRound, ROUNDS_PER_SERIES,
-  SERIES_CENSUS_LEAD_MS,
+  seriesClockFor,
 } from '../../protocol/src/series.js';
 
 const [nodeUrl, roundHex, outDir, send] = process.argv.slice(2);
@@ -42,9 +42,10 @@ if (toHex(roundId(live)) !== roundHex) throw new Error(`the node answered a cont
 // 2. THE SERIES' START, from the census the round names
 const mtpOf = (h) => BigInt(JSON.parse(cli('getblockheader', cli('getblockhash', String(h)))).mediantime) * 1000n;
 const H = live.censusHeight;
+const { censusLeadMs: SERIES_CENSUS_LEAD_MS } = seriesClockFor(live.networkId);   // testnet4: 36 h (TN24-1405 + 36 h census)
 const start = mtpOf(H) + SERIES_CENSUS_LEAD_MS + 1000n;
 if (mtpOf(H + 1) <= start - SERIES_CENSUS_LEAD_MS)
-  throw new Error(`block ${H + 1}'s median time is not after series_start - 120 h: the census rule would name another height`);
+  throw new Error(`block ${H + 1}'s median time is not after series_start - census lead: the census rule would name another height`);
 const template = seriesTemplate(live, start);
 const lead = seriesLeadIsValid(template);
 if (!lead.ok) throw new Error(lead.why);

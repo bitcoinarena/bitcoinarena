@@ -6,9 +6,9 @@
 // is refused for the same reasons any round is - for every start from now to now + 72 h, and again as the clock
 // moves. A series that leaves less than the 72 h lead is refused whole, by the spec's rule.
 import { toHex } from '../../protocol/src/hash.js';
-import { SERIES_LEAD_MIN_MS, seriesLeadIsValid, seriesId, seriesRound, seriesRoundsWithin } from '../../protocol/src/series.js';
+import { SERIES_WRITE_AHEAD_MS, seriesLeadIsValid, seriesId, seriesRound, seriesRoundsWithin } from '../../protocol/src/series.js';
 
-export const SERIES_HORIZON_MS = SERIES_LEAD_MIN_MS;          // 72 h
+export const SERIES_HORIZON_MS = SERIES_WRITE_AHEAD_MS;       // 72 h on every network (TN24-1405)
 
 /**
  * One series' writer over a Round store. `write(nowMs)` opens every round of the series starting in
