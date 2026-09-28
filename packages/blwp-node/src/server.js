@@ -14,6 +14,7 @@
 // One process, one player, no verification. There is no bond here, no quota
 // and no committee; those are M2.1 steps 4 and later, and each is refused
 // rather than half-built.
+import { seriesWriter } from './series-writer.js';
 import { federationGatewayCount } from '../../protocol/src/gateways.js';
 import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
@@ -224,6 +225,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // its own clock once it is over (protocol roundEndMs). `true`, or
   // `{ everyMs }`. Off by default: a harness closes its rounds when it says so.
   closeAtEnd = false,
+  // THE SERIES THIS NODE WRITES AHEAD (NODE72-1131): series templates (protocol/src/series.js `seriesTemplate`), each
+  // round of which from now to now + 72 h is opened in this node's store and listed - again every `seriesEveryMs`.
+  series = [], seriesEveryMs = 60000,
+  // THE ROUND STORE'S CLOCK, when a caller must set it before anything reads it (a series is written at start). Unset: the wall clock.
+  roundClock = null,
   // THE SIGNER NODES' ADVERTISEMENTS, by round (Map node key hex -> advert), so a slash
   // proof names each accused signer node's own bond. Defaults to this node's census.
   advertsFor = null,
@@ -280,6 +286,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     } catch (e) { console.error(`[replay] cannot keep this node's core in ${replayCores}: ${e.message}`); }
   }
   const round = new Round(db, undefined, { cores: installed });
+  if (roundClock) round.now = roundClock;
   // THE CHAIN §13A'S WINDOWS ARE READ FROM (RULED the owner 2026-09-24): this node's own chain view - blocks at both ends of
   // every window, and the block its own postings and re-runs name. A node given no chain decides no window.
   if (windowChain) round.chainView = windowChain;
@@ -1545,6 +1552,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     sweep();
   }
 
+  // AND EVERY ROUND OF THE NEXT 72 HOURS, WRITTEN (NODE72-1131). A series that leaves less than the 72 h lead is
+  // refused at start, by name, rather than written short.
+  const writers = series.map((t) => seriesWriter(round, t));
+  const seriesIds = () => { const all = new Set(); for (const w of writers) for (const x of w.ids()) all.add(x); return all; };
+  let seriesTimer = null;
+  if (writers.length) {
+    const writeAll = () => timed('series writer', () => {
+      if (shuttingDown) return;
+      for (const w of writers) {
+        const added = w.write(round.now());
+        if (added) console.log(`[series] ${toHex(w.id).slice(0, 16)}: ${added} round(s) written, ${w.summary(round.now()).ahead} ahead to +72 h`);
+      }
+    });
+    writeAll();
+    seriesTimer = setInterval(writeAll, seriesEveryMs);
+    seriesTimer.unref();
+  }
+
   const http = createServer(async (req, res) => {
     try {
       const url = new URL(req.url, 'http://node');
@@ -1862,11 +1887,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'GET' && url.pathname === '/rounds') {
         const nowMs = BigInt(round.now());
         const listed = [];
+        // A SERIES' ROUNDS ARE WRITTEN 72 h AHEAD, and listed as far ahead as the asker names (`ahead`, ms; `?ahead=72h`
+        // for all of them). Unnamed, the next ten minutes of them: a lobby polls this every few seconds and signs no
+        // 2880 rows to show one. Rounds posted one by one are listed as they always were.
+        const aheadRaw = url.searchParams.get('ahead');
+        const aheadMs = aheadRaw === null ? 600000n : /^\d+h$/.test(aheadRaw) ? BigInt(aheadRaw.slice(0, -1)) * 3600000n : BigInt(aheadRaw);
+        const ofSeries = writers.length ? seriesIds() : null;
         for (const held of round.openRounds()) {
           let c;
           try { c = decodeRoundContract(held.contract); } catch { continue; }
           if (nowMs >= c.entryCloseMs) continue;          // entry is over: nobody can join it
           const id = toHex(held.roundId);
+          if (ofSeries && ofSeries.has(id) && c.startTimeMs > nowMs + aheadMs) continue;
           const players = round.playersOf(held.roundId);
           const free = c.stakeMsat === 0n;
           let watchers = 0;
@@ -1904,6 +1936,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           : (x.phase === 'open' ? -1 : 1)));
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ node: toHex(round.pubkey), nowMs: String(nowMs), rounds: listed }));
+      }
+
+      // THE SERIES THIS NODE WRITES, and how far ahead it has written them (NODE72-1131).
+      if (req.method === 'GET' && url.pathname === '/series') {
+        const nowMs = round.now();
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ node: toHex(round.pubkey), nowMs: String(nowMs), series: writers.map((w) => w.summary(nowMs)) }));
       }
 
       if (req.method === 'GET' && url.pathname === '/round') {
@@ -3462,6 +3501,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         clearInterval(lateTimer);
         settlements.stop();
         if (endTimer) clearInterval(endTimer);
+        if (seriesTimer) clearInterval(seriesTimer);
         for (const t of finalityTimers) clearTimeout(t);
         finalityTimers.clear();
         for (const t of rerunTimers) clearTimeout(t);
