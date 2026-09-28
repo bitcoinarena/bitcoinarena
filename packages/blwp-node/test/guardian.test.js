@@ -118,3 +118,28 @@ test('starting the node starts its guardian with nothing configured for it, and 
   let alive = true; try { process.kill(g.pid, 0); } catch { alive = false; }
   assert.equal(alive, false, 'stopping the node stops its guardian');
 });
+
+// A BITCOIND THAT DOES NOT ANSWER ONCE DOES NOT COST THE NODE ITS GUARDIAN (testnet4, 2026-09-28 09:27: node 1 of 7 was
+// restarted while bitcoind was busy, got one "fetch failed", and ran the day with no guardian). It is asked again; a
+// chain that never answers is still refused by name, with how often it was asked.
+test('a chain that fails once is asked again, and the node is still a guardian', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'blwp-guardian-retry-'));
+  const cookie = join(dir, 'cookie'); writeFileSync(cookie, '__cookie__:sekrit');
+  const bin = join(dir, 'bin'); const { mkdirSync } = await import('node:fs'); mkdirSync(bin);
+  writeFileSync(join(bin, 'fedimintd'), '#!/bin/sh\nexec sleep 60\n'); chmodSync(join(bin, 'fedimintd'), 0o755);
+  let asked = 0;
+  const flaky = async () => { asked++; if (asked < 3) throw new Error('fetch failed'); return { chain: 'testnet4' }; };
+  const said = [];
+  const g = await startGuardian({ nodePort: 31221, host: '127.0.0.1', storePath: join(dir, 'a.db'), bitcoindUrl: 'http://127.0.0.1:48332',
+    cookiePath: cookie, call: flaky, env: { PATH: `${bin}:/usr/bin:/bin` }, tailscale: TS, log: (x) => said.push(x), chainWaitMs: 10 });
+  try {
+    assert.equal(g.running, true, 'two failed answers and then one: a guardian');
+    assert.equal(asked, 3);
+    assert.equal(said.filter((x) => /asking again/.test(x)).length, 2);
+  } finally { await g.stop(); }
+  const dead = await startGuardian({ nodePort: 31221, host: '127.0.0.1', storePath: join(dir, 'b.db'), bitcoindUrl: 'http://127.0.0.1:48332',
+    cookiePath: cookie, call: async () => { throw new Error('fetch failed'); }, env: { PATH: `${bin}:/usr/bin:/bin` }, tailscale: TS,
+    log: () => {}, chainTries: 3, chainWaitMs: 10 });
+  assert.equal(dead.running, false);
+  assert.match(dead.why, /fetch failed \(asked 3 times\)/);
+});

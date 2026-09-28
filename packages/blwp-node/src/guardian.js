@@ -119,13 +119,27 @@ const readTailscale = () => new Promise((resolve) => {
  * with no chain, or no fedimintd on this machine, is not a guardian, and says so rather than failing its start.
  */
 export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, cookiePath, call, env = process.env,
-  tailscale = undefined, log = (s) => console.log(s) }) {
+  tailscale = undefined, log = (s) => console.log(s), chainTries = 12, chainWaitMs = 5000 }) {
   const not = (why) => { log(`[guardian] not a guardian: ${why}`); return { running: false, why, stop: async () => {} }; };
   if (!bitcoindUrl || !cookiePath) return not('this node reads no chain (BLWP_BITCOIND_URL / BLWP_BITCOIND_COOKIE)');
   const bin = findFedimintd(env.PATH || '');
   if (!bin) return not('no fedimintd on this machine');
   let network, chain;
-  try { chain = (await call('getblockchaininfo')).chain; network = fedimintNetwork(chain); } catch (e) { return not(e.message); }
+  // A CHAIN THAT DOES NOT ANSWER ONCE IS ASKED AGAIN (the owner's testnet4, 2026-09-28 09:27: node 1 of 7 restarted while
+  // bitcoind was busy, got one "fetch failed", and ran the whole day as a node with no guardian - the federation at 6
+  // of 7 and its invite naming the one guardian that was missing). A minute of tries; a chain that is not a known
+  // network is refused at once, since asking again cannot change it.
+  for (let tries = 1; ; tries++) {
+    let info;
+    try { info = await call('getblockchaininfo'); } catch (e) {
+      if (tries >= chainTries) return not(`${e.message} (asked ${tries} times)`);
+      log(`[guardian] bitcoind did not answer (${e.message}); asking again in ${chainWaitMs} ms, try ${tries} of ${chainTries}`);
+      await new Promise((r) => setTimeout(r, chainWaitMs));
+      continue;
+    }
+    try { chain = info.chain; network = fedimintNetwork(chain); } catch (e) { return not(e.message); }
+    break;
+  }
   const dataDir = `${storePath === ':memory:' ? join(env.TMPDIR || '/tmp', `blwp-guardian-${nodePort}`) : storePath}.guardian`;
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   const pwFile = join(dataDir, 'admin-password');
