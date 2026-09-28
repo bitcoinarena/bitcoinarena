@@ -1270,16 +1270,14 @@ SeriesContract        every field of a Round Contract except the round's own
   round_run           82 s, every run of the round starting at its start_time (below)
 
 series_id             = H(SeriesContract)
-publication           OP_RETURN "BLW" SERIES series_id, confirmed strictly
-                      below the series' beacon block - the same rule as a
-                      round's (above), once per series
-committee_time        = the series' committee_time
-series_start          >= committee_time + series_lead_min
-series_lead_min       72 h (the owner 2026-09-28 11:31, HORIZON72-1131; replaces
-                      the 48 h of the same morning): every round exists -
-                      published, beacon at depth, committee drawn - at least
-                      72 h before it takes its first entry
-beacon, depth         as above, once per series
+publication           OP_RETURN "BLW" SERIES series_id, confirmed before
+                      series_start (CENSUS3D-1401; a series has nothing to
+                      grind, below)
+committee_time        = series_start - series_lead_min
+series_lead_min       72 h (the owner 2026-09-28 11:31, HORIZON72-1131; the
+                      census, committee time and lead all at 72 h since
+                      14:02, CENSUS3D-1401)
+beacon, depth         as above, once per series; reached inside the 72 h
 ```
 
 **Timing - every network, every round *(RULED, the owner 2026-09-28; replaces
@@ -1338,15 +1336,20 @@ not `H(series_id || i)` of a published series whose beacon it holds, or whose
 `i` is outside `0 .. round_count - 1`, or whose entry window is not the one
 derived above.
 
-**72 hours ahead *(RULED, the owner 2026-09-28 11:31, HORIZON72-1131; replaces
-the 48 h lead ruled earlier the same day)*.** A round is created at least
-72 h before its entry opens: its series is published, its beacon has come and
-reached its depth, and its committee is drawn, all before `series_start - 72 h`.
-A node **must refuse** a series whose `series_start` is less than 72 h after
-its `committee_time`, and must not list, open or take entries for a round of
-it. Bitcoin's delays (testnet4's gaps of hours, a reorg that drops the
-publication and forces it again) are absorbed inside those 72 h, never in
-front of a player. The lead is not `abandon_blocks` (48 h),
+**72 hours, about 3 days *(RULED, the owner 2026-09-28 14:02, CENSUS3D-1401;
+replaces CENSUS90-1400 and the 84 h / 120 h schedule of HORIZON72-1131)*.**
+A series' census is cut and its `committee_time` falls **72 h** before its
+first entry opens, both at the same instant. Inside those 72 h, and before
+`series_start`, the census block reaches its depth, the series is
+published, its beacon comes and reaches its depth, and its committee is
+drawn. There is **no window in front of the 72 h**: no publication window
+(the 36 h and CENSUS90's 6 h are withdrawn) and no beacon slack (the 12 h is
+withdrawn, and so is the rule that the beacon be deep before
+`series_start - 72 h`). A node **must refuse** a series whose `series_start`
+is not 72 h after its `committee_time`, and must not list, open or take
+entries for a round whose committee it has not drawn. Bitcoin's delays
+(testnet4's gaps of hours, a reorg that drops the publication and forces it
+again) are absorbed inside those 72 h, never in front of a player. The lead is not `abandon_blocks` (48 h),
 `departure_notice` or `founding_window` (72 h): those are the federation's
 clocks (§23A.1) and do not move with it.
 
@@ -1357,41 +1360,48 @@ clocks (§23A.1) and do not move with it.
 ```text
 series_start(k)      = genesis_series_start + k * series_max       (24 h)
 round_count          = series_max / round_period                    (960)
-census_height(k)     = the highest block whose MTP <= series_start(k) - 90 h
+census_height(k)     = the highest block whose MTP <= series_start(k) - 72 h
+committee_time(k)    = series_start(k) - 72 h
 publish_from(k)      = census_height(k) at census_confirmations depth
-committee_time(k)    = series_start(k) - 84 h
-beacon(k)            = first block with MTP > committee_time(k), at depth;
-                       it must be at depth before series_start(k) - 72 h
+beacon(k)            = first block with MTP > committee_time(k); drawn from
+                       once at depth, before series_start(k)
 SeriesContract(k)    = the genesis template with these values; nothing else
 ```
 
-`committee_time` and the depth deadline moved 24 h earlier with the 72 h
-lead (HORIZON72-1131), keeping the 12 h between them that the beacon had at
-48 h. **The census cutoff is `series_start - 90 h` (RULED, the owner 2026-09-28
-14:00, CENSUS90-1400)**, not the 120 h that briefly followed from carrying
-the old 36 h publication window along: that window was the long part, and it
-is cut to **6 h**. The 72 h player lead, the 84 h `committee_time` and the
-72 h depth deadline do not move.
+The census cutoff, `committee_time` and the lead are one number, 72 h
+(CENSUS3D-1401). The 120 h census of HORIZON72-1131, the 90 h of
+CENSUS90-1400 and the 84 h `committee_time` are withdrawn.
 
-**A series already broadcast stays.** A series whose publication confirmed
-before this ruling keeps the contract it was published with - its census
-height, its `committee_time`, its start - and is neither re-derived nor
-moved. The 90 h cutoff applies to every series whose `publish_from` falls
-after the ruling.
+**A series already broadcast stays.** The series already published for
+**3 October** - and any other series whose publication confirmed before
+this ruling - keeps the contract it was published with: its census height,
+its `committee_time`, its start. It is neither re-derived nor moved. The
+72 h schedule applies to every series not yet published.
+
+**Why publication may now come after the beacon block.** A round published
+by its creator must confirm below its beacon block, because a creator who
+saw the beacon could grind `round_id` (§5A.5 above). A series has nothing
+to grind: every field of `SeriesContract(k)` is a function of the genesis
+parameters, the clock and the chain at `census_height(k)` (next paragraph),
+so there is exactly one candidate whoever publishes it and whenever.
+With the census cut at the same instant as `committee_time`, the census
+block cannot be at depth before the beacon block exists, so the "below the
+beacon" rule would make every series impossible. For a series it is
+therefore replaced by **confirmed before `series_start`**; for a round a
+creator publishes, it stands unchanged.
 
 Every field is fixed by the genesis parameters and the chain, so every node
 computes the same `SeriesContract(k)` and the same `series_id`. **Any bonded
-node may publish it** - `OP_RETURN "BLW" SERIES series_id` - between
-`publish_from(k)` and `committee_time(k)`: the **6 h** between the census
-cutoff and `committee_time` (CENSUS90-1400), less the census block's own
-`census_confirmations` depth, in which one transaction has to confirm. The reference behaviour is that every node publishes once
+node may publish it** - `OP_RETURN "BLW" SERIES series_id` - from
+`publish_from(k)` on, inside the 72 h, and it must confirm before
+`series_start(k)`. The reference behaviour is that every node publishes once
 `publish_from(k)` has passed and it sees no confirmed publication yet; the
 series counts from the **first confirmed publication** (lowest height, then
 lowest txid). A second publication of the same `series_id` is legal and only
 wasted fee; a publication of any other hash for slot `k` is not a series and is
 ignored. Nothing is chosen, so there is nothing to grind: the old argument
 ("each candidate costs a transaction") is replaced by "there is exactly one
-candidate". If no publication confirms before the beacon block, series `k`
+candidate". If no publication confirms before `series_start(k)`, series `k`
 does not exist and its 24 h of rounds are a gap - no stake was taken in it.
 
 **Who pays the fee.** The publisher pays it from its own wallet and is
@@ -1404,16 +1414,17 @@ the confirmed publication's own fee, read from the chain (reference `fee_cap`:
 are the duplicating node's loss, which is what keeps nodes from all
 publishing at once.
 
-**Continuity.** Because the times are fixed, the created horizon is **72 h of
-rounds written ahead**, never less: series `k` is created (beacon at depth) at
-the latest at `series_start(k) - 72 h`, while series `k-3` runs. The lobby always
+**Continuity.** Because the times are fixed, **72 h of rounds are fixed
+ahead**: series `k`'s census and `committee_time` fall at
+`series_start(k) - 72 h`, while series `k-3` runs, and it is published and
+drawn inside those 72 h. The lobby always
 shows one round open for entries and the rounds that follow it, every one
 already fixed; a player never waits on Bitcoin. If series `k` fails, rounds
 stop at the end of series `k-1` and resume at `series_start(k+1)` - nothing is
 paid or refunded for a gap, because no stake was taken in it.
 
-**What the lead costs.** Every round's committee is known at least 72 h
-before the round runs - time to approach its members. That is the same exposure as any
+**What the lead costs.** Every round's committee is known up to 72 h
+before the round runs, from the hour its beacon is deep - time to approach its members. That is the same exposure as any
 known committee: a member that signs a false settlement loses its bond
 (§5A.3), and the per-round stake ceiling (§5A.10) keeps what one round can
 win below what five slashed bonds cost. The lead changes when a briber can
@@ -1534,7 +1545,7 @@ this one.
 
 ### Reserve seats *(RULED, the owner 2026-09-28)*
 
-A node drawn 72 h or more ahead (§5A.5, round series) may be offline when its
+A node drawn up to 72 h ahead (§5A.5, round series) may be offline when its
 round comes. So each role draws **more nodes than it seats**:
 
 ```text
