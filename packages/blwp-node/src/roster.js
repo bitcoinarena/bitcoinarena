@@ -25,6 +25,7 @@ import { timed } from './slow.js';
 import { committeeSeedFromBeacon, beaconFromChain, beaconIsTheChains } from '../../protocol/src/beacon.js';
 import { findPublication, publicationIsBeforeBeacon } from '../../protocol/src/publication.js';
 import { bondSetFor } from './curve.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 
 /**
  * WHERE THE BLOCKS COME FROM, AND THEY ARE NOT INVENTED HERE.
@@ -279,6 +280,8 @@ export class Roster {
         const raw = byTxid.get(toHex(e.txid));
         return raw ? { transaction: raw } : null;
       },
+      // THE NEWEST ADVERTISEMENT UPDATE (§5A.2), each checked against its bond's own node key
+      verifyUpdate: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } },
     });
     if (!census.ok) return census;
 
@@ -339,10 +342,15 @@ export class Roster {
       if (!((e.advert && e.advert.guardianOf) || []).some((g) => toHex(g.federationId) === fid)) continue;
       const at = where.get(toHex(e.txid));
       if (!at) continue;
+      // AND ITS NEWEST ADVERTISEMENT UPDATE, where the census applied one (§5A.2): the page proves it into its own headers
+      // and reads the guardian keys from it, not from the bond's first advertisement
+      const up = e.updatedBy ? where.get(toHex(e.updatedBy.txid)) : null;
       bonds.push({
         nodePubkey: toHex(e.pubkey), position: at.position,
         transaction: toHex(at.block.transactions[at.position]),
         branch: merkleBranchOf(at.txids, at.position).map(toHex),
+        ...(up ? { update: { transaction: toHex(up.block.transactions[up.position]), position: up.position,
+          branch: merkleBranchOf(up.txids, up.position).map(toHex) } } : {}),
       });
     }
     return { ok: true, federationId: fid, bonds };

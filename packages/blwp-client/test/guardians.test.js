@@ -10,7 +10,7 @@ import { advertId } from '../../protocol/src/advert.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { hash256, parseTransaction } from '../../protocol/src/tx.js';
 import { blockHashOf, BITCOIN_MAINNET_GENESIS_HEADER } from '../../protocol/src/chain.js';
-import { bondTransaction, blockOf } from '../../protocol/tools/bond.js';
+import { bondTransaction, blockOf, advertUpdateTransaction } from '../../protocol/tools/bond.js';
 import { guardiansOf, bondedGuardians } from '../src/guardians.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -110,4 +110,57 @@ test('guardians read off another federation than the round names count nothing',
   // and a bond advertising a guardian key of another federation is not this one's
   const theirs = chainOf([bondOf(1, 1), bondOf(2, 2), bondOf(3, 3, { fed: b32(0xfd) })]);
   assert.equal((await count({ chain: theirs.chain, offers: theirs.offers })).bonded, 2);
+});
+
+// THE NEWEST ADVERTISEMENT COUNTS (§5A.2; the owner 2026-09-28, the advertisement-update letter: "the page guardian-bond
+// check: same newest-update rule as the census"). Three bonds name keys the federation no longer holds - the refound
+// gave every guardian a new one - and each node's signed update names its new key: the page counts the new keys, the
+// same bonds. An update signed by anybody else, or mined below its bond, is refused by name and the bond's own
+// advertisement stands.
+test('updates signed by the bonds\' own nodes replace their guardian keys; a forged or older-than-bond one does not', async () => {
+  const stale = [1, 2, 3].map((n) => bondOf(n, 10 + n));             // keys 11, 12, 13: not the federation's
+  const bondTxid = (tx) => parseTransaction(tx).txid;
+  const updateOf = (n, g, { signer = node(n).secret, bond } = {}) => {
+    const a = { ...advertFor(node(n).pubkey, [{ federationId: FED, guardianKey: key(g) }]), timestamp: 1790000000000n };
+    return advertUpdateTransaction(a, { bondTxid: bondTxid(bond), signature: schnorr.sign(advertId(a), signer), previousTxid: b32(0xb0 + n) });
+  };
+  const chainWith = (bonds, updates) => {
+    const chain = [BITCOIN_MAINNET_GENESIS_HEADER];
+    const put = (transaction) => {
+      const sibling = b32(0x98);
+      chain.push(blockOf(hash256, [parseTransaction(transaction).txid, sibling], { previous: blockHashOf(chain.at(-1)) }).header);
+      return { transaction, branch: [sibling], position: 0 };
+    };
+    const offers = bonds.map(put);
+    const ups = updates.map((u) => (u ? put(u) : null));
+    for (let i = 0; i < 6; i++) chain.push(blockOf(hash256, [b32(0xe0 + i)], { previous: blockHashOf(chain.at(-1)) }).header);
+    return { chain, offers: offers.map((o, i) => (ups[i] ? { ...o, update: ups[i] } : o)) };
+  };
+
+  const before = chainWith(stale, [null, null, null]);
+  assert.equal((await count(before)).bonded, 0, 'the bonds as posted name no key of this federation');
+
+  const after = chainWith(stale, stale.map((b, i) => updateOf(i + 1, i + 1, { bond: b })));
+  const got = await count(after);
+  assert.equal(got.ok, true, got.why);
+  assert.equal(got.bonded, 3, 'the same three bonds, counted under their updated keys');
+  assert.deepEqual(got.refused, []);
+
+  const forged = chainWith(stale, [updateOf(1, 1, { bond: stale[0] }), updateOf(2, 2, { bond: stale[1], signer: node(9).secret }),
+    updateOf(3, 3, { bond: stale[2] })]);
+  const f = await count(forged);
+  assert.equal(f.bonded, 2);
+  assert.match(f.refused.join('\n'), /bond 1: its update is not applied - the update is not signed by the bond's node key/);
+
+  // an update mined BELOW its bond: the update block first, then the bond
+  const u1 = updateOf(1, 1, { bond: stale[0] });
+  const chain = [BITCOIN_MAINNET_GENESIS_HEADER];
+  const put = (transaction) => {
+    chain.push(blockOf(hash256, [parseTransaction(transaction).txid, b32(0x97)], { previous: blockHashOf(chain.at(-1)) }).header);
+    return { transaction, branch: [b32(0x97)], position: 0 };
+  };
+  const up = put(u1); const bond = put(stale[0]);
+  for (let i = 0; i < 6; i++) chain.push(blockOf(hash256, [b32(0xd0 + i)], { previous: blockHashOf(chain.at(-1)) }).header);
+  const early = await count({ chain, offers: [{ ...bond, update: up }] });
+  assert.match(early.refused.join('\n'), /bond 0: its update is not applied - the update is older than its bond/);
 });

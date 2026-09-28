@@ -23,6 +23,7 @@ import { encodeAdvert, advertId, joinSignedAdvert, splitSignedAdvert, decodeAdve
 import { parseTransaction, commitmentsOf, witnessRunsOf } from '../../protocol/src/tx.js';
 import { splitBlock } from '../../protocol/src/block.js';
 import { bondMarker } from '../../protocol/src/constants.js';
+import { advertUpdatePayload, readAdvertUpdate } from '../../protocol/src/advert-update.js';
 import { toHex, fromHex, taggedHash } from '../../protocol/src/hash.js';
 import { tweakPoint, combine } from '../src/curve.js';
 
@@ -158,6 +159,23 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
    * carries at least `bondSats`. Null when there is none, and then - only then - a bond is posted.
    */
   function findBond(nodeSecret, { endpoint, guardianOf = [], guardianCapable = false, guardianEndpoint = '', bondSats = 0n } = {}) {
+    const guards = (list) => (list || []).map((x) => `${toHex(x.federationId)}:${toHex(x.guardianKey)}`).sort().join(',');
+    for (const b of bondsOf(nodeSecret)) {
+      if (BigInt(b.sats) < BigInt(bondSats)) continue;
+      const { advert } = b;
+      if (advert.endpoint !== endpoint || !!advert.guardianCapable !== !!guardianCapable
+        || (advert.guardianEndpoint || '') !== (guardianEndpoint || '') || guards(advert.guardianOf) !== guards(guardianOf)) continue;
+      return b;
+    }
+    return null;
+  }
+
+  /**
+   * EVERY CONFIRMED UNSPENT BOND OF THIS NODE KEY, newest first, each with the advertisement it stands for now: the
+   * newest signed update of it (§5A.2; the owner 2026-09-28: "accept an updated advert and select the existing bond"),
+   * else the one it committed to at creation (`bondAdvert` is always the latter).
+   */
+  function bondsOf(nodeSecret) {
     const nodeKey = schnorr.getPublicKey(nodeSecret);
     const built = bondOutputKey({
       nodeKey, arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK,
@@ -167,9 +185,8 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
     }, { tweakPoint, combine });
     const scan = JSON.parse(cli('scantxoutset', 'start', JSON.stringify([`raw(5120${toHex(built.outputKey)})`])));
     const unspent = (scan.unspents || []).filter((u) => u.height > 0).sort((a, b) => b.height - a.height);
-    const guards = (list) => (list || []).map((x) => `${toHex(x.federationId)}:${toHex(x.guardianKey)}`).sort().join(',');
+    const out = [];
     for (const u of unspent) {
-      if (BigInt(Math.round(u.amount * 1e8)) < BigInt(bondSats)) continue;
       const tx = parseTransaction(fromHex(cli('getrawtransaction', u.txid, 'false', cli('getblockhash', String(u.height)))));
       const commitments = commitmentsOf(tx);
       let advert = null;
@@ -180,11 +197,75 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
         } catch { /* not a signed body */ }
       }
       if (!advert || toHex(advert.nodePubkey) !== toHex(nodeKey)) continue;
-      if (advert.endpoint !== endpoint || !!advert.guardianCapable !== !!guardianCapable
-        || (advert.guardianEndpoint || '') !== (guardianEndpoint || '') || guards(advert.guardianOf) !== guards(guardianOf)) continue;
-      return { txid: u.txid, vout: u.vout, height: u.height, sats: Math.round(u.amount * 1e8), advert };
+      const newer = newestUpdateOf({ txid: fromHex(u.txid).reverse(), vout: u.vout, height: u.height, nodePubkey: nodeKey });
+      out.push({ txid: u.txid, vout: u.vout, height: u.height, sats: Math.round(u.amount * 1e8),
+        advert: newer ? newer.advert : advert, bondAdvert: advert,
+        ...(newer ? { updatedBy: { txid: newer.txidHex, height: newer.height } } : {}) });
     }
-    return null;
+    return out;
+  }
+
+  /**
+   * THE NEWEST SIGNED UPDATE OF ONE BOND, off the chain's own UTXO set: an update pays the network's marker dust, which
+   * nobody can spend, so every update is an unspent marker output. Each is read at its block (no txindex needed) and
+   * kept only if it names this bond, carries its node key, is signed by it and sits at or above the bond.
+   */
+  let markers = null;
+  function newestUpdateOf(bond) {
+    if (!markers) {
+      const scan = JSON.parse(cli('scantxoutset', 'start', JSON.stringify([`raw(5120${toHex(bondMarker(network))})`])));
+      markers = (scan.unspents || []).filter((m) => m.height > 0);
+    }
+    let best = null;
+    for (const m of markers) {
+      if (m.height < bond.height) continue;
+      let read;
+      try { read = readAdvertUpdate(fromHex(cli('getrawtransaction', m.txid, 'false', cli('getblockhash', String(m.height)))), { network }); }
+      catch { continue; }
+      if (!read.ok || toHex(read.bondTxid) !== toHex(bond.txid) || read.bondVout !== bond.vout) continue;
+      if (toHex(read.nodePubkey) !== toHex(bond.nodePubkey)) continue;
+      let signed = false;
+      try { signed = schnorr.verify(read.signature, read.advertId, read.nodePubkey); } catch { signed = false; }
+      if (!signed) continue;
+      if (!best || m.height > best.height) best = { advert: read.advert, height: m.height, txidHex: m.txid };
+    }
+    return best;
+  }
+
+  /**
+   * AN ADVERTISEMENT UPDATE FOR ONE EXISTING BOND (§5A.2): the marker dust, OP_RETURN "BLW" 'A' bond outpoint
+   * H(advertisement), the body signed by the node key in the witness - funded like a bond's carrier, spending no bond
+   * and starting no maturity clock. `bond` is { txid (hex as bitcoind shows it), vout }. `prepareAdvertUpdate` signs the
+   * body and names the carrier output to fund; `postAdvertUpdate` spends that carrier (from `utxo` when the caller
+   * funded it with coins it chose, else funded here) and answers the raw transaction.
+   */
+  function prepareAdvertUpdate(nodeSecret, advert) {
+    const nodeKey = schnorr.getPublicKey(nodeSecret);
+    if (toHex(advert.nodePubkey) !== toHex(nodeKey)) throw new Error('an update names the node key that signs it');
+    const id = advertId(advert);
+    const pieces = chunksOf(joinSignedAdvert(encodeAdvert(advert), schnorr.sign(id, nodeSecret)));
+    const carrierSecret = schnorr.utils.randomSecretKey();
+    const carrier = carrierFor(carrierSecret, pieces.length);
+    return { id, pieces, carrierSecret, carrier, spk: carrier.spk };
+  }
+
+  function postAdvertUpdate(prepared, bond, { utxo, fundBtc = minable ? '0.001' : '0.00003', feeSats = 1200n } = {}) {
+    const { id, pieces, carrierSecret, carrier } = prepared;
+    const funded = utxo || fund(carrier.spk, fundBtc);
+    const payload = advertUpdatePayload({ bondTxid: fromHex(bond.txid).reverse(), bondVout: bond.vout, advertIdBytes: id });
+    const outputs = [
+      { value: 330n, script: fromHex('5120' + toHex(bondMarker(network))) },
+      { value: 0n, script: Uint8Array.from([0x6a, payload.length, ...payload]) },
+    ];
+    const change = funded.value - 330n - feeSats;
+    if (change >= 546n) outputs.push({ value: change, script: payTo() });
+    const inputs = [{ txid: fromHex(funded.txid).reverse(), vout: funded.vout, sequence: 0xfffffffe }];
+    const sighash = tapSighash({ version: 2, locktime: 0, inputs, outputs,
+      prevouts: [{ value: funded.value, script: carrier.spk }], inputIndex: 0, leafHash: carrier.leaf });
+    const hex = toHex(serializeSpend({ version: 2, locktime: 0, inputs, outputs,
+      witnesses: [scriptPathWitness({ stack: [schnorr.sign(sighash, carrierSecret), ...pieces],
+        script: carrier.script, controlBlock: carrier.control })] }));
+    return { hex, advertId: toHex(id), txid: JSON.parse(cli('decoderawtransaction', hex)).txid };
   }
 
   function postBond(nodeSecret, { endpoint, roles = ['game', 'verify', 'settlement'],
@@ -250,5 +331,5 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
     return { blocks, firstHeight: from };
   }
 
-  return { height, mine, bury, minable, waitForHeight, include, postBond, findBond, blocksFrom, genesis: g };
+  return { height, mine, bury, minable, waitForHeight, include, postBond, findBond, bondsOf, prepareAdvertUpdate, postAdvertUpdate, newestUpdateOf, blocksFrom, genesis: g };
 }

@@ -26,6 +26,7 @@
 // spends, and the signer node's census reads them from the chain it indexed. A spent
 // bond counted here is one a signer node's own count refuses.
 import { acceptAdvert, chainWork } from '../../protocol/src/chain.js';
+import { acceptAdvertUpdate } from '../../protocol/src/advert-update.js';
 import { advertId } from '../../protocol/src/advert.js';
 import { federationIsBonded } from '../../protocol/src/federation.js';
 import { fromHex, toHex } from '../../protocol/src/hash.js';
@@ -51,6 +52,8 @@ export function offersFrom(answer) {
   if (!a || !Array.isArray(a.bonds)) throw new Error('that answer names no guardian bonds');
   return a.bonds.map((b) => ({
     transaction: fromHex(b.transaction), branch: b.branch.map(fromHex), position: b.position,
+    // THE BOND'S NEWEST ADVERTISEMENT UPDATE, when the node's census applied one (§5A.2)
+    ...(b.update ? { update: { transaction: fromHex(b.update.transaction), branch: b.update.branch.map(fromHex), position: b.update.position } } : {}),
   }));
 }
 
@@ -94,7 +97,24 @@ export async function bondedGuardians({ guardians, round, chain, offers, verify,
       refused.push(`bond ${i}: the advertisement for ${toHex(seen.nodePubkey).slice(0, 16)} is not signed by the node it names`);
       continue;
     }
-    census.push({ pubkey: seen.nodePubkey, bondSats: BigInt(seen.bondSats), advert: seen.advert });
+    // THE NEWEST ADVERTISEMENT, NOT THE FIRST (§5A.2; the owner 2026-09-28): an update offered beside the bond is proved
+    // into this page's own headers, must name this bond, carry the bond's own node key and be signed by it, and sit at
+    // or above the bond - then its guardian keys are the ones counted. An update that fails any of that is refused by
+    // name and the bond's own advertisement stands. (A node can omit a newer update; it cannot forge one.)
+    let advert = seen.advert;
+    if (offers[i].update) {
+      const up = offers[i].update;
+      let got = null; let upWhy = 'the update is not in any block of that chain';
+      for (let h = 0; h < chain.length && !got; h++) {
+        const r = await acceptAdvertUpdate({ transaction: up.transaction, header: chain[h], branch: up.branch, position: up.position,
+          network, bond: { txid: seen.txid, vout: seen.bondVout, nodePubkey: seen.nodePubkey }, verify });
+        if (r.ok) { if (h >= at) got = r; else upWhy = 'the update is older than its bond'; }
+        else if (r.why !== 'the update is not in that block') { upWhy = r.why; break; }
+      }
+      if (got) advert = got.advert;
+      else refused.push(`bond ${i}: its update is not applied - ${upWhy}`);
+    }
+    census.push({ pubkey: seen.nodePubkey, bondSats: BigInt(seen.bondSats), advert });
   }
 
   const count = federationIsBonded({

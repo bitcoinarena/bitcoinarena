@@ -46,3 +46,42 @@ test('and a node whose bond does not say so is not listed as a guardian', () => 
   assert.deepEqual(capable, { honest: true, doomed: false, shallow: false });
   for (const e of read.eligible.filter((x) => whoIs(x.pubkey) !== 'honest')) assert.equal(e.advert.guardianEndpoint, '');
 });
+
+// THE CENSUS READS THE NEWEST ADVERTISEMENT (§5A.2; the owner 2026-09-28, the advertisement-update letter: "the node
+// census: read the newest update, not the original bond advert"). One block on top of the recorded chain carries an
+// update of the honest bond naming a new guardian key; with the census height there, the honest entry is the same bond
+// with the updated advertisement. The fixture holds no node secret, so the signature check is the test's: an update
+// the check refuses is not applied, and the bond's own advertisement stands.
+test('an update of the honest bond at or below the census height replaces its advertisement; a refused one does not', async () => {
+  const { advertUpdateTransaction, blockOf } = await import('../../protocol/tools/bond.js');
+  const { hash256 } = await import('../../protocol/src/tx.js');
+  const { blockHashOf } = await import('../../protocol/src/chain.js');
+  const base = deriveCensus(view, { contract, resolve, bond: BOND });
+  const honest = base.entries[0];
+  const newKey = Uint8Array.from([0x02, ...new Uint8Array(32).fill(0x7a)]);
+  const fed = new Uint8Array(32).fill(0x33);
+  const a = { ...honest.advert, guardianOf: [{ federationId: fed, guardianKey: newKey }], timestamp: 1790000000000n };
+  const tx = advertUpdateTransaction(a, { bondTxid: honest.txid, bondVout: honest.vout, signature: new Uint8Array(64).fill(1) });
+  const last = blocks.at(-1).header;
+  const time = new DataView(last.buffer, last.byteOffset).getUint32(68, true) + 600;
+  const { header } = blockOf(hash256, [parseTransaction(tx).txid], { previous: blockHashOf(last), time });
+  const tipHeight = view.firstHeight + blocks.length;
+  const longer = { blocks: [...blocks, { header, transactions: [tx] }], firstHeight: view.firstHeight };
+  const at = { ...contract, censusHeight: tipHeight };
+  const seen = [];
+  const applied = deriveCensus(longer, { contract: at, resolve, bond: BOND, verifyUpdate: (sig, msg, key) => { seen.push(toHex(key)); return true; } });
+  assert.equal(applied.ok, true, applied.why);
+  const e = applied.entries.find((x) => whoIs(x.pubkey) === 'honest');
+  assert.deepEqual(e.advert.guardianOf[0].guardianKey, newKey, 'the census names the updated guardian key');
+  assert.equal(toHex(e.txid), toHex(honest.txid), 'the same bond');
+  assert.equal(e.updatedBy.height, tipHeight);
+  assert.deepEqual(seen, [CHAIN.nodes.honest.pubkey], 'the update is checked against the bond\'s own node key');
+  const refused = deriveCensus(longer, { contract: at, resolve, bond: BOND, verifyUpdate: () => false });
+  const kept = refused.entries.find((x) => whoIs(x.pubkey) === 'honest');
+  assert.equal(kept.advert.guardianCapable, true);
+  assert.equal(kept.advert.guardianOf.length, honest.advert.guardianOf.length, 'a refused update leaves the bond\'s own advertisement');
+  assert.equal(kept.updatedBy, undefined);
+  // and an update above the census height is not read
+  const early = deriveCensus(longer, { contract: { ...at, censusHeight: tipHeight - 1 }, resolve, bond: BOND, verifyUpdate: () => true });
+  assert.equal(early.entries.find((x) => whoIs(x.pubkey) === 'honest').updatedBy, undefined);
+});
