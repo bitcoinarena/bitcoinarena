@@ -44,6 +44,22 @@ const invite = inviteForGuardians(Uint8Array.from(Buffer.from(named.federationId
   guardianPorts.map((p, k) => ({ url: `${(env[`BLWP_WSS_${p}`] || `wss://seat.example.com/guardian-${k + 1}`).replace(/\/$/, '')}/guardian`, peer: k })));
 const lock = stakeLockPort({ bin: env.BLWP_STAKE_LOCK_BIN, dataDir: env.BLWP_FEDERATION_CLIENT_DIR });
 
+// EVERY /guardian-k IS ON THE FUNNEL, or is put back (item 5, 2026-09-28: /guardian-1 had gone from the Funnel, nobody
+// knows how, and a guardian nobody can reach is not in the federation a player joins). Added with `tailscale funnel`,
+// never `serve`: `serve --set-path` turns Funnel off for the whole of :443 (measured 2026-09-27).
+{
+  let funnel = null;
+  try { funnel = execFileSync('tailscale', ['funnel', 'status', '--json'], { encoding: 'utf8', timeout: 15000 }); } catch { funnel = null; }
+  if (funnel === null) say({ funnel: 'unread', why: 'tailscale funnel status did not answer: the guardian paths are not checked' });
+  else for (const [k, p] of guardianPorts.entries()) {
+    const path = `/guardian-${k + 1}`;
+    if (funnel.includes(`"${path}"`)) continue;
+    say({ funnel: 'missing', path, port: p });
+    execFileSync('tailscale', ['funnel', '--bg', `--set-path=${path}`, `http://127.0.0.1:${p}`], { encoding: 'utf8', timeout: 30000 });
+    say({ funnel: 'restored', path, port: p });
+  }
+}
+
 const datadir = env.BLWP_TN4_DATADIR || '/mnt/bitcoin/tn4';
 const wallet = env.BLWP_TN4_WALLET || 'testnet';
 const cli = (...a) => execFileSync(env.BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli',
