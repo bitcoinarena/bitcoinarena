@@ -1887,18 +1887,29 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'GET' && url.pathname === '/rounds') {
         const nowMs = BigInt(round.now());
         const listed = [];
-        // A SERIES' ROUNDS ARE WRITTEN 72 h AHEAD, and listed as far ahead as the asker names (`ahead`, ms; `?ahead=72h`
-        // for all of them). Unnamed, the next ten minutes of them: a lobby polls this every few seconds and signs no
-        // 2880 rows to show one. Rounds posted one by one are listed as they always were.
+        // EVERY ANNOUNCED ROUND, WITH ITS TIMES AND WHO IS RESPONSIBLE FOR IT (the owner 2026-09-28 16:12, ROUNDS-EP-1612):
+        // every round this node holds that has not ended - a series' rounds 72 h ahead included - with its start and
+        // end as ISO-8601 UTC and its committees as the census and the beacon draw them (Roster.committeeFor, the
+        // same sortition a client recomputes), or `drawn: false` and why. `ahead` (ms, or e.g. `72h`) narrows it to
+        // the rounds starting that soon; unnamed, nothing is left out. A lobby filters by its own clock.
         const aheadRaw = url.searchParams.get('ahead');
-        const aheadMs = aheadRaw === null ? 600000n : /^\d+h$/.test(aheadRaw) ? BigInt(aheadRaw.slice(0, -1)) * 3600000n : BigInt(aheadRaw);
-        const ofSeries = writers.length ? seriesIds() : null;
+        const aheadMs = aheadRaw === null ? null : /^\d+h$/.test(aheadRaw) ? BigInt(aheadRaw.slice(0, -1)) * 3600000n : BigInt(aheadRaw);
+        const iso = (ms) => new Date(Number(ms)).toISOString();
+        const committeeOf = (rid) => {
+          const game = roster.committeeFor(rid, 'game');
+          const settlement = roster.committeeFor(rid, 'settlement');
+          if (!game.ok || !settlement.ok) return { drawn: false, why: (!game.ok ? game : settlement).why };
+          const keys = (x) => x.committee.map((e) => toHex(e.pubkey));
+          return { drawn: true, game: keys(game), settlement: keys(settlement) };
+        };
         for (const held of round.openRounds()) {
           let c;
           try { c = decodeRoundContract(held.contract); } catch { continue; }
-          if (nowMs >= c.entryCloseMs) continue;          // entry is over: nobody can join it
+          let endMs;
+          try { endMs = roundEndMs(c); } catch { endMs = c.entryCloseMs; }
+          if (nowMs >= endMs) continue;                   // over: announced no longer
+          if (aheadMs !== null && c.startTimeMs > nowMs + aheadMs) continue;
           const id = toHex(held.roundId);
-          if (ofSeries && ofSeries.has(id) && c.startTimeMs > nowMs + aheadMs) continue;
           const players = round.playersOf(held.roundId);
           const free = c.stakeMsat === 0n;
           let watchers = 0;
@@ -1915,7 +1926,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const sig = schnorr.sign(lobbyListingId({ roundId: held.roundId, nodePubkey: round.pubkey, nowMs, phase,
             assignedHere, joined: players.joined, playing: players.playing }), round.identity.secret);
           listed.push({
-            id, phase,
+            id, phase, entryOpen: nowMs >= c.committeeTimeMs && nowMs < c.entryCloseMs,
+            startTime: iso(c.startTimeMs), endTime: iso(endMs), committee: committeeOf(held.roundId),
             committeeTimeMs: String(c.committeeTimeMs), startTimeMs: String(c.startTimeMs),
             entryCloseMs: String(c.entryCloseMs), stakeMsat: String(c.stakeMsat),
             // WHAT JOINING ASKS OF THE PLAYER: nothing, or a federation stake lock. There is no third

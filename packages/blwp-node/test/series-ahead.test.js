@@ -80,10 +80,19 @@ test('the node writes every round of the next 72 hours, the one 72 h out among t
     const all = await (await fetch(`http://127.0.0.1:${s.port}/rounds?ahead=72h`)).json();
     assert.equal(all.rounds.length, written, 'every written round is listed out to 72 h');
     assert.ok(all.rounds.some((r) => r.id === last.id), 'the round 72 h out is listed');
+    // ROUNDS-EP-1612: a plain /rounds lists every announced round, each with ISO-8601 UTC start and end and who is
+    // responsible - here nobody yet: this node has no chain view, so no committee is drawn, and the row says so
     const lobby = await (await fetch(`http://127.0.0.1:${s.port}/rounds`)).json();
-    assert.ok(lobby.rounds.every((r) => BigInt(r.startTimeMs) <= BigInt(NOW) + 600000n), 'a plain /rounds lists the next ten minutes of a series');
+    assert.equal(lobby.rounds.length, written, 'nothing announced is left out');
+    const row = lobby.rounds.find((r) => r.id === last.id);
+    assert.equal(row.startTime, new Date(Number(lastStart)).toISOString());
+    assert.ok(Date.parse(row.endTime) > Date.parse(row.startTime), 'the end is the round\'s own end, after its start');
+    assert.equal(row.committee.drawn, false);
+    assert.match(row.committee.why, /chain view|beacon|census/);
+    const soon = await (await fetch(`http://127.0.0.1:${s.port}/rounds?ahead=${2 * 3600000}`)).json();
+    assert.ok(soon.rounds.length > 0 && soon.rounds.every((r) => Date.parse(r.startTime) <= NOW + 2 * 3600000), '?ahead narrows it');
     console.log(`  FACTS: ${JSON.stringify({ written, perSeries: summary.series.map((x) => x.written), last: { index: last.index,
-      inHours: Number(lastStart - BigInt(NOW)) / H, id: last.id.slice(0, 16) }, listedAt72h: all.rounds.length, lobbyListed: lobby.rounds.length, tookMs })}`);
+      inHours: Number(lastStart - BigInt(NOW)) / H, id: last.id.slice(0, 16) }, listedAt72h: all.rounds.length, plainListed: lobby.rounds.length, endOfLast: row.endTime, committee: row.committee, tookMs })}`);
   } finally { await s.close(); }
 });
 
