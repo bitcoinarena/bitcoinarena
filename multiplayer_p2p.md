@@ -1357,7 +1357,7 @@ clocks (§23A.1) and do not move with it.
 ```text
 series_start(k)      = genesis_series_start + k * series_max       (24 h)
 round_count          = series_max / round_period                    (960)
-census_height(k)     = the highest block whose MTP <= series_start(k) - 120 h
+census_height(k)     = the highest block whose MTP <= series_start(k) - 90 h
 publish_from(k)      = census_height(k) at census_confirmations depth
 committee_time(k)    = series_start(k) - 84 h
 beacon(k)            = first block with MTP > committee_time(k), at depth;
@@ -1365,16 +1365,26 @@ beacon(k)            = first block with MTP > committee_time(k), at depth;
 SeriesContract(k)    = the genesis template with these values; nothing else
 ```
 
-All three times moved 24 h earlier with the 72 h lead (HORIZON72-1131), and
-nothing else about them changed: the 12 h between `committee_time` and the
-depth deadline is the slack the beacon had at 48 h, and the 36 h publication
-window below is the window it had.
+`committee_time` and the depth deadline moved 24 h earlier with the 72 h
+lead (HORIZON72-1131), keeping the 12 h between them that the beacon had at
+48 h. **The census cutoff is `series_start - 90 h` (RULED, the owner 2026-09-28
+14:00, CENSUS90-1400)**, not the 120 h that briefly followed from carrying
+the old 36 h publication window along: that window was the long part, and it
+is cut to **6 h**. The 72 h player lead, the 84 h `committee_time` and the
+72 h depth deadline do not move.
+
+**A series already broadcast stays.** A series whose publication confirmed
+before this ruling keeps the contract it was published with - its census
+height, its `committee_time`, its start - and is neither re-derived nor
+moved. The 90 h cutoff applies to every series whose `publish_from` falls
+after the ruling.
 
 Every field is fixed by the genesis parameters and the chain, so every node
 computes the same `SeriesContract(k)` and the same `series_id`. **Any bonded
 node may publish it** - `OP_RETURN "BLW" SERIES series_id` - between
-`publish_from(k)` and `committee_time(k)`, 36 hours in which one transaction
-has to confirm. The reference behaviour is that every node publishes once
+`publish_from(k)` and `committee_time(k)`: the **6 h** between the census
+cutoff and `committee_time` (CENSUS90-1400), less the census block's own
+`census_confirmations` depth, in which one transaction has to confirm. The reference behaviour is that every node publishes once
 `publish_from(k)` has passed and it sees no confirmed publication yet; the
 series counts from the **first confirmed publication** (lowest height, then
 lowest txid). A second publication of the same `series_id` is legal and only
