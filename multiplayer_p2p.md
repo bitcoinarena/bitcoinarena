@@ -1277,7 +1277,8 @@ committee_time        = series_start - series_lead_min
 series_lead_min       a genesis parameter (§27A.6): mainnet 72 h (the owner
                       2026-09-28 11:31, HORIZON72-1131; census, committee
                       time and lead one 72 h since 14:02, CENSUS3D-1401);
-                      testnet4 24 h (14:05, TN24-1405)
+                      testnet4 24 h (14:05, TN24-1405), with its census
+                      cut 36 h ahead (14:09, TN24-POST-1409)
 beacon, depth         as above, once per series; reached inside the 72 h
 ```
 
@@ -1361,7 +1362,8 @@ clocks (§23A.1) and do not move with it.
 ```text
 series_start(k)      = genesis_series_start + k * series_max       (24 h)
 round_count          = series_max / round_period                    (960)
-census_height(k)     = the highest block whose MTP <= series_start(k) - series_lead_min
+census_height(k)     = the highest block whose MTP <= series_start(k) - census_lead
+                       (mainnet 72 h; testnet4 36 h - TN24-POST-1409)
 committee_time(k)    = series_start(k) - series_lead_min
                        (mainnet 72 h, testnet4 24 h - TN24-1405)
 publish_from(k)      = census_height(k) at census_confirmations depth
@@ -1374,15 +1376,19 @@ The census cutoff, `committee_time` and the lead are one number, 72 h
 (CENSUS3D-1401). The 120 h census of HORIZON72-1131, the 90 h of
 CENSUS90-1400 and the 84 h `committee_time` are withdrawn.
 
-**Testnet4 runs the same clock at 24 h *(RULED, the owner 2026-09-28 14:05,
-TN24-1405)*, so a round can be tested the next day.** On testnet4 the census
-lead, `committee_time` and `series_lead_min` are all **24 h**: the census is
-cut and `committee_time` falls at `series_start - 24 h`, and inside those
-24 h, before `series_start`, the census block reaches depth, the series is
-published, the beacon comes and reaches depth, and the committee is drawn.
-There is no publication window and no beacon slack in front of the 24 h,
-exactly as there is none in front of mainnet's 72 h. A testnet4 node refuses
-a series whose `series_start` is not 24 h after its `committee_time`.
+**Testnet4 runs a 24 h lead *(RULED, the owner 2026-09-28 14:05, TN24-1405)*,
+so a round can be tested the next day, with its census cut 36 h ahead
+*(RULED 14:09, TN24-POST-1409)*.** On testnet4 `committee_time` and
+`series_lead_min` are **24 h**: `committee_time` falls at
+`series_start - 24 h`. The census is cut **12 h earlier**, at
+`series_start - 36 h`, and those 12 h are testnet4's **publication window**:
+from `publish_from(k)` (the census block at depth) the series is published,
+and the publication must confirm **strictly below the beacon block**, the
+rule a round published by its creator follows. Inside the 24 h, before
+`series_start`, the beacon comes and reaches depth and the committee is
+drawn; there is no beacon slack in front of the 24 h. A testnet4 node
+refuses a series whose `series_start` is not 24 h after its
+`committee_time`, or whose census is not cut 36 h before its start.
 **Mainnet does not change**: 72 h, CENSUS3D-1401.
 
 **The writer's horizon is 72 h on every network (TN24-1405).** The node
@@ -1409,22 +1415,25 @@ so there is exactly one candidate whoever publishes it and whenever.
 With the census cut at the same instant as `committee_time`, the census
 block cannot be at depth before the beacon block exists, so the "below the
 beacon" rule would make every series impossible. For a series it is
-therefore replaced by **confirmed before `series_start`**; for a round a
-creator publishes, it stands unchanged.
+therefore replaced by **confirmed before `series_start`** on mainnet; for a
+round a creator publishes, it stands unchanged, and on testnet4, whose census
+is cut 12 h before `committee_time` (TN24-POST-1409), the series follows it
+too.
 
 Every field is fixed by the genesis parameters and the chain, so every node
 computes the same `SeriesContract(k)` and the same `series_id`. **Any bonded
 node may publish it** - `OP_RETURN "BLW" SERIES series_id` - from
-`publish_from(k)` on, inside the 72 h, and it must confirm before
-`series_start(k)`. The reference behaviour is that every node publishes once
+`publish_from(k)` on. On mainnet that is inside the 72 h and it must confirm
+before `series_start(k)`; on testnet4 it is the 12 h window and it must
+confirm strictly below the beacon block (TN24-POST-1409). The reference behaviour is that every node publishes once
 `publish_from(k)` has passed and it sees no confirmed publication yet; the
 series counts from the **first confirmed publication** (lowest height, then
 lowest txid). A second publication of the same `series_id` is legal and only
 wasted fee; a publication of any other hash for slot `k` is not a series and is
 ignored. Nothing is chosen, so there is nothing to grind: the old argument
 ("each candidate costs a transaction") is replaced by "there is exactly one
-candidate". If no publication confirms before `series_start(k)`, series `k`
-does not exist and its 24 h of rounds are a gap - no stake was taken in it.
+candidate". If no publication confirms in time - before `series_start(k)` on
+mainnet, below the beacon block on testnet4 - series `k` does not exist and its 24 h of rounds are a gap - no stake was taken in it.
 
 **Who pays the fee.** The publisher pays it from its own wallet and is
 reimbursed from the node fee (§22A, 2%) of the series' round 0 - or, if round
@@ -4649,7 +4658,8 @@ a state whose origin nobody can check.
 | `federation_min` | 7 | 5 | 3 |
 | `abandon_blocks` / `departure_notice` / `founding_window` / `drain_blocks` / `claim_blocks` (v4.6.5, the owner: fast; 36 h arbitration) | 288 / 432 / 432 / **4032** / **216** (≈ 48 h / 72 h / 72 h / **28 d** / **36 h**) | **12 / 18 / 18 / 144 / 9** (≈ 2 h / 3 h / 3 h / 24 h / 1.5 h; the owner: much shorter) | 10 / 10 / 10 / 100 / 10 |
 | confirmations | 6 | 2 | **1** |
-| `series_lead_min` = census lead = `series_start - committee_time` (CENSUS3D-1401, TN24-1405) | **72 h** | **24 h** (testnet4) | regtest's own blocks |
+| `series_lead_min` = `series_start - committee_time` (CENSUS3D-1401, TN24-1405) | **72 h** | **24 h** (testnet4) | regtest's own blocks |
+| census lead = `series_start - census cutoff` (TN24-POST-1409) | **72 h** | **36 h** (testnet4; 12 h publication window) | regtest's own blocks |
 | writer horizon (rounds generated ahead, TN24-1405) | 72 h | **72 h** | 72 h |
 | `bond_maturity` | ~30 days | ~1 day | **100 blocks** |
 | `notice_period` | ~30 days | ~1 day | **10 blocks** |
