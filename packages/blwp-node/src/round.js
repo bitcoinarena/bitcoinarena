@@ -1252,6 +1252,14 @@ export class Round {
    * M3.3-34): the contract as stored and when this node opened it. A closed
    * round is nobody's lobby business.
    */
+  /** The rounds this node has closed, the latest first (the /rounds page's finished list, ROUNDS-HTML-1617). */
+  finishedRounds(limit = 200) {
+    return this.db.prepare('SELECT round_id, contract, closed_ms FROM rounds WHERE state = ? ORDER BY closed_ms DESC LIMIT ?')
+      .all(CLOSED, limit)
+      .filter((r) => parses(r.contract))
+      .map((r) => ({ roundId: new Uint8Array(r.round_id), contract: new Uint8Array(r.contract), closedMs: r.closed_ms }));
+  }
+
   openRounds() {
     return this.db.prepare('SELECT round_id, contract, opened_ms FROM rounds WHERE state = ? ORDER BY opened_ms')
       .all(OPEN)
