@@ -1275,9 +1275,10 @@ publication           OP_RETURN "BLW" SERIES series_id, confirmed strictly
                       round's (above), once per series
 committee_time        = the series' committee_time
 series_start          >= committee_time + series_lead_min
-series_lead_min       48 h (the owner 2026-09-28): every round exists - published,
-                      beacon at depth, committee drawn - at least 48 h before
-                      it takes its first entry
+series_lead_min       72 h (the owner 2026-09-28 11:31, HORIZON72-1131; replaces
+                      the 48 h of the same morning): every round exists -
+                      published, beacon at depth, committee drawn - at least
+                      72 h before it takes its first entry
 beacon, depth         as above, once per series
 ```
 
@@ -1337,14 +1338,17 @@ not `H(series_id || i)` of a published series whose beacon it holds, or whose
 `i` is outside `0 .. round_count - 1`, or whose entry window is not the one
 derived above.
 
-**48 hours ahead *(RULED, the owner 2026-09-28)*.** A round is created at least
-48 h before its entry opens: its series is published, its beacon has come and
-reached its depth, and its committee is drawn, all before `series_start - 48 h`.
-A node **must refuse** a series whose `series_start` is less than 48 h after
+**72 hours ahead *(RULED, the owner 2026-09-28 11:31, HORIZON72-1131; replaces
+the 48 h lead ruled earlier the same day)*.** A round is created at least
+72 h before its entry opens: its series is published, its beacon has come and
+reached its depth, and its committee is drawn, all before `series_start - 72 h`.
+A node **must refuse** a series whose `series_start` is less than 72 h after
 its `committee_time`, and must not list, open or take entries for a round of
 it. Bitcoin's delays (testnet4's gaps of hours, a reorg that drops the
-publication and forces it again) are absorbed inside those 48 h, never in
-front of a player.
+publication and forces it again) are absorbed inside those 72 h, never in
+front of a player. The lead is not `abandon_blocks` (48 h),
+`departure_notice` or `founding_window` (72 h): those are the federation's
+clocks (§23A.1) and do not move with it.
 
 **The series is a function of the clock, so anyone can publish it.** Series
 `k` has fixed times, derived from the network's genesis
@@ -1353,13 +1357,18 @@ front of a player.
 ```text
 series_start(k)      = genesis_series_start + k * series_max       (24 h)
 round_count          = series_max / round_period                    (960)
-census_height(k)     = the highest block whose MTP <= series_start(k) - 96 h
+census_height(k)     = the highest block whose MTP <= series_start(k) - 120 h
 publish_from(k)      = census_height(k) at census_confirmations depth
-committee_time(k)    = series_start(k) - 60 h
+committee_time(k)    = series_start(k) - 84 h
 beacon(k)            = first block with MTP > committee_time(k), at depth;
-                       it must be at depth before series_start(k) - 48 h
+                       it must be at depth before series_start(k) - 72 h
 SeriesContract(k)    = the genesis template with these values; nothing else
 ```
+
+All three times moved 24 h earlier with the 72 h lead (HORIZON72-1131), and
+nothing else about them changed: the 12 h between `committee_time` and the
+depth deadline is the slack the beacon had at 48 h, and the 36 h publication
+window below is the window it had.
 
 Every field is fixed by the genesis parameters and the chain, so every node
 computes the same `SeriesContract(k)` and the same `series_id`. **Any bonded
@@ -1385,15 +1394,15 @@ the confirmed publication's own fee, read from the chain (reference `fee_cap`:
 are the duplicating node's loss, which is what keeps nodes from all
 publishing at once.
 
-**Continuity.** Because the times are fixed, the created horizon is always
-between 48 and 72 h ahead: series `k` is created (beacon at depth) at the
-latest at `series_start(k) - 48 h`, while series `k-1` runs. The lobby always
+**Continuity.** Because the times are fixed, the created horizon is **72 h of
+rounds written ahead**, never less: series `k` is created (beacon at depth) at
+the latest at `series_start(k) - 72 h`, while series `k-3` runs. The lobby always
 shows one round open for entries and the rounds that follow it, every one
 already fixed; a player never waits on Bitcoin. If series `k` fails, rounds
 stop at the end of series `k-1` and resume at `series_start(k+1)` - nothing is
 paid or refunded for a gap, because no stake was taken in it.
 
-**What the lead costs.** Every round's committee is known at least 48 h
+**What the lead costs.** Every round's committee is known at least 72 h
 before the round runs - time to approach its members. That is the same exposure as any
 known committee: a member that signs a false settlement loses its bond
 (§5A.3), and the per-round stake ceiling (§5A.10) keeps what one round can
@@ -1515,7 +1524,7 @@ this one.
 
 ### Reserve seats *(RULED, the owner 2026-09-28)*
 
-A node drawn 48 h or more ahead (§5A.5, round series) may be offline when its
+A node drawn 72 h or more ahead (§5A.5, round series) may be offline when its
 round comes. So each role draws **more nodes than it seats**:
 
 ```text
