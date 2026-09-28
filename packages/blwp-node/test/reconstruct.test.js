@@ -33,7 +33,7 @@ import { FORFEIT, DELIVERED } from '../../protocol/src/payout.js';
 import { serve } from '../src/server.js';
 import { feldmanGroup } from '../src/curve.js';
 import { assumeAssigned, assumeStakeSeen } from './assignment.js';
-import { Preimages, decodeShareAnswer, SEALED_ANSWER_BYTES } from '../src/preimage.js';
+import { StakeSecrets, decodeShareAnswer, SEALED_ANSWER_BYTES } from '../src/stake-secret.js';
 import { dealHandout, encodeHandout } from '../../protocol/src/handout.js';
 import { openShare } from '../../protocol/src/seal.js';
 import { SHARES_NEEDED } from '../../protocol/src/shares.js';
@@ -279,7 +279,7 @@ test('one node alone opens nothing, four refuse by name, five reconstruct', asyn
 
     const asker = nodes[0];
     const peersOf = (n) => nodes.slice(1, 1 + n).map((x) => `http://127.0.0.1:${x.port}`);
-    const openWith = (n) => new Preimages(asker.round, {
+    const openWith = (n) => new StakeSecrets(asker.round, {
       curve: feldmanGroup, peers: peersOf(n), fetcher: (u) => fetch(u), random: rand,
     }).open({ roundId: rid, entryId: eid });
 
@@ -306,7 +306,7 @@ test('one node alone opens nothing, four refuse by name, five reconstruct', asyn
 
     // AND IT STOPS AT FIVE. Asking a sixth signer node for a secret five already
     // opened is spreading it for nothing.
-    const all = await new Preimages(asker.round, {
+    const all = await new StakeSecrets(asker.round, {
       curve: feldmanGroup, peers: peersOf(6), fetcher: (u) => fetch(u), random: rand,
     }).open({ roundId: rid, entryId: eid });
     assert.equal(all.held, 5, 'the asker kept asking after it had enough');
@@ -403,7 +403,7 @@ test('a delivered run never gives up its preimage, and neither does one that is 
     }
     await untilNextBlock();
 
-    const may = holder.preimages.mayRelease(orid, wid);
+    const may = holder.stakeSecrets.mayRelease(orid, wid);
     assert.equal(may.ok, false);
     assert.match(may.why, /that run is DELIVERED/);
     assert.match(may.why, /would let anyone claim a lock that has to go back to its player/);
@@ -423,7 +423,7 @@ test('a delivered run never gives up its preimage, and neither does one that is 
       holder.round.putResult(orid, uid, who.round.pubkey, id,
         joinSignedResult(encodePlayerResult(failed), schnorr.sign(id, who.round.identity.secret)));
     }
-    const short = holder.preimages.mayRelease(orid, uid);
+    const short = holder.stakeSecrets.mayRelease(orid, uid);
     assert.equal(short.ok, false);
     assert.match(short.why, /no share is handed out before the result is final/);
     assert.match(short.why, /4 of 5 agree/);
@@ -449,7 +449,7 @@ test('a player who committed to one secret and dealt another opens nothing', asy
     const { eid } = await everyoneReplays(nodes, lying);
 
     const asker = nodes[0];
-    const opened = await new Preimages(asker.round, {
+    const opened = await new StakeSecrets(asker.round, {
       curve: feldmanGroup,
       peers: nodes.slice(1).map((x) => `http://127.0.0.1:${x.port}`),
       fetcher: (u) => fetch(u), random: rand,
@@ -498,7 +498,7 @@ test('a signer node that never replayed the run hands over nothing', async () =>
     }
     await untilNextBlock();
 
-    const may = quiet.preimages.mayRelease(orid, wid);
+    const may = quiet.stakeSecrets.mayRelease(orid, wid);
     assert.equal(may.ok, false);
     assert.match(may.why, /this node signed no result for that run, so it releases nothing/);
   } finally { for (const n of nodes) await n.close(); }

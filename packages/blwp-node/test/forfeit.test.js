@@ -68,7 +68,7 @@ async function lockRound({ minScore = 1 } = {}) {
       const there = [`http://127.0.0.1:${o.port}`];
       d.verifier.peers = there;
      
-      d.preimages.peers = there;
+      d.stakeSecrets.peers = there;
       d.dkg.peers = there;
     }
     const drafted = { ...contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [a, b].map((d) => `http://127.0.0.1:${d.port}`)),

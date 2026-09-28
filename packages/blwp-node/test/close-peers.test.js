@@ -5,7 +5,7 @@
 // the loser's settle on the daemon where its run was final said "1 of 5
 // shares: a stake nobody can open stays in flight" with NO peer in the reason
 // - it had asked nobody - and both daemons' payout gathers said "1 of 2 signer nodes
-// signed this table". `Preimages` and `Payouts` read only the `peers` option,
+// signed this table". `StakeSecrets` and `Payouts` read only the `peers` option,
 // which the real launchers never pass. They now take the round's settlement
 // committee from the census, the same rule the receipt pull uses; a list the
 // operator gave still wins.
@@ -21,7 +21,7 @@ import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { Round } from '../src/round.js';
 import { Roster } from '../src/roster.js';
-import { Preimages } from '../src/preimage.js';
+import { StakeSecrets } from '../src/stake-secret.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { encodeRoundContract, decodeRoundContract } from '../../protocol/src/contracts.js';
 import { toHex } from '../../protocol/src/hash.js';
@@ -48,8 +48,8 @@ function refusingSignerNodes() {
   return { asked, fetcher };
 }
 
-/** A Preimages whose own share and handout are stood in for - what is measured is who it asks. */
-class Asking extends Preimages {
+/** A StakeSecrets whose own share and handout are stood in for - what is measured is who it asks. */
+class Asking extends StakeSecrets {
   handoutOf() { return { ok: true, entry: { stakeCommitment: b32(7) }, handout: {} }; }
   async mine() { return { ok: true, share: { signerNode: 1, value: 1n } }; }
 }
@@ -137,7 +137,7 @@ test('a daemon given no peers asks the other settlement signer node, off the cen
       const joined = new Roster(again.round, { chainFor: () => published, randomnessFor: () => beacon }).assignSignerNodes(rid);
       assert.equal(joined.ok, true, joined.why);
       const other = [`http://127.0.0.1:${b.port}`];
-      assert.deepEqual(again.preimages.peersOf(rid), other, 'the preimage ask does not reach the other settlement signer node');
+      assert.deepEqual(again.stakeSecrets.peersOf(rid), other, 'the preimage ask does not reach the other settlement signer node');
     } finally { await again.close(); }
   } finally { await b.close(); }
 });

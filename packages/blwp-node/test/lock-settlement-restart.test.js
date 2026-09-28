@@ -140,7 +140,7 @@ async function lockRoundOnDisk() {
     for (const [d, o] of [[w.a, w.b], [w.b, w.a]]) {
       if (!d || !o) continue;
       const there = [`http://127.0.0.1:${o.port}`];
-      d.verifier.peers = there; d.preimages.peers = there; d.dkg.peers = there;
+      d.verifier.peers = there; d.stakeSecrets.peers = there; d.dkg.peers = there;
     }
   };
   wire();

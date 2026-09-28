@@ -51,10 +51,10 @@ export const locksStake = (contract) => contract.federationId instanceof Uint8Ar
 export class LockSettlement {
   /**
    * `dkg` holds this signer node's share of the round's claim key; `port` is the
-   * federation (blwp-stake-lock); `preimages` opens a loser's P with the other
+   * federation (blwp-stake-lock); `stakeSecrets` opens a loser's P with the other
    * signer nodes; `peersFor(rid)` names the other settlement signer nodes' bases.
    */
-  constructor(round, { dkg, port, curve, random, preimages, peersFor = () => [], fetcher = (u, o) => fetch(u, o),
+  constructor(round, { dkg, port, curve, random, stakeSecrets, peersFor = () => [], fetcher = (u, o) => fetch(u, o),
     signerNodesFor = (rid, contract) => ({ gameVerify: contract.nodes, settlement: contract.nodes }), winnings = null,
     turnClock = null, finalityOf = resultFinality } = {}) {
     this.round = round;
@@ -71,7 +71,7 @@ export class LockSettlement {
     this.port = port;
     this.curve = curve;
     this.random = random;
-    this.preimages = preimages;
+    this.stakeSecrets = stakeSecrets;
     this.peersFor = peersFor;
     this.fetcher = fetcher;
     this.built = new Map();          // round id hex -> the settlement this signer node rebuilt
@@ -229,7 +229,7 @@ export class LockSettlement {
     const claims = [];
     for (const c of plan.claims) {
       if (c.kind === 'fee') { claims.push(c); continue; }
-      const opened = await this.preimages.open({ roundId: roundIdBytes, entryId: entryIdBytes, needed: receiptsNeeded(contract.nodes.length) });
+      const opened = await this.stakeSecrets.open({ roundId: roundIdBytes, entryId: entryIdBytes, needed: receiptsNeeded(contract.nodes.length) });
       if (!opened.ok) return refuse(`the late loser's P could not be opened: ${opened.why}`);
       if (fields.paymentImage.kind === 'point') {
         const point = this.curve.pointFromScalar(scalarFrom32(opened.preimage) % FIELD);
@@ -403,7 +403,7 @@ export class LockSettlement {
     for (const c of plan.claims) {
       if (c.kind === 'fee') { claims.push(c); continue; }
       const entryId = lockEntry.get(toHex(c.pubkey));
-      const opened = await this.preimages.open({ roundId: roundIdBytes, entryId, needed: receiptsNeeded(contract.nodes.length) });
+      const opened = await this.stakeSecrets.open({ roundId: roundIdBytes, entryId, needed: receiptsNeeded(contract.nodes.length) });
       if (!opened.ok) return refuse(`a loser's P could not be opened: ${opened.why}`);
       const lock = locks.get(toHex(c.pubkey));
       if (lock.fields.paymentImage.kind === 'point') {

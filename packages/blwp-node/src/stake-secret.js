@@ -1,7 +1,8 @@
 // FIVE SIGNER NODES, AND ONLY FIVE SIGNER NODES, CAN OPEN A STAKE.
 //
-// 23.4: a loser's stake lock is claimed with its preimage, reconstructed "from at
-// least 5 preimage shares". Everything that sentence needs existed before this
+// 23.4: a loser's stake lock is claimed with its stake secret, reconstructed "from at
+// least 5" sealed stake-secret shares - a point lock's secret, not a Lightning preimage (ruled 2026-09-28:
+// this file was preimage.js, the class Preimages). Everything that sentence needs existed before this
 // file and none of it ran: `reconstruct` and `openStake` had zero callers, and
 // the one thing that ever produced 32 bytes for a settle handed them over
 // directly. This is what asks.
@@ -18,7 +19,7 @@
 //                         contract's, so a stranger cannot make itself one by
 //                         asking
 //   the lock is claimed   FINAL, and an outcome 23.2 claims (lock-action.js). A
-//                         DELIVERED run's lock RETURNS - its preimage must never
+//                         DELIVERED run's lock RETURNS - its stake secret must never
 //                         be released, because releasing it lets anyone claim
 //                         the lock and take the player's stake
 //
@@ -60,7 +61,7 @@ export function decodeShareAnswer(bytes) {
   };
 }
 
-export class Preimages {
+export class StakeSecrets {
   constructor(round, { curve, peers = [], fetcher = fetch, random, peersFor = null } = {}) {
     this.round = round;
     this.curve = curve;
@@ -167,7 +168,7 @@ export class Preimages {
       return {
         ok: false,
         why: `that run is ${result.outcome}, whose lock ${said.action === 'RETURN' ? 'returns to its player' : 'expires back to its player'}: `
-          + 'releasing its preimage would let anyone claim a lock that has to go back to its player',
+          + 'releasing its stake secret would let anyone claim a lock that has to go back to its player',
       };
     return { ok: true, outcome: result.outcome };
   }
@@ -265,7 +266,7 @@ export class Preimages {
           + (why.length ? ` (${why.join('; ')})` : ''),
       };
 
-    // AND IT HAS TO BE THE PREIMAGE THE ENTRY NAMES. A dealer who committed to
+    // AND IT HAS TO BE THE STAKE SECRET THE ENTRY NAMES. A dealer who committed to
     // one secret and hashed another is caught HERE - five signer nodes open it, the
     // hash does not match, and nothing is claimed. The lock expires and the
     // player is refunded, so the cheat gains nothing and needs no proof system.

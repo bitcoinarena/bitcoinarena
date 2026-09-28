@@ -65,7 +65,7 @@ async function signerNodes({ endIn = 9000, lagB = 0 } = {}) {
   const wire = () => {
     for (const [d, o] of [[a, b], [b, a]]) {
       const there = [`http://127.0.0.1:${o.port}`];
-      d.verifier.peers = there; d.preimages.peers = there; d.dkg.peers = there;
+      d.verifier.peers = there; d.stakeSecrets.peers = there; d.dkg.peers = there;
     }
   };
   wire();
