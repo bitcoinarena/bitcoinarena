@@ -14,6 +14,7 @@
  *   BLWP_WSS_31221=wss://seat.example.com/guardian-1 ... \
  *   node tools/run-testnet4-paid.mjs
  */
+import { inviteForGuardians, readInvite } from '../src/invite.js';
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -34,7 +35,13 @@ const missing = ['BLWP_STAKE_LOCK_BIN', 'BLWP_FEDERATION_CLIENT_DIR', 'BLWP_FEDE
   'BLWP_BITCOIND_COOKIE'].filter((k) => !env[k]);
 if (missing.length) throw new Error(`set ${missing.join(', ')}`);
 const stakeMsat = BigInt(env.BLWP_PAID_STAKE_MSAT || 10000000);
-const invite = readFileSync(env.BLWP_FEDERATION_INVITE_FILE, 'utf8').replace(/["\s]/g, '');
+// THE INVITE NAMES EVERY GUARDIAN (item 5, 2026-09-28): the file's invite named guardian 1 alone, and while guardian 1
+// was down every player join failed "Failed to download client config". Read for its federation id, then written
+// again with all seven guardians' endpoints - the peer id of /guardian-k is k - 1, as the founding wrote them.
+const fileInvite = readFileSync(env.BLWP_FEDERATION_INVITE_FILE, 'utf8').replace(/["\s]/g, '');
+const named = readInvite(fileInvite);
+const invite = inviteForGuardians(Uint8Array.from(Buffer.from(named.federationId, 'hex')),
+  guardianPorts.map((p, k) => ({ url: `${(env[`BLWP_WSS_${p}`] || `wss://seat.example.com/guardian-${k + 1}`).replace(/\/$/, '')}/guardian`, peer: k })));
 const lock = stakeLockPort({ bin: env.BLWP_STAKE_LOCK_BIN, dataDir: env.BLWP_FEDERATION_CLIENT_DIR });
 
 const datadir = env.BLWP_TN4_DATADIR || '/mnt/bitcoin/tn4';
