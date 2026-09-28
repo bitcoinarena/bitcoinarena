@@ -1570,6 +1570,73 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     seriesTimer.unref();
   }
 
+  // THE ANNOUNCED ROUNDS (ROUNDS-EP-1612 / ROUNDS-HTML-1617): every round held that has not ended, with ISO-8601 UTC
+  // start and end and its committees as the census and the beacon draw them - the sortition a client recomputes.
+  const committeeOf = (rid) => {
+    const game = roster.committeeFor(rid, 'game');
+    const settlement = roster.committeeFor(rid, 'settlement');
+    if (!game.ok || !settlement.ok) return { drawn: false, why: (!game.ok ? game : settlement).why };
+    const keys = (x) => x.committee.map((e) => toHex(e.pubkey));
+    return { drawn: true, game: keys(game), settlement: keys(settlement) };
+  };
+  const announcedRounds = (url) => {
+    const nowMs = BigInt(round.now());
+    const listed = [];
+    // EVERY ANNOUNCED ROUND, WITH ITS TIMES AND WHO IS RESPONSIBLE FOR IT (the owner 2026-09-28 16:12, ROUNDS-EP-1612):
+    // every round this node holds that has not ended - a series' rounds 72 h ahead included - with its start and
+    // end as ISO-8601 UTC and its committees as the census and the beacon draw them (Roster.committeeFor, the
+    // same sortition a client recomputes), or `drawn: false` and why. `ahead` (ms, or e.g. `72h`) narrows it to
+    // the rounds starting that soon; unnamed, nothing is left out. A lobby filters by its own clock.
+    const aheadRaw = url.searchParams.get('ahead');
+    const aheadMs = aheadRaw === null ? null : /^\d+h$/.test(aheadRaw) ? BigInt(aheadRaw.slice(0, -1)) * 3600000n : BigInt(aheadRaw);
+    const iso = (ms) => new Date(Number(ms)).toISOString();
+    for (const held of round.openRounds()) {
+      let c;
+      try { c = decodeRoundContract(held.contract); } catch { continue; }
+      let endMs;
+      try { endMs = roundEndMs(c); } catch { endMs = c.entryCloseMs; }
+      if (nowMs >= endMs) continue;                   // over: announced no longer
+      if (aheadMs !== null && c.startTimeMs > nowMs + aheadMs) continue;
+      const id = toHex(held.roundId);
+      const players = round.playersOf(held.roundId);
+      const free = c.stakeMsat === 0n;
+      let watchers = 0;
+      for (const w of watching.values()) if (toHex(w.roundId) === id) watchers++;
+      // §5A.5: before committee_time the lobby shows "committee: pending"
+      // and offers no entry; the entry door refuses by the same rule.
+      const phase = nowMs < c.committeeTimeMs ? 'pending' : 'open';
+      const assignedHere = round.signerNodes(held.roundId).length > 0;
+      // THE ROUND'S THRESHOLD, from its contract: 2 of 2 here, 5 of 7 on
+      // mainnet. A round is playable only when that many of its signer nodes hold
+      // it, so the page counts signer nodes, and this one signs what it says.
+      let needed = null;
+      try { needed = roundThreshold(c.gameVerifySlots); } catch { needed = null; }
+      const sig = schnorr.sign(lobbyListingId({ roundId: held.roundId, nodePubkey: round.pubkey, nowMs, phase,
+        assignedHere, joined: players.joined, playing: players.playing }), round.identity.secret);
+      listed.push({
+        id, phase, entryOpen: nowMs >= c.committeeTimeMs && nowMs < c.entryCloseMs,
+        startTime: iso(c.startTimeMs), endTime: iso(endMs), committee: committeeOf(held.roundId),
+        committeeTimeMs: String(c.committeeTimeMs), startTimeMs: String(c.startTimeMs),
+        entryCloseMs: String(c.entryCloseMs), stakeMsat: String(c.stakeMsat),
+        // WHAT JOINING ASKS OF THE PLAYER: nothing, or a federation stake lock. There is no third
+        // answer - "a Lightning payment" was the withdrawn Lightning custody's hold invoice, which does not exist (§23.6).
+        free, wallet: free ? 'none' : 'federation-lock',
+        assignedHere, joined: players.joined, playing: players.playing, watching: watchers,
+        // AND WHAT ITS JOINED PLAYERS CHOSE TO BE CALLED - each record its
+        // player's own signature (lobby-name.js), not this signer node's word.
+        names: namesHeld(held.roundId),
+        needed, signerNodes: c.nodes.length,
+        // THIS SIGNER NODE'S SIGNED WORD (lobby-listing.js): round, node, time, phase,
+        // joined here, and the two counts. `watching` is not signed.
+        sig: toHex(sig),
+      });
+    }
+    listed.sort((x, y) => (x.phase === y.phase
+      ? (BigInt(x.entryCloseMs) < BigInt(y.entryCloseMs) ? -1 : 1)
+      : (x.phase === 'open' ? -1 : 1)));
+    return { nowMs, listed };
+  };
+
   const http = createServer(async (req, res) => {
     try {
       const url = new URL(req.url, 'http://node');
@@ -1884,70 +1951,77 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // "A lobby carries nothing": every id here is a name, and the page fetches
       // each contract and hashes it before it shows a row. `free` and `wallet`
       // are read off the contract this node stores; the counts are its own.
+      // THE ROUNDS PAGE (ROUNDS-HTML-1617): a browser asking for /rounds gets the page; everything else - a lobby's
+      // fetch, a script - gets the list as before. The page reads /api/rounds and /api/round-result beside it.
+      if (req.method === 'GET' && url.pathname === '/rounds' && /text\/html/.test(String(req.headers.accept || ''))) {
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', ...CORS });
+        return res.end(readFileSync(new URL('../pages/rounds.html', import.meta.url)));
+      }
       if (req.method === 'GET' && url.pathname === '/rounds') {
-        const nowMs = BigInt(round.now());
-        const listed = [];
-        // EVERY ANNOUNCED ROUND, WITH ITS TIMES AND WHO IS RESPONSIBLE FOR IT (the owner 2026-09-28 16:12, ROUNDS-EP-1612):
-        // every round this node holds that has not ended - a series' rounds 72 h ahead included - with its start and
-        // end as ISO-8601 UTC and its committees as the census and the beacon draw them (Roster.committeeFor, the
-        // same sortition a client recomputes), or `drawn: false` and why. `ahead` (ms, or e.g. `72h`) narrows it to
-        // the rounds starting that soon; unnamed, nothing is left out. A lobby filters by its own clock.
-        const aheadRaw = url.searchParams.get('ahead');
-        const aheadMs = aheadRaw === null ? null : /^\d+h$/.test(aheadRaw) ? BigInt(aheadRaw.slice(0, -1)) * 3600000n : BigInt(aheadRaw);
-        const iso = (ms) => new Date(Number(ms)).toISOString();
-        const committeeOf = (rid) => {
-          const game = roster.committeeFor(rid, 'game');
-          const settlement = roster.committeeFor(rid, 'settlement');
-          if (!game.ok || !settlement.ok) return { drawn: false, why: (!game.ok ? game : settlement).why };
-          const keys = (x) => x.committee.map((e) => toHex(e.pubkey));
-          return { drawn: true, game: keys(game), settlement: keys(settlement) };
-        };
-        for (const held of round.openRounds()) {
-          let c;
-          try { c = decodeRoundContract(held.contract); } catch { continue; }
-          let endMs;
-          try { endMs = roundEndMs(c); } catch { endMs = c.entryCloseMs; }
-          if (nowMs >= endMs) continue;                   // over: announced no longer
-          if (aheadMs !== null && c.startTimeMs > nowMs + aheadMs) continue;
-          const id = toHex(held.roundId);
-          const players = round.playersOf(held.roundId);
-          const free = c.stakeMsat === 0n;
-          let watchers = 0;
-          for (const w of watching.values()) if (toHex(w.roundId) === id) watchers++;
-          // §5A.5: before committee_time the lobby shows "committee: pending"
-          // and offers no entry; the entry door refuses by the same rule.
-          const phase = nowMs < c.committeeTimeMs ? 'pending' : 'open';
-          const assignedHere = round.signerNodes(held.roundId).length > 0;
-          // THE ROUND'S THRESHOLD, from its contract: 2 of 2 here, 5 of 7 on
-          // mainnet. A round is playable only when that many of its signer nodes hold
-          // it, so the page counts signer nodes, and this one signs what it says.
-          let needed = null;
-          try { needed = roundThreshold(c.gameVerifySlots); } catch { needed = null; }
-          const sig = schnorr.sign(lobbyListingId({ roundId: held.roundId, nodePubkey: round.pubkey, nowMs, phase,
-            assignedHere, joined: players.joined, playing: players.playing }), round.identity.secret);
-          listed.push({
-            id, phase, entryOpen: nowMs >= c.committeeTimeMs && nowMs < c.entryCloseMs,
-            startTime: iso(c.startTimeMs), endTime: iso(endMs), committee: committeeOf(held.roundId),
-            committeeTimeMs: String(c.committeeTimeMs), startTimeMs: String(c.startTimeMs),
-            entryCloseMs: String(c.entryCloseMs), stakeMsat: String(c.stakeMsat),
-            // WHAT JOINING ASKS OF THE PLAYER: nothing, or a federation stake lock. There is no third
-            // answer - "a Lightning payment" was the withdrawn Lightning custody's hold invoice, which does not exist (§23.6).
-            free, wallet: free ? 'none' : 'federation-lock',
-            assignedHere, joined: players.joined, playing: players.playing, watching: watchers,
-            // AND WHAT ITS JOINED PLAYERS CHOSE TO BE CALLED - each record its
-            // player's own signature (lobby-name.js), not this signer node's word.
-            names: namesHeld(held.roundId),
-            needed, signerNodes: c.nodes.length,
-            // THIS SIGNER NODE'S SIGNED WORD (lobby-listing.js): round, node, time, phase,
-            // joined here, and the two counts. `watching` is not signed.
-            sig: toHex(sig),
-          });
-        }
-        listed.sort((x, y) => (x.phase === y.phase
-          ? (BigInt(x.entryCloseMs) < BigInt(y.entryCloseMs) ? -1 : 1)
-          : (x.phase === 'open' ? -1 : 1)));
+        const { nowMs, listed } = announcedRounds(url);
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ node: toHex(round.pubkey), nowMs: String(nowMs), rounds: listed }));
+      }
+
+      // THE PAGE'S DATA: the announced rounds (upcoming) and the finished ones, each with its times and committees.
+      if (req.method === 'GET' && url.pathname === '/api/rounds') {
+        const { nowMs, listed } = announcedRounds(url);
+        const finished = [];
+        const seen = new Set(listed.map((r) => r.id));
+        const rowOf = (rid, c, closedMs) => {
+          let endMs; try { endMs = roundEndMs(c); } catch { endMs = c.entryCloseMs; }
+          const players = round.playersOf(rid);
+          return { id: toHex(rid), startTime: new Date(Number(c.startTimeMs)).toISOString(), endTime: new Date(Number(endMs)).toISOString(),
+            closedTime: closedMs ? new Date(Number(closedMs)).toISOString() : null, free: c.stakeMsat === 0n, stakeMsat: String(c.stakeMsat),
+            joined: players.joined, committee: committeeOf(rid) };
+        };
+        // an open round whose end has passed is finished too, waiting for its close
+        for (const held of round.openRounds()) {
+          const id = toHex(held.roundId);
+          if (seen.has(id)) continue;
+          let c; try { c = decodeRoundContract(held.contract); } catch { continue; }
+          finished.push(rowOf(held.roundId, c, null));
+        }
+        for (const held of round.finishedRounds(200)) {
+          let c; try { c = decodeRoundContract(held.contract); } catch { continue; }
+          finished.push(rowOf(held.roundId, c, held.closedMs));
+        }
+        finished.sort((a, b) => (a.endTime < b.endTime ? 1 : -1));
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ node: toHex(round.pubkey), nowMs: String(nowMs), upcoming: listed, finished }));
+      }
+
+      // WHO WAS IN A FINISHED ROUND AND WHO WON HOW MUCH (ROUNDS-HTML-1617): each entry, its player's signed name,
+      // the outcome and score the signer nodes signed, and what this node holds as owed or paid to it.
+      if (req.method === 'GET' && url.pathname === '/api/round-result') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (rid.length !== 32) return text(res, 400, 'a round result is asked for by a round id');
+        const held = round.get(rid);
+        if (!held) return text(res, 404, 'this node holds no such round');
+        const c = decodeRoundContract(new Uint8Array(held.contract));
+        const names = new Map();
+        for (const n of round.lobbyNames(rid)) {
+          try { const r = decodeLobbyName(n.record); names.set(toHex(r.playerPubkey), r.name); } catch { /* not a record */ }
+        }
+        const players = round.entriesOf(rid).map(({ entryId, entry }) => {
+          const signed = round.results(rid, entryId);
+          const tally = new Map();
+          for (const r of signed) {
+            try {
+              const x = decodePlayerResult(splitSignedResult(r.bytes).body);
+              const k = `${x.outcome}:${x.score}`;
+              tally.set(k, { outcome: x.outcome, score: x.score, signers: ((tally.get(k) || {}).signers || 0) + 1 });
+            } catch { /* not a result */ }
+          }
+          const best = [...tally.values()].sort((a, b) => b.signers - a.signers)[0] || null;
+          const won = round.winnings(entryId);
+          const player = toHex(entry.playerPubkey);
+          return { entry: toHex(entryId), player, name: names.get(player) || '', stakeMsat: String(entry.stakeMsat),
+            outcome: best ? best.outcome : null, score: best ? best.score : null, signedBy: best ? best.signers : 0,
+            wonMsat: won ? String(won.owedMsat) : '0', winningsState: won ? won.state : (entry.stakeMsat === 0n ? 'FREE' : 'NONE') };
+        });
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ id: rid.toString('hex'), state: held.state, free: c.stakeMsat === 0n, players }));
       }
 
       // THE SERIES THIS NODE WRITES, and how far ahead it has written them (NODE72-1131).
