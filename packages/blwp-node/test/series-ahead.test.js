@@ -11,12 +11,12 @@ import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { decodeRoundContract } from '../../protocol/src/contracts.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
+import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../protocol/src/genesis-ids.js';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId } from '../../protocol/src/donation.js';
 import {
   seriesTemplate, seriesId, seriesRound, seriesRoundsWithin, seriesLeadIsValid, seriesPublicationPayload,
-  ROUND_PERIOD_MS, SERIES_MAX_MS, SERIES_LEAD_MIN_MS, ROUNDS_PER_SERIES,
+  ROUND_PERIOD_MS, SERIES_MAX_MS, SERIES_LEAD_MIN_MS, ROUNDS_PER_SERIES, SERIES_CLOCKS, seriesClockFor, SERIES_WRITE_AHEAD_MS,
 } from '../../protocol/src/series.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -38,7 +38,7 @@ const base = (nodes) => ({
 test('a series: 960 rounds 90 s apart, each closing entry at its start, and its publication is "BLW" S + its id', () => {
   const t = seriesTemplate(base([b32(7)]), BigInt(NOW) + 100n * BigInt(H));
   assert.equal(ROUNDS_PER_SERIES, 960);
-  assert.equal(t.startTimeMs - t.committeeTimeMs, 84n * BigInt(H), 'committee_time = series_start - 84 h');
+  assert.equal(t.startTimeMs - t.committeeTimeMs, 72n * BigInt(H), 'mainnet (and regtest): committee_time = series_start - 72 h (CENSUS3D-1401)');
   assert.deepEqual(seriesLeadIsValid(t).ok, true);
   const r5 = seriesRound(t, 5);
   assert.equal(r5.startTimeMs, t.startTimeMs + 5n * ROUND_PERIOD_MS);
@@ -92,4 +92,39 @@ test('a series with less than the 72 h lead is refused whole, by name', async ()
   const short = { ...t, committeeTimeMs: t.startTimeMs - 48n * BigInt(H) };        // the 48 h this morning ruled out
   assert.match(seriesLeadIsValid(short).why, /must exist 259200000 ms \(72 h\) before its first entry/);
   await assert.rejects(async () => serve(openStore(':memory:'), { port: 0, funded: () => true, roundClock: () => NOW, series: [short] }), /series refused/);
+});
+
+// TN24-1405 AND THE 36 h CENSUS (the owner 2026-09-28): testnet4's committee_time is 24 h before the start and its lead 24 h,
+// its census 36 h before the start - 12 h before committee_time, the publication window; mainnet stays one 72 h; the
+// writer lays 72 h of rounds ahead on both.
+test('testnet4 runs a 24 h committee clock on a 36 h census, mainnet one 72 h, and the writer 72 h on both', async () => {
+  assert.deepEqual(Object.fromEntries(Object.entries(SERIES_CLOCKS.mainnet).map(([k, v]) => [k, Number(v) / H])),
+    { censusLeadMs: 72, committeeLeadMs: 72, leadMinMs: 72 });
+  assert.deepEqual(Object.fromEntries(Object.entries(SERIES_CLOCKS.testnet4).map(([k, v]) => [k, Number(v) / H])),
+    { censusLeadMs: 36, committeeLeadMs: 24, leadMinMs: 24 });
+  assert.equal(seriesClockFor(NETWORK_ID_REGTEST), SERIES_CLOCKS.mainnet);
+  assert.equal(seriesClockFor(NETWORK_ID_TESTNET4), SERIES_CLOCKS.testnet4);
+  assert.equal(Number(SERIES_WRITE_AHEAD_MS) / H, 72);
+  // census 154206, median 2026-09-28T07:52:04Z: series_start = MTP + 36 h + 1 s, committee_time 12 h after the census
+  const mtp = BigInt(Date.parse('2026-09-28T07:52:04Z'));
+  const tn = { ...base([b32(7)]), networkId: NETWORK_ID_TESTNET4 };
+  const t = seriesTemplate(tn, mtp + SERIES_CLOCKS.testnet4.censusLeadMs + 1000n);
+  assert.equal(new Date(Number(t.startTimeMs)).toISOString(), '2026-09-29T19:52:05.000Z');
+  assert.equal(new Date(Number(t.committeeTimeMs)).toISOString(), '2026-09-28T19:52:05.000Z');
+  assert.equal(t.committeeTimeMs - mtp, 12n * BigInt(H) + 1000n, 'committee_time 12 h after the census median, not 1 s');
+  assert.equal(seriesLeadIsValid(t).ok, true);
+  assert.equal(seriesLeadIsValid({ ...t, committeeTimeMs: t.startTimeMs - 23n * BigInt(H) }).ok, false, 'testnet4 refuses under 24 h');
+  // the 3 October series keeps its 84 h lead and stays valid on testnet4
+  assert.equal(seriesLeadIsValid({ ...t, committeeTimeMs: t.startTimeMs - 84n * BigInt(H) }).ok, true);
+  // the writer on testnet4: 72 h of rounds ahead, not 24
+  const node = await serve(openStore(':memory:'), { port: 0, funded: () => true });
+  const nodes = [node.round.pubkey]; await node.close();
+  const series = [0n, 1n, 2n].map((k) => seriesTemplate({ ...base(nodes), networkId: NETWORK_ID_TESTNET4 }, BigInt(NOW) + BigInt(H) + k * SERIES_MAX_MS));
+  const s = await serve(openStore(':memory:'), { port: 0, funded: () => true, roundClock: () => NOW, series });
+  try {
+    const sum = await (await fetch(`http://127.0.0.1:${s.port}/series`)).json();
+    const last = BigInt(sum.series[2].last.startTimeMs);
+    assert.ok(last > BigInt(NOW) + 72n * BigInt(H) - ROUND_PERIOD_MS && last <= BigInt(NOW) + 72n * BigInt(H), 'testnet4 rounds written 72 h ahead');
+    console.log(`  FACTS: testnet4 written ${sum.series.reduce((n, x) => n + x.written, 0)}, last ${(Number(last) - NOW) / H} h out`);
+  } finally { await s.close(); }
 });

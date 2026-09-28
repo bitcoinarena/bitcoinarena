@@ -8,10 +8,10 @@
 //
 // THE TIMES ARE THE SPEC'S, counted back from the series' start:
 //
-//     committee_time(k)  = series_start(k) - 84 h        (its beacon at depth before series_start - 72 h)
-//     census_height(k)   = the highest block whose MTP <= series_start(k) - 120 h
-//     series_lead_min    = 72 h: every round exists 72 h before it takes an entry, and a node refuses a series
-//                          whose start is less than 72 h after its committee_time
+//     committee_time(k)  = series_start(k) - committee lead   (mainnet 72 h, testnet4 24 h)
+//     census_height(k)   = the highest block whose MTP <= series_start(k) - census lead   (mainnet 72 h, testnet4 36 h)
+//     series_lead_min    = mainnet 72 h, testnet4 24 h: a node refuses a series whose start is less than that after
+//                          its committee_time; the writer still lays 72 h of rounds ahead on every network
 //
 // NOT YET HERE, and said rather than papered over: `round_id(i) = H(series_id || i)` needs a Round Contract that
 // carries its series id and index; until the contract format does, a series round's id is its derived contract's
@@ -21,22 +21,44 @@ import { taggedHash } from './hash.js';
 import { encodeRoundContract } from './contracts.js';
 import { PUBLICATION_MAGIC, PUBLICATION_BYTES } from './publication.js';
 import { OP_RETURN } from './tx.js';
+import { NETWORK_ID_TESTNET4 } from './genesis-ids.js';
 
 export const ROUND_PERIOD_MS = 90000n;
 export const SERIES_MAX_MS = 86400000n;                     // a series lasts at most 24 h
 export const ROUNDS_PER_SERIES = Number(SERIES_MAX_MS / ROUND_PERIOD_MS);   // 960
-export const SERIES_LEAD_MIN_MS = 72n * 3600000n;           // HORIZON72-1131
-export const SERIES_COMMITTEE_LEAD_MS = 84n * 3600000n;
-export const SERIES_CENSUS_LEAD_MS = 120n * 3600000n;
+const HOUR = 3600000n;
+// THE WRITER'S HORIZON IS 72 h ON EVERY NETWORK (TN24-1405): the schedule is laid 72 h ahead whatever the clock below.
+export const SERIES_WRITE_AHEAD_MS = 72n * HOUR;
+
+/**
+ * THE SERIES CLOCK, PER NETWORK. Mainnet (CENSUS3D-1401): census cut, committee_time and lead are one 72 h.
+ * Testnet4 (TN24-1405, and the owner 14:1x: "Take the 36 h census lead"): committee_time 24 h before the start and a
+ * 24 h lead, so a round can be tested the next day - and the census 36 h before the start, because a census cut at the
+ * committee_time puts the beacon (the first block past committee_time) one block after the census block, below any
+ * publication that names that census: measured on census 154206, committee_time 1 s after its median and block 154207
+ * already past it. The 12 h between census and committee_time is the publication window.
+ */
+export const SERIES_CLOCKS = Object.freeze({
+  mainnet: Object.freeze({ censusLeadMs: 72n * HOUR, committeeLeadMs: 72n * HOUR, leadMinMs: 72n * HOUR }),
+  testnet4: Object.freeze({ censusLeadMs: 36n * HOUR, committeeLeadMs: 24n * HOUR, leadMinMs: 24n * HOUR }),
+});
+const sameBytes = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array && a.length === b.length && a.every((x, i) => x === b[i]);
+/** The clock a contract's network runs: testnet4's for its network id, mainnet's for every other. */
+export const seriesClockFor = (networkId) => (sameBytes(networkId, NETWORK_ID_TESTNET4) ? SERIES_CLOCKS.testnet4 : SERIES_CLOCKS.mainnet);
+// the mainnet figures under their old names, for callers that name no network
+export const SERIES_LEAD_MIN_MS = SERIES_CLOCKS.mainnet.leadMinMs;
+export const SERIES_COMMITTEE_LEAD_MS = SERIES_CLOCKS.mainnet.committeeLeadMs;
+export const SERIES_CENSUS_LEAD_MS = SERIES_CLOCKS.mainnet.censusLeadMs;
 export const PUBLICATION_KIND_SERIES = 0x53;                // 'S', beside ROUND's 'R'
 
 const u64 = (v) => { const b = new Uint8Array(8); new DataView(b.buffer).setBigUint64(0, BigInt(v)); return b; };
 const u32 = (v) => { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, v); return b; };
 
-/** The series' template from any Round Contract of its committee: committee_time 84 h before the start, entry closing at it. */
+/** The series' template from any Round Contract of its committee: committee_time its network's lead before the start, entry closing at it. */
 export function seriesTemplate(contract, seriesStartMs) {
   const start = BigInt(seriesStartMs);
-  return { ...contract, committeeTimeMs: start - SERIES_COMMITTEE_LEAD_MS, startTimeMs: start, entryCloseMs: start };
+  const clock = seriesClockFor(contract.networkId);
+  return { ...contract, committeeTimeMs: start - clock.committeeLeadMs, startTimeMs: start, entryCloseMs: start };
 }
 
 /** HORIZON72-1131: a series whose start is less than 72 h after its committee_time is refused - listed, opened, entered never. */
@@ -44,8 +66,9 @@ export function seriesLeadIsValid(template) {
   if (!template || typeof template.startTimeMs !== 'bigint' || typeof template.committeeTimeMs !== 'bigint')
     return { ok: false, why: 'a series names its committee time and its start' };
   const lead = template.startTimeMs - template.committeeTimeMs;
-  if (lead < SERIES_LEAD_MIN_MS)
-    return { ok: false, why: `that series starts ${lead} ms after its committee time, and a round must exist ${SERIES_LEAD_MIN_MS} ms (72 h) before its first entry` };
+  const min = seriesClockFor(template.networkId).leadMinMs;
+  if (lead < min)
+    return { ok: false, why: `that series starts ${lead} ms after its committee time, and a round must exist ${min} ms (${min / HOUR} h) before its first entry` };
   if (template.entryCloseMs !== template.startTimeMs)
     return { ok: false, why: 'a series round takes no late join: its entry closes at its start' };
   return { ok: true, leadMs: lead };
