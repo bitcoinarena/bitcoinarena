@@ -1236,6 +1236,79 @@ gets no entry receipts.
   block confirms within the grace period, the round never opens for entry;
   since no stake was committed, nothing needs refunding.
 
+### Round series — a new round every 90 seconds *(RULED, the owner 2026-09-28)*
+
+**The nodes open a new round every 90 seconds, continuously.** A publication
+and a beacon per round cannot carry that: each costs a transaction and waits
+on Bitcoin for its block and its depth - an hour at best on mainnet, many
+hours on testnet4 (measured 2026-09-27/28: a round published at 01:58 had no
+block to carry its publication before its beacon arrived at 03:58, and died
+there). So the unit anchored on chain is a **series**, and the rounds of a
+series need nothing more from Bitcoin.
+
+```text
+SeriesContract        every field of a Round Contract except the round's own
+                      times, plus:
+  series_start        wall-clock instant of round 0's entry opening
+  round_period        90 s (the network's reference; a genesis parameter)
+  round_count         how many rounds the series holds (cap below)
+  entry_window        how long each round takes entries (reference: = round_period)
+
+series_id             = H(SeriesContract)
+publication           OP_RETURN "BLW" SERIES series_id, confirmed strictly
+                      below the series' beacon block - the same rule as a
+                      round's (above), once per series
+committee_time        = the series' committee_time; series_start >= committee_time
+                        + min_entry_window
+beacon, depth         as above, once per series
+```
+
+**Round `i` of a series is derived, never authored:**
+
+```text
+round_contract(i)     = SeriesContract with
+                          committee_time  = series committee_time
+                          start_time      = series_start + i * round_period
+                          entry_open      = start_time
+                          entry_close     = start_time + entry_window
+                          round_index     = i
+round_id(i)           = H(series_id || i)
+committee             = the series' committee (one sortition on the series'
+                        census and beacon, §5A.6)
+round_seed(i)         = H(committee_seed || i)   - the world, the per-round
+                        draws; never a value anyone picks
+```
+
+Every round of a series is fixed the moment the series is published: nothing
+per round is chosen after the beacon, so a series grinds no better than a
+single round did, and the anti-grinding arithmetic above holds per series. A
+node **must refuse** an entry, a lock or a settlement for a `round_id` that is
+not `H(series_id || i)` of a published series whose beacon it holds, or whose
+`i` is outside `0 .. round_count - 1`, or whose entry window is not the one
+derived above.
+
+**Continuity.** The next series is published while the current one runs, far
+enough ahead that its publication confirms, its beacon comes and reaches its
+depth before the current series' last round closes (`series_lead`, reference:
+6 h on testnet4, 3 h on mainnet). The lobby therefore always shows exactly one
+round open for entries and the next one opening at its `start_time`; a player
+never waits on Bitcoin. If the next series is late, rounds stop at the end of
+the current one and resume at the next series' `series_start` - nothing is
+paid or refunded for a gap, because no stake was taken in it.
+
+**Cap.** One captured committee now holds every round of its series, not one.
+`round_count` is therefore capped so a series lasts at most `series_max`
+(reference: 24 h, 960 rounds at 90 s), and the per-round stake ceiling
+(§5A.10) is unchanged: a capture's gain grows with the rounds it sits over,
+and the slash it risks (§5A.3) is five bonds per round it settles falsely.
+
+**Per round, unchanged:** each round has its own entries, stake locks, claim
+key (§23.1; the committee may deal keys for upcoming rounds ahead), transcript,
+objection window and settlement - rounds overlap (round `i+1` takes entries
+while round `i`'s runs finish) and settle independently. What moved off chain
+is only the round's *existence*: it follows from its series, so it needs no
+transaction and no block of its own.
+
 ## 5A.6 Selection — bond-weighted stateless sortition
 *(replaces the stateful rotation of v4.5)*
 
