@@ -68,6 +68,8 @@ const round = await standUpRound({ host: '127.0.0.1', portA: pa, portB: pb, port
   // THE ENTRY WINDOW OUTLASTS THE BEACON: on testnet4 committee_time is passed by somebody else's blocks, about an
   // hour after publication, and entries open only then.
   entryWindowMs: BigInt(env.BLWP_ENTRY_WINDOW_MS || 6 * 3600 * 1000),
+  // OR AN ENTRY CLOSE AT A WALL-CLOCK INSTANT (ISO), the window then fitted to it once committee_time is known
+  ...(env.BLWP_ENTRY_CLOSE_AT ? { entryCloseAtMs: Date.parse(env.BLWP_ENTRY_CLOSE_AT) } : {}),
   signerNode: { closeAtEnd: true, stakeLocks: lock },
   guardianChain: { bitcoindUrl: env.BLWP_BITCOIND_URL, cookiePath: env.BLWP_BITCOIND_COOKIE, call: chainCall },
   // the signed test set names 18777, which the live Daily holds; this committee answers on its own door
