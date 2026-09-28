@@ -18,6 +18,10 @@
 > guardians, seats and clients talk; how a player finds his federation on
 > any device; and the **BIP39 seed of 12 or 24 words** every player writes
 > down, from which the wallet, the round keys and the identity key derive.
+> **Bonds (the owner 2026-09-28):** a confirmed, unspent bond stays the bond for
+> every later round, restart and advertisement; a new advertisement is an
+> update transaction, not a new bond; maturity is not expiry (§5A.2,
+> §5A.3B).
 > Later the same day: **guardians earn from the 2%** (§22A, three pools);
 > a slashed guardian bond goes **evenly to the active census nodes and 25%
 > to the developers**, never to the witnesses (§23A.5); and a guardian can
@@ -683,8 +687,9 @@ custody as a guardian of a federation, §23A). Any combination is valid,
 including none, and an operator who wants no part of custody simply leaves
 `guardian_capable` off and is never in a guardian sortition. No role is
 implied by another, no role is implied by the bond, and no fee share is
-paid for a role a node did not take (§22A). A node changes its roles with a
-new bond-committed advertisement, effective at the next `census_height`;
+paid for a role a node did not take (§22A). A node changes its roles with an
+**advertisement update** (§5A.2) - never a new bond - effective at the next
+`census_height`;
 turning a role off while serving it is a departure and follows the notice
 of that role (§23A.5 for a guardian; a seat serves out the rounds it sits
 in). Nothing is slashed for a role a node never advertised.
@@ -735,7 +740,44 @@ which the published advertisement gives up regardless.
 **What this costs.** A node cannot join the census instantly: it must fund a
 bond and wait for confirmations. That is intended — the delay is what makes
 census membership expensive, and it is the same property that makes the
-census objective.
+census objective. It is paid **once**.
+
+**A bond, once confirmed, stays the bond (RULED, the owner 2026-09-28 07:39).**
+
+- **It does not expire.** A bond output that has confirmed and is unspent
+  is the node's bond at every later `census_height` - for every later
+  round, across every restart of the node, and across every new
+  advertisement of the same `node_pubkey`. Nothing in this protocol ages a
+  bond out, replaces it or asks for it again. `bond_maturity` (§5A.3B) is
+  the earliest height at which the node may take its money back, not a
+  height at which the bond stops counting: an unspent bond past maturity
+  is still the bond. A bond stops being the bond in exactly two ways: it is
+  **spent** (by the node, by a cooperative close, or by a slash), or it is
+  knocked out by a proof that it was spent (§5A.3B).
+- **The funding spend is the bond's birth.** The transaction that spends a
+  funding output into the bond output **creates** the bond. That the funding
+  output is spent is not an objection, not a spend of the bond, and never
+  evidence against the census entry; only a spend **of the bond output
+  itself** is (§5A.3B).
+- **A node never posts a bond it already has.** On start, on restart, for a
+  new round, and for a new advertisement, the node first looks on chain for
+  a confirmed, unspent bond output committing to its `node_pubkey`
+  (template, `BOND_MARKER`, §5A.3). If one exists, **that is the bond** and
+  the node's bond-posting path (`postBond` in the reference node) is not
+  taken. The posting path runs only when no such output exists, or when
+  the operator asks for an **additional** bond to raise the node's weight
+  (§5A.10B: several bonds, weight is their sum) - an addition, never a
+  replacement.
+- **A new advertisement is an update, not a new bond.** The bond commits,
+  at its creation, to the node's first advertisement. Every later one is an
+  **advertisement update**: one small transaction that pays the
+  `BOND_MARKER` dust (so it is findable, as a bond is), carries
+  `OP_RETURN "BLW" ADV bond_outpoint H(NodeAdvertisement)`, carries the body
+  in its witness (§25.1), and is signed by `node_pubkey`. It spends no bond
+  and starts no maturity clock. The census reads, for each unspent bond, the
+  **newest valid update confirmed at or below `census_height`**, else the
+  advertisement the bond committed to at creation. An update whose
+  `node_pubkey` is not the bond's is not an update of that bond.
 
 ## 5A.3 Eligibility — objective criteria only *(tightened in 4.6.1)*
 
@@ -894,14 +936,20 @@ script path A (recovery, unilateral)
 
 script path B (slash)
               <k-of-m arbitration keys> CHECKMULTISIG
-              -> the arbitration quorum, any time before maturity
+              -> the arbitration quorum, at any time (no timelock)
 ```
 
-`bond_maturity` is an absolute locktime set beyond the last round the node
-may serve plus the objection and challenge windows (reference: 30 days after
-the node stops advertising). Its purpose is that **arbitration can never
-freeze a bond forever**: if arbitration disappears, path A returns the money
-to its owner.
+`bond_maturity` is an absolute locktime, reference 30 days after the bond
+confirms. It is **not an expiry** (RULED, the owner 2026-09-28): it is only the
+earliest height at which path A lets the node take its money back, and its
+purpose is that **arbitration can never freeze a bond forever**: if
+arbitration disappears, path A returns the money to its owner. A bond past
+maturity that the node has not spent is still the bond (§5A.2) and still
+counts, round after round. The one thing maturity changes is a race: past
+it, a node that sees a slash coming can spend through path A first and
+leave. That spend takes it out of the census for good and is itself public,
+so the residual is deterrence lost for an offence caught late, never a
+player's money (§5A.3B, "Why player funds do not depend on any of this").
 
 ### Why Taproot and not a plain multisig
 
@@ -941,7 +989,8 @@ that it is still unspent - and unspentness is the whole question.
 
 **Proving unspentness positively.** Bitcoin has no UTXO set commitment, so
 a light client cannot be handed a proof that an output is still unspent.
-It can, however, be handed the opposite: a spend of that output is itself a
+It can, however, be handed the opposite: a spend of that output - the bond
+output itself, never the funding output it was made from (§5A.2) - is itself a
 complete, portable proof, exactly like the equivocation proof of §13B. The
 census can therefore be built from inclusion proofs and **corrected by
 objection** - anyone may knock an entry out by presenting the spending
@@ -2538,8 +2587,9 @@ faces in §5A.10.
 
 It is computable by anyone from the chain, so it needs no vote, no tally,
 no quorum and no round of messages. A node changes its declaration the same
-way it changes anything else in its advertisement: by publishing a new one
-with a new bond (§5A.10B), which is deliberately not free.
+way it changes anything else in its advertisement: by an advertisement
+update (§5A.2) - one transaction and its confirmations, never a new bond -
+which is deliberately not free.
 
 ### 3. Client preferences: not network parameters
 
@@ -3074,8 +3124,8 @@ draws again. The ceremony's output is the federation configuration;
 `federation_id` is its hash, exactly as §23.6 already verifies it.
 
 **Then, in this order:** every guardian re-advertises with `guardian_of[]`
-naming `(federation_id, peer key)` (a new bond-committed advertisement,
-§5A.1); the guardians sign the first **federation record** (§23A.4) with
+naming `(federation_id, peer key)` (an advertisement update, §5A.2 - the
+bond it already has stays its bond); the guardians sign the first **federation record** (§23A.4) with
 `status = OPEN`; the seats and relays carry it. Only from then on may a
 Round Contract name it (§23.6 unchanged: threshold of its guardians bonded
 census nodes at `census_height`).
@@ -3302,8 +3352,8 @@ successor either, so a slash is not a reason to want a succession. And
 nothing goes to anyone before the players are whole: the escrow pays a
 liquidation first, the nodes and the developers from what is left.
 
-**A guardian's bond is otherwise a normal census bond** (§5A.3B): path A
-returns it to him at maturity if nobody slashes; path B is the arbitration
+**A guardian's bond is otherwise a normal census bond** (§5A.3B): it stays
+his bond until he spends it; path A lets him take it back from maturity on; path B is the arbitration
 slash on a committed proof; path C the cooperative close. He may not spend
 it while seated - that is the census's own definition of leaving without
 notice.
@@ -4074,9 +4124,10 @@ about Bitcoin.
 how absurd it is; a median is moved only as far as the weight behind it
 reaches. A node declaring a node fee of 90% moves nothing.
 
-**Changing a declaration is deliberately not free.** It means publishing a
-new advertisement, which means a new bond output and its confirmations
-(§5A.10B). Governance therefore moves at the speed of capital, and a
+**Changing a declaration is deliberately not free.** It means an
+advertisement update (§5A.2): a transaction, its fee and its confirmations.
+It never means a new bond - a confirmed bond stays the bond (the owner
+2026-09-28). Governance therefore moves at the speed of capital, and a
 campaign to swing a parameter is visible on chain while it is being
 assembled.
 
@@ -4599,7 +4650,7 @@ the same clock the census already uses.
 |---|---|---|---|
 | Review | 1008 | 7 d | Published, votes not yet counted. Time to find that it is broken *before* anybody has committed to it. |
 | Voting | **1440** | **10 d** | `OP_RETURN` votes confirm. |
-| Cooldown | 2016 | 14 d | Outcome known, change **not** live. Operators upgrade; anyone who dislikes it exits or lets a bond lapse. |
+| Cooldown | 2016 | 14 d | Outcome known, change **not** live. Operators upgrade; anyone who dislikes it exits by spending their bond after maturity. |
 | Activation | at `activation_height` | | |
 | **Total** | **4464** | **~31 d** | |
 
