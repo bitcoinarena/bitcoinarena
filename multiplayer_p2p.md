@@ -1258,8 +1258,11 @@ series_id             = H(SeriesContract)
 publication           OP_RETURN "BLW" SERIES series_id, confirmed strictly
                       below the series' beacon block - the same rule as a
                       round's (above), once per series
-committee_time        = the series' committee_time; series_start >= committee_time
-                        + min_entry_window
+committee_time        = the series' committee_time
+series_start          >= committee_time + series_lead_min
+series_lead_min       48 h (the owner 2026-09-28): every round exists - published,
+                      beacon at depth, committee drawn - at least 48 h before
+                      it takes its first entry
 beacon, depth         as above, once per series
 ```
 
@@ -1287,14 +1290,31 @@ not `H(series_id || i)` of a published series whose beacon it holds, or whose
 `i` is outside `0 .. round_count - 1`, or whose entry window is not the one
 derived above.
 
-**Continuity.** The next series is published while the current one runs, far
-enough ahead that its publication confirms, its beacon comes and reaches its
-depth before the current series' last round closes (`series_lead`, reference:
-6 h on testnet4, 3 h on mainnet). The lobby therefore always shows exactly one
-round open for entries and the next one opening at its `start_time`; a player
-never waits on Bitcoin. If the next series is late, rounds stop at the end of
-the current one and resume at the next series' `series_start` - nothing is
-paid or refunded for a gap, because no stake was taken in it.
+**48 hours ahead *(RULED, the owner 2026-09-28)*.** A round is created at least
+48 h before its entry opens: its series is published, its beacon has come and
+reached its depth, and its committee is drawn, all before `series_start - 48 h`.
+A node **must refuse** a series whose `series_start` is less than 48 h after
+its `committee_time`, and must not list, open or take entries for a round of
+it. Bitcoin's delays (testnet4's gaps of hours, a reorg that drops the
+publication and forces it again) are absorbed inside those 48 h, never in
+front of a player.
+
+**Continuity.** The nodes therefore keep the published series at least 48 h
+ahead of the wall clock at all times: a series is published as soon as the
+horizon of already-created rounds falls below 48 h plus the time a publication
+and its beacon take (reference: publish the series starting in 72 h, each
+covering 24 h, once a day). The lobby always shows one round open for entries
+and the rounds that follow it, every one already fixed; a player never waits
+on Bitcoin. If the nodes fail to publish in time, rounds stop where the
+created horizon ends and resume at the next series' `series_start` - nothing
+is paid or refunded for a gap, because no stake was taken in it.
+
+**What the lead costs.** Every committee is known at least 48 h before its
+rounds run - time to approach its members. That is the same exposure as any
+known committee: a member that signs a false settlement loses its bond
+(§5A.3), and the per-round stake ceiling (§5A.10) keeps what one round can
+win below what five slashed bonds cost. The lead changes when a briber can
+start, not what a capture pays.
 
 **Cap.** One captured committee now holds every round of its series, not one.
 `round_count` is therefore capped so a series lasts at most `series_max`
