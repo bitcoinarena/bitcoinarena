@@ -794,7 +794,22 @@ bond_amount >= bond_min(role)
 committed advertisement body retrievable and hash-matching
 advertisement signature valid under node_pubkey
 advertisement declares the role and a supported protocol version
+advertisement declares serving = true          (the owner 2026-09-28, below)
 ```
+
+**Stepping out without unbonding** *(RULED, the owner 2026-09-28)*. A node that
+will be offline - maintenance, a move, retirement - publishes an
+advertisement update (§5A.2) with `serving = false`. From the first series
+whose `census_height` is at or above that update's block, the node is not in
+the census and is never drawn; its bond stays confirmed, unspent and valid
+(§5A.2), and it keeps the rounds of series already created (at most 72 h
+ahead, §5A.5 - those draws are fixed). An update with `serving = true` brings
+it back from the next census in the same way. The fee is the node's own; no
+bond moves and no maturity clock starts. A node that stops answering without
+stepping out is not punished for the absence itself - it earns no fee share
+(§22A) and yields its seat to the reserve (§5A.7) - but it wastes the reserve,
+so the reference node warns its operator when it has missed three seatings in
+a row and offers the `serving = false` update.
 
 `bond_min(role)` is **named in the Round Contract**, not global. A round
 declares the bracket it plays at and the floor that goes with it, and a
@@ -1355,17 +1370,18 @@ win below what five slashed bonds cost. The lead changes when a briber can
 start, not what a capture pays.
 
 **Who runs the rounds.** Every round draws its own committees: §5A.6 run
-with `committee_seed(i)` over the series' census, per role (§5A.9), 7 slots,
-threshold 5 (§5A.7). The census is the one named in the series: every node
+with `committee_seed(i)` over the series' census, per role (§5A.9): 9 drawn,
+at most 7 seated from those present, threshold 5 (§5A.7). The census is the one named in the series: every node
 whose bond is confirmed and unspent at the series' `census_height` and commits
 to its advertisement (§5A.2-5A.3) - including a bond confirmed long ago
 (§5A.2). A node bonded after that height takes part from the next series whose
 census includes it. Over a series each node sits in about
 `960 x 7 x w_node / W_total` committees per role, in proportion to its bond;
 nobody chooses who serves, and nobody can move a node in or out of a round.
-A node selected for a round it cannot serve is handled as any absent member
-(§5A.7): the round runs if the threshold is present, and otherwise never opens
-for entries.
+A drawn node that is offline yields its seat to the next drawn node in score
+order (reserve seats, §5A.7); a round with fewer than 5 of its 9 drawn present
+never opens for entries. A node that will be away steps out of the census
+beforehand (§5A.3, `serving = false`).
 
 **Cap.** One captured beacon draw no longer holds a series: each round's
 committee is its own draw, so a capture is per round and the arithmetic of
@@ -1466,6 +1482,52 @@ networks run smaller committees, and because the sizes are part of the
 network's identity a small-committee network can never be mistaken for
 this one.
 
+### Reserve seats *(RULED, the owner 2026-09-28)*
+
+A node drawn 48 h or more ahead (§5A.5, round series) may be offline when its
+round comes. So each role draws **more nodes than it seats**:
+
+```text
+drawn      = 9 per role     the 9 lowest scores of §5A.6, in score order
+seats      = 7              at most; the threshold stays 5
+present    = drawn nodes that signed PRESENT(round_id, role, node_pubkey)
+             before seating_close = start_time - 30 s
+seated     = the first min(7, |present|) present nodes in score order
+round opens for entries iff |seated| >= 5
+```
+
+**The seating certificate.** The seated nodes sign
+`SEATING(round_id, role, seated list)`; a round's seating is valid only with
+the signature of **every** node it seats. Each node signs at most one seating
+per round and role, and seats itself only in score order among the PRESENT
+messages it holds: it seats a node ranked below one it knows to be present
+only if that one is also seated. Two valid seatings for the same round and
+role always share a signer - each has at least 5 of the same 9, and
+5 + 5 > 9 - so two certificates are proof of **equivocation** by that signer
+and slash its bond (§5A.3B). The general constraint, for any parameters:
+`2 x threshold > drawn`.
+
+A client takes an entry only for a round whose seating certificate it holds
+and has checked against the draw it computes itself (§5A.6); the lobby lists
+the seated nodes of each round. A node that sees two certificates for one
+round publishes both, and the round is void (§13C) - no stake was taken,
+because entries need the certificate.
+
+**What the reserve buys**, with a share `q` of the drawn weight offline
+(independent draws):
+
+| offline `q` | P(round fails), 7 drawn, need 5 | P(round fails), 9 drawn, need 5 |
+|---|---|---|
+| 10% | 2.6% | 0.1% |
+| 20% | 14.8% | 2.0% |
+| 30% | 35.3% | 9.9% |
+
+The reserve changes nothing about capture: a seated committee is still 5 of
+at most 7, drawn from the census by §5A.6, and an attacker gains no seats by
+being present - only an honest node that is absent loses its seat. An
+attacker that controls reserve seats and keeps the others from seating needs
+their absence, which it cannot cause without breaking their node.
+
 ## 5A.8 (removed)
 
 The stateful rotation cursor of v4.5 is gone; see §5A.6. Nothing in v4.6
@@ -1476,9 +1538,9 @@ requires a canonical assignment log.
 Selection runs separately per role, and by default overlap is minimized:
 
 ```text
-select 7 GAME/VERIFY
+draw 9 GAME/VERIFY (§5A.7 reserve seats)
 remove those nodes (and their operator_id siblings) from the settlement pool
-select 7 SETTLEMENT from the remainder
+draw 9 SETTLEMENT from the remainder
 ```
 
 Fallback if too few remain: overlap is permitted but `overlap_count` is
