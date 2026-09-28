@@ -1276,10 +1276,11 @@ round_contract(i)     = SeriesContract with
                           entry_close     = start_time + entry_window
                           round_index     = i
 round_id(i)           = H(series_id || i)
-committee             = the series' committee (one sortition on the series'
-                        census and beacon, §5A.6)
-round_seed(i)         = H(committee_seed || i)   - the world, the per-round
-                        draws; never a value anyone picks
+committee_seed(i)     = H(series committee_seed || i)
+committee(i)          = §5A.6 sortition with committee_seed(i) over the
+                        series' census - a fresh draw for every round
+round_seed(i)         = H(committee_seed(i) || "world") - the world, the
+                        per-round draws; never a value anyone picks
 ```
 
 Every round of a series is fixed the moment the series is published: nothing
@@ -1299,28 +1300,78 @@ it. Bitcoin's delays (testnet4's gaps of hours, a reorg that drops the
 publication and forces it again) are absorbed inside those 48 h, never in
 front of a player.
 
-**Continuity.** The nodes therefore keep the published series at least 48 h
-ahead of the wall clock at all times: a series is published as soon as the
-horizon of already-created rounds falls below 48 h plus the time a publication
-and its beacon take (reference: publish the series starting in 72 h, each
-covering 24 h, once a day). The lobby always shows one round open for entries
-and the rounds that follow it, every one already fixed; a player never waits
-on Bitcoin. If the nodes fail to publish in time, rounds stop where the
-created horizon ends and resume at the next series' `series_start` - nothing
-is paid or refunded for a gap, because no stake was taken in it.
+**The series is a function of the clock, so anyone can publish it.** Series
+`k` has fixed times, derived from the network's genesis
+(`genesis_series_start`, §27A.6), and so a fixed contract:
 
-**What the lead costs.** Every committee is known at least 48 h before its
-rounds run - time to approach its members. That is the same exposure as any
+```text
+series_start(k)      = genesis_series_start + k * series_max       (24 h)
+round_count          = series_max / round_period                    (960)
+census_height(k)     = the highest block whose MTP <= series_start(k) - 96 h
+publish_from(k)      = census_height(k) at census_confirmations depth
+committee_time(k)    = series_start(k) - 60 h
+beacon(k)            = first block with MTP > committee_time(k), at depth;
+                       it must be at depth before series_start(k) - 48 h
+SeriesContract(k)    = the genesis template with these values; nothing else
+```
+
+Every field is fixed by the genesis parameters and the chain, so every node
+computes the same `SeriesContract(k)` and the same `series_id`. **Any bonded
+node may publish it** - `OP_RETURN "BLW" SERIES series_id` - between
+`publish_from(k)` and `committee_time(k)`, 36 hours in which one transaction
+has to confirm. The reference behaviour is that every node publishes once
+`publish_from(k)` has passed and it sees no confirmed publication yet; the
+series counts from the **first confirmed publication** (lowest height, then
+lowest txid). A second publication of the same `series_id` is legal and only
+wasted fee; a publication of any other hash for slot `k` is not a series and is
+ignored. Nothing is chosen, so there is nothing to grind: the old argument
+("each candidate costs a transaction") is replaced by "there is exactly one
+candidate". If no publication confirms before the beacon block, series `k`
+does not exist and its 24 h of rounds are a gap - no stake was taken in it.
+
+**Who pays the fee.** The publisher pays it from its own wallet and is
+reimbursed from the node fee (§22A, 2%) of the series' round 0 - or, if round
+0 has no entries, the first round of the series that settles with any. The
+reimbursement is one line in that round's settlement: `publisher_payout =
+min(publication fee, fee_cap)` to the publisher's bond key, where the fee is
+the confirmed publication's own fee, read from the chain (reference `fee_cap`:
+10,000 sat). Only the first confirmed publication is reimbursed; duplicates
+are the duplicating node's loss, which is what keeps nodes from all
+publishing at once.
+
+**Continuity.** Because the times are fixed, the created horizon is always
+between 48 and 72 h ahead: series `k` is created (beacon at depth) at the
+latest at `series_start(k) - 48 h`, while series `k-1` runs. The lobby always
+shows one round open for entries and the rounds that follow it, every one
+already fixed; a player never waits on Bitcoin. If series `k` fails, rounds
+stop at the end of series `k-1` and resume at `series_start(k+1)` - nothing is
+paid or refunded for a gap, because no stake was taken in it.
+
+**What the lead costs.** Every round's committee is known at least 48 h
+before the round runs - time to approach its members. That is the same exposure as any
 known committee: a member that signs a false settlement loses its bond
 (§5A.3), and the per-round stake ceiling (§5A.10) keeps what one round can
 win below what five slashed bonds cost. The lead changes when a briber can
 start, not what a capture pays.
 
-**Cap.** One captured committee now holds every round of its series, not one.
-`round_count` is therefore capped so a series lasts at most `series_max`
-(reference: 24 h, 960 rounds at 90 s), and the per-round stake ceiling
-(§5A.10) is unchanged: a capture's gain grows with the rounds it sits over,
-and the slash it risks (§5A.3) is five bonds per round it settles falsely.
+**Who runs the rounds.** Every round draws its own committees: §5A.6 run
+with `committee_seed(i)` over the series' census, per role (§5A.9), 7 slots,
+threshold 5 (§5A.7). The census is the one named in the series: every node
+whose bond is confirmed and unspent at the series' `census_height` and commits
+to its advertisement (§5A.2-5A.3) - including a bond confirmed long ago
+(§5A.2). A node bonded after that height takes part from the next series whose
+census includes it. Over a series each node sits in about
+`960 x 7 x w_node / W_total` committees per role, in proportion to its bond;
+nobody chooses who serves, and nobody can move a node in or out of a round.
+A node selected for a round it cannot serve is handled as any absent member
+(§5A.7): the round runs if the threshold is present, and otherwise never opens
+for entries.
+
+**Cap.** One captured beacon draw no longer holds a series: each round's
+committee is its own draw, so a capture is per round and the arithmetic of
+§5A.6 and §5A.10 holds per round unchanged. `round_count` is still capped so a
+series lasts at most `series_max` (reference: 24 h, 960 rounds at 90 s),
+which bounds how long one census stands before newly bonded nodes join.
 
 **Per round, unchanged:** each round has its own entries, stake locks, claim
 key (§23.1; the committee may deal keys for upcoming rounds ahead), transcript,
