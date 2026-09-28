@@ -7,8 +7,9 @@
 // against its contract before it shows it (lobby.js); this is the node's half.
 //
 // One signer node, five rounds: free and open, free with its committee pending, free
-// and past its entry close, paying and open, free and closed. Only the three a
-// player could still come to are listed, the open ones first.
+// and past its entry close, paying and open, free and closed. Every round that has not ended is listed (ROUNDS-EP-1612,
+// the owner 2026-09-28: "It lists every announced round") - the one past its entry close too, saying entryOpen false - and
+// the closed one is not; the open ones first.
 //
 // MEASURED BEFORE (TASKBOOK, M3.3-34): GET /rounds was 404 - no door listed
 // rounds, and a page with no `round=` in its link could only be the offline game.
@@ -85,26 +86,29 @@ test('the node lists the rounds a player can still join - free or paying, open o
     const body = r.status === 200 ? await r.json() : null;
     const listed = body ? body.rounds : [];
     const byId = Object.fromEntries(listed.map((x) => [x.id, x]));
-    const pick = (x) => x && { phase: x.phase, free: x.free, wallet: x.wallet, joined: x.joined, playing: x.playing, assignedHere: x.assignedHere };
+    const pick = (x) => x && { phase: x.phase, entryOpen: x.entryOpen, free: x.free, wallet: x.wallet, joined: x.joined, playing: x.playing, assignedHere: x.assignedHere };
     const facts = {
       status: r.status, played,
       order: listed.map((x) => Object.keys(ids).find((k) => ids[k] === x.id)),
       freeOpen: pick(byId[ids.freeOpen]),
       freePending: pick(byId[ids.freePending]),
       payingOpen: pick(byId[ids.payingOpen]),
+      freeEntryOver: pick(byId[ids.freeEntryOver]),
     };
     console.log('  FACTS (lobby):', JSON.stringify(facts));
     assert.deepEqual(facts, {
       status: 200, played: '1',
       // open before pending, and among the open the soonest entry close first:
       // payingOpen's committee came 1 s before freeOpen's, so its entry closes first
-      order: ['payingOpen', 'freeOpen', 'freePending'],
-      freeOpen: { phase: 'open', free: true, wallet: 'none', joined: 1, playing: 1, assignedHere: true },
+      // the round past its entry close is announced still (it has not ended), and its entry closed soonest
+      order: ['freeEntryOver', 'payingOpen', 'freeOpen', 'freePending'],
+      freeOpen: { phase: 'open', entryOpen: true, free: true, wallet: 'none', joined: 1, playing: 1, assignedHere: true },
       // ASSIGNED HERE BY THE CHAIN (2026-09-25): the bonded census names this daemon and the round has a slot for each of
       // its two nodes, so the node is assigned to every round it opened. Measured before the chain view: false, because a
       // node with no chain view assigned nobody and only freeOpen was forced by assumeAssigned.
-      freePending: { phase: 'pending', free: true, wallet: 'none', joined: 0, playing: 0, assignedHere: true },
-      payingOpen: { phase: 'open', free: false, wallet: 'federation-lock', joined: 0, playing: 0, assignedHere: true },
+      freePending: { phase: 'pending', entryOpen: false, free: true, wallet: 'none', joined: 0, playing: 0, assignedHere: true },
+      payingOpen: { phase: 'open', entryOpen: true, free: false, wallet: 'federation-lock', joined: 0, playing: 0, assignedHere: true },
+      freeEntryOver: { phase: 'open', entryOpen: false, free: true, wallet: 'none', joined: 0, playing: 0, assignedHere: true },
     });
     // The times the page needs to say "entry closes in 1:42", as the contract has them.
     assert.equal(byId[ids.freeOpen].entryCloseMs, String(rounds.freeOpen.entryCloseMs));
@@ -124,6 +128,6 @@ test('the node lists the rounds a player can still join - free or paying, open o
     };
     console.log('  signed (2-of-2):', JSON.stringify({ verified, needed: open.needed, signerNodes: open.signerNodes, tampered }));
     assert.deepEqual({ verified, needed: open.needed, signerNodes: open.signerNodes, tampered },
-      { verified: [true, true, true], needed: 2, signerNodes: 2, tampered: { joined: false, assignedHere: false, anotherKey: false } });
+      { verified: [true, true, true, true], needed: 2, signerNodes: 2, tampered: { joined: false, assignedHere: false, anotherKey: false } });
   } finally { await d.close(); }
 });
