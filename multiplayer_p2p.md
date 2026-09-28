@@ -471,7 +471,7 @@ same inputs + same seed + same sim version = same score
 ## 0.16 End-to-end player experience
 
 Alice opens the Unity WebGL game and sees an active round: 100 sat stake,
-49 players, late join open, entry closes 12:07, mission time 3 minutes. She
+49 players, entries open for 15 seconds, mission time 90 seconds. She
 picks a truck and cargo, commits 100 sat from her player wallet (topped up
 from her external Lightning wallet when it runs low, §24A.1),
 and rolls out. She steers, brakes, chooses her route, meets deterministic
@@ -1267,7 +1267,7 @@ SeriesContract        every field of a Round Contract except the round's own
   series_start        wall-clock instant of round 0's entry opening
   round_period        90 s (the network's reference; a genesis parameter)
   round_count         how many rounds the series holds (cap below)
-  entry_window        how long each round takes entries (reference: = round_period)
+  entry_window        how long each round takes entries (15 s, below)
 
 series_id             = H(SeriesContract)
 publication           OP_RETURN "BLW" SERIES series_id, confirmed strictly
@@ -1280,6 +1280,22 @@ series_lead_min       48 h (the owner 2026-09-28): every round exists - publishe
                       it takes its first entry
 beacon, depth         as above, once per series
 ```
+
+**Timing - every network, every round *(RULED, the owner 2026-09-28)*.** A round
+takes entries for **15 seconds** from its `start_time`, and a run lasts
+**90 seconds** (`round_duration_s` = 90, `blockTicks` = 5400 at 60 ticks/s). A
+new round opens every 90 s. This holds on mainnet, testnet4 and regtest, and
+for free rounds as for paying ones - there is no longer, "test" timing.
+
+```text
+entry_open(i)      = start_time(i) = series_start + i * 90 s
+entry_close(i)     = start_time(i) + 15 s
+last run ends      <= entry_close(i) + 2 x start_deadline + 90 s   (roundEndMs)
+```
+
+So a player waits at most 75 s for the next round to open, and at most two
+rounds' runs are on the road at once (round `i`'s last runs finish while round
+`i+1`'s start); each settles on its own.
 
 **Round `i` of a series is derived, never authored:**
 
@@ -4219,8 +4235,8 @@ census_height:         H (Bitcoin), roots in the contract
 published_at:          11:50   committee unknowable, no entry possible
 committee_time:        11:55   beacon -> both committees fixed, entry opens
 start_time:            12:00
-entry closes:          12:07
-T_run:                 3 minutes
+entry closes:          12:00:15  (15 s)
+T_run:                 90 seconds
 objection window W:    10 minutes
 GAME/VERIFY:           7 slots, 5-of-7   (known from 11:55)
 SETTLEMENT:            7 slots, 5-of-7   (known from 11:55)
@@ -4673,8 +4689,8 @@ So the line is not "median good, ballot bad". It is:
 ```text
 game_config {
   timing {
-    round_duration_s        180      // how long a run lasts
-    entry_window_s          120      // lobby open before committee_time
+    round_duration_s        90       // how long a run lasts (5400 ticks)
+    entry_window_s          15       // a round takes entries for 15 s from its start_time
     loading_time_s          8        // held at the bay
     claim_window_s          3600     // to take a payout
   }
@@ -5283,9 +5299,9 @@ max_players_per_round
 (measured_replay_speed x result_window) / T_run
 ```
 
-Example with `T_run` = 3 min and a 10-minute result window: at a measured
-30× realtime the ceiling is 100 players per committee node; at 60× it is
-200. Rounds larger than that require either a longer result window, a faster
+Example with `T_run` = 90 s and a 10-minute result window: at a measured
+30× realtime the ceiling is 200 players per committee node; at 60× it is
+400. Rounds larger than that require either a longer result window, a faster
 core, or per-node partitioning of the replay set — a design decision to be
 made **after** measurement.
 
