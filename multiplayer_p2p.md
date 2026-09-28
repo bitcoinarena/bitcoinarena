@@ -471,7 +471,7 @@ same inputs + same seed + same sim version = same score
 ## 0.16 End-to-end player experience
 
 Alice opens the Unity WebGL game and sees an active round: 100 sat stake,
-49 players, entries open for 15 seconds, mission time 90 seconds. She
+49 players, all starting together, mission time 82 seconds. She
 picks a truck and cargo, commits 100 sat from her player wallet (topped up
 from her external Lightning wallet when it runs low, §24A.1),
 and rolls out. She steers, brakes, chooses her route, meets deterministic
@@ -1267,7 +1267,7 @@ SeriesContract        every field of a Round Contract except the round's own
   series_start        wall-clock instant of round 0's entry opening
   round_period        90 s (the network's reference; a genesis parameter)
   round_count         how many rounds the series holds (cap below)
-  entry_window        how long each round takes entries (15 s, below)
+  round_run           82 s, every run of the round starting at its start_time (below)
 
 series_id             = H(SeriesContract)
 publication           OP_RETURN "BLW" SERIES series_id, confirmed strictly
@@ -1281,21 +1281,36 @@ series_lead_min       48 h (the owner 2026-09-28): every round exists - publishe
 beacon, depth         as above, once per series
 ```
 
-**Timing - every network, every round *(RULED, the owner 2026-09-28)*.** A round
-takes entries for **15 seconds** from its `start_time`, and a run lasts
-**90 seconds** (`round_duration_s` = 90, `blockTicks` = 5400 at 60 ticks/s). A
-new round opens every 90 s. This holds on mainnet, testnet4 and regtest, and
-for free rounds as for paying ones - there is no longer, "test" timing.
+**Timing - every network, every round *(RULED, the owner 2026-09-28; replaces
+0a4c25c4's 15 s entry window and 90 s run)*.** A new round starts every
+**90 seconds**, and **every run of a round starts together** at its
+`start_time` and lasts at most **82 seconds** (`round_duration_s` = 82,
+`blockTicks` = 4920 at 60 ticks/s). A player plays every round without
+missing one: the run ends at least 8 s before the next round starts, the
+result card stands for those **8 seconds**, and then the page says
+**"joining next round in N seconds"** beside an **"exit game"** button until
+the next start. This holds on mainnet, testnet4 and regtest, and for free
+rounds as for paying ones - there is no longer "test" timing.
 
 ```text
-entry_open(i)      = start_time(i) = series_start + i * 90 s
-entry_close(i)     = start_time(i) + 15 s
-last run ends      <= entry_close(i) + 2 x start_deadline + 90 s   (roundEndMs)
+start_time(i)      = series_start + i * 90 s
+entry_open(i)      = committee_time(i)          (the committee exists; 5A.5)
+entry_close(i)     = start_time(i)              (no late join: all start together)
+join_tick          = start_time(i)'s tick, for every entry of the round
+run ends           <= start_time(i) + 82 s  =  start_time(i+1) - 8 s
+result card        >= 8 s, then "joining next round in N s" + "exit game"
 ```
 
-So a player waits at most 75 s for the next round to open, and at most two
-rounds' runs are on the road at once (round `i`'s last runs finish while round
-`i+1`'s start); each settles on its own.
+**Continuing is the default.** While a player's run of round `i` is on the
+road, the page enters round `i+1` for them (its entry window is open: the
+committee of `i+1` exists long before, §5A.5), so the next run starts with
+everybody else at `start_time(i+1)`. In a paying round that entry locks the
+next stake from the player's wallet as any entry does; the player stops it
+with **exit game**, on the countdown or at any time before `start_time(i+1)`,
+and a stake locked for a round the player then leaves refunds by the lock's
+own expiry path (§23.1). A player who is not continuing enters from the
+lobby any time before a round's start. At most one round's runs are on the
+road at once; each round settles on its own.
 
 **Round `i` of a series is derived, never authored:**
 
@@ -1303,8 +1318,8 @@ rounds' runs are on the road at once (round `i`'s last runs finish while round
 round_contract(i)     = SeriesContract with
                           committee_time  = series committee_time
                           start_time      = series_start + i * round_period
-                          entry_open      = start_time
-                          entry_close     = start_time + entry_window
+                          entry_open      = its seating certificate (below)
+                          entry_close     = start_time   (all runs start together)
                           round_index     = i
 round_id(i)           = H(series_id || i)
 committee_seed(i)     = H(series committee_seed || i)
@@ -1507,7 +1522,8 @@ round comes. So each role draws **more nodes than it seats**:
 drawn      = 9 per role     the 9 lowest scores of §5A.6, in score order
 seats      = 7              at most; the threshold stays 5
 present    = drawn nodes that signed PRESENT(round_id, role, node_pubkey)
-             before seating_close = start_time - 30 s
+             before seating_close = start_time - 120 s  (so round i+1 is
+             seated before round i starts and a continuing player can enter it)
 seated     = the first min(7, |present|) present nodes in score order
 round opens for entries iff |seated| >= 5
 ```
@@ -4235,8 +4251,8 @@ census_height:         H (Bitcoin), roots in the contract
 published_at:          11:50   committee unknowable, no entry possible
 committee_time:        11:55   beacon -> both committees fixed, entry opens
 start_time:            12:00
-entry closes:          12:00:15  (15 s)
-T_run:                 90 seconds
+entry closes:          12:00:00  (at the start: all start together)
+T_run:                 82 seconds
 objection window W:    10 minutes
 GAME/VERIFY:           7 slots, 5-of-7   (known from 11:55)
 SETTLEMENT:            7 slots, 5-of-7   (known from 11:55)
@@ -4689,8 +4705,8 @@ So the line is not "median good, ballot bad". It is:
 ```text
 game_config {
   timing {
-    round_duration_s        90       // how long a run lasts (5400 ticks)
-    entry_window_s          15       // a round takes entries for 15 s from its start_time
+    round_duration_s        82       // how long a run lasts (4920 ticks); every run of a round starts together
+    round_period_s          90       // a new round every 90 s; the 8 s between is the result card
     loading_time_s          8        // held at the bay
     claim_window_s          3600     // to take a payout
   }
@@ -5299,9 +5315,9 @@ max_players_per_round
 (measured_replay_speed x result_window) / T_run
 ```
 
-Example with `T_run` = 90 s and a 10-minute result window: at a measured
-30× realtime the ceiling is 200 players per committee node; at 60× it is
-400. Rounds larger than that require either a longer result window, a faster
+Example with `T_run` = 82 s and a 10-minute result window: at a measured
+30× realtime the ceiling is 219 players per committee node; at 60× it is
+439. Rounds larger than that require either a longer result window, a faster
 core, or per-node partitioning of the replay set — a design decision to be
 made **after** measurement.
 
