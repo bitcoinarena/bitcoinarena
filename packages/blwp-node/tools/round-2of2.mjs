@@ -716,7 +716,21 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   async function viewToTip() {
     const from = Math.max(0, bondFloor - 20);
     const tip = Number(await chainRpc('getblockcount', []));
-    const have = censusView && censusView.firstHeight === from ? censusView : { blocks: [], firstHeight: from };
+    let have = censusView && censusView.firstHeight === from ? censusView : { blocks: [], firstHeight: from };
+    // A REORG REPLACES BLOCKS THIS VIEW ALREADY HOLDS: drop them back to the last one the chain still has, or the
+    // next block read does not follow the view's end and every later look is "not a chain" (measured testnet4
+    // 2026-09-28 09:00: a 2-block reorg at 154203 held round 919acf85's beacon wait on a stale view).
+    let keep = have.blocks.length;
+    while (keep > 0) {
+      const ours = blockHashOf(have.blocks[keep - 1].header);
+      const theirs = String(await chainRpc('getblockhash', [from + keep - 1]));
+      if (theirs === toHex(ours) || theirs === toHex(Uint8Array.from(ours).reverse())) break;
+      keep--;
+    }
+    if (keep < have.blocks.length) {
+      console.log(`[view] reorg: ${have.blocks.length - keep} block(s) from ${from + keep} replaced; reading them again`);
+      have = { blocks: have.blocks.slice(0, keep), firstHeight: from };
+    }
     const next = from + have.blocks.length;
     if (next > tip) return have;
     const more = await blocksOver(chainRpc, next, tip);
