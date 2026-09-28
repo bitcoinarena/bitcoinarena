@@ -355,7 +355,16 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     const reused = rt.minable ? members.map(() => null) : members.map((m, i) => rt.findBond(m.id.secret, wantFor(m, i)));
     for (const [i, b] of reused.entries())
       if (b) console.log(`[bond] node ${members[i].name} reuses ${b.txid}:${b.vout} (${b.sats} sats, height ${b.height})`);
+    for (const [i, b] of reused.entries())
+      if (b && b.updatedBy) console.log(`[bond] node ${members[i].name}: its advertisement is the update ${b.updatedBy.txid} (height ${b.updatedBy.height})`);
     const toPost = members.map((m, i) => (reused[i] ? null : i)).filter((i) => i !== null);
+    // OFF REGTEST A MISSING BOND STOPS THE RUN, IT IS NOT POSTED (§5A.2; the owner 2026-09-28, the advertisement-update
+    // letter: "accept an updated advert and select the existing bond. If none matches, stop. Do not post a bond"). A
+    // node whose bond says something else is given an advertisement update (tools/testnet4-advert-update.mjs), not a
+    // second bond.
+    if (!rt.minable && toPost.length)
+      throw new Error(`no confirmed unspent bond, as bonded or as updated, says what node(s) ${toPost.map((i) => members[i].name).join(', ')} `
+        + 'say now: publish an advertisement update for the existing bond; no bond is posted here');
     const posted = toPost.map((i) => members[i]).map((m, j) =>
       rt.postBond(m.id.secret, {
         // THE PUBLIC ENDPOINT, THE SAME ONE THE ADVERT NAMES (the owner 2026-09-25 21:41: the replay link a player copies

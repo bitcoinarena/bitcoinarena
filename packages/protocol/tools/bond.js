@@ -13,6 +13,7 @@
 import { encodeAdvert, advertId, joinSignedAdvert } from '../src/advert.js';
 import { meetsTarget } from '../src/chain.js';
 import { bondMarker } from '../src/constants.js';
+import { advertUpdatePayload } from '../src/advert-update.js';
 
 const varint = (n) => {
   if (n < 0xfd) return [n];
@@ -117,4 +118,28 @@ export function blockOf(hash256, txids, {
     if (meetsTarget(header)) return { header, root: level[0], nonce };
     if (nonce > 5000000) throw new Error('these bits are too hard to mine in a test');
   }
+}
+
+/**
+ * AN ADVERTISEMENT UPDATE OF AN EXISTING BOND (§5A.2), for fixtures: the marker dust, OP_RETURN "BLW" 'A' bond_outpoint
+ * H(advertisement), and the signed body as the one witness item. `bondTxid` is in the byte order parseTransaction
+ * computes. Spends no bond and pays none.
+ */
+export function advertUpdateTransaction(advert, {
+  bondTxid, bondVout = 0,
+  signature = new Uint8Array(64),
+  previousTxid = new Uint8Array(32).fill(0xac),
+  network = 'regtest',
+} = {}) {
+  const payload = advertUpdatePayload({ bondTxid, bondVout, advertIdBytes: advertId(advert) });
+  const body = joinSignedAdvert(encodeAdvert(advert), signature);
+  return new Uint8Array([
+    ...u32(1), 0x00, 0x01,
+    ...varint(1), ...previousTxid, ...u32(0), ...varint(0), ...u32(0xffffffff),
+    ...varint(2),
+    ...u64(330), ...push([0x51, 0x20, ...bondMarker(network)]),
+    ...u64(0), ...push([0x6a, ...push([...payload])]),
+    ...varint(1), ...push([...body]),
+    ...u32(0),
+  ]);
 }

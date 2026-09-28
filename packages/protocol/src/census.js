@@ -2,6 +2,7 @@
 //
 // Two decisions here are load-bearing and both look like details.
 
+import { newestUpdates } from './advert-update.js';
 import { Writer } from './encode.js';
 import { taggedHash, fromHex, toHex } from './hash.js';
 import { TAG, ROLES, PROTOCOL_VERSION, TYPE_CENSUS_LEAF, networkOf } from './constants.js';
@@ -1140,7 +1141,7 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, 
  * spent, and the advertisement signature needs a curve this package does not
  * carry. Neither is skipped quietly.
  */
-export function deriveCensus(views, { contract, candidates, resolve, verifyAdvert, bond }) {
+export function deriveCensus(views, { contract, candidates, resolve, verifyAdvert, bond, verifyUpdate }) {
   // MOST WORK WINS, HERE, before anything is read. Two chains that disagree
   // about Bitcoin are not two censuses: one of them is the chain.
   const chain = bestChainView(views);
@@ -1192,9 +1193,33 @@ export function deriveCensus(views, { contract, candidates, resolve, verifyAdver
   });
   if (!resolved.ok) return resolved;
 
+  // THE NEWEST ADVERTISEMENT, NOT THE FIRST (§5A.2; the owner 2026-09-28): for each resolved bond, the newest valid
+  // update confirmed at or below census_height - signed by the bond's own node key (`verifyUpdate`) - replaces the
+  // advertisement the bond committed to at creation. The census's own filters then read the updated body: an update
+  // that declares no role, or not this round's version, takes the node out of this census. With no `verifyUpdate`
+  // nothing is applied: an update nobody checked is not an update.
+  let eligible = resolved.eligible;
+  const updatedOut = [];
+  if (typeof verifyUpdate === 'function') {
+    const updates = newestUpdates(chain, eligible, { atHeight: contract.censusHeight, network: network || 'regtest', verify: verifyUpdate });
+    eligible = [];
+    for (const e of resolved.eligible) {
+      const u = updates.get(`${Array.from(e.txid).join(',')}:${e.vout}`);
+      if (!u) { eligible.push(e); continue; }
+      const roles = u.advert.roles || [];
+      const versions = u.advert.protocolVersions || [];
+      if (!roles.length || !versions.includes(contract.protocolVersion)) {
+        updatedOut.push({ ...e, why: 'its newest advertisement update declares no role or not this round\'s version' });
+        continue;
+      }
+      eligible.push({ ...e, advert: u.advert, advertId: u.advertId, roles,
+        updatedBy: { txid: u.txid, height: u.height, position: u.position } });
+    }
+  }
+
   let census;
   try {
-    census = commitCensus(resolved.eligible, { contract, view: chain });
+    census = commitCensus(eligible, { contract, view: chain });
   } catch (e) {
     return { ok: false, why: `that census cannot be committed: ${e.message}` };
   }
@@ -1210,6 +1235,7 @@ export function deriveCensus(views, { contract, candidates, resolve, verifyAdver
     excluded: [
       ...scanned.excluded.map((e) => ({ ...e, step: 'scan' })),
       ...resolved.excluded.map((e) => ({ ...e, step: 'resolve' })),
+      ...updatedOut.map((e) => ({ ...e, step: 'update' })),
     ],
     unchecked: resolved.unchecked,
     chainChecked: resolved.chainChecked,
