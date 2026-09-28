@@ -1559,6 +1559,53 @@ This is what §5A.10 turns into a rule: the stake ceiling is set so that the
 capital required to reach these probabilities exceeds the pools it could
 take.
 
+### The client computes the committee itself *(RULED, the owner 2026-09-28)*
+
+**A client never takes a node's word for who serves a round.** Before it
+seals a stake-secret share, signs an entry or lists a round as joinable, the
+client computes the round's committees itself - the same sortition the nodes
+run - and compares. Asking several nodes and accepting when they agree is
+not a check: nodes that are all wrong together, or all the nodes a player
+happens to know, would pass it.
+
+```text
+inputs the client verifies itself
+  headers        Bitcoin headers up to the tip, checked for proof of work
+                 and linkage (§5A.5); from any node or public source
+  census         the round's census list per role at census_height: every
+                 entry's bond output proven by a Merkle branch against those
+                 headers, its advertisement signature valid (§5A.3), and the
+                 list hashing to the census_root the published contract names
+  beacon         the beacon block by the §5A.5 rule on those headers, at depth,
+                 and the series publication strictly below it
+  round index    i, from the round's start and the series start
+
+computation
+  committee_seed(i) = H(series committee_seed || i)          (§5A.5)
+  drawn[role]       = §5A.6 sortition over census[role]      (9 per role, §5A.7)
+  seated[role]      = the seating certificate's list, checked against
+                      drawn[role] in score order (§5A.7)
+
+refusal
+  a node's committee answer, a contract's node list or a seating
+  certificate that differs from the client's own computation -> the round
+  is refused, the lobby says which node answered what, and no share is
+  sealed, no stake locked, no entry signed
+```
+
+What the nodes deliver is **transport**: headers, the census entries with
+their proofs, the beacon height, the seating certificate. Every one of them
+is checked; none is believed. A census entry missing from what a node sent
+shows as a root that does not match the contract's `census_root`, and the
+client asks another source. The census root itself is fixed on chain by the
+series publication (§5A.5), so a node cannot change which census a round was
+drawn from after the fact.
+
+The computation is cheap enough for a phone: a census of a few thousand
+entries is one hash per entry per role and a sort; the proofs are a Merkle
+branch per bond. A client that cannot complete it - no headers, a missing
+proof - does not join; it says why, the way a refused entry does.
+
 ## 5A.7 Committee size and thresholds *(changed in v4.6)*
 
 Mainnet:
