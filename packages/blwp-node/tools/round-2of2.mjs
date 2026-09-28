@@ -161,6 +161,12 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
                                      // block is somebody else's - waited for, never mined. A member's store may be named
                                      // outright (`storePaths`, in member order), for nodes that already hold their key.
                                      network = 'regtest', wallet = undefined, storePaths = [],
+                                     // AN ENTRY CLOSE AT A WALL-CLOCK INSTANT, for the first round (the owner 2026-09-27
+                                     // 17:24: the testnet4 round finished by 23:00). On testnet4 committee_time is the
+                                     // tip's own timestamp, which runs up to two hours ahead of the wall clock, so no
+                                     // window can be sized before the census: the window is what is left from
+                                     // committee_time to this instant, never under thirty minutes. Unset: as before.
+                                     entryCloseAtMs = null,
                                      donationRecipients = stakeMsat > 0n || (paid && BigInt(paid.stakeMsat) > 0n)
                                        ? { port: TEST_RECIPIENT_PORT } : null } = {}) {
   // WHAT THESE DAEMONS FUND (M3.3-31): a PAYING round goes through the
@@ -328,12 +334,29 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   let censusConfirmations = 1;
   let onChain = null;
   let bondHeight = 0;
+  let bondFloor = 0;
   let localChain = null;
   let localBlocks = null;
   if (cli) {
     const rt = regtest(cli, { network, ...(wallet ? { wallet } : {}) });
     onChain = rt;
-    const posted = members.map((m, i) =>
+    // WHAT EACH NODE'S BOND MUST SAY: the advert the node would post now
+    const wantFor = (m, i) => ({
+      endpoint: process.env[`BLWP_WSS_${m.port}`] || `ws://${host}:${m.port}`,
+      ...(guardianOfFor(i).length ? { guardianOf: guardianOfFor(i) } : {}),
+      ...m.guardian,
+      ...(rt.minable ? {} : { bondSats: 50000n }),
+    });
+    // A BOND THAT ONCE CONFIRMED STAYS VALID (spec §5A.3; the owner 2026-09-28 07:39: "The operator does not post again.
+    // Change the node so a confirmed unspent bond for that node key is reused"). Off regtest - where every block is
+    // somebody else's and a fresh set costs a confirmation and six more - each node's newest confirmed, unspent bond
+    // that says what the node says now is used as it stands; a node posts only when it has none. Regtest keeps posting:
+    // a fresh regtest has nothing to reuse and mines its own.
+    const reused = rt.minable ? members.map(() => null) : members.map((m, i) => rt.findBond(m.id.secret, wantFor(m, i)));
+    for (const [i, b] of reused.entries())
+      if (b) console.log(`[bond] node ${members[i].name} reuses ${b.txid}:${b.vout} (${b.sats} sats, height ${b.height})`);
+    const toPost = members.map((m, i) => (reused[i] ? null : i)).filter((i) => i !== null);
+    const posted = toPost.map((i) => members[i]).map((m, j) =>
       rt.postBond(m.id.secret, {
         // THE PUBLIC ENDPOINT, THE SAME ONE THE ADVERT NAMES (the owner 2026-09-25 21:41: the replay link a player copies
         // is built from these, and "a copied link that only opens on 127.0.0.1 does not count"). The bond said
@@ -344,30 +367,35 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
         // `federationIsBonded` counts zero of the federation's threshold and every paying FEDERATION
         // round is refused on a bonded-federation check the bonds could not satisfy. Per node, so
         // three operators cover a 3-of-4 rather than one operator claiming it three times.
-        ...(guardianOfFor(i).length ? { guardianOf: guardianOfFor(i) } : {}),
+        ...(guardianOfFor(toPost[j]).length ? { guardianOf: guardianOfFor(toPost[j]) } : {}),
         // AND WHETHER IT IS A GUARDIAN, as the node itself answered (above)
         ...m.guardian,
         // ON TESTNET4 THE BOND IS THE ROUND'S MINIMUM, not regtest's half a coin: 50 000 sats, the contract's
         // bond_min_sats, out of a 55 000-sat funding output (the rest is the marker, the fee and the change).
         ...(rt.minable ? {} : { bondSats: 50000n, fundBtc: '0.00055' }),
       }));
-    rt.include(posted.map((p) => p.hex));
+    if (posted.length) rt.include(posted.map((p) => p.hex));
     // THE CENSUS HEIGHT IS ABOVE THE BONDS, NOT AT THEM. Depth is measured at
     // `census_height` - "spentness, height and depth off REAL BLOCKS with depth
     // at census_height" (15) - so a bond in the census height's own block is
     // one confirmation deep and a round asking for six excludes it. Measured:
     // "that census carries 0 game nodes where regtest was born needing 2".
-    bondHeight = rt.height();
+    // THE NEWEST BOND sets the depth the census must wait for; the OLDEST sets where the census view begins
+    const heights = reused.filter(Boolean).map((b) => b.height);
+    if (posted.length) heights.push(rt.height());
+    bondHeight = Math.max(...heights);
+    bondFloor = Math.min(...heights);
     // SIX DEEP, AND ON A REAL CHAIN THOSE ARE SOMEBODY ELSE'S BLOCKS (RULED, the owner 2026-09-21 17:01).
     //
     // `rt.bury(6)` mines on regtest, exactly as `rt.mine(6)` did, and WAITS everywhere else. The round's
     // beacon is the first block after `committee_time`, so an operator who can make blocks on the round's
     // own chain can make the beacon he wants - which is fine for a free regtest round and is not fine for
     // one holding money. Measured on testnet4: 723.3 s a block, so six is about 72 minutes.
-    censusHeight = rt.bury(6);
+    censusHeight = rt.height() - bondHeight + 1 >= 7 ? rt.height() : rt.bury(bondHeight + 6 - rt.height());
     if (censusHeight - bondHeight + 1 < 7)
       throw new Error('the bonds are not deep enough at the census height');
-    for (const [i, p] of posted.entries()) bonded[i].onChainTxid = p.txid;
+    for (const [j, p] of posted.entries()) bonded[toPost[j]].onChainTxid = p.txid;
+    for (const [i, b] of reused.entries()) if (b) bonded[i].onChainTxid = b.txid;
     censusConfirmations = 6;
     censusView = null;                  // read after committee_time, below
   } else {
@@ -562,7 +590,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     committeeTimeMs = (BigInt(blockTimeOf(tip)) + 2n) * 1000n;
     // FROM WELL BEFORE THE BONDS: the census is read from here now, and the
     // beacon's view below reaches back past committee_time from the same start.
-    censusView = onChain.blocksFrom(Math.max(0, bondHeight - 20), onChain.height());
+    censusView = onChain.blocksFrom(Math.max(0, bondFloor - 20), onChain.height());
   }
   const contract = {
     networkId: NETWORK_ID, configHash: TRUCK_CONFIG_HASH, censusConfirmations,
@@ -573,7 +601,9 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     gameVerifySlots: members.length, settlementSlots: members.length, simCoreHash: CORE_HASH,
     committeeTimeMs, randomnessRule: 'bitcoin-block-hash',
     startTimeMs: committeeTimeMs + MIN_ENTRY_WINDOW_MS,
-    entryCloseMs: committeeTimeMs + MIN_ENTRY_WINDOW_MS + BigInt(entryWindowMs),
+    entryCloseMs: committeeTimeMs + MIN_ENTRY_WINDOW_MS + (entryCloseAtMs == null ? BigInt(entryWindowMs)
+      : (BigInt(entryCloseAtMs) - committeeTimeMs - MIN_ENTRY_WINDOW_MS > 1_800_000n
+        ? BigInt(entryCloseAtMs) - committeeTimeMs - MIN_ENTRY_WINDOW_MS : 1_800_000n)),
     objectionWindowMs, custody: 'FEDERATION', slashMinimumServed: 20,
     slashRemainder: 'SPLIT', federationId, stakeExpiryBlocks: 144,
     // WHERE THE SIGNER NODES POST EACH RUN'S TRANSCRIPT (v4.6.2 §13A, P2): the two
@@ -684,7 +714,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     throw last;
   };
   async function viewToTip() {
-    const from = Math.max(0, bondHeight - 20);
+    const from = Math.max(0, bondFloor - 20);
     const tip = Number(await chainRpc('getblockcount', []));
     const have = censusView && censusView.firstHeight === from ? censusView : { blocks: [], firstHeight: from };
     const next = from + have.blocks.length;

@@ -19,7 +19,8 @@ import {
   bondOutputKey, bondInternalKey, tapLeafHash, TAPLEAF_VERSION,
 } from '../../protocol/src/bond-script.js';
 import { tapSighash, scriptPathWitness, serializeSpend } from '../../protocol/src/bond-spend.js';
-import { encodeAdvert, advertId, joinSignedAdvert } from '../../protocol/src/advert.js';
+import { encodeAdvert, advertId, joinSignedAdvert, splitSignedAdvert, decodeAdvert } from '../../protocol/src/advert.js';
+import { parseTransaction, commitmentsOf, witnessRunsOf } from '../../protocol/src/tx.js';
 import { splitBlock } from '../../protocol/src/block.js';
 import { bondMarker } from '../../protocol/src/constants.js';
 import { toHex, fromHex, taggedHash } from '../../protocol/src/hash.js';
@@ -148,6 +149,44 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
    * with no way for a harness to say otherwise. Now a caller that KNOWS its federation's guardians can
    * name them, which is the only thing a local federation round was missing.
    */
+  /**
+   * THE NODE'S BOND ALREADY ON CHAIN (spec §5A.3; the owner 2026-09-28 07:39: "a bond that once confirmed stays valid. The
+   * operator does not post again"). Every bond a node posts pays the same output key - it is built from the node key,
+   * the network's arbitration keys and its maturity, nothing else - so the chain's own UTXO set answers which of the
+   * node's bonds are still unspent. Of those, the newest confirmed one whose committed advertisement says what the
+   * node says now (`want`: endpoint, guardian or not, guardian endpoint, which federation keys it guards) and that
+   * carries at least `bondSats`. Null when there is none, and then - only then - a bond is posted.
+   */
+  function findBond(nodeSecret, { endpoint, guardianOf = [], guardianCapable = false, guardianEndpoint = '', bondSats = 0n } = {}) {
+    const nodeKey = schnorr.getPublicKey(nodeSecret);
+    const built = bondOutputKey({
+      nodeKey, arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK,
+      bondMaturity: g.bondMaturity,
+      internalKey: bondInternalKey({ nodeKey, arbitrationKeys: g.arbitrationKeys },
+        { combine }).internalKey,
+    }, { tweakPoint, combine });
+    const scan = JSON.parse(cli('scantxoutset', 'start', JSON.stringify([`raw(5120${toHex(built.outputKey)})`])));
+    const unspent = (scan.unspents || []).filter((u) => u.height > 0).sort((a, b) => b.height - a.height);
+    const guards = (list) => (list || []).map((x) => `${toHex(x.federationId)}:${toHex(x.guardianKey)}`).sort().join(',');
+    for (const u of unspent) {
+      if (BigInt(Math.round(u.amount * 1e8)) < BigInt(bondSats)) continue;
+      const tx = parseTransaction(fromHex(cli('getrawtransaction', u.txid, 'false', cli('getblockhash', String(u.height)))));
+      const commitments = commitmentsOf(tx);
+      let advert = null;
+      for (const item of witnessRunsOf(tx)) {
+        try {
+          const a = decodeAdvert(splitSignedAdvert(item).body); const id = advertId(a);
+          if (commitments.some((c) => c.length === 32 && id.every((b, i) => b === c[i]))) { advert = a; break; }
+        } catch { /* not a signed body */ }
+      }
+      if (!advert || toHex(advert.nodePubkey) !== toHex(nodeKey)) continue;
+      if (advert.endpoint !== endpoint || !!advert.guardianCapable !== !!guardianCapable
+        || (advert.guardianEndpoint || '') !== (guardianEndpoint || '') || guards(advert.guardianOf) !== guards(guardianOf)) continue;
+      return { txid: u.txid, vout: u.vout, height: u.height, sats: Math.round(u.amount * 1e8), advert };
+    }
+    return null;
+  }
+
   function postBond(nodeSecret, { endpoint, roles = ['game', 'verify', 'settlement'],
     bondSats = 50000000n, guardianOf = [], guardianCapable = false, guardianEndpoint = '', fundBtc } = {}) {
     const nodeKey = schnorr.getPublicKey(nodeSecret);
@@ -211,5 +250,5 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
     return { blocks, firstHeight: from };
   }
 
-  return { height, mine, bury, minable, waitForHeight, include, postBond, blocksFrom, genesis: g };
+  return { height, mine, bury, minable, waitForHeight, include, postBond, findBond, blocksFrom, genesis: g };
 }
