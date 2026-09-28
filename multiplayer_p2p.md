@@ -1274,9 +1274,10 @@ publication           OP_RETURN "BLW" SERIES series_id, confirmed before
                       series_start (CENSUS3D-1401; a series has nothing to
                       grind, below)
 committee_time        = series_start - series_lead_min
-series_lead_min       72 h (the owner 2026-09-28 11:31, HORIZON72-1131; the
-                      census, committee time and lead all at 72 h since
-                      14:02, CENSUS3D-1401)
+series_lead_min       a genesis parameter (§27A.6): mainnet 72 h (the owner
+                      2026-09-28 11:31, HORIZON72-1131; census, committee
+                      time and lead one 72 h since 14:02, CENSUS3D-1401);
+                      testnet4 24 h (14:05, TN24-1405)
 beacon, depth         as above, once per series; reached inside the 72 h
 ```
 
@@ -1360,8 +1361,9 @@ clocks (§23A.1) and do not move with it.
 ```text
 series_start(k)      = genesis_series_start + k * series_max       (24 h)
 round_count          = series_max / round_period                    (960)
-census_height(k)     = the highest block whose MTP <= series_start(k) - 72 h
-committee_time(k)    = series_start(k) - 72 h
+census_height(k)     = the highest block whose MTP <= series_start(k) - series_lead_min
+committee_time(k)    = series_start(k) - series_lead_min
+                       (mainnet 72 h, testnet4 24 h - TN24-1405)
 publish_from(k)      = census_height(k) at census_confirmations depth
 beacon(k)            = first block with MTP > committee_time(k); drawn from
                        once at depth, before series_start(k)
@@ -1371,6 +1373,26 @@ SeriesContract(k)    = the genesis template with these values; nothing else
 The census cutoff, `committee_time` and the lead are one number, 72 h
 (CENSUS3D-1401). The 120 h census of HORIZON72-1131, the 90 h of
 CENSUS90-1400 and the 84 h `committee_time` are withdrawn.
+
+**Testnet4 runs the same clock at 24 h *(RULED, the owner 2026-09-28 14:05,
+TN24-1405)*, so a round can be tested the next day.** On testnet4 the census
+lead, `committee_time` and `series_lead_min` are all **24 h**: the census is
+cut and `committee_time` falls at `series_start - 24 h`, and inside those
+24 h, before `series_start`, the census block reaches depth, the series is
+published, the beacon comes and reaches depth, and the committee is drawn.
+There is no publication window and no beacon slack in front of the 24 h,
+exactly as there is none in front of mainnet's 72 h. A testnet4 node refuses
+a series whose `series_start` is not 24 h after its `committee_time`.
+**Mainnet does not change**: 72 h, CENSUS3D-1401.
+
+**The writer's horizon is 72 h on every network (TN24-1405).** The node
+generates the schedule - every series slot `k` and every round's
+`round_id` position, `start_time` and entry window, all functions of the
+clock - **72 h ahead on every network, testnet4 included**. That horizon
+does not shrink to 24 h. What the lead governs is when a written slot is
+**filled**: its census, publication, beacon and committee, which on testnet4
+come in its last 24 h and on mainnet in its last 72 h. A round whose slot is
+written but not yet filled is listed as scheduled and takes no entry.
 
 **A series already broadcast stays.** The series already published for
 **3 October** - and any other series whose publication confirmed before
@@ -4627,6 +4649,8 @@ a state whose origin nobody can check.
 | `federation_min` | 7 | 5 | 3 |
 | `abandon_blocks` / `departure_notice` / `founding_window` / `drain_blocks` / `claim_blocks` (v4.6.5, the owner: fast; 36 h arbitration) | 288 / 432 / 432 / **4032** / **216** (≈ 48 h / 72 h / 72 h / **28 d** / **36 h**) | **12 / 18 / 18 / 144 / 9** (≈ 2 h / 3 h / 3 h / 24 h / 1.5 h; the owner: much shorter) | 10 / 10 / 10 / 100 / 10 |
 | confirmations | 6 | 2 | **1** |
+| `series_lead_min` = census lead = `series_start - committee_time` (CENSUS3D-1401, TN24-1405) | **72 h** | **24 h** (testnet4) | regtest's own blocks |
+| writer horizon (rounds generated ahead, TN24-1405) | 72 h | **72 h** | 72 h |
 | `bond_maturity` | ~30 days | ~1 day | **100 blocks** |
 | `notice_period` | ~30 days | ~1 day | **10 blocks** |
 | stake ceiling | §5A.10 table | testnet sats | play money only |
