@@ -51,7 +51,7 @@ export async function sevenSignerNodes(custody, { endIn = null } = {}) {
     for (const i of up) {
       const there = ports.filter((_, j) => j !== i).map((p) => `http://127.0.0.1:${p}`);
       const d = signerNodes[i];
-      d.verifier.peers = there; d.preimages.peers = there; d.dkg.peers = there;
+      d.verifier.peers = there; d.stakeSecrets.peers = there; d.dkg.peers = there;
     }
   };
   wire();
@@ -79,7 +79,7 @@ export async function sevenSignerNodes(custody, { endIn = null } = {}) {
     // nothing listens - its forwards and receipts are lost - until heal().
     cut(...is) {
       const dead = [1, 2, 3, 4, 5, 6].map((p) => `http://127.0.0.1:${p}`);
-      for (const i of is) { const d = signerNodes[i]; d.verifier.peers = dead; d.preimages.peers = dead; d.dkg.peers = dead; }
+      for (const i of is) { const d = signerNodes[i]; d.verifier.peers = dead; d.stakeSecrets.peers = dead; d.dkg.peers = dead; }
     },
     heal() { wire(); },
     // A PARTITION BETWEEN TWO GROUPS OF SIGNER NODES THAT ARE UP: each side's links to the
@@ -88,7 +88,7 @@ export async function sevenSignerNodes(custody, { endIn = null } = {}) {
       const blocked = (i, j) => (a.includes(i) && b.includes(j)) || (b.includes(i) && a.includes(j));
       for (const i of up) {
         const there = ports.map((p, j) => (j === i ? null : blocked(i, j) ? `http://127.0.0.1:${j + 1}` : `http://127.0.0.1:${p}`)).filter(Boolean);
-        const d = signerNodes[i]; d.verifier.peers = there; d.preimages.peers = there; d.dkg.peers = there;
+        const d = signerNodes[i]; d.verifier.peers = there; d.stakeSecrets.peers = there; d.dkg.peers = there;
       }
     },
     async close() { for (const i of [...up]) { try { await signerNodes[i].close(); } catch { /* down */ } } },

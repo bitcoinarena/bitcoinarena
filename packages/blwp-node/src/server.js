@@ -90,7 +90,7 @@ import { encodeClaimKeyAttestation, claimKeyAttestationId } from '../../protocol
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { splitSlashEvidence, slashProofId, SLASH_EVIDENCE_BYTES, REPLAY_CONTRADICTS, splitRerunSlashEvidence, RERUN_SLASH_EVIDENCE_BYTES } from '../../protocol/src/slash.js';
 import { slashOwing, entriesForSlash } from './slash-owing.js';
-import { Preimages, encodeShareAnswer, SEALED_ANSWER_BYTES } from './preimage.js';
+import { StakeSecrets, encodeShareAnswer, SEALED_ANSWER_BYTES } from './stake-secret.js';
 import { Dkg } from './dkg.js';
 import { Forfeit } from './forfeit.js';
 import { LockSettlement, locksStake, SUBMITTING } from './settlement.js';
@@ -346,7 +346,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // WHO CAN OPEN A STAKE. One share each, sealed, and five of them or nothing.
   // The peers are the same list the verifier gathers results from, because a
   // signer node that answers about a run is a signer node that can be asked about its share.
-  const preimages = new Preimages(round, {
+  const stakeSecrets = new StakeSecrets(round, {
     curve: feldmanGroup, peers, fetcher: (u, o) => fetch(u, o), random: (n) => new Uint8Array(randomBytes(n)),
     // AND WHEN THE OPERATOR SAID NOTHING, the round's SETTLEMENT signer nodes off the
     // census - they hold the shares. Read when a stake is opened, long after
@@ -372,7 +372,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
   // TWO FIRST MARKS PROVEN HERE (§13B; M3.3-34, a signer node that stays down): ask
   // the other signer nodes for their shares NOW, while they are up, and keep the
-  // envelopes (preimages.open) - so a signer node that goes down later and stays down
+  // envelopes (stakeSecrets.open) - so a signer node that goes down later and stays down
   // past the hold's expiry cannot hand the stake back. Measured before: A held
   // the proof, B went down before the close, "1 of 2 shares" - the hold stayed
   // in flight to expire back to the player. `pull`: this signer node learned of the
@@ -740,7 +740,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     random: (n) => new Uint8Array(randomBytes(n)), peersFor: winningsPeers, fetcher: (u, o) => fetch(u, o),
     lnurlFetch, network: winningsNetwork }) : null;
   const settlements = new LockSettlement(round, {
-    dkg, port: stakeLocks, curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)), preimages, winnings, finalityOf,
+    dkg, port: stakeLocks, curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)), stakeSecrets, winnings, finalityOf,
     peersFor: (rid) => {
       const picked = roster.committeeFor(rid, 'settlement');
       return picked.ok ? endpointsOf(picked.committee, round.pubkey) : (dkg.peers || []);
@@ -2394,14 +2394,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (rid.length !== 32 || eid.length !== 32)
           return text(res, 400, 'a share is asked for by round and entry');
         const ask = { roundId: new Uint8Array(rid), entryId: new Uint8Array(eid), asker: new Uint8Array(asker) };
-        let said = await preimages.answer(ask);
+        let said = await stakeSecrets.answer(ask);
         // A PROOF OF TWO FIRST MARKS THIS SIGNER NODE HAS NOT PULLED YET (M3.3-34): the
         // asker's signer nodes may hold it - pulled, checked here and kept, never taken
         // on the asker's word; then asked of this signer node's own record again.
         // `proof=1`: the asker holds a proof of two first marks - pulled even over a
         // result this signer node signed (measured: a signer node that had signed FAILED refused).
         if (!said.ok && (url.searchParams.get('proof') === '1' || !round.results(ask.roundId, ask.entryId).length)
-          && await verifier.pullFirstMarkProof(ask.roundId, ask.entryId)) said = await preimages.answer(ask);
+          && await verifier.pullFirstMarkProof(ask.roundId, ask.entryId)) said = await stakeSecrets.answer(ask);
         // A SIGNER NODE HOLDING THE PROOF GATHERS TOO, while the signer nodes are up (M3.3-34):
         // measured before on 5 of 7 - signer nodes that learned the proof here, when
         // asked, never gathered; with the two signer nodes that had gathered down, the
@@ -3480,7 +3480,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
   return new Promise((resolve) => {
     http.listen(port, host, () => resolve({
-      http, wss, round, host, verifier, ghosts, roster, preimages,
+      http, wss, round, host, verifier, ghosts, roster, stakeSecrets,
       dkg, settlements, winnings,
       // What the last close did with the money, and the same door an operator
       // uses to run a settlement again by hand.

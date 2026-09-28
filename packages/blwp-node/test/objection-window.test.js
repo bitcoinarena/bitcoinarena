@@ -66,7 +66,7 @@ test('seven signer nodes: an objection filed in the window against a run this no
     // one after the open: inside the window, and later than the block it opened at, whatever the machine's speed.
     const eidOf = (name) => w.runs[name].eid;
     const clockAt = (now) => Object.assign(Object.create(w.holder.round), { now: () => now });
-    const mayAt = (now, name) => new (w.holder.preimages.constructor)(clockAt(now), {}).mayRelease(w.rid, eidOf(name));
+    const mayAt = (now, name) => new (w.holder.stakeSecrets.constructor)(clockAt(now), {}).mayRelease(w.rid, eidOf(name));
     const opens = ['agrees', 'dissents'].map((n) => resultFinality(w.holder.round, w.rid, eidOf(n)).provisionalAtMs);
     assert.equal(opens[0], opens[1], 'the two runs\' windows did not open at one block');
     const open = opens[0];
@@ -109,7 +109,7 @@ test('seven signer nodes: the window opens when this node held the threshold, no
     // ON BLOCKS (RULED 2026-09-24): the window is [the threshold's posting block, the first block at or after it + W), read
     // at its end block on the node's own clock stubbed - not by waiting on the wall, which a one-second block makes a race.
     const eid = w.runs.agrees.eid;
-    const at = (now) => new (w.holder.preimages.constructor)(Object.assign(Object.create(w.holder.round), { now: () => now }), {});
+    const at = (now) => new (w.holder.stakeSecrets.constructor)(Object.assign(Object.create(w.holder.round), { now: () => now }), {});
     const open = resultFinality(w.holder.round, w.rid, eid).provisionalAtMs;
     assert.ok(open > CLOCK.mtpOf(CLOCK.tipAt(ownAt)), 'the window opened at this node\'s own result\'s block, before five agreed');
     const end = CLOCK.endAt(open, 1500);
@@ -125,7 +125,7 @@ test('seven signer nodes: an objection against a run this node replayed differen
   const w = await sevenSignerNodes(1000);
   try {
     w.sign('dissents', (r) => ({ score: r.score + 1 }));
-    const may = () => w.holder.preimages.mayRelease(w.rid, w.runs.dissents.eid);
+    const may = () => w.holder.stakeSecrets.mayRelease(w.rid, w.runs.dissents.eid);
     await wait(1200);
     const final = may();
     assert.equal(final.ok, true, `the run was not FINAL after its window: ${final.why}`);

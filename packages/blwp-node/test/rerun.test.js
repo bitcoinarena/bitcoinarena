@@ -70,7 +70,7 @@ test('the committee re-runs a suspended result: the holder re-runs by itself, fo
     w.rerunBy('dissents', 4);
     const later = at(w, s.filed + 2 * WINDOW_MS);                     // two windows, as measured before
     const after = resultFinality(later, w.rid, s.eid);
-    const may = new (w.holder.preimages.constructor)(later, {}).mayRelease(w.rid, s.eid);
+    const may = new (w.holder.stakeSecrets.constructor)(later, {}).mayRelease(w.rid, s.eid);
     const facts = {
       suspendedByTheObjection: state,
       holderReranItsReplay: toHex(runOf(own.result)) === toHex(runOf(s.replay)),
@@ -129,7 +129,7 @@ test('four re-runs are not five: two windows later the result is VOID by §13C a
     w.rerunBy('dissents', 3);
     const later = at(w, s.filed + 2 * WINDOW_MS);
     const after = resultFinality(later, w.rid, s.eid);
-    const may = new (w.holder.preimages.constructor)(later, {}).mayRelease(w.rid, s.eid);
+    const may = new (w.holder.stakeSecrets.constructor)(later, {}).mayRelease(w.rid, s.eid);
     assert.equal(after.state, 'VOID', `four re-runs, two windows later: ${after.why}`);
     assert.match(after.why, /with 4 of 5 re-runs on one outcome/);
     assert.equal(may.ok, false, 'a share left a result four signer nodes re-ran');
@@ -157,12 +157,12 @@ test('a suspended entry is SUSPENDED one millisecond before its re-run window en
     const inside = resultFinality(at(w, edge - 1), w.rid, s.eid);
     const ended = resultFinality(at(w, edge), w.rid, s.eid);
     const twoLater = resultFinality(at(w, s.filed + 2 * WINDOW_MS), w.rid, s.eid);
-    const released = new (w.holder.preimages.constructor)(at(w, edge), {}).mayRelease(w.rid, s.eid);
+    const released = new (w.holder.stakeSecrets.constructor)(at(w, edge), {}).mayRelease(w.rid, s.eid);
     const onRecord = new LockSettlement(at(w, edge, mine), {}).entriesOnRecord(w.rid, null);
     const forfeit = await new Forfeit(at(w, edge, { stakeLock: () => ({ fields: {} }) }), {}).message(w.rid, s.eid);
     const proven = at(w, edge, { ...mine, provenTwoFirstMarks: () => true, noQuorum: () => null });
     const forfeited = resultFinality(proven, w.rid, s.eid);
-    const provenRelease = new (w.holder.preimages.constructor)(proven, {}).mayRelease(w.rid, s.eid);
+    const provenRelease = new (w.holder.stakeSecrets.constructor)(proven, {}).mayRelease(w.rid, s.eid);
     const provenRecord = new LockSettlement(proven, {}).entriesOnRecord(w.rid, null);
     const outcomes = (r) => (r.ok ? r.entries.map((e) => `${e.outcome}/${e.score}`) : r.why);
     console.log('  FACTS:', JSON.stringify({ lag, inside: inside.state, ended: ended.state, twoLater: twoLater.state,
@@ -213,7 +213,7 @@ test('an agreed re-run is PROVISIONALLY_FINAL until its own objection window clo
     const agreed = resultFinality(w.holder.round, w.rid, s.eid).agreedAtMs;   // the block the agreed re-run first sits at threshold in
     assert.ok(agreed < s.filed + WINDOW_MS, `the fifth re-run landed at ${agreed - s.filed} ms, outside the re-run window`);
     const before = resultFinality(at(w, agreed + WINDOW_MS - 1), w.rid, s.eid);
-    const may = new (w.holder.preimages.constructor)(at(w, agreed + WINDOW_MS - 1), {}).mayRelease(w.rid, s.eid);
+    const may = new (w.holder.stakeSecrets.constructor)(at(w, agreed + WINDOW_MS - 1), {}).mayRelease(w.rid, s.eid);
     const closed = resultFinality(at(w, agreed + WINDOW_MS), w.rid, s.eid);
     console.log('  FACTS:', JSON.stringify({ agreedAfterFiling: agreed - s.filed, before: before.state, released: may.ok, closed: closed.state }),
       '|', before.why);
@@ -250,7 +250,7 @@ test('a second valid objection inside the re-run\'s own objection window makes t
     const closed = resultFinality(at(w, s.agreed + WINDOW_MS), w.rid, s.eid);
     const threeLater = resultFinality(at(w, s.filed + 3 * WINDOW_MS), w.rid, s.eid);
     const edge = s.agreed + WINDOW_MS - 1;
-    const released = new (w.holder.preimages.constructor)(at(w, edge), {}).mayRelease(w.rid, s.eid);
+    const released = new (w.holder.stakeSecrets.constructor)(at(w, edge), {}).mayRelease(w.rid, s.eid);
     const onRecord = new LockSettlement(at(w, edge, { stakeSeen: (eid) => toHex(eid) === toHex(s.eid) }), {}).entriesOnRecord(w.rid, null);
     const forfeit = await new Forfeit(at(w, edge, { stakeLock: () => ({ fields: {} }) }), {}).message(w.rid, s.eid);
     console.log('  FACTS:', JSON.stringify({ agreedAfterFiling: s.agreed - s.filed, secondAfterAgreed: filedSecond - s.agreed,
@@ -386,7 +386,7 @@ test('re-run slash proofs are filed only on a second-objection VOID, refused by 
     const mine = { stakeSeen: (eid) => toHex(eid) === toHex(s.eid) };
     const money = async () => ({
       state: resultFinality(at(w, inside), w.rid, s.eid).state,
-      released: new (w.holder.preimages.constructor)(at(w, inside), {}).mayRelease(w.rid, s.eid).ok,
+      released: new (w.holder.stakeSecrets.constructor)(at(w, inside), {}).mayRelease(w.rid, s.eid).ok,
       table: (({ ok, entries, why }) => (ok ? entries.map((e) => `${e.outcome}/${e.score}`) : why))(
         new LockSettlement(at(w, inside, mine), {}).entriesOnRecord(w.rid, null)),
       forfeit: (await new Forfeit(at(w, inside, { stakeLock: () => ({ fields: {} }) }), {}).message(w.rid, s.eid)).why,
@@ -489,7 +489,7 @@ test('first-result proofs on a second-objection VOID: refused by name, deduped, 
     const stake = { stakeSeen: (eid) => toHex(eid) === toHex(s.eid) };
     const money = async () => ({
       state: resultFinality(at(w, inside), w.rid, s.eid).state,
-      released: new (w.holder.preimages.constructor)(at(w, inside), {}).mayRelease(w.rid, s.eid).ok,
+      released: new (w.holder.stakeSecrets.constructor)(at(w, inside), {}).mayRelease(w.rid, s.eid).ok,
       table: (({ ok, entries, why }) => (ok ? entries.map((e) => `${e.outcome}/${e.score}`) : why))(
         new LockSettlement(at(w, inside, stake), {}).entriesOnRecord(w.rid, null)),
       forfeit: (await new Forfeit(at(w, inside, { stakeLock: () => ({ fields: {} }) }), {}).message(w.rid, s.eid)).why,
@@ -534,10 +534,10 @@ test('§13C VOID at the re-run window\'s end files the five first-result signers
     assert.equal(w.holder.round.slashProofs(w.rid, s.eid).length, 0, 'a proof was filed while SUSPENDED');
     const proven = { provenTwoFirstMarks: () => true };
     const forfeitState = resultFinality(at(w, s.filed + WINDOW_MS, proven), w.rid, s.eid).state;
-    const forfeitReleased = new (w.holder.preimages.constructor)(at(w, s.filed + WINDOW_MS, proven), {}).mayRelease(w.rid, s.eid);
+    const forfeitReleased = new (w.holder.stakeSecrets.constructor)(at(w, s.filed + WINDOW_MS, proven), {}).mayRelease(w.rid, s.eid);
     const forfeited = await firstFiling(verifierAt(s.filed + WINDOW_MS, proven), w.rid, s.eid);
     const forfeitRows = w.holder.round.slashProofs(w.rid, s.eid).length;
-    const forfeitAfter = new (w.holder.preimages.constructor)(at(w, s.filed + WINDOW_MS, proven), {}).mayRelease(w.rid, s.eid);
+    const forfeitAfter = new (w.holder.stakeSecrets.constructor)(at(w, s.filed + WINDOW_MS, proven), {}).mayRelease(w.rid, s.eid);
     console.log('  FACTS (13C first-result slash):', JSON.stringify({ suspended: suspendedStill.filed.length, forfeitState,
       forfeitFiled: forfeited.filed.length, forfeitRows }));
     assert.equal(suspendedStill.filed.length, 0);
@@ -621,7 +621,7 @@ test('C3a: an entry still SUSPENDED is left out and the round settles without it
     assert.equal(lockAfter(settlement, w.rid, s.agreesId).claimed, true);
     const forfeitNow = await new Forfeit(at(w, s.filed + WINDOW_MS - 1, { stakeLock: () => ({ fields: {} }) }), {}).message(w.rid, s.eid);
     assert.match(forfeitNow.why, /no forfeit before the result is final/);
-    assert.equal(new (w.holder.preimages.constructor)(inWindow, {}).mayRelease(w.rid, s.eid).ok, false);
+    assert.equal(new (w.holder.stakeSecrets.constructor)(inWindow, {}).mayRelease(w.rid, s.eid).ok, false);
     // THEN VOID (§13C at filed + W): nothing claims or forfeits it; the lock returns at expiry, the forfeit refuses.
     const voided = at(w, s.filed + WINDOW_MS, s.settledWith([s.agreesId]));
     assert.equal(resultFinality(voided, w.rid, s.eid).state, 'VOID');
