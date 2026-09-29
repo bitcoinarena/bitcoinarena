@@ -111,7 +111,7 @@ export async function lockRound({ minScore = 1, stakeMsat = STAKE, port = lockPo
 // fee locks at every size measured, so an entry that brings none is refused at the door - which is pick (a)
 // working, not a failure. A test that is ABOUT that refusal builds its own entry below.
 // `address`: the entry names the fixture's Lightning address at every signer node once it has played.
-export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, address = false } = {}) {
+export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, address = false, noMarks = false } = {}) {
   const session = ed25519.utils.randomSecretKey();
   const preimage = secretScalar();
   const e = rand(32);
@@ -163,6 +163,8 @@ export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, ad
     const locked = await fetch(`${base}/lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(fields)) });
     assert.equal(locked.status, 201, await locked.text());
     if (feeLock && !feeFirst) await handFee();
+    // `noMarks`: seated and staked, and nothing sent - a walk-away (§15 at the door)
+    if (noMarks) continue;
     assert.equal(await say(d.port, encodeInputBatch(input)), String(who.ticks));
     assert.equal((await say(d.port, signedMark)).length, SIGNED_RECEIPT_BYTES);
   }

@@ -43,6 +43,7 @@ test('no first mark past the start deadline is FORFEIT 0 at both signer nodes at
     assert.deepEqual(facts.a.results, ['FORFEIT']);
     assert.deepEqual(facts.b.results, ['FORFEIT']);
     assert.equal(facts.a.forfeit, 409, 'the lock is not handed back');
+    assert.equal(w.b.round.entryVoid(run.eid), null, 'never ENTRY_VOID, at either signer node');
     console.log(`  FACTS (door): lock round ${toHex(w.rid).slice(0, 16)}, entry ${toHex(run.eid).slice(0, 16)}`);
   } finally { await w.close(); }
 });

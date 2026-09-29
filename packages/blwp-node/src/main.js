@@ -20,6 +20,9 @@
 //     BLWP_DONATION_NETWORK       regtest | testnet4: the network's signed test donation set, which the rounds name
 //     BLWP_ATTACH_PROOF_DIR       the launcher's headers.bin and bond.json, served on GET /headers and GET /bond,
 //                                 read at every ask (the launcher writes them once the nodes are up)
+//     BLWP_SERIES_FILE            the series this node holds: one Round Contract template per line, hex (serve's
+//                                 `series`). Measured 2026-09-29: without it a node process could hold no series at all,
+//                                 so every series round was refused - the doors were proved only on in-process nodes.
 //
 // Both or neither. With them the daemon can read each round's beacon and derive each round's census - which is where it
 // learns the other signer nodes' addresses, from the advertisements in their bonds. (It no longer finds a pool output or
@@ -37,6 +40,7 @@ import { stakeLocksFromEnv } from './stake-lock-port.js';
 import { fundingFromEnv } from './funding.js';
 import { startNode } from './node-start.js';
 import { readFileSync } from 'node:fs';
+import { decodeRoundContract } from '../../protocol/src/contracts.js';
 import { TEST_DONATION_SET_REGTEST, TEST_DONATION_SET_TESTNET4 } from '../../protocol/src/test-donation-sets.js';
 
 const port = Number(process.argv[2] || 8080);
@@ -74,6 +78,11 @@ if (process.env.BLWP_CLOSE_AT_END === '1') options.closeAtEnd = true;
   const net = process.env.BLWP_DONATION_NETWORK;
   if (net && net !== 'regtest' && net !== 'testnet4') { console.error(`BLWP_DONATION_NETWORK is regtest or testnet4, not ${net}`); process.exit(2); }
   if (net) options.donationSets = [net === 'regtest' ? TEST_DONATION_SET_REGTEST : TEST_DONATION_SET_TESTNET4];
+}
+if (process.env.BLWP_SERIES_FILE) {
+  const lines = readFileSync(process.env.BLWP_SERIES_FILE, 'utf8').split(/\s+/).filter((x) => /^[0-9a-f]+$/i.test(x));
+  try { options.series = lines.map((h) => decodeRoundContract(new Uint8Array(Buffer.from(h, 'hex')))); }
+  catch (e) { console.error(`BLWP_SERIES_FILE: a line is not a Round Contract: ${e.message}`); process.exit(2); }
 }
 if (process.env.BLWP_ATTACH_PROOF_DIR) {
   const dir = process.env.BLWP_ATTACH_PROOF_DIR;
