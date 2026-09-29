@@ -109,12 +109,24 @@ export function encodeGenesisParameters(p) {
     w.u64(b.minSats);
     w.u64(b.maxSats);
   }
+  // WHEN SERIES 0 STARTS (ALL-BUT-MIN-1727; multiplayer_p2p.md "The series is a function of the clock":
+  // series_start(k) = genesis_series_start + k * series_max). A genesis parameter, so the network id commits to it
+  // and no series names its own start.
+  if (typeof p.genesisSeriesStartMs !== 'bigint' || p.genesisSeriesStartMs < 0n) throw new Error('genesis names when series 0 starts');
+  w.u64(p.genesisSeriesStartMs);
   return w.finish();
 }
 
-export function testnetShape(chain, marker, arbitrationKeys, federation) {
+/**
+ * WHEN EACH NETWORK'S SERIES 0 STARTS, midnight UTC (ALL-BUT-MIN-1727). The spec names the parameter and not its value;
+ * these are this build's: regtest 2026-01-01, testnet4 2026-10-01. Series k starts 24 h * k after it.
+ */
+export const GENESIS_SERIES_START_MS = Object.freeze({ regtest: 1767225600000n, testnet4: 1790812800000n });
+
+export function testnetShape(chain, marker, arbitrationKeys, federation, genesisSeriesStartMs) {
   return {
     chain,
+    genesisSeriesStartMs,
     // THE FEDERATION'S OWN PARAMETERS ARE GENESIS PARAMETERS (§27A.6), so they are hashed into the
     // network id like every other rule a player is held to. Without them two networks could share an id
     // while one drains a federation in 24 h and the other in 28 d, and a contract naming that id would
@@ -177,10 +189,10 @@ export { receiptsNeeded } from './threshold.js';
 export function genesisFor(network) {
   if (network === 'regtest')
     return testnetShape('bitcoin-regtest', bondMarker('regtest'), ARBITRATION_KEYS_REGTEST,
-      { federationNominal: 4, ...REGTEST_CLOCKS });
+      { federationNominal: 4, ...REGTEST_CLOCKS }, GENESIS_SERIES_START_MS.regtest);
   if (network === 'testnet4' || network === 'testnet')
     return testnetShape('bitcoin-testnet4', bondMarker('testnet'), ARBITRATION_KEYS_TESTNET4,
-      { federationNominal: 4, ...TESTNET_CLOCKS });
+      { federationNominal: 4, ...TESTNET_CLOCKS }, GENESIS_SERIES_START_MS.testnet4);
   throw new Error('no genesis for ' + network);
 }
 

@@ -224,6 +224,8 @@ export const VSS_NONCE_BYTES = 12;
 
 export const TAG = {
   roundContract: 'BLWP/v1/RoundContract',
+  // round_id(i) = H(series_id || i) (multiplayer_p2p.md "Round i of a series is derived, never authored"; ALL-BUT-MIN-1727)
+  seriesRound: 'BLWP/v1/SeriesRound',
   entryContract: 'BLWP/v1/EntryContract',
   advert: 'BLWP/v1/Advert',
   censusLeaf: 'BLWP/v1/CensusLeaf',

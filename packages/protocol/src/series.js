@@ -13,15 +13,17 @@
 //     series_lead_min    = mainnet 72 h, testnet4 24 h: a node refuses a series whose start is less than that after
 //                          its committee_time; the writer still lays 72 h of rounds ahead on every network
 //
-// NOT YET HERE, and said rather than papered over: `round_id(i) = H(series_id || i)` needs a Round Contract that
-// carries its series id and index; until the contract format does, a series round's id is its derived contract's
-// hash, which is as fixed by the series as the spec's id is. `genesis_series_start` is not a genesis parameter yet,
-// so a series names its own start, checked here against the 72 h lead and the 90 s grid.
+// A ROUND OF A SERIES CARRIES ITS SERIES ID AND ITS INDEX, and its id is round_id(i) = H(series_id || i)
+// (ALL-BUT-MIN-1727, the owner 2026-09-29 17:27; contracts.js). A node holds such a round only when its contract is
+// exactly the one the series derives - index inside 0 .. round_count - 1, entry window the derived one
+// (seriesRoundCheck) - and refuses entries, locks and settlements for any other.
 import { taggedHash } from './hash.js';
 import { encodeRoundContract } from './contracts.js';
 import { PUBLICATION_MAGIC, PUBLICATION_BYTES } from './publication.js';
 import { OP_RETURN } from './tx.js';
 import { NETWORK_ID_TESTNET4 } from './genesis-ids.js';
+import { genesisFor } from './genesis.js';
+import { networkOf } from './constants.js';
 
 export const ROUND_PERIOD_MS = 90000n;
 export const SERIES_MAX_MS = 86400000n;                     // a series lasts at most 24 h
@@ -54,9 +56,32 @@ export const PUBLICATION_KIND_SERIES = 0x53;                // 'S', beside ROUND
 const u64 = (v) => { const b = new Uint8Array(8); new DataView(b.buffer).setBigUint64(0, BigInt(v)); return b; };
 const u32 = (v) => { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, v); return b; };
 
-/** The series' template from any Round Contract of its committee: committee_time its network's lead before the start, entry closing at it. */
-export function seriesTemplate(contract, seriesStartMs) {
-  const start = BigInt(seriesStartMs);
+/** When series 0 starts on the network a contract names: its genesis parameter (ALL-BUT-MIN-1727). */
+export function genesisSeriesStart(networkId) {
+  const network = networkOf(networkId);
+  if (!network) throw new Error('that contract names a network this build has no genesis for, so no series start');
+  return genesisFor(network).genesisSeriesStartMs;
+}
+
+/** series_start(k) = genesis_series_start + k * series_max. */
+export function seriesStartOf(networkId, k) {
+  if (!Number.isInteger(k) || k < 0) throw new Error('a series is numbered 0, 1, 2 ...');
+  return genesisSeriesStart(networkId) + BigInt(k) * SERIES_MAX_MS;
+}
+
+/** The first series whose start is at or after `ms` on that network. */
+export function seriesIndexAt(networkId, ms) {
+  const g = genesisSeriesStart(networkId);
+  const at = BigInt(ms);
+  return at <= g ? 0 : Number((at - g + SERIES_MAX_MS - 1n) / SERIES_MAX_MS);
+}
+
+/**
+ * SERIES k's TEMPLATE from any Round Contract of its committee: its start the network's genesis_series_start + k * 24 h
+ * (a series does not name its own start), committee_time its network's lead before it, entry closing at it.
+ */
+export function seriesTemplate(contract, k) {
+  const start = seriesStartOf(contract.networkId, k);
   const clock = seriesClockFor(contract.networkId);
   return { ...contract, committeeTimeMs: start - clock.committeeLeadMs, startTimeMs: start, entryCloseMs: start };
 }
@@ -71,12 +96,20 @@ export function seriesLeadIsValid(template) {
     return { ok: false, why: `that series starts ${lead} ms after its committee time, and a round must exist ${min} ms (${min / HOUR} h) before its first entry` };
   if (template.entryCloseMs !== template.startTimeMs)
     return { ok: false, why: 'a series round takes no late join: its entry closes at its start' };
+  // ON THE GENESIS GRID (ALL-BUT-MIN-1727): a series starts at genesis_series_start + k * 24 h, never where it names
+  let g;
+  try { g = genesisSeriesStart(template.networkId); } catch (e) { return { ok: false, why: e.message }; }
+  if (template.startTimeMs < g || (template.startTimeMs - g) % SERIES_MAX_MS !== 0n)
+    return { ok: false, why: `that series starts at ${template.startTimeMs}, and a series starts at genesis_series_start ${g} + k * ${SERIES_MAX_MS} ms` };
   return { ok: true, leadMs: lead };
 }
 
+/** A contract without its series fields: what a series' template is. */
+const withoutSeries = (c) => { const { seriesId: _s, roundIndex: _i, ...rest } = c; void _s; void _i; return rest; };
+
 /** series_id = H(template || round_period || round_count), tagged. */
 export function seriesId(template, { periodMs = ROUND_PERIOD_MS, count = ROUNDS_PER_SERIES } = {}) {
-  const body = encodeRoundContract(template);
+  const body = encodeRoundContract(withoutSeries(template));
   const bytes = new Uint8Array(body.length + 12);
   bytes.set(body, 0);
   bytes.set(u64(periodMs), body.length);
@@ -88,7 +121,30 @@ export function seriesId(template, { periodMs = ROUND_PERIOD_MS, count = ROUNDS_
 export function seriesRound(template, i, { periodMs = ROUND_PERIOD_MS, count = ROUNDS_PER_SERIES } = {}) {
   if (!Number.isInteger(i) || i < 0 || i >= count) throw new Error(`round ${i} is outside the series' 0 .. ${count - 1}`);
   const start = template.startTimeMs + BigInt(i) * BigInt(periodMs);
-  return { ...template, startTimeMs: start, entryCloseMs: start };
+  return { ...withoutSeries(template), startTimeMs: start, entryCloseMs: start,
+    seriesId: seriesId(template, { periodMs, count }), roundIndex: i };
+}
+
+/**
+ * IS THIS THE ROUND A SERIES THIS NODE HOLDS DERIVES? A contract naming no series is not a series round ({ ok, series:
+ * false }). One naming a series must name one of `templates` (the series this node holds), an index inside
+ * 0 .. round_count - 1, and be byte for byte `seriesRound(template, i)` - its entry window the derived one.
+ */
+export function seriesRoundCheck(contract, templates, { periodMs = ROUND_PERIOD_MS, count = ROUNDS_PER_SERIES } = {}) {
+  if (!contract || contract.seriesId === undefined || contract.seriesId === null) return { ok: true, series: false };
+  const t = (templates || []).find((x) => sameBytes(seriesId(x, { periodMs, count }), contract.seriesId));
+  const hex = Array.from(contract.seriesId.subarray(0, 8), (b) => b.toString(16).padStart(2, '0')).join('');
+  if (!t) return { ok: false, series: true, why: `that round names series ${hex}, and this node holds no such series` };
+  if (!Number.isInteger(contract.roundIndex) || contract.roundIndex < 0 || contract.roundIndex >= count)
+    return { ok: false, series: true, why: `round ${contract.roundIndex} is outside series ${hex}'s 0 .. ${count - 1}` };
+  const derived = seriesRound(t, contract.roundIndex, { periodMs, count });
+  if (contract.startTimeMs !== derived.startTimeMs || contract.entryCloseMs !== derived.entryCloseMs
+    || contract.committeeTimeMs !== derived.committeeTimeMs)
+    return { ok: false, series: true, why: `round ${contract.roundIndex} of series ${hex} opens and closes its entry at `
+      + `${derived.committeeTimeMs}..${derived.entryCloseMs}, and that contract names ${contract.committeeTimeMs}..${contract.entryCloseMs}` };
+  if (!sameBytes(encodeRoundContract(contract), encodeRoundContract(derived)))
+    return { ok: false, series: true, why: `that contract is not round ${contract.roundIndex} of series ${hex} as the series derives it` };
+  return { ok: true, series: true, index: contract.roundIndex, template: t };
 }
 
 /** The indices of the series' rounds whose start lies in [fromMs, toMs]. */

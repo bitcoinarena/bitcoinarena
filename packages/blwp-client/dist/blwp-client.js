@@ -459,8 +459,8 @@ function bytesToBigInt(bytes) {
 // function of these same public keys, so recomputing beat rerunning.
 
 const GENESIS_CONFIG_HASH = fromHex('bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1');
-const NETWORK_ID_REGTEST = fromHex('83cea98f06eeea115885942b09bc980a48e50ffcca16ce3b49fd8df7aef76c98');
-const NETWORK_ID_TESTNET4 = fromHex('26b9162e72a397a4433f3cae8ea213a9a3fc2094bc04c1789a91b691edc9f62f');
+const NETWORK_ID_REGTEST = fromHex('30927357ec8945494d397ad427df5fb34702e1dd69608ac92f9b61f00b10649d');
+const NETWORK_ID_TESTNET4 = fromHex('bf876cb1a9cb671ba127e40e242ac9a79d82259ec28f8900f94faf5b1005604d');
 const AUTHORITY_PUBKEY_REGTEST = fromHex('6a0bbf5d24255489cdd44d0c33ac1e3ff4006491ec7d76bc1ea5723e5c59b700');
 const RECOVERY_PUBKEY_REGTEST = fromHex('981ca74b57d303c6053b9c1335d111817a74bd82ced80f87491d1d9a4fb9d7ae');
 const AUTHORITY_PUBKEY_TESTNET4 = fromHex('ea65169edd6387d681a3c6b14c5a17243d49fcdcdbf60816b0e2cb2771a8c9bc');
@@ -732,6 +732,8 @@ const VSS_NONCE_BYTES = 12;
 
 const TAG = {
   roundContract: 'BLWP/v1/RoundContract',
+  // round_id(i) = H(series_id || i) (multiplayer_p2p.md "Round i of a series is derived, never authored"; ALL-BUT-MIN-1727)
+  seriesRound: 'BLWP/v1/SeriesRound',
   entryContract: 'BLWP/v1/EntryContract',
   advert: 'BLWP/v1/Advert',
   censusLeaf: 'BLWP/v1/CensusLeaf',
@@ -1520,6 +1522,15 @@ function encodeRoundContract(c) {
       throw new Error(`startDeadlineTicks is a whole number of ticks from 1 to below the round's ${c.blockTicks}`);
     w.u32(c.startDeadlineTicks);
   }
+  // THE SERIES AND THE INDEX, present only on a round of a series (ALL-BUT-MIN-1727; multiplayer_p2p.md "Round i of a
+  // series is derived, never authored": round_id(i) = H(series_id || i)). Written after the deadline and only when
+  // named, so every contract that names no series keeps its bytes and its id.
+  if (c.seriesId !== undefined && c.seriesId !== null) {
+    if (!(c.seriesId instanceof Uint8Array) || c.seriesId.length !== 32) throw new Error('a round of a series names its 32-byte series id');
+    if (!Number.isInteger(c.roundIndex) || c.roundIndex < 0 || c.roundIndex > 0xffffffff) throw new Error('a round of a series names its index');
+    w.bytes32(c.seriesId);
+    w.u32(c.roundIndex);
+  } else if (c.roundIndex !== undefined && c.roundIndex !== null) throw new Error('a round index without its series');
   return w.finish();
 }
 
@@ -1589,12 +1600,19 @@ function decodeRoundContract(bytes) {
     nodes: r.vec((rr) => rr.bytes32()),
   };
   // The start deadline, present only when the round named one that is not the
-  // default. Written as the default it would be a second encoding of one round.
-  if (r.at < r.b.length) {
+  // default. Written as the default it would be a second encoding of one round. And after it the series and the
+  // index, only on a round of a series: 4 bytes left is the deadline, 36 the series, 40 both.
+  const left = r.b.length - r.at;
+  if (left !== 0 && left !== 4 && left !== 36 && left !== 40) throw new Error(`a round contract with ${left} trailing bytes`);
+  if (left === 4 || left === 40) {
     const d = r.u32();
     if (d === START_DEADLINE_TICKS) throw new Error('a start deadline equal to the default is written by omitting it');
     if (d < 1 || d >= c.blockTicks) throw new Error(`a start deadline of ${d} ticks is outside 1 to below the round's ${c.blockTicks}`);
     c.startDeadlineTicks = d;
+  }
+  if (left === 36 || left === 40) {
+    c.seriesId = r.bytes32();
+    c.roundIndex = r.u32();
   }
   r.end();
   // AND BYTES FROM ANYWHERE ARE HELD TO THE SAME (M3 W7): a paying FEDERATION round naming none is refused.
@@ -1603,7 +1621,19 @@ function decodeRoundContract(bytes) {
   return c;
 }
 
-const roundId = (c) => taggedHash(TAG.roundContract, encodeRoundContract(c));
+/**
+ * THE ROUND'S ID. A round of a series: H(series_id || i) - the series fixes the round, and a node holds its contract
+ * only when it is exactly the one the series derives (series.js seriesRoundCheck). Any other round: its contract's hash.
+ */
+const roundId = (c) => {
+  if (c && c.seriesId !== undefined && c.seriesId !== null) {
+    encodeRoundContract(c);                                   // a contract that does not encode has no id
+    const i = new Uint8Array(4); new DataView(i.buffer).setUint32(0, c.roundIndex, false);
+    const body = new Uint8Array(36); body.set(c.seriesId, 0); body.set(i, 32);
+    return taggedHash(TAG.seriesRound, body);
+  }
+  return taggedHash(TAG.roundContract, encodeRoundContract(c));
+};
 
 /**
  * IS THIS CONTRACT FOR THIS BUILD'S NETWORK, AND FOR RULES IT IS RUNNING?

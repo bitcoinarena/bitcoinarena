@@ -45,8 +45,8 @@
 import { fromHex } from './hash.js';
 
 export const GENESIS_CONFIG_HASH = fromHex('bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1');
-export const NETWORK_ID_REGTEST = fromHex('83cea98f06eeea115885942b09bc980a48e50ffcca16ce3b49fd8df7aef76c98');
-export const NETWORK_ID_TESTNET4 = fromHex('26b9162e72a397a4433f3cae8ea213a9a3fc2094bc04c1789a91b691edc9f62f');
+export const NETWORK_ID_REGTEST = fromHex('30927357ec8945494d397ad427df5fb34702e1dd69608ac92f9b61f00b10649d');
+export const NETWORK_ID_TESTNET4 = fromHex('bf876cb1a9cb671ba127e40e242ac9a79d82259ec28f8900f94faf5b1005604d');
 export const AUTHORITY_PUBKEY_REGTEST = fromHex('6a0bbf5d24255489cdd44d0c33ac1e3ff4006491ec7d76bc1ea5723e5c59b700');
 export const RECOVERY_PUBKEY_REGTEST = fromHex('981ca74b57d303c6053b9c1335d111817a74bd82ced80f87491d1d9a4fb9d7ae');
 export const AUTHORITY_PUBKEY_TESTNET4 = fromHex('ea65169edd6387d681a3c6b14c5a17243d49fcdcdbf60816b0e2cb2771a8c9bc');

@@ -32,7 +32,10 @@ test('on a round that names the tight line of 120: in time decides nothing, afte
   };
   console.log('  FACTS (first mark, deadline 120):', JSON.stringify(facts));
   assert.deepEqual(facts, { markAt60: null, markAt1320: FORFEIT, markAt1197: FORFEIT, noMark: null });
-  assert.match(firstMarkOutcome({ joinTick: 0, deadlineTicks: 120, firstMark: null }).why, /not ENTRY_VOID and not FORFEIT.*§15/);
+  // NO MARK YET DECIDES NOTHING HERE: the walk-away is §15's FORFEIT, decided at the node's door once the start window
+  // has passed (ALL-BUT-MIN-1727) - never ENTRY_VOID
+  assert.equal(firstMarkOutcome({ joinTick: 0, deadlineTicks: 120, firstMark: null }).outcome, null);
+  assert.match(firstMarkOutcome({ joinTick: 0, deadlineTicks: 120, firstMark: null }).why, /not ENTRY_VOID - a walk-away is §15's FORFEIT, decided at the door/);
 });
 
 test('a late first mark is never a refund: FORFEIT, not ENTRY_VOID (§13C)', () => {

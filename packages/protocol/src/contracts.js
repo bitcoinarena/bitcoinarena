@@ -199,6 +199,15 @@ export function encodeRoundContract(c) {
       throw new Error(`startDeadlineTicks is a whole number of ticks from 1 to below the round's ${c.blockTicks}`);
     w.u32(c.startDeadlineTicks);
   }
+  // THE SERIES AND THE INDEX, present only on a round of a series (ALL-BUT-MIN-1727; multiplayer_p2p.md "Round i of a
+  // series is derived, never authored": round_id(i) = H(series_id || i)). Written after the deadline and only when
+  // named, so every contract that names no series keeps its bytes and its id.
+  if (c.seriesId !== undefined && c.seriesId !== null) {
+    if (!(c.seriesId instanceof Uint8Array) || c.seriesId.length !== 32) throw new Error('a round of a series names its 32-byte series id');
+    if (!Number.isInteger(c.roundIndex) || c.roundIndex < 0 || c.roundIndex > 0xffffffff) throw new Error('a round of a series names its index');
+    w.bytes32(c.seriesId);
+    w.u32(c.roundIndex);
+  } else if (c.roundIndex !== undefined && c.roundIndex !== null) throw new Error('a round index without its series');
   return w.finish();
 }
 
@@ -268,12 +277,19 @@ export function decodeRoundContract(bytes) {
     nodes: r.vec((rr) => rr.bytes32()),
   };
   // The start deadline, present only when the round named one that is not the
-  // default. Written as the default it would be a second encoding of one round.
-  if (r.at < r.b.length) {
+  // default. Written as the default it would be a second encoding of one round. And after it the series and the
+  // index, only on a round of a series: 4 bytes left is the deadline, 36 the series, 40 both.
+  const left = r.b.length - r.at;
+  if (left !== 0 && left !== 4 && left !== 36 && left !== 40) throw new Error(`a round contract with ${left} trailing bytes`);
+  if (left === 4 || left === 40) {
     const d = r.u32();
     if (d === START_DEADLINE_TICKS) throw new Error('a start deadline equal to the default is written by omitting it');
     if (d < 1 || d >= c.blockTicks) throw new Error(`a start deadline of ${d} ticks is outside 1 to below the round's ${c.blockTicks}`);
     c.startDeadlineTicks = d;
+  }
+  if (left === 36 || left === 40) {
+    c.seriesId = r.bytes32();
+    c.roundIndex = r.u32();
   }
   r.end();
   // AND BYTES FROM ANYWHERE ARE HELD TO THE SAME (M3 W7): a paying FEDERATION round naming none is refused.
@@ -282,7 +298,19 @@ export function decodeRoundContract(bytes) {
   return c;
 }
 
-export const roundId = (c) => taggedHash(TAG.roundContract, encodeRoundContract(c));
+/**
+ * THE ROUND'S ID. A round of a series: H(series_id || i) - the series fixes the round, and a node holds its contract
+ * only when it is exactly the one the series derives (series.js seriesRoundCheck). Any other round: its contract's hash.
+ */
+export const roundId = (c) => {
+  if (c && c.seriesId !== undefined && c.seriesId !== null) {
+    encodeRoundContract(c);                                   // a contract that does not encode has no id
+    const i = new Uint8Array(4); new DataView(i.buffer).setUint32(0, c.roundIndex, false);
+    const body = new Uint8Array(36); body.set(c.seriesId, 0); body.set(i, 32);
+    return taggedHash(TAG.seriesRound, body);
+  }
+  return taggedHash(TAG.roundContract, encodeRoundContract(c));
+};
 
 /**
  * IS THIS CONTRACT FOR THIS BUILD'S NETWORK, AND FOR RULES IT IS RUNNING?

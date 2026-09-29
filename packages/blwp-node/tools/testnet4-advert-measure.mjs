@@ -18,7 +18,7 @@ import { openStore, nodeIdentity } from '../src/store.js';
 import { readInvite } from '../src/invite.js';
 import { Roster } from '../src/roster.js';
 import { encodeRoundContract, roundId } from '../../protocol/src/contracts.js';
-import { seriesTemplate, seriesRound } from '../../protocol/src/series.js';
+import { seriesTemplate, seriesRound, seriesIndexAt } from '../../protocol/src/series.js';
 import { NETWORK_ID_TESTNET4 } from '../../protocol/src/genesis-ids.js';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId } from '../../protocol/src/donation.js';
@@ -70,7 +70,7 @@ const base = {
   exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20, timeFloor: 30, timeCeil: 150,
   minScore: 1, rankNumerator: 3, rankDenominator: 4, nodes: nodes.map((x) => x.pubkey),
 };
-const round0 = seriesRound(seriesTemplate(base, BigInt(Date.now()) + 86400000n), 0);
+const round0 = seriesRound(seriesTemplate(base, seriesIndexAt(base.networkId, Date.now()) + 1), 0);
 const rosterFor = (contract) => {
   const rid = roundId(contract);
   const store = { get: (id) => (toHex(id) === toHex(rid) ? { contract: encodeRoundContract(contract) } : null) };

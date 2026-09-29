@@ -14,8 +14,9 @@
 // nodes are available ... refunded"), and it is not decided here.
 //
 // In time: nothing is decided here; the mark goes on as any mark. No first mark
-// at the door: nothing yet - not ENTRY_VOID and not FORFEIT. A walk-away is
-// decided at the round's close (`stoppedOutcome`, §15, ruled 2026-09-12).
+// yet: nothing from this function - the walk-away is decided AT THE DOOR once the entry's start window has passed
+// (ALL-BUT-MIN-1727, the owner 2026-09-29 17:27: FORFEIT, score 0, "not left undecided until the close"; the node's
+// door sweep, by the close's own peer-checked `stoppedOutcome`), never ENTRY_VOID and never a refund.
 //
 // THE LOCK: a FORFEIT stake is claimed in the round's settlement transaction
 // (§23.2) - W4, parked behind the fee-lock ruling. Until then a FORFEIT lock
@@ -58,7 +59,7 @@ export function firstMarkOutcome({ joinTick, originTick, originName = 'join', de
   const lastTick = origin + deadlineTicks;
   if (firstMark == null)
     return { outcome: null, lastTick,
-      why: 'no first mark yet: nothing is decided at the door - not ENTRY_VOID and not FORFEIT (a walk-away is §15\'s, decided at the round\'s close)' };
+      why: 'no first mark yet: not ENTRY_VOID - a walk-away is §15\'s FORFEIT, decided at the door once the start window has passed' };
   if (!Number.isInteger(firstMark.tick) || firstMark.tick < joinTick)
     throw new Error(`a first mark is at a tick at or after the join tick ${joinTick}`);
   if (!firstMarkIsChainStart(firstMark.previousHash))

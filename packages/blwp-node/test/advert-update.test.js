@@ -7,12 +7,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { advertId } from '../src/advert.js';
-import { parseTransaction } from '../src/tx.js';
+import { advertId } from '../../protocol/src/advert.js';
+import { parseTransaction } from '../../protocol/src/tx.js';
 import {
   advertUpdatePayload, readAdvertUpdatePayload, readAdvertUpdate, checkAgainstBond, newestUpdates, ADVERT_UPDATE_BYTES,
-} from '../src/advert-update.js';
-import { advertUpdateTransaction, bondTransaction } from '../tools/bond.js';
+} from '../../protocol/src/advert-update.js';
+import { advertUpdateTransaction, bondTransaction } from '../../protocol/tools/bond.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const verify = (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } };
