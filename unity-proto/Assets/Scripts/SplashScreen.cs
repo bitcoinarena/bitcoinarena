@@ -38,6 +38,7 @@ public class SplashScreen : MonoBehaviour
     string _pickId = "", _tapId = "", _nameWhy = "";
     int _offset;
     bool _joining, _autoPlay, _hiddenTold;
+    string _adoptedRound = "";
     string _joinWhy = "";
     float _joinedAt = -1f;
     // the owner's four how-to panels (2026-09-14 07:55), loaded once, and where they were drawn
@@ -160,6 +161,16 @@ public class SplashScreen : MonoBehaviour
                 int k = Blwp.DailyLobby.Keep(_lobby.rows, _tapId);
                 _pickId = k >= 0 ? _lobby.rows[k].id : "";
             }
+        }
+
+        // THE NEXT ROUND THE PAGE ENTERED IS PLAYED LIKE ONE PLAY JOINED (the owner 2026-09-28, option 1 of A: continuing is the
+        // default). The page enters round i+1 after a run and holds it until its start; Unity takes that join as its own,
+        // once per round, and starts the run when it says joined - at the round's start, with everybody.
+        if (!_joining && _lobby != null && _lobby.join != null && _lobby.join.next && !string.IsNullOrEmpty(_lobby.join.round)
+            && _lobby.join.round != _adoptedRound && (_lobby.join.state == "joining" || _lobby.join.state == "joined"))
+        {
+            _adoptedRound = _lobby.join.round;
+            _joining = true; _joinedAt = -1f; _joinWhy = "";
         }
 
         // PLAY IN THE LOBBY JOINS IN THIS PAGE (the owner 2026-09-13 07:11):
