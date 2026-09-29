@@ -75,7 +75,9 @@ const values = {
   CODE_FILENAME: one('the wasm', (f) => /\.wasm(\.|$)/.test(f)),
   COMPANY_NAME: setting('companyName'),
   PRODUCT_NAME: setting('productName'),
-  PRODUCT_VERSION: setting('bundleVersion'),
+  // THE BUILD'S OWN NUMBER (BuildWebGL leaves it in the build as build.txt), so the loading screen says what the lobby
+  // says; the committed ProjectSettings only for a build that has none (the owner 2026-09-29: 17xx under a 22xx lobby).
+  PRODUCT_VERSION: existsSync(join(BUILD, 'build.txt')) ? readFileSync(join(BUILD, 'build.txt'), 'utf8').trim() : setting('bundleVersion'),
 };
 
 const unknown = left()

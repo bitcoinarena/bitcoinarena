@@ -194,6 +194,12 @@ public static class BuildWebGL
         ReportContents(report);
         CopyStreamedContent(output);
         StampDownloadSize(output);
+        // THE NUMBER TRAVELS WITH THE BUILD (the owner 2026-09-29: "It's 17xx now but was 2200ish before"): the loading screen's
+        // version is filled by tools/fill-template.mjs at every deploy, and it read the committed ProjectSettings - 0.0.1791,
+        // since the builds bump bundleVersion only locally - so a page-only redeploy showed 17xx under a 22xx lobby. The
+        // build's own number is left beside it, and fill-template takes it from here.
+        if (s.result == BuildResult.Succeeded)
+            File.WriteAllText(Path.Combine(output, "build.txt"), PlayerSettings.bundleVersion);
 
         if (s.result != BuildResult.Succeeded)
         {
