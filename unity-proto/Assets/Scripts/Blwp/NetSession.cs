@@ -117,7 +117,7 @@ namespace Blwp
             // lobby taking the screen there are about 0.6 s, and this poll refreshes every 0.5 s - so whether the
             // player is told why depends on which lands first. Photographed both ways on one build: bay-04.png has
             // the line, bayok-27.png and bayfull-29.png are the same state with nothing on screen.
-            // `DriveHud.DrawRunStopped` returns at its first line on an empty string, so a late poll is silence.
+            // (The HUD no longer prints it - NO-STOPPED-LINE-2103 - but the ending's reason is still the session's.)
             // Fetched once, the moment the run ends; the poll below carries on as before.
             if (BlwpNet.Ended && string.IsNullOrEmpty(Ending)) Ending = BlwpNet.Ending();
             if (Time.unscaledTime < _nextPoll) return;
