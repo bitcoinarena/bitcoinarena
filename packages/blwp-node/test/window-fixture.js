@@ -112,6 +112,102 @@ export const wordsAt = (t) => {
   }
   return TAPE[t];
 };
+
+/**
+ * THE SCRIPTED WINNER UNDER A ROUND'S OWN BEACON. A paying round seeds its players from the beacon its bonded chain
+ * names (1847956a), not from RANDOMNESS, so the tape above - closed-loop in RANDOMNESS's world - steered another world
+ * and the winner stopped delivering: nineteen tests read FAILED, score 0, "recorded inputs, another run's beacon". The
+ * same driver, run closed-loop in the world the signer nodes will replay; the world secret's last byte counts up from
+ * WINNER's to the first whose drive delivers with a score by `ticks` (measured under RANDOMNESS: about one byte in eight
+ * does, 0.2 s each). Anyone else, or no beacon, plays the tape above unchanged. Harness only.
+ */
+const _beaconWinners = new Map();
+const sameBytes = (a, b) => a && b && a.length === b.length && a.every((x, i) => x === b[i]);
+/**
+ * THE SAME SEARCH, YIELDING between worlds, so the daemons in this process keep answering while it runs; it fills the
+ * cache `playFor` reads. Every play path awaits it first.
+ */
+export async function warmPlay(who, randomness) {
+  if (!randomness || sameBytes(randomness, RANDOMNESS) || !sameBytes(who.key, WINNER.key) || !sameBytes(who.worldSecret, WINNER.worldSecret)) return;
+  const key = `${Buffer.from(randomness).toString('hex')}:${who.ticks}`;
+  for (let n = 0; n < 256 && !_beaconWinners.has(key); n++) {
+    const worldSecret = Uint8Array.from(WINNER.worldSecret);
+    worldSecret[31] = (WINNER.worldSecret[31] + n) & 255;
+    const run = drivenTape(seedWordForEntry({ playerPubkey: who.key, worldSecret, joinTick: 0 }, randomness), who.ticks);
+    if (run.outcome === 'DELIVERED' && run.score > 0) _beaconWinners.set(key, { worldSecret, words: (t) => run.tape[t], score: run.score });
+    await new Promise((r) => setImmediate(r));
+  }
+}
+
+/**
+ * N QUALIFIERS UNDER A ROUND'S BEACON, for the pool's ranks: real player keys (the secret 0x30 + i), each driven
+ * closed-loop in the first world of its own whose drive delivers with a score, n distinct scores, the highest first.
+ * Each carries its words, which `playFor` hands back. Searched yielding, as `warmPlay` is.
+ */
+export async function qualifiersUnder(randomness, n, ticks = WINNER.ticks) {
+  const out = [];
+  for (let i = 0; out.length < n && i < 64; i++) {
+    const key = schnorr.getPublicKey(b32(0x30 + i));
+    for (let last = 0; last < 256; last++) {
+      const worldSecret = Uint8Array.from(WINNER.worldSecret); worldSecret[31] = last;
+      const run = drivenTape(seedWordForEntry({ playerPubkey: key, worldSecret, joinTick: 0 }, randomness), ticks);
+      await new Promise((r) => setImmediate(r));
+      if (run.outcome !== 'DELIVERED' || !(run.score > 0) || out.some((q) => q.score === run.score)) continue;
+      out.push({ name: `q${run.score}`, key, worldSecret, ticks, score: run.score, words: (t) => run.tape[t] });
+      break;
+    }
+  }
+  if (out.length < n) throw new Error(`${out.length} of ${n} qualifiers found under this beacon`);
+  return out.sort((a, b) => b.score - a.score);
+}
+
+export function playFor(who, randomness) {
+  const plain = { worldSecret: who.worldSecret, words: who.words || wordsAt };
+  if (!randomness || sameBytes(randomness, RANDOMNESS) || !sameBytes(who.key, WINNER.key) || !sameBytes(who.worldSecret, WINNER.worldSecret)) return plain;
+  const key = `${Buffer.from(randomness).toString('hex')}:${who.ticks}`;
+  if (_beaconWinners.has(key)) return _beaconWinners.get(key);
+  for (let n = 0; n < 256; n++) {
+    const worldSecret = Uint8Array.from(WINNER.worldSecret);
+    worldSecret[31] = (WINNER.worldSecret[31] + n) & 255;
+    const run = drivenTape(seedWordForEntry({ playerPubkey: who.key, worldSecret, joinTick: 0 }, randomness), who.ticks);
+    if (run.outcome !== 'DELIVERED' || !(run.score > 0)) continue;
+    const got = { worldSecret, words: (t) => run.tape[t], score: run.score };
+    _beaconWinners.set(key, got);
+    return got;
+  }
+  throw new Error('no world under this beacon where the scripted winner delivers');
+}
+
+/**
+ * THE DRIVER, CLOSED-LOOP IN ONE WORLD: `ticks` words steered at the gate from the truck's own picture in the world
+ * `seedWord` seeds, and what the core says the run came to - DELIVERED with its score, FAILED, or null (still running).
+ * Past the run's end the words are idle; the tape is always `ticks` long.
+ */
+export function drivenTape(seedWord, ticks) {
+  const st = init(seedWord);
+  const tape = [];
+  let ended = null;
+  // THE CORE IS NOT STEPPED PAST THE RUN'S END: a failed world costs only its own ticks (a search runs on the daemons'
+  // thread - measured, 7.1 s stepping every world to the end held the loop past the servers' keep-alive, ECONNRESET).
+  for (let t = 0; t < ticks; t++) {
+    if (ended) { tape.push([0, 0, 0, 0, 0]); continue; }
+    const words = driverWords(st);
+    tape.push(words);
+    step(st, ...words);
+    const r = CORE.result(st); if (r.outcome) ended = r;
+  }
+  return { tape, outcome: ended ? ended.outcome : null, score: ended ? ended.score : 0 };
+}
+
+/** The driver's five words from the truck's picture: full throttle, steered at the gate past its lead. */
+function driverWords(st) {
+  const p = CORE.picture(st);
+  const x = p.x / 65536, z = p.z / 65536, heading = p.heading / 65536;
+  let off = Math.atan2(GATE_X / 65536 + LEAD_M - x, -z) / (2 * Math.PI) - heading;
+  off -= Math.round(off);
+  return [65536, Math.max(-65536, Math.min(65536, Math.round(off * STEER_GAIN * 65536))), 0, 0, 0];
+}
+
 export const STAKE = 100000n;
 export const WINDOW_MS = 3000;
 export const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -180,6 +276,7 @@ export const secretScalar = () => { let p = rand(32); while (scalarFrom32(p) >= 
 
 /** One player's stake dealt at `needed` to every signer node, joined, paid and played on `daemons`. */
 export async function joinAndPlay(daemons, c, rid, who, needed, { direct = false, donationMsat = 0n, port = null, randomness = RANDOMNESS } = {}) {
+  await warmPlay(who, randomness);
   const session = ed25519.utils.randomSecretKey();
   const preimage = secretScalar();
   const e = rand(32);
@@ -193,7 +290,7 @@ export async function joinAndPlay(daemons, c, rid, who, needed, { direct = false
   const entry = {
     roundId: rid, playerPubkey: who.key, sessionPubkey: ed25519.getPublicKey(session),
     stakeCommitment: sha256(preimage), stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE), donationMsat,
-    joinTick: 0, worldSecret: who.worldSecret, vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0], feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
+    joinTick: 0, worldSecret: playFor(who, randomness).worldSecret, vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0], feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
   };
   // ON A SIGNER NODE THAT REACHES A FEDERATION (`port`, the lock fixture's; RULED 2026-09-25) the entry arrives as production
   // shapes it: its stake locked to its point and its 2% fee locked to H(F), both in that federation - the round mints fee
@@ -209,10 +306,10 @@ export async function joinAndPlay(daemons, c, rid, who, needed, { direct = false
   }
   const eid = entryId(entry);
   const input = { roundId: rid, entryId: eid, previousHash: GENESIS_HASH, firstTick: 0,
-    ticks: Array.from({ length: who.ticks }, (_, t) => wordsAt(t)), liquidations: [] };
+    ticks: Array.from({ length: who.ticks }, (_, t) => playFor(who, randomness).words(t)), liquidations: [] };
   // THE SEED IS THE ROUND'S BEACON when the caller names it (a bonded chain's), the fixtures' RANDOMNESS otherwise.
   const st = init(seedWordForEntry(entry, randomness || RANDOMNESS));
-  for (let t = 0; t < who.ticks; t++) step(st, ...wordsAt(t));
+  for (let t = 0; t < who.ticks; t++) step(st, ...playFor(who, randomness).words(t));
   const mark = { roundId: rid, entryId: eid, tick: who.ticks,
     stateHash: Uint8Array.from(stateHash(st).match(/../g).map((x) => parseInt(x, 16))),
     inputChainHash: batchId(input), previousHash: NO_PREVIOUS, sessionPubkey: ed25519.getPublicKey(session) };

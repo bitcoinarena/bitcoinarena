@@ -30,7 +30,7 @@ import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { resultFinality, resultWindow } from '../src/finality.js';
 import { assumeAssigned } from './assignment.js';
 import { lockPort, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
-import { b32, rand, RANDOMNESS, STAKE, WINDOW_MS, WINNER, GENESIS_HASH, wordsAt, contractFor, say, secretScalar, opts, wait, presentDay } from './window-fixture.js';
+import { b32, rand, RANDOMNESS, STAKE, WINDOW_MS, WINNER, GENESIS_HASH, wordsAt, playFor, warmPlay, contractFor, say, secretScalar, opts, wait, presentDay } from './window-fixture.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
 import { dealHandout, encodeHandout, handoutId } from '../../protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../protocol/src/shares.js';
@@ -97,6 +97,9 @@ async function signerNodes({ endIn = 9000, lagB = 0 } = {}) {
  * first mark at 90 and a mark at 120 on it - the player's second chain.
  */
 async function joinAndBuild(w, { lockAt = ['a', 'b'] } = {}) {
+  // THE WINNER UNDER THIS ROUND'S OWN BEACON (window-fixture playFor): the recorded tape misses there.
+  await warmPlay(WINNER, w.randomness);
+  const play = playFor(WINNER, w.randomness);
   const session = ed25519.utils.randomSecretKey();
   const preimage = secretScalar();
   const e = rand(32);
@@ -111,7 +114,7 @@ async function joinAndBuild(w, { lockAt = ['a', 'b'] } = {}) {
   const entry = {
     roundId: w.rid, playerPubkey: WINNER.key, sessionPubkey: ed25519.getPublicKey(session),
     stakeCommitment: sha256(preimage), stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE), donationMsat: 0n,
-    joinTick: 0, worldSecret: WINNER.worldSecret, vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0],
+    joinTick: 0, worldSecret: play.worldSecret, vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0],
     feePreimage: feeSecret, stakeLockOutpoint: outpoint, feeLockOutpoint: feeOutpoint,
     claimKeyAttestationRef: b32(0x9a),
   };
@@ -134,7 +137,7 @@ async function joinAndBuild(w, { lockAt = ['a', 'b'] } = {}) {
   }
   const sign = (m) => joinSigned(encodeCheckpoint(m), ed25519.sign(checkpointId(m), session));
   const batchOf = (from, to, previousHash) => ({ roundId: w.rid, entryId: eid, previousHash, firstTick: from,
-    ticks: Array.from({ length: to - from }, (_, t) => wordsAt(from + t)), liquidations: [] });
+    ticks: Array.from({ length: to - from }, (_, t) => play.words(from + t)), liquidations: [] });
   const markOf = (tick, h, input, previousHash) => ({ roundId: w.rid, entryId: eid, tick, stateHash: h,
     inputChainHash: batchId(input), previousHash, sessionPubkey: entry.sessionPubkey });
   const chain = (ticks) => {
@@ -142,7 +145,7 @@ async function joinAndBuild(w, { lockAt = ['a', 'b'] } = {}) {
     const out = [];
     let from = 0; let prevBatch = GENESIS_HASH; let prevMark = NO_PREVIOUS; let first = null;
     for (const to of ticks) {
-      for (let t = from; t < to; t++) step(st, ...wordsAt(t));
+      for (let t = from; t < to; t++) step(st, ...play.words(t));
       const b = batchOf(from, to, prevBatch);
       const m = markOf(to, Uint8Array.from(stateHash(st).match(/../g).map((x) => parseInt(x, 16))), b, prevMark);
       out.push(encodeInputBatch(b), sign(m));

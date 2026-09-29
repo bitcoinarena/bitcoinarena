@@ -79,7 +79,9 @@ test('a qualifier who named an address is paid by one outgoing contract to the c
 test('a round with no qualifier pays no winnings: no payout output, no invoice asked for, and both stake locks left to expire back', async () => {
   const port = lockPort();
   const addr = lnurl(port);
-  const w = await lockRound({ port, minScore: 1000000, serveOpts: { lnurlFetch: addr.fetchLike, winningsEveryMs: 500 } });
+  // THE FLOOR NO RUN REACHES, the field's largest: scores are E x T x C in 1e-5 points and a delivering world here scores
+  // up to 395 points (measured), so no smaller floor is sure to leave both runs under it.
+  const w = await lockRound({ port, minScore: 0xffffffff, serveOpts: { lnurlFetch: addr.fetchLike, winningsEveryMs: 500 } });
   try {
     const won = await lockAndPlay(w, WINNER);
     const lost = await lockAndPlay(w, LOSER);

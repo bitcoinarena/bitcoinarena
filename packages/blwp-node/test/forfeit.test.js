@@ -28,7 +28,7 @@ import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { assumeAssigned } from './assignment.js';
 import { lockPort, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
 import { lnurl, nameAddress } from './lock-round-fixture.js';
-import { b32, rand, RANDOMNESS, STAKE, WINDOW_MS, WINNER, LOSER, GENESIS_HASH, wordsAt, contractFor, say, secretScalar, opts, wait } from './window-fixture.js';
+import { b32, rand, RANDOMNESS, STAKE, WINDOW_MS, WINNER, LOSER, GENESIS_HASH, wordsAt, playFor, warmPlay, contractFor, say, secretScalar, opts, wait } from './window-fixture.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
 import { dealHandout, encodeHandout, handoutId } from '../../protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../protocol/src/shares.js';
@@ -96,6 +96,9 @@ async function lockRound({ minScore = 1 } = {}) {
 
 /** One player staked by a lock both signer nodes verified, then played (as joinAndPlay plays). */
 async function lockAndPlay(w, who) {
+  // THE WINNER UNDER THIS ROUND'S OWN BEACON (window-fixture playFor): the recorded tape misses there.
+  await warmPlay(who, w.randomness);
+  const play = playFor(who, w.randomness);
   const session = ed25519.utils.randomSecretKey();
   const preimage = secretScalar();
   const e = rand(32);
@@ -112,7 +115,7 @@ async function lockAndPlay(w, who) {
   const entry = {
     roundId: w.rid, playerPubkey: who.key, sessionPubkey: ed25519.getPublicKey(session),
     stakeCommitment: sha256(preimage), stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE), donationMsat: 0n,
-    joinTick: 0, worldSecret: who.worldSecret, vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0],
+    joinTick: 0, worldSecret: play.worldSecret, vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0],
     feePreimage: feeSecret, stakeLockOutpoint: outpoint, feeLockOutpoint: feeOutpoint,
     claimKeyAttestationRef: b32(0x9a),
   };
@@ -124,9 +127,9 @@ async function lockAndPlay(w, who) {
     claimPk: w.claimPk, refundPk: refundKeyOf(who.key), expiration: w.port.height + 200 };
   await w.port.put(feeOutpoint, feeFields);
   const input = { roundId: w.rid, entryId: eid, previousHash: GENESIS_HASH, firstTick: 0,
-    ticks: Array.from({ length: who.ticks }, (_, t) => wordsAt(t)), liquidations: [] };
+    ticks: Array.from({ length: who.ticks }, (_, t) => play.words(t)), liquidations: [] };
   const st = init(seedWordForEntry(entry, w.randomness || RANDOMNESS));
-  for (let t = 0; t < who.ticks; t++) step(st, ...wordsAt(t));
+  for (let t = 0; t < who.ticks; t++) step(st, ...play.words(t));
   const mark = { roundId: w.rid, entryId: eid, tick: who.ticks,
     stateHash: Uint8Array.from(stateHash(st).match(/../g).map((x) => parseInt(x, 16))),
     inputChainHash: batchId(input), previousHash: NO_PREVIOUS, sessionPubkey: ed25519.getPublicKey(session) };
@@ -218,7 +221,9 @@ test('a Delivered run below the round\'s min_score is not a qualifier: its forfe
   // paying front (the owner 2026-09-23: FRONT_SCORE_SPAN 40 -> 36 m) - the same run, measured here in the node's own
   // score, not a figure carried over from a core test.
   // it was 12, then 367), and the claim is about a DELIVERED run under the minimum.
-  const w = await lockRound({ minScore: 1000 });
+  // THE FLOOR NO RUN REACHES, the field's largest: scores are E x T x C in 1e-5 points (a delivering world scores up to
+  // 395 points, measured), so a smaller floor is not sure to be above the run.
+  const w = await lockRound({ minScore: 0xffffffff });
   try {
     const winner = await lockAndPlay(w, WINNER);
     assert.deepEqual(await closeRound(w), ['closed', 'closed']);
@@ -227,9 +232,9 @@ test('a Delivered run below the round\'s min_score is not a qualifier: its forfe
       got = await ask(w.a, w, winner.eid);
       if (!/before the result is final/.test(String(got.body))) break;
     }
-    console.log(`  a Delivered run, score 2, min_score 1000: ${got.status} ${String(got.body).slice(0, 120)}`);
+    console.log(`  a Delivered run, min_score 4294967295: ${got.status} ${String(got.body).slice(0, 120)}`);
     assert.equal(got.status, 409);
-    assert.match(String(got.body), /DELIVERED with score 2 and this round's minimum is 1000: not a qualifier/);
+    assert.match(String(got.body), /DELIVERED with score [1-9]\d* and this round's minimum is 4294967295: not a qualifier/);
     assert.equal(w.a.round.forfeit(winner.eid), null);
   } finally { await w.close(); }
 });

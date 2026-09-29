@@ -10,7 +10,7 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 
 import { lockPort, TWO_GATEWAYS } from './lock-fixture.js';
 import { lockRound, lockAndPlay, closeRound, untilSettled, standing, lnurl as lnurlFixture, nameAddress as nameAddressAt } from './lock-round-fixture.js';
-import { WINNER, LOSER, wait, b32 } from './window-fixture.js';
+import { WINNER, LOSER, wait, b32, qualifiersUnder } from './window-fixture.js';
 import { refundKeyOf } from '../../protocol/src/stake-lock.js';
 import { netStakeMsat } from '../../protocol/src/payout.js';
 import { sendableInvoiceMsat, lowestLiveGateway } from '../../protocol/src/winnings-send.js';
@@ -30,21 +30,15 @@ async function untilPaid(w, eid, ms = 30000) {
 }
 
 // THE POOL, ON THE SIGNER NODES (ruled 2026-09-23). Five qualifiers make two paying ranks (K = ceil(5/4)); the
-// players are real keys whose runs the core delivers with distinct scores (tools/find-players.mjs, 2026-09-23).
-const Q5 = [
-  ['e4ba1845b2cf8ead40bd844e6c2cdcbe0f0c1ce1c266beb983ef03cd38de7e0f', 0x70, 268],
-  ['c31bd57c6603159d05d1535b68e818e90e8ed4d2627cf59a739ffb9977412f1d', 0xb5, 179],
-  ['065deff80da6d6496933a32d73260a18aaced90183c5be678b61cdc2c3fbae9a', 0xb1, 138],
-  ['994d47237d7d454d7c93526186bacbe0b183cf8ba46d9a0712ba278f5c9602ef', 0x50, 132],
-  ['4e9279c6b687943496e5001b8b15a9dd154eb6d5bfabdf7a33acfd0eee2276e3', 0xa9, 60],
-].map(([key, last, score]) => { const worldSecret = Uint8Array.from(WINNER.worldSecret); worldSecret[31] = last;
-  return { name: `q${score}`, key: fromHex(key), worldSecret, ticks: WINNER.ticks, score }; });
+// players are real keys whose runs the core delivers with distinct scores - found under each round's own beacon
+// (window-fixture qualifiersUnder), since a paying round seeds its players from it, highest score first.
 
 test('POOL A on the signer nodes: the top qualifier names no address and the others do - its share is sent to the addressed paying rank, once, the pot is the payouts and their fees, and the unaddressed one is paid nothing', async () => {
   const port = lockPort();
   const addr = lnurl(port);
   const w = await lockRound({ port, serveOpts: { lnurlFetch: addr.fetchLike } });
   try {
+    const Q5 = await qualifiersUnder(w.randomness, 5);
     const played = [];
     for (const who of Q5) played.push({ who, ...(await lockAndPlay(w, who)) });
     const lost = await lockAndPlay(w, LOSER);

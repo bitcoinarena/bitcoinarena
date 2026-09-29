@@ -49,7 +49,11 @@ import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { stakeLockPort } from '../src/stake-lock-port.js';
 import { lockFieldsToJson } from '../src/stake-lock-signer-node.js';
 import { assumeAssigned } from '../test/assignment.js';
-import { contractFor, opts, WINNER, LOSER, RANDOMNESS, GENESIS_HASH, wordsAt, say, secretScalar } from '../test/window-fixture.js';
+import { contractFor, opts, WINNER, LOSER, GENESIS_HASH, wordsAt, drivenTape, say, secretScalar } from '../test/window-fixture.js';
+import { bondedChainSlot, bondedChainFor } from '../test/lock-fixture.js';
+import { CLOCK } from '../test/block-clock.js';
+import { splitCertificate, checkPlanTaken } from '../src/plan-taken.js';
+import { receiptsNeeded } from '../../protocol/src/threshold.js';
 import { lockFromClient } from '../../blwp-client/src/lock-result.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
 import { dealHandout, encodeHandout, handoutId } from '../../protocol/src/handout.js';
@@ -76,6 +80,8 @@ const say_ = (o) => console.log(JSON.stringify(o, (k, v) => (typeof v === 'bigin
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const rand = (n) => new Uint8Array(randomBytes(n));
 const curve = { ...feldmanGroup, tweakPoint };
+const bytesToNumber = (b) => BigInt(`0x${toHex(b)}`);
+const numberToBytes32 = (n) => fromHex(n.toString(16).padStart(64, '0'));
 const run = (bin, args) => new Promise((done) => execFile(bin, args, { timeout: 120000 }, (err, out, e) => done({ ok: !err, out: String(out), err: String(e || (err && err.message) || '') })));
 const lncli = async (who, ...a) => {
   const rpc = { alice: env.ALICE_RPC, bob: env.BOB_RPC, carol: env.CAROL_RPC }[who];
@@ -114,11 +120,16 @@ const lnurlFetch = (url) => new Promise((done, fail) => {
 });
 
 const port = stakeLockPort({ bin: env.LOCK_BIN, dataDir: `${P}/client` });
+// THE CHAIN THE ROUND IS READ FROM (RULED 2026-09-25: a paying round opens only on a node that reads the chain): the
+// fixtures' bonded chain names the census and the beacon; the money is this regtest federation's, through its own lock
+// port. The players seed from that beacon, as the signer nodes replay them.
+const slot = bondedChainSlot(port);
 const stores = [join(dir, 'a.db'), join(dir, 'b.db')];
 const up = async () => {
   const nodes = [];
-  for (const path of stores) nodes.push(await serve(openStore(path), { port: 0, ...opts, stakeLocks: port, poolCurve: curve,
-    finality: { everyMs: 500 }, lnurlFetch, winningsEveryMs: 3000 }));
+  for (const path of stores) nodes.push(await serve(openStore(path), { port: 0, ...opts, stakeLocks: slot.port, poolCurve: curve,
+    finality: { everyMs: 500 }, lnurlFetch, winningsEveryMs: 3000, chainFor: slot.chainFor, randomnessFor: slot.randomnessFor }));
+  for (const d of nodes) d.round.chainView = CLOCK.chainView();
   for (const [d, o] of [[nodes[0], nodes[1]], [nodes[1], nodes[0]]]) {
     const there = [`http://127.0.0.1:${o.port}`];
     d.verifier.peers = there; d.stakeSecrets.peers = there; d.dkg.peers = there;
@@ -134,11 +145,14 @@ await wasmMod.default({ module_or_path: readFileSync(`${env.WASM_PKG}/blwp_lock_
 const { LockClient } = wasmMod;
 
 const STAKE = 1000000n;
-const minScore = PHASE === 'fail' ? 1000000 : 1;
+const minScore = PHASE === 'fail' ? 0xffffffff : 1;
 const fedId = (await port.gateways()).federationId;
-const c = { ...contractFor([a.round.pubkey, b.round.pubkey], 20000n, [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
+const drafted = { ...contractFor([a.round.pubkey, b.round.pubkey], 20000n, [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
   custody: 'FEDERATION', federationId: fedId, minScore, stakeMsat: STAKE };
+const bonded = bondedChainFor(drafted.nodes, drafted, slot, { endpoints: [a, b].map((d) => `ws://127.0.0.1:${d.port}`) });
+const c = { ...drafted, censusRoot: bonded.censusRoot, committeeTimeMs: bonded.committeeTimeMs };
 const rid = roundId(c);
+const RANDOMNESS = slot.randomnessFor({ contract: c }).hash;
 for (const d of [a, b]) {
   const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
   if (r.status !== 201) throw new Error(`round: ${r.status} ${await r.text()}`);
@@ -185,9 +199,9 @@ async function lockAndPlay(who) {
     stakeLockOutpoint: lk.outpoint, feeLockOutpoint: feeOut, claimKeyAttestationRef: new Uint8Array(32) };
   const eid = entryId(entry);
   const input = { roundId: rid, entryId: eid, previousHash: GENESIS_HASH, firstTick: 0,
-    ticks: Array.from({ length: who.ticks }, (_, t) => wordsAt(t)), liquidations: [] };
+    ticks: Array.from({ length: who.ticks }, (_, t) => (who.words || wordsAt)(t)), liquidations: [] };
   const st = init(seedWordForEntry(entry, RANDOMNESS));
-  for (let t = 0; t < who.ticks; t++) step(st, ...wordsAt(t));
+  for (let t = 0; t < who.ticks; t++) step(st, ...(who.words || wordsAt)(t));
   const mark = { roundId: rid, entryId: eid, tick: who.ticks, stateHash: Uint8Array.from(stateHash(st).match(/../g).map((x) => parseInt(x, 16))),
     inputChainHash: batchId(input), previousHash: NO_PREVIOUS, sessionPubkey: entry.sessionPubkey };
   const signedMark = joinSigned(encodeCheckpoint(mark), ed25519.sign(checkpointId(mark), session));
@@ -219,6 +233,13 @@ const playerLike = (who, want) => {
     const key = schnorr.getPublicKey(k);
     for (let last = 0; last < 256; last++) {
       const worldSecret = Uint8Array.from(who.worldSecret); worldSecret[31] = last;
+      // THE WINNER IS DRIVEN CLOSED-LOOP IN ITS OWN WORLD (window-fixture drivenTape): the recorded tape was steered in
+      // another world and misses under this round's beacon.
+      if (want === RUN_DELIVERED) {
+        const run = drivenTape(seedWordForEntry({ playerPubkey: key, worldSecret, joinTick: 0 }, RANDOMNESS), who.ticks);
+        if (run.outcome === 'DELIVERED' && run.score > 0) return { ...who, key, worldSecret, score: run.score, words: (t) => run.tape[t] };
+        continue;
+      }
       if (runOf(key, worldSecret, who.ticks) === want) return { ...who, key, worldSecret };
     }
   }
@@ -281,6 +302,21 @@ for (const stop = Date.now() + 240000; Date.now() < stop; await wait(1000)) {
 say_({ step: 'settlement', state: settled ? settled.state : (await standing(a)).state, ms: Date.now() - t0, txid: settled && settled.txid,
   moved: settled && settled.moved });
 
+// THE SEATS AGREED BEFORE THE PAYOUT, AS A THRESHOLD OF SIGNATURES (PRIORITIES 2026-09-29 item 2): each signer node's
+// certificate for the send plan - the plan id and the signed acceptances that counted - checked here, on its own, against
+// the round's seats: a key the contract seats, a signature that verifies, over that id, one per seat, 2 of 2 needed.
+for (const d of [a, b]) {
+  const r = await fetch(`http://127.0.0.1:${d.port}/settle-taken?round=${toHex(rid)}`);
+  if (r.status !== 200) { say_({ step: 'seats agreed', node: toHex(d.round.pubkey).slice(0, 16), status: r.status, why: (await r.text()).slice(0, 160) }); continue; }
+  const cert = await r.json();
+  const records = splitCertificate(fromHex(cert.certificate));
+  const checked = records.map((x) => checkPlanTaken(x, { seats: c.nodes, planId: fromHex(cert.planId) }));
+  const who = new Set(checked.filter((x) => x.ok).map((x) => x.who));
+  say_({ step: 'seats agreed', node: toHex(d.round.pubkey).slice(0, 16), planId: cert.planId.slice(0, 16), signed: records.length,
+    verified: checked.filter((x) => x.ok).length, distinctSeats: who.size, needed: receiptsNeeded(c.nodes.length),
+    threshold: who.size >= receiptsNeeded(c.nodes.length) });
+}
+
 const invoiceOf = async (hash) => lncli('alice', 'lookupinvoice', hash);
 const channelPeer = async (chanId) => {
   const chans = (await lncli('alice', 'listchannels')).channels || [];
@@ -288,6 +324,29 @@ const channelPeer = async (chanId) => {
   return ch ? ch.remote_pubkey : null;
 };
 const rowsOn = async (eid) => Promise.all([a, b].map((d) => winnings(d, eid)));
+
+// THE FEE-LOCK PATH, TO THE END (PRIORITIES 2026-09-29 item 3; regtest only, never testnet4): the players' fee locks
+// (hash locks to H(F), F handed over in the entry) are claimed by the settlement and pay each sitting signer node one
+// pre-expired payout contract to its own key (lock-settlement.js). Here each signer node collects its own: the stock
+// client's redeem with the refund witness, signed by the node's identity key, into this probe's federation client.
+// Printed per node: the payout, accepted or not, whether the guardians still hold the contract after.
+if (settled && settled.moved) {
+  const fees = settled.moved.payouts.map((p, outIdx) => ({ ...p, outIdx })).filter((p) => p.kind === 'signer node');
+  for (const p of fees) {
+    const d = [a, b].find((n) => toHex(n.round.pubkey) === p.pk.slice(2));
+    if (!d) { say_({ step: 'fee collected', pk: p.pk.slice(0, 18), why: 'no signer node here holds that key' }); continue; }
+    let secret = Uint8Array.from(d.round.identity.secret);
+    // THE CONTRACT NAMES THE EVEN KEY (02 || x): an odd node key signs with its negation, which is that key.
+    if (secp256k1.getPublicKey(secret, true)[0] !== 0x02) secret = numberToBytes32(FIELD - bytesToNumber(secret));
+    const r = await run(env.LOCK_BIN, ['--mode', 'redeem', '--data-dir', `${P}/client`, '--outpoint', `${settled.moved.txid}:${p.outIdx}`,
+      '--signer-secret', toHex(secret), '--witness', 'refund', '--hash', '00'.repeat(32), '--amount-msat', String(p.msat),
+      '--claim-pk', p.pk, '--refund-pk', p.pk, '--expiration', '0']);
+    const line = r.out.trim().split('\n').filter((l) => l.startsWith('{')).pop();
+    const j = line ? JSON.parse(line) : {};
+    say_({ step: 'fee collected', node: p.pk.slice(2, 18), outIdx: p.outIdx, msat: p.msat, accepted: j.accepted ?? null,
+      signerIsRefundPk: j.signer_is_refund_pk ?? null, heldAfter: j.stored_after ? 'held' : 'none', error: j.error ? String(j.error).slice(0, 160) : (line ? null : r.err.slice(-200)) });
+  }
+}
 
 if (PHASE === 'pass') {
   let rows = null;
