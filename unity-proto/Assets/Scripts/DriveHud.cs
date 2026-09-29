@@ -680,7 +680,9 @@ public class DriveHud : MonoBehaviour
                       + $"\"{was} · {n} order(s) · {string.Join(" ", seen)}\"; "
                       + $"the core says \"{line}\"");
         }
-        if (rowToo) Shadowed(LiquidationBox(w, h), line, _sub, new Color(1f, 0.72f, 0.25f));
+        var liqStyle = new GUIStyle(_sub);
+        if (rowToo && FitLine(liqStyle, line, LiquidationBox(w, h).width, 10))
+            Shadowed(LiquidationBox(w, h), line, liqStyle, new Color(1f, 0.72f, 0.25f));
 
         // AND ACROSS THE MIDDLE OF THE SCREEN, while the cloud stands (the owner 2026-09-19 13:10: "when a liquidation
         // nuke/bomb hits, show in the CENTER of the screen how much was liquidated, e.g. $305000 Short liquidated").
@@ -748,14 +750,17 @@ public class DriveHud : MonoBehaviour
         // and centred put "BLOCK 965,829 · 2:06" straight across the practice
         // switch on a phone.
         var head = HeadlineBox(w, h);
-        Shadowed(new Rect(head.x, y, head.width, style.fontSize * 1.35f),
-                 $"BLOCK {block.Height:N0}   ·   {left / 60}:{left % 60:00}", style, colour);
+        string clock = $"BLOCK {block.Height:N0}   ·   {left / 60}:{left % 60:00}";
+        int size = style.fontSize;
+        if (FitLine(style, clock, head.width, 12))
+            Shadowed(new Rect(head.x, y, head.width, style.fontSize * 1.35f), clock, style, colour);
 
         var sub = new GUIStyle(_small) { alignment = TextAnchor.UpperCenter };
-        Shadowed(new Rect(head.x, y + style.fontSize * 1.2f, head.width, _small.fontSize * 1.6f),
-                 late ? "DELIVER BEFORE THE BLOCK IS MINED — OR LOSE THE LOAD"
-                      : "the block is the round · arrive before it closes",
-                 sub, new Color(1f, 1f, 1f, late ? 0.95f : 0.6f));
+        string words = late ? "DELIVER BEFORE THE BLOCK IS MINED — OR LOSE THE LOAD"
+                            : "the block is the round · arrive before it closes";
+        if (FitLine(sub, words, head.width, 10))
+            Shadowed(new Rect(head.x, y + size * 1.2f, head.width, sub.fontSize * 1.6f), words, sub,
+                     new Color(1f, 1f, 1f, late ? 0.95f : 0.6f));
     }
 
     /// <summary>
@@ -1318,6 +1323,21 @@ public class DriveHud : MonoBehaviour
     /// margin, and a style that cannot go below `floor` because below that the
     /// answer is fewer words rather than smaller ones.
     /// </summary>
+    /// <summary>
+    /// ONE LINE, WHOLE, OR NOT AT ALL (the owner 2026-09-29 21:18, CLIP-2118: on his phone "24h" under the percent was cut in
+    /// half by its row, "UNDER FIRE" was clipped to a lone red R in the gap, and a log line started off the card's left
+    /// edge). The label is not wrapped; its font shrinks to fit `width`, down to `floor`; and if it still does not fit
+    /// the caller draws nothing rather than a clipped piece of it.
+    /// </summary>
+    public static bool FitLine(GUIStyle style, string line, float width, int floor)
+    {
+        if (string.IsNullOrEmpty(line)) return false;
+        style.wordWrap = false;
+        style.clipping = TextClipping.Overflow;
+        FitInto(style, line, width, floor);
+        return style.CalcSize(new GUIContent(line)).x <= width + 0.5f;
+    }
+
     static void FitInto(GUIStyle style, string line, float width, int floor)
     {
         if (width <= 1f || string.IsNullOrEmpty(line)) return;
@@ -2526,8 +2546,8 @@ public class DriveHud : MonoBehaviour
             fontStyle = FontStyle.Bold,
             fontSize = Mathf.RoundToInt(Mathf.Min(w, h) * 0.045f),
         };
-        Shadowed(UnderFireBox(w, h), "UNDER FIRE",
-                 style, new Color(1f, 0.35f, 0.3f, k));
+        if (FitLine(style, "UNDER FIRE", UnderFireBox(w, h).width, 10))
+            Shadowed(UnderFireBox(w, h), "UNDER FIRE", style, new Color(1f, 0.35f, 0.3f, k));
     }
 
     /// <summary>
@@ -2551,7 +2571,8 @@ public class DriveHud : MonoBehaviour
             fontSize = Mathf.RoundToInt(AssaultBannerFont(w, h)),
         };
         var c = watch.BannerSide == 0 ? Up : Down;
-        Shadowed(AssaultBannerBox(w, h), watch.Banner, style, new Color(c.r, c.g, c.b, a));
+        if (FitLine(style, watch.Banner, AssaultBannerBox(w, h).width, 10))
+            Shadowed(AssaultBannerBox(w, h), watch.Banner, style, new Color(c.r, c.g, c.b, a));
     }
 
     /// <summary>
@@ -2565,6 +2586,9 @@ public class DriveHud : MonoBehaviour
         if (Mobile) return;
         var watch = ChartHud.Watch;
         if (watch == null || watch.Log.Count == 0) return;
+        // NOT ON THE RESULT CARD (CLIP-2118: "[21:16:33] BULLS ASSAULT ..." read chopped at the card's left edge on the
+        // phone). The card owns the screen for its eight seconds.
+        if (ArrivalShowing) return;
         var box = AssaultLogBox(w, h);
         float lh = SmallFont(w, h) * 1.45f;
         var style = new GUIStyle(_small) { alignment = TextAnchor.UpperLeft };
@@ -2576,7 +2600,9 @@ public class DriveHud : MonoBehaviour
             // The oldest lines fade rather than vanish, so the log reads newest-at-the-bottom at a glance.
             float fade = watch.Log.Count <= 1 ? 1f : 0.45f + 0.55f * i / (watch.Log.Count - 1);
             var c = line.Side == 0 ? Up : Down;
-            Shadowed(new Rect(box.x, box.y + (i - first) * lh, box.width, lh), line.Text, style,
+            var one = new GUIStyle(style);
+            if (!FitLine(one, line.Text, box.width, 9)) continue;
+            Shadowed(new Rect(box.x, box.y + (i - first) * lh, box.width, lh), line.Text, one,
                      new Color(c.r, c.g, c.b, fade));
         }
     }
@@ -2720,7 +2746,7 @@ public class DriveHud : MonoBehaviour
         var hot = new Color(0.96f, 0.86f, 0.20f,
                             0.7f + 0.3f * Mathf.Sin(Time.unscaledTime * 6.5f));
         var band = IrradiatedBox(w, h);
-        Shadowed(band, "IRRADIATED", warn, hot);
+        if (FitLine(warn, "IRRADIATED", band.width, 10)) Shadowed(band, "IRRADIATED", warn, hot);
 
         // The contract asks for a simulated strike to be MARKED as one. Same
         // pictures either way - the core cannot tell a simulated liquidation
@@ -3082,9 +3108,10 @@ public class DriveHud : MonoBehaviour
 
             double chg = market.DayChangePct;
             string sub = PriceSubline(market.Price, chg, market.Status);
-            if (sub.Length > 0)
-                Shadowed(new Rect(head.x, HeadlineRowY(w, h, 1), head.width, _sub.fontSize * 1.6f),
-                         sub, _sub, chg >= 0 ? Up : Down);
+            var subStyle = new GUIStyle(_sub);
+            if (sub.Length > 0 && FitLine(subStyle, sub, head.width, 10))
+                Shadowed(new Rect(head.x, HeadlineRowY(w, h, 1), head.width, subStyle.fontSize * 1.6f),
+                         sub, subStyle, chg >= 0 ? Up : Down);
             // AND WHAT IS BROKEN, NAMED, in the corner rather than across the headline.
             var small = new GUIStyle(_small) { alignment = TextAnchor.UpperLeft, fontStyle = FontStyle.Bold };
             DrawConnectionTrouble(w, h, small, false);
