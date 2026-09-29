@@ -809,6 +809,18 @@ public class DriveHud : MonoBehaviour
     bool _cardFolded;
     float _foldEnding = float.NaN;
 
+    /// <summary>
+    /// THIS RUN'S ENDING, NOT AN OLDER ONE (measured on WASTED at 0.0.2306: "DELIVERED 0 BTC to the miners" over the wreck -
+    /// with the hold open-ended while the next round comes, a delivery that never happened on this page, SinceDelivery's
+    /// 999 s, and any earlier run's delivery counted as this ending). Only an ending after this run's roll out has a card.
+    /// </summary>
+    bool EndingIsThisRuns(bool missed)
+    {
+        float endAt = missed ? gate.MissedAt : Time.unscaledTime - gate.SinceDelivery;
+        if (!missed && gate.SinceDelivery >= 900f) return false;                 // never delivered on this page
+        return loadout == null || endAt >= loadout.ConfirmedAt - 0.01f;
+    }
+
     /// <summary>Folded is this ending's choice: a new ending (another delivery or miss instant) shows its card again.</summary>
     void FoldResetsFor(float endingAt)
     {
@@ -825,15 +837,21 @@ public class DriveHud : MonoBehaviour
     }
 
     /// <summary>Is the arrival card on screen this frame? (Folded, it is not: the game underneath is.)</summary>
-    public bool ArrivalShowing
+    public bool ArrivalShowing => !_cardFolded && ArrivalHeld;
+
+    /// <summary>
+    /// Is this ending's card held - on screen or folded? Folded, the card-less endings' lone "copy game replay" does not
+    /// stand in for it (measured folded: that control appeared mid-screen over the game the fold was for).
+    /// </summary>
+    public bool ArrivalHeld
     {
         get
         {
             if (gate == null || ArrivalIsHiddenBy(SendOffShowing)) return false;
-            if (_cardFolded) return false;
             float Hold = ArrivalHoldNow;
             bool missed = LastEndingWasMiss() && Time.unscaledTime - gate.MissedAt < Hold;
-            return missed || gate.SinceDelivery < Hold;
+            if (!(missed || gate.SinceDelivery < Hold)) return false;
+            return EndingIsThisRuns(missed);
         }
     }
 
@@ -928,6 +946,7 @@ public class DriveHud : MonoBehaviour
         bool missed = LastEndingWasMiss() && Time.unscaledTime - gate.MissedAt < Hold;
         float since = missed ? Time.unscaledTime - gate.MissedAt : gate.SinceDelivery;
         if (!missed && gate.SinceDelivery >= Hold) return;
+        if (!EndingIsThisRuns(missed)) return;
         FoldResetsFor(missed ? gate.MissedAt : Time.unscaledTime - gate.SinceDelivery);
 
         // FULL STRENGTH FOR THE WHOLE HOLD (PRIORITIES item 3: "it stays up ... 8 s"). It faded over the last 28% -
@@ -1080,8 +1099,8 @@ public class DriveHud : MonoBehaviour
     {
         if (_splash == null) _splash = Object.FindFirstObjectByType<SplashScreen>();
         bool lobby = _splash != null && _splash.Showing;
-        bool alone = CopyReplayAlone(Blwp.BlwpCore.ReplayForThisRun, ArrivalShowing, lobby);
-        if (CopyStateResets(ArrivalShowing, alone)) { _copyPressedAt = -1f; _copiedAt = -1f; }
+        bool alone = CopyReplayAlone(Blwp.BlwpCore.ReplayForThisRun, ArrivalHeld, lobby);
+        if (CopyStateResets(ArrivalHeld, alone)) { _copyPressedAt = -1f; _copiedAt = -1f; }
         if (!alone) return;
         var row = CopyReplayAloneRow(w, h);
         var line = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.UpperCenter,
