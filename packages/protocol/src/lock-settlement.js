@@ -39,6 +39,7 @@ import { winnings } from './payout-spend.js';
 import { nodeFeeTable, entryFeeMsat, GAME_VERIFY, SETTLEMENT } from './fee.js';
 import { MIN_PLAYERS_PER_ROUND } from './constants.js';
 import { refundKeyOf } from './stake-lock.js';
+import { splitDonation } from './donation.js';
 import { sha256, toHex, fromHex } from './hash.js';
 
 const refuse = (why) => ({ ok: false, why });
@@ -90,8 +91,12 @@ export function settlementNonce(roundId) {
 // player. Left out, the addressed set is the qualifiers with a send - no address is ever implied.
 // `requireSends`: the plan that is signed. An addressed qualifier without an accepted send is refused, never paid
 // by a contract only its key can move.
+//
+// `donationSet`: THE ROUND'S DONATION SET (§22A), as this signer node holds it signed - where a walk-away's claimed lock
+// sends its 25% (`remainderSettlement`). An entry marked `atTheDoor` is one this signer node's own store holds FORFEIT at
+// the door (§15): no first mark, or a first mark past the line.
 export function lockSettlement({ roundId, entries, minScore = 0, locks, fees, feeLocks = new Map(), signerNodes = null, contract = null,
-  sends = new Map(), addressed = null, requireSends = false }) {
+  sends = new Map(), addressed = null, requireSends = false, donationSet = null }) {
   if (!(locks instanceof Map)) return refuse('the verified stake locks are a Map by player key');
   if (!(feeLocks instanceof Map)) return refuse('the verified fee locks are a Map by player key');
   if (!fees || typeof fees.ppm !== 'bigint' || typeof fees.baseMsat !== 'bigint' || fees.ppm < 0n || fees.baseMsat < 0n)
@@ -116,7 +121,7 @@ export function lockSettlement({ roundId, entries, minScore = 0, locks, fees, fe
     const net = netStakeMsat(a.entry);
     if (lock.amountMsat !== net)
       return refuse(`a loser's lock holds ${lock.amountMsat} msat and its entry's net stake is ${net}`);
-    claims.push({ pubkey: a.entry.pubkey, outpoint: lock.outpoint, amountMsat: net });
+    claims.push({ pubkey: a.entry.pubkey, outpoint: lock.outpoint, amountMsat: net, atTheDoor: !!a.entry.atTheDoor });
   }
   const forfeits = h.actions.filter((a) => a.action === RETURN).map((a) => a.entry.pubkey);
   if (!claims.length && !feePart.claims.length)
@@ -126,6 +131,11 @@ export function lockSettlement({ roundId, entries, minScore = 0, locks, fees, fe
   if (!claims.length)
     return finish({ roundId, claims: [], payouts: [], unpaid: [], forfeits, poolMsat: 0n, inputFeesMsat: 0n, spendableMsat: 0n,
       stakeWhy: 'no loser\'s lock is claimed in this round' }, feePart);
+  const remainderArgs = { roundId, forfeits, fees, contract, donationSet, sends, requireSends, feePart };
+  // NOBODY QUALIFIES AND A WALK-AWAY'S LOCK IS CLAIMED (lockActions): its stake is the round's remainder, split 75/25.
+  if (h.remainderMsat > 0n)
+    return remainderSettlement({ ...remainderArgs, claims, unpaid: [],
+      stakeWhy: 'nobody qualifies: the walk-away\'s lock is claimed and split 75% to the sitting signer nodes, 25% to the donation set' });
 
   const owed = winnings({ table: h.table.table, stakes: h.table.activated });
   if (!owed.ok) return refuse(owed.why);
@@ -145,8 +155,16 @@ export function lockSettlement({ roundId, entries, minScore = 0, locks, fees, fe
   const inputFeesMsat = claims.reduce((s, c) => s + lnv2FeeMsat(fees, c.amountMsat), 0n);
   const spendableMsat = poolMsat - inputFeesMsat;
   const unpaid = [...pooled];
-  const nobody = (why) => finish({ roundId, claims: [], payouts: [], unpaid, forfeits, poolMsat: 0n, inputFeesMsat: 0n, spendableMsat: 0n,
-    stakeWhy: why }, feePart);
+  // A WALK-AWAY IS NEVER A REFUND (RULED 2026-09-30): with nobody to send the winnings to, the other losers' locks
+  // expire back - and a walk-away's is claimed all the same, into the remainder split.
+  const nobody = (why) => {
+    const door = claims.filter((c) => c.atTheDoor);
+    if (door.length)
+      return remainderSettlement({ ...remainderArgs, claims: door, unpaid,
+        stakeWhy: `${why}; the walk-away's lock is claimed and split 75% to the sitting signer nodes, 25% to the donation set` });
+    return finish({ roundId, claims: [], payouts: [], unpaid, forfeits, poolMsat: 0n, inputFeesMsat: 0n, spendableMsat: 0n,
+      stakeWhy: why }, feePart);
+  };
   // (iii): NOBODY TO SEND TO, NOTHING CLAIMED. The losers' locks expire back to them; the fee part still settles.
   // An addressed qualifier outside the paying ranks has no weight in the table, so it cannot carry the pooled
   // shares either: renormalised over weights that sum to nothing there is no split, and none is invented.
@@ -189,8 +207,85 @@ export function lockSettlement({ roundId, entries, minScore = 0, locks, fees, fe
   }
   // THE SHARES A LATE LOSER'S SECOND SETTLEMENT IS SPLIT BY (C3b-1): what each paid winner got, in the table's order.
   const stakeShares = split.map(({ row, msat }) => ({ pubkey: row.pubkey, msat }));
-  return { ...finish({ roundId, claims: claims.map((c) => ({ ...c, kind: 'stake' })), payouts: payouts.map((p) => ({ ...p, kind: p.sent ? 'sent' : 'qualifier' })),
+  return { ...finish({ roundId, claims: claims.map(stakeClaim), payouts: payouts.map((p) => ({ ...p, kind: p.sent ? 'sent' : 'qualifier' })),
     unpaid, forfeits, poolMsat, inputFeesMsat, spendableMsat, stakeWhy: null }, feePart), stakeShares };
+}
+
+const stakeClaim = ({ atTheDoor: _door, ...c }) => ({ ...c, kind: 'stake' });
+
+/** THE RULED REMAINDER SPLIT (FEDERATION.md; RULED the owner 2026-09-21): 75% to the nodes, the rest to the donation set. */
+export const REMAINDER_NODES_PERCENT = 75n;
+
+const DONATION_SEND_TAG = new TextEncoder().encode('blwp donation send v1');
+
+/**
+ * THE ID A DONATION SEND IS KEPT AND SIGNED UNDER: one per (round, recipient in the set's published order). It stands
+ * where a player send's entry id stands (winnings-send.js), since a recipient has no entry.
+ */
+export function donationSendId(roundId, index) {
+  if (!(roundId instanceof Uint8Array) || roundId.length !== 32) throw new Error('a round id is 32 bytes');
+  if (!Number.isInteger(index) || index < 0 || index > 255) throw new Error('a donation recipient is 0..255 in the set\'s order');
+  const m = new Uint8Array(DONATION_SEND_TAG.length + 33);
+  m.set(DONATION_SEND_TAG); m.set(roundId, DONATION_SEND_TAG.length); m[DONATION_SEND_TAG.length + 32] = index;
+  return sha256(m);
+}
+
+/**
+ * A WALK-AWAY'S CLAIMED LOCK, PAID BY THE RULED REMAINDER SPLIT (RULED the owner 2026-09-30, destination 1): a round
+ * nobody is paid in claims the locks of the entries held FORFEIT at the door, and never hands them back. Less the
+ * guardians' fees on those inputs, 75% goes to the round's SITTING SIGNER NODES - evenly, each one pre-expired payout
+ * contract to its own key, as the fee locks pay them; the msat the division leaves to the first in the round's order -
+ * and 25% to the round's DONATION SET by share_bps (§22A's `splitDonation`, its remainder to the first as published),
+ * each recipient paid by the Lightning-address send a winner is paid by (winnings-send.js): an outgoing contract to
+ * that recipient's invoice, refunding to the committee claim key. A recipient has no key, so no contract only its
+ * owner can move is possible - and so, where `requireSends` says the plan is the signed one, a recipient without an
+ * accepted send is REFUSED: nothing is built. A share too small to pay its own output fee is reported unpaid.
+ */
+function remainderSettlement({ roundId, claims, forfeits, fees, contract, donationSet, sends, requireSends, feePart, unpaid, stakeWhy }) {
+  const sitting = contract && Array.isArray(contract.nodes) ? [...new Map(contract.nodes.map((k) => [toHex(k), k])).values()] : [];
+  if (!sitting.length) return refuse('a walk-away\'s lock is split with the round\'s sitting signer nodes, and no contract names them');
+  const recipients = donationSet && Array.isArray(donationSet.recipients) ? donationSet.recipients : null;
+  if (!recipients || !recipients.length)
+    return refuse('a walk-away\'s lock pays 25% to the round\'s donation set, and this signer node holds no signed set for the round, so nothing is built');
+  const poolMsat = claims.reduce((s, c) => s + c.amountMsat, 0n);
+  const inputFeesMsat = claims.reduce((s, c) => s + lnv2FeeMsat(fees, c.amountMsat), 0n);
+  const spendableMsat = poolMsat - inputFeesMsat;
+  if (spendableMsat <= 0n) return refuse(`the guardians' fees on the walk-away's lock (${inputFeesMsat} msat) take the whole ${poolMsat}`);
+  const nodesMsat = (spendableMsat * REMAINDER_NODES_PERCENT) / 100n;
+  const donationMsat = spendableMsat - nodesMsat;
+  const out = [...unpaid];
+  const payouts = [];
+  const each = nodesMsat / BigInt(sitting.length);
+  sitting.forEach((k, i) => {
+    const owedMsat = each + (i === 0 ? nodesMsat - each * BigInt(sitting.length) : 0n);
+    const msat = largestPayoutMsat(fees, owedMsat);
+    if (msat === 0n) { out.push({ pubkey: k, owedMsat, why: 'its share of the walk-away\'s stake does not pay its own output fee' }); return; }
+    payouts.push({ pubkey: k, payoutPk: refundKeyOf(k), owedMsat, msat, feeMsat: lnv2FeeMsat(fees, msat), kind: 'remainder node' });
+  });
+  const split = splitDonation({ donationMsat, recipients });
+  if (!split.owed) return refuse(`the round's donation set does not stand, so nothing is built: ${split.why}`);
+  for (let i = 0; i < split.shares.length; i++) {
+    const { lnurl, amountMsat: owedMsat } = split.shares[i];
+    const id = donationSendId(roundId, i);
+    const donation = { id, index: i, lnurl };
+    const msat = largestPayoutMsat(fees, owedMsat);
+    if (msat === 0n) { out.push({ pubkey: id, owedMsat, why: `the donation share for ${lnurl} does not pay its own output fee` }); continue; }
+    const send = sends instanceof Map ? sends.get(toHex(id)) : null;
+    if (send && send.payoutMsat !== undefined && BigInt(send.payoutMsat) !== msat)
+      return refuse(`a donation send was planned for a ${send.payoutMsat} msat payout and this signer node's payout is ${msat}: ${lnurl}`);
+    if (send) {
+      payouts.push({ pubkey: id, payoutPk: send.refundPk, owedMsat, msat, feeMsat: lnv2FeeMsat(fees, msat), kind: 'sent', donation,
+        sent: { paymentHash: String(send.paymentHash).toLowerCase(), gatewayPk: String(send.gatewayPk).toLowerCase(), expiration: BigInt(send.expiration) } });
+      continue;
+    }
+    // THE DONATION SEND IS MISSING: the signed plan is refused, and the walk-away's lock is not claimed on a guess.
+    if (requireSends) return refuse(`the donation set's share for ${lnurl} has no accepted Lightning-address send, so nothing is built`);
+    // THE BASE PLAN the donation sends are sized from; never signed (requireSends). A recipient has no key to name.
+    payouts.push({ pubkey: id, payoutPk: new Uint8Array(33), owedMsat, msat, feeMsat: lnv2FeeMsat(fees, msat), kind: 'donation', donation });
+  }
+  const done = finish({ roundId, claims: claims.map(stakeClaim), payouts, unpaid: out, forfeits, poolMsat, inputFeesMsat, spendableMsat, stakeWhy }, feePart);
+  if (!done.ok) return done;
+  return { ...done, remainder: { nodesMsat, donationMsat, sitting: sitting.length, recipients: split.shares.length } };
 }
 
 const LATE_NONCE_TAG = new TextEncoder().encode('blwp late lock settlement v1');
