@@ -187,13 +187,58 @@
       background:#ff9d2e; color:#241400; border:0; border-radius:4px; }
     #blwp-settings-go { flex: none; font-size: 20px; line-height: 1; padding: 6px 10px; cursor: pointer;
       background: rgba(13,16,20,0.9); color: #e8eaed; border: 1px solid #3a4452; border-radius: 6px; }
-    /* SETTINGS IS ITS OWN SCREEN, over everything while it is open. */
-    #blwp-settings { position: fixed; inset: 0; z-index: 40; overflow-y: auto; background: #0d1014;
-      padding: 16px; box-sizing: border-box; }
-    #blwp-settings .settings-row { margin: 0 0 18px 0; max-width: 720px; }
-    #blwp-settings label { display: block; font-weight: 700; margin-bottom: 6px; color: #f7931a; }
-    #blwp-settings button { font: inherit; padding: 6px 12px; margin: 4px 6px 4px 0; cursor: pointer;
-      background: #1e2833; color: #e8eaed; border: 1px solid #33414f; border-radius: 4px; }
+    /* THE LOBBY'S BALANCE (the owner 2026-09-29 12:47, SETTINGS-1254): confirmed and pending, each with its icon. */
+    #blwp-lobby-balance { position: fixed; z-index: 30; display: flex; gap: 6px; box-sizing: border-box;
+      font: 600 13px/1.1 system-ui, sans-serif; pointer-events: none; }
+    #blwp-lobby-balance .bal-chip { flex: 1 1 0; min-width: 0; display: flex; align-items: center; gap: 6px; padding: 0 8px;
+      border-radius: 6px; background: rgba(13,16,20,0.92); border: 1px solid #5a4a22; color: #e8eaed; white-space: nowrap; overflow: hidden; }
+    #blwp-lobby-balance .bal-what { color: #9fb3c8; font-weight: 600; }
+    #blwp-lobby-balance b { margin-left: auto; }
+    body.blwp-clean #blwp-lobby-balance { display: none !important; }
+    .bal-ico { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px;
+      border-radius: 50%; font-size: 11px; font-weight: 800; flex: none; }
+    .bal-ico.ok { background: #1f6f3a; color: #d8ffe4; }
+    .bal-ico.pend { background: #7a5a12; color: #ffe7ad; }
+    /* SETTINGS IS ITS OWN SCREEN, over everything while it is open - framed blocks, not a stack of labels. */
+    #blwp-settings { position: fixed; inset: 0; z-index: 40; overflow-y: auto; background: #0b0e12;
+      padding: 14px 14px 24px; box-sizing: border-box; font: 15px/1.35 system-ui, sans-serif; color: #e8eaed; }
+    #blwp-settings .settings-head { display: flex; align-items: center; justify-content: space-between; max-width: 720px;
+      margin: 0 auto 14px; }
+    #blwp-settings .settings-head h2 { margin: 0; font-size: 20px; color: #f7931a; letter-spacing: 0.04em; }
+    #blwp-settings .settings-card { max-width: 720px; margin: 0 auto 14px; padding: 14px; box-sizing: border-box;
+      background: linear-gradient(180deg, #161c24, #11161c); border: 1px solid #2f3b49; border-radius: 10px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.35); }
+    #blwp-settings .settings-card h3 { margin: 0 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em;
+      color: #f7931a; border-bottom: 1px solid #2f3b49; padding-bottom: 8px; }
+    #blwp-settings button, #blwp-seed-modal button { font: inherit; font-weight: 600; padding: 9px 14px; margin: 4px 6px 4px 0;
+      cursor: pointer; background: #1e2833; color: #e8eaed; border: 1px solid #3a4a5c; border-radius: 6px; }
+    #blwp-settings button.primary, #blwp-seed-modal button.primary { background: #f7931a; color: #1b1000; border-color: #f7931a; }
+    #blwp-settings button:disabled { opacity: 0.45; cursor: default; }
+    #blwp-settings .bal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+    #blwp-settings .bal-box { display: flex; align-items: center; gap: 8px; padding: 10px; border-radius: 8px;
+      background: #0d1218; border: 1px solid #263240; }
+    #blwp-settings .bal-box .bal-what { font-size: 12px; color: #9fb3c8; }
+    #blwp-settings .bal-box .bal-sats { font-size: 17px; font-weight: 700; }
+    #blwp-settings .muted { color: #9fb3c8; font-size: 13px; }
+    #blwp-settings .name-row { display: flex; gap: 8px; align-items: center; }
+    #blwp-settings input[type=text], #blwp-settings select { flex: 1 1 auto; min-width: 0; font: inherit; padding: 9px 10px;
+      background: #0d1218; color: #e8eaed; border: 1px solid #3a4a5c; border-radius: 6px; }
+    #blwp-settings select { width: 100%; font-weight: 700; font-size: 17px; color: #f7931a; }
+    /* THE SEED, A SMALL MODAL OVER SETTINGS: 24 numbered words in a grid, then Verify one word at a time. */
+    #blwp-seed-modal { position: fixed; inset: 0; z-index: 45; display: none; align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.6); padding: 14px; box-sizing: border-box; font: 15px/1.35 system-ui, sans-serif; color: #e8eaed; }
+    #blwp-seed-modal .modal-box { width: 100%; max-width: 460px; max-height: 100%; overflow-y: auto; box-sizing: border-box;
+      background: #141a21; border: 1px solid #f7931a; border-radius: 12px; padding: 16px; }
+    #blwp-seed-modal h3 { margin: 0 0 12px; color: #f7931a; font-size: 17px; }
+    #blwp-seed-modal .seed-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 12px; }
+    #blwp-seed-modal .seed-cell { display: flex; gap: 6px; align-items: baseline; padding: 7px 8px; border-radius: 6px;
+      background: #0d1218; border: 1px solid #263240; font-weight: 600; }
+    #blwp-seed-modal .seed-cell .n { color: #9fb3c8; font-size: 11px; min-width: 16px; text-align: right; }
+    #blwp-seed-modal .opt-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 10px 0; }
+    #blwp-seed-modal .opt-grid button { margin: 0; padding: 14px 8px; font-size: 16px; }
+    #blwp-seed-modal .verify-n { font-size: 20px; font-weight: 800; }
+    #blwp-seed-modal .why { color: #ff7b72; min-height: 1.3em; }
+    #blwp-seed-modal .done { color: #3fb950; font-size: 18px; font-weight: 800; }
   </style>
 </head>
 <body>
@@ -217,37 +262,71 @@
   <!-- SETTINGS, ITS OWN SCREEN (the owner 2026-09-25 21:16: "The wallet page belongs in the settings screen. Deposit,
        withdraw, the seed, the backup warning: that is Settings"): the wallet, the name, the donation, and the seed with
        Verify. -->
+  <!-- THE BALANCE, IN THE LOBBY'S OWN PANEL (the owner 2026-09-29): placed over the row Unity reports as `balance`, where
+       NAME and KEY stood, above the rounds. -->
+  <div id="blwp-lobby-balance" style="display:none">
+    <span class="bal-chip" title="confirmed"><span class="bal-ico ok">&#10003;</span><span class="bal-what">Confirmed</span><b id="blwp-lobby-confirmed">&ndash;</b></span>
+    <span class="bal-chip" title="pending"><span class="bal-ico pend">&#8987;</span><span class="bal-what">Pending</span><b id="blwp-lobby-pending">&ndash;</b></span>
+  </div>
   <div id="blwp-settings" style="display:none">
-    <div class="settings-row">
-      <label>Wallet</label>
-      <div id="blwp-balance-line"></div>
+    <div class="settings-head"><h2>SETTINGS</h2><button id="blwp-settings-close" type="button">&#10005; Close</button></div>
+    <section class="settings-card" id="blwp-set-wallet">
+      <h3>Wallet</h3>
+      <div class="bal-grid">
+        <div class="bal-box"><span class="bal-ico ok">&#10003;</span><div><div class="bal-what">Confirmed</div><div class="bal-sats" id="blwp-bal-confirmed">&ndash;</div></div></div>
+        <div class="bal-box"><span class="bal-ico pend">&#8987;</span><div><div class="bal-what">Pending</div><div class="bal-sats" id="blwp-bal-pending">&ndash;</div></div></div>
+      </div>
+      <div class="muted" id="blwp-balance-line"></div>
       <div id="blwp-money-actions">
         <button id="blwp-deposit-go" type="button">Deposit</button>
         <button id="blwp-withdraw-lobby" type="button">Withdraw</button>
         <button id="blwp-move-go" type="button">Move</button>
       </div>
-      <div id="blwp-money-why"></div>
+      <div class="muted" id="blwp-money-why"></div>
+    </section>
+    <section class="settings-card" id="blwp-set-name">
+      <h3>Name</h3>
+      <div class="muted">Current name</div>
+      <div class="name-row">
+        <input id="blwp-name-field" type="text" autocomplete="off" spellcheck="false" maxlength="32">
+        <button id="blwp-name-update" type="button" class="primary">Update</button>
+      </div>
+      <div class="muted" id="blwp-name-why"></div>
+    </section>
+    <section class="settings-card" id="blwp-set-donation">
+      <h3>Donation</h3>
+      <select id="blwp-donation-select" aria-label="Donation">
+        <option value="0">0%</option><option value="1">1%</option><option value="2" selected>2%</option>
+        <option value="3">3%</option><option value="4">4%</option><option value="5">5%</option>
+      </select>
+      <div class="muted" id="blwp-donation-recipients"></div>
+    </section>
+    <section class="settings-card" id="blwp-set-seed">
+      <h3>Seed phrase</h3>
+      <div class="muted" id="blwp-settings-backup"></div>
+      <button id="blwp-phrase-show" type="button" class="primary">Show seed phrase</button>
+    </section>
+  </div>
+  <div id="blwp-seed-modal" role="dialog" aria-modal="true">
+    <div class="modal-box">
+      <div id="blwp-seed-words">
+        <h3>Your seed phrase</h3>
+        <div id="blwp-phrase" class="seed-grid"></div>
+        <button id="blwp-verify-start" type="button" class="primary">Verify seed phrase</button>
+        <button id="blwp-seed-close" type="button">Close</button>
+      </div>
+      <div id="blwp-verify-step" style="display:none">
+        <h3>Verify seed phrase</h3>
+        <div>Word <span class="verify-n" id="blwp-verify-n">1</span> of 24</div>
+        <div class="opt-grid" id="blwp-verify-options"></div>
+        <div class="why" id="blwp-verify-why"></div>
+        <button id="blwp-verify-cancel" type="button">Cancel</button>
+      </div>
+      <div id="blwp-verify-done" style="display:none">
+        <div class="done">Seed phrase verified</div>
+        <button id="blwp-verify-close" type="button" class="primary">Done</button>
+      </div>
     </div>
-    <div class="settings-row">
-      <label for="blwp-name-field">Name</label>
-      <input id="blwp-name-field" type="text" autocomplete="off" spellcheck="false" maxlength="32">
-    </div>
-    <div class="settings-row">
-      <label>Donation</label>
-      <div id="blwp-donation-choices"></div>
-      <div id="blwp-donation-recipients"></div>
-    </div>
-    <div class="settings-row">
-      <label>Seed phrase</label>
-      <div id="blwp-settings-backup"></div>
-      <div id="blwp-phrase"></div>
-      <button id="blwp-phrase-show" type="button">Show my 24 words</button>
-      <textarea id="blwp-phrase-typed" rows="3" spellcheck="false" autocomplete="off"
-                placeholder="type all 24 words back, in order" style="display:none"></textarea>
-      <button id="blwp-verify-go" type="button" style="display:none">Backup</button>
-      <div id="blwp-verify-why"></div>
-    </div>
-    <button id="blwp-settings-close" type="button">Close</button>
   </div>
   <div id="blwp-lobby"></div>
   <div id="blwp-players"></div>
@@ -1253,6 +1332,15 @@
       // cargo panel, the drive) - Unity says what it draws (BLWP_UNITY_LOBBY), and the strip follows the lobby.
       const u = window.BLWP_UNITY_LOBBY;
       money.style.display = window.unityInstance && !document.getElementById('boot') && u && u.showing && u.lobby ? '' : 'none';
+      // THE BALANCE OVER THE LOBBY'S OWN ROW: Unity's layout units scaled to the canvas as it sits on the page
+      const balEl = document.getElementById('blwp-lobby-balance');
+      const cv = document.getElementById('canvas');
+      const row = u && u.balance;
+      if (balEl && cv && money.style.display === '' && Array.isArray(row) && row[2] > 0 && Array.isArray(u.screen)) {
+        const c = cv.getBoundingClientRect(); const kx = c.width / u.screen[0]; const ky = c.height / u.screen[1];
+        Object.assign(balEl.style, { display: 'flex', left: `${c.left + row[0] * kx}px`, top: `${c.top + row[1] * ky}px`,
+          width: `${row[2] * kx}px`, height: `${row[3] * ky}px` });
+      } else if (balEl) balEl.style.display = 'none';
       const st = backupStore(); const seed = walletSeed();
       const line = (st && seed) ? BLWPCLIENT.backupLine(st, seed) : BLWPCLIENT.NO_BACKUP_LINE;
       document.getElementById('blwp-backup-notice').textContent = line;
@@ -1262,9 +1350,17 @@
       // THE BALANCE IS READ, NEVER COMPUTED HERE. Until the player wallet of §24A.1 exists this says what
       // it honestly knows - nothing yet - rather than inventing a number the page would then be trusted for.
       const bal = window.BLWP_WALLET_BALANCE;
-      document.getElementById('blwp-balance-line').textContent = bal === undefined || bal === null
-        ? 'Balance: not in this wallet yet'
-        : `Balance: ${bal.sats} sat in ${bal.federation}${bal.pending ? ` - ${bal.pending} pending` : ''}`;
+      const known = bal !== undefined && bal !== null;
+      // CONFIRMED AND PENDING, EACH WITH ITS ICON, in the lobby and in Settings (the owner 2026-09-29 12:47). Until the
+      // player wallet of §24A.1 reports a balance the numbers say nothing ("-") rather than invent one.
+      const sat = (n) => `${Number(n || 0).toLocaleString('en-US')} sat`;
+      const confirmed = known ? sat(bal.sats) : '\u2013';
+      const pending = known ? sat(bal.pending) : '\u2013';
+      for (const [id, v] of [['blwp-lobby-confirmed', confirmed], ['blwp-bal-confirmed', confirmed],
+        ['blwp-lobby-pending', pending], ['blwp-bal-pending', pending]]) {
+        const el = document.getElementById(id); if (el) el.textContent = v;
+      }
+      document.getElementById('blwp-balance-line').textContent = known ? `in ${bal.federation}` : 'No balance in this wallet yet';
       const why = document.getElementById('blwp-money-why');
       if (why && !isBackedUp()) why.textContent = '';
     }
@@ -1292,52 +1388,108 @@
     document.getElementById('blwp-backup-cta').addEventListener('click', () => {
       settingsPanel().style.display = ''; paintSettings();
       document.getElementById('blwp-phrase-show').click();
-      document.getElementById('blwp-phrase-typed').scrollIntoView({ block: 'center' });
     });
     document.getElementById('blwp-settings-close').addEventListener('click', () => {
       settingsPanel().style.display = 'none';
     });
+    // THE DONATION IS A DROPDOWN, 2% UNTIL THE PLAYER PICKS (the owner 2026-09-29 12:47): six choices, no custom field (§24B).
+    if (window.BLWP_DONATION_BPS === undefined) window.BLWP_DONATION_BPS = 200;
+    document.getElementById('blwp-donation-select').addEventListener('change', (e) => {
+      window.BLWP_DONATION_BPS = Number(e.target.value) * 100; paintSettings();
+    });
+    // THE NAME, UPDATE ONLY: the field holds the current name; no key here, no empty create field.
+    const nameField = document.getElementById('blwp-name-field');
+    const nameUpdate = document.getElementById('blwp-name-update');
+    const currentName = () => (window.BLWP_IDENTITY && window.BLWP_IDENTITY.name) || '';
+    nameField.addEventListener('input', () => {
+      const t = nameField.value.trim();
+      nameUpdate.disabled = !t || t === currentName();
+    });
+    nameUpdate.addEventListener('click', () => {
+      const t = nameField.value.trim();
+      const why = document.getElementById('blwp-name-why');
+      if (!t) { why.textContent = 'A name is needed.'; return; }
+      const said = window.BLWP_LOBBY_ACT && window.BLWP_LOBBY_ACT.setName ? window.BLWP_LOBBY_ACT.setName(t) : 'the lobby is not up yet';
+      why.textContent = said || 'Updated.';
+      paintSettings();
+    });
     function paintSettings() {
-      const choices = document.getElementById('blwp-donation-choices');
-      if (choices && !choices.dataset.built) {
-        // SIX CHOICES AND NO CUSTOM FIELD (§24B). The recipients stand beside them.
-        for (const pct of [0, 1, 2, 3, 4, 5]) {
-          const b = document.createElement('button');
-          b.type = 'button'; b.textContent = `${pct}%`; b.dataset.pct = String(pct);
-          b.addEventListener('click', () => { window.BLWP_DONATION_BPS = pct * 100; paintSettings(); });
-          choices.appendChild(b);
-        }
-        choices.dataset.built = '1';
-      }
-      const chosen = Math.round((window.BLWP_DONATION_BPS || 0) / 100);
-      for (const b of choices ? choices.children : [])
-        b.style.fontWeight = Number(b.dataset.pct) === chosen ? '700' : '400';
+      const sel = document.getElementById('blwp-donation-select');
+      const chosen = String(Math.round((window.BLWP_DONATION_BPS || 0) / 100));
+      if (sel && sel.value !== chosen) sel.value = chosen;
       const rec = document.getElementById('blwp-donation-recipients');
-      if (rec) rec.textContent = BLWPCLIENT.donationRecipientsLine
-        ? BLWPCLIENT.donationRecipientsLine(window.BLWP_ROUND) : '';
+      // WHO RECEIVES IT, once a round names its donation set - and nothing otherwise: never "no donation set" under a
+      // dropdown that plainly shows the choice (the owner 2026-09-29 12:47)
+      const line = BLWPCLIENT.donationRecipientsLine ? BLWPCLIENT.donationRecipientsLine(window.BLWP_ROUND) : '';
+      if (rec) rec.textContent = /no donation/i.test(line || '') ? '' : (line || '');
+      if (document.activeElement !== nameField) { nameField.value = currentName(); nameUpdate.disabled = true; }
       paintMoney();
+    }
+    // THE SEED PHRASE, A SMALL MODAL OVER SETTINGS (the owner 2026-09-29 12:47): the 24 words numbered in a grid, and
+    // Verify seed phrase - one word at a time, 1 to 24, each out of four taken from this phrase. A wrong tap does not
+    // advance. After word 24 the backup is recorded by the same rule as before (verifyAndRecord) and the modal says so.
+    const seedModal = document.getElementById('blwp-seed-modal');
+    const seedPanes = (which) => {
+      for (const [id, name] of [['blwp-seed-words', 'words'], ['blwp-verify-step', 'verify'], ['blwp-verify-done', 'done']])
+        document.getElementById(id).style.display = which === name ? '' : 'none';
+    };
+    const closeSeed = () => { seedModal.style.display = 'none'; window.BLWP_VERIFY = null; paintMoney(); };
+    const randomIndex = (n) => { const a = new Uint32Array(1); crypto.getRandomValues(a); return a[0] % n; };
+    let verify = null;
+    function paintVerify() {
+      const n = verify.at + 1;
+      document.getElementById('blwp-verify-n').textContent = String(n);
+      const right = verify.words[verify.at];
+      const others = [...new Set(verify.words.filter((w) => w !== right))];
+      const options = [right];
+      while (options.length < 4 && others.length) options.push(others.splice(randomIndex(others.length), 1)[0]);
+      for (let i = options.length - 1; i > 0; i--) { const j = randomIndex(i + 1); [options[i], options[j]] = [options[j], options[i]]; }
+      const box = document.getElementById('blwp-verify-options');
+      box.textContent = '';
+      for (const w of options) {
+        const b = document.createElement('button'); b.type = 'button'; b.textContent = w; b.dataset.word = w;
+        b.addEventListener('click', () => pick(w));
+        box.appendChild(b);
+      }
+      window.BLWP_VERIFY = { word: n, options, right };
+    }
+    function pick(w) {
+      const why = document.getElementById('blwp-verify-why');
+      if (w !== verify.words[verify.at]) { why.textContent = `Not word ${verify.at + 1}. Try again.`; return; }
+      why.textContent = '';
+      verify.at += 1;
+      if (verify.at < verify.words.length) { paintVerify(); return; }
+      const said = BLWPCLIENT.verifyAndRecord({ typed: verify.words.join(' '), phrase: verify.phrase, storage: verify.st, seed: verify.seed });
+      window.BLWP_VERIFY = { done: !!said.ok };
+      if (!said.ok) { why.textContent = said.why; return; }
+      seedPanes('done'); paintMoney();
     }
     document.getElementById('blwp-phrase-show').addEventListener('click', () => {
       const seed = walletSeed();
       const made = seed ? BLWPCLIENT.phraseFromSeed(seed) : { ok: false, why: 'no wallet yet' };
-      const out = document.getElementById('blwp-phrase');
-      if (!made.ok) { out.textContent = made.why; return; }
-      // The 24 words, numbered, so a player copying them cannot lose his place.
-      out.textContent = made.words.map((w, i) => `${i + 1}. ${w}`).join('   ');
-      document.getElementById('blwp-phrase-typed').style.display = '';
-      document.getElementById('blwp-verify-go').style.display = '';
+      const grid = document.getElementById('blwp-phrase');
+      grid.textContent = '';
+      seedModal.style.display = 'flex'; seedPanes('words');
+      if (!made.ok) { grid.textContent = made.why; document.getElementById('blwp-verify-start').style.display = 'none'; return; }
+      document.getElementById('blwp-verify-start').style.display = '';
+      made.words.forEach((w, i) => {
+        const cell = document.createElement('div'); cell.className = 'seed-cell';
+        const num = document.createElement('span'); num.className = 'n'; num.textContent = String(i + 1);
+        const word = document.createElement('span'); word.textContent = w;
+        cell.append(num, word); grid.appendChild(cell);
+      });
     });
-    document.getElementById('blwp-verify-go').addEventListener('click', () => {
+    document.getElementById('blwp-verify-start').addEventListener('click', () => {
       const seed = walletSeed(); const st = backupStore();
       const made = seed ? BLWPCLIENT.phraseFromSeed(seed) : null;
-      const typed = document.getElementById('blwp-phrase-typed').value;
-      const why = document.getElementById('blwp-verify-why');
-      if (!made || !made.ok || !st) { why.textContent = 'no wallet to back up yet'; return; }
-      const said = BLWPCLIENT.verifyAndRecord({ typed, phrase: made.phrase, storage: st, seed });
-      why.textContent = said.ok ? 'Backed up. Keep those 24 words somewhere safe.' : said.why;
-      if (said.ok) document.getElementById('blwp-phrase-typed').value = '';
-      paintMoney();
+      if (!made || !made.ok || !st) { document.getElementById('blwp-phrase').textContent = 'no wallet to back up yet'; return; }
+      verify = { words: made.words, phrase: made.phrase, at: 0, st, seed };
+      document.getElementById('blwp-phrase').textContent = '';            // the words go: verify is from memory
+      document.getElementById('blwp-verify-why').textContent = '';
+      seedPanes('verify'); paintVerify();
     });
+    for (const id of ['blwp-seed-close', 'blwp-verify-cancel', 'blwp-verify-close'])
+      document.getElementById(id).addEventListener('click', closeSeed);
     setInterval(paintMoney, 1000);
 
     const withdrawGo = document.getElementById('blwp-withdraw-go');
@@ -1751,6 +1903,12 @@
           const typed = window.prompt('Your name in the lobby - leave it empty for the name made from your key',
             me && me.custom ? me.name : '');
           if (typed === null) return '';
+          const r = BLWPCLIENT.setPlayerName(typed, { storage: window.sessionStorage });
+          who();
+          return r.ok ? '' : r.why;
+        },
+        // THE NAME FROM SETTINGS (the owner 2026-09-29 12:47: the name lives in Settings only). Answers why not, or ''.
+        setName(typed) {
           const r = BLWPCLIENT.setPlayerName(typed, { storage: window.sessionStorage });
           who();
           return r.ok ? '' : r.why;
