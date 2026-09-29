@@ -977,9 +977,14 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       // the chain and the clock (a committee time the chain has passed cannot name a beacon after its publication).
       const stake = kind.stakeMsat !== undefined ? BigInt(kind.stakeMsat) : contract.stakeMsat;
       const last = held.filter((c) => BigInt(c.stakeMsat) === stake).reduce((m, c) => (c.startTimeMs > m ? c.startTimeMs : m), 0n);
+      // A WHOLE PERIOD OF LEAD, not the protocol's 60 s minimum: a round is listed once its committee time has passed
+      // (its beacon is the first block after it), so with a 90 s lead round i+1 is listed as round i starts - before any
+      // run of round i can end, and the countdown has its number from the first second (measured with 60 s: a run over
+      // 9.5 s into its round waited 20 s for the next round to be listed).
+      const lead = BigInt(roundPeriodMs) > MIN_ENTRY_WINDOW_MS ? BigInt(roundPeriodMs) : MIN_ENTRY_WINDOW_MS;
       start = last > 0n ? last + BigInt(roundPeriodMs) : start;
-      while (start - MIN_ENTRY_WINDOW_MS < committee) start += BigInt(roundPeriodMs);
-      committee = start - MIN_ENTRY_WINDOW_MS;
+      while (start - lead < committee) start += BigInt(roundPeriodMs);
+      committee = start - lead;
       close = start;
     }
     const next = { ...contract,
@@ -1015,9 +1020,11 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     const check = () => {
       if (opening) return;
       const now = BigInt(Date.now());
-      // ON THE PERIOD a kind is due once no round of it is still to start - the next one is opened as the last one begins
-      const due = kinds.find((k) => !held.some((c) => BigInt(c.stakeMsat) === stakeOf(k)
-        && (roundPeriodMs ? c.startTimeMs > now : c.entryCloseMs > now + BigInt(leadMs))));
+      // ON THE PERIOD a kind is due while fewer than two of its rounds are still to start: round i+2 is published during
+      // round i+1's lead, before its committee time (round i+1's start), and listed as round i+1 begins
+      const due = kinds.find((k) => (roundPeriodMs
+        ? held.filter((c) => BigInt(c.stakeMsat) === stakeOf(k) && c.startTimeMs > now).length < 2
+        : !held.some((c) => BigInt(c.stakeMsat) === stakeOf(k) && c.entryCloseMs > now + BigInt(leadMs))));
       if (!due) return;
       opening = openNext(due).then((id) => onOpen(id, due), onError).finally(() => { opening = null; });
     };
