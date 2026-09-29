@@ -50,7 +50,7 @@ public class SplashScreen : MonoBehaviour
     bool _lastHowToCarousel;
     Rect _lastHowToPrev, _lastHowToNext;
     readonly System.Collections.Generic.List<int> _howToShown = new System.Collections.Generic.List<int>();
-    Rect _lastName, _lastKey, _lastMore;
+    Rect _lastName, _lastKey, _lastMore, _lastBalance;
     string _lastNotice = "";
     string _lastSilent = "";
     Rect _lastSilentRect;
@@ -641,11 +641,21 @@ public class SplashScreen : MonoBehaviour
         // the name wrapped to a third line in a two-line box, and the box clipped
         // "You are" at the top and the key at the bottom (the owner 22:16: every
         // element fully visible).
-        var youText = new GUIContent($"You are <b>{Escape(you.name)}</b> · {(you.custom ? "your name" : "made from your key")}\n{second}");
-        while (youStyle.fontSize > 10 && youStyle.CalcHeight(youText, l.you.width) > l.you.height) youStyle.fontSize--;
-        GUI.Label(l.you, youText, youStyle);
-        if (SmallButton(l.name, "NAME")) { WakeAudio(); _nameWhy = Blwp.DailyLobby.EditName(); _polledAt = -10f; }
-        if (SmallButton(l.key, "KEY")) Blwp.DailyLobby.KeyBackup();
+        // NO NAME AND NO KEY IN THE LOBBY (the owner 2026-09-29 12:47, SETTINGS-1254: "Remove the name and the key from the lobby.
+        // The name lives in settings only"). The page's strip over the lobby shows the balance; this box keeps only a
+        // withdrawal that is waiting, or why a name was refused.
+        // AND THE BALANCE WHERE THEY WERE (the owner 2026-09-29: "display balances on top of lobby in the modal"): the row NAME
+        // and KEY stood in, above the rounds, is reported as `balance`; the page draws confirmed and pending there, with
+        // their icons, over this panel.
+        _lastBalance = Rect.MinMaxRect(Mathf.Min(l.name.xMin, l.key.xMin), Mathf.Min(l.name.yMin, l.key.yMin),
+                                       Mathf.Max(l.name.xMax, l.key.xMax), Mathf.Max(l.name.yMax, l.key.yMax));
+        _lastName = new Rect(); _lastKey = new Rect();
+        if (!string.IsNullOrEmpty(_nameWhy) || !string.IsNullOrEmpty(_lastNotice))
+        {
+            var youText = new GUIContent(second);
+            while (youStyle.fontSize > 10 && youStyle.CalcHeight(youText, l.you.width) > l.you.height) youStyle.fontSize--;
+            GUI.Label(l.you, youText, youStyle);
+        }
 
         var rows = _lobby.rows;
         int needed = 2;
@@ -800,7 +810,7 @@ public class SplashScreen : MonoBehaviour
         if (_lobby != null)
         {
             sb.Append(",\"you\":").Append(J(_lobby.you.name)).Append(",\"withdrawNotice\":").Append(J(_lastNotice)).Append(",\"name\":").Append(R(_lastName))
-              .Append(",\"key\":").Append(R(_lastKey)).Append(",\"howTo\":").Append(R(_lastHowTo))
+              .Append(",\"key\":").Append(R(_lastKey)).Append(",\"balance\":").Append(R(_lastBalance)).Append(",\"howTo\":").Append(R(_lastHowTo))
               .Append(",\"howToCells\":[").Append(_lastHowToCells == null ? "" : string.Join(",", System.Array.ConvertAll(_lastHowToCells, R))).Append(']')
               .Append(",\"howToDrawn\":").Append(_howToWhole != null ? _howToShown.Count : 0)
               .Append(",\"howToShown\":[").Append(string.Join(",", _howToShown)).Append(']')
