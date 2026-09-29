@@ -41,11 +41,14 @@ export function nextRoundAfter(played, rows, nowMs = Date.now()) {
 
 /**
  * WHAT THE PAGE SHOWS AFTER A RUN, at `nowMs`: `runOverMs` when the run ended, `nextStartMs` the next round's start.
- * { show: 'card' } for the result card's 8 s; { show: 'countdown', line, seconds, exit } from then until the start;
- * { show: 'start' } once it has come; { show: 'lobby' } after exit game or with no next round.
+ * THE COUNTDOWN IS IMMEDIATE (the owner 2026-09-29 22:09, COUNTDOWN-NOW-2209: "It does not wait 8 seconds"): { show:
+ * 'countdown', line, seconds, exit } from the run's end until the start, beside the ending Unity keeps up - the result
+ * card, WASTED or the timeout screen; { show: 'start' } once it has come; { show: 'lobby' } after exit game or with no
+ * next round. `runOverMs` is kept for the caller's record; the card's own 8 s are Unity's (it can fold, and stays while
+ * the next round is coming).
  */
 export function nextRoundView({ runOverMs, nextStartMs, nowMs = Date.now(), exited = false } = {}) {
-  if (nowMs < runOverMs + RESULT_CARD_MS) return { show: 'card' };
+  void runOverMs;
   if (exited || !Number.isFinite(nextStartMs)) return { show: 'lobby' };
   if (nowMs >= nextStartMs) return { show: 'start' };
   const seconds = Math.ceil((nextStartMs - nowMs) / 1000);

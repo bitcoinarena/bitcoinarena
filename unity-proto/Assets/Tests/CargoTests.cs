@@ -130,7 +130,8 @@ public class CargoTests
         float worstAboard = float.MaxValue;
         foreach (var s in _bay.Slots) worstAboard = Mathf.Min(worstAboard, s.tx.FeeRate);
         foreach (var tx in _feed.Offers)
-            if (!_bay.Contains(tx.txid))
+            // a parcel over the truck's BTC limit fits no truck (CARGO-BTC-2148): it is not left behind, it cannot go
+            if (!_bay.Contains(tx.txid) && tx.Btc <= CargoBay.BtcLimit)
                 Assert.LessOrEqual(tx.FeeRate, worstAboard + 0.01f,
                     $"{tx.Short} zahlt {tx.FeeRate:0.0} sat/vB und blieb stehen, " +
                     $"waehrend {worstAboard:0.0} geladen wurde");
@@ -286,7 +287,8 @@ public class CargoTests
         Assert.AreEqual(Mathf.Min(_feed.Offers.Count, yard.show), standing,
             "die angebotenen Transaktionen stehen nicht als Pakete im Panel");
 
-        var tx = yard.Captions()[0].tx;
+        // the first crate that fits the truck's 20 BTC (CARGO-BTC-2148): the whale at the front does not
+        var tx = yard.Captions().Find((c) => c.tx.Btc <= CargoBay.BtcLimit).tx;
         Assert.IsTrue(yard.Toggle(tx), "das Paket liess sich nicht aufladen");
         yield return null;
 
@@ -936,7 +938,7 @@ public class CargoTests
         int before = yard.Captions().Count;
         Assert.AreEqual(yard.show, before, "die Rampe ist nicht voll besetzt");
 
-        var first = yard.Captions()[0].tx;
+        var first = yard.Captions().Find((c) => c.tx.Btc <= CargoBay.BtcLimit).tx;   // one that fits the truck
         yard.Toggle(first);
         yield return null;
 

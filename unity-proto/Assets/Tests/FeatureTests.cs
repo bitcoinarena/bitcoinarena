@@ -110,8 +110,9 @@ public class FeatureTests
     {
         _feed.Offers = new List<MempoolFeed.Tx>
         {
+            // near the truck's 20 BTC limit - a whale does not fit one truck any more (CARGO-BTC-2148)
             new MempoolFeed.Tx { txid = "whale000000000000000000000000001",
-                                 feeSats = 9000, vsize = 300, valueSats = 4_000_000_000 },
+                                 feeSats = 9000, vsize = 300, valueSats = 1_950_000_000 },
         };
         yield return null; yield return null;
 
@@ -122,7 +123,7 @@ public class FeatureTests
         yield return null; yield return null;
 
         Assert.Greater(_bay.Heat, 0.5f,
-            $"ein Whale an Bord ergibt nur {_bay.Heat:0.00} Fahndungsdruck");
+            $"19.5 BTC an Bord ergeben nur {_bay.Heat:0.00} Fahndungsdruck");
         // The army half of this claim is gone with the C# army, and the core
         // has no Heat term at all - `Rand(5, 11)` with Heat at zero, because
         // every recording it was built against has Heat at zero. Listed as a

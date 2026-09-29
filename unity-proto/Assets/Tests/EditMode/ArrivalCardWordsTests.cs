@@ -23,8 +23,8 @@ public class ArrivalCardWordsTests
 {
     static string[] AllLines() => new[]
     {
-        DriveHud.ArrivalHeadline(false, 7225), DriveHud.ArrivalHeadline(true, 0),
-        DriveHud.ArrivalHeadline(false, 4123456),
+        DriveHud.ArrivalHeadline(false, 0.0036), DriveHud.ArrivalHeadline(true, 0),
+        DriveHud.ArrivalHeadline(false, 15.92), DriveHud.ArrivalHeadline(false, 12.34567891),
         DriveHud.ArrivalScoreLine(false, 155), DriveHud.ArrivalScoreLine(true, 0),
         DriveHud.ArrivalWorkLine(false, 0.83f, 1f, 1.5f), DriveHud.ArrivalWorkLine(true, 0f, 0f, 0f),
         DriveHud.ArrivalFootLine(false), DriveHud.ArrivalFootLine(true),
@@ -56,7 +56,7 @@ public class ArrivalCardWordsTests
             Thread.CurrentThread.CurrentCulture = new CultureInfo("de-DE");
             StringAssert.Contains("load 0.83", DriveHud.ArrivalWorkLine(false, 0.83f, 1f, 1.5f));
             StringAssert.Contains("speed 1.50", DriveHud.ArrivalWorkLine(false, 0.83f, 1f, 1.5f));
-            StringAssert.Contains("4,123,456 sat", DriveHud.ArrivalHeadline(false, 4123456));
+            StringAssert.Contains("DELIVERED  12.34567891 BTC to the miners", DriveHud.ArrivalHeadline(false, 12.34567891));
             StringAssert.Contains("+1,234.00000", DriveHud.ArrivalScoreLine(false, 123400000));
         }
         finally { Thread.CurrentThread.CurrentCulture = was; }
@@ -67,12 +67,12 @@ public class ArrivalCardWordsTests
     {
         // The fault in one line: the sample the fit used is shorter than the line the card draws, and by how much
         // depends on the fee. A fit measured on a constant can never be right for a string that is not one.
-        Assert.Greater(DriveHud.ArrivalHeadline(false, 7225).Length,
+        Assert.Greater(DriveHud.ArrivalHeadline(false, 0.0036).Length,
                        DriveHud.ArrivalHeadline(true, 0).Length,
                        "the delivered headline is no longer than BLOCK MINED WITHOUT YOU - the shot says it is");
-        Assert.Greater(DriveHud.ArrivalHeadline(false, 4123456).Length,
-                       DriveHud.ArrivalHeadline(false, 7225).Length,
-                       "a bigger fee does not make a longer headline");
+        Assert.Greater(DriveHud.ArrivalHeadline(false, 12.34567891).Length,
+                       DriveHud.ArrivalHeadline(false, 0.5).Length,
+                       "a load with more digits does not make a longer headline");
     }
 
     // THE OWNER'S 18:29 PLAYTEST (2026-09-25): DELIVERED at tick 4596, SCORE +137, and the card read
@@ -188,6 +188,31 @@ public class ArrivalCardWordsTests
         finally { Object.DestroyImmediate(hud.gameObject); }
     }
 
+    /// <summary>
+    /// THE CARD FOLDS (the owner 2026-09-29 22:00, PRIORITIES item 2): "fold" under the card collapses it so the game and
+    /// spectating are seen; "show result" brings it back. The control sits under the card's bottom edge - over none of its
+    /// lines - and on the screen, at a phone's size and a desktop's.
+    /// </summary>
+    [Test]
+    public void TheFoldControlSitsUnderTheCardAndOnTheScreen()
+    {
+        Assert.AreEqual("fold", DriveHud.FoldLabel);
+        Assert.AreEqual("show result", DriveHud.ShowResultLabel);
+        var hud = new GameObject("hud").AddComponent<DriveHud>();
+        try
+        {
+            foreach (var (w, h) in new[] { (390, 844), (1170, 2532), (1280, 720) })
+            {
+                var card = hud.ArrivalBox(w, h);
+                var tab = DriveHud.FoldTab(card, h, 14, DriveHud.FoldLabel, null);
+                Assert.GreaterOrEqual(tab.y, card.yMax, $"{w}x{h}: the fold control is on the card");
+                Assert.LessOrEqual(tab.yMax, h, $"{w}x{h}: the fold control is off the bottom");
+                Assert.GreaterOrEqual(tab.x, 0f); Assert.LessOrEqual(tab.xMax, w + 0.5f);
+            }
+        }
+        finally { Object.DestroyImmediate(hud.gameObject); }
+    }
+
     [Test]
     public void WhileTheCardIsUpNothingElseIsDrawnThroughIt()
     {
@@ -260,7 +285,31 @@ public class ArrivalCardWordsTests
         string src = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "Scripts/Cargo/LoadoutPanel.cs"));
         StringAssert.Contains("string load = LoadLabel(Blwp.BlwpCore.CargoWord);", src);
         StringAssert.DoesNotContain("$\"×{Mathf.Clamp01(bay.Fill):0.00}\"", src, "the bed fill is printed as the LOAD factor again");
-        StringAssert.Contains("TRUCK FULL", src);
+        StringAssert.Contains("of {CargoBay.BtcLimit:0.##} BTC", src, "the gauge reads the BTC on board against the truck's limit");
+    }
+
+    /// <summary>
+    /// BTC TO THE MINERS, AND A TRUCK CARRIES AT MOST 20 BTC (the owner 2026-09-29, CARGO-BTC-2148: measured 15.92 - ten
+    /// parcels of an average real block's transactions - and set to 20 by the owner). A
+    /// parcel bigger than the limit does not fit an empty truck; the words say BTC, never sat fees.
+    /// </summary>
+    [Test]
+    public void TheTruckCarriesBtcToTheMinersUpToItsLimit()
+    {
+        Assert.AreEqual(20.0, CargoBay.BtcLimit, 1e-9);
+        var bay = new GameObject("bay").AddComponent<CargoBay>();
+        try
+        {
+            var small = new MempoolFeed.Tx { txid = "a", valueSats = 360000, feeSats = 500, vsize = 140 };
+            var whale = new MempoolFeed.Tx { txid = "b", valueSats = 2_600_000_000L, feeSats = 900, vsize = 300 };
+            Assert.IsTrue(bay.Fits(small), "0.0036 BTC fits an empty truck");
+            Assert.IsFalse(bay.Fits(whale), "26 BTC does not fit a truck that carries 20");
+        }
+        finally { Object.DestroyImmediate(bay.gameObject); }
+        StringAssert.Contains("BTC to the miners", DriveHud.ArrivalHeadline(false, 1.5));
+        StringAssert.Contains("that BTC goes to the miners", DriveHud.ArrivalFootLine(false));
+        StringAssert.DoesNotContain("sat", DriveHud.ArrivalHeadline(false, 1.5) + DriveHud.ArrivalFootLine(false) + DriveHud.ArrivalFootLine(true));
+        Assert.AreEqual("0.0036 BTC", LoadoutPanel.BtcLabel(0.0036));
     }
 
     // "copied!" ON THE CARD (the owner 2026-09-26 07:12): shown once the page's clipboard write resolved - not on the press,

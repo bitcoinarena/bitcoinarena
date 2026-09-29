@@ -176,7 +176,7 @@ public class DriveHud : MonoBehaviour
         // would be to say less rather than to say it smaller.
         {
             string longest = bay != null && bay.IsLoaded
-                ? $"CARGO  {bay.Count} parcels  ·  {bay.FeeCarried:N0} sat" : "CARGO  empty";
+                ? $"CARGO  {bay.Count} parcels  ·  {LoadoutPanel.BtcLabel(bay.BtcCarried)}" : "CARGO  empty";
             string tailNow = runScore == null
                 ? $"{gate.Runs} runs delivered"
                 : $"best {CoreScoreFactors.Points(runScore.Best)}  ·  {gate.Runs} runs  ·  {gate.SatsDelivered:N0} sat";
@@ -222,7 +222,7 @@ public class DriveHud : MonoBehaviour
             Shadowed(Row(score.fontSize * 1.25f), $"SCORE  {CoreScoreFactors.Points(pending)}", score, tint);
 
             Shadowed(Row(under.fontSize * 1.5f), bay.IsLoaded
-                         ? $"CARGO  {bay.Count} parcels  ·  {bay.FeeCarried:N0} sat"
+                         ? $"CARGO  {bay.Count} parcels  ·  {LoadoutPanel.BtcLabel(bay.BtcCarried)}"
                          : "CARGO  empty",
                      under, bay.IsLoaded ? Color.white : new Color(1f, 1f, 1f, 0.6f));
         }
@@ -793,14 +793,46 @@ public class DriveHud : MonoBehaviour
     /// </summary>
     public const float ArrivalHoldSeconds = 8f;
 
-    /// <summary>Is the arrival card on screen this frame?</summary>
+    /// <summary>
+    /// THE CARD STANDS WHILE THE NEXT ROUND IS COMING (the owner 2026-09-29 21:58, SPECTATE-2158): its 8 s, and on for as
+    /// long as the page takes the player to the next round - until "exit game" or that round's start - instead of the lobby.
+    /// </summary>
+    public static float ArrivalHoldFor(bool continuing) => continuing ? float.MaxValue : ArrivalHoldSeconds;
+    float ArrivalHoldNow => ArrivalHoldFor(SplashScreen.Continuing);
+
+    /// <summary>The last ending was a miss, not a delivery: with the hold open-ended, only the newer of the two counts.</summary>
+    bool LastEndingWasMiss() => gate.MissedAt >= 0f && Time.unscaledTime - gate.MissedAt <= gate.SinceDelivery;
+
+    /// <summary>The fold control's words, exactly.</summary>
+    public const string FoldLabel = "fold";
+    public const string ShowResultLabel = "show result";
+    bool _cardFolded;
+    float _foldEnding = float.NaN;
+
+    /// <summary>Folded is this ending's choice: a new ending (another delivery or miss instant) shows its card again.</summary>
+    void FoldResetsFor(float endingAt)
+    {
+        if (float.IsNaN(_foldEnding) || Mathf.Abs(endingAt - _foldEnding) > 0.5f) { _foldEnding = endingAt; _cardFolded = false; }
+    }
+
+    /// <summary>The fold control's place: under the card's bottom edge, at its right - over none of the card's lines.</summary>
+    public static Rect FoldTab(Rect card, int h, int fontSize, string label, GUIStyle style)
+    {
+        float bw = style != null ? style.CalcSize(new GUIContent(label)).x + fontSize * 1.6f : fontSize * 8f;
+        float bh = fontSize * 2.2f;
+        float y = Mathf.Min(card.yMax + 4f, h - bh - 4f);
+        return new Rect(card.xMax - bw, y, bw, bh);
+    }
+
+    /// <summary>Is the arrival card on screen this frame? (Folded, it is not: the game underneath is.)</summary>
     public bool ArrivalShowing
     {
         get
         {
             if (gate == null || ArrivalIsHiddenBy(SendOffShowing)) return false;
-            const float Hold = ArrivalHoldSeconds;
-            bool missed = Time.unscaledTime - gate.MissedAt < Hold;
+            if (_cardFolded) return false;
+            float Hold = ArrivalHoldNow;
+            bool missed = LastEndingWasMiss() && Time.unscaledTime - gate.MissedAt < Hold;
             return missed || gate.SinceDelivery < Hold;
         }
     }
@@ -892,17 +924,18 @@ public class DriveHud : MonoBehaviour
         // control's press before the page answered, so "copied!" never stood). DrawCopyReplayAlone resets it then.
         if (ArrivalIsHiddenBy(SendOffShowing)) return;
 
-        const float Hold = ArrivalHoldSeconds;
-        bool missed = Time.unscaledTime - gate.MissedAt < Hold;
+        float Hold = ArrivalHoldNow;
+        bool missed = LastEndingWasMiss() && Time.unscaledTime - gate.MissedAt < Hold;
         float since = missed ? Time.unscaledTime - gate.MissedAt : gate.SinceDelivery;
         if (!missed && gate.SinceDelivery >= Hold) return;
+        FoldResetsFor(missed ? gate.MissedAt : Time.unscaledTime - gate.SinceDelivery);
 
         // FULL STRENGTH FOR THE WHOLE HOLD (PRIORITIES item 3: "it stays up ... 8 s"). It faded over the last 28% -
         // from 5.76 s, nearly gone by 7.5 s, measured live 2026-09-26 - so the readable card stood about 6 s of the 8.
         // The lobby takes over at 8 s; until then nothing about the card gets harder to read.
         float k = 1f;
 
-        string headline = ArrivalHeadline(missed, gate.LastRun);
+        string headline = ArrivalHeadline(missed, gate.LastBtc);
         string scoreLine = ArrivalScoreLine(missed, runScore == null ? 0 : runScore.LastScore);
         string workLine = runScore == null ? "" : ArrivalWorkLine(missed, runScore.LastCargo, runScore.LastExposure, runScore.LastTime, runScore.LastScore);
         string footLine = ArrivalFootLine(missed);
@@ -937,6 +970,16 @@ public class DriveHud : MonoBehaviour
         float[] heights = ArrivalRowHeights(big.fontSize, mid.fontSize, line.fontSize, 0f, false, replay);
         var card = CardIn(w, h, ArrivalHeight(padY, heights));
         var rows = ArrivalRows(card, padY, heights);
+
+        // THE CARD FOLDS (the owner 2026-09-29 22:00, PRIORITIES item 2): a control under the card collapses it so the game
+        // and spectating are what is seen; "show result" brings it back - during its 8 s and during the countdown.
+        var foldStyle = new GUIStyle(GUI.skin.button) { fontSize = Mathf.Max(11, line.fontSize), fontStyle = FontStyle.Bold };
+        if (_cardFolded)
+        {
+            if (GUI.Button(FoldTab(card, h, foldStyle.fontSize, ShowResultLabel, foldStyle), ShowResultLabel, foldStyle)) _cardFolded = false;
+            return;
+        }
+        if (GUI.Button(FoldTab(card, h, foldStyle.fontSize, FoldLabel, foldStyle), FoldLabel, foldStyle)) _cardFolded = true;
 
         // OPAQUE ENOUGH TO READ (18:39: the truck's cab and the road showed through "BULLS LEADING" and the factors).
         GUI.color = new Color(0.02f, 0.03f, 0.05f, 0.96f * k);
@@ -1064,9 +1107,10 @@ public class DriveHud : MonoBehaviour
     /// build's font (13:05 shot: "those fees go to the miners   the score is what the run pays you") and the
     /// decimals came out under the browser's culture ("load 0,83" on a German machine) - this build speaks English.
     /// </summary>
-    public static string ArrivalHeadline(bool missed, long sat) =>
+    /// BTC TO THE MINERS, NOT SAT FEES (the owner 2026-09-29 21:48, CARGO-BTC-2148): the truck carries transactions' BTC.
+    public static string ArrivalHeadline(bool missed, double btc) =>
         missed ? "BLOCK MINED WITHOUT YOU"
-               : "DELIVERED  " + sat.ToString("N0", CultureInfo.InvariantCulture) + " sat to the miners";
+               : "DELIVERED  " + LoadoutPanel.BtcLabel(btc) + " to the miners";
 
     /// <summary>The live DANGER meter's words: the core's E (RunScore.Exposure), to two decimals.</summary>
     public static string DangerLabel(float coreE) => "DANGER  ×" + coreE.ToString("0.00", CultureInfo.InvariantCulture);
@@ -1096,8 +1140,8 @@ public class DriveHud : MonoBehaviour
     // player had never taken part in. The sats are the FEES of the transactions being hauled - they belong to the
     // miner, which is why the headline says delivered to the miners.
     public static string ArrivalFootLine(bool missed) =>
-        missed ? "the fees never reached the block - beat the clock next time"
-               : "those fees go to the miners - the score is what the run pays you";
+        missed ? "the BTC never reached the block - beat the clock next time"
+               : "that BTC goes to the miners - the score is what the run pays you";
 
     /// <summary>
     /// The block being mined, its clock, and the best blocks so far.
@@ -1149,7 +1193,7 @@ public class DriveHud : MonoBehaviour
                  new Color(1f, 1f, 1f, 0.85f));
         y += lh * BlockRows[3];
         Shadowed(new Rect(pad * 1.5f, y, bw, lh),
-                 $"in this block: {block.PendingSats:N0} sat  ·  {block.PendingBtc:0.###} BTC",
+                 $"in this block: {LoadoutPanel.BtcLabel(block.PendingBtc)}",
                  line, Up);
         // `BlockRows[4]` is the pending line's own height - it is counted in
         // the content total but it is not an advance, because the gap to the

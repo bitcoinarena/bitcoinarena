@@ -64,17 +64,18 @@ test('while round i is on the road the next round is i+1 of the same kind - not 
   assert.equal(nextRoundAfter(played, rows.filter((r) => !r.free), onTheRoad), null, 'no free round listed: none');
 });
 
-test('after the run: the card 8 s, then "joining next round in N seconds" beside "exit game" until the start', () => {
+test('after the run: "joining next round in N seconds" beside "exit game" at once, not after the card\'s 8 s (COUNTDOWN-NOW-2209)', () => {
   const r3 = seriesRound(free, 3); const next = Number(seriesRound(free, 4).startTimeMs);
   const arrived = Number(r3.startTimeMs) + 30000;                 // delivered at 30 s
-  assert.deepEqual(nextRoundView({ runOverMs: arrived, nextStartMs: next, nowMs: arrived + 7999 }), { show: 'card' });
-  const first = nextRoundView({ runOverMs: arrived, nextStartMs: next, nowMs: arrived + RESULT_CARD_MS });
-  assert.deepEqual(first, { show: 'countdown', seconds: 52, line: 'joining next round in 52 seconds', exit: 'exit game' });
+  // two seconds after the delivery the countdown is already up, beside the result card Unity keeps
+  assert.deepEqual(nextRoundView({ runOverMs: arrived, nextStartMs: next, nowMs: arrived + 2000 }),
+    { show: 'countdown', seconds: 58, line: 'joining next round in 58 seconds', exit: 'exit game' });
+  assert.equal(nextRoundView({ runOverMs: arrived, nextStartMs: next, nowMs: arrived }).line, 'joining next round in 60 seconds');
   assert.equal(nextRoundView({ runOverMs: arrived, nextStartMs: next, nowMs: next - 400 }).line, 'joining next round in 1 seconds');
   assert.deepEqual(nextRoundView({ runOverMs: arrived, nextStartMs: next, nowMs: next }), { show: 'start' });
-  // a run that used all 82 s: its card ends exactly at the next start - no countdown is left, the next run starts
+  // a run that used all 82 s: 8 s of countdown, then the next run
   const full = Number(r3.startTimeMs) + 82000;
-  assert.deepEqual(nextRoundView({ runOverMs: full, nextStartMs: next, nowMs: full + RESULT_CARD_MS }), { show: 'start' });
-  // exit game: the lobby, not the next round
-  assert.deepEqual(nextRoundView({ runOverMs: arrived, nextStartMs: next, nowMs: arrived + 9000, exited: true }), { show: 'lobby' });
+  assert.equal(nextRoundView({ runOverMs: full, nextStartMs: next, nowMs: full + 1000 }).seconds, 7);
+  // exit game: the lobby, not the next round - at once as well
+  assert.deepEqual(nextRoundView({ runOverMs: arrived, nextStartMs: next, nowMs: arrived + 1000, exited: true }), { show: 'lobby' });
 });
