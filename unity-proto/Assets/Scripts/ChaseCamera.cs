@@ -193,13 +193,13 @@ public class ChaseCamera : MonoBehaviour
     public bool Flying => _flyLeft > 0f;
 
     /// <summary>
-    /// THE FLIGHT ENDS AT ROLL OUT (the owner 2026-09-26, playtest 14:08: "on drive start the camera goes top-down"). PLAY
-    /// starts a 4.2 s fly-in from 52 m over the middle of the field, looking west at the post office, and the cargo panel
-    /// did not stop it: a ROLL OUT inside those seconds drove off under a camera still high over the field and facing away
-    /// from the miner. This ends it and puts the camera where the follow rests - the truck's position, `distance` back
-    /// along its heading, `height` up, looking down the road ahead - so the next frame is the ordinary behind-the-truck
-    /// view, not a glide down from the flight's height. Any look-around left over is dropped with it; after this only a
-    /// swipe moves the view.
+    /// THE FLIGHT ENDS AT ROLL OUT, AND THE DRIVE STAYS FIRST PERSON (the owner 2026-09-29 12:45, PLAYTEST-ROLL-1245: "when
+    /// he does roll out, the view suddenly becomes top-down instead of first person. It must stay first person"). PLAY
+    /// starts a 4.2 s fly-in over the field; ROLL OUT ends it and puts the camera where the follow rests - the truck's
+    /// position, `distance` back along its heading, `height` up, looking down the road ahead - so the next frame is the
+    /// ordinary behind-the-truck view. It no longer switches to the top-down (the 2026-09-27 11:31 top-down drive start
+    /// is withdrawn by this); from the overview it comes back to the view behind the truck. Any look-around left over is
+    /// dropped with it; after this only a swipe moves the view.
     /// </summary>
     public void EndFlyIn()
     {
@@ -207,17 +207,17 @@ public class ChaseCamera : MonoBehaviour
         _orbitYaw = 0f; _orbitPitch = 0f;
         _dragging = false; _dragIdle = 0f;
         _ownView = false;
-        if (View == Mode.God) _driveView = Mode.Overhead; else View = Mode.Overhead;
+        if (View == Mode.God) _driveView = Mode.Follow; else View = Mode.Follow;
         if (target == null) return;
         _yaw = target.eulerAngles.y * Mathf.Deg2Rad;
         _lastHeading = target.eulerAngles.y;
-        if (View != Mode.Overhead) return;
-        OverheadGoal(out var goal, out var look);
-        _pos = goal;                                   // at once: the drive starts top-down, no glide into it
+        if (View != Mode.Follow) return;
+        _pos = target.position + new Vector3(-Mathf.Sin(_yaw), 0f, -Mathf.Cos(_yaw)) * distance + Vector3.up * height;
         transform.position = _pos;
-        transform.rotation = Quaternion.LookRotation(look - _pos, Vector3.up);
-        LogFrame("roll out");
-        _nextFrameLog = Time.unscaledTime + 2f;
+        transform.rotation = Quaternion.LookRotation(
+            target.position + target.forward * (lookAhead * 0.4f) + Vector3.up * 1.2f - _pos, Vector3.up);
+        Debug.Log($"[camera] roll out: {View}, pitch {Vector3.Angle(transform.forward, Vector3.ProjectOnPlane(transform.forward, Vector3.up)):F0} deg, "
+                  + $"{Vector3.Distance(transform.position, target.position):F1} m from the truck");
     }
 
     float _nextFrameLog;

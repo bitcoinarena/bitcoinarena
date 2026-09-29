@@ -3,12 +3,11 @@ using NUnit.Framework;
 using UnityEngine;
 
 /// <summary>
-/// THE DRIVE STARTS TOP-DOWN, THE DESTINATION IN FRAME (the owner 2026-09-26 14:08, "on drive start the camera goes
-/// top-down"; 2026-09-27 11:31, "The destination stays in focus unless he swipes away himself"). PLAY starts a 4.2 s
-/// fly-in from 52 m over the field, and ROLL OUT ends it: the camera is at once over the truck, looking steeply down,
-/// with the truck and the miner's gate both inside the frame - on a phone held upright and on a desktop - and it keeps
-/// them there as the truck drives. A swipe hands the view over: the gate is no longer held, and nothing brings it back
-/// until the next ROLL OUT (held past the look-return's delay: CameraNoseTests in PlayMode, where the clock runs).
+/// ROLL OUT STAYS FIRST PERSON (the owner 2026-09-29 12:45, PLAYTEST-ROLL-1245: "when he does roll out, the view suddenly
+/// becomes top-down instead of first person. It must stay first person"). PLAY starts a 4.2 s fly-in from 52 m over the
+/// field, and ROLL OUT ends it: the camera is at once behind the truck - `distance` back, `height` up, looking down the
+/// road ahead, not down on the ground - on a phone held upright and on a desktop, and it stays behind the truck as it
+/// drives. Never the top-down: not from the fly-in, not after the overview, not after a swipe.
 /// </summary>
 public class RollOutEndsFlyInTests
 {
@@ -19,17 +18,25 @@ public class RollOutEndsFlyInTests
         typeof(ChaseCamera).GetMethod("LateUpdate", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(chase, null);
     }
 
-    static void AssertInFrame(Camera cam, Vector3 p, string what)
+    /// <summary>The first-person drive view: the follow mode, behind the truck, looking along the road, the truck in frame.</summary>
+    static void AssertFirstPerson(ChaseCamera chase, Camera cam, Transform truck, string when)
     {
-        var v = cam.WorldToViewportPoint(p);
-        Assert.That(v.z, Is.GreaterThan(0f), $"{what} is in front of the camera: {v}");
-        Assert.That(v.x, Is.InRange(0.02f, 0.98f), $"{what} is inside the frame, across: {v}");
-        Assert.That(v.y, Is.InRange(0.02f, 0.98f), $"{what} is inside the frame, up and down: {v}");
+        Assert.AreEqual(ChaseCamera.Mode.Follow, chase.View, $"{when}: the drive view is behind the truck, not {chase.View}");
+        Assert.IsFalse(chase.DestinationInFocus, $"{when}: no top-down holding the gate");
+        var f = cam.transform.forward;
+        Assert.That(f.y, Is.GreaterThan(-0.6f), $"{when}: looking along the road, not steeply down: {f}");
+        var toTruck = truck.position - cam.transform.position;
+        Assert.That(Vector3.Dot(Vector3.ProjectOnPlane(toTruck, Vector3.up).normalized, Vector3.ProjectOnPlane(truck.forward, Vector3.up).normalized),
+            Is.GreaterThan(0.7f), $"{when}: the camera is behind the truck, facing where it drives");
+        var v = cam.WorldToViewportPoint(truck.position);
+        Assert.That(v.z, Is.GreaterThan(0f), $"{when}: the truck is in front of the camera: {v}");
+        Assert.That(v.x, Is.InRange(0.02f, 0.98f), $"{when}: the truck is in the frame: {v}");
+        Assert.That(v.y, Is.InRange(0.02f, 0.98f), $"{when}: the truck is in the frame: {v}");
     }
 
     [TestCase(390f / 844f, TestName = "phone upright")]
     [TestCase(1280f / 720f, TestName = "desktop")]
-    public void RollOutGoesTopDownWithTheTruckAndTheGateInFrame(float aspect)
+    public void RollOutStaysFirstPersonBehindTheTruck(float aspect)
     {
         var truck = new GameObject("truck");
         var go = new GameObject("chase");
@@ -45,32 +52,26 @@ public class RollOutEndsFlyInTests
             chase.FlyIn(new Vector3(0f, 52f, 0f), new Vector3(-114f, 20f, 0f), 4.2f);
             Assert.IsTrue(chase.Flying, "PLAY's flight is running under the cargo panel");
 
-            chase.destination = Gate;
+            chase.destination = Gate;                                          // LoadoutPanel names the gate before ROLL OUT
             chase.EndFlyIn();
             Assert.IsFalse(chase.Flying, "ROLL OUT ends it");
-            Assert.AreEqual(ChaseCamera.Mode.Overhead, chase.View, "the drive view is the top-down");
-            Assert.IsTrue(chase.DestinationInFocus);
-            Assert.That(go.transform.forward.y, Is.LessThan(-0.9f), $"looking steeply down, not along the road: {go.transform.forward}");
-            AssertInFrame(cam, truck.transform.position, "the truck at roll out");
-            AssertInFrame(cam, Gate, "the miner's gate at roll out");
-            // clear of the pads along the bottom: a quarter of the way up, the gate high above it
-            Assert.That(cam.WorldToViewportPoint(truck.transform.position).y, Is.EqualTo(0.25f).Within(0.02f), "the truck a quarter up the screen");
-            Assert.That(cam.WorldToViewportPoint(Gate).y, Is.EqualTo(0.85f).Within(0.02f), "the gate near the top");
+            AssertFirstPerson(chase, cam, truck.transform, "at roll out");
+            Assert.That(Vector3.Distance(go.transform.position, truck.transform.position), Is.LessThan(chase.distance + chase.height + 1f),
+                "at once behind the truck, not a glide down from the flight's height");
 
-            // and it stays so while the truck drives there
+            // and it stays so while the truck drives
             for (int step = 0; step < 6; step++)
             {
                 truck.transform.position += new Vector3(30f, 0f, step % 2 == 0 ? 6f : -6f);
                 for (int f = 0; f < 240; f++) Frame(chase);
-                AssertInFrame(cam, truck.transform.position, $"the truck at x {truck.transform.position.x:F0}");
-                AssertInFrame(cam, Gate, $"the gate with the truck at x {truck.transform.position.x:F0}");
+                AssertFirstPerson(chase, cam, truck.transform, $"driving, the truck at x {truck.transform.position.x:F0}");
             }
         }
         finally { Object.DestroyImmediate(go); Object.DestroyImmediate(truck); }
     }
 
     [Test]
-    public void ASwipeTakesTheViewAndTheNextRollOutHoldsTheGateAgain()
+    public void RollOutFromTheOverviewOrAfterASwipeIsFirstPersonToo()
     {
         var truck = new GameObject("truck");
         var go = new GameObject("chase");
@@ -83,47 +84,24 @@ public class RollOutEndsFlyInTests
             var chase = go.AddComponent<ChaseCamera>();
             chase.target = truck.transform;
             chase.destination = Gate;
-            chase.EndFlyIn();
-            Assert.IsTrue(chase.DestinationInFocus);
 
-            // a drag across half the screen, off the pads
+            // the overview on, then ROLL OUT: back behind the truck when it closes
+            chase.Toggle();
+            Assert.AreEqual(ChaseCamera.Mode.God, chase.View);
+            chase.EndFlyIn();
+            chase.Toggle();
+            for (int f = 0; f < 240; f++) Frame(chase);
+            AssertFirstPerson(chase, cam, truck.transform, "the overview closed after roll out");
+
+            // a swipe, then the next ROLL OUT: behind the truck again, the look dropped
             chase.useExternalPointer = true;
             var from = new Vector3(Screen.width * 0.25f, Screen.height * 0.6f, 0f);
             chase.externalPointerHeld = true; chase.externalPointerAt = from; Frame(chase);
             for (int i = 1; i <= 10; i++) { chase.externalPointerAt = from + Vector3.right * (Screen.width * 0.05f * i); Frame(chase); }
             chase.externalPointerHeld = false; Frame(chase);
-            Assert.IsFalse(chase.DestinationInFocus, "he swiped away himself");
-            float yaw = chase.OrbitYaw;
-            Assert.That(Mathf.Abs(yaw), Is.GreaterThan(20f), $"the drag turned the view: {yaw}");
-
-            for (int f = 0; f < 60; f++) Frame(chase);
-            Assert.AreEqual(yaw, chase.OrbitYaw, 0.001f, "the dragged angle holds after the finger lifts");
-            Assert.IsFalse(chase.DestinationInFocus, "the gate is not pulled back");
-            AssertInFrame(cam, truck.transform.position, "the truck is what the view follows");
-
-            // the next drive starts top-down on the gate again
             chase.EndFlyIn();
-            Assert.IsTrue(chase.DestinationInFocus, "a new ROLL OUT holds the gate again");
-        }
-        finally { Object.DestroyImmediate(go); Object.DestroyImmediate(truck); }
-    }
-
-    [Test]
-    public void TheOverviewToggleComesBackToTheTopDown()
-    {
-        var truck = new GameObject("truck");
-        var go = new GameObject("chase");
-        try
-        {
-            go.AddComponent<Camera>();
-            var chase = go.AddComponent<ChaseCamera>();
-            chase.target = truck.transform;
-            chase.destination = Gate;
-            chase.EndFlyIn();
-            chase.Toggle();
-            Assert.AreEqual(ChaseCamera.Mode.God, chase.View);
-            chase.Toggle();
-            Assert.AreEqual(ChaseCamera.Mode.Overhead, chase.View);
+            Assert.AreEqual(0f, chase.OrbitYaw, 0.001f, "ROLL OUT drops the look-around");
+            AssertFirstPerson(chase, cam, truck.transform, "the next roll out");
         }
         finally { Object.DestroyImmediate(go); Object.DestroyImmediate(truck); }
     }

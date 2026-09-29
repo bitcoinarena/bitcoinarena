@@ -655,8 +655,8 @@ public class VehicleTests
         var chase = Object.FindFirstObjectByType<ChaseCamera>();
         var cam = chase.GetComponent<Camera>();
         var terrain = Object.FindFirstObjectByType<MempoolTerrain>();
-        // THE DRIVE STARTS TOP-DOWN (the owner 2026-09-27 11:31): ROLL OUT puts the camera over the truck and the gate
-        Assert.AreEqual(ChaseCamera.Mode.Overhead, chase.View, "startet nicht in der Draufsicht");
+        // THE DRIVE STAYS FIRST PERSON (the owner 2026-09-29 12:45, PLAYTEST-ROLL-1245): ROLL OUT leaves the camera behind the truck
+        Assert.AreEqual(ChaseCamera.Mode.Follow, chase.View, "startet nicht hinter dem Truck");
 
         chase.Toggle();
         Assert.AreEqual(ChaseCamera.Mode.God, chase.View);
@@ -688,13 +688,13 @@ public class VehicleTests
         Vector3 up = chase.transform.position;
 
         chase.Toggle();
-        Assert.AreEqual(ChaseCamera.Mode.Overhead, chase.View, "zurueck in die Draufsicht der Fahrt");
+        Assert.AreEqual(ChaseCamera.Mode.Follow, chase.View, "zurueck hinter den Truck, nicht in eine Draufsicht");
         yield return new WaitForSeconds(2.5f);
 
         // back over the truck, not over the middle of the field: the truck is in the frame again
         var v = chase.GetComponent<Camera>().WorldToViewportPoint(_truck.transform.position);
         Assert.IsTrue(v.z > 0f && v.x is >= 0f and <= 1f && v.y is >= 0f and <= 1f,
-            $"die Draufsicht zeigt den Truck nicht: {v}");
+            $"die Fahrtansicht zeigt den Truck nicht: {v}");
         Assert.AreNotEqual(up, chase.transform.position, "die Kamera bleibt in der Uebersicht stehen");
     }
 
