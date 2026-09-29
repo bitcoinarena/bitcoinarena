@@ -69,6 +69,11 @@ const verifyNode = (signature, message, pubkey) => {
   try { return schnorr.verify(signature, message, pubkey); } catch { return false; }
 };
 
+const sendRow = (r) => ({ entryId: new Uint8Array(r.entry_id), attempt: r.attempt, roundId: new Uint8Array(r.round_id),
+  address: r.address, invoice: r.invoice, paymentHash: r.payment_hash, invoiceMsat: BigInt(r.invoice_msat), payoutMsat: BigInt(r.payout_msat),
+  owedMsat: BigInt(r.owed_msat), gatewayUrl: r.gateway_url, gatewayPk: r.gateway_pk, expiration: BigInt(r.expiration),
+  txid: r.txid, outIdx: r.out_idx === null ? null : Number(r.out_idx), preimage: r.preimage, state: r.state, why: r.why, donation: !!r.donation });
+
 export class Round {
   constructor(db, now = () => Date.now(), { cores = installedCores() } = {}) {
     this.db = db;
@@ -1757,11 +1762,15 @@ export class Round {
       address: r.address, namedMs: Number(r.named_ms) } : null;
   }
 
-  /** A winning's send plan, as this signer node checked it (protocol/winnings-send.js). One row per attempt. */
+  /**
+   * A winning's send plan, as this signer node checked it (protocol/winnings-send.js). One row per attempt. A DONATION
+   * send (`donation`: a walk-away's 25% to one recipient of the round's donation set, RULED 2026-09-30) is kept in
+   * donation_sends under its send id, since a recipient is no entry; every reader below reads both.
+   */
   putSendPlan({ entryId, roundId, attempt = 0, address, invoice, paymentHash, invoiceMsat, payoutMsat, owedMsat, gatewayUrl, gatewayPk,
-    expiration, state = 'PLANNED', why }) {
+    expiration, state = 'PLANNED', why, donation = false }) {
     const now = this.now();
-    this.db.prepare('INSERT INTO winnings_sends (entry_id, attempt, round_id, address, invoice, payment_hash, invoice_msat, payout_msat, '
+    this.db.prepare(`INSERT INTO ${donation ? 'donation_sends' : 'winnings_sends'} (entry_id, attempt, round_id, address, invoice, payment_hash, invoice_msat, payout_msat, `
       + 'owed_msat, gateway_url, gateway_pk, expiration, state, why, planned_ms, updated_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
       + 'ON CONFLICT(entry_id, attempt) DO NOTHING')
       .run(Buffer.from(entryId), attempt, Buffer.from(roundId), String(address), String(invoice), String(paymentHash).toLowerCase(),
@@ -1771,43 +1780,46 @@ export class Round {
 
   /** Where a send stands: its contract (txid, output), its preimage once the gateway paid, and its state. */
   markSend({ entryId, attempt = 0, state, why, txid = null, outIdx = null, preimage = null }) {
-    this.db.prepare('UPDATE winnings_sends SET state = ?, why = ?, txid = COALESCE(?, txid), out_idx = COALESCE(?, out_idx), '
-      + 'preimage = COALESCE(?, preimage), updated_ms = ? WHERE entry_id = ? AND attempt = ?')
-      .run(state, String(why), txid, outIdx === null ? null : Number(outIdx), preimage, this.now(), Buffer.from(entryId), attempt);
+    for (const table of ['winnings_sends', 'donation_sends'])
+      this.db.prepare(`UPDATE ${table} SET state = ?, why = ?, txid = COALESCE(?, txid), out_idx = COALESCE(?, out_idx), `
+        + 'preimage = COALESCE(?, preimage), updated_ms = ? WHERE entry_id = ? AND attempt = ?')
+        .run(state, String(why), txid, outIdx === null ? null : Number(outIdx), preimage, this.now(), Buffer.from(entryId), attempt);
+  }
+
+  /** A round's send rows, the winners' and the donation set's, in entry (send id) then attempt order. */
+  sendRowsOf(roundIdBytes) {
+    const rid = Buffer.from(roundIdBytes);
+    return this.db.prepare('SELECT *, 0 AS donation FROM winnings_sends WHERE round_id = ? UNION ALL '
+      + 'SELECT *, 1 AS donation FROM donation_sends WHERE round_id = ? ORDER BY entry_id, attempt').all(rid, rid);
   }
 
   /** Every attempt of every send of a round, in entry then attempt order. */
   sendAttemptsOf(roundIdBytes) {
-    return this.db.prepare('SELECT * FROM winnings_sends WHERE round_id = ? ORDER BY entry_id, attempt').all(Buffer.from(roundIdBytes))
-      .map((r) => ({ entryId: new Uint8Array(r.entry_id), attempt: r.attempt, roundId: new Uint8Array(r.round_id),
-        address: r.address, invoice: r.invoice, paymentHash: r.payment_hash, invoiceMsat: BigInt(r.invoice_msat), payoutMsat: BigInt(r.payout_msat),
-        owedMsat: BigInt(r.owed_msat), gatewayUrl: r.gateway_url, gatewayPk: r.gateway_pk, expiration: BigInt(r.expiration),
-        txid: r.txid, outIdx: r.out_idx === null ? null : Number(r.out_idx), preimage: r.preimage, state: r.state, why: r.why }));
+    return this.sendRowsOf(roundIdBytes).map(sendRow);
   }
 
   /** Every send of a round, the latest attempt of each entry, in entry order. */
   sendPlansOf(roundIdBytes) {
-    const rows = this.db.prepare('SELECT * FROM winnings_sends WHERE round_id = ? ORDER BY entry_id, attempt').all(Buffer.from(roundIdBytes));
     const latest = new Map();
-    for (const r of rows) latest.set(Buffer.from(r.entry_id).toString('hex'), r);
-    return [...latest.values()].map((r) => ({ entryId: new Uint8Array(r.entry_id), attempt: r.attempt, roundId: new Uint8Array(r.round_id),
-      address: r.address, invoice: r.invoice, paymentHash: r.payment_hash, invoiceMsat: BigInt(r.invoice_msat), payoutMsat: BigInt(r.payout_msat),
-      owedMsat: BigInt(r.owed_msat), gatewayUrl: r.gateway_url, gatewayPk: r.gateway_pk, expiration: BigInt(r.expiration),
-      txid: r.txid, outIdx: r.out_idx === null ? null : Number(r.out_idx), preimage: r.preimage, state: r.state, why: r.why }));
+    for (const r of this.sendRowsOf(roundIdBytes)) latest.set(Buffer.from(r.entry_id).toString('hex'), r);
+    return [...latest.values()].map(sendRow);
   }
 
   /** A round's first send plans, dropped - only while every send of that round is still PLANNED (nothing went out). */
   dropPlannedSends(roundIdBytes) {
     const rid = Buffer.from(roundIdBytes);
-    const moved = this.db.prepare("SELECT COUNT(*) AS n FROM winnings_sends WHERE round_id = ? AND (state != 'PLANNED' OR attempt != 0)").get(rid).n;
+    const moved = ['winnings_sends', 'donation_sends'].reduce((n, table) => n
+      + this.db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE round_id = ? AND (state != 'PLANNED' OR attempt != 0)`).get(rid).n, 0);
     if (moved) return 0;
-    return this.db.prepare("DELETE FROM winnings_sends WHERE round_id = ? AND attempt = 0 AND state = 'PLANNED'").run(rid).changes;
+    return ['winnings_sends', 'donation_sends'].reduce((n, table) => n
+      + this.db.prepare(`DELETE FROM ${table} WHERE round_id = ? AND attempt = 0 AND state = 'PLANNED'`).run(rid).changes, 0);
   }
 
   /** Every round holding a send that is not PAID - what the winnings sweep visits. */
   roundsWithUnpaidSends() {
     const out = new Map();
-    for (const r of this.db.prepare('SELECT round_id, entry_id, attempt, state FROM winnings_sends ORDER BY entry_id, attempt').all()) {
+    for (const r of this.db.prepare('SELECT round_id, entry_id, attempt, state FROM winnings_sends UNION ALL '
+      + 'SELECT round_id, entry_id, attempt, state FROM donation_sends ORDER BY entry_id, attempt').all()) {
       const k = Buffer.from(r.entry_id).toString('hex');
       out.set(k, { roundId: new Uint8Array(r.round_id), state: r.state });
     }

@@ -103,6 +103,18 @@ export function lockActions({ roundId, entries, minScore = 0 }) {
     return { entry: e, action, why: said.why };
   });
 
+  // A WALK-AWAY IS NEVER A REFUND, EVEN WITH NO QUALIFIER (RULED the owner 2026-09-30): an entry the signer node's own store
+  // holds FORFEIT AT THE DOOR (`atTheDoor`: §15, no first mark, or a first mark past the line) has its lock claimed
+  // when nobody qualifies, and what it holds is the round's REMAINDER - split by the ruled remainder split, not handed
+  // out by the table (lock-settlement.js). Every other loser keeps the no-qualifier expiry: nobody acts on its lock.
+  const remainder = table.qualifiers === 0 && actions.some((a) => a.action === CLAIM && a.entry.atTheDoor);
+  if (remainder)
+    for (const a of actions) {
+      if (a.action !== CLAIM || a.entry.atTheDoor) continue;
+      a.action = EXPIRE;
+      a.why = 'nobody qualifies, so this lock is left to expire back to its player';
+    }
+
   // WHAT EACH LOCK HOLDS is the net stake, so that is what a claim moves and what a return or an expiry hands back. The
   // fee and the donation were never in the stake lock (§23.5).
   const poolMsat = actions
@@ -123,13 +135,14 @@ export function lockActions({ roundId, entries, minScore = 0 }) {
     sharesMsat += amount > held ? amount - held : 0n;
   });
 
-  if (rows.length && poolMsat !== sharesMsat)
+  const remainderMsat = remainder ? poolMsat : 0n;
+  if (rows.length && poolMsat !== sharesMsat + remainderMsat)
     throw new Error(
       `the operator would keep ${poolMsat - sharesMsat} msat: a pool of ${poolMsat} `
       + `against ${sharesMsat} handed out`);
 
   return {
-    actions, poolMsat, refundedMsat, sharesMsat, table,
+    actions, poolMsat, refundedMsat, sharesMsat, remainderMsat, table,
     settledMsat: poolMsat, paidMsat: sharesMsat,
   };
 }

@@ -31,6 +31,15 @@
  * locks still in the federation, the fee locks settled.
  * POOL C: as A with every qualifier addressed - the table's own split, one send per paying qualifier through the
  * lowest-key live gateway, each SETTLED once.
+ * WALKAWAY (RULED the owner 2026-09-30, destination 1; regtest only): nobody qualifies. A walker locks through the page's
+ * own lock client, commits at both signer nodes and sends nothing; a player beside it plays and is WRECKED (FAILED). The
+ * door (§15) signs the walker FORFEIT 0 at both; its first mark sent after the line is the same door. At the close the
+ * walker's stake lock is claimed - 75% to the round's two sitting signer nodes, each one pre-expired contract to its
+ * own key and redeemed here by that node's own key, 25% to the donation set by share_bps through the Lightning-address
+ * send (the regtest set's two recipients, answering with alice's invoices on a free port: the set names 127.0.0.1:18777,
+ * which this probe never binds - its LNURL fetch is pointed at the recipients' own port). Printed: the door, the late
+ * mark, the settlement's claims and payouts, each node's redeem, each donation invoice on alice, the walker's lock gone,
+ * the FAILED player's lock still held to expire back, GET /forfeit for both.
  * It prints what it measured and decides nothing.
  */
 import { execFile, execFileSync } from 'node:child_process';
@@ -70,6 +79,9 @@ import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { feeLockPays } from '../../protocol/src/lock-settlement.js';
 import { lowestLiveGateway } from '../../protocol/src/winnings-send.js';
 import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
+import { TEST_DONATION_SET_REGTEST, TEST_DONATION_ENDPOINTS } from '../../protocol/src/test-donation-sets.js';
+import { serveDonationRecipients } from '../src/lnurl-recipients.js';
+import { decodePlayerResult, splitSignedResult } from '../../protocol/src/result.js';
 
 const env = process.env;
 const P = env.PROBE;
@@ -114,10 +126,19 @@ const lnurlServer = createServer({ key: readFileSync(join(dir, 'key.pem')), cert
 });
 await new Promise((r) => lnurlServer.listen(0, '127.0.0.1', r));
 const ADDRESS = `winner@127.0.0.1:${lnurlServer.address().port}`;
-const lnurlFetch = (url) => new Promise((done, fail) => {
+// WALKAWAY: THE DONATION SET'S RECIPIENTS, answering with alice's invoices under each recipient's own metadata.
+const WALK = PHASE === 'walkaway';
+const donationAsked = [];
+const recipients = WALK ? await serveDonationRecipients({ port: 0, invoice: async ({ amountMsat, descriptionHash }) => {
+  const inv = await lncli('alice', 'addinvoice', '--amt_msat', String(amountMsat), '--description_hash', toHex(descriptionHash));
+  donationAsked.push({ amountMsat: String(amountMsat), hash: inv.r_hash });
+  return { request: inv.payment_request };
+} }) : null;
+const SET_BASE = new URL(TEST_DONATION_ENDPOINTS[0]).origin;
+const lnurlFetch = (url) => (WALK && String(url).startsWith('http://') ? fetch(String(url).replace(SET_BASE, recipients.base)) : new Promise((done, fail) => {
   const req = httpsRequest(url, { ca: cert }, (res) => { let b = ''; res.on('data', (d) => { b += d; }); res.on('end', () => done({ json: async () => JSON.parse(b) })); });
   req.on('error', fail); req.end();
-});
+}));
 
 const port = stakeLockPort({ bin: env.LOCK_BIN, dataDir: `${P}/client` });
 // THE CHAIN THE ROUND IS READ FROM (RULED 2026-09-25: a paying round opens only on a node that reads the chain): the
@@ -128,7 +149,8 @@ const stores = [join(dir, 'a.db'), join(dir, 'b.db')];
 const up = async () => {
   const nodes = [];
   for (const path of stores) nodes.push(await serve(openStore(path), { port: 0, ...opts, stakeLocks: slot.port, poolCurve: curve,
-    finality: { everyMs: 500 }, lnurlFetch, winningsEveryMs: 3000, chainFor: slot.chainFor, randomnessFor: slot.randomnessFor }));
+    finality: { everyMs: 500 }, lnurlFetch, winningsEveryMs: 3000, chainFor: slot.chainFor, randomnessFor: slot.randomnessFor,
+    ...(WALK ? { donationSets: [TEST_DONATION_SET_REGTEST], doorSweepMs: 250 } : {}) }));
   for (const d of nodes) d.round.chainView = CLOCK.chainView();
   for (const [d, o] of [[nodes[0], nodes[1]], [nodes[1], nodes[0]]]) {
     const there = [`http://127.0.0.1:${o.port}`];
@@ -176,7 +198,7 @@ say_({ step: 'deposit', final: await lc.awaitReceive(rcv.operation), balanceMsat
 const rule = JSON.parse(await lc.feeRule());
 const gate = feeLockPays({ contract: c, fees: { ppm: BigInt(rule.fee_ppm), baseMsat: BigInt(rule.fee_base_msat) } });
 
-async function lockAndPlay(who) {
+async function lockAndPlay(who, { noMarks = false } = {}) {
   const session = ed25519.utils.randomSecretKey();
   const p = secretScalar();
   const point = feldmanGroup.pointFromScalar(scalarFrom32(p) % FIELD);
@@ -214,10 +236,12 @@ async function lockAndPlay(who) {
     const l = await fetch(`${base}/lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(lk.fields)) });
     if (feeFields) await fetch(`${base}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(feeFields)) });
     said.push(l.status);
+    // `noMarks`: seated and staked, and nothing sent - a walk-away (§15 at the door)
+    if (noMarks) continue;
     await say(d.port, encodeInputBatch(input));
     await say(d.port, signedMark);
   }
-  return { eid, session, outpoint: lk.outpoint, locked: said };
+  return { eid, session, outpoint: lk.outpoint, locked: said, late: [encodeInputBatch(input), signedMark] };
 }
 // REAL PLAYER KEYS, AND RUNS CHOSEN THE WAY THE FIXTURE CHOSE ITS OWN: the seed is the player's key with the world
 // secret, so for each real key the world secret's last byte is stepped until the core itself says the fixture's
@@ -253,7 +277,21 @@ const nameAddress = async (played) => {
   }
 };
 let W; let L; let Q = [];
-if (POOL) {
+if (WALK) {
+  W = await lockAndPlay(playerLike(LOSER, RUN_WRECKED), { noMarks: true });
+  L = await lockAndPlay(playerLike(LOSER, RUN_WRECKED));
+  say_({ step: 'played', walker: { entry: toHex(W.eid).slice(0, 16), lock: W.locked }, failed: { entry: toHex(L.eid).slice(0, 16), lock: L.locked } });
+  const resultsAt = (d, eid) => d.round.results(rid, eid).map((r) => decodePlayerResult(splitSignedResult(r.bytes).body)).map((r) => `${r.outcome}/${r.score}`);
+  const t = Date.now();
+  for (const stop = Date.now() + 90000; Date.now() < stop && !(resultsAt(a, W.eid).length && resultsAt(b, W.eid).length); await wait(500));
+  say_({ step: 'door', msAfterLock: Date.now() - t, A: resultsAt(a, W.eid), B: resultsAt(b, W.eid),
+    entryVoid: [!!a.round.entryVoid(W.eid), !!b.round.entryVoid(W.eid)] });
+  // THE WALKER'S FIRST MARK, SENT PAST THE LINE: the same door, recorded FORFEIT at both.
+  const said = [];
+  for (const d of [a, b]) for (const m of W.late) said.push(String(await say(d.port, m)).slice(0, 100));
+  say_({ step: 'late first mark', said, recorded: [!!a.round.startForfeit(W.eid), !!b.round.startForfeit(W.eid)],
+    A: resultsAt(a, W.eid), B: resultsAt(b, W.eid) });
+} else if (POOL) {
   // FIVE QUALIFIERS WITH DISTINCT SCORES AND A LOSER: from find-players.mjs lines, or searched here.
   const lines = env.PLAYERS_FILE ? readFileSync(env.PLAYERS_FILE, 'utf8').split('\n').filter(Boolean).map((x) => JSON.parse(x)) : [];
   const asWho = (x) => ({ name: x.state, key: fromHex(x.key), worldSecret: fromHex(x.worldSecret), ticks: x.ticks, score: x.score });
@@ -331,7 +369,8 @@ const rowsOn = async (eid) => Promise.all([a, b].map((d) => winnings(d, eid)));
 // client's redeem with the refund witness, signed by the node's identity key, into this probe's federation client.
 // Printed per node: the payout, accepted or not, whether the guardians still hold the contract after.
 if (settled && settled.moved) {
-  const fees = settled.moved.payouts.map((p, outIdx) => ({ ...p, outIdx })).filter((p) => p.kind === 'signer node');
+  // AND A WALK-AWAY'S 75% (WALKAWAY): each sitting signer node's remainder payout, collected the same way.
+  const fees = settled.moved.payouts.map((p, outIdx) => ({ ...p, outIdx })).filter((p) => p.kind === 'signer node' || p.kind === 'remainder node');
   for (const p of fees) {
     const d = [a, b].find((n) => toHex(n.round.pubkey) === p.pk.slice(2));
     if (!d) { say_({ step: 'fee collected', pk: p.pk.slice(0, 18), why: 'no signer node here holds that key' }); continue; }
@@ -343,7 +382,7 @@ if (settled && settled.moved) {
       '--claim-pk', p.pk, '--refund-pk', p.pk, '--expiration', '0']);
     const line = r.out.trim().split('\n').filter((l) => l.startsWith('{')).pop();
     const j = line ? JSON.parse(line) : {};
-    say_({ step: 'fee collected', node: p.pk.slice(2, 18), outIdx: p.outIdx, msat: p.msat, accepted: j.accepted ?? null,
+    say_({ step: 'fee collected', kind: p.kind, node: p.pk.slice(2, 18), outIdx: p.outIdx, msat: p.msat, accepted: j.accepted ?? null,
       signerIsRefundPk: j.signer_is_refund_pk ?? null, heldAfter: j.stored_after ? 'held' : 'none', error: j.error ? String(j.error).slice(0, 160) : (line ? null : r.err.slice(-200)) });
   }
 }
@@ -456,6 +495,27 @@ if (PHASE === 'pass') {
   const after = { asked: asked.length, settled: await settledOnAlice() };
   say_({ step: 'restart', before, after, settlement: (await standing(a)).state,
     rows: await Promise.all(Q.map(async (q) => (await rowsOn(q.eid)).map((r) => r.winnings && r.winnings.state))) });
+} else if (WALK) {
+  // THE DONATION SENDS CARRIED TO PAID, each on alice; the walker's lock gone, the FAILED player's held.
+  const donations = () => a.round.sendPlansOf(rid).filter((r) => r.donation);
+  for (const stop = Date.now() + 180000; Date.now() < stop; await wait(2000)) {
+    const rows = donations();
+    if (rows.length && rows.every((r) => r.state === 'PAID')) break;
+  }
+  const sends = [];
+  for (const r of donations()) {
+    const inv = await invoiceOf(r.paymentHash);
+    sends.push({ address: r.address.slice(0, 28), owedMsat: r.owedMsat, payoutMsat: r.payoutMsat, invoiceMsat: r.invoiceMsat, gateway: r.gatewayUrl,
+      state: r.state, atB: (b.round.sendPlansOf(rid).find((x) => x.paymentHash === r.paymentHash) || {}).state,
+      preimageHashes: r.preimage ? toHex(sha256(fromHex(r.preimage))) === r.paymentHash : null,
+      alice: { state: inv.state, amtPaidMsat: inv.amt_paid_msat } });
+  }
+  const forfeit = async (eid) => (await fetch(`http://127.0.0.1:${a.port}/forfeit?round=${toHex(rid)}&entry=${toHex(eid)}`)).status;
+  say_({ step: 'walkaway', settlement: settled && settled.state, why: settled && settled.why, remainder: settled && settled.moved && settled.moved.remainder,
+    claims: settled && settled.moved && settled.moved.claims, payouts: settled && settled.moved && settled.moved.payouts,
+    donationSends: sends, recipientsAsked: donationAsked.length, winnerAddressAsked: asked.length,
+    walkerLockInFederationAfter: await port.status(W.outpoint), failedLockInFederationAfter: await port.status(L.outpoint),
+    forfeitDoor: { walker: await forfeit(W.eid), failed: await forfeit(L.eid) } });
 } else if (PHASE === 'poolB') {
   await wait(20000);
   const s = await standing(a);
@@ -471,5 +531,5 @@ if (PHASE === 'pass') {
   say_({ step: 'no qualifier', settlement: s.state, moved: s.moved, addressAsked: asked.length, rows: rows.map((r) => r.winnings),
     sends: rows.map((r) => r.send), stakeLocksStillStored: stored });
 }
-await a.close(); await b.close(); lnurlServer.close();
+await a.close(); await b.close(); lnurlServer.close(); if (recipients) await recipients.close();
 process.exit(0);

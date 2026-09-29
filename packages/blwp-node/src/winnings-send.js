@@ -13,6 +13,11 @@
 // invoice's hash and kept on every signer node: one payment row each.
 //
 // Every message a signer node signs it rebuilds from its own store and its own tool first: no door takes a message.
+//
+// AND THE DONATION SET'S 25% OF A WALK-AWAY'S LOCK (RULED the owner 2026-09-30, destination 1), sent the same way: one plan
+// per recipient of the round's donation set, its invoice fetched from that recipient's LNURL, agreed by the seats,
+// kept (donation_sends, under the send id `donationSendId`), signed, asked of the gateway, and re-sent if unpaid. A
+// recipient has no key, so it is paid only by the send - there is no contract only its owner could move.
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { lightningAddressEndpoint, payRequestStands, callbackFor, invoiceAnswersPayRequest } from '../../protocol/src/lnurl-pay.js';
 import { sendableInvoiceMsat, lowestLiveGateway, sendPlanStands, proposedExpiration } from '../../protocol/src/winnings-send.js';
@@ -20,6 +25,15 @@ import { signShare340, aggregate340, nonceGenerate340 } from '../../protocol/src
 import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
 import { encodeCommitments, decodeCommitments, decodeShare } from './pool-wire.js';
 import { largestPayoutMsat, lnv2FeeMsat } from '../../protocol/src/lock-settlement.js';
+import { urlOfLnurl } from '../../protocol/src/bech32.js';
+
+/** Where an address's pay request is: a Lightning address (LUD-16), or a donation recipient's LNURL (LUD-01). */
+function payRequestUrl(address) {
+  if (/^lnurl1/i.test(String(address || ''))) {
+    try { return { ok: true, url: urlOfLnurl(String(address).toLowerCase()) }; } catch (e) { return { ok: false, why: `that LNURL does not decode: ${e.message}` }; }
+  }
+  return lightningAddressEndpoint(address);
+}
 
 const refuse = (why, status = 409) => ({ ok: false, status, why });
 const PAID = 'PAID';
@@ -44,7 +58,7 @@ export class WinningsSend {
 
   /** The address's LUD-06 pay request, as THIS signer node fetches it. */
   async payRequest(address, amountMsat) {
-    const ep = lightningAddressEndpoint(address);
+    const ep = payRequestUrl(address);
     if (!ep.ok) return refuse(ep.why);
     let said;
     try { said = await (await this.lnurlFetch(ep.url)).json(); } catch (e) { return refuse(`${ep.url} did not answer: ${e.message}`); }
@@ -72,20 +86,20 @@ export class WinningsSend {
     this.dropIfStale(roundIdBytes, base);
     const kept = this.round.sendPlansOf(roundIdBytes);
     if (kept.length) return { ok: true, rows: kept };
-    const wanting = this.qualifiersWithAddress(base);
+    const wanting = this.wanting(base);
     if (!wanting.length) return { ok: true, rows: [] };
     const g = await this.port.gateways();
     const gw = lowestLiveGateway(g.gateways);
     if (!gw) return refuse('the round\'s federation has no live gateway to send the winnings through');
     const rows = [];
-    for (const { entryId, payout, address } of wanting) {
+    for (const { entryId, payout, address, donation } of wanting) {
       const invoiceMsat = sendableInvoiceMsat(payout.msat, gw.sendFeeDefault);
       if (invoiceMsat <= 0n) return refuse(`a payout of ${payout.msat} msat does not cover the gateway's own fee`);
       const inv = await this.invoiceFor(address, invoiceMsat);
-      if (!inv.ok) return refuse(`the winner's invoice does not stand, so no payout is built on it: ${inv.why}`);
+      if (!inv.ok) return refuse(`the ${donation ? 'donation recipient' : 'winner'}'s invoice does not stand, so no payout is built on it: ${inv.why}`);
       rows.push({ entryId, roundId: roundIdBytes, attempt: 0, address, invoice: inv.invoice, paymentHash: inv.paymentHash, invoiceMsat,
         payoutMsat: payout.msat, owedMsat: payout.owedMsat, gatewayUrl: gw.url, gatewayPk: gw.modulePublicKey,
-        expiration: proposedExpiration(g.height, gw) });
+        expiration: proposedExpiration(g.height, gw), donation: !!donation });
     }
     for (const r of rows) this.round.putSendPlan({ ...r, why: 'proposed by this signer node' });
     return { ok: true, rows: this.round.sendPlansOf(roundIdBytes) };
@@ -108,7 +122,7 @@ export class WinningsSend {
       this.round.dropPlannedSends(roundIdBytes);
       kept = [];
     }
-    const wanting = new Map(this.qualifiersWithAddress(base).map((w) => [toHex(w.entryId), w]));
+    const wanting = new Map(this.wanting(base).map((w) => [toHex(w.entryId), w]));
     if (proposed.length !== wanting.size)
       return refuse(`the plan names ${proposed.length} winning(s) and this signer node's settlement owes ${wanting.size} to a named address`);
     const g = await this.port.gateways();
@@ -125,7 +139,7 @@ export class WinningsSend {
       if (!stands.ok) return refuse(`the send plan does not stand here: ${stands.why}`);
       rows.push({ entryId: w.entryId, roundId: roundIdBytes, attempt: Number(p.attempt || 0), address: w.address, invoice: p.invoice,
         paymentHash: p.paymentHash, invoiceMsat: stands.invoiceMsat, payoutMsat: w.payout.msat, owedMsat: w.payout.owedMsat,
-        gatewayUrl: p.gatewayUrl, gatewayPk: p.gatewayPk, expiration: BigInt(p.expiration) });
+        gatewayUrl: p.gatewayUrl, gatewayPk: p.gatewayPk, expiration: BigInt(p.expiration), donation: !!w.donation });
     }
     for (const r of rows) this.round.putSendPlan({ ...r, why: 'checked by this signer node' });
     return { ok: true, rows: this.round.sendPlansOf(roundIdBytes) };
@@ -142,7 +156,7 @@ export class WinningsSend {
     if (!kept.length) return false;
     const settled = this.round.lockSettlement(roundIdBytes);
     if (settled && settled.state === 'ACCEPTED') return false;
-    const wanting = new Map(this.qualifiersWithAddress(base).map((w) => [toHex(w.entryId), w.payout.msat]));
+    const wanting = new Map(this.wanting(base).map((w) => [toHex(w.entryId), w.payout.msat]));
     const same = kept.length === wanting.size && kept.every((k) => wanting.get(toHex(k.entryId)) === k.payoutMsat);
     if (same) return false;
     return this.round.dropPlannedSends(roundIdBytes) > 0;
@@ -163,6 +177,17 @@ export class WinningsSend {
     return this.round.sendAttemptsOf(roundIdBytes).filter((x) => x.attempt === 0).map(plain);
   }
 
+  /** Every send the base plan wants: its qualifiers' to their named addresses, and its donation shares. */
+  wanting(base) {
+    return [...this.qualifiersWithAddress(base), ...this.donationsOf(base)].sort((a, b) => (toHex(a.entryId) < toHex(b.entryId) ? -1 : 1));
+  }
+
+  /** The donation shares of the base plan (a walk-away's 25%), each under its send id, with the recipient's LNURL. */
+  donationsOf(base) {
+    return base.plan.payouts.filter((p) => p.kind === 'donation' && p.donation)
+      .map((p) => ({ entryId: p.donation.id, payout: p, address: p.donation.lnurl, donation: true }));
+  }
+
   /** Qualifier payouts of the base plan whose entry named an address, with that address. */
   qualifiersWithAddress(base) {
     const out = [];
@@ -180,6 +205,7 @@ export class WinningsSend {
     const byEntry = new Map([...base.entryOf.entries()].map(([pk, eid]) => [toHex(eid), pk]));
     const sends = new Map();
     // THE FIRST ATTEMPT ONLY: the settlement is what it was when it was signed; a re-send is its own transaction.
+    for (const d of this.donationsOf(base)) byEntry.set(toHex(d.entryId), toHex(d.entryId));
     for (const r of this.round.sendAttemptsOf(roundIdBytes).filter((x) => x.attempt === 0)) {
       const pk = byEntry.get(toHex(r.entryId));
       if (pk) sends.set(pk, { paymentHash: r.paymentHash, gatewayPk: r.gatewayPk, refundPk: claimPk, expiration: r.expiration, payoutMsat: r.payoutMsat });
@@ -259,7 +285,7 @@ export class WinningsSend {
     if (!inv.ok) return refuse(`the winner's invoice does not stand, so nothing is re-sent on it: ${inv.why}`);
     const row = { entryId: prev.entryId, roundId: roundIdBytes, attempt: prev.attempt + 1, address: prev.address, invoice: inv.invoice,
       paymentHash: inv.paymentHash, invoiceMsat, payoutMsat: out, owedMsat: prev.owedMsat, gatewayUrl: gw.url, gatewayPk: gw.modulePublicKey,
-      expiration: proposedExpiration(g.height, gw) };
+      expiration: proposedExpiration(g.height, gw), donation: !!prev.donation };
     this.round.putSendPlan({ ...row, why: `re-send proposed: attempt ${prev.attempt} expired unpaid through ${prev.gatewayUrl}` });
     const refused = [];
     for (const base of this.peersFor(roundIdBytes)) {
@@ -294,7 +320,7 @@ export class WinningsSend {
     if (!stands.ok) return refuse(`the re-send does not stand here: ${stands.why}`);
     this.round.putSendPlan({ entryId: prev.entryId, roundId: roundIdBytes, attempt: prev.attempt + 1, address: prev.address, invoice: p.invoice,
       paymentHash: p.paymentHash, invoiceMsat: stands.invoiceMsat, payoutMsat: out, owedMsat: prev.owedMsat, gatewayUrl: p.gatewayUrl,
-      gatewayPk: p.gatewayPk, expiration: BigInt(p.expiration), why: `re-send checked here: attempt ${prev.attempt} expired` });
+      gatewayPk: p.gatewayPk, expiration: BigInt(p.expiration), donation: !!prev.donation, why: `re-send checked here: attempt ${prev.attempt} expired` });
     return { ok: true };
   }
 
@@ -389,6 +415,8 @@ export class WinningsSend {
 
   keepPaid(row, preimage, why) {
     this.round.markSend({ entryId: row.entryId, attempt: row.attempt, state: PAID, why, preimage: toHex(preimage) });
+    // A DONATION SEND IS NO PLAYER'S WINNING: its PAID row is all that is kept.
+    if (row.donation) return;
     this.round.putWinnings({ entryId: row.entryId, roundId: row.roundId, owedMsat: row.owedMsat, state: PAID, request: row.invoice,
       why, paidMs: this.round.now() });
   }

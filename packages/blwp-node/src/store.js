@@ -337,6 +337,33 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (entry_id, attempt)
     );
 
+    -- A WALK-AWAY'S DONATION SENDS (RULED the owner 2026-09-30, destination 1): the 25% of a walk-away's claimed lock sent to
+    -- the round's donation set, one send per recipient, by the same Lightning-address send a winner is paid by. The
+    -- winnings_sends columns, kept apart only because a recipient is no entry: entry_id here is the send's id,
+    -- donationSendId(round, recipient index) (protocol/lock-settlement.js).
+    CREATE TABLE IF NOT EXISTS donation_sends (
+      entry_id      BLOB NOT NULL,
+      attempt       INTEGER NOT NULL,
+      round_id      BLOB NOT NULL,
+      address       TEXT NOT NULL,
+      invoice       TEXT NOT NULL,
+      payment_hash  TEXT NOT NULL,
+      invoice_msat  INTEGER NOT NULL,
+      payout_msat   INTEGER NOT NULL,
+      owed_msat     INTEGER NOT NULL,
+      gateway_url   TEXT NOT NULL,
+      gateway_pk    TEXT NOT NULL,
+      expiration    INTEGER NOT NULL,
+      txid          TEXT,
+      out_idx       INTEGER,
+      preimage      TEXT,
+      state         TEXT NOT NULL,
+      why           TEXT NOT NULL,
+      planned_ms    INTEGER NOT NULL,
+      updated_ms    INTEGER NOT NULL,
+      PRIMARY KEY (entry_id, attempt)
+    );
+
     CREATE TABLE IF NOT EXISTS held_final_ask (
       entry_id  BLOB PRIMARY KEY,
       round_id  BLOB NOT NULL,

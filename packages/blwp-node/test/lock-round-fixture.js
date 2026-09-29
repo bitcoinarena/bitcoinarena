@@ -36,7 +36,8 @@ export function lnurl(port, { lieAmount = false, lieHash = false } = {}) {
   const issued = [];
   const fetchLike = async (url) => {
     const u = new URL(url);
-    if (u.pathname.startsWith('/.well-known/lnurlp/'))
+    // AND THE DONATION SET'S RECIPIENTS (a walk-away's 25%, RULED 2026-09-30): their LNURLs name /lnurlp/<name>.
+    if (u.pathname.startsWith('/.well-known/lnurlp/') || u.pathname.startsWith('/lnurlp/'))
       return { json: async () => ({ tag: 'payRequest', callback: `https://${u.host}/cb`, metadata: METADATA, minSendable: 1000, maxSendable: 100000000000 }) };
     if (u.pathname === '/cb') {
       const amountMsat = BigInt(u.searchParams.get('amount'));
@@ -168,7 +169,8 @@ export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, ad
     assert.equal(await say(d.port, encodeInputBatch(input)), String(who.ticks));
     assert.equal((await say(d.port, signedMark)).length, SIGNED_RECEIPT_BYTES);
   }
-  const played = { eid, entry, fields, outpoint, feeOutpoint, session };
+  // `late`: the run's batch and first mark, for a test that sends them after the start deadline (§15's same door)
+  const played = { eid, entry, fields, outpoint, feeOutpoint, session, late: [encodeInputBatch(input), signedMark] };
   if (address) await nameAddress([w.a, w.b], played, address === true ? ADDRESS : address);
   return played;
 }

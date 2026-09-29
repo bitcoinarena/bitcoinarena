@@ -57,8 +57,10 @@ export class LockSettlement {
    */
   constructor(round, { dkg, port, curve, random, stakeSecrets, peersFor = () => [], fetcher = (u, o) => fetch(u, o),
     signerNodesFor = (rid, contract) => ({ gameVerify: contract.nodes, settlement: contract.nodes }), winnings = null,
-    turnClock = null, finalityOf = resultFinality } = {}) {
+    turnClock = null, donationSetFor = null, finalityOf = resultFinality } = {}) {
     this.round = round;
+    // THE ROUND'S SIGNED DONATION SET (server.js `donationSetFor`): where a walk-away's claimed lock sends its 25%.
+    this.donationSetFor = donationSetFor;
     // HOW THIS SIGNER NODE READS A RUN'S FINALITY - `resultFinality`; a test may hand another view (a test aid, as
     // `finality.rerunMs` is), since two signer nodes that agree on a run cannot hold a valid objection against it.
     this.finalityOf = finalityOf;
@@ -116,7 +118,12 @@ export class LockSettlement {
       const mine = this.round.results(roundIdBytes, entryId).find((r) => toHex(r.nodePubkey) === toHex(this.round.pubkey));
       if (!mine) return refuse(`this signer node signed no result for ${toHex(entryId).slice(0, 16)}, so it settles nothing`);
       const r = decodePlayerResult(splitSignedResult(mine.bytes).body);
-      entries.push({ ...base, outcome: r.outcome, score: r.score });
+      // A WALK-AWAY, AS ONLY THIS STORE KNOWS IT (RULED the owner 2026-09-30): FORFEIT at the §15 door - no first mark held
+      // here, or a first mark past the line already recorded FORFEIT. Its lock is never a refund (lock-action.js). The
+      // other FORFEITs above - no quorum, proven equivocation - are left unmarked and keep the no-qualifier expiry.
+      const atTheDoor = r.outcome === FORFEIT
+        && (!this.round.firstMarkHeld(roundIdBytes, entryId) || !!(this.round.startForfeit && this.round.startForfeit(entryId)));
+      entries.push({ ...base, outcome: r.outcome, score: r.score, ...(atTheDoor ? { atTheDoor } : {}) });
     }
     void contract;
     return { ok: true, entries, leftOut };
@@ -459,14 +466,16 @@ export class LockSettlement {
     // its own rows; a peer holding another set rebuilds other amounts and refuses the proposer's plan by name.
     const addressed = new Set();
     for (const e of on.entries) if (this.round.payoutAddress && this.round.payoutAddress(e.entryId)) addressed.add(toHex(e.pubkey));
+    const ds = on.entries.some((e) => e.atTheDoor) && this.donationSetFor ? this.donationSetFor(contract) : null;
     const args = { roundId: roundIdBytes, entries: on.entries, minScore: contract.minScore, locks, fees,
-      feeLocks, signerNodes: feeLocks.size ? this.signerNodesFor(roundIdBytes, contract) : null, contract, addressed };
+      feeLocks, signerNodes: feeLocks.size ? this.signerNodesFor(roundIdBytes, contract) : null, contract, addressed,
+      donationSet: ds && ds.ok ? ds.set : null };
     let plan = lockSettlement(args);
     if (!plan.ok) return refuse(`no lock is claimed: ${plan.why}`);
     if (plan.nothing) return refuse(`no lock is claimed: ${plan.why}`);
     const base = { plan, entryOf: lockEntry };
     // THE PLAN THAT IS SIGNED pays every addressed qualifier by its accepted send - never by a contract its key moves.
-    if (withSends && plan.payouts.some((p) => p.kind === 'qualifier')) {
+    if (withSends && plan.payouts.some((p) => p.kind === 'qualifier' || p.kind === 'donation')) {
       if (!this.winnings) return refuse('this signer node sends no winnings, so it builds no payout to a named address');
       plan = lockSettlement({ ...args, sends: this.winnings.sendsFor(roundIdBytes, base, claimPk), requireSends: true });
       if (!plan.ok) return refuse(`no lock is claimed: ${plan.why}`);
@@ -487,7 +496,11 @@ export class LockSettlement {
     return {
       txid: m.txid,
       claims: p.claims.map((c) => ({ kind: c.kind || 'stake', msat: String(c.amountMsat) })),
-      payouts: p.payouts.map((x) => ({ kind: x.kind || 'qualifier', pk: toHex(x.payoutPk), msat: String(x.msat), feeMsat: String(x.feeMsat) })),
+      payouts: p.payouts.map((x) => ({ kind: x.kind || 'qualifier', pk: toHex(x.payoutPk), msat: String(x.msat), feeMsat: String(x.feeMsat),
+        ...(x.donation ? { donation: x.donation.lnurl } : {}) })),
+      // A WALK-AWAY'S REMAINDER (RULED 2026-09-30): what went 75% to the sitting signer nodes and 25% to the donation set.
+      remainder: p.remainder ? { nodesMsat: String(p.remainder.nodesMsat), donationMsat: String(p.remainder.donationMsat),
+        signerNodes: p.remainder.sitting, recipients: p.remainder.recipients } : null,
       poolMsat: String(p.poolMsat), inputFeesMsat: String(p.inputFeesMsat), paidMsat: String(p.paidMsat),
       outputFeesMsat: String(p.outputFeesMsat || 0n), unspentMsat: String(p.unspentMsat || 0n), stakeWhy: p.stakeWhy || null,
       // THE POOL: qualifiers not paid, each with why (no address - its share split over those who named one).
@@ -724,12 +737,15 @@ export class LockSettlement {
     const sent = await this.port.settle({ claimPk: m.claimPk, claims: m.claims, payouts: m.plan.payouts, nonce: m.plan.nonce, signature });
     const state = sent.accepted ? ACCEPTED : REFUSED;
     const stakeClaims = m.plan.claims.filter((c) => c.kind !== 'fee').length;
-    const qualifiers = m.plan.payouts.filter((p) => p.kind !== 'signer node').length;
+    const qualifiers = m.plan.payouts.filter((p) => p.kind === 'qualifier' || (p.kind === 'sent' && !p.donation)).length;
+    const remainder = m.plan.remainder
+      ? `; the walk-away's remainder ${m.plan.remainder.nodesMsat} msat to ${m.plan.remainder.sitting} signer node(s), `
+        + `${m.plan.remainder.donationMsat} msat to ${m.plan.remainder.recipients} donation recipient(s)` : '';
     const feePart = m.plan.feeClaims && m.plan.feeClaims.length
       ? `; fee locks ${m.plan.feeClaims.length}, ${m.plan.feePoolMsat} msat, paid ${m.plan.signerNodePayouts.length} signer node(s) ${m.plan.feePaidMsat} msat`
       : (m.plan.feeHole ? `; no fee lock claimed: ${m.plan.feeHole.why}` : '');
     const why = sent.accepted
-      ? `claimed ${stakeClaims} loser lock(s), ${m.plan.poolMsat} msat; paid ${qualifiers} qualifier(s) ${m.plan.paidMsat} msat${feePart}`
+      ? `claimed ${stakeClaims} loser lock(s), ${m.plan.poolMsat} msat; paid ${qualifiers} qualifier(s) ${m.plan.paidMsat} msat${remainder}${feePart}`
       : `the guardians refused it: ${sent.error}`;
     this.round.putLockSettlement({ roundId: roundIdBytes, txid: m.txid, message: m.message, signature, state, why });
     const winnings = sent.accepted ? await this.sendWinnings(roundIdBytes) : null;
@@ -745,7 +761,7 @@ export class LockSettlement {
     // combined settlement signature does not verify"). The others wait for its plan and check it.
     const t = await this.turn(roundIdBytes);
     if (!t.mine) {
-      if (this.round.sendPlansOf(roundIdBytes).length || !this.winnings.qualifiersWithAddress(got.base).length) return { ok: true, rows: [] };
+      if (this.round.sendPlansOf(roundIdBytes).length || !this.winnings.wanting(got.base).length) return { ok: true, rows: [] };
       return refuse(`the send plan is proposed by the signer node whose turn it is; this one waits for it and checks it (${t.why})`);
     }
     // ADOPT BEFORE PROPOSING: a plan a peer already keeps, if it stands here, is this asker's plan too - a second invoice

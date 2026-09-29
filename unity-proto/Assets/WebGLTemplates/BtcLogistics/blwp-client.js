@@ -7683,6 +7683,18 @@ function lockActions({ roundId, entries, minScore = 0 }) {
     return { entry: e, action, why: said.why };
   });
 
+  // A WALK-AWAY IS NEVER A REFUND, EVEN WITH NO QUALIFIER (RULED the owner 2026-09-30): an entry the signer node's own store
+  // holds FORFEIT AT THE DOOR (`atTheDoor`: §15, no first mark, or a first mark past the line) has its lock claimed
+  // when nobody qualifies, and what it holds is the round's REMAINDER - split by the ruled remainder split, not handed
+  // out by the table (lock-settlement.js). Every other loser keeps the no-qualifier expiry: nobody acts on its lock.
+  const remainder = table.qualifiers === 0 && actions.some((a) => a.action === CLAIM && a.entry.atTheDoor);
+  if (remainder)
+    for (const a of actions) {
+      if (a.action !== CLAIM || a.entry.atTheDoor) continue;
+      a.action = EXPIRE;
+      a.why = 'nobody qualifies, so this lock is left to expire back to its player';
+    }
+
   // WHAT EACH LOCK HOLDS is the net stake, so that is what a claim moves and what a return or an expiry hands back. The
   // fee and the donation were never in the stake lock (§23.5).
   const poolMsat = actions
@@ -7703,13 +7715,14 @@ function lockActions({ roundId, entries, minScore = 0 }) {
     sharesMsat += amount > held ? amount - held : 0n;
   });
 
-  if (rows.length && poolMsat !== sharesMsat)
+  const remainderMsat = remainder ? poolMsat : 0n;
+  if (rows.length && poolMsat !== sharesMsat + remainderMsat)
     throw new Error(
       `the operator would keep ${poolMsat - sharesMsat} msat: a pool of ${poolMsat} `
       + `against ${sharesMsat} handed out`);
 
   return {
-    actions, poolMsat, refundedMsat, sharesMsat, table,
+    actions, poolMsat, refundedMsat, sharesMsat, remainderMsat, table,
     settledMsat: poolMsat, paidMsat: sharesMsat,
   };
 }
@@ -7875,6 +7888,349 @@ const payableKey = (pubkey) => {
   return v > 0n && v < FIELD;
 };
 
+// ---- protocol/src/donation.js
+// 22A: THE PLAYER'S DONATION, WHICH GOES TO A SET AND NOT TO AN ADDRESS.
+//
+// "A donation goes to a set of recipients with declared shares, not to one
+// address... `share_bps` are basis points and MUST sum to exactly 10000."
+//
+// `donationMsat` has been on every Entry Contract since it was written and
+// read by nothing - the same state `feeMsat` was in before the fee table.
+// This is the arithmetic and the one rule that decides where the money does
+// NOT go when a payment fails.
+//
+// THE ROUNDING IS NOT THE FEE'S ROUNDING, and that is deliberate rather than
+// an oversight to be tidied. 22A gives the node fee's remainder to the
+// ascending `H(round_id || node_pubkey)` order and gives the donation's to
+// "the first recipient in the set as published. Deterministic, and the
+// amounts are too small for anything cleverer to be worth its complexity."
+// Two rules, written down separately, and copying either onto the other would
+// be inventing a third.
+//
+// WHAT IS DELIBERATELY NOT HERE. 22A also says the set "is named in the Round
+// Contract and its hash is part of the contract hash". That is a signed field
+// and it moves every round id, so it is a decision before it is work - the
+// same split the fee table took before `feeMsat`. And there is no Lightning
+// here: a recipient is an opaque `lnurl` string, because this package pays
+// nobody and inventing a payment layer to test one would be inventing a
+// second protocol.
+
+
+
+
+/** Basis points, and 22A's MUST: the shares sum to exactly this. */
+const DONATION_BPS_TOTAL = 10000;
+
+/**
+ * AN LNURL IS BECH32, AND BECH32 DECIDES ITS OWN CASE RULES.
+ *
+ * Two of them, and both are the encoding's, not this file's invention:
+ * a string may not be MIXED case, and case carries no meaning - `LNURL1ABC`
+ * and `lnurl1abc` are one address.
+ *
+ * Treating the string as opaque bytes instead was measured and was a hole:
+ * `[{LNURL1ABC, 5000}, {lnurl1abc, 5000}]` stood, which is ONE PARTY HOLDING
+ * TWO SHARES - exactly what the duplicate check exists to prevent - and the
+ * same payee produced two different set ids, so two honest nodes handed the
+ * same recipients in different case disagreed about which set was used.
+ *
+ * FOLDED IN ASCII AND NOT BY `toLowerCase`, deliberately. `toLowerCase` is
+ * Unicode and in a Turkish locale maps `I` to a dotless `ı`, so two
+ * implementations of this protocol could canonicalise one address two ways and
+ * disagree about who is being paid. Bech32 is ASCII; the fold is ASCII.
+ */
+const upper = (c) => c >= 65 && c <= 90;
+const lower = (c) => c >= 97 && c <= 122;
+
+function canonicalLnurl(lnurl) {
+  let out = '';
+  for (let i = 0; i < lnurl.length; i++) {
+    const c = lnurl.charCodeAt(i);
+    out += upper(c) ? String.fromCharCode(c + 32) : lnurl[i];
+  }
+  return out;
+}
+
+function isMixedCase(lnurl) {
+  let hasUpper = false;
+  let hasLower = false;
+  for (let i = 0; i < lnurl.length; i++) {
+    const c = lnurl.charCodeAt(i);
+    if (upper(c)) hasUpper = true;
+    else if (lower(c)) hasLower = true;
+  }
+  return hasUpper && hasLower;
+}
+
+/**
+ * DOES THIS SET STAND?
+ *
+ * A set whose shares do not sum to exactly 10000 is not a division of the
+ * player's donation: under it money is either left over with nobody named to
+ * receive it, or promised twice. Either way the player's chosen amount is not
+ * what the set hands out, and 22A says MUST.
+ *
+ * Answered rather than thrown, like every other decision in this package.
+ */
+function donationSetStands(recipients) {
+  if (!Array.isArray(recipients) || !recipients.length)
+    return { ok: false, why: 'a donation goes to a set, and this names nobody' };
+
+  let sum = 0;
+  const seen = new Set();
+  for (const [at, r] of recipients.entries()) {
+    if (!r || typeof r.lnurl !== 'string' || !r.lnurl.length)
+      return { ok: false, why: `recipient ${at} has no address to be paid at` };
+    if (!Number.isInteger(r.shareBps) || r.shareBps < 0)
+      return { ok: false, why: `recipient ${at} has no whole share in basis points` };
+
+    // BECH32 FORBIDS MIXED CASE, so an address in it is not an address.
+    if (isMixedCase(r.lnurl))
+      return {
+        ok: false,
+        why: `recipient ${at} is mixed case, which bech32 does not allow in an address`,
+      };
+
+    // ONE RECIPIENT LISTED TWICE IS TWO SHARES FOR ONE PARTY, and the set is
+    // "a parameter the network can hold an opinion about" - an opinion it
+    // cannot form if the same address can appear under two weights.
+    //
+    // COMPARED CANONICALLY, because case carries no meaning in bech32: the two
+    // spellings of one payee are one payee, and listing both was measured
+    // standing before this line existed.
+    const key = canonicalLnurl(r.lnurl);
+    if (seen.has(key))
+      return {
+        ok: false,
+        why: `${r.lnurl} is listed twice, which is one party with two shares`,
+      };
+    seen.add(key);
+    sum += r.shareBps;
+  }
+
+  if (sum !== DONATION_BPS_TOTAL)
+    return {
+      ok: false,
+      why: `those shares sum to ${sum} basis points and 22A says exactly `
+        + `${DONATION_BPS_TOTAL}: the player's donation is not what that set hands out`,
+    };
+  return { ok: true, why: `${recipients.length} recipients sharing exactly ${sum} basis points` };
+}
+
+/**
+ * WHAT EACH RECIPIENT IS OWED OF ONE PLAYER'S DONATION.
+ *
+ * "Rounding: compute in millisatoshis, floor each share, and give the
+ * remainder to the first recipient in the set AS PUBLISHED."
+ *
+ * So the split is EXACT - the remainder is handed to a named party rather than
+ * dropped - and the sum of the shares is the donation, to the millisatoshi.
+ * That is a different property from the node fee, where each entry's own floor
+ * can collect less than the round's table owes; here there is nothing to
+ * collect less of, and no gap for anybody to keep.
+ *
+ * A PLAYER WHO DONATES NOTHING PAYS NOTHING, and the set is irrelevant to that
+ * entry - 22A says so - so a zero donation is answered without judging the
+ * set at all.
+ *
+ * THE ANSWER IS `owed`, NOT `ok`, and the difference is the whole reason it
+ * was renamed. A zero donation returns successfully with a set that would NOT
+ * stand, because 22A says the set is irrelevant to that entry - and a field
+ * called `ok` invites a caller to read that as "this set stands", which it
+ * does not say and must never be taken to. `owed` says what this function
+ * actually answers: what each recipient is owed. Whether a set stands is
+ * `donationSetStands`, and it is a different question with a different name.
+ */
+function splitDonation({ donationMsat, recipients }) {
+  if (typeof donationMsat !== 'bigint')
+    return { owed: false, why: 'a donation is BigInt millisatoshi' };
+  if (donationMsat < 0n)
+    return { owed: false, why: 'a donation cannot be negative' };
+
+  if (donationMsat === 0n)
+    return {
+      owed: true,
+      shares: (Array.isArray(recipients) ? recipients : []).map((r) => ({
+        lnurl: r && r.lnurl, amountMsat: 0n,
+      })),
+      why: 'donations are off for this entry, and the set is irrelevant to it',
+    };
+
+  const stands = donationSetStands(recipients);
+  if (!stands.ok) return { owed: false, why: stands.why };
+
+  const shares = recipients.map((r) => ({
+    lnurl: r.lnurl,
+    amountMsat: (donationMsat * BigInt(r.shareBps)) / BigInt(DONATION_BPS_TOTAL),
+  }));
+
+  // The remainder to the first as published - not to the largest share, not
+  // to a hash order, and not dropped.
+  const handed = shares.reduce((sum, s) => sum + s.amountMsat, 0n);
+  shares[0].amountMsat += donationMsat - handed;
+
+  const total = shares.reduce((sum, s) => sum + s.amountMsat, 0n);
+  if (total !== donationMsat)
+    throw new Error(`donation split broken: ${total} of ${donationMsat}`);
+
+  return { owed: true, shares, why: `${donationMsat} split over ${shares.length} recipients` };
+}
+
+/**
+ * WHAT ACTUALLY MOVES WHEN A PAYMENT FAILS, and where it does NOT go.
+ *
+ * 22A: "Payment failure to one recipient does not void the entry or the round.
+ * A donation is voluntary and outside the pool; an unreachable LNURL is a
+ * failed payment and nothing more. Clients SHOULD report it and MUST NOT
+ * redirect the share to the remaining recipients, WHICH WOULD LET ONE
+ * UNREACHABLE ENDPOINT QUIETLY REDISTRIBUTE OTHER PEOPLE'S MONEY."
+ *
+ * So an unpaid share stays unpaid. Every other recipient is owed exactly what
+ * it was owed before, and the failure changes one number: what was paid. This
+ * is the money-law clause and not a retry policy - whether a client tries
+ * again is its business, and where the money may go is not.
+ *
+ * The entry stands either way: a donation is outside the pool, so a failure
+ * here can neither void a round nor touch a stake.
+ */
+function donationAfterFailures({ shares, failed = [] }) {
+  const out = new Set(failed);
+  const paid = [];
+  const unpaid = [];
+  for (const s of shares) (out.has(s.lnurl) ? unpaid : paid).push({ ...s });
+
+  return {
+    paid,
+    unpaid,
+    paidMsat: paid.reduce((sum, s) => sum + s.amountMsat, 0n),
+    unpaidMsat: unpaid.reduce((sum, s) => sum + s.amountMsat, 0n),
+    entryStands: true,
+    why: unpaid.length
+      ? `${unpaid.length} recipient(s) unreachable; their share is not redistributed`
+      : 'every recipient was paid its share',
+  };
+}
+
+/**
+ * The donations of a round, for the rounds where somebody wants the total.
+ * Refunded entries are excluded for the reason the fee base excludes them: a
+ * VOID entry is money that never moved.
+ */
+const donatedMsat = (entries) =>
+  entries.filter((e) => !isRefund(e.outcome)).reduce((sum, e) => sum + e.donationMsat, 0n);
+
+/**
+ * THE SET AS BYTES, so a committee can check one instead of being handed an
+ * array.
+ *
+ * Every other object here that decides money encodes and carries a tagged id -
+ * the payout table, the settlement record, the fee claim, the service record,
+ * the slash proof - and until this the donation set was the only one that did
+ * not. That is what stopped two independent nodes agreeing on WHICH set a
+ * player donated under, and nothing could be bound to one.
+ *
+ * THE ORDER IS PART OF THE SET AND IS NOT SORTED. Everywhere else in this
+ * package a vector is sorted so that two honest callers agree - the payout
+ * table by pubkey, the committee by key - and here that would be a bug: 22A
+ * gives the remainder to "the first recipient in the set AS PUBLISHED", so the
+ * order decides who is topped up. A set reordered is a set that pays somebody
+ * else the odd millisatoshi, and it must therefore be a different set with a
+ * different id.
+ *
+ * A SET THAT DOES NOT STAND DOES NOT ENCODE. There would otherwise be bytes
+ * with a real tagged id naming shares that sum to 9999 - an object that looks
+ * exactly as published as an honest one and hands out a different amount than
+ * the player chose. Refused at the encoder, so no such id can exist.
+ */
+function encodeDonationSet(recipients) {
+  const stands = donationSetStands(recipients);
+  if (!stands.ok) throw new Error(`that set does not stand: ${stands.why}`);
+
+  const w = new Writer();
+  w.u8(TYPE_DONATION_SET);
+  w.u16(PROTOCOL_VERSION);
+  w.vec(recipients, (r, ww) => {
+    // THE ADDRESS, CANONICALLY. 22A's "the client MUST show every recipient
+    // before wallet approval - a donation to an undisclosed address is not a
+    // donation" is about WHICH payee, and bech32 says case is not part of
+    // that: the same list typed in upper and in lower is the same set and must
+    // therefore hash to one id, or two honest nodes disagree over spelling.
+    ww.str(canonicalLnurl(r.lnurl));
+    ww.u16(r.shareBps);
+  });
+  return w.finish();
+}
+
+function decodeDonationSet(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_DONATION_SET) throw new Error('not a donation set');
+  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  const recipients = r.vec((rr) => ({ lnurl: rr.str(), shareBps: rr.u16() }));
+  if (r.at !== bytes.length) throw new Error('trailing bytes after the donation set');
+
+  // Checked on the way in as well as on the way out: bytes are where a set
+  // arrives from a stranger, and a stranger is exactly who might send one that
+  // does not stand.
+  const stands = donationSetStands(recipients);
+  if (!stands.ok) throw new Error(`that set does not stand: ${stands.why}`);
+
+  // AND THE BYTES THEMSELVES MUST BE CANONICAL, or one set has two of them.
+  //
+  // The encoder folds, so nothing this package writes is ever uppercase - but
+  // a stranger does not use this encoder. Hand-crafted bytes spelling the
+  // payee `LNURL1ABC` decoded happily and stood, which left ONE SET WITH TWO
+  // BYTE STRINGS: a committee comparing what it received, or hashing it
+  // directly instead of re-encoding, would see two different sets and
+  // disagree - the very disagreement folding was adopted to remove. Measured
+  // before this check existed.
+  //
+  // Refused rather than quietly folded on the way in: bytes that are not the
+  // set's own encoding are not that set, and accepting them would make the id
+  // depend on who did the hashing.
+  for (const [at, r] of recipients.entries())
+    if (r.lnurl !== canonicalLnurl(r.lnurl))
+      throw new Error(
+        `recipient ${at} is not canonical: a set has one encoding, and these `
+        + 'bytes are not it');
+
+  return recipients;
+}
+
+/** What 22A means by naming a set: one hash, over the recipients as published. */
+const donationSetId = (recipients) =>
+  taggedHash(TAG.donationSet, encodeDonationSet(recipients));
+
+/**
+ * IS THIS THE SET THE ROUND NAMED? 22A's binding, checked.
+ *
+ * "The set is named in the Round Contract and its hash is part of the contract
+ * hash, SO IT CANNOT CHANGE AFTER ENTRY." A set with an id and nothing naming
+ * which one applies leaves two honest nodes able to agree on a set's bytes and
+ * still disagree about whether it was this round's - and a player's donation
+ * split by a list nobody signed up to.
+ *
+ * Answered rather than thrown, like every other decision here: a set that does
+ * not stand has no id at all, and that is a refusal rather than a crash.
+ */
+function donationSetMatchesRound(contract, recipients) {
+  if (!contract || !(contract.donationSetId instanceof Uint8Array)
+      || contract.donationSetId.length !== 32)
+    return { ok: false, why: 'that round names no donation set' };
+
+  let id;
+  try { id = donationSetId(recipients); }
+  catch (e) { return { ok: false, why: e.message }; }
+
+  const same = id.every((b, i) => b === contract.donationSetId[i]);
+  return same
+    ? { ok: true, why: 'that is the set this round named' }
+    : {
+      ok: false,
+      why: 'that set is not the one this round named, and 22A says it cannot '
+        + 'change after entry',
+    };
+}
+
 // ---- protocol/src/lock-settlement.js
 // THE ROUND'S ONE SETTLEMENT OF STAKE LOCKS (FEDERATION.md, money flow step 5;
 // W4 - the owner 2026-09-14 07:22: "a loser loses the stake. The lock is claimed
@@ -7911,6 +8267,7 @@ const payableKey = (pubkey) => {
 // the round's order), each signer node one pre-expired payout contract to its own key -
 // never to the donation recipients, and no split invented here. A VOID or
 // ENTRY_VOID entry's fee lock is not claimed: §22A's fee base leaves it out.
+
 
 
 
@@ -7967,8 +8324,12 @@ function settlementNonce(roundId) {
 // player. Left out, the addressed set is the qualifiers with a send - no address is ever implied.
 // `requireSends`: the plan that is signed. An addressed qualifier without an accepted send is refused, never paid
 // by a contract only its key can move.
+//
+// `donationSet`: THE ROUND'S DONATION SET (§22A), as this signer node holds it signed - where a walk-away's claimed lock
+// sends its 25% (`remainderSettlement`). An entry marked `atTheDoor` is one this signer node's own store holds FORFEIT at
+// the door (§15): no first mark, or a first mark past the line.
 function lockSettlement({ roundId, entries, minScore = 0, locks, fees, feeLocks = new Map(), signerNodes = null, contract = null,
-  sends = new Map(), addressed = null, requireSends = false }) {
+  sends = new Map(), addressed = null, requireSends = false, donationSet = null }) {
   if (!(locks instanceof Map)) return refuse('the verified stake locks are a Map by player key');
   if (!(feeLocks instanceof Map)) return refuse('the verified fee locks are a Map by player key');
   if (!fees || typeof fees.ppm !== 'bigint' || typeof fees.baseMsat !== 'bigint' || fees.ppm < 0n || fees.baseMsat < 0n)
@@ -7993,7 +8354,7 @@ function lockSettlement({ roundId, entries, minScore = 0, locks, fees, feeLocks 
     const net = netStakeMsat(a.entry);
     if (lock.amountMsat !== net)
       return refuse(`a loser's lock holds ${lock.amountMsat} msat and its entry's net stake is ${net}`);
-    claims.push({ pubkey: a.entry.pubkey, outpoint: lock.outpoint, amountMsat: net });
+    claims.push({ pubkey: a.entry.pubkey, outpoint: lock.outpoint, amountMsat: net, atTheDoor: !!a.entry.atTheDoor });
   }
   const forfeits = h.actions.filter((a) => a.action === RETURN).map((a) => a.entry.pubkey);
   if (!claims.length && !feePart.claims.length)
@@ -8003,6 +8364,11 @@ function lockSettlement({ roundId, entries, minScore = 0, locks, fees, feeLocks 
   if (!claims.length)
     return finish({ roundId, claims: [], payouts: [], unpaid: [], forfeits, poolMsat: 0n, inputFeesMsat: 0n, spendableMsat: 0n,
       stakeWhy: 'no loser\'s lock is claimed in this round' }, feePart);
+  const remainderArgs = { roundId, forfeits, fees, contract, donationSet, sends, requireSends, feePart };
+  // NOBODY QUALIFIES AND A WALK-AWAY'S LOCK IS CLAIMED (lockActions): its stake is the round's remainder, split 75/25.
+  if (h.remainderMsat > 0n)
+    return remainderSettlement({ ...remainderArgs, claims, unpaid: [],
+      stakeWhy: 'nobody qualifies: the walk-away\'s lock is claimed and split 75% to the sitting signer nodes, 25% to the donation set' });
 
   const owed = winnings({ table: h.table.table, stakes: h.table.activated });
   if (!owed.ok) return refuse(owed.why);
@@ -8022,8 +8388,16 @@ function lockSettlement({ roundId, entries, minScore = 0, locks, fees, feeLocks 
   const inputFeesMsat = claims.reduce((s, c) => s + lnv2FeeMsat(fees, c.amountMsat), 0n);
   const spendableMsat = poolMsat - inputFeesMsat;
   const unpaid = [...pooled];
-  const nobody = (why) => finish({ roundId, claims: [], payouts: [], unpaid, forfeits, poolMsat: 0n, inputFeesMsat: 0n, spendableMsat: 0n,
-    stakeWhy: why }, feePart);
+  // A WALK-AWAY IS NEVER A REFUND (RULED 2026-09-30): with nobody to send the winnings to, the other losers' locks
+  // expire back - and a walk-away's is claimed all the same, into the remainder split.
+  const nobody = (why) => {
+    const door = claims.filter((c) => c.atTheDoor);
+    if (door.length)
+      return remainderSettlement({ ...remainderArgs, claims: door, unpaid,
+        stakeWhy: `${why}; the walk-away's lock is claimed and split 75% to the sitting signer nodes, 25% to the donation set` });
+    return finish({ roundId, claims: [], payouts: [], unpaid, forfeits, poolMsat: 0n, inputFeesMsat: 0n, spendableMsat: 0n,
+      stakeWhy: why }, feePart);
+  };
   // (iii): NOBODY TO SEND TO, NOTHING CLAIMED. The losers' locks expire back to them; the fee part still settles.
   // An addressed qualifier outside the paying ranks has no weight in the table, so it cannot carry the pooled
   // shares either: renormalised over weights that sum to nothing there is no split, and none is invented.
@@ -8066,8 +8440,85 @@ function lockSettlement({ roundId, entries, minScore = 0, locks, fees, feeLocks 
   }
   // THE SHARES A LATE LOSER'S SECOND SETTLEMENT IS SPLIT BY (C3b-1): what each paid winner got, in the table's order.
   const stakeShares = split.map(({ row, msat }) => ({ pubkey: row.pubkey, msat }));
-  return { ...finish({ roundId, claims: claims.map((c) => ({ ...c, kind: 'stake' })), payouts: payouts.map((p) => ({ ...p, kind: p.sent ? 'sent' : 'qualifier' })),
+  return { ...finish({ roundId, claims: claims.map(stakeClaim), payouts: payouts.map((p) => ({ ...p, kind: p.sent ? 'sent' : 'qualifier' })),
     unpaid, forfeits, poolMsat, inputFeesMsat, spendableMsat, stakeWhy: null }, feePart), stakeShares };
+}
+
+const stakeClaim = ({ atTheDoor: _door, ...c }) => ({ ...c, kind: 'stake' });
+
+/** THE RULED REMAINDER SPLIT (FEDERATION.md; RULED the owner 2026-09-21): 75% to the nodes, the rest to the donation set. */
+const REMAINDER_NODES_PERCENT = 75n;
+
+const DONATION_SEND_TAG = new TextEncoder().encode('blwp donation send v1');
+
+/**
+ * THE ID A DONATION SEND IS KEPT AND SIGNED UNDER: one per (round, recipient in the set's published order). It stands
+ * where a player send's entry id stands (winnings-send.js), since a recipient has no entry.
+ */
+function donationSendId(roundId, index) {
+  if (!(roundId instanceof Uint8Array) || roundId.length !== 32) throw new Error('a round id is 32 bytes');
+  if (!Number.isInteger(index) || index < 0 || index > 255) throw new Error('a donation recipient is 0..255 in the set\'s order');
+  const m = new Uint8Array(DONATION_SEND_TAG.length + 33);
+  m.set(DONATION_SEND_TAG); m.set(roundId, DONATION_SEND_TAG.length); m[DONATION_SEND_TAG.length + 32] = index;
+  return sha256(m);
+}
+
+/**
+ * A WALK-AWAY'S CLAIMED LOCK, PAID BY THE RULED REMAINDER SPLIT (RULED the owner 2026-09-30, destination 1): a round
+ * nobody is paid in claims the locks of the entries held FORFEIT at the door, and never hands them back. Less the
+ * guardians' fees on those inputs, 75% goes to the round's SITTING SIGNER NODES - evenly, each one pre-expired payout
+ * contract to its own key, as the fee locks pay them; the msat the division leaves to the first in the round's order -
+ * and 25% to the round's DONATION SET by share_bps (§22A's `splitDonation`, its remainder to the first as published),
+ * each recipient paid by the Lightning-address send a winner is paid by (winnings-send.js): an outgoing contract to
+ * that recipient's invoice, refunding to the committee claim key. A recipient has no key, so no contract only its
+ * owner can move is possible - and so, where `requireSends` says the plan is the signed one, a recipient without an
+ * accepted send is REFUSED: nothing is built. A share too small to pay its own output fee is reported unpaid.
+ */
+function remainderSettlement({ roundId, claims, forfeits, fees, contract, donationSet, sends, requireSends, feePart, unpaid, stakeWhy }) {
+  const sitting = contract && Array.isArray(contract.nodes) ? [...new Map(contract.nodes.map((k) => [toHex(k), k])).values()] : [];
+  if (!sitting.length) return refuse('a walk-away\'s lock is split with the round\'s sitting signer nodes, and no contract names them');
+  const recipients = donationSet && Array.isArray(donationSet.recipients) ? donationSet.recipients : null;
+  if (!recipients || !recipients.length)
+    return refuse('a walk-away\'s lock pays 25% to the round\'s donation set, and this signer node holds no signed set for the round, so nothing is built');
+  const poolMsat = claims.reduce((s, c) => s + c.amountMsat, 0n);
+  const inputFeesMsat = claims.reduce((s, c) => s + lnv2FeeMsat(fees, c.amountMsat), 0n);
+  const spendableMsat = poolMsat - inputFeesMsat;
+  if (spendableMsat <= 0n) return refuse(`the guardians' fees on the walk-away's lock (${inputFeesMsat} msat) take the whole ${poolMsat}`);
+  const nodesMsat = (spendableMsat * REMAINDER_NODES_PERCENT) / 100n;
+  const donationMsat = spendableMsat - nodesMsat;
+  const out = [...unpaid];
+  const payouts = [];
+  const each = nodesMsat / BigInt(sitting.length);
+  sitting.forEach((k, i) => {
+    const owedMsat = each + (i === 0 ? nodesMsat - each * BigInt(sitting.length) : 0n);
+    const msat = largestPayoutMsat(fees, owedMsat);
+    if (msat === 0n) { out.push({ pubkey: k, owedMsat, why: 'its share of the walk-away\'s stake does not pay its own output fee' }); return; }
+    payouts.push({ pubkey: k, payoutPk: refundKeyOf(k), owedMsat, msat, feeMsat: lnv2FeeMsat(fees, msat), kind: 'remainder node' });
+  });
+  const split = splitDonation({ donationMsat, recipients });
+  if (!split.owed) return refuse(`the round's donation set does not stand, so nothing is built: ${split.why}`);
+  for (let i = 0; i < split.shares.length; i++) {
+    const { lnurl, amountMsat: owedMsat } = split.shares[i];
+    const id = donationSendId(roundId, i);
+    const donation = { id, index: i, lnurl };
+    const msat = largestPayoutMsat(fees, owedMsat);
+    if (msat === 0n) { out.push({ pubkey: id, owedMsat, why: `the donation share for ${lnurl} does not pay its own output fee` }); continue; }
+    const send = sends instanceof Map ? sends.get(toHex(id)) : null;
+    if (send && send.payoutMsat !== undefined && BigInt(send.payoutMsat) !== msat)
+      return refuse(`a donation send was planned for a ${send.payoutMsat} msat payout and this signer node's payout is ${msat}: ${lnurl}`);
+    if (send) {
+      payouts.push({ pubkey: id, payoutPk: send.refundPk, owedMsat, msat, feeMsat: lnv2FeeMsat(fees, msat), kind: 'sent', donation,
+        sent: { paymentHash: String(send.paymentHash).toLowerCase(), gatewayPk: String(send.gatewayPk).toLowerCase(), expiration: BigInt(send.expiration) } });
+      continue;
+    }
+    // THE DONATION SEND IS MISSING: the signed plan is refused, and the walk-away's lock is not claimed on a guess.
+    if (requireSends) return refuse(`the donation set's share for ${lnurl} has no accepted Lightning-address send, so nothing is built`);
+    // THE BASE PLAN the donation sends are sized from; never signed (requireSends). A recipient has no key to name.
+    payouts.push({ pubkey: id, payoutPk: new Uint8Array(33), owedMsat, msat, feeMsat: lnv2FeeMsat(fees, msat), kind: 'donation', donation });
+  }
+  const done = finish({ roundId, claims: claims.map(stakeClaim), payouts, unpaid: out, forfeits, poolMsat, inputFeesMsat, spendableMsat, stakeWhy }, feePart);
+  if (!done.ok) return done;
+  return { ...done, remainder: { nodesMsat, donationMsat, sitting: sitting.length, recipients: split.shares.length } };
 }
 
 const LATE_NONCE_TAG = new TextEncoder().encode('blwp late lock settlement v1');
@@ -10068,349 +10519,6 @@ async function discover({
     chain,
     reusedChain,
   };
-}
-
-// ---- protocol/src/donation.js
-// 22A: THE PLAYER'S DONATION, WHICH GOES TO A SET AND NOT TO AN ADDRESS.
-//
-// "A donation goes to a set of recipients with declared shares, not to one
-// address... `share_bps` are basis points and MUST sum to exactly 10000."
-//
-// `donationMsat` has been on every Entry Contract since it was written and
-// read by nothing - the same state `feeMsat` was in before the fee table.
-// This is the arithmetic and the one rule that decides where the money does
-// NOT go when a payment fails.
-//
-// THE ROUNDING IS NOT THE FEE'S ROUNDING, and that is deliberate rather than
-// an oversight to be tidied. 22A gives the node fee's remainder to the
-// ascending `H(round_id || node_pubkey)` order and gives the donation's to
-// "the first recipient in the set as published. Deterministic, and the
-// amounts are too small for anything cleverer to be worth its complexity."
-// Two rules, written down separately, and copying either onto the other would
-// be inventing a third.
-//
-// WHAT IS DELIBERATELY NOT HERE. 22A also says the set "is named in the Round
-// Contract and its hash is part of the contract hash". That is a signed field
-// and it moves every round id, so it is a decision before it is work - the
-// same split the fee table took before `feeMsat`. And there is no Lightning
-// here: a recipient is an opaque `lnurl` string, because this package pays
-// nobody and inventing a payment layer to test one would be inventing a
-// second protocol.
-
-
-
-
-/** Basis points, and 22A's MUST: the shares sum to exactly this. */
-const DONATION_BPS_TOTAL = 10000;
-
-/**
- * AN LNURL IS BECH32, AND BECH32 DECIDES ITS OWN CASE RULES.
- *
- * Two of them, and both are the encoding's, not this file's invention:
- * a string may not be MIXED case, and case carries no meaning - `LNURL1ABC`
- * and `lnurl1abc` are one address.
- *
- * Treating the string as opaque bytes instead was measured and was a hole:
- * `[{LNURL1ABC, 5000}, {lnurl1abc, 5000}]` stood, which is ONE PARTY HOLDING
- * TWO SHARES - exactly what the duplicate check exists to prevent - and the
- * same payee produced two different set ids, so two honest nodes handed the
- * same recipients in different case disagreed about which set was used.
- *
- * FOLDED IN ASCII AND NOT BY `toLowerCase`, deliberately. `toLowerCase` is
- * Unicode and in a Turkish locale maps `I` to a dotless `ı`, so two
- * implementations of this protocol could canonicalise one address two ways and
- * disagree about who is being paid. Bech32 is ASCII; the fold is ASCII.
- */
-const upper = (c) => c >= 65 && c <= 90;
-const lower = (c) => c >= 97 && c <= 122;
-
-function canonicalLnurl(lnurl) {
-  let out = '';
-  for (let i = 0; i < lnurl.length; i++) {
-    const c = lnurl.charCodeAt(i);
-    out += upper(c) ? String.fromCharCode(c + 32) : lnurl[i];
-  }
-  return out;
-}
-
-function isMixedCase(lnurl) {
-  let hasUpper = false;
-  let hasLower = false;
-  for (let i = 0; i < lnurl.length; i++) {
-    const c = lnurl.charCodeAt(i);
-    if (upper(c)) hasUpper = true;
-    else if (lower(c)) hasLower = true;
-  }
-  return hasUpper && hasLower;
-}
-
-/**
- * DOES THIS SET STAND?
- *
- * A set whose shares do not sum to exactly 10000 is not a division of the
- * player's donation: under it money is either left over with nobody named to
- * receive it, or promised twice. Either way the player's chosen amount is not
- * what the set hands out, and 22A says MUST.
- *
- * Answered rather than thrown, like every other decision in this package.
- */
-function donationSetStands(recipients) {
-  if (!Array.isArray(recipients) || !recipients.length)
-    return { ok: false, why: 'a donation goes to a set, and this names nobody' };
-
-  let sum = 0;
-  const seen = new Set();
-  for (const [at, r] of recipients.entries()) {
-    if (!r || typeof r.lnurl !== 'string' || !r.lnurl.length)
-      return { ok: false, why: `recipient ${at} has no address to be paid at` };
-    if (!Number.isInteger(r.shareBps) || r.shareBps < 0)
-      return { ok: false, why: `recipient ${at} has no whole share in basis points` };
-
-    // BECH32 FORBIDS MIXED CASE, so an address in it is not an address.
-    if (isMixedCase(r.lnurl))
-      return {
-        ok: false,
-        why: `recipient ${at} is mixed case, which bech32 does not allow in an address`,
-      };
-
-    // ONE RECIPIENT LISTED TWICE IS TWO SHARES FOR ONE PARTY, and the set is
-    // "a parameter the network can hold an opinion about" - an opinion it
-    // cannot form if the same address can appear under two weights.
-    //
-    // COMPARED CANONICALLY, because case carries no meaning in bech32: the two
-    // spellings of one payee are one payee, and listing both was measured
-    // standing before this line existed.
-    const key = canonicalLnurl(r.lnurl);
-    if (seen.has(key))
-      return {
-        ok: false,
-        why: `${r.lnurl} is listed twice, which is one party with two shares`,
-      };
-    seen.add(key);
-    sum += r.shareBps;
-  }
-
-  if (sum !== DONATION_BPS_TOTAL)
-    return {
-      ok: false,
-      why: `those shares sum to ${sum} basis points and 22A says exactly `
-        + `${DONATION_BPS_TOTAL}: the player's donation is not what that set hands out`,
-    };
-  return { ok: true, why: `${recipients.length} recipients sharing exactly ${sum} basis points` };
-}
-
-/**
- * WHAT EACH RECIPIENT IS OWED OF ONE PLAYER'S DONATION.
- *
- * "Rounding: compute in millisatoshis, floor each share, and give the
- * remainder to the first recipient in the set AS PUBLISHED."
- *
- * So the split is EXACT - the remainder is handed to a named party rather than
- * dropped - and the sum of the shares is the donation, to the millisatoshi.
- * That is a different property from the node fee, where each entry's own floor
- * can collect less than the round's table owes; here there is nothing to
- * collect less of, and no gap for anybody to keep.
- *
- * A PLAYER WHO DONATES NOTHING PAYS NOTHING, and the set is irrelevant to that
- * entry - 22A says so - so a zero donation is answered without judging the
- * set at all.
- *
- * THE ANSWER IS `owed`, NOT `ok`, and the difference is the whole reason it
- * was renamed. A zero donation returns successfully with a set that would NOT
- * stand, because 22A says the set is irrelevant to that entry - and a field
- * called `ok` invites a caller to read that as "this set stands", which it
- * does not say and must never be taken to. `owed` says what this function
- * actually answers: what each recipient is owed. Whether a set stands is
- * `donationSetStands`, and it is a different question with a different name.
- */
-function splitDonation({ donationMsat, recipients }) {
-  if (typeof donationMsat !== 'bigint')
-    return { owed: false, why: 'a donation is BigInt millisatoshi' };
-  if (donationMsat < 0n)
-    return { owed: false, why: 'a donation cannot be negative' };
-
-  if (donationMsat === 0n)
-    return {
-      owed: true,
-      shares: (Array.isArray(recipients) ? recipients : []).map((r) => ({
-        lnurl: r && r.lnurl, amountMsat: 0n,
-      })),
-      why: 'donations are off for this entry, and the set is irrelevant to it',
-    };
-
-  const stands = donationSetStands(recipients);
-  if (!stands.ok) return { owed: false, why: stands.why };
-
-  const shares = recipients.map((r) => ({
-    lnurl: r.lnurl,
-    amountMsat: (donationMsat * BigInt(r.shareBps)) / BigInt(DONATION_BPS_TOTAL),
-  }));
-
-  // The remainder to the first as published - not to the largest share, not
-  // to a hash order, and not dropped.
-  const handed = shares.reduce((sum, s) => sum + s.amountMsat, 0n);
-  shares[0].amountMsat += donationMsat - handed;
-
-  const total = shares.reduce((sum, s) => sum + s.amountMsat, 0n);
-  if (total !== donationMsat)
-    throw new Error(`donation split broken: ${total} of ${donationMsat}`);
-
-  return { owed: true, shares, why: `${donationMsat} split over ${shares.length} recipients` };
-}
-
-/**
- * WHAT ACTUALLY MOVES WHEN A PAYMENT FAILS, and where it does NOT go.
- *
- * 22A: "Payment failure to one recipient does not void the entry or the round.
- * A donation is voluntary and outside the pool; an unreachable LNURL is a
- * failed payment and nothing more. Clients SHOULD report it and MUST NOT
- * redirect the share to the remaining recipients, WHICH WOULD LET ONE
- * UNREACHABLE ENDPOINT QUIETLY REDISTRIBUTE OTHER PEOPLE'S MONEY."
- *
- * So an unpaid share stays unpaid. Every other recipient is owed exactly what
- * it was owed before, and the failure changes one number: what was paid. This
- * is the money-law clause and not a retry policy - whether a client tries
- * again is its business, and where the money may go is not.
- *
- * The entry stands either way: a donation is outside the pool, so a failure
- * here can neither void a round nor touch a stake.
- */
-function donationAfterFailures({ shares, failed = [] }) {
-  const out = new Set(failed);
-  const paid = [];
-  const unpaid = [];
-  for (const s of shares) (out.has(s.lnurl) ? unpaid : paid).push({ ...s });
-
-  return {
-    paid,
-    unpaid,
-    paidMsat: paid.reduce((sum, s) => sum + s.amountMsat, 0n),
-    unpaidMsat: unpaid.reduce((sum, s) => sum + s.amountMsat, 0n),
-    entryStands: true,
-    why: unpaid.length
-      ? `${unpaid.length} recipient(s) unreachable; their share is not redistributed`
-      : 'every recipient was paid its share',
-  };
-}
-
-/**
- * The donations of a round, for the rounds where somebody wants the total.
- * Refunded entries are excluded for the reason the fee base excludes them: a
- * VOID entry is money that never moved.
- */
-const donatedMsat = (entries) =>
-  entries.filter((e) => !isRefund(e.outcome)).reduce((sum, e) => sum + e.donationMsat, 0n);
-
-/**
- * THE SET AS BYTES, so a committee can check one instead of being handed an
- * array.
- *
- * Every other object here that decides money encodes and carries a tagged id -
- * the payout table, the settlement record, the fee claim, the service record,
- * the slash proof - and until this the donation set was the only one that did
- * not. That is what stopped two independent nodes agreeing on WHICH set a
- * player donated under, and nothing could be bound to one.
- *
- * THE ORDER IS PART OF THE SET AND IS NOT SORTED. Everywhere else in this
- * package a vector is sorted so that two honest callers agree - the payout
- * table by pubkey, the committee by key - and here that would be a bug: 22A
- * gives the remainder to "the first recipient in the set AS PUBLISHED", so the
- * order decides who is topped up. A set reordered is a set that pays somebody
- * else the odd millisatoshi, and it must therefore be a different set with a
- * different id.
- *
- * A SET THAT DOES NOT STAND DOES NOT ENCODE. There would otherwise be bytes
- * with a real tagged id naming shares that sum to 9999 - an object that looks
- * exactly as published as an honest one and hands out a different amount than
- * the player chose. Refused at the encoder, so no such id can exist.
- */
-function encodeDonationSet(recipients) {
-  const stands = donationSetStands(recipients);
-  if (!stands.ok) throw new Error(`that set does not stand: ${stands.why}`);
-
-  const w = new Writer();
-  w.u8(TYPE_DONATION_SET);
-  w.u16(PROTOCOL_VERSION);
-  w.vec(recipients, (r, ww) => {
-    // THE ADDRESS, CANONICALLY. 22A's "the client MUST show every recipient
-    // before wallet approval - a donation to an undisclosed address is not a
-    // donation" is about WHICH payee, and bech32 says case is not part of
-    // that: the same list typed in upper and in lower is the same set and must
-    // therefore hash to one id, or two honest nodes disagree over spelling.
-    ww.str(canonicalLnurl(r.lnurl));
-    ww.u16(r.shareBps);
-  });
-  return w.finish();
-}
-
-function decodeDonationSet(bytes) {
-  const r = new Reader(bytes);
-  if (r.u8() !== TYPE_DONATION_SET) throw new Error('not a donation set');
-  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
-  const recipients = r.vec((rr) => ({ lnurl: rr.str(), shareBps: rr.u16() }));
-  if (r.at !== bytes.length) throw new Error('trailing bytes after the donation set');
-
-  // Checked on the way in as well as on the way out: bytes are where a set
-  // arrives from a stranger, and a stranger is exactly who might send one that
-  // does not stand.
-  const stands = donationSetStands(recipients);
-  if (!stands.ok) throw new Error(`that set does not stand: ${stands.why}`);
-
-  // AND THE BYTES THEMSELVES MUST BE CANONICAL, or one set has two of them.
-  //
-  // The encoder folds, so nothing this package writes is ever uppercase - but
-  // a stranger does not use this encoder. Hand-crafted bytes spelling the
-  // payee `LNURL1ABC` decoded happily and stood, which left ONE SET WITH TWO
-  // BYTE STRINGS: a committee comparing what it received, or hashing it
-  // directly instead of re-encoding, would see two different sets and
-  // disagree - the very disagreement folding was adopted to remove. Measured
-  // before this check existed.
-  //
-  // Refused rather than quietly folded on the way in: bytes that are not the
-  // set's own encoding are not that set, and accepting them would make the id
-  // depend on who did the hashing.
-  for (const [at, r] of recipients.entries())
-    if (r.lnurl !== canonicalLnurl(r.lnurl))
-      throw new Error(
-        `recipient ${at} is not canonical: a set has one encoding, and these `
-        + 'bytes are not it');
-
-  return recipients;
-}
-
-/** What 22A means by naming a set: one hash, over the recipients as published. */
-const donationSetId = (recipients) =>
-  taggedHash(TAG.donationSet, encodeDonationSet(recipients));
-
-/**
- * IS THIS THE SET THE ROUND NAMED? 22A's binding, checked.
- *
- * "The set is named in the Round Contract and its hash is part of the contract
- * hash, SO IT CANNOT CHANGE AFTER ENTRY." A set with an id and nothing naming
- * which one applies leaves two honest nodes able to agree on a set's bytes and
- * still disagree about whether it was this round's - and a player's donation
- * split by a list nobody signed up to.
- *
- * Answered rather than thrown, like every other decision here: a set that does
- * not stand has no id at all, and that is a refusal rather than a crash.
- */
-function donationSetMatchesRound(contract, recipients) {
-  if (!contract || !(contract.donationSetId instanceof Uint8Array)
-      || contract.donationSetId.length !== 32)
-    return { ok: false, why: 'that round names no donation set' };
-
-  let id;
-  try { id = donationSetId(recipients); }
-  catch (e) { return { ok: false, why: e.message }; }
-
-  const same = id.every((b, i) => b === contract.donationSetId[i]);
-  return same
-    ? { ok: true, why: 'that is the set this round named' }
-    : {
-      ok: false,
-      why: 'that set is not the one this round named, and 22A says it cannot '
-        + 'change after entry',
-    };
 }
 
 // ---- protocol/src/donation-keys.js
