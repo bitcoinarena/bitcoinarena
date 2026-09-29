@@ -902,15 +902,20 @@
       const recipientsLine = donationSet ? BLWPCLIENT.donationRecipientsLine(donationSet) : '';
       const onlyLoopback = /https?:\/\/(127\.0\.0\.1|localhost|\[::1\])/i.test(recipientsLine)
         && !/https?:\/\/(?!127\.0\.0\.1|localhost|\[::1\])/i.test(recipientsLine);
-      const askForADonation = pays && donationSet && !onlyLoopback;
+      // THE DONATION IS THE ONE CHOSEN IN SETTINGS (the owner 2026-09-29: "Wire in donations"; "The default donation is
+      // 2%, it is never empty or not set"). No prompt: the Settings dropdown - 2% until the player picks, never above
+      // 5% - is the answer `chooseDonation` judges, for every paying round whose donation set checks. Kept per round in
+      // this tab as before, so a reload over a kept lock writes the same donation. Paid to the recipients once the
+      // signer nodes count the stake (payDonation, below); a recipient no wallet can reach is reported unpaid there.
       if (pays && donationSet && onlyLoopback)
-        console.log('[blwp] donation not asked: every recipient is loopback, which no wallet can reach - '
+        console.log('[blwp] donation recipients are loopback, which no wallet can reach - the share will show unpaid: '
           + recipientsLine);
-      const donation = askForADonation
+      const settingsPct = String(donationBps() / 100);
+      const donation = pays && donationSet
         ? BLWPCLIENT.chooseDonation({ roundIdHex: named.roundIdHex, round: named.round,
-          ask: (m, d) => window.prompt(m, d), confirm: (m) => window.confirm(m), storage: window.sessionStorage,
-          recipientsLine })
+          ask: () => settingsPct, confirm: () => false, storage: window.sessionStorage, recipientsLine })
         : { bps: 0, donationMsat: 0n };
+      console.log(`[blwp] donation ${donation.bps / 100}% = ${donation.donationMsat} msat${donation.kept ? ' (kept for this round)' : ''}`);
       window.BLWP_DONATION = { bps: donation.bps, donationMsat: String(donation.donationMsat), kept: !!donation.kept };
       let stake = null;
       let claimKey = null;
@@ -1307,6 +1312,16 @@
     //
     // The gate is not decided here: `BLWPCLIENT.mayDeposit` / `mayJoin` are the rule and they live where
     // `node --test` can drive them. This is the screen that asks them and shows the answer.
+    /** THE DONATION CHOSEN IN SETTINGS, in basis points: 2% unless the player picked 0-5% in this tab. Never unset. */
+    function donationBps() {
+      if (typeof window.BLWP_DONATION_BPS !== 'number') {
+        let kept = null;
+        try { kept = window.sessionStorage.getItem('blwp.donation.settings'); } catch { kept = null; }
+        const n = Number(kept);
+        window.BLWP_DONATION_BPS = kept !== null && Number.isInteger(n) && n >= 0 && n <= 500 && n % 100 === 0 ? n : 200;
+      }
+      return window.BLWP_DONATION_BPS;
+    }
     const walletSeed = () => {
       try { return BLWPCLIENT.tabSeed({ storage: window.sessionStorage,
         random: (n) => crypto.getRandomValues(new Uint8Array(n)) }); } catch { return null; }
@@ -1393,9 +1408,10 @@
       settingsPanel().style.display = 'none';
     });
     // THE DONATION IS A DROPDOWN, 2% UNTIL THE PLAYER PICKS (the owner 2026-09-29 12:47): six choices, no custom field (§24B).
-    if (window.BLWP_DONATION_BPS === undefined) window.BLWP_DONATION_BPS = 200;
     document.getElementById('blwp-donation-select').addEventListener('change', (e) => {
-      window.BLWP_DONATION_BPS = Number(e.target.value) * 100; paintSettings();
+      window.BLWP_DONATION_BPS = Number(e.target.value) * 100;
+      try { window.sessionStorage.setItem('blwp.donation.settings', String(window.BLWP_DONATION_BPS)); } catch { /* kept for this page only */ }
+      paintSettings();
     });
     // THE NAME, UPDATE ONLY: the field holds the current name; no key here, no empty create field.
     const nameField = document.getElementById('blwp-name-field');
@@ -1415,7 +1431,7 @@
     });
     function paintSettings() {
       const sel = document.getElementById('blwp-donation-select');
-      const chosen = String(Math.round((window.BLWP_DONATION_BPS || 0) / 100));
+      const chosen = String(Math.round(donationBps() / 100));
       if (sel && sel.value !== chosen) sel.value = chosen;
       const rec = document.getElementById('blwp-donation-recipients');
       // WHO RECEIVES IT, once a round names its donation set - and nothing otherwise: never "no donation set" under a
