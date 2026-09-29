@@ -20,6 +20,20 @@ public class CopyReplayEveryEndingTests
         Assert.IsFalse(DriveHud.CopyReplayAlone(false, false, false), "no run of this roll-out has ended: nothing to copy");
     }
 
+    /// <summary>
+    /// "copied!" STANDS ON WRECKED TOO (the owner 2026-09-29 17:45, SEE-AND-COPIED-1745): on WRECKED only the lone control
+    /// is up, and the press was forgotten every frame the result card was not showing. It is forgotten only when neither
+    /// control is up.
+    /// </summary>
+    [Test]
+    public void APressIsForgottenOnlyWhenNeitherTheCardNorTheLoneControlIsUp()
+    {
+        Assert.IsFalse(DriveHud.CopyStateResets(cardShowing: false, loneShowing: true), "WRECKED: the lone control keeps its press and its copied!");
+        Assert.IsFalse(DriveHud.CopyStateResets(cardShowing: true, loneShowing: false), "the result card keeps its press and its copied!");
+        Assert.IsTrue(DriveHud.CopyStateResets(cardShowing: false, loneShowing: false), "no control up: the next one starts unpressed");
+        Assert.AreEqual("copied!", DriveHud.CopiedLabel);
+    }
+
     [TestCase(1170, 2532, TestName = "phone upright")]
     [TestCase(1280, 720, TestName = "desktop")]
     public void ItsRowIsOnScreenUnderTheWastedBandAndClearOfThePads(int w, int h)
