@@ -52,6 +52,9 @@ walk(SRC + 'join.js');
 // AND THE LOBBY (M3.3-34): what a page with no round in its link lists - the
 // named nodes' rounds, each checked against its own contract.
 walk(SRC + 'lobby.js');
+// AND THE NEXT ROUND (the owner 2026-09-28, option 1 of A): after a run, the round the page enters by default, and the
+// countdown and the exit it shows.
+walk(SRC + 'next-round.js');
 // AND WHO THE TAB IS IN IT: a generated key, a name from that key, and the
 // player's own name over it (M3.3-34).
 walk(SRC + 'identity.js');
@@ -186,6 +189,8 @@ out += '         lobbyQuery: lobbyQuery, fetchLobby: fetchLobby, lobbyLine: lobb
 out += '         SIGNER_ANSWER_MS: SIGNER_ANSWER_MS,\n';
 // AND ONE FREE ROUND AND ONE PAYING ROUND LISTED, NEVER TWO OF EITHER, with the paying one's stake.
 out += '         lobbyOnePerKind: lobbyOnePerKind, lobbyStakeSats: lobbyStakeSats,\n';
+out += '         nextRoundAfter: nextRoundAfter, nextRoundView: nextRoundView, joiningNextRoundIn: joiningNextRoundIn,\n';
+out += '         EXIT_GAME: EXIT_GAME, RESULT_CARD_MS: RESULT_CARD_MS,\n';
 // AND THE DAILY'S OWN LOBBY AT THE BARE ROOT, from daily.json beside the page.
 out += '         dailyLobbySearch: dailyLobbySearch,\n';
 // WHO THE TAB IS IN THE LOBBY (M3.3-34): the generated key's public half, the

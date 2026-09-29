@@ -199,6 +199,16 @@
       border-radius: 50%; font-size: 11px; font-weight: 800; flex: none; }
     .bal-ico.ok { background: #1f6f3a; color: #d8ffe4; }
     .bal-ico.pend { background: #7a5a12; color: #ffe7ad; }
+    /* THE NEXT ROUND (the owner 2026-09-28, option 1 of A; spec "Timing - every network, every round"): after the result
+       card, "joining next round in N seconds" beside "exit game" until the next start. */
+    #blwp-next { position: fixed; left: 50%; bottom: 18%; transform: translateX(-50%); z-index: 35; display: none;
+      align-items: center; gap: 12px; padding: 12px 14px; border-radius: 10px; max-width: calc(100% - 32px); box-sizing: border-box;
+      background: rgba(13,16,20,0.95); border: 2px solid #f7931a; color: #e8eaed; font: 700 16px/1.25 system-ui, sans-serif; }
+    #blwp-next-say { white-space: nowrap; }
+    #blwp-next { width: max-content; }
+    #blwp-next-exit { flex: none; font: inherit; padding: 9px 14px; cursor: pointer; background: #1e2833; color: #e8eaed;
+      border: 1px solid #3a4a5c; border-radius: 6px; }
+    body.blwp-clean #blwp-next { display: none !important; }
     /* SETTINGS IS ITS OWN SCREEN, over everything while it is open - framed blocks, not a stack of labels. */
     #blwp-settings { position: fixed; inset: 0; z-index: 40; overflow-y: auto; background: #0b0e12;
       padding: 14px 14px 24px; box-sizing: border-box; font: 15px/1.35 system-ui, sans-serif; color: #e8eaed; }
@@ -262,6 +272,7 @@
   <!-- SETTINGS, ITS OWN SCREEN (the owner 2026-09-25 21:16: "The wallet page belongs in the settings screen. Deposit,
        withdraw, the seed, the backup warning: that is Settings"): the wallet, the name, the donation, and the seed with
        Verify. -->
+  <div id="blwp-next" role="status"><span id="blwp-next-say"></span><button id="blwp-next-exit" type="button">exit game</button></div>
   <!-- THE BALANCE, IN THE LOBBY'S OWN PANEL (the owner 2026-09-29): placed over the row Unity reports as `balance`, where
        NAME and KEY stood, above the rounds. -->
   <div id="blwp-lobby-balance" style="display:none">
@@ -753,7 +764,68 @@
           .catch((e) => console.error('[blwp] the run is over, and that lobby cannot be read: ' + e.message));
       }
       askForWinnings(run);
+      // CONTINUING IS THE DEFAULT (the owner 2026-09-28, option 1 of A; spec "Timing - every network, every round"): the
+      // page enters the next round of the same kind for the player now - its entry is open until its start - and holds
+      // it until that start, so the next run starts with everybody at start_time(i+1). "exit game" stops it.
+      if (!noLobby && window.BLWP_CONTINUE !== false && window.BLWP_ROUND) continueToTheNextRound(window.BLWP_ROUND);
     };
+    function continueToTheNextRound(played) {
+      const next = window.BLWP_NEXT = { state: 'looking', runOverAt: Date.now() };
+      // LOOKED FOR UNTIL IT IS LISTED: a series lists round i+1 long before; a launcher that opens its next round later
+      // (the Daily: about a minute before the current round's entry closes) lists it later - measured 65 s after a run.
+      // Given up only when the player joins something else from the lobby, or after 10 minutes.
+      const joinAtRunOver = window.BLWP_JOIN;
+      const look = () => {
+        if (window.BLWP_NEXT !== next || next.state !== 'looking' || window.BLWP_CONTINUE === false) return;
+        if (window.BLWP_JOIN !== joinAtRunOver || Date.now() - next.runOverAt > 600000) { next.state = 'none'; return; }
+        const r = BLWPCLIENT.nextRoundAfter(played, window.BLWP_LOBBY_ROWS, Date.now());
+        if (!r) { setTimeout(look, 1000); return; }
+        Object.assign(next, { state: 'joining', round: r.id, startMs: Number(r.startTimeMs) });
+        const act = window.BLWP_LOBBY_ACT;
+        const took = act && act.join(r.id, { holdUntilMs: Number(r.startTimeMs), next: true });
+        console.log(`[blwp] next round ${r.id.slice(0, 16)}: ${took ? 'entering it now, joined at its start' : 'not joinable'} `
+          + `(starts ${new Date(Number(r.startTimeMs)).toISOString()})`);
+        if (!took) next.state = 'none';
+      };
+      look();
+    }
+    // "joining next round in N seconds" BESIDE "exit game", after the result card and until the next start - the words
+    // and the timing are BLWPCLIENT.nextRoundView's
+    (function paintNext() {
+      const box = document.getElementById('blwp-next');
+      const n = window.BLWP_NEXT; const j = window.BLWP_JOIN;
+      let v = { show: 'lobby' };
+      if (n && n.state === 'joining' && j && j.round === n.round && j.state === 'joining' && window.BLWP_CONTINUE !== false) {
+        v = BLWPCLIENT.nextRoundView({ runOverMs: n.runOverAt, nextStartMs: n.startMs, nowMs: Date.now() });
+        // the card stands until Unity leaves it, and never less than its 8 s
+        if (v.show === 'countdown' && window.BLWP_CARD_UP) v = { show: 'card' };
+      }
+      if (n && n.state === 'joining' && Date.now() >= n.startMs) n.state = 'started';
+      if (box) {
+        box.style.display = v.show === 'countdown' ? 'flex' : 'none';
+        if (v.show === 'countdown') {
+          document.getElementById('blwp-next-say').textContent = v.line;
+          document.getElementById('blwp-next-exit').textContent = v.exit;
+        }
+      }
+      window.BLWP_NEXT_VIEW = v;
+      setTimeout(paintNext, 250);
+    })();
+    document.getElementById('blwp-next-exit').addEventListener('click', () => {
+      // EXIT GAME: no next round. A join still being made, or held for its start, is dropped; a stake a paying round
+      // already locked refunds by the lock's own expiry (§23.1) - nothing new is sent. PLAY from the lobby continues again.
+      window.BLWP_CONTINUE = false;
+      const n = window.BLWP_NEXT; const j = window.BLWP_JOIN;
+      if (n) n.state = 'exited';
+      if (j && n && j.round === n.round && j.state === 'joining') {
+        // "refused" with no reason: Unity, which took this join as its own, stops waiting and shows the plain lobby
+        j.cancelled = true; j.state = 'refused'; j.why = ''; j.stage = ''; j.held = false;
+        window.BLWP_ROUND = undefined; window.BLWP_ENTRY = undefined;
+        history.replaceState(null, '', location.pathname + (typeof window.BLWP_LOBBY_BACK === 'string' ? window.BLWP_LOBBY_BACK : ''));
+      }
+      console.log('[blwp] exit game: no next round');
+      document.getElementById('blwp-next').style.display = 'none';
+    });
     async function joinTheRoundIfOneWasNamed() {
       if (typeof BLWPCLIENT === 'undefined') return;
       const named = await BLWPCLIENT.joinFromQuery(location.search);
@@ -1821,6 +1893,7 @@
         const now = Date.now();
         // ONE FREE ROUND AND ONE PAYING ROUND, never two of either (the owner 2026-09-15 16:08), and
         // what the paying one costs.
+        window.BLWP_LOBBY_ROWS = got.rows;                // every round listed, for the next one after a run (below)
         window.BLWP_LOBBY = BLWPCLIENT.lobbyOnePerKind(got.rows).map((r) => ({ id: r.id, phase: r.phase, free: r.free, wallet: r.wallet,
           signerNodesAgree: r.signerNodesAgree, needed: r.needed, joinable: r.joinable, stakeSats: BLWPCLIENT.lobbyStakeSats(r),
           line: BLWPCLIENT.lobbyLine(r, now), raw: r, join: r.joinable ? BLWPCLIENT.lobbyJoinSearch(search, r.id) : null }));
@@ -1847,7 +1920,7 @@
         // WHICH ROUND the join was for, by id and kind, so a refusal names the round rather than "the round"
         join: window.BLWP_JOIN ? { state: window.BLWP_JOIN.state, why: String(window.BLWP_JOIN.why || ''), stage: String(window.BLWP_JOIN.stage || ''),
           round: String(window.BLWP_JOIN.round || ''), kindKnown: !!window.BLWP_JOIN.kindKnown, free: !!window.BLWP_JOIN.free,
-          stakeSats: Number(window.BLWP_JOIN.stakeSats) || 0 }
+          stakeSats: Number(window.BLWP_JOIN.stakeSats) || 0, next: !!window.BLWP_JOIN.next }
           : { state: '', why: '', stage: '', round: '', kindKnown: false, free: false, stakeSats: 0 },
         // A WITHDRAWAL AVAILABLE (the owner 2026-09-14), for the lobby to say so.
         withdraw: withdrawAvailable() });
@@ -1860,16 +1933,24 @@
         // the address becomes the round's link (with `play=1`, so a reload still
         // starts the round), the round is joined by the same code a round link
         // runs, and Unity starts the round when BLWP_JOIN says joined.
-        join(id) {
-          const r = (window.BLWP_LOBBY || []).find((x) => x.id === id && x.join);
+        join(id, { holdUntilMs = 0, next = false } = {}) {
+          // THE LOBBY'S OWN ROW, or - for the next round after a run - any row this page last read (a series lists more
+          // than one round of a kind, and the lobby shows one per kind)
+          let r = (window.BLWP_LOBBY || []).find((x) => x.id === id && x.join);
+          if (!r && next) {
+            const raw = (window.BLWP_LOBBY_ROWS || []).find((x) => x.id === id && x.joinable);
+            if (raw) r = { id, free: raw.free, stakeSats: BLWPCLIENT.lobbyStakeSats(raw), join: BLWPCLIENT.lobbyJoinSearch(search, id) };
+          }
           if (!r) return false;
+          // PLAY FROM THE LOBBY CONTINUES AGAIN after an exit game (the next-round chain is the player's to stop, not forever)
+          if (!next) window.BLWP_CONTINUE = true;
           if (window.BLWP_JOIN && window.BLWP_JOIN.state === 'joining') return true;
           const back = location.search;
           window.BLWP_LOBBY_BACK = back;         // where the address goes back to once the run is over
           history.replaceState(null, '', location.pathname + r.join + '&play=1');
           window.BLWP_JOIN_REFUSED = null;
           const join = window.BLWP_JOIN = { state: 'joining', why: '', stage: '', round: id, kindKnown: true, free: !!r.free,
-            stakeSats: Number(r.stakeSats) || 0 };
+            stakeSats: Number(r.stakeSats) || 0, next: !!next };
           const refuse = (why) => {
             join.state = 'refused';
             join.why = String(why);
@@ -1903,7 +1984,19 @@
                 console.error('[blwp] a join answered after it was refused by time: dropped');
                 return;
               }
-              if (window.BLWP_ENTRY) join.state = 'joined';
+              // A CONTINUED ROUND STARTS WITH EVERYBODY (spec: "the next run starts with everybody else at start_time(i+1)"):
+              // entered now, it is "joined" for Unity - which starts the run on it - only at the round's own start.
+              if (window.BLWP_ENTRY && holdUntilMs > Date.now()) {
+                join.stage = 'next round';
+                join.held = true;
+                const release = () => {
+                  if (join.cancelled || window.BLWP_JOIN !== join) return;
+                  if (Date.now() < holdUntilMs) { setTimeout(release, Math.min(1000, holdUntilMs - Date.now())); return; }
+                  join.held = false; join.stage = ''; join.state = 'joined';
+                  console.log(`[blwp] next round ${String(id).slice(0, 16)}: joined at its start (${new Date(holdUntilMs).toISOString()})`);
+                };
+                release();
+              } else if (window.BLWP_ENTRY) join.state = 'joined';
               // AND A REFUSAL IS SAID OUT LOUD (2026-09-21). Measured on the live Daily: PLAY on a paid round
               // left `no session yet: the page has named no node` and NOTHING else - 98 console events, 0
               // exceptions, and not one line naming why, because every refusal below the first set

@@ -44,6 +44,8 @@ namespace Blwp
         public bool kindKnown;
         public bool free;
         public long stakeSats;
+        /// <summary>The page entered this round itself, as the next one after a run (continuing is the default, the owner 2026-09-28).</summary>
+        public bool next;
     }
 
     /// <summary>What the page hands Unity to draw: the lobby, or nothing.</summary>
