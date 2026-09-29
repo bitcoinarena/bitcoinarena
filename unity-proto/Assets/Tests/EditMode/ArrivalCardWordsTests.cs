@@ -310,6 +310,11 @@ public class ArrivalCardWordsTests
         StringAssert.Contains("that BTC goes to the miners", DriveHud.ArrivalFootLine(false));
         StringAssert.DoesNotContain("sat", DriveHud.ArrivalHeadline(false, 1.5) + DriveHud.ArrivalFootLine(false) + DriveHud.ArrivalFootLine(true));
         Assert.AreEqual("0.0036 BTC", LoadoutPanel.BtcLabel(0.0036));
+        // A CRATE'S VALUE: three significant digits, so a small parcel is never read as a big one by a clipped edge
+        Assert.AreEqual("0.000234 BTC", LoadoutPanel.BtcShort(0.00023427));
+        Assert.AreEqual("0.0036 BTC", LoadoutPanel.BtcShort(0.0036));
+        Assert.AreEqual("12.3 BTC", LoadoutPanel.BtcShort(12.3456));
+        Assert.AreEqual("321 BTC", LoadoutPanel.BtcShort(321.2299));
     }
 
     // "copied!" ON THE CARD (the owner 2026-09-26 07:12): shown once the page's clipboard write resolved - not on the press,
