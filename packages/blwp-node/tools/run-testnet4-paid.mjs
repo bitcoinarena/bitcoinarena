@@ -13,6 +13,12 @@
  *   BLWP_STAKE_LOCK_BIN=... BLWP_FEDERATION_CLIENT_DIR=... BLWP_FEDERATION_INVITE_FILE=... \
  *   BLWP_WSS_31221=wss://seat.example.com/guardian-1 ... \
  *   node tools/run-testnet4-paid.mjs
+ *
+ * BLWP_ATTACH=1 (the owner 2026-09-29: the seven blwp-tn4-node units own the guardians): the seven nodes already run, one
+ * process each (src/main.js on node-<k>.db, each starting its own guardian) - this runner starts none and opens no node
+ * store. It reads each node's key from GET /identity and its bond from the chain, publishes and posts the rounds over
+ * HTTP, names the paying ones in BLWP_FUNDED_ROUNDS_FILE and writes the page's bond proof to BLWP_ATTACH_PROOF_DIR,
+ * both of which the nodes read. Each node makes each round's claim key itself, with its peers, on their own doors.
  */
 import { inviteForGuardians, readInvite } from '../src/invite.js';
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
@@ -94,6 +100,8 @@ const round = await standUpRound({ host: '127.0.0.1', portA: pa, portB: pb, port
   // OR AN ENTRY CLOSE AT A WALL-CLOCK INSTANT (ISO), the window then fitted to it once committee_time is known
   ...(env.BLWP_ENTRY_CLOSE_AT ? { entryCloseAtMs: Date.parse(env.BLWP_ENTRY_CLOSE_AT) } : {}),
   signerNode: { closeAtEnd: true, stakeLocks: lock },
+  ...(env.BLWP_ATTACH === '1' ? { attach: { fundedFile: env.BLWP_FUNDED_ROUNDS_FILE || join(home, 'paid', 'funded-rounds.txt'),
+    proofDir: env.BLWP_ATTACH_PROOF_DIR || join(home, 'paid', 'attach-proof') } } : {}),
   guardianChain: { bitcoindUrl: env.BLWP_BITCOIND_URL, cookiePath: env.BLWP_BITCOIND_COOKIE, call: chainCall },
   // the signed test set names 18777, which the live Daily holds; this committee answers on its own door
   donationRecipients: { port: Number(env.BLWP_RECIPIENT_PORT || 18787) } });

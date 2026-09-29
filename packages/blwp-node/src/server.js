@@ -1732,10 +1732,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // than an empty body a client would have to interpret. Two daemons are
       // two origins, which is what `agreedChain` counts.
       if (req.method === 'GET' && url.pathname === '/headers') {
-        if (!headerBytes)
+        // A FUNCTION IS READ AT THE ASK (attach, 2026-09-29): a launcher that runs no node writes it after the node is up.
+        const hb = typeof headerBytes === 'function' ? headerBytes() : headerBytes;
+        if (!hb)
           return text(res, 404, 'this node was given no chain to serve; a chain comes from providers');
         res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
-        return res.end(Buffer.from(headerBytes));
+        return res.end(Buffer.from(hb));
       }
 
       // AND THE BOND PROOF THE ADVERTISEMENT COMMITS TO: the transaction and
@@ -1743,10 +1745,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // re-derives the root and checks it against the header it agreed on, so
       // what is served here is evidence and not an answer.
       if (req.method === 'GET' && url.pathname === '/bond') {
-        if (!bondProof)
+        const bp = typeof bondProof === 'function' ? bondProof() : bondProof;
+        if (!bp)
           return text(res, 404, 'this node was given no bond proof to serve');
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
-        return res.end(JSON.stringify(bondProof));
+        return res.end(JSON.stringify(bp));
       }
 
       // AND THE BONDS OF A ROUND'S GUARDIANS (M3; the owner 07:33), out of the census this signer node derived

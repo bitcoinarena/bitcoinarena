@@ -36,7 +36,7 @@ import { execFileSync } from 'node:child_process';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { createServer } from 'node:http';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, statSync, appendFileSync, writeFileSync as writeProof, mkdirSync as mkProofDir } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
 
 import { openStore, nodeIdentity } from '../src/store.js';
@@ -167,6 +167,18 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
                                      // window can be sized before the census: the window is what is left from
                                      // committee_time to this instant, never under thirty minutes. Unset: as before.
                                      entryCloseAtMs = null,
+                                     // ATTACH (the owner 2026-09-29: the seven blwp-tn4-node units own the guardians): the nodes
+                                     // already run, one process each, on `portA`, `portB`, ... - this tool starts none and opens
+                                     // no store. `{ fundedFile, proofDir }`: the paying rounds it opens are named in
+                                     // `fundedFile` (the nodes' BLWP_FUNDED_ROUNDS_FILE); the bond proof the page reads is
+                                     // written to `proofDir` (the nodes' BLWP_ATTACH_PROOF_DIR). Identities come from each
+                                     // node's GET /identity, bonds from the chain by public key; no bond is posted.
+                                     attach = null,
+                                     // 90 s ROUNDS (the owner 2026-09-29 21:58, SPECTATE-2158: "Free rounds are also 90 s rounds, same
+                                     // as paying. A new free round every 90 s, run at most 82 s"): with `roundPeriodMs` the keeper
+                                     // opens each next round of a kind at the last one's start + the period, its entry closing
+                                     // at that start - the series' round shape (protocol series.js seriesRound).
+                                     roundPeriodMs = null,
                                      donationRecipients = stakeMsat > 0n || (paid && BigInt(paid.stakeMsat) > 0n)
                                        ? { port: TEST_RECIPIENT_PORT } : null } = {}) {
   // WHAT THESE DAEMONS FUND (M3.3-31): a PAYING round goes through the
@@ -176,7 +188,13 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // With a paying kind beside a free first round, both: the free round and its
   // entries as before, the paying rounds by the operator's rule, each named
   // by this tool as it opens it.
-  const funded = stakeMsat > 0n ? operatorFunding() : paid ? freeOrOperatorFunding() : () => true;
+  const funded = attach
+    ? Object.assign(() => true, { nameRound: (rid) => appendFileSync(attach.fundedFile, `${toHex(rid)}\n`) })
+    : stakeMsat > 0n ? operatorFunding() : paid ? freeOrOperatorFunding() : () => true;
+  if (attach) {
+    if (!attach.fundedFile || !attach.proofDir) throw new Error('attach names its fundedFile and its proofDir');
+    if (!cli) throw new Error('attach reads the nodes\' bonds off a chain: it needs a bitcoind');
+  }
 
   // THE BEACON IS THE CHAIN'S OR THERE IS NONE.
   //
@@ -207,13 +225,20 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   const DONATION_SET = network === 'regtest' ? TEST_DONATION_SET_REGTEST : TEST_DONATION_SET_TESTNET4;
   const pathOf = (name, i) => storePaths[i] || (store === ':memory:' ? ':memory:' : `${store}/${name}.db`);
   const pathA = pathOf('a', 0), pathB = pathOf('b', 1);
-  const dbA = openStore(pathA);
-  const dbB = openStore(pathB);
+  // ATTACHED, NO STORE IS OPENED HERE: each node's store is its own process's.
+  const dbA = attach ? null : openStore(pathA);
+  const dbB = attach ? null : openStore(pathB);
   // EVERY SIGNER NODE BEYOND THE FIRST TWO, in the order their bonds are mined.
   const beyond = [...(portC ? [portC] : []), ...extraPorts];
   const pathsBeyond = beyond.map((_, i) => pathOf(String.fromCharCode(99 + i), 2 + i));
-  const dbsBeyond = pathsBeyond.map((p) => openStore(p));
-  const idA = nodeIdentity(dbA);
+  const dbsBeyond = pathsBeyond.map((p) => (attach ? null : openStore(p)));
+  // ATTACHED, A NODE'S KEY IS WHAT ITS OWN GET /identity ANSWERS - the public key only; nothing here signs for it.
+  const identityOver = async (port) => {
+    const r = await fetch(`http://${host}:${port}/identity`);
+    if (!r.ok) throw new Error(`the node on ${port} answered /identity ${r.status}: attach needs it running`);
+    return { pubkey: new Uint8Array(await r.arrayBuffer()) };
+  };
+  const idA = attach ? await identityOver(portA) : nodeIdentity(dbA);
 
   // THE ADVERTISEMENT IS SIGNED BY THE NODE IT NAMES. A stranger's signature
   // is refused at the door - the committee is the round's, and the key that
@@ -229,15 +254,15 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     if (new Set(all).size !== all.length)
       throw new Error(`every signer node needs its own port: two bonds cannot advertise one address (${all.join(', ')})`);
   }
-  const idB = nodeIdentity(dbB);
+  const idB = attach ? await identityOver(portB) : nodeIdentity(dbB);
 
   // EVERY SIGNER NODE THIS ROUND HAS, in the order their bonds are mined. Two
   // unless the caller asked for more.
   const members = [
     { id: idA, port: portA, db: dbA, path: pathA, name: 'A' },
     { id: idB, port: portB, db: dbB, path: pathB, name: 'B' },
-    ...beyond.map((port, i) => ({ id: nodeIdentity(dbsBeyond[i]), port, db: dbsBeyond[i], path: pathsBeyond[i],
-      name: String.fromCharCode(67 + i) })),
+    ...await Promise.all(beyond.map(async (port, i) => ({ id: attach ? await identityOver(port) : nodeIdentity(dbsBeyond[i]),
+      port, db: dbsBeyond[i], path: pathsBeyond[i], name: String.fromCharCode(67 + i) }))),
   ];
   // AND WHICH GUARDIAN EACH ONE SAYS IT RUNS. A flat list is every node's, as
   // before; a nested one is read per node, so no two operators claim one key.
@@ -249,6 +274,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // below, once the census is there. The node decides whether it is a guardian (node-start.js: the key beside its
   // store); this tool starts nodes only, and the Daily's nodes hold no key, so they answer {guardian: false}.
   for (const m of members) {
+    if (attach) { m.guardian = await guardianFieldsFromNode(`http://${host}:${m.port}`); continue; }
     const probe = await startNode({ db: m.db, path: m.path }, { port: m.port, host }, guardianChain);
     try { m.guardian = await guardianFieldsFromNode(`http://${host}:${probe.port}`); }
     finally { await probe.close(); }
@@ -280,7 +306,8 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // BIP-340, because letter 26 made a node's identity ITS BOND KEY: every
     // signature a node makes is schnorr under the key its bond was posted
     // with, and an ed25519 signature here is refused at the door by name.
-    const signature = schnorr.sign(advertId(advert), id.secret);
+    // ATTACHED, NOTHING IS SIGNED HERE: the bond's own advertisement and signature are read off the chain below.
+    const signature = attach ? new Uint8Array(64) : schnorr.sign(advertId(advert), id.secret);
     // THE OUTPUT KEY IS THE ONE 5A.3B BUILDS, not the fixture filler. Letter 24
     // made the census rebuild a bond's key from the node key, the network's
     // arbitration set and its maturity, and refuse one that does not rebuild -
@@ -306,16 +333,21 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // is refused by name ("carries something that is not a transaction"). With
   // a single leaf the root IS the txid and the merkle branch is empty, which
   // is a proof this tool can write down without a proof builder.
-  const built = [];
-  let previous = blockHashOf(BITCOIN_MAINNET_GENESIS_HEADER);
-  for (const one of bonded) {
-    const { header } = blockOf(hash256, [one.txid], { previous });
-    built.push({ header, transactions: [one.transaction] });
-    previous = blockHashOf(header);
-  }
-  const chain = [BITCOIN_MAINNET_GENESIS_HEADER, ...built.map((b) => b.header)];
-  const headerBytes = new Uint8Array(chain.length * 80);
-  chain.forEach((h, i) => headerBytes.set(h, i * 80));
+  const headersOf = (list) => {
+    const built = [];
+    let previous = blockHashOf(BITCOIN_MAINNET_GENESIS_HEADER);
+    for (const one of list) {
+      const { header } = blockOf(hash256, [one.txid], { previous });
+      built.push({ header, transactions: [one.transaction] });
+      previous = blockHashOf(header);
+    }
+    const chain = [BITCOIN_MAINNET_GENESIS_HEADER, ...built.map((b) => b.header)];
+    const bytes = new Uint8Array(chain.length * 80);
+    chain.forEach((h, i) => bytes.set(h, i * 80));
+    return bytes;
+  };
+  // `let`: ATTACHED, it is built again from the bonds' own advertisements once they are read off the chain.
+  let headerBytes = headersOf(bonded);
 
   // THE VIEW THE CENSUS IS DERIVED FROM.
   //
@@ -352,7 +384,9 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // somebody else's and a fresh set costs a confirmation and six more - each node's newest confirmed, unspent bond
     // that says what the node says now is used as it stands; a node posts only when it has none. Regtest keeps posting:
     // a fresh regtest has nothing to reuse and mines its own.
-    const reused = rt.minable ? members.map(() => null) : members.map((m, i) => rt.findBond(m.id.secret, wantFor(m, i)));
+    // ATTACHED, EVERY NETWORK REUSES: a node's bond is found by its public key, and one that is missing stops the run.
+    const reused = rt.minable && !attach ? members.map(() => null)
+      : members.map((m, i) => rt.findBond(attach ? { pubkey: m.id.pubkey } : m.id.secret, wantFor(m, i)));
     for (const [i, b] of reused.entries())
       if (b) console.log(`[bond] node ${members[i].name} reuses ${b.txid}:${b.vout} (${b.sats} sats, height ${b.height})`);
     for (const [i, b] of reused.entries())
@@ -362,7 +396,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // letter: "accept an updated advert and select the existing bond. If none matches, stop. Do not post a bond"). A
     // node whose bond says something else is given an advertisement update (tools/testnet4-advert-update.mjs), not a
     // second bond.
-    if (!rt.minable && toPost.length)
+    if ((!rt.minable || attach) && toPost.length)
       throw new Error(`no confirmed unspent bond, as bonded or as updated, says what node(s) ${toPost.map((i) => members[i].name).join(', ')} `
         + 'say now: publish an advertisement update for the existing bond; no bond is posted here');
     const posted = toPost.map((i) => members[i]).map((m, j) =>
@@ -403,8 +437,22 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     censusHeight = rt.height() - bondHeight + 1 >= 7 ? rt.height() : rt.bury(bondHeight + 6 - rt.height());
     if (censusHeight - bondHeight + 1 < 7)
       throw new Error('the bonds are not deep enough at the census height');
+    // ATTACHED, THE CENSUS IS READ OVER THE NODES' OWN WINDOW - main.js's CENSUS_LOOKBACK, 2016 blocks below the census
+    // height - so the root this tool names is the root each node derives (measured on regtest: from 20 below the bonds,
+    // an older unspent bond the nodes counted gave them another root, and every round was refused).
+    if (attach) bondFloor = Math.max(20, censusHeight - 2016 + 20);
     for (const [j, p] of posted.entries()) bonded[toPost[j]].onChainTxid = p.txid;
     for (const [i, b] of reused.entries()) if (b) bonded[i].onChainTxid = b.txid;
+    // ATTACHED: the advertisement and signature the bond itself committed to, so the page's proof is the chain's words.
+    if (attach) for (const [i, b] of reused.entries()) {
+      const built = bondOutputKey({ nodeKey: members[i].id.pubkey, arbitrationKeys: rt.genesis.arbitrationKeys,
+        arbitrationK: rt.genesis.arbitrationK, bondMaturity: rt.genesis.bondMaturity,
+        internalKey: bondInternalKey({ nodeKey: members[i].id.pubkey, arbitrationKeys: rt.genesis.arbitrationKeys }, { combine }).internalKey,
+      }, { tweakPoint, combine });
+      const transaction = bondTransaction(b.bondAdvert, { signature: b.bondSignature, outputKey: built.outputKey });
+      bonded[i] = { advert: b.bondAdvert, signature: b.bondSignature, transaction, txid: parseTransaction(transaction).txid, onChainTxid: b.txid };
+    }
+    if (attach) headerBytes = headersOf(bonded);
     censusConfirmations = 6;
     censusView = null;                  // read after committee_time, below
   } else {
@@ -528,7 +576,15 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   const optsA = { port: portA, host, funded, donationSets: [DONATION_SET], headerBytes, bondProof, chainFor,
     ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn,
     ...(federation ? { federation } : {}), ...signerNode };
-  let a = await startNode({ db: dbA, path: pathA }, optsA, guardianChain);
+  // ATTACHED: the page's bond proof for the running nodes to serve (their BLWP_ATTACH_PROOF_DIR), and no node started -
+  // each member is its port and its key, the node itself another process's.
+  if (attach) {
+    mkProofDir(attach.proofDir, { recursive: true });
+    writeProof(`${attach.proofDir}/headers.bin`, headerBytes);
+    writeProof(`${attach.proofDir}/bond.json`, JSON.stringify(bondProof));
+  }
+  const attached = (m) => ({ port: m.port, round: { pubkey: m.id.pubkey }, attached: true, close: async () => {} });
+  let a = attach ? attached(members[0]) : await startNode({ db: dbA, path: pathA }, optsA, guardianChain);
   const optsB = { port: portB, host, funded, donationSets: [DONATION_SET], headerBytes, bondProof, chainFor,
     ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn,
     ...(federation ? { federation } : {}), ...signerNode };
@@ -536,7 +592,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // while it holds a close that needs B): B is served on a port nobody names -
   // the bond, the relays and every peer say `portB` - only so the first round
   // can be posted to it; the caller closes it, and restartB serves it on portB.
-  let b = await startNode({ db: dbB, path: pathB }, bDownAtStart ? { ...optsB, port: 0 } : optsB, guardianChain);
+  let b = attach ? attached(members[1]) : await startNode({ db: dbB, path: pathB }, bDownAtStart ? { ...optsB, port: 0 } : optsB, guardianChain);
   // AND THE THIRD, WHEN THERE IS ONE. Served exactly like the other two - a
   // bonded census node that is not also a running daemon would be a bond
   // vouching for a guardian nobody can reach.
@@ -547,7 +603,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   const rest = [];
   for (const o of optsBeyond) {
     const m = members[2 + rest.length];
-    rest.push(await startNode({ db: m.db, path: m.path }, o, guardianChain));
+    rest.push(attach ? attached(m) : await startNode({ db: m.db, path: m.path }, o, guardianChain));
   }
   const nodeC = rest[0] || null;
   if (a.port !== portA)
@@ -820,8 +876,17 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // not be played at all. A committee member that was never told of the round
     // is not a committee member.
     for (const node of [a, b, ...rest]) {
-      const r = await fetch(`http://${host}:${node.port}/round`, { method: 'POST', body });
-      if (!r.ok) throw new Error(`${node.port} refused the round: ${await r.text()}`);
+      // ATTACHED, A NODE READS A ROUND'S VIEW OFF ITS OWN BITCOIND THE FIRST TIME IT IS ASKED (main.js chainFor) and
+      // refuses until it has it: asked again, 3 s apart, for up to five minutes - that refusal only.
+      let r, why = '';
+      for (let tries = 0; ; tries++) {
+        r = await fetch(`http://${host}:${node.port}/round`, { method: 'POST', body });
+        if (r.ok) break;
+        why = await r.text();
+        if (!(attach && /no chain view|view .*pending|no beacon/i.test(why)) || tries >= 100) break;
+        await new Promise((res) => setTimeout(res, 3000));
+      }
+      if (!r.ok) throw new Error(`${node.port} refused the round: ${why}`);
       opened.push(toHex(new Uint8Array(await r.arrayBuffer())));
     }
     const rid = toHex(roundId(c));
@@ -904,12 +969,23 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // round opened with 59 s of its 180 s entry left, and the keeper opened a
     // second one 6 s later. Now is later than that tip, so the rule still holds.
     const tip = await tipHeader();
-    const committee = (BigInt(Math.max(blockTimeOf(tip), Math.floor(Date.now() / 1000))) + 2n) * 1000n;
+    let committee = (BigInt(Math.max(blockTimeOf(tip), Math.floor(Date.now() / 1000))) + 2n) * 1000n;
+    let start = committee + MIN_ENTRY_WINDOW_MS;
+    let close = start + (contract.entryCloseMs - contract.startTimeMs);
+    if (roundPeriodMs) {
+      // ON THE PERIOD: the last round of this kind's start + 90 s, stepped on until its committee time is still ahead of
+      // the chain and the clock (a committee time the chain has passed cannot name a beacon after its publication).
+      const stake = kind.stakeMsat !== undefined ? BigInt(kind.stakeMsat) : contract.stakeMsat;
+      const last = held.filter((c) => BigInt(c.stakeMsat) === stake).reduce((m, c) => (c.startTimeMs > m ? c.startTimeMs : m), 0n);
+      start = last > 0n ? last + BigInt(roundPeriodMs) : start;
+      while (start - MIN_ENTRY_WINDOW_MS < committee) start += BigInt(roundPeriodMs);
+      committee = start - MIN_ENTRY_WINDOW_MS;
+      close = start;
+    }
     const next = { ...contract,
       ...(kind.stakeMsat !== undefined ? { stakeMsat: BigInt(kind.stakeMsat) } : {}),
       ...(kind.custody ? { custody: kind.custody } : {}),
-      committeeTimeMs: committee, startTimeMs: committee + MIN_ENTRY_WINDOW_MS,
-      entryCloseMs: committee + MIN_ENTRY_WINDOW_MS + (contract.entryCloseMs - contract.startTimeMs) };
+      committeeTimeMs: committee, startTimeMs: start, entryCloseMs: close };
     censusView = await viewToTip();
     // THE KEEPER'S OWN WORK, NAMED (the owner 2026-09-17 19:15, the ghost lag). Eight of twelve stalls over 300 ms still
     // name nothing but 0-20 ms of frames while this thread burns 190-250 ms, and the keeper opening a round is the
@@ -939,8 +1015,9 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     const check = () => {
       if (opening) return;
       const now = BigInt(Date.now());
+      // ON THE PERIOD a kind is due once no round of it is still to start - the next one is opened as the last one begins
       const due = kinds.find((k) => !held.some((c) => BigInt(c.stakeMsat) === stakeOf(k)
-        && c.entryCloseMs > now + BigInt(leadMs)));
+        && (roundPeriodMs ? c.startTimeMs > now : c.entryCloseMs > now + BigInt(leadMs))));
       if (!due) return;
       opening = openNext(due).then((id) => onOpen(id, due), onError).finally(() => { opening = null; });
     };
