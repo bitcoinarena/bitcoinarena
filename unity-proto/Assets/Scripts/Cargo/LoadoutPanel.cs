@@ -164,7 +164,7 @@ public class LoadoutPanel : MonoBehaviour
         sorted.Sort((a, b) => b.FeeRate.CompareTo(a.FeeRate));
         foreach (var tx in sorted)
         {
-            if (bay.Fill >= autoFill) break;
+            if (Mathf.Max(bay.Fill, bay.BtcFill) >= autoFill) break;   // room or BTC, whichever binds
             bay.TryAdd(tx);
         }
 
@@ -258,7 +258,7 @@ public class LoadoutPanel : MonoBehaviour
             int risk = bay != null ? Mathf.RoundToInt(bay.HeatOf(c.tx) * 100f) : 0;
             GUI.Label(new Rect(box.x, box.y + _cap.fontSize * 1.25f, box.width, _capSub.fontSize * 1.5f),
                       c.loaded ? $"fills {share}% · danger +{risk}%"
-                               : $"{c.tx.feeSats:N0} sat fee · danger +{risk}%"
+                               : BtcLabel(c.tx.Btc) + $" · danger +{risk}%"
                                  + (c.tx.Whale ? "  🐋" : ""), _capSub);
 
             // Two lines only. Twenty-one crates in three rows leaves no room
@@ -326,24 +326,34 @@ public class LoadoutPanel : MonoBehaviour
             fontSize = Mathf.RoundToInt(Mathf.Clamp(bar.height * 0.50f, 16f, 40f)),
         };
         // a shadow, then the face: IMGUI has no text shadow of its own
-        title.normal.textColor = new Color(0f, 0f, 0f, 0.6f);
-        GUI.Label(new Rect(bar.x + 2f, bar.y + 3f, bar.width, bar.height), "CHOOSE YOUR MEMPOOL CARGO", title);
-        title.normal.textColor = PanelSkin.Gold;
-        GUI.Label(bar, "CHOOSE YOUR MEMPOOL CARGO", title);
-
         // Wide enough for the words, and no wrapping: at 150 px "LIVE MEMPOOL"
         // broke onto a second line and spilled out of its own pill.
         var tag = new GUIStyle(_small)
             { alignment = TextAnchor.MiddleLeft, fontStyle = FontStyle.Bold, wordWrap = false };
         float tagW = Mathf.Clamp(panel.width * 0.20f, 190f, 300f);
+        var count = new GUIStyle(_small) { alignment = TextAnchor.MiddleRight };
+        string ramp = yard.Captions().Count + " on the ramp";
+        float countW = count.CalcSize(new GUIContent(ramp)).x;
+
+        // THE TITLE BETWEEN THE PILL AND THE COUNT, NEVER UNDER EITHER (the owner 2026-09-29 21:48, CARGO-BTC-2148: on his
+        // phone "LIVE MEMPOOL" lay over "CHOOSE YOUR MEMPOOL CARGO", read "LIVE MEMPOOL C" / "HOOSE ..."). Centred, with
+        // the wider of the two side boxes kept clear on both sides, and its font shrunk to the room that leaves.
+        float side = 14f + Mathf.Max(tagW, countW + 2f) + 10f;
+        var titleRect = new Rect(bar.x + side, bar.y, Mathf.Max(0f, bar.width - 2f * side), bar.height);
+        string heading = "CHOOSE YOUR MEMPOOL CARGO";
+        if (DriveHud.FitLine(title, heading, titleRect.width, 10))
+        {
+            title.normal.textColor = new Color(0f, 0f, 0f, 0.6f);
+            GUI.Label(new Rect(titleRect.x + 2f, titleRect.y + 3f, titleRect.width, titleRect.height), heading, title);
+            title.normal.textColor = PanelSkin.Gold;
+            GUI.Label(titleRect, heading, title);
+        }
         PanelSkin.Tag(new Rect(bar.x + 14f, bar.y + bar.height * 0.28f, tagW, bar.height * 0.44f),
                       feed != null && feed.Fresh ? "● LIVE MEMPOOL" : "○ CONNECTING",
                       feed != null && feed.Fresh ? PanelSkin.Cyan : new Color(1f, 1f, 1f, 0.5f), tag);
 
-        var count = new GUIStyle(_small) { alignment = TextAnchor.MiddleRight };
         count.normal.textColor = new Color(1f, 1f, 1f, 0.55f);
-        GUI.Label(new Rect(bar.x, bar.y, bar.width - 16f, bar.height),
-                  yard.Captions().Count + " on the ramp", count);
+        GUI.Label(new Rect(bar.x, bar.y, bar.width - 16f, bar.height), ramp, count);
 
         var hint = new GUIStyle(GUI.skin.label)
         {
@@ -463,9 +473,20 @@ public class LoadoutPanel : MonoBehaviour
         float pad = Mathf.Max(10f, h * 0.022f);
         float head = Mathf.RoundToInt(Mathf.Clamp(min * 0.034f, 15f, 26f));
         float barW = Mathf.Min(w * 0.94f, 1040f);
-        float panelH = head * 1.6f * 5.1f;
+        float lh = head * 1.6f;
+        float panelH = lh * 5.1f + (ButtonHeight(w, h, lh) - lh);
         return new Rect((w - barW) * 0.5f, h - panelH - pad, barW, panelH);
     }
+
+    /// <summary>A phone: the browser says so, or the screen is held upright. A desktop in landscape is neither.</summary>
+    public static bool Phone(int w, int h) => DriveHud.Mobile || h > w;
+
+    /// <summary>AUTO's and ROLL OUT's height: the row's on a desktop, 2.2 rows on a phone - a thumb's target.</summary>
+    public static float ButtonHeight(int w, int h, float lh) => Phone(w, h) ? lh * 2.2f : lh;
+
+    /// <summary>A parcel's or a load's BTC, as a block explorer writes it: up to eight decimals, no trailing zeros.</summary>
+    public static string BtcLabel(double btc) =>
+        btc.ToString("0.########", System.Globalization.CultureInfo.InvariantCulture) + " BTC";
 
     void Bar(int w, int h, int min, float pad)
     {
@@ -489,11 +510,12 @@ public class LoadoutPanel : MonoBehaviour
         bool refused = yard != null && Time.unscaledTime - yard.RefusedAt < 0.7f;
 
         // --- capacity -------------------------------------------------------
-        Gauge(new Rect(panel.x + inner, top, gaugeW, gaugeH), bay.Fill,
+        // THE GAUGE IS THE BINDING LIMIT: the bed's room or the truck's BTC, whichever is nearer full
+        Gauge(new Rect(panel.x + inner, top, gaugeW, gaugeH), Mathf.Max(bay.Fill, bay.BtcFill),
               refused ? new Color(1f, 0.35f, 0.3f)
                       : Color.Lerp(new Color(0.3f, 0.75f, 0.45f), new Color(1f, 0.78f, 0.2f), bay.Fill),
               refused ? "TRUCK  —  FULL"
-                      : $"TRUCK FULL  {Mathf.RoundToInt(bay.Fill * 100f)}%  ·  {bay.Count} parcels",
+                      : $"TRUCK  {BtcLabel(bay.BtcCarried)} of {CargoBay.BtcLimit:0.##} BTC  ·  {bay.Count} parcels",
               _small);
 
         // --- risk -----------------------------------------------------------
@@ -573,13 +595,19 @@ public class LoadoutPanel : MonoBehaviour
                   "you pick LOAD · DANGER and SPEED you earn driving", sub);
 
         // --- buttons ---------------------------------------------------------
-        float by = panel.yMax - lh * 1.25f;
+        // BIGGER TO TAP ON A PHONE (the owner 2026-09-29 21:48, CARGO-BTC-2148: AUTO (80%) and ROLL OUT were too small
+        // to tap); a desktop keeps its size. `ButtonHeight` also sizes the bar (BottomBarRect), so the taller buttons
+        // stay inside it.
+        float bh = ButtonHeight(w, h, lh);
+        float by = panel.yMax - bh - lh * 0.25f;
         float bw = gaugeW;
-        if (GUI.Button(new Rect(panel.x + inner, by, bw, lh), "AUTO  (80%)", _btn)) Auto();
+        var btn = new GUIStyle(_btn);
+        if (Phone(w, h)) btn.fontSize = Mathf.RoundToInt(Mathf.Max(_btn.fontSize, bh * 0.42f));
+        if (GUI.Button(new Rect(panel.x + inner, by, bw, bh), "AUTO  (80%)", btn)) Auto();
 
         GUI.enabled = bay.IsLoaded;
-        if (GUI.Button(new Rect(panel.x + inner * 2f + gaugeW, by, bw, lh),
-                       bay.IsLoaded ? "ROLL OUT" : "NOTHING LOADED", _btn)) Confirm();
+        if (GUI.Button(new Rect(panel.x + inner * 2f + gaugeW, by, bw, bh),
+                       bay.IsLoaded ? "ROLL OUT" : "NOTHING LOADED", btn)) Confirm();
         GUI.enabled = true;
     }
 

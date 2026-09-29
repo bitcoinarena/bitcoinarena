@@ -115,12 +115,25 @@ public class SplashScreen : MonoBehaviour
             }
         }
         if (_hud == null) _hud = FindFirstObjectByType<DriveHud>();
+        // THE NEXT ROUND IS COMING, SO THE LOBBY IS NOT (the owner 2026-09-29 21:58, SPECTATE-2158): while the page takes the
+        // player to the next round - its countdown up, from the run's end until "exit game" or that round's start - no
+        // PLAY, no round list, no banner: the result card, or WASTED, stays and the camera is the player's.
+        if (!Showing && Time.unscaledTime - _continuingPolledAt > 0.5f)
+        {
+            _continuingPolledAt = Time.unscaledTime;
+            var page = Blwp.DailyLobby.Poll();
+            Continuing = page != null && page.continuing;
+            if (Continuing) _lobby = page;
+        }
+        if (Showing) Continuing = false;
         bool cardUp = _hud != null && _hud.ArrivalShowing;
-        if (!Showing && LobbyMayCover(cardUp) && ShouldReturnToLobby(Blwp.BlwpCore.Available, runStateNow, Blwp.BlwpNet.Ended,
+        if (!Showing && !Continuing && LobbyMayCover(cardUp) && ShouldReturnToLobby(Blwp.BlwpCore.Available, runStateNow, Blwp.BlwpNet.Ended,
                                            _fromLobby, wrecked,
                                            _wreckedAt < 0f ? 0f : Time.unscaledTime - _wreckedAt, hold,
                                            _endedAt < 0f ? 0f : Time.unscaledTime - _endedAt)) ShowLobbyAgain();
-        if (!Showing && BackFromSpectating(_spectating, _spectator != null && _spectator.Active)) ShowLobbyAgain();
+        if (!Showing && !Continuing && BackFromSpectating(_spectating, _spectator != null && _spectator.Active)) ShowLobbyAgain();
+        // AND THE NEXT ROUND'S JOIN IS TAKEN HERE, lobby or not: held by the page to its start, then played.
+        if (!Showing && Continuing) { AdoptNextJoin(); if (StepJoin()) return; }
         // A NODE REFUSED THE ENTRY BEFORE THE RUN WAS LIVE (the owner 2026-09-26, the 21:13 case): the page has taken the
         // join fallback and reports the join refused; with no live session and the truck still at the ramp, this round is
         // not played - the chooser closes and the lobby comes back, its "Not joined" line the page's.
@@ -163,27 +176,42 @@ public class SplashScreen : MonoBehaviour
             }
         }
 
-        // THE NEXT ROUND THE PAGE ENTERED IS PLAYED LIKE ONE PLAY JOINED (the owner 2026-09-28, option 1 of A: continuing is the
-        // default). The page enters round i+1 after a run and holds it until its start; Unity takes that join as its own,
-        // once per round, and starts the run when it says joined - at the round's start, with everybody.
+        AdoptNextJoin();
+        StepJoin();
+    }
+
+    /// <summary>True while the page is taking the player to the next round (SPECTATE-2158); DriveHud keeps the card up.</summary>
+    public static bool Continuing { get; private set; }
+    float _continuingPolledAt = -10f;
+
+    /// <summary>
+    /// THE NEXT ROUND THE PAGE ENTERED IS PLAYED LIKE ONE PLAY JOINED (the owner 2026-09-28, option 1 of A: continuing is the
+    /// default). The page enters round i+1 after a run and holds it until its start; Unity takes that join as its own,
+    /// once per round, and starts the run when it says joined - at the round's start, with everybody.
+    /// </summary>
+    void AdoptNextJoin()
+    {
         if (!_joining && _lobby != null && _lobby.join != null && _lobby.join.next && !string.IsNullOrEmpty(_lobby.join.round)
             && _lobby.join.round != _adoptedRound && (_lobby.join.state == "joining" || _lobby.join.state == "joined"))
         {
             _adoptedRound = _lobby.join.round;
             _joining = true; _joinedAt = -1f; _joinWhy = "";
         }
+    }
 
-        // PLAY IN THE LOBBY JOINS IN THIS PAGE (the owner 2026-09-13 07:11):
-        // no reload, so no second loading screen - the round starts here once the
-        // page has joined it.
-        if (_joining && _lobby != null)
-        {
-            if (_lobby.join.state == "joined" && _joinedAt < 0f) _joinedAt = Time.unscaledTime;
-            string next = Blwp.DailyLobby.AfterJoin(_lobby, Blwp.BlwpNet.Live,
-                                                    _joinedAt < 0f ? 0f : Time.unscaledTime - _joinedAt);
-            if (next == "play") { _joining = false; Play(); return; }
-            if (next == "refused") { _joining = false; _joinWhy = _lobby.join.why; _polledAt = -10f; }
-        }
+    /// <summary>
+    /// PLAY IN THE LOBBY JOINS IN THIS PAGE (the owner 2026-09-13 07:11): no reload, so no second loading screen - the round
+    /// starts here once the page has joined it. True when the run was started.
+    /// </summary>
+    bool StepJoin()
+    {
+        if (!_joining || _lobby == null) return false;
+        if (_lobby.join.state == "joined" && _joinedAt < 0f) _joinedAt = Time.unscaledTime;
+        string next = Blwp.DailyLobby.AfterJoin(_lobby, Blwp.BlwpNet.Live,
+                                                _joinedAt < 0f ? 0f : Time.unscaledTime - _joinedAt);
+        if (next == "play") { _joining = false; Continuing = false; Play(); return true; }
+        if (next == "refused") { _joining = false; _joinWhy = _lobby.join.why; _polledAt = -10f; }
+        return false;
     }
 
     /// <summary>Free camera, without starting the round.</summary>

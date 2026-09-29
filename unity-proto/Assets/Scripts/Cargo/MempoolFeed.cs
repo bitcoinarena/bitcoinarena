@@ -154,6 +154,19 @@ public class MempoolFeed : MonoBehaviour
     /// Something to load when the API cannot be reached. The yard being empty
     /// would block the player behind a network failure with nothing to pick.
     /// </summary>
+    /// <summary>
+    /// A PARCEL'S BTC AS THE MEMPOOL CARRIES THEM (CARGO-BTC-2148): it was 0.002-40 BTC uniform, a mean of 20 - no real
+    /// mempool looks like that, and with the truck's BTC limit (20) two parcels filled it. Sampled from mempool.space
+    /// 2026-09-29: median 0.0036 BTC, 90th percentile 0.43, a few in the hundreds. Log-normal: log10 BTC ~ N(-2.44, 1.1),
+    /// kept inside 0.0001 .. 350.
+    /// </summary>
+    static double SyntheticBtc()
+    {
+        float u1 = Mathf.Max(1e-6f, Random.value), u2 = Random.value;
+        double z = System.Math.Sqrt(-2.0 * System.Math.Log(u1)) * System.Math.Cos(2.0 * System.Math.PI * u2);
+        return System.Math.Min(350.0, System.Math.Max(0.0001, System.Math.Pow(10.0, -2.44 + 1.1 * z)));
+    }
+
     static List<Tx> Synthetic(int n)
     {
         var list = new List<Tx>();
@@ -165,7 +178,7 @@ public class MempoolFeed : MonoBehaviour
                 txid = System.Guid.NewGuid().ToString("N").Substring(0, 32),
                 vsize = vsize,
                 feeSats = (long)(vsize * Random.Range(1.2f, 90f)),
-                valueSats = (long)(Random.Range(0.002f, 40f) * 1e8f),
+                valueSats = (long)(SyntheticBtc() * 1e8),
             });
         }
         return list;

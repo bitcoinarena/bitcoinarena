@@ -89,15 +89,16 @@ public class CargoBay : MonoBehaviour
     /// which is both wrong and unreadable: the player is hunted for the prize
     /// they are carrying, and the prize is the fee.
     ///
-    /// A whale still adds on top, because a bed carrying twenty-five BTC is
-    /// worth diverting armour for whatever it pays.
+    /// Value still adds on top, because a bed carrying the truck's whole BTC
+    /// limit is worth diverting armour for whatever it pays. (It was a whale's
+    /// twenty-five BTC; no whale fits the 20 BTC truck, CARGO-BTC-2148.)
     /// </summary>
     public float Heat
     {
         get
         {
             float fromFees = Mathf.Clamp01(FeeCarried / Mathf.Max(1f, heatAtSats));
-            float fromValue = Mathf.Clamp01((float)(BtcCarried / 25.0)) * 0.45f;
+            float fromValue = Mathf.Clamp01((float)(BtcCarried / BtcLimit)) * 0.45f;
             return Mathf.Clamp01(fromFees + fromValue);
         }
     }
@@ -166,9 +167,23 @@ public class CargoBay : MonoBehaviour
         return false;
     }
 
-    /// <summary>Does it still fit? Asked before a click is allowed to land.</summary>
+    /// <summary>
+    /// HOW MUCH BTC ONE TRUCK CARRIES TO THE MINERS: 20 BTC (the owner 2026-09-29, CARGO-BTC-2148, after the measurement:
+    /// "Instead of 15.92 btc make the limit 20 btc"). The measurement it replaced: 150 mainnet blocks, 969043-969192
+    /// (mempool.space, 2026-09-29), a median 6,792 BTC of outputs over a median 4,452 transactions - 1.592 BTC a
+    /// transaction; a full bed of ten parcels of an average block, 15.92 BTC. The parcels are the live mempool's own
+    /// transactions at their own value (sampled: median 0.0036 BTC, 90th percentile 0.43, a few in the hundreds), so most
+    /// trucks fill by room, a whale (25 BTC and up) does not fit one truck, and a few big transactions fill it by value.
+    /// </summary>
+    public const double BtcLimit = 20.0;
+
+    /// <summary>0..1, how much of the truck's BTC limit is on board.</summary>
+    public float BtcFill => (float)System.Math.Min(1.0, BtcCarried / BtcLimit);
+
+    /// <summary>Does it still fit? Asked before a click is allowed to land: the room on the bed and the BTC limit.</summary>
     public bool Fits(MempoolFeed.Tx tx)
     {
+        if (tx != null && BtcCarried + tx.Btc > BtcLimit + 1e-9) return false;
         float need = RoomFor(tx);
         for (int c = 0; c < columns; c++)
             if (UsedIn(c) + need <= bedLength + 0.001f) return true;
@@ -186,6 +201,9 @@ public class CargoBay : MonoBehaviour
     public bool TryAdd(MempoolFeed.Tx tx)
     {
         if (tx == null || Contains(tx.txid)) return false;
+        // AND THE TRUCK'S BTC LIMIT, here as in Fits: measured, AUTO loaded the 30 BTC whale first (it pays the most per
+        // vbyte), the truck read full by value, and AUTO stopped at one parcel.
+        if (BtcCarried + tx.Btc > BtcLimit + 1e-9) return false;
 
         float need = RoomFor(tx);
         int best = -1; float bestUsed = float.MaxValue;

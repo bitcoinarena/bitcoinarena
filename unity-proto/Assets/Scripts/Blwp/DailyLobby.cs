@@ -72,6 +72,8 @@ namespace Blwp
         /// <summary>The signer nodes, by address, that did not answer the page's last lobby read within `answerS` seconds.</summary>
         public string[] unanswered = new string[0];
         public int answerS = 10;
+        /// <summary>The page is taking the player to the next round (SPECTATE-2158): no lobby until exit game or its start.</summary>
+        public bool continuing;
     }
 
     /// <summary>

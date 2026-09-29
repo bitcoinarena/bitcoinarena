@@ -204,8 +204,11 @@
     #blwp-next { position: fixed; left: 50%; bottom: 18%; transform: translateX(-50%); z-index: 35; display: none;
       align-items: center; gap: 12px; padding: 12px 14px; border-radius: 10px; max-width: calc(100% - 32px); box-sizing: border-box;
       background: rgba(13,16,20,0.95); border: 2px solid #f7931a; color: #e8eaed; font: 700 16px/1.25 system-ui, sans-serif; }
-    #blwp-next-say { white-space: nowrap; }
+    /* SIDE BY SIDE ON A PHONE, NEITHER OVER THE OTHER (SPECTATE-2158: "exit game" lay on the countdown words): the words
+       take the room left of the button and wrap inside it; the button keeps its own width. */
+    #blwp-next-say { flex: 1 1 auto; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
     #blwp-next { width: max-content; }
+    @media (max-width: 520px) { #blwp-next { width: calc(100% - 32px); font-size: 15px; } }
     #blwp-next-exit { flex: none; font: inherit; padding: 9px 14px; cursor: pointer; background: #1e2833; color: #e8eaed;
       border: 1px solid #3a4a5c; border-radius: 6px; }
     body.blwp-clean #blwp-next { display: none !important; }
@@ -697,17 +700,8 @@
     // behind it. Measured on 0.0.1386: DELIVERED, the banner, and no lobby, ever. So a page that has no
     // lobby goes back to the lobby its link names - the same query without the round and `play` - and
     // starts it here, without a reload.
-    // AND THE ONE QUESTION A WINNER IS ASKED (ruled 2026-09-23): `run` is the bridge's - this run's round and entry,
-    // the page core's word and score, min_score, the round's signer nodes and the session key's address call. Asked
-    // once, only when the core said DELIVERED at or above min_score; the address signed and posted to every signer
-    // node (`askForWinnings`). Nothing named: nothing posted, the share pooled by the settlement.
-    const askForWinnings = (run) => {
-      if (!run || typeof BLWPCLIENT === 'undefined' || !BLWPCLIENT.askForWinnings) return;
-      BLWPCLIENT.askForWinnings({ run, prompt: (text) => window.prompt(text), storage: vault() })
-        .then((r) => console.log('[blwp] winnings: ' + (r.named ? r.address + ' taken by ' + r.acked.length + ' of '
-          + run.nodes.length + ' signer node(s)' : r.why)))
-        .catch((e) => console.error('[blwp] winnings: ' + e.message));
-    };
+    // NO WINNINGS ADDRESS IS ASKED FOR (the owner 2026-09-29 21:58, SPECTATE-2158: "Remove 'Where should your winnings be
+    // sent? Lightning address'. Winnings go to the federation wallet and are paid out to the user there"). Free or paying.
     // COPY GAME REPLAY (the owner 2026-09-25 18:39): the result card's control hands this page the run (the bridge's
     // BlwpCopyReplay); the page copies ONE https link - a random committee node of the round, from its advertisement
     // endpoints (a node's /replay/nodes), ws made https - to /replay?round=<hex>&entry=<hex>. The endpoints are fetched
@@ -763,7 +757,6 @@
           .then((shown) => console.log('[blwp] the run is over: ' + (shown ? 'the lobby is up' : 'this page names no lobby')))
           .catch((e) => console.error('[blwp] the run is over, and that lobby cannot be read: ' + e.message));
       }
-      askForWinnings(run);
       // CONTINUING IS THE DEFAULT (the owner 2026-09-28, option 1 of A; spec "Timing - every network, every round"): the
       // page enters the next round of the same kind for the player now - its entry is open until its start - and holds
       // it until that start, so the next run starts with everybody at start_time(i+1). "exit game" stops it.
@@ -774,10 +767,11 @@
       // saw no countdown - the box waited for the nodes to list the next round, up to a minute on the Daily). Until the
       // next round is listed it counts to the played round's start + 90 s, or the next 90 s step after it that has not
       // come yet; once listed, to that round's own start.
+      // ONE CLOCK (the owner 2026-09-29 21:58, SPECTATE-2158: the bar said 84 s while the row said "closes 0:54"): no invented
+      // 90 s slot. Until the next round is listed the box says it is joining it, with no number; once listed, it counts to
+      // that round's own start - the number its lobby row shows.
       const runOverAt = Date.now();
-      const slot = (nowMs) => { const s0 = Number(played.startTimeMs); let t = s0 + 90000;
-        while (t <= nowMs + BLWPCLIENT.RESULT_CARD_MS) t += 90000; return t; };
-      const next = window.BLWP_NEXT = { state: 'looking', runOverAt, slot, startMs: slot(runOverAt) };
+      const next = window.BLWP_NEXT = { state: 'looking', runOverAt, startMs: NaN };
       // LOOKED FOR UNTIL IT IS LISTED: a series lists round i+1 long before; a launcher that opens its next round later
       // (the Daily: about a minute before the current round's entry closes) lists it later - measured 65 s after a run.
       // Given up only when the player joins something else from the lobby, or after 10 minutes.
@@ -802,14 +796,13 @@
       const box = document.getElementById('blwp-next');
       const n = window.BLWP_NEXT; const j = window.BLWP_JOIN;
       let v = { show: 'lobby' };
-      // still looking: the 90 s step moves on when it has passed without a listed round
-      if (n && n.state === 'looking' && n.slot && Date.now() >= n.startMs) n.startMs = n.slot(Date.now() - BLWPCLIENT.RESULT_CARD_MS);
       const waiting = n && window.BLWP_CONTINUE !== false && (n.state === 'looking'
         || (n.state === 'joining' && j && j.round === n.round && j.state === 'joining'));
       if (waiting) {
         v = BLWPCLIENT.nextRoundView({ runOverMs: n.runOverAt, nextStartMs: n.startMs, nowMs: Date.now() });
-        // the card stands until Unity leaves it, and never less than its 8 s
-        if (v.show === 'countdown' && window.BLWP_CARD_UP) v = { show: 'card' };
+        // not listed yet: the words without a number, beside exit game - never a number that is not the round's start
+        if (n.state === 'looking' && v.show === 'lobby') v = { show: 'countdown', line: 'joining next round', exit: BLWPCLIENT.EXIT_GAME };
+        // AT ONCE, beside the ending Unity keeps up (COUNTDOWN-NOW-2209): no waiting for the card
       }
       if (n && n.state === 'joining' && Date.now() >= n.startMs) n.state = 'started';
       if (box) {
@@ -1933,6 +1926,10 @@
           round: String(window.BLWP_JOIN.round || ''), kindKnown: !!window.BLWP_JOIN.kindKnown, free: !!window.BLWP_JOIN.free,
           stakeSats: Number(window.BLWP_JOIN.stakeSats) || 0, next: !!window.BLWP_JOIN.next }
           : { state: '', why: '', stage: '', round: '', kindKnown: false, free: false, stakeSats: 0 },
+        // THE PAGE IS TAKING THE PLAYER TO THE NEXT ROUND (the owner 2026-09-29 21:58, SPECTATE-2158): from the run's end until
+        // "exit game" or that round's start. Unity shows no lobby meanwhile - the result card, or WASTED, stays.
+        continuing: (() => { const n = window.BLWP_NEXT;
+          return !!n && window.BLWP_CONTINUE !== false && (n.state === 'looking' || n.state === 'joining'); })(),
         // A WITHDRAWAL AVAILABLE (the owner 2026-09-14), for the lobby to say so.
         withdraw: withdrawAvailable() });
       window.BLWP_LOBBY_ACT = {
