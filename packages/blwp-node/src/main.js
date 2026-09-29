@@ -14,6 +14,13 @@
 //     BLWP_STAKE_LOCK_BIN    blwp-stake-lock (tools/stake-lock), for stake-lock rounds
 //     BLWP_FEDERATION_CLIENT_DIR  the data dir of a client joined to the round's federation
 //
+// AND WHAT A LAUNCHER USED TO HAND ITS IN-PROCESS NODES, for nodes that run as their own processes (attach, the owner
+// 2026-09-29: the seven blwp-tn4-node units own the guardians; tools/run-testnet4-paid.mjs BLWP_ATTACH=1):
+//     BLWP_CLOSE_AT_END=1         this node closes every round that is over, itself
+//     BLWP_DONATION_NETWORK       regtest | testnet4: the network's signed test donation set, which the rounds name
+//     BLWP_ATTACH_PROOF_DIR       the launcher's headers.bin and bond.json, served on GET /headers and GET /bond,
+//                                 read at every ask (the launcher writes them once the nodes are up)
+//
 // Both or neither. With them the daemon can read each round's beacon and derive each round's census - which is where it
 // learns the other signer nodes' addresses, from the advertisements in their bonds. (It no longer finds a pool output or
 // sends a pool payout: that was the withdrawn custody's, §23.6, RULED 2026-09-25.)
@@ -29,6 +36,8 @@ import { lightningFromEnv } from './lnd-settings.js';
 import { stakeLocksFromEnv } from './stake-lock-port.js';
 import { fundingFromEnv } from './funding.js';
 import { startNode } from './node-start.js';
+import { readFileSync } from 'node:fs';
+import { TEST_DONATION_SET_REGTEST, TEST_DONATION_SET_TESTNET4 } from '../../protocol/src/test-donation-sets.js';
 
 const port = Number(process.argv[2] || 8080);
 const path = process.argv[3] || 'round.db';
@@ -60,6 +69,17 @@ const db = openStore(path);
 // entries into them - off by default, so an unnamed round is still 402.
 const options = { port, host, funded: fundingFromEnv(process.env), ...(fed.given ? { stakeLocks: fed.stakeLocks } : {}) };
 if (ln.given) options.lightning = ln.lightning;
+if (process.env.BLWP_CLOSE_AT_END === '1') options.closeAtEnd = true;
+{
+  const net = process.env.BLWP_DONATION_NETWORK;
+  if (net && net !== 'regtest' && net !== 'testnet4') { console.error(`BLWP_DONATION_NETWORK is regtest or testnet4, not ${net}`); process.exit(2); }
+  if (net) options.donationSets = [net === 'regtest' ? TEST_DONATION_SET_REGTEST : TEST_DONATION_SET_TESTNET4];
+}
+if (process.env.BLWP_ATTACH_PROOF_DIR) {
+  const dir = process.env.BLWP_ATTACH_PROOF_DIR;
+  options.headerBytes = () => { try { return new Uint8Array(readFileSync(`${dir}/headers.bin`)); } catch { return null; } };
+  options.bondProof = () => { try { return JSON.parse(readFileSync(`${dir}/bond.json`, 'utf8')); } catch { return null; } };
+}
 if (url) {
   const call = bitcoindRpc({ url, cookiePath });
   // A 400-header window, as the 2-of-2 tool reads one: the rule refuses a
@@ -87,6 +107,8 @@ if (url) {
   // (No census is read ahead for rounds owing an on-chain pool payout: that payout is gone with the withdrawn custody -
   // §23.6, RULED 2026-09-25. A round's view is read the first time it is asked for, below.)
   Object.assign(options, {
+    // THE CHAIN'S TIP, for the settlement's takeover order (M3.3-19) and a lock's expiry, as the launcher gave its nodes
+    chainTip: async () => Number(await call('getblockcount')),
     chainFor: ({ contract, roundIdBytes } = {}) => {
       const key = roundIdBytes ? Buffer.from(roundIdBytes).toString('hex') : null;
       if (key && views.has(key)) return views.get(key);

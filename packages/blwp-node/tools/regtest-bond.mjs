@@ -176,7 +176,9 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
    * else the one it committed to at creation (`bondAdvert` is always the latter).
    */
   function bondsOf(nodeSecret) {
-    const nodeKey = schnorr.getPublicKey(nodeSecret);
+    // THE PUBLIC KEY IS ENOUGH (attach, 2026-09-29): `{ pubkey }` in place of the secret - finding a bond reads the chain
+    // and signs nothing, so a launcher that holds no node's store can find every node's bond.
+    const nodeKey = nodeSecret && nodeSecret.pubkey ? nodeSecret.pubkey : schnorr.getPublicKey(nodeSecret);
     const built = bondOutputKey({
       nodeKey, arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK,
       bondMaturity: g.bondMaturity,
@@ -189,17 +191,18 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
     for (const u of unspent) {
       const tx = parseTransaction(fromHex(cli('getrawtransaction', u.txid, 'false', cli('getblockhash', String(u.height)))));
       const commitments = commitmentsOf(tx);
-      let advert = null;
+      let advert = null, advertSignature = null;
       for (const item of witnessRunsOf(tx)) {
         try {
-          const a = decodeAdvert(splitSignedAdvert(item).body); const id = advertId(a);
-          if (commitments.some((c) => c.length === 32 && id.every((b, i) => b === c[i]))) { advert = a; break; }
+          const signed = splitSignedAdvert(item);
+          const a = decodeAdvert(signed.body); const id = advertId(a);
+          if (commitments.some((c) => c.length === 32 && id.every((b, i) => b === c[i]))) { advert = a; advertSignature = signed.signature; break; }
         } catch { /* not a signed body */ }
       }
       if (!advert || toHex(advert.nodePubkey) !== toHex(nodeKey)) continue;
       const newer = newestUpdateOf({ txid: fromHex(u.txid).reverse(), vout: u.vout, height: u.height, nodePubkey: nodeKey });
       out.push({ txid: u.txid, vout: u.vout, height: u.height, sats: Math.round(u.amount * 1e8),
-        advert: newer ? newer.advert : advert, bondAdvert: advert,
+        advert: newer ? newer.advert : advert, bondAdvert: advert, bondSignature: advertSignature,
         ...(newer ? { updatedBy: { txid: newer.txidHex, height: newer.height } } : {}) });
     }
     return out;

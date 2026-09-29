@@ -81,9 +81,14 @@ export function freeOrOperatorFunding({ named = () => [] } = {}) {
   return funded;
 }
 
-/** The launcher's rule, off the operator's own settings. */
+/**
+ * The launcher's rule, off the operator's own settings. BLWP_FUND_FREE_ROUNDS=1 takes a free round and its entries too, as
+ * the Daily's launcher does in-process (`freeOrOperatorFunding`) - for nodes run as their own processes (attach). Unset,
+ * a free round is not funded here, as before.
+ */
 export function fundingFromEnv(env) {
-  return operatorFunding({
+  const rule = env.BLWP_FUND_FREE_ROUNDS === '1' ? freeOrOperatorFunding : operatorFunding;
+  return rule({
     named: () => {
       const ids = idsIn(env.BLWP_FUNDED_ROUNDS);
       if (env.BLWP_FUNDED_ROUNDS_FILE) {
