@@ -2773,7 +2773,34 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const got = lateHex
           ? await settlements.takeLateSends(new Uint8Array(rid), new Uint8Array(Buffer.from(lateHex, 'hex')), proposed)
           : await settlements.takeSends(new Uint8Array(rid), proposed);
-        return got.ok ? text(res, 201, `${got.rows.length} send plan(s) checked and kept`) : text(res, got.status || 409, got.why);
+        // THE ANSWER IS THIS SEAT'S SIGNATURE over the plan's id (plan-taken.js), not a status the asker counts.
+        if (!got.ok) return text(res, got.status || 409, got.why);
+        res.writeHead(201, { 'content-type': 'application/octet-stream', ...CORS });
+        return res.end(Buffer.from(got.taken));
+      }
+
+      // THE SEATS' SIGNED AGREEMENT A SETTLEMENT'S SEND PLAN WAS TAKEN BY: the plan id and the signed acceptances that
+      // counted, concatenated (128 bytes each), for anyone who checks the threshold for themselves.
+      // AND HANDED IN by the asker: kept only if it stands against the plan this seat kept (settlement.js takeCertificate).
+      if (req.method === 'POST' && url.pathname === '/settle-taken') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (rid.length !== 32) return text(res, 400, 'a signed agreement is for a round id');
+        const lateHex = url.searchParams.get('late');
+        if (lateHex && !/^[0-9a-f]{64}$/.test(lateHex)) return text(res, 400, 'a late settlement is named by a 32-byte entry id');
+        const got = settlements.takeCertificate(new Uint8Array(rid), lateHex ? new Uint8Array(Buffer.from(lateHex, 'hex')) : null,
+          new Uint8Array(await read(req)));
+        return got.ok ? text(res, 201, `${got.agreed} of ${got.needed} seats' signed agreement kept`) : text(res, got.status || 409, got.why);
+      }
+
+      if (req.method === 'GET' && url.pathname === '/settle-taken') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (rid.length !== 32) return text(res, 400, 'a signed agreement is for a round id');
+        const lateHex = url.searchParams.get('late');
+        if (lateHex && !/^[0-9a-f]{64}$/.test(lateHex)) return text(res, 400, 'a late settlement is named by a 32-byte entry id');
+        const kept = settlements.planCertificate(new Uint8Array(rid), lateHex ? new Uint8Array(Buffer.from(lateHex, 'hex')) : null);
+        if (!kept) return text(res, 404, 'this seat holds no signed agreement for that settlement');
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ planId: toHex(kept.planId), certificate: toHex(kept.certificate) }));
       }
 
       // THE AUTH OF A SEND, between signer nodes: a commitment and a share over the invoice's consensus hash, each

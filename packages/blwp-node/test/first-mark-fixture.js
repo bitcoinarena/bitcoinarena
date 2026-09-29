@@ -11,7 +11,7 @@ import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { resultFinality } from '../src/finality.js';
 import { assumeAssigned } from './assignment.js';
 import { lockPort, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
-import { b32, rand, RANDOMNESS, STAKE, WINDOW_MS, WINNER, GENESIS_HASH, wordsAt, contractFor, say, secretScalar, opts, wait, presentDay } from './window-fixture.js';
+import { b32, rand, RANDOMNESS, STAKE, WINDOW_MS, WINNER, GENESIS_HASH, wordsAt, playFor, warmPlay, contractFor, say, secretScalar, opts, wait, presentDay } from './window-fixture.js';
 import { CLOCK } from './block-clock.js';
 import { roundEndMs } from '../../protocol/src/first-mark.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
@@ -82,6 +82,9 @@ export async function signerNodes({ endIn = null, serveOpts = {} } = {}) {
 
 /** Joined and locked at both signer nodes; the run's messages, with its first mark at `firstAt`. */
 export async function joinAndBuild(w, { firstAt = 60 } = {}) {
+  // THE WINNER UNDER THIS ROUND'S OWN BEACON (window-fixture playFor): the recorded tape misses there.
+  await warmPlay(WINNER, w.randomness);
+  const play = playFor(WINNER, w.randomness);
   const session = ed25519.utils.randomSecretKey();
   const preimage = secretScalar();
   const e = rand(32);
@@ -96,7 +99,7 @@ export async function joinAndBuild(w, { firstAt = 60 } = {}) {
   const entry = {
     roundId: w.rid, playerPubkey: WINNER.key, sessionPubkey: ed25519.getPublicKey(session),
     stakeCommitment: sha256(preimage), stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE), donationMsat: 0n,
-    joinTick: 0, worldSecret: WINNER.worldSecret, vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0],
+    joinTick: 0, worldSecret: play.worldSecret, vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0],
     feePreimage: feeSecret, stakeLockOutpoint: outpoint, feeLockOutpoint: feeOutpoint,
     claimKeyAttestationRef: b32(0x9a),
   };
@@ -115,10 +118,10 @@ export async function joinAndBuild(w, { firstAt = 60 } = {}) {
     assert.equal((await fetch(`${base}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(feeFields)) })).status, 201);
   }
   const st = init(seedWordForEntry(entry, w.randomness || RANDOMNESS));
-  const hashAt = (upTo, from) => { for (let t = from; t < upTo; t++) step(st, ...wordsAt(t)); return Uint8Array.from(stateHash(st).match(/../g).map((x) => parseInt(x, 16))); };
+  const hashAt = (upTo, from) => { for (let t = from; t < upTo; t++) step(st, ...play.words(t)); return Uint8Array.from(stateHash(st).match(/../g).map((x) => parseInt(x, 16))); };
   const sign = (m) => joinSigned(encodeCheckpoint(m), ed25519.sign(checkpointId(m), session));
   const batchOf = (from, to, previousHash) => ({ roundId: w.rid, entryId: eid, previousHash, firstTick: from,
-    ticks: Array.from({ length: to - from }, (_, t) => wordsAt(from + t)), liquidations: [] });
+    ticks: Array.from({ length: to - from }, (_, t) => play.words(from + t)), liquidations: [] });
   const markOf = (tick, stateHashAt, input, previousHash) => ({ roundId: w.rid, entryId: eid, tick, stateHash: stateHashAt,
     inputChainHash: batchId(input), previousHash, sessionPubkey: entry.sessionPubkey });
   let messages;
@@ -140,14 +143,14 @@ export async function joinAndBuild(w, { firstAt = 60 } = {}) {
   // first batch 0..1319 and a first mark at 1320 - the other half of a player
   // who sent an on-time first mark to one signer node and a late one to another.
   const lateSt = init(seedWordForEntry(entry, w.randomness || RANDOMNESS));
-  for (let t = 0; t < END; t++) step(lateSt, ...wordsAt(t));
+  for (let t = 0; t < END; t++) step(lateSt, ...play.words(t));
   const lb = batchOf(0, END, GENESIS_HASH);
   const lm = markOf(END, Uint8Array.from(stateHash(lateSt).match(/../g).map((x) => parseInt(x, 16))), lb, NO_PREVIOUS);
   const late = [encodeInputBatch(lb), sign(lm)];
   // AND A SECOND ON-TIME FIRST MARK (tick 30, from nothing): the other half of a
   // player who sent one on-time first mark to one signer node and a different one to another.
   const otherSt = init(seedWordForEntry(entry, w.randomness || RANDOMNESS));
-  for (let t = 0; t < 30; t++) step(otherSt, ...wordsAt(t));
+  for (let t = 0; t < 30; t++) step(otherSt, ...play.words(t));
   const ob = batchOf(0, 30, GENESIS_HASH);
   const om = markOf(30, Uint8Array.from(stateHash(otherSt).match(/../g).map((x) => parseInt(x, 16))), ob, NO_PREVIOUS);
   const other = [encodeInputBatch(ob), sign(om)];
@@ -157,7 +160,7 @@ export async function joinAndBuild(w, { firstAt = 60 } = {}) {
   // one of those: past the line like the first one, a different tick, and its own inputs from nothing.
   const againSt = init(seedWordForEntry(entry, w.randomness || RANDOMNESS));
   const AGAIN_AT = 960;
-  for (let t = 0; t < AGAIN_AT; t++) step(againSt, ...wordsAt(t));
+  for (let t = 0; t < AGAIN_AT; t++) step(againSt, ...play.words(t));
   const gb = batchOf(0, AGAIN_AT, GENESIS_HASH);
   const gm = markOf(AGAIN_AT, Uint8Array.from(stateHash(againSt).match(/../g).map((x) => parseInt(x, 16))), gb, NO_PREVIOUS);
   const again = [encodeInputBatch(gb), sign(gm)];

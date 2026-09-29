@@ -12,7 +12,7 @@ import { assumeAssigned } from './assignment.js';
 import { lockPort, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
 import { askerOrder } from '../src/payout.js';
 import { testInvoice } from './bolt11-fixture.js';
-import { b32, rand, RANDOMNESS, STAKE, WINDOW_MS, GENESIS_HASH, wordsAt, contractFor, say, secretScalar, opts, wait } from './window-fixture.js';
+import { b32, rand, RANDOMNESS, STAKE, WINDOW_MS, GENESIS_HASH, wordsAt, playFor, warmPlay, contractFor, say, secretScalar, opts, wait } from './window-fixture.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
 import { dealHandout, encodeHandout, handoutId } from '../../protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../protocol/src/shares.js';
@@ -122,10 +122,12 @@ export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, ad
     ephemeralSecret: e, ephemeralPubkey: feldmanGroup.pointX(e), coefficients: [scalarFrom32(rand(32)) % FIELD], needed: 2, curve: feldmanGroup });
   assert.equal(dealt.ok, true, dealt.why);
   const outpoint = { txid: rand(32), outIdx: 0n };
+  await warmPlay(who, w.randomness);
+  const play = playFor(who, w.randomness);
   const entry = {
     roundId: w.rid, playerPubkey: who.key, sessionPubkey: ed25519.getPublicKey(session),
     stakeCommitment: sha256(preimage), stakeMsat: w.c.stakeMsat, feeMsat: entryFeeMsat(w.c.stakeMsat), donationMsat: 0n,
-    joinTick: 0, worldSecret: who.worldSecret, vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0],
+    joinTick: 0, worldSecret: play.worldSecret, vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0],
     feePreimage: feeSecret, stakeLockOutpoint: outpoint, feeLockOutpoint: feeOutpoint,
     claimKeyAttestationRef: b32(0x9a),
   };
@@ -137,9 +139,9 @@ export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, ad
     refundPk: refundKeyOf(who.key), expiration: w.port.height + 200 } : null;
   if (feeLock) await w.port.put(feeOutpoint, feeFields);
   const input = { roundId: w.rid, entryId: eid, previousHash: GENESIS_HASH, firstTick: 0,
-    ticks: Array.from({ length: who.ticks }, (_, t) => wordsAt(t)), liquidations: [] };
+    ticks: Array.from({ length: who.ticks }, (_, t) => play.words(t)), liquidations: [] };
   const st = init(seedWordForEntry(entry, w.randomness || RANDOMNESS));
-  for (let t = 0; t < who.ticks; t++) step(st, ...wordsAt(t));
+  for (let t = 0; t < who.ticks; t++) step(st, ...play.words(t));
   const mark = { roundId: w.rid, entryId: eid, tick: who.ticks,
     stateHash: Uint8Array.from(stateHash(st).match(/../g).map((x) => parseInt(x, 16))),
     inputChainHash: batchId(input), previousHash: NO_PREVIOUS, sessionPubkey: ed25519.getPublicKey(session) };

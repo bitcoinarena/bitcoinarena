@@ -11,7 +11,7 @@ import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { assumeAssigned } from './assignment.js';
 import { lockPort, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
 import { contractFor, say, wait, opts, rand, b32, secretScalar, STAKE, joinAndPlay, WINNER, LOSER,
-  RANDOMNESS, GENESIS_HASH, wordsAt, PLANTED_FIRST_MARK_DEADLINE, presentDay } from './window-fixture.js';
+  RANDOMNESS, GENESIS_HASH, wordsAt, playFor, warmPlay, PLANTED_FIRST_MARK_DEADLINE, presentDay } from './window-fixture.js';
 import { CLOCK } from './block-clock.js';
 import { roundEndMs } from '../../protocol/src/first-mark.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
@@ -193,6 +193,9 @@ export async function twoFirstMarks(w, run) {
  * receipt the winner's mark.
  */
 export async function playWinner(w, signerNodesUp = null) {
+  // THE WINNER UNDER THIS ROUND'S OWN BEACON (window-fixture playFor): the recorded tape misses there.
+  await warmPlay(WINNER, w.randomness);
+  const play = playFor(WINNER, w.randomness);
   const ds = signerNodesUp ? signerNodesUp.map((i) => w.signerNodes[i]) : w.signerNodes;      // the signer nodes that are up
   const session = ed25519.utils.randomSecretKey();
   const preimage = secretScalar();
@@ -204,7 +207,7 @@ export async function playWinner(w, signerNodesUp = null) {
   const entry = {
     roundId: w.rid, playerPubkey: WINNER.key, sessionPubkey: ed25519.getPublicKey(session),
     stakeCommitment: sha256(preimage), stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE), donationMsat: 0n,
-    joinTick: 0, worldSecret: WINNER.worldSecret, vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0],
+    joinTick: 0, worldSecret: play.worldSecret, vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0],
     feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n },
     claimKeyAttestationRef: new Uint8Array(32),
   };
@@ -219,9 +222,9 @@ export async function playWinner(w, signerNodesUp = null) {
     assert.equal(seen.status, 200, await seen.text());
   }
   const input = { roundId: w.rid, entryId: eid, previousHash: GENESIS_HASH, firstTick: 0,
-    ticks: Array.from({ length: WINNER.ticks }, (_, t) => wordsAt(t)), liquidations: [] };
+    ticks: Array.from({ length: WINNER.ticks }, (_, t) => play.words(t)), liquidations: [] };
   const st = init(seedWordForEntry(entry, w.randomness || RANDOMNESS));
-  for (let t = 0; t < WINNER.ticks; t++) step(st, ...wordsAt(t));
+  for (let t = 0; t < WINNER.ticks; t++) step(st, ...play.words(t));
   const mark = { roundId: w.rid, entryId: eid, tick: WINNER.ticks,
     stateHash: Uint8Array.from(stateHash(st).match(/../g).map((x) => parseInt(x, 16))),
     inputChainHash: batchId(input), previousHash: NO_PREVIOUS, sessionPubkey: entry.sessionPubkey };

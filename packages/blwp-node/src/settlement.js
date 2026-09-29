@@ -35,6 +35,7 @@ import { resultFinality } from './finality.js';
 import { encodeCommitments, decodeCommitments, encodeShare, decodeShare } from './pool-wire.js';
 import { sendPlanToJson, planKey } from './winnings-send.js';
 import { askerOrder, eligibleAsker } from './payout.js';
+import { planTakenId, signPlanTaken, countPlanTaken, joinCertificate, splitCertificate } from './plan-taken.js';
 
 const listKey = (commitments) => commitments.map((c) => `${c.id}:${toHex(c.hiding)}:${toHex(c.binding)}`).sort().join('|');
 const refuse = (why, status = 409) => ({ ok: false, status, why });
@@ -75,6 +76,7 @@ export class LockSettlement {
     this.peersFor = peersFor;
     this.fetcher = fetcher;
     this.built = new Map();          // round id hex -> the settlement this signer node rebuilt
+    this.planCertificates = new Map(); // round id hex [:late entry hex] -> { planId, certificate } the seats signed
     this.planRetries = new Map();    // round id hex -> how often a peer refused the send plan
     this.retryTimers = new Set();
     this.pairs = new Map();          // round id hex -> { hiding, binding, commitment, list, share }
@@ -354,16 +356,9 @@ export class LockSettlement {
     const body = JSON.stringify(proposed.rows.map(sendPlanToJson));
     const peers = this.peersFor(roundIdBytes);
     if (!peers.length && got.contract.nodes.length > 1) return refuse('this signer node knows no peer to hand the late send plan to yet');
-    const refused = [];
-    for (const base of peers) {
-      try {
-        const r = await this.fetcher(`${base}/settle-sends?round=${toHex(roundIdBytes)}&late=${toHex(entryIdBytes)}`, { method: 'POST', body });
-        if (!r.ok) refused.push(`${base}: ${(await r.text()).trim()}`);
-      } catch (e) { refused.push(`${base}: ${e.message}`); }
-    }
-    const need = receiptsNeeded(got.contract.nodes.length);
-    const took = 1 + peers.length - refused.length;
-    if (took < need) return refuse(`${took} of the ${need} signer nodes the late settlement needs took its send plan: ${refused.join('; ')}`);
+    const agreed = await this.planAgreed(roundIdBytes, entryIdBytes, body, got.contract, peers,
+      `${toHex(roundIdBytes)}&late=${toHex(entryIdBytes)}`);
+    if (!agreed.final) return refuse(`${agreed.agreed} of the ${agreed.needed} seats the late settlement needs signed its send plan: ${agreed.refused.join('; ')}`);
     this.built.delete(`${toHex(roundIdBytes)}:${toHex(entryIdBytes)}`);
     return { ok: true, rows: proposed.rows };
   }
@@ -375,7 +370,7 @@ export class LockSettlement {
     if (!got.ok) return got;
     const checked = await this.lateWinningsFor(roundIdBytes, entryIdBytes).check(roundIdBytes, got.base, proposed);
     if (checked.ok) this.built.delete(`${toHex(roundIdBytes)}:${toHex(entryIdBytes)}`);
-    return checked;
+    return checked.ok ? { ...checked, taken: this.planTakenBy(planTakenId({ roundId: roundIdBytes, lateEntryId: entryIdBytes, rows: proposed })) } : checked;
   }
 
   /** The accepted late settlement's winnings, sent - by the round's asker; the others answer and keep the preimage. */
@@ -760,28 +755,86 @@ export class LockSettlement {
     if (!proposed.ok) return proposed;
     // AN EMPTY PLAN IS HANDED OUT TOO: a peer that holds an address this signer node does not refuses it by name.
     const body = JSON.stringify(proposed.rows.map(sendPlanToJson));
-    const refused = [];
     const peers = this.peersFor(roundIdBytes);
     // A PLAN HANDED TO NOBODY IS NOT TAKEN. Measured: a signer node restarted inside a settlement asked again before it
     // knew its peers, "handed" a new plan to none, and the peer went on refusing against the old one.
     if (!peers.length && got.contract.nodes.length > 1)
       return { ...refuse('this signer node knows no peer to hand the send plan to yet, so nothing is settled'), peerRefused: true };
-    for (const base of peers) {
-      try {
-        const r = await this.fetcher(`${base}/settle-sends?round=${toHex(roundIdBytes)}`, { method: 'POST', body });
-        if (!r.ok) refused.push(`${base}: ${(await r.text()).trim()}`);
-      } catch (e) { refused.push(`${base}: ${e.message}`); }
-    }
     // THE ROUND'S SIGNING THRESHOLD TAKES IT, NOT EVERY PEER (measured on a 5-of-7: one signer node that saw the run end
     // otherwise refused the plan, and nothing was ever settled). The settlement is signed by whoever rebuilt the same
-    // bytes; the plan needs as many as that signature does. A 2-of-2 still needs both.
-    const need = receiptsNeeded(got.contract.nodes.length);
-    const took = 1 + peers.length - refused.length;
-    if (took < need)
-      return { ...refuse(`${took} of the ${need} signer nodes the settlement needs took the send plan, so nothing is settled: ${refused.join('; ')}`), peerRefused: true };
-    if (refused.length) console.log(`[winnings] ${toHex(roundIdBytes).slice(0, 16)} the send plan was taken by ${took} of ${1 + peers.length} signer nodes; refused: ${refused.join('; ')}`);
+    // bytes; the plan needs as many as that signature does. A 2-of-2 still needs both. AND IT IS COUNTED IN SIGNATURES,
+    // NOT HTTP STATUSES (plan-taken.js): a seat's yes is its node key's signature over the plan's id.
+    const agreed = await this.planAgreed(roundIdBytes, null, body, got.contract, peers, toHex(roundIdBytes));
+    if (!agreed.final)
+      return { ...refuse(`${agreed.agreed} of the ${agreed.needed} seats the settlement needs signed the send plan, so nothing is settled: ${agreed.refused.join('; ')}`), peerRefused: true };
+    console.log(`[winnings] ${toHex(roundIdBytes).slice(0, 16)} ${agreed.agreed} of ${got.contract.nodes.length} seats signed send plan ${toHex(agreed.planId).slice(0, 16)} (${agreed.needed} needed)${agreed.refused.length ? `; did not count: ${agreed.refused.join('; ')}` : ''}`);
     this.built.delete(toHex(roundIdBytes));
     return { ok: true, rows: proposed.rows };
+  }
+
+  /**
+   * THE SEATS' SIGNED AGREEMENT ON A SEND PLAN (plan-taken.js): the plan handed to every peer, each answer a signed
+   * acceptance or nothing, and only verified signatures by the round's seats over this plan's id counted - this seat's
+   * own among them. The certificate that counted is kept, for GET /settle-taken and for anyone who checks it.
+   */
+  async planAgreed(roundIdBytes, lateEntryId, body, contract, peers, query) {
+    const planId = planTakenId({ roundId: roundIdBytes, lateEntryId, rows: JSON.parse(body) });
+    const own = this.planTakenBy(planId);
+    const answers = [];
+    for (const base of peers) {
+      try {
+        const r = await this.fetcher(`${base}/settle-sends?round=${query}`, { method: 'POST', body });
+        if (!r.ok) { answers.push({ base, why: (await r.text()).trim() }); continue; }
+        answers.push({ base, bytes: new Uint8Array(await r.arrayBuffer()) });
+      } catch (e) { answers.push({ base, why: e.message }); }
+    }
+    const counted = countPlanTaken({ own, answers, seats: contract.nodes, planId });
+    if (counted.final) {
+      const certificate = joinCertificate(counted.certificate);
+      this.planCertificates.set(lateEntryId ? `${toHex(roundIdBytes)}:${toHex(lateEntryId)}` : toHex(roundIdBytes), { planId, certificate });
+      // EVERY SEAT HOLDS IT, not the asker alone: handed to each peer, which keeps it only if it stands against the plan
+      // that peer kept itself (`takeCertificate`). A peer that misses it still signed its own acceptance.
+      const body = new Uint8Array(32 + certificate.length); body.set(planId, 0); body.set(certificate, 32);
+      for (const a of answers) {
+        if (!a.bytes) continue;
+        try { await this.fetcher(`${a.base}/settle-taken?round=${query}`, { method: 'POST', body }); } catch { /* it holds its own acceptance */ }
+      }
+    }
+    return { ...counted, planId };
+  }
+
+  /**
+   * A PEER KEEPS THE SEATS' CERTIFICATE only if it stands here: over the id of the plan this seat kept, a threshold of
+   * the round's seats, each signature verified here.
+   */
+  takeCertificate(roundIdBytes, lateEntryId, bytes) {
+    if (!(bytes instanceof Uint8Array) || bytes.length < 32) return refuse('a certificate is a plan id and signed acceptances', 400);
+    const row = this.round.get(roundIdBytes);
+    if (!row) return refuse('this seat holds no such round');
+    const contract = decodeRoundContract(new Uint8Array(row.contract));
+    const sender = lateEntryId ? this.lateWinningsFor(roundIdBytes, lateEntryId) : this.winnings;
+    if (!sender) return refuse('this signer node sends no winnings');
+    const kept = sender.keptPlan(roundIdBytes);
+    if (!kept.length) return refuse('this seat keeps no send plan for that settlement');
+    const planId = planTakenId({ roundId: roundIdBytes, lateEntryId, rows: kept });
+    if (toHex(planId) !== toHex(bytes.subarray(0, 32))) return refuse('that certificate is for another plan than the one this seat kept');
+    const records = splitCertificate(bytes.subarray(32));
+    const counted = countPlanTaken({ own: records[0], answers: records.slice(1).map((b, i) => ({ base: `record ${i + 1}`, bytes: b })),
+      seats: contract.nodes, planId });
+    if (!counted.final) return refuse(`${counted.agreed} of the ${counted.needed} seats in that certificate stand here: ${counted.refused.join('; ')}`);
+    this.planCertificates.set(lateEntryId ? `${toHex(roundIdBytes)}:${toHex(lateEntryId)}` : toHex(roundIdBytes),
+      { planId, certificate: joinCertificate(counted.certificate) });
+    return { ok: true, agreed: counted.agreed, needed: counted.needed };
+  }
+
+  /** This seat's signed acceptance of a plan id. */
+  planTakenBy(planId) {
+    return signPlanTaken({ planId, secret: this.round.identity.secret, pubkey: this.round.pubkey });
+  }
+
+  /** The certificate a settlement's plan was agreed by, or null. */
+  planCertificate(roundIdBytes, lateEntryId = null) {
+    return this.planCertificates.get(lateEntryId ? `${toHex(roundIdBytes)}:${toHex(lateEntryId)}` : toHex(roundIdBytes)) || null;
   }
 
   retryPlan(roundIdBytes, { everyMs = 1000, most = 120 } = {}) {
@@ -877,7 +930,7 @@ export class LockSettlement {
     if (!got.ok) return got;
     const checked = await this.winnings.check(roundIdBytes, got.base, proposed);
     if (checked.ok) this.built.delete(toHex(roundIdBytes));
-    return checked;
+    return checked.ok ? { ...checked, taken: this.planTakenBy(planTakenId({ roundId: roundIdBytes, rows: proposed })) } : checked;
   }
 
   /** The settled round's winnings, sent (winnings-send.js `sendAll`). */
