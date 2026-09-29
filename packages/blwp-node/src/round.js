@@ -665,9 +665,16 @@ export class Round {
     // player's own late start: refused - no receipt - and kept as the evidence
     // the entry is FORFEIT. Not ENTRY_VOID: a refund the player could choose by
     // starting late is one §13C forbids. In time, it goes on as any mark. A
-    // player with no first mark is not decided here at all (§15, unbuilt).
+    // player with no first mark is decided at the door (server.js door sweep, ALL-BUT-MIN-1727).
     if (same(c.previousHash, NO_PREVIOUS)) {
       const joined = decodeEntryContract(new Uint8Array(entry.contract));
+      // AFTER THE DOOR (ALL-BUT-MIN-1727): this signer node already signed the entry FORFEIT because no first mark came
+      // before its start window passed. A first mark now is that same late start - refused, kept as the evidence.
+      if (this.hasResult(c.roundId, c.entryId, this.pubkey)) {
+        const why = 'this signer node signed the entry FORFEIT at the door: no first mark came before its start window passed';
+        this.putStartForfeit({ entryId: c.entryId, roundId: c.roundId, markTick: c.tick, lastTick: joined.joinTick, mark: bytes, why });
+        throw new Error(`FORFEIT: ${why}`);
+      }
       let decided;
       try {
         const rc = decodeRoundContract(new Uint8Array(round.contract));

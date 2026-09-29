@@ -15,7 +15,7 @@ import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../protocol/src/gene
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId } from '../../protocol/src/donation.js';
 import {
-  seriesTemplate, seriesId, seriesRound, seriesRoundsWithin, seriesLeadIsValid, seriesPublicationPayload,
+  seriesTemplate, seriesId, seriesRound, seriesRoundsWithin, seriesLeadIsValid, seriesPublicationPayload, seriesIndexAt, seriesStartOf,
   ROUND_PERIOD_MS, SERIES_MAX_MS, SERIES_LEAD_MIN_MS, ROUNDS_PER_SERIES, SERIES_CLOCKS, seriesClockFor, SERIES_WRITE_AHEAD_MS,
 } from '../../protocol/src/series.js';
 
@@ -36,7 +36,8 @@ const base = (nodes) => ({
 });
 
 test('a series: 960 rounds 90 s apart, each closing entry at its start, and its publication is "BLW" S + its id', () => {
-  const t = seriesTemplate(base([b32(7)]), BigInt(NOW) + 100n * BigInt(H));
+  const k = seriesIndexAt(NETWORK_ID_REGTEST, NOW + 100 * Number(H));
+  const t = seriesTemplate(base([b32(7)]), k);
   assert.equal(ROUNDS_PER_SERIES, 960);
   assert.equal(t.startTimeMs - t.committeeTimeMs, 72n * BigInt(H), 'mainnet (and regtest): committee_time = series_start - 72 h (CENSUS3D-1401)');
   assert.deepEqual(seriesLeadIsValid(t).ok, true);
@@ -48,17 +49,22 @@ test('a series: 960 rounds 90 s apart, each closing entry at its start, and its 
   const p = seriesPublicationPayload(seriesId(t));
   assert.deepEqual([...p.subarray(0, 4)], [0x42, 0x4c, 0x57, 0x53]);
   assert.equal(p.length, 36);
-  const moved = seriesTemplate(base([b32(7)]), t.startTimeMs + ROUND_PERIOD_MS);
-  assert.notDeepEqual(seriesId(moved), seriesId(t), 'another start is another series');
+  const next = seriesTemplate(base([b32(7)]), k + 1);
+  assert.notDeepEqual(seriesId(next), seriesId(t), 'another series is another id');
+  assert.equal(next.startTimeMs - t.startTimeMs, SERIES_MAX_MS, 'series k+1 starts 24 h after series k');
+  // A SERIES DOES NOT NAME ITS OWN START (ALL-BUT-MIN-1727): one moved off the genesis grid is refused
+  const moved = { ...t, startTimeMs: t.startTimeMs + ROUND_PERIOD_MS, entryCloseMs: t.startTimeMs + ROUND_PERIOD_MS, committeeTimeMs: t.committeeTimeMs + ROUND_PERIOD_MS };
+  assert.match(seriesLeadIsValid(moved).why, /genesis_series_start/);
+  assert.equal(t.startTimeMs, seriesStartOf(NETWORK_ID_REGTEST, k));
 });
 
 test('the node writes every round of the next 72 hours, the one 72 h out among them, and lists it', async () => {
   const node = await serve(openStore(':memory:'), { port: 0, funded: () => true, now: () => NOW });
   const nodes = [node.round.pubkey];
   await node.close();
-  // three consecutive series from an hour from now: 72 h of rounds needs three 24 h series
-  const firstStart = BigInt(NOW) + BigInt(H);
-  const series = [0n, 1n, 2n].map((k) => seriesTemplate(base(nodes), firstStart + k * SERIES_MAX_MS));
+  // THE SERIES RUNNING NOW AND THE NEXT THREE, on the genesis grid: 72 h of rounds from now spans them
+  const k0 = seriesIndexAt(NETWORK_ID_REGTEST, NOW) - 1;
+  const series = [0, 1, 2, 3].map((j) => seriesTemplate(base(nodes), k0 + j));
   const t0 = Date.now();
   const s = await serve(openStore(':memory:'), { port: 0, funded: () => true, roundClock: () => NOW, series });
   const tookMs = Date.now() - t0;
@@ -67,7 +73,7 @@ test('the node writes every round of the next 72 hours, the one 72 h out among t
     const summary = await (await fetch(`http://127.0.0.1:${s.port}/series`)).json();
     const written = summary.series.reduce((n, x) => n + x.written, 0);
     assert.equal(written, expected);
-    const last = summary.series[2].last;
+    const last = summary.series.map((x) => x.last).filter(Boolean).sort((a, b) => (BigInt(a.startTimeMs) < BigInt(b.startTimeMs) ? -1 : 1)).at(-1);
     const lastStart = BigInt(last.startTimeMs);
     assert.ok(lastStart <= BigInt(NOW) + SERIES_LEAD_MIN_MS && lastStart > BigInt(NOW) + SERIES_LEAD_MIN_MS - ROUND_PERIOD_MS,
       `the last written round starts within 90 s of now + 72 h, not at ${lastStart - BigInt(NOW)} ms`);
@@ -97,7 +103,7 @@ test('the node writes every round of the next 72 hours, the one 72 h out among t
 });
 
 test('a series with less than the 72 h lead is refused whole, by name', async () => {
-  const t = seriesTemplate(base([b32(7)]), BigInt(NOW) + BigInt(H));
+  const t = seriesTemplate(base([b32(7)]), seriesIndexAt(NETWORK_ID_REGTEST, NOW) + 1);
   const short = { ...t, committeeTimeMs: t.startTimeMs - 48n * BigInt(H) };        // the 48 h this morning ruled out
   assert.match(seriesLeadIsValid(short).why, /must exist 259200000 ms \(72 h\) before its first entry/);
   await assert.rejects(async () => serve(openStore(':memory:'), { port: 0, funded: () => true, roundClock: () => NOW, series: [short] }), /series refused/);
@@ -114,13 +120,14 @@ test('testnet4 runs a 24 h committee clock on a 36 h census, mainnet one 72 h, a
   assert.equal(seriesClockFor(NETWORK_ID_REGTEST), SERIES_CLOCKS.mainnet);
   assert.equal(seriesClockFor(NETWORK_ID_TESTNET4), SERIES_CLOCKS.testnet4);
   assert.equal(Number(SERIES_WRITE_AHEAD_MS) / H, 72);
-  // census 154206, median 2026-09-28T07:52:04Z: series_start = MTP + 36 h + 1 s, committee_time 12 h after the census
-  const mtp = BigInt(Date.parse('2026-09-28T07:52:04Z'));
+  // SERIES 0 ON TESTNET4 starts at its genesis_series_start, 2026-10-01T00:00Z (ALL-BUT-MIN-1727): committee_time 24 h
+  // before it, the census cut 36 h before it - so committee_time is 12 h after the census, the publication window
   const tn = { ...base([b32(7)]), networkId: NETWORK_ID_TESTNET4 };
-  const t = seriesTemplate(tn, mtp + SERIES_CLOCKS.testnet4.censusLeadMs + 1000n);
-  assert.equal(new Date(Number(t.startTimeMs)).toISOString(), '2026-09-29T19:52:05.000Z');
-  assert.equal(new Date(Number(t.committeeTimeMs)).toISOString(), '2026-09-28T19:52:05.000Z');
-  assert.equal(t.committeeTimeMs - mtp, 12n * BigInt(H) + 1000n, 'committee_time 12 h after the census median, not 1 s');
+  const t = seriesTemplate(tn, 0);
+  assert.equal(new Date(Number(t.startTimeMs)).toISOString(), '2026-10-01T00:00:00.000Z');
+  assert.equal(new Date(Number(t.committeeTimeMs)).toISOString(), '2026-09-30T00:00:00.000Z');
+  const censusCut = t.startTimeMs - SERIES_CLOCKS.testnet4.censusLeadMs;
+  assert.equal(t.committeeTimeMs - censusCut, 12n * BigInt(H), 'committee_time 12 h after the census cut');
   assert.equal(seriesLeadIsValid(t).ok, true);
   assert.equal(seriesLeadIsValid({ ...t, committeeTimeMs: t.startTimeMs - 23n * BigInt(H) }).ok, false, 'testnet4 refuses under 24 h');
   // the 3 October series keeps its 84 h lead and stays valid on testnet4
@@ -128,11 +135,11 @@ test('testnet4 runs a 24 h committee clock on a 36 h census, mainnet one 72 h, a
   // the writer on testnet4: 72 h of rounds ahead, not 24
   const node = await serve(openStore(':memory:'), { port: 0, funded: () => true });
   const nodes = [node.round.pubkey]; await node.close();
-  const series = [0n, 1n, 2n].map((k) => seriesTemplate({ ...base(nodes), networkId: NETWORK_ID_TESTNET4 }, BigInt(NOW) + BigInt(H) + k * SERIES_MAX_MS));
+  const series = [0, 1, 2].map((k) => seriesTemplate({ ...base(nodes), networkId: NETWORK_ID_TESTNET4 }, k));
   const s = await serve(openStore(':memory:'), { port: 0, funded: () => true, roundClock: () => NOW, series });
   try {
     const sum = await (await fetch(`http://127.0.0.1:${s.port}/series`)).json();
-    const last = BigInt(sum.series[2].last.startTimeMs);
+    const last = BigInt(sum.series.map((x) => x.last).filter(Boolean).sort((a, b) => (BigInt(a.startTimeMs) < BigInt(b.startTimeMs) ? -1 : 1)).at(-1).startTimeMs);
     assert.ok(last > BigInt(NOW) + 72n * BigInt(H) - ROUND_PERIOD_MS && last <= BigInt(NOW) + 72n * BigInt(H), 'testnet4 rounds written 72 h ahead');
     console.log(`  FACTS: testnet4 written ${sum.series.reduce((n, x) => n + x.written, 0)}, last ${(Number(last) - NOW) / H} h out`);
   } finally { await s.close(); }

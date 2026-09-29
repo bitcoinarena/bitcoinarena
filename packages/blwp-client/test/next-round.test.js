@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { nextRoundAfter, nextRoundView, joiningNextRoundIn, EXIT_GAME, RESULT_CARD_MS } from '../src/next-round.js';
-import { seriesTemplate, seriesRound, ROUND_PERIOD_MS } from '../../protocol/src/series.js';
+import { seriesTemplate, seriesRound, seriesIndexAt, ROUND_PERIOD_MS } from '../../protocol/src/series.js';
 import { roundEndMs } from '../../protocol/src/first-mark.js';
 import { roundId } from '../../protocol/src/contracts.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
@@ -25,10 +25,10 @@ const base = (stakeMsat) => ({
   stakeMsat, bondMinSats: 50000n, blockTicks: 4920, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
   timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4, nodes: [b32(7), b32(8)],
 });
-const START = 1790700000000n;
-const free = seriesTemplate(base(0n), START + 100n * H);
-const paid = seriesTemplate(base(10000000n), START + 100n * H);
-const other = seriesTemplate(base(5000000n), START + 100n * H);
+const K = seriesIndexAt(NETWORK_ID_REGTEST, 1790700000000);
+const free = seriesTemplate(base(0n), K);
+const paid = seriesTemplate(base(10000000n), K);
+const other = seriesTemplate(base(5000000n), K);
 // lobby rows as fetchLobby makes them, entry closing at the start (no late join)
 const row = (c) => ({ id: toHex(roundId(c)), free: c.stakeMsat === 0n, stakeMsat: c.stakeMsat, startTimeMs: c.startTimeMs,
   entryCloseMs: c.entryCloseMs, joinable: true });

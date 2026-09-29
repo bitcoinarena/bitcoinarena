@@ -22,7 +22,7 @@ import { join } from 'node:path';
 import { decodeRoundContract, encodeRoundContract, roundId } from '../../protocol/src/contracts.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 import {
-  seriesTemplate, seriesLeadIsValid, seriesId, seriesPublicationPayload, seriesRound, ROUNDS_PER_SERIES,
+  seriesTemplate, seriesIndexAt, seriesLeadIsValid, seriesId, seriesPublicationPayload, seriesRound, ROUNDS_PER_SERIES,
   seriesClockFor,
 } from '../../protocol/src/series.js';
 
@@ -43,10 +43,13 @@ if (toHex(roundId(live)) !== roundHex) throw new Error(`the node answered a cont
 const mtpOf = (h) => BigInt(JSON.parse(cli('getblockheader', cli('getblockhash', String(h)))).mediantime) * 1000n;
 const H = live.censusHeight;
 const { censusLeadMs: SERIES_CENSUS_LEAD_MS } = seriesClockFor(live.networkId);   // testnet4: 36 h (TN24-1405 + 36 h census)
-const start = mtpOf(H) + SERIES_CENSUS_LEAD_MS + 1000n;
-if (mtpOf(H + 1) <= start - SERIES_CENSUS_LEAD_MS)
-  throw new Error(`block ${H + 1}'s median time is not after series_start - census lead: the census rule would name another height`);
-const template = seriesTemplate(live, start);
+// SERIES k STARTS AT genesis_series_start + k * 24 h (ALL-BUT-MIN-1727): the first series whose census cut is at or after
+// block H's median, and H must be the highest block at or below that cut - otherwise the census names another height
+const k = seriesIndexAt(live.networkId, mtpOf(H) + SERIES_CENSUS_LEAD_MS);
+const template = seriesTemplate(live, k);
+const cut = template.startTimeMs - SERIES_CENSUS_LEAD_MS;
+if (!(mtpOf(H) <= cut && mtpOf(H + 1) > cut))
+  throw new Error(`series ${k} cuts its census at ${cut}; block ${H} is not the highest block at or below it, so that round's census names another series`);
 const lead = seriesLeadIsValid(template);
 if (!lead.ok) throw new Error(lead.why);
 const tip = JSON.parse(cli('getblockchaininfo'));

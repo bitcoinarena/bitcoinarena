@@ -15,6 +15,7 @@
 // and no committee; those are M2.1 steps 4 and later, and each is refused
 // rather than half-built.
 import { seriesWriter } from './series-writer.js';
+import { seriesRoundCheck } from '../../protocol/src/series.js';
 import { federationGatewayCount } from '../../protocol/src/gateways.js';
 import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
@@ -24,7 +25,8 @@ import { decodeRoundContract, decodeEntryContract, publicationRelaysAreValid, cu
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 import { lobbyListingId } from '../../protocol/src/lobby-listing.js';
 import { decodeLobbyName, lobbyNameId } from '../../protocol/src/lobby-name.js';
-import { roundEndMs } from '../../protocol/src/first-mark.js';
+import { roundEndMs, startDeadlineOf } from '../../protocol/src/first-mark.js';
+import { msForTicks } from '../../protocol/src/tick.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { lightningAddressEndpoint } from '../../protocol/src/lnurl-pay.js';
 import { WinningsSend, sendPlanToJson } from './winnings-send.js';
@@ -225,6 +227,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // its own clock once it is over (protocol roundEndMs). `true`, or
   // `{ everyMs }`. Off by default: a harness closes its rounds when it says so.
   closeAtEnd = false,
+  // §15 AT THE DOOR (ALL-BUT-MIN-1727): how often the walk-away door is swept; on wherever the node closes its own rounds.
+  doorSweepMs = closeAtEnd ? 5000 : 0,
   // THE SERIES THIS NODE WRITES AHEAD (NODE72-1131): series templates (protocol/src/series.js `seriesTemplate`), each
   // round of which from now to now + 72 h is opened in this node's store and listed - again every `seriesEveryMs`.
   series = [], seriesEveryMs = 60000,
@@ -1531,6 +1535,44 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // refunded at its lock's expiry and a delivery was never paid. With this on,
   // the signer node closes a round once `roundEndMs` has passed on its own clock, by
   // the very path that message takes, and at start for any round already over.
+  // §15 AT THE DOOR (ALL-BUT-MIN-1727, the owner 2026-09-29 17:27: "A seated player whose stake was committed and who sent
+  // no first mark is FORFEIT, score 0, at the door, not left undecided until the close"). A paying entry whose stake
+  // this signer node has seen and that holds no first mark here is decided once its start window has passed - the later
+  // of the round's start and the stake seen, plus the round's start deadline, plus DOOR_GRACE_MS - by the very
+  // decision the close makes (verifier.retryClose): the peers' receipts carried, and FORFEIT over the empty transcript
+  // only when no signer node holds a first mark and no ENTRY_VOID stands. Never ENTRY_VOID, never a refund. A signer
+  // node it cannot reach still waits, as at the close. Free entries commit no stake and are left to the close.
+  const DOOR_GRACE_MS = 5000;
+  let doorTimer = null;
+  const doorTried = new Map();
+  if (doorSweepMs > 0) {
+    const doorSweep = () => timed('door sweep', () => {
+      if (shuttingDown) return;
+      const nowMs = round.now();
+      for (const held of round.openRounds()) {
+        let c;
+        try { c = decodeRoundContract(held.contract); } catch { continue; }
+        if (c.stakeMsat === 0n || BigInt(nowMs) < c.startTimeMs) continue;
+        let deadlineMs;
+        try { deadlineMs = Number(msForTicks(startDeadlineOf(c)).ms); } catch { continue; }
+        for (const { entryId } of round.entriesOf(held.roundId)) {
+          if (round.hasResult(held.roundId, entryId, round.pubkey) || round.firstMarkHeld(held.roundId, entryId)) continue;
+          const seen = round.stakeSeen(entryId);
+          if (!seen) continue;
+          const door = Math.max(Number(c.startTimeMs), seen.seenMs) + deadlineMs + DOOR_GRACE_MS;
+          if (nowMs < door) continue;
+          const key = `${toHex(held.roundId)}:${toHex(entryId)}`;
+          if (nowMs - (doorTried.get(key) || 0) < 15000) continue;
+          doorTried.set(key, nowMs);
+          verifier.retryClose(held.roundId, entryId).then((r) => {
+            if (r && r.stored) console.log(`[door] ${key.slice(0, 16)} ${toHex(entryId).slice(0, 16)}: no first mark past the start deadline - signed at the door`);
+          }).catch((e) => console.error(`[door] ${key.slice(0, 16)}: ${e.message}`));
+        }
+      }
+    });
+    doorTimer = setInterval(doorSweep, doorSweepMs);
+    doorTimer.unref();
+  }
   let endTimer = null;
   if (closeAtEnd) {
     const sweep = () => timed('close sweep', () => {
@@ -1555,6 +1597,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // AND EVERY ROUND OF THE NEXT 72 HOURS, WRITTEN (NODE72-1131). A series that leaves less than the 72 h lead is
   // refused at start, by name, rather than written short.
   const writers = series.map((t) => seriesWriter(round, t));
+  // A ROUND OF A SERIES IS TAKEN ONLY AS THE SERIES DERIVES IT (ALL-BUT-MIN-1727): its id H(series_id || i) of a series
+  // this node holds, its index inside 0 .. round_count - 1, its entry window the derived one. Every door that takes
+  // something for a round - the round itself, an entry, a lock, a settlement - asks this; a round naming no series
+  // is not a series round and is not touched.
+  const seriesRefusal = (contract) => { const c = seriesRoundCheck(contract, series); return c.ok ? null : c.why; };
+  const seriesRefusalOfRound = (rid) => {
+    const row = rid ? round.get(rid) : null;
+    if (!row) return null;
+    let c;
+    try { c = decodeRoundContract(new Uint8Array(row.contract)); } catch { return null; }
+    return seriesRefusal(c);
+  };
   const seriesIds = () => { const all = new Set(); for (const w of writers) for (const x of w.ids()) all.add(x); return all; };
   let seriesTimer = null;
   if (writers.length) {
@@ -1710,6 +1764,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         let contract;
         try { contract = decodeRoundContract(await read(req)); }
         catch (e) { return text(res, 400, `that is not a round this signer node opens: ${e.message}`); }
+        { const why = seriesRefusal(contract); if (why) return text(res, 409, `series round refused: ${why}`); }
         // Asked BEFORE anything is decoded into the database, so a refusal
         // costs a parse and nothing else.
         if (!funded({ kind: 'round', contract, node: fundingView }))
@@ -2100,6 +2155,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
       if (req.method === 'POST' && url.pathname === '/entry') {
         const contract = decodeEntryContract(await read(req));
+        { const why = seriesRefusalOfRound(contract.roundId); if (why) return text(res, 409, `entry refused: ${why}`); }
         if (!funded({ kind: 'entry', contract, node: fundingView }))
           return text(res, 402, 'this node stores nothing for an entry nobody has funded');
         // THE FEE-LOCK DOOR (the owner 2026-09-14, pick a). Where the round's gate mints fee locks,
@@ -2554,6 +2610,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         catch (e) { return text(res, 400, `that is not a stake lock: ${e.message}`); }
         const stored = round.entry(eid);
         if (!stored) return text(res, 404, 'this node holds no such entry');
+        { const why = seriesRefusalOfRound(decodeEntryContract(stored).roundId); if (why) return text(res, 409, `lock refused: ${why}`); }
         const claimPk = claimKeyOf(decodeEntryContract(stored).roundId);
         let got;
         try { got = await verifyStakeLock({ round, port: stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk }); }
@@ -2574,6 +2631,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         catch (e) { return text(res, 400, `that is not a fee lock: ${e.message}`); }
         const stored = round.entry(eid);
         if (!stored) return text(res, 404, 'this node holds no such entry');
+        { const why = seriesRefusalOfRound(decodeEntryContract(stored).roundId); if (why) return text(res, 409, `lock refused: ${why}`); }
         const claimPk = claimKeyOf(decodeEntryContract(stored).roundId);
         let got;
         try { got = await verifyFeeLock({ round, port: stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk }); }
@@ -2634,6 +2692,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         if (rid.length !== 32) return text(res, 400, 'a settlement is asked for by a round id');
         const r8 = new Uint8Array(rid);
+        { const why = seriesRefusalOfRound(r8); if (why) return text(res, 409, `settlement refused: ${why}`); }
         // A LATE LOSER'S SECOND SETTLEMENT (C3b-1) is asked for by its entry as well: one per (round, entry).
         const lateHex = url.searchParams.get('entry');
         const entry = lateHex ? new Uint8Array(Buffer.from(lateHex, 'hex')) : null;
@@ -2692,6 +2751,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'GET' && url.pathname === '/settle-sends') {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         if (rid.length !== 32) return text(res, 400, 'send plans are for a round id');
+        { const why = seriesRefusalOfRound(new Uint8Array(rid)); if (why) return text(res, 409, `settlement refused: ${why}`); }
         if (!winnings) return text(res, 409, 'this signer node sends no winnings');
         // A LATE SETTLEMENT'S PLANS (C3b-2a), asked for by its late entry as well.
         const lateHex = url.searchParams.get('late');
@@ -2704,6 +2764,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'POST' && url.pathname === '/settle-sends') {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         if (rid.length !== 32) return text(res, 400, 'send plans are for a round id');
+        { const why = seriesRefusalOfRound(new Uint8Array(rid)); if (why) return text(res, 409, `settlement refused: ${why}`); }
         let proposed;
         try { proposed = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch (e) { return text(res, 400, `not JSON: ${e.message}`); }
         if (!Array.isArray(proposed)) return text(res, 400, 'send plans are a list');
@@ -3587,6 +3648,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         clearInterval(lateTimer);
         settlements.stop();
         if (endTimer) clearInterval(endTimer);
+        if (doorTimer) clearInterval(doorTimer);
         if (seriesTimer) clearInterval(seriesTimer);
         for (const t of finalityTimers) clearTimeout(t);
         finalityTimers.clear();
