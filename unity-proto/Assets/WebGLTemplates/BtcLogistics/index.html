@@ -763,6 +763,12 @@
       if (!noLobby && window.BLWP_CONTINUE !== false && window.BLWP_ROUND) continueToTheNextRound(window.BLWP_ROUND);
     };
     function continueToTheNextRound(played) {
+      // ONCE PER RUN: the run's end is said more than once (the core's word, then the session's close), and the first
+      // call has already entered the next round - which is BLWP_ROUND by the second. Measured: the second call looked for
+      // the round after THAT one, found none listed, and the box said "joining next round" with no number while the page
+      // was in fact joining 459d734a.
+      const was = window.BLWP_NEXT;
+      if (was && (was.state === 'looking' || was.state === 'joining') && Date.now() - was.runOverAt < 120000) return;
       // THE COUNTDOWN STANDS FROM THE CARD'S END, LISTED ROUND OR NOT (the owner 2026-09-29 17:45, SEE-AND-COPIED-1745: he
       // saw no countdown - the box waited for the nodes to list the next round, up to a minute on the Daily). Until the
       // next round is listed it counts to the played round's start + 90 s, or the next 90 s step after it that has not
@@ -1950,6 +1956,10 @@
             if (raw) r = { id, free: raw.free, stakeSats: BLWPCLIENT.lobbyStakeSats(raw), join: BLWPCLIENT.lobbyJoinSearch(search, id) };
           }
           if (!r) return false;
+          // EVERY RUN STARTS AT ITS ROUND'S START, PLAY FROM THE LOBBY TOO (the owner 2026-09-29 22:00, PRIORITIES item 6: "Free
+          // play does not keep the old clock"): a round not yet started is joined now and held to its start, as the next
+          // round after a run is. Measured before: PLAY into a free 90 s round 26 s ahead of its start began the run at once.
+          if (!holdUntilMs) { const st = Number((r.raw && r.raw.startTimeMs) || 0); if (st > Date.now()) holdUntilMs = st; }
           // PLAY FROM THE LOBBY CONTINUES AGAIN after an exit game (the next-round chain is the player's to stop, not forever)
           if (!next) window.BLWP_CONTINUE = true;
           if (window.BLWP_JOIN && window.BLWP_JOIN.state === 'joining') return true;
@@ -1995,7 +2005,7 @@
               // A CONTINUED ROUND STARTS WITH EVERYBODY (spec: "the next run starts with everybody else at start_time(i+1)"):
               // entered now, it is "joined" for Unity - which starts the run on it - only at the round's own start.
               if (window.BLWP_ENTRY && holdUntilMs > Date.now()) {
-                join.stage = 'next round';
+                join.stage = next ? 'next round' : 'until the round starts';
                 join.held = true;
                 const release = () => {
                   if (join.cancelled || window.BLWP_JOIN !== join) return;
