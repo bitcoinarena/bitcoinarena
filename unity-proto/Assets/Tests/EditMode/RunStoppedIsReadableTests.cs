@@ -81,15 +81,6 @@ public class RunStoppedIsReadableTests
         Object.DestroyImmediate(hud.gameObject);
     }
 
-    /// <summary>The line itself is unchanged: still the client's own reason, still not invented here.</summary>
-    [Test]
-    public void TheLineIsStillTheReasonTheNetLayerGave()
-    {
-        Assert.AreEqual("RUN STOPPED - the node refuses this run's inputs at tick 9406: error the round is closed",
-            DriveHud.RunStoppedLine("VOID the node refuses this run's inputs at tick 9406: error the round is closed"));
-        Assert.AreEqual("", DriveHud.RunStoppedLine(""), "no reason, no row");
-    }
-
     /// <summary>
     /// AND THE REASON MUST OUTLAST THE POLL. Measured in the bay: 0.6 s between the VOID and the lobby, against a
     /// 0.5 s reason poll, so the row appeared or did not depending on which landed first - bay-04.png has the

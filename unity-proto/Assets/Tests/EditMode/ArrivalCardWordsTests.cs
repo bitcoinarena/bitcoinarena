@@ -139,17 +139,17 @@ public class ArrivalCardWordsTests
             {
                 int w = (int)f.x, h = (int)f.y;
                 float head0 = DriveHud.CardHead(w, h, true);
-                float stopped = DriveHud.RunStoppedFont(w, h) * 1.4f;          // one line of "RUN STOPPED - the core said DELIVERED at tick 4596"
-                float k = hud.ArrivalScale(w, h, head0, stopped, true, true);
+                // NO RUN-STOPPED ROW, NO WHO-LEADS ROW (CARD-NARROW-2101, NO-STOPPED-LINE-2103)
+                float k = hud.ArrivalScale(w, h, head0, 0f, false, true);
                 float head = head0 * k;
-                float[] heights = DriveHud.ArrivalRowHeights(head, DriveHud.ArrivalMidFont(head), DriveHud.ArrivalLineFont(head), stopped * k, true, true);
+                float[] heights = DriveHud.ArrivalRowHeights(head, DriveHud.ArrivalMidFont(head), DriveHud.ArrivalLineFont(head), 0f, false, true);
                 var card = hud.ArrivalBox(w, h);
                 var rows = DriveHud.ArrivalRows(card, head * 0.55f, heights);
                 Debug.Log($"[result card] {w}x{h}: card {card.x:0},{card.y:0} {card.width:0}x{card.height:0} (bottom {card.yMax:0} of {h}), "
                           + $"{rows.Length} rows, font scale {k:0.00}");
                 Assert.LessOrEqual(card.yMax, h, $"the card runs off the bottom at {w}x{h}");
                 Assert.GreaterOrEqual(card.x, 0f); Assert.LessOrEqual(card.xMax, w);
-                Assert.AreEqual(7, rows.Length, "run stopped, headline, score, leading, factors, foot, copy game replay");
+                Assert.AreEqual(5, rows.Length, "headline, score, factors, foot, copy game replay");
                 for (int i = 0; i < rows.Length; i++)
                 {
                     Assert.GreaterOrEqual(rows[i].y, card.y, $"row {i} starts above the card at {w}x{h}");
@@ -157,9 +157,33 @@ public class ArrivalCardWordsTests
                     for (int j = i + 1; j < rows.Length; j++)
                         Assert.LessOrEqual(rows[i].yMax, rows[j].y + 0.01f, $"row {i} crosses row {j} at {w}x{h}");
                 }
-                // the run-stopped sentence is the card's own FIRST row, above the headline - never drawn across it
-                Assert.Less(rows[0].yMax, rows[1].y + 0.01f);
             }
+        }
+        finally { Object.DestroyImmediate(hud.gameObject); }
+    }
+
+    /// <summary>
+    /// ON A PHONE HELD UPRIGHT THE CARD HAS THE WIDTH (the owner 2026-09-29 21:01, CARD-NARROW-2101: on his phone the card was
+    /// the centre strip, 150 of 924 px in his shot, and broke RUN STOPPED and DELIVERED mid-word). At the phone's own size -
+    /// 390x844 points and its 1170x2532 pixels - the card is at least 88% of the width, starts under the left column
+    /// (SIM, its last box) and ends on the screen; a landscape screen keeps the gap between the columns.
+    /// </summary>
+    [Test]
+    public void OnAnUprightPhoneTheCardTakesTheWidth()
+    {
+        var hud = new GameObject("hud").AddComponent<DriveHud>();
+        try
+        {
+            foreach (var (w, h) in new[] { (390, 844), (1170, 2532), (360, 780) })
+            {
+                var card = hud.ArrivalBox(w, h);
+                Assert.GreaterOrEqual(card.width, w * 0.88f, $"{w}x{h}: the card is {card.width:0} of {w} wide");
+                Assert.GreaterOrEqual(card.x, 0f); Assert.LessOrEqual(card.xMax, w);
+                Assert.GreaterOrEqual(card.y, hud.SimBox(w, h).yMax, $"{w}x{h}: the card starts on the left column");
+                Assert.LessOrEqual(card.yMax, h, $"{w}x{h}: the card runs off the bottom");
+            }
+            var wide = hud.ArrivalBox(1280, 720);
+            Assert.AreEqual(hud.HeadlineBox(1280, 720).width, wide.width, 0.5f, "landscape keeps the gap between the columns");
         }
         finally { Object.DestroyImmediate(hud.gameObject); }
     }
@@ -167,8 +191,6 @@ public class ArrivalCardWordsTests
     [Test]
     public void WhileTheCardIsUpNothingElseIsDrawnThroughIt()
     {
-        Assert.IsTrue(DriveHud.RunStoppedRowHiddenBy(arrivalCarriesIt: true), "the separate run-stopped row is still drawn across the card");
-        Assert.IsFalse(DriveHud.RunStoppedRowHiddenBy(arrivalCarriesIt: false), "the run-stopped row is gone when there is no card to carry it");
         Assert.IsTrue(DriveHud.WaypointHiddenBy(arrivalShowing: true), "the DROP-OFF marker is still drawn through the card");
         Assert.IsFalse(DriveHud.WaypointHiddenBy(arrivalShowing: false), "the DROP-OFF marker is gone on the road");
     }

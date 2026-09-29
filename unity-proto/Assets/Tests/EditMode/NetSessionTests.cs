@@ -126,30 +126,17 @@ public class NetSessionTests
     }
 
     /// <summary>
-    /// WHAT THE PLAYER IS TOLD, AND WHAT THEY ARE NOT.
-    ///
-    /// The client's word is `VOID`, which is the protocol's name for what a
-    /// COMMITTEE decides under the no-quorum rule - not something a browser may
-    /// announce. What this client knows is that it cannot record any more of
-    /// this round, and that is all the screen says. A payout word on a HUD
-    /// would be a browser-side outcome, which is the one thing the whole design
-    /// forbids.
+    /// NO RUN-STOPPED SENTENCE ON ANY ENDING (the owner 2026-09-29 21:03, NO-STOPPED-LINE-2103): "RUN STOPPED - the core said
+    /// DELIVERED at tick 1845" broke mid-word on his phone and says nothing the ending's headline does not. The HUD has no
+    /// sentence to print and no draw to print it with - on delivery, WRECKED, WASTED, the timer, a miss, an empty truck, VOID.
     /// </summary>
     [Test]
-    public void TheStoppedLineSaysWhyAndNotWhatItPays()
+    public void NoEndingPrintsARunStoppedSentence()
     {
-        const string ending = "VOID a tick was dropped at 601: the hold was full at 600, "
-                              + "so no transcript from here can be replayed";
-        string line = DriveHud.RunStoppedLine(ending);
-
-        Assert.IsTrue(line.StartsWith("RUN STOPPED"), line);
-        StringAssert.Contains("the hold was full at 600", line,
-            "the player is told why, in the client's own words");
-
-        foreach (var word in new[] { "VOID", "REFUND", "REFUNDED", "WON", "LOST",
-                                     "FORFEIT", "PAID", "DELIVERED" })
-            Assert.IsFalse(line.ToUpperInvariant().Contains(word),
-                $"the HUD claimed an outcome: {word} in \"{line}\"");
+        const System.Reflection.BindingFlags All = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic
+            | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Instance;
+        foreach (var name in new[] { "RunStoppedLine", "DrawRunStopped", "RunStoppedRowHiddenBy" })
+            Assert.IsNull(typeof(DriveHud).GetMethod(name, All), $"DriveHud still has {name}");
     }
 
     /// <summary>
@@ -182,13 +169,4 @@ public class NetSessionTests
         finally { Object.DestroyImmediate(hud.gameObject); }
     }
 
-    [Test]
-    public void ALiveRunSaysNothingAtAll()
-    {
-        Assert.AreEqual("", DriveHud.RunStoppedLine(""),
-            "a banner on a healthy run is a banner nobody reads on a broken one");
-        Assert.AreEqual("", DriveHud.RunStoppedLine(null));
-        Assert.AreEqual("RUN STOPPED", DriveHud.RunStoppedLine("VOID"),
-            "and a word with no reason still stops the run rather than saying nothing");
-    }
 }

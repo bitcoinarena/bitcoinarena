@@ -37,7 +37,6 @@ public class DriveHud : MonoBehaviour
     static readonly Color Up = new Color(0.30f, 0.88f, 0.48f);
     static readonly Color Down = new Color(1f, 0.42f, 0.42f);
 
-    Blwp.NetSession _session;
 
     void Awake()
     {
@@ -902,34 +901,19 @@ public class DriveHud : MonoBehaviour
         string scoreLine = ArrivalScoreLine(missed, runScore == null ? 0 : runScore.LastScore);
         string workLine = runScore == null ? "" : ArrivalWorkLine(missed, runScore.LastCargo, runScore.LastExposure, runScore.LastTime, runScore.LastScore);
         string footLine = ArrivalFootLine(missed);
-        // WHO IS LEADING, on the run's end screen (§4.14, the owner 2026-09-19 12:55: "no who-won/who-leads"). The
-        // run ends inside the round, so the word is LEADING; THE BULLS WIN belongs to the round's own end.
-        string leadLine = runScore == null ? null : ChartHud.LiveLeading;
-        // AND WHY THE RUN STOPPED, as the card's own first row while the card is up (18:39: the separate row was drawn
-        // across the headline). DrawRunStopped leaves it to the card for exactly as long as the card carries it.
-        if (_session == null) _session = Object.FindFirstObjectByType<Blwp.NetSession>();
-        string stopped = RunStoppedLine(_session != null ? _session.Ending : "");
+        // NO WHO-LEADS ROW AND NO RUN-STOPPED SENTENCE (the owner 2026-09-29 21:01 CARD-NARROW-2101 and 21:03
+        // NO-STOPPED-LINE-2103): LEVEL / BULLS / BEARS and the lead percent (ChartHud.LiveLeading) do not belong on the
+        // result, and "RUN STOPPED - the core said DELIVERED at tick N" goes on every ending. The headline says the ending.
 
         // Sized off the WIDTH, not the smaller dimension, and scaled together to keep the card's bottom on screen.
         float head0 = CardHead(w, h, true);
-        var stopStyle = new GUIStyle(GUI.skin.label)
-        {
-            alignment = TextAnchor.UpperCenter, fontStyle = FontStyle.Bold, wordWrap = true,
-            fontSize = Mathf.RoundToInt(RunStoppedFont(w, h)),
-        };
         var probe = CardIn(w, h, 10f);
-        float stoppedHeight = stopped.Length == 0 ? 0f : stopStyle.CalcHeight(new GUIContent(stopped), probe.width - 16f) + stopStyle.fontSize * 0.4f;
         // COPY GAME REPLAY, on the card whenever the run that just ended is one the bridge kept (the owner 2026-09-27 13:19:
         // every ending, the run that just ended and not the one before - `BlwpCore.ReplayForThisRun`, taken at the end
         // from the session ROLL OUT found for this run). No longer waiting for the session's closing word as well.
         bool replay = runScore != null && Blwp.BlwpCore.ReplayForThisRun;
-        float scale = ArrivalScale(w, h, head0, stoppedHeight, leadLine != null, replay);
+        float scale = ArrivalScale(w, h, head0, 0f, false, replay);
         int head = Mathf.RoundToInt(head0 * scale);
-        if (stopped.Length > 0)
-        {
-            stopStyle.fontSize = Mathf.Max(9, Mathf.RoundToInt(stopStyle.fontSize * scale));
-            stoppedHeight = stopStyle.CalcHeight(new GUIContent(stopped), probe.width - 16f) + stopStyle.fontSize * 0.4f;
-        }
         var big = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.UpperCenter, fontStyle = FontStyle.Bold, fontSize = head };
         var mid = new GUIStyle(GUI.skin.label)
         {
@@ -942,11 +926,10 @@ public class DriveHud : MonoBehaviour
         FitInto(big, headline, probe.width - 16f, 11);
         FitInto(mid, scoreLine, probe.width - 16f, 10);
         FitInto(line, workLine.Length > footLine.Length ? workLine : footLine, probe.width - 16f, 9);
-        if (leadLine != null) FitInto(mid, leadLine.Length > scoreLine.Length ? leadLine : scoreLine, probe.width - 16f, 10);
 
         // THE ROWS FROM THE FONTS THAT ARE DRAWN, and the card from the rows.
         float padY = head * 0.55f;
-        float[] heights = ArrivalRowHeights(big.fontSize, mid.fontSize, line.fontSize, stoppedHeight, leadLine != null, replay);
+        float[] heights = ArrivalRowHeights(big.fontSize, mid.fontSize, line.fontSize, 0f, false, replay);
         var card = CardIn(w, h, ArrivalHeight(padY, heights));
         var rows = ArrivalRows(card, padY, heights);
 
@@ -959,11 +942,6 @@ public class DriveHud : MonoBehaviour
         GUI.color = Color.white;
 
         int r = 0;
-        if (stopped.Length > 0)
-        {
-            stopStyle.normal.textColor = new Color(1f, 0.78f, 0.25f, k);
-            GUI.Label(Inset(rows[r++]), stopped, stopStyle);
-        }
         big.normal.textColor = missed ? new Color(1f, 0.42f, 0.36f, k) : new Color(Up.r, Up.g, Up.b, k);
         GUI.Label(Inset(rows[r++]), headline, big);
 
@@ -971,11 +949,6 @@ public class DriveHud : MonoBehaviour
 
         mid.normal.textColor = new Color(1f, 0.86f, 0.35f, k);
         GUI.Label(Inset(rows[r++]), scoreLine, mid);
-        if (leadLine != null)
-        {
-            mid.normal.textColor = new Color(1f, 1f, 1f, k * 0.85f);
-            GUI.Label(Inset(rows[r++]), leadLine, mid);
-        }
         // The working, which is the whole point of showing a score at all: it is where the player reads WHY a careful
         // full run scored 40 and a reckless half-empty one scored 700.
         line.normal.textColor = new Color(1f, 1f, 1f, k * 0.92f);
@@ -1390,9 +1363,17 @@ public class DriveHud : MonoBehaviour
     /// it, and stands below the block clock. It is narrower than it was; the
     /// alternative is wider and on top of the numbers.
     /// </summary>
-    Rect CardIn(int w, int h, float height)
+    public Rect CardIn(int w, int h, float height)
     {
         float pad = Mathf.Max(10f, h * 0.022f);
+        // A PHONE HELD UPRIGHT GETS THE WIDTH (the owner 2026-09-29 21:01, CARD-NARROW-2101: on his phone the centre column
+        // broke RUN STOPPED and DELIVERED mid-word). The gap between the columns there is a strip; the card takes the
+        // screen's width under the left column (SIM, the column's last box) for the eight seconds it stands.
+        if (h > w)
+        {
+            float wide = w - 2f * Mathf.Max(8f, w * 0.03f);
+            return new Rect((w - wide) * 0.5f, SimBox(w, h).yMax + pad, wide, height);
+        }
         var head = HeadlineBox(w, h);
         if (head.width <= 0f)
         {
@@ -1464,9 +1445,8 @@ public class DriveHud : MonoBehaviour
         return height <= room || height <= 1f ? 1f : Mathf.Max(0.4f, room / height);
     }
 
-    /// <summary>The arrival card as the shot had it: a networked run - a one-line run-stopped row, who is leading, and
-    /// the copy-game-replay control.</summary>
-    public Rect ArrivalBox(int w, int h) => ArrivalBox(w, h, RunStoppedFont(w, h) * 1.4f, true, true);
+    /// <summary>The arrival card of a networked run: headline, score, factors, foot line and the copy-game-replay control.</summary>
+    public Rect ArrivalBox(int w, int h) => ArrivalBox(w, h, 0f, false, true);
 
     public Rect ArrivalBox(int w, int h, float stoppedHeight, bool lead, bool replay = false)
     {
@@ -2441,13 +2421,6 @@ public class DriveHud : MonoBehaviour
     /// `ending` is `<WORD> <reason>` off the bridge, or empty while the run is
     /// alive. The word is dropped and the reason kept.
     /// </summary>
-    public static string RunStoppedLine(string ending)
-    {
-        if (string.IsNullOrEmpty(ending)) return "";
-        int space = ending.IndexOf(' ');
-        string why = space < 0 ? "" : ending.Substring(space + 1).Trim();
-        return why.Length == 0 ? "RUN STOPPED" : "RUN STOPPED - " + why;
-    }
 
     /// <summary>
     /// UNDER THE HEADLINE STACK, not floating above it.
@@ -2524,44 +2497,11 @@ public class DriveHud : MonoBehaviour
         return new Rect(clock.x, y, clock.width, font * 4.4f);
     }
 
-    /// <summary>The arrival card is up and draws the run-stopped sentence as its own first row (DrawManifest runs).</summary>
-    bool ArrivalCarriesRunStopped => ArrivalShowing && bay != null;
-
     /// <summary>
     /// Nothing else is drawn through the result card while it is up (18:39: the DROP-OFF / DELIVERED marker sat in the
     /// headline). Static so the rule is asserted without a scene.
     /// </summary>
     public static bool WaypointHiddenBy(bool arrivalShowing) => arrivalShowing;
-    public static bool RunStoppedRowHiddenBy(bool arrivalCarriesIt) => arrivalCarriesIt;
-
-    void DrawRunStopped(int w, int h, bool cardCarriesIt = false)
-    {
-        if (RunStoppedRowHiddenBy(cardCarriesIt)) return;
-        // Found once and kept. A session that never existed leaves this null
-        // for the life of the scene, which is a player who was given no node
-        // to play against: they see exactly the HUD that shipped before any of
-        // this existed.
-        if (_session == null) _session = Object.FindFirstObjectByType<Blwp.NetSession>();
-        string line = RunStoppedLine(_session != null ? _session.Ending : "");
-        if (line.Length == 0) return;
-
-        var style = new GUIStyle(GUI.skin.label)
-        {
-            alignment = TextAnchor.UpperCenter,
-            fontStyle = FontStyle.Bold,
-            fontSize = Mathf.RoundToInt(Mathf.Min(w, h) * 0.030f),
-            wordWrap = true,
-        };
-        // THE BOX IS MEASURED FROM THE SENTENCE, not guessed at a multiple of the font. `font * 2.8` cut at
-        // "error the round" and lost "is closed"; `font * 4.4` reached "cannot publish" and cut there. The copy
-        // is the client's own and is not shortened to fit, so the box is the thing that gives - CalcHeight asks
-        // the style how tall this line actually wraps at this width, and the rect is at least that. The minimum
-        // in `RunStoppedBox` stays, so the geometry tests still have something fixed to hold.
-        var box = RunStoppedBox(w, h);
-        float need = style.CalcHeight(new GUIContent(line), box.width);
-        Shadowed(new Rect(box.x, box.y, box.width, Mathf.Max(box.height, need)), line, style,
-                 new Color(1f, 0.78f, 0.25f, 1f));
-    }
 
     void DrawUnderFire(int w, int h)
     {
@@ -3177,14 +3117,8 @@ public class DriveHud : MonoBehaviour
         if (loading)
         {
             DrawWasted(w, h);
-            // AND WHY THE RUN STOPPED, because the bay is where that matters most (the owner 2026-09-20). A truck
-            // still choosing cargo when the block closes is the path that ends VOID, and this branch returned
-            // before `DrawRunStopped` ever ran - so the line was not covered, it was never drawn. Measured on one
-            // build: `ring-28.png` is the bay with the run VOID and nothing on screen, `ring-11.png` is the road
-            // with the same VOID and the line plainly there. The SAME draw is called here; `RunStoppedBox` steps
-            // below the cargo panel so it has somewhere to be.
-            DrawRunStopped(w, h);
-            // AND WHAT THE WAR SAID, for exactly the reason `DrawRunStopped` is here (2026-09-21, measured).
+            // NO RUN-STOPPED SENTENCE HERE EITHER (NO-STOPPED-LINE-2103): the ending's own band says it.
+            // WHAT THE WAR SAID (2026-09-21, measured).
             // This branch returned before `DrawAssaultLog` ever ran, so a declaration made while the player was
             // choosing cargo was not covered by the panel - it was never drawn. Over four rounds on Daily
             // 0.0.1842, 8 of 12 declarations were made with the bay open and the player was told about 0 of
@@ -3200,7 +3134,6 @@ public class DriveHud : MonoBehaviour
         DrawUnderFire(w, h);
         DrawAssaultBanner(w, h);
         DrawAssaultLog(w, h);
-        DrawRunStopped(w, h, ArrivalCarriesRunStopped);
         if (!WaypointHiddenBy(ArrivalShowing)) DrawWaypoint(w, h);
         DrawFallout(w, h);
         DrawHealth(w, h);
