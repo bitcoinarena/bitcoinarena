@@ -256,10 +256,13 @@ public class LoadoutPanel : MonoBehaviour
             // The stake and the danger it attracts, on one line and plainly
             // labelled, so the trade is visible before it is made.
             int risk = bay != null ? Mathf.RoundToInt(bay.HeatOf(c.tx) * 100f) : 0;
-            GUI.Label(new Rect(box.x, box.y + _cap.fontSize * 1.25f, box.width, _capSub.fontSize * 1.5f),
-                      c.loaded ? $"fills {share}% · danger +{risk}%"
-                               : BtcLabel(c.tx.Btc) + $" · danger +{risk}%"
-                                 + (c.tx.Whale ? "  🐋" : ""), _capSub);
+            // WHOLE OR SHRUNK, NEVER CLIPPED (measured at 390x844: "0.00023427 BTC · danger" was cut at both edges and read
+            // "23427 BTC"): three significant digits, fitted to the crate's own width.
+            string sub = c.loaded ? $"fills {share}% · danger +{risk}%"
+                                  : BtcShort(c.tx.Btc) + $" · danger +{risk}%" + (c.tx.Whale ? "  🐋" : "");
+            var subStyle = new GUIStyle(_capSub);
+            if (DriveHud.FitLine(subStyle, sub, box.width - 4f, 8))
+                GUI.Label(new Rect(box.x, box.y + _cap.fontSize * 1.25f, box.width, subStyle.fontSize * 1.5f), sub, subStyle);
 
             // Two lines only. Twenty-one crates in three rows leaves no room
             // for a third, and the value is already told by the colour.
@@ -447,9 +450,12 @@ public class LoadoutPanel : MonoBehaviour
         GUI.color = Color.white;
         Frame(track, new Color(1f, 1f, 1f, 0.25f), 1f);
 
-        style.normal.textColor = Color.white;
-        GUI.Label(new Rect(track.x + 8f, track.y - style.fontSize * 1.35f,
-                           track.width, style.fontSize * 1.4f), label, style);
+        // ONE LINE, FITTED TO THE TRACK (measured at 390x844: "TRUCK 0 BTC of 20 BTC · 0 parcels" wrapped and was cut)
+        var fitted = new GUIStyle(style);
+        fitted.normal.textColor = Color.white;
+        if (DriveHud.FitLine(fitted, label, track.width - 8f, 8))
+            GUI.Label(new Rect(track.x + 8f, track.y - fitted.fontSize * 1.35f,
+                               track.width, fitted.fontSize * 1.4f), label, fitted);
     }
 
     /// <summary>
@@ -484,6 +490,14 @@ public class LoadoutPanel : MonoBehaviour
     /// <summary>AUTO's and ROLL OUT's height: the row's on a desktop, 2.2 rows on a phone - a thumb's target.</summary>
     public static float ButtonHeight(int w, int h, float lh) => Phone(w, h) ? lh * 2.2f : lh;
 
+    /// <summary>A parcel's BTC on its crate: three significant digits (0.000234, 0.0036, 12.3), no trailing zeros.</summary>
+    public static string BtcShort(double btc)
+    {
+        if (btc <= 0) return "0 BTC";
+        int decimals = btc >= 100 ? 0 : Mathf.Clamp(2 - Mathf.FloorToInt((float)System.Math.Log10(btc)), 0, 8);
+        return System.Math.Round(btc, decimals).ToString("0.########", System.Globalization.CultureInfo.InvariantCulture) + " BTC";
+    }
+
     /// <summary>A parcel's or a load's BTC, as a block explorer writes it: up to eight decimals, no trailing zeros.</summary>
     public static string BtcLabel(double btc) =>
         btc.ToString("0.########", System.Globalization.CultureInfo.InvariantCulture) + " BTC";
@@ -515,7 +529,7 @@ public class LoadoutPanel : MonoBehaviour
               refused ? new Color(1f, 0.35f, 0.3f)
                       : Color.Lerp(new Color(0.3f, 0.75f, 0.45f), new Color(1f, 0.78f, 0.2f), bay.Fill),
               refused ? "TRUCK  —  FULL"
-                      : $"TRUCK  {BtcLabel(bay.BtcCarried)} of {CargoBay.BtcLimit:0.##} BTC  ·  {bay.Count} parcels",
+                      : $"TRUCK  {BtcShort(bay.BtcCarried)} of {CargoBay.BtcLimit:0.##} BTC  ·  {bay.Count} parcels",
               _small);
 
         // --- risk -----------------------------------------------------------
@@ -603,11 +617,14 @@ public class LoadoutPanel : MonoBehaviour
         float bw = gaugeW;
         var btn = new GUIStyle(_btn);
         if (Phone(w, h)) btn.fontSize = Mathf.RoundToInt(Mathf.Max(_btn.fontSize, bh * 0.42f));
-        if (GUI.Button(new Rect(panel.x + inner, by, bw, bh), "AUTO  (80%)", btn)) Auto();
+        // THE LABELS FIT THE BUTTONS (measured at 390x844 with the bigger font: "NOTHING LOADED" read "THING LOADI")
+        var autoStyle = new GUIStyle(btn); DriveHud.FitLine(autoStyle, "AUTO  (80%)", bw - 12f, 10);
+        if (GUI.Button(new Rect(panel.x + inner, by, bw, bh), "AUTO  (80%)", autoStyle)) Auto();
 
         GUI.enabled = bay.IsLoaded;
-        if (GUI.Button(new Rect(panel.x + inner * 2f + gaugeW, by, bw, bh),
-                       bay.IsLoaded ? "ROLL OUT" : "NOTHING LOADED", btn)) Confirm();
+        string go = bay.IsLoaded ? "ROLL OUT" : "NOTHING LOADED";
+        var goStyle = new GUIStyle(btn); DriveHud.FitLine(goStyle, go, bw - 12f, 10);
+        if (GUI.Button(new Rect(panel.x + inner * 2f + gaugeW, by, bw, bh), go, goStyle)) Confirm();
         GUI.enabled = true;
     }
 
