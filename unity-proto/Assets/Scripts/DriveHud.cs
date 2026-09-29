@@ -883,8 +883,9 @@ public class DriveHud : MonoBehaviour
     /// </summary>
     void DrawArrivalCard(int w, int h)
     {
-        // a card that is gone takes its "copied!" with it: the next card starts unpressed
-        if (!ArrivalShowing) { _copyPressedAt = -1f; _copiedAt = -1f; }
+        // A CARD THAT IS GONE TAKES ITS "copied!" WITH IT - but only when no copy control is up at all (the owner 2026-09-29
+        // 17:45, SEE-AND-COPIED-1745: on WRECKED - no result card - this reset ran every frame and wiped the lone
+        // control's press before the page answered, so "copied!" never stood). DrawCopyReplayAlone resets it then.
         if (ArrivalIsHiddenBy(SendOffShowing)) return;
 
         const float Hold = ArrivalHoldSeconds;
@@ -995,7 +996,14 @@ public class DriveHud : MonoBehaviour
         {
             var button = new GUIStyle(GUI.skin.button) { fontSize = fontSize, fontStyle = FontStyle.Bold };
             float bw = Mathf.Min(row.width - 16f, button.CalcSize(new GUIContent(CopyReplayLabel)).x + fontSize * 2f);
-            var rect = new Rect(row.x + (row.width - bw) * 0.5f, row.y + row.height * 0.15f, bw, row.height * 0.7f);
+            // BESIDE, NOT ON (SEE-AND-COPIED-1745, measured on WRECKED's narrow row: the tip covered "…ay"): while "copied!"
+            // stands, the button and the tip are centred together, side by side, inside the row
+            var tipStyle = new GUIStyle(line) { fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter };
+            float tipW = tipStyle.CalcSize(new GUIContent(CopiedLabel)).x + line.fontSize, gap = line.fontSize * 0.5f;
+            bool tipUp = CopiedTooltipShows(_copiedAt, Time.unscaledTime);
+            float pairW = tipUp ? Mathf.Min(row.width - 8f, bw + gap + tipW) : bw;
+            if (tipUp) bw = Mathf.Max(fontSize * 4f, pairW - gap - tipW);
+            var rect = new Rect(row.x + (row.width - pairW) * 0.5f, row.y + row.height * 0.15f, bw, row.height * 0.7f);
             if (GUI.Button(rect, CopyReplayLabel, button))
             {
                 _replayCopied = Blwp.BlwpCore.CopyReplay() == 1;
@@ -1013,9 +1021,8 @@ public class DriveHud : MonoBehaviour
             {
                 var tip = new GUIStyle(line) { fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter };
                 tip.normal.textColor = new Color(0.45f, 1f, 0.55f, 1f);
-                var size = tip.CalcSize(new GUIContent(CopiedLabel));
-                float tw = size.x + line.fontSize, th = rect.height;
-                float tx = Mathf.Min(rect.xMax + line.fontSize * 0.5f, row.xMax - tw);
+                float tw = tipW, th = rect.height;
+                float tx = Mathf.Min(rect.xMax + gap, row.xMax - tw);
                 var tipRect = new Rect(tx, rect.y, tw, th);
                 PanelSkin.Gradient(tipRect, new Color(0.08f, 0.20f, 0.10f, 0.96f), new Color(0.05f, 0.14f, 0.07f, 0.96f));
                 PanelSkin.Border(tipRect, new Color(0.45f, 1f, 0.55f, 0.9f));
@@ -1027,6 +1034,12 @@ public class DriveHud : MonoBehaviour
     bool _replayCopied;
     float _copyPressedAt = -1f, _copiedAt = -1f;
     SplashScreen _splash;
+
+    /// <summary>
+    /// WHEN A PRESS OF "copy game replay" IS FORGOTTEN: only when neither the result card nor the lone control is up. Each
+    /// frame either one is up, its press and its "copied!" stand (SEE-AND-COPIED-1745: WRECKED has only the lone control).
+    /// </summary>
+    public static bool CopyStateResets(bool cardShowing, bool loneShowing) => !cardShowing && !loneShowing;
 
     /// <summary>WHETHER THE LONE CONTROL IS DRAWN: a kept run to copy, no result card carrying it, the lobby not up.</summary>
     public static bool CopyReplayAlone(bool replayForThisRun, bool cardShowing, bool lobbyShowing)
@@ -1046,11 +1059,9 @@ public class DriveHud : MonoBehaviour
     {
         if (_splash == null) _splash = Object.FindFirstObjectByType<SplashScreen>();
         bool lobby = _splash != null && _splash.Showing;
-        if (!CopyReplayAlone(Blwp.BlwpCore.ReplayForThisRun, ArrivalShowing, lobby))
-        {
-            if (!ArrivalShowing) { _copyPressedAt = -1f; _copiedAt = -1f; }
-            return;
-        }
+        bool alone = CopyReplayAlone(Blwp.BlwpCore.ReplayForThisRun, ArrivalShowing, lobby);
+        if (CopyStateResets(ArrivalShowing, alone)) { _copyPressedAt = -1f; _copiedAt = -1f; }
+        if (!alone) return;
         var row = CopyReplayAloneRow(w, h);
         var line = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.UpperCenter,
             fontSize = Mathf.RoundToInt(Mathf.Max(12f, Mathf.Min(w, h) * 0.034f)) };

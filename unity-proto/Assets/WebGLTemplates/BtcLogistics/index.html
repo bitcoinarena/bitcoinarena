@@ -770,7 +770,14 @@
       if (!noLobby && window.BLWP_CONTINUE !== false && window.BLWP_ROUND) continueToTheNextRound(window.BLWP_ROUND);
     };
     function continueToTheNextRound(played) {
-      const next = window.BLWP_NEXT = { state: 'looking', runOverAt: Date.now() };
+      // THE COUNTDOWN STANDS FROM THE CARD'S END, LISTED ROUND OR NOT (the owner 2026-09-29 17:45, SEE-AND-COPIED-1745: he
+      // saw no countdown - the box waited for the nodes to list the next round, up to a minute on the Daily). Until the
+      // next round is listed it counts to the played round's start + 90 s, or the next 90 s step after it that has not
+      // come yet; once listed, to that round's own start.
+      const runOverAt = Date.now();
+      const slot = (nowMs) => { const s0 = Number(played.startTimeMs); let t = s0 + 90000;
+        while (t <= nowMs + BLWPCLIENT.RESULT_CARD_MS) t += 90000; return t; };
+      const next = window.BLWP_NEXT = { state: 'looking', runOverAt, slot, startMs: slot(runOverAt) };
       // LOOKED FOR UNTIL IT IS LISTED: a series lists round i+1 long before; a launcher that opens its next round later
       // (the Daily: about a minute before the current round's entry closes) lists it later - measured 65 s after a run.
       // Given up only when the player joins something else from the lobby, or after 10 minutes.
@@ -795,7 +802,11 @@
       const box = document.getElementById('blwp-next');
       const n = window.BLWP_NEXT; const j = window.BLWP_JOIN;
       let v = { show: 'lobby' };
-      if (n && n.state === 'joining' && j && j.round === n.round && j.state === 'joining' && window.BLWP_CONTINUE !== false) {
+      // still looking: the 90 s step moves on when it has passed without a listed round
+      if (n && n.state === 'looking' && n.slot && Date.now() >= n.startMs) n.startMs = n.slot(Date.now() - BLWPCLIENT.RESULT_CARD_MS);
+      const waiting = n && window.BLWP_CONTINUE !== false && (n.state === 'looking'
+        || (n.state === 'joining' && j && j.round === n.round && j.state === 'joining'));
+      if (waiting) {
         v = BLWPCLIENT.nextRoundView({ runOverMs: n.runOverAt, nextStartMs: n.startMs, nowMs: Date.now() });
         // the card stands until Unity leaves it, and never less than its 8 s
         if (v.show === 'countdown' && window.BLWP_CARD_UP) v = { show: 'card' };
@@ -817,7 +828,7 @@
       window.BLWP_CONTINUE = false;
       const n = window.BLWP_NEXT; const j = window.BLWP_JOIN;
       if (n) n.state = 'exited';
-      if (j && n && j.round === n.round && j.state === 'joining') {
+      if (j && n && n.round && j.round === n.round && j.state === 'joining') {
         // "refused" with no reason: Unity, which took this join as its own, stops waiting and shows the plain lobby
         j.cancelled = true; j.state = 'refused'; j.why = ''; j.stage = ''; j.held = false;
         window.BLWP_ROUND = undefined; window.BLWP_ENTRY = undefined;
