@@ -60,6 +60,9 @@
        wallet can be given the invoice. Empty, it takes no room. */
     #blwp-deposit { max-width: min(560px, 90vw); text-align: center; font-size: 13px; color: #e8eaed; }
     #blwp-deposit:empty { display: none; }
+    /* AN INVOICE TO PAY IS ON TOP (measured 2026-09-30 at 800x437: the backup banner and the lobby chips, z-index 30, lay over
+       the QR code and it did not scan) - under the settings and the seed dialog only. */
+    body > #blwp-deposit:not(:empty) { z-index: 38; }
     /* ...AND OVER THE GAME once the loading screen is gone: PLAY in the lobby
        joins in the running page (M3.3-34), so a lock round's deposit
        is asked for after Unity loaded. */
@@ -1042,7 +1045,7 @@
                 try {
                   const qr = document.createElement('div');
                   qr.className = 'blwp-deposit-qr';
-                  qr.style.cssText = 'background:#fff;padding:8px;width:min(70vw,280px);margin:8px auto;line-height:0';
+                  qr.style.cssText = 'background:#fff;padding:8px;width:min(80vw,320px,60vh);margin:8px auto;line-height:0';
                   qr.innerHTML = BLWPCLIENT.invoiceQrSvg(d.invoice);
                   depositEl.appendChild(qr);
                 } catch (e) { console.error('[blwp] no deposit QR: ' + e.message); }

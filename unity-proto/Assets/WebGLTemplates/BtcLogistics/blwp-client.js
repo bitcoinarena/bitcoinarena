@@ -12223,11 +12223,11 @@ const stringToBytes = qrcode.stringToBytes;
 // that made the invoice, not by a loose one beside the page. BOLT11 is case-insensitive and its upper case fits the
 // QR alphanumeric mode, as wallets write it; the `lightning:` scheme is the one wallets open.
 
-/** An SVG tag of `lightning:<INVOICE>` as a QR code, error correction M. */
+/** An SVG tag of `lightning:<INVOICE>` as a QR code, error correction L. */
 function invoiceQrSvg(invoice, { cellSize = 4, margin = 4 } = {}) {
   const text = String(invoice || '').trim();
   if (!/^ln[a-z0-9]+$/i.test(text)) throw new Error('that is not a Lightning invoice, so no QR code is drawn');
-  const qr = qrcode(0, 'M');
+  const qr = qrcode(0, 'L');   // L: fewest modules - a screen, not a printed label, so no damage to recover from
   qr.addData(`LIGHTNING:${text.toUpperCase()}`, 'Alphanumeric');
   qr.make();
   return qr.createSvgTag({ cellSize, margin, scalable: true });
