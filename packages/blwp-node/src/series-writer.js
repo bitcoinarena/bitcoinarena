@@ -32,6 +32,10 @@ export function seriesWriter(round, template, { horizonMs = SERIES_HORIZON_MS } 
     return added;
   };
   const ids = () => new Set([...written.values()].map((w) => w.id));
+  /** The rounds written that start in [now, now + ms), soonest first: what the node assigns signer nodes to next. */
+  const startingWithin = (nowMs, ms) => [...written.values()]
+    .filter((w) => w.startTimeMs >= BigInt(nowMs) && w.startTimeMs < BigInt(nowMs) + BigInt(ms))
+    .sort((a, b) => (a.startTimeMs < b.startTimeMs ? -1 : 1)).map((w) => w.id);
   const summary = (nowMs) => {
     const now = BigInt(nowMs);
     const ahead = [...written.entries()].filter(([, w]) => w.startTimeMs >= now).sort((a, b) => a[0] - b[0]);
@@ -39,5 +43,5 @@ export function seriesWriter(round, template, { horizonMs = SERIES_HORIZON_MS } 
     return { series: toHex(id), startTimeMs: String(template.startTimeMs), committeeTimeMs: String(template.committeeTimeMs),
       horizonMs: String(horizonMs), written: written.size, ahead: ahead.length, first: at(ahead[0]), last: at(ahead[ahead.length - 1]) };
   };
-  return { id, template, write, ids, summary };
+  return { id, template, write, ids, summary, startingWithin };
 }

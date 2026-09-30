@@ -121,6 +121,8 @@ function lobbySigned(verify, { id, nodeKey, nowMs, x }) {
  * @returns {{ rows: object[], refused: string[] }} rows open before pending,
  *   soonest entry close first; a round past its entry close is not a row.
  */
+const CONTRACTS = new Map();                     // round id hex -> its contract (the id is its hash)
+
 export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, skewMs = LOBBY_SKEW_MS, answerMs = SIGNER_ANSWER_MS } = {}) {
   if (!Array.isArray(nodes) || !nodes.length) throw new Error('a lobby asks the nodes it was named, and it was named none');
   if (typeof verify !== 'function') throw new Error('a lobby checks each signer node\'s signed listing, and no verify was injected');
@@ -156,10 +158,15 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
   const rows = [];
   // A ROUND'S CONTRACT FROM A NODE THAT ANSWERED FIRST, so a silent one costs its limit once per paint, not once per row.
   const answeredFirst = [...unique.filter((n) => !unanswered.includes(String(n))), ...unique.filter((n) => unanswered.includes(String(n)))];
+  // KEPT BY ID, FETCHED 16 AT A TIME (the owner 2026-09-30, testnet4 series 3cfbe516: ~450 rounds listed, each contract
+  // fetched one after another on every paint). A round's id is its contract's hash, so a kept contract cannot go stale.
+  const wanted = [...said.keys()].filter((id) => !CONTRACTS.has(id));
+  for (let i = 0; i < wanted.length; i += 16)
+    await Promise.all(wanted.slice(i, i + 16).map((id) => fetchRound(id, answeredFirst, { fetcher: ask })
+      .then(({ contract }) => { CONTRACTS.set(id, contract); }, (e) => { refused.push(`${id.slice(0, 16)}: ${e.message}`); })));
   for (const [id, counts] of said) {
-    let contract;
-    try { ({ contract } = await fetchRound(id, answeredFirst, { fetcher: ask })); }
-    catch (e) { refused.push(`${id.slice(0, 16)}: ${e.message}`); continue; }
+    const contract = CONTRACTS.get(id);
+    if (!contract) continue;
     const now = BigInt(Math.floor(nowMs));
     if (now >= contract.entryCloseMs) continue;
     const pays = roundPays(contract);
