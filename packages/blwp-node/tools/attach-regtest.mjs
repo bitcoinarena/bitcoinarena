@@ -20,6 +20,11 @@ import { bitcoindRpc } from '../src/chain-rpc.js';
 import { regtest } from './regtest-bond.mjs';
 import { standUpRound } from './round-2of2.mjs';
 import { decodeClaimKeyAttestation } from '../../protocol/src/claim-key.js';
+import { dealHandout, encodeHandout } from '../../protocol/src/handout.js';
+import { FIELD, scalarFrom32 } from '../../protocol/src/shares.js';
+import { receiptsNeeded } from '../../protocol/src/threshold.js';
+import { feldmanGroup } from '../src/curve.js';
+import { randomBytes } from 'node:crypto';
 
 const env = process.env;
 const RT = env.RT, RPCPORT = env.RPCPORT || '30601';
@@ -44,9 +49,17 @@ for (const [i, path] of stores.entries()) {
   posted.push(rt.postBond(id.secret, { endpoint: `ws://127.0.0.1:${ports[i]}` }));
   db.close();
 }
-rt.include(posted.map((p) => p.hex));
+// EXTRA_BONDS=1 (the owner 2026-09-30, one key one seat): the testnet4 census shape - extra bond rows under some node keys
+// (nodes 2, 4 and 7, two more each), every one a real bond of that node's key on this chain.
+const extra = [];
+if (env.EXTRA_BONDS === '1')
+  for (const i of [1, 3, 6]) {
+    const db = openStore(stores[i]); const id = nodeIdentity(db); db.close();
+    for (let n = 0; n < 2; n++) extra.push({ node: i + 1, ...rt.postBond(id.secret, { endpoint: `ws://127.0.0.1:${ports[i]}` }) });
+  }
+rt.include([...posted, ...extra].map((p) => p.hex));
 rt.mine(1);
-out({ step: 'bonds', posted: posted.length, height: rt.height() });
+out({ step: 'bonds', posted: posted.length, extraRows: extra.map((x) => x.node), height: rt.height() });
 
 // ---- 2. seven node processes
 const logs = stores.map((s) => `${s}.log`);
@@ -92,6 +105,25 @@ while (Date.now() < stop && (opened.length < 3 || !(await allKeyed()))) await wa
 const rounds = [];
 for (const rid of opened) rounds.push({ round: rid.slice(0, 16), heldBy: await heldBy(rid), claimKeyAt: await keyAt(rid),
   claimKeyMade: text.filter((t) => t.includes(`[claim-key] ${rid.slice(0, 16)}: this signer node holds`)).length });
+// ONE KEY, ONE SEAT, AND THE STAKE'S HANDOUT DEALT TO THAT COMMITTEE (as the page deals it: to the round's drawn
+// settlement signer nodes, needed = receiptsNeeded(7)) - posted to all seven; each answer counted.
+const seats = [];
+for (const rid of opened) {
+  const row = ((await (await fetch(`http://127.0.0.1:${ports[0]}/rounds`)).json()).rounds || []).find((r) => r.id === rid);
+  const c = row && row.committee;
+  if (!c || !c.drawn) { seats.push({ round: rid.slice(0, 16), drawn: false, why: c && c.why }); continue; }
+  const signerNodes = c.settlement.map((k) => Uint8Array.from(Buffer.from(k, 'hex')));
+  const needed = receiptsNeeded(signerNodes.length);
+  const e = new Uint8Array(randomBytes(32));
+  const dealt = await dealHandout({ preimage: new Uint8Array(randomBytes(32)), signerNodes, roundId: Uint8Array.from(Buffer.from(rid, 'hex')),
+    playerPubkey: new Uint8Array(randomBytes(32)), ephemeralSecret: e, ephemeralPubkey: feldmanGroup.pointX(e),
+    coefficients: Array.from({ length: needed - 1 }, () => scalarFrom32(new Uint8Array(randomBytes(32))) % FIELD), needed, curve: feldmanGroup });
+  const took = dealt.ok ? await Promise.all(ports.map(async (p) => { const r = await fetch(`http://127.0.0.1:${p}/handout`, { method: 'POST', body: encodeHandout(dealt.handout) }); return r.status === 201 ? 201 : `${r.status} ${(await r.text()).slice(0, 80)}`; })) : [];
+  seats.push({ round: rid.slice(0, 16), eligibleEntries: c.eligibleEntries, eligibleKeys: c.eligibleKeys,
+    game: { seats: c.game.length, distinct: new Set(c.game).size }, settlement: { seats: c.settlement.length, distinct: new Set(c.settlement).size },
+    handout: dealt.ok ? { dealtTo: signerNodes.length, needed, took: took.filter((x) => x === 201).length, answers: [...new Set(took.map(String))] } : { dealt: false, why: dealt.why } });
+}
+out({ step: 'one key one seat', seats });
 // WHO HOLDS EACH STORE OPEN: /proc/<pid>/fd, every process of this user, this harness included
 const holders = stores.map((s) => {
   const who = [];
