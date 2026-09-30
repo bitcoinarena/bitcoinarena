@@ -9216,7 +9216,8 @@ async function playerWithdrawable({ round, invite, seed, LockClient, storage, on
  * every tab switch); `claimed` resolves with whichever invoice was paid first, `close()` rejects it. Every invoice made
  * stays payable: one paid after another was claimed is credited to the same wallet.
  */
-function depositOffer({ client, stakeMsat, haveMsat = null, needMsat = null, gateways = [], onDeposit = () => {} } = {}) {
+function depositOffer({ client, stakeMsat, haveMsat = null, needMsat = null, gateways = [], onDeposit = () => {},
+  storage = null, federationId = null } = {}) {
   let settle; let fail;
   const claimed = new Promise((res, rej) => { settle = res; fail = rej; });
   claimed.catch(() => {});
@@ -9232,27 +9233,70 @@ function depositOffer({ client, stakeMsat, haveMsat = null, needMsat = null, gat
     const got = JSON.parse(await client.receive(String(amount), gateway));
     const d = { invoice: got.invoice, amountMsat: amount, creditsMsat: null, gateway };
     made.push(d);
+    // KEPT UNTIL IT ENDS: a reload between the payment and the claim leaves this page, and the next page's wallet
+    // (resumeDeposits) waits on the same operation and writes its history row
+    pendingAdd(storage, federationId, { invoice: d.invoice, operation: got.operation, msat: String(amount) });
     onDeposit(d);
-    client.awaitReceive(got.operation).then((final) => { said(d, final); if (final === 'Claimed') settle(d); },
-      (e) => said(d, 'Failure: ' + String((e && e.message) || e)));
+    client.awaitReceive(got.operation).then((final) => {
+      if (final === 'Claimed') depositRowOnce(storage, federationId, d);
+      pendingDrop(storage, federationId, got.operation);
+      said(d, final); if (final === 'Claimed') settle(d);
+    }, (e) => said(d, 'Failure: ' + String((e && e.message) || e)));
     return d;
   };
   return { stakeMsat: BigInt(stakeMsat || 0n), haveMsat, needMsat, choices: depositChoices(stakeMsat), invoice, claimed, made,
     watch: (fn) => { watchers.push(fn); },
     close: (why) => fail(new Error(why || 'the deposit was closed: nothing was paid')) };
 }
+// DEPOSITS NOT YET ENDED, per federation (blwp.deposit.pending.<fed>): every invoice made, until its receive ends.
+const PENDING_PREFIX = 'blwp.deposit.pending.';
+function pendingDeposits(storage, federationId) {
+  try { const raw = storage && storage.getItem(PENDING_PREFIX + fedHexOf(federationId)); const l = raw ? JSON.parse(raw) : []; return Array.isArray(l) ? l : []; }
+  catch { return []; }
+}
+function pendingWrite(storage, federationId, list) {
+  try { if (list.length) storage.setItem(PENDING_PREFIX + fedHexOf(federationId), JSON.stringify(list)); else storage.removeItem(PENDING_PREFIX + fedHexOf(federationId)); }
+  catch { /* a tab that cannot write keeps no note; the money is not touched */ }
+}
+function pendingAdd(storage, federationId, p) {
+  if (!storage || !fedHexOf(federationId)) return;
+  pendingWrite(storage, federationId, [...pendingDeposits(storage, federationId).filter((x) => x.operation !== p.operation), { atMs: Date.now(), ...p }]);
+}
+function pendingDrop(storage, federationId, operation) {
+  if (!storage || !fedHexOf(federationId)) return;
+  pendingWrite(storage, federationId, pendingDeposits(storage, federationId).filter((x) => x.operation !== operation));
+}
+/** One history row per paid invoice, however many pages saw it claimed. */
+function depositRowOnce(storage, federationId, d) {
+  if (!storage || !fedHexOf(federationId)) return false;
+  let invoiceHash = null;
+  try { invoiceHash = toHex(decodeBolt11(d.invoice).paymentHash); } catch { invoiceHash = null; }
+  if (invoiceHash && ledgerRows(storage, federationId).some((r) => r.kind === 'deposit' && r.invoiceHash === invoiceHash)) return false;
+  ledgerAppend(storage, federationId, { kind: 'deposit', msat: String(d.amountMsat), invoiceHash });
+  return true;
+}
+/**
+ * THE DEPOSITS AN EARLIER PAGE LEFT (the owner 2026-09-30: a reload of the deposit page lands on the lobby, and a payment
+ * made just before it must still be in the history): the reopened wallet waits on each kept operation; a claimed one
+ * gets its row, and every ended one leaves the list. `onClaimed(d)` for each new row. Spends nothing.
+ */
+function resumeDeposits({ client, storage, federationId, onClaimed = () => {} } = {}) {
+  return Promise.all(pendingDeposits(storage, federationId).map((p) => client.awaitReceive(p.operation).then((final) => {
+    const d = { invoice: p.invoice, amountMsat: BigInt(p.msat) };
+    if (final === 'Claimed' && depositRowOnce(storage, federationId, d)) onClaimed(d);
+    pendingDrop(storage, federationId, p.operation);
+    return final;
+  }, () => 'unknown')));
+}
 /** A deposit into the player wallet from Settings: the same tabs, this round's stake, no round to fund. */
 async function settingsDepositOffer({ round, invite, seed, LockClient, storage, gateways = [], onDeposit = () => {}, onClaimed = () => {} } = {}) {
   const client = await playerWallet({ round, invite, seed, LockClient, storage });
-  const offer = depositOffer({ client, stakeMsat: round.stakeMsat, haveMsat: BigInt(await client.balanceMsat()), gateways, onDeposit });
+  const offer = depositOffer({ client, stakeMsat: round.stakeMsat, haveMsat: BigInt(await client.balanceMsat()), gateways, onDeposit,
+    storage, federationId: round.federationId });
   offer.claimed.then((d) => { depositRow(storage, round, d); onClaimed(d); }, () => {});
   return offer;
 }
-function depositRow(storage, round, d) {
-  let invoiceHash = null;
-  try { invoiceHash = toHex(decodeBolt11(d.invoice).paymentHash); } catch { invoiceHash = null; }
-  ledgerAppend(storage, round.federationId, { kind: 'deposit', msat: String(d.amountMsat), invoiceHash });
-}
+function depositRow(storage, round, d) { depositRowOnce(storage, round.federationId, d); }
 const DEPOSIT_MARGIN_PPM = 6000n;
 const DEPOSIT_MARGIN_MSAT = 10000n;
 async function fundPlayerWallet({ round, invite, seed, LockClient, storage, donationMsat = 0n, gateways = [],
@@ -9268,7 +9312,8 @@ async function fundPlayerWallet({ round, invite, seed, LockClient, storage, dona
     // THE PLAYER CHOOSES THE DEPOSIT (GROSS-INVOICE-2053): the page shows the offer - the tabs, the invoice, a close - and
     // this waits for whichever invoice is paid, then looks again; still short, the offer is shown again.
     if (askDeposit) {
-      const offer = depositOffer({ client, stakeMsat: round.stakeMsat, haveMsat: have, needMsat: n.need, gateways, onDeposit });
+      const offer = depositOffer({ client, stakeMsat: round.stakeMsat, haveMsat: have, needMsat: n.need, gateways, onDeposit,
+        storage, federationId: round.federationId });
       askDeposit(offer);
       onStep('waiting for the deposit into the player wallet');
       const d = await offer.claimed;
@@ -17907,7 +17952,7 @@ return { Client: Client, markState: markState,
          withdrawPlayerWallet: withdrawPlayerWallet,
          saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, keptLockUse: keptLockUse,
          ledgerRows: ledgerRows, ledgerReadSavedStakes: ledgerReadSavedStakes,
-         depositChoices: depositChoices, withdrawChoices: withdrawChoices, playerWithdrawable: playerWithdrawable, depositOffer: depositOffer, settingsDepositOffer: settingsDepositOffer, DEPOSIT_INSUFFICIENT: DEPOSIT_INSUFFICIENT,
+         depositChoices: depositChoices, withdrawChoices: withdrawChoices, playerWithdrawable: playerWithdrawable, pendingDeposits: pendingDeposits, resumeDeposits: resumeDeposits, depositOffer: depositOffer, settingsDepositOffer: settingsDepositOffer, DEPOSIT_INSUFFICIENT: DEPOSIT_INSUFFICIENT,
          findLock: findLock, refundStake: refundStake, forfeitOf: forfeitOf, redeemStake: redeemStake,
          settlementOf: settlementOf, redeemPayout: redeemPayout, payoutLine: payoutLine,
          returnStake: returnStake, stakeBackLine: stakeBackLine,
