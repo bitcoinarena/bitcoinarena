@@ -22,7 +22,7 @@ import { bech32Encode, convertBits } from '../../protocol/src/bech32.js';
 import { decodeBolt11 } from '../../protocol/src/bolt11.js';
 
 import { lockStake, fundPlayerWallet, walletSecretFor, withdrawPlayerWallet, handLock, lockSecretFor, lockAmountMsat, lockLine, saveLock, savedLock, markLockCommitted,
-  refundStake, redeemStake, redeemPayout, payoutLine, returnStake, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, withdrawLine, refundKept, refundLine, lookOwed, owedToLine as owedLine, collectAndWithdraw, tabLockWallet, findOwedRounds, feeSecretFor, ledgerRows, ledgerReadSavedStakes, playerWallet, depositChoices, DEPOSIT_INSUFFICIENT } from '../src/page-lock.js';
+  refundStake, redeemStake, redeemPayout, payoutLine, returnStake, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, withdrawLine, refundKept, refundLine, lookOwed, owedToLine as owedLine, collectAndWithdraw, tabLockWallet, findOwedRounds, feeSecretFor, ledgerRows, ledgerReadSavedStakes, playerWallet, depositChoices, depositOffer, withdrawChoices, playerWithdrawable, DEPOSIT_INSUFFICIENT } from '../src/page-lock.js';
 import { replayLinkFor } from '../src/replay-link.js';
 import { lockFieldsFromJson } from '../../protocol/src/stake-lock.js';
 import { sha256 } from '../../protocol/src/hash.js';
@@ -1295,6 +1295,37 @@ test('a short wallet is asked, the invoice is the gross amount of the tab chosen
   const closed = lockClient();
   await assert.rejects(() => fundPlayerWallet({ round, invite: INVITE, seed: b32(0x53), LockClient: closed.LockClient, storage: tabStorage(),
     askDeposit: (offer) => offer.close() }), /the deposit was closed/);
+});
+
+test('the deposit status: each invoice names its gateway, and a watcher hears how it ended - claimed, expired or a failed wait', async () => {
+  const heard = [];
+  const client = { receive: async () => JSON.stringify({ invoice: 'lntb1x', operation: 'op1' }),
+    awaitReceive: async (op) => (op === 'op1' ? 'Expired' : 'Claimed') };
+  const offer = depositOffer({ client, stakeMsat: 100000n, gateways: ['https://gw-b.example/'] });
+  offer.watch((d, final) => heard.push([d.gateway, final]));
+  const d = await offer.invoice(100000n);
+  assert.equal(d.gateway, 'https://gw-b.example/');
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(heard, [['https://gw-b.example/', 'Expired']]);
+  client.receive = async () => JSON.stringify({ invoice: 'lntb1y', operation: 'op2' });
+  await offer.invoice(200000n);
+  assert.equal((await offer.claimed).invoice, 'lntb1y', 'the claimed one settles the offer');
+  assert.deepEqual(heard[1], ['https://gw-b.example/', 'Claimed']);
+  client.receive = async () => JSON.stringify({ invoice: 'lntb1z', operation: 'op3' });
+  client.awaitReceive = async () => { throw new Error('the federation did not answer'); };
+  await offer.invoice(100000n); await new Promise((r) => setTimeout(r, 0));
+  assert.match(heard[2][1], /^Failure: the federation did not answer/);
+});
+
+test('the withdrawal tabs are 25%, 50% and 100% of what the wallet can send, in whole sat, then Custom', async () => {
+  const c = withdrawChoices(20513999n);
+  assert.deepEqual(c.map((x) => x.label), ['25%', '50%', '100%', 'Custom']);
+  assert.deepEqual(c.slice(0, 3).map((x) => x.msat), [5128000n, 10256000n, 20513000n]);
+  assert.equal(c[3].msat, null);
+  assert.deepEqual(withdrawChoices(0n).slice(0, 3).map((x) => x.msat), [0n, 0n, 0n]);
+  const { LockClient } = lockClient();
+  assert.equal(await playerWithdrawable({ round, invite: INVITE, seed: b32(0x61), LockClient, storage: tabStorage() }), 0n,
+    'an empty wallet can send nothing, and says so without an error');
 });
 
 test('a withdrawal of a chosen amount pays only an invoice of exactly that amount', async () => {
