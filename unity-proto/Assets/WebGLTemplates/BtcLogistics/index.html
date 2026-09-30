@@ -1037,6 +1037,15 @@
               if (depositEl) {
                 depositEl.textContent = 'Pay ' + String((d.amountMsat + 999n) / 1000n) + ' sat into your player wallet '
                   + 'from any Lightning wallet; your stake is then spent from it:';
+                // THE QR CODE (the owner 2026-09-30: the deposit needs a QR code): drawn by the pinned bundle from the invoice
+                // it checked, above the invoice text a desktop player copies.
+                try {
+                  const qr = document.createElement('div');
+                  qr.className = 'blwp-deposit-qr';
+                  qr.style.cssText = 'background:#fff;padding:8px;width:min(70vw,280px);margin:8px auto;line-height:0';
+                  qr.innerHTML = BLWPCLIENT.invoiceQrSvg(d.invoice);
+                  depositEl.appendChild(qr);
+                } catch (e) { console.error('[blwp] no deposit QR: ' + e.message); }
                 const box = document.createElement('code');
                 box.textContent = d.invoice;
                 depositEl.appendChild(box);
@@ -1883,6 +1892,22 @@
         return r.ok ? BLWPCLIENT.dailyLobbySearch(await r.json()) : null;
       } catch { return null; }
     }
+    // THE TESTNET LOBBY BESIDE THE FREE ONE (the owner 2026-09-30 14:18 and 16:07, DEPLOY-1900: "The page he opens always shows
+    // both: a free round and a live paid testnet round of series 3cfbe516. The nodes serve both. Do not hide one to show the
+    // other"). daily.json's `testnet` names that lobby as a link would - its nodes, bond, advert, federation and funded
+    // gateway - held to the same rules (`dailyLobbySearch`). Read whatever the address carries.
+    async function testnetLobby(first) {
+      if (!BLWPCLIENT.dailyLobbySearch) return null;
+      try {
+        const r = await fetch('daily.json', { cache: 'no-store' });
+        if (!r.ok) return null;
+        const d = await r.json();
+        const search = d && d.testnet ? BLWPCLIENT.dailyLobbySearch(d.testnet) : null;
+        const named = search ? BLWPCLIENT.lobbyQuery(search) : null;
+        if (!named || (first && named.nodes.join(',') === first.nodes.join(','))) return null;
+        return { search, named };
+      } catch { return null; }
+    }
     async function showTheLobbyIfOneWasNamed() {
       if (typeof BLWPCLIENT === 'undefined' || !BLWPCLIENT.lobbyQuery) return false;
       let search = location.search;
@@ -1894,6 +1919,10 @@
       if (!named) return false;
       window.BLWP_LOBBY_FROM = search === location.search ? 'link' : 'daily.json';
       findTheRoundsOwed(named);
+      const testnet = await testnetLobby(named);
+      if (testnet) { findTheRoundsOwed(testnet.named); console.log('[blwp] the testnet lobby too: ' + testnet.named.nodes.length + ' node(s)'); }
+      // WHICH LOBBY A ROW CAME FROM, so its join - PLAY, or the next round after a run - carries that lobby's own link
+      const rowSearch = window.BLWP_ROW_SEARCH = new Map();
       // WHO THIS TAB IS (M3.3-34): the identity key the page generated from the
       // tab's seed, the name made from it, and the player's own name over it.
       // Unity draws it (SplashScreen, DailyLobby.cs); it is decided here. The
@@ -1914,24 +1943,27 @@
       const leftOf = (line) => { const m = String(line).match(/closes in (\d+):(\d\d)/); return m ? Number(m[1]) * 60 + Number(m[2]) : -1; };
       const joinedOf = (line) => { const m = String(line).match(/(\d+) joined/); return m ? Number(m[1]) : 0; };
       const paint = async () => {
-        let got;
         // 2 OF 2 (M3.3-34): each signer node's listing is its own BIP-340 signature,
         // checked with the curve the daemons sign under; Join is offered only
         // when the round's threshold of its own signer nodes say open and assigned.
-        try {
-          got = await BLWPCLIENT.fetchLobby({ nodes: named.nodes,
-            verify: (s, m, k) => !!(window.BLWP_CURVE && window.BLWP_CURVE.verify && window.BLWP_CURVE.verify(s, m, k)) });
-        } catch (e) { got = { rows: [], refused: [e.message], unanswered: [] }; }
+        const read = (nodes) => BLWPCLIENT.fetchLobby({ nodes,
+          verify: (s, m, k) => !!(window.BLWP_CURVE && window.BLWP_CURVE.verify && window.BLWP_CURVE.verify(s, m, k)) })
+          .catch((e) => ({ rows: [], refused: [e.message], unanswered: [] }));
+        const [got, got2] = await Promise.all([read(named.nodes), testnet ? read(testnet.named.nodes) : null]);
         const now = Date.now();
-        // ONE FREE ROUND AND ONE PAYING ROUND, never two of either (the owner 2026-09-15 16:08), and
-        // what the paying one costs.
-        window.BLWP_LOBBY_ROWS = got.rows;                // every round listed, for the next one after a run (below)
-        window.BLWP_LOBBY = BLWPCLIENT.lobbyOnePerKind(got.rows).map((r) => ({ id: r.id, phase: r.phase, free: r.free, wallet: r.wallet,
+        // ONE FREE ROUND AND ONE PAYING ROUND, never two of either (the owner 2026-09-15 16:08), and what the paying one
+        // costs. WITH THE TESTNET LOBBY the free row is this lobby's and the paying row the testnet's: both, always.
+        const mine = testnet ? got.rows.filter((r) => r.free) : got.rows;
+        const theirs = got2 ? got2.rows.filter((r) => !r.free) : [];
+        for (const r of mine) rowSearch.set(r.id, search);
+        for (const r of theirs) rowSearch.set(r.id, testnet.search);
+        window.BLWP_LOBBY_ROWS = [...mine, ...theirs];    // every round listed, for the next one after a run (below)
+        window.BLWP_LOBBY = BLWPCLIENT.lobbyOnePerKind(window.BLWP_LOBBY_ROWS).map((r) => ({ id: r.id, phase: r.phase, free: r.free, wallet: r.wallet,
           signerNodesAgree: r.signerNodesAgree, needed: r.needed, joinable: r.joinable, stakeSats: BLWPCLIENT.lobbyStakeSats(r),
-          line: BLWPCLIENT.lobbyLine(r, now), raw: r, join: r.joinable ? BLWPCLIENT.lobbyJoinSearch(search, r.id) : null }));
-        refused = got.refused || [];
-        unanswered = got.unanswered || [];
-        warmPlayerWallet(named, window.BLWP_LOBBY);
+          line: BLWPCLIENT.lobbyLine(r, now), raw: r, join: r.joinable ? BLWPCLIENT.lobbyJoinSearch(rowSearch.get(r.id) || search, r.id) : null }));
+        refused = [...(got.refused || []), ...((got2 && got2.refused) || [])];
+        unanswered = [...(got.unanswered || []), ...((got2 && got2.unanswered) || [])];
+        warmPlayerWallet(testnet ? testnet.named : named, window.BLWP_LOBBY);
       };
       // THE PLAYER WALLET IS OPENED IN THE LOBBY, BEFORE PLAY (INSTANT-1527, the owner 2026-09-30 15:23: "PLAY to the deposit
       // invoice is a Lightning payment ... the lock client joining the federation" does not sit in front of the user). Once
@@ -1993,7 +2025,7 @@
           let r = (window.BLWP_LOBBY || []).find((x) => x.id === id && x.join);
           if (!r && next) {
             const raw = (window.BLWP_LOBBY_ROWS || []).find((x) => x.id === id && x.joinable);
-            if (raw) r = { id, free: raw.free, stakeSats: BLWPCLIENT.lobbyStakeSats(raw), join: BLWPCLIENT.lobbyJoinSearch(search, id) };
+            if (raw) r = { id, free: raw.free, stakeSats: BLWPCLIENT.lobbyStakeSats(raw), join: BLWPCLIENT.lobbyJoinSearch(rowSearch.get(id) || search, id) };
           }
           if (!r) return false;
           // EVERY RUN STARTS AT ITS ROUND'S START, PLAY FROM THE LOBBY TOO (the owner 2026-09-29 22:00, PRIORITIES item 6: "Free
