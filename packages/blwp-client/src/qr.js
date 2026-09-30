@@ -5,11 +5,11 @@
 // QR alphanumeric mode, as wallets write it; the `lightning:` scheme is the one wallets open.
 import { qrcode } from './vendor-qrcode.js';
 
-/** An SVG tag of `lightning:<INVOICE>` as a QR code, error correction M. */
+/** An SVG tag of `lightning:<INVOICE>` as a QR code, error correction L. */
 export function invoiceQrSvg(invoice, { cellSize = 4, margin = 4 } = {}) {
   const text = String(invoice || '').trim();
   if (!/^ln[a-z0-9]+$/i.test(text)) throw new Error('that is not a Lightning invoice, so no QR code is drawn');
-  const qr = qrcode(0, 'M');
+  const qr = qrcode(0, 'L');   // L: fewest modules - a screen, not a printed label, so no damage to recover from
   qr.addData(`LIGHTNING:${text.toUpperCase()}`, 'Alphanumeric');
   qr.make();
   return qr.createSvgTag({ cellSize, margin, scalable: true });
