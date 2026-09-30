@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { lockSettlement, donationSendId } from '../src/lock-settlement.js';
 import { lockActions, CLAIM, EXPIRE } from '../src/lock-action.js';
-import { FORFEIT, FAILED } from '../src/payout.js';
+import { FORFEIT, FAILED, DELIVERED } from '../src/payout.js';
 import { TEST_DONATION_SET_REGTEST } from '../src/test-donation-sets.js';
 import { toHex } from '../src/hash.js';
 
@@ -74,4 +74,14 @@ test('lockSettlement: a held donation share (the recipient did not answer) is a 
   const wrong = lockSettlement({ roundId: rid, entries: [entry(5, FORFEIT, true)], minScore: 1, locks: locks(5), fees, contract, donationSet: TEST_DONATION_SET_REGTEST,
     sends: new Map([held(0, 16000n), held(1, 8165n)]), requireSends: true });
   assert.equal(wrong.ok, false, 'a held share of another amount is built on');
+});
+
+test('lockSettlement: qualifiers, none addressed, beside a walker and a FAILED player - only the walker\'s lock is claimed, into the 75/25 split', () => {
+  const winner = { pubkey: b32(8), stakeMsat: 100000n, feeMsat: 2000n, donationMsat: 0n, outcome: DELIVERED, score: 50 };
+  const p = lockSettlement({ roundId: rid, entries: [winner, entry(5, FORFEIT, true), entry(6, FAILED)], minScore: 1, locks: locks(5, 6, 8),
+    fees, contract, donationSet: TEST_DONATION_SET_REGTEST, addressed: new Set() });
+  assert.equal(p.ok, true, p.why);
+  assert.deepEqual(p.claims.map((c) => toHex(c.pubkey)), [toHex(b32(5))], 'a lock other than the walker\'s is claimed');
+  assert.deepEqual([p.remainder.nodesMsat, p.remainder.donationMsat], [73500n, 24500n]);
+  assert.match(p.stakeWhy, /no qualifier with a paying rank named a Lightning address.*walk-away's lock is claimed/);
 });
