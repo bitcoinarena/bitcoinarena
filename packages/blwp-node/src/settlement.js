@@ -500,7 +500,7 @@ export class LockSettlement {
         ...(x.donation ? { donation: x.donation.lnurl } : {}) })),
       // A WALK-AWAY'S REMAINDER (RULED 2026-09-30): what went 75% to the sitting signer nodes and 25% to the donation set.
       remainder: p.remainder ? { nodesMsat: String(p.remainder.nodesMsat), donationMsat: String(p.remainder.donationMsat),
-        signerNodes: p.remainder.sitting, recipients: p.remainder.recipients } : null,
+        signerNodes: p.remainder.sitting, recipients: p.remainder.recipients, heldMsat: String(p.remainder.heldMsat || 0n) } : null,
       poolMsat: String(p.poolMsat), inputFeesMsat: String(p.inputFeesMsat), paidMsat: String(p.paidMsat),
       outputFeesMsat: String(p.outputFeesMsat || 0n), unspentMsat: String(p.unspentMsat || 0n), stakeWhy: p.stakeWhy || null,
       // THE POOL: qualifiers not paid, each with why (no address - its share split over those who named one).

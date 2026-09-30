@@ -40,6 +40,9 @@
  * which this probe never binds - its LNURL fetch is pointed at the recipients' own port). Printed: the door, the late
  * mark, the settlement's claims and payouts, each node's redeem, each donation invoice on alice, the walker's lock gone,
  * the FAILED player's lock still held to expire back, GET /forfeit for both.
+ * NODES=7 runs the round on seven signer nodes (5 of 7). DONATION_DOWN=1 (RULED 2026-09-30, hole 1 (a)): nothing answers
+ * for the donation set at the close - the settlement completes with the 25% held under the committee key - and the
+ * recipients start only after that; printed: the held contracts, then the retry paying the set.
  * It prints what it measured and decides nothing.
  */
 import { execFile, execFileSync } from 'node:child_process';
@@ -79,6 +82,7 @@ import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { feeLockPays } from '../../protocol/src/lock-settlement.js';
 import { lowestLiveGateway } from '../../protocol/src/winnings-send.js';
 import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
+import { askerOrder } from '../src/payout.js';
 import { TEST_DONATION_SET_REGTEST, TEST_DONATION_ENDPOINTS } from '../../protocol/src/test-donation-sets.js';
 import { serveDonationRecipients } from '../src/lnurl-recipients.js';
 import { decodePlayerResult, splitSignedResult } from '../../protocol/src/result.js';
@@ -129,13 +133,18 @@ const ADDRESS = `winner@127.0.0.1:${lnurlServer.address().port}`;
 // WALKAWAY: THE DONATION SET'S RECIPIENTS, answering with alice's invoices under each recipient's own metadata.
 const WALK = PHASE === 'walkaway';
 const donationAsked = [];
-const recipients = WALK ? await serveDonationRecipients({ port: 0, invoice: async ({ amountMsat, descriptionHash }) => {
+const N = WALK ? Number(env.NODES || 2) : 2;
+const DOWN = WALK && env.DONATION_DOWN === '1';
+const startRecipients = () => serveDonationRecipients({ port: 0, invoice: async ({ amountMsat, descriptionHash }) => {
   const inv = await lncli('alice', 'addinvoice', '--amt_msat', String(amountMsat), '--description_hash', toHex(descriptionHash));
   donationAsked.push({ amountMsat: String(amountMsat), hash: inv.r_hash });
   return { request: inv.payment_request };
-} }) : null;
+} });
+let recipients = WALK && !DOWN ? await startRecipients() : null;
 const SET_BASE = new URL(TEST_DONATION_ENDPOINTS[0]).origin;
-const lnurlFetch = (url) => (WALK && String(url).startsWith('http://') ? fetch(String(url).replace(SET_BASE, recipients.base)) : new Promise((done, fail) => {
+const lnurlFetch = (url) => (WALK && String(url).startsWith('http://')
+  ? (recipients ? fetch(String(url).replace(SET_BASE, recipients.base)) : Promise.reject(new Error(`connect ECONNREFUSED ${new URL(url).host}`)))
+  : new Promise((done, fail) => {
   const req = httpsRequest(url, { ca: cert }, (res) => { let b = ''; res.on('data', (d) => { b += d; }); res.on('end', () => done({ json: async () => JSON.parse(b) })); });
   req.on('error', fail); req.end();
 }));
@@ -145,20 +154,21 @@ const port = stakeLockPort({ bin: env.LOCK_BIN, dataDir: `${P}/client` });
 // fixtures' bonded chain names the census and the beacon; the money is this regtest federation's, through its own lock
 // port. The players seed from that beacon, as the signer nodes replay them.
 const slot = bondedChainSlot(port);
-const stores = [join(dir, 'a.db'), join(dir, 'b.db')];
+const stores = Array.from({ length: N }, (_, i) => join(dir, `${'abcdefg'[i]}.db`));
 const up = async () => {
   const nodes = [];
   for (const path of stores) nodes.push(await serve(openStore(path), { port: 0, ...opts, stakeLocks: slot.port, poolCurve: curve,
     finality: { everyMs: 500 }, lnurlFetch, winningsEveryMs: 3000, chainFor: slot.chainFor, randomnessFor: slot.randomnessFor,
     ...(WALK ? { donationSets: [TEST_DONATION_SET_REGTEST], doorSweepMs: 250 } : {}) }));
   for (const d of nodes) d.round.chainView = CLOCK.chainView();
-  for (const [d, o] of [[nodes[0], nodes[1]], [nodes[1], nodes[0]]]) {
-    const there = [`http://127.0.0.1:${o.port}`];
+  for (const d of nodes) {
+    const there = nodes.filter((o) => o !== d).map((o) => `http://127.0.0.1:${o.port}`);
     d.verifier.peers = there; d.stakeSecrets.peers = there; d.dkg.peers = there;
   }
   return nodes;
 };
-let [a, b] = await up();
+const all = await up();
+let [a, b] = all;
 
 const esm = join(dir, 'blwp-lock-client.mjs');
 copyFileSync(`${env.WASM_PKG}/blwp_lock_client.js`, esm);
@@ -169,18 +179,18 @@ const { LockClient } = wasmMod;
 const STAKE = 1000000n;
 const minScore = PHASE === 'fail' ? 0xffffffff : 1;
 const fedId = (await port.gateways()).federationId;
-const drafted = { ...contractFor([a.round.pubkey, b.round.pubkey], 20000n, [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
+const drafted = { ...contractFor(all.map((d) => d.round.pubkey), 20000n, all.map((d) => `http://127.0.0.1:${d.port}`)),
   custody: 'FEDERATION', federationId: fedId, minScore, stakeMsat: STAKE };
-const bonded = bondedChainFor(drafted.nodes, drafted, slot, { endpoints: [a, b].map((d) => `ws://127.0.0.1:${d.port}`) });
+const bonded = bondedChainFor(drafted.nodes, drafted, slot, { endpoints: all.map((d) => `ws://127.0.0.1:${d.port}`) });
 const c = { ...drafted, censusRoot: bonded.censusRoot, committeeTimeMs: bonded.committeeTimeMs };
 const rid = roundId(c);
 const RANDOMNESS = slot.randomnessFor({ contract: c }).hash;
-for (const d of [a, b]) {
+for (const d of all) {
   const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
   if (r.status !== 201) throw new Error(`round: ${r.status} ${await r.text()}`);
   assumeAssigned(d.round, rid, c.nodes);
 }
-for (let pass = 0; pass < 2; pass++) for (const d of [a, b]) await d.dkg.run(c.nodes);
+for (let pass = 0; pass < 2; pass++) for (const d of all) await d.dkg.run(c.nodes);
 const held = a.dkg.signerNodeFor(c.nodes);
 if (!held.ok) throw new Error(`claim key: ${held.why}`);
 const claimPk = held.pool.groupPublicKey;
@@ -214,7 +224,7 @@ async function lockAndPlay(who, { noMarks = false } = {}) {
   }
   const e = rand(32);
   const dealt = await dealHandout({ preimage: p, signerNodes: c.nodes, roundId: rid, playerPubkey: who.key, ephemeralSecret: e,
-    ephemeralPubkey: feldmanGroup.pointX(e), coefficients: [scalarFrom32(rand(32)) % FIELD], needed: 2, curve: feldmanGroup });
+    ephemeralPubkey: feldmanGroup.pointX(e), coefficients: Array.from({ length: receiptsNeeded(N) - 1 }, () => scalarFrom32(rand(32)) % FIELD), needed: receiptsNeeded(N), curve: feldmanGroup });
   const entry = { roundId: rid, playerPubkey: who.key, sessionPubkey: ed25519.getPublicKey(session), stakeCommitment: sha256(p),
     stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE), donationMsat: 0n, joinTick: 0, worldSecret: who.worldSecret,
     vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0], feePreimage: F,
@@ -228,7 +238,7 @@ async function lockAndPlay(who, { noMarks = false } = {}) {
     inputChainHash: batchId(input), previousHash: NO_PREVIOUS, sessionPubkey: entry.sessionPubkey };
   const signedMark = joinSigned(encodeCheckpoint(mark), ed25519.sign(checkpointId(mark), session));
   const said = [];
-  for (const d of [a, b]) {
+  for (const d of all) {
     const base = `http://127.0.0.1:${d.port}`;
     await fetch(`${base}/handout`, { method: 'POST', body: encodeHandout(dealt.handout) });
     const j = await fetch(`${base}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
@@ -284,12 +294,13 @@ if (WALK) {
   const resultsAt = (d, eid) => d.round.results(rid, eid).map((r) => decodePlayerResult(splitSignedResult(r.bytes).body)).map((r) => `${r.outcome}/${r.score}`);
   const t = Date.now();
   for (const stop = Date.now() + 90000; Date.now() < stop && !(resultsAt(a, W.eid).length && resultsAt(b, W.eid).length); await wait(500));
-  say_({ step: 'door', msAfterLock: Date.now() - t, A: resultsAt(a, W.eid), B: resultsAt(b, W.eid),
+  for (const stop = Date.now() + 60000; Date.now() < stop && all.some((d) => !resultsAt(d, W.eid).length); await wait(500));
+  say_({ step: 'door', msAfterLock: Date.now() - t, A: resultsAt(a, W.eid), B: resultsAt(b, W.eid), signedAt: all.map((d) => resultsAt(d, W.eid).join()),
     entryVoid: [!!a.round.entryVoid(W.eid), !!b.round.entryVoid(W.eid)] });
   // THE WALKER'S FIRST MARK, SENT PAST THE LINE: the same door, recorded FORFEIT at both.
   const said = [];
-  for (const d of [a, b]) for (const m of W.late) said.push(String(await say(d.port, m)).slice(0, 100));
-  say_({ step: 'late first mark', said, recorded: [!!a.round.startForfeit(W.eid), !!b.round.startForfeit(W.eid)],
+  for (const d of all) for (const m of W.late) said.push(String(await say(d.port, m)).slice(0, 100));
+  say_({ step: 'late first mark', said: [...new Set(said)], recorded: all.map((d) => !!d.round.startForfeit(W.eid)),
     A: resultsAt(a, W.eid), B: resultsAt(b, W.eid) });
 } else if (POOL) {
   // FIVE QUALIFIERS WITH DISTINCT SCORES AND A LOSER: from find-players.mjs lines, or searched here.
@@ -328,7 +339,7 @@ if (PHASE === 'expiry') {
   const after = (await lncli('bob', 'listchannels')).channels[0];
   say_({ step: 'gateway A drained', paidToAlice: drained, bobLocal: after.local_balance, bobReserve: after.local_constraints.chan_reserve_sat });
 }
-await Promise.all([say(a.port, `close ${toHex(rid)}`), say(b.port, `close ${toHex(rid)}`)]);
+await Promise.all(all.map((d) => say(d.port, `close ${toHex(rid)}`)));
 const t0 = Date.now();
 const standing = async (d) => (await fetch(`http://127.0.0.1:${d.port}/lock-settlement?round=${toHex(rid)}`)).json();
 const winnings = async (d, eid) => (await fetch(`http://127.0.0.1:${d.port}/winnings?entry=${toHex(eid)}`)).json();
@@ -372,7 +383,7 @@ if (settled && settled.moved) {
   // AND A WALK-AWAY'S 75% (WALKAWAY): each sitting signer node's remainder payout, collected the same way.
   const fees = settled.moved.payouts.map((p, outIdx) => ({ ...p, outIdx })).filter((p) => p.kind === 'signer node' || p.kind === 'remainder node');
   for (const p of fees) {
-    const d = [a, b].find((n) => toHex(n.round.pubkey) === p.pk.slice(2));
+    const d = all.find((n) => toHex(n.round.pubkey) === p.pk.slice(2));
     if (!d) { say_({ step: 'fee collected', pk: p.pk.slice(0, 18), why: 'no signer node here holds that key' }); continue; }
     let secret = Uint8Array.from(d.round.identity.secret);
     // THE CONTRACT NAMES THE EVEN KEY (02 || x): an odd node key signs with its negation, which is that key.
@@ -496,17 +507,37 @@ if (PHASE === 'pass') {
   say_({ step: 'restart', before, after, settlement: (await standing(a)).state,
     rows: await Promise.all(Q.map(async (q) => (await rowsOn(q.eid)).map((r) => r.winnings && r.winnings.state))) });
 } else if (WALK) {
-  // THE DONATION SENDS CARRIED TO PAID, each on alice; the walker's lock gone, the FAILED player's held.
-  const donations = () => a.round.sendPlansOf(rid).filter((r) => r.donation);
-  for (const stop = Date.now() + 180000; Date.now() < stop; await wait(2000)) {
+  // THE PROPOSER holds the sends it drives: the round's asker (M3.3-19's seat 0).
+  const sorted = [...all].sort((x, y) => (toHex(x.round.pubkey) < toHex(y.round.pubkey) ? -1 : 1));
+  const first = askerOrder(rid, sorted.map((d) => d.round.pubkey)).order[0];
+  const lead = sorted.find((d) => toHex(d.round.pubkey) === toHex(first));
+  const others = all.filter((d) => d !== lead);
+  // DONATION_DOWN: the settlement went through with nothing answering for the set - the 25% HELD under the committee key.
+  if (DOWN) {
+    const heldRows = () => lead.round.sendAttemptsOf(rid).filter((r) => r.donation && r.attempt === 0);
+    for (const stop = Date.now() + 120000; Date.now() < stop && !(heldRows().length && heldRows().every((r) => r.state === 'HELD')); await wait(1000));
+    const m = settled && settled.moved;
+    const held = [];
+    for (const r of heldRows()) held.push({ address: r.address.slice(0, 28), state: r.state, payoutMsat: r.payoutMsat, invoice: r.invoice ? 'yes' : 'none',
+      contract: r.txid ? `${r.txid.slice(0, 16)}:${r.outIdx}` : null,
+      inFederation: r.txid ? await port.status({ txid: fromHex(r.txid), outIdx: BigInt(r.outIdx) }) : null });
+    say_({ step: 'held, nothing answering for the set', settlement: settled && settled.state, remainder: m && m.remainder,
+      remainderNodes: m && m.payouts.filter((p) => p.kind === 'remainder node').map((p) => [p.pk.slice(2, 14), p.msat]),
+      heldPayouts: m && m.payouts.filter((p) => p.kind === 'held').map((p) => [p.msat, p.pk === toHex(claimPk) ? 'committee claim key' : p.pk]),
+      held, recipientsAsked: donationAsked.length, walkerLockInFederation: await port.status(W.outpoint) });
+    recipients = await startRecipients();
+    say_({ step: 'the recipients answer now', at: recipients.base });
+  }
+  const donations = () => lead.round.sendPlansOf(rid).filter((r) => r.donation);
+  for (const stop = Date.now() + 300000; Date.now() < stop; await wait(2000)) {
     const rows = donations();
     if (rows.length && rows.every((r) => r.state === 'PAID')) break;
   }
   const sends = [];
   for (const r of donations()) {
-    const inv = await invoiceOf(r.paymentHash);
-    sends.push({ address: r.address.slice(0, 28), owedMsat: r.owedMsat, payoutMsat: r.payoutMsat, invoiceMsat: r.invoiceMsat, gateway: r.gatewayUrl,
-      state: r.state, atB: (b.round.sendPlansOf(rid).find((x) => x.paymentHash === r.paymentHash) || {}).state,
+    const inv = r.paymentHash ? await invoiceOf(r.paymentHash) : {};
+    sends.push({ address: r.address.slice(0, 28), attempt: r.attempt, owedMsat: r.owedMsat, payoutMsat: r.payoutMsat, invoiceMsat: r.invoiceMsat, gateway: r.gatewayUrl,
+      state: r.state, atOthers: others.map((d) => (d.round.sendPlansOf(rid).find((x) => x.paymentHash === r.paymentHash) || {}).state || '-').join(),
       preimageHashes: r.preimage ? toHex(sha256(fromHex(r.preimage))) === r.paymentHash : null,
       alice: { state: inv.state, amtPaidMsat: inv.amt_paid_msat } });
   }
@@ -515,7 +546,10 @@ if (PHASE === 'pass') {
     claims: settled && settled.moved && settled.moved.claims, payouts: settled && settled.moved && settled.moved.payouts,
     donationSends: sends, recipientsAsked: donationAsked.length, winnerAddressAsked: asked.length,
     walkerLockInFederationAfter: await port.status(W.outpoint), failedLockInFederationAfter: await port.status(L.outpoint),
-    forfeitDoor: { walker: await forfeit(W.eid), failed: await forfeit(L.eid) } });
+    forfeitDoor: { walker: await forfeit(W.eid), failed: await forfeit(L.eid) },
+    heldContractsAfter: DOWN ? await Promise.all(lead.round.sendAttemptsOf(rid).filter((r) => r.donation && r.attempt === 0 && r.txid)
+      .map(async (r) => ((await port.status({ txid: fromHex(r.txid), outIdx: BigInt(r.outIdx) })).stored ? 'held' : 'spent'))) : null,
+    signerNodes: `${receiptsNeeded(N)} of ${N}` });
 } else if (PHASE === 'poolB') {
   await wait(20000);
   const s = await standing(a);
@@ -531,5 +565,5 @@ if (PHASE === 'pass') {
   say_({ step: 'no qualifier', settlement: s.state, moved: s.moved, addressAsked: asked.length, rows: rows.map((r) => r.winnings),
     sends: rows.map((r) => r.send), stakeLocksStillStored: stored });
 }
-await a.close(); await b.close(); lnurlServer.close(); if (recipients) await recipients.close();
+for (const d of (WALK ? all : [a, b])) await d.close(); lnurlServer.close(); if (recipients) await recipients.close();
 process.exit(0);
