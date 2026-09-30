@@ -17357,9 +17357,10 @@ function lobbyOnePerKind(rows, nowMs = Date.now()) {
   const seriesStart = (r) => BigInt(r.contract.startTimeMs) - BigInt(r.contract.roundIndex || 0) * 90000n;
   // ONLY ONCE IT IS ACTIVE (the owner 2026-09-30 16:31: "Until tomorrow, accept the rounds of the series already posted ...
   // Once that new series is active, its rounds are the ones. Until then, the old series rounds stand"): the newer series
-  // wins when its row is open - its committee time passed - and not while it is pending.
+  // wins when its row can be JOINED - open and assigned - not while it is pending, nor while it is open but not yet
+  // assigned (a node assigns a series round 2 h before its start): until then the rounds that can be joined stand.
   const newer = (x, y) => series(x) && series(y) && seriesStart(x) !== seriesStart(y)
-    && (seriesStart(x) > seriesStart(y) ? x : y).phase === 'open';
+    && (seriesStart(x) > seriesStart(y) ? x : y).joinable;
   const better = (x, y) => (newer(x, y) ? seriesStart(x) > seriesStart(y)
     : x.joinable !== y.joinable ? x.joinable
     : series(x) !== series(y) ? series(x)

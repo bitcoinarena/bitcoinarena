@@ -368,6 +368,9 @@ test('the newest series wins once it is active - its rows open - and the older s
   // UNTIL IT IS ACTIVE THE OLD SERIES STANDS (16:31): the new series' rounds pending, the joinable 10000 sat round is shown
   assert.deepEqual(lobbyOnePerKind(rows, now).map((r) => r.id), ['old-open'], 'a pending new series hid the old one');
   // ONCE ACTIVE, ITS ROUNDS ARE THE ONES: open rows of the newer series win over the older series' joinable one
+  // OPEN BUT NOT YET ASSIGNED (committee time passed, start more than 2 h away): not active yet either
+  const opened = rows.map((r) => (r.id.startsWith('new') ? { ...r, phase: 'open', joinable: false } : r));
+  assert.deepEqual(lobbyOnePerKind(opened, now).map((r) => r.id), ['old-open'], 'an open, unassigned new series hid a joinable round');
   const active = rows.map((r) => (r.id.startsWith('new') ? { ...r, phase: 'open', joinable: true } : r));
   assert.deepEqual(lobbyOnePerKind(active, now).map((r) => r.id), ['new-0'], 'the 10000 sat round of the older series was shown');
 });
