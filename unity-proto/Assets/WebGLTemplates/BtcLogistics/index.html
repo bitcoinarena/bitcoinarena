@@ -1123,6 +1123,9 @@
             const wallet = {
               round: named.round, invite: named.federation, seed, LockClient: wasm.LockClient,
               donationMsat: donation.donationMsat, storage: vault(), onStep,
+              // A DEPOSIT ONLY THROUGH A GATEWAY THAT HOLDS E-CASH (the owner 2026-09-30 14:30): the link's (or daily.json's)
+              // `gateway` list, never the lock client's random pick when one is named.
+              gateways: (new URLSearchParams(location.search).get('gateway') || '').split(',').map((g) => g.trim()).filter(Boolean),
             };
             // THE TOP-UP, ONLY IF THE PLAYER WALLET IS SHORT: into the wallet, not into the round.
             await BLWPCLIENT.fundPlayerWallet(Object.assign({}, wallet, {
@@ -1962,7 +1965,19 @@
           if (!holdUntilMs) { const st = Number((r.raw && r.raw.startTimeMs) || 0); if (st > Date.now()) holdUntilMs = st; }
           // PLAY FROM THE LOBBY CONTINUES AGAIN after an exit game (the next-round chain is the player's to stop, not forever)
           if (!next) window.BLWP_CONTINUE = true;
-          if (window.BLWP_JOIN && window.BLWP_JOIN.state === 'joining') return true;
+          // JOIN ENTERS THE ROUND IT NAMES (the owner 2026-09-30 09:39, item 1: "Join must enter the round the row shows ... not
+          // the one after it"). A join already going for THIS round is this one. Before, any join going - for any round -
+          // answered yes: a next round the page was holding to its start took the player's Join on another row, and Unity
+          // then waited on that other round. A HELD join for another round (entered, only its start to come) is dropped
+          // as exit game drops it, and this round is joined; one still being made is not raced - Join answers no.
+          const going = window.BLWP_JOIN;
+          if (going && going.state === 'joining') {
+            if (going.round === id) return true;
+            if (next || !going.held) return false;
+            going.cancelled = true; going.state = 'refused'; going.why = ''; going.stage = ''; going.held = false;
+            if (window.BLWP_NEXT && window.BLWP_NEXT.round === going.round) window.BLWP_NEXT.state = 'none';
+            console.log(`[blwp] join ${String(id).slice(0, 16)}: the held join on ${String(going.round).slice(0, 16)} is dropped`);
+          }
           const back = location.search;
           window.BLWP_LOBBY_BACK = back;         // where the address goes back to once the run is over
           history.replaceState(null, '', location.pathname + r.join + '&play=1');

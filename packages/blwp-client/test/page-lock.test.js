@@ -1187,3 +1187,16 @@ test('the join link carries the federation\'s invite, and refuses one that is no
   assert.equal(joinQuery(`${base}&federation=${INVITE}`).federation, INVITE);
   assert.throws(() => joinQuery(`${base}&federation=http://evil.test`), /not a federation invite code/);
 });
+
+// A DEPOSIT ONLY THROUGH A GATEWAY THAT HOLDS E-CASH (the owner 2026-09-30 14:30: "Do not pick a gateway at random"). The
+// lock client's plan named 'http://gw' (its own pick); the operator lists the funded gateway, and the receive names that.
+test('a deposit goes through the listed funded gateway, not the lock client\'s pick', async () => {
+  const { LockClient, log } = lockClient();
+  await fundPlayerWallet({ round, invite: INVITE, seed, LockClient, storage: tabStorage(), gateways: ['https://funded.example/'] });
+  const asked = log.filter((l) => l.receive).map((l) => l.receive.gateway);
+  assert.ok(asked.length > 0, 'no deposit was asked');
+  assert.deepEqual([...new Set(asked)], ['https://funded.example/']);
+  const { LockClient: L2, log: log2 } = lockClient();
+  await fundPlayerWallet({ round, invite: INVITE, seed, LockClient: L2, storage: tabStorage() });
+  assert.deepEqual([...new Set(log2.filter((l) => l.receive).map((l) => l.receive.gateway))], ['http://gw'], 'with no list the plan stands');
+});

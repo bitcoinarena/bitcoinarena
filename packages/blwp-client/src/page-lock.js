@@ -203,7 +203,22 @@ async function needFor(client, LockClient, { amount, feeMsat }) {
  * the wallet is short of this round's locks - nothing when it already holds them. `onDeposit({ invoice, amountMsat,
  * creditsMsat })` is told each invoice the player's own Lightning wallet must pay. Returns the deposits made.
  */
-export async function fundPlayerWallet({ round, invite, seed, LockClient, storage, donationMsat = 0n,
+/**
+ * THE GATEWAY A DEPOSIT GOES THROUGH (the owner 2026-09-30 14:30: "A deposit goes only to a gateway that holds e-cash ...
+ * Do not pick a gateway at random"). The lock client's own plan picks among the federation's gateways at random, and a
+ * gateway with no e-cash in the federation cannot fund the receive: measured on testnet4, gateway A (0 msat in 337ae01a)
+ * was picked for five of eight deposits. Given the operator's list of funded gateways, the deposit goes through the
+ * planned one only if it is listed, else the first listed - never an unlisted one. With no list, the plan stands.
+ */
+export function depositGateway(planned, funded = []) {
+  const norm = (u) => String(u || '').trim().replace(/\/+$/, '').toLowerCase();
+  const list = (funded || []).map(norm).filter(Boolean);
+  if (!list.length) return String(planned || '');
+  const i = list.indexOf(norm(planned));
+  return (funded || []).filter((u) => norm(u))[i >= 0 ? i : 0];
+}
+
+export async function fundPlayerWallet({ round, invite, seed, LockClient, storage, donationMsat = 0n, gateways = [],
   onDeposit = () => {}, onStep = () => {} } = {}) {
   const client = await playerWallet({ round, invite, seed, LockClient, storage, onStep });
   const locks = await locksFor(round, client, donationMsat);
@@ -218,7 +233,7 @@ export async function fundPlayerWallet({ round, invite, seed, LockClient, storag
     // NEVER A DEPOSIT SMALLER THAN THE LOCKS' ALLOWANCE: a Lightning receive that small is refused (measured, 556 msat).
     const least = n.locks.reduce((t, m) => t + BigInt(LockClient.lockAllowanceMsat(String(m))), 0n);
     const plan = JSON.parse(await client.depositFor(String(shortBy > least ? shortBy : least)));
-    const invoice = JSON.parse(await client.receive(String(plan.invoice_msat), String(plan.gateway || '')));
+    const invoice = JSON.parse(await client.receive(String(plan.invoice_msat), depositGateway(plan.gateway, gateways)));
     const d = { invoice: invoice.invoice, amountMsat: BigInt(plan.invoice_msat), creditsMsat: BigInt(plan.credited_msat) };
     deposits.push(d);
     onDeposit(d);

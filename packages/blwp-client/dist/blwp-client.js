@@ -9149,7 +9149,22 @@ async function needFor(client, LockClient, { amount, feeMsat }) {
  * the wallet is short of this round's locks - nothing when it already holds them. `onDeposit({ invoice, amountMsat,
  * creditsMsat })` is told each invoice the player's own Lightning wallet must pay. Returns the deposits made.
  */
-async function fundPlayerWallet({ round, invite, seed, LockClient, storage, donationMsat = 0n,
+/**
+ * THE GATEWAY A DEPOSIT GOES THROUGH (the owner 2026-09-30 14:30: "A deposit goes only to a gateway that holds e-cash ...
+ * Do not pick a gateway at random"). The lock client's own plan picks among the federation's gateways at random, and a
+ * gateway with no e-cash in the federation cannot fund the receive: measured on testnet4, gateway A (0 msat in 337ae01a)
+ * was picked for five of eight deposits. Given the operator's list of funded gateways, the deposit goes through the
+ * planned one only if it is listed, else the first listed - never an unlisted one. With no list, the plan stands.
+ */
+function depositGateway(planned, funded = []) {
+  const norm = (u) => String(u || '').trim().replace(/\/+$/, '').toLowerCase();
+  const list = (funded || []).map(norm).filter(Boolean);
+  if (!list.length) return String(planned || '');
+  const i = list.indexOf(norm(planned));
+  return (funded || []).filter((u) => norm(u))[i >= 0 ? i : 0];
+}
+
+async function fundPlayerWallet({ round, invite, seed, LockClient, storage, donationMsat = 0n, gateways = [],
   onDeposit = () => {}, onStep = () => {} } = {}) {
   const client = await playerWallet({ round, invite, seed, LockClient, storage, onStep });
   const locks = await locksFor(round, client, donationMsat);
@@ -9164,7 +9179,7 @@ async function fundPlayerWallet({ round, invite, seed, LockClient, storage, dona
     // NEVER A DEPOSIT SMALLER THAN THE LOCKS' ALLOWANCE: a Lightning receive that small is refused (measured, 556 msat).
     const least = n.locks.reduce((t, m) => t + BigInt(LockClient.lockAllowanceMsat(String(m))), 0n);
     const plan = JSON.parse(await client.depositFor(String(shortBy > least ? shortBy : least)));
-    const invoice = JSON.parse(await client.receive(String(plan.invoice_msat), String(plan.gateway || '')));
+    const invoice = JSON.parse(await client.receive(String(plan.invoice_msat), depositGateway(plan.gateway, gateways)));
     const d = { invoice: invoice.invoice, amountMsat: BigInt(plan.invoice_msat), creditsMsat: BigInt(plan.credited_msat) };
     deposits.push(d);
     onDeposit(d);
@@ -14912,6 +14927,11 @@ function dailyLobbySearch(daily) {
   if (nodes.length < 2 || typeof daily.bond !== 'string' || !/^[0-9a-f]{128}$/.test(String(daily.advert))) return null;
   const q = new URLSearchParams({ node: nodes.join(','), bond: daily.bond, advert: daily.advert });
   if (typeof daily.federation === 'string' && daily.federation) q.set('federation', daily.federation);
+  // THE FUNDED GATEWAYS (the owner 2026-09-30 14:30): the gateways holding e-cash in the federation, the only ones a deposit
+  // may go through (page-lock.js depositGateway). A string or a list; carried as one comma-separated `gateway`.
+  const gws = (Array.isArray(daily.gateway) ? daily.gateway : typeof daily.gateway === 'string' ? daily.gateway.split(',') : [])
+    .map((g) => String(g).trim()).filter((g) => /^https?:\/\//.test(g));
+  if (gws.length) q.set('gateway', gws.join(','));
   const search = '?' + q.toString();
   try { return lobbyQuery(search) ? search : null; } catch { return null; }
 }

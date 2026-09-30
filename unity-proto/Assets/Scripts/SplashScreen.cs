@@ -39,6 +39,8 @@ public class SplashScreen : MonoBehaviour
     int _offset;
     bool _joining, _autoPlay, _hiddenTold;
     string _adoptedRound = "";
+    /// <summary>An adopted next round is being joined: stepped until it plays or is refused, lobby or countdown or neither.</summary>
+    bool _nextJoin;
     string _joinWhy = "";
     float _joinedAt = -1f;
     // the owner's four how-to panels (2026-09-14 07:55), loaded once, and where they were drawn
@@ -123,17 +125,17 @@ public class SplashScreen : MonoBehaviour
             _continuingPolledAt = Time.unscaledTime;
             var page = Blwp.DailyLobby.Poll();
             Continuing = page != null && page.continuing;
-            if (Continuing) _lobby = page;
+            if (FollowsThePage(Continuing, _nextJoin) && page != null) _lobby = page;
         }
         if (Showing) Continuing = false;
         bool cardUp = _hud != null && _hud.ArrivalShowing;
-        if (!Showing && !Continuing && LobbyMayCover(cardUp) && ShouldReturnToLobby(Blwp.BlwpCore.Available, runStateNow, Blwp.BlwpNet.Ended,
+        if (!Showing && MayReturnToLobby(Continuing, _nextJoin) && LobbyMayCover(cardUp) && ShouldReturnToLobby(Blwp.BlwpCore.Available, runStateNow, Blwp.BlwpNet.Ended,
                                            _fromLobby, wrecked,
                                            _wreckedAt < 0f ? 0f : Time.unscaledTime - _wreckedAt, hold,
                                            _endedAt < 0f ? 0f : Time.unscaledTime - _endedAt)) ShowLobbyAgain();
         if (!Showing && !Continuing && BackFromSpectating(_spectating, _spectator != null && _spectator.Active)) ShowLobbyAgain();
         // AND THE NEXT ROUND'S JOIN IS TAKEN HERE, lobby or not: held by the page to its start, then played.
-        if (!Showing && Continuing) { AdoptNextJoin(); if (StepJoin()) return; }
+        if (!Showing && FollowsThePage(Continuing, _nextJoin)) { AdoptNextJoin(); if (StepJoin()) return; }
         // A NODE REFUSED THE ENTRY BEFORE THE RUN WAS LIVE (the owner 2026-09-26, the 21:13 case): the page has taken the
         // join fallback and reports the join refused; with no live session and the truck still at the ramp, this round is
         // not played - the chooser closes and the lobby comes back, its "Not joined" line the page's.
@@ -182,6 +184,19 @@ public class SplashScreen : MonoBehaviour
 
     /// <summary>True while the page is taking the player to the next round (SPECTATE-2158); DriveHud keeps the card up.</summary>
     public static bool Continuing { get; private set; }
+
+    /// <summary>
+    /// THE NEXT ROUND IS PLAYED, NOT THE LOBBY (the owner 2026-09-30 09:39, item 2: "After the countdown the lobby comes back and
+    /// the player must join by hand. Wrong. The next round starts by itself"). At the next round's start the page says, in
+    /// the same repaint, that its join is "joined" and that it is no longer continuing. A poll that read both at once left
+    /// the adopted join unread and unstepped - it was stepped and the page read only while continuing - and the last run's
+    /// ended word, its hold long spent, brought the lobby back and dropped the join. An adopted join is followed until it
+    /// plays or is refused, continuing or not.
+    /// </summary>
+    public static bool FollowsThePage(bool continuing, bool nextJoinGoing) => continuing || nextJoinGoing;
+
+    /// <summary>The end of the last run goes back to the lobby only while no next round is coming or being joined.</summary>
+    public static bool MayReturnToLobby(bool continuing, bool nextJoinGoing) => !continuing && !nextJoinGoing;
     float _continuingPolledAt = -10f;
 
     /// <summary>
@@ -195,7 +210,7 @@ public class SplashScreen : MonoBehaviour
             && _lobby.join.round != _adoptedRound && (_lobby.join.state == "joining" || _lobby.join.state == "joined"))
         {
             _adoptedRound = _lobby.join.round;
-            _joining = true; _joinedAt = -1f; _joinWhy = "";
+            _joining = true; _nextJoin = true; _joinedAt = -1f; _joinWhy = "";
         }
     }
 
@@ -209,8 +224,8 @@ public class SplashScreen : MonoBehaviour
         if (_lobby.join.state == "joined" && _joinedAt < 0f) _joinedAt = Time.unscaledTime;
         string next = Blwp.DailyLobby.AfterJoin(_lobby, Blwp.BlwpNet.Live,
                                                 _joinedAt < 0f ? 0f : Time.unscaledTime - _joinedAt);
-        if (next == "play") { _joining = false; Continuing = false; Play(); return true; }
-        if (next == "refused") { _joining = false; _joinWhy = _lobby.join.why; _polledAt = -10f; }
+        if (next == "play") { _joining = false; _nextJoin = false; Continuing = false; Play(); return true; }
+        if (next == "refused") { _joining = false; _nextJoin = false; _joinWhy = _lobby.join.why; _polledAt = -10f; }
         return false;
     }
 
@@ -411,6 +426,7 @@ public class SplashScreen : MonoBehaviour
         _spectating = false;
         _fromLobby = false;
         _joining = false;
+        _nextJoin = false;
         _joinedAt = -1f;
         _joinWhy = "";
         _hiddenTold = false;
