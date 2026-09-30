@@ -374,3 +374,20 @@ test('the newest series wins once it is active - its rows open - and the older s
   const active = rows.map((r) => (r.id.startsWith('new') ? { ...r, phase: 'open', joinable: true } : r));
   assert.deepEqual(lobbyOnePerKind(active, now).map((r) => r.id), ['new-0'], 'the 10000 sat round of the older series was shown');
 });
+
+
+// THE HAND-OVER BETWEEN TWO SERIES OF ONE STAKE (the owner 2026-09-30): at 2026-10-02 22:00Z series k=2's first round (start
+// 2026-10-03 00:00Z) is joinable 2 h early; 8172fffd still starts a round every 90 s until 23:58:30Z - its soonest round
+// is the row, not k=2's two hours out. And the newest series still decides the stake: 100 sat over 10000.
+test('two series of one stake: the soonest joinable round wins, not the newer series 2 h out; the newest series sets the stake', () => {
+  const S1 = Date.parse('2026-10-02T00:00:00Z'), S2 = Date.parse('2026-10-03T00:00:00Z'), now = Date.parse('2026-10-02T22:00:00Z');
+  const mk = (id, byte, start, i, stakeMsat, joinable) => ({ id, free: false, joinable, phase: 'open', entryCloseMs: start + i * 90000, stakeMsat,
+    contract: { seriesId: new Uint8Array(32).fill(byte), roundIndex: i, startTimeMs: BigInt(start + i * 90000) } });
+  const rows = [mk('k1-881', 0x81, S1, 881, 100000n, true), mk('k1-882', 0x81, S1, 882, 100000n, true), mk('k2-0', 0x82, S2, 0, 100000n, true)];
+  // 881 starts 22:01:30 - 90 s, exactly the join lead - and is the soonest with it left
+  assert.deepEqual(lobbyOnePerKind(rows, now).map((r) => r.id), ['k1-881'], 'the newer series two hours out hid the running one');
+  const old = mk('old-10k', 0x3c, Date.parse('2026-09-29T19:52:05Z'), 959, 10000000n, true);
+  assert.deepEqual(lobbyOnePerKind([old, ...rows], now).map((r) => r.id), ['k1-881'], 'the 10000 sat round of the older series was shown');
+  assert.deepEqual(lobbyOnePerKind([old, ...rows.map((r) => ({ ...r, joinable: false }))], now).map((r) => r.id), ['old-10k'],
+    'before the 100 sat series can be joined, the old series stands');
+});
