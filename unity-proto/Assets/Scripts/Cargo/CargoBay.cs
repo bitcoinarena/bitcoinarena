@@ -89,16 +89,18 @@ public class CargoBay : MonoBehaviour
     /// which is both wrong and unreadable: the player is hunted for the prize
     /// they are carrying, and the prize is the fee.
     ///
-    /// Value still adds on top, because a bed carrying the truck's whole BTC
-    /// limit is worth diverting armour for whatever it pays. (It was a whale's
-    /// twenty-five BTC; no whale fits the 20 BTC truck, CARGO-BTC-2148.)
+    /// A whale still adds on top, because a bed carrying twenty-five BTC is
+    /// worth diverting armour for whatever it pays. The 25 BTC is the core's
+    /// (cargo.js BTC_AT_FULL), not the truck's 20 BTC load limit: a full truck
+    /// does not fill this term, and that is the game's real heat (the owner
+    /// 2026-09-30 - the gauge shows the core, the core is not moved to 20).
     /// </summary>
     public float Heat
     {
         get
         {
             float fromFees = Mathf.Clamp01(FeeCarried / Mathf.Max(1f, heatAtSats));
-            float fromValue = Mathf.Clamp01((float)(BtcCarried / BtcLimit)) * 0.45f;
+            float fromValue = Mathf.Clamp01((float)(BtcCarried / 25.0)) * 0.45f;
             return Mathf.Clamp01(fromFees + fromValue);
         }
     }
