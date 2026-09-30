@@ -73,6 +73,8 @@ export function endpointsOf(committee, selfPubkey) {
 /** THE ONE REFUSAL A NODE THAT READS NO CHAIN GIVES FOR A ROUND'S CENSUS - and POST /round's for a paying round (RULED 2026-09-25). */
 export const NO_CHAIN_VIEW_WHY = 'this node has no chain view for that round, so it cannot say who is bonded';
 
+const whereOf = new WeakMap();                 // chain view -> its txid index (guardianBondsFor)
+
 export class Roster {
   constructor(round, { chainFor = NO_CHAIN_VIEW, randomnessFor = NO_BEACON } = {}) {
     this.round = round;
@@ -262,7 +264,12 @@ export class Roster {
 
     // THE ONE ALREADY DERIVED, if it was derived from a view that begins where this one does, for this round's own
     // census height. Nothing that arrives later is in it.
-    const kept = `${toHex(roundIdBytes)}:${view.firstHeight}:${contract.censusHeight}:${asRoundsOwn ? 'round' : 'height'}`;
+    // A SERIES ROUND'S CENSUS IS ITS SERIES' (the owner 2026-09-30, measured on testnet4): every round of series 3cfbe516 names
+    // one template - one census height, one network, one bond floor - and ~500 of them derived their census each, from a
+    // ~2080-block view, past a 64-entry cache, on every listing: GET /rounds took over 90 s. Keyed by the series id, one
+    // derivation serves the series. A round naming no series keeps its own key.
+    const whose = contract.seriesId instanceof Uint8Array ? `series:${toHex(contract.seriesId)}` : toHex(roundIdBytes);
+    const kept = `${whose}:${view.firstHeight}:${contract.censusHeight}:${asRoundsOwn ? 'round' : 'height'}`;
     const had = this.censuses.get(kept);
     if (had) return had;
 
@@ -331,11 +338,16 @@ export class Roster {
     const fid = toHex(contract.federationId);
     const view = this.chainFor({ contract, roundIdBytes });
 
-    const where = new Map();
-    for (const block of (view && Array.isArray(view.blocks) ? view.blocks : [])) {
-      let txids;
-      try { txids = (block.transactions || []).map((raw) => parseTransaction(raw).txid); } catch { continue; }
-      txids.forEach((t, position) => where.set(toHex(t), { block, txids, position }));
+    // ONE INDEX PER VIEW (the rounds of a series share their view): built once, not on every ask.
+    let where = view && typeof view === 'object' ? whereOf.get(view) : null;
+    if (!where) {
+      where = new Map();
+      for (const block of (view && Array.isArray(view.blocks) ? view.blocks : [])) {
+        let txids;
+        try { txids = (block.transactions || []).map((raw) => parseTransaction(raw).txid); } catch { continue; }
+        txids.forEach((t, position) => where.set(toHex(t), { block, txids, position }));
+      }
+      if (view && typeof view === 'object') whereOf.set(view, where);
     }
     const bonds = [];
     for (const e of census.entries) {
