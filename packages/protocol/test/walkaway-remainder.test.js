@@ -60,3 +60,18 @@ test('lockSettlement: no donation set held - refused; a FORFEIT not at the door 
   assert.equal(plain.ok, false, 'a FORFEIT not at the door is refused as before - its lock expires back');
   assert.match(plain.why, /operator would keep/);
 });
+
+test('lockSettlement: a held donation share (the recipient did not answer) is a pre-expired contract under the committee key - the 75% unchanged', () => {
+  const claimPk = new Uint8Array(33).fill(3);
+  const held = (i, msat) => [toHex(donationSendId(rid, i)), { paymentHash: '', gatewayPk: '', refundPk: claimPk, expiration: 0n, payoutMsat: msat, held: true }];
+  const p = lockSettlement({ roundId: rid, entries: [entry(5, FORFEIT, true)], minScore: 1, locks: locks(5), fees, contract, donationSet: TEST_DONATION_SET_REGTEST,
+    sends: new Map([held(0, 16335n), held(1, 8165n)]), requireSends: true });
+  assert.equal(p.ok, true, p.why);
+  const h = p.payouts.filter((x) => x.kind === 'held');
+  assert.deepEqual(h.map((x) => [toHex(x.payoutPk), x.msat, !!x.sent]).sort(), [[toHex(claimPk), 16335n, false], [toHex(claimPk), 8165n, false]].sort());
+  assert.deepEqual(p.payouts.filter((x) => x.kind === 'remainder node').map((x) => x.msat), [36750n, 36750n]);
+  assert.equal(p.remainder.heldMsat, 24500n);
+  const wrong = lockSettlement({ roundId: rid, entries: [entry(5, FORFEIT, true)], minScore: 1, locks: locks(5), fees, contract, donationSet: TEST_DONATION_SET_REGTEST,
+    sends: new Map([held(0, 16000n), held(1, 8165n)]), requireSends: true });
+  assert.equal(wrong.ok, false, 'a held share of another amount is built on');
+});

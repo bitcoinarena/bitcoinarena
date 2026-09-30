@@ -240,6 +240,11 @@ export function donationSendId(roundId, index) {
  * that recipient's invoice, refunding to the committee claim key. A recipient has no key, so no contract only its
  * owner can move is possible - and so, where `requireSends` says the plan is the signed one, a recipient without an
  * accepted send is REFUSED: nothing is built. A share too small to pay its own output fee is reported unpaid.
+ *
+ * A RECIPIENT THAT DOES NOT ANSWER (RULED the owner 2026-09-30, hole 1 (a)): the seats' accepted plan names that share
+ * HELD (`send.held`) - no invoice - and the settlement pays it into a pre-expired contract under the committee claim
+ * key only, so the signer nodes can retry the Lightning-address send to that same recipient (winnings-send.js). It
+ * is not a signer fee, not a gift, not a refund to the walker, and it never joins the 75%: unpaid, it stays there.
  */
 function remainderSettlement({ roundId, claims, forfeits, fees, contract, donationSet, sends, requireSends, feePart, unpaid, stakeWhy }) {
   const sitting = contract && Array.isArray(contract.nodes) ? [...new Map(contract.nodes.map((k) => [toHex(k), k])).values()] : [];
@@ -273,6 +278,10 @@ function remainderSettlement({ roundId, claims, forfeits, fees, contract, donati
     const send = sends instanceof Map ? sends.get(toHex(id)) : null;
     if (send && send.payoutMsat !== undefined && BigInt(send.payoutMsat) !== msat)
       return refuse(`a donation send was planned for a ${send.payoutMsat} msat payout and this signer node's payout is ${msat}: ${lnurl}`);
+    if (send && send.held) {
+      payouts.push({ pubkey: id, payoutPk: send.refundPk, owedMsat, msat, feeMsat: lnv2FeeMsat(fees, msat), kind: 'held', donation });
+      continue;
+    }
     if (send) {
       payouts.push({ pubkey: id, payoutPk: send.refundPk, owedMsat, msat, feeMsat: lnv2FeeMsat(fees, msat), kind: 'sent', donation,
         sent: { paymentHash: String(send.paymentHash).toLowerCase(), gatewayPk: String(send.gatewayPk).toLowerCase(), expiration: BigInt(send.expiration) } });
@@ -285,7 +294,8 @@ function remainderSettlement({ roundId, claims, forfeits, fees, contract, donati
   }
   const done = finish({ roundId, claims: claims.map(stakeClaim), payouts, unpaid: out, forfeits, poolMsat, inputFeesMsat, spendableMsat, stakeWhy }, feePart);
   if (!done.ok) return done;
-  return { ...done, remainder: { nodesMsat, donationMsat, sitting: sitting.length, recipients: split.shares.length } };
+  return { ...done, remainder: { nodesMsat, donationMsat, sitting: sitting.length, recipients: split.shares.length,
+    heldMsat: payouts.filter((p) => p.kind === 'held').reduce((t, p) => t + p.msat, 0n) } };
 }
 
 const LATE_NONCE_TAG = new TextEncoder().encode('blwp late lock settlement v1');

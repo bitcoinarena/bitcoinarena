@@ -18,6 +18,9 @@
 // per recipient of the round's donation set, its invoice fetched from that recipient's LNURL, agreed by the seats,
 // kept (donation_sends, under the send id `donationSendId`), signed, asked of the gateway, and re-sent if unpaid. A
 // recipient has no key, so it is paid only by the send - there is no contract only its owner could move.
+// A RECIPIENT THAT DOES NOT ANSWER (RULED 2026-09-30, hole 1 (a)) is planned HELD - a row with no invoice - and its
+// share is settled into a pre-expired contract under the committee claim key; the proposer's sweep retries that same
+// recipient, and once it answers, the held contract is spent (the re-send's refund) into the send to its invoice.
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { lightningAddressEndpoint, payRequestStands, callbackFor, invoiceAnswersPayRequest } from '../../protocol/src/lnurl-pay.js';
 import { sendableInvoiceMsat, lowestLiveGateway, sendPlanStands, proposedExpiration } from '../../protocol/src/winnings-send.js';
@@ -96,12 +99,18 @@ export class WinningsSend {
       const invoiceMsat = sendableInvoiceMsat(payout.msat, gw.sendFeeDefault);
       if (invoiceMsat <= 0n) return refuse(`a payout of ${payout.msat} msat does not cover the gateway's own fee`);
       const inv = await this.invoiceFor(address, invoiceMsat);
+      // A DONATION RECIPIENT THAT DOES NOT ANSWER IS HELD, not refused: the walk-away's settlement goes ahead.
+      if (!inv.ok && donation) {
+        rows.push({ entryId, roundId: roundIdBytes, attempt: 0, address, invoice: '', paymentHash: '', invoiceMsat: 0n, payoutMsat: payout.msat,
+          owedMsat: payout.owedMsat, gatewayUrl: '', gatewayPk: '', expiration: 0n, donation: true, heldWhy: inv.why });
+        continue;
+      }
       if (!inv.ok) return refuse(`the ${donation ? 'donation recipient' : 'winner'}'s invoice does not stand, so no payout is built on it: ${inv.why}`);
       rows.push({ entryId, roundId: roundIdBytes, attempt: 0, address, invoice: inv.invoice, paymentHash: inv.paymentHash, invoiceMsat,
         payoutMsat: payout.msat, owedMsat: payout.owedMsat, gatewayUrl: gw.url, gatewayPk: gw.modulePublicKey,
         expiration: proposedExpiration(g.height, gw), donation: !!donation });
     }
-    for (const r of rows) this.round.putSendPlan({ ...r, why: 'proposed by this signer node' });
+    for (const r of rows) this.round.putSendPlan({ ...r, why: r.heldWhy ? `held: the recipient did not answer (${String(r.heldWhy).slice(0, 120)})` : 'proposed by this signer node' });
     return { ok: true, rows: this.round.sendPlansOf(roundIdBytes) };
   }
 
@@ -131,6 +140,13 @@ export class WinningsSend {
       const w = wanting.get(String(p.entry));
       if (!w) return refuse(`the plan names entry ${String(p.entry).slice(0, 16)}, which this signer node does not owe to an address`);
       if (w.address !== p.address) return refuse('the plan names another address than the one this signer node holds for that entry');
+      // A HELD DONATION SHARE: no invoice to check - only that it is this signer node's own share of that recipient.
+      if (w.donation && !p.invoice) {
+        if (String(p.payoutMsat) !== String(w.payout.msat)) return refuse(`a held donation share of ${p.payoutMsat} msat, and this signer node's is ${w.payout.msat}`);
+        rows.push({ entryId: w.entryId, roundId: roundIdBytes, attempt: 0, address: w.address, invoice: '', paymentHash: '', invoiceMsat: 0n,
+          payoutMsat: w.payout.msat, owedMsat: w.payout.owedMsat, gatewayUrl: '', gatewayPk: '', expiration: 0n, donation: true });
+        continue;
+      }
       const gw = lowestLiveGateway(g.gateways);
       if (!gw) return refuse('this signer node sees no live gateway on the round\'s federation');
       const pr = await this.payRequest(w.address, sendableInvoiceMsat(w.payout.msat, gw.sendFeeDefault));
@@ -208,7 +224,8 @@ export class WinningsSend {
     for (const d of this.donationsOf(base)) byEntry.set(toHex(d.entryId), toHex(d.entryId));
     for (const r of this.round.sendAttemptsOf(roundIdBytes).filter((x) => x.attempt === 0)) {
       const pk = byEntry.get(toHex(r.entryId));
-      if (pk) sends.set(pk, { paymentHash: r.paymentHash, gatewayPk: r.gatewayPk, refundPk: claimPk, expiration: r.expiration, payoutMsat: r.payoutMsat });
+      if (pk) sends.set(pk, { paymentHash: r.paymentHash, gatewayPk: r.gatewayPk, refundPk: claimPk, expiration: r.expiration, payoutMsat: r.payoutMsat,
+        held: r.donation && !r.invoice });
     }
     return sends;
   }
@@ -232,7 +249,10 @@ export class WinningsSend {
    */
   async contractOf(roundIdBytes, row, built) {
     if (row.attempt === 0) {
-      const outIdx = built.plan.payouts.findIndex((p) => p.sent && p.sent.paymentHash === row.paymentHash);
+      // A HELD DONATION SHARE's contract is the settlement's held output for that recipient's send id.
+      const outIdx = !row.invoice
+        ? built.plan.payouts.findIndex((p) => p.kind === 'held' && p.donation && toHex(p.donation.id) === toHex(row.entryId))
+        : built.plan.payouts.findIndex((p) => p.sent && p.sent.paymentHash === row.paymentHash);
       return outIdx < 0 ? null : { txid: fromHex(built.txid), outIdx: BigInt(outIdx) };
     }
     const tx = await this.resendTx(roundIdBytes, row, built);
@@ -432,6 +452,17 @@ export class WinningsSend {
     for (const row of this.round.sendPlansOf(roundIdBytes)) {
       const entryHex = toHex(row.entryId);
       if (row.state === PAID) { out.push({ entry: entryHex, attempt: row.attempt, state: PAID, already: true }); continue; }
+      // A HELD DONATION SHARE: kept under the committee key, and the same recipient asked again - once it answers, the
+      // re-send spends the held contract into the send to its invoice (the next pass funds and pays it).
+      if (!row.invoice) {
+        const at = await this.contractOf(roundIdBytes, row, built);
+        if (!at) { out.push({ entry: entryHex, attempt: row.attempt, ok: false, why: 'no held contract for this share' }); continue; }
+        if (!row.txid) this.round.markSend({ entryId: row.entryId, attempt: 0, state: 'HELD', txid: toHex(at.txid), outIdx: Number(at.outIdx),
+          why: 'the recipient did not answer: its share is held under the committee key for a retry to the same address' });
+        const re = await this.proposeResend(roundIdBytes, this.rowOf(roundIdBytes, entryHex, 0), built);
+        out.push({ entry: entryHex, attempt: row.attempt, ok: false, held: true, resend: re.ok ? re.row.attempt : re.why });
+        continue;
+      }
       if (row.attempt > 0 && !row.txid) {
         const s = await this.sign(roundIdBytes, row, built, 'resend');
         if (!s.ok) { out.push({ entry: entryHex, attempt: row.attempt, ...s }); continue; }
