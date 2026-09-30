@@ -54,6 +54,7 @@ import { parseConnection, payInvoice } from './nwc.js';
 import { STAKE_NOT_SEEN } from '../../protocol/src/constants.js';
 import { stakeSeenBy, settlementBy, SETTLEMENT_OVER } from './join.js';
 import { handLock } from './page-lock.js';
+import { invoiceQrSvg } from './qr.js';
 import { decodeGhost } from '../../protocol/src/ghost.js';
 import { TYPE_GHOST } from '../../protocol/src/constants.js';
 import { discover } from './directory.js';

@@ -65,6 +65,33 @@ if (!/^[0-9a-f]{128}$/.test(String(d.advert))) bad('carries no signed advertisem
 })();
 CHECK
 cp "$DAILY" "$BUILD/daily.json"
+# THE TESTNET LOBBY BESIDE IT (the owner 2026-09-30 16:07, DEPLOY-1900: "The page he opens always shows both: a free round and a
+# live paid testnet round of series 3cfbe516"): testnet-lobby.json in the pair's directory - the testnet4 nodes, bond,
+# advert, federation and funded gateway - is merged into daily.json as `testnet`, once one of its nodes answers /rounds.
+TESTNET="$DAILY_DIR/testnet-lobby.json"
+if [ -f "$TESTNET" ]; then
+  node - "$BUILD/daily.json" "$TESTNET" <<'MERGE' || { echo "refusing: $TESTNET names no live testnet node" >&2; exit 4; }
+const fs = require('fs');
+const [daily, testnet] = process.argv.slice(2).map((f) => JSON.parse(fs.readFileSync(f, 'utf8')));
+(async () => {
+  // THIS HOST CANNOT REACH ITS OWN FUNNEL NAME (the relay drops TLS started here): the name is resolved to the tailnet
+  // address for the check, as the harness's Chrome maps it (--host-resolver-rules).
+  const { execFileSync } = require('child_process');
+  let ok = 0;
+  for (const n of testnet.node || []) {
+    const u = new URL(`${n}/rounds`);
+    try {
+      const code = execFileSync('curl', ['-s', '-o', '/dev/null', '-w', '%{http_code}', '-m', '60',
+        '--resolve', `${u.hostname}:443:${process.env.BLWP_TAILNET_IP || '198.51.100.7'}`, u.toString()]).toString();
+      if (code === '200') { ok++; break; }
+    } catch {}
+  }
+  if (!ok) process.exit(1);
+  fs.writeFileSync(process.argv[2], JSON.stringify({ ...daily, testnet }, null, 1));
+  console.log(`daily.json: testnet lobby merged, ${(testnet.node || []).length} node(s)`);
+})();
+MERGE
+fi
 
 
 echo "deploying $(du -sh "$BUILD" | cut -f1) to Cloudflare Pages project '$PROJECT'"
