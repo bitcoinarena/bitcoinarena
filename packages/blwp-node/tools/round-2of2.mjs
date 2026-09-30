@@ -41,6 +41,7 @@ import { extname, join, normalize } from 'node:path';
 
 import { openStore, nodeIdentity } from '../src/store.js';
 import { chainBeacon } from '../src/beacon-source.js';
+import { awaitPublishedBeacon } from '../src/publication-wait.js';
 import { beaconFromChain, medianTimePast } from '../../protocol/src/beacon.js';
 import { regtest } from './regtest-bond.mjs';
 import { chainOf, publicationOf } from '../../protocol/tools/chainview.js';
@@ -809,22 +810,21 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
 
   async function publishOnChain(c) {
     const raw = await chainRpc('createrawtransaction', [[], [{ data: toHex(publicationPayload(roundId(c))) }]]);
-    const paid = (await chainRpc('fundrawtransaction', onChain.minable ? [raw] : [raw, { fee_rate: 2 }])).hex;
+    // REPLACEABLE, so a publication left in the mempool can have its fee raised (awaitPublishedBeacon).
+    const paid = (await chainRpc('fundrawtransaction', onChain.minable ? [raw] : [raw, { fee_rate: 2, replaceable: true }])).hex;
     const signed = (await chainRpc('signrawtransactionwithwallet', [paid])).hex;
     // ON TESTNET4 IT IS BROADCAST, and the chain's own blocks carry it and then pass committee_time: nothing is
-    // mined, so nothing here can choose the beacon. Waited for, a minute between looks, for up to four hours.
+    // mined, so nothing here can choose the beacon. ITS OWN PUBLICATION FIRST (the owner 2026-09-30, the fcb15cca refusal):
+    // no beacon is named, and nothing is posted, until the publication has confirmed below the beacon block; its fee is
+    // raised while it waits; a round whose beacon block came first answers `dead` and is never posted.
     if (!onChain.minable) {
       const txid = await chainRpc('sendrawtransaction', [signed]);
-      console.log(`[publish] round ${toHex(roundId(c)).slice(0, 16)} published in ${txid}; waiting for its beacon on ${network}`);
-      for (let tries = 0; ; tries++) {
-        censusView = await viewToTip();
-        const named = beaconFromChain(c,
-          { headers: censusView.blocks.map((b) => b.header), firstHeight: censusView.firstHeight });
-        if (named.ok) return named;
-        if (tries > 240) throw new Error(`${network} named no beacon in four hours: ${named.why}`);
-        if (tries % 10 === 0) console.log(`[publish] no beacon yet at ${censusView.firstHeight + censusView.blocks.length - 1}: ${named.why}`);
-        await new Promise((r) => setTimeout(r, 60000));
-      }
+      console.log(`[publish] round ${toHex(roundId(c)).slice(0, 16)} published in ${txid}; waiting for it to confirm, then its beacon, on ${network}`);
+      const got = await awaitPublishedBeacon({ contract: c, txid, rpc: chainRpc, view: async () => (censusView = await viewToTip()),
+        sleepMs: Number(process.env.BLWP_PUBLISH_LOOK_MS || 60000) });
+      if (got.dead) console.log(`[publish] ${got.why}`);
+      else console.log(`[publish] round ${toHex(roundId(c)).slice(0, 16)} confirmed at ${got.publishedAt}; its beacon is block ${got.named.height}`);
+      return got.dead ? got : got.named;
     }
     await chainRpc('generateblock', [await chainRpc('getnewaddress', []), [signed]]);
     let tries = 0;
@@ -839,7 +839,21 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       await mineAsync(6);
     }
   }
-  if (onChain) await publishOnChain(contract);
+  // A ROUND WHOSE BEACON CAME BEFORE ITS PUBLICATION IS DRAFTED AGAIN - a new committee time just past the tip, the
+  // same windows after it, its own census root and its own publication - never posted as it was.
+  if (onChain) {
+    for (let drafts = 1; ; drafts++) {
+      const got = await publishOnChain(contract);
+      if (!got || !got.dead) break;
+      if (drafts >= 6) throw new Error(`six rounds in a row were not published before their beacons: ${got.why}`);
+      const tip = (await blocksOver(chainRpc, Number(await chainRpc('getblockcount', [])), Number(await chainRpc('getblockcount', [])))).blocks[0].header;
+      const shift = (BigInt(blockTimeOf(tip)) + 2n) * 1000n - contract.committeeTimeMs;
+      contract.committeeTimeMs += shift; contract.startTimeMs += shift; contract.entryCloseMs += shift;
+      censusView = await viewToTip();
+      contract.censusRoot = censusRootFor(contract);
+      console.log(`[publish] drafted again as round ${toHex(roundId(contract)).slice(0, 16)}: committee time ${new Date(Number(contract.committeeTimeMs)).toISOString()}`);
+    }
+  }
 
   // AND THE BEACON IS READ BEFORE THE ROUND IS POSTED, because posting is when
   // a node signer nodes: `POST /round` calls `assignSignerNodes`, joining needs the committee
@@ -883,7 +897,9 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
         r = await fetch(`http://${host}:${node.port}/round`, { method: 'POST', body });
         if (r.ok) break;
         why = await r.text();
-        if (!(attach && /no chain view|view .*pending|no beacon/i.test(why)) || tries >= 100) break;
+        // AND A NODE WHOSE OWN VIEW HAS NOT YET READ THE PUBLICATION this tool saw confirm below the beacon: asked again,
+        // not exited on (the owner 2026-09-30). A round whose beacon came first never gets here - it is drafted again.
+        if (!(attach && /no chain view|view .*pending|no beacon|no publication transaction/i.test(why)) || tries >= 100) break;
         await new Promise((res) => setTimeout(res, 3000));
       }
       if (!r.ok) throw new Error(`${node.port} refused the round: ${why}`);
@@ -997,7 +1013,9 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // last stretch of this thread nobody timed: it runs in the same process as both signer nodes, so whatever it holds,
     // the pictured trucks wait for. One name, on both of its stretches; nothing is moved.
     next.censusRoot = timed('keeper opening a round', () => censusRootFor(next), { over: 20 });
-    await publishOnChain(next);
+    const published = await publishOnChain(next);
+    // NOT PUBLISHED BEFORE ITS BEACON: not opened; the keeper drafts the next one from the chain as it stands then.
+    if (published && published.dead) throw new Error(`the next round was not opened: ${published.why}`);
     const seen = beacon ? await beacon.refresh(next) : { ok: false, why: 'no beacon' };
     if (!seen.ok) throw new Error('the next round names no beacon: ' + seen.why);
     if (funded.nameRound) funded.nameRound(roundId(next));
