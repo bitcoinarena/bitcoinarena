@@ -33,6 +33,9 @@ const keyOf = (contract) => `${contract.committeeTimeMs}:${contract.censusConfir
 export function chainBeacon({ call, window = BEACON_WINDOW } = {}) {
   if (typeof call !== 'function') throw new Error('a chain beacon needs a way to ask a node');
   const held = new Map();
+  // ONE READ IN FLIGHT PER QUESTION (the owner 2026-09-30, the testnet4 bitcoind flood): rounds that share a committee_time
+  // share the read, instead of each reading 400 headers until the first answer lands.
+  const reading = new Map();
 
   return {
     /**
@@ -42,10 +45,16 @@ export function chainBeacon({ call, window = BEACON_WINDOW } = {}) {
      * rather than discover later that it has no beacon.
      */
     async refresh(contract) {
-      const view = await headersToTip(call, { count: window });
-      const seen = beaconFromChain(contract, view);
-      if (seen.ok) held.set(keyOf(contract), seen);
-      return seen;
+      const key = keyOf(contract);
+      if (reading.has(key)) return reading.get(key);
+      const read = (async () => {
+        const view = await headersToTip(call, { count: window });
+        const seen = beaconFromChain(contract, view);
+        if (seen.ok) held.set(key, seen);
+        return seen;
+      })().finally(() => reading.delete(key));
+      reading.set(key, read);
+      return read;
     },
 
     /** What this node holds for that round, or nothing at all. */

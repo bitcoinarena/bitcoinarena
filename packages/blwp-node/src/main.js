@@ -100,7 +100,9 @@ if (url) {
   // other readers of a beacon ask synchronously.
   // AND ITS CENSUS BLOCKS, for the same reason: the roster reads a view
   // synchronously, and the signer nodes' addresses are in it.
-  const views = new Map();
+  const views = new Map();                     // view key -> the view
+  const reading = new Map();                   // view key -> its one read in flight
+  const keyOfRound = new Map();                // round id hex -> the view key it was asked under
   // UP TO THE BEACON, AND AS DEEP PAST IT AS THE ROUND ASKS. The beacon comes
   // after the census height in the normal order, and the roster checks the
   // seed block against this same view - at the round's own confirmation depth.
@@ -119,10 +121,19 @@ if (url) {
   Object.assign(options, {
     // THE CHAIN'S TIP, for the settlement's takeover order (M3.3-19) and a lock's expiry, as the launcher gave its nodes
     chainTip: async () => Number(await call('getblockcount')),
+    // ONE VIEW PER WHAT IT DEPENDS ON - census height, committee_time, confirmation depth - NOT PER ROUND, AND ONE READ
+    // OF IT IN FLIGHT (the owner 2026-09-30, measured on testnet4): a node holding series 3cfbe516 lists ~508 rounds that
+    // all name the same census and beacon, and a view read per round id - ~100 blocks each, re-asked on every listing
+    // while unread - flooded the testnet4 bitcoind from seven nodes: "Too many open files" at 07:10Z, the daemon
+    // restarted, and the LNDs on it shut down. A round asked by id alone answers from the key it was read under.
     chainFor: ({ contract, roundIdBytes } = {}) => {
-      const key = roundIdBytes ? Buffer.from(roundIdBytes).toString('hex') : null;
-      if (key && views.has(key)) return views.get(key);
-      if (key && contract) viewOf(contract).then((v) => views.set(key, v)).catch(() => {});
+      const rid = roundIdBytes ? Buffer.from(roundIdBytes).toString('hex') : null;
+      const key = contract ? `${contract.censusHeight}:${contract.committeeTimeMs}:${contract.censusConfirmations}` : rid && keyOfRound.get(rid);
+      if (!key) return undefined;
+      if (rid && contract) keyOfRound.set(rid, key);
+      if (views.has(key)) return views.get(key);
+      if (contract && !reading.has(key))
+        reading.set(key, viewOf(contract).then((v) => views.set(key, v)).catch(() => {}).finally(() => reading.delete(key)));
       return undefined;
     },
     // A round seen for the first time is read now and answered from then on.
