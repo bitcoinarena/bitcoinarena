@@ -1666,7 +1666,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return { drawn: true, game: keys(game), settlement: keys(settlement), eligibleEntries: game.eligible,
       eligibleKeys: new Set((roster.censusFor(rid).entries || []).map((e) => toHex(e.pubkey))).size };
   };
-  const listingKept = new Map();                  // GET /rounds query -> { at, json }, kept 2 s
+  const listingKept = new Map();                  // GET /rounds query -> { at, json }, a large one kept 30 s
   const announcedRounds = (url) => {
     const nowMs = BigInt(round.now());
     const listed = [];
@@ -2088,7 +2088,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const nowReal = Date.now();
         let body = listingKept.get(q);
         // ONLY A LARGE LISTING IS KEPT (a series' - over 100 rounds): a small one is made fresh on every ask, as before.
-        if (!body || !body.large || nowReal - body.at > 2000) {
+        // A LARGE ONE KEPT 30 s (measured 15:12Z: pages whose bundle predates `next` asked the whole listing - 1155 rounds with
+        // two series - every few seconds, each 8-11 s on the node's loop; a page takes a listing up to 60 s old).
+        if (!body || !body.large || nowReal - body.at > 30000) {
           const { nowMs, listed } = announcedRounds(url);
           body = { at: nowReal, large: listed.length > 100, json: JSON.stringify({ node: toHex(round.pubkey), nowMs: String(nowMs), rounds: listed }) };
           listingKept.set(q, body);
