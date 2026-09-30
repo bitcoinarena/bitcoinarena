@@ -1575,7 +1575,7 @@
           try {
             const wasm = await import('./blwp_lock_client.js'); await wasm.default();
             const offer = await BLWPCLIENT.settingsDepositOffer({ round: ctx.round, invite: ctx.invite, seed: ctx.seed, LockClient: wasm.LockClient,
-              storage: vault(), gateways: ctx.gateways, onClaimed: () => { paintHistory(); } });
+              storage: vault(), gateways: ctx.gateways, onClaimed: () => { paintHistory(); if (window.BLWP_READ_BALANCE) window.BLWP_READ_BALANCE(); } });
             showDepositOffer(offer, { title: 'Deposit into your player wallet', overSettings: true });
           } catch (e) { why.textContent = 'No deposit: ' + (e && e.message ? e.message : e); }
         })();
@@ -1795,7 +1795,7 @@
           else if (out.state === 'Refunded') status.set(3, `The payment could not be completed. Your ${n} are back in your wallet.`, 'fail');
           else if (out.withdrawableMsat != null && chosen > BigInt(out.withdrawableMsat)) status.set(3, TOO_MUCH, 'fail');
           else status.set(3, 'Withdrawal failed: ' + out.why, 'fail');
-          paintHistory();
+          paintHistory(); if (window.BLWP_READ_BALANCE) window.BLWP_READ_BALANCE();
         } catch (e) { status.set(3, 'Withdrawal failed: ' + (e && e.message ? e.message : e), 'fail'); }
       };
     }
@@ -1959,6 +1959,8 @@
     for (const id of ['blwp-seed-close', 'blwp-verify-cancel', 'blwp-verify-close'])
       document.getElementById(id).addEventListener('click', closeSeed);
     setInterval(paintMoney, 1000);
+    // the balance read again every 10 s (a read, never a spend)
+    setInterval(() => { if (window.BLWP_READ_BALANCE) window.BLWP_READ_BALANCE(); }, 10000);
 
     const withdrawGo = document.getElementById('blwp-withdraw-go');
     if (withdrawGo) withdrawGo.addEventListener('click', () => {
@@ -2320,8 +2322,23 @@
         window.BLWP_WALLET_WARM = (async () => {
           const wasm = await import('./blwp_lock_client.js');
           await wasm.default();
-          await BLWPCLIENT.playerWallet({ round: r.raw.contract, invite: named.federation, seed, LockClient: wasm.LockClient, storage: vault() });
+          const client = await BLWPCLIENT.playerWallet({ round: r.raw.contract, invite: named.federation, seed, LockClient: wasm.LockClient, storage: vault() });
           console.log('[blwp] player wallet open in the lobby, ' + (Date.now() - t0) + ' ms');
+          // THE BALANCE THE BOXES SHOW (Confirmed / Pending, lobby and Settings): read off this wallet, never computed
+          const fed = BLWPCLIENT.toHex(r.raw.contract.federationId);
+          window.BLWP_READ_BALANCE = async () => {
+            try {
+              const msat = BigInt(await client.balanceMsat());
+              window.BLWP_WALLET_BALANCE = { sats: Number(msat / 1000n), pending: 0, federation: 'federation ' + fed.slice(0, 16) + '\u2026' };
+            } catch (e) { console.log('[blwp] the balance could not be read: ' + (e && e.message ? e.message : e)); }
+          };
+          await window.BLWP_READ_BALANCE();
+          // A DEPOSIT AN EARLIER PAGE LEFT (a reload between the payment and the claim): finished here, its history row
+          // written once, the balance read again
+          BLWPCLIENT.resumeDeposits({ client, storage: vault(), federationId: r.raw.contract.federationId,
+            onClaimed: (d) => { console.log('[blwp] a deposit an earlier page made is claimed: ' + d.amountMsat + ' msat'); window.BLWP_READ_BALANCE(); paintHistory(); } })
+            .catch(() => {});
+          return client;
         })().catch((e) => { window.BLWP_WALLET_WARM = null; console.log('[blwp] player wallet not opened in the lobby: ' + (e && e.message ? e.message : e)); });
       }
       // THE LOBBY, AS UNITY DRAWS IT (the owner 2026-09-12 22:11-22:16): the title

@@ -22,7 +22,7 @@ import { bech32Encode, convertBits } from '../../protocol/src/bech32.js';
 import { decodeBolt11 } from '../../protocol/src/bolt11.js';
 
 import { lockStake, fundPlayerWallet, walletSecretFor, withdrawPlayerWallet, handLock, lockSecretFor, lockAmountMsat, lockLine, saveLock, savedLock, markLockCommitted,
-  refundStake, redeemStake, redeemPayout, payoutLine, returnStake, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, withdrawLine, refundKept, refundLine, lookOwed, owedToLine as owedLine, collectAndWithdraw, tabLockWallet, findOwedRounds, feeSecretFor, ledgerRows, ledgerReadSavedStakes, playerWallet, depositChoices, depositOffer, withdrawChoices, playerWithdrawable, DEPOSIT_INSUFFICIENT } from '../src/page-lock.js';
+  refundStake, redeemStake, redeemPayout, payoutLine, returnStake, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, withdrawLine, refundKept, refundLine, lookOwed, owedToLine as owedLine, collectAndWithdraw, tabLockWallet, findOwedRounds, feeSecretFor, ledgerRows, ledgerReadSavedStakes, playerWallet, depositChoices, depositOffer, withdrawChoices, playerWithdrawable, pendingDeposits, resumeDeposits, DEPOSIT_INSUFFICIENT } from '../src/page-lock.js';
 import { replayLinkFor } from '../src/replay-link.js';
 import { lockFieldsFromJson } from '../../protocol/src/stake-lock.js';
 import { sha256 } from '../../protocol/src/hash.js';
@@ -1326,6 +1326,36 @@ test('the withdrawal tabs are 25%, 50% and 100% of what the wallet can send, in 
   const { LockClient } = lockClient();
   assert.equal(await playerWithdrawable({ round, invite: INVITE, seed: b32(0x61), LockClient, storage: tabStorage() }), 0n,
     'an empty wallet can send nothing, and says so without an error');
+});
+
+test('a deposit paid just before a reload: the next page\'s wallet finds it, writes its history row once, and forgets it', async () => {
+  const tab = tabStorage();
+  const inv = bolt11For(100000n);
+  // the page that made the invoice is reloaded away before the claim: its wait never ends
+  const gone = { receive: async () => JSON.stringify({ invoice: inv, operation: 'op-a' }), awaitReceive: () => new Promise(() => {}) };
+  const offer = depositOffer({ client: gone, stakeMsat: 100000n, storage: tab, federationId: TEST_FEDERATION_ID });
+  await offer.invoice(100000n);
+  assert.equal(pendingDeposits(tab, TEST_FEDERATION_ID).length, 1, 'the invoice is kept until it ends');
+  assert.equal(ledgerRows(tab, TEST_FEDERATION_ID).length, 0);
+  // the reloaded page reopens the wallet; the same operation ends Claimed
+  const heard = [];
+  const reopened = { awaitReceive: async (op) => (op === 'op-a' ? 'Claimed' : 'Failure') };
+  assert.deepEqual(await resumeDeposits({ client: reopened, storage: tab, federationId: TEST_FEDERATION_ID, onClaimed: (d) => heard.push(d.amountMsat) }), ['Claimed']);
+  const rows = ledgerRows(tab, TEST_FEDERATION_ID);
+  assert.equal(rows.length, 1); assert.equal(rows[0].kind, 'deposit'); assert.equal(rows[0].msat, '100000');
+  assert.deepEqual(heard, [100000n]);
+  assert.equal(pendingDeposits(tab, TEST_FEDERATION_ID).length, 0, 'an ended deposit leaves the list');
+  // a second page seeing the same invoice claimed writes no second row
+  const again = { receive: async () => JSON.stringify({ invoice: inv, operation: 'op-a' }), awaitReceive: async () => 'Claimed' };
+  const o2 = depositOffer({ client: again, stakeMsat: 100000n, storage: tab, federationId: TEST_FEDERATION_ID });
+  await o2.invoice(100000n); await o2.claimed;
+  assert.equal(ledgerRows(tab, TEST_FEDERATION_ID).length, 1, 'one paid invoice, one row');
+  // an expired one leaves the list with no row
+  const exp = { receive: async () => JSON.stringify({ invoice: bolt11For(200000n), operation: 'op-b' }), awaitReceive: () => new Promise(() => {}) };
+  await depositOffer({ client: exp, stakeMsat: 100000n, storage: tab, federationId: TEST_FEDERATION_ID }).invoice(200000n);
+  await resumeDeposits({ client: { awaitReceive: async () => 'Expired' }, storage: tab, federationId: TEST_FEDERATION_ID });
+  assert.equal(pendingDeposits(tab, TEST_FEDERATION_ID).length, 0);
+  assert.equal(ledgerRows(tab, TEST_FEDERATION_ID).length, 1);
 });
 
 test('a withdrawal of a chosen amount pays only an invoice of exactly that amount', async () => {
