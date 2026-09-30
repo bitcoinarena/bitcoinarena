@@ -36,3 +36,26 @@ test('any other address stays: a round link with no deposit up, and a different 
   assert.equal(load('?round=ab12&play=1', null).search, '?round=ab12&play=1');
   assert.equal(load('?round=cd34&play=1', { at: '?round=ab12&play=1', back: '' }).search, '?round=cd34&play=1');
 });
+
+// TYPING IN THE PAGE'S OWN FIELDS (the owner 2026-09-30 22:04): the guard is registered on the window, in the capture phase,
+// before Unity's keyboard capture; a key in an input stops there (Unity's later listener never runs), one on the canvas
+// goes on.
+test('a key typed into a field never reaches a later window listener (Unity), a key on the canvas does', () => {
+  const from2 = html.indexOf('// TYPING IN THE PAGE\'S OWN FIELDS');
+  const code = html.slice(html.indexOf('(function () {', from2), html.indexOf('})();', from2) + 5);
+  const listeners = [];
+  const window = { addEventListener: (n, fn, capture) => listeners.push({ n, fn, capture }) };
+  new Function('window', code)(window);
+  assert.deepEqual(listeners.map((l) => [l.n, l.capture]), [['keydown', true], ['keypress', true], ['keyup', true]]);
+  let unity = 0;
+  listeners.push({ n: 'keydown', fn: () => { unity++; }, capture: true });   // Unity, registered after the page's guard
+  const fire = (target) => {
+    let stopped = false;
+    const e = { target, stopImmediatePropagation: () => { stopped = true; } };
+    for (const l of listeners.filter((x) => x.n === 'keydown')) { if (stopped) break; l.fn(e); }
+  };
+  fire({ tagName: 'INPUT' }); fire({ tagName: 'TEXTAREA' });
+  assert.equal(unity, 0, 'Unity took a key typed into a field');
+  fire({ tagName: 'CANVAS' });
+  assert.equal(unity, 1, 'a key on the game no longer reached Unity');
+});

@@ -73,7 +73,20 @@
     #blwp-deposit .dep-tabs button, .wd-tabs button { padding: 5px 10px; border: 1px solid #3a4250; background: #1c2128; color: #e8eaed; border-radius: 4px; cursor: pointer; }
     #blwp-deposit .dep-tabs button.on, .wd-tabs button.on,
     #blwp-settings .wd-tabs button.on { background: #f7931a; color: #111; border-color: #f7931a; }   /* over Settings' own button style */
+    #blwp-withdraw-panel.empty input, #blwp-withdraw-panel.empty button { opacity: .4; pointer-events: none; }
     #blwp-deposit .dep-custom input, .wd-custom input { width: 9em; padding: 4px; }
+    /* A FIXED HEIGHT (the owner 2026-09-30: "the deposit window never jumps when the QR changes"): the QR square, the amount
+       line, the custom row, the invoice line and the status keep their space whether filled or not. */
+    #blwp-deposit .dep-custom { height: 30px; margin: 4px 0; }
+    #blwp-deposit .dep-custom input { width: 10em; font-size: 16px; }
+    #blwp-deposit .dep-amount { height: 2.8em; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+    #blwp-deposit .blwp-deposit-qr { box-sizing: border-box; aspect-ratio: 1 / 1; display: flex; align-items: center; justify-content: center; }
+    #blwp-deposit .blwp-deposit-qr svg { width: 100%; height: 100%; }
+    #blwp-deposit .qr-hold { color: #8a94a3; font-size: 12px; line-height: 1.4; }
+    #blwp-deposit .dep-inv-row { height: 36px; }
+    #blwp-deposit .dep-inv-row code { height: 36px; box-sizing: border-box; line-height: 18px; }
+    #blwp-deposit .dep-copy { height: 36px; box-sizing: border-box; }
+    #blwp-deposit .pay-status-text { height: 2.8em; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
     /* COPY INVOICE (the owner 2026-09-30): one press copies the invoice; the button turns green and says Copied */
     #blwp-deposit .dep-inv-row { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
     /* ONE LINE (a 437 px window cut the tabs off with the invoice wrapped over six lines; the copy button carries it whole) */
@@ -337,7 +350,7 @@
       </div>
       <div id="blwp-withdraw-panel" style="display:none">
         <div class="wd-tabs" id="blwp-wd-tabs"></div>
-        <div class="wd-custom" id="blwp-wd-custom" style="display:none"><input id="blwp-wd-sat" type="number" min="1" step="1" placeholder="sat"></div>
+        <div class="wd-custom" id="blwp-wd-custom" style="display:none"><input id="blwp-wd-sat" type="text" inputmode="numeric" autocomplete="off" placeholder="amount in sat"></div>
         <div class="muted" id="blwp-wd-amount"></div>
         <input id="blwp-wd-invoice" type="text" placeholder="Paste an invoice from your own Lightning wallet for that amount" style="width:100%;box-sizing:border-box;margin:6px 0">
         <button id="blwp-wd-go" type="button">Withdraw</button>
@@ -548,6 +561,15 @@
   <script src="blwp-curve.js"></script>
 
   <script>
+    // TYPING IN THE PAGE'S OWN FIELDS (the owner 2026-09-30 22:04, phone: "you cannot type into the custom deposit field").
+    // Measured: the field had focus and every key was lost - Unity's WebGL keyboard capture takes keydown on the window
+    // and cancels it. This listener is on the window too, in the capture phase and registered before Unity loads, so a
+    // key typed into an input, a textarea or an editable element ends here and Unity never sees it; its default (the
+    // character) still happens. Keys anywhere else still drive the game.
+    (function () {
+      const editable = (t) => !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
+      for (const n of ['keydown', 'keypress', 'keyup']) window.addEventListener(n, (e) => { if (editable(e.target)) e.stopImmediatePropagation(); }, true);
+    })();
     // A RELOAD OF THE DEPOSIT PAGE LANDS ON THE LOBBY (the owner 2026-09-30 21:10, PRIORITIES: "Reloading the deposit page
     // redirects to the normal Core page. Do not stay on the deposit screen. Do not show the status box or the loading
     // screen over the QR"). While a join's deposit offer is up the address is the round's link with play=1, and a reload
@@ -1587,13 +1609,16 @@
       close.type = 'button'; close.title = 'Close';
       add('div', 'dep-title', message || title);
       const tabs = add('div', 'dep-tabs');
-      const custom = add('div', 'dep-custom'); custom.style.display = 'none';
-      const field = document.createElement('input'); field.type = 'number'; field.min = '1'; field.step = '1'; field.placeholder = 'sat';
-      const set = document.createElement('button'); set.type = 'button'; set.textContent = 'Set amount';
-      custom.append(field, set);
+      // CUSTOM: typed, read with parseInt as it is typed, the invoice made a moment after the last key - no Set button.
+      // The row keeps its place when hidden (visibility), so choosing Custom moves nothing.
+      const custom = add('div', 'dep-custom'); custom.style.visibility = 'hidden';
+      const field = document.createElement('input'); field.type = 'text'; field.inputMode = 'numeric'; field.autocomplete = 'off';
+      field.placeholder = 'amount in sat';
+      custom.append(field);
       const amount = add('div', 'dep-amount');
       const qr = add('div', 'blwp-deposit-qr');
-      qr.style.cssText = 'background:#fff;padding:8px;width:min(80vw,320px,36vh);margin:6px auto;line-height:0';
+      qr.style.cssText = 'background:#fff;padding:8px;width:min(80vw,320px,33vh);margin:6px auto;line-height:0';
+      const qrHold = (words) => { qr.innerHTML = ''; const h = document.createElement('div'); h.className = 'qr-hold'; h.textContent = words; qr.appendChild(h); };
       // COPY INVOICE (the owner 2026-09-30): the invoice shown, to the clipboard, with the press answered on the button -
       // green "Copied ✓" for 1.5 s, or red "Copy failed" (then the invoice text is selected to copy by hand).
       const row = add('div', 'dep-inv-row');
@@ -1632,7 +1657,7 @@
       const show = async (msat) => {
         const mine = ++token;
         amount.textContent = `Pay ${sats(msat)} from any Lightning wallet to top up your game wallet.`;
-        qr.innerHTML = ''; box.textContent = 'making the invoice \u2026'; copy.disabled = true;
+        qrHold('Creating the QR code \u2026'); box.textContent = 'creating the invoice \u2026'; copy.disabled = true;
         status.set(1, `Creating your invoice for ${sats(msat)} \u2026`, 'busy');
         try {
           const d = await offer.invoice(msat);
@@ -1644,7 +1669,7 @@
         } catch (e) {
           if (mine !== token) return;
           const why = e && e.message ? e.message : String(e);
-          box.textContent = 'No invoice: ' + why;
+          box.textContent = 'No invoice: ' + why; qrHold('No QR code');
           status.set(3, 'The invoice could not be created: ' + why, 'fail');
         }
       };
@@ -1652,12 +1677,24 @@
         const b = document.createElement('button'); b.type = 'button'; b.textContent = c.label; b.dataset.key = c.key;
         b.addEventListener('click', () => {
           for (const x of buttons) x.classList.toggle('on', x === b);
-          custom.style.display = c.key === 'custom' ? '' : 'none';
-          if (c.key !== 'custom') show(c.msat); else { field.focus(); amount.textContent = 'Enter an amount in sat.'; qr.innerHTML = ''; box.textContent = ''; copy.disabled = true; token++; current = null; status.set(0, 'Enter an amount in sat, then press Set amount.', ''); }
+          custom.style.visibility = c.key === 'custom' ? 'visible' : 'hidden';
+          if (c.key !== 'custom') show(c.msat); else { field.focus(); typed(); }
         });
         tabs.appendChild(b); return b;
       });
-      set.addEventListener('click', () => { const sat = Math.floor(Number(field.value)); if (sat > 0) show(BigInt(sat) * 1000n); });
+      let typeTimer = 0;
+      const typed = () => {
+        clearTimeout(typeTimer);
+        const sat = parseInt(String(field.value).replace(/[^0-9]/g, ''), 10);
+        if (!(sat > 0)) {
+          token++; current = null; copy.disabled = true; box.textContent = '';
+          amount.textContent = 'Enter an amount in sat.'; qrHold('The QR code appears as soon as you enter an amount');
+          status.set(0, 'Enter an amount in sat.', ''); return;
+        }
+        amount.textContent = `Pay ${sats(BigInt(sat) * 1000n)} from any Lightning wallet to top up your game wallet.`;
+        typeTimer = setTimeout(() => show(BigInt(sat) * 1000n), 450);
+      };
+      field.addEventListener('input', typed);
       // noted for a reload (the boot script above): only a join's offer - Settings' is over the lobby's own address
       if (!overSettings) {
         try { sessionStorage.setItem('blwp.depositAt', JSON.stringify({ at: location.search,
@@ -1706,15 +1743,21 @@
         buttons = BLWPCLIENT.withdrawChoices(withdrawable ?? 0n).map((c) => {
           const b = document.createElement('button'); b.type = 'button';
           b.textContent = c.key === 'custom' || !(withdrawable > 0n) ? c.label : `${c.label} · ${satOf(c.msat)}`;
-          b.disabled = c.key !== 'custom' && !(withdrawable > 0n);
+          // NOTHING TO WITHDRAW, NOTHING TO PRESS (the owner 2026-09-30): at 0 every tab, Custom included, is off
+          b.disabled = !(withdrawable > 0n);
           b.addEventListener('click', () => { for (const x of buttons) x.classList.toggle('on', x === b);
             custom.style.display = c.key === 'custom' ? '' : 'none';
-            if (c.key === 'custom') { const n = Math.floor(Number(sat.value)); chosen = n > 0 ? BigInt(n) * 1000n : null; sat.focus(); } else chosen = c.msat;
+            if (c.key === 'custom') { chosen = typedSat(); sat.focus(); } else chosen = c.msat;
             say(); });
           tabs.appendChild(b); return b;
         });
       };
-      sat.oninput = () => { const n = Math.floor(Number(sat.value)); chosen = n > 0 ? BigInt(n) * 1000n : null; say(); };
+      const typedSat = () => { const n = parseInt(String(sat.value).replace(/[^0-9]/g, ''), 10); return n > 0 ? BigInt(n) * 1000n : null; };
+      sat.oninput = () => { chosen = typedSat(); say(); };
+      // off until the wallet says how much it can send; off for good at 0
+      const goBtn = document.getElementById('blwp-wd-go');
+      const usable = (on) => { panel.classList.toggle('empty', !on); inv.disabled = !on; sat.disabled = !on; goBtn.disabled = !on; };
+      usable(false);
       paintTabs(null);
       amountEl.textContent = 'Checking how much you can withdraw …';
       (async () => {
@@ -1722,9 +1765,10 @@
           const wasm = await import('./blwp_lock_client.js'); await wasm.default();
           const can = await BLWPCLIENT.playerWithdrawable({ round: ctx.round, invite: ctx.invite, seed: ctx.seed, LockClient: wasm.LockClient, storage: vault() });
           paintTabs(can);
+          usable(can > 0n);
           if (can > 0n) buttons[2].click();   // 100%: everything
-          else { amountEl.textContent = 'Your wallet has nothing to withdraw right now. You can still enter a custom amount.'; }
-        } catch (e) { paintTabs(null); amountEl.textContent = 'Your balance could not be read (' + (e && e.message ? e.message : e) + '). You can still enter a custom amount.'; }
+          else { chosen = null; amountEl.textContent = 'Your wallet is empty, so there is nothing to withdraw.'; }
+        } catch (e) { paintTabs(null); amountEl.textContent = 'Your balance could not be read (' + (e && e.message ? e.message : e) + '). Try again in a moment.'; }
       })();
       document.getElementById('blwp-wd-go').onclick = async () => {
         if (!chosen) { why.textContent = 'Choose an amount first.'; return; }
