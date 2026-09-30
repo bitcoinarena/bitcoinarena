@@ -1793,7 +1793,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           return text(res, 409, 'that round names testnet4\'s network id before genesis_series_start, and only series 3cfbe516 is taken under it');
         // Asked BEFORE anything is decoded into the database, so a refusal
         // costs a parse and nothing else.
-        if (!funded({ kind: 'round', contract, node: fundingView }))
+        // A ROUND OF A SERIES THIS NODE HOLDS IS FUNDED BY THAT: the operator gave the node the series (the owner 2026-09-30,
+        // measured on testnet4: a page's join posts the round, and every node answered 402 for a series 3cfbe516 round
+        // it had written itself, because the funded-rounds list names rounds, not series).
+        const ofHeldSeries = contract.seriesId instanceof Uint8Array && writers.some((w) => toHex(w.id) === toHex(contract.seriesId));
+        if (!ofHeldSeries && !funded({ kind: 'round', contract, node: fundingView }))
           return text(res, 402, 'this node stores nothing for a round nobody has funded');
         // A ROUND ON A CORE OR CONFIG THIS SIGNER NODE DOES NOT RUN IS NOT OPENED HERE (M3 R1; the owner 08:07: each
         // round names its sim_wasm_hash and config_hash, signer nodes replay what that round names). 27A.7.5: the
