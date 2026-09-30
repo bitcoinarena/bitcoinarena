@@ -1758,12 +1758,16 @@
       const goBtn = document.getElementById('blwp-wd-go');
       const usable = (on) => { panel.classList.toggle('empty', !on); inv.disabled = !on; sat.disabled = !on; goBtn.disabled = !on; };
       usable(false);
+      // CUSTOM OVER THE BALANCE, IN PLAYER WORDS (the owner 2026-09-30): never the wallet library's msat sentence
+      const TOO_MUCH = 'Not enough to withdraw that amount after fees. Choose a smaller amount.';
+      let canMsat = null;
       paintTabs(null);
       amountEl.textContent = 'Checking how much you can withdraw …';
       (async () => {
         try {
           const wasm = await import('./blwp_lock_client.js'); await wasm.default();
           const can = await BLWPCLIENT.playerWithdrawable({ round: ctx.round, invite: ctx.invite, seed: ctx.seed, LockClient: wasm.LockClient, storage: vault() });
+          canMsat = can;
           paintTabs(can);
           usable(can > 0n);
           if (can > 0n) buttons[2].click();   // 100%: everything
@@ -1774,6 +1778,7 @@
         if (!chosen) { why.textContent = 'Choose an amount first.'; return; }
         const pasted = String(inv.value || '').trim();
         if (!pasted) { why.textContent = `Paste an invoice for ${satOf(chosen)}.`; return; }
+        if (canMsat !== null && chosen > canMsat) { why.textContent = ''; status.set(3, TOO_MUCH, 'fail'); return; }
         why.textContent = '';
         const n = satOf(chosen);
         const host = (u) => { try { return new URL(u).host; } catch { return String(u || ''); } };
@@ -1788,6 +1793,7 @@
             storage: vault(), amountMsat: chosen, onStep, invoiceFor: async () => ({ ok: true, invoice: pasted }) });
           if (out.ok) status.set(3, `Done! ${n} were sent to your Lightning wallet` + (host(out.gateway) ? ` via ${host(out.gateway)}.` : '.'), 'ok');
           else if (out.state === 'Refunded') status.set(3, `The payment could not be completed. Your ${n} are back in your wallet.`, 'fail');
+          else if (out.withdrawableMsat != null && chosen > BigInt(out.withdrawableMsat)) status.set(3, TOO_MUCH, 'fail');
           else status.set(3, 'Withdrawal failed: ' + out.why, 'fail');
           paintHistory();
         } catch (e) { status.set(3, 'Withdrawal failed: ' + (e && e.message ? e.message : e), 'fail'); }
