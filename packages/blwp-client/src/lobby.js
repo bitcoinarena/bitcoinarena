@@ -139,7 +139,9 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
   // and a lobby of two cost two limits. Answers are read in the order the nodes were named.
   const unique = [...new Set(nodes)];
   const answers = await Promise.all(unique.map((node) =>
-    ask(`${String(node).replace(/\/+$/, '')}/rounds`).then((r) => ({ r }), (e) => ({ e }))));
+    // AT MOST 8 UPCOMING ROUNDS OF EACH SERIES (`next`): a node holding two series lists ~1150 rounds otherwise - 63 s,
+    // past what the lobby waits for a node. A lobby shows one round per kind; eight leaves the lead's choice its room.
+    ask(`${String(node).replace(/\/+$/, '')}/rounds?next=${LOBBY_PER_SERIES}`).then((r) => ({ r }), (e) => ({ e }))));
   for (const [k, node] of unique.entries()) {
     try {
       const { r, e } = answers[k];
@@ -232,13 +234,21 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
 // 90 S, THE JOIN ITSELF (the owner 2026-09-30: the next possible paid round is always visible - no 3 minute lead): the row is the next paying round a join can still enter before its entry closes at its start. Measured live on
 // the testnet4 page 13:54Z: PLAY to the deposit invoice 23.5 s; game 2, payment to a committed entry ~50 s.
 export const SERIES_JOIN_LEAD_MS = 90000;
+export const LOBBY_PER_SERIES = 8;
 export function lobbyOnePerKind(rows, nowMs = Date.now()) {
   // THE SERIES FIRST (the owner 2026-09-30 08:50: "Only the 72-hour series ... count"; a one-off round such as 5eaa0966 does
   // not): a round of a series beats one naming none; among series rounds, the soonest with the join lead left; otherwise
   // as before - joinable, then open, then the latest entry close.
   const series = (r) => !!(r.contract && r.contract.seriesId instanceof Uint8Array);
   const leads = (r) => r.entryCloseMs - nowMs >= SERIES_JOIN_LEAD_MS;
-  const better = (x, y) => (x.joinable !== y.joinable ? x.joinable
+  // THE NEWEST SERIES FIRST (the owner 2026-09-30: "Post a new 72-hour series ... at 100 sats a round. That series takes
+  // priority over the old posted rounds. The lobby shows these 100 sat rounds, not the 10000 sat rounds of series
+  // 3cfbe516"): of two series, the one that starts later is the one posted after - its rows win, listed before their
+  // committee time too, over a joinable row of the older one. A series' start is its round's start less i x 90 s.
+  const seriesStart = (r) => BigInt(r.contract.startTimeMs) - BigInt(r.contract.roundIndex || 0) * 90000n;
+  const newer = (x, y) => series(x) && series(y) && seriesStart(x) !== seriesStart(y);
+  const better = (x, y) => (newer(x, y) ? seriesStart(x) > seriesStart(y)
+    : x.joinable !== y.joinable ? x.joinable
     : series(x) !== series(y) ? series(x)
       : series(x) && leads(x) !== leads(y) ? leads(x)
         : series(x) ? x.entryCloseMs < y.entryCloseMs

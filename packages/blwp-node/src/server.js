@@ -1678,6 +1678,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const aheadRaw = url.searchParams.get('ahead');
     const aheadMs = aheadRaw === null ? null : /^\d+h$/.test(aheadRaw) ? BigInt(aheadRaw.slice(0, -1)) * 3600000n : BigInt(aheadRaw);
     const iso = (ms) => new Date(Number(ms)).toISOString();
+    // `next` (a count): AT MOST THAT MANY UPCOMING ROUNDS OF EACH SERIES, the soonest (the owner 2026-09-30, measured on testnet4:
+    // with series 8172fffd written beside 3cfbe516, GET /rounds listed 1155 rounds, 970 KB, in 63 s - every row signed and
+    // its committees asked - and the page's lobby, which waits ~10 s a node, showed no paying row). Rounds of no series are
+    // all listed; unnamed, nothing is left out. Only the rows kept are signed and have their committees asked.
+    const nextRaw = url.searchParams.get('next');
+    const perSeries = nextRaw !== null && /^\d+$/.test(nextRaw) ? Number(nextRaw) : null;
+    const candidates = [];
     for (const held of round.openRounds()) {
       let c;
       try { c = decodeRoundContract(held.contract); } catch { continue; }
@@ -1685,6 +1692,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       try { endMs = roundEndMs(c); } catch { endMs = c.entryCloseMs; }
       if (nowMs >= endMs) continue;                   // over: announced no longer
       if (aheadMs !== null && c.startTimeMs > nowMs + aheadMs) continue;
+      candidates.push({ held, c, endMs });
+    }
+    if (perSeries !== null) {
+      candidates.sort((x, y) => (x.c.startTimeMs < y.c.startTimeMs ? -1 : x.c.startTimeMs > y.c.startTimeMs ? 1 : 0));
+      const count = new Map();
+      const kept = [];
+      for (const x of candidates) {
+        if (!(x.c.seriesId instanceof Uint8Array)) { kept.push(x); continue; }
+        const k = toHex(x.c.seriesId); const n = count.get(k) || 0;
+        if (n >= perSeries) continue;
+        count.set(k, n + 1); kept.push(x);
+      }
+      candidates.length = 0; candidates.push(...kept);
+    }
+    for (const { held, c, endMs } of candidates) {
       const id = toHex(held.roundId);
       const players = round.playersOf(held.roundId);
       const free = c.stakeMsat === 0n;
