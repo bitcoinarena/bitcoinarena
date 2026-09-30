@@ -217,9 +217,20 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
  * 2 FREE and 2 PAID. Per kind this keeps one row: a joinable one over one that is not, an open one
  * over a pending one, then the one with the most entry left. Order is kept.
  */
-export function lobbyOnePerKind(rows) {
+// A SERIES ROUND CLOSES ITS ENTRY AT ITS START, and a paying join - the deposit, then the stake lock - takes minutes: the
+// row shown is the soonest series round that still leaves this much.
+export const SERIES_JOIN_LEAD_MS = 180000;
+export function lobbyOnePerKind(rows, nowMs = Date.now()) {
+  // THE SERIES FIRST (the owner 2026-09-30 08:50: "Only the 72-hour series ... count"; a one-off round such as 5eaa0966 does
+  // not): a round of a series beats one naming none; among series rounds, the soonest with the join lead left; otherwise
+  // as before - joinable, then open, then the latest entry close.
+  const series = (r) => !!(r.contract && r.contract.seriesId instanceof Uint8Array);
+  const leads = (r) => r.entryCloseMs - nowMs >= SERIES_JOIN_LEAD_MS;
   const better = (x, y) => (x.joinable !== y.joinable ? x.joinable
-    : x.phase !== y.phase ? x.phase === 'open' : x.entryCloseMs > y.entryCloseMs);
+    : series(x) !== series(y) ? series(x)
+      : series(x) && leads(x) !== leads(y) ? leads(x)
+        : series(x) ? x.entryCloseMs < y.entryCloseMs
+          : x.phase !== y.phase ? x.phase === 'open' : x.entryCloseMs > y.entryCloseMs);
   const kept = new Map();
   for (const r of rows) {
     const kind = r.free ? 'free' : 'paying';
