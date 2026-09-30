@@ -218,8 +218,8 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
  * over a pending one, then the one with the most entry left. Order is kept.
  */
 // A SERIES ROUND CLOSES ITS ENTRY AT ITS START, and a paying join - the deposit, then the stake lock - takes minutes: the
-// row shown is the soonest series round that still leaves this much.
-export const SERIES_JOIN_LEAD_MS = 180000;
+// row shown is the soonest series round that still leaves this much (6 min: the first paid testnet4 join, 2026-09-30).
+export const SERIES_JOIN_LEAD_MS = 360000;
 export function lobbyOnePerKind(rows, nowMs = Date.now()) {
   // THE SERIES FIRST (the owner 2026-09-30 08:50: "Only the 72-hour series ... count"; a one-off round such as 5eaa0966 does
   // not): a round of a series beats one naming none; among series rounds, the soonest with the join lead left; otherwise
