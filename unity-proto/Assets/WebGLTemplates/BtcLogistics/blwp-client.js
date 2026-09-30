@@ -9094,13 +9094,28 @@ function paysIntoALock(round, invite, LockClient) {
  * THE PLAYER WALLET FOR THIS ROUND'S FEDERATION: joined under `walletSecretFor(seed, federationId)`, kept in the tab
  * per federation. Two paying rounds of one federation open the same wallet. Returns the lock client over it.
  */
+// ONE OPEN WALLET PER LOCK CLIENT, TAB STORE AND WALLET SECRET (INSTANT-1527, the owner 2026-09-30 15:23: the slow steps do
+// not sit in front of the user). The page opens the player wallet in the lobby, before PLAY - joining the federation is
+// the slowest step of a paying join - and the deposit, the lock and the withdraw use that same open client rather than
+// joining again on the same store. A join that failed is not kept.
+const openWallets = new WeakMap();
 async function playerWallet({ round, invite, seed, LockClient, storage, onStep = () => {} } = {}) {
   paysIntoALock(round, invite, LockClient);
   const secret = walletSecretFor(seed, round.federationId);
+  const key = `${toHex(round.federationId)}:${toHex(secret)}`;
+  const byStore = storage && (openWallets.get(LockClient) || openWallets.set(LockClient, new WeakMap()).get(LockClient));
+  const open = byStore && byStore.get(storage);
+  if (open && open.has(key)) { onStep('the player wallet is open'); return open.get(key); }
   const store = storage ? walletStoreFor(storage, round.federationId, secret) : unkeptLockStore();
   const kept = JSON.parse(store.entries()).length;
   onStep(kept ? 'reopening the player wallet this tab keeps for this federation' : 'joining the federation with the player wallet');
-  return LockClient.join(invite, toHex(round.federationId), toHex(secret), store);
+  const joining = LockClient.join(invite, toHex(round.federationId), toHex(secret), store);
+  if (byStore) {
+    const m = open || new Map(); if (!open) byStore.set(storage, m);
+    m.set(key, joining);
+    joining.catch(() => m.delete(key));
+  }
+  return joining;
 }
 
 /**
@@ -9164,8 +9179,10 @@ function depositGateway(planned, funded = []) {
   return (funded || []).filter((u) => norm(u))[i >= 0 ? i : 0];
 }
 
+const DEPOSIT_MARGIN_PPM = 6000n;
+const DEPOSIT_MARGIN_MSAT = 10000n;
 async function fundPlayerWallet({ round, invite, seed, LockClient, storage, donationMsat = 0n, gateways = [],
-  onDeposit = () => {}, onStep = () => {} } = {}) {
+  estimateDeposit = false, onDeposit = () => {}, onStep = () => {} } = {}) {
   const client = await playerWallet({ round, invite, seed, LockClient, storage, onStep });
   const locks = await locksFor(round, client, donationMsat);
   const deposits = [];
@@ -9178,7 +9195,16 @@ async function fundPlayerWallet({ round, invite, seed, LockClient, storage, dona
     const shortBy = n.need !== null ? n.need - have : n.floor - have;
     // NEVER A DEPOSIT SMALLER THAN THE LOCKS' ALLOWANCE: a Lightning receive that small is refused (measured, 556 msat).
     const least = n.locks.reduce((t, m) => t + BigInt(LockClient.lockAllowanceMsat(String(m))), 0n);
-    const plan = JSON.parse(await client.depositFor(String(shortBy > least ? shortBy : least)));
+    const asked = shortBy > least ? shortBy : least;
+    // THE INVOICE AT ONCE (INSTANT-1527, the owner 2026-09-30 15:23: "PLAY to the deposit invoice is a Lightning payment").
+    // Measured in a page on testnet4: the lock client's depositFor took 256.8 s - it searches the invoice amount with a
+    // receive-fee quote over the network at every step - against 1.3 s for the receive itself. With `estimateDeposit`
+    // the invoice is sized from the fees here: measured, gateway B's receive plus the claim took 31698 msat of 9899474
+    // (0.32%); DEPOSIT_MARGIN_PPM and DEPOSIT_MARGIN_MSAT cover that with room, and what is over stays in the player's
+    // own wallet. A credit that still falls short is topped up by this loop's next deposit.
+    const plan = estimateDeposit
+      ? { invoice_msat: String(asked + (asked * DEPOSIT_MARGIN_PPM) / 1000000n + DEPOSIT_MARGIN_MSAT), credited_msat: String(asked), gateway: '' }
+      : JSON.parse(await client.depositFor(String(asked)));
     const invoice = JSON.parse(await client.receive(String(plan.invoice_msat), depositGateway(plan.gateway, gateways)));
     const d = { invoice: invoice.invoice, amountMsat: BigInt(plan.invoice_msat), creditsMsat: BigInt(plan.credited_msat) };
     deposits.push(d);
@@ -15048,8 +15074,13 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
  * over a pending one, then the one with the most entry left. Order is kept.
  */
 // A SERIES ROUND CLOSES ITS ENTRY AT ITS START, and a paying join - the deposit, then the stake lock - takes minutes: the
-// row shown is the soonest series round that still leaves this much (20 min: measured 2026-09-30, a paying join took 5-7 min from PLAY to its deposit on the testnet4 page).
-const SERIES_JOIN_LEAD_MS = 1200000;
+// row shown is the soonest series round that still leaves this much.
+// 3 MIN, NOT 20 (INSTANT-1527, the owner 2026-09-30 15:23: "A payable round is always in the lobby. The player can join one
+// now. Do not hide paying rows until their start is 20 minutes away"). The 20 min covered a join whose deposit invoice
+// took 5-7 min - measured, the lock client's depositFor alone was 256.8 s. The invoice is asked at once now and the wallet
+// is open from the lobby; measured on game 2, payment to a committed entry was ~50 s. A series starts a round every 90 s,
+// so the row shown starts within 3 to 4.5 min.
+const SERIES_JOIN_LEAD_MS = 180000;
 function lobbyOnePerKind(rows, nowMs = Date.now()) {
   // THE SERIES FIRST (the owner 2026-09-30 08:50: "Only the 72-hour series ... count"; a one-off round such as 5eaa0966 does
   // not): a round of a series beats one naming none; among series rounds, the soonest with the join lead left; otherwise
