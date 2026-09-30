@@ -241,18 +241,24 @@ export function lobbyOnePerKind(rows, nowMs = Date.now()) {
   // as before - joinable, then open, then the latest entry close.
   const series = (r) => !!(r.contract && r.contract.seriesId instanceof Uint8Array);
   const leads = (r) => r.entryCloseMs - nowMs >= SERIES_JOIN_LEAD_MS;
-  // THE NEWEST SERIES FIRST (the owner 2026-09-30: "Post a new 72-hour series ... at 100 sats a round. That series takes
-  // priority over the old posted rounds. The lobby shows these 100 sat rounds, not the 10000 sat rounds of series
-  // 3cfbe516"): of two series, the one that starts later is the one posted after - its rows win, listed before their
-  // committee time too, over a joinable row of the older one. A series' start is its round's start less i x 90 s.
+  // A SERIES' START, its round's start less i x 90 s: of two series the later-starting one is the one posted after
+  // (the owner 2026-09-30: "That series takes priority over the old posted rounds").
   const seriesStart = (r) => BigInt(r.contract.startTimeMs) - BigInt(r.contract.roundIndex || 0) * 90000n;
-  // ONLY ONCE IT IS ACTIVE (the owner 2026-09-30 16:31: "Until tomorrow, accept the rounds of the series already posted ...
-  // Once that new series is active, its rounds are the ones. Until then, the old series rounds stand"): the newer series
-  // wins when its row can be JOINED - open and assigned - not while it is pending, nor while it is open but not yet
-  // assigned (a node assigns a series round 2 h before its start): until then the rounds that can be joined stand.
-  const newer = (x, y) => series(x) && series(y) && seriesStart(x) !== seriesStart(y)
-    && (seriesStart(x) > seriesStart(y) ? x : y).joinable;
-  const better = (x, y) => (newer(x, y) ? seriesStart(x) > seriesStart(y)
+  // THE NEWEST SERIES DECIDES THE STAKE, THE SOONEST ROUND OF THAT STAKE WINS (the owner 2026-09-30: "the newest series
+  // decides only the stake. Among joinable rows with that stake, the soonest round wins"; 16:31: until the new series is
+  // active the old rounds stand). Per kind, the stake of the newest series with a JOINABLE row - open and assigned - is the
+  // stake shown: 100 sat over 3cfbe516's 10000 once 8172fffd can be joined, and before that the old series' own. Between
+  // two series of that one stake - 8172fffd and the next day's - nothing but the soonest round decides: measured by the rule
+  // before this, k=2's first round, joinable 2 h before its start, would have hidden 8172fffd's last two hours of rounds.
+  const winningStake = new Map();
+  for (const r of rows) {
+    if (!series(r) || !r.joinable) continue;
+    const kind = r.free ? 'free' : 'paying';
+    const had = winningStake.get(kind);
+    if (!had || seriesStart(r) > had.start) winningStake.set(kind, { start: seriesStart(r), stake: BigInt(r.stakeMsat) });
+  }
+  const ofWinningStake = (r) => { const w = winningStake.get(r.free ? 'free' : 'paying'); return !w || BigInt(r.stakeMsat) === w.stake; };
+  const better = (x, y) => (ofWinningStake(x) !== ofWinningStake(y) ? ofWinningStake(x)
     : x.joinable !== y.joinable ? x.joinable
     : series(x) !== series(y) ? series(x)
       : series(x) && leads(x) !== leads(y) ? leads(x)
