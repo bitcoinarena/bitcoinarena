@@ -18,6 +18,7 @@
 // exactly the one the series derives - index inside 0 .. round_count - 1, entry window the derived one
 // (seriesRoundCheck) - and refuses entries, locks and settlements for any other.
 import { taggedHash } from './hash.js';
+import { isOldTestnet4Id, isOldTestnet4Series } from './old-series.js';
 import { encodeRoundContract } from './contracts.js';
 import { PUBLICATION_MAGIC, PUBLICATION_BYTES } from './publication.js';
 import { OP_RETURN } from './tx.js';
@@ -46,7 +47,8 @@ export const SERIES_CLOCKS = Object.freeze({
 });
 const sameBytes = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array && a.length === b.length && a.every((x, i) => x === b[i]);
 /** The clock a contract's network runs: testnet4's for its network id, mainnet's for every other. */
-export const seriesClockFor = (networkId) => (sameBytes(networkId, NETWORK_ID_TESTNET4) ? SERIES_CLOCKS.testnet4 : SERIES_CLOCKS.mainnet);
+export const seriesClockFor = (networkId) => (sameBytes(networkId, NETWORK_ID_TESTNET4) || isOldTestnet4Id(networkId)
+  ? SERIES_CLOCKS.testnet4 : SERIES_CLOCKS.mainnet);
 // the mainnet figures under their old names, for callers that name no network
 export const SERIES_LEAD_MIN_MS = SERIES_CLOCKS.mainnet.leadMinMs;
 export const SERIES_COMMITTEE_LEAD_MS = SERIES_CLOCKS.mainnet.committeeLeadMs;
@@ -96,6 +98,8 @@ export function seriesLeadIsValid(template) {
     return { ok: false, why: `that series starts ${lead} ms after its committee time, and a round must exist ${min} ms (${min / HOUR} h) before its first entry` };
   if (template.entryCloseMs !== template.startTimeMs)
     return { ok: false, why: 'a series round takes no late join: its entry closes at its start' };
+  // PICK B (old-series.js): series 3cfbe516 of testnet4's old id predates genesis_series_start - no grid to be on
+  if (isOldTestnet4Id(template.networkId) && isOldTestnet4Series(seriesId(template))) return { ok: true, leadMs: lead, oldSeries: true };
   // ON THE GENESIS GRID (ALL-BUT-MIN-1727): a series starts at genesis_series_start + k * 24 h, never where it names
   let g;
   try { g = genesisSeriesStart(template.networkId); } catch (e) { return { ok: false, why: e.message }; }

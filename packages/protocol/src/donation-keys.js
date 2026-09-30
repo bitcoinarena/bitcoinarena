@@ -9,11 +9,14 @@ import {
   NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4,
   AUTHORITY_PUBKEY_REGTEST, RECOVERY_PUBKEY_REGTEST, AUTHORITY_PUBKEY_TESTNET4, RECOVERY_PUBKEY_TESTNET4,
 } from './genesis-ids.js';
+import { isOldTestnet4Id } from './old-series.js';
 
 export function donationKeysForNetworkId(networkId) {
   const is = (known) => networkId instanceof Uint8Array && networkId.length === 32
     && networkId.every((x, i) => x === known[i]);
   if (is(NETWORK_ID_REGTEST)) return { network: 'regtest', authority: AUTHORITY_PUBKEY_REGTEST, recovery: RECOVERY_PUBKEY_REGTEST };
   if (is(NETWORK_ID_TESTNET4)) return { network: 'testnet4', authority: AUTHORITY_PUBKEY_TESTNET4, recovery: RECOVERY_PUBKEY_TESTNET4 };
+  // PICK B (old-series.js): the same testnet4 authority signed the set series 3cfbe516 names under the old id
+  if (isOldTestnet4Id(networkId)) return { network: 'testnet4', authority: AUTHORITY_PUBKEY_TESTNET4, recovery: RECOVERY_PUBKEY_TESTNET4 };
   return null;
 }

@@ -15,6 +15,7 @@
 // and no committee; those are M2.1 steps 4 and later, and each is refused
 // rather than half-built.
 import { seriesWriter } from './series-writer.js';
+import { isOldTestnet4Id, isOldTestnet4Series } from '../../protocol/src/old-series.js';
 import { seriesRoundCheck } from '../../protocol/src/series.js';
 import { federationGatewayCount } from '../../protocol/src/gateways.js';
 import { createServer } from 'node:http';
@@ -1770,6 +1771,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         try { contract = decodeRoundContract(await read(req)); }
         catch (e) { return text(res, 400, `that is not a round this signer node opens: ${e.message}`); }
         { const why = seriesRefusal(contract); if (why) return text(res, 409, `series round refused: ${why}`); }
+        // PICK B (protocol/src/old-series.js): testnet4's id before genesis_series_start opens a round of series 3cfbe516
+        // and nothing else.
+        if (isOldTestnet4Id(contract.networkId) && !(contract.seriesId && isOldTestnet4Series(contract.seriesId)))
+          return text(res, 409, 'that round names testnet4\'s network id before genesis_series_start, and only series 3cfbe516 is taken under it');
         // Asked BEFORE anything is decoded into the database, so a refusal
         // costs a parse and nothing else.
         if (!funded({ kind: 'round', contract, node: fundingView }))

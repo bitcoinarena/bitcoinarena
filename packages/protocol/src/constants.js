@@ -7,6 +7,7 @@
 // reusing a neighbour's.
 
 import { taggedHash } from './hash.js';
+import { isOldTestnet4Id } from './old-series.js';
 import { utf8Encode } from './utf8.js';
 import {
   GENESIS_CONFIG_HASH as GENESIS_CONFIG_HASH_ID,
@@ -463,6 +464,8 @@ export function networkOf(networkId) {
   const same = (a) => a.every((b, i) => b === networkId[i]);
   if (same(NETWORK_ID_REGTEST)) return 'regtest';
   if (same(NETWORK_ID_TESTNET4)) return 'testnet4';
+  // PICK B (old-series.js): testnet4 under its id before genesis_series_start, for series 3cfbe516 alone
+  if (isOldTestnet4Id(networkId)) return 'testnet4';
   return null;
 }
 
