@@ -85,7 +85,8 @@ export class WinningsSend {
    * THE COORDINATOR'S PROPOSAL: one plan per qualifier of `base` whose entry named an address. Kept, and returned;
    * a round already planned is not planned again. A bad invoice is a refusal: no payout output is built on it.
    */
-  async propose(roundIdBytes, base) {
+  // `hold`: donation addresses planned HELD without asking them - the seats' refusal named them unreachable there.
+  async propose(roundIdBytes, base, { hold = new Set() } = {}) {
     this.dropIfStale(roundIdBytes, base);
     const kept = this.round.sendPlansOf(roundIdBytes);
     if (kept.length) return { ok: true, rows: kept };
@@ -98,7 +99,7 @@ export class WinningsSend {
     for (const { entryId, payout, address, donation } of wanting) {
       const invoiceMsat = sendableInvoiceMsat(payout.msat, gw.sendFeeDefault);
       if (invoiceMsat <= 0n) return refuse(`a payout of ${payout.msat} msat does not cover the gateway's own fee`);
-      const inv = await this.invoiceFor(address, invoiceMsat);
+      const inv = donation && hold.has(address) ? refuse('a seat could not reach it') : await this.invoiceFor(address, invoiceMsat);
       // A DONATION RECIPIENT THAT DOES NOT ANSWER IS HELD, not refused: the walk-away's settlement goes ahead.
       if (!inv.ok && donation) {
         rows.push({ entryId, roundId: roundIdBytes, attempt: 0, address, invoice: '', paymentHash: '', invoiceMsat: 0n, payoutMsat: payout.msat,
@@ -150,6 +151,9 @@ export class WinningsSend {
       const gw = lowestLiveGateway(g.gateways);
       if (!gw) return refuse('this signer node sees no live gateway on the round\'s federation');
       const pr = await this.payRequest(w.address, sendableInvoiceMsat(w.payout.msat, gw.sendFeeDefault));
+      // A DONATION RECIPIENT THIS SEAT CANNOT REACH is named, so the proposer can plan it HELD (hole 1 (a)): an invoice this
+      // seat cannot check is not taken, and the walk-away's settlement is not left to stall into a refund.
+      if (!pr.ok && w.donation) return refuse(`the donation recipient does not answer here: ${w.address} (${pr.why})`);
       if (!pr.ok) return refuse(`this signer node could not read the address's pay request: ${pr.why}`);
       const stands = sendPlanStands({ plan: p, payoutMsat: w.payout.msat, gateways: g.gateways, height: g.height, metadata: pr.metadata, network: this.network });
       if (!stands.ok) return refuse(`the send plan does not stand here: ${stands.why}`);
@@ -306,7 +310,18 @@ export class WinningsSend {
     const row = { entryId: prev.entryId, roundId: roundIdBytes, attempt: prev.attempt + 1, address: prev.address, invoice: inv.invoice,
       paymentHash: inv.paymentHash, invoiceMsat, payoutMsat: out, owedMsat: prev.owedMsat, gatewayUrl: gw.url, gatewayPk: gw.modulePublicKey,
       expiration: proposedExpiration(g.height, gw), donation: !!prev.donation };
-    this.round.putSendPlan({ ...row, why: `re-send proposed: attempt ${prev.attempt} expired unpaid through ${prev.gatewayUrl}` });
+    this.round.putSendPlan({ ...row, why: prev.invoice ? `re-send proposed: attempt ${prev.attempt} expired unpaid through ${prev.gatewayUrl}`
+      : 'a held donation share re-sent: the recipient answers' });
+    const refused = await this.offerResend(roundIdBytes, row);
+    return refused.length ? refuse(`a signer node did not take the re-send: ${refused.join('; ')}`) : { ok: true, row: this.rowOf(roundIdBytes, entryHex) };
+  }
+
+  /**
+   * A RE-SEND HANDED TO THE PEERS, each checking it itself (`checkResend`); a peer that holds it already takes it again.
+   * Offered again before an unfunded re-send is signed: a peer that refused it once - a held donation recipient it could
+   * not yet reach - takes the same attempt once it can, instead of the re-send waiting on a row it never kept.
+   */
+  async offerResend(roundIdBytes, row) {
     const refused = [];
     for (const base of this.peersFor(roundIdBytes)) {
       try {
@@ -314,7 +329,7 @@ export class WinningsSend {
         if (!r.ok) refused.push(`${base}: ${(await r.text()).trim()}`);
       } catch (e) { refused.push(`${base}: ${e.message}`); }
     }
-    return refused.length ? refuse(`a signer node did not take the re-send: ${refused.join('; ')}`) : { ok: true, row: this.rowOf(roundIdBytes, entryHex) };
+    return refused;
   }
 
   /** A PEER'S CHECK of a re-send: the previous attempt expired here, the gateway is the next live key here, the invoice stands. */
@@ -464,6 +479,7 @@ export class WinningsSend {
         continue;
       }
       if (row.attempt > 0 && !row.txid) {
+        await this.offerResend(roundIdBytes, row);
         const s = await this.sign(roundIdBytes, row, built, 'resend');
         if (!s.ok) { out.push({ entry: entryHex, attempt: row.attempt, ...s }); continue; }
         const tx = await this.resendTx(roundIdBytes, row, built, s.signature);

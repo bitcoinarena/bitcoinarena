@@ -108,3 +108,39 @@ test('5 of 7: the same claim - no qualifier, the donation set not answering; the
     assert.equal(BigInt(m.remainder.heldMsat), BigInt(m.remainder.donationMsat));
   } finally { await w.close(); }
 });
+
+test('the donation set answers the proposer and not the other seat: the recipients the seat names are planned HELD, the walk-away settles, and the retry pays once the seat reaches them', async () => {
+  const port = lockPort();
+  const w = await lockRound({ port, serveOpts: { doorSweepMs: 250, winningsEveryMs: 500, donationSets: [TEST_DONATION_SET_REGTEST] } });
+  try {
+    const p = proposerOf(w);
+    const seat = p === w.a ? w.b : w.a;
+    // THE OTHER SEAT CANNOT REACH THE SET; the proposer can.
+    let seatDown = true;
+    const own = seat.winnings.lnurlFetch;
+    seat.winnings.lnurlFetch = (url) => (seatDown && new URL(url).pathname.startsWith('/lnurlp/') ? Promise.reject(new Error('connect ECONNREFUSED')) : own(url));
+    const walker = await lockAndPlay(w, { ...LOSER, name: 'walker', key: b32(0x21) }, { noMarks: true });
+    for (const stop = Date.now() + 60000; Date.now() < stop && !(w.a.round.results(w.rid, walker.eid).length && w.b.round.results(w.rid, walker.eid).length); await wait(250));
+    await closeRound(w);
+    const st = await untilSettled(w, 90000);
+    const moved = (await (await fetch(`http://127.0.0.1:${p.port}/lock-settlement?round=${toHex(w.rid)}`)).json()).moved;
+    const claimed = port.settlements.some((x) => (x.claims || []).some((c) => opKey(c.outpoint) === opKey(walker.outpoint)));
+    const facts = { state: st.state, why: String(st.why).slice(0, 160), walkerLockClaimed: claimed, walkerLockHeld: port.locks.has(opKey(walker.outpoint)),
+      held: moved && moved.payouts.filter((x) => x.kind === 'held').map((x) => x.msat), sent: moved && moved.payouts.filter((x) => x.kind === 'sent').length,
+      invoicesAskedByTheProposer: w.lnurl.issued.filter((i) => i.host === '127.0.0.1:18777').length };
+    console.log('  FACTS (the set down at one seat):', JSON.stringify(facts));
+    assert.equal(st.state, 'ACCEPTED', st.why);
+    assert.ok(claimed && !facts.walkerLockHeld, 'the walker\'s lock is left to expire back - a refund');
+    assert.equal(facts.held.length, 2, 'the recipients the seat could not reach are not held');
+    assert.equal(facts.sent, 0, 'an invoice the seat could not check was built on');
+    // THE SEAT REACHES THE SET: the retry pays it
+    seatDown = false;
+    let latest = [];
+    for (const stop = Date.now() + 60000; Date.now() < stop; await wait(500)) {
+      latest = p.round.sendPlansOf(w.rid).filter((r) => r.donation);
+      if (latest.length === 2 && latest.every((r) => r.state === 'PAID')) break;
+    }
+    console.log('  FACTS (the seat reaches the set):', JSON.stringify(latest.map((r) => [r.attempt, r.state, String(r.payoutMsat)])));
+    assert.ok(latest.length === 2 && latest.every((r) => r.state === 'PAID' && r.attempt >= 1), 'the held shares were not paid once both seats reach the set');
+  } finally { await w.close(); }
+});

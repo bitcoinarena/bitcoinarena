@@ -767,10 +767,10 @@ export class LockSettlement {
     // ADOPT BEFORE PROPOSING: a plan a peer already keeps, if it stands here, is this asker's plan too - a second invoice
     // would be a second plan the peers split over. The lowest-keyed that stands wins (`check` gives way to it).
     await this.adoptPeerPlan(roundIdBytes, got.base);
-    const proposed = await this.winnings.propose(roundIdBytes, got.base);
+    let proposed = await this.winnings.propose(roundIdBytes, got.base);
     if (!proposed.ok) return proposed;
     // AN EMPTY PLAN IS HANDED OUT TOO: a peer that holds an address this signer node does not refuses it by name.
-    const body = JSON.stringify(proposed.rows.map(sendPlanToJson));
+    let body = JSON.stringify(proposed.rows.map(sendPlanToJson));
     const peers = this.peersFor(roundIdBytes);
     // A PLAN HANDED TO NOBODY IS NOT TAKEN. Measured: a signer node restarted inside a settlement asked again before it
     // knew its peers, "handed" a new plan to none, and the peer went on refusing against the old one.
@@ -780,7 +780,21 @@ export class LockSettlement {
     // otherwise refused the plan, and nothing was ever settled). The settlement is signed by whoever rebuilt the same
     // bytes; the plan needs as many as that signature does. A 2-of-2 still needs both. AND IT IS COUNTED IN SIGNATURES,
     // NOT HTTP STATUSES (plan-taken.js): a seat's yes is its node key's signature over the plan's id.
-    const agreed = await this.planAgreed(roundIdBytes, null, body, got.contract, peers, toHex(roundIdBytes));
+    let agreed = await this.planAgreed(roundIdBytes, null, body, got.contract, peers, toHex(roundIdBytes));
+    // A DONATION RECIPIENT THAT ANSWERS HERE AND NOT AT A SEAT (hole 1 (a)): a seat names the first it cannot reach; each
+    // one named is planned HELD - its share settled under the committee key and retried - and the plan offered again,
+    // until the seats agree or name no new one, rather than the whole settlement stalling into a refund.
+    const hold = new Set();
+    while (!agreed.final) {
+      const named = proposed.rows.filter((r) => r.donation && r.invoice && !hold.has(r.address)
+        && agreed.refused.some((x) => x.includes(`the donation recipient does not answer here: ${r.address}`))).map((r) => r.address);
+      if (!named.length || !(this.round.dropPlannedSends(roundIdBytes) > 0)) break;
+      for (const a of named) hold.add(a);
+      proposed = await this.winnings.propose(roundIdBytes, got.base, { hold });
+      if (!proposed.ok) return proposed;
+      body = JSON.stringify(proposed.rows.map(sendPlanToJson));
+      agreed = await this.planAgreed(roundIdBytes, null, body, got.contract, peers, toHex(roundIdBytes));
+    }
     if (!agreed.final)
       return { ...refuse(`${agreed.agreed} of the ${agreed.needed} seats the settlement needs signed the send plan, so nothing is settled: ${agreed.refused.join('; ')}`), peerRefused: true };
     console.log(`[winnings] ${toHex(roundIdBytes).slice(0, 16)} ${agreed.agreed} of ${got.contract.nodes.length} seats signed send plan ${toHex(agreed.planId).slice(0, 16)} (${agreed.needed} needed)${agreed.refused.length ? `; did not count: ${agreed.refused.join('; ')}` : ''}`);
