@@ -34,6 +34,7 @@
 const CENSUS_LOOKBACK = 2016;
 import { openStore } from './store.js';
 import { tipHeaderView } from './tip-view.js';
+import { isOldTestnet4Id, isOldTestnet4Series, OLD_TESTNET4_SERIES_BOND_HEIGHT } from '../../protocol/src/old-series.js';
 import { bitcoindRpc, blocksOver } from './chain-rpc.js';
 import { chainBeacon } from './beacon-source.js';
 import { lightningFromEnv } from './lnd-settings.js';
@@ -148,6 +149,17 @@ if (url) {
       return got;
     },
   });
+  // A HELD SERIES' VIEWS ARE READ AT START (TWO-GAMES-1407, measured on testnet4 2026-09-30 12:37Z): the first paying
+  // POST /round after a restart was refused by every node - "this node has no chain view for that round, so it cannot
+  // say who is bonded" - because the old series' bonding is read at its own census height (OLD_TESTNET4_SERIES_BOND_HEIGHT),
+  // a view key nothing had asked for yet, and chainFor answers no view while a read is in flight. The deposit had landed
+  // and its lock was made; the join was dropped. Both keys of each held series are asked for now, so they are read before
+  // the first player's round is.
+  for (const c of options.series || []) {
+    options.chainFor({ contract: c });
+    if (c.seriesId instanceof Uint8Array && isOldTestnet4Id(c.networkId) && isOldTestnet4Series(c.seriesId))
+      options.chainFor({ contract: { ...c, censusHeight: OLD_TESTNET4_SERIES_BOND_HEIGHT } });
+  }
 }
 // THE NODE, AND ITS GUARDIAN WHEN IT HOLDS A GUARDIAN KEY (node-start.js; §23A.2, RULED the owner 2026-09-26 22:54 and
 // 2026-09-27): nothing here is guardian config - whether this node is a guardian is the key beside its store, and the
