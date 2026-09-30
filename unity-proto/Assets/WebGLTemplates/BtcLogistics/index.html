@@ -1983,7 +1983,10 @@
           // as long as it was watched. JOIN_ANSWER_S with no named step (a stake lock or an invoice names its step and waits
           // on the player, and is not cut) refuses it, naming the signer nodes that did not answer; a late answer after that
           // is dropped, so a refused join never turns into a session.
-          const JOIN_ANSWER_S = 30;
+          // 600 s, NOT 30 (the owner 2026-09-30, measured on the testnet4 page): a paying join's steps before its first named
+          // one - the round, the claim key, the handout, the lock client's federation - took 5-7 min there, and the 30 s
+          // cut refused joins that were still going; their deposits then landed and the finished joins were dropped.
+          const JOIN_ANSWER_S = 600;
           const since = Date.now();
           const hosts = (list) => list.map((n) => String(n).replace(/^[a-z]+:\/\//, '').replace(/\/+$/, '')).join(' and ');
           const clock = setInterval(() => {
