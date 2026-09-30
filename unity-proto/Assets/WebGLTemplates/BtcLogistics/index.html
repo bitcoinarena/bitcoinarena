@@ -63,6 +63,16 @@
     /* AN INVOICE TO PAY IS ON TOP (measured 2026-09-30 at 800x437: the backup banner and the lobby chips, z-index 30, lay over
        the QR code and it did not scan) - under the settings and the seed dialog only. */
     body > #blwp-deposit:not(:empty) { z-index: 38; }
+    /* THE DEPOSIT MODAL (GROSS-INVOICE-2053): a close, the message, the round tabs, the amount, the QR and the invoice */
+    #blwp-deposit.deposit-modal { background: #11151a; border: 1px solid #3a4250; border-radius: 8px; padding: 12px 14px;
+      /* CENTRED AND SCROLLABLE (measured at 800x437: anchored to the bottom it grew over the top edge, its close and tabs cut off) */
+      top: 50%; bottom: auto; transform: translate(-50%, -50%); max-height: 94vh; overflow-y: auto; box-sizing: border-box; }
+    #blwp-deposit.over-settings { z-index: 44 !important; }
+    #blwp-deposit .dep-close { float: right; background: none; border: 0; color: #e8eaed; font-size: 18px; cursor: pointer; }
+    #blwp-deposit .dep-tabs, .wd-tabs { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin: 8px 0; }
+    #blwp-deposit .dep-tabs button, .wd-tabs button { padding: 5px 10px; border: 1px solid #3a4250; background: #1c2128; color: #e8eaed; border-radius: 4px; cursor: pointer; }
+    #blwp-deposit .dep-tabs button.on, .wd-tabs button.on { background: #f7931a; color: #111; border-color: #f7931a; }
+    #blwp-deposit .dep-custom input, .wd-custom input { width: 9em; padding: 4px; }
     /* ...AND OVER THE GAME once the loading screen is gone: PLAY in the lobby
        joins in the running page (M3.3-34), so a lock round's deposit
        is asked for after Unity loaded. */
@@ -303,6 +313,13 @@
       <div id="blwp-history">
         <div class="muted" id="blwp-history-fed"></div>
         <div id="blwp-history-rows"></div>
+      </div>
+      <div id="blwp-withdraw-panel" style="display:none">
+        <div class="wd-tabs" id="blwp-wd-tabs"></div>
+        <div class="wd-custom" id="blwp-wd-custom" style="display:none"><input id="blwp-wd-sat" type="number" min="1" step="1" placeholder="sat"></div>
+        <div class="muted" id="blwp-wd-amount"></div>
+        <input id="blwp-wd-invoice" type="text" placeholder="Paste an invoice from your own Lightning wallet for that amount" style="width:100%;box-sizing:border-box;margin:6px 0">
+        <button id="blwp-wd-go" type="button">Withdraw</button>
       </div>
       <div id="blwp-money-actions">
         <button id="blwp-deposit-go" type="button">Deposit</button>
@@ -1043,26 +1060,10 @@
           console.log('[blwp] join step -> deposit (beside the rest)');
           // THE TOP-UP, ONLY IF THE PLAYER WALLET IS SHORT: into the wallet, not into the round.
           await BLWPCLIENT.fundPlayerWallet(Object.assign({}, wallet, {
-            // THE INVOICE AT ONCE: sized from the fees, not searched over the network (256.8 s measured; page-lock.js).
-            estimateDeposit: true,
+            // THE PLAYER CHOOSES THE DEPOSIT (GROSS-INVOICE-2053): the modal - the round tabs, a gross invoice, a close.
+            askDeposit: (offer) => showDepositOffer(offer, { message: BLWPCLIENT.DEPOSIT_INSUFFICIENT }),
             onDeposit: (d) => {
               window.BLWP_DEPOSIT = { invoice: d.invoice, amountMsat: String(d.amountMsat) };
-              if (depositEl) {
-                depositEl.textContent = 'Pay ' + String((d.amountMsat + 999n) / 1000n) + ' sat into your player wallet '
-                  + 'from any Lightning wallet; your stake is then spent from it:';
-                // THE QR CODE (the owner 2026-09-30: the deposit needs a QR code): drawn by the pinned bundle from the invoice
-                // it checked, above the invoice text a desktop player copies.
-                try {
-                  const qr = document.createElement('div');
-                  qr.className = 'blwp-deposit-qr';
-                  qr.style.cssText = 'background:#fff;padding:8px;width:min(80vw,320px,60vh);margin:8px auto;line-height:0';
-                  qr.innerHTML = BLWPCLIENT.invoiceQrSvg(d.invoice);
-                  depositEl.appendChild(qr);
-                } catch (e) { console.error('[blwp] no deposit QR: ' + e.message); }
-                const box = document.createElement('code');
-                box.textContent = d.invoice;
-                depositEl.appendChild(box);
-              }
               console.log('[blwp] player wallet deposit: ' + String(d.amountMsat) + ' msat, ' + d.invoice);
             },
           }));
@@ -1510,15 +1511,112 @@
       const el = document.getElementById(id);
       if (!el) continue;
       el.addEventListener('click', () => {
-        // WITHDRAW IS NOT GATED. Taking your own money OUT never needs a backup - it is putting money in,
-        // and staking it, that a lost seed loses.
-        if (which === 'withdraw') {
-          document.getElementById('blwp-money-why').textContent = 'Withdraw is not wired to a wallet yet.';
-          return;
-        }
-        // NOT GATED ANY MORE. A player who has not written the phrase down is warned, not stopped.
-        document.getElementById('blwp-money-why').textContent = 'Deposit is not wired to a wallet yet.';
+        // WITHDRAW IS NOT GATED. Taking your own money OUT never needs a backup - it is putting money in, and staking
+        // it, that a lost seed loses. BOTH WEAR THE ROUND TABS (GROSS-INVOICE-2053): n x this lobby's paying stake, or Custom.
+        const why = document.getElementById('blwp-money-why');
+        const ctx = moneyContext();
+        if (!ctx.ok) { why.textContent = ctx.why; return; }
+        if (which === 'withdraw') { openWithdraw(ctx); return; }
+        why.textContent = '';
+        (async () => {
+          try {
+            const wasm = await import('./blwp_lock_client.js'); await wasm.default();
+            const offer = await BLWPCLIENT.settingsDepositOffer({ round: ctx.round, invite: ctx.invite, seed: ctx.seed, LockClient: wasm.LockClient,
+              storage: vault(), gateways: ctx.gateways, onClaimed: () => { paintHistory(); } });
+            showDepositOffer(offer, { title: 'Deposit into your player wallet', overSettings: true });
+          } catch (e) { why.textContent = 'No deposit: ' + (e && e.message ? e.message : e); }
+        })();
       });
+    }
+    // THE DEPOSIT MODAL (the owner 2026-09-30 20:53, GROSS-INVOICE-2053): a close; the message when the wallet cannot fund the
+    // round; the tabs "1 round", "2 rounds", "5 rounds", "10 rounds", "Custom" - each this round's stake times the count,
+    // Custom an amount the player writes; every switch a new GROSS invoice - its amount, its QR code and its text. A paid
+    // invoice closes it; the close rejects the offer (nothing is paid, the join stops).
+    function showDepositOffer(offer, { message = '', title = 'Deposit', overSettings = false } = {}) {
+      const el = document.getElementById('blwp-deposit');
+      if (!el) return;
+      el.textContent = '';
+      el.className = 'deposit-modal' + (overSettings ? ' over-settings' : '');
+      const add = (tag, cls, text) => { const x = document.createElement(tag); if (cls) x.className = cls; if (text !== undefined) x.textContent = text; el.appendChild(x); return x; };
+      const close = add('button', 'dep-close', '\u2715');
+      close.type = 'button'; close.title = 'Close';
+      add('div', 'dep-title', message || title);
+      const tabs = add('div', 'dep-tabs');
+      const custom = add('div', 'dep-custom'); custom.style.display = 'none';
+      const field = document.createElement('input'); field.type = 'number'; field.min = '1'; field.step = '1'; field.placeholder = 'sat';
+      const set = document.createElement('button'); set.type = 'button'; set.textContent = 'Set amount';
+      custom.append(field, set);
+      const amount = add('div', 'dep-amount');
+      const qr = add('div', 'blwp-deposit-qr');
+      qr.style.cssText = 'background:#fff;padding:8px;width:min(80vw,320px,40vh);margin:8px auto;line-height:0';
+      const box = add('code', 'dep-invoice');
+      let token = 0;
+      const show = async (msat) => {
+        const mine = ++token;
+        amount.textContent = `Pay ${(BigInt(msat) + 999n) / 1000n} sat into your player wallet from any Lightning wallet`;
+        qr.innerHTML = ''; box.textContent = 'making the invoice \u2026';
+        try {
+          const d = await offer.invoice(msat);
+          if (mine !== token) return;
+          qr.innerHTML = BLWPCLIENT.invoiceQrSvg(d.invoice);
+          box.textContent = d.invoice;
+        } catch (e) { if (mine === token) box.textContent = 'No invoice: ' + (e && e.message ? e.message : e); }
+      };
+      const buttons = offer.choices.map((c) => {
+        const b = document.createElement('button'); b.type = 'button'; b.textContent = c.label; b.dataset.key = c.key;
+        b.addEventListener('click', () => {
+          for (const x of buttons) x.classList.toggle('on', x === b);
+          custom.style.display = c.key === 'custom' ? '' : 'none';
+          if (c.key !== 'custom') show(c.msat); else { field.focus(); amount.textContent = 'Write an amount in sat'; qr.innerHTML = ''; box.textContent = ''; token++; }
+        });
+        tabs.appendChild(b); return b;
+      });
+      set.addEventListener('click', () => { const sat = Math.floor(Number(field.value)); if (sat > 0) show(BigInt(sat) * 1000n); });
+      const done = () => { el.textContent = ''; el.className = ''; };
+      close.addEventListener('click', () => { offer.close(); done(); });
+      offer.claimed.then(done, done);
+      buttons[0].click();
+    }
+    window.BLWP_SHOW_DEPOSIT = showDepositOffer;
+    // WHAT SETTINGS' DEPOSIT AND WITHDRAW WORK ON: the lobby's paying round (its stake sets the tabs), the invite of the
+    // federation that holds the funds, its funded gateway, and this tab's seed.
+    function moneyContext() {
+      const row = (window.BLWP_LOBBY || []).find((r) => !r.free && r.raw && r.raw.contract);
+      const lob = window.BLWP_LEDGER_LOBBY; const seed = walletSeed();
+      if (!row) return { ok: false, why: 'No paying round is listed, so there is no stake to count rounds in.' };
+      if (!lob || !lob.federation || !seed) return { ok: false, why: 'This lobby names no federation to hold the funds.' };
+      return { ok: true, round: row.raw.contract, roundStake: BigInt(BLWPCLIENT.lobbyStakeSats(row.raw)) * 1000n, invite: lob.federation, seed,
+        gateways: window.BLWP_LEDGER_GATEWAYS || [] };
+    }
+    function openWithdraw(ctx) {
+      const panel = document.getElementById('blwp-withdraw-panel'); const tabs = document.getElementById('blwp-wd-tabs');
+      const custom = document.getElementById('blwp-wd-custom'); const sat = document.getElementById('blwp-wd-sat');
+      const amountEl = document.getElementById('blwp-wd-amount'); const inv = document.getElementById('blwp-wd-invoice');
+      const why = document.getElementById('blwp-money-why');
+      panel.style.display = ''; tabs.textContent = ''; why.textContent = '';
+      let chosen = null;
+      const say = () => { amountEl.textContent = chosen ? `Withdraw ${chosen / 1000n} sat - paste an invoice for exactly that amount` : 'Write an amount in sat'; };
+      const buttons = BLWPCLIENT.depositChoices(ctx.roundStake).map((c) => {
+        const b = document.createElement('button'); b.type = 'button'; b.textContent = c.label;
+        b.addEventListener('click', () => { for (const x of buttons) x.classList.toggle('on', x === b);
+          custom.style.display = c.key === 'custom' ? '' : 'none'; chosen = c.key === 'custom' ? null : c.msat; say(); });
+        tabs.appendChild(b); return b;
+      });
+      sat.oninput = () => { const n = Math.floor(Number(sat.value)); chosen = n > 0 ? BigInt(n) * 1000n : null; say(); };
+      document.getElementById('blwp-wd-go').onclick = async () => {
+        if (!chosen) { why.textContent = 'Choose an amount first.'; return; }
+        const pasted = String(inv.value || '').trim();
+        if (!pasted) { why.textContent = `Paste an invoice for ${chosen / 1000n} sat.`; return; }
+        why.textContent = 'Withdrawing \u2026';
+        try {
+          const wasm = await import('./blwp_lock_client.js'); await wasm.default();
+          const out = await BLWPCLIENT.withdrawPlayerWallet({ round: ctx.round, invite: ctx.invite, seed: ctx.seed, LockClient: wasm.LockClient,
+            storage: vault(), amountMsat: chosen, invoiceFor: async () => ({ ok: true, invoice: pasted }) });
+          why.textContent = out.ok ? `Withdrawn: ${chosen / 1000n} sat to your own wallet over Lightning.` : ('Not withdrawn: ' + out.why);
+          paintHistory();
+        } catch (e) { why.textContent = 'Not withdrawn: ' + (e && e.message ? e.message : e); }
+      };
+      buttons[0].click();
     }
     // THE HISTORY UNDER THE BALANCES (the owner 2026-09-30 16:15; accepted sequence): every deposit, withdrawal and stake this
     // tab made in the federation that holds the funds - its id named, the id LockClient.federationIdOf reads off the
@@ -1982,6 +2080,7 @@
       const testnet = await testnetLobby(named);
       // THE LOBBY WHOSE FEDERATION HOLDS THE PLAYER'S FUNDS, for the Settings history (the testnet one when there is one)
       window.BLWP_LEDGER_LOBBY = testnet ? testnet.named : named;
+      window.BLWP_LEDGER_GATEWAYS = (new URLSearchParams((testnet ? testnet.search : search).replace(/^\?/, '')).get('gateway') || '').split(',').map((g) => g.trim()).filter(Boolean);
       if (testnet) { findTheRoundsOwed(testnet.named); console.log('[blwp] the testnet lobby too: ' + testnet.named.nodes.length + ' node(s)'); }
       // WHICH LOBBY A ROW CAME FROM, so its join - PLAY, or the next round after a run - carries that lobby's own link
       const rowSearch = window.BLWP_ROW_SEARCH = new Map();

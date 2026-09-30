@@ -233,10 +233,59 @@ export function depositGateway(planned, funded = []) {
   return (funded || []).filter((u) => norm(u))[i >= 0 ? i : 0];
 }
 
+// THE DEPOSIT IS THE GROSS ROUND AMOUNT, IN ROUNDS (the owner 2026-09-30 20:53, GROSS-INVOICE-2053: "A 10000 sat round
+// invoices 10000 sat, not 9906. Fee and donation are not subtracted from the invoice ... The tabs are '1 round', '2
+// rounds', '5 rounds', '10 rounds', and 'Custom' ... The amount is this round's stake times the count"). The gateway's
+// receive fee and the lock allowance come out of what the wallet is credited: measured on testnet4, a gross 10000 sat
+// invoice credits 9968 sat, more than one round's locks; a gross 100 sat one credits 97.7 sat, 0.6 sat short of one
+// 100 sat round with the 2% donation - the page then says the wallet cannot fund the round, and two rounds cover.
+export const DEPOSIT_ROUNDS = [1, 2, 5, 10];
+export const DEPOSIT_INSUFFICIENT = 'insufficient funds to play this round. Do you want to do a lightning deposit?';
+/** The deposit tabs for a round of `stakeMsat`: n rounds at n x the stake, then Custom (an amount the player names). */
+export function depositChoices(stakeMsat) {
+  const stake = BigInt(stakeMsat || 0n);
+  return [...DEPOSIT_ROUNDS.map((n) => ({ key: String(n), label: n === 1 ? '1 round' : `${n} rounds`, rounds: n, msat: stake * BigInt(n) })),
+    { key: 'custom', label: 'Custom', rounds: null, msat: null }];
+}
+/**
+ * ONE DEPOSIT OFFER: `invoice(msat)` asks the wallet's gateway for a gross invoice of exactly that amount (a new one at
+ * every tab switch); `claimed` resolves with whichever invoice was paid first, `close()` rejects it. Every invoice made
+ * stays payable: one paid after another was claimed is credited to the same wallet.
+ */
+export function depositOffer({ client, stakeMsat, haveMsat = null, needMsat = null, gateways = [], onDeposit = () => {} } = {}) {
+  let settle; let fail;
+  const claimed = new Promise((res, rej) => { settle = res; fail = rej; });
+  claimed.catch(() => {});
+  const made = [];
+  const invoice = async (msat) => {
+    const amount = BigInt(msat);
+    if (amount <= 0n) throw new Error('a deposit is more than 0 sat');
+    const got = JSON.parse(await client.receive(String(amount), depositGateway('', gateways)));
+    const d = { invoice: got.invoice, amountMsat: amount, creditsMsat: null };
+    made.push(d);
+    onDeposit(d);
+    client.awaitReceive(got.operation).then((final) => { if (final === 'Claimed') settle(d); }, () => {});
+    return d;
+  };
+  return { stakeMsat: BigInt(stakeMsat || 0n), haveMsat, needMsat, choices: depositChoices(stakeMsat), invoice, claimed, made,
+    close: (why) => fail(new Error(why || 'the deposit was closed: nothing was paid')) };
+}
+/** A deposit into the player wallet from Settings: the same tabs, this round's stake, no round to fund. */
+export async function settingsDepositOffer({ round, invite, seed, LockClient, storage, gateways = [], onDeposit = () => {}, onClaimed = () => {} } = {}) {
+  const client = await playerWallet({ round, invite, seed, LockClient, storage });
+  const offer = depositOffer({ client, stakeMsat: round.stakeMsat, haveMsat: BigInt(await client.balanceMsat()), gateways, onDeposit });
+  offer.claimed.then((d) => { depositRow(storage, round, d); onClaimed(d); }, () => {});
+  return offer;
+}
+function depositRow(storage, round, d) {
+  let invoiceHash = null;
+  try { invoiceHash = toHex(decodeBolt11(d.invoice).paymentHash); } catch { invoiceHash = null; }
+  ledgerAppend(storage, round.federationId, { kind: 'deposit', msat: String(d.amountMsat), invoiceHash });
+}
 export const DEPOSIT_MARGIN_PPM = 6000n;
 export const DEPOSIT_MARGIN_MSAT = 10000n;
 export async function fundPlayerWallet({ round, invite, seed, LockClient, storage, donationMsat = 0n, gateways = [],
-  estimateDeposit = false, onDeposit = () => {}, onStep = () => {} } = {}) {
+  estimateDeposit = false, askDeposit = null, onDeposit = () => {}, onStep = () => {} } = {}) {
   const client = await playerWallet({ round, invite, seed, LockClient, storage, onStep });
   const locks = await locksFor(round, client, donationMsat);
   const deposits = [];
@@ -245,6 +294,17 @@ export async function fundPlayerWallet({ round, invite, seed, LockClient, storag
     const n = await needFor(client, LockClient, locks);
     onStep(`the player wallet holds ${have} msat; this round's locks need ${n.need === null ? 'more than that' : `${n.need} msat`}`);
     if (n.need !== null && have >= n.need) break;
+    // THE PLAYER CHOOSES THE DEPOSIT (GROSS-INVOICE-2053): the page shows the offer - the tabs, the invoice, a close - and
+    // this waits for whichever invoice is paid, then looks again; still short, the offer is shown again.
+    if (askDeposit) {
+      const offer = depositOffer({ client, stakeMsat: round.stakeMsat, haveMsat: have, needMsat: n.need, gateways, onDeposit });
+      askDeposit(offer);
+      onStep('waiting for the deposit into the player wallet');
+      const d = await offer.claimed;
+      deposits.push(d);
+      depositRow(storage, round, d);
+      continue;
+    }
     if (tries >= 3) throw new Error(`after ${tries} deposits the player wallet holds ${have} msat and cannot fund this round's locks`);
     const shortBy = n.need !== null ? n.need - have : n.floor - have;
     // NEVER A DEPOSIT SMALLER THAN THE LOCKS' ALLOWANCE: a Lightning receive that small is refused (measured, 556 msat).
@@ -256,8 +316,9 @@ export async function fundPlayerWallet({ round, invite, seed, LockClient, storag
     // the invoice is sized from the fees here: measured, gateway B's receive plus the claim took 31698 msat of 9899474
     // (0.32%); DEPOSIT_MARGIN_PPM and DEPOSIT_MARGIN_MSAT cover that with room, and what is over stays in the player's
     // own wallet. A credit that still falls short is topped up by this loop's next deposit.
+    // GROSS (GROSS-INVOICE-2053): the invoice is the round's stake, never the shortfall less fee and donation
     const plan = estimateDeposit
-      ? { invoice_msat: String(asked + (asked * DEPOSIT_MARGIN_PPM) / 1000000n + DEPOSIT_MARGIN_MSAT), credited_msat: String(asked), gateway: '' }
+      ? { invoice_msat: String(BigInt(round.stakeMsat || 0n) > 0n ? BigInt(round.stakeMsat) : asked), credited_msat: String(asked), gateway: '' }
       : JSON.parse(await client.depositFor(String(asked)));
     const invoice = JSON.parse(await client.receive(String(plan.invoice_msat), depositGateway(plan.gateway, gateways)));
     const d = { invoice: invoice.invoice, amountMsat: BigInt(plan.invoice_msat), creditsMsat: BigInt(plan.credited_msat) };
@@ -266,9 +327,7 @@ export async function fundPlayerWallet({ round, invite, seed, LockClient, storag
     onStep('waiting for the deposit into the player wallet');
     const final = await client.awaitReceive(invoice.operation);
     if (final !== 'Claimed') throw new Error(`the deposit into the player wallet was not claimed: ${final}`);
-    let invoiceHash = null;
-    try { invoiceHash = toHex(decodeBolt11(d.invoice).paymentHash); } catch { invoiceHash = null; }
-    ledgerAppend(storage, round.federationId, { kind: 'deposit', msat: String(d.amountMsat), creditsMsat: String(d.creditsMsat), invoiceHash });
+    depositRow(storage, round, d);
   }
   return { client, deposits, heldMsat: BigInt(await client.balanceMsat()) };
 }
@@ -817,12 +876,23 @@ export async function tabLockWallet({ round, roundId, invite, seed, LockClient, 
  * the stock client's own sum) goes to an invoice from the player's own wallet: made by
  * their connected wallet, or pasted. Nothing is remembered between withdraws.
  */
-export async function withdrawCollected({ client, invoiceFor, onStep = () => {} } = {}) {
+export async function withdrawCollected({ client, invoiceFor, amountMsat = null, onStep = () => {} } = {}) {
   const withdrawable = BigInt(await client.withdrawableMsat());
   if (withdrawable <= 0n) return { ok: false, final: true, withdrawableMsat: 0n, why: 'nothing in this tab\'s wallet to withdraw' };
-  onStep(`asking the player's wallet for an invoice of ${withdrawable} msat`);
-  const inv = await invoiceFor(withdrawable);
+  // AN AMOUNT THE PLAYER CHOSE (GROSS-INVOICE-2053: the same round tabs under Settings, for withdrawal): n x the stake or a
+  // custom amount, never more than the wallet can send after the fees; unnamed, the whole withdrawable balance.
+  const asked = amountMsat === null ? withdrawable : BigInt(amountMsat);
+  if (asked <= 0n) return { ok: false, final: false, withdrawableMsat: withdrawable, why: 'a withdrawal is more than 0 sat' };
+  if (asked > withdrawable) return { ok: false, final: false, withdrawableMsat: withdrawable, why: `the wallet can send ${withdrawable} msat after the fees, less than the ${asked} msat asked` };
+  onStep(`asking the player's wallet for an invoice of ${asked} msat`);
+  const inv = await invoiceFor(asked);
   if (!inv || !inv.ok) return { ok: false, final: false, withdrawableMsat: withdrawable, why: (inv && inv.why) || 'no invoice to withdraw to' };
+  if (amountMsat !== null) {
+    let named = null;
+    try { named = decodeBolt11(inv.invoice).amountMsat; } catch (e) { return { ok: false, final: false, withdrawableMsat: withdrawable, why: `that is not an invoice (${e.message})` }; }
+    if (named !== asked) return { ok: false, final: false, withdrawableMsat: withdrawable,
+      why: `the invoice asks ${named === null ? 'any amount' : `${named} msat`}, and ${asked} msat was chosen - nothing was sent` };
+  }
   onStep('withdrawing over Lightning');
   const said = JSON.parse(await client.withdraw(inv.invoice));
   const ok = said.state === 'Success';
@@ -837,10 +907,10 @@ export async function withdrawCollected({ client, invoiceFor, onStep = () => {} 
  * the same withdraw the round's wallet uses (`withdrawCollected`): its whole withdrawable balance to an invoice from the
  * player's own Lightning wallet. A spend - called from the Withdraw press alone, never on a timer.
  */
-export async function withdrawPlayerWallet({ round, invite, seed, LockClient, storage, invoiceFor, onStep = () => {} } = {}) {
+export async function withdrawPlayerWallet({ round, invite, seed, LockClient, storage, invoiceFor, amountMsat = null, onStep = () => {} } = {}) {
   const client = await playerWallet({ round, invite, seed, LockClient, storage, onStep });
   let out;
-  try { out = await withdrawCollected({ client, invoiceFor, onStep }); } catch (e) {
+  try { out = await withdrawCollected({ client, invoiceFor, amountMsat, onStep }); } catch (e) {
     // THE STOCK CLIENT'S ANSWER FOR A BALANCE ITS OWN SEND FEES WOULD EAT: nothing to withdraw, and nothing spent.
     if (!/too low to send any amount after fees/i.test(String((e && e.message) || e))) throw e;
     out = { ok: false, final: true, withdrawableMsat: 0n, why: 'nothing in the player wallet to withdraw after the send\'s fees' };

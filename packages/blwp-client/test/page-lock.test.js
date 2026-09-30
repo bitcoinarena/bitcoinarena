@@ -22,7 +22,7 @@ import { bech32Encode, convertBits } from '../../protocol/src/bech32.js';
 import { decodeBolt11 } from '../../protocol/src/bolt11.js';
 
 import { lockStake, fundPlayerWallet, walletSecretFor, withdrawPlayerWallet, handLock, lockSecretFor, lockAmountMsat, lockLine, saveLock, savedLock, markLockCommitted,
-  refundStake, redeemStake, redeemPayout, payoutLine, returnStake, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, withdrawLine, refundKept, refundLine, lookOwed, owedToLine as owedLine, collectAndWithdraw, tabLockWallet, findOwedRounds, feeSecretFor, ledgerRows, ledgerReadSavedStakes, playerWallet } from '../src/page-lock.js';
+  refundStake, redeemStake, redeemPayout, payoutLine, returnStake, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, withdrawLine, refundKept, refundLine, lookOwed, owedToLine as owedLine, collectAndWithdraw, tabLockWallet, findOwedRounds, feeSecretFor, ledgerRows, ledgerReadSavedStakes, playerWallet, depositChoices, DEPOSIT_INSUFFICIENT } from '../src/page-lock.js';
 import { replayLinkFor } from '../src/replay-link.js';
 import { lockFieldsFromJson } from '../../protocol/src/stake-lock.js';
 import { sha256 } from '../../protocol/src/hash.js';
@@ -841,10 +841,14 @@ test('the page spends nothing on a timer: its interval functions only look, and 
   const withdrawAt = page.indexOf('window.BLWP_WITHDRAW = async function');
   assert.equal(calls.length, 1);
   assert.ok(calls[0] > withdrawAt && calls[0] < page.indexOf('\n    };\n', withdrawAt), 'collect-and-withdraw is called outside the Withdraw action');
-  // AND THE PLAYER WALLET'S WITHDRAW (§24A.1) is called once, inside the Withdraw action alone.
+  // AND THE PLAYER WALLET'S WITHDRAW (§24A.1) is called only inside a Withdraw press: the lobby's Withdraw action, and
+  // Settings' Withdraw button with its round tabs (GROSS-INVOICE-2053) - never on a timer (above).
   const fromWallet = [...page.matchAll(/BLWPCLIENT\.withdrawPlayerWallet\(/g)].map((m) => m.index);
-  assert.equal(fromWallet.length, 1);
-  assert.ok(fromWallet[0] > withdrawAt && fromWallet[0] < page.indexOf('\n    };\n', withdrawAt), 'the player wallet is withdrawn outside the Withdraw action');
+  const settingsAt = page.indexOf("document.getElementById('blwp-wd-go').onclick = async () => {");
+  const inside = (i, at, end) => at >= 0 && i > at && i < page.indexOf(end, at);
+  assert.equal(fromWallet.length, 2);
+  for (const i of fromWallet)
+    assert.ok(inside(i, withdrawAt, '\n    };\n') || inside(i, settingsAt, '\n      };\n'), 'the player wallet is withdrawn outside a Withdraw press');
 });
 
 // W4 / 6d: A LOCK NO SIGNER NODE WILL SETTLE COMES BACK BY THE PLAYER'S OWN KEY AFTER ITS EXPIRY.
@@ -1262,4 +1266,44 @@ test('stakes kept before the history existed are read into it once', () => {
   const [row] = ledgerRows(tab, round.federationId);
   assert.equal(row.kind, 'stake'); assert.equal(row.round, toHex(rid)); assert.equal(row.msat, '9800000'); assert.equal(row.atMs, null);
   assert.equal(ledgerReadSavedStakes(tab, round.federationId), 0, 'read twice');
+});
+
+
+// GROSS-INVOICE-2053 (the owner 2026-09-30 20:53): the deposit is the gross round amount, chosen in round tabs.
+test('the deposit tabs are this round\'s stake times 1, 2, 5 and 10, then Custom - 100 sat is 100, 200, 500, 1000', () => {
+  const c100 = depositChoices(100000n);
+  assert.deepEqual(c100.map((c) => c.label), ['1 round', '2 rounds', '5 rounds', '10 rounds', 'Custom']);
+  assert.deepEqual(c100.slice(0, 4).map((c) => String(c.msat / 1000n)), ['100', '200', '500', '1000']);
+  assert.equal(c100[4].msat, null);
+  assert.deepEqual(depositChoices(10000000n).slice(0, 4).map((c) => String(c.msat / 1000n)), ['10000', '20000', '50000', '100000']);
+  assert.equal(DEPOSIT_INSUFFICIENT, 'insufficient funds to play this round. Do you want to do a lightning deposit?');
+});
+
+test('a short wallet is asked, the invoice is the gross amount of the tab chosen, a switch makes a new one, the paid one funds the round; a close refuses', async () => {
+  const { LockClient, log } = lockClient();
+  const tab = tabStorage();
+  const shown = [];
+  const done = await fundPlayerWallet({ round, invite: INVITE, seed, LockClient, storage: tab, askDeposit: (offer) => {
+    shown.push({ have: offer.haveMsat, choices: offer.choices.map((c) => c.label) });
+    // the player looks at 1 round, switches to 2 rounds, and pays that one
+    (async () => { await offer.invoice(offer.choices[0].msat); await offer.invoice(offer.choices[1].msat); })();
+  } });
+  const asked = log.filter((l) => l.receive).map((l) => BigInt(l.receive.msat));
+  assert.deepEqual(asked, [BigInt(round.stakeMsat), 2n * BigInt(round.stakeMsat)], 'the invoices are not the gross round amounts');
+  assert.equal(shown.length, 1); assert.equal(shown[0].choices.length, 5);
+  assert.ok(done.heldMsat > 0n);
+  const closed = lockClient();
+  await assert.rejects(() => fundPlayerWallet({ round, invite: INVITE, seed: b32(0x53), LockClient: closed.LockClient, storage: tabStorage(),
+    askDeposit: (offer) => offer.close() }), /the deposit was closed/);
+});
+
+test('a withdrawal of a chosen amount pays only an invoice of exactly that amount', async () => {
+  const { LockClient } = lockClient();
+  const tab = tabStorage();
+  (await playerWallet({ round, invite: INVITE, seed, LockClient, storage: tab })).balance += 900000n;
+  const inv = bolt11For(200000n);
+  const bad = await withdrawPlayerWallet({ round, invite: INVITE, seed, LockClient, storage: tab, amountMsat: 300000n, invoiceFor: async () => ({ ok: true, invoice: inv }) });
+  assert.equal(bad.ok, false); assert.match(bad.why, /nothing was sent/);
+  const good = await withdrawPlayerWallet({ round, invite: INVITE, seed, LockClient, storage: tab, amountMsat: 200000n, invoiceFor: async () => ({ ok: true, invoice: inv }) });
+  assert.equal(good.ok, true, good.why);
 });
