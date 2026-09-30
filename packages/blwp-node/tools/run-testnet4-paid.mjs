@@ -108,11 +108,23 @@ const round = await standUpRound({ host: '127.0.0.1', portA: pa, portB: pb, port
 say({ paid: 'up', network: 'testnet4', custody: round.contract.custody, stakeMsat: String(stakeMsat),
   federation: toHex(fed.federationId), guardians: fed.keys.length, threshold: fed.threshold,
   nodes: round.nodes, firstRound: round.id, beacon: round.beacon && round.beacon.ok ? round.beacon.height : null });
-writeFileSync(join(home, 'paid', 'lobby-url.txt'), round.lobbyUrl + '\n');
+// THE FUNDED GATEWAY STAYS IN THE LINK (the owner 2026-09-30 14:30 and the leadMs letter): a start used to write the link
+// without `gateway=`, and a page opened on it deposits through whichever gateway the lock client picks. The gateway the
+// link already named is kept.
+let lobbyUrl = round.lobbyUrl;
+try {
+  const had = new URL(readFileSync(join(home, 'paid', 'lobby-url.txt'), 'utf8').trim()).searchParams.get('gateway');
+  const next = new URL(lobbyUrl);
+  if (had && !next.searchParams.get('gateway')) { next.searchParams.set('gateway', had); lobbyUrl = next.toString(); }
+} catch { /* no link before: the round's own */ }
+writeFileSync(join(home, 'paid', 'lobby-url.txt'), lobbyUrl + '\n');
 writeFileSync(join(home, 'paid', 'testnet4.json'),
   JSON.stringify({ node: round.nodes, bond: round.bond, advert: round.advert, federation: invite, round: round.id }, null, 2) + '\n');
 console.log(round.lobbyUrl);
-round.keepOpen({ onOpen: (id) => say({ opened: id, stakeMsat: String(stakeMsat), custody: 'FEDERATION' }),
+// THE NEXT ONE-OFF 4 h BEFORE THE CURRENT ENTRY CLOSES (the owner 2026-09-30: "4 h is the lead"): a round is published first
+// and joinable only once its beacon is 6 deep - measured 1.5-3 h on testnet4 - so opening it 60 s before the close left a
+// 1.5-3 h gap every 6 h with no paid round to join.
+round.keepOpen({ leadMs: 4 * 3600 * 1000, onOpen: (id) => say({ opened: id, stakeMsat: String(stakeMsat), custody: 'FEDERATION' }),
   onError: (e) => say({ paidNotOpened: e.message }) });
 const stop = async () => { say({ stopping: true }); await round.close(); process.exit(0); };
 process.on('SIGINT', stop);
