@@ -15,7 +15,7 @@
 // and no committee; those are M2.1 steps 4 and later, and each is refused
 // rather than half-built.
 import { seriesWriter } from './series-writer.js';
-import { isOldTestnet4Id, isOldTestnet4Series } from '../../protocol/src/old-series.js';
+import { isOldTestnet4Id, isOldTestnet4Series, OLD_TESTNET4_SERIES_BOND_HEIGHT } from '../../protocol/src/old-series.js';
 import { seriesRoundCheck } from '../../protocol/src/series.js';
 import { federationGatewayCount } from '../../protocol/src/gateways.js';
 import { createServer } from 'node:http';
@@ -1020,7 +1020,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (!stakeLocks || typeof stakeLocks.guardians !== 'function')
       return { ok: false, why: REACHES_NO_FEDERATION };
     // THE POSTED CONTRACT, stored or not: POST /round asks this before round.open (RULED 2026-09-25).
-    const census = roster.censusFor(rid, null, { posted: contract });
+    // PICK B (old-series.js): series 3cfbe516's guardians are counted where their advertisements name them (154300).
+    const oldSeries = isOldTestnet4Id(contract.networkId) && contract.seriesId instanceof Uint8Array && isOldTestnet4Series(contract.seriesId);
+    const census = oldSeries ? roster.censusFor(rid, OLD_TESTNET4_SERIES_BOND_HEIGHT, { posted: contract, asRoundsOwn: false })
+      : roster.censusFor(rid, null, { posted: contract });
     if (!census.ok) return census;
     let g;
     try { g = await stakeLocks.guardians(); }
