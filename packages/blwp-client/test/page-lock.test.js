@@ -22,7 +22,9 @@ import { bech32Encode, convertBits } from '../../protocol/src/bech32.js';
 import { decodeBolt11 } from '../../protocol/src/bolt11.js';
 
 import { lockStake, fundPlayerWallet, walletSecretFor, withdrawPlayerWallet, handLock, lockSecretFor, lockAmountMsat, lockLine, saveLock, savedLock, markLockCommitted,
-  refundStake, redeemStake, redeemPayout, payoutLine, returnStake, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, withdrawLine, refundKept, refundLine, lookOwed, owedToLine as owedLine, collectAndWithdraw, tabLockWallet, findOwedRounds, feeSecretFor } from '../src/page-lock.js';
+  refundStake, redeemStake, redeemPayout, payoutLine, returnStake, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, withdrawLine, refundKept, refundLine, lookOwed, owedToLine as owedLine, collectAndWithdraw, tabLockWallet, findOwedRounds, feeSecretFor, ledgerRows, ledgerReadSavedStakes, playerWallet } from '../src/page-lock.js';
+import { replayLinkFor } from '../src/replay-link.js';
+import { lockFieldsFromJson } from '../../protocol/src/stake-lock.js';
 import { sha256 } from '../../protocol/src/hash.js';
 import { entryFor, joinQuery, stakeFor, playerFor } from '../src/join.js';
 import { lockFieldsToJson } from '../../protocol/src/stake-lock.js';
@@ -1217,4 +1219,47 @@ test('an estimated deposit asks no depositFor, and its invoice carries the margi
   const first = log.find((l) => l.receive).receive;
   assert.equal(first.gateway, 'https://funded.example/');
   assert.ok(BigInt(first.msat) > deposits[0].creditsMsat, 'the invoice is not above what it credits');
+});
+
+
+// THE WALLET'S HISTORY (the owner 2026-09-30 16:15; accepted sequence): one list per federation in the tab's vault - a
+// deposit once its receive is claimed, a stake when saveLock keeps the lock (its entry added on commit), a withdrawal
+// when it succeeds; and a stake row names its round and entry, from which the replay link is built.
+test('the wallet history: a deposit, then a stake, then a withdrawal are three rows; the stake row names its round and entry, and a replay link is built from it', async () => {
+  const { LockClient } = lockClient();
+  const tab = tabStorage();
+  await fundPlayerWallet({ round, invite: INVITE, seed, LockClient, storage: tab });
+  const got = await ask({ LockClient, storage: tab });
+  saveLock(tab, { roundId: rid, playerPubkey: player, stake: { preimage: b32(0x44), body: new Uint8Array(0) }, lock: got, federationId: round.federationId });
+  markLockCommitted(tab, { roundId: rid, playerPubkey: player, entryId: b32(0x0e) });
+  // WHAT A SETTLED ROUND RETURNED TO THE WALLET, for the withdraw to take (the stand-in's balance, on the open wallet)
+  (await playerWallet({ round, invite: INVITE, seed, LockClient, storage: tab })).balance += 50000n;
+  const w = await withdrawPlayerWallet({ round, invite: INVITE, seed, LockClient, storage: tab, invoiceFor: async () => ({ ok: true, invoice: 'lnbcrt1out' }) });
+  assert.equal(w.ok, true);
+  const rows = ledgerRows(tab, round.federationId);
+  console.log('  FACTS (history):', JSON.stringify(rows.map(({ atMs, ...r }) => r)));
+  assert.deepEqual(rows.map((r) => r.kind), ['deposit', 'stake', 'withdrawal']);
+  assert.ok('invoiceHash' in rows[0] && BigInt(rows[0].msat) > 0n);
+  const stakeRow = rows[1];
+  assert.equal(stakeRow.round, toHex(rid));
+  assert.equal(stakeRow.entry, '0e'.repeat(32));
+  assert.equal(stakeRow.msat, String(got.fields.amountMsat + (got.feeLock ? got.feeLock.fields.amountMsat : 0n)));
+  assert.equal(rows[2].state, 'Success');
+  const link = replayLinkFor({ endpoints: ['wss://test-host.example/guardian-1'], roundHex: stakeRow.round, entryHex: stakeRow.entry });
+  assert.equal(link.ok, true, link.why);
+  assert.ok(link.url.includes(`round=${stakeRow.round}`) && link.url.includes(`entry=${stakeRow.entry}`), link.url);
+  assert.equal(ledgerReadSavedStakes(tab, round.federationId), 0, 'the stake the history already holds was added again');
+  assert.equal(ledgerRows(tab, b32(0x77)).length, 0, 'another federation shows this one\'s rows');
+});
+
+test('stakes kept before the history existed are read into it once', () => {
+  const tab = tabStorage();
+  const lock = { outpoint: { txid: b32(0xab), outIdx: 0n }, fields: { ...lockFieldsFromJson({ amountMsat: '9800000', paymentImage: { kind: 'hash', bytes: 'aa'.repeat(32) },
+    claimPk: '02' + 'bb'.repeat(32), refundPk: '02' + 'cc'.repeat(32), expiration: '154698' }) }, feeLock: null };
+  saveLock(tab, { roundId: rid, playerPubkey: player, stake: { preimage: b32(0x44), body: new Uint8Array(0) }, lock });
+  assert.equal(ledgerRows(tab, round.federationId).length, 0, 'a lock saved with no federation named was written to a history');
+  assert.equal(ledgerReadSavedStakes(tab, round.federationId), 1);
+  const [row] = ledgerRows(tab, round.federationId);
+  assert.equal(row.kind, 'stake'); assert.equal(row.round, toHex(rid)); assert.equal(row.msat, '9800000'); assert.equal(row.atMs, null);
+  assert.equal(ledgerReadSavedStakes(tab, round.federationId), 0, 'read twice');
 });
