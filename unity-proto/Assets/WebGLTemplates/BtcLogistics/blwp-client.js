@@ -9194,6 +9194,24 @@ function depositChoices(stakeMsat) {
     { key: 'custom', label: 'Custom', rounds: null, msat: null }];
 }
 /**
+ * THE WITHDRAWAL TABS (the owner 2026-09-30: "The withdrawal is different: 25% 50% 100% custom - you enter a custom
+ * amount"): shares of what the wallet can send after its fees, in whole sat (an invoice names sat), then Custom.
+ */
+const WITHDRAW_SHARES = [25, 50, 100];
+function withdrawChoices(withdrawableMsat) {
+  const all = BigInt(withdrawableMsat || 0n);
+  return [...WITHDRAW_SHARES.map((pct) => ({ key: String(pct), label: `${pct}%`, pct, msat: (all * BigInt(pct) / 100n) / 1000n * 1000n })),
+    { key: 'custom', label: 'Custom', pct: null, msat: null }];
+}
+/** What the player wallet can send now, after the send's fees, in msat (0 when its fees would eat all of it). Spends nothing. */
+async function playerWithdrawable({ round, invite, seed, LockClient, storage, onStep = () => {} } = {}) {
+  const client = await playerWallet({ round, invite, seed, LockClient, storage, onStep });
+  try { return BigInt(await client.withdrawableMsat()); } catch (e) {
+    if (/too low to send any amount after fees/i.test(String((e && e.message) || e))) return 0n;
+    throw e;
+  }
+}
+/**
  * ONE DEPOSIT OFFER: `invoice(msat)` asks the wallet's gateway for a gross invoice of exactly that amount (a new one at
  * every tab switch); `claimed` resolves with whichever invoice was paid first, `close()` rejects it. Every invoice made
  * stays payable: one paid after another was claimed is credited to the same wallet.
@@ -9203,17 +9221,24 @@ function depositOffer({ client, stakeMsat, haveMsat = null, needMsat = null, gat
   const claimed = new Promise((res, rej) => { settle = res; fail = rej; });
   claimed.catch(() => {});
   const made = [];
+  // THE DEPOSIT'S STATUS (the owner 2026-09-30): each invoice's end - "Claimed", "Expired", "Failure" or the wait's own
+  // error - to whoever watches the offer (the page's status line and bar under the invoice).
+  const watchers = [];
+  const said = (d, final) => { for (const w of watchers) { try { w(d, final); } catch { /* a watcher's own fault */ } } };
   const invoice = async (msat) => {
     const amount = BigInt(msat);
     if (amount <= 0n) throw new Error('a deposit is more than 0 sat');
-    const got = JSON.parse(await client.receive(String(amount), depositGateway('', gateways)));
-    const d = { invoice: got.invoice, amountMsat: amount, creditsMsat: null };
+    const gateway = depositGateway('', gateways);
+    const got = JSON.parse(await client.receive(String(amount), gateway));
+    const d = { invoice: got.invoice, amountMsat: amount, creditsMsat: null, gateway };
     made.push(d);
     onDeposit(d);
-    client.awaitReceive(got.operation).then((final) => { if (final === 'Claimed') settle(d); }, () => {});
+    client.awaitReceive(got.operation).then((final) => { said(d, final); if (final === 'Claimed') settle(d); },
+      (e) => said(d, 'Failure: ' + String((e && e.message) || e)));
     return d;
   };
   return { stakeMsat: BigInt(stakeMsat || 0n), haveMsat, needMsat, choices: depositChoices(stakeMsat), invoice, claimed, made,
+    watch: (fn) => { watchers.push(fn); },
     close: (why) => fail(new Error(why || 'the deposit was closed: nothing was paid')) };
 }
 /** A deposit into the player wallet from Settings: the same tabs, this round's stake, no round to fund. */
@@ -17882,7 +17907,7 @@ return { Client: Client, markState: markState,
          withdrawPlayerWallet: withdrawPlayerWallet,
          saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, keptLockUse: keptLockUse,
          ledgerRows: ledgerRows, ledgerReadSavedStakes: ledgerReadSavedStakes,
-         depositChoices: depositChoices, depositOffer: depositOffer, settingsDepositOffer: settingsDepositOffer, DEPOSIT_INSUFFICIENT: DEPOSIT_INSUFFICIENT,
+         depositChoices: depositChoices, withdrawChoices: withdrawChoices, playerWithdrawable: playerWithdrawable, depositOffer: depositOffer, settingsDepositOffer: settingsDepositOffer, DEPOSIT_INSUFFICIENT: DEPOSIT_INSUFFICIENT,
          findLock: findLock, refundStake: refundStake, forfeitOf: forfeitOf, redeemStake: redeemStake,
          settlementOf: settlementOf, redeemPayout: redeemPayout, payoutLine: payoutLine,
          returnStake: returnStake, stakeBackLine: stakeBackLine,
