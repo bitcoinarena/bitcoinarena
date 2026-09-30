@@ -28,3 +28,12 @@ export const isOldTestnet4Series = (seriesIdBytes) => sameId(seriesIdBytes, OLD_
  * is the same seven keys either way (one key, one seat).
  */
 export const OLD_TESTNET4_SERIES_CENSUS_FROM = 154152;
+
+/**
+ * ITS FEDERATION'S BONDING, READ WHERE THE GUARDIANS ARE NAMED (the same ruling, measured 2026-09-30): §23.6 takes a paying
+ * round only on a federation whose guardians are bonded - guardian_of[] in the census's advertisements. The series'
+ * census (154206) predates the advertisement updates that name each node's guardian (154282), so every node refused its
+ * rounds "on an unbonded federation" while the guardians are bonded on the chain. For this series alone the bonding is
+ * read from the census at this fixed height, after those updates; its committee stays its own census's.
+ */
+export const OLD_TESTNET4_SERIES_BOND_HEIGHT = 154300;
