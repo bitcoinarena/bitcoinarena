@@ -42,7 +42,8 @@
  * the FAILED player's lock still held to expire back, GET /forfeit for both.
  * NODES=7 runs the round on seven signer nodes (5 of 7). DONATION_DOWN=1 (RULED 2026-09-30, hole 1 (a)): nothing answers
  * for the donation set at the close - the settlement completes with the 25% held under the committee key - and the
- * recipients start only after that; printed: the held contracts, then the retry paying the set.
+ * recipients start only after that; printed: the held contracts, then the retry paying the set. RESTART=1 restarts every
+ * signer node on its own store while the share is held, before the recipients answer.
  * It prints what it measured and decides nothing.
  */
 import { execFile, execFileSync } from 'node:child_process';
@@ -155,9 +156,10 @@ const port = stakeLockPort({ bin: env.LOCK_BIN, dataDir: `${P}/client` });
 // port. The players seed from that beacon, as the signer nodes replay them.
 const slot = bondedChainSlot(port);
 const stores = Array.from({ length: N }, (_, i) => join(dir, `${'abcdefg'[i]}.db`));
-const up = async () => {
+// `ports`: a restart comes back on each node's own port - the round's contract names those endpoints.
+const up = async (ports = []) => {
   const nodes = [];
-  for (const path of stores) nodes.push(await serve(openStore(path), { port: 0, ...opts, stakeLocks: slot.port, poolCurve: curve,
+  for (const [i, path] of stores.entries()) nodes.push(await serve(openStore(path), { port: ports[i] || 0, ...opts, stakeLocks: slot.port, poolCurve: curve,
     finality: { everyMs: 500 }, lnurlFetch, winningsEveryMs: 3000, chainFor: slot.chainFor, randomnessFor: slot.randomnessFor,
     ...(WALK ? { donationSets: [TEST_DONATION_SET_REGTEST], doorSweepMs: 250 } : {}) }));
   for (const d of nodes) d.round.chainView = CLOCK.chainView();
@@ -510,8 +512,8 @@ if (PHASE === 'pass') {
   // THE PROPOSER holds the sends it drives: the round's asker (M3.3-19's seat 0).
   const sorted = [...all].sort((x, y) => (toHex(x.round.pubkey) < toHex(y.round.pubkey) ? -1 : 1));
   const first = askerOrder(rid, sorted.map((d) => d.round.pubkey)).order[0];
-  const lead = sorted.find((d) => toHex(d.round.pubkey) === toHex(first));
-  const others = all.filter((d) => d !== lead);
+  let lead = sorted.find((d) => toHex(d.round.pubkey) === toHex(first));
+  let others = all.filter((d) => d !== lead);
   // DONATION_DOWN: the settlement went through with nothing answering for the set - the 25% HELD under the committee key.
   if (DOWN) {
     const heldRows = () => lead.round.sendAttemptsOf(rid).filter((r) => r.donation && r.attempt === 0);
@@ -525,6 +527,15 @@ if (PHASE === 'pass') {
       remainderNodes: m && m.payouts.filter((p) => p.kind === 'remainder node').map((p) => [p.pk.slice(2, 14), p.msat]),
       heldPayouts: m && m.payouts.filter((p) => p.kind === 'held').map((p) => [p.msat, p.pk === toHex(claimPk) ? 'committee claim key' : p.pk]),
       held, recipientsAsked: donationAsked.length, walkerLockInFederation: await port.status(W.outpoint) });
+    // RESTART=1: every signer node stopped and started again on its own store while the share is held.
+    if (env.RESTART === '1') {
+      const li = all.indexOf(lead);
+      for (const d of all) await d.close();
+      const fresh = await up(all.map((d) => d.port));
+      all.splice(0, all.length, ...fresh);
+      lead = all[li]; others = all.filter((d) => d !== lead);
+      say_({ step: 'restarted every signer node on its store', held: lead.round.sendAttemptsOf(rid).filter((r) => r.donation).map((r) => [r.attempt, r.state]) });
+    }
     recipients = await startRecipients();
     say_({ step: 'the recipients answer now', at: recipients.base });
   }
@@ -541,7 +552,7 @@ if (PHASE === 'pass') {
       preimageHashes: r.preimage ? toHex(sha256(fromHex(r.preimage))) === r.paymentHash : null,
       alice: { state: inv.state, amtPaidMsat: inv.amt_paid_msat } });
   }
-  const forfeit = async (eid) => (await fetch(`http://127.0.0.1:${a.port}/forfeit?round=${toHex(rid)}&entry=${toHex(eid)}`)).status;
+  const forfeit = async (eid) => (await fetch(`http://127.0.0.1:${lead.port}/forfeit?round=${toHex(rid)}&entry=${toHex(eid)}`)).status;
   say_({ step: 'walkaway', settlement: settled && settled.state, why: settled && settled.why, remainder: settled && settled.moved && settled.moved.remainder,
     claims: settled && settled.moved && settled.moved.claims, payouts: settled && settled.moved && settled.moved.payouts,
     donationSends: sends, recipientsAsked: donationAsked.length, winnerAddressAsked: asked.length,
