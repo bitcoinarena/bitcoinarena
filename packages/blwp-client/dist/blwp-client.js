@@ -9212,6 +9212,9 @@ async function fundPlayerWallet({ round, invite, seed, LockClient, storage, dona
     onStep('waiting for the deposit into the player wallet');
     const final = await client.awaitReceive(invoice.operation);
     if (final !== 'Claimed') throw new Error(`the deposit into the player wallet was not claimed: ${final}`);
+    let invoiceHash = null;
+    try { invoiceHash = toHex(decodeBolt11(d.invoice).paymentHash); } catch { invoiceHash = null; }
+    ledgerAppend(storage, round.federationId, { kind: 'deposit', msat: String(d.amountMsat), creditsMsat: String(d.creditsMsat), invoiceHash });
   }
   return { client, deposits, heldMsat: BigInt(await client.balanceMsat()) };
 }
@@ -9279,6 +9282,57 @@ function feeSecretFor(seed, roundId) {
   return sha256(m);
 }
 
+// THE WALLET'S HISTORY (the owner 2026-09-30 16:15: "Settings, under the balances, shows a transaction history. Every deposit,
+// every withdrawal, and every deduction for a game stake. A stake row names the round"). APPEND-ONLY, ONE LIST PER
+// FEDERATION, in the tab's vault under blwp.ledger.<federation id hex>: a deposit row once its receive is claimed
+// (fundPlayerWallet), a stake row when saveLock keeps the lock (markLockCommitted adds its entry), a withdrawal row when a
+// withdraw succeeds. Rows are what this tab did; nothing here asks the federation.
+const LEDGER_PREFIX = 'blwp.ledger.';
+const LEDGER_READ_PREFIX = 'blwp.ledger.read.';
+const fedHexOf = (f) => (f instanceof Uint8Array ? toHex(f) : String(f || '')).toLowerCase();
+const ledgerKey = (federationId) => `${LEDGER_PREFIX}${fedHexOf(federationId)}`;
+/** This federation's rows, oldest first, as kept. */
+function ledgerRows(storage, federationId) {
+  try { const raw = storage && storage.getItem(ledgerKey(federationId)); const rows = raw ? JSON.parse(raw) : []; return Array.isArray(rows) ? rows : []; }
+  catch { return []; }
+}
+function ledgerAppend(storage, federationId, row) {
+  if (!storage || !fedHexOf(federationId)) return;
+  try {
+    const rows = ledgerRows(storage, federationId);
+    rows.push({ atMs: Date.now(), ...row });
+    storage.setItem(ledgerKey(federationId), JSON.stringify(rows));
+  } catch { /* a tab that cannot write keeps no history; the money is not touched */ }
+}
+const storageKeys = (storage) => {
+  const out = [];
+  try { for (let i = 0; i < storage.length; i++) { const k = storage.key(i); if (k) out.push(k); } } catch { /* none */ }
+  return out;
+};
+const lockTotalMsat = (j) => BigInt(j.fields && j.fields.amountMsat ? j.fields.amountMsat : 0)
+  + BigInt(j.feeLock && j.feeLock.fields && j.feeLock.fields.amountMsat ? j.feeLock.fields.amountMsat : 0);
+/**
+ * THE STAKES THIS TAB KEPT BEFORE THE HISTORY EXISTED, READ ONCE (per federation): every blwp.lock.saved.<round>.<player>
+ * without a stake row becomes one, its time unknown (null). A saved lock does not name its federation; the tab's paying
+ * rounds are of the one federation it deposits into, which is the one asked for here.
+ */
+function ledgerReadSavedStakes(storage, federationId) {
+  if (!storage || !fedHexOf(federationId)) return 0;
+  const flag = `${LEDGER_READ_PREFIX}${fedHexOf(federationId)}`;
+  try { if (storage.getItem(flag)) return 0; } catch { return 0; }
+  const rows = ledgerRows(storage, federationId);
+  let added = 0;
+  for (const k of storageKeys(storage)) {
+    const m = /^blwp\.lock\.saved\.([0-9a-f]{64})\.([0-9a-f]{16})$/.exec(k);
+    if (!m || rows.some((r) => r.kind === 'stake' && r.round === m[1] && r.player === m[2])) continue;
+    let j; try { j = JSON.parse(storage.getItem(k)); } catch { continue; }
+    rows.push({ atMs: null, kind: 'stake', round: m[1], player: m[2], entry: j.committedTo || null, msat: String(lockTotalMsat(j)), read: true });
+    added++;
+  }
+  try { storage.setItem(ledgerKey(federationId), JSON.stringify(rows)); storage.setItem(flag, String(Date.now())); } catch { return 0; }
+  return added;
+}
+
 const savedLockKey = (roundId, playerPubkey) => `blwp.lock.saved.${toHex(roundId)}.${toHex(playerPubkey).slice(0, 16)}`;
 
 /**
@@ -9287,7 +9341,11 @@ const savedLockKey = (roundId, playerPubkey) => `blwp.lock.saved.${toHex(roundId
  * preimage is kept where the player's seed already is (the tab's storage), and
  * its handout as the bytes the signer nodes took.
  */
-function saveLock(storage, { roundId, playerPubkey, stake, lock }) {
+function saveLock(storage, { roundId, playerPubkey, stake, lock, federationId = null }) {
+  const lockMsat = BigInt(lock.fields && lock.fields.amountMsat ? lock.fields.amountMsat : 0n)
+    + BigInt(lock.feeLock && lock.feeLock.fields && lock.feeLock.fields.amountMsat ? lock.feeLock.fields.amountMsat : 0n);
+  if (federationId) ledgerAppend(storage, federationId, { kind: 'stake', round: toHex(roundId), player: toHex(playerPubkey).slice(0, 16),
+    entry: null, msat: String(lockMsat) });
   storage.setItem(savedLockKey(roundId, playerPubkey), JSON.stringify({
     preimage: toHex(stake.preimage), body: toHex(stake.body),
     outpoint: { txid: toHex(lock.outpoint.txid), outIdx: String(lock.outpoint.outIdx) },
@@ -9343,6 +9401,16 @@ function markLockCommitted(storage, { roundId, playerPubkey, entryId }) {
   const raw = storage.getItem(key);
   if (!raw) return;
   storage.setItem(key, JSON.stringify({ ...JSON.parse(raw), committedTo: toHex(entryId) }));
+  // AND THE STAKE ROW NAMES ITS ENTRY, in whichever federation's history holds it
+  const round = toHex(roundId), player = toHex(playerPubkey).slice(0, 16);
+  for (const k of storageKeys(storage)) {
+    if (!k.startsWith(LEDGER_PREFIX) || k.startsWith(LEDGER_READ_PREFIX)) continue;
+    let rows; try { rows = JSON.parse(storage.getItem(k)); } catch { continue; }
+    if (!Array.isArray(rows)) continue;
+    let changed = false;
+    for (const r of rows) if (r.kind === 'stake' && r.round === round && r.player === player && !r.entry) { r.entry = toHex(entryId); changed = true; }
+    if (changed) { try { storage.setItem(k, JSON.stringify(rows)); } catch { /* kept as it was */ } }
+  }
 }
 
 /**
@@ -9723,6 +9791,7 @@ async function withdrawPlayerWallet({ round, invite, seed, LockClient, storage, 
     if (!/too low to send any amount after fees/i.test(String((e && e.message) || e))) throw e;
     out = { ok: false, final: true, withdrawableMsat: 0n, why: 'nothing in the player wallet to withdraw after the send\'s fees' };
   }
+  if (out.ok) ledgerAppend(storage, round.federationId, { kind: 'withdrawal', msat: String(out.invoiceMsat ?? out.withdrawableMsat), state: out.state });
   return { ...out, from: 'the player wallet' };
 }
 
@@ -9908,6 +9977,8 @@ async function collectAndWithdraw({ look = null, client, invoiceFor, canInvoice 
     return { ...none(`the invoice asks ${fixed} msat and this tab's wallet can pay ${seen.inTabMsat} msat - paste one for at most that`), look: seen };
   const got = await collectOwed({ look: seen, client, onStep, ...ask });
   const withdraw = await withdrawCollected({ client, invoiceFor, onStep });
+  if (withdraw.ok && ask.round) ledgerAppend(ask.storage, ask.round.federationId,
+    { kind: 'withdrawal', msat: String(withdraw.invoiceMsat ?? withdraw.withdrawableMsat), state: withdraw.state });
   return { ...got, look: seen, withdraw };
 }
 
@@ -17734,6 +17805,7 @@ return { Client: Client, markState: markState,
          playerWallet: playerWallet, fundPlayerWallet: fundPlayerWallet, walletSecretFor: walletSecretFor,
          withdrawPlayerWallet: withdrawPlayerWallet,
          saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, keptLockUse: keptLockUse,
+         ledgerRows: ledgerRows, ledgerReadSavedStakes: ledgerReadSavedStakes,
          findLock: findLock, refundStake: refundStake, forfeitOf: forfeitOf, redeemStake: redeemStake,
          settlementOf: settlementOf, redeemPayout: redeemPayout, payoutLine: payoutLine,
          returnStake: returnStake, stakeBackLine: stakeBackLine,

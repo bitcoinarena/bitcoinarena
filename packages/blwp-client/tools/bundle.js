@@ -168,6 +168,7 @@ out += '         lockStake: lockStake, handLock: handLock, lockSecretFor: lockSe
 out += '         playerWallet: playerWallet, fundPlayerWallet: fundPlayerWallet, walletSecretFor: walletSecretFor,\n';
 out += '         withdrawPlayerWallet: withdrawPlayerWallet,\n';
 out += '         saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, keptLockUse: keptLockUse,\n';
+out += '         ledgerRows: ledgerRows, ledgerReadSavedStakes: ledgerReadSavedStakes,\n';
 out += '         findLock: findLock, refundStake: refundStake, forfeitOf: forfeitOf, redeemStake: redeemStake,\n';
 // AND THE WINNER'S PAYOUT (6d, W4): the signer nodes' accepted settlement, the payout
 // contract to this seed's key spent into the tab's wallet, and its line.
