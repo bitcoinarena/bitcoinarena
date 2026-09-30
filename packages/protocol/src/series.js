@@ -21,7 +21,7 @@ import { taggedHash } from './hash.js';
 import { isOldTestnet4Id, isOldTestnet4Series } from './old-series.js';
 import { encodeRoundContract } from './contracts.js';
 import { PUBLICATION_MAGIC, PUBLICATION_BYTES } from './publication.js';
-import { OP_RETURN } from './tx.js';
+import { OP_RETURN, parseTransaction, commitmentsOf } from './tx.js';
 import { NETWORK_ID_TESTNET4 } from './genesis-ids.js';
 import { genesisFor } from './genesis.js';
 import { networkOf } from './constants.js';
@@ -170,6 +170,23 @@ export function seriesPublicationPayload(seriesIdBytes) {
   out[3] = PUBLICATION_KIND_SERIES;
   out.set(seriesIdBytes, 4);
   return out;
+}
+
+/**
+ * WHERE A SERIES WAS PUBLISHED, IN A CHAIN VIEW THIS NODE READ ITSELF: the lowest block carrying its series payload - a
+ * series round has no publication of its own, the series' is its (§5A.5 for a series). Null when the view holds none.
+ */
+export function findSeriesPublication(view, seriesIdBytes) {
+  if (!view || !Array.isArray(view.blocks) || !Number.isInteger(view.firstHeight)) return null;
+  const want = seriesPublicationPayload(seriesIdBytes);
+  for (let i = 0; i < view.blocks.length; i++) {
+    for (const raw of view.blocks[i].transactions || []) {
+      let tx;
+      try { tx = parseTransaction(raw); } catch { continue; }
+      if (commitmentsOf(tx).some((p) => p.length === want.length && p.every((b, j) => b === want[j]))) return { tx, height: view.firstHeight + i };
+    }
+  }
+  return null;
 }
 
 /** The output that publishes a series: zero value, one direct push. */

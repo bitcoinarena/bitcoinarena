@@ -24,6 +24,8 @@ import { toHex } from '../../protocol/src/hash.js';
 import { timed } from './slow.js';
 import { committeeSeedFromBeacon, beaconFromChain, beaconIsTheChains } from '../../protocol/src/beacon.js';
 import { findPublication, publicationIsBeforeBeacon } from '../../protocol/src/publication.js';
+import { findSeriesPublication } from '../../protocol/src/series.js';
+import { isOldTestnet4Id, isOldTestnet4Series, OLD_TESTNET4_SERIES_CENSUS_FROM } from '../../protocol/src/old-series.js';
 import { bondSetFor } from './curve.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
@@ -193,12 +195,22 @@ export class Roster {
       // publishes many candidate rounds for free, waits for the beacon, and
       // promotes the one whose committee is his. Found in this node's own
       // view, so the height is the chain's and no txid is taken on trust.
-      const published = findPublication(view, roundIdBytes);
-      const before = publicationIsBeforeBeacon({
-        roundId: roundIdBytes, tx: published && published.tx,
-        txHeight: published ? published.height : undefined, beaconHeight: named.height,
-      });
-      if (!before.ok) return before;
+      // A SERIES ROUND IS PUBLISHED BY ITS SERIES' PUBLICATION ("BLW" SERIES series_id), which must confirm strictly below
+      // the beacon block as a round's own must (measured 2026-09-30: every round of series 3cfbe516 was refused here, "there
+      // is no publication transaction to read", because only a round's own publication was looked for).
+      if (contract.seriesId instanceof Uint8Array) {
+        const series = findSeriesPublication(view, contract.seriesId);
+        if (!series) return { ok: false, why: `this node's chain view holds no publication of series ${toHex(contract.seriesId).slice(0, 16)}` };
+        if (!(series.height < named.height))
+          return { ok: false, why: `series ${toHex(contract.seriesId).slice(0, 16)} was published at ${series.height}, not below its beacon block ${named.height}` };
+      } else {
+        const published = findPublication(view, roundIdBytes);
+        const before = publicationIsBeforeBeacon({
+          roundId: roundIdBytes, tx: published && published.tx,
+          txHeight: published ? published.height : undefined, beaconHeight: named.height,
+        });
+        if (!before.ok) return before;
+      }
       checkedAgainstChain = true;
     }
 
@@ -280,7 +292,11 @@ export class Roster {
       }
     }
 
-    const census = deriveCensus(view, {
+    // PICK B (old-series.js): series 3cfbe516's census is read as its publisher read it, from 154152
+    const readFrom = isOldTestnet4Id(contract.networkId) && contract.seriesId instanceof Uint8Array && isOldTestnet4Series(contract.seriesId)
+      && view.firstHeight < OLD_TESTNET4_SERIES_CENSUS_FROM
+      ? { firstHeight: OLD_TESTNET4_SERIES_CENSUS_FROM, blocks: view.blocks.slice(OLD_TESTNET4_SERIES_CENSUS_FROM - view.firstHeight) } : view;
+    const census = deriveCensus(readFrom, {
       contract,
       bond: bondSetFor(network),
       resolve: (e) => {

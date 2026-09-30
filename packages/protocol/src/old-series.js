@@ -19,3 +19,12 @@ export const OLD_TESTNET4_SERIES_ID = fromHex('3cfbe516d93ddf4bd2ca31c4fff6bd1db
 const sameId = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array && a.length === b.length && a.every((x, i) => x === b[i]);
 export const isOldTestnet4Id = (networkId) => sameId(networkId, NETWORK_ID_TESTNET4_BEFORE_SERIES_GENESIS);
 export const isOldTestnet4Series = (seriesIdBytes) => sameId(seriesIdBytes, OLD_TESTNET4_SERIES_ID);
+
+/**
+ * ITS CENSUS AS ITS PUBLISHER READ IT (the same ruling, measured 2026-09-30): the series names census root 726a0b87...,
+ * which the 2026-09-28 runner derived from a view starting at its bonds' floor - 20 = 154152: the seven bonds at 154172.
+ * A node's 2016-block lookback also sees each key's earlier bond at 154120 - fourteen entries, root a86ea4e0... - and
+ * refused every round of the series. For this series alone the census is read from 154152, as published. The committee
+ * is the same seven keys either way (one key, one seat).
+ */
+export const OLD_TESTNET4_SERIES_CENSUS_FROM = 154152;
