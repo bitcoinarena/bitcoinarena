@@ -1651,6 +1651,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return { drawn: true, game: keys(game), settlement: keys(settlement), eligibleEntries: game.eligible,
       eligibleKeys: new Set((roster.censusFor(rid).entries || []).map((e) => toHex(e.pubkey))).size };
   };
+  const listingKept = new Map();                  // GET /rounds query -> { at, json }, kept 2 s
   const announcedRounds = (url) => {
     const nowMs = BigInt(round.now());
     const listed = [];
@@ -2038,9 +2039,22 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return res.end(readFileSync(new URL('../pages/rounds.html', import.meta.url)));
       }
       if (req.method === 'GET' && url.pathname === '/rounds') {
-        const { nowMs, listed } = announcedRounds(url);
+        // THE LISTING KEPT FOR 2 s PER QUERY (the owner 2026-09-30, measured on testnet4 with series 3cfbe516): ~440 rounds,
+        // each signed and its committees asked, held the loop 3-5 s per listing, and the page repaints its lobby every
+        // few seconds from every tab - a join's own requests waited behind it (6.7 min from PLAY to the deposit). Each
+        // row is signed with the listing's time, and a page takes a listing up to LOBBY_SKEW_MS (60 s) old.
+        const q = url.search;
+        const nowReal = Date.now();
+        let body = listingKept.get(q);
+        // ONLY A LARGE LISTING IS KEPT (a series' - over 100 rounds): a small one is made fresh on every ask, as before.
+        if (!body || !body.large || nowReal - body.at > 2000) {
+          const { nowMs, listed } = announcedRounds(url);
+          body = { at: nowReal, large: listed.length > 100, json: JSON.stringify({ node: toHex(round.pubkey), nowMs: String(nowMs), rounds: listed }) };
+          listingKept.set(q, body);
+          if (listingKept.size > 16) listingKept.delete(listingKept.keys().next().value);
+        }
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
-        return res.end(JSON.stringify({ node: toHex(round.pubkey), nowMs: String(nowMs), rounds: listed }));
+        return res.end(body.json);
       }
 
       // THE PAGE'S DATA: the announced rounds (upcoming) and the finished ones, each with its times and committees.

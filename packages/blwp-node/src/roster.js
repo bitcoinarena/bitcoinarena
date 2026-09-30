@@ -96,6 +96,9 @@ export class Roster {
 
   /** How many derived censuses are kept: a round is asked about while it settles, and then never again. */
   static CENSUS_KEPT = 64;
+  // PER-ROUND ANSWERS (a seed, a committee) FOR A SERIES' WORTH OF ROUNDS (the owner 2026-09-30: ~440 listed rounds of
+  // series 3cfbe516 missed a 64-entry cache on every listing and were drawn again each time).
+  static PER_ROUND_KEPT = 4096;
 
   /**
    * THE SEED THIS ROUND'S SIGNER NODES ARE ASSIGNED WITH, from the beacon and never from the
@@ -127,7 +130,7 @@ export class Roster {
       () => this.#seedFor(roundIdBytes, contract, view), { over: 20 });
     if (kept && answer.ok) {
       this.seeds.set(kept, answer);
-      if (this.seeds.size > Roster.CENSUS_KEPT) this.seeds.delete(this.seeds.keys().next().value);
+      if (this.seeds.size > Roster.PER_ROUND_KEPT) this.seeds.delete(this.seeds.keys().next().value);
     }
     return answer;
   }
@@ -493,7 +496,7 @@ export class Roster {
       () => this.#committeeFor(roundIdBytes, role), { over: 20 });
     if (kept && answer.ok) {
       this.committees.set(kept, answer);
-      if (this.committees.size > Roster.CENSUS_KEPT) this.committees.delete(this.committees.keys().next().value);
+      if (this.committees.size > Roster.PER_ROUND_KEPT) this.committees.delete(this.committees.keys().next().value);
     }
     return answer;
   }
