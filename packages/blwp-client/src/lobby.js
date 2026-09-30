@@ -246,7 +246,11 @@ export function lobbyOnePerKind(rows, nowMs = Date.now()) {
   // 3cfbe516"): of two series, the one that starts later is the one posted after - its rows win, listed before their
   // committee time too, over a joinable row of the older one. A series' start is its round's start less i x 90 s.
   const seriesStart = (r) => BigInt(r.contract.startTimeMs) - BigInt(r.contract.roundIndex || 0) * 90000n;
-  const newer = (x, y) => series(x) && series(y) && seriesStart(x) !== seriesStart(y);
+  // ONLY ONCE IT IS ACTIVE (the owner 2026-09-30 16:31: "Until tomorrow, accept the rounds of the series already posted ...
+  // Once that new series is active, its rounds are the ones. Until then, the old series rounds stand"): the newer series
+  // wins when its row is open - its committee time passed - and not while it is pending.
+  const newer = (x, y) => series(x) && series(y) && seriesStart(x) !== seriesStart(y)
+    && (seriesStart(x) > seriesStart(y) ? x : y).phase === 'open';
   const better = (x, y) => (newer(x, y) ? seriesStart(x) > seriesStart(y)
     : x.joinable !== y.joinable ? x.joinable
     : series(x) !== series(y) ? series(x)
