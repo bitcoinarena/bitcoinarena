@@ -88,6 +88,7 @@ export class Roster {
     // answer that cannot change. A census is fixed at the round's own `censusHeight` - blocks mined above it are not
     // in it - so it is kept per round and per view start, and only when it matched the root the round names.
     this.censuses = new Map();
+    this.chainChecks = new Map();                // series or round : beacon : view extent -> the chain check's answer
     // AND THE SEED AND THE COMMITTEE THE SAME WAY, per round and per view.
     this.seeds = new Map();
     this.committees = new Map();
@@ -168,6 +169,29 @@ export class Roster {
     if (view && view.pending)
       return { ok: false, why: 'this node is still reading its chain view for that round' };
     let checkedAgainstChain = false;
+    // THE CHAIN CHECK ONCE PER SERIES AND VIEW (the owner 2026-09-30, measured on testnet4): the beacon's block, its proof of
+    // work and the series' publication are the same question for every round of a series - one committee_time, one
+    // depth, one randomness, one publication - and at ~220 ms a round, past a 64-entry cache, ~484 rounds held GET
+    // /rounds past 90 s. Kept by series (or round), randomness and the view's extent; a new header asks again.
+    const chainKey = view && Array.isArray(view.blocks) && view.blocks.length
+      ? `${contract.seriesId instanceof Uint8Array ? `series:${toHex(contract.seriesId)}` : toHex(roundIdBytes)}:${contract.committeeTimeMs}:`
+        + `${contract.censusConfirmations}:${toHex(randomness)}:${view.firstHeight}:${view.blocks.length}` : null;
+    if (chainKey && this.chainChecks.has(chainKey)) {
+      const had = this.chainChecks.get(chainKey);
+      return had.ok ? { ...seeded, checkedAgainstChain: true } : had;
+    }
+    const checked = this.#chainCheck(roundIdBytes, contract, view, randomness, given);
+    if (chainKey) {
+      this.chainChecks.set(chainKey, checked);
+      if (this.chainChecks.size > Roster.CENSUS_KEPT) this.chainChecks.delete(this.chainChecks.keys().next().value);
+    }
+    if (!checked.ok) return checked;
+    checkedAgainstChain = checked.checked;
+    return { ...seeded, checkedAgainstChain };
+  }
+
+  #chainCheck(roundIdBytes, contract, view, randomness, given) {
+    let checkedAgainstChain = false;
     if (view && Array.isArray(view.blocks) && view.blocks.length) {
       const headers = { headers: view.blocks.map((b) => b.header), firstHeight: view.firstHeight };
       const named = beaconFromChain(contract, headers);
@@ -213,8 +237,7 @@ export class Roster {
       }
       checkedAgainstChain = true;
     }
-
-    return { ...seeded, checkedAgainstChain };
+    return { ok: true, checked: checkedAgainstChain };
   }
 
   /**
