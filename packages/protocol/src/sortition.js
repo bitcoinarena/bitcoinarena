@@ -1,7 +1,7 @@
 // Committee selection: bond-weighted, linear, and decided in integers.
 
 import { Writer } from './encode.js';
-import { taggedHash, bytesToBigInt } from './hash.js';
+import { taggedHash, bytesToBigInt, toHex } from './hash.js';
 import { TAG, roleByte } from './constants.js';
 import { compareEntries, meetsCensusMinimum } from './census.js';
 import { poolOfRole, GAME_VERIFY, SETTLEMENT } from './fee.js';
@@ -123,14 +123,30 @@ export function selectCommittee({ entries, contract, role, exclude, committeeSee
 
   const excluded = new Set((exclude || []).map((e) => outpointKey(e)));
 
-  const scored = entries
-    .filter((e) => e.roles.includes(role))
-    .filter((e) => !excluded.has(outpointKey(e)))
-    .map((e) => ({
-      entry: e,
-      ticket: ticketFor(committeeSeed, e, role),
-      weight: weightOf(e.bondSats, bondMin),
-    }));
+  // ONE NODE KEY, ONE SEAT (RULED the owner 2026-09-30, after testnet4 round 5eaa0966: a census still holding extra bond
+  // rows under two node keys seated node 7 and node 4 twice in the game pool and node 2 twice in settlement, and the
+  // stake's handout could not be dealt - "two signer nodes of that handout are one key"). A node key is drawn at most
+  // once: all its bonds for the role count as ONE entry - their sats summed into its weight, its ticket drawn on its
+  // lowest outpoint - so extra bond rows under one key never fill two seats. An outpoint excluded for a re-draw
+  // excludes its key.
+  const keyOf = (e) => toHex(e.pubkey);
+  const out = new Set(entries.filter((e) => excluded.has(outpointKey(e))).map(keyOf));
+  const byKey = new Map();
+  for (const e of entries) {
+    if (!e.roles.includes(role) || out.has(keyOf(e))) continue;
+    const had = byKey.get(keyOf(e));
+    if (!had) { byKey.set(keyOf(e), { entry: e, bondSats: e.bondSats }); continue; }
+    had.bondSats += e.bondSats;
+    if (compareEntries(e, had.entry) < 0) had.entry = e;
+  }
+  // FEWER NODE KEYS THAN SEATS: each key once, as each entry was once before - never a key twice to fill a seat. The
+  // census minimum above is what refuses a census too small to hold a round (roster.test pins the smaller honest answer).
+
+  const scored = [...byKey.values()].map(({ entry, bondSats }) => ({
+    entry,
+    ticket: ticketFor(committeeSeed, entry, role),
+    weight: weightOf(bondSats, bondMin),
+  }));
 
   scored.sort((a, b) => {
     const left = a.ticket * b.weight;

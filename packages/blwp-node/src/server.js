@@ -1631,7 +1631,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const settlement = roster.committeeFor(rid, 'settlement');
     if (!game.ok || !settlement.ok) return { drawn: false, why: (!game.ok ? game : settlement).why };
     const keys = (x) => x.committee.map((e) => toHex(e.pubkey));
-    return { drawn: true, game: keys(game), settlement: keys(settlement) };
+    // WHAT IT WAS DRAWN FROM: the census's bond entries and its distinct node keys - a key sits once (sortition.js).
+    return { drawn: true, game: keys(game), settlement: keys(settlement), eligibleEntries: game.eligible,
+      eligibleKeys: new Set((roster.censusFor(rid).entries || []).map((e) => toHex(e.pubkey))).size };
   };
   const announcedRounds = (url) => {
     const nowMs = BigInt(round.now());

@@ -54,12 +54,20 @@ export async function awaitPublishedBeacon({ contract, txid, view, rpc, feeRate 
     if (!pub) {
       // UNCONFIRMED: no beacon is named. A block that came without it raises its fee.
       if (tip > bumpedAt && rate < maxFeeRate) {
-        const next = Math.min(maxFeeRate, rate * 2);
-        try {
-          const b = await rpc('bumpfee', [current, { fee_rate: next }]);
-          log(`[publish] round ${tag}: block ${tip} came without publication ${current.slice(0, 16)}; fee raised ${rate} -> ${next} sat/vB, now ${String(b.txid).slice(0, 16)}`);
-          current = b.txid; rate = next;
-        } catch (e) { log(`[publish] round ${tag}: the fee raise was refused: ${e.message}`); }
+        // A RAISE THE NODE REFUSES (measured on testnet4, 99ce7662: 4 -> 8 sat/vB refused, "Insufficient total fee ...
+        // must be at least" the old fee plus the increment - the replacement's size differs) is doubled again at once,
+        // up to the cap, rather than asked the same way at the next block and refused the same way.
+        for (let next = Math.min(maxFeeRate, rate * 2); ; next = Math.min(maxFeeRate, next * 2)) {
+          try {
+            const b = await rpc('bumpfee', [current, { fee_rate: next }]);
+            log(`[publish] round ${tag}: block ${tip} came without publication ${current.slice(0, 16)}; fee raised ${rate} -> ${next} sat/vB, now ${String(b.txid).slice(0, 16)}`);
+            current = b.txid; rate = next;
+            break;
+          } catch (e) {
+            log(`[publish] round ${tag}: the fee raise to ${next} sat/vB was refused: ${e.message}`);
+            if (next >= maxFeeRate) break;
+          }
+        }
         bumpedAt = tip;
       } else if (look % 10 === 0) log(`[publish] round ${tag}: publication ${current.slice(0, 16)} unconfirmed at ${tip}; no beacon is named until it confirms`);
       await sleep(sleepMs);
