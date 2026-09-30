@@ -102,6 +102,11 @@ export function dailyLobbySearch(daily) {
   if (nodes.length < 2 || typeof daily.bond !== 'string' || !/^[0-9a-f]{128}$/.test(String(daily.advert))) return null;
   const q = new URLSearchParams({ node: nodes.join(','), bond: daily.bond, advert: daily.advert });
   if (typeof daily.federation === 'string' && daily.federation) q.set('federation', daily.federation);
+  // THE FUNDED GATEWAYS (the owner 2026-09-30 14:30): the gateways holding e-cash in the federation, the only ones a deposit
+  // may go through (page-lock.js depositGateway). A string or a list; carried as one comma-separated `gateway`.
+  const gws = (Array.isArray(daily.gateway) ? daily.gateway : typeof daily.gateway === 'string' ? daily.gateway.split(',') : [])
+    .map((g) => String(g).trim()).filter((g) => /^https?:\/\//.test(g));
+  if (gws.length) q.set('gateway', gws.join(','));
   const search = '?' + q.toString();
   try { return lobbyQuery(search) ? search : null; } catch { return null; }
 }
