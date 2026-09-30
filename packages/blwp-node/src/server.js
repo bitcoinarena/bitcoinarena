@@ -1022,8 +1022,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // THE POSTED CONTRACT, stored or not: POST /round asks this before round.open (RULED 2026-09-25).
     // PICK B (old-series.js): series 3cfbe516's guardians are counted where their advertisements name them (154300).
     const oldSeries = isOldTestnet4Id(contract.networkId) && contract.seriesId instanceof Uint8Array && isOldTestnet4Series(contract.seriesId);
-    const census = oldSeries ? roster.censusFor(rid, OLD_TESTNET4_SERIES_BOND_HEIGHT, { posted: contract, asRoundsOwn: false })
-      : roster.censusFor(rid, null, { posted: contract });
+    const read = () => (oldSeries ? roster.censusFor(rid, OLD_TESTNET4_SERIES_BOND_HEIGHT, { posted: contract, asRoundsOwn: false })
+      : roster.censusFor(rid, null, { posted: contract }));
+    // A VIEW STILL BEING READ IS WAITED FOR, NOT ANSWERED AS NONE (TWO-GAMES-1407, measured on testnet4 2026-09-30): after a
+    // restart every node refused the first paying POST /round - "no chain view for that round" - while the view's first
+    // read (~2000 blocks) was in flight; the page's join then dropped a deposit that had already landed and been locked.
+    // Up to VIEW_WAIT_MS for the read to come in; a view that never comes is refused as before.
+    let census = read();
+    for (const until = Date.now() + VIEW_WAIT_MS; !census.ok && VIEW_NOT_YET.test(census.why || '') && Date.now() < until;) {
+      await new Promise((r) => setTimeout(r, 1000));
+      census = read();
+    }
     if (!census.ok) return census;
     let g;
     try { g = await stakeLocks.guardians(); }
@@ -1035,6 +1044,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       census: census.entries, bondMinSats: contract.bondMinSats });
     return bonded.ok ? bonded : { ok: false, why: `this signer node assigns no round on an unbonded federation (§23.6): ${bonded.why}` };
   }
+
+  const VIEW_WAIT_MS = 180000;
+  const VIEW_NOT_YET = /no chain view for that round|still reading its chain view/;
 
   // THE ONE REFUSAL A SIGNER NODE THAT REACHES NO FEDERATION GIVES A PAYING ROUND: guardiansBonded's, and POST /round's
   // before anything of the round exists (RULED 2026-09-25).
