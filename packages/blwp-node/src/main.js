@@ -33,6 +33,7 @@
 // daemon, and a round whose committee holds one is refused by name.
 const CENSUS_LOOKBACK = 2016;
 import { openStore } from './store.js';
+import { tipHeaderView } from './tip-view.js';
 import { bitcoindRpc, blocksOver } from './chain-rpc.js';
 import { chainBeacon } from './beacon-source.js';
 import { lightningFromEnv } from './lnd-settings.js';
@@ -136,6 +137,10 @@ if (url) {
         reading.set(key, viewOf(contract).then((v) => views.set(key, v)).catch(() => {}).finally(() => reading.delete(key)));
       return undefined;
     },
+    // THE CHAIN A §13A/§13C WINDOW IS READ ON, AND THE TIP A POSTING OR RE-RUN NAMES: one header view that follows the tip
+    // (src/tip-view.js). The round's census view above stops at its beacon's depth, and answered for these too - measured
+    // on testnet4, series round fbd8294e: agreed and posted by all 7, never final, never settled.
+    windowChain: tipHeaderView({ call, log: (s) => console.log(s) }),
     // A round seen for the first time is read now and answered from then on.
     randomnessFor: (q) => {
       const got = beacon.for(q);
