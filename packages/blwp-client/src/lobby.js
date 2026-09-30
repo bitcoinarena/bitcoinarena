@@ -223,8 +223,13 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
  * over a pending one, then the one with the most entry left. Order is kept.
  */
 // A SERIES ROUND CLOSES ITS ENTRY AT ITS START, and a paying join - the deposit, then the stake lock - takes minutes: the
-// row shown is the soonest series round that still leaves this much (20 min: measured 2026-09-30, a paying join took 5-7 min from PLAY to its deposit on the testnet4 page).
-export const SERIES_JOIN_LEAD_MS = 1200000;
+// row shown is the soonest series round that still leaves this much.
+// 3 MIN, NOT 20 (INSTANT-1527, the owner 2026-09-30 15:23: "A payable round is always in the lobby. The player can join one
+// now. Do not hide paying rows until their start is 20 minutes away"). The 20 min covered a join whose deposit invoice
+// took 5-7 min - measured, the lock client's depositFor alone was 256.8 s. The invoice is asked at once now and the wallet
+// is open from the lobby; measured on game 2, payment to a committed entry was ~50 s. A series starts a round every 90 s,
+// so the row shown starts within 3 to 4.5 min.
+export const SERIES_JOIN_LEAD_MS = 180000;
 export function lobbyOnePerKind(rows, nowMs = Date.now()) {
   // THE SERIES FIRST (the owner 2026-09-30 08:50: "Only the 72-hour series ... count"; a one-off round such as 5eaa0966 does
   // not): a round of a series beats one naming none; among series rounds, the soonest with the join lead left; otherwise

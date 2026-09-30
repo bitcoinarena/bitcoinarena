@@ -210,13 +210,14 @@ test('one player wallet per seed and federation: two rounds of one federation op
   const { LockClient, log } = lockClient();
   const tab = tabStorage();
   await fundPlayerWallet({ round, invite: INVITE, seed, LockClient, storage: tab });
-  const joined = async (r, s = seed) => { const n = log.length; await fundPlayerWallet({ round: r, invite: INVITE, seed: s, LockClient, storage: tab }).catch(() => {}); return log.slice(n).find((l) => l.join).join; };
+  // THE SAME WALLET IS THE SAME OPEN CLIENT NOW (INSTANT-1527): a second round of the federation asks no second join.
+  const joined = async (r, s = seed) => { const n = log.length; await fundPlayerWallet({ round: r, invite: INVITE, seed: s, LockClient, storage: tab }).catch(() => {}); const j = log.slice(n).find((l) => l.join); return j ? j.join : { reused: true }; };
   const same = await joined(other);
   const fedOther = await joined(fed2);
   const seedOther = await joined(round, b32(0x52));
   console.log(`  wallets: another round of the federation kept ${same.kept}; another federation kept ${fedOther.kept}; another seed kept ${seedOther.kept}`);
-  assert.equal(same.secret, toHex(walletSecretFor(seed, TEST_FEDERATION_ID)));
-  assert.ok(same.kept > 0, 'another round of the same federation did not reopen the player wallet');
+  assert.ok(same.reused || (same.secret === toHex(walletSecretFor(seed, TEST_FEDERATION_ID)) && same.kept > 0),
+    'another round of the same federation neither reused nor reopened the player wallet');
   assert.notEqual(fedOther.secret, same.secret);
   assert.equal(fedOther.kept, 0, 'another federation opened this federation\'s wallet');
   assert.equal(seedOther.kept, 0, 'another seed opened this seed\'s wallet');
@@ -1199,4 +1200,21 @@ test('a deposit goes through the listed funded gateway, not the lock client\'s p
   const { LockClient: L2, log: log2 } = lockClient();
   await fundPlayerWallet({ round, invite: INVITE, seed, LockClient: L2, storage: tabStorage() });
   assert.deepEqual([...new Set(log2.filter((l) => l.receive).map((l) => l.receive.gateway))], ['http://gw'], 'with no list the plan stands');
+});
+
+// THE INVOICE AT ONCE (INSTANT-1527): measured, depositFor took 256.8 s in a page on testnet4. With estimateDeposit the
+// invoice is sized here - depositFor is never asked - and it carries the margin, so the wallet is credited what it needs.
+test('an estimated deposit asks no depositFor, and its invoice carries the margin', async () => {
+  const { LockClient, log } = lockClient();
+  let quoted = 0;
+  const orig = LockClient.prototype.depositFor;
+  LockClient.prototype.depositFor = function (...a) { quoted++; return orig.apply(this, a); };
+  const deposits = [];
+  await fundPlayerWallet({ round, invite: INVITE, seed, LockClient, storage: tabStorage(), estimateDeposit: true,
+    gateways: ['https://funded.example/'], onDeposit: (d) => deposits.push(d) });
+  assert.equal(quoted, 0, 'depositFor was asked');
+  assert.ok(deposits.length >= 1);
+  const first = log.find((l) => l.receive).receive;
+  assert.equal(first.gateway, 'https://funded.example/');
+  assert.ok(BigInt(first.msat) > deposits[0].creditsMsat, 'the invoice is not above what it credits');
 });

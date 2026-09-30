@@ -1002,6 +1002,54 @@
       let stake = null;
       let claimKey = null;
       let stakeLock = null;
+      // THE DEPOSIT FIRST, BESIDE THE REST (the owner 2026-09-30 15:23, INSTANT-1527 item 1: "PLAY to the deposit invoice is a
+      // Lightning payment, not a 7 minute join. The slow steps ... do not sit in front of the user"). The deposit goes into
+      // the PLAYER WALLET - one per seed and federation (§24A.1) - not into this round, so its invoice needs only the lock
+      // client, the federation and this round's amounts. It is asked now, and the signer nodes, the claim key and the
+      // handout run while the player pays; the lock waits for both. A lock kept from before a reload asks no deposit.
+      const depositEl = document.getElementById('blwp-deposit');
+      const stageEl = document.getElementById('stage');
+      let funding = null;
+      if (pays && BLWPCLIENT.roundLocks(named.round)) {
+        const keptEarly = BLWPCLIENT.savedLock(vault(), { roundId: BLWPCLIENT.fromHex(named.roundIdHex), playerPubkey: player.pubkey });
+        if (BLWPCLIENT.keptLockUse(keptEarly).use === 'new') funding = (async () => {
+          const wasm = await import('./blwp_lock_client.js');
+          await wasm.default();
+          const onStep = (step) => {
+            if (stageEl) stageEl.textContent = 'Stake lock: ' + step + ' …';
+            if (window.BLWP_JOIN) window.BLWP_JOIN.stage = 'stake lock: ' + step;
+            console.log('[blwp] stake lock: ' + step);
+          };
+          const wallet = {
+            round: named.round, invite: named.federation, seed, LockClient: wasm.LockClient,
+            donationMsat: donation.donationMsat, storage: vault(), onStep,
+            // A DEPOSIT ONLY THROUGH A GATEWAY THAT HOLDS E-CASH (the owner 2026-09-30 14:30): the link's (or daily.json's)
+            // `gateway` list, never the lock client's random pick when one is named.
+            gateways: (new URLSearchParams(location.search).get('gateway') || '').split(',').map((g) => g.trim()).filter(Boolean),
+          };
+          console.log('[blwp] join step -> deposit (beside the rest)');
+          // THE TOP-UP, ONLY IF THE PLAYER WALLET IS SHORT: into the wallet, not into the round.
+          await BLWPCLIENT.fundPlayerWallet(Object.assign({}, wallet, {
+            // THE INVOICE AT ONCE: sized from the fees, not searched over the network (256.8 s measured; page-lock.js).
+            estimateDeposit: true,
+            onDeposit: (d) => {
+              window.BLWP_DEPOSIT = { invoice: d.invoice, amountMsat: String(d.amountMsat) };
+              if (depositEl) {
+                depositEl.textContent = 'Pay ' + String((d.amountMsat + 999n) / 1000n) + ' sat into your player wallet '
+                  + 'from any Lightning wallet; your stake is then spent from it:';
+                const box = document.createElement('code');
+                box.textContent = d.invoice;
+                depositEl.appendChild(box);
+              }
+              console.log('[blwp] player wallet deposit: ' + String(d.amountMsat) + ' msat, ' + d.invoice);
+            },
+          }));
+          console.log('[blwp] join step <- deposit (in the player wallet)');
+          if (depositEl) depositEl.textContent = '';
+          return wallet;
+        })();
+        funding.catch(() => {});   // answered where the lock awaits it
+      }
       if (pays) {
         let signerNodes = null;
         try {
@@ -1096,10 +1144,8 @@
         // (`fundPlayerWallet`) - the invoice shown here for the player's own Lightning wallet to pay - and
         // then the stake leaves the player wallet with nothing Lightning in between.
         if (BLWPCLIENT.roundLocks(named.round)) {
-          const depositEl = document.getElementById('blwp-deposit');
-          // ON THE LOADING SCREEN, which is all a player sees while this waits:
-          // the step on the stage line, the invoice in its own selectable box.
-          const stageEl = document.getElementById('stage');
+          // ON THE LOADING SCREEN, which is all a player sees while this waits: the step on the stage line, the invoice
+          // in its own selectable box (depositEl, stageEl - above, where the deposit is asked).
           const whose = { roundId: BLWPCLIENT.fromHex(named.roundIdHex), playerPubkey: player.pubkey };
           // WHAT THE PAYOUT IS COLLECTED WITH after the window (6d): the same seed,
           // round and federation the lock was made with.
@@ -1113,35 +1159,8 @@
             console.log('[blwp] stake lock kept from before the reload, at '
               + BLWPCLIENT.toHex(stakeLock.outpoint.txid) + ':' + String(stakeLock.outpoint.outIdx));
           } else try {
-            const wasm = await import('./blwp_lock_client.js');
-            await wasm.default();
-            const onStep = (step) => {
-              if (stageEl) stageEl.textContent = 'Stake lock: ' + step + ' …';
-              if (window.BLWP_JOIN) window.BLWP_JOIN.stage = 'stake lock: ' + step;
-              console.log('[blwp] stake lock: ' + step);
-            };
-            const wallet = {
-              round: named.round, invite: named.federation, seed, LockClient: wasm.LockClient,
-              donationMsat: donation.donationMsat, storage: vault(), onStep,
-              // A DEPOSIT ONLY THROUGH A GATEWAY THAT HOLDS E-CASH (the owner 2026-09-30 14:30): the link's (or daily.json's)
-              // `gateway` list, never the lock client's random pick when one is named.
-              gateways: (new URLSearchParams(location.search).get('gateway') || '').split(',').map((g) => g.trim()).filter(Boolean),
-            };
-            // THE TOP-UP, ONLY IF THE PLAYER WALLET IS SHORT: into the wallet, not into the round.
-            await BLWPCLIENT.fundPlayerWallet(Object.assign({}, wallet, {
-              onDeposit: (d) => {
-                window.BLWP_DEPOSIT = { invoice: d.invoice, amountMsat: String(d.amountMsat) };
-                if (depositEl) {
-                  depositEl.textContent = 'Pay ' + String((d.amountMsat + 999n) / 1000n) + ' sat into your player wallet '
-                    + 'from any Lightning wallet; your stake is then spent from it:';
-                  const box = document.createElement('code');
-                  box.textContent = d.invoice;
-                  depositEl.appendChild(box);
-                }
-                console.log('[blwp] player wallet deposit: ' + String(d.amountMsat) + ' msat, ' + d.invoice);
-              },
-            }));
-            if (depositEl) depositEl.textContent = '';
+            // THE DEPOSIT ASKED AT THE START OF THE JOIN (above), IN THE PLAYER WALLET BY NOW OR PAID WHILE THIS WAITS.
+            const wallet = await (funding || Promise.reject(new Error('no deposit was started for this round')));
             // THE STAKE, FROM THE PLAYER WALLET: it asks for no deposit.
             const made = await BLWPCLIENT.lockStake(Object.assign({}, wallet, {
               roundId: BLWPCLIENT.fromHex(named.roundIdHex), stake, claimKey, playerPubkey: player.pubkey,
@@ -1912,7 +1931,25 @@
           line: BLWPCLIENT.lobbyLine(r, now), raw: r, join: r.joinable ? BLWPCLIENT.lobbyJoinSearch(search, r.id) : null }));
         refused = got.refused || [];
         unanswered = got.unanswered || [];
+        warmPlayerWallet(named, window.BLWP_LOBBY);
       };
+      // THE PLAYER WALLET IS OPENED IN THE LOBBY, BEFORE PLAY (INSTANT-1527, the owner 2026-09-30 15:23: "PLAY to the deposit
+      // invoice is a Lightning payment ... the lock client joining the federation" does not sit in front of the user). Once
+      // a paying row that locks is listed, the lock client is loaded and this seed's wallet for its federation is joined in
+      // the background; PLAY's deposit, the lock and the withdraw then use that open wallet (page-lock.js playerWallet).
+      function warmPlayerWallet(named, rows) {
+        if (window.BLWP_WALLET_WARM || !named || !named.federation) return;
+        const r = (rows || []).find((x) => !x.free && x.raw && x.raw.contract && BLWPCLIENT.roundLocks(x.raw.contract));
+        const seed = r ? walletSeed() : null;
+        if (!seed) return;
+        const t0 = Date.now();
+        window.BLWP_WALLET_WARM = (async () => {
+          const wasm = await import('./blwp_lock_client.js');
+          await wasm.default();
+          await BLWPCLIENT.playerWallet({ round: r.raw.contract, invite: named.federation, seed, LockClient: wasm.LockClient, storage: vault() });
+          console.log('[blwp] player wallet open in the lobby, ' + (Date.now() - t0) + ' ms');
+        })().catch((e) => { window.BLWP_WALLET_WARM = null; console.log('[blwp] player wallet not opened in the lobby: ' + (e && e.message ? e.message : e)); });
+      }
       // THE LOBBY, AS UNITY DRAWS IT (the owner 2026-09-12 22:11-22:16): the title
       // screen is the lobby - no HTML over the game. What it shows is this, and
       // what it presses comes back here.
