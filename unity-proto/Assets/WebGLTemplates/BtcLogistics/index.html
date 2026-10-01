@@ -570,6 +570,38 @@
       const editable = (t) => !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
       for (const n of ['keydown', 'keypress', 'keyup']) window.addEventListener(n, (e) => { if (editable(e.target)) e.stopImmediatePropagation(); }, true);
     })();
+    // THE PHRASE IS KEPT IN THE BROWSER (the owner 2026-10-01: "We want it to be safe even if the user closes the browser and
+    // loads it again. It needs to be persisted" - this replaces the tab-only rule of 2026-09-30). Every phrase a tab
+    // holds is also kept in the browser's storage (blwp.seeds); a tab marks the one it holds with a heartbeat every 4 s. A tab
+    // with no phrase of its own - a new tab, a browser opened again - takes a kept phrase no open tab holds (no
+    // heartbeat for 12 s); only when every kept one is held does it get a new one. Two open tabs stay two players.
+    function blwpSeedKeeper({ L, T, now, every, on, random }) {
+      const KEY = 'blwp.player.seed', FROM = 'blwp.player.seed.from', LIST = 'blwp.seeds', HELD = 'blwp.seed.held.';
+      const read = () => { try { const l = JSON.parse(L.getItem(LIST) || '[]'); return Array.isArray(l) ? l : []; } catch { return []; } };
+      let tab = T.getItem('blwp.tab.id');
+      if (!tab) { tab = random(); T.setItem('blwp.tab.id', tab); }
+      const heldBy = (hex) => { try { return JSON.parse(L.getItem(HELD + hex.slice(0, 16)) || 'null'); } catch { return null; } };
+      const free = (hex) => { const h = heldBy(hex); return !h || h.tab === tab || now() - h.at > 12000; };
+      if (!/^[0-9a-f]{64}$/i.test(T.getItem(KEY) || '')) {
+        const f = read().find((x) => /^[0-9a-f]{64}$/i.test(x.hex) && free(x.hex));
+        if (f) { T.setItem(KEY, f.hex); T.setItem(FROM, f.from === 'imported' ? 'imported' : 'minted'); }
+      }
+      const beat = () => {
+        const cur = T.getItem(KEY);
+        if (!/^[0-9a-f]{64}$/i.test(cur || '')) return;
+        const l = read();
+        if (!l.some((x) => x.hex === cur)) { l.push({ hex: cur, from: T.getItem(FROM) === 'imported' ? 'imported' : 'minted', at: now() }); L.setItem(LIST, JSON.stringify(l)); }
+        L.setItem(HELD + cur.slice(0, 16), JSON.stringify({ tab, at: now() }));
+      };
+      beat(); every(beat, 4000);
+      on('pagehide', () => { const cur = T.getItem(KEY); if (cur && (heldBy(cur) || {}).tab === tab) L.removeItem(HELD + cur.slice(0, 16)); });
+      return { beat };
+    }
+    try {
+      window.BLWP_SEED_KEEPER = blwpSeedKeeper({ L: window.localStorage, T: window.sessionStorage, now: () => Date.now(),
+        every: (fn, ms) => setInterval(fn, ms), on: (n, fn) => window.addEventListener(n, fn),
+        random: () => Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => b.toString(16).padStart(2, '0')).join('') });
+    } catch (e) { console.log('[blwp] the phrase is not kept in this browser: ' + (e && e.message ? e.message : e)); }
     // A RELOAD OF THE DEPOSIT PAGE LANDS ON THE LOBBY (the owner 2026-09-30 21:10, PRIORITIES: "Reloading the deposit page
     // redirects to the normal Core page. Do not stay on the deposit screen. Do not show the status box or the loading
     // screen over the QR"). While a join's deposit offer is up the address is the round's link with play=1, and a reload
@@ -989,6 +1021,7 @@
         use.addEventListener('click', () => {
           try {
             BLWPCLIENT.importSeed(paste.value, { storage: window.sessionStorage });
+            if (window.BLWP_SEED_KEEPER) window.BLWP_SEED_KEEPER.beat();   // kept in the browser before the reload
             location.reload();
           } catch (e) { why.textContent = e.message; }
         });
@@ -2527,7 +2560,7 @@
           const typed = window.prompt('Private key backup - this tab\'s seed. Copy it and keep it. '
             + 'On another device, paste your own seed here instead to find what you are owed.', mine);
           if (typed && typed.trim().toLowerCase() !== mine) {
-            try { BLWPCLIENT.importSeed(typed, { storage: window.sessionStorage }); location.reload(); }
+            try { BLWPCLIENT.importSeed(typed, { storage: window.sessionStorage }); if (window.BLWP_SEED_KEEPER) window.BLWP_SEED_KEEPER.beat(); location.reload(); }
             catch (e) { window.alert(e.message); }
           }
         },
