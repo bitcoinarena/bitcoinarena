@@ -2461,7 +2461,18 @@
         const read = (nodes) => BLWPCLIENT.fetchLobby({ nodes,
           verify: (s, m, k) => !!(window.BLWP_CURVE && window.BLWP_CURVE.verify && window.BLWP_CURVE.verify(s, m, k)) })
           .catch((e) => ({ rows: [], refused: [e.message], unanswered: [] }));
-        const [got, got2] = await Promise.all([read(named.nodes), testnet ? read(testnet.named.nodes) : null]);
+        // EACH SIDE DRAWN AS SOON AS IT ANSWERS (the owner 2026-10-01: both rows, always): measured on the live page, a paint
+        // waited for both sides, so slow testnet4 nodes held the free row back until its entry had closed. A side not in
+        // yet is `pending`, and keeps the rows it last had.
+        const NOT_YET = { rows: [], refused: [], unanswered: [], pending: true };
+        let mineGot = null; let theirsGot = null;
+        const pMine = read(named.nodes);
+        const pTheirs = testnet ? read(testnet.named.nodes) : Promise.resolve(null);
+        pMine.then((g) => { mineGot = g; draw(g, testnet ? (theirsGot || NOT_YET) : null); });
+        pTheirs.then((g) => { theirsGot = g; if (g) draw(mineGot || NOT_YET, g); });
+        await Promise.all([pMine, pTheirs]);
+      };
+      const draw = (got, got2) => {
         const now = Date.now();
         // ONE FREE ROUND AND ONE PAYING ROUND, never two of either (the owner 2026-09-15 16:08), and what the paying one
         // costs. WITH THE TESTNET LOBBY the free row is this lobby's and the paying row the testnet's: both, always.
