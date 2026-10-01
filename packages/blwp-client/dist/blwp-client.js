@@ -17588,7 +17588,11 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
 // the testnet4 page 13:54Z: PLAY to the deposit invoice 23.5 s; game 2, payment to a committed entry ~50 s.
 const SERIES_JOIN_LEAD_MS = 90000;
 const LOBBY_PER_SERIES = 8;
-function lobbyOnePerKind(rows, nowMs = Date.now()) {
+function lobbyOnePerKind(rows, nowMs = Date.now(), { paidSeriesOnly = false } = {}) {
+  // ONLY 90-SECOND PAID ROUNDS (the owner 2026-10-01: "We want always 90 second rounds in Testnet ... no paid row till
+  // then"): with `paidSeriesOnly` a paying round that is not a series round - the runner's one-off with its 6 h entry
+  // window - is never listed; until a series' rounds can be joined there is no paid row. Free rows are untouched.
+  if (paidSeriesOnly) rows = rows.filter((r) => r.free || !!(r.contract && r.contract.seriesId instanceof Uint8Array));
   // THE SERIES FIRST (the owner 2026-09-30 08:50: "Only the 72-hour series ... count"; a one-off round such as 5eaa0966 does
   // not): a round of a series beats one naming none; among series rounds, the soonest with the join lead left; otherwise
   // as before - joinable, then open, then the latest entry close.

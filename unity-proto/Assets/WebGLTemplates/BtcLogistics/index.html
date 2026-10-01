@@ -2368,7 +2368,7 @@
         for (const r of mine) rowSearch.set(r.id, search);
         for (const r of theirs) rowSearch.set(r.id, testnet.search);
         window.BLWP_LOBBY_ROWS = [...mine, ...theirs];    // every round listed, for the next one after a run (below)
-        window.BLWP_LOBBY = BLWPCLIENT.lobbyOnePerKind(window.BLWP_LOBBY_ROWS).map((r) => ({ id: r.id, phase: r.phase, free: r.free, wallet: r.wallet,
+        window.BLWP_LOBBY = BLWPCLIENT.lobbyOnePerKind(window.BLWP_LOBBY_ROWS, Date.now(), { paidSeriesOnly: true }).map((r) => ({ id: r.id, phase: r.phase, free: r.free, wallet: r.wallet,
           signerNodesAgree: r.signerNodesAgree, needed: r.needed, joinable: r.joinable, stakeSats: BLWPCLIENT.lobbyStakeSats(r),
           line: BLWPCLIENT.lobbyLine(r, now), raw: r, join: r.joinable ? BLWPCLIENT.lobbyJoinSearch(rowSearch.get(r.id) || search, r.id) : null }));
         refused = [...(got.refused || []), ...((got2 && got2.refused) || [])];
