@@ -128,12 +128,22 @@ if (url) {
   // Measured: stopping at the census height, "no block in this view is after
   // this round's committee time"; stopping at the beacon, "the block that
   // seeds this round is 1 deep and this round asks for 6". Never past the tip.
+  const VIEW_REREAD_MS = 10000;
   const viewOf = async (contract) => {
     const seen = await beacon.refresh(contract);
     const tip = Number(await call('getblockcount'));
     const deep = seen.ok ? seen.height + contract.censusConfirmations - 1 : 0;
     const to = Math.min(tip, Math.max(contract.censusHeight, deep));
-    return blocksOver(call, Math.max(0, contract.censusHeight - CENSUS_LOOKBACK), to);
+    const view = await blocksOver(call, Math.max(0, contract.censusHeight - CENSUS_LOOKBACK), to);
+    // SHORT OF THE BEACON'S DEPTH, a view is read again later (ORDER-2116, measured on the free pair 2026-10-01: a round
+    // posted 15 min ahead was read before its beacon existed, kept for good, and never drew a committee - "no block in
+    // this view is after this round's committee time"; no free round posted ahead was joinable).
+    if (view && typeof view === 'object') {
+      Object.defineProperty(view, 'shortOfBeacon', { value: !(seen.ok && tip >= deep), enumerable: false });
+      Object.defineProperty(view, 'readAtMs', { value: Date.now(), enumerable: false, writable: true });
+      Object.defineProperty(view, 'tipAtRead', { value: tip, enumerable: false });
+    }
+    return view;
   };
   // (No census is read ahead for rounds owing an on-chain pool payout: that payout is gone with the withdrawn custody -
   // §23.6, RULED 2026-09-25. A round's view is read the first time it is asked for, below.)
@@ -150,7 +160,30 @@ if (url) {
       const key = contract ? `${contract.censusHeight}:${contract.committeeTimeMs}:${contract.censusConfirmations}` : rid && keyOfRound.get(rid);
       if (!key) return undefined;
       if (rid && contract) keyOfRound.set(rid, key);
-      if (views.has(key)) return views.get(key);
+      if (views.has(key)) {
+        const had = views.get(key);
+        // the one held is answered meanwhile; a fresh read replaces it once it lands
+        if (had && had.shortOfBeacon && contract && !reading.has(key) && Date.now() - had.readAtMs >= VIEW_REREAD_MS)
+          // and only once the beacon is on the chain at the round's depth - one header asked per tip, the beacon read once
+          // the tip's median time has passed committee_time; a view is many blocks, and re-reading it on every new block
+          // held 46 RPC calls open per node on the free pair (measured 2026-10-01).
+          reading.set(key, (async () => {
+            had.readAtMs = Date.now();
+            const tip = Number(await call('getblockcount'));
+            if (tip === had.tipAtRead) return;
+            let seen = beacon.for({ contract });
+            if (!seen) {
+              const head = await call('getblockheader', [await call('getblockhash', [tip])]);
+              if (!(BigInt(head.mediantime) * 1000n > BigInt(contract.committeeTimeMs))) return;
+              const read = await beacon.refresh(contract);
+              if (!read.ok) return;
+              seen = read;
+            }
+            if (tip < seen.height + contract.censusConfirmations - 1) return;
+            views.set(key, await viewOf(contract));
+          })().catch(() => {}).finally(() => reading.delete(key)));
+        return had;
+      }
       if (contract && !reading.has(key))
         reading.set(key, viewOf(contract).then((v) => views.set(key, v)).catch(() => {}).finally(() => reading.delete(key)));
       return undefined;

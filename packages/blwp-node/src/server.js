@@ -1739,6 +1739,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // the opener posts what it holds again.
   const BEACON_NOT_YET = /no beacon|no chain view|no block in this view is after|is \d+ deep and this round asks for|not yet/i;
   const awaitingBeacon = new Set();
+  // AND THE ONES POSTED BEFORE A RESTART (ORDER-2116, measured on the free pair 2026-10-01): the set lived in memory only, so
+  // every round the opener had posted ahead of a node's restart stayed stored, unassigned and unjoinable for good. Refilled
+  // from the store: a round with no signer nodes whose committee time is less than ten minutes past.
+  if (chainFor) {
+    try {
+      for (const r of round.db.prepare('SELECT round_id, contract FROM rounds').all()) {
+        const rid = new Uint8Array(r.round_id);
+        if (round.signerNodes(rid).length) continue;
+        let c; try { c = decodeRoundContract(new Uint8Array(r.contract)); } catch { continue; }
+        if (BigInt(round.now()) <= c.committeeTimeMs + 600000n) awaitingBeacon.add(toHex(rid));
+      }
+    } catch (e) { console.error(`[round] posted rounds not re-read at start: ${e.message}`); }
+  }
   if (chainFor) {
     const assignLater = setInterval(() => timed('assign posted rounds', () => {
       if (shuttingDown) return;
