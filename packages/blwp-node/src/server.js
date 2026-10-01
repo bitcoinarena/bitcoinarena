@@ -1701,9 +1701,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // the writer only opened series 3cfbe516's rounds, no node listed itself assigned, and the page offered none
         // of them). The rounds starting in the next two hours, a few a pass so the loop is not held; a refusal (no view
         // yet) is asked again next pass. The claim key is the committee's - made once, not per round.
+        // AND ALWAYS THE SOONEST ONE, however far ahead (the owner 2026-10-01 15:25, HARD: "The nodes always serve both at
+        // once. Testnet4 rounds and free rounds ... A player opening the page sees a free row and a paid testnet4 row
+        // together"): measured that afternoon, series 8172fffd's first round starts 00:00Z, ~8 h out, so no node listed
+        // itself assigned and the page showed the free row alone. Its entry is open from its committee time; assigned,
+        // it is a joinable row at once.
         if (chainFor) {
           let done = 0;
-          for (const hex of w.startingWithin(round.now(), 2 * 3600 * 1000)) {
+          const next = w.soonest(round.now());
+          const upcoming = w.startingWithin(round.now(), 2 * 3600 * 1000);
+          for (const hex of next && !upcoming.includes(next) ? [next, ...upcoming] : upcoming) {
             if (done >= 20) break;
             const rid = new Uint8Array(Buffer.from(hex, 'hex'));
             if (round.signerNodes(rid).length) continue;

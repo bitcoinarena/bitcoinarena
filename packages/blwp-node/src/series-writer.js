@@ -36,6 +36,8 @@ export function seriesWriter(round, template, { horizonMs = SERIES_HORIZON_MS } 
   const startingWithin = (nowMs, ms) => [...written.values()]
     .filter((w) => w.startTimeMs >= BigInt(nowMs) && w.startTimeMs < BigInt(nowMs) + BigInt(ms))
     .sort((a, b) => (a.startTimeMs < b.startTimeMs ? -1 : 1)).map((w) => w.id);
+  /** The soonest round written that has not started, or null. */
+  const soonest = (nowMs) => startingWithin(nowMs, Number.MAX_SAFE_INTEGER - Number(nowMs))[0] || null;
   const summary = (nowMs) => {
     const now = BigInt(nowMs);
     const ahead = [...written.entries()].filter(([, w]) => w.startTimeMs >= now).sort((a, b) => a[0] - b[0]);
@@ -43,5 +45,5 @@ export function seriesWriter(round, template, { horizonMs = SERIES_HORIZON_MS } 
     return { series: toHex(id), startTimeMs: String(template.startTimeMs), committeeTimeMs: String(template.committeeTimeMs),
       horizonMs: String(horizonMs), written: written.size, ahead: ahead.length, first: at(ahead[0]), last: at(ahead[ahead.length - 1]) };
   };
-  return { id, template, write, ids, summary, startingWithin };
+  return { id, template, write, ids, summary, startingWithin, soonest };
 }

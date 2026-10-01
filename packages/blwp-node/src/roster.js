@@ -225,7 +225,11 @@ export class Roster {
       // A SERIES ROUND IS PUBLISHED BY ITS SERIES' PUBLICATION ("BLW" SERIES series_id), which must confirm strictly below
       // the beacon block as a round's own must (measured 2026-09-30: every round of series 3cfbe516 was refused here, "there
       // is no publication transaction to read", because only a round's own publication was looked for).
-      if (contract.seriesId instanceof Uint8Array) {
+      // A FREE ROUND IS NOT POSTED ON THE CHAIN IN ADVANCE (the owner 2026-10-01 15:25, HARD): it moves no money, so there is
+      // no committee worth grinding for; it is still multiplayer - its players join one round, its committee replays it.
+      if (BigInt(contract.stakeMsat) === 0n) {
+        // nothing to find: the free round is checked against the chain as every round is above, its census and beacon
+      } else if (contract.seriesId instanceof Uint8Array) {
         const series = findSeriesPublication(view, contract.seriesId);
         if (!series) return { ok: false, why: `this node's chain view holds no publication of series ${toHex(contract.seriesId).slice(0, 16)}` };
         if (!(series.height < named.height))
