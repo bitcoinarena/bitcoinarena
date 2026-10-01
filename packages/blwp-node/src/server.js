@@ -1212,7 +1212,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // seen paid - and all three read what the hold-invoice close used to return. A lock round's close
     // returns none of it: its money moves in the one settlement, which has its own recovery below.
     const waitingOn = () => (latest && latest.waiting) || [];
-    const windowDue = () => waitingOn().some((w) => w.closesAtMs !== null && round.now() >= w.closesAtMs);
+    // A WINDOW THAT HAS CLOSED runs the close logic once for that run and that close, not on every tick after it
+    // (ORDER-2116: past the window a run short only of its peers' FINAL signatures kept it running each tick).
+    const dueDone = new Set();
+    const dueNow = () => waitingOn().filter((w) => w.closesAtMs !== null && round.now() >= w.closesAtMs)
+      .map((w) => `${w.entryId}:${w.closesAtMs}`);
+    const windowDue = () => dueNow().some((k) => !dueDone.has(k));
+    // A RUN THE LAST PASS LEFT WAITING THAT IS FINAL NOW - its FINAL signatures came in by POST between ticks, so no
+    // gather here turned it - runs the close logic, which settles it.
+    const finalSince = () => waitingOn().some((w) => {
+      try { return resultFinality(round, roundIdBytes, Uint8Array.from(Buffer.from(w.entryId, 'hex'))).state === FINAL; }
+      catch { return false; }
+    });
     // A run whose transcript is not posted yet: the close logic runs again,
     // which posts and gathers the signer nodes' postings (P2).
     const unposted = () => waitingOn().some((w) => w.published === false);
@@ -1231,6 +1242,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // had signed 1 of 2 after its peer decided VOID.
     const decidedHere = (eid) => !!round.noQuorum(eid);
     const notFinalYet = () => stored.some((r) => !decidedHere(r.entryId) && resultFinality(round, roundIdBytes, r.entryId).state !== 'FINAL');
+    // PAST THE WINDOW THE CLOSE LOGIC RUNS AGAIN ONLY FOR A RUN WHOSE TRANSCRIPT IS NOT POSTED YET (ORDER-2116, measured
+    // 2026-10-01 on the free series pair). A run posted and signed FINAL here, short only of its peers' FINAL signatures,
+    // is gathered by gatherFinal on every tick below; running the whole close for it again - its postings re-checked, its
+    // committee drawn again - held each node's loop 60-80 s at a time over 43 such rounds, so neither node answered the
+    // other's GET /final-sig and none of them ever became FINAL. A FINAL that lands still runs it (`turned`).
+    const postingShort = () => stored.some((r) => {
+      if (decidedHere(r.entryId)) return false;
+      const f = resultFinality(round, roundIdBytes, r.entryId);
+      return f.state !== 'FINAL' && f.published !== true;
+    });
     // closesAtMs is on the round's clock and `until` on this watch's, so the
     // distance is carried across rather than the number.
     const stretch = () => {
@@ -1323,8 +1344,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         try { if (await gatherFinal(roundIdBytes, r.entryId)) turned = true; } catch (e) { console.error(`[final] ${e.message}`); }
       }
       if (shuttingDown) return;
-      if (turned || windowDue() || unposted() || suspendedShort() || pendingShort()
-        || (pastWindow && notFinalYet())) {
+      if (turned || windowDue() || finalSince() || unposted() || suspendedShort() || pendingShort()
+        || (pastWindow && postingShort())) {
+        for (const k of dueNow()) dueDone.add(k);
         stakes = settleTheStakes(roundIdBytes, { replayed: closed.replayed, gathered })
           .catch((e) => { console.error(`[verify] ${e.message}`); return { ok: false, why: e.message }; });
         latest = await stakes;
