@@ -21,8 +21,8 @@ export const TRUCK = Object.freeze({
 });
 
 /**
- * A CORE'S RUN LENGTH UNDER A CONFIG (M3 R1 R3): its `runTicks(config)` where it has one, else its one
- * RUN_TICKS (the truck's BLOCK_TICKS - one config). A round names it as blockTicks; the signer node checks it.
+ * A CORE'S RUN LENGTH UNDER A CONFIG (M3 R1 R3): its `runTicks(config)` where it has one, else its one RUN_TICKS (the
+ * truck's BLOCK_TICKS) - the length of a run whose round names none, and, since the 82/90 fork, the longest one may.
  */
 export function runTicksOf(core, config) {
   const a = core && core.adapter;
@@ -30,16 +30,47 @@ export function runTicksOf(core, config) {
   return typeof a.runTicks === 'function' ? a.runTicks(config) : a.RUN_TICKS;
 }
 
+/**
+ * MAY A ROUND NAME THIS RUN LENGTH ON THIS CORE (the 82/90 fork, the owner 2026-10-01: "The round length must be part of
+ * the contract - not a fixed constant")? A core held to one length (the truck before the fork) takes that one; a core
+ * that takes the round's length takes any it says fits (1 .. RUN_TICKS for the truck).
+ */
+export function runLengthFits(core, config, blockTicks) {
+  if (!core || !core.adapter) return { ok: false, why: 'no core to check that round\'s run length against' };
+  if (!Number.isInteger(blockTicks)) return { ok: false, why: 'that round names no run length' };
+  if (Number.isInteger(core.fixedRunTicks))
+    return blockTicks === core.fixedRunTicks ? { ok: true }
+      : { ok: false, why: `that round says a run is ${blockTicks} ticks and this core ends one at ${core.fixedRunTicks} (${core.name}) - a run is not replayed to a length its core does not stop at` };
+  if (typeof core.adapter.runTicksFits !== 'function') {
+    // A CORE OF ONE LENGTH UNDER ITS CONFIG (it takes none from the round): that length only.
+    const own = runTicksOf(core, config);
+    return blockTicks === own ? { ok: true }
+      : { ok: false, why: `that round says a run is ${blockTicks} ticks and this core ends one at ${own}` };
+  }
+  return core.adapter.runTicksFits(blockTicks) ? { ok: true }
+    : { ok: false, why: `that round says a run is ${blockTicks} ticks, and ${core.name} runs 1 to ${runTicksOf(core, config)}` };
+}
+
 /** The truck's hashes as a round names them: its sim_wasm_hash and its (genesis) config_hash. */
 export const TRUCK_CORE_HASH = fromHex(TRUCK.hash);
 export const TRUCK_CONFIG_HASH = GENESIS_CONFIG_HASH;
+
+/**
+ * THE TRUCK BEFORE THE 82/90 HARD FORK (the owner 2026-10-01: "Change the core, it's basically a hard fork"): the core every
+ * round before the fork names, d15c39bb..., ended every run at its own 10800 ticks. The core after it takes the run length
+ * from the round and runs 10800 ticks hash for hash as the old one did (core/test/round-ends.test.js), so the old hash is
+ * installed as this same core held to that one length: its rounds replay unchanged, and none of them names another.
+ */
+export const TRUCK_BEFORE_FORK_HASH = 'd15c39bb83b7cb63ce2b232a7b62b0078d78d9944013ce42799c80a29bf005ef';
+export const TRUCK_BEFORE_FORK = Object.freeze({ ...TRUCK, name: `${TRUCK.name} (before the 82/90 fork)`, hash: TRUCK_BEFORE_FORK_HASH,
+  fixedRunTicks: TRUCK_ADAPTER.RUN_TICKS });
 
 /**
  * THE CORES A SIGNER NODE HAS INSTALLED, by hash: the truck always, and every core its operator installs
  * beside it (serve's `cores`) - several at once, each with its own configs (the owner 08:07).
  */
 export function installedCores(extra = []) {
-  const all = new Map([[TRUCK.hash, TRUCK]]);
+  const all = new Map([[TRUCK.hash, TRUCK], [TRUCK_BEFORE_FORK_HASH, TRUCK_BEFORE_FORK]]);
   for (const c of extra) all.set(c.hash, c);
   return all;
 }
@@ -62,5 +93,6 @@ export function coreForRound(contract, installed = INSTALLED) {
     return { ok: false, why: `this signer node runs ${core.name} but not the config `
       + `${contract.configHash instanceof Uint8Array ? toHex(contract.configHash).slice(0, 16) : '(none)'} that round names: `
       + 'not selectable for it (27A.7.5)' };
-  return { ok: true, core, config: core.configs.get(toHex(contract.configHash)) };
+  // AND THE ROUND'S RUN LENGTH (the 82/90 fork): its contract's blockTicks, carried with the core to every replay of it.
+  return { ok: true, core, config: core.configs.get(toHex(contract.configHash)), runTicks: contract.blockTicks };
 }

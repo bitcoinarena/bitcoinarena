@@ -19,6 +19,8 @@ import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js
 import assert from 'node:assert/strict';
 
 import { openStore } from '../src/store.js';
+import { TRUCK_BEFORE_FORK_HASH } from '../src/cores.js';
+import { fromHex as fromHexForFork } from '../../protocol/src/hash.js';
 import { Round } from '../src/round.js';
 import { replay as replayUnder } from '../src/replay.js';
 import { TRUCK } from '../src/cores.js';
@@ -70,20 +72,19 @@ function drive(round, rid, eid, from, count) {
   return { stored, refused };
 }
 
-test('a round that says a run is some other length is not a shorter round', () => {
+// THE 82/90 HARD FORK (the owner 2026-10-01: "The round length must be part of the contract - not a fixed constant"): on the
+// truck after the fork a round names its run length - any from 1 to BLOCK_TICKS opens, and the core ends its runs there;
+// longer is refused by name. On the truck BEFORE the fork (its hash d15c39bb..., installed as the same core held to one
+// length) only its own BLOCK_TICKS opens. Before the fork this test refused every length but BLOCK_TICKS on the one truck.
+test('a round names its run length on the truck after the fork - 1 to 10800 opens, longer is refused; the truck before the fork takes only its 10800', () => {
   const round = new Round(openStore(':memory:'), () => NOW + 1000);
-
-  // The core's own number opens.
-  assert.ok(round.open(contractWith(BLOCK_TICKS)));
-
-  // Anything else is refused BY NAME, and both directions are wrong: a shorter
-  // round would have the node bounding batches the simulator would not stop
-  // at, and a longer one promises ticks the simulator will never run.
-  for (const ticks of [4500, 1, BLOCK_TICKS - 1, BLOCK_TICKS + 1]) {
-    assert.throws(() => round.open(contractWith(ticks)),
-      new RegExp(`says a run is ${ticks} ticks and this core ends one at ${BLOCK_TICKS}`),
-      `a round naming ${ticks} was stored`);
-  }
+  for (const ticks of [BLOCK_TICKS, 4920, 1, BLOCK_TICKS - 1]) assert.ok(round.open(contractWith(ticks)), `a round naming ${ticks} was refused`);
+  for (const ticks of [BLOCK_TICKS + 1, 0])
+    assert.throws(() => round.open(contractWith(ticks)), new RegExp(`says a run is ${ticks} ticks, and btc-logistics truck runs 1 to ${BLOCK_TICKS}`));
+  const before = (ticks) => ({ ...contractWith(ticks), simCoreHash: fromHexForFork(TRUCK_BEFORE_FORK_HASH), slashMinimumServed: 21 });
+  assert.ok(round.open(before(BLOCK_TICKS)), 'a round of the truck before the fork, at its 10800, was refused');
+  for (const ticks of [4920, BLOCK_TICKS - 1])
+    assert.throws(() => round.open(before(ticks)), new RegExp(`says a run is ${ticks} ticks and this core ends one at ${BLOCK_TICKS}`));
   assert.match(runLengthIsTheCores({}).why, /names no run length/);
   assert.equal(runLengthIsTheCores(contractWith(BLOCK_TICKS), BLOCK_TICKS).blockTicks, BLOCK_TICKS);
 });
@@ -138,6 +139,26 @@ test('replay refuses a transcript that reaches past the run, however it was got'
     { roundRandomness: b32(0xbe) });
   assert.equal(whole.ok, true, whole.why);
   assert.equal(whole.ticks, BLOCK_TICKS, 'a full legal run did not replay');
+});
+
+// AN 82 s ROUND (the 82/90 fork): its contract's 4920 ticks, carried with the core (coreForRound's runTicks) into the
+// replay - the run ends at its tick 4919, the core ends it MISSED there, and one tick more is a transcript past the run.
+test('an 82 s round replays to its own 4920 ticks: a whole run replays and ends MISSED, one tick more is refused', async () => {
+  const { coreForRound } = await import('../src/cores.js');
+  const found = coreForRound(contractWith(4920));
+  assert.equal(found.ok, true, found.why);
+  const core = { ...found.core, config: found.config, runTicks: found.runTicks };
+  const entry = entryOn(b32(1));
+  const ticks = [];
+  for (let t = 0; t <= 4920; t++) ticks.push({ tick: t, words: [0, 0, 65536, 0, 0] });
+  const over = replay({ ticks, liquidations: [] }, entry, { roundRandomness: b32(0xbe), core });
+  assert.equal(over.ok, false, 'a drive past the 82 s run was replayed');
+  assert.match(over.why, /that run ends at tick 4919/);
+  const whole = replay({ ticks: ticks.slice(0, 4920), liquidations: [] }, entry, { roundRandomness: b32(0xbe), core });
+  assert.equal(whole.ok, true, whole.why);
+  assert.equal(whole.ticks, 4920);
+  console.log('  FACTS (82 s replay):', JSON.stringify({ ticks: whole.ticks, outcome: whole.outcome, score: whole.score }));
+  assert.equal(whole.outcome, 'FAILED', 'a braked truck at its 82 s run end did not end FAILED (MISSED)');
 });
 
 // M3 R1 R3 (the owner 2026-09-15 08:07: several cores and rule sets at once): a round's run length is its own

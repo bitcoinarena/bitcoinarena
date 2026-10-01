@@ -113,7 +113,8 @@ export function replay(transcript, entry, { core, seedWord, roundRandomness, mar
   // Measured before this existed: 9600 ticks of a 9000-tick run replayed
   // clean, all 9600 of them.
   // THE RUN'S LENGTH IS ITS CORE'S, under the round's config (M3 R1 R3): runTicks(config), else RUN_TICKS.
-  const runTicks = typeof a.runTicks === 'function' ? a.runTicks(core.config) : a.RUN_TICKS;
+  // AND, SINCE THE 82/90 FORK, THE ROUND'S OWN: core.runTicks, its contract's blockTicks, when the round names one.
+  const runTicks = Number.isInteger(core.runTicks) ? core.runTicks : typeof a.runTicks === 'function' ? a.runTicks(core.config) : a.RUN_TICKS;
   const ends = lastTickOfRun(start, runTicks);
   const reaches = ticks[ticks.length - 1].tick;
   if (reaches > ends)
@@ -156,7 +157,7 @@ export function replay(transcript, entry, { core, seedWord, roundRandomness, mar
   const wanted = new Set(pictures);
   const taken = new Map();
 
-  const st = a.start(seedWord, core.config);
+  const st = a.start(seedWord, core.config, { runTicks });
   let checked = 0;
   let divergedAt = null;
 
@@ -271,7 +272,7 @@ export function replayInWorker(transcript, entry, options = {}) {
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL(import.meta.url), {
       workerData: { blwpReplay: true, transcript, entry, source: source || null, options: rest,
-        core: { hash: core.hash, url: core.url, config: core.config } },
+        core: { hash: core.hash, url: core.url, config: core.config, runTicks: core.runTicks } },
     });
     let answered = false;
     worker.once('message', (m) => { answered = true; resolve(m); });
@@ -296,7 +297,7 @@ if (!isMainThread && workerData && workerData.blwpReplay) {
       try { inputs = readTranscript(db, source.roundId, source.entryId); }
       finally { try { db.close(); } catch { /* closing */ } }
     }
-    parentPort.postMessage(replay(inputs, entry, { ...options, core: { hash: core.hash, url: core.url, config: core.config, adapter: m.CORE } }));
+    parentPort.postMessage(replay(inputs, entry, { ...options, core: { hash: core.hash, url: core.url, config: core.config, runTicks: core.runTicks, adapter: m.CORE } }));
     parentPort.close();
   }, (e) => {
     parentPort.postMessage({ ok: false, why: `the core named for that run could not be loaded: ${e.message}` });
@@ -358,9 +359,10 @@ export class RunInProgress {
 
     this.seedWord = seedWord;
     this.joinTick = entry.joinTick;
-    this.runTicks = typeof this.a.runTicks === 'function' ? this.a.runTicks(core.config) : this.a.RUN_TICKS;
+    this.runTicks = Number.isInteger(core.runTicks) ? core.runTicks
+      : typeof this.a.runTicks === 'function' ? this.a.runTicks(core.config) : this.a.RUN_TICKS;
     this.endsAt = lastTickOfRun(entry.joinTick, this.runTicks);
-    this.st = this.a.start(seedWord, core.config);
+    this.st = this.a.start(seedWord, core.config, { runTicks: this.runTicks });
     // The last tick STEPPED. Nothing yet, so one before the join.
     this.at = entry.joinTick - 1;
     // Liquidations land BEFORE their own tick and exactly once, whether the

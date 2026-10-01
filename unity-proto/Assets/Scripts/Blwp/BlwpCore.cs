@@ -32,6 +32,7 @@ namespace Blwp
         [DllImport("__Internal")] private static extern int BlwpQueryParam(IntPtr name, IntPtr outp, int cap);
         [DllImport("__Internal")] private static extern int BlwpRestart(int seed);
         [DllImport("__Internal")] private static extern int BlwpReliefEpoch();
+        [DllImport("__Internal")] private static extern int BlwpRunTicks();
         [DllImport("__Internal")] private static extern int BlwpTeleport(int x, int z, int heading);
         [DllImport("__Internal")] private static extern int BlwpTakeImpact();
         [DllImport("__Internal")] private static extern int BlwpReadImpact();
@@ -62,6 +63,7 @@ namespace Blwp
         private static int BlwpQueryParam(IntPtr n, IntPtr o, int cap) => 0;
         private static int BlwpRestart(int seed) => 0;
         private static int BlwpReliefEpoch() => 0;
+        private static int BlwpRunTicks() => 0;
         private static int BlwpTeleport(int x, int z, int h) => 0;
         private static int BlwpTakeImpact() => 0;
         private static int BlwpCopyReplay() => 0;
@@ -284,6 +286,13 @@ namespace Blwp
         /// live on 0.0.1385, the tick went 234 -> 32 with no rebuild, and two seeds' reliefs differ by up
         /// to 5.59 m. Both counts only ever go up, so their sum moves whenever either does.
         public static int ReliefEpoch => _reliefEpoch + BlwpReliefEpoch();
+
+        /// <summary>
+        /// THE TICKS THE RUN IN PLAY ENDS AT - its round's own run length (the 82/90 fork, the owner 2026-10-01: "The round
+        /// length must be part of the contract, not a fixed constant"), read from the core that runs it; the core's
+        /// default (`Layout.BLOCK_TICKS`) where no run says otherwise (the editor, a run with no round).
+        /// </summary>
+        public static int RunTicks { get { int t = BlwpRunTicks(); return t > 0 ? t : Layout.BLOCK_TICKS; } }
         static int _reliefEpoch;
 
         /// <summary>

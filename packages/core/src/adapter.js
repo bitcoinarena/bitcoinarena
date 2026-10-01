@@ -7,16 +7,18 @@
 // bundle does not carry it - the page drives sim.js itself, and nothing bundled imports this file.
 import { init, step, submitLiquidation, submitLoad, submitSample, submitTape, runScore } from './sim.js';
 import { hash, O_SCORE, S_STATE, S_HEAT, O_TRUCK, T_X, T_Z, T_HEADING } from './state.js';
-import { RUN_LIVE, RUN_DELIVERED, BLOCK_TICKS } from './rules/gate.js';
+import { RUN_LIVE, RUN_DELIVERED, BLOCK_TICKS, runTicksIsValid } from './rules/gate.js';
 
 export const CORE = Object.freeze({
   name: 'btc-logistics truck',
-  /** A run's length in ticks, from its own join (0.8's mission duration). */
+  /** A run's length in ticks when its round names none (0.8's mission duration), and the longest a round may name. */
   RUN_TICKS: BLOCK_TICKS,
+  /** Whether a round may name this run length (blockTicks): the hard fork of 2026-10-01 - the round's, 1 to RUN_TICKS. */
+  runTicksFits: (t) => runTicksIsValid(t),
   /** Input words per tick: throttle, steer, brake, handbrake, practice. */
   INPUT_WORDS: 5,
-  /** A run from its seed word. */
-  start: (seedWord) => init(seedWord),
+  /** A run from its seed word, ending after its round's run length (blockTicks; RUN_TICKS when none is named). */
+  start: (seedWord, config, { runTicks } = {}) => init(seedWord, runTicks === undefined ? {} : { runTicks }),
   /**
    * THE TRANSCRIPT'S OWN EVENTS, each applied BEFORE the tick it names - round setup for that tick,
    * not a consequence of it: a load (fee, btc - how hard the war hunts the run) and a liquidation
