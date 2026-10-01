@@ -5,6 +5,15 @@
 **Version:** 4.6.4 (supersedes v4.4/v4.5 and the earlier v1.x P2P drafts; all remain in git history)
 **Date:** 2026-09-21
 
+> **WINDOW-10-SPEC (the owner 2026-10-01 09:40).** The objection window is
+> **exactly 600 seconds of wall time** from the moment a result is
+> `PROVISIONALLY_FINAL`, then `FINAL` if no valid objection landed. It is not
+> a contract parameter, not counted in blocks and not a range. Winnings show
+> as **pending** in the balances the moment the result is signed, not when
+> the window closes, and disappear if the payment becomes invalid. Changed:
+> §6 (`objection_window_W`), §12, §13A, §13C, §14, §24, §24B.1, the worked
+> example, §34's capacity line and the overview diagram.
+
 > **Revision 4.6.4 — the federation has a life (the owner 2026-09-21).** A
 > federation now holds standing balances across many rounds (v4.6.3), so
 > §23A says what the spec never said: how a federation is founded and by
@@ -136,7 +145,7 @@ attacker could take the whole pool.
 | 2 | **Bonds are mandatory and slashable; thresholds raised to 5-of-7 for both roles; selection is linear bond-weighted stateless sortition.** | **Free Sybil + thin quorums.** v4.4 made bonds optional ("if the protocol adopts bonding"), defined no slashing, and used 2-of-3 settlement. Two colluding operators drained a round. With a free identity and 12 eligible settlement nodes of which an attacker ran 4, P(≥2 of 3 selected are his) = **23.6%**; for game/verify (20 eligible, 8 his, 5 chosen, 3 needed) = **29.6%**. Roughly every third to fourth round was fully controllable at zero cost. | Node operation now requires capital. Small networks must run at capped stakes (§5A.10). |
 | 3 | **A node may not sign for a round in which its operator plays.** | **Self-signing.** v4.4 separated game/verify from settlement but never separated *player* from *node*. | Nodes declare an operator identity; overlapping entries forfeit the fee and the signature right. |
 | 4 | **The custody chapter exists** (§23): hold invoice, preimage VSS-shared to the settlement committee, threshold-signed movement, expiry-as-default refund. | **The missing mechanism.** v4.4 said "stake commitment" and "2-of-3 Lightning settlement" but never stated where a stake lives during a round or which key moves it. Without it, "non-custodial" was unsupported and outages had no refund path. | The most complex part of the protocol; the interim construction is named honestly (§23.6). |
-| 5 | **Objection window with a replay veto** (§13A) before finality. | **Unappealable lies.** In v4.4, a colluding quorum's signature was the end of the story. The veto existed in the earlier v1.1/v1.2 drafts and was dropped in the simplification; it is the cheapest defence in the whole design. | Finality is delayed by the window `W` (reference: 10 minutes). |
+| 5 | **Objection window with a replay veto** (§13A) before finality. | **Unappealable lies.** In v4.4, a colluding quorum's signature was the end of the story. The veto existed in the earlier v1.1/v1.2 drafts and was dropped in the simplification; it is the cheapest defence in the whole design. | Finality is delayed by the window `W`: exactly 600 s of wall time (WINDOW-10-SPEC, 2026-10-01). |
 | 6 | **Explicit equivocation and no-quorum rules** (§13B, §13C). | **Undefined states.** v4.4 never said what happens if a player publishes two conflicting checkpoint chains, or if the committee cannot agree on a result — the latter left funds stuck with no defined path. | Two short rules; one of them (equivocation ⇒ forfeit) must be in the Entry Contract. |
 
 Smaller corrections, all listed here so nothing is silently changed:
@@ -1997,7 +2006,7 @@ RoundContract {
   arbitration_k, arbitration_m
   bond_maturity                    // absolute locktime for unilateral recovery
 
-  objection_window_W               // v4.6, reference 10 minutes
+  objection_window_W               // exactly 600000 ms (WINDOW-10-SPEC, 2026-10-01); any other value is an invalid contract
   equivocation_rule_hash           // v4.6
   no_quorum_rule_hash              // v4.6
 
@@ -2247,8 +2256,10 @@ disagrees about it disagrees about the attested tape, which is objectionable
 rank, and rank reads the truck.
 
 Once **5-of-7** nodes sign the identical result, the result becomes
-`PROVISIONALLY_FINAL` and the objection window opens (§13A). It becomes
-`FINAL` when the window closes without a valid objection.
+`PROVISIONALLY_FINAL` and the objection window opens (§13A): **600 seconds of
+wall time from that moment**. It becomes `FINAL` when those 600 seconds pass
+without a valid objection. The player's winnings or refund show as
+**pending** from the same moment (§24), not from `FINAL`.
 
 > v4.4 made 3 matching signatures immediately final. v4.6 inserts the
 > window, because a signature quorum that lies had no counterparty in v4.4.
@@ -2257,8 +2268,45 @@ Once **5-of-7** nodes sign the identical result, the result becomes
 
 # 13A. Objection window and replay veto *(new in v4.6)*
 
-After a result is `PROVISIONALLY_FINAL`, the window `W` (reference: 10
-minutes, contract-defined) runs.
+After a result is `PROVISIONALLY_FINAL`, the window `W` runs: **exactly 10
+minutes, 600 seconds of wall time** (RULED, the owner 2026-10-01 09:40,
+WINDOW-10-SPEC).
+
+**The window, stated once.**
+
+- **What it was.** Until this ruling `W` was a contract field with a
+  "reference" of 10 minutes, so a round could name another; the code also
+  carried it as a window in blocks at both ends, and §13A allowed any value
+  up to 6 hours. None of that stands. There is one window on every network
+  and in every round: 600 seconds.
+- **The clock.** Wall time, not blocks. The window opens at the moment the
+  result becomes `PROVISIONALLY_FINAL` - the signing time of the fifth
+  matching result signature, as the signatures carry it - and closes 600
+  seconds later. Each seat reads that instant from the signatures it holds
+  and measures the 600 seconds on its own clock; a block height is never the
+  measure, so a slow or bursty chain (testnet4's gaps of hours) neither
+  shortens nor stretches it.
+- **What a node refuses.** A Round Contract whose `objection_window_W` is
+  not exactly 600000 ms is invalid: a node refuses to open it, list it or
+  take an entry for it. A node refuses to record or sign `FINAL` for a result
+  before 600 seconds have passed since its `PROVISIONALLY_FINAL` moment, and
+  refuses to keep a result short of `FINAL` once they have passed with no
+  valid objection on record.
+- **A late objection.** An objection that reaches a seat after its window
+  closed does not suspend anything: the result is `FINAL`, §14 lets nothing
+  undo it, and the payment proceeds. But a valid objection is also a fraud
+  proof against every node that signed the contradicted result (§5A.3,
+  "a result contradicted by replay"), and that proof has no deadline: it is
+  filed for slashing, and the slashed bonds pay the affected players (§5A.3).
+  Late is too late to change the result, never too late to cost the liars
+  their bonds.
+- **What the player sees.** The winnings, or the stake coming back, appear
+  as a pending line in the balances the moment the result is
+  `PROVISIONALLY_FINAL` (§24), with the amount and the time the window
+  closes in UTC. They do not wait for the window. If the payment becomes
+  invalid - a valid objection inside the window, a re-run that changes the
+  result, `VOID`, a forfeit - the pending line disappears, and the line the
+  new result earns, if any, takes its place.
 
 **Who may object:** anyone — the affected player, another player in the
 round, a non-selected node, a spectator, a watchtower.
@@ -2289,10 +2337,11 @@ cannot reach 5-of-7 on the re-run, §13C applies.
 field, which the owner ruled 2026-09-15 equal to the objection window).**
 Suspension is bounded, by the same contract field, twice at most:
 
-1. The valid objection opens a **re-run window** of one result window,
-   counted from the block-timestamped moment the objection was filed.
+1. The valid objection opens a **re-run window** of 600 seconds of wall
+   time, counted from the moment the objection was filed (WINDOW-10-SPEC).
 2. A re-run result with 5-of-7 inside that window is provisionally final
-   and gets **one** objection window of its own. If none is valid, it is
+   and gets **one** objection window of its own, 600 seconds from its own
+   `PROVISIONALLY_FINAL` moment. If none is valid, it is
    `FINAL`. If one is valid, the signers of that result are slashed as
    well and the entry is **`VOID`** at once - refunded by forfeit or by the
    lock's expiry (§23.2) - with no third run: two contradicted quorums in
@@ -2304,12 +2353,12 @@ Suspension is bounded, by the same contract field, twice at most:
    otherwise - and the slashing of the first result's signers stands,
    because the objection that proved them wrong already exists.
 
-So an objected entry is decided at the latest three windows after it was
-provisionally final. The stake lock's 144 blocks (§23.1) must cover
-that plus the round and the settlement, so a Round Contract whose objection
-window exceeds **6 hours** is invalid (three windows and a round inside a
-day with room for settlement); at the 10-minute reference it is half an
-hour.
+So an objected entry is decided at the latest three windows - 30 minutes -
+after it was provisionally final; an entry nobody objects to, 10 minutes.
+That is the objection path's length, not a range of the window: the window
+is always 600 seconds. The stake lock's 144 blocks (§23.1) cover it with
+room to spare, and the former rule that a contract's window may not exceed
+6 hours is withdrawn with the field's freedom (WINDOW-10-SPEC).
 The settlement transaction does not wait on an entry that is SUSPENDED:
 the round settles without it, and a suspended entry's lock is settled on
 its own when it ends - forfeited to the player if `VOID` or `DELIVERED`,
@@ -2338,8 +2387,11 @@ the attacker at no cost. Therefore:
 - a `PROVISIONALLY_FINAL` result is not `FINAL` until the canonical
   transcript it names by `transcript_hash` has been **retrieved by ≥5
   settlement seats** from any game/verify node and **posted by them to the
-  round's `publication_relays[]`**, and the window `W` counts from that
-  posting, not from the fifth signature;
+  round's `publication_relays[]`** within the window. The window still
+  counts from the `PROVISIONALLY_FINAL` moment (WINDOW-10-SPEC), so the
+  seats post at once: a transcript posted late leaves objectors less of the
+  600 seconds, and one not posted when they end leaves the result unable to
+  become `FINAL`;
 - a settlement seat that cannot retrieve the transcript within the result
   window treats the entry as `VOID` (§13C): a result nobody can replay does
   not settle;
@@ -2387,9 +2439,10 @@ nodes**, together with the input batches whose hashes it commits to. All
 nodes replay that object, so "node A saw more than node B" cannot by itself
 produce disagreement.
 
-**Result window.** The result window **equals the objection window** - same
-duration, a field on the contract (the owner 2026-09-15). A seat that cannot
-retrieve the transcript in that window treats the entry as VOID.
+**Result window.** The result window **equals the objection window** -
+600 seconds of wall time (the owner 2026-09-15; fixed at 600 s by
+WINDOW-10-SPEC, 2026-10-01). A seat that cannot retrieve the transcript in
+that window treats the entry as VOID.
 
 **No-quorum rule.** If, after the result window, no result has 5-of-7
 signatures:
@@ -2429,6 +2482,7 @@ The one-way ladder:
 
 ```text
 PROVISIONAL -> PROVISIONALLY_FINAL -> FINAL -> SETTLED
+                        |       600 s wall time, then FINAL (WINDOW-10-SPEC)
                         |
                         +-> (valid objection) -> re-replay -> FINAL
 PROVISIONAL -> VOID / ENTRY_VOID          (refund; reachable only from PROVISIONAL)
@@ -3892,12 +3946,19 @@ and the rules are:
   player's own key redeeming into the player's own notes, so nothing
   changes hands. The Withdraw is the one action that pays out over
   Lightning, and it is the player's.
-- **Pending, then in the wallet.** From `STAKE_COMMITTED` until the notes
-  are in the wallet the lobby and the end screen show the stake and, once
-  the payout table is final, the winnings as **pending**, with the amount
-  and what they wait on (result, objection window, settlement signature,
-  redemption). The moment the notes are in the wallet the pending line
-  clears and the balance shows them.
+- **Pending, then in the wallet.** From `STAKE_COMMITTED` the lobby and the
+  end screen show the stake as **pending**. The winnings, or the stake coming
+  back, show as **pending the moment the player's result is
+  `PROVISIONALLY_FINAL`** (RULED, the owner 2026-10-01, WINDOW-10-SPEC) - not
+  when the objection window closes and not when the payout table is final -
+  with the amount and what they wait on: the window's close in UTC, the
+  settlement signature, the redemption. While other players' results are
+  still arriving the amount is the payout table computed over the results
+  signed so far, and it updates as they arrive; it is marked as such. **If
+  the payment becomes invalid** - a valid objection, a re-run, `VOID`,
+  `FORFEIT` - **the pending line disappears**, and whatever the new result
+  earns takes its place. The moment the notes are in the wallet the pending
+  line clears and the balance shows them.
 - **The game tells the player.** The wallet balance is shown wherever the
   player can enter a round or withdraw, beside the federation's name.
 - **One tab at a time uses the wallet** (a browser lock); another tab shows
@@ -4104,7 +4165,8 @@ does all of it; a client that does not is not a paying client.
 **RULED:** the player wallet's balance (§24A.1) is shown in the lobby at all
 times: the amount, the federation's name beside it (§23A.3), and, while a
 round of the player's is not yet settled into the wallet, the **pending**
-line of §24 under it. It is **not shown in the game**: the truck, the
+line of §24 under it - present from the moment the result is
+`PROVISIONALLY_FINAL`, gone if the payment becomes invalid (WINDOW-10-SPEC). It is **not shown in the game**: the truck, the
 mission and the war are the whole screen there (WAR_TACTICS.md §0), and a
 number that changes while the player drives is a distraction that decides
 nothing. Withdraw, Deposit and Move (§23A.3) are lobby actions, next to the
@@ -4361,7 +4423,7 @@ committee_time:        11:55   beacon -> both committees fixed, entry opens
 start_time:            12:00
 entry closes:          12:00:00  (at the start: all start together)
 T_run:                 82 seconds
-objection window W:    10 minutes
+objection window W:    600 s wall time (fixed, WINDOW-10-SPEC)
 GAME/VERIFY:           7 slots, 5-of-7   (known from 11:55)
 SETTLEMENT:            7 slots, 5-of-7   (known from 11:55)
 ```
@@ -4383,8 +4445,10 @@ and delivers.
 
 Her client uploads the full transcript to two committee nodes and a mirror
 before showing the victory screen. Five game/verify nodes replay and sign
-`DELIVERED, score 18,321`. The result is provisionally final at 12:05; the
-objection window closes at 12:15; nobody objects; it is `FINAL`.
+`DELIVERED, score 18,321`. The result is provisionally final at 12:05:00
+UTC, and her lobby shows her stake and her rank share as **pending** at
+once, with "window closes 12:15:00 UTC". The objection window closes at
+12:15:00, 600 seconds later; nobody objects; it is `FINAL`.
 
 At 12:07 entry closes: 61 players. Final results: 24 delivered, 31 failed,
 6 forfeit → loser pool 3,700 sat. The deterministic payout table is signed
@@ -4394,8 +4458,8 @@ transaction that moves the losers' locks straight into the qualifiers'
 rank-weighted payout contracts — every action a 5-of-7 threshold ceremony.
 
 Alice's client redeems her 100 sat stake and her rank share into her player
-wallet the moment the settlement transaction is seen; until then her end
-screen showed them as pending. She plays on from the wallet, or withdraws to
+wallet the moment the settlement transaction is seen; from 12:05 until then
+her end screen and her lobby showed them as pending. She plays on from the wallet, or withdraws to
 her own Lightning wallet whenever she likes. No central game server decided
 she won, and at no instant did any single party hold her money.
 
@@ -5426,10 +5490,10 @@ max_players_per_round
 (measured_replay_speed x result_window) / T_run
 ```
 
-Example with `T_run` = 82 s and a 10-minute result window: at a measured
+Example with `T_run` = 82 s and the 600-second result window: at a measured
 30× realtime the ceiling is 219 players per committee node; at 60× it is
-439. Rounds larger than that require either a longer result window, a faster
-core, or per-node partitioning of the replay set — a design decision to be
+439. The window is fixed (WINDOW-10-SPEC), so rounds larger than that
+require a faster core or per-node partitioning of the replay set — a design decision to be
 made **after** measurement.
 
 Do not hard-code unsupported assumptions such as `20x realtime` until the
@@ -5522,7 +5586,7 @@ committee nor outcome).
    result + payout            preimage shares +
      signatures               threshold wallet
           |                           |
-          +--- objection window W ----+
+          +--- objection window 600 s -+
                         |
                  FINAL PAYOUT TABLE
                         |
