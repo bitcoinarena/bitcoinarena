@@ -1318,6 +1318,7 @@ test('N rounds play N rounds (the owner 2026-10-01): the "N rounds" tab funds ex
     const client = await playerWallet({ round, invite: INVITE, seed: sd, LockClient, storage: tab });
     const locks = await locksForRound(round, client, 0n);
     assert.equal(BigInt(log[0].receive.msat), roundsDepositMsat(N, locks, LockClient));
+    assert.equal(roundsDepositMsat(N, locks, LockClient), BigInt(N) * roundsDepositMsat(1, locks, LockClient), 'N rounds is not N x 1 round');
     for (let k = 1; k <= N; k++) {
       // round k: the wallet holds its locks without another deposit, then they are spent
       await fundPlayerWallet({ round, invite: INVITE, seed: sd, LockClient, storage: tab, askDeposit: () => assert.fail(`round ${k} of ${N} asked for a deposit`) });

@@ -9195,10 +9195,15 @@ const NOTE_MSAT = 512n;
 const ceilNote = (msat) => (BigInt(msat) + NOTE_MSAT - 1n) / NOTE_MSAT * NOTE_MSAT;
 /** What one round's locks take from the wallet: each lock's amount in whole notes. */
 const roundCostMsat = ({ amount, feeMsat = 0n }) => ceilNote(amount) + (BigInt(feeMsat) > 0n ? ceilNote(feeMsat) : 0n);
-/** The deposit that plays `n` rounds: n x one round's locks, plus the margin the wallet's stake check asks (needFor). */
-function roundsDepositMsat(n, locks, LockClient) {
+/** The deposit that plays ONE round: its locks, plus the margin the wallet's stake check asks (needFor), in whole notes. */
+function oneRoundDepositMsat(locks, LockClient) {
   const margin = BigInt(locks.feeMsat || 0n) > 0n ? BigInt(LockClient.lockAllowanceMsat(String(locks.feeMsat))) : 0n;
-  return ceilNote(BigInt(n) * roundCostMsat(locks) + margin);
+  return ceilNote(roundCostMsat(locks) + margin);
+}
+/** N ROUNDS ARE N x ONE ROUND (the owner 2026-10-01: "1 round" 100.xx sat; then 2 rounds 198.656 beside it read as wrong):
+ * every round funded as the first is - each with its own margin - so the tabs are 1, 2, 5, 10 x the "1 round" amount. */
+function roundsDepositMsat(n, locks, LockClient) {
+  return BigInt(n) * oneRoundDepositMsat(locks, LockClient);
 }
 const DEPOSIT_INSUFFICIENT = 'insufficient funds to play this round. Do you want to do a lightning deposit?';
 /** The deposit tabs for a round of `stakeMsat`: n rounds at n x the stake, then Custom (an amount the player names). */
