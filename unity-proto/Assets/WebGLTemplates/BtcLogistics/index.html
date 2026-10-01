@@ -1780,8 +1780,19 @@
     window.BLWP_SHOW_DEPOSIT = showDepositOffer;
     // WHAT SETTINGS' DEPOSIT AND WITHDRAW WORK ON: the lobby's paying round (its stake sets the tabs), the invite of the
     // federation that holds the funds, its funded gateway, and this tab's seed.
+    // THE PAYING ROUND THE WALLET IS COUNTED IN, listed or not (the owner 2026-10-01: no paid row until 90 s rounds can be
+    // joined - measured 05:35Z: with no paid row the wallet never opened, no balance, and Deposit and Withdraw refused).
+    // Any paying round the signer nodes hold names the federation and the stake: a series round first (the soonest), else
+    // the latest-starting one.
+    function moneyRound() {
+      const paid = (window.BLWP_LOBBY_ROWS || []).filter((r) => !r.free && r.contract);
+      const series = paid.filter((r) => r.contract.seriesId instanceof Uint8Array).sort((x, y) => (BigInt(x.contract.startTimeMs) < BigInt(y.contract.startTimeMs) ? -1 : 1));
+      const other = paid.filter((r) => !(r.contract.seriesId instanceof Uint8Array)).sort((x, y) => (BigInt(x.contract.startTimeMs) > BigInt(y.contract.startTimeMs) ? -1 : 1));
+      const r = series[0] || other[0];
+      return r ? { free: false, raw: r } : null;
+    }
     function moneyContext() {
-      const row = (window.BLWP_LOBBY || []).find((r) => !r.free && r.raw && r.raw.contract);
+      const row = (window.BLWP_LOBBY || []).find((r) => !r.free && r.raw && r.raw.contract) || moneyRound();
       const lob = window.BLWP_LEDGER_LOBBY; const seed = walletSeed();
       if (!row) return { ok: false, why: 'No paying round is listed, so there is no stake to count rounds in.' };
       if (!lob || !lob.federation || !seed) return { ok: false, why: 'This lobby names no federation to hold the funds.' };
@@ -2373,7 +2384,7 @@
           line: BLWPCLIENT.lobbyLine(r, now), raw: r, join: r.joinable ? BLWPCLIENT.lobbyJoinSearch(rowSearch.get(r.id) || search, r.id) : null }));
         refused = [...(got.refused || []), ...((got2 && got2.refused) || [])];
         unanswered = [...(got.unanswered || []), ...((got2 && got2.unanswered) || [])];
-        warmPlayerWallet(testnet ? testnet.named : named, window.BLWP_LOBBY);
+        warmPlayerWallet(testnet ? testnet.named : named, [...(window.BLWP_LOBBY || []), ...[moneyRound()].filter(Boolean)]);
       };
       // THE PLAYER WALLET IS OPENED IN THE LOBBY, BEFORE PLAY (INSTANT-1527, the owner 2026-09-30 15:23: "PLAY to the deposit
       // invoice is a Lightning payment ... the lock client joining the federation" does not sit in front of the user). Once
