@@ -167,7 +167,9 @@ test('3. an objection received at end + 604.9 s suspends the run and no FINAL is
     assert.equal(d.lateObjection, true);
     assert.equal(after.dissents.state, 'FINAL', after.dissents.why);
     // FILED AGAINST THE SIGNERS (5A.3B step 1), by the holder itself once the run was FINAL.
-    const proofs = w.holder.round.slashProofs(w.rid, w.runs.dissents.eid).length;
+    // filed one signer after another once FINAL lands, so read until all five are in (measured under load: 2, then 5)
+    let proofs = 0;
+    for (const stop = Date.now() + 15000; Date.now() < stop && (proofs = w.holder.round.slashProofs(w.rid, w.runs.dissents.eid).length) < 5;) await wait(200);
     console.log('  FACTS (3, slash):', big({ proofs }));
     assert.ok(proofs >= 5, `the late objection was not filed against the five signers: ${proofs} proof(s)`);
   } finally { await w.close(); }
