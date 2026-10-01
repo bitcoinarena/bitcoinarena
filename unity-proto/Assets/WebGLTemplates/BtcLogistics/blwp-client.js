@@ -9209,7 +9209,11 @@ const DEPOSIT_ROUNDS = [1, 2, 5, 10];
 // 10 rounds"). Measured: the federation issues e-cash in powers of two from 512 msat, so a deposit credits only its whole
 // 512 msat (100000 -> 99840, 5000 -> 4608), and a lock costs its amount rounded up to 512 msat (98000 -> 98304; the fee
 // rule is 0/0). So a deposit is sized in whole notes, and N rounds is N x one round's locks plus the stake check's margin.
-const NOTE_MSAT = 512n;
+// 1 SAT = 1 SAT (the owner 2026-10-01: "Fix it instead right now and rebuild rust ... we want 1 sat = 1 sat and round 100
+// sat round numbers"): the lock client is rebuilt with the mint client issuing and spending notes from 1 msat
+// (client_denominations 0..41 - the federation signs those already), so a whole note is any msat: nothing is rounded,
+// a 100 sat deposit credits 100 sat, and a 100 sat round takes exactly 100 sat. (512 was the stock client's floor.)
+const NOTE_MSAT = 1n;
 const ceilNote = (msat) => (BigInt(msat) + NOTE_MSAT - 1n) / NOTE_MSAT * NOTE_MSAT;
 /** What one round takes from the wallet: each lock's amount in whole notes, and the donation's shares (each in whole notes). */
 const roundCostMsat = ({ amount, feeMsat = 0n, donationCostMsat: donation = 0n }) =>
@@ -9450,7 +9454,7 @@ async function fundPlayerWallet({ round, invite, seed, LockClient, storage, dona
  * holds it, and the wallet's balance before and after.
  */
 async function lockStake({ round, roundId, invite, seed, stake, claimKey, playerPubkey, LockClient,
-  storage, donationMsat = 0n, onStep = () => {} } = {}) {
+  storage, donationMsat = 0n, donationRecipients = null, onStep = () => {} } = {}) {
   paysIntoALock(round, invite, LockClient);
   if (!stake || namesNothing(stake.stakePoint)) throw new Error('a lock is to the stake\'s point, and this stake names none');
   if (!claimKey || !claimKey.ok || namesNothing(claimKey.claimPk))
@@ -9459,9 +9463,12 @@ async function lockStake({ round, roundId, invite, seed, stake, claimKey, player
     throw new Error('a lock refunds to the player\'s key, and that is 32 bytes');
 
   const client = await playerWallet({ round, invite, seed, LockClient, storage, onStep });
-  const { amount, feeGate, feeMsat } = await locksFor(round, client, donationMsat);
+  // THE SAME CHECK THE FUNDING MADE (measured in the tests with 1 msat notes: given only { amount, feeMsat } this check
+  // dropped the fee-free flag and the donation and asked the reserve back - a wallet funded for exactly its round refused)
+  const locks = await locksFor(round, client, donationMsat, donationRecipients);
+  const { amount, feeGate, feeMsat } = locks;
   const before = BigInt(await client.balanceMsat());
-  const n = await needFor(client, LockClient, { amount, feeMsat });
+  const n = await needFor(client, LockClient, locks);
   if (n.need === null || before < n.need)
     throw new Error(`no stake is locked to this round: the player wallet holds ${before} msat and this round's locks need `
       + `${n.need === null ? `at least ${n.floor}` : n.need} msat - top the player wallet up first; the stake itself asks for no deposit`);

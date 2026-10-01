@@ -22,7 +22,7 @@ import { bech32Encode, convertBits } from '../../protocol/src/bech32.js';
 import { decodeBolt11 } from '../../protocol/src/bolt11.js';
 
 import { lockStake, fundPlayerWallet, walletSecretFor, withdrawPlayerWallet, handLock, lockSecretFor, lockAmountMsat, lockLine, saveLock, savedLock, markLockCommitted,
-  refundStake, redeemStake, redeemPayout, payoutLine, returnStake, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, withdrawLine, refundKept, refundLine, lookOwed, owedToLine as owedLine, collectAndWithdraw, tabLockWallet, findOwedRounds, feeSecretFor, ledgerRows, ledgerReadSavedStakes, playerWallet, depositChoices, depositOffer, withdrawChoices, playerWithdrawable, pendingDeposits, resumeDeposits, restOfFeesMsat, shortOnlyByFees, restInvoiceMsat, ceilNote, roundsDepositMsat, locksForRound, settingsDepositOffer, DEPOSIT_INSUFFICIENT } from '../src/page-lock.js';
+  refundStake, redeemStake, redeemPayout, payoutLine, returnStake, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, withdrawLine, refundKept, refundLine, lookOwed, owedToLine as owedLine, collectAndWithdraw, tabLockWallet, findOwedRounds, feeSecretFor, ledgerRows, ledgerReadSavedStakes, playerWallet, depositChoices, depositOffer, withdrawChoices, playerWithdrawable, pendingDeposits, resumeDeposits, restOfFeesMsat, shortOnlyByFees, restInvoiceMsat, ceilNote, NOTE_MSAT, roundsDepositMsat, locksForRound, settingsDepositOffer, DEPOSIT_INSUFFICIENT } from '../src/page-lock.js';
 import { replayLinkFor } from '../src/replay-link.js';
 import { lockFieldsFromJson } from '../../protocol/src/stake-lock.js';
 import { sha256 } from '../../protocol/src/hash.js';
@@ -1296,7 +1296,7 @@ function noteClient() {
     async balanceMsat() { return String(this.balance); }
     async feeRule() { return JSON.stringify({ fee_ppm: 0, fee_base_msat: 0 }); }
     async lockCostMsat(msat) { const c = ceilNote(msat); if (this.balance < c) throw new Error('Insufficient funds'); return String(c); }
-    async receive(msat, gateway) { log.push({ receive: { msat, gateway } }); this.coming = BigInt(msat) / 512n * 512n; return JSON.stringify({ invoice: 'lnbcrt1n', operation: 'op' + log.length }); }
+    async receive(msat, gateway) { log.push({ receive: { msat, gateway } }); this.coming = BigInt(msat) / NOTE_MSAT * NOTE_MSAT; return JSON.stringify({ invoice: 'lnbcrt1n', operation: 'op' + log.length }); }
     async awaitReceive() { this.balance += this.coming; this.coming = 0n; this.keep(); return 'Claimed'; }
     async spend(msat) { const c = ceilNote(msat); if (this.balance < c) throw new Error('Insufficient funds'); this.balance -= c; this.keep(); }
   }
@@ -1442,8 +1442,8 @@ test('option 2: a paid gross deposit that falls short is not asked again with th
 
 test('the rest of the fees: the smallest whole sat whose notes cover the shortfall; asked at once only when the wallet is short by no more than a tenth of the stake', () => {
   assert.equal(restOfFeesMsat(1n), 1000n);
-  assert.equal(restOfFeesMsat(1000n), 2000n, '1 sat credits 512 msat, short of 1000');
-  assert.equal(restOfFeesMsat(2464n), 3000n);
+  assert.equal(restOfFeesMsat(1000n), 1000n, '1 sat credits 1 sat');
+  assert.equal(restOfFeesMsat(2464n), 3000n, 'the rest is the next whole sat');
   assert.equal(shortOnlyByFees(99840n, 2464n, 100000n), true, 'the measured 99840 msat wallet is asked only the rest');
   assert.equal(shortOnlyByFees(0n, 100000n, 100000n), false, 'an empty wallet gets the tabs');
   assert.equal(shortOnlyByFees(50000n, 50000n, 100000n), false, 'half a round short gets the tabs');
@@ -1460,12 +1460,11 @@ test('a rest under the federation\'s 5 sat floor is invoiced at 5 sat; more is i
   assert.deepEqual(o.choices.map((c) => [c.key, c.msat]), [['rest', 5000n]]);
 });
 
-test('the price per round: a 100 sat round with a two-recipient 2% donation is 101 sat, and N x 101 holds N rounds for every tab', async () => {
+test('1 sat = 1 sat (the owner 2026-10-01): a 100 sat round - stake lock 96, fee lock 2, donation 2 - is 100 sat, and N rounds N x 100', async () => {
+  assert.equal(NOTE_MSAT, 1n, 'the lock client issues notes from 1 msat');
   const { LockClient } = noteClient();
-  const locks = { amount: 96000n, feeMsat: 2000n, zeroFees: true, donationCostMsat: 1536n + 1024n };   // shares 1334 and 666
-  assert.equal(roundsDepositMsat(1, locks, LockClient), 101000n);
-  assert.deepEqual([2, 5, 10].map((n) => roundsDepositMsat(n, locks, LockClient)), [202000n, 505000n, 1010000n]);
-  for (const n of [1, 2, 5, 10]) assert.ok((BigInt(n) * 101000n) / 512n * 512n >= BigInt(n) * 100864n, `${n} rounds`);
+  const locks = { amount: 96000n, feeMsat: 2000n, zeroFees: true, donationCostMsat: 1334n + 666n };
+  assert.deepEqual([1, 2, 5, 10].map((n) => roundsDepositMsat(n, locks, LockClient)), [100000n, 200000n, 500000n, 1000000n]);
 });
 test('a withdrawal of a chosen amount pays only an invoice of exactly that amount', async () => {
   const { LockClient } = lockClient();

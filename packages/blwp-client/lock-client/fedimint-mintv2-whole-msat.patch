@@ -1,0 +1,13 @@
+diff --git a/modules/fedimint-mintv2-common/src/config.rs b/modules/fedimint-mintv2-common/src/config.rs
+index 0ba6166771b..050bc4abec2 100644
+--- a/modules/fedimint-mintv2-common/src/config.rs
++++ b/modules/fedimint-mintv2-common/src/config.rs
+@@ -19,7 +19,7 @@ pub fn consensus_denominations() -> impl DoubleEndedIterator<Item = Denomination
+ }
+ 
+ pub fn client_denominations() -> impl DoubleEndedIterator<Item = Denomination> {
+-    (9..42).map(Denomination)
++    (0..42).map(Denomination)
+ }
+ 
+ #[derive(Clone, Debug, Serialize, Deserialize)]
