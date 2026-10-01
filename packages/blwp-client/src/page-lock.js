@@ -177,6 +177,7 @@ export async function playerWallet({ round, invite, seed, LockClient, storage, o
  * it pays a sitting signer node, and a refusal of a federation that charges a base fee (FEDERATION.md item 4; §22A) -
  * before anything is deposited or locked. An unknown rule is not a base fee (the gate then mints no fee lock).
  */
+export async function locksForRound(round, client, donationMsat) { return locksFor(round, client, donationMsat); }
 async function locksFor(round, client, donationMsat) {
   const amount = lockAmountMsat(round, donationMsat);
   let feeRule = null;
@@ -240,11 +241,24 @@ export function depositGateway(planned, funded = []) {
 // invoice credits 9968 sat, more than one round's locks; a gross 100 sat one credits 97.7 sat, 0.6 sat short of one
 // 100 sat round with the 2% donation - the page then says the wallet cannot fund the round, and two rounds cover.
 export const DEPOSIT_ROUNDS = [1, 2, 5, 10];
+// N ROUNDS PLAY N ROUNDS (the owner 2026-10-01: "so rounds can always be played. 10 rounds deposit must be capable of playing
+// 10 rounds"). Measured: the federation issues e-cash in powers of two from 512 msat, so a deposit credits only its whole
+// 512 msat (100000 -> 99840, 5000 -> 4608), and a lock costs its amount rounded up to 512 msat (98000 -> 98304; the fee
+// rule is 0/0). So a deposit is sized in whole notes, and N rounds is N x one round's locks plus the stake check's margin.
+export const NOTE_MSAT = 512n;
+export const ceilNote = (msat) => (BigInt(msat) + NOTE_MSAT - 1n) / NOTE_MSAT * NOTE_MSAT;
+/** What one round's locks take from the wallet: each lock's amount in whole notes. */
+export const roundCostMsat = ({ amount, feeMsat = 0n }) => ceilNote(amount) + (BigInt(feeMsat) > 0n ? ceilNote(feeMsat) : 0n);
+/** The deposit that plays `n` rounds: n x one round's locks, plus the margin the wallet's stake check asks (needFor). */
+export function roundsDepositMsat(n, locks, LockClient) {
+  const margin = BigInt(locks.feeMsat || 0n) > 0n ? BigInt(LockClient.lockAllowanceMsat(String(locks.feeMsat))) : 0n;
+  return ceilNote(BigInt(n) * roundCostMsat(locks) + margin);
+}
 export const DEPOSIT_INSUFFICIENT = 'insufficient funds to play this round. Do you want to do a lightning deposit?';
 /** The deposit tabs for a round of `stakeMsat`: n rounds at n x the stake, then Custom (an amount the player names). */
-export function depositChoices(stakeMsat) {
+export function depositChoices(stakeMsat, sizeOf = null) {
   const stake = BigInt(stakeMsat || 0n);
-  return [...DEPOSIT_ROUNDS.map((n) => ({ key: String(n), label: n === 1 ? '1 round' : `${n} rounds`, rounds: n, msat: stake * BigInt(n) })),
+  return [...DEPOSIT_ROUNDS.map((n) => ({ key: String(n), label: n === 1 ? '1 round' : `${n} rounds`, rounds: n, msat: sizeOf ? sizeOf(n) : stake * BigInt(n) })),
     { key: 'custom', label: 'Custom', rounds: null, msat: null }];
 }
 /**
@@ -271,7 +285,7 @@ export async function playerWithdrawable({ round, invite, seed, LockClient, stor
  * stays payable: one paid after another was claimed is credited to the same wallet.
  */
 export function depositOffer({ client, stakeMsat, haveMsat = null, needMsat = null, gateways = [], onDeposit = () => {},
-  storage = null, federationId = null, restMsat = null } = {}) {
+  storage = null, federationId = null, restMsat = null, sizeOf = null } = {}) {
   let settle; let fail;
   // WHAT CAME OF IT (option 2, the owner 2026-10-01): once a paid deposit is claimed, the round is looked at again -
   // `outcome` resolves { funded: true } or { funded: false, rest } with the offer for exactly the rest
@@ -285,7 +299,8 @@ export function depositOffer({ client, stakeMsat, haveMsat = null, needMsat = nu
   const watchers = [];
   const said = (d, final) => { for (const w of watchers) { try { w(d, final); } catch { /* a watcher's own fault */ } } };
   const invoice = async (msat) => {
-    const amount = BigInt(msat);
+    // in whole notes: a part under 512 msat would never be credited
+    const amount = ceilNote(msat);
     if (amount <= 0n) throw new Error('a deposit is more than 0 sat');
     const gateway = depositGateway('', gateways);
     const got = JSON.parse(await client.receive(String(amount), gateway));
@@ -307,7 +322,7 @@ export function depositOffer({ client, stakeMsat, haveMsat = null, needMsat = nu
   const restPay = rest === null ? null : restInvoiceMsat(rest);
   return { stakeMsat: BigInt(stakeMsat || 0n), haveMsat, needMsat, invoice, claimed, made, restMsat: rest, restPayMsat: restPay,
     // THE TABS (1, 2, 5, 10 rounds and Custom, gross), or - for the rest of a round's fees - the one amount
-    choices: rest === null ? depositChoices(stakeMsat) : [{ key: 'rest', label: 'The rest', rounds: null, msat: restPay }],
+    choices: rest === null ? depositChoices(stakeMsat, sizeOf) : [{ key: 'rest', label: 'The rest', rounds: null, msat: restPay }],
     outcome, decided: (o) => decide(o),
     watch: (fn) => { watchers.push(fn); },
     close: (why) => fail(new Error(why || 'the deposit was closed: nothing was paid')) };
@@ -353,10 +368,11 @@ export function resumeDeposits({ client, storage, federationId, onClaimed = () =
   }, () => 'unknown')));
 }
 /** A deposit into the player wallet from Settings: the same tabs, this round's stake, no round to fund. */
-export async function settingsDepositOffer({ round, invite, seed, LockClient, storage, gateways = [], onDeposit = () => {}, onClaimed = () => {} } = {}) {
+export async function settingsDepositOffer({ round, invite, seed, LockClient, storage, gateways = [], donationMsat = 0n, onDeposit = () => {}, onClaimed = () => {} } = {}) {
   const client = await playerWallet({ round, invite, seed, LockClient, storage });
+  const locks = await locksFor(round, client, donationMsat);
   const offer = depositOffer({ client, stakeMsat: round.stakeMsat, haveMsat: BigInt(await client.balanceMsat()), gateways, onDeposit,
-    storage, federationId: round.federationId });
+    storage, federationId: round.federationId, sizeOf: (n) => roundsDepositMsat(n, locks, LockClient) });
   offer.claimed.then((d) => { depositRow(storage, round, d); onClaimed(d); offer.decided({ funded: true }); }, () => {});
   return offer;
 }
@@ -371,11 +387,11 @@ export const DEPOSIT_MARGIN_MSAT = 10000n;
 export const REST_MARGIN_MSAT = 1000n;
 /** THE SMALLEST DEPOSIT THE FEDERATION TAKES (measured 2026-10-01 through gateway B: 2, 3, 4 sat refused "Amount is too
  * small to cover fees", 5 sat made). A rest under it is invoiced at it; the extra stays in the player wallet. */
-export const REST_FLOOR_MSAT = 5000n;
+export const REST_FLOOR_MSAT = ceilNote(5000n);   // 5 sat in whole notes: 5120 msat (5000 would credit 4608)
 export const restInvoiceMsat = (restMsat) => (BigInt(restMsat) < REST_FLOOR_MSAT ? REST_FLOOR_MSAT : BigInt(restMsat));
+/** The rest: exactly what the wallet is short, in whole notes (credited whole, so no margin). */
 export function restOfFeesMsat(shortMsat) {
-  const m = BigInt(shortMsat) + REST_MARGIN_MSAT;
-  return (m + 999n) / 1000n * 1000n;
+  return ceilNote(shortMsat > 0n ? shortMsat : 1n);
 }
 /** A wallet that holds most of a round and is short only by its fees (no more than a tenth of the stake) is asked the rest. */
 export const shortOnlyByFees = (haveMsat, shortMsat, stakeMsat) => haveMsat > 0n && shortMsat > 0n && shortMsat * 10n <= BigInt(stakeMsat || 0n);
@@ -399,7 +415,7 @@ export async function fundPlayerWallet({ round, invite, seed, LockClient, storag
       const short = (n.need !== null ? n.need : n.floor) - have;
       const restMsat = prev || shortOnlyByFees(have, short, round.stakeMsat) ? restOfFeesMsat(short > 0n ? short : 0n) : null;
       const offer = depositOffer({ client, stakeMsat: round.stakeMsat, haveMsat: have, needMsat: n.need, gateways, onDeposit,
-        storage, federationId: round.federationId, restMsat });
+        storage, federationId: round.federationId, restMsat, sizeOf: (k) => roundsDepositMsat(k, locks, LockClient) });
       if (prev) prev.decided({ funded: false, rest: offer }); else askDeposit(offer);
       onStep(restMsat === null ? 'waiting for the deposit into the player wallet' : `waiting for the rest of this round's fees: ${restMsat} msat`);
       const d = await offer.claimed;
