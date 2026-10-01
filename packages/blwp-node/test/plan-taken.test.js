@@ -14,13 +14,15 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { planTakenId, signPlanTaken, countPlanTaken, splitCertificate, checkPlanTaken } from '../src/plan-taken.js';
 import { lockPort } from './lock-fixture.js';
-import { lockRound, lockAndPlay, closeRound, lnurl, nameAddress, proposerOf, standing } from './lock-round-fixture.js';
-import { WINNER, LOSER, wait } from './window-fixture.js';
+import { lockRound, lockAndPlay, closeRound, proposerOf, standing } from './lock-round-fixture.js';
+import { LOSER, wait } from './window-fixture.js';
+import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const seat = (n) => { const secret = b32(n); return { secret, pubkey: schnorr.getPublicKey(secret) }; };
 const ROUND = b32(0x77);
+const WALKER = { ...LOSER, name: 'walker', key: b32(0x21) };
 const ROWS = [
   { entry: '11'.repeat(32), attempt: 0, address: 'w@example.com', invoice: 'lnbcrt1', paymentHash: 'bb'.repeat(32), invoiceMsat: '93440',
     payoutMsat: '98000', owedMsat: '98000', gatewayUrl: 'http://gw-a/', gatewayPk: '02c3', expiration: '400' },
@@ -79,10 +81,11 @@ test('the plan id is the plan: row order and key order do not move it, any field
   assert.notEqual(toHex(planTakenId({ roundId: b32(0x78), rows: ROWS })), id);
 });
 
-test('two signer nodes: a peer that answers the plan 201 with no signature has not agreed - nothing settled, nothing paid; its signed answer settles and pays, and the certificate verifies on its own', async () => {
+// SINCE WINNINGS-AUTO (RULED the owner 2026-10-01) no winner has a send plan; the seats' signed agreement on a send plan
+// still guards a walk-away round's donation sends, so the plan measured here is that one.
+test('two signer nodes: a peer that answers the donation send plan 201 with no signature has not agreed - nothing settled, nothing paid; its signed answer settles and pays, and the certificate verifies on its own', async () => {
   const port = lockPort();
-  const addr = lnurl(port);
-  const w = await lockRound({ port, serveOpts: { lnurlFetch: addr.fetchLike, winningsEveryMs: 500 } });
+  const w = await lockRound({ port, serveOpts: { doorSweepMs: 250, winningsEveryMs: 500, donationSets: [TEST_DONATION_SET_REGTEST] } });
   const asker = proposerOf(w);
   const real = asker.settlements.fetcher;
   // THE PEER'S DOOR, AS A PROXY THAT SAYS YES: the plan reaches the peer and is kept there, and the asker is handed a
@@ -97,9 +100,7 @@ test('two signer nodes: a peer that answers the plan 201 with no signature has n
     return r;
   };
   try {
-    const won = await lockAndPlay(w, WINNER);
-    await lockAndPlay(w, LOSER);
-    await nameAddress([w.a, w.b], won);
+    await lockAndPlay(w, WALKER, { noMarks: true });
     await closeRound(w);
     // the close, the objection window, the finality - then the asker asks, and asks again
     let got = null;
@@ -110,17 +111,17 @@ test('two signer nodes: a peer that answers the plan 201 with no signature has n
     assert.equal(got.ok, false);
     assert.match(got.why, /1 of the 2 seats the settlement needs signed the send plan, so nothing is settled: .*no signed acceptance/);
     assert.equal(port.settlements.length, 0, 'a settlement was submitted on one seat\'s word');
-    assert.equal(port.gatewayPayments.length, 0, 'a winner was paid on one seat\'s word');
+    assert.equal(port.gatewayPayments.length, 0, 'a donation was paid on one seat\'s word');
 
     bare = false;
     let st;
     for (const stop = Date.now() + 60000; Date.now() < stop; await wait(250)) {
       st = await standing(w.a, w);
-      const paid = (await (await fetch(`http://127.0.0.1:${asker.port}/winnings?entry=${toHex(won.eid)}`)).json());
-      if (st.state === 'ACCEPTED' && paid.winnings && paid.winnings.state === 'PAID') break;
+      const sends = asker.round.sendPlansOf(w.rid).filter((r) => r.donation);
+      if (st.state === 'ACCEPTED' && sends.length && sends.every((r) => r.state === 'PAID')) break;
     }
     assert.equal(st.state, 'ACCEPTED', st.why);
-    assert.equal(port.gatewayPayments.length, 1, 'the winner was not paid once');
+    assert.equal(port.gatewayPayments.length, TEST_DONATION_SET_REGTEST.recipients.length, 'each donation recipient was not paid once');
     // EVERY SEAT HOLDS THE CERTIFICATE, and it verifies here on its own: two different seats over one plan id.
     const seats = w.c.nodes;
     const other = asker === w.a ? w.b : w.a;

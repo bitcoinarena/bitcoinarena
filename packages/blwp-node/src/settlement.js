@@ -224,16 +224,15 @@ export class LockSettlement {
       signerNodes: feeLock ? this.signerNodesFor(roundIdBytes, contract) : null, contract };
     // THE BASE PLAN the late sends are sized from (C3b-2a). With a winnings sender it is never signed, so a winner whose
     // lock row is missing here does not block it: its payout goes by send, refunding to the committee key.
-    const baseLocks = this.winnings ? new Map(shares.map((x) => [toHex(x.pubkey), winnerLocks.get(toHex(x.pubkey)) || { refundPk: claimPk }])) : winnerLocks;
-    const basePlan = lateLockSettlement({ ...args, winnerLocks: baseLocks });
+    // WINNINGS-AUTO (RULED the owner 2026-10-01): the late shares are paid by payout contracts to the winners' own lock keys
+    // (C3b-1), never by a send - so the base plan is the plan, and a winner's lock row is required.
+    const basePlan = lateLockSettlement({ ...args, winnerLocks });
     if (!basePlan.ok) return refuse(`no late lock is claimed: ${basePlan.why}`);
     const base = { plan: basePlan, entryOf };
     if (onlyBase) return { ok: true, base, contract, claimPk };
     // THE PLAN THAT IS SIGNED pays every winner by its accepted late send (slice C3b-2a): a winner the first settlement
     // paid with no address or no accepted send is refused by name - never paid by a contract only its key can move.
-    const plan = this.winnings
-      ? lateLockSettlement({ ...args, winnerLocks, sends: this.lateWinningsFor(roundIdBytes, entryIdBytes).sendsFor(roundIdBytes, base, claimPk), requireSends: true })
-      : basePlan;
+    const plan = basePlan;
     if (!plan.ok) return refuse(`no late lock is claimed: ${plan.why}`);
     const claims = [];
     for (const c of plan.claims) {

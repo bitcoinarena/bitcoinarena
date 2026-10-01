@@ -146,12 +146,13 @@ export function lockSettlement({ roundId, entries, minScore = 0, locks, fees, fe
     const e = h.table.activated.find((x) => toHex(x.pubkey) === toHex(row.pubkey));
     if (!e || !lockOf(e)) return refuse(`a qualifier's stake lock was never verified, so there is no key to pay: ${toHex(row.pubkey).slice(0, 16)}`);
   }
-  const sendOf = (row) => (sends instanceof Map ? sends.get(toHex(row.pubkey)) : null) || null;
-  const named = addressed instanceof Set ? addressed : new Set(sends instanceof Map ? sends.keys() : []);
-  // THE UNADDRESSED ARE NOT PAID: their rows leave the split, and what they were owed stays in the pot.
-  const pooled = owed.rows.filter((r) => !named.has(toHex(r.pubkey)))
-    .map((r) => ({ pubkey: r.pubkey, owedMsat: r.msat, why: 'it named no Lightning address, so its share is split over the qualifiers who did' }));
-  let paying = owed.rows.filter((r) => named.has(toHex(r.pubkey)));
+  // WINNINGS-AUTO (RULED the owner 2026-10-01): EVERY QUALIFIER IS PAID, by its payout contract into its federation wallet -
+  // never by a Lightning send to a named address, and no share is pooled for want of one. `addressed` and qualifier
+  // `sends` (the 2026-09-23 path) decide nothing any more.
+  void addressed;
+  const sendOf = () => null;
+  const pooled = [];
+  let paying = [...owed.rows];
   const inputFeesMsat = claims.reduce((s, c) => s + lnv2FeeMsat(fees, c.amountMsat), 0n);
   const spendableMsat = poolMsat - inputFeesMsat;
   const unpaid = [...pooled];
@@ -168,7 +169,7 @@ export function lockSettlement({ roundId, entries, minScore = 0, locks, fees, fe
   // (iii): NOBODY TO SEND TO, NOTHING CLAIMED. The losers' locks expire back to them; the fee part still settles.
   // An addressed qualifier outside the paying ranks has no weight in the table, so it cannot carry the pooled
   // shares either: renormalised over weights that sum to nothing there is no split, and none is invented.
-  if (!paying.length) return nobody('no qualifier with a paying rank named a Lightning address, so no loser\'s lock is claimed and each expires back to its player');
+  if (!paying.length) return nobody('no qualifier holds a paying rank, so no loser\'s lock is claimed and each expires back to its player');
   if (spendableMsat <= 0n) return refuse(`the guardians' fees on the claimed locks (${inputFeesMsat} msat) take the whole pool of ${poolMsat}`);
 
   // THE TABLE'S WEIGHTS OVER THE ADDRESSED SET. A row whose share cannot pay its own output fee leaves the split
@@ -181,7 +182,7 @@ export function lockSettlement({ roundId, entries, minScore = 0, locks, fees, fe
     if (!small.length) break;
     for (const x of small) unpaid.push({ pubkey: x.row.pubkey, owedMsat: x.row.msat, why: 'its share does not pay its own output fee' });
     paying = paying.filter((r) => !small.some((x) => x.row === r));
-    if (!paying.length) return nobody('no addressed qualifier\'s share pays its own output fee, so no loser\'s lock is claimed and each expires back to its player');
+    if (!paying.length) return nobody('no qualifier\'s share pays its own output fee, so no loser\'s lock is claimed and each expires back to its player');
   }
   // THE DUST TO THE FIRST ADDRESSED ROW of the table's own order: the payouts and their fees are the whole spendable pot.
   const gross = (msat) => msat + lnv2FeeMsat(fees, msat);
@@ -200,8 +201,7 @@ export function lockSettlement({ roundId, entries, minScore = 0, locks, fees, fe
           expiration: BigInt(send.expiration) } });
       continue;
     }
-    if (requireSends) return refuse(`an addressed qualifier has no accepted send, so nothing is built: ${toHex(row.pubkey).slice(0, 16)}`);
-    // THE BASE PLAN the send plans are sized from; never signed (requireSends).
+    // the payout contract to the qualifier's own key, redeemed by its client into its federation wallet (WINNINGS-AUTO)
     const e = h.table.activated.find((x) => toHex(x.pubkey) === toHex(row.pubkey));
     payouts.push({ pubkey: row.pubkey, payoutPk: lockOf(e).refundPk, owedMsat: row.msat, msat, feeMsat: lnv2FeeMsat(fees, msat) });
   }
@@ -362,16 +362,10 @@ export function lateLockSettlement({ roundId, entryId, entry, lock, feeLock = nu
   // Otherwise the base plan's pre-expired payout contract to the winner's own lock key (C3b-1), never signed where
   // `requireSends` says the sends are required.
   const payouts = [];
+  // WINNINGS-AUTO (RULED the owner 2026-10-01): a late share is paid as every winning is - the pre-expired payout contract
+  // to the winner's own lock key (C3b-1), redeemed into its federation wallet - never a send (C3b-2a withdrawn).
+  void sends; void requireSends;
   for (const { row, msat } of split) {
-    const send = sends instanceof Map ? sends.get(toHex(row.pubkey)) : null;
-    if (send && send.payoutMsat !== undefined && BigInt(send.payoutMsat) !== msat)
-      return refuse(`a send was planned for a ${send.payoutMsat} msat payout and this signer node's late payout is ${msat}: ${toHex(row.pubkey).slice(0, 16)}`);
-    if (send) {
-      payouts.push({ pubkey: row.pubkey, payoutPk: send.refundPk, owedMsat: row.msat, msat, feeMsat: lnv2FeeMsat(fees, msat), kind: 'sent',
-        sent: { paymentHash: String(send.paymentHash).toLowerCase(), gatewayPk: String(send.gatewayPk).toLowerCase(), expiration: BigInt(send.expiration) } });
-      continue;
-    }
-    if (requireSends) return refuse(`a winner the first settlement paid has no accepted late send, so nothing is built: ${toHex(row.pubkey).slice(0, 16)}`);
     const wl = winnerLocks.get(toHex(row.pubkey));
     if (!wl) return refuse(`a winner's stake lock was never verified, so there is no key to pay: ${toHex(row.pubkey).slice(0, 16)}`);
     payouts.push({ pubkey: row.pubkey, payoutPk: wl.refundPk, owedMsat: row.msat, msat, feeMsat: lnv2FeeMsat(fees, msat), kind: 'qualifier' });

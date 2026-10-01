@@ -78,6 +78,7 @@ import { donationSetId } from '../../protocol/src/donation.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { timed, watchLoop } from './slow.js';
 import { resultFinality } from './finality.js';
+import { standingOf } from './standing.js';
 import { outageOutcome } from '../../protocol/src/entry-void.js';
 import { ENTRY_VOID, netStakeMsat } from '../../protocol/src/payout.js';
 import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../protocol/src/objection.js';
@@ -2942,6 +2943,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const sender = late8 ? settlements.lateWinningsFor(new Uint8Array(rid), late8) : winnings;
         const got = await sender.checkResend(new Uint8Array(rid), built, proposed);
         return got.ok ? text(res, 201, 're-send checked and kept') : text(res, got.status || 409, got.why);
+      }
+
+      // AND IN PUBLIC: THE PENDING LINE'S FIGURE (WINDOW-10-SPEC, §24): this entry's state, its row of the payout table over
+      // the results signed so far, and the window's open and close (the round's end, and 600 s after). Read-only.
+      if (req.method === 'GET' && url.pathname === '/standing') {
+        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
+        if (eid.length !== 32) return text(res, 400, 'a standing is asked for by entry id');
+        const stored = round.entry(eid);
+        if (!stored) return text(res, 404, 'this node holds no such entry');
+        const rid = decodeEntryContract(stored).roundId;
+        const row = round.get(rid);
+        if (!row) return text(res, 404, 'this node holds no such round');
+        const s = standingOf(round, rid, new Uint8Array(eid), decodeRoundContract(new Uint8Array(row.contract)));
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ entry: eid.toString('hex'), round: toHex(rid), nowMs: String(Date.now()), ...s }) + '\n');
       }
 
       // AND IN PUBLIC: where an entry's winning stands - its plan, its contract, and the preimage once paid.

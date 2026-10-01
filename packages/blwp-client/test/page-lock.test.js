@@ -22,7 +22,7 @@ import { bech32Encode, convertBits } from '../../protocol/src/bech32.js';
 import { decodeBolt11 } from '../../protocol/src/bolt11.js';
 
 import { lockStake, fundPlayerWallet, walletSecretFor, withdrawPlayerWallet, handLock, lockSecretFor, lockAmountMsat, lockLine, saveLock, savedLock, markLockCommitted,
-  refundStake, redeemStake, redeemPayout, payoutLine, returnStake, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, invoiceAmountMsat, withdrawLine, refundKept, refundLine, lookOwed, owedToLine as owedLine, collectAndWithdraw, tabLockWallet, findOwedRounds, feeSecretFor, ledgerRows, ledgerReadSavedStakes, playerWallet, depositChoices, depositOffer, withdrawChoices, playerWithdrawable, pendingDeposits, resumeDeposits, restOfFeesMsat, shortOnlyByFees, restInvoiceMsat, ceilNote, NOTE_MSAT, roundsDepositMsat, locksForRound, settingsDepositOffer, DEPOSIT_INSUFFICIENT } from '../src/page-lock.js';
+  refundStake, redeemStake, redeemPayout, payoutLine, returnStake, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, collectIntoPlayerWallet, invoiceAmountMsat, withdrawLine, refundKept, refundLine, lookOwed, owedToLine as owedLine, collectAndWithdraw, tabLockWallet, findOwedRounds, feeSecretFor, ledgerRows, ledgerReadSavedStakes, playerWallet, depositChoices, depositOffer, withdrawChoices, playerWithdrawable, pendingDeposits, resumeDeposits, restOfFeesMsat, shortOnlyByFees, restInvoiceMsat, ceilNote, NOTE_MSAT, roundsDepositMsat, locksForRound, settingsDepositOffer, DEPOSIT_INSUFFICIENT } from '../src/page-lock.js';
 import { replayLinkFor } from '../src/replay-link.js';
 import { lockFieldsFromJson } from '../../protocol/src/stake-lock.js';
 import { sha256 } from '../../protocol/src/hash.js';
@@ -528,6 +528,33 @@ test('the page looks at what a seed is owed and spends nothing: a winner\'s payo
   console.log(`  collect and withdraw: ${spent.join(' -> ')}; "${withdrawLine(done.withdraw)}"`);
   assert.deepEqual(spent, ['refund', 'redeem', 'withdraw'], 'the payout, the stake and the withdraw were not one action');
   assert.equal(done.withdraw.ok, true);
+
+  // WINNINGS-AUTO (RULED the owner 2026-10-01): the same owed money, collected BY ITSELF into the player's federation
+  // wallet - opened for this federation, the payout redeemed and the stake back - and nothing withdrawn; the history
+  // row is what the wallet's balance grew by.
+  spent.length = 0;
+  let bal = 0n;
+  const pw = { ...wallet(0),
+    async balanceMsat() { return String(bal); },
+    async refund() { spent.push('refund'); bal += 973312n; return JSON.stringify({ accepted: true, amount_msat: 978000, balance_before: 0, balance_after: 973312, stored_before: { contract_id: 'p', blocks_left: 0 } }); },
+    async redeem() { spent.push('redeem'); bal += 977920n; return JSON.stringify({ forfeit_verifies: true, accepted: true, amount_msat: 980000, balance_before: 973312, balance_after: 1951232 }); },
+    async withdraw() { spent.push('withdraw'); throw new Error('the automatic collect withdrew'); } };
+  const joined = [];
+  const store = tabStorage();
+  const look = await lookOwed({ ...ask, fetcher: signerNodes(), client: wallet(0), kept });
+  const auto = await collectIntoPlayerWallet({ ...ask, look, invite: INVITE, storage: store, fetcher: signerNodes(),
+    LockClient: { join: async (invite, fed) => { joined.push(fed); return pw; }, lockAllowanceMsat: () => '0' } });
+  console.log(`  collected by itself: ${spent.join(' -> ')}; credited ${auto.creditedMsat}`);
+  assert.equal(auto.collected, true);
+  assert.deepEqual(spent, ['refund', 'redeem'], 'the automatic collect did not redeem both, or withdrew');
+  assert.deepEqual(joined, [toHex(round.federationId)], 'not the player wallet of this federation');
+  assert.equal(auto.creditedMsat, 973312n + 977920n);
+  const rows = ledgerRows(store, round.federationId);
+  assert.deepEqual(rows.map((r) => [r.kind, r.msat]), [['winnings', String(973312n + 977920n)]], 'the history has no winnings row of what arrived');
+  // AND NOTHING OWED: nothing opened, nothing moved
+  const none = await collectIntoPlayerWallet({ ...ask, look: { payoutMsat: 0n, stakeMsat: 0n, refundMsat: 0n }, invite: INVITE, storage: tabStorage(),
+    LockClient: { join: async () => { throw new Error('a wallet was opened with nothing owed'); } } });
+  assert.equal(none.collected, false);
 });
 
 // W4 / 6d: A CLOSED TAB LOSES NOTHING THE FEDERATION HELD - measured on a federation that keeps
@@ -823,12 +850,16 @@ function bolt11For(amountMsat) {
 
 // W4 / 6d: THE PAGE'S TIMERS ONLY LOOK. The page's own code: nothing registered on an interval
 // collects, redeems, refunds or withdraws; the collect is reached from the Withdraw button only.
-test('the page spends nothing on a timer: its interval functions only look, and collect-and-withdraw is called from the Withdraw action alone', async () => {
+test('the page withdraws nothing on a timer: its interval functions look, the payout look collects into the player wallet by itself (WINNINGS-AUTO), and collect-and-withdraw is called from the Withdraw action alone', async () => {
   const { readFileSync } = await import('node:fs');
   const page = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url), 'utf8');
   const spends = /redeemPayout|returnStake|refundKept|withdrawCollected|withdrawPlayerWallet|collectOwed|collectAndWithdraw|\.refund\(|\.redeem\(|\.withdraw\(/;
   const timed = [...page.matchAll(/setInterval\((\w+), \d+\)/g)].map((m) => m[1]);
   assert.ok(timed.includes('lookThePayout'), `the look is not on a timer (${timed.join(', ')})`);
+  // WINNINGS-AUTO (RULED the owner 2026-10-01): the timed look collects what is owed into the player wallet by itself - and
+  // that one call is the only money it moves: it redeems, never withdraws (the spends below stay off every timer)
+  const look = page.slice(page.search(/function lookThePayout\(/), page.indexOf('\n    }\n', page.search(/function lookThePayout\(/)));
+  assert.match(look, /BLWPCLIENT\.collectIntoPlayerWallet\(/, 'the look does not collect into the player wallet by itself');
   for (const name of timed) {
     const at = page.search(new RegExp(`function ${name}\\(`));
     if (at < 0) continue;
@@ -1337,6 +1368,32 @@ test('the Settings tabs are sized as the join sizes them - with the donation - s
   assert.equal(withDonation, roundsDepositMsat(1, locks, LockClient));
   // the donation is paid from the player wallet too: one round is its stake lock, its fee lock and the donation, each in whole notes
   assert.equal(locks.donationCostMsat, ceilNote(two));
+});
+
+test('the donation is paid by the player (the owner 2026-10-01): an N rounds deposit pays each round\'s stake lock, fee lock and every donation share from the player wallet - never asked again, N = 1 and 10', async () => {
+  const { TEST_DONATION_SET_REGTEST } = await import('../../protocol/src/test-donation-sets.js');
+  const { splitDonation } = await import('../../protocol/src/donation.js');
+  const recipients = TEST_DONATION_SET_REGTEST.recipients;
+  for (const N of [1, 10]) {
+    const { LockClient } = noteClient();
+    const tab = tabStorage(); const sd = b32(0xa0 + N);
+    const donationMsat = BigInt(round.stakeMsat) * 200n / 10000n;   // 2%, the Settings default
+    let asked = 0;
+    await fundPlayerWallet({ round, invite: INVITE, seed: sd, LockClient, storage: tab, donationMsat, donationRecipients: recipients,
+      askDeposit: (offer) => { asked++; offer.invoice(offer.choices.find((c) => c.rounds === N).msat); } });
+    assert.equal(asked, 1);
+    const client = await playerWallet({ round, invite: INVITE, seed: sd, LockClient, storage: tab });
+    const locks = await locksForRound(round, client, donationMsat, recipients);
+    const shares = splitDonation({ donationMsat, recipients }).shares.map((x) => x.amountMsat).filter((m) => m > 0n);
+    assert.ok(shares.length >= 2, 'the test set should split the donation');
+    for (let k = 1; k <= N; k++) {
+      await fundPlayerWallet({ round, invite: INVITE, seed: sd, LockClient, storage: tab, donationMsat, donationRecipients: recipients,
+        askDeposit: () => assert.fail(`round ${k} of ${N} asked for a deposit`) });
+      await client.spend(locks.amount); if (locks.feeMsat > 0n) await client.spend(locks.feeMsat);
+      for (const m of shares) await client.spend(m);                  // each share its own payment, from the same wallet
+    }
+    assert.ok(BigInt(await client.balanceMsat()) >= 0n);
+  }
 });
 
 test('a close refuses the deposit', async () => {

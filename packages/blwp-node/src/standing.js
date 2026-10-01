@@ -1,0 +1,82 @@
+// WHERE ONE ENTRY'S MONEY STANDS, FOR THE PLAYER'S PENDING LINE (WINDOW-10-SPEC, the owner 2026-10-01, §24): "The winnings,
+// or the stake coming back, show as pending the moment the player's result is PROVISIONALLY_FINAL - not when the
+// objection window closes and not when the payout table is final - with the amount and what they wait on: the window's
+// close in UTC ... While other players' results are still arriving the amount is the payout table computed over the
+// results signed so far, and it updates as they arrive; it is marked as such. If the payment becomes invalid - a valid
+// objection, a re-run, VOID, FORFEIT - the pending line disappears."
+//
+// Read-only: each entry's finality as this signer node holds it, the payout table over the entries whose results are
+// signed so far (computePayoutTable - the same arithmetic the settlement pays by), and this entry's row. Nothing here
+// signs, settles or moves money.
+import { computePayoutTable, netStakeMsat, VOID, FORFEIT, ENTRY_VOID } from '../../protocol/src/payout.js';
+import { decodePlayerResult, splitSignedResult } from '../../protocol/src/result.js';
+import { roundEndMs } from '../../protocol/src/first-mark.js';
+import { toHex } from '../../protocol/src/hash.js';
+import { resultFinality } from './finality.js';
+import { PROVISIONALLY_FINAL, FINAL } from '../../protocol/src/objection.js';
+import { runId } from './verdict.js';
+
+/** The objection window, fixed (WINDOW-10-SPEC): 600 s of wall time from the round's end. */
+export const OBJECTION_WINDOW_MS = 600000n;
+
+// One entry's outcome as far as this node can say: from its threshold of signed results, or a refund/forfeit word.
+function outcomeOf(round, roundIdBytes, entryId) {
+  if (round.entryVoid && round.entryVoid(entryId)) return { decided: true, outcome: ENTRY_VOID, score: 0, state: ENTRY_VOID };
+  const nq = round.noQuorum ? round.noQuorum(entryId) : null;
+  if (nq && (nq.outcome === VOID || nq.outcome === FORFEIT)) return { decided: true, outcome: nq.outcome, score: 0, state: nq.outcome };
+  let s;
+  try { s = resultFinality(round, roundIdBytes, entryId); } catch (e) { return { decided: false, state: null, why: e.message }; }
+  if (s.state === VOID || s.state === FORFEIT) return { decided: true, outcome: s.state, score: 0, state: s.state, why: s.why };
+  // signed by the threshold - PROVISIONALLY_FINAL or FINAL - and not in a re-run: its agreed result
+  if ((s.state === PROVISIONALLY_FINAL || s.state === FINAL) && !s.rerun && s.runId) {
+    for (const r of round.results(roundIdBytes, entryId)) {
+      let body;
+      try { body = decodePlayerResult(splitSignedResult(r.bytes).body); } catch { continue; }
+      if (toHex(runId(body)) === s.runId) return { decided: true, outcome: body.outcome, score: body.score, state: s.state, why: s.why };
+    }
+  }
+  return { decided: false, state: s.state || null, why: s.why };
+}
+
+/**
+ * The standing of `entryIdBytes` in its round: `{ state, pendingMsat, provisional, signedSoFar, entries, windowOpenMs,
+ * windowCloseMs, why }`. `pendingMsat` is this entry's row of the payout table over the results signed so far - only
+ * while its own result stands (PROVISIONALLY_FINAL or FINAL); null otherwise, so a VOID, a FORFEIT, an upheld objection
+ * or a re-run takes the line away.
+ */
+export function standingOf(round, roundIdBytes, entryIdBytes, contract) {
+  let openMs = null;
+  try { openMs = roundEndMs(contract); } catch { openMs = null; }
+  const base = { windowOpenMs: openMs === null ? null : String(openMs),
+    windowCloseMs: openMs === null ? null : String(openMs + OBJECTION_WINDOW_MS) };
+  const all = round.entriesOf(roundIdBytes);
+  const entries = [];
+  let mine = null;
+  for (const { entryId, entry } of all) {
+    // a stake no seat saw committed is not in the round (§23.1 step 5)
+    if (round.stakeSeen && !round.stakeSeen(entryId)) continue;
+    const o = outcomeOf(round, roundIdBytes, entryId);
+    if (toHex(entryId) === toHex(entryIdBytes)) mine = { ...o, pubkey: entry.playerPubkey };
+    if (!o.decided) continue;
+    entries.push({ entryId, pubkey: entry.playerPubkey, stakeMsat: entry.stakeMsat, feeMsat: entry.feeMsat,
+      donationMsat: entry.donationMsat, outcome: o.outcome, score: o.score });
+  }
+  if (!mine) return { ...base, state: null, pendingMsat: null, why: 'this signer node holds no such entry in the round' };
+  const counted = all.filter(({ entryId }) => !round.stakeSeen || round.stakeSeen(entryId)).length;
+  const standsOn = mine.decided && (mine.state === PROVISIONALLY_FINAL || mine.state === FINAL);
+  let pendingMsat = null;
+  let kind = null;
+  // A VOID (or never-activated) entry is refunded: its stake coming back is what is pending (§23.2, §24)
+  if (mine.decided && (mine.state === VOID || mine.state === ENTRY_VOID)) {
+    const e = all.find(({ entryId }) => toHex(entryId) === toHex(entryIdBytes));
+    try { pendingMsat = String(netStakeMsat(e.entry)); kind = 'refund'; } catch { pendingMsat = null; }
+  }
+  if (standsOn) {
+    kind = 'payout';
+    const { table } = computePayoutTable({ roundId: roundIdBytes, entries, minScore: contract.minScore });
+    const row = table.find((t) => toHex(t.pubkey) === toHex(mine.pubkey));
+    pendingMsat = row ? String(row.amountMsat) : '0';
+  }
+  return { ...base, state: mine.state, outcome: mine.decided ? mine.outcome : null, pendingMsat, kind,
+    provisional: entries.length < counted, signedSoFar: entries.length, entries: counted, why: mine.why || null };
+}

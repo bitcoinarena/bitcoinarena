@@ -343,7 +343,7 @@
       <h3>Wallet</h3>
       <div class="bal-grid">
         <div class="bal-box"><span class="bal-ico ok">&#10003;</span><div><div class="bal-what">Confirmed</div><div class="bal-sats" id="blwp-bal-confirmed">&ndash;</div></div></div>
-        <div class="bal-box"><span class="bal-ico pend">&#8987;</span><div><div class="bal-what">Pending</div><div class="bal-sats" id="blwp-bal-pending">&ndash;</div></div></div>
+        <div class="bal-box"><span class="bal-ico pend">&#8987;</span><div><div class="bal-what">Pending</div><div class="bal-sats" id="blwp-bal-pending">&ndash;</div><div class="bal-what" id="blwp-bal-pending-when"></div></div></div>
       </div>
       <div class="muted" id="blwp-balance-line"></div>
       <div id="blwp-history">
@@ -1289,7 +1289,12 @@
           // WHAT THE PAYOUT IS COLLECTED WITH after the window (6d): the same seed,
           // round and federation the lock was made with.
           window.BLWP_LOCK_JOIN = { invite: named.federation, roundIdHex: named.roundIdHex, seed, nodes: named.nodes };
-          const committedTo = (eid) => BLWPCLIENT.markLockCommitted(vault(), Object.assign({ entryId: eid }, whose));
+          const committedTo = (eid) => {
+            // THE PENDING LINE ASKS ABOUT THIS ENTRY from now on (WINDOW-10-SPEC, §24)
+            try { vault().setItem('blwp.pending.' + named.roundIdHex, JSON.stringify({ roundIdHex: named.roundIdHex,
+              entryIdHex: BLWPCLIENT.toHex(eid), nodes: named.nodes })); } catch { /* no note, no line */ }
+            return BLWPCLIENT.markLockCommitted(vault(), Object.assign({ entryId: eid }, whose));
+          };
           if (reuse) {
             stakeLock = { outpoint: reuse.lock.outpoint, fields: reuse.lock.fields, feeLock: reuse.lock.feeLock || null,
               needed: BLWPCLIENT.sharesNeededFor(named.round), onCommitted: committedTo };
@@ -1484,6 +1489,17 @@
         window.BLWP_ELSEWHERE = w ? null : newest.roundIdHex;
         const look = w ? await BLWPCLIENT.lookOwed(Object.assign(roundAsk(newest, w.LockClient), { client: w.client })) : null;
         if (look) { window.BLWP_OWED = look; window.BLWP_WITHDRAWABLE = look.inTabMsat; }
+        // WINNINGS-AUTO (RULED the owner 2026-10-01): what is owed goes into the player's federation wallet by itself, the
+        // moment it exists - redeemed only, never sent out; the pending line clears as the balance takes it
+        if (look) {   // collectIntoPlayerWallet collects only what is owed (payout, stake back, refund)
+          const c = await BLWPCLIENT.collectIntoPlayerWallet({ look, ...roundAsk(newest, w.LockClient) });
+          if (c.collected) {
+            console.log('[blwp] owed, collected into the player wallet: ' + c.creditedMsat + ' msat');
+            BLWPCLIENT.markCollectDone(vault(), newest.roundIdHex, { payout: BLWPCLIENT.owedToLine(look), stake: null });
+            if (window.BLWP_READ_BALANCE) window.BLWP_READ_BALANCE();
+            paintHistory();
+          }
+        }
         if (!look) { /* looked at in the other tab */ }
         else if (newest.done) window.BLWP_COLLECT_LINE = [newest.done.payout, newest.done.stake].filter(Boolean).join(' · ');
         else if (look.final && look.inTabMsat === 0n) {
@@ -1927,11 +1943,11 @@
       if (!rows.length) { rowsEl.textContent = 'No deposits, stakes or withdrawals in this tab yet'; return; }
       const sat = (msat) => `${(Number(BigInt(msat || 0) / 1000n)).toLocaleString('en-US')} sat`;
       for (const r of rows) {
-        const plus = r.kind === 'deposit';
+        const plus = r.kind === 'deposit' || r.kind === 'winnings';
         const el = document.createElement('div');
         el.className = `hist-row ${plus ? 'plus' : 'minus'}` + (r.kind === 'stake' && r.entry ? ' clickable' : '');
         const when = r.atMs ? new Date(r.atMs).toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : 'earlier';
-        const what = r.kind === 'deposit' ? 'Deposit' : r.kind === 'donation' ? `Donation${r.round ? ' \u00b7 round ' + String(r.round).slice(0, 8) : ''}`
+        const what = r.kind === 'deposit' ? 'Deposit' : r.kind === 'winnings' ? `Winnings${r.round ? ' \u00b7 round ' + String(r.round).slice(0, 8) : ''}` : r.kind === 'donation' ? `Donation${r.round ? ' \u00b7 round ' + String(r.round).slice(0, 8) : ''}`
           : r.kind === 'withdrawal' ? `Withdrawal${r.state && r.state !== 'Success' ? ' (' + r.state + ')' : ''}`
           : `Stake · round ${String(r.round).slice(0, 8)}${r.entry ? '' : ' · not entered'}`;
         for (const [cls, text] of [['hist-when', when], ['hist-what', what], ['hist-amt', (plus ? '+' : '\u2212') + sat(r.msat)]]) {
@@ -2308,6 +2324,39 @@
     setInterval(paintPlayers, 500);
     setInterval(paintWallet, 1000);
     setInterval(lookThePayout, 5000);
+    // THE PENDING LINE (WINDOW-10-SPEC, RULED the owner 2026-10-01, §24): every 2 s each round this tab staked in is asked of
+    // its signer nodes (/standing): the winnings, or the stake coming back, show as pending the moment the result is
+    // signed - not when the window closes - with the window's close in UTC, "provisional" while other results still
+    // arrive; a result that becomes invalid (FORFEIT, an upheld objection, a re-run) takes the line away; once the
+    // money is collected into the wallet (lookThePayout) the note goes and the balance shows it. It only looks.
+    async function lookThePending() {
+      let notes = [];
+      try { const v = vault(); for (let i = 0; i < v.length; i++) { const k = v.key(i); if (k && k.startsWith('blwp.pending.')) notes.push(k); } } catch { notes = []; }
+      const done = new Set((BLWPCLIENT.savedCollects ? BLWPCLIENT.savedCollects(vault()) : []).filter((r) => r.done).map((r) => r.roundIdHex));
+      let total = 0n; let closeMs = null; let provisional = false;
+      for (const k of notes) {
+        let n; try { n = JSON.parse(vault().getItem(k)); } catch { n = null; }
+        if (!n || done.has(n.roundIdHex)) { try { vault().removeItem(k); } catch { /* none */ } continue; }
+        const said = await Promise.all((n.nodes || []).map((u) => fetch(String(u).replace(/\/$/, '') + '/standing?entry=' + n.entryIdHex, { cache: 'no-store' })
+          .then((r) => (r.ok ? r.json() : null)).catch(() => null)));
+        // the figure most signer nodes say; a node without it says nothing here
+        const votes = new Map();
+        for (const x of said) if (x && x.pendingMsat !== null && x.pendingMsat !== undefined) votes.set(x.pendingMsat, (votes.get(x.pendingMsat) || 0) + 1);
+        const best = [...votes.entries()].sort((a, b) => b[1] - a[1])[0];
+        if (!best || best[0] === '0') continue;
+        total += BigInt(best[0]);
+        const one = said.find((x) => x && x.pendingMsat === best[0]);
+        if (one && one.windowCloseMs && (closeMs === null || Number(one.windowCloseMs) > closeMs)) closeMs = Number(one.windowCloseMs);
+        if (one && one.provisional) provisional = true;
+      }
+      window.BLWP_PENDING_SATS = Number(total / 1000n);
+      if (window.BLWP_WALLET_BALANCE) window.BLWP_WALLET_BALANCE.pending = window.BLWP_PENDING_SATS;
+      const when = total > 0n && closeMs ? `window closes ${new Date(closeMs).toISOString().slice(11, 19)} UTC${provisional ? ' \u00b7 provisional' : ''}` : '';
+      const whenEl = document.getElementById('blwp-bal-pending-when'); if (whenEl) whenEl.textContent = when;
+      const chip = document.getElementById('blwp-lobby-pending'); if (chip && chip.parentNode) chip.parentNode.title = when || 'pending';
+      paintMoney();
+    }
+    setInterval(lookThePending, 2000);
     probeNodes();
     setInterval(probeNodes, 2000);
     paintPlayers();
@@ -2448,7 +2497,7 @@
           window.BLWP_READ_BALANCE = async () => {
             try {
               const msat = BigInt(await client.balanceMsat());
-              window.BLWP_WALLET_BALANCE = { sats: Number(msat / 1000n), pending: 0, federation: 'federation ' + fed.slice(0, 16) + '\u2026' };
+              window.BLWP_WALLET_BALANCE = { sats: Number(msat / 1000n), pending: window.BLWP_PENDING_SATS || 0, federation: 'federation ' + fed.slice(0, 16) + '\u2026' };
             } catch (e) { console.log('[blwp] the balance could not be read: ' + (e && e.message ? e.message : e)); }
           };
           await window.BLWP_READ_BALANCE();

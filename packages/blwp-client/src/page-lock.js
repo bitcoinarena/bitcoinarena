@@ -1258,6 +1258,23 @@ export async function collectOwed({ look, client, ...ask } = {}) {
 }
 
 /**
+ * WINNINGS-AUTO (RULED the owner 2026-10-01): WHAT IS OWED GOES INTO THE PLAYER WALLET BY ITSELF - the payout contract
+ * redeemed, the stake back by the signer nodes' forfeit or by the player's key after expiry - the moment it exists, with
+ * no press. Into the player's own federation wallet (one per seed and federation) and NOTHING out of it: no Lightning,
+ * no withdraw. What arrived is written in the history as a "winnings" row, by what the wallet's balance actually grew.
+ */
+export async function collectIntoPlayerWallet({ look, round, roundId, invite, seed, curve, LockClient, storage, nodes, fetcher } = {}) {
+  if (!look || !(look.payoutMsat > 0n || look.stakeMsat > 0n || look.refundMsat > 0n)) return { collected: false, creditedMsat: 0n };
+  const client = await playerWallet({ round, invite, seed, LockClient, storage });
+  const before = BigInt(await client.balanceMsat());
+  const got = await collectOwed({ look, client, round, roundId, invite, seed, curve, LockClient, storage, nodes, ...(fetcher ? { fetcher } : {}) });
+  const after = BigInt(await client.balanceMsat());
+  const creditedMsat = after > before ? after - before : 0n;
+  if (creditedMsat > 0n) ledgerAppend(storage, round.federationId, { kind: 'winnings', msat: String(creditedMsat), round: toHex(roundId) });
+  return { collected: true, got, creditedMsat };
+}
+
+/**
  * COLLECT AND WITHDRAW IN ONE ACTION (W4 / 6d): looked at again as the player presses, collected
  * into the one wallet, and at once out to the player's own. With no invoice to pay (no wallet
  * connected, none pasted) nothing is collected: the money stays in the federation, not the tab.

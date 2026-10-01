@@ -76,12 +76,16 @@ test('lockSettlement: a held donation share (the recipient did not answer) is a 
   assert.equal(wrong.ok, false, 'a held share of another amount is built on');
 });
 
-test('lockSettlement: qualifiers, none addressed, beside a walker and a FAILED player - only the walker\'s lock is claimed, into the 75/25 split', () => {
+test('lockSettlement, WINNINGS-AUTO (RULED the owner 2026-10-01): a qualifier beside a walker and a FAILED player, naming nothing - both losers\' locks are claimed and paid to the qualifier by its contract; no remainder split', () => {
   const winner = { pubkey: b32(8), stakeMsat: 100000n, feeMsat: 2000n, donationMsat: 0n, outcome: DELIVERED, score: 50 };
-  const p = lockSettlement({ roundId: rid, entries: [winner, entry(5, FORFEIT, true), entry(6, FAILED)], minScore: 1, locks: locks(5, 6, 8),
-    fees, contract, donationSet: TEST_DONATION_SET_REGTEST, addressed: new Set() });
+  const held = locks(5, 6, 8);
+  const p = lockSettlement({ roundId: rid, entries: [winner, entry(5, FORFEIT, true), entry(6, FAILED)], minScore: 1, locks: held,
+    fees, contract, donationSet: TEST_DONATION_SET_REGTEST });
   assert.equal(p.ok, true, p.why);
-  assert.deepEqual(p.claims.map((c) => toHex(c.pubkey)), [toHex(b32(5))], 'a lock other than the walker\'s is claimed');
-  assert.deepEqual([p.remainder.nodesMsat, p.remainder.donationMsat], [73500n, 24500n]);
-  assert.match(p.stakeWhy, /no qualifier with a paying rank named a Lightning address.*walk-away's lock is claimed/);
+  assert.deepEqual(p.claims.map((c) => toHex(c.pubkey)).sort(), [toHex(b32(5)), toHex(b32(6))].sort(), 'not both losers\' locks were claimed');
+  const won = p.payouts.filter((x) => x.kind === 'qualifier');
+  assert.equal(won.length, 1);
+  assert.equal(toHex(won[0].payoutPk), toHex(held.get(toHex(b32(8))).refundPk), 'the winnings are not a contract to the qualifier\'s own key');
+  assert.equal(p.remainder, undefined, 'a remainder split was made although a qualifier is paid');
+  assert.equal(p.inputFeesMsat + p.paidMsat + p.outputFeesMsat, p.poolMsat, 'the payout and its fees are not the claimed pot');
 });

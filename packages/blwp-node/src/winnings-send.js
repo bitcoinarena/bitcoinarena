@@ -208,8 +208,18 @@ export class WinningsSend {
       .map((p) => ({ entryId: p.donation.id, payout: p, address: p.donation.lnurl, donation: true }));
   }
 
-  /** Qualifier payouts of the base plan whose entry named an address, with that address. */
+  /**
+   * Qualifier payouts of the base plan whose entry named an address, with that address - NONE since WINNINGS-AUTO (RULED
+   * the owner 2026-10-01): a qualifier is paid by its payout contract into its federation wallet, never by a Lightning send,
+   * so no winner is planned a send (and none could be paid twice). Donation shares still are.
+   */
   qualifiersWithAddress(base) {
+    void base;
+    return [];
+  }
+
+  // the former address path, kept for reading old plans
+  qualifiersWithAddressBefore(base) {
     const out = [];
     for (const p of base.plan.payouts) {
       if (p.kind !== 'qualifier') continue;
