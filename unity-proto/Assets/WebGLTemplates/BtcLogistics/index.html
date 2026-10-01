@@ -1663,7 +1663,12 @@
       // Lightning payment, the federation's e-cash in the player wallet - or the invoice expired or failed.
       const status = payStatus(el);
       const host = (u) => { try { return new URL(u).host; } catch { return String(u || ''); } };
-      const sats = (msat) => `${((BigInt(msat) + 999n) / 1000n).toLocaleString('en-US')} sat`;
+      // EXACT AMOUNTS (N rounds play N rounds, the owner 2026-10-01): a deposit is sized in whole 512 msat notes, so it can be
+      // 100.352 sat - shown as it is, never rounded to a sat it is not
+      const satNum = (msat) => { const m = BigInt(msat); const w = (m / 1000n).toLocaleString('en-US'); const f = m % 1000n;
+        return f ? `${w}.${String(f).padStart(3, '0').replace(/0+$/, '')}` : w; };
+      const sats = (msat) => `${satNum(msat)} sat`;
+      const due = (msat) => (BLWPCLIENT.ceilNote ? BLWPCLIENT.ceilNote(msat) : BigInt(msat));
       let copyTimer = 0;
       const copied = (ok) => {
         clearTimeout(copyTimer);
@@ -1693,9 +1698,9 @@
       };
       const show = async (msat) => {
         const mine = ++token;
-        amount.textContent = `Pay ${sats(msat)} from any Lightning wallet to top up your game wallet.`;
+        amount.textContent = `Pay ${sats(due(msat))} from any Lightning wallet to top up your game wallet.`;
         qrHold('Creating the QR code \u2026'); box.textContent = 'creating the invoice \u2026'; copy.disabled = true;
-        status.set(1, `Creating your invoice for ${sats(msat)} \u2026`, 'busy');
+        status.set(1, `Creating your invoice for ${sats(due(msat))} \u2026`, 'busy');
         try {
           const d = await active.invoice(msat);
           if (mine !== token) return;
@@ -1728,7 +1733,7 @@
           amount.textContent = 'Enter an amount in sat.'; qrHold('The QR code appears as soon as you enter an amount');
           status.set(0, 'Enter an amount in sat.', ''); return;
         }
-        amount.textContent = `Pay ${sats(BigInt(sat) * 1000n)} from any Lightning wallet to top up your game wallet.`;
+        amount.textContent = `Pay ${sats(due(BigInt(sat) * 1000n))} from any Lightning wallet to top up your game wallet.`;
         typeTimer = setTimeout(() => show(BigInt(sat) * 1000n), 450);
       };
       field.addEventListener('input', typed);
@@ -1746,7 +1751,7 @@
       close.addEventListener('click', () => { active.close(); done(); });
       // THE REST, IN PLACE: the title says what is missing, the tabs keep their place unseen, the one invoice is made
       // THE 5 SAT FLOOR (the owner 2026-10-01): a rest under the smallest deposit the federation takes is asked at that floor
-      const satN = (msat) => ((BigInt(msat) + 999n) / 1000n).toLocaleString('en-US');
+      const satN = (msat) => satNum(msat);
       const restPay = (o) => (o.restPayMsat !== undefined && o.restPayMsat !== null ? o.restPayMsat : o.restMsat);
       const restWords = (o) => restPay(o) > o.restMsat
         ? `This round needs ${satN(o.restMsat)} more sat for fees. The smallest Lightning deposit is ${satN(restPay(o))} sat. Pay ${satN(restPay(o))} sat to join.`
