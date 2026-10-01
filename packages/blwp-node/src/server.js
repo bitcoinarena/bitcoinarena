@@ -1129,7 +1129,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (!f.signable) return false;
     const mine = finalSignatureNow(round, rid, eid, signHere);
     if (mine) takeFinalSig(rid, eid, mine, f);
-    await Promise.all(verifier.peersOf(rid).map(async (peer) => {
+    // THE PEERS: the round's game committee off the census, or - a node whose chain view no longer reaches the round's
+    // census, measured on testnet4 for rounds of the day before - the settlement committee's, then its DKG peers, as the
+    // settlement itself falls back.
+    let peersHere = verifier.peers && verifier.peers.length ? verifier.peers : [];
+    if (!peersHere.length) { const picked = roster.committeeFor(rid, 'game'); if (picked.ok) peersHere = endpointsOf(picked.committee, round.pubkey); }
+    if (!peersHere.length) { const picked = roster.committeeFor(rid, 'settlement'); if (picked.ok) peersHere = endpointsOf(picked.committee, round.pubkey); }
+    if (!peersHere.length) peersHere = dkg.peers || [];
+    await Promise.all(peersHere.map(async (peer) => {
       try {
         const r = await fetch(`${String(peer).replace(/\/+$/, '')}/final-sig?round=${toHex(rid)}&entry=${toHex(eid)}`, { signal: AbortSignal.timeout(3000) });
         if (r.status !== 200) return;
