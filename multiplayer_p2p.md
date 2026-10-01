@@ -3264,6 +3264,18 @@ federation's own consensus view of Bitcoin.
 | `VOID` / `ENTRY_VOID` | Forfeit at once; if nobody acts, the lock expires | Nothing — after expiry only the player's key can take it |
 | Payout to a qualifier | A payout contract in the same settlement transaction: a lock already past expiry whose refund key is the qualifier, redeemable at once by that key alone | Final payout table (5-of-7) + 5-of-7 settlement signature |
 
+> **WINNINGS-AUTO (RULED, the owner 2026-10-01).** Winnings are paid
+> **automatically into the player's federation wallet**. Every qualifier is
+> paid by its payout contract in the settlement transaction - to its round
+> key, inside the federation - and never by a Lightning send to an address it
+> named: the player names nothing, is asked nothing, and no qualifier's share
+> is pooled for want of an address. The player's client redeems every payout
+> contract and every forfeited lock into the player wallet **by itself, the
+> moment it exists** - no press, no withdraw step (§24A.1). Until the notes
+> are in the wallet the amount is **pending** (§24, WINDOW-10-SPEC). Withdrawn:
+> the Lightning-address payout of 2026-09-23 and the rule that a page collects
+> only on the player's press.
+
 The **settlement transaction** is one atomic federation transaction per
 round: every loser's stake lock and every fee lock in; one payout contract
 per qualifier and per paid node slot out. Every settlement node rebuilds it
@@ -4047,7 +4059,7 @@ where the stake comes from and where the winnings go.
 wallet**: one wallet per player seed and federation, kept in the browser,
 into which the player deposits, from which every stake is paid, into which
 every payout and refund is collected **automatically the moment it is
-available** (shown as *pending* until then, §24), and from which the player
+available** (WINNINGS-AUTO, 2026-10-01: by the client itself, with no press) (shown as *pending* until then, §24), and from which the player
 withdraws over a Lightning invoice whenever he likes, in any amount. No
 custody, and no channel to any central server.
 
