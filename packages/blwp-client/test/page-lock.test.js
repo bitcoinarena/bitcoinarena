@@ -22,7 +22,7 @@ import { bech32Encode, convertBits } from '../../protocol/src/bech32.js';
 import { decodeBolt11 } from '../../protocol/src/bolt11.js';
 
 import { lockStake, fundPlayerWallet, walletSecretFor, withdrawPlayerWallet, handLock, lockSecretFor, lockAmountMsat, lockLine, saveLock, savedLock, markLockCommitted,
-  refundStake, redeemStake, redeemPayout, payoutLine, returnStake, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, withdrawLine, refundKept, refundLine, lookOwed, owedToLine as owedLine, collectAndWithdraw, tabLockWallet, findOwedRounds, feeSecretFor, ledgerRows, ledgerReadSavedStakes, playerWallet, depositChoices, depositOffer, withdrawChoices, playerWithdrawable, pendingDeposits, resumeDeposits, DEPOSIT_INSUFFICIENT } from '../src/page-lock.js';
+  refundStake, redeemStake, redeemPayout, payoutLine, returnStake, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, withdrawLine, refundKept, refundLine, lookOwed, owedToLine as owedLine, collectAndWithdraw, tabLockWallet, findOwedRounds, feeSecretFor, ledgerRows, ledgerReadSavedStakes, playerWallet, depositChoices, depositOffer, withdrawChoices, playerWithdrawable, pendingDeposits, resumeDeposits, restOfFeesMsat, shortOnlyByFees, DEPOSIT_INSUFFICIENT } from '../src/page-lock.js';
 import { replayLinkFor } from '../src/replay-link.js';
 import { lockFieldsFromJson } from '../../protocol/src/stake-lock.js';
 import { sha256 } from '../../protocol/src/hash.js';
@@ -1356,6 +1356,50 @@ test('a deposit paid just before a reload: the next page\'s wallet finds it, wri
   await resumeDeposits({ client: { awaitReceive: async () => 'Expired' }, storage: tab, federationId: TEST_FEDERATION_ID });
   assert.equal(pendingDeposits(tab, TEST_FEDERATION_ID).length, 0);
   assert.equal(ledgerRows(tab, TEST_FEDERATION_ID).length, 1);
+});
+
+test('option 2: a paid gross deposit that falls short is not asked again with the tabs - its outcome hands one exact invoice for the rest; paid, it is funded', async () => {
+  const { LockClient, log } = lockClient();
+  // the first (gross) deposit credits 97% of itself, as the measured round fell short; the rest is credited whole
+  const realReceive = LockClient.prototype.receive; let first = true;
+  // (the stand-in's small-receive refusal models the old 2 sat gateway fee; the gateways' fees are 0 since FEES-0)
+  LockClient.prototype.receive = async function (msat, gw) {
+    if (first) { await realReceive.call(this, msat, gw); this.coming = BigInt(msat) * 97n / 100n; first = false; }
+    else { log.push({ receive: { msat, gateway: gw } }); this.coming = BigInt(msat); }
+    return JSON.stringify({ invoice: 'lnbcrt1page', operation: 'op' });
+  };
+  const tab = tabStorage();
+  const asks = []; const outcomes = [];
+  const done = await fundPlayerWallet({ round, invite: INVITE, seed: b32(0x71), LockClient, storage: tab, askDeposit: (offer) => {
+    asks.push(offer.choices.map((c) => c.label));
+    (async () => {
+      await offer.invoice(offer.choices[0].msat);            // "1 round": the gross stake; the stand-in credits it less 16064 msat
+      let o = await offer.outcome; outcomes.push(o.funded);
+      while (!o.funded) {
+        assert.deepEqual(o.rest.choices.map((c) => c.key), ['rest'], 'the rest is one amount, not the tabs');
+        await o.rest.invoice(o.rest.choices[0].msat);
+        o = await o.rest.outcome; outcomes.push(o.funded);
+      }
+    })();
+  } });
+  assert.equal(asks.length, 1, 'the modal was asked for twice - it must not start over');
+  assert.deepEqual(asks[0], ['1 round', '2 rounds', '5 rounds', '10 rounds', 'Custom']);
+  assert.deepEqual(outcomes, [false, true]);
+  const asked = log.filter((l) => l.receive).map((l) => BigInt(l.receive.msat));
+  assert.equal(asked[0], BigInt(round.stakeMsat), 'the first invoice is the gross round amount');
+  assert.equal(asked.length, 2);
+  assert.equal(asked[1] % 1000n, 0n, 'the rest is whole sat');
+  assert.ok(asked[1] < BigInt(round.stakeMsat) / 10n, 'the rest is the fees, not another round');
+  assert.ok(done.heldMsat > 0n);
+});
+
+test('the rest of the fees: the shortfall plus 1 sat, in whole sat; asked at once only when the wallet is short by no more than a tenth of the stake', () => {
+  assert.equal(restOfFeesMsat(1n), 2000n);
+  assert.equal(restOfFeesMsat(1000n), 2000n);
+  assert.equal(restOfFeesMsat(2464n), 4000n);
+  assert.equal(shortOnlyByFees(99840n, 2464n, 100000n), true, 'the measured 99840 msat wallet is asked only the rest');
+  assert.equal(shortOnlyByFees(0n, 100000n, 100000n), false, 'an empty wallet gets the tabs');
+  assert.equal(shortOnlyByFees(50000n, 50000n, 100000n), false, 'half a round short gets the tabs');
 });
 
 test('a withdrawal of a chosen amount pays only an invoice of exactly that amount', async () => {
