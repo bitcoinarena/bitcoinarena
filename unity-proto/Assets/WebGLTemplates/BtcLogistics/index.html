@@ -1607,7 +1607,7 @@
       const add = (tag, cls, text) => { const x = document.createElement(tag); if (cls) x.className = cls; if (text !== undefined) x.textContent = text; el.appendChild(x); return x; };
       const close = add('button', 'dep-close', '\u2715');
       close.type = 'button'; close.title = 'Close';
-      add('div', 'dep-title', message || title);
+      const titleEl = add('div', 'dep-title', message || title);
       const tabs = add('div', 'dep-tabs');
       // CUSTOM: typed, read with parseInt as it is typed, the invoice made a moment after the last key - no Set button.
       // The row keeps its place when hidden (visibility), so choosing Custom moves nothing.
@@ -1648,19 +1648,23 @@
         copied(ok);
       });
       let token = 0; let current = null;
-      offer.watch && offer.watch((d, final) => {
-        if (d.invoice !== current) return;
+      // THE OFFER THIS MODAL SHOWS: the gross one, then - when a paid deposit still falls short (option 2, the owner
+      // 2026-10-01) - the rest of the round's fees, in this same modal
+      let active = offer;
+      const watcher = (o) => (d, final) => {
+        if (o !== active || d.invoice !== current) return;
+        const again = o.restMsat === null ? ' Pick an amount to get a new one.' : '';
         if (final === 'Claimed') status.set(3, `Payment received! ${sats(d.amountMsat)} are now in your wallet.`, 'ok');
-        else if (final === 'Expired') status.set(3, 'This invoice has expired and nothing was charged. Pick an amount to get a new one.', 'fail');
-        else status.set(3, `The deposit did not go through (${final}), and nothing was charged. Pick an amount to try again.`, 'fail');
-      });
+        else if (final === 'Expired') status.set(3, 'This invoice has expired and nothing was charged.' + again, 'fail');
+        else status.set(3, `The deposit did not go through (${final}), and nothing was charged.` + again, 'fail');
+      };
       const show = async (msat) => {
         const mine = ++token;
         amount.textContent = `Pay ${sats(msat)} from any Lightning wallet to top up your game wallet.`;
         qrHold('Creating the QR code \u2026'); box.textContent = 'creating the invoice \u2026'; copy.disabled = true;
         status.set(1, `Creating your invoice for ${sats(msat)} \u2026`, 'busy');
         try {
-          const d = await offer.invoice(msat);
+          const d = await active.invoice(msat);
           if (mine !== token) return;
           current = d.invoice;
           qr.innerHTML = BLWPCLIENT.invoiceQrSvg(d.invoice);
@@ -1706,9 +1710,33 @@
         if (el.dataset.offer !== mine) return;
         el.textContent = ''; el.className = ''; try { sessionStorage.removeItem('blwp.depositAt'); } catch { /* none */ }
       };
-      close.addEventListener('click', () => { offer.close(); done(); });
-      // the "done" step stays on screen a moment before the modal goes
-      offer.claimed.then(() => setTimeout(done, 2500), done);
+      close.addEventListener('click', () => { active.close(); done(); });
+      // THE REST, IN PLACE: the title says what is missing, the tabs keep their place unseen, the one invoice is made
+      const restWords = (o) => `This round needs ${((o.restMsat + 999n) / 1000n).toLocaleString('en-US')} more sat for fees. Pay the rest to join.`;
+      const takeRest = (o) => {
+        active = o; bind(o);
+        titleEl.textContent = restWords(o);
+        tabs.style.visibility = 'hidden'; custom.style.visibility = 'hidden';
+        show(o.restMsat);
+      };
+      // PAID: the green line stays; the round is looked at again (`outcome`). Funded - the modal goes 2.5 s later.
+      // Still short - after the green line has stood 2 s, the rest of the fees in this same modal (never the tabs again).
+      const bind = (o) => {
+        if (o.watch) o.watch(watcher(o));
+        o.claimed.then(async () => {
+          const greenAt = Date.now();
+          const out = o.outcome ? await Promise.race([o.outcome, new Promise((r) => setTimeout(() => r({ funded: true }), 120000))]) : { funded: true };
+          if (o !== active) return;
+          if (out.funded || !out.rest) { setTimeout(done, 2500); return; }
+          await new Promise((r) => setTimeout(r, Math.max(0, 2000 - (Date.now() - greenAt))));
+          if (o === active) takeRest(out.rest);
+        }, () => { if (o === active) done(); });
+      };
+      bind(offer);
+      if (offer.restMsat !== null && offer.restMsat !== undefined) {
+        titleEl.textContent = restWords(offer);
+        tabs.style.visibility = 'hidden';
+      }
       buttons[0].click();
     }
     window.BLWP_SHOW_DEPOSIT = showDepositOffer;

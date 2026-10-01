@@ -9217,8 +9217,12 @@ async function playerWithdrawable({ round, invite, seed, LockClient, storage, on
  * stays payable: one paid after another was claimed is credited to the same wallet.
  */
 function depositOffer({ client, stakeMsat, haveMsat = null, needMsat = null, gateways = [], onDeposit = () => {},
-  storage = null, federationId = null } = {}) {
+  storage = null, federationId = null, restMsat = null } = {}) {
   let settle; let fail;
+  // WHAT CAME OF IT (option 2, the owner 2026-10-01): once a paid deposit is claimed, the round is looked at again -
+  // `outcome` resolves { funded: true } or { funded: false, rest } with the offer for exactly the rest
+  let decide;
+  const outcome = new Promise((res) => { decide = res; });
   const claimed = new Promise((res, rej) => { settle = res; fail = rej; });
   claimed.catch(() => {});
   const made = [];
@@ -9244,7 +9248,11 @@ function depositOffer({ client, stakeMsat, haveMsat = null, needMsat = null, gat
     }, (e) => said(d, 'Failure: ' + String((e && e.message) || e)));
     return d;
   };
-  return { stakeMsat: BigInt(stakeMsat || 0n), haveMsat, needMsat, choices: depositChoices(stakeMsat), invoice, claimed, made,
+  const rest = restMsat === null ? null : BigInt(restMsat);
+  return { stakeMsat: BigInt(stakeMsat || 0n), haveMsat, needMsat, invoice, claimed, made, restMsat: rest,
+    // THE TABS (1, 2, 5, 10 rounds and Custom, gross), or - for the rest of a round's fees - the one exact amount
+    choices: rest === null ? depositChoices(stakeMsat) : [{ key: 'rest', label: 'The rest', rounds: null, msat: rest }],
+    outcome, decided: (o) => decide(o),
     watch: (fn) => { watchers.push(fn); },
     close: (why) => fail(new Error(why || 'the deposit was closed: nothing was paid')) };
 }
@@ -9293,32 +9301,51 @@ async function settingsDepositOffer({ round, invite, seed, LockClient, storage, 
   const client = await playerWallet({ round, invite, seed, LockClient, storage });
   const offer = depositOffer({ client, stakeMsat: round.stakeMsat, haveMsat: BigInt(await client.balanceMsat()), gateways, onDeposit,
     storage, federationId: round.federationId });
-  offer.claimed.then((d) => { depositRow(storage, round, d); onClaimed(d); }, () => {});
+  offer.claimed.then((d) => { depositRow(storage, round, d); onClaimed(d); offer.decided({ funded: true }); }, () => {});
   return offer;
 }
 function depositRow(storage, round, d) { depositRowOnce(storage, round.federationId, d); }
 const DEPOSIT_MARGIN_PPM = 6000n;
 const DEPOSIT_MARGIN_MSAT = 10000n;
+/**
+ * THE REST OF A ROUND'S FEES, AS ONE INVOICE (option 2, the owner 2026-10-01: "This round needs N more sat for fees. Pay the
+ * rest to join." - measured: a 100 sat round's gross 100 sat credited 99840 msat, short of its locks). What the wallet is
+ * short, plus 1 sat for the claim of this small deposit itself, in whole sat.
+ */
+const REST_MARGIN_MSAT = 1000n;
+function restOfFeesMsat(shortMsat) {
+  const m = BigInt(shortMsat) + REST_MARGIN_MSAT;
+  return (m + 999n) / 1000n * 1000n;
+}
+/** A wallet that holds most of a round and is short only by its fees (no more than a tenth of the stake) is asked the rest. */
+const shortOnlyByFees = (haveMsat, shortMsat, stakeMsat) => haveMsat > 0n && shortMsat > 0n && shortMsat * 10n <= BigInt(stakeMsat || 0n);
 async function fundPlayerWallet({ round, invite, seed, LockClient, storage, donationMsat = 0n, gateways = [],
   estimateDeposit = false, askDeposit = null, onDeposit = () => {}, onStep = () => {} } = {}) {
   const client = await playerWallet({ round, invite, seed, LockClient, storage, onStep });
   const locks = await locksFor(round, client, donationMsat);
   const deposits = [];
+  let prev = null;
   for (let tries = 0; ; tries++) {
     const have = BigInt(await client.balanceMsat());
     const n = await needFor(client, LockClient, locks);
     onStep(`the player wallet holds ${have} msat; this round's locks need ${n.need === null ? 'more than that' : `${n.need} msat`}`);
-    if (n.need !== null && have >= n.need) break;
+    if (n.need !== null && have >= n.need) { if (prev) prev.decided({ funded: true }); break; }
     // THE PLAYER CHOOSES THE DEPOSIT (GROSS-INVOICE-2053): the page shows the offer - the tabs, the invoice, a close - and
-    // this waits for whichever invoice is paid, then looks again; still short, the offer is shown again.
+    // this waits for whichever invoice is paid, then looks again.
+    // STILL SHORT AFTER A PAID DEPOSIT, OR SHORT ONLY BY THE FEES (option 2, the owner 2026-10-01): not the tabs again - the
+    // rest, as one exact invoice, handed to the paid offer's `outcome` (the modal stays and shows it) or, with no paid
+    // deposit before it, asked for at once.
     if (askDeposit) {
+      const short = (n.need !== null ? n.need : n.floor) - have;
+      const restMsat = prev || shortOnlyByFees(have, short, round.stakeMsat) ? restOfFeesMsat(short > 0n ? short : 0n) : null;
       const offer = depositOffer({ client, stakeMsat: round.stakeMsat, haveMsat: have, needMsat: n.need, gateways, onDeposit,
-        storage, federationId: round.federationId });
-      askDeposit(offer);
-      onStep('waiting for the deposit into the player wallet');
+        storage, federationId: round.federationId, restMsat });
+      if (prev) prev.decided({ funded: false, rest: offer }); else askDeposit(offer);
+      onStep(restMsat === null ? 'waiting for the deposit into the player wallet' : `waiting for the rest of this round's fees: ${restMsat} msat`);
       const d = await offer.claimed;
       deposits.push(d);
       depositRow(storage, round, d);
+      prev = offer;
       continue;
     }
     if (tries >= 3) throw new Error(`after ${tries} deposits the player wallet holds ${have} msat and cannot fund this round's locks`);
@@ -17952,7 +17979,7 @@ return { Client: Client, markState: markState,
          withdrawPlayerWallet: withdrawPlayerWallet,
          saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, keptLockUse: keptLockUse,
          ledgerRows: ledgerRows, ledgerReadSavedStakes: ledgerReadSavedStakes,
-         depositChoices: depositChoices, withdrawChoices: withdrawChoices, playerWithdrawable: playerWithdrawable, pendingDeposits: pendingDeposits, resumeDeposits: resumeDeposits, depositOffer: depositOffer, settingsDepositOffer: settingsDepositOffer, DEPOSIT_INSUFFICIENT: DEPOSIT_INSUFFICIENT,
+         depositChoices: depositChoices, withdrawChoices: withdrawChoices, playerWithdrawable: playerWithdrawable, pendingDeposits: pendingDeposits, resumeDeposits: resumeDeposits, restOfFeesMsat: restOfFeesMsat, depositOffer: depositOffer, settingsDepositOffer: settingsDepositOffer, DEPOSIT_INSUFFICIENT: DEPOSIT_INSUFFICIENT,
          findLock: findLock, refundStake: refundStake, forfeitOf: forfeitOf, redeemStake: redeemStake,
          settlementOf: settlementOf, redeemPayout: redeemPayout, payoutLine: payoutLine,
          returnStake: returnStake, stakeBackLine: stakeBackLine,
