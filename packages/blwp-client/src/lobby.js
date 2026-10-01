@@ -239,7 +239,9 @@ export function lobbyOnePerKind(rows, nowMs = Date.now(), { paidSeriesOnly = fal
   // ONLY 90-SECOND PAID ROUNDS (the owner 2026-10-01: "We want always 90 second rounds in Testnet ... no paid row till
   // then"): with `paidSeriesOnly` a paying round that is not a series round - the runner's one-off with its 6 h entry
   // window - is never listed; until a series' rounds can be joined there is no paid row. Free rows are untouched.
-  if (paidSeriesOnly) rows = rows.filter((r) => r.free || !!(r.contract && r.contract.seriesId instanceof Uint8Array));
+  // Measured 05:26Z: series 8172fffd's round 0, a day out, showed as "PAID · 100 sats · closes 1113:28 · 0 of 5 signer nodes
+  // - waiting" - a paid row before any can be joined. So a paid row is listed only once it can be joined.
+  if (paidSeriesOnly) rows = rows.filter((r) => r.free || (!!(r.contract && r.contract.seriesId instanceof Uint8Array) && !!r.joinable));
   // THE SERIES FIRST (the owner 2026-09-30 08:50: "Only the 72-hour series ... count"; a one-off round such as 5eaa0966 does
   // not): a round of a series beats one naming none; among series rounds, the soonest with the join lead left; otherwise
   // as before - joinable, then open, then the latest entry close.

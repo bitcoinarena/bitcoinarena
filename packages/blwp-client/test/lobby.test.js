@@ -299,6 +299,8 @@ test('the lobby lists one free round and one paying round, never two of either, 
   assert.deepEqual(lobbyOnePerKind([row('free', true, 60), oneOff], T, { paidSeriesOnly: true }).map((r) => r.id), ['free'], 'a 6 h one-off paid row was listed');
   assert.deepEqual(lobbyOnePerKind([oneOff, seriesRow], T - 200000, { paidSeriesOnly: true }).map((r) => r.id), ['series-0']);
   assert.deepEqual(lobbyOnePerKind([oneOff], T).map((r) => r.id), ['one-off'], 'without the option nothing changes');
+  const dayOut = row('8172fffd-0', false, 0, { joinable: false, phase: 'pending', contract: { seriesId: new Uint8Array(32), startTimeMs: BigInt(T + 67000000), roundIndex: 0n } });
+  assert.deepEqual(lobbyOnePerKind([row('free', true, 60), dayOut], T, { paidSeriesOnly: true }).map((r) => r.id), ['free'], 'a series round nobody can join yet was a paid row');
   // WHAT A PAYING ROW COSTS, in whole sats: 100000 msat is 100 sat; a free row costs nothing.
   assert.equal(lobbyStakeSats(row('pay', false, 500)), 100);
   assert.equal(lobbyStakeSats(row('free', true, 500)), 0);
