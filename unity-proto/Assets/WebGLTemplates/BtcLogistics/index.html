@@ -2465,8 +2465,13 @@
         const now = Date.now();
         // ONE FREE ROUND AND ONE PAYING ROUND, never two of either (the owner 2026-09-15 16:08), and what the paying one
         // costs. WITH THE TESTNET LOBBY the free row is this lobby's and the paying row the testnet's: both, always.
-        const mine = testnet ? got.rows.filter((r) => r.free) : got.rows;
-        const theirs = got2 ? got2.rows.filter((r) => !r.free) : [];
+        // A SIDE WHOSE NODES DID NOT ANSWER THIS PAINT KEEPS ITS LAST ROWS (the owner 2026-10-01 15:25: "Do not drop free to show
+        // testnet4. Do not drop testnet4 to show free"; measured under load: paid alone, both, free alone, paint by paint).
+        const kept = window.BLWP_LOBBY_KEPT = window.BLWP_LOBBY_KEPT || { mine: [], theirs: [] };
+        const mine = kept.mine = BLWPCLIENT.lobbyKeepWhenUnanswered(kept.mine,
+          { ...got, rows: testnet ? got.rows.filter((r) => r.free) : got.rows }, now);
+        const theirs = kept.theirs = got2 ? BLWPCLIENT.lobbyKeepWhenUnanswered(kept.theirs,
+          { ...got2, rows: got2.rows.filter((r) => !r.free) }, now) : [];
         for (const r of mine) rowSearch.set(r.id, search);
         for (const r of theirs) rowSearch.set(r.id, testnet.search);
         window.BLWP_LOBBY_ROWS = [...mine, ...theirs];    // every round listed, for the next one after a run (below)
