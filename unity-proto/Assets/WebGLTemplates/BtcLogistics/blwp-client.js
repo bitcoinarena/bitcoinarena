@@ -18222,12 +18222,13 @@ const LOBBY_PER_SERIES = 8;
  * Measured on the live page under load: each paint read the free nodes and the testnet4 nodes, and a side whose nodes did
  * not answer in time came back with no rows - the page showed the paid row alone, then both, then the free row alone. A
  * read with rows is taken as it is; one with no rows because its nodes went unanswered (or refused) keeps the rows it last
- * had, while their entry is still open. A side that answered and lists nothing lists nothing.
+ * had, while their entry is still open (a read still in flight, `pending`, the same). A side that answered and lists
+ * nothing lists nothing.
  */
 function lobbyKeepWhenUnanswered(previousRows, got, nowMs = Date.now()) {
   const rows = (got && got.rows) || [];
   if (rows.length) return rows;
-  const silent = !!(got && ((got.unanswered && got.unanswered.length) || (got.refused && got.refused.length)));
+  const silent = !!(got && (got.pending || (got.unanswered && got.unanswered.length) || (got.refused && got.refused.length)));
   if (!silent) return rows;
   return (previousRows || []).filter((r) => Number(r.entryCloseMs) > Number(nowMs));
 }
