@@ -17,6 +17,7 @@
 // (ALL-BUT-MIN-1727, the owner 2026-09-29 17:27; contracts.js). A node holds such a round only when its contract is
 // exactly the one the series derives - index inside 0 .. round_count - 1, entry window the derived one
 // (seriesRoundCheck) - and refuses entries, locks and settlements for any other.
+import { msForTicks } from './tick.js';
 import { taggedHash } from './hash.js';
 import { isOldTestnet4Id, isOldTestnet4Series } from './old-series.js';
 import { encodeRoundContract } from './contracts.js';
@@ -134,6 +135,22 @@ export function seriesRound(template, i, { periodMs = ROUND_PERIOD_MS, count = R
  * false }). One naming a series must name one of `templates` (the series this node holds), an index inside
  * 0 .. round_count - 1, and be byte for byte `seriesRound(template, i)` - its entry window the derived one.
  */
+/**
+ * A SERIES' RUN FITS ITS 90 s SLOT (the 82/90 hard fork, the owner 2026-10-01; multiplayer_p2p.md "Timing": "a run lasts at
+ * most 82 seconds ... run ends <= start_time(i+1) - 8 s"): the run its rounds name (blockTicks, at the core's tick rate)
+ * ends at least 8 s before the next round starts. Asked of a series on a core that takes its rounds' run length; a core
+ * held to one length (the truck before the fork, 180 s) is that core's own and was posted before the rule.
+ */
+export const SERIES_RESULT_CARD_MS = 8000n;
+export function seriesRunFits(template, { periodMs = ROUND_PERIOD_MS } = {}) {
+  let runMs;
+  try { runMs = msForTicks(template.blockTicks).ms; } catch (e) { return { ok: false, why: `the series names no run length: ${e.message}` }; }
+  const most = BigInt(periodMs) - SERIES_RESULT_CARD_MS;
+  if (BigInt(runMs) > most)
+    return { ok: false, why: `a run of ${template.blockTicks} ticks is ${runMs} ms, and a round of a ${periodMs} ms series runs at most ${most} ms (its next start less ${SERIES_RESULT_CARD_MS} ms)` };
+  return { ok: true, runMs: BigInt(runMs) };
+}
+
 export function seriesRoundCheck(contract, templates, { periodMs = ROUND_PERIOD_MS, count = ROUNDS_PER_SERIES } = {}) {
   if (!contract || contract.seriesId === undefined || contract.seriesId === null) return { ok: true, series: false };
   const t = (templates || []).find((x) => sameBytes(seriesId(x, { periodMs, count }), contract.seriesId));

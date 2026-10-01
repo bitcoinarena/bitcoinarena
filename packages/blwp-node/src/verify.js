@@ -566,7 +566,7 @@ export class Verifier {
     const row = this.round.get(roundIdBytes);
     if (!row) return null;
     const found = coreForRound(decodeRoundContract(new Uint8Array(row.contract)), this.cores);
-    return found.ok ? { ...found.core, config: found.config } : null;
+    return found.ok ? { ...found.core, config: found.config, runTicks: found.runTicks } : null;
   }
 
   /**

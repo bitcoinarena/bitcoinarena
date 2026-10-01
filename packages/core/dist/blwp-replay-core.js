@@ -5058,6 +5058,16 @@ const HALF_MOUTH = Math.imul(34, ONE);
  */
 const BLOCK_TICKS = 10800;
 
+/**
+ * THE RUN LENGTH IS THE ROUND'S (the owner 2026-10-01, the 82/90 hard fork: "The round length must be part of the contract
+ * - not a fixed constant. It must be part of the round announcement"). A run ends MISSED after the ticks its round's
+ * contract names (blockTicks), handed to `init`; BLOCK_TICKS stays the default a run without a round gets (practice, a
+ * SIM round) and the longest a round may name. A run of BLOCK_TICKS is the same, tick for tick and hash for hash, as the
+ * core before this (the length is not in the hashed state).
+ */
+const MAX_RUN_TICKS = BLOCK_TICKS;
+function runTicksIsValid(t) { return Number.isInteger(t) && t >= 1 && t <= MAX_RUN_TICKS; }
+
 const RUN_LIVE = 0;
 const RUN_DELIVERED = 1;
 const RUN_WRECKED = 2;
@@ -5072,9 +5082,9 @@ const arrived = (x, z) => x >= GATE_X && abs(z) <= HALF_MOUTH;
  * Order matters: a wreck beats an arrival in the same tick, and a missed block
  * beats both - a truck that is destroyed as the block closes did not deliver.
  */
-function outcome(state, x, z, hp, tickInBlock) {
+function outcome(state, x, z, hp, tickInBlock, runTicks = BLOCK_TICKS) {
   if (state !== RUN_LIVE) return state;
-  if (tickInBlock >= BLOCK_TICKS) return RUN_MISSED;
+  if (tickInBlock >= runTicks) return RUN_MISSED;
   if (hp <= 0) return RUN_WRECKED;
   if (arrived(x, z)) return RUN_DELIVERED;
   return RUN_LIVE;
@@ -6139,8 +6149,11 @@ function groundAt(st, x, z) {
   return surfaceAt(st, x, z);
 }
 
-function init(seedWord) {
+function init(seedWord, { runTicks = BLOCK_TICKS } = {}) {
+  // THE ROUND'S RUN LENGTH (gate.js): kept beside the state, not in it, so a run's hashes do not depend on it.
+  if (!runTicksIsValid(runTicks)) throw new Error(`a run lasts 1 to ${BLOCK_TICKS} ticks, not ${runTicks}`);
   const st = create();
+  st.runTicks = runTicks;
   const s = st.i32;
   const rng = s.subarray(O_RNG, O_RNG + 4);
   seed(rng, seedWord);
@@ -7611,7 +7624,7 @@ function step(st, throttle, steer, brake, handbrake, practice) {
 
   // ---- 4. outcome --------------------------------------------------------
   s[O_SCORE + S_STATE] = outcome(
-    s[O_SCORE + S_STATE], tx, tz, s[T + T_HP], s[O_SCORE + S_ELAPSED]);
+    s[O_SCORE + S_STATE], tx, tz, s[T + T_HP], s[O_SCORE + S_ELAPSED], st.runTicks === undefined ? BLOCK_TICKS : st.runTicks);
   if (s[O_SCORE + S_STATE] === RUN_DELIVERED && s[O_SCORE + S_DELIVERED] === 0)
     s[O_SCORE + S_DELIVERED] = scoreOf(
       s[O_SCORE + S_EXPOSURE], s[O_SCORE + S_ELAPSED], s[O_SCORE + S_CARGO]);
@@ -7683,12 +7696,14 @@ const runScore = (st) =>
 
 const CORE = Object.freeze({
   name: 'btc-logistics truck',
-  /** A run's length in ticks, from its own join (0.8's mission duration). */
+  /** A run's length in ticks when its round names none (0.8's mission duration), and the longest a round may name. */
   RUN_TICKS: BLOCK_TICKS,
+  /** Whether a round may name this run length (blockTicks): the hard fork of 2026-10-01 - the round's, 1 to RUN_TICKS. */
+  runTicksFits: (t) => runTicksIsValid(t),
   /** Input words per tick: throttle, steer, brake, handbrake, practice. */
   INPUT_WORDS: 5,
-  /** A run from its seed word. */
-  start: (seedWord) => init(seedWord),
+  /** A run from its seed word, ending after its round's run length (blockTicks; RUN_TICKS when none is named). */
+  start: (seedWord, config, { runTicks } = {}) => init(seedWord, runTicks === undefined ? {} : { runTicks }),
   /**
    * THE TRANSCRIPT'S OWN EVENTS, each applied BEFORE the tick it names - round setup for that tick,
    * not a consequence of it: a load (fee, btc - how hard the war hunts the run) and a liquidation

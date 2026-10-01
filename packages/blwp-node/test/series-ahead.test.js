@@ -32,7 +32,7 @@ const base = (nodes) => ({
   objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT',
   federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'],
   donationSetId: donationSetId(TEST_DONATION_SET_REGTEST.recipients),
-  censusHeight: 900000, censusRoot: b32(2), stakeMsat: 0n, bondMinSats: 50000n, blockTicks: BLOCK_TICKS,
+  censusHeight: 900000, censusRoot: b32(2), stakeMsat: 0n, bondMinSats: 50000n, blockTicks: 4920,   // 82 s of its 90 s slot (the 82/90 fork: seriesRunFits)
   exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20, timeFloor: 30, timeCeil: 150,
   minScore: 1, rankNumerator: 3, rankDenominator: 4, nodes,
 });
@@ -165,4 +165,16 @@ test('a series whose first round is 8 h out has none within the 2 h lead, and th
   assert.equal(within.length, 0, 'a round starts within 2 h: not the case the test names');
   assert.equal(w.soonest(at), Buffer.from(roundIdOf(first)).toString('hex'), 'the soonest is not the series\' first round');
   assert.equal(w.soonest(Number(start) + 1), w.startingWithin(Number(start) + 1, 2 * H)[0], 'once rounds run, the soonest is the next one');
+});
+
+// THE 82/90 FORK (the owner 2026-10-01): a series on the core that takes its rounds' run length fits 82 s into its 90 s slot -
+// 4920 ticks (81 979 ms) is taken - 4921 (81 996 ms) is the longest that fits - and 4922 (82 013 ms) and 10800 (180 s) are refused by name.
+test('a series runs at most 82 s of its 90 s slot: 4920 and 4921 ticks are taken, 4922 and 10800 are refused by name', async () => {
+  const { seriesRunFits } = await import('../../protocol/src/series.js');
+  const t = (blockTicks) => seriesTemplate({ ...base([b32(1)]), blockTicks }, seriesIndexAt(NETWORK_ID_REGTEST, NOW) + 1);
+  assert.equal(seriesRunFits(t(4920)).ok, true);
+  assert.equal(seriesRunFits(t(4920)).runMs, 81979n);
+  assert.equal(seriesRunFits(t(4921)).ok, true);
+  for (const ticks of [4922, 10800]) assert.match(seriesRunFits(t(ticks)).why, new RegExp(`a run of ${ticks} ticks is \\d+ ms, and a round of a 90000 ms series runs at most 82000 ms`));
+  await assert.rejects(async () => serve(openStore(':memory:'), { port: 0, funded: () => true, roundClock: () => NOW, series: [t(10800)] }), /series refused: a run of 10800 ticks/);
 });

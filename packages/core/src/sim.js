@@ -46,7 +46,7 @@ import { ARMOUR_WEST, ARMOUR_EAST, RIFLE_STANDOFF, rifleStandoff } from './rules
 import { heat as heatForLoad } from './rules/cargo.js';
 import { stepUnit, standingStill, separatePair, clearOfTruck, runOver, truckSpeed, threatAt, pickTarget, pickRifleTarget, riflePost, RELOAD_MIN, RELOAD_SPAN, DAMAGE_MIN, DAMAGE_SPAN, BACKOFF_RANGE, HIT_PER_MIL, ARMOUR_RANGE, RIFLE_RANGE, RIFLE_HIT_PER_MIL, RIFLE_RELOAD_TICKS, RIFLE_RELOAD_TICKS_SPAN, RIFLE_LOOK_TICKS, RIFLE_LOOK_TICKS_SPAN, RIFLE_HP, RIFLE_DAMAGE, hullDownHold, WRECK_R, COURIER_RANGE, COURIER_DAMAGE_MIN, COURIER_DAMAGE_SPAN, COURIER_RIFLE_MIN, COURIER_RIFLE_SPAN, courierReach, outranksTheFoe, shellForHeat } from './rules/army.js';
 import { accrue, earning, scoreOf, frontWeight, APRON_RADIUS } from './rules/score.js';
-import { outcome, RUN_LIVE, RUN_DELIVERED, RUN_WRECKED, RUN_MISSED } from './rules/gate.js';
+import { outcome, RUN_LIVE, RUN_DELIVERED, RUN_WRECKED, RUN_MISSED, BLOCK_TICKS, runTicksIsValid } from './rules/gate.js';
 import { frontlineZ, SAMPLES } from './rules/frontline.js';
 import {
   launchHeli, stepHeli, releaseBomb, stepBomb, bombDamage, blastReach, sortieWait, fallTime, NO_AIM, BOMB_RADIUS,
@@ -762,8 +762,11 @@ export function groundAt(st, x, z) {
   return surfaceAt(st, x, z);
 }
 
-export function init(seedWord) {
+export function init(seedWord, { runTicks = BLOCK_TICKS } = {}) {
+  // THE ROUND'S RUN LENGTH (gate.js): kept beside the state, not in it, so a run's hashes do not depend on it.
+  if (!runTicksIsValid(runTicks)) throw new Error(`a run lasts 1 to ${BLOCK_TICKS} ticks, not ${runTicks}`);
   const st = create();
+  st.runTicks = runTicks;
   const s = st.i32;
   const rng = s.subarray(O_RNG, O_RNG + 4);
   seed(rng, seedWord);
@@ -2234,7 +2237,7 @@ export function step(st, throttle, steer, brake, handbrake, practice) {
 
   // ---- 4. outcome --------------------------------------------------------
   s[O_SCORE + S_STATE] = outcome(
-    s[O_SCORE + S_STATE], tx, tz, s[T + T_HP], s[O_SCORE + S_ELAPSED]);
+    s[O_SCORE + S_STATE], tx, tz, s[T + T_HP], s[O_SCORE + S_ELAPSED], st.runTicks === undefined ? BLOCK_TICKS : st.runTicks);
   if (s[O_SCORE + S_STATE] === RUN_DELIVERED && s[O_SCORE + S_DELIVERED] === 0)
     s[O_SCORE + S_DELIVERED] = scoreOf(
       s[O_SCORE + S_EXPOSURE], s[O_SCORE + S_ELAPSED], s[O_SCORE + S_CARGO]);
