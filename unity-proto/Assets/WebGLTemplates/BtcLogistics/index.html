@@ -80,6 +80,8 @@
     #blwp-deposit .dep-custom { height: 30px; margin: 4px 0; }
     #blwp-deposit .dep-custom input { width: 10em; font-size: 16px; }
     #blwp-deposit .dep-amount { height: 2.8em; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+    /* WHY NOT EXACTLY THE STAKE (the owner 2026-10-01): two small lines under the amount, their place kept when empty */
+    #blwp-deposit .dep-why { height: 2.6em; overflow: hidden; font-size: 11px; line-height: 1.3em; color: #9fb3c8; margin: 0 4px; }
     #blwp-deposit .blwp-deposit-qr { box-sizing: border-box; aspect-ratio: 1 / 1; display: flex; align-items: center; justify-content: center; }
     #blwp-deposit .blwp-deposit-qr svg { width: 100%; height: 100%; }
     #blwp-deposit .qr-hold { color: #8a94a3; font-size: 12px; line-height: 1.4; }
@@ -1138,12 +1140,20 @@
           };
           const wallet = {
             round: named.round, invite: named.federation, seed, LockClient: wasm.LockClient,
-            donationMsat: donation.donationMsat, storage: vault(), onStep,
+            donationMsat: donation.donationMsat, donationRecipients: donationSet ? donationSet.recipients : null, storage: vault(), onStep,
             // A DEPOSIT ONLY THROUGH A GATEWAY THAT HOLDS E-CASH (the owner 2026-09-30 14:30): the link's (or daily.json's)
             // `gateway` list, never the lock client's random pick when one is named.
             gateways: (new URLSearchParams(location.search).get('gateway') || '').split(',').map((g) => g.trim()).filter(Boolean),
           };
           console.log('[blwp] join step -> deposit (beside the rest)');
+          // THE DONATION IS PAID FROM THE PLAYER WALLET (the owner 2026-10-01): its own send pays each recipient's invoice
+          window.BLWP_PLAYER_PAYER = async (invoice) => {
+            const c = await BLWPCLIENT.playerWallet({ round: named.round, invite: named.federation, seed, LockClient: wasm.LockClient, storage: vault() });
+            const said = JSON.parse(await c.withdraw(invoice));
+            if (said.state !== 'Success') return { ok: false, why: 'the player wallet could not pay it (' + said.state + ')' };
+            try { BLWPCLIENT.recordDonation(vault(), named.round.federationId, { msat: BigInt(said.invoice_msat || 0), round: named.roundIdHex }); } catch { /* history only */ }
+            return { ok: true, preimage: said.preimage };
+          };
           // THE TOP-UP, ONLY IF THE PLAYER WALLET IS SHORT: into the wallet, not into the round.
           await BLWPCLIENT.fundPlayerWallet(Object.assign({}, wallet, {
             // THE PLAYER CHOOSES THE DEPOSIT (GROSS-INVOICE-2053): the modal - the round tabs, a gross invoice, a close.
@@ -1611,7 +1621,8 @@
             // is the 1 round PLAY asks (measured 2026-10-01: without it Settings asked 102.4 sat where a round takes 100.31)
             const donationMsat = ctx.roundStake * BigInt(donationBps()) / 10000n;
             const offer = await BLWPCLIENT.settingsDepositOffer({ round: ctx.round, invite: ctx.invite, seed: ctx.seed, LockClient: wasm.LockClient,
-              storage: vault(), gateways: ctx.gateways, donationMsat, onClaimed: () => { paintHistory(); if (window.BLWP_READ_BALANCE) window.BLWP_READ_BALANCE(); } });
+              storage: vault(), gateways: ctx.gateways, donationMsat,
+              donationRecipients: window.BLWP_DONATION_SET ? window.BLWP_DONATION_SET.recipients : null, onClaimed: () => { paintHistory(); if (window.BLWP_READ_BALANCE) window.BLWP_READ_BALANCE(); } });
             showDepositOffer(offer, { title: 'Deposit into your player wallet', overSettings: true });
           } catch (e) { why.textContent = 'No deposit: ' + (e && e.message ? e.message : e); }
         })();
@@ -1652,8 +1663,9 @@
       field.placeholder = 'amount in sat';
       custom.append(field);
       const amount = add('div', 'dep-amount');
+      const why = add('div', 'dep-why');
       const qr = add('div', 'blwp-deposit-qr');
-      qr.style.cssText = 'background:#fff;padding:8px;width:min(80vw,320px,33vh);margin:6px auto;line-height:0';
+      qr.style.cssText = 'background:#fff;padding:8px;width:min(80vw,320px,28vh);margin:6px auto;line-height:0';
       const qrHold = (words) => { qr.innerHTML = ''; const h = document.createElement('div'); h.className = 'qr-hold'; h.textContent = words; qr.appendChild(h); };
       // COPY INVOICE (the owner 2026-09-30): the invoice shown, to the clipboard, with the press answered on the button -
       // green "Copied ✓" for 1.5 s, or red "Copy failed" (then the invoice text is selected to copy by hand).
@@ -1723,6 +1735,11 @@
         b.addEventListener('click', () => {
           for (const x of buttons) x.classList.toggle('on', x === b);
           custom.style.visibility = c.key === 'custom' ? 'visible' : 'hidden';
+          // WHY NOT EXACTLY THE STAKE: the round tabs only (Custom and the rest say their own amount)
+          const one = offer.choices[0] && offer.choices[0].rounds === 1 ? offer.choices[0].msat : null;
+          why.textContent = c.rounds && one && offer.perRoundStake > 0n && one !== offer.perRoundStake
+            ? `A round costs ${sats(offer.perRoundStake)}. You deposit ${sats(one)} per round because the federation's e-cash comes in notes of 0.512 sat and every part of a round (stake, node fee, donation) is paid in whole notes. Whatever a round does not use stays in your wallet.`
+            : '';
           if (c.key !== 'custom') show(c.msat); else { field.focus(); typed(); }
         });
         tabs.appendChild(b); return b;
@@ -1761,7 +1778,7 @@
         : `This round needs ${satN(o.restMsat)} more sat for fees. Pay the rest to join.`;
       const takeRest = (o) => {
         active = o; bind(o);
-        titleEl.textContent = restWords(o);
+        titleEl.textContent = restWords(o); why.textContent = '';
         tabs.style.visibility = 'hidden'; custom.style.visibility = 'hidden';
         show(restPay(o));
       };
@@ -1908,7 +1925,8 @@
         const el = document.createElement('div');
         el.className = `hist-row ${plus ? 'plus' : 'minus'}` + (r.kind === 'stake' && r.entry ? ' clickable' : '');
         const when = r.atMs ? new Date(r.atMs).toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : 'earlier';
-        const what = r.kind === 'deposit' ? 'Deposit' : r.kind === 'withdrawal' ? `Withdrawal${r.state && r.state !== 'Success' ? ' (' + r.state + ')' : ''}`
+        const what = r.kind === 'deposit' ? 'Deposit' : r.kind === 'donation' ? `Donation${r.round ? ' \u00b7 round ' + String(r.round).slice(0, 8) : ''}`
+          : r.kind === 'withdrawal' ? `Withdrawal${r.state && r.state !== 'Success' ? ' (' + r.state + ')' : ''}`
           : `Stake · round ${String(r.round).slice(0, 8)}${r.entry ? '' : ' · not entered'}`;
         for (const [cls, text] of [['hist-when', when], ['hist-what', what], ['hist-amt', (plus ? '+' : '\u2212') + sat(r.msat)]]) {
           const c = document.createElement('span'); c.className = cls; c.textContent = text; el.appendChild(c);
@@ -2196,9 +2214,19 @@
       // Client notes each share before its wallet is asked and never asks a
       // noted one again, so a reload over a kept lock reports and sends nothing.
       if (c && c.joinedEntry && window.BLWP_DONATION_SET && typeof c.joinedEntry.donationMsat === 'bigint'
-          && c.joinedEntry.donationMsat > 0n && c.stakeCommitted === true && !donationPaying && wallet) {
-        const heldWallet = wallet.current();
-        if (heldWallet.ok) {
+          && c.joinedEntry.donationMsat > 0n && c.stakeCommitted === true && !donationPaying && (wallet || window.BLWP_PLAYER_PAYER)) {
+        const heldWallet = wallet ? wallet.current() : { ok: false };
+        // NO OUTSIDE WALLET CONNECTED: the player wallet pays it (the owner 2026-10-01: "donation is paid by the player as well")
+        if (!heldWallet.ok && window.BLWP_PLAYER_PAYER) {
+          donationPaying = true;
+          window.BLWP_DONATION_PAID = { state: 'paying' };
+          c.payDonation(c.joinedEntry, window.BLWP_DONATION_SET, {
+            round: window.BLWP_ROUND, payWith: window.BLWP_PLAYER_PAYER, log: spent, storage: window.sessionStorage,
+          }).then((said) => {
+            window.BLWP_DONATION_PAID = BLWPCLIENT.donationPaidState(window.BLWP_DONATION_SET, said);
+            paintWallet(); paintHistory(); if (window.BLWP_READ_BALANCE) window.BLWP_READ_BALANCE();
+          }).catch((e) => { window.BLWP_DONATION_PAID = { state: 'error', why: e.message }; paintWallet(); });
+        } else if (heldWallet.ok) {
           donationPaying = true;
           window.BLWP_DONATION_PAID = { state: 'paying' };
           c.payDonation(c.joinedEntry, window.BLWP_DONATION_SET, {

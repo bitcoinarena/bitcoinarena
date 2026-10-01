@@ -1303,7 +1303,7 @@ function noteClient() {
   return { LockClient: Note, log };
 }
 
-test('N rounds play N rounds (the owner 2026-10-01): the "N rounds" tab funds exactly N rounds\' locks in whole notes - 1, 2, 5 and 10', async () => {
+test('N rounds play N rounds (the owner 2026-10-01): the "N rounds" tab, a whole number of sats, funds N rounds\' locks - 1, 2, 5 and 10', async () => {
   for (const [i, N] of [[0, 1], [1, 2], [2, 5], [3, 10]]) {
     const { LockClient, log } = noteClient();
     const tab = tabStorage(); const sd = b32(0x80 + N);
@@ -1311,7 +1311,7 @@ test('N rounds play N rounds (the owner 2026-10-01): the "N rounds" tab funds ex
     await fundPlayerWallet({ round, invite: INVITE, seed: sd, LockClient, storage: tab, askDeposit: (offer) => {
       asked++;
       assert.deepEqual(offer.choices.map((c) => c.label), ['1 round', '2 rounds', '5 rounds', '10 rounds', 'Custom']);
-      assert.equal(offer.choices[i].msat % 512n, 0n, 'not in whole notes');
+      assert.equal(offer.choices[i].msat % 1000n, 0n, 'not a whole sat');
       offer.invoice(offer.choices[i].msat);
     } });
     assert.equal(asked, 1);
@@ -1333,8 +1333,10 @@ test('the Settings tabs are sized as the join sizes them - with the donation - s
   const two = BigInt(round.stakeMsat) * 200n / 10000n;   // 2%, the Settings default
   const withDonation = (await at(two)).choices[0].msat; const without = (await at(0n)).choices[0].msat;
   const client = await playerWallet({ round, invite: INVITE, seed: b32(0x91), LockClient, storage: tabStorage() });
-  assert.equal(withDonation, roundsDepositMsat(1, await locksForRound(round, client, two), LockClient));
-  assert.ok(withDonation < without, 'the donation did not shrink the round the Settings tab asks for');
+  const locks = await locksForRound(round, client, two);
+  assert.equal(withDonation, roundsDepositMsat(1, locks, LockClient));
+  // the donation is paid from the player wallet too: one round is its stake lock, its fee lock and the donation, each in whole notes
+  assert.equal(locks.donationCostMsat, ceilNote(two));
 });
 
 test('a close refuses the deposit', async () => {
@@ -1387,8 +1389,8 @@ test('a deposit paid just before a reload: the next page\'s wallet finds it, wri
   const reopened = { awaitReceive: async (op) => (op === 'op-a' ? 'Claimed' : 'Failure') };
   assert.deepEqual(await resumeDeposits({ client: reopened, storage: tab, federationId: TEST_FEDERATION_ID, onClaimed: (d) => heard.push(d.amountMsat) }), ['Claimed']);
   const rows = ledgerRows(tab, TEST_FEDERATION_ID);
-  assert.equal(rows.length, 1); assert.equal(rows[0].kind, 'deposit'); assert.equal(rows[0].msat, String(ceilNote(100000n)));
-  assert.deepEqual(heard, [ceilNote(100000n)]);
+  assert.equal(rows.length, 1); assert.equal(rows[0].kind, 'deposit'); assert.equal(rows[0].msat, '100000');
+  assert.deepEqual(heard, [100000n]);
   assert.equal(pendingDeposits(tab, TEST_FEDERATION_ID).length, 0, 'an ended deposit leaves the list');
   // a second page seeing the same invoice claimed writes no second row
   const again = { receive: async () => JSON.stringify({ invoice: inv, operation: 'op-a' }), awaitReceive: async () => 'Claimed' };
@@ -1431,31 +1433,39 @@ test('option 2: a paid gross deposit that falls short is not asked again with th
   assert.deepEqual(asks[0], ['1 round', '2 rounds', '5 rounds', '10 rounds', 'Custom']);
   assert.deepEqual(outcomes, [false, true]);
   const asked = log.filter((l) => l.receive).map((l) => BigInt(l.receive.msat));
-  assert.equal(asked[0] % 512n, 0n, 'the first invoice is the "1 round" tab, in whole notes');
+  assert.equal(asked[0] % 1000n, 0n, 'the first invoice is the "1 round" tab, a whole sat');
   assert.equal(asked.length, 2);
-  assert.equal(asked[1] % 512n, 0n, 'the rest is in whole notes');
+  assert.equal(asked[1] % 1000n, 0n, 'the rest is a whole sat');
   assert.ok(asked[1] < BigInt(round.stakeMsat) / 10n, 'the rest is the fees, not another round');
   assert.ok(done.heldMsat > 0n);
 });
 
-test('the rest of the fees: the shortfall in whole 512 msat notes; asked at once only when the wallet is short by no more than a tenth of the stake', () => {
-  assert.equal(restOfFeesMsat(1n), 512n);
-  assert.equal(restOfFeesMsat(1000n), 1024n);
-  assert.equal(restOfFeesMsat(2464n), 2560n);
+test('the rest of the fees: the smallest whole sat whose notes cover the shortfall; asked at once only when the wallet is short by no more than a tenth of the stake', () => {
+  assert.equal(restOfFeesMsat(1n), 1000n);
+  assert.equal(restOfFeesMsat(1000n), 2000n, '1 sat credits 512 msat, short of 1000');
+  assert.equal(restOfFeesMsat(2464n), 3000n);
   assert.equal(shortOnlyByFees(99840n, 2464n, 100000n), true, 'the measured 99840 msat wallet is asked only the rest');
   assert.equal(shortOnlyByFees(0n, 100000n, 100000n), false, 'an empty wallet gets the tabs');
   assert.equal(shortOnlyByFees(50000n, 50000n, 100000n), false, 'half a round short gets the tabs');
 });
-test('a rest under the federation\'s 5 sat floor is invoiced at 5 sat in whole notes (5120 msat); more is invoiced as it is', async () => {
-  assert.equal(restInvoiceMsat(2048n), 5120n);
-  assert.equal(restInvoiceMsat(4096n), 5120n);
-  assert.equal(restInvoiceMsat(5120n), 5120n);
-  assert.equal(restInvoiceMsat(7168n), 7168n);
-  const client = { receive: async (msat) => JSON.stringify({ invoice: 'lntb51200p1x', operation: 'op' + msat }), awaitReceive: () => new Promise(() => {}) };
-  const o = depositOffer({ client, stakeMsat: 100000n, restMsat: 2048n });
-  assert.equal(o.restMsat, 2048n, 'the rest the round needs');
-  assert.equal(o.restPayMsat, 5120n, 'the invoice asks the floor');
-  assert.deepEqual(o.choices.map((c) => [c.key, c.msat]), [['rest', 5120n]]);
+test('a rest under the federation\'s 5 sat floor is invoiced at 5 sat; more is invoiced as it is', async () => {
+  assert.equal(restInvoiceMsat(2000n), 5000n);
+  assert.equal(restInvoiceMsat(4000n), 5000n);
+  assert.equal(restInvoiceMsat(5000n), 5000n);
+  assert.equal(restInvoiceMsat(7000n), 7000n);
+  const client = { receive: async (msat) => JSON.stringify({ invoice: 'lntb50n1x', operation: 'op' + msat }), awaitReceive: () => new Promise(() => {}) };
+  const o = depositOffer({ client, stakeMsat: 100000n, restMsat: 2000n });
+  assert.equal(o.restMsat, 2000n, 'the rest the round needs');
+  assert.equal(o.restPayMsat, 5000n, 'the invoice asks the floor');
+  assert.deepEqual(o.choices.map((c) => [c.key, c.msat]), [['rest', 5000n]]);
+});
+
+test('the price per round: a 100 sat round with a two-recipient 2% donation is 101 sat, and N x 101 holds N rounds for every tab', async () => {
+  const { LockClient } = noteClient();
+  const locks = { amount: 96000n, feeMsat: 2000n, zeroFees: true, donationCostMsat: 1536n + 1024n };   // shares 1334 and 666
+  assert.equal(roundsDepositMsat(1, locks, LockClient), 101000n);
+  assert.deepEqual([2, 5, 10].map((n) => roundsDepositMsat(n, locks, LockClient)), [202000n, 505000n, 1010000n]);
+  for (const n of [1, 2, 5, 10]) assert.ok((BigInt(n) * 101000n) / 512n * 512n >= BigInt(n) * 100864n, `${n} rounds`);
 });
 test('a withdrawal of a chosen amount pays only an invoice of exactly that amount', async () => {
   const { LockClient } = lockClient();

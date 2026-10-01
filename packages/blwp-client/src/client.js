@@ -1231,7 +1231,7 @@ export class Client {
    * share already noted is never asked again - a reload over a kept lock
    * reports what was paid and left unpaid, and sends nothing.
    */
-  async payDonation(entry, set, { round, connection, curve, fetcher = (u) => fetch(u), log, random, storage, ...options } = {}) {
+  async payDonation(entry, set, { round, connection, curve, fetcher = (u) => fetch(u), log, random, storage, payWith = null, ...options } = {}) {
     const none = { paid: [], failed: [], unknown: [], paidMsat: 0n, asked: 0 };
     if (!entry || typeof entry.donationMsat !== 'bigint') return { ok: false, ...none, why: 'there is no entry whose donation to pay' };
     if (entry.donationMsat === 0n) return { ok: true, ...none, why: 'this entry donates nothing, so nothing is paid' };
@@ -1248,9 +1248,12 @@ export class Client {
       const named = donationSetMatchesRound(round, set.recipients);
       if (!named.ok) return { ok: false, ...none, why: named.why };
     }
-    const where = typeof connection === 'string' ? parseConnection(connection) : connection;
+    // THE PLAYER WALLET PAYS IT (the owner 2026-10-01: "donation is paid by the player as well"): `payWith(invoice)` -
+    // the federation player wallet's own send - in place of a wallet connection; each share's invoice is still the
+    // recipient's own, checked against its pay request, as below.
+    const where = payWith ? { ok: true } : (typeof connection === 'string' ? parseConnection(connection) : connection);
     if (!where || !where.ok) return { ok: false, ...none, why: (where && where.why) || 'there is no wallet connection to pay the donation with' };
-    if (!curve || typeof curve.ecdhShared !== 'function' || typeof curve.signSchnorr !== 'function')
+    if (!payWith && (!curve || typeof curve.ecdhShared !== 'function' || typeof curve.signSchnorr !== 'function'))
       return { ok: false, ...none, why: 'talking to a wallet needs a curve, and none was injected' };
     const split = splitDonation({ donationMsat: entry.donationMsat, recipients: set.recipients });
     if (!split.owed) return { ok: false, ...none, why: split.why };
@@ -1295,7 +1298,9 @@ export class Client {
       // NOTED BEFORE THE WALLET IS ASKED: a tab that cannot keep the note does
       // not ask, because a reload would ask again.
       if (!note({ state: 'asked' })) { unpaid('this tab could not keep a record of the payment, so the wallet is not asked - a reload would ask it again'); continue; }
-      const wallet = await payInvoice(where, answer.pr, {
+      let wallet;
+      if (payWith) { try { wallet = await payWith(answer.pr); } catch (e) { wallet = { ok: false, why: String((e && e.message) || e) }; } }
+      else wallet = await payInvoice(where, answer.pr, {
         curve, random: random || ((n) => crypto.getRandomValues(new Uint8Array(n))), ...options,
       });
       if (!wallet.ok) { unpaid(`the wallet did not pay it: ${wallet.why}`); continue; }
