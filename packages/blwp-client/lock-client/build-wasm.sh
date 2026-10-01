@@ -22,6 +22,7 @@ git checkout -- . && git clean -fdq
 patch -p1 < /mnt/bitcoin/blwp-build-a535/packages/blwp-client/lock-client/fedimint-lnv2-send-expiry.patch
 # 1 SAT = 1 SAT: the client issues and spends notes from 1 msat (the federation signs 0..41 already)
 patch -p1 < /mnt/bitcoin/blwp-build-a535/packages/blwp-client/lock-client/fedimint-mintv2-whole-msat.patch
+patch -p1 < /mnt/bitcoin/blwp-build-a535/packages/blwp-client/lock-client/fedimint-lnv2-testnet4-invoices.patch
 grep -n "(0..42).map(Denomination)" modules/fedimint-mintv2-common/src/config.rs | wc -l | grep -qx 2
 ln -sfn /mnt/bitcoin/blwp-build-a535/packages/blwp-client/lock-client blwp-lock-client
 grep -q '"blwp-lock-client"' Cargo.toml || sed -i 's/^members = \[/members = [\n  "blwp-lock-client",/' Cargo.toml
