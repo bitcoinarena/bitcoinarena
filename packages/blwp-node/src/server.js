@@ -1763,6 +1763,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       try { endMs = roundEndMs(c); } catch { endMs = c.entryCloseMs; }
       if (nowMs >= endMs) continue;                   // over: announced no longer
       if (c.objectionWindowMs !== OBJECTION_WINDOW_MS) continue;   // §13A, WINDOW-10-SPEC: not 600 000 ms, never listed
+      // A ROUND OF A SERIES THIS NODE NO LONGER HOLDS IS NOT ANNOUNCED (the 82/90 fork: a series replaced before it ran -
+      // its rounds already written ahead into the store - takes no entry at any door, so it is offered nowhere either).
+      if (seriesRefusal(c)) continue;
       if (aheadMs !== null && c.startTimeMs > nowMs + aheadMs) continue;
       candidates.push({ held, c, endMs });
     }
@@ -1799,6 +1802,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         id, phase, entryOpen: nowMs >= c.committeeTimeMs && nowMs < c.entryCloseMs,
         startTime: iso(c.startTimeMs), endTime: iso(endMs), committee: committeeOf(held.roundId),
         committeeTimeMs: String(c.committeeTimeMs), startTimeMs: String(c.startTimeMs),
+        // THE RUN LENGTH, ANNOUNCED (the 82/90 fork, the owner 2026-10-01: "It must be part of the round announcement"):
+        // the contract's blockTicks - in the signed contract this row names - and what it is in seconds.
+        blockTicks: c.blockTicks, runMs: (() => { try { return String(msForTicks(c.blockTicks).ms); } catch { return null; } })(),
         entryCloseMs: String(c.entryCloseMs), stakeMsat: String(c.stakeMsat),
         // WHAT JOINING ASKS OF THE PLAYER: nothing, or a federation stake lock. There is no third
         // answer - "a Lightning payment" was the withdrawn Lightning custody's hold invoice, which does not exist (§23.6).

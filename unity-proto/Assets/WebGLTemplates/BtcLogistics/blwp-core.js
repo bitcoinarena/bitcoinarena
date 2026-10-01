@@ -1083,7 +1083,7 @@ const K_STATE = 0, K_X = 1, K_Z = 2, K_LOAD = 3, K_SERIAL = 4;
 const O_CRATERS = O_STRIKE + STRIKE_WORDS;
 const MAX_CRATERS = 8;
 /**
- * ARMED, THEN DUG (the owner 2026-09-16): the blast is on the tick the liquidation is consumed and the
+ * ARMED, THEN DUG (Daniel 2026-09-16): the blast is on the tick the liquidation is consumed and the
  * hole opens 384 ticks later, so every slot carries its own dig tick and the load it was armed with.
  * Until then its radius is zero, which is what every reader already tests - the terrain, the army's
  * push-out and the page see no bowl at all. Per slot rather than one pending hole: a second
@@ -1095,7 +1095,7 @@ const C_X = 0, C_Z = 1, C_R = 2, C_D = 3, C_ROUNDS = 4, C_DIG = 5, C_LOAD = 6;
 const craterBase = (i) => O_CRATERS + Math.imul(i, C_WORDS);
 
 /**
- * ARMOUR TACTICS (TANK_TACTICS.md, the owner 2026-09-16 18:20): the round seed's hash and, per team, its frontage slot,
+ * ARMOUR TACTICS (TANK_TACTICS.md, Daniel 2026-09-16 18:20): the round seed's hash and, per team, its frontage slot,
  * last scoot, and role clock - rules/tactics.js reads and writes them. Appended, so no offset above moves.
  */
 const O_TACTICS = O_CRATERS + Math.imul(MAX_CRATERS, C_WORDS);
@@ -1774,7 +1774,7 @@ function resolveSolids(v, s, fx, fz, floor) {
 const ARMOUR_RADIUS = 196608;
 
 /**
- * THE HULL IS A HULL (§1.2, RULED 2026-09-19 from the owner's 12:58 playtest shots).
+ * THE HULL IS A HULL (§1.2, RULED 2026-09-19 from Daniel's 12:58 playtest shots).
  *
  * The circle above was a compromise and the comment beside it says so - "a slightly generous circle around a 7 m
  * hull would have the truck bouncing off thin air beside it". Measured from the shots and the renderer: the drawn
@@ -1944,7 +1944,7 @@ const MINER_X = 11075584;         // 169 m, the miner's own origin (was 114.4; t
  * WHERE THE MINER ACTUALLY BEGINS - the west edge of the DRAWN building, not its origin and not its tunnel.
  *
  * The first cut of this (2026-09-19 13:09) put the door at the tunnel's mouth, 90.4 m, because that is where the
- * entry corridor clears. the owner's 15:58 shot showed why that was the wrong edge: the building's legs, feet, cables
+ * entry corridor clears. Daniel's 15:58 shot showed why that was the wrong edge: the building's legs, feet, cables
  * and lower mass stand on the ground from 60.6 m west of its origin, so road, chart and tanks were still under it.
  * The door is that edge. With the origin at 169 m it is 108.4 m, and nothing the world lays down goes past it: the
  * candle field ends at 90.0 m, the road ribbon ends here, and the army's own east clamp is held short of it.
@@ -1990,7 +1990,7 @@ function mapSolids(ground, halfX, halfZ, reliefHalfX = halfX) {
 
   // ---- THE FOUR EDGES OF THE WORLD ARE NOT SOLIDS ------------------------
   //
-  // RULED (the owner 2026-09-22, ruling 4 of `ef7af68c`, re-stated knowing these existed): the map edge is
+  // RULED (Daniel 2026-09-22, ruling 4 of `ef7af68c`, re-stated knowing these existed): the map edge is
   // a CLAMP, not a wall. The core owes no wall solids, and the client stops drawing walls the core does
   // not build.
   //
@@ -2026,7 +2026,7 @@ function mapSolids(ground, halfX, halfZ, reliefHalfX = halfX) {
   // Over every mouth.
   put(shellX, 0, half(WALL_DEPTH), SHELL_HALF, add(postG, MOUTH_HIGH), postHigh);
 
-  // AND ACROSS EVERY MOUTH, WHICH WAS A HOLE RIGHT THROUGH THE BUILDING (the owner 2026-09-20 18:59,
+  // AND ACROSS EVERY MOUTH, WHICH WAS A HOLE RIGHT THROUGH THE BUILDING (Daniel 2026-09-20 18:59,
   // photographed: "the truck must not drive through that building ... Mempool collision must be exactly the
   // yellow marked line on the facade").
   //
@@ -2083,7 +2083,7 @@ function mapSolids(ground, halfX, halfZ, reliefHalfX = halfX) {
   // written here in the units the core keeps. They are NOT a mesh collider and nothing was copied from the C#:
   // DeliveryGate's five Slab() calls still build the five above, and that agreement is left exactly as it was.
   //
-  // WHAT IS DELIBERATELY ABSENT, and it is a ruling rather than an oversight (the owner 2026-09-20):
+  // WHAT IS DELIBERATELY ABSENT, and it is a ruling rather than an oversight (Daniel 2026-09-20):
   //   mass_behind_tunnel         hangs from y 2.7 m across the whole approach while the truck's body is 3.26 m,
   //                              so its roof passes 0.56 m through it. The delivery gate is at x 169, PAST that
   //                              mass at x 119..145, so a solid there closes the only route to the miner. The
@@ -2094,7 +2094,7 @@ function mapSolids(ground, halfX, halfZ, reliefHalfX = halfX) {
   //                              at truck height, and the gate is beyond them. A box on any of them closes the
   //                              route as surely as the mass does. Nothing solid stands within 6 m of the centre
   //                              line at truck height, so the run-in is always open.
-  // THE FINISH STRAIGHT IS FREE (the owner 2026-09-25 21:19: "The finish-straight passage must be completely free. A
+  // THE FINISH STRAIGHT IS FREE (Daniel 2026-09-25 21:19: "The finish-straight passage must be completely free. A
   // truck at speed crosses it with no hit and no slowdown from a collider ... Whatever is now in that passage, in the
   // core or in Unity, comes out. Do not add a box to keep the mesh honest if it stands in the passage").
   //   MEASURED before (straight.mjs, 20 seeds, full throttle from x 60): on the spawn bay's own lane, z 10.2, 17 of
@@ -2107,7 +2107,7 @@ function mapSolids(ground, halfX, halfZ, reliefHalfX = halfX) {
   //   The passage is the tunnel between its ribs, |z| < 32.8, from the miner's door to the gate: nothing in it is
   //   solid at any height. The walls, ribs, jambs and seams line it and stay; the coin stacks are past the gate and
   //   outside the mouth, and stay.
-  // THE CORRIDOR LINING IS OUT, AND THE COIN STACKS STAND WHERE THEY ARE DRAWN (the owner 2026-09-26 07:18, phone, block
+  // THE CORRIDOR LINING IS OUT, AND THE COIN STACKS STAND WHERE THEY ARE DRAWN (Daniel 2026-09-26 07:18, phone, block
   // 968644: "The collisions left and right of the finish straight are wrong. They come out. The passage stays free ...
   // The circled stack needs a collision. You can drive through it now. The box is where that drawn stack stands, not
   // where an old measurement put coin_stack").
@@ -2174,7 +2174,7 @@ const COURIER_RANGE = Math.imul(34, ONE);
  * is closer than it is, and multiplies the shell. Heat ZERO is still the C#
  * recording. Full heat used the C# 1.4 / 2.5 / 0.6 factors and covered the
  * whole 85 m half-map (tanks noticed at 81.6 m), so the rim was not a rim
- * and a loaded run could not reach the gate. M1.a16 (the owner 2026-09-07):
+ * and a loaded run could not reach the gate. M1.a16 (Daniel 2026-09-07):
  * keep it hard, 30-40% of committed runs should get through.
  *
  * A tank at full heat now notices at 34 x 1.3 = 44.2 m, will leave a foe
@@ -2408,7 +2408,7 @@ const RIFLE_TRAIL_MAX = Math.imul(40, ONE);  // and trails it by at most 40 m
 const OVERRUN_DEPTH = Math.imul(14, ONE);   // Army.OverrunDepth
 const FALL_BACK = Math.imul(34, ONE);
 
-/** The post office's paving edge: the army's west kerb (the owner 2026-09-19 13:09, "no tank on the loading dock"). */
+/** The post office's paving edge: the army's west kerb (Daniel 2026-09-19 13:09, "no tank on the loading dock"). */
 const DOCK_EDGE = 5465702;                  // 83.4 m
 
 
@@ -2439,7 +2439,7 @@ const SQUAD_SPAN = Math.imul(76, ONE);     // anchors run from -76 to +76
 const SQUAD_WIDTH = Math.imul(16, ONE);    // each unit sits within 8 m of its anchor
 
 /**
- * ARMOUR DOCTRINE (WAR_TACTICS.md, the owner 2026-09-16 18:20): where a tank goes is assigned in `rules/tactics.js` -
+ * ARMOUR DOCTRINE (WAR_TACTICS.md, Daniel 2026-09-16 18:20): where a tank goes is assigned in `rules/tactics.js` -
  * teams, roles, frontage slots, shoot-and-scoot - and handed in on `u` (tac, tacX, tacDepth, tacBounding). This step only
  * moves the tank there, and picks the hull-down spot for a tank that holds.
  *
@@ -2552,7 +2552,7 @@ const OVERRUN = Math.imul(14, ONE);
  * along. That only stays harmless while this runs from the first tick, which
  * is why it is at the top of the army's step and not somewhere convenient.
  */
-// WAR_TACTICS.md §1.1 (the owner 2026-09-16): never inside 12 m, tank to tank, either side - was C#'s 8.5 m friendly and
+// WAR_TACTICS.md §1.1 (Daniel 2026-09-16): never inside 12 m, tank to tank, either side - was C#'s 8.5 m friendly and
 // 7.5 m hostile, and the measured nearest tank sat at 8.50 m, pressed against it, on half of all tank-ticks.
 const FRIENDLY_SPACING = Math.imul(12, ONE);
 const HOSTILE_SPACING = Math.imul(12, ONE);
@@ -2667,8 +2667,8 @@ const SIDE_BEAR = 1;
  * before the wobble or every recorded transcript stops replaying.
  */
 /**
- * A POST INSIDE A CRATER IS ON ITS RIM INSTEAD, ON THE TANK'S OWN SIDE (the owner 2026-09-19 15:57,
- * owner-screens/tanks-stuck-craters-1557.jpg: "tanks stuck in craters - they do not move away and cannot attack").
+ * A POST INSIDE A CRATER IS ON ITS RIM INSTEAD, ON THE TANK'S OWN SIDE (Daniel 2026-09-19 15:57,
+ * daniel-screens/tanks-stuck-craters-1557.jpg: "tanks stuck in craters - they do not move away and cannot attack").
  *
  * Measured before this rule, over 90 s with nukes landing, seeds 1 / 2 / 3: 44.7% / 45.7% / 52.4% of all living
  * tank-ticks were spent within 1.5 m of a crater rim, and 44131 of seed 1's 44193 of those had the tank's POST
@@ -2679,7 +2679,7 @@ const SIDE_BEAR = 1;
  *
  * The post SLIDES ALONG ITS OWN DEPTH LINE to the nearer edge of the bowl - x only, the line's z untouched - so the
  * hull drives AROUND the hole and keeps its place in the front, instead of standing on the lip. Projecting it
- * radially onto the rim was the first cut and it is not what the owner asked for: measured, it left the tank within
+ * radially onto the rim was the first cut and it is not what Daniel asked for: measured, it left the tank within
  * 1.5 m of a rim on 36.0 / 29.3 / 26.9% of tank-ticks, because the rim was then the post. Craters are visited in
  * index order and the point is re-checked, because bowls overlap (his shot has three); four passes, then it stands
  * where it is - a bounded loop, so the tick cost cannot run away.
@@ -2796,7 +2796,7 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, halfX, half
     // HULL-DOWN, for the overwatch tank: the candidate with the highest ground between it and the enemy.
     // the crest the core holds for this tank (tactics.js crestHold, §4.1 hysteresis), handed in as an offset from the line
     if (!u.tacBounding && ground) hold = add(hold, u.tacCrest | 0);
-    // AND NOT INTO A CRATER (the owner 2026-09-19 15:57). A post in a bowl and the AvoidWrecks push below pull against
+    // AND NOT INTO A CRATER (Daniel 2026-09-19 15:57). A post in a bowl and the AvoidWrecks push below pull against
     // each other every tick, and the hull stands on the lip for as long as the crater lives: measured 44.7 / 45.7 /
     // 52.4% of living tank-ticks within 1.5 m of a rim on seeds 1 / 2 / 3, longest stay 68.6 / 68.6 / 73.6 s. The
     // post goes to the rim on this tank's own side (tactics.js clearOfCraters), so it paths around and keeps firing.
@@ -3090,7 +3090,7 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, halfX, half
     stepZ = mulFast(cos(u.heading), along);
   }
 
-  // AND NOT ONTO EITHER BUILDING (the owner 2026-09-19 13:09 and 15:58). The army's own edge is FRONT_X - 4 = 88 m.
+  // AND NOT ONTO EITHER BUILDING (Daniel 2026-09-19 13:09 and 15:58). The army's own edge is FRONT_X - 4 = 88 m.
   // West, the post office's paving reaches to 83.4 m, so the kerb is nearer than the army's edge and it wins.
   // East, the miner's drawn west edge is the door (map.js MINER_DOOR_X, 108.4 m since the world grew), so the
   // army's own edge is the nearer one there. The clamp is therefore NOT symmetric, and writing it as one number
@@ -3108,7 +3108,7 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, halfX, half
   // stay out; what is taken is the shape of the rule, not the feature whose
   // share of the gap measured zero.
   //
-  // THE 0.6 m MAN IS GONE (the owner 2026-09-19, and §11.3's own sentence: the
+  // THE 0.6 m MAN IS GONE (Daniel 2026-09-19, and §11.3's own sentence: the
   // push "no longer applies to a man; it still applies to a tank (3.2 m)").
   // Both sizes were carried across together because they sat on one line in
   // C#, and that was the leftover: C# wrote them when a man in a hole was a
@@ -3157,7 +3157,7 @@ function stepUnit(u, rng, seamZ, truckX, truckZ, truckHeading, heat, halfX, half
   // at 92.0 m against an 88 m edge. A rule that other rules may step over is not a rule.
   if (u.armour) u.x = clamp(u.x, neg(min(ARMOUR_WEST, halfX)), min(ARMOUR_EAST, halfX));
 
-  // NOTHING OFF THE TRUCK (the owner 2026-09-16 17:00: "Tanks must NOT react to the truck except by shooting. No
+  // NOTHING OFF THE TRUCK (Daniel 2026-09-16 17:00: "Tanks must NOT react to the truck except by shooting. No
   // dodge. No being pushed. They are much stronger than him; that must be obvious."). The ring that held armour
   // 28 m off the truck (3c4f849), and the cap on it (11ea754), are gone: measured with it, no tank ever stood inside
   // 12 m of a truck held in the battle (0 tank-ticks, 5 seeds x 3 places x 2 beds) because the truck moved them. A
@@ -3295,7 +3295,7 @@ const FIRE_RELOAD_SPAN = 108;    // up to 3.2 s
  */
 const HIT_PER_MIL = 550;
 
-const FIRE_DAMAGE_MIN = Math.imul(12, ONE);   // 11 -> 12, about 10% (the owner 2026-09-23)
+const FIRE_DAMAGE_MIN = Math.imul(12, ONE);   // 11 -> 12, about 10% (Daniel 2026-09-23)
 const FIRE_DAMAGE_SPAN = Math.imul(14, ONE);
 
 /**
@@ -3376,7 +3376,7 @@ function threatAt(units, count, x, z) {
 const SAMPLES = 64;
 
 /**
- * The seam's reach either side of z = 0 as a share of the half depth, Q16.16: 0.53, +-45 m (WAR_TACTICS.md §4.15, the owner
+ * The seam's reach either side of z = 0 as a share of the half depth, Q16.16: 0.53, +-45 m (WAR_TACTICS.md §4.15, Daniel
  * 2026-09-17 09:40: a smaller static chart, so the relief outside the band stands behind the lines). It was 0.72 (C#'s
  * +-61.2 m, see `frontlineZ`); 0.53 x 65536 = 34734.08.
  */
@@ -3387,7 +3387,7 @@ const FRONT_DEPTH = 34734;
  * +-130 m map, so the fight line's price at an x is read from the samples of the candle standing at that x. 32 slots of
  * FIELD_SLOT from FIELD_X0 (spawn ruling B: first face 26 m past the spawn centre, last slot ending before the miner face);
  *
- * RULING B REFITTED TO THE MEASURED DOOR (the owner 2026-09-19 13:09 and his pick after the measurement). The "miner face"
+ * RULING B REFITTED TO THE MEASURED DOOR (Daniel 2026-09-19 13:09 and his pick after the measurement). The "miner face"
  * the ruling named is x 108.4, which is where the MODEL'S ORIGIN is placed - not where the building begins. Measured
  * out of bitcoin_miner_megastructure.glb, through DeliveryGate's 180-degree turn and (1, 0.45, 1) scale, the miner
  * stands on the ground from x 53.8 m (power cables), with feet at 62.8, legs at 66.9 and its lower mass from 64.4;
@@ -3405,7 +3405,7 @@ const FIELD_SLOT = 339558;                  // 5.18124 m; 32 slots end at 89.999
 const TAPE_HALF = 32768, TAPE_LAST_Q = Math.imul(SAMPLES - 1, ONE);
 
 /**
- * THE SCROLL (§4.15 movement, the owner 2026-09-17 13:49), in samples, Q16.16: how far the chart has slid toward the post
+ * THE SCROLL (§4.15 movement, Daniel 2026-09-17 13:49), in samples, Q16.16: how far the chart has slid toward the post
  * office since its slots last lined up. One sample is half a slot (2.878 m at the spawn-B pitch) over the 300 ticks a
  * sample lasts, 0.576 m/s; held at a whole sample when the next one is late. The pairing moves a candle one whole slot
  * every second sample, so the slide runs 0..2 samples between those moves - `(1 - taken & 1)` whole samples plus the
@@ -3529,7 +3529,7 @@ function frontlineZ(hist, x, halfX, halfZ, taken = 0, scroll = 0, scaleLo = null
 }
 
 // ---- rules/candles.js
-// THE CANDLES ARE TERRAIN - WAR_TACTICS.md §4.15, as a RAISED RIBBON (playtest fix 492f128, the owner 2026-09-17 13:51).
+// THE CANDLES ARE TERRAIN - WAR_TACTICS.md §4.15, as a RAISED RIBBON (playtest fix 492f128, Daniel 2026-09-17 13:51).
 //
 // The tape's candles as a height layer the surface reader adds (`surfaceAt = relief + candles - craters`),
 // on a static chart band levelled to a pancake of the relief. 32 slots of 5.756 m between the apron and the miner (spawn
@@ -3544,7 +3544,7 @@ function frontlineZ(hist, x, halfX, halfZ, taken = 0, scroll = 0, scaleLo = null
 
 
 const CANDLES = 32;
-// SPAWN RULING B (the owner 2026-09-17): the truck leaves the apron, then meets the chart. The first x-face stands 26 m past
+// SPAWN RULING B (Daniel 2026-09-17): the truck leaves the apron, then meets the chart. The first x-face stands 26 m past
 // the spawn centre (START_X -100.4 m; the nose is 3.275 m ahead of it, so the nose meets it 22.7 m out, past the 22 m
 // apron), and the 32 slots end at the miner's face (x 108.4 m), so no body stands in the gate throat or across the
 // delivery line (x 114). 32 slots over 184.2 m: pitch 5.75625 m, the corridor kept at 2.8 m, the body what is left.
@@ -3556,7 +3556,7 @@ const CANDLE_H = ONE;                       // 1 m plateau (was 2)
 const CANDLE_RAMP = 262144;                 // 4 m ramp: 1 m over 4 m is 25% (was 5 m at 40%)
 const CANDLE_MIN_LENGTH = ONE;              // a doji is built 1 m long
 /**
- * THE WICK IS GROUND TOO (§4.15, the owner 2026-09-17 15:30: "can I drive through it? that would not be logical"): a ridge
+ * THE WICK IS GROUND TOO (§4.15, Daniel 2026-09-17 15:30: "can I drive through it? that would not be logical"): a ridge
  * 0.5 m tall with a 1 m top along the slot's centre line, from the body's end out to the high (and from the low to the
  * body's other end), its sides and far end ramped at 25% (2 m). It runs R into the body, where the body's own ramp is
  * already past 0.5 m, so ridge and body meet without a step. Nothing stands above 1 m; nothing is passed through.
@@ -3602,7 +3602,7 @@ function zOfPrice(p, lo, span, halfZ) {
  * does), so which tape sample starts slot 0 follows the parity of the samples taken: `taken` odd drops the oldest sample
  * and leaves the newest slot the forming candle.
  *
- * A CONTINUOUS STAIRCASE (§4.15, the owner 2026-09-17 13:42; found on the live top-down: scattered pillars with gaps). The
+ * A CONTINUOUS STAIRCASE (§4.15, Daniel 2026-09-17 13:42; found on the live top-down: scattered pillars with gaps). The
  * tape is a series of closes: candle c's open is the previous candle's close (sample 2c - 1; the first slot's open is its
  * own first sample, the one before it has left the tape), its close sample 2c + 1, its low and high the min and max of
  * those three samples. Every body starts where the last one ended.
@@ -3692,7 +3692,7 @@ function faceDistance(layout, n, z0, z1, z, across) {
 }
 
 /**
- * STATIC, NOT DYNAMIC (§4.15, the owner 2026-09-17 09:40): the band is fixed, so no ground moves under a wheel. Inside
+ * STATIC, NOT DYNAMIC (§4.15, Daniel 2026-09-17 09:40): the band is fixed, so no ground moves under a wheel. Inside
  * |x| <= 104, |z| <= 54 the relief is a pancake - `apron + 0.15 (relief - apron)`, the mempool's swells kept low. Outside
  * it, within the band's x, the relief is held to a 40% cone from the pancake at the band's edge,
  * `|h - edge| <= 0.4 (|z| - 54)` (12.4 m at the map's edge), so no ground rises (or falls) toward the band faster than a
@@ -3746,7 +3746,7 @@ function writeCandleView(layout, apron, out, taken = 0, shift = 0) {
 }
 
 // ---- rules/tactics.js
-// ARMOUR TACTICS - WAR_TACTICS.md at the repo root is the spec (the owner 2026-09-16 18:20). This file is its
+// ARMOUR TACTICS - WAR_TACTICS.md at the repo root is the spec (Daniel 2026-09-16 18:20). This file is its
 // implementation; the army step (rules/army.js) only moves a tank to what is handed out here.
 //
 // Deterministic: every value is an integer function of the round seed word, the tank's roster slot index, the tick
@@ -3961,7 +3961,7 @@ function initTactics(s, base, seedWord) {
 }
 
 // =====================================================================================================================
-// OBJECTIVES (WAR_TACTICS.md §4.11, the owner 2026-09-16 19:02-19:05): RIDGE, HOLLOW and GAP - three inner lanes read
+// OBJECTIVES (WAR_TACTICS.md §4.11, Daniel 2026-09-16 19:02-19:05): RIDGE, HOLLOW and GAP - three inner lanes read
 // from the round's ground, which is a function of the seed alone. Nothing here reads a truck.
 // =====================================================================================================================
 
@@ -4033,7 +4033,7 @@ const assaultPhase = (s, base, side) => (s[assaultWord(base, side)] >> 4) & 15;
 const assaultCount = (s, base, side) => s[assaultWord(base, side)] >>> 8;
 
 // =====================================================================================================================
-// THE CHART FIGHTS THE WAR (WAR_TACTICS.md §4.14, the owner 2026-09-16 21:30/21:40). Two readings of the tape, re-read on the
+// THE CHART FIGHTS THE WAR (WAR_TACTICS.md §4.14, Daniel 2026-09-16 21:30/21:40). Two readings of the tape, re-read on the
 // sample tick and never between: the LEAD (newest against the round's open: who is winning the round, supply) and the
 // TREND (the colour of the last six finished 10 s candles: who is attacking right now). Chart -> war only: nothing here
 // reads the truck, and nothing in the war writes the tape.
@@ -4069,7 +4069,7 @@ function initMarket(s, base, tape) {
 /**
  * A finished candle's colour (§4.14): +1 green, -1 red, 0 a doji.
  *
- * THE DOJI BAND IS 0.3 bp, NOT 3 (measured 2026-09-19 from the owner's 12:55 shot). §4.14 writes both numbers and they
+ * THE DOJI BAND IS 0.3 bp, NOT 3 (measured 2026-09-19 from Daniel's 12:55 shot). §4.14 writes both numbers and they
  * are not the same one: *"a candle whose body is under 3 bp of the open (a doji, $2.25 at $75,000)"* - but 3 bp of
  * $75,000 is $22.50, and $2.25 is 0.3 bp. The worked example is the intent; the prose slipped a decimal and the core
  * had copied the prose.
@@ -4090,7 +4090,7 @@ function candleColour(open, close) {
  * THE COLOUR OF THE `c`th FINISHED CANDLE BACK, `c` = 0 the newest, counted from the tape index `end` that the newest
  * finished candle closes on (`trendEnd` below).
  *
- * IT IS THE BODY THE PLAYER SEES, and until 2026-09-19 21:39 it was half of it (the owner,
+ * IT IS THE BODY THE PLAYER SEES, and until 2026-09-19 21:39 it was half of it (Daniel,
  * hud-sideways-five-red-2139.png: "SIDEWAYS is wrong - last five candles are RED"). A candle is TWO samples: §4.15's
  * staircase opens each one on the previous candle's close (chart.js: `o = sample[a - 1]`, `c = sample[a + 1]`), and
  * the world's bodies are built the same way (candles.js `candleLayout`). This read `tape[end - 2c - 1]` as the open -
@@ -4265,7 +4265,7 @@ function isBounding(s, base, index, tick) {
 }
 
 /**
- * NO TANK ON A LOADING DOCK (the owner 2026-09-19 13:09, playtest: "tanks must not drive on the Post Office loading
+ * NO TANK ON A LOADING DOCK (Daniel 2026-09-19 13:09, playtest: "tanks must not drive on the Post Office loading
  * dock"). The post office stands at x -114.4 m and its paving reaches 31 m out, to -83.4 m; the outer slot is at
  * -81 m and the pair's outer tank sits 6 m beyond it, at -87 m, which is 3.6 m of concrete. The slot pitch does not
  * move - it is 27 m, pinned by the 46 m gun and the kill-zone row - and neither does the free slot or the pair's
@@ -4289,7 +4289,7 @@ const PAIR_EAST_X = (Math.min(5767168, MINER_DOOR_X - Math.imul(4, ONE)) - PAIR_
 /* ------------------------------------------------------------------ §11.3 COVER: wrecks and craters ---------- */
 
 /**
- * COVER IS A PLACE, AND A PLACE IS A FUNCTION OF THE STATE (WAR_TACTICS.md §11.3, the owner 2026-09-16 19:02:
+ * COVER IS A PLACE, AND A PLACE IS A FUNCTION OF THE STATE (WAR_TACTICS.md §11.3, Daniel 2026-09-16 19:02:
  * "they must not stay cannon fodder. They take cover, go prone, suppress, use wrecks and craters. Real infantry
  * hides."). Nothing here is ported: the old army has no cover at all, and its one artefact in this ground -
  * `AvoidWrecks`, which pushes a man OUT of a crater - is the inverse of this rule and stays where it belongs, on
@@ -4447,7 +4447,7 @@ function coverEligible(s, base, side, postX, postZ, seamZ, place, held = false) 
     if (abs(dx) > reach || abs(dz) > reach) return false;
     if (length2(dx, dz) > reach) return false;
   }
-  // THE CLAMP PICKS A HOLE; IT DOES NOT TAKE ONE BACK (the owner 2026-09-19, on the measurement below). The clamp
+  // THE CLAMP PICKS A HOLE; IT DOES NOT TAKE ONE BACK (Daniel 2026-09-19, on the measurement below). The clamp
   // `[seam - side x 40, seam + side x 8]` says which places a man may be SENT to. Applied again every tick to a
   // claim he already holds, it takes the hole away from under him while he is still walking to it - and it does so
   // by a hair. Measured on the §11.3 drive, two seeds: 106 clamp deaths, 105 of them breaking the FRONT bound, by
@@ -4604,7 +4604,7 @@ function onPost(s, base, index, tick, seamAt, ground) {
   const p = postOf(s, base, index, tick), side = teamOf(index).side;
   const line = add(seamAt(p.x) | 0, mulFast(Math.imul(side, ONE), p.depth));
   const held = p.bounding ? line : crestHold(s, base, index, p, line, side, ground);
-  // THE SAME POINT THE STEP AIMS AT: a post inside a crater is on its rim (army.js clearOfCraters, the owner 15:57).
+  // THE SAME POINT THE STEP AIMS AT: a post inside a crater is on its rim (army.js clearOfCraters, Daniel 15:57).
   // Read here too, or a tank standing correctly on a rim would be measured as off post and its team would stop
   // swapping roles and scooting.
   const clear = clearOfCraters(cratersOf(s), p.x, held, side);
@@ -4885,7 +4885,7 @@ function heat(feeSats, btcHundredths) {
 
 /** Metres of ground made good at full danger for E = 1. */
 // WHAT A FULL RUN OF RISK IS WORTH, and it was set too low to tell two runs
-// apart. the owner drove the seam and drove the edges and both paid about a
+// apart. Daniel drove the seam and drove the edges and both paid about a
 // thousand.
 //
 // Exposure accrues as `threat * (1 + cargo) * forward metres`, and a run gains
@@ -4918,13 +4918,13 @@ const APRON_RADIUS = Math.imul(22, ONE);
 
 /** Metres off the seam at which a metre of ground pays nothing.
  *  36, not 40: a 10% tighter band so a lane that skirts the front pays nothing
- *  sooner (the owner 2026-09-23). */
+ *  sooner (Daniel 2026-09-23). */
 const FRONT_SCORE_SPAN = Math.imul(36, ONE);
 
 /**
  * How much of the local threat counts for the score, from distance to the
  * front. 1 on the seam, 0 at 36 m and beyond. Quadratic so a rim far from
- * the fighting is not a slightly quieter lane (the owner 2026-09-07).
+ * the fighting is not a slightly quieter lane (Daniel 2026-09-07).
  */
 const frontWeight = (z, seam) => {
   const sep = abs(sub(z, seam));
@@ -4969,7 +4969,7 @@ const timeFactor = (ticks) =>
                      T_FLOOR, T_CEIL);
 
 /**
- * THE FACTORS ON THE GRID THE CARD PRINTS, AND THE SCORE THEIR PRODUCT (the owner 2026-09-25: "Their product is the score,
+ * THE FACTORS ON THE GRID THE CARD PRINTS, AND THE SCORE THEIR PRODUCT (Daniel 2026-09-25: "Their product is the score,
  * so the core's score is that product"; multiplayer_p2p.md §18A.3: score = 1000 · E · T · C).
  *
  * Each factor is an integer count of 1e-5 (FACTOR_SCALE), formed from the core's own word and rounded once, half up:
@@ -5058,6 +5058,16 @@ const HALF_MOUTH = Math.imul(34, ONE);
  */
 const BLOCK_TICKS = 10800;
 
+/**
+ * THE RUN LENGTH IS THE ROUND'S (Daniel 2026-10-01, the 82/90 hard fork: "The round length must be part of the contract
+ * - not a fixed constant. It must be part of the round announcement"). A run ends MISSED after the ticks its round's
+ * contract names (blockTicks), handed to `init`; BLOCK_TICKS stays the default a run without a round gets (practice, a
+ * SIM round) and the longest a round may name. A run of BLOCK_TICKS is the same, tick for tick and hash for hash, as the
+ * core before this (the length is not in the hashed state).
+ */
+const MAX_RUN_TICKS = BLOCK_TICKS;
+function runTicksIsValid(t) { return Number.isInteger(t) && t >= 1 && t <= MAX_RUN_TICKS; }
+
 const RUN_LIVE = 0;
 const RUN_DELIVERED = 1;
 const RUN_WRECKED = 2;
@@ -5072,9 +5082,9 @@ const arrived = (x, z) => x >= GATE_X && abs(z) <= HALF_MOUTH;
  * Order matters: a wreck beats an arrival in the same tick, and a missed block
  * beats both - a truck that is destroyed as the block closes did not deliver.
  */
-function outcome(state, x, z, hp, tickInBlock) {
+function outcome(state, x, z, hp, tickInBlock, runTicks = BLOCK_TICKS) {
   if (state !== RUN_LIVE) return state;
-  if (tickInBlock >= BLOCK_TICKS) return RUN_MISSED;
+  if (tickInBlock >= runTicks) return RUN_MISSED;
   if (hp <= 0) return RUN_WRECKED;
   if (arrived(x, z)) return RUN_DELIVERED;
   return RUN_LIVE;
@@ -5480,10 +5490,10 @@ const TRUCK_ARMOUR = Math.imul(3, ONE) >> 1;   // 1.5, TruckHealth.armour
  * counterpart yet, because the core has no hulls. It is on the list with
  * `Army.Wrecks`.
  */
-// SUPERSEDED (the owner 2026-09-16 17:06): the speed-priced crash above - 4 m/s a write-off, 0.5 m/s the floor, 6 points
+// SUPERSEDED (Daniel 2026-09-16 17:06): the speed-priced crash above - 4 m/s a write-off, 0.5 m/s the floor, 6 points
 // per m/s - is gone. Any touch with live armour writes the truck off; see the armour contact in `step`.
 
-// THE WORLD GREW EAST (the owner 2026-09-19 15:58, miner-entrance-still-covered-1558.jpg, ruled 16:0x). The drawn miner
+// THE WORLD GREW EAST (Daniel 2026-09-19 15:58, miner-entrance-still-covered-1558.jpg, ruled 16:0x). The drawn miner
 // reaches 60.6 m west of its own origin, so at an origin of 114.4 m the building stood on the battlefield from x
 // 53.8 m - over the chart's last nine slots, the road and the army. Moving the chart could not fix that without a
 // 4.05 m pitch, which is narrower than the corridors the 10:05 playtest already called a trap. So the world grows:
@@ -5805,7 +5815,7 @@ function setSolids(st, count, boxes) {
  * small end, twenty at the large, which is the span (z) asks for.
  */
 /**
- * HOW LONG THE GROUND TAKES TO OPEN, in ticks (the owner 2026-09-16).
+ * HOW LONG THE GROUND TAKES TO OPEN, in ticks (Daniel 2026-09-16).
  *
  * The blast is the tick the liquidation is consumed; the bowl is 384 ticks after it, and the page
  * draws it on the tick the core says it exists. Measured before: the hole stood in the state on the
@@ -5917,7 +5927,7 @@ function submitSample(st, price) {
   const p = price | 0;
   if (p <= 0) return false;
   const h = st.tape, s = st.i32, m = O_TACTICS + TAC_MARKET;
-  // THE FIRST LIVE PRICE CONTINUES THE CHART, IT DOES NOT SHOVE IT (the owner 2026-09-17 16:42, from the cab: "at the start
+  // THE FIRST LIVE PRICE CONTINUES THE CHART, IT DOES NOT SHOVE IT (Daniel 2026-09-17 16:42, from the cab: "at the start
   // of the round the candles move left, then freeze"). The seeded tape is the round's own shape around a made-up level
   // ($78,515 on the Daily) and the first live price ($76,737) landed far outside it: the rescale swung the whole chart
   // - the seam at x 0 moved 19.3 m sideways over the 300 ticks after the sample and stopped there. Every price the
@@ -5946,7 +5956,7 @@ function submitSample(st, price) {
 }
 
 /**
- * THE LIVE TAPE (the owner 2026-09-17 16:44: "reload always shows the SAME world candles - not live. Seeded tape is fallback
+ * THE LIVE TAPE (Daniel 2026-09-17 16:44: "reload always shows the SAME world candles - not live. Seeded tape is fallback
  * only"). The page hands the core the last SAMPLES live prices (5 s apart, oldest first) before any live sample has
  * arrived: the tape, the open and the scale become the market's, and the seeded tape stays only as the fallback when no
  * history could be fetched. Once per core, before the first sample; in the transcript like a sample (batch `tapes`).
@@ -6098,7 +6108,7 @@ function seamAtX(st, x) {
 
 function surfaceAt(st, x, z) {
   // relief as the static chart band holds it (§4.15: pancake inside, cone outside) + the candles - craters.
-  // PASSABILITY (§4.15, the owner 2026-09-17 14:40 "make it so trucks and tanks get through"): nothing added in the band stands
+  // PASSABILITY (§4.15, Daniel 2026-09-17 14:40 "make it so trucks and tanks get through"): nothing added in the band stands
   // over 1 m or climbs over 25% but a crater's bowl, so the 2.4 m hull-down berms (e0f4ed7) are withdrawn - a berm across
   // the hold band was a wall to a truck crossing the front. The candle ribbon (1 m, 25%) is the only layer added.
   if (!st.candles) return sub(heightAtWorld(st.ground, x, z, RELIEF_HALF_X, HALF_Z), craterCut(st.i32, x, z));
@@ -6139,8 +6149,11 @@ function groundAt(st, x, z) {
   return surfaceAt(st, x, z);
 }
 
-function init(seedWord) {
+function init(seedWord, { runTicks = BLOCK_TICKS } = {}) {
+  // THE ROUND'S RUN LENGTH (gate.js): kept beside the state, not in it, so a run's hashes do not depend on it.
+  if (!runTicksIsValid(runTicks)) throw new Error(`a run lasts 1 to ${BLOCK_TICKS} ticks, not ${runTicks}`);
   const st = create();
+  st.runTicks = runTicks;
   const s = st.i32;
   const rng = s.subarray(O_RNG, O_RNG + 4);
   seed(rng, seedWord);
@@ -6218,7 +6231,7 @@ function init(seedWord) {
     spawnUnit(s, rng, i);
     if (isArmour(i)) enterInLane(s, O_TACTICS, i);   // WAR_TACTICS.md: every tank enters in its team's lane
   }
-  // AN ARMY STARTS DEPLOYED (the owner 2026-09-19, ruled): a rifleman is put ON his post when he spawns - the comment
+  // AN ARMY STARTS DEPLOYED (Daniel 2026-09-19, ruled): a rifleman is put ON his post when he spawns - the comment
   // above says so - while a tank was given only its lane's x and kept the spawn's z at the back edge. That is a
   // spawn fault the C# recording happens to contain, not doctrine, and it is not copied: both sides spent the
   // opening walking in, covering nothing.
@@ -6729,7 +6742,7 @@ function step(st, throttle, steer, brake, handbrake, practice) {
     // The hole is ARMED here, at the impact, and dug `CRATER_DELAY` ticks later: the slot keeps the
     // place and the load, and its radius stays zero until then. `craterOf` runs at the dig, so the
     // load is the only thing that has to be carried.
-    // AND NOTHING IN THE BLAST WALKS AWAY (the owner 2026-09-19 15:55: "nuke must kill EVERY tank in the blast. No
+    // AND NOTHING IN THE BLAST WALKS AWAY (Daniel 2026-09-19 15:55: "nuke must kill EVERY tank in the blast. No
     // survivors in range"). Measured before this rule, over three seeds and nine strikes each: 8 of 8, 6 of 6 and
     // 9 of 9 living tanks inside 16 m of a strike survived it - the liquidation had no lethality at all, it only
     // dug. The blast is the hole it is about to dig: every living unit, armour or man, either side, inside the
@@ -6817,7 +6830,7 @@ function step(st, throttle, steer, brake, handbrake, practice) {
   // does not, because the core has no invulnerable radius - that is a listed
   // gap and not something to invent here.
   //
-  // A TANK IS NOT A WALL, IT IS THE END (the owner 2026-09-16 17:06: "Touch truck-tank = truck dies"). The crash used
+  // A TANK IS NOT A WALL, IT IS THE END (Daniel 2026-09-16 17:06: "Touch truck-tank = truck dies"). The crash used
   // to be priced by how hard the truck went in - nothing under 0.5 m/s, a write-off only from 4 m/s - so a truck
   // could lean on a tank and drive on: measured, 17 of 24 slow drive-ins touched a tank and 22 of 24 trucks lived.
   // Any contact with live armour in a live run now writes it off; the impact word still goes to the host for the
@@ -6851,7 +6864,7 @@ function step(st, throttle, steer, brake, handbrake, practice) {
   // to be carried at its real size. The rifle still adds exactly ONE until
   // its own half of (j) is done.
   let courierDmg = 0;
-  // NO FIRE BEFORE ROLL-OUT (WAR_TACTICS.md §1.2, the owner 2026-09-16): no gun chooses the truck until its best x is
+  // NO FIRE BEFORE ROLL-OUT (WAR_TACTICS.md §1.2, Daniel 2026-09-16): no gun chooses the truck until its best x is
   // APRON_RADIUS past its start. Latched through S_BESTX, which never goes back. Measured before, truck idle 60 s in
   // the bay over 8 seeds: 4/8 hit on HEAD's core, 7/8 hit and one wrecked once tanks fired on a truck with no enemy near.
   const rolledOut = sub(s[O_SCORE + S_BESTX], START_X) >= APRON_RADIUS;
@@ -6955,7 +6968,7 @@ function step(st, throttle, steer, brake, handbrake, practice) {
   // A tank still driving in from further back is not on the line: it neither waits for the budget nor uses it up.
   // Measured with it counted, a side's column blocked itself - no tank on its line, a budget of nought, and the
   // seam-metre samples covered by two hulls were 0.1% in the first ten seconds and 57% at the end of the minute.
-  // THE BUDGET GOES TO GROUND CHANGING HANDS FIRST (§0 row 11, the owner 2026-09-16: "point the budgeted movers at actual
+  // THE BUDGET GOES TO GROUND CHANGING HANDS FIRST (§0 row 11, Daniel 2026-09-16: "point the budgeted movers at actual
   // crossings and giving ground"): a tank posted across the seam or on a team giving ground, then the tanks furthest
   // from where they are going - a scoot, a leg swap - before a hull correcting a metre. `offPost` is that rank: how far
   // (|dx| + |dz|) a tank on the line stands from its hold at the start of the tick - the hull-down spot for an
@@ -6966,7 +6979,7 @@ function step(st, throttle, steer, brake, handbrake, practice) {
   // were a budget wait, 49854 of them more than 8 m out. A tank still on its old post waits there - that is its
   // overwatch - and a tank that has started goes on. A new move starts while the grants already running, the pushed
   // hulls and the tanks of its side still to step that rank above it are fewer than the budget.
-  // A COLUMN (RULED, the owner 2026-09-16 21:20): a tank that has not yet stood on its post (within 1.5 m) since it spawned
+  // A COLUMN (RULED, Daniel 2026-09-16 21:20): a tank that has not yet stood on its post (within 1.5 m) since it spawned
   // or respawned. Columns do not count against the half-line budget: they neither wait on it nor use it up. Bit 7 of the
   // tank's U_COOLDOWN word, cleared at spawn. Counted by distance alone (40 m of its post), the opening drive and every
   // respawn queued for the budget 40 m short of their posts: 7.1 points of living-pair tank-ticks (a274fbc).
@@ -7058,7 +7071,7 @@ function step(st, throttle, steer, brake, handbrake, practice) {
     }
     if (!u.armour) {
       const rt = rifleTeamOf(i);
-      // A FIRE TEAM TAKES ITS POST FROM ITS FIRST MAN'S SQUAD (WAR_TACTICS.md §9.2, the owner 2026-09-16): the four stand
+      // A FIRE TEAM TAKES ITS POST FROM ITS FIRST MAN'S SQUAD (WAR_TACTICS.md §9.2, Daniel 2026-09-16): the four stand
       // on one anchor. His squad is the one drawn at his spawn, kept in his U_TARGET - no draw moves.
       u.anchor = s[squadWord(u.side, s[unitBase(firstManOf(rt.side, rt.team)) + U_TARGET])];
       u.halted = halted[rt.side < 0 ? 0 : 1][rt.team];
@@ -7151,7 +7164,7 @@ function step(st, throttle, steer, brake, handbrake, practice) {
     // A PROBE'S VIEW OF THE TANK'S OWN STEP (§0 row 2 reads flips of the own step, outside separation, which ran before this
     // loop): written only when a probe set `st.trace`, never read by a rule, outside the state and its hash.
     if (st.trace && u.armour) { st.trace.dx[i >> 2] = sub(u.x, s[b + U_X]); st.trace.dz[i >> 2] = sub(u.z, s[b + U_Z]); }
-    // OVERWATCH (the owner 2026-09-16 18:10): a tank that moved this tick is bounding, and does not fire in it.
+    // OVERWATCH (Daniel 2026-09-16 18:10): a tank that moved this tick is bounding, and does not fire in it.
     const movedThisTick = u.armour && u.tacBounding
       && (abs(sub(u.x, s[b + U_X])) + abs(sub(u.z, s[b + U_Z]))) > 1310;
 
@@ -7529,7 +7542,7 @@ function step(st, throttle, steer, brake, handbrake, practice) {
     }
   }
 
-  // ---- THE MAP EDGE IS A CLAMP (ruling 4, the owner 2026-09-22) --------------
+  // ---- THE MAP EDGE IS A CLAMP (ruling 4, Daniel 2026-09-22) --------------
   //
   // "The map edge is a clamp, not a wall. The core owes no wall solids." `rules/map.js` used to put four
   // boxes at +-HALF_X / +-HALF_Z, 26 m tall and sunk 6 m, so that a truck arriving airborne could not
@@ -7611,7 +7624,7 @@ function step(st, throttle, steer, brake, handbrake, practice) {
 
   // ---- 4. outcome --------------------------------------------------------
   s[O_SCORE + S_STATE] = outcome(
-    s[O_SCORE + S_STATE], tx, tz, s[T + T_HP], s[O_SCORE + S_ELAPSED]);
+    s[O_SCORE + S_STATE], tx, tz, s[T + T_HP], s[O_SCORE + S_ELAPSED], st.runTicks === undefined ? BLOCK_TICKS : st.runTicks);
   if (s[O_SCORE + S_STATE] === RUN_DELIVERED && s[O_SCORE + S_DELIVERED] === 0)
     s[O_SCORE + S_DELIVERED] = scoreOf(
       s[O_SCORE + S_EXPOSURE], s[O_SCORE + S_ELAPSED], s[O_SCORE + S_CARGO]);
@@ -7784,7 +7797,7 @@ function chartView(st, range, out) {
   out[CH_LEAD_BP] = bp > 0 ? idiv((last - open) | 0, bp) : 0;
   // The six candles the trend is read from (§4.14), newest in bits 0-1: 1 green, 2 red, 0 doji.
   // THE SAME FUNCTION THE TREND USES (tactics.js `trendCandle`), not a second copy of the indexing: this held its own
-  // copy, and when the copy graded half a body so did the dots - which is why the owner's 21:39 shot had six dots that
+  // copy, and when the copy graded half a body so did the dots - which is why Daniel's 21:39 shot had six dots that
   // disagreed with the five red candles drawn above them on the same HUD.
   let dots = 0;
   const end = trendEnd(st.tape, count);

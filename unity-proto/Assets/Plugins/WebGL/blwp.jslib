@@ -266,6 +266,13 @@ mergeInto(LibraryManager.library, {
 
   // HOW MANY TIMES THE PAGE ITSELF PUT THE CORE IN A NEW WORLD (the session start's init), which
   // C# does not see. Read-only; C# adds its own count of Init and Restart to it.
+  // THE RUN LENGTH OF THE RUN IN PLAY (the 82/90 fork, the owner 2026-10-01: the round's own, not a constant): the ticks the
+  // core ends this run at - its round's blockTicks, or the core's default for a run with no round. 0 before any run.
+  BlwpRunTicks: function () {
+    var b = Module.blwp;
+    return (b && b.st && typeof b.st.runTicks === 'number') ? (b.st.runTicks | 0) : 0;
+  },
+
   BlwpReliefEpoch: function () {
     var b = Module.blwp;
     return b ? (b.reliefEpoch | 0) : 0;
@@ -611,7 +618,9 @@ mergeInto(LibraryManager.library, {
           // `BlwpStep` can land between the reset and `setRound`. `net.seen`
           // counts from here too, because a checkpoint is labelled with it and
           // hashes the core as it stands.
-          b.st = b.core.init(net.seedWord);
+          // AT THE ROUND'S OWN RUN LENGTH (the 82/90 fork): its contract's blockTicks, as the signer nodes replay it.
+          b.st = b.core.init(net.seedWord, (net.contract && typeof net.contract.blockTicks === 'number')
+            ? { runTicks: net.contract.blockTicks } : {});
           // A NEW WORLD IS A NEW RELIEF: the seed names the hills. Counted here, where C# never
           // hears about it, so the drawn terrain knows to rebuild (BlwpCore.ReliefEpoch).
           b.reliefEpoch = (b.reliefEpoch | 0) + 1;

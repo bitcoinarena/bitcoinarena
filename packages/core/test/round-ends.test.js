@@ -38,3 +38,22 @@ test('the elapsed clock stops once the run is over, so a finished round cannot c
     'S_ELAPSED kept counting after the run ended - the outcome would be re-decided every tick');
   assert.equal(s[O_SCORE + S_STATE], RUN_MISSED, 'and the outcome stays MISSED once named');
 });
+
+// THE RUN LENGTH IS THE ROUND'S (the 82/90 hard fork, the owner 2026-10-01): a round naming 4920 ticks (82 s) ends its runs
+// MISSED there; one naming 10800 runs exactly as the core always did - every tick's state hash the same as a run started
+// with no length - so rounds of the core before the fork replay unchanged; a length outside 1..10800 is refused.
+import { hash } from '../src/state.js';
+test('a round of 4920 ticks ends its run MISSED at 4920; one of 10800 is the old run hash for hash; 0 and 10801 are refused', () => {
+  const short = init(1, { runTicks: 4920 }), s = short.i32;
+  let endedAt = -1;
+  for (let t = 0; t < 6000; t++) { step(short, 0, 0, 65536, 0, 0); if (s[O_SCORE + S_STATE] !== RUN_LIVE) { endedAt = t; break; } }
+  assert.equal(s[O_SCORE + S_STATE], RUN_MISSED);
+  assert.equal(s[O_SCORE + S_ELAPSED], 4920, `an 82 s round's run ended at ${s[O_SCORE + S_ELAPSED]} ticks`);
+  const a = init(7), b = init(7, { runTicks: BLOCK_TICKS });
+  for (let t = 0; t < BLOCK_TICKS + 5; t++) {
+    const w = [t % 3 ? 65536 : 0, ((t * 97) % 131071) - 65535, t % 50 === 0 ? 65536 : 0, 0, 0];
+    step(a, ...w); step(b, ...w);
+    if (t % 600 === 0 || t >= BLOCK_TICKS - 2) assert.equal(hash(a), hash(b), `the 10800 run differs from the default at tick ${t}`);
+  }
+  for (const bad of [0, -1, 10801, 4920.5]) assert.throws(() => init(1, { runTicks: bad }), /a run lasts 1 to 10800 ticks/);
+});

@@ -17,6 +17,7 @@ import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { resultFrom } from '../src/verdict.js';
 import { TRUCK, TRUCK_CORE_HASH, TRUCK_CONFIG_HASH, coreForRound, installedCores } from '../src/cores.js';
+import { TRUCK_BEFORE_FORK_HASH } from '../src/cores.js';
 import { contractFor, opts, b32 } from './window-fixture.js';
 import { encodeRoundContract, roundId } from '../../protocol/src/contracts.js';
 import { toHex } from '../../protocol/src/hash.js';
@@ -53,7 +54,11 @@ test('the registry resolves a round by both hashes, holds the truck always, and 
   assert.equal(got.core, TRUCK);
   const other = { name: 'a second title', hash: 'ab'.repeat(32), url: 'file:///nowhere', adapter: TRUCK.adapter, configs: new Map([['cd'.repeat(32), {}]]) };
   const both = installedCores([other]);
-  assert.deepEqual([...both.keys()].sort(), [TRUCK.hash, other.hash].sort());
+  // THE TRUCK, THE TRUCK BEFORE THE 82/90 FORK (its old hash, the same core held to 10800), and the operator's core.
+  assert.deepEqual([...both.keys()].sort(), [TRUCK.hash, TRUCK_BEFORE_FORK_HASH, other.hash].sort());
+  const old = coreForRound({ simCoreHash: Uint8Array.from(Buffer.from(TRUCK_BEFORE_FORK_HASH, 'hex')), configHash: TRUCK_CONFIG_HASH, blockTicks: 10800 });
+  assert.equal(old.ok, true, old.why);
+  assert.deepEqual([old.core.adapter === TRUCK.adapter, old.core.fixedRunTicks, old.runTicks], [true, 10800, 10800]);
   assert.equal(coreForRound({ simCoreHash: Uint8Array.from(Buffer.from(other.hash, 'hex')), configHash: Uint8Array.from(Buffer.from('cd'.repeat(32), 'hex')) }, both).core, other);
   assert.equal(coreForRound({ simCoreHash: Uint8Array.from(Buffer.from(other.hash, 'hex')), configHash: TRUCK_CONFIG_HASH }, both).ok, false,
     'a core was run under a config it does not carry');

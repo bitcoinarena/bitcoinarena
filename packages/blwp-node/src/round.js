@@ -10,7 +10,7 @@
 // something is the checkpoints in step 3.
 import {
   encodeRoundContract, roundId, encodeEntryContract, entryId, decodeEntryContract,
-  decodeRoundContract, roundWindowsAreValid, runLengthIsTheCores, lastTickOfRun, sittingSeatsFitTheSlots } from '../../protocol/src/contracts.js';
+  decodeRoundContract, roundWindowsAreValid, lastTickOfRun, sittingSeatsFitTheSlots } from '../../protocol/src/contracts.js';
 import { decodeInputBatch, batchTicks, batchId } from '../../protocol/src/batch.js';
 import { encodeTranscript, transcriptHash, checkTranscript, GENESIS } from '../../protocol/src/transcript.js';
 import {
@@ -32,7 +32,7 @@ import { receiptsNeeded } from '../../protocol/src/genesis.js';
 import { decodeHandout } from '../../protocol/src/handout.js';
 import { stakePointIsTheHandouts } from '../../protocol/src/contracts.js';
 import { firstMarkOutcome, startDeadlineOf } from '../../protocol/src/first-mark.js';
-import { coreForRound, installedCores, runTicksOf } from './cores.js';
+import { coreForRound, installedCores, runLengthFits } from './cores.js';
 import { chainIndex } from './finality.js';
 import { withinTolerance } from '../../protocol/src/window.js';
 import { decodeRerunResult, splitSignedRerun } from '../../protocol/src/rerun.js';
@@ -298,7 +298,8 @@ export class Round {
     // THE ROUND'S OWN CORE AND CONFIG say how long a run is (M3 R1 R3), not the truck's rules.
     const runs = coreForRound(contract, this.cores);
     if (!runs.ok) throw new Error(runs.why);
-    const runLength = runLengthIsTheCores(contract, runTicksOf(runs.core, runs.config));
+    // THE ROUND'S RUN LENGTH ON THE CORE IT NAMES (the 82/90 fork): any the core takes - the old core only its own.
+    const runLength = runLengthFits(runs.core, runs.config, contract.blockTicks);
     if (!runLength.ok) throw new Error(runLength.why);
 
     // AND IT MAY NOT SEAT MORE SIGNER NODES THAN IT HAS SLOTS (§22A: "Not seven census slots when the round

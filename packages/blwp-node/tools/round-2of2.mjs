@@ -88,6 +88,19 @@ export async function guardianFieldsFromNode(url) {
     : { guardianCapable: false, guardianEndpoint: '' };
 }
 
+/**
+ * THE 82/90 HARD FORK (the owner 2026-10-01: "Prepare new rounds with 82/90 seconds for free and paid in 24 hours ... Change
+ * the core, it's basically a hard fork"; "The round length must be part of the contract"): a round starting at or after
+ * RUN_82_FROM_MS names 4920 ticks - 82 s at the core's 65536/1092 ticks a second - and every run of it ends there; one
+ * starting before names the core's old 10800. The instant is series k=2's start on the testnet4 grid, 2026-10-03 00:00Z,
+ * where free and paid switch together; BLWP_RUN82_FROM_MS moves it for a harness.
+ */
+export const RUN_82_TICKS = 4920;
+/** Rounds of each kind kept opened ahead on the 90 s period: 8 is 12 minutes, so a restart shorter than that skips no slot. */
+export const ROUNDS_AHEAD = Number(process.env.BLWP_ROUNDS_AHEAD || 8);
+export const RUN_82_FROM_MS = BigInt(process.env.BLWP_RUN82_FROM_MS || Date.UTC(2026, 9, 3, 0, 0, 0));
+export const runTicksAt = (startMs) => (BigInt(startMs) >= RUN_82_FROM_MS ? RUN_82_TICKS : BLOCK_TICKS);
+
 export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8081,
                                      // A THIRD SIGNER NODE, OPT-IN (§23.6). A 3-of-4 federation needs its
                                      // threshold in DISTINCT bonded census nodes and two nodes cannot be
@@ -677,7 +690,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // it, and a round naming no relay could never settle a stake.
     publicationRelays: members.map((m) => `http://${host}:${m.port}`),
     donationSetId: idOfDonationSet(DONATION_SET.recipients), censusHeight,
-    censusRoot: new Uint8Array(32), stakeMsat, bondMinSats: 50000n, blockTicks: BLOCK_TICKS,
+    censusRoot: new Uint8Array(32), stakeMsat, bondMinSats: 50000n, blockTicks: runTicksAt(committeeTimeMs + MIN_ENTRY_WINDOW_MS),
     exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
     timeFloor: 30, timeCeil: 150, minScore: 100000, rankNumerator: 3, rankDenominator: 4,   // min_score 1 point, in the score's 1e-5 points
     nodes: [a.round.pubkey, b.round.pubkey, ...rest.map((d) => d.round.pubkey)],
@@ -972,6 +985,16 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // from 2026-09-06), so a round opened on it today would be past its entry
   // close before anybody saw it: refused by name rather than listed as open.
   const held = [contract];
+  // NO GAP BETWEEN 90 s ROUNDS ACROSS A RESTART (the owner 2026-10-01: "There may be no gaps between 90 sec rounds"): the rounds
+  // this pair already holds - written by the opener before it stopped, still in the signer nodes' stores - are the grid it
+  // goes on from. Without them a restart began a new grid at its own first round, and the slots in between went unplayed.
+  if (roundPeriodMs && a && a.round && typeof a.round.openRounds === 'function') {
+    const nowMs = BigInt(Date.now());
+    for (const r of a.round.openRounds()) {
+      let c; try { c = decodeRoundContract(new Uint8Array(r.contract)); } catch { continue; }
+      if (c.startTimeMs > nowMs && !held.some((h) => toHex(roundId(h)) === toHex(roundId(c)))) held.push(c);
+    }
+  }
   // `kind` overrides the first round's stake and custody - `paid` for the paying
   // round kept beside the free one; nothing else of the contract changes, so both
   // kinds name the same core, config and signer nodes.
@@ -1006,7 +1029,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     const next = { ...contract,
       ...(kind.stakeMsat !== undefined ? { stakeMsat: BigInt(kind.stakeMsat) } : {}),
       ...(kind.custody ? { custody: kind.custody } : {}),
-      committeeTimeMs: committee, startTimeMs: start, entryCloseMs: close };
+      committeeTimeMs: committee, startTimeMs: start, entryCloseMs: close, blockTicks: runTicksAt(start) };
     censusView = await viewToTip();
     // THE KEEPER'S OWN WORK, NAMED (the owner 2026-09-17 19:15, the ghost lag). Eight of twelve stalls over 300 ms still
     // name nothing but 0-20 ms of frames while this thread burns 190-250 ms, and the keeper opening a round is the
@@ -1041,7 +1064,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       // ON THE PERIOD a kind is due while fewer than two of its rounds are still to start: round i+2 is published during
       // round i+1's lead, before its committee time (round i+1's start), and listed as round i+1 begins
       const due = kinds.find((k) => (roundPeriodMs
-        ? held.filter((c) => BigInt(c.stakeMsat) === stakeOf(k) && c.startTimeMs > now).length < 2
+        ? held.filter((c) => BigInt(c.stakeMsat) === stakeOf(k) && c.startTimeMs > now).length < ROUNDS_AHEAD
         : !held.some((c) => BigInt(c.stakeMsat) === stakeOf(k) && c.entryCloseMs > now + BigInt(leadMs))));
       if (!due) return;
       opening = openNext(due).then((id) => onOpen(id, due), onError).finally(() => { opening = null; });

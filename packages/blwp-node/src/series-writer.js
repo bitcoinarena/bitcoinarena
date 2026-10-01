@@ -6,7 +6,8 @@
 // is refused for the same reasons any round is - for every start from now to now + 72 h, and again as the clock
 // moves. A series that leaves less than the 72 h lead is refused whole, by the spec's rule.
 import { toHex } from '../../protocol/src/hash.js';
-import { SERIES_WRITE_AHEAD_MS, seriesLeadIsValid, seriesId, seriesRound, seriesRoundsWithin } from '../../protocol/src/series.js';
+import { SERIES_WRITE_AHEAD_MS, seriesLeadIsValid, seriesId, seriesRound, seriesRoundsWithin, seriesRunFits } from '../../protocol/src/series.js';
+import { coreForRound } from './cores.js';
 
 export const SERIES_HORIZON_MS = SERIES_WRITE_AHEAD_MS;       // 72 h on every network (TN24-1405)
 
@@ -17,6 +18,12 @@ export const SERIES_HORIZON_MS = SERIES_WRITE_AHEAD_MS;       // 72 h on every n
 export function seriesWriter(round, template, { horizonMs = SERIES_HORIZON_MS } = {}) {
   const lead = seriesLeadIsValid(template);
   if (!lead.ok) throw new Error(`series refused: ${lead.why}`);
+  // AND ITS RUN FITS ITS SLOT (the 82/90 fork): on a core that takes the round's run length, at most 82 s of 90.
+  const runs = round && round.cores ? coreForRound(template, round.cores) : null;
+  if (runs && runs.ok && !Number.isInteger(runs.core.fixedRunTicks)) {
+    const fits = seriesRunFits(template);
+    if (!fits.ok) throw new Error(`series refused: ${fits.why}`);
+  }
   const id = seriesId(template);
   const written = new Map();                                  // index -> { id hex, startTimeMs }
   const write = (nowMs) => {

@@ -48,7 +48,9 @@ public class BlockClock : MonoBehaviour
     /// clock has told him the round should be over when it was not (2026-09-16 15:36, the comment below).
     /// A number both engines need is not a number either of them may type.
     /// </summary>
-    public const int RunTicks = Blwp.Layout.BLOCK_TICKS;
+    /// SINCE THE 82/90 FORK (the owner 2026-10-01) the run's own length, from the core running it - its round's blockTicks -
+    /// not the generated constant, which is now only the default a run with no round gets.
+    public static int RunTicks => Blwp.BlwpCore.RunTicks;
 
     /// <summary>
     /// Seconds of a core run left after `elapsed` of its ticks, at the core's own rate - 65536/1092 ticks a second
