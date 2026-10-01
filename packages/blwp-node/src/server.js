@@ -1123,6 +1123,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (kept === 'evidence') console.log(`[final] ${toHex(eid).slice(0, 16)} a FINAL signature of ${toHex(x.signerPubkey).slice(0, 16)} does not count: ${fault.why}`);
     return { kept, why: fault ? fault.why : null };
   }
+  const drawRefused = new Map();
   async function gatherFinal(rid, eid) {
     let f = resultFinality(round, rid, eid);
     if (f.state === FINAL) return true;
@@ -1132,9 +1133,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // THE PEERS: the round's game committee off the census, or - a node whose chain view no longer reaches the round's
     // census, measured on testnet4 for rounds of the day before - the settlement committee's, then its DKG peers, as the
     // settlement itself falls back.
+    // A REFUSED DRAW IS REMEMBERED PER ROUND FOR TEN MINUTES (ORDER-2116, measured on the free pair): a round whose census
+    // this node no longer reaches is refused both draws, ~0.4 s of loop each, and the roster keeps no refusal - so every
+    // watch tick of such a round paid ~0.8 s before it fell through to the DKG peers. The peers themselves are read fresh.
     let peersHere = verifier.peers && verifier.peers.length ? verifier.peers : [];
-    if (!peersHere.length) { const picked = roster.committeeFor(rid, 'game'); if (picked.ok) peersHere = endpointsOf(picked.committee, round.pubkey); }
-    if (!peersHere.length) { const picked = roster.committeeFor(rid, 'settlement'); if (picked.ok) peersHere = endpointsOf(picked.committee, round.pubkey); }
+    const refusedAt = drawRefused.get(toHex(rid));
+    const drawNow = !(refusedAt && Date.now() - refusedAt < 600000);
+    if (!peersHere.length && drawNow) { const picked = roster.committeeFor(rid, 'game'); if (picked.ok) peersHere = endpointsOf(picked.committee, round.pubkey); }
+    if (!peersHere.length && drawNow) { const picked = roster.committeeFor(rid, 'settlement'); if (picked.ok) peersHere = endpointsOf(picked.committee, round.pubkey); }
+    if (!peersHere.length && drawNow && !(verifier.peers && verifier.peers.length)) {
+      drawRefused.set(toHex(rid), Date.now());
+      if (drawRefused.size > 4096) drawRefused.delete(drawRefused.keys().next().value);
+    }
     if (!peersHere.length) peersHere = dkg.peers || [];
     await Promise.all(peersHere.map(async (peer) => {
       try {

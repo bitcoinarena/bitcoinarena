@@ -18,7 +18,6 @@
 // before this seat's end + 1205 s, and its signed time is within the tolerance. No threshold by then is §13C. With one,
 // the re-run's own window is [end + 1200 s, end + 1800 s), FINAL is signed on the re-run after end + 1805 s, and a valid
 // objection to the re-run received before that makes the entry VOID at once.
-import { schnorr } from '@noble/curves/secp256k1.js';
 import { objectionHolds, FINAL, SUSPENDED, PROVISIONALLY_FINAL } from '../../protocol/src/objection.js';
 import { rerunIsAgreed, runOf, decodeRerunResult, splitSignedRerun } from '../../protocol/src/rerun.js';
 import { noQuorumOutcome, VOID } from '../../protocol/src/payout.js';
@@ -33,6 +32,7 @@ import { windowsOf, withinTolerance, FINAL_TOLERANCE_MS } from '../../protocol/s
 import { finalSigned, signFinalSig } from '../../protocol/src/final-sig.js';
 import { verifiedFinal, runId } from './verdict.js';
 import { transcriptIsPublished } from '../../protocol/src/posting.js';
+import { verifyKept } from './verify-kept.js';
 
 const hex = (b) => [...b].map((v) => v.toString(16).padStart(2, '0')).join('');
 const utc = (ms) => new Date(Number(ms)).toISOString();
@@ -78,7 +78,7 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
     const who = hex(result.nodePubkey);
     if (!signerNodes.has(who)) continue;
     let ok = false;
-    try { ok = schnorr.verify(signature, resultId(result), result.nodePubkey); } catch { ok = false; }
+    ok = verifyKept(signature, resultId(result), result.nodePubkey);
     if (!ok) continue;
     const run = runId(result);
     if (who === hex(round.pubkey)) mine = run;
@@ -87,7 +87,7 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
         playerPubkey: result.playerPubkey, transcriptHash: result.transcriptHash });
   }
   const signedResultId = agreeing[0].run;
-  const verify = (s, m, k) => schnorr.verify(s, m, k);
+  const verify = (s, m, k) => verifyKept(s, m, k);
   const nowMs = BigInt(now);
   const base = { runId: seen.runId, signers: agreeing.length, provisionalAtMs: Number(win.openMs),
     windowOpenMs: win.openMs, windowCloseMs: win.closeMs, finalAfterMs: win.finalAfterMs };
