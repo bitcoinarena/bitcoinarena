@@ -96,8 +96,16 @@ export async function guardianFieldsFromNode(url) {
  * where free and paid switch together; BLWP_RUN82_FROM_MS moves it for a harness.
  */
 export const RUN_82_TICKS = 4920;
-/** Rounds of each kind kept opened ahead on the 90 s period: 8 is 12 minutes, so a restart shorter than that skips no slot. */
-export const ROUNDS_AHEAD = Number(process.env.BLWP_ROUNDS_AHEAD || 8);
+/** Rounds of each kind kept published ahead on the 90 s period: 10 is 15 minutes (with PUBLISH_AHEAD; without it one
+ * period, each open waiting for its beacon). */
+export const ROUNDS_AHEAD = Number(process.env.BLWP_ROUNDS_AHEAD || 10);
+/**
+ * PUBLISH AHEAD (BLWP_PUBLISH_AHEAD=1; the free grid gapless across a restart, the owner 2026-10-01): each round is mined into
+ * a block and posted to the signer nodes as soon as it is drafted - they store it and assign its signer nodes once the
+ * block past its committee time is on the chain (server.js) - and the chain's own block clock, a unit of its own, makes
+ * that block. Unset, the opener waits for each beacon itself, as before.
+ */
+export const PUBLISH_AHEAD = process.env.BLWP_PUBLISH_AHEAD === '1';
 export const RUN_82_FROM_MS = BigInt(process.env.BLWP_RUN82_FROM_MS || Date.UTC(2026, 9, 3, 0, 0, 0));
 export const runTicksAt = (startMs) => (BigInt(startMs) >= RUN_82_FROM_MS ? RUN_82_TICKS : BLOCK_TICKS);
 
@@ -840,6 +848,9 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       return got.dead ? got : got.named;
     }
     await chainRpc('generateblock', [await chainRpc('getnewaddress', []), [signed]]);
+    // PUBLISHED AHEAD (the owner 2026-10-01: "publish each round as soon as it is drafted; the block clock names the beacon
+    // later"): mined into a block now, and the beacon left to the chain's own block clock - the round is posted at once.
+    if (PUBLISH_AHEAD && c.committeeTimeMs > BigInt(Date.now()) + 5000n) return { ahead: true };
     let tries = 0;
     for (;;) {
       censusView = await viewToTip();
@@ -994,6 +1005,18 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       let c; try { c = decodeRoundContract(new Uint8Array(r.contract)); } catch { continue; }
       if (c.startTimeMs > nowMs && !held.some((h) => toHex(roundId(h)) === toHex(roundId(c)))) held.push(c);
     }
+  } else if (roundPeriodMs && attach) {
+    // ATTACHED, THE HELD ROUNDS ARE ASKED OF NODE A: the rounds it announces, each contract by its id.
+    const nowMs = BigInt(Date.now());
+    try {
+      const listed = (await (await fetch(`http://${host}:${portA}/rounds?ahead=${2 * 3600000}`)).json()).rounds || [];
+      for (const r of listed) {
+        const got = await fetch(`http://${host}:${portA}/round?id=${r.id}`);
+        if (!got.ok) continue;
+        let c; try { c = decodeRoundContract(new Uint8Array(await got.arrayBuffer())); } catch { continue; }
+        if (c.startTimeMs > nowMs && !held.some((h) => toHex(roundId(h)) === toHex(roundId(c)))) held.push(c);
+      }
+    } catch (e) { console.error(`[keeper] the held rounds could not be read from node A: ${e.message}`); }
   }
   // `kind` overrides the first round's stake and custody - `paid` for the paying
   // round kept beside the free one; nothing else of the contract changes, so both
@@ -1039,7 +1062,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     const published = await publishOnChain(next);
     // NOT PUBLISHED BEFORE ITS BEACON: not opened; the keeper drafts the next one from the chain as it stands then.
     if (published && published.dead) throw new Error(`the next round was not opened: ${published.why}`);
-    const seen = beacon ? await beacon.refresh(next) : { ok: false, why: 'no beacon' };
+    const seen = published && published.ahead ? { ok: true, ahead: true } : beacon ? await beacon.refresh(next) : { ok: false, why: 'no beacon' };
     if (!seen.ok) throw new Error('the next round names no beacon: ' + seen.why);
     if (funded.nameRound) funded.nameRound(roundId(next));
     const nextId = await timed('keeper opening a round', () => postRound(next), { over: 20 });
