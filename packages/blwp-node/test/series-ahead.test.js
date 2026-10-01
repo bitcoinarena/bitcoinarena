@@ -6,10 +6,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { openStore } from '../src/store.js';
+import { Round } from '../src/round.js';
+import { seriesWriter } from '../src/series-writer.js';
 import { serve } from '../src/server.js';
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
-import { decodeRoundContract } from '../../protocol/src/contracts.js';
+import { decodeRoundContract, roundId as roundIdOf } from '../../protocol/src/contracts.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../protocol/src/genesis-ids.js';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -143,4 +145,24 @@ test('testnet4 runs a 24 h committee clock on a 36 h census, mainnet one 72 h, a
     assert.ok(last > BigInt(NOW) + 72n * BigInt(H) - ROUND_PERIOD_MS && last <= BigInt(NOW) + 72n * BigInt(H), 'testnet4 rounds written 72 h ahead');
     console.log(`  FACTS: testnet4 written ${sum.series.reduce((n, x) => n + x.written, 0)}, last ${(Number(last) - NOW) / H} h out`);
   } finally { await s.close(); }
+});
+
+// ALWAYS A PAID ROW (the owner 2026-10-01 15:25, HARD: "The nodes always serve both at once ... a free row and a paid
+// testnet4 row together"): the node assigns signer nodes to the rounds starting within 2 h AND to the soonest round,
+// however far ahead - measured on testnet4 the same day, series 8172fffd's first round 8 h out was assigned by no node and
+// the page showed no paid row. The writer names that round: nothing within 2 h, and `soonest` is the first round.
+test('a series whose first round is 8 h out has none within the 2 h lead, and the writer names that first round as the soonest', () => {
+  const round = new Round(openStore(':memory:'), () => NOW);
+  const k = seriesIndexAt(NETWORK_ID_REGTEST, NOW) + 1;
+  const t = seriesTemplate(base([round.pubkey]), k);
+  const start = seriesStartOf(NETWORK_ID_REGTEST, k);
+  const at = Number(start) - 8 * H;
+  const w = seriesWriter(round, t);
+  w.write(at);
+  const within = w.startingWithin(at, 2 * H);
+  const first = seriesRound(t, 0);
+  console.log(`  FACTS (soonest): ${JSON.stringify({ firstInHours: (Number(start) - at) / H, within: within.length, soonest: (w.soonest(at) || '').slice(0, 16) })}`);
+  assert.equal(within.length, 0, 'a round starts within 2 h: not the case the test names');
+  assert.equal(w.soonest(at), Buffer.from(roundIdOf(first)).toString('hex'), 'the soonest is not the series\' first round');
+  assert.equal(w.soonest(Number(start) + 1), w.startingWithin(Number(start) + 1, 2 * H)[0], 'once rounds run, the soonest is the next one');
 });
