@@ -116,8 +116,12 @@ const entryWindowMs = BigInt(env.BLWP_ENTRY_WINDOW_MS || 150000);
 // BLWP_ROUND_PERIOD_MS=90000 (SPECTATE-2158): free rounds every 90 s, each run starting together at its round's start and
 // entry closing there - set with BLWP_ENTRY_WINDOW_MS=0 so the first round has the same shape.
 const roundPeriodMs = env.BLWP_ROUND_PERIOD_MS ? Number(env.BLWP_ROUND_PERIOD_MS) : null;
+// ATTACH (BLWP_ATTACH=1; the free grid gapless across a restart, the owner 2026-10-01: "The two free nodes run as their own
+// processes, so an opener restart does not touch them"): the signer nodes run as units of their own on portA and portB, on
+// this pair's stores, and this tool opens rounds for them and starts none.
+const attach = env.BLWP_ATTACH === '1' ? { fundedFile: `${dir}/funded-rounds.txt`, proofDir: `${dir}/attach-proof` } : null;
 const round = await standUpRound({ host, portA, portB, store: dir, rpc, cli, page, signerNode: { closeAtEnd: true },
-  bDownAtStart: !!env.BLWP_START_B_DOWN, entryWindowMs, roundPeriodMs });
+  bDownAtStart: !!env.BLWP_START_B_DOWN, entryWindowMs, roundPeriodMs, attach });
 // SIGNER NODE B STARTS DOWN (BLWP_START_B_DOWN=1), for an operator's look at signer node A
 // restarted while it holds a close that needs B; SIGUSR2 brings B up.
 if (env.BLWP_START_B_DOWN) { await round.b.close(); say({ signerNodeB: 'down', atStart: true }); }

@@ -1689,6 +1689,30 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     try { c = decodeRoundContract(new Uint8Array(row.contract)); } catch { return null; }
     return seriesRefusal(c);
   };
+  // ROUNDS POSTED AHEAD OF THEIR BEACON, assigned once it is on the chain: a pass every 5 s, a few a pass, each kept until
+  // it is assigned or ten minutes past its committee time (then it is the 409 a late post gets). A restart forgets the set;
+  // the opener posts what it holds again.
+  const BEACON_NOT_YET = /no beacon|no chain view|no block in this view is after|is \d+ deep and this round asks for|not yet/i;
+  const awaitingBeacon = new Set();
+  if (chainFor) {
+    const assignLater = setInterval(() => timed('assign posted rounds', () => {
+      if (shuttingDown) return;
+      let done = 0;
+      for (const hex of [...awaitingBeacon]) {
+        if (done >= 10) break;
+        const rid = new Uint8Array(Buffer.from(hex, 'hex'));
+        const row = round.get(rid);
+        if (!row || round.signerNodes(rid).length) { awaitingBeacon.delete(hex); continue; }
+        let c; try { c = decodeRoundContract(new Uint8Array(row.contract)); } catch { awaitingBeacon.delete(hex); continue; }
+        if (BigInt(round.now()) > c.committeeTimeMs + 600000n) { awaitingBeacon.delete(hex); continue; }
+        if (BigInt(round.now()) < c.committeeTimeMs) continue;
+        const assigned = roster.assignSignerNodes(rid);
+        done++;
+        if (assigned.ok) { awaitingBeacon.delete(hex); makeClaimKey(rid); console.log(`[round] ${hex.slice(0, 16)} posted ahead: signer nodes assigned at its beacon`); }
+      }
+    }), 5000);
+    assignLater.unref();
+  }
   const seriesIds = () => { const all = new Set(); for (const w of writers) for (const x of w.ids()) all.add(x); return all; };
   let seriesTimer = null;
   if (writers.length) {
@@ -1999,6 +2023,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           // (A ROUND THAT TAKES A STAKE INTO A FEDERATION IS ASSIGNED SIGNER NODES ONLY ON A BONDED ONE - §23.6, P3; the owner
           // 2026-09-15 07:33 - and that is asked before round.open now, above: an unbonded one is not stored at all.)
           const assigned = roster.assignSignerNodes(id);
+          // A ROUND POSTED AHEAD OF ITS BEACON (the owner 2026-10-01, the free grid gapless across a restart: "publish each round
+          // as soon as it is drafted; the block clock names the beacon later"): stored, and its signer nodes assigned by the
+          // sweep below once the block past its committee time is on this node's chain. 202, the round's id.
+          if (!assigned.ok && BigInt(contract.committeeTimeMs) + 600000n > BigInt(round.now()) && BEACON_NOT_YET.test(assigned.why || '')) {
+            awaitingBeacon.add(toHex(new Uint8Array(id)));
+            return bytes(res, 202, id);
+          }
           if (!assigned.ok) return text(res, 409, assigned.why);
           // AND ITS SIGNER NODES MAKE ITS CLAIM KEY, in the background (see makeClaimKey).
           makeClaimKey(id);

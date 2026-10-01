@@ -30,6 +30,8 @@ export function seriesWriter(round, template, { horizonMs = SERIES_HORIZON_MS } 
     const now = BigInt(nowMs);
     let added = 0;
     for (const i of seriesRoundsWithin(template, now, now + BigInt(horizonMs))) {
+      // NOT FROM ITS CUT ON (the 82/90 tail): those rounds are its tail's.
+      if (Number.isInteger(template.seriesCutFrom) && i >= template.seriesCutFrom) continue;
       if (written.has(i)) continue;
       const c = seriesRound(template, i);
       const rid = round.open(c);
