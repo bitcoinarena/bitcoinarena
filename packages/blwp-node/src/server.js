@@ -1123,7 +1123,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (kept === 'evidence') console.log(`[final] ${toHex(eid).slice(0, 16)} a FINAL signature of ${toHex(x.signerPubkey).slice(0, 16)} does not count: ${fault.why}`);
     return { kept, why: fault ? fault.why : null };
   }
-  const drawRefused = new Map();
+  const drawnPeers = new Map();
   async function gatherFinal(rid, eid) {
     let f = resultFinality(round, rid, eid);
     if (f.state === FINAL) return true;
@@ -1133,27 +1133,40 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // THE PEERS: the round's game committee off the census, or - a node whose chain view no longer reaches the round's
     // census, measured on testnet4 for rounds of the day before - the settlement committee's, then its DKG peers, as the
     // settlement itself falls back.
-    // A REFUSED DRAW IS REMEMBERED PER ROUND FOR TEN MINUTES (ORDER-2116, measured on the free pair): a round whose census
-    // this node no longer reaches is refused both draws, ~0.4 s of loop each, and the roster keeps no refusal - so every
-    // watch tick of such a round paid ~0.8 s before it fell through to the DKG peers. The peers themselves are read fresh.
+    // THE DRAW IS KEPT PER ROUND (ORDER-2116, profiled on the free pair): a round's committee and the addresses it draws
+    // come from its census - bond adverts at its census height - and do not change; drawing them again on every watch
+    // tick re-derived that census each time (a series round shares one cached census, a free round has its own), 55 % of
+    // a node's loop over 43 rounds past their window. A refusal is kept ten minutes, as the chain may yet reach the census.
+    // The DKG peers, the last fallback, are read fresh.
     let peersHere = verifier.peers && verifier.peers.length ? verifier.peers : [];
-    const refusedAt = drawRefused.get(toHex(rid));
-    const drawNow = !(refusedAt && Date.now() - refusedAt < 600000);
-    if (!peersHere.length && drawNow) { const picked = roster.committeeFor(rid, 'game'); if (picked.ok) peersHere = endpointsOf(picked.committee, round.pubkey); }
-    if (!peersHere.length && drawNow) { const picked = roster.committeeFor(rid, 'settlement'); if (picked.ok) peersHere = endpointsOf(picked.committee, round.pubkey); }
-    if (!peersHere.length && drawNow && !(verifier.peers && verifier.peers.length)) {
-      drawRefused.set(toHex(rid), Date.now());
-      if (drawRefused.size > 4096) drawRefused.delete(drawRefused.keys().next().value);
+    if (!peersHere.length) {
+      const had = drawnPeers.get(toHex(rid));
+      if (had && (had.peers.length || Date.now() - had.at < 600000)) peersHere = had.peers;
+      else {
+        let picked = roster.committeeFor(rid, 'game');
+        if (picked.ok) peersHere = endpointsOf(picked.committee, round.pubkey);
+        if (!peersHere.length) { picked = roster.committeeFor(rid, 'settlement'); if (picked.ok) peersHere = endpointsOf(picked.committee, round.pubkey); }
+        drawnPeers.set(toHex(rid), { at: Date.now(), peers: peersHere });
+        if (drawnPeers.size > 4096) drawnPeers.delete(drawnPeers.keys().next().value);
+      }
     }
     if (!peersHere.length) peersHere = dkg.peers || [];
-    await Promise.all(peersHere.map(async (peer) => {
+    const ask = (peers) => Promise.all(peers.map(async (peer) => {
       try {
         const r = await fetch(`${String(peer).replace(/\/+$/, '')}/final-sig?round=${toHex(rid)}&entry=${toHex(eid)}`, { signal: AbortSignal.timeout(3000) });
         if (r.status !== 200) return;
         takeFinalSig(rid, eid, new Uint8Array(await r.arrayBuffer()), f);
       } catch { /* a peer that does not answer signs nothing here */ }
     }));
+    await ask(peersHere);
     f = resultFinality(round, rid, eid);
+    // STILL SHORT, THE DKG PEERS TOO (ORDER-2116, measured on the free pair): the addresses a round's census gives are its
+    // seats' bond adverts at its census height, and a seat whose address moved since (a quick tunnel renamed) answers
+    // there no more - 44 runs sat at 1 of 2 FINAL signatures while the other seat served its own in 6 ms at home.
+    if (f.state !== FINAL) {
+      const more = (dkg.peers || []).filter((p) => !peersHere.includes(p));
+      if (more.length) { await ask(more); f = resultFinality(round, rid, eid); }
+    }
     if (f.state === FINAL) console.log(`[final] ${toHex(eid).slice(0, 16)} FINAL: ${String(f.why).slice(0, 160)}`);
     // A LATE OBJECTION THIS SEAT HOLDS (§13A): it suspended nothing, and once the run is FINAL it is filed for slashing.
     if (f.state === FINAL && f.lateObjection) {
