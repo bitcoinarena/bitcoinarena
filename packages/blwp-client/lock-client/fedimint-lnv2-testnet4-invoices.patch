@@ -1,0 +1,17 @@
+--- a/modules/fedimint-lnv2-client/src/lib.rs	2026-10-01 08:29:49.121215647 +0200
++++ b/modules/fedimint-lnv2-client/src/lib.rs	2026-10-01 08:29:49.123215791 +0200
+@@ -552,7 +552,13 @@
+             return Err(SendPaymentError::InvoiceExpired);
+         }
+ 
+-        if self.cfg.network != invoice.currency().into() {
++        // BLWP: testnet4 has no BOLT11 prefix of its own - its invoices are `lntb`, which reads as Testnet - so a
++        // federation labelled Testnet4 (the fork's network_from_chain_id) takes Testnet invoices as its own.
++        let invoice_network: fedimint_lnv2_common::config::Network = invoice.currency().into();
++        let same_network = self.cfg.network == invoice_network
++            || (self.cfg.network == fedimint_lnv2_common::config::Network::Testnet4
++                && invoice_network == fedimint_lnv2_common::config::Network::Testnet);
++        if !same_network {
+             return Err(SendPaymentError::WrongCurrency {
+                 invoice_currency: invoice.currency(),
+                 federation_currency: self.cfg.network.into(),
