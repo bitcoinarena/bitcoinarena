@@ -303,9 +303,11 @@ export function depositOffer({ client, stakeMsat, haveMsat = null, needMsat = nu
     return d;
   };
   const rest = restMsat === null ? null : BigInt(restMsat);
-  return { stakeMsat: BigInt(stakeMsat || 0n), haveMsat, needMsat, invoice, claimed, made, restMsat: rest,
-    // THE TABS (1, 2, 5, 10 rounds and Custom, gross), or - for the rest of a round's fees - the one exact amount
-    choices: rest === null ? depositChoices(stakeMsat) : [{ key: 'rest', label: 'The rest', rounds: null, msat: rest }],
+  // what the rest invoice asks: the rest itself, or the 5 sat floor when the rest is under it
+  const restPay = rest === null ? null : restInvoiceMsat(rest);
+  return { stakeMsat: BigInt(stakeMsat || 0n), haveMsat, needMsat, invoice, claimed, made, restMsat: rest, restPayMsat: restPay,
+    // THE TABS (1, 2, 5, 10 rounds and Custom, gross), or - for the rest of a round's fees - the one amount
+    choices: rest === null ? depositChoices(stakeMsat) : [{ key: 'rest', label: 'The rest', rounds: null, msat: restPay }],
     outcome, decided: (o) => decide(o),
     watch: (fn) => { watchers.push(fn); },
     close: (why) => fail(new Error(why || 'the deposit was closed: nothing was paid')) };
@@ -367,6 +369,10 @@ export const DEPOSIT_MARGIN_MSAT = 10000n;
  * short, plus 1 sat for the claim of this small deposit itself, in whole sat.
  */
 export const REST_MARGIN_MSAT = 1000n;
+/** THE SMALLEST DEPOSIT THE FEDERATION TAKES (measured 2026-10-01 through gateway B: 2, 3, 4 sat refused "Amount is too
+ * small to cover fees", 5 sat made). A rest under it is invoiced at it; the extra stays in the player wallet. */
+export const REST_FLOOR_MSAT = 5000n;
+export const restInvoiceMsat = (restMsat) => (BigInt(restMsat) < REST_FLOOR_MSAT ? REST_FLOOR_MSAT : BigInt(restMsat));
 export function restOfFeesMsat(shortMsat) {
   const m = BigInt(shortMsat) + REST_MARGIN_MSAT;
   return (m + 999n) / 1000n * 1000n;

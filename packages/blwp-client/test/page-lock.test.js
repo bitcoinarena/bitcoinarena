@@ -22,7 +22,7 @@ import { bech32Encode, convertBits } from '../../protocol/src/bech32.js';
 import { decodeBolt11 } from '../../protocol/src/bolt11.js';
 
 import { lockStake, fundPlayerWallet, walletSecretFor, withdrawPlayerWallet, handLock, lockSecretFor, lockAmountMsat, lockLine, saveLock, savedLock, markLockCommitted,
-  refundStake, redeemStake, redeemPayout, payoutLine, returnStake, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, withdrawLine, refundKept, refundLine, lookOwed, owedToLine as owedLine, collectAndWithdraw, tabLockWallet, findOwedRounds, feeSecretFor, ledgerRows, ledgerReadSavedStakes, playerWallet, depositChoices, depositOffer, withdrawChoices, playerWithdrawable, pendingDeposits, resumeDeposits, restOfFeesMsat, shortOnlyByFees, DEPOSIT_INSUFFICIENT } from '../src/page-lock.js';
+  refundStake, redeemStake, redeemPayout, payoutLine, returnStake, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, withdrawLine, refundKept, refundLine, lookOwed, owedToLine as owedLine, collectAndWithdraw, tabLockWallet, findOwedRounds, feeSecretFor, ledgerRows, ledgerReadSavedStakes, playerWallet, depositChoices, depositOffer, withdrawChoices, playerWithdrawable, pendingDeposits, resumeDeposits, restOfFeesMsat, shortOnlyByFees, restInvoiceMsat, DEPOSIT_INSUFFICIENT } from '../src/page-lock.js';
 import { replayLinkFor } from '../src/replay-link.js';
 import { lockFieldsFromJson } from '../../protocol/src/stake-lock.js';
 import { sha256 } from '../../protocol/src/hash.js';
@@ -1400,6 +1400,18 @@ test('the rest of the fees: the shortfall plus 1 sat, in whole sat; asked at onc
   assert.equal(shortOnlyByFees(99840n, 2464n, 100000n), true, 'the measured 99840 msat wallet is asked only the rest');
   assert.equal(shortOnlyByFees(0n, 100000n, 100000n), false, 'an empty wallet gets the tabs');
   assert.equal(shortOnlyByFees(50000n, 50000n, 100000n), false, 'half a round short gets the tabs');
+});
+
+test('a rest under the federation\'s 5 sat floor is invoiced at 5 sat; 5 sat or more is invoiced exactly', async () => {
+  assert.equal(restInvoiceMsat(2000n), 5000n);
+  assert.equal(restInvoiceMsat(4000n), 5000n);
+  assert.equal(restInvoiceMsat(5000n), 5000n);
+  assert.equal(restInvoiceMsat(7000n), 7000n);
+  const client = { receive: async (msat) => JSON.stringify({ invoice: 'lntb50n1x', operation: 'op' + msat }), awaitReceive: () => new Promise(() => {}) };
+  const o = depositOffer({ client, stakeMsat: 100000n, restMsat: 2000n });
+  assert.equal(o.restMsat, 2000n, 'the rest the round needs');
+  assert.equal(o.restPayMsat, 5000n, 'the invoice asks the floor');
+  assert.deepEqual(o.choices.map((c) => [c.key, c.msat]), [['rest', 5000n]]);
 });
 
 test('a withdrawal of a chosen amount pays only an invoice of exactly that amount', async () => {
