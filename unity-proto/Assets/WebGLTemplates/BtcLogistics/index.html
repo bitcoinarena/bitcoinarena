@@ -1712,12 +1712,17 @@
       };
       close.addEventListener('click', () => { active.close(); done(); });
       // THE REST, IN PLACE: the title says what is missing, the tabs keep their place unseen, the one invoice is made
-      const restWords = (o) => `This round needs ${((o.restMsat + 999n) / 1000n).toLocaleString('en-US')} more sat for fees. Pay the rest to join.`;
+      // THE 5 SAT FLOOR (the owner 2026-10-01): a rest under the smallest deposit the federation takes is asked at that floor
+      const satN = (msat) => ((BigInt(msat) + 999n) / 1000n).toLocaleString('en-US');
+      const restPay = (o) => (o.restPayMsat !== undefined && o.restPayMsat !== null ? o.restPayMsat : o.restMsat);
+      const restWords = (o) => restPay(o) > o.restMsat
+        ? `This round needs ${satN(o.restMsat)} more sat for fees. The smallest Lightning deposit is ${satN(restPay(o))} sat. Pay ${satN(restPay(o))} sat to join.`
+        : `This round needs ${satN(o.restMsat)} more sat for fees. Pay the rest to join.`;
       const takeRest = (o) => {
         active = o; bind(o);
         titleEl.textContent = restWords(o);
         tabs.style.visibility = 'hidden'; custom.style.visibility = 'hidden';
-        show(o.restMsat);
+        show(restPay(o));
       };
       // PAID: the green line stays; the round is looked at again (`outcome`). Funded - the modal goes 2.5 s later.
       // Still short - after the green line has stood 2 s, the rest of the fees in this same modal (never the tabs again).
