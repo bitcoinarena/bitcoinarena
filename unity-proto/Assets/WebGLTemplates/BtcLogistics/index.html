@@ -1861,7 +1861,7 @@
             : 'Your wallet is empty, so there is nothing to withdraw.';
         } catch (e) { amountEl.textContent = 'Your balance could not be read (' + (e && e.message ? e.message : e) + '). Try again in a moment.'; }
       })();
-      go.onclick = async () => {
+      document.getElementById('blwp-wd-go').onclick = async () => {
         readInvoice();
         const pasted = String(inv.value || '').trim();
         if (!pasted) { why.textContent = 'Paste an invoice first.'; return; }
