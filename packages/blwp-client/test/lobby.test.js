@@ -293,6 +293,12 @@ test('the lobby lists one free round and one paying round, never two of either, 
   // Only one kind open: only that one listed; nothing open: nothing listed.
   assert.deepEqual(lobbyOnePerKind([row('pay', false, 500)]).map((r) => r.id), ['pay']);
   assert.deepEqual(lobbyOnePerKind([]), []);
+  // ONLY 90-SECOND PAID ROUNDS (the owner 2026-10-01): the core page lists no one-off paying round; a series one stays
+  const oneOff = row('one-off', false, 21600);
+  const seriesRow = row('series-0', false, 0, { contract: { seriesId: new Uint8Array(32), startTimeMs: BigInt(T), roundIndex: 0n } });
+  assert.deepEqual(lobbyOnePerKind([row('free', true, 60), oneOff], T, { paidSeriesOnly: true }).map((r) => r.id), ['free'], 'a 6 h one-off paid row was listed');
+  assert.deepEqual(lobbyOnePerKind([oneOff, seriesRow], T - 200000, { paidSeriesOnly: true }).map((r) => r.id), ['series-0']);
+  assert.deepEqual(lobbyOnePerKind([oneOff], T).map((r) => r.id), ['one-off'], 'without the option nothing changes');
   // WHAT A PAYING ROW COSTS, in whole sats: 100000 msat is 100 sat; a free row costs nothing.
   assert.equal(lobbyStakeSats(row('pay', false, 500)), 100);
   assert.equal(lobbyStakeSats(row('free', true, 500)), 0);
