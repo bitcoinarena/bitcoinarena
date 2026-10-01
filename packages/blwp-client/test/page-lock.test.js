@@ -22,7 +22,7 @@ import { bech32Encode, convertBits } from '../../protocol/src/bech32.js';
 import { decodeBolt11 } from '../../protocol/src/bolt11.js';
 
 import { lockStake, fundPlayerWallet, walletSecretFor, withdrawPlayerWallet, handLock, lockSecretFor, lockAmountMsat, lockLine, saveLock, savedLock, markLockCommitted,
-  refundStake, redeemStake, redeemPayout, payoutLine, returnStake, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, withdrawLine, refundKept, refundLine, lookOwed, owedToLine as owedLine, collectAndWithdraw, tabLockWallet, findOwedRounds, feeSecretFor, ledgerRows, ledgerReadSavedStakes, playerWallet, depositChoices, depositOffer, withdrawChoices, playerWithdrawable, pendingDeposits, resumeDeposits, restOfFeesMsat, shortOnlyByFees, restInvoiceMsat, ceilNote, roundsDepositMsat, locksForRound, DEPOSIT_INSUFFICIENT } from '../src/page-lock.js';
+  refundStake, redeemStake, redeemPayout, payoutLine, returnStake, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, withdrawLine, refundKept, refundLine, lookOwed, owedToLine as owedLine, collectAndWithdraw, tabLockWallet, findOwedRounds, feeSecretFor, ledgerRows, ledgerReadSavedStakes, playerWallet, depositChoices, depositOffer, withdrawChoices, playerWithdrawable, pendingDeposits, resumeDeposits, restOfFeesMsat, shortOnlyByFees, restInvoiceMsat, ceilNote, roundsDepositMsat, locksForRound, settingsDepositOffer, DEPOSIT_INSUFFICIENT } from '../src/page-lock.js';
 import { replayLinkFor } from '../src/replay-link.js';
 import { lockFieldsFromJson } from '../../protocol/src/stake-lock.js';
 import { sha256 } from '../../protocol/src/hash.js';
@@ -1324,6 +1324,16 @@ test('N rounds play N rounds (the owner 2026-10-01): the "N rounds" tab funds ex
       await client.spend(locks.amount); if (locks.feeMsat > 0n) await client.spend(locks.feeMsat);
     }
   }
+});
+
+test('the Settings tabs are sized as the join sizes them - with the donation - so "1 round" there is the 1 round PLAY asks', async () => {
+  const { LockClient } = noteClient();
+  const at = (donationMsat) => settingsDepositOffer({ round, invite: INVITE, seed: b32(0x91), LockClient, storage: tabStorage(), donationMsat });
+  const two = BigInt(round.stakeMsat) * 200n / 10000n;   // 2%, the Settings default
+  const withDonation = (await at(two)).choices[0].msat; const without = (await at(0n)).choices[0].msat;
+  const client = await playerWallet({ round, invite: INVITE, seed: b32(0x91), LockClient, storage: tabStorage() });
+  assert.equal(withDonation, roundsDepositMsat(1, await locksForRound(round, client, two), LockClient));
+  assert.ok(withDonation < without, 'the donation did not shrink the round the Settings tab asks for');
 });
 
 test('a close refuses the deposit', async () => {

@@ -1607,8 +1607,11 @@
         (async () => {
           try {
             const wasm = await import('./blwp_lock_client.js'); await wasm.default();
+            // THE ROUNDS ARE SIZED AS THE JOIN SIZES THEM: with the donation chosen in Settings (stake x its %), so "1 round" here
+            // is the 1 round PLAY asks (measured 2026-10-01: without it Settings asked 102.4 sat where a round takes 100.31)
+            const donationMsat = ctx.roundStake * BigInt(donationBps()) / 10000n;
             const offer = await BLWPCLIENT.settingsDepositOffer({ round: ctx.round, invite: ctx.invite, seed: ctx.seed, LockClient: wasm.LockClient,
-              storage: vault(), gateways: ctx.gateways, onClaimed: () => { paintHistory(); if (window.BLWP_READ_BALANCE) window.BLWP_READ_BALANCE(); } });
+              storage: vault(), gateways: ctx.gateways, donationMsat, onClaimed: () => { paintHistory(); if (window.BLWP_READ_BALANCE) window.BLWP_READ_BALANCE(); } });
             showDepositOffer(offer, { title: 'Deposit into your player wallet', overSettings: true });
           } catch (e) { why.textContent = 'No deposit: ' + (e && e.message ? e.message : e); }
         })();
