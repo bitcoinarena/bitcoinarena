@@ -1,6 +1,7 @@
 // THE FIVE-OF-SEVEN FIXTURE: seven live signer nodes on one stake-lock round and the helpers that drive them, shared
 // by five-of-seven.test.js and five-of-seven-receipts-lost.test.js. Moved here unchanged when the file was split to fit
 // the 180 s per-file cap (measured 2026-09-23: ten tests, 18-40 s each, ~220 s in one file).
+import { testNow, skipTo } from './test-clock.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import assert from 'node:assert/strict';
 import { ed25519 } from '@noble/curves/ed25519.js';
@@ -58,7 +59,7 @@ export async function sevenSignerNodes(custody, { endIn = null } = {}) {
   const base = { ...contractFor(signerNodes.map((d) => d.round.pubkey), BigInt(WINDOW), ports.map((p) => `http://127.0.0.1:${p}`)),
     ...(custody === 'lock' ? { custody: 'FEDERATION', federationId: TEST_FEDERATION_ID } : {}) };
   // `endIn`: THE ROUND IN THE PRESENT, its contract end this many ms from now (§13C's result window opens at it).
-  const drafted = endIn === null ? base : presentDay(base, Date.now() + endIn);
+  const drafted = endIn === null ? base : presentDay(base, testNow() + endIn);
   // ONLY THE FIELD THE CHAIN DICTATES (RULED 2026-09-25): the census root its bonds derive to; the round's times stand.
   const c = slot ? { ...drafted, censusRoot: bondedChainFor(drafted.nodes, drafted, slot,
     { endpoints: ports.map((p) => `ws://127.0.0.1:${p}`) }).censusRoot } : drafted;
@@ -297,13 +298,13 @@ export async function lockAfterClose(w, run) {
   const up = [...w.up].sort((a, b) => a - b);
   // EVERY MARK OF THE PATH IS PLAY-TIME EVIDENCE: made before the result window's end block (RULED 2026-09-24: evidence
   // counts strictly before it). A path that ran past it would test a late pair, not the path it names.
-  const endAtClose = CLOCK.endAt(Math.ceil(Number(roundEndMs(w.c)) / 1000) * 1000, WINDOW);
-  assert.ok(Date.now() < endAtClose, `the path ran ${Date.now() - endAtClose} ms past the result window's end block before its close`);
+  const endAtClose = (Number(roundEndMs(w.c)) + 605000);
+  assert.ok(testNow() < endAtClose, `the path ran ${testNow() - endAtClose} ms past the result window's end block before its close`);
   await Promise.all(up.map((i) => say(w.signerNodes[i].port, `close ${toHex(w.rid)}`)));
   // PAST THE RESULT WINDOW ON THE CHAIN (RULED 2026-09-24): its end block - opened at the first block at or after the
   // round's contract end - before any §13C decision can be; then each signer node's next pass.
-  const endMs = CLOCK.endAt(Math.ceil(Number(roundEndMs(w.c)) / 1000) * 1000, WINDOW);
-  for (const stop = Date.now() + 30000; Date.now() < stop && Date.now() < endMs; await wait(100));
+  const endMs = (Number(roundEndMs(w.c)) + 605000);
+  skipTo(endMs + 100);
   for (let t = Date.now(); Date.now() - t < 20000
     && !up.every((i) => w.signerNodes[i].round.noQuorum(run.eid) || w.signerNodes[i].round.results(w.rid, run.eid).length); await wait(250));
   await wait(WINDOW + 1500);

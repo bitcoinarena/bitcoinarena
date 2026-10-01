@@ -215,6 +215,10 @@ export const TYPE_TRANSCRIPT_POSTING = 0x18;
 // its replay of the canonical transcript produces, tied to the contradicted run.
 // The spec names no wire object for it; this is that object.
 export const TYPE_RERUN_RESULT = 0x19;
+// A SEAT'S FINAL SIGNATURE (§13A, WINDOW-10-SPEC, the owner 2026-10-01): one settlement seat's word that a run is FINAL,
+// signed once its own clock read the window's close + the tolerance and it held no valid objection in time. Five of
+// seven (the round's threshold) make the run FINAL.
+export const TYPE_FINAL_SIGNATURE = 0x1a;
 
 // A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
 // under AES-GCM plus the 16-byte tag that makes a wrong key a REFUSAL rather
@@ -323,6 +327,8 @@ export const TAG = {
   transcriptPosting: 'BLWP/v1/TranscriptPosting',
   // What a signer node signs when it re-runs a suspended result (§13A).
   rerunResult: 'BLWP/v1/RerunResult',
+  // What a settlement seat signs when it signs a run FINAL (§13A, WINDOW-10-SPEC).
+  finalSignature: 'BLWP/v1/FinalSignature',
 };
 
 /**
@@ -498,12 +504,13 @@ export function genesisConfigHash() {
 export const OBJECTION_WINDOW_REFERENCE_MS = 600000n;
 
 /**
- * THE LONGEST OBJECTION WINDOW A ROUND CONTRACT MAY NAME: six hours, in milliseconds (§13A, RULED the owner
- * 2026-09-24). An objected entry is decided at the latest three windows after it was provisionally final - the
- * objection window, the re-run window, the re-run's own objection window - and the stake lock's 144 blocks must
- * cover that plus the round and the settlement: three windows and a round inside a day, with room to settle.
+ * THE OBJECTION WINDOW, FIXED (§13A, WINDOW-10-SPEC, RULED the owner 2026-10-01 09:40): exactly 600 seconds of wall time from
+ * the round's end as its contract fixes it. Not a contract choice, not blocks, not a range: a Round Contract whose
+ * objection_window_W is anything else is invalid. It replaces the six-hour cap (MAX_OBJECTION_WINDOW_MS, withdrawn).
  */
-export const MAX_OBJECTION_WINDOW_MS = 21_600_000n;
+export const OBJECTION_WINDOW_MS = 600_000n;
+/** The clock tolerance (§13A, RULED with WINDOW-10-SPEC): a seat signs FINAL at window close + 5 s, and counts a signed time only within 5 s of its own clock. */
+export const FINAL_TOLERANCE_MS = 5_000n;
 
 /**
  * WHICH CUSTODY CONSTRUCTION A ROUND USES. Section 23.6 says "The Round Contract names which construction it

@@ -63,7 +63,7 @@ async function federationRound({ signerNodes = 2, keyOf = () => CLAIM, federatio
   const drafted = {
     networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
     gameVerifySlots: signerNodes, settlementSlots: signerNodes, simCoreHash: CORE_HASH, startTimeMs: now + MIN_ENTRY_WINDOW_MS,
-    entryCloseMs: now + MIN_ENTRY_WINDOW_MS + 600000n, objectionWindowMs: 3000n, custody: 'FEDERATION',
+    entryCloseMs: now + MIN_ENTRY_WINDOW_MS + 600000n, objectionWindowMs: 600000n, custody: 'FEDERATION',
     slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId, stakeExpiryBlocks: 144,
     publicationRelays: daemons.map((d) => `http://127.0.0.1:${d.port}`), donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,
     censusRoot: b32(2), committeeTimeMs: now - 1000n, randomnessRule: 'bitcoin-block-hash', stakeMsat: 100000n,

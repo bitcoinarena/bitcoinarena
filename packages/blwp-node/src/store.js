@@ -886,6 +886,30 @@ export function openStore(path = ':memory:') {
       seen_ms  INTEGER NOT NULL,
       PRIMARY KEY (round_id, entry_id)
     );
+
+    -- THE SEATS' FINAL SIGNATURES (§13A, WINDOW-10-SPEC, the owner 2026-10-01): one per seat per run, the latest that counted
+    -- on arrival (signed within 5 s of this seat's clock when it came), with when it came. The run is FINAL at the
+    -- round's threshold of them.
+    CREATE TABLE IF NOT EXISTS final_sigs (
+      round_id      BLOB NOT NULL,
+      entry_id      BLOB NOT NULL,
+      run_id        BLOB NOT NULL,
+      signer_pubkey BLOB NOT NULL,
+      bytes         BLOB NOT NULL,
+      seen_ms       INTEGER NOT NULL,
+      PRIMARY KEY (round_id, entry_id, run_id, signer_pubkey)
+    );
+    -- AND THE ONES THAT DID NOT COUNT BECAUSE OF THEIR TIME (§13A rule 3): "A back-dated or forward-dated signature does
+    -- not count and is itself evidence against its signer." Kept as they came, with why.
+    CREATE TABLE IF NOT EXISTS final_sig_evidence (
+      round_id      BLOB NOT NULL,
+      entry_id      BLOB NOT NULL,
+      signer_pubkey BLOB NOT NULL,
+      bytes         BLOB NOT NULL,
+      seen_ms       INTEGER NOT NULL,
+      why           TEXT NOT NULL,
+      PRIMARY KEY (round_id, entry_id, signer_pubkey, bytes)
+    );
   `);
   // A STORE MADE BEFORE A NONCE ROW CARRIED ITS SIGNING ATTEMPT gets the column:
   // every row it already holds was attempt 0.
@@ -900,6 +924,11 @@ export function openStore(path = ':memory:') {
   // the answer. A store made before the ruling gets the column; a row there names none, and its refusal counts nowhere.
   if (!db.prepare('PRAGMA table_info(first_mark_offers)').all().some((c) => c.name === 'block_hash'))
     db.exec('ALTER TABLE first_mark_offers ADD COLUMN block_hash BLOB');
+  // §13C'S EVIDENCE COUNTS BY WHEN THIS SEAT HELD IT (§13A, WINDOW-10-SPEC, RULED the owner 2026-10-01): a record of a mark
+  // keeps the moment it was made here, and counts in a decision only if it was held before the decision's instant. A row
+  // from before the column counts as held from the start.
+  if (!db.prepare('PRAGMA table_info(evidence_blocks)').all().some((c) => c.name === 'seen_ms'))
+    db.exec('ALTER TABLE evidence_blocks ADD COLUMN seen_ms INTEGER');
   // AND BEFORE AN ENTRY_VOID SAID HOW THIS SIGNER NODE LEARNED IT (M3.3-34): every row
   // it already holds was decided on its own record.
   if (!db.prepare('PRAGMA table_info(entry_voids)').all().some((c) => c.name === 'learned'))

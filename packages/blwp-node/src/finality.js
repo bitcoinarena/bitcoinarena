@@ -1,47 +1,46 @@
-// WHEN A RESULT THIS NODE HOLDS MAY MOVE MONEY (M3.3-32).
+// WHEN A RESULT THIS NODE HOLDS MAY MOVE MONEY (M3.3-32; §13A, WINDOW-10-SPEC, RULED the owner 2026-10-01).
 //
-// Section 13A, through `protocol/src/objection.js`'s own `finality()`: a run
-// the committee's threshold signed is PROVISIONALLY_FINAL, and it is FINAL
-// when the round contract's objection window has closed with no valid
-// objection. "Taking a player's stake requires a final result, an elapsed
-// objection window, and a threshold quorum." Measured before this file: the
-// daemon took the quorum as final and settled, cancelled and handed out shares
-// 586-977 ms after the close of a round whose contract named a 3000 ms window.
+// A run the committee's threshold signed is PROVISIONALLY_FINAL. The objection window is exactly 600 s of wall time from
+// the round's end as its contract fixes it (protocol window.js), the same instant on every node; a seat signs FINAL
+// once its own clock reads close + 5 s, it holds the run PROVISIONALLY_FINAL, its transcript is posted and it holds no
+// valid objection received in time; and the run is FINAL only when the round's threshold of seats (5 of 7, 2 of 2) have
+// signed FINAL with times inside the 5 s tolerance of this seat's clock (protocol final-sig.js). No block decides any
+// of it: blocks are where randomness comes from, not when a window ends.
 //
-// THE WINDOW OPENS when THIS node first held the threshold: the `seen_ms` of
-// the agreeing record that completed it, off the store - so a restart does not
-// open it again, and no message can open it earlier. Two signer nodes see the
-// threshold at slightly different moments and close the window at slightly
-// different moments; neither closes it sooner than the contract's full length
-// after it could itself see the quorum.
+// A VALID OBJECTION is what `objectionHolds` says it is: the committee's receipts, and a replay that contradicts the
+// signed result (the replay a daemon holds is its OWN). It counts by when it reached THIS seat, on this seat's clock:
+// before this seat's close + 5 s it suspends the run here - this seat never signs FINAL on it, and since FINAL needs the
+// threshold, three seats that saw it in time block it. After that it suspends nothing: it is kept, flagged
+// `lateObjection`, as evidence against the signers. Filing costs nothing, which is why a filing alone suspends nothing.
 //
-// A VALID OBJECTION is what `objectionHolds` says it is: the committee's
-// receipts, and a replay that contradicts the signed result. The replay a
-// daemon holds is its OWN, so an objection filed at `/objection` against a run
-// holds on a node that signed a different run than the threshold did, and on
-// no other. Filing costs nothing, which is why a filing alone suspends
-// nothing: it would let anybody hold every stake past its window and hand it
-// back to its player.
+// A SUSPENDED RUN is decided by the committee's re-run, chained from the same close (RULED 2026-10-01): the re-run
+// window is [end + 600 s, end + 1200 s); a re-run counts if it was signed after the objection was held here, arrived
+// before this seat's end + 1205 s, and its signed time is within the tolerance. No threshold by then is §13C. With one,
+// the re-run's own window is [end + 1200 s, end + 1800 s), FINAL is signed on the re-run after end + 1805 s, and a valid
+// objection to the re-run received before that makes the entry VOID at once.
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { objectionHolds, FINAL, SUSPENDED, PROVISIONALLY_FINAL } from '../../protocol/src/objection.js';
 import { rerunIsAgreed, runOf, decodeRerunResult, splitSignedRerun } from '../../protocol/src/rerun.js';
 import { noQuorumOutcome, VOID } from '../../protocol/src/payout.js';
 import { decodeRoundContract } from '../../protocol/src/contracts.js';
-import { medianTimePast, beaconFromChain } from '../../protocol/src/beacon.js';
-import { roundEndMs } from '../../protocol/src/first-mark.js';
+import { medianTimePast } from '../../protocol/src/beacon.js';
 import { blockHashOf } from '../../protocol/src/chain.js';
 import { splitSignedResult, decodePlayerResult, resultId } from '../../protocol/src/result.js';
 import {
   splitSignedReceipt, decodeCheckpointReceipt, SIGNED_RECEIPT_BYTES,
 } from '../../protocol/src/receipt.js';
+import { windowsOf, withinTolerance, FINAL_TOLERANCE_MS } from '../../protocol/src/window.js';
+import { finalSigned, signFinalSig } from '../../protocol/src/final-sig.js';
 import { verifiedFinal, runId } from './verdict.js';
 import { transcriptIsPublished } from '../../protocol/src/posting.js';
 
 const hex = (b) => [...b].map((v) => v.toString(16).padStart(2, '0')).join('');
+const utc = (ms) => new Date(Number(ms)).toISOString();
 
 /**
- * Where one run stands on this node, now: `state` is null (no threshold yet),
- * PROVISIONALLY_FINAL, FINAL or SUSPENDED, with `why` and `closesAtMs`.
+ * Where one run stands on this node, now: `state` is null (no threshold yet), PROVISIONALLY_FINAL, FINAL or SUSPENDED
+ * (or §13C's VOID/FORFEIT), with `why`, `closesAtMs`, and - when this seat may sign FINAL now - `signable`
+ * ({ runId, finalAfterMs }). `nextAtMs`: the next instant at which the clock alone changes the answer, if any.
  */
 export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.now() } = {}) {
   const row = round.get(roundIdBytes);
@@ -50,6 +49,8 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
   const committee = round.signerNodes(roundIdBytes);
   const held = round.results(roundIdBytes, entryIdBytes);
   const seen = verifiedFinal(held.map((r) => r.bytes), { contract, signerNodes: committee });
+  let win = null;
+  try { win = windowsOf(contract); } catch { win = null; }
   if (!seen.ok || !seen.final) {
     // §13C'S NO-QUORUM OUTCOME (M3.3-34), on this signer node's own record once the
     // result window passed with no result at the threshold: VOID - or FORFEIT,
@@ -57,8 +58,9 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
     // PROVISIONAL.
     const nq = typeof round.noQuorum === 'function' ? round.noQuorum(entryIdBytes) : null;
     if (nq) return { state: nq.outcome, why: nq.why, noQuorum: true };
-    return { state: null, why: seen.why || 'not final' };
+    return { state: null, why: seen.why || 'not final', nextAtMs: win ? win.finalAfterMs : null };
   }
+  if (!win) return { state: PROVISIONALLY_FINAL, runId: seen.runId, why: 'the round\'s end cannot be computed from its contract, so no window can open or close' };
 
   // WHO SIGNED THE AGREED RUN, and when this node held each of them. The
   // same checks `verifiedFinal` counted under: a signer node, and a signature that
@@ -85,40 +87,19 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
         playerPubkey: result.playerPubkey, transcriptHash: result.transcriptHash });
   }
   const signedResultId = agreeing[0].run;
-  const W = Number(contract.objectionWindowMs);
   const verify = (s, m, k) => schnorr.verify(s, m, k);
-  const base = { runId: seen.runId, signers: agreeing.length };
-
-  // THE WINDOWS ARE BLOCKS AT BOTH ENDS (§13A, RULED the owner 2026-09-24): each opens at the block its opening filing names
-  // and ends at the first later block whose median time past is at or after open + objection_window_ms; a filing is
-  // inside only if the block it names is in this chain, at or after the open, and strictly before the end block. No
-  // receive time and no clock decides a window - this node's chain does, and a node without the block it needs decides
-  // nothing: no FINAL, VOID, slash or claim. Two holders with the same blocks through the end block answer alike.
-  const chain = chainIndex(round, roundIdBytes, contract);
-  if (!chain.ok) return { ...base, state: PROVISIONALLY_FINAL, blockPending: true, why: `no window of this run can open or end: ${chain.why}` };
-
-  // THE FIRST WINDOW OPENS AT THE POSTING THAT COMPLETES THE THRESHOLD (v4.6.2 §13A, P2; RULED 2026-09-24): the joint
-  // moment - the transcript posted and the signed results' threshold held - is the block the posting records name, the
-  // threshold's one by the chain's own order. No threshold of postings, no open.
-  const published = transcriptIsPublished({
-    roundId: roundIdBytes, playerPubkey: agreeing[0].playerPubkey, transcriptHash: agreeing[0].transcriptHash,
+  const nowMs = BigInt(now);
+  const base = { runId: seen.runId, signers: agreeing.length, provisionalAtMs: Number(win.openMs),
+    windowOpenMs: win.openMs, windowCloseMs: win.closeMs, finalAfterMs: win.finalAfterMs };
+  const finalSigs = (run, finalAfterMs) => finalSigned({
+    roundId: roundIdBytes, entryId: entryIdBytes, runId: run, records: round.finalSigs(roundIdBytes, entryIdBytes, run),
+    committee, slots: contract.settlementSlots, finalAfterMs, verify,
+  });
+  const postedFor = (transcriptHash) => transcriptIsPublished({
+    roundId: roundIdBytes, playerPubkey: agreeing[0].playerPubkey, transcriptHash,
     postings: round.postings(roundIdBytes, entryIdBytes), signerNodes: committee,
     settlementSlots: contract.settlementSlots, verify,
   });
-  const unpostable = !(contract.publicationRelays || []).length;
-  if (unpostable)
-    return { ...base, state: PROVISIONALLY_FINAL, published: false, posted: 0,
-      why: 'the round contract names no publication relay, so no result of it can become final: the objection window opens only when its transcript is posted' };
-  if (!published.ok)
-    return { ...base, state: PROVISIONALLY_FINAL, published: false, posted: published.posted || 0,
-      why: `${published.why}: the objection window opens only when its transcript is posted` };
-  const first = openAt(chain, published.blocks, published.needed, W);
-  if (!first.ok)
-    return { ...base, state: PROVISIONALLY_FINAL, published: true, posted: published.posted, blockPending: true, why: first.why };
-  const windows = { first: first.window };
-  const provisionalAtMs = first.window.open.mtp;
-  const closesAtMs = BigInt(first.window.end ? first.window.end.mtp : provisionalAtMs + W);
-
   const receiptsHeld = () => {
     const { bytes } = round.receipts(roundIdBytes, entryIdBytes);
     const out = [];
@@ -130,84 +111,96 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
     return out;
   };
 
-  // THE OBJECTION, BY THE BLOCK IT NAMES, and valid as ever: the committee's receipts, and this node's replay differing.
-  const filedBlock = typeof round.objectedBlock === 'function' ? round.objectedBlock(roundIdBytes, entryIdBytes) : null;
+  // THE OBJECTION, BY WHEN IT REACHED THIS SEAT (its own clock), and valid as ever: the committee's receipts, and this
+  // node's replay differing.
+  const filedAt = typeof round.objectedAt === 'function' ? round.objectedAt(roundIdBytes, entryIdBytes) : null;
   let objection = null;
-  let where = null;
-  if (filedBlock) {
+  if (filedAt !== null && filedAt !== undefined)
     objection = objectionHolds({
       objection: { roundId: roundIdBytes, signedResultId, atMs: 0n },
       receipts: receiptsHeld(), committee, roundId: roundIdBytes, signedResultId,
       replayDiffers: mine !== null && hex(mine) !== seen.runId,
     });
-    where = place(chain, first.window, filedBlock, W);
-  }
-  const common = { ...base, published: true, posted: published.posted, provisionalAtMs, closesAtMs, windows, objection: objection && objection.why };
-  if (objection && objection.holds && where === 'pending')
-    return { ...common, state: PROVISIONALLY_FINAL, blockPending: true,
-      why: `an objection names block ${hex(filedBlock).slice(0, 16)}, which this node cannot place in the window yet: it decides nothing` };
-  if (!(objection && objection.holds && where === 'inside')) {
-    if (!first.window.end)
-      return { ...common, state: PROVISIONALLY_FINAL, blockPending: true,
-        why: `the objection window opened at block ${first.window.open.height} (${first.window.open.mtp}) and its end block - the first at or after ${first.window.open.mtp + W} - is not in this chain yet` };
-    return { ...common, state: FINAL,
-      why: `the objection window [${first.window.open.height}, ${first.window.end.height}) closed with no valid objection inside it` };
+  const inTime = objection && objection.holds && BigInt(filedAt) < win.finalAfterMs;
+  const lateObjection = !!(objection && objection.holds && !inTime);
+
+  if (!inTime) {
+    const common = { ...base, closesAtMs: win.closeMs, objection: objection && objection.why, lateObjection,
+      ...(lateObjection ? { lateObjectionAtMs: filedAt } : {}) };
+    const fin = finalSigs(signedResultId, win.finalAfterMs);
+    const said = { signed: fin.signed, needed: fin.needed };
+    if (fin.ok)
+      return { ...common, state: FINAL, published: true, finalSigs: said,
+        why: `signed FINAL by ${fin.signed} of ${committee.length} seats after the objection window closed at ${utc(win.closeMs)} with no valid objection in time` };
+    const published = postedFor(agreeing[0].transcriptHash);
+    if (!(contract.publicationRelays || []).length)
+      return { ...common, state: PROVISIONALLY_FINAL, published: false, posted: 0, finalSigs: said,
+        why: 'the round contract names no publication relay, so no result of it can become final: a seat signs FINAL only once its transcript is posted' };
+    if (nowMs < win.finalAfterMs)
+      return { ...common, state: PROVISIONALLY_FINAL, published: published.ok, posted: published.posted || 0, finalSigs: said, nextAtMs: win.finalAfterMs,
+        why: `the objection window closes at ${utc(win.closeMs)} (the round's end + 600 s); FINAL is signed from ${utc(win.finalAfterMs)}` };
+    if (!published.ok)
+      return { ...common, state: PROVISIONALLY_FINAL, published: false, posted: published.posted || 0, finalSigs: said,
+        why: `${published.why}: a seat signs FINAL only once the transcript is posted` };
+    return { ...common, state: PROVISIONALLY_FINAL, published: true, posted: published.posted, finalSigs: said,
+      signable: { runId: signedResultId, finalAfterMs: win.finalAfterMs },
+      why: `the objection window closed at ${utc(win.closeMs)} with no valid objection in time; ${fin.why}` };
   }
 
-  // A SUSPENDED RESULT IS DECIDED BY THE COMMITTEE'S RE-RUN (v4.6.2 §13A), INSIDE THE RE-RUN WINDOW: one window from the
-  // objection's own block. A re-run counts by the block it names. No threshold by the window's end block is §13C's rule -
-  // FORFEIT if the player's equivocation is proven (§13B), VOID otherwise; before that block, nothing is decided.
-  const filedHeight = chain.heightOf(filedBlock);
-  const rerunWindow = { open: { height: filedHeight, mtp: chain.mtpAt(filedHeight) } };
-  rerunWindow.end = windowEnd(chain, rerunWindow.open, W);
-  windows.rerun = rerunWindow;
-  const filedAtMs = rerunWindow.open.mtp;
+  // A SUSPENDED RESULT IS DECIDED BY THE COMMITTEE'S RE-RUN (§13A), INSIDE THE RE-RUN WINDOW chained from the first
+  // window's close: [end + 600 s, end + 1200 s). A re-run counts if signed after the objection was held here (less the
+  // tolerance), arrived before this seat's end + 1205 s, and signed within the tolerance of this seat's clock at arrival.
+  // No threshold by end + 1205 s is §13C's rule - FORFEIT if the player's equivocation is proven (§13B), VOID otherwise.
+  const filedAtMs = Number(filedAt);
   const records = round.reruns(roundIdBytes, entryIdBytes).map((r) => {
     let x = null;
     try { x = decodeRerunResult(splitSignedRerun(r.bytes).body); } catch { x = null; }
-    return { ...r, block: x ? x.blockHash : null, where: x ? place(chain, rerunWindow, x.blockHash, W) : 'outside' };
+    const counts = !!x && x.signedAtMs + FINAL_TOLERANCE_MS >= BigInt(filedAt) && withinTolerance(x.signedAtMs, r.seenMs)
+      && BigInt(r.seenMs) < win.rerunDeadlineMs;
+    return { ...r, counts };
   });
-  const inside = records.filter((r) => r.where === 'inside');
+  const inside = records.filter((r) => r.counts);
   const agreedOn = (recs) => rerunIsAgreed({
     roundId: roundIdBytes, playerPubkey: agreeing[0].playerPubkey, contradictedRunId: agreeing[0].run,
     records: recs, signerNodes: committee, slots: contract.gameVerifySlots, verify,
   });
   const rerun = agreedOn(inside);
   const said = { agreed: rerun.agreed || 0, needed: rerun.needed };
-  const suspended = { ...common, state: SUSPENDED, rerun: said, filedAtMs, closesAtMs };
+  const common = { ...base, objection: objection && objection.why, filedAtMs, rerunWindowOpenMs: win.rerunOpenMs, rerunWindowCloseMs: win.rerunCloseMs };
+  const suspended = { ...common, state: SUSPENDED, rerun: said, closesAtMs: win.rerunCloseMs };
   if (!rerun.ok) {
-    if (!rerunWindow.end)
-      return { ...suspended, blockPending: true,
-        why: `a valid objection suspends finality: the committee re-runs the canonical transcript, and 13C applies only if that re-run cannot reach five of seven; re-run so far: ${rerun.why}; the re-run window's end block - the first at or after ${filedAtMs + W} - is not in this chain yet` };
-    // §13C'S EVIDENCE IN THIS WINDOW (RULED 2026-09-24): a pair counts only if both its marks sit strictly before the re-run
-    // window's end block.
+    // DECIDED ONCE (§13C): a §13C outcome this seat already wrote for the entry stands - evidence that reaches it later
+    // does not turn a VOID into a FORFEIT.
+    const had = typeof round.noQuorum === 'function' ? round.noQuorum(entryIdBytes) : null;
+    if (had && nowMs >= win.rerunDeadlineMs)
+      return { ...common, state: had.outcome, noQuorum: true, rerun: said, rerunWindowClosedAtMs: Number(win.rerunCloseMs), why: had.why };
+    if (nowMs < win.rerunDeadlineMs)
+      return { ...suspended, nextAtMs: win.rerunDeadlineMs,
+        why: `a valid objection reached this seat at ${utc(filedAt)}, before ${utc(win.finalAfterMs)}: finality is suspended and the committee re-runs the canonical transcript until the re-run window closes at ${utc(win.rerunCloseMs)}; re-run so far: ${rerun.why}` };
+    // §13C'S EVIDENCE: every pair this seat holds by the time it decides.
     const proven = typeof round.provenTwoFirstMarks === 'function'
-      && round.provenTwoFirstMarks(roundIdBytes, entryIdBytes, { chain, end: rerunWindow.end }) === true;
+      && round.provenTwoFirstMarks(roundIdBytes, entryIdBytes, evidenceWindow(round, roundIdBytes, contract, win.rerunDeadlineMs)) === true;
     const d = noQuorumOutcome({ signatures: rerun.agreed || 0, needed: rerun.needed || seen.needed, equivocationProven: proven, state: SUSPENDED });
-    if (d.outcome)
-      return { ...base, state: d.outcome, noQuorum: true, rerun: said, filedAtMs, windows, provisionalAtMs,
-        rerunWindowClosedAtMs: rerunWindow.end.mtp, objection: objection && objection.why,
-        why: `${d.why} - the re-run window [${rerunWindow.open.height}, ${rerunWindow.end.height}) closed with ${rerun.agreed || 0} of `
-          + `${rerun.needed || seen.needed} re-runs on one outcome (§13A, §13C)` };
+    if (d.outcome) {
+      const why = `${d.why} - the re-run window closed at ${utc(win.rerunCloseMs)} with ${rerun.agreed || 0} of `
+        + `${rerun.needed || seen.needed} re-runs on one outcome (§13A, §13C)`;
+      return { ...common, state: d.outcome, noQuorum: true, rerun: said, rerunWindowClosedAtMs: Number(win.rerunCloseMs), why };
+    }
     return { ...suspended, why: `the re-run window closed: ${d.why}` };
   }
 
-  // THE RE-RUN'S OWN OBJECTION WINDOW (§13A): it opens at the block where the agreed re-run first sits at threshold - by
-  // the chain's order of the blocks its records name - and ends as every window does.
-  const byChain = [...inside].sort((a, b) => chain.orderOf(a.block) - chain.orderOf(b.block));
-  let openRec = byChain[byChain.length - 1];
-  for (let k = 1; k <= byChain.length; k++) if (agreedOn(byChain.slice(0, k)).ok) { openRec = byChain[k - 1]; break; }
-  const ownHeight = chain.heightOf(openRec.block);
-  const own = { open: { height: ownHeight, mtp: chain.mtpAt(ownHeight) } };
-  own.end = windowEnd(chain, own.open, W);
-  windows.own = own;
-  const agreedAtMs = own.open.mtp;
-  const agreedCommon = { ...base, rerun: { ...said, runId: hex(rerun.runId) }, provisionalAtMs, filedAtMs, agreedAtMs, windows,
-    runId: hex(rerun.runId), contradictedRunId: seen.runId, objection: objection && objection.why };
+  // THE RE-RUN'S OWN OBJECTION WINDOW (§13A): [end + 1200 s, end + 1800 s), FINAL on the re-run from end + 1805 s.
+  const bySeen = [...inside].sort((a, b) => a.seenMs - b.seenMs);
+  let agreedAtMs = bySeen.length ? bySeen[bySeen.length - 1].seenMs : null;
+  for (let k = 1; k <= bySeen.length; k++) if (agreedOn(bySeen.slice(0, k)).ok) { agreedAtMs = bySeen[k - 1].seenMs; break; }
+  const agreedCommon = { ...common, rerun: { ...said, runId: hex(rerun.runId) }, agreedAtMs, closesAtMs: win.ownCloseMs,
+    ownWindowOpenMs: win.ownOpenMs, ownWindowCloseMs: win.ownCloseMs, finalAfterMs: win.ownFinalAfterMs,
+    runId: hex(rerun.runId), contradictedRunId: seen.runId };
 
-  // A SECOND VALID OBJECTION INSIDE THAT WINDOW VOIDS THE ENTRY AT ONCE (§13A, slice C2b): by the block it names.
-  const secondBlock = typeof round.rerunObjectedBlock === 'function' ? round.rerunObjectedBlock(roundIdBytes, entryIdBytes) : null;
-  if (secondBlock) {
+  // A SECOND VALID OBJECTION, RECEIVED HERE BEFORE end + 1805 s, VOIDS THE ENTRY AT ONCE (§13A, slice C2b).
+  const secondAt = typeof round.rerunObjectedAt === 'function' ? round.rerunObjectedAt(roundIdBytes, entryIdBytes) : null;
+  let lateSecond = false;
+  if (secondAt !== null && secondAt !== undefined) {
     const mineRec = round.reruns(roundIdBytes, entryIdBytes).find((r) => hex(r.signerNodePubkey) === hex(round.pubkey));
     let ownRun = null;
     try { ownRun = mineRec ? runOf(decodeRerunResult(splitSignedRerun(mineRec.bytes).body).result) : null; } catch { ownRun = null; }
@@ -216,29 +209,42 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
       receipts: receiptsHeld(), committee, roundId: roundIdBytes, signedResultId: rerun.runId,
       replayDiffers: ownRun !== null && hex(ownRun) !== hex(rerun.runId),
     });
-    const at2 = place(chain, own, secondBlock, W);
-    if (second.holds && at2 === 'pending')
-      return { ...agreedCommon, state: PROVISIONALLY_FINAL, blockPending: true, closesAtMs: BigInt(agreedAtMs + W),
-        why: `a second objection names block ${hex(secondBlock).slice(0, 16)}, which this node cannot place in the re-run's window yet: it decides nothing` };
-    if (second.holds && at2 === 'inside')
+    if (second.holds && BigInt(secondAt) < win.ownFinalAfterMs)
       return { ...agreedCommon, state: VOID, secondObjection: true, objection: second.why,
-        why: `a second valid objection, in block ${chain.heightOf(secondBlock)} inside the agreed re-run's own objection window `
-          + `[${own.open.height}, ${own.end ? own.end.height : '...'}), contradicts the re-run too: two contradicted quorums in one entry - VOID, no third run (13A)` };
+        why: `a second valid objection, received here at ${utc(secondAt)} before ${utc(win.ownFinalAfterMs)}, contradicts the agreed re-run too: `
+          + 'two contradicted quorums in one entry - VOID, no third run (13A)' };
+    lateSecond = second.holds;
   }
-  if (!own.end)
-    return { ...agreedCommon, state: PROVISIONALLY_FINAL, closesAtMs: BigInt(agreedAtMs + W), blockPending: true,
-      why: `re-run by ${rerun.agreed} of ${committee.length} committee signer nodes at block ${own.open.height} (${agreedAtMs}): its own `
-        + `objection window's end block - the first at or after ${agreedAtMs + W} - is not in this chain yet (13A)` };
-  const posted = transcriptIsPublished({
-    roundId: roundIdBytes, playerPubkey: agreeing[0].playerPubkey, transcriptHash: rerun.result.transcriptHash,
-    postings: round.postings(roundIdBytes, entryIdBytes), signerNodes: committee,
-    settlementSlots: contract.settlementSlots, verify,
-  });
-  if (posted.ok)
-    return { ...agreedCommon, state: FINAL, published: true, posted: posted.posted, closesAtMs: BigInt(own.end.mtp),
-      why: `re-run by ${rerun.agreed} of ${committee.length} committee signer nodes: the replay outcome is authoritative (13A)` };
-  return { ...agreedCommon, state: SUSPENDED, published: false, posted: posted.posted || 0,
-    why: `the re-run agreed, and its transcript is not posted: ${posted.why}` };
+  const fin = finalSigs(rerun.runId, win.ownFinalAfterMs);
+  const finSaid = { signed: fin.signed, needed: fin.needed };
+  if (fin.ok)
+    return { ...agreedCommon, state: FINAL, published: true, finalSigs: finSaid, lateObjection: lateSecond,
+      why: `re-run by ${rerun.agreed} of ${committee.length} committee signer nodes, signed FINAL by ${fin.signed} seats after its own window closed at ${utc(win.ownCloseMs)}: the replay outcome is authoritative (13A)` };
+  if (nowMs < win.ownFinalAfterMs)
+    return { ...agreedCommon, state: PROVISIONALLY_FINAL, finalSigs: finSaid, nextAtMs: win.ownFinalAfterMs,
+      why: `re-run by ${rerun.agreed} of ${committee.length} committee signer nodes: its own objection window closes at ${utc(win.ownCloseMs)}; FINAL is signed from ${utc(win.ownFinalAfterMs)} (13A)` };
+  const posted = postedFor(rerun.result.transcriptHash);
+  if (!posted.ok)
+    return { ...agreedCommon, state: SUSPENDED, published: false, posted: posted.posted || 0, finalSigs: finSaid,
+      why: `the re-run agreed, and its transcript is not posted: ${posted.why}` };
+  return { ...agreedCommon, state: PROVISIONALLY_FINAL, published: true, posted: posted.posted, finalSigs: finSaid, lateObjection: lateSecond,
+    signable: { runId: rerun.runId, finalAfterMs: win.ownFinalAfterMs },
+    why: `re-run agreed; its own window closed at ${utc(win.ownCloseMs)} with no valid objection in time; ${fin.why}` };
+}
+
+/**
+ * THIS SEAT'S FINAL SIGNATURE ON A RUN, NOW, or null when it would not sign: only a run `resultFinality` calls
+ * `signable` (its window's close + 5 s passed on this seat's clock, the transcript posted, no valid objection received
+ * in time) or already FINAL here. Signed fresh, at this seat's clock, every time it is asked - a signature counts only
+ * within 5 s of the receiver's clock, so an old one is worth nothing. `sign(digest)` signs with this seat's key.
+ */
+export function finalSignatureNow(round, roundIdBytes, entryIdBytes, sign, { now = round.now() } = {}) {
+  const f = resultFinality(round, roundIdBytes, entryIdBytes, { now });
+  let run = null;
+  if (f.signable) run = f.signable.runId;
+  else if (f.state === FINAL && f.runId) run = typeof f.runId === 'string' ? Uint8Array.from(Buffer.from(f.runId, 'hex')) : f.runId;
+  if (!run) return null;
+  return signFinalSig({ roundId: roundIdBytes, entryId: entryIdBytes, runId: run, signerPubkey: round.pubkey, signedAtMs: BigInt(now) }, sign);
 }
 
 // THE CHAIN AS THIS NODE HOLDS IT, indexed once per view: a block's height by its hash, and its median time past (ms).
@@ -268,63 +274,27 @@ export function chainIndex(round, roundIdBytes, contract) {
   return { ok: true, ...idx };
 }
 
-/** The end of a window opened at `open`: the first later block whose median time past is at or after open + W, or null. */
-export function windowEnd(chain, open, W) {
-  if (open.mtp === null) return null;
-  for (let h = open.height + 1; h <= chain.tip; h++) {
-    const m = chain.mtpAt(h);
-    if (m !== null && m >= open.mtp + W) return { height: h, mtp: m };
-  }
-  return null;
-}
-
 /**
- * WHERE A FILING'S BLOCK FALLS IN A WINDOW (RULED 2026-09-24): 'inside' if it is in this chain, its median time past at or
- * after the open and it is before the end block; 'outside' if it is the end block or later, before the open, or - once the
- * end block is here - not in this chain at all; 'pending' while the end block is not here and the named block is not
- * either. A block present before any end block exists is inside: the end, when it comes, is later.
- */
-export function place(chain, win, hash, W) {
-  const h = chain.heightOf(hash);
-  if (h === null) return win.end ? 'outside' : 'pending';
-  if (win.end && h >= win.end.height) return 'outside';
-  const m = chain.mtpAt(h);
-  if (m === null || m < win.open.mtp) return 'outside';
-  if (win.end) return 'inside';
-  return m < win.open.mtp + W ? 'inside' : 'pending';
-}
-
-/** The first window's open: the block of the posting that completes the threshold, by the chain's order, and its end. */
-function openAt(chain, blocks, needed, W) {
-  const heights = (blocks || []).map((b) => chain.heightOf(b));
-  if (heights.some((h) => h === null))
-    return { ok: false, why: 'a posting names a block this node does not hold yet, so the objection window\'s open is not decided here: it decides nothing' };
-  const sorted = [...heights].sort((a, b) => a - b);
-  const h = sorted[needed - 1];
-  const open = { height: h, mtp: chain.mtpAt(h) };
-  if (open.mtp === null) return { ok: false, why: 'the posting\'s block has no median time past in this node\'s view' };
-  return { ok: true, window: { open, end: windowEnd(chain, open, W) } };
-}
-
-/**
- * §13C'S RESULT WINDOW ON THE CHAIN (RULED the owner 2026-09-24): it opens at the first block at or after the round's contract
- * end - protocol `roundEndMs`: entry close, two start deadlines and the run length, the instant every run on the contract
- * has ended, the same at every holder and not this node's close - asked of the chain exactly as the beacon block is
- * (`beaconFromChain`), and it ends at the first later block whose median time past is at or after open + W, as every §13A
- * window does. `ok: true` only once this node holds that end block: a node without it decides no §13C outcome, and a
- * holder that closed earlier or later does not move either end.
+ * §13C'S RESULT WINDOW ON THE WALL CLOCK (§13A, WINDOW-10-SPEC, RULED the owner 2026-10-01): "A result reaches
+ * PROVISIONALLY_FINAL inside the window ... one that has not by window_close falls to §13C's no-quorum rule." The same
+ * window as the objection window - the round's end to + 600 s - and this seat decides once its own clock reads the
+ * close + 5 s, as it would sign FINAL. `window`: the evidence this seat holds by then (evidenceWindow), or null.
  */
 export function resultWindow(round, roundIdBytes, contract) {
-  const chain = chainIndex(round, roundIdBytes, contract);
-  if (!chain.ok) return { ok: false, why: `the result window cannot open or end: ${chain.why}` };
-  let endOfRound;
-  try { endOfRound = roundEndMs(contract); } catch (e) { return { ok: false, why: e.message }; }
-  const picked = beaconFromChain({ committeeTimeMs: endOfRound - 1n, censusConfirmations: contract.censusConfirmations },
-    { headers: chain.headers, firstHeight: chain.firstHeight });
-  if (!picked.ok) return { ok: false, why: `the result window has not opened in this node's chain (the first block at or after the round's end ${endOfRound}): ${picked.why}` };
-  const open = { height: picked.height, mtp: Number(picked.timeMs) };
-  const W = Number(contract.objectionWindowMs);
-  const end = windowEnd(chain, open, W);
-  if (!end) return { ok: false, open, why: `the result window opened at block ${open.height} (${open.mtp}) and its end block - the first at or after ${open.mtp + W} - is not in this node's chain yet` };
-  return { ok: true, open, end, chain };
+  let win;
+  try { win = windowsOf(contract); } catch (e) { return { ok: false, why: e.message }; }
+  const nowMs = BigInt(round.now());
+  if (nowMs < win.finalAfterMs)
+    return { ok: false, closesAtMs: win.closeMs, why: `the result window closes at ${utc(win.closeMs)} (the round's end + 600 s); nothing is decided before ${utc(win.finalAfterMs)}` };
+  return { ok: true, openMs: win.openMs, closesAtMs: win.closeMs, window: evidenceWindow(round, roundIdBytes, contract, win.finalAfterMs) };
+}
+
+/**
+ * THE EVIDENCE OF A WINDOW (§13C, WINDOW-10-SPEC): every record of a mark made before `untilMs` - the window's close + 5 s,
+ * the instant a seat decides it - this seat's own by when it made it, a peer's by when that peer made it; whatever block
+ * it names. A mark recorded later is a late mark, and counts in no decision; and the decision is written once
+ * (no_quorum), so nothing that arrives after it changes it. (Round.markCounts reads `end.untilMs`.)
+ */
+export function evidenceWindow(round, roundIdBytes, contract, untilMs) {
+  return { chain: null, end: { untilMs: BigInt(untilMs) } };
 }

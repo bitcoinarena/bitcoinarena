@@ -10,6 +10,7 @@
 //     the same §13C record - VOID, or FORFEIT on a counted pair - and the first-result slash follows that record.
 //
 // THE CHAIN is the fixtures' block clock (block-clock.js).
+import { testNow, skipTo } from './test-clock.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -19,7 +20,7 @@ import {
 import { CLOCK } from './block-clock.js';
 import { roundEndMs } from '../../protocol/src/first-mark.js';
 
-const endOf = (c, W) => CLOCK.endAt(Math.ceil(Number(roundEndMs(c)) / 1000) * 1000, W);
+const endOf = (c, W) => (Number(roundEndMs(c)) + 605000);
 async function until(cond, ms = 30000) {
   for (const stop = Date.now() + ms; Date.now() < stop; await wait(100)) if (await cond()) return true;
   return !!(await cond());
@@ -37,10 +38,10 @@ test('a late closer holding a peer\'s ENTRY_VOID writes the same §13C VOID and 
     const endMs = endOf(w.c, WINDOW);
     const early = [0, 1, 2, 3];
     const late = [5, 6];
-    const earlyClosedBeforeEnd = Date.now() < endMs;
+    const earlyClosedBeforeEnd = testNow() < endMs;
     await Promise.all(early.map((i) => say(w.signerNodes[i].port, `close ${toHex(w.rid)}`)));
     const beforeEnd = early.map((i) => !!w.signerNodes[i].round.noQuorum(run.eid));
-    await until(() => Date.now() >= endMs + 2000, 60000);
+    skipTo(endMs + 2000);
     await until(() => early.every((i) => w.signerNodes[i].round.noQuorum(run.eid)));
     await Promise.all(late.map((i) => say(w.signerNodes[i].port, `close ${toHex(w.rid)}`)));
     await until(() => late.every((i) => w.signerNodes[i].round.noQuorum(run.eid)), 15000);

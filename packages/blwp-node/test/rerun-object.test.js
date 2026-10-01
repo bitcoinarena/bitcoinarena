@@ -25,7 +25,7 @@ const result = (over = {}) => ({
   transcriptHash: b32(0x34), simCoreHash: b32(0x35), nodePubkey: b32(0), ...over,
 });
 const signed = (secret, over = {}, contradictedRunId = CONTRADICTED) => {
-  const x = { contradictedRunId, blockHash: b32(0x5b), result: result({ ...over, nodePubkey: schnorr.getPublicKey(secret) }) };
+  const x = { contradictedRunId, signedAtMs: 1790000000000n, result: result({ ...over, nodePubkey: schnorr.getPublicKey(secret) }) };
   return { bytes: joinSignedRerun(encodeRerunResult(x), schnorr.sign(rerunResultId(x), secret)) };
 };
 const count = (records, slots = 7, onSignerNodes = signerNodes) => rerunIsAgreed({
@@ -33,11 +33,11 @@ const count = (records, slots = 7, onSignerNodes = signerNodes) => rerunIsAgreed
 });
 
 test('a re-run result survives the wire at a fixed size, and every field is in its id', () => {
-  const x = { contradictedRunId: CONTRADICTED, blockHash: b32(0x5b), result: result({ nodePubkey: signerNodes[0] }) };
+  const x = { contradictedRunId: CONTRADICTED, signedAtMs: 1790000000000n, result: result({ nodePubkey: signerNodes[0] }) };
   const body = encodeRerunResult(x);
   assert.equal(body.length, RERUN_BYTES);
   assert.deepEqual(decodeRerunResult(body), x);
-  for (const over of [{ contradictedRunId: b32(9) }, { blockHash: b32(9) }, { result: result({ nodePubkey: signerNodes[0], score: 8 }) },
+  for (const over of [{ contradictedRunId: b32(9) }, { signedAtMs: 1790000000001n }, { result: result({ nodePubkey: signerNodes[0], score: 8 }) },
     { result: result({ nodePubkey: signerNodes[1] }) }])
     assert.notEqual(toHex(rerunResultId({ ...x, ...over })), toHex(rerunResultId(x)), JSON.stringify(Object.keys(over)));
   const whole = signed(keys[0]).bytes;

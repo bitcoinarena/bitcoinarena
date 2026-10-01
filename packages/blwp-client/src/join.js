@@ -20,6 +20,7 @@
 // a different core hash - which is precisely the substitution the round id
 // exists to prevent. Same rule as the entry a resuming client re-hashes.
 import { decodeRoundContract, roundId } from '../../protocol/src/contracts.js';
+import { OBJECTION_WINDOW_MS } from '../../protocol/src/window.js';
 import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
 import { httpProvider } from './headers.js';
 import { NO_SHARES, dealHandout, encodeHandout } from '../../protocol/src/handout.js';
@@ -134,6 +135,10 @@ export async function fetchRound(id, nodes, { fetcher = fetch } = {}) {
         refused.push(`${node}: answered with round ${got}`);
         continue;
       }
+      // §13A, WINDOW-10-SPEC (RULED the owner 2026-10-01): a round whose objection window is not exactly 600 000 ms is
+      // invalid - the page lists it nowhere and joins it never, whatever a node answers.
+      if (contract.objectionWindowMs !== OBJECTION_WINDOW_MS)
+        throw new Error(`round ${id} names an objection window of ${contract.objectionWindowMs} ms, not ${OBJECTION_WINDOW_MS}: that contract is invalid and the page does not join it`);
       return { contract, from: node, refused };
     } catch (e) {
       refused.push(`${node}: ${e.message}`);

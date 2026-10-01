@@ -1,19 +1,9 @@
-// A ROUND CANNOT NAME A ZERO RESULT WINDOW (§13, §13A).
+// THE OBJECTION WINDOW IS EXACTLY 600 000 ms (§13A, WINDOW-10-SPEC, RULED the owner 2026-10-01 09:40).
 //
-// §13A: "After a result is `PROVISIONALLY_FINAL`, the window `W` (reference: 10 minutes, contract-defined)
-// runs." §13: "The result window **equals the objection window** - same duration, a field on the contract.
-// A seat that cannot retrieve the transcript in that window treats the entry as VOID."
-//
-// A window of zero is not a short window, it is none. Two things break at once:
-//   - finality is instant, so §13A's replay veto - "the cheapest defence in the whole design" - can never be
-//     exercised by anyone: the affected player, another player, a non-selected node, a spectator, a watchtower;
-//   - `verify.js`'s own result-window test is `now >= closed_ms + objectionWindowMs`, so it is true the moment
-//     the round closes, and a seat that has not yet retrieved the transcript voids the entry immediately.
-//
-// NO FLOOR IS SPECIFIED AND NONE IS INVENTED. "Reference: 10 minutes, contract-defined" is a reference, not a
-// minimum, and no sentence in BLWP v4.6.1 states a floor or a ceiling for W. So these pin exactly one thing:
-// the duration must be positive. A contract naming ANY positive window - a second, ten minutes, an hour -
-// still opens, because the field is contract-defined and it is not this guard's business which value it is.
+// "A Round Contract whose objection_window_W is not exactly 600000 ms is invalid: a node refuses to open it, list it or
+// take an entry for it." Until that ruling the field was contract-defined - any positive window up to a 6-hour cap
+// opened - and this file pinned that; the reference ten minutes is now the only window, and 0, 599999 and 600001 are
+// refused alike, by name. (The node's open, list and entry doors are measured in window-10.test.js.)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { roundWindowsAreValid } from '../../protocol/src/contracts.js';
@@ -24,36 +14,23 @@ const round = (objectionWindowMs) => ({
   committeeTimeMs: 0n, startTimeMs: 600000n, entryCloseMs: 700000n, objectionWindowMs,
 });
 
-test('the reference ten minutes opens', () => {
+test('600000 ms - ten minutes - opens', () => {
   const r = roundWindowsAreValid(round(600000n));
   assert.equal(r.ok, true, r.why);
 });
 
-// RULED the owner 2026-09-24 (§13A, ruling C): a window over six hours is an invalid contract, so 86400000n left this list.
-test('ANY positive window up to six hours opens, because the field is contract-defined', () => {
-  // The spec gives a reference, not a value. A round that wants one second gets one second.
-  for (const w of [1n, 1000n, 60000n, 600000n, 3600000n, 21_600_000n]) {
-    const r = roundWindowsAreValid(round(w));
-    assert.equal(r.ok, true, `a ${w}ms window was refused: ${r.why}`);
-  }
-});
-
-// SIX HOURS AT MOST (§13A, RULED the owner 2026-09-24): a suspended entry ends at most three windows after it was
-// provisionally final, and the stake lock's 144 blocks must hold those three, the round and the settlement.
-test('a window of 21600000 ms opens and 21600001 ms is refused, naming the 6-hour cap', () => {
-  assert.equal(roundWindowsAreValid(round(21_600_000n)).ok, true);
-  for (const w of [21_600_001n, 86_400_000n]) {
+test('every other window is refused - one millisecond either side, a second, an hour, six hours - naming the 600000 ms rule', () => {
+  for (const w of [1n, 1000n, 60000n, 599999n, 600001n, 3600000n, 21_600_000n, 86_400_000n]) {
     const r = roundWindowsAreValid(round(w));
     assert.equal(r.ok, false, `a ${w}ms window opened`);
-    assert.match(r.why, new RegExp(`^that round's objection window is ${w}ms, over the 6-hour cap of 21600000ms: `));
+    assert.match(r.why, new RegExp(`^that round's objection window is ${w}ms: the objection window is exactly 600000ms `));
   }
 });
 
 test('A ZERO WINDOW IS REFUSED, and the refusal says why it matters', () => {
   const r = roundWindowsAreValid(round(0n));
   assert.equal(r.ok, false, 'a round opened with no result window at all');
-  assert.match(r.why, /objection window is 0ms/);
-  assert.match(r.why, /replay veto could never be used/);
+  assert.match(r.why, /objection window is 0ms: the objection window is exactly 600000ms/);
 });
 
 test('a negative window is refused too', () => {

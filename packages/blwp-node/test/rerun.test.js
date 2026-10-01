@@ -15,7 +15,8 @@
 // re-runs are counted, and 5 of 7 on one outcome replace SUSPENDED. Short of
 // that by the end of the re-run window - one objection window from the filing -
 // §13C decides (RULED 2026-09-24): VOID, or FORFEIT on proven equivocation.
-import { CLOCK } from './block-clock.js';
+import { testNow, skipTo } from './test-clock.js';
+import { windowsOf } from '../../protocol/src/window.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -43,14 +44,32 @@ async function holdersRerun(w, eid, ms = 8000) {
   return null;
 }
 
+// EVERY ROUND HERE ENDS A FEW SECONDS AHEAD (WINDOW-10-SPEC, RULED the owner 2026-10-01): its windows run from the round's
+// end on the wall clock - the objection window to + 600 s, the re-run window to + 1200 s (decided at + 1205 s), the
+// re-run's own window to + 1800 s (FINAL signed from + 1805 s) - read at named instants or skipped to on the fixtures' clock.
+const seven = (o = {}) => sevenSignerNodes(WINDOW_MS, undefined, { endMs: testNow() + 4000, ...o });
+const winOf = (w) => { const x = windowsOf(w.contract); return Object.fromEntries(Object.entries(x).map(([k, v]) => [k, Number(v)])); };
+
 /** The fixture: five sign the rewritten score, the objection is filed; returns the suspended run. */
 async function suspended(w) {
   w.sign('dissents', (r) => ({ score: r.score + 1 }));
   const eid = w.runs.dissents.eid;
   assert.equal((await object(w, eid)).status, 201);
   const mine = w.holder.round.results(w.rid, eid).find((r) => toHex(r.nodePubkey) === toHex(w.holder.round.pubkey));
-  // FILED AT ITS BLOCK (RULED 2026-09-24): the time of the block the objection names - every window of this entry counts from blocks.
-  return { eid, replay: decodePlayerResult(splitSignedResult(mine.bytes).body), filed: resultFinality(w.holder.round, w.rid, eid).filedAtMs };
+  // FILED WHEN IT REACHED THIS SEAT, on its clock (WINDOW-10-SPEC); every window of the entry runs from the round's end.
+  return { eid, replay: decodePlayerResult(splitSignedResult(mine.bytes).body), filed: resultFinality(w.holder.round, w.rid, eid).filedAtMs, win: winOf(w) };
+}
+
+/** FINAL, AS A SEAT SEES IT (WINDOW-10-SPEC): past the run's final_after, the holder signs and four of the six sign too. */
+async function signedFinal(w, name) {
+  const eid = w.runs[name].eid;
+  const f = resultFinality(w.holder.round, w.rid, eid);
+  skipTo(Number(f.finalAfterMs) + 50);
+  const q = `round=${toHex(w.rid)}&entry=${toHex(eid)}`;
+  const own = await fetch(`http://127.0.0.1:${w.holder.port}/final-sig?${q}`);
+  if (own.status === 200) await fetch(`http://127.0.0.1:${w.holder.port}/final-sig?${q}`, { method: 'POST', body: new Uint8Array(await own.arrayBuffer()) });
+  await w.finalBy(name, 4);
+  return resultFinality(w.holder.round, w.rid, eid);
 }
 
 /**
@@ -61,16 +80,15 @@ async function suspended(w) {
 const at = (w, now, over = {}) => Object.assign(Object.create(w.holder.round), { now: () => now }, over);
 
 test('the committee re-runs a suspended result: the holder re-runs by itself, four signer nodes agree, and two windows later the re-run\'s outcome is FINAL and its share is released', async () => {
-  const w = await sevenSignerNodes(WINDOW_MS);
+  const w = await seven();
   try {
     const s = await suspended(w);
     const state = resultFinality(w.holder.round, w.rid, s.eid).state;
     const own = await holdersRerun(w, s.eid);
     assert.ok(own, 'the holder never re-ran the suspended result');
     w.rerunBy('dissents', 4);
-    const later = at(w, s.filed + 2 * WINDOW_MS);                     // two windows, as measured before
-    const after = resultFinality(later, w.rid, s.eid);
-    const may = new (w.holder.stakeSecrets.constructor)(later, {}).mayRelease(w.rid, s.eid);
+    const after = await signedFinal(w, 'dissents');                  // the re-run's own window over, and signed FINAL
+    const may = new (w.holder.stakeSecrets.constructor)(w.holder.round, {}).mayRelease(w.rid, s.eid);
     const facts = {
       suspendedByTheObjection: state,
       holderReranItsReplay: toHex(runOf(own.result)) === toHex(runOf(s.replay)),
@@ -86,7 +104,7 @@ test('the committee re-runs a suspended result: the holder re-runs by itself, fo
       suspendedByTheObjection: 'SUSPENDED', holderReranItsReplay: true, holderNamedTheContradictedRun: true,
       reruns: 5, after: 'FINAL', authoritativeRun: true, shareReleased: true, outcome: 'FAILED',
     });
-    assert.match(after.why, /re-run by 5 of 7 committee signer nodes: the replay outcome is authoritative/);
+    assert.match(after.why, /re-run by 5 of 7 committee signer nodes, signed FINAL by 5 seats .*the replay outcome is authoritative/);
   } finally { await w.close(); }
 });
 
@@ -97,14 +115,14 @@ test('the committee re-runs a suspended result: the holder re-runs by itself, fo
 // the same rule - FAILED at that checkpoint, the same score, the same run - and
 // five of seven re-runs make that FINAL.
 test('an objected stopped run is re-run under the same rule: FAILED at its last receipted checkpoint, the same run, FINAL at five of seven', async () => {
-  const w = await sevenSignerNodes(WINDOW_MS, undefined, { play: { dissents: { ...WINNER, ticks: 600 } } });
+  const w = await seven({ play: { dissents: { ...WINNER, ticks: 600 } } });
   try {
     const s = await suspended(w);
     const state = resultFinality(w.holder.round, w.rid, s.eid).state;
     const own = await holdersRerun(w, s.eid);
     assert.ok(own, 'the holder never re-ran the suspended stopped run');
     w.rerunBy('dissents', 4);
-    const after = resultFinality(at(w, s.filed + 2 * WINDOW_MS), w.rid, s.eid);
+    const after = await signedFinal(w, 'dissents');
     const facts = {
       replay: `${s.replay.outcome}/${s.replay.score}`, suspendedByTheObjection: state,
       rerun: `${own.result.outcome}/${own.result.score}`, sameRun: toHex(runOf(own.result)) === toHex(runOf(s.replay)),
@@ -122,12 +140,12 @@ test('an objected stopped run is re-run under the same rule: FAILED at its last 
 // ... (13C, timed from the parked result window, is not applied)". The re-run window is one objection window from the
 // filing, and no 5 of 7 by its end is §13C's rule - here VOID, no fork proof. Four re-runs two windows later are VOID.
 test('four re-runs are not five: two windows later the result is VOID by §13C and no share leaves', async () => {
-  const w = await sevenSignerNodes(WINDOW_MS);
+  const w = await seven();
   try {
     const s = await suspended(w);
     assert.ok(await holdersRerun(w, s.eid), 'the holder never re-ran the suspended result');
     w.rerunBy('dissents', 3);
-    const later = at(w, s.filed + 2 * WINDOW_MS);
+    const later = at(w, s.win.rerunDeadlineMs);                         // the re-run window decided: end + 1205 s
     const after = resultFinality(later, w.rid, s.eid);
     const may = new (w.holder.stakeSecrets.constructor)(later, {}).mayRelease(w.rid, s.eid);
     assert.equal(after.state, 'VOID', `four re-runs, two windows later: ${after.why}`);
@@ -145,18 +163,18 @@ test('four re-runs are not five: two windows later the result is VOID by §13C a
 // Equivocation proven on this node's store makes the same instant FORFEIT: its share is released and the lock
 // settlement lists it FORFEIT, score 0, on the finality alone - no stored no-quorum record.
 test('a suspended entry is SUSPENDED one millisecond before its re-run window ends and VOID at it, and VOID and FORFEIT both reach the money', async () => {
-  const w = await sevenSignerNodes(WINDOW_MS);
+  const w = await seven();
   try {
     const s = await suspended(w);
     assert.ok(await holdersRerun(w, s.eid), 'the holder never re-ran the suspended result');
     w.rerunBy('dissents', 3);
     const lag = w.holder.round.reruns(w.rid, s.eid).map((r) => r.seenMs - s.filed);
-    const edge = s.filed + WINDOW_MS;
+    const edge = s.win.rerunDeadlineMs;                                 // end + 1205 s: this seat decides
     // Only this entry's stake is counted seen: the fixture's other runs are short of a quorum and not what is measured.
     const mine = { stakeSeen: (eid) => toHex(eid) === toHex(s.eid) };
     const inside = resultFinality(at(w, edge - 1), w.rid, s.eid);
     const ended = resultFinality(at(w, edge), w.rid, s.eid);
-    const twoLater = resultFinality(at(w, s.filed + 2 * WINDOW_MS), w.rid, s.eid);
+    const twoLater = resultFinality(at(w, s.win.ownFinalAfterMs), w.rid, s.eid);
     const released = new (w.holder.stakeSecrets.constructor)(at(w, edge), {}).mayRelease(w.rid, s.eid);
     const onRecord = new LockSettlement(at(w, edge, mine), {}).entriesOnRecord(w.rid, null);
     const forfeit = await new Forfeit(at(w, edge, { stakeLock: () => ({ fields: {} }) }), {}).message(w.rid, s.eid);
@@ -168,10 +186,10 @@ test('a suspended entry is SUSPENDED one millisecond before its re-run window en
     console.log('  FACTS:', JSON.stringify({ lag, inside: inside.state, ended: ended.state, twoLater: twoLater.state,
       released: released.ok, table: outcomes(onRecord), forfeit: forfeit.why,
       proven: forfeited.state, provenRelease, provenTable: outcomes(provenRecord) }));
-    assert.ok(lag.every((ms) => ms < WINDOW_MS), `a re-run landed outside its window: ${lag}`);
+    assert.ok(w.holder.round.reruns(w.rid, s.eid).every((r) => r.seenMs < s.win.rerunDeadlineMs), `a re-run landed outside its window: ${lag}`);
     assert.equal(inside.state, 'SUSPENDED', inside.why);
     assert.equal(ended.state, 'VOID', ended.why);
-    assert.match(ended.why, /the re-run window \[\d+, \d+\) closed with 4 of 5 re-runs on one outcome \(§13A, §13C\)/);
+    assert.match(ended.why, /the re-run window closed at \S+ with 4 of 5 re-runs on one outcome \(§13A, §13C\)/);
     assert.equal(twoLater.state, 'VOID');
     assert.equal(released.ok, false, 'a share left a VOID entry');
     assert.deepEqual(outcomes(onRecord), ['VOID/0']);
@@ -185,12 +203,12 @@ test('a suspended entry is SUSPENDED one millisecond before its re-run window en
 
 // A STORED §13C RECORD AND THE FINALITY'S OWN FORFEIT ARE ONE ENTRY IN THE TABLE, NOT TWO, and never the "not final" refusal.
 test('a FORFEIT with a stored no-quorum record is listed once', async () => {
-  const w = await sevenSignerNodes(WINDOW_MS);
+  const w = await seven();
   try {
     const s = await suspended(w);
     assert.ok(await holdersRerun(w, s.eid), 'the holder never re-ran the suspended result');
     w.rerunBy('dissents', 3);
-    const both = at(w, s.filed + WINDOW_MS, { stakeSeen: (eid) => toHex(eid) === toHex(s.eid), provenTwoFirstMarks: () => true,
+    const both = at(w, s.win.rerunDeadlineMs, { stakeSeen: (eid) => toHex(eid) === toHex(s.eid), provenTwoFirstMarks: () => true,
       noQuorum: (eid) => (toHex(eid) === toHex(s.eid) ? { outcome: 'FORFEIT', why: 'stored' } : null) });
     const r = new LockSettlement(both, {}).entriesOnRecord(w.rid, null);
     assert.equal(r.ok, true, r.why);
@@ -203,24 +221,24 @@ test('a FORFEIT with a stored no-quorum record is listed once', async () => {
 // agreeing re-run record - and objection_window_ms long. One millisecond before it closes the entry is
 // PROVISIONALLY_FINAL and no share leaves; at its close, FINAL. Before this slice the agreed re-run was FINAL at once.
 test('an agreed re-run is PROVISIONALLY_FINAL until its own objection window closes, then FINAL', async () => {
-  const w = await sevenSignerNodes(WINDOW_MS);
+  const w = await seven();
   try {
     const s = await suspended(w);
     assert.ok(await holdersRerun(w, s.eid), 'the holder never re-ran the suspended result');
     w.rerunBy('dissents', 4);
     const seen = w.holder.round.reruns(w.rid, s.eid).map((r) => r.seenMs).sort((a, b) => a - b);
     assert.equal(seen.length, 5);
-    const agreed = resultFinality(w.holder.round, w.rid, s.eid).agreedAtMs;   // the block the agreed re-run first sits at threshold in
-    assert.ok(agreed < s.filed + WINDOW_MS, `the fifth re-run landed at ${agreed - s.filed} ms, outside the re-run window`);
-    const before = resultFinality(at(w, agreed + WINDOW_MS - 1), w.rid, s.eid);
-    const may = new (w.holder.stakeSecrets.constructor)(at(w, agreed + WINDOW_MS - 1), {}).mayRelease(w.rid, s.eid);
-    const closed = resultFinality(at(w, agreed + WINDOW_MS), w.rid, s.eid);
+    const agreed = resultFinality(w.holder.round, w.rid, s.eid).agreedAtMs;   // when this seat held the fifth agreeing re-run
+    assert.ok(agreed < s.win.rerunDeadlineMs, `the fifth re-run landed at ${agreed - s.filed} ms, outside the re-run window`);
+    const before = resultFinality(at(w, s.win.ownFinalAfterMs - 1), w.rid, s.eid);
+    const may = new (w.holder.stakeSecrets.constructor)(at(w, s.win.ownFinalAfterMs - 1), {}).mayRelease(w.rid, s.eid);
+    const closed = await signedFinal(w, 'dissents');
     console.log('  FACTS:', JSON.stringify({ agreedAfterFiling: agreed - s.filed, before: before.state, released: may.ok, closed: closed.state }),
       '|', before.why);
     assert.equal(before.state, 'PROVISIONALLY_FINAL', before.why);
     assert.equal(may.ok, false, 'a share left an agreed re-run inside its own objection window');
     assert.equal(closed.state, 'FINAL', closed.why);
-    assert.match(closed.why, /re-run by 5 of 7 committee signer nodes: the replay outcome is authoritative/);
+    assert.match(closed.why, /re-run by 5 of 7 committee signer nodes, signed FINAL by 5 seats .*the replay outcome is authoritative/);
   } finally { await w.close(); }
 });
 
@@ -234,32 +252,32 @@ async function agreedWithoutTheHolder(w) {
   w.rerunBy('dissents', 5, { over: { score: s.replay.score + 2 } });
   const agreeing = w.holder.round.reruns(w.rid, s.eid).filter((r) => toHex(r.signerNodePubkey) !== toHex(w.holder.round.pubkey))
     .map((r) => r.seenMs).sort((a, b) => a - b);
-  return { ...s, agreed: resultFinality(w.holder.round, w.rid, s.eid).agreedAtMs };
+  return { ...s, agreed: resultFinality(w.holder.round, w.rid, s.eid).agreedAtMs, own: s.win.ownFinalAfterMs };
 }
 
 test('a second valid objection inside the re-run\'s own objection window makes the entry VOID, and the VOID reaches the money', async () => {
-  const w = await sevenSignerNodes(WINDOW_MS);
+  const w = await seven();
   try {
     const s = await agreedWithoutTheHolder(w);
-    assert.equal(resultFinality(at(w, s.agreed + WINDOW_MS - 1), w.rid, s.eid).state, 'PROVISIONALLY_FINAL');
+    assert.equal(resultFinality(at(w, s.own - 1), w.rid, s.eid).state, 'PROVISIONALLY_FINAL');
     const second = await object(w, s.eid);
     assert.equal(second.status, 201, `the second objection was not taken: ${await second.text()}`);
     const filedSecondLocal = w.holder.round.rerunObjectedAt(w.rid, s.eid);
-    const filedSecond = CLOCK.mtpOf(w.holder.round.rerunObjectedBlock(w.rid, s.eid));
-    const inside = resultFinality(at(w, s.agreed + WINDOW_MS - 1), w.rid, s.eid);
-    const closed = resultFinality(at(w, s.agreed + WINDOW_MS), w.rid, s.eid);
-    const threeLater = resultFinality(at(w, s.filed + 3 * WINDOW_MS), w.rid, s.eid);
-    const edge = s.agreed + WINDOW_MS - 1;
+    const filedSecond = filedSecondLocal;
+    const inside = resultFinality(at(w, s.own - 1), w.rid, s.eid);
+    const closed = resultFinality(at(w, s.own), w.rid, s.eid);
+    const threeLater = resultFinality(at(w, s.own + 3600000), w.rid, s.eid);
+    const edge = s.own - 1;
     const released = new (w.holder.stakeSecrets.constructor)(at(w, edge), {}).mayRelease(w.rid, s.eid);
     const onRecord = new LockSettlement(at(w, edge, { stakeSeen: (eid) => toHex(eid) === toHex(s.eid) }), {}).entriesOnRecord(w.rid, null);
     const forfeit = await new Forfeit(at(w, edge, { stakeLock: () => ({ fields: {} }) }), {}).message(w.rid, s.eid);
     console.log('  FACTS:', JSON.stringify({ agreedAfterFiling: s.agreed - s.filed, secondAfterAgreed: filedSecond - s.agreed,
       inside: inside.state, closed: closed.state, threeLater: threeLater.state, released: released.ok,
       table: onRecord.ok ? onRecord.entries.map((e) => `${e.outcome}/${e.score}`) : onRecord.why }), '|', inside.why);
-    assert.ok(filedSecond !== null && filedSecond >= s.agreed && filedSecond < s.agreed + WINDOW_MS,
-      `the second objection was stored at ${filedSecond}, not inside ${s.agreed}..${s.agreed + WINDOW_MS}`);
+    assert.ok(filedSecond !== null && filedSecond >= s.agreed && filedSecond < s.own,
+      `the second objection was stored at ${filedSecond}, not inside ${s.agreed}..${s.own}`);
     assert.equal(inside.state, 'VOID', inside.why);
-    assert.match(inside.why, /a second valid objection, in block \d+ inside the agreed re-run's own objection window .* VOID, no third run \(13A\)/);
+    assert.match(inside.why, /a second valid objection, received here at \S+ before \S+, contradicts the agreed re-run too: two contradicted quorums in one entry - VOID, no third run \(13A\)/);
     assert.equal(closed.state, 'VOID', closed.why);
     assert.equal(threeLater.state, 'VOID', threeLater.why);
     assert.equal(released.ok, false, 'a share left an entry two objections voided');
@@ -277,36 +295,39 @@ test('a second valid objection inside the re-run\'s own objection window makes t
 
 // AND OUTSIDE IT: a second objection at the re-run's window close is not counted, and the intake takes none (C2b).
 test('a second objection at the re-run\'s window close counts for nothing, and the intake answers 409 and stores nothing', async () => {
-  const w = await sevenSignerNodes(WINDOW_MS);
+  const w = await seven();
   try {
     const s = await agreedWithoutTheHolder(w);
-    const close = at(w, s.agreed + WINDOW_MS);
-    const intake = objectionIntake(close, w.rid, s.eid, CLOCK.tipAt(s.agreed + WINDOW_MS));
+    const close = at(w, s.own);                                         // end + 1805 s on this seat's clock
+    const intake = objectionIntake(close, w.rid, s.eid);
     assert.deepEqual(intake, { status: 409, text: 'the re-run\'s objection window has closed' });
     assert.equal(w.holder.round.rerunObjectedAt(w.rid, s.eid), null, 'the intake stored an objection after the window');
-    assert.equal(close.objectRerun(w.rid, s.eid, CLOCK.tipAt(s.agreed + WINDOW_MS)), true);                  // written straight to the store at the close
-    assert.equal(w.holder.round.rerunObjectedAt(w.rid, s.eid), s.agreed + WINDOW_MS);
+    assert.equal(close.objectRerun(w.rid, s.eid), true);                // written straight to the store at the close
+    assert.equal(w.holder.round.rerunObjectedAt(w.rid, s.eid), s.own);
     const read = resultFinality(close, w.rid, s.eid);
-    assert.equal(read.state, 'FINAL', read.why);
+    // NOT VOID: late, it suspends nothing - the re-run is signable FINAL here, and the objection is kept as evidence.
+    assert.equal(read.state, 'PROVISIONALLY_FINAL', read.why);
+    assert.ok(read.signable, read.why);
+    assert.equal(read.lateObjection, true);
   } finally { await w.close(); }
 });
 
 // THE INTAKE'S REJECTS (C2b): while the run is still SUSPENDED an objection is the first one again; a missing entry or a
 // round the entry is not in is 404, and this entry is unchanged.
 test('while SUSPENDED an objection is the first again, and a missing or foreign entry is 404 with this entry unchanged', async () => {
-  const w = await sevenSignerNodes(WINDOW_MS);
+  const w = await seven();
   try {
     const s = await suspended(w);
     const again = await object(w, s.eid);
     assert.equal(again.status, 200);
     assert.equal((await again.text()).trim(), 'already objected');
     assert.equal(w.holder.round.rerunObjectedAt(w.rid, s.eid), null, 'an objection while SUSPENDED was stored as the second');
-    const missing = await fetch(`http://127.0.0.1:${w.holder.port}/objection?round=${toHex(w.rid)}&entry=${toHex(rand(32))}&block=${toHex(CLOCK.tipAt(Date.now()))}`, { method: 'POST' });
+    const missing = await fetch(`http://127.0.0.1:${w.holder.port}/objection?round=${toHex(w.rid)}&entry=${toHex(rand(32))}`, { method: 'POST' });
     assert.equal(missing.status, 404);
-    const foreign = await fetch(`http://127.0.0.1:${w.holder.port}/objection?round=${toHex(rand(32))}&entry=${toHex(s.eid)}&block=${toHex(CLOCK.tipAt(Date.now()))}`, { method: 'POST' });
+    const foreign = await fetch(`http://127.0.0.1:${w.holder.port}/objection?round=${toHex(rand(32))}&entry=${toHex(s.eid)}`, { method: 'POST' });
     assert.equal(foreign.status, 404);
     assert.equal(w.holder.round.rerunObjectedAt(w.rid, s.eid), null);
-    assert.equal(CLOCK.mtpOf(w.holder.round.objectedBlock(w.rid, s.eid)), s.filed);
+    assert.equal(w.holder.round.objectedAt(w.rid, s.eid), s.filed);
     assert.equal(resultFinality(at(w, s.filed + 1), w.rid, s.eid).state, 'SUSPENDED');
     // AND NO RE-RUN SIGNER IS FILED AGAINST WHILE SUSPENDED (C2c): no re-run is agreed.
     const none = await new Verifier(at(w, s.filed + 1), { advertsFor: () => w.adverts, pool: {} }).fileRerunSlashProofs(w.rid, s.eid);
@@ -327,7 +348,7 @@ const agreeingRerunSigners = (w, eid, agreedRun) => w.holder.round.reruns(w.rid,
   .filter((r) => toHex(runOf(r)) === agreedRun).map((r) => toHex(r.nodePubkey)).sort();
 
 test('the second objection\'s 201 files one slash proof per agreeing re-run signer, each slashHoldsOnRerun accepts, and none against the holder', async () => {
-  const w = await sevenSignerNodes(WINDOW_MS);
+  const w = await seven();
   try {
     const s = await agreedWithoutTheHolder(w);
     assert.equal(rerunProofsOf(w, s.eid).length, 0);
@@ -335,7 +356,7 @@ test('the second objection\'s 201 files one slash proof per agreeing re-run sign
     const filed = rerunProofsOf(w, s.eid);
     console.log('  FACTS (C2c):', JSON.stringify({ proofs: filed.length }));
     assert.equal(filed.length, 5, 'the second objection filed no slash proof against the re-run\'s signers');
-    const agreedRun = resultFinality(at(w, s.agreed + WINDOW_MS - 1), w.rid, s.eid).runId;
+    const agreedRun = resultFinality(at(w, s.own - 1), w.rid, s.eid).runId;
     const canonical = w.holder.round.canonicalTranscript(w.rid, s.eid).hash;
     const committee = w.holder.round.signerNodes(w.rid);
     const checks = filed.map((p) => {
@@ -368,21 +389,19 @@ test('the second objection\'s 201 files one slash proof per agreeing re-run sign
 // outcome and a signer with no advertisement refused by name and nothing stored for them; a second filing adds no row and
 // publishes nothing; and the entry's money reads the same before the proofs and after them.
 test('re-run slash proofs are filed only on a second-objection VOID, refused by name, deduped, and move no money', async () => {
-  const w = await sevenSignerNodes(WINDOW_MS);
+  const w = await seven();
   try {
     const s = await agreedWithoutTheHolder(w);
     w.rerunBy('dissents', 1, { keys: [rand(32)], over: { score: s.replay.score + 2 } });           // a stranger, the agreed outcome
     w.rerunBy('dissents', 1, { keys: w.others.slice(5), over: { score: s.replay.score + 3 } });    // a signer, another outcome
-    const inside = s.agreed + WINDOW_MS - 1;
+    const inside = s.own - 1;
     const verifierAt = (now) => new Verifier(at(w, now), { advertsFor: () => w.adverts, pool: {} });
     const provisional = await verifierAt(inside).fileRerunSlashProofs(w.rid, s.eid);
-    const cleanFinal = await verifierAt(s.agreed + WINDOW_MS).fileRerunSlashProofs(w.rid, s.eid);
-    assert.deepEqual([provisional.filed, cleanFinal.filed], [[], []]);
+    assert.deepEqual(provisional.filed, []);
     assert.match(provisional.refused[0], /no second objection has made that entry VOID \(it is PROVISIONALLY_FINAL\)/);
-    assert.match(cleanFinal.refused[0], /no second objection has made that entry VOID \(it is FINAL\)/);
     assert.equal(rerunProofsOf(w, s.eid).length, 0);
 
-    assert.equal(at(w, s.agreed + 100).objectRerun(w.rid, s.eid, CLOCK.tipAt(s.agreed + 100)), true);   // the second objection, inside the window
+    assert.equal(at(w, s.agreed + 100).objectRerun(w.rid, s.eid), true);   // the second objection, inside the window
     const mine = { stakeSeen: (eid) => toHex(eid) === toHex(s.eid) };
     const money = async () => ({
       state: resultFinality(at(w, inside), w.rid, s.eid).state,
@@ -403,7 +422,7 @@ test('re-run slash proofs are filed only on a second-objection VOID, refused by 
     const first = await verifierAt(inside).fileRerunSlashProofs(w.rid, s.eid);
     w.adverts.set(withheld, advert);
     const second = await verifierAt(inside).fileRerunSlashProofs(w.rid, s.eid);
-    const third = await verifierAt(inside + 10 * WINDOW_MS).fileRerunSlashProofs(w.rid, s.eid);   // after the window
+    const third = await verifierAt(inside + 3600000).fileRerunSlashProofs(w.rid, s.eid);   // after the window
     const after = await money();
     const rows = rerunProofsOf(w, s.eid).map((p) => toHex(p.nodePubkey)).sort();
     const refusedOf = (who) => first.refused.find((r) => r.startsWith(who.slice(0, 16))) || '';
@@ -418,7 +437,10 @@ test('re-run slash proofs are filed only on a second-objection VOID, refused by 
     assert.deepEqual([third.filed, third.published], [[], 0]);
     assert.deepEqual([first.published, second.published], [4, 1]);
     assert.deepEqual(rows, signers);
-    assert.equal(w.holder.round.slashProofs(w.rid, s.eid).length, 0, 'a proof was filed against the first result\'s signers');
+    // (The first result's signers are filed too, on this VOID - by the holder's own re-run watch, which now runs to the
+    // re-run's own FINAL on the round's clock (WINDOW-10-SPEC); fileRerunSlashProofs itself files none of them.)
+    assert.ok(w.holder.round.slashProofs(w.rid, s.eid).every((p) => firstResultSigners(w, s.eid).includes(toHex(p.nodePubkey))),
+      'a first-result proof names a key that did not sign the first result');
     assert.deepEqual(after, before);
     assert.deepEqual(before, { state: 'VOID', released: false, table: ['VOID/0'],
       forfeit: 'that entry is VOID (§13C): nothing is forfeited - nobody acts, and the lock returns to the player at its expiry' });
@@ -447,7 +469,7 @@ const slashesEach = (w, eid, rows) => {
 };
 
 test('the second objection\'s 201 also files one slash proof per first-result signer, and a signer of both results has a row in each table', async () => {
-  const w = await sevenSignerNodes(WINDOW_MS);
+  const w = await seven();
   try {
     const s = await agreedWithoutTheHolder(w);
     w.rerunBy('dissents', 1, { keys: w.others.slice(5), over: { score: s.replay.score + 2 } });   // agreed, never signed the first
@@ -467,7 +489,7 @@ test('the second objection\'s 201 also files one slash proof per first-result si
 });
 
 test('first-result proofs on a second-objection VOID: refused by name, deduped, and no money moves', async () => {
-  const w = await sevenSignerNodes(WINDOW_MS);
+  const w = await seven();
   try {
     const s = await agreedWithoutTheHolder(w);
     w.rerunBy('dissents', 1, { keys: w.others.slice(5), over: { score: s.replay.score + 2 } });
@@ -481,11 +503,11 @@ test('first-result proofs on a second-objection VOID: refused by name, deduped, 
     const fid = resultId(forged);
     w.holder.round.putResult(w.rid, s.eid, forged.nodePubkey, fid, joinSignedResult(encodePlayerResult(forged), schnorr.sign(fid, stranger)));
     assert.notEqual(toHex(runOf(mine)), toHex(w.runs.dissents.contradicted));
-    const inside = s.agreed + WINDOW_MS - 1;
+    const inside = s.own - 1;
     const verifierAt = (now, over = {}) => new Verifier(at(w, now, over), { advertsFor: () => w.adverts, pool: {} });
     const early = await firstFiling(verifierAt(inside), w.rid, s.eid);
     assert.equal(w.holder.round.slashProofs(w.rid, s.eid).length, 0, 'a proof was filed while the re-run was PROVISIONALLY_FINAL');
-    assert.equal(at(w, s.agreed + 100).objectRerun(w.rid, s.eid, CLOCK.tipAt(s.agreed + 100)), true);
+    assert.equal(at(w, s.agreed + 100).objectRerun(w.rid, s.eid), true);
     const stake = { stakeSeen: (eid) => toHex(eid) === toHex(s.eid) };
     const money = async () => ({
       state: resultFinality(at(w, inside), w.rid, s.eid).state,
@@ -502,7 +524,7 @@ test('first-result proofs on a second-objection VOID: refused by name, deduped, 
     const first = await firstFiling(verifierAt(inside), w.rid, s.eid);
     w.adverts.set(withheld, advert);
     const second = await firstFiling(verifierAt(inside), w.rid, s.eid);
-    const third = await firstFiling(verifierAt(inside + 10 * WINDOW_MS), w.rid, s.eid);
+    const third = await firstFiling(verifierAt(inside + 3600000), w.rid, s.eid);
     const after = await money();
     const refusedOf = (who) => first.refused.find((r) => r.startsWith(who.slice(0, 16))) || '';
     console.log('  FACTS (first-result filing):', JSON.stringify({ early: early.filed.length, first: first.filed.length,
@@ -524,20 +546,21 @@ test('first-result proofs on a second-objection VOID: refused by name, deduped, 
 });
 
 test('§13C VOID at the re-run window\'s end files the five first-result signers on the stubbed clock, and FORFEIT with proven equivocation does too', async () => {
-  const w = await sevenSignerNodes(WINDOW_MS);
+  const w = await seven();
   try {
     const s = await suspended(w);
     assert.ok(await holdersRerun(w, s.eid), 'the holder never re-ran the suspended result');
-    w.rerunBy('dissents', 3);                                                   // four of five: §13C at filed + W
+    w.rerunBy('dissents', 3);                                                   // four of five: §13C at end + 1205 s
     const verifierAt = (now, over = {}) => new Verifier(at(w, now, over), { advertsFor: () => w.adverts, pool: {} });
-    const suspendedStill = await firstFiling(verifierAt(s.filed + WINDOW_MS - 1), w.rid, s.eid);
+    const D = s.win.rerunDeadlineMs;
+    const suspendedStill = await firstFiling(verifierAt(D - 1), w.rid, s.eid);
     assert.equal(w.holder.round.slashProofs(w.rid, s.eid).length, 0, 'a proof was filed while SUSPENDED');
     const proven = { provenTwoFirstMarks: () => true };
-    const forfeitState = resultFinality(at(w, s.filed + WINDOW_MS, proven), w.rid, s.eid).state;
-    const forfeitReleased = new (w.holder.stakeSecrets.constructor)(at(w, s.filed + WINDOW_MS, proven), {}).mayRelease(w.rid, s.eid);
-    const forfeited = await firstFiling(verifierAt(s.filed + WINDOW_MS, proven), w.rid, s.eid);
+    const forfeitState = resultFinality(at(w, D, proven), w.rid, s.eid).state;
+    const forfeitReleased = new (w.holder.stakeSecrets.constructor)(at(w, D, proven), {}).mayRelease(w.rid, s.eid);
+    const forfeited = await firstFiling(verifierAt(D, proven), w.rid, s.eid);
     const forfeitRows = w.holder.round.slashProofs(w.rid, s.eid).length;
-    const forfeitAfter = new (w.holder.stakeSecrets.constructor)(at(w, s.filed + WINDOW_MS, proven), {}).mayRelease(w.rid, s.eid);
+    const forfeitAfter = new (w.holder.stakeSecrets.constructor)(at(w, D, proven), {}).mayRelease(w.rid, s.eid);
     console.log('  FACTS (13C first-result slash):', JSON.stringify({ suspended: suspendedStill.filed.length, forfeitState,
       forfeitFiled: forfeited.filed.length, forfeitRows }));
     assert.equal(suspendedStill.filed.length, 0);
@@ -547,20 +570,21 @@ test('§13C VOID at the re-run window\'s end files the five first-result signers
     assert.deepEqual(forfeitAfter, forfeitReleased, 'the FORFEIT filing moved the money');
     assert.ok(slashesEach(w, s.eid, w.holder.round.slashProofs(w.rid, s.eid)));
     // AND THE SAME ROWS ON VOID: already stored, the VOID filing dedupes and files nothing more.
-    const voided = await firstFiling(verifierAt(s.filed + WINDOW_MS), w.rid, s.eid);
-    assert.equal(resultFinality(at(w, s.filed + WINDOW_MS), w.rid, s.eid).state, 'VOID');
+    const voided = await firstFiling(verifierAt(D), w.rid, s.eid);
+    assert.equal(resultFinality(at(w, D), w.rid, s.eid).state, 'VOID');
     assert.deepEqual([voided.filed, voided.published], [[], 0]);
     assert.deepEqual(w.holder.round.slashProofs(w.rid, s.eid).map((p) => toHex(p.nodePubkey)).sort(), firstResultSigners(w, s.eid));
   } finally { await w.close(); }
 });
 
 test('§13C VOID on the real clock: the re-run watch, on its default budget, files the first-result signers itself', async () => {
-  const w = await sevenSignerNodes(WINDOW_MS);                                   // no rerunMs shortcut
+  const w = await seven();                                   // no rerunMs shortcut
   try {
     const s = await suspended(w);
     assert.ok(await holdersRerun(w, s.eid), 'the holder never re-ran the suspended result');
     w.rerunBy('dissents', 3);
-    const stop = s.filed + 2 * WINDOW_MS + 4000;                                  // filed + 2W, a tick, and margin
+    skipTo(s.win.rerunDeadlineMs + 50);                                           // the re-run window decided, on every clock
+    const stop = Date.now() + 15000;                                              // the watch's next ticks, and margin
     while (Date.now() < stop && w.holder.round.slashProofs(w.rid, s.eid).length < 5) await wait(100);
     const rows = w.holder.round.slashProofs(w.rid, s.eid);
     console.log('  FACTS (13C watch):', JSON.stringify({ rows: rows.length, afterFilingMs: rows.length ? Math.max(...rows.map((p) => p.seenMs)) - s.filed : null,
@@ -568,7 +592,7 @@ test('§13C VOID on the real clock: the re-run watch, on its default budget, fil
     assert.equal(rows.length, 5, 'the watch stopped before §13C and filed no first-result proof');
     assert.deepEqual(rows.map((p) => toHex(p.nodePubkey)).sort(), firstResultSigners(w, s.eid));
     assert.ok(slashesEach(w, s.eid, rows));
-    assert.ok(rows.every((p) => p.seenMs >= s.filed + WINDOW_MS), 'a proof was filed before the re-run window ended');
+    assert.ok(rows.every((p) => p.seenMs >= s.win.rerunDeadlineMs), 'a proof was filed before the re-run window ended');
   } finally { await w.close(); }
 });
 
@@ -586,12 +610,12 @@ const lockAfter = (settlement, rid, eid) => (typeof settlement.lockAfterSettleme
 
 async function settledWithOneObjected(w, reruns) {
   w.sign('agrees', () => ({}));
-  // A BLOCK APART (RULED 2026-09-24, windows are blocks): the decided run's window and the objected run's re-run window
-  // would otherwise open, and so end, at one block, and no moment has the one closed and the other open.
-  await wait(1100);
   const s = await suspended(w);
   assert.ok(await holdersRerun(w, s.eid), 'the holder never re-ran the suspended result');
   w.rerunBy('dissents', reruns);
+  // THE DECIDED RUN SIGNED FINAL past end + 605 s (WINDOW-10-SPEC), while the objected one is in its re-run window.
+  const agreesFinal = await signedFinal(w, 'agrees');
+  assert.equal(agreesFinal.state, 'FINAL', agreesFinal.why);
   const agreesId = w.runs.agrees.eid;
   // Each entry's verified lock, as the round's settlement names them; only these two stakes are counted seen.
   const lockOf = (eid) => ({ outpoint: `${toHex(eid)}:0`, fields: {} });
@@ -602,10 +626,11 @@ async function settledWithOneObjected(w, reruns) {
 }
 
 test('C3a: an entry still SUSPENDED is left out and the round settles without it; SUSPENDED, then VOID, then FORFEIT', async () => {
-  const w = await sevenSignerNodes(WINDOW_MS);
+  const w = await seven();
   try {
-    const s = await settledWithOneObjected(w, 3);                               // four of five: §13C at filed + W
-    const inWindow = at(w, s.filed + WINDOW_MS - 1, s.settledWith([s.agreesId]));
+    const s = await settledWithOneObjected(w, 3);                               // four of five: §13C at end + 1205 s
+    const D = s.win.rerunDeadlineMs;
+    const inWindow = at(w, D - 1, s.settledWith([s.agreesId]));
     const standing = [s.agreesId, s.eid].map((eid) => ({ entryId: toHex(eid), ...resultFinality(inWindow, w.rid, eid) }));
     const gate = waitsOn(standing);
     const on = new LockSettlement(inWindow, {}).entriesOnRecord(w.rid, null);
@@ -619,18 +644,18 @@ test('C3a: an entry still SUSPENDED is left out and the round settles without it
     const settlement = new LockSettlement(inWindow, {});
     assert.match(lockAfter(settlement, w.rid, s.eid).why, /left out of the round's settlement: still in its re-run window/);
     assert.equal(lockAfter(settlement, w.rid, s.agreesId).claimed, true);
-    const forfeitNow = await new Forfeit(at(w, s.filed + WINDOW_MS - 1, { stakeLock: () => ({ fields: {} }) }), {}).message(w.rid, s.eid);
+    const forfeitNow = await new Forfeit(at(w, D - 1, { stakeLock: () => ({ fields: {} }) }), {}).message(w.rid, s.eid);
     assert.match(forfeitNow.why, /no forfeit before the result is final/);
     assert.equal(new (w.holder.stakeSecrets.constructor)(inWindow, {}).mayRelease(w.rid, s.eid).ok, false);
-    // THEN VOID (§13C at filed + W): nothing claims or forfeits it; the lock returns at expiry, the forfeit refuses.
-    const voided = at(w, s.filed + WINDOW_MS, s.settledWith([s.agreesId]));
+    // THEN VOID (§13C at end + 1205 s): nothing claims or forfeits it; the lock returns at expiry, the forfeit refuses.
+    const voided = at(w, D, s.settledWith([s.agreesId]));
     assert.equal(resultFinality(voided, w.rid, s.eid).state, 'VOID');
     const afterVoid = lockAfter(new LockSettlement(voided, {}), w.rid, s.eid);
     assert.deepEqual([afterVoid.claimed, afterVoid.why], [false, 'VOID: nothing acts, and the lock returns to the player at its expiry']);
-    assert.match((await new Forfeit(at(w, s.filed + WINDOW_MS, { stakeLock: () => ({ fields: {} }) }), {}).message(w.rid, s.eid)).why,
+    assert.match((await new Forfeit(at(w, D, { stakeLock: () => ({ fields: {} }) }), {}).message(w.rid, s.eid)).why,
       /that entry is VOID \(§13C\): nothing is forfeited/);
     // THEN FORFEIT (§13C with proven equivocation): not claimed in C3a, by name.
-    const forfeited = at(w, s.filed + WINDOW_MS, { ...s.settledWith([s.agreesId]), provenTwoFirstMarks: () => true });
+    const forfeited = at(w, D, { ...s.settledWith([s.agreesId]), provenTwoFirstMarks: () => true });
     assert.equal(resultFinality(forfeited, w.rid, s.eid).state, 'FORFEIT');
     const afterForfeit = lockAfter(new LockSettlement(forfeited, {}), w.rid, s.eid);
     assert.deepEqual([afterForfeit.claimed, afterForfeit.why], [false, 'claimed in the round\'s second settlement, not built yet']);
@@ -638,12 +663,11 @@ test('C3a: an entry still SUSPENDED is left out and the round settles without it
 });
 
 test('C3a: an entry PROVISIONALLY_FINAL on its re-run is left out too, and once FINAL and FAILED its lock waits for the second settlement', async () => {
-  const w = await sevenSignerNodes(WINDOW_MS);
+  const w = await seven();
   try {
     const s = await settledWithOneObjected(w, 4);                               // five of seven: an agreed re-run
     const seen = w.holder.round.reruns(w.rid, s.eid).map((r) => r.seenMs).sort((a, b) => a - b);
-    const agreed = resultFinality(w.holder.round, w.rid, s.eid).agreedAtMs;   // the block the agreed re-run first sits at threshold in
-    const inWindow = at(w, agreed + WINDOW_MS - 1, s.settledWith([s.agreesId]));
+    const inWindow = at(w, s.win.ownFinalAfterMs - 1, s.settledWith([s.agreesId]));
     const standing = [s.agreesId, s.eid].map((eid) => ({ entryId: toHex(eid), ...resultFinality(inWindow, w.rid, eid) }));
     const on = new LockSettlement(inWindow, {}).entriesOnRecord(w.rid, null);
     assert.deepEqual(standing.map((x) => x.state), ['FINAL', 'PROVISIONALLY_FINAL']);
@@ -653,18 +677,20 @@ test('C3a: an entry PROVISIONALLY_FINAL on its re-run is left out too, and once 
     // AN ORDINARY PROVISIONALLY_FINAL - inside its first objection window, no re-run - is still waited on.
     assert.deepEqual(waitsOn([{ entryId: 'x', state: 'PROVISIONALLY_FINAL' }]).length, 1);
     // THEN FINAL, the replay FAILED: not claimed in C3a, by name; not a qualifier, so no forfeit either.
-    const final = at(w, agreed + WINDOW_MS, s.settledWith([s.agreesId]));
+    const signed = await signedFinal(w, 'dissents');
+    assert.equal(signed.state, 'FINAL', signed.why);
+    const final = at(w, s.win.ownFinalAfterMs + 100, s.settledWith([s.agreesId]));
     const f = resultFinality(final, w.rid, s.eid);
     assert.equal(f.state, 'FINAL', f.why);
     const afterFinal = lockAfter(new LockSettlement(final, {}), w.rid, s.eid);
     assert.deepEqual([afterFinal.claimed, afterFinal.why], [false, 'claimed in the round\'s second settlement, not built yet']);
-    assert.match((await new Forfeit(at(w, agreed + WINDOW_MS, { stakeLock: () => ({ fields: {} }) }), {}).message(w.rid, s.eid)).why,
+    assert.match((await new Forfeit(at(w, s.win.ownFinalAfterMs + 100, { stakeLock: () => ({ fields: {} }) }), {}).message(w.rid, s.eid)).why,
       /not a qualifier, so its stake lock is not forfeited|this signer node verified no stake lock|no share of the round's claim key/);
   } finally { await w.close(); }
 });
 
 test('re-runs from keys that are not assigned, about another contradicted run, or to another outcome count for nothing', async () => {
-  const w = await sevenSignerNodes(WINDOW_MS);
+  const w = await seven();
   try {
     const s = await suspended(w);
     assert.ok(await holdersRerun(w, s.eid), 'the holder never re-ran the suspended result');
@@ -672,7 +698,7 @@ test('re-runs from keys that are not assigned, about another contradicted run, o
     w.rerunBy('dissents', 2, { keys: [rand(32), rand(32)] });                           // two strangers
     w.rerunBy('dissents', 1, { keys: w.others.slice(2), contradicted: b32(0x66) });     // another contradicted run
     w.rerunBy('dissents', 1, { keys: w.others.slice(3), over: { score: s.replay.score + 2 } }); // another outcome
-    const after = resultFinality(at(w, s.filed + WINDOW_MS - 1), w.rid, s.eid);   // inside the re-run window (RULED 2026-09-24)
+    const after = resultFinality(at(w, s.win.rerunDeadlineMs - 1), w.rid, s.eid);   // inside the re-run window
     assert.equal(after.state, 'SUSPENDED', `strangers, another run or another outcome made five: ${after.why}`);
     assert.match(after.why, /3 of 5 committee signer nodes have re-run/);
   } finally { await w.close(); }

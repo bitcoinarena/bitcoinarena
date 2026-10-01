@@ -210,7 +210,7 @@ test('late start at close (3): the late mark reached A only and its forward was 
 });
 
 test('late start at close (4): the peer is down at the close - the signer node holds, signs nothing, and both sign FORFEIT 0 when it is back', async () => {
-  const w = await signerNodes();
+  const w = await signerNodes({ endIn: 9000 });                 // a round in the present: its result window still open (WINDOW-10-SPEC)
   try {
     const run = await joinAndBuild(w, { firstAt: END });
     for (const m of run.messages) await say(w.a.port, m);
@@ -242,7 +242,7 @@ test('late start at close (4): the peer is down at the close - the signer node h
 // mark. How such a conflict resolves is ENTRY_VOID territory - parked; only the
 // hold is measured here.
 test('late start at close (5): an on-time first mark at B and a late one at A, B down at A\'s close - A holds and signs nothing', async () => {
-  const w = await signerNodes();
+  const w = await signerNodes({ endIn: 9000 });                 // a round in the present: its result window still open (WINDOW-10-SPEC)
   try {
     const run = await joinAndBuild(w);
     await w.downA();

@@ -34,6 +34,8 @@ import { stakePointIsTheHandouts } from '../../protocol/src/contracts.js';
 import { firstMarkOutcome, startDeadlineOf } from '../../protocol/src/first-mark.js';
 import { coreForRound, installedCores, runTicksOf } from './cores.js';
 import { chainIndex } from './finality.js';
+import { withinTolerance } from '../../protocol/src/window.js';
+import { decodeRerunResult, splitSignedRerun } from '../../protocol/src/rerun.js';
 
 /**
  * 5-of-7 unless the round's contract is the 2-slot test genesis.
@@ -332,6 +334,10 @@ export class Round {
     // then and offers no entry button; this is the same rule at the door,
     // where it cannot be skipped by a client that does not draw a lobby.
     const asks = decodeRoundContract(new Uint8Array(round.contract));
+    // AND NOT A ROUND WHOSE OBJECTION WINDOW IS NOT 600 000 ms (§13A, WINDOW-10-SPEC): one opened before the rule is held,
+    // never entered.
+    const windows = roundWindowsAreValid(asks);
+    if (!windows.ok && /objection window/.test(windows.why)) throw new Error(windows.why);
     const opensAt = asks.committeeTimeMs;
     const now = BigInt(this.now());
     if (now < opensAt)
@@ -1633,11 +1639,54 @@ export class Round {
       .map((r) => ({ signerNodePubkey: new Uint8Array(r.signer_node_pubkey), bytes: new Uint8Array(r.bytes), seenMs: Number(r.seen_ms) }));
   }
 
-  /** One signer node's signed re-run of a suspended result; one per signer node (13A). */
+  /**
+   * One signer node's signed re-run of a suspended result; one per signer node (13A). A re-run counts only if signed
+   * within 5 s of this seat's clock when it came (§13A, WINDOW-10-SPEC), so a fresh one that counts replaces a held one;
+   * one that does not count is kept only where none is held.
+   */
   putRerun(roundIdBytes, entryIdBytes, signerNodePubkey, bytes) {
+    const now = this.now();
+    const counted = (b, seen) => { try { return withinTolerance(decodeRerunResult(splitSignedRerun(b).body).signedAtMs, seen); } catch { return false; } };
+    // A HELD ONE THAT COUNTED IS KEPT: a later copy - this seat's own, signed again for a peer - must not move its arrival.
+    const held = this.db.prepare('SELECT bytes, seen_ms FROM reruns WHERE round_id = ? AND entry_id = ? AND signer_node_pubkey = ?')
+      .get(roundIdBytes, entryIdBytes, signerNodePubkey);
+    const replace = !!held && !counted(new Uint8Array(held.bytes), held.seen_ms) && counted(bytes, now);
     return this.db.prepare(
-      'INSERT OR IGNORE INTO reruns (round_id, entry_id, signer_node_pubkey, bytes, seen_ms) VALUES (?, ?, ?, ?, ?)')
-      .run(roundIdBytes, entryIdBytes, signerNodePubkey, bytes, this.now()).changes;
+      `INSERT OR ${replace ? 'REPLACE' : 'IGNORE'} INTO reruns (round_id, entry_id, signer_node_pubkey, bytes, seen_ms) VALUES (?, ?, ?, ?, ?)`)
+      .run(roundIdBytes, entryIdBytes, signerNodePubkey, bytes, now).changes;
+  }
+
+  /**
+   * A SEAT'S FINAL SIGNATURE, AS IT ARRIVED (§13A, WINDOW-10-SPEC): `fault` is protocol finalSigFault's answer at this
+   * seat's clock now. One that counts is kept (the latest per seat and run); one refused for its time is kept as
+   * evidence against its signer; anything else is dropped. Returns 'kept', 'evidence' or 'refused'.
+   */
+  putFinalSig(roundIdBytes, entryIdBytes, x, bytes, fault, seenMs = this.now()) {
+    if (!fault) {
+      this.db.prepare('INSERT OR REPLACE INTO final_sigs (round_id, entry_id, run_id, signer_pubkey, bytes, seen_ms) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(roundIdBytes, entryIdBytes, x.runId, x.signerPubkey, bytes, seenMs);
+      return 'kept';
+    }
+    if (fault.evidence && fault.x) {
+      this.db.prepare('INSERT OR IGNORE INTO final_sig_evidence (round_id, entry_id, signer_pubkey, bytes, seen_ms, why) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(roundIdBytes, entryIdBytes, fault.x.signerPubkey, bytes, seenMs, fault.why);
+      return 'evidence';
+    }
+    return 'refused';
+  }
+
+  /** The FINAL signatures this seat holds on one run, each with when it came. */
+  finalSigs(roundIdBytes, entryIdBytes, runIdBytes) {
+    return this.db.prepare('SELECT signer_pubkey, bytes, seen_ms FROM final_sigs WHERE round_id = ? AND entry_id = ? AND run_id = ? ORDER BY signer_pubkey')
+      .all(roundIdBytes, entryIdBytes, runIdBytes)
+      .map((r) => ({ signerPubkey: new Uint8Array(r.signer_pubkey), bytes: new Uint8Array(r.bytes), seenMs: Number(r.seen_ms) }));
+  }
+
+  /** The FINAL signatures refused for their time (§13A rule 3), as evidence. */
+  finalSigEvidence(roundIdBytes, entryIdBytes) {
+    return this.db.prepare('SELECT signer_pubkey, bytes, seen_ms, why FROM final_sig_evidence WHERE round_id = ? AND entry_id = ? ORDER BY seen_ms')
+      .all(roundIdBytes, entryIdBytes)
+      .map((r) => ({ signerPubkey: new Uint8Array(r.signer_pubkey), bytes: new Uint8Array(r.bytes), seenMs: Number(r.seen_ms), why: r.why }));
   }
 
   /** Every signed re-run this node holds for a run, its own included. */
@@ -1927,8 +1976,8 @@ export class Round {
   /** Each peer's answer to the offered first mark with the block this node recorded it in (null: none named). */
   firstMarkOfferBlocks(entryIdBytes) {
     const out = {};
-    for (const r of this.db.prepare('SELECT peer, answer, block_hash FROM first_mark_offers WHERE entry_id = ?').all(entryIdBytes))
-      out[r.peer] = { answer: r.answer, block: r.block_hash ? new Uint8Array(r.block_hash) : null };
+    for (const r of this.db.prepare('SELECT peer, answer, block_hash, at_ms FROM first_mark_offers WHERE entry_id = ?').all(entryIdBytes))
+      out[r.peer] = { answer: r.answer, block: r.block_hash ? new Uint8Array(r.block_hash) : null, atMs: r.at_ms };
     return out;
   }
 
@@ -1955,20 +2004,27 @@ export class Round {
    * peer named for its own record of that mark - kept as the peer named it. `mark` is the signed mark or its id. Every
    * record is kept; the mark is placed at the earliest of them. No block (no chain here): nothing is kept.
    */
-  noteEvidenceBlock(roundIdBytes, entryIdBytes, mark, blockHash = undefined) {
+  noteEvidenceBlock(roundIdBytes, entryIdBytes, mark, blockHash = undefined, seenMs = undefined) {
     let id = mark;
     if (mark && mark.length !== 32) {
       try { id = checkpointId(decodeCheckpoint(splitSigned(mark).body)); } catch { return; }
     }
-    const block = blockHash === undefined ? this.tipOf(roundIdBytes) : blockHash;
-    if (!id || !block || block.length !== 32) return;
-    this.db.prepare('INSERT OR IGNORE INTO evidence_blocks (entry_id, mark_id, block_hash) VALUES (?, ?, ?)').run(entryIdBytes, id, block);
+    // THE BLOCK IS KEPT AS IT WAS NAMED, AND THE MOMENT THIS SEAT MADE THE RECORD with it (WINDOW-10-SPEC): the moment is what
+    // counts now. A seat that reads no chain records the mark all the same, under no block.
+    const named = blockHash === undefined ? this.tipOf(roundIdBytes) : blockHash;
+    const block = named && named.length === 32 ? named : new Uint8Array(32);
+    if (!id) return;
+    // A PULLED RECORD KEEPS WHEN ITS PEER MADE IT (`seenMs`); a record held twice keeps the earlier time.
+    const at = Number.isSafeInteger(seenMs) ? seenMs : this.now();
+    this.db.prepare('INSERT INTO evidence_blocks (entry_id, mark_id, block_hash, seen_ms) VALUES (?, ?, ?, ?) '
+      + 'ON CONFLICT (entry_id, mark_id, block_hash) DO UPDATE SET seen_ms = MIN(COALESCE(seen_ms, excluded.seen_ms), excluded.seen_ms)')
+      .run(entryIdBytes, id, block, at);
   }
 
   /** Every evidence record this node holds for an entry's marks: [{ markId, block }]. */
   evidenceBlocks(entryIdBytes) {
-    return this.db.prepare('SELECT mark_id, block_hash FROM evidence_blocks WHERE entry_id = ?').all(entryIdBytes)
-      .map((r) => ({ markId: new Uint8Array(r.mark_id), block: new Uint8Array(r.block_hash) }));
+    return this.db.prepare('SELECT mark_id, block_hash, seen_ms FROM evidence_blocks WHERE entry_id = ?').all(entryIdBytes)
+      .map((r) => ({ markId: new Uint8Array(r.mark_id), block: new Uint8Array(r.block_hash), seenMs: r.seen_ms }));
   }
 
   /**
@@ -1980,6 +2036,12 @@ export class Round {
     let id = mark;
     if (mark && mark.length !== 32) {
       try { id = checkpointId(decodeCheckpoint(splitSigned(mark).body)); } catch { return false; }
+    }
+    // BY WHEN THIS SEAT HELD IT (§13A, WINDOW-10-SPEC): `end.untilMs`, the instant this seat decides - a record made here
+    // before it counts; one made at or after it does not, whatever block it names.
+    if (end && end.untilMs !== undefined) {
+      const rows = this.db.prepare('SELECT seen_ms FROM evidence_blocks WHERE entry_id = ? AND mark_id = ?').all(entryIdBytes, id);
+      return rows.some((r) => r.seen_ms === null || BigInt(r.seen_ms) < BigInt(end.untilMs));
     }
     const heights = this.db.prepare('SELECT block_hash FROM evidence_blocks WHERE entry_id = ? AND mark_id = ?').all(entryIdBytes, id)
       .map((r) => chain.heightOf(new Uint8Array(r.block_hash))).filter((h) => h !== null);
