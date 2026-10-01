@@ -99,6 +99,7 @@ export const RUN_82_TICKS = 4920;
 /** Rounds of each kind kept published ahead on the 90 s period: 10 is 15 minutes (with PUBLISH_AHEAD; without it one
  * period, each open waiting for its beacon). */
 export const ROUNDS_AHEAD = Number(process.env.BLWP_ROUNDS_AHEAD || 10);
+const COMMITTEE_LEAD_MS = process.env.BLWP_COMMITTEE_LEAD_MS ? Math.max(Number(MIN_ENTRY_WINDOW_MS), Number(process.env.BLWP_COMMITTEE_LEAD_MS)) : null;
 /**
  * PUBLISH AHEAD (BLWP_PUBLISH_AHEAD=1; the free grid gapless across a restart, the owner 2026-10-01): each round is mined into
  * a block and posted to the signer nodes as soon as it is drafted - they store it and assign its signer nodes once the
@@ -1043,7 +1044,13 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       // (its beacon is the first block after it), so with a 90 s lead round i+1 is listed as round i starts - before any
       // run of round i can end, and the countdown has its number from the first second (measured with 60 s: a run over
       // 9.5 s into its round waited 20 s for the next round to be listed).
-      const lead = BigInt(roundPeriodMs) > MIN_ENTRY_WINDOW_MS ? BigInt(roundPeriodMs) : MIN_ENTRY_WINDOW_MS;
+      // BLWP_COMMITTEE_LEAD_MS (ORDER-2116, measured on the free pair 2026-10-01): a round posted ahead is assigned by each
+      // node once its beacon - the first block whose median time passes committee_time - is 6 deep on its own chain. On the
+      // 10 s regtest clock that is ~95 s after committee_time (median lags ~50 s, six blocks ~50 s): with a 90 s lead every
+      // free round was assigned after its entry had closed, and none was joinable. 180 s leaves ~85 s to join. The start
+      // grid is unchanged: one round every period.
+      const lead = COMMITTEE_LEAD_MS !== null ? BigInt(COMMITTEE_LEAD_MS)
+        : BigInt(roundPeriodMs) > MIN_ENTRY_WINDOW_MS ? BigInt(roundPeriodMs) : MIN_ENTRY_WINDOW_MS;
       start = last > 0n ? last + BigInt(roundPeriodMs) : start;
       while (start - lead < committee) start += BigInt(roundPeriodMs);
       committee = start - lead;
