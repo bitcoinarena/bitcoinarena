@@ -412,4 +412,5 @@ test('a lobby read that got no answer keeps its last open rows; one that answere
   const fresh = { id: 'free-2', free: true, entryCloseMs: now + 90000 };
   assert.deepEqual(lobbyKeepWhenUnanswered([free], { rows: [fresh], unanswered: ['https://b'] }, now), [fresh]);
   assert.deepEqual(lobbyKeepWhenUnanswered(undefined, { rows: [], unanswered: ['x'] }, now), []);
+  assert.deepEqual(lobbyKeepWhenUnanswered([free], { rows: [], refused: [], unanswered: [], pending: true }, now), [free], 'a side still in flight dropped its row');
 });
