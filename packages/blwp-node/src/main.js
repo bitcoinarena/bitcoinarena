@@ -99,6 +99,11 @@ if (process.env.BLWP_SERIES_FILE) {
     });
   } catch (e) { console.error(`BLWP_SERIES_FILE: a line is not a series: ${e.message}`); process.exit(2); }
 }
+// WHERE THE OTHER SIGNER NODES ANSWER, as the operator knows it (serve's `peers`; ORDER-2116, measured on the free pair):
+// with none named, a node finds its peers off the round's census - the bond adverts at its census height - and a seat
+// whose address moved since answers there no more. The free pair's nodes run as their own units (the owner 2026-10-01) and
+// lost the peers the 2-of-2 launcher handed them: 44 runs sat at 1 of 2 FINAL signatures. Comma-separated base URLs.
+if (process.env.BLWP_PEERS) options.peers = process.env.BLWP_PEERS.split(',').map((s) => s.trim()).filter(Boolean);
 if (process.env.BLWP_ATTACH_PROOF_DIR) {
   const dir = process.env.BLWP_ATTACH_PROOF_DIR;
   options.headerBytes = () => { try { return new Uint8Array(readFileSync(`${dir}/headers.bin`)); } catch { return null; } };
