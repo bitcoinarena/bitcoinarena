@@ -61,3 +61,34 @@ test('a reload keeps the tab\'s own phrase; an imported phrase is kept, and so i
   const c = openTab(L);
   assert.ok([mine, a.seed].includes(c.seed), 'an opened-again browser got neither kept phrase');
 });
+
+// ONE TAB PER PHRASE (the owner 2026-10-01): a duplicated tab - its session storage copied, phrase and tab id - finds the
+// phrase's lock held by the first tab, drops the phrase and starts again as its own player.
+test('a duplicated tab does not run the same wallet: it finds the phrase locked, drops it and reloads as another player', async () => {
+  const held = new Set();
+  // the browser answers a lock request later, as this does
+  const locks = { request: (name, opts, cb) => { queueMicrotask(() => { if (held.has(name)) { cb(null); return; } held.add(name); cb({ name }); }); } };
+  const settle = () => new Promise((r) => setTimeout(r, 0));
+  const L = store();
+  const open = (T) => {
+    let reloaded = false;
+    const k = Keeper({ L, T, now: () => clock, every: () => {}, on: () => {}, random: () => `tab${++tabs}`, locks, reload: () => { reloaded = true; } });
+    const seed = Buffer.from(tabSeed({ storage: T, random: rnd })).toString('hex');
+    k.beat();
+    return { seed, reloaded: () => reloaded };
+  };
+  const tA = store(); const a = open(tA); await settle();
+  assert.equal(a.reloaded(), false, 'the first tab holds its phrase');
+  // DUPLICATE: the browser copies the first tab's session storage, phrase and tab id
+  const tB = store(); for (const [k, v] of tA.map) tB.setItem(k, v);
+  const dup = open(tB);
+  assert.equal(dup.seed, a.seed, 'precondition: the copy starts on the same phrase');
+  await settle();
+  assert.equal(dup.reloaded(), true, 'the duplicate ran the same wallet on');
+  assert.equal(tB.getItem('blwp.player.seed'), null, 'the duplicate kept the phrase');
+  assert.notEqual(tB.getItem('blwp.tab.id'), tA.getItem('blwp.tab.id'), 'the duplicate kept the copied tab id');
+  // ITS RELOAD: a phrase no other tab holds - here a new one
+  const b = open(tB); await settle();
+  assert.notEqual(b.seed, a.seed, 'after the reload the duplicate is still the first tab\'s player');
+  assert.equal(b.reloaded(), false);
+});
