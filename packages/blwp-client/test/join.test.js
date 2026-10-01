@@ -310,9 +310,11 @@ test('the page joins a named round and still invents none', () => {
   // and a player's own ghost is dropped - so the two tabs would show each
   // other nothing.
   assert.ok(page.includes('sessionStorage'), 'the page has no per-tab identity');
-  // localStorage ONLY FOR A KEPT ROUND'S MONEY (the owner 2026-09-14, spec §24): named once, in
-  // vault(); the player's seed and identity never go there, so two tabs stay two players.
-  assert.equal((page.match(/localStorage/g) || []).length, 1, 'the page names localStorage outside vault()');
+  // localStorage FOR A KEPT ROUND'S MONEY (the owner 2026-09-14, spec §24), in vault(), AND FOR THE KEPT PHRASES (the owner
+  // 2026-10-01: "safe even if the user closes the browser and loads it again"), in blwpSeedKeeper - which hands a tab
+  // only a phrase no open tab holds, so two tabs stay two players (seed-keeper.test.js). Named twice, nowhere else.
+  assert.equal((page.match(/localStorage/g) || []).length, 2, 'the page names localStorage outside vault() and the seed keeper');
+  assert.match(page, /window\.BLWP_SEED_KEEPER = blwpSeedKeeper\(\{ L: window\.localStorage, T: window\.sessionStorage,/, 'the phrases are not kept by blwpSeedKeeper');
   assert.match(page, /function vault\(\) \{\n\s+try \{ const s = window\.localStorage;/, 'localStorage is not the kept rounds\' vault()');
   for (const call of ['tabSeed', 'seedOrigin', 'importSeed', 'tabIdentity', 'setPlayerName', 'nameRecordFor'])
     assert.ok(!new RegExp(`${call}\\([^)]*vault\\(\\)`).test(page), `the page keeps the player (${call}) in storage every tab shares`);
