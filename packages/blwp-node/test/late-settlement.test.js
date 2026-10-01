@@ -19,8 +19,7 @@ import { b32, WINNER, LOSER, wait } from './window-fixture.js';
 import { lateLockSettlement } from '../../protocol/src/lock-settlement.js';
 import { netStakeMsat, FAILED, FORFEIT } from '../../protocol/src/payout.js';
 import { refundKeyOf } from '../../protocol/src/stake-lock.js';
-import { toHex, sha256 } from '../../protocol/src/hash.js';
-import { sendableInvoiceMsat, lowestLiveGateway } from '../../protocol/src/winnings-send.js';
+import { toHex } from '../../protocol/src/hash.js';
 import { readFileSync, readdirSync } from 'node:fs';
 
 const LATE = { name: 'late', key: b32(6), worldSecret: b32(0xc1), ticks: 1000 };
@@ -100,39 +99,12 @@ async function claimedLate(outcome) {
     assert.equal(facts.lateLockGone, true);
     assert.deepEqual(facts.stakeClaims, [key(late.outpoint)]);
     assert.deepEqual(facts.feeClaims, [key(late.feeOutpoint)], 'the late fee lock was not claimed with it');
-    // SENT, NOT COLLECTED (RULED 2026-09-24, slice C3b-2a): exactly the base payout's msat, as an outgoing contract to the
-    // winner's invoice refunding to the committee claim key. (C3b-1 paid it by a contract to the winner's own lock key.)
-    assert.deepEqual(facts.winnerPaid, want.payouts.map((p) => [toHex(w.claimPk), p.msat]));
-    assert.deepEqual(facts.winnerSent, [true], 'the late winner was not paid by a send');
+    // WINNINGS-AUTO (RULED the owner 2026-10-01): the late share is a payout contract to the first winner's own lock key
+    // (C3b-1), redeemed into its federation wallet - never a send (C3b-2a withdrawn); no late send row anywhere.
+    assert.deepEqual(facts.winnerPaid, want.payouts.map((p) => [toHex(refundKeyOf(won.entry.playerPubkey)), p.msat]));
+    assert.deepEqual(facts.winnerSent, [false], 'the late winner was paid by a send');
     assert.equal(want.payouts[0].msat, 98000n, 'the late payout on the zero-fee federation is not the whole net stake');
-    // THE LATE SEND: invoice = 98000 less the lowest live gateway's own fee; PAID with the invoice's preimage; the first
-    // round's send still PAID at attempt 0; the winner paid exactly twice, once per transaction.
-    // THE SENDS FOLLOW THE ACCEPTED LATE SETTLEMENT: waited on until both signer nodes hold them PAID, a bounded while.
-    for (const stop = Date.now() + 15000; Date.now() < stop; await wait(200)) {
-      const rows = [w.a, w.b].map((d) => d.round.lateSendScope(late.eid).sendAttemptsOf(w.rid));
-      if (rows.every((r) => r.length && r.every((x) => x.state === 'PAID'))) break;
-    }
-    const gw = lowestLiveGateway((await w.port.gateways()).gateways);
-    const lateRows = [w.a, w.b].map((d) => d.round.lateSendScope(late.eid).sendAttemptsOf(w.rid));
-    const firstRows = [w.a, w.b].map((d) => d.round.sendAttemptsOf(w.rid).filter((r) => toHex(r.entryId) === toHex(won.eid)));
-    const sendFacts = {
-      invoiceMsat: lateRows[0].map((r) => r.invoiceMsat),
-      wantInvoiceMsat: sendableInvoiceMsat(98000n, gw.sendFeeDefault),
-      latePaid: lateRows.map((rows) => rows.map((r) => `${r.state}:${r.attempt}:${r.preimage && toHex(sha256(Uint8Array.from(Buffer.from(r.preimage, 'hex')))) === r.paymentHash}`)),
-      firstPaid: firstRows.map((rows) => rows.map((r) => `${r.state}:${r.attempt}`)),
-      paidRowsForWinner: firstRows[0].filter((r) => r.state === 'PAID').length + lateRows[0].filter((r) => toHex(r.entryId) === toHex(won.eid) && r.state === 'PAID').length,
-      lateHashIsTheOutput: lateRows[0].length === 1 && second.payouts.some((p) => p.sent && p.sent.paymentHash === lateRows[0][0].paymentHash),
-    };
-    console.log(`  FACTS (late ${outcome} send):`, JSON.stringify(sendFacts, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
-    assert.deepEqual(sendFacts.invoiceMsat, [sendFacts.wantInvoiceMsat]);
-    // 98000 LESS THE LOWEST LIVE GATEWAY'S OWN FEE (4000 msat + 6000 ppm): the largest invoice whose fee still fits.
-    const gwFee = (a) => 4000n + (a * 6000n) / 1000000n;
-    const inv = sendFacts.wantInvoiceMsat;
-    assert.ok(inv + gwFee(inv) <= 98000n && inv + 1n + gwFee(inv + 1n) > 98000n, `the invoice ${inv} is not 98000 less the gateway's own fee`);
-    assert.deepEqual(sendFacts.latePaid, [['PAID:0:true'], ['PAID:0:true']], 'the late send is not PAID with the invoice\'s preimage at both signer nodes');
-    assert.deepEqual(sendFacts.firstPaid, [['PAID:0'], ['PAID:0']], 'the first round\'s send changed');
-    assert.equal(sendFacts.paidRowsForWinner, 2, 'the winner is not paid exactly twice, once per transaction');
-    assert.equal(sendFacts.lateHashIsTheOutput, true, 'the late transaction does not commit to the late plan\'s payment hash');
+    assert.deepEqual([w.a, w.b].map((d) => d.round.lateSendScope(late.eid).sendAttemptsOf(w.rid).length), [0, 0], 'a late send was planned');
     assert.ok(facts.signerNodePayouts > 0, 'the late fee lock paid no signer node');
     assert.equal(facts.firstUnchanged, true, 'the first settlement changed');
     assert.deepEqual(facts.after, ['claimed in the round\'s second settlement', 'claimed in the round\'s second settlement']);
@@ -141,7 +113,7 @@ async function claimedLate(outcome) {
     assert.equal(again.kept, true);
     await wait(600);
     assert.equal(w.port.settlements.length, 2, 'a second attempt submitted again');
-    assert.equal(w.a.round.lateSendScope(late.eid).sendAttemptsOf(w.rid).length, 1, 'a second sweep added a second late send row');
+    assert.equal(w.a.round.lateSendScope(late.eid).sendAttemptsOf(w.rid).length, 0, 'a second sweep planned a late send');
   } finally { await w.close(); }
 }
 

@@ -1,4 +1,4 @@
-// THE POOL, ON THE SIGNER NODES (RULED 2026-09-23: (ii), with (iii); never (i)). A qualifier who names no Lightning
+// WINNINGS-AUTO (RULED the owner 2026-10-01) replaces THE POOL (RULED 2026-09-23: (ii), with (iii); never (i)). A qualifier who names no Lightning
 // address is not paid: its share is split over the qualifiers who named one, by the payout table's own weights
 // renormalised over them; with nobody addressed no stake lock is claimed. Split out of winnings-sent.test.js so each
 // file runs inside the 180 s cap.
@@ -33,7 +33,7 @@ async function untilPaid(w, eid, ms = 30000) {
 // players are real keys whose runs the core delivers with distinct scores - found under each round's own beacon
 // (window-fixture qualifiersUnder), since a paying round seeds its players from it, highest score first.
 
-test('POOL A on the signer nodes: the top qualifier names no address and the others do - its share is sent to the addressed paying rank, once, the pot is the payouts and their fees, and the unaddressed one is paid nothing', async () => {
+test('WINNINGS-AUTO A on the signer nodes (RULED the owner 2026-10-01): five qualifiers, the top one naming nothing and the others an address - every paying rank is paid by its payout contract to its own key, no invoice asked, no gateway paid; the pot is the payouts and their fees', async () => {
   const port = lockPort();
   const addr = lnurl(port);
   const w = await lockRound({ port, serveOpts: { lnurlFetch: addr.fetchLike } });
@@ -47,36 +47,27 @@ test('POOL A on the signer nodes: the top qualifier names no address and the oth
     await closeRound(w);
     const settled = await untilSettled(w);
     assert.equal(settled.state, 'ACCEPTED', settled.why);
-    for (const q of rest.slice(0, 1)) await untilPaid(w, q.eid);
     const s = port.settlements.at(-1);
     const seats = w.c.nodes.map((k) => toHex(refundKeyOf(k)));
     const stake = s.payouts.filter((p) => !seats.includes(toHex(p.payoutPk)));
-    const lockHeld = (o) => port.locks.has(`${toHex(o.txid)}:${o.outIdx}`);
     const net = netStakeMsat(lost.entry);
     const fee = (m) => port.feeRule.baseMsat + (m * port.feeRule.ppm) / 1000000n;
-    const rows = await Promise.all(played.map(async (q) => Promise.all([w.a, w.b].map((d) => winningsAt(d, q.eid)))));
-    console.log('  FACTS:', JSON.stringify({ stakePayouts: stake.map((p) => ({ msat: String(p.msat), fee: String(fee(p.msat)), sent: !!p.sent })), loserNet: String(net),
-      inputFee: String(fee(net)), issued: addr.issued.map((x) => String(x.amountMsat)), gatewayPayments: port.gatewayPayments.length,
-      rows: rows.map((r, i) => `${Q5[i].score}:${r.map((x) => (x.winnings ? x.winnings.state : '-')).join('/')}`), topLockHeld: lockHeld(top.outpoint) }));
-    // THE TABLE PAYS TWO RANKS; the top one named nothing, so the second is paid the whole spendable pot, by one contract.
-    assert.equal(stake.length, 1, 'not exactly one qualifier payout');
-    assert.ok(stake[0].sent, 'the addressed qualifier was not sent its winning');
-    assert.equal(stake[0].sent.paymentHash, addr.issued[0].paymentHash, 'the contract is not the addressed qualifier\'s invoice');
-    assert.equal(stake.some((p) => toHex(p.payoutPk) === toHex(refundKeyOf(top.who.key))), false, 'the unaddressed qualifier was paid');
-    assert.equal(stake[0].msat + fee(stake[0].msat) + fee(net), net, 'the payout and the fees are not the whole claimed pot');
-    assert.equal(addr.issued.length, 1, 'more than the one paying addressed qualifier was asked for an invoice');
-    assert.equal(port.gatewayPayments.length, 1, 'the gateway was not asked exactly once');
-    assert.deepEqual(rows[1].map((x) => x.winnings && x.winnings.state), ['PAID', 'PAID'], 'the second rank is not PAID on both signer nodes');
-    for (const i of [0, 2, 3, 4]) for (const x of rows[i]) assert.equal(x.winnings, null, `a winning was kept for the qualifier scoring ${Q5[i].score}`);
-    assert.equal(lockHeld(top.outpoint), true, 'the unaddressed qualifier\'s own stake lock was spent - it comes back by its forfeit');
-    // AND SETTLING AGAIN - what a restart does - pays nothing more.
-    const before = { settlements: port.settlements.length, payments: port.gatewayPayments.length, issued: addr.issued.length };
+    console.log('  FACTS:', JSON.stringify({ stakePayouts: stake.map((p) => ({ msat: String(p.msat), to: toHex(p.payoutPk).slice(0, 12), sent: !!p.sent })),
+      loserNet: String(net), issued: addr.issued.length, gatewayPayments: port.gatewayPayments.length }));
+    // TWO PAYING RANKS (K = ceil(5/4)): the top one, which named nothing, is paid as the second is
+    assert.equal(stake.length, 2, 'not both paying ranks were paid');
+    assert.ok(stake.some((p) => toHex(p.payoutPk) === toHex(refundKeyOf(top.who.key))), 'the qualifier who named nothing was not paid');
+    for (const p of stake) assert.equal(p.sent, undefined, 'a qualifier was paid by a Lightning send');
+    assert.equal(stake.reduce((t, p) => t + p.msat + fee(p.msat), 0n) + fee(net), net, 'the payouts and the fees are not the whole claimed pot');
+    assert.equal(addr.issued.length, 0, 'an address was asked for an invoice');
+    assert.equal(port.gatewayPayments.length, 0, 'a gateway was paid');
+    const before = { settlements: port.settlements.length, payments: port.gatewayPayments.length };
     for (const d of [w.a, w.b]) await d.settlements.settle(w.rid);
-    assert.deepEqual({ settlements: port.settlements.length, payments: port.gatewayPayments.length, issued: addr.issued.length }, before);
+    assert.deepEqual({ settlements: port.settlements.length, payments: port.gatewayPayments.length }, before);
   } finally { await w.close(); }
 });
 
-test('POOL B on the signer nodes: the only qualifier names no address - no stake lock is claimed, no invoice asked, nothing sent; the fee locks still settle', async () => {
+test('WINNINGS-AUTO B on the signer nodes: the only qualifier names nothing - the loser\'s stake lock is claimed and the winner paid by its contract; the fee locks still settle', async () => {
   const port = lockPort();
   const addr = lnurl(port);
   const w = await lockRound({ port, serveOpts: { lnurlFetch: addr.fetchLike } });
@@ -86,16 +77,14 @@ test('POOL B on the signer nodes: the only qualifier names no address - no stake
     await closeRound(w);
     const settled = await untilSettled(w);
     const lockHeld = (o) => port.locks.has(`${toHex(o.txid)}:${o.outIdx}`);
-    const claimed = port.settlements.flatMap((x) => x.claims.map((c) => `${toHex(c.outpoint.txid)}:${c.outpoint.outIdx}`));
     const seats = w.c.nodes.map((k) => toHex(refundKeyOf(k)));
     const stakePaid = port.settlements.flatMap((x) => x.payouts).filter((p) => !seats.includes(toHex(p.payoutPk)));
-    console.log('  FACTS:', JSON.stringify({ state: settled.state, why: settled.why, claimed: claimed.length, stakePaid: stakePaid.length,
-      issued: addr.issued.length, gatewayPayments: port.gatewayPayments.length, loserLockHeld: lockHeld(lost.outpoint), winnerLockHeld: lockHeld(won.outpoint),
-      feeLocksHeld: [won, lost].filter((x) => lockHeld(x.feeOutpoint)).length }));
+    console.log('  FACTS:', JSON.stringify({ state: settled.state, stakePaid: stakePaid.length, issued: addr.issued.length,
+      loserLockHeld: lockHeld(lost.outpoint), feeLocksHeld: [won, lost].filter((x) => lockHeld(x.feeOutpoint)).length }));
     assert.equal(settled.state, 'ACCEPTED', settled.why);
-    assert.equal(lockHeld(lost.outpoint), true, 'the loser\'s stake lock was claimed with nobody to send it to');
-    assert.equal(lockHeld(won.outpoint), true);
-    assert.equal(stakePaid.length, 0, 'a stake payout was built with nobody addressed');
+    assert.equal(lockHeld(lost.outpoint), false, 'the loser\'s stake lock was not claimed');
+    assert.equal(stakePaid.length, 1);
+    assert.equal(toHex(stakePaid[0].payoutPk), toHex(refundKeyOf(WINNER.key)), 'the winner is not paid by a contract to its own key');
     assert.equal(addr.issued.length, 0);
     assert.equal(port.gatewayPayments.length, 0);
     assert.equal([won, lost].filter((x) => lockHeld(x.feeOutpoint)).length, 0, 'the seats were not paid their fee');

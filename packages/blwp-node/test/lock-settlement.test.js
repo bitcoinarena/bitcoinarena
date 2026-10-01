@@ -116,10 +116,10 @@ test('after the window the loser\'s lock is claimed by one committee signature, 
     assert.equal(w.port.locks.has(key(lost.outpoint)), false, 'the loser\'s lock was not claimed');
     assert.equal(w.port.locks.has(key(won.outpoint)), true, 'the settlement spent the winner\'s own lock - that comes back by its forfeit');
     assert.equal(paid.length, 1, 'one payout contract, to the one qualifier');
-    // SENT, NOT COLLECTED (ruled 2026-09-23): the winner named an address, so its payout is the outgoing contract to
-    // its invoice, refunding to the committee - never a contract only the winner's key can move.
-    assert.ok(paid[0].sent, 'the qualifier was paid by a contract its key moves, not sent');
-    assert.equal(toHex(paid[0].payoutPk), toHex(w.claimPk), 'the sent payout does not refund to the committee');
+    // WINNINGS-AUTO (RULED the owner 2026-10-01): the winner named an address, and is paid all the same by its payout
+    // contract to its own key - redeemed into its federation wallet - never by a send refunding to the committee.
+    assert.ok(!paid[0].sent, 'the qualifier was paid by a Lightning send');
+    assert.equal(toHex(paid[0].payoutPk), toHex(refundKeyOf(WINNER.key)), 'the payout contract is not to the winner\'s own key');
     assert.equal(netStakeMsat(lost.entry), 98000n);
     assert.equal(paid[0].msat, 96000n, '98000 in, 1000 on the input, 1000 on the output');
     const sent = w.port.settlements[0];
@@ -153,9 +153,8 @@ test('the signer nodes list the rounds they settled since a time with the keys e
     const mine = listed.rounds.find((r) => r.id === toHex(w.rid));
     assert.ok(mine, 'the settled round is not listed');
     assert.equal(mine.state, 'ACCEPTED');
-    // THE WINNING WAS SENT to the address the winner named (ruled 2026-09-23): the list names the payouts a seed would
-    // collect, and a sent winning is not one - the outgoing contract refunds to the committee, never to the seed.
-    assert.deepEqual(mine.payouts, [], 'a sent winning is listed for the seed to collect');
+    // WINNINGS-AUTO: the winning is a payout contract to the winner's key, so the list names it for the seed to collect.
+    assert.deepEqual(mine.payouts, [toHex(refundKeyOf(WINNER.key))], 'the winner\'s payout is not listed for its seed to collect');
     assert.deepEqual([...mine.refunds].sort(), [toHex(refundKeyOf(WINNER.key)), toHex(refundKeyOf(LOSER.key))].sort(), 'the listed refund keys are not the two locks\'');
     assert.equal('contract' in mine, false, 'every listed round carries its contract');
     // AND THE CONTRACT OF A ROUND A DEVICE MATCHED, FROM /round: its id.
@@ -190,7 +189,7 @@ test('where the round mints fee locks (1000 sat, the federation\'s own rule) a s
     const got = await untilSettled(w);
     assert.equal(got.state, 'ACCEPTED', got.why);
     const paid = [...w.port.payouts.values()];
-    const winner = paid.find((p) => p.sent);
+    const winner = paid.find((p) => toHex(p.payoutPk) === toHex(refundKeyOf(WINNER.key)));
     console.log(`  the round of those who brought theirs: ${got.why}; payouts ${paid.map((p) => String(p.msat)).join(', ')}`);
     assert.equal(winner.msat, 978000n);
     assert.deepEqual(paid.filter((p) => p !== winner).map((p) => p.msat), [18000n, 18000n]);
@@ -239,7 +238,7 @@ test('where the round mints, a fee lock handed before its stake lock counts the 
     await closeRound(w);
     const got = await untilSettled(w);
     assert.equal(got.state, 'ACCEPTED', got.why);
-    const winner = [...w.port.payouts.values()].find((p) => p.sent);
+    const winner = [...w.port.payouts.values()].find((p) => toHex(p.payoutPk) === toHex(refundKeyOf(WINNER.key)));
     console.log(`  fee lock first: ${got.why}; the winner ${winner && winner.msat}`);
     assert.equal(winner.msat, 978000n);
   } finally { await w.close(); }
@@ -263,7 +262,8 @@ test('each player\'s fee lock is verified by both signer nodes and claimed in th
     const signerNodeKeys = w.c.nodes.map((k) => toHex(refundKeyOf(k))).sort();
     assert.deepEqual(paid.filter((p) => signerNodeKeys.includes(toHex(p.payoutPk))).map((p) => [toHex(p.payoutPk), p.msat]).sort(),
       signerNodeKeys.map((k) => [k, 2000n]), 'each sitting signer node is not paid its 2000 msat (1% + 1% of 200000, both pools)');
-    assert.deepEqual(paid.filter((p) => p.sent).map((p) => p.msat), [98000n], 'the winner is not sent its 98000');
+    assert.deepEqual(paid.filter((p) => toHex(p.payoutPk) === toHex(refundKeyOf(WINNER.key))).map((p) => p.msat), [98000n], 'the winner is not paid its 98000 by its contract');
+    assert.equal(paid.some((p) => p.sent), false, 'something was paid by a Lightning send');
     assert.equal([won.feeOutpoint, lost.feeOutpoint, lost.outpoint].some((o) => w.port.locks.has(key(o))), false, 'a claimed lock is still held');
     assert.equal(w.port.locks.has(key(won.outpoint)), true, 'the winner\'s own stake lock was spent - it comes back by its forfeit');
   } finally { await w.close(); }
@@ -304,7 +304,7 @@ test('a 1000 sat round\'s 20000 msat fee locks are claimed under the real guardi
     const feeIn = sent ? sent.claims.filter((c) => [key(won.feeOutpoint), key(lost.feeOutpoint)].includes(key(c.outpoint))) : [];
     console.log(`  1000 sat: ${got.state} - ${got.why}`);
     console.log(`  stake 1000000 msat, fee lock ${won.entry.feeMsat} msat x ${feeIn.length}, input fees ${feeIn.length * 1000} msat, `
-      + `output fees ${signerNodeNets.length * 1000} msat, per-signer node net [${signerNodeNets.join(', ')}] msat; winner sent ${paid.filter((p) => p.sent).map((p) => p.msat).join(', ')}`);
+      + `output fees ${signerNodeNets.length * 1000} msat, per-signer node net [${signerNodeNets.join(', ')}] msat; winner paid ${paid.filter((p) => toHex(p.payoutPk) === toHex(refundKeyOf(WINNER.key))).map((p) => p.msat).join(', ')}`);
     assert.equal(got.state, 'ACCEPTED', got.why);
     assert.equal(won.entry.feeMsat, 20000n);
     assert.equal(feeIn.length, 2, 'both fee locks are claimed');
@@ -315,7 +315,7 @@ test('a 1000 sat round\'s 20000 msat fee locks are claimed under the real guardi
 });
 
 test('a round with a loser and no qualifier pays no stake and still pays the seats: both stake locks expire back, both fee locks settle the 2%', async () => {
-  const w = await lockRound({ minScore: 1000000 });
+  const w = await lockRound({ minScore: 150000001 })   // above the highest score there is (1500 points, core score.js); the delivered run scores per round - 11448150 in one, over 20000000 in another (measured 2026-10-01: both qualified at lower minimums)
   try {
     const one = await lockAndPlay(w, WINNER);
     const two = await lockAndPlay(w, LOSER);
@@ -346,8 +346,7 @@ test('a round with a loser and no qualifier pays no stake and still pays the sea
     assert.equal(got.state, 'ACCEPTED', got.why);
     assert.ok(w.port.settlements.length > 0, 'the round ran and the seats earned, but nothing was submitted');
 
-    // NO STAKE REACHES A QUALIFIER, because there is none: min_score is 1000000 and the delivered run scores
-    // 5. Neither lock is claimed - both expire back to the players who staked them.
+    // NO STAKE REACHES A QUALIFIER, because there is none: min_score is 150000001, above any score there is. Neither lock is claimed - both expire back to the players who staked them.
     const players = [refundKeyOf(WINNER.key), refundKeyOf(LOSER.key)].map(toHex);
     assert.deepEqual(paidNQ.filter((x) => players.includes(toHex(x.payoutPk))), [],
       'a stake was paid out although nobody qualified');
