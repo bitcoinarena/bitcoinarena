@@ -83,9 +83,21 @@ if (process.env.BLWP_CLOSE_AT_END === '1') options.closeAtEnd = true;
   if (net) options.donationSets = net === 'regtest' ? [TEST_DONATION_SET_REGTEST] : [TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS];
 }
 if (process.env.BLWP_SERIES_FILE) {
-  const lines = readFileSync(process.env.BLWP_SERIES_FILE, 'utf8').split(/\s+/).filter((x) => /^[0-9a-f]+$/i.test(x));
-  try { options.series = lines.map((h) => decodeRoundContract(new Uint8Array(Buffer.from(h, 'hex')))); }
-  catch (e) { console.error(`BLWP_SERIES_FILE: a line is not a Round Contract: ${e.message}`); process.exit(2); }
+  // ONE SERIES A LINE: its template, hex; then `count=N` for a tail (the 82/90 fork: fewer than a day's 960 rounds - its id
+  // is taken over that count) and `cut=N` for a series replaced from round N by its tail.
+  const lines = readFileSync(process.env.BLWP_SERIES_FILE, 'utf8').split(/\n/).map((l) => l.trim().split(/\s+/))
+    .filter((w) => w[0] && /^[0-9a-f]+$/i.test(w[0]));
+  try {
+    options.series = lines.map(([h, ...more]) => {
+      const t = decodeRoundContract(new Uint8Array(Buffer.from(h, 'hex')));
+      for (const m of more) {
+        const kv = /^(count|cut)=(\d+)$/.exec(m);
+        if (!kv) throw new Error(`a series line names ${m}, not count=N or cut=N`);
+        if (kv[1] === 'count') t.seriesCount = Number(kv[2]); else t.seriesCutFrom = Number(kv[2]);
+      }
+      return t;
+    });
+  } catch (e) { console.error(`BLWP_SERIES_FILE: a line is not a series: ${e.message}`); process.exit(2); }
 }
 if (process.env.BLWP_ATTACH_PROOF_DIR) {
   const dir = process.env.BLWP_ATTACH_PROOF_DIR;
