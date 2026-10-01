@@ -12,6 +12,7 @@
 // anywhere - FINAL after the window; two daemons whose contract named a relay -
 // loser settled, winner cancelled, payout queued, the relay asked 0 times.
 import { resultFinality } from '../src/finality.js';
+import { roundEndMs } from '../../protocol/src/first-mark.js';
 import { CLOCK } from './block-clock.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -62,29 +63,30 @@ test('seven signer nodes, five sign and nobody posts the transcript anywhere: af
   } finally { await w.close(); await relay.close(); }
 });
 
-test('seven signer nodes: four postings are not enough; the fifth opens the window, and W counts from it, not from the signatures', async () => {
+// THE WINDOW RUNS FROM THE ROUND'S END, AND THE POSTING IS A CONDITION OF SIGNING FINAL (§13A, WINDOW-10-SPEC, RULED the owner
+// 2026-10-01; until then the window opened at the threshold's posting block). Here the round ended in 1970, so its window
+// closed long ago: four postings and no seat may sign FINAL; the fifth, and it may - and five signatures make it FINAL.
+test('seven signer nodes: four postings are not enough; with the fifth a seat signs FINAL - the window itself runs from the round\'s end', async () => {
   const w = await sevenSignerNodes(1000);
   try {
     w.sign('agrees', () => ({}), { posted: false });
     w.post('agrees', 4);
-    await wait(1200);                       // a whole window after the signatures
+    const eid = w.runs.agrees.eid;
     const four = mayRelease(w, 'agrees');
     assert.equal(four.ok, false, 'four postings made the run final');
     assert.match(four.why, /4 of 5 settlement signer nodes have posted/);
+    const asked = await fetch(`http://127.0.0.1:${w.holder.port}/final-sig?round=${toHex(w.rid)}&entry=${toHex(eid)}`);
+    assert.equal(asked.status, 409, 'the holder signed FINAL on a transcript four seats posted');
+    assert.match(await asked.text(), /a seat signs FINAL only once the transcript is posted/);
 
-    w.post('agrees', 5);                    // the fifth signer node's posting, naming the block of now
-    // THE WINDOW IS BLOCKS (RULED 2026-09-24): it opens at the block the threshold's posting names and ends at the first
-    // block at or after that plus W - read on the node's own clock stubbed at those blocks, not by waiting on the wall.
-    const eid = w.runs.agrees.eid;
-    const open = resultFinality(w.holder.round, w.rid, eid).provisionalAtMs;
-    const signedAt = CLOCK.mtpOf(CLOCK.tipAt(Date.now() - 1200));
-    const stubAt = (now) => new (w.holder.stakeSecrets.constructor)(Object.assign(Object.create(w.holder.round), { now: () => now }), {});
-    assert.ok(open > signedAt, `the window opened at ${open}, not after the signatures' block ${signedAt}`);
-    const inside = stubAt(CLOCK.endAt(open, 1000) - 1).mayRelease(w.rid, eid);
-    assert.equal(inside.ok, false, 'the window was counted from the signatures, not from the posting');
-    assert.match(inside.why, /objection window/);
-    const after = stubAt(CLOCK.endAt(open, 1000)).mayRelease(w.rid, eid);
-    assert.equal(after.ok, true, `the run was not final at its window's end block after its fifth posting: ${after.why}`);
+    w.post('agrees', 5);                    // the fifth signer node's posting
+    const five = resultFinality(w.holder.round, w.rid, eid);
+    assert.ok(five.signable, `five postings, and still not signable: ${five.why}`);
+    assert.equal(five.provisionalAtMs, Number(roundEndMs(w.contract)), 'the window does not run from the round\'s end');
+    const signed = await w.finalNow('agrees');
+    assert.equal(signed.state, 'FINAL', signed.why);
+    const after = mayRelease(w, 'agrees');
+    assert.equal(after.ok, true, `the run was not final once five seats signed it after its fifth posting: ${after.why}`);
   } finally { await w.close(); }
 });
 

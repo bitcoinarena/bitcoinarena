@@ -17,6 +17,7 @@
 // B "refused"; at the close both signer nodes HOLDING - 3 attempts at 2 s, 12 and 11 at
 // 10 s - no result, finality null, no Void, forfeit 409 at both, lock held: a
 // hold for ever.
+import { testNow, skipTo } from './test-clock.js';
 import { roundEndMs } from '../../protocol/src/first-mark.js';
 import { CLOCK } from './block-clock.js';
 import { test } from 'node:test';
@@ -72,7 +73,7 @@ async function signerNodes({ endIn = 9000, lagB = 0 } = {}) {
   const base = { ...contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
     custody: 'FEDERATION', federationId: TEST_FEDERATION_ID, startDeadlineTicks: undefined };
   // `endIn`: THE ROUND IN THE PRESENT, its contract end this many ms from now (§13C's window opens at it).
-  const drafted = endIn === null ? base : presentDay(base, Date.now() + endIn);
+  const drafted = endIn === null ? base : presentDay(base, testNow() + endIn);
   const c = { ...drafted, censusRoot: bondedChainFor(drafted.nodes, drafted, slot,
     { endpoints: [a, b].map((d) => `ws://127.0.0.1:${d.port}`) }).censusRoot };
   const rid = roundId(c);
@@ -205,6 +206,7 @@ test('one signer node refused (1): B is up and refuses the on-time first mark - 
     await until(async () => (await Promise.all([w.a, w.b].map(async (d) => ((await (await fetch(
       `http://127.0.0.1:${d.port}/closing?round=${toHex(w.rid)}`)).json()).some((s) => s.entry === toHex(run.eid)))))).every(Boolean), 10000);
     const inWindow = { a: await at(w.a, w, run), b: await at(w.b, w, run) };
+    skipTo(Number(roundEndMs(w.c)) + 605000 + 100);                        // past the result window (WINDOW-10-SPEC)
     await until(() => w.a.round.noQuorum(run.eid) && w.b.round.noQuorum(run.eid));
     await wait(300);
     const after = { a: await at(w.a, w, run), b: await at(w.b, w, run), lockHeld: lockHeld(w, run) };
@@ -255,6 +257,7 @@ test('one signer node refused (2): the refusals are the player\'s own two first 
     await wait(1000);
     const offers = { a: w.a.round.firstMarkOffers(run.eid), b: w.b.round.firstMarkOffers(run.eid) };
     await Promise.all([say(w.a.port, `close ${toHex(w.rid)}`), say(w.b.port, `close ${toHex(w.rid)}`)]);
+    skipTo(Number(roundEndMs(w.c)) + 605000 + 100);                        // past the result window (WINDOW-10-SPEC)
     await until(() => w.a.round.noQuorum(run.eid) && w.b.round.noQuorum(run.eid));
     const after = { a: await at(w.a, w, run), b: await at(w.b, w, run), lockHeld: lockHeld(w, run),
       proofs: { a: w.a.round.equivocation(w.rid, run.eid).length, b: w.b.round.equivocation(w.rid, run.eid).length } };
@@ -283,8 +286,8 @@ test('one signer node refused (4): the refusing signer node is unreachable at th
     assert.equal(await say(w.a.port, `close ${toHex(w.rid)}`), 'closed');
     // PAST THE RESULT WINDOW ON THE CHAIN (RULED 2026-09-24): two seconds past its end block - opened at the first block at
     // or after the round's contract end - not W past this node's close.
-    const endMs = CLOCK.endAt(Math.ceil(Number(roundEndMs(w.c)) / 1000) * 1000, WINDOW_MS);
-    await until(() => Date.now() >= endMs, 30000);
+    const endMs = (Number(roundEndMs(w.c)) + 605000);
+    skipTo(endMs + 100);
     await until(() => w.a.round.noQuorum(run.eid), 30000);                // A decides on its next pass past the end block
     const pastWindowBDown = await at(w.a, w, run);
     await w.upB();
@@ -319,6 +322,7 @@ test('one signer node refused (8): the first mark reached only the signer node t
       `http://127.0.0.1:${d.port}/closing?round=${toHex(w.rid)}`)).json()).some((s) => s.entry === toHex(run.eid)))))).every(Boolean)
       || [w.a, w.b].every((d) => d.round.results(w.rid, run.eid).length > 0), 10000);
     const inWindow = { a: await at(w.a, w, run), b: await at(w.b, w, run) };
+    skipTo(Number(roundEndMs(w.c)) + 605000 + 100);                        // past the result window (WINDOW-10-SPEC)
     await until(() => [w.a, w.b].every((d) => d.round.noQuorum(run.eid) || resultFinality(d.round, w.rid, run.eid).state === 'FINAL'));
     await wait(300);
     const after = { a: await at(w.a, w, run), b: await at(w.b, w, run), lockHeld: lockHeld(w, run) };
@@ -344,6 +348,8 @@ test('one signer node refused (5, 6): B refuses, then sees the stake and takes t
     for (const m of run.messages.slice(0, 2)) saidB.push(String(await say(w.b.port, m)).slice(0, 30));
     for (const m of run.messages.slice(2)) for (const d of [w.a, w.b]) await say(d.port, m);
     await Promise.all([say(w.a.port, `close ${toHex(w.rid)}`), say(w.b.port, `close ${toHex(w.rid)}`)]);
+    await until(() => [w.a, w.b].every((d) => resultFinality(d.round, w.rid, run.eid).state === 'PROVISIONALLY_FINAL'));
+    skipTo(Number(roundEndMs(w.c)) + 605000 + 100);                        // past the result window (WINDOW-10-SPEC)
     await until(() => [w.a, w.b].every((d) => resultFinality(d.round, w.rid, run.eid).state === 'FINAL'));
     await wait(WINDOW_MS + 1500);                           // long past the result window
     const after = { a: await at(w.a, w, run), b: await at(w.b, w, run) };
@@ -360,39 +366,42 @@ test('one signer node refused (5, 6): B refuses, then sees the stake and takes t
   } finally { await w.close(); }
 });
 
-// §13C'S RESULT WINDOW ON THE CHAIN (RULED the owner 2026-09-24): it opens at the first block at or after the round's contract
-// end (roundEndMs - the same instant at every holder) and ends at the first later block at or after open + W. Two
-// holders that close seconds apart write their §13C outcome at the same end block - not each at its own close + W, where
-// the first could freeze a refund or a forfeit the other, still inside its local window, could still contradict.
+// §13C'S RESULT WINDOW ON THE WALL CLOCK (WINDOW-10-SPEC, RULED the owner 2026-10-01; it was blocks from 2026-09-24): it opens at
+// the round's contract end (roundEndMs - the same instant at every holder) and closes 600 s later; each holder decides
+// from end + 605 s on its own clock. Two holders that close seconds apart write their §13C outcome from that same instant -
+// not each at its own close + W, where the first could freeze a refund or a forfeit the other could still contradict.
 async function writesOf(w, run, ms = 25000) {
   const at_ = { a: null, b: null };
   for (const stop = Date.now() + ms; Date.now() < stop && !(at_.a && at_.b); await wait(50))
-    for (const s of ['a', 'b']) if (!at_[s] && w[s].round.noQuorum(run.eid)) at_[s] = { ms: Date.now(), outcome: w[s].round.noQuorum(run.eid).outcome };
+    for (const s of ['a', 'b']) if (!at_[s] && w[s].round.noQuorum(run.eid)) at_[s] = { ms: testNow(), outcome: w[s].round.noQuorum(run.eid).outcome };
   return at_;
 }
 
-test('§13C on the chain (VOID): two holders closing three seconds apart write VOID, both only once the result window\'s end block is there - not each at its own close + W', async () => {
+test('§13C on the wall clock (VOID): two holders closing three seconds apart write VOID, both only from the round\'s end + 605 s - not each at its own close + W', async () => {
   const w = await signerNodes({ endIn: 9000 });
   try {
     const run = await joinAndBuild(w, { lockAt: ['a'] });
     for (const m of run.messages) { await say(w.a.port, m); await say(w.b.port, m); }
     await until(() => w.b.round.refusedFirstMark(run.eid) && Object.values(w.a.round.firstMarkOffers(run.eid)).includes('refused'));
-    const closeA = Date.now();
+    const closeA = testNow();
     await say(w.a.port, `close ${toHex(w.rid)}`);
     await wait(3000);
-    const closeB = Date.now();
+    const closeB = testNow();
     await say(w.b.port, `close ${toHex(w.rid)}`);
+    const endMs = (Number(roundEndMs(w.c)) + 605000);
+    const early = await writesOf(w, run, 1500);                           // inside the window: neither writes
+    assert.deepEqual([early.a, early.b], [null, null], 'a holder wrote inside the result window');
+    skipTo(endMs + 100);
     const wrote = await writesOf(w, run);
-    const endMs = CLOCK.endAt(Math.ceil(Number(roundEndMs(w.c)) / 1000) * 1000, WINDOW_MS);
     console.log('  FACTS (13C VOID timing):', JSON.stringify({ closesApart: closeB - closeA, wroteA: wrote.a && wrote.a.ms - closeA,
       wroteB: wrote.b && wrote.b.ms - closeA, gap: wrote.a && wrote.b ? wrote.b.ms - wrote.a.ms : null, endBlockAfterCloseA: endMs - closeA,
       outcomes: [wrote.a && wrote.a.outcome, wrote.b && wrote.b.outcome] }));
     assert.deepEqual([wrote.a && wrote.a.outcome, wrote.b && wrote.b.outcome], ['VOID', 'VOID']);
-    assert.ok(wrote.a.ms >= endMs && wrote.b.ms >= endMs, 'a holder wrote before the result window\'s end block');
+    assert.ok(wrote.a.ms >= endMs && wrote.b.ms >= endMs, 'a holder wrote before the round\'s end + 605 s');
   } finally { await w.close(); }
 });
 
-test('§13C on the chain (FORFEIT): the player\'s two first marks, two holders closing three seconds apart - FORFEIT at both, both only once the end block is there', async () => {
+test('§13C on the wall clock (FORFEIT): the player\'s two first marks, two holders closing three seconds apart - FORFEIT at both, both only from the round\'s end + 605 s', async () => {
   const w = await signerNodes({ endIn: 12000 });
   try {
     const run = await joinAndBuild(w);
@@ -402,20 +411,25 @@ test('§13C on the chain (FORFEIT): the player\'s two first marks, two holders c
     for (const m of run.alt) await say(w.b.port, m);
     for (const m of run.messages.slice(0, 2)) await say(w.a.port, m);
     await wait(1000);
-    const closeA = Date.now();
+    const closeA = testNow();
     await say(w.a.port, `close ${toHex(w.rid)}`);
     await wait(3000);
     await say(w.b.port, `close ${toHex(w.rid)}`);
+    const endMs = (Number(roundEndMs(w.c)) + 605000);
+    const early = await writesOf(w, run, 1500);                           // inside the window: neither writes
+    assert.deepEqual([early.a, early.b], [null, null], 'a holder wrote inside the result window');
+    skipTo(endMs + 100);
     const wrote = await writesOf(w, run);
-    const endMs = CLOCK.endAt(Math.ceil(Number(roundEndMs(w.c)) / 1000) * 1000, WINDOW_MS);
     console.log('  FACTS (13C FORFEIT timing):', JSON.stringify({ wroteA: wrote.a && wrote.a.ms - closeA, wroteB: wrote.b && wrote.b.ms - closeA,
       gap: wrote.a && wrote.b ? wrote.b.ms - wrote.a.ms : null, endBlockAfterCloseA: endMs - closeA, outcomes: [wrote.a && wrote.a.outcome, wrote.b && wrote.b.outcome] }));
     assert.deepEqual([wrote.a && wrote.a.outcome, wrote.b && wrote.b.outcome], ['FORFEIT', 'FORFEIT']);
-    assert.ok(wrote.a.ms >= endMs && wrote.b.ms >= endMs, 'a holder wrote before the result window\'s end block');
+    assert.ok(wrote.a.ms >= endMs && wrote.b.ms >= endMs, 'a holder wrote before the round\'s end + 605 s');
   } finally { await w.close(); }
 });
 
-test('§13C on the chain: a holder whose chain has not got the end block writes nothing, and a decision taken with the end block as tip is past the window at both', async () => {
+// A HOLDER WHOSE CHAIN LAGS DECIDES AT THE SAME INSTANT (WINDOW-10-SPEC): no block decides a window - B's chain view
+// runs LAG behind, and both write VOID from the round's end + 605 s; resultWindow answers by the clock alone at both.
+test('§13C on the wall clock: a holder whose chain lags decides at the same instant - end + 605 s - as one whose chain does not', async () => {
   const LAG = 4000;
   const w = await signerNodes({ endIn: 9000, lagB: LAG });
   try {
@@ -423,26 +437,16 @@ test('§13C on the chain: a holder whose chain has not got the end block writes 
     for (const m of run.messages) { await say(w.a.port, m); await say(w.b.port, m); }
     await until(() => w.b.round.refusedFirstMark(run.eid) && Object.values(w.a.round.firstMarkOffers(run.eid)).includes('refused'));
     await Promise.all([say(w.a.port, `close ${toHex(w.rid)}`), say(w.b.port, `close ${toHex(w.rid)}`)]);
-    const endMs = CLOCK.endAt(Math.ceil(Number(roundEndMs(w.c)) / 1000) * 1000, WINDOW_MS);
-    // A writes once the end block is there; at that moment B's chain, LAG behind, does not hold it yet.
-    let atAWrote = null;
-    for (const stop = Date.now() + 25000; Date.now() < stop && !atAWrote; await wait(50))
-      if (w.a.round.noQuorum(run.eid)) atAWrote = { ms: Date.now(), bWrote: !!w.b.round.noQuorum(run.eid), bWindow: resultWindow(w.b.round, w.rid, w.c).ok };
-    const wrote = await writesOf(w, run);
+    const endMs = (Number(roundEndMs(w.c)) + 605000);
     const edge = (d, now) => resultWindow(Object.assign(Object.create(d.round), { now: () => now }), w.rid, w.c).ok;
-    console.log('  FACTS (13C lagging):', JSON.stringify({ endMs, aWroteAfterEnd: atAWrote && atAWrote.ms - endMs, bHadNotWritten: atAWrote && !atAWrote.bWrote,
-      bSawNoEnd: atAWrote && !atAWrote.bWindow, bWroteAfterEnd: wrote.b && wrote.b.ms - endMs, outcomes: [wrote.a && wrote.a.outcome, wrote.b && wrote.b.outcome],
-      tipAtEnd: [edge(w.a, endMs), edge(w.b, endMs + LAG)], tipBeforeEnd: [edge(w.a, endMs - 1), edge(w.b, endMs + LAG - 1)] }));
-    assert.ok(atAWrote && atAWrote.ms >= endMs, 'A wrote before the end block');
-    if (atAWrote.ms < endMs + LAG - 200) {
-      assert.equal(atAWrote.bWindow, false, 'B, lagging, already held the end block');
-      assert.equal(atAWrote.bWrote, false, 'B wrote without the end block');
-    }
-    assert.ok(wrote.b.ms >= endMs + LAG, 'B wrote before its chain held the end block');
-    assert.deepEqual([wrote.a.outcome, wrote.b.outcome], ['VOID', 'VOID']);
-    // THE END BLOCK AS TIP IS PAST THE WINDOW; ONE BLOCK BEFORE IT, NOT - at both.
-    assert.deepEqual([edge(w.a, endMs), edge(w.b, endMs + LAG)], [true, true]);
-    assert.deepEqual([edge(w.a, endMs - 1), edge(w.b, endMs + LAG - 1)], [false, false]);
+    skipTo(endMs + 100);
+    const wrote = await writesOf(w, run);
+    console.log('  FACTS (13C, a lagging chain):', JSON.stringify({ wroteAfterEnd: [wrote.a && wrote.a.ms - endMs, wrote.b && wrote.b.ms - endMs],
+      outcomes: [wrote.a && wrote.a.outcome, wrote.b && wrote.b.outcome], atEnd: [edge(w.a, endMs), edge(w.b, endMs)], before: [edge(w.a, endMs - 1), edge(w.b, endMs - 1)] }));
+    assert.deepEqual([wrote.a && wrote.a.outcome, wrote.b && wrote.b.outcome], ['VOID', 'VOID']);
+    assert.ok(wrote.a.ms >= endMs && wrote.b.ms >= endMs, 'a holder wrote before the round\'s end + 605 s');
+    assert.deepEqual([edge(w.a, endMs), edge(w.b, endMs)], [true, true], 'the lagging chain kept B from deciding at end + 605 s');
+    assert.deepEqual([edge(w.a, endMs - 1), edge(w.b, endMs - 1)], [false, false]);
   } finally { await w.close(); }
 });
 
@@ -454,11 +458,11 @@ test('a refusal after the result window\'s end block is outside at both holders:
   const w = await signerNodes({ endIn: 12000 });
   try {
     const run = await joinAndBuild(w, { lockAt: ['a'] });
-    const endMs = CLOCK.endAt(Math.ceil(Number(roundEndMs(w.c)) / 1000) * 1000, WINDOW_MS);
-    const aClosedBeforeEnd = Date.now() < endMs;
+    const endMs = (Number(roundEndMs(w.c)) + 605000);
+    const aClosedBeforeEnd = testNow() < endMs;
     await say(w.a.port, `close ${toHex(w.rid)}`);
-    await until(() => Date.now() >= endMs + 1000, 30000);
-    const refusedAfterEnd = Date.now() >= endMs;
+    skipTo(endMs + 1000);
+    const refusedAfterEnd = testNow() >= endMs;
     const saidB = [];
     for (const m of run.messages.slice(0, 2)) saidB.push(String(await say(w.b.port, m)).slice(0, 40));   // to B only, late
     await until(() => !!w.b.round.refusedFirstMark(run.eid), 5000);

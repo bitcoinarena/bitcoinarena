@@ -1,5 +1,6 @@
 // LATE START AT THE CLOSE WITH TWO FIRST MARKS (5b-5e), AND §13C'S EVIDENCE TIED TO ITS BLOCK - split from
 // first-mark.test.js (2026-09-24) so each file stays inside the suite's 180 s. The fixture is first-mark-fixture.js.
+import { testNow, skipTo } from './test-clock.js';
 import { test } from 'node:test';
 import {
   CLOCK, END, FIELD, GENESIS_HASH, NO_PREVIOUS, RANDOMNESS, SIGNED_FORFEIT_0, STAKE, START_DEADLINE_TICKS, TEST_FEDERATION_ID, WINDOW_MS, WINNER, answer, assert, assumeAssigned, b32, batchId, brief, checkpointId, closeAndSettle, closingOf, contractFor, curve, dealHandout, decidedBoth, decodePlayerResult, ed25519, encodeCheckpoint, encodeEntryContract, encodeHandout, encodeInputBatch, encodeRoundContract, entryFeeMsat, entryId, feldmanGroup, finalAtBoth, handoutId, holdsFirst, init, joinAndBuild, joinSigned, lockFieldsToJson, lockHeldOf, lockPort, netStakeMsat, openStore, opts, outcomeAt, pastResultWindow, presentDay, rand, refundKeyOf, resultFinality, roundEndMs, roundId, say, scalarFrom32, secretScalar, seedWordForEntry, serve, sha256, signedAt, signerNodes, splitSignedResult, stateHash, step, toHex, transcriptsAcross, tweakPoint, untilForwarded, wait, wordsAt,
@@ -205,11 +206,11 @@ test('a proof after the result window\'s end block is outside at both holders: B
     await wait(500);
     const bVoidFirst = !!w.b.round.entryVoid(run.eid);
     await w.upA();
-    const endMs = CLOCK.endAt(Math.ceil(Number(roundEndMs(w.c)) / 1000) * 1000, WINDOW_MS);
-    const bClosedBeforeEnd = Date.now() < endMs;
+    const endMs = (Number(roundEndMs(w.c)) + 605000);
+    const bClosedBeforeEnd = testNow() < endMs;
     await say(w.b.port, `close ${toHex(w.rid)}`);
     await pastResultWindow(w, () => !!w.b.round.noQuorum(run.eid));
-    const lateAfterEnd = Date.now() >= endMs;
+    const lateAfterEnd = testNow() >= endMs;
     for (const m of run.late) await say(w.a.port, m);                       // late, to A - after the end block
     await wait(500);
     await say(w.a.port, `close ${toHex(w.rid)}`);

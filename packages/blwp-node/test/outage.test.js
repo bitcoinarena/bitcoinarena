@@ -17,6 +17,7 @@
 //
 // MEASURED BEFORE (tools/outage-before.mjs, 3300558): (b) nothing recorded, no
 // result, forfeit 409, a silent refund at expiry; (b') DELIVERED at both.
+import { testNow } from './test-clock.js';
 import { test } from 'node:test';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import assert from 'node:assert/strict';
@@ -30,6 +31,7 @@ import { resultFinality } from '../src/finality.js';
 import { assumeAssigned } from './assignment.js';
 import { lockPort, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
 import { b32, rand, RANDOMNESS, STAKE, WINDOW_MS, WINNER, GENESIS_HASH, wordsAt, playFor, warmPlay, contractFor, say, secretScalar, opts, wait } from './window-fixture.js';
+import { presentDay } from './window-fixture.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
 import { dealHandout, encodeHandout, handoutId } from '../../protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../protocol/src/shares.js';
@@ -47,7 +49,7 @@ import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
 const curve = { ...feldmanGroup, tweakPoint };
 const END = WINNER.ticks;                      // 1320: past the 900 line; the run delivers here
 
-async function signerNodes() {
+async function signerNodes({ endIn = null } = {}) {
   // A CHAIN THAT BONDS THE ROUND'S TWO SIGNER NODES (RULED 2026-09-25), as lockRound in lock-round-fixture.js: both are
   // running daemons, so the claim key is their own live DKG; the round's beacon is that chain's, and the player seeds from it.
   const slot = bondedChainSlot(lockPort());
@@ -65,8 +67,11 @@ async function signerNodes() {
   };
   wire();
   // THIS ROUND NAMES NO START DEADLINE: the page's own window, 900.
-  const drafted = { ...contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
+  const base = { ...contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
     custody: 'FEDERATION', federationId: TEST_FEDERATION_ID, startDeadlineTicks: undefined };
+  // `endIn`: THE ROUND IN THE PRESENT, its end this many ms ahead - its result window open (WINDOW-10-SPEC). Left out, the
+  // round ended in 1970 and its window closed long ago.
+  const drafted = endIn === null ? base : presentDay(base, testNow() + endIn);
   const c = { ...drafted, censusRoot: bondedChainFor(drafted.nodes, drafted, slot,
     { endpoints: [a, b].map((d) => `ws://127.0.0.1:${d.port}`) }).censusRoot };
   const rid = roundId(c);
@@ -283,7 +288,7 @@ const closeAt = (d, w) => say(d.port, `close ${toHex(w.rid)}`);
 const firstOnly = (run) => run.messages.slice(0, 2);
 
 test('(i) the chain stops at 60 and A closes while B is down: ENTRY_VOID (closed) at both signer nodes, the lock back at once', async () => {
-  const w = await signerNodes();
+  const w = await signerNodes({ endIn: 9000 });
   try {
     const run = await joinAndBuild(w);
     await w.downB();

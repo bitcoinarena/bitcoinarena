@@ -9,6 +9,7 @@
 //
 // Each case: the lock fixture's port, two distinct live gateways naming the round's federation; only the fee rule changes.
 // The round is moved to the present (entry close ahead) so `GET /rounds` would list it if it were stored.
+import { testNow } from './test-clock.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -30,7 +31,7 @@ async function opened(feeRule, { noFees = false } = {}) {
     randomnessFor: slot.randomnessFor, claimKeyFor: () => new Uint8Array(33).fill(2) });
   try {
     const base = contractFor([d.round.pubkey, b32(0x33)], 3000n, ['wss://r.example']);
-    const drafted = presentDay(base, Date.now() + 300000);                 // entry closes ~74 s from now
+    const drafted = presentDay(base, testNow() + 300000);                 // entry closes ~74 s from now
     const c = { ...drafted, censusRoot: bondedChainFor(drafted.nodes, drafted, slot,
       { endpoints: [`ws://127.0.0.1:${d.port}`] }).censusRoot };
     const rid = roundId(c);

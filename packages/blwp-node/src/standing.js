@@ -11,13 +11,14 @@
 import { computePayoutTable, netStakeMsat, VOID, FORFEIT, ENTRY_VOID } from '../../protocol/src/payout.js';
 import { decodePlayerResult, splitSignedResult } from '../../protocol/src/result.js';
 import { roundEndMs } from '../../protocol/src/first-mark.js';
+import { OBJECTION_WINDOW_MS } from '../../protocol/src/window.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { resultFinality } from './finality.js';
 import { PROVISIONALLY_FINAL, FINAL } from '../../protocol/src/objection.js';
 import { runId } from './verdict.js';
 
-/** The objection window, fixed (WINDOW-10-SPEC): 600 s of wall time from the round's end. */
-export const OBJECTION_WINDOW_MS = 600000n;
+/** The objection window, fixed (WINDOW-10-SPEC): 600 s of wall time from the round's end - the protocol's one constant. */
+export { OBJECTION_WINDOW_MS };
 
 // One entry's outcome as far as this node can say: from its threshold of signed results, or a refund/forfeit word.
 function outcomeOf(round, roundIdBytes, entryId) {

@@ -763,6 +763,10 @@ const TYPE_TRANSCRIPT_POSTING = 0x18;
 // its replay of the canonical transcript produces, tied to the contradicted run.
 // The spec names no wire object for it; this is that object.
 const TYPE_RERUN_RESULT = 0x19;
+// A SEAT'S FINAL SIGNATURE (§13A, WINDOW-10-SPEC, the owner 2026-10-01): one settlement seat's word that a run is FINAL,
+// signed once its own clock read the window's close + the tolerance and it held no valid objection in time. Five of
+// seven (the round's threshold) make the run FINAL.
+const TYPE_FINAL_SIGNATURE = 0x1a;
 
 // A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
 // under AES-GCM plus the 16-byte tag that makes a wrong key a REFUSAL rather
@@ -871,6 +875,8 @@ const TAG = {
   transcriptPosting: 'BLWP/v1/TranscriptPosting',
   // What a signer node signs when it re-runs a suspended result (§13A).
   rerunResult: 'BLWP/v1/RerunResult',
+  // What a settlement seat signs when it signs a run FINAL (§13A, WINDOW-10-SPEC).
+  finalSignature: 'BLWP/v1/FinalSignature',
 };
 
 /**
@@ -1045,12 +1051,13 @@ function genesisConfigHash() {
 const OBJECTION_WINDOW_REFERENCE_MS = 600000n;
 
 /**
- * THE LONGEST OBJECTION WINDOW A ROUND CONTRACT MAY NAME: six hours, in milliseconds (§13A, RULED the owner
- * 2026-09-24). An objected entry is decided at the latest three windows after it was provisionally final - the
- * objection window, the re-run window, the re-run's own objection window - and the stake lock's 144 blocks must
- * cover that plus the round and the settlement: three windows and a round inside a day, with room to settle.
+ * THE OBJECTION WINDOW, FIXED (§13A, WINDOW-10-SPEC, RULED the owner 2026-10-01 09:40): exactly 600 seconds of wall time from
+ * the round's end as its contract fixes it. Not a contract choice, not blocks, not a range: a Round Contract whose
+ * objection_window_W is anything else is invalid. It replaces the six-hour cap (MAX_OBJECTION_WINDOW_MS, withdrawn).
  */
-const MAX_OBJECTION_WINDOW_MS = 21_600_000n;
+const OBJECTION_WINDOW_MS = 600_000n;
+/** The clock tolerance (§13A, RULED with WINDOW-10-SPEC): a seat signs FINAL at window close + 5 s, and counts a signed time only within 5 s of its own clock. */
+const FINAL_TOLERANCE_MS = 5_000n;
 
 /**
  * WHICH CUSTODY CONSTRUCTION A ROUND USES. Section 23.6 says "The Round Contract names which construction it
@@ -1950,36 +1957,17 @@ function roundWindowsAreValid(c) {
       why: `that round closes entry at ${c.entryCloseMs}, before its committee forms at ${opensAt}`,
     };
 
-  // AND IT MUST NAME A RESULT WINDOW THAT IS ACTUALLY A WINDOW (§13A, §13).
-  //
-  // "After a result is PROVISIONALLY_FINAL, the window W (reference: 10 minutes, contract-defined) runs", and
-  // "The result window equals the objection window - same duration, a field on the contract". A window of
-  // ZERO is not a short window, it is no window: finality is instant, so §13A's replay veto - which the spec
-  // calls the cheapest defence in the whole design - can never be exercised, and `verify.js`'s result-window
-  // test (`now >= closed_ms + objectionWindowMs`) is true the moment the round closes, so a seat that has not
-  // yet retrieved the transcript voids the entry immediately.
-  //
-  // NO FLOOR IS SPECIFIED AND NONE IS INVENTED HERE. §13A gives "reference: 10 minutes, contract-defined" -
-  // a reference, not a minimum. So this refuses a duration that is not positive, and - since the 2026-09-24
-  // ruling - one over six hours; any window in between opens, because the field is contract-defined.
+  // AND ITS OBJECTION WINDOW IS EXACTLY 600 000 ms (§13A, WINDOW-10-SPEC, RULED the owner 2026-10-01 09:40): "A Round
+  // Contract whose objection_window_W is not exactly 600000 ms is invalid: a node refuses to open it, list it or take an
+  // entry for it." The field was contract-defined with a 10-minute reference and a 6-hour cap; neither stands.
   if (typeof c.objectionWindowMs !== 'bigint')
     return { ok: false, opensAt, why: 'that round names no objection window, so nothing says when a result may become final' };
-  if (c.objectionWindowMs <= 0n)
+  if (c.objectionWindowMs !== OBJECTION_WINDOW_MS)
     return {
       ok: false,
       opensAt,
-      why: `that round's objection window is ${c.objectionWindowMs}ms: a zero window is not a short one, it is `
-        + 'none at all - finality would be instant and §13A\'s replay veto could never be used',
-    };
-  // AND NO LONGER THAN SIX HOURS (§13A, RULED the owner 2026-09-24). A suspended entry ends at most three windows after
-  // it was provisionally final, and the stake lock's 144 blocks must cover those three and the round and the
-  // settlement - so a longer window is a contract whose locks can expire before its entries are decided.
-  if (c.objectionWindowMs > MAX_OBJECTION_WINDOW_MS)
-    return {
-      ok: false,
-      opensAt,
-      why: `that round's objection window is ${c.objectionWindowMs}ms, over the 6-hour cap of ${MAX_OBJECTION_WINDOW_MS}ms: `
-        + 'three windows and a round must fit inside the stake lock\'s 144 blocks with room for the settlement',
+      why: `that round's objection window is ${c.objectionWindowMs}ms: the objection window is exactly ${OBJECTION_WINDOW_MS}ms `
+        + '(600 s of wall time from the round\'s end, §13A), so the contract is invalid',
     };
 
   return { ok: true, opensAt, earliestStart };
@@ -3617,6 +3605,546 @@ async function payInvoice(where, invoice, options = {}) {
   if (typeof preimage !== 'string' || !/^[0-9a-f]{64}$/i.test(preimage))
     return { ok: false, why: 'the wallet said it paid and produced no preimage' };
   return { ok: true, preimage, feesPaidMsat: said.result.fees_paid };
+}
+
+// ---- core/src/fixed.js
+// Q16.16 fixed point. THE ONLY FILE that may use * and / directly, and the
+// determinism guard enforces that (tools/check-determinism.js).
+//
+// One unit is 1/65536. The range is +/-32768, which covers a 260 x 170 m map,
+// velocities, angles and health with room to spare.
+//
+// Every operation here produces an exact integer result, so it is identical in
+// every conforming engine: ECMAScript specifies integer arithmetic on Numbers
+// exactly as long as operands and results are integers below 2^53, and
+// specifies the bitwise operators as 32-bit with defined wrapping.
+
+const SHIFT = 16;
+const ONE = 65536;
+const HALF = 32768;
+
+const fromInt = (n) => (n << SHIFT) | 0;
+const toInt = (x) => x >> SHIFT;            // arithmetic shift = floor
+
+/** Only for constants in source. Never call this on runtime data. */
+const fromFloat = (f) => Math.round(f * ONE) | 0;
+
+const add = (a, b) => (a + b) | 0;
+const sub = (a, b) => (a - b) | 0;
+const neg = (a) => (-a) | 0;
+const abs = (a) => (a < 0 ? (-a) | 0 : a);
+
+/**
+ * Fast multiply. Exact while |a*b| < 2^53, which holds for any pair of Q16.16
+ * values whose product stays inside the representable range - the intermediate
+ * is at most 2^31 * 2^31 = 2^62, so this is NOT universally safe and the caller
+ * must know its magnitudes. Used on the simulation's hot paths.
+ */
+const mulFast = (a, b) => ((a * b) / ONE) | 0;
+
+/**
+ * Rounding multiply, and rounding conversion back to a whole number. `mulFast`
+ * and `toInt` both throw the fraction away, which is right for the simulation -
+ * a truncation there is a rule, applied identically on every engine - but wrong
+ * where the value being produced is a *reported* number that some other
+ * implementation rounds. The score is the one such number: the old game ends on
+ * `Mathf.RoundToInt`, so the core has to round too or it sits a point low on
+ * roughly half of all runs. Same magnitude rules as `mulFast`: the caller must
+ * know |a*b| stays under 2^53.
+ */
+const mulRound = (a, b) => (((a * b) + (ONE >> 1)) / ONE) | 0;
+const toIntRound = (x) => (x + (ONE >> 1)) >> SHIFT;
+
+/**
+ * Exact multiply for anything that could overflow the double's integer range.
+ * BigInt is exact at any width; it allocates, so it stays off per-unit inner
+ * loops by convention rather than by enforcement.
+ */
+const mulWide = (a, b) =>
+  Number((BigInt(a) * BigInt(b)) >> BigInt(SHIFT)) | 0;
+
+/** Truncating divide. Returns 0 for a zero divisor rather than NaN or Infinity. */
+const div = (a, b) => (b === 0 ? 0 : ((a * ONE) / b) | 0);
+
+/**
+ * Rounding divide, the counterpart of `mulRound` and for the same reason: a
+ * quotient that feeds a *reported* number must not lose its fraction, or the
+ * loss compounds through the multiplies that follow it. Every truncation leans
+ * the same way, so they add rather than cancel. Only for those; `div` stays
+ * the simulation's divide.
+ */
+const divRound = (a, b) =>
+  b === 0 ? 0 : (((a * ONE) + ((b / 2) | 0)) / b) | 0;
+
+/**
+ * Rounded `a * b / c` without ever landing on the intermediate. A ratio taken
+ * on its own has to be stored as a Q16.16 fraction of at most 1.0, which
+ * quantises it to 1.5e-5 - and once that ratio is scaled up by a thousand the
+ * error is scaled with it. Kept as one expression the quotient is only ever
+ * rounded at the end, at the precision of the answer rather than the ratio.
+ * The caller must know |a*b| stays under 2^53.
+ */
+const mulDivRound = (a, b, c) =>
+  c === 0 ? 0 : (((a * b) + ((c / 2) | 0)) / c) | 0;
+
+/**
+ * Truncating divide of two PLAIN INTEGERS - not Q16.16 values.
+ *
+ * `div` scales its numerator by ONE first, which is right for fixed-point and
+ * wrong for a count. Splitting a hundred parts of something, or a byte into
+ * buckets, was being written as `x / n | 0` at the call site, which is exactly
+ * the arithmetic the guard exists to keep in one auditable file.
+ *
+ * Truncates towards zero, as `| 0` does, so it is the same value the inline
+ * form produced. Both arguments must already be int32.
+ */
+const idiv = (a, b) => (b === 0 ? 0 : (a / b) | 0);
+
+const min = (a, b) => (a < b ? a : b);
+const max = (a, b) => (a > b ? a : b);
+const clamp = (x, lo, hi) => (x < lo ? lo : x > hi ? hi : x);
+const sign = (a) => (a > 0 ? 1 : a < 0 ? -1 : 0);
+
+/**
+ * Integer square root of a Q16.16 value, by Newton-Raphson on integers.
+ *
+ * Math.sqrt is correctly rounded and would in fact be deterministic, but it is
+ * banned wholesale rather than by exception: a whitelist with one hole in it is
+ * a whitelist somebody widens later.
+ */
+function sqrt(x) {
+  if (x <= 0) return 0;
+  // sqrt(x/ONE)*ONE = sqrt(x*ONE); the product needs 48 bits, so it stays exact
+  let n = x * ONE;
+  let r = 1 << 15;
+  for (let i = 0; i < 24; i++) {
+    const next = ((r + (n / r)) / 2) | 0;
+    if (next === r) break;
+    r = next;
+  }
+  return r | 0;
+}
+
+/**
+ * Length of a 2D vector, both components Q16.16.
+ *
+ * The first version scaled the components down by 256 before squaring, out of
+ * caution about overflow, and then applied the FIXED-POINT square root to the
+ * result - counting the scale twice. It returned roughly 256x too much, the
+ * speed cap fired on the first tick, and the vehicle covered five metres in
+ * fifty seconds. No overflow guard was needed: at the map's maximum speed the
+ * intermediate is 3.4e12, comfortably inside the exact integer range.
+ */
+/**
+ * Cube root, Q16.16 in and out.
+ *
+ * `Math.cbrt` is out for the same reason `Math.sqrt` is: it is a host
+ * function, and the poison test refuses every one of them. Newton on
+ * `y = (2y + x/y^2) / 3`, which is the cube-root iteration written in this
+ * file's own operations - `mulFast` for `y^2`, `div` for `x/y^2`, `idiv` for
+ * the third - so there is no arithmetic here that is not already tested.
+ *
+ * Twenty iterations from a power-of-two start. The iteration thirds its error
+ * when it is far out, so the largest input this core has - a liquidation
+ * capped at 32767 millions, whose root is 32 - is reached in a handful;
+ * twenty is the same work for every input, which keeps the cost off the
+ * input value.
+ *
+ * The last three lines are the correction. Newton lands within a unit but not
+ * always ON the floor, and a root that is one Q16.16 unit high would make a
+ * crater one fifteen-thousandth of a metre wider on one machine and not on
+ * another if any step ever rounded differently. So it is walked to the exact
+ * floor: the largest y whose cube does not exceed x.
+ *
+ * Bounds. The caller's x reaches 32767 * ONE = 2.147e9 and the root 32 * ONE.
+ * `mulFast(y, y)` peaks at 4.4e12 before its divide and `div(x, t)` at 1.4e14,
+ * both exact in a double long before 2^53. Above that the input would have to
+ * be a liquidation of thirty-two billion dollars, which `LIQ_MAX` refuses.
+ */
+function cbrt(x) {
+  if (x <= 0) return 0;
+
+  // THE START MATTERS, and starting at 1.0 does not work. Newton's first step
+  // from there is `(2 + x) / 3`, which for x = 1000 lands on 334 - and 334
+  // squared in Q16.16 is 7.3e9, past a signed word, so `mulFast` wraps
+  // negative and the iteration is destroyed before it has begun. Measured:
+  // 1000 came out as 334.15 and 8000 as 2667.
+  //
+  // So the start is a power of two at the right size. `x` is ONE * v, so
+  // log2(x) = 16 + log2(v) and the root is ONE * v^(1/3) = 2^(16 + log2(v)/3).
+  // From there the iteration never overshoots and every intermediate stays
+  // inside the range the bounds note below promises.
+  let bits = -1;
+  for (let t = x; t > 0; t >>>= 1) bits++;
+  let shift = 16 + (((bits - 16) / 3) | 0);
+  if (shift < 0) shift = 0;
+  if (shift > 30) shift = 30;
+  let y = (1 << shift) | 0;
+  if (y < 1) y = 1;
+
+  for (let i = 0; i < 20; i++) {
+    const sq = mulFast(y, y);
+    if (sq <= 0) break;
+    y = idiv(add(add(y, y), div(x, sq)), 3);
+    if (y <= 0) { y = 1; break; }
+  }
+
+  // The cube is compared, never stored, so it is worked out in the double
+  // domain: `mulFast` would wrap at y = 32.0 exactly, where the true cube is
+  // 2^31, and a wrap in the CORRECTION would turn "too big" into "far too
+  // small" and walk the answer the wrong way. Exact to 2^53, which the bounds
+  // note below is well inside.
+  const cube = (v) => ((v * v) / ONE) * v / ONE;
+  while (y > 1 && cube(y) > x) y = (y - 1) | 0;
+  while (cube((y + 1) | 0) <= x) y = (y + 1) | 0;
+  return y;
+}
+
+const length2 = (x, y) => {
+  if (x === 0 && y === 0) return 0;
+  return sqrt((mulFast(x, x) + mulFast(y, y)) | 0);
+};
+
+// ---- core/src/tick.js
+// THE TICK THE SIMULATION ACTUALLY RUNS, AND THE CORE IS WHAT KNOWS IT.
+//
+// Section 5 of multiplayer_p2p.md requires a "fixed protocol tick" and names
+// no number: no rate, no interval, no unit, and nobody who emits one. Ticks
+// are only ever the unit something else is counted in - a checkpoint's `tick`
+// (10), an input batch's `first_tick`/`last_tick` (11), a late joiner's
+// `join_tick`, "the exposure integral accumulated per simulation tick". The
+// round contract, meanwhile, measures the round in TIME: `start_time`,
+// `entry_close_time`, `player_run_duration // T_run`, with the worked example
+// at "T_run: 3 minutes".
+//
+// So the conversion between the two is not in the spec, and it cannot be
+// invented in the protocol either: the tick is a property of the simulation
+// binary, which is what `sim_wasm_hash` / `simCoreHash` commits to. A round
+// signed under one core and replayed under another must not be able to
+// disagree about how long it was. The core states it; everything else reads
+// it. That is the same rule as the payout table - one implementation, no
+// second path - applied to time.
+//
+// IT IS NOT A SIXTIETH OF A SECOND. TICK_DT is 1092 in Q16.16, which is
+// 0.01666259765625 s, and 1/60 is 0.016666... The two are not the same number
+// and they do not round the same way: `rules/air.js` already had to write
+// Y_LERP against the tick rather than against a sixtieth, because 1-exp(-2/60)
+// gave 2149 where the tick asks for 2148. Sixty ticks is 65520 in Q16.16
+// seconds, not 65536 - a second of ticks is 244 microseconds short of a
+// second, and over a three-minute run that is worth about two and a half
+// ticks. A protocol that wrote "60" would be a second clock disagreeing with
+// the first.
+//
+// The only other place sixty is written down is a comment in `BlwpNet.cs`,
+// which is exactly the leftover number not to copy into a money path.
+
+/**
+ * ONE TICK, IN Q16.16 SECONDS. Every rule in `sim.js` steps by this and
+ * nothing else, so it is the whole definition of how long a tick is.
+ */
+const TICK_DT = 1092;
+
+/**
+ * TICKS PER SECOND, AS AN EXACT RATIO AND NEVER AS A NUMBER.
+ *
+ *     ONE / TICK_DT  =  65536 / 1092  =  60.014652...
+ *
+ * It does not divide, so any single value for it is already a rounding. Kept
+ * as a numerator and a denominator: a caller that needs a count multiplies and
+ * divides once, in integers, and whatever does not divide is a remainder it
+ * can be told about rather than a difference it never sees. `TICKS_PER_SECOND`
+ * as a float would put 60.014652 into arithmetic that has to agree bit for bit
+ * on every machine, which is the one thing this core exists to prevent.
+ *
+ * Neither half is a fresh literal: the numerator IS `ONE`, the denominator IS
+ * the tick, so there is no third number that could drift from the other two.
+ */
+const TICKS_PER_SECOND_NUM = ONE;
+const TICKS_PER_SECOND_DEN = TICK_DT;
+
+// ---- protocol/src/tick.js
+// TIME, IN THE ONLY UNIT THE SIMULATION HAS.
+//
+// The round contract measures a round in TIME - `startTimeMs`, `entryCloseMs`,
+// `objectionWindowMs`, and section 6's `player_run_duration // T_run` with the
+// worked example at "T_run: 3 minutes" - while the transcript, the
+// checkpoints, the ghosts and `blockTicks` all count TICKS. Nothing converted
+// between them, which is why the CLTV floor of 15 and the run length of 19 are
+// both parked: "the round contract measures its length in TICKS and an HTLC in
+// TIME, and the protocol defines no tick rate to convert between them."
+//
+// THE RATE IS NOT DECLARED HERE. It is imported from the core, which is the
+// only thing entitled to say how long its own tick is: the tick is a property
+// of the simulation binary, and `simCoreHash` is what a round signs to pin
+// that binary. A literal in this file would be a second clock - one number in
+// the thing that runs the round and another in the thing that pays for it -
+// and two clocks that agree today agree only until one of them is edited. It
+// is the same rule as the payout table: one implementation, and no argument
+// through which a caller can supply a different one.
+//
+// This is the shape `hash.js` already uses to take `sha256bytes` off the core:
+// "a hash that pins money should not gain a dependency whose version could
+// change its output."
+
+
+/**
+ * MILLISECONDS PER TICK, AS A REDUCED INTEGER RATIO.
+ *
+ *     TICK_DT / ONE seconds  =  1092 / 65536 s  =  1092000 / 65536 ms
+ *                            =  34125 / 2048 ms   (exactly, after gcd)
+ *
+ * Derived, not typed: the numerator and denominator come out of the core's own
+ * two numbers and a thousand, so there is no third literal here that could
+ * drift away from the tick it was written for. Reduced once at load, because
+ * the reduction is what keeps every product below the range where a caller
+ * might be tempted to narrow it.
+ */
+const gcd = (a, b) => (b === 0n ? a : gcd(b, a % b));
+const MS_NUM_RAW = BigInt(TICKS_PER_SECOND_DEN) * 1000n;
+const MS_DEN_RAW = BigInt(TICKS_PER_SECOND_NUM);
+const G = gcd(MS_NUM_RAW, MS_DEN_RAW);
+
+/** One tick is `MS_PER_TICK_NUM / MS_PER_TICK_DEN` milliseconds, exactly. */
+const MS_PER_TICK_NUM = MS_NUM_RAW / G;
+const MS_PER_TICK_DEN = MS_DEN_RAW / G;
+
+const whole = (v, what) => {
+  const n = typeof v === 'bigint' ? v : BigInt(v);
+  if (n < 0n) throw new RangeError(`${what} cannot be negative: ${n}`);
+  return n;
+};
+
+/**
+ * TICKS TO SECONDS, EXACTLY, IN THE CORE'S OWN Q16.16.
+ *
+ * The only conversion with no remainder anywhere: a tick IS `TICK_DT` of these
+ * units, so a count of ticks is a multiplication and nothing is lost. Every
+ * other unit below has to divide, and dividing is where a clock starts lying.
+ */
+function secondsQ16ForTicks(ticks) {
+  return whole(ticks, 'a tick count') * BigInt(TICK_DT);
+}
+
+/**
+ * TICKS TO MILLISECONDS: the whole milliseconds, and the part that is left.
+ *
+ * `10800n` ticks is 179956 ms and 112/2048 of a millisecond - 179.9560546875
+ * seconds - and not the three minutes anyone would assume. The remainder is
+ * RETURNED rather than rounded away, because a millisecond dropped per call is
+ * how a run and the invoice that covers it end up disagreeing about when the
+ * round is over, and `exact` says outright whether anything was dropped.
+ */
+function msForTicks(ticks) {
+  const total = whole(ticks, 'a tick count') * MS_PER_TICK_NUM;
+  const ms = total / MS_PER_TICK_DEN;
+  const remainder = total - ms * MS_PER_TICK_DEN;
+  return { ms, remainder, divisor: MS_PER_TICK_DEN, exact: remainder === 0n };
+}
+
+/**
+ * MILLISECONDS TO TICKS: floor, and the leftover named as a fraction of a tick.
+ *
+ * FLOOR AND NOT ROUND. Three minutes is 10802.637 ticks: rounding gives 10803,
+ * which is a tick of run nobody simulated, and a round whose last tick exists
+ * only in the contract is a round whose transcript is short by one - a
+ * disagreement between two honest nodes with nothing to arbitrate it. Floor
+ * always lands inside the time available, and the 0.637 that is left comes
+ * back as `remainder / divisor` so a caller can see it rather than discover it.
+ *
+ * The remainder is a fraction of ONE TICK, not a duration in some third unit:
+ * inventing a unit here would be inventing a clock here.
+ */
+function ticksForMs(ms) {
+  const total = whole(ms, 'a duration in milliseconds') * MS_PER_TICK_DEN;
+  const ticks = total / MS_PER_TICK_NUM;
+  const remainder = total - ticks * MS_PER_TICK_NUM;
+  return { ticks, remainder, divisor: MS_PER_TICK_NUM, exact: remainder === 0n };
+}
+
+/**
+ * AND WHEN A CALLER NEEDS AN EXACT ANSWER, IT REFUSES RATHER THAN GUESSES.
+ *
+ * Some numbers must not be approximately right: a CLTV that expires half a
+ * tick before the round ends is an escape hatch, and a run length that is a
+ * tick out is a transcript that cannot be replayed to its own end. Those
+ * callers ask here, and a duration that is not a whole number of ticks comes
+ * back refused and named, with the remainder in the reason - not rounded to
+ * the nearest tick with the difference unmentioned.
+ */
+function exactTicksForMs(ms) {
+  const got = ticksForMs(ms);
+  if (!got.exact) {
+    return {
+      ok: false,
+      why: `${ms} ms is ${got.ticks} ticks and ${got.remainder}/${got.divisor} of a tick, `
+        + 'which is not a whole number of ticks',
+    };
+  }
+  return { ok: true, ticks: got.ticks };
+}
+
+// ---- protocol/src/first-mark.js
+// THE PLAYER'S FIRST MARK AGAINST THE ROUND'S START DEADLINE (§15, §16, §13C).
+//
+// A round names a start deadline in ticks after a player's join tick (or gets
+// START_DEADLINE_TICKS). The first mark - the one that chains to nothing - is
+// where the player commits to a first tick, under the entry's session key; the
+// tick it names is the player's own, and every signer node reads the same number.
+//
+// RULED (M3, pick (a)): A FIRST MARK SIGNED AFTER join_tick + THE DEADLINE IS
+// THE PLAYER'S OWN ACT, so it is FORFEIT - player conduct (§15: "the player
+// normally becomes FAILED or FORFEIT") - and NOT ENTRY_VOID. The world is known
+// before the first tick, so a late first mark that refunded would be a refund
+// the player chose after seeing the run; §13C: "a player cannot manufacture a
+// refund". ENTRY_VOID stays §16's outage refund ("if fewer than 5 game/verify
+// nodes are available ... refunded"), and it is not decided here.
+//
+// In time: nothing is decided here; the mark goes on as any mark. No first mark
+// yet: nothing from this function - the walk-away is decided AT THE DOOR once the entry's start window has passed
+// (ALL-BUT-MIN-1727, the owner 2026-09-29 17:27: FORFEIT, score 0, "not left undecided until the close"; the node's
+// door sweep, by the close's own peer-checked `stoppedOutcome`), never ENTRY_VOID and never a refund.
+//
+// THE LOCK: a FORFEIT stake is claimed in the round's settlement transaction
+// (§23.2) - W4, parked behind the fee-lock ruling. Until then a FORFEIT lock
+// refunds at expiry: the money hole every loser has, listed, not closed.
+
+
+
+/** The round's start deadline, in ticks after a player's join tick. */
+const startDeadlineOf = (contract) =>
+  (contract && contract.startDeadlineTicks !== undefined ? contract.startDeadlineTicks : START_DEADLINE_TICKS);
+
+const firstMarkIsChainStart = (previousHash) =>
+  previousHash === undefined || (previousHash instanceof Uint8Array && previousHash.length === 32 && previousHash.every((b) => b === 0));
+
+/**
+ * WHAT THE PLAYER'S FIRST MARK DECIDES.
+ *
+ *   joinTick        the entry's join tick
+ *   deadlineTicks   the round's start deadline (startDeadlineOf(contract))
+ *   firstMark       { tick, previousHash? } - a first mark chains to nothing
+ *                   (previousHash is 32 zeros) - or null when there is none
+ *
+ * @returns {{ outcome: 'FORFEIT' | null, lastTick: number, why: string }}
+ */
+function firstMarkOutcome({ joinTick, originTick, originName = 'join', deadlineTicks, firstMark } = {}) {
+  // THE WINDOW COUNTS FROM WHEN THE PLAYER CAN ACTUALLY DRIVE (the owner 2026-09-21).
+  //
+  // It counted from the entry's `joinTick`, which a paying browser sets to 0 - so the 900 ticks were spent
+  // while the player was still waiting to pay. MEASURED on the live Daily: the first mark landed 4320 ticks
+  // late, and 3803 of those (88%) were the round's clock running through the invoice wait; only 188 fell
+  // after the stake was held. A window that opens before the money arrives is not a start deadline, it is a
+  // payment deadline, and it forfeited a stake that was paid and held.
+  //
+  // `originTick` is that origin. Callers that name none keep the old behaviour exactly, wording included -
+  // a free round has nothing to wait for, so its join tick IS when it can drive.
+  const origin = Number.isInteger(originTick) ? originTick : joinTick;
+  if (!Number.isInteger(origin) || origin < 0) throw new Error('a join tick is a whole tick, not negative');
+  if (!Number.isInteger(deadlineTicks) || deadlineTicks < 1) throw new Error('a start deadline is a whole number of ticks, at least 1');
+  const lastTick = origin + deadlineTicks;
+  if (firstMark == null)
+    return { outcome: null, lastTick,
+      why: 'no first mark yet: not ENTRY_VOID - a walk-away is §15\'s FORFEIT, decided at the door once the start window has passed' };
+  if (!Number.isInteger(firstMark.tick) || firstMark.tick < joinTick)
+    throw new Error(`a first mark is at a tick at or after the join tick ${joinTick}`);
+  if (!firstMarkIsChainStart(firstMark.previousHash))
+    throw new Error('that mark chains to another: it is not the first mark');
+  if (firstMark.tick <= lastTick)
+    return { outcome: null, lastTick,
+      why: `the first mark at tick ${firstMark.tick} is inside the start deadline (${originName} ${origin} + ${deadlineTicks} = ${lastTick})` };
+  return { outcome: FORFEIT, lastTick,
+    why: `the first mark at tick ${firstMark.tick} is after the start deadline (${originName} ${origin} + ${deadlineTicks} = ${lastTick}): `
+      + 'a late start is the player\'s own act, not a refund' };
+}
+
+/**
+ * §15 AT THE ROUND'S CLOSE: "A TRANSCRIPT THAT STOPS BECOMES A DETERMINISTIC
+ * RESULT" - never a refund (ruled 2026-09-12). Closing the tab is no escape:
+ *   - no receipted first mark once the start deadline has passed (the round's
+ *     close is past it) is FORFEIT: the player never started - the late
+ *     start's family - score 0, over the empty receipted transcript;
+ *   - a run whose checkpoints stopped before the close ends at its last
+ *     receipted checkpoint; one still LIVE there did not deliver: FAILED,
+ *     scored at that checkpoint.
+ * Neither is VOID (§13C: signer nodes that cannot agree through no fault of the
+ * player) or ENTRY_VOID (§16: signer nodes out before the first tick). A run that
+ * ended on its own is its replay's, and nothing is decided here.
+ *
+ *   receiptedMarks  marks the committee carried (the canonical prefix)
+ *   liveAtLast      that prefix replays to a run still LIVE at its last mark
+ *   deadlinePassed  the round's start deadline has passed
+ * @returns {{ outcome: 'FORFEIT' | 'FAILED' | null, why: string }}
+ */
+function stoppedOutcome({ receiptedMarks, liveAtLast = false, deadlinePassed } = {}) {
+  if (!Number.isInteger(receiptedMarks) || receiptedMarks < 0) throw new Error('receipted marks are a whole count');
+  if (receiptedMarks === 0)
+    return deadlinePassed
+      ? { outcome: FORFEIT, why: 'no receipted first mark by the start deadline: the player never started - FORFEIT, score 0, as a late start is; not a refund' }
+      : { outcome: null, why: 'no first mark yet, and the start deadline has not passed' };
+  if (liveAtLast)
+    return { outcome: FAILED, why: 'the checkpoints stopped before the round closed: the run ends at its last receipted checkpoint, undelivered - FAILED' };
+  return { outcome: null, why: 'the run ended on its own: its replay decides' };
+}
+
+/**
+ * WHEN A ROUND IS OVER, so its signer nodes close it (M3.3-34, the Daily's close): the
+ * latest a player can join (entry close), plus the start deadline their first
+ * tick may take, a whole run (BLOCK_TICKS - the network's, which every valid
+ * contract carries), and the start deadline once more for the last mark to
+ * reach the signer nodes: the window the first mark already gets, not a new constant.
+ * Rounded UP to the millisecond, so no run is cut short by a remainder. By then
+ * every run has ended or stopped (§15), and the close decides nothing a player
+ * could still change.
+ * @returns {bigint} milliseconds
+ */
+function roundEndMs(contract) {
+  if (!contract || contract.entryCloseMs === undefined) throw new Error('a round\'s end is counted from its entry close, and it names none');
+  // the round's own run length (M3 R1 R3): its contract's blockTicks, which the signer node checked against its core
+  if (!Number.isInteger(contract.blockTicks) || contract.blockTicks < 1) throw new Error('a round\'s end is counted from its run length, and it names none');
+  const span = msForTicks(2 * startDeadlineOf(contract) + contract.blockTicks);
+  return BigInt(contract.entryCloseMs) + span.ms + (span.exact ? 0n : 1n);
+}
+
+// ---- protocol/src/window.js
+// THE OBJECTION WINDOWS OF ONE ROUND, ON THE WALL CLOCK (§13A, WINDOW-10-SPEC, RULED the owner 2026-10-01).
+//
+//   window_open   = round_end                  the round's end as its contract fixes it (roundEndMs), in UTC
+//   window_close  = round_end + 600 s
+//   final_after   = window_close + 5 s         a seat signs FINAL only once its own clock reads this
+//
+// and, for an entry a valid objection suspended, chained from that same close - never from the objection's arrival or
+// the block it names (RULED the owner 2026-10-01):
+//
+//   re-run window       [round_end + 600 s, round_end + 1200 s)    a re-run counts if it arrived before + 1205 s
+//   the re-run's own    [round_end + 1200 s, round_end + 1800 s)   FINAL on the re-run after + 1805 s
+//
+// Every node computes these from the signed contract the round id binds, so every window starts and ends at the same
+// instant everywhere and nobody - no node, no signer's timestamp, no miner - can move them.
+
+
+
+/** All of a round's window instants (BigInt ms), from its contract alone. */
+function windowsOf(contract) {
+  const end = roundEndMs(contract);
+  const W = OBJECTION_WINDOW_MS;
+  const T = FINAL_TOLERANCE_MS;
+  return {
+    openMs: end,
+    closeMs: end + W,
+    finalAfterMs: end + W + T,
+    rerunOpenMs: end + W,
+    rerunCloseMs: end + 2n * W,
+    rerunDeadlineMs: end + 2n * W + T,
+    ownOpenMs: end + 2n * W,
+    ownCloseMs: end + 3n * W,
+    ownFinalAfterMs: end + 3n * W + T,
+  };
+}
+
+/** Is a signed time within the tolerance of the receiving seat's own clock at arrival? */
+function withinTolerance(signedAtMs, atMs) {
+  const d = BigInt(signedAtMs) - BigInt(atMs);
+  return (d < 0n ? -d : d) <= FINAL_TOLERANCE_MS;
 }
 
 // ---- protocol/src/advert.js
@@ -6718,6 +7246,7 @@ function claimKeyIsAttested({ roundId, claimPk, signatures, signerNodes, settlem
 
 
 
+
 /**
  * HOW MANY SHARES OPEN THIS ROUND'S STAKES - the round's number, not the
  * player's: 2 of 2, 5 of 7 (`receiptsNeeded` over the settlement slots). The
@@ -6820,6 +7349,10 @@ async function fetchRound(id, nodes, { fetcher = fetch } = {}) {
         refused.push(`${node}: answered with round ${got}`);
         continue;
       }
+      // §13A, WINDOW-10-SPEC (RULED the owner 2026-10-01): a round whose objection window is not exactly 600 000 ms is
+      // invalid - the page lists it nowhere and joins it never, whatever a node answers.
+      if (contract.objectionWindowMs !== OBJECTION_WINDOW_MS)
+        throw new Error(`round ${id} names an objection window of ${contract.objectionWindowMs} ms, not ${OBJECTION_WINDOW_MS}: that contract is invalid and the page does not join it`);
       return { contract, from: node, refused };
     } catch (e) {
       refused.push(`${node}: ${e.message}`);

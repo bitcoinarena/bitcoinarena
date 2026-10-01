@@ -580,7 +580,7 @@ export class Verifier {
    * M3.3-34 hold "past the window, keep asking" for a signer node that cannot retrieve the transcript.
    */
   async #unretrievedPastWindow(roundIdBytes, entryId, contract, why) {
-    // PAST THE RESULT WINDOW ON THE CHAIN (RULED 2026-09-24): its end block, not this node's close + W on its clock.
+    // PAST THE RESULT WINDOW (§13A, WINDOW-10-SPEC): the round's end + 600 s, decided at + 605 s on this seat's clock.
     const rw = resultWindow(this.round, roundIdBytes, contract);
     if (!rw.ok) return null;
     const had = this.round.noQuorum(entryId);
@@ -588,14 +588,14 @@ export class Verifier {
     const line = this.round.startLine(roundIdBytes, entryId);
     if (!line) return null;
     const signers = new Set(this.round.results(roundIdBytes, entryId).map((r) => hex(r.nodePubkey))).size;
-    // THE PROOF COUNTS ONLY BEFORE THE END BLOCK (RULED 2026-09-24), after asking the peers for theirs.
-    const proven = await this.#equivocationProven(roundIdBytes, entryId, null, { chain: rw.chain, end: rw.end });
+    // THE PROOF THIS SEAT HOLDS WHEN IT DECIDES, after asking the peers for theirs.
+    const proven = await this.#equivocationProven(roundIdBytes, entryId, null, rw.window);
     const d = noQuorumRule({ signatures: signers, needed: line.needed,
       equivocationProven: proven,
       state: finalityOf(this.round, roundIdBytes, entryId).state });
     if (!d.outcome) return null;
-    const reason = `${d.why} - this signer node could not retrieve the transcript within the result window `
-      + `[${rw.open.height}, ${rw.end.height}) on the chain: ${why}`;
+    const reason = `${d.why} - this signer node could not retrieve the transcript within the result window, `
+      + `closed at ${new Date(Number(rw.closesAtMs)).toISOString()}: ${why}`;
     this.round.putNoQuorum({ entryId, roundId: roundIdBytes, outcome: d.outcome, why: reason });
     return { entryId, stored: false, decided: d.outcome, why: reason };
   }
@@ -613,7 +613,7 @@ export class Verifier {
     const row = this.round.get(roundIdBytes);
     if (!row) return null;
     const contract = decodeRoundContract(new Uint8Array(row.contract));
-    // PAST THE RESULT WINDOW ON THE CHAIN (RULED 2026-09-24): its end block, not this node's close + W on its clock.
+    // PAST THE RESULT WINDOW (§13A, WINDOW-10-SPEC): the round's end + 600 s, decided at + 605 s on this seat's clock.
     const rw = resultWindow(this.round, roundIdBytes, contract);
     if (!rw.ok) return null;
     const had = this.round.noQuorum(entryIdBytes);
@@ -625,10 +625,10 @@ export class Verifier {
     if (signerNodes - declined >= line.needed) return null;          // a quorum can still form
     const signers = new Set(this.round.results(roundIdBytes, entryIdBytes).map((r) => hex(r.nodePubkey))).size;
     const d = noQuorumRule({ signatures: signers, needed: line.needed,
-      equivocationProven: await this.#equivocationProven(roundIdBytes, entryIdBytes, null, { chain: rw.chain, end: rw.end }),
+      equivocationProven: await this.#equivocationProven(roundIdBytes, entryIdBytes, null, rw.window),
       state: finalityOf(this.round, roundIdBytes, entryIdBytes).state });
     if (!d.outcome) return null;
-    const why = `${d.why} - past the result window [${rw.open.height}, ${rw.end.height}) with ${signers} of ${line.needed} signatures, and `
+    const why = `${d.why} - past the result window (closed ${new Date(Number(rw.closesAtMs)).toISOString()}) with ${signers} of ${line.needed} signatures, and `
       + `${declined} of ${signerNodes} signer nodes decided it by §13C, so no quorum can form`;
     this.round.putNoQuorum({ entryId: entryIdBytes, roundId: roundIdBytes, outcome: d.outcome, why });
     return { entryId: entryIdBytes, stored: false, decided: d.outcome, why };
@@ -654,7 +654,8 @@ export class Verifier {
     // - a late start, a pair, a refusal - counts only if it sits strictly before that block, at every holder. Before it,
     // nothing is decided, and what evidence there is only says the decision is pending.
     const rw = resultWindow(this.round, roundIdBytes, contract);
-    const win = rw.ok ? { chain: rw.chain, end: rw.end } : null;
+    // PAST THE WINDOW (wall clock): the evidence this seat held before its decision instant counts (WINDOW-10-SPEC).
+    const win = rw.ok ? rw.window : null;
     if (win) await this.#pullEvidenceBlocks(roundIdBytes, entryId);
     const counts = (m) => !win || this.round.markCounts(entryId, m, win.chain, win.end);
     // AN OUTAGE-VOID, THEN THE PLAYER'S SECOND FIRST MARK (ruled 2026-09-12): the
@@ -709,7 +710,7 @@ export class Verifier {
       // A REFUSAL COUNTS WHERE THIS NODE RECORDED IT (RULED 2026-09-24): strictly before the end block.
       const offers = this.round.firstMarkOfferBlocks(entryId);
       const refused = Object.values(offers).filter((o) => o.answer === 'refused'
-        && (!win || (o.block && win.chain.heightOf(o.block) !== null && win.chain.heightOf(o.block) < win.end.height))).length;
+        && (!win || (o.atMs !== null && o.atMs !== undefined && BigInt(o.atMs) < BigInt(win.end.untilMs)))).length;
       if (refused < line.needed - receipts) return null;
       evidence = `the on-time first mark here has ${receipts} of ${line.needed} receipts and ${refused} signer node(s) that were up refused it`;
     } else {
@@ -754,7 +755,8 @@ export class Verifier {
         const got = await r.json();
         for (const x of (got && got.marks) || []) {
           if (!/^[0-9a-f]{64}$/.test(String(x.mark)) || !/^[0-9a-f]{64}$/.test(String(x.block))) continue;
-          this.round.noteEvidenceBlock(roundIdBytes, entryId, Uint8Array.from(Buffer.from(x.mark, 'hex')), Uint8Array.from(Buffer.from(x.block, 'hex')));
+          this.round.noteEvidenceBlock(roundIdBytes, entryId, Uint8Array.from(Buffer.from(x.mark, 'hex')), Uint8Array.from(Buffer.from(x.block, 'hex')),
+            Number.isSafeInteger(x.seenMs) ? x.seenMs : undefined);
         }
       } catch { /* a signer node that cannot answer shows nothing */ }
     }
@@ -1201,11 +1203,10 @@ export class Verifier {
           nodePubkey: this.round.pubkey, stopped: true,
         });
         if (built && !built.ok) report.refused.push(built.why);
-        // THE RE-RUN NAMES THE BLOCK IT SITS IN (§13A, RULED 2026-09-24): this node's chain tip when it signs.
-        const tip = chainIndex(this.round, roundIdBytes, contract);
-        if (built && built.ok && !tip.ok) report.refused.push(`this signer node names no block for its re-run: ${tip.why}`);
-        if (built && built.ok && tip.ok) {
-          const x = { contradictedRunId, blockHash: tip.tipHash(), result: built.result };
+        // THE RE-RUN CARRIES WHEN IT WAS SIGNED, ON THIS SEAT'S CLOCK (§13A, WINDOW-10-SPEC, RULED 2026-10-01): a holder
+        // counts it only within 5 s of its own clock at arrival, before its re-run window's end + 5 s.
+        if (built && built.ok) {
+          const x = { contradictedRunId, signedAtMs: BigInt(this.round.now()), result: built.result };
           const signature = schnorr.sign(rerunResultId(x), this.round.identity.secret);
           this.round.putRerun(roundIdBytes, entryIdBytes, this.round.pubkey, joinSignedRerun(encodeRerunResult(x), signature));
         }
@@ -1261,8 +1262,12 @@ export class Verifier {
    */
   async fileFirstResultSlashProofs(roundIdBytes, entryIdBytes) {
     const standing = finalityOf(this.round, roundIdBytes, entryIdBytes);
+    // AND A LATE OBJECTION (§13A, WINDOW-10-SPEC): one that reached this seat after its close + 5 s suspends nothing and
+    // the run is FINAL, but "a valid objection is also a fraud proof against every node that signed the contradicted
+    // result ... that proof has no deadline: it is filed for slashing".
+    const late = standing.state === 'FINAL' && standing.lateObjection && !standing.contradictedRunId;
     const ended = (standing.state === 'VOID' && (standing.secondObjection || standing.noQuorum))
-      || (standing.state === 'FORFEIT' && standing.noQuorum);
+      || (standing.state === 'FORFEIT' && standing.noQuorum) || late;
     if (!ended || !standing.runId)
       return { filed: [], refused: [`that entry has not ended VOID or FORFEIT after an objection (it is ${standing.state || 'without a result'}), so its first result's signers are not slashed yet`], published: 0 };
     const contradicted = Buffer.from(standing.secondObjection ? standing.contradictedRunId : standing.runId, 'hex');

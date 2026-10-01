@@ -4,6 +4,10 @@
 // (§23.6); the paid fake Lightning its hold-invoice tests ran on went with them.
 import { roundEndMs } from '../../protocol/src/first-mark.js';
 import { CLOCK } from './block-clock.js';
+import { testNow, skipTo } from './test-clock.js';
+import { OBJECTION_WINDOW_MS } from '../../protocol/src/window.js';
+import { signFinalSig } from '../../protocol/src/final-sig.js';
+import { resultFinality } from '../src/finality.js';
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
 // THE RUN LENGTH IS THE CORE'S (2026-09-20). This fixture said 9000 and the core has ended a run at 10800
 // since c01cc655 ("a round is three minutes"). `Round.open` refuses a contract that disagrees with the core
@@ -251,13 +255,16 @@ export function presentDay(contract, endMs) {
     entryCloseMs: contract.entryCloseMs + shift };
 }
 
-export const contractFor = (nodes, objectionWindowMs, publicationRelays = []) => ({
+// THE OBJECTION WINDOW IS EXACTLY 600 000 ms (§13A, WINDOW-10-SPEC, RULED the owner 2026-10-01): whatever a caller still
+// passes as its second argument, the contract says 600000 - any other number is an invalid contract the node refuses. A
+// test about that refusal sets the field itself.
+export const contractFor = (nodes, _windowNoLongerChosen, publicationRelays = []) => ({
   startDeadlineTicks: PLANTED_FIRST_MARK_DEADLINE,
   networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
   gameVerifySlots: nodes.length, settlementSlots: nodes.length, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n,
   // FEDERATION, NAMING TEST_FEDERATION_ID: the one custody this network has (RULED 2026-09-22 22:59 -
   // THRESHOLD_LN does not exist).
-  entryCloseMs: 2000n, objectionWindowMs, custody: 'FEDERATION',
+  entryCloseMs: 2000n, objectionWindowMs: OBJECTION_WINDOW_MS, custody: 'FEDERATION',
   slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays, donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n,
   randomnessRule: 'bitcoin-block-hash', stakeMsat: STAKE, bondMinSats: 50000n,
@@ -348,14 +355,17 @@ export async function joinAndPlay(daemons, c, rid, who, needed, { direct = false
 // THE BEACON AFTER THE ROUND'S OWN COMMITTEE TIME: the same hash and height, timed 400 ms after it - for the fixtures'
 // 1970 contracts that is the 900 it always was; a round moved to the present (`presentDay`) gets one after its own time.
 const beaconFor = (q) => ({ ...BEACON, timeMs: q && q.contract && typeof q.contract.committeeTimeMs === 'bigint' ? q.contract.committeeTimeMs + 400n : BEACON.timeMs });
-export const opts = { funded: () => true, randomnessFor: beaconFor, windowChain: CLOCK.chainView() };
+// AND THE SHARED CLOCK THAT SKIPS (test-clock.js, WINDOW-10-SPEC): every fixture daemon's round store reads it.
+export const opts = { funded: () => true, randomnessFor: beaconFor, windowChain: CLOCK.chainView(), roundClock: testNow };
 /**
  * ONE DAEMON ON A SEVEN-SIGNER NODE ROUND, the other six signer nodes' keys this test holds.
  * Two losers play on it and it signs its own result for each; then `sign` has
  * five of the other signer nodes sign - the same run it did, or a rewritten one - and
  * the run is PROVISIONALLY_FINAL on it.
  */
-export async function sevenSignerNodes(windowMs, relays, { storedBeforeTheRule = false, finality = null, play = {} } = {}) {
+// `endMs`: put the round's end (protocol roundEndMs) at that instant (presentDay) - a window test's round, whose 600 s
+// window is read on the wall clock; left out, the round sits in 1970 as it always did, its windows long closed.
+export async function sevenSignerNodes(windowMs, relays, { storedBeforeTheRule = false, finality = null, play = {}, endMs = null } = {}) {
   // EVERY SIGNER NODE'S ADVERTISEMENT, as a census would give it: each names its own
   // bond outpoint, which a slash proof must name (5A.3B). Filled once the keys exist.
   const adverts = new Map();
@@ -377,8 +387,9 @@ export async function sevenSignerNodes(windowMs, relays, { storedBeforeTheRule =
     const others = Array.from({ length: 6 }, () => rand(32));
     [holder.round.pubkey, ...others.map((s) => schnorr.getPublicKey(s))].forEach((k, i) =>
       adverts.set(toHex(k), { nodePubkey: k, bondTxid: b32(0xb0 + i), bondVout: i }));
-    const drafted = contractFor([holder.round.pubkey, ...others.map((s) => schnorr.getPublicKey(s))], BigInt(windowMs),
+    const first = contractFor([holder.round.pubkey, ...others.map((s) => schnorr.getPublicKey(s))], BigInt(windowMs),
       relays === undefined ? [`http://127.0.0.1:${holder.port}`] : relays);
+    const drafted = endMs === null ? first : presentDay(first, endMs);
     // ONLY THE FIELD THE CHAIN DICTATES (RULED 2026-09-25): the census root its bonds derive to; the committee time stands.
     const c = { ...drafted, censusRoot: bondedChainFor(drafted.nodes, drafted, slot, { endpoints: [`ws://127.0.0.1:${holder.port}`] }).censusRoot };
     const rid = roundId(c);
@@ -439,19 +450,56 @@ export async function sevenSignerNodes(windowMs, relays, { storedBeforeTheRule =
     // six re-run the holder's own replay - the same run - unless `over` says
     // otherwise, each tied to the run the five signed (or `contradicted`).
     // `block`: the block the re-run names (§13A, RULED 2026-09-24) - by default the chain's tip as it is made.
-    const rerunBy = (name, count, { keys = others, over = {}, contradicted = runs[name].contradicted, block = null } = {}) => {
+    // `signedAtMs`: when each signer signed it (§13A, WINDOW-10-SPEC) - by default the holder's clock now, so it counts.
+    const rerunBy = (name, count, { keys = others, over = {}, contradicted = runs[name].contradicted, signedAtMs = null } = {}) => {
       const eid = runs[name].eid;
       const mine = holder.round.results(rid, eid).find((r) => toHex(r.nodePubkey) === toHex(holder.round.pubkey));
       const shape = decodePlayerResult(splitSignedResult(mine.bytes).body);
       for (const secret of keys.slice(0, count)) {
-        const x = { contradictedRunId: contradicted, blockHash: block || CLOCK.tipAt(Date.now()), result: { ...shape, ...over, nodePubkey: schnorr.getPublicKey(secret) } };
+        const x = { contradictedRunId: contradicted, signedAtMs: BigInt(signedAtMs ?? holder.round.now()), result: { ...shape, ...over, nodePubkey: schnorr.getPublicKey(secret) } };
         holder.round.putRerun(rid, eid, x.result.nodePubkey,
           joinSignedRerun(encodeRerunResult(x), schnorr.sign(rerunResultId(x), secret)));
       }
     };
-    return { holder, rid, runs, sign, post, rerunBy, others, adverts, contract: c, close: () => holder.close() };
+    // OTHER SEATS' FINAL SIGNATURES (§13A, WINDOW-10-SPEC): the first `count` of the six sign FINAL on `run` (by default
+    // the run the holder's threshold agreed) at `signedAtMs` (by default the holder's clock now), POSTed to the holder,
+    // which checks each on arrival. Returns what it answered for each.
+    const finalBy = async (name, count, { keys = others, run = null, signedAtMs = null } = {}) => {
+      const eid = runs[name].eid;
+      const f = resultFinality(holder.round, rid, eid);
+      const runId = run || (f.runId ? fromHex(typeof f.runId === 'string' ? f.runId : toHex(f.runId)) : null);
+      assert.ok(runId, `no agreed run for ${name} to sign FINAL on`);
+      const said = [];
+      for (const secret of keys.slice(0, count)) {
+        const x = { roundId: rid, entryId: eid, runId, signerPubkey: schnorr.getPublicKey(secret), signedAtMs: BigInt(signedAtMs ?? holder.round.now()) };
+        const r = await fetch(`http://127.0.0.1:${holder.port}/final-sig?round=${toHex(rid)}&entry=${toHex(eid)}`,
+          { method: 'POST', body: signFinalSig(x, (d) => schnorr.sign(d, secret)) });
+        said.push(`${r.status} ${await r.text()}`);
+      }
+      return said;
+    };
+    // FINAL AS THE HOLDER SEES IT (WINDOW-10-SPEC): the fixtures' clock skipped past the run's final_after, the holder's
+    // own FINAL signature (asked for as a peer asks, handed back) and four of the six. Returns the holder's finality.
+    const finalNow = async (name) => {
+      const eid = runs[name].eid;
+      skipTo(Number(resultFinality(holder.round, rid, eid).finalAfterMs) + 50);
+      const q = `round=${toHex(rid)}&entry=${toHex(eid)}`;
+      const own = await fetch(`http://127.0.0.1:${holder.port}/final-sig?${q}`);
+      if (own.status === 200) await fetch(`http://127.0.0.1:${holder.port}/final-sig?${q}`, { method: 'POST', body: new Uint8Array(await own.arrayBuffer()) });
+      await finalBy(name, 4);
+      return resultFinality(holder.round, rid, eid);
+    };
+    return { holder, rid, runs, sign, post, rerunBy, finalBy, finalNow, others, adverts, contract: c, close: () => holder.close() };
   } catch (err) { await holder.close(); throw err; }
 }
 
 // AN OBJECTION NAMES THE BLOCK IT IS FILED IN (§13A, RULED 2026-09-24): by default the chain's tip as it is filed.
-export const object = (w, eid, block = CLOCK.tipAt(Date.now())) => fetch(`http://127.0.0.1:${w.holder.port}/objection?round=${toHex(w.rid)}&entry=${toHex(eid)}&block=${toHex(block)}`, { method: 'POST' });
+// ONE RETRY ON A RESET CONNECTION: a pooled keep-alive socket the daemon closed while idle (measured 2026-10-01: a second
+// daemon started on a file store between two requests outlasted the holder's keep-alive, and the reused socket reset).
+export const object = async (w, eid, block = CLOCK.tipAt(Date.now())) => {
+  const at = `http://127.0.0.1:${w.holder.port}/objection?round=${toHex(w.rid)}&entry=${toHex(eid)}&block=${toHex(block)}`;
+  try { return await fetch(at, { method: 'POST' }); } catch (e) {
+    if (!/ECONNRESET|other side closed/.test(String(e && e.cause && e.cause.message))) throw e;
+    return fetch(at, { method: 'POST' });
+  }
+};

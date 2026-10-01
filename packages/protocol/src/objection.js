@@ -30,7 +30,7 @@
 // is what happens only if that re-run fails.
 import { Writer, Reader } from './encode.js';
 import { taggedHash } from './hash.js';
-import { PROTOCOL_VERSION, TYPE_OBJECTION, TAG } from './constants.js';
+import { PROTOCOL_VERSION, TYPE_OBJECTION, TAG, OBJECTION_WINDOW_MS } from './constants.js';
 import { OUTCOMES, outcomeByte, provisionallyFinal } from './result.js';
 
 /** The three answers a result can be sitting in. */
@@ -161,6 +161,9 @@ export function finality({
   const window = contract && contract.objectionWindowMs;
   if (typeof window !== 'bigint')
     return { state: null, why: 'the round contract does not say how long the objection window is' };
+  // EXACTLY 600 000 ms (§13A, WINDOW-10-SPEC, RULED the owner 2026-10-01): any other number is an invalid contract.
+  if (window !== OBJECTION_WINDOW_MS)
+    return { state: null, why: `the round contract's objection window is ${window} ms, not ${OBJECTION_WINDOW_MS}: an invalid contract` };
 
   // THE WINDOW IS WORKED OUT FIRST, and that ordering is the rule rather than
   // tidiness. This used to look for a holding objection before it looked at

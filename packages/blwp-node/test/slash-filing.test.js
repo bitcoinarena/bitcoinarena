@@ -14,6 +14,8 @@
 //
 // MEASURED BEFORE (TASKBOOK, b311e15): FINAL, 5 contradicted signers, 0 slash
 // proofs filed, no door (404). Now the node files one per contradicted signer.
+import { testNow } from './test-clock.js';
+import { windowsOf } from '../../protocol/src/window.js';
 import { CLOCK } from './block-clock.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -27,7 +29,9 @@ import { slashOwing, entriesForSlash } from '../src/slash-owing.js';
 import { decodeRoundContract } from '../../protocol/src/contracts.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
-const FAST = { finality: { everyMs: 100, rerunMs: 8000 } };
+// A ROUND ENDING A FEW SECONDS AHEAD (WINDOW-10-SPEC): its re-run window and the re-run's own run from the round's end on
+// the wall clock, skipped to on the fixtures' clock; the re-run watch's budget is the test aid's, in real time.
+const FAST = () => ({ finality: { everyMs: 100, rerunMs: 30000 }, endMs: testNow() + 4000 });
 
 async function reranTo(w, reruns) {
   w.sign('dissents', (r) => ({ score: r.score + 1 }));
@@ -36,6 +40,11 @@ async function reranTo(w, reruns) {
   const stop = Date.now() + 8000;
   while (Date.now() < stop && !w.holder.round.reruns(w.rid, eid).some((r) => toHex(r.signerNodePubkey) === toHex(w.holder.round.pubkey))) await wait(50);
   w.rerunBy('dissents', reruns);
+  // AN AGREED RE-RUN IS FINAL ONCE ITS OWN WINDOW CLOSED AND FIVE SEATS SIGNED (end + 1805 s); short of five it stays SUSPENDED.
+  if (reruns >= 4) {
+    const f = await w.finalNow('dissents');
+    assert.equal(f.state, 'FINAL', f.why);
+  }
   return eid;
 }
 
@@ -45,7 +54,7 @@ const contradictedSigners = (w, eid) => w.holder.round.results(w.rid, eid)
   .map((r) => toHex(r.nodePubkey)).sort();
 
 test('the re-run makes the result FINAL, and the node files and publishes a REPLAY_CONTRADICTS proof against each of the five who signed the contradicted result - each one slashHolds accepts', async () => {
-  const w = await sevenSignerNodes(WINDOW_MS, undefined, FAST);
+  const w = await sevenSignerNodes(WINDOW_MS, undefined, FAST());
   try {
     const eid = await reranTo(w, 4);
     const stop = Date.now() + 8000;
@@ -86,20 +95,21 @@ test('the re-run makes the result FINAL, and the node files and publishes a REPL
 });
 
 test('a re-run short of five files no slash proof: the result is still SUSPENDED and nobody has been contradicted yet', async () => {
-  const w = await sevenSignerNodes(WINDOW_MS, undefined, FAST);
+  const w = await sevenSignerNodes(WINDOW_MS, undefined, FAST());
   try {
     const eid = await reranTo(w, 3);
     // Inside the re-run window, on the node's own clock stubbed (RULED 2026-09-24, slice C1): SUSPENDED is legal only
     // until the filing plus one objection window; past it this is §13C's VOID, not a leftover SUSPENDED.
     // (RULED 2026-09-24, windows are blocks): one millisecond before the re-run window's end block - the objection's block plus W.
-    const inside = Object.assign(Object.create(w.holder.round), { now: () => CLOCK.mtpOf(w.holder.round.objectedBlock(w.rid, eid)) + WINDOW_MS - 1 });
+    // (WINDOW-10-SPEC): one millisecond before this seat decides the re-run window, the round's end + 1205 s.
+    const inside = Object.assign(Object.create(w.holder.round), { now: () => Number(windowsOf(w.contract).rerunDeadlineMs) - 1 });
     assert.equal(resultFinality(inside, w.rid, eid).state, 'SUSPENDED');
     assert.equal(w.holder.round.slashProofs(w.rid, eid).length, 0, 'a proof was filed on a re-run that is not authoritative');
   } finally { await w.close(); }
 });
 
 test('a contradicted signer whose advertisement this node does not hold is not accused on a guessed bond', async () => {
-  const w = await sevenSignerNodes(WINDOW_MS, undefined, FAST);
+  const w = await sevenSignerNodes(WINDOW_MS, undefined, FAST());
   try {
     const missing = toHex(schnorr.getPublicKey(w.others[0]));     // one of the five who signed the contradicted result
     w.adverts.delete(missing);
@@ -123,7 +133,7 @@ test('a contradicted signer whose advertisement this node does not hold is not a
 // NOTHING HERE SPENDS. Steps 3 and 5 of §5A.3B - the escrow output and MuSig2 over the arbitration
 // keys - do not exist in this tree, and the door answers with amounts and names only.
 test('the door will not pick the slashing height, and says what the five proofs owe out of the census at the one it is given', async () => {
-  const w = await sevenSignerNodes(WINDOW_MS, undefined, FAST);
+  const w = await sevenSignerNodes(WINDOW_MS, undefined, FAST());
   try {
     const eid = await reranTo(w, 4);
     const stop = Date.now() + 8000;

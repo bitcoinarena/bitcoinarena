@@ -24,7 +24,7 @@ import { serve } from '../src/server.js';
 import { resultFinality } from '../src/finality.js';
 import { assumeAssigned } from './assignment.js';
 import { rand, WINDOW_MS, WINNER, GENESIS_HASH, wordsAt, contractFor, say, opts, wait, RANDOMNESS, presentDay } from './window-fixture.js';
-import { CLOCK } from './block-clock.js';
+import { testNow, skipTo } from './test-clock.js';
 import { roundEndMs } from '../../protocol/src/first-mark.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
 import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
@@ -52,8 +52,9 @@ async function signerNodes({ finality = {}, endIn = null } = {}) {
   wire();
   const base = { ...contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
     stakeMsat: 0n, federationId: new Uint8Array(32) };
-  // `endIn`: THE ROUND IN THE PRESENT, its contract end this many ms from now (§13C's result window opens at it).
-  const c = endIn === null ? base : presentDay(base, Date.now() + endIn);
+  // `endIn`: THE ROUND IN THE PRESENT, its contract end this many ms from now (§13C's result window opens at it, and the
+  // objection window: 600 s of wall time, WINDOW-10-SPEC). Left out, the round sits in 1970 and both windows closed long ago.
+  const c = endIn === null ? base : presentDay(base, testNow() + endIn);
   const rid = roundId(c);
   for (const d of [a, b]) {
     assert.equal((await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) })).status, 201);
@@ -114,8 +115,13 @@ async function playedAndJoined(w) {
 async function backAndFinal(w, runs, more) {
   await w.upB(more);
   assert.equal(await say(w.b.port, `close ${toHex(w.rid)}`), 'closed');
+  // BOTH SIGN, THEN THE WINDOW RUNS ITS 600 s (WINDOW-10-SPEC) - skipped on the fixtures' clock - AND BOTH SIGN FINAL.
+  const states = () => [w.a, w.b].flatMap((d) => runs.map((r) => resultFinality(d.round, w.rid, r.eid).state));
   for (let t = Date.now(); Date.now() - t < 25000; await wait(200))
-    if ([w.a, w.b].every((d) => runs.every((r) => resultFinality(d.round, w.rid, r.eid).state === 'FINAL'))) break;
+    if (states().every((x) => x === 'PROVISIONALLY_FINAL' || x === 'FINAL')) break;
+  skipTo(Number(roundEndMs(w.c)) + 605000 + 100);
+  for (let t = Date.now(); Date.now() - t < 25000; await wait(200))
+    if (states().every((x) => x === 'FINAL')) break;
 }
 function assertOneFinal(after) {
   for (const s of ['a', 'b']) {
@@ -127,7 +133,7 @@ function assertOneFinal(after) {
 }
 
 test('a signer node whose peer is down at the close holds - no result, no Void - tries again, and both runs go final 2 of 2 when the peer is back', async () => {
-  const w = await signerNodes();
+  const w = await signerNodes({ endIn: 5000 });
   try {
     const { P, W } = await playedAndJoined(w);
     await w.downB();
@@ -170,11 +176,11 @@ test('past the result window a signer node that cannot retrieve the transcript d
     await wait(700);
     const inWindowAt = await until(10000, () => closingAt(w, w.a, W));
     const inWindow = { state: inWindowAt.state, attempts: inWindowAt.attempts };
-    // PAST THE RESULT WINDOW ON THE CHAIN (RULED 2026-09-24): its end block - opened at the first block at or after the
-    // round's contract end - not W past this node's close.
-    const endMs = CLOCK.endAt(Math.ceil(Number(roundEndMs(w.c)) / 1000) * 1000, WINDOW_MS);
-    const insideAt = Date.now();
-    await until(30000, () => Date.now() >= endMs);
+    // PAST THE RESULT WINDOW (WINDOW-10-SPEC): the round's end + 600 s, decided from + 605 s on each seat's clock - not W
+    // past this node's close, and no block. Skipped to on the fixtures' clock.
+    const endMs = Number(roundEndMs(w.c)) + 605000;
+    const insideAt = testNow();
+    skipTo(endMs + 100);
     await until(15000, () => ['W', 'P'].every((k) => resultFinality(w.a.round, w.rid, { W, P }[k].eid).state === 'VOID'));
     await wait(500);
     const pastWindow = { W: brief(await closingAt(w, w.a, W)), P: brief(await closingAt(w, w.a, P)),
@@ -183,14 +189,14 @@ test('past the result window a signer node that cannot retrieve the transcript d
     // with A saying it decided the entry by §13C, so no quorum can form - it decides the same. Measured before that
     // follow-up: B signed 1 of 2 and its watch asked with no end. Its own close + W no longer matters (RULED 2026-09-24).
     await w.upB();
-    const bClosedAt = Date.now();
+    const bClosedAt = testNow();
     assert.equal(await say(w.b.port, `close ${toHex(w.rid)}`), 'closed');
     await until(15000, () => ['W', 'P'].every((k) => resultFinality(w.b.round, w.rid, { W, P }[k].eid).state === 'VOID'));
-    const bDecidedAfterMs = Date.now() - bClosedAt;
+    const bDecidedAfterMs = testNow() - bClosedAt;
     const after = { P: { a: look(w, w.a, P), b: look(w, w.b, P) }, W: { a: look(w, w.a, W), b: look(w, w.b, W) } };
     console.log('  FACTS (past the window):', JSON.stringify({ inWindow, pastWindow, after, bDecidedAfterMs, endBlockAfterCloseA: endMs - closedAt }));
     assert.ok(insideAt < endMs, 'the in-window read was not inside the result window');
-    assert.ok(bClosedAt >= endMs, 'B closed before the end block: B deciding would say nothing about the chain window');
+    assert.ok(bClosedAt >= endMs, 'B closed before the window\'s end: B deciding would say nothing about the window');
     assert.equal(inWindow.state, 'HOLDING', 'inside the window the signer node waits, as before');
     assert.ok(pastWindow.W.attempts > inWindow.attempts, `no retry after the window: ${inWindow.attempts} then ${pastWindow.W.attempts}`);
     for (const run of ['W', 'P']) {
@@ -208,7 +214,7 @@ test('past the result window a signer node that cannot retrieve the transcript d
 });
 
 test('a signer node restarted while holding picks the hold up from its store, and signs the one transcript when its peer is back', async () => {
-  const w = await signerNodes();
+  const w = await signerNodes({ endIn: 5000 });
   try {
     const { P, W } = await playedAndJoined(w);
     await w.downB();

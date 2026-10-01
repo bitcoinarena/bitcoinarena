@@ -10,6 +10,9 @@
 //
 // Everything here goes through the daemons' own doors. Nothing hands a share
 // to anybody in this file.
+import { signFinalSig } from '../../protocol/src/final-sig.js';
+import { resultFinality } from '../src/finality.js';
+import { fromHex } from '../../protocol/src/hash.js';
 import { lockPort, lockedEntry, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
 import { CLOCK } from './block-clock.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
@@ -103,7 +106,7 @@ const drafted = (nodes) => ({
   // did not have to wait; a zero window is now refused, because it erases §13A's replay veto (contracts.js).
   // The spec sets NO FLOOR - "reference: 10 minutes, contract-defined" - so the smallest legal window is 1ms,
   // which has passed by the time these tests ask. Nothing asserted here is about the window's length.
-  entryCloseMs: 2000n, objectionWindowMs: 1n, custody: 'FEDERATION',
+  entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION',
   slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: committeeRelays, donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n,
   randomnessRule: 'bitcoin-block-hash', stakeMsat: 100000n, bondMinSats: 50000n,
@@ -402,6 +405,15 @@ test('a delivered run never gives up its preimage, and neither does one that is 
       holder.round.putPosting(orid, wid, who.round.pubkey, postedBy(who, orid, delivered));
     }
     await untilNextBlock();
+    // AND EVERY SEAT SIGNS IT FINAL (WINDOW-10-SPEC): the round ended in 1970, so its window closed long ago.
+    const agreedRun = fromHex(resultFinality(holder.round, orid, wid).runId);
+    for (const who of nodes) {
+      const x = { roundId: orid, entryId: wid, runId: agreedRun, signerPubkey: who.round.pubkey, signedAtMs: BigInt(holder.round.now()) };
+      const r = await fetch(`http://127.0.0.1:${holder.port}/final-sig?round=${toHex(orid)}&entry=${toHex(wid)}`,
+        { method: 'POST', body: signFinalSig(x, (d) => schnorr.sign(d, who.round.identity.secret)) });
+      assert.equal(r.status, 201, await r.text());
+    }
+    assert.equal(resultFinality(holder.round, orid, wid).state, 'FINAL');
 
     const may = holder.stakeSecrets.mayRelease(orid, wid);
     assert.equal(may.ok, false);
@@ -497,6 +509,15 @@ test('a signer node that never replayed the run hands over nothing', async () =>
       quiet.round.putPosting(orid, wid, who.round.pubkey, postedBy(who, orid, failed));
     }
     await untilNextBlock();
+    // AND THE SIX SIGN IT FINAL (WINDOW-10-SPEC): the round ended in 1970, so its window closed long ago.
+    const agreedRun = fromHex(resultFinality(quiet.round, orid, wid).runId);
+    for (const who of nodes.slice(0, 6)) {
+      const x = { roundId: orid, entryId: wid, runId: agreedRun, signerPubkey: who.round.pubkey, signedAtMs: BigInt(quiet.round.now()) };
+      const r = await fetch(`http://127.0.0.1:${quiet.port}/final-sig?round=${toHex(orid)}&entry=${toHex(wid)}`,
+        { method: 'POST', body: signFinalSig(x, (d) => schnorr.sign(d, who.round.identity.secret)) });
+      assert.equal(r.status, 201, await r.text());
+    }
+    assert.equal(resultFinality(quiet.round, orid, wid).state, 'FINAL');
 
     const may = quiet.stakeSecrets.mayRelease(orid, wid);
     assert.equal(may.ok, false);

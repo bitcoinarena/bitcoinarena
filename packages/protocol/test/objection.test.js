@@ -23,7 +23,7 @@ import {
 import { resultId, RESULTS_FOR_FINAL } from '../src/result.js';
 import { DELIVERED, FAILED } from '../src/payout.js';
 import { OBJECTION_WINDOW_REFERENCE_MS } from '../src/constants.js';
-import { encodeRoundContract, decodeRoundContract } from '../src/contracts.js';
+import { encodeRoundContract, decodeRoundContract, roundWindowsAreValid } from '../src/contracts.js';
 import { toHex } from '../src/hash.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -58,16 +58,23 @@ const committeeReceipts = () => [1, 2, 3, 4, 5].map((n) => ({ nodePubkey: commit
 /** An objection is always checked AGAINST a round and a result; these are it. */
 const about = { roundId: b32(1), signedResultId: resultId(result()) };
 
-test('the window is a field of the round the player signed, not a constant', () => {
+// WINDOW-10-SPEC (RULED the owner 2026-10-01): the field stays on the wire and in the id, and it must say 600000 - a contract
+// naming 0, 599999 or 600001 is invalid (roundWindowsAreValid), and finality() reads no window from it.
+test('the window is exactly 600000 ms: the field is in the signed round, and any other number is an invalid contract', () => {
   const c = contract();
   const back = decodeRoundContract(encodeRoundContract(c));
   assert.equal(back.objectionWindowMs, OBJECTION_WINDOW_REFERENCE_MS);
   assert.equal(OBJECTION_WINDOW_REFERENCE_MS, 600000n, 'ten minutes in milliseconds');
-
-  // and it is covered by the contract's id: a shorter window is another round
-  const shorter = contract({ objectionWindowMs: 1000n });
-  assert.notEqual(toHex(encodeRoundContract(shorter)), toHex(encodeRoundContract(c)));
-  assert.equal(decodeRoundContract(encodeRoundContract(shorter)).objectionWindowMs, 1000n);
+  assert.equal(roundWindowsAreValid(c).ok, true, roundWindowsAreValid(c).why);
+  for (const w of [0n, 1000n, 599999n, 600001n]) {
+    const other = contract({ objectionWindowMs: w });
+    assert.notEqual(toHex(encodeRoundContract(other)), toHex(encodeRoundContract(c)), 'the window is not covered by the id');
+    const v = roundWindowsAreValid(other);
+    assert.equal(v.ok, false, `a ${w} ms window was valid`);
+    assert.match(v.why, /objection window is exactly 600000ms/);
+    const f = finality({ signedBy: signedBy(5), committee, contract: other, provisionalAtMs: 10000n, now: 10000n + 10n ** 9n });
+    assert.equal(f.state, null, `a ${w} ms contract became final`);
+  }
 });
 
 test('an objection survives the wire, and every field is in its id', () => {
@@ -116,13 +123,9 @@ test('the window closes at the contract s length, to the millisecond', () => {
   assert.equal(ask(closes), FINAL);
   assert.equal(ask(closes + 1n), FINAL);
 
-  // a shorter window in the contract closes sooner - the number is not in the code
+  // a contract naming a shorter window does not close sooner: it is invalid, and nothing is final under it
   const brief = contract({ objectionWindowMs: 1000n });
-  const askBrief = (now) => finality({
-    signedBy: signedBy(5), committee, contract: brief, provisionalAtMs: at, now,
-  }).state;
-  assert.equal(askBrief(at + 999n), PROVISIONALLY_FINAL);
-  assert.equal(askBrief(at + 1000n), FINAL);
+  assert.equal(finality({ signedBy: signedBy(5), committee, contract: brief, provisionalAtMs: at, now: at + 1000n }).state, null);
 
   // and a contract with no window at all is refused rather than guessed
   const { objectionWindowMs, ...noWindow } = c;
@@ -324,7 +327,8 @@ test('an objection about another round, or another result, does not touch this o
 
 // PUBLICATION IS A CONDITION OF FINALITY (v4.6.2 §13A, P2).
 test('a result nobody has posted is never final, and the window counts from the posting, not the signatures', () => {
-  const c = contract({ objectionWindowMs: 1000n });
+  const c = contract();
+  const W = OBJECTION_WINDOW_REFERENCE_MS;
   const at = 10000n;
   const ask = (now, publishedAtMs) => finality({
     signedBy: signedBy(5), committee, contract: c, provisionalAtMs: at, publishedAtMs, now,
@@ -337,11 +341,11 @@ test('a result nobody has posted is never final, and the window counts from the 
 
   // posted 5 s after the fifth signature: W runs from there
   const posted = at + 5000n;
-  assert.equal(ask(at + 1000n, posted).state, PROVISIONALLY_FINAL, 'the window ran from the signatures');
-  assert.equal(ask(posted + 999n, posted).state, PROVISIONALLY_FINAL);
-  assert.equal(ask(posted + 1000n, posted).state, FINAL);
-  assert.equal(ask(posted + 1000n, posted).closesAtMs, posted + 1000n);
+  assert.equal(ask(at + W, posted).state, PROVISIONALLY_FINAL, 'the window ran from the signatures');
+  assert.equal(ask(posted + W - 1n, posted).state, PROVISIONALLY_FINAL);
+  assert.equal(ask(posted + W, posted).state, FINAL);
+  assert.equal(ask(posted + W, posted).closesAtMs, posted + W);
   // a posting dated before the threshold does not open the window early
-  assert.equal(ask(at + 999n, at - 5000n).state, PROVISIONALLY_FINAL);
-  assert.equal(ask(at + 1000n, at - 5000n).state, FINAL);
+  assert.equal(ask(at + W - 1n, at - 5000n).state, PROVISIONALLY_FINAL);
+  assert.equal(ask(at + W, at - 5000n).state, FINAL);
 });

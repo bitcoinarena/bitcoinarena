@@ -27,6 +27,7 @@ import { toHex, fromHex } from '../../protocol/src/hash.js';
 import { lobbyListingId } from '../../protocol/src/lobby-listing.js';
 import { decodeLobbyName, lobbyNameId } from '../../protocol/src/lobby-name.js';
 import { roundEndMs, startDeadlineOf } from '../../protocol/src/first-mark.js';
+import { OBJECTION_WINDOW_MS, windowsOf } from '../../protocol/src/window.js';
 import { msForTicks } from '../../protocol/src/tick.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { lightningAddressEndpoint } from '../../protocol/src/lnurl-pay.js';
@@ -77,7 +78,7 @@ import { authorityAt, donationSetSignedBy, encodeDonationSetBody, encodeAuthorit
 import { donationSetId } from '../../protocol/src/donation.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { timed, watchLoop } from './slow.js';
-import { resultFinality } from './finality.js';
+import { resultFinality, finalSignatureNow } from './finality.js';
 import { standingOf } from './standing.js';
 import { outageOutcome } from '../../protocol/src/entry-void.js';
 import { ENTRY_VOID, netStakeMsat } from '../../protocol/src/payout.js';
@@ -88,7 +89,8 @@ import { installedCores, coreForRound, TRUCK } from './cores.js';
 import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join as joinPath } from 'node:path';
 import { readTranscript } from './transcript-read.js';
-import { SIGNED_RERUN_BYTES, rerunResultId, decodeRerunResult, splitSignedRerun } from '../../protocol/src/rerun.js';
+import { SIGNED_RERUN_BYTES, rerunResultId, decodeRerunResult, splitSignedRerun, encodeRerunResult, joinSignedRerun } from '../../protocol/src/rerun.js';
+import { decodeFinalSig, splitSignedFinalSig, finalSigFault, SIGNED_FINAL_SIG_BYTES } from '../../protocol/src/final-sig.js';
 import { verifyStakeLock, verifyFeeLock, lockFieldsFromJson, roundMintsFees, federationTakesNoBaseFee } from './stake-lock-signer-node.js';
 import { encodeClaimKeyAttestation, claimKeyAttestationId } from '../../protocol/src/claim-key.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
@@ -183,12 +185,17 @@ export const settleWaitsOn = (standing) => standing.filter((x) => x.state === PR
 
 export function objectionIntake(round, rid, eid, blockHash = null) {
   try {
-    // AN OBJECTION NAMES THE BLOCK IT IS FILED IN (§13A, RULED 2026-09-24): the window places it by that block.
-    if (!(blockHash instanceof Uint8Array) || blockHash.length !== 32) return { status: 400, text: 'an objection names the 32-byte hash of the block it is filed in' };
+    // AN OBJECTION COUNTS BY WHEN IT REACHED THIS SEAT, ON ITS OWN CLOCK (§13A, WINDOW-10-SPEC, RULED the owner 2026-10-01):
+    // before this seat's window close + 5 s it suspends the run here; after, it suspends nothing and is kept as evidence.
+    // A block it names is kept and decides nothing.
+    if (blockHash !== null && (!(blockHash instanceof Uint8Array) || blockHash.length !== 32)) return { status: 400, text: 'a block an objection names is a 32-byte hash' };
     if (round.object(rid, eid, blockHash)) return { status: 201, text: 'objected' };
     if (round.rerunObjectedAt(rid, eid) !== null) return { status: 200, text: 'already objected' };
     const f = resultFinality(round, rid, eid);
     const agreedRerun = !!(f.rerun && f.rerun.runId);
+    // THE RE-RUN'S OWN WINDOW IS OVER FOR THIS SEAT at the round's end + 1805 s on its clock (§13A, WINDOW-10-SPEC).
+    if (agreedRerun && f.finalAfterMs !== undefined && BigInt(round.now()) >= BigInt(f.finalAfterMs))
+      return { status: 409, text: 'the re-run\'s objection window has closed' };
     if (f.state === PROVISIONALLY_FINAL && agreedRerun)
       return round.objectRerun(rid, eid, blockHash) ? { status: 201, text: 'objected' } : { status: 200, text: 'already objected' };
     if (agreedRerun) return { status: 409, text: 'the re-run\'s objection window has closed' };
@@ -952,6 +959,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (now.noQuorum && !now.secondObjection) {
       try { await verifier.pullEvidence(rid, eid); } catch { /* a peer that cannot answer shows nothing */ }
       now = resultFinality(round, rid, eid);
+      // DECIDED ONCE, ON THIS SEAT'S OWN CLOCK (§13C, WINDOW-10-SPEC): written, so evidence that arrives later changes nothing.
+      if (now.noQuorum && (now.state === 'VOID' || now.state === 'FORFEIT') && !round.noQuorum(eid))
+        round.putNoQuorum({ entryId: eid, roundId: rid, outcome: now.state, why: now.why });
     }
     // AN ENTRY THAT ENDED VOID OR FORFEIT AFTER THE OBJECTION - §13C at the re-run window's end, or a second objection -
     // still slashes the first result's signers (ruling C steps 2 and 3, RULED the owner 2026-09-24); the watch files them
@@ -1096,26 +1106,63 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     };
     attempt();
   }
+  /**
+   * THE SEATS' FINAL SIGNATURES ON ONE RUN (§13A, WINDOW-10-SPEC): once this seat may sign - its window's close + 5 s
+   * passed on its clock, the transcript posted, no valid objection received in time - it signs, and asks every peer for
+   * its own signature, fresh (GET /final-sig). Each is checked here on arrival (protocol finalSigFault) and kept, kept
+   * as evidence, or dropped. Returns whether the run is FINAL here now.
+   */
+  const signHere = (digest) => schnorr.sign(digest, round.identity.secret);
+  function takeFinalSig(rid, eid, bytes, f = resultFinality(round, rid, eid)) {
+    let x;
+    try { x = decodeFinalSig(splitSignedFinalSig(bytes).body); } catch (e) { return { kept: 'refused', why: e.message }; }
+    const seenMs = round.now();
+    const fault = finalSigFault({ bytes, seenMs }, { roundId: rid, entryId: eid, runId: null,
+      committee: round.signerNodes(rid), finalAfterMs: f.finalAfterMs ?? 0n, verify: (sg, m, k) => schnorr.verify(sg, m, k) });
+    const kept = round.putFinalSig(rid, eid, x, bytes, fault, seenMs);
+    if (kept === 'evidence') console.log(`[final] ${toHex(eid).slice(0, 16)} a FINAL signature of ${toHex(x.signerPubkey).slice(0, 16)} does not count: ${fault.why}`);
+    return { kept, why: fault ? fault.why : null };
+  }
+  async function gatherFinal(rid, eid) {
+    let f = resultFinality(round, rid, eid);
+    if (f.state === FINAL) return true;
+    if (!f.signable) return false;
+    const mine = finalSignatureNow(round, rid, eid, signHere);
+    if (mine) takeFinalSig(rid, eid, mine, f);
+    await Promise.all(verifier.peersOf(rid).map(async (peer) => {
+      try {
+        const r = await fetch(`${String(peer).replace(/\/+$/, '')}/final-sig?round=${toHex(rid)}&entry=${toHex(eid)}`, { signal: AbortSignal.timeout(3000) });
+        if (r.status !== 200) return;
+        takeFinalSig(rid, eid, new Uint8Array(await r.arrayBuffer()), f);
+      } catch { /* a peer that does not answer signs nothing here */ }
+    }));
+    f = resultFinality(round, rid, eid);
+    if (f.state === FINAL) console.log(`[final] ${toHex(eid).slice(0, 16)} FINAL: ${String(f.why).slice(0, 160)}`);
+    // A LATE OBJECTION THIS SEAT HOLDS (§13A): it suspended nothing, and once the run is FINAL it is filed for slashing.
+    if (f.state === FINAL && f.lateObjection) {
+      const g = await verifier.fileFirstResultSlashProofs(rid, eid);
+      for (const who of g.filed) console.log(`[slash] ${toHex(eid).slice(0, 16)} late objection: filed REPLAY_CONTRADICTS against ${who.slice(0, 16)}`);
+    }
+    return f.state === FINAL;
+  }
   function watchRerun(rid, eid) {
     const row = round.get(rid);
     if (!row) return;
     const contract = decodeRoundContract(new Uint8Array(row.contract));
     const everyMs = finality.everyMs ?? 2000;
-    // THE WATCH RUNS TO FILED + 2W AND ONE TICK (RULED the owner 2026-09-24): §13C decides at filed + W, and an agreed
-    // re-run is FINAL at the latest before filed + 2W (its own window, slice C2a). It used to stop at the objection plus
-    // one window - before both, so without the `rerunMs` test aid neither the §13C slash nor the FINAL one was filed.
-    const filedMs = round.objectedAt(rid, eid) ?? Date.now();
-    const until = finality.rerunMs !== undefined ? Date.now() + finality.rerunMs
-      : filedMs + 2 * Number(contract.objectionWindowMs) + everyMs;
-    // THE WINDOWS END AT BLOCKS (RULED 2026-09-24), which can come well after the clock's filed + 2W (a median time past
-    // runs behind the clock): while this node still waits for a block it keeps asking, a bounded day.
-    const waitsForBlock = () => { try { return !!resultFinality(round, rid, eid).blockPending; } catch { return false; } };
+    // THE WATCH RUNS TO THE RE-RUN'S OWN FINAL AND A MINUTE (§13A, WINDOW-10-SPEC, RULED the owner 2026-10-01): §13C decides at
+    // the round's end + 1205 s, and an agreed re-run is signed FINAL from + 1805 s - both on the round's clock, carried
+    // to this watch's.
+    let lastMs;
+    try { lastMs = Number(windowsOf(contract).ownFinalAfterMs) + 60000; } catch { lastMs = round.now() + 3600000; }
+    const until = finality.rerunMs !== undefined ? Date.now() + finality.rerunMs : null;
     const tick = async () => {
       if (shuttingDown) return;
       let done = false;
+      try { await gatherFinal(rid, eid); } catch (e) { console.error(`[final] ${e.message}`); }
       try { done = await rerunAndFile(rid, eid); } catch (e) { console.error(`[rerun] ${e.message}`); }
       if (done || shuttingDown) return;
-      if (Date.now() >= until && !(waitsForBlock() && Date.now() < filedMs + 24 * 3600 * 1000)) return;
+      if (until !== null ? Date.now() >= until : round.now() >= lastMs) return;
       const t = setTimeout(() => { rerunTimers.delete(t); tick(); }, everyMs);
       rerunTimers.add(t);
     };
@@ -1258,6 +1305,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             console.log(`[close] ${toHex(r.entryId).slice(0, 16)} ${d.decided}: ${String(d.why).slice(0, 160)}`);
           }
         }
+      }
+      // AND THE SEATS' FINAL SIGNATURES (§13A, WINDOW-10-SPEC): every signed run not FINAL here yet, once this seat may sign.
+      for (const r of stored) {
+        if (decidedHere(r.entryId)) continue;
+        await breathe();
+        let was = null;
+        try { was = resultFinality(round, roundIdBytes, r.entryId).state; } catch { continue; }
+        if (was === FINAL) continue;
+        try { if (await gatherFinal(roundIdBytes, r.entryId)) turned = true; } catch (e) { console.error(`[final] ${e.message}`); }
       }
       if (shuttingDown) return;
       if (turned || windowDue() || unposted() || suspendedShort() || pendingShort()
@@ -1692,6 +1748,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       let endMs;
       try { endMs = roundEndMs(c); } catch { endMs = c.entryCloseMs; }
       if (nowMs >= endMs) continue;                   // over: announced no longer
+      if (c.objectionWindowMs !== OBJECTION_WINDOW_MS) continue;   // §13A, WINDOW-10-SPEC: not 600 000 ms, never listed
       if (aheadMs !== null && c.startTimeMs > nowMs + aheadMs) continue;
       candidates.push({ held, c, endMs });
     }
@@ -2055,7 +2112,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
         if (eid.length !== 32) return text(res, 400, 'an entry is asked for by its id');
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
-        return res.end(JSON.stringify({ marks: round.evidenceBlocks(new Uint8Array(eid)).map((x) => ({ mark: toHex(x.markId), block: toHex(x.block) })) }));
+        return res.end(JSON.stringify({ marks: round.evidenceBlocks(new Uint8Array(eid)).map((x) => ({ mark: toHex(x.markId), block: toHex(x.block), seenMs: x.seenMs })) }));
       }
 
       if (req.method === 'GET' && url.pathname === '/start-forfeit') {
@@ -3084,7 +3141,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'GET' && url.pathname === '/reruns') {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
-        const held = round.reruns(rid, eid);
+        // THIS SEAT'S OWN RE-RUN, SIGNED AGAIN NOW (§13A, WINDOW-10-SPEC): a holder counts a re-run only within 5 s of its
+        // own clock at arrival, so the one this seat signed is handed out with this moment's time - the same result.
+        const held = round.reruns(rid, eid).map((r) => {
+          if (toHex(r.signerNodePubkey) !== toHex(round.pubkey)) return r;
+          try {
+            const x = { ...decodeRerunResult(splitSignedRerun(r.bytes).body), signedAtMs: BigInt(round.now()) };
+            return { ...r, bytes: joinSignedRerun(encodeRerunResult(x), schnorr.sign(rerunResultId(x), round.identity.secret)) };
+          } catch { return r; }
+        });
         const out = new Uint8Array(held.length * SIGNED_RERUN_BYTES);
         held.forEach((r, i) => out.set(r.bytes, i * SIGNED_RERUN_BYTES));
         res.writeHead(200, { 'content-type': 'application/octet-stream', 'x-reruns': String(held.length), ...CORS });
@@ -3236,6 +3301,33 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return res.end(Buffer.from(kept));
       }
 
+      // THIS SEAT'S FINAL SIGNATURE ON A RUN, SIGNED NOW (§13A, WINDOW-10-SPEC): 200 and the signed record once this seat
+      // would sign - its window's close + 5 s passed on its own clock, the transcript posted, no valid objection received
+      // in time - or the run is FINAL here; 409 and why otherwise.
+      if (req.method === 'GET' && url.pathname === '/final-sig') {
+        const rid = new Uint8Array(Buffer.from(url.searchParams.get('round') || '', 'hex'));
+        const eid = new Uint8Array(Buffer.from(url.searchParams.get('entry') || '', 'hex'));
+        let signed = null;
+        let why = 'no such round';
+        try {
+          signed = round.get(rid) ? finalSignatureNow(round, rid, eid, signHere) : null;
+          if (!signed && round.get(rid)) why = resultFinality(round, rid, eid).why || 'not signable';
+        } catch (e) { why = e.message; }
+        if (!signed) { res.writeHead(409, { 'content-type': 'text/plain', ...CORS }); return res.end(String(why)); }
+        res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
+        return res.end(Buffer.from(signed));
+      }
+      // AND ONE PUSHED HERE: checked on arrival, against this seat's clock.
+      if (req.method === 'POST' && url.pathname === '/final-sig') {
+        const rid = new Uint8Array(Buffer.from(url.searchParams.get('round') || '', 'hex'));
+        const eid = new Uint8Array(Buffer.from(url.searchParams.get('entry') || '', 'hex'));
+        const body = new Uint8Array(await read(req));
+        if (!round.get(rid) || body.length !== SIGNED_FINAL_SIG_BYTES) { res.writeHead(400, CORS); return res.end('not a FINAL signature for a round held here'); }
+        const t = takeFinalSig(rid, eid, body);
+        res.writeHead(t.kept === 'kept' ? 201 : 409, { 'content-type': 'text/plain', ...CORS });
+        return res.end(t.kept === 'kept' ? 'kept' : String(t.why));
+      }
+
       // AN OBJECTION AGAINST A RUN (13A intake). What an objection costs and
       // who may file one is the objection protocol and is not decided here;
       // that the node KNOWS of one is what lets the replay queue put it first.
@@ -3248,6 +3340,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // RE-RUNS IT (13A): this signer node starts its own re-run at once.
         const after = taken.status === 201 ? resultFinality(round, rid, eid) : null;
         if (after && after.state === SUSPENDED) watchRerun(new Uint8Array(rid), new Uint8Array(eid));
+        // A LATE ONE (§13A, WINDOW-10-SPEC): it suspends nothing, and it is filed for slashing against the signers.
+        if (after && after.state === FINAL && after.lateObjection) {
+          const g = await verifier.fileFirstResultSlashProofs(new Uint8Array(rid), new Uint8Array(eid));
+          for (const who of g.filed) console.log(`[slash] ${toHex(eid).slice(0, 16)} late objection: filed REPLAY_CONTRADICTS against ${who.slice(0, 16)}`);
+        }
         // AND A SECOND ONE THAT VOIDS THE ENTRY SLASHES THE RE-RUN'S SIGNERS AS WELL (13A, slice C2c): this node files
         // its proofs before it answers, so what it took and what it filed are one step.
         if (after && after.state === 'VOID' && after.secondObjection) {

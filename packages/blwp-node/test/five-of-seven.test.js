@@ -12,6 +12,7 @@
 // signer node 0, which forwards it to 1-3 (four receipts, one short of five); 4-6 back;
 // a DIFFERENT on-time first mark (30) to signer node 4, which forwards it to 5 and 6
 // (three receipts). Neither mark can reach five, and signer nodes 0-3 hold the pair.
+import { testNow, skipTo } from './test-clock.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -25,11 +26,12 @@ test('5 of 7, a stake lock: two first marks - FORFEIT at all seven, no signer no
   try {
     const run = await joinWithTwoFirstMarks(w, 'lock');
     const before = await twoFirstMarks(w, run);
-    const endMs = CLOCK.endAt(Math.ceil(Number(roundEndMs(w.c)) / 1000) * 1000, WINDOW);
-    const closedAt = Date.now() - endMs;
+    const endMs = (Number(roundEndMs(w.c)) + 605000);
+    const closedAt = testNow() - endMs;
     await Promise.all(w.signerNodes.map((d) => say(d.port, `close ${toHex(w.rid)}`)));
+    skipTo(endMs + 100);                                               // past the result window (WINDOW-10-SPEC)
     for (let t = Date.now(); Date.now() - t < 30000 && !w.signerNodes.every((d) => d.round.noQuorum(run.eid)); await wait(250));
-    console.log('  TIMING (5 of 7, lock; ms after the result window\'s end block):', JSON.stringify({ closedAt, decidedAt: Date.now() - endMs }));
+    console.log('  TIMING (5 of 7, lock; ms after the result window\'s end block):', JSON.stringify({ closedAt, decidedAt: testNow() - endMs }));
     await wait(1000);
     const signerNodesAfter = stateAt(w, run);
     const doors = [];

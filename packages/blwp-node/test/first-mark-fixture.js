@@ -1,6 +1,7 @@
 // THE FIRST-MARK FIXTURE: two in-process signer nodes of a lock round and the helpers first-mark.test.js and
 // first-mark-late.test.js share (split 2026-09-24 so each file stays inside the suite's 180 s: every round now waits
 // for its result window's end block on the chain). See first-mark.test.js for the rules they drive.
+import { testNow, skipTo } from './test-clock.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import assert from 'node:assert/strict';
 import { ed25519 } from '@noble/curves/ed25519.js';
@@ -57,7 +58,7 @@ export async function signerNodes({ endIn = null, serveOpts = {} } = {}) {
   const base = { ...contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
     custody: 'FEDERATION', federationId: TEST_FEDERATION_ID, startDeadlineTicks: undefined };
   // `endIn`: THE ROUND IN THE PRESENT, its contract end this many ms from now (§13C's result window opens at it).
-  const drafted = endIn === null ? base : presentDay(base, Date.now() + endIn);
+  const drafted = endIn === null ? base : presentDay(base, testNow() + endIn);
   // ONLY THE FIELD THE CHAIN DICTATES (RULED 2026-09-25): the census root its bonds derive to; the round's times stand.
   const c = { ...drafted, censusRoot: bondedChainFor(drafted.nodes, drafted, slot,
     { endpoints: [a, b].map((d) => `ws://127.0.0.1:${d.port}`) }).censusRoot };
@@ -186,8 +187,8 @@ export async function closeAndSettle(w, run) {
 // PAST THE RESULT WINDOW ON THE CHAIN (RULED 2026-09-24): its end block - opened at the first block at or after the
 // round's contract end - and then each node's next pass that decides; not W past the close.
 export async function pastResultWindow(w, decided) {
-  const endMs = CLOCK.endAt(Math.ceil(Number(roundEndMs(w.c)) / 1000) * 1000, WINDOW_MS);
-  for (const stop = Date.now() + 30000; Date.now() < stop && Date.now() < endMs; await wait(100));
+  const endMs = (Number(roundEndMs(w.c)) + 605000);
+  skipTo(endMs + 100);
   for (const stop = Date.now() + 30000; Date.now() < stop && !decided(); await wait(100));
 }
 export const decidedBoth = (w, run) => () => [w.a, w.b].every((d) => d.round.noQuorum(run.eid));
@@ -213,9 +214,15 @@ export const transcriptsAcross = (x, y) => new Set([...x.transcripts, ...y.trans
 export const lockHeldOf = (w, run) => w.port.locks.has(`${toHex(run.outpoint.txid)}:${run.outpoint.outIdx}`);
 export const closingOf = async (d, w, run) => ((await (await fetch(`http://127.0.0.1:${d.port}/closing?round=${toHex(w.rid)}`)).json())
   .find((s) => s.entry === toHex(run.eid)) || null);
+// FINAL AT BOTH (WINDOW-10-SPEC): once both hold the result at the threshold, the fixtures' clock is skipped past the
+// round's end + 605 s - a no-op for a round that ended in 1970 - and both seats' watches sign and gather FINAL.
 export const finalAtBoth = async (w, run, ms = 20000) => {
-  for (let t = Date.now(); Date.now() - t < ms; await wait(250))
-    if ([w.a, w.b].every((d) => resultFinality(d.round, w.rid, run.eid).state === 'FINAL')) return true;
+  const states = () => [w.a, w.b].map((d) => resultFinality(d.round, w.rid, run.eid).state);
+  for (let t = Date.now(); Date.now() - t < ms; await wait(250)) {
+    const now = states();
+    if (now.every((x) => x === 'FINAL')) return true;
+    if (now.every((x) => x === 'PROVISIONALLY_FINAL' || x === 'FINAL')) skipTo(Number(roundEndMs(w.c)) + 605000 + 100);
+  }
   return false;
 };
 export const SIGNED_FORFEIT_0 = { results: ['FORFEIT/0'], signers: 2, finality: 'FINAL', entryVoid: false, forfeit: 409 };

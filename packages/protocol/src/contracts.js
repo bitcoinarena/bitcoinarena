@@ -16,7 +16,7 @@ import { taggedHash } from './hash.js';
 import {
   TAG, PROTOCOL_VERSION, TYPE_ROUND_CONTRACT, TYPE_ENTRY_CONTRACT, ROLES,
   CUSTODY, custodyByte, custodyName, slashRemainderByte, slashRemainderOf, MIN_ENTRY_WINDOW_MS,
-  STAKE_EXPIRY_BLOCKS, START_DEADLINE_TICKS, MAX_OBJECTION_WINDOW_MS,
+  STAKE_EXPIRY_BLOCKS, START_DEADLINE_TICKS, OBJECTION_WINDOW_MS,
   SCORE_SCALE,
 } from './constants.js';
 
@@ -584,36 +584,17 @@ export function roundWindowsAreValid(c) {
       why: `that round closes entry at ${c.entryCloseMs}, before its committee forms at ${opensAt}`,
     };
 
-  // AND IT MUST NAME A RESULT WINDOW THAT IS ACTUALLY A WINDOW (§13A, §13).
-  //
-  // "After a result is PROVISIONALLY_FINAL, the window W (reference: 10 minutes, contract-defined) runs", and
-  // "The result window equals the objection window - same duration, a field on the contract". A window of
-  // ZERO is not a short window, it is no window: finality is instant, so §13A's replay veto - which the spec
-  // calls the cheapest defence in the whole design - can never be exercised, and `verify.js`'s result-window
-  // test (`now >= closed_ms + objectionWindowMs`) is true the moment the round closes, so a seat that has not
-  // yet retrieved the transcript voids the entry immediately.
-  //
-  // NO FLOOR IS SPECIFIED AND NONE IS INVENTED HERE. §13A gives "reference: 10 minutes, contract-defined" -
-  // a reference, not a minimum. So this refuses a duration that is not positive, and - since the 2026-09-24
-  // ruling - one over six hours; any window in between opens, because the field is contract-defined.
+  // AND ITS OBJECTION WINDOW IS EXACTLY 600 000 ms (§13A, WINDOW-10-SPEC, RULED the owner 2026-10-01 09:40): "A Round
+  // Contract whose objection_window_W is not exactly 600000 ms is invalid: a node refuses to open it, list it or take an
+  // entry for it." The field was contract-defined with a 10-minute reference and a 6-hour cap; neither stands.
   if (typeof c.objectionWindowMs !== 'bigint')
     return { ok: false, opensAt, why: 'that round names no objection window, so nothing says when a result may become final' };
-  if (c.objectionWindowMs <= 0n)
+  if (c.objectionWindowMs !== OBJECTION_WINDOW_MS)
     return {
       ok: false,
       opensAt,
-      why: `that round's objection window is ${c.objectionWindowMs}ms: a zero window is not a short one, it is `
-        + 'none at all - finality would be instant and §13A\'s replay veto could never be used',
-    };
-  // AND NO LONGER THAN SIX HOURS (§13A, RULED the owner 2026-09-24). A suspended entry ends at most three windows after
-  // it was provisionally final, and the stake lock's 144 blocks must cover those three and the round and the
-  // settlement - so a longer window is a contract whose locks can expire before its entries are decided.
-  if (c.objectionWindowMs > MAX_OBJECTION_WINDOW_MS)
-    return {
-      ok: false,
-      opensAt,
-      why: `that round's objection window is ${c.objectionWindowMs}ms, over the 6-hour cap of ${MAX_OBJECTION_WINDOW_MS}ms: `
-        + 'three windows and a round must fit inside the stake lock\'s 144 blocks with room for the settlement',
+      why: `that round's objection window is ${c.objectionWindowMs}ms: the objection window is exactly ${OBJECTION_WINDOW_MS}ms `
+        + '(600 s of wall time from the round\'s end, §13A), so the contract is invalid',
     };
 
   return { ok: true, opensAt, earliestStart };
