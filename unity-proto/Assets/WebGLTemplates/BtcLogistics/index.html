@@ -576,7 +576,7 @@
     // holds is also kept in the browser's storage (blwp.seeds); a tab marks the one it holds with a heartbeat every 4 s. A tab
     // with no phrase of its own - a new tab, a browser opened again - takes a kept phrase no open tab holds (no
     // heartbeat for 12 s); only when every kept one is held does it get a new one. Two open tabs stay two players.
-    function blwpSeedKeeper({ L, T, now, every, on, random }) {
+    function blwpSeedKeeper({ L, T, now, every, on, random, locks = null, reload = () => {} }) {
       const KEY = 'blwp.player.seed', FROM = 'blwp.player.seed.from', LIST = 'blwp.seeds', HELD = 'blwp.seed.held.';
       const read = () => { try { const l = JSON.parse(L.getItem(LIST) || '[]'); return Array.isArray(l) ? l : []; } catch { return []; } };
       let tab = T.getItem('blwp.tab.id');
@@ -587,9 +587,28 @@
         const f = read().find((x) => /^[0-9a-f]{64}$/i.test(x.hex) && free(x.hex));
         if (f) { T.setItem(KEY, f.hex); T.setItem(FROM, f.from === 'imported' ? 'imported' : 'minted'); }
       }
+      // ONE TAB PER PHRASE (the owner 2026-10-01, "fix that problem": two tabs on one phrase ran two wallet clients on one
+      // storage and spent the same e-cash note twice - "The note is already spent", 8192 msat gone). The tab takes the
+      // browser's exclusive lock on its phrase and holds it while it lives; the browser lets go when the tab closes or
+      // crashes. A tab whose phrase another tab holds - a duplicated or a restored tab - drops it and starts again as its
+      // own player (a free kept phrase, or a new one): two tabs stay two players, never one wallet twice.
+      let lockedFor = null;
+      const lockPhrase = (cur) => {
+        if (!locks || lockedFor === cur) return;
+        lockedFor = cur;
+        locks.request('blwp.phrase.' + cur.slice(0, 16), { ifAvailable: true }, (lock) => {
+          if (lock) return new Promise(() => {});   // held for the tab's life
+          if (T.getItem(KEY) !== cur) return undefined;
+          T.removeItem(KEY); T.removeItem(FROM);
+          T.setItem('blwp.tab.id', random());       // a duplicated tab copied its id too
+          reload();
+          return undefined;
+        });
+      };
       const beat = () => {
         const cur = T.getItem(KEY);
         if (!/^[0-9a-f]{64}$/i.test(cur || '')) return;
+        lockPhrase(cur);
         const l = read();
         if (!l.some((x) => x.hex === cur)) { l.push({ hex: cur, from: T.getItem(FROM) === 'imported' ? 'imported' : 'minted', at: now() }); L.setItem(LIST, JSON.stringify(l)); }
         L.setItem(HELD + cur.slice(0, 16), JSON.stringify({ tab, at: now() }));
@@ -601,6 +620,7 @@
     try {
       window.BLWP_SEED_KEEPER = blwpSeedKeeper({ L: window.localStorage, T: window.sessionStorage, now: () => Date.now(),
         every: (fn, ms) => setInterval(fn, ms), on: (n, fn) => window.addEventListener(n, fn),
+        locks: (navigator.locks && typeof navigator.locks.request === 'function') ? navigator.locks : null, reload: () => location.reload(),
         random: () => Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => b.toString(16).padStart(2, '0')).join('') });
     } catch (e) { console.log('[blwp] the phrase is not kept in this browser: ' + (e && e.message ? e.message : e)); }
     // A RELOAD OF THE DEPOSIT PAGE LANDS ON THE LOBBY (the owner 2026-09-30 21:10, PRIORITIES: "Reloading the deposit page
