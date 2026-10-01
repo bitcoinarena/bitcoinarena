@@ -431,12 +431,13 @@ export async function sevenSignerNodes(windowMs, relays, { storedBeforeTheRule =
           joinSignedPosting(encodeTranscriptPosting(p), schnorr.sign(transcriptPostingId(p), secret)));
       }
     };
-    const sign = (name, rewrite, { posted = true } = {}) => {
+    // `expect`: the outcome the holder's own replay must have reached (the fixtures' runs lose; a test may play a winner).
+    const sign = (name, rewrite, { posted = true, expect = 'FAILED' } = {}) => {
       const eid = runs[name].eid;
       const mine = holder.round.results(rid, eid).find((r) => toHex(r.nodePubkey) === toHex(holder.round.pubkey));
       assert.ok(mine, `the holder signed no result for ${name}`);
       const shape = decodePlayerResult(splitSignedResult(mine.bytes).body);
-      assert.equal(shape.outcome, 'FAILED', `${name} did not lose`);
+      assert.equal(shape.outcome, expect, `${name} did not end ${expect}`);
       // THE RUN THEY SIGNED, which an objection contradicts and a re-run names.
       runs[name].contradicted = resultId({ ...shape, ...rewrite(shape), nodePubkey: new Uint8Array(32) });
       for (const secret of others.slice(0, 5)) {
