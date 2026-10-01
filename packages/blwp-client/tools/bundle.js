@@ -191,7 +191,7 @@ out += '         lookOwed: lookOwed, owedToLine: owedToLine, collectOwed: collec
 out += '         lobbyQuery: lobbyQuery, fetchLobby: fetchLobby, lobbyLine: lobbyLine, lobbyJoinSearch: lobbyJoinSearch,\n';
 out += '         SIGNER_ANSWER_MS: SIGNER_ANSWER_MS,\n';
 // AND ONE FREE ROUND AND ONE PAYING ROUND LISTED, NEVER TWO OF EITHER, with the paying one's stake.
-out += '         lobbyOnePerKind: lobbyOnePerKind, lobbyStakeSats: lobbyStakeSats,\n';
+out += '         lobbyOnePerKind: lobbyOnePerKind, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats,\n';
 out += '         nextRoundAfter: nextRoundAfter, nextRoundView: nextRoundView, joiningNextRoundIn: joiningNextRoundIn,\n';
 out += '         EXIT_GAME: EXIT_GAME, RESULT_CARD_MS: RESULT_CARD_MS,\n';
 // AND THE DAILY'S OWN LOBBY AT THE BARE ROOT, from daily.json beside the page.

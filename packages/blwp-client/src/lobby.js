@@ -235,6 +235,22 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
 // the testnet4 page 13:54Z: PLAY to the deposit invoice 23.5 s; game 2, payment to a committed entry ~50 s.
 export const SERIES_JOIN_LEAD_MS = 90000;
 export const LOBBY_PER_SERIES = 8;
+/**
+ * A LOBBY READ THAT GOT NO ANSWER KEEPS ITS LAST ROWS (the owner 2026-10-01 15:25, HARD: "A player opening the page sees a
+ * free row and a paid testnet4 row together. Do not drop free to show testnet4. Do not drop testnet4 to show free.").
+ * Measured on the live page under load: each paint read the free nodes and the testnet4 nodes, and a side whose nodes did
+ * not answer in time came back with no rows - the page showed the paid row alone, then both, then the free row alone. A
+ * read with rows is taken as it is; one with no rows because its nodes went unanswered (or refused) keeps the rows it last
+ * had, while their entry is still open. A side that answered and lists nothing lists nothing.
+ */
+export function lobbyKeepWhenUnanswered(previousRows, got, nowMs = Date.now()) {
+  const rows = (got && got.rows) || [];
+  if (rows.length) return rows;
+  const silent = !!(got && ((got.unanswered && got.unanswered.length) || (got.refused && got.refused.length)));
+  if (!silent) return rows;
+  return (previousRows || []).filter((r) => Number(r.entryCloseMs) > Number(nowMs));
+}
+
 export function lobbyOnePerKind(rows, nowMs = Date.now(), { paidSeriesOnly = false } = {}) {
   // ONLY 90-SECOND PAID ROUNDS (the owner 2026-10-01: "We want always 90 second rounds in Testnet ... no paid row till
   // then"): with `paidSeriesOnly` a paying round that is not a series round - the runner's one-off with its 6 h entry
