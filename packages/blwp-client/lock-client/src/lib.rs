@@ -400,14 +400,29 @@ impl LockClient {
     /// gateway is paid only against the invoice's preimage; otherwise the
     /// contract refunds this client. JSON: { state, preimage, invoice_msat,
     /// balance_before, balance_after }.
-    pub async fn withdraw(&self, invoice: String) -> Result<String, JsError> {
+    pub async fn withdraw(&self, invoice: String, preferred: Option<String>) -> Result<String, JsError> {
         let ln = self.client.get_first_module::<LightningClientModule>().map_err(js)?;
         let invoice: lightning_invoice::Bolt11Invoice = invoice.trim().parse().map_err(|e| js(format!("{e:?}")))?;
         let invoice_msat = invoice.amount_milli_satoshis();
         let balance_before = self.client.get_balance_for_btc().await.map_err(js)?;
-        // THE GATEWAY `send` WOULD PICK, picked by the same stock call and
-        // handed to it, so the withdraw can say which one carried it.
-        let (gateway, _) = ln.select_gateway(Some(invoice.clone())).await.map_err(js)?;
+        // NEVER THE GATEWAY ON THE INVOICE'S OWN NODE (the owner 2026-10-01 08:34, measured: a withdrawal to an invoice
+        // made on LND-a went to gateway A - the stock pick for a payee that is a gateway's node - which took it for a
+        // federation receive and cancelled it, "No corresponding decryption contract available"; refunded). The
+        // preferred gateway first (the page's funded one), then the federation's list: the first whose Lightning
+        // node is not the payee. An invoice can be sent once, so the pick has to be right the first time.
+        let payee = invoice.recover_payee_pub_key().serialize();
+        let mut candidates: Vec<SafeUrl> = Vec::new();
+        if let Some(p) = preferred.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
+            if let Ok(u) = SafeUrl::parse(p) { candidates.push(u); }
+        }
+        for g in ln.list_gateways(None).await.map_err(js)? { if !candidates.contains(&g) { candidates.push(g); } }
+        let mut chosen = None;
+        for g in &candidates {
+            if let Ok(Some(ri)) = ln.routing_info(g).await {
+                if ri.lightning_public_key.serialize() != payee { chosen = Some(g.clone()); break; }
+            }
+        }
+        let gateway = match chosen { Some(g) => g, None => ln.select_gateway(Some(invoice.clone())).await.map_err(js)?.0 };
         let op = ln.send(invoice, Some(gateway.clone()), serde_json::Value::Null).await.map_err(js)?;
         let (state, preimage) = match ln.await_final_send_operation_state(op).await.map_err(js)? {
             FinalSendOperationState::Success(p) => ("Success", Some(p.iter().map(|b| format!("{b:02x}")).collect::<String>())),

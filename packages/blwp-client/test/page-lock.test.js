@@ -1466,6 +1466,16 @@ test('1 sat = 1 sat (the owner 2026-10-01): a 100 sat round - stake lock 96, fee
   const locks = { amount: 96000n, feeMsat: 2000n, zeroFees: true, donationCostMsat: 1334n + 666n };
   assert.deepEqual([1, 2, 5, 10].map((n) => roundsDepositMsat(n, locks, LockClient)), [100000n, 200000n, 500000n, 1000000n]);
 });
+test('a withdrawal names the funded gateway to the lock client (the owner 2026-10-01 08:34: the stock pick sent an LND-a invoice to gateway A and it was refunded)', async () => {
+  const seen = [];
+  const client = { withdrawableMsat: async () => '50000',
+    withdraw: async (invoice, gw) => { seen.push(gw); return JSON.stringify({ state: 'Success', preimage: 'ab'.repeat(32), invoice_msat: 5000, gateway: gw }); } };
+  const out = await withdrawCollected({ client, amountMsat: 5000n, gateways: ['https://gw-b.example/'],
+    invoiceFor: async () => ({ ok: true, invoice: bolt11For(5000n) }) });
+  assert.equal(out.ok, true, out.why);
+  assert.deepEqual(seen, ['https://gw-b.example/']);
+});
+
 test('a withdrawal of a chosen amount pays only an invoice of exactly that amount', async () => {
   const { LockClient } = lockClient();
   const tab = tabStorage();

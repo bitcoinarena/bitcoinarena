@@ -1047,7 +1047,7 @@ export async function tabLockWallet({ round, roundId, invite, seed, LockClient, 
  * the stock client's own sum) goes to an invoice from the player's own wallet: made by
  * their connected wallet, or pasted. Nothing is remembered between withdraws.
  */
-export async function withdrawCollected({ client, invoiceFor, amountMsat = null, onStep = () => {} } = {}) {
+export async function withdrawCollected({ client, invoiceFor, amountMsat = null, gateways = [], onStep = () => {} } = {}) {
   const withdrawable = BigInt(await client.withdrawableMsat());
   if (withdrawable <= 0n) return { ok: false, final: true, withdrawableMsat: 0n, why: 'nothing in this tab\'s wallet to withdraw' };
   // AN AMOUNT THE PLAYER CHOSE (GROSS-INVOICE-2053: the same round tabs under Settings, for withdrawal): n x the stake or a
@@ -1065,7 +1065,8 @@ export async function withdrawCollected({ client, invoiceFor, amountMsat = null,
       why: `the invoice asks ${named === null ? 'any amount' : `${named} msat`}, and ${asked} msat was chosen - nothing was sent` };
   }
   onStep('withdrawing over Lightning');
-  const said = JSON.parse(await client.withdraw(inv.invoice));
+  // the funded gateway preferred; the lock client never takes the gateway on the invoice's own node
+  const said = JSON.parse(await client.withdraw(inv.invoice, depositGateway('', gateways) || undefined));
   const ok = said.state === 'Success';
   return { ok, final: ok, withdrawableMsat: withdrawable, invoiceMsat: said.invoice_msat == null ? null : BigInt(said.invoice_msat),
     state: said.state, gateway: said.gateway, balance_before: said.balance_before, balance_after: said.balance_after,
@@ -1078,10 +1079,10 @@ export async function withdrawCollected({ client, invoiceFor, amountMsat = null,
  * the same withdraw the round's wallet uses (`withdrawCollected`): its whole withdrawable balance to an invoice from the
  * player's own Lightning wallet. A spend - called from the Withdraw press alone, never on a timer.
  */
-export async function withdrawPlayerWallet({ round, invite, seed, LockClient, storage, invoiceFor, amountMsat = null, onStep = () => {} } = {}) {
+export async function withdrawPlayerWallet({ round, invite, seed, LockClient, storage, invoiceFor, amountMsat = null, gateways = [], onStep = () => {} } = {}) {
   const client = await playerWallet({ round, invite, seed, LockClient, storage, onStep });
   let out;
-  try { out = await withdrawCollected({ client, invoiceFor, amountMsat, onStep }); } catch (e) {
+  try { out = await withdrawCollected({ client, invoiceFor, amountMsat, gateways, onStep }); } catch (e) {
     // THE STOCK CLIENT'S ANSWER FOR A BALANCE ITS OWN SEND FEES WOULD EAT: nothing to withdraw, and nothing spent.
     if (!/too low to send any amount after fees/i.test(String((e && e.message) || e))) throw e;
     out = { ok: false, final: true, withdrawableMsat: 0n, why: 'nothing in the player wallet to withdraw after the send\'s fees' };

@@ -1149,7 +1149,8 @@
           // THE DONATION IS PAID FROM THE PLAYER WALLET (the owner 2026-10-01): its own send pays each recipient's invoice
           window.BLWP_PLAYER_PAYER = async (invoice) => {
             const c = await BLWPCLIENT.playerWallet({ round: named.round, invite: named.federation, seed, LockClient: wasm.LockClient, storage: vault() });
-            const said = JSON.parse(await c.withdraw(invoice));
+            const gw = (new URLSearchParams(location.search).get('gateway') || '').split(',').map((g) => g.trim()).filter(Boolean)[0];
+            const said = JSON.parse(await c.withdraw(invoice, gw || undefined));
             if (said.state !== 'Success') return { ok: false, why: 'the player wallet could not pay it (' + said.state + ')' };
             try { BLWPCLIENT.recordDonation(vault(), named.round.federationId, { msat: BigInt(said.invoice_msat || 0), round: named.roundIdHex }); } catch { /* history only */ }
             return { ok: true, preimage: said.preimage };
@@ -1892,7 +1893,7 @@
         try {
           const wasm = await import('./blwp_lock_client.js'); await wasm.default();
           const out = await BLWPCLIENT.withdrawPlayerWallet({ round: ctx.round, invite: ctx.invite, seed: ctx.seed, LockClient: wasm.LockClient,
-            storage: vault(), amountMsat: chosen, onStep, invoiceFor: async () => ({ ok: true, invoice: pasted }) });
+            storage: vault(), amountMsat: chosen, gateways: ctx.gateways, onStep, invoiceFor: async () => ({ ok: true, invoice: pasted }) });
           if (out.ok) status.set(3, `Done! ${n} were sent to your Lightning wallet` + (host(out.gateway) ? ` via ${host(out.gateway)}.` : '.'), 'ok');
           else if (out.state === 'Refunded') status.set(3, `The payment could not be completed. Your ${n} are back in your wallet.`, 'fail');
           else if (out.withdrawableMsat != null && chosen > BigInt(out.withdrawableMsat)) status.set(3, TOO_MUCH, 'fail');
