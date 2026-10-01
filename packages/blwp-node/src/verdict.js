@@ -21,6 +21,7 @@
 // result ids is what section 13 asks for. The hash is the reason the ids
 // match, not a thing to sign beside them.
 import { schnorr } from '@noble/curves/secp256k1.js';
+import { verifyKept } from './verify-kept.js';
 import {
   resultId, encodePlayerResult, decodePlayerResult, splitSignedResult, SIGNED_RESULT_BYTES,
 } from '../../protocol/src/result.js';
@@ -170,7 +171,7 @@ export function verifiedFinal(records, { contract, signerNodes: joined }) {
     seen.add(who);
 
     let ok = false;
-    try { ok = schnorr.verify(signature, resultId(result), result.nodePubkey); } catch { ok = false; }
+    ok = verifyKept(signature, resultId(result), result.nodePubkey);
     if (!ok) { forged++; continue; }
 
     const run = hex(runId(result));
