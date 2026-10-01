@@ -448,6 +448,32 @@ impl LockClient {
         .to_string())
     }
 
+    /// THE SEND OPERATIONS THIS CLIENT KEEPS (read-only; measured 2026-10-01: a failed withdraw held 8192 msat that did
+    /// not come back): each with its gateway, contract amount, funding transaction and the federation's answer on it -
+    /// accepted, rejected with its reason, or undecided after 5 s. Spends nothing.
+    #[wasm_bindgen(js_name = sendLog)]
+    pub async fn send_log(&self) -> Result<String, JsError> {
+        let ops = self.client.operation_log().paginate_operations_rev(30, None).await;
+        let mut out = Vec::new();
+        for (key, entry) in ops {
+            let op = key.operation_id;
+            let Ok(fedimint_lnv2_client::LightningOperationMeta::Send(m)) =
+                entry.try_meta::<fedimint_lnv2_client::LightningOperationMeta>() else { continue };
+            let txid = m.change_outpoint_range.txid();
+            let client = &self.client;
+            let wait = Box::pin(async { client.transaction_updates(op).await.await_tx_accepted(txid).await });
+            let tick = Box::pin(fedimint_core::runtime::sleep(fedimint_core::runtime::Duration::from_secs(5)));
+            let funding = match futures::future::select(wait, tick).await {
+                futures::future::Either::Left((Ok(()), _)) => "accepted".to_owned(),
+                futures::future::Either::Left((Err(e), _)) => format!("rejected: {e}"),
+                futures::future::Either::Right(_) => "undecided".to_owned(),
+            };
+            out.push(serde_json::json!({ "operation": op.fmt_full().to_string(), "gateway": m.gateway.to_string(),
+                "contract_msat": m.contract.amount.msats, "txid": txid.to_string(), "funding": funding }));
+        }
+        Ok(serde_json::Value::Array(out).to_string())
+    }
+
     /// The client's ecash, in msat, as a decimal string.
     #[wasm_bindgen(js_name = balanceMsat)]
     pub async fn balance_msat(&self) -> Result<String, JsError> {
