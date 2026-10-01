@@ -168,6 +168,21 @@ test('a 2% donor pays 1334 msat and 666 msat to the two recipients the set names
   console.log(`  2% donor: ${said.paid.map((p) => `${p.amountMsat} msat to ${p.url}`).join(', ')}; wallet asked ${asked.length}`);
 });
 
+test('the player wallet pays the donation (the owner 2026-10-01): payWith gets exactly the recipients\' invoices, no wallet connection needed', async () => {
+  const entry = entryOf(2000n);
+  const endpoints = await recipients();
+  const paidBy = [];
+  try {
+    const client = new Client({ base: 'http://127.0.0.1:9', core: {}, sign: async () => new Uint8Array(64), verify: () => true });
+    client.stakeCommitted = true;
+    const said = await client.payDonation(entry, SET, { fetcher: endpoints.fetcher, random: rand,
+      payWith: async (invoice) => { paidBy.push(invoice); return { ok: true, preimage: 'cd'.repeat(32) }; } });
+    assert.equal(said.ok, true, said.why);
+    assert.equal(said.paidMsat, 2000n);
+    assert.deepEqual(paidBy, endpoints.issued.map((i) => i.pr), 'the player wallet paid something other than the recipients\' invoices');
+  } finally { await endpoints.close(); }
+});
+
 test('a 0% donor pays nothing and asks nobody', async () => {
   const { said, seen, asked } = await pay(entryOf(0n));
   assert.deepEqual([said.ok, said.paidMsat, seen.length, asked.length], [true, 0n, 0, 0]);

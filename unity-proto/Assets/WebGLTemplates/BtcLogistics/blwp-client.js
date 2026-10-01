@@ -8973,6 +8973,7 @@ function decodeBolt11(invoice) {
 
 
 
+
 const namesNothing = (b) => !(b instanceof Uint8Array) || b.every((x) => x === 0);
 
 /**
@@ -9123,8 +9124,20 @@ async function playerWallet({ round, invite, seed, LockClient, storage, onStep =
  * it pays a sitting signer node, and a refusal of a federation that charges a base fee (FEDERATION.md item 4; §22A) -
  * before anything is deposited or locked. An unknown rule is not a base fee (the gate then mints no fee lock).
  */
-async function locksForRound(round, client, donationMsat) { return locksFor(round, client, donationMsat); }
-async function locksFor(round, client, donationMsat) {
+async function locksForRound(round, client, donationMsat, donationRecipients = null) { return locksFor(round, client, donationMsat, donationRecipients); }
+/**
+ * THE DONATION, PAID FROM THE PLAYER WALLET TOO (the owner 2026-10-01: "donation is paid by the player as well"): what its
+ * shares take from the wallet - each share is its own Lightning payment, so each is rounded up to whole notes. With no
+ * set to split by, the donation as one share.
+ */
+function donationCostMsat(donationMsat, recipients = null) {
+  const d = BigInt(donationMsat || 0n);
+  if (d <= 0n) return 0n;
+  const split = Array.isArray(recipients) ? splitDonation({ donationMsat: d, recipients }) : null;
+  const shares = split && split.owed ? split.shares.map((x) => x.amountMsat) : [d];
+  return shares.reduce((t, m) => t + (m > 0n ? ceilNote(m) : 0n), 0n);
+}
+async function locksFor(round, client, donationMsat, donationRecipients = null) {
   const amount = lockAmountMsat(round, donationMsat);
   let feeRule = null;
   if (typeof client.feeRule === 'function') {
@@ -9135,7 +9148,11 @@ async function locksFor(round, client, donationMsat) {
     throw new Error(`no stake is locked to this round: its federation charges a base fee of ${feeRule.baseMsat} msat `
       + 'on every input and output - a federation for BLWP runs with disable_base_fees (FEDERATION.md)');
   const feeGate = feeLockPays({ contract: round, fees: feeRule });
-  return { amount, feeGate, feeMsat: feeGate.pays ? feeGate.lockMsat : 0n };
+  // A FEDERATION WITH NO FEES (0/0) quotes every lock exactly - its amount in whole notes - so the stake check needs no
+  // allowance on top (the owner 2026-10-01: the 2 sat "reserve" made one 100 sat round ask 100.352 + 2.006)
+  const zeroFees = !!feeRule && feeRule.baseMsat === 0n && feeRule.ppm === 0n;
+  return { amount, feeGate, feeMsat: feeGate.pays ? feeGate.lockMsat : 0n, zeroFees,
+    donationCostMsat: donationCostMsat(donationMsat, donationRecipients) };
 }
 
 /**
@@ -9144,7 +9161,7 @@ async function locksFor(round, client, donationMsat) {
  * the notes the stake lock leaves (measured in a real browser, 0.0.1236: 21504 msat left for a 20000 msat fee lock that
  * then cost more). `null` quotes: the wallet holds too little to be quoted at all (the stock dry run).
  */
-async function needFor(client, LockClient, { amount, feeMsat }) {
+async function needFor(client, LockClient, { amount, feeMsat, zeroFees = false, donationCostMsat: donation = 0n }) {
   const locks = feeMsat > 0n ? [amount, feeMsat] : [amount];
   let quoted = 0n;
   for (const m of locks) {
@@ -9154,9 +9171,10 @@ async function needFor(client, LockClient, { amount, feeMsat }) {
       break;
     }
   }
-  const margin = feeMsat > 0n ? BigInt(LockClient.lockAllowanceMsat(String(feeMsat))) : 0n;
-  const allowance = locks.reduce((t, m) => t + BigInt(LockClient.lockAllowanceMsat(String(m))), 0n);
-  return { locks, need: quoted === null ? null : quoted + margin, floor: locks.reduce((t, m) => t + m, 0n) + allowance + margin };
+  const margin = feeMsat > 0n && !zeroFees ? BigInt(LockClient.lockAllowanceMsat(String(feeMsat))) : 0n;
+  const allowance = zeroFees ? locks.reduce((t, m) => t + (ceilNote(m) - m), 0n) : locks.reduce((t, m) => t + BigInt(LockClient.lockAllowanceMsat(String(m))), 0n);
+  // and the donation's shares, paid from the same wallet once the stake is counted
+  return { locks, need: quoted === null ? null : quoted + margin + donation, floor: locks.reduce((t, m) => t + m, 0n) + allowance + margin + donation };
 }
 
 /**
@@ -9193,12 +9211,27 @@ const DEPOSIT_ROUNDS = [1, 2, 5, 10];
 // rule is 0/0). So a deposit is sized in whole notes, and N rounds is N x one round's locks plus the stake check's margin.
 const NOTE_MSAT = 512n;
 const ceilNote = (msat) => (BigInt(msat) + NOTE_MSAT - 1n) / NOTE_MSAT * NOTE_MSAT;
-/** What one round's locks take from the wallet: each lock's amount in whole notes. */
-const roundCostMsat = ({ amount, feeMsat = 0n }) => ceilNote(amount) + (BigInt(feeMsat) > 0n ? ceilNote(feeMsat) : 0n);
-/** The deposit that plays ONE round: its locks, plus the margin the wallet's stake check asks (needFor), in whole notes. */
+/** What one round takes from the wallet: each lock's amount in whole notes, and the donation's shares (each in whole notes). */
+const roundCostMsat = ({ amount, feeMsat = 0n, donationCostMsat: donation = 0n }) =>
+  ceilNote(amount) + (BigInt(feeMsat) > 0n ? ceilNote(feeMsat) : 0n) + BigInt(donation || 0n);
+const floorNote = (msat) => BigInt(msat) / NOTE_MSAT * NOTE_MSAT;
+/** What a whole-sat invoice is credited: its whole notes. */
+const creditedMsat = (msat) => floorNote(msat);
+/** What one round needs the wallet to hold: its locks and donation, plus the stake check's margin where fees are charged. */
+function oneRoundNeedMsat(locks, LockClient) {
+  const margin = BigInt(locks.feeMsat || 0n) > 0n && !locks.zeroFees ? BigInt(LockClient.lockAllowanceMsat(String(locks.feeMsat))) : 0n;
+  return roundCostMsat(locks) + margin;
+}
+/**
+ * THE PRICE PER ROUND, IN WHOLE SATS (the owner 2026-10-01: "which amounts are safe, so we show no odd amounts" - "yes"): the
+ * smallest whole sat P such that N x P sat, credited in whole notes, holds N rounds for every tab (1, 2, 5, 10). A 100
+ * sat round with a two-recipient donation: 101 sat (101 -> 100864 credited = one round's 100864).
+ */
 function oneRoundDepositMsat(locks, LockClient) {
-  const margin = BigInt(locks.feeMsat || 0n) > 0n ? BigInt(LockClient.lockAllowanceMsat(String(locks.feeMsat))) : 0n;
-  return ceilNote(roundCostMsat(locks) + margin);
+  const need = oneRoundNeedMsat(locks, LockClient);
+  let p = (need + 999n) / 1000n;
+  while (DEPOSIT_ROUNDS.some((n) => creditedMsat(BigInt(n) * p * 1000n) < BigInt(n) * need)) p += 1n;
+  return p * 1000n;
 }
 /** N ROUNDS ARE N x ONE ROUND (the owner 2026-10-01: "1 round" 100.xx sat; then 2 rounds 198.656 beside it read as wrong):
  * every round funded as the first is - each with its own margin - so the tabs are 1, 2, 5, 10 x the "1 round" amount. */
@@ -9250,8 +9283,8 @@ function depositOffer({ client, stakeMsat, haveMsat = null, needMsat = null, gat
   const watchers = [];
   const said = (d, final) => { for (const w of watchers) { try { w(d, final); } catch { /* a watcher's own fault */ } } };
   const invoice = async (msat) => {
-    // in whole notes: a part under 512 msat would never be credited
-    const amount = ceilNote(msat);
+    // AS ASKED, IN WHOLE SATS: the tabs are priced so their whole notes hold the rounds (oneRoundDepositMsat)
+    const amount = BigInt(msat);
     if (amount <= 0n) throw new Error('a deposit is more than 0 sat');
     const gateway = depositGateway('', gateways);
     const got = JSON.parse(await client.receive(String(amount), gateway));
@@ -9271,7 +9304,7 @@ function depositOffer({ client, stakeMsat, haveMsat = null, needMsat = null, gat
   const rest = restMsat === null ? null : BigInt(restMsat);
   // what the rest invoice asks: the rest itself, or the 5 sat floor when the rest is under it
   const restPay = rest === null ? null : restInvoiceMsat(rest);
-  return { stakeMsat: BigInt(stakeMsat || 0n), haveMsat, needMsat, invoice, claimed, made, restMsat: rest, restPayMsat: restPay,
+  return { stakeMsat: BigInt(stakeMsat || 0n), perRoundStake: BigInt(stakeMsat || 0n), haveMsat, needMsat, invoice, claimed, made, restMsat: rest, restPayMsat: restPay,
     // THE TABS (1, 2, 5, 10 rounds and Custom, gross), or - for the rest of a round's fees - the one amount
     choices: rest === null ? depositChoices(stakeMsat, sizeOf) : [{ key: 'rest', label: 'The rest', rounds: null, msat: restPay }],
     outcome, decided: (o) => decide(o),
@@ -9319,9 +9352,9 @@ function resumeDeposits({ client, storage, federationId, onClaimed = () => {} } 
   }, () => 'unknown')));
 }
 /** A deposit into the player wallet from Settings: the same tabs, this round's stake, no round to fund. */
-async function settingsDepositOffer({ round, invite, seed, LockClient, storage, gateways = [], donationMsat = 0n, onDeposit = () => {}, onClaimed = () => {} } = {}) {
+async function settingsDepositOffer({ round, invite, seed, LockClient, storage, gateways = [], donationMsat = 0n, donationRecipients = null, onDeposit = () => {}, onClaimed = () => {} } = {}) {
   const client = await playerWallet({ round, invite, seed, LockClient, storage });
-  const locks = await locksFor(round, client, donationMsat);
+  const locks = await locksFor(round, client, donationMsat, donationRecipients);
   const offer = depositOffer({ client, stakeMsat: round.stakeMsat, haveMsat: BigInt(await client.balanceMsat()), gateways, onDeposit,
     storage, federationId: round.federationId, sizeOf: (n) => roundsDepositMsat(n, locks, LockClient) });
   offer.claimed.then((d) => { depositRow(storage, round, d); onClaimed(d); offer.decided({ funded: true }); }, () => {});
@@ -9338,18 +9371,25 @@ const DEPOSIT_MARGIN_MSAT = 10000n;
 const REST_MARGIN_MSAT = 1000n;
 /** THE SMALLEST DEPOSIT THE FEDERATION TAKES (measured 2026-10-01 through gateway B: 2, 3, 4 sat refused "Amount is too
  * small to cover fees", 5 sat made). A rest under it is invoiced at it; the extra stays in the player wallet. */
-const REST_FLOOR_MSAT = ceilNote(5000n);   // 5 sat in whole notes: 5120 msat (5000 would credit 4608)
+const REST_FLOOR_MSAT = 5000n;   // the smallest deposit the federation takes (measured: 2, 3, 4 sat refused)
 const restInvoiceMsat = (restMsat) => (BigInt(restMsat) < REST_FLOOR_MSAT ? REST_FLOOR_MSAT : BigInt(restMsat));
-/** The rest: exactly what the wallet is short, in whole notes (credited whole, so no margin). */
+/** A donation the player wallet paid, a history row (every deduction is a row - the owner 2026-09-30 16:15). */
+function recordDonation(storage, federationId, { msat, round }) {
+  ledgerAppend(storage, federationId, { kind: 'donation', msat: String(msat), round: round ? String(round) : null });
+}
+/** The rest: the smallest whole sat whose whole notes cover what the wallet is short. */
 function restOfFeesMsat(shortMsat) {
-  return ceilNote(shortMsat > 0n ? shortMsat : 1n);
+  const short = shortMsat > 0n ? BigInt(shortMsat) : 1n;
+  let sat = (short + 999n) / 1000n;
+  while (creditedMsat(sat * 1000n) < short) sat += 1n;
+  return sat * 1000n;
 }
 /** A wallet that holds most of a round and is short only by its fees (no more than a tenth of the stake) is asked the rest. */
 const shortOnlyByFees = (haveMsat, shortMsat, stakeMsat) => haveMsat > 0n && shortMsat > 0n && shortMsat * 10n <= BigInt(stakeMsat || 0n);
-async function fundPlayerWallet({ round, invite, seed, LockClient, storage, donationMsat = 0n, gateways = [],
+async function fundPlayerWallet({ round, invite, seed, LockClient, storage, donationMsat = 0n, donationRecipients = null, gateways = [],
   estimateDeposit = false, askDeposit = null, onDeposit = () => {}, onStep = () => {} } = {}) {
   const client = await playerWallet({ round, invite, seed, LockClient, storage, onStep });
-  const locks = await locksFor(round, client, donationMsat);
+  const locks = await locksFor(round, client, donationMsat, donationRecipients);
   const deposits = [];
   let prev = null;
   for (let tries = 0; ; tries++) {
@@ -15107,7 +15147,7 @@ class Client {
    * share already noted is never asked again - a reload over a kept lock
    * reports what was paid and left unpaid, and sends nothing.
    */
-  async payDonation(entry, set, { round, connection, curve, fetcher = (u) => fetch(u), log, random, storage, ...options } = {}) {
+  async payDonation(entry, set, { round, connection, curve, fetcher = (u) => fetch(u), log, random, storage, payWith = null, ...options } = {}) {
     const none = { paid: [], failed: [], unknown: [], paidMsat: 0n, asked: 0 };
     if (!entry || typeof entry.donationMsat !== 'bigint') return { ok: false, ...none, why: 'there is no entry whose donation to pay' };
     if (entry.donationMsat === 0n) return { ok: true, ...none, why: 'this entry donates nothing, so nothing is paid' };
@@ -15124,9 +15164,12 @@ class Client {
       const named = donationSetMatchesRound(round, set.recipients);
       if (!named.ok) return { ok: false, ...none, why: named.why };
     }
-    const where = typeof connection === 'string' ? parseConnection(connection) : connection;
+    // THE PLAYER WALLET PAYS IT (the owner 2026-10-01: "donation is paid by the player as well"): `payWith(invoice)` -
+    // the federation player wallet's own send - in place of a wallet connection; each share's invoice is still the
+    // recipient's own, checked against its pay request, as below.
+    const where = payWith ? { ok: true } : (typeof connection === 'string' ? parseConnection(connection) : connection);
     if (!where || !where.ok) return { ok: false, ...none, why: (where && where.why) || 'there is no wallet connection to pay the donation with' };
-    if (!curve || typeof curve.ecdhShared !== 'function' || typeof curve.signSchnorr !== 'function')
+    if (!payWith && (!curve || typeof curve.ecdhShared !== 'function' || typeof curve.signSchnorr !== 'function'))
       return { ok: false, ...none, why: 'talking to a wallet needs a curve, and none was injected' };
     const split = splitDonation({ donationMsat: entry.donationMsat, recipients: set.recipients });
     if (!split.owed) return { ok: false, ...none, why: split.why };
@@ -15171,7 +15214,9 @@ class Client {
       // NOTED BEFORE THE WALLET IS ASKED: a tab that cannot keep the note does
       // not ask, because a reload would ask again.
       if (!note({ state: 'asked' })) { unpaid('this tab could not keep a record of the payment, so the wallet is not asked - a reload would ask it again'); continue; }
-      const wallet = await payInvoice(where, answer.pr, {
+      let wallet;
+      if (payWith) { try { wallet = await payWith(answer.pr); } catch (e) { wallet = { ok: false, why: String((e && e.message) || e) }; } }
+      else wallet = await payInvoice(where, answer.pr, {
         curve, random: random || ((n) => crypto.getRandomValues(new Uint8Array(n))), ...options,
       });
       if (!wallet.ok) { unpaid(`the wallet did not pay it: ${wallet.why}`); continue; }
@@ -18012,7 +18057,7 @@ return { Client: Client, markState: markState,
          withdrawPlayerWallet: withdrawPlayerWallet,
          saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, keptLockUse: keptLockUse,
          ledgerRows: ledgerRows, ledgerReadSavedStakes: ledgerReadSavedStakes,
-         depositChoices: depositChoices, withdrawChoices: withdrawChoices, playerWithdrawable: playerWithdrawable, pendingDeposits: pendingDeposits, resumeDeposits: resumeDeposits, restOfFeesMsat: restOfFeesMsat, restInvoiceMsat: restInvoiceMsat, REST_FLOOR_MSAT: REST_FLOOR_MSAT, ceilNote: ceilNote, roundsDepositMsat: roundsDepositMsat, depositOffer: depositOffer, settingsDepositOffer: settingsDepositOffer, DEPOSIT_INSUFFICIENT: DEPOSIT_INSUFFICIENT,
+         depositChoices: depositChoices, withdrawChoices: withdrawChoices, playerWithdrawable: playerWithdrawable, pendingDeposits: pendingDeposits, resumeDeposits: resumeDeposits, restOfFeesMsat: restOfFeesMsat, restInvoiceMsat: restInvoiceMsat, REST_FLOOR_MSAT: REST_FLOOR_MSAT, ceilNote: ceilNote, roundsDepositMsat: roundsDepositMsat, recordDonation: recordDonation, donationCostMsat: donationCostMsat, depositOffer: depositOffer, settingsDepositOffer: settingsDepositOffer, DEPOSIT_INSUFFICIENT: DEPOSIT_INSUFFICIENT,
          findLock: findLock, refundStake: refundStake, forfeitOf: forfeitOf, redeemStake: redeemStake,
          settlementOf: settlementOf, redeemPayout: redeemPayout, payoutLine: payoutLine,
          returnStake: returnStake, stakeBackLine: stakeBackLine,

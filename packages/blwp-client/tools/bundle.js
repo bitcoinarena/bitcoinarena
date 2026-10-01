@@ -169,7 +169,7 @@ out += '         playerWallet: playerWallet, fundPlayerWallet: fundPlayerWallet,
 out += '         withdrawPlayerWallet: withdrawPlayerWallet,\n';
 out += '         saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, keptLockUse: keptLockUse,\n';
 out += '         ledgerRows: ledgerRows, ledgerReadSavedStakes: ledgerReadSavedStakes,\n';
-out += '         depositChoices: depositChoices, withdrawChoices: withdrawChoices, playerWithdrawable: playerWithdrawable, pendingDeposits: pendingDeposits, resumeDeposits: resumeDeposits, restOfFeesMsat: restOfFeesMsat, restInvoiceMsat: restInvoiceMsat, REST_FLOOR_MSAT: REST_FLOOR_MSAT, ceilNote: ceilNote, roundsDepositMsat: roundsDepositMsat, depositOffer: depositOffer, settingsDepositOffer: settingsDepositOffer, DEPOSIT_INSUFFICIENT: DEPOSIT_INSUFFICIENT,\n';
+out += '         depositChoices: depositChoices, withdrawChoices: withdrawChoices, playerWithdrawable: playerWithdrawable, pendingDeposits: pendingDeposits, resumeDeposits: resumeDeposits, restOfFeesMsat: restOfFeesMsat, restInvoiceMsat: restInvoiceMsat, REST_FLOOR_MSAT: REST_FLOOR_MSAT, ceilNote: ceilNote, roundsDepositMsat: roundsDepositMsat, recordDonation: recordDonation, donationCostMsat: donationCostMsat, depositOffer: depositOffer, settingsDepositOffer: settingsDepositOffer, DEPOSIT_INSUFFICIENT: DEPOSIT_INSUFFICIENT,\n';
 out += '         findLock: findLock, refundStake: refundStake, forfeitOf: forfeitOf, redeemStake: redeemStake,\n';
 // AND THE WINNER'S PAYOUT (6d, W4): the signer nodes' accepted settlement, the payout
 // contract to this seed's key spent into the tab's wallet, and its line.
