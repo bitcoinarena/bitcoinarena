@@ -1476,6 +1476,12 @@ test('a withdrawal names the funded gateway to the lock client (the owner 2026-1
   assert.deepEqual(seen, ['https://gw-b.example/']);
 });
 
+test('the invoice defines the withdrawal (the owner 2026-10-01): its amount is read off it; no amount and not an invoice are said so', () => {
+  assert.deepEqual(invoiceAmountMsat(bolt11For(99000n)), { ok: true, msat: 99000n });
+  assert.equal(invoiceAmountMsat('hello').why, 'That is not a Lightning invoice.');
+  assert.equal(invoiceAmountMsat('').ok, false);
+});
+
 test('a withdrawal of a chosen amount pays only an invoice of exactly that amount', async () => {
   const { LockClient } = lockClient();
   const tab = tabStorage();

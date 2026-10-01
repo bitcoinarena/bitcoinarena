@@ -308,6 +308,15 @@ export function depositChoices(stakeMsat, sizeOf = null) {
  * amount"): shares of what the wallet can send after its fees, in whole sat (an invoice names sat), then Custom.
  */
 export const WITHDRAW_SHARES = [25, 50, 100];
+/** THE AMOUNT AN INVOICE ASKS (the owner 2026-10-01: the invoice defines the amount - no withdraw selector): msat, or why not. */
+export function invoiceAmountMsat(invoice) {
+  const text = String(invoice || '').trim();
+  if (!text) return { ok: false, why: '' };
+  let d;
+  try { d = decodeBolt11(text); } catch { return { ok: false, why: 'That is not a Lightning invoice.' }; }
+  if (d.amountMsat === null || d.amountMsat === undefined || BigInt(d.amountMsat) <= 0n) return { ok: false, why: 'Please use an invoice with an amount.' };
+  return { ok: true, msat: BigInt(d.amountMsat) };
+}
 export function withdrawChoices(withdrawableMsat) {
   const all = BigInt(withdrawableMsat || 0n);
   return [...WITHDRAW_SHARES.map((pct) => ({ key: String(pct), label: `${pct}%`, pct, msat: (all * BigInt(pct) / 100n) / 1000n * 1000n })),

@@ -9254,6 +9254,15 @@ function depositChoices(stakeMsat, sizeOf = null) {
  * amount"): shares of what the wallet can send after its fees, in whole sat (an invoice names sat), then Custom.
  */
 const WITHDRAW_SHARES = [25, 50, 100];
+/** THE AMOUNT AN INVOICE ASKS (the owner 2026-10-01: the invoice defines the amount - no withdraw selector): msat, or why not. */
+function invoiceAmountMsat(invoice) {
+  const text = String(invoice || '').trim();
+  if (!text) return { ok: false, why: '' };
+  let d;
+  try { d = decodeBolt11(text); } catch { return { ok: false, why: 'That is not a Lightning invoice.' }; }
+  if (d.amountMsat === null || d.amountMsat === undefined || BigInt(d.amountMsat) <= 0n) return { ok: false, why: 'Please use an invoice with an amount.' };
+  return { ok: true, msat: BigInt(d.amountMsat) };
+}
 function withdrawChoices(withdrawableMsat) {
   const all = BigInt(withdrawableMsat || 0n);
   return [...WITHDRAW_SHARES.map((pct) => ({ key: String(pct), label: `${pct}%`, pct, msat: (all * BigInt(pct) / 100n) / 1000n * 1000n })),
@@ -18065,7 +18074,7 @@ return { Client: Client, markState: markState,
          withdrawPlayerWallet: withdrawPlayerWallet,
          saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, keptLockUse: keptLockUse,
          ledgerRows: ledgerRows, ledgerReadSavedStakes: ledgerReadSavedStakes,
-         depositChoices: depositChoices, withdrawChoices: withdrawChoices, playerWithdrawable: playerWithdrawable, pendingDeposits: pendingDeposits, resumeDeposits: resumeDeposits, restOfFeesMsat: restOfFeesMsat, restInvoiceMsat: restInvoiceMsat, REST_FLOOR_MSAT: REST_FLOOR_MSAT, ceilNote: ceilNote, roundsDepositMsat: roundsDepositMsat, recordDonation: recordDonation, donationCostMsat: donationCostMsat, depositOffer: depositOffer, settingsDepositOffer: settingsDepositOffer, DEPOSIT_INSUFFICIENT: DEPOSIT_INSUFFICIENT,
+         depositChoices: depositChoices, withdrawChoices: withdrawChoices, invoiceAmountMsat: invoiceAmountMsat, playerWithdrawable: playerWithdrawable, pendingDeposits: pendingDeposits, resumeDeposits: resumeDeposits, restOfFeesMsat: restOfFeesMsat, restInvoiceMsat: restInvoiceMsat, REST_FLOOR_MSAT: REST_FLOOR_MSAT, ceilNote: ceilNote, roundsDepositMsat: roundsDepositMsat, recordDonation: recordDonation, donationCostMsat: donationCostMsat, depositOffer: depositOffer, settingsDepositOffer: settingsDepositOffer, DEPOSIT_INSUFFICIENT: DEPOSIT_INSUFFICIENT,
          findLock: findLock, refundStake: refundStake, forfeitOf: forfeitOf, redeemStake: redeemStake,
          settlementOf: settlementOf, redeemPayout: redeemPayout, payoutLine: payoutLine,
          returnStake: returnStake, stakeBackLine: stakeBackLine,

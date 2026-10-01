@@ -351,10 +351,9 @@
         <div id="blwp-history-rows"></div>
       </div>
       <div id="blwp-withdraw-panel" style="display:none">
-        <div class="wd-tabs" id="blwp-wd-tabs"></div>
-        <div class="wd-custom" id="blwp-wd-custom" style="display:none"><input id="blwp-wd-sat" type="text" inputmode="numeric" autocomplete="off" placeholder="amount in sat"></div>
         <div class="muted" id="blwp-wd-amount"></div>
-        <input id="blwp-wd-invoice" type="text" placeholder="Paste an invoice from your own Lightning wallet for that amount" style="width:100%;box-sizing:border-box;margin:6px 0">
+        <input id="blwp-wd-invoice" type="text" autocomplete="off" placeholder="Paste an invoice from your own Lightning wallet" style="width:100%;box-sizing:border-box;margin:6px 0">
+        <div class="muted" id="blwp-wd-chosen"></div>
         <button id="blwp-wd-go" type="button">Withdraw</button>
       </div>
       <div id="blwp-money-actions">
@@ -1826,61 +1825,47 @@
         gateways: window.BLWP_LEDGER_GATEWAYS || [] };
     }
     function openWithdraw(ctx) {
-      const panel = document.getElementById('blwp-withdraw-panel'); const tabs = document.getElementById('blwp-wd-tabs');
-      const custom = document.getElementById('blwp-wd-custom'); const sat = document.getElementById('blwp-wd-sat');
+      // THE INVOICE DEFINES THE AMOUNT (the owner 2026-10-01, "1 and 3"): no selector - the page says how much can be withdrawn,
+      // the player makes an invoice in their own wallet for up to that, and the page reads the amount off the invoice.
+      const panel = document.getElementById('blwp-withdraw-panel');
       const amountEl = document.getElementById('blwp-wd-amount'); const inv = document.getElementById('blwp-wd-invoice');
+      const chosenEl = document.getElementById('blwp-wd-chosen');
       const why = document.getElementById('blwp-money-why');
-      panel.style.display = ''; tabs.textContent = ''; why.textContent = '';
+      panel.style.display = ''; why.textContent = ''; chosenEl.textContent = ''; inv.value = '';
       // WHAT IS HAPPENING NOW, UNDER THE PASTED INVOICE (the owner 2026-09-30): one status line and bar, made once
       const go = document.getElementById('blwp-wd-go');
       const status = openWithdraw.status || (openWithdraw.status = payStatus(go.parentNode, go.nextSibling));
       status.hide();
-      let chosen = null;
       const satOf = (msat) => `${(BigInt(msat) / 1000n).toLocaleString('en-US')} sat`;
-      const say = () => { amountEl.textContent = chosen ? `You withdraw ${satOf(chosen)}. Paste an invoice for exactly this amount.` : 'Enter an amount in sat.'; };
-      // THE TABS (the owner 2026-09-30): 25%, 50% and 100% of what the wallet can send after its fees, then Custom - an amount
-      // the player types. The shares wait for the wallet's answer; Custom works at once.
-      let buttons = [];
-      const paintTabs = (withdrawable) => {
-        tabs.textContent = '';
-        buttons = BLWPCLIENT.withdrawChoices(withdrawable ?? 0n).map((c) => {
-          const b = document.createElement('button'); b.type = 'button';
-          b.textContent = c.key === 'custom' || !(withdrawable > 0n) ? c.label : `${c.label} · ${satOf(c.msat)}`;
-          // NOTHING TO WITHDRAW, NOTHING TO PRESS (the owner 2026-09-30): at 0 every tab, Custom included, is off
-          b.disabled = !(withdrawable > 0n);
-          b.addEventListener('click', () => { for (const x of buttons) x.classList.toggle('on', x === b);
-            custom.style.display = c.key === 'custom' ? '' : 'none';
-            if (c.key === 'custom') { chosen = typedSat(); sat.focus(); } else chosen = c.msat;
-            say(); });
-          tabs.appendChild(b); return b;
-        });
-      };
-      const typedSat = () => { const n = parseInt(String(sat.value).replace(/[^0-9]/g, ''), 10); return n > 0 ? BigInt(n) * 1000n : null; };
-      sat.oninput = () => { chosen = typedSat(); say(); };
-      // off until the wallet says how much it can send; off for good at 0
-      const goBtn = document.getElementById('blwp-wd-go');
-      const usable = (on) => { panel.classList.toggle('empty', !on); inv.disabled = !on; sat.disabled = !on; goBtn.disabled = !on; };
-      usable(false);
       // CUSTOM OVER THE BALANCE, IN PLAYER WORDS (the owner 2026-09-30): never the wallet library's msat sentence
       const TOO_MUCH = 'Not enough to withdraw that amount after fees. Choose a smaller amount.';
-      let canMsat = null;
-      paintTabs(null);
+      let canMsat = null; let chosen = null;
+      // off until the wallet says how much it can send; off for good at 0
+      const usable = (on) => { panel.classList.toggle('empty', !on); inv.disabled = !on; go.disabled = !on; };
+      usable(false);
       amountEl.textContent = 'Checking how much you can withdraw …';
+      const readInvoice = () => {
+        const a = BLWPCLIENT.invoiceAmountMsat(inv.value);
+        chosen = a.ok ? a.msat : null;
+        chosenEl.textContent = a.ok ? `You withdraw ${satOf(a.msat)}.` : a.why;
+        if (a.ok && canMsat !== null && a.msat > canMsat) status.set(3, TOO_MUCH, 'fail'); else status.hide();
+      };
+      inv.oninput = readInvoice;
       (async () => {
         try {
           const wasm = await import('./blwp_lock_client.js'); await wasm.default();
           const can = await BLWPCLIENT.playerWithdrawable({ round: ctx.round, invite: ctx.invite, seed: ctx.seed, LockClient: wasm.LockClient, storage: vault() });
           canMsat = can;
-          paintTabs(can);
           usable(can > 0n);
-          if (can > 0n) buttons[2].click();   // 100%: everything
-          else { chosen = null; amountEl.textContent = 'Your wallet is empty, so there is nothing to withdraw.'; }
-        } catch (e) { paintTabs(null); amountEl.textContent = 'Your balance could not be read (' + (e && e.message ? e.message : e) + '). Try again in a moment.'; }
+          amountEl.textContent = can > 0n ? `You can withdraw up to ${satOf(can)}. Make an invoice in your own wallet for any amount up to that and paste it here.`
+            : 'Your wallet is empty, so there is nothing to withdraw.';
+        } catch (e) { amountEl.textContent = 'Your balance could not be read (' + (e && e.message ? e.message : e) + '). Try again in a moment.'; }
       })();
-      document.getElementById('blwp-wd-go').onclick = async () => {
-        if (!chosen) { why.textContent = 'Choose an amount first.'; return; }
+      go.onclick = async () => {
+        readInvoice();
         const pasted = String(inv.value || '').trim();
-        if (!pasted) { why.textContent = `Paste an invoice for ${satOf(chosen)}.`; return; }
+        if (!pasted) { why.textContent = 'Paste an invoice first.'; return; }
+        if (!chosen) return;
         if (canMsat !== null && chosen > canMsat) { why.textContent = ''; status.set(3, TOO_MUCH, 'fail'); return; }
         why.textContent = '';
         const n = satOf(chosen);
