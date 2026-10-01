@@ -10016,7 +10016,7 @@ async function withdrawCollected({ client, invoiceFor, amountMsat = null, gatewa
   const ok = said.state === 'Success';
   return { ok, final: ok, withdrawableMsat: withdrawable, invoiceMsat: said.invoice_msat == null ? null : BigInt(said.invoice_msat),
     state: said.state, gateway: said.gateway, balance_before: said.balance_before, balance_after: said.balance_after,
-    why: ok ? undefined : `the withdraw ended ${said.state}${said.state === 'Refunded' ? ' - the money is back in this tab\'s wallet' : ''}` };
+    why: ok ? undefined : `the withdraw ended ${said.state}${said.state === 'Refunded' ? ' - the money is back in this tab\'s wallet' : ''}${said.why ? ` (${said.why})` : ''}` };
 }
 
 /**

@@ -429,9 +429,20 @@ impl LockClient {
             FinalSendOperationState::Refunded => ("Refunded", None),
             FinalSendOperationState::Failure => ("Failure", None),
         };
+        // WHY IT FAILED (measured 2026-10-01: "Failure" with no reason - the funding transaction was rejected and the
+        // reason stayed inside the client): the federation's own answer on the funding transaction.
+        let mut why: Option<String> = None;
+        if state == "Failure" {
+            if let Some(entry) = self.client.operation_log().get_operation(op).await {
+                if let Ok(fedimint_lnv2_client::LightningOperationMeta::Send(m)) = entry.try_meta::<fedimint_lnv2_client::LightningOperationMeta>() {
+                    let txid = m.change_outpoint_range.txid();
+                    if let Err(e) = self.client.transaction_updates(op).await.await_tx_accepted(txid).await { why = Some(e); }
+                }
+            }
+        }
         let balance_after = self.client.get_balance_for_btc().await.map_err(js)?;
         Ok(serde_json::json!({
-            "state": state, "preimage": preimage, "invoice_msat": invoice_msat, "gateway": gateway.to_string(),
+            "state": state, "preimage": preimage, "why": why, "invoice_msat": invoice_msat, "gateway": gateway.to_string(),
             "balance_before": balance_before.msats, "balance_after": balance_after.msats,
         })
         .to_string())
