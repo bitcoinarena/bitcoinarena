@@ -11,7 +11,7 @@
 import { computePayoutTable, netStakeMsat, VOID, FORFEIT, ENTRY_VOID } from '../../protocol/src/payout.js';
 import { decodePlayerResult, splitSignedResult } from '../../protocol/src/result.js';
 import { roundEndMs } from '../../protocol/src/first-mark.js';
-import { OBJECTION_WINDOW_MS } from '../../protocol/src/window.js';
+import { OBJECTION_WINDOW_MS, FINAL_TOLERANCE_MS } from '../../protocol/src/window.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { resultFinality } from './finality.js';
 import { PROVISIONALLY_FINAL, FINAL } from '../../protocol/src/objection.js';
@@ -72,6 +72,20 @@ export function standingOf(round, roundIdBytes, entryIdBytes, contract) {
     const e = all.find(({ entryId }) => toHex(entryId) === toHex(entryIdBytes));
     try { pendingMsat = String(netStakeMsat(e.entry)); kind = 'refund'; } catch { pendingMsat = null; }
   }
+  // SETTLED WITHOUT FINAL (the owner 2026-10-01, WINDOW-10-SPEC follow-up): "The line appears at once when money is owed. It
+  // disappears when the payment is no longer owed." A result still PROVISIONALLY_FINAL past this seat's end + 605 s, in a
+  // round whose settlement this seat holds ACCEPTED by the federation, and that settlement pays this entry's share - its
+  // player among the paid shares, or its stake lock among the claimed - owes nothing more: no pending amount. The record
+  // stays PROVISIONALLY_FINAL and nothing signs a FINAL for it (rounds settled before the FINAL signature existed, whose
+  // census the seats' chain view no longer reaches).
+  if (mine.decided && mine.state === PROVISIONALLY_FINAL && openMs !== null
+    && BigInt(round.now()) >= openMs + OBJECTION_WINDOW_MS + FINAL_TOLERANCE_MS) {
+    const settled = settledFor(round, roundIdBytes, entryIdBytes, mine.pubkey);
+    if (settled)
+      return { ...base, state: mine.state, outcome: mine.outcome, pendingMsat: null, kind: null, settled: settled.txid,
+        provisional: false, signedSoFar: entries.length, entries: counted,
+        why: `the round's settlement ${settled.txid} is ACCEPTED by the federation and pays this entry's share: nothing is pending` };
+  }
   if (standsOn) {
     kind = 'payout';
     const { table } = computePayoutTable({ roundId: roundIdBytes, entries, minScore: contract.minScore });
@@ -80,4 +94,16 @@ export function standingOf(round, roundIdBytes, entryIdBytes, contract) {
   }
   return { ...base, state: mine.state, outcome: mine.decided ? mine.outcome : null, pendingMsat, kind,
     provisional: entries.length < counted, signedSoFar: entries.length, entries: counted, why: mine.why || null };
+}
+
+/** This seat's ACCEPTED settlement of the round, if it pays this entry's share - its player paid, or its stake lock claimed. */
+function settledFor(round, roundIdBytes, entryIdBytes, playerPubkey) {
+  const s = typeof round.lockSettlement === 'function' ? round.lockSettlement(roundIdBytes) : null;
+  if (!s || s.state !== 'ACCEPTED') return null;
+  const shares = typeof round.lockSettlementShares === 'function' ? round.lockSettlementShares(roundIdBytes) || [] : [];
+  if (shares.some((x) => toHex(x.pubkey) === toHex(playerPubkey) && x.msat > 0n)) return s;
+  const moves = typeof round.lockSettlementMoves === 'function' ? round.lockSettlementMoves(roundIdBytes) : null;
+  const lock = typeof round.stakeLock === 'function' ? round.stakeLock(entryIdBytes) : null;
+  if (moves && lock && moves.claims.includes(lock.outpoint)) return s;
+  return null;
 }

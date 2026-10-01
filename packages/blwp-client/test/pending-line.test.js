@@ -51,3 +51,19 @@ test('collected into the wallet: the round\'s note goes and nothing is pending',
   assert.equal(p.window.BLWP_PENDING_SATS, 0);
   assert.equal(p.kept.size, 0, 'the collected round is still asked about');
 });
+
+// SETTLED WITHOUT FINAL (the owner 2026-10-01): the signer nodes answer a round settled and accepted, with no FINAL signature,
+// with state PROVISIONALLY_FINAL, no pending amount, and the accepted settlement as the reason - the page shows no line,
+// as for an invalid payment; and the same note on a live round with its amount shows it again.
+test('a round the nodes report settled - PROVISIONALLY_FINAL, no pending amount - gives no line; the live amount does', async () => {
+  const settled = { state: 'PROVISIONALLY_FINAL', pendingMsat: null, kind: null, settled: 'ab'.repeat(32),
+    windowCloseMs: String(Date.UTC(2026, 8, 30, 22, 13, 30)), why: `the round's settlement ${'ab'.repeat(32)} is ACCEPTED by the federation and pays this entry's share: nothing is pending` };
+  const p = page({ answers: { a: settled, b: settled, c: settled } });
+  await p.go();
+  assert.equal(p.window.BLWP_PENDING_SATS, 0, 'a settled round left a pending amount');
+  assert.equal(p.window.BLWP_WALLET_BALANCE.pending, 0);
+  assert.equal(p.els['blwp-bal-pending-when'].textContent, '', 'a settled round left its window line');
+  const live = page({ answers: { a: signed('196000', { state: 'PROVISIONALLY_FINAL' }), b: signed('196000', { state: 'PROVISIONALLY_FINAL' }), c: settled } });
+  await live.go();
+  assert.equal(live.window.BLWP_PENDING_SATS, 196);
+});
