@@ -17,7 +17,7 @@ import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
-import { lobbyQuery, lobbyJoinSearch, fetchLobby, lobbyLine, dailyLobbySearch, lobbyOnePerKind, lobbyStakeSats, answerWithin, SIGNER_ANSWER_MS } from '../src/lobby.js';
+import { lobbyQuery, lobbyJoinSearch, fetchLobby, lobbyLine, dailyLobbySearch, lobbyOnePerKind, lobbyKeepWhenUnanswered, lobbyStakeSats, answerWithin, SIGNER_ANSWER_MS } from '../src/lobby.js';
 import { encodeRoundContract, roundId } from '../../protocol/src/contracts.js';
 import { lobbyListingId } from '../../protocol/src/lobby-listing.js';
 import { encodeLobbyName, lobbyNameId } from '../../protocol/src/lobby-name.js';
@@ -398,4 +398,18 @@ test('two series of one stake: the soonest joinable round wins, not the newer se
   assert.deepEqual(lobbyOnePerKind([old, ...rows], now).map((r) => r.id), ['k1-881'], 'the 10000 sat round of the older series was shown');
   assert.deepEqual(lobbyOnePerKind([old, ...rows.map((r) => ({ ...r, joinable: false }))], now).map((r) => r.id), ['old-10k'],
     'before the 100 sat series can be joined, the old series stands');
+});
+
+// BOTH ROWS, ALWAYS (the owner 2026-10-01 15:25): a side whose nodes did not answer one paint keeps the rows it had while
+// their entry is open; a side that answered keeps what it answered, rows or none; nothing past its entry close is kept.
+test('a lobby read that got no answer keeps its last open rows; one that answered is taken as it is', () => {
+  const now = 1790870000000;
+  const free = { id: 'free-1', free: true, entryCloseMs: now + 40000 };
+  const closed = { id: 'free-0', free: true, entryCloseMs: now - 1 };
+  assert.deepEqual(lobbyKeepWhenUnanswered([free, closed], { rows: [], unanswered: ['https://a'], refused: [] }, now), [free]);
+  assert.deepEqual(lobbyKeepWhenUnanswered([free], { rows: [], refused: ['fetch failed'], unanswered: [] }, now), [free]);
+  assert.deepEqual(lobbyKeepWhenUnanswered([free], { rows: [], refused: [], unanswered: [] }, now), [], 'an answered empty list kept an old row');
+  const fresh = { id: 'free-2', free: true, entryCloseMs: now + 90000 };
+  assert.deepEqual(lobbyKeepWhenUnanswered([free], { rows: [fresh], unanswered: ['https://b'] }, now), [fresh]);
+  assert.deepEqual(lobbyKeepWhenUnanswered(undefined, { rows: [], unanswered: ['x'] }, now), []);
 });
