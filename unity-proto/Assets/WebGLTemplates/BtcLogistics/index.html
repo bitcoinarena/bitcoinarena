@@ -1291,8 +1291,15 @@
           window.BLWP_LOCK_JOIN = { invite: named.federation, roundIdHex: named.roundIdHex, seed, nodes: named.nodes };
           const committedTo = (eid) => {
             // THE PENDING LINE ASKS ABOUT THIS ENTRY from now on (WINDOW-10-SPEC, §24)
-            try { vault().setItem('blwp.pending.' + named.roundIdHex, JSON.stringify({ roundIdHex: named.roundIdHex,
-              entryIdHex: BLWPCLIENT.toHex(eid), nodes: named.nodes })); } catch { /* no note, no line */ }
+            // ONE NOTE PER ENTRY, AND THIS TAB READS ITS OWN (ORDER-2116, measured 2026-10-02 01:56Z): keyed by round alone,
+            // a second player in the same browser overwrote the first's note, and the winner's tab asked about the loser's
+            // entry - pending 0 while all 7 signer nodes said 192000 msat. A tab that wrote none (a reopened browser) reads all.
+            try {
+              const key = 'blwp.pending.' + named.roundIdHex + '.' + BLWPCLIENT.toHex(eid);
+              vault().setItem(key, JSON.stringify({ roundIdHex: named.roundIdHex, entryIdHex: BLWPCLIENT.toHex(eid), nodes: named.nodes }));
+              const mine = JSON.parse(window.sessionStorage.getItem('blwp.pending.mine') || '[]');
+              if (!mine.includes(key)) { mine.push(key); window.sessionStorage.setItem('blwp.pending.mine', JSON.stringify(mine)); }
+            } catch { /* no note, no line */ }
             return BLWPCLIENT.markLockCommitted(vault(), Object.assign({ entryId: eid }, whose));
           };
           if (reuse) {
@@ -2332,6 +2339,7 @@
     async function lookThePending() {
       let notes = [];
       try { const v = vault(); for (let i = 0; i < v.length; i++) { const k = v.key(i); if (k && k.startsWith('blwp.pending.')) notes.push(k); } } catch { notes = []; }
+      try { const mine = JSON.parse(window.sessionStorage.getItem('blwp.pending.mine') || 'null'); if (Array.isArray(mine)) notes = notes.filter((k) => mine.includes(k)); } catch { /* every note */ }
       const done = new Set((BLWPCLIENT.savedCollects ? BLWPCLIENT.savedCollects(vault()) : []).filter((r) => r.done).map((r) => r.roundIdHex));
       let total = 0n; let closeMs = null; let provisional = false;
       for (const k of notes) {
