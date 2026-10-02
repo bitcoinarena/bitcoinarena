@@ -49,6 +49,11 @@ export const REFUSED = 'REFUSED';
 export const locksStake = (contract) => contract.federationId instanceof Uint8Array
   && contract.federationId.some((b) => b !== 0) && contract.stakeMsat > 0n;
 
+// A PLAN NAMED BY EVERYTHING IN IT (NODE-OPT-1648): claims, payouts, nonce, the claim key and the seat it names - bigints
+// as decimal, bytes as hex - so an identical plan has the identical name and any change in it a different one.
+const planFingerprint = (plan, claimPk, signerNode) => JSON.stringify({ c: plan.claims, p: plan.payouts, n: plan.nonce, k: claimPk, s: signerNode },
+  (k, v) => (typeof v === 'bigint' ? `${v}n` : v instanceof Uint8Array ? toHex(v) : v));
+
 export class LockSettlement {
   /**
    * `dkg` holds this signer node's share of the round's claim key; `port` is the
@@ -78,6 +83,7 @@ export class LockSettlement {
     this.peersFor = peersFor;
     this.fetcher = fetcher;
     this.built = new Map();          // round id hex -> the settlement this signer node rebuilt
+    this.byPlan = new Map();         // round id hex -> { fp, built }: the last build and the plan it was built for
     this.planCertificates = new Map(); // round id hex [:late entry hex] -> { planId, certificate } the seats signed
     this.planRetries = new Map();    // round id hex -> how often a peer refused the send plan
     this.retryTimers = new Set();
@@ -399,6 +405,13 @@ export class LockSettlement {
     const got = await this.planOf(roundIdBytes, { withSends: true });
     if (!got.ok) return got;
     const { plan, contract, claimPk, held, locks, lockEntry } = got;
+    // THE SAME PLAN IS NOT BUILT TWICE (NODE-OPT-1648): `built` is dropped whenever send plans are checked - the coordinator
+    // proposes the same ones every winnings sweep while a send is held - and every drop rebuilt the settlement: the losers'
+    // P opened again and a stock-client settle run on the shared client directory, 49 a minute across seven idle testnet4
+    // seats. The plan is recomputed from the store as before (no client run); built for an identical plan, it is reused.
+    const fp = planFingerprint(plan, claimPk, held.signerNode);
+    const prior = this.byPlan.get(key);
+    if (prior && prior.fp === fp) { this.built.set(key, prior.built); return prior.built; }
 
     const claims = [];
     for (const c of plan.claims) {
@@ -418,6 +431,8 @@ export class LockSettlement {
     const built = { ok: true, message: fromHex(tx.message), txid: tx.txid, plan, claims, claimPk,
       signerNode: held.signerNode, needed: receiptsNeeded(contract.nodes.length) };
     this.built.set(key, built);
+    this.byPlan.set(key, { fp, built });
+    if (this.byPlan.size > 4096) this.byPlan.delete(this.byPlan.keys().next().value);
     return built;
   }
 
