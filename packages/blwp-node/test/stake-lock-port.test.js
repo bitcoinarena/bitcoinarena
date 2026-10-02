@@ -64,3 +64,32 @@ test('the port comes from two settings, both or neither', () => {
   assert.equal(both.given, true);
   assert.equal(typeof both.stakeLocks.status, 'function');
 });
+
+// KEPT A MINUTE FOR EVERY CALLER (2026-10-02: the winnings resend loop spawned the tool for gateways and fees about every
+// 6 s per idle testnet4 seat, ~1.7 MB/s of client-database writes each): ten asks of each within the minute run the
+// tool once per mode; after the minute it runs again.
+test('gateways and fees are read once a minute however often they are asked', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'stake-lock-port-'));
+  try {
+    const t = fakeTool(dir, {
+      gateways: { mode: 'gateways', federation_id: 'aa'.repeat(32), block_count: 9, gateways: [] },
+      fees: { mode: 'fees', fee_ppm: 1000, fee_base_msat: 2000 },
+    });
+    let clock = 1_000_000;
+    const port = stakeLockPort({ bin: t.bin, dataDir: '/d', now: () => clock });
+    const asks = [];
+    for (let i = 0; i < 10; i++) asks.push(port.gateways(), port.fees());
+    const answers = await Promise.all(asks);
+    const once = t.argv().length;
+    clock += 30000; await port.gateways(); await port.fees();
+    const halfMinute = t.argv().length;
+    clock += 31000; await port.gateways(); await port.fees();
+    const after = t.argv().length;
+    console.log('  FACTS:', JSON.stringify({ once, halfMinute, after }));
+    assert.equal(once, 2, 'twenty asks ran the tool more than once per mode');
+    assert.equal(halfMinute, 2);
+    assert.equal(after, 4, 'a minute later the tool was not asked again');
+    assert.equal(answers[1].ppm, 1000n);
+    assert.equal(answers[0].height, 9);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
