@@ -2508,7 +2508,12 @@
         for (const r of mine) rowSearch.set(r.id, search);
         for (const r of theirs) rowSearch.set(r.id, testnet.search);
         window.BLWP_LOBBY_ROWS = [...mine, ...theirs];    // every round listed, for the next one after a run (below)
-        window.BLWP_LOBBY = BLWPCLIENT.lobbyOnePerKind(window.BLWP_LOBBY_ROWS, Date.now(), { paidSeriesOnly: true }).map((r) => ({ id: r.id, phase: r.phase, free: r.free, wallet: r.wallet,
+        // THE ROUND PLAY CHOSE STAYS HIGHLIGHTED (the owner 2026-10-02: "once a round has been selected with play the highlighting
+        // may no longer change when the other round is newer"): while a join is going or held, its round is its kind's row.
+        const going = window.BLWP_JOIN && !window.BLWP_JOIN.cancelled && (window.BLWP_JOIN.state === 'joining' || window.BLWP_JOIN.state === 'joined')
+          ? window.BLWP_JOIN.round : null;
+        const picked = BLWPCLIENT.lobbyOnePerKind(window.BLWP_LOBBY_ROWS, Date.now(), { paidSeriesOnly: true });
+        window.BLWP_LOBBY = (BLWPCLIENT.lobbyKeepJoined ? BLWPCLIENT.lobbyKeepJoined(picked, window.BLWP_LOBBY_ROWS, going) : picked).map((r) => ({ id: r.id, phase: r.phase, free: r.free, wallet: r.wallet,
           signerNodesAgree: r.signerNodesAgree, needed: r.needed, joinable: r.joinable, stakeSats: BLWPCLIENT.lobbyStakeSats(r),
           line: BLWPCLIENT.lobbyLine(r, now), raw: r, join: r.joinable ? BLWPCLIENT.lobbyJoinSearch(rowSearch.get(r.id) || search, r.id) : null }));
         refused = [...(got.refused || []), ...((got2 && got2.refused) || [])];

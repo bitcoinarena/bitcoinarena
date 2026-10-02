@@ -18321,6 +18321,22 @@ function lobbyKeepWhenUnanswered(previousRows, got, nowMs = Date.now()) {
   return (previousRows || []).filter((r) => Number(r.entryCloseMs) > Number(nowMs));
 }
 
+/**
+ * THE ROUND PLAY CHOSE STAYS THE ROW OF ITS KIND (the owner 2026-10-02: "once a round has been selected with play the
+ * highlighting may no longer change when the other round is newer, currently while it's waiting it is switching the
+ * highlight to the other round"): lobbyOnePerKind picks the soonest round that still leaves the join lead, so while a join
+ * waits for its round the pick moved on to the next one. With `joinedId` named and still listed, its row replaces the
+ * pick of its own kind (free or paying); the other kind is untouched. Unlisted (over), nothing is pinned.
+ */
+function lobbyKeepJoined(picked, rows, joinedId) {
+  if (!joinedId) return picked;
+  const joined = (rows || []).find((r) => r.id === joinedId);
+  if (!joined) return picked;
+  const kind = (r) => (r.free ? 'free' : 'paying');
+  const replaced = picked.map((r) => (kind(r) === kind(joined) ? joined : r));
+  return picked.some((r) => kind(r) === kind(joined)) ? replaced : [...replaced, joined];
+}
+
 function lobbyOnePerKind(rows, nowMs = Date.now(), { paidSeriesOnly = false } = {}) {
   // ONLY 90-SECOND PAID ROUNDS (the owner 2026-10-01: "We want always 90 second rounds in Testnet ... no paid row till
   // then"): with `paidSeriesOnly` a paying round that is not a series round - the runner's one-off with its 6 h entry
@@ -18735,7 +18751,7 @@ return { Client: Client, markState: markState,
          lookOwed: lookOwed, owedToLine: owedToLine, collectOwed: collectOwed, collectAndWithdraw: collectAndWithdraw, findOwedRounds: findOwedRounds,
          lobbyQuery: lobbyQuery, fetchLobby: fetchLobby, lobbyLine: lobbyLine, lobbyJoinSearch: lobbyJoinSearch,
          SIGNER_ANSWER_MS: SIGNER_ANSWER_MS,
-         lobbyOnePerKind: lobbyOnePerKind, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats,
+         lobbyOnePerKind: lobbyOnePerKind, lobbyKeepJoined: lobbyKeepJoined, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats,
          nextRoundAfter: nextRoundAfter, nextRoundView: nextRoundView, joiningNextRoundIn: joiningNextRoundIn,
          EXIT_GAME: EXIT_GAME, RESULT_CARD_MS: RESULT_CARD_MS,
          dailyLobbySearch: dailyLobbySearch,
