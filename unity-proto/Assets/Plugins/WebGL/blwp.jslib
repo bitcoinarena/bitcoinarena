@@ -628,7 +628,11 @@ mergeInto(LibraryManager.library, {
 
       return net.client.openRound(contract)
         .then(function () { return net.client.join(entry); })
-        .then(function () { return net.client.connect(); })
+        // the first socket is tried until it opens, up to the round's start + 10 s (client.connectFirst)
+        .then(function () {
+          var start = contract && contract.startTimeMs !== undefined ? Number(contract.startTimeMs) : NaN;
+          return net.client.connectFirst({ untilMs: isFinite(start) ? Math.max(start + 10000, Date.now() + 30000) : Date.now() + 30000 });
+        })
         // A JOIN HELD TO THE ROUND'S START ENTERS ITS WORLD AT THAT START, NOT BEFORE (ORDER-2116, measured on testnet4
         // 2026-10-02 00:00Z): the session opens at entry - the round opened, the entry posted before entry closes, the
         // socket up - but the core went into the round's world and recording began right then, 12 min early. A slow page
