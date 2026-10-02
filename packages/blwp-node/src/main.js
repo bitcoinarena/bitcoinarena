@@ -36,6 +36,7 @@ import { openStore } from './store.js';
 import { tipHeaderView } from './tip-view.js';
 import { isOldTestnet4Id, isOldTestnet4Series, OLD_TESTNET4_SERIES_BOND_HEIGHT } from '../../protocol/src/old-series.js';
 import { bitcoindRpc, blocksOver } from './chain-rpc.js';
+import { blockHashOf } from '../../protocol/src/chain.js';
 import { chainBeacon } from './beacon-source.js';
 import { lightningFromEnv } from './lnd-settings.js';
 import { stakeLocksFromEnv } from './stake-lock-port.js';
@@ -129,6 +130,7 @@ if (url) {
   // this round's committee time"; stopping at the beacon, "the block that
   // seeds this round is 1 deep and this round asks for 6". Never past the tip.
   const VIEW_REREAD_MS = 10000;
+  const toHexMain = (b) => Buffer.from(b).toString('hex');
   const viewOf = async (contract) => {
     const seen = await beacon.refresh(contract);
     const tip = Number(await call('getblockcount'));
@@ -180,7 +182,20 @@ if (url) {
               seen = read;
             }
             if (tip < seen.height + contract.censusConfirmations - 1) return;
-            views.set(key, await viewOf(contract));
+            // EXTENDED, NOT READ AGAIN: the blocks after the held view's end are appended (a whole view is ~2000 blocks
+            // past the census lookback; ten rounds re-reading theirs on the 10 s clock finished minutes after their entry
+            // closed, measured). A first new block that does not link to the held tip - a reorganised chain - reads the
+            // whole view again.
+            const end = had.firstHeight + had.blocks.length - 1;
+            const to = Math.min(tip, Math.max(contract.censusHeight, seen.height + contract.censusConfirmations - 1));
+            const more = to > end ? await blocksOver(call, end + 1, to) : { blocks: [] };
+            const links = !more.blocks.length || toHexMain(more.blocks[0].header.subarray(4, 36)) === toHexMain(blockHashOf(had.blocks[had.blocks.length - 1].header));
+            if (!links) { views.set(key, await viewOf(contract)); return; }
+            const view = { ...had, blocks: [...had.blocks, ...more.blocks] };
+            Object.defineProperty(view, 'shortOfBeacon', { value: false, enumerable: false });
+            Object.defineProperty(view, 'readAtMs', { value: Date.now(), enumerable: false, writable: true });
+            Object.defineProperty(view, 'tipAtRead', { value: tip, enumerable: false });
+            views.set(key, view);
           })().catch(() => {}).finally(() => reading.delete(key)));
         return had;
       }
