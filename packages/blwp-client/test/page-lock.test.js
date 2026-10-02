@@ -1590,3 +1590,19 @@ test('two players of one round in one browser keep a collect each, and each tab 
   assert.equal(savedCollects(s2, { seed: winner })[0].done, null, 'the loser\'s old record marked the winner\'s new one done');
   assert.ok(t2.has('blwp.collect.' + lr), 'another seed\'s old record was removed');
 });
+
+// THE LOCK GOES TO EVERY SIGNER NODE AT ONCE (JOIN-TIME-1359, the owner 2026-10-02: "PLAY to a committed entry is the clock"):
+// handed one after another, seven nodes that each verify in the federation (~1.8 s) made the stake lock ~13 s of the paid
+// join. Seven nodes that each take 300 ms are all answered in about 300 ms, and the answers keep the nodes' order.
+test('handLock asks every signer node at once and keeps their order', async () => {
+  const nodes = [1, 2, 3, 4, 5, 6, 7].map((i) => `http://n${i}`);
+  const fetcher = (u) => new Promise((r) => setTimeout(() => r({ status: u.includes('n3') ? 409 : 201, text: async () => (u.includes('n3') ? 'no' : 'kept') }), 300));
+  const t0 = Date.now();
+  const got = await handLock({ entryId: b32(0x0e), fields: { paymentImage: { kind: 'hash', bytes: b32(0x21) }, amountMsat: 96000n, claimPk: CLAIM, refundPk: CLAIM, expiration: 1000 }, nodes, needed: 5, fetcher });
+  const ms = Date.now() - t0;
+  console.log('  FACTS:', JSON.stringify({ ms, committed: got.committed, order: got.said.map((x) => x.node.slice(-2)) }));
+  assert.ok(ms < 1000, `seven 300 ms nodes took ${ms} ms - asked one after another`);
+  assert.deepEqual(got.said.map((x) => x.node), nodes);
+  assert.equal(got.committed, 6);
+  assert.equal(got.ok, true);
+});

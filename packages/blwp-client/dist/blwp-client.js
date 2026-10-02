@@ -10849,15 +10849,19 @@ async function handLock({ entryId, fields, nodes, needed, fetcher = fetch, door 
   // `door`: 'lock' for the stake lock, 'fee-lock' for the fee lock (Pick b).
   if (door !== 'lock' && door !== 'fee-lock') throw new Error('a lock is handed to a signer node\'s /lock or /fee-lock');
   const body = JSON.stringify(lockFieldsToJson(fields));
-  const said = [];
-  for (const node of [...new Set(nodes || [])]) {
+  // TO EVERY SIGNER NODE AT ONCE (JOIN-TIME-1359, the owner 2026-10-02: "The join takes too long. Cut that time. PLAY to a
+  // committed entry is the clock"): handed one node after another, each answering only once it had asked the federation
+  // (two or three client runs, ~1.8 s), the stake lock took ~13 s across 7 and the fee lock ~9 s more - 19 of the paid
+  // join's 38 s from PLAY to the stake SEEN at 5 of 7 (measured on testnet4, round 1a21b8d0). Each node checks on its own;
+  // the answers keep the nodes' order.
+  const said = await Promise.all([...new Set(nodes || [])].map(async (node) => {
     try {
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/${door}?entry=${toHex(entryId)}`, { method: 'POST', body });
-      said.push({ node, status: r.status, why: (await r.text()).trim() });
+      return { node, status: r.status, why: (await r.text()).trim() };
     } catch (e) {
-      said.push({ node, status: 0, why: e.message });
+      return { node, status: 0, why: e.message };
     }
-  }
+  }));
   const committed = said.filter((s) => s.status === 201).length;
   return { ok: committed >= needed, committed, needed, said };
 }
