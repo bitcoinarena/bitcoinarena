@@ -602,6 +602,20 @@ mergeInto(LibraryManager.library, {
       return net.client.openRound(contract)
         .then(function () { return net.client.join(entry); })
         .then(function () { return net.client.connect(); })
+        // A JOIN HELD TO THE ROUND'S START ENTERS ITS WORLD AT THAT START, NOT BEFORE (ORDER-2116, measured on testnet4
+        // 2026-10-02 00:00Z): the session opens at entry - the round opened, the entry posted before entry closes, the
+        // socket up - but the core went into the round's world and recording began right then, 12 min early. A slow page
+        // jumped ticks to keep up and the first mark at tick 992 was past the 900-tick start deadline: FORFEIT at every
+        // signer node. Held off the session itself instead, the entry reached no node before entry closed (measured at
+        // 00:30Z). So the session opens, and only this step waits for the page to release the join (index.html `release`).
+        .then(function () {
+          return new Promise(function (go) {
+            (function wait() {
+              var j = (typeof window !== 'undefined') ? window.BLWP_JOIN : null;
+              if (j && j.held && !j.cancelled) setTimeout(wait, 100); else go();
+            })();
+          });
+        })
         .then(function () {
           // THE HOLD, THE DRAIN AND THE SKIPPING ALL LIVE IN THE CLIENT.
           //
