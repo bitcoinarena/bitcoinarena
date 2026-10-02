@@ -626,13 +626,16 @@ mergeInto(LibraryManager.library, {
         });
       };
 
+      // THE SOCKET OPENS BESIDE THE ROUND AND THE ENTRY, not after them (JOIN-TIME, the owner 2026-10-02: "Join click to the
+      // round actually loaded: 2 to 3 seconds at most"): it depends on neither, and opened last it added its whole
+      // handshake - measured 1.3 s - after POST /round and POST /entry. Tried until it opens, up to the round's start
+      // + 10 s (client.connectFirst).
+      var start0 = contract && contract.startTimeMs !== undefined ? Number(contract.startTimeMs) : NaN;
+      var socketOpen = net.client.connectFirst({ untilMs: isFinite(start0) ? Math.max(start0 + 10000, Date.now() + 30000) : Date.now() + 30000 });
+      socketOpen.catch(function () { /* answered below, where the session waits for it */ });
       return net.client.openRound(contract)
         .then(function () { return net.client.join(entry); })
-        // the first socket is tried until it opens, up to the round's start + 10 s (client.connectFirst)
-        .then(function () {
-          var start = contract && contract.startTimeMs !== undefined ? Number(contract.startTimeMs) : NaN;
-          return net.client.connectFirst({ untilMs: isFinite(start) ? Math.max(start + 10000, Date.now() + 30000) : Date.now() + 30000 });
-        })
+        .then(function () { return socketOpen; })
         // A JOIN HELD TO THE ROUND'S START ENTERS ITS WORLD AT THAT START, NOT BEFORE (ORDER-2116, measured on testnet4
         // 2026-10-02 00:00Z): the session opens at entry - the round opened, the entry posted before entry closes, the
         // socket up - but the core went into the round's world and recording began right then, 12 min early. A slow page
