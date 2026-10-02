@@ -643,6 +643,19 @@ mergeInto(LibraryManager.library, {
             roundId: net.where.roundId, entryId: net.where.entryId,
             blockTicks: contract.blockTicks | 0,
           });
+          // WHAT UNITY HANDED OVER BEFORE THIS WORLD, now into it and onto the wire together - THE LATEST OF EACH KIND ONLY:
+          // a signer node keeps one sample, one tape and one load per tick (its store's key), so ninety samples queued in
+          // the hold and all handed over at tick 0 were one sample there and ninety here - DELIVERED on the page, FAILED at
+          // all 7 (measured 04:33Z). What came before the latest is the lobby's market, not the round's.
+          net.inWorld = true;
+          var latest = {};
+          (net.queued || []).forEach(function (q) { latest[q[0]] = q; });
+          ['tape', 'load', 'sample'].map(function (k) { return latest[k]; }).filter(Boolean).forEach(function (q) {
+            if (q[0] === 'tape') { b.core.submitTape(b.st, q[1]); net.client.submitTape(q[1]); }
+            else if (q[0] === 'load') { b.core.submitLoad(b.st, q[1], q[2]); net.client.submitLoad(q[1], q[2]); }
+            else if (q[0] === 'sample') { b.core.submitSample(b.st, q[1]); net.client.submitSample(q[1]); }
+          });
+          net.queued = [];
 
           // AND ASK TO BE SHOWN THE OTHER TRUCKS.
           //
@@ -668,18 +681,31 @@ mergeInto(LibraryManager.library, {
     // THE LOAD, ON ITS WAY TO THE TRANSCRIPT. The client holds it against the
     // tick the run has reached and publishes it with the batch that covers
     // that tick; nothing is decided here.
+    // AND NOT BEFORE THE CORE IS IN THE ROUND'S WORLD (ORDER-2116, measured on testnet4 2026-10-02 02:39Z): Unity hands a
+    // load, a sample or the round's tape to the core and to this session together. While the session waits for the round's
+    // start the core is still the lobby's, so the core's copy was thrown away when it entered the round's world and the
+    // client's went out: every signer node replayed a war the page never ran - DELIVERED on the page, FAILED at all 7.
+    // Kept here until then, and handed to the round's core and to the client together (`net.opened`).
+    var heldUntilWorld = function (kind, a, b2) {
+      if (net.inWorld) return false;
+      (net.queued = net.queued || []).push([kind, a, b2]);
+      return true;
+    };
     net.load = function (feeSats, btcHundredths) {
       if (!net.client) return;
+      if (heldUntilWorld('load', feeSats, btcHundredths)) return;
       net.client.submitLoad(feeSats, btcHundredths);
     };
 
     net.sample = function (price) {
       if (!net.client) return;
+      if (heldUntilWorld('sample', price)) return;
       net.client.submitSample(price);
     };
 
     net.tape = function (prices) {
       if (!net.client) return;
+      if (heldUntilWorld('tape', prices)) return;
       net.client.submitTape(prices);
     };
 
