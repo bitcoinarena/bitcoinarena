@@ -32,6 +32,7 @@
 // census height. A bond funded earlier than that is not seen by a restarted
 // daemon, and a round whose committee holds one is refused by name.
 const CENSUS_LOOKBACK = 2016;
+import { TESTNET4_DONATION_SET } from '../../protocol/src/testnet4-donation-set.js';
 import { openStore } from './store.js';
 import { tipHeaderView } from './tip-view.js';
 import { isOldTestnet4Id, isOldTestnet4Series, OLD_TESTNET4_SERIES_BOND_HEIGHT } from '../../protocol/src/old-series.js';
@@ -81,7 +82,9 @@ if (process.env.BLWP_CLOSE_AT_END === '1') options.closeAtEnd = true;
   const net = process.env.BLWP_DONATION_NETWORK;
   if (net && net !== 'regtest' && net !== 'testnet4') { console.error(`BLWP_DONATION_NETWORK is regtest or testnet4, not ${net}`); process.exit(2); }
   // testnet4 also holds the set series 3cfbe516 names, under the old id (PICK B, protocol/src/old-series.js)
-  if (net) options.donationSets = net === 'regtest' ? [TEST_DONATION_SET_REGTEST] : [TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS];
+  // AND TESTNET4'S SET WITH REAL RECIPIENTS (LNURL-0822, serial 2): for the contracts that name it; a contract names its set
+  // by id (22A), so the rounds already written keep theirs
+  if (net) options.donationSets = net === 'regtest' ? [TEST_DONATION_SET_REGTEST] : [TESTNET4_DONATION_SET, TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS];
 }
 if (process.env.BLWP_SERIES_FILE) {
   // ONE SERIES A LINE: its template, hex; then `count=N` for a tail (the 82/90 fork: fewer than a day's 960 rounds - its id
