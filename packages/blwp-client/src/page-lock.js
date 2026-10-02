@@ -113,6 +113,25 @@ export function walletSecretFor(seed, federationId) {
   return taggedHash(TAG.playerWalletSecret, msg);
 }
 
+/**
+ * HOW MUCH WALLET A KEPT PHRASE HAS IN THIS BROWSER (the owner 2026-10-02: "I should have more than 0 sats on my wallet" - a
+ * tab took another kept phrase than the one that deposited: the history, kept per federation, showed the deposit and the
+ * stake, the balance was the other phrase's empty wallet). For every federation this browser keeps a ledger for, the
+ * entries the phrase's player wallet keeps there - 0 for a phrase that never had one. Read off the store's keys only.
+ */
+export function phraseWalletEntries(storage, seedHex) {
+  if (!storage || !/^[0-9a-f]{64}$/i.test(String(seedHex || ''))) return 0;
+  const keys = storageKeys(storage);
+  const feds = keys.map((k) => /^blwp\.ledger\.([0-9a-f]{64})$/i.exec(k)).filter(Boolean).map((m) => m[1].toLowerCase());
+  let n = 0;
+  for (const f of new Set(feds)) {
+    let secret; try { secret = walletSecretFor(fromHex(String(seedHex).toLowerCase()), fromHex(f)); } catch { continue; }
+    const prefix = `blwp.walletdb.${f.slice(0, 16)}.${toHex(sha256(secret)).slice(0, 16)}.`;
+    n += keys.filter((k) => k.startsWith(prefix)).length;
+  }
+  return n;
+}
+
 /** WHERE THE PLAYER WALLET IS KEPT: the tab's storage, under the federation and the secret's hash, never the secret. */
 export function walletStoreFor(storage, federationId, secret) {
   const prefix = `blwp.walletdb.${toHex(federationId).slice(0, 16)}.${toHex(sha256(secret)).slice(0, 16)}.`;
