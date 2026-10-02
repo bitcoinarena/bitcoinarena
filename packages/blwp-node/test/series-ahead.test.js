@@ -178,3 +178,32 @@ test('a series runs at most 82 s of its 90 s slot: 4920 and 4921 ticks are taken
   for (const ticks of [4922, 10800]) assert.match(seriesRunFits(t(ticks)).why, new RegExp(`a run of ${ticks} ticks is \\d+ ms, and a round of a 90000 ms series runs at most 82000 ms`));
   await assert.rejects(async () => serve(openStore(':memory:'), { port: 0, funded: () => true, roundClock: () => NOW, series: [t(10800)] }), /series refused: a run of 10800 ticks/);
 });
+
+// A SERIES ADDED WHILE THE NODE RUNS IS TAKEN WITHOUT A RESTART (the owner 2026-10-02: "find out the reason for the restarts
+// and find a way to recover from them" - the 82/90 waiter restarted the seven seats one at a time after each day's series,
+// and a seat restarted between a join and its round's start lost the player's run, FORFEIT). A node started holding one
+// series is handed a second by seriesReload; on its next writer pass it writes and lists the second too, and a reload
+// answering null (the file unchanged) or failing changes nothing.
+test('a series added to the file while the node runs is written on the next pass, no restart', async () => {
+  const node = await serve(openStore(':memory:'), { port: 0, funded: () => true, now: () => NOW });
+  const nodes = [node.round.pubkey];
+  await node.close();
+  const k0 = seriesIndexAt(NETWORK_ID_REGTEST, NOW);
+  const first = seriesTemplate(base(nodes), k0 + 1);
+  const second = seriesTemplate(base(nodes), k0 + 2);
+  const answers = [null, () => { throw new Error('half-written file'); }, [first, second], null];
+  let asked = 0;
+  const seriesReload = () => { const a = answers[Math.min(asked++, answers.length - 1)]; return typeof a === 'function' ? a() : a; };
+  const s = await serve(openStore(':memory:'), { port: 0, funded: () => true, roundClock: () => NOW, series: [first], seriesEveryMs: 100, seriesReload });
+  try {
+    const ids = async () => (await (await fetch(`http://127.0.0.1:${s.port}/series`)).json()).series.map((x) => x.series);
+    const before = await ids();
+    for (let t = Date.now(); Date.now() - t < 5000 && asked < 4; await new Promise((r) => setTimeout(r, 100)));
+    const after = await ids();
+    console.log('  FACTS:', JSON.stringify({ before: before.map((x) => x.slice(0, 8)), after: after.map((x) => x.slice(0, 8)), asked }));
+    assert.equal(before.length, 1);
+    assert.equal(after.length, 2, 'the second series was not taken');
+    assert.ok(after.includes(toHexId(seriesId(second))), 'the series taken is not the one added');
+  } finally { await s.close(); }
+});
+const toHexId = (b) => Buffer.from(b).toString('hex');

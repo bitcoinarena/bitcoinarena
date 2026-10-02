@@ -241,6 +241,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE SERIES THIS NODE WRITES AHEAD (NODE72-1131): series templates (protocol/src/series.js `seriesTemplate`), each
   // round of which from now to now + 72 h is opened in this node's store and listed - again every `seriesEveryMs`.
   series = [], seriesEveryMs = 60000,
+  // A SERIES ADDED WHILE RUNNING (main.js reads BLWP_SERIES_FILE again when it changes): a function that answers the whole
+  // list when it changed, else null. Each series not held yet gets its writer on the next pass - no restart.
+  seriesReload = null,
   // THE ROUND STORE'S CLOCK, when a caller must set it before anything reads it (a series is written at start). Unset: the wall clock.
   roundClock = null,
   // THE SIGNER NODES' ADVERTISEMENTS, by round (Map node key hex -> advert), so a slash
@@ -1781,9 +1784,25 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   }
   const seriesIds = () => { const all = new Set(); for (const w of writers) for (const x of w.ids()) all.add(x); return all; };
   let seriesTimer = null;
-  if (writers.length) {
+  const takeNewSeries = () => {
+    if (typeof seriesReload !== 'function') return;
+    let now;
+    try { now = seriesReload(); } catch (e) { console.error(`[series] the series file did not read: ${e.message} - the series held stay`); return; }
+    if (!now) return;
+    const held = new Set(writers.map((w) => toHex(w.id)));
+    for (const t of now) {
+      let w;
+      try { w = seriesWriter(round, t); } catch (e) { console.error(`[series] a new line refused: ${e.message}`); continue; }
+      const id = toHex(w.id);
+      if (held.has(id)) continue;
+      series.push(t); writers.push(w); held.add(id);
+      console.log(`[series] ${id.slice(0, 16)}: taken from the series file without a restart`);
+    }
+  };
+  if (writers.length || typeof seriesReload === 'function') {
     const writeAll = () => timed('series writer', () => {
       if (shuttingDown) return;
+      takeNewSeries();
       for (const w of writers) {
         const added = w.write(round.now());
         if (added) console.log(`[series] ${toHex(w.id).slice(0, 16)}: ${added} round(s) written, ${w.summary(round.now()).ahead} ahead to +72 h`);
