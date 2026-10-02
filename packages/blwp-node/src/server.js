@@ -1702,8 +1702,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // loop) - ~2,950 rounds held on testnet4, a series 72 h ahead. A contract never changes: ids are read, a contract only
   // the first time, and what is kept of rounds no longer open goes once it outgrows them by 500.
   const heldKept = new Map();                   // round id hex -> { c, endMs } or { bad: true }
+  // an id's hex, kept for the id objects the open list below hands out again and again
+  const hexOfId = new WeakMap();
+  const hexId = (rid) => { let h = hexOfId.get(rid); if (h === undefined) { h = toHex(rid); hexOfId.set(rid, h); } return h; };
   const heldOf = (rid) => {
-    const k = toHex(rid);
+    const k = hexId(rid);
     let v = heldKept.get(k);
     if (!v) {
       const row = round.db.prepare('SELECT contract FROM rounds WHERE round_id = ?').get(rid);
@@ -1716,10 +1719,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
     return v;
   };
+  // THE OPEN LIST READ AGAIN ONLY WHEN IT CHANGED (NODE-OPT-1648): the close sweep (2 s), the door sweep (5 s) and the
+  // listing each read ~2,950 ids from the store and turned each into hex; a round opening or closing changes the open
+  // rounds' count or their newest row, which one covering-index read tells.
+  let openList = { key: null, ids: [] };
+  const openKeyQuery = () => round.db.prepare('SELECT count(*) AS n, max(rowid) AS m FROM rounds WHERE state = 0').get();
   const openHeld = () => {
-    const ids = round.openRoundIds();
+    const q = openKeyQuery();
+    const key = `${q.n}:${q.m}`;
+    if (openList.key !== key) openList = { key, ids: round.openRoundIds() };
+    const ids = openList.ids;
     if (heldKept.size > ids.length + 500) {
-      const open = new Set(ids.map((r) => toHex(r)));
+      const open = new Set(ids.map((r) => hexId(r)));
       for (const k of heldKept.keys()) if (!open.has(k)) heldKept.delete(k);
     }
     return ids;
