@@ -2321,7 +2321,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // ONLY A LARGE LISTING IS KEPT (a series' - over 100 rounds): a small one is made fresh on every ask, as before.
         // A LARGE ONE KEPT 30 s (measured 15:12Z: pages whose bundle predates `next` asked the whole listing - 1155 rounds with
         // two series - every few seconds, each 8-11 s on the node's loop; a page takes a listing up to 60 s old).
-        if (!body || !body.large || nowReal - body.at > 30000) {
+        // AND A SMALL ONE 2 s (JOIN-TIME-1359, the owner 2026-10-02: "Keep cutting the load of empty and open rounds"): the lobby's
+        // `?next=8` was made afresh on every ask from every open lobby every few seconds - 1038 of them over 200 ms in seat 1's
+        // recent log, up to 14.8 s held - and its joined/playing counts may lag 2 s where a page takes 60.
+        if (!body || nowReal - body.at > (body.large ? 30000 : 2000)) {
           const { nowMs, listed } = announcedRounds(url);
           body = { at: nowReal, large: listed.length > 100, json: JSON.stringify({ node: toHex(round.pubkey), nowMs: String(nowMs), rounds: listed }) };
           listingKept.set(q, body);
