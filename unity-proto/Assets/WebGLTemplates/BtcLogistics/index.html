@@ -1187,7 +1187,10 @@
           if (depositEl) depositEl.textContent = '';
           return wallet;
         })();
-        funding.catch(() => {});   // answered where the lock awaits it
+        // ONLY WHEN A DEPOSIT WAS STARTED (JOIN-TIME-1359, measured 2026-10-02 13:07Z): a round this browser already holds a lock
+        // for starts none - funding stays null - and this line threw "Cannot read properties of null (reading 'catch')", which
+        // refused the join: PLAY again on a round already joined (a reload, a second tab) could not get back in.
+        if (funding) funding.catch(() => {});   // answered where the lock awaits it
       }
       if (pays) {
         let signerNodes = null;
