@@ -57,6 +57,7 @@ export class WinningsSend {
     // so the peer answers from that late settlement's rows; empty for the round's own sends.
     Object.assign(this, { round, port, curve, random, peersFor, fetcher, lnurlFetch, network, scopeParam });
     this.pairs = new Map();      // `${round}:${entry}:${attempt}` -> nonce pair for the auth signature
+    this.rebuilt = new Map();    // an unsigned re-send transaction, by everything it is built from
   }
 
   /** The address's LUD-06 pay request, as THIS signer node fetches it. */
@@ -285,9 +286,21 @@ export class WinningsSend {
     const from = await this.contractOf(roundIdBytes, prev, built);
     if (!from) return null;
     const nonce = resendNonce({ roundId: roundIdBytes, lateEntryId: this.round.lateEntryId || null, entryId: row.entryId, attempt: row.attempt });
-    return this.port.settle({ claimPk: built.claimPk, claims: [], refunds: [{ outpoint: from, amountMsat: prev.payoutMsat }],
+    // AN UNSIGNED REBUILD IS KEPT (NODE-OPT-1648): it is the same transaction every time - the nonce is the round's, the
+    // entry's and the attempt's - yet every winnings sweep (once a minute, every seat) rebuilt it with a stock-client run
+    // on the shared client directory for every held send: 48 `settle` runs a minute across seven idle testnet4 seats. A
+    // signed one is a submission and always goes to the federation.
+    const key = signature ? null : [toHex(roundIdBytes), toHex(row.entryId), row.attempt, built.txid, String(prev.payoutMsat),
+      String(row.payoutMsat), row.paymentHash, row.gatewayPk, row.expiration, toHex(from.txid), String(from.outIdx)].join(':');
+    if (key && this.rebuilt.has(key)) return this.rebuilt.get(key);
+    const tx = await this.port.settle({ claimPk: built.claimPk, claims: [], refunds: [{ outpoint: from, amountMsat: prev.payoutMsat }],
       payouts: [{ payoutPk: built.claimPk, msat: row.payoutMsat,
         sent: { paymentHash: row.paymentHash, gatewayPk: row.gatewayPk, expiration: row.expiration } }], nonce, signature });
+    if (key && tx) {
+      this.rebuilt.set(key, tx);
+      if (this.rebuilt.size > 4096) this.rebuilt.delete(this.rebuilt.keys().next().value);
+    }
+    return tx;
   }
 
   /** Has this attempt's contract expired unpaid, as this signer node reads the federation? */
