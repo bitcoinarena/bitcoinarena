@@ -23,6 +23,10 @@
 // tested. There is no default, no constant and no fallback here.
 import { beaconFromChain } from '../../protocol/src/beacon.js';
 import { headersToTip } from './chain-rpc.js';
+import { blockHashOf } from '../../protocol/src/chain.js';
+
+const hex = (b) => Buffer.from(b).toString('hex');
+const fromHex = (h) => Uint8Array.from(Buffer.from(h, 'hex'));
 
 /** Headers read per refresh. A view is a window; the rule judges what is in it. */
 export const BEACON_WINDOW = 64;
@@ -36,6 +40,34 @@ export function chainBeacon({ call, window = BEACON_WINDOW } = {}) {
   // ONE READ IN FLIGHT PER QUESTION (the owner 2026-09-30, the testnet4 bitcoind flood): rounds that share a committee_time
   // share the read, instead of each reading 400 headers until the first answer lands.
   const reading = new Map();
+  // AND ONE HEADER WINDOW FOR EVERY QUESTION (ORDER-2116, measured on the free pair 2026-10-01): a round asked about
+  // before its beacon read 400 headers - 800 calls - on every ask, and ten rounds posted ahead held 46 RPC calls open per
+  // node; their beacons were found minutes after their entry had closed. The window is read once and then extended by the
+  // blocks past its tip; a first new header that does not link to the held tip (a reorganised chain) reads it whole.
+  let win = null;
+  let winRead = null;
+  const extend = () => {
+    if (winRead) return winRead;
+    winRead = (async () => {
+      const tip = Number(await call('getblockcount'));
+      if (win && tip === win.tipHeight) return win;
+      if (win && tip > win.tipHeight && tip - win.tipHeight < window) {
+        const added = [];
+        for (let h = win.tipHeight + 1; h <= tip; h++)
+          added.push(fromHex(await call('getblockheader', [await call('getblockhash', [h]), false])));
+        const last = win.headers[win.headers.length - 1];
+        if (hex(added[0].subarray(4, 36)) === hex(blockHashOf(last))) {
+          const headers = [...win.headers, ...added];
+          const drop = Math.max(0, headers.length - window);
+          win = { headers: headers.slice(drop), firstHeight: win.firstHeight + drop, tipHeight: tip };
+          return win;
+        }
+      }
+      win = await headersToTip(call, { count: window });
+      return win;
+    })().finally(() => { winRead = null; });
+    return winRead;
+  };
 
   return {
     /**
@@ -46,9 +78,10 @@ export function chainBeacon({ call, window = BEACON_WINDOW } = {}) {
      */
     async refresh(contract) {
       const key = keyOf(contract);
+      if (held.has(key)) return { ok: true, ...held.get(key) };
       if (reading.has(key)) return reading.get(key);
       const read = (async () => {
-        const view = await headersToTip(call, { count: window });
+        const view = await extend();
         const seen = beaconFromChain(contract, view);
         if (seen.ok) held.set(key, seen);
         return seen;
