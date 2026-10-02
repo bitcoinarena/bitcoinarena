@@ -70,7 +70,10 @@ export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs =
      * THE FEDERATION'S GUARDIANS, off its own config (§23.6; the owner 2026-09-15 07:33): its id, each
      * guardian's 33-byte broadcast key, and its consensus threshold - what federationIsBonded counts.
      */
-    async guardians() {
+    // KEPT A MINUTE TOO (JOIN-TIME, the owner 2026-10-02: "Join click to the round actually loaded: 2 to 3 seconds"): every
+    // POST /round - each player's PLAY - ran the stock client for the guardian set, ~0.5 s a round open; it changes in days.
+    guardians() { return guardiansKept(); },
+    async guardiansRead() {
       const j = await run(bin, ['--mode', 'guardians', '--data-dir', readDataDir], timeoutMs);
       return { federationId: fromHex(String(j.federation_id)), guardians: Number(j.guardians), threshold: Number(j.threshold),
         keys: (j.keys || []).map((k) => fromHex(String(k.key))) };
@@ -136,6 +139,7 @@ export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs =
     },
   };
   const gatewaysKept = keptFor(keepMs, () => port.gatewaysRead(), now);
+  const guardiansKept = keptFor(keepMs, () => port.guardiansRead(), now);
   const feesKept = keptFor(keepMs, () => port.feesRead(), now);
   return port;
 }
