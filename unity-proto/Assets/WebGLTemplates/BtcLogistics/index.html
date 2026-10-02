@@ -462,12 +462,15 @@
     let version = '';
     document.addEventListener('DOMContentLoaded', () => { const el = document.getElementById('sub'); version = el ? el.textContent : ''; keep('page', version); });
     keep('page', 'loaded ' + location.pathname + (/[?&]round=([0-9a-f]{8})/.exec(location.search) ? ' round ' + /[?&]round=([0-9a-f]{8})/.exec(location.search)[1] : ''));
+    // UNITY'S OWN NOISE IS NOT KEPT (measured PAID-NIGHT-2155: "Ran out of virtual channels" warnings, dozens a second in a
+    // fight, pushed every [blwp] line out of the 800 within a minute)
+    const SPAM = /Ran out of virtual channels|\[UnityCache\]|kinematic body|JS_FileSystem_Sync|world is still settling/;
     const text = (args) => Array.from(args).map((a) => (a instanceof Error ? a.message : typeof a === 'string' ? a : (() => { try { return JSON.stringify(a); } catch { return String(a); } })())).join(' ');
     for (const [name, kind] of [['log', 'log'], ['info', 'log'], ['warn', 'WARN'], ['error', 'ERROR']]) {
       const was = console[name];
       if (typeof was !== 'function') continue;
       console[name] = function () {
-        try { const t = text(arguments); if (kind !== 'log' || t.indexOf('[blwp]') !== -1) keep(kind, t); } catch { /* never in the way */ }
+        try { const t = text(arguments); if ((kind !== 'log' || t.indexOf('[blwp]') !== -1) && !SPAM.test(t)) keep(kind, t); } catch { /* never in the way */ }
         return was.apply(this, arguments);
       };
     }
@@ -534,10 +537,25 @@
   // route per host (a Cloudflare tunnel to the same paths): each socket to such a host goes the way that last opened, and a
   // socket that fails before it opens turns the next one to the other way. Plain fetches are left alone (they share one
   // connection that already works).
+  // ONE LOCK CLIENT PER PAGE (PAID-NIGHT-2155, measured live): the page imported and initialised the lock client's wasm
+  // from nine places, and the glue only remembers the module once initialising has finished - two at once made two
+  // instances in one tab (that tab fetched the wasm twice; three clean tabs once each). Objects of the first then ran
+  // against the second's memory: a guardian's socket address came out as "/guardian" + 4 zero bytes + "uardian", every
+  // 15 s, so that guardian was out of reach for the tab (and with three such, a 5 of 7 consensus call fails - the
+  // "2,3,5 => Transport error: WebSocket connection failed" of the 2026-10-02 playtest). Every caller now takes this one
+  // promise of the initialised module; a failed load is not kept.
+  window.BLWP_LOCK_WASM = () => (window.__blwpLockWasm = window.__blwpLockWasm || import('./blwp_lock_client.js')
+    .then(async (m) => { await m.default(); return m; })
+    .catch((e) => { window.__blwpLockWasm = null; throw e; }));
   (function () {
     const Real = window.WebSocket;
     if (!Real) return;
     const routes = window.BLWP_ALT_ROUTES = window.BLWP_ALT_ROUTES || {};
+    // KNOWN FROM THE PAGE'S START (PAID-NIGHT-2155, measured: a page opened on a round link never read the lobby's
+    // daily.json, so its play socket went to the Funnel host alone and failed, 1006): read here at once.
+    fetch('daily.json', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d && d.testnet && d.testnet.alt && typeof d.testnet.alt === 'object') Object.assign(routes, d.testnet.alt); })
+      .catch(() => { /* the lobby reads it again */ });
     const viaAlt = new Map();
     function routed(url) {
       try {
@@ -553,6 +571,8 @@
     class RoutedWebSocket extends Real {
       constructor(url, protocols) {
         const r = routed(url);
+        // a NUL in a socket address is the lock client's memory mixed up (see BLWP_LOCK_WASM): said, so it shows in the logs
+        if (/\u0000|%00/.test(String(url))) console.error('[blwp] a socket address with NUL bytes - the lock client\'s memory is mixed up; reload the page: ' + String(url).replace(/\u0000/g, '\\0'));
         if (protocols === undefined) super(r.url); else super(r.url, protocols);
         const log = window.BLWP_LOG_SOCKET || (() => {});
         log('new', r.url);
@@ -1301,7 +1321,7 @@
       if (pays && BLWPCLIENT.roundLocks(named.round)) {
         const keptEarly = BLWPCLIENT.savedLock(vault(), { roundId: BLWPCLIENT.fromHex(named.roundIdHex), playerPubkey: player.pubkey });
         if (BLWPCLIENT.keptLockUse(keptEarly).use === 'new') funding = (async () => {
-          const wasm = await import('./blwp_lock_client.js');
+          const wasm = await window.BLWP_LOCK_WASM();
           await wasm.default();
           const onStep = (step) => {
             if (stageEl) stageEl.textContent = 'Stake lock: ' + step + ' …';
@@ -1597,7 +1617,7 @@
     async function roundWallet(r) {
       if (!(await holdRound(r.roundIdHex))) return null;
       if (!roundWallets.has(r.roundIdHex)) {
-        const wasm = await import('./blwp_lock_client.js');
+        const wasm = await window.BLWP_LOCK_WASM();
         await wasm.default();
         roundWallets.set(r.roundIdHex, { LockClient: wasm.LockClient, client: await BLWPCLIENT.tabLockWallet(roundAsk(r, wasm.LockClient)) });
       }
@@ -1826,7 +1846,7 @@
         why.textContent = '';
         (async () => {
           try {
-            const wasm = await import('./blwp_lock_client.js'); await wasm.default();
+            const wasm = await window.BLWP_LOCK_WASM(); await wasm.default();
             // THE ROUNDS ARE SIZED AS THE JOIN SIZES THEM: with the donation chosen in Settings (stake x its %), so "1 round" here
             // is the 1 round PLAY asks (measured 2026-10-01: without it Settings asked 102.4 sat where a round takes 100.31)
             const donationMsat = ctx.roundStake * BigInt(donationBps()) / 10000n;
@@ -2063,7 +2083,7 @@
       inv.oninput = readInvoice;
       (async () => {
         try {
-          const wasm = await import('./blwp_lock_client.js'); await wasm.default();
+          const wasm = await window.BLWP_LOCK_WASM(); await wasm.default();
           const can = await BLWPCLIENT.playerWithdrawable({ round: ctx.round, invite: ctx.invite, seed: ctx.seed, LockClient: wasm.LockClient, storage: vault() });
           canMsat = can;
           usable(can > 0n);
@@ -2086,7 +2106,7 @@
           else if (/withdrawing over Lightning/.test(step)) status.set(2, `Sending ${n} over Lightning …`, 'busy');
         };
         try {
-          const wasm = await import('./blwp_lock_client.js'); await wasm.default();
+          const wasm = await window.BLWP_LOCK_WASM(); await wasm.default();
           const out = await BLWPCLIENT.withdrawPlayerWallet({ round: ctx.round, invite: ctx.invite, seed: ctx.seed, LockClient: wasm.LockClient,
             storage: vault(), amountMsat: chosen, gateways: ctx.gateways, onStep, invoiceFor: async () => ({ ok: true, invoice: pasted }) });
           if (out.ok) status.set(3, `Done! ${n} were sent to your Lightning wallet` + (host(out.gateway) ? ` via ${host(out.gateway)}.` : '.'), 'ok');
@@ -2106,7 +2126,7 @@
       const lob = window.BLWP_LEDGER_LOBBY;
       if (!lob || !lob.federation) { fedEl.textContent = 'No federation named by this lobby'; rowsEl.textContent = ''; return; }
       let fed;
-      try { const wasm = await import('./blwp_lock_client.js'); await wasm.default(); fed = String(wasm.LockClient.federationIdOf(lob.federation)).toLowerCase(); }
+      try { const wasm = await window.BLWP_LOCK_WASM(); await wasm.default(); fed = String(wasm.LockClient.federationIdOf(lob.federation)).toLowerCase(); }
       catch (e) { fedEl.textContent = 'The federation id could not be read: ' + (e && e.message ? e.message : e); return; }
       window.BLWP_LEDGER_FEDERATION = fed;
       fedEl.textContent = 'Federation ' + fed;
@@ -2166,7 +2186,7 @@
       otherWalletsBusy = true;
       el.textContent = 'Reading the other wallets in this browser \u2026';
       try {
-        const wasm = await import('./blwp_lock_client.js'); await wasm.default();
+        const wasm = await window.BLWP_LOCK_WASM(); await wasm.default();
         const heldElsewhere = (hex) => { try { const h = JSON.parse(L.getItem('blwp.seed.held.' + hex.slice(0, 16)) || 'null'); return !!h && Date.now() - h.at <= 12000 && h.tab !== sessionStorage.getItem('blwp.tab.id'); } catch { return false; } };
         const lines = [];
         let total = 0;
@@ -2833,7 +2853,7 @@
         if (!seed) return;
         const t0 = Date.now();
         window.BLWP_WALLET_WARM = (async () => {
-          const wasm = await import('./blwp_lock_client.js');
+          const wasm = await window.BLWP_LOCK_WASM();
           await wasm.default();
           const client = await BLWPCLIENT.playerWallet({ round: r.raw.contract, invite: named.federation, seed, LockClient: wasm.LockClient, storage: vault() });
           console.log('[blwp] player wallet open in the lobby, ' + (Date.now() - t0) + ' ms');
@@ -2886,7 +2906,7 @@
           const others = kept.filter((x) => { if (!/^[0-9a-f]{64}$/i.test(x.hex) || x.hex === cur) return false;
             const n = entriesOf(x.hex); return n > 0 && L.getItem(emptyKey(x.hex)) !== String(n); });
           if (!others.length) return;
-          const wasm = await import('./blwp_lock_client.js'); await wasm.default();
+          const wasm = await window.BLWP_LOCK_WASM(); await wasm.default();
           for (const x of others) {
             const take = async () => {
               const other = await Promise.race([BLWPCLIENT.playerWallet({ round, invite: named.federation, seed: BLWPCLIENT.fromHex(x.hex), LockClient: wasm.LockClient, storage: L }),
@@ -2947,7 +2967,7 @@
         // the address becomes the round's link (with `play=1`, so a reload still
         // starts the round), the round is joined by the same code a round link
         // runs, and Unity starts the round when BLWP_JOIN says joined.
-        join(id, { holdUntilMs = 0, next = false } = {}) {
+        join(id, { holdUntilMs = 0, next = false, link = false } = {}) {
           // THE LOBBY'S OWN ROW, or - for the next round after a run - any row this page last read (a series lists more
           // than one round of a kind, and the lobby shows one per kind)
           let r = (window.BLWP_LOBBY || []).find((x) => x.id === id && x.join);
@@ -3034,7 +3054,7 @@
                 // starts" and nothing else): "round starts in 1:58", counted down each second; Unity reads it every 0.75 s.
                 const startsIn = () => {
                   const s = Math.max(0, Math.ceil((holdUntilMs - Date.now()) / 1000));
-                  return (next ? 'next round starts in ' : 'round starts in ') + Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+                  return (next && !link ? 'next round starts in ' : 'round starts in ') + Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
                 };
                 join.stage = startsIn();
                 join.held = true;
@@ -3120,7 +3140,43 @@
       }
       return join;
     };
+    // A ROUND LINK WHOSE ROUND HAS NOT STARTED IS PLAYED FROM THE LOBBY, HELD TO ITS START (PAID-NIGHT-2155, measured live:
+    // a reload of round d581529b 3 min before its start rejoined it with the stake lock it had made, and Unity - reading
+    // play=1 - started driving at once in the world before the start, with no session; the truck wrecked there, that
+    // counted as the run's end, and the page went on to the next round 192003b2 and asked a second 100 sat deposit, the
+    // locked entry left to walk away). So the address loses round and play, the lobby comes up, and the round is joined
+    // as the lobby joins a round ahead: held to its start, the countdown on the lobby's line, Unity adopting the join and
+    // starting the run at the start. The join takes the kept lock as before. A round already started goes on as ever.
+    async function heldRoundLink() {
+      const q = new URLSearchParams(location.search.replace(/^\?/, ''));
+      const id = (q.get('round') || '').toLowerCase();
+      if (!/^[0-9a-f]{64}$/.test(id) || q.get('play') !== '1' || !BLWPCLIENT.lobbyQuery) return false;
+      const bare = new URLSearchParams(q); bare.delete('round'); bare.delete('play');
+      let named = null; try { named = BLWPCLIENT.lobbyQuery('?' + bare.toString()); } catch { named = null; }
+      if (!named || !named.nodes || !named.nodes.length) return false;
+      let startMs = NaN;
+      for (const n of named.nodes.slice(0, 3)) {
+        try {
+          const r = await fetch(String(n).replace(/\/+$/, '') + '/rounds?next=12', { cache: 'no-store', signal: AbortSignal.timeout(6000) });
+          const d = await r.json(); const x = (d.rounds || d).find((y) => y && y.id === id);
+          if (x) { startMs = Number(x.startTimeMs); break; }
+        } catch { /* the next node */ }
+      }
+      if (!(startMs - Date.now() > 5000)) return false;
+      console.log(`[blwp] round link ${id.slice(0, 16)} starts at ${new Date(startMs).toISOString()}: joined from the lobby, held to its start`);
+      const was = location.search;
+      history.replaceState(null, '', location.pathname);
+      if (!(await showTheLobbyIfOneWasNamed())) { history.replaceState(null, '', location.pathname + was); return false; }
+      for (let i = 0; i < 40; i++) {
+        if (window.BLWP_LOBBY_ACT && (window.BLWP_LOBBY_ROWS || []).some((x) => x.id === id && x.joinable)) break;
+        await new Promise((r) => setTimeout(r, 500));
+      }
+      const took = !!(window.BLWP_LOBBY_ACT && window.BLWP_LOBBY_ACT.join(id, { holdUntilMs: startMs, next: true, link: true }));
+      console.log(`[blwp] round link ${id.slice(0, 16)}: ${took ? 'joined, held to its start' : 'not joinable from the lobby - PLAY it there'}`);
+      return true;
+    }
     const joinOrBackToTheLobby = async () => {
+      if (await heldRoundLink().catch((e) => { console.error('[blwp] round link not held: ' + e.message); return false; })) return;
       const onARound = /(^|[?&])round=/.test(location.search);
       try {
         await joinTheRoundIfOneWasNamed();
