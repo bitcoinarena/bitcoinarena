@@ -67,3 +67,33 @@ test('a round the nodes report settled - PROVISIONALLY_FINAL, no pending amount 
   await live.go();
   assert.equal(live.window.BLWP_PENDING_SATS, 196);
 });
+
+// TWO PLAYERS IN ONE BROWSER (ORDER-2116, measured 2026-10-02 01:56Z): the notes share one store; keyed by round alone the
+// loser's overwrote the winner's and the winner's tab showed nothing while every node said 192000 msat. One note per
+// entry, and a tab asks only about the notes it wrote; a tab that wrote none (a reopened browser) asks about all.
+test('two entries of one round in one browser: each tab asks only about its own entry', async () => {
+  const kept = new Map([
+    ['blwp.pending.r1.e1', JSON.stringify({ roundIdHex: 'r1', entryIdHex: 'e1', nodes: ['http://a'] })],
+    ['blwp.pending.r1.e2', JSON.stringify({ roundIdHex: 'r1', entryIdHex: 'e2', nodes: ['http://a'] })],
+  ]);
+  const store = { get length() { return kept.size; }, key: (i) => [...kept.keys()][i], getItem: (k) => kept.get(k) ?? null, removeItem: (k) => kept.delete(k) };
+  const asked = [];
+  const fetch = async (u) => { const e = new URL(u).searchParams.get('entry'); asked.push(e); return { ok: true, json: async () => signed(e === 'e1' ? '192000' : '0') }; };
+  const tab = (mine) => {
+    const session = new Map(mine ? [['blwp.pending.mine', JSON.stringify(mine)]] : []);
+    const window = { BLWP_WALLET_BALANCE: { sats: 0, pending: 0 }, sessionStorage: { getItem: (k) => session.get(k) ?? null } };
+    const run = new Function('vault', 'BLWPCLIENT', 'fetch', 'document', 'window', 'paintMoney', `${src}; return lookThePending();`);
+    return run(() => store, { savedCollects: () => [] }, fetch, { getElementById: () => null }, window, () => {}).then(() => window.BLWP_PENDING_SATS);
+  };
+  const winner = await tab(['blwp.pending.r1.e1']);
+  const winnerAsked = asked.splice(0);
+  const loser = await tab(['blwp.pending.r1.e2']);
+  const loserAsked = asked.splice(0);
+  const reopened = await tab(null);
+  console.log('  FACTS (two tabs):', JSON.stringify({ winner, winnerAsked, loser, loserAsked, reopened, reopenedAsked: asked }));
+  assert.equal(winner, 192, 'the winner\'s tab does not show its own pending');
+  assert.deepEqual(winnerAsked, ['e1']);
+  assert.equal(loser, 0);
+  assert.deepEqual(loserAsked, ['e2']);
+  assert.deepEqual([...asked].sort(), ['e1', 'e2'], 'a tab with no notes of its own does not ask about every note');
+});
