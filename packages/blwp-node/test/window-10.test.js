@@ -243,3 +243,32 @@ test('4b. a valid objection to the agreed re-run, received before end + 1805 s, 
     assert.equal(after.secondObjection, true);
   } finally { await w.close(); }
 });
+
+// WINDOW-LIVE-1155 (the owner 2026-10-02: "The measured rounds that stayed PROVISIONALLY_FINAL are not done"): a seat that held
+// no valid objection and whose run never reached five FINAL signatures decides §13C at the re-run window's end, once.
+test('2b. short of five FINAL signatures at end + 1205 s, a seat that held no objection and signed FINAL itself decides VOID, and a later FINAL signature does not turn it back', async () => {
+  const w = await roundAhead();
+  try {
+    w.sign('agrees', () => ({}));
+    const eid = w.runs.agrees.eid;
+    const E = roundEndMs(w.contract);
+    skipTo(Number(E + 605000n) + 50);
+    await holderSigns(w, eid);
+    await w.finalBy('agrees', 3);
+    const atFour = stateOf(w, eid);
+    skipTo(Number(E + 1204000n));
+    const before = stateOf(w, eid);
+    skipTo(Number(E + 1205000n) + 50);
+    const at = stateOf(w, eid);
+    const kept = w.holder.round.noQuorum(eid);
+    await w.finalBy('agrees', 1, { keys: w.others.slice(4, 5) });
+    const after = stateOf(w, eid);
+    console.log('  FACTS (2b):', big({ atFour: [atFour.state, atFour.finalSigs], before: before.state, at: [at.state, at.why], kept: kept && kept.outcome, after: after.state }));
+    assert.equal(atFour.state, 'PROVISIONALLY_FINAL');
+    assert.equal(before.state, 'PROVISIONALLY_FINAL', 'decided before the re-run window\'s end + 5 s');
+    assert.equal(at.state, 'VOID', at.why);
+    assert.match(at.why, /not FINAL by the re-run window's end/);
+    assert.equal(kept && kept.outcome, 'VOID', 'the decision was not written');
+    assert.equal(after.state, 'VOID', 'a FINAL signature arriving later turned the decision back');
+  } finally { await w.close(); }
+});
