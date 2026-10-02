@@ -432,6 +432,45 @@
   </div>
 
   <script>
+  // A SECOND ROUTE TO THE NODES' HOST (the owner 2026-10-02, playtest: "Not joined PAID ... consensus_block_count, 1 => Transport
+  // error: WebSocket connection failed, 5 => ..., 6 => ..."). The testnet4 nodes and guardians answer at one Tailscale Funnel
+  // host, and from his network one of its three relays resets every connection (measured from the test host: 185.40.234.37
+  // ECONNRESET, IPv6 unreachable; earlier the same day it was the only one that worked). A browser socket that lands on that relay
+  // fails and Chrome does not try the next address, so asking again failed again. daily.json's `testnet.alt` names a second
+  // route per host (a Cloudflare tunnel to the same paths): each socket to such a host goes the way that last opened, and a
+  // socket that fails before it opens turns the next one to the other way. Plain fetches are left alone (they share one
+  // connection that already works).
+  (function () {
+    const Real = window.WebSocket;
+    if (!Real) return;
+    const routes = window.BLWP_ALT_ROUTES = window.BLWP_ALT_ROUTES || {};
+    const viaAlt = new Map();
+    function routed(url) {
+      try {
+        const u = new URL(String(url));
+        const alt = routes[u.host];
+        if (!alt) return { url, key: null };
+        const key = u.host + '/' + u.pathname.split('/')[1];
+        if (!viaAlt.has(key)) viaAlt.set(key, true);
+        if (viaAlt.get(key)) u.host = alt;
+        return { url: u.toString(), key };
+      } catch { return { url, key: null }; }
+    }
+    class RoutedWebSocket extends Real {
+      constructor(url, protocols) {
+        const r = routed(url);
+        if (protocols === undefined) super(r.url); else super(r.url, protocols);
+        if (!r.key) return;
+        let opened = false;
+        this.addEventListener('open', () => { opened = true; });
+        this.addEventListener('error', () => { if (!opened) viaAlt.set(r.key, !viaAlt.get(r.key)); });
+      }
+    }
+    window.WebSocket = RoutedWebSocket;
+  })();
+  </script>
+
+  <script>
   // GETTING SOUND OUT OF AN iPHONE.
   //
   // iOS Safari keeps every AudioContext suspended until one is resumed from
@@ -1345,7 +1384,15 @@
             if (stageEl) stageEl.textContent = BLWPCLIENT.lockLine(stakeLock);
             console.log('[blwp] stake locked at ' + BLWPCLIENT.toHex(made.outpoint.txid) + ':' + String(made.outpoint.outIdx));
           } catch (e) {
-            window.BLWP_JOIN_REFUSED = 'this round\'s stake goes into a federation lock, and it was not made: ' + e.message;
+            // SHORT IN THE LOBBY, WHOLE IN THE CONSOLE (the owner 2026-10-02, playtest screenshot: a four-line "Federation rpc error
+            // { method => ..., 1 => Transport error: WebSocket connection failed, ... }" grew the lobby's red box over the
+            // "PLAY joins round" line): guardians that could not be reached are named by number, the rest of the error is
+            // the console's.
+            const unreached = [...String(e.message).matchAll(/(\d+) => Transport error/g)].map((m) => m[1]);
+            console.error('[blwp] the stake lock was not made: ' + e.message);
+            window.BLWP_JOIN_REFUSED = unreached.length
+              ? 'the stake lock was not made: guardian' + (unreached.length > 1 ? 's ' : ' ') + unreached.join(', ') + ' could not be reached. Try PLAY again.'
+              : 'this round\'s stake goes into a federation lock, and it was not made: ' + e.message;
             console.error('[blwp] join refused: ' + window.BLWP_JOIN_REFUSED);
             return;
           }
@@ -2502,6 +2549,7 @@
         if (!r.ok) return null;
         const d = await r.json();
         const search = d && d.testnet ? BLWPCLIENT.dailyLobbySearch(d.testnet) : null;
+        if (d && d.testnet && d.testnet.alt && typeof d.testnet.alt === 'object') Object.assign(window.BLWP_ALT_ROUTES || {}, d.testnet.alt);
         const named = search ? BLWPCLIENT.lobbyQuery(search) : null;
         if (!named || (first && named.nodes.join(',') === first.nodes.join(','))) return null;
         return { search, named };
