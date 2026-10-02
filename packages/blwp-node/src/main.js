@@ -43,7 +43,7 @@ import { lightningFromEnv } from './lnd-settings.js';
 import { stakeLocksFromEnv } from './stake-lock-port.js';
 import { fundingFromEnv } from './funding.js';
 import { startNode } from './node-start.js';
-import { readFileSync } from 'node:fs';
+import { statSync, readFileSync } from 'node:fs';
 import { decodeRoundContract } from '../../protocol/src/contracts.js';
 import { TEST_DONATION_SET_REGTEST, TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS } from '../../protocol/src/test-donation-sets.js';
 
@@ -86,22 +86,35 @@ if (process.env.BLWP_CLOSE_AT_END === '1') options.closeAtEnd = true;
   // by id (22A), so the rounds already written keep theirs
   if (net) options.donationSets = net === 'regtest' ? [TEST_DONATION_SET_REGTEST] : [TESTNET4_DONATION_SET, TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS];
 }
+// ONE SERIES A LINE: its template, hex; then `count=N` for a tail (the 82/90 fork: fewer than a day's 960 rounds - its id
+// is taken over that count) and `cut=N` for a series replaced from round N by its tail.
+const readSeriesFile = (path) => readFileSync(path, 'utf8').split(/\n/).map((l) => l.trim().split(/\s+/))
+  .filter((w) => w[0] && /^[0-9a-f]+$/i.test(w[0]))
+  .map(([h, ...more]) => {
+    const t = decodeRoundContract(new Uint8Array(Buffer.from(h, 'hex')));
+    for (const m of more) {
+      const kv = /^(count|cut)=(\d+)$/.exec(m);
+      if (!kv) throw new Error(`a series line names ${m}, not count=N or cut=N`);
+      if (kv[1] === 'count') t.seriesCount = Number(kv[2]); else t.seriesCutFrom = Number(kv[2]);
+    }
+    return t;
+  });
 if (process.env.BLWP_SERIES_FILE) {
-  // ONE SERIES A LINE: its template, hex; then `count=N` for a tail (the 82/90 fork: fewer than a day's 960 rounds - its id
-  // is taken over that count) and `cut=N` for a series replaced from round N by its tail.
-  const lines = readFileSync(process.env.BLWP_SERIES_FILE, 'utf8').split(/\n/).map((l) => l.trim().split(/\s+/))
-    .filter((w) => w[0] && /^[0-9a-f]+$/i.test(w[0]));
-  try {
-    options.series = lines.map(([h, ...more]) => {
-      const t = decodeRoundContract(new Uint8Array(Buffer.from(h, 'hex')));
-      for (const m of more) {
-        const kv = /^(count|cut)=(\d+)$/.exec(m);
-        if (!kv) throw new Error(`a series line names ${m}, not count=N or cut=N`);
-        if (kv[1] === 'count') t.seriesCount = Number(kv[2]); else t.seriesCutFrom = Number(kv[2]);
-      }
-      return t;
-    });
-  } catch (e) { console.error(`BLWP_SERIES_FILE: a line is not a series: ${e.message}`); process.exit(2); }
+  const path = process.env.BLWP_SERIES_FILE;
+  try { options.series = readSeriesFile(path); } catch (e) { console.error(`BLWP_SERIES_FILE: a line is not a series: ${e.message}`); process.exit(2); }
+  // A SERIES ADDED TO THE FILE IS TAKEN WITHOUT A RESTART (the owner 2026-10-02: "find out the reason for the restarts and
+  // find a way to recover from them"): the 82/90 waiter restarted the seven seats one at a time, 10 min apart, after each
+  // day's series - one restarted between a player's join and the round's start lost his session and his run went FORFEIT
+  // (round 798ebc79, seat 1, 11:45:56Z), one restarted inside the objection window never signed FINAL (seat 2). The file is
+  // read again when it changes; the series writer pass takes what is new.
+  let seen = (() => { try { return statSync(path).mtimeMs; } catch { return null; } })();
+  options.seriesReload = () => {
+    let m; try { m = statSync(path).mtimeMs; } catch { return null; }
+    if (m === seen) return null;
+    const read = readSeriesFile(path);
+    seen = m;
+    return read;
+  };
 }
 // WHERE THE OTHER SIGNER NODES ANSWER, as the operator knows it (serve's `peers`; ORDER-2116, measured on the free pair):
 // with none named, a node finds its peers off the round's census - the bond adverts at its census height - and a seat
@@ -163,6 +176,16 @@ if (url) {
     // restarted, and the LNDs on it shut down. A round asked by id alone answers from the key it was read under.
     chainFor: ({ contract, roundIdBytes } = {}) => {
       const rid = roundIdBytes ? Buffer.from(roundIdBytes).toString('hex') : null;
+      // A ROUND ASKED BY ID ALONE AFTER A RESTART (the owner 2026-10-02: "find a way to recover from them"): the id -> view key
+      // map lives in memory, so a seat restarted inside a round's objection window answered "no chain view for that round",
+      // could not say who is bonded, gathered no FINAL signature and kept none - seat 2 stayed PROVISIONALLY_FINAL on round
+      // 798ebc79 while the other six signed FINAL 7 of 7. The round's own contract is in the store: its key is read from it.
+      if (!contract && rid && !keyOfRound.has(rid)) {
+        try {
+          const row = db.prepare('SELECT contract FROM rounds WHERE round_id = ?').get(Buffer.from(rid, 'hex'));
+          if (row) contract = decodeRoundContract(new Uint8Array(row.contract));
+        } catch { contract = undefined; }
+      }
       const key = contract ? `${contract.censusHeight}:${contract.committeeTimeMs}:${contract.censusConfirmations}` : rid && keyOfRound.get(rid);
       if (!key) return undefined;
       if (rid && contract) keyOfRound.set(rid, key);
