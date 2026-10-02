@@ -241,10 +241,14 @@
       font: 600 13px/1.1 system-ui, sans-serif; pointer-events: none; }
     #blwp-lobby-balance .bal-chip { flex: 1 1 0; min-width: 0; display: flex; align-items: center; gap: 6px; padding: 0 8px;
       border-radius: 6px; background: rgba(13,16,20,0.92); border: 1px solid #5a4a22; color: #e8eaed; white-space: nowrap; overflow: hidden; }
-    #blwp-lobby-balance .bal-what { color: #9fb3c8; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    /* ICON AND AMOUNT ONLY IN THE LOBBY (the owner 2026-10-02: "Co 310 sat / Pe... 0 sat - not very nice"): the chips are too
+       narrow for the words beside a three-digit amount, and a cut word reads worse than none; the icon says which (the
+       chip's title says it in words), Settings shows the words in full */
+    #blwp-lobby-balance .bal-what { display: none; }
+    #blwp-lobby-balance .bal-chip { justify-content: center; }
     /* THE AMOUNT IS NEVER CUT (the owner 2026-10-02: "Confirmed 5" - a three-digit balance was clipped): the amount and the
        icon keep their width, the label gives way first */
-    #blwp-lobby-balance b { margin-left: auto; flex: none; }
+    #blwp-lobby-balance b { flex: none; }
     #blwp-lobby-balance .bal-ico { flex: none; }
     body.blwp-clean #blwp-lobby-balance { display: none !important; }
     .bal-ico { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px;
