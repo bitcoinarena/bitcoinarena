@@ -1832,6 +1832,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   }
   const seriesIds = () => { const all = new Set(); for (const w of writers) for (const x of w.ids()) all.add(x); return all; };
   let seriesTimer = null;
+  let seriesVersion = 0;               // bumped when a series is added while running: the listing's verdicts are read again
   const takeNewSeries = () => {
     if (typeof seriesReload !== 'function') return;
     let now;
@@ -1843,7 +1844,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       try { w = seriesWriter(round, t); } catch (e) { console.error(`[series] a new line refused: ${e.message}`); continue; }
       const id = toHex(w.id);
       if (held.has(id)) continue;
-      series.push(t); writers.push(w); held.add(id);
+      series.push(t); writers.push(w); held.add(id); seriesVersion++;
       console.log(`[series] ${id.slice(0, 16)}: taken from the series file without a restart`);
     }
   };
@@ -1895,7 +1896,6 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       eligibleKeys: new Set((roster.censusFor(rid).entries || []).map((e) => toHex(e.pubkey))).size };
   };
   const listingKept = new Map();                  // GET /rounds query -> { at, json }, a large one kept 30 s
-  const contractKept = new Map();
   // THE DOORS' FEDERATION FACTS, KEPT A MINUTE (ORDER-2116, measured on testnet4 2026-10-02 03:5xZ): POST /round asked the
   // lock port for the federation's gateways and fee rule on every call - a client process each, pinging the gateways - and
   // two players opening their sessions against 7 nodes queued them: POST /round 80-110 s, a session open over 7 min, the
@@ -1924,35 +1924,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const nextRaw = url.searchParams.get('next');
     const perSeries = nextRaw !== null && /^\d+$/.test(nextRaw) ? Number(nextRaw) : null;
     const candidates = [];
-    const openIds = round.openRoundIds();
-    // what is kept of rounds no longer open goes once it outgrows the open ones by 500 (a round closes every 90 s)
-    if (contractKept.size > openIds.length + 500) {
-      const open = new Set(openIds.map((r) => toHex(r)));
-      for (const k of contractKept.keys()) if (!open.has(k)) contractKept.delete(k);
-    }
-    for (const roundId of openIds) {
+    // ONE DECODED CONTRACT PER ROUND FOR THE SWEEPS AND THIS LISTING ALIKE (NODE-OPT-1648): a decoded contract is ~7 KB
+    // of heap, ~20 MB for the ~2,950 rounds a testnet4 seat holds, and this listing kept a second copy of each. The
+    // listing's own facts - its end, and whether it is announced at all - are kept on the same entry; the second depends
+    // on the series this node holds, so it is read again once a series is added (seriesVersion).
+    for (const roundId of openHeld()) {
       const held = { roundId };
-      // A ROUND'S CONTRACT, ITS END AND ITS SERIES VERDICT ARE READ ONCE (ORDER-2116, measured on testnet4 2026-10-02):
-      // every listing decoded all ~2000 held contracts and ran the series check on each - 0.7-3 s of loop per
-      // `?next=8` - and each open lobby asks every node every few seconds, so two pages held all 7 nodes near 90 % and a
-      // join's POST /round took 48 s. A contract never changes, nor the series this process holds.
-      const key = toHex(held.roundId);
-      let kept = contractKept.get(key);
-      if (!kept) {
-        // read from the store only now, the first time this process lists it (the ids above carry no contract)
-        const row = round.get(roundId);
-        let c;
-        try { c = decodeRoundContract(new Uint8Array(row.contract)); } catch { contractKept.set(key, { unlisted: true, endMs: null }); continue; }
-        let endMs;
-        try { endMs = roundEndMs(c); } catch { endMs = c.entryCloseMs; }
+      const kept = heldOf(roundId);
+      if (kept.bad) continue;
+      if (kept.listedUnder !== seriesVersion) {
         // §13A, WINDOW-10-SPEC: not 600 000 ms, never listed. A ROUND OF A SERIES THIS NODE NO LONGER HOLDS IS NOT
         // ANNOUNCED (the 82/90 fork: a series replaced before it ran takes no entry at any door, so it is offered nowhere).
-        kept = { c, endMs, unlisted: c.objectionWindowMs !== OBJECTION_WINDOW_MS || !!seriesRefusal(c) };
-        contractKept.set(key, kept);
+        kept.unlisted = kept.c.objectionWindowMs !== OBJECTION_WINDOW_MS || !!seriesRefusal(kept.c);
+        kept.listedEnd = kept.endMs !== null ? kept.endMs : kept.c.entryCloseMs;
+        kept.listedUnder = seriesVersion;
       }
       if (kept.unlisted) continue;
-      const { c, endMs } = kept;
-      if (nowMs >= endMs) continue;   // over: announced no longer (kept, so an ended round still open here is not read again)
+      const c = kept.c, endMs = kept.listedEnd;
+      if (nowMs >= endMs) continue;   // over: announced no longer
       if (aheadMs !== null && c.startTimeMs > nowMs + aheadMs) continue;
       candidates.push({ held, c, endMs });
     }
