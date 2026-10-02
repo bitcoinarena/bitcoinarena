@@ -465,7 +465,7 @@
     // UNITY'S OWN NOISE IS NOT KEPT (measured PAID-NIGHT-2155: "Ran out of virtual channels" warnings, dozens a second in a
     // fight, pushed every [blwp] line out of the 800 within a minute)
     // AND UNITY'S OWN WORD ON WHAT IT WROTE INTO THE CORE: a live or simulated liquidation offered or held back ([feed], [sim])
-    const KEEP = /\[blwp\]|\[feed\]|\[sim\]/;
+    const KEEP = /\[blwp\]|\[feed\]|\[sim\]|\[spawnmark\]/;
     const SPAM = /Ran out of virtual channels|\[UnityCache\]|kinematic body|JS_FileSystem_Sync|world is still settling/;
     const text = (args) => Array.from(args).map((a) => (a instanceof Error ? a.message : typeof a === 'string' ? a : (() => { try { return JSON.stringify(a); } catch { return String(a); } })())).join(' ');
     for (const [name, kind] of [['log', 'log'], ['info', 'log'], ['warn', 'WARN'], ['error', 'ERROR']]) {

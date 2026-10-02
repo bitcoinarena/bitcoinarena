@@ -310,6 +310,17 @@ mergeInto(LibraryManager.library, {
   BlwpTeleport: function (x, z, heading) {
     var b = Module.blwp;
     if (!b) return 0;
+    // NOT INTO A SIGNED RUN (PAID-NIGHT-2155, measured live): SpawnMark re-seats a held truck on Unity's own bay mark at
+    // every terrain rebuild (bay 13, z 10.200), and the round's world puts it in its own bay (bay 14, z 17.000). A rebuild
+    // after the round's world began and before the truck left the bay moved the core's truck 6.8 m in a write no
+    // transcript carries: the page DELIVERED and all 7 signer nodes replayed FAILED on the same ticks (rounds 552cd565,
+    // 10d734af, 235a6646 - sampled: at tick 21 the one differing word was the truck's z, 10.2 against 17.0). While this
+    // session's run is live the core's truck moves only by its inputs; before the run and once it is over, as before.
+    var n = Module.blwpNet;
+    if (n && n.inWorld && n.client && !n.client.over) {
+      console.log('[blwp] teleport refused: a signed run is live - no transcript would carry it');
+      return 0;
+    }
     return b.core.teleport(b.st, x | 0, z | 0, heading | 0) ? 1 : 0;
   },
 
