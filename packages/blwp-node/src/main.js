@@ -36,7 +36,7 @@ import { TESTNET4_DONATION_SET } from '../../protocol/src/testnet4-donation-set.
 import { openStore } from './store.js';
 import { tipHeaderView } from './tip-view.js';
 import { isOldTestnet4Id, isOldTestnet4Series, OLD_TESTNET4_SERIES_BOND_HEIGHT } from '../../protocol/src/old-series.js';
-import { bitcoindRpc, blocksOver } from './chain-rpc.js';
+import { bitcoindRpc, blocksOver, blockCache } from './chain-rpc.js';
 import { blockHashOf } from '../../protocol/src/chain.js';
 import { chainBeacon } from './beacon-source.js';
 import { lightningFromEnv } from './lnd-settings.js';
@@ -124,6 +124,7 @@ if (url) {
   // AND ITS CENSUS BLOCKS, for the same reason: the roster reads a view
   // synchronously, and the signer nodes' addresses are in it.
   const views = new Map();                     // view key -> the view
+  const blocksKept = blockCache();             // block hash -> its one parsed copy, shared by every view
   const reading = new Map();                   // view key -> its one read in flight
   const keyOfRound = new Map();                // round id hex -> the view key it was asked under
   // UP TO THE BEACON, AND AS DEEP PAST IT AS THE ROUND ASKS. The beacon comes
@@ -139,7 +140,7 @@ if (url) {
     const tip = Number(await call('getblockcount'));
     const deep = seen.ok ? seen.height + contract.censusConfirmations - 1 : 0;
     const to = Math.min(tip, Math.max(contract.censusHeight, deep));
-    const view = await blocksOver(call, Math.max(0, contract.censusHeight - CENSUS_LOOKBACK), to);
+    const view = await blocksOver(call, Math.max(0, contract.censusHeight - CENSUS_LOOKBACK), to, { cache: blocksKept });
     // SHORT OF THE BEACON'S DEPTH, a view is read again later (ORDER-2116, measured on the free pair 2026-10-01: a round
     // posted 15 min ahead was read before its beacon existed, kept for good, and never drew a committee - "no block in
     // this view is after this round's committee time"; no free round posted ahead was joinable).
@@ -191,7 +192,7 @@ if (url) {
             // whole view again.
             const end = had.firstHeight + had.blocks.length - 1;
             const to = Math.min(tip, Math.max(contract.censusHeight, seen.height + contract.censusConfirmations - 1));
-            const more = to > end ? await blocksOver(call, end + 1, to) : { blocks: [] };
+            const more = to > end ? await blocksOver(call, end + 1, to, { cache: blocksKept }) : { blocks: [] };
             const links = !more.blocks.length || toHexMain(more.blocks[0].header.subarray(4, 36)) === toHexMain(blockHashOf(had.blocks[had.blocks.length - 1].header));
             if (!links) { views.set(key, await viewOf(contract)); return; }
             const view = { ...had, blocks: [...had.blocks, ...more.blocks] };
