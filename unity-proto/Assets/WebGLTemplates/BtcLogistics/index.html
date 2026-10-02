@@ -388,6 +388,12 @@
       </select>
       <div class="muted" id="blwp-donation-recipients"></div>
     </section>
+    <section class="settings-card" id="blwp-set-logs">
+      <h3>Client logs</h3>
+      <div class="muted">What this page did - its log lines, sockets and run state, no seed or keys - to paste to Claude.</div>
+      <button id="blwp-logs-copy" type="button">Copy client logs</button>
+      <div class="muted" id="blwp-logs-said"></div>
+    </section>
     <section class="settings-card" id="blwp-set-seed">
       <h3>Seed phrase</h3>
       <div class="muted" id="blwp-settings-backup"></div>
@@ -432,6 +438,93 @@
   </div>
 
   <script>
+  // CLIENT LOGS TO PASTE (the owner 2026-10-02: "Add a function that I can paste to you like copy client logs" - his Firefox
+  // run stopped reaching the signer nodes at tick 2066 and nothing on the page or the seats said why, and Unity's render
+  // debug lines flood the console so nothing could be copied from it). From the first script on, the page keeps the
+  // lines that say something - every "[blwp]" line, every console error and warning, uncaught errors - and every
+  // socket's open, close (with its code) and error, the last 800, in this browser's localStorage so a reload keeps them.
+  // Settings' "Copy client logs" and BLWP_COPY_LOGS() in the console copy them with the run's session state, the join and
+  // the balance as one JSON block. Never in it: a seed phrase, a seed, a key or e-cash - those are cut out by value.
+  (function () {
+    const KEY = 'blwp.clientlog', MOST = 800, LONGEST = 400;
+    let lines = [];
+    try { lines = JSON.parse(localStorage.getItem(KEY) || '[]'); if (!Array.isArray(lines)) lines = []; } catch { lines = []; }
+    let dirty = false;
+    const at = () => new Date().toISOString().slice(11, 23);
+    const keep = (kind, text) => {
+      lines.push(at() + ' ' + kind + ' ' + String(text).slice(0, LONGEST));
+      if (lines.length > MOST) lines.splice(0, lines.length - MOST);
+      dirty = true;
+    };
+    setInterval(() => { if (!dirty) return; dirty = false; try { localStorage.setItem(KEY, JSON.stringify(lines)); } catch { /* full or blocked */ } }, 2000);
+    window.addEventListener('pagehide', () => { try { localStorage.setItem(KEY, JSON.stringify(lines)); } catch { /* none */ } });
+    let version = '';
+    document.addEventListener('DOMContentLoaded', () => { const el = document.getElementById('sub'); version = el ? el.textContent : ''; keep('page', version); });
+    keep('page', 'loaded ' + location.pathname + (/[?&]round=([0-9a-f]{8})/.exec(location.search) ? ' round ' + /[?&]round=([0-9a-f]{8})/.exec(location.search)[1] : ''));
+    const text = (args) => Array.from(args).map((a) => (a instanceof Error ? a.message : typeof a === 'string' ? a : (() => { try { return JSON.stringify(a); } catch { return String(a); } })())).join(' ');
+    for (const [name, kind] of [['log', 'log'], ['info', 'log'], ['warn', 'WARN'], ['error', 'ERROR']]) {
+      const was = console[name];
+      if (typeof was !== 'function') continue;
+      console[name] = function () {
+        try { const t = text(arguments); if (kind !== 'log' || t.indexOf('[blwp]') !== -1) keep(kind, t); } catch { /* never in the way */ }
+        return was.apply(this, arguments);
+      };
+    }
+    window.addEventListener('error', (e) => keep('UNCAUGHT', (e.message || 'error') + (e.filename ? ' @' + String(e.filename).split('/').pop() + ':' + e.lineno : '')));
+    window.addEventListener('unhandledrejection', (e) => keep('UNHANDLED', e.reason && e.reason.message ? e.reason.message : String(e.reason)));
+    // the route shim (next script) reports every socket here
+    window.BLWP_LOG_SOCKET = (what, url, extra) => keep('socket', what + ' ' + String(url).replace(/^wss?:\/\//, '').replace(/\?.*$/, '') + (extra ? ' ' + extra : ''));
+
+    // WHAT IS CUT OUT, BY VALUE: this browser's seeds (the tab's and every kept one) and e-cash notes
+    const secrets = () => {
+      const s = [];
+      try { const t = sessionStorage.getItem('blwp.player.seed'); if (t) s.push(String(t)); } catch { /* none */ }
+      try { const k = JSON.parse(localStorage.getItem('blwp.seeds') || '[]'); for (const x of Array.isArray(k) ? k : []) s.push(typeof x === 'string' ? x : x && (x.seed || x.hex) || ''); } catch { /* none */ }
+      const seeds = s.filter((x) => typeof x === 'string' && x.length >= 32);
+      // and each seed's 24 words, as the phrase and word by word in a row is never logged - the phrase itself is
+      const phrases = [];
+      for (const x of seeds) { try { const p = window.BLWPCLIENT && BLWPCLIENT.phraseFromSeed && BLWPCLIENT.phraseFromSeed(BLWPCLIENT.fromHex(x)); if (p && p.ok && p.phrase) phrases.push(p.phrase); } catch { /* none */ } }
+      return [...phrases, ...seeds];
+    };
+    const clean = (t, hide) => {
+      let out = String(t);
+      for (const h of hide) out = out.split(h).join('[seed]');
+      return out.replace(/fedimint[0-9a-z]{40,}/gi, '[ecash]');
+    };
+    const pick = (o, names) => { const r = {}; if (!o) return null; for (const n of names) { const v = o[n]; if (v !== undefined && typeof v !== 'function') r[n] = typeof v === 'bigint' ? String(v) : v; } return r; };
+    window.BLWP_CLIENT_LOGS = () => {
+      const M = window.unityInstance && window.unityInstance.Module;
+      const net = M && (M.blwpRunNet || M.blwpNet);
+      const sub = document.getElementById('sub');
+      const report = {
+        page: version || (sub ? sub.textContent : ''), at: new Date().toISOString(), browser: navigator.userAgent,
+        visible: document.visibilityState, focused: document.hasFocus(),
+        url: location.pathname + (/[?&]round=([0-9a-f]+)/.exec(location.search) ? '?round=' + /[?&]round=([0-9a-f]+)/.exec(location.search)[1] : ''),
+        routes: window.BLWP_ALT_ROUTES || null,
+        net: net ? Object.assign(pick(net, ['state', 'error', 'batches', 'marks', 'tick', 'seen', 'resumedAt', 'openedAt']) || {},
+          { client: pick(net.client, ['state', 'error', 'drops', 'tries', 'firstTries', 'nextTick', 'ended', 'resumedAt', 'rewatched']) }) : null,
+        ended: window.BLWP_ENDED_RUN || null,
+        join: pick(window.BLWP_JOIN, ['state', 'why', 'stage', 'round', 'free', 'stakeSats', 'next', 'held']),
+        balance: window.BLWP_WALLET_BALANCE ? pick(window.BLWP_WALLET_BALANCE, ['sats', 'pending']) : null,
+        lines,
+      };
+      return clean(JSON.stringify(report, null, 1), secrets());
+    };
+    window.BLWP_COPY_LOGS = async () => {
+      const t = window.BLWP_CLIENT_LOGS();
+      try { await navigator.clipboard.writeText(t); return 'copied ' + lines.length + ' lines (' + t.length + ' characters) - paste them to Claude'; }
+      catch {
+        const ta = document.createElement('textarea'); ta.value = t; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        let ok = false; try { ok = document.execCommand('copy'); } catch { ok = false; }
+        ta.remove();
+        return ok ? 'copied ' + lines.length + ' lines - paste them to Claude' : 'the browser refused the copy: run copy(BLWP_CLIENT_LOGS()) in the console';
+      }
+    };
+  })();
+  </script>
+
+  <script>
   // A SECOND ROUTE TO THE NODES' HOST (the owner 2026-10-02, playtest: "Not joined PAID ... consensus_block_count, 1 => Transport
   // error: WebSocket connection failed, 5 => ..., 6 => ..."). The testnet4 nodes and guardians answer at one Tailscale Funnel
   // host, and from his network one of its three relays resets every connection (measured from the test host: 185.40.234.37
@@ -460,6 +553,11 @@
       constructor(url, protocols) {
         const r = routed(url);
         if (protocols === undefined) super(r.url); else super(r.url, protocols);
+        const log = window.BLWP_LOG_SOCKET || (() => {});
+        log('new', r.url);
+        this.addEventListener('open', () => log('open', r.url));
+        this.addEventListener('close', (e) => log('close', r.url, 'code ' + e.code + (e.reason ? ' ' + e.reason : '') + (e.wasClean ? '' : ' not clean')));
+        this.addEventListener('error', () => log('error', r.url));
         if (!r.key) return;
         let opened = false;
         this.addEventListener('open', () => { opened = true; });
@@ -2213,6 +2311,10 @@
     for (const id of ['blwp-seed-close', 'blwp-verify-cancel', 'blwp-verify-close'])
       document.getElementById(id).addEventListener('click', closeSeed);
     setInterval(paintMoney, 1000);
+    document.getElementById('blwp-logs-copy').addEventListener('click', async () => {
+      const said = document.getElementById('blwp-logs-said');
+      said.textContent = window.BLWP_COPY_LOGS ? await window.BLWP_COPY_LOGS() : 'this page keeps no client logs';
+    });
     // the balance read again every 10 s (a read, never a spend)
     setInterval(() => { if (window.BLWP_READ_BALANCE) window.BLWP_READ_BALANCE(); }, 10000);
 
