@@ -1135,11 +1135,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return { kept, why: fault ? fault.why : null };
   }
   const drawnPeers = new Map();
+  // A RUN STILL SHORT OF FINAL IS ASKED LESS OFTEN WHILE NOTHING NEW ARRIVES (the owner 2026-10-02: "Focus on lowering the
+  // load"): every finality tick signed this seat's FINAL afresh (new bytes, a store write), asked all six peers and
+  // verified and rewrote each answer - for every run short of five, without end; profiled on an idle testnet4 seat,
+  // 6.6 % of its loop. Its own signature is signed once; a pass that gains no signature doubles the wait (5 s to 5 min),
+  // one that gains resets it.
+  const gatherWait = new Map();                 // round+entry hex -> { nextMs, held, waitMs }
   async function gatherFinal(rid, eid) {
     let f = resultFinality(round, rid, eid);
-    if (f.state === FINAL) return true;
+    if (f.state === FINAL) { gatherWait.delete(toHex(rid) + toHex(eid)); return true; }
     if (!f.signable) return false;
-    const mine = finalSignatureNow(round, rid, eid, signHere);
+    const gk = toHex(rid) + toHex(eid);
+    const g = gatherWait.get(gk);
+    if (g && Date.now() < g.nextMs) return false;
+    const heldBefore = (f.finalSigs && f.finalSigs.signed) || 0;
+    const ownHex = toHex(round.pubkey);
+    const signedHere = round.finalSigs(rid, eid, f.signable.runId).some((r) => toHex(r.signerPubkey) === ownHex);
+    const mine = signedHere ? null : finalSignatureNow(round, rid, eid, signHere);
     if (mine) takeFinalSig(rid, eid, mine, f);
     // THE PEERS: the round's game committee off the census, or - a node whose chain view no longer reaches the round's
     // census, measured on testnet4 for rounds of the day before - the settlement committee's, then its DKG peers, as the
@@ -1171,6 +1183,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }));
     await ask(peersHere);
     f = resultFinality(round, rid, eid);
+    {
+      const held = (f.finalSigs && f.finalSigs.signed) || 0;
+      const waitMs = held > heldBefore || !g ? 5000 : Math.min(g.waitMs * 2, 300000);
+      gatherWait.set(gk, { nextMs: Date.now() + waitMs, held, waitMs });
+      if (gatherWait.size > 8192) gatherWait.delete(gatherWait.keys().next().value);
+    }
     // STILL SHORT, THE DKG PEERS TOO (ORDER-2116, measured on the free pair): the addresses a round's census gives are its
     // seats' bond adverts at its census height, and a seat whose address moved since (a quick tunnel renamed) answers
     // there no more - 44 runs sat at 1 of 2 FINAL signatures while the other seat served its own in 6 ms at home.
@@ -1678,6 +1696,34 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // decision the close makes (verifier.retryClose): the peers' receipts carried, and FORFEIT over the empty transcript
   // only when no signer node holds a first mark and no ENTRY_VOID stands. Never ENTRY_VOID, never a refund. A signer
   // node it cannot reach still waits, as at the close. Free entries commit no stake and are left to the close.
+  // THE OPEN ROUNDS, EACH CONTRACT DECODED ONCE (the owner 2026-10-02: "Focus on lowering the load as much as possible by
+  // optimizing code and database of the node(s)"): the close sweep (every 2 s), the door sweep (every 5 s) and the finished
+  // listing read every open round's contract out of the store and decoded it twice (openRounds' parse filter, then the
+  // loop) - ~2,950 rounds held on testnet4, a series 72 h ahead. A contract never changes: ids are read, a contract only
+  // the first time, and what is kept of rounds no longer open goes once it outgrows them by 500.
+  const heldKept = new Map();                   // round id hex -> { c, endMs } or { bad: true }
+  const heldOf = (rid) => {
+    const k = toHex(rid);
+    let v = heldKept.get(k);
+    if (!v) {
+      const row = round.db.prepare('SELECT contract FROM rounds WHERE round_id = ?').get(rid);
+      try {
+        const c = decodeRoundContract(new Uint8Array(row.contract));
+        let endMs = null; try { endMs = roundEndMs(c); } catch { endMs = null; }
+        v = { c, endMs };
+      } catch { v = { bad: true }; }
+      heldKept.set(k, v);
+    }
+    return v;
+  };
+  const openHeld = () => {
+    const ids = round.openRoundIds();
+    if (heldKept.size > ids.length + 500) {
+      const open = new Set(ids.map((r) => toHex(r)));
+      for (const k of heldKept.keys()) if (!open.has(k)) heldKept.delete(k);
+    }
+    return ids;
+  };
   const DOOR_GRACE_MS = 5000;
   let doorTimer = null;
   const doorTried = new Map();
@@ -1685,9 +1731,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const doorSweep = () => timed('door sweep', () => {
       if (shuttingDown) return;
       const nowMs = round.now();
-      for (const held of round.openRounds()) {
-        let c;
-        try { c = decodeRoundContract(held.contract); } catch { continue; }
+      for (const roundId of openHeld()) {
+        const held = { roundId };
+        const h = heldOf(roundId);
+        if (h.bad) continue;
+        const c = h.c;
         if (c.stakeMsat === 0n || BigInt(nowMs) < c.startTimeMs) continue;
         let deadlineMs;
         try { deadlineMs = Number(msForTicks(startDeadlineOf(c)).ms); } catch { continue; }
@@ -1714,11 +1762,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const sweep = () => timed('close sweep', () => {
       if (shuttingDown) return;
       const nowMs = BigInt(round.now());
-      for (const held of round.openRounds()) {
-        let c;
-        try { c = decodeRoundContract(held.contract); } catch { continue; }
-        let end;
-        try { end = roundEndMs(c); } catch { continue; }
+      for (const roundId of openHeld()) {
+        const held = { roundId };
+        const h = heldOf(roundId);
+        if (h.bad || h.endMs === null) continue;
+        const end = h.endMs;
         if (nowMs < end) continue;
         if (round.close(held.roundId)) {
           console.log(`[close] ${toHex(held.roundId).slice(0, 16)} is over at ${end}: closed by this signer node`);
@@ -2347,11 +2395,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             joined: players.joined, committee: committeeOf(rid) };
         };
         // an open round whose end has passed is finished too, waiting for its close
-        for (const held of round.openRounds()) {
-          const id = toHex(held.roundId);
+        for (const roundId of openHeld()) {
+          const id = toHex(roundId);
           if (seen.has(id)) continue;
-          let c; try { c = decodeRoundContract(held.contract); } catch { continue; }
-          finished.push(rowOf(held.roundId, c, null));
+          const h = heldOf(roundId);
+          if (h.bad) continue;
+          finished.push(rowOf(roundId, h.c, null));
         }
         for (const held of round.finishedRounds(200)) {
           let c; try { c = decodeRoundContract(held.contract); } catch { continue; }
