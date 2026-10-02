@@ -140,6 +140,7 @@ if (url) {
   const blocksKept = blockCache();             // block hash -> its one parsed copy, shared by every view
   const reading = new Map();                   // view key -> its one read in flight
   const keyOfRound = new Map();                // round id hex -> the view key it was asked under
+  const viewFailed = new Map();                // view key -> { atMs, why } of its last failed read
   // UP TO THE BEACON, AND AS DEEP PAST IT AS THE ROUND ASKS. The beacon comes
   // after the census height in the normal order, and the roster checks the
   // seed block against this same view - at the round's own confirmation depth.
@@ -226,8 +227,20 @@ if (url) {
           })().catch(() => {}).finally(() => reading.delete(key)));
         return had;
       }
+      // A READ THAT FAILED IS SAID ONCE AND TRIED AGAIN A MINUTE LATER, not on every pass (the owner 2026-10-02, the load): the
+      // error was dropped, so every close and verify pass over a round whose view would not read - on all seven testnet4
+      // seats, rounds from days back and today's alike - read ~2,100 blocks from bitcoind again, and the seat said only
+      // "no chain view for that round".
+      const failed = viewFailed.get(key);
+      if (failed && Date.now() - failed.atMs < 60000) return undefined;
       if (contract && !reading.has(key))
-        reading.set(key, viewOf(contract).then((v) => views.set(key, v)).catch(() => {}).finally(() => reading.delete(key)));
+        reading.set(key, viewOf(contract).then((v) => { views.set(key, v); viewFailed.delete(key); })
+          .catch((e) => {
+            const why = String((e && e.message) || e);
+            if (!failed || failed.why !== why) console.error(`[chain] view ${key} did not read: ${why}`);
+            viewFailed.set(key, { atMs: Date.now(), why });
+          })
+          .finally(() => reading.delete(key)));
       return undefined;
     },
     // THE CHAIN A §13A/§13C WINDOW IS READ ON, AND THE TIP A POSTING OR RE-RUN NAMES: one header view that follows the tip
