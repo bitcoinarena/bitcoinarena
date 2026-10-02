@@ -10,6 +10,7 @@
 // stops when the queue empties. Nothing here polls, nothing ticks, and nothing
 // here reaches the core: `replay.js` remains the only file in this daemon that
 // does, and this file only decides which runs are handed to it.
+import { dissentsOn } from './test-dissent.js';
 import { ReplayPool } from './pool.js';
 import { timed } from './slow.js';
 import { SIGNED_RECEIPT_BYTES } from '../../protocol/src/receipt.js';
@@ -1206,7 +1207,10 @@ export class Verifier {
         // THE RE-RUN CARRIES WHEN IT WAS SIGNED, ON THIS SEAT'S CLOCK (§13A, WINDOW-10-SPEC, RULED 2026-10-01): a holder
         // counts it only within 5 s of its own clock at arrival, before its re-run window's end + 5 s.
         if (built && built.ok) {
-          const x = { contradictedRunId, signedAtMs: BigInt(this.round.now()), result: built.result };
+          // THE TEST FAULT (test-dissent.js, off by default): for its one named entry this seat signs a different run.
+          const result = dissentsOn(entryIdBytes) ? { ...built.result, score: (built.result.score + 1) >>> 0 } : built.result;
+          if (dissentsOn(entryIdBytes)) console.log(`[test-dissent] ${hex(entryIdBytes).slice(0, 16)}: re-run signed with score ${result.score}, not ${built.result.score}`);
+          const x = { contradictedRunId, signedAtMs: BigInt(this.round.now()), result };
           const signature = schnorr.sign(rerunResultId(x), this.round.identity.secret);
           this.round.putRerun(roundIdBytes, entryIdBytes, this.round.pubkey, joinSignedRerun(encodeRerunResult(x), signature));
         }
