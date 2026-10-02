@@ -19,7 +19,7 @@ function page({ answers, done = [] }) {
   const run = new Function('vault', 'BLWPCLIENT', 'fetch', 'document', 'window', 'paintMoney', `${src}; return lookThePending();`);
   return { go: () => run(() => store, BLWPCLIENT, fetch, { getElementById: (id) => els[id] || null }, window, () => {}), window, els, kept };
 }
-const signed = (msat, more = {}) => ({ pendingMsat: msat, windowCloseMs: String(Date.UTC(2026, 9, 1, 12, 11, 22)), provisional: false, ...more });
+const signed = (msat, more = {}) => ({ kind: 'payout', pendingMsat: msat, windowCloseMs: String(Date.UTC(2026, 9, 1, 12, 11, 22)), provisional: false, ...more });
 
 test('signed: the majority figure is pending at once, with the window close in UTC', async () => {
   const p = page({ answers: { a: signed('196000'), b: signed('196000'), c: signed('98000') } });
@@ -96,4 +96,19 @@ test('two entries of one round in one browser: each tab asks only about its own 
   assert.equal(loser, 0);
   assert.deepEqual(loserAsked, ['e2']);
   assert.deepEqual([...asked].sort(), ['e1', 'e2'], 'a tab with no notes of its own does not ask about every note');
+});
+
+// WINDOW-LIVE-1155 (the owner 2026-10-02: "If the payment becomes invalid, the pending line disappears"): measured on testnet4,
+// four seats voided the run (each offering the 96 sat stake back as a refund) while three still said PROVISIONALLY_FINAL
+// 192 sat - and the line showed 96, then would have shown 192. A refund is not winnings, and a figure fewer than half the
+// answering seats say is not shown.
+test('four seats VOID with a refund, three still PROVISIONALLY_FINAL with winnings: no line', async () => {
+  const voided = { state: 'VOID', kind: 'refund', pendingMsat: '96000', windowCloseMs: String(Date.UTC(2026, 9, 1, 12, 11, 22)) };
+  const answers = { a: voided, b: voided, c: voided, d: voided, e: signed('192000'), f: signed('192000'), g: signed('192000') };
+  const p = page({ answers });
+  const note = JSON.parse(p.kept.get('blwp.pending.r1')); note.nodes = Object.keys(answers).map((h) => 'http://' + h);
+  p.kept.set('blwp.pending.r1', JSON.stringify(note));
+  await p.go();
+  assert.equal(p.window.BLWP_PENDING_SATS, 0, 'a refund or a minority figure was shown as pending winnings');
+  assert.equal(p.els['blwp-bal-pending-when'].textContent, '');
 });

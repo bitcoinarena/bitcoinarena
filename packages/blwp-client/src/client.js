@@ -890,6 +890,34 @@ export class Client {
   }
 
   /**
+   * THE FIRST SOCKET, TRIED UNTIL IT OPENS OR THE ROUND CANNOT USE IT (PRIORITIES 2026-10-02 12:13, the owner's playtest):
+   * the entry was posted to all 7 signer nodes and the stake locked, but the one socket the page then opened failed while
+   * the test host stalled - "Not joined ... socket error" - and the page gave up a join every node held; no first mark
+   * came, and the door signed FORFEIT. A refused join is a refusal; a socket that did not open is the link, so it is
+   * tried again with the same backoff `reconnect` uses (1 s doubling to 8 s), each attempt given `attemptMs`, until
+   * `untilMs` (the page passes the round's start plus a few seconds, inside the first-mark deadline).
+   */
+  async connectFirst({ untilMs = Infinity, attemptMs = 10000, now = () => Date.now() } = {}) {
+    let backoff = 0;
+    this.firstTries = 0;
+    for (;;) {
+      this.firstTries++;
+      try {
+        let timer = null;
+        try {
+          return await Promise.race([this.connect(), new Promise((_, no) => { timer = setTimeout(() => no(new Error('socket did not open in ' + attemptMs + ' ms')), attemptMs); })]);
+        } finally { clearTimeout(timer); }
+      } catch (e) {
+        this.error = String(e.message || e);
+        if (this.sock) { const sk = this.sock; this.sock = null; try { sk.close(); } catch { /* gone */ } }
+        backoff = backoff ? Math.min(backoff * 2, 8000) : 1000;
+        if (this.ended || now() + backoff >= untilMs) throw new Error(`${this.error} (${this.firstTries} tries)`);
+        await this.sleep(backoff);
+      }
+    }
+  }
+
+  /**
    * THE SOCKET CAME BACK, OR IT DID NOT YET.
    *
    * This loop was in `blwp.jslib`, which is the one file the JS suites cannot

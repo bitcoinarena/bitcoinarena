@@ -2351,11 +2351,18 @@
         if (!n || done.has(n.roundIdHex)) { try { vault().removeItem(k); } catch { /* none */ } continue; }
         const said = await Promise.all((n.nodes || []).map((u) => fetch(String(u).replace(/\/$/, '') + '/standing?entry=' + n.entryIdHex, { cache: 'no-store' })
           .then((r) => (r.ok ? r.json() : null)).catch(() => null)));
-        // the figure most signer nodes say; a node without it says nothing here
+        // WINNINGS MORE THAN HALF THE ANSWERING SEATS SAY (WINDOW-LIVE-1155, the owner 2026-10-02: "If the payment becomes
+        // invalid, the pending line disappears"): every seat that answers votes - one with no figure, or with a refund (a
+        // VOID run's stake coming back, not winnings), votes for none. Measured before: four seats VOID, three still
+        // PROVISIONALLY_FINAL, and the line went from 192 to the 96 sat refund instead of away.
+        const answered = said.filter((x) => x);
         const votes = new Map();
-        for (const x of said) if (x && x.pendingMsat !== null && x.pendingMsat !== undefined) votes.set(x.pendingMsat, (votes.get(x.pendingMsat) || 0) + 1);
+        for (const x of answered) {
+          const fig = x.kind === 'payout' && x.pendingMsat !== null && x.pendingMsat !== undefined ? String(x.pendingMsat) : null;
+          votes.set(fig, (votes.get(fig) || 0) + 1);
+        }
         const best = [...votes.entries()].sort((a, b) => b[1] - a[1])[0];
-        if (!best || best[0] === '0') continue;
+        if (!best || best[0] === null || best[0] === '0' || best[1] * 2 <= answered.length) continue;
         total += BigInt(best[0]);
         const one = said.find((x) => x && x.pendingMsat === best[0]);
         if (one && one.windowCloseMs && (closeMs === null || Number(one.windowCloseMs) > closeMs)) closeMs = Number(one.windowCloseMs);
