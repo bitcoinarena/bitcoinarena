@@ -2835,11 +2835,17 @@
               // A CONTINUED ROUND STARTS WITH EVERYBODY (spec: "the next run starts with everybody else at start_time(i+1)"):
               // entered now, it is "joined" for Unity - which starts the run on it - only at the round's own start.
               if (window.BLWP_ENTRY && holdUntilMs > Date.now()) {
-                join.stage = next ? 'next round' : 'until the round starts';
+                // WITH THE TIME LEFT (the owner 2026-10-02: "When does the round actually start?" - the line said "until the round
+                // starts" and nothing else): "round starts in 1:58", counted down each second; Unity reads it every 0.75 s.
+                const startsIn = () => {
+                  const s = Math.max(0, Math.ceil((holdUntilMs - Date.now()) / 1000));
+                  return (next ? 'next round starts in ' : 'round starts in ') + Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+                };
+                join.stage = startsIn();
                 join.held = true;
                 const release = () => {
                   if (join.cancelled || window.BLWP_JOIN !== join) return;
-                  if (Date.now() < holdUntilMs) { setTimeout(release, Math.min(1000, holdUntilMs - Date.now())); return; }
+                  if (Date.now() < holdUntilMs) { join.stage = startsIn(); setTimeout(release, Math.min(1000, holdUntilMs - Date.now())); return; }
                   join.held = false; join.stage = ''; join.state = 'joined';
                   console.log(`[blwp] next round ${String(id).slice(0, 16)}: joined at its start (${new Date(holdUntilMs).toISOString()})`);
                 };
