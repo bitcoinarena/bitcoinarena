@@ -72,17 +72,40 @@ export function bitcoindRpc({ url, cookiePath, fetcher = fetch, readCookie } = {
  * a first assignment does. The census checks the header links and merkle roots
  * itself; this only divides the bytes.
  */
-export async function blocksOver(call, from, to) {
+export async function blocksOver(call, from, to, { cache = null } = {}) {
   const blocks = [];
   for (let h = from; h <= to; h++) {
     const hash = await call('getblockhash', [h]);
+    const had = cache ? cache.get(hash) : undefined;
+    if (had) { blocks.push(had); continue; }
     // THE BLOCK, TURNED FROM HEX INTO BYTES, IS THIS THREAD'S WORK (the owner 2026-09-18 02:40: name the leftover). The
     // read itself waits on bitcoind; what runs here is the answer's continuation - a megabyte of hex parsed and split -
     // and it lands on the thread that draws the other players' trucks.
     const answer = await call('getblock', [hash, 0]);
-    blocks.push(timed('chain block read', () => splitBlock(fromHex(answer)), { over: 20 }));
+    const block = timed('chain block read', () => splitBlock(fromHex(answer)), { over: 20 });
+    if (cache) cache.put(hash, block);
+    blocks.push(block);
   }
   return { blocks, firstHeight: from };
+}
+
+/**
+ * ONE COPY OF A BLOCK, HOWEVER MANY VIEWS HOLD IT (the owner 2026-10-02: "Continue with 1" - the free pair's two nodes held
+ * 3.8 GB each). Every free round names its own committee_time, so every round got its own ~2,000-block view, read from
+ * bitcoind and kept: 2,511 rounds, 2,511 view keys over 19 census heights - the same blocks, parsed again, once per round,
+ * and never let go. Keyed by the block's hash, so a reorganised chain is new blocks, never a stale answer; the oldest
+ * kept are dropped past `max`. A view still holds the blocks it read - this only stops two views holding two copies.
+ */
+export function blockCache({ max = 50000 } = {}) {
+  const kept = new Map();
+  return {
+    get: (hash) => kept.get(hash),
+    put: (hash, block) => {
+      kept.set(hash, block);
+      if (kept.size > max) kept.delete(kept.keys().next().value);
+    },
+    get size() { return kept.size; },
+  };
 }
 
 /**

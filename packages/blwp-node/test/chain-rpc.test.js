@@ -140,3 +140,38 @@ test('what it reads is what the rule judges, with no second chooser between', as
   assert.equal(seen.height, 112, 'the reader moved the block the rule would have picked');
   assert.deepEqual(seen.hash, blockHashOf(node.headers[12]));
 });
+
+// ONE COPY OF A BLOCK, HOWEVER MANY VIEWS HOLD IT (2026-10-02: the free pair's nodes held 3.8 GB each - a ~2,000-block
+// view per round, 2,511 rounds over 19 census heights). Two overlapping views through one cache: the second asks bitcoind
+// only for the blocks the first did not read, and holds the very same block objects; a reorganised height (a new hash)
+// is read again, never answered from the old block.
+test('a shared block cache: an overlapping view reads only its new blocks and holds the same objects; a new hash at a height is read again', async () => {
+  const { blocksOver, blockCache } = await import('../src/chain-rpc.js');
+  const hashAt = new Map([[0, 'h0'], [1, 'h1'], [2, 'h2'], [3, 'h3'], [4, 'h4']]);
+  // a header, one transaction: version, 1 input (36-byte outpoint, 1-byte script, sequence), 1 output (value, empty
+  // script), locktime - 61 bytes
+  const tx = [1, 0, 0, 0, 1, ...new Array(36).fill(0), 1, 0, 255, 255, 255, 255, 1, ...new Array(8).fill(0), 0, 0, 0, 0, 0];
+  const rawFor = (hash) => { const b = new Uint8Array([...new Array(80).fill(0), 1, ...tx]); b[0] = hash.length; b[1] = hash.charCodeAt(1); return b; };
+  let reads = 0;
+  const call = async (method, [arg]) => {
+    if (method === 'getblockhash') return hashAt.get(arg);
+    if (method === 'getblock') { reads++; return Buffer.from(rawFor(arg)).toString('hex'); }
+    throw new Error(method);
+  };
+  const cache = blockCache();
+  const first = await blocksOver(call, 0, 3, { cache });
+  const afterFirst = reads;
+  const second = await blocksOver(call, 1, 4, { cache });
+  const afterSecond = reads;
+  hashAt.set(4, 'h4b');
+  const third = await blocksOver(call, 3, 4, { cache });
+  console.log('  FACTS:', JSON.stringify({ afterFirst, afterSecond, afterReorg: reads, cached: cache.size }));
+  assert.equal(afterFirst, 4);
+  assert.equal(afterSecond, 5, 'the overlapping view read blocks the cache held');
+  assert.equal(second.blocks[0], first.blocks[1], 'two views hold two copies of one block');
+  assert.equal(reads, 6, 'the reorganised height was not read again');
+  assert.notEqual(third.blocks[1], second.blocks[3], 'a new hash was answered with the old block');
+  const small = blockCache({ max: 2 });
+  small.put('a', 1); small.put('b', 2); small.put('c', 3);
+  assert.deepEqual([small.get('a'), small.get('b'), small.get('c'), small.size], [undefined, 2, 3, 2]);
+});
