@@ -1606,3 +1606,25 @@ test('handLock asks every signer node at once and keeps their order', async () =
   assert.equal(got.committed, 6);
   assert.equal(got.ok, true);
 });
+
+// THE LOBBY'S WALLET OPEN THAT NEVER SETTLES DOES NOT HOLD PLAY FOR GOOD (JOIN-TIME-1359, measured 2026-10-02 on testnet4:
+// 2 of 12 paid joins sat at "the player wallet is open" - the lobby's federation join never answered). A lock client whose
+// first join hangs and whose second answers: the lobby opens (and hangs), PLAY waits openWaitMs, says so, joins again and
+// gets the second client; and a join that never answers at all is refused by name after joinWaitMs.
+test('a wallet the lobby could not open is joined again at PLAY, and a join that never answers is refused by name', async () => {
+  let joins = 0;
+  const good = { tag: 'second' };
+  const LockClient = { join: () => (++joins === 1 ? new Promise(() => {}) : Promise.resolve(good)) };
+  const tab = tabStorage(); const steps = [];
+  const args = { round, invite: INVITE, seed: b32(0x93), LockClient, storage: tab, openWaitMs: 100, joinWaitMs: 400 };
+  playerWallet(args).catch(() => {});                                     // the lobby: never answers, cut at 400 ms
+  const t0 = Date.now();
+  const got = await playerWallet({ ...args, onStep: (s) => steps.push(s) });   // PLAY
+  console.log('  FACTS:', JSON.stringify({ ms: Date.now() - t0, joins, steps }));
+  assert.equal(got, good);
+  assert.equal(joins, 2);
+  assert.ok(steps.some((s) => /did not open in 0 s|did not open in/.test(s)), 'PLAY did not say the lobby wallet failed to open');
+  const never = { join: () => new Promise(() => {}) };
+  await assert.rejects(playerWallet({ round, invite: INVITE, seed: b32(0x94), LockClient: never, storage: tabStorage(), joinWaitMs: 100 }),
+    /did not open the player wallet in 0 s - press PLAY again/);
+});
