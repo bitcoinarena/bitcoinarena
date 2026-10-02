@@ -74,7 +74,7 @@ import { Verifier } from './verify.js';
 import { Ghosts } from './ghosts.js';
 import { Roster, endpointsOf, NO_CHAIN_VIEW_WHY } from './roster.js';
 import { receiptsNeeded as roundThreshold, donationKeysForNetworkId } from '../../protocol/src/genesis.js';
-import { authorityAt, donationSetSignedBy, encodeDonationSetBody, encodeAuthorityRotation } from '../../protocol/src/authority.js';
+import { authorityAt, donationSetSignedBy, donationSetInForce, encodeDonationSetBody, encodeAuthorityRotation } from '../../protocol/src/authority.js';
 import { donationSetId } from '../../protocol/src/donation.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { timed, watchLoop } from './slow.js';
@@ -319,6 +319,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (!named.length) return { ok: false, why: 'this signer node holds no signed donation set with the id this round names' };
     const at = authorityAt({ networkId: contract.networkId, authority: keys.authority, recovery: keys.recovery,
       rotations: donationRotations, height: contract.censusHeight, verify: verifyDonation });
+    // THE SET IN FORCE, A SOFT FORK (27A.4; LNURL-0822, the owner 2026-10-02): the highest validly signed serial whose valid_from
+    // the round's census height has reached is the set the round must name. A round written below a newer set's valid_from
+    // keeps the set it named (22A); one at or past it names the newer set or is no round with a set.
+    const forced = donationSetInForce({ networkId: contract.networkId, authority: keys.authority, recovery: keys.recovery,
+      sets: donationSets, rotations: donationRotations, height: contract.censusHeight, verify: verifyDonation });
+    if (forced.ok && toHex(donationSetId(forced.recipients)) !== want)
+      return { ok: false, why: `at census height ${contract.censusHeight} this network's donation set in force is serial ${forced.serial} `
+        + `(${toHex(donationSetId(forced.recipients)).slice(0, 16)}), and this round names ${want.slice(0, 16)}` };
     for (const s of named) {
       if (toHex(s.networkId) !== toHex(contract.networkId) || !(s.validFrom <= contract.censusHeight)) continue;
       if (donationSetSignedBy(s, { authority: at.authority, verify: verifyDonation }).ok) return { ok: true, set: s };
@@ -2073,6 +2081,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           try { noBase = federationTakesNoBaseFee({ fees: typeof stakeLocks.fees === 'function' ? await doorFees() : null }); }
           catch (e) { return text(res, 503, `this node could not read the federation's fee rule: ${e.message}`); }
           if (!noBase.ok) return text(res, 409, noBase.why);
+        }
+
+        // AND IT NAMES THE DONATION SET IN FORCE AT ITS CENSUS HEIGHT (27A.4, a soft fork; LNURL-0822) - asked where this node
+        // holds its network's sets; a round already written below a newer set's valid_from keeps the one it named.
+        if (contract.stakeMsat > 0n && donationSets.length && donationKeysForNetworkId(contract.networkId)) {
+          const ds = donationSetFor(contract);
+          if (!ds.ok && /in force/.test(ds.why)) return text(res, 409, ds.why);
         }
 
         // AND ITS FEDERATION IS BONDED (§23.6, P3; RULED the owner 2026-09-25): asked here, before round.open, with

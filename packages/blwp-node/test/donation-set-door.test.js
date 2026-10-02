@@ -123,3 +123,24 @@ test('a signer node serves the authority rotations it holds for the round\'s net
     assert.deepEqual(said[1].rotations, []);
   } finally { await w.close(); }
 });
+
+// THE SET IN FORCE, A SOFT FORK (27A.4; LNURL-0822, the owner 2026-10-02): a newer serial signed by the network's authority,
+// valid from a height, is the set every round with its census at or past that height must name; a round below it keeps the
+// set it named (22A). A regtest serial-2 set valid from 900100, public bytes signed by the regtest authority.
+const SET2 = { ...decodeDonationSetBody(Uint8Array.from(Buffer.from('14000130927357ec8945494d397ad427df5fb34702e1dd69608ac92f9b61f00b10649d0000000000000002000dbc040099100001000200466c6e75726c31647036386775726e3867686a376572306465736867656677763475787a6d747364336a6a376d7277773465786375703064656a68736170647679306e387265381a0b00466c6e75726c31647036386775726e3867686a376572306465736867656677763475787a6d747364336a6a376d7277773465786375703064656a687361706476673764706667710d05', 'hex'))),
+  signature: Uint8Array.from(Buffer.from('e69e56d2cc1b2d0172fae95f205e1eaa586046d2b8e387869d1f8601f9cba7a7203956149f0231bbdb90cdfcc088dcb63502e5e81230137672d176644b890f0d', 'hex')) };
+test('a newer set in force from a height: a round below it keeps its set, a round at it must name the newer one', async () => {
+  assert.equal(ed25519.verify(SET2.signature, donationSetBodyId(SET2), AUTHORITY_PUBKEY_REGTEST), true, 'the serial-2 set is not the regtest authority\'s');
+  const w = await signerNodesWith([[SET, SET2], [SET, SET2]]);
+  try {
+    const below = await w.ask(w.signerNodes[0], await w.post({ ...contractFor(w.nodes, SET_ID), censusHeight: 900099 }));
+    const oldAt = await w.ask(w.signerNodes[0], await w.post({ ...contractFor(w.nodes, SET_ID), censusHeight: 900100 }));
+    const newAt = await w.ask(w.signerNodes[0], await w.post({ ...contractFor(w.nodes, donationSetId(SET2.recipients)), censusHeight: 900100 }));
+    const why = oldAt.status === 200 ? '' : Buffer.from(oldAt.bytes).toString();
+    console.log('  FACTS (in force):', JSON.stringify({ below: below.status, oldAtHeight: oldAt.status, why: why.slice(0, 140), newAtHeight: newAt.status }));
+    assert.equal(below.status, 200, 'a round below the newer set lost the set it named');
+    assert.notEqual(oldAt.status, 200, 'a round at the newer set\'s height was served the superseded set');
+    assert.match(why, /in force is serial 2/);
+    assert.equal(newAt.status, 200, 'a round naming the set in force was refused');
+  } finally { await w.close(); }
+});
