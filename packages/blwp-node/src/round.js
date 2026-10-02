@@ -221,6 +221,14 @@ export class Round {
       throw new Error(
         `${toHex(r.nodePubkey)} is not on this round's committee`);
 
+    // THE SAME RECEIPT AGAIN IS NOT VERIFIED AGAIN (the owner 2026-10-02, the join's 2-3 s: "Cut whatever is between the click and
+    // the loaded round"): a close retried for a run held short of final re-took every peer's receipts each time, and each
+    // signature verified on the loop - 0.8-1.1 s held at a time on testnet4 seats (close take receipts), every PLAY behind it
+    // waiting. Byte for byte the one this node verified and stored, it is answered as stored; any other bytes for the same
+    // mark and node go the whole way, so a second, different receipt is still checked and caught.
+    const already = this.db.prepare('SELECT bytes FROM receipts WHERE checkpoint_id = ? AND node_pubkey = ?').get(r.checkpointId, r.nodePubkey);
+    if (already && Buffer.from(already.bytes).equals(Buffer.from(bytes))) return 'held';
+
     let ok = false;
     ok = verifyNode(signature, receiptId(r), r.nodePubkey);
     if (!ok) throw new Error(`the receipt from ${toHex(r.nodePubkey)} does not verify`);
