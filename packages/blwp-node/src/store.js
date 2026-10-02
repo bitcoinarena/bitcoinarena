@@ -51,9 +51,20 @@ export function openStore(path = ':memory:') {
   // file read-only and reads a run's rows itself, instead of the thread that answers /play reading them and handing
   // them across. ':memory:' names no file, and those rows are handed across as before.
   db.blwpPath = path === ':memory:' ? null : path;
+  // EVERY STATEMENT COMPILED ONCE (NODE-OPT-1648, the owner 2026-10-02: "Optimize the node software for CPU, memory, and
+  // performance"): node:sqlite keeps no statement cache, and the store is asked through db.prepare(sql) inline - a tick
+  // batch alone compiled seven statements per call; profiled on a testnet4 seat during a live round, prepare and exec were
+  // ~11 % of its loop. A statement is kept per SQL text and reused (nothing here iterates a statement while running it).
+  const compile = db.prepare.bind(db);
+  const compiled = new Map();
+  db.prepare = (sql) => { let st = compiled.get(sql); if (!st) { st = compile(sql); compiled.set(sql, st); } return st; };
   renameToSignerNodes(db);
   db.exec(`
     PRAGMA journal_mode = WAL;
+    -- A COMMIT WITHOUT A DISK SYNC (NODE-OPT-1648): in WAL mode NORMAL keeps every commit across a crash of this process
+    -- and the store consistent across a power loss, which can lose only the last commits; FULL synced on every commit -
+    -- one per tick batch from every player.
+    PRAGMA synchronous = NORMAL;
     PRAGMA foreign_keys = ON;
 
     CREATE TABLE IF NOT EXISTS rounds (

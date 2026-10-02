@@ -50,9 +50,21 @@ export const RECEIPTS_FOR_CANONICAL = receiptsNeeded(7);
  * contract does not decode - a past round of the withdrawn Lightning custody, custody byte 0 - is answered as no row at all.
  * Its bytes stay where they are: absent is not deleted, and nothing here writes to the store.
  */
-const parses = (contract) => {
-  try { decodeRoundContract(new Uint8Array(contract)); return true; } catch { return false; }
+// WHAT A STORED CONTRACT SAYS, READ ONCE PER CONTRACT (NODE-OPT-1648): every get() decoded the whole contract only to
+// see that it parses, and a tick batch decoded it again for its blockTicks - on every batch from every player. Kept by
+// the contract's bytes (a contract never changes), up to 8192; only these two answers leave, never the decoded object.
+const contractFacts = new Map();
+const factsOf = (contract) => {
+  const key = Buffer.from(contract).toString('base64');
+  let f = contractFacts.get(key);
+  if (f === undefined) {
+    try { const c = decodeRoundContract(new Uint8Array(contract)); f = { blockTicks: c.blockTicks }; } catch { f = null; }
+    contractFacts.set(key, f);
+    if (contractFacts.size > 8192) contractFacts.delete(contractFacts.keys().next().value);
+  }
+  return f;
 };
+const parses = (contract) => factsOf(contract) !== null;
 
 function neededForRound(db, roundIdBytes) {
   const row = db.prepare('SELECT contract FROM rounds WHERE round_id = ?').get(roundIdBytes);
@@ -491,7 +503,7 @@ export class Round {
     // round the player signed up to rather than from a number invented here.
     // The transport already refuses a frame that could not decode at all;
     // this refuses one that decodes and still could not be honest.
-    const blockTicks = decodeRoundContract(new Uint8Array(round.contract)).blockTicks;
+    const blockTicks = factsOf(round.contract).blockTicks;
     if (b.ticks.length > blockTicks)
       throw new Error(
         `a batch carries at most the round's ${blockTicks} ticks, got ${b.ticks.length}`);
