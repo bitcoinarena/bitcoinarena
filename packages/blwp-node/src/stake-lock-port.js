@@ -33,8 +33,22 @@ export function contractArgs(f) {
     '--refund-pk', toHex(f.refundPk), '--expiration', String(f.expiration)];
 }
 
-export function stakeLockPort({ bin, dataDir, timeoutMs = 60000 }) {
-  return {
+// THE FEDERATION'S GATEWAYS AND FEE RULE, KEPT A MINUTE FOR EVERY CALLER (the owner 2026-10-02, the the test host's load): the
+// winnings resend loop asked both on every pass over its held rounds - one stock-client run each, about one every 6 s per
+// signer node - and each run opened the federation client's database: ~1.7 MB/s written by every idle testnet4 seat,
+// 12 MB/s together, while no table changed. One read in flight; a failed read is not kept. (The doors did this already.)
+const keptFor = (ms, fn, now = () => Date.now()) => {
+  let at = 0, v = null, p = null;
+  return () => {
+    if (v && now() - at < ms) return Promise.resolve(v);
+    if (p) return p;
+    p = Promise.resolve().then(fn).then((r) => { v = r; at = now(); return r; }).finally(() => { p = null; });
+    return p;
+  };
+};
+
+export function stakeLockPort({ bin, dataDir, timeoutMs = 60000, keepMs = 60000, now = () => Date.now() }) {
+  const port = {
     async status(outpoint) {
       const j = await run(bin, ['--mode', 'status', '--data-dir', dataDir, '--outpoint', outpointArg(outpoint)], timeoutMs);
       return {
@@ -60,7 +74,8 @@ export function stakeLockPort({ bin, dataDir, timeoutMs = 60000 }) {
      * `routing_info` for this federation - with the Lightning node key it answered with, which is its
      * identity. Read-only. It says nothing about inbound, and nothing here pretends it does.
      */
-    async gateways() {
+    gateways() { return gatewaysKept(); },
+    async gatewaysRead() {
       const j = await run(bin, ['--mode', 'gateways', '--data-dir', dataDir], timeoutMs);
       return { federationId: fromHex(String(j.federation_id)),
         height: j.block_count === undefined ? null : Number(j.block_count),
@@ -86,7 +101,8 @@ export function stakeLockPort({ bin, dataDir, timeoutMs = 60000 }) {
         sent: j.sent === true, preimage: j.preimage ? fromHex(String(j.preimage)) : null, why: j.why || null };
     },
     /** The guardians' own LNv2 fee rule, off the federation's config (W4). */
-    async fees() {
+    fees() { return feesKept(); },
+    async feesRead() {
       const j = await run(bin, ['--mode', 'fees', '--data-dir', dataDir], timeoutMs);
       return { ppm: BigInt(j.fee_ppm), baseMsat: BigInt(j.fee_base_msat) };
     },
@@ -113,6 +129,9 @@ export function stakeLockPort({ bin, dataDir, timeoutMs = 60000 }) {
         unspentMsat: j.unspent_msat === undefined ? null : BigInt(j.unspent_msat) };
     },
   };
+  const gatewaysKept = keptFor(keepMs, () => port.gatewaysRead(), now);
+  const feesKept = keptFor(keepMs, () => port.feesRead(), now);
+  return port;
 }
 
 /**
