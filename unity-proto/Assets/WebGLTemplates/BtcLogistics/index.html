@@ -584,7 +584,12 @@
       const heldBy = (hex) => { try { return JSON.parse(L.getItem(HELD + hex.slice(0, 16)) || 'null'); } catch { return null; } };
       const free = (hex) => { const h = heldBy(hex); return !h || h.tab === tab || now() - h.at > 12000; };
       if (!/^[0-9a-f]{64}$/i.test(T.getItem(KEY) || '')) {
-        const f = read().find((x) => /^[0-9a-f]{64}$/i.test(x.hex) && free(x.hex));
+        // THE KEPT PHRASE WITH A WALLET FIRST (the owner 2026-10-02: "I should have more than 0 sats on my wallet" - a tab took the
+        // first free kept phrase, an empty one, and showed 0 beside the history of the phrase that had deposited): among the
+        // free ones, the one whose player wallet keeps the most in this browser; then the order they were kept in.
+        const entriesOf = (hex) => { try { return (typeof BLWPCLIENT !== 'undefined' && BLWPCLIENT.phraseWalletEntries) ? BLWPCLIENT.phraseWalletEntries(L, hex) : 0; } catch { return 0; } };
+        const f = read().filter((x) => /^[0-9a-f]{64}$/i.test(x.hex) && free(x.hex))
+          .map((x, i) => ({ x, i, n: entriesOf(x.hex) })).sort((a, b) => (b.n - a.n) || (a.i - b.i)).map((y) => y.x)[0];
         if (f) { T.setItem(KEY, f.hex); T.setItem(FROM, f.from === 'imported' ? 'imported' : 'minted'); }
       }
       // ONE TAB PER PHRASE (the owner 2026-10-01, "fix that problem": two tabs on one phrase ran two wallet clients on one
