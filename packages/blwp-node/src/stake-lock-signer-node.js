@@ -96,9 +96,10 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
   if (taken && !Buffer.from(taken.entryId).equals(Buffer.from(entryIdBytes)))
     return { ok: false, why: 'that stake lock already stakes another entry in this round: one lock is one entry' };
 
-  const st = await port.status(outpoint);
+  // THE FEDERATION'S WORD AND THE CONTRACT'S ID ASKED TOGETHER (the owner 2026-10-02: "stake/fee verification of 5 of 7
+  // confirmations must also be much faster"): two stock-client runs, one after the other before.
+  const [st, id] = await Promise.all([port.status(outpoint), port.contractId(fields)]);
   if (!st || !st.stored) return { ok: false, why: 'the federation holds no lock at the entry\'s stake_lock_outpoint' };
-  const id = await port.contractId(fields);
   if (String(id) !== String(st.stored.contractId))
     return { ok: false, why: 'the lock at that outpoint is not the contract handed over: its id is another' };
   if (fields.expiration !== st.blockCount + st.stored.blocksLeft)
@@ -139,9 +140,9 @@ export async function verifyFeeLock({ round, port, entryIdBytes, fields, claimPk
   const outpoint = entry.feeLockOutpoint;
   if (!outpoint || zero(outpoint.txid)) return { ok: false, why: 'that entry names no fee lock outpoint' };
   if (zero(entry.feePreimage)) return { ok: false, why: 'that entry hands over no F, so its fee lock could never be claimed' };
-  const st = await port.status(outpoint);
+  const [st, id] = await Promise.all([port.status(outpoint), port.contractId(fields)]);
   if (!st || !st.stored) return { ok: false, why: 'the federation holds no lock at the entry\'s fee_lock_outpoint' };
-  const id = await port.contractId(fields);
+
   if (String(id) !== String(st.stored.contractId))
     return { ok: false, why: 'the lock at that outpoint is not the fee contract handed over: its id is another' };
   if (fields.expiration !== st.blockCount + st.stored.blocksLeft)
