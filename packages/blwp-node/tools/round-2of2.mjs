@@ -463,6 +463,13 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // ATTACHED, THE CENSUS IS READ OVER THE NODES' OWN WINDOW - main.js's CENSUS_LOOKBACK, 2016 blocks below the census
     // height - so the root this tool names is the root each node derives (measured on regtest: from 20 below the bonds,
     // an older unspent bond the nodes counted gave them another root, and every round was refused).
+    // AND NO HIGHER THAN THAT WINDOW STILL REACHES THE OLDEST BOND (ORDER-2116, measured on the free pair 2026-10-01): the
+    // 10 s block clock grows the regtest chain 2016 blocks in 5.6 h; an opener restarted then named the tip, its bonds
+    // 2027 blocks below, and every round it opened read "that census carries 0 game nodes where regtest was born needing 2".
+    if (attach && posted.length === 0) {
+      const reach = bondFloor + 2016 - 20;
+      if (censusHeight > reach && reach - bondHeight + 1 >= 7) censusHeight = reach;
+    }
     if (attach) bondFloor = Math.max(20, censusHeight - 2016 + 20);
     for (const [j, p] of posted.entries()) bonded[toPost[j]].onChainTxid = p.txid;
     for (const [i, b] of reused.entries()) if (b) bonded[i].onChainTxid = b.txid;
