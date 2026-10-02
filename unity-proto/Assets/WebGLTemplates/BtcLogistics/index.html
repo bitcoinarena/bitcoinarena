@@ -467,12 +467,23 @@
     // AND UNITY'S OWN WORD ON WHAT IT WROTE INTO THE CORE: a live or simulated liquidation offered or held back ([feed], [sim])
     const KEEP = /\[blwp\]|\[feed\]|\[sim\]|\[spawnmark\]/;
     const SPAM = /Ran out of virtual channels|\[UnityCache\]|kinematic body|JS_FileSystem_Sync|world is still settling/;
+    const QUIET = /^(FMOD returns error code|Ran out of virtual channels|\[render\]|\[ground\]|\[tanks\]|\[paper\]|\[bars\]|\[cloud\]|\[UnityCache\]|\[ghost\])/;
+    let verbose = /[?&]verbose=1\b/.test(location.search);
+    try { verbose = verbose || localStorage.getItem('blwp.verbose') === '1'; } catch { /* storage blocked */ }
+    const VERBOSE = () => verbose;
+    window.BLWP_VERBOSE = (on) => { verbose = !!on; try { localStorage.setItem('blwp.verbose', on ? '1' : '0'); } catch { /* none */ } return 'console ' + (verbose ? 'verbose' : 'quiet'); };
     const text = (args) => Array.from(args).map((a) => (a instanceof Error ? a.message : typeof a === 'string' ? a : (() => { try { return JSON.stringify(a); } catch { return String(a); } })())).join(' ');
     for (const [name, kind] of [['log', 'log'], ['info', 'log'], ['warn', 'WARN'], ['error', 'ERROR']]) {
       const was = console[name];
       if (typeof was !== 'function') continue;
       console[name] = function () {
-        try { const t = text(arguments); if ((kind !== 'log' || KEEP.test(t)) && !SPAM.test(t)) keep(kind, t); } catch { /* never in the way */ }
+        let t = '';
+        try { t = text(arguments); if ((kind !== 'log' || KEEP.test(t)) && !SPAM.test(t)) keep(kind, t); } catch { /* never in the way */ }
+        // UNITY'S DEBUG NOISE STAYS OUT OF THE CONSOLE (the owner 2026-10-02: "It's spamming the console with render debugs so I
+        // can't paste anything"; measured on 0.0.2468: 1004 console calls in 30 s - 444 FMOD audio errors, 222 "Ran out of
+        // virtual channels", 151 [render], and [ground] [tanks] [paper] [bars] [cloud]). Errors always pass; ?verbose=1 or
+        // BLWP_VERBOSE(true) (kept in this browser) lets everything through again.
+        if (kind !== 'ERROR' && !VERBOSE() && QUIET.test(t)) return undefined;
         return was.apply(this, arguments);
       };
     }
