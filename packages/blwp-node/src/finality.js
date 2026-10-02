@@ -33,6 +33,7 @@ import { finalSigned, signFinalSig } from '../../protocol/src/final-sig.js';
 import { verifiedFinal, runId } from './verdict.js';
 import { transcriptIsPublished } from '../../protocol/src/posting.js';
 import { verifyKept } from './verify-kept.js';
+import { dissentsOn } from './test-dissent.js';
 
 const hex = (b) => [...b].map((v) => v.toString(16).padStart(2, '0')).join('');
 const utc = (ms) => new Date(Number(ms)).toISOString();
@@ -119,7 +120,7 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
     objection = objectionHolds({
       objection: { roundId: roundIdBytes, signedResultId, atMs: 0n },
       receipts: receiptsHeld(), committee, roundId: roundIdBytes, signedResultId,
-      replayDiffers: mine !== null && hex(mine) !== seen.runId,
+      replayDiffers: (mine !== null && hex(mine) !== seen.runId) || dissentsOn(entryIdBytes),
     });
   const inTime = objection && objection.holds && BigInt(filedAt) < win.finalAfterMs;
   const lateObjection = !!(objection && objection.holds && !inTime);

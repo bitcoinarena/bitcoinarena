@@ -1821,6 +1821,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   const listingKept = new Map();                  // GET /rounds query -> { at, json }, a large one kept 30 s
   const contractKept = new Map();
+  // THE DOORS' FEDERATION FACTS, KEPT A MINUTE (ORDER-2116, measured on testnet4 2026-10-02 03:5xZ): POST /round asked the
+  // lock port for the federation's gateways and fee rule on every call - a client process each, pinging the gateways - and
+  // two players opening their sessions against 7 nodes queued them: POST /round 80-110 s, a session open over 7 min, the
+  // round closed before the run began. Which gateways answer and what the federation charges are door preconditions that
+  // change on the scale of minutes; one read in flight, kept 60 s. Settlements and sends still ask afresh.
+  const keptMinute = (fn) => { let at = 0, v = null, p = null;
+    return () => { if (v && Date.now() - at < 60000) return Promise.resolve(v); if (p) return p;
+      p = Promise.resolve().then(fn).then((r) => { v = r; at = Date.now(); return r; }).finally(() => { p = null; }); return p; }; };
+  const doorGateways = keptMinute(() => stakeLocks.gateways());
+  const doorFees = keptMinute(() => stakeLocks.fees());
   const announcedRounds = (url) => {
     const nowMs = BigInt(round.now());
     const listed = [];
@@ -2045,7 +2055,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             return text(res, 409, 'this signer node\'s lock port cannot list the federation\'s gateways, so it cannot count '
               + 'two of them (§23.6): it opens no paying round');
           let seen;
-          try { seen = await stakeLocks.gateways(); }
+          try { seen = await doorGateways(); }
           catch (e) { return text(res, 409, `this signer node could not list its federation's gateways: ${e.message}`); }
           if (!(seen.federationId instanceof Uint8Array) || toHex(seen.federationId) !== toHex(contract.federationId))
             return text(res, 409, `this signer node reaches federation ${seen.federationId instanceof Uint8Array
@@ -2060,7 +2070,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           // the owner 2026-09-25): a round whose every entry would be refused is not opened, stored or listed. The same
           // refusal sentence; an unknown rule is not a base fee.
           let noBase = { ok: true };
-          try { noBase = federationTakesNoBaseFee({ fees: typeof stakeLocks.fees === 'function' ? await stakeLocks.fees() : null }); }
+          try { noBase = federationTakesNoBaseFee({ fees: typeof stakeLocks.fees === 'function' ? await doorFees() : null }); }
           catch (e) { return text(res, 503, `this node could not read the federation's fee rule: ${e.message}`); }
           if (!noBase.ok) return text(res, 409, noBase.why);
         }
@@ -2440,7 +2450,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             // such a federation; this is the same refusal on the node, so no entry is taken either.
             // An unknown rule is not a base fee, and is not refused here.
             let noBase = { ok: true };
-            try { noBase = federationTakesNoBaseFee({ fees: stakeLocks && typeof stakeLocks.fees === 'function' ? await stakeLocks.fees() : null }); }
+            try { noBase = federationTakesNoBaseFee({ fees: stakeLocks && typeof stakeLocks.fees === 'function' ? await doorFees() : null }); }
             catch (e) { return text(res, 503, `this node could not read the federation's fee rule: ${e.message}`); }
             if (!noBase.ok) return text(res, 409, `this node takes no entry in that round: ${noBase.why}`);
             const namesNone = contract.feeLockOutpoint.txid.every((x) => x === 0) || contract.feePreimage.every((x) => x === 0);
