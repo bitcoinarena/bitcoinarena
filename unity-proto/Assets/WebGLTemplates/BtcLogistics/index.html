@@ -421,6 +421,7 @@
       </div>
     </div>
   </div>
+  <div id="blwp-link-warn" role="alert" style="display:none;position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:9999;max-width:min(92vw,720px);padding:8px 14px;border-radius:8px;background:#b3261e;color:#fff;font:600 14px/1.35 system-ui,sans-serif;text-align:center;pointer-events:none;box-shadow:0 2px 10px rgba(0,0,0,.4)"></div>
   <div id="blwp-lobby"></div>
   <div id="blwp-players"></div>
   <div id="blwp-refund"></div>
@@ -2311,6 +2312,88 @@
     for (const id of ['blwp-seed-close', 'blwp-verify-cancel', 'blwp-verify-close'])
       document.getElementById(id).addEventListener('click', closeSeed);
     setInterval(paintMoney, 1000);
+    // A RUN THAT DOES NOT REACH THE SIGNER NODES IS SAID WHILE IT IS DRIVEN (the owner 2026-10-02, playtest: his Firefox run
+    // delivered on his screen, and the seats held its first 2067 ticks - 34 s - and nothing after: FAILED, no pending,
+    // and nothing on the page had said so). Each second: the ticks the game handed over (`offered`) against the tick the
+    // signer nodes are owed next (`nextTick`); more than 3 s apart, a red bar says how far behind and why (the session's
+    // state and last error); a run that ends with ticks never sent says how much of it counts. Each change is logged, so
+    // the client logs carry it.
+    const TICK_HZ = 60;
+    let linkSaid = '', linkLoggedAt = 0, linkEndedSaidFor = null, linkEndedUntil = 0, linkLive = null, linkLiveGoneAt = 0;
+    const mmss = (s) => Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');
+    function watchTheLink() {
+      const bar = document.getElementById('blwp-link-warn');
+      if (!bar) return;
+      const M = window.unityInstance && window.unityInstance.Module;
+      const n = M && (M.blwpRunNet || M.blwpNet);
+      const c = n && n.client;
+      let say = '';
+      // THE RUN THAT ENDED, judged on the session that carried it: the page hands the next round a new session at once
+      // (measured: the old one was replaced before its `ended` could be read), so the last live one is kept until it has
+      // ended or been replaced, and then said if ticks of it never reached the signer nodes.
+      // A REPLACED ONE IS GIVEN 15 s to finish its own last flush, unless it has ended already.
+      if (c && typeof c.offered === 'number' && !c.ended && c.offered > 0 && linkLive !== c) { linkLive = c; linkLiveGoneAt = 0; }
+      if (linkLive && linkLive !== c && !linkLiveGoneAt) linkLiveGoneAt = Date.now();
+      // THE SESSION THE RUN IS ON - the live one, or the replaced one still finishing - and how far the nodes are behind it
+      // (a live session is the run: BLWP_STARTED, which drivingNow reads, is set by nothing)
+      const on = linkLive && !linkLive.ended ? linkLive : null;
+      if (on && typeof on.nextTick === 'number') {
+        const behindS = Math.max(0, on.offered - on.nextTick) / TICK_HZ;
+        const why = [on.state, on.refusedWhy || on.error].filter(Boolean).join(': ');
+        if (behindS > 3)
+          say = `Your run is not reaching the signer nodes: the last ${Math.round(behindS)} s are not sent yet${why ? ' (' + why + ')' : ''}. Only what reaches them counts.`;
+      }
+      const done = linkLive && (linkLive.ended || (linkLiveGoneAt && Date.now() - linkLiveGoneAt > 15000)) ? linkLive : null;
+      if (done) {
+        linkLive = null; linkLiveGoneAt = 0;
+        const unsentS = Math.max(0, done.offered - done.nextTick) / TICK_HZ;
+        if (unsentS > 1 && linkEndedSaidFor !== done) {
+          const why = [done.state, done.refusedWhy || done.error].filter(Boolean).join(': ');
+          linkEndedSaidFor = done; linkEndedUntil = Date.now() + 30000;
+          bar.dataset.ended = `The signer nodes got ${mmss(done.nextTick / TICK_HZ)} of your run; the last ${Math.round(unsentS)} s never reached them, so the run counts only up to there${why ? ' (' + why + ')' : ''}.`;
+        }
+      }
+      if (!say && Date.now() < linkEndedUntil) say = bar.dataset.ended || '';
+      // logged when it appears, when it changes kind, every 10 s while it stays, and when it clears - not every second
+      const kind = !say ? '' : say === bar.dataset.ended ? 'ended' : 'behind';
+      if (kind !== linkSaid || (kind && Date.now() - linkLoggedAt > 10000)) {
+        if (say) console.warn('[blwp] ' + say); else if (linkSaid) console.log('[blwp] the run reaches the signer nodes again');
+        linkSaid = kind; linkLoggedAt = Date.now();
+      }
+      bar.textContent = say;
+      bar.style.display = say ? '' : 'none';
+    }
+    setInterval(watchTheLink, 1000);
+
+    // ONE PAID RUN AT A TIME IN THIS BROWSER (the owner 2026-10-02, "Both"): a tab in a paid run - joining it, or driving it
+    // until its session ends - keeps a heartbeat in localStorage; PLAY on a paid round in another tab of this browser is
+    // refused while that heartbeat is under 6 s old. Another browser is another storage and is not seen.
+    const PAID_RUN = 'blwp.paid.run', THIS_TAB = Math.random().toString(16).slice(2);
+    const paidRunHere = () => {
+      const j = window.BLWP_JOIN;
+      if (!j || j.free || j.cancelled || j.state === 'refused') return null;
+      if (j.state === 'joining') return j.round;
+      const M = window.unityInstance && window.unityInstance.Module;
+      const n = M && (M.blwpRunNet || M.blwpNet);
+      if (n && n.client && n.client.ended) return null;
+      if (window.BLWP_ENDED_RUN && window.BLWP_ENDED_RUN.roundHex === j.round) return null;
+      return window.BLWP_ROUND ? j.round : null;
+    };
+    setInterval(() => {
+      try {
+        const round = paidRunHere();
+        const was = JSON.parse(localStorage.getItem(PAID_RUN) || 'null');
+        if (round) localStorage.setItem(PAID_RUN, JSON.stringify({ tab: THIS_TAB, round, beat: Date.now() }));
+        else if (was && was.tab === THIS_TAB) localStorage.removeItem(PAID_RUN);
+      } catch { /* storage blocked: no marker, no refusal */ }
+    }, 2000);
+    window.addEventListener('pagehide', () => { try { const was = JSON.parse(localStorage.getItem(PAID_RUN) || 'null'); if (was && was.tab === THIS_TAB) localStorage.removeItem(PAID_RUN); } catch { /* none */ } });
+    window.BLWP_PAID_RUN_ELSEWHERE = () => {
+      try {
+        const was = JSON.parse(localStorage.getItem(PAID_RUN) || 'null');
+        return was && was.tab !== THIS_TAB && Date.now() - Number(was.beat) < 6000 ? String(was.round || '') : null;
+      } catch { return null; }
+    };
     document.getElementById('blwp-logs-copy').addEventListener('click', async () => {
       const said = document.getElementById('blwp-logs-said');
       said.textContent = window.BLWP_COPY_LOGS ? await window.BLWP_COPY_LOGS() : 'this page keeps no client logs';
@@ -2873,6 +2956,16 @@
             if (raw) r = { id, free: raw.free, stakeSats: BLWPCLIENT.lobbyStakeSats(raw), join: BLWPCLIENT.lobbyJoinSearch(rowSearch.get(id) || search, id) };
           }
           if (!r) return false;
+          // ANOTHER TAB OF THIS BROWSER IS IN A PAID RUN: this paid join is refused by name (see BLWP_PAID_RUN_ELSEWHERE)
+          if (!r.free && window.BLWP_PAID_RUN_ELSEWHERE) {
+            const there = window.BLWP_PAID_RUN_ELSEWHERE();
+            if (there && there !== id) {
+              window.BLWP_JOIN = { state: 'refused', why: 'another tab of this browser is playing a paid round - finish it there first',
+                stage: '', round: id, kindKnown: true, free: false, stakeSats: Number(r.stakeSats) || 0, next: !!next };
+              console.warn('[blwp] join ' + String(id).slice(0, 16) + ' refused: another tab of this browser is in paid round ' + there.slice(0, 16));
+              return true;
+            }
+          }
           // EVERY RUN STARTS AT ITS ROUND'S START, PLAY FROM THE LOBBY TOO (the owner 2026-09-29 22:00, PRIORITIES item 6: "Free
           // play does not keep the old clock"): a round not yet started is joined now and held to its start, as the next
           // round after a run is. Measured before: PLAY into a free 90 s round 26 s ahead of its start began the run at once.
