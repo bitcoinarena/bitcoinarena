@@ -1564,3 +1564,29 @@ test('WINDOW-10-SPEC: the page lists and joins only a round whose objection wind
   const got = await fetchRound(toHex(rid), ['http://127.0.0.1:9'], { fetcher: answering(round) });
   assert.equal(got.contract.objectionWindowMs, 600000n);
 });
+
+// TWO PLAYERS IN ONE BROWSER (ORDER-2116, measured 2026-10-02 05:5xZ): keyed by round alone, the loser's record replaced the
+// winner's, the winner's tab found nothing owed and marked the round done - its 96000 msat payout left in the federation.
+test('two players of one round in one browser keep a collect each, and each tab reads and marks only its own', () => {
+  const tab = new Map();
+  const storage = { getItem: (k) => (tab.has(k) ? tab.get(k) : null), setItem: (k, v) => tab.set(k, String(v)), removeItem: (k) => tab.delete(k),
+    key: (i) => [...tab.keys()][i] ?? null, get length() { return tab.size; } };
+  const lockRound = { ...round, custody: 'FEDERATION', federationId: TEST_FEDERATION_ID };
+  const lr = toHex(roundId(lockRound));
+  const winner = b32(0x5a), loser = b32(0x5b);
+  for (const s of [winner, loser]) assert.equal(saveCollect(storage, { roundIdHex: lr, round: lockRound, invite: INVITE, nodes: ['http://a.test'], seed: s }), true);
+  const w = savedCollects(storage, { seed: winner }), l = savedCollects(storage, { seed: loser });
+  assert.equal(savedCollects(storage).length, 2, 'one record replaced the other');
+  assert.deepEqual([w.length, l.length, toHex(w[0].seed), toHex(l[0].seed)], [1, 1, toHex(winner), toHex(loser)]);
+  assert.equal(markCollectDone(storage, lr, { payout: 'No payout' }, loser), true);
+  assert.equal(savedCollects(storage, { seed: winner })[0].done, null, 'the loser\'s answer marked the winner\'s round done');
+  assert.deepEqual(savedCollects(storage, { seed: loser })[0].done, { payout: 'No payout' });
+  // A RECORD FROM BEFORE THE SEED KEY, the loser's and marked done, is not carried into the winner's new record
+  const t2 = new Map();
+  const s2 = { getItem: (k) => (t2.has(k) ? t2.get(k) : null), setItem: (k, v) => t2.set(k, String(v)), removeItem: (k) => t2.delete(k),
+    key: (i) => [...t2.keys()][i] ?? null, get length() { return t2.size; } };
+  t2.set('blwp.collect.' + lr, JSON.stringify({ roundIdHex: lr, round: toHex(encodeRoundContract(lockRound)), invite: INVITE, nodes: [], seed: toHex(loser), stakeLock: null, done: { payout: 'No payout' }, savedMs: 1 }));
+  saveCollect(s2, { roundIdHex: lr, round: lockRound, invite: INVITE, nodes: ['http://a.test'], seed: winner });
+  assert.equal(savedCollects(s2, { seed: winner })[0].done, null, 'the loser\'s old record marked the winner\'s new one done');
+  assert.ok(t2.has('blwp.collect.' + lr), 'another seed\'s old record was removed');
+});

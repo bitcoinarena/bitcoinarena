@@ -10415,10 +10415,19 @@ const STAKE_NOTE = 'blwp.stakeback.';
  * invite, the signer nodes, the tab's seed, the lock), and the page collects from these
  * records on every load until both answers are final.
  */
+// ONE RECORD PER ROUND AND PLAYER (ORDER-2116, measured 2026-10-02 05:5xZ): keyed by round alone, a second player in the
+// same browser replaced the first's record, the winner's tab looked up the loser's lock, found nothing owed and marked the
+// round done - its pending line went at FINAL and its 96000 msat payout stayed in the federation. The record already
+// carries its tab's seed; the key now names it too, and a tab reads and marks only its own.
+const collectKey = (roundIdHex, seed) => `${COLLECT_NOTE}${roundIdHex}.${(seed instanceof Uint8Array ? toHex(seed) : String(seed || '')).slice(0, 16)}`;
 function saveCollect(storage, { roundIdHex, round, invite, nodes, seed, stakeLock = null } = {}) {
   try {
-    const key = `${COLLECT_NOTE}${roundIdHex}`;
-    const was = storage.getItem(key);
+    const key = collectKey(roundIdHex, seed);
+    // a record of this round from before the key named its seed, if it is this seed's, moves under the new key
+    let old = storage.getItem(`${COLLECT_NOTE}${roundIdHex}`);
+    try { if (old && JSON.parse(old).seed === toHex(seed)) storage.removeItem(`${COLLECT_NOTE}${roundIdHex}`); else old = null; } catch { old = null; }
+    // only this seed's old record carries over: another player's answers are not this one's
+    const was = storage.getItem(key) || old;
     const done = was ? (JSON.parse(was).done || null) : null;
     // THE LOCK IS FOR THE PANEL'S LINE ONLY - the collect finds the lock through the signer nodes.
     // Measured on 0.0.1236: a lock that did not encode threw the whole record away, and
@@ -10434,14 +10443,16 @@ function saveCollect(storage, { roundIdHex, round, invite, nodes, seed, stakeLoc
 }
 
 /** Every collect this tab keeps, oldest first; an unreadable record is skipped. */
-function savedCollects(storage) {
+function savedCollects(storage, { seed = null } = {}) {
   const out = [];
+  const mine = seed instanceof Uint8Array ? toHex(seed) : null;
   try {
     for (let i = 0; i < storage.length; i++) {
       const k = storage.key(i);
       if (!k || !k.startsWith(COLLECT_NOTE)) continue;
       try {
         const r = JSON.parse(storage.getItem(k));
+        if (mine && r.seed !== mine) continue;
         const [txid, outIdx] = r.stakeLock ? String(r.stakeLock.outpoint).split(':') : [null, null];
         out.push({ roundIdHex: r.roundIdHex, round: decodeRoundContract(fromHex(r.round)), invite: r.invite, nodes: r.nodes, seed: fromHex(r.seed),
           stakeLock: r.stakeLock ? { outpoint: { txid: fromHex(txid), outIdx: BigInt(outIdx) }, fields: lockFieldsFromJson(r.stakeLock.fields) } : null,
@@ -10453,10 +10464,18 @@ function savedCollects(storage) {
 }
 
 /** A round whose payout and stake answers are both final: the lines kept, and it is not asked again. */
-function markCollectDone(storage, roundIdHex, done) {
+function markCollectDone(storage, roundIdHex, done, seed = null) {
   try {
-    const key = `${COLLECT_NOTE}${roundIdHex}`;
+    let key = seed ? collectKey(roundIdHex, seed) : null;
+    if (!key || !storage.getItem(key)) {
+      // no seed named, or a record from before the seed key: the round's record under the old key, else its only one
+      const keys = [];
+      for (let i = 0; i < storage.length; i++) { const k = storage.key(i); if (k === `${COLLECT_NOTE}${roundIdHex}` || (k && k.startsWith(`${COLLECT_NOTE}${roundIdHex}.`))) keys.push(k); }
+      key = keys.includes(`${COLLECT_NOTE}${roundIdHex}`) ? `${COLLECT_NOTE}${roundIdHex}` : keys.length === 1 ? keys[0] : null;
+      if (!key) return false;
+    }
     const r = JSON.parse(storage.getItem(key));
+    if (r && seed && r.seed !== toHex(seed)) return false;
     if (!r) return false;
     storage.setItem(key, JSON.stringify({ ...r, done }));
     return true;
