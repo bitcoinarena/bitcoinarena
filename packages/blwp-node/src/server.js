@@ -1820,6 +1820,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       eligibleKeys: new Set((roster.censusFor(rid).entries || []).map((e) => toHex(e.pubkey))).size };
   };
   const listingKept = new Map();                  // GET /rounds query -> { at, json }, a large one kept 30 s
+  const contractKept = new Map();
   const announcedRounds = (url) => {
     const nowMs = BigInt(round.now());
     const listed = [];
@@ -1839,15 +1840,25 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const perSeries = nextRaw !== null && /^\d+$/.test(nextRaw) ? Number(nextRaw) : null;
     const candidates = [];
     for (const held of round.openRounds()) {
-      let c;
-      try { c = decodeRoundContract(held.contract); } catch { continue; }
-      let endMs;
-      try { endMs = roundEndMs(c); } catch { endMs = c.entryCloseMs; }
-      if (nowMs >= endMs) continue;                   // over: announced no longer
-      if (c.objectionWindowMs !== OBJECTION_WINDOW_MS) continue;   // §13A, WINDOW-10-SPEC: not 600 000 ms, never listed
-      // A ROUND OF A SERIES THIS NODE NO LONGER HOLDS IS NOT ANNOUNCED (the 82/90 fork: a series replaced before it ran -
-      // its rounds already written ahead into the store - takes no entry at any door, so it is offered nowhere either).
-      if (seriesRefusal(c)) continue;
+      // A ROUND'S CONTRACT, ITS END AND ITS SERIES VERDICT ARE READ ONCE (ORDER-2116, measured on testnet4 2026-10-02):
+      // every listing decoded all ~2000 held contracts and ran the series check on each - 0.7-3 s of loop per
+      // `?next=8` - and each open lobby asks every node every few seconds, so two pages held all 7 nodes near 90 % and a
+      // join's POST /round took 48 s. A contract never changes, nor the series this process holds.
+      const key = toHex(held.roundId);
+      let kept = contractKept.get(key);
+      if (!kept) {
+        let c;
+        try { c = decodeRoundContract(held.contract); } catch { continue; }
+        let endMs;
+        try { endMs = roundEndMs(c); } catch { endMs = c.entryCloseMs; }
+        // §13A, WINDOW-10-SPEC: not 600 000 ms, never listed. A ROUND OF A SERIES THIS NODE NO LONGER HOLDS IS NOT
+        // ANNOUNCED (the 82/90 fork: a series replaced before it ran takes no entry at any door, so it is offered nowhere).
+        kept = { c, endMs, unlisted: c.objectionWindowMs !== OBJECTION_WINDOW_MS || !!seriesRefusal(c) };
+        contractKept.set(key, kept);
+      }
+      const { c, endMs } = kept;
+      if (nowMs >= endMs) { contractKept.delete(key); continue; }   // over: announced no longer
+      if (kept.unlisted) continue;
       if (aheadMs !== null && c.startTimeMs > nowMs + aheadMs) continue;
       candidates.push({ held, c, endMs });
     }
