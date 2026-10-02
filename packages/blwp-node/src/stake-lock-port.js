@@ -47,10 +47,16 @@ const keptFor = (ms, fn, now = () => Date.now()) => {
   };
 };
 
-export function stakeLockPort({ bin, dataDir, timeoutMs = 60000, keepMs = 60000, now = () => Date.now() }) {
+// READ-ONLY ASKS TAKE THEIR OWN CLIENT DIRECTORY (JOIN-TIME-1359, the owner 2026-10-02: "The join takes too long"): the seven
+// testnet4 seats shared one federation client directory, and its database admits one process at a time - so every seat's
+// lock status, fee rule and gateway read queued behind every other's, and a paid entry held by all 7 was SEEN by them one
+// after another, ~1.3 s apart, 13-19 s after it was held (measured on testnet4, rounds 1a21b8d0 and 1537ed99). `readDataDir`
+// (a copy of the joined directory, one per seat) answers status, guardians, gateways and fees, which submit nothing; send and
+// settle, which do, stay on `dataDir`.
+export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs = 60000, keepMs = 60000, now = () => Date.now() }) {
   const port = {
     async status(outpoint) {
-      const j = await run(bin, ['--mode', 'status', '--data-dir', dataDir, '--outpoint', outpointArg(outpoint)], timeoutMs);
+      const j = await run(bin, ['--mode', 'status', '--data-dir', readDataDir, '--outpoint', outpointArg(outpoint)], timeoutMs);
       return {
         blockCount: Number(j.block_count),
         stored: j.stored ? { contractId: String(j.stored.contract_id), blocksLeft: Number(j.stored.blocks_left) } : null,
@@ -65,7 +71,7 @@ export function stakeLockPort({ bin, dataDir, timeoutMs = 60000, keepMs = 60000,
      * guardian's 33-byte broadcast key, and its consensus threshold - what federationIsBonded counts.
      */
     async guardians() {
-      const j = await run(bin, ['--mode', 'guardians', '--data-dir', dataDir], timeoutMs);
+      const j = await run(bin, ['--mode', 'guardians', '--data-dir', readDataDir], timeoutMs);
       return { federationId: fromHex(String(j.federation_id)), guardians: Number(j.guardians), threshold: Number(j.threshold),
         keys: (j.keys || []).map((k) => fromHex(String(k.key))) };
     },
@@ -76,7 +82,7 @@ export function stakeLockPort({ bin, dataDir, timeoutMs = 60000, keepMs = 60000,
      */
     gateways() { return gatewaysKept(); },
     async gatewaysRead() {
-      const j = await run(bin, ['--mode', 'gateways', '--data-dir', dataDir], timeoutMs);
+      const j = await run(bin, ['--mode', 'gateways', '--data-dir', readDataDir], timeoutMs);
       return { federationId: fromHex(String(j.federation_id)),
         height: j.block_count === undefined ? null : Number(j.block_count),
         gateways: (j.gateways || []).map((g) => ({ url: String(g.url), live: g.live === true,
@@ -103,7 +109,7 @@ export function stakeLockPort({ bin, dataDir, timeoutMs = 60000, keepMs = 60000,
     /** The guardians' own LNv2 fee rule, off the federation's config (W4). */
     fees() { return feesKept(); },
     async feesRead() {
-      const j = await run(bin, ['--mode', 'fees', '--data-dir', dataDir], timeoutMs);
+      const j = await run(bin, ['--mode', 'fees', '--data-dir', readDataDir], timeoutMs);
       return { ppm: BigInt(j.fee_ppm), baseMsat: BigInt(j.fee_base_msat) };
     },
     /**
@@ -144,5 +150,6 @@ export function stakeLocksFromEnv(env) {
   if (!got.length) return { ok: true, given: false };
   if (got.length !== STAKE_LOCK_SETTINGS.length)
     return { ok: false, why: `${STAKE_LOCK_SETTINGS.join(' and ')} go together: set both, or neither` };
-  return { ok: true, given: true, stakeLocks: stakeLockPort({ bin: env.BLWP_STAKE_LOCK_BIN, dataDir: env.BLWP_FEDERATION_CLIENT_DIR }) };
+  return { ok: true, given: true, stakeLocks: stakeLockPort({ bin: env.BLWP_STAKE_LOCK_BIN, dataDir: env.BLWP_FEDERATION_CLIENT_DIR,
+    readDataDir: env.BLWP_FEDERATION_CLIENT_READ_DIR || env.BLWP_FEDERATION_CLIENT_DIR }) };
 }
