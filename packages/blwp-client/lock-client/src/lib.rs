@@ -100,13 +100,42 @@ async fn credited(ln: &LightningClientModule, fee: &PaymentFee, invoice: u64) ->
     Ok(contract.msats.saturating_sub(claim.msats))
 }
 
+/// A CONSENSUS REQUEST ASKED AGAIN WHEN THE GUARDIANS' SOCKETS FAIL (the owner 2026-10-02, playtest: "Not joined PAID ...
+/// Federation rpc error { method => consensus_block_count, 2 => Transport error: WebSocket connection failed, 3 => ..., 5 =>
+/// ... }"): a consensus answer needs the threshold of guardians, and from some networks a guardian's first socket fails
+/// (measured: error, error, open on retry) - one try made it no answer and the join failed. Up to 8 tries, 300 ms doubling
+/// to 3 s between them (~15 s at most); the last error is said if every try fails.
+async fn consensus_with_retries<T, F, Fut>(mut ask: F) -> anyhow::Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<T>>,
+{
+    let mut wait = fedimint_core::runtime::Duration::from_millis(300);
+    let mut last = None;
+    for _ in 0..8 {
+        match ask().await {
+            Ok(v) => return Ok(v),
+            Err(e) => last = Some(e),
+        }
+        fedimint_core::runtime::sleep(wait).await;
+        wait = std::cmp::min(wait * 2, fedimint_core::runtime::Duration::from_secs(3));
+    }
+    Err(last.unwrap_or_else(|| anyhow::anyhow!("no answer")))
+}
+
 async fn block_count(api: &DynModuleApi) -> anyhow::Result<u64> {
-    Ok(api.request_current_consensus(CONSENSUS_BLOCK_COUNT_ENDPOINT.to_string(), ApiRequestErased::new(())).await?)
+    consensus_with_retries(|| async {
+        Ok(api.request_current_consensus(CONSENSUS_BLOCK_COUNT_ENDPOINT.to_string(), ApiRequestErased::new(())).await?)
+    })
+    .await
 }
 
 /// What the guardians hold at an outpoint: the contract id and the blocks LEFT.
 async fn stored_at(api: &DynModuleApi, outpoint: OutPoint) -> anyhow::Result<Option<(ContractId, u64)>> {
-    Ok(api.request_current_consensus(OUTGOING_CONTRACT_EXPIRATION_ENDPOINT.to_string(), ApiRequestErased::new(outpoint)).await?)
+    consensus_with_retries(|| async {
+        Ok(api.request_current_consensus(OUTGOING_CONTRACT_EXPIRATION_ENDPOINT.to_string(), ApiRequestErased::new(outpoint)).await?)
+    })
+    .await
 }
 
 #[wasm_bindgen]
