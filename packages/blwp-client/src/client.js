@@ -572,6 +572,12 @@ export class Client {
     // The count is kept, not thrown: the round is joined either way, and the
     // stake is committed or not by the signer nodes' own answers.
     if (this.stakeLock) {
+      // THE FEE LOCK GOES BESIDE THE STAKE LOCK, NOT AFTER IT (the owner 2026-10-02: "stake/fee verification of 5 of 7
+      // confirmations must also be much faster"): each signer node verifies the two on their own, and whichever lands
+      // second makes the stake SEEN there - handed after the stake lock's whole pass, the fee lock added that pass again.
+      const feeHanding = this.stakeLock.feeLock
+        ? handLock({ entryId: mine, fields: this.stakeLock.feeLock.fields, nodes: [this.base, ...this.peers], needed: this.stakeLock.needed, door: 'fee-lock' })
+        : null;
       this.lockHanded = await handLock({ entryId: mine, fields: this.stakeLock.fields,
         nodes: [this.base, ...this.peers], needed: this.stakeLock.needed });
       // AND THE PAGE IS TOLD WHICH SIGNER NODE NOW HOLDS IT, so a reload does not
@@ -582,10 +588,7 @@ export class Client {
       // AND THE FEE LOCK, WHEN THE PAGE MADE ONE (Pick b: only when it can pay a
       // signer node): each signer node checks it against the entry's F and fee and keeps it for
       // the round's one settlement.
-      if (this.stakeLock.feeLock) {
-        this.feeLockHanded = await handLock({ entryId: mine, fields: this.stakeLock.feeLock.fields,
-          nodes: [this.base, ...this.peers], needed: this.stakeLock.needed, door: 'fee-lock' });
-      }
+      if (feeHanding) this.feeLockHanded = await feeHanding;
     }
     return joined;
   }
