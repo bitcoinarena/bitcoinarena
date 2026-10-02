@@ -18,3 +18,11 @@ test('a phrase whose player wallet keeps entries counts them; an empty one count
   assert.equal(phraseWalletEntries(L, empty), 0);
   assert.equal(phraseWalletEntries(L, 'not hex'), 0);
 });
+
+test('a wallet in a federation this browser keeps no history for is found when that federation is named', () => {
+  const mem2 = () => { const m = new Map(); return { get length() { return m.size; }, key: (i) => [...m.keys()][i], getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k) }; };
+  const L = mem2(); const fed = new Uint8Array(32).fill(0x44); const seed = '0c'.repeat(32);
+  walletStoreFor(L, fed, walletSecretFor(Uint8Array.from(Buffer.from(seed, 'hex')), fed)).put('n', 'x');
+  assert.equal(phraseWalletEntries(L, seed), 0, 'no ledger, no federation named');
+  assert.equal(phraseWalletEntries(L, seed, Buffer.from(fed).toString('hex')), 1);
+});

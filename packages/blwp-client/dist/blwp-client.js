@@ -9593,10 +9593,13 @@ function walletSecretFor(seed, federationId) {
  * stake, the balance was the other phrase's empty wallet). For every federation this browser keeps a ledger for, the
  * entries the phrase's player wallet keeps there - 0 for a phrase that never had one. Read off the store's keys only.
  */
-function phraseWalletEntries(storage, seedHex) {
+function phraseWalletEntries(storage, seedHex, federationIdHex = null) {
   if (!storage || !/^[0-9a-f]{64}$/i.test(String(seedHex || ''))) return 0;
   const keys = storageKeys(storage);
+  // the federation asked about, when named (a wallet with money and no history row is still a wallet), and every one
+  // this browser keeps a history for
   const feds = keys.map((k) => /^blwp\.ledger\.([0-9a-f]{64})$/i.exec(k)).filter(Boolean).map((m) => m[1].toLowerCase());
+  if (/^[0-9a-f]{64}$/i.test(String(federationIdHex || ''))) feds.push(String(federationIdHex).toLowerCase());
   let n = 0;
   for (const f of new Set(feds)) {
     let secret; try { secret = walletSecretFor(fromHex(String(seedHex).toLowerCase()), fromHex(f)); } catch { continue; }
