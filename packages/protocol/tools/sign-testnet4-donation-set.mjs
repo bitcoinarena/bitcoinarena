@@ -30,7 +30,11 @@ if (key.asymmetricKeyType !== 'ed25519') throw new Error('the testnet4 donation 
 const pub = createPublicKey(key);
 if (toHex(pub.export({ type: 'spki', format: 'der' }).subarray(-32)) !== toHex(AUTHORITY_PUBKEY_TESTNET4))
   throw new Error('that key is not the donation authority testnet4 genesis names');
-const body = { networkId: NETWORK_ID_TESTNET4, serial: 2n, validFrom: 0, recipients: RECIPIENTS };
+// IN FORCE FROM 154790 (a soft fork, 27A.4: the highest validly signed serial whose valid_from a round's census height has
+// reached is the set that round must name; every paid series already published - census 154206, 154539, 154668 - keeps
+// the set it named, 22A)
+const VALID_FROM = Number(process.env.VALID_FROM || 154790);
+const body = { networkId: NETWORK_ID_TESTNET4, serial: 2n, validFrom: VALID_FROM, recipients: RECIPIENTS };
 const digest = Buffer.from(donationSetBodyId(body));
 const signature = sign(null, digest, key);
 if (!verify(null, digest, pub, signature)) throw new Error('the signature does not verify');
