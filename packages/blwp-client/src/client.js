@@ -256,6 +256,10 @@ const FINAL_RELINK_EVERY_MS = 1000;
 /** The core's own words for a run that is over (core rules/gate.js RUN_DELIVERED 1, RUN_WRECKED 2, RUN_MISSED 3), as they read off the state. */
 const RUN_ENDING_WORDS = Object.freeze({ 1: 'DELIVERED', 2: 'WRECKED', 3: 'MISSED' });
 
+// HOW LONG THE LOCKS ARE OFFERED TO THE SIGNER NODES IN THE BACKGROUND: past the start deadline (900 ticks, 15 s) a stake
+// not yet seen voids the entry anyway; two minutes covers a join held to a round that starts later.
+export const LOCK_HAND_MS = 120000;
+
 export class Client {
   /**
    * A client that reaches a node because Bitcoin says where it is, AND because
@@ -572,25 +576,40 @@ export class Client {
     // The count is kept, not thrown: the round is joined either way, and the
     // stake is committed or not by the signer nodes' own answers.
     if (this.stakeLock) {
-      // THE FEE LOCK GOES BESIDE THE STAKE LOCK, NOT AFTER IT (the owner 2026-10-02: "stake/fee verification of 5 of 7
-      // confirmations must also be much faster"): each signer node verifies the two on their own, and whichever lands
-      // second makes the stake SEEN there - handed after the stake lock's whole pass, the fee lock added that pass again.
-      const feeHanding = this.stakeLock.feeLock
-        ? handLock({ entryId: mine, fields: this.stakeLock.feeLock.fields, nodes: [this.base, ...this.peers], needed: this.stakeLock.needed, door: 'fee-lock' })
-        : null;
-      this.lockHanded = await handLock({ entryId: mine, fields: this.stakeLock.fields,
-        nodes: [this.base, ...this.peers], needed: this.stakeLock.needed });
-      // AND THE PAGE IS TOLD WHICH SIGNER NODE NOW HOLDS IT, so a reload does not
-      // hand the same lock to a second entry (a signer node refuses that anyway).
-      if (this.lockHanded.ok && typeof this.stakeLock.onCommitted === 'function') {
-        try { this.stakeLock.onCommitted(mine); } catch { /* the page's bookkeeping, not the signer node's */ }
-      }
-      // AND THE FEE LOCK, WHEN THE PAGE MADE ONE (Pick b: only when it can pay a
-      // signer node): each signer node checks it against the entry's F and fee and keeps it for
-      // the round's one settlement.
-      if (feeHanding) this.feeLockHanded = await feeHanding;
+      // THE LOCKS GO TO THE SIGNER NODES IN THE BACKGROUND (JOIN-TIME, the owner 2026-10-02: "Join click to the round actually
+      // loaded: 2 to 3 seconds at most"; ruled the same day: the stake is confirmed in the background - the signer nodes hold
+      // a player's ticks until they have seen it, and an unconfirmed stake by the start deadline voids the entry). The
+      // session opens now. The stake lock and the fee lock go to every node at once, and a node that did not take one yet
+      // (the federation still accepting the lock, a node slow to answer) is asked again until `needed` took each, or
+      // LOCK_HAND_MS passes. `lockHanding` is the whole of it, for a caller that wants to wait.
+      this.lockHanding = this.#handLocksUntilTaken(mine);
     }
     return joined;
+  }
+
+  async #handLocksUntilTaken(mine) {
+    const nodes = [this.base, ...this.peers];
+    const needed = this.stakeLock.needed;
+    const kinds = [{ door: 'lock', fields: this.stakeLock.fields, key: 'lockHanded' }];
+    if (this.stakeLock.feeLock) kinds.push({ door: 'fee-lock', fields: this.stakeLock.feeLock.fields, key: 'feeLockHanded' });
+    const took = new Map(kinds.map((k) => [k.door, new Set()]));
+    const until = Date.now() + LOCK_HAND_MS;
+    for (let pause = 300; ; pause = Math.min(pause * 2, 3000)) {
+      await Promise.all(kinds.map(async (k) => {
+        const left = nodes.filter((n) => !took.get(k.door).has(n));
+        if (!left.length) return;
+        const r = await handLock({ entryId: mine, fields: k.fields, nodes: left, needed: 0, door: k.door });
+        for (const s of r.said) if (s.status === 201) took.get(k.door).add(s.node);
+        this[k.key] = { ok: took.get(k.door).size >= needed, committed: took.get(k.door).size, needed, said: r.said };
+      }));
+      if (this.lockHanded && this.lockHanded.ok && !this.lockCommittedSaid && typeof this.stakeLock.onCommitted === 'function') {
+        this.lockCommittedSaid = true;
+        try { this.stakeLock.onCommitted(mine); } catch { /* the page's bookkeeping, not the signer node's */ }
+      }
+      if (kinds.every((k) => took.get(k.door).size >= nodes.length) || Date.now() >= until) break;
+      await this.sleep(pause);
+    }
+    return { lock: this.lockHanded, feeLock: this.feeLockHanded };
   }
 
   /** A socket to another committee node, for checkpoints only. */
