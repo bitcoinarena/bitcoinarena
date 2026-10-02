@@ -1443,8 +1443,12 @@
     }
     // CLAIMED LATER (the owner 2026-09-14): the newest kept round that is not final, so an older
     // round still owed is looked at and withdrawn once the newer ones are done; else the newest.
+    // THIS TAB'S OWN COLLECTS (ORDER-2116): a second player in the same browser keeps its own, under its own seed
+    function collectSeed() {
+      try { return BLWPCLIENT.tabSeed({ storage: window.sessionStorage, random: (n) => crypto.getRandomValues(new Uint8Array(n)) }); } catch { return null; }
+    }
     function newestKept() {
-      const kept = BLWPCLIENT.savedCollects(vault()).filter((r) => BLWPCLIENT.roundLocks(r.round));
+      const kept = BLWPCLIENT.savedCollects(vault(), { seed: collectSeed() }).filter((r) => BLWPCLIENT.roundLocks(r.round));
       const open = kept.filter((r) => !r.done);
       return open.length ? open[open.length - 1] : (kept.length ? kept[kept.length - 1] : null);
     }
@@ -1458,7 +1462,7 @@
       if (typeof BLWPCLIENT === 'undefined' || !BLWPCLIENT.findOwedRounds || !window.BLWP_CURVE || !named || !named.federation) return;
       try {
         const seed = BLWPCLIENT.tabSeed({ storage: window.sessionStorage, random: (n) => crypto.getRandomValues(new Uint8Array(n)) });
-        const known = BLWPCLIENT.savedCollects(vault()).map((r) => r.roundIdHex);
+        const known = BLWPCLIENT.savedCollects(vault(), { seed: collectSeed() }).map((r) => r.roundIdHex);
         const found = await BLWPCLIENT.findOwedRounds({ seed, curve: window.BLWP_CURVE, nodes: named.nodes,
           sinceMs: Date.now() - OWED_LOOKBACK_MS, known });
         for (const f of found)
@@ -1502,7 +1506,7 @@
           const c = await BLWPCLIENT.collectIntoPlayerWallet({ look, ...roundAsk(newest, w.LockClient) });
           if (c.collected) {
             console.log('[blwp] owed, collected into the player wallet: ' + c.creditedMsat + ' msat');
-            BLWPCLIENT.markCollectDone(vault(), newest.roundIdHex, { payout: BLWPCLIENT.owedToLine(look), stake: null });
+            BLWPCLIENT.markCollectDone(vault(), newest.roundIdHex, { payout: BLWPCLIENT.owedToLine(look), stake: null }, collectSeed());
             if (window.BLWP_READ_BALANCE) window.BLWP_READ_BALANCE();
             paintHistory();
           }
@@ -1511,7 +1515,7 @@
         else if (newest.done) window.BLWP_COLLECT_LINE = [newest.done.payout, newest.done.stake].filter(Boolean).join(' · ');
         else if (look.final && look.inTabMsat === 0n) {
           const line = BLWPCLIENT.owedToLine(look);
-          BLWPCLIENT.markCollectDone(vault(), newest.roundIdHex, { payout: line, stake: null });
+          BLWPCLIENT.markCollectDone(vault(), newest.roundIdHex, { payout: line, stake: null }, collectSeed());
           console.log('[blwp] owed: ' + line);
         }
       } catch (e) { console.error('[blwp] owed: ' + e.message); }
@@ -2340,7 +2344,7 @@
       let notes = [];
       try { const v = vault(); for (let i = 0; i < v.length; i++) { const k = v.key(i); if (k && k.startsWith('blwp.pending.')) notes.push(k); } } catch { notes = []; }
       try { const mine = JSON.parse(window.sessionStorage.getItem('blwp.pending.mine') || 'null'); if (Array.isArray(mine)) notes = notes.filter((k) => mine.includes(k)); } catch { /* every note */ }
-      const done = new Set((BLWPCLIENT.savedCollects ? BLWPCLIENT.savedCollects(vault()) : []).filter((r) => r.done).map((r) => r.roundIdHex));
+      const done = new Set((BLWPCLIENT.savedCollects ? BLWPCLIENT.savedCollects(vault(), { seed: typeof collectSeed === "function" ? collectSeed() : null }) : []).filter((r) => r.done).map((r) => r.roundIdHex));
       let total = 0n; let closeMs = null; let provisional = false;
       for (const k of notes) {
         let n; try { n = JSON.parse(vault().getItem(k)); } catch { n = null; }
