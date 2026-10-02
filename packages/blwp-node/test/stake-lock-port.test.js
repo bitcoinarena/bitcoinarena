@@ -93,3 +93,23 @@ test('gateways and fees are read once a minute however often they are asked', as
     assert.equal(answers[0].height, 9);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+// READ-ONLY ASKS ON THEIR OWN DIRECTORY (JOIN-TIME-1359): status, guardians, gateways and fees name readDataDir; send and
+// settle name the shared dataDir; unset, both are dataDir; the env names it BLWP_FEDERATION_CLIENT_READ_DIR.
+test('status, guardians, gateways and fees read their own client directory; send and settle keep the shared one', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'stake-lock-port-'));
+  try {
+    const t = fakeTool(dir, {
+      status: { mode: 'status', block_count: 1, stored: null },
+      gateways: { mode: 'gateways', federation_id: 'aa'.repeat(32), gateways: [] },
+      fees: { mode: 'fees', fee_ppm: 0, fee_base_msat: 0 },
+    });
+    const port = stakeLockPort({ bin: t.bin, dataDir: '/shared', readDataDir: '/mine' });
+    await port.status({ txid: b(1), outIdx: 0n }); await port.gateways(); await port.fees();
+    const dirs = t.argv().map((a) => a[a.indexOf('--data-dir') + 1]);
+    assert.deepEqual(dirs, ['/mine', '/mine', '/mine']);
+    const fromEnv = stakeLocksFromEnv({ BLWP_STAKE_LOCK_BIN: t.bin, BLWP_FEDERATION_CLIENT_DIR: '/shared', BLWP_FEDERATION_CLIENT_READ_DIR: '/seat-3' });
+    await fromEnv.stakeLocks.status({ txid: b(2), outIdx: 0n });
+    assert.equal(t.argv().at(-1)[t.argv().at(-1).indexOf('--data-dir') + 1], '/seat-3');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
