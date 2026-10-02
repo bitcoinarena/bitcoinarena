@@ -3834,6 +3834,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     setImmediate(() => {
       ghostDue.delete(key);
       if (shuttingDown) return;
+      // NOBODY WATCHING THIS ROUND HERE, NO PICTURE MADE (NODE-OPT-1648): a player asks for pictures on its main socket,
+      // at one seat; at the other six its sockets carry checkpoints only. Yet every stored batch stepped a warm copy of
+      // its run at every seat - each seat re-simulating every player, for nobody (profiled on testnet4 seat 3 during a
+      // two-player round: the warm step 4.1 % of its loop, no watcher there). A watcher arriving later is drawn as a cold
+      // run is: from the tick reached, catching up over the next pushes (STEP_BUDGET).
+      let watched = false;
+      for (const [sock, who] of watching) if (sock.readyState === sock.OPEN && hexOf(who.roundId) === key) { watched = true; break; }
+      if (!watched) return;
       try {
         // TO THE NEWEST TICK, not one budgeted slice of it: a turn that coalesced twenty batches has more ticks to
         // walk than one call takes (STEP_BUDGET), and a truck left mid-way is the very fault this warm step exists to
