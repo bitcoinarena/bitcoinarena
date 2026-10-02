@@ -231,6 +231,13 @@ export function openStore(path = ':memory:') {
     -- (round, entry, tick), which cannot answer that question.
     CREATE INDEX IF NOT EXISTS checkpoints_by_id ON checkpoints (checkpoint_id);
 
+    -- THE OPEN ROUNDS IN THE ORDER THEY OPENED, AND THE CLOSED ONES LATEST FIRST, READ FROM AN INDEX (the owner 2026-10-02,
+    -- the the test host's load): openRounds and finishedRounds sorted every round's contract in a temporary B-tree, and with
+    -- ~2,950 rounds held (a series 72 h ahead) the sort spilled to temporary files on every door sweep, close sweep and
+    -- lobby listing - 2,276 page writes in 5 s, ~1.6 MB/s from every idle testnet4 seat, while no row changed.
+    CREATE INDEX IF NOT EXISTS rounds_by_state_opened ON rounds (state, opened_ms);
+    CREATE INDEX IF NOT EXISTS rounds_by_state_closed ON rounds (state, closed_ms);
+
     -- THIS NODE'S OWN KEY. One row, and the CHECK is what makes it one: a
     -- daemon with two identities would sign some receipts with each and a
     -- client checking them against the committee would be right to refuse
