@@ -608,6 +608,42 @@ impl LockClient {
         .to_string())
     }
 
+    /// THE WHOLE BALANCE AS E-CASH (the owner 2026-10-02: "Can't we show all wallets we have and combine all of them when
+    /// playing a round?"): the stock mint module's send of everything this wallet holds, as the prefixed base32 string
+    /// another wallet of the same federation receives. Answers {"msat", "ecash"}; ecash null when the wallet is empty.
+    /// The caller keeps the string until it is received - spent here, it exists nowhere else.
+    #[wasm_bindgen(js_name = sendAllEcash)]
+    pub async fn send_all_ecash(&self) -> Result<String, JsError> {
+        let mint = self.client.get_first_module::<fedimint_mintv2_client::MintClientModule>().map_err(js)?;
+        let balance = self.client.get_balance_for_btc().await.map_err(js)?;
+        if balance.msats == 0 {
+            return Ok(serde_json::json!({ "msat": 0, "ecash": serde_json::Value::Null }).to_string());
+        }
+        let (_, ecash) = mint.send(balance, serde_json::Value::Null, false).await.map_err(js)?;
+        Ok(serde_json::json!({
+            "msat": balance.msats,
+            "ecash": fedimint_core::base32::encode_prefixed(fedimint_core::base32::FEDIMINT_PREFIX, &ecash),
+        })
+        .to_string())
+    }
+
+    /// E-CASH IN: reissued into this wallet; answers once the federation has reissued it - {"state": "Success" |
+    /// "Rejected" (already spent) | "AlreadyReceived"}.
+    #[wasm_bindgen(js_name = receiveEcash)]
+    pub async fn receive_ecash(&self, ecash: String) -> Result<String, JsError> {
+        let mint = self.client.get_first_module::<fedimint_mintv2_client::MintClientModule>().map_err(js)?;
+        let bytes = fedimint_core::base32::decode_prefixed(fedimint_core::base32::FEDIMINT_PREFIX, ecash.trim()).map_err(js)?;
+        let operation = match mint.receive(bytes, serde_json::Value::Null).await {
+            Ok(op) => op,
+            Err(fedimint_mintv2_client::ReceiveECashError::AlreadyReceived) => {
+                return Ok(serde_json::json!({ "state": "AlreadyReceived" }).to_string());
+            }
+            Err(e) => return Err(js(e)),
+        };
+        let state = mint.await_final_receive_operation_state(operation).await.map_err(js)?;
+        Ok(serde_json::json!({ "state": format!("{state:?}") }).to_string())
+    }
+
     /// THE STAKE LOCK: one stock OutgoingContract funded from this client's
     /// ecash, then what the guardians stored at its outpoint beside what was
     /// computed. `point`, `claim_pk`, `refund_pk` are 33-byte compressed hex.
