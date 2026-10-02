@@ -9628,17 +9628,32 @@ function paysIntoALock(round, invite, LockClient) {
 // the slowest step of a paying join - and the deposit, the lock and the withdraw use that same open client rather than
 // joining again on the same store. A join that failed is not kept.
 const openWallets = new WeakMap();
-async function playerWallet({ round, invite, seed, LockClient, storage, onStep = () => {} } = {}) {
+async function playerWallet({ round, invite, seed, LockClient, storage, onStep = () => {}, openWaitMs = 15000, joinWaitMs = 180000 } = {}) {
   paysIntoALock(round, invite, LockClient);
   const secret = walletSecretFor(seed, round.federationId);
   const key = `${toHex(round.federationId)}:${toHex(secret)}`;
   const byStore = storage && (openWallets.get(LockClient) || openWallets.set(LockClient, new WeakMap()).get(LockClient));
   const open = byStore && byStore.get(storage);
-  if (open && open.has(key)) { onStep('the player wallet is open'); return open.get(key); }
+  // THE WALLET THE LOBBY OPENED, IF IT DID OPEN (JOIN-TIME-1359, measured 2026-10-02 on testnet4: 2 of 12 paid joins sat at
+  // "the player wallet is open" for good - the lobby's join of the federation never settled, and PLAY took that promise
+  // as an open wallet; a named step is never cut by time). Given `openWaitMs`; then, unsettled or failed, joined again.
+  if (open && open.has(key)) {
+    const kept = open.get(key);
+    const done = await Promise.race([kept.then((v) => ({ v }), (e) => ({ e })), new Promise((r) => setTimeout(() => r(null), openWaitMs))]);
+    if (done && 'v' in done) { onStep('the player wallet is open'); return done.v; }
+    if (open.get(key) === kept) open.delete(key);
+    onStep(done ? `the player wallet did not open (${done.e && done.e.message ? done.e.message : done.e}) - joining the federation again`
+      : `the player wallet did not open in ${Math.round(openWaitMs / 1000)} s - joining the federation again`);
+  }
   const store = storage ? walletStoreFor(storage, round.federationId, secret) : unkeptLockStore();
   const kept = JSON.parse(store.entries()).length;
   onStep(kept ? 'reopening the player wallet this tab keeps for this federation' : 'joining the federation with the player wallet');
-  const joining = LockClient.join(invite, toHex(round.federationId), toHex(secret), store);
+  // AND A JOIN THAT NEVER ANSWERS IS REFUSED BY NAME after `joinWaitMs`, so PLAY can be pressed again
+  let timer = null;
+  const joining = Promise.race([
+    LockClient.join(invite, toHex(round.federationId), toHex(secret), store),
+    new Promise((_, no) => { timer = setTimeout(() => no(new Error(`the federation did not open the player wallet in ${Math.round(joinWaitMs / 1000)} s - press PLAY again`)), joinWaitMs); }),
+  ]).finally(() => clearTimeout(timer));
   if (byStore) {
     const m = open || new Map(); if (!open) byStore.set(storage, m);
     m.set(key, joining);
