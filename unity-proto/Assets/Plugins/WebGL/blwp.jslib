@@ -55,6 +55,15 @@ mergeInto(LibraryManager.library, {
   BlwpSubmitLoad: function (feeSats, btcHundredths) {
     var b = Module.blwp;
     if (!b || !b.core.submitLoad) return 0;
+    // ONE LOAD A TICK IN THE ROUND'S WORLD (ORDER-2116, measured 2026-10-02 08:00Z): a signer node keeps the first of a kind at
+    // a tick, so a second one here - Unity's own beside the one handed over at the world's start - moved this core and not
+    // the replay (DELIVERED here, FAILED at all 7, the same 1457 ticks). The second is dropped, here and on the wire.
+    var net0 = Module.blwpNet;
+    if (net0 && net0.inWorld && net0.client) {
+      var at0 = net0.client.offered | 0; net0.lastAt = net0.lastAt || {};
+      if (net0.lastAt.load === at0) return 0;
+      net0.lastAt.load = at0;
+    }
     var ok = b.core.submitLoad(b.st, feeSats | 0, btcHundredths | 0) ? 1 : 0;
     if (ok && Module.blwpNet) Module.blwpNet.load(feeSats | 0, btcHundredths | 0);
     return ok;
@@ -66,6 +75,15 @@ mergeInto(LibraryManager.library, {
   BlwpSubmitSample: function (price) {
     var b = Module.blwp;
     if (!b || !b.core.submitSample) return 0;
+    // ONE SAMPLE A TICK IN THE ROUND'S WORLD (ORDER-2116, measured 2026-10-02 08:00Z): a signer node keeps the first of a kind at
+    // a tick, so a second one here - Unity's own beside the one handed over at the world's start - moved this core and not
+    // the replay (DELIVERED here, FAILED at all 7, the same 1457 ticks). The second is dropped, here and on the wire.
+    var net0 = Module.blwpNet;
+    if (net0 && net0.inWorld && net0.client) {
+      var at0 = net0.client.offered | 0; net0.lastAt = net0.lastAt || {};
+      if (net0.lastAt.sample === at0) return 0;
+      net0.lastAt.sample = at0;
+    }
     var ok = b.core.submitSample(b.st, price | 0) ? 1 : 0;
     if (ok && Module.blwpNet) Module.blwpNet.sample(price | 0);
     return ok;
@@ -76,6 +94,15 @@ mergeInto(LibraryManager.library, {
   BlwpSubmitTape: function (ptr, n) {
     var b = Module.blwp;
     if (!b || !b.core.submitTape || (n | 0) !== 64) return 0;
+    // ONE TAPE A TICK IN THE ROUND'S WORLD (ORDER-2116, measured 2026-10-02 08:00Z): a signer node keeps the first of a kind at
+    // a tick, so a second one here - Unity's own beside the one handed over at the world's start - moved this core and not
+    // the replay (DELIVERED here, FAILED at all 7, the same 1457 ticks). The second is dropped, here and on the wire.
+    var net0 = Module.blwpNet;
+    if (net0 && net0.inWorld && net0.client) {
+      var at0 = net0.client.offered | 0; net0.lastAt = net0.lastAt || {};
+      if (net0.lastAt.tape === at0) return 0;
+      net0.lastAt.tape = at0;
+    }
     var prices = Array.prototype.slice.call(new Int32Array(Module.HEAP32.buffer, ptr, 64));
     var ok = b.core.submitTape(b.st, prices) ? 1 : 0;
     if (ok && Module.blwpNet && Module.blwpNet.tape) Module.blwpNet.tape(prices);
@@ -654,6 +681,7 @@ mergeInto(LibraryManager.library, {
             if (q[0] === 'tape') { b.core.submitTape(b.st, q[1]); net.client.submitTape(q[1]); }
             else if (q[0] === 'load') { b.core.submitLoad(b.st, q[1], q[2]); net.client.submitLoad(q[1], q[2]); }
             else if (q[0] === 'sample') { b.core.submitSample(b.st, q[1]); net.client.submitSample(q[1]); }
+            (net.lastAt = net.lastAt || {})[q[0]] = net.client.offered | 0;
           });
           net.queued = [];
 
