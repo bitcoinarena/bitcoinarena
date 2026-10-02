@@ -1279,6 +1279,16 @@ export class Round {
       .map((r) => ({ roundId: new Uint8Array(r.round_id), contract: new Uint8Array(r.contract), closedMs: r.closed_ms }));
   }
 
+  /**
+   * THE OPEN ROUNDS' IDS ONLY, in the order they opened - no contract read (the owner 2026-10-02, the the test host's load: GET /rounds,
+   * which every lobby asks of every node every few seconds, read all ~2,950 held contracts out of the store and decoded each
+   * just to list ids it had already decoded and kept - ~24 % of an idle seat's loop while one round ran). A caller that
+   * needs a contract it has not kept asks get(id).
+   */
+  openRoundIds() {
+    return this.db.prepare('SELECT round_id FROM rounds WHERE state = ? ORDER BY opened_ms').all(OPEN).map((r) => new Uint8Array(r.round_id));
+  }
+
   openRounds() {
     return this.db.prepare('SELECT round_id, contract, opened_ms FROM rounds WHERE state = ? ORDER BY opened_ms')
       .all(OPEN)

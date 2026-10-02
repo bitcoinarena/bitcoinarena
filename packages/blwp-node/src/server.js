@@ -1857,7 +1857,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const nextRaw = url.searchParams.get('next');
     const perSeries = nextRaw !== null && /^\d+$/.test(nextRaw) ? Number(nextRaw) : null;
     const candidates = [];
-    for (const held of round.openRounds()) {
+    const openIds = round.openRoundIds();
+    // what is kept of rounds no longer open goes once it outgrows the open ones by 500 (a round closes every 90 s)
+    if (contractKept.size > openIds.length + 500) {
+      const open = new Set(openIds.map((r) => toHex(r)));
+      for (const k of contractKept.keys()) if (!open.has(k)) contractKept.delete(k);
+    }
+    for (const roundId of openIds) {
+      const held = { roundId };
       // A ROUND'S CONTRACT, ITS END AND ITS SERIES VERDICT ARE READ ONCE (ORDER-2116, measured on testnet4 2026-10-02):
       // every listing decoded all ~2000 held contracts and ran the series check on each - 0.7-3 s of loop per
       // `?next=8` - and each open lobby asks every node every few seconds, so two pages held all 7 nodes near 90 % and a
@@ -1865,8 +1872,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const key = toHex(held.roundId);
       let kept = contractKept.get(key);
       if (!kept) {
+        // read from the store only now, the first time this process lists it (the ids above carry no contract)
+        const row = round.get(roundId);
         let c;
-        try { c = decodeRoundContract(held.contract); } catch { continue; }
+        try { c = decodeRoundContract(new Uint8Array(row.contract)); } catch { contractKept.set(key, { unlisted: true, endMs: null }); continue; }
         let endMs;
         try { endMs = roundEndMs(c); } catch { endMs = c.entryCloseMs; }
         // §13A, WINDOW-10-SPEC: not 600 000 ms, never listed. A ROUND OF A SERIES THIS NODE NO LONGER HOLDS IS NOT
@@ -1874,9 +1883,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         kept = { c, endMs, unlisted: c.objectionWindowMs !== OBJECTION_WINDOW_MS || !!seriesRefusal(c) };
         contractKept.set(key, kept);
       }
-      const { c, endMs } = kept;
-      if (nowMs >= endMs) { contractKept.delete(key); continue; }   // over: announced no longer
       if (kept.unlisted) continue;
+      const { c, endMs } = kept;
+      if (nowMs >= endMs) continue;   // over: announced no longer (kept, so an ended round still open here is not read again)
       if (aheadMs !== null && c.startTimeMs > nowMs + aheadMs) continue;
       candidates.push({ held, c, endMs });
     }
