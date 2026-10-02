@@ -241,8 +241,11 @@
       font: 600 13px/1.1 system-ui, sans-serif; pointer-events: none; }
     #blwp-lobby-balance .bal-chip { flex: 1 1 0; min-width: 0; display: flex; align-items: center; gap: 6px; padding: 0 8px;
       border-radius: 6px; background: rgba(13,16,20,0.92); border: 1px solid #5a4a22; color: #e8eaed; white-space: nowrap; overflow: hidden; }
-    #blwp-lobby-balance .bal-what { color: #9fb3c8; font-weight: 600; }
-    #blwp-lobby-balance b { margin-left: auto; }
+    #blwp-lobby-balance .bal-what { color: #9fb3c8; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    /* THE AMOUNT IS NEVER CUT (the owner 2026-10-02: "Confirmed 5" - a three-digit balance was clipped): the amount and the
+       icon keep their width, the label gives way first */
+    #blwp-lobby-balance b { margin-left: auto; flex: none; }
+    #blwp-lobby-balance .bal-ico { flex: none; }
     body.blwp-clean #blwp-lobby-balance { display: none !important; }
     .bal-ico { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px;
       border-radius: 50%; font-size: 11px; font-weight: 800; flex: none; }
@@ -1654,7 +1657,8 @@
         ['blwp-lobby-pending', pending], ['blwp-bal-pending', pending]]) {
         const el = document.getElementById(id); if (el) el.textContent = v;
       }
-      document.getElementById('blwp-balance-line').textContent = known ? `in ${bal.federation}` : 'No balance in this wallet yet';
+      // THE FEDERATION ONCE (the owner 2026-10-02: "don't show the federation id twice"): the history names it in full
+      document.getElementById('blwp-balance-line').textContent = known ? '' : 'No balance in this wallet yet';
       const why = document.getElementById('blwp-money-why');
       if (why && !isBackedUp()) why.textContent = '';
     }
@@ -2029,8 +2033,11 @@
           lines.push({ hex: x.hex, sats, busy: heldElsewhere(x.hex) });
         }
         el.innerHTML = '';
+        // NOTHING SHOWN FOR WALLETS WITH 0 SAT (the owner 2026-10-02: "don't show wallets with 0 sat"): only a wallet holding sats,
+        // or one that could not be read now, is named; with none, no line at all
+        if (!lines.some((w) => w.sats === null || w.sats > 0)) return;
         const head = document.createElement('div'); head.className = 'muted';
-        head.textContent = 'Other wallets in this browser: ' + total + ' sat';
+        head.textContent = 'Other wallets in this browser' + (total ? ': ' + total + ' sat' : '');
         el.appendChild(head);
         for (const w of lines) {
           if (w.sats === 0) continue;
