@@ -24,6 +24,7 @@ import { noQuorumOutcome, VOID } from '../../protocol/src/payout.js';
 import { decodeRoundContract } from '../../protocol/src/contracts.js';
 import { medianTimePast } from '../../protocol/src/beacon.js';
 import { blockHashOf } from '../../protocol/src/chain.js';
+import { toHex } from '../../protocol/src/hash.js';
 import { splitSignedResult, decodePlayerResult, resultId } from '../../protocol/src/result.js';
 import {
   splitSignedReceipt, decodeCheckpointReceipt, SIGNED_RECEIPT_BYTES,
@@ -130,9 +131,35 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
       ...(lateObjection ? { lateObjectionAtMs: filedAt } : {}) };
     const fin = finalSigs(signedResultId, win.finalAfterMs);
     const said = { signed: fin.signed, needed: fin.needed };
+    const decided = nowMs >= win.rerunDeadlineMs && typeof round.noQuorum === 'function' ? round.noQuorum(entryIdBytes) : null;
+    if (decided) return { ...common, state: decided.outcome, noQuorum: true, finalSigs: said, why: decided.why };
     if (fin.ok)
       return { ...common, state: FINAL, published: true, finalSigs: said,
         why: `signed FINAL by ${fin.signed} of ${committee.length} seats after the objection window closed at ${utc(win.closeMs)} with no valid objection in time` };
+    // NOT FINAL BY THE RE-RUN WINDOW'S END, AT A SEAT THAT HELD NO VALID OBJECTION (WINDOW-LIVE-1155, the owner 2026-10-02: "The
+    // measured rounds that stayed PROVISIONALLY_FINAL are not done"). Measured: four seats upheld an objection and voided
+    // the run at end + 1205 s; the other three, short of the five FINAL signatures, stayed PROVISIONALLY_FINAL for good.
+    // §13C decides here too, once, at the same instant: VOID - or FORFEIT on a proven equivocation - and it is written, so
+    // a FINAL signature arriving later does not turn it back. A run that did reach FINAL never comes here.
+    // only a seat that signed FINAL itself, and in time - before the re-run window's end: one that never reached that step,
+    // or reached it late (caught up after a restart, a test round dated 1970), would void a run the others are still
+    // signing, so it decides nothing here
+    const ownHex = round.pubkey ? toHex(round.pubkey) : null;
+    const signedOwn = ownHex !== null && round.finalSigs(roundIdBytes, entryIdBytes, signedResultId)
+      .some((r) => toHex(r.signerPubkey) === ownHex && BigInt(r.seenMs) < win.rerunDeadlineMs);
+    if (nowMs >= win.rerunDeadlineMs && signedOwn) {
+      const proven = typeof round.provenTwoFirstMarks === 'function'
+        && round.provenTwoFirstMarks(roundIdBytes, entryIdBytes, evidenceWindow(round, roundIdBytes, contract, win.rerunDeadlineMs)) === true;
+      const d = noQuorumOutcome({ signatures: fin.signed || 0, needed: fin.needed || 1, equivocationProven: proven, state: PROVISIONALLY_FINAL });
+      if (d.outcome) {
+        const why = `not FINAL by the re-run window's end at ${utc(win.rerunCloseMs)}: ${fin.signed || 0} of ${fin.needed} seats `
+          + `signed FINAL - ${d.why} (§13C)`;
+        // written only when asked at this seat's own clock: a look ahead (a caller's `now` past it) decides nothing
+        if (typeof round.putNoQuorum === 'function' && nowMs <= BigInt(round.now()))
+          round.putNoQuorum({ entryId: entryIdBytes, roundId: roundIdBytes, outcome: d.outcome, why });
+        return { ...common, state: d.outcome, noQuorum: true, finalSigs: said, why };
+      }
+    }
     const published = postedFor(agreeing[0].transcriptHash);
     if (!(contract.publicationRelays || []).length)
       return { ...common, state: PROVISIONALLY_FINAL, published: false, posted: 0, finalSigs: said,
