@@ -1050,4 +1050,32 @@ public class CargoTests
         Assert.AreEqual(30f, list[0].FeeRate, 0.01f, "die Gebuehrenrate stimmt nicht");
         Assert.AreEqual(1.23456789, list[0].Btc, 0.0001);
     }
+
+    /// <summary>
+    /// THE BED KEPT ACROSS A RELOAD (the redone mid-run reload playthrough: the resumed truck drove with "CARGO empty"):
+    /// ROLL OUT keeps the parcels as text with the page, a resumed run reads them back - the same parcels, in loading order,
+    /// carrying the same fee and BTC the core was handed.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator KeptBedComesBackAsTheSameParcels()
+    {
+        _bayUi.Auto();
+        yield return null;
+        Assert.IsTrue(_bay.IsLoaded, "AUTO loaded nothing");
+        long fee = _bay.FeeCarried; int hundredths = _bay.BtcHundredths; int n = _bay.Count;
+
+        var kept = LoadoutPanel.ParseBed(LoadoutPanel.BedText(_bay.Slots));
+        Assert.AreEqual(n, kept.Count);
+        _bay.Clear();
+        foreach (var tx in kept) Assert.IsTrue(_bay.TryAdd(tx), $"{tx.txid} did not go back on the bed");
+        Assert.AreEqual(fee, _bay.FeeCarried, "the fee the core was handed");
+        Assert.AreEqual(hundredths, _bay.BtcHundredths, "the BTC the core was handed");
+
+        Assert.AreEqual(0, LoadoutPanel.ParseBed(null).Count);
+        Assert.AreEqual(0, LoadoutPanel.ParseBed("").Count);
+        var one = LoadoutPanel.ParseBed("nonsense;abc,1,2;dddd4444,4500,150,20000000;x,y,z,w");
+        Assert.AreEqual(1, one.Count, "malformed parcels are skipped");
+        Assert.AreEqual(4500, one[0].feeSats);
+        Assert.AreEqual(20_000_000, one[0].valueSats);
+    }
 }

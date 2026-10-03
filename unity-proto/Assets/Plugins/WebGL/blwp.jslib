@@ -943,6 +943,23 @@ mergeInto(LibraryManager.library, {
     if (typeof window === 'undefined') return 0;
     return window.BLWP_RESUME && window.BLWP_RESUME.caughtUp ? 1 : 0;
   },
+  // THE BED OF THIS ROUND'S RUN, KEPT ACROSS A RELOAD (the owner 2026-10-03, the redone reload playthrough: the resumed truck
+  // drove with an empty bed, "CARGO empty"). The core holds the load as two numbers; the parcels are Unity's, so ROLL OUT
+  // keeps them here per round, beside the round's session key, and a resumed run puts them back on the bed.
+  BlwpKeepCargo: function (textPtr) {
+    var slot = null;
+    try { slot = (typeof BLWP_ROUND !== 'undefined' && BLWP_ROUND) ? 'blwp.cargo.' + BLWPCLIENT.toHex(BLWPCLIENT.roundId(BLWP_ROUND)) : null; } catch (e) { slot = null; }
+    try { if (slot) window.sessionStorage.setItem(slot, UTF8ToString(textPtr)); } catch (e) { slot = null; }
+    return slot ? 1 : 0;
+  },
+  BlwpKeptCargo: function (outPtr, cap) {
+    var v = null;
+    try { v = (typeof BLWP_ROUND !== 'undefined' && BLWP_ROUND) ? window.sessionStorage.getItem('blwp.cargo.' + BLWPCLIENT.toHex(BLWPCLIENT.roundId(BLWP_ROUND))) : null; } catch (e) { v = null; }
+    if (!v || v.length >= (cap | 0)) { Module.HEAPU8[outPtr] = 0; return 0; }
+    for (var i = 0; i < v.length; i++) Module.HEAPU8[outPtr + i] = v.charCodeAt(i) & 255;
+    Module.HEAPU8[outPtr + v.length] = 0;
+    return v.length;
+  },
   BlwpLoadoutOpen: function (open) {
     if (typeof window === 'undefined') return;
     window.BLWP_LOADOUT_OPEN = open !== 0;
