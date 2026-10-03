@@ -44,6 +44,7 @@ import { lightningFromEnv } from './node-start.js';
 import { stakeLocksFromEnv } from './stake-lock-port.js';
 import { fundingFromEnv } from './funding.js';
 import { startNode } from './node-start.js';
+import { hostsFromEnv, hostsReader } from './hosts.js';
 import { statSync, readFileSync } from 'node:fs';
 import { decodeRoundContract } from '../../protocol/src/contracts.js';
 import { TEST_DONATION_SET_REGTEST, TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS } from '../../protocol/src/test-donation-sets.js';
@@ -123,6 +124,8 @@ if (process.env.BLWP_SERIES_FILE) {
 // with none named, a node finds its peers off the round's census - the bond adverts at its census height - and a seat
 // whose address moved since answers there no more. The free pair's nodes run as their own units (the owner 2026-10-01) and
 // lost the peers the 2-of-2 launcher handed them: 44 runs sat at 1 of 2 FINAL signatures. Comma-separated base URLs.
+// WHAT THIS NODE HOSTS (the owner 2026-10-03 22:50): node 1 gateway A + LND 1, node 2 gateway B + LND 2 - read for its /dashboard
+{ const hc = hostsFromEnv(); if (hc) { options.hosts = hostsReader(hc).start(); console.log(`hosts: ${hc.lnd ? 'LND ' + hc.lnd.rpcserver : 'no LND'}, ${hc.gateway ? 'gateway ' + hc.gateway.name + ' ' + hc.gateway.base : 'no gateway'}`); } }
 if (process.env.BLWP_PEERS) options.peers = process.env.BLWP_PEERS.split(',').map((s) => s.trim()).filter(Boolean);
 if (process.env.BLWP_ATTACH_PROOF_DIR) {
   const dir = process.env.BLWP_ATTACH_PROOF_DIR;
