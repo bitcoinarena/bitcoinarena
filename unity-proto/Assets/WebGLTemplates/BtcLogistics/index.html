@@ -2968,7 +2968,12 @@
         // may no longer change when the other round is newer"): while a join is going or held, its round is its kind's row.
         const going = window.BLWP_JOIN && !window.BLWP_JOIN.cancelled && (window.BLWP_JOIN.state === 'joining' || window.BLWP_JOIN.state === 'joined')
           ? window.BLWP_JOIN.round : null;
-        const picked = BLWPCLIENT.lobbyOnePerKind(window.BLWP_LOBBY_ROWS, Date.now(), { paidSeriesOnly: true });
+        // THE SOONEST ROUND WHEN NOTHING MUST BE DEPOSITED FIRST (the owner 2026-10-03): a free row, or a paid row whose stake
+        // the player wallet already holds, needs only 15 s of entry left; a wallet that must take a deposit keeps 90 s
+        const walletMsat = window.BLWP_WALLET_BALANCE && typeof window.BLWP_WALLET_BALANCE.sats === 'number' ? BigInt(window.BLWP_WALLET_BALANCE.sats) * 1000n : 0n;
+        const leadMsFor = (r) => (r.free || (r.stakeMsat !== undefined && walletMsat >= BigInt(r.stakeMsat))
+          ? BLWPCLIENT.FUNDED_JOIN_LEAD_MS : BLWPCLIENT.SERIES_JOIN_LEAD_MS);
+        const picked = BLWPCLIENT.lobbyOnePerKind(window.BLWP_LOBBY_ROWS, Date.now(), { paidSeriesOnly: true, leadMsFor });
         window.BLWP_LOBBY = (BLWPCLIENT.lobbyKeepJoined ? BLWPCLIENT.lobbyKeepJoined(picked, window.BLWP_LOBBY_ROWS, going) : picked).map((r) => ({ id: r.id, phase: r.phase, free: r.free, wallet: r.wallet,
           signerNodesAgree: r.signerNodesAgree, needed: r.needed, joinable: r.joinable, stakeSats: BLWPCLIENT.lobbyStakeSats(r),
           line: BLWPCLIENT.lobbyLine(r, now), raw: r, join: r.joinable ? BLWPCLIENT.lobbyJoinSearch(rowSearch.get(r.id) || search, r.id) : null }));

@@ -28,13 +28,15 @@ const big = (v) => { try { return BigInt(v); } catch { return 0n; } };
  * next after `played` starts. `rows` are lobby rows (fetchLobby: id, free, stakeMsat, startTimeMs, entryCloseMs,
  * joinable). Null when there is none.
  */
+// A NEXT ROUND ABOUT TO CLOSE IS SKIPPED for the one after it: the join needs a few seconds before entry closes
+export const NEXT_ROUND_MARGIN_MS = 15000;
 export function nextRoundAfter(played, rows, nowMs = Date.now()) {
   if (!played) return null;
   const stake = big(played.stakeMsat);
   const start = Number(played.startTimeMs);
   const candidates = (rows || []).filter((r) => r && r.joinable
     && !!r.free === (stake === 0n) && (r.free || big(r.stakeMsat) === stake)
-    && Number(r.startTimeMs) > start && Number(r.entryCloseMs) > nowMs);
+    && Number(r.startTimeMs) > start && Number(r.entryCloseMs) > nowMs + NEXT_ROUND_MARGIN_MS);
   candidates.sort((a, b) => Number(a.startTimeMs) - Number(b.startTimeMs));
   return candidates[0] || null;
 }

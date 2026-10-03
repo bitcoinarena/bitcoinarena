@@ -234,6 +234,11 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
 // 90 S, THE JOIN ITSELF (the owner 2026-09-30: the next possible paid round is always visible - no 3 minute lead): the row is the next paying round a join can still enter before its entry closes at its start. Measured live on
 // the testnet4 page 13:54Z: PLAY to the deposit invoice 23.5 s; game 2, payment to a committed entry ~50 s.
 export const SERIES_JOIN_LEAD_MS = 90000;
+// 15 S WHEN NOTHING HAS TO BE DEPOSITED FIRST (the owner 2026-10-03: "I always have to wait for the next round that starts in
+// XX minutes"): a free row, or a paid row whose stake the player wallet already holds, is the soonest round with 15 s of
+// entry left - measured on 0.0.2483, a funded paid PLAY 12.96 s before the start showed the round loaded in 1.20 s and its
+// entry was taken at 7 of 7 before the start (V4, 3a16ec30). A wallet that must take a deposit first keeps the 90 s.
+export const FUNDED_JOIN_LEAD_MS = 15000;
 export const LOBBY_PER_SERIES = 8;
 /**
  * A LOBBY READ THAT GOT NO ANSWER KEEPS ITS LAST ROWS (the owner 2026-10-01 15:25, HARD: "A player opening the page sees a
@@ -268,7 +273,7 @@ export function lobbyKeepJoined(picked, rows, joinedId) {
   return picked.some((r) => kind(r) === kind(joined)) ? replaced : [...replaced, joined];
 }
 
-export function lobbyOnePerKind(rows, nowMs = Date.now(), { paidSeriesOnly = false } = {}) {
+export function lobbyOnePerKind(rows, nowMs = Date.now(), { paidSeriesOnly = false, leadMsFor = () => SERIES_JOIN_LEAD_MS } = {}) {
   // ONLY 90-SECOND PAID ROUNDS (the owner 2026-10-01: "We want always 90 second rounds in Testnet ... no paid row till
   // then"): with `paidSeriesOnly` a paying round that is not a series round - the runner's one-off with its 6 h entry
   // window - is never listed; until a series' rounds can be joined there is no paid row. Free rows are untouched.
@@ -279,7 +284,7 @@ export function lobbyOnePerKind(rows, nowMs = Date.now(), { paidSeriesOnly = fal
   // not): a round of a series beats one naming none; among series rounds, the soonest with the join lead left; otherwise
   // as before - joinable, then open, then the latest entry close.
   const series = (r) => !!(r.contract && r.contract.seriesId instanceof Uint8Array);
-  const leads = (r) => r.entryCloseMs - nowMs >= SERIES_JOIN_LEAD_MS;
+  const leads = (r) => r.entryCloseMs - nowMs >= leadMsFor(r);
   // A SERIES' START, its round's start less i x 90 s: of two series the later-starting one is the one posted after
   // (the owner 2026-09-30: "That series takes priority over the old posted rounds").
   const seriesStart = (r) => BigInt(r.contract.startTimeMs) - BigInt(r.contract.roundIndex || 0) * 90000n;
