@@ -84,6 +84,8 @@ test('gateways and fees are read once a minute however often they are asked', as
     clock += 30000; await port.gateways(); await port.fees();
     const halfMinute = t.argv().length;
     clock += 31000; await port.gateways(); await port.fees();
+    // past the minute the held answer comes back at once and the tool is asked again behind it (keptFor)
+    for (let i = 0; i < 100 && t.argv().length < 4; i++) await new Promise((r) => setTimeout(r, 20));
     const after = t.argv().length;
     console.log('  FACTS:', JSON.stringify({ once, halfMinute, after }));
     assert.equal(once, 2, 'twenty asks ran the tool more than once per mode');
