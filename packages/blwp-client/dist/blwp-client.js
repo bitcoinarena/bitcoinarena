@@ -7461,18 +7461,20 @@ async function postHandout(stake, nodes, { fetcher = fetch, needed: asked } = {}
     throw new Error('this stake does not say how many signer nodes open it');
   if (!Array.isArray(nodes) || !nodes.length)
     throw new Error('no node to publish this handout to');
-  const accepted = [];
-  const refused = [];
-  for (const node of nodes) {
+  // EVERY NODE AT ONCE (the owner 2026-10-02, the join's 2-3 s): posted one after another, the handout was ~0.8 s of a funded
+  // paid join before its lock (0.0.2476). Still all of them before the lock is made, read in the nodes' order.
+  const answers = await Promise.all(nodes.map(async (node) => {
     const at = node.replace(/\/+$/, '') + '/handout';
     try {
       const r = await fetcher(at, { method: 'POST', body: stake.body });
-      if (r.ok) accepted.push(node);
-      else refused.push(`${node}: ${(await r.text()).trim()}`);
+      if (r.ok) return { node, ok: true };
+      return { node, why: `${node}: ${(await r.text()).trim()}` };
     } catch (e) {
-      refused.push(`${node}: ${e.message}`);
+      return { node, why: `${node}: ${e.message}` };
     }
-  }
+  }));
+  const accepted = answers.filter((a) => a.ok).map((a) => a.node);
+  const refused = answers.filter((a) => !a.ok).map((a) => a.why);
   if (accepted.length < needed)
     return {
       ok: false, accepted: accepted.length, needed, refused,
