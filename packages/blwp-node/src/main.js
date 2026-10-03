@@ -33,6 +33,7 @@
 // daemon, and a round whose committee holds one is refused by name.
 const CENSUS_LOOKBACK = 2016;
 import { TESTNET4_DONATION_SET } from '../../protocol/src/testnet4-donation-set.js';
+import { TESTNET4_DONATION_SET_KEYS } from '../../protocol/src/testnet4-donation-set-keys.js';
 import { openStore } from './store.js';
 import { tipHeaderView } from './tip-view.js';
 import { isOldTestnet4Id, isOldTestnet4Series, OLD_TESTNET4_SERIES_BOND_HEIGHT } from '../../protocol/src/old-series.js';
@@ -84,7 +85,9 @@ if (process.env.BLWP_CLOSE_AT_END === '1') options.closeAtEnd = true;
   // testnet4 also holds the set series 3cfbe516 names, under the old id (PICK B, protocol/src/old-series.js)
   // AND TESTNET4'S SET WITH REAL RECIPIENTS (LNURL-0822, serial 2): for the contracts that name it; a contract names its set
   // by id (22A), so the rounds already written keep theirs
-  if (net) options.donationSets = net === 'regtest' ? [TEST_DONATION_SET_REGTEST] : [TESTNET4_DONATION_SET, TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS];
+  // AND, FROM ITS valid_from (154965), TESTNET4'S SET OF KEYS (serial 3; the owner 2026-10-03, FEDERATION.md "Donations in the
+// federation"): every round whose census reaches it names it; the rounds already written keep the set they named
+if (net) options.donationSets = net === 'regtest' ? [TEST_DONATION_SET_REGTEST] : [TESTNET4_DONATION_SET_KEYS, TESTNET4_DONATION_SET, TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS];
 }
 // ONE SERIES A LINE: its template, hex; then `count=N` for a tail (the 82/90 fork: fewer than a day's 960 rounds - its id
 // is taken over that count) and `cut=N` for a series replaced from round N by its tail.
