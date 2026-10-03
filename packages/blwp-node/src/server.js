@@ -30,6 +30,7 @@ import { roundEndMs, startDeadlineOf } from '../../protocol/src/first-mark.js';
 import { OBJECTION_WINDOW_MS, windowsOf } from '../../protocol/src/window.js';
 import { msForTicks } from '../../protocol/src/tick.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
+import { dashboardData, dashboardHtml } from './dashboard.js';
 import { lightningAddressEndpoint } from '../../protocol/src/lnurl-pay.js';
 import { WinningsSend, sendPlanToJson } from './winnings-send.js';
 import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN } from '../../protocol/src/constants.js';
@@ -1723,6 +1724,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // listing each read ~2,950 ids from the store and turned each into hex; a round opening or closing changes the open
   // rounds' count or their newest row, which one covering-index read tells.
   let openList = { key: null, ids: [] };
+  let dashboardKept = null;   // /dashboard.json, kept 30 s
   const openKeyQuery = () => round.db.prepare('SELECT count(*) AS n, max(rowid) AS m FROM rounds WHERE state = 0').get();
   const openHeld = () => {
     const q = openKeyQuery();
@@ -2039,6 +2041,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       if (req.method === 'GET' && url.pathname === '/identity') {
         return bytes(res, 200, round.pubkey);
+      }
+
+      // /Dashboard (the owner 2026-10-01 15:44): what this node earned, spent and did, from its own store - the page, and
+      // the figures it draws (kept 30 s: one reading walks every round with entries)
+      if (req.method === 'GET' && (url.pathname === '/Dashboard' || url.pathname === '/dashboard')) {
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', ...CORS });
+        return res.end(dashboardHtml());
+      }
+      if (req.method === 'GET' && url.pathname === '/dashboard.json') {
+        const nowMs = Date.now();
+        if (!dashboardKept || nowMs - dashboardKept.at > 30000) dashboardKept = { at: nowMs, body: JSON.stringify(dashboardData(round, { nowMs })) };
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
+        return res.end(dashboardKept.body);
       }
 
       // THE CHAIN, AS BITCOIN'S OWN BYTES. 80-byte headers back to back, which
