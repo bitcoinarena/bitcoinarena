@@ -89,3 +89,18 @@ test('lockSettlement, WINNINGS-AUTO (RULED the owner 2026-10-01): a qualifier be
   assert.equal(p.remainder, undefined, 'a remainder split was made although a qualifier is paid');
   assert.equal(p.inputFeesMsat + p.paidMsat + p.outputFeesMsat, p.poolMsat, 'the payout and its fees are not the claimed pot');
 });
+
+// A SET OF KEYS (the owner 2026-10-03): the 25% is paid as a winner is - a payout contract to each recipient's own key - and
+// the signed plan needs no Lightning send for it.
+test('lockSettlement: with a set of keys the donation share is a payout contract to each key, signed with no send', () => {
+  const DEVS = { recipients: [
+    { recipientPk: Uint8Array.of(2, ...new Uint8Array(32).fill(0xa1)), shareBps: 6667, label: 'dev a' },
+    { recipientPk: Uint8Array.of(3, ...new Uint8Array(32).fill(0xb2)), shareBps: 3333, label: 'dev b' }] };
+  const p = lockSettlement({ roundId: rid, entries: [entry(5, FORFEIT, true), entry(6, FAILED)], minScore: 1, locks: locks(5, 6), fees, contract,
+    donationSet: DEVS, requireSends: true });
+  assert.equal(p.ok, true, p.why);
+  const keyed = p.payouts.filter((x) => x.kind === 'donation key');
+  assert.deepEqual(keyed.map((x) => [Buffer.from(x.payoutPk).toString('hex').slice(0, 4), x.donation.label]), [['02a1', 'dev a'], ['03b2', 'dev b']]);
+  assert.equal(p.payouts.filter((x) => x.kind === 'donation').length, 0, 'no share is left for a Lightning send');
+  assert.ok(keyed[0].msat > keyed[1].msat);
+});

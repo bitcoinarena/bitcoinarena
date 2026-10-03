@@ -511,7 +511,7 @@ export class LockSettlement {
       txid: m.txid,
       claims: p.claims.map((c) => ({ kind: c.kind || 'stake', msat: String(c.amountMsat) })),
       payouts: p.payouts.map((x) => ({ kind: x.kind || 'qualifier', pk: toHex(x.payoutPk), msat: String(x.msat), feeMsat: String(x.feeMsat),
-        ...(x.donation ? { donation: x.donation.lnurl } : {}) })),
+        ...(x.donation ? { donation: x.donation.lnurl || x.donation.label || "a key" } : {}) })),
       // A WALK-AWAY'S REMAINDER (RULED 2026-09-30): what went 75% to the sitting signer nodes and 25% to the donation set.
       remainder: p.remainder ? { nodesMsat: String(p.remainder.nodesMsat), donationMsat: String(p.remainder.donationMsat),
         signerNodes: p.remainder.sitting, recipients: p.remainder.recipients, heldMsat: String(p.remainder.heldMsat || 0n) } : null,
@@ -666,6 +666,7 @@ export class LockSettlement {
       if (saw.verdict === 'in') {
         const why = `found in the federation after this signer node was inside it: ${saw.why}`;
         this.round.putLockSettlement({ roundId: roundIdBytes, txid: kept.txid, message: kept.message, signature: kept.signature, state: ACCEPTED, why });
+        { const b = this.built.get(toHex(roundIdBytes)); if (b && b.ok) this.indexDonationKeys(roundIdBytes, kept.txid, b.plan); }
         return { ok: true, state: ACCEPTED, why, txid: kept.txid, signature: kept.signature, recovered: true };
       }
       if (saw.verdict === 'mixed') {
@@ -762,8 +763,24 @@ export class LockSettlement {
       ? `claimed ${stakeClaims} loser lock(s), ${m.plan.poolMsat} msat; paid ${qualifiers} qualifier(s) ${m.plan.paidMsat} msat${remainder}${feePart}`
       : `the guardians refused it: ${sent.error}`;
     this.round.putLockSettlement({ roundId: roundIdBytes, txid: m.txid, message: m.message, signature, state, why });
+    if (sent.accepted) this.indexDonationKeys(roundIdBytes, m.txid, m.plan);
     const winnings = sent.accepted ? await this.sendWinnings(roundIdBytes) : null;
     return { ok: sent.accepted, state, why, txid: m.txid, signature, plan: m.plan, answer: sent, winnings };
+  }
+
+  /**
+   * A WALK-AWAY'S DONATION, PAID TO KEYS, IN THE DONATIONS INDEX (the owner 2026-10-03): each `donation key` payout of an
+   * accepted settlement is a payout contract at (txid, its place among the payouts) - the out_idx a winner redeems by -
+   * listed under its key like a lock transaction's donation output, so the dev's client finds it (GET /donations).
+   */
+  indexDonationKeys(roundIdBytes, txid, plan) {
+    if (!plan || !Array.isArray(plan.payouts) || !this.round.putDonationOutputs || !/^[0-9a-f]{64}$/.test(String(txid))) return;
+    const row = this.round.get(roundIdBytes);
+    const federationId = row ? decodeRoundContract(new Uint8Array(row.contract)).federationId : new Uint8Array(32);
+    const rows = plan.payouts.map((p, i) => ({ p, i })).filter(({ p }) => p.kind === 'donation key').map(({ p, i }) => ({
+      outpoint: { txid: fromHex(String(txid)), outIdx: BigInt(i) }, entryId: p.donation.id, roundId: roundIdBytes, federationId,
+      recipientPk: p.payoutPk, amountMsat: p.msat, contractId: `settlement:${i}` }));
+    if (rows.length) this.round.putDonationOutputs(rows);
   }
 
   /** THE COORDINATOR'S SEND PLANS: proposed from the base plan and handed to every peer, which checks them itself. */
