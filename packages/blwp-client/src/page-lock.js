@@ -24,7 +24,7 @@ import { decodeHandout, handoutId } from '../../protocol/src/handout.js';
 import { lockFromClient } from './lock-result.js';
 import { feeLockPays } from '../../protocol/src/lock-settlement.js';
 import { roundLocks, playerFor } from './join.js';
-import { encodeRoundContract, decodeRoundContract, roundId as roundIdOf, custodyFieldsAreValid } from '../../protocol/src/contracts.js';
+import { encodeRoundContract, decodeRoundContract, roundId as roundIdOf, custodyFieldsAreValid, entryId } from '../../protocol/src/contracts.js';
 import { decodeBolt11 } from '../../protocol/src/bolt11.js';
 import { splitDonation } from '../../protocol/src/donation.js';
 
@@ -766,9 +766,17 @@ export function savedLock(storage, { roundId, playerPubkey }) {
  * resumed (its session key lives in the player and is not kept), so the join stops, says
  * why, and the payout and stake are still collected from the tab's kept record.
  */
-export function keptLockUse(kept) {
+export function keptLockUse(kept, { entry = null, beforeStart = false } = {}) {
   if (!kept) return { use: 'new' };
   if (!kept.committedTo) return { use: 'reuse', kept };
+  // UNLESS THE TAB KEPT THAT VERY ENTRY AND THE ROUND HAS NOT STARTED (measured 2026-10-03 13:58:51Z on 0.0.2490: a reload
+  // 10 s into a chained join, 84 s before its round's start, refused here - the lock was committed and the kept entry and
+  // session key (PAID-NIGHT-2155) were never reached). Before the start there is no run to lose: the same entry is sent
+  // again, the seats take it as the one they hold, and the run is played from its start.
+  let keptId = null;
+  // entryId by its own name: the bundle strips imports, and an "as" alias is undefined there (measured: 0.0.2491 refused)
+  try { keptId = entry ? toHex(entryId(entry)) : null; } catch { keptId = null; }
+  if (beforeStart && keptId && keptId === String(kept.committedTo)) return { use: 'reuse', kept, resumed: true };
   return { use: 'staked', kept,
     why: `this tab's stake in this round is already locked and committed to entry ${String(kept.committedTo).slice(0, 16)}…: `
       + 'no second deposit - the run cannot be resumed after a reload, and its payout and stake are collected after the window' };
