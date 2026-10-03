@@ -19,7 +19,8 @@ function page({ answers, done = [] }) {
   const run = new Function('vault', 'BLWPCLIENT', 'fetch', 'document', 'window', 'paintMoney', `${src}; return lookThePending();`);
   return { go: () => run(() => store, BLWPCLIENT, fetch, { getElementById: (id) => els[id] || null }, window, () => {}), window, els, kept };
 }
-const signed = (msat, more = {}) => ({ kind: 'payout', pendingMsat: msat, windowCloseMs: String(Date.UTC(2026, 9, 1, 12, 11, 22)), provisional: false, ...more });
+// THE WINDOW STILL OPEN (a close in the future); `closed` is one already past
+const signed = (msat, more = {}) => ({ kind: 'payout', pendingMsat: msat, windowCloseMs: String(Date.UTC(2099, 9, 1, 12, 11, 22)), provisional: false, ...more });
 
 test('signed: the majority figure is pending at once, with the window close in UTC', async () => {
   const p = page({ answers: { a: signed('196000'), b: signed('196000'), c: signed('98000') } });
@@ -27,6 +28,14 @@ test('signed: the majority figure is pending at once, with the window close in U
   assert.equal(p.window.BLWP_PENDING_SATS, 196, 'the pending is not the majority figure');
   assert.equal(p.window.BLWP_WALLET_BALANCE.pending, 196);
   assert.equal(p.els['blwp-bal-pending-when'].textContent, 'window closes 12:11:22 UTC');
+});
+
+test('past the close the line says the window closed and the payout is on its way (playtest d917975d)', async () => {
+  const closed = signed('192000', { windowCloseMs: String(Date.UTC(2026, 9, 3, 6, 43, 21)) });
+  const p = page({ answers: { a: closed, b: closed } });
+  await p.go();
+  assert.equal(p.window.BLWP_PENDING_SATS, 192);
+  assert.equal(p.els['blwp-bal-pending-when'].textContent, 'window closed 06:43:21 UTC \u00b7 paying out');
 });
 
 test('while other results still arrive the figure is marked provisional', async () => {
