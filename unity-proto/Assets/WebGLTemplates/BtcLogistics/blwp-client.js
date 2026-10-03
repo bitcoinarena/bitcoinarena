@@ -13555,6 +13555,7 @@ async function askForBond(providers, { chain, ask, timeoutMs = 10000 } = {}) {
 
 
 
+const BONDS_KEPT = new WeakMap();   // proof headers -> (bond providers -> a bond that held), see discover
 
 
 /**
@@ -13822,9 +13823,21 @@ async function discover({
     if (!chain.ok) return { ok: false, why: `no chain: ${chain.why}`, refused: chain.refused };
   }
 
-  let bond = await askForBond(bonds, {
-    chain: chain.headers, ask, timeoutMs: PROVIDER_WAIT_MS,
-  });
+  // A BOND ALREADY PROVEN INTO THIS SAME PROOF BY THESE SAME PROVIDERS IS NOT ASKED AGAIN (the owner 2026-10-02, the join's
+  // 2-3 s): the page proves the chain and the bond at the PLAY click (warmTheSession) and the session hands back that very
+  // proof - asked again it was 0.29 s of a funded paid join after the lock. Kept by the proof's headers and the providers
+  // themselves (the objects, not their words), only an answer that held.
+  const keptBonds = BONDS_KEPT.get(chain.headers);
+  let bond = keptBonds && keptBonds.get(bonds);
+  if (!bond) {
+    bond = await askForBond(bonds, {
+      chain: chain.headers, ask, timeoutMs: PROVIDER_WAIT_MS,
+    });
+    if (bond.ok && chain.headers && typeof chain.headers === 'object' && bonds && typeof bonds === 'object') {
+      if (!BONDS_KEPT.has(chain.headers)) BONDS_KEPT.set(chain.headers, new WeakMap());
+      BONDS_KEPT.get(chain.headers).set(bonds, bond);
+    }
+  }
   if (!bond.ok && reusedChain) {
     // THE KEPT PROOF DID NOT CARRY THIS ROUND'S BOND: read the chain afresh once and try again, rather than playing
     // under a chain that cannot reach it. IF THAT READ FAILS, the answer is still the BOND's own refusal: the kept
