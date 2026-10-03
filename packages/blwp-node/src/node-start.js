@@ -50,7 +50,7 @@ export async function startNode({ db, path }, options = {}, chain = {}) {
   return node;
 }
 
-// ---- THE NODE'S LND, READ FROM ITS ENVIRONMENT (moved here from lnd-port.js and lnd-settings.js, THRESHOLD_LN cut, the owner
+// ---- THE NODE'S LND, READ FROM ITS ENVIRONMENT (moved here from lnd-port.js and lnd-settings.js, the Lightning-hold cut, the owner
 // 2026-10-03: those two files are gone; main.js and tools/round-2of2.mjs read the node's Lightning settings from here) ----
 
 // A READ-ONLY WINDOW ONTO A REAL LIGHTNING NODE: IT DECODES AN INVOICE, AND NOTHING ELSE.
