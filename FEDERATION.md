@@ -289,6 +289,60 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
 - **Every amount that comes back is a row in the wallet's history:** a stake back with no payout is a "Refund" row
   (money in), next to deposits, stakes, winnings, donations and withdrawals.
 
+## Donations in the federation (the owner 2026-10-03, ruled; options decided here)
+
+the owner 2026-10-03: "We'll use the federation(s) as donation layer. Every dev has its own client with a private key that
+corresponds to the 66.67% or 33.33% stake in the donation set." Measured the same day, the Lightning way failed twice:
+the rounds named LNURLs no browser could reach (every share UNPAID), and a 666 msat share found no route over a channel
+whose min_htlc was 1 sat - most mainnet channels refuse below 1 sat, and the fixed fee per hop (0-1 sat) is as large as
+a 2 sat donation.
+
+**The set names keys, not LNURLs - one set for the network, no per-federation subsets.**
+
+```text
+donation set = signed by the network's donation authority (as today)
+  [ { recipient_pk: 33-byte secp256k1 key, share_bps: 6667, label: "dev a" },
+    { recipient_pk: ...,                    share_bps: 3333, label: "dev b" } ]     sum = 10000
+```
+
+A key is valid in every federation, and every round already names its federation, so a round's donation goes to the
+same keys in that round's federation. Options weighed:
+
+| Option | For | Against |
+|---|---|---|
+| **One set of keys, any federation (chosen)** | a new federation needs no new set; one key per dev; nothing to keep in step | a recipient carries the custody risk of every federation rounds name, until it withdraws |
+| A subset per federation | a dev can refuse a federation | the set must be re-signed for every new federation; a round in a federation the set forgot pays nobody |
+| One key + a per-recipient list of refused federations | refusal without per-federation keys | a share in a refused federation has nowhere to go; deferred until somebody needs it |
+
+**Paid in the lock transaction, not over Lightning.** The player's client already spends from the player wallet into
+the stake lock and the fee lock in ONE federation transaction (step 3 of the money flow). That transaction gains one
+**donation output per recipient**: a payout contract as §5 builds them - a pre-expired lock with `refund_pk` =
+`recipient_pk`, which the recipient redeems with its own key at any time. No gateway, no route, no minimum HTLC, no
+Lightning fee; msat amounts as they are (floor each share, remainder to the first recipient, as §22A). The donation
+leaves the wallet in the same transaction as the stake: a stake that is locked is a donation that is paid.
+- **Not returned**, as before: a walk-away or a refunded stake does not bring the donation back (§22A: voluntary,
+  outside the pool). A join that locked and then failed has given its donation.
+- **Enforced by the seats:** the Entry Contract names the donation outpoints beside the stake and fee lock outpoints;
+  a signer node takes an entry whose `donation_bps > 0` only if the federation holds those outputs, each to its
+  recipient key, each for its share of `donation_msat`. A wrong or missing output is refused like a wrong stake lock.
+- **Recipient B on LND C, the LNURL service and the forwarder retire** with the last round that names an LNURL set.
+
+**Found by the recipient's own client, which asks every federation it knows.**
+- Each signer node keeps the donation outpoints of the entries it took, by recipient key and federation:
+  `GET /donations?key=<recipient_pk>[&since=<ms>]` -> `[{ federation_id, round_id, entry_id, outpoint, amount_msat }]`.
+  Public (the entries are), and checkable: the client confirms each outpoint with the federation itself.
+- The dev's client holds one private key. It learns the federations from the rounds the seats serve (each round names
+  its federation and invite), asks the seats for its outpoints, redeems each in its federation into its own e-cash
+  there, and withdraws over Lightning when it chooses - one Lightning fee for many donations.
+- One key across federations links a dev's donations together; for named devs that is the point. A per-federation
+  tweak of the key is possible later without changing the set.
+
+**What changes, all of it a hard fork of the formats:** the donation set's recipient record (key instead of LNURL),
+the Entry Contract (donation outpoints), the signer nodes' entry check and index, the page's lock transaction, a
+recipient client. Rounds already published keep the LNURL set they name (and the 10-03/10-04 forwarder). CONFLICT,
+recorded: multiplayer_p2p.md §22A "The donation set" (LNURLs, "separate Lightning payments") reads the old way; that file
+is not edited here (the owner's standing order).
+
 ## Rulings (the owner 2026-09-21)
 
 - **The player wallet** (§24A.1, v4.6.3): the round wallet is one wallet
