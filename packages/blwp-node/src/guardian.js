@@ -118,8 +118,20 @@ const readTailscale = () => new Promise((resolve) => {
  * Start this node's guardian. Answers `{ running, why, endpoint, apiPort, stop }`; `running: false` names why - a node
  * with no chain, or no fedimintd on this machine, is not a guardian, and says so rather than failing its start.
  */
+/** The kept guardian's own unit, by node port: blwp-tn4-guardian-31221 for the node on 31221. */
+export const guardianUnit = (nodePort) => `blwp-tn4-guardian-${nodePort}`;
+
+/** systemd --user, for a kept guardian: whether its unit runs, and starting it (its env and log given). */
+export const systemdUnits = {
+  active: (unit) => new Promise((ok) => execFile('systemctl', ['--user', 'is-active', '--quiet', `${unit}.service`], (e) => ok(!e))),
+  start: (unit, bin, envVars, logPath) => new Promise((ok, no) => execFile('systemd-run',
+    ['--user', `--unit=${unit}`, '--collect', '-p', 'Restart=on-failure', '-p', `StandardOutput=append:${logPath}`,
+      '-p', `StandardError=append:${logPath}`, ...Object.entries(envVars).map(([k, v]) => `--setenv=${k}=${v}`), bin],
+    { timeout: 20000 }, (e, out, err) => (e ? no(new Error(`systemd-run ${unit}: ${(err || e.message).trim()}`)) : ok()))),
+};
+
 export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, cookiePath, call, env = process.env,
-  tailscale = undefined, log = (s) => console.log(s), chainTries = 12, chainWaitMs = 5000 }) {
+  tailscale = undefined, log = (s) => console.log(s), chainTries = 12, chainWaitMs = 5000, units = systemdUnits }) {
   const not = (why) => { log(`[guardian] not a guardian: ${why}`); return { running: false, why, stop: async () => {} }; };
   if (!bitcoindUrl || !cookiePath) return not('this node reads no chain (BLWP_BITCOIND_URL / BLWP_BITCOIND_COOKIE)');
   const bin = findFedimintd(env.PATH || '');
@@ -149,6 +161,22 @@ export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, co
   const fmEnv = guardianEnv({ nodePort, dataDir, network, chain, bitcoindUrl, endpoint,
     cookieSecret: readFileSync(cookiePath, 'utf8').trim().split(':').slice(1).join(':'),
     password: readFileSync(pwFile, 'utf8').trim() });
+  // A GUARDIAN THAT OUTLIVES ITS NODE (the owner 2026-10-03, after the restart that held deposits: "2. Separate guardian and
+  // node"). With BLWP_GUARDIAN_KEEP=1 the node still starts its own guardian, with nothing typed, but as a systemd user
+  // unit of its own; a node that starts while that unit runs adopts it, and closing the node leaves it running - so a
+  // node restart (a code update) is no guardian restart. Measured before: each guardian restarted mid-session replayed
+  // the session (4733, 10164, 11546 units) and a deposit waited 168.8 s for the federation's order.
+  if (env.BLWP_GUARDIAN_KEEP === '1' && storePath !== ':memory:') {
+    const unit = guardianUnit(nodePort);
+    const ports = guardianPorts(nodePort);
+    if (await units.active(unit)) {
+      log(`[guardian] ${unit} already runs: adopted, not restarted; endpoint ${endpoint}, api 127.0.0.1:${ports.api}`);
+      return { running: true, kept: true, adopted: true, unit, endpoint, network, chain, dataDir, apiPort: ports.api, stop: async () => {} };
+    }
+    await units.start(unit, bin, { ...fmEnv, PATH: env.PATH || '' }, join(dataDir, 'fedimintd.log'));
+    log(`[guardian] fedimintd started as ${unit} on chain ${chain} (Fedimint label ${network}), endpoint ${endpoint}, api 127.0.0.1:${ports.api}; it outlives this node`);
+    return { running: true, kept: true, adopted: false, unit, endpoint, network, chain, dataDir, apiPort: ports.api, stop: async () => {} };
+  }
   const out = openSync(join(dataDir, 'fedimintd.log'), 'a');
   const child = spawn(bin, [], { env: { ...env, ...fmEnv }, stdio: ['ignore', out, out] });
   let exited = false;
