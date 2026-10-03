@@ -37,13 +37,20 @@ export function contractArgs(f) {
 // winnings resend loop asked both on every pass over its held rounds - one stock-client run each, about one every 6 s per
 // signer node - and each run opened the federation client's database: ~1.7 MB/s written by every idle testnet4 seat,
 // 12 MB/s together, while no table changed. One read in flight; a failed read is not kept. (The doors did this already.)
-const keptFor = (ms, fn, now = () => Date.now()) => {
+// AND AN ANSWER ALREADY HELD IS GIVEN AT ONCE PAST ITS MINUTE, READ AGAIN BEHIND IT (the owner 2026-10-02, the join's 2-3 s):
+// the federation's fee rule, guardians and gateways are its config, and the paid entry door waited on a fresh read of the
+// fee rule whenever the minute had run out - POST /entry 0.29-0.90 s at seat 1, 0 ms of it on the loop. Only the first
+// read ever waits; a failed re-read keeps the answer held.
+export const keptFor = (ms, fn, now = () => Date.now()) => {
   let at = 0, v = null, p = null;
+  const read = () => {
+    if (!p) p = Promise.resolve().then(fn).then((r) => { v = r; at = now(); return r; }).finally(() => { p = null; });
+    return p;
+  };
   return () => {
     if (v && now() - at < ms) return Promise.resolve(v);
-    if (p) return p;
-    p = Promise.resolve().then(fn).then((r) => { v = r; at = now(); return r; }).finally(() => { p = null; });
-    return p;
+    if (v) { read().catch(() => { /* the held answer stands */ }); return Promise.resolve(v); }
+    return read();
   };
 };
 
