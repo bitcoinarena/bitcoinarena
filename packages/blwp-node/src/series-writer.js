@@ -26,13 +26,19 @@ export function seriesWriter(round, template, { horizonMs = SERIES_HORIZON_MS } 
   }
   const id = seriesId(template);
   const written = new Map();                                  // index -> { id hex, startTimeMs }
-  const write = (nowMs) => {
+  // `untilMs` (wall clock): stop there and say so (`writer.more`), so a node's start - every round of 72 h opened again,
+  // ~4,500 on testnet4 with seven series, measured 21-33 s of a loop that answered nothing - is walked in slices, the
+  // soonest rounds first, with requests served between them.
+  const writer = { more: false };
+  const write = (nowMs, untilMs = Infinity) => {
     const now = BigInt(nowMs);
     let added = 0;
+    writer.more = false;
     for (const i of seriesRoundsWithin(template, now, now + BigInt(horizonMs))) {
       // NOT FROM ITS CUT ON (the 82/90 tail): those rounds are its tail's.
       if (Number.isInteger(template.seriesCutFrom) && i >= template.seriesCutFrom) continue;
       if (written.has(i)) continue;
+      if (Date.now() >= untilMs) { writer.more = true; break; }
       const c = seriesRound(template, i);
       const rid = round.open(c);
       written.set(i, { id: toHex(rid), startTimeMs: c.startTimeMs });
@@ -54,5 +60,5 @@ export function seriesWriter(round, template, { horizonMs = SERIES_HORIZON_MS } 
     return { series: toHex(id), startTimeMs: String(template.startTimeMs), committeeTimeMs: String(template.committeeTimeMs),
       horizonMs: String(horizonMs), written: written.size, ahead: ahead.length, first: at(ahead[0]), last: at(ahead[ahead.length - 1]) };
   };
-  return { id, template, write, ids, summary, startingWithin, soonest };
+  return Object.assign(writer, { id, template, write, ids, summary, startingWithin, soonest });
 }
