@@ -1,0 +1,188 @@
+using UnityEngine;
+#if ENABLE_INPUT_SYSTEM
+using UnityEngine.InputSystem;
+#endif
+
+/// <summary>
+/// SPECTATE AFTER THE RUN (the owner 2026-10-03, PRIORITIES: "When wrecked/finished the *real* spectate mode should run"; the
+/// letter: "when the run ends WRECKED or FINISHED, switch to a free-roam spectate camera instead of freezing ... over about
+/// 3 s it rises from the chase view to a steep top-down view. Then arrows or swipe pan, and pinch or wheel zoom").
+///
+/// Display only. The core has already named the run (DELIVERED or WRECKED latch in S_STATE) and DriveInput reads no
+/// throttle or steer after that, so the keys and pads that drove the truck now move this camera and nothing else: the
+/// truck stays where the run ended. The HUD - the block timer, the result card and its controls - is drawn over whatever
+/// camera is up and stays. A MISSED run is not this: the block closed on a truck still driving.
+///
+/// The chase camera is switched off while this has the view and back on when the next run's cargo panel opens or the
+/// core is live again.
+/// </summary>
+public class RunEndSpectate : MonoBehaviour
+{
+    public ChaseCamera chase;
+    public Transform truck;
+    public LoadoutPanel loadout;
+    public SpectatorCamera spectator;
+
+    [Tooltip("Seconds the rise from the chase view to the top-down view takes.")]
+    public float riseSeconds = 3f;
+    [Tooltip("Degrees below the horizon the top-down view looks: steep, not straight down, so the map keeps a direction.")]
+    public float topPitch = 78f;
+    public float startHeight = 80f;
+    public float minHeight = 20f;
+    public float maxHeight = 420f;
+    [Tooltip("Pan speed, in screen heights a second at full stick.")]
+    public float panRate = 0.9f;
+
+    public bool Active { get; private set; }
+    /// <summary>0 at the end of the run, 1 once the camera is top-down.</summary>
+    public float Rise => Active ? Mathf.Clamp01(_t / Mathf.Max(0.01f, riseSeconds)) : 0f;
+    /// <summary>The ground point the top-down view is centred on.</summary>
+    public Vector3 Focus => _focus;
+    public float Height => _height;
+
+    Camera _cam;
+    Vector3 _focus, _fromPos;
+    Quaternion _fromRot;
+    float _yaw, _height, _t;
+    bool _dragging, _pinching;
+    Vector2 _pressAt, _lastPointer;
+    float _lastPinch;
+
+    /// <summary>The top-down pose over <paramref name="focus"/>: steep, facing <paramref name="yaw"/>, <paramref name="height"/> up.</summary>
+    public static Pose TopPose(Vector3 focus, float yaw, float height, float pitch)
+    {
+        var rot = Quaternion.Euler(pitch, yaw, 0f);
+        // back along the view by the height over the sine of the pitch: the focus is the centre of the screen
+        var pos = focus - rot * Vector3.forward * (height / Mathf.Max(0.05f, Mathf.Sin(pitch * Mathf.Deg2Rad)));
+        return new Pose(pos, rot);
+    }
+
+    /// <summary>The focus after a pan: stick (x right, y up the screen) at a rate in screen heights a second.</summary>
+    public static Vector3 Panned(Vector3 focus, float yaw, Vector2 stick, float height, float rate, float dt)
+    {
+        var fwd = Quaternion.Euler(0f, yaw, 0f) * Vector3.forward;
+        var right = Quaternion.Euler(0f, yaw, 0f) * Vector3.right;
+        float metres = height * rate * dt;
+        return focus + (right * stick.x + fwd * stick.y) * metres;
+    }
+
+    /// <summary>The height after a zoom of <paramref name="steps"/> (positive closer), clamped.</summary>
+    public static float Zoomed(float height, float steps, float min, float max)
+        => Mathf.Clamp(height * Mathf.Exp(-0.15f * steps), min, max);
+
+    void Awake() => _cam = GetComponent<Camera>();
+
+    /// <summary>The run has ended: take the view from where the chase camera has it and rise over <paramref name="at"/>.</summary>
+    public void Begin(Vector3 at)
+    {
+        if (Active) return;
+        Active = true;
+        _t = 0f;
+        _focus = new Vector3(at.x, at.y, at.z);
+        _fromPos = transform.position;
+        _fromRot = transform.rotation;
+        // up the screen stays the way the chase camera was looking
+        var f = transform.forward; f.y = 0f;
+        _yaw = f.sqrMagnitude > 1e-4f ? Quaternion.LookRotation(f.normalized, Vector3.up).eulerAngles.y : 0f;
+        _height = startHeight;
+        _dragging = _pinching = false;
+        if (chase != null) chase.enabled = false;
+        Debug.Log($"[blwp] spectate: the run is over, the camera rises over {at.x:0},{at.z:0}");
+    }
+
+    public void Leave()
+    {
+        if (!Active) return;
+        Active = false;
+        if (chase != null) chase.enabled = true;
+        Debug.Log("[blwp] spectate: back to the chase camera");
+    }
+
+    /// <summary>Whether the core says this live round's run ended WRECKED or DELIVERED (a MISSED end is not spectated).</summary>
+    static bool RunEndedHere()
+    {
+        if (!Blwp.BlwpCore.Available || DeliveryGate.BackToTheBay(Blwp.BlwpNet.RoundSeed)) return false;
+        int s = Blwp.BlwpCore.RunState;
+        return s == Blwp.Layout.RUN_DELIVERED || s == Blwp.Layout.RUN_WRECKED;
+    }
+
+    void Update()
+    {
+        bool cargoOpen = loadout != null && loadout.IsOpen;
+        if (!Active)
+        {
+            if (!cargoOpen && truck != null && (spectator == null || !spectator.Active) && RunEndedHere()) Begin(truck.position);
+            return;
+        }
+        if (cargoOpen || (Blwp.BlwpCore.Available && Blwp.BlwpCore.RunState == Blwp.Layout.RUN_LIVE)) { Leave(); return; }
+        Steer(Time.unscaledDeltaTime);
+    }
+
+    /// <summary>One frame of the camera: the rise, then pan and zoom from the keys, pads, pointer, wheel and fingers.</summary>
+    public void Steer(float dt)
+    {
+        _t += dt;
+        if (Rise >= 1f) ReadControls(dt);
+        var top = TopPose(_focus, _yaw, _height, topPitch);
+        float e = Rise; e = e * e * (3f - 2f * e);
+        transform.position = Vector3.Lerp(_fromPos, top.position, e);
+        transform.rotation = Quaternion.Slerp(_fromRot, top.rotation, e);
+    }
+
+    /// <summary>Pan by a stick (x right, y up the screen) for <paramref name="dt"/> seconds - the keys' and pads' way in.</summary>
+    public void Pan(Vector2 stick, float dt) => _focus = Panned(_focus, _yaw, Vector2.ClampMagnitude(stick, 1f), _height, panRate, dt);
+
+    public void Zoom(float steps) => _height = Zoomed(_height, steps, minHeight, maxHeight);
+
+    void ReadControls(float dt)
+    {
+        // ARROWS, WASD AND THE ON-SCREEN PADS: what drove the truck, read raw (the run is over, so they drive nothing)
+        var stick = new Vector2(DriveInput.HeldSteer, DriveInput.HeldThrottle);
+        if (stick.sqrMagnitude > 1e-4f) Pan(stick, dt);
+
+        float metresPerPixel = 2f * _height / Mathf.Max(0.05f, Mathf.Sin(topPitch * Mathf.Deg2Rad))
+                             * Mathf.Tan((_cam != null ? _cam.fieldOfView : 60f) * 0.5f * Mathf.Deg2Rad) / Mathf.Max(1, Screen.height);
+#if ENABLE_INPUT_SYSTEM
+        // PINCH: two fingers apart is closer
+        var touch = Touchscreen.current;
+        int down = 0; Vector2 a = default, b = default;
+        if (touch != null)
+            foreach (var t in touch.touches)
+                if (t.press.isPressed) { if (down == 0) a = t.position.ReadValue(); else if (down == 1) b = t.position.ReadValue(); down++; }
+        if (down >= 2)
+        {
+            float d = Vector2.Distance(a, b);
+            if (_pinching && _lastPinch > 1f) _height = Mathf.Clamp(_height * _lastPinch / Mathf.Max(1f, d), minHeight, maxHeight);
+            _lastPinch = d; _pinching = true; _dragging = false;
+            return;
+        }
+        _pinching = false;
+
+        // THE WHEEL
+        var mouse = Mouse.current;
+        if (mouse != null)
+        {
+            float wheel = mouse.scroll.ReadValue().y;
+            if (Mathf.Abs(wheel) > 0.01f) Zoom(Mathf.Sign(wheel) * Mathf.Min(3f, Mathf.Max(1f, Mathf.Abs(wheel) / 120f)));
+        }
+
+        // SWIPE OR DRAG: the map follows the finger (or the mouse), not on a pad, and only past a few pixels so a tap on
+        // the result card's controls does not nudge the view
+        bool pressed = false; Vector2 p = default;
+        if (down == 1) { pressed = true; p = a; }
+        else if (mouse != null && mouse.leftButton.isPressed) { pressed = true; p = mouse.position.ReadValue(); }
+        if (!pressed) { _dragging = false; _pressAt = Vector2.zero; return; }
+        if (!_dragging)
+        {
+            if (_pressAt == Vector2.zero) { _pressAt = p; _lastPointer = p; return; }
+            if (ChaseCamera.OverAPad(p) || Vector2.Distance(p, _pressAt) < 8f) return;
+            _dragging = true;
+        }
+        var delta = p - _lastPointer;
+        _lastPointer = p;
+        var fwd = Quaternion.Euler(0f, _yaw, 0f) * Vector3.forward;
+        var right = Quaternion.Euler(0f, _yaw, 0f) * Vector3.right;
+        _focus -= (right * delta.x + fwd * delta.y) * metresPerPixel;
+#endif
+    }
+}
