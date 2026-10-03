@@ -46,6 +46,7 @@ namespace Blwp
         [DllImport("__Internal")] private static extern int BlwpCopyReplay();
         [DllImport("__Internal")] private static extern int BlwpReplayCopied();
         [DllImport("__Internal")] private static extern void BlwpLoadoutOpen(int open);
+        [DllImport("__Internal")] private static extern int BlwpResumedRun();
         [DllImport("__Internal")] private static extern int BlwpSolids(IntPtr ptr, int cap);
         [DllImport("__Internal")] private static extern int BlwpReplayForThisRun();
         [DllImport("__Internal")] private static extern void BlwpRunStarts();
@@ -69,6 +70,7 @@ namespace Blwp
         private static int BlwpCopyReplay() => 0;
         private static int BlwpReplayCopied() => 0;
         private static void BlwpLoadoutOpen(int open) { }
+        private static int BlwpResumedRun() => 0;
         private static int BlwpSolids(IntPtr ptr, int cap) => 0;
         private static int BlwpReplayForThisRun() => 0;
         private static void BlwpRunStarts() { }
@@ -261,6 +263,9 @@ namespace Blwp
 
         /// <summary>Tells the page the cargo panel opened or closed, so it hides its node strip meanwhile.</summary>
         public static void LoadoutOpen(bool open) => BlwpLoadoutOpen(open ? 1 : 0);
+
+        /// <summary>A run resumed after a reload has caught up to the tick the seats hold (the page's BLWP_RESUME).</summary>
+        public static bool ResumedRun() => BlwpResumedRun() != 0;
 
         // SetGround IS GONE. It was the host's door - Unity uploaded the relief
         // it was drawing and the core felt those hills, while every committee

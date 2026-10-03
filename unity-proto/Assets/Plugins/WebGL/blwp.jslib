@@ -936,6 +936,13 @@ mergeInto(LibraryManager.library, {
   // card's "copied!" is the clipboard's answer, not the press (the owner 2026-09-26 07:12).
   // THE CARGO PANEL IS OPEN (the owner 2026-09-26 14:02): the page's node strip is hidden at once and stays hidden
   // (paintPlayers reads BLWP_LOADOUT_OPEN) until the panel closes.
+  // A RUN RESUMED AFTER A RELOAD HAS CAUGHT UP (the owner 2026-10-03, the mid-run reload playthrough: the player saw the cargo
+  // panel over the resumed run and could not drive - the run ended MISSED): 1 while BLWP_RESUME says the core stands at the
+  // tick the seats hold, else 0. LoadoutPanel then closes and hands the truck back; the run's load is already in its record.
+  BlwpResumedRun: function () {
+    if (typeof window === 'undefined') return 0;
+    return window.BLWP_RESUME && window.BLWP_RESUME.caughtUp ? 1 : 0;
+  },
   BlwpLoadoutOpen: function (open) {
     if (typeof window === 'undefined') return;
     window.BLWP_LOADOUT_OPEN = open !== 0;
