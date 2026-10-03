@@ -11,8 +11,9 @@ const lncliAnswers = {
   listpayments: { payments: [{ status: 'SUCCEEDED', fee_msat: '2000', creation_time_ns: '1791000000000000000' },
     { status: 'SUCCEEDED', fee_msat: '0', creation_time_ns: '1791000000000000000' }, { status: 'FAILED', fee_msat: '5000', creation_time_ns: '1' }] },
 };
-const run = async (bin, args) => {
+const run = async (bin, args, env) => {
   assert.ok(args.includes('--rpcserver=127.0.0.1:11010') && args.includes('--network=testnet4'));
+  assert.equal(env.HOME, '/x', 'lncli runs with HOME at the LND directory, never a profile it cannot read');
   return lncliAnswers[args.find((a) => !a.startsWith('--'))];
 };
 

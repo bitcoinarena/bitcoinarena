@@ -8,7 +8,7 @@ import { execFile } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
 const DAY = 86400000;
-const execFileJson = (bin, args) => new Promise((ok, no) => execFile(bin, args, { timeout: 20000, maxBuffer: 64 << 20 },
+const execFileJson = (bin, args, env) => new Promise((ok, no) => execFile(bin, args, { timeout: 20000, maxBuffer: 64 << 20, ...(env ? { env } : {}) },
   (e, out, err) => (e ? no(new Error(String(err || e.message).trim().slice(0, 200))) : ok(JSON.parse(out)))));
 
 /**
@@ -28,10 +28,13 @@ export function hostsFromEnv(env = process.env) {
 /** The figures of one LND, by lncli: who it is, its channels, its routing fees (30 d) and the fees its own payments paid. */
 export async function readLnd({ lnddir, rpcserver, network, lncli }, { run = execFileJson, nowMs = Date.now() } = {}) {
   const a = [`--lnddir=${lnddir}`, `--rpcserver=${rpcserver}`, `--network=${network}`];
+  // HOME IS THE LND'S OWN DIRECTORY (measured on seats 1 and 2, 2026-10-03 23:31Z: lncli under the node read
+  // /root/.lncli/profiles.json, was refused, and read nothing): no lncli profile there, so the flags above are all it uses
+  const env = { ...process.env, HOME: lnddir };
   const [info, bal, fwd, pays] = await Promise.all([
-    run(lncli, [...a, 'getinfo']), run(lncli, [...a, 'channelbalance']),
-    run(lncli, [...a, 'fwdinghistory', '--start_time=-30d', '--max_events=50000']),
-    run(lncli, [...a, 'listpayments', '--max_payments=100000']),
+    run(lncli, [...a, 'getinfo'], env), run(lncli, [...a, 'channelbalance'], env),
+    run(lncli, [...a, 'fwdinghistory', '--start_time=-30d', '--max_events=50000'], env),
+    run(lncli, [...a, 'listpayments', '--max_payments=100000'], env),
   ]);
   const msat = (b) => (b && b.msat !== undefined ? String(b.msat) : b && b.sat !== undefined ? String(BigInt(b.sat) * 1000n) : '0');
   const routing = (fwd.forwarding_events || []).reduce((t, e) => t + BigInt(e.fee_msat || 0), 0n);
