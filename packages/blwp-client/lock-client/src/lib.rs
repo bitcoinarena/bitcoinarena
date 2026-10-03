@@ -142,6 +142,8 @@ async fn stored_at(api: &DynModuleApi, outpoint: OutPoint) -> anyhow::Result<Opt
 pub struct LockClient {
     client: ClientHandle,
     lnv2: ModuleInstanceId,
+    /// THE LAST CONSENSUS BLOCK COUNT READ, and when (ms since the epoch) - see `count_for_lock`.
+    last_count: std::sync::Mutex<Option<(u64, u64)>>,
 }
 
 #[wasm_bindgen]
@@ -190,7 +192,7 @@ impl LockClient {
             return Err(js("the wallet this tab kept is another federation's"));
         }
         let lnv2 = client.get_first_instance(&KIND).ok_or_else(|| js("this federation has no lnv2 module"))?;
-        Ok(LockClient { client, lnv2 })
+        Ok(LockClient { client, lnv2, last_count: std::sync::Mutex::new(None) })
     }
 
     /// THE PLAYER'S REFUND (§23.2: nobody acted, and the lock expired). The
@@ -710,6 +712,16 @@ impl LockClient {
     /// transaction carrying both outgoing contracts, one acceptance, and both outpoints read together - outputs 0 and 1 as
     /// built, any other output only if they are not it. Each contract is matched to its outpoint by the id the guardians
     /// store, so the answer is two answers of `lock`'s own shape ("stake", "fee"), checked by the page as before.
+    /// THE BLOCK COUNT READ AHEAD (the join's 2-3 s): the lobby asks it once its wallet is open, so the lock that follows
+    /// within a minute builds on it instead of a consensus read of its own. Answers the count.
+    #[wasm_bindgen(js_name = warmBlockCount)]
+    pub async fn warm_block_count(&self) -> Result<String, JsError> {
+        let api = self.client.api().with_module(self.lnv2);
+        let count = block_count(&api).await.map_err(js)?;
+        self.keep_count(count);
+        Ok(count.to_string())
+    }
+
     #[wasm_bindgen(js_name = lockBoth)]
     pub async fn lock_both(
         &self,
@@ -722,7 +734,7 @@ impl LockClient {
         expiry_delta: u32,
     ) -> Result<String, JsError> {
         let api = self.client.api().with_module(self.lnv2);
-        let count = block_count(&api).await.map_err(js)?;
+        let count = self.count_for_lock(&api).await.map_err(js)?;
         let refund = PublicKey::from_str(&refund_pk).map_err(js)?;
         let claim = PublicKey::from_str(&claim_pk).map_err(js)?;
         let make = |payment_image: PaymentImage, msat: &str| -> Result<OutgoingContract, JsError> {
@@ -779,6 +791,7 @@ impl LockClient {
         take(&mut found, 0, a.map_err(js)?);
         take(&mut found, 1, b.map_err(js)?);
         let mut at_read = counted.map_err(js)?;
+        self.keep_count(at_read);
         if !found.iter().all(|f| f.is_some()) {
             for out_idx in 2..16u64 {
                 if found.iter().all(|f| f.is_some()) {
@@ -807,6 +820,31 @@ impl LockClient {
 }
 
 impl LockClient {
+    /// THE BLOCK COUNT A LOCK IS BUILT ON (the owner 2026-10-02, the join's 2-3 s): a count read in the last 60 s, else a fresh
+    /// consensus read. The seats accept a lock whose lock_height (its expiration less stake_expiry_blocks) is up to 12
+    /// blocks below the height they verify at (stake-lock-signer-node.js, RULED 2026-09-24 option a); a count a minute old
+    /// is at most a block behind on any chain this runs on.
+    async fn count_for_lock(&self, api: &DynModuleApi) -> anyhow::Result<u64> {
+        let now = fedimint_core::time::duration_since_epoch().as_millis() as u64;
+        if let Ok(kept) = self.last_count.lock() {
+            if let Some((at, count)) = *kept {
+                if now.saturating_sub(at) < 60_000 {
+                    return Ok(count);
+                }
+            }
+        }
+        let count = block_count(api).await?;
+        self.keep_count(count);
+        Ok(count)
+    }
+
+    fn keep_count(&self, count: u64) {
+        let now = fedimint_core::time::duration_since_epoch().as_millis() as u64;
+        if let Ok(mut kept) = self.last_count.lock() {
+            *kept = Some((now, count));
+        }
+    }
+
     async fn lock_to(
         &self,
         payment_image: PaymentImage,
