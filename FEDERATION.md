@@ -333,7 +333,10 @@ leaves the wallet in the same transaction as the stake: a stake that is locked i
   Public (the entries are), and checkable: the client confirms each outpoint with the federation itself.
 - The dev's client holds one private key. It learns the federations from the rounds the seats serve (each round names
   its federation and invite), asks the seats for its outpoints, redeems each in its federation into its own e-cash
-  there, and withdraws over Lightning when it chooses - one Lightning fee for many donations.
+  there, and withdraws it to **the dev's own LND, configured in that client** (the owner 2026-10-03): the client has its
+  LND make an invoice for what it collected and pays it from the federation through a gateway (stock LNv2 send; the
+  gateway is paid only against the preimage, otherwise the notes come back). One Lightning fee for many donations, and
+  the money ends on the dev's own node, not in a wallet someone else runs.
 - One key across federations links a dev's donations together; for named devs that is the point. A per-federation
   tweak of the key is possible later without changing the set.
 
