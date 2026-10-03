@@ -5,6 +5,14 @@
 **Version:** 4.6.4 (supersedes v4.4/v4.5 and the earlier v1.x P2P drafts; all remain in git history)
 **Date:** 2026-09-21
 
+> **Late join and background stake (the owner 2026-10-02 / 2026-10-03,
+> written 2026-10-03).** A series may take new entries up to 45 s after a
+> round's start; a late joiner plays a full 82 s run from his join; the
+> round's end - the anchor of the 10-minute window - is entry close + 15 s
+> + 82 s. Play starts at once and the stake is verified in the background;
+> an entry whose stake is not seen by entry close + 15 s is `ENTRY_VOID`.
+> §5A.5 Timing, §13A, §23.1 step 5.
+
 > **WINDOW-10-SPEC (the owner 2026-10-01 09:40), anchored the same day.** The
 > objection window is **exactly 600 seconds of wall time**, then `FINAL` if
 > no valid objection landed. It opens at the **round's end as its contract
@@ -1308,11 +1316,31 @@ rounds as for paying ones - there is no longer "test" timing.
 ```text
 start_time(i)      = series_start + i * 90 s
 entry_open(i)      = committee_time(i)          (the committee exists; 5A.5)
-entry_close(i)     = start_time(i)              (no late join: all start together)
-join_tick          = start_time(i)'s tick, for every entry of the round
-run ends           <= start_time(i) + 82 s  =  start_time(i+1) - 8 s
+entry_close(i)     = start_time(i) + late_join  late_join = 0 or 45 s, fixed by the series
+                                                (in its template, so in its series id)
+post_grace         = 15 s                       a join begun before entry_close may post
+                                                its entry until entry_close + 15 s; a NEW
+                                                entry after that is refused
+join_tick          = the entry's own join; its 82 s run counts from there
+run ends           <= entry_close(i) + post_grace + 82 s   (the round's end, below)
 result card        >= 8 s, then "joining next round in N s" + "exit game"
 ```
+
+**Late join (RULED, the owner 2026-10-02 and 2026-10-03: "Joining an existing
+round is possible with 45 seconds in").** A series may let players join a
+round that is already running, up to **45 seconds** after its start. The 45
+seconds are part of the series template (`entry_close - start_time`), so
+they are in the series id and every round of the series derives them; a
+series names either 0 or 45 s and nothing else. A late joiner plays a full
+82-second run from his own join, with the same stake and the same rules;
+his first-mark window and his door count from his entry, not from the
+round's start. All runs of a round therefore end by
+`entry_close + post_grace + 82 s`, which is the instant §13A calls the
+**round's end**. With late join on, back-to-back 90 s rounds overlap: a
+player who joins round *i* late is still driving when round *i+1* starts,
+and simply takes a later round next. Before this ruling every series round
+closed its entry at its start and all players started together; a series
+with late join 0 keeps exactly that.
 
 **Continuing is the default.** While a player's run of round `i` is on the
 road, the page enters round `i+1` for them (its entry window is open: the
@@ -2288,8 +2316,10 @@ WINDOW-10-SPEC).
   observes or any signer writes down:
 
   ```text
-  window_open   = round_end                  the round's end as its contract fixes it
-                                             (start_time + T_run), in UTC
+  window_open   = round_end                  the round's end as its contract fixes it:
+                                             entry_close + post_grace + T_run, in UTC -
+                                             the latest instant any run of the round can
+                                             end, late joiners included (§5A.5)
   window_close  = round_end + 600 s
   final_after   = window_close + tolerance   tolerance = 5 s (RULED HERE)
   ```
@@ -3235,7 +3265,22 @@ been removed from this document.
    `lock_height` is no more than `stake_lock_freshness_blocks` (**12**)
    below the height at which the seat verifies. Seeing the lock is not
    enough: the player built it, and a short expiry alone would let a loser
-   refund before settlement. Play begins only after this.
+   refund before settlement.
+
+   **Play does not wait for it (RULED, the owner 2026-10-02: "Joining the
+   round should take at most 2-3 seconds from clicking the Join button to
+   the round actually loading").** The round loads and the player drives at
+   once; the stake is checked **in the background**. The seats take and
+   receipt the player's inputs from the first tick but **hold them** - no
+   result is signed and no entry counts toward the round's membership -
+   until five settlement seats have verified the locks as above. A stake
+   not verified by `entry_close + post_grace` (§5A.5; RULED HERE, the same
+   instant a new entry is refused) makes the entry **`ENTRY_VOID`**: its
+   inputs are dropped, it is excluded from the pool and the payout table,
+   and whatever reached a lock goes back by forfeit or expiry (§23.2). The
+   page shows the run as unconfirmed until the stake is seen, and says so if
+   it never is. A player cannot win on a stake that never arrived, and
+   cannot lose one either.
 
    **RULED 2026-09-24 (the owner: resolve every parked question).** The old
    check read "≥ current height + `stake_expiry_blocks`" while step 4
@@ -4501,11 +4546,12 @@ and delivers.
 
 Her client uploads the full transcript to two committee nodes and a mirror
 before showing the victory screen. Five game/verify nodes replay and sign
-`DELIVERED, score 18,321`. The round ended at 12:01:22 UTC (12:00:00 plus
-82 s), so its window runs 12:01:22 to 12:11:22 on every node. Her result is
-provisionally final at 12:02:10, and her lobby shows her stake and her rank
-share as **pending** at once, with "window closes 12:11:22 UTC". Nobody
-objects; from 12:11:27 the seats sign `FINAL`, and with the fifth it is.
+`DELIVERED, score 18,321`. The round's end is 12:01:37 UTC (entry close
+12:00:00, plus the 15 s post grace, plus 82 s), so its window runs 12:01:37
+to 12:11:37 on every node. Her result is provisionally final at 12:02:10,
+and her lobby shows her stake and her rank share as **pending** at once,
+with "window closes 12:11:37 UTC". Nobody objects; from 12:11:42 the seats
+sign `FINAL`, and with the fifth it is.
 
 At 12:07 entry closes: 61 players. Final results: 24 delivered, 31 failed,
 6 forfeit → loser pool 3,700 sat. The deterministic payout table is signed
