@@ -177,8 +177,32 @@ public class LoadoutPanel : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// A RUN RESUMED AFTER A RELOAD (the owner 2026-10-03, the mid-run reload playthrough: the player saw this panel over the
+    /// resumed run, the arrows did not drive, the run ended MISSED). The run is already rolling in the core - its load is in
+    /// the seats' record - so the panel closes and the truck is handed back, as a roll-out does, without a second load and
+    /// without restarting anything (StartRound keeps a live round's core anyway).
+    /// </summary>
+    public void ResumeDriving()
+    {
+        IsOpen = false;
+        if (yard != null) yard.Close();
+        if (truck != null) truck.controlsLocked = false;
+        ConfirmedAt = Time.unscaledTime;
+        Blwp.BlwpCore.RunStarts();
+        var chase = FindFirstObjectByType<ChaseCamera>();
+        if (chase != null)
+        {
+            var gate = FindFirstObjectByType<DeliveryGate>();
+            chase.destination = gate != null ? gate.Mouth : (Vector3?)null;
+            chase.EndFlyIn();
+        }
+        Debug.Log("[blwp] resumed run: the cargo panel closed, driving on");
+    }
+
     void Update()
     {
+        if (IsOpen && Blwp.BlwpCore.ResumedRun()) ResumeDriving();
         if (health != null && health.IsDestroyed && !_wasDestroyed)
         {
             if (bay != null) bay.Clear();
