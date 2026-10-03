@@ -49,7 +49,7 @@ import { bitcoindRpc, blocksOver } from '../src/chain-rpc.js';
 import { timed } from '../src/slow.js';
 import { operatorFunding, freeOrOperatorFunding } from '../src/funding.js';
 import { startNode } from '../src/node-start.js';
-import { lightningFromEnv } from '../src/lnd-settings.js';
+import { lightningFromEnv } from '../src/node-start.js';
 import { serveDonationRecipients, TEST_RECIPIENT_PORT } from '../src/lnurl-recipients.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { BITCOIN_MAINNET_GENESIS_HEADER, blockHashOf, blockTimeOf } from '../../protocol/src/chain.js';

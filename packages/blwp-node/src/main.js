@@ -39,7 +39,7 @@ import { isOldTestnet4Id, isOldTestnet4Series, OLD_TESTNET4_SERIES_BOND_HEIGHT }
 import { bitcoindRpc, blocksOver, blockCache } from './chain-rpc.js';
 import { blockHashOf } from '../../protocol/src/chain.js';
 import { chainBeacon } from './beacon-source.js';
-import { lightningFromEnv } from './lnd-settings.js';
+import { lightningFromEnv } from './node-start.js';
 import { stakeLocksFromEnv } from './stake-lock-port.js';
 import { fundingFromEnv } from './funding.js';
 import { startNode } from './node-start.js';
@@ -58,7 +58,7 @@ if (Boolean(url) !== Boolean(cookiePath)) {
 }
 
 // LIGHTNING COMES FROM FOUR SETTINGS, ALL OR NONE - BLWP_LNCLI, BLWP_LND_DIR, BLWP_LND_RPC,
-// BLWP_LND_NETWORK - parsed in `lnd-settings.js`. It is used to READ an invoice (what the federation's
+// BLWP_LND_NETWORK - parsed in `node-start.js` (lightningFromEnv). It is used to READ an invoice (what the federation's
 // LNv2 invoice commits to) and nothing else. It no longer holds stakes, and there is no start-up ask
 // about a stake died inside a settle: the hold invoice was the withdrawn Lightning custody's, and the custody field has one
 // value, FEDERATION (§23.6, RULED 2026-09-22 22:59).

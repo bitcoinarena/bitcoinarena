@@ -2675,7 +2675,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
        * commits to THIS invoice's hash instead. Asked for exactly the entry's
        * net stake - the stake less the fee and the donation the player names
        * (`&donation=`, msat, none is 0) - because `/entry` then takes the
-       * gateway's invoice up (lnd-port.js) and any other amount is not the
+       * gateway's invoice up (lndPort, node-start.js) and any other amount is not the
        * entry's net stake. Measured before (M3.2 6e): the donation was
        * left out, so a 2% donor was joined on a 980000 msat invoice and its
        * quote refused it (the entry holds 960000). The hash and the amount

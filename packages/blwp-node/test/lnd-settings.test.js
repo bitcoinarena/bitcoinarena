@@ -3,7 +3,7 @@
 // second launcher reading it cannot accept what the first refuses.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { lightningFromEnv, LND_SETTINGS } from '../src/lnd-settings.js';
+import { lightningFromEnv, LND_SETTINGS } from '../src/node-start.js';
 
 const all = { BLWP_LNCLI: '/x/lncli', BLWP_LND_DIR: '/x/lnd', BLWP_LND_RPC: '127.0.0.1:1' };
 
