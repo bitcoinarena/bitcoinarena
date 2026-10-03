@@ -8,7 +8,7 @@
 // Nothing here hashes a contract or speaks the federation's API: a second
 // implementation of either would be a second place for them to disagree.
 //
-// It runs the tool once per question, as `lnd-port.js` runs lncli: the
+// It runs the tool once per question, as the node's lndPort (node-start.js) runs lncli: the
 // federation is the tool's business, and a daemon that linked the client
 // crates in would be a daemon in Rust.
 import { execFile } from 'node:child_process';

@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { serveDonationRecipients, recipientMetadata, TEST_RECIPIENT_PORT, TEST_RECIPIENT_NAMES } from '../src/lnurl-recipients.js';
-import { lndPort } from '../src/lnd-port.js';
+import { lndPort } from '../src/node-start.js';
 import { bech32Encode, convertBits } from '../../protocol/src/bech32.js';
 import { decodeBolt11 } from '../../protocol/src/bolt11.js';
 import { payRequestStands, invoiceAnswersPayRequest } from '../../protocol/src/lnurl-pay.js';
