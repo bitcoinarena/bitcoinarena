@@ -77,6 +77,9 @@ export const NO_CHAIN_VIEW_WHY = 'this node has no chain view for that round, so
 
 const whereOf = new WeakMap();                 // chain view -> its txid index (guardianBondsFor)
 
+/** A chain view's transactions by txid, indexed once per view object (censusFor). */
+const TXIDS_OF_VIEW = new WeakMap();
+
 export class Roster {
   constructor(round, { chainFor = NO_CHAIN_VIEW, randomnessFor = NO_BEACON } = {}) {
     this.round = round;
@@ -315,11 +318,18 @@ export class Roster {
     const had = this.censuses.get(kept);
     if (had) return had;
 
-    const byTxid = new Map();
-    for (const block of view.blocks) {
-      for (const raw of block.transactions || []) {
-        try { byTxid.set(toHex(parseTransaction(raw).txid), raw); } catch { /* not one */ }
+    // THE VIEW'S TRANSACTIONS BY TXID, ONCE PER VIEW (2026-10-03, measured: a restarted seat held its loop 3-8 s per
+    // assignment - every series' census parsed every transaction of the same ~2,080-block view again). Kept with the view
+    // object itself, so a new view is indexed afresh and an old one is let go with it.
+    let byTxid = TXIDS_OF_VIEW.get(view);
+    if (!byTxid) {
+      byTxid = new Map();
+      for (const block of view.blocks) {
+        for (const raw of block.transactions || []) {
+          try { byTxid.set(toHex(parseTransaction(raw).txid), raw); } catch { /* not one */ }
+        }
       }
+      TXIDS_OF_VIEW.set(view, byTxid);
     }
 
     // PICK B (old-series.js): series 3cfbe516's census is read as its publisher read it, from 154152
