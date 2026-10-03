@@ -1176,7 +1176,10 @@
         round: Object.assign({}, round, { id: BLWPCLIENT.fromHex(roundIdHex) }),
         signerNodes: sn.signerNodes, nodes, curve: window.BLWP_CURVE,
       }, {}));
-      const p = { signer, claim };
+      // AND ITS DONATION SET (0.43 s of the funded join measured on 0.0.2474), the same read the join makes
+      const donation = BLWPCLIENT.fetchDonationSet({ round, nodes, verifyEd25519: pageEd25519Verify });
+      const p = { signer, claim, donation };
+      donation.then((d) => { if (!d || !d.ok) delete p.donation; }, () => { delete p.donation; });
       ROUND_PREP.set(roundIdHex, p);
       signer.catch(() => ROUND_PREP.delete(roundIdHex));
       claim.then((a) => { if (!a || !a.ok) ROUND_PREP.delete(roundIdHex); }, () => ROUND_PREP.delete(roundIdHex));
@@ -1335,7 +1338,8 @@
       // checks there is no donation to choose: it stays 0, and the page says why.
       let donationSet = null;
       if (pays) {
-        const ds = await joinStep('fetchDonationSet', () => BLWPCLIENT.fetchDonationSet({ round: named.round, nodes: named.nodes, verifyEd25519: pageEd25519Verify }));
+        const ds = await joinStep('fetchDonationSet', () => (ROUND_PREP.get(named.roundIdHex) && ROUND_PREP.get(named.roundIdHex).donation)
+          || BLWPCLIENT.fetchDonationSet({ round: named.round, nodes: named.nodes, verifyEd25519: pageEd25519Verify }));
         if (ds.ok) donationSet = ds.set;
         else { window.BLWP_DONATION_SET_WHY = ds.why; console.error('[blwp] no donation: ' + ds.why); }
       }
@@ -2926,6 +2930,12 @@
           await wasm.default();
           const client = await BLWPCLIENT.playerWallet({ round: r.raw.contract, invite: named.federation, seed, LockClient: wasm.LockClient, storage: vault() });
           console.log('[blwp] player wallet open in the lobby, ' + (Date.now() - t0) + ' ms');
+          // THE LOCK QUOTES ASKED AHEAD for this round, at the donation Settings chose (the join's 2-3 s; page-lock warmLockQuotes)
+          try {
+            BLWPCLIENT.warmLockQuotes({ round: r.raw.contract, client, LockClient: wasm.LockClient,
+              donationMsat: BigInt(BLWPCLIENT.lobbyStakeSats(r.raw)) * 1000n * BigInt(donationBps()) / 10000n })
+              .then(() => console.log('[blwp] warm: lock quotes in ' + (Date.now() - t0) + ' ms'), () => { /* the join quotes itself */ });
+          } catch { /* the join quotes itself */ }
           // THE BALANCE THE BOXES SHOW (Confirmed / Pending, lobby and Settings): read off this wallet, never computed
           const fed = BLWPCLIENT.toHex(r.raw.contract.federationId);
           window.BLWP_READ_BALANCE = async () => {

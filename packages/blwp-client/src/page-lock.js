@@ -288,6 +288,18 @@ async function needFor(client, LockClient, { amount, feeMsat, zeroFees = false, 
 }
 
 /**
+ * THE LOCK QUOTES ASKED AHEAD (the owner 2026-10-02, PRIORITIES 19:05, the join's 2-3 s): what a join's deposit check and lock
+ * will ask the lock client, asked by the lobby once its wallet is open, so PLAY finds them kept (quoteLock: per client,
+ * amount and balance - a deposit or a spend in between quotes afresh). Measured on 0.0.2474: the first quote was 0.47 s of
+ * a funded paid join after the click. Spends nothing; answers what the round's locks would need.
+ */
+export async function warmLockQuotes({ round, client, LockClient, donationMsat = 0n, donationRecipients = null } = {}) {
+  const locks = await locksFor(round, client, BigInt(donationMsat), donationRecipients);
+  const n = await needFor(client, LockClient, locks);
+  return { need: n.need };
+}
+
+/**
  * THE TOP-UP: a Lightning deposit INTO THE PLAYER WALLET, its own act and never inside a stake (§24A.1: "if short, a
  * Lightning deposit via any listed gateway"; RULED 2026-09-25: no Lightning between the players). Deposits only what
  * the wallet is short of this round's locks - nothing when it already holds them. `onDeposit({ invoice, amountMsat,
