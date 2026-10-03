@@ -260,6 +260,8 @@ const RUN_ENDING_WORDS = Object.freeze({ 1: 'DELIVERED', 2: 'WRECKED', 3: 'MISSE
 // not yet seen voids the entry anyway; two minutes covers a join held to a round that starts later.
 export const LOCK_HAND_MS = 120000;
 
+const OPENED_ROUNDS = new Map();
+
 export class Client {
   /**
    * A client that reaches a node because Bitcoin says where it is, AND because
@@ -535,11 +537,20 @@ export class Client {
     this.nodes = [...contract.nodes];
     this.gameVerifySlots = contract.gameVerifySlots || this.nodes.length;
     const mine = roundId(contract);
-    const r = await fetch(`${this.base}/round`, {
-      method: 'POST', body: encodeRoundContract(contract),
-    });
-    if (r.status !== 201) throw new Error(`the node refused the round: ${(await r.text()).trim()}`);
-    return agrees(mine, new Uint8Array(await r.arrayBuffer()), 'round');
+    // THE NODE'S ANSWER FOR THIS ROUND IS KEPT FOR THE PAGE (the owner 2026-10-02, the join's 2-3 s): POST /round took 1.4 s
+    // of a paid join after the stake was locked, and the page can ask it at the click, beside the lock. Kept per node
+    // and round, the promise itself; a refusal is not kept, so the session then asks afresh and is told why.
+    const key = `${this.base}|${toHex(mine)}`;
+    if (!OPENED_ROUNDS.has(key)) {
+      const asked = (async () => {
+        const r = await fetch(`${this.base}/round`, { method: 'POST', body: encodeRoundContract(contract) });
+        if (r.status !== 201) throw new Error(`the node refused the round: ${(await r.text()).trim()}`);
+        return agrees(mine, new Uint8Array(await r.arrayBuffer()), 'round');
+      })();
+      OPENED_ROUNDS.set(key, asked);
+      asked.catch(() => OPENED_ROUNDS.delete(key));
+    }
+    return OPENED_ROUNDS.get(key);
   }
 
   /**

@@ -169,23 +169,37 @@ export async function fetchRound(id, nodes, { fetcher = fetch } = {}) {
  * the height from the chain is letter 32's work and the page does not do it;
  * what the page can do is refuse to be told two different things, and say so.
  */
+// A ROUND'S RANDOMNESS, ONCE AGREED, IS KEPT FOR THE PAGE (the owner 2026-10-02, the join's 2-3 s): the beacon of a round never
+// changes, and the session asked all its nodes again after the page had - kept per round and node list, the promise
+// itself, so a second asker shares the first's reads; a refusal is not kept.
+const RANDOMNESS = new Map();
 export async function fetchRandomness(id, nodes, { fetcher = fetch } = {}) {
   if (!Array.isArray(nodes) || !nodes.length)
     throw new Error('no node to ask for this round\'s randomness');
-  const said = [];
-  const refused = [];
-  for (const node of nodes) {
+  const key = id + '|' + nodes.join(',');
+  if (fetcher === fetch && RANDOMNESS.has(key)) return RANDOMNESS.get(key);
+  const asked = readRandomness(id, nodes, fetcher);
+  if (fetcher === fetch) { RANDOMNESS.set(key, asked); asked.catch(() => RANDOMNESS.delete(key)); }
+  return asked;
+}
+
+async function readRandomness(id, nodes, fetcher) {
+  // EVERY NODE AT ONCE (measured 2026-10-03 00:03Z: asked one after another, 'session opening' to 'world seed from 7
+  // nodes' took 1.5 s of a paid join); the answers are still read in the nodes' order, and all must agree as before.
+  const reads = await Promise.all(nodes.map(async (node) => {
     const at = node.replace(/\/+$/, '') + '/randomness?round=' + id;
     try {
       const r = await readWithOneRetry(fetcher, at);
-      if (!r.ok) { refused.push(`${node}: answered ${r.status} ${(await r.text()).trim()}`); continue; }
+      if (!r.ok) return { node, refused: `${node}: answered ${r.status} ${(await r.text()).trim()}` };
       const bytes = new Uint8Array(await r.arrayBuffer());
-      if (bytes.length !== 32) { refused.push(`${node}: answered ${bytes.length} bytes`); continue; }
-      said.push({ node, hash: bytes, height: Number(r.headers.get('x-height') || 0) });
+      if (bytes.length !== 32) return { node, refused: `${node}: answered ${bytes.length} bytes` };
+      return { node, hash: bytes, height: Number(r.headers.get('x-height') || 0) };
     } catch (e) {
-      refused.push(`${node}: ${e.message}`);
+      return { node, refused: `${node}: ${e.message}` };
     }
-  }
+  }));
+  const said = reads.filter((x) => x.hash);
+  const refused = reads.filter((x) => x.refused).map((x) => x.refused);
   if (!said.length)
     throw new Error('no node named this round\'s randomness: ' + refused.join('; '));
   const first = toHex(said[0].hash);
