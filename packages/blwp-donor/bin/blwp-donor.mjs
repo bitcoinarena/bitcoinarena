@@ -13,7 +13,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync, chmod
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFile } from 'node:child_process';
-import { newKey, walletSecretFor, gatherDonations, redeemAll, withdrawToLnd } from '../src/donor.js';
+import { newKey, walletSecretFor, gatherDonations, redeemAll, withdrawToLnd, routeWebSockets } from '../src/donor.js';
 
 const [cmd, dir, ...rest] = process.argv.slice(2);
 const flag = (n, d) => { const i = rest.indexOf(`--${n}`); return i >= 0 ? rest[i + 1] : d; };
@@ -76,16 +76,22 @@ function fileStore(path) {
 async function invites() {
   const LC = await lockClient();
   const out = { ...(cfg.invites || {}) };
+  const routes = {};
   for (const url of cfg.invitesFrom || []) {
     try {
       const d = await (await fetch(url, { cache: 'no-store' })).json();
+      // the guardians' second route, as the page takes it (not the loopback donation route)
+      Object.assign(routes, (d && d.testnet && d.testnet.alt) || {});
       for (const inv of [d && d.testnet && d.testnet.federation, d && d.federation].filter((x) => typeof x === 'string')) {
         try { out[String(LC.federationIdOf(inv)).toLowerCase()] = inv; } catch { /* not an invite */ }
       }
     } catch (e) { say({ step: 'invites', from: url, why: e.message }); }
   }
+  delete routes['127.0.0.1:18777'];
+  if (!routed && routeWebSockets(routes)) { routed = true; say({ step: 'routes', guardians: Object.keys(routes).length }); }
   return out;
 }
+let routed = false;
 
 async function pass() {
   const state = readJson(statePath, { done: [], withdrawals: [] });

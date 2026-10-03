@@ -817,6 +817,137 @@ impl LockClient {
         };
         Ok(serde_json::json!({ "stake": describe(&stake, found[0])?, "fee": describe(&fee, found[1])? }).to_string())
     }
+
+    /// THE STAKE, ITS FEE LOCK AND THE PLAYER'S DONATION IN ONE TRANSACTION (the owner 2026-10-03, FEDERATION.md "Donations in
+    /// the federation"): the stake lock and - when `fee_hash` is not empty - the fee lock as `lockBoth` builds them, and one
+    /// payout contract per entry of `donations` (JSON `[{"pk": 33-byte hex, "msat": "n"}, ...]` in the set's order): the zero
+    /// hash image, expired from the start, claim, refund and ephemeral key all the recipient's - only that key can spend it,
+    /// by Refund, at any time (the settlement's payout shape). Every output is matched to its outpoint by the id the guardians
+    /// store. JSON: { "stake": <lock's shape>, "fee": <lock's shape> | null, "donations": [{ txid, out_idx, recipient_pk,
+    /// amount_msat, stored_contract_id, ids_match }] }.
+    #[wasm_bindgen(js_name = lockWithDonations)]
+    #[allow(clippy::too_many_arguments)]
+    pub async fn lock_with_donations(
+        &self,
+        point: String,
+        stake_msat: String,
+        fee_hash: String,
+        fee_msat: String,
+        claim_pk: String,
+        refund_pk: String,
+        expiry_delta: u32,
+        donations: String,
+    ) -> Result<String, JsError> {
+        let api = self.client.api().with_module(self.lnv2);
+        let count = self.count_for_lock(&api).await.map_err(js)?;
+        let refund = PublicKey::from_str(&refund_pk).map_err(js)?;
+        let claim = PublicKey::from_str(&claim_pk).map_err(js)?;
+        let make = |payment_image: PaymentImage, msat: &str| -> Result<OutgoingContract, JsError> {
+            Ok(OutgoingContract {
+                payment_image,
+                amount: Amount::from_msats(msat.parse().map_err(js)?),
+                expiration: count + u64::from(expiry_delta),
+                claim_pk: claim,
+                refund_pk: refund,
+                ephemeral_pk: refund,
+            })
+        };
+        let mut contracts: Vec<OutgoingContract> = vec![make(PaymentImage::Point(PublicKey::from_str(&point).map_err(js)?), &stake_msat)?];
+        let with_fee = !fee_hash.trim().is_empty();
+        if with_fee {
+            contracts.push(make(PaymentImage::Hash(sha256::Hash::from_str(&fee_hash).map_err(js)?), &fee_msat)?);
+        }
+        let given: Vec<serde_json::Value> = serde_json::from_str(&donations).map_err(js)?;
+        let first_donation = contracts.len();
+        for d in &given {
+            let pk = PublicKey::from_str(d.get("pk").and_then(|v| v.as_str()).ok_or_else(|| js("a donation names no pk"))?).map_err(js)?;
+            let msat: u64 = d.get("msat").and_then(|v| v.as_str()).ok_or_else(|| js("a donation names no msat"))?.parse().map_err(js)?;
+            if msat == 0 {
+                return Err(js("a donation output of 0 msat is not made"));
+            }
+            contracts.push(OutgoingContract {
+                payment_image: PaymentImage::Hash(sha256::Hash::from_str(&"00".repeat(32)).map_err(js)?),
+                amount: Amount::from_msats(msat),
+                expiration: 0,
+                claim_pk: pk,
+                refund_pk: pk,
+                ephemeral_pk: pk,
+            });
+        }
+        let outputs = contracts
+            .iter()
+            .map(|c| ClientOutput {
+                output: LightningOutput::V0(LightningOutputV0::Outgoing(c.clone())),
+                amounts: Amounts::new_bitcoin(c.amount),
+            })
+            .collect::<Vec<_>>();
+        let bundle = ClientOutputBundle::new_no_sm(outputs).into_dyn(self.lnv2);
+        let operation = OperationId::new_random();
+        let change = self
+            .client
+            .finalize_and_submit_transaction(operation, "blwp-lock-client", |_| (), TransactionBuilder::new().with_outputs(bundle))
+            .await
+            .map_err(js)?;
+        let txid = change.txid();
+        self.client
+            .transaction_updates(operation)
+            .await
+            .await_tx_accepted(txid)
+            .await
+            .map_err(|e| js(format!("the guardians did not accept the lock transaction: {e}")))?;
+        // EVERY OUTPUT BY ITS STORED ID: the ones built first are read together, change outputs after them only if needed
+        let ids: Vec<ContractId> = contracts.iter().map(OutgoingContract::contract_id).collect();
+        let mut found: Vec<Option<(u64, ContractId, u64)>> = vec![None; contracts.len()];
+        let take = |found: &mut Vec<Option<(u64, ContractId, u64)>>, out_idx: u64, got: Option<(ContractId, u64)>| {
+            if let Some((id, left)) = got {
+                for k in 0..ids.len() {
+                    if id == ids[k] && found[k].is_none() {
+                        found[k] = Some((out_idx, id, left));
+                        break;
+                    }
+                }
+            }
+        };
+        let n = contracts.len() as u64;
+        let reads = futures::future::join_all((0..n).map(|i| stored_at(&api, OutPoint { txid, out_idx: i }))).await;
+        for (i, r) in reads.into_iter().enumerate() {
+            take(&mut found, i as u64, r.map_err(js)?);
+        }
+        let mut out_idx = n;
+        while !found.iter().all(Option::is_some) && out_idx < n + 16 {
+            let got = stored_at(&api, OutPoint { txid, out_idx }).await.map_err(js)?;
+            take(&mut found, out_idx, got);
+            out_idx += 1;
+        }
+        let at_read = block_count(&api).await.map_err(js)?;
+        self.keep_count(at_read);
+        let missing = |k: usize| js(format!("the lock transaction {txid} was accepted but no output of it holds outgoing contract {k}"));
+        let describe = |k: usize| -> Result<serde_json::Value, JsError> {
+            let c = &contracts[k];
+            let (out_idx, stored_id, left) = found[k].ok_or_else(|| missing(k))?;
+            Ok(serde_json::json!({
+                "txid": txid.to_string(), "out_idx": out_idx,
+                "block_count_at_lock": count, "expiry_delta": expiry_delta,
+                "computed_contract_id": c.contract_id().0.to_string(), "computed_expiration": c.expiration,
+                "stored_contract_id": stored_id.0.to_string(), "stored_blocks_left": left,
+                "block_count_at_read": at_read, "stored_expiration": at_read + left,
+                "ids_match": stored_id == c.contract_id(), "amount_msat": c.amount.msats,
+            }))
+        };
+        let mut donated = Vec::new();
+        for k in first_donation..contracts.len() {
+            let (out_idx, stored_id, _) = found[k].ok_or_else(|| missing(k))?;
+            donated.push(serde_json::json!({
+                "txid": txid.to_string(), "out_idx": out_idx, "recipient_pk": contracts[k].refund_pk.to_string(),
+                "amount_msat": contracts[k].amount.msats, "stored_contract_id": stored_id.0.to_string(),
+                "ids_match": stored_id == contracts[k].contract_id(),
+            }));
+        }
+        Ok(serde_json::json!({
+            "stake": describe(0)?, "fee": if with_fee { describe(1)? } else { serde_json::Value::Null }, "donations": donated,
+        })
+        .to_string())
+    }
 }
 
 impl LockClient {

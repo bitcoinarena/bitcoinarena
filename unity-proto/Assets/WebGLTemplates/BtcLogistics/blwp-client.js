@@ -8080,6 +8080,9 @@ function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stak
       ? { txid: stakeLock.feeLock.outpoint.txid, outIdx: BigInt(stakeLock.feeLock.outpoint.outIdx) }
       : { txid: new Uint8Array(32), outIdx: 0n },
     claimKeyAttestationRef: roundLocks(round) ? claimKey.ref : new Uint8Array(32),
+    // THE DONATION OUTPUTS THE LOCK TRANSACTION MADE (the owner 2026-10-03): named only when there are any
+    ...(stakeLock && Array.isArray(stakeLock.donations) && stakeLock.donations.length
+      ? { donationOutpoints: stakeLock.donations.map((d) => ({ txid: d.txid, outIdx: BigInt(d.outIdx) })) } : {}),
     stakeMsat: BigInt(round.stakeMsat || 0n),
     // THE NODE FEE, AND IT IS 2% OF THIS ENTRY'S OWN STAKE - taken OUT of it,
     // never on top (22A). The stake is the one number the wallet commits; the
@@ -10183,6 +10186,30 @@ async function fundPlayerWallet({ round, invite, seed, LockClient, storage, dona
   return { client, deposits, heldMsat: BigInt(await client.balanceMsat()) };
 }
 
+/** The shares a donation pays in the federation: for a set of keys, each share above 0 msat, in the set's order; else none. */
+function donationKeyShares(donationMsat, recipients) {
+  if (typeof donationMsat !== 'bigint' || donationMsat <= 0n || !donationSetPaysKeys(recipients)) return [];
+  const split = splitDonation({ donationMsat, recipients });
+  if (!split.owed) throw new Error(`the donation cannot be split over this round's set: ${split.why}`);
+  return split.shares.filter((s) => s.amountMsat > 0n);
+}
+
+/**
+ * THE DONATION OUTPUTS THE LOCK CLIENT MADE, CHECKED: one per share, in order, each the contract the guardians store, to that
+ * share's key, for exactly its amount - or no lock answer is taken. Outpoints as the entry names them.
+ */
+function donationOutputsFromClient(said, shares) {
+  if (!Array.isArray(said) || said.length !== shares.length)
+    throw new Error(`the lock client made ${Array.isArray(said) ? said.length : 'no'} donation output(s), and the donation owes ${shares.length}`);
+  return said.map((d, i) => {
+    if (d.ids_match !== true) throw new Error('the guardians hold another contract at a donation output than the one built');
+    if (String(d.recipient_pk).toLowerCase() !== toHex(shares[i].recipientPk)) throw new Error(`donation output ${i} pays another key than the set's`);
+    if (BigInt(d.amount_msat) !== shares[i].amountMsat) throw new Error(`donation output ${i} holds ${d.amount_msat} msat, and its share is ${shares[i].amountMsat}`);
+    if (!/^[0-9a-f]{64}$/.test(String(d.txid)) || !Number.isInteger(d.out_idx)) throw new Error('the lock client named no donation outpoint');
+    return { txid: fromHex(d.txid), outIdx: BigInt(d.out_idx), recipientPk: shares[i].recipientPk, amountMsat: shares[i].amountMsat };
+  });
+}
+
 /**
  * THE STAKE, SPENT FROM THE PLAYER WALLET INTO THE ROUND'S LOCK (§24A.1, §23.1 steps 3-5). Opens the player wallet for
  * the round's federation - never a per-round wallet - and locks the net stake (and the fee lock, when Pick b's gate
@@ -10217,6 +10244,32 @@ async function lockStake({ round, roundId, invite, seed, stake, claimKey, player
   // THE STAKE AND THE FEE IN ONE TRANSACTION (the owner 2026-10-02, the join's 2-3 s): `lockBoth` when the lock client has it
   // and a fee is due - one block count, one transaction, one acceptance, both outpoints read together - each half checked
   // exactly as a lone lock is. Measured before: the two locks one after the other, 7.2 s of a paid join (Q4).
+  // THE DONATION IN THE SAME TRANSACTION (the owner 2026-10-03, FEDERATION.md "Donations in the federation"): a round whose set
+  // pays keys gets one payout contract per share above 0 msat, in the set's order, beside the stake (and the fee lock) -
+  // `lockWithDonations`. The entry names the outpoints; the seats check them with the federation before the stake counts.
+  const donationShares = donationKeyShares(donationMsat, donationRecipients);
+  if (donationShares.length) {
+    if (typeof client.lockWithDonations !== 'function')
+      throw new Error('this round pays its donation in the federation, and this page\'s lock client cannot - reload the page');
+    onStep(`locking the stake${feeGate.pays ? ', the node fee' : ''} and the donation together`);
+    const preimage = feeGate.pays ? feeSecretFor(seed, roundId) : null;
+    const image = preimage ? sha256(preimage) : null;
+    const all = JSON.parse(await client.lockWithDonations(toHex(stake.stakePoint), String(amount), image ? toHex(image) : '',
+      String(feeGate.pays ? feeMsat : 0n), toHex(claimKey.claimPk), toHex(refundPk), delta,
+      JSON.stringify(donationShares.map((d) => ({ pk: toHex(d.recipientPk), msat: String(d.amountMsat) })))));
+    const lock = lockFromClient(all.stake, { point: stake.stakePoint, claimPk: claimKey.claimPk, refundPk });
+    if (lock.fields.amountMsat !== amount)
+      throw new Error(`the lock client locked ${lock.fields.amountMsat} msat, and this entry's net stake is ${amount}`);
+    let feeLock = null;
+    if (feeGate.pays) {
+      const made = lockFromClient(all.fee, { hash: image, claimPk: claimKey.claimPk, refundPk });
+      if (made.fields.amountMsat !== feeMsat)
+        throw new Error(`the lock client locked ${made.fields.amountMsat} msat as the fee, and this entry's fee is ${feeMsat}`);
+      feeLock = { ...made, preimage };
+    }
+    const donations = donationOutputsFromClient(all.donations, donationShares);
+    return { ...lock, client, feeLock, feeGate, donations, walletBeforeMsat: before, walletAfterMsat: BigInt(await client.balanceMsat()) };
+  }
   if (feeGate.pays && typeof client.lockBoth === 'function') {
     onStep('locking the stake and the node fee together');
     const preimage = feeSecretFor(seed, roundId);
@@ -10338,7 +10391,12 @@ function saveLock(storage, { roundId, playerPubkey, stake, lock, federationId = 
     feeLock: lock.feeLock ? { preimage: toHex(lock.feeLock.preimage),
       outpoint: { txid: toHex(lock.feeLock.outpoint.txid), outIdx: String(lock.feeLock.outpoint.outIdx) },
       fields: lockFieldsToJson(lock.feeLock.fields) } : null,
+    // AND ITS DONATION OUTPUTS (the owner 2026-10-03): the entry names them, so a reload names the same
+    donations: (lock.donations || []).map((d) => ({ txid: toHex(d.txid), outIdx: String(d.outIdx), recipientPk: toHex(d.recipientPk), amountMsat: String(d.amountMsat) })),
   }));
+  // THE DONATION IN THE WALLET'S HISTORY, paid with the stake
+  const donated = (lock.donations || []).reduce((t, d) => t + BigInt(d.amountMsat), 0n);
+  if (federationId && donated > 0n) ledgerAppend(storage, federationId, { kind: 'donation', msat: String(donated), round: toHex(roundId) });
 }
 
 /** The kept lock for this round and player, rebuilt - or null. `committedTo` names the entry a signer node committed it to. */
@@ -10357,7 +10415,8 @@ function savedLock(storage, { roundId, playerPubkey }) {
     lock: { outpoint: { txid: fromHex(j.outpoint.txid), outIdx: BigInt(j.outpoint.outIdx) }, fields: lockFieldsFromJson(j.fields),
       feeLock: j.feeLock ? { preimage: fromHex(j.feeLock.preimage),
         outpoint: { txid: fromHex(j.feeLock.outpoint.txid), outIdx: BigInt(j.feeLock.outpoint.outIdx) },
-        fields: lockFieldsFromJson(j.feeLock.fields) } : null },
+        fields: lockFieldsFromJson(j.feeLock.fields) } : null,
+      donations: (j.donations || []).map((d) => ({ txid: fromHex(d.txid), outIdx: BigInt(d.outIdx), recipientPk: fromHex(d.recipientPk), amountMsat: BigInt(d.amountMsat) })) },
     committedTo: j.committedTo || null,
   };
 }
@@ -14598,6 +14657,8 @@ function noteDonationShare(storage, whose, lnurl, { amountMsat, ...note }) {
  */
 function donationPaidState(set, said) {
   if (!said) return null;
+  // PAID WITH THE STAKE, IN THE FEDERATION (the owner 2026-10-03): a set of keys has no Lightning share to report one by one
+  if (said.inLock) return { state: 'paid', inLock: true, paidMsat: said.paidMsat, unpaidMsat: 0n, shares: [], why: said.why };
   const recipients = set && Array.isArray(set.recipients) ? set.recipients : [];
   const noted = new Map();
   for (const p of said.paid || []) noted.set(p.lnurl, { state: 'paid', amountMsat: p.amountMsat });
@@ -14688,9 +14749,12 @@ function notedDonationForLink(search, { storage, curve } = {}) {
 }
 
 /** Every recipient of a set, with its share and where it is paid - what the page shows before the wallet approves. */
+const toHexOf = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 function donationRecipientsLine(set) {
   if (!set || !Array.isArray(set.recipients)) return 'no donation set';
   return 'Recipients: ' + set.recipients.map((r) => {
+    // A KEY IN THE FEDERATION (the owner 2026-10-03): its label and the key's first characters
+    if (r.recipientPk instanceof Uint8Array) return `${(r.shareBps / 100).toFixed(2)}% to ${r.label || 'a dev'} (key ${toHexOf(r.recipientPk).slice(0, 12)}…, in the round's federation)`;
     let where;
     try { where = urlOfLnurl(r.lnurl); } catch { where = r.lnurl; }
     return `${(r.shareBps / 100).toFixed(2)}% to ${where}`;
@@ -16068,6 +16132,9 @@ class Client {
     const none = { paid: [], failed: [], unknown: [], paidMsat: 0n, asked: 0 };
     if (!entry || typeof entry.donationMsat !== 'bigint') return { ok: false, ...none, why: 'there is no entry whose donation to pay' };
     if (entry.donationMsat === 0n) return { ok: true, ...none, why: 'this entry donates nothing, so nothing is paid' };
+    // A SET OF KEYS IS PAID IN THE LOCK TRANSACTION, not here (the owner 2026-10-03, FEDERATION.md): nothing to send over Lightning
+    if (set && donationSetPaysKeys(set.recipients))
+      return { ok: true, ...none, paidMsat: entry.donationMsat, inLock: true, why: 'paid in the federation, in the same transaction as the stake' };
     // NOT BEFORE THE SIGNER NODES HOLD THE STAKE (M3.2 6e, §22A): the donation is part of
     // one wallet commitment, counted over financially activated entries only.
     // Measured before: a joined entry whose stake nobody had seen paid 2000 msat

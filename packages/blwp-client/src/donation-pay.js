@@ -80,6 +80,8 @@ export function noteDonationShare(storage, whose, lnurl, { amountMsat, ...note }
  */
 export function donationPaidState(set, said) {
   if (!said) return null;
+  // PAID WITH THE STAKE, IN THE FEDERATION (the owner 2026-10-03): a set of keys has no Lightning share to report one by one
+  if (said.inLock) return { state: 'paid', inLock: true, paidMsat: said.paidMsat, unpaidMsat: 0n, shares: [], why: said.why };
   const recipients = set && Array.isArray(set.recipients) ? set.recipients : [];
   const noted = new Map();
   for (const p of said.paid || []) noted.set(p.lnurl, { state: 'paid', amountMsat: p.amountMsat });
@@ -170,9 +172,12 @@ export function notedDonationForLink(search, { storage, curve } = {}) {
 }
 
 /** Every recipient of a set, with its share and where it is paid - what the page shows before the wallet approves. */
+const toHexOf = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 export function donationRecipientsLine(set) {
   if (!set || !Array.isArray(set.recipients)) return 'no donation set';
   return 'Recipients: ' + set.recipients.map((r) => {
+    // A KEY IN THE FEDERATION (the owner 2026-10-03): its label and the key's first characters
+    if (r.recipientPk instanceof Uint8Array) return `${(r.shareBps / 100).toFixed(2)}% to ${r.label || 'a dev'} (key ${toHexOf(r.recipientPk).slice(0, 12)}…, in the round's federation)`;
     let where;
     try { where = urlOfLnurl(r.lnurl); } catch { where = r.lnurl; }
     return `${(r.shareBps / 100).toFixed(2)}% to ${where}`;

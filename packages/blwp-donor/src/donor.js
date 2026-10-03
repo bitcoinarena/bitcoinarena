@@ -100,3 +100,26 @@ export async function withdrawToLnd({ client, lnd, minMsat = 10000n, memo = 'blw
   const said = JSON.parse(await client.withdraw(invoice, null));
   return { withdrawn: said.state === 'Success', withdrawableMsat: can, ...said };
 }
+
+/**
+ * THE GUARDIANS' SECOND ROUTE, AS THE PAGE TAKES IT (index.html RoutedWebSocket): daily.json's testnet.alt maps a host, or a
+ * host and its first path segment, to a Cloudflare tunnel; a socket to such an address goes there instead. Measured
+ * 2026-10-03 on the test host: the invite's Funnel addresses answered nothing ("Failed to download client config") - the
+ * Funnel relay drops connections from that machine. Installed on `globalThis.WebSocket`, which the wasm lock client uses.
+ */
+export function routeWebSockets(routes, Real = globalThis.WebSocket) {
+  if (!Real || !routes || !Object.keys(routes).length) return false;
+  class Routed extends Real {
+    constructor(url, protocols) {
+      let to = String(url);
+      try {
+        const u = new URL(to);
+        const alt = routes[`${u.host}/${u.pathname.split('/')[1]}`] || routes[u.host];
+        if (alt && !/^\d+\.\d+\.\d+\.\d+(:\d+)?$/.test(alt)) { u.host = alt; to = u.toString(); }
+      } catch { /* as named */ }
+      if (protocols === undefined) super(to); else super(to, protocols);
+    }
+  }
+  globalThis.WebSocket = Routed;
+  return true;
+}

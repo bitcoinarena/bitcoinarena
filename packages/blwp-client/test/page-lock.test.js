@@ -64,7 +64,7 @@ const claimKey = { ok: true, claimPk: CLAIM, ref: b32(0x9a) };
  * hold, as the stock dry run does. The allowance is the stock
  * TRANSACTION_FEE_DEFAULT's arithmetic (2 sat + 3000 ppm).
  */
-function lockClient({ idsMatch = true, lockedMsat, lockFee = 2528n, feeRule = null, both = false, badFee = false } = {}) {
+function lockClient({ idsMatch = true, lockedMsat, lockFee = 2528n, feeRule = null, both = false, badFee = false, donations = false, badDonation = null } = {}) {
   const log = [];
   // Its wallet is kept in the store it is handed, as the real one's database
   // is: one key, the balance, written when a deposit is claimed.
@@ -138,6 +138,22 @@ function lockClient({ idsMatch = true, lockedMsat, lockFee = 2528n, feeRule = nu
     const one = (out_idx, id, stored, amount) => ({ txid: 'ef'.repeat(32), out_idx, computed_contract_id: id, stored_contract_id: stored,
       ids_match: id === stored, computed_expiration: expiration, stored_expiration: expiration, amount_msat: Number(amount) });
     return JSON.stringify({ stake: one(0, 's1', 's1', stakeMsat), fee: one(1, 'f1', badFee ? 'f2' : 'f1', feeMsat) });
+  };
+  // THE DONATION IN THE SAME TRANSACTION (the owner 2026-10-03): stake, fee when a hash is given, then one output per donation;
+  // `badDonation` 'key' or 'amount' answers an output that is not the share it was asked for
+  if (donations) Fake.prototype.lockWithDonations = async function (point, stakeMsat, hash, feeMsat, claim, refund, delta, given) {
+    const ds = JSON.parse(given);
+    log.push({ lockWithDonations: { point, stakeMsat, hash, feeMsat, claim, refund, delta, donations: ds } });
+    this.balance -= BigInt(stakeMsat) + BigInt(hash ? feeMsat : 0) + ds.reduce((t, d) => t + BigInt(d.msat), 0n) + lockFee;
+    if (this.store) this.store.put('ba', this.balance.toString(16).padStart(2, '0'));
+    const expiration = 1000 + delta;
+    const one = (out_idx, id, amount) => ({ txid: '9a'.repeat(32), out_idx, computed_contract_id: id, stored_contract_id: id,
+      ids_match: true, computed_expiration: expiration, stored_expiration: expiration, amount_msat: Number(amount) });
+    const first = hash ? 2 : 1;
+    return JSON.stringify({ stake: one(0, 's1', stakeMsat), fee: hash ? one(1, 'f1', feeMsat) : null,
+      donations: ds.map((d, i) => ({ txid: '9a'.repeat(32), out_idx: first + i, ids_match: true, stored_contract_id: `d${i}`,
+        recipient_pk: badDonation === 'key' && i === 1 ? '03' + 'ee'.repeat(32) : d.pk,
+        amount_msat: Number(BigInt(d.msat) + (badDonation === 'amount' && i === 0 ? 1n : 0n)) })) });
   };
   return { LockClient: Fake, log };
 }
@@ -1687,4 +1703,37 @@ test('a committed lock is reused before the start, and resumed until the close, 
   assert.equal(keptLockUse({ ...kept, committedTo: 'ee'.repeat(32) }, { entry, beforeStart: false, beforeClose: true }).use, 'staked', 'running, another entry');
   assert.equal(keptLockUse(kept, { entry: null, beforeStart: true }).use, 'staked', 'no kept entry');
   assert.equal(keptLockUse({ ...kept, committedTo: 'ee'.repeat(32) }, { entry, beforeStart: true }).use, 'staked', 'another entry');
+});
+
+// DONATIONS IN THE FEDERATION (the owner 2026-10-03): a round whose set pays keys locks the stake, the fee and one payout
+// contract per share in ONE transaction; each output is checked against its share; the outpoints are kept across a reload.
+test('a set of keys: one lockWithDonations call, the shares in the set\'s order, each output checked, kept for a reload', async () => {
+  const DEVS = [{ recipientPk: Uint8Array.of(2, ...b32(0xa1)), shareBps: 6667, label: 'dev a' }, { recipientPk: Uint8Array.of(3, ...b32(0xb2)), shareBps: 3333, label: 'dev b' }];
+  const round100 = { ...round, stakeMsat: 100000n };
+  const rid100 = roundId(round100);
+  for (const [feeRule, badDonation] of [[RULE, null], [null, null], [RULE, 'key'], [RULE, 'amount']]) {
+    const { LockClient, log } = lockClient({ feeRule, both: true, donations: true, badDonation });
+    const tab = tabStorage();
+    await fundPlayerWallet({ round: round100, invite: INVITE, seed, LockClient, storage: tab, donationMsat: 2000n, donationRecipients: DEVS });
+    const go = lockStake({ round: round100, roundId: rid100, invite: INVITE, seed, stake: { stakePoint: POINT }, claimKey, playerPubkey: player,
+      LockClient, storage: tab, donationMsat: 2000n, donationRecipients: DEVS });
+    if (badDonation === 'key') { await assert.rejects(go, /pays another key than the set's/); continue; }
+    if (badDonation === 'amount') { await assert.rejects(go, /holds 1335 msat, and its share is 1334/); continue; }
+    const got = await go;
+    const calls = log.filter((l) => l.lock || l.lockHash || l.lockBoth || l.lockWithDonations);
+    assert.deepEqual(calls.map((c) => Object.keys(c)[0]), ['lockWithDonations'], 'stake, fee and donation were not one transaction');
+    assert.deepEqual(calls[0].lockWithDonations.donations, [{ pk: '02' + 'a1'.repeat(32), msat: '1334' }, { pk: '03' + 'b2'.repeat(32), msat: '666' }]);
+    assert.equal(calls[0].lockWithDonations.hash === '', !feeRule, 'a fee hash only when the fee lock is due');
+    assert.equal(!!got.feeLock, !!feeRule);
+    assert.deepEqual(got.donations.map((d) => [d.outIdx, d.amountMsat]), feeRule ? [[2n, 1334n], [3n, 666n]] : [[1n, 1334n], [2n, 666n]]);
+    // kept across a reload, with the donation row in the history
+    const player2 = pageCurve.pointX(b32(0x62));
+    const kept = await stakeFor({ ...round100, id: rid100 }, { signerNodes: [0x21, 0x22].map((n) => pageCurve.pointX(b32(n))), curve: pageCurve,
+      random: (n) => new Uint8Array(n).fill(9), playerPubkey: player2, needed: 2 });
+    saveLock(tab, { roundId: rid100, playerPubkey: player2, stake: kept, lock: got, federationId: round100.federationId });
+    const back = savedLock(tab, { roundId: rid100, playerPubkey: player2 });
+    assert.deepEqual(back.lock.donations.map((d) => [toHex(d.txid).slice(0, 4), d.outIdx, toHex(d.recipientPk).slice(0, 4), d.amountMsat]),
+      got.donations.map((d) => [toHex(d.txid).slice(0, 4), d.outIdx, toHex(d.recipientPk).slice(0, 4), d.amountMsat]));
+    assert.ok(ledgerRows(tab, round100.federationId).some((r) => r.kind === 'donation' && r.msat === '2000'));
+  }
 });

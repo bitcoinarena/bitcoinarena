@@ -63,7 +63,7 @@ import { NO_SHARES } from '../../protocol/src/handout.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { netStakeMsat } from '../../protocol/src/payout.js';
 // THE PLAYER'S DONATION (M3.2 6e): the split, the failure rule, the LNURL checks.
-import { donationSetMatchesRound, splitDonation, donationAfterFailures } from '../../protocol/src/donation.js';
+import { donationSetMatchesRound, splitDonation, donationAfterFailures, donationSetPaysKeys } from '../../protocol/src/donation.js';
 import { donationKeysForNetworkId } from '../../protocol/src/donation-keys.js';
 import { urlOfLnurl } from '../../protocol/src/bech32.js';
 import { payRequestStands, callbackFor, invoiceAnswersPayRequest } from '../../protocol/src/lnurl-pay.js';
@@ -1317,6 +1317,9 @@ export class Client {
     const none = { paid: [], failed: [], unknown: [], paidMsat: 0n, asked: 0 };
     if (!entry || typeof entry.donationMsat !== 'bigint') return { ok: false, ...none, why: 'there is no entry whose donation to pay' };
     if (entry.donationMsat === 0n) return { ok: true, ...none, why: 'this entry donates nothing, so nothing is paid' };
+    // A SET OF KEYS IS PAID IN THE LOCK TRANSACTION, not here (the owner 2026-10-03, FEDERATION.md): nothing to send over Lightning
+    if (set && donationSetPaysKeys(set.recipients))
+      return { ok: true, ...none, paidMsat: entry.donationMsat, inLock: true, why: 'paid in the federation, in the same transaction as the stake' };
     // NOT BEFORE THE SIGNER NODES HOLD THE STAKE (M3.2 6e, §22A): the donation is part of
     // one wallet commitment, counted over financially activated entries only.
     // Measured before: a joined entry whose stake nobody had seen paid 2000 msat

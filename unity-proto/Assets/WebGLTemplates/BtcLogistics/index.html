@@ -1591,7 +1591,7 @@
           if (reuse) {
             // A JOIN THAT HOLDS A LOCK IS NOT REPLACED BY ANOTHER PLAY (BLWP_JOIN_ANSWER busy): it is finished
             if (thisJoin) thisJoin.locking = true;
-            stakeLock = { outpoint: reuse.lock.outpoint, fields: reuse.lock.fields, feeLock: reuse.lock.feeLock || null,
+            stakeLock = { outpoint: reuse.lock.outpoint, fields: reuse.lock.fields, feeLock: reuse.lock.feeLock || null, donations: reuse.lock.donations || [],
               needed: BLWPCLIENT.sharesNeededFor(named.round), onCommitted: committedTo };
             window.BLWP_STAKE_LOCK = stakeLock;
             if (stageEl) stageEl.textContent = BLWPCLIENT.lockLine(stakeLock);
@@ -1616,7 +1616,7 @@
             }));
             // AND ITS FEE LOCK, ONLY WHEN THE GATE SAID IT CAN PAY A SIGNER NODE (Pick b):
             // a 100 sat round makes none, so the player is charged no lock that expires unused.
-            stakeLock = { outpoint: made.outpoint, fields: made.fields, feeLock: made.feeLock || null,
+            stakeLock = { outpoint: made.outpoint, fields: made.fields, feeLock: made.feeLock || null, donations: made.donations || [],
               needed: BLWPCLIENT.sharesNeededFor(named.round), onCommitted: committedTo };
             console.log('[blwp] fee lock: ' + (made.feeLock ? 'minted, ' + String(made.feeLock.fields.amountMsat) + ' msat' : 'none - ' + made.feeGate.why));
             // KEPT BEFORE ANYTHING ELSE CAN HAPPEN TO THE TAB: a reload from here
