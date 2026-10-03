@@ -127,6 +127,26 @@ public class RunEndSpectate : MonoBehaviour
         float e = Rise; e = e * e * (3f - 2f * e);
         transform.position = Vector3.Lerp(_fromPos, top.position, e);
         transform.rotation = Quaternion.Slerp(_fromRot, top.rotation, e);
+        Report();
+    }
+
+    // THE READINGS (the owner 2026-10-03: "Pan ... Record the move. Zoom ... Record the change"): the page cannot see Unity's
+    // camera, so the camera says where it is - once when the rise is done, then at most every 0.25 s while a pan or a zoom
+    // moves it - with the truck beside it, which must not move.
+    bool _toldTop;
+    float _toldAt;
+    Vector3 _toldFocus;
+    float _toldHeight;
+
+    void Report()
+    {
+        if (Rise < 1f) { _toldTop = false; return; }
+        bool moved = (_focus - _toldFocus).sqrMagnitude > 0.01f || Mathf.Abs(_height - _toldHeight) > 0.05f;
+        if (_toldTop && (!moved || Time.unscaledTime - _toldAt < 0.25f)) return;
+        Debug.Log($"[blwp] spectate {(_toldTop ? "moved" : "top-down")}: focus {_focus.x:0.0},{_focus.z:0.0} height {_height:0.0} m, "
+                + $"camera {transform.position.x:0.0},{transform.position.y:0.0},{transform.position.z:0.0} pitch {transform.eulerAngles.x:0.0}, "
+                + $"truck {(truck != null ? $"{truck.position.x:0.0},{truck.position.z:0.0}" : "-")}");
+        _toldTop = true; _toldAt = Time.unscaledTime; _toldFocus = _focus; _toldHeight = _height;
     }
 
     /// <summary>Pan by a stick (x right, y up the screen) for <paramref name="dt"/> seconds - the keys' and pads' way in.</summary>
