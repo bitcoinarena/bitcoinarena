@@ -80,6 +80,25 @@ const whereOf = new WeakMap();                 // chain view -> its txid index (
 /** A chain view's transactions by txid, indexed once per view object (censusFor). */
 const TXIDS_OF_VIEW = new WeakMap();
 
+// A CENSUS AS STORED: JSON, its bytes and bigints marked (the page keeps an entry the same way)
+const censusReplacer = (k, v) => (v instanceof Uint8Array ? { u8: toHex(v) } : typeof v === 'bigint' ? { big: String(v) } : v);
+const censusReviver = (k, v) => (v && typeof v === 'object' && typeof v.u8 === 'string' && Object.keys(v).length === 1 ? Uint8Array.from(Buffer.from(v.u8, 'hex'))
+  : v && typeof v === 'object' && typeof v.big === 'string' && Object.keys(v).length === 1 ? BigInt(v.big) : v);
+function readKeptCensus(round, key) {
+  const db = round && round.db;
+  if (!db) return null;
+  try {
+    const row = db.prepare('SELECT body FROM census_kept WHERE key = ?').get(key);
+    return row ? JSON.parse(row.body, censusReviver) : null;
+  } catch { return null; }
+}
+function keepCensus(round, key, census) {
+  const db = round && round.db;
+  if (!db) return;
+  try { db.prepare('INSERT OR REPLACE INTO census_kept (key, body, kept_ms) VALUES (?, ?, ?)').run(key, JSON.stringify(census, censusReplacer), Date.now()); }
+  catch { /* kept in memory only */ }
+}
+
 export class Roster {
   constructor(round, { chainFor = NO_CHAIN_VIEW, randomnessFor = NO_BEACON } = {}) {
     this.round = round;
@@ -317,6 +336,15 @@ export class Roster {
     const kept = `${whose}:${view.firstHeight}:${contract.censusHeight}:${asRoundsOwn ? 'round' : 'height'}`;
     const had = this.censuses.get(kept);
     if (had) return had;
+    // KEPT ACROSS A RESTART (OPEN-LIST-2140 item 4, measured: one derivation held the loop 2.7 s - every transaction of a
+    // ~2,000-block view parsed and hashed again - and a restarted seat derived one per series): a census this node checked
+    // against its round's own root is read back from the store instead.
+    const stored = asRoundsOwn ? readKeptCensus(this.round, kept) : null;
+    if (stored && stored.root instanceof Uint8Array && contract.censusRoot instanceof Uint8Array
+        && stored.root.length === 32 && stored.root.every((b, i) => b === contract.censusRoot[i])) {
+      this.censuses.set(kept, stored);
+      return stored;
+    }
 
     // THE VIEW'S TRANSACTIONS BY TXID, ONCE PER VIEW (2026-10-03, measured: a restarted seat held its loop 3-8 s per
     // assignment - every series' census parsed every transaction of the same ~2,080-block view again). Kept with the view
@@ -376,6 +404,7 @@ export class Roster {
     // still derived when it can be.
     this.censuses.set(kept, census);
     if (this.censuses.size > Roster.CENSUS_KEPT) this.censuses.delete(this.censuses.keys().next().value);
+    keepCensus(this.round, kept, census);
     return census;
   }
 
