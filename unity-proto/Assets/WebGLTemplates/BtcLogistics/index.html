@@ -1073,6 +1073,41 @@
       catch (e) { console.error('[blwp] copy game replay: the clipboard refused (' + e.message + '); the link is ' + link.url); }
       return link;
     };
+    // THE RESULT SUMMARY ON THE END CARD (the owner 2026-10-04): the round's own /api/round-result, read from its signer nodes
+    // about 1 s after the end and every 2 s while the card is up, handed to Unity as it came (BlwpResultSummary). The
+    // page decides nothing: each player's outcome, score, signers, result and netMsat are the seats' own (playerBalance);
+    // it only names the fields Unity reads and writes a missing number as empty.
+    let resultTimer = null;
+    const readResultSummary = async (run, nodes) => {
+      const kept = window.BLWP_RESULT;
+      if (!kept || kept.roundHex !== run.roundHex || !window.BLWP_CARD_UP) { clearInterval(resultTimer); resultTimer = null; return; }
+      for (const n of nodes) {
+        try {
+          const r = await fetch(`${String(n).replace(/\/+$/, '')}/api/round-result?round=${run.roundHex}`, { cache: 'no-store', signal: AbortSignal.timeout(1500) });
+          if (!r.ok) continue;
+          const j = await r.json();
+          if (window.BLWP_RESULT !== kept) return;
+          kept.text = JSON.stringify({ mine: run.entryHex, players: (j.players || []).map((p) => ({
+            entry: p.entry || '', key: p.player || '', name: p.name || '', outcome: p.outcome || '',
+            score: p.score === null || p.score === undefined ? -1 : Number(p.score), signedBy: p.signedBy | 0,
+            result: p.result || '', net: p.netMsat === null || p.netMsat === undefined ? '' : String(p.netMsat) })) })
+            // ASCII ON THE BRIDGE: a name's other letters go as \u escapes, which Unity's JSON reader turns back
+            .replace(/[\u007f-\uffff]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
+          kept.reads = (kept.reads | 0) + 1;
+          kept.from = String(n);
+          return;
+        } catch (e) { /* the next node */ }
+      }
+    };
+    const startResultSummary = (run) => {
+      if (!run || !run.roundHex || !run.entryHex) return;
+      if (window.BLWP_RESULT && window.BLWP_RESULT.roundHex === run.roundHex && resultTimer) return;
+      const nodes = (run.nodes && run.nodes.length ? run.nodes : window.BLWP_NODES) || [];
+      window.BLWP_RESULT = { roundHex: run.roundHex, entryHex: run.entryHex, text: '', reads: 0 };
+      clearInterval(resultTimer);
+      setTimeout(() => readResultSummary(run, nodes), 1000);
+      resultTimer = setInterval(() => readResultSummary(run, nodes), 2000);
+    };
     window.BLWP_RUN_OVER = (word, run) => {
       if (run) prefetchReplayNodes(run.roundHex, run.nodes);
       window.BLWP_CHAIN = undefined;
@@ -1102,6 +1137,8 @@
       // THE RESULT CARD IS UP FROM HERE UNTIL THE LOBBY (PRIORITIES item 3, "nothing overlaps"; measured 2026-09-26 at
       // 1280x720: this panel's top edge crossed the card's bottom border). It steps aside until Unity reports the lobby.
       window.BLWP_CARD_UP = true;
+      // and the result summary on it, read from the round's signer nodes while it stands
+      startResultSummary(run);
       { const pl = document.getElementById('blwp-players'); if (pl) pl.style.display = 'none'; }
       if (noLobby && !window.BLWP_LOBBY_STARTING) {
         window.BLWP_LOBBY_STARTING = true;

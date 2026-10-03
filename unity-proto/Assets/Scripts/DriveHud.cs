@@ -969,7 +969,10 @@ public class DriveHud : MonoBehaviour
         // every ending, the run that just ended and not the one before - `BlwpCore.ReplayForThisRun`, taken at the end
         // from the session ROLL OUT found for this run). No longer waiting for the session's closing word as well.
         bool replay = runScore != null && Blwp.BlwpCore.ReplayForThisRun;
-        float scale = ArrivalScale(w, h, head0, 0f, false, replay);
+        // THE RESULT SUMMARY (the owner 2026-10-04): under SCORE, above "copy game replay", on a networked run's card
+        if (replay) ReadSummary(w, h, head0); else _summaryLines.Clear();
+        int summary = _summaryLines.Count;
+        float scale = ArrivalScale(w, h, head0, 0f, false, replay, summary);
         int head = Mathf.RoundToInt(head0 * scale);
         var big = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.UpperCenter, fontStyle = FontStyle.Bold, fontSize = head };
         var mid = new GUIStyle(GUI.skin.label)
@@ -986,7 +989,7 @@ public class DriveHud : MonoBehaviour
 
         // THE ROWS FROM THE FONTS THAT ARE DRAWN, and the card from the rows.
         float padY = head * 0.55f;
-        float[] heights = ArrivalRowHeights(big.fontSize, mid.fontSize, line.fontSize, 0f, false, replay);
+        float[] heights = ArrivalRowHeights(big.fontSize, mid.fontSize, line.fontSize, 0f, false, replay, summary);
         var card = CardIn(w, h, ArrivalHeight(padY, heights));
         var rows = ArrivalRows(card, padY, heights);
 
@@ -1023,8 +1026,45 @@ public class DriveHud : MonoBehaviour
         line.normal.textColor = new Color(1f, 1f, 1f, k * 0.62f);
         GUI.Label(Inset(rows[r++]), footLine, line);
 
+        if (summary > 0)
+        {
+            var sl = new GUIStyle(line);
+            for (int i = 0; i < summary; i++)
+            {
+                // the names and the high score bright, this player's line in gold, the balance list quieter
+                sl.fontStyle = i == 2 ? FontStyle.Bold : FontStyle.Normal;
+                sl.normal.textColor = i == 2 ? new Color(1f, 0.86f, 0.35f, k) : new Color(1f, 1f, 1f, k * (i < 2 ? 0.92f : 0.75f));
+                FitInto(sl, _summaryLines[i], rows[r].width - 16f, 9);
+                GUI.Label(Inset(rows[r++]), _summaryLines[i], sl);
+                sl.fontSize = line.fontSize;
+            }
+        }
+
         if (replay) DrawCopyReplay(rows[r++], line.fontSize, line);
     }
+
+    /// <summary>
+    /// THE RESULT SUMMARY'S LINES, from the round result the page read (BlwpCore.ResultSummary, refreshed by the page every
+    /// 2 s while the card is up), re-read here twice a second. All of them while the card fits unshrunk; when it would have
+    /// to shrink and more than three players are listed, the balance list is cut to three rows and "and N more".
+    /// </summary>
+    void ReadSummary(int w, int h, float head0)
+    {
+        if (Time.unscaledTime - _summaryReadAt < 0.5f) return;
+        _summaryReadAt = Time.unscaledTime;
+        string json = Blwp.BlwpCore.ResultSummary();
+        if (json == _summaryJson) return;
+        _summaryJson = json;
+        var wire = ResultSummary.Parse(json);
+        _summaryLines = ResultSummary.Lines(wire);
+        if (wire != null && wire.players.Length > 3 && ArrivalScale(w, h, head0, 0f, false, true, _summaryLines.Count) < 1f)
+            _summaryLines = ResultSummary.Lines(wire, 3);
+        Debug.Log("[blwp] result summary: " + string.Join(" | ", _summaryLines));
+    }
+
+    System.Collections.Generic.List<string> _summaryLines = new System.Collections.Generic.List<string>();
+    string _summaryJson;
+    float _summaryReadAt = -10f;
 
     /// <summary>
     /// THE ONE "copy game replay" CONTROL, on whatever says the run is over: the result card's own row, or - on the
@@ -1488,6 +1528,9 @@ public class DriveHud : MonoBehaviour
         => ArrivalRowHeights(head, mid, line, stoppedHeight, lead, false);
 
     public static float[] ArrivalRowHeights(float head, float mid, float line, float stoppedHeight, bool lead, bool replay)
+        => ArrivalRowHeights(head, mid, line, stoppedHeight, lead, replay, 0);
+
+    public static float[] ArrivalRowHeights(float head, float mid, float line, float stoppedHeight, bool lead, bool replay, int summary)
     {
         var rows = new System.Collections.Generic.List<float>();
         if (stoppedHeight > 0f) rows.Add(stoppedHeight);
@@ -1496,6 +1539,7 @@ public class DriveHud : MonoBehaviour
         if (lead) rows.Add(mid * 1.3f);         // who is leading
         rows.Add(line * 1.7f);                  // the factors
         rows.Add(line * 1.7f);                  // the foot line
+        for (int i = 0; i < summary; i++) rows.Add(line * 1.45f);   // the result summary (ResultSummary), under SCORE
         if (replay) rows.Add(line * 2.4f);      // copy game replay: a networked run's
         return rows.ToArray();
     }
@@ -1520,10 +1564,10 @@ public class DriveHud : MonoBehaviour
     /// The card at a font scale that keeps its bottom on screen: when the rows are taller than the room under the block
     /// clock, every font shrinks by the same factor - the copy is not shortened.
     /// </summary>
-    public float ArrivalScale(int w, int h, float head, float stoppedHeight, bool lead, bool replay = false)
+    public float ArrivalScale(int w, int h, float head, float stoppedHeight, bool lead, bool replay = false, int summary = 0)
     {
         float padY = head * 0.55f;
-        float height = ArrivalHeight(padY, ArrivalRowHeights(head, ArrivalMidFont(head), ArrivalLineFont(head), stoppedHeight, lead, replay));
+        float height = ArrivalHeight(padY, ArrivalRowHeights(head, ArrivalMidFont(head), ArrivalLineFont(head), stoppedHeight, lead, replay, summary));
         float room = h - Mathf.Max(8f, h * 0.02f) - CardIn(w, h, height).y;
         return height <= room || height <= 1f ? 1f : Mathf.Max(0.4f, room / height);
     }
@@ -1534,10 +1578,11 @@ public class DriveHud : MonoBehaviour
     public Rect ArrivalBox(int w, int h, float stoppedHeight, bool lead, bool replay = false)
     {
         float head = CardHead(w, h, true);
-        float k = ArrivalScale(w, h, head, stoppedHeight, lead, replay);
+        int summary = replay ? _summaryLines.Count : 0;
+        float k = ArrivalScale(w, h, head, stoppedHeight, lead, replay, summary);
         head *= k;
         return CardIn(w, h, ArrivalHeight(head * 0.55f,
-            ArrivalRowHeights(head, ArrivalMidFont(head), ArrivalLineFont(head), stoppedHeight * k, lead, replay)));
+            ArrivalRowHeights(head, ArrivalMidFont(head), ArrivalLineFont(head), stoppedHeight * k, lead, replay, summary)));
     }
 
     /// <summary>The streaming list, right-hand side, one row per model.</summary>
