@@ -1077,7 +1077,13 @@
       const going = window.BLWP_JOIN;
       const newerJoin = !!(going && !going.cancelled && going.state === 'joining' && going.round
         && (!run || !run.roundHex || String(going.round) !== String(run.roundHex)));
-      if (!newerJoin && location.search !== back) history.replaceState(null, '', location.pathname + back);
+      // AND A RESUMED RUN KEEPS ITS ADDRESS UNTIL IT ENDS ITSELF (the owner 2026-10-03): while it catches up, nothing else's end
+      // puts the lobby's address over its round=; it may only when that run ends, or once its round has closed.
+      const resume = window.BLWP_RESUME;
+      const resumedEnds = !!(resume && run && String(run.roundHex) === String(resume.roundIdHex) && resume.caughtUp);
+      const resuming = !!(resume && !resumedEnds && Date.now() < Number(resume.closeMs));
+      if (resumedEnds) window.BLWP_RESUME = null;
+      if (!newerJoin && !resuming && location.search !== back) history.replaceState(null, '', location.pathname + back);
       window.BLWP_RUN_ENDED = String(word || '');
       // THE RESULT CARD IS UP FROM HERE UNTIL THE LOBBY (PRIORITIES item 3, "nothing overlaps"; measured 2026-09-26 at
       // 1280x720: this panel's top edge crossed the card's bottom border). It steps aside until Unity reports the lobby.
@@ -1404,8 +1410,10 @@
           return e && key && key.raw ? Object.assign({}, e, { roundId: BLWPCLIENT.fromHex(roundIdHex), sessionPubkey: BLWPCLIENT.fromHex(key.raw) }) : null;
         } catch { return null; }
       };
+      // AND UNTIL THE ROUND CLOSES A RUN ALREADY STARTED IS RESUMED (the owner 2026-10-03, "That run must not be lost")
+      const closeMsOf = () => { try { return Number(BLWPCLIENT.roundEndMs(named.round)); } catch { return NaN; } };
       const keptUseOf = (kept) => BLWPCLIENT.keptLockUse(kept, { entry: keptSentEntry(named.roundIdHex),
-        beforeStart: Date.now() < Number(named.round.startTimeMs) });
+        beforeStart: Date.now() < Number(named.round.startTimeMs), beforeClose: Date.now() < closeMsOf() });
       // handout run while the player pays; the lock waits for both. A lock kept from before a reload asks no deposit.
       const depositEl = document.getElementById('blwp-deposit');
       const stageEl = document.getElementById('stage');
@@ -1513,7 +1521,14 @@
         // 980000 + 20000 msat. The join stops and says why; the collect runs from the
         // record the first join kept.
         const use = keptUseOf(kept);
-        if (use.resumed) console.log('[blwp] the lock is committed to the entry this tab kept, and the round has not started: the same entry is sent again');
+        if (use.resumed === true) console.log('[blwp] the lock is committed to the entry this tab kept, and the round has not started: the same entry is sent again');
+        // THE RUN ALREADY STARTED: the bridge takes it back from the seats (blwp.jslib net.opened, BLWP_RESUME) - the same
+        // entry, lock and session key, its transcript replayed into the core, and it goes on from the tick the seats are owed.
+        if (use.resumed === 'running') {
+          window.BLWP_RESUME = { roundIdHex: named.roundIdHex, entryIdHex: String(use.kept.committedTo), closeMs: closeMsOf(), caughtUp: false };
+          console.log('[blwp] the round started before this reload: its run is resumed from the seats, entry '
+            + String(use.kept.committedTo).slice(0, 16) + ', no second deposit');
+        }
         if (use.use === 'staked') {
           window.BLWP_JOIN_REFUSED = use.why;
           console.error('[blwp] join refused: ' + window.BLWP_JOIN_REFUSED);
@@ -2726,6 +2741,17 @@
       // PLAYER PER ROUND ACROSS A RELOAD: handed the tab's sessionStorage, the
       // Client notes each share before its wallet is asked and never asks a
       // noted one again, so a reload over a kept lock reports and sends nothing.
+      // A LOOPBACK RECIPIENT GOES OVER ITS LISTED ROUTE (the owner 2026-10-03, option A): the paid rounds of 10-02..10-04 name
+      // testnet4's test donation set, http://127.0.0.1:18777/lnurlp/blwp-test-a and -b - a player's browser reached nothing
+      // there, every share was UNPAID and nothing was deducted. daily.json's testnet.alt names a route for 127.0.0.1:18777
+      // (the testnet4 donation service, the same two recipients); only a loopback recipient that has one is sent there.
+      const donationFetch = (u) => {
+        try {
+          const x = new URL(String(u)), alt = (window.BLWP_ALT_ROUTES || {})[x.host];
+          if (alt && (x.hostname === '127.0.0.1' || x.hostname === 'localhost')) return fetch('https://' + alt + x.pathname + x.search);
+        } catch { /* as named */ }
+        return fetch(u);
+      };
       if (c && c.joinedEntry && window.BLWP_DONATION_SET && typeof c.joinedEntry.donationMsat === 'bigint'
           && c.joinedEntry.donationMsat > 0n && c.stakeCommitted === true && !donationPaying && (wallet || window.BLWP_PLAYER_PAYER)) {
         const heldWallet = wallet ? wallet.current() : { ok: false };
@@ -2734,7 +2760,7 @@
           donationPaying = true;
           window.BLWP_DONATION_PAID = { state: 'paying' };
           c.payDonation(c.joinedEntry, window.BLWP_DONATION_SET, {
-            round: window.BLWP_ROUND, payWith: window.BLWP_PLAYER_PAYER, log: spent, storage: window.sessionStorage,
+            round: window.BLWP_ROUND, payWith: window.BLWP_PLAYER_PAYER, log: spent, storage: window.sessionStorage, fetcher: donationFetch,
           }).then((said) => {
             window.BLWP_DONATION_PAID = BLWPCLIENT.donationPaidState(window.BLWP_DONATION_SET, said);
             paintWallet(); paintHistory(); if (window.BLWP_READ_BALANCE) window.BLWP_READ_BALANCE();
@@ -2744,7 +2770,7 @@
           window.BLWP_DONATION_PAID = { state: 'paying' };
           c.payDonation(c.joinedEntry, window.BLWP_DONATION_SET, {
             round: window.BLWP_ROUND, connection: heldWallet, curve: window.BLWP_CURVE, log: spent, storage: window.sessionStorage,
-            random: (n) => crypto.getRandomValues(new Uint8Array(n)),
+            random: (n) => crypto.getRandomValues(new Uint8Array(n)), fetcher: donationFetch,
           }).then((said) => {
             window.BLWP_DONATION_PAID = BLWPCLIENT.donationPaidState(window.BLWP_DONATION_SET, said);
             paintWallet();

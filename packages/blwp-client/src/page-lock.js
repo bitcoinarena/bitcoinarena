@@ -762,11 +762,11 @@ export function savedLock(storage, { roundId, playerPubkey }) {
  * a new join. One no signer node committed: the same stake and lock, no second deposit (W1b).
  * One a signer node COMMITTED to an entry: that signer node is taken and its stake is locked - measured
  * before: the page dealt a new stake and set out to fund "980000 + 20000 msat of lock",
- * a second deposit for a round the player already stakes. The run itself cannot be
- * resumed (its session key lives in the player and is not kept), so the join stops, says
- * why, and the payout and stake are still collected from the tab's kept record.
+ * a second deposit for a round the player already stakes. A tab that kept the very entry the lock is committed to
+ * plays it again (before the start) or resumes it (until the close); otherwise the join stops, says why, and the
+ * payout and stake are still collected from the tab's kept record.
  */
-export function keptLockUse(kept, { entry = null, beforeStart = false } = {}) {
+export function keptLockUse(kept, { entry = null, beforeStart = false, beforeClose = false } = {}) {
   if (!kept) return { use: 'new' };
   if (!kept.committedTo) return { use: 'reuse', kept };
   // UNLESS THE TAB KEPT THAT VERY ENTRY AND THE ROUND HAS NOT STARTED (measured 2026-10-03 13:58:51Z on 0.0.2490: a reload
@@ -777,6 +777,10 @@ export function keptLockUse(kept, { entry = null, beforeStart = false } = {}) {
   // entryId by its own name: the bundle strips imports, and an "as" alias is undefined there (measured: 0.0.2491 refused)
   try { keptId = entry ? toHex(entryId(entry)) : null; } catch { keptId = null; }
   if (beforeStart && keptId && keptId === String(kept.committedTo)) return { use: 'reuse', kept, resumed: true };
+  // AND AFTER THE START, UNTIL THE ROUND CLOSES (the owner 2026-10-03: "a reload after the round has started ... That run must
+  // not be lost"): the same entry, lock and session key, and the run is RESUMED from what the seats hold of it (the bridge
+  // replays the transcript and goes on from the adopted mark - blwp.jslib BLWP_RESUME). After the close only the collect.
+  if (!beforeStart && beforeClose && keptId && keptId === String(kept.committedTo)) return { use: 'reuse', kept, resumed: 'running' };
   return { use: 'staked', kept,
     why: `this tab's stake in this round is already locked and committed to entry ${String(kept.committedTo).slice(0, 16)}…: `
       + 'no second deposit - the run cannot be resumed after a reload, and its payout and stake are collected after the window' };

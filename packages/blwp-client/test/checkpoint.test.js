@@ -42,7 +42,7 @@ import {
 import { GENESIS, encodeTranscript } from '../../protocol/src/transcript.js';
 import { batchId } from '../../protocol/src/batch.js';
 import { toHex } from '../../protocol/src/hash.js';
-import { Client, markState, RECEIPTS_FOR_LIVE } from '../src/client.js';
+import { Client, markState, RECEIPTS_FOR_LIVE, catchUpCore } from '../src/client.js';
 import {
   decodeCheckpointReceipt, receiptId, splitSignedReceipt, encodeCheckpointReceipt,
   joinSignedReceipt, SIGNED_RECEIPT_BYTES,
@@ -971,4 +971,86 @@ test('a reconnect adopts the NEWEST live mark, not the oldest', async () => {
     assert.notDeepEqual(got.head, first.id);
     assert.notDeepEqual(got.head, third.id);
   } finally { await node.close(); }
+});
+
+// A RELOAD AFTER THE ROUND STARTED (the owner 2026-10-03, "That run must not be lost"): a NEW client - the reloaded tab - with
+// the same session key and the same entry. The node takes the entry again as the one it holds, the client resumes without
+// recording a tick while it fetches, the core stepped through the node's transcript is the state the marks were hashed
+// from, and the next batch and the next mark are accepted.
+test('a reloaded tab with the same entry and session key resumes the run: same entry, core caught up to the marked state, next batch and mark accepted', async () => {
+  const { node, client, rid, eid } = await rig();
+  try {
+    const drive = () => [45875, 0, 0, 0, 0];
+    const one = await client.batch(Array.from({ length: 400 }, drive), { roundId: rid, entryId: eid });
+    assert.equal(one.accepted, 400);
+    const mark = await client.checkpoint(driven(400), { roundId: rid, entryId: eid, tick: 400, inputChainHash: batchId(one.batch) });
+    assert.equal(mark.answer, 'receipted');
+    await gossipCarry(client, mark);
+    client.close();
+
+    const back = new Client({ base: `http://127.0.0.1:${node.port}`, core, sign, verify });
+    back.nodes = [node.round.pubkey, ...peerKeys];
+    await back.openRound({ ...contract(), nodes: [node.round.pubkey, ...peerKeys] });
+    assert.deepEqual(await back.join(entryFor(rid)), eid, 'the same entry sent again is the entry the node holds');
+    await back.connect();
+    const fetching = back.resumeAfterReload({ roundId: rid, entryId: eid, blockTicks: BLOCK_TICKS });
+    assert.equal(back.record([1, 2, 3, 4, 5]), false, 'a tick recorded while the run is fetched would be published at 0');
+    const got = await fetching;
+    assert.equal(got.nextTick, 400);
+    assert.deepEqual(got.head, mark.id, 'the adopted mark is the one five carried');
+    assert.deepEqual(back.where && back.where.entryId, eid);
+
+    const st = core.init(7);
+    assert.equal(catchUpCore(core, st, got.transcript), 400);
+    assert.equal(core.hash(st), core.hash(driven(400)), 'the caught-up core is not the state the run reached');
+
+    const two = await back.batch(Array.from({ length: 200 }, drive), { roundId: rid, entryId: eid });
+    assert.equal(two.accepted, 200, `the node refused the batch after the reload: ${two.answer}`);
+    for (let t = 0; t < 200; t++) core.step(st, 45875, 0, 0, 0);
+    const next = await back.checkpoint(st, { roundId: rid, entryId: eid, tick: 600, inputChainHash: batchId(two.batch) });
+    assert.equal(next.answer, 'receipted', `the node refused the mark after the reload: ${next.answer}`);
+    back.close();
+  } finally { await node.close(); }
+});
+
+// AND THE NEWEST MARK'S RECEIPTS ARE AT THE PEERS, NOT HERE (measured on 0.0.2493: after a reload all 7 seats held mark
+// 120 with one receipt each, their own; this node's /receipts carried one for it, the resume adopted mark 60 and every
+// later mark was refused "does not follow the chain head"). The resume reads each peer's /receipts too.
+test('a resume after a reload adopts the newest mark whose receipts sit at the peers, and the next mark follows it', async () => {
+  const { node, client, rid, eid } = await rig();
+  let peer = null;
+  try {
+    const drive = () => [45875, 0, 0, 0, 0];
+    const one = await client.batch(Array.from({ length: 460 }, drive), { roundId: rid, entryId: eid });
+    assert.equal(one.accepted, 460);
+    const first = await client.checkpoint(driven(400), { roundId: rid, entryId: eid, tick: 400, inputChainHash: batchId(one.batch) });
+    assert.equal(first.answer, 'receipted');
+    await gossipCarry(client, first);                        // live at this node: five receipts here
+    carry(client, first);                                    // and live for this client, so its next mark chains on it
+    const newest = await client.checkpoint(driven(460), { roundId: rid, entryId: eid, tick: 460, inputChainHash: batchId(one.batch) });
+    assert.equal(newest.answer, 'receipted');                // this node's own receipt only; the other four are at a peer
+    client.close();
+    const held = Buffer.concat([0, 1, 2, 3].map((i) => Buffer.from(receiptFrom(peers[i], newest.id, 2000n + BigInt(i)))));
+    peer = createServer((req, res) => {
+      if (req.url.startsWith('/receipts')) { res.writeHead(200); res.end(held); } else { res.writeHead(404); res.end(); }
+    });
+    await new Promise((r) => peer.listen(0, '127.0.0.1', r));
+
+    const alone = new Client({ base: `http://127.0.0.1:${node.port}`, core, sign, verify });
+    alone.nodes = [node.round.pubkey, ...peerKeys];
+    assert.deepEqual((await alone.resume({ roundId: rid, entryId: eid })).head, first.id, 'this node alone carries only the older mark');
+
+    const back = new Client({ base: `http://127.0.0.1:${node.port}`, core, sign, verify });
+    back.nodes = [node.round.pubkey, ...peerKeys];
+    back.peers = [`http://127.0.0.1:${peer.address().port}`];
+    const got = await back.resume({ roundId: rid, entryId: eid });
+    assert.deepEqual(got.head, newest.id, 'the newest mark, carried by five with the peer\'s receipts');
+    assert.equal(got.witnessed, 5);
+    await back.connect();
+    const two = await back.batch(Array.from({ length: 140 }, drive), { roundId: rid, entryId: eid });
+    assert.equal(two.accepted, 140);
+    const next = await back.checkpoint(driven(600), { roundId: rid, entryId: eid, tick: 600, inputChainHash: batchId(two.batch) });
+    assert.equal(next.answer, 'receipted', `the mark after the resume did not follow the seats' head: ${next.answer}`);
+    back.close();
+  } finally { if (peer) peer.close(); await node.close(); }
 });

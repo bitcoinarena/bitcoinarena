@@ -683,6 +683,33 @@ mergeInto(LibraryManager.library, {
           });
         })
         .then(function () {
+          // A RUN THAT STARTED BEFORE THIS TAB WAS RELOADED IS TAKEN BACK, NOT BEGUN AGAIN (the owner 2026-10-03: "a reload
+          // after the round has started ... That run must not be lost"). The page kept the entry and the session key and
+          // named it (index.html BLWP_RESUME); the seats hold its inputs and marks. The client resumes from them (nothing
+          // recorded meanwhile), the core enters the same world and is stepped through the transcript as a seat replays
+          // it, and the run goes on from the tick the seats are owed, its next mark after the one five carried.
+          var R = (typeof window !== 'undefined') ? window.BLWP_RESUME : null;
+          if (R && R.entryIdHex === BLWPCLIENT.toHex(net.where.entryId)) {
+            net.resuming = true;
+            return net.client.resumeAfterReload({ roundId: net.where.roundId, entryId: net.where.entryId, blockTicks: contract.blockTicks | 0 })
+              .then(function (r) {
+                b.st = b.core.init(net.seedWord, (net.contract && typeof net.contract.blockTicks === 'number')
+                  ? { runTicks: net.contract.blockTicks } : {});
+                b.reliefEpoch = (b.reliefEpoch | 0) + 1;
+                net.seen = BLWPCLIENT.catchUpCore(b.core, b.st, r.transcript);
+                // what Unity handed over before this is the lobby's market: the run's own tape, load and samples are in
+                // the transcript, at their ticks
+                net.queued = [];
+                net.inWorld = true;
+                net.resumedAt = net.seen;
+                net.resuming = false;
+                R.caughtUp = true; R.tick = net.seen;
+                console.log('[blwp] resumed at tick ' + net.seen + ' after the reload: ' + r.batches + ' batches, mark head '
+                  + (r.live ? 'carried by ' + r.witnessed : 'none') + ', ' + r.receipts + ' receipts');
+                try { net.ghosts = BLWPCLIENT.watchGhosts(net.client, net.where); }
+                catch (e) { console.error('[blwp] ghosts unavailable: ' + (e && e.message)); net.ghosts = null; }
+              }, function (e) { net.resuming = false; throw e; });
+          }
           // THE HOLD, THE DRAIN AND THE SKIPPING ALL LIVE IN THE CLIENT.
           //
           // They used to be here, in a promise chain this file appended to on
@@ -778,6 +805,8 @@ mergeInto(LibraryManager.library, {
 
     net.tick = function (words) {
       if (!net.client) return;
+      // A RUN BEING TAKEN BACK AFTER A RELOAD records, counts and marks nothing until its core has caught up (net.opened)
+      if (net.resuming) return;
       // THE RUN IS OVER ONCE THE CORE SAID SO: the game may keep stepping, none of it is the run.
       if (net.finishing) return;
       // PAST THE RUN'S LAST TICK THE GAME'S TICKS ARE NOT INPUTS. The game keeps
