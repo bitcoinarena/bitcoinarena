@@ -842,3 +842,29 @@ test('the slash-owing door answers off the chain at a height above the round\'s 
     assert.match(lowSaid, /below the round's census height/);
   } finally { await node.close(); }
 });
+
+// A CENSUS KEPT ACROSS A RESTART (OPEN-LIST-2140 item 4): one derivation held a starting seat's loop 2.7 s. A census this
+// node checked against its round's own root is stored, and a new Roster over the same store reads it back without
+// deriving - the chain view is still asked for (its first height is in the key), the census is not computed again.
+test('a census checked against its round\'s root is kept in the store and read back by a restarted roster', () => {
+  const { round, rid, roster } = daemon([bondOf(0x11), bondOf(0x12)]);
+  const first = roster.censusFor(rid);
+  assert.equal(first.ok, true, first.why);
+  // a fresh roster over the same store
+  const kept = new Roster(round, { chainFor: ({ contract } = {}) => chainWith([bondOf(0x11), bondOf(0x12)], contract),
+    randomnessFor: ({ contract }) => beaconOf(chainWith([bondOf(0x11), bondOf(0x12)], contract), contract) });
+  const again = kept.censusFor(rid);
+  assert.equal(again.ok, true, again.why);
+  assert.equal(Buffer.from(again.root).toString('hex'), Buffer.from(first.root).toString('hex'));
+  assert.deepEqual(again.entries.map((e) => [Buffer.from(e.pubkey).toString('hex'), e.roles, String(e.bondSats)]),
+    first.entries.map((e) => [Buffer.from(e.pubkey).toString('hex'), e.roles, String(e.bondSats)]));
+  assert.equal(typeof again.work, 'bigint');
+  assert.ok(round.db.prepare('SELECT count(*) n FROM census_kept').get().n >= 1, 'nothing kept in the store');
+  // a stored census whose root is not the round's is not taken
+  round.db.prepare('UPDATE census_kept SET body = ?').run(JSON.stringify({ ok: true, root: { u8: '00'.repeat(32) }, entries: [] }));
+  const third = new Roster(round, { chainFor: ({ contract } = {}) => chainWith([bondOf(0x11), bondOf(0x12)], contract),
+    randomnessFor: ({ contract }) => beaconOf(chainWith([bondOf(0x11), bondOf(0x12)], contract), contract) });
+  const derivedAgain = third.censusFor(rid);
+  assert.equal(derivedAgain.ok, true);
+  assert.equal(Buffer.from(derivedAgain.root).toString('hex'), Buffer.from(first.root).toString('hex'), 'a kept census with another root was used');
+});

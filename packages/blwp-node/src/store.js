@@ -651,6 +651,14 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (round_id, entry_id, node_pubkey)
     );
 
+    -- A CENSUS THIS NODE DERIVED AND CHECKED AGAINST ITS ROUND'S OWN ROOT (OPEN-LIST-2140 item 4): a pure function of the
+    -- chain below its height, so it is kept across a restart - a cold derivation held a starting seat's loop 2.7 s each.
+    CREATE TABLE IF NOT EXISTS census_kept (
+      key      TEXT PRIMARY KEY,
+      body     TEXT NOT NULL,
+      kept_ms  INTEGER NOT NULL
+    );
+
     -- A DONATION OUTPUT THIS SIGNER NODE VERIFIED (the owner 2026-10-03, FEDERATION.md "Donations in the federation"): a
     -- payout contract in the player's lock transaction paying one recipient key its share. One output is one entry's.
     -- Indexed by key: what a dev's client asks for (GET /donations?key=).
