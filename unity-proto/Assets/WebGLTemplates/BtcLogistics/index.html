@@ -1785,6 +1785,27 @@
         return;
       }
       payoutAsking = true;
+      // EVERY ROUND STILL OWED, NOT ONLY THE NEWEST (the owner 2026-10-03 06:47, playtest d917975d: "still pending" 4 min
+      // after the settlement was ACCEPTED at 7 of 7). The collect looked at the newest open record only; the 24 h scan
+      // (findTheRoundsOwed) re-saves the rounds it finds with a fresh time, so an older round that cannot finish could
+      // stay "newest" and starve the round just won. The older open rounds are collected first, each on its own.
+      for (const older of BLWPCLIENT.savedCollects(vault(), { seed: collectSeed() })
+        .filter((r) => BLWPCLIENT.roundLocks(r.round) && !r.done && r.roundIdHex !== newest.roundIdHex)) {
+        try {
+          const wo = await roundWallet(older);
+          const lo = wo ? await BLWPCLIENT.lookOwed(Object.assign(roundAsk(older, wo.LockClient), { client: wo.client })) : null;
+          if (!lo) continue;
+          const co = await BLWPCLIENT.collectIntoPlayerWallet({ look: lo, ...roundAsk(older, wo.LockClient) });
+          if (co.collected) {
+            console.log('[blwp] owed (round ' + older.roundIdHex.slice(0, 8) + '), collected into the player wallet: ' + co.creditedMsat + ' msat');
+            BLWPCLIENT.markCollectDone(vault(), older.roundIdHex, { payout: BLWPCLIENT.owedToLine(lo), stake: null }, collectSeed());
+            if (window.BLWP_READ_BALANCE) window.BLWP_READ_BALANCE();
+            paintHistory();
+          } else if (lo.final && lo.inTabMsat === 0n) {
+            BLWPCLIENT.markCollectDone(vault(), older.roundIdHex, { payout: BLWPCLIENT.owedToLine(lo), stake: null }, collectSeed());
+          }
+        } catch (e) { console.error('[blwp] owed (round ' + older.roundIdHex.slice(0, 8) + '): ' + e.message); }
+      }
       try {
         const w = await roundWallet(newest);
         // OPEN IN ANOTHER TAB OF THIS BROWSER: that tab looks and withdraws; this one says so.
@@ -2246,11 +2267,12 @@
       if (!rows.length) { rowsEl.textContent = 'No deposits, stakes or withdrawals in this tab yet'; return; }
       const sat = (msat) => `${(Number(BigInt(msat || 0) / 1000n)).toLocaleString('en-US')} sat`;
       for (const r of rows) {
-        const plus = r.kind === 'deposit' || r.kind === 'winnings';
+        const plus = r.kind === 'deposit' || r.kind === 'winnings' || r.kind === 'refund';
         const el = document.createElement('div');
         el.className = `hist-row ${plus ? 'plus' : 'minus'}` + (r.kind === 'stake' && r.entry ? ' clickable' : '');
         const when = r.atMs ? new Date(r.atMs).toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : 'earlier';
         const what = r.kind === 'deposit' ? 'Deposit' : r.kind === 'winnings' ? `Winnings${r.round ? ' \u00b7 round ' + String(r.round).slice(0, 8) : ''}` : r.kind === 'donation' ? `Donation${r.round ? ' \u00b7 round ' + String(r.round).slice(0, 8) : ''}`
+          : r.kind === 'refund' ? `Refund \u00b7 round ${String(r.round || '').slice(0, 8)} \u00b7 stake back`
           : r.kind === 'withdrawal' ? `Withdrawal${r.state && r.state !== 'Success' ? ' (' + r.state + ')' : ''}`
           : `Stake · round ${String(r.round).slice(0, 8)}${r.entry ? '' : ' · not entered'}`;
         for (const [cls, text] of [['hist-when', when], ['hist-what', what], ['hist-amt', (plus ? '+' : '\u2212') + sat(r.msat)]]) {
@@ -2802,7 +2824,11 @@
       }
       window.BLWP_PENDING_SATS = Number(total / 1000n);
       if (window.BLWP_WALLET_BALANCE) window.BLWP_WALLET_BALANCE.pending = window.BLWP_PENDING_SATS;
-      const when = total > 0n && closeMs ? `window closes ${new Date(closeMs).toISOString().slice(11, 19)} UTC${provisional ? ' \u00b7 provisional' : ''}` : '';
+      // PAST THE CLOSE THE LINE SAYS WHAT HAPPENS NOW (the owner 2026-10-03, playtest d917975d: "window closes 06:43:21 UTC"
+      // still shown after 06:43:21 - the signer nodes settle 13-23 s after the close, and the page collects after that)
+      const when = total > 0n && closeMs ? (Date.now() < closeMs
+        ? `window closes ${new Date(closeMs).toISOString().slice(11, 19)} UTC${provisional ? ' \u00b7 provisional' : ''}`
+        : `window closed ${new Date(closeMs).toISOString().slice(11, 19)} UTC \u00b7 paying out`) : '';
       const whenEl = document.getElementById('blwp-bal-pending-when'); if (whenEl) whenEl.textContent = when;
       const chip = document.getElementById('blwp-lobby-pending'); if (chip && chip.parentNode) chip.parentNode.title = when || 'pending';
       paintMoney();
