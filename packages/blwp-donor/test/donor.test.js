@@ -1,0 +1,68 @@
+// THE DEV'S DONATION CLIENT, ITS DECISIONS (the owner 2026-10-03): the key, where the funds are, what is redeemed, when it
+// withdraws - with the seats, the federation and the LND faked; the live pass is measured on testnet4.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { secp256k1 } from '../../blwp-node/node_modules/@noble/curves/secp256k1.js';
+
+import { newKey, keyFromSecret, walletSecretFor, gatherDonations, donationFields, splitOutpoint, redeemAll, withdrawToLnd } from '../src/donor.js';
+import { donationContractFields, lockFieldsToJson } from '../../blwp-node/src/stake-lock-signer-node.js';
+
+const PK = '02' + 'a1'.repeat(32);
+const op = (n) => `${'08'.repeat(32)}:${n}`;
+const row = (n, fed, msat, ms) => ({ outpoint: op(n), federationId: fed, amountMsat: String(msat), roundId: 'r', entryId: 'e', verifiedMs: ms });
+const seatsAnswering = (bySeat) => async (url) => {
+  const seat = url.split('/donations')[0];
+  if (!(seat in bySeat)) throw new Error('connection refused');
+  return { ok: true, json: async () => ({ donations: bySeat[seat] }) };
+};
+
+test('a new key is a secp256k1 key whose compressed point is the recipient key', () => {
+  const k = newKey();
+  assert.equal(k.recipientPkHex, Buffer.from(secp256k1.getPublicKey(Buffer.from(k.secretHex, 'hex'), true)).toString('hex'));
+  assert.equal(keyFromSecret(Buffer.from(k.secretHex, 'hex')).recipientPkHex, k.recipientPkHex);
+  assert.notEqual(walletSecretFor(k.secretHex, 'aa'.repeat(32)), walletSecretFor(k.secretHex, 'bb'.repeat(32)), 'one wallet per federation');
+});
+
+test('every seat is asked; one donation listed by several seats is one; the funds are grouped by federation; a silent seat is named', async () => {
+  const fa = 'aa'.repeat(32), fb = 'bb'.repeat(32);
+  const got = await gatherDonations({ recipientPkHex: PK, seats: ['http://s1', 'http://s2', 'http://s3'], fetcher: seatsAnswering({
+    'http://s1': [row(2, fa, 1334, 10), row(5, fb, 666, 30)],
+    'http://s2': [row(2, fa, 1334, 10), row(3, fa, 1334, 20)],
+  }) });
+  assert.equal(got.total, 3);
+  assert.deepEqual([...got.byFederation.keys()], [fa, fb]);
+  assert.deepEqual(got.byFederation.get(fa).map((d) => [d.outpoint.slice(-2), d.seats]), [[':2', 2], [':3', 1]]);
+  assert.deepEqual(got.unanswered, ['http://s3: connection refused']);
+});
+
+test('the contract the client redeems is the one the seats verified: the same fields', () => {
+  const seat = lockFieldsToJson(donationContractFields({ recipientPk: Buffer.from(PK, 'hex'), amountMsat: 1334n }));
+  assert.deepEqual(JSON.parse(donationFields(PK, 1334n)), JSON.parse(JSON.stringify(seat)));
+  assert.deepEqual(splitOutpoint(op(7)), { txid: '08'.repeat(32), outIdx: 7 });
+  assert.throws(() => splitOutpoint('nope'));
+});
+
+test('redeem: accepted is redeemed, a contract no longer held was spent (final), anything else is asked again; done is skipped', async () => {
+  const asked = [];
+  const client = { async refund(txid, idx, fields, secret) {
+    asked.push(idx);
+    if (idx === 2) return JSON.stringify({ accepted: true, txid: 'f'.repeat(64), stored_before: { contract_id: 'c' } });
+    if (idx === 3) return JSON.stringify({ accepted: false, stored_before: null, error: 'no contract' });
+    if (idx === 4) return JSON.stringify({ accepted: false, stored_before: { contract_id: 'c' }, error: 'not accepted yet' });
+    throw new Error('guardians unreachable');
+  } };
+  const r = await redeemAll({ client, donations: [row(2), row(3), row(4), row(5), row(6)], recipientPkHex: PK, secretHex: '11'.repeat(32), done: new Set([op(6)]) });
+  assert.deepEqual(asked, [2, 3, 4, 5]);
+  assert.deepEqual(r.redeemed.map((d) => d.outpoint.slice(-1)), ['2']);
+  assert.deepEqual(r.spent.map((d) => d.outpoint.slice(-1)), ['3']);
+  assert.deepEqual(r.failed.map((d) => [d.outpoint.slice(-1), d.why]), [['4', 'not accepted yet'], ['5', 'guardians unreachable']]);
+});
+
+test('withdraw: below the minimum nothing is asked of the LND; above it, the largest payable invoice is made and paid', async () => {
+  const made = [];
+  const lnd = { invoice: async (msat) => { made.push(msat); return 'lntb1...'; } };
+  const low = await withdrawToLnd({ client: { withdrawableMsat: async () => '9999' }, lnd, minMsat: 10000n });
+  assert.equal(low.withdrawn, false); assert.deepEqual(made, []);
+  const high = await withdrawToLnd({ client: { withdrawableMsat: async () => '25000', withdraw: async (inv) => JSON.stringify({ state: 'Success', preimage: 'ab' }) }, lnd, minMsat: 10000n });
+  assert.equal(high.withdrawn, true); assert.deepEqual(made, [25000n]);
+});

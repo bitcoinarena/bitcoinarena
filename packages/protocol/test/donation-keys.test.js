@@ -115,3 +115,18 @@ test('the outputs an entry must name: one per share above 0 msat, in the set\'s 
   assert.match(donationOutputsExpected(lockedEntry({ donationOutpoints: PAID }), TESTNET4_DONATION_SET.recipients).why, /pays LNURLs/);
   assert.equal(donationOutputsExpected(lockedEntry(), TESTNET4_DONATION_SET.recipients).ok, true);
 });
+
+test('testnet4\'s set of keys is signed by testnet4\'s donation authority, serial 3, two dev keys at 6667 / 3333', async () => {
+  const { TESTNET4_DONATION_SET_KEYS: S } = await import('../src/testnet4-donation-set-keys.js');
+  const { donationSetSignedBy } = await import('../src/authority.js');
+  const { donationKeysForNetworkId } = await import('../src/donation-keys.js');
+  const { NETWORK_ID_TESTNET4 } = await import('../src/genesis-ids.js');
+  const { verify, createPublicKey } = await import('node:crypto');
+  const keys = donationKeysForNetworkId(NETWORK_ID_TESTNET4);
+  const ed = (sig, msg, k) => verify(null, msg, createPublicKey({ key: Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), Buffer.from(k)]), format: 'der', type: 'spki' }), sig);
+  assert.equal(donationSetSignedBy(S, { authority: keys.authority, verify: ed }).ok, true);
+  assert.equal(S.serial, 3n);
+  assert.equal(toHex(S.networkId), toHex(NETWORK_ID_TESTNET4));
+  assert.deepEqual(S.recipients.map((r) => [r.label, r.shareBps, r.recipientPk.length]), [['dev a', 6667, 33], ['dev b', 3333, 33]]);
+  assert.ok(donationSetPaysKeys(S.recipients));
+});
