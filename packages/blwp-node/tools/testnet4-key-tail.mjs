@@ -63,7 +63,10 @@ if (into < 0n || into % ROUND_PERIOD_MS !== 0n) throw new Error(`${startIso} is 
 const index = Number((into % SERIES_MAX_MS) / ROUND_PERIOD_MS);
 if (index === 0) throw new Error('a tail starts inside its day, not at its first round');
 const count = ROUNDS_PER_SERIES - index;
-const template = { ...base, startTimeMs: start, committeeTimeMs: start - TAIL_COMMITTEE_LEAD_MIN_MS, entryCloseMs: start + LATE_JOIN_MS, seriesCount: count };
+// COMMITTEE_AT_MS: an explicit committee time (SERIES-2200, the owner 2026-10-03: "The first round starts 36 hours after the
+// post. Give that publication 12 hours to confirm") - else the tail's minimum lead, 12 h before the start
+const committee = env.COMMITTEE_AT_MS ? BigInt(env.COMMITTEE_AT_MS) : start - TAIL_COMMITTEE_LEAD_MIN_MS;
+const template = { ...base, startTimeMs: start, committeeTimeMs: committee, entryCloseMs: start + LATE_JOIN_MS, seriesCount: count };
 const lead = seriesLeadIsValid(template);
 if (!lead.ok) throw new Error(lead.why);
 const tipMtp = BigInt(JSON.parse(cli('getblockchaininfo')).mediantime) * 1000n;
