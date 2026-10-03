@@ -1526,7 +1526,7 @@
         // entry, lock and session key, its transcript replayed into the core, and it goes on from the tick the seats are owed.
         if (use.resumed === 'running') {
           window.BLWP_RESUME = { roundIdHex: named.roundIdHex, entryIdHex: String(use.kept.committedTo), closeMs: closeMsOf(), caughtUp: false };
-          console.log('[blwp] the round started before this reload: its run is resumed from the seats, entry '
+          console.log('[blwp] the round started before this reload: its run is resumed from the signer nodes, entry '
             + String(use.kept.committedTo).slice(0, 16) + ', no second deposit');
         }
         if (use.use === 'staked') {
