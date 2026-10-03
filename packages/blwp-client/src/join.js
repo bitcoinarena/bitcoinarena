@@ -829,6 +829,9 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
       ? { txid: stakeLock.feeLock.outpoint.txid, outIdx: BigInt(stakeLock.feeLock.outpoint.outIdx) }
       : { txid: new Uint8Array(32), outIdx: 0n },
     claimKeyAttestationRef: roundLocks(round) ? claimKey.ref : new Uint8Array(32),
+    // THE DONATION OUTPUTS THE LOCK TRANSACTION MADE (the owner 2026-10-03): named only when there are any
+    ...(stakeLock && Array.isArray(stakeLock.donations) && stakeLock.donations.length
+      ? { donationOutpoints: stakeLock.donations.map((d) => ({ txid: d.txid, outIdx: BigInt(d.outIdx) })) } : {}),
     stakeMsat: BigInt(round.stakeMsat || 0n),
     // THE NODE FEE, AND IT IS 2% OF THIS ENTRY'S OWN STAKE - taken OUT of it,
     // never on top (22A). The stake is the one number the wallet commits; the
