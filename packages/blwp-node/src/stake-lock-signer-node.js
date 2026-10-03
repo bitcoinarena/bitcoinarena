@@ -27,6 +27,7 @@
 import { decodeEntryContract, decodeRoundContract } from '../../protocol/src/contracts.js';
 import { lockMatchesEntry, lockFieldsFromJson, lockFieldsToJson } from '../../protocol/src/stake-lock.js';
 import { feeLockPays } from '../../protocol/src/lock-settlement.js';
+import { donationOutputsExpected } from '../../protocol/src/donation.js';
 
 /**
  * WHETHER THIS ROUND'S GATE MINTS FEE LOCKS (Pick b), by the federation's own fee rule
@@ -77,7 +78,48 @@ const zero = (b) => !(b instanceof Uint8Array) || b.every((x) => x === 0);
 // the page's bundle writes with.
 export { lockFieldsFromJson, lockFieldsToJson };
 
-export async function verifyStakeLock({ round, port, entryIdBytes, fields, claimPk }) {
+/**
+ * A DONATION OUTPUT AS THE PLAYER'S LOCK TRANSACTION MAKES IT (the owner 2026-10-03, FEDERATION.md): a payout contract -
+ * the zero hash image, expired from the start, claim and refund key both the recipient's - so only that key can spend
+ * it, with `Refund`, at any time. The same shape the settlement pays a winner with (stake-lock main.rs settle).
+ */
+export const donationContractFields = ({ recipientPk, amountMsat }) => ({
+  paymentImage: { kind: 'hash', bytes: new Uint8Array(32) }, amountMsat, claimPk: recipientPk, refundPk: recipientPk, expiration: 0,
+});
+
+/**
+ * THE ENTRY'S DONATION OUTPUTS, CHECKED WITH THE FEDERATION (the owner 2026-10-03): for a round whose set pays keys, every
+ * output `donationOutputsExpected` pairs - the federation holds, at that outpoint, the payout contract to that key for
+ * exactly that share - and none already pays for another entry. Answers the rows to keep, or why the entry's donation
+ * is not what its set says. An LNURL round answers none (and refuses outputs it does not name).
+ */
+export async function verifyDonationOutputs({ round, port, entry, entryIdBytes, recipients, federationId }) {
+  if (!recipients) {
+    if ((entry.donationOutpoints || []).length) return { ok: false, why: 'this signer node holds no donation set for that round, so it cannot check its donation outputs' };
+    return { ok: true, rows: [] };
+  }
+  const want = donationOutputsExpected(entry, recipients);
+  if (!want.ok) return { ok: false, why: `donation: ${want.why}` };
+  if (!want.outputs.length) return { ok: true, rows: [] };
+  if (!port) return { ok: false, why: 'this node reaches no federation, so it cannot verify a donation output' };
+  const rows = [];
+  for (const o of want.outputs) {
+    const taken = round.donationOutputAt ? round.donationOutputAt(o.outpoint) : null;
+    if (taken && !Buffer.from(taken.entryId).equals(Buffer.from(entryIdBytes)))
+      return { ok: false, why: 'that donation output already pays for another entry: one output is one entry\'s' };
+    const fields = donationContractFields(o);
+    const [st, id] = await Promise.all([port.status(o.outpoint), port.contractId(fields)]);
+    const at = `${Buffer.from(o.outpoint.txid).toString('hex').slice(0, 16)}…:${o.outpoint.outIdx}`;
+    if (!st || !st.stored) return { ok: false, why: `donation: the federation holds nothing at ${at}` };
+    if (String(id) !== String(st.stored.contractId))
+      return { ok: false, why: `donation: the output at ${at} is not ${o.amountMsat} msat to key ${Buffer.from(o.recipientPk).toString('hex').slice(0, 16)}…` };
+    rows.push({ outpoint: o.outpoint, entryId: entryIdBytes, roundId: entry.roundId, federationId, recipientPk: o.recipientPk,
+      amountMsat: o.amountMsat, contractId: String(id) });
+  }
+  return { ok: true, rows };
+}
+
+export async function verifyStakeLock({ round, port, entryIdBytes, fields, claimPk, donationRecipients = null }) {
   const stored = round.entry(entryIdBytes);
   if (!stored) return { ok: false, why: 'this node holds no such entry' };
   const entry = decodeEntryContract(stored);
@@ -108,6 +150,12 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
 
   const matches = lockMatchesEntry({ lock: fields, entry, kind: 'stake', claimPk, height: st.blockCount });
   if (!matches.ok) return matches;
+
+  // AND ITS DONATION, IN THE SAME TRANSACTION (the owner 2026-10-03): a stake whose donation outputs are wrong or missing is
+  // not counted - nothing is kept for it, and the lock may be handed over again.
+  const donated = await verifyDonationOutputs({ round, port, entry, entryIdBytes, recipients: donationRecipients, federationId: contract.federationId });
+  if (!donated.ok) return donated;
+  if (donated.rows.length && round.putDonationOutputs) round.putDonationOutputs(donated.rows);
 
   round.putStakeLock({ entryId: entryIdBytes, roundId: entry.roundId, outpoint, fields: lockFieldsToJson(fields), contractId: String(id) });
   // IN A ROUND WHOSE GATE MINTS, THE STAKE COUNTS ONLY WITH ITS FEE LOCK (pick a): kept,

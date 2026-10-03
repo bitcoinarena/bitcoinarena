@@ -651,6 +651,21 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (round_id, entry_id, node_pubkey)
     );
 
+    -- A DONATION OUTPUT THIS SIGNER NODE VERIFIED (the owner 2026-10-03, FEDERATION.md "Donations in the federation"): a
+    -- payout contract in the player's lock transaction paying one recipient key its share. One output is one entry's.
+    -- Indexed by key: what a dev's client asks for (GET /donations?key=).
+    CREATE TABLE IF NOT EXISTS donation_outputs (
+      outpoint      TEXT PRIMARY KEY,
+      entry_id      BLOB NOT NULL,
+      round_id      BLOB NOT NULL,
+      federation_id BLOB NOT NULL,
+      recipient_pk  TEXT NOT NULL,
+      amount_msat   TEXT NOT NULL,
+      contract_id   TEXT NOT NULL,
+      verified_ms   INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS donation_outputs_by_key ON donation_outputs (recipient_pk, verified_ms);
+
     -- A STAKE LOCK THIS SIGNER NODE VERIFIED (23.1 step 5): the contract the player
     -- handed over, the federation's id for it, and where it sits.
     CREATE TABLE IF NOT EXISTS stake_locks (
