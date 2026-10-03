@@ -621,6 +621,12 @@ export class Client {
 
   async #handLocksUntilTaken(mine) {
     const nodes = [this.base, ...this.peers];
+    // A LOCK STILL BEING ACCEPTED (OPEN-LIST-2140 item 3: the entry goes out on the lock's submission) is handed over the
+    // moment the guardians accept it - measured on 0.0.2498, the backoff's first tries fell before acceptance and the one
+    // that took landed late: the 5th of 7 signer nodes verified 3.5 s after PLAY. A lock refused there is handed to nobody.
+    if (this.stakeLock.accepted && typeof this.stakeLock.accepted.then === 'function') {
+      try { await this.stakeLock.accepted; } catch { return { lock: null, feeLock: null }; }
+    }
     const needed = this.stakeLock.needed;
     const kinds = [{ door: 'lock', fields: this.stakeLock.fields, key: 'lockHanded' }];
     if (this.stakeLock.feeLock) kinds.push({ door: 'fee-lock', fields: this.stakeLock.feeLock.fields, key: 'feeLockHanded' });

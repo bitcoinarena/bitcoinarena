@@ -10254,6 +10254,46 @@ async function lockStake({ round, roundId, invite, seed, stake, claimKey, player
   // THE STAKE AND THE FEE IN ONE TRANSACTION (the owner 2026-10-02, the join's 2-3 s): `lockBoth` when the lock client has it
   // and a fee is due - one block count, one transaction, one acceptance, both outpoints read together - each half checked
   // exactly as a lone lock is. Measured before: the two locks one after the other, 7.2 s of a paid join (Q4).
+  // THE LOCK ANSWERED ON SUBMISSION, ITS ACCEPTANCE CHECKED AFTER (the owner 2026-10-03, OPEN-LIST-2140 item 3: PLAY to the
+  // entry committed was 3.5-4.7 s, the lock's federation acceptance 1.9-2.6 s of it). `lockSubmit` hands the guardians the
+  // one transaction - stake, fee lock when due, donation outputs - and answers its outpoints at once; the entry names them
+  // and goes to the signer nodes while the guardians accept it. `accepted` is the old answer's every check, made when they
+  // have: a lock refused there refuses the join by name (the signer nodes never count a stake they cannot find).
+  if (typeof client.lockSubmit === 'function' && typeof client.lockAccepted === 'function') {
+    const donationShares = donationKeyShares(donationMsat, donationRecipients);
+    onStep(`locking the stake${feeGate.pays ? ', the node fee' : ''}${donationShares.length ? ' and the donation' : ''} (submitted, accepted behind)`);
+    const preimage = feeGate.pays ? feeSecretFor(seed, roundId) : null;
+    const image = preimage ? sha256(preimage) : null;
+    const submitted = JSON.parse(await client.lockSubmit(toHex(stake.stakePoint), String(amount), image ? toHex(image) : '',
+      String(feeGate.pays ? feeMsat : 0n), toHex(claimKey.claimPk), toHex(refundPk), delta,
+      JSON.stringify(donationShares.map((d) => ({ pk: toHex(d.recipientPk), msat: String(d.amountMsat) })))));
+    const asBuilt = (o, image) => ({ outpoint: { txid: fromHex(submitted.txid), outIdx: BigInt(o.out_idx) },
+      fields: { paymentImage: image, amountMsat: BigInt(o.amount_msat), claimPk: claimKey.claimPk, refundPk, expiration: o.computed_expiration },
+      contractId: o.computed_contract_id });
+    const outs = submitted.outputs || [];
+    const stakeOut = outs.find((o) => o.role === 'stake');
+    const feeOut = outs.find((o) => o.role === 'fee');
+    if (!stakeOut || BigInt(stakeOut.amount_msat) !== amount) throw new Error(`the lock client built ${stakeOut ? stakeOut.amount_msat : 'no'} msat of stake, and this entry's net stake is ${amount}`);
+    if (feeGate.pays && (!feeOut || BigInt(feeOut.amount_msat) !== feeMsat)) throw new Error(`the lock client built ${feeOut ? feeOut.amount_msat : 'no'} msat of fee lock, and this entry's fee is ${feeMsat}`);
+    const lock = asBuilt(stakeOut, { kind: 'point', bytes: stake.stakePoint });
+    const feeLock = feeGate.pays ? { ...asBuilt(feeOut, { kind: 'hash', bytes: image }), preimage } : null;
+    const donations = donationOutputsFromClient(outs.filter((o) => o.role === 'donation').map((o) => ({ ...o, txid: submitted.txid, ids_match: true })), donationShares);
+    const accepted = (async () => {
+      const all = JSON.parse(await client.lockAccepted(JSON.stringify(submitted)));
+      const got = lockFromClient(all.stake, { point: stake.stakePoint, claimPk: claimKey.claimPk, refundPk });
+      if (got.contractId !== lock.contractId || got.outpoint.outIdx !== lock.outpoint.outIdx)
+        throw new Error('the guardians hold the stake lock at another output than the entry names');
+      if (feeLock) {
+        const f = lockFromClient(all.fee, { hash: image, claimPk: claimKey.claimPk, refundPk });
+        if (f.contractId !== feeLock.contractId || f.outpoint.outIdx !== feeLock.outpoint.outIdx)
+          throw new Error('the guardians hold the fee lock at another output than the entry names');
+      }
+      donationOutputsFromClient(all.donations, donationShares);
+      return { ok: true, walletAfterMsat: BigInt(await client.balanceMsat()) };
+    })();
+    accepted.catch(() => { /* the caller is handed it; unobserved, it must not be an unhandled rejection */ });
+    return { ...lock, client, feeLock, feeGate, donations, accepted, walletBeforeMsat: before, walletAfterMsat: null };
+  }
   // THE DONATION IN THE SAME TRANSACTION (the owner 2026-10-03, FEDERATION.md "Donations in the federation"): a round whose set
   // pays keys gets one payout contract per share above 0 msat, in the set's order, beside the stake (and the fee lock) -
   // `lockWithDonations`. The entry names the outpoints; the seats check them with the federation before the stake counts.
@@ -15446,6 +15486,12 @@ class Client {
 
   async #handLocksUntilTaken(mine) {
     const nodes = [this.base, ...this.peers];
+    // A LOCK STILL BEING ACCEPTED (OPEN-LIST-2140 item 3: the entry goes out on the lock's submission) is handed over the
+    // moment the guardians accept it - measured on 0.0.2498, the backoff's first tries fell before acceptance and the one
+    // that took landed late: the 5th of 7 signer nodes verified 3.5 s after PLAY. A lock refused there is handed to nobody.
+    if (this.stakeLock.accepted && typeof this.stakeLock.accepted.then === 'function') {
+      try { await this.stakeLock.accepted; } catch { return { lock: null, feeLock: null }; }
+    }
     const needed = this.stakeLock.needed;
     const kinds = [{ door: 'lock', fields: this.stakeLock.fields, key: 'lockHanded' }];
     if (this.stakeLock.feeLock) kinds.push({ door: 'fee-lock', fields: this.stakeLock.feeLock.fields, key: 'feeLockHanded' });

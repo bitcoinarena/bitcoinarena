@@ -1616,7 +1616,7 @@
             }));
             // AND ITS FEE LOCK, ONLY WHEN THE GATE SAID IT CAN PAY A SIGNER NODE (Pick b):
             // a 100 sat round makes none, so the player is charged no lock that expires unused.
-            stakeLock = { outpoint: made.outpoint, fields: made.fields, feeLock: made.feeLock || null, donations: made.donations || [],
+            stakeLock = { outpoint: made.outpoint, fields: made.fields, feeLock: made.feeLock || null, donations: made.donations || [], accepted: made.accepted || null,
               needed: BLWPCLIENT.sharesNeededFor(named.round), onCommitted: committedTo };
             console.log('[blwp] fee lock: ' + (made.feeLock ? 'minted, ' + String(made.feeLock.fields.amountMsat) + ' msat' : 'none - ' + made.feeGate.why));
             // KEPT BEFORE ANYTHING ELSE CAN HAPPEN TO THE TAB: a reload from here
@@ -1625,7 +1625,20 @@
             window.BLWP_STAKE_LOCK = stakeLock;
             if (depositEl) depositEl.textContent = '';
             if (stageEl) stageEl.textContent = BLWPCLIENT.lockLine(stakeLock);
-            console.log('[blwp] stake locked at ' + BLWPCLIENT.toHex(made.outpoint.txid) + ':' + String(made.outpoint.outIdx));
+            console.log('[blwp] stake locked at ' + BLWPCLIENT.toHex(made.outpoint.txid) + ':' + String(made.outpoint.outIdx)
+              + (made.accepted ? ' (submitted; the guardians accept it while the entry goes out)' : ''));
+            // THE ACCEPTANCE BEHIND THE ENTRY (OPEN-LIST-2140 item 3): the entry names the submitted outpoints at once; a lock
+            // the guardians refuse refuses the join by name - its stake is never counted, and no money moved.
+            if (made.accepted) {
+              const t0 = Date.now();
+              made.accepted.then((a) => console.log('[blwp] TIMED lock accepted ' + (Date.now() - t0) + ' ms after the entry went out'
+                + (a && a.walletAfterMsat !== undefined ? '; the player wallet holds ' + String(a.walletAfterMsat) + ' msat' : '')))
+                .catch((e) => {
+                  console.error('[blwp] the stake lock was not accepted: ' + e.message);
+                  window.BLWP_JOIN_REFUSED = 'the stake lock was not accepted by the guardians: ' + String(e.message).slice(0, 160);
+                  if (window.BLWP_JOIN) Object.assign(window.BLWP_JOIN, { state: 'refused', why: window.BLWP_JOIN_REFUSED });
+                });
+            }
           } catch (e) {
             // SHORT IN THE LOBBY, WHOLE IN THE CONSOLE (the owner 2026-10-02, playtest screenshot: a four-line "Federation rpc error
             // { method => ..., 1 => Transport error: WebSocket connection failed, ... }" grew the lobby's red box over the

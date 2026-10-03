@@ -64,7 +64,7 @@ const claimKey = { ok: true, claimPk: CLAIM, ref: b32(0x9a) };
  * hold, as the stock dry run does. The allowance is the stock
  * TRANSACTION_FEE_DEFAULT's arithmetic (2 sat + 3000 ppm).
  */
-function lockClient({ idsMatch = true, lockedMsat, lockFee = 2528n, feeRule = null, both = false, badFee = false, donations = false, badDonation = null } = {}) {
+function lockClient({ idsMatch = true, lockedMsat, lockFee = 2528n, feeRule = null, both = false, badFee = false, donations = false, badDonation = null, submit = false, acceptAs = 'same' } = {}) {
   const log = [];
   // Its wallet is kept in the store it is handed, as the real one's database
   // is: one key, the balance, written when a deposit is claimed.
@@ -155,6 +155,31 @@ function lockClient({ idsMatch = true, lockedMsat, lockFee = 2528n, feeRule = nu
         recipient_pk: badDonation === 'key' && i === 1 ? '03' + 'ee'.repeat(32) : d.pk,
         amount_msat: Number(BigInt(d.msat) + (badDonation === 'amount' && i === 0 ? 1n : 0n)) })) });
   };
+  // THE LOCK ANSWERED ON SUBMISSION (OPEN-LIST-2140 item 3): lockSubmit answers the outputs as built, lockAccepted later
+  // what the guardians store - `acceptAs` 'moved' holds the stake at another output, 'refused' throws
+  if (submit) {
+    Fake.prototype.lockSubmit = async function (point, stakeMsat, hash, feeMsat, claim, refund, delta, given) {
+      const ds = JSON.parse(given);
+      log.push({ lockSubmit: { stakeMsat, hash, feeMsat, donations: ds } });
+      this.balance -= BigInt(stakeMsat) + BigInt(hash ? feeMsat : 0) + ds.reduce((t, d) => t + BigInt(d.msat), 0n) + lockFee;
+      const exp = 1000 + delta;
+      const outputs = [{ out_idx: 0, role: 'stake', computed_contract_id: 's1', computed_expiration: exp, amount_msat: Number(stakeMsat), recipient_pk: null }];
+      if (hash) outputs.push({ out_idx: 1, role: 'fee', computed_contract_id: 'f1', computed_expiration: exp, amount_msat: Number(feeMsat), recipient_pk: null });
+      ds.forEach((d, i) => outputs.push({ out_idx: outputs.length, role: 'donation', computed_contract_id: `d${i}`, computed_expiration: 0, amount_msat: Number(d.msat), recipient_pk: d.pk }));
+      this.submitted = { operation: 'op1', txid: '5a'.repeat(32), block_count_at_lock: 1000, expiry_delta: delta, with_fee: !!hash, outputs };
+      return JSON.stringify(this.submitted);
+    };
+    Fake.prototype.lockAccepted = async function (sub) {
+      const s = JSON.parse(sub);
+      log.push({ lockAccepted: s.operation });
+      await new Promise((r) => setTimeout(r, 20));
+      if (acceptAs === 'refused') throw new Error('the guardians did not accept the lock transaction: spent inputs');
+      const one = (o) => ({ txid: s.txid, out_idx: acceptAs === 'moved' && o.role === 'stake' ? 7 : o.out_idx, computed_contract_id: o.computed_contract_id,
+        stored_contract_id: o.computed_contract_id, ids_match: true, computed_expiration: o.computed_expiration, stored_expiration: o.computed_expiration,
+        amount_msat: o.amount_msat, recipient_pk: o.recipient_pk });
+      return JSON.stringify({ stake: one(s.outputs[0]), fee: s.with_fee ? one(s.outputs[1]) : null, donations: s.outputs.filter((o) => o.role === 'donation').map(one) });
+    };
+  }
   return { LockClient: Fake, log };
 }
 
@@ -1735,5 +1760,28 @@ test('a set of keys: one lockWithDonations call, the shares in the set\'s order,
     assert.deepEqual(back.lock.donations.map((d) => [toHex(d.txid).slice(0, 4), d.outIdx, toHex(d.recipientPk).slice(0, 4), d.amountMsat]),
       got.donations.map((d) => [toHex(d.txid).slice(0, 4), d.outIdx, toHex(d.recipientPk).slice(0, 4), d.amountMsat]));
     assert.ok(ledgerRows(tab, round100.federationId).some((r) => r.kind === 'donation' && r.msat === '2000'));
+  }
+});
+
+// THE LOCK ANSWERED ON SUBMISSION (the owner 2026-10-03, OPEN-LIST-2140 item 3): the entry's outpoints come back before the
+// guardians accept the lock; acceptance is checked after, and a lock held elsewhere or refused rejects `accepted`.
+test('a submitted lock answers its outpoints before acceptance; acceptance is checked after, and a moved or refused lock rejects', async () => {
+  const DEVS = [{ recipientPk: Uint8Array.of(2, ...b32(0xa1)), shareBps: 6667, label: 'dev a' }, { recipientPk: Uint8Array.of(3, ...b32(0xb2)), shareBps: 3333, label: 'dev b' }];
+  const round100 = { ...round, stakeMsat: 100000n };
+  const rid100 = roundId(round100);
+  for (const acceptAs of ['same', 'moved', 'refused']) {
+    const { LockClient, log } = lockClient({ feeRule: RULE, both: true, donations: true, submit: true, acceptAs });
+    const tab = tabStorage();
+    await fundPlayerWallet({ round: round100, invite: INVITE, seed, LockClient, storage: tab, donationMsat: 2000n, donationRecipients: DEVS });
+    const got = await lockStake({ round: round100, roundId: rid100, invite: INVITE, seed, stake: { stakePoint: POINT }, claimKey, playerPubkey: player,
+      LockClient, storage: tab, donationMsat: 2000n, donationRecipients: DEVS });
+    // answered at submission: nothing awaited the guardians yet
+    assert.deepEqual(log.filter((l) => l.lockSubmit || l.lockAccepted || l.lockBoth || l.lockWithDonations || l.lock).map((l) => Object.keys(l)[0]), ['lockSubmit', 'lockAccepted']);
+    assert.equal(toHex(got.outpoint.txid), '5a'.repeat(32));
+    assert.deepEqual([got.outpoint.outIdx, got.feeLock.outpoint.outIdx, ...got.donations.map((d) => d.outIdx)], [0n, 1n, 2n, 3n]);
+    assert.deepEqual(got.donations.map((d) => d.amountMsat), [1334n, 666n]);
+    if (acceptAs === 'same') { const a = await got.accepted; assert.equal(a.ok, true); }
+    else if (acceptAs === 'moved') await assert.rejects(got.accepted, /another output than the entry names/);
+    else await assert.rejects(got.accepted, /did not accept the lock transaction/);
   }
 });
