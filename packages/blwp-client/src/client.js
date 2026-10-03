@@ -1026,6 +1026,11 @@ export class Client {
             if (/^watching /.test(said)) this.rewatched++;
             else this.error = `the subscription did not come back: ${said}`;
           }
+          // AND THE SOCKET MUST STILL BE THERE (measured 2026-10-03 21:38:50Z, paid round 8bed315a: the new socket closed
+          // while this was resuming; its close found this reconnect in flight, so the onDrop it fired got this same promise
+          // back and started nothing, the resume answered from the CLOSED words, and the run was called ready with no socket
+          // under it - nothing ever closed again, nothing reconnected, and all 1469 ticks stayed held). Round again instead.
+          if (!this.sock || this.sock.readyState !== 1) throw new Error('the socket closed while the run was resuming');
           this.resumedAt = r.nextTick;
           this.backoff = 0;
           this.state = 'ready';
