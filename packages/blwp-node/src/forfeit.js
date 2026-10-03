@@ -25,11 +25,11 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { decodeRoundContract } from '../../protocol/src/contracts.js';
 import { decodePlayerResult, splitSignedResult } from '../../protocol/src/result.js';
-import { isQualifier } from '../../protocol/src/payout.js';
+import { isQualifier, FORFEIT as FORFEIT_OUTCOME } from '../../protocol/src/payout.js';
 import { signShare340, aggregate340, nonceGenerate340 } from '../../protocol/src/frost-bip340.js';
 import { receiptsNeeded } from '../../protocol/src/threshold.js';
 import { lockFieldsFromJson } from '../../protocol/src/stake-lock.js';
-import { FINAL } from '../../protocol/src/objection.js';
+import { FINAL, SUSPENDED, PROVISIONALLY_FINAL } from '../../protocol/src/objection.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 import { resultFinality } from './finality.js';
 import { encodeCommitments, decodeCommitments, encodeShare, decodeShare } from './pool-wire.js';
@@ -119,9 +119,12 @@ export class Forfeit {
       const mine = this.round.results(roundIdBytes, entryIdBytes).find((r) => toHex(r.nodePubkey) === toHex(this.round.pubkey));
       if (!mine) return refuse('this signer node signed no result for that run, so it forfeits nothing');
       const result = decodePlayerResult(splitSignedResult(mine.bytes).body);
-      if (!isQualifier(result, contract.minScore))
-        return refuse(`that run is ${result.outcome} with score ${result.score} and this round's minimum is `
-          + `${contract.minScore}: not a qualifier, so its stake lock is not forfeited`);
+      if (!isQualifier(result, contract.minScore)) {
+        const back = this.nobodyWonReturn(roundIdBytes, entryIdBytes, lock, result);
+        if (!back.ok)
+          return refuse(`that run is ${result.outcome} with score ${result.score} and this round's minimum is `
+            + `${contract.minScore}: not a qualifier, so its stake lock is not forfeited (${back.why})`);
+      }
     }
     const held = this.dkg.signerNodeFor(contract.nodes);
     if (!held.ok) return refuse(`this signer node holds no share of the round's claim key: ${held.why}`);
@@ -132,6 +135,30 @@ export class Forfeit {
     const id = String(await this.port.contractId(fields));
     if (id !== String(lock.contractId)) return refuse('the contract rebuilt from this signer node\'s record is not the one it verified');
     return { ok: true, message: fromHex(id), claimPk, signerNode: held.signerNode, needed: receiptsNeeded(contract.nodes.length) };
+  }
+
+  /**
+   * NOBODY WON: THE STAKE BACK AT SETTLEMENT, NOT AT EXPIRY (the owner 2026-10-03: "1 is fine" - the money back within a
+   * block, stake_expiry_blocks stays 144 as the backstop). A round whose settlement paid no winner claims no loser's
+   * lock but a walk-away's (lock-settlement.js `nobody`), and every other lock "expires back to its player" - after 144
+   * blocks. On THIS signer node's own record - its settlement ACCEPTED, no winner's share in it, this lock not among
+   * its claims, and no entry of the round still inside a window that could change who won - the lock is forfeited back
+   * to its refund key now. A forfeit can only return money to its owner; a walk-away (FORFEIT) is never a refund.
+   */
+  nobodyWonReturn(roundIdBytes, entryIdBytes, lock, result) {
+    if (result.outcome === FORFEIT_OUTCOME) return { ok: false, why: 'a walk-away is never a refund' };
+    const s = this.round.lockSettlement ? this.round.lockSettlement(roundIdBytes) : null;
+    if (!s || s.state !== 'ACCEPTED') return { ok: false, why: 'the round\'s settlement is not ACCEPTED at this signer node' };
+    const moves = this.round.lockSettlementMoves ? this.round.lockSettlementMoves(roundIdBytes) : null;
+    if (!moves) return { ok: false, why: 'this signer node keeps no record of what its settlement moved' };
+    if ((moves.claims || []).includes(String(lock.outpoint))) return { ok: false, why: 'its lock was claimed in the settlement' };
+    const shares = this.round.lockSettlementShares ? this.round.lockSettlementShares(roundIdBytes) : null;
+    if (!shares || shares.length) return { ok: false, why: 'the settlement paid a winner' };
+    for (const e of this.round.entriesOf(roundIdBytes)) {
+      const st = resultFinality(this.round, roundIdBytes, e.entryId).state;
+      if (st === SUSPENDED || st === PROVISIONALLY_FINAL) return { ok: false, why: 'an entry of the round is still inside its window' };
+    }
+    return { ok: true };
   }
 
   /** ROUND ONE: this signer node's nonce commitment for the forfeit it would sign. */
