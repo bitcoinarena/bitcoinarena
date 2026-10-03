@@ -28,6 +28,14 @@ import { genesisFor } from './genesis.js';
 import { networkOf } from './constants.js';
 
 export const ROUND_PERIOD_MS = 90000n;
+// LATE JOIN (the owner 2026-10-03: "Joining an existing round is possible with 45 seconds in"): a series may close each round's
+// entry LATE_JOIN_MS after its start instead of at it. The template's own entry_close - start is the series' late join
+// (0 or LATE_JOIN_MS), and every round derives the same: it is in the template's bytes, so in the series id.
+export const LATE_JOIN_MS = 45000n;
+const lateJoinOf = (template) => {
+  const late = template.entryCloseMs - template.startTimeMs;
+  return late === 0n || late === LATE_JOIN_MS ? late : null;
+};
 export const SERIES_MAX_MS = 86400000n;                     // a series lasts at most 24 h
 export const ROUNDS_PER_SERIES = Number(SERIES_MAX_MS / ROUND_PERIOD_MS);   // 960
 const HOUR = 3600000n;
@@ -100,8 +108,8 @@ export function seriesLeadIsValid(template) {
   const min = seriesClockFor(template.networkId).leadMinMs;
   if (lead < min)
     return { ok: false, why: `that series starts ${lead} ms after its committee time, and a round must exist ${min} ms (${min / HOUR} h) before its first entry` };
-  if (template.entryCloseMs !== template.startTimeMs)
-    return { ok: false, why: 'a series round takes no late join: its entry closes at its start' };
+  if (lateJoinOf(template) === null)
+    return { ok: false, why: `a series round's entry closes at its start or ${LATE_JOIN_MS} ms after it (late join)` };
   // PICK B (old-series.js): series 3cfbe516 of testnet4's old id predates genesis_series_start - no grid to be on
   if (isOldTestnet4Id(template.networkId) && isOldTestnet4Series(seriesId(template))) return { ok: true, leadMs: lead, oldSeries: true };
   // ON THE GENESIS GRID (ALL-BUT-MIN-1727): a series starts at genesis_series_start + k * 24 h, never where it names
@@ -114,7 +122,7 @@ export function seriesLeadIsValid(template) {
 
 function tailIsValid(template, lead) {
   if (seriesClockFor(template.networkId) !== SERIES_CLOCKS.testnet4) return { ok: false, why: 'a tail series is testnet4\'s only: the mainnet clock is one 72 h' };
-  if (template.entryCloseMs !== template.startTimeMs) return { ok: false, why: 'a series round takes no late join: its entry closes at its start' };
+  if (lateJoinOf(template) === null) return { ok: false, why: `a series round's entry closes at its start or ${LATE_JOIN_MS} ms after it (late join)` };
   let g;
   try { g = genesisSeriesStart(template.networkId); } catch (e) { return { ok: false, why: e.message }; }
   const into = template.startTimeMs - g;
@@ -155,7 +163,8 @@ export function seriesRound(template, i, { periodMs = ROUND_PERIOD_MS, count } =
   count = countOf(template, count);
   if (!Number.isInteger(i) || i < 0 || i >= count) throw new Error(`round ${i} is outside the series' 0 .. ${count - 1}`);
   const start = template.startTimeMs + BigInt(i) * BigInt(periodMs);
-  return { ...withoutSeries(template), startTimeMs: start, entryCloseMs: start,
+  const late = template.entryCloseMs !== undefined && lateJoinOf(template) !== null ? lateJoinOf(template) : 0n;
+  return { ...withoutSeries(template), startTimeMs: start, entryCloseMs: start + late,
     seriesId: seriesId(template, { periodMs, count }), roundIndex: i };
 }
 
