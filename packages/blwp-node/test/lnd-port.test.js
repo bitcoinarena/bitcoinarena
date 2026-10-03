@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { lndPort } from '../src/lnd-port.js';
+import { lndPort } from '../src/node-start.js';
 
 const hex = (b) => Buffer.from(b).toString('hex');
 
