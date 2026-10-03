@@ -225,6 +225,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // settles or cancels holds, and it pays nothing: that was the withdrawn Lightning custody's custody by one operator.
   // (`preimageFor`, `preflight` and `secondsPerBlock` served only that hold, and are gone with it.)
   lightning = null,
+  // WHAT THIS NODE HOSTS (hosts.js): a reader of its LND and gateway, only on a node whose environment names them; its last
+  // reading goes into /dashboard.json (figures only, never the gateway's password or the LND's macaroon).
+  hosts = null,
   // THIS NODE'S OWN GUARDIAN (§23A.2, RULED 2026-09-26 22:54): `{ apiPort, endpoint }` when the node started one
   // (guardian.js). Its websocket is carried on this server at /guardian, so the guardian's endpoint is the node's own
   // public address; null for a node that is not a guardian.
@@ -2085,7 +2088,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       if (req.method === 'GET' && url.pathname === '/dashboard.json') {
         const nowMs = Date.now();
-        if (!dashboardKept || nowMs - dashboardKept.at > 30000) dashboardKept = { at: nowMs, body: JSON.stringify(dashboardData(round, { nowMs, poolsFor: dashboardPools })) };
+        if (!dashboardKept || nowMs - dashboardKept.at > 30000) dashboardKept = { at: nowMs, body: JSON.stringify(dashboardData(round, { nowMs, poolsFor: dashboardPools, hosts: hosts ? hosts.snapshot() : null })) };
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
         return res.end(dashboardKept.body);
       }
