@@ -23,6 +23,8 @@ public static class ResultSummary
     [System.Serializable] public class Wire
     {
         public string mine = "";
+        /// <summary>The page's word that the card should stand until this run's result is signed (or the round's close + 10 s).</summary>
+        public bool hold;
         public Row[] players = new Row[0];
     }
 

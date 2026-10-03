@@ -59,4 +59,13 @@ public class ResultSummaryTests
         Assert.AreEqual("-1.5 sat", ResultSummary.Sats("-1500"));
         Assert.AreEqual("0.00001", ResultSummary.Score(1));
     }
+
+    // THE CARD WAITS FOR THE SIGNED RESULT (the owner 2026-10-04, option 1): the page's hold rides with the summary
+    [Test]
+    public void ThePagesHoldIsRead()
+    {
+        Assert.IsTrue(ResultSummary.Parse("{\"mine\":\"e1\",\"hold\":true,\"players\":[]}").hold);
+        Assert.IsFalse(ResultSummary.Parse("{\"mine\":\"e1\",\"hold\":false,\"players\":[]}").hold);
+        Assert.IsFalse(ResultSummary.Parse(OneRun).hold, "no word from the page is no hold");
+    }
 }
