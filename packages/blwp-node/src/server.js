@@ -1899,6 +1899,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const upcoming = w.startingWithin(round.now(), 2 * 3600 * 1000);
           for (const hex of next && !upcoming.includes(next) ? [next, ...upcoming] : upcoming) {
             if (done >= 20) break;
+            // THE ASSIGNING IS SLICED TOO: measured offline, opening a restarted seat's 2,123 rounds took 121 ms - the
+            // 15-28 s holds were these assignments, each reading a census from the chain (cold after a restart)
+            if (Date.now() >= until) { more = true; break; }
             const rid = new Uint8Array(Buffer.from(hex, 'hex'));
             if (round.signerNodes(rid).length) continue;
             const assigned = roster.assignSignerNodes(rid);
