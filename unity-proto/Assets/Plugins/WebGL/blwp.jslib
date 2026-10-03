@@ -485,13 +485,31 @@ mergeInto(LibraryManager.library, {
       };
     };
 
-    crypto.subtle.generateKey({ name: 'Ed25519' }, false, ['sign', 'verify'])
-      .then(function (pair) {
-        keys = pair;
-        return crypto.subtle.exportKey('raw', pair.publicKey);
-      })
-      .then(function (raw) {
-        net.sessionPubkey = new Uint8Array(raw);
+    // THE SESSION KEY KEPT ACROSS A RELOAD, PER ROUND, IN THE TAB'S SESSION STORAGE (the owner 2026-10-03, PAID-NIGHT-2155:
+    // "Page. Keep the run's signing key across a reload, in the tab's session storage, so the re-sent entry is the same
+    // entry"). Measured before (round 241f32fa): a reload while the page sent its entry left that entry at one seat with no
+    // stake, signed FORFEIT there, and the reloaded page made another entry under a new key. The key is made once for the
+    // round and its private half kept as PKCS#8 in this tab's sessionStorage only; a reload of the tab signs with it again.
+    var sessionKeyFor = function () {
+      var slot = null, store = null, kept = null;
+      try { slot = (typeof BLWP_ROUND !== 'undefined' && BLWP_ROUND) ? 'blwp.session.key.' + BLWPCLIENT.toHex(BLWPCLIENT.roundId(BLWP_ROUND)) : null; } catch (e) { slot = null; }
+      try { store = window.sessionStorage; kept = slot ? JSON.parse(store.getItem(slot) || 'null') : null; } catch (e) { kept = null; }
+      if (kept && kept.pkcs8 && kept.raw)
+        return crypto.subtle.importKey('pkcs8', BLWPCLIENT.fromHex(kept.pkcs8), { name: 'Ed25519' }, false, ['sign'])
+          .then(function (privateKey) { console.log('[blwp] the session key of this round kept from before the reload'); return { privateKey: privateKey, raw: BLWPCLIENT.fromHex(kept.raw) }; });
+      return crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']).then(function (pair) {
+        return Promise.all([crypto.subtle.exportKey('pkcs8', pair.privateKey), crypto.subtle.exportKey('raw', pair.publicKey)])
+          .then(function (x) {
+            var raw = new Uint8Array(x[1]);
+            try { if (slot && store) store.setItem(slot, JSON.stringify({ pkcs8: BLWPCLIENT.toHex(new Uint8Array(x[0])), raw: BLWPCLIENT.toHex(raw) })); } catch (e) { /* kept for this page only */ }
+            return { privateKey: pair.privateKey, raw: raw };
+          });
+      });
+    };
+    sessionKeyFor()
+      .then(function (k) {
+        keys = { privateKey: k.privateKey };
+        net.sessionPubkey = k.raw;
         return net.open(base, sign);
       })
       .catch(function (e) {

@@ -1608,12 +1608,38 @@
         console.log('[blwp] this round asks no stake, so none is dealt');
       }
 
-      window.BLWP_ENTRY = BLWPCLIENT.entryFor(
+      // THE SAME ENTRY AFTER A RELOAD (the owner 2026-10-03, PAID-NIGHT-2155: "Keep the run's signing key across a reload, in
+      // the tab's session storage, so the re-sent entry is the same entry"). An entry draws its world secret at random, so a
+      // reloaded page made another entry even with the kept stake lock - measured on round 241f32fa: the first, sent as the
+      // reload landed, sat at one seat with no stake and was signed FORFEIT there. The entry is kept per round in this tab's
+      // sessionStorage and taken again when it names the very stake lock this join holds (the kept one); the bridge keeps
+      // the session key the same way (blwp.jslib sessionKeyFor), so the entry the nodes are sent is byte for byte the first.
+      const entrySlot = 'blwp.entry.' + named.roundIdHex;
+      const keptEntry = (() => {
+        if (!stakeLock) return null;
+        try {
+          const back = (k, v) => (v && typeof v === 'object' && typeof v.u8 === 'string' ? BLWPCLIENT.fromHex(v.u8)
+            : v && typeof v === 'object' && typeof v.big === 'string' ? BigInt(v.big) : v);
+          const e = JSON.parse(window.sessionStorage.getItem(entrySlot) || 'null', back);
+          const lock = e && e.stakeLockOutpoint;
+          return lock && BLWPCLIENT.toHex(lock.txid) === BLWPCLIENT.toHex(stakeLock.outpoint.txid)
+            && BigInt(lock.outIdx) === BigInt(stakeLock.outpoint.outIdx) ? e : null;
+        } catch { return null; }
+      })();
+      if (keptEntry) window.BLWP_ENTRY = keptEntry;
+      else window.BLWP_ENTRY = BLWPCLIENT.entryFor(
         Object.assign({}, named.round, { id: BLWPCLIENT.fromHex(named.roundIdHex) }), {
           seed, curve: window.BLWP_CURVE, playerPubkey: player.pubkey, random, ...(stake ? { stake } : {}),
           ...(claimKey ? { claimKey } : {}), ...(stakeLock ? { stakeLock } : {}),
           donationMsat: donation.donationMsat,
         });
+      if (keptEntry) console.log('[blwp] the entry of this round kept from before the reload');
+      else if (stakeLock) {
+        try {
+          window.sessionStorage.setItem(entrySlot, JSON.stringify(window.BLWP_ENTRY, (k, v) => (v instanceof Uint8Array ? { u8: BLWPCLIENT.toHex(v) }
+            : typeof v === 'bigint' ? { big: String(v) } : v)));
+        } catch { /* kept for this page only */ }
+      }
       window.BLWP_CHAIN = named.chain;
       window.BLWP_ADVERT = named.advert;
       console.log('[blwp] joining round ' + named.roundIdHex + ' from ' + named.from);
