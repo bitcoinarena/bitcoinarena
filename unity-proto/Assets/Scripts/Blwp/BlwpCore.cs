@@ -48,6 +48,7 @@ namespace Blwp
         [DllImport("__Internal")] private static extern void BlwpLoadoutOpen(int open);
         [DllImport("__Internal")] private static extern int BlwpResumedRun();
         [DllImport("__Internal")] private static extern int BlwpKeepCargo(IntPtr text);
+        [DllImport("__Internal")] private static extern int BlwpResultSummary(IntPtr outp, int cap);
         [DllImport("__Internal")] private static extern int BlwpKeptCargo(IntPtr outp, int cap);
         [DllImport("__Internal")] private static extern int BlwpSolids(IntPtr ptr, int cap);
         [DllImport("__Internal")] private static extern int BlwpReplayForThisRun();
@@ -74,6 +75,7 @@ namespace Blwp
         private static void BlwpLoadoutOpen(int open) { }
         private static int BlwpResumedRun() => 0;
         private static int BlwpKeepCargo(IntPtr t) => 0;
+        private static int BlwpResultSummary(IntPtr o, int cap) => 0;
         private static int BlwpKeptCargo(IntPtr o, int cap) => 0;
         private static int BlwpSolids(IntPtr ptr, int cap) => 0;
         private static int BlwpReplayForThisRun() => 0;
@@ -278,6 +280,20 @@ namespace Blwp
             var bytes = System.Text.Encoding.ASCII.GetBytes(text + "\0");
             var h = GCHandle.Alloc(bytes, GCHandleType.Pinned);
             try { BlwpKeepCargo(h.AddrOfPinnedObject()); }
+            finally { h.Free(); }
+        }
+
+        /// <summary>The round result the page read for the end card (index.html BLWP_RESULT.text), or null before its first answer.</summary>
+        public static string ResultSummary()
+        {
+            if (!Compiled) return null;
+            var outBytes = new byte[65536];
+            var h = GCHandle.Alloc(outBytes, GCHandleType.Pinned);
+            try
+            {
+                int n = BlwpResultSummary(h.AddrOfPinnedObject(), outBytes.Length);
+                return n > 0 ? System.Text.Encoding.ASCII.GetString(outBytes, 0, n) : null;
+            }
             finally { h.Free(); }
         }
 

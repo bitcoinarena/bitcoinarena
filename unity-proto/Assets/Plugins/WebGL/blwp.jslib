@@ -946,6 +946,15 @@ mergeInto(LibraryManager.library, {
   // THE BED OF THIS ROUND'S RUN, KEPT ACROSS A RELOAD (the owner 2026-10-03, the redone reload playthrough: the resumed truck
   // drove with an empty bed, "CARGO empty"). The core holds the load as two numbers; the parcels are Unity's, so ROLL OUT
   // keeps them here per round, beside the round's session key, and a resumed run puts them back on the bed.
+  // THE RESULT SUMMARY THE PAGE READ (the owner 2026-10-04): the round's /api/round-result as index.html projected it
+  // (window.BLWP_RESULT.text, ASCII JSON), or 0 bytes before the first answer. Unity draws it on the end card.
+  BlwpResultSummary: function (outPtr, cap) {
+    var v = (typeof window !== 'undefined' && window.BLWP_RESULT && window.BLWP_RESULT.text) || '';
+    if (!v || v.length >= (cap | 0)) { Module.HEAPU8[outPtr] = 0; return 0; }
+    for (var i = 0; i < v.length; i++) Module.HEAPU8[outPtr + i] = v.charCodeAt(i) & 255;
+    Module.HEAPU8[outPtr + v.length] = 0;
+    return v.length;
+  },
   BlwpKeepCargo: function (textPtr) {
     var slot = null;
     try { slot = (typeof BLWP_ROUND !== 'undefined' && BLWP_ROUND) ? 'blwp.cargo.' + BLWPCLIENT.toHex(BLWPCLIENT.roundId(BLWP_ROUND)) : null; } catch (e) { slot = null; }
