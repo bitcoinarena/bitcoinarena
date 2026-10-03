@@ -1872,11 +1872,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
   };
   if (writers.length || typeof seriesReload === 'function') {
+    // IN SLICES OF ~150 ms (a seat's start held its loop 21-33 s here, answering no join): what is left is written on
+    // the next turn of the loop, the soonest rounds first.
+    let sliceQueued = false;
     const writeAll = () => timed('series writer', () => {
       if (shuttingDown) return;
       takeNewSeries();
+      const until = Date.now() + 150;
+      let more = false;
       for (const w of writers) {
-        const added = w.write(round.now());
+        const added = w.write(round.now(), until);
+        if (w.more) more = true;
         if (added) console.log(`[series] ${toHex(w.id).slice(0, 16)}: ${added} round(s) written, ${w.summary(round.now()).ahead} ahead to +72 h`);
         // AND ITS SIGNER NODES ASSIGNED, as POST /round assigns a posted round's (the owner 2026-09-30, measured on testnet4:
         // the writer only opened series 3cfbe516's rounds, no node listed itself assigned, and the page offered none
@@ -1901,6 +1907,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           }
         }
       }
+      if (more && !sliceQueued) { sliceQueued = true; setImmediate(() => { sliceQueued = false; writeAll(); }); }
     });
     writeAll();
     seriesTimer = setInterval(writeAll, seriesEveryMs);
