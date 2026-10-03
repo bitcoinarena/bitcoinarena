@@ -276,6 +276,16 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
   redeems it at once: the stake is back in the player wallet minutes after the run, within one federation transaction of
   the settlement. A walk-away (FORFEIT at the door) is never a refund (2026-09-30); the fee lock and the donation are
   not returned.
+- **Late join (series from 2026-10-03 22:00Z):** a series may close each round's entry 45 s after its start
+  (`LATE_JOIN_MS`, in the template's bytes, so in the series id). A player who joins a running round plays a full run
+  from his own join - the run, the first-mark deadline and the door all count from the entry, not the round's start -
+  so his run ends up to 45 s after the others'. The signer nodes take a NEW entry of such a round until its entry close
+  + 15 s (the time a join begun before the close takes to lock and post); the same entry posted again is still taken.
+  Rounds closing entry at their start keep the old door. CONFLICT, recorded: multiplayer_p2p.md §5A.5 ("its entry
+  closing at that start") and its Timing rule ("run ends <= start_time(i+1) - 8 s") still read the old way; that file
+  is not edited here (the owner's standing order). Published: T1 fa570b05 (2026-10-03 22:00-23:58:30Z) and T2 4d8f738a
+  (2026-10-04 00:01:30-23:58:30Z), tails of the live paid round's contract; full series for 10-05 and 10-06 follow
+  once their census blocks exist (>= 72 h of rounds).
 - **Every amount that comes back is a row in the wallet's history:** a stake back with no payout is a "Refund" row
   (money in), next to deposits, stakes, winnings, donations and withdrawals.
 
