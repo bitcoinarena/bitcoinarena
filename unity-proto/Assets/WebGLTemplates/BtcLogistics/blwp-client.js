@@ -10048,10 +10048,27 @@ async function lockStake({ round, roundId, invite, seed, stake, claimKey, player
       + `${n.need === null ? `at least ${n.floor}` : n.need} msat - top the player wallet up first; the stake itself asks for no deposit`);
 
   onStep(`the player wallet holds ${before} msat; locking ${amount} msat (and ${feeMsat} msat of node fee after it) from it`);
-  onStep('locking the stake');
   const refundPk = refundKeyOf(playerPubkey);
   // A LOCK IS MADE FOR EXACTLY stake_expiry_blocks (§23.1 step 4, RULED the owner 2026-09-24: no margin).
   const delta = Number(round.stakeExpiryBlocks);
+  // THE STAKE AND THE FEE IN ONE TRANSACTION (the owner 2026-10-02, the join's 2-3 s): `lockBoth` when the lock client has it
+  // and a fee is due - one block count, one transaction, one acceptance, both outpoints read together - each half checked
+  // exactly as a lone lock is. Measured before: the two locks one after the other, 7.2 s of a paid join (Q4).
+  if (feeGate.pays && typeof client.lockBoth === 'function') {
+    onStep('locking the stake and the node fee together');
+    const preimage = feeSecretFor(seed, roundId);
+    const image = sha256(preimage);
+    const both = JSON.parse(await client.lockBoth(toHex(stake.stakePoint), String(amount), toHex(image), String(feeMsat),
+      toHex(claimKey.claimPk), toHex(refundPk), delta));
+    const lock = lockFromClient(both.stake, { point: stake.stakePoint, claimPk: claimKey.claimPk, refundPk });
+    if (lock.fields.amountMsat !== amount)
+      throw new Error(`the lock client locked ${lock.fields.amountMsat} msat, and this entry's net stake is ${amount}`);
+    const made = lockFromClient(both.fee, { hash: image, claimPk: claimKey.claimPk, refundPk });
+    if (made.fields.amountMsat !== feeMsat)
+      throw new Error(`the lock client locked ${made.fields.amountMsat} msat as the fee, and this entry's fee is ${feeMsat}`);
+    return { ...lock, client, feeLock: { ...made, preimage }, feeGate, walletBeforeMsat: before, walletAfterMsat: BigInt(await client.balanceMsat()) };
+  }
+  onStep('locking the stake');
   const answer = await client.lock(toHex(stake.stakePoint), String(amount), toHex(claimKey.claimPk), toHex(refundPk), delta);
   const lock = lockFromClient(answer, { point: stake.stakePoint, claimPk: claimKey.claimPk, refundPk });
   if (lock.fields.amountMsat !== amount)
