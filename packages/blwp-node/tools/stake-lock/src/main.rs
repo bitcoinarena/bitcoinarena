@@ -145,7 +145,10 @@ async fn open(data_dir: PathBuf) -> anyhow::Result<ClientHandle> {
         .context("that client has no secret: join the federation first")?;
     let mnemonic = Mnemonic::from_entropy(&entropy)?;
     let root = RootSecret::StandardDoubleDerive(Bip39RootSecretStrategy::<12>::to_root_secret(&mnemonic));
-    let endpoints = ConnectorRegistry::build_from_client_defaults().bind().await?;
+    // THE GUARDIANS ON THIS MACHINE, BY THEIR LOCAL PORTS WHEN SAID (FM_WS_API_CONNECT_OVERRIDES, the stock override - this
+    // tool never read it): measured 2026-10-03 16:20Z, every call through the guardians' Funnel addresses lost 3 of 7 peers
+    // to the relay that drops this machine, and a consensus read needs 5 - the seats got through on retries only.
+    let endpoints = ConnectorRegistry::build_from_client_defaults().with_env_var_overrides()?.bind().await?;
     Ok(builder.open(endpoints, db, root).await?)
 }
 
@@ -261,7 +264,7 @@ async fn send(a: &Args, client: &ClientHandle) -> anyhow::Result<()> {
     let (txid, idx) = need(a, "outpoint")?.split_once(':').context("an outpoint is TXID:IDX")?;
     let outpoint = OutPoint { txid: TransactionId::from_str(txid)?, out_idx: idx.parse()? };
     let gateway = fedimint_core::util::SafeUrl::parse(need(a, "gateway")?)?;
-    let connectors = ConnectorRegistry::build_from_client_defaults().bind().await?;
+    let connectors = ConnectorRegistry::build_from_client_defaults().with_env_var_overrides()?.bind().await?;
     let conn = RealGatewayConnection { api: fedimint_lnv2_common::GatewayApi::new(None, connectors) };
     let said = conn.send_payment(gateway.clone(), client.federation_id(), outpoint, contract, invoice, auth).await;
     match said {
