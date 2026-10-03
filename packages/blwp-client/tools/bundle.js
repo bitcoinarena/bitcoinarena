@@ -113,7 +113,7 @@ for (const file of order) {
     .replace(/^export\s+(async\s+)?(const|function|class|let|var)\s/gm, '$1$2 ');
   out += '\n// ---- ' + relative(ROOT, file) + '\n' + body;
 }
-out += '\nreturn { Client: Client, markState: markState,\n';
+out += '\nreturn { Client: Client, markState: markState, catchUpCore: catchUpCore,\n';
 out += '         reach: reach, endpointFor: endpointFor,\n';
 out += '         discover: discover, agreedChain: agreedChain,\n';
 out += '         askForBond: askForBond, provenBond: provenBond,\n';
@@ -168,6 +168,8 @@ out += '         lockStake: lockStake, handLock: handLock, lockSecretFor: lockSe
 out += '         playerWallet: playerWallet, fundPlayerWallet: fundPlayerWallet, walletSecretFor: walletSecretFor,\n';
 out += '         withdrawPlayerWallet: withdrawPlayerWallet,\n';
 out += '         saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, keptLockUse: keptLockUse,\n';
+// AND THE ROUND'S CLOSE, which ends a reloaded tab's resume (keptLockUse beforeClose)
+out += '         roundEndMs: roundEndMs,\n';
 out += '         ledgerRows: ledgerRows, ledgerReadSavedStakes: ledgerReadSavedStakes,\n';
 out += '         depositChoices: depositChoices, withdrawChoices: withdrawChoices, invoiceAmountMsat: invoiceAmountMsat, playerWithdrawable: playerWithdrawable, pendingDeposits: pendingDeposits, resumeDeposits: resumeDeposits, restOfFeesMsat: restOfFeesMsat, restInvoiceMsat: restInvoiceMsat, REST_FLOOR_MSAT: REST_FLOOR_MSAT, ceilNote: ceilNote, roundsDepositMsat: roundsDepositMsat, recordDonation: recordDonation, collectIntoPlayerWallet: collectIntoPlayerWallet, donationCostMsat: donationCostMsat, depositOffer: depositOffer, settingsDepositOffer: settingsDepositOffer, DEPOSIT_INSUFFICIENT: DEPOSIT_INSUFFICIENT,\n';
 out += '         findLock: findLock, refundStake: refundStake, forfeitOf: forfeitOf, redeemStake: redeemStake,\n';

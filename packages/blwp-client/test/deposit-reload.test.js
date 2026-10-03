@@ -59,3 +59,39 @@ test('a key typed into a field never reaches a later window listener (Unity), a 
   fire({ tagName: 'CANVAS' });
   assert.equal(unity, 1, 'a key on the game no longer reached Unity');
 });
+
+// A RELOAD AFTER THE ROUND STARTED BEGINS NO FUNDING (the owner 2026-10-03, "That run must not be lost"): the page's join
+// starts a deposit only for a lock it must make anew, asks keptLockUse with the round's close, and a resumed run
+// ('running') is named to the bridge - never a second deposit.
+test('a reload after the start: no funding unless the kept lock answers new, the close is asked, a running resume is named to the bridge', async () => {
+  const { keptLockUse } = await import('../src/page-lock.js');
+  assert.match(html, /if \(keptUseOf\(keptEarly\)\.use === 'new'\) funding = /, 'funding starts only for a lock made anew');
+  assert.match(html, /beforeClose: Date\.now\(\) < closeMsOf\(\)/, 'the round\'s close bounds the resume');
+  assert.match(html, /if \(use\.resumed === 'running'\) \{\s*window\.BLWP_RESUME = \{ roundIdHex: named\.roundIdHex, entryIdHex: String\(use\.kept\.committedTo\)/);
+  // a committed lock with no kept entry, running: staked - and staked is not 'new', so no funding either
+  const kept = { committedTo: 'ee'.repeat(32) };
+  assert.notEqual(keptLockUse(kept, { entry: null, beforeStart: false, beforeClose: true }).use, 'new');
+  assert.notEqual(keptLockUse(kept, { entry: null, beforeStart: false, beforeClose: false }).use, 'new');
+});
+
+// AND ITS ADDRESS STAYS WHILE IT CATCHES UP: the run-end handler, run on a fake tab.
+test('the run-end handler leaves a resumed round\'s address until that run ends, or its round closes', () => {
+  const a = html.indexOf('    window.BLWP_RUN_OVER = (word, run) => {');
+  const b = html.indexOf('      window.BLWP_RUN_ENDED = String(word || \'\');', a);
+  assert.ok(a > 0 && b > a);
+  const body = html.slice(a, b).replace('    window.BLWP_RUN_OVER = (word, run) => {', '');
+  const runOver = (win, run) => {
+    const location = { pathname: '/', search: '?round=aa&play=1' };
+    const history = { replaceState: (_s, _t, url) => { const i = url.indexOf('?'); location.search = i < 0 ? '' : url.slice(i); } };
+    new Function('window', 'location', 'history', 'prefetchReplayNodes', 'URLSearchParams', 'word', 'run', body)(
+      win, location, history, () => {}, URLSearchParams, 'FINISHED', run);
+    return location.search;
+  };
+  const later = Date.now() + 60000;
+  assert.equal(runOver({ BLWP_RESUME: { roundIdHex: 'aa', caughtUp: false, closeMs: later } }, null), '?round=aa&play=1', 'catching up: stays');
+  assert.equal(runOver({ BLWP_RESUME: { roundIdHex: 'aa', caughtUp: true, closeMs: later } }, { roundHex: 'bb' }), '?round=aa&play=1', 'another run\'s end: stays');
+  const w = { BLWP_RESUME: { roundIdHex: 'aa', caughtUp: true, closeMs: later } };
+  assert.equal(runOver(w, { roundHex: 'aa' }), '', 'the resumed run itself ended: the lobby\'s address');
+  assert.equal(w.BLWP_RESUME, null, 'and the resume is over');
+  assert.equal(runOver({ BLWP_RESUME: { roundIdHex: 'aa', caughtUp: false, closeMs: Date.now() - 1 } }, null), '', 'its round closed');
+});

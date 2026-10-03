@@ -37,7 +37,7 @@ import {
   encodeRoundContract, decodeRoundContract, encodeEntryContract, decodeEntryContract, roundId, entryId, lastTickOfRun,
 } from '../../protocol/src/contracts.js';
 import {
-  GENESIS, decodeTranscript, checkTranscript, transcriptBelongsToEntry,
+  GENESIS, decodeTranscript, checkTranscript, transcriptBelongsToEntry, flatten,
 } from '../../protocol/src/transcript.js';
 import { encodeInputBatch, batchId, batchTicks } from '../../protocol/src/batch.js';
 import { fromHex, toHex, sha256 } from '../../protocol/src/hash.js';
@@ -261,6 +261,27 @@ const RUN_ENDING_WORDS = Object.freeze({ 1: 'DELIVERED', 2: 'WRECKED', 3: 'MISSE
 export const LOCK_HAND_MS = 120000;
 
 const OPENED_ROUNDS = new Map();
+
+/**
+ * THE CORE STEPPED THROUGH A TRANSCRIPT, as a seat replays it (blwp-node replay.js, core adapter eventsOf): each tick's
+ * tape, load, sample and liquidation BEFORE that tick, then its five words. The page's core after a reload is then the
+ * state its marks were hashed from, and the run goes on from the tick the node is owed. `core` is the page's sim
+ * (step(st, w0..w4), submitTape/Load/Sample/Liquidation(st, ...)). Answers the next tick.
+ */
+export function catchUpCore(core, st, transcript) {
+  const f = flatten(transcript);
+  const at = (rows) => new Map(rows.map(([i, ...v]) => [i, v]));
+  const tapes = at(f.tapes), loads = at(f.loads), samples = at(f.samples), due = at(f.liquidations);
+  for (let i = 0; i < f.ticks.length; i++) {
+    if (tapes.has(i)) core.submitTape(st, tapes.get(i));
+    if (loads.has(i)) core.submitLoad(st, ...loads.get(i));
+    if (samples.has(i)) core.submitSample(st, samples.get(i)[0]);
+    if (due.has(i) && core.submitLiquidation) core.submitLiquidation(st, due.get(i)[0]);
+    const w = f.ticks[i];
+    core.step(st, w[0], w[1], w[2], w[3], w[4]);
+  }
+  return f.firstTick + f.ticks.length;
+}
 
 export class Client {
   /**
@@ -1211,9 +1232,9 @@ export class Client {
    * fetch. Verified rather than trusted for the same reason as before: a
    * receipt taken on a node's word is not evidence of anything.
    */
-  async recoverReceipts({ roundId, entryId }) {
+  async recoverReceipts({ roundId, entryId }, base = this.base) {
     const r = await readWithOneRetry(fetch,
-      `${this.base}/receipts?round=${toHex(roundId)}&entry=${toHex(entryId)}`);
+      `${base}/receipts?round=${toHex(roundId)}&entry=${toHex(entryId)}`);
     if (!r.ok) throw new Error(`the node refused the receipts: ${(await r.text()).trim()}`);
     const bytes = new Uint8Array(await r.arrayBuffer());
     if (bytes.length % SIGNED_RECEIPT_BYTES !== 0)
@@ -1633,6 +1654,14 @@ export class Client {
     // cannot inflate the count and a receipt that fails its mark, the
     // committee or its signature never reached the count at all.
     const marks = await this.recoverReceipts({ roundId, entryId });
+    // AND EACH COMMITTEE PEER'S OWN RECEIPTS (the owner 2026-10-03, the reload in a running round): every node receipts a
+    // mark to the client that sent it, so after a RELOAD the newest mark's receipts were in the closed tab - measured on
+    // 0.0.2493, all 7 seats held mark 120 with one receipt each (their own), this node's /receipts showed 1, the resume
+    // adopted mark 60 and every later mark was refused "does not follow the chain head". Each peer's receipts are
+    // verified one by one exactly as this node's, so the 5-of-7 rule is the same; a peer that does not answer adds none.
+    const fromPeers = await Promise.all((this.peers || []).map((base) =>
+      this.recoverReceipts({ roundId, entryId }, base).catch(() => [])));
+    for (const more of fromPeers) marks.push(...more);
     const c = await readWithOneRetry(fetch,
       `${this.base}/checkpoints?round=${toHex(roundId)}&entry=${toHex(entryId)}`);
     const cb = new Uint8Array(await c.arrayBuffer());
@@ -1654,7 +1683,22 @@ export class Client {
 
     return { ticks: ok.ticks, batches: t.batches.length, nextTick: this.nextTick,
              batchHead: this.batchHead, head: this.head, receipts: marks.length,
-             live: adopted !== null, witnessed: adopted ? this.witnessed(adopted) : 0 };
+             live: adopted !== null, witnessed: adopted ? this.witnessed(adopted) : 0, transcript: t };
+  }
+
+  /**
+   * A RUN TAKEN BACK AFTER THE TAB WAS RELOADED (the owner 2026-10-03: "a reload after the round has started ... That run
+   * must not be lost"). The same entry and session key (the page kept both); this client is new and knows nothing of the
+   * run, so it is told the round and then resumes from what the node holds - its input chain, its next tick and the newest
+   * mark five committee members carried. NOTHING IS RECORDED UNTIL THAT IS DONE: the game ticks through the fetches, and a
+   * tick recorded at this client's 0 would be published as the input of a tick the node already holds. The caller steps
+   * its core through the returned transcript (`catchUpCore`) before it records again.
+   */
+  async resumeAfterReload({ roundId, entryId, blockTicks }) {
+    this.setRound({ roundId, entryId, blockTicks });
+    const where = this.where;
+    this.where = null;
+    try { return await this.resume(where); } finally { this.where = where; }
   }
 
   /**
