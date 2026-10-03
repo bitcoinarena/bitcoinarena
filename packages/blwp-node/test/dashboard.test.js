@@ -14,7 +14,7 @@ test('an empty node: every category and period is there, at 0, with 30 days of c
   assert.equal(d.days.length, 30);
   assert.equal(d.days.at(-1).day, '2026-10-03');
   assert.equal(d.roundsChecked, 0);
-  assert.match(d.notes.guardian, /not paid yet/);
+  assert.match(d.notes.guardian, /guardian third/);
   assert.equal(typeof d.node, 'string');
 });
 

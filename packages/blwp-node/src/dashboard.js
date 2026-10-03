@@ -6,7 +6,7 @@
 // node has been active, which rounds it checked and what it earned on each, which settlements it made, and which
 // federations it is in."
 //
-// EVERY FIGURE IS READ FROM THIS NODE'S OWN STORE - nothing asked of a peer, nothing estimated:
+// EVERY FIGURE IS READ FROM THIS NODE'S OWN STORE (and its census, through `poolsFor`) - nothing asked of a peer, nothing estimated:
 //   - a round it checked: one in which it signed at least one player's result;
 //   - its fee share in that round: §22A's table (`nodeFeeTable`) over the entries it signed a result for, its two pools
 //     the round's signer nodes - the table the settlement claims the fee locks by; EARNED once this node's settlement of
@@ -22,7 +22,7 @@ const DAY = 86400000;
 const hex = (b) => toHex(new Uint8Array(b));
 
 /** The dashboard's figures, from `round` (a Round over this node's store) at `nowMs`. */
-export function dashboardData(round, { nowMs = Date.now(), roundsShown = 200 } = {}) {
+export function dashboardData(round, { nowMs = Date.now(), roundsShown = 200, poolsFor = null } = {}) {
   const db = round.db;
   const me = hex(round.pubkey);
   const first = db.prepare('SELECT MIN(opened_ms) AS t FROM rounds').get();
@@ -52,14 +52,17 @@ export function dashboardData(round, { nowMs = Date.now(), roundsShown = 200 } =
         entries.push({ pubkey: e.playerPubkey, stakeMsat: e.stakeMsat, outcome: res.outcome });
       } catch { /* an unreadable row earns nothing */ }
     }
-    let gameVerify = 0n; let settlement = 0n;
+    let gameVerify = 0n; let settlement = 0n; let guardian = 0n;
     if (entries.length && contract.stakeMsat > 0n && Array.isArray(contract.nodes)) {
       try {
-        const table = nodeFeeTable({ contract, entries, pools: { gameVerify: contract.nodes, settlement: contract.nodes },
-          eligible: new Set(contract.nodes.map(hex)) });
+        // THE SAME POOLS THE SETTLEMENT PAYS BY (server: the census committees and the federation's guardians)
+        let pools = { gameVerify: contract.nodes, settlement: contract.nodes, guardian: [] };
+        try { if (poolsFor) pools = poolsFor(new Uint8Array(r.round_id), contract) || pools; } catch { /* the contract's own nodes */ }
+        const all = [...pools.gameVerify, ...pools.settlement, ...(pools.guardian || [])];
+        const table = nodeFeeTable({ contract, entries, pools, eligible: new Set(all.map(hex)) });
         for (const [k, msat] of table.signerNodes) {
           if (!k.endsWith(me)) continue;
-          if (k.startsWith('gameVerify')) gameVerify += msat; else settlement += msat;
+          if (k.startsWith('gameVerify')) gameVerify += msat; else if (k.startsWith('guardian')) guardian += msat; else settlement += msat;
         }
       } catch { /* a round the table refuses earns nothing here */ }
     }
@@ -67,7 +70,7 @@ export function dashboardData(round, { nowMs = Date.now(), roundsShown = 200 } =
     rounds.push({ id: hex(r.round_id), startMs: Number(contract.startTimeMs), free: contract.stakeMsat === 0n,
       stakeMsat: String(contract.stakeMsat), entries: r.n, checked: mine.length,
       settlement: s ? { state: s.state, madeMs: Number(s.made_ms), why: String(s.why || '').slice(0, 160) } : null,
-      earned: s && s.state === 'ACCEPTED', gameVerifyMsat: String(gameVerify), settlementMsat: String(settlement) });
+      earned: s && s.state === 'ACCEPTED', gameVerifyMsat: String(gameVerify), settlementMsat: String(settlement), guardianMsat: String(guardian) });
   }
   const checked = rounds.filter((r) => r.checked > 0);
   // TOTALS FOR THE DAY, THE MONTH, THE YEAR (UTC), earned only
@@ -79,7 +82,7 @@ export function dashboardData(round, { nowMs = Date.now(), roundsShown = 200 } =
   const totals = { day: zero(), month: zero(), year: zero(), owed: zero() };
   const daily = new Map();
   for (const r of checked) {
-    const add = (t) => { t.gameVerifyMsat += BigInt(r.gameVerifyMsat); t.settlementMsat += BigInt(r.settlementMsat); };
+    const add = (t) => { t.gameVerifyMsat += BigInt(r.gameVerifyMsat); t.settlementMsat += BigInt(r.settlementMsat); t.guardianMsat += BigInt(r.guardianMsat); };
     if (!r.earned) { add(totals.owed); continue; }
     const at = r.settlement.madeMs;
     if (at >= dayStart) add(totals.day);
@@ -108,7 +111,7 @@ export function dashboardData(round, { nowMs = Date.now(), roundsShown = 200 } =
     days, roundsChecked: checked.length, rounds: checked.slice(0, roundsShown),
     settlements, settlementsByState: byState, federations: [...federations.values()],
     notes: {
-      guardian: 'the fee table pays two pools (game/verify, settlement); the guardian third is not paid yet',
+      guardian: 'the guardian third (§22A) goes to the census nodes guarding the round\'s federation; this node\'s share is shown when it guards it',
       lightning: 'this node holds no Lightning channel', gateway: 'this node pays no gateway',
     },
   };
@@ -132,7 +135,7 @@ th{color:var(--dim);font-weight:600}td.n{text-align:right;font-variant-numeric:t
 </style></head><body>
 <h1>Node Dashboard</h1><div class="sub" id="who">loading…</div>
 <h2>Earnings</h2><div class="tabs" id="tabs"></div><div class="grid" id="totals" style="margin-top:8px"></div>
-<h2>Fee earned per day, last 30 days (msat)</h2><div class="card"><div class="legend"><span><i style="background:var(--gv)"></i>game/verify</span><span><i style="background:var(--st)"></i>settlement</span></div><div id="chart"></div></div>
+<h2>Fee earned per day, last 30 days (msat)</h2><div class="card"><div class="legend"><span><i style="background:var(--gv)"></i>game/verify</span><span><i style="background:var(--st)"></i>settlement</span><span><i style="background:var(--gd)"></i>guardian</span></div><div id="chart"></div></div>
 <h2>Rounds checked</h2><div class="card scroll"><table id="rounds"></table></div>
 <h2>Settlements</h2><div class="card scroll"><div id="sstate" class="sub"></div><table id="settle"></table></div>
 <h2>Federations</h2><div class="card scroll"><table id="feds"></table></div>
@@ -143,16 +146,16 @@ const el=(id)=>document.getElementById(id);
 let D=null,period='day';
 function totals(){const T=D.totals[period];const names=[['gameVerifyMsat','Game/verify fee'],['settlementMsat','Settlement fee'],['guardianMsat','Guardian/custody fee'],['otherMsat','Other earnings'],['lightningCostMsat','Lightning costs'],['gatewayCostMsat','Gateway costs']];
 el('totals').innerHTML='<div class="card"><h3>'+({day:'Today',month:'This month',year:'This year'}[period])+' (earned: settlement ACCEPTED)</h3>'+names.map(([k,n])=>'<div class="row"><span>'+n+'</span><b>'+(k.includes('Cost')&&T[k]!=='0'?'−':'')+sat(T[k])+'</b></div>').join('')+'<div class="row profit"><span>Absolute profit</span><b>'+sat(T.profitMsat)+'</b></div></div>'
- +'<div class="card"><h3>Owed (rounds not settled yet)</h3><div class="row"><span>Game/verify</span><b>'+sat(D.totals.owed.gameVerifyMsat)+'</b></div><div class="row"><span>Settlement</span><b>'+sat(D.totals.owed.settlementMsat)+'</b></div></div>'
+ +'<div class="card"><h3>Owed (rounds not settled yet)</h3><div class="row"><span>Game/verify</span><b>'+sat(D.totals.owed.gameVerifyMsat)+'</b></div><div class="row"><span>Settlement</span><b>'+sat(D.totals.owed.settlementMsat)+'</b></div><div class="row"><span>Guardian</span><b>'+sat(D.totals.owed.guardianMsat)+'</b></div></div>'
  +'<div class="card"><h3>Notes</h3><div class="sub" style="margin:0">'+D.notes.guardian+'<br>'+D.notes.lightning+'<br>'+D.notes.gateway+'</div></div>';
 el('tabs').innerHTML=['day','month','year'].map(p=>'<button class="'+(p===period?'on':'')+'" data-p="'+p+'">'+({day:'Day',month:'Month',year:'Year'}[p])+'</button>').join('');
 el('tabs').querySelectorAll('button').forEach(b=>b.onclick=()=>{period=b.dataset.p;totals()});}
-function chart(){const W=1000,H=220,P=34,days=D.days,max=Math.max(1,...days.map(d=>Number(d.gameVerifyMsat)+Number(d.settlementMsat)));const bw=(W-P)/days.length;
+function chart(){const W=1000,H=220,P=34,days=D.days,max=Math.max(1,...days.map(d=>Number(d.gameVerifyMsat)+Number(d.settlementMsat)+Number(d.guardianMsat)));const bw=(W-P)/days.length;
 let s='<svg viewBox="0 0 '+W+' '+(H+24)+'" role="img" aria-label="fee per day">';for(let i=0;i<=4;i++){const y=H-(H-10)*i/4;s+='<line x1="'+P+'" x2="'+W+'" y1="'+y+'" y2="'+y+'" stroke="var(--line)"/><text x="0" y="'+(y+4)+'" fill="var(--dim)" font-size="11">'+Math.round(max*i/4)+'</text>'}
-days.forEach((d,i)=>{const g=Number(d.gameVerifyMsat),st=Number(d.settlementMsat),hg=(H-10)*g/max,hs=(H-10)*st/max,x=P+i*bw+2;
-s+='<g><title>'+d.day+': game/verify '+g+' msat, settlement '+st+' msat</title><rect x="'+x+'" y="'+(H-hg)+'" width="'+(bw-4)+'" height="'+hg+'" fill="var(--gv)"/><rect x="'+x+'" y="'+(H-hg-hs)+'" width="'+(bw-4)+'" height="'+hs+'" fill="var(--st)"/></g>';
+days.forEach((d,i)=>{const g=Number(d.gameVerifyMsat),st=Number(d.settlementMsat),gd=Number(d.guardianMsat),hg=(H-10)*g/max,hs=(H-10)*st/max,hd=(H-10)*gd/max,x=P+i*bw+2;
+s+='<g><title>'+d.day+': game/verify '+g+' msat, settlement '+st+' msat, guardian '+gd+' msat</title><rect x="'+x+'" y="'+(H-hg)+'" width="'+(bw-4)+'" height="'+hg+'" fill="var(--gv)"/><rect x="'+x+'" y="'+(H-hg-hs)+'" width="'+(bw-4)+'" height="'+hs+'" fill="var(--st)"/><rect x="'+x+'" y="'+(H-hg-hs-hd)+'" width="'+(bw-4)+'" height="'+hd+'" fill="var(--gd)"/></g>';
 if(i%5===0)s+='<text x="'+x+'" y="'+(H+16)+'" fill="var(--dim)" font-size="11">'+d.day.slice(5)+'</text>'});el('chart').innerHTML=s+'</svg>'}
-function tables(){el('rounds').innerHTML='<tr><th>Round</th><th>Start</th><th>Kind</th><th class="n">Entries</th><th class="n">Checked</th><th class="n">Game/verify</th><th class="n">Settlement</th><th>Settlement</th></tr>'+D.rounds.map(r=>'<tr><td>'+r.id.slice(0,12)+'</td><td>'+t(r.startMs)+'</td><td>'+(r.free?'free':sat(r.stakeMsat))+'</td><td class="n">'+r.entries+'</td><td class="n">'+r.checked+'</td><td class="n">'+sat(r.gameVerifyMsat)+'</td><td class="n">'+sat(r.settlementMsat)+'</td><td class="'+(r.earned?'ok':'')+'">'+(r.settlement?r.settlement.state:'-')+'</td></tr>').join('');
+function tables(){el('rounds').innerHTML='<tr><th>Round</th><th>Start</th><th>Kind</th><th class="n">Entries</th><th class="n">Checked</th><th class="n">Game/verify</th><th class="n">Settlement</th><th class="n">Guardian</th><th>Settlement</th></tr>'+D.rounds.map(r=>'<tr><td>'+r.id.slice(0,12)+'</td><td>'+t(r.startMs)+'</td><td>'+(r.free?'free':sat(r.stakeMsat))+'</td><td class="n">'+r.entries+'</td><td class="n">'+r.checked+'</td><td class="n">'+sat(r.gameVerifyMsat)+'</td><td class="n">'+sat(r.settlementMsat)+'</td><td class="n">'+sat(r.guardianMsat)+'</td><td class="'+(r.earned?'ok':'')+'">'+(r.settlement?r.settlement.state:'-')+'</td></tr>').join('');
 el('sstate').textContent=Object.entries(D.settlementsByState).map(([k,v])=>k+' '+v).join(' · ')||'none yet';
 el('settle').innerHTML='<tr><th>Round</th><th>Made</th><th>State</th><th>What</th></tr>'+D.settlements.map(s=>'<tr><td>'+s.round.slice(0,12)+'</td><td>'+t(s.madeMs)+'</td><td class="'+(s.state==='ACCEPTED'?'ok':s.state==='REFUSED'?'bad':'')+'">'+s.state+'</td><td>'+s.why.replace(/[<>&]/g,'')+'</td></tr>').join('');
 el('feds').innerHTML='<tr><th>Federation</th><th class="n">Paid rounds</th><th>First</th><th>Last</th></tr>'+D.federations.map(f=>'<tr><td>'+f.federation.slice(0,16)+'…</td><td class="n">'+f.rounds+'</td><td>'+t(f.firstMs)+'</td><td>'+t(f.lastMs)+'</td></tr>').join('')}

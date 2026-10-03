@@ -377,6 +377,21 @@ export class Roster {
    * headers it agreed from providers and counts with the keys its own lock client read off the
    * federation (blwp-client/src/guardians.js). A signer node can omit a bond here; it cannot forge one.
    */
+  /**
+   * THE ROUND'S GUARDIANS, FOR THE GUARDIAN POOL (§22A v4.6.4): the census nodes whose advertisement names the round's
+   * federation among the ones they guard (one node is one guardian, §23A.2), by node key. None named: an empty list, and
+   * the fee table keeps its two pools.
+   */
+  guardiansFor(roundIdBytes) {
+    const census = this.censusFor(roundIdBytes);
+    if (!census.ok) return census;
+    const contract = decodeRoundContract(new Uint8Array(this.round.get(roundIdBytes).contract));
+    const fid = toHex(contract.federationId);
+    return { ok: true, guardians: census.entries
+      .filter((e) => ((e.advert && e.advert.guardianOf) || []).some((g) => toHex(g.federationId) === fid))
+      .map((e) => e.pubkey) };
+  }
+
   guardianBondsFor(roundIdBytes) {
     const census = this.censusFor(roundIdBytes);
     if (!census.ok) return census;

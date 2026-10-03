@@ -20,7 +20,7 @@ import { remainderOrder } from '../src/payout.js';
 import {
   nodeFeeTable, grossVolumeMsat, feeOwed, poolOfRole, entryFeeMsat, feeMatchesEntry,
   NODE_FEE_BPS, POOL_BPS,
-  GAME_VERIFY, SETTLEMENT, POOLS,
+  GAME_VERIFY, SETTLEMENT, GUARDIAN, POOLS,
 } from '../src/fee.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -74,8 +74,21 @@ test('a signer node in both pools earns both shares, and they do not merge', () 
 
 test('the rates are 22A\'s and are not a taste', () => {
   assert.equal(NODE_FEE_BPS, 200, '2.00% of gross_round_volume');
-  assert.equal(POOL_BPS, 100, '1.00% to each pool');
-  assert.deepEqual(POOLS, [GAME_VERIFY, SETTLEMENT]);
+  assert.equal(POOL_BPS, 100, '1.00% to each pool when the round names no guardian (the two-pool table)');
+  assert.deepEqual(POOLS, [GAME_VERIFY, SETTLEMENT, GUARDIAN]);
+});
+
+// THE GUARDIAN POOL (§22A v4.6.4, RULED 2026-09-21 / 2026-10-01 15:44): 2/3 % each to game/verify, settlement and the
+// guardians of the round's federation - and a node in all three pools is owed the same total as under two.
+test('with guardians named the fee splits in three equal thirds, and the leftover msats take turns', () => {
+  const nodes = [new Uint8Array(32).fill(1), new Uint8Array(32).fill(2)];
+  const t = nodeFeeTable({ contract, entries, pools: { gameVerify: nodes, settlement: nodes, guardian: nodes },
+    eligible: new Set(nodes.map((k) => Buffer.from(k).toString('hex'))) });
+  assert.equal(t.fee, 8000n);
+  assert.deepEqual(t.pools, { gameVerify: 2666n, settlement: 2666n, guardian: 2668n });
+  const per = new Map();
+  for (const [k, v] of t.signerNodes) { const key = k.split(':')[1]; per.set(key, (per.get(key) || 0n) + v); }
+  assert.deepEqual([...per.values()].sort(), [4000n, 4000n], 'each node the same total as under two pools');
 });
 
 /**
