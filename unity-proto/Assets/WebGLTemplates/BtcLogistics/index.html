@@ -1391,7 +1391,8 @@
           await wasm.default();
           const onStep = (step) => {
             if (stageEl) stageEl.textContent = 'Stake lock: ' + step + ' …';
-            if (window.BLWP_JOIN) window.BLWP_JOIN.stage = 'stake lock: ' + step;
+            // A ROUND ALREADY SHOWN LOADED keeps its countdown on the line; the lock's steps go to the console
+            if (window.BLWP_JOIN && !window.BLWP_JOIN.loaded) window.BLWP_JOIN.stage = 'stake lock: ' + step;
             console.log('[blwp] stake lock: ' + step);
           };
           const wallet = {
@@ -1555,6 +1556,13 @@
           } else try {
             // THE DEPOSIT ASKED AT THE START OF THE JOIN (above), IN THE PLAYER WALLET BY NOW OR PAID WHILE THIS WAITS.
             const wallet = await (funding || Promise.reject(new Error('no deposit was started for this round')));
+            // THE ROUND IS SHOWN LOADED HERE, THE LOCK FINISHES BEHIND IT (the owner 2026-10-03: "A paid join of an already-open
+            // round stays at most 3 seconds from the click to the loaded round"). Measured on 0.0.2479: the lock's federation
+            // acceptance alone took 1.9-2.6 s (1.7-5.2 s earlier) of a 3.5-4.7 s join. The player wallet holds this round's
+            // locks and the stake's handout is taken; a join held to the round's start shows its countdown now, and the
+            // lock, then the entry, are made while it counts. Nothing is sent to a seat earlier than before: the entry still
+            // names an accepted lock. A lock or an entry that fails refuses the join by name, as it did.
+            if (typeof window.BLWP_JOIN_LOADED === 'function') window.BLWP_JOIN_LOADED();
             // THE STAKE, FROM THE PLAYER WALLET: it asks for no deposit.
             const made = await BLWPCLIENT.lockStake(Object.assign({}, wallet, {
               roundId: BLWPCLIENT.fromHex(named.roundIdHex), stake, claimKey, playerPubkey: player.pubkey,
@@ -3123,7 +3131,7 @@
           const join = window.BLWP_JOIN = { state: 'joining', why: '', stage: '', round: id, kindKnown: true, free: !!r.free,
             stakeSats: Number(r.stakeSats) || 0, next: !!next };
           const refuse = (why) => {
-            join.state = 'refused';
+            join.state = 'refused'; join.held = false; join.loaded = false;
             join.why = String(why);
             if (/the round is closed/.test(join.why)) (window.BLWP_CLOSED_ROUNDS = window.BLWP_CLOSED_ROUNDS || new Set()).add(id);
             // not joined: the lobby's address back, and no round left named for Unity to open
@@ -3151,8 +3159,27 @@
             const silent = unanswered.length ? unanswered : named.nodes;
             refuse('signer node' + (silent.length === 1 ? ' ' : 's ') + hosts(silent) + ' did not answer in ' + JOIN_ANSWER_S + ' s');
           }, 1000);
+          // THE ROUND SHOWN LOADED BEFORE ITS LOCK IS ACCEPTED (BLWP_JOIN_LOADED, called by the join once the player wallet
+          // holds the locks): only for a join held to a start at least LOADED_LEAD_MS away - the lock and the entry are
+          // made inside that lead; nearer the start the line keeps naming the lock's steps as before.
+          const LOADED_LEAD_MS = 20000;
+          window.BLWP_JOIN_LOADED = () => {
+            if (window.BLWP_JOIN !== join || join.cancelled || join.state !== 'joining' || join.loaded) return;
+            if (!(holdUntilMs - Date.now() > LOADED_LEAD_MS)) return;
+            join.loaded = true; join.held = true;
+            const s0 = Math.max(0, Math.ceil((holdUntilMs - Date.now()) / 1000));
+            const tick = () => {
+              if (window.BLWP_JOIN !== join || join.state !== 'joining' || !join.loaded || join.committed) return;
+              const s = Math.max(0, Math.ceil((holdUntilMs - Date.now()) / 1000));
+              join.stage = (next && !link ? 'next round starts in ' : 'round starts in ') + Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+              setTimeout(tick, 1000);
+            };
+            tick();
+            console.log('[blwp] TIMED round loaded ' + (Date.now() - since) + ' ms (starts in ' + s0 + ' s; the lock and the entry go on behind it)');
+          };
           joinTheRoundIfOneWasNamed()
             .then(() => {
+              join.committed = true;
               if (join.cancelled) {
                 if (window.BLWP_JOIN === join) { window.BLWP_ENTRY = undefined; window.BLWP_CHAIN = undefined; window.BLWP_ADVERT = undefined; window.BLWP_ROUND = undefined; }
                 console.error('[blwp] a join answered after it was refused by time: dropped');
