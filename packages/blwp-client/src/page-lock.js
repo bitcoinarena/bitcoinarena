@@ -252,15 +252,34 @@ async function locksFor(round, client, donationMsat, donationRecipients = null) 
  * the notes the stake lock leaves (measured in a real browser, 0.0.1236: 21504 msat left for a 20000 msat fee lock that
  * then cost more). `null` quotes: the wallet holds too little to be quoted at all (the stock dry run).
  */
+// A LOCK'S QUOTE, KEPT FOR THE WALLET AS IT STANDS (the owner 2026-10-02, the join's 2-3 s): the lock client's quote is a dry
+// run over the notes held, asked once for the deposit check and again for the lock - measured 1.9 s between 'the player
+// wallet is open' and 'locking' in a paid join. Kept per client, amount and balance (a deposit or a spend is another
+// wallet and quotes afresh), for two minutes; the two locks' quotes are asked together.
+const QUOTES = new WeakMap();
+async function quoteLock(client, m) {
+  let byKey = QUOTES.get(client);
+  if (!byKey) { byKey = new Map(); QUOTES.set(client, byKey); }
+  let balance = '';
+  try { balance = String(await client.balanceMsat()); } catch { balance = 'unknown'; }
+  const key = `${m}|${balance}`;
+  const hit = byKey.get(key);
+  if (hit && Date.now() - hit.at < 120000) return hit.msat;
+  const msat = BigInt(await client.lockCostMsat(String(m)));
+  byKey.set(key, { at: Date.now(), msat });
+  return msat;
+}
 async function needFor(client, LockClient, { amount, feeMsat, zeroFees = false, donationCostMsat: donation = 0n }) {
   const locks = feeMsat > 0n ? [amount, feeMsat] : [amount];
   let quoted = 0n;
-  for (const m of locks) {
-    try { quoted += BigInt(await client.lockCostMsat(String(m))); } catch (e) {
+  const quotes = await Promise.all(locks.map((m) => quoteLock(client, m).then((q) => ({ q }), (e) => ({ e }))));
+  for (const { q, e } of quotes) {
+    if (e) {
       if (!/insufficient funds/i.test(String((e && e.message) || e))) throw e;
       quoted = null;
       break;
     }
+    quoted += q;
   }
   const margin = feeMsat > 0n && !zeroFees ? BigInt(LockClient.lockAllowanceMsat(String(feeMsat))) : 0n;
   const allowance = zeroFees ? locks.reduce((t, m) => t + (ceilNote(m) - m), 0n) : locks.reduce((t, m) => t + BigInt(LockClient.lockAllowanceMsat(String(m))), 0n);
