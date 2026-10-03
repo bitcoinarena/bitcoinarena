@@ -56,7 +56,9 @@ if (typeof d.bond !== 'string' || !/^https:\/\//.test(d.bond)) bad('names no bon
 if (!/^[0-9a-f]{128}$/.test(String(d.advert))) bad('carries no signed advertisement');
 (async () => {
   for (const n of nodes) {
-    let r; try { r = await fetch(`${n}/rounds`, { signal: AbortSignal.timeout(15000) }); } catch (e) { bad(`${n}/rounds did not answer: ${e.message}`); }
+    // ?next=1, NOT THE WHOLE LIST (PAID-NIGHT-2155, measured: a bare /rounds is every round the node holds - 2.2 MB, 7 s,
+    // up to 17 s on testnet4 seat 1's event loop, every PLAY behind it waiting); one listed round proves it answers
+    let r; try { r = await fetch(`${n}/rounds?next=1`, { signal: AbortSignal.timeout(15000) }); } catch (e) { bad(`${n}/rounds did not answer: ${e.message}`); }
     if (r.status !== 200) bad(`${n}/rounds answered ${r.status}`);
     let body; try { body = await r.json(); } catch { bad(`${n}/rounds is not JSON`); }
     if (!Array.isArray(body.rounds)) bad(`${n}/rounds lists no rounds array`);
@@ -79,7 +81,7 @@ const [daily, testnet] = process.argv.slice(2).map((f) => JSON.parse(fs.readFile
   const { execFileSync } = require('child_process');
   let ok = 0;
   for (const n of testnet.node || []) {
-    const u = new URL(`${n}/rounds`);
+    const u = new URL(`${n}/rounds?next=1`);   // not the whole list: a bare /rounds held seat 1's loop 7-17 s
     try {
       const code = execFileSync('curl', ['-s', '-o', '/dev/null', '-w', '%{http_code}', '-m', '60',
         '--resolve', `${u.hostname}:443:${process.env.BLWP_TAILNET_IP || '198.51.100.7'}`, u.toString()]).toString();
