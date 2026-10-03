@@ -3958,6 +3958,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             };
             watching.set(sock, who);
 
+            // THE OTHERS BROUGHT TO THEIR NEWEST TICK FIRST (the owner 2026-09-17: "the ghost must be realtime"): since nobody-
+            // watching rounds make no pictures (NODE-OPT-1648, 41a58db5), a watcher arriving after a truck drove was shown
+            // it from the start - measured, ghost-realtime: tick 149 of a truck that had published 1199. The same bounded
+            // walk the warm step takes, once, for this watcher; a run longer than it catches up over the next pushes.
+            try {
+              timed('ghost watcher warm', () => {
+                for (const e of round.entriesOf(who.roundId)) {
+                  const eid = e.entryId;
+                  if (hexOf(eid) === hexOf(who.entryId)) continue;
+                  const published = ghosts.playedThrough(who.roundId, eid);
+                  for (let slice = 0; slice < 8; slice++) {
+                    const made = ghosts.latest(who.roundId, eid);
+                    if (!made.ok || published === null || made.ghost.tick >= published) break;
+                  }
+                }
+              });
+            } catch (e) { console.error(`[ghosts] warming for a new watcher: ${e.message}`); }
+
             // AND THE FIELD AS IT STANDS, so a player joining late sees the
             // trucks already driving instead of waiting for the next batch.
             // THE COUNT GOES FIRST and the frames follow it: a client that

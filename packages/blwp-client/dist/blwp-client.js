@@ -9217,6 +9217,16 @@ function remainderSettlement({ roundId, claims, forfeits, fees, contract, donati
   for (let i = 0; i < split.shares.length; i++) {
     const { lnurl, amountMsat: owedMsat } = split.shares[i];
     const id = donationSendId(roundId, i);
+    // A RECIPIENT WITH A KEY (the owner 2026-10-03, FEDERATION.md "Donations in the federation"): paid as a winner is - a
+    // pre-expired payout contract to its own key, which only it can redeem. No Lightning send, nothing held for a retry.
+    if (split.shares[i].recipientPk instanceof Uint8Array) {
+      const pk = split.shares[i].recipientPk;
+      const msat = largestPayoutMsat(fees, owedMsat);
+      if (msat === 0n) { out.push({ pubkey: id, owedMsat, why: `the donation share for ${split.shares[i].label || 'a key'} does not pay its own output fee` }); continue; }
+      payouts.push({ pubkey: id, payoutPk: pk, owedMsat, msat, feeMsat: lnv2FeeMsat(fees, msat), kind: 'donation key',
+        donation: { id, index: i, recipientPk: pk, label: split.shares[i].label } });
+      continue;
+    }
     const donation = { id, index: i, lnurl };
     const msat = largestPayoutMsat(fees, owedMsat);
     if (msat === 0n) { out.push({ pubkey: id, owedMsat, why: `the donation share for ${lnurl} does not pay its own output fee` }); continue; }
