@@ -746,6 +746,12 @@ const TYPE_DKG_CONTRIBUTION = 0x13;
  * a rotation read as a donation set would be the cold key publishing payees.
  */
 const TYPE_SIGNED_DONATION_SET = 0x14;
+/**
+ * A DONATION SET OF KEYS (the owner 2026-10-03, FEDERATION.md "Donations in the federation"): each recipient is a 33-byte
+ * secp256k1 key the player's lock transaction pays a payout contract to, in the round's federation - no LNURL. Its own
+ * byte, so a set of keys and a set of LNURLs are never the same bytes, and every set already published keeps its id.
+ */
+const TYPE_DONATION_SET_KEYS = 0x1b;
 const TYPE_AUTHORITY_ROTATION = 0x15;
 // ONE SETTLEMENT SIGNER NODE SAYING "this is the round's claim key" (§23.1 step 0,
 // v4.6.2): a client locks a stake to a claim_pk only with the round's
@@ -1776,6 +1782,13 @@ function encodeEntryContract(e) {
   writeOutpoint(w, e.stakeLockOutpoint, 'stakeLockOutpoint');
   writeOutpoint(w, e.feeLockOutpoint, 'feeLockOutpoint');
   w.bytes32(e.claimKeyAttestationRef);
+  // THE DONATION OUTPOINTS (the owner 2026-10-03, FEDERATION.md "Donations in the federation"): where the player's lock
+  // transaction paid each recipient key of a set of keys its share - in the set's order, one per share above 0 msat
+  // (donationOutputsExpected). WRITTEN ONLY WHEN THERE ARE ANY: an entry that pays no key - every entry before this, every
+  // LNURL round - keeps exactly its bytes and its id. An empty list is never written, so an entry has one encoding.
+  const donations = e.donationOutpoints || [];
+  if (!Array.isArray(donations)) throw new Error('donationOutpoints is a list of federation outpoints');
+  if (donations.length) w.vec(donations, (o, ww) => writeOutpoint(ww, o, 'a donation outpoint'));
   return w.finish();
 }
 
@@ -1812,6 +1825,10 @@ function decodeEntryContract(bytes) {
     feeLockOutpoint: readOutpoint(r),
     claimKeyAttestationRef: r.bytes32(),
   };
+  if (r.at < bytes.length) {
+    e.donationOutpoints = r.vec(readOutpoint);
+    if (!e.donationOutpoints.length) throw new Error('an empty list of donation outpoints is not written: these bytes are not an entry\'s one encoding');
+  }
   r.end();
   return e;
 }
@@ -8584,9 +8601,19 @@ function isMixedCase(lnurl) {
  *
  * Answered rather than thrown, like every other decision in this package.
  */
+/** A recipient key: a compressed secp256k1 point, as the claim key (claim-key.js). */
+const RECIPIENT_KEY_BYTES = 33;
+/** A recipient's label is for the screen, short: at most this many characters. */
+const RECIPIENT_LABEL_MAX = 48;
+const isRecipientKey = (b) => b instanceof Uint8Array && b.length === RECIPIENT_KEY_BYTES && (b[0] === 0x02 || b[0] === 0x03);
+/** Does this set pay keys in the federation (FEDERATION.md, the owner 2026-10-03) rather than LNURLs? */
+const donationSetPaysKeys = (recipients) => Array.isArray(recipients) && recipients.length > 0
+  && recipients.some((r) => r && r.recipientPk !== undefined);
+
 function donationSetStands(recipients) {
   if (!Array.isArray(recipients) || !recipients.length)
     return { ok: false, why: 'a donation goes to a set, and this names nobody' };
+  if (donationSetPaysKeys(recipients)) return keySetStands(recipients);
 
   let sum = 0;
   const seen = new Set();
@@ -8630,6 +8657,36 @@ function donationSetStands(recipients) {
 }
 
 /**
+ * A SET OF KEYS, JUDGED (the owner 2026-10-03): every recipient a key - never a set of keys and LNURLs mixed, which would pay
+ * half a donation in the federation and half over Lightning - each key once, each label short, the shares summing to
+ * exactly 10000 as for an LNURL set.
+ */
+function keySetStands(recipients) {
+  let sum = 0;
+  const seen = new Set();
+  for (const [at, r] of recipients.entries()) {
+    if (!r || r.lnurl !== undefined)
+      return { ok: false, why: `recipient ${at} names an LNURL in a set of keys: a set pays keys or LNURLs, never both` };
+    if (!isRecipientKey(r.recipientPk))
+      return { ok: false, why: `recipient ${at} is no 33-byte compressed secp256k1 key` };
+    if (!Number.isInteger(r.shareBps) || r.shareBps < 0)
+      return { ok: false, why: `recipient ${at} has no whole share in basis points` };
+    if (typeof r.label !== 'string' || r.label.length > RECIPIENT_LABEL_MAX)
+      return { ok: false, why: `recipient ${at} has no label of at most ${RECIPIENT_LABEL_MAX} characters` };
+    const key = toHex(r.recipientPk);
+    if (seen.has(key)) return { ok: false, why: `key ${key.slice(0, 16)}… is listed twice, which is one party with two shares` };
+    seen.add(key);
+    sum += r.shareBps;
+  }
+  if (sum !== DONATION_BPS_TOTAL)
+    return { ok: false, why: `those shares sum to ${sum} basis points and 22A says exactly ${DONATION_BPS_TOTAL}` };
+  return { ok: true, why: `${recipients.length} keys sharing exactly ${sum} basis points` };
+}
+
+/** One share's recipient as the set names it: its LNURL, or its key and label. */
+const payeeOf = (r) => (r && r.recipientPk !== undefined ? { recipientPk: r.recipientPk, label: r.label } : { lnurl: r && r.lnurl });
+
+/**
  * WHAT EACH RECIPIENT IS OWED OF ONE PLAYER'S DONATION.
  *
  * "Rounding: compute in millisatoshis, floor each share, and give the
@@ -8663,7 +8720,7 @@ function splitDonation({ donationMsat, recipients }) {
     return {
       owed: true,
       shares: (Array.isArray(recipients) ? recipients : []).map((r) => ({
-        lnurl: r && r.lnurl, amountMsat: 0n,
+        ...payeeOf(r), amountMsat: 0n,
       })),
       why: 'donations are off for this entry, and the set is irrelevant to it',
     };
@@ -8672,7 +8729,7 @@ function splitDonation({ donationMsat, recipients }) {
   if (!stands.ok) return { owed: false, why: stands.why };
 
   const shares = recipients.map((r) => ({
-    lnurl: r.lnurl,
+    ...payeeOf(r),
     amountMsat: (donationMsat * BigInt(r.shareBps)) / BigInt(DONATION_BPS_TOTAL),
   }));
 
@@ -8686,6 +8743,29 @@ function splitDonation({ donationMsat, recipients }) {
     throw new Error(`donation split broken: ${total} of ${donationMsat}`);
 
   return { owed: true, shares, why: `${donationMsat} split over ${shares.length} recipients` };
+}
+
+/**
+ * THE DONATION OUTPUTS AN ENTRY MUST NAME, AND WHICH IS WHICH (the owner 2026-10-03): for a set of keys, one federation
+ * output per share above 0 msat, in the set's order, each a payout contract to that share's key for exactly its amount.
+ * Answers the pairs a signer node checks against the federation ([{ outpoint, recipientPk, amountMsat }]), or why the
+ * entry's list is not the set's: a missing or extra outpoint, or donation outpoints where nothing is donated or the set
+ * pays LNURLs. Zero shares (a donation too small to reach a recipient) name no output.
+ */
+function donationOutputsExpected(entry, recipients) {
+  const named = (entry && entry.donationOutpoints) || [];
+  if (!entry || typeof entry.donationMsat !== 'bigint') return { ok: false, why: 'that entry names no donation' };
+  if (!donationSetPaysKeys(recipients)) {
+    if (named.length) return { ok: false, why: 'that round\'s donation set pays LNURLs, and the entry names donation outputs' };
+    return { ok: true, outputs: [], why: 'the set pays LNURLs: no output in the federation' };
+  }
+  const split = splitDonation({ donationMsat: entry.donationMsat, recipients });
+  if (!split.owed) return { ok: false, why: split.why };
+  const owed = split.shares.filter((sh) => sh.amountMsat > 0n);
+  if (named.length !== owed.length)
+    return { ok: false, why: `that entry names ${named.length} donation output(s) and its donation of ${entry.donationMsat} msat owes ${owed.length}` };
+  return { ok: true, outputs: owed.map((sh, i) => ({ outpoint: named[i], recipientPk: sh.recipientPk, amountMsat: sh.amountMsat })),
+    why: `${owed.length} donation output(s), ${entry.donationMsat} msat` };
 }
 
 /**
@@ -8757,6 +8837,14 @@ const donatedMsat = (entries) =>
 function encodeDonationSet(recipients) {
   const stands = donationSetStands(recipients);
   if (!stands.ok) throw new Error(`that set does not stand: ${stands.why}`);
+  if (donationSetPaysKeys(recipients)) {
+    // A SET OF KEYS: the key, the share, the label - in the order published (the remainder rule reads it)
+    const w = new Writer();
+    w.u8(TYPE_DONATION_SET_KEYS);
+    w.u16(PROTOCOL_VERSION);
+    w.vec(recipients, (r, ww) => { ww.bytes(r.recipientPk, RECIPIENT_KEY_BYTES); ww.u16(r.shareBps); ww.str(r.label); });
+    return w.finish();
+  }
 
   const w = new Writer();
   w.u8(TYPE_DONATION_SET);
@@ -8775,7 +8863,16 @@ function encodeDonationSet(recipients) {
 
 function decodeDonationSet(bytes) {
   const r = new Reader(bytes);
-  if (r.u8() !== TYPE_DONATION_SET) throw new Error('not a donation set');
+  const type = r.u8();
+  if (type === TYPE_DONATION_SET_KEYS) {
+    if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+    const recipients = r.vec((rr) => ({ recipientPk: rr.bytes(RECIPIENT_KEY_BYTES), shareBps: rr.u16(), label: rr.str() }));
+    if (r.at !== bytes.length) throw new Error('trailing bytes after the donation set');
+    const stands = donationSetStands(recipients);
+    if (!stands.ok) throw new Error(`that set does not stand: ${stands.why}`);
+    return recipients;
+  }
+  if (type !== TYPE_DONATION_SET) throw new Error('not a donation set');
   if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
   const recipients = r.vec((rr) => ({ lnurl: rr.str(), shareBps: rr.u16() }));
   if (r.at !== bytes.length) throw new Error('trailing bytes after the donation set');

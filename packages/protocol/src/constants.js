@@ -198,6 +198,12 @@ export const TYPE_DKG_CONTRIBUTION = 0x13;
  * a rotation read as a donation set would be the cold key publishing payees.
  */
 export const TYPE_SIGNED_DONATION_SET = 0x14;
+/**
+ * A DONATION SET OF KEYS (the owner 2026-10-03, FEDERATION.md "Donations in the federation"): each recipient is a 33-byte
+ * secp256k1 key the player's lock transaction pays a payout contract to, in the round's federation - no LNURL. Its own
+ * byte, so a set of keys and a set of LNURLs are never the same bytes, and every set already published keeps its id.
+ */
+export const TYPE_DONATION_SET_KEYS = 0x1b;
 export const TYPE_AUTHORITY_ROTATION = 0x15;
 // ONE SETTLEMENT SIGNER NODE SAYING "this is the round's claim key" (§23.1 step 0,
 // v4.6.2): a client locks a stake to a claim_pk only with the round's
