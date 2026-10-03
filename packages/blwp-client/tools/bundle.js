@@ -181,6 +181,8 @@ out += '         saveCollect: saveCollect, savedCollects: savedCollects, markCol
 // AND 6d's DESTINATION: the tab's round wallet withdrawn over Lightning to the player's own.
 out += '         tabLockWallet: tabLockWallet, withdrawCollected: withdrawCollected, withdrawLine: withdrawLine, makeInvoice: makeInvoice,\n';
 out += '         invoiceQrSvg: invoiceQrSvg,\n';
+// AND THE LOCK QUOTES ASKED AHEAD, while the lobby shows a paid round (the join's 2-3 s).
+out += '         warmLockQuotes: warmLockQuotes,\n';
 // AND A LOCK NO SIGNER NODE WILL SETTLE, BACK BY THE PLAYER'S KEY AFTER ITS EXPIRY, from the tab's record.
 out += '         refundKept: refundKept, refundLine: refundLine,\n';
 // AND NOTHING SPENT BEFORE THE PLAYER WITHDRAWS: the look that spends nothing, and the collect
