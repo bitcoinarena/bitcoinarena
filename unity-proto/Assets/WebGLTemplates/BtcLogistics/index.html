@@ -1209,6 +1209,11 @@
       if (!named) return;
 
       window.BLWP_ROUND = named.round;
+      // THE ROUND THE PLAYER WAS GIVEN, AS THIS JOIN READ IT FROM THE ADDRESS (the owner 2026-10-03, the chained paid join): the
+      // session's check takes it from here, not from the address at session open - the run's end puts the lobby's address
+      // back (BLWP_RUN_OVER), and a next round's join that began just before it lost its round= and was refused ("no round
+      // id from the player", measured 13:33:14Z on 340213ac).
+      window.BLWP_GIVEN_ROUND = named.roundIdHex;
       // BLWP_CHAIN AND BLWP_ADVERT ARE SET LAST, beside BLWP_ENTRY (M3.3-34): they
       // are what tells Unity there is a session to open (BlwpNetNodeUrl), and a
       // signer node PLAY takes in this page lands while Unity is already running - a
@@ -2970,8 +2975,8 @@
           ? window.BLWP_JOIN.round : null;
         // THE SOONEST ROUND WHEN NOTHING MUST BE DEPOSITED FIRST (the owner 2026-10-03): a free row, or a paid row whose stake
         // the player wallet already holds, needs only 15 s of entry left; a wallet that must take a deposit keeps 90 s
-        const walletMsat = window.BLWP_WALLET_BALANCE && typeof window.BLWP_WALLET_BALANCE.sats === 'number' ? BigInt(window.BLWP_WALLET_BALANCE.sats) * 1000n : 0n;
-        const leadMsFor = (r) => (r.free || (r.stakeMsat !== undefined && walletMsat >= BigInt(r.stakeMsat))
+        const walletSats = window.BLWP_WALLET_BALANCE && typeof window.BLWP_WALLET_BALANCE.sats === 'number' ? window.BLWP_WALLET_BALANCE.sats : 0;
+        const leadMsFor = (r) => (r.free || walletSats >= BLWPCLIENT.lobbyStakeSats(r)
           ? BLWPCLIENT.FUNDED_JOIN_LEAD_MS : BLWPCLIENT.SERIES_JOIN_LEAD_MS);
         const picked = BLWPCLIENT.lobbyOnePerKind(window.BLWP_LOBBY_ROWS, Date.now(), { paidSeriesOnly: true, leadMsFor });
         window.BLWP_LOBBY = (BLWPCLIENT.lobbyKeepJoined ? BLWPCLIENT.lobbyKeepJoined(picked, window.BLWP_LOBBY_ROWS, going) : picked).map((r) => ({ id: r.id, phase: r.phase, free: r.free, wallet: r.wallet,
