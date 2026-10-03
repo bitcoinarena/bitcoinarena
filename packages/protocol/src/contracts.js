@@ -403,6 +403,13 @@ export function encodeEntryContract(e) {
   writeOutpoint(w, e.stakeLockOutpoint, 'stakeLockOutpoint');
   writeOutpoint(w, e.feeLockOutpoint, 'feeLockOutpoint');
   w.bytes32(e.claimKeyAttestationRef);
+  // THE DONATION OUTPOINTS (the owner 2026-10-03, FEDERATION.md "Donations in the federation"): where the player's lock
+  // transaction paid each recipient key of a set of keys its share - in the set's order, one per share above 0 msat
+  // (donationOutputsExpected). WRITTEN ONLY WHEN THERE ARE ANY: an entry that pays no key - every entry before this, every
+  // LNURL round - keeps exactly its bytes and its id. An empty list is never written, so an entry has one encoding.
+  const donations = e.donationOutpoints || [];
+  if (!Array.isArray(donations)) throw new Error('donationOutpoints is a list of federation outpoints');
+  if (donations.length) w.vec(donations, (o, ww) => writeOutpoint(ww, o, 'a donation outpoint'));
   return w.finish();
 }
 
@@ -439,6 +446,10 @@ export function decodeEntryContract(bytes) {
     feeLockOutpoint: readOutpoint(r),
     claimKeyAttestationRef: r.bytes32(),
   };
+  if (r.at < bytes.length) {
+    e.donationOutpoints = r.vec(readOutpoint);
+    if (!e.donationOutpoints.length) throw new Error('an empty list of donation outpoints is not written: these bytes are not an entry\'s one encoding');
+  }
   r.end();
   return e;
 }
