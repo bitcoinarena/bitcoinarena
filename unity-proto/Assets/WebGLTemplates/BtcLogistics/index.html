@@ -443,13 +443,17 @@
   // run stopped reaching the signer nodes at tick 2066 and nothing on the page or the seats said why, and Unity's render
   // debug lines flood the console so nothing could be copied from it). From the first script on, the page keeps the
   // lines that say something - every "[blwp]" line, every console error and warning, uncaught errors - and every
-  // socket's open, close (with its code) and error, the last 800, in this browser's localStorage so a reload keeps them.
+  // socket's open, close (with its code) and error, the last 800, in this browser's own store so a reload keeps them.
   // Settings' "Copy client logs" and BLWP_COPY_LOGS() in the console copy them with the run's session state, the join and
   // the balance as one JSON block. Never in it: a seed phrase, a seed, a key or e-cash - those are cut out by value.
   (function () {
+    // THIS BROWSER'S OWN STORE, for what is the browser's and no player's: this log, the console's verbose switch and the
+    // one-paid-run heartbeat (and a read of the kept phrases, only to cut them out of a copy). A tab's player and money are
+    // vault()'s and the seed keeper's, nowhere else.
+    const browserStore = window.BLWP_BROWSER_STORE = () => { try { return window.localStorage; } catch { return null; } };
     const KEY = 'blwp.clientlog', MOST = 800, LONGEST = 400;
     let lines = [];
-    try { lines = JSON.parse(localStorage.getItem(KEY) || '[]'); if (!Array.isArray(lines)) lines = []; } catch { lines = []; }
+    try { lines = JSON.parse(browserStore().getItem(KEY) || '[]'); if (!Array.isArray(lines)) lines = []; } catch { lines = []; }
     let dirty = false;
     const at = () => new Date().toISOString().slice(11, 23);
     const keep = (kind, text) => {
@@ -457,8 +461,8 @@
       if (lines.length > MOST) lines.splice(0, lines.length - MOST);
       dirty = true;
     };
-    setInterval(() => { if (!dirty) return; dirty = false; try { localStorage.setItem(KEY, JSON.stringify(lines)); } catch { /* full or blocked */ } }, 2000);
-    window.addEventListener('pagehide', () => { try { localStorage.setItem(KEY, JSON.stringify(lines)); } catch { /* none */ } });
+    setInterval(() => { if (!dirty) return; dirty = false; try { browserStore().setItem(KEY, JSON.stringify(lines)); } catch { /* full or blocked */ } }, 2000);
+    window.addEventListener('pagehide', () => { try { browserStore().setItem(KEY, JSON.stringify(lines)); } catch { /* none */ } });
     let version = '';
     document.addEventListener('DOMContentLoaded', () => { const el = document.getElementById('sub'); version = el ? el.textContent : ''; keep('page', version); });
     keep('page', 'loaded ' + location.pathname + (/[?&]round=([0-9a-f]{8})/.exec(location.search) ? ' round ' + /[?&]round=([0-9a-f]{8})/.exec(location.search)[1] : ''));
@@ -469,9 +473,9 @@
     const SPAM = /Ran out of virtual channels|\[UnityCache\]|kinematic body|JS_FileSystem_Sync|world is still settling/;
     const QUIET = /^(FMOD returns error code|Ran out of virtual channels|\[render\]|\[ground\]|\[tanks\]|\[paper\]|\[bars\]|\[cloud\]|\[UnityCache\]|\[ghost\])/;
     let verbose = /[?&]verbose=1\b/.test(location.search);
-    try { verbose = verbose || localStorage.getItem('blwp.verbose') === '1'; } catch { /* storage blocked */ }
+    try { verbose = verbose || browserStore().getItem('blwp.verbose') === '1'; } catch { /* storage blocked */ }
     const VERBOSE = () => verbose;
-    window.BLWP_VERBOSE = (on) => { verbose = !!on; try { localStorage.setItem('blwp.verbose', on ? '1' : '0'); } catch { /* none */ } return 'console ' + (verbose ? 'verbose' : 'quiet'); };
+    window.BLWP_VERBOSE = (on) => { verbose = !!on; try { browserStore().setItem('blwp.verbose', on ? '1' : '0'); } catch { /* none */ } return 'console ' + (verbose ? 'verbose' : 'quiet'); };
     const text = (args) => Array.from(args).map((a) => (a instanceof Error ? a.message : typeof a === 'string' ? a : (() => { try { return JSON.stringify(a); } catch { return String(a); } })())).join(' ');
     for (const [name, kind] of [['log', 'log'], ['info', 'log'], ['warn', 'WARN'], ['error', 'ERROR']]) {
       const was = console[name];
@@ -496,7 +500,7 @@
     const secrets = () => {
       const s = [];
       try { const t = sessionStorage.getItem('blwp.player.seed'); if (t) s.push(String(t)); } catch { /* none */ }
-      try { const k = JSON.parse(localStorage.getItem('blwp.seeds') || '[]'); for (const x of Array.isArray(k) ? k : []) s.push(typeof x === 'string' ? x : x && (x.seed || x.hex) || ''); } catch { /* none */ }
+      try { const k = JSON.parse(browserStore().getItem('blwp.seeds') || '[]'); for (const x of Array.isArray(k) ? k : []) s.push(typeof x === 'string' ? x : x && (x.seed || x.hex) || ''); } catch { /* none */ }
       const seeds = s.filter((x) => typeof x === 'string' && x.length >= 32);
       // and each seed's 24 words, as the phrase and word by word in a row is never logged - the phrase itself is
       const phrases = [];
@@ -1158,6 +1162,23 @@
       console.log('[blwp] exit game: no next round');
       document.getElementById('blwp-next').style.display = 'none';
     });
+    function warmTheSession(named) {
+      try {
+        const t0 = Date.now();
+        BLWPCLIENT.fetchRandomness(named.roundIdHex, named.nodes)
+          .then(() => console.log('[blwp] warm: the round\'s randomness in ' + (Date.now() - t0) + ' ms'))
+          .catch((e) => console.log('[blwp] warm: no randomness ahead (' + e.message + ')'));
+        const c = named.chain, d = named.advert;
+        if (!c || !c.headers || !c.bonds || !BLWPCLIENT.Client) return;
+        const discovery = { headers: c.headers, bonds: c.bonds, committee: named.round.nodes,
+          signedAdvert: d && d.signedAdvert ? BLWPCLIENT.fromHex(d.signedAdvert) : undefined };
+        BLWPCLIENT.Client.at(discovery, { core: { hash: () => new Uint8Array(32) }, sign: async () => new Uint8Array(64),
+          contract: named.round, roundIdGiven: BLWPCLIENT.fromHex(named.roundIdHex) })
+          .then((client) => client.openRound(named.round))
+          .then(() => console.log('[blwp] warm: chain proved and the round opened at the node in ' + (Date.now() - t0) + ' ms'))
+          .catch((e) => console.log('[blwp] warm: the session reads were not done ahead (' + e.message + ')'));
+      } catch (e) { console.log('[blwp] warm: not started (' + e.message + ')'); }
+    }
     async function joinTheRoundIfOneWasNamed() {
       if (typeof BLWPCLIENT === 'undefined') return;
       const named = await BLWPCLIENT.joinFromQuery(location.search);
@@ -1173,6 +1194,12 @@
       // page that asked one node would let that node put this player alone in
       // a world nobody replays.
       window.BLWP_NODES = named.nodes;
+      // THE SESSION'S OWN READS, STARTED HERE BESIDE THE STAKE (the owner 2026-10-02, PRIORITIES 19:05: "From the Join click to
+      // the round actually loaded: 2 to 3 seconds at most"). The round's randomness, the chain proof and the node's POST
+      // /round hang on the round alone, not on the entry; measured after the stake was locked (0.0.2470, 00:03Z) they ran
+      // one after another - 1.5 s, 1.0 s and 1.4 s. Started at the click, the session finds them done: fetchRandomness and
+      // openRound keep their answer per round, and Client.at (wrapped below) hands its proof on as BLWP_PROVED_CHAIN.
+      warmTheSession(named);
       // THE PLAYER'S KEY IS A KEY, and this page makes one.
       //
       // `player_pubkey` used to be 32 random bytes. It is where a winner's
@@ -2401,7 +2428,7 @@
     setInterval(watchTheLink, 1000);
 
     // ONE PAID RUN AT A TIME IN THIS BROWSER (the owner 2026-10-02, "Both"): a tab in a paid run - joining it, or driving it
-    // until its session ends - keeps a heartbeat in localStorage; PLAY on a paid round in another tab of this browser is
+    // until its session ends - keeps a heartbeat in the browser's own store (BLWP_BROWSER_STORE); PLAY on a paid round in another tab of this browser is
     // refused while that heartbeat is under 6 s old. Another browser is another storage and is not seen.
     const PAID_RUN = 'blwp.paid.run', THIS_TAB = Math.random().toString(16).slice(2);
     const paidRunHere = () => {
@@ -2417,15 +2444,15 @@
     setInterval(() => {
       try {
         const round = paidRunHere();
-        const was = JSON.parse(localStorage.getItem(PAID_RUN) || 'null');
-        if (round) localStorage.setItem(PAID_RUN, JSON.stringify({ tab: THIS_TAB, round, beat: Date.now() }));
-        else if (was && was.tab === THIS_TAB) localStorage.removeItem(PAID_RUN);
+        const was = JSON.parse(window.BLWP_BROWSER_STORE().getItem(PAID_RUN) || 'null');
+        if (round) window.BLWP_BROWSER_STORE().setItem(PAID_RUN, JSON.stringify({ tab: THIS_TAB, round, beat: Date.now() }));
+        else if (was && was.tab === THIS_TAB) window.BLWP_BROWSER_STORE().removeItem(PAID_RUN);
       } catch { /* storage blocked: no marker, no refusal */ }
     }, 2000);
-    window.addEventListener('pagehide', () => { try { const was = JSON.parse(localStorage.getItem(PAID_RUN) || 'null'); if (was && was.tab === THIS_TAB) localStorage.removeItem(PAID_RUN); } catch { /* none */ } });
+    window.addEventListener('pagehide', () => { try { const was = JSON.parse(window.BLWP_BROWSER_STORE().getItem(PAID_RUN) || 'null'); if (was && was.tab === THIS_TAB) window.BLWP_BROWSER_STORE().removeItem(PAID_RUN); } catch { /* none */ } });
     window.BLWP_PAID_RUN_ELSEWHERE = () => {
       try {
-        const was = JSON.parse(localStorage.getItem(PAID_RUN) || 'null');
+        const was = JSON.parse(window.BLWP_BROWSER_STORE().getItem(PAID_RUN) || 'null');
         return was && was.tab !== THIS_TAB && Date.now() - Number(was.beat) < 6000 ? String(was.round || '') : null;
       } catch { return null; }
     };

@@ -7384,23 +7384,37 @@ async function fetchRound(id, nodes, { fetcher = fetch } = {}) {
  * the height from the chain is letter 32's work and the page does not do it;
  * what the page can do is refuse to be told two different things, and say so.
  */
+// A ROUND'S RANDOMNESS, ONCE AGREED, IS KEPT FOR THE PAGE (the owner 2026-10-02, the join's 2-3 s): the beacon of a round never
+// changes, and the session asked all its nodes again after the page had - kept per round and node list, the promise
+// itself, so a second asker shares the first's reads; a refusal is not kept.
+const RANDOMNESS = new Map();
 async function fetchRandomness(id, nodes, { fetcher = fetch } = {}) {
   if (!Array.isArray(nodes) || !nodes.length)
     throw new Error('no node to ask for this round\'s randomness');
-  const said = [];
-  const refused = [];
-  for (const node of nodes) {
+  const key = id + '|' + nodes.join(',');
+  if (fetcher === fetch && RANDOMNESS.has(key)) return RANDOMNESS.get(key);
+  const asked = readRandomness(id, nodes, fetcher);
+  if (fetcher === fetch) { RANDOMNESS.set(key, asked); asked.catch(() => RANDOMNESS.delete(key)); }
+  return asked;
+}
+
+async function readRandomness(id, nodes, fetcher) {
+  // EVERY NODE AT ONCE (measured 2026-10-03 00:03Z: asked one after another, 'session opening' to 'world seed from 7
+  // nodes' took 1.5 s of a paid join); the answers are still read in the nodes' order, and all must agree as before.
+  const reads = await Promise.all(nodes.map(async (node) => {
     const at = node.replace(/\/+$/, '') + '/randomness?round=' + id;
     try {
       const r = await readWithOneRetry(fetcher, at);
-      if (!r.ok) { refused.push(`${node}: answered ${r.status} ${(await r.text()).trim()}`); continue; }
+      if (!r.ok) return { node, refused: `${node}: answered ${r.status} ${(await r.text()).trim()}` };
       const bytes = new Uint8Array(await r.arrayBuffer());
-      if (bytes.length !== 32) { refused.push(`${node}: answered ${bytes.length} bytes`); continue; }
-      said.push({ node, hash: bytes, height: Number(r.headers.get('x-height') || 0) });
+      if (bytes.length !== 32) return { node, refused: `${node}: answered ${bytes.length} bytes` };
+      return { node, hash: bytes, height: Number(r.headers.get('x-height') || 0) };
     } catch (e) {
-      refused.push(`${node}: ${e.message}`);
+      return { node, refused: `${node}: ${e.message}` };
     }
-  }
+  }));
+  const said = reads.filter((x) => x.hash);
+  const refused = reads.filter((x) => x.refused).map((x) => x.refused);
   if (!said.length)
     throw new Error('no node named this round\'s randomness: ' + refused.join('; '));
   const first = toHex(said[0].hash);
@@ -14815,6 +14829,8 @@ const RUN_ENDING_WORDS = Object.freeze({ 1: 'DELIVERED', 2: 'WRECKED', 3: 'MISSE
 // not yet seen voids the entry anyway; two minutes covers a join held to a round that starts later.
 const LOCK_HAND_MS = 120000;
 
+const OPENED_ROUNDS = new Map();
+
 class Client {
   /**
    * A client that reaches a node because Bitcoin says where it is, AND because
@@ -15090,11 +15106,20 @@ class Client {
     this.nodes = [...contract.nodes];
     this.gameVerifySlots = contract.gameVerifySlots || this.nodes.length;
     const mine = roundId(contract);
-    const r = await fetch(`${this.base}/round`, {
-      method: 'POST', body: encodeRoundContract(contract),
-    });
-    if (r.status !== 201) throw new Error(`the node refused the round: ${(await r.text()).trim()}`);
-    return agrees(mine, new Uint8Array(await r.arrayBuffer()), 'round');
+    // THE NODE'S ANSWER FOR THIS ROUND IS KEPT FOR THE PAGE (the owner 2026-10-02, the join's 2-3 s): POST /round took 1.4 s
+    // of a paid join after the stake was locked, and the page can ask it at the click, beside the lock. Kept per node
+    // and round, the promise itself; a refusal is not kept, so the session then asks afresh and is told why.
+    const key = `${this.base}|${toHex(mine)}`;
+    if (!OPENED_ROUNDS.has(key)) {
+      const asked = (async () => {
+        const r = await fetch(`${this.base}/round`, { method: 'POST', body: encodeRoundContract(contract) });
+        if (r.status !== 201) throw new Error(`the node refused the round: ${(await r.text()).trim()}`);
+        return agrees(mine, new Uint8Array(await r.arrayBuffer()), 'round');
+      })();
+      OPENED_ROUNDS.set(key, asked);
+      asked.catch(() => OPENED_ROUNDS.delete(key));
+    }
+    return OPENED_ROUNDS.get(key);
   }
 
   /**
