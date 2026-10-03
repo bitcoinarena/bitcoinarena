@@ -769,21 +769,26 @@ impl LockClient {
                 }
             }
         };
-        let (a, b) = futures::future::join(
+        // THE BLOCK COUNT BESIDE THE TWO READS, not after them (a third consensus call that waited on the other two)
+        let (a, b, counted) = futures::future::join3(
             stored_at(&api, OutPoint { txid, out_idx: 0 }),
             stored_at(&api, OutPoint { txid, out_idx: 1 }),
+            block_count(&api),
         )
         .await;
         take(&mut found, 0, a.map_err(js)?);
         take(&mut found, 1, b.map_err(js)?);
-        for out_idx in 2..16u64 {
-            if found.iter().all(|f| f.is_some()) {
-                break;
+        let mut at_read = counted.map_err(js)?;
+        if !found.iter().all(|f| f.is_some()) {
+            for out_idx in 2..16u64 {
+                if found.iter().all(|f| f.is_some()) {
+                    break;
+                }
+                let got = stored_at(&api, OutPoint { txid, out_idx }).await.map_err(js)?;
+                take(&mut found, out_idx, got);
             }
-            let got = stored_at(&api, OutPoint { txid, out_idx }).await.map_err(js)?;
-            take(&mut found, out_idx, got);
+            at_read = block_count(&api).await.map_err(js)?;
         }
-        let at_read = block_count(&api).await.map_err(js)?;
         let describe = |c: &OutgoingContract, f: Option<(u64, ContractId, u64)>| -> Result<serde_json::Value, JsError> {
             let (out_idx, stored_id, left) = f.ok_or_else(|| {
                 js(format!("the lock transaction {txid} was accepted but no output of it holds this outgoing contract"))
