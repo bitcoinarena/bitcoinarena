@@ -1162,6 +1162,26 @@
       console.log('[blwp] exit game: no next round');
       document.getElementById('blwp-next').style.display = 'none';
     });
+    // A PAID ROUND'S SIGNER NODES AND ITS ATTESTED CLAIM KEY, ASKED WHILE THE LOBBY SHOWS IT (the owner 2026-10-02, PRIORITIES
+    // 19:05, the join's 2-3 s). Both are the round's own and fixed - its settlement committee and the key its signer nodes
+    // attested - and a funded paid join waited on them after the click: measured on 0.0.2472 (round 7bd58c39) PLAY to
+    // 'locking' 2.27 s, 1.2 s of it fetchSettlementSignerNodes and then the claim key. Kept per round, the promises; a
+    // failure or a key not attested yet is not kept, so the join then asks as before (with its own waiting line).
+    const ROUND_PREP = new Map();
+    function prepRound(roundIdHex, round, nodes) {
+      const known = ROUND_PREP.get(roundIdHex);
+      if (known) return known;
+      const signer = BLWPCLIENT.fetchSettlementSignerNodes(roundIdHex, nodes);
+      const claim = signer.then((sn) => BLWPCLIENT.awaitAttestedClaimKey({
+        round: Object.assign({}, round, { id: BLWPCLIENT.fromHex(roundIdHex) }),
+        signerNodes: sn.signerNodes, nodes, curve: window.BLWP_CURVE,
+      }, {}));
+      const p = { signer, claim };
+      ROUND_PREP.set(roundIdHex, p);
+      signer.catch(() => ROUND_PREP.delete(roundIdHex));
+      claim.then((a) => { if (!a || !a.ok) ROUND_PREP.delete(roundIdHex); }, () => ROUND_PREP.delete(roundIdHex));
+      return p;
+    }
     function warmTheSession(named) {
       try {
         const t0 = Date.now();
@@ -1408,7 +1428,7 @@
       if (pays) {
         let signerNodes = null;
         try {
-          signerNodes = await joinStep('fetchSettlementSignerNodes', () => BLWPCLIENT.fetchSettlementSignerNodes(named.roundIdHex, named.nodes));
+          signerNodes = await joinStep('fetchSettlementSignerNodes', () => prepRound(named.roundIdHex, named.round, named.nodes).signer);
         } catch (e) {
           // REFUSED BY NAME rather than joined silently. A paying round whose
           // settlement committee this page cannot learn is a round whose stake
@@ -1428,7 +1448,10 @@
           // WAITED FOR, A LITTLE: the signer nodes make the key when they are assigned to the
           // round, and a link opened at once can find one signer node still making it.
           const stageNow = document.getElementById('stage');
-          const att = await BLWPCLIENT.awaitAttestedClaimKey({
+          // the claim key asked while the lobby showed this round, if it is in and attested; else asked here as ever
+          const prepped = ROUND_PREP.get(named.roundIdHex);
+          const early = prepped ? await prepped.claim.catch(() => null) : null;
+          const att = (early && early.ok) ? early : await BLWPCLIENT.awaitAttestedClaimKey({
             round: Object.assign({}, named.round, { id: BLWPCLIENT.fromHex(named.roundIdHex) }),
             signerNodes: signerNodes.signerNodes, nodes: named.nodes, curve: window.BLWP_CURVE,
           }, {
@@ -2883,6 +2906,10 @@
         unanswered = [...(got.unanswered || []), ...((got2 && got2.unanswered) || [])];
         window.BLWP_LOBBY_NAMED_FOR_WALLET = testnet ? testnet.named : named;
         warmPlayerWallet(testnet ? testnet.named : named, [...(window.BLWP_LOBBY || []), ...[moneyRound()].filter(Boolean)]);
+        for (const r of (window.BLWP_LOBBY || [])) {
+          if (r.free || !r.raw || !r.raw.contract || !BLWPCLIENT.roundLocks(r.raw.contract)) continue;
+          try { prepRound(r.id, r.raw.contract, (testnet ? testnet.named : named).nodes); } catch { /* the join asks itself */ }
+        }
       };
       // THE PLAYER WALLET IS OPENED IN THE LOBBY, BEFORE PLAY (INSTANT-1527, the owner 2026-09-30 15:23: "PLAY to the deposit
       // invoice is a Lightning payment ... the lock client joining the federation" does not sit in front of the user). Once
