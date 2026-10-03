@@ -10483,7 +10483,10 @@ async function returnStake({ round, roundId, invite, seed, curve, LockClient, st
   try {
     got = await redeemStake({ round, roundId, invite, seed, curve, LockClient, storage, nodes, fetcher, client, onStep });
   } catch (e) {
-    const lost = /that run is \S+ with score/.test(e.message);
+    // NOBODY WON (the owner 2026-10-03): a loser's stake comes back at settlement when no winner was paid - a signer node
+    // whose settlement is not ACCEPTED yet, or whose round has an entry still in its window, says so, and is asked again
+    const lost = /that run is \S+ with score/.test(e.message)
+      && !/not ACCEPTED at this signer node|still inside its window|keeps no record of what its settlement moved/.test(e.message);
     return { ok: false, final: lost,
       why: lost ? 'the signer nodes forfeit this seed\'s lock to nobody: the run did not qualify, so its stake went into the round\'s pool' : e.message };
   }
@@ -10775,7 +10778,9 @@ async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = fetch, c
       else {
         const f = await forfeitOf({ roundId, entryId: locks[0].entryId, nodes, fetcher });
         if (f.ok) stake = { state: 'owed', msat, how: 'forfeit' };
-        else if (/that run is \S+ with score/.test(f.why)) stake = { state: 'lost', msat };
+        // NOBODY WON (the owner 2026-10-03): a signer node not yet ACCEPTED, or a round entry still in its window, is waiting
+        else if (/that run is \S+ with score/.test(f.why)
+          && !/not ACCEPTED at this signer node|still inside its window|keeps no record of what its settlement moved/.test(f.why)) stake = { state: 'lost', msat };
         else stake = { state: 'waiting', msat, why: f.why };
       }
     } else {
@@ -10864,7 +10869,10 @@ async function collectIntoPlayerWallet({ look, round, roundId, invite, seed, cur
   const got = await collectOwed({ look, client, round, roundId, invite, seed, curve, LockClient, storage, nodes, ...(fetcher ? { fetcher } : {}) });
   const after = BigInt(await client.balanceMsat());
   const creditedMsat = after > before ? after - before : 0n;
-  if (creditedMsat > 0n) ledgerAppend(storage, round.federationId, { kind: 'winnings', msat: String(creditedMsat), round: toHex(roundId) });
+  // A STAKE THAT ONLY CAME BACK IS A REFUND ROW, NOT WINNINGS (the owner 2026-10-03: "the money that comes back must be
+  // visible in the TX history"): nobody won, or the round was refunded - no payout, the stake (or its expiry refund) back
+  const kind = look.payoutMsat > 0n ? 'winnings' : 'refund';
+  if (creditedMsat > 0n) ledgerAppend(storage, round.federationId, { kind, msat: String(creditedMsat), round: toHex(roundId) });
   return { collected: true, got, creditedMsat };
 }
 
