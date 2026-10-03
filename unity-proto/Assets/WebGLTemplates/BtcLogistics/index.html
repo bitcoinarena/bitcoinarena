@@ -3203,12 +3203,12 @@
             refuse('signer node' + (silent.length === 1 ? ' ' : 's ') + hosts(silent) + ' did not answer in ' + JOIN_ANSWER_S + ' s');
           }, 1000);
           // THE ROUND SHOWN LOADED BEFORE ITS LOCK IS ACCEPTED (BLWP_JOIN_LOADED, called by the join once the player wallet
-          // holds the locks): only for a join held to a start at least LOADED_LEAD_MS away - the lock and the entry are
-          // made inside that lead; nearer the start the line keeps naming the lock's steps as before.
-          const LOADED_LEAD_MS = 20000;
+          // holds the locks), FOR ANY JOIN HELD TO ITS ROUND'S START, HOWEVER NEAR (the owner 2026-10-03: "A start under 20 s
+          // away still gets the loaded round inside 3 s when the entry is still open"). V3 measured the seats taking an
+          // entry 21 s after the start and running it at 7 of 7; a lock that lands after the start joins the round then.
           window.BLWP_JOIN_LOADED = () => {
             if (window.BLWP_JOIN !== join || join.cancelled || join.state !== 'joining' || join.loaded) return;
-            if (!(holdUntilMs - Date.now() > LOADED_LEAD_MS)) return;
+            if (!(holdUntilMs > 0)) return;
             join.loaded = true; join.held = true;
             const s0 = Math.max(0, Math.ceil((holdUntilMs - Date.now()) / 1000));
             const tick = () => {
@@ -3246,7 +3246,7 @@
                   console.log(`[blwp] next round ${String(id).slice(0, 16)}: joined at its start (${new Date(holdUntilMs).toISOString()})`);
                 };
                 release();
-              } else if (window.BLWP_ENTRY) join.state = 'joined';
+              } else if (window.BLWP_ENTRY) { join.held = false; join.stage = ''; join.state = 'joined'; }   // shown loaded, committed after the start
               // AND A REFUSAL IS SAID OUT LOUD (2026-09-21). Measured on the live Daily: PLAY on a paid round
               // left `no session yet: the page has named no node` and NOTHING else - 98 console events, 0
               // exceptions, and not one line naming why, because every refusal below the first set
