@@ -71,3 +71,39 @@ test('a real node: /dashboard opens a round to its players from api/round-result
     assert.equal(p.result, 'free');
   } finally { await node.close(); }
 });
+
+// WHAT A NODE HOSTS (the owner 2026-10-03 22:50, plan accepted 2026-10-04): node 1 gateway A + LND 1, node 2 gateway B + LND 2,
+// nodes 3-7 neither. A real node handed a hosts reader shows them; one without keeps both notes and no Hosts card.
+test('a real node that hosts an LND and a gateway shows them in dashboard.json; one that hosts neither keeps both notes', async () => {
+  const { serve } = await import('../src/server.js');
+  const now = Date.now();
+  const fake = { snapshot: () => ({
+    lnd: { alias: 'lnd-testnet4', pubkey: '0274e26122c7b8fc', activeChannels: 1, synced: true, localMsat: '1082086628', remoteMsat: '459114372',
+      routingFeesMsat30d: '0', forwards30d: 0, paymentFees: [{ atMs: now - 1000, feeMsat: '1000' }, { atMs: now - 40 * 86400000, feeMsat: '7000' }], readAtMs: now },
+    gateway: { name: 'gw-a', state: 'Running', lightningAlias: 'lnd-testnet4', federations: [{ id: '337ae01a', name: 'blwp-testnet4', ecashMsat: '248999936' }],
+      lightningMsat: '1082086628', inboundMsat: '459114372', onchainSat: '20446', payments30d: { incoming: { success: 0, failure: 0, feesMsat: '0' }, outgoing: { success: 0, failure: 2, feesMsat: '0' } }, readAtMs: now },
+  }) };
+  const hosting = await serve(openStore(), { port: 0, funded: () => true, hosts: fake });
+  const bare = await serve(openStore(), { port: 0, funded: () => true });
+  try {
+    const d = await (await fetch(`http://127.0.0.1:${hosting.port}/dashboard.json`)).json();
+    assert.equal(d.hosts.lnd.alias, 'lnd-testnet4');
+    assert.equal(d.hosts.gateway.name, 'gw-a');
+    assert.equal(d.hosts.gateway.federations[0].ecashMsat, '248999936');
+    assert.equal(d.hosts.lnd.paidFeesMsat, '8000');
+    assert.equal(d.hosts.lnd.paymentFees, undefined, 'the payment list itself stays on the node');
+    assert.doesNotMatch(d.notes.lightning, /holds no Lightning channel/);
+    assert.doesNotMatch(d.notes.gateway, /pays no gateway/);
+    assert.match(d.notes.gateway, /gateway costs are 0: the gateway is what charges, the node pays it nothing/);
+    assert.equal(d.totals.day.lightningCostMsat, '1000', 'today\'s payment fee is today\'s Lightning cost');
+    assert.equal(d.totals.day.gatewayCostMsat, '0');
+    assert.equal(d.totals.day.profitMsat, '-1000');
+    const page = await (await fetch(`http://127.0.0.1:${hosting.port}/dashboard`)).text();
+    assert.ok(page.includes('function hostsCard()') && page.includes('<h3>Hosts</h3>'));
+    const n = await (await fetch(`http://127.0.0.1:${bare.port}/dashboard.json`)).json();
+    assert.equal(n.hosts, null);
+    assert.equal(n.notes.lightning, 'this node holds no Lightning channel');
+    assert.equal(n.notes.gateway, 'this node pays no gateway');
+    assert.equal(n.totals.day.lightningCostMsat, '0');
+  } finally { await hosting.close(); await bare.close(); }
+});

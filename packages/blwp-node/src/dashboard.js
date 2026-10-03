@@ -12,7 +12,11 @@
 //     the round's signer nodes - the table the settlement claims the fee locks by; EARNED once this node's settlement of
 //     the round is ACCEPTED (the fee locks were claimed), OWED before;
 //   - the guardian/custody third, Lightning and gateway costs: the fee table pays two pools and this node holds no
-//     Lightning channel and pays no gateway, so they are 0 - and said so, not hidden.
+//     Lightning channel and pays no gateway, so they are 0 - and said so, not hidden;
+//   - A NODE THAT HOSTS AN LND AND A GATEWAY (the owner 2026-10-03 22:50: node 1 gateway A + LND 1, node 2 gateway B + LND 2;
+//     plan accepted 2026-10-04) shows them in `hosts`, read by hosts.js on this machine: the LND's own figures, the fees its
+//     own payments paid as the Lightning costs of the day / month / year, and the gateway's figures. Gateway costs stay 0
+//     with the reason: the gateway is what charges; the node pays it nothing. `hosts` is null on a node that hosts neither.
 import { decodeRoundContract, decodeEntryContract } from '../../protocol/src/contracts.js';
 import { decodePlayerResult, splitSignedResult } from '../../protocol/src/result.js';
 import { nodeFeeTable } from '../../protocol/src/fee.js';
@@ -22,7 +26,7 @@ const DAY = 86400000;
 const hex = (b) => toHex(new Uint8Array(b));
 
 /** The dashboard's figures, from `round` (a Round over this node's store) at `nowMs`. */
-export function dashboardData(round, { nowMs = Date.now(), roundsShown = 200, poolsFor = null } = {}) {
+export function dashboardData(round, { nowMs = Date.now(), roundsShown = 200, poolsFor = null, hosts = null } = {}) {
   const db = round.db;
   const me = hex(round.pubkey);
   const first = db.prepare('SELECT MIN(opened_ms) AS t FROM rounds').get();
@@ -91,6 +95,14 @@ export function dashboardData(round, { nowMs = Date.now(), roundsShown = 200, po
     const d = new Date(at).toISOString().slice(0, 10);
     const t = daily.get(d) || zero(); add(t); daily.set(d, t);
   }
+  // THE LIGHTNING COSTS OF A NODE THAT HOSTS AN LND: the fees its own payments paid, by when they were made
+  const lnd = hosts && hosts.lnd && !hosts.lnd.error ? hosts.lnd : null;
+  for (const p of (lnd && lnd.paymentFees) || []) {
+    const fee = BigInt(p.feeMsat);
+    if (p.atMs >= dayStart) totals.day.lightningCostMsat += fee;
+    if (p.atMs >= monthStart) totals.month.lightningCostMsat += fee;
+    if (p.atMs >= yearStart) totals.year.lightningCostMsat += fee;
+  }
   const out = (t) => {
     const income = t.gameVerifyMsat + t.settlementMsat + t.guardianMsat + t.otherMsat;
     const costs = t.lightningCostMsat + t.gatewayCostMsat;
@@ -112,8 +124,16 @@ export function dashboardData(round, { nowMs = Date.now(), roundsShown = 200, po
     settlements, settlementsByState: byState, federations: [...federations.values()],
     notes: {
       guardian: 'the guardian third (§22A) goes to the census nodes guarding the round\'s federation; this node\'s share is shown when it guards it',
-      lightning: 'this node holds no Lightning channel', gateway: 'this node pays no gateway',
+      lightning: hosts && hosts.lnd ? `this node hosts LND ${hosts.lnd.alias || '(not read: ' + (hosts.lnd.error || '?') + ')'}; its Lightning costs are the fees its own payments paid`
+        : 'this node holds no Lightning channel',
+      gateway: hosts && hosts.gateway ? `this node hosts gateway ${hosts.gateway.name}; gateway costs are 0: the gateway is what charges, the node pays it nothing`
+        : 'this node pays no gateway',
     },
+    hosts: hosts && (hosts.lnd || hosts.gateway) ? {
+      lnd: hosts.lnd ? (() => { const { paymentFees, ...rest } = hosts.lnd;
+        return { ...rest, paymentsWithFee: (paymentFees || []).length, paidFeesMsat: String((paymentFees || []).reduce((t, x) => t + BigInt(x.feeMsat), 0n)) }; })() : null,
+      gateway: hosts.gateway || null,
+    } : null,
   };
 }
 
@@ -160,9 +180,14 @@ function readPlayers(id){players.set(id,{loading:true});fetch('api/round-result?
 function totals(){const T=D.totals[period];const names=[['gameVerifyMsat','Game/verify fee'],['settlementMsat','Settlement fee'],['guardianMsat','Guardian/custody fee'],['otherMsat','Other earnings'],['lightningCostMsat','Lightning costs'],['gatewayCostMsat','Gateway costs']];
 el('totals').innerHTML='<div class="card"><h3>'+({day:'Today',month:'This month',year:'This year'}[period])+' (earned: settlement ACCEPTED)</h3>'+names.map(([k,n])=>'<div class="row"><span>'+n+'</span><b>'+(k.includes('Cost')&&T[k]!=='0'?'−':'')+sat(T[k])+'</b></div>').join('')+'<div class="row profit"><span>Absolute profit</span><b>'+sat(T.profitMsat)+'</b></div></div>'
  +'<div class="card"><h3>Owed (rounds not settled yet)</h3><div class="row"><span>Game/verify</span><b>'+sat(D.totals.owed.gameVerifyMsat)+'</b></div><div class="row"><span>Settlement</span><b>'+sat(D.totals.owed.settlementMsat)+'</b></div><div class="row"><span>Guardian</span><b>'+sat(D.totals.owed.guardianMsat)+'</b></div></div>'
- +'<div class="card"><h3>Notes</h3><div class="sub" style="margin:0">'+D.notes.guardian+'<br>'+D.notes.lightning+'<br>'+D.notes.gateway+'</div></div>';
+ +'<div class="card"><h3>Notes</h3><div class="sub" style="margin:0">'+D.notes.guardian+'<br>'+D.notes.lightning+'<br>'+D.notes.gateway+'</div></div>'+hostsCard();
 el('tabs').innerHTML=['day','month','year'].map(p=>'<button class="'+(p===period?'on':'')+'" data-p="'+p+'">'+({day:'Day',month:'Month',year:'Year'}[p])+'</button>').join('');
 el('tabs').querySelectorAll('button').forEach(b=>b.onclick=()=>{period=b.dataset.p;totals()});}
+// THE HOSTS CARD (node 1: gateway A + LND 1, node 2: gateway B + LND 2): only on a node that hosts them
+function hostsCard(){const H=D.hosts;if(!H)return '';const r=(k,v)=>'<div class="row"><span>'+k+'</span><b>'+v+'</b></div>';let s='<div class="card" id="hosts"><h3>Hosts</h3>';
+ const L=H.lnd;if(L)s+=L.error?r('LND','not read: '+esc(L.error)):r('LND',esc(L.alias))+r('Node key',esc(L.pubkey.slice(0,16))+'…')+r('Active channels',L.activeChannels)+r('Local balance',sat(L.localMsat))+r('Remote balance',sat(L.remoteMsat))+r('Routing fees, 30 days',sat(L.routingFeesMsat30d)+' · '+L.forwards30d+' forwards')+r('Fees its payments paid',sat(L.paidFeesMsat)+' · '+L.paymentsWithFee+' payments');
+ const G=H.gateway;if(G)s+=G.error?r('Gateway '+esc(G.name),'not read: '+esc(G.error)):r('Gateway',esc(G.name)+' · '+esc(G.state))+(G.federations||[]).map(f=>r('E-cash in '+esc(f.name||f.id.slice(0,12)),sat(f.ecashMsat))).join('')+r('Lightning balance',sat(G.lightningMsat))+r('Inbound liquidity',sat(G.inboundMsat))+r('On-chain',G.onchainSat+' sat')+(G.payments30d?r('Payments in, 30 days',G.payments30d.incoming.success+' ok · '+G.payments30d.incoming.failure+' failed · fees '+sat(G.payments30d.incoming.feesMsat))+r('Payments out, 30 days',G.payments30d.outgoing.success+' ok · '+G.payments30d.outgoing.failure+' failed · fees '+sat(G.payments30d.outgoing.feesMsat)):'');
+ const at=Math.max((L&&L.readAtMs)||0,(G&&G.readAtMs)||0);return s+'<div class="sub" style="margin:6px 0 0">read '+t(at)+'</div></div>'}
 function chart(){const W=1000,H=220,P=34,days=D.days,max=Math.max(1,...days.map(d=>Number(d.gameVerifyMsat)+Number(d.settlementMsat)+Number(d.guardianMsat)));const bw=(W-P)/days.length;
 let s='<svg viewBox="0 0 '+W+' '+(H+24)+'" role="img" aria-label="fee per day">';for(let i=0;i<=4;i++){const y=H-(H-10)*i/4;s+='<line x1="'+P+'" x2="'+W+'" y1="'+y+'" y2="'+y+'" stroke="var(--line)"/><text x="0" y="'+(y+4)+'" fill="var(--dim)" font-size="11">'+Math.round(max*i/4)+'</text>'}
 days.forEach((d,i)=>{const g=Number(d.gameVerifyMsat),st=Number(d.settlementMsat),gd=Number(d.guardianMsat),hg=(H-10)*g/max,hs=(H-10)*st/max,hd=(H-10)*gd/max,x=P+i*bw+2;
