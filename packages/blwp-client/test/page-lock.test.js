@@ -34,7 +34,7 @@ import { refundKeyOf } from '../../protocol/src/stake-lock.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { roundId, encodeRoundContract } from '../../protocol/src/contracts.js';
-import { toHex } from '../../protocol/src/hash.js';
+import { toHex, fromHex } from '../../protocol/src/hash.js';
 import { CORE_HASH } from '../../blwp-node/tools/core-hash.mjs';
 import { joinedWithLock, CLAIM } from '../../blwp-node/test/lock-fixture.js';
 
@@ -1661,4 +1661,25 @@ test('a wallet the lobby could not open is joined again at PLAY, and a join that
   const never = { join: () => new Promise(() => {}) };
   await assert.rejects(playerWallet({ round, invite: INVITE, seed: b32(0x94), LockClient: never, storage: tabStorage(), joinWaitMs: 100 }),
     /did not open the player wallet in 0 s - press PLAY again/);
+});
+
+// MEASURED 2026-10-03 13:58:51Z ON 0.0.2490: A RELOAD BEFORE THE ROUND'S START, HOLDING THE ENTRY ITS LOCK WAS COMMITTED TO, PLAYS IT.
+test('a committed lock is reused before the start when the tab kept the very entry it was committed to; another entry or a started round stops', async () => {
+  const { entryId } = await import('../../protocol/src/contracts.js');
+  const { entryFor } = await import('../src/join.js');
+  const { feldmanGroup } = await import('../../blwp-node/src/curve.js');
+  const { TEST_FEDERATION_ID } = await import('../../protocol/src/test-federation.js');
+  const { coreHashHex } = await import('../../core/tools/hash-core.js');
+  const { randomBytes } = await import('node:crypto');
+  const round = { id: b32(0x21), stakeMsat: 100000n, settlementSlots: 7, simCoreHash: fromHex(coreHashHex()), federationId: TEST_FEDERATION_ID };
+  const entry = Object.assign(entryFor(round, { seed: b32(0x5e), curve: feldmanGroup, random: (n) => new Uint8Array(randomBytes(n)),
+    claimKey: { ok: true, ref: new Uint8Array(32).fill(0x9a) },
+    stakeLock: { outpoint: { txid: b32(0xd8), outIdx: 0 }, fields: { paymentImage: { kind: 'point', bytes: Uint8Array.of(2, ...b32(0x6c)) } } } }),
+    { roundId: round.id, sessionPubkey: b32(0x55) });   // as the bridge sends it (blwp.jslib net.open)
+  const kept = { stake: { preimage: b32(1) }, lock: { outpoint: { txid: b32(0xd8), outIdx: 0n } }, committedTo: toHex(entryId(entry)) };
+  const r = keptLockUse(kept, { entry, beforeStart: true });
+  assert.equal(r.use, 'reuse'); assert.equal(r.resumed, true); assert.equal(r.kept, kept);
+  assert.equal(keptLockUse(kept, { entry, beforeStart: false }).use, 'staked', 'a started round: the run is not resumed');
+  assert.equal(keptLockUse(kept, { entry: null, beforeStart: true }).use, 'staked', 'no kept entry');
+  assert.equal(keptLockUse({ ...kept, committedTo: 'ee'.repeat(32) }, { entry, beforeStart: true }).use, 'staked', 'another entry');
 });

@@ -1071,7 +1071,13 @@
         const s = q.toString();
         back = s ? '?' + s : '';
       }
-      if (location.search !== back) history.replaceState(null, '', location.pathname + back);
+      // A NEWER JOIN KEEPS ITS ADDRESS (the owner 2026-10-03, the chained paid join): this runs twice at a run's end, and its
+      // second call put the lobby's address back after the next round's join had set its round= - a reload in that round
+      // then found no round to take its kept lock, key and entry back for (measured 13:43:36.667 -> 13:43:37.357Z).
+      const going = window.BLWP_JOIN;
+      const newerJoin = !!(going && !going.cancelled && going.state === 'joining' && going.round
+        && (!run || !run.roundHex || String(going.round) !== String(run.roundHex)));
+      if (!newerJoin && location.search !== back) history.replaceState(null, '', location.pathname + back);
       window.BLWP_RUN_ENDED = String(word || '');
       // THE RESULT CARD IS UP FROM HERE UNTIL THE LOBBY (PRIORITIES item 3, "nothing overlaps"; measured 2026-09-26 at
       // 1280x720: this panel's top edge crossed the card's bottom border). It steps aside until Unity reports the lobby.
@@ -1386,13 +1392,27 @@
       // Lightning payment, not a 7 minute join. The slow steps ... do not sit in front of the user"). The deposit goes into
       // the PLAYER WALLET - one per seed and federation (§24A.1) - not into this round, so its invoice needs only the lock
       // client, the federation and this round's amounts. It is asked now, and the signer nodes, the claim key and the
+      // THE ENTRY THIS TAB SENT FOR A ROUND, AS THE SEATS HOLD IT (2026-10-03, 0.0.2491): the kept entry (blwp.entry.<round>)
+      // with the round id and the kept session key's public half the bridge puts on it (blwp.jslib sessionKeyFor). A lock
+      // committed to exactly that entry is played again before the round's start instead of refused (keptLockUse).
+      const keptSentEntry = (roundIdHex) => {
+        try {
+          const back = (k, v) => (v && typeof v === 'object' && typeof v.u8 === 'string' ? BLWPCLIENT.fromHex(v.u8)
+            : v && typeof v === 'object' && typeof v.big === 'string' ? BigInt(v.big) : v);
+          const e = JSON.parse(window.sessionStorage.getItem('blwp.entry.' + roundIdHex) || 'null', back);
+          const key = JSON.parse(window.sessionStorage.getItem('blwp.session.key.' + roundIdHex) || 'null');
+          return e && key && key.raw ? Object.assign({}, e, { roundId: BLWPCLIENT.fromHex(roundIdHex), sessionPubkey: BLWPCLIENT.fromHex(key.raw) }) : null;
+        } catch { return null; }
+      };
+      const keptUseOf = (kept) => BLWPCLIENT.keptLockUse(kept, { entry: keptSentEntry(named.roundIdHex),
+        beforeStart: Date.now() < Number(named.round.startTimeMs) });
       // handout run while the player pays; the lock waits for both. A lock kept from before a reload asks no deposit.
       const depositEl = document.getElementById('blwp-deposit');
       const stageEl = document.getElementById('stage');
       let funding = null;
       if (pays && BLWPCLIENT.roundLocks(named.round)) {
         const keptEarly = BLWPCLIENT.savedLock(vault(), { roundId: BLWPCLIENT.fromHex(named.roundIdHex), playerPubkey: player.pubkey });
-        if (BLWPCLIENT.keptLockUse(keptEarly).use === 'new') funding = (async () => {
+        if (keptUseOf(keptEarly).use === 'new') funding = (async () => {
           const wasm = await window.BLWP_LOCK_WASM();
           await wasm.default();
           const onStep = (step) => {
@@ -1492,7 +1512,8 @@
         // deposit - measured before, a reload onto the round link set out to fund a second
         // 980000 + 20000 msat. The join stops and says why; the collect runs from the
         // record the first join kept.
-        const use = BLWPCLIENT.keptLockUse(kept);
+        const use = keptUseOf(kept);
+        if (use.resumed) console.log('[blwp] the lock is committed to the entry this tab kept, and the round has not started: the same entry is sent again');
         if (use.use === 'staked') {
           window.BLWP_JOIN_REFUSED = use.why;
           console.error('[blwp] join refused: ' + window.BLWP_JOIN_REFUSED);
