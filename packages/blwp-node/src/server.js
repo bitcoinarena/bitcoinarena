@@ -204,6 +204,20 @@ export function objectionIntake(round, rid, eid, blockHash = null) {
   } catch (err) { return { status: 404, text: err.message }; }
 }
 
+/**
+ * A PLAYER'S RESULT IN ONE ROUND, IN MONEY (the dashboard's rounds, the owner 2026-10-03 22:25): `result` won / lost / stake
+ * back / pending / free, and `netMsat` - what the player's balance changed by (null while pending).
+ */
+export function playerBalance({ entry, best, won, settled, nobodyWon, minScore }) {
+  if (entry.stakeMsat === 0n) return { result: 'free', netMsat: '0' };
+  if (!settled || settled.state !== 'ACCEPTED' || !best) return { result: 'pending', netMsat: null };
+  const costs = BigInt(entry.feeMsat || 0n) + BigInt(entry.donationMsat || 0n);
+  const qualified = best.outcome === 'DELIVERED' && BigInt(best.score) >= BigInt(minScore || 0);
+  if (qualified) return { result: 'won', netMsat: String(BigInt(won ? won.owedMsat : 0n) - costs) };
+  if (nobodyWon && best.outcome !== 'FORFEIT') return { result: 'stake back', netMsat: String(-costs) };
+  return { result: 'lost', netMsat: String(-BigInt(entry.stakeMsat)) };
+}
+
 export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FUNDED,
   randomnessFor, chainFor, peers = [], headerBytes, bondProof,
   // A LIGHTNING INVOICE READER, AND NOTHING MORE (§23.6, RULED 2026-09-22 22:59). `/federation-invoice`
@@ -2462,6 +2476,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         for (const n of round.lobbyNames(rid)) {
           try { const r = decodeLobbyName(n.record); names.set(toHex(r.playerPubkey), r.name); } catch { /* not a record */ }
         }
+        // WHAT EACH PLAYER WON OR LOST, as this node's settlement says (the owner 2026-10-03 22:25, the dashboard's rounds): a
+        // qualifier gets its stake back and its payout, less the node fee and its donation; a loser or a walk-away loses
+        // the stake; when the settlement paid nobody, every stake but a walk-away's comes back (forfeit.js nobodyWonReturn),
+        // so only the fee and the donation are gone. Until this node's settlement is ACCEPTED it is pending.
+        const settled = round.lockSettlement ? round.lockSettlement(rid) : null;
+        const shares = settled && settled.state === 'ACCEPTED' && round.lockSettlementShares ? round.lockSettlementShares(rid) : null;
+        const nobodyWon = !!(shares && !shares.length);
         const players = round.entriesOf(rid).map(({ entryId, entry }) => {
           const signed = round.results(rid, entryId);
           const tally = new Map();
@@ -2477,7 +2498,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const player = toHex(entry.playerPubkey);
           return { entry: toHex(entryId), player, name: names.get(player) || '', stakeMsat: String(entry.stakeMsat),
             outcome: best ? best.outcome : null, score: best ? best.score : null, signedBy: best ? best.signers : 0,
-            wonMsat: won ? String(won.owedMsat) : '0', winningsState: won ? won.state : (entry.stakeMsat === 0n ? 'FREE' : 'NONE') };
+            wonMsat: won ? String(won.owedMsat) : '0', winningsState: won ? won.state : (entry.stakeMsat === 0n ? 'FREE' : 'NONE'),
+            ...playerBalance({ entry, best, won, settled, nobodyWon, minScore: c.minScore }) };
         });
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ id: rid.toString('hex'), state: held.state, free: c.stakeMsat === 0n, players }));

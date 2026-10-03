@@ -222,6 +222,19 @@
       #blwp-wallet input { width: calc(100% - 150px); margin-right: 8px; vertical-align: middle; }
       #blwp-wallet button { vertical-align: middle; }
     }
+    /* THE CONSOLE (the owner 2026-10-03 playtest: "The console with the consensus and federation logs covers the whole
+       playfield ... Make it much more compact. A small button labeled Console opens it. Collapsed by default."): the
+       node strip and the round's federation panel are the console. Closed, neither is drawn and only this button is;
+       open, both are drawn small. The deposit invoice, a refusal and the lobby are not the console and never hide. */
+    #blwp-console-go { position: fixed; top: 52px; right: 8px; z-index: 31; display: none; padding: 3px 8px;
+      font: 600 11px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #c9d1d9;
+      background: rgba(13,16,20,0.72); border: 1px solid #3a4452; border-radius: 4px; cursor: pointer; }
+    #blwp-console-go[aria-expanded="true"] { color: #0d1014; background: #f7931a; border-color: #f7931a; }
+    body.blwp-console-open #blwp-wallet { top: 78px; right: 8px; max-width: 280px; max-height: 45vh; overflow-y: auto;
+      font-size: 11px; line-height: 1.3; padding: 6px 8px; }
+    body.blwp-console-open #blwp-wallet .owed { font-size: 12px; }
+    body.blwp-console-open #blwp-players { font-size: 10px; line-height: 1.25; padding: 4px 7px; max-width: min(40vw, 320px); }
+    body.blwp-clean #blwp-console-go { display: none !important; }
     /* THE LOBBY'S STRIP: positioned over the top edge, never in the page's flow, so it can never be the page. */
     #blwp-money { position: fixed; top: 6px; left: 8px; right: 8px; z-index: 30; display: flex; gap: 8px;
       align-items: flex-start; justify-content: flex-end; pointer-events: none; }
@@ -425,6 +438,7 @@
   <div id="blwp-lobby"></div>
   <div id="blwp-players"></div>
   <div id="blwp-refund"></div>
+  <button id="blwp-console-go" type="button" aria-expanded="false" title="Consensus and federation lines">Console</button>
   <div id="blwp-wallet">
     <div class="owed" id="blwp-owed"></div>
     <div class="spent" id="blwp-spent"></div>
@@ -2620,6 +2634,30 @@
       if (window.BLWP_WITHDRAWING || inTab) { e.preventDefault(); e.returnValue = ''; }
     });
 
+    // THE CONSOLE'S STATE: closed by default, the player's choice kept in this browser (a blocked store: closed)
+    const consoleShown = { wallet: false, players: false };
+    function consoleOpen() { return document.body.classList.contains('blwp-console-open'); }
+    function consoleHas(part, has) {
+      consoleShown[part] = has;
+      const go = document.getElementById('blwp-console-go');
+      if (go) go.style.display = consoleShown.wallet || consoleShown.players ? 'block' : 'none';
+    }
+    (function consoleButton() {
+      const go = document.getElementById('blwp-console-go');
+      if (!go) return;
+      let open = false;
+      try { open = window.BLWP_BROWSER_STORE().getItem('blwp.console.open') === '1'; } catch { open = false; }
+      const set = (o) => {
+        document.body.classList.toggle('blwp-console-open', o);
+        go.setAttribute('aria-expanded', o ? 'true' : 'false');
+        try { window.BLWP_BROWSER_STORE().setItem('blwp.console.open', o ? '1' : '0'); } catch { /* not kept */ }
+        try { paintWallet(); paintPlayers(); } catch { /* painted on the next tick */ }
+      };
+      set(open);
+      // a click on the button is the page's, never Unity's
+      go.addEventListener('pointerdown', (e) => e.stopPropagation());
+      go.addEventListener('click', (e) => { e.stopPropagation(); set(!consoleOpen()); });
+    })();
     function paintWallet() {
       const el = document.getElementById('blwp-wallet');
       if (!el || !wallet || typeof BLWPCLIENT === 'undefined') return;
@@ -2629,8 +2667,9 @@
       // after a reload onto the lobby the panel still says what came back.
       const shown = window.BLWP_ROUND || (window.BLWP_COLLECT && window.BLWP_COLLECT.round);
       const pays = shown && BLWPCLIENT.roundPays(shown);
-      if (!pays) { el.style.display = 'none'; return; }
-      el.style.display = 'block';
+      if (!pays) { el.style.display = 'none'; consoleHas('wallet', false); return; }
+      consoleHas('wallet', true);
+      el.style.display = consoleOpen() ? 'block' : 'none';
       // EACH DONATION SHARE, PAID / UNPAID / OUTCOME UNKNOWN (M3.2 6e): the
       // client's line off the client's state - which on a reload is the tab's
       // notes - painted before the lock branch, so a lock round shows it too.
@@ -2710,8 +2749,9 @@
       if (!el) return;
       if (window.BLWP_CARD_UP && window.BLWP_UNITY_LOBBY && window.BLWP_UNITY_LOBBY.showing) window.BLWP_CARD_UP = false;
       // hidden while the cargo panel is open (the owner 2026-09-26 14:02) - the pads and TRUCK FULL stay; this line does not
-      if (!window.BLWP_ROUND || window.BLWP_CARD_UP || window.BLWP_LOADOUT_OPEN) { el.style.display = 'none'; return; }
-      el.style.display = 'block';
+      if (!window.BLWP_ROUND || window.BLWP_CARD_UP || window.BLWP_LOADOUT_OPEN) { el.style.display = 'none'; consoleHas('players', false); return; }
+      consoleHas('players', true);
+      el.style.display = consoleOpen() ? 'block' : 'none';
       const inst = window.unityInstance;
       const mod = (inst && inst.Module) || (typeof Module !== 'undefined' ? Module : window.Module);
       const net = mod && mod.blwpNet;
