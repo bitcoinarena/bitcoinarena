@@ -537,6 +537,13 @@ public class Bootstrap : MonoBehaviour
             spec.truck = truck.transform;
             spec.gate = _gate;
             spec.post = _post;
+
+            // SPECTATE AFTER A WRECKED OR DELIVERED RUN (the owner 2026-10-03): the same camera, rising to top-down
+            var after = chaseCam.gameObject.AddComponent<RunEndSpectate>();
+            after.chase = chaseCam;
+            after.truck = truck.transform;
+            after.loadout = hud.loadout;
+            after.spectator = spec;
         }
 
         var splash = gameObject.AddComponent<SplashScreen>();
