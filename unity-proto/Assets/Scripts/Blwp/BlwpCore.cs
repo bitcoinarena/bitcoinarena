@@ -47,6 +47,8 @@ namespace Blwp
         [DllImport("__Internal")] private static extern int BlwpReplayCopied();
         [DllImport("__Internal")] private static extern void BlwpLoadoutOpen(int open);
         [DllImport("__Internal")] private static extern int BlwpResumedRun();
+        [DllImport("__Internal")] private static extern int BlwpKeepCargo(IntPtr text);
+        [DllImport("__Internal")] private static extern int BlwpKeptCargo(IntPtr outp, int cap);
         [DllImport("__Internal")] private static extern int BlwpSolids(IntPtr ptr, int cap);
         [DllImport("__Internal")] private static extern int BlwpReplayForThisRun();
         [DllImport("__Internal")] private static extern void BlwpRunStarts();
@@ -71,6 +73,8 @@ namespace Blwp
         private static int BlwpReplayCopied() => 0;
         private static void BlwpLoadoutOpen(int open) { }
         private static int BlwpResumedRun() => 0;
+        private static int BlwpKeepCargo(IntPtr t) => 0;
+        private static int BlwpKeptCargo(IntPtr o, int cap) => 0;
         private static int BlwpSolids(IntPtr ptr, int cap) => 0;
         private static int BlwpReplayForThisRun() => 0;
         private static void BlwpRunStarts() { }
@@ -266,6 +270,30 @@ namespace Blwp
 
         /// <summary>A run resumed after a reload has caught up to the tick the seats hold (the page's BLWP_RESUME).</summary>
         public static bool ResumedRun() => BlwpResumedRun() != 0;
+
+        /// <summary>Keeps this round's bed with the page (ASCII), so a run resumed after a reload gets its parcels back.</summary>
+        public static void KeepCargo(string text)
+        {
+            if (!Compiled || text == null) return;
+            var bytes = System.Text.Encoding.ASCII.GetBytes(text + "\0");
+            var h = GCHandle.Alloc(bytes, GCHandleType.Pinned);
+            try { BlwpKeepCargo(h.AddrOfPinnedObject()); }
+            finally { h.Free(); }
+        }
+
+        /// <summary>The bed kept for this round before a reload, or null.</summary>
+        public static string KeptCargo()
+        {
+            if (!Compiled) return null;
+            var outBytes = new byte[32768];
+            var h = GCHandle.Alloc(outBytes, GCHandleType.Pinned);
+            try
+            {
+                int n = BlwpKeptCargo(h.AddrOfPinnedObject(), outBytes.Length);
+                return n > 0 ? System.Text.Encoding.ASCII.GetString(outBytes, 0, n) : null;
+            }
+            finally { h.Free(); }
+        }
 
         // SetGround IS GONE. It was the host's door - Unity uploaded the relief
         // it was drawing and the core felt those hills, while every committee

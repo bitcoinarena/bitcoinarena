@@ -128,6 +128,8 @@ public class LoadoutPanel : MonoBehaviour
         // ghost it drew hunted a run the player was not driving. Two integers
         // cross now, the bridge publishes them, and the core decides the cost.
         if (bay != null) Blwp.BlwpCore.SubmitLoad(bay.FeeCarried, bay.BtcHundredths);
+        // and kept with the page for this round, so a reload mid-run puts these parcels back on the bed (ResumeDriving)
+        if (bay != null) Blwp.BlwpCore.KeepCargo(BedText(bay.Slots));
 
         // AND THE RUN'S SESSION IS NOTED, so the replay the result offers is this run's and not the one before
         Blwp.BlwpCore.RunStarts();
@@ -188,6 +190,11 @@ public class LoadoutPanel : MonoBehaviour
         IsOpen = false;
         if (yard != null) yard.Close();
         if (truck != null) truck.controlsLocked = false;
+        // THE RUN'S PARCELS BACK ON THE BED (the redone playthrough: the resumed truck drove with "CARGO empty"): the ones ROLL
+        // OUT kept for this round. Display only - the core already carries the load it was handed.
+        var kept = ParseBed(Blwp.BlwpCore.KeptCargo());
+        if (bay != null && kept.Count > 0) { bay.Clear(); foreach (var tx in kept) bay.TryAdd(tx); }
+        ConfirmedSats = bay != null ? bay.FeeCarried : 0;
         ConfirmedAt = Time.unscaledTime;
         Blwp.BlwpCore.RunStarts();
         var chase = FindFirstObjectByType<ChaseCamera>();
@@ -197,7 +204,32 @@ public class LoadoutPanel : MonoBehaviour
             chase.destination = gate != null ? gate.Mouth : (Vector3?)null;
             chase.EndFlyIn();
         }
-        Debug.Log("[blwp] resumed run: the cargo panel closed, driving on");
+        Debug.Log($"[blwp] resumed run: the cargo panel closed, driving on with {kept.Count} parcel(s) kept from before the reload");
+    }
+
+    /// <summary>The bed as text the page keeps: "txid,fee,vsize,value" per parcel, ';' between them, in loading order.</summary>
+    public static string BedText(IEnumerable<CargoBay.Slot> slots)
+    {
+        var parts = new List<string>();
+        foreach (var s in slots)
+            if (s != null && s.tx != null && !string.IsNullOrEmpty(s.tx.txid) && s.tx.txid.IndexOfAny(new[] { ',', ';' }) < 0)
+                parts.Add($"{s.tx.txid},{s.tx.feeSats},{s.tx.vsize},{s.tx.valueSats}");
+        return string.Join(";", parts);
+    }
+
+    /// <summary>The parcels of a kept bed; a malformed parcel is skipped, nothing at all is an empty list.</summary>
+    public static List<MempoolFeed.Tx> ParseBed(string text)
+    {
+        var txs = new List<MempoolFeed.Tx>();
+        if (string.IsNullOrEmpty(text)) return txs;
+        foreach (var part in text.Split(';'))
+        {
+            var f = part.Split(',');
+            if (f.Length != 4 || f[0].Length == 0) continue;
+            if (!long.TryParse(f[1], out var fee) || !int.TryParse(f[2], out var vsize) || !long.TryParse(f[3], out var value)) continue;
+            txs.Add(new MempoolFeed.Tx { txid = f[0], feeSats = fee, vsize = vsize, valueSats = value });
+        }
+        return txs;
     }
 
     void Update()
