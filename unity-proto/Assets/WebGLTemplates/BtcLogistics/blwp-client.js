@@ -10271,11 +10271,11 @@ function savedLock(storage, { roundId, playerPubkey }) {
  * a new join. One no signer node committed: the same stake and lock, no second deposit (W1b).
  * One a signer node COMMITTED to an entry: that signer node is taken and its stake is locked - measured
  * before: the page dealt a new stake and set out to fund "980000 + 20000 msat of lock",
- * a second deposit for a round the player already stakes. The run itself cannot be
- * resumed (its session key lives in the player and is not kept), so the join stops, says
- * why, and the payout and stake are still collected from the tab's kept record.
+ * a second deposit for a round the player already stakes. A tab that kept the very entry the lock is committed to
+ * plays it again (before the start) or resumes it (until the close); otherwise the join stops, says why, and the
+ * payout and stake are still collected from the tab's kept record.
  */
-function keptLockUse(kept, { entry = null, beforeStart = false } = {}) {
+function keptLockUse(kept, { entry = null, beforeStart = false, beforeClose = false } = {}) {
   if (!kept) return { use: 'new' };
   if (!kept.committedTo) return { use: 'reuse', kept };
   // UNLESS THE TAB KEPT THAT VERY ENTRY AND THE ROUND HAS NOT STARTED (measured 2026-10-03 13:58:51Z on 0.0.2490: a reload
@@ -10286,6 +10286,10 @@ function keptLockUse(kept, { entry = null, beforeStart = false } = {}) {
   // entryId by its own name: the bundle strips imports, and an "as" alias is undefined there (measured: 0.0.2491 refused)
   try { keptId = entry ? toHex(entryId(entry)) : null; } catch { keptId = null; }
   if (beforeStart && keptId && keptId === String(kept.committedTo)) return { use: 'reuse', kept, resumed: true };
+  // AND AFTER THE START, UNTIL THE ROUND CLOSES (the owner 2026-10-03: "a reload after the round has started ... That run must
+  // not be lost"): the same entry, lock and session key, and the run is RESUMED from what the seats hold of it (the bridge
+  // replays the transcript and goes on from the adopted mark - blwp.jslib BLWP_RESUME). After the close only the collect.
+  if (!beforeStart && beforeClose && keptId && keptId === String(kept.committedTo)) return { use: 'reuse', kept, resumed: 'running' };
   return { use: 'staked', kept,
     why: `this tab's stake in this round is already locked and committed to entry ${String(kept.committedTo).slice(0, 16)}…: `
       + 'no second deposit - the run cannot be resumed after a reload, and its payout and stake are collected after the window' };
@@ -14912,6 +14916,27 @@ const LOCK_HAND_MS = 120000;
 
 const OPENED_ROUNDS = new Map();
 
+/**
+ * THE CORE STEPPED THROUGH A TRANSCRIPT, as a seat replays it (blwp-node replay.js, core adapter eventsOf): each tick's
+ * tape, load, sample and liquidation BEFORE that tick, then its five words. The page's core after a reload is then the
+ * state its marks were hashed from, and the run goes on from the tick the node is owed. `core` is the page's sim
+ * (step(st, w0..w4), submitTape/Load/Sample/Liquidation(st, ...)). Answers the next tick.
+ */
+function catchUpCore(core, st, transcript) {
+  const f = flatten(transcript);
+  const at = (rows) => new Map(rows.map(([i, ...v]) => [i, v]));
+  const tapes = at(f.tapes), loads = at(f.loads), samples = at(f.samples), due = at(f.liquidations);
+  for (let i = 0; i < f.ticks.length; i++) {
+    if (tapes.has(i)) core.submitTape(st, tapes.get(i));
+    if (loads.has(i)) core.submitLoad(st, ...loads.get(i));
+    if (samples.has(i)) core.submitSample(st, samples.get(i)[0]);
+    if (due.has(i) && core.submitLiquidation) core.submitLiquidation(st, due.get(i)[0]);
+    const w = f.ticks[i];
+    core.step(st, w[0], w[1], w[2], w[3], w[4]);
+  }
+  return f.firstTick + f.ticks.length;
+}
+
 class Client {
   /**
    * A client that reaches a node because Bitcoin says where it is, AND because
@@ -15861,9 +15886,9 @@ class Client {
    * fetch. Verified rather than trusted for the same reason as before: a
    * receipt taken on a node's word is not evidence of anything.
    */
-  async recoverReceipts({ roundId, entryId }) {
+  async recoverReceipts({ roundId, entryId }, base = this.base) {
     const r = await readWithOneRetry(fetch,
-      `${this.base}/receipts?round=${toHex(roundId)}&entry=${toHex(entryId)}`);
+      `${base}/receipts?round=${toHex(roundId)}&entry=${toHex(entryId)}`);
     if (!r.ok) throw new Error(`the node refused the receipts: ${(await r.text()).trim()}`);
     const bytes = new Uint8Array(await r.arrayBuffer());
     if (bytes.length % SIGNED_RECEIPT_BYTES !== 0)
@@ -16283,6 +16308,14 @@ class Client {
     // cannot inflate the count and a receipt that fails its mark, the
     // committee or its signature never reached the count at all.
     const marks = await this.recoverReceipts({ roundId, entryId });
+    // AND EACH COMMITTEE PEER'S OWN RECEIPTS (the owner 2026-10-03, the reload in a running round): every node receipts a
+    // mark to the client that sent it, so after a RELOAD the newest mark's receipts were in the closed tab - measured on
+    // 0.0.2493, all 7 seats held mark 120 with one receipt each (their own), this node's /receipts showed 1, the resume
+    // adopted mark 60 and every later mark was refused "does not follow the chain head". Each peer's receipts are
+    // verified one by one exactly as this node's, so the 5-of-7 rule is the same; a peer that does not answer adds none.
+    const fromPeers = await Promise.all((this.peers || []).map((base) =>
+      this.recoverReceipts({ roundId, entryId }, base).catch(() => [])));
+    for (const more of fromPeers) marks.push(...more);
     const c = await readWithOneRetry(fetch,
       `${this.base}/checkpoints?round=${toHex(roundId)}&entry=${toHex(entryId)}`);
     const cb = new Uint8Array(await c.arrayBuffer());
@@ -16304,7 +16337,22 @@ class Client {
 
     return { ticks: ok.ticks, batches: t.batches.length, nextTick: this.nextTick,
              batchHead: this.batchHead, head: this.head, receipts: marks.length,
-             live: adopted !== null, witnessed: adopted ? this.witnessed(adopted) : 0 };
+             live: adopted !== null, witnessed: adopted ? this.witnessed(adopted) : 0, transcript: t };
+  }
+
+  /**
+   * A RUN TAKEN BACK AFTER THE TAB WAS RELOADED (the owner 2026-10-03: "a reload after the round has started ... That run
+   * must not be lost"). The same entry and session key (the page kept both); this client is new and knows nothing of the
+   * run, so it is told the round and then resumes from what the node holds - its input chain, its next tick and the newest
+   * mark five committee members carried. NOTHING IS RECORDED UNTIL THAT IS DONE: the game ticks through the fetches, and a
+   * tick recorded at this client's 0 would be published as the input of a tick the node already holds. The caller steps
+   * its core through the returned transcript (`catchUpCore`) before it records again.
+   */
+  async resumeAfterReload({ roundId, entryId, blockTicks }) {
+    this.setRound({ roundId, entryId, blockTicks });
+    const where = this.where;
+    this.where = null;
+    try { return await this.resume(where); } finally { this.where = where; }
   }
 
   /**
@@ -18857,7 +18905,7 @@ function replayLinkFor({ endpoints, roundHex, entryHex, random = Math.random } =
   return { ok: true, host, url: `${host}/replay?round=${String(roundHex).toLowerCase()}&entry=${String(entryHex).toLowerCase()}` };
 }
 
-return { Client: Client, markState: markState,
+return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          reach: reach, endpointFor: endpointFor,
          discover: discover, agreedChain: agreedChain,
          askForBond: askForBond, provenBond: provenBond,
@@ -18891,6 +18939,7 @@ return { Client: Client, markState: markState,
          playerWallet: playerWallet, fundPlayerWallet: fundPlayerWallet, walletSecretFor: walletSecretFor,
          withdrawPlayerWallet: withdrawPlayerWallet,
          saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, keptLockUse: keptLockUse,
+         roundEndMs: roundEndMs,
          ledgerRows: ledgerRows, ledgerReadSavedStakes: ledgerReadSavedStakes,
          depositChoices: depositChoices, withdrawChoices: withdrawChoices, invoiceAmountMsat: invoiceAmountMsat, playerWithdrawable: playerWithdrawable, pendingDeposits: pendingDeposits, resumeDeposits: resumeDeposits, restOfFeesMsat: restOfFeesMsat, restInvoiceMsat: restInvoiceMsat, REST_FLOOR_MSAT: REST_FLOOR_MSAT, ceilNote: ceilNote, roundsDepositMsat: roundsDepositMsat, recordDonation: recordDonation, collectIntoPlayerWallet: collectIntoPlayerWallet, donationCostMsat: donationCostMsat, depositOffer: depositOffer, settingsDepositOffer: settingsDepositOffer, DEPOSIT_INSUFFICIENT: DEPOSIT_INSUFFICIENT,
          findLock: findLock, refundStake: refundStake, forfeitOf: forfeitOf, redeemStake: redeemStake,

@@ -1664,7 +1664,7 @@ test('a wallet the lobby could not open is joined again at PLAY, and a join that
 });
 
 // MEASURED 2026-10-03 13:58:51Z ON 0.0.2490: A RELOAD BEFORE THE ROUND'S START, HOLDING THE ENTRY ITS LOCK WAS COMMITTED TO, PLAYS IT.
-test('a committed lock is reused before the start when the tab kept the very entry it was committed to; another entry or a started round stops', async () => {
+test('a committed lock is reused before the start, and resumed until the close, when the tab kept the very entry it was committed to; another entry or a closed round stops', async () => {
   const { entryId } = await import('../../protocol/src/contracts.js');
   const { entryFor } = await import('../src/join.js');
   const { feldmanGroup } = await import('../../blwp-node/src/curve.js');
@@ -1679,7 +1679,12 @@ test('a committed lock is reused before the start when the tab kept the very ent
   const kept = { stake: { preimage: b32(1) }, lock: { outpoint: { txid: b32(0xd8), outIdx: 0n } }, committedTo: toHex(entryId(entry)) };
   const r = keptLockUse(kept, { entry, beforeStart: true });
   assert.equal(r.use, 'reuse'); assert.equal(r.resumed, true); assert.equal(r.kept, kept);
-  assert.equal(keptLockUse(kept, { entry, beforeStart: false }).use, 'staked', 'a started round: the run is not resumed');
+  assert.equal(keptLockUse(kept, { entry, beforeStart: false }).use, 'staked', 'a closed round: the run is not resumed');
+  // AFTER THE START, BEFORE THE CLOSE (the owner 2026-10-03, "That run must not be lost"): resumed from the seats' record
+  const running = keptLockUse(kept, { entry, beforeStart: false, beforeClose: true });
+  assert.equal(running.use, 'reuse'); assert.equal(running.resumed, 'running'); assert.equal(running.kept, kept);
+  assert.equal(keptLockUse(kept, { entry: null, beforeStart: false, beforeClose: true }).use, 'staked', 'running, no kept entry');
+  assert.equal(keptLockUse({ ...kept, committedTo: 'ee'.repeat(32) }, { entry, beforeStart: false, beforeClose: true }).use, 'staked', 'running, another entry');
   assert.equal(keptLockUse(kept, { entry: null, beforeStart: true }).use, 'staked', 'no kept entry');
   assert.equal(keptLockUse({ ...kept, committedTo: 'ee'.repeat(32) }, { entry, beforeStart: true }).use, 'staked', 'another entry');
 });
