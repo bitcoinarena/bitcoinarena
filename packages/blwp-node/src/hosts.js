@@ -1,40 +1,51 @@
 // WHAT THIS NODE HOSTS (the owner 2026-10-03 22:50, plan accepted 2026-10-04): node 1 hosts gateway A and LND 1, node 2 gateway
 // B and LND 2, nodes 3-7 neither. A node that hosts them shows them on its own /dashboard, read here - read-only, from this
-// machine: the LND through lncli (getinfo, channelbalance, fwdinghistory, listpayments), the gateway over loopback HTTP
+// machine: the LND over its own loopback REST API with its READ-ONLY macaroon (getinfo, channel balance, forwarding
+// history, payments - not lncli, which cannot run inside the seats' `unshare -r` namespace: measured 2026-10-03 23:31Z, it
+// opens /root/.lncli/profiles.json whatever HOME or --profile say, and is refused), the gateway over loopback HTTP
 // (GET /v1/info and /v1/balances, POST /v1/payment_summary), its password from its file. Nothing here restarts, moves or
 // configures either. The reading is refreshed every 60 s in the background, so a dashboard read never waits on Lightning,
 // and the password and the macaroon never leave this file: the snapshot carries figures only.
-import { execFile } from 'node:child_process';
+import { request } from 'node:https';
 import { readFileSync } from 'node:fs';
 
 const DAY = 86400000;
-const execFileJson = (bin, args, env) => new Promise((ok, no) => execFile(bin, args, { timeout: 20000, maxBuffer: 64 << 20, ...(env ? { env } : {}) },
-  (e, out, err) => (e ? no(new Error(String(err || e.message).trim().slice(0, 200))) : ok(JSON.parse(out)))));
+
+/** One call to an LND's REST API: its own TLS certificate as the only CA, the macaroon in its header. */
+export const lndRest = ({ rest, cert, macaroonHex }) => (path, body) => new Promise((ok, no) => {
+  const u = new URL(path, rest);
+  const req = request(u, { method: body ? 'POST' : 'GET', ca: cert, timeout: 20000,
+    headers: { 'Grpc-Metadata-macaroon': macaroonHex, ...(body ? { 'content-type': 'application/json' } : {}) } }, (res) => {
+    let b = ''; res.setEncoding('utf8'); res.on('data', (d) => { b += d; });
+    res.on('end', () => { if (res.statusCode !== 200) return no(new Error(`${path} ${res.statusCode} ${b.slice(0, 120)}`)); try { ok(JSON.parse(b)); } catch (e) { no(e); } });
+  });
+  req.on('timeout', () => req.destroy(new Error(`${path} timed out`)));
+  req.on('error', no);
+  req.end(body ? JSON.stringify(body) : undefined);
+});
 
 /**
- * `BLWP_HOSTS_LND` = "<lnddir>,<rpcserver>[,<network>[,<lncli>]]" and `BLWP_HOSTS_GATEWAY` = "<name>,<base>,<password file>",
- * or null when the environment names neither.
+ * `BLWP_HOSTS_LND` = "<lnddir>,<REST base>[,<network>]" (the read-only macaroon and tls.cert are read from the lnddir) and
+ * `BLWP_HOSTS_GATEWAY` = "<name>,<base>,<password file>", or null when the environment names neither.
  */
 export function hostsFromEnv(env = process.env) {
   const l = env.BLWP_HOSTS_LND ? env.BLWP_HOSTS_LND.split(',').map((s) => s.trim()) : null;
   const g = env.BLWP_HOSTS_GATEWAY ? env.BLWP_HOSTS_GATEWAY.split(',').map((s) => s.trim()) : null;
   if (!l && !g) return null;
   return {
-    lnd: l ? { lnddir: l[0], rpcserver: l[1], network: l[2] || 'testnet4', lncli: l[3] || '/mnt/bitcoin/lnd-linux-amd64-v0.21.3-beta/lncli' } : null,
+    lnd: l ? { lnddir: l[0], rest: l[1].replace(/\/+$/, ''), network: l[2] || 'testnet4' } : null,
     gateway: g ? { name: g[0], base: g[1].replace(/\/+$/, ''), passwordFile: g[2] } : null,
   };
 }
 
-/** The figures of one LND, by lncli: who it is, its channels, its routing fees (30 d) and the fees its own payments paid. */
-export async function readLnd({ lnddir, rpcserver, network, lncli }, { run = execFileJson, nowMs = Date.now() } = {}) {
-  const a = [`--lnddir=${lnddir}`, `--rpcserver=${rpcserver}`, `--network=${network}`];
-  // HOME IS THE LND'S OWN DIRECTORY (measured on seats 1 and 2, 2026-10-03 23:31Z: lncli under the node read
-  // /root/.lncli/profiles.json, was refused, and read nothing): no lncli profile there, so the flags above are all it uses
-  const env = { ...process.env, HOME: lnddir };
+/** The figures of one LND, over its REST API: who it is, its channels, its routing fees (30 d) and the fees its own payments paid. */
+export async function readLnd({ lnddir, rest, network }, { call = null, readFile = readFileSync, nowMs = Date.now() } = {}) {
+  const get = call || lndRest({ rest, cert: readFile(`${lnddir}/tls.cert`),
+    macaroonHex: readFile(`${lnddir}/data/chain/bitcoin/${network}/readonly.macaroon`).toString('hex') });
   const [info, bal, fwd, pays] = await Promise.all([
-    run(lncli, [...a, 'getinfo'], env), run(lncli, [...a, 'channelbalance'], env),
-    run(lncli, [...a, 'fwdinghistory', '--start_time=-30d', '--max_events=50000'], env),
-    run(lncli, [...a, 'listpayments', '--max_payments=100000'], env),
+    get('/v1/getinfo'), get('/v1/balance/channels'),
+    get('/v1/switch', { start_time: String(Math.floor((nowMs - 30 * DAY) / 1000)), num_max_events: 50000 }),
+    get('/v1/payments?max_payments=100000&include_incomplete=false'),
   ]);
   const msat = (b) => (b && b.msat !== undefined ? String(b.msat) : b && b.sat !== undefined ? String(BigInt(b.sat) * 1000n) : '0');
   const routing = (fwd.forwarding_events || []).reduce((t, e) => t + BigInt(e.fee_msat || 0), 0n);
