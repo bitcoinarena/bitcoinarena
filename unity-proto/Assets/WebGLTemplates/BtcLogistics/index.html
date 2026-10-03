@@ -2936,6 +2936,12 @@
               donationMsat: BigInt(BLWPCLIENT.lobbyStakeSats(r.raw)) * 1000n * BigInt(donationBps()) / 10000n })
               .then(() => console.log('[blwp] warm: lock quotes in ' + (Date.now() - t0) + ' ms'), () => { /* the join quotes itself */ });
           } catch { /* the join quotes itself */ }
+          // AND THE BLOCK COUNT A LOCK IS BUILT ON, kept by the lock client for a minute: read now and every 45 s while the lobby
+          // is open, so PLAY's lock skips a consensus read of its own (lib.rs count_for_lock)
+          if (typeof client.warmBlockCount === 'function') {
+            const warmCount = () => client.warmBlockCount().catch(() => { /* the lock reads it itself */ });
+            warmCount(); setInterval(warmCount, 45000);
+          }
           // THE BALANCE THE BOXES SHOW (Confirmed / Pending, lobby and Settings): read off this wallet, never computed
           const fed = BLWPCLIENT.toHex(r.raw.contract.federationId);
           window.BLWP_READ_BALANCE = async () => {
