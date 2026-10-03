@@ -1087,23 +1087,46 @@
           if (!r.ok) continue;
           const j = await r.json();
           if (window.BLWP_RESULT !== kept) return;
-          kept.text = JSON.stringify({ mine: run.entryHex, players: (j.players || []).map((p) => ({
+          kept.players = (j.players || []).map((p) => ({
             entry: p.entry || '', key: p.player || '', name: p.name || '', outcome: p.outcome || '',
             score: p.score === null || p.score === undefined ? -1 : Number(p.score), signedBy: p.signedBy | 0,
-            result: p.result || '', net: p.netMsat === null || p.netMsat === undefined ? '' : String(p.netMsat) })) })
-            // ASCII ON THE BRIDGE: a name's other letters go as \u escapes, which Unity's JSON reader turns back
-            .replace(/[\u007f-\uffff]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
+            result: p.result || '', net: p.netMsat === null || p.netMsat === undefined ? '' : String(p.netMsat) }));
+          writeResultSummary(kept);
           kept.reads = (kept.reads | 0) + 1;
           kept.from = String(n);
           return;
         } catch (e) { /* the next node */ }
       }
     };
+    // THE CARD WAITS FOR THIS RUN'S SIGNED RESULT (the owner 2026-10-04, option 1): the seats sign a run when its ROUND closes -
+    // measured 90.5 s after a delivery - so with continue off the card, and the lobby behind it, hold until this player's own
+    // result is signed by five, or the round's close + 10 s, whichever is first. `hold` rides with the summary to Unity
+    // (DriveHud.ArrivalHoldNow); this timer keeps it true to the clock even when no seat answers.
+    const RESULT_SIGNED_AT = 5, RESULT_HOLD_PAST_CLOSE_MS = 10000;
+    const resultHolds = (kept) => !(kept.players || []).some((p) => p.entry === kept.entryHex && p.signedBy >= RESULT_SIGNED_AT);
+    const writeResultSummary = (kept) => {
+      kept.hold = Date.now() < kept.holdUntil && resultHolds(kept);
+      kept.text = JSON.stringify({ mine: kept.entryHex, hold: kept.hold, players: kept.players || [] })
+        // ASCII ON THE BRIDGE: a name's other letters go as \u escapes, which Unity's JSON reader turns back
+        .replace(/[\u007f-\uffff]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
+    };
+    let holdTimer = null;
     const startResultSummary = (run) => {
       if (!run || !run.roundHex || !run.entryHex) return;
       if (window.BLWP_RESULT && window.BLWP_RESULT.roundHex === run.roundHex && resultTimer) return;
       const nodes = (run.nodes && run.nodes.length ? run.nodes : window.BLWP_NODES) || [];
-      window.BLWP_RESULT = { roundHex: run.roundHex, entryHex: run.entryHex, text: '', reads: 0 };
+      let closeMs = NaN;
+      try { if (window.BLWP_ROUND && BLWPCLIENT.toHex(BLWPCLIENT.roundId(window.BLWP_ROUND)) === run.roundHex) closeMs = Number(BLWPCLIENT.roundEndMs(window.BLWP_ROUND)); } catch { /* no close: no hold */ }
+      const kept = window.BLWP_RESULT = { roundHex: run.roundHex, entryHex: run.entryHex, text: '', reads: 0, players: [],
+        holdUntil: isFinite(closeMs) ? closeMs + RESULT_HOLD_PAST_CLOSE_MS : 0 };
+      writeResultSummary(kept);
+      clearInterval(holdTimer);
+      holdTimer = setInterval(() => {
+        if (window.BLWP_RESULT !== kept || !window.BLWP_CARD_UP) { clearInterval(holdTimer); holdTimer = null; return; }
+        const was = kept.hold;
+        if (was && !(Date.now() < kept.holdUntil && resultHolds(kept))) { writeResultSummary(kept); console.log('[blwp] result summary: the card lets go (' + (resultHolds(kept) ? 'the round closed + 10 s' : 'this run signed by ' + RESULT_SIGNED_AT) + ')'); }
+      }, 500);
+      console.log('[blwp] result summary: the card holds until this run is signed by ' + RESULT_SIGNED_AT + ' or ' + (kept.holdUntil ? new Date(kept.holdUntil).toISOString().slice(11, 19) + 'Z' : 'no close known: no hold'));
       clearInterval(resultTimer);
       setTimeout(() => readResultSummary(run, nodes), 1000);
       resultTimer = setInterval(() => readResultSummary(run, nodes), 2000);

@@ -798,7 +798,12 @@ public class DriveHud : MonoBehaviour
     /// long as the page takes the player to the next round - until "exit game" or that round's start - instead of the lobby.
     /// </summary>
     public static float ArrivalHoldFor(bool continuing) => continuing ? float.MaxValue : ArrivalHoldSeconds;
-    float ArrivalHoldNow => ArrivalHoldFor(SplashScreen.Continuing);
+    // AND WHILE THIS RUN'S RESULT IS NOT SIGNED YET (the owner 2026-10-04, option 1): the seats sign at the round's close, so with
+    // continue off the card - and the lobby behind it (SplashScreen.LobbyMayCover) - waits for the page's `hold` to clear.
+    float ArrivalHoldNow => ArrivalHoldFor(SplashScreen.Continuing || ResultHolding);
+
+    /// <summary>The result summary the page read says hold the card: this run is not signed yet, its round's close + 10 s not passed.</summary>
+    public bool ResultHolding { get; private set; }
 
     /// <summary>The last ending was a miss, not a delivery: with the hold open-ended, only the newer of the two counts.</summary>
     bool LastEndingWasMiss() => gate.MissedAt >= 0f && Time.unscaledTime - gate.MissedAt <= gate.SinceDelivery;
@@ -1056,10 +1061,11 @@ public class DriveHud : MonoBehaviour
         if (json == _summaryJson) return;
         _summaryJson = json;
         var wire = ResultSummary.Parse(json);
+        ResultHolding = wire != null && wire.hold;
         _summaryLines = ResultSummary.Lines(wire);
         if (wire != null && wire.players.Length > 3 && ArrivalScale(w, h, head0, 0f, false, true, _summaryLines.Count) < 1f)
             _summaryLines = ResultSummary.Lines(wire, 3);
-        Debug.Log("[blwp] result summary: " + string.Join(" | ", _summaryLines));
+        Debug.Log("[blwp] result summary" + (ResultHolding ? " (holding)" : "") + ": " + string.Join(" | ", _summaryLines));
     }
 
     System.Collections.Generic.List<string> _summaryLines = new System.Collections.Generic.List<string>();
