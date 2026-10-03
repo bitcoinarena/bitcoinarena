@@ -702,6 +702,103 @@ impl LockClient {
         let image = PaymentImage::Hash(sha256::Hash::from_str(&hash).map_err(js)?);
         self.lock_to(image, amount_msat, claim_pk, refund_pk, expiry_delta).await
     }
+
+    /// THE STAKE LOCK AND THE FEE LOCK IN ONE TRANSACTION (the owner 2026-10-02, the join's 2-3 s: "Cut whatever is between the
+    /// click and the loaded round"). Measured on testnet4 the two locks were two transactions one after the other - each a
+    /// block count, a submit, the wait for the guardians to accept it, a search of its outputs and a second block count:
+    /// 'locking the stake' to 'fee lock: minted' 7.2 s in a paid join (Q4, 22:29:17-25Z). Here: one block count, one
+    /// transaction carrying both outgoing contracts, one acceptance, and both outpoints read together - outputs 0 and 1 as
+    /// built, any other output only if they are not it. Each contract is matched to its outpoint by the id the guardians
+    /// store, so the answer is two answers of `lock`'s own shape ("stake", "fee"), checked by the page as before.
+    #[wasm_bindgen(js_name = lockBoth)]
+    pub async fn lock_both(
+        &self,
+        point: String,
+        stake_msat: String,
+        fee_hash: String,
+        fee_msat: String,
+        claim_pk: String,
+        refund_pk: String,
+        expiry_delta: u32,
+    ) -> Result<String, JsError> {
+        let api = self.client.api().with_module(self.lnv2);
+        let count = block_count(&api).await.map_err(js)?;
+        let refund = PublicKey::from_str(&refund_pk).map_err(js)?;
+        let claim = PublicKey::from_str(&claim_pk).map_err(js)?;
+        let make = |payment_image: PaymentImage, msat: &str| -> Result<OutgoingContract, JsError> {
+            Ok(OutgoingContract {
+                payment_image,
+                amount: Amount::from_msats(msat.parse().map_err(js)?),
+                expiration: count + u64::from(expiry_delta),
+                claim_pk: claim,
+                refund_pk: refund,
+                ephemeral_pk: refund,
+            })
+        };
+        let stake = make(PaymentImage::Point(PublicKey::from_str(&point).map_err(js)?), &stake_msat)?;
+        let fee = make(PaymentImage::Hash(sha256::Hash::from_str(&fee_hash).map_err(js)?), &fee_msat)?;
+        let outputs = [&stake, &fee]
+            .iter()
+            .map(|c| ClientOutput {
+                output: LightningOutput::V0(LightningOutputV0::Outgoing((*c).clone())),
+                amounts: Amounts::new_bitcoin(c.amount),
+            })
+            .collect::<Vec<_>>();
+        let bundle = ClientOutputBundle::new_no_sm(outputs).into_dyn(self.lnv2);
+        let operation = OperationId::new_random();
+        let change = self
+            .client
+            .finalize_and_submit_transaction(operation, "blwp-lock-client", |_| (), TransactionBuilder::new().with_outputs(bundle))
+            .await
+            .map_err(js)?;
+        let txid = change.txid();
+        self.client
+            .transaction_updates(operation)
+            .await
+            .await_tx_accepted(txid)
+            .await
+            .map_err(|e| js(format!("the guardians did not accept the lock transaction: {e}")))?;
+        let ids = [stake.contract_id(), fee.contract_id()];
+        let mut found: [Option<(u64, ContractId, u64)>; 2] = [None, None];
+        let take = |found: &mut [Option<(u64, ContractId, u64)>; 2], out_idx: u64, got: Option<(ContractId, u64)>| {
+            if let Some((id, left)) = got {
+                for k in 0..2 {
+                    if id == ids[k] && found[k].is_none() {
+                        found[k] = Some((out_idx, id, left));
+                    }
+                }
+            }
+        };
+        let (a, b) = futures::future::join(
+            stored_at(&api, OutPoint { txid, out_idx: 0 }),
+            stored_at(&api, OutPoint { txid, out_idx: 1 }),
+        )
+        .await;
+        take(&mut found, 0, a.map_err(js)?);
+        take(&mut found, 1, b.map_err(js)?);
+        for out_idx in 2..16u64 {
+            if found.iter().all(|f| f.is_some()) {
+                break;
+            }
+            let got = stored_at(&api, OutPoint { txid, out_idx }).await.map_err(js)?;
+            take(&mut found, out_idx, got);
+        }
+        let at_read = block_count(&api).await.map_err(js)?;
+        let describe = |c: &OutgoingContract, f: Option<(u64, ContractId, u64)>| -> Result<serde_json::Value, JsError> {
+            let (out_idx, stored_id, left) = f.ok_or_else(|| {
+                js(format!("the lock transaction {txid} was accepted but no output of it holds this outgoing contract"))
+            })?;
+            Ok(serde_json::json!({
+                "txid": txid.to_string(), "out_idx": out_idx,
+                "block_count_at_lock": count, "expiry_delta": expiry_delta,
+                "computed_contract_id": c.contract_id().0.to_string(), "computed_expiration": c.expiration,
+                "stored_contract_id": stored_id.0.to_string(), "stored_blocks_left": left,
+                "block_count_at_read": at_read, "stored_expiration": at_read + left,
+                "ids_match": stored_id == c.contract_id(), "amount_msat": c.amount.msats,
+            }))
+        };
+        Ok(serde_json::json!({ "stake": describe(&stake, found[0])?, "fee": describe(&fee, found[1])? }).to_string())
+    }
 }
 
 impl LockClient {

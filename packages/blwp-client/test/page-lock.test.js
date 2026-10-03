@@ -64,7 +64,7 @@ const claimKey = { ok: true, claimPk: CLAIM, ref: b32(0x9a) };
  * hold, as the stock dry run does. The allowance is the stock
  * TRANSACTION_FEE_DEFAULT's arithmetic (2 sat + 3000 ppm).
  */
-function lockClient({ idsMatch = true, lockedMsat, lockFee = 2528n, feeRule = null } = {}) {
+function lockClient({ idsMatch = true, lockedMsat, lockFee = 2528n, feeRule = null, both = false, badFee = false } = {}) {
   const log = [];
   // Its wallet is kept in the store it is handed, as the real one's database
   // is: one key, the balance, written when a deposit is claimed.
@@ -128,6 +128,17 @@ function lockClient({ idsMatch = true, lockedMsat, lockFee = 2528n, feeRule = nu
         ids_match: true, computed_expiration: expiration, stored_expiration: expiration, amount_msat: Number(amount) });
     }
   }
+  // THE ONE-TRANSACTION LOCK (`lockBoth`), when this stand-in has it: both contracts in one transaction, outputs 0 and 1,
+  // each answered in `lock`'s own shape; `badFee` stores another contract at the fee's outpoint than the one built
+  if (both) Fake.prototype.lockBoth = async function (point, stakeMsat, hash, feeMsat, claim, refund, delta) {
+    log.push({ lockBoth: { point, stakeMsat, hash, feeMsat, claim, refund, delta } });
+    this.balance -= BigInt(stakeMsat) + BigInt(feeMsat) + lockFee;
+    if (this.store) this.store.put('ba', this.balance.toString(16).padStart(2, '0'));
+    const expiration = 1000 + delta;
+    const one = (out_idx, id, stored, amount) => ({ txid: 'ef'.repeat(32), out_idx, computed_contract_id: id, stored_contract_id: stored,
+      ids_match: id === stored, computed_expiration: expiration, stored_expiration: expiration, amount_msat: Number(amount) });
+    return JSON.stringify({ stake: one(0, 's1', 's1', stakeMsat), fee: one(1, 'f1', badFee ? 'f2' : 'f1', feeMsat) });
+  };
   return { LockClient: Fake, log };
 }
 
@@ -265,6 +276,29 @@ test('a 100 sat round under the ruled fee: its 2000 msat fee lock pays the signe
     stake: { stakeCommitment: b32(0x71), vssSharesRef: new Uint8Array(32), stakePoint: POINT }, stakeLock: { outpoint: got.outpoint, fields: got.fields, feeLock: got.feeLock } });
   assert.equal(toHex(entry.feePreimage), toHex(feeSecretFor(seed, rid100)));
   assert.notEqual(toHex(entry.feeLockOutpoint.txid), '00'.repeat(32));
+});
+
+test('the stake and the fee lock in one transaction when the lock client has lockBoth: one call, each half checked as a lone lock, and a fee outpoint holding another contract refused', async () => {
+  const round100 = { ...round, stakeMsat: 100000n };
+  const rid100 = roundId(round100);
+  for (const badFee of [false, true]) {
+    const { LockClient, log } = lockClient({ feeRule: RULE, both: true, badFee });
+    const tab = tabStorage();
+    await fundPlayerWallet({ round: round100, invite: INVITE, seed, LockClient, storage: tab });
+    const go = lockStake({ round: round100, roundId: rid100, invite: INVITE, seed, stake: { stakePoint: POINT }, claimKey, playerPubkey: player,
+      LockClient, storage: tab });
+    if (badFee) { await assert.rejects(go, /another contract/); continue; }
+    const got = await go;
+    const calls = log.filter((l) => l.lock || l.lockHash || l.lockBoth);
+    console.log(`  lockBoth: ${calls.length} call(s): ${calls.map((c) => Object.keys(c)[0]).join(', ')}; stake at out ${got.outpoint.outIdx}, fee at out ${got.feeLock.outpoint.outIdx}`);
+    assert.deepEqual(calls.map((c) => Object.keys(c)[0]), ['lockBoth'], 'the two locks were not one transaction');
+    assert.equal(calls[0].lockBoth.feeMsat, '2000');
+    assert.equal(calls[0].lockBoth.hash, toHex(sha256(feeSecretFor(seed, rid100))));
+    assert.equal(got.outpoint.outIdx, 0n);
+    assert.equal(got.feeLock.outpoint.outIdx, 1n);
+    assert.equal(toHex(got.outpoint.txid), toHex(got.feeLock.outpoint.txid));
+    assert.equal(toHex(got.feeLock.preimage), toHex(feeSecretFor(seed, rid100)));
+  }
 });
 
 test('a 1000 sat round: the page mints one 20000 msat fee lock to H(F), names F and its outpoint in the entry, and hands it to each signer node\'s /fee-lock', async () => {
