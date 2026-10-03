@@ -265,6 +265,20 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
   every game, at entry, outside the federation. Nothing of a donation is
   locked.
 
+## Rulings (the owner 2026-10-03)
+
+- **A stake nobody claims comes back at settlement, not at expiry.** `stake_expiry_blocks` stays **144** - the
+  backstop if the signer nodes never settle (a shorter expiry would let a loser take the stake back before the
+  settlement claims it, and would change every round's contract). When a round's settlement paid **no winner**, every
+  lock it did not claim - a FAILED run, a DELIVERED run below the score - is forfeited back to its player's refund key by
+  the signer nodes as soon as their settlement is ACCEPTED (each signer node on its own record: settlement ACCEPTED, no
+  winner's share, the lock not among its claims, no entry of the round still inside its window). The player's client
+  redeems it at once: the stake is back in the player wallet minutes after the run, within one federation transaction of
+  the settlement. A walk-away (FORFEIT at the door) is never a refund (2026-09-30); the fee lock and the donation are
+  not returned.
+- **Every amount that comes back is a row in the wallet's history:** a stake back with no payout is a "Refund" row
+  (money in), next to deposits, stakes, winnings, donations and withdrawals.
+
 ## Rulings (the owner 2026-09-21)
 
 - **The player wallet** (§24A.1, v4.6.3): the round wallet is one wallet
