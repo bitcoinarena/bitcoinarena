@@ -2328,6 +2328,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!round.entriesOf(rec.roundId).some((e) => toHex(e.entry.playerPubkey) === toHex(rec.playerPubkey)))
           return answer(409, { why: 'this signer node holds no player with that key in that round' });
         const kept = round.putLobbyName({ roundId: rec.roundId, playerPubkey: rec.playerPubkey, record: bytes, signature: sig, atMs: rec.atMs });
+        // A NEW NAME IS LISTED AT ONCE: the small listings kept 5 s (GET /rounds) are dropped, so a player's rename shows on
+        // the next poll - measured: lobby-names served the old name for up to 5 s after the new one was taken (red since
+        // 669b39be). The large series listing is not touched; it names no players.
+        if (kept) for (const [k, v] of listingKept) if (!v.large) listingKept.delete(k);
         return kept ? answer(201, { kept: true }) : answer(200, { kept: false, why: 'this signer node keeps a newer name of that player' });
       }
       if (req.method === 'GET' && url.pathname === '/names') {
