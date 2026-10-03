@@ -784,8 +784,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     signerNodesFor: (rid, contract) => {
       const game = roster.committeeFor(rid, 'game');
       const settle = roster.committeeFor(rid, 'settlement');
+      // AND THE GUARDIAN POOL (§22A v4.6.4): the census nodes guarding the round's federation; none - the two-pool table
+      let guardian = [];
+      try { const g = roster.guardiansFor(rid); if (g.ok) guardian = g.guardians; } catch { guardian = []; }
       return { gameVerify: game.ok ? game.committee.map((e) => e.pubkey) : contract.nodes,
-        settlement: settle.ok ? settle.committee.map((e) => e.pubkey) : contract.nodes };
+        settlement: settle.ok ? settle.committee.map((e) => e.pubkey) : contract.nodes, guardian };
     },
   });
 
@@ -1725,6 +1728,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // rounds' count or their newest row, which one covering-index read tells.
   let openList = { key: null, ids: [] };
   let dashboardKept = null;   // /dashboard.json, kept 30 s
+  // the dashboard's pools: the settlement's own (census committees and the round federation's guardians)
+  const dashboardPools = (rid, contract) => {
+    const game = roster.committeeFor(rid, 'game'); const settle = roster.committeeFor(rid, 'settlement');
+    let guardian = []; try { const g = roster.guardiansFor(rid); if (g.ok) guardian = g.guardians; } catch { guardian = []; }
+    return { gameVerify: game.ok ? game.committee.map((e) => e.pubkey) : contract.nodes,
+      settlement: settle.ok ? settle.committee.map((e) => e.pubkey) : contract.nodes, guardian };
+  };
   const openKeyQuery = () => round.db.prepare('SELECT count(*) AS n, max(rowid) AS m FROM rounds WHERE state = 0').get();
   const openHeld = () => {
     const q = openKeyQuery();
@@ -2051,7 +2061,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       if (req.method === 'GET' && url.pathname === '/dashboard.json') {
         const nowMs = Date.now();
-        if (!dashboardKept || nowMs - dashboardKept.at > 30000) dashboardKept = { at: nowMs, body: JSON.stringify(dashboardData(round, { nowMs })) };
+        if (!dashboardKept || nowMs - dashboardKept.at > 30000) dashboardKept = { at: nowMs, body: JSON.stringify(dashboardData(round, { nowMs, poolsFor: dashboardPools })) };
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
         return res.end(dashboardKept.body);
       }
