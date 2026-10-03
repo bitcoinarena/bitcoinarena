@@ -2452,6 +2452,29 @@ export class Round {
         refunds: refunds.all(x.round_id).map((l) => String(JSON.parse(l.fields).refundPk).toLowerCase()) }));
   }
 
+  /** Donation outputs this signer node verified for one entry (the owner 2026-10-03): kept, and indexed by recipient key. */
+  putDonationOutputs(rows) {
+    const put = this.db.prepare('INSERT OR REPLACE INTO donation_outputs (outpoint, entry_id, round_id, federation_id, recipient_pk, amount_msat, contract_id, verified_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+    for (const r of rows)
+      put.run(`${Buffer.from(r.outpoint.txid).toString('hex')}:${r.outpoint.outIdx}`, Buffer.from(r.entryId), Buffer.from(r.roundId),
+        Buffer.from(r.federationId), Buffer.from(r.recipientPk).toString('hex'), String(r.amountMsat), r.contractId, this.now());
+  }
+
+  /** The entry a verified donation output at this outpoint already pays for, or null: one output is one entry's. */
+  donationOutputAt(outpoint) {
+    const r = this.db.prepare('SELECT entry_id FROM donation_outputs WHERE outpoint = ?')
+      .get(`${Buffer.from(outpoint.txid).toString('hex')}:${outpoint.outIdx}`);
+    return r ? { entryId: new Uint8Array(r.entry_id) } : null;
+  }
+
+  /** WHAT A RECIPIENT KEY WAS DONATED, oldest first, from `sinceMs`: every output this signer node verified for it. */
+  donationsFor(recipientHex, sinceMs = 0) {
+    return this.db.prepare('SELECT outpoint, entry_id, round_id, federation_id, amount_msat, contract_id, verified_ms FROM donation_outputs WHERE recipient_pk = ? AND verified_ms >= ? ORDER BY verified_ms, outpoint LIMIT 5000')
+      .all(String(recipientHex).toLowerCase(), Math.max(0, Math.floor(Number(sinceMs) || 0)))
+      .map((r) => ({ outpoint: r.outpoint, entryId: Buffer.from(r.entry_id).toString('hex'), roundId: Buffer.from(r.round_id).toString('hex'),
+        federationId: Buffer.from(r.federation_id).toString('hex'), amountMsat: r.amount_msat, contractId: r.contract_id, verifiedMs: Number(r.verified_ms) }));
+  }
+
   /** The entry a verified lock at this outpoint already stakes, or null: one lock is one entry. */
   stakeLockAt(outpoint) {
     const r = this.db.prepare('SELECT entry_id FROM stake_locks WHERE outpoint = ?')

@@ -76,7 +76,7 @@ import { Ghosts } from './ghosts.js';
 import { Roster, endpointsOf, NO_CHAIN_VIEW_WHY } from './roster.js';
 import { receiptsNeeded as roundThreshold, donationKeysForNetworkId } from '../../protocol/src/genesis.js';
 import { authorityAt, donationSetSignedBy, donationSetInForce, encodeDonationSetBody, encodeAuthorityRotation } from '../../protocol/src/authority.js';
-import { donationSetId } from '../../protocol/src/donation.js';
+import { donationSetId, donationOutputsExpected } from '../../protocol/src/donation.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { timed, watchLoop } from './slow.js';
 import { resultFinality, finalSignatureNow } from './finality.js';
@@ -2578,6 +2578,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
               return text(res, 409, `this round mints fee locks (${gate.why}): an entry that brings no fee lock is not taken - `
                 + 'its stake would not be counted, and it would block the round\'s settlement');
           }
+          // THE DONATION OUTPUTS THE ENTRY NAMES ARE ITS SET'S (the owner 2026-10-03, FEDERATION.md): as many as its donation owes
+          // a set of keys, none for an LNURL set or no donation. The federation is asked when the lock is handed over (/lock).
+          const ds = donationSetFor(rc);
+          if (ds.ok || (contract.donationOutpoints || []).length) {
+            const want = ds.ok ? donationOutputsExpected(contract, ds.set.recipients) : { ok: false, why: ds.why };
+            if (!want.ok) return text(res, 409, `entry refused: donation: ${want.why}`);
+          }
         }
         const joined = round.enter(contract);
         // NO HOLD IS ISSUED HERE ANY MORE. This door used to ask the signer node's Lightning for a hold
@@ -2988,6 +2995,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return res.end(Buffer.from(out));
       }
 
+      // WHAT A RECIPIENT KEY WAS DONATED (the owner 2026-10-03, FEDERATION.md "Donations in the federation"): every donation
+      // output this signer node verified for that key, in every round and federation, oldest first, from `since` (ms). Public,
+      // as the entries are; a dev's client confirms each outpoint with its federation before it redeems.
+      if (req.method === 'GET' && url.pathname === '/donations') {
+        const key = String(url.searchParams.get('key') || '').toLowerCase();
+        if (!/^0[23][0-9a-f]{64}$/.test(key)) return text(res, 400, 'a recipient key is 66 hex characters, a compressed secp256k1 point');
+        const rows = round.donationsFor(key, Number(url.searchParams.get('since') || 0));
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ key, donations: rows }));
+      }
+
       // THE PLAYER'S STAKE LOCK, handed to a signer node to verify (23.1 step 5): the
       // contract it locked, as JSON. The signer node asks the federation what it holds
       // at the entry's outpoint, hashes the contract, checks every field against
@@ -3002,8 +3020,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!stored) return text(res, 404, 'this node holds no such entry');
         { const why = seriesRefusalOfRound(decodeEntryContract(stored).roundId); if (why) return text(res, 409, `lock refused: ${why}`); }
         const claimPk = claimKeyOf(decodeEntryContract(stored).roundId);
+        // THE ROUND'S DONATION SET, so the donation outputs in the same transaction are checked with the stake (the owner 2026-10-03)
+        let donationRecipients = null;
+        { const rr = round.get(decodeEntryContract(stored).roundId);
+          const ds = rr ? donationSetFor(decodeRoundContract(new Uint8Array(rr.contract))) : { ok: false };
+          if (ds.ok) donationRecipients = ds.set.recipients; }
         let got;
-        try { got = await verifyStakeLock({ round, port: stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk }); }
+        try { got = await verifyStakeLock({ round, port: stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk, donationRecipients }); }
         catch (e) { got = { ok: false, why: `the federation could not be asked: ${e.message}` }; }
         if (!got.ok) return text(res, 409, got.why);
         return text(res, 201, `stake lock verified: contract ${got.contractId} holds ${got.paidMsat} msat`
