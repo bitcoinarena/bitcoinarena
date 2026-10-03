@@ -216,3 +216,24 @@ test('a batch that fails part of the way through leaves no tick behind', () => {
   assert.equal(r.transcript(rid, eid).ticks.length, 3);
 });
 
+
+test('a late-join round takes a new entry until its entry close + 15 s, and the same entry again after (2026-10-03)', () => {
+  let now = 0;
+  const r = new Round(openStore(), () => now);
+  const c = { ...contract(), entryCloseMs: contract().startTimeMs + 45000n, seriesId: new Uint8Array(32).fill(3), roundIndex: 0 };
+  const rid = r.open(c);
+  now = Number(c.entryCloseMs) + 10000;                       // 10 s after the close: a join that began before it
+  const eid = r.enter(entryFor(rid));
+  now = Number(c.entryCloseMs) + 16000;                       // past the grace: a new entry is refused by name
+  assert.throws(() => r.enter({ ...entryFor(rid), worldSecret: new Uint8Array(32).fill(9) }), /entry closed at/);
+  assert.equal(toHex(r.enter(entryFor(rid))), toHex(eid), 'the same entry posted again is still taken');
+});
+
+test('a round closing entry at its start keeps the old door: no time limit at entry', () => {
+  let now = 0;
+  const r = new Round(openStore(), () => now);
+  const c = contract();
+  const rid = r.open(c);
+  now = Number(c.startTimeMs) + 600000;
+  assert.ok(r.enter(entryFor(rid)));
+});
