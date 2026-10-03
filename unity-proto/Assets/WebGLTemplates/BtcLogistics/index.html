@@ -1204,6 +1204,7 @@
     }
     async function joinTheRoundIfOneWasNamed() {
       if (typeof BLWPCLIENT === 'undefined') return;
+      const thisJoin = window.BLWP_JOIN || null;   // the lobby's join this call makes (null for a round link)
       const named = await BLWPCLIENT.joinFromQuery(location.search);
       if (!named) return;
 
@@ -1547,6 +1548,8 @@
             return BLWPCLIENT.markLockCommitted(vault(), Object.assign({ entryId: eid }, whose));
           };
           if (reuse) {
+            // A JOIN THAT HOLDS A LOCK IS NOT REPLACED BY ANOTHER PLAY (BLWP_JOIN_ANSWER busy): it is finished
+            if (thisJoin) thisJoin.locking = true;
             stakeLock = { outpoint: reuse.lock.outpoint, fields: reuse.lock.fields, feeLock: reuse.lock.feeLock || null,
               needed: BLWPCLIENT.sharesNeededFor(named.round), onCommitted: committedTo };
             window.BLWP_STAKE_LOCK = stakeLock;
@@ -1556,6 +1559,9 @@
           } else try {
             // THE DEPOSIT ASKED AT THE START OF THE JOIN (above), IN THE PLAYER WALLET BY NOW OR PAID WHILE THIS WAITS.
             const wallet = await (funding || Promise.reject(new Error('no deposit was started for this round')));
+            // A JOIN REPLACED BY ANOTHER PLAY BEFORE ITS LOCK makes no lock (the deposit, if any, stays in the player wallet)
+            if (thisJoin && thisJoin.cancelled) throw new Error('this join was replaced by another PLAY before its stake was locked');
+            if (thisJoin) thisJoin.locking = true;   // from here it holds a lock (busy: finished, never replaced)
             // THE ROUND IS SHOWN LOADED HERE, THE LOCK FINISHES BEHIND IT (the owner 2026-10-03: "A paid join of an already-open
             // round stays at most 3 seconds from the click to the loaded round"). Measured on 0.0.2479: the lock's federation
             // acceptance alone took 1.9-2.6 s (1.7-5.2 s earlier) of a 3.5-4.7 s join. The player wallet holds this round's
@@ -3087,14 +3093,43 @@
         // starts the round), the round is joined by the same code a round link
         // runs, and Unity starts the round when BLWP_JOIN says joined.
         join(id, { holdUntilMs = 0, next = false, link = false } = {}) {
+          // EVERY ANSWER CARRIES ITS REASON (the owner 2026-10-03: two PLAY clicks answered false before any join, cause
+          // unnamed): window.BLWP_JOIN_ANSWER { ok, why, at, round, ... } and one line; Unity still gets true or false.
+          const answer = (ok, why, more) => {
+            window.BLWP_JOIN_ANSWER = Object.assign({ ok: !!ok, why, at: Date.now(), round: String(id) }, more || {});
+            if (!ok) console.warn('[blwp] join ' + String(id).slice(0, 16) + ' not-started: ' + why + ' ' + JSON.stringify(more || {}));
+            return !!ok;
+          };
           // THE LOBBY'S OWN ROW, or - for the next round after a run - any row this page last read (a series lists more
           // than one round of a kind, and the lobby shows one per kind)
           let r = (window.BLWP_LOBBY || []).find((x) => x.id === id && x.join);
-          if (!r && next) {
+          // NO-ROW: THE ROUND FROM EVERY ROUND LISTED, as the next round after a run is found (the lobby shows one row per
+          // kind; a newer round of the series can take the row between a click's pick and the click itself)
+          if (!r) {
             const raw = (window.BLWP_LOBBY_ROWS || []).find((x) => x.id === id && x.joinable);
-            if (raw) r = { id, free: raw.free, stakeSats: BLWPCLIENT.lobbyStakeSats(raw), join: BLWPCLIENT.lobbyJoinSearch(rowSearch.get(id) || search, id) };
+            if (raw) r = { id, free: raw.free, stakeSats: BLWPCLIENT.lobbyStakeSats(raw), raw, join: BLWPCLIENT.lobbyJoinSearch(rowSearch.get(id) || search, id) };
           }
-          if (!r) return false;
+          if (!r) {
+            const ids = (window.BLWP_LOBBY_ROWS || []).map((x) => String(x.id).slice(0, 8) + (x.joinable ? '+' : '-'));
+            const more = { lobbyAgeMs: window.BLWP_LOBBY_PAINTED_AT ? Date.now() - window.BLWP_LOBBY_PAINTED_AT : null, rows: ids,
+              inRows: (window.BLWP_LOBBY_ROWS || []).some((x) => x.id === id), painting: !!window.BLWP_LOBBY_PAINTING };
+            // A LOBBY REFRESH IN FLIGHT: waited for briefly (3 s), then the round is looked for again; meanwhile the join says
+            // so by name, and a round still not listed is refused by name
+            const going0 = window.BLWP_JOIN;
+            if (window.BLWP_LOBBY_PAINTING && !(going0 && going0.state === 'joining' && !going0.finding) && !next) {
+              const finding = window.BLWP_JOIN = { state: 'joining', why: '', stage: 'finding the round in the lobby', round: id, kindKnown: false, finding: true };
+              const t0 = Date.now();
+              (function look() {
+                if (window.BLWP_JOIN !== finding) return;
+                if ((window.BLWP_LOBBY_ROWS || []).some((x) => x.id === id && x.joinable)) { window.BLWP_LOBBY_ACT.join(id, { holdUntilMs, next, link }); return; }
+                if (Date.now() - t0 < 3000) { setTimeout(look, 250); return; }
+                finding.state = 'refused'; finding.why = 'this round is no longer listed in the lobby'; finding.stage = '';
+                answer(false, 'no-row', Object.assign({}, more, { waitedMs: Date.now() - t0 }));
+              })();
+              return answer(true, 'no-row-waiting', more);
+            }
+            return answer(false, 'no-row', more);
+          }
           // ANOTHER TAB OF THIS BROWSER IS IN A PAID RUN: this paid join is refused by name (see BLWP_PAID_RUN_ELSEWHERE)
           if (!r.free && window.BLWP_PAID_RUN_ELSEWHERE) {
             const there = window.BLWP_PAID_RUN_ELSEWHERE();
@@ -3102,7 +3137,7 @@
               window.BLWP_JOIN = { state: 'refused', why: 'another tab of this browser is playing a paid round - finish it there first',
                 stage: '', round: id, kindKnown: true, free: false, stakeSats: Number(r.stakeSats) || 0, next: !!next };
               console.warn('[blwp] join ' + String(id).slice(0, 16) + ' refused: another tab of this browser is in paid round ' + there.slice(0, 16));
-              return true;
+              return answer(true, 'elsewhere', { there });
             }
           }
           // EVERY RUN STARTS AT ITS ROUND'S START, PLAY FROM THE LOBBY TOO (the owner 2026-09-29 22:00, PRIORITIES item 6: "Free
@@ -3116,13 +3151,19 @@
           // answered yes: a next round the page was holding to its start took the player's Join on another row, and Unity
           // then waited on that other round. A HELD join for another round (entered, only its start to come) is dropped
           // as exit game drops it, and this round is joined; one still being made is not raced - Join answers no.
+          // BUSY: another join going. One still finding its row, or one of this tab with no lock yet, is replaced by this
+          // click; one that holds a lock (or a next round's join, which is the page's own) is finished, and this click is
+          // refused by name.
           const going = window.BLWP_JOIN;
           if (going && going.state === 'joining') {
-            if (going.round === id) return true;
-            if (next || !going.held) return false;
-            going.cancelled = true; going.state = 'refused'; going.why = ''; going.stage = ''; going.held = false;
+            if (going.round === id && !going.finding) return answer(true, 'already-joining');
+            const busy = { other: String(going.round || ''), state: going.state, held: !!going.held, next: !!going.next, locking: !!going.locking };
+            if (next || going.locking) {
+              return answer(false, 'busy', Object.assign(busy, { said: next ? 'the next round is the page\'s own join' : 'finishing the join of round ' + String(going.round).slice(0, 16) }));
+            }
+            going.cancelled = true; going.state = 'refused'; going.why = ''; going.stage = ''; going.held = false; going.loaded = false;
             if (window.BLWP_NEXT && window.BLWP_NEXT.round === going.round) window.BLWP_NEXT.state = 'none';
-            console.log(`[blwp] join ${String(id).slice(0, 16)}: the held join on ${String(going.round).slice(0, 16)} is dropped`);
+            console.log(`[blwp] join ${String(id).slice(0, 16)}: the join on ${String(going.round).slice(0, 16)} (no lock yet) is dropped`);
           }
           const back = location.search;
           window.BLWP_LOBBY_BACK = back;         // where the address goes back to once the run is over
@@ -3131,7 +3172,9 @@
           const join = window.BLWP_JOIN = { state: 'joining', why: '', stage: '', round: id, kindKnown: true, free: !!r.free,
             stakeSats: Number(r.stakeSats) || 0, next: !!next };
           const refuse = (why) => {
-            join.state = 'refused'; join.held = false; join.loaded = false;
+            // THE COUNTDOWN GOES WITH THE JOIN (V2, measured 0.0.2481: a lock refused after the round was shown loaded left
+            // 'next round starts in 4:45' on the line beside the refusal)
+            join.state = 'refused'; join.held = false; join.loaded = false; join.stage = '';
             join.why = String(why);
             if (/the round is closed/.test(join.why)) (window.BLWP_CLOSED_ROUNDS = window.BLWP_CLOSED_ROUNDS || new Set()).add(id);
             // not joined: the lobby's address back, and no round left named for Unity to open
@@ -3212,7 +3255,7 @@
                      console.error('[blwp] join refused: ' + join.why); }
             })
             .catch((e) => { if (!join.cancelled) refuse(e && e.message ? e.message : e); });
-          return true;
+          return answer(true, 'started');
         },
         // THE NAME, in the browser's own prompt: a phone's keyboard types into it.
         editName() {
@@ -3246,7 +3289,8 @@
       // EVERY SECOND, ONE AT A TIME (the owner 2026-09-16 15:36): every 5 s the list trailed a new round, a
       // join and the countdown; a paint that is still waiting on a signer node is not started again.
       let painting = false;
-      setInterval(() => { if (painting) return; painting = true; paint().finally(() => { painting = false; }); }, 1000);
+      setInterval(() => { if (painting) return; painting = true; window.BLWP_LOBBY_PAINTING = true;
+        paint().finally(() => { painting = false; window.BLWP_LOBBY_PAINTING = false; window.BLWP_LOBBY_PAINTED_AT = Date.now(); }); }, 1000);
       return true;
     }
 
