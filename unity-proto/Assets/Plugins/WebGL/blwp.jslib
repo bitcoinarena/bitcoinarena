@@ -550,7 +550,10 @@ mergeInto(LibraryManager.library, {
       // nodes as the committee and then satisfying its own choice.
       var given = null;
       try {
-        var q = new URLSearchParams(window.location.search).get('round');
+        // THE ROUND THE JOIN READ FROM THE PLAYER'S LINK (index.html BLWP_GIVEN_ROUND), not the address now: a run's end
+        // puts the lobby's address back, and a chained join's round= was gone by its session open (2026-10-03 13:33Z)
+        var q = (typeof window.BLWP_GIVEN_ROUND === 'string' && /^[0-9a-f]{64}$/.test(window.BLWP_GIVEN_ROUND))
+          ? window.BLWP_GIVEN_ROUND : new URLSearchParams(window.location.search).get('round');
         if (q) given = BLWPCLIENT.fromHex(q);
       } catch (e) { given = null; }
       var entry = Object.assign({}, signerNode, {
