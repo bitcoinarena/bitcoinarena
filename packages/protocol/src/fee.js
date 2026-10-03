@@ -34,10 +34,14 @@ import { DELIVERED, FAILED, FORFEIT, isRefund, remainderOrder, netStakeMsat } fr
 export const NODE_FEE_BPS = 200;
 export const POOL_BPS = 100;
 
-/** The two pools 22A pays, and the roles that sit in each. */
+/** The pools 22A pays, and the roles that sit in each. */
 export const GAME_VERIFY = 'gameVerify';
 export const SETTLEMENT = 'settlement';
-export const POOLS = [GAME_VERIFY, SETTLEMENT];
+// THE GUARDIAN POOL (§22A v4.6.4, RULED the owner 2026-09-21 and 2026-10-01 15:44: "2/3 % to the game/verify pool, 2/3 % to
+// the settlement pool ... and 2/3 % to the guardian pool, the seated guardians of the federation the round names"): the
+// third pool, divided evenly among those guardians. A round whose guardians are not named keeps the two-pool table.
+export const GUARDIAN = 'guardian';
+export const POOLS = [GAME_VERIFY, SETTLEMENT, GUARDIAN];
 
 /**
  * WHICH POOL A ROLE IS PAID FROM, and it is not a formality.
@@ -99,18 +103,27 @@ export function grossVolumeMsat(entries) {
 export function nodeFeeTable({ contract, entries, pools, eligible }) {
   const gross = grossVolumeMsat(entries);
   const fee = (gross * BigInt(NODE_FEE_BPS)) / 10000n;
-  const first = (gross * BigInt(POOL_BPS)) / 10000n;
-
-  // The second pool is what is left of the fee, not a second division: two
-  // floors of the same ragged number can lose a millisatoshi between them.
-  const shareOf = { [GAME_VERIFY]: first, [SETTLEMENT]: fee - first };
+  // THREE EQUAL THIRDS WHEN THE ROUND'S GUARDIANS ARE NAMED AND ONE IS ELIGIBLE: the first two floored, the guardian pool
+  // what is left (two floors of the same ragged number can lose a millisatoshi between them). With no guardian named, the
+  // two-pool table exactly as before - 1% and the rest.
+  const guardians = ((pools && pools[GUARDIAN]) || []).filter((k) => eligible.has(hex(k)));
+  let shareOf;
+  if (guardians.length) {
+    const third = fee / 3n;
+    shareOf = { [GAME_VERIFY]: third, [SETTLEMENT]: third, [GUARDIAN]: fee - 2n * third };
+  } else {
+    const first = (gross * BigInt(POOL_BPS)) / 10000n;
+    shareOf = { [GAME_VERIFY]: first, [SETTLEMENT]: fee - first, [GUARDIAN]: 0n };
+  }
 
   const id = roundId(contract);
   const signerNodes = new Map();
   let unallocated = 0n;
+  let cursor = 0;   // where the leftover order stopped (three pools)
 
   for (const pool of POOLS) {
     const amount = shareOf[pool];
+    if (amount === 0n) continue;
     const inPool = (pools && pools[pool]) || [];
     const earning = inPool.filter((k) => eligible.has(hex(k)));
 
@@ -122,10 +135,16 @@ export function nodeFeeTable({ contract, entries, pools, eligible }) {
     const each = amount / BigInt(earning.length);
     let left = amount - each * BigInt(earning.length);
     for (const k of earning) signerNodes.set(signerNodeKey(pool, k), (signerNodes.get(signerNodeKey(pool, k)) || 0n) + each);
-    for (const e of remainderOrder(id, earning.map((pubkey) => ({ pubkey })))) {
+    // WITH THREE POOLS THE LEFTOVER MSATS TAKE TURNS ACROSS THEM: the order goes on where the pool before stopped, so
+    // a node does not take the extra millisatoshi of every third (measured: 4000 msat over two nodes, 2001 and 1999).
+    // The two-pool table keeps its own order, exactly as before.
+    const order = remainderOrder(id, earning.map((pubkey) => ({ pubkey })));
+    const from = guardians.length ? cursor % order.length : 0;
+    for (const e of [...order.slice(from), ...order.slice(0, from)]) {
       if (left <= 0n) break;
       signerNodes.set(signerNodeKey(pool, e.pubkey), signerNodes.get(signerNodeKey(pool, e.pubkey)) + 1n);
       left -= 1n;
+      cursor++;
     }
   }
 

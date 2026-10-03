@@ -36,7 +36,7 @@
 import { netStakeMsat, isRefund, FAILED, FORFEIT, VOID, DELIVERED } from './payout.js';
 import { lockActions, CLAIM, RETURN } from './lock-action.js';
 import { winnings } from './payout-spend.js';
-import { nodeFeeTable, entryFeeMsat, GAME_VERIFY, SETTLEMENT } from './fee.js';
+import { nodeFeeTable, entryFeeMsat, GAME_VERIFY, SETTLEMENT, GUARDIAN } from './fee.js';
 import { MIN_PLAYERS_PER_ROUND } from './constants.js';
 import { refundKeyOf } from './stake-lock.js';
 import { splitDonation } from './donation.js';
@@ -466,7 +466,7 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees }) {
     if (!(f.preimage instanceof Uint8Array) || f.preimage.length !== 32) return refuse('a fee lock is claimed with its F, and that is 32 bytes');
     claims.push({ pubkey: e.pubkey, outpoint: f.outpoint, amountMsat: f.amountMsat, preimage: f.preimage, kind: 'fee' });
   }
-  const eligible = new Set([...signerNodes[GAME_VERIFY], ...signerNodes[SETTLEMENT]].map(toHex));
+  const eligible = new Set([...signerNodes[GAME_VERIFY], ...signerNodes[SETTLEMENT], ...(Array.isArray(signerNodes[GUARDIAN]) ? signerNodes[GUARDIAN] : [])].map(toHex));
   let table;
   try { table = nodeFeeTable({ contract, entries: counted, pools: signerNodes, eligible }); } catch (e) { return refuse(e.message); }
   const poolMsat = claims.reduce((s, c) => s + c.amountMsat, 0n);
