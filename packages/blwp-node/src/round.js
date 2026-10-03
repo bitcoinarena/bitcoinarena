@@ -41,6 +41,8 @@ import { decodeRerunResult, splitSignedRerun } from '../../protocol/src/rerun.js
  * 5-of-7 unless the round's contract is the 2-slot test genesis.
  */
 export const RECEIPTS_FOR_CANONICAL = receiptsNeeded(7);
+// THE TIME A JOIN THAT BEGAN BEFORE THE ENTRY CLOSED MAY TAKE TO LOCK ITS STAKE AND POST ITS ENTRY (late join, 2026-10-03)
+export const ENTRY_POST_GRACE_MS = 15000n;
 
 /**
  * A STORED ROUND THIS NETWORK CANNOT PARSE IS ABSENT (RULED, the owner 2026-09-22 22:59, §23.6): "a record
@@ -364,6 +366,17 @@ export class Round {
     if (now < opensAt)
       throw new Error(
         `that round's committee forms at ${opensAt} and it is ${now}: entry opens then`);
+    // AND NOT AFTER ITS ENTRY CLOSES (the owner 2026-10-03, late join: "Joining an existing round is possible with 45 seconds
+    // in"). The door took an entry as long as the round was open - measured, V3's entry 21 s after a start that closed its
+    // entry - so a late join had no end but the round's. Now an entry new to this node is refused once the round's
+    // entry_close has passed by more than ENTRY_POST_GRACE_MS (the time a join that began before the close takes to lock
+    // its stake and post); the same entry posted again - a retry, a reload's resend, a peer's copy - is still taken.
+    // Only a series round whose entry closes after its start (a late-join series): a round closing entry at its start keeps the
+    // old door, where a join held to the start may land its entry a few seconds after it.
+    if (asks.seriesId instanceof Uint8Array && typeof asks.entryCloseMs === 'bigint' && asks.entryCloseMs > asks.startTimeMs
+      && now > asks.entryCloseMs + ENTRY_POST_GRACE_MS
+      && !this.db.prepare('SELECT 1 FROM entries WHERE entry_id = ?').get(Buffer.from(entryId(contract))))
+      throw new Error(`that round's entry closed at ${asks.entryCloseMs} (+ ${ENTRY_POST_GRACE_MS} ms to post) and it is ${now}`);
 
     // AND IT PAYS WHAT THIS ROUND ASKS - THE STAKE, AND THE FEE AND THE
     // DONATION OUT OF IT (22A: inclusive, never on top).
