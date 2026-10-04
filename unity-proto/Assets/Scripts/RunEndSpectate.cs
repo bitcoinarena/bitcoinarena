@@ -22,6 +22,8 @@ public class RunEndSpectate : MonoBehaviour
     public Transform truck;
     public LoadoutPanel loadout;
     public SpectatorCamera spectator;
+    /// <summary>The death sequence: in a live round this waits for its band to hold and fade (#131).</summary>
+    public WastedSequence wasted;
 
     [Tooltip("Seconds the rise from the chase view to the top-down view takes.")]
     public float riseSeconds = 3f;
@@ -95,7 +97,20 @@ public class RunEndSpectate : MonoBehaviour
         if (!Active) return;
         Active = false;
         if (chase != null) chase.enabled = true;
+        _leftAt = Time.unscaledTime;
         Debug.Log("[blwp] spectate: back to the chase camera");
+    }
+
+    // THE NEXT TRUCK IN VIEW (#131): 2 s after spectate lets go, where the camera is against the truck, once.
+    float _leftAt = -1f;
+    void ReportChase()
+    {
+        if (_leftAt < 0f || Time.unscaledTime - _leftAt < 2f || truck == null) return;
+        _leftAt = -1f;
+        var cam = _cam != null ? _cam.transform : transform;
+        float d = Vector3.Distance(cam.position, truck.position);
+        float ahead = Vector3.Dot(cam.forward, (truck.position - cam.position).normalized);
+        Debug.Log($"[blwp] chase: 2 s after spectate, the camera is {d:0.0} m from the truck, facing it {ahead:0.00}, chase on {(chase != null && chase.enabled)}, death orbit {(chase != null && chase.deathOrbit.HasValue ? "set" : "none")}");
     }
 
     /// <summary>Whether the core says this live round's run ended WRECKED or DELIVERED (a MISSED end is not spectated).</summary>
@@ -111,7 +126,8 @@ public class RunEndSpectate : MonoBehaviour
         bool cargoOpen = loadout != null && loadout.IsOpen;
         if (!Active)
         {
-            if (!cargoOpen && truck != null && (spectator == null || !spectator.Active) && RunEndedHere()) Begin(truck.position);
+            if (!cargoOpen && truck != null && (spectator == null || !spectator.Active) && (wasted == null || !wasted.BandUp) && RunEndedHere()) Begin(truck.position);
+            ReportChase();
             return;
         }
         if (cargoOpen || (Blwp.BlwpCore.Available && Blwp.BlwpCore.RunState == Blwp.Layout.RUN_LIVE)) { Leave(); return; }
