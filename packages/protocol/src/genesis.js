@@ -13,14 +13,19 @@ import {
   AUTHORITY_PUBKEY_TESTNET4, RECOVERY_PUBKEY_TESTNET4,
 } from './genesis-ids.js';
 import { NODE_FEE_BPS } from './fee.js';
+// THE GAME CONFIG THE NETWORK WAS FOUNDED ON, NOT THE LIVE CORE'S (2026-10-04): the network id commits to this config's
+// hash, and every contract, bond and donation set is signed under that id - so it is read from the core the network was
+// founded on, kept frozen in core/frozen/2069b4c2, and does not follow a later core. When par moved from 3900 ticks to
+// 1800 (T sinks from 20 s, the owner 09:17) the live core's constants would have moved the network id: a refound. A later
+// core's own rules are named by its core hash, which every round carries beside this config.
 import {
   EXPOSURE_REFERENCE, APRON_RADIUS, FRONT_SCORE_SPAN, T_FLOOR, T_CEIL,
   REFERENCE_TICKS,
-} from '../../core/src/rules/score.js';
-import { HALF_MOUTH, BLOCK_TICKS } from '../../core/src/rules/gate.js';
+} from '../../core/frozen/2069b4c2/rules/score.js';
+import { HALF_MOUTH, BLOCK_TICKS } from '../../core/frozen/2069b4c2/rules/gate.js';
 import {
   HEAT_REACH_ARMOUR, HEAT_REACH_RIFLE, HEAT_OUTRANK, HEAT_SHELL,
-} from '../../core/src/rules/army.js';
+} from '../../core/frozen/2069b4c2/rules/army.js';
 
 export const TAG_GAME_CONFIG = 'BLWP/v1/GameConfig';
 export const TAG_GENESIS = 'BLWP/v1/GenesisParameters';

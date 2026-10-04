@@ -2199,11 +2199,19 @@ function encodeInputBatch(b) {
   const tapes = [...(b.tapes || [])].sort((x, y) => x[0] - y[0]);
   // one a batch at most: a run hands over one tape, and the transport ceiling stays a short message
   if (tapes.length > 1) throw new Error('a batch carries at most one tape');
-  if (samples.length || tapes.length) w.vec(samples, (l, ww) => { ww.u32(l[0]); ww.i32(l[1]); });
-  if (tapes.length) w.vec(tapes, (l, ww) => {
+  // THE ROOM A LOAD FILLS (the owner 2026-10-04 08:54: the cargo factor C is the bed fill): `[tick, room]` for each load
+  // that carries a fourth word, the room its bed takes (cargo.js roomFor summed), so a replay sets the same C. A third
+  // optional tail after the samples and the tape, written only when a load carries a room - so every batch before it,
+  // and every load that carries none, is byte for byte what it was and keeps its id. The two tails before it are written
+  // (empty) when this one is, so the three read back unambiguously.
+  const rooms = loads.filter((l) => l.length > 3 && l[3] !== undefined && l[3] !== null).map((l) => [l[0], l[3] | 0]);
+  if (new Set(rooms.map((r) => r[0])).size !== rooms.length) throw new Error('a batch carries one room a load tick');
+  if (samples.length || tapes.length || rooms.length) w.vec(samples, (l, ww) => { ww.u32(l[0]); ww.i32(l[1]); });
+  if (tapes.length || rooms.length) w.vec(tapes, (l, ww) => {
     if (l.length !== 1 + TAPE_PRICES) throw new Error(`a tape carries ${TAPE_PRICES} prices`);
     ww.u32(l[0]); for (let i = 1; i <= TAPE_PRICES; i++) ww.i32(l[i]);
   });
+  if (rooms.length) w.vec(rooms, (l, ww) => { ww.u32(l[0]); ww.i32(l[1]); });
   return w.finish();
 }
 
@@ -2226,12 +2234,19 @@ function decodeInputBatch(bytes) {
   });
   b.liquidations = r.vec((rr) => [rr.u32(), rr.i32()]);
   b.loads = r.vec((rr) => [rr.u32(), rr.i32(), rr.i32()]);
-  // whatever follows the loads is a sample vector, then a tape vector, or nothing; bytes that do not read as those are
-  // trailing bytes
+  // whatever follows the loads is a sample vector, then a tape vector, then a room vector, or nothing; bytes that do not
+  // read as those are trailing bytes
   try {
     b.samples = r.at < bytes.length ? r.vec((rr) => [rr.u32(), rr.i32()]) : [];
     b.tapes = r.at < bytes.length ? r.vec((rr) => { const t = [rr.u32()]; for (let i = 0; i < TAPE_PRICES; i++) t.push(rr.i32()); return t; }) : [];
+    var rooms = r.at < bytes.length ? r.vec((rr) => [rr.u32(), rr.i32()]) : [];
   } catch { throw new Error('trailing bytes after the batch'); }
+  // each room joins the load at its tick; a room with no load there is not a batch this encoder writes
+  for (const [at, room] of rooms) {
+    const l = b.loads.filter((x) => x[0] === at);
+    if (l.length !== 1 || l[0].length > 3) throw new Error('a room names no single load at its tick');
+    l[0].push(room);
+  }
   if (b.tapes.length > 1) throw new Error('a batch carries at most one tape');
   // one encoding per batch: empty optional tails are written as none
   if (r.at === bytes.length && bytes.length !== encodeInputBatch(b).length) throw new Error('an empty optional vector is not canonical');
@@ -2495,7 +2510,7 @@ function flatten(t) {
     firstTick,
     ticks,
     liquidations: liquidations.map(([at, size]) => [at - firstTick, size]),
-    loads: loads.map(([at, fee, btc]) => [at - firstTick, fee, btc]),
+    loads: loads.map(([at, ...rest]) => [at - firstTick, ...rest]),   // [fee, btc] or [fee, btc, room]
     samples: samples.map(([at, price]) => [at - firstTick, price]),
     tapes: tapes.sort((a, c) => a[0] - c[0]).map(([at, ...prices]) => [at - firstTick, ...prices]),
   };
@@ -6816,6 +6831,7 @@ const KNOWN_GOOD_CORE_HASHES = Object.freeze([
   'a5eaa7aa94f66cd4e0305c45e4c7f4059a0fd807be3d4ff146a0d4a7f2451274',
   'd15c39bb83b7cb63ce2b232a7b62b0078d78d9944013ce42799c80a29bf005ef',
   '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e',
+  'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8',
 ]);
 
 // ---- protocol/src/known-core.js
@@ -16770,9 +16786,12 @@ class Client {
    *
    * Refused once the run has ended, like every other outbound thing here.
    */
-  submitLoad(feeSats, btcHundredths) {
+  submitLoad(feeSats, btcHundredths, roomUsed) {
     if (this.ended || !this.where) return false;
-    this.loads.push([this.offered, feeSats | 0, btcHundredths | 0]);
+    // AND THE ROOM THE BED TAKES when the page has one (the owner 2026-10-04 08:54: the cargo factor C is the bed fill), so
+    // the signer nodes' replay sets the same C; a load without one crosses as before
+    const room = roomUsed === undefined || roomUsed === null ? [] : [roomUsed | 0];
+    this.loads.push([this.offered, feeSats | 0, btcHundredths | 0, ...room]);
     return true;
   }
 

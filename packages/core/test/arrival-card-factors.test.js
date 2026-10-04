@@ -7,6 +7,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 import { scoreOf, exposure5, time5, cargo5, FACTOR_SCALE, SCORE_SCALE, EXPOSURE_REFERENCE, REFERENCE_TICKS, T_TICKS_MIN, T_TICKS_MAX } from '../src/rules/score.js';
+// THE CORE THAT SHOT WAS PLAYED ON (2069b4c2, par 3900 ticks), kept frozen: its score is history and does not move with par
+import * as then from '../frozen/2069b4c2/rules/score.js';
 
 const ONE = 65536;
 const CS = readFileSync(new URL('../../../unity-proto/Assets/Scripts/Cargo/RunScore.cs', import.meta.url), 'utf8');
@@ -34,11 +36,16 @@ test('CoreScoreFactors carries the core\'s own constants', () => {
 test('the 18:29 shot: the card reads load 0.70000 x danger 0.23091 x speed 0.84856, and the core\'s score is that product, 137.15869', () => {
   // THE CORE'S WORDS OF THAT RUN, measured: round 6f2d00c2..., entry 66d99bb6..., the pinned fleet core stepped over the
   // transcript and beacon in a copy of the Daily's store.
+  // ON THE CORE IT WAS PLAYED ON (2069b4c2): the card's factors are that core's, and its score their product.
   const exposure = 4842601, ticks = 4596, cargo = 45875;
-  const facts = { score: scoreOf(exposure, ticks, cargo), card: [C5(cargo), E5(exposure), T5(ticks)].map((x) => (x / 1e5).toFixed(5)),
-    atReference: scoreOf(EXPOSURE_REFERENCE, ticks, cargo) };
+  const facts = { score: then.scoreOf(exposure, ticks, cargo),
+    card: [then.cargo5(cargo), then.exposure5(exposure), then.time5(ticks)].map((x) => (x / 1e5).toFixed(5)),
+    atReference: then.scoreOf(then.EXPOSURE_REFERENCE, ticks, cargo) };
   console.log('  FACTS (18:29):', JSON.stringify(facts));
   assert.deepEqual(facts, { score: 13715869, card: ['0.70000', '0.23091', '0.84856'], atReference: 59399200 });
+  // AND THE SAME WORDS TODAY (T sinks from 20 s, par 1800, the owner 09:17): the C# card and the core still agree, at the new T.
+  assert.deepEqual([C5(cargo), E5(exposure), T5(ticks)], [cargo5(cargo), exposure5(exposure), time5(ticks)]);
+  assert.equal(divRound(C5(cargo) * E5(exposure) * T5(ticks), 1e7), scoreOf(exposure, ticks, cargo));
 });
 
 test('over a grid of runs the card\'s factors are the core\'s, and their product is the core\'s score exactly', () => {
