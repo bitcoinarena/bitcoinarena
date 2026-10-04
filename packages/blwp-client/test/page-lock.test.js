@@ -21,7 +21,7 @@ import assert from 'node:assert/strict';
 import { bech32Encode, convertBits } from '../../protocol/src/bech32.js';
 import { decodeBolt11 } from '../../protocol/src/bolt11.js';
 
-import { lockStake, fundPlayerWallet, walletSecretFor, withdrawPlayerWallet, handLock, lockSecretFor, lockAmountMsat, lockLine, saveLock, savedLock, markLockCommitted,
+import { lockStake, fundPlayerWallet, walletSecretFor, markSeedRecover, seedRecovers, walletStoreFor, withdrawPlayerWallet, handLock, lockSecretFor, lockAmountMsat, lockLine, saveLock, savedLock, markLockCommitted,
   refundStake, redeemStake, redeemPayout, payoutLine, returnStake, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, collectIntoPlayerWallet, invoiceAmountMsat, withdrawLine, refundKept, refundLine, lookOwed, owedToLine as owedLine, collectAndWithdraw, tabLockWallet, findOwedRounds, feeSecretFor, ledgerRows, ledgerReadSavedStakes, playerWallet, depositChoices, depositOffer, withdrawChoices, playerWithdrawable, pendingDeposits, resumeDeposits, restOfFeesMsat, shortOnlyByFees, restInvoiceMsat, ceilNote, NOTE_MSAT, roundsDepositMsat, locksForRound, settingsDepositOffer, DEPOSIT_INSUFFICIENT } from '../src/page-lock.js';
 import { replayLinkFor } from '../src/replay-link.js';
 import { lockFieldsFromJson } from '../../protocol/src/stake-lock.js';
@@ -1797,4 +1797,39 @@ test('a submitted lock answers its outpoints before acceptance; acceptance is ch
     else if (acceptAs === 'moved') await assert.rejects(got.accepted, /another output than the entry names/);
     else await assert.rejects(got.accepted, /did not accept the lock transaction/);
   }
+});
+
+// A SEED BROUGHT FROM ANOTHER DEVICE RECOVERS ITS WALLET (kanban #27, the owner 2026-10-04): the page marks a typed-in seed;
+// that seed's player wallet, kept nowhere in this browser, is opened by LockClient.recover (Fedimint's own recovery) - not
+// joined empty. A seed this page made is joined; a wallet this browser keeps is reopened by join even when marked; a lock
+// client built before recover existed joins.
+test('an imported seed with no wallet here is recovered from the federation; a made seed, a kept wallet and an old client join', async () => {
+  const opened = (tab, s, withRecover = true) => {
+    const { LockClient: L } = lockClient();
+    const calls = [];
+    const LC = { join: (...a) => { calls.push('join'); return L.join(...a); } };
+    if (withRecover) LC.recover = (...a) => { calls.push('recover'); return L.join(...a); };
+    const steps = [];
+    return playerWallet({ round, invite: INVITE, seed: s, LockClient: LC, storage: tab, onStep: (x) => steps.push(x) }).then(() => ({ calls, steps }));
+  };
+  const imported = b32(0x71);
+  const tab = tabStorage();
+  assert.equal(seedRecovers(tab, imported), false);
+  assert.equal(markSeedRecover(tab, toHex(imported)), true);
+  assert.equal(markSeedRecover(tab, 'not hex'), false);
+  assert.equal(seedRecovers(tab, imported), true);
+  assert.ok(![...tab.m.keys()].some((k) => k.includes(toHex(imported))), 'the mark names the seed');
+  const a = await opened(tab, imported);
+  assert.deepEqual(a.calls, ['recover']);
+  assert.deepEqual(a.steps, ['recovering the player wallet of this seed from the federation']);
+  // a seed this page made, in the same browser: joined
+  assert.deepEqual((await opened(tab, b32(0x72))).calls, ['join']);
+  // the marked seed whose wallet this browser now keeps: reopened, never recovered again
+  walletStoreFor(tab, round.federationId, walletSecretFor(imported, round.federationId)).put('client', 'x');
+  const b = await opened(tab, imported);
+  assert.deepEqual(b.calls, ['join']);
+  assert.deepEqual(b.steps, ['reopening the player wallet this tab keeps for this federation']);
+  // a lock client without recover: joined
+  const other = b32(0x73); const tab2 = tabStorage(); markSeedRecover(tab2, toHex(other));
+  assert.deepEqual((await opened(tab2, other, false)).calls, ['join']);
 });
