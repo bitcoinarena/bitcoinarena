@@ -742,7 +742,8 @@ public class DriveHud : MonoBehaviour
         if (block == null || block.Remaining <= 0f) return;
 
         int left = Mathf.CeilToInt(block.Remaining);
-        bool late = left <= 30;
+        // before a joined round starts this is the round's countdown to its start (#64), and nothing is late yet
+        bool late = left <= 30 && !block.StartsIn;
 
         var style = new GUIStyle(GUI.skin.label)
         {
@@ -760,13 +761,14 @@ public class DriveHud : MonoBehaviour
         // and centred put "BLOCK 965,829 · 2:06" straight across the practice
         // switch on a phone.
         var head = HeadlineBox(w, h);
-        string clock = $"BLOCK {block.Height:N0}   ·   {left / 60}:{left % 60:00}";
+        string clock = block.StartsIn ? $"ROUND STARTS IN   {left / 60}:{left % 60:00}" : $"BLOCK {block.Height:N0}   ·   {left / 60}:{left % 60:00}";
         int size = style.fontSize;
         if (FitLine(style, clock, head.width, 12))
             Shadowed(new Rect(head.x, y, head.width, style.fontSize * 1.35f), clock, style, colour);
 
         var sub = new GUIStyle(_small) { alignment = TextAnchor.UpperCenter };
-        string words = late ? "DELIVER BEFORE THE BLOCK IS MINED — OR LOSE THE LOAD"
+        string words = block.StartsIn ? "the same clock on every device - the round's own start"
+                     : late ? "DELIVER BEFORE THE BLOCK IS MINED — OR LOSE THE LOAD"
                             : "the block is the round · arrive before it closes";
         if (FitLine(sub, words, head.width, 10))
             Shadowed(new Rect(head.x, y + size * 1.2f, head.width, sub.fontSize * 1.6f), words, sub,
@@ -1295,7 +1297,7 @@ public class DriveHud : MonoBehaviour
         y += lh * BlockRows[2];
 
         int secs = Mathf.CeilToInt(block.Remaining);
-        Shadowed(new Rect(pad * 1.5f, y, bw, lh), $"{secs / 60}:{secs % 60:00} left", line,
+        Shadowed(new Rect(pad * 1.5f, y, bw, lh), block.StartsIn ? $"starts in {secs / 60}:{secs % 60:00}" : $"{secs / 60}:{secs % 60:00} left", line,
                  new Color(1f, 1f, 1f, 0.85f));
         y += lh * BlockRows[3];
         Shadowed(new Rect(pad * 1.5f, y, bw, lh),
