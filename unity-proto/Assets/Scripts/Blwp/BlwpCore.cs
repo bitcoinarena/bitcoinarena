@@ -49,6 +49,7 @@ namespace Blwp
         [DllImport("__Internal")] private static extern int BlwpResumedRun();
         [DllImport("__Internal")] private static extern int BlwpKeepCargo(IntPtr text);
         [DllImport("__Internal")] private static extern int BlwpResultSummary(IntPtr outp, int cap);
+        [DllImport("__Internal")] private static extern void BlwpHudCorner(IntPtr json);
         [DllImport("__Internal")] private static extern int BlwpKeptCargo(IntPtr outp, int cap);
         [DllImport("__Internal")] private static extern int BlwpSolids(IntPtr ptr, int cap);
         [DllImport("__Internal")] private static extern int BlwpReplayForThisRun();
@@ -76,6 +77,7 @@ namespace Blwp
         private static int BlwpResumedRun() => 0;
         private static int BlwpKeepCargo(IntPtr t) => 0;
         private static int BlwpResultSummary(IntPtr o, int cap) => 0;
+        private static void BlwpHudCorner(IntPtr j) { }
         private static int BlwpKeptCargo(IntPtr o, int cap) => 0;
         private static int BlwpSolids(IntPtr ptr, int cap) => 0;
         private static int BlwpReplayForThisRun() => 0;
@@ -280,6 +282,16 @@ namespace Blwp
             var bytes = System.Text.Encoding.ASCII.GetBytes(text + "\0");
             var h = GCHandle.Alloc(bytes, GCHandleType.Pinned);
             try { BlwpKeepCargo(h.AddrOfPinnedObject()); }
+            finally { h.Free(); }
+        }
+
+        /// <summary>Hands the page where the top-right HUD corner ends (DriveHud.ConsoleSlot), for its Console button.</summary>
+        public static void HudCorner(string json)
+        {
+            if (!Compiled || json == null) return;
+            var bytes = System.Text.Encoding.ASCII.GetBytes(json + "\0");
+            var h = GCHandle.Alloc(bytes, GCHandleType.Pinned);
+            try { BlwpHudCorner(h.AddrOfPinnedObject()); }
             finally { h.Free(); }
         }
 
