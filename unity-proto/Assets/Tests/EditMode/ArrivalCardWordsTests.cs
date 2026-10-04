@@ -279,9 +279,8 @@ public class ArrivalCardWordsTests
     }
 
     // THE LOADOUT PANEL'S LOAD IS THE CORE'S C (RULED 2026-09-26, A): the same C the card prints, never Unity's float bed
-    // fill. Since C is the bed fill (the owner 2026-10-04 08:54) the core sets it from the load's room at ROLL OUT, and before
-    // it the panel prints the C this bed would set - the CORE's fill of the bed's vsizes (cargo.js roomFor), asked of the
-    // page (BlwpCore.BedFill), still on the card's grid.
+    // fill. Since C is the bed fill (the owner 2026-10-04 08:54) the load is declared to the core whenever the bed changes
+    // (#63), so the core's C is the bed's from the first parcel on, and the panel prints that C, on the card's grid.
     [Test]
     public void TheLoadoutsLoadIsTheCoresCargoFactorNotTheBedFill()
     {
@@ -289,8 +288,11 @@ public class ArrivalCardWordsTests
         Assert.AreEqual("0.70000", CoreScoreFactors.Cargo(45875).ToString("0.00000", CultureInfo.InvariantCulture),
             "the panel and the card print C to the same decimals");
         string src = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "Scripts/Cargo/LoadoutPanel.cs"));
-        StringAssert.Contains("_fillWord = Blwp.BlwpCore.BedFill(vs);", src, "the preview is the core's fill of the bed");
-        StringAssert.Contains("string load = LoadLabel(_fillWord);", src);
+        // #63 (playtest 2026-10-04 13:30: LOAD x0.00000 after AUTO): the panel prints the core's own C, and the load is
+        // declared to the core whenever the bed changes, so the two move together before ROLL OUT
+        StringAssert.Contains("string load = LoadLabel(Blwp.BlwpCore.CargoWord);", src);
+        StringAssert.Contains("if (bed != _bedDeclared && Blwp.BlwpCore.SubmitLoad(bay.FeeCarried, bay.BtcHundredths, bay.VsizeList))", src,
+            "the bed's changes are not declared to the core");
         StringAssert.Contains("Blwp.BlwpCore.SubmitLoad(bay.FeeCarried, bay.BtcHundredths, bay.VsizeList)", src, "the load carries the bed's vsizes");
         StringAssert.DoesNotContain("$\"×{Mathf.Clamp01(bay.Fill):0.00}\"", src, "the bed fill is printed as the LOAD factor again");
         StringAssert.Contains("of {CargoBay.BtcLimit:0.##} BTC", src, "the gauge reads the BTC on board against the truck's limit");
