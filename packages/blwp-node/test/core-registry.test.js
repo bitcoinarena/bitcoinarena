@@ -57,7 +57,8 @@ test('the registry resolves a round by both hashes, holds the truck always, and 
   // THE TRUCK, 2069b4c2 KEPT BESIDE IT (path A, 2026-10-04), THE TRUCK BEFORE THE 82/90 FORK (its old hash: 2069b4c2 held
   // to 10800), and the operator's core.
   assert.deepEqual([...both.keys()].sort(), [TRUCK.hash, '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e', TRUCK_BEFORE_FORK_HASH, other.hash].sort());
-  const old = coreForRound({ simCoreHash: Uint8Array.from(Buffer.from(TRUCK_BEFORE_FORK_HASH, 'hex')), configHash: TRUCK_CONFIG_HASH, blockTicks: 10800 });
+  // the pre-fork core's rounds name the founding config (2026-10-04: a round names the config of the rules it plays)
+  const old = coreForRound({ simCoreHash: Uint8Array.from(Buffer.from(TRUCK_BEFORE_FORK_HASH, 'hex')), configHash: GENESIS_CONFIG_HASH, blockTicks: 10800 });
   assert.equal(old.ok, true, old.why);
   assert.deepEqual([old.core.hash === TRUCK_BEFORE_FORK_HASH, old.core.fixedRunTicks, old.runTicks], [true, 10800, 10800]);
   assert.equal(coreForRound({ simCoreHash: Uint8Array.from(Buffer.from(other.hash, 'hex')), configHash: Uint8Array.from(Buffer.from('cd'.repeat(32), 'hex')) }, both).core, other);
@@ -91,7 +92,7 @@ import { CORE as FROZEN_2069 } from '../../core/frozen/2069b4c2/adapter.js';
 import { CORE as NOW } from '../../core/src/adapter.js';
 
 test('2069b4c2 rounds are replayed by the frozen 2069b4c2 core, the pre-fork core by it held to 10800, the rest by the truck', () => {
-  const at = (hex) => coreForRound({ simCoreHash: Uint8Array.from(Buffer.from(hex, 'hex')), configHash: TRUCK_CONFIG_HASH, blockTicks: 4920 });
+  const at = (hex) => coreForRound({ simCoreHash: Uint8Array.from(Buffer.from(hex, 'hex')), configHash: GENESIS_CONFIG_HASH, blockTicks: 4920 });
   const old = at(TRUCK_2069_HASH);
   assert.equal(old.ok, true, old.why);
   assert.equal(old.core.adapter, FROZEN_2069);
@@ -108,4 +109,23 @@ test('2069b4c2 rounds are replayed by the frozen 2069b4c2 core, the pre-fork cor
   const a = drive(FROZEN_2069, [[0, 0, 0]]), b = drive(NOW, [[0, 0, 0, 0]]);
   assert.ok(a.score > 0, `the 2069b4c2 drive scored ${a.score}`);
   assert.equal(b.score, 0, 'an empty bed on the current core scores nothing');
+});
+
+// THE CONFIG A ROUND NAMES IS THE RULES IT PLAYS (the owner 2026-10-04, fix 1 of the spec audit): de2f263d runs its own
+// config, 2069b4c2 the founding one; de2f263d with the founding config only for a round made before the cut-over.
+import { TRUCK_CURRENT_CONFIG, FOUNDING_CONFIG_ON_DE2F_BEFORE_MS } from '../src/cores.js';
+import { GENESIS_CONFIG_HASH } from '../../protocol/src/genesis-ids.js';
+test('each core runs the config of its own rules; the founding config on de2f263d only before the cut-over', () => {
+  const pair = (core, config, committeeTimeMs) => coreForRound({ simCoreHash: Uint8Array.from(Buffer.from(core, 'hex')),
+    configHash: config instanceof Uint8Array ? config : Uint8Array.from(Buffer.from(config, 'hex')), blockTicks: 4920, committeeTimeMs });
+  const before = BigInt(FOUNDING_CONFIG_ON_DE2F_BEFORE_MS - 60000), after = BigInt(FOUNDING_CONFIG_ON_DE2F_BEFORE_MS + 60000);
+  assert.equal(pair(TRUCK.hash, TRUCK_CURRENT_CONFIG, after).ok, true);
+  assert.equal(TRUCK_CONFIG_HASH.length, 32);
+  assert.equal(Buffer.from(TRUCK_CONFIG_HASH).toString('hex'), TRUCK_CURRENT_CONFIG, 'a round on the truck is made with another config');
+  assert.equal(pair(TRUCK_2069_HASH, GENESIS_CONFIG_HASH, after).ok, true);
+  assert.match(pair(TRUCK_2069_HASH, TRUCK_CURRENT_CONFIG, before).why, /not the config/);
+  if (TRUCK.hash === 'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8') {
+    assert.equal(pair(TRUCK.hash, GENESIS_CONFIG_HASH, before).ok, true, 'a free round made before the cut-over is refused');
+    assert.match(pair(TRUCK.hash, GENESIS_CONFIG_HASH, after).why, /only for rounds made before/);
+  }
 });
