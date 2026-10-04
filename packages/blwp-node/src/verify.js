@@ -1138,7 +1138,16 @@ export class Verifier {
         holdLate = true;
         if (!this.latePostingSaid.has(hex(entryIdBytes))) {
           this.latePostingSaid.add(hex(entryIdBytes));
-          console.log(`[test-late-posting] ${hex(entryIdBytes).slice(0, 16)}: no posting until ${new Date(Number(w.finalAfterMs + LATE_POSTING_AFTER_MS)).toISOString()}`);
+          const at = Number(w.finalAfterMs + LATE_POSTING_AFTER_MS);
+          console.log(`[test-late-posting] ${hex(entryIdBytes).slice(0, 16)}: no posting until ${new Date(at).toISOString()}`);
+          // AND THEN IT POSTS, whether or not anything still asks it to: an entry decided at the deadline is never published
+          // again by the close, so the fault makes the late posting itself (measured live 2026-10-04: without this, the
+          // late posting never existed). On this seat's own clock.
+          const rid = new Uint8Array(roundIdBytes), eid = new Uint8Array(entryIdBytes);
+          setTimeout(() => {
+            this.publish(rid, eid).then((r) => console.log(`[test-late-posting] ${hex(eid).slice(0, 16)}: posted late - ${r && r.ok ? 'published' : (r && r.why) || 'done'}`),
+              (e) => console.log(`[test-late-posting] ${hex(eid).slice(0, 16)}: the late posting failed: ${e.message}`));
+          }, Math.max(0, at - Number(this.round.now())) + 500).unref?.();
         }
       }
     }
