@@ -21,6 +21,8 @@ import {
   TYPE_TRANSCRIPT, TYPE_CHECKPOINT_RECEIPT, TYPE_OBJECTION, TYPE_SLASH_PROOF,
   TYPE_SETTLEMENT_RECORD, TYPE_FEE_CLAIM, TYPE_SERVICE_RECORD,
   TYPE_DONATION_SET, TYPE_GHOST, TYPE_VSS_HANDOUT,
+  TYPE_DKG_CONTRIBUTION, TYPE_SIGNED_DONATION_SET, TYPE_DONATION_SET_KEYS, TYPE_AUTHORITY_ROTATION,
+  TYPE_CLAIM_KEY_ATTESTATION, TYPE_DKG_AGREEMENT, TYPE_TRANSCRIPT_POSTING, TYPE_RERUN_RESULT, TYPE_FINAL_SIGNATURE,
 } from './constants.js';
 
 /**
@@ -52,6 +54,18 @@ export const FRAMES = new Map([
   [TYPE_SERVICE_RECORD, { name: 'ServiceRecord', authority: true }],
   [TYPE_VSS_HANDOUT, { name: 'VssHandout', authority: true }],
   [TYPE_DONATION_SET, { name: 'DonationSet', authority: true }],
+  // THE NINE DECLARED AFTER THE HANDOUT AND NEVER ENTERED HERE (the spec audit of 2026-10-04): each decides something -
+  // a settlement key, a donation set, the authority, a claim key, a posted transcript, a re-run, a FINAL - so each is
+  // authority. Missing, `bearsAuthority` refused all nine as unknown.
+  [TYPE_DKG_CONTRIBUTION, { name: 'DkgContribution', authority: true }],
+  [TYPE_SIGNED_DONATION_SET, { name: 'SignedDonationSet', authority: true }],
+  [TYPE_AUTHORITY_ROTATION, { name: 'AuthorityRotation', authority: true }],
+  [TYPE_CLAIM_KEY_ATTESTATION, { name: 'ClaimKeyAttestation', authority: true }],
+  [TYPE_DKG_AGREEMENT, { name: 'DkgAgreement', authority: true }],
+  [TYPE_TRANSCRIPT_POSTING, { name: 'TranscriptPosting', authority: true }],
+  [TYPE_RERUN_RESULT, { name: 'RerunResult', authority: true }],
+  [TYPE_FINAL_SIGNATURE, { name: 'FinalSignature', authority: true }],
+  [TYPE_DONATION_SET_KEYS, { name: 'DonationSetKeys', authority: true }],
 
   // THE ONLY ONE. 0.9's ghost: something to look at, and nothing else.
   [TYPE_GHOST, { name: 'Ghost', authority: false }],
