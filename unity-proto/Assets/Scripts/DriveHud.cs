@@ -2071,11 +2071,23 @@ public class DriveHud : MonoBehaviour
         var I = CultureInfo.InvariantCulture;
         // AND THE WANTED / HUNTED CAPTION under the pips (measured 844x390 on 0.0.2515: the button covered "WANTED")
         float bottom = ChartTopRight(w, h) ? Mathf.Max(ChartCorner(w, h), WantedBox(w, h).yMax + SmallFont(w, h) * 1.6f) : ChartCorner(w, h);
+        // AND THE FLOOR THE OPEN PANEL MUST STOP ABOVE: the cargo bay's top while the bay is up (measured 844x390 on 0.0.2519,
+        // paid round: the panel covered HUNTED, LOAD and the right half of ROLL OUT), else the screen's bottom
+        float floor = CargoBayUp() ? loadout.BottomBarRect(w, h).y : h;
         return "{\"w\":" + w + ",\"h\":" + h + ",\"top\":" + (bottom + m * 0.25f).ToString("0.#", I)
+             + ",\"floor\":" + floor.ToString("0.#", I)
              + ",\"right\":" + (w - m).ToString("0.#", I) + ",\"padX\":" + up.x.ToString("0.#", I) + ",\"padY\":" + up.y.ToString("0.#", I)
              + ",\"padW\":" + up.width.ToString("0.#", I) + ",\"m\":" + m.ToString("0.#", I) + "}";
     }
     string _consoleSlotSent;
+
+    /// <summary>The cargo bay is drawn: open, and not behind the title or the lobby (LoadoutPanel.OnGUI's own rule).</summary>
+    bool CargoBayUp()
+    {
+        if (loadout == null || !loadout.IsOpen || CleanHud.On) return false;
+        if (_splash == null) _splash = Object.FindFirstObjectByType<SplashScreen>();
+        return _splash == null || !_splash.Showing;
+    }
 
     /// <summary>The bottom of the top-right corner's own furniture: the settings icons, or the debug readout when it is up.</summary>
     public float ChartCorner(int w, int h)
