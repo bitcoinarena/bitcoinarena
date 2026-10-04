@@ -196,7 +196,15 @@ public class DriveHud : MonoBehaviour
         // NOTHING UNDER THE RESULT CARD (the owner 2026-09-25, PRIORITIES item 3: "nothing overlaps"; measured 2026-09-26 at
         // 1280x720: CARGO / SCORE / BANKED ran under the card's bottom-right corner). The card carries the run's score and
         // its working while it stands, so this block steps aside until it is gone.
-        if (!ArrivalShowing)
+        // AND UNDER THE WRECK'S SUMMARY (the owner 2026-10-04: on WASTED the summary panel and this block shared ~110 px at
+        // 1280x720) - the same rule: the summary carries this run's result, the block reads 0 there anyway.
+        bool scoreBlock = !ArrivalShowing && !_wreckSummaryUp;
+        if (scoreBlock != _scoreBlockWas)
+        {
+            _scoreBlockWas = scoreBlock;
+            Debug.Log("[blwp] score block " + (scoreBlock ? "drawn" : "stepped aside") + (_wreckSummaryUp ? " (the wreck's summary is up)" : ArrivalShowing ? " (the result card is up)" : ""));
+        }
+        if (scoreBlock)
         {
             string tail = runScore == null
                 ? $"{gate.Runs} runs delivered"
@@ -1141,13 +1149,16 @@ public class DriveHud : MonoBehaviour
         return new Rect((w - rw) * 0.5f, bandBottom + font * 0.6f, rw, font * 2.6f);
     }
 
+    bool _wreckSummaryUp, _scoreBlockWas = true;
+    string _wreckPanelLogged;
+
     void DrawCopyReplayAlone(int w, int h)
     {
         if (_splash == null) _splash = Object.FindFirstObjectByType<SplashScreen>();
         bool lobby = _splash != null && _splash.Showing;
         bool alone = CopyReplayAlone(Blwp.BlwpCore.ReplayForThisRun, ArrivalHeld, lobby);
         if (CopyStateResets(ArrivalHeld, alone)) { _copyPressedAt = -1f; _copiedAt = -1f; }
-        if (!alone) return;
+        if (!alone) { _wreckSummaryUp = false; return; }
         var row = CopyReplayAloneRow(w, h);
         var line = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.UpperCenter,
             fontSize = Mathf.RoundToInt(Mathf.Max(12f, Mathf.Min(w, h) * 0.034f)) };
@@ -1159,6 +1170,7 @@ public class DriveHud : MonoBehaviour
         // THE RESULT SUMMARY ON A WRECK TOO (the owner 2026-10-04): a wreck draws no card, so the same lines stand under its
         // lone control - and the lobby waits for the same hold (SplashScreen reads ResultHolding)
         ReadSummary(w, h, CardHead(w, h, true));
+        _wreckSummaryUp = _summaryLines.Count > 0;
         if (_summaryLines.Count == 0) return;
         var sl = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontSize = Mathf.RoundToInt(line.fontSize * 0.8f) };
         float lh = sl.fontSize * 1.45f;
@@ -1168,6 +1180,12 @@ public class DriveHud : MonoBehaviour
         GUI.color = new Color(0.02f, 0.03f, 0.05f, 0.85f);
         GUI.DrawTexture(panel, _flat);
         GUI.color = Color.white;
+        string panelTag = $"{w}x{h} {panel.x:0},{panel.y:0} {panel.width:0}x{panel.height:0} lines {_summaryLines.Count}";
+        if (panelTag != _wreckPanelLogged && Event.current.type == EventType.Repaint)
+        {
+            _wreckPanelLogged = panelTag;
+            Debug.Log($"[blwp] wreck summary panel at {panelTag} (x {panel.xMin:0}..{panel.xMax:0}, y {panel.yMin:0}..{panel.yMax:0}); score block {(_scoreBlockWas ? "drawn" : "stepped aside")}");
+        }
         for (int i = 0; i < _summaryLines.Count; i++)
         {
             sl.fontStyle = i == 2 ? FontStyle.Bold : FontStyle.Normal;
