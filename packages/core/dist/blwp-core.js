@@ -4902,17 +4902,15 @@ const EXPOSURE_REFERENCE = Math.imul(320, ONE);
 /**
  * PAR TIME, IN TICKS, AND THE TICKS ARE THE RULE.
  *
- * 3900 of them: 3900 x TICK_DT / ONE = 64.984 seconds, not the 65 that "at 60
- * Hz" would give. The tick is 1092/65536 s and not a sixtieth (`tick.js`), so
- * the two disagree by 16 ms over this constant.
+ * Daniel 2026-10-04 09:17: T starts to sink at 20 seconds. The ceiling stays
+ * 1.5 and the floor stays 0.25. 20 s is 1200 ticks (1200 x 1092/65536 =
+ * 19.995 s). T leaves 1.5 there, is 1 at 1800 ticks (30 s), and reaches 0.25
+ * at 7200 ticks (120 s). The old par was 3900 ticks, about 65 s.
  *
- * THE NUMBER DOES NOT MOVE. A tick count is what the simulation compares
- * against, so this IS the par - every score, every signed result and every
- * recorded vector is against 3900 ticks. Multiplying 65 by 60 to "fix" it
- * would change every score ever produced. The label was the thing that was
- * wrong.
+ * A tick count is what the simulation compares against, so this IS the par.
+ * The tick is 1092/65536 s and not a sixtieth (`tick.js`).
  */
-const REFERENCE_TICKS = 3900;
+const REFERENCE_TICKS = 1800;
 /** No danger is earned within this of the start. */
 const APRON_RADIUS = Math.imul(22, ONE);
 
@@ -4937,10 +4935,10 @@ const T_FLOOR = 16384;      // 0.25
 const T_CEIL = 98304;       // 1.5
 
 // The time clamp, said in ticks: T = REFERENCE_TICKS / ticks held to
-// [0.25, 1.5] is exactly ticks held to [2600, 15600]. Written out so the two
-// forms cannot drift apart silently.
-const T_TICKS_MIN = 2600;   // REFERENCE_TICKS / 1.5
-const T_TICKS_MAX = 15600;  // REFERENCE_TICKS / 0.25
+// [0.25, 1.5] is exactly ticks held to [1200, 7200]. Written out so the two
+// forms cannot drift apart silently. 1200 ticks is 20 seconds: T starts to sink.
+const T_TICKS_MIN = 1200;   // REFERENCE_TICKS / 1.5, 20 s
+const T_TICKS_MAX = 7200;   // REFERENCE_TICKS / 0.25, 120 s
 
 /**
  * Accumulates exposure over GROUND MADE GOOD against a high-water mark.
@@ -4974,7 +4972,7 @@ const timeFactor = (ticks) =>
  *
  * Each factor is an integer count of 1e-5 (FACTOR_SCALE), formed from the core's own word and rounded once, half up:
  *   E5 = S_EXPOSURE held to the 320 m reference, over that reference     0 .. 100000
- *   T5 = 3900 over S_ELAPSED held to 2600 .. 15600 ticks                 25000 .. 150000
+ *   T5 = 1800 over S_ELAPSED held to 1200 .. 7200 ticks                  25000 .. 150000
  *   C5 = S_CARGO held to 0 .. ONE, over ONE                              0 .. 100000
  * and the score is 1000 · E · T · C of those, kept as an integer count of 1e-5 points (SCORE_SCALE): E5·T5·C5 / 1e7,
  * rounded once, half up. So the product of the factors as the card prints them, to five decimals, IS the score to five
@@ -5435,6 +5433,7 @@ const sortieWait = (rng) => mulFast(SORTIE_SECONDS, between(rng, JITTER_MIN, JIT
 
 
 var heatForLoad = heat;
+var bedFill = fill;
 
 
 
@@ -6166,11 +6165,13 @@ function init(seedWord, { runTicks = BLOCK_TICKS } = {}) {
   // because a draw here would shift every stream after it and draw order is
   // protocol; C# takes it from `Random.value` once at Awake.
   s[O_TRUCK + T_FLAGS] = (Math.imul(seedWord | 0, 2654435761) >>> 31) & 1;
-  s[O_TRUCK + T_CARGO] = 45875;             // 0.7 of a bed
+  // AN EMPTY BED UNTIL A LOAD IS DECLARED (Daniel 2026-10-04 08:54: C is how full the truck is, not always 0.7):
+  // submitLoad writes the fill, from the room the load carries.
+  s[O_TRUCK + T_CARGO] = 0;
   // Armour tactics from the seed, before any unit moves (rules/tactics.js).
   initTactics(s, O_TACTICS, seedWord);
   s[O_SCORE + S_BESTX] = START_X;
-  s[O_SCORE + S_CARGO] = 45875;
+  s[O_SCORE + S_CARGO] = 0;
   s[O_SCORE + S_STATE] = RUN_LIVE;
 
   st.tape = tape(seedWord | 0);
@@ -7670,10 +7671,23 @@ const frontAt = (st, x) => seamAtX(st, x | 0);
  *
  * Sats and hundredths of a BTC, both clamped by the rule itself.
  */
-function submitLoad(st, feeSats, btcHundredths) {
+function submitLoad(st, feeSats, btcHundredths, roomUsed) {
   st.i32[O_SCORE + S_HEAT] = heatForLoad(feeSats | 0, btcHundredths | 0);
+  // THE CARGO FACTOR C IS THE BED FILL (Daniel 2026-10-04 08:54): room used over the bed, 0 empty .. ONE full - the room
+  // is the sum of cargo.js roomFor over what went on the bed, and it crosses in the load, so a replay sets the same C.
+  // Not the heat, and not tied to S_HEAT. A load that carries no room (one stored before the room crossed) keeps the
+  // 0.7 of a bed every run had until now, so a stored run does not move.
+  const c = roomUsed === undefined || roomUsed === null ? LEGACY_CARGO : bedFill(Math.max(0, roomUsed | 0));
+  st.i32[O_SCORE + S_CARGO] = c;
+  st.i32[O_TRUCK + T_CARGO] = c;
   return true;
 }
+
+/** The cargo factor of a load that carries no room: 0.7 of a bed, what C was for every run before the fill. */
+const LEGACY_CARGO = 45875;
+
+/** The cargo factor the run is scored at, 0..ONE: the bed fill of the declared load. */
+const cargoOf = (st) => st.i32[O_SCORE + S_CARGO];
 
 /** What the core is currently hunting this load at, 0..ONE. */
 const heatOf = (st) => st.i32[O_SCORE + S_HEAT];
@@ -7871,7 +7885,7 @@ return { init: init, step: step, hash: hash, runScore: runScore,
          restart: restart, frontAt: frontAt, submitLiquidation: submitLiquidation, submitSample: submitSample, submitTape: submitTape,
          chartView: chartView, chartPoint: chartPoint, CH_WORDS: CH_WORDS,
          candleView: candleView, CV_TOTAL: CV_TOTAL, terrainAt: terrainAt,
-         submitLoad: submitLoad, heatOf: heatOf,
+         submitLoad: submitLoad, heatOf: heatOf, cargoOf: cargoOf, roomFor: roomFor, bedFill: bedFill,
          create: create, WORDS: WORDS };
 })();
 if (typeof module !== "undefined") module.exports = BLWP;

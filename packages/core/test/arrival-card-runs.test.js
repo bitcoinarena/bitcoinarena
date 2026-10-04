@@ -6,19 +6,19 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { arrivalCardRuns } from '../tools/arrival-card-runs.mjs';
-import { scoreOf, exposure5, time5, cargo5 } from '../src/rules/score.js';
+import { scoreOf, exposure5, time5, cargo5, REFERENCE_TICKS, T_TICKS_MIN, T_TICKS_MAX } from '../src/rules/score.js';
 
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/arrival-card-runs.json', import.meta.url), 'utf8')).runs;
 
 // THE CARGO WORD IN THESE RUNS IS A FIXTURE WRITE, NOT A PLAYER INPUT: this core sets S_CARGO once, in init, to 45875
 // (0.70), and no input changes it. And T stops at about 0.364, not the 0.25 clamp: 0.25 CANNOT be reached by a delivered
-// run on this core - the block closes at BLOCK_TICKS 10800 and a miss beats an arrival, so T >= 3900/10799.
+// run on this core - the block closes at BLOCK_TICKS 10800 and a miss beats an arrival, so T >= REFERENCE_TICKS/10799.
 test('1. the fixture is the 72 DELIVERED runs the core produces now, with T and C both moving', () => {
   const now = arrivalCardRuns();
   assert.equal(now.length, 72);
   assert.ok(now.every((r) => r.state === 1), 'a run in the fixture did not deliver');
   assert.deepEqual(fixture, now, 'the fixture is not what this core produces - regenerate it with tools/arrival-card-runs.mjs');
-  const T = (r) => 3900 / Math.min(15600, Math.max(2600, r.elapsed));
+  const T = (r) => REFERENCE_TICKS / Math.min(T_TICKS_MAX, Math.max(T_TICKS_MIN, r.elapsed));
   assert.ok(now.some((r) => T(r) < 1.5), 'no run has T below the 1.5 clamp');
   assert.ok(Math.min(...now.map(T)) < 0.37, 'T does not reach down near the delivered floor (about 0.364)');
   assert.ok(now.some((r) => r.cargo !== 45875), 'every run carries the default cargo word 0.70');
