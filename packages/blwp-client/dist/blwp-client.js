@@ -9983,7 +9983,7 @@ function oneRoundDepositMsat(locks, LockClient) {
 function roundsDepositMsat(n, locks, LockClient) {
   return BigInt(n) * oneRoundDepositMsat(locks, LockClient);
 }
-const DEPOSIT_INSUFFICIENT = 'insufficient funds to play this round. Do you want to do a lightning deposit?';
+const DEPOSIT_INSUFFICIENT = 'Not enough sats in your player wallet to play this round. Deposit with Lightning?';
 /** The deposit tabs for a round of `stakeMsat`: n rounds at n x the stake, then Custom (an amount the player names). */
 function depositChoices(stakeMsat, sizeOf = null) {
   const stake = BigInt(stakeMsat || 0n);
