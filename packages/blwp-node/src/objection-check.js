@@ -36,6 +36,20 @@ export function replayFormOf(t) {
   };
 }
 
+/** The run's inputs as GET /replay/transcript hands them out (readTranscript's shape), checked for that shape. */
+export function inputsFormOf(j) {
+  const rows = (x, name) => { if (!Array.isArray(x)) throw new Error(`${name} is not a list`); return x; };
+  const ticks = rows(j && j.ticks, 'ticks').map((r, i) => {
+    if (!r || !Number.isInteger(r.tick) || !Array.isArray(r.words) || !r.words.every(Number.isInteger)) throw new Error(`tick row ${i} is not { tick, words }`);
+    return { tick: r.tick, words: r.words };
+  });
+  const ints = (x, name) => rows(x || [], name).map((r, i) => {
+    if (!Array.isArray(r) || !r.every(Number.isInteger)) throw new Error(`${name} row ${i} is not a list of integers`);
+    return r;
+  });
+  return { ticks, liquidations: ints(j.liquidations, 'liquidations'), loads: ints(j.loads, 'loads'), samples: ints(j.samples, 'samples'), tapes: ints(j.tapes, 'tapes') };
+}
+
 /**
  * CHECK ONE OBJECTION BUNDLE. `bundle` the bytes posted; `roundId`, `entryId` the run it is filed against; `entry` that
  * entry's signed contract; `contract` the round's; `committee` its signer nodes' keys; `signedResultId` the run the
@@ -78,11 +92,31 @@ export async function checkObjectionBundle({ bundle, roundId, entryId, entry, co
   if (!chain.ok) return no('chain', `the chain is broken at ${chain.in} ${chain.at}: ${chain.why}`);
   if (!t.marks.length) return no('chain', 'that transcript carries no checkpoints, so nothing in it was receipted');
 
-  // 5. IT BELONGS TO THE ENTRY: its round and entry, from the tick the entry joined, within the round's run.
+  // THE RUN'S INPUTS: the transcript's own batches, or - a live run, whose ticks travel as play frames and whose canonical
+  // transcript is its receipted marks over no batches - the bundle's fifth part, as GET /replay/transcript hands it out.
+  // Either way the replay below must reproduce every receipted mark's state hash, which is what binds them to the run.
+  let form = null;
+  if (t.batches.length) form = replayFormOf(t);
+  else if (b.inputs) {
+    try { form = inputsFormOf(JSON.parse(Buffer.from(b.inputs).toString('utf8'))); }
+    catch (e) { return no('chain', `the run's inputs do not read: ${e.message}`); }
+  } else return no('chain', 'that transcript carries no inputs, and the objection carries none beside it');
+
+  // 5. IT BELONGS TO THE ENTRY: its round and entry, from the tick the entry joined, within the round's run - and, for
+  //    inputs carried beside the transcript, none past the last receipted mark (inputs no committee stood behind).
   if (hex(t.entryId) !== hex(entryId)) return no('entry', 'that transcript is another entry\'s');
   const runTicks = core && Number.isInteger(core.runTicks) ? core.runTicks : null;
-  const belongs = transcriptBelongsToEntry(t, entry, runTicks);
-  if (!belongs.ok) return no('entry', belongs.why);
+  if (t.batches.length) {
+    const belongs = transcriptBelongsToEntry(t, entry, runTicks);
+    if (!belongs.ok) return no('entry', belongs.why);
+  } else {
+    if (!form.ticks.length) return no('entry', 'those inputs carry no ticks, so there is nothing that began anywhere');
+    if (form.ticks[0].tick !== entry.joinTick)
+      return no('entry', `those inputs begin at tick ${form.ticks[0].tick} and that entry joined at ${entry.joinTick}`);
+    const reaches = form.ticks[form.ticks.length - 1].tick;
+    if (Number.isInteger(chain.throughTick) && reaches >= chain.throughTick)
+      return no('entry', `those inputs reach tick ${reaches}, past the last receipted mark at ${chain.throughTick}`);
+  }
 
   // 6. EVERY CHECKPOINT HAS A RECEIPT SIGNED BY A COMMITTEE MEMBER. A receipt from anyone else, or one whose signature
   //    does not verify, refuses the bundle by name: an objection carries evidence, and a forged piece is not evidence.
@@ -108,9 +142,14 @@ export async function checkObjectionBundle({ bundle, roundId, entryId, entry, co
 
   // 7. THE REPLAY, UNDER THE ROUND'S OWN CORE: it gives the claimed result, and the claimed result is not the signed one.
   //    A run LIVE at its last tick is scored as the seats score it after the close (§15): at its last receipted mark.
-  const form = replayFormOf(t);
+  const marks = t.marks.map((m) => { const c = decodeCheckpoint(splitSigned(m).body); return { tick: c.tick, stateHash: c.stateHash }; });
   let answer;
-  try { answer = await replayRun(form, entry, { core, roundRandomness }); } catch (e) { answer = { ok: false, why: e.message }; }
+  try { answer = await replayRun(form, entry, { core, roundRandomness, marks }); } catch (e) { answer = { ok: false, why: e.message }; }
+  // THE INPUTS ARE THE RUN THE MARKS RECEIPTED: every mark's state hash reproduced, none left unreached
+  if (answer && answer.ok && (answer.divergedAt !== null && answer.divergedAt !== undefined))
+    return no('replay', `the inputs do not reproduce the receipted checkpoint at tick ${answer.divergedAt}`);
+  if (answer && answer.ok && answer.unchecked > 0)
+    return no('replay', `the inputs never reach ${answer.unchecked} of the ${marks.length} receipted checkpoints`);
   if (answer && answer.ok && answer.outcome === null && Number.isInteger(chain.throughTick)) {
     const last = chain.throughTick;
     const cut = (rows) => rows.filter((r) => r[0] < last);
