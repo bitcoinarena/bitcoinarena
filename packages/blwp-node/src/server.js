@@ -1946,6 +1946,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       eligibleKeys: new Set((roster.censusFor(rid).entries || []).map((e) => toHex(e.pubkey))).size };
   };
   const listingKept = new Map();                  // GET /rounds query -> { at, json }, a large one kept 30 s
+  const listingBuilding = new Map();              // GET /rounds query -> the listing being built (one at a time)
   // THE DOORS' FEDERATION FACTS, KEPT A MINUTE (ORDER-2116, measured on testnet4 2026-10-02 03:5xZ): POST /round asked the
   // lock port for the federation's gateways and fee rule on every call - a client process each, pinging the gateways - and
   // two players opening their sessions against 7 nodes queued them: POST /round 80-110 s, a session open over 7 min, the
@@ -1956,7 +1957,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       p = Promise.resolve().then(fn).then((r) => { v = r; at = Date.now(); return r; }).finally(() => { p = null; }); return p; }; };
   const doorGateways = keptMinute(() => stakeLocks.gateways());
   const doorFees = keptMinute(() => stakeLocks.fees());
-  const announcedRounds = (url) => {
+  // THE LISTING GIVES THE LOOP BACK (the owner 2026-10-04 07:15: "A seat must keep answering while it lists rounds" -
+  // measured on seat 7: one uncached GET /rounds, 1709 rounds, held the loop 6368 ms and /identity waited 6383 ms). Every
+  // row is signed and its committee drawn; that work now stops every LISTING_SLICE_MS and lets the loop serve what waits.
+  const LISTING_SLICE_MS = 15;
+  const announcedRounds = async (url) => {
+    let sliceAt = performance.now();
+    const yieldIfLong = async () => {
+      if (performance.now() - sliceAt < LISTING_SLICE_MS) return;
+      await new Promise((r) => setImmediate(r));
+      sliceAt = performance.now();
+    };
     const nowMs = BigInt(round.now());
     const listed = [];
     // EVERY ANNOUNCED ROUND, WITH ITS TIMES AND WHO IS RESPONSIBLE FOR IT (the owner 2026-09-28 16:12, ROUNDS-EP-1612):
@@ -1979,6 +1990,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // listing's own facts - its end, and whether it is announced at all - are kept on the same entry; the second depends
     // on the series this node holds, so it is read again once a series is added (seriesVersion).
     for (const roundId of openHeld()) {
+      await yieldIfLong();
       const held = { roundId };
       const kept = heldOf(roundId);
       if (kept.bad) continue;
@@ -2008,6 +2020,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       candidates.length = 0; candidates.push(...kept);
     }
     for (const { held, c, endMs } of candidates) {
+      await yieldIfLong();
       const id = toHex(held.roundId);
       const players = round.playersOf(held.roundId);
       const free = c.stakeMsat === 0n;
@@ -2429,10 +2442,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // `?next=8` was made afresh on every ask from every open lobby every few seconds - 1038 of them over 200 ms in seat 1's
         // recent log, up to 14.8 s held - and its joined/playing counts may lag 5 s where a page takes 60.
         if (!body || nowReal - body.at > (body.large ? 30000 : 5000)) {
-          const { nowMs, listed } = announcedRounds(url);
-          body = { at: nowReal, large: listed.length > 100, json: JSON.stringify({ node: toHex(round.pubkey), nowMs: String(nowMs), rounds: listed }) };
-          listingKept.set(q, body);
-          if (listingKept.size > 16) listingKept.delete(listingKept.keys().next().value);
+          // ONE BUILD PER QUERY AT A TIME: every asker that comes while it yields waits for the same listing
+          let building = listingBuilding.get(q);
+          if (!building) {
+            building = (async () => {
+              const { nowMs, listed } = await announcedRounds(url);
+              const made = { at: nowReal, large: listed.length > 100, json: JSON.stringify({ node: toHex(round.pubkey), nowMs: String(nowMs), rounds: listed }) };
+              listingKept.set(q, made);
+              if (listingKept.size > 16) listingKept.delete(listingKept.keys().next().value);
+              return made;
+            })().finally(() => listingBuilding.delete(q));
+            listingBuilding.set(q, building);
+          }
+          body = await building;
         }
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(body.json);
@@ -2440,7 +2462,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
       // THE PAGE'S DATA: the announced rounds (upcoming) and the finished ones, each with its times and committees.
       if (req.method === 'GET' && url.pathname === '/api/rounds') {
-        const { nowMs, listed } = announcedRounds(url);
+        const { nowMs, listed } = await announcedRounds(url);
         const finished = [];
         const seen = new Set(listed.map((r) => r.id));
         const rowOf = (rid, c, closedMs) => {
