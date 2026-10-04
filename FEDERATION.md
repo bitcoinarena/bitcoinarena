@@ -295,6 +295,12 @@ Brought into multiplayer_p2p.md the same day (the owner: "We don't want a confli
 T), §27A.7.8 (rule changes by ruling until the ballot is built), with §27A.1 and §27A.8 pointing to it. What is left here
 is the record: the dates, the hashes and the one transition pair.
 
+- **One world per round (#23 world grinding; evening).** Config `2170f250` (genesis.js `encodeGameConfigV4`: v3's
+  fields and a world rule, 1 = shared per round) on core `7e2123d1`: every player of a round drives
+  `round_seed = H(committee_seed || "world")` (§5A.5, §12) - the player chooses nothing about the world, an entry's world
+  secret is 32 zero bytes and the seats refuse any other. `f51759b6` (per-player) stays installed for the 10-06 series.
+  Free pair on `2170f250` from its roll at 16:44Z; testnet4 seats at 17:02-17:03Z, so the 10-07 series publishes on it.
+  Measured: free round 7e294027, two players with different keys, the same world seed 0x8b99aa, both runs signed 2/2.
 - **The score's C and T (08:54, 09:17).** C is the bed fill: room used over the bed, the sum of cargo.js `roomFor` over
   the vsizes on the bed, 0 empty to 1 full, set by the load at roll-out (init 0); a load that carries no room (stored
   before the room crossed) keeps 0.7. T is par 1800 ticks: 1.5 until 1200 ticks (20 s), 1 at 1800 (30 s), 0.25 from
