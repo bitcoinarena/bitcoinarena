@@ -2058,6 +2058,23 @@ public class DriveHud : MonoBehaviour
         return r;
     }
 
+    /// <summary>
+    /// WHERE THE PAGE'S CONSOLE BUTTON GOES (the owner 2026-10-04: it sat on the chart's header). The page cannot see this HUD,
+    /// so the HUD says, in its own pixels: the screen it laid out, the bottom of the top-right corner's furniture (chart,
+    /// sound and menu row, wanted pips, debug readout - ChartCorner), the corner's right edge, and the throttle pad's
+    /// rectangle the button must not land on. The page places the button from these alone.
+    /// </summary>
+    public string ConsoleSlot(int w, int h)
+    {
+        float m = TouchPad.Margin(w, h);
+        var up = TouchPad.RectFor(TouchPad.Pad.Up, w, h);
+        var I = CultureInfo.InvariantCulture;
+        return "{\"w\":" + w + ",\"h\":" + h + ",\"top\":" + (ChartCorner(w, h) + m * 0.25f).ToString("0.#", I)
+             + ",\"right\":" + (w - m).ToString("0.#", I) + ",\"padX\":" + up.x.ToString("0.#", I) + ",\"padY\":" + up.y.ToString("0.#", I)
+             + ",\"padW\":" + up.width.ToString("0.#", I) + ",\"m\":" + m.ToString("0.#", I) + "}";
+    }
+    string _consoleSlotSent;
+
     /// <summary>The bottom of the top-right corner's own furniture: the settings icons, or the debug readout when it is up.</summary>
     public float ChartCorner(int w, int h)
     {
@@ -3201,6 +3218,12 @@ public class DriveHud : MonoBehaviour
 
     void OnGUI()
     {
+        // THE CONSOLE BUTTON'S SLOT, to the page whenever it changes (a resize, the debug readout)
+        if (Event.current.type == EventType.Repaint)
+        {
+            string slot = ConsoleSlot(Screen.width, Screen.height);
+            if (slot != _consoleSlotSent) { _consoleSlotSent = slot; Blwp.BlwpCore.HudCorner(slot); }
+        }
         if (CleanHud.On) return;
         Styles();
         int w = Screen.width, h = Screen.height;
