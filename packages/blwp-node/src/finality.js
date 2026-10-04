@@ -53,6 +53,44 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
   const seen = verifiedFinal(held.map((r) => r.bytes), { contract, signerNodes: committee });
   let win = null;
   try { win = windowsOf(contract); } catch { win = null; }
+  // THE IN-TIME QUORUM (§13A "Results must be in before the window closes ... one that has not by window_close falls to
+  // §13C's no-quorum rule"; §13C; kanban #26, RULED the owner 2026-10-04). The deadline is final_after - the round's end +
+  // 600 s + 5 s, wall-clock ms - on this seat's clock, by when this seat HELD each result (a PlayerResult carries no
+  // signed time, so its held time is its time, as for objections). Past it, only the results held before it count: a
+  // threshold completed later, and a split with every seat up (no run at the threshold at all), are both no quorum in the
+  // window, decided here once and written - FORFEIT on a proven equivocation (§13B), else VOID - so a result that lands
+  // afterwards never turns it FINAL. A result arriving after an in-time threshold is only late and changes nothing.
+  // Before (measured, spec audit #5/#6): the threshold counted whenever it arrived, and only unreachable or declining
+  // peers ever reached §13C, so a 4-3 split with all seven up was never decided.
+  if (win && BigInt(now) >= win.finalAfterMs) {
+    const inTimeHeld = held.filter((r) => BigInt(r.seenMs) < win.finalAfterMs);
+    const inTime = verifiedFinal(inTimeHeld.map((r) => r.bytes), { contract, signerNodes: committee });
+    // ...where at least one result was held in time: a late threshold or a split. A seat holding none could not retrieve
+    // the transcript or sign at all - §13C's other door, decided by the verifier with its own reason (#unretrievedPastWindow)
+    if (inTime.ok && !inTime.final && (inTime.agreed || 0) >= 1) {
+      const had = typeof round.noQuorum === 'function' ? round.noQuorum(entryIdBytes) : null;
+      if (had) return { state: had.outcome, why: had.why, noQuorum: true };
+      const proven = typeof round.provenTwoFirstMarks === 'function'
+        && round.provenTwoFirstMarks(roundIdBytes, entryIdBytes, evidenceWindow(round, roundIdBytes, contract, win.finalAfterMs)) === true;
+      const d = noQuorumOutcome({ signatures: inTime.agreed || 0, needed: inTime.needed, equivocationProven: proven, state: null });
+      if (d.outcome) {
+        let late = '';
+        if (seen.ok && seen.final) {
+          const times = held.filter((r) => { try { return hex(runId(decodePlayerResult(splitSignedResult(r.bytes).body))) === seen.runId; } catch { return false; } })
+            .map((r) => BigInt(r.seenMs)).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+          const kth = times[inTime.needed - 1];
+          if (kth !== undefined) late = `; the matching result that completed the threshold (${inTime.needed} of ${inTime.needed}) reached this seat at ${utc(kth)}, after the result window's deadline`;
+        }
+        const why = `no result at the threshold by ${utc(win.finalAfterMs)} (the round's end + 600 s + 5 s): ${inTime.agreed || 0} of ${inTime.needed} `
+          + `matching results held in time${late} - ${d.why} (§13C)`;
+        // written only when asked at this seat's own clock: a look ahead (a caller's `now` past it) decides nothing
+        if (typeof round.putNoQuorum === 'function' && BigInt(now) <= BigInt(round.now())
+          && round.putNoQuorum({ entryId: entryIdBytes, roundId: roundIdBytes, outcome: d.outcome, why }) === 1)
+          console.log(`[close] ${hex(entryIdBytes).slice(0, 16)} ${d.outcome}: ${why}`);
+        return { state: d.outcome, why, noQuorum: true, inTime: inTime.agreed || 0, needed: inTime.needed };
+      }
+    }
+  }
   if (!seen.ok || !seen.final) {
     // §13C'S NO-QUORUM OUTCOME (M3.3-34), on this signer node's own record once the
     // result window passed with no result at the threshold: VOID - or FORFEIT,
@@ -97,10 +135,11 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
     roundId: roundIdBytes, entryId: entryIdBytes, runId: run, records: round.finalSigs(roundIdBytes, entryIdBytes, run),
     committee, slots: contract.settlementSlots, finalAfterMs, verify,
   });
-  const postedFor = (transcriptHash) => transcriptIsPublished({
+  // `beforeMs`: only the postings this seat held before it count (§13A, kanban #26: published within the window)
+  const postedFor = (transcriptHash, beforeMs = null) => transcriptIsPublished({
     roundId: roundIdBytes, playerPubkey: agreeing[0].playerPubkey, transcriptHash,
-    postings: round.postings(roundIdBytes, entryIdBytes), signerNodes: committee,
-    settlementSlots: contract.settlementSlots, verify,
+    postings: round.postings(roundIdBytes, entryIdBytes).filter((p) => beforeMs === null || BigInt(p.seenMs) < BigInt(beforeMs)),
+    signerNodes: committee, settlementSlots: contract.settlementSlots, verify,
   });
   const receiptsHeld = () => {
     const { bytes } = round.receipts(roundIdBytes, entryIdBytes);
@@ -134,7 +173,9 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
       ...(lateObjection ? { lateObjectionAtMs: filedAt } : {}) };
     const fin = finalSigs(signedResultId, win.finalAfterMs);
     const said = { signed: fin.signed, needed: fin.needed };
-    const decided = nowMs >= win.rerunDeadlineMs && typeof round.noQuorum === 'function' ? round.noQuorum(entryIdBytes) : null;
+    // A DECISION WRITTEN AT THIS SEAT STANDS from final_after on (kanban #26: a late posting's VOID, a late threshold's, a
+    // split's - decided once), so FINAL signatures arriving afterwards never turn it back
+    const decided = nowMs >= win.finalAfterMs && typeof round.noQuorum === 'function' ? round.noQuorum(entryIdBytes) : null;
     if (decided) return { ...common, state: decided.outcome, noQuorum: true, finalSigs: said, why: decided.why };
     if (fin.ok)
       return { ...common, state: FINAL, published: true, finalSigs: said,
@@ -170,10 +211,23 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
     if (nowMs < win.finalAfterMs)
       return { ...common, state: PROVISIONALLY_FINAL, published: published.ok, posted: published.posted || 0, finalSigs: said, nextAtMs: win.finalAfterMs,
         why: `the objection window closes at ${utc(win.closeMs)} (the round's end + 600 s); FINAL is signed from ${utc(win.finalAfterMs)}` };
-    if (!published.ok)
-      return { ...common, state: PROVISIONALLY_FINAL, published: false, posted: published.posted || 0, finalSigs: said,
-        why: `${published.why}: a seat signs FINAL only once the transcript is posted` };
-    return { ...common, state: PROVISIONALLY_FINAL, published: true, posted: published.posted, finalSigs: said,
+    // PUBLISHED WITHIN THE WINDOW (§13A "Publication is a condition of finality ... posted by them to the round's
+    // publication_relays[] within the window"; "a settlement seat that cannot retrieve the transcript within the result
+    // window treats the entry as VOID"; kanban #26). Past final_after only the postings this seat held before it count: a
+    // threshold of postings completed later is not publication in the window, and the entry is VOID - decided once and
+    // written, so the late posting landing never turns it FINAL. A posting after an in-time threshold is only late.
+    const inTimePosted = postedFor(agreeing[0].transcriptHash, win.finalAfterMs);
+    if (!inTimePosted.ok) {
+      const why = `the transcript was not published by the settlement threshold by ${utc(win.finalAfterMs)} (the round's end + 600 s + 5 s): `
+        + `${inTimePosted.posted || 0} of ${inTimePosted.needed || '?'} postings held in time`
+        + `${published.ok ? `; the posting that completed the threshold reached this seat at ${utc(published.atMs)}, after the result window's deadline` : ''}`
+        + ' - a seat that cannot retrieve the transcript within the result window treats the entry as VOID (§13A, §13C)';
+      if (typeof round.putNoQuorum === 'function' && nowMs <= BigInt(round.now())
+        && round.putNoQuorum({ entryId: entryIdBytes, roundId: roundIdBytes, outcome: VOID, why }) === 1)
+        console.log(`[close] ${hex(entryIdBytes).slice(0, 16)} VOID: ${why}`);
+      return { ...common, state: VOID, noQuorum: true, unpublished: true, published: false, posted: inTimePosted.posted || 0, finalSigs: said, why };
+    }
+    return { ...common, state: PROVISIONALLY_FINAL, published: true, posted: inTimePosted.posted, finalSigs: said,
       signable: { runId: signedResultId, finalAfterMs: win.finalAfterMs },
       why: `the objection window closed at ${utc(win.closeMs)} with no valid objection in time; ${fin.why}` };
   }

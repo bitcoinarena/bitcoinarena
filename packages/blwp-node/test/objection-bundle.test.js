@@ -38,7 +38,7 @@ async function played() {
   const w = await lockRound({ endMs: testNow() + 4000 });
   const honest = await lockAndPlay(w, WINNER);
   const loser = await lockAndPlay(w, LOSER);
-  await closeRound(w);
+  await closeRound(w, { window: false });                   // inside the window: an objection is in time
   const both = await until(() => [w.a, w.b].every((d) => [honest, loser].every((p) => stateAt(d, w, p.eid).state === 'PROVISIONALLY_FINAL')));
   assert.ok(both, `not both runs signed at both seats: ${JSON.stringify([w.a, w.b].map((d) => [honest, loser].map((p) => stateAt(d, w, p.eid).why)))}`);
   return { w, honest, loser };
