@@ -2744,9 +2744,22 @@
           // AND NEVER OVER THE THROTTLE PAD'S COLUMN: where its column runs under the button (1280x720), the panel stands
           // left of the pad as the button does at phone size
           const pRight = Math.max(right, window.innerWidth - padLeft + c.m * 0.5 * sx);
-          panel.style.top = pTop + 'px'; panel.style.right = Math.round(pRight) + 'px';
+          panel.style.right = Math.round(pRight) + 'px';
           panel.style.left = 'auto'; panel.style.maxWidth = '280px';
-          panel.style.maxHeight = Math.max(40, Math.min(window.innerHeight * 0.45, window.innerHeight - pTop - c.m * sy)) + 'px';
+          // AND ABOVE THE CARGO BAY (measured 844x390, paid round: the panel lay over HUNTED, LOAD and ROLL OUT): the HUD's
+          // floor is the bay's top while it is up. Where that leaves under the button less than PANEL_MIN, the panel opens
+          // UPWARD from the button instead, over the price chart - which is read, never pressed.
+          const PANEL_MIN = 80;
+          const floor = r.top + (Number.isFinite(c.floor) ? c.floor : c.h) * sy;
+          const below = Math.min(window.innerHeight * 0.45, floor - pTop - c.m * 0.5 * sy, window.innerHeight - pTop - c.m * sy);
+          if (below >= PANEL_MIN) {
+            panel.style.top = pTop + 'px'; panel.style.bottom = 'auto';
+            panel.style.maxHeight = Math.round(below) + 'px';
+          } else {
+            const pBottom = Math.round(top - gap);
+            panel.style.top = 'auto'; panel.style.bottom = Math.round(window.innerHeight - pBottom) + 'px';
+            panel.style.maxHeight = Math.round(Math.max(40, Math.min(window.innerHeight * 0.45, pBottom - c.m * 0.5 * sy))) + 'px';
+          }
         }
         window.BLWP_CONSOLE_PLACED = { top: Math.round(top), right: Math.round(right), bh, bw, corner: c };
       };

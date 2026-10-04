@@ -9,7 +9,7 @@ using UnityEngine;
 /// </summary>
 public class ConsoleSlotTests
 {
-    [System.Serializable] class Slot { public float w, h, top, right, padX, padY, padW, m; }
+    [System.Serializable] class Slot { public float w, h, top, right, padX, padY, padW, m, floor; }
 
     static Slot SlotOf(DriveHud hud, int w, int h) => JsonUtility.FromJson<Slot>(hud.ConsoleSlot(w, h));
 
@@ -54,5 +54,28 @@ public class ConsoleSlotTests
             Assert.Less(s.top, hud.HudChartPanel(w, h).y, "above the chart, which is down over the pads");
         }
         finally { Object.DestroyImmediate(hud.gameObject); }
+    }
+
+    /// <summary>THE FLOOR (measured 844x390 on 0.0.2519, paid round: the open panel covered HUNTED, LOAD and ROLL OUT): the
+    /// cargo bay's top while the bay is open, the screen's bottom once it is closed.</summary>
+    [TestCase(1280, 720)]
+    [TestCase(844, 390)]
+    public void TheFloorIsTheCargoBaysTopWhileItIsOpen(int w, int h)
+    {
+        DriveHud.MobileOverride = true; DriveHud.PadsOverride = true;
+        var hud = new GameObject("hud").AddComponent<DriveHud>();
+        var bay = new GameObject("loadout").AddComponent<LoadoutPanel>();
+        try
+        {
+            hud.loadout = bay;
+            Assert.AreEqual(h, SlotOf(hud, w, h).floor, 0.06f, "closed: the screen's bottom");
+            bay.Open();
+            Assert.IsTrue(bay.IsOpen);
+            Assert.AreEqual(bay.BottomBarRect(w, h).y, SlotOf(hud, w, h).floor, 0.06f, "open: the bay's top");
+            Assert.Less(SlotOf(hud, w, h).floor, h);
+            bay.Dismiss();
+            Assert.AreEqual(h, SlotOf(hud, w, h).floor, 0.06f, "closed again");
+        }
+        finally { Object.DestroyImmediate(hud.gameObject); Object.DestroyImmediate(bay.gameObject); }
     }
 }
