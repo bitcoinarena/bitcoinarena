@@ -1,5 +1,5 @@
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../src/cores.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -34,7 +34,7 @@ test('a 2-slot round is canonical at two distinct receipts', () => {
   const db = openStore(':memory:');
   const round = new Round(db);
   const contract = {
-    networkId: b32(0x4e), configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
+    networkId: b32(0x4e), configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 1,
     gameVerifySlots: 2, settlementSlots: 2, simCoreHash: TRUCK_CORE_HASH,
     startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n,
     custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'],

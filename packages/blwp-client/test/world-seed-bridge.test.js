@@ -21,6 +21,9 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { standUpRound } from '../../blwp-node/tools/round-2of2.mjs';
+// #23: these are about PER-PLAYER worlds (the bridge must not fall back to the harness seed), so their rounds name the
+// per-player config v3; the shared world (v4) is world-shared.test.js and world-shared-door.test.js.
+import { TRUCK_V3_CONFIG_HASH } from '../../blwp-node/src/cores.js';
 import { joinFromQuery, tabSeed, playerFor, entryFor, fetchRandomness } from '../src/join.js';
 import { pageCurve } from '../src/page-curve.js';
 import { feldmanGroup } from '../../blwp-node/src/curve.js';
@@ -74,7 +77,7 @@ function shippedBridge(globals) {
 }
 
 test('nothing on a live round reads the constant seed, and the core is in the round\'s world before a tick is recorded', async () => {
-  const round = await standUpRound({ host: '127.0.0.1', portA: 18220, portB: 18221 });
+  const round = await standUpRound({ host: '127.0.0.1', portA: 18220, portB: 18221, configHash: TRUCK_V3_CONFIG_HASH });
   try {
     const named = await joinFromQuery(new URL(round.url).search);
     const rid = roundId(named.round);
@@ -215,7 +218,7 @@ test('nothing on a live round reads the constant seed, and the core is in the ro
  * knows the seed, that is the world however late somebody else asks.
  */
 test('once a round is joined, a later Init from C# cannot put the core back in the harness world', async () => {
-  const round = await standUpRound({ host: '127.0.0.1', portA: 18230, portB: 18231 });
+  const round = await standUpRound({ host: '127.0.0.1', portA: 18230, portB: 18231, configHash: TRUCK_V3_CONFIG_HASH });
   const tabs = [];
   // DECLARED OUT HERE so the teardown can reach it. It was `const` inside the
   // try, so `finally` threw a ReferenceError its own catch swallowed and this
@@ -357,7 +360,7 @@ test('a restart in the middle of a live run is not the run the committee replays
  * peer requests in this one process: the file never exited.
  */
 test('a join held open while the game steps publishes from the tick the core is on, and marks name it', async () => {
-  const round = await standUpRound({ host: '127.0.0.1', portA: 18240, portB: 18241 });
+  const round = await standUpRound({ host: '127.0.0.1', portA: 18240, portB: 18241, configHash: TRUCK_V3_CONFIG_HASH });
   const realOpen = CLIENT.Client.prototype.openRound;
   const realRecord = CLIENT.Client.prototype.record;
   const realMark = CLIENT.Client.prototype.markNow;

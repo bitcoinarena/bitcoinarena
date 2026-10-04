@@ -35,27 +35,9 @@ const cat = (...parts) => {
 
 const is32 = (b) => b instanceof Uint8Array && b.length === 32;
 
-/**
- * THE SEED, EXACTLY AS 5A.5 WRITES IT.
- *
- * Four 32-byte inputs in that order and nothing else. The order is not a
- * detail: two nodes concatenating differently would select different
- * committees from identical facts, which is the one thing a committee cannot
- * survive.
- */
-export function committeeSeedFrom({
-  censusRootGameVerify, censusRootSettlement, roundId, roundRandomness,
-}) {
-  for (const [name, value] of [
-    ['the game/verify census root', censusRootGameVerify],
-    ['the settlement census root', censusRootSettlement],
-    ['the round id', roundId],
-    ['the round randomness', roundRandomness],
-  ]) if (!is32(value)) throw new TypeError(`${name} is not 32 bytes`);
-
-  return taggedHash(TAG.committeeSeed,
-    cat(censusRootGameVerify, censusRootSettlement, roundId, roundRandomness));
-}
+// committeeSeedFrom lives in committee-seed.js (one copy; seed.js needs it for the round's world)
+export { committeeSeedFrom } from './committee-seed.js';
+import { committeeSeedFrom } from './committee-seed.js';
 
 /**
  * WAS THIS VALUE UNKNOWABLE WHEN THE ROUND WAS MADE?

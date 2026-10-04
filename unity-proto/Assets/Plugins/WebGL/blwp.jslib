@@ -627,8 +627,9 @@ mergeInto(LibraryManager.library, {
       // reach those nodes: a bonded stranger with a real proof would otherwise
       // be handed the entry and the whole section 11 transcript, and the first
       // receipt refusing it is a round trip too late to take any of it back.
+      // AND THE ROUND'S CONTRACT (#23): its config hash chooses the world rule - one world per round, or per player
       return C.worldSeedFor({
-        entry: entry, round: net.where.roundId, nodes: nodes,
+        entry: entry, round: net.where.roundId, nodes: nodes, contract: net.contract,
       }).then(function (world) {
         net.seedWord = world.seedWord | 0;
         net.randomness = world.randomness;

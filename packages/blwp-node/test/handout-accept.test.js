@@ -18,7 +18,7 @@
 // lock fixture's port, and each entry arrives with its stake and fee locked in it (lockedEntry). Contracts unchanged.
 import { lockPort, lockedEntry, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../src/cores.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -56,7 +56,7 @@ async function onChain() {
 }
 
 const drafted = (node) => ({
-  networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 6,
+  networkId: NETWORK_ID_REGTEST, configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6,
   // SEVEN SETTLEMENT SIGNER NODES, because the handouts below are dealt 5-of-7 to
   // seven: the door now asks the round what its stakes open at (M3.3-26).
   gameVerifySlots: 2, settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH,
@@ -236,7 +236,7 @@ test('a handout published for another round does not let an entry in', async () 
   const { lp, node, slot } = await onChain();
   try {
     const one = contractFor(node, slot);
-    const two = { ...one, configHash: TRUCK_CONFIG_HASH, slashMinimumServed: 21 };
+    const two = { ...one, configHash: TRUCK_V3_CONFIG_HASH, slashMinimumServed: 21 };
     const ridOne = (await post(node.port, '/round', encodeRoundContract(one))).bytes;
     const ridTwo = (await post(node.port, '/round', encodeRoundContract(two))).bytes;
     assert.notEqual(toHex(ridOne), toHex(ridTwo));

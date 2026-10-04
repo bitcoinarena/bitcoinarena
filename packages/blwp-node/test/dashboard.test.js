@@ -33,7 +33,7 @@ test('a real node: /dashboard opens a round to its players from api/round-result
   const { serve } = await import('../src/server.js');
   const { Client } = await import('../../blwp-client/src/client.js');
   const { TEST_FEDERATION_ID } = await import('../../protocol/src/test-federation.js');
-  const { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } = await import('../src/cores.js');
+  const { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } = await import('../src/cores.js');
   const { BLOCK_TICKS } = await import('../../core/src/rules/gate.js');
   const { TEST_DONATION_SET_REGTEST } = await import('../../protocol/src/test-donation-sets.js');
   const { donationSetId } = await import('../../protocol/src/donation.js');
@@ -47,7 +47,7 @@ test('a real node: /dashboard opens a round to its players from api/round-result
   try {
     const client = new Client({ base: `http://127.0.0.1:${node.port}`, core, sign: (id) => ed25519.sign(id, session), verify: () => true });
     const rid = await client.openRound({
-      networkId: b32(0x4e), configHash: TRUCK_CONFIG_HASH, censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'], donationSetId: donationSetId(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,
+      networkId: b32(0x4e), configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'], donationSetId: donationSetId(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,
       censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash', stakeMsat: 0n, bondMinSats: 50000n,
       blockTicks: BLOCK_TICKS, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
       timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4, nodes: [node.round.pubkey],

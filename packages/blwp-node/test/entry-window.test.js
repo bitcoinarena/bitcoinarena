@@ -14,7 +14,7 @@
 // exists. "Selecting at start_time and allowing commitment before that is
 // impossible, not merely unwise."
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../src/cores.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -33,7 +33,7 @@ import { entryFeeMsat } from '../../protocol/src/fee.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const COMMITTEE_TIME = 500n;
 const contract = (over = {}) => ({
-  networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 6,
+  networkId: NETWORK_ID_REGTEST, configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6,
   gameVerifySlots: 2, settlementSlots: 2, simCoreHash: TRUCK_CORE_HASH,
   committeeTimeMs: COMMITTEE_TIME, randomnessRule: 'bitcoin-block-hash',
   startTimeMs: COMMITTEE_TIME + MIN_ENTRY_WINDOW_MS, entryCloseMs: 200000n,

@@ -12,7 +12,7 @@
 // A FREE ROUND (RULED the owner 2026-09-25): nothing this file asserts depends on the stake, and a paying round opens only
 // on a signer node that reaches a federation now.
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../blwp-node/src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../blwp-node/src/cores.js';
 import { test } from 'node:test';
 // The run length is the core's; a literal 9000 is refused by the node as a contract
 // disagreeing with the network it names (WAR_TACTICS moved a run to 10800).
@@ -65,7 +65,7 @@ test('two daemons, one page: the other truck arrives where its own transcript pu
   try {
     // ONE CONTRACT, TWO SIGNER NODES - the 2-of-2 that already runs.
     const contract = {
-      networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 6,
+      networkId: NETWORK_ID_REGTEST, configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6,
       gameVerifySlots: 2, settlementSlots: 2, simCoreHash: TRUCK_CORE_HASH,
       committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
       startTimeMs: 500n + MIN_ENTRY_WINDOW_MS, entryCloseMs: 200000n,

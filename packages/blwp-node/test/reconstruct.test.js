@@ -16,7 +16,7 @@ import { fromHex } from '../../protocol/src/hash.js';
 import { lockPort, lockedEntry, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
 import { CLOCK } from './block-clock.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../src/cores.js';
 // THE RUN LENGTH IS THE CORE'S (2026-09-20). This fixture said 9000 and the core has ended a run at 10800
 // since c01cc655, so `Round.open` refused the contract - "a second clock is not a shorter round" - and every
 // test here died with "this node holds no such round" before a single share was dealt. These seven tests are
@@ -100,7 +100,7 @@ const contractFor = (nodes) => {
     { endpoints: committeeRelays.map((u) => u.replace('http://', 'ws://')) }).censusRoot } : c;
 };
 const drafted = (nodes) => ({
-  startDeadlineTicks: PLANTED_FIRST_MARK_DEADLINE, networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
+  startDeadlineTicks: PLANTED_FIRST_MARK_DEADLINE, networkId: NETWORK_ID_REGTEST, configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 1,
   gameVerifySlots: 7, settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n,
   // A WINDOW OF 1ms, NOT 0. This fixture named a zero objection window so finality was instant and the suite
   // did not have to wait; a zero window is now refused, because it erases §13A's replay veto (contracts.js).
@@ -379,7 +379,7 @@ test('a delivered run never gives up its preimage, and neither does one that is 
     // A ROUND OF ITS OWN, because every signer node's round above is closed and a
     // closed round takes no new entries.
     const holder = nodes[6];
-    const other = { ...contractFor(nodes.map((n) => n.round.pubkey)), configHash: TRUCK_CONFIG_HASH, slashMinimumServed: 21 };
+    const other = { ...contractFor(nodes.map((n) => n.round.pubkey)), configHash: TRUCK_V3_CONFIG_HASH, slashMinimumServed: 21 };
     const orid = holder.round.open(other);
     assumeAssigned(holder.round, orid, other.nodes);
 
@@ -484,7 +484,7 @@ test('a signer node that never replayed the run hands over nothing', async () =>
     const { rid, eid } = await everyoneReplays(nodes, stake);
 
     const quiet = nodes[6];
-    const c = { ...contractFor(nodes.map((n) => n.round.pubkey)), configHash: TRUCK_CONFIG_HASH, slashMinimumServed: 22 };
+    const c = { ...contractFor(nodes.map((n) => n.round.pubkey)), configHash: TRUCK_V3_CONFIG_HASH, slashMinimumServed: 22 };
     const orid = quiet.round.open(c);
     assumeAssigned(quiet.round, orid, c.nodes);
     const entry = {
