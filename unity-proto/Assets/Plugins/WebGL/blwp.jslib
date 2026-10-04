@@ -52,9 +52,13 @@ mergeInto(LibraryManager.library, {
   //
   // Sats aboard and hundredths of a BTC. The core decides what that costs;
   // nothing here does arithmetic on it, and there is no second copy to drift.
-  BlwpSubmitLoad: function (feeSats, btcHundredths) {
+  // AND THE ROOM IT FILLS (the owner 2026-10-04 08:54: C is the bed fill): Unity hands the vsizes on the bed, the core's own
+  // roomFor (cargo.js) sums them here, and that one integer goes to the core and on the wire with the load - so a replay
+  // sets the same C. A core without roomFor (an older bundle) gets the load as before.
+  BlwpSubmitLoad: function (feeSats, btcHundredths, vsizesPtr) {
     var b = Module.blwp;
     if (!b || !b.core.submitLoad) return 0;
+    var room = blwpRoomOf(b.core, vsizesPtr ? UTF8ToString(vsizesPtr) : '');
     // ONE LOAD A TICK IN THE ROUND'S WORLD (ORDER-2116, measured 2026-10-02 08:00Z): a signer node keeps the first of a kind at
     // a tick, so a second one here - Unity's own beside the one handed over at the world's start - moved this core and not
     // the replay (DELIVERED here, FAILED at all 7, the same 1457 ticks). The second is dropped, here and on the wire.
@@ -64,9 +68,18 @@ mergeInto(LibraryManager.library, {
       if (net0.lastAt.load === at0) return 0;
       net0.lastAt.load = at0;
     }
-    var ok = b.core.submitLoad(b.st, feeSats | 0, btcHundredths | 0) ? 1 : 0;
-    if (ok && Module.blwpNet) Module.blwpNet.load(feeSats | 0, btcHundredths | 0);
+    var ok = (room === null ? b.core.submitLoad(b.st, feeSats | 0, btcHundredths | 0)
+      : b.core.submitLoad(b.st, feeSats | 0, btcHundredths | 0, room)) ? 1 : 0;
+    if (ok && Module.blwpNet) Module.blwpNet.load(feeSats | 0, btcHundredths | 0, room);
     return ok;
+  },
+
+  // THE C A BED OF THESE VSIZES WOULD SET, for the cargo panel before ROLL OUT: the core's fill of the summed room, 0..ONE.
+  BlwpBedFill: function (vsizesPtr) {
+    var b = Module.blwp;
+    if (!b || !b.core.bedFill) return 0;
+    var room = blwpRoomOf(b.core, vsizesPtr ? UTF8ToString(vsizesPtr) : '');
+    return room === null ? 0 : b.core.bedFill(room) | 0;
   },
 
   // A LIVE PRICE SAMPLE (the owner 2026-09-17 16:01: the chart was frozen, nothing ever submitted one), in the tape's unit
@@ -281,6 +294,16 @@ mergeInto(LibraryManager.library, {
     return (n && typeof n.seedWord === 'number') ? (n.seedWord | 0) : (seed | 0);
   },
 
+  // THE ROOM A BED TAKES, by the core's own rule: the sum of core.roomFor over the comma-separated vsizes, or null for a core
+  // that has no roomFor (a load then crosses without a room, as before). An empty bed is 0.
+  $blwpRoomOf: function (core, list) {
+    if (!core || typeof core.roomFor !== 'function') return null;
+    var room = 0;
+    String(list || '').split(',').forEach(function (v) { if (v !== '') room = (room + (core.roomFor(v | 0) | 0)) | 0; });
+    return room;
+  },
+  BlwpSubmitLoad__deps: ['$blwpRoomOf'],
+  BlwpBedFill__deps: ['$blwpRoomOf'],
   BlwpInit__deps: ['$blwpWorldSeed'],
   BlwpRestart__deps: ['$blwpWorldSeed'],
 
@@ -745,7 +768,10 @@ mergeInto(LibraryManager.library, {
           (net.queued || []).forEach(function (q) { latest[q[0]] = q; });
           ['tape', 'load', 'sample'].map(function (k) { return latest[k]; }).filter(Boolean).forEach(function (q) {
             if (q[0] === 'tape') { b.core.submitTape(b.st, q[1]); net.client.submitTape(q[1]); }
-            else if (q[0] === 'load') { b.core.submitLoad(b.st, q[1], q[2]); net.client.submitLoad(q[1], q[2]); }
+            else if (q[0] === 'load') {
+              if (q[3] === null || q[3] === undefined) { b.core.submitLoad(b.st, q[1], q[2]); net.client.submitLoad(q[1], q[2]); }
+              else { b.core.submitLoad(b.st, q[1], q[2], q[3]); net.client.submitLoad(q[1], q[2], q[3]); }
+            }
             else if (q[0] === 'sample') { b.core.submitSample(b.st, q[1]); net.client.submitSample(q[1]); }
             (net.lastAt = net.lastAt || {})[q[0]] = net.client.offered | 0;
           });
@@ -780,15 +806,16 @@ mergeInto(LibraryManager.library, {
     // start the core is still the lobby's, so the core's copy was thrown away when it entered the round's world and the
     // client's went out: every signer node replayed a war the page never ran - DELIVERED on the page, FAILED at all 7.
     // Kept here until then, and handed to the round's core and to the client together (`net.opened`).
-    var heldUntilWorld = function (kind, a, b2) {
+    var heldUntilWorld = function (kind, a, b2, c3) {
       if (net.inWorld) return false;
-      (net.queued = net.queued || []).push([kind, a, b2]);
+      (net.queued = net.queued || []).push([kind, a, b2, c3]);
       return true;
     };
-    net.load = function (feeSats, btcHundredths) {
+    net.load = function (feeSats, btcHundredths, room) {
       if (!net.client) return;
-      if (heldUntilWorld('load', feeSats, btcHundredths)) return;
-      net.client.submitLoad(feeSats, btcHundredths);
+      if (heldUntilWorld('load', feeSats, btcHundredths, room)) return;
+      if (room === null || room === undefined) net.client.submitLoad(feeSats, btcHundredths);
+      else net.client.submitLoad(feeSats, btcHundredths, room);
     };
 
     net.sample = function (price) {

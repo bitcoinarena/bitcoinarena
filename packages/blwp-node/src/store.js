@@ -562,6 +562,7 @@ export function openStore(path = ':memory:') {
       tick      INTEGER NOT NULL,
       fee_sats  INTEGER NOT NULL,
       btc_hund  INTEGER NOT NULL,
+      room      INTEGER,
       PRIMARY KEY (round_id, entry_id, tick)
     );
 
@@ -958,6 +959,10 @@ export function openStore(path = ':memory:') {
     db.exec('ALTER TABLE pool_nonces ADD COLUMN attempt INTEGER NOT NULL DEFAULT 0');
   // AN OBJECTION NAMES ITS BLOCK (§13A, RULED the owner 2026-09-24): the window places it by that block, not by when it came.
   // A store made before the ruling gets the column; a row there names none, and counts nowhere.
+  // THE ROOM A LOAD FILLS (the owner 2026-10-04 08:54: the cargo factor C is the bed fill, crossing with the load): a store
+  // made before it gets the column; a row there carries none, and replays at the 0.7 every run had.
+  if (!db.prepare('PRAGMA table_info(loads)').all().some((c) => c.name === 'room'))
+    db.exec('ALTER TABLE loads ADD COLUMN room INTEGER');
   for (const t of ['objections', 'rerun_objections'])
     if (!db.prepare(`PRAGMA table_info(${t})`).all().some((c) => c.name === 'block_hash'))
       db.exec(`ALTER TABLE ${t} ADD COLUMN block_hash BLOB`);

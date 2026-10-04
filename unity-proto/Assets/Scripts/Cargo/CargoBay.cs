@@ -109,6 +109,17 @@ public class CargoBay : MonoBehaviour
     public float HeatOf(MempoolFeed.Tx tx) =>
         tx == null ? 0f : Mathf.Clamp01(tx.feeSats / Mathf.Max(1f, heatAtSats));
 
+    /// <summary>The vsizes on the bed, comma-separated: what the load carries to the core, which sums its own roomFor.</summary>
+    public string VsizeList
+    {
+        get
+        {
+            var sb = new System.Text.StringBuilder();
+            foreach (var s in Slots) { if (s.tx == null) continue; if (sb.Length > 0) sb.Append(','); sb.Append(s.tx.vsize); }
+            return sb.ToString();
+        }
+    }
+
     /// <summary>0..1, how full the bed is. Drives the gauge.</summary>
     public float Fill
     {

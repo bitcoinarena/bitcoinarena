@@ -37,7 +37,7 @@ if (raw[0] === 0x09) {
   const due = new Map(liquidations.map(([at, size]) => [at, size]));
   // The load lands before its own tick, like a strike. A replay that skipped
   // it would be hunted at zero while the player was hunted for a full bed.
-  const bed = new Map(loads.map(([at, fee, btc]) => [at, [fee, btc]]));
+  const bed = new Map(loads.map(([at, ...rest]) => [at, rest]));   // [fee, btc] or [fee, btc, room]
   for (let i = 0; i < ticks.length; i++) {
     if (bed.has(i)) submitLoad(st, ...bed.get(i));
     if (due.has(i)) submitLiquidation(st, due.get(i));

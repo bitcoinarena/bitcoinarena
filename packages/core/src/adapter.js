@@ -21,12 +21,14 @@ export const CORE = Object.freeze({
   start: (seedWord, config, { runTicks } = {}) => init(seedWord, runTicks === undefined ? {} : { runTicks }),
   /**
    * THE TRANSCRIPT'S OWN EVENTS, each applied BEFORE the tick it names - round setup for that tick,
-   * not a consequence of it: a load (fee, btc - how hard the war hunts the run) and a liquidation
+   * not a consequence of it: a load (fee, btc - how hard the war hunts the run; and the room it fills, the cargo factor C,
+   * when it carries one) and a liquidation
    * (size). Loads first, then liquidations, as the golden vectors and core/tools/replay.js have it.
    */
   eventsOf(transcript) {
     const due = new Map((transcript.liquidations || []).map(([at, size]) => [at, size]));
-    const loaded = new Map((transcript.loads || []).map(([at, fee, btc]) => [at, [fee, btc]]));
+    // a load is [at, fee, btc] or, since the bed fill crossed (the owner 2026-10-04 08:54), [at, fee, btc, room]
+    const loaded = new Map((transcript.loads || []).map(([at, ...rest]) => [at, rest]));
     // the live price, one sample at a tick (the page submits at most one per 300 ticks)
     const priced = new Map((transcript.samples || []).map(([at, price]) => [at, price]));
     // the live tape handed over before any sample, [tick, p0 .. p63]

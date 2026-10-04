@@ -223,7 +223,7 @@ export function flatten(t) {
     firstTick,
     ticks,
     liquidations: liquidations.map(([at, size]) => [at - firstTick, size]),
-    loads: loads.map(([at, fee, btc]) => [at - firstTick, fee, btc]),
+    loads: loads.map(([at, ...rest]) => [at - firstTick, ...rest]),   // [fee, btc] or [fee, btc, room]
     samples: samples.map(([at, price]) => [at - firstTick, price]),
     tapes: tapes.sort((a, c) => a[0] - c[0]).map(([at, ...prices]) => [at - firstTick, ...prices]),
   };

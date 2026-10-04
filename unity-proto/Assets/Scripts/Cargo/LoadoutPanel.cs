@@ -127,7 +127,7 @@ public class LoadoutPanel : MonoBehaviour
         // replay of the same transcript carried 0, so a committee and every
         // ghost it drew hunted a run the player was not driving. Two integers
         // cross now, the bridge publishes them, and the core decides the cost.
-        if (bay != null) Blwp.BlwpCore.SubmitLoad(bay.FeeCarried, bay.BtcHundredths);
+        if (bay != null) Blwp.BlwpCore.SubmitLoad(bay.FeeCarried, bay.BtcHundredths, bay.VsizeList);
         // and kept with the page for this round, so a reload mid-run puts these parcels back on the bed (ResumeDriving)
         if (bay != null) Blwp.BlwpCore.KeepCargo(BedText(bay.Slots));
 
@@ -630,7 +630,11 @@ public class LoadoutPanel : MonoBehaviour
         // LOAD x DANGER x SPEED, while the score multiplies the core's cargo word - set once, at init, to 0.70 on this
         // core, whatever is loaded. The bed fill stays on the gauge as TRUCK FULL %, which does not enter the score. That
         // the loadout choice does not move the score is what this core does, and the panel now says so.
-        string load = LoadLabel(Blwp.BlwpCore.CargoWord);
+        // AND IT IS THE BED FILL NOW (the owner 2026-10-04 08:54): the core sets C from the load's room at ROLL OUT, so before it
+        // the panel shows the C this bed would set - the core's own fill of these vsizes, asked of the page.
+        string vs = bay.VsizeList;
+        if (vs != _fillOf) { _fillOf = vs; _fillWord = Blwp.BlwpCore.BedFill(vs); }
+        string load = LoadLabel(_fillWord);
         while (reward.fontSize > 12 && reward.CalcSize(new GUIContent(load)).x > rw) reward.fontSize--;
         GUI.Label(new Rect(rx, top - reward.fontSize * 0.1f, rw, reward.fontSize * 1.3f), load, reward);
 
@@ -683,6 +687,8 @@ public class LoadoutPanel : MonoBehaviour
         if (GUI.Button(new Rect(panel.x + inner * 2f + gaugeW, by, bw, bh), go, goStyle)) Confirm();
         GUI.enabled = true;
     }
+
+    string _fillOf; int _fillWord;
 
     /// <summary>The panel's LOAD number: the core's C (S_CARGO on the 1e-5 grid), to the five decimals the card prints.</summary>
     public static string LoadLabel(int cargoWord) =>
