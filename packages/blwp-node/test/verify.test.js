@@ -36,6 +36,7 @@ import {
 } from '../../protocol/src/result.js';
 import { verifiedFinal } from '../src/verdict.js';
 import { GENESIS } from '../../protocol/src/transcript.js';
+import { buildObjectionBundle } from '../tools/objection-bundle.mjs';
 import { toHex } from '../../protocol/src/hash.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { committeeSeedFromBeacon } from '../../protocol/src/beacon.js';
@@ -207,8 +208,20 @@ async function roundThrough(node, {
   }
 
   if (objectFirst) {
-    const r = await post(node.port, `/objection?round=${toHex(rid)}&entry=${toHex(eid)}&block=${toHex(CLOCK.tipAt(Date.now()))}`);
-    assert.equal(r.status, 201);
+    // AN OBJECTION CARRIES ITS TRANSCRIPT AND RECEIPTS (§13A, kanban #24): an empty body is 400; a real bundle before any
+    // result is signed has nothing to object to (422) - neither is stored. The objected flag the close reads is then the
+    // store's own record, as a run objected on an earlier close carries it.
+    const at = `/objection?round=${toHex(rid)}&entry=${toHex(eid)}&block=${toHex(CLOCK.tipAt(Date.now()))}`;
+    const empty = await post(node.port, at);
+    assert.equal(empty.status, 400);
+    assert.equal((await empty.text()).trim(), 'an objection carries its transcript and receipts (13A)');
+    const { bundle } = await buildObjectionBundle({ base: `http://127.0.0.1:${node.port}`, roundId: rid, entryId: eid,
+      signedRunId: b32(0x55), playerPubkey: entry.playerPubkey, claimed: { outcome: 'DELIVERED', score: 1 } });
+    const early = await post(node.port, at, bundle);
+    assert.equal(early.status, 422);
+    assert.match(await early.text(), /there is no signed result for that entry to object to/);
+    assert.equal(node.round.objected(rid, eid), false, 'a refused objection was stored');
+    assert.equal(node.round.object(rid, eid), true);
   }
 
   assert.equal(await s.say(`close ${toHex(rid)}`), 'closed');
@@ -314,13 +327,14 @@ test('an objection recorded over the wire reaches the pool as an objected job', 
     await settle(node);
     assert.equal((await results(node.port, rid, eid)).count, 1);
 
-    // a second objection against the same run is not a second objection
-    const again = await post(node.port, `/objection?round=${toHex(rid)}&entry=${toHex(eid)}&block=${toHex(CLOCK.tipAt(Date.now()))}`);
-    assert.equal(again.status, 200);
-    assert.equal((await again.text()).trim(), 'already objected');
+    // a bundle against a run one of two signer nodes has signed: no committee result to object to yet, nothing changes
+    const { bundle } = await buildObjectionBundle({ base: `http://127.0.0.1:${node.port}`, roundId: rid, entryId: eid,
+      signedRunId: b32(0x55), playerPubkey: b32(0x61), claimed: { outcome: 'DELIVERED', score: 1 } });
+    const again = await post(node.port, `/objection?round=${toHex(rid)}&entry=${toHex(eid)}&block=${toHex(CLOCK.tipAt(Date.now()))}`, bundle);
+    assert.equal(again.status, 422);
 
     // and one against a run this node has never heard of is refused
-    const nowhere = await post(node.port, `/objection?round=${toHex(rid)}&entry=${toHex(b32(0x99))}&block=${toHex(CLOCK.tipAt(Date.now()))}`);
+    const nowhere = await post(node.port, `/objection?round=${toHex(rid)}&entry=${toHex(b32(0x99))}&block=${toHex(CLOCK.tipAt(Date.now()))}`, bundle);
     assert.equal(nowhere.status, 404);
   } finally { await node.close(); }
 });

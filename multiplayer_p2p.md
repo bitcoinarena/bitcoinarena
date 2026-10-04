@@ -2428,6 +2428,37 @@ consistent, and deterministic replay under the round's `sim_wasm_hash`
 produces `claimed_result ≠ signed_result`. Anyone can check this; there is
 no judgement involved, only replay.
 
+**AS BUILT (the owner 2026-10-04, kanban #24).** `POST
+/objection?round=&entry=[&block=]` takes the objection as its body and
+refuses an empty one: 400, "an objection carries its transcript and
+receipts (13A)". The body is a bundle of four length-prefixed parts:
+- the Objection (`encodeObjection`: round, player, `transcript_hash`, the
+  signed result objected to, the claimed outcome and score, the objector's
+  key);
+- the objector's BIP-340 signature over its id;
+- the canonical transcript, as `GET /canonical` hands it out (batches and
+  signed marks: the object `transcript_hash` names);
+- the signed receipts, as `GET /receipts` hands them out.
+
+The seat checks it on its own evidence before anything is stored
+(`objection-check.js`). The checks run in this order, and each refusal
+is named:
+1. the signature;
+2. the round, entry and result named;
+3. the transcript's hash;
+4. the checkpoint chain;
+5. that the transcript belongs to the entry;
+6. that every checkpoint has a receipt signed by a committee member;
+7. that the replay under the round's own core gives the claimed result,
+   and that it differs from the signed one.
+
+A bundle that fails is refused (422 with the reason) and nothing is
+stored. A valid one is stored with its arrival time, taken before the
+replay runs, and counts as the replay that disagrees, beside the seat's
+own replay. The same function runs outside any seat:
+`tools/check-objection.mjs` reads only a seat's public doors (`/round`,
+`/entry`, `/results`, `/randomness`) and replays locally.
+
 **Effect:** a valid objection suspends finality. The full committee re-runs
 the canonical transcript; the replay outcome is authoritative. Every node
 that signed the contradicted result is slashed (§5A.3). If the committee

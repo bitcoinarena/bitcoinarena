@@ -57,7 +57,8 @@ import { hash as stateHash } from '../../core/src/state.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
 import { encodeTranscriptPosting, transcriptPostingId, joinSignedPosting } from '../../protocol/src/posting.js';
-import { encodeRerunResult, rerunResultId, joinSignedRerun } from '../../protocol/src/rerun.js';
+import { encodeRerunResult, rerunResultId, joinSignedRerun, decodeRerunResult, splitSignedRerun } from '../../protocol/src/rerun.js';
+import { buildObjectionBundle } from '../tools/objection-bundle.mjs';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { netStakeMsat } from '../../protocol/src/payout.js';
 import { refundKeyOf } from '../../protocol/src/stake-lock.js';
@@ -504,10 +505,38 @@ export async function sevenSignerNodes(windowMs, relays, { storedBeforeTheRule =
 // AN OBJECTION NAMES THE BLOCK IT IS FILED IN (§13A, RULED 2026-09-24): by default the chain's tip as it is filed.
 // ONE RETRY ON A RESET CONNECTION: a pooled keep-alive socket the daemon closed while idle (measured 2026-10-01: a second
 // daemon started on a file store between two requests outlasted the holder's keep-alive, and the reused socket reset).
-export const object = async (w, eid, block = CLOCK.tipAt(Date.now())) => {
+// AN OBJECTION CARRIES ITS TRANSCRIPT AND RECEIPTS (§13A, kanban #24, RULED the owner 2026-10-04): the bundle a player
+// builds from what the holder hands out (GET /canonical, GET /receipts), claiming what the holder's OWN replay signed -
+// the honest replay - against the run that stands now (the agreed re-run's, while one does). Where the committee signed
+// the same run, that bundle is refused (422, "the replay agrees with the signed result"); where it signed another, it
+// holds. `opts.body` posts those bytes instead (an empty body, a forged bundle); `opts.claimed` claims another result.
+export async function objectionBundleFor(w, eid, opts = {}) {
+  const round = w.holder.round;
+  const f = resultFinality(round, w.rid, eid);
+  const against = f.rerun && f.rerun.runId ? f.rerun.runId : f.runId;
+  if (!against) throw new Error(`no signed run to object to: ${f.why}`);
+  const me = toHex(round.pubkey);
+  let own = null;
+  if (f.rerun && f.rerun.runId) {
+    const rec = round.reruns(w.rid, eid).find((r) => toHex(r.signerNodePubkey) === me);
+    if (rec) own = decodeRerunResult(splitSignedRerun(rec.bytes).body).result;
+  } else {
+    const rec = round.results(w.rid, eid).find((r) => toHex(r.nodePubkey) === me);
+    if (rec) own = decodePlayerResult(splitSignedResult(rec.bytes).body);
+  }
+  const anyResult = own || decodePlayerResult(splitSignedResult(round.results(w.rid, eid)[0].bytes).body);
+  const claimed = opts.claimed || (own ? { outcome: own.outcome, score: own.score } : null);
+  if (!claimed) throw new Error('the holder signed no result of its own to claim');
+  return buildObjectionBundle({ base: `http://127.0.0.1:${w.holder.port}`, roundId: w.rid, entryId: eid, signedRunId: against,
+    playerPubkey: anyResult.playerPubkey, claimed, objectorSecret: opts.objectorSecret, transcript: opts.transcript || null,
+    receipts: opts.receipts || null });
+}
+
+export const object = async (w, eid, block = CLOCK.tipAt(Date.now()), opts = {}) => {
   const at = `http://127.0.0.1:${w.holder.port}/objection?round=${toHex(w.rid)}&entry=${toHex(eid)}&block=${toHex(block)}`;
-  try { return await fetch(at, { method: 'POST' }); } catch (e) {
+  const body = opts.body !== undefined ? opts.body : (await objectionBundleFor(w, eid, opts)).bundle;
+  try { return await fetch(at, { method: 'POST', body }); } catch (e) {
     if (!/ECONNRESET|other side closed/.test(String(e && e.cause && e.cause.message))) throw e;
-    return fetch(at, { method: 'POST' });
+    return fetch(at, { method: 'POST', body });
   }
 };

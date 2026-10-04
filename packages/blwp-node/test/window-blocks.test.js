@@ -45,7 +45,9 @@ test('a pair that reaches a holder after it decided the re-run window counts for
     w.sign('dissents', (r) => ({ score: r.score + 1 }));
     const eid = w.runs.dissents.eid;
     w.holder.round.db.exec(`VACUUM INTO '${join(dir, 'b.sqlite')}'`);
-    b = await serve(openStore(join(dir, 'b.sqlite')), { port: 0, ...opts, advertsFor: () => w.adverts });
+    // B REPLAYS UNDER THE ROUND'S OWN BEACON, as A does (§13A, kanban #24: an objection's bundle is replayed at each door)
+    b = await serve(openStore(join(dir, 'b.sqlite')), { port: 0, ...opts, advertsFor: () => w.adverts,
+      randomnessFor: w.holder.verifier.randomnessFor, chainFor: w.holder.verifier.chainFor });
     b.round.chainView = CLOCK.chainView();
     const B = { holder: b, rid: w.rid };
     assert.equal((await object(w, eid)).status, 201);
@@ -91,7 +93,9 @@ test('a pair that reaches both holders before they decide the re-run window coun
     w.sign('dissents', (r) => ({ score: r.score + 1 }));
     const eid = w.runs.dissents.eid;
     w.holder.round.db.exec(`VACUUM INTO '${join(dir, 'b.sqlite')}'`);
-    b = await serve(openStore(join(dir, 'b.sqlite')), { port: 0, ...opts, advertsFor: () => w.adverts });
+    // B REPLAYS UNDER THE ROUND'S OWN BEACON, as A does (§13A, kanban #24: an objection's bundle is replayed at each door)
+    b = await serve(openStore(join(dir, 'b.sqlite')), { port: 0, ...opts, advertsFor: () => w.adverts,
+      randomnessFor: w.holder.verifier.randomnessFor, chainFor: w.holder.verifier.chainFor });
     b.round.chainView = CLOCK.chainView();
     const B = { holder: b, rid: w.rid };
     assert.equal((await object(w, eid)).status, 201);
