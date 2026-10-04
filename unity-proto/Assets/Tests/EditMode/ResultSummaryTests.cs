@@ -11,7 +11,7 @@ public class ResultSummaryTests
 
     // round 572adcf6 as the seats answered at 22:15Z, projected by index.html (settlement not accepted yet: pending)
     const string OneRun = "{\"mine\":\"" + Mine + "\",\"players\":[{\"entry\":\"" + Mine + "\",\"key\":\"f608dffc6f98145e1d793717c160eae70c616ae2513c9910099c34fbf1fce8d2\","
-        + "\"name\":\"\",\"outcome\":\"DELIVERED\",\"score\":8304450,\"signedBy\":7,\"result\":\"pending\",\"net\":\"\"}]}";
+        + "\"name\":\"\",\"outcome\":\"DELIVERED\",\"score\":8304450,\"signedBy\":7,\"result\":\"pending\",\"net\":\"\",\"stakeMsat\":\"100000\"}]}";
 
     [Test]
     public void OneDeliveredRunStillPendingReadsAsTheSeatsSaidIt()
@@ -20,9 +20,9 @@ public class ResultSummaryTests
         Assert.AreEqual(new[] {
             "DELIVERED you",
             "HIGH SCORE  1. you 83.04450",
-            "YOU  PENDING",
+            "YOU  DELIVERED  ·  pending",
             "preliminary · 1 of 1 runs signed",
-            "you  pending",
+            "you  stake 100 sat  ·  pending",
         }, lines.ToArray());
     }
 
@@ -33,14 +33,14 @@ public class ResultSummaryTests
             $"{{\"entry\":\"{entry}\",\"key\":\"{key}\",\"name\":\"{name}\",\"outcome\":\"{outcome}\",\"score\":{score},\"signedBy\":{signed},\"result\":\"{result}\",\"net\":\"{net}\"}}";
         string json = "{\"mine\":\"e1\",\"players\":["
             + P("e1", "aaaaaaaaaaaa", "", "DELIVERED", 8304450, 7, "won", "12500") + ","
-            + P("e2", "bbbbbbbbbbbb", "J\\u00fcrgen", "MISSED", 0, 6, "lost", "-100000") + ","
+            + P("e2", "bbbbbbbbbbbb", "J\\u00fcrgen", "FAILED", 4147753, 6, "lost", "-100000") + ","
             + P("e3", "cccccccccccc", "", "DELIVERED", 16147950, 4, "stake back", "-4000") + ","
             + P("e4", "dddddddddddd", "", "", -1, 0, "", "") + "]}";
         var w = ResultSummary.Parse(json);
         var all = ResultSummary.Lines(w);
-        Assert.AreEqual("DELIVERED you, cccccccc  ·  MISSED Jürgen  ·  1 still driving", all[0]);
-        Assert.AreEqual("HIGH SCORE  1. cccccccc 161.47950   2. you 83.04450   3. Jürgen 0.00000", all[1]);
-        Assert.AreEqual("YOU  WON  +12.5 sat", all[2]);
+        Assert.AreEqual("DELIVERED you, cccccccc  ·  FAILED Jürgen  ·  1 still driving", all[0], "a FAILED player is named, by the signed word");
+        Assert.AreEqual("HIGH SCORE  1. cccccccc 161.47950   2. you 83.04450", all[1], "a FAILED run's signed score is no high score");
+        Assert.AreEqual("YOU  DELIVERED  ·  WON  +12.5 sat", all[2]);
         Assert.AreEqual("preliminary · 2 of 4 runs signed", all[3], "signed means five signers or more");
         Assert.AreEqual(new[] { "you  +12.5 sat", "Jürgen  -100 sat", "cccccccc  -4 sat", "dddddddd  pending" }, all.GetRange(4, 4).ToArray());
         var cut = ResultSummary.Lines(w, 3);
@@ -67,5 +67,20 @@ public class ResultSummaryTests
         Assert.IsTrue(ResultSummary.Parse("{\"mine\":\"e1\",\"hold\":true,\"players\":[]}").hold);
         Assert.IsFalse(ResultSummary.Parse("{\"mine\":\"e1\",\"hold\":false,\"players\":[]}").hold);
         Assert.IsFalse(ResultSummary.Parse(OneRun).hold, "no word from the page is no hold");
+    }
+
+    // THE WRECK (round 3b16e292 as the seats signed it, 00:14:07Z): this player FAILED, signed by 7, settlement pending
+    [Test]
+    public void AWreckReadsFailedWithItsStakeAndNoHighScore()
+    {
+        const string wreck = "{\"mine\":\"32dc\",\"hold\":true,\"players\":[{\"entry\":\"32dc\",\"key\":\"8559fc1f\",\"name\":\"\",\"outcome\":\"FAILED\",\"score\":4147753,\"signedBy\":7,\"result\":\"pending\",\"net\":\"\",\"stakeMsat\":\"100000\"}]}";
+        Assert.AreEqual(new[] {
+            "FAILED you",
+            "HIGH SCORE  -",
+            "YOU  FAILED  ·  pending",
+            "preliminary · 1 of 1 runs signed",
+            "you  stake 100 sat  ·  pending",
+        }, ResultSummary.Lines(ResultSummary.Parse(wreck)).ToArray());
+        Assert.AreEqual("", ResultSummary.Stake("0"), "a free entry names no stake");
     }
 }
