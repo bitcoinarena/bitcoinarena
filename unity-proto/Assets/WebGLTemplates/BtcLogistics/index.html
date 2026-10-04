@@ -3148,7 +3148,7 @@
           votes.set(fig, (votes.get(fig) || 0) + 1);
         }
         const best = [...votes.entries()].sort((a, b) => b[1] - a[1])[0];
-        if (typeof collectNote === 'function') collectNote('pending ' + String(n.roundIdHex).slice(0, 8), answered.length + ' of ' + (n.nodes || []).length + ' seats answered /standing; '
+        if (typeof collectNote === 'function') collectNote('pending ' + String(n.roundIdHex).slice(0, 8), answered.length + ' of ' + (n.nodes || []).length + ' signer nodes answered /standing; '
           + [...votes.entries()].map(([f, c]) => (f === null ? 'none' : f + ' msat') + ' x' + c).join(', ')
           + (answered[0] ? ' | ' + [answered[0].kind, answered[0].state, answered[0].outcome].filter(Boolean).join(' ') : ''));
         if (!best || best[0] === null || best[0] === '0' || best[1] * 2 <= answered.length) continue;
