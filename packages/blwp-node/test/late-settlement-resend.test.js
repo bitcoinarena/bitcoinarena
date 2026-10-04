@@ -8,6 +8,8 @@
 // FILE-BACKED stores, as lock-settlement-restart.test.js has them, so a signer node can die and start again on its own
 // records. The late sweep is slowed out of the way and every step is driven by the round's asker, so each kill point is
 // exactly where the pin says. `finalityOf` is the same test aid as late-settlement.test.js's.
+import { presentDay } from './window-fixture.js';
+import { testNow } from './test-clock.js';
 import { CLOCK } from './block-clock.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -59,8 +61,9 @@ async function settledOnDisk() {
     }
   };
   wire();
-  w.c = { ...contractFor([w.a.round.pubkey, w.b.round.pubkey], BigInt(WINDOW_MS), [w.a, w.b].map((d) => `http://127.0.0.1:${d.port}`)),
-    custody: 'FEDERATION', federationId: TEST_FEDERATION_ID, minScore: 1, stakeMsat: STAKE };
+  // THE ROUND ENDS NOW, NOT IN 1970 (kanban #26), as lock-round-fixture's; closeRound skips past final_after in live order
+  w.c = presentDay({ ...contractFor([w.a.round.pubkey, w.b.round.pubkey], BigInt(WINDOW_MS), [w.a, w.b].map((d) => `http://127.0.0.1:${d.port}`)),
+    custody: 'FEDERATION', federationId: TEST_FEDERATION_ID, minScore: 1, stakeMsat: STAKE }, testNow() + 3000);
   w.c = { ...w.c, censusRoot: bondedChainFor(w.c.nodes, w.c, slot,
     { endpoints: [w.a, w.b].map((d) => `ws://127.0.0.1:${d.port}`) }).censusRoot };
   w.rid = roundId(w.c);

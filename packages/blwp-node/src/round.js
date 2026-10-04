@@ -2209,8 +2209,8 @@ export class Round {
 
   /** §13C's no-quorum outcome for an entry, decided here once: VOID or FORFEIT. */
   putNoQuorum({ entryId, roundId, outcome, why }) {
-    this.db.prepare('INSERT OR IGNORE INTO no_quorum (entry_id, round_id, outcome, why, decided_ms) VALUES (?, ?, ?, ?, ?)')
-      .run(entryId, roundId, outcome, why, this.now());
+    return this.db.prepare('INSERT OR IGNORE INTO no_quorum (entry_id, round_id, outcome, why, decided_ms) VALUES (?, ?, ?, ?, ?)')
+      .run(entryId, roundId, outcome, why, this.now()).changes;
   }
 
   /** The no-quorum outcome this signer node decided for an entry, or null. */

@@ -17,6 +17,7 @@
 //
 // MEASURED BEFORE (tools/outage-before.mjs, 3300558): (b) nothing recorded, no
 // result, forfeit 409, a silent refund at expiry; (b') DELIVERED at both.
+import { closeRound as closeRoundLive } from './lock-round-fixture.js';
 import { testNow } from './test-clock.js';
 import { test } from 'node:test';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
@@ -50,7 +51,7 @@ import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
 const curve = { ...feldmanGroup, tweakPoint };
 const END = WINNER.ticks;                      // 1320: past the 900 line; the run delivers here
 
-async function signerNodes({ endIn = null } = {}) {
+async function signerNodes({ endIn = 9000 } = {}) {
   // A CHAIN THAT BONDS THE ROUND'S TWO SIGNER NODES (RULED 2026-09-25), as lockRound in lock-round-fixture.js: both are
   // running daemons, so the claim key is their own live DKG; the round's beacon is that chain's, and the player seeds from it.
   const slot = bondedChainSlot(lockPort());
@@ -167,7 +168,8 @@ function recordAt(d, w, run) {
     finality: resultFinality(d.round, w.rid, run.eid).state };
 }
 async function closeAndSettle(w, run) {
-  await Promise.all([say(w.a.port, `close ${toHex(w.rid)}`), say(w.b.port, `close ${toHex(w.rid)}`)]);
+  // in live order past final_after (lock-round-fixture closeRound; kanban #26)
+  await closeRoundLive({ a: w.a, b: w.b, rid: w.rid, c: w.c });
   for (let t = Date.now(); Date.now() - t < 15000; await wait(250)) {
     const f = await fetch(`http://127.0.0.1:${w.a.port}/forfeit?round=${toHex(w.rid)}&entry=${toHex(run.eid)}`);
     if (f.ok || !/before the result is final/.test(await f.text())) break;

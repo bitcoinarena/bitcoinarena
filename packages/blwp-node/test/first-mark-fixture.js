@@ -1,6 +1,7 @@
 // THE FIRST-MARK FIXTURE: two in-process signer nodes of a lock round and the helpers first-mark.test.js and
 // first-mark-late.test.js share (split 2026-09-24 so each file stays inside the suite's 180 s: every round now waits
 // for its result window's end block on the chain). See first-mark.test.js for the rules they drive.
+import { closeRound as closeRoundLive } from './lock-round-fixture.js';
 import { testNow, skipTo } from './test-clock.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import assert from 'node:assert/strict';
@@ -34,7 +35,7 @@ import { toHex, sha256 } from '../../protocol/src/hash.js';
 export const curve = { ...feldmanGroup, tweakPoint };
 export const END = WINNER.ticks;                      // 1320: the run delivers here
 
-export async function signerNodes({ endIn = null, serveOpts = {} } = {}) {
+export async function signerNodes({ endIn = 9000, serveOpts = {} } = {}) {
   // A CHAIN THAT BONDS THE ROUND'S TWO SIGNER NODES (RULED 2026-09-25: a paying round opens only on a signer node that
   // reads the chain, and its beacon is that chain's). Both are running daemons: the claim key is their own live DKG.
   const slot = bondedChainSlot(lockPort());
@@ -58,7 +59,9 @@ export async function signerNodes({ endIn = null, serveOpts = {} } = {}) {
   // not the 1400 the fixture's settling rounds name past their planted marks.
   const base = { ...contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
     custody: 'FEDERATION', federationId: TEST_FEDERATION_ID, startDeadlineTicks: undefined };
-  // `endIn`: THE ROUND IN THE PRESENT, its contract end this many ms from now (§13C's result window opens at it).
+  // `endIn`: THE ROUND IN THE PRESENT, its contract end this many ms from now (§13C's result window opens at it). By default
+  // 9 s (kanban #26: a result counts only if its seat held it before the round's end + 600 s + 5 s - a round dated in
+  // 1970 has every result late, and VOID). `endIn: null`: the old 1970 dates, for a test about a long-closed window.
   const drafted = endIn === null ? base : presentDay(base, testNow() + endIn);
   // ONLY THE FIELD THE CHAIN DICTATES (RULED 2026-09-25): the census root its bonds derive to; the round's times stand.
   const c = { ...drafted, censusRoot: bondedChainFor(drafted.nodes, drafted, slot,
@@ -179,7 +182,8 @@ export async function outcomeAt(d, w, run) {
     forfeit: f.status };
 }
 export async function closeAndSettle(w, run) {
-  await Promise.all([say(w.a.port, `close ${toHex(w.rid)}`), say(w.b.port, `close ${toHex(w.rid)}`)]);
+  // in live order past final_after (lock-round-fixture closeRound; kanban #26)
+  await closeRoundLive({ a: w.a, b: w.b, rid: w.rid, c: w.c });
   for (let t = Date.now(); Date.now() - t < 15000; await wait(250)) {
     const f = await fetch(`http://127.0.0.1:${w.a.port}/forfeit?round=${toHex(w.rid)}&entry=${toHex(run.eid)}`);
     if (f.ok || !/before the result is final/.test(await f.text())) break;
@@ -222,7 +226,9 @@ export const finalAtBoth = async (w, run, ms = 20000) => {
   for (let t = Date.now(); Date.now() - t < ms; await wait(250)) {
     const now = states();
     if (now.every((x) => x === 'FINAL')) return true;
-    if (now.every((x) => x === 'PROVISIONALLY_FINAL' || x === 'FINAL')) skipTo(Number(roundEndMs(w.c)) + 605000 + 100);
+    // published too, as a live seat's are seconds after its result (§13A, kanban #26: postings count only if held in time)
+    const published = [w.a, w.b].every((d) => { const f = resultFinality(d.round, w.rid, run.eid); return f.state === 'FINAL' || f.published === true; });
+    if (now.every((x) => x === 'PROVISIONALLY_FINAL' || x === 'FINAL') && published) skipTo(Number(roundEndMs(w.c)) + 605000 + 100);
   }
   return false;
 };

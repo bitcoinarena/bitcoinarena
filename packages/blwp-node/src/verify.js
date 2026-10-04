@@ -10,7 +10,8 @@
 // stops when the queue empties. Nothing here polls, nothing ticks, and nothing
 // here reaches the core: `replay.js` remains the only file in this daemon that
 // does, and this file only decides which runs are handed to it.
-import { dissentsOn } from './test-dissent.js';
+import { windowsOf } from '../../protocol/src/window.js';
+import { dissentsOn, dissentsFirstOn, postsLateOn, LATE_POSTING_AFTER_MS } from './test-dissent.js';
 import { ReplayPool } from './pool.js';
 import { checkObjectionBundle } from './objection-check.js';
 import { decodeObjectionBundle } from '../../protocol/src/objection.js';
@@ -42,6 +43,7 @@ import {
 import { encodeSlashProof, slashProofId, slashHolds, joinSlashEvidence, slashHoldsOnRerun, joinRerunSlashEvidence } from '../../protocol/src/slash.js';
 import {
   joinSignedResult, splitSignedResult, decodePlayerResult, resultId, SIGNED_RESULT_BYTES,
+  encodePlayerResult,
 } from '../../protocol/src/result.js';
 import { decodeRoundContract } from '../../protocol/src/contracts.js';
 import { splitSigned as splitSignedMark, decodeCheckpoint, checkpointId, SIGNED_CHECKPOINT_BYTES } from '../../protocol/src/checkpoint.js';
@@ -205,6 +207,7 @@ export class Verifier {
     this.objectionTurns = new Map();
     this.objectionReplays = new Map();
     this.objectionReplayCount = 0;
+    this.latePostingSaid = new Set();
     /** The last close's whole sequence: replays, then the asking. */
     this.settling = Promise.resolve([]);
   }
@@ -904,6 +907,12 @@ export class Verifier {
       nodePubkey: this.round.pubkey, stopped,
     });
     if (!built.ok) return { entryId, stored: false, why: built.why };
+    // THE TEST FAULT, FIRST RESULT (test-dissent.js dissentsFirstOn, off by default; kanban #26): one score higher
+    if (dissentsFirstOn(entryId)) {
+      built.result = { ...built.result, score: (built.result.score + 1) >>> 0 };
+      built.encoded = encodePlayerResult(built.result);
+      console.log(`[test-dissent] ${hex(entryId).slice(0, 16)}: first result signed with score ${built.result.score}, not ${built.result.score - 1}`);
+    }
 
     const signed = signResult(built.result, this.round.identity.secret);
     const bytes = joinSignedResult(built.encoded, signed.signature);
@@ -1120,7 +1129,20 @@ export class Verifier {
     const relays = contract.publicationRelays || [];
     if (joined && !said && !relays.length)
       report.refused.push('the round contract names no publication relay, so this signer node can post its transcript nowhere');
-    if (joined && !said && relays.length) {
+    // THE TEST FAULT, LATE POSTING (test-dissent.js postsLateOn, off by default; kanban #26): for its one named entry this
+    // seat posts nothing until its own clock reads the round's final_after + 10 s
+    let holdLate = false;
+    if (joined && !said && postsLateOn(entryIdBytes)) {
+      let w = null; try { w = windowsOf(contract); } catch { w = null; }
+      if (w && BigInt(this.round.now()) < w.finalAfterMs + LATE_POSTING_AFTER_MS) {
+        holdLate = true;
+        if (!this.latePostingSaid.has(hex(entryIdBytes))) {
+          this.latePostingSaid.add(hex(entryIdBytes));
+          console.log(`[test-late-posting] ${hex(entryIdBytes).slice(0, 16)}: no posting until ${new Date(Number(w.finalAfterMs + LATE_POSTING_AFTER_MS)).toISOString()}`);
+        }
+      }
+    }
+    if (joined && !said && relays.length && !holdLate) {
       const bytes = await this.#transcriptNamed(roundIdBytes, entryIdBytes, transcriptHash, report);
       let readBack = 0;
       for (const relay of bytes ? relays : []) {

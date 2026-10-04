@@ -27,7 +27,9 @@ import { serve } from '../src/server.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { assumeAssigned } from './assignment.js';
 import { lockPort, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
-import { lnurl, nameAddress } from './lock-round-fixture.js';
+import { lnurl, nameAddress, closeRound as closeRoundLive } from './lock-round-fixture.js';
+import { testNow } from './test-clock.js';
+import { presentDay } from './window-fixture.js';
 import { b32, rand, RANDOMNESS, STAKE, WINDOW_MS, WINNER, LOSER, GENESIS_HASH, wordsAt, playFor, warmPlay, contractFor, say, secretScalar, opts, wait } from './window-fixture.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
 import { dealHandout, encodeHandout, handoutId } from '../../protocol/src/handout.js';
@@ -72,8 +74,9 @@ async function lockRound({ minScore = 1 } = {}) {
       d.stakeSecrets.peers = there;
       d.dkg.peers = there;
     }
-    const drafted = { ...contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
-      custody: 'FEDERATION', federationId: TEST_FEDERATION_ID, minScore };
+    // THE ROUND ENDS NOW, NOT IN 1970 (kanban #26), as lock-round-fixture's: its results are held inside its window
+    const drafted = presentDay({ ...contractFor([a.round.pubkey, b.round.pubkey], BigInt(WINDOW_MS), [a, b].map((d) => `http://127.0.0.1:${d.port}`)),
+      custody: 'FEDERATION', federationId: TEST_FEDERATION_ID, minScore }, testNow() + 3000);
     const c = { ...drafted, censusRoot: bondedChainFor(drafted.nodes, drafted, slot,
       { endpoints: [a, b].map((d) => `ws://127.0.0.1:${d.port}`) }).censusRoot };
     const rid = roundId(c);
@@ -154,7 +157,8 @@ const ask = async (d, w, eid) => {
   const r = await fetch(`http://127.0.0.1:${d.port}/forfeit?round=${toHex(w.rid)}&entry=${toHex(eid)}`);
   return { status: r.status, body: r.ok ? await r.json() : (await r.text()).trim() };
 };
-const closeRound = (w) => Promise.all([say(w.a.port, `close ${toHex(w.rid)}`), say(w.b.port, `close ${toHex(w.rid)}`)]);
+// lock-round-fixture's close: in live order past final_after (kanban #26)
+const closeRound = (w) => closeRoundLive({ ...w, c: w.c || w.contract });
 async function untilForfeit(w, eid, ms = 20000) {
   let got;
   for (const stop = Date.now() + ms; Date.now() < stop; await wait(250)) {

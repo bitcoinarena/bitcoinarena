@@ -11,6 +11,8 @@
 // MEASURED BEFORE (TASKBOOK): seven signer nodes, five signatures and nothing posted
 // anywhere - FINAL after the window; two daemons whose contract named a relay -
 // loser settled, winner cancelled, payout queued, the relay asked 0 times.
+import { testNow, skipTo } from './test-clock.js';
+import { windowsOf } from '../../protocol/src/window.js';
 import { resultFinality } from '../src/finality.js';
 import { roundEndMs } from '../../protocol/src/first-mark.js';
 import { CLOCK } from './block-clock.js';
@@ -49,37 +51,43 @@ async function countingRelay({ lies = false } = {}) {
 
 const mayRelease = (w, name) => w.holder.stakeSecrets.mayRelease(w.rid, w.runs[name].eid);
 
-test('seven signer nodes, five sign and nobody posts the transcript anywhere: after the window the run is still not final, and says why', async () => {
+// AFTER THE WINDOW AN UNPUBLISHED RUN IS VOID (§13A "a settlement seat that cannot retrieve the transcript within the
+// result window treats the entry as VOID"; kanban #26, RULED the owner 2026-10-04). Before, a round dated in 1970 read "0 of
+// 5 have posted" past its window for good - and postings arriving then could still make it FINAL.
+test('seven signer nodes, five sign and nobody posts the transcript anywhere: after the window the run is VOID, and says why', async () => {
   const relay = await countingRelay();
-  const w = await sevenSignerNodes(1000, [relay.url]);
+  const w = await sevenSignerNodes(1000, [relay.url], { endMs: testNow() + 4000 });
   try {
     w.sign('agrees', () => ({}), { posted: false });
+    skipTo(Number(windowsOf(w.contract).finalAfterMs) + 100);
     await wait(1200);
     const may = mayRelease(w, 'agrees');
-    const facts = { final: may.ok, relayAsked: relay.seen.length, relayHolds: relay.held.size };
-    console.log('  FACTS (7 signer nodes, nothing posted):', JSON.stringify(facts), may.why || '');
-    assert.deepEqual(facts, { final: false, relayAsked: 0, relayHolds: 0 });
-    assert.match(may.why, /0 of 5 settlement signer nodes have posted/);
+    const f = resultFinality(w.holder.round, w.rid, w.runs.agrees.eid);
+    const facts = { final: may.ok, state: f.state, relayAsked: relay.seen.length, relayHolds: relay.held.size };
+    console.log('  FACTS (7 signer nodes, nothing posted):', JSON.stringify(facts), f.why || '');
+    assert.deepEqual(facts, { final: false, state: 'VOID', relayAsked: 0, relayHolds: 0 });
+    assert.match(f.why, /: 0 of 5 postings held in time - a seat that cannot retrieve the transcript within the result window treats the entry as VOID/);
   } finally { await w.close(); await relay.close(); }
 });
 
 // THE WINDOW RUNS FROM THE ROUND'S END, AND THE POSTING IS A CONDITION OF SIGNING FINAL (§13A, WINDOW-10-SPEC, RULED the owner
-// 2026-10-01; until then the window opened at the threshold's posting block). Here the round ended in 1970, so its window
-// closed long ago: four postings and no seat may sign FINAL; the fifth, and it may - and five signatures make it FINAL.
+// 2026-10-01). Inside the window four postings are not publication and no seat signs FINAL; the fifth, held in time, and
+// past the window a seat may - and five signatures make it FINAL (kanban #26: postings count only if held in time).
 test('seven signer nodes: four postings are not enough; with the fifth a seat signs FINAL - the window itself runs from the round\'s end', async () => {
-  const w = await sevenSignerNodes(1000);
+  const w = await sevenSignerNodes(1000, undefined, { endMs: testNow() + 4000 });
   try {
     w.sign('agrees', () => ({}), { posted: false });
     w.post('agrees', 4);
     const eid = w.runs.agrees.eid;
     const four = mayRelease(w, 'agrees');
     assert.equal(four.ok, false, 'four postings made the run final');
-    assert.match(four.why, /4 of 5 settlement signer nodes have posted/);
+    const fourAt = resultFinality(w.holder.round, w.rid, eid);
+    assert.deepEqual([fourAt.published, fourAt.posted], [false, 4], fourAt.why);
     const asked = await fetch(`http://127.0.0.1:${w.holder.port}/final-sig?round=${toHex(w.rid)}&entry=${toHex(eid)}`);
     assert.equal(asked.status, 409, 'the holder signed FINAL on a transcript four seats posted');
-    assert.match(await asked.text(), /a seat signs FINAL only once the transcript is posted/);
 
-    w.post('agrees', 5);                    // the fifth signer node's posting
+    w.post('agrees', 5);                    // the fifth signer node's posting, inside the window
+    skipTo(Number(windowsOf(w.contract).finalAfterMs) + 100);
     const five = resultFinality(w.holder.round, w.rid, eid);
     assert.ok(five.signable, `five postings, and still not signable: ${five.why}`);
     assert.equal(five.provisionalAtMs, Number(roundEndMs(w.contract)), 'the window does not run from the round\'s end');
@@ -91,7 +99,7 @@ test('seven signer nodes: four postings are not enough; with the fifth a seat si
 });
 
 test('seven signer nodes: postings from keys that are not assigned, or about another transcript, count for nothing', async () => {
-  const w = await sevenSignerNodes(500);
+  const w = await sevenSignerNodes(500, undefined, { endMs: testNow() + 4000 });
   try {
     w.sign('agrees', () => ({}), { posted: false });
     w.post('agrees', 4);
@@ -100,7 +108,8 @@ test('seven signer nodes: postings from keys that are not assigned, or about ano
     await wait(700);
     const may = mayRelease(w, 'agrees');
     assert.equal(may.ok, false, 'strangers or postings of another transcript made the run final');
-    assert.match(may.why, /4 of 5 settlement signer nodes have posted/);
+    const f = resultFinality(w.holder.round, w.rid, w.runs.agrees.eid);
+    assert.deepEqual([f.published, f.posted], [false, 4], f.why);
   } finally { await w.close(); }
 });
 

@@ -483,7 +483,15 @@ test('a refusal after the result window\'s end block is outside at both holders:
     assert.equal(refusedAfterEnd, true, 'B did not refuse after the end block: not the case the test names');
     assert.equal(after.b.refusedHere, true, 'B kept no refusal: not the case the test names');
     assert.equal(after.a.record, after.b.record, `the holders split on a refusal after the end block: A ${after.a.record}, B ${after.b.record}`);
-    // THE REFUSAL, OUTSIDE, IS NO EVIDENCE: no §13C VOID at either - the same record the player's walk-away gets.
-    assert.ok([after.a, after.b].every((x) => x.record !== 'VOID'), 'a refusal after the end block was counted');
+    // THE REFUSAL, OUTSIDE, IS NO EVIDENCE. Since the result window's deadline (kanban #26, RULED the owner 2026-10-04) B's own
+    // result - made only when it closes, after the deadline - completes the 2 of 2 late, so the entry is VOID at both by
+    // that deadline (§13A: results must be in before the window closes; §13C: no quorum in the window, nothing proven
+    // against the player, refunded) - not by the refusal: neither seat's reason rests on a refused first mark.
+    const whyAt = (d) => (d.round.noQuorum(run.eid) || {}).why || resultFinality(d.round, w.rid, run.eid).why || '';
+    const whys = { a: whyAt(w.a), b: whyAt(w.b) };
+    console.log('  FACTS (late refusal, reasons):', JSON.stringify(whys));
+    assert.ok([whys.a, whys.b].every((x) => !/refus/i.test(x)), `a refusal after the end block was counted: ${JSON.stringify(whys)}`);
+    // the deadline's reasons: a threshold completed late, or (A held none of it in time) a transcript not published in time
+    for (const x of [whys.a, whys.b]) assert.match(x, /no result at the threshold by|was not published by the settlement threshold by/);
   } finally { await w.close(); }
 });

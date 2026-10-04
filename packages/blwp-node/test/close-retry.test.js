@@ -117,8 +117,11 @@ async function backAndFinal(w, runs, more) {
   assert.equal(await say(w.b.port, `close ${toHex(w.rid)}`), 'closed');
   // BOTH SIGN, THEN THE WINDOW RUNS ITS 600 s (WINDOW-10-SPEC) - skipped on the fixtures' clock - AND BOTH SIGN FINAL.
   const states = () => [w.a, w.b].flatMap((d) => runs.map((r) => resultFinality(d.round, w.rid, r.eid).state));
+  // AND PUBLISHED, as a live seat's are seconds after its result (§13A, kanban #26: a posting counts only if its seat held it
+  // before final_after) - then the skip
+  const ready = () => [w.a, w.b].every((d) => runs.every((r) => { const f = resultFinality(d.round, w.rid, r.eid); return f.state === 'FINAL' || (f.state === 'PROVISIONALLY_FINAL' && f.published === true); }));
   for (let t = Date.now(); Date.now() - t < 25000; await wait(200))
-    if (states().every((x) => x === 'PROVISIONALLY_FINAL' || x === 'FINAL')) break;
+    if (ready()) break;
   skipTo(Number(roundEndMs(w.c)) + 605000 + 100);
   for (let t = Date.now(); Date.now() - t < 25000; await wait(200))
     if (states().every((x) => x === 'FINAL')) break;
