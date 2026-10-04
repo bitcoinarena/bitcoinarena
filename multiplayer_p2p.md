@@ -13,7 +13,8 @@
 > start + 82 s - a later join does not extend the round. The round's end -
 > the anchor of the 10-minute window - is entry close + 2 x start deadline
 > + the run, as the code computes it. Play starts at once and the stake is verified in the background;
-> an entry whose stake is not seen by the instant a new entry is refused is `ENTRY_VOID`.
+> no play frame of an entry is taken until its stake is seen held, and an entry whose first mark arrives only after its
+> start deadline is `ENTRY_VOID` (§16).
 > §5A.5 Timing, §13A, §23.1 step 5.
 
 > **WINDOW-10-SPEC (the owner 2026-10-01 09:40), anchored the same day.** The
@@ -3343,9 +3344,11 @@ been removed from this document.
    receipt the player's inputs from the first tick but **hold them** - no
    result is signed and no entry counts toward the round's membership -
    until five settlement seats have verified the locks as above. A stake
-   not verified by the instant a new entry is refused (§5A.5: `start_time +
-   37 s` on a late-join round since #130, the entry close otherwise; RULED
-   HERE, the same instant) makes the entry **`ENTRY_VOID`**: its
+   not yet seen held takes nothing: a signer node takes none of that entry's
+   play frames until it has seen the stake held (the client holds its ticks
+   and asks again, `STAKE_NOT_SEEN`), and a first mark that reaches it only
+   after the entry's start deadline (`join_tick + start_deadline`, §16) makes
+   the entry **`ENTRY_VOID`** there: its
    inputs are dropped, it is excluded from the pool and the payout table,
    and whatever reached a lock goes back by forfeit or expiry (§23.2). The
    page shows the run as unconfirmed until the stake is seen, and says so if
