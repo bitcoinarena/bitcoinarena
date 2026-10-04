@@ -545,6 +545,7 @@ public class Bootstrap : MonoBehaviour
             after.loadout = hud.loadout;
             after.spectator = spec;
             after.wasted = _wasted;          // #131: the rise waits for the live round's WASTED band to hold and fade
+            after.health = _truckHealth;     // #131: and the next run's bay opens on a whole truck
         }
 
         var splash = gameObject.AddComponent<SplashScreen>();

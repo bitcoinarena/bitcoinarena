@@ -24,6 +24,9 @@ public class RunEndSpectate : MonoBehaviour
     public SpectatorCamera spectator;
     /// <summary>The death sequence: in a live round this waits for its band to hold and fade (#131).</summary>
     public WastedSequence wasted;
+    /// <summary>The truck's wreck: put right when the next run's bay opens under this camera (#131).</summary>
+    public TruckHealth health;
+    float _endSeenAt = -1f;
 
     [Tooltip("Seconds the rise from the chase view to the top-down view takes.")]
     public float riseSeconds = 3f;
@@ -110,7 +113,7 @@ public class RunEndSpectate : MonoBehaviour
         var cam = _cam != null ? _cam.transform : transform;
         float d = Vector3.Distance(cam.position, truck.position);
         float ahead = Vector3.Dot(cam.forward, (truck.position - cam.position).normalized);
-        Debug.Log($"[blwp] chase: 2 s after spectate, the camera is {d:0.0} m from the truck, facing it {ahead:0.00}, chase on {(chase != null && chase.enabled)}, death orbit {(chase != null && chase.deathOrbit.HasValue ? "set" : "none")}");
+        Debug.Log($"[blwp] chase: 2 s after spectate, the camera is {d:0.0} m from the truck, facing it {ahead:0.00}, chase on {(chase != null && chase.enabled)}, death orbit {(chase != null && chase.deathOrbit.HasValue ? "set" : "none")}, truck {(health != null && health.IsDestroyed ? "still a wreck" : "whole")}");
     }
 
     /// <summary>Whether the core says this live round's run ended WRECKED or DELIVERED (a MISSED end is not spectated).</summary>
@@ -126,11 +129,26 @@ public class RunEndSpectate : MonoBehaviour
         bool cargoOpen = loadout != null && loadout.IsOpen;
         if (!Active)
         {
-            if (!cargoOpen && truck != null && (spectator == null || !spectator.Active) && (wasted == null || !wasted.BandUp) && RunEndedHere()) Begin(truck.position);
+            bool ended = RunEndedHere();
+            if (!ended) _endSeenAt = -1f; else if (_endSeenAt < 0f) _endSeenAt = Time.unscaledTime;
+            // A WRECK WAITS FOR ITS WASTED (#131): the core names the wreck in the same frame the truck's health does, so
+            // "no band up yet" is not "the band is over" - measured on 0.0.2731, the rise began 0.1 s before WASTED came up.
+            // It starts once this wreck's sequence has ended, or after hold + fade + 0.5 s if none ever came up.
+            bool waitWasted = ended && wasted != null && Blwp.BlwpCore.RunState == Blwp.Layout.RUN_WRECKED
+                && (wasted.BandUp || (wasted.LiveEndedAt < _endSeenAt
+                    && Time.unscaledTime - _endSeenAt < wasted.holdSeconds + wasted.fadeOutSeconds + 0.5f));
+            if (!cargoOpen && truck != null && (spectator == null || !spectator.Active) && !waitWasted && ended) Begin(truck.position);
             ReportChase();
             return;
         }
-        if (cargoOpen || (Blwp.BlwpCore.Available && Blwp.BlwpCore.RunState == Blwp.Layout.RUN_LIVE)) { Leave(); return; }
+        if (cargoOpen || (Blwp.BlwpCore.Available && Blwp.BlwpCore.RunState == Blwp.Layout.RUN_LIVE))
+        {
+            // THE NEXT TRUCK IS WHOLE (#131): measured on 0.0.2731, the next round's bay opened on the last run's wreck,
+            // still burning, for its whole countdown - only PLAY put it right. The bay opening under this camera does now.
+            if (health != null && health.IsDestroyed) { health.Revive(); Debug.Log("[blwp] spectate: the last run's wreck is put right for the next truck"); }
+            Leave();
+            return;
+        }
         Steer(Time.unscaledDeltaTime);
     }
 

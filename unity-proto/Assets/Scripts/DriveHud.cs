@@ -3026,7 +3026,8 @@ public class DriveHud : MonoBehaviour
             alignment = TextAnchor.MiddleCenter, fontStyle = FontStyle.Bold,
             fontSize = Mathf.RoundToInt(Mathf.Clamp(Mathf.Min(w, h) * 0.028f, 12f, 22f)),
         };
-        var r = new Rect(0f, h * 0.11f, w, style.fontSize * 1.6f);
+        // under the block line and its sentence, clear of the price and UNDER FIRE at the top (measured on 0.0.2731)
+        var r = new Rect(0f, h * 0.42f, w, style.fontSize * 1.6f);
         GUI.color = Color.white;
         style.normal.textColor = new Color(0f, 0f, 0f, 0.6f);
         GUI.Label(new Rect(r.x + 1f, r.y + 1f, r.width, r.height), "WRECKED \u00b7 spectating", style);
