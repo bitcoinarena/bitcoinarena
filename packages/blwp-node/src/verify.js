@@ -13,6 +13,8 @@
 import { dissentsOn } from './test-dissent.js';
 import { ReplayPool } from './pool.js';
 import { checkObjectionBundle } from './objection-check.js';
+import { decodeObjectionBundle } from '../../protocol/src/objection.js';
+import { sha256 } from '../../protocol/src/hash.js';
 import { verifyKept } from './verify-kept.js';
 import { timed } from './slow.js';
 import { SIGNED_RECEIPT_BYTES } from '../../protocol/src/receipt.js';
@@ -199,6 +201,10 @@ export class Verifier {
     this.done = [];
     /** What it QUEUED, and how - so a node can be asked what it thought it had. */
     this.queued = [];
+    // THE OBJECTION DOOR'S BOUNDS (#24 audit): one check in flight per entry, and each replayed run kept by its bytes
+    this.objectionTurns = new Map();
+    this.objectionReplays = new Map();
+    this.objectionReplayCount = 0;
     /** The last close's whole sequence: replays, then the asking. */
     this.settling = Promise.resolve([]);
   }
@@ -1174,13 +1180,46 @@ export class Verifier {
     if (!beacon.ok) return { holds: false, step: 'replay', why: `no beacon to replay under: ${beacon.why}` };
     const core = this.#coreOf(roundIdBytes);
     if (!core) return { holds: false, step: 'replay', why: 'this signer node holds no core for that round' };
-    return checkObjectionBundle({
-      bundle, roundId: roundIdBytes, entryId: entryIdBytes, entry: found.entry, contract,
-      committee: this.round.signerNodes(roundIdBytes), signedResultId, core, roundRandomness: beacon.hash,
-      verify: (sig, msg, key) => verifyKept(sig, msg, key),
-      replayRun: (form, entry, options) => this.pool.submit({ core, key: `${hex(roundIdBytes)}:${hex(entryIdBytes)}:objection:${++objectionJobs}`,
-        objected: true, transcript: form, source: null, entry, options: { roundRandomness: options.roundRandomness, marks: options.marks || [] } }),
-    });
+    // THE DOOR IS OPEN TO ANYONE, SO ITS REPLAYS ARE BOUNDED (#24 audit: every bundle that passed the cheap checks cost a
+    // full replay, ~1.4 s measured live, first in the pool - a flood of copies would have starved the closes):
+    //   - ONE CHECK IN FLIGHT PER ENTRY: the next bundle for that entry waits its turn (its arrival is already stamped at
+    //     the door, so waiting never makes an objection late);
+    //   - THE SAME RUN IS REPLAYED ONCE: a replay is keyed by the bytes it replays (transcript and inputs) and the length
+    //     replayed, kept in flight and after, so copies of one bundle share one answer;
+    //   - AND IN THE ORDINARY CLASS: a check is not yet an objection, so it does not go ahead of a close. The re-run a held
+    //     objection starts is still first (rerun, objected: true).
+    const tail = this.objectionTurns.get(hex(entryIdBytes)) || Promise.resolve();
+    let release;
+    const turn = new Promise((r) => { release = r; });
+    const mine = tail.then(() => turn);
+    this.objectionTurns.set(hex(entryIdBytes), mine);
+    await tail;
+    try {
+      let content = '';
+      try { const p = decodeObjectionBundle(bundle); content = hex(sha256(new Uint8Array([...p.transcript, ...(p.inputs || [])]))); } catch { content = ''; }
+      return await checkObjectionBundle({
+        bundle, roundId: roundIdBytes, entryId: entryIdBytes, entry: found.entry, contract,
+        committee: this.round.signerNodes(roundIdBytes), signedResultId, core, roundRandomness: beacon.hash,
+        verify: (sig, msg, key) => verifyKept(sig, msg, key),
+        replayRun: (form, entry, options) => {
+          const key = `${hex(roundIdBytes)}:${hex(entryIdBytes)}:${content}:${form.ticks.length}`;
+          const had = content && this.objectionReplays.get(key);
+          if (had) return had;
+          this.objectionReplayCount++;
+          const job = this.pool.submit({ core, key: `${hex(roundIdBytes)}:${hex(entryIdBytes)}:objection:${++objectionJobs}`,
+            objected: false, transcript: form, source: null, entry, options: { roundRandomness: options.roundRandomness, marks: options.marks || [] } });
+          if (content) {
+            this.objectionReplays.set(key, job);
+            job.catch(() => this.objectionReplays.delete(key));
+            if (this.objectionReplays.size > 256) this.objectionReplays.delete(this.objectionReplays.keys().next().value);
+          }
+          return job;
+        },
+      });
+    } finally {
+      release();
+      if (this.objectionTurns.get(hex(entryIdBytes)) === mine) this.objectionTurns.delete(hex(entryIdBytes));
+    }
   }
 
   /**

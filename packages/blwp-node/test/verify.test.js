@@ -327,11 +327,14 @@ test('an objection recorded over the wire reaches the pool as an objected job', 
     await settle(node);
     assert.equal((await results(node.port, rid, eid)).count, 1);
 
-    // a bundle against a run one of two signer nodes has signed: no committee result to object to yet, nothing changes
+    // a second objection against the same run is not a second objection - and, the first on record, it costs no replay
     const { bundle } = await buildObjectionBundle({ base: `http://127.0.0.1:${node.port}`, roundId: rid, entryId: eid,
       signedRunId: b32(0x55), playerPubkey: b32(0x61), claimed: { outcome: 'DELIVERED', score: 1 } });
+    const replays = node.verifier.objectionReplayCount;
     const again = await post(node.port, `/objection?round=${toHex(rid)}&entry=${toHex(eid)}&block=${toHex(CLOCK.tipAt(Date.now()))}`, bundle);
-    assert.equal(again.status, 422);
+    assert.equal(again.status, 200);
+    assert.equal((await again.text()).trim(), 'already objected');
+    assert.equal(node.verifier.objectionReplayCount, replays, 'an entry that holds its objection replayed another bundle');
 
     // and one against a run this node has never heard of is refused
     const nowhere = await post(node.port, `/objection?round=${toHex(rid)}&entry=${toHex(b32(0x99))}&block=${toHex(CLOCK.tipAt(Date.now()))}`, bundle);

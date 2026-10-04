@@ -71,8 +71,15 @@ test('(a) an empty body is 400 and nothing is stored, the run still becomes FINA
     const signed = ownResult(w.a, w, honest.eid);
     const b = await buildObjectionBundle({ base: base(w.b), roundId: w.rid, entryId: honest.eid, signedRunId: runId(signed),
       playerPubkey: signed.playerPubkey, claimed: { outcome: signed.outcome, score: signed.score } });
+    const before = w.a.verifier.objectionReplayCount;
     const fair = await postObjection(w.a, w, honest.eid, b.bundle);
     const fairText = (await fair.text()).trim();
+    // THE DOOR'S BOUND (#24 audit): the bundle, ten copies of it at once and another objector's bundle of the same run cost ONE replay
+    const copies = await Promise.all(Array.from({ length: 10 }, () => postObjection(w.a, w, honest.eid, b.bundle).then(async (r) => [r.status, (await r.text()).trim()])));
+    const other = await buildObjectionBundle({ base: base(w.b), roundId: w.rid, entryId: honest.eid, signedRunId: runId(signed),
+      playerPubkey: signed.playerPubkey, claimed: { outcome: signed.outcome, score: signed.score } });
+    const otherAt = await postObjection(w.a, w, honest.eid, other.bundle);
+    const replays = w.a.verifier.objectionReplayCount - before;
     const stranger = await checkObjectionAt({ base: base(w.b), roundId: w.rid, entryId: honest.eid, bundle: b.bundle });
     const stored = [w.a, w.b].map((d) => d.round.objected(w.rid, honest.eid));
     skipTo(Number(stateAt(w.a, w, honest.eid).finalAfterMs) + 50);
@@ -80,7 +87,8 @@ test('(a) an empty body is 400 and nothing is stored, the run still becomes FINA
     console.log('  FACTS (a, b):', JSON.stringify({ empty: [empty.status, emptyText], honest: [fair.status, fairText],
       signed: { outcome: signed.outcome, score: signed.score, run: toHex(runId(signed)).slice(0, 16) },
       stranger: { holds: stranger.holds, step: stranger.step, why: stranger.why, replayed: stranger.replayed, replayedRun: stranger.replayedRunId && stranger.replayedRunId.slice(0, 16) },
-      stored, after: [w.a, w.b].map((d) => stateAt(d, w, honest.eid).state) }));
+      stored, after: [w.a, w.b].map((d) => stateAt(d, w, honest.eid).state),
+      bound: { copies: [...new Set(copies.map((c) => c.join(' ')))], other: otherAt.status, replaysForTwelve: replays } }));
     assert.equal(empty.status, 400);
     assert.equal(emptyText, 'an objection carries its transcript and receipts (13A)');
     assert.equal(fair.status, 422);
@@ -89,6 +97,9 @@ test('(a) an empty body is 400 and nothing is stored, the run still becomes FINA
     assert.equal(stranger.why, 'the replay agrees with the signed result');
     assert.equal(stranger.replayedRunId, toHex(runId(signed)), 'the stranger\'s replay is not the run the seats signed');
     assert.deepEqual(stored, [false, false], 'a refused objection was stored');
+    assert.deepEqual(copies.map((c) => c[0]), Array(10).fill(422));
+    assert.equal(otherAt.status, 422);
+    assert.equal(replays, 1, `twelve bundles of one run cost ${replays} replays`);
     assert.ok(final, `the run did not become FINAL: ${[w.a, w.b].map((d) => stateAt(d, w, honest.eid).why).join(' | ')}`);
   } finally { await w.close(); }
 });
@@ -137,10 +148,15 @@ test('(c) collusion: both seats sign a forged result; the player\'s bundle is up
     const took = await postObjection(w.a, w, eid, b.bundle);
     const tookText = (await took.text()).trim();
     const after = stateAt(w.a, w, eid);
+    // AND ONCE HELD, ANOTHER BUNDLE COSTS NO REPLAY: "already objected" at the door
+    const replaysBefore = w.a.verifier.objectionReplayCount;
+    const again = await postObjection(w.a, w, eid, b.bundle);
+    const againText = (await again.text()).trim();
+    const replaysAgain = w.a.verifier.objectionReplayCount - replaysBefore;
     console.log('  FACTS (c):', JSON.stringify({ truth: { outcome: truth.outcome, score: truth.score, run: toHex(runId(truth)).slice(0, 16) },
       forgedRun: forgedRun.slice(0, 16), seatOwnRun: ownAfter.slice(0, 16),
       stranger: { holds: check.holds, why: check.why, replayed: check.replayed, replayedRun: check.replayedRunId && check.replayedRunId.slice(0, 16), signedRun: check.signedRunId && check.signedRunId.slice(0, 16) },
-      seatA: [took.status, tookText], after: { state: after.state, objection: after.objection } }));
+      seatA: [took.status, tookText], after: { state: after.state, objection: after.objection }, again: [again.status, againText, replaysAgain] }));
     console.log('  FACTS (d):', JSON.stringify({ refusals, storedAfterForgeries }));
 
     assert.equal(refusals.badSignature[0], 422);
@@ -158,5 +174,6 @@ test('(c) collusion: both seats sign a forged result; the player\'s bundle is up
     assert.equal(check.signedRunId, forgedRun);
     assert.equal(took.status, 201, tookText);
     assert.equal(after.state, 'SUSPENDED', after.why);
+    assert.deepEqual([again.status, againText, replaysAgain], [200, 'already objected', 0]);
   } finally { await w.close(); }
 });

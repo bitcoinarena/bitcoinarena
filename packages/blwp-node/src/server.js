@@ -3691,12 +3691,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // THE RUN IT IS FILED AGAINST: the agreed re-run's while that one stands, else the run the committee signed.
         let standing = null;
         try { standing = resultFinality(round, rid, eid); } catch { standing = null; }
+        // AN ENTRY THAT ALREADY HOLDS ITS OBJECTION costs no replay (#24 audit, the door's bound): the first is on record
+        // and no second is taken until a re-run is agreed - the intake's own answer, before any work.
+        const rerunAgreed = !!(standing && standing.rerun && standing.rerun.runId);
+        if ((round.objected(rid, eid) && !rerunAgreed) || round.rerunObjectedAt(rid, eid) !== null)
+          return text(res, 200, 'already objected');
         const against = standing && standing.rerun && standing.rerun.runId ? standing.rerun.runId : standing && standing.runId;
         const checked = await verifier.checkObjection(new Uint8Array(rid), new Uint8Array(eid), bundle,
           typeof against === 'string' ? new Uint8Array(Buffer.from(against, 'hex')) : against instanceof Uint8Array ? against : null);
         console.log(`[objection] ${toHex(eid).slice(0, 16)} ${checked.holds ? 'holds' : `refused at ${checked.step}`}: ${checked.why}`
           + (checked.replayedRunId ? ` (replayed run ${checked.replayedRunId.slice(0, 16)} ${checked.replayed.outcome} ${checked.replayed.score}, `
-            + `claimed ${checked.claimedRunId.slice(0, 16)}, signed run ${checked.signedRunId.slice(0, 16)})` : ''));
+            + `claimed ${checked.claimedRunId.slice(0, 16)}, signed run ${checked.signedRunId.slice(0, 16)})` : '')
+          + `; objection replays here so far ${verifier.objectionReplayCount}`);
         if (!checked.holds) return text(res, 422, checked.why);
         const taken = objectionIntake(round, rid, eid, /^[0-9a-f]{64}$/.test(blockHex) ? new Uint8Array(Buffer.from(blockHex, 'hex')) : null, bundle, arrivedMs);
         // AN OBJECTION THAT HOLDS SUSPENDS THE RESULT, AND THE COMMITTEE
