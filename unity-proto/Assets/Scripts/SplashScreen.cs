@@ -128,7 +128,9 @@ public class SplashScreen : MonoBehaviour
             if (FollowsThePage(Continuing, _nextJoin) && page != null) _lobby = page;
         }
         if (Showing) Continuing = false;
-        bool cardUp = _hud != null && _hud.ArrivalShowing;
+        // AND WHILE THE RESULT SUMMARY HOLDS (the owner 2026-10-04): on a wreck too, which draws no card - the page's hold to the
+        // round's close + 20 s (DriveHud.ResultHolding), so the signed names stand on WASTED as on the card
+        bool cardUp = _hud != null && (_hud.ArrivalShowing || _hud.ResultHolding);
         if (!Showing && MayReturnToLobby(Continuing, _nextJoin) && LobbyMayCover(cardUp) && ShouldReturnToLobby(Blwp.BlwpCore.Available, runStateNow, Blwp.BlwpNet.Ended,
                                            _fromLobby, wrecked,
                                            _wreckedAt < 0f ? 0f : Time.unscaledTime - _wreckedAt, hold,

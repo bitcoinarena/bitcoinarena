@@ -975,7 +975,7 @@ public class DriveHud : MonoBehaviour
         // from the session ROLL OUT found for this run). No longer waiting for the session's closing word as well.
         bool replay = runScore != null && Blwp.BlwpCore.ReplayForThisRun;
         // THE RESULT SUMMARY (the owner 2026-10-04): under SCORE, above "copy game replay", on a networked run's card
-        if (replay) ReadSummary(w, h, head0); else _summaryLines.Clear();
+        if (replay) ReadSummary(w, h, head0); else { _summaryLines.Clear(); ResultHolding = false; }
         int summary = _summaryLines.Count;
         float scale = ArrivalScale(w, h, head0, 0f, false, replay, summary);
         int head = Mathf.RoundToInt(head0 * scale);
@@ -1155,6 +1155,27 @@ public class DriveHud : MonoBehaviour
         GUI.DrawTexture(row, _flat);
         GUI.color = Color.white;
         DrawCopyReplay(row, line.fontSize, line);
+
+        // THE RESULT SUMMARY ON A WRECK TOO (the owner 2026-10-04): a wreck draws no card, so the same lines stand under its
+        // lone control - and the lobby waits for the same hold (SplashScreen reads ResultHolding)
+        ReadSummary(w, h, CardHead(w, h, true));
+        if (_summaryLines.Count == 0) return;
+        var sl = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontSize = Mathf.RoundToInt(line.fontSize * 0.8f) };
+        float lh = sl.fontSize * 1.45f;
+        var panel = new Rect(row.x - row.width * 0.25f, row.yMax + 4f, row.width * 1.5f, lh * _summaryLines.Count + 8f);
+        panel.x = Mathf.Max(8f, panel.x); panel.width = Mathf.Min(w - 16f, panel.width);
+        if (panel.yMax > h - 4f) { float k = (h - 4f - panel.y) / panel.height; sl.fontSize = Mathf.Max(9, Mathf.RoundToInt(sl.fontSize * k)); lh = sl.fontSize * 1.45f; panel.height = lh * _summaryLines.Count + 8f; }
+        GUI.color = new Color(0.02f, 0.03f, 0.05f, 0.85f);
+        GUI.DrawTexture(panel, _flat);
+        GUI.color = Color.white;
+        for (int i = 0; i < _summaryLines.Count; i++)
+        {
+            sl.fontStyle = i == 2 ? FontStyle.Bold : FontStyle.Normal;
+            sl.normal.textColor = i == 2 ? new Color(1f, 0.86f, 0.35f, 1f) : new Color(1f, 1f, 1f, i < 2 ? 0.92f : 0.75f);
+            var r = new Rect(panel.x + 8f, panel.y + 4f + lh * i, panel.width - 16f, lh);
+            FitInto(sl, _summaryLines[i], r.width, 9);
+            GUI.Label(r, _summaryLines[i], sl);
+        }
     }
 
     /// <summary>The tooltip's word, shown once the clipboard holds the replay link.</summary>

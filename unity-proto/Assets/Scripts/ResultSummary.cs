@@ -15,7 +15,7 @@ public static class ResultSummary
 {
     [System.Serializable] public class Row
     {
-        public string entry = "", key = "", name = "", outcome = "", result = "", net = "";
+        public string entry = "", key = "", name = "", outcome = "", result = "", net = "", stakeMsat = "";
         public long score = -1;
         public int signedBy;
     }
@@ -28,8 +28,12 @@ public static class ResultSummary
         public Row[] players = new Row[0];
     }
 
-    /// <summary>The words the outcomes are named by, in the order the names line lists them.</summary>
-    public static readonly string[] Outcomes = { "DELIVERED", "MISSED", "WRECKED", "FORFEIT" };
+    /// <summary>
+    /// The words the outcomes are named by, in the order the names line lists them: the SIGNED result's four (protocol
+    /// result.js) - a wreck and a miss are both FAILED there, and MISSED / WRECKED never come from the seats (the owner
+    /// 2026-10-04: a FAILED player was left off the names line).
+    /// </summary>
+    public static readonly string[] Outcomes = { "DELIVERED", "FAILED", "FORFEIT", "VOID" };
 
     /// <summary>A run counts as signed once this many signer nodes signed its result.</summary>
     public const int SignedAt = 5;
@@ -66,6 +70,13 @@ public static class ResultSummary
         return sign + sat + " sat";
     }
 
+    /// <summary>"stake 100 sat  ·  " from the entry's stakeMsat; nothing for an unknown or free stake.</summary>
+    public static string Stake(string stakeMsat)
+    {
+        if (string.IsNullOrEmpty(stakeMsat) || !long.TryParse(stakeMsat, NumberStyles.None, CultureInfo.InvariantCulture, out long m) || m == 0) return "";
+        return "stake " + Sats(stakeMsat).Substring(1) + "  ·  ";
+    }
+
     public static string NamesLine(Wire w)
     {
         var parts = new List<string>();
@@ -81,7 +92,8 @@ public static class ResultSummary
 
     public static string HighScoreLine(Wire w)
     {
-        var top = w.players.Where(p => p.score >= 0 && !string.IsNullOrEmpty(p.outcome))
+        // DELIVERED RUNS ONLY: a FAILED run carries a signed score too, but it delivered nothing and earns nothing
+        var top = w.players.Where(p => p.score >= 0 && p.outcome == "DELIVERED")
                            .OrderByDescending(p => p.score).Take(3).ToList();
         if (top.Count == 0) return "HIGH SCORE  -";
         return "HIGH SCORE  " + string.Join("   ", top.Select((p, i) => $"{i + 1}. {Who(p, w.mine)} {Score(p.score)}"));
@@ -91,8 +103,11 @@ public static class ResultSummary
     {
         var me = w.players.FirstOrDefault(p => !string.IsNullOrEmpty(w.mine) && p.entry == w.mine);
         if (me == null) return "YOU  not in the result yet";
-        string result = string.IsNullOrEmpty(me.result) ? "PENDING" : me.result.ToUpperInvariant();
-        return string.IsNullOrEmpty(me.net) ? $"YOU  {result}" : $"YOU  {result}  {Sats(me.net)}";
+        // THE SIGNED OUTCOME AS SOON AS IT IS SIGNED, then the seats' own result once the settlement is accepted: the page
+        // never turns an outcome into a win or a loss (a DELIVERED run still has to reach the round's minimum and rank)
+        if (string.IsNullOrEmpty(me.outcome)) return "YOU  PENDING";
+        if (string.IsNullOrEmpty(me.result) || me.result == "pending" || string.IsNullOrEmpty(me.net)) return $"YOU  {me.outcome}  ·  pending";
+        return $"YOU  {me.outcome}  ·  {me.result.ToUpperInvariant()}  {Sats(me.net)}";
     }
 
     public static string BalanceHeader(Wire w) =>
@@ -101,7 +116,7 @@ public static class ResultSummary
     /// <summary>One row per player, in the result's order; with <paramref name="most"/> set, that many and "and N more".</summary>
     public static List<string> BalanceRows(Wire w, int most = int.MaxValue)
     {
-        var rows = w.players.Take(most).Select(p => $"{Who(p, w.mine)}  {Sats(p.net)}").ToList();
+        var rows = w.players.Take(most).Select(p => $"{Who(p, w.mine)}  {Stake(p.stakeMsat)}{Sats(p.net)}").ToList();
         if (w.players.Length > most) rows.Add($"and {w.players.Length - most} more");
         return rows;
     }

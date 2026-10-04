@@ -1087,7 +1087,9 @@
           if (!r.ok) continue;
           const j = await r.json();
           if (window.BLWP_RESULT !== kept) return;
-          kept.players = (j.players || []).map((p) => ({
+          // the seat's own player object first (its stake among it, forwarded as the seat wrote it), then the fields Unity
+          // reads named and their nulls written empty
+          kept.players = (j.players || []).map((p) => ({ ...p,
             entry: p.entry || '', key: p.player || '', name: p.name || '', outcome: p.outcome || '',
             score: p.score === null || p.score === undefined ? -1 : Number(p.score), signedBy: p.signedBy | 0,
             result: p.result || '', net: p.netMsat === null || p.netMsat === undefined ? '' : String(p.netMsat) }));
