@@ -1218,6 +1218,11 @@ mergeInto(LibraryManager.library, {
     try { document.body.classList.toggle('blwp-clean', !!on); } catch (e) { /* no body yet */ }
   },
 
+  // WHERE THE TOP-RIGHT HUD CORNER ENDS (DriveHud.ConsoleSlot, the owner 2026-10-04): the page's Console button goes under it
+  BlwpHudCorner: function (jsonPtr) {
+    try { window.BLWP_HUD_CORNER = JSON.parse(UTF8ToString(jsonPtr)); if (window.BLWP_PLACE_CONSOLE) window.BLWP_PLACE_CONSOLE(); } catch (e) { /* not JSON */ }
+  },
+
   BlwpAssaultShown: function (jsonPtr) {
     try { window.BLWP_UNITY_ASSAULT = JSON.parse(UTF8ToString(jsonPtr)); } catch (e) { /* not JSON: nothing to keep */ }
   },

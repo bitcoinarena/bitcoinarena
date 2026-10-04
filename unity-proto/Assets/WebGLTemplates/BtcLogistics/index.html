@@ -2716,8 +2716,29 @@
         go.setAttribute('aria-expanded', o ? 'true' : 'false');
         try { window.BLWP_BROWSER_STORE().setItem('blwp.console.open', o ? '1' : '0'); } catch { /* not kept */ }
         try { paintWallet(); paintPlayers(); } catch { /* painted on the next tick */ }
+        try { if (window.BLWP_PLACE_CONSOLE) window.BLWP_PLACE_CONSOLE(); } catch { /* placed on the next slot */ }
       };
       set(open);
+      // UNDER THE HUD'S TOP-RIGHT CORNER (the owner 2026-10-04: the button sat on the chart's header): Unity says where its
+      // corner ends and where the throttle pad is (window.BLWP_HUD_CORNER, DriveHud.ConsoleSlot, in its own pixels); the
+      // button goes just under the corner, right-aligned with it - or, where that would land on the throttle pad, just left
+      // of the pad. The open panel goes under the button. No layout rule here: every number is the HUD's.
+      window.BLWP_PLACE_CONSOLE = () => {
+        const c = window.BLWP_HUD_CORNER, canvas = document.getElementById('canvas');
+        if (!c || !canvas || !c.w || !c.h) return;
+        const r = canvas.getBoundingClientRect(), sx = r.width / c.w, sy = r.height / c.h;
+        const bh = go.offsetHeight || 20, bw = go.offsetWidth || 64, gap = 4;
+        let top = r.top + c.top * sy, right = window.innerWidth - (r.left + c.right * sx);
+        const padTop = r.top + c.padY * sy, padLeft = r.left + c.padX * sx, padRight = r.left + (c.padX + c.padW) * sx;
+        const btnLeft = window.innerWidth - right - bw;
+        if (top + bh > padTop - gap && btnLeft < padRight) right = window.innerWidth - padLeft + c.m * 0.5 * sx;
+        go.style.top = Math.round(top) + 'px';
+        go.style.right = Math.round(right) + 'px';
+        const panel = document.getElementById('blwp-wallet');
+        if (panel && consoleOpen()) { panel.style.top = Math.round(top + bh + gap) + 'px'; panel.style.right = Math.round(right) + 'px'; }
+        window.BLWP_CONSOLE_PLACED = { top: Math.round(top), right: Math.round(right), bh, bw, corner: c };
+      };
+      window.addEventListener('resize', () => window.BLWP_PLACE_CONSOLE());
       // a click on the button is the page's, never Unity's
       go.addEventListener('pointerdown', (e) => e.stopPropagation());
       go.addEventListener('click', (e) => { e.stopPropagation(); set(!consoleOpen()); });
