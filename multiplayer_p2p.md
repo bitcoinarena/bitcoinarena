@@ -2700,10 +2700,27 @@ score:
 ```text
 score = 1000 · E · T · C
 
-E  exposure  in [0,1]      time and depth in the corridor, heat-weighted
-T  time      in [0.5,1.5]  reference_time / elapsed, clamped
-C  cargo     in [0,1]      value delivered / capacity
+E  exposure  in [0,1]       time and depth in the corridor, heat-weighted
+T  time      in [0.25,1.5]  reference_ticks / elapsed_ticks, clamped
+C  cargo     in [0,1]       room used / bed capacity
 ```
+
+**T, the time factor** *(the owner 2026-10-04)*. `reference_ticks` (par) is
+**1800 ticks**, about 30 s at 1092/65536 s a tick. T is 1.5 - the ceiling -
+for any run of 1200 ticks (20 s) or less, falls from there, is 1 at par, and
+reaches the floor 0.25 at 7200 ticks (120 s). In ticks the clamp is
+`elapsed held to [1200, 7200]`; the tick count, not seconds, is the rule.
+
+**C, the cargo factor** *(the owner 2026-10-04)*. C is how full the truck is:
+the **room used over the bed's capacity**, 0 for an empty bed and 1 for a
+full one. The room is the core's own `roomFor(vsize)` summed over the
+parcels loaded, and it is declared with the load at roll-out, so a replay
+sets the same C. A run declares no load until roll-out and starts at C = 0.
+A load stored before the room was declared (an older transcript) carries no
+room and keeps C = 0.7, so a stored run never moves.
+
+Both are part of the round's config (§27A.7.5): a round is scored by the
+par, the T bounds and the cargo rule its `config_hash` names.
 
 with the exposure integral accumulated per simulation tick:
 
@@ -4587,10 +4604,10 @@ No token, no treasury, no voting contract.
 | `proposal_deposit_sats` | bond-weighted median (§27A.2) | the census |
 | `bond_min` per bracket | bond-weighted median **with notice** (§27A.3) | the census |
 | **`node_fee_bps`**, the bracket set, `donation_bps`, `role_split` | set at genesis; changed by config proposal, MONEY class (§27A.7) | a ballot of active bonds |
-| game difficulty, damage, army, round timings | config proposal, DESIGN class (§27A.7); a round MAY override within its contract | a ballot, then the round |
+| game difficulty, damage, army, round timings | config proposal, DESIGN class (§27A.7); a round MAY override within its contract. **Until the ballot is built: by ruling, §27A.7.8** | a ballot, then the round |
 | the donation set | signed by the donation authority | one key, nothing else (§27A.4) |
 | `genesis_parameters`: committee shape, thresholds, beacon | not within a network. Changing them creates a **successor** network by hard fork (§27A.8) | a ballot, UPGRADE class |
-| the core, message formats, new unit types, new parameters | hard fork with a code commitment (§27A.8) | a ballot, UPGRADE class |
+| the core, message formats, new unit types, new parameters | hard fork with a code commitment (§27A.8). **Until the ballot is built, a new core may run beside the old under the same `network_id`, by ruling, §27A.7.8** | a ballot, UPGRADE class |
 | backwards-compatible protocol additions | software version; adoption is running it (§27A.5) | nobody in particular |
 
 The split between the first rows and the third and fourth is the subject of
@@ -5250,6 +5267,45 @@ after `bond_maturity` or by a valid slash, and no operator token touches
 either. **A fully compromised operator API costs a vote, never a bond** -
 which is why it is safe for this to be a convenient web UI at all.
 
+### 27A.7.8 Until the ballot is built *(interim, the owner 2026-10-04)*
+
+The ballot of §27A.7.2-§27A.7.4 and the fork certificate of §27A.8.1 are not
+built yet. Until they are, a change to the game's rules is made **by the
+network's authority, by ruling**, and it is made the same way a passed
+ballot would make it - never by editing the rules a round already names:
+
+- **A rule change is a new `game_config` with its own `config_hash`**, under
+  the **same `network_id`**. `genesis_config_hash` stays the config the
+  network was founded on and is never rewritten: it is where the chain of
+  configs starts (§27A.6), not the config every round plays. A later config
+  is encoded with its version first, so no two configs can be read as each
+  other, and its hash is computed from the core's own constants, never
+  typed.
+- **A change that needs a new core installs it beside the old one, under the
+  same `network_id`.** Each core plays its own config, and a round names the
+  pair: `sim_wasm_hash` and `config_hash` (§6). A node holds every pair a
+  published round names - an old core is kept, frozen, for as long as a
+  round on it can be replayed - and a node that does not hold a round's pair
+  is not selectable for it (§27A.7.5). A client lists the pairs it knows and
+  refuses a known core under a config it does not play, exactly as it
+  refuses an unknown core (§5).
+- **No round is moved.** A round keeps the pair it was created under to the
+  end (§27A.7.5). A new pair is used only by rounds created after the change,
+  and a paid series only from the next series published. Where rounds were
+  created on a new core before its config had a hash, that one pair is kept
+  for those rounds only, bounded by a committee-time cut-over, and refused
+  for any round after it.
+- **Each change is recorded** with its ruling, its date, the old and new
+  hashes and the cut-over (FEDERATION.md, "Rulings").
+
+This is not the governance of §27A.7: nobody votes and nothing is on chain.
+It keeps the two properties that matter until the ballot exists - every
+round is scored by the rules it entered under, and every change is visible
+by hash - and it is replaced by §27A.7 / §27A.8 as soon as those are built.
+The first change made this way: core `de2f263d` with config `dbb49344`
+(C the bed fill, par 1800 ticks, §18A.3) beside `2069b4c2` with the
+founding config `bbae68dc`.
+
 ## 27A.8 Hard forks: a successor, not a stranger
 
 Everything so far can only change numbers. New message types, a changed
@@ -5262,6 +5318,9 @@ And the change genuinely **is** a new network. `genesis_parameters` is
 committed in `network_id` (§27A.6), so altering the committee shape, the
 beacon or the core is by construction a different network with a different
 census. That is a property worth keeping, not a bug to route around.
+
+(Until the fork certificate is built, a new core runs beside the old one
+under the same `network_id` instead, by ruling - §27A.7.8.)
 
 So the mechanism does not deny it. It makes the new network **provably the
 successor of the old one**:
