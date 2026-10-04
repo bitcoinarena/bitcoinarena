@@ -2601,6 +2601,34 @@ the infrastructure's fault and refunds.
 > **Why:** v4.4 had no rule at all. A committee that could not agree left
 > funds in an undefined state with no path forward.
 
+**AS BUILT (the owner 2026-10-04, kanban #26).** The result window's deadline
+is `final_after`: the round's end + 600 s + 5 s, in wall-clock ms, on each
+seat's own clock, by when that seat **held** each record. A PlayerResult
+carries no signed time, so its held time is its deadline, as for
+objections. A posting's block hash is stored data and decides nothing.
+Past `final_after` (`finality.js resultFinality`):
+- **A late result:** only the results held before the deadline count. If
+  at least one was held in time and no run reached the threshold, §13C
+  decides once and the decision is written: FORFEIT on proven
+  equivocation, otherwise VOID. That covers a threshold completed late
+  and a split with every seat up. The reason names the late arrival.
+  A seat that held no result in time could not retrieve or sign; that is
+  the "cannot retrieve the transcript" door above, decided by the
+  verifier.
+- **A late posting:** only the postings held before the deadline count.
+  An in-time quorum not published by the settlement threshold in time is
+  VOID (§13A, "publication is a condition of finality").
+- A written decision stands, so FINAL signatures, a result or a posting
+  that arrive later never turn it back. Each one is logged once as
+  `[close] <entry> VOID|FORFEIT: <why>`.
+- A VOID entry is left out of the round's settlement and payout. Its
+  lock is neither claimed nor forfeited and returns to the player at
+  expiry (§23.2).
+
+Measured live on the free pair, for a late result, a split and a late
+posting (two test faults, off by default: `BLWP_TEST_DISSENT_FILE` with
+`<entry> first`, and `BLWP_TEST_LATE_POSTING_FILE`).
+
 ---
 
 # 14. Finality
