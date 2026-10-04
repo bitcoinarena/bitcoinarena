@@ -596,6 +596,19 @@ test('the page looks at what a seed is owed and spends nothing: a winner\'s payo
   assert.equal(back.stake.state, 'gone');
   assert.match(owedLine(back), /Stake 980000 msat: no longer in the federation - back to your key after its expiry/);
   assert.doesNotMatch(owedLine(back), /No stake back/, 'a stake back by the player\'s key read as no stake back');
+  // KANBAN #133 (playtest 2026-10-04: a DELIVERED player's 96 sat sat at "paying out" for 2 h and no seat was ever asked
+  // for the stake back): a settled round whose signer nodes do not answer where the lock is is still waiting - never
+  // "no lock", which is final and closed the round's record for good. Answered with no lock, it is final as before.
+  const down = (url) => (url.includes('/stake-lock') ? Promise.reject(new Error('tunnel dropped')) : signerNodes({ payout: false })(url));
+  const unanswered = await lookOwed({ ...ask, fetcher: down, client: wallet(0) });
+  assert.equal(unanswered.stake.state, 'waiting', JSON.stringify(unanswered.stake));
+  assert.equal(unanswered.final, false, 'a lock nobody answered for closed the round as owed nothing');
+  assert.deepEqual([unanswered.lockAnswers.asked, unanswered.lockAnswers.answered], [1, 0]);
+  assert.match(unanswered.stake.why, /no signer node answered where this seed's lock is \(a\.test tunnel dropped\)/);
+  const noLock = await lookOwed({ ...ask, fetcher: signerNodes({ payout: false, known: false }), client: wallet(0) });
+  assert.equal(noLock.stake.state, 'none');
+  assert.equal(noLock.final, true);
+  assert.deepEqual([noLock.lockAnswers.asked, noLock.lockAnswers.answered], [1, 1]);
 
   const invoiceFor = async (msat) => ({ ok: true, invoice: `lnbcrt${msat}n1p` });
   const done = await collectAndWithdraw({ ...ask, invite: INVITE, LockClient: { join: async () => { throw new Error('a second wallet was opened'); } },
