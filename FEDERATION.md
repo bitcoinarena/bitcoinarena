@@ -219,7 +219,12 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
 10. a fresh browser with the seed alone recovers the wallet's notes through
     the federation's stock backup, and finds unredeemed round contracts
     through `GET /settled?since=`; nothing is asked of a node that the node
-    does not already publish
+    does not already publish. **AS BUILT (the owner 2026-10-04, kanban #27):**
+    Fedimint's own recovery, not the stock backup. The browser runs it
+    through the wasm lock client (`LockClient.recover`, the fork's
+    recovery clock patched for wasm32). Measured on testnet4, page 0.0.2737:
+    a second fresh browser given the first one's 24 words recovered its
+    100 sat in 7.2 s.
 11. cleared browser storage with no backup made: what returns from the seed
     and what does not, written down and shown to the player before the
     first deposit
@@ -239,7 +244,10 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
     bond and the census seat as they were
 15. **the seed alone, another device:** twelve words typed into a fresh
     browser find the federation among three, recover the notes and the
-    unredeemed contracts, and show the same display name
+    unredeemed contracts, and show the same display name. **AS BUILT
+    (kanban #27):** 24 words, one federation listed. The notes (item 10) and
+    the unredeemed rounds (the 24 h `/settled` scan) are recovered.
+    "Among three" waits for a second federation in the census.
 16. **testnet 5 of 7:** two guardians down, everything still completes; a
     third down halts, back up resumes, nothing lost; one guardian gone
     starts a succession to seven that every wallet follows on its own; a
