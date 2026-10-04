@@ -56,7 +56,7 @@ test('the registry resolves a round by both hashes, holds the truck always, and 
   const both = installedCores([other]);
   // THE TRUCK, 2069b4c2 KEPT BESIDE IT (path A, 2026-10-04), THE TRUCK BEFORE THE 82/90 FORK (its old hash: 2069b4c2 held
   // to 10800), and the operator's core.
-  assert.deepEqual([...both.keys()].sort(), [TRUCK.hash, '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e', TRUCK_BEFORE_FORK_HASH, other.hash].sort());
+  assert.deepEqual([...both.keys()].sort(), [TRUCK.hash, 'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8', '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e', TRUCK_BEFORE_FORK_HASH, other.hash].sort());
   // the pre-fork core's rounds name the founding config (2026-10-04: a round names the config of the rules it plays)
   const old = coreForRound({ simCoreHash: Uint8Array.from(Buffer.from(TRUCK_BEFORE_FORK_HASH, 'hex')), configHash: GENESIS_CONFIG_HASH, blockTicks: 10800 });
   assert.equal(old.ok, true, old.why);
@@ -124,8 +124,11 @@ test('each core runs the config of its own rules; the founding config on de2f263
   assert.equal(Buffer.from(TRUCK_CONFIG_HASH).toString('hex'), TRUCK_CURRENT_CONFIG, 'a round on the truck is made with another config');
   assert.equal(pair(TRUCK_2069_HASH, GENESIS_CONFIG_HASH, after).ok, true);
   assert.match(pair(TRUCK_2069_HASH, TRUCK_CURRENT_CONFIG, before).why, /not the config/);
-  if (TRUCK.hash === 'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8') {
-    assert.equal(pair(TRUCK.hash, GENESIS_CONFIG_HASH, before).ok, true, 'a free round made before the cut-over is refused');
-    assert.match(pair(TRUCK.hash, GENESIS_CONFIG_HASH, after).why, /only for rounds made before/);
-  }
+  // de2f263d, frozen beside the truck since exposure takes the heat: its own config, and the founding one before the cut-over
+  const DE2F = 'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8';
+  assert.equal(pair(DE2F, 'dbb493445fd56ba099bf8651a444f7c6de4b36add1cb01275bd1857920bd0801', after).ok, true);
+  assert.equal(pair(DE2F, GENESIS_CONFIG_HASH, before).ok, true, 'a free round made before the cut-over is refused');
+  assert.match(pair(DE2F, GENESIS_CONFIG_HASH, after).why, /only for rounds made before/);
+  assert.match(pair(DE2F, TRUCK_CURRENT_CONFIG, before).why, /not the config/);
+  assert.match(pair(TRUCK.hash, GENESIS_CONFIG_HASH, before).why, /not the config/);
 });
