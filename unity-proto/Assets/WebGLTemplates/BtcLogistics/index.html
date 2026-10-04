@@ -1409,14 +1409,18 @@
         backup.append(label, code);
         const own = document.createElement('div');
         const paste = document.createElement('input');
-        paste.type = 'password'; paste.autocomplete = 'off'; paste.placeholder = 'your seed (64 hex)';
+        paste.type = 'password'; paste.autocomplete = 'off'; paste.placeholder = 'your 24 words, or your seed (64 hex)';
         const use = document.createElement('button');
         use.type = 'button'; use.textContent = 'use my seed';
         const why = document.createElement('div');
         use.addEventListener('click', () => {
           try {
-            BLWPCLIENT.importSeed(paste.value, { storage: window.sessionStorage });
+            // THE 24 WORDS OR THE 64 HEX (kanban #27): the words checked and turned into the seed; importSeed takes the hex
+            const got = BLWPCLIENT.seedHexFromInput(paste.value);
+            if (!got.ok) { why.textContent = got.why; return; }
+            BLWPCLIENT.importSeed(got.hex, { storage: window.sessionStorage });
             if (window.BLWP_SEED_KEEPER) window.BLWP_SEED_KEEPER.beat();   // kept in the browser before the reload
+            console.log('[blwp] seed restored from ' + got.from);
             location.reload();
           } catch (e) { why.textContent = e.message; }
         });
@@ -3660,10 +3664,15 @@
           const mine = BLWPCLIENT.toHex(BLWPCLIENT.tabSeed({ storage: window.sessionStorage, random: tabRandom }));
           // AND BACK IN (spec §24, the owner 2026-09-14): on another device the player pastes their own
           // seed here; the page reloads under it and finds from the signer nodes the rounds it is owed.
+          // THE 24 WORDS TOO (kanban #27, the owner 2026-10-04): the backup the wallet shows is 24 words, so they restore here as
+          // the 64 hex do - checked, a wrong word refused by name; importSeed still takes only the 64 hex
           const typed = window.prompt('Private key backup - this tab\'s seed. Copy it and keep it. '
-            + 'On another device, paste your own seed here instead to find what you are owed.', mine);
+            + 'On another device, type your 24 words (or paste your seed) here instead to find what you are owed.', mine);
           if (typed && typed.trim().toLowerCase() !== mine) {
-            try { BLWPCLIENT.importSeed(typed, { storage: window.sessionStorage }); if (window.BLWP_SEED_KEEPER) window.BLWP_SEED_KEEPER.beat(); location.reload(); }
+            const got = BLWPCLIENT.seedHexFromInput(typed);
+            if (!got.ok) { window.alert(got.why); return; }
+            if (got.hex === mine) return;
+            try { BLWPCLIENT.importSeed(got.hex, { storage: window.sessionStorage }); if (window.BLWP_SEED_KEEPER) window.BLWP_SEED_KEEPER.beat(); console.log('[blwp] seed restored from ' + got.from); location.reload(); }
             catch (e) { window.alert(e.message); }
           }
         },

@@ -129,7 +129,7 @@ out += '         stakeLine: stakeLine,\n';
 out += '         joinQuery: joinQuery, joinFromQuery: joinFromQuery,\n';
 out += '         verifyPhrase: verifyPhrase, verifyAndRecord: verifyAndRecord,\n';
 out += '         isVerified: isVerified, backupLine: backupLine, NO_BACKUP_LINE: NO_BACKUP_LINE,\n';
-out += '         phraseFromSeed: phraseFromSeed, seedFromPhrase: seedFromPhrase, PHRASE_WORDS: PHRASE_WORDS,\n';
+out += '         phraseFromSeed: phraseFromSeed, seedFromPhrase: seedFromPhrase, seedHexFromInput: seedHexFromInput, PHRASE_WORDS: PHRASE_WORDS,\n';
 out += '         fetchRound: fetchRound, bondProvider: bondProvider,\n';
 // THE SEED THE COMMITTEE WILL REPLAY THIS PLAYER WITH. Without it the page
 // cannot put its own core in the world its transcript is judged in, which is

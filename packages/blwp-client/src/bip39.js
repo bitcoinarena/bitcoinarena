@@ -58,3 +58,19 @@ export function seedFromPhrase(phrase) {
     return { ok: false, why: 'that phrase does not check out - one of the words is wrong' };
   return { ok: true, seed };
 }
+
+/**
+ * WHAT THE PLAYER TYPED, AS THE 64 HEX importSeed TAKES (kanban #27, the owner 2026-10-04): the 24 words of his backup -
+ * checked, so a wrong word is refused by name and never restores an empty wallet - or the 64 hex digits as before.
+ * The words encode the 32-byte seed directly (no BIP-39 key stretching: the keys stay this game's own hash of the
+ * seed), so they restore this game's wallet and nothing else. Answers { ok, hex, from: 'words' | 'hex' } or { ok:false, why }.
+ */
+export function seedHexFromInput(text) {
+  const t = String(text == null ? '' : text).trim();
+  if (/^[0-9a-fA-F]{64}$/.test(t)) return { ok: true, hex: t.toLowerCase(), from: 'hex' };
+  const got = seedFromPhrase(t);
+  if (!got.ok) return { ok: false, why: `${got.why} (24 words, or the 64 hex digits)` };
+  let hex = '';
+  for (const b of got.seed) hex += b.toString(16).padStart(2, '0');
+  return { ok: true, hex, from: 'words' };
+}
