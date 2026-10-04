@@ -127,7 +127,7 @@ public class LoadoutPanel : MonoBehaviour
         // replay of the same transcript carried 0, so a committee and every
         // ghost it drew hunted a run the player was not driving. Two integers
         // cross now, the bridge publishes them, and the core decides the cost.
-        if (bay != null) Blwp.BlwpCore.SubmitLoad(bay.FeeCarried, bay.BtcHundredths);
+        if (bay != null) Blwp.BlwpCore.SubmitLoad(bay.FeeCarried, bay.BtcHundredths, bay.VsizeList);
         // and kept with the page for this round, so a reload mid-run puts these parcels back on the bed (ResumeDriving)
         if (bay != null) Blwp.BlwpCore.KeepCargo(BedText(bay.Slots));
 
@@ -149,7 +149,7 @@ public class LoadoutPanel : MonoBehaviour
     [Tooltip("How full AUTO will load the bed. Deliberately short of full: " +
              "it is the quick option, not the best one, and topping the load " +
              "up by hand has to be worth doing.")]
-    public float autoFill = 0.8f;
+    public float autoFill = 0.6f;
 
     /// <summary>
     /// A quick, decent load: the best paying freight first, which is what the
@@ -630,7 +630,11 @@ public class LoadoutPanel : MonoBehaviour
         // LOAD x DANGER x SPEED, while the score multiplies the core's cargo word - set once, at init, to 0.70 on this
         // core, whatever is loaded. The bed fill stays on the gauge as TRUCK FULL %, which does not enter the score. That
         // the loadout choice does not move the score is what this core does, and the panel now says so.
-        string load = LoadLabel(Blwp.BlwpCore.CargoWord);
+        // AND IT IS THE BED FILL NOW (the owner 2026-10-04 08:54): the core sets C from the load's room at ROLL OUT, so before it
+        // the panel shows the C this bed would set - the core's own fill of these vsizes, asked of the page.
+        string vs = bay.VsizeList;
+        if (vs != _fillOf) { _fillOf = vs; _fillWord = Blwp.BlwpCore.BedFill(vs); }
+        string load = LoadLabel(_fillWord);
         while (reward.fontSize > 12 && reward.CalcSize(new GUIContent(load)).x > rw) reward.fontSize--;
         GUI.Label(new Rect(rx, top - reward.fontSize * 0.1f, rw, reward.fontSize * 1.3f), load, reward);
 
@@ -665,7 +669,7 @@ public class LoadoutPanel : MonoBehaviour
                   "you pick LOAD · DANGER and SPEED you earn driving", sub);
 
         // --- buttons ---------------------------------------------------------
-        // BIGGER TO TAP ON A PHONE (the owner 2026-09-29 21:48, CARGO-BTC-2148: AUTO (80%) and ROLL OUT were too small
+        // BIGGER TO TAP ON A PHONE (the owner 2026-09-29 21:48, CARGO-BTC-2148: AUTO and ROLL OUT were too small
         // to tap); a desktop keeps its size. `ButtonHeight` also sizes the bar (BottomBarRect), so the taller buttons
         // stay inside it.
         float bh = ButtonHeight(w, h, lh);
@@ -674,8 +678,8 @@ public class LoadoutPanel : MonoBehaviour
         var btn = new GUIStyle(_btn);
         if (Phone(w, h)) btn.fontSize = Mathf.RoundToInt(Mathf.Max(_btn.fontSize, bh * 0.42f));
         // THE LABELS FIT THE BUTTONS (measured at 390x844 with the bigger font: "NOTHING LOADED" read "THING LOADI")
-        var autoStyle = new GUIStyle(btn); DriveHud.FitLine(autoStyle, "AUTO  (80%)", bw - 12f, 10);
-        if (GUI.Button(new Rect(panel.x + inner, by, bw, bh), "AUTO  (80%)", autoStyle)) Auto();
+        var autoStyle = new GUIStyle(btn); DriveHud.FitLine(autoStyle, "AUTO  (60%)", bw - 12f, 10);
+        if (GUI.Button(new Rect(panel.x + inner, by, bw, bh), "AUTO  (60%)", autoStyle)) Auto();
 
         GUI.enabled = bay.IsLoaded;
         string go = bay.IsLoaded ? "ROLL OUT" : "NOTHING LOADED";
@@ -683,6 +687,8 @@ public class LoadoutPanel : MonoBehaviour
         if (GUI.Button(new Rect(panel.x + inner * 2f + gaugeW, by, bw, bh), go, goStyle)) Confirm();
         GUI.enabled = true;
     }
+
+    string _fillOf; int _fillWord;
 
     /// <summary>The panel's LOAD number: the core's C (S_CARGO on the 1e-5 grid), to the five decimals the card prints.</summary>
     public static string LoadLabel(int cargoWord) =>
