@@ -8,9 +8,10 @@
 // core: it is handed one of these.
 import { CORE as TRUCK_ADAPTER } from '../../core/src/adapter.js';
 import { CORE as TRUCK_2069_ADAPTER } from '../../core/frozen/2069b4c2/adapter.js';
+import { CORE as TRUCK_DE2F_ADAPTER } from '../../core/frozen/de2f263d/adapter.js';
 import { coreHashHex } from '../../core/tools/hash-core.js';
 import { GENESIS_CONFIG_HASH } from '../../protocol/src/genesis-ids.js';
-import { computeCurrentConfigHash } from '../../protocol/src/genesis.js';
+import { computeCurrentConfigHash, computeDe2fConfigHash } from '../../protocol/src/genesis.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 
 /**
@@ -33,8 +34,7 @@ export const TRUCK = Object.freeze({
   hash: coreHashHex(),
   url: new URL('../../core/src/adapter.js', import.meta.url).href,
   adapter: TRUCK_ADAPTER,
-  configs: new Map([[TRUCK_CURRENT_CONFIG, {}],
-    ...(coreHashHex() === DE2F_HASH ? [[toHex(GENESIS_CONFIG_HASH), { committeeBeforeMs: FOUNDING_CONFIG_ON_DE2F_BEFORE_MS }]] : [])]),
+  configs: new Map([[TRUCK_CURRENT_CONFIG, {}]]),
   // the bundle the replay page runs for this core's rounds (core/tools/bundle-replay.js)
   replayFile: new URL('../../core/dist/blwp-replay-core.js', import.meta.url),
 });
@@ -46,6 +46,23 @@ export const TRUCK = Object.freeze({
  * is frozen in core/frozen/2069b4c2 and its hash is computed from those files here, never typed: a frozen tree that
  * drifted would name another core and be refused below.
  */
+/**
+ * de2f263d KEPT INSTALLED BESIDE THE TRUCK (the owner 2026-10-04, option 1: exposure weighted by heat makes a new core): the
+ * free rounds the pair opened on it from 08:23Z are replayed by it, frozen in core/frozen/de2f263d. It plays its own
+ * config dbb49344 (v2), and the founding config only for a round made before the 13:00Z cut-over.
+ */
+const FROZEN_DE2F = new URL('../../core/frozen/de2f263d', import.meta.url).pathname;
+if (coreHashHex(FROZEN_DE2F) !== DE2F_HASH) throw new Error(`core/frozen/de2f263d hashes to ${coreHashHex(FROZEN_DE2F)}, not the core it keeps`);
+export const TRUCK_DE2F = Object.freeze({
+  name: `${TRUCK_ADAPTER.name} (de2f263d, exposure by C)`,
+  hash: DE2F_HASH,
+  url: new URL('../../core/frozen/de2f263d/adapter.js', import.meta.url).href,
+  adapter: TRUCK_DE2F_ADAPTER,
+  configs: new Map([[toHex(computeDe2fConfigHash()), {}],
+    [toHex(GENESIS_CONFIG_HASH), { committeeBeforeMs: FOUNDING_CONFIG_ON_DE2F_BEFORE_MS }]]),
+  replayFile: new URL('../../core/dist/blwp-replay-core-de2f263d.js', import.meta.url),
+});
+
 export const TRUCK_2069_HASH = '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e';
 const FROZEN_2069 = new URL('../../core/frozen/2069b4c2', import.meta.url).pathname;
 if (coreHashHex(FROZEN_2069) !== TRUCK_2069_HASH) throw new Error(`core/frozen/2069b4c2 hashes to ${coreHashHex(FROZEN_2069)}, not the core it keeps`);
@@ -110,7 +127,7 @@ export const TRUCK_BEFORE_FORK = Object.freeze({ ...TRUCK_2069, name: `${TRUCK.n
  * beside it (serve's `cores`) - several at once, each with its own configs (the owner 08:07).
  */
 export function installedCores(extra = []) {
-  const all = new Map([[TRUCK.hash, TRUCK], [TRUCK_2069_HASH, TRUCK_2069], [TRUCK_BEFORE_FORK_HASH, TRUCK_BEFORE_FORK]]);
+  const all = new Map([[TRUCK.hash, TRUCK], [DE2F_HASH, TRUCK_DE2F], [TRUCK_2069_HASH, TRUCK_2069], [TRUCK_BEFORE_FORK_HASH, TRUCK_BEFORE_FORK]]);
   for (const c of extra) all.set(c.hash, c);
   return all;
 }
