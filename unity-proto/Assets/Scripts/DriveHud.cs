@@ -3014,6 +3014,26 @@ public class DriveHud : MonoBehaviour
     /// Fades up with the sequence rather than snapping on, and sits slightly
     /// above centre the way GTA does - dead centre reads as a menu.
     /// </summary>
+    // AFTER THE BAND, A SMALL LINE (#131): while the run-end spectate has the view of a WRECKED run, the top of the screen
+    // says so in a few words, so the war on screen reads as watched, not as the game going on without the player.
+    RunEndSpectate _afterRun;
+    void DrawSpectating(int w, int h)
+    {
+        if (_afterRun == null) _afterRun = Object.FindFirstObjectByType<RunEndSpectate>();
+        if (_afterRun == null || !_afterRun.Active || !Blwp.BlwpCore.Available || Blwp.BlwpCore.RunState != Blwp.Layout.RUN_WRECKED) return;
+        var style = new GUIStyle(GUI.skin.label)
+        {
+            alignment = TextAnchor.MiddleCenter, fontStyle = FontStyle.Bold,
+            fontSize = Mathf.RoundToInt(Mathf.Clamp(Mathf.Min(w, h) * 0.028f, 12f, 22f)),
+        };
+        var r = new Rect(0f, h * 0.11f, w, style.fontSize * 1.6f);
+        GUI.color = Color.white;
+        style.normal.textColor = new Color(0f, 0f, 0f, 0.6f);
+        GUI.Label(new Rect(r.x + 1f, r.y + 1f, r.width, r.height), "WRECKED \u00b7 spectating", style);
+        style.normal.textColor = new Color(0.95f, 0.45f, 0.40f, 0.95f);
+        GUI.Label(r, "WRECKED \u00b7 spectating", style);
+    }
+
     void DrawWasted(int w, int h)
     {
         if (wasted == null || wasted.Intensity <= 0.01f) return;
@@ -3341,6 +3361,7 @@ public class DriveHud : MonoBehaviour
         if (loading)
         {
             DrawWasted(w, h);
+            DrawSpectating(w, h);
             // NO RUN-STOPPED SENTENCE HERE EITHER (NO-STOPPED-LINE-2103): the ending's own band says it.
             // WHAT THE WAR SAID (2026-09-21, measured).
             // This branch returned before `DrawAssaultLog` ever ran, so a declaration made while the player was
@@ -3362,6 +3383,7 @@ public class DriveHud : MonoBehaviour
         DrawFallout(w, h);
         DrawHealth(w, h);
         DrawWasted(w, h);
+        DrawSpectating(w, h);
         DrawCopyReplayAlone(w, h);
         DrawManifest(w, h);
         DrawStreamingPanel(w, h);

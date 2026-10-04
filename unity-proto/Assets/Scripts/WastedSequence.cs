@@ -28,6 +28,20 @@ public class WastedSequence : MonoBehaviour
     [Tooltip("Seconds before the respawn that everything comes back to normal.")]
     public float recover = 0.8f;
 
+    // IN A LIVE ROUND THE BAND HOLDS 3 s, THEN FADES (kanban #131, the owner 2026-10-04 15:16: "Remove the WASTED text after a
+    // few seconds. Spectate stays"): the band, the slow motion and the grade are up for holdSeconds from the wreck, fade out
+    // over fadeOutSeconds, and the sequence ends - the death orbit let go, time back to 1 - so the run-end spectate takes the
+    // view and the next round opens on the chase camera. This replaces the 2026-09-27 hold-until-the-lobby in live rounds.
+    [Tooltip("Seconds the WASTED band holds in a live round, from the wreck.")]
+    public float holdSeconds = 3f;
+    [Tooltip("Seconds the band, slow motion and grade take to fade out after the hold, in a live round.")]
+    public float fadeOutSeconds = 0.5f;
+
+    /// <summary>True while the live round's band is up or fading: the run-end spectate waits for it.</summary>
+    public bool BandUp => _running && _live;
+    bool _live;
+    float _wreckedAt = -1f;
+
     /// <summary>0..1, how far into the sequence. Drives the WASTED overlay.</summary>
     public float Intensity { get; private set; }
 
@@ -97,7 +111,13 @@ public class WastedSequence : MonoBehaviour
 
     bool _bound;
 
-    void Begin() => _running = true;
+    void Begin()
+    {
+        _running = true;
+        _wreckedAt = Time.unscaledTime;
+        _live = !DeliveryGate.BackToTheBay(Blwp.BlwpNet.RoundSeed);
+        if (_live) Debug.Log($"[blwp] wasted: up, the band holds {holdSeconds:0.0} s then fades over {fadeOutSeconds:0.0} s");
+    }
 
     void End()
     {
@@ -117,17 +137,45 @@ public class WastedSequence : MonoBehaviour
     {
         if (!_running) { Intensity = 0f; return; }
 
+        // THE LIVE ROUND'S OWN CLOCK (#131): hold, fade, end - nothing respawns there, so the respawn timer says nothing
+        if (_live)
+        {
+            float since = Time.unscaledTime - _wreckedAt;
+            bool nextRun = since > 0.5f && Blwp.BlwpCore.Available && Blwp.BlwpCore.RunState == Blwp.Layout.RUN_LIVE;
+            if (since >= holdSeconds + fadeOutSeconds || nextRun)
+            {
+                _running = false; _live = false; Intensity = 0f;
+                Restore();
+                Debug.Log($"[blwp] wasted: gone {since:0.00} s after the wreck{(nextRun ? " (a new run began)" : "")}; time scale {Time.timeScale:0.00}");
+                return;
+            }
+            Apply(LiveIntensity(since, fadeIn, holdSeconds, fadeOutSeconds));
+            return;
+        }
+
         float dead = health.respawnSeconds - health.RespawnIn;
 
-        // in over the first moment, back out just before he is up again
+        // PRACTICE: in over the first moment, back out just before he is up again (a live round is handled above)
         float rise = Mathf.Clamp01(dead / Mathf.Max(0.01f, fadeIn));
-        // IN A LIVE ROUND NOTHING COMES BACK, so nothing fades back out: WASTED holds until the lobby, and PLAY ends it
-        // (the owner 2026-09-27 13:25: "He must not see the truck without WASTED")
-        float fall = DeliveryGate.BackToTheBay(Blwp.BlwpNet.RoundSeed)
-            ? Mathf.Clamp01(health.RespawnIn / Mathf.Max(0.01f, recover)) : 1f;
-        Intensity = Mathf.Min(rise, fall);
+        float fall = Mathf.Clamp01(health.RespawnIn / Mathf.Max(0.01f, recover));
+        Apply(Mathf.Min(rise, fall));
+    }
 
-        float k = Intensity;
+    /// <summary>
+    /// THE LIVE ROUND'S CURVE (#131), <paramref name="since"/> the wreck in real seconds: up over <paramref name="fadeIn"/>,
+    /// full until <paramref name="hold"/>, down to 0 over <paramref name="fadeOut"/>, 0 after.
+    /// </summary>
+    public static float LiveIntensity(float since, float fadeIn, float hold, float fadeOut)
+    {
+        if (since < 0f) return 0f;
+        float up = Mathf.Clamp01(since / Mathf.Max(0.01f, fadeIn));
+        float down = since <= hold ? 1f : Mathf.Clamp01(1f - (since - hold) / Mathf.Max(0.01f, fadeOut));
+        return Mathf.Min(up, down);
+    }
+
+    void Apply(float k)
+    {
+        Intensity = k;
         Time.timeScale = Mathf.Lerp(1f, slowMotion, k);
 
         _volume.weight = k;
