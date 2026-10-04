@@ -104,7 +104,10 @@
   const R = window.BLWP_REPLAY, CORE = R.CORE, L = R.layout, ONE = R.ONE;
 
   // STEP THE WHOLE RUN ONCE, keeping what the map draws at every tick.
-  const seedWord = BLWPCLIENT.seedWordForEntry(ent, beacon);
+  // THE WORLD BY THE ROUND'S RULE (#23): one world per round under a shared-world config (v4), the player's own under any
+  // other - the one function the page and the seats use, so the replay is the run in the world it was played in
+  const seedWord = BLWPCLIENT.worldSeedWord({ entry: ent, roundRandomness: beacon, contract, roundId: BLWPCLIENT.fromHex(round) });
+  console.log('[blwp] replay world seed 0x' + (seedWord >>> 0).toString(16) + (BLWPCLIENT.worldIsShared(contract) ? ' (one world for the round)' : ' (the player\'s own world)'));
   const st = CORE.start(seedWord);
   // an older core a stored round names may keep no map solids of its own (its host set them): draw none then
   const solids = st.solids && st.solids.box ? { n: st.solids.n, box: Int32Array.from(st.solids.box.subarray(0, st.solids.n * 6)) } : { n: 0, box: new Int32Array(0) };

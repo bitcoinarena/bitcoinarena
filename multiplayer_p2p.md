@@ -2235,6 +2235,16 @@ round_randomness = hash(beacon_block)                // §5A.5 (ruled 2026-09-24
 player_seed      = H(round_randomness || player_pubkey || player_secret)
 ```
 
+**One world per round where the round's config says so *(RULED, the owner
+2026-10-04, #23)*.** Under a shared-world config (`2170f250`, §27A.7.8) the
+world is `round_seed = H(committee_seed || "world")` (§5A.5) for every player
+of the round: no `player_secret`, key or `join_tick` moves it, the entry's
+`world_secret` is 32 zero bytes, and a node refuses an entry that names any
+other. The beacon of a series is known a day ahead, so a world a player
+could pick a secret or a fresh key for was a world he could try offline and
+enter with the easiest - the per-player rule below is kept only for the
+rounds published under the configs before it.
+
 The player's secret is committed (`seed_commitment`) in the Entry Contract.
 For entries made before `start_time` the beacon is already known at
 commitment time, so grinding is prevented instead by the sub-seed binding to
@@ -5308,6 +5318,12 @@ founding config `bbae68dc`. The second, the same day: core `7e2123d1` with
 config `f51759b6`, whose exposure is weighted by the load's heat as §18A.3
 writes it (`de2f263d` weighted it by C, which counted a full bed twice);
 `de2f263d` stays installed for the free rounds made on it.
+The third, the same day (the owner 2026-10-04, #23 world grinding): config
+`2170f250` (`encodeGameConfigV4`: v3's fields and a world rule) on the same
+core `7e2123d1` - one world per round, `round_seed`, shared by every player
+of the round (§12). `f51759b6` stays installed for the rounds published on
+it (the 10-06 series); the first rounds on `2170f250` are the free pair's
+from its roll at 2026-10-04 16:44Z and the 10-07 paid series.
 
 ## 27A.8 Hard forks: a successor, not a stranger
 
