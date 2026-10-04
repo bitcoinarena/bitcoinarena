@@ -10587,18 +10587,28 @@ function markLockCommitted(storage, { roundId, playerPubkey, entryId }) {
 async function findLock({ roundId, playerPubkey, nodes, fetcher = fetch } = {}) {
   const refund = toHex(refundKeyOf(playerPubkey));
   const found = new Map();
-  for (const node of [...new Set(nodes || [])]) {
+  // WHO ANSWERED (kanban #133): the list carries how many signer nodes were asked, answered and named a lock, and each
+  // one's reply in short - an empty list nobody answered is not "no lock".
+  const asked = [...new Set(nodes || [])];
+  const said = [];
+  for (const node of asked) {
     try {
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/stake-lock?round=${toHex(roundId)}&refund=${refund}`);
-      if (!r.ok) continue;
-      for (const l of await r.json()) {
+      if (!r.ok) { said.push(`${String(node).replace(/^https?:\/\//, '').slice(0, 40)} ${r.status}`); continue; }
+      const got = await r.json();
+      said.push(`${String(node).replace(/^https?:\/\//, '').slice(0, 40)} ${got.length}`);
+      for (const l of got) {
         const [txid, outIdx] = String(l.outpoint).split(':');
         if (!found.has(l.outpoint))
           found.set(l.outpoint, { outpoint: { txid: fromHex(txid), outIdx: BigInt(outIdx) }, fields: lockFieldsFromJson(l.fields), entryId: l.entryId });
       }
-    } catch { /* a signer node that does not answer is one of several */ }
+    } catch (e) { said.push(`${String(node).replace(/^https?:\/\//, '').slice(0, 40)} ${String(e && e.message || e).slice(0, 40)}`); }
   }
-  return [...found.values()];
+  const out = [...found.values()];
+  out.asked = asked.length;
+  out.answered = said.filter((x) => /\s\d+$/.test(x) && !/\s[45]\d\d$/.test(x)).length;
+  out.said = said;
+  return out;
 }
 
 /**
@@ -11062,11 +11072,18 @@ async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = fetch, c
     else payout = { state: await held(s.txid, at) ? 'owed' : 'gone', msat: BigInt(s.moved.payouts[at].msat) };
   }
   let stake;
+  let lockAnswers = null;
   const backNote = note(`${STAKE_NOTE}${rid}`);
   if (backNote) stake = { state: 'collected', msat: BigInt(backNote.amountMsat) };
   else {
     const locks = s.ok ? await findLock({ roundId, playerPubkey: player.pubkey, nodes, fetcher }) : [];
-    if (locks.length) {
+    lockAnswers = locks.said ? { asked: locks.asked, answered: locks.answered, said: locks.said } : null;
+    // NOBODY ANSWERED IS NOT "NO LOCK" (kanban #133, playtest 2026-10-04: a DELIVERED player's 96 sat stake was never
+    // asked back - the page's record of the round ended as if nothing were owed): with no signer node answering where
+    // the lock is, the stake is still waiting and the round is looked at again.
+    if (!locks.length && s.ok && locks.asked > 0 && locks.answered === 0)
+      stake = { state: 'waiting', why: `no signer node answered where this seed's lock is (${locks.said.join('; ')})` };
+    else if (locks.length) {
       let msat = 0n;
       for (const l of locks) if (await held(toHex(l.outpoint.txid), l.outpoint.outIdx)) msat += BigInt(l.fields.amountMsat);
       const whole = locks.reduce((t, l) => t + BigInt(l.fields.amountMsat), 0n);
@@ -11112,7 +11129,8 @@ async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = fetch, c
   // FINAL: the federation holds nothing more of this seed's in this round. The tab's own balance is apart.
   const final = ['none', 'gone', 'collected'].includes(payout.state) && ['lost', 'gone', 'none', 'collected'].includes(stake.state);
   return { payout, stake, payoutMsat, stakeMsat: owed('forfeit'), refundMsat: owed('refund'), stakeLost: stake.state === 'lost',
-    owedMsat: payoutMsat + owed('forfeit') + owed('refund'), inTabMsat, tabBalanceMsat, final, settled: s.ok };
+    owedMsat: payoutMsat + owed('forfeit') + owed('refund'), inTabMsat, tabBalanceMsat, final, settled: s.ok,
+    settledWhy: s.ok ? null : s.why, lockAnswers };
 }
 
 /** WHAT THE PLAYER IS OWED, AS THEY SEE IT: yours in the federation until you withdraw, when it comes back, or nothing. */

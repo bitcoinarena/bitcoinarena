@@ -1952,6 +1952,9 @@
         const known = BLWPCLIENT.savedCollects(vault(), { seed: collectSeed() }).map((r) => r.roundIdHex);
         const found = await BLWPCLIENT.findOwedRounds({ seed, curve: window.BLWP_CURVE, nodes: named.nodes,
           sinceMs: Date.now() - OWED_LOOKBACK_MS, known });
+        console.log('[blwp] collect scan: the last 24 h settled rounds over ' + named.nodes.length + ' signer node(s) - ' + found.length
+          + ' new round(s) name this seed\'s key' + (found.length ? ' (' + found.map((f) => f.roundIdHex.slice(0, 8) + (f.payout ? ' payout' : '') + (f.lock ? ' lock' : '')).join(', ') + ')' : '')
+          + ', ' + known.length + ' already kept');
         for (const f of found)
           BLWPCLIENT.saveCollect(vault(), { roundIdHex: f.roundIdHex, round: f.round, invite: named.federation, nodes: named.nodes, seed });
         window.BLWP_FOUND_OWED = found.map((f) => f.roundIdHex);
@@ -1970,8 +1973,53 @@
       return { available: msat > 0n || !!window.BLWP_ELSEWHERE, msat: String(msat), elsewhere: !!window.BLWP_ELSEWHERE };
     }
     window.BLWP_WITHDRAW_AVAILABLE = withdrawAvailable;
+    // THE COLLECT, SAID ALOUD (kanban #133, playtest 2026-10-04 13:41Z: a DELIVERED player's 96 sat showed "paying out" for
+    // 2 h and the console said nothing - the seats were never asked for the stake back). Each step of each round's collect is
+    // one line, written only when it changes (the loop runs every 5 s), and kept in window.BLWP_COLLECT_DEBUG by key.
+    const collectSaid = new Map();
+    window.BLWP_COLLECT_DEBUG = {};
+    function collectNote(key, text) {
+      if (collectSaid.get(key) === text) return;
+      collectSaid.set(key, text);
+      window.BLWP_COLLECT_DEBUG[key] = { text, at: new Date().toISOString() };
+      console.log('[blwp] collect ' + key + ': ' + text);
+    }
+    function lookSaid(lo) {
+      if (!lo) return 'no look';
+      const st = lo.stake || {}; const pa = lo.payout || {};
+      return 'payout ' + pa.state + (pa.msat !== undefined ? ' ' + String(pa.msat) : '') + (pa.why ? ' (' + String(pa.why).slice(0, 120) + ')' : '')
+        + ' | stake ' + st.state + (st.how ? '/' + st.how : '') + (st.msat !== undefined ? ' ' + String(st.msat) : '') + (st.why ? ' (' + String(st.why).slice(0, 160) + ')' : '')
+        + ' | final ' + lo.final + ' | settled ' + lo.settled + (lo.settledWhy ? ' (' + String(lo.settledWhy).slice(0, 120) + ')' : '')
+        + ' | in tab ' + String(lo.inTabMsat)
+        + (lo.lockAnswers ? ' | lock asked ' + lo.lockAnswers.asked + ', answered ' + lo.lockAnswers.answered + ' [' + lo.lockAnswers.said.join('; ') + ']' : '');
+    }
+    // A RECORD MARKED DONE TOO EARLY IS OPENED AGAIN BY HAND (#133): BLWP_COLLECT_REOPEN('3568d136') - this tab's seed's
+    // record of that round loses its "done", and the next collect looks at it again. Answers what it did.
+    window.BLWP_COLLECT_REOPEN = (prefix) => {
+      const want = String(prefix || '').toLowerCase(); const v = vault(); const did = [];
+      for (let i = 0; i < v.length; i++) {
+        const k = v.key(i); if (!k || !k.startsWith('blwp.collect.')) continue;
+        let r; try { r = JSON.parse(v.getItem(k)); } catch { continue; }
+        if (!r || !String(r.roundIdHex).startsWith(want) || !r.done) continue;
+        v.setItem(k, JSON.stringify(Object.assign({}, r, { done: null }))); did.push(String(r.roundIdHex).slice(0, 8));
+      }
+      collectSaid.clear();
+      return did.length ? 'reopened ' + did.join(', ') : 'no done record of a round starting ' + want;
+    };
+    let payoutAskingSince = 0;
     async function lookThePayout() {
-      if (payoutAsking || typeof BLWPCLIENT === 'undefined' || !BLWPCLIENT.savedCollects) return;
+      if (payoutAsking) {
+        if (payoutAskingSince && Date.now() - payoutAskingSince > 60000)
+          collectNote('loop', 'still on its last look, started ' + new Date(payoutAskingSince).toISOString().slice(11, 19) + 'Z - a step has not returned');
+        return;
+      }
+      if (typeof BLWPCLIENT === 'undefined' || !BLWPCLIENT.savedCollects) return;
+      {
+        const mine = BLWPCLIENT.savedCollects(vault(), { seed: collectSeed() });
+        const all = BLWPCLIENT.savedCollects(vault(), {});
+        collectNote('records', mine.length + ' of this tab\'s seed (' + (mine.map((r) => r.roundIdHex.slice(0, 8) + (r.done ? ' done' : ' open')).join(', ') || 'none')
+          + '), ' + (all.length - mine.length) + ' of other seeds in this browser');
+      }
       const newest = newestKept();
       if (!newest) return;
       window.BLWP_COLLECT = { roundIdHex: newest.roundIdHex, round: newest.round, stakeLock: newest.stakeLock };
@@ -1980,7 +2028,7 @@
         paintWallet();
         return;
       }
-      payoutAsking = true;
+      payoutAsking = true; payoutAskingSince = Date.now();
       // EVERY ROUND STILL OWED, NOT ONLY THE NEWEST (the owner 2026-10-03 06:47, playtest d917975d: "still pending" 4 min
       // after the settlement was ACCEPTED at 7 of 7). The collect looked at the newest open record only; the 24 h scan
       // (findTheRoundsOwed) re-saves the rounds it finds with a fresh time, so an older round that cannot finish could
@@ -1989,7 +2037,9 @@
         .filter((r) => BLWPCLIENT.roundLocks(r.round) && !r.done && r.roundIdHex !== newest.roundIdHex)) {
         try {
           const wo = await roundWallet(older);
+          if (!wo) collectNote(older.roundIdHex.slice(0, 8), 'older round: its wallet is held by another tab of this browser');
           const lo = wo ? await BLWPCLIENT.lookOwed(Object.assign(roundAsk(older, wo.LockClient), { client: wo.client })) : null;
+          if (lo) collectNote(older.roundIdHex.slice(0, 8), 'older round: ' + lookSaid(lo));
           if (!lo) continue;
           const co = await BLWPCLIENT.collectIntoPlayerWallet({ look: lo, ...roundAsk(older, wo.LockClient) });
           if (co.collected) {
@@ -1999,6 +2049,7 @@
             paintHistory();
           } else if (lo.final && lo.inTabMsat === 0n) {
             BLWPCLIENT.markCollectDone(vault(), older.roundIdHex, { payout: BLWPCLIENT.owedToLine(lo), stake: null }, collectSeed());
+            collectNote(older.roundIdHex.slice(0, 8), 'older round MARKED DONE: ' + BLWPCLIENT.owedToLine(lo) + ' <- ' + lookSaid(lo));
           }
         } catch (e) { console.error('[blwp] owed (round ' + older.roundIdHex.slice(0, 8) + '): ' + e.message); }
       }
@@ -2006,7 +2057,9 @@
         const w = await roundWallet(newest);
         // OPEN IN ANOTHER TAB OF THIS BROWSER: that tab looks and withdraws; this one says so.
         window.BLWP_ELSEWHERE = w ? null : newest.roundIdHex;
+        if (!w) collectNote(newest.roundIdHex.slice(0, 8), 'newest round: its wallet is held by another tab of this browser');
         const look = w ? await BLWPCLIENT.lookOwed(Object.assign(roundAsk(newest, w.LockClient), { client: w.client })) : null;
+        if (look) collectNote(newest.roundIdHex.slice(0, 8), 'newest round: ' + lookSaid(look));
         if (look) { window.BLWP_OWED = look; window.BLWP_WITHDRAWABLE = look.inTabMsat; }
         // WINNINGS-AUTO (RULED the owner 2026-10-01): what is owed goes into the player's federation wallet by itself, the
         // moment it exists - redeemed only, never sent out; the pending line clears as the balance takes it
@@ -2025,9 +2078,10 @@
           const line = BLWPCLIENT.owedToLine(look);
           BLWPCLIENT.markCollectDone(vault(), newest.roundIdHex, { payout: line, stake: null }, collectSeed());
           console.log('[blwp] owed: ' + line);
+          collectNote(newest.roundIdHex.slice(0, 8), 'newest round MARKED DONE: ' + line + ' <- ' + lookSaid(look));
         }
       } catch (e) { console.error('[blwp] owed: ' + e.message); }
-      payoutAsking = false;
+      payoutAsking = false; payoutAskingSince = 0;
       paintWallet();
     }
 
@@ -3094,6 +3148,9 @@
           votes.set(fig, (votes.get(fig) || 0) + 1);
         }
         const best = [...votes.entries()].sort((a, b) => b[1] - a[1])[0];
+        if (typeof collectNote === 'function') collectNote('pending ' + String(n.roundIdHex).slice(0, 8), answered.length + ' of ' + (n.nodes || []).length + ' seats answered /standing; '
+          + [...votes.entries()].map(([f, c]) => (f === null ? 'none' : f + ' msat') + ' x' + c).join(', ')
+          + (answered[0] ? ' | ' + [answered[0].kind, answered[0].state, answered[0].outcome].filter(Boolean).join(' ') : ''));
         if (!best || best[0] === null || best[0] === '0' || best[1] * 2 <= answered.length) continue;
         total += BigInt(best[0]);
         const one = said.find((x) => x && x.pendingMsat === best[0]);
