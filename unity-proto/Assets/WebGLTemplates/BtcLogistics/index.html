@@ -1330,7 +1330,7 @@
       // THE ROUND'S OWN CORE, before anything of the round is made (path A): a round on a core this page does not carry is
       // refused here by name rather than played on the wrong one
       {
-        const core = window.BLWP_USE_CORE ? window.BLWP_USE_CORE(named.round.simCoreHash) : { ok: true };
+        const core = window.BLWP_USE_CORE ? window.BLWP_USE_CORE(BLWPCLIENT.roundCoreHex(named.round)) : { ok: true };
         if (!core.ok) {
           window.BLWP_JOIN_REFUSED = core.why;
           if (window.BLWP_JOIN) Object.assign(window.BLWP_JOIN, { state: 'refused', why: core.why });

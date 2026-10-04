@@ -7332,6 +7332,13 @@ const sourceKey = (u) => {
  * server: a page that mis-spells a key should be told which key, not left
  * waiting on a request nobody will answer.
  */
+/**
+ * THE CORE A ROUND NAMES, as hex (path A, 2026-10-04: the page carries two cores and plays each round on its own). Read
+ * here, not in the page, so the page still names no contract field: it asks which core, and joins.
+ */
+const roundCoreHex = (round) => (round && round.simCoreHash instanceof Uint8Array && round.simCoreHash.length === 32
+  ? toHex(round.simCoreHash) : '');
+
 function joinQuery(search) {
   const q = new URLSearchParams(
     typeof search === 'string' ? (search.startsWith('?') ? search.slice(1) : search) : search);
@@ -19150,7 +19157,7 @@ function replayLinkFor({ endpoints, roundHex, entryHex, random = Math.random } =
 }
 
 return { Client: Client, markState: markState, catchUpCore: catchUpCore,
-         reach: reach, endpointFor: endpointFor,
+         reach: reach, endpointFor: endpointFor, roundCoreHex: roundCoreHex,
          discover: discover, agreedChain: agreedChain,
          askForBond: askForBond, provenBond: provenBond,
          headersOverHttp: headersOverHttp, httpProvider: httpProvider,
