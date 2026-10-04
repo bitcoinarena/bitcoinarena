@@ -48,6 +48,7 @@ namespace Blwp
         [DllImport("__Internal")] private static extern int BlwpReplayCopied();
         [DllImport("__Internal")] private static extern void BlwpLoadoutOpen(int open);
         [DllImport("__Internal")] private static extern int BlwpResumedRun();
+        [DllImport("__Internal")] private static extern int BlwpRoundStartsInMs();
         [DllImport("__Internal")] private static extern int BlwpKeepCargo(IntPtr text);
         [DllImport("__Internal")] private static extern int BlwpResultSummary(IntPtr outp, int cap);
         [DllImport("__Internal")] private static extern void BlwpHudCorner(IntPtr json);
@@ -76,6 +77,7 @@ namespace Blwp
         private static int BlwpReplayCopied() => 0;
         private static void BlwpLoadoutOpen(int open) { }
         private static int BlwpResumedRun() => 0;
+        private static int BlwpRoundStartsInMs() => -1;
         private static int BlwpKeepCargo(IntPtr t) => 0;
         private static int BlwpResultSummary(IntPtr o, int cap) => 0;
         private static void BlwpHudCorner(IntPtr j) { }
@@ -276,6 +278,9 @@ namespace Blwp
 
         /// <summary>A run resumed after a reload has caught up to the tick the seats hold (the page's BLWP_RESUME).</summary>
         public static bool ResumedRun() => BlwpResumedRun() != 0;
+
+        /// <summary>Ms until the joined round starts (its contract's start against this device's clock), or -1 (#64).</summary>
+        public static int RoundStartsInMs() => Compiled ? BlwpRoundStartsInMs() : -1;
 
         /// <summary>Keeps this round's bed with the page (ASCII), so a run resumed after a reload gets its parcels back.</summary>
         public static void KeepCargo(string text)
