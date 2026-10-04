@@ -114,7 +114,7 @@ for (const file of order) {
   out += '\n// ---- ' + relative(ROOT, file) + '\n' + body;
 }
 out += '\nreturn { Client: Client, markState: markState, catchUpCore: catchUpCore,\n';
-out += '         reach: reach, endpointFor: endpointFor,\n';
+out += '         reach: reach, endpointFor: endpointFor, roundCoreHex: roundCoreHex,\n';
 out += '         discover: discover, agreedChain: agreedChain,\n';
 out += '         askForBond: askForBond, provenBond: provenBond,\n';
 out += '         headersOverHttp: headersOverHttp, httpProvider: httpProvider,\n';
