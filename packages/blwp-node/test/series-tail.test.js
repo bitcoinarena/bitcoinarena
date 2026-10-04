@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH, TRUCK_BEFORE_FORK_HASH } from '../src/cores.js';
+import { GENESIS_CONFIG_HASH } from '../../protocol/src/genesis-ids.js';
 import { encodeRoundContract } from '../../protocol/src/contracts.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { NETWORK_ID_TESTNET4 } from '../../protocol/src/genesis-ids.js';
@@ -17,7 +18,8 @@ import { fromHex } from '../../protocol/src/hash.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const base = (nodes) => ({
-  networkId: NETWORK_ID_TESTNET4, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 6, gameVerifySlots: 2, settlementSlots: 2,
+  // the pre-fork core's rounds name the founding config (2026-10-04: a round names the config of the rules it plays)
+  networkId: NETWORK_ID_TESTNET4, configHash: GENESIS_CONFIG_HASH, censusConfirmations: 6, gameVerifySlots: 2, settlementSlots: 2,
   simCoreHash: fromHex(TRUCK_BEFORE_FORK_HASH), committeeTimeMs: 0n, randomnessRule: 'bitcoin-block-hash', startTimeMs: 0n, entryCloseMs: 0n,
   objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT',
   federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'],
