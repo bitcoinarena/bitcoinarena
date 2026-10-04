@@ -19,7 +19,8 @@ import {
 const b32 = (n) => new Uint8Array(32).fill(n);
 const entryAt = (n, vout = 0, over = {}) => ({
   txid: b32(n), vout, pubkey: b32(n + 0x40), advertId: b32(n + 0x60), bondSats: 60000n,
-  height: 900000, roles: ['game'], spent: false, ...over,
+  // TEN BLOCKS UNDER THE CENSUS HEIGHT: eleven deep AT the census, where depth is measured (5A.4 step 1) - not at the tip
+  height: 900000 - 10, roles: ['game'], spent: false, ...over,
 });
 const entries = [entryAt(0x11), entryAt(0x12, 1), entryAt(0x13)];
 const HEIGHT = 900000;
@@ -202,4 +203,18 @@ test('a census that cannot be built is refused with its reason', () => {
   });
   assert.equal(seen.ok, false);
   assert.match(seen.why, /that census cannot be built: duplicate outpoint/);
+});
+
+/**
+ * DEPTH IS COUNTED AT THE CENSUS HEIGHT, NOT AT THE TIP (5A.4 step 1, "unspent AT census_height with >=
+ * census_confirmations depth"; TASKBOOK 23145): a bond two blocks under the census is three deep there however far the
+ * chain has grown, so the root is the same whenever it is asked. Measured from the tip, it was shallow to a node whose
+ * view ended at the census and deep to one ten blocks later - two roots for one round.
+ */
+test('the root does not depend on how far the chain has grown past the census', () => {
+  const near = [entryAt(0x21, 0, { height: HEIGHT - 2 }), ...entries];
+  const atCensus = commitCensus(near, { contract: at(), view: chain(HEIGHT) });
+  const later = commitCensus(near, { contract: at(), view: chain(HEIGHT + 50) });
+  assert.equal(toHex(atCensus.root), toHex(later.root), 'the chain growing past the census moved the root');
+  assert.equal(later.entries.length, 3, 'a bond three deep at the census was rooted under a rule of six');
 });

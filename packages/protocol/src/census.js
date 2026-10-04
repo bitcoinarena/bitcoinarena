@@ -213,7 +213,7 @@ function depthRuleOf(contract, view) {
  * output into a root.
  */
 export function commitCensus(entries, { contract, view }) {
-  const { censusHeight, censusConfirmations, tipHeight } = depthRuleOf(contract, viewOrThrow(view));
+  const { censusHeight, censusConfirmations } = depthRuleOf(contract, viewOrThrow(view));
 
   for (const e of entries)
     if (!(e.advertId instanceof Uint8Array) || e.advertId.length !== 32)
@@ -221,7 +221,10 @@ export function commitCensus(entries, { contract, view }) {
 
   const eligible = entries
     .filter((e) => e.height <= censusHeight)
-    .filter((e) => tipHeight - e.height + 1 >= censusConfirmations)
+    // DEPTH AT THE CENSUS HEIGHT, as SCAN measures it (5A.4 step 1, "unspent AT census_height with >= census_confirmations
+    // depth"): measured against the tip, a bond shallow at the census became deep once the chain grew, and the root a
+    // node committed to depended on when it asked (TASKBOOK 23145; the spec audit of 2026-10-04 found these two left).
+    .filter((e) => censusHeight - e.height + 1 >= censusConfirmations)
     .filter((e) => !e.spent)
     .sort(compareEntries);
 
@@ -1012,7 +1015,7 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, 
         });
         continue;
       }
-      const deep = depth.tipHeight - height + 1;
+      const deep = depth.censusHeight - height + 1;   // at the census height, as SCAN and COMMIT measure it
       if (deep < depth.censusConfirmations) {
         excluded.push({
           ...e,

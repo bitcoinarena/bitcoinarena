@@ -46,7 +46,20 @@ test('one type carries no authority, and it is the ghost', () => {
   // check, so that object gates play and carries authority. Saying so here is
   // the whole point of this guard - the count is not a number to keep green,
   // it is the question "what does the new one decide" asked out loud.
-  assert.equal(FRAMES.size, 18, 'a type was added without saying what it decides');
+  assert.equal(FRAMES.size, 27, 'a type was added without saying what it decides');
+});
+
+/**
+ * EVERY TYPE THE PROTOCOL DECLARES IS IN THE MAP (the spec audit of 2026-10-04: nine declared after the handout, 0x13 -
+ * 0x1b, were never entered, and the count above was the only guard - it can only see the map it counts). Read off
+ * constants.js itself, so a tenth cannot be declared and forgotten.
+ */
+test('every TYPE_ the protocol declares has its entry, and no two share a byte', async () => {
+  const constants = await import('../src/constants.js');
+  const declared = Object.entries(constants).filter(([k, v]) => k.startsWith('TYPE_') && Number.isInteger(v));
+  assert.ok(declared.length >= 27);
+  for (const [name, byte] of declared) assert.ok(FRAMES.has(byte), `${name} (0x${byte.toString(16)}) has no entry in FRAMES`);
+  assert.equal(new Set(declared.map(([, v]) => v)).size, declared.length, 'two TYPE_ constants share a byte');
 });
 
 /**
