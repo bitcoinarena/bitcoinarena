@@ -129,7 +129,7 @@ export async function lockRound({ minScore = 1, stakeMsat = STAKE, port = lockPo
 // fee locks at every size measured, so an entry that brings none is refused at the door - which is pick (a)
 // working, not a failure. A test that is ABOUT that refusal builds its own entry below.
 // `address`: the entry names the fixture's Lightning address at every signer node once it has played.
-export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, address = false, noMarks = false } = {}) {
+export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, address = false, noMarks = false, fork = null } = {}) {
   const session = ed25519.utils.randomSecretKey();
   const preimage = secretScalar();
   const e = rand(32);
@@ -184,11 +184,44 @@ export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, ad
     if (feeLock && !feeFirst) await handFee();
     // `noMarks`: seated and staked, and nothing sent - a walk-away (§15 at the door)
     if (noMarks) continue;
+    if (fork) continue;                                   // the fork's run goes out below, seat by seat
     assert.equal(await say(d.port, encodeInputBatch(input)), String(who.ticks));
     assert.equal((await say(d.port, signedMark)).length, SIGNED_RECEIPT_BYTES);
   }
+  // `fork` (§13B at a later tick; kanban #25): the run in two batches, a first mark at tick 60, and at its end mark X to
+  // the first seat and a contradicting mark Y to the second - `fork: 'tick'` Y at the same tick with another state,
+  // `fork: 'parent'` Y one tick earlier from the same parent. Both signed by the entry's session key; each seat holds one.
+  let forked = null;
+  if (fork) {
+    const sign = (m) => joinSigned(encodeCheckpoint(m), ed25519.sign(checkpointId(m), session));
+    const b1 = { roundId: w.rid, entryId: eid, previousHash: GENESIS_HASH, firstTick: 0,
+      ticks: Array.from({ length: 60 }, (_, t) => play.words(t)), liquidations: [], loads: bedFrom(0) };
+    const b2 = { roundId: w.rid, entryId: eid, previousHash: batchId(b1), firstTick: 60,
+      ticks: Array.from({ length: who.ticks - 60 }, (_, t) => play.words(60 + t)), liquidations: [], loads: [] };
+    const s60 = loaded(init(seedWordForEntry(entry, w.randomness || RANDOMNESS)));
+    for (let t = 0; t < 60; t++) step(s60, ...play.words(t));
+    const hashOf = (x) => Uint8Array.from(stateHash(x).match(/../g).map((v) => parseInt(v, 16)));
+    const m1 = { roundId: w.rid, entryId: eid, tick: 60, stateHash: hashOf(s60), inputChainHash: batchId(b1), previousHash: NO_PREVIOUS,
+      sessionPubkey: ed25519.getPublicKey(session) };
+    const x = { ...mark, inputChainHash: batchId(b2), previousHash: checkpointId(m1) };
+    const y = fork === 'parent' ? { ...x, tick: who.ticks - 1, stateHash: sha256(x.stateHash) } : { ...x, stateHash: sha256(x.stateHash) };
+    const nodes = w.nodes || [w.a, w.b];
+    forked = { x: sign(x), y: sign(y), tick: Math.min(x.tick, y.tick), mode: fork };
+    const said = (a) => (a instanceof Uint8Array ? `${a.length} bytes` : String(a).slice(0, 120));
+    for (const [i, d] of nodes.entries()) {
+      const answers = [];
+      answers.push(said(await say(d.port, encodeInputBatch(b1))));
+      answers.push(said(await say(d.port, sign(m1))));
+      answers.push(said(await say(d.port, encodeInputBatch(b2))));
+      answers.push(said(await say(d.port, i === 0 ? forked.x : forked.y)));
+      // a later seat may already hold the first batch, forwarded by the first (its answer is then 0 new ticks)
+      assert.deepEqual([i > 0 && answers[0] === '0' ? '60' : answers[0], ...answers.slice(1)],
+        ['60', `${SIGNED_RECEIPT_BYTES} bytes`, String(who.ticks - 60), `${SIGNED_RECEIPT_BYTES} bytes`],
+        `seat ${i} did not take the fork run: ${JSON.stringify(answers)}`);
+    }
+  }
   // `late`: the run's batch and first mark, for a test that sends them after the start deadline (§15's same door)
-  const played = { eid, entry, fields, outpoint, feeOutpoint, session, late: [encodeInputBatch(input), signedMark] };
+  const played = { eid, entry, fields, outpoint, feeOutpoint, session, late: [encodeInputBatch(input), signedMark], forked };
   if (address) await nameAddress(w.nodes || [w.a, w.b], played, address === true ? ADDRESS : address);
   return played;
 }
