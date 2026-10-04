@@ -2205,7 +2205,7 @@
       };
       const show = async (msat) => {
         const mine = ++token;
-        amount.textContent = `Pay ${sats(due(msat))} from any Lightning wallet to top up your game wallet.`;
+        amount.textContent = `Pay ${sats(due(msat))} from any Lightning wallet to top up your player wallet.`;
         qrHold('Creating the QR code \u2026'); box.textContent = 'creating the invoice \u2026'; copy.disabled = true;
         status.set(1, `Creating your invoice for ${sats(due(msat))} \u2026`, 'busy');
         try {
@@ -2245,7 +2245,7 @@
           amount.textContent = 'Enter an amount in sat.'; qrHold('The QR code appears as soon as you enter an amount');
           status.set(0, 'Enter an amount in sat.', ''); return;
         }
-        amount.textContent = `Pay ${sats(due(BigInt(sat) * 1000n))} from any Lightning wallet to top up your game wallet.`;
+        amount.textContent = `Pay ${sats(due(BigInt(sat) * 1000n))} from any Lightning wallet to top up your player wallet.`;
         typeTimer = setTimeout(() => show(BigInt(sat) * 1000n), 450);
       };
       field.addEventListener('input', typed);

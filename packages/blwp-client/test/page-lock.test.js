@@ -1382,7 +1382,7 @@ test('the deposit tabs are this round\'s stake times 1, 2, 5 and 10, then Custom
   assert.deepEqual(c100.slice(0, 4).map((c) => String(c.msat / 1000n)), ['100', '200', '500', '1000']);
   assert.equal(c100[4].msat, null);
   assert.deepEqual(depositChoices(10000000n).slice(0, 4).map((c) => String(c.msat / 1000n)), ['10000', '20000', '50000', '100000']);
-  assert.equal(DEPOSIT_INSUFFICIENT, 'insufficient funds to play this round. Do you want to do a lightning deposit?');
+  assert.equal(DEPOSIT_INSUFFICIENT, 'Not enough sats in your player wallet to play this round. Deposit with Lightning?');
 });
 
 /** A stand-in wallet as measured on 337ae01a (2026-10-01): e-cash in whole 512 msat notes - a deposit credits its whole
