@@ -291,14 +291,14 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
 
 ## Rulings (the owner 2026-10-04) - the rules a round plays, and how they changed
 
-Recorded here because multiplayer_p2p.md is not edited (the owner's standing order); each item names the spec text it
-leaves behind.
+Brought into multiplayer_p2p.md the same day (the owner: "We don't want a conflict, solve it in the spec"): §18A.3 (C and
+T), §27A.7.8 (rule changes by ruling until the ballot is built), with §27A.1 and §27A.8 pointing to it. What is left here
+is the record: the dates, the hashes and the one transition pair.
 
 - **The score's C and T (08:54, 09:17).** C is the bed fill: room used over the bed, the sum of cargo.js `roomFor` over
   the vsizes on the bed, 0 empty to 1 full, set by the load at roll-out (init 0); a load that carries no room (stored
   before the room crossed) keeps 0.7. T is par 1800 ticks: 1.5 until 1200 ticks (20 s), 1 at 1800 (30 s), 0.25 from
-  7200 (120 s). CONFLICT: §18A.3 defines C as "value delivered / capacity" and names neither par nor the T bounds; its
-  formula block says T in [0.5, 1.5] where its prose already says 0.25.
+  7200 (120 s). In the spec: §18A.3.
 - **A round names the config of the rules it plays (fix 1 of the 2026-10-04 spec audit; §27A.6 "a round is bound to
   the config it was created under").** Each core plays its own config: 2069b4c2 the founding config bbae68dc, de2f263d
   the config dbb49344 (genesis.js `encodeGameConfigV2`: versioned, hashed from the core's own constants, naming par, the
@@ -306,12 +306,11 @@ leaves behind.
   pairs (known-cores.js `KNOWN_GOOD_CORE_CONFIGS`) and refuses a known core under a config it does not play.
 - **The network id commits to the founding config only.** It is the config the network was founded on (read from the
   frozen 2069b4c2 core) and does not move when the rules do - no refound. Later configs live beside it under the same
-  network id, each named by the rounds that play it. CONFLICT: §27A.6 reads as if the genesis config hash were the
-  network's one game config.
+  network id, each named by the rounds that play it (§27A.6, §27A.7.8).
 - **Until governance exists, a rule change is a new config (and core) hash under the same network id, by the
   authority's ruling.** The new core de2f263d and its config dbb49344 came into force by this ruling, without the
   DESIGN ballot (§27A.7) or the hard fork with a new network id (§27A.8.1) the spec prescribes - no ballot code exists,
-  and a new network id is a refound. CONFLICT: §27A.7 / §27A.8.
+  and a new network id is a refound. In the spec: §27A.7.8, the interim rule until the ballot is built.
 - **One transition pair, by date.** The free rounds the series pair opened from 08:23Z name de2f263d with the founding
   config (they were made before its config had a hash); they are not rewritten. The seats accept that pair only for a
   round whose committee time is before 2026-10-04 13:00Z and refuse it after; the client accepts the pair, the seats
