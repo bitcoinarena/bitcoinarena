@@ -31,7 +31,7 @@ import { encodeInputBatch } from '../../protocol/src/batch.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
-import { lastTickOfRun, runLengthIsTheCores } from '../../protocol/src/contracts.js';
+import { lastTickOfRun, runTicksForEntry, runLengthIsTheCores } from '../../protocol/src/contracts.js';
 
 // The node fee is 27A.7's 2% of the stake, and the door checks it now
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
@@ -108,20 +108,22 @@ test('a whole run is stored, and the tick after it is refused', () => {
   assert.match(over.refused, /inputs past the end are inputs for a run that is over/);
 });
 
-test('a late joiner gets a whole run, counted from its own join tick', () => {
+// KANBAN #130 (the owner 2026-10-04 14:30: "A later join does not extend the round. The late joiner has less time"): a late
+// entry's run ends at the round's last tick, the same as every run - before, it had a whole run from its own join.
+test('a late joiner\'s run ends with the round\'s: from its join tick to the round\'s last tick', () => {
   const round = new Round(openStore(':memory:'), () => NOW + 1000);
   const rid = round.open(contractWith(BLOCK_TICKS));
   const eid = round.enter(entryOn(rid, 3000));
 
-  // 0.8: the same mission duration even when late. The run ends 9000 ticks
-  // after THIS entry's join, not 9000 after the round began.
-  assert.equal(lastTickOfRun(3000, BLOCK_TICKS), 3000 + BLOCK_TICKS - 1);
-  const whole = drive(round, rid, eid, 3000, BLOCK_TICKS);
-  assert.equal(whole.refused, null, whole.refused);
-  assert.equal(whole.stored, BLOCK_TICKS, 'a late joiner was cut short');
+  assert.equal(lastTickOfRun(3000, BLOCK_TICKS), BLOCK_TICKS - 1);
+  assert.equal(runTicksForEntry(3000, BLOCK_TICKS), BLOCK_TICKS - 3000);
+  assert.equal(lastTickOfRun(0, BLOCK_TICKS), BLOCK_TICKS - 1, 'an entry at tick 0 ends where it always did');
+  const rest = drive(round, rid, eid, 3000, BLOCK_TICKS - 3000);
+  assert.equal(rest.refused, null, rest.refused);
+  assert.equal(rest.stored, BLOCK_TICKS - 3000);
 
-  const over = drive(round, rid, eid, 3000 + BLOCK_TICKS, 600);
-  assert.match(over.refused, new RegExp(`that run ends at tick ${3000 + BLOCK_TICKS - 1}`));
+  const over = drive(round, rid, eid, BLOCK_TICKS, 600);
+  assert.match(over.refused, new RegExp(`that run ends at tick ${BLOCK_TICKS - 1}`));
 });
 
 test('replay refuses a transcript that reaches past the run, however it was got', () => {
@@ -178,5 +180,6 @@ test('a round\'s run length is its own core\'s under its config: the counter ope
   const truckOnly = new Round(openStore(':memory:'), () => NOW + 1000);
   assert.throws(() => truckOnly.open(counterRound(LOW.config.ticks)), /this signer node holds no core/);
   assert.throws(() => lastTickOfRun(3000), /counted from the round's run length/);
-  assert.equal(lastTickOfRun(3000, LOW.config.ticks), 3000 + LOW.config.ticks - 1);
+  assert.equal(lastTickOfRun(30, LOW.config.ticks), LOW.config.ticks - 1);
+  assert.throws(() => lastTickOfRun(3000, LOW.config.ticks), /an entry joins at a tick of the round's run, 0 to/);
 });

@@ -32,6 +32,8 @@ export const ROUND_PERIOD_MS = 90000n;
 // entry LATE_JOIN_MS after its start instead of at it. The template's own entry_close - start is the series' late join
 // (0 or LATE_JOIN_MS), and every round derives the same: it is in the template's bytes, so in the series id.
 export const LATE_JOIN_MS = 45000n;
+// The last entry of a late-join round (kanban #130) is contracts.js LATE_JOIN_LAST_ENTRY_MS.
+export { LATE_JOIN_LAST_ENTRY_MS } from './contracts.js';
 const lateJoinOf = (template) => {
   const late = template.entryCloseMs - template.startTimeMs;
   return late === 0n || late === LATE_JOIN_MS ? late : null;

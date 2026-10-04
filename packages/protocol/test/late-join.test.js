@@ -176,26 +176,27 @@ test('a late run refuses a mark on inputs it never published', () => {
  * `genesis.js` writes that number into the config hash a round's network
  * commits to. So the assertion is not loosened, it is turned the right way up.
  */
+// KANBAN #130 (the owner 2026-10-04 14:30: "A later join does not extend the round. The late joiner has less time"): a late
+// entry's run ends on the round's last tick - from its join tick to BLOCK_TICKS - 1 - not BLOCK_TICKS after its join.
 test('a transcript that runs past its own end is refused, and a full one is not', () => {
-  const entry = entryAt(50);
-  const seen = transcriptBelongsToEntry(runFrom(50, entryId(entry)), entry);
+  const entry = entryAt(60);
+  const seen = transcriptBelongsToEntry(runFrom(60, entryId(entry)), entry);
 
   assert.equal(seen.ok, true, seen.why);
   assert.equal(seen.unchecked, undefined, 'the run length is still reported as unchecked');
-  assert.equal(seen.endsAt, 50 + BLOCK_TICKS - 1,
-    'the run ends BLOCK_TICKS from this entry\'s own join tick, not from tick zero');
+  assert.equal(seen.endsAt, BLOCK_TICKS - 1,
+    'the run ends on the round\'s last tick, whatever tick this entry joined at');
 
-  // A RUN OF EXACTLY THE LENGTH IS LEGAL, and one batch more is not. The
-  // helper carries THREE ticks a batch, so a whole run is BLOCK_TICKS / 3 of
-  // them and its last tick is the run's own last tick - counted rather than
-  // guessed, because a count that lands near the end measures nothing.
-  const whole = BLOCK_TICKS / 3;
-  const full = transcriptBelongsToEntry(runFrom(50, entryId(entry), whole), entry);
+  // A RUN OF EXACTLY THE LENGTH LEFT IS LEGAL, and one batch more is not. The helper carries THREE ticks a batch, so the
+  // run from tick 60 is (BLOCK_TICKS - 60) / 3 of them and its last tick is the round's own last tick.
+  const whole = (BLOCK_TICKS - 60) / 3;
+  assert.ok(Number.isInteger(whole));
+  const full = transcriptBelongsToEntry(runFrom(60, entryId(entry), whole), entry);
   assert.equal(full.ok, true, full.why);
 
-  const over = transcriptBelongsToEntry(runFrom(50, entryId(entry), whole + 1), entry);
+  const over = transcriptBelongsToEntry(runFrom(60, entryId(entry), whole + 1), entry);
   assert.equal(over.ok, false, 'a run past its own end was accepted');
-  assert.match(over.why, new RegExp(`that run ends at tick ${50 + BLOCK_TICKS - 1}`));
+  assert.match(over.why, new RegExp(`that run ends at tick ${BLOCK_TICKS - 1}`));
   assert.match(over.why, /and that transcript reaches/);
   assert.equal(toHex(entryId(entry)).length, 64);
 });

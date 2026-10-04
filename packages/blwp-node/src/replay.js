@@ -27,7 +27,7 @@ import { isMainThread, parentPort, workerData, Worker } from 'node:worker_thread
 // signer node's cores.js resolves it, and this file drives that core's adapter - it imports none. The
 // loop is the same; what a tick's events are, what a run came to and what a picture is are the
 // core's to say.
-import { lastTickOfRun } from '../../protocol/src/contracts.js';
+import { lastTickOfRun, runTicksForEntry } from '../../protocol/src/contracts.js';
 import { INPUT_WORDS } from '../../protocol/src/batch.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 
@@ -120,7 +120,7 @@ export function replay(transcript, entry, { core, seedWord, roundRandomness, mar
   if (reaches > ends)
     return {
       ok: false,
-      why: `that run ends at tick ${ends} - ${runTicks} ticks from its join at ${start} - `
+      why: `that run ends at tick ${ends} - the round's last of ${runTicks}, joined at ${start} - `
         + `and that transcript reaches ${reaches}`,
     };
 
@@ -157,7 +157,8 @@ export function replay(transcript, entry, { core, seedWord, roundRandomness, mar
   const wanted = new Set(pictures);
   const taken = new Map();
 
-  const st = a.start(seedWord, core.config, { runTicks });
+  // A LATE ENTRY'S RUN ENDS WITH THE ROUND'S (kanban #130): blockTicks - joinTick ticks, the same as every run for joinTick 0
+  const st = a.start(seedWord, core.config, { runTicks: runTicksForEntry(start, runTicks) });
   let checked = 0;
   let divergedAt = null;
 
@@ -362,7 +363,7 @@ export class RunInProgress {
     this.runTicks = Number.isInteger(core.runTicks) ? core.runTicks
       : typeof this.a.runTicks === 'function' ? this.a.runTicks(core.config) : this.a.RUN_TICKS;
     this.endsAt = lastTickOfRun(entry.joinTick, this.runTicks);
-    this.st = this.a.start(seedWord, core.config, { runTicks: this.runTicks });
+    this.st = this.a.start(seedWord, core.config, { runTicks: runTicksForEntry(entry.joinTick, this.runTicks) });
     // The last tick STEPPED. Nothing yet, so one before the join.
     this.at = entry.joinTick - 1;
     // Liquidations land BEFORE their own tick and exactly once, whether the
@@ -413,7 +414,7 @@ export class RunInProgress {
     if (tick > this.endsAt)
       return {
         ok: false,
-        why: `that run ends at tick ${this.endsAt} - ${this.runTicks} ticks from its join at `
+        why: `that run ends at tick ${this.endsAt} - the round's last of ${this.runTicks}, joined at `
           + `${this.joinTick} - and that picture asks for ${tick}`,
       };
 

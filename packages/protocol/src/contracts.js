@@ -522,19 +522,34 @@ export function runLengthIsTheCores(contract, coreTicks) {
 }
 
 /**
- * THE LAST TICK A RUN MAY CARRY, for an entry that joined at `joinTick`.
+ * THE LAST TICK A RUN MAY CARRY, for an entry that joined at `joinTick`: THE ROUND'S LAST TICK, for every entry.
  *
- * The core measures a run in ELAPSED ticks while it is LIVE, which is what
- * gives a late joiner a whole run rather than the stub left of the round
- * (0.8). Elapsed can never exceed the span of absolute ticks, so a transcript
- * whose ticks reach `joinTick + BLOCK_TICKS` carries inputs for a run that is
- * over however it ended.
+ * EVERY RUN OF A ROUND ENDS AT THE ROUND'S 82 s (kanban #130, the owner 2026-10-04 14:30: "They always end at the 82/90
+ * boundary: the run ends at 82 s, the slot at 90 s. A later join does not extend the round. The late joiner has less
+ * time"). Ticks are counted from the round's start; an entry joined at tick J carries ticks J .. blockTicks - 1, and its
+ * run is blockTicks - J (runTicksForEntry). Before, the last tick was joinTick + blockTicks - 1 - a whole run from the
+ * join - which every entry made so far met with joinTick 0, the same tick as now: old rounds replay as they did.
  */
 export function lastTickOfRun(joinTick, blockTicks) {
   // The run length is the round's (its contract's blockTicks, checked against its core) - M3 R1 R3.
   if (!Number.isInteger(blockTicks) || blockTicks < 1)
     throw new Error('a run\'s last tick is counted from the round\'s run length, and none was given');
-  return joinTick + blockTicks - 1;
+  if (!Number.isInteger(joinTick) || joinTick < 0 || joinTick >= blockTicks)
+    throw new Error(`an entry joins at a tick of the round's run, 0 to ${blockTicks - 1}, not ${joinTick}`);
+  return blockTicks - 1;
+}
+
+// THE LAST ENTRY OF A LATE-JOIN ROUND (kanban #130, the owner 2026-10-04 14:30: "Join closes when 45 s remain. A player who
+// would have 45 s or less left must not enter"): remaining is the round clock to its run's end at start + 82 s, so an entry
+// is taken only before start + 37 s; at that instant 45 s remain and it is refused. Stricter than the bytes (entry_close
+// start + 45 s), which stay as posted: no new series.
+export const LATE_JOIN_RUN_MS = 82000n;
+export const LATE_JOIN_LEFT_MS = 45000n;
+export const LATE_JOIN_LAST_ENTRY_MS = LATE_JOIN_RUN_MS - LATE_JOIN_LEFT_MS;   // 37 000 ms after the start
+
+/** THE RUN AN ENTRY GETS (kanban #130): from its join tick to the round's last tick - blockTicks - joinTick ticks. */
+export function runTicksForEntry(joinTick, blockTicks) {
+  return lastTickOfRun(joinTick, blockTicks) - joinTick + 1;
 }
 
 

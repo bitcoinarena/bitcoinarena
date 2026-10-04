@@ -217,15 +217,17 @@ test('a batch that fails part of the way through leaves no tick behind', () => {
 });
 
 
-test('a late-join round takes a new entry until its entry close + 15 s, and the same entry again after (2026-10-03)', () => {
+// KANBAN #130 (the owner 2026-10-04 14:30): the 15 s grace after entry_close is gone - a late-join round takes a new entry only
+// before start + 37 s, when more than 45 s of its run (to start + 82 s) remain; late-entry-cutoff.test.js has the rest.
+test('a late-join round takes a new entry until start + 37 s, refuses one from then, and takes the same entry again after (2026-10-04)', () => {
   let now = 0;
   const r = new Round(openStore(), () => now);
   const c = { ...contract(), entryCloseMs: contract().startTimeMs + 45000n, seriesId: new Uint8Array(32).fill(3), roundIndex: 0 };
   const rid = r.open(c);
-  now = Number(c.entryCloseMs) + 10000;                       // 10 s after the close: a join that began before it
+  now = Number(c.startTimeMs) + 5000;                         // 5 s in: a join tick of 0 is within the clock's 10 s
   const eid = r.enter(entryFor(rid));
-  now = Number(c.entryCloseMs) + 16000;                       // past the grace: a new entry is refused by name
-  assert.throws(() => r.enter({ ...entryFor(rid), worldSecret: new Uint8Array(32).fill(9) }), /entry closed at/);
+  now = Number(c.startTimeMs) + 37000;                        // 45 s of the run left: a new entry is refused by name
+  assert.throws(() => r.enter({ ...entryFor(rid), worldSecret: new Uint8Array(32).fill(9) }), /45 s or less of its run left/);
   assert.equal(toHex(r.enter(entryFor(rid))), toHex(eid), 'the same entry posted again is still taken');
 });
 

@@ -1726,7 +1726,12 @@
             // the soonest round whose entry is open, so a deposit can outlast it). The seats take an entry until the close
             // plus 15 s (ENTRY_POST_GRACE_MS); with under 5 s of that left no lock is made - the deposit stays in the player
             // wallet, and the lobby's join takes the next round of the series from it (BLWP_LOBBY_ACT.join, `missed`).
-            const lastEntryMs = Number(named.round.entryCloseMs) + 15000 - 5000;
+            // KANBAN #130: on a late-join round the seats take no entry from start + 37 s (45 s or less of the run left), so a
+            // join counts as missed once less than the join's own time (LATE_JOIN_JOIN_MS) is left before that cutoff; any
+            // other round keeps its close + 10 s.
+            const lastEntryMs = BLWPCLIENT.isLateJoinRound(named.round)
+              ? BLWPCLIENT.lateJoinLastEntryMs(named.round) - BLWPCLIENT.LATE_JOIN_JOIN_MS
+              : Number(named.round.entryCloseMs) + 15000 - 5000;
             if (thisJoin && !thisJoin.free && Number.isFinite(lastEntryMs) && Date.now() > lastEntryMs) {
               thisJoin.missed = true;
               throw new Error('the entry closed before the deposit arrived');
@@ -1823,12 +1828,20 @@
             && BigInt(lock.outIdx) === BigInt(stakeLock.outpoint.outIdx) ? e : null;
         } catch { return null; }
       })();
+      // A LATE ENTRY JOINS AT THE ROUND'S TICK (kanban #130: "A later join does not extend the round. The late joiner has
+      // less time"): a late-join round already started is entered at the first tick due LATE_JOIN_SESSION_MS from now, and
+      // the join is held to that tick's instant (BLWP_LATE_AT_MS, BLWP_LOBBY_ACT.join) so its first recorded tick is the
+      // round's own; its run is the round's run less those ticks and ends at start + 82 s with everybody's.
+      const late = keptEntry ? { joinTick: Number(keptEntry.joinTick) || 0, atMs: null } : BLWPCLIENT.lateJoinTick(named.round, Date.now());
+      window.BLWP_LATE_AT_MS = late.atMs;
+      if (late.joinTick > 0) console.log('[blwp] late join: entry at round tick ' + late.joinTick + ', its first tick due at '
+        + (late.atMs ? new Date(late.atMs).toISOString().slice(11, 23) + 'Z' : 'its reload'));
       if (keptEntry) window.BLWP_ENTRY = keptEntry;
       else window.BLWP_ENTRY = BLWPCLIENT.entryFor(
         Object.assign({}, named.round, { id: BLWPCLIENT.fromHex(named.roundIdHex) }), {
           seed, curve: window.BLWP_CURVE, playerPubkey: player.pubkey, random, ...(stake ? { stake } : {}),
           ...(claimKey ? { claimKey } : {}), ...(stakeLock ? { stakeLock } : {}),
-          donationMsat: donation.donationMsat,
+          donationMsat: donation.donationMsat, joinTick: late.joinTick,
         });
       if (keptEntry) console.log('[blwp] the entry of this round kept from before the reload');
       else if (stakeLock) {
@@ -3534,6 +3547,9 @@
                 console.error('[blwp] a join answered after it was refused by time: dropped');
                 return;
               }
+              // A LATE ENTRY IS HELD TO ITS JOIN TICK (kanban #130): released when that tick is due on the round clock.
+              if (window.BLWP_ENTRY && Number(window.BLWP_ENTRY.joinTick) > 0 && Number(window.BLWP_LATE_AT_MS) > holdUntilMs)
+                holdUntilMs = Number(window.BLWP_LATE_AT_MS);
               // A CONTINUED ROUND STARTS WITH EVERYBODY (spec: "the next run starts with everybody else at start_time(i+1)"):
               // entered now, it is "joined" for Unity - which starts the run on it - only at the round's own start.
               if (window.BLWP_ENTRY && holdUntilMs > Date.now()) {
