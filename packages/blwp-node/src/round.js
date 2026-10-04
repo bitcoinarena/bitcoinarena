@@ -12,6 +12,8 @@ import {
   encodeRoundContract, roundId, encodeEntryContract, entryId, decodeEntryContract,
   decodeRoundContract, roundWindowsAreValid, lastTickOfRun, sittingSeatsFitTheSlots } from '../../protocol/src/contracts.js';
 import { decodeInputBatch, batchTicks, batchId } from '../../protocol/src/batch.js';
+import { LATE_JOIN_LAST_ENTRY_MS } from '../../protocol/src/contracts.js';
+import { ticksForMs } from '../../protocol/src/tick.js';
 import { encodeTranscript, transcriptHash, checkTranscript, GENESIS } from '../../protocol/src/transcript.js';
 import {
   decodeCheckpoint, checkpointId, NO_PREVIOUS, splitSigned,
@@ -41,8 +43,8 @@ import { decodeRerunResult, splitSignedRerun } from '../../protocol/src/rerun.js
  * 5-of-7 unless the round's contract is the 2-slot test genesis.
  */
 export const RECEIPTS_FOR_CANONICAL = receiptsNeeded(7);
-// THE TIME A JOIN THAT BEGAN BEFORE THE ENTRY CLOSED MAY TAKE TO LOCK ITS STAKE AND POST ITS ENTRY (late join, 2026-10-03)
-export const ENTRY_POST_GRACE_MS = 15000n;
+// A LATE ENTRY'S JOIN TICK MAY TRAIL THE ROUND'S CLOCK BY THIS MUCH (kanban #130): the device's clock and the post.
+export const LATE_ENTRY_TICK_SLACK_MS = 10000n;
 
 /**
  * A STORED ROUND THIS NETWORK CANNOT PARSE IS ABSENT (RULED, the owner 2026-09-22 22:59, §23.6): "a record
@@ -366,17 +368,29 @@ export class Round {
     if (now < opensAt)
       throw new Error(
         `that round's committee forms at ${opensAt} and it is ${now}: entry opens then`);
-    // AND NOT AFTER ITS ENTRY CLOSES (the owner 2026-10-03, late join: "Joining an existing round is possible with 45 seconds
-    // in"). The door took an entry as long as the round was open - measured, V3's entry 21 s after a start that closed its
-    // entry - so a late join had no end but the round's. Now an entry new to this node is refused once the round's
-    // entry_close has passed by more than ENTRY_POST_GRACE_MS (the time a join that began before the close takes to lock
-    // its stake and post); the same entry posted again - a retry, a reload's resend, a peer's copy - is still taken.
+    // AND NOT WHEN 45 s OR LESS OF THE ROUND'S RUN REMAIN (kanban #130, the owner 2026-10-04 14:30: "Join closes when 45 s
+    // remain. A player who would have 45 s or less left must not enter and waits for the next round"). Every run of the
+    // round ends at its start + 82 s (lastTickOfRun), so an entry new to this node is refused from start + 37 s on
+    // (LATE_JOIN_LAST_ENTRY_MS): at that instant 45 s remain. This replaces the 15 s grace after entry_close (start + 45 s,
+    // which let an entry in up to start + 60 s with 22 s left); the series bytes still say start + 45 s, the door is
+    // stricter. The same entry posted again - a retry, a reload's resend, a peer's copy - is still taken.
     // Only a series round whose entry closes after its start (a late-join series): a round closing entry at its start keeps the
     // old door, where a join held to the start may land its entry a few seconds after it.
-    if (asks.seriesId instanceof Uint8Array && typeof asks.entryCloseMs === 'bigint' && asks.entryCloseMs > asks.startTimeMs
-      && now > asks.entryCloseMs + ENTRY_POST_GRACE_MS
-      && !this.db.prepare('SELECT 1 FROM entries WHERE entry_id = ?').get(Buffer.from(entryId(contract))))
-      throw new Error(`that round's entry closed at ${asks.entryCloseMs} (+ ${ENTRY_POST_GRACE_MS} ms to post) and it is ${now}`);
+    const lateJoin = asks.seriesId instanceof Uint8Array && typeof asks.entryCloseMs === 'bigint' && asks.entryCloseMs > asks.startTimeMs;
+    if (lateJoin && !this.db.prepare('SELECT 1 FROM entries WHERE entry_id = ?').get(Buffer.from(entryId(contract)))) {
+      const lastEntry = asks.startTimeMs + LATE_JOIN_LAST_ENTRY_MS;
+      if (now >= lastEntry)
+        throw new Error(`that round's entry closed at ${lastEntry} (start + ${LATE_JOIN_LAST_ENTRY_MS} ms: 45 s or less of its run left) and it is ${now}`);
+      // AND A LATE ENTRY JOINS WHERE THE ROUND IS (#130: "A later join does not extend the round. The late joiner has
+      // less time"): its join tick is no earlier than the round's ticks already gone, less LATE_ENTRY_TICK_SLACK_MS for
+      // the device's clock and the post; its run is then blockTicks - joinTick and ends with the round's.
+      if (now > asks.startTimeMs) {
+        const gone = now - asks.startTimeMs > LATE_ENTRY_TICK_SLACK_MS ? ticksForMs(now - asks.startTimeMs - LATE_ENTRY_TICK_SLACK_MS).ticks : 0n;
+        if (BigInt(contract.joinTick) < gone)
+          throw new Error(`that entry joins at tick ${contract.joinTick}, and ${now - asks.startTimeMs} ms of the round have gone: `
+            + `a late entry joins at tick ${gone} or later, and its run ends with the round's`);
+      }
+    }
 
     // AND IT PAYS WHAT THIS ROUND ASKS - THE STAKE, AND THE FEE AND THE
     // DONATION OUT OF IT (22A: inclusive, never on top).
@@ -546,7 +560,7 @@ export class Round {
       const reaches = b.firstTick + b.ticks.length - 1;
       if (reaches > last)
         throw new Error(
-          `that run ends at tick ${last} - ${blockTicks} ticks from its join at ${joinTick} - `
+          `that run ends at tick ${last} - the round's last of ${blockTicks}, joined at ${joinTick} - `
           + `and this batch reaches ${reaches}: inputs past the end are inputs for a run `
           + 'that is over');
     }

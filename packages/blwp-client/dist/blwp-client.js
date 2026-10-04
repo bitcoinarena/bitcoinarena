@@ -1901,19 +1901,34 @@ function runLengthIsTheCores(contract, coreTicks) {
 }
 
 /**
- * THE LAST TICK A RUN MAY CARRY, for an entry that joined at `joinTick`.
+ * THE LAST TICK A RUN MAY CARRY, for an entry that joined at `joinTick`: THE ROUND'S LAST TICK, for every entry.
  *
- * The core measures a run in ELAPSED ticks while it is LIVE, which is what
- * gives a late joiner a whole run rather than the stub left of the round
- * (0.8). Elapsed can never exceed the span of absolute ticks, so a transcript
- * whose ticks reach `joinTick + BLOCK_TICKS` carries inputs for a run that is
- * over however it ended.
+ * EVERY RUN OF A ROUND ENDS AT THE ROUND'S 82 s (kanban #130, the owner 2026-10-04 14:30: "They always end at the 82/90
+ * boundary: the run ends at 82 s, the slot at 90 s. A later join does not extend the round. The late joiner has less
+ * time"). Ticks are counted from the round's start; an entry joined at tick J carries ticks J .. blockTicks - 1, and its
+ * run is blockTicks - J (runTicksForEntry). Before, the last tick was joinTick + blockTicks - 1 - a whole run from the
+ * join - which every entry made so far met with joinTick 0, the same tick as now: old rounds replay as they did.
  */
 function lastTickOfRun(joinTick, blockTicks) {
   // The run length is the round's (its contract's blockTicks, checked against its core) - M3 R1 R3.
   if (!Number.isInteger(blockTicks) || blockTicks < 1)
     throw new Error('a run\'s last tick is counted from the round\'s run length, and none was given');
-  return joinTick + blockTicks - 1;
+  if (!Number.isInteger(joinTick) || joinTick < 0 || joinTick >= blockTicks)
+    throw new Error(`an entry joins at a tick of the round's run, 0 to ${blockTicks - 1}, not ${joinTick}`);
+  return blockTicks - 1;
+}
+
+// THE LAST ENTRY OF A LATE-JOIN ROUND (kanban #130, the owner 2026-10-04 14:30: "Join closes when 45 s remain. A player who
+// would have 45 s or less left must not enter"): remaining is the round clock to its run's end at start + 82 s, so an entry
+// is taken only before start + 37 s; at that instant 45 s remain and it is refused. Stricter than the bytes (entry_close
+// start + 45 s), which stay as posted: no new series.
+const LATE_JOIN_RUN_MS = 82000n;
+const LATE_JOIN_LEFT_MS = 45000n;
+const LATE_JOIN_LAST_ENTRY_MS = LATE_JOIN_RUN_MS - LATE_JOIN_LEFT_MS;   // 37 000 ms after the start
+
+/** THE RUN AN ENTRY GETS (kanban #130): from its join tick to the round's last tick - blockTicks - joinTick ticks. */
+function runTicksForEntry(joinTick, blockTicks) {
+  return lastTickOfRun(joinTick, blockTicks) - joinTick + 1;
 }
 
 
@@ -2597,7 +2612,7 @@ function transcriptBelongsToEntry(transcript, entry, blockTicks) {
   if (reaches > ends)
     return {
       ok: false,
-      why: `that run ends at tick ${ends} - ${blockTicks} ticks from its join at `
+      why: `that run ends at tick ${ends} - the round's last of ${blockTicks}, joined at `
         + `${entry.joinTick} - and that transcript reaches ${reaches}`,
     };
 
@@ -16635,6 +16650,10 @@ class Client {
    */
   setRound({ roundId, entryId, blockTicks }) {
     this.where = { roundId, entryId };
+    // A LATE ENTRY'S FIRST TICK IS ITS JOIN TICK (kanban #130): the round's tick it joined at, so its run ends with the round's.
+    // An entry at tick 0 starts where it always did.
+    const joinTick = this.joinedEntry && Number.isInteger(this.joinedEntry.joinTick) ? this.joinedEntry.joinTick : 0;
+    if (joinTick > 0) this.nextTick = joinTick;
     this.maxHold = blockTicks | 0;
     this.chunk = Math.min(600, this.maxHold || 600);
     this.hold = [];
@@ -18532,6 +18551,57 @@ function encodeLobbyListing({ roundId, nodePubkey, nowMs, phase, assignedHere, j
 /** What a signer node signs (BIP-340, its node key) for one listed round. */
 const lobbyListingId = (listing) => taggedHash(TAG.lobbyListing, encodeLobbyListing(listing));
 
+// ---- blwp-client/src/late-join.js
+/**
+ * A LATE JOIN ENDS WITH ITS ROUND (kanban #130, the owner 2026-10-04 14:30): "Rounds are 90 s. They always end at the 82/90
+ * boundary: the run ends at 82 s, the slot at 90 s. A later join does not extend the round. The late joiner has less time.
+ * Join closes when 45 s remain. A player who would have 45 s or less left must not enter and waits for the next round."
+ *
+ * A late-join series round says entry_close = start + 45 s in its bytes; the seats are stricter and take a new entry only
+ * before start + 37 s (LATE_JOIN_LAST_ENTRY_MS - 45 s left of a run ending at start + 82 s). The page is stricter again by
+ * the time a join takes, so a join it offers reaches a seat before that cutoff. A late entry names the round tick it joins
+ * at; its run is the round's run less those ticks, and it ends on the round's last tick with everybody else's.
+ */
+
+
+// FROM THE ENTRY TO THE FIRST RECORDED TICK: the session opens (the round, the entry, the socket - 1-2 s measured) while
+// the page holds the join to its join tick.
+const LATE_JOIN_SESSION_MS = 3000;
+// THE TIME A JOIN TAKES from PLAY (or from a deposit landing) to its entry at a seat: the lock and the post.
+const LATE_JOIN_JOIN_MS = 5000;
+
+/** A round of a series whose entry closes after its start: a late-join round. */
+const isLateJoinRound = (c) => !!c && c.seriesId instanceof Uint8Array
+  && c.entryCloseMs !== undefined && c.startTimeMs !== undefined && BigInt(c.entryCloseMs) > BigInt(c.startTimeMs);
+
+/** The seats' last instant for a new entry: start + 37 s for a late-join round (refused at and after it). */
+const lateJoinLastEntryMs = (c) => Number(BigInt(c.startTimeMs) + LATE_JOIN_LAST_ENTRY_MS);
+
+/**
+ * UNTIL WHEN THE PAGE OFFERS A ROUND: a late-join round until the seats' cutoff less the time a join takes; any other
+ * round until its contract's entry close.
+ */
+function entryOpenUntilMs(c) {
+  const close = Number(c.entryCloseMs);
+  return isLateJoinRound(c) ? Math.min(close, lateJoinLastEntryMs(c) - LATE_JOIN_JOIN_MS) : close;
+}
+
+/**
+ * THE TICK A JOIN MADE AT `nowMs` ENTERS AT, and the instant that tick is due on the round clock. 0 (and no instant) for
+ * a round not yet started or not a late-join round; else the first whole tick at or after now + LATE_JOIN_SESSION_MS, so
+ * the page holds the join until `atMs` and its first recorded tick is the round's own.
+ */
+function lateJoinTick(c, nowMs = Date.now(), leadMs = LATE_JOIN_SESSION_MS) {
+  if (!isLateJoinRound(c)) return { joinTick: 0, atMs: null };
+  const start = BigInt(c.startTimeMs);
+  const gone = BigInt(Math.ceil(nowMs + leadMs)) - start;
+  if (gone <= 0n) return { joinTick: 0, atMs: null };
+  const t = ticksForMs(gone);
+  const j = t.ticks + (t.exact ? 0n : 1n);
+  const m = msForTicks(j);
+  return { joinTick: Number(j), atMs: Number(start + m.ms + (m.exact ? 0n : 1n)) };
+}
+
 // ---- blwp-client/src/lobby.js
 // THE LOBBY, AS THE PAGE READS IT (M3.3-34, §25).
 //
@@ -18560,6 +18630,7 @@ const lobbyListingId = (listing) => taggedHash(TAG.lobbyListing, encodeLobbyList
 // AND WHO IS JOINED, BY THE NAMES THEY CHOSE: each signer node serves the name records
 // its joined players signed (lobby-name.js); a row carries the ones that check
 // (identity.js `checkedNames`) - never a key in place of a name.
+
 
 
 
@@ -18735,7 +18806,9 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
       wallet: pays ? 'federation-lock' : 'none',
       stakeMsat: contract.stakeMsat,
       committeeTimeMs: Number(contract.committeeTimeMs), startTimeMs: Number(contract.startTimeMs),
-      entryCloseMs: Number(contract.entryCloseMs),
+      // A LATE-JOIN ROUND IS OFFERED ONLY WHILE A JOIN STILL REACHES A SEAT BEFORE 45 s OF ITS RUN REMAIN (kanban #130): its
+      // close here is start + 37 s less the join's time, not the bytes' start + 45 s - the row, its "closes in" and the pick.
+      entryCloseMs: entryOpenUntilMs(contract),
       said: counts,
       signerNodesAgree: agreeing.size, needed, signerNodes: signerNodes.size,
       joinable: phase === 'open' && agreeing.size >= needed,
@@ -19232,6 +19305,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          lobbyQuery: lobbyQuery, fetchLobby: fetchLobby, lobbyLine: lobbyLine, lobbyJoinSearch: lobbyJoinSearch,
          SIGNER_ANSWER_MS: SIGNER_ANSWER_MS,
          lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, lobbyKeepJoined: lobbyKeepJoined, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
+         isLateJoinRound: isLateJoinRound, lateJoinTick: lateJoinTick, runTicksForEntry: runTicksForEntry, entryOpenUntilMs: entryOpenUntilMs, lateJoinLastEntryMs: lateJoinLastEntryMs, LATE_JOIN_JOIN_MS: LATE_JOIN_JOIN_MS,
          nextRoundAfter: nextRoundAfter, nextRoundView: nextRoundView, joiningNextRoundIn: joiningNextRoundIn,
          EXIT_GAME: EXIT_GAME, RESULT_CARD_MS: RESULT_CARD_MS,
          dailyLobbySearch: dailyLobbySearch,

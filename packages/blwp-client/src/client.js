@@ -1726,6 +1726,10 @@ export class Client {
    */
   setRound({ roundId, entryId, blockTicks }) {
     this.where = { roundId, entryId };
+    // A LATE ENTRY'S FIRST TICK IS ITS JOIN TICK (kanban #130): the round's tick it joined at, so its run ends with the round's.
+    // An entry at tick 0 starts where it always did.
+    const joinTick = this.joinedEntry && Number.isInteger(this.joinedEntry.joinTick) ? this.joinedEntry.joinTick : 0;
+    if (joinTick > 0) this.nextTick = joinTick;
     this.maxHold = blockTicks | 0;
     this.chunk = Math.min(600, this.maxHold || 600);
     this.hold = [];
