@@ -2438,7 +2438,14 @@ receipts (13A)". The body is a bundle of four length-prefixed parts:
 - the objector's BIP-340 signature over its id;
 - the canonical transcript, as `GET /canonical` hands it out (batches and
   signed marks: the object `transcript_hash` names);
-- the signed receipts, as `GET /receipts` hands them out.
+- the signed receipts, as `GET /receipts` hands them out;
+- and, when the transcript carries no batches, a fifth part: the run's
+  inputs, as `GET /replay/transcript` hands them out. Measured live on
+  the free pair (2026-10-04): the live client sends its ticks as play
+  frames, so a live run's canonical transcript is its receipted marks
+  over no batches. The replay must reproduce every receipted mark's
+  state hash, which binds those inputs to the run. Inputs that reach
+  past the last receipted mark are refused.
 
 The seat checks it on its own evidence before anything is stored
 (`objection-check.js`). The checks run in this order, and each refusal

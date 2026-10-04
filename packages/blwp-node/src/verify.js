@@ -1179,7 +1179,7 @@ export class Verifier {
       committee: this.round.signerNodes(roundIdBytes), signedResultId, core, roundRandomness: beacon.hash,
       verify: (sig, msg, key) => verifyKept(sig, msg, key),
       replayRun: (form, entry, options) => this.pool.submit({ core, key: `${hex(roundIdBytes)}:${hex(entryIdBytes)}:objection:${++objectionJobs}`,
-        objected: true, transcript: form, source: null, entry, options: { roundRandomness: options.roundRandomness } }),
+        objected: true, transcript: form, source: null, entry, options: { roundRandomness: options.roundRandomness, marks: options.marks || [] } }),
     });
   }
 
