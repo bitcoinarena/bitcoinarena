@@ -1693,8 +1693,10 @@ test('an untold core hunts exactly as the recordings do', () => {
   // Zero is the default and the recordings were taken at it, so a core nobody
   // has spoken to must be bit-identical to one told an empty bed.
   const quiet = init(0x5eed1234);
+  // AN EMPTY BED IS ROOM 0 (the owner 2026-10-04 08:54: C is the bed fill, init empty): a load that carries no room is a
+  // stored one, and keeps 0.7 - that is not an empty bed.
   const told = init(0x5eed1234);
-  submitLoad(told, 0, 0);
+  submitLoad(told, 0, 0, 0);
   for (let t = 0; t < 600; t++) { step(quiet, 40000, 0, 0, 0, 0); step(told, 40000, 0, 0, 0, 0); }
   assert.equal(hash(quiet), hash(told));
 });
@@ -1765,8 +1767,12 @@ test('heat multiplies the shell and the arithmetic is the C#s', () => {
 // ---------------------------------------------------------------------------
 
 /** Drive east at full throttle for a while and hand back the state. */
+// A BED 0.7 FULL, declared as a load of no fee (heat 0, where the recordings were taken): 0.7 of the 6 m bed, so C is
+// the 45875 every one of these drives was measured at before C became the bed fill (the owner 2026-10-04 08:54).
+const BED_07 = 275250;
 function driven(ticks, practice = 1) {
   const st = init(0x5eed1234);
+  submitLoad(st, 0, 0, BED_07);
   for (let t = 0; t < ticks; t++) step(st, ONE, 0, 0, 0, practice);
   return st;
 }
@@ -1863,6 +1869,7 @@ test('the seam banks more than the quiet lane for the same ground made good', ()
   const TARGET = 60 * ONE, STEP = Math.round(12 * ONE / 60);
   const lane = (z) => {
     const st = init(0x5eed1234);
+    submitLoad(st, 0, 0, BED_07);
     const s = st.i32;
     let ticks = 0, x = s[O_TRUCK + T_X];
     while (s[O_TRUCK + T_X] < TARGET && ticks < 5400) {

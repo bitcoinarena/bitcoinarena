@@ -499,8 +499,8 @@ export class Round {
     const putLiq = this.db.prepare(
       'INSERT OR IGNORE INTO liquidations (round_id, entry_id, tick, size) VALUES (?, ?, ?, ?)');
     const putLoad = this.db.prepare(
-      'INSERT OR IGNORE INTO loads (round_id, entry_id, tick, fee_sats, btc_hund) '
-      + 'VALUES (?, ?, ?, ?, ?)');
+      'INSERT OR IGNORE INTO loads (round_id, entry_id, tick, fee_sats, btc_hund, room) '
+      + 'VALUES (?, ?, ?, ?, ?, ?)');
     const putSample = this.db.prepare(
       'INSERT OR IGNORE INTO samples (round_id, entry_id, tick, price) VALUES (?, ?, ?, ?)');
     const putTape = this.db.prepare(
@@ -578,8 +578,8 @@ export class Round {
         fresh += put.run(b.roundId, b.entryId, at[i], words).changes;
       }
       for (const [tick, size] of b.liquidations) putLiq.run(b.roundId, b.entryId, tick, size);
-      for (const [tick, fee, btc] of (b.loads || []))
-        putLoad.run(b.roundId, b.entryId, tick, fee, btc);
+      for (const [tick, fee, btc, room] of (b.loads || []))
+        putLoad.run(b.roundId, b.entryId, tick, fee, btc, room === undefined ? null : room);
       for (const [tick, price] of (b.samples || []))
         putSample.run(b.roundId, b.entryId, tick, price);
       for (const [tick, ...prices] of (b.tapes || []))
@@ -1278,7 +1278,7 @@ export class Round {
     // six ticks would get none of them and draw the truck at heat zero, which
     // is the fault letter 40 exists to close. There is a handful in a run.
     const loads = this.db.prepare(
-      'SELECT tick, fee_sats, btc_hund FROM loads WHERE round_id = ? AND entry_id = ? ORDER BY tick')
+      'SELECT tick, fee_sats, btc_hund, room FROM loads WHERE round_id = ? AND entry_id = ? ORDER BY tick')
       .all(roundIdBytes, entryIdBytes);
     // the price samples from `from` on, like the liquidations: each belongs to its own tick
     const samples = this.db.prepare(
@@ -1290,7 +1290,7 @@ export class Round {
       from,
       ticks: ticks.map((r) => ({ tick: r.tick, words: [...new Int32Array(new Uint8Array(r.words).buffer)] })),
       liquidations: liq.map((r) => [r.tick, r.size]),
-      loads: loads.map((r) => [r.tick, r.fee_sats, r.btc_hund]),
+      loads: loads.map((r) => (r.room === null || r.room === undefined ? [r.tick, r.fee_sats, r.btc_hund] : [r.tick, r.fee_sats, r.btc_hund, r.room])),
       samples: samples.map((r) => [r.tick, r.price]),
     };
   }

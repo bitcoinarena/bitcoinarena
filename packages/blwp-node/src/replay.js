@@ -435,9 +435,9 @@ export class RunInProgress {
     // ticks and the node serves the loads WHOLE beside them, so the one
     // declared at roll-out is in every slice - and this is what stops it being
     // applied again on each.
-    for (const [at, fee, btc] of transcript.loads || [])
+    for (const [at, ...load] of transcript.loads || [])    // [fee, btc] or [fee, btc, room] (the bed fill, C)
       if (at > this.at && !this.loadSeen.has(at)) {
-        this.loadDue.set(at, [fee, btc]); this.loadSeen.add(at);
+        this.loadDue.set(at, load); this.loadSeen.add(at);
       }
 
     // THE PRICE SAMPLES, ONCE EACH, like the liquidations: each moves the tape at its own tick.
@@ -452,7 +452,7 @@ export class RunInProgress {
     // so each lands once, whichever slice brought it.
     const events = this.a.eventsOf({
       liquidations: [...this.due],
-      loads: [...this.loadDue].map(([at, [fee, btc]]) => [at, fee, btc]),
+      loads: [...this.loadDue].map(([at, load]) => [at, ...load]),
       samples: [...this.sampleDue],
       tapes: [...this.tapeDue].map(([at, prices]) => [at, ...prices]),
     });

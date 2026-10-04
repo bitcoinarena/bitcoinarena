@@ -274,8 +274,10 @@ public class ArrivalCardWordsTests
         StringAssert.Contains("public float Exposure => CoreScoreFactors.Exposure(Blwp.BlwpCore.ExposureWord);", src);
     }
 
-    // THE LOADOUT PANEL'S LOAD IS THE CORE'S C (RULED 2026-09-26, A): the same C the card prints, not the bed fill. On
-    // this core S_CARGO is 45875 from init, so the panel reads x0.70000 whatever is loaded; the bed fill is TRUCK FULL %.
+    // THE LOADOUT PANEL'S LOAD IS THE CORE'S C (RULED 2026-09-26, A): the same C the card prints, never Unity's float bed
+    // fill. Since C is the bed fill (the owner 2026-10-04 08:54) the core sets it from the load's room at ROLL OUT, and before
+    // it the panel prints the C this bed would set - the CORE's fill of the bed's vsizes (cargo.js roomFor), asked of the
+    // page (BlwpCore.BedFill), still on the card's grid.
     [Test]
     public void TheLoadoutsLoadIsTheCoresCargoFactorNotTheBedFill()
     {
@@ -283,7 +285,9 @@ public class ArrivalCardWordsTests
         Assert.AreEqual("0.70000", CoreScoreFactors.Cargo(45875).ToString("0.00000", CultureInfo.InvariantCulture),
             "the panel and the card print C to the same decimals");
         string src = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "Scripts/Cargo/LoadoutPanel.cs"));
-        StringAssert.Contains("string load = LoadLabel(Blwp.BlwpCore.CargoWord);", src);
+        StringAssert.Contains("_fillWord = Blwp.BlwpCore.BedFill(vs);", src, "the preview is the core's fill of the bed");
+        StringAssert.Contains("string load = LoadLabel(_fillWord);", src);
+        StringAssert.Contains("Blwp.BlwpCore.SubmitLoad(bay.FeeCarried, bay.BtcHundredths, bay.VsizeList)", src, "the load carries the bed's vsizes");
         StringAssert.DoesNotContain("$\"×{Mathf.Clamp01(bay.Fill):0.00}\"", src, "the bed fill is printed as the LOAD factor again");
         StringAssert.Contains("of {CargoBay.BtcLimit:0.##} BTC", src, "the gauge reads the BTC on board against the truck's limit");
     }

@@ -1905,9 +1905,12 @@ export class Client {
    *
    * Refused once the run has ended, like every other outbound thing here.
    */
-  submitLoad(feeSats, btcHundredths) {
+  submitLoad(feeSats, btcHundredths, roomUsed) {
     if (this.ended || !this.where) return false;
-    this.loads.push([this.offered, feeSats | 0, btcHundredths | 0]);
+    // AND THE ROOM THE BED TAKES when the page has one (the owner 2026-10-04 08:54: the cargo factor C is the bed fill), so
+    // the signer nodes' replay sets the same C; a load without one crosses as before
+    const room = roomUsed === undefined || roomUsed === null ? [] : [roomUsed | 0];
+    this.loads.push([this.offered, feeSats | 0, btcHundredths | 0, ...room]);
     return true;
   }
 

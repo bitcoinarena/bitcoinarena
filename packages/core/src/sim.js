@@ -43,7 +43,7 @@ import { mapSolids } from './rules/map.js';
 import { CANDLES, CL_WORDS, candleLayout, candleHeightAt, writeCandleView, levelled } from './rules/candles.js';
 import { scrollOf, FIELD_SLOT } from './rules/frontline.js';
 import { ARMOUR_WEST, ARMOUR_EAST, RIFLE_STANDOFF, rifleStandoff } from './rules/army.js';
-import { heat as heatForLoad } from './rules/cargo.js';
+import { heat as heatForLoad, fill as bedFill } from './rules/cargo.js';
 import { stepUnit, standingStill, separatePair, clearOfTruck, runOver, truckSpeed, threatAt, pickTarget, pickRifleTarget, riflePost, RELOAD_MIN, RELOAD_SPAN, DAMAGE_MIN, DAMAGE_SPAN, BACKOFF_RANGE, HIT_PER_MIL, ARMOUR_RANGE, RIFLE_RANGE, RIFLE_HIT_PER_MIL, RIFLE_RELOAD_TICKS, RIFLE_RELOAD_TICKS_SPAN, RIFLE_LOOK_TICKS, RIFLE_LOOK_TICKS_SPAN, RIFLE_HP, RIFLE_DAMAGE, hullDownHold, WRECK_R, COURIER_RANGE, COURIER_DAMAGE_MIN, COURIER_DAMAGE_SPAN, COURIER_RIFLE_MIN, COURIER_RIFLE_SPAN, courierReach, outranksTheFoe, shellForHeat } from './rules/army.js';
 import { accrue, earning, scoreOf, frontWeight, APRON_RADIUS } from './rules/score.js';
 import { outcome, RUN_LIVE, RUN_DELIVERED, RUN_WRECKED, RUN_MISSED, BLOCK_TICKS, runTicksIsValid } from './rules/gate.js';
@@ -779,11 +779,13 @@ export function init(seedWord, { runTicks = BLOCK_TICKS } = {}) {
   // because a draw here would shift every stream after it and draw order is
   // protocol; C# takes it from `Random.value` once at Awake.
   s[O_TRUCK + T_FLAGS] = (Math.imul(seedWord | 0, 2654435761) >>> 31) & 1;
-  s[O_TRUCK + T_CARGO] = 45875;             // 0.7 of a bed
+  // AN EMPTY BED UNTIL A LOAD IS DECLARED (the owner 2026-10-04 08:54: C is how full the truck is, not always 0.7):
+  // submitLoad writes the fill, from the room the load carries.
+  s[O_TRUCK + T_CARGO] = 0;
   // Armour tactics from the seed, before any unit moves (rules/tactics.js).
   initTactics(s, O_TACTICS, seedWord);
   s[O_SCORE + S_BESTX] = START_X;
-  s[O_SCORE + S_CARGO] = 45875;
+  s[O_SCORE + S_CARGO] = 0;
   s[O_SCORE + S_STATE] = RUN_LIVE;
 
   st.tape = tape(seedWord | 0);
@@ -2283,10 +2285,23 @@ export const frontAt = (st, x) => seamAtX(st, x | 0);
  *
  * Sats and hundredths of a BTC, both clamped by the rule itself.
  */
-export function submitLoad(st, feeSats, btcHundredths) {
+export function submitLoad(st, feeSats, btcHundredths, roomUsed) {
   st.i32[O_SCORE + S_HEAT] = heatForLoad(feeSats | 0, btcHundredths | 0);
+  // THE CARGO FACTOR C IS THE BED FILL (the owner 2026-10-04 08:54): room used over the bed, 0 empty .. ONE full - the room
+  // is the sum of cargo.js roomFor over what went on the bed, and it crosses in the load, so a replay sets the same C.
+  // Not the heat, and not tied to S_HEAT. A load that carries no room (one stored before the room crossed) keeps the
+  // 0.7 of a bed every run had until now, so a stored run does not move.
+  const c = roomUsed === undefined || roomUsed === null ? LEGACY_CARGO : bedFill(Math.max(0, roomUsed | 0));
+  st.i32[O_SCORE + S_CARGO] = c;
+  st.i32[O_TRUCK + T_CARGO] = c;
   return true;
 }
+
+/** The cargo factor of a load that carries no room: 0.7 of a bed, what C was for every run before the fill. */
+export const LEGACY_CARGO = 45875;
+
+/** The cargo factor the run is scored at, 0..ONE: the bed fill of the declared load. */
+export const cargoOf = (st) => st.i32[O_SCORE + S_CARGO];
 
 /** What the core is currently hunting this load at, 0..ONE. */
 export const heatOf = (st) => st.i32[O_SCORE + S_HEAT];
