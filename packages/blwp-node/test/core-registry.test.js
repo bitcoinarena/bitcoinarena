@@ -54,11 +54,12 @@ test('the registry resolves a round by both hashes, holds the truck always, and 
   assert.equal(got.core, TRUCK);
   const other = { name: 'a second title', hash: 'ab'.repeat(32), url: 'file:///nowhere', adapter: TRUCK.adapter, configs: new Map([['cd'.repeat(32), {}]]) };
   const both = installedCores([other]);
-  // THE TRUCK, THE TRUCK BEFORE THE 82/90 FORK (its old hash, the same core held to 10800), and the operator's core.
-  assert.deepEqual([...both.keys()].sort(), [TRUCK.hash, TRUCK_BEFORE_FORK_HASH, other.hash].sort());
+  // THE TRUCK, 2069b4c2 KEPT BESIDE IT (path A, 2026-10-04), THE TRUCK BEFORE THE 82/90 FORK (its old hash: 2069b4c2 held
+  // to 10800), and the operator's core.
+  assert.deepEqual([...both.keys()].sort(), [TRUCK.hash, '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e', TRUCK_BEFORE_FORK_HASH, other.hash].sort());
   const old = coreForRound({ simCoreHash: Uint8Array.from(Buffer.from(TRUCK_BEFORE_FORK_HASH, 'hex')), configHash: TRUCK_CONFIG_HASH, blockTicks: 10800 });
   assert.equal(old.ok, true, old.why);
-  assert.deepEqual([old.core.adapter === TRUCK.adapter, old.core.fixedRunTicks, old.runTicks], [true, 10800, 10800]);
+  assert.deepEqual([old.core.hash === TRUCK_BEFORE_FORK_HASH, old.core.fixedRunTicks, old.runTicks], [true, 10800, 10800]);
   assert.equal(coreForRound({ simCoreHash: Uint8Array.from(Buffer.from(other.hash, 'hex')), configHash: Uint8Array.from(Buffer.from('cd'.repeat(32), 'hex')) }, both).core, other);
   assert.equal(coreForRound({ simCoreHash: Uint8Array.from(Buffer.from(other.hash, 'hex')), configHash: TRUCK_CONFIG_HASH }, both).ok, false,
     'a core was run under a config it does not carry');
@@ -80,4 +81,31 @@ test('a result names the core that replayed the run, and one whose replay ran an
   assert.match(other.why, /that run was replayed under core abababababababab, not the core/);
   const unnamed = resultFrom({ answer: { ...answer, coreHash: undefined }, contract, entry, transcript, entryId: b32(9), nodePubkey: b32(8) });
   assert.equal(unnamed.ok, false, 'a replay that names no core was signed');
+});
+
+// 2069b4c2 KEPT INSTALLED BESIDE THE TRUCK (the owner 2026-10-04, path A): every round published before C became the bed
+// fill and T sank from 20 s names it, and is replayed by it - its frozen source, not the truck that moved on. The pre-fork
+// core d15c39bb rides on it too: 2069b4c2 is the core that ran those rounds hash for hash at 10800 ticks.
+import { TRUCK_2069, TRUCK_2069_HASH } from '../src/cores.js';
+import { CORE as FROZEN_2069 } from '../../core/frozen/2069b4c2/adapter.js';
+import { CORE as NOW } from '../../core/src/adapter.js';
+
+test('2069b4c2 rounds are replayed by the frozen 2069b4c2 core, the pre-fork core by it held to 10800, the rest by the truck', () => {
+  const at = (hex) => coreForRound({ simCoreHash: Uint8Array.from(Buffer.from(hex, 'hex')), configHash: TRUCK_CONFIG_HASH, blockTicks: 4920 });
+  const old = at(TRUCK_2069_HASH);
+  assert.equal(old.ok, true, old.why);
+  assert.equal(old.core.adapter, FROZEN_2069);
+  assert.equal(old.core, TRUCK_2069);
+  const pre = at(TRUCK_BEFORE_FORK_HASH);
+  assert.equal(pre.core.adapter, FROZEN_2069, 'the pre-fork core is still the truck that moved on');
+  assert.equal(pre.core.fixedRunTicks, FROZEN_2069.RUN_TICKS);
+  const now = coreForRound({ simCoreHash: TRUCK_CORE_HASH, configHash: TRUCK_CONFIG_HASH, blockTicks: 4920 });
+  assert.equal(now.core.adapter, NOW);
+  assert.notEqual(TRUCK.hash, TRUCK_2069_HASH);
+  // and they differ where the rule moved: the same load and drive scores differently under the two
+  const drive = (core, loads) => { const st = core.start(0x5eed1234); const ev = core.eventsOf({ loads });
+    for (let t = 0; t < 1500; t++) { ev.before(st, t); core.step(st, [65536, 0, 0, 0, 1]); } return core.result(st); };
+  const a = drive(FROZEN_2069, [[0, 0, 0]]), b = drive(NOW, [[0, 0, 0, 0]]);
+  assert.ok(a.score > 0, `the 2069b4c2 drive scored ${a.score}`);
+  assert.equal(b.score, 0, 'an empty bed on the current core scores nothing');
 });

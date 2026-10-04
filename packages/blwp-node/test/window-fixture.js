@@ -45,7 +45,14 @@ import { FIELD, scalarFrom32 } from '../../protocol/src/shares.js';
 import {
   splitSignedResult, decodePlayerResult, encodePlayerResult, joinSignedResult, resultId,
 } from '../../protocol/src/result.js';
-import { init, step } from '../../core/src/sim.js';
+import { init, step, submitLoad } from '../../core/src/sim.js';
+
+// THE SCRIPTED PLAYERS' BED (C is the bed fill since 2026-10-04: an undeclared load is an empty bed, and an empty bed
+// scores 0): declared at tick 0 as a load of no fee and no BTC - heat 0, where these tapes were recorded - and 0.7 of the
+// 6 m bed, so C is the 45875 they were measured at. In the batch, so the signer nodes' replay sets the same C.
+export const FIXTURE_ROOM = 275250;
+export const loaded = (st) => { submitLoad(st, 0, 0, FIXTURE_ROOM); return st; };
+export const bedFrom = (from) => (from === 0 ? [[0, 0, 0, FIXTURE_ROOM]] : []);
 import { hash as stateHash } from '../../core/src/state.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
@@ -104,7 +111,7 @@ const LEAD_M = 20, STEER_GAIN = 6;
 export const wordsAt = (t) => {
   while (TAPE.length <= t) {
     if (_tapeState === null)
-      _tapeState = init(seedWordForEntry({ playerPubkey: WINNER.key, worldSecret: WINNER.worldSecret, joinTick: 0 }, RANDOMNESS));
+      _tapeState = loaded(init(seedWordForEntry({ playerPubkey: WINNER.key, worldSecret: WINNER.worldSecret, joinTick: 0 }, RANDOMNESS)));
     const p = CORE.picture(_tapeState);
     const x = p.x / 65536, z = p.z / 65536, heading = p.heading / 65536;
     let off = Math.atan2(GATE_X / 65536 + LEAD_M - x, -z) / (2 * Math.PI) - heading;
@@ -188,7 +195,7 @@ export function playFor(who, randomness) {
  * Past the run's end the words are idle; the tape is always `ticks` long.
  */
 export function drivenTape(seedWord, ticks) {
-  const st = init(seedWord);
+  const st = loaded(init(seedWord));
   const tape = [];
   let ended = null;
   // THE CORE IS NOT STEPPED PAST THE RUN'S END: a failed world costs only its own ticks (a search runs on the daemons'
@@ -313,9 +320,9 @@ export async function joinAndPlay(daemons, c, rid, who, needed, { direct = false
   }
   const eid = entryId(entry);
   const input = { roundId: rid, entryId: eid, previousHash: GENESIS_HASH, firstTick: 0,
-    ticks: Array.from({ length: who.ticks }, (_, t) => playFor(who, randomness).words(t)), liquidations: [] };
+    ticks: Array.from({ length: who.ticks }, (_, t) => playFor(who, randomness).words(t)), liquidations: [], loads: bedFrom(0) };
   // THE SEED IS THE ROUND'S BEACON when the caller names it (a bonded chain's), the fixtures' RANDOMNESS otherwise.
-  const st = init(seedWordForEntry(entry, randomness || RANDOMNESS));
+  const st = loaded(init(seedWordForEntry(entry, randomness || RANDOMNESS)));
   for (let t = 0; t < who.ticks; t++) step(st, ...playFor(who, randomness).words(t));
   const mark = { roundId: rid, entryId: eid, tick: who.ticks,
     stateHash: Uint8Array.from(stateHash(st).match(/../g).map((x) => parseInt(x, 16))),

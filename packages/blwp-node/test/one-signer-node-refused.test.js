@@ -39,6 +39,7 @@ import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../protocol/src/checkpoint.js';
 import { decodePlayerResult, splitSignedResult } from '../../protocol/src/result.js';
 import { init, step } from '../../core/src/sim.js';
+import { loaded, bedFrom } from './window-fixture.js';
 import { hash as stateHash } from '../../core/src/state.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { netStakeMsat } from '../../protocol/src/payout.js';
@@ -138,11 +139,11 @@ async function joinAndBuild(w, { lockAt = ['a', 'b'] } = {}) {
   }
   const sign = (m) => joinSigned(encodeCheckpoint(m), ed25519.sign(checkpointId(m), session));
   const batchOf = (from, to, previousHash) => ({ roundId: w.rid, entryId: eid, previousHash, firstTick: from,
-    ticks: Array.from({ length: to - from }, (_, t) => play.words(from + t)), liquidations: [] });
+    ticks: Array.from({ length: to - from }, (_, t) => play.words(from + t)), liquidations: [], loads: bedFrom(from) });
   const markOf = (tick, h, input, previousHash) => ({ roundId: w.rid, entryId: eid, tick, stateHash: h,
     inputChainHash: batchId(input), previousHash, sessionPubkey: entry.sessionPubkey });
   const chain = (ticks) => {
-    const st = init(seedWordForEntry(entry, w.randomness || RANDOMNESS));
+    const st = loaded(init(seedWordForEntry(entry, w.randomness || RANDOMNESS)));
     const out = [];
     let from = 0; let prevBatch = GENESIS_HASH; let prevMark = NO_PREVIOUS; let first = null;
     for (const to of ticks) {

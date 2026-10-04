@@ -747,7 +747,31 @@
        module build across four engines - see packages/core/README.md. It is a
        plain script rather than a module because Unity's jslib runs in the page
        realm and cannot import. -->
+  <!-- TWO CORES, AND THE ROUND SAYS WHICH (the owner 2026-10-04, path A): every round names its core by hash, and a run
+       is played on that core or its checkpoints fail from tick 0. 2069b4c2 (C 0.7, par 65 s) is the core of every round
+       published before C became the bed fill and T sank from 20 s; blwp-core.js is the core after it, and the default.
+       The join hands the round's hash to BLWP_USE_CORE (below), which puts that core under the jslib before the round's
+       world is made. Each bundle defines BLWP; the first is kept by its hash before the second is loaded. -->
+  <script src="blwp-core-2069b4c2.js"></script>
+  <script>window.BLWP_CORES = { '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e': BLWP };</script>
   <script src="blwp-core.js"></script>
+  <script>
+    window.BLWP_CORES['de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8'] = BLWP;
+    window.BLWP_CORE_DEFAULT = 'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8';
+    // THE ROUND'S CORE, BY ITS HASH: the global the jslib's BlwpInit reads, and the core under Unity's running state if
+    // Unity is up - its next init (the round's world) is then that core's. A hash this page carries no core for is refused.
+    window.BLWP_USE_CORE = function (hash) {
+      var hex = typeof hash === 'string' ? hash.toLowerCase()
+        : Array.prototype.map.call(hash || [], function (x) { return ('0' + x.toString(16)).slice(-2); }).join('');
+      var core = window.BLWP_CORES[hex];
+      if (!core) return { ok: false, why: 'that round runs core ' + hex.slice(0, 16) + '..., and this page carries no such core - '
+        + 'a run on another core fails its checkpoints from the first tick' };
+      window.BLWP = core; window.BLWP_ROUND_CORE = hex;
+      var b = window.unityInstance && window.unityInstance.Module && window.unityInstance.Module.blwp;
+      if (b && b.core !== core) { b.core = core; console.log('[blwp] core ' + hex.slice(0, 8) + ' for this round'); }
+      return { ok: true, hex: hex };
+    };
+  </script>
 
   <!-- THE BLWP CLIENT, beside the core and never inside it.
        The core is what the game is drawn from; the client is what the player's
@@ -1303,6 +1327,17 @@
       if (!named) return;
 
       window.BLWP_ROUND = named.round;
+      // THE ROUND'S OWN CORE, before anything of the round is made (path A): a round on a core this page does not carry is
+      // refused here by name rather than played on the wrong one
+      {
+        const core = window.BLWP_USE_CORE ? window.BLWP_USE_CORE(named.round.simCoreHash) : { ok: true };
+        if (!core.ok) {
+          window.BLWP_JOIN_REFUSED = core.why;
+          if (window.BLWP_JOIN) Object.assign(window.BLWP_JOIN, { state: 'refused', why: core.why });
+          console.error('[blwp] join refused: ' + window.BLWP_JOIN_REFUSED);
+          return;
+        }
+      }
       // THE ROUND THE PLAYER WAS GIVEN, AS THIS JOIN READ IT FROM THE ADDRESS (the owner 2026-10-03, the chained paid join): the
       // session's check takes it from here, not from the address at session open - the run's end puts the lobby's address
       // back (BLWP_RUN_OVER), and a next round's join that began just before it lost its round= and was refused ("no round

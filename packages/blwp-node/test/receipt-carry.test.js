@@ -42,6 +42,7 @@ import {
   decodeCheckpointReceipt, SIGNED_RECEIPT_BYTES,
 } from '../../protocol/src/receipt.js';
 import { init, step } from '../../core/src/sim.js';
+import { loaded, bedFrom } from './window-fixture.js';
 import { hash as stateHash } from '../../core/src/state.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { toHex } from '../../protocol/src/hash.js';
@@ -101,8 +102,8 @@ async function played() {
   const entry = entryFor(rid);
   const eid = entryId(entry);
   const input = { roundId: rid, entryId: eid, previousHash: GENESIS_HASH, firstTick: 0,
-    ticks: Array.from({ length: TICKS }, (_, t) => wordsAt(t)), liquidations: [] };
-  const st = init(seedWordForEntry(entry, RANDOMNESS));
+    ticks: Array.from({ length: TICKS }, (_, t) => wordsAt(t)), liquidations: [], loads: bedFrom(0) };
+  const st = loaded(init(seedWordForEntry(entry, RANDOMNESS)));
   for (let t = 0; t < TICKS; t++) step(st, ...wordsAt(t));
   const mark = {
     roundId: rid, entryId: eid, tick: TICKS,

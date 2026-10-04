@@ -2893,8 +2893,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', ...CORS });
           return res.end(readFileSync(kept));
         }
+        // the bundle of the core that round names, among those installed (the truck's own, or 2069b4c2's beside it)
         res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', ...CORS });
-        return res.end(readFileSync(new URL('../../core/dist/blwp-replay-core.js', import.meta.url)));
+        return res.end(readFileSync(runs.core.replayFile || new URL('../../core/dist/blwp-replay-core.js', import.meta.url)));
       }
       // THE PROTOCOL'S DECODERS AND SEED for the page: the client bundle, as the game page carries it.
       if (req.method === 'GET' && url.pathname === '/replay/client.js') {

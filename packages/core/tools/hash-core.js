@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = new URL('../src', import.meta.url).pathname;
 
-export function coreSourceFiles() {
+export function coreSourceFiles(root = ROOT) {
   const files = [];
   (function walk(dir) {
     for (const name of readdirSync(dir).sort()) {
@@ -25,15 +25,18 @@ export function coreSourceFiles() {
       if (statSync(p).isDirectory()) walk(p);
       else if (name.endsWith('.js')) files.push(p);
     }
-  })(ROOT);
+  })(root);
   return files.sort();
 }
 
-/** The core's sim_wasm_hash, as 64 hex digits. */
-export function coreHashHex() {
+/**
+ * The core's sim_wasm_hash, as 64 hex digits - of this tree's core/src, or of another core's source tree laid out the
+ * same way (a core kept beside it, core/frozen/<hash>: its hash is computed from its files, never typed).
+ */
+export function coreHashHex(root = ROOT) {
   const h = createHash('sha256');
-  for (const f of coreSourceFiles()) {
-    h.update(relative(ROOT, f));
+  for (const f of coreSourceFiles(root)) {
+    h.update(relative(root, f));
     h.update('\0');
     h.update(readFileSync(f));
     h.update('\0');

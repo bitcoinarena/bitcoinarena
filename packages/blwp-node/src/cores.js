@@ -7,6 +7,7 @@
 // its own sources, never typed - and the configs it runs, by config_hash. `replay.js` imports no
 // core: it is handed one of these.
 import { CORE as TRUCK_ADAPTER } from '../../core/src/adapter.js';
+import { CORE as TRUCK_2069_ADAPTER } from '../../core/frozen/2069b4c2/adapter.js';
 import { coreHashHex } from '../../core/tools/hash-core.js';
 import { GENESIS_CONFIG_HASH } from '../../protocol/src/genesis-ids.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
@@ -18,6 +19,27 @@ export const TRUCK = Object.freeze({
   url: new URL('../../core/src/adapter.js', import.meta.url).href,
   adapter: TRUCK_ADAPTER,
   configs: new Map([[toHex(GENESIS_CONFIG_HASH), {}]]),
+  // the bundle the replay page runs for this core's rounds (core/tools/bundle-replay.js)
+  replayFile: new URL('../../core/dist/blwp-replay-core.js', import.meta.url),
+});
+
+/**
+ * THE TRUCK BEFORE C BECAME THE BED FILL AND T SANK FROM 20 S (the owner 2026-10-04 08:54 and 09:17; accepted path A): core
+ * 2069b4c2, kept INSTALLED beside the truck - every round published on it (the day's paid set, the late-join series, the
+ * free rounds before the pair moved) is replayed by it, byte for byte the core those rounds were played on. Its source
+ * is frozen in core/frozen/2069b4c2 and its hash is computed from those files here, never typed: a frozen tree that
+ * drifted would name another core and be refused below.
+ */
+export const TRUCK_2069_HASH = '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e';
+const FROZEN_2069 = new URL('../../core/frozen/2069b4c2', import.meta.url).pathname;
+if (coreHashHex(FROZEN_2069) !== TRUCK_2069_HASH) throw new Error(`core/frozen/2069b4c2 hashes to ${coreHashHex(FROZEN_2069)}, not the core it keeps`);
+export const TRUCK_2069 = Object.freeze({
+  name: `${TRUCK_ADAPTER.name} (2069b4c2, C 0.7 and par 65 s)`,
+  hash: TRUCK_2069_HASH,
+  url: new URL('../../core/frozen/2069b4c2/adapter.js', import.meta.url).href,
+  adapter: TRUCK_2069_ADAPTER,
+  configs: new Map([[toHex(GENESIS_CONFIG_HASH), {}]]),
+  replayFile: new URL('../../core/dist/blwp-replay-core-2069b4c2.js', import.meta.url),
 });
 
 /**
@@ -62,15 +84,17 @@ export const TRUCK_CONFIG_HASH = GENESIS_CONFIG_HASH;
  * installed as this same core held to that one length: its rounds replay unchanged, and none of them names another.
  */
 export const TRUCK_BEFORE_FORK_HASH = 'd15c39bb83b7cb63ce2b232a7b62b0078d78d9944013ce42799c80a29bf005ef';
-export const TRUCK_BEFORE_FORK = Object.freeze({ ...TRUCK, name: `${TRUCK.name} (before the 82/90 fork)`, hash: TRUCK_BEFORE_FORK_HASH,
-  fixedRunTicks: TRUCK_ADAPTER.RUN_TICKS });
+// HELD BY 2069b4c2 SINCE THE TRUCK MOVED ON (2026-10-04): 2069b4c2 is the core that ran d15c39bb's rounds hash for hash at
+// 10800 ticks; the truck after it does not (C from an empty bed, T from 20 s), so it no longer stands in for them.
+export const TRUCK_BEFORE_FORK = Object.freeze({ ...TRUCK_2069, name: `${TRUCK.name} (before the 82/90 fork)`, hash: TRUCK_BEFORE_FORK_HASH,
+  fixedRunTicks: TRUCK_2069_ADAPTER.RUN_TICKS });
 
 /**
  * THE CORES A SIGNER NODE HAS INSTALLED, by hash: the truck always, and every core its operator installs
  * beside it (serve's `cores`) - several at once, each with its own configs (the owner 08:07).
  */
 export function installedCores(extra = []) {
-  const all = new Map([[TRUCK.hash, TRUCK], [TRUCK_BEFORE_FORK_HASH, TRUCK_BEFORE_FORK]]);
+  const all = new Map([[TRUCK.hash, TRUCK], [TRUCK_2069_HASH, TRUCK_2069], [TRUCK_BEFORE_FORK_HASH, TRUCK_BEFORE_FORK]]);
   for (const c of extra) all.set(c.hash, c);
   return all;
 }
