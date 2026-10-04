@@ -27,13 +27,20 @@ import {
   HEAT_REACH_ARMOUR, HEAT_REACH_RIFLE, HEAT_OUTRANK, HEAT_SHELL,
 } from '../../core/frozen/2069b4c2/rules/army.js';
 
-// AND THE CURRENT CORE'S, for the config its rounds name (encodeGameConfigV2) - never for the network id
-import * as live from '../../core/src/rules/score.js';
-import * as liveGate from '../../core/src/rules/gate.js';
-import * as liveArmy from '../../core/src/rules/army.js';
-import * as liveCargo from '../../core/src/rules/cargo.js';
-import { LEGACY_CARGO } from '../../core/src/sim.js';
-const liveSim = { LEGACY_CARGO };
+// AND THE LATER CORES', for the configs their rounds name - never for the network id: de2f263d's own (frozen, v2) and the
+// current core's (v3)
+import * as liveScore from '../../core/src/rules/score.js';
+import * as liveGateM from '../../core/src/rules/gate.js';
+import * as liveArmyM from '../../core/src/rules/army.js';
+import * as liveCargoM from '../../core/src/rules/cargo.js';
+import { LEGACY_CARGO as LIVE_LEGACY_CARGO } from '../../core/src/sim.js';
+import * as de2fScore from '../../core/frozen/de2f263d/rules/score.js';
+import * as de2fGate from '../../core/frozen/de2f263d/rules/gate.js';
+import * as de2fArmy from '../../core/frozen/de2f263d/rules/army.js';
+import * as de2fCargo from '../../core/frozen/de2f263d/rules/cargo.js';
+import { LEGACY_CARGO as DE2F_LEGACY_CARGO } from '../../core/frozen/de2f263d/sim.js';
+const LIVE = { score: liveScore, gate: liveGateM, army: liveArmyM, cargo: liveCargoM, sim: { LEGACY_CARGO: LIVE_LEGACY_CARGO } };
+const DE2F = { score: de2fScore, gate: de2fGate, army: de2fArmy, cargo: de2fCargo, sim: { LEGACY_CARGO: DE2F_LEGACY_CARGO } };
 
 export const TAG_GAME_CONFIG = 'BLWP/v1/GameConfig';
 export const TAG_GENESIS = 'BLWP/v1/GenesisParameters';
@@ -76,9 +83,9 @@ export const computeGenesisConfigHash = () => taggedHash(TAG_GAME_CONFIG, encode
  */
 export const GAME_CONFIG_V2 = 2;
 export const CARGO_RULE_BED_FILL = 1;
-export function encodeGameConfigV2() {
+export function encodeGameConfigV2({ score: live, gate: liveGate, army: liveArmy, cargo: liveCargo, sim: liveSim } = DE2F, version = GAME_CONFIG_V2) {
   const w = new Writer();
-  w.u8(GAME_CONFIG_V2);
+  w.u8(version);
   w.u32(live.EXPOSURE_REFERENCE);
   w.u32(liveGate.HALF_MOUTH);
   w.u32(live.APRON_RADIUS);
@@ -103,8 +110,24 @@ export function encodeGameConfigV2() {
   return w.finish();
 }
 
+/** The config de2f263d's rounds name (dbb49344): v2, from that core's own frozen constants. */
+export const computeDe2fConfigHash = () => taggedHash(TAG_GAME_CONFIG, encodeGameConfigV2(DE2F));
+
+/**
+ * v3 (the owner 2026-10-04, option 1 of the spec audit): the v2 fields, and the exposure weight - 1 = the load's HEAT, as
+ * §18A.3 has it (rate = proximity · (1 + heat)). de2f263d weighted exposure by C, which counted a full bed twice once C
+ * became the bed fill; the core after it weights by heat, and its rounds name this config.
+ */
+export const GAME_CONFIG_V3 = 3;
+export const EXPOSURE_WEIGHT_HEAT = 1;
+export function encodeGameConfigV3() {
+  const v2 = encodeGameConfigV2(LIVE, GAME_CONFIG_V3);
+  const out = new Uint8Array(v2.length + 1); out.set(v2); out[v2.length] = EXPOSURE_WEIGHT_HEAT;
+  return out;
+}
+
 /** The config hash a round on the current core names: computed from the core's own constants, never typed. */
-export const computeCurrentConfigHash = () => taggedHash(TAG_GAME_CONFIG, encodeGameConfigV2());
+export const computeCurrentConfigHash = () => taggedHash(TAG_GAME_CONFIG, encodeGameConfigV3());
 
 /**
  * Randomness nobody in this protocol can grind: the Bitcoin block hash at a

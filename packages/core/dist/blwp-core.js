@@ -7616,8 +7616,11 @@ function step(st, throttle, steer, brake, handbrake, practice) {
     // core's - and `setUnits` had no caller left anywhere in the project, so
     // the preference was a dead branch guarding a dead setter. Both are gone.
     const threat = mulFast(threatAt(view, UNITS, tx, tz), frontWeight(tz, seamZ));
+    // WEIGHTED BY THE HEAT, AS §18A.3 SAYS ("rate(t) = proximity(t) · (1 + heat(t))"; Daniel 2026-10-04, option 1 of the
+    // spec audit): this read S_CARGO, which was harmless while C sat at 0.7 and counted a full bed twice - once in E, once
+    // as C - once C became the bed fill. The heat is the load's own (fee and BTC, submitLoad), 0 until a load is declared.
     s[O_SCORE + S_EXPOSURE] = accrue(
-      s[O_SCORE + S_EXPOSURE], s[O_SCORE + S_BESTX], tx, threat, s[O_SCORE + S_CARGO]);
+      s[O_SCORE + S_EXPOSURE], s[O_SCORE + S_BESTX], tx, threat, s[O_SCORE + S_HEAT]);
   }
   if (gaining) s[O_SCORE + S_BESTX] = tx;
   if (s[O_SCORE + S_STATE] === RUN_LIVE)

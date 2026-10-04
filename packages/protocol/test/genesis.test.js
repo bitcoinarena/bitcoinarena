@@ -47,7 +47,7 @@ test('test nets use 2-of-2, one confirmation, 100-block maturity, bitcoin block 
 // spec audit; §27A.6 "a round is bound to the config it was created under"). The founding hash is the pinned one and the
 // network ids above do not move; the current config is versioned, hashed from the current core's own constants, and names
 // what the founding encoding cannot - par, the time bounds and the cargo rule.
-import { computeGenesisConfigHash as foundingHash, computeCurrentConfigHash, encodeGameConfigV2, encodeGameConfig as founding, GAME_CONFIG_V2, CARGO_RULE_BED_FILL } from '../src/genesis.js';
+import { computeGenesisConfigHash as foundingHash, computeCurrentConfigHash, encodeGameConfigV2, encodeGameConfigV3, computeDe2fConfigHash, encodeGameConfig as founding, GAME_CONFIG_V2, GAME_CONFIG_V3, EXPOSURE_WEIGHT_HEAT, CARGO_RULE_BED_FILL } from '../src/genesis.js';
 import { REFERENCE_TICKS, T_TICKS_MIN, T_TICKS_MAX } from '../../core/src/rules/score.js';
 import { LEGACY_CARGO } from '../../core/src/sim.js';
 import { KNOWN_GOOD_CORE_CONFIGS } from '../src/known-cores.js';
@@ -70,4 +70,12 @@ test('the current core plays a config of its own, beside the founding one the ne
   // and the client lists the current core with the config it plays
   assert.ok((KNOWN_GOOD_CORE_CONFIGS[coreHashHex()] || []).includes(toHex(computeCurrentConfigHash())),
     'the current core is not listed with its config: run node packages/protocol/tools/known-cores.js');
+});
+
+test('de2f263d keeps dbb49344 from its frozen constants; the current core names v3, whose last field is the heat weight', () => {
+  assert.equal(toHex(computeDe2fConfigHash()), 'dbb493445fd56ba099bf8651a444f7c6de4b36add1cb01275bd1857920bd0801', 'de2f263d\'s config moved');
+  const v3 = encodeGameConfigV3();
+  assert.equal(v3[0], GAME_CONFIG_V3);
+  assert.equal(v3[v3.length - 1], EXPOSURE_WEIGHT_HEAT);
+  assert.notEqual(toHex(computeCurrentConfigHash()), toHex(computeDe2fConfigHash()));
 });

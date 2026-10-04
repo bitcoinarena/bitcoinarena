@@ -93,12 +93,16 @@ public class ArrivalCardWordsTests
     public void TheCardsFactorsAreTheCoresAndTheirProductIsTheScoreOnTheLineAbove()
     {
         float e = CoreScoreFactors.Exposure(ShotExposureWord), t = CoreScoreFactors.Time(ShotTicks), c = CoreScoreFactors.Cargo(ShotCargoWord);
-        // the core's score of that run, now the product itself (score.js scoreOf: 13715869 in 1e-5 points)
-        string line = DriveHud.ArrivalWorkLine(false, c, e, t, 13715869);
-        Debug.Log($"playtest 18:29 card, from the core's words: {line}");
-        Assert.AreEqual("load 0.70000   ×   danger 0.23091   ×   speed 0.84856   ×  1000  =  137.15869", line);
+        // ON THE CORE THAT RUN WAS PLAYED ON (par 3900): speed 0.84856, and the score 137.15869 is the product of the
+        // three factors - history, kept as the product it was.
         Assert.AreEqual(137.15869m, Product5("0.70000", "0.23091", "0.84856"));
-        Assert.AreEqual("SCORE  +137.15869", DriveHud.ArrivalScoreLine(false, 13715869));
+        // AND THE SAME WORDS ON TODAY'S CARD (par 1800, the owner 2026-10-04 09:17): speed 0.39164, and the core's score of
+        // those words (score.js scoreOf: 6330351 in 1e-5 points) is again the product of the factors the card prints.
+        string line = DriveHud.ArrivalWorkLine(false, c, e, t, 6330351);
+        Debug.Log($"the 18:29 words on today's card: {line}");
+        Assert.AreEqual("load 0.70000   ×   danger 0.23091   ×   speed 0.39164   ×  1000  =  63.30351", line);
+        Assert.AreEqual(63.30351m, Product5("0.70000", "0.23091", "0.39164"));
+        Assert.AreEqual("SCORE  +63.30351", DriveHud.ArrivalScoreLine(false, 6330351));
     }
 
     [Test]

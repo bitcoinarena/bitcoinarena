@@ -751,13 +751,16 @@
        is played on that core or its checkpoints fail from tick 0. 2069b4c2 (C 0.7, par 65 s) is the core of every round
        published before C became the bed fill and T sank from 20 s; blwp-core.js is the core after it, and the default.
        The join hands the round's hash to BLWP_USE_CORE (below), which puts that core under the jslib before the round's
-       world is made. Each bundle defines BLWP; the first is kept by its hash before the second is loaded. -->
+       world is made. Each bundle defines BLWP; each is kept by its hash before the next is loaded. -->
   <script src="blwp-core-2069b4c2.js"></script>
   <script>window.BLWP_CORES = { '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e': BLWP };</script>
+  <!-- AND de2f263d (C the bed fill, exposure by C): the free rounds made on it from 08:23Z on 2026-10-04 -->
+  <script src="blwp-core-de2f263d.js"></script>
+  <script>window.BLWP_CORES['de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8'] = BLWP;</script>
   <script src="blwp-core.js"></script>
   <script>
-    window.BLWP_CORES['de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8'] = BLWP;
-    window.BLWP_CORE_DEFAULT = 'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8';
+    window.BLWP_CORES['7e2123d1990d1443fcac12dc6c7575059935d89d794822bc69c67b184870ce20'] = BLWP;
+    window.BLWP_CORE_DEFAULT = '7e2123d1990d1443fcac12dc6c7575059935d89d794822bc69c67b184870ce20';
     // THE ROUND'S CORE, BY ITS HASH: the global the jslib's BlwpInit reads, and the core under Unity's running state if
     // Unity is up - its next init (the round's world) is then that core's. A hash this page carries no core for is refused.
     window.BLWP_USE_CORE = function (hash) {

@@ -35,7 +35,7 @@ test('a day cut at 360 and its 82 s tail: the announcement runs on 90 s with no 
   const day = { ...seriesTemplate(base(nodes), k), seriesCutFrom: 360 };
   const first = seriesRound(day, 360).startTimeMs;
   const tail = { ...day, seriesCutFrom: undefined, seriesCount: 600, startTimeMs: first, entryCloseMs: first, committeeTimeMs: first - 12n * 3600000n,
-    simCoreHash: TRUCK_CORE_HASH, blockTicks: 4920 };
+    simCoreHash: TRUCK_CORE_HASH, configHash: TRUCK_CONFIG_HASH, blockTicks: 4920 };
   delete tail.seriesCutFrom;
   assert.equal(seriesLeadIsValid(tail).ok, true, seriesLeadIsValid(tail).why);
   const NOW = Number(first) - 20 * 60000;                       // 20 minutes before the cut

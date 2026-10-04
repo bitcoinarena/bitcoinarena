@@ -11,12 +11,13 @@
 // is done.
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { coreHashHex } from '../../core/tools/hash-core.js';
-import { computeCurrentConfigHash, computeGenesisConfigHash } from '../src/genesis.js';
+import { computeCurrentConfigHash, computeGenesisConfigHash, computeDe2fConfigHash } from '../src/genesis.js';
 import { toHex } from '../src/hash.js';
 
 const OUT = new URL('../src/known-cores.js', import.meta.url).pathname;
-const prior = existsSync(OUT)
-  ? [...readFileSync(OUT, 'utf8').matchAll(/'([0-9a-f]{64})'/g)].map((m) => m[1]) : [];
+// the core list only - the file also holds the core+config pairs below it, whose config hashes are not cores
+const priorList = existsSync(OUT) ? (readFileSync(OUT, 'utf8').split('KNOWN_GOOD_CORE_CONFIGS')[0]) : '';
+const prior = [...priorList.matchAll(/'([0-9a-f]{64})'/g)].map((m) => m[1]);
 const now = coreHashHex();
 const list = prior.includes(now) ? prior : [...prior, now];
 
@@ -31,7 +32,7 @@ const priorPairs = existsSync(OUT)
 const pairs = { '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e': [FOUNDING],
   // the free rounds de2f263d played from 08:23Z with the founding config, before its own (the seats hold that pair only
   // for rounds made before 2026-10-04 13:00Z; the client takes the pair, the seats the date)
-  'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8': [FOUNDING], ...priorPairs };
+  'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8': [toHex(computeDe2fConfigHash()), FOUNDING], ...priorPairs };
 const current = toHex(computeCurrentConfigHash());
 pairs[now] = [...new Set([current, ...(pairs[now] || [])])];
 
