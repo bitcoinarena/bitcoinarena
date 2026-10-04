@@ -4023,7 +4023,23 @@ Nothing is typed, and no link decides it.
   every OPEN and DRAINING federation of the census for the stock backup
   under that seed; the one that has it is his, and the stock recovery
   rebuilds the notes. Unredeemed contracts are found through
-  `GET /settled?since=` as §24 already says. A federation that has since
+  `GET /settled?since=` as §24 already says.
+  **RULED AS BUILT (the owner 2026-10-04, kanban #27): no guardian backup.** The
+  notes come back through Fedimint's own **recovery**, which the client
+  runs in the browser. mintv2 rescans the federation's issuance history for
+  the notes this wallet secret's keys made. The fork's recovery timed out
+  on tokio's clock, which panics on wasm32, so it is patched to the
+  runtime's clock (`lock-client/fedimint-mintv2-recovery-wasm-clock.patch`).
+  The page marks a seed the player typed in (a hash of it, never the
+  seed). The first open of that seed's player wallet in a browser that
+  keeps none is then `LockClient.recover`, not an empty join. Every later
+  open, including one after a recovery a closed or reloaded tab cut short,
+  waits for any recovery still pending. A seed the page made itself is
+  joined as before. Today the census lists one federation, so it is the
+  federation the lobby names that is recovered. Asking every census
+  federation in turn waits until a second one is listed. After a restore,
+  both devices hold the same notes: whichever spends one first spends it,
+  and the other device's copy is refused as spent. A federation that has since
   CLOSED is shown as such with what §23A.6 step 5 says.
 - **Rounds elsewhere** are shown with their federation and entered by swap
   (§23A.3), never silently.
@@ -4040,6 +4056,19 @@ of its words back, in order, which the client checks - the button is named
 withdrawn) - never leaves the browser, and is
 never seen by any node, seat, guardian or gateway. On another device the
 player types it, and nothing else is needed (§23A.7).
+
+**RULED AS BUILT (the owner 2026-10-04, kanban #27): no standard BIP-39
+derivation and no migration.** The page shows **24 words**, which encode
+the 32-byte player seed directly: the BIP-39 wordlist and checksum over
+those bytes as entropy, never PBKDF2 key stretching (`bip39.js`). Every
+key stays this game's own tagged hash of that seed. The Fedimint wallet
+secret is `walletSecretFor(seed, federation_id)`, and its root is
+`DerivableSecret::new_root(secret, "BLWP/v1/LockClient")`, not a BIP-39
+seed. So the words restore this game's wallet and keys, and a stock
+BIP-39 tool given the same words derives other keys. Both restore inputs
+(Settings "use my seed" and the key-backup prompt) take the 24 words or
+the 64 hex. The tree below is the original design; where the two differ,
+this paragraph is what is built.
 
 Everything the player owns derives from it, with domain separation, so that
 one backup restores all of it and no key is ever reused across purposes:
@@ -4141,12 +4170,15 @@ and the rules are:
   federation for its key. The wallet is never dropped by the client.
   Cleared browser storage loses the wallet's notes unless the federation's
   stock backup restores them from the seed (FEDERATION.md rehearsal item
-  10); what the federation still holds in contracts for a round key comes
+  10; AS BUILT, kanban #27: Fedimint's recovery from the seed, run in the
+  browser, finds them again, §23A.7); what the federation still holds in contracts for a round key comes
   back from the seed alone.
 - **On another device** (the owner 2026-09-14: alice plays on her desktop,
   forgets to withdraw, and plays on her iPhone two hours later): the seed
   backup is brought in. The wallet's notes recover through the federation's
-  stock backup under that seed. For contracts not yet redeemed, the client
+  stock backup under that seed (AS BUILT, kanban #27: through Fedimint's
+  own recovery under that seed, in the browser, with no backup kept by the
+  guardians, §23A.7). For contracts not yet redeemed, the client
   asks each seat for the rounds it settled in the last 24 hours
   (`GET /settled?since=`), each listed with the keys its settlement pays and
   the refund keys of its verified locks - both public already. The client

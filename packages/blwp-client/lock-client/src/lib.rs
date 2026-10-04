@@ -1187,7 +1187,12 @@ impl LockClient {
         let (tab, _kept) = store::TabDatabase::load(store).map_err(js)?;
         let db: Database = tab.into();
         let client = if Client::is_initialized(&db).await {
-            builder.open(connectors, db, root).await.map_err(js)?
+            let client = builder.open(connectors, db, root).await.map_err(js)?;
+            // A RECOVERY A TAB LEFT HALF DONE (#27): the store is initialized as soon as recovery starts, so a tab closed,
+            // reloaded or timed out mid-recovery reopens here - Fedimint resumes the recovery on open, and this waits for it
+            // (at once when none is pending) instead of handing over a wallet whose notes are still being found
+            client.wait_for_all_recoveries().await.map_err(js)?;
+            client
         } else if recover {
             let preview = builder.preview(connectors, &invite).await.map_err(js)?;
             let client = preview.recover(db, root, None).await.map_err(js)?;
