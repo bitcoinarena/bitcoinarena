@@ -6834,6 +6834,13 @@ const KNOWN_GOOD_CORE_HASHES = Object.freeze([
   'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8',
 ]);
 
+// The configs a round on each of these cores may name (§27A.6: a round names the config of the rules it plays). A core
+// with no entry here is checked by its hash alone, as before pairs were listed.
+const KNOWN_GOOD_CORE_CONFIGS = Object.freeze({
+  '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1']),
+  'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8': Object.freeze(['dbb493445fd56ba099bf8651a444f7c6de4b36add1cb01275bd1857920bd0801', 'bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1']),
+});
+
 // ---- protocol/src/known-core.js
 // A PAYING ROUND RUNS A CORE THIS CLIENT KNOWS, OR IT IS REFUSED.
 //
@@ -6849,7 +6856,11 @@ const KNOWN_GOOD_CORE_HASHES = Object.freeze([
 // only if the code that decides the round is code they can know.
 
 
-function coreIsKnownGood(simCoreHash) {
+/**
+ * AND THE CONFIG IT RUNS, when the round names one (the owner 2026-10-04, fix 1 of the spec audit; §27A.6): a listed core
+ * plays the configs listed beside it, and a round naming another config on it is refused the same way an unknown core is.
+ */
+function coreIsKnownGood(simCoreHash, configHash) {
   if (!(simCoreHash instanceof Uint8Array) || simCoreHash.length !== 32)
     return { ok: false, why: 'that round names no 32-byte core hash, so nothing says which simulation decides it' };
   const hex = toHex(simCoreHash);
@@ -6859,6 +6870,14 @@ function coreIsKnownGood(simCoreHash) {
       why: `that round runs core ${hex.slice(0, 16)}..., which is not on this client's known-good list of `
         + 'reproducibly built cores: a paying round on an unknown core is refused (§5)',
     };
+  const configs = KNOWN_GOOD_CORE_CONFIGS && KNOWN_GOOD_CORE_CONFIGS[hex];
+  if (configHash !== undefined && configs) {
+    if (!(configHash instanceof Uint8Array) || configHash.length !== 32)
+      return { ok: false, why: 'that round names no 32-byte config hash, so nothing says which rules decide it' };
+    if (!configs.includes(toHex(configHash)))
+      return { ok: false, why: `that round runs core ${hex.slice(0, 16)}... under config ${toHex(configHash).slice(0, 16)}..., which is `
+        + 'not a config this client knows that core to play: refused, as an unknown core is (§5, §27A.6)' };
+  }
   return { ok: true };
 }
 
@@ -8034,7 +8053,7 @@ function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stak
   }
   // A PAYING ROUND ON AN UNKNOWN CORE IS REFUSED (§5): no override, no flag. A
   // free round risks nothing and is joined as before.
-  if (roundPays(round)) { const core = coreIsKnownGood(round.simCoreHash); if (!core.ok) throw new Error(core.why); }
+  if (roundPays(round)) { const core = coreIsKnownGood(round.simCoreHash, round.configHash); if (!core.ok) throw new Error(core.why); }
   // THE SIGNER NODE'S KEY IS THE SEED'S KEY FOR THIS ROUND, and nothing else (§24,
   // v4.6.2, F2). A payout and a refund go to it, so a page that joined a player
   // under any other key - a bug, or a host that lies - would send the money
@@ -8152,7 +8171,7 @@ async function stakeFor(round, { signerNodes, curve, random, playerPubkey, neede
   if (!round || !round.id) throw new Error('a stake is dealt for a round, and that is not one');
   // NO STAKE ON A CORE THIS CLIENT DOES NOT KNOW (§5). Refused before anything
   // is dealt, so a backdoored round gets no handout, no hold and no signer node.
-  { const core = coreIsKnownGood(round.simCoreHash); if (!core.ok) throw new Error(core.why); }
+  { const core = coreIsKnownGood(round.simCoreHash, round.configHash); if (!core.ok) throw new Error(core.why); }
   // AT THE ROUND'S THRESHOLD, the one the node's door takes and its settle
   // opens at (M3.3-26). The default was a flat 5 whatever the round, and any
   // other number is a stake the door refuses - so it is refused here first.
