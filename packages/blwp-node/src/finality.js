@@ -71,7 +71,7 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
       const had = typeof round.noQuorum === 'function' ? round.noQuorum(entryIdBytes) : null;
       if (had) return { state: had.outcome, why: had.why, noQuorum: true };
       const proven = typeof round.provenTwoFirstMarks === 'function'
-        && round.provenTwoFirstMarks(roundIdBytes, entryIdBytes, evidenceWindow(round, roundIdBytes, contract, win.finalAfterMs)) === true;
+        && (typeof round.provenEquivocation === 'function' ? round.provenEquivocation : round.provenTwoFirstMarks).call(round, roundIdBytes, entryIdBytes, evidenceWindow(round, roundIdBytes, contract, win.finalAfterMs)) === true;
       const d = noQuorumOutcome({ signatures: inTime.agreed || 0, needed: inTime.needed, equivocationProven: proven, state: null });
       if (d.outcome) {
         let late = '';
@@ -193,7 +193,7 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
       .some((r) => toHex(r.signerPubkey) === ownHex && BigInt(r.seenMs) < win.rerunDeadlineMs);
     if (nowMs >= win.rerunDeadlineMs && signedOwn) {
       const proven = typeof round.provenTwoFirstMarks === 'function'
-        && round.provenTwoFirstMarks(roundIdBytes, entryIdBytes, evidenceWindow(round, roundIdBytes, contract, win.rerunDeadlineMs)) === true;
+        && (typeof round.provenEquivocation === 'function' ? round.provenEquivocation : round.provenTwoFirstMarks).call(round, roundIdBytes, entryIdBytes, evidenceWindow(round, roundIdBytes, contract, win.rerunDeadlineMs)) === true;
       const d = noQuorumOutcome({ signatures: fin.signed || 0, needed: fin.needed || 1, equivocationProven: proven, state: PROVISIONALLY_FINAL });
       if (d.outcome) {
         const why = `not FINAL by the re-run window's end at ${utc(win.rerunCloseMs)}: ${fin.signed || 0} of ${fin.needed} seats `
@@ -264,7 +264,7 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
         why: `a valid objection reached this seat at ${utc(filedAt)}, before ${utc(win.finalAfterMs)}: finality is suspended and the committee re-runs the canonical transcript until the re-run window closes at ${utc(win.rerunCloseMs)}; re-run so far: ${rerun.why}` };
     // §13C'S EVIDENCE: every pair this seat holds by the time it decides.
     const proven = typeof round.provenTwoFirstMarks === 'function'
-      && round.provenTwoFirstMarks(roundIdBytes, entryIdBytes, evidenceWindow(round, roundIdBytes, contract, win.rerunDeadlineMs)) === true;
+      && (typeof round.provenEquivocation === 'function' ? round.provenEquivocation : round.provenTwoFirstMarks).call(round, roundIdBytes, entryIdBytes, evidenceWindow(round, roundIdBytes, contract, win.rerunDeadlineMs)) === true;
     const d = noQuorumOutcome({ signatures: rerun.agreed || 0, needed: rerun.needed || seen.needed, equivocationProven: proven, state: SUSPENDED });
     if (d.outcome) {
       const why = `${d.why} - the re-run window closed at ${utc(win.rerunCloseMs)} with ${rerun.agreed || 0} of `

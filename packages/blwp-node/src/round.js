@@ -1125,7 +1125,59 @@ export class Round {
       const tickOf = (m) => decodeCheckpoint(splitSigned(m).body).tick;
       out.push({ how: 'two first marks', tick: Math.min(tickOf(a), tickOf(b)), stored: a, offered: b, seenMs: r.seen_ms });
     }
+    // AND A FORK PAIR PULLED FROM A PEER (fork_pairs, §13B at any tick; kanban #25)
+    for (const r of this.db.prepare('SELECT mark_a, mark_b, seen_ms FROM fork_pairs WHERE round_id = ? AND entry_id = ?')
+      .all(roundIdBytes, entryIdBytes)) {
+      const a = new Uint8Array(r.mark_a);
+      const b = new Uint8Array(r.mark_b);
+      const ca = decodeCheckpoint(splitSigned(a).body), cb = decodeCheckpoint(splitSigned(b).body);
+      out.push({ how: ca.tick === cb.tick ? 'two marks at one tick' : 'two chains from one parent', tick: Math.min(ca.tick, cb.tick),
+        stored: a, offered: b, seenMs: r.seen_ms });
+    }
     return out.sort((a, b) => a.tick - b.tick);
+  }
+
+  /**
+   * KEEP A PEER'S PROOF OF A FORK AT ANY TICK (§13B "two different checkpoints for the same tick, or two chains that
+   * diverge at any tick"; kanban #25): both signed by the entry's session key, one entry, different marks, and the same
+   * tick or the same parent - the pair provesEquivocation checks. Anything else is not kept. Answers whether it is held.
+   */
+  putForkPair({ a, b }) {
+    let ca, cb;
+    try { ca = this.playerSigned(a); cb = this.playerSigned(b); } catch { return false; }
+    if (same(a, b) || !same(ca.entryId, cb.entryId) || !same(ca.roundId, cb.roundId)) return false;
+    if (ca.tick !== cb.tick && !same(ca.previousHash, cb.previousHash)) return false;
+    const [x, y] = Buffer.compare(Buffer.from(a), Buffer.from(b)) < 0 ? [a, b] : [b, a];
+    this.db.prepare('INSERT OR IGNORE INTO fork_pairs (round_id, entry_id, mark_a, mark_b, seen_ms) VALUES (?, ?, ?, ?, ?)')
+      .run(ca.roundId, ca.entryId, x, y, this.now());
+    this.noteEvidenceBlock(ca.roundId, ca.entryId, checkpointId(ca));
+    this.noteEvidenceBlock(cb.roundId, cb.entryId, checkpointId(cb));
+    return true;
+  }
+
+  /**
+   * DOES THIS SIGNER NODE HOLD THE PROOF OF A FORK AT ANY TICK? (§13B; kanban #25) Two different marks of this entry, both
+   * signed by its session key, at the same tick or from the same parent - checked here from this node's own store (its
+   * stored and refused marks, and the pairs it pulled). The first-mark pair is one such fork and is answered too.
+   * Returns `{ tick, how }` - the tick where the chains part - or null. `window` as provenTwoFirstMarks'.
+   */
+  provenFork(roundIdBytes, entryIdBytes, window = null) {
+    for (const f of this.equivocation(roundIdBytes, entryIdBytes)) {
+      try {
+        const a = f.stored, b = f.offered;
+        if (same(a, b)) continue;
+        if (window && !(this.markCounts(entryIdBytes, a, window.chain, window.end) && this.markCounts(entryIdBytes, b, window.chain, window.end))) continue;
+        const ca = this.playerSigned(a), cb = this.playerSigned(b);
+        if (!same(ca.entryId, entryIdBytes) || !same(cb.entryId, entryIdBytes)) continue;
+        if (ca.tick === cb.tick || same(ca.previousHash, cb.previousHash)) return { tick: Math.min(ca.tick, cb.tick), how: f.how };
+      } catch { /* not the player's two marks */ }
+    }
+    return null;
+  }
+
+  /** §13B'S PROOF, AT ANY TICK (kanban #25): two first marks, or a fork at any later tick. */
+  provenEquivocation(roundIdBytes, entryIdBytes, window = null) {
+    return this.provenTwoFirstMarks(roundIdBytes, entryIdBytes, window) || this.provenFork(roundIdBytes, entryIdBytes, window) !== null;
   }
 
   /**

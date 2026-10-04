@@ -182,6 +182,18 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (entry_id, first_a, first_b)
     );
 
+    -- AND TWO MARKS AT ANY LATER TICK, PULLED FROM A PEER (§13B, kanban #25, RULED the owner 2026-10-04): a pair
+    -- provesEquivocation accepts - one entry, both signed by its session key, different ids, the same tick or the same
+    -- parent - that this node did not hold as a checkpoint and a refused mark of its own. Kept so it serves it too.
+    CREATE TABLE IF NOT EXISTS fork_pairs (
+      round_id BLOB NOT NULL,
+      entry_id BLOB NOT NULL REFERENCES entries(entry_id),
+      mark_a   BLOB NOT NULL,
+      mark_b   BLOB NOT NULL,
+      seen_ms  INTEGER NOT NULL,
+      PRIMARY KEY (entry_id, mark_a, mark_b)
+    );
+
     -- ANOTHER SIGNER NODE'S SHARE OF A STAKE'S PREIMAGE, AS IT SEALED IT TO THIS SIGNER NODE
     -- (M3.3-34): the envelope, never the opened share - so a signer node that released
     -- its share and then went down cannot hand the stake back by staying down.
