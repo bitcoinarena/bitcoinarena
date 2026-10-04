@@ -2735,7 +2735,19 @@
         go.style.top = Math.round(top) + 'px';
         go.style.right = Math.round(right) + 'px';
         const panel = document.getElementById('blwp-wallet');
-        if (panel && consoleOpen()) { panel.style.top = Math.round(top + bh + gap) + 'px'; panel.style.right = Math.round(right) + 'px'; }
+        // AND NO LOWER THAN THE SCREEN (the owner 2026-10-04: at 844x390 the panel's 45vh from under the button ran to y 423):
+        // its height is the room left under the button, less the HUD's own margin - the 45vh cap still applies above that
+        if (panel && consoleOpen()) {
+          const pTop = Math.round(top + bh + gap);
+          // under the button, right-aligned with it, the shipped 280 px wide - not stretched from the left edge by the
+          // phone-landscape rule (measured 844x390: that put it over the left steering pads)
+          // AND NEVER OVER THE THROTTLE PAD'S COLUMN: where its column runs under the button (1280x720), the panel stands
+          // left of the pad as the button does at phone size
+          const pRight = Math.max(right, window.innerWidth - padLeft + c.m * 0.5 * sx);
+          panel.style.top = pTop + 'px'; panel.style.right = Math.round(pRight) + 'px';
+          panel.style.left = 'auto'; panel.style.maxWidth = '280px';
+          panel.style.maxHeight = Math.max(40, Math.min(window.innerHeight * 0.45, window.innerHeight - pTop - c.m * sy)) + 'px';
+        }
         window.BLWP_CONSOLE_PLACED = { top: Math.round(top), right: Math.round(right), bh, bw, corner: c };
       };
       window.addEventListener('resize', () => window.BLWP_PLACE_CONSOLE());
