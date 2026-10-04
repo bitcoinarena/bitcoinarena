@@ -20,6 +20,7 @@ import assert from 'node:assert/strict';
 
 import { openStore } from '../src/store.js';
 import { TRUCK_BEFORE_FORK_HASH } from '../src/cores.js';
+import { GENESIS_CONFIG_HASH } from '../../protocol/src/genesis-ids.js';
 import { fromHex as fromHexForFork } from '../../protocol/src/hash.js';
 import { Round } from '../src/round.js';
 import { replay as replayUnder } from '../src/replay.js';
@@ -81,7 +82,8 @@ test('a round names its run length on the truck after the fork - 1 to 10800 open
   for (const ticks of [BLOCK_TICKS, 4920, 1, BLOCK_TICKS - 1]) assert.ok(round.open(contractWith(ticks)), `a round naming ${ticks} was refused`);
   for (const ticks of [BLOCK_TICKS + 1, 0])
     assert.throws(() => round.open(contractWith(ticks)), new RegExp(`says a run is ${ticks} ticks, and btc-logistics truck runs 1 to ${BLOCK_TICKS}`));
-  const before = (ticks) => ({ ...contractWith(ticks), simCoreHash: fromHexForFork(TRUCK_BEFORE_FORK_HASH), slashMinimumServed: 21 });
+  // the pre-fork core's rounds name the founding config (2026-10-04: a round names the config of the rules it plays)
+  const before = (ticks) => ({ ...contractWith(ticks), simCoreHash: fromHexForFork(TRUCK_BEFORE_FORK_HASH), configHash: GENESIS_CONFIG_HASH, slashMinimumServed: 21 });
   assert.ok(round.open(before(BLOCK_TICKS)), 'a round of the truck before the fork, at its 10800, was refused');
   for (const ticks of [4920, BLOCK_TICKS - 1])
     assert.throws(() => round.open(before(ticks)), new RegExp(`says a run is ${ticks} ticks and this core ends one at ${BLOCK_TICKS}`));
