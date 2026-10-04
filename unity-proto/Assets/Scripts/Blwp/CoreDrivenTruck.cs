@@ -645,7 +645,7 @@ namespace Blwp
                     if (_feed == null) _feed = FindFirstObjectByType<MarketFeed>();
                     if (_feed != null && _feed.Fresh && BlwpCore.SubmitSample(_feed.Price)) SamplesSubmitted++;
                 }
-                BlwpCore.Step(Throttle(), Steer(), Brake(), Handbrake(), PracticeMode.Input);
+                BlwpCore.Step(Throttle(), Steer(), Brake(), Handbrake(), PracticeMode.InputFor(BlwpNet.Live));
             }
             Apply(Mathf.Clamp01(_accumulator / step));
         }
