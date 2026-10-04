@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 
 import { lockRound, lockAndPlay } from './lock-round-fixture.js';
 import { bondedChainSlot, bondedChainFor } from './lock-fixture.js';
-import { LOSER, RANDOMNESS, wordsAt } from './window-fixture.js';
+import { LOSER, RANDOMNESS, wordsAt, loaded } from './window-fixture.js';
 import { beaconFromChain, committeeSeedFromBeacon } from '../../protocol/src/beacon.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { decodeCheckpoint, CHECKPOINT_BYTES, SIGNED_CHECKPOINT_BYTES } from '../../protocol/src/checkpoint.js';
@@ -96,8 +96,9 @@ test('3. a round on a fixed beacon replays bit-identically: the same contract mi
       assert.equal(r.ok, true, r.why);
       runs.push({ stateHash: r.stateHash, outcome: r.outcome, score: r.score, ticks: r.ticks });
     }
-    // AND THE PLAYER'S OWN STEPPING, from the same seed word over the same inputs.
-    const st = init(seedWordForEntry(played.entry, beacon.hash));
+    // AND THE PLAYER'S OWN STEPPING, from the same seed word over the same inputs - its bed declared at tick 0 as the
+    // fixture's batch declares it (lockAndPlay)
+    const st = loaded(init(seedWordForEntry(played.entry, beacon.hash)));
     for (let t = 0; t < LOSER.ticks; t++) step(st, ...wordsAt(t));
     const facts = { beacon: toHex(beacon.hash).slice(0, 16), remined: toHex(remined.hash).slice(0, 16), height: [beacon.height, remined.height],
       runs: runs.map((r) => `${r.stateHash.slice(0, 16)} ${r.outcome} ${r.score} ${r.ticks}`), player: stateHash(st).slice(0, 16) };
