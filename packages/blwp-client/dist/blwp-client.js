@@ -18773,6 +18773,12 @@ const SERIES_JOIN_LEAD_MS = 90000;
 // entry left - measured on 0.0.2483, a funded paid PLAY 12.96 s before the start showed the round loaded in 1.20 s and its
 // entry was taken at 7 of 7 before the start (V4, 3a16ec30). A wallet that must take a deposit first keeps the 90 s.
 const FUNDED_JOIN_LEAD_MS = 15000;
+// NO LEAD (kanban #122, the owner 2026-10-04: "es darf niemals mehr als 90 Sekunden bei 'closes in' stehen. Ich darf immer
+// 45 sekunden in einer Runde bereits joinen"): the paid row is the soonest series round whose entry is still open, funded
+// or not. A series opens a round every 90 s and its entry closes 45 s after its start, so the row's "closes in" is never
+// over 90 s. Measured on 0.0.2527: an empty wallet's 90 s lead showed "closes in 1:41" for a round starting in 0:56.
+// A join whose deposit misses the entry close moves on to the next round (the page, BLWP_LOBBY_ACT.join).
+const JOIN_LEAD_MS = 0;
 const LOBBY_PER_SERIES = 8;
 /**
  * A LOBBY READ THAT GOT NO ANSWER KEEPS ITS LAST ROWS (the owner 2026-10-01 15:25, HARD: "A player opening the page sees a
@@ -18807,7 +18813,7 @@ function lobbyKeepJoined(picked, rows, joinedId) {
   return picked.some((r) => kind(r) === kind(joined)) ? replaced : [...replaced, joined];
 }
 
-function lobbyOnePerKind(rows, nowMs = Date.now(), { paidSeriesOnly = false, leadMsFor = () => SERIES_JOIN_LEAD_MS } = {}) {
+function lobbyOnePerKind(rows, nowMs = Date.now(), { paidSeriesOnly = false, leadMsFor = () => JOIN_LEAD_MS } = {}) {
   // ONLY 90-SECOND PAID ROUNDS (the owner 2026-10-01: "We want always 90 second rounds in Testnet ... no paid row till
   // then"): with `paidSeriesOnly` a paying round that is not a series round - the runner's one-off with its 6 h entry
   // window - is never listed; until a series' rounds can be joined there is no paid row. Free rows are untouched.
@@ -18818,7 +18824,7 @@ function lobbyOnePerKind(rows, nowMs = Date.now(), { paidSeriesOnly = false, lea
   // not): a round of a series beats one naming none; among series rounds, the soonest with the join lead left; otherwise
   // as before - joinable, then open, then the latest entry close.
   const series = (r) => !!(r.contract && r.contract.seriesId instanceof Uint8Array);
-  const leads = (r) => r.entryCloseMs - nowMs >= leadMsFor(r);
+  const leads = (r) => r.entryCloseMs - nowMs > leadMsFor(r);
   // A SERIES' START, its round's start less i x 90 s: of two series the later-starting one is the one posted after
   // (the owner 2026-09-30: "That series takes priority over the old posted rounds").
   const seriesStart = (r) => BigInt(r.contract.startTimeMs) - BigInt(r.contract.roundIndex || 0) * 90000n;
@@ -19225,7 +19231,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          lookOwed: lookOwed, owedToLine: owedToLine, collectOwed: collectOwed, collectAndWithdraw: collectAndWithdraw, findOwedRounds: findOwedRounds,
          lobbyQuery: lobbyQuery, fetchLobby: fetchLobby, lobbyLine: lobbyLine, lobbyJoinSearch: lobbyJoinSearch,
          SIGNER_ANSWER_MS: SIGNER_ANSWER_MS,
-         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, lobbyKeepJoined: lobbyKeepJoined, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS,
+         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, lobbyKeepJoined: lobbyKeepJoined, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
          nextRoundAfter: nextRoundAfter, nextRoundView: nextRoundView, joiningNextRoundIn: joiningNextRoundIn,
          EXIT_GAME: EXIT_GAME, RESULT_CARD_MS: RESULT_CARD_MS,
          dailyLobbySearch: dailyLobbySearch,

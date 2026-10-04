@@ -1722,6 +1722,15 @@
             const wallet = await (funding || Promise.reject(new Error('no deposit was started for this round')));
             // A JOIN REPLACED BY ANOTHER PLAY BEFORE ITS LOCK makes no lock (the deposit, if any, stays in the player wallet)
             if (thisJoin && thisJoin.cancelled) throw new Error('this join was replaced by another PLAY before its stake was locked');
+            // A DEPOSIT THAT LANDS AFTER THE ENTRY CLOSED GOES TO THE NEXT ROUND (kanban #122, the owner 2026-10-04: the paid row is
+            // the soonest round whose entry is open, so a deposit can outlast it). The seats take an entry until the close
+            // plus 15 s (ENTRY_POST_GRACE_MS); with under 5 s of that left no lock is made - the deposit stays in the player
+            // wallet, and the lobby's join takes the next round of the series from it (BLWP_LOBBY_ACT.join, `missed`).
+            const lastEntryMs = Number(named.round.entryCloseMs) + 15000 - 5000;
+            if (thisJoin && !thisJoin.free && Number.isFinite(lastEntryMs) && Date.now() > lastEntryMs) {
+              thisJoin.missed = true;
+              throw new Error('the entry closed before the deposit arrived');
+            }
             if (thisJoin) thisJoin.locking = true;   // from here it holds a lock (busy: finished, never replaced)
             // THE ROUND IS SHOWN LOADED HERE, THE LOCK FINISHES BEHIND IT (the owner 2026-10-03: "A paid join of an already-open
             // round stays at most 3 seconds from the click to the loaded round"). Measured on 0.0.2479: the lock's federation
@@ -3224,11 +3233,8 @@
         // may no longer change when the other round is newer"): while a join is going or held, its round is its kind's row.
         const going = window.BLWP_JOIN && !window.BLWP_JOIN.cancelled && (window.BLWP_JOIN.state === 'joining' || window.BLWP_JOIN.state === 'joined')
           ? window.BLWP_JOIN.round : null;
-        // THE SOONEST ROUND WHEN NOTHING MUST BE DEPOSITED FIRST (the owner 2026-10-03): a free row, or a paid row whose stake
-        // the player wallet already holds, needs only 15 s of entry left; a wallet that must take a deposit keeps 90 s
-        const walletSats = window.BLWP_WALLET_BALANCE && typeof window.BLWP_WALLET_BALANCE.sats === 'number' ? window.BLWP_WALLET_BALANCE.sats : 0;
-        const leadMsFor = (r) => (r.free || walletSats >= BLWPCLIENT.lobbyStakeSats(r)
-          ? BLWPCLIENT.FUNDED_JOIN_LEAD_MS : BLWPCLIENT.SERIES_JOIN_LEAD_MS);
+        // NO LEAD (kanban #122): the soonest round whose entry is open, funded or not - "closes in" never over 90 s
+        const leadMsFor = () => BLWPCLIENT.JOIN_LEAD_MS;
         const picked = BLWPCLIENT.lobbyOnePerKind(window.BLWP_LOBBY_ROWS, Date.now(), { paidSeriesOnly: true, leadMsFor });
         window.BLWP_LOBBY = (BLWPCLIENT.lobbyKeepJoined ? BLWPCLIENT.lobbyKeepJoined(picked, window.BLWP_LOBBY_ROWS, going) : picked).map((r) => ({ id: r.id, phase: r.phase, free: r.free, wallet: r.wallet,
           signerNodesAgree: r.signerNodesAgree, needed: r.needed, joinable: r.joinable, stakeSats: BLWPCLIENT.lobbyStakeSats(r),
@@ -3541,7 +3547,19 @@
               else { refuse(window.BLWP_JOIN_REFUSED || 'this page did not join that round');
                      console.error('[blwp] join refused: ' + join.why); }
             })
-            .catch((e) => { if (!join.cancelled) refuse(e && e.message ? e.message : e); });
+            .catch((e) => {
+              if (join.cancelled) return;
+              refuse(e && e.message ? e.message : e);
+              // MISSED THE CLOSE (kanban #122): the next round of this series, of the same stake, joined with the deposit
+              // already in the player wallet - no second invoice. Only while this join is still the page's join.
+              if (!join.missed || window.BLWP_JOIN !== join) return;
+              const start = Number((r.raw && r.raw.startTimeMs) || 0);
+              const after = (window.BLWP_LOBBY_ROWS || []).filter((x) => x.joinable && !x.free && BLWPCLIENT.lobbyStakeSats(x) === Number(r.stakeSats)
+                && Number(x.startTimeMs) > start && Number(x.entryCloseMs) > Date.now()).sort((a, b) => Number(a.startTimeMs) - Number(b.startTimeMs))[0];
+              console.warn('[blwp] join ' + String(id).slice(0, 16) + ': the entry closed before the deposit arrived; '
+                + (after ? 'joining the next round ' + String(after.id).slice(0, 16) : 'no next round listed'));
+              if (after) window.BLWP_LOBBY_ACT.join(after.id, { link });
+            });
           return answer(true, 'started');
         },
         // THE NAME, in the browser's own prompt: a phone's keyboard types into it.
