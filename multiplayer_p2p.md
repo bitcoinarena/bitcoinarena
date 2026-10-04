@@ -5,12 +5,15 @@
 **Version:** 4.6.4 (supersedes v4.4/v4.5 and the earlier v1.x P2P drafts; all remain in git history)
 **Date:** 2026-09-21
 
-> **Late join and background stake (the owner 2026-10-02 / 2026-10-03,
-> written 2026-10-03).** A series may take new entries up to 45 s after a
-> round's start; a late joiner plays a full 82 s run from his join; the
-> round's end - the anchor of the 10-minute window - is entry close + 15 s
-> + 82 s. Play starts at once and the stake is verified in the background;
-> an entry whose stake is not seen by entry close + 15 s is `ENTRY_VOID`.
+> **Late join and background stake (the owner 2026-10-02 / 2026-10-03, written
+> 2026-10-03; the run's end and the door RULED again 2026-10-04 14:30, #130).**
+> A series may name an entry close 45 s after a round's start; the signer
+> nodes take a new entry only before start + 37 s (45 s or less of the run
+> left is too late), and a late joiner's run ends with everybody's at
+> start + 82 s - a later join does not extend the round. The round's end -
+> the anchor of the 10-minute window - is entry close + 2 x start deadline
+> + the run, as the code computes it. Play starts at once and the stake is verified in the background;
+> an entry whose stake is not seen by the instant a new entry is refused is `ENTRY_VOID`.
 > §5A.5 Timing, §13A, §23.1 step 5.
 
 > **WINDOW-10-SPEC (the owner 2026-10-01 09:40), anchored the same day.** The
@@ -435,9 +438,10 @@ before they draw it; a seat can omit it, never invent it), and is never on the
 signed final. Other players' rows - seated view, lobby, board - show the name
 from their verified display record: the custom name if they chose one, else
 the default from the identity key the record carries. The
-LNURL-pay `comment` on donations is the player **public key as hex**, not the
-display name (the owner 2026-09-08). It is omitted if `commentAllowed` is under
-64 characters.
+LNURL-pay `comment` on donations (rounds published with an LNURL set only;
+a key set pays inside the federation, §22A) is the player **public key as
+hex**, not the display name (the owner 2026-09-08). It is omitted if
+`commentAllowed` is under 64 characters.
 
 **Browser key (M3).** The secret is stored in the browser (`blwp.player.v1`)
 with a backup download/import the player triggers. It is never uploaded to a
@@ -1318,11 +1322,12 @@ start_time(i)      = series_start + i * 90 s
 entry_open(i)      = committee_time(i)          (the committee exists; 5A.5)
 entry_close(i)     = start_time(i) + late_join  late_join = 0 or 45 s, fixed by the series
                                                 (in its template, so in its series id)
-post_grace         = 15 s                       a join begun before entry_close may post
-                                                its entry until entry_close + 15 s; a NEW
-                                                entry after that is refused
-join_tick          = the entry's own join; its 82 s run counts from there
-run ends           <= entry_close(i) + post_grace + 82 s   (the round's end, below)
+last_entry(i)      = start_time(i) + 37 s       a late-join round: a NEW entry at or after it
+                                                is refused - 45 s or less of the run is left
+                                                (#130); the same entry posted again is taken
+join_tick          = the round's ticks already gone at the join (0 before the start); the
+                     run is blockTicks - join_tick and ends on the round's last tick
+run ends           <= start_time(i) + 82 s      every run, late joiners included
 result card        >= 8 s, then "joining next round in N s" + "exit game"
 ```
 
@@ -1331,16 +1336,24 @@ round is possible with 45 seconds in").** A series may let players join a
 round that is already running, up to **45 seconds** after its start. The 45
 seconds are part of the series template (`entry_close - start_time`), so
 they are in the series id and every round of the series derives them; a
-series names either 0 or 45 s and nothing else. A late joiner plays a full
-82-second run from his own join, with the same stake and the same rules;
-his first-mark window and his door count from his entry, not from the
-round's start. All runs of a round therefore end by
-`entry_close + post_grace + 82 s`, which is the instant §13A calls the
-**round's end**. With late join on, back-to-back 90 s rounds overlap: a
-player who joins round *i* late is still driving when round *i+1* starts,
-and simply takes a later round next. Before this ruling every series round
-closed its entry at its start and all players started together; a series
-with late join 0 keeps exactly that.
+series names either 0 or 45 s and nothing else.
+
+**The run ends with the round; the door closes when 45 s remain *(RULED,
+the owner 2026-10-04 14:30, #130: "They always end at the 82/90 boundary ... A
+later join does not extend the round. The late joiner has less time. Join
+closes when 45 s remain")*.** The signer nodes are stricter than the bytes:
+a new entry of a late-join round is refused from `start_time + 37 s` on (at
+that instant 45 s of the run remain), and a late entry names the round's
+ticks already gone as its `join_tick` (a node refuses one more than 10 s
+behind its own clock). Its run is `blockTicks - join_tick` and ends on the
+round's last tick with everybody's, so every run of a round ends by
+`start_time + 82 s` and the 8 s before the next start hold for late joiners
+too; the page offers a late-join round until `start_time + 32 s` (the join's
+own 5 s). No new series was needed: the 45 s in the bytes stand. The
+**round's end** of §13A is `entry_close + 2 x start_deadline + T_run` (code:
+`roundEndMs`) - after every run's end, as before. Before the late-join
+ruling every series round closed its entry at its start and all players
+started together; a series with late join 0 keeps exactly that.
 
 **Continuing is the default.** While a player's run of round `i` is on the
 road, the page enters round `i+1` for them (its entry window is open: the
@@ -1360,7 +1373,8 @@ round_contract(i)     = SeriesContract with
                           committee_time  = series committee_time
                           start_time      = series_start + i * round_period
                           entry_open      = its seating certificate (below)
-                          entry_close     = start_time   (all runs start together)
+                          entry_close     = start_time + late_join   (0 or 45 s, in the
+                                            template; the door is start + 37 s, §5A.5 Timing)
                           round_index     = i
 round_id(i)           = H(series_id || i)
 committee_seed(i)     = H(series committee_seed || i)
@@ -2327,9 +2341,10 @@ WINDOW-10-SPEC).
 
   ```text
   window_open   = round_end                  the round's end as its contract fixes it:
-                                             entry_close + post_grace + T_run, in UTC -
-                                             the latest instant any run of the round can
-                                             end, late joiners included (§5A.5)
+                                             entry_close + 2 x start_deadline + T_run, in
+                                             UTC (code: roundEndMs) - after the latest
+                                             instant any run of the round can end, late
+                                             joiners included (§5A.5)
   window_close  = round_end + 600 s
   final_after   = window_close + tolerance   tolerance = 5 s (RULED HERE)
   ```
@@ -3006,18 +3021,45 @@ distribute the remaining msat in ascending `H(round_id ‖ node_pubkey)` order.
 ## The donation set
 
 A donation goes to a **set** of recipients with declared shares, not to one
-address:
+address. *(RULED, the owner 2026-10-03: "We'll use the federation(s) as
+donation layer"; FEDERATION.md "Donations in the federation".)* The set
+names **keys**, not LNURLs - one set for the network, valid in every
+federation:
 
-```json
-[
-  { "lnurl": "LNURL1...", "share_bps": 5000 },
-  { "lnurl": "LNURL2...", "share_bps": 5000 }
-]
+```text
+donation set = signed by the network's donation authority (§27A.4)
+  [ { recipient_pk: 33-byte secp256k1 key, share_bps: 6667, label: "dev a" },
+    { recipient_pk: ...,                    share_bps: 3333, label: "dev b" } ]
 ```
 
 `share_bps` are basis points and MUST sum to exactly 10000. A client with
 donations enabled pays each recipient its share of the player's chosen
-donation - fifty-fifty above - as separate Lightning payments.
+donation **inside the round's federation, in the same transaction that
+locks the stake and the fee**: one donation output per recipient, a payout
+contract as §5 builds them - a pre-expired lock with `refund_pk =
+recipient_pk`, which only the recipient redeems, with its own key, at any
+time. No gateway, no route, no minimum HTLC and no Lightning fee: a stake
+that is locked is a donation that is paid. (Measured 2026-10-03, the
+Lightning way failed twice: LNURLs no browser could reach, and a 666 msat
+share found no route over a channel whose minimum HTLC was 1 sat.)
+
+- **The Entry Contract names the donation outpoints** beside the stake and
+  fee lock outpoints - one per share above 0 msat, in the set's order, and
+  only when there are any, so an entry that pays no key keeps its bytes and
+  its id.
+- **Enforced by the signer nodes:** an entry whose donation is above 0 is
+  taken only if the federation holds those outputs, each to its recipient
+  key for its share; a wrong or missing output is refused like a wrong
+  stake lock.
+- **Found by the recipient's own client:** each signer node keeps the
+  donation outpoints of the entries it took, by recipient key and
+  federation, and answers them publicly (`GET /donations?key=...`); the
+  recipient's client confirms each with the federation, redeems it there
+  and withdraws to its own Lightning node - one Lightning fee for many
+  donations.
+- **Rounds already published keep the set they name.** A round whose set
+  names LNURLs (before 2026-10-04) paid them over Lightning as separate
+  payments; nothing of such a round is rewritten.
 
 **Why a set and not an address.** One address is one party's decision about
 who deserves the money, made once and never revisited. A set with shares is
@@ -3034,11 +3076,11 @@ entry.
   donation to an undisclosed address is not a donation.
 - A player who has donations switched off pays none of them, and the set is
   irrelevant to that entry.
-- Payment failure to one recipient does not void the entry or the round.
-  A donation is voluntary and outside the pool; an unreachable LNURL is a
-  failed payment and nothing more. Clients SHOULD report it and MUST NOT
-  redirect the share to the remaining recipients, which would let one
-  unreachable endpoint quietly redistribute other people's money.
+- A donation is voluntary and outside the pool, and **not returned**: a
+  walk-away or a refunded stake does not bring it back, and a join that
+  locked and then failed has given its donation. A share is never
+  redirected to the remaining recipients. (Under an LNURL set, an
+  unreachable LNURL was a failed payment and nothing more.)
 - Rounding: compute in millisatoshis, floor each share, and give the
   remainder to the first recipient in the set as published. Deterministic,
   and the amounts are too small for anything cleverer to be worth its
@@ -3301,8 +3343,9 @@ been removed from this document.
    receipt the player's inputs from the first tick but **hold them** - no
    result is signed and no entry counts toward the round's membership -
    until five settlement seats have verified the locks as above. A stake
-   not verified by `entry_close + post_grace` (§5A.5; RULED HERE, the same
-   instant a new entry is refused) makes the entry **`ENTRY_VOID`**: its
+   not verified by the instant a new entry is refused (§5A.5: `start_time +
+   37 s` on a late-join round since #130, the entry close otherwise; RULED
+   HERE, the same instant) makes the entry **`ENTRY_VOID`**: its
    inputs are dropped, it is excluded from the pool and the payout table,
    and whatever reached a lock goes back by forfeit or expiry (§23.2). The
    page shows the run as unconfirmed until the stake is seen, and says so if
@@ -4207,11 +4250,11 @@ Lightning deposit of at least the stake plus fee, and the client locks from
 the wallet the moment the notes arrive - the v4.6.2 per-round deposit is
 this case, not a second path (§23.1 step 3).
 
-**Donations** (§27A.4) are paid at entry from the player wallet through a
-gateway to each recipient's LNURL invoice, as a withdrawal is (RULED HERE).
-They are still never locked in the federation and still go to the
-recipient directly; the gateway is paid only against the preimage. A player
-who prefers may pay them from the external wallet as before.
+**Donations** (§27A.4, §22A "The donation set") are paid at entry from the
+player wallet **inside the federation**: one output per recipient key in the
+same transaction as the stake and fee locks *(RULED, the owner 2026-10-03;
+replaces the Lightning payment to each recipient's LNURL ruled here
+earlier, which stays for the rounds published with an LNURL set)*.
 
 ## 24A.2 The payment surface, and all of it
 
@@ -4221,7 +4264,7 @@ who prefers may pay them from the external wallet as before.
 | Player pays a stake | E-cash from the player wallet into the round's stake lock and fee lock (§23.1); no Lightning payment |
 | Player is paid a win or refunded | A payout contract or a forfeited lock to the player's round key, redeemed into the player wallet by the client as soon as it exists; pending until then |
 | Player withdraws | Any part of the balance to a BOLT11 invoice from the external wallet, through any listed gateway |
-| Donations are paid | LNURL per recipient, by share (§27A.4), from the player wallet through a gateway or from the external wallet - never through a lock |
+| Donations are paid | One output per recipient key, by share (§22A, §27A.4), in the player's lock transaction inside the federation; redeemed by the recipient's own key (LNURL over Lightning only for rounds published with an LNURL set) |
 
 Lightning at the edges only, when the player chooses; stakes and winnings
 move inside the federation, under the player's own keys, and nothing waits
@@ -4810,7 +4853,7 @@ CANNOT  make a player donate: the percentage is the player's, and zero
 
 | | Effect |
 |---|---|
-| **authority stolen** | The thief signs a set with a higher serial pointing at their own LNURLs, and players with donations on pay them until it is noticed. Answered by a rotation from the recovery key: **no fork, the census survives.** Nothing else is touched - no round, no stake, no payout, no committee. |
+| **authority stolen** | The thief signs a set with a higher serial pointing at their own keys, and players with donations on pay them until it is noticed. Answered by a rotation from the recovery key: **no fork, the census survives.** Nothing else is touched - no round, no stake, no payout, no committee. |
 | **authority lost** | Same remedy. Rotate and carry on. |
 | **both lost** | The set freezes at its last published serial and every donation keeps going where it was already going. Everything else works. There is no further recovery and there should not be. |
 | **recovery stolen** | The thief can seize the authority. It is therefore **exactly as sensitive as the authority key** and must be stored accordingly - the fact that it is used once in years makes cold storage realistic, not optional. |
