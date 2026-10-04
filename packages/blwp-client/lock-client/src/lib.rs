@@ -167,32 +167,20 @@ impl LockClient {
         secret: String,
         store: store::LockStore,
     ) -> Result<LockClient, JsError> {
-        let invite = InviteCode::from_str(&invite).map_err(js)?;
-        let named = invite.federation_id().to_string();
-        if named != federation_id.to_ascii_lowercase() {
-            return Err(js(format!(
-                "that invite is to federation {named}, and this round's stake goes into {federation_id}"
-            )));
-        }
-        let secret = secret_from_hex(&secret)?;
-        let mut builder = Client::builder().await.map_err(js)?;
-        builder.with_module(fedimint_mintv2_client::MintClientInit);
-        builder.with_module(fedimint_lnv2_client::LightningClientInit::default());
-        let connectors = ConnectorRegistry::build_from_client_defaults().bind().await.map_err(js)?;
-        let root = RootSecret::StandardDoubleDerive(DerivableSecret::new_root(&secret, b"BLWP/v1/LockClient"));
-        let (tab, _kept) = store::TabDatabase::load(store).map_err(js)?;
-        let db: Database = tab.into();
-        let client = if Client::is_initialized(&db).await {
-            builder.open(connectors, db, root).await.map_err(js)?
-        } else {
-            let preview = builder.preview(connectors, &invite).await.map_err(js)?;
-            preview.join(db, root).await.map_err(js)?
-        };
-        if client.federation_id().to_string() != named {
-            return Err(js("the wallet this tab kept is another federation's"));
-        }
-        let lnv2 = client.get_first_instance(&KIND).ok_or_else(|| js("this federation has no lnv2 module"))?;
-        Ok(LockClient { client, lnv2, last_count: std::sync::Mutex::new(None) })
+        Self::start(invite, federation_id, secret, store, false).await
+    }
+
+    /// THE WALLET ON A NEW DEVICE (#27, the owner 2026-10-04: "patch Fedimint's recovery so it runs in the browser"): as
+    /// `join`, but a store that holds no wallet yet is RECOVERED from the federation instead of joined empty - Fedimint's
+    /// own recovery (mintv2 scans the federation's issuance history for the notes this secret's keys made) runs, and
+    /// this waits for it. A secret that never held notes recovers an empty wallet; a kept store opens as with `join`.
+    pub async fn recover(
+        invite: String,
+        federation_id: String,
+        secret: String,
+        store: store::LockStore,
+    ) -> Result<LockClient, JsError> {
+        Self::start(invite, federation_id, secret, store, true).await
     }
 
     /// THE PLAYER'S REFUND (§23.2: nobody acted, and the lock expired). The
@@ -1172,5 +1160,47 @@ impl LockClient {
             }
         }
         Err(js(format!("the lock transaction {txid} was accepted but no outpoint of it holds an outgoing contract")))
+    }
+}
+
+impl LockClient {
+    async fn start(
+        invite: String,
+        federation_id: String,
+        secret: String,
+        store: store::LockStore,
+        recover: bool,
+    ) -> Result<LockClient, JsError> {
+        let invite = InviteCode::from_str(&invite).map_err(js)?;
+        let named = invite.federation_id().to_string();
+        if named != federation_id.to_ascii_lowercase() {
+            return Err(js(format!(
+                "that invite is to federation {named}, and this round's stake goes into {federation_id}"
+            )));
+        }
+        let secret = secret_from_hex(&secret)?;
+        let mut builder = Client::builder().await.map_err(js)?;
+        builder.with_module(fedimint_mintv2_client::MintClientInit);
+        builder.with_module(fedimint_lnv2_client::LightningClientInit::default());
+        let connectors = ConnectorRegistry::build_from_client_defaults().bind().await.map_err(js)?;
+        let root = RootSecret::StandardDoubleDerive(DerivableSecret::new_root(&secret, b"BLWP/v1/LockClient"));
+        let (tab, _kept) = store::TabDatabase::load(store).map_err(js)?;
+        let db: Database = tab.into();
+        let client = if Client::is_initialized(&db).await {
+            builder.open(connectors, db, root).await.map_err(js)?
+        } else if recover {
+            let preview = builder.preview(connectors, &invite).await.map_err(js)?;
+            let client = preview.recover(db, root, None).await.map_err(js)?;
+            client.wait_for_all_recoveries().await.map_err(js)?;
+            client
+        } else {
+            let preview = builder.preview(connectors, &invite).await.map_err(js)?;
+            preview.join(db, root).await.map_err(js)?
+        };
+        if client.federation_id().to_string() != named {
+            return Err(js("the wallet this tab kept is another federation's"));
+        }
+        let lnv2 = client.get_first_instance(&KIND).ok_or_else(|| js("this federation has no lnv2 module"))?;
+        Ok(LockClient { client, lnv2, last_count: std::sync::Mutex::new(None) })
     }
 }

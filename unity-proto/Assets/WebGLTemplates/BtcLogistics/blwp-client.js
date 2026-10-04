@@ -9926,6 +9926,24 @@ function walletStoreFor(storage, federationId, secret) {
 }
 
 /**
+ * A SEED BROUGHT FROM ANOTHER DEVICE RECOVERS ITS WALLET (#27, the owner 2026-10-04: "patch Fedimint's recovery so it runs in
+ * the browser, then measure the second device finding the notes the first device held"). The page marks a seed the player
+ * typed in (24 words or 64 hex); a player wallet of that seed that this browser keeps nothing of is then RECOVERED from the
+ * federation (LockClient.recover: Fedimint's own mintv2 recovery, the notes this secret's keys made) instead of joined
+ * empty. Only an imported seed: a seed this page made has no notes anywhere else, and its first open stays a plain join.
+ * The mark is per seed, never the seed: the key is a hash of it. A wallet already kept here opens as before.
+ */
+const recoverMarkKey = (seed) => `blwp.recover.${toHex(sha256(seed)).slice(0, 16)}`;
+function markSeedRecover(storage, seedHex) {
+  if (!storage || !/^[0-9a-f]{64}$/i.test(String(seedHex || ''))) return false;
+  storage.setItem(recoverMarkKey(fromHex(String(seedHex).toLowerCase())), '1');
+  return true;
+}
+const seedRecovers = (storage, seed) => {
+  try { return !!(storage && seed instanceof Uint8Array && storage.getItem(recoverMarkKey(seed)) === '1'); } catch { return false; }
+};
+
+/**
  * THE CHECKS A PAYING ROUND'S STAKE IS HELD TO, before the player wallet is even opened: a round that names a
  * federation, custody fields in full (M3 W7, §23), an invite to reach it, a lock client to reach it with.
  */
@@ -9968,11 +9986,13 @@ async function playerWallet({ round, invite, seed, LockClient, storage, onStep =
   }
   const store = storage ? walletStoreFor(storage, round.federationId, secret) : unkeptLockStore();
   const kept = JSON.parse(store.entries()).length;
-  onStep(kept ? 'reopening the player wallet this tab keeps for this federation' : 'joining the federation with the player wallet');
+  const recover = !kept && typeof LockClient.recover === 'function' && seedRecovers(storage, seed);
+  onStep(kept ? 'reopening the player wallet this tab keeps for this federation'
+    : recover ? 'recovering the player wallet of this seed from the federation' : 'joining the federation with the player wallet');
   // AND A JOIN THAT NEVER ANSWERS IS REFUSED BY NAME after `joinWaitMs`, so PLAY can be pressed again
   let timer = null;
   const joining = Promise.race([
-    LockClient.join(invite, toHex(round.federationId), toHex(secret), store),
+    (recover ? LockClient.recover : LockClient.join).call(LockClient, invite, toHex(round.federationId), toHex(secret), store),
     new Promise((_, no) => { timer = setTimeout(() => no(new Error(`the federation did not open the player wallet in ${Math.round(joinWaitMs / 1000)} s - press PLAY again`)), joinWaitMs); }),
   ]).finally(() => clearTimeout(timer));
   if (byStore) {
@@ -19418,7 +19438,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          awaitAttestedClaimKey: awaitAttestedClaimKey,
          sharesNeededFor: sharesNeededFor,
          lockStake: lockStake, handLock: handLock, lockSecretFor: lockSecretFor, lockLine: lockLine,
-         playerWallet: playerWallet, fundPlayerWallet: fundPlayerWallet, walletSecretFor: walletSecretFor,
+         playerWallet: playerWallet, fundPlayerWallet: fundPlayerWallet, walletSecretFor: walletSecretFor, markSeedRecover: markSeedRecover, seedRecovers: seedRecovers,
          withdrawPlayerWallet: withdrawPlayerWallet,
          saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, keptLockUse: keptLockUse,
          roundEndMs: roundEndMs,
