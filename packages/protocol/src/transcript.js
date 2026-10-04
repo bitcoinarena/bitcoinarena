@@ -310,7 +310,7 @@ export function transcriptBelongsToEntry(transcript, entry, blockTicks) {
   if (reaches > ends)
     return {
       ok: false,
-      why: `that run ends at tick ${ends} - ${blockTicks} ticks from its join at `
+      why: `that run ends at tick ${ends} - the round's last of ${blockTicks}, joined at `
         + `${entry.joinTick} - and that transcript reaches ${reaches}`,
     };
 

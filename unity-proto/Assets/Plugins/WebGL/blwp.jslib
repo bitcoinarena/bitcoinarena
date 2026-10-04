@@ -749,12 +749,15 @@ mergeInto(LibraryManager.library, {
           // counts from here too, because a checkpoint is labelled with it and
           // hashes the core as it stands.
           // AT THE ROUND'S OWN RUN LENGTH (the 82/90 fork): its contract's blockTicks, as the signer nodes replay it.
+          // A LATE ENTRY'S RUN ENDS WITH THE ROUND'S (kanban #130): the round's run less the ticks before its join tick, and
+          // its ticks are counted from that join tick - the HUD's time left is then the round's, and the last tick everybody's.
+          var joinTick = (entry && typeof entry.joinTick === 'number' && entry.joinTick > 0) ? (entry.joinTick | 0) : 0;
           b.st = b.core.init(net.seedWord, (net.contract && typeof net.contract.blockTicks === 'number')
-            ? { runTicks: net.contract.blockTicks } : {});
+            ? { runTicks: BLWPCLIENT.runTicksForEntry(joinTick, net.contract.blockTicks) } : {});
           // A NEW WORLD IS A NEW RELIEF: the seed names the hills. Counted here, where C# never
           // hears about it, so the drawn terrain knows to rebuild (BlwpCore.ReliefEpoch).
           b.reliefEpoch = (b.reliefEpoch | 0) + 1;
-          net.seen = 0;
+          net.seen = joinTick;
           net.client.setRound({
             roundId: net.where.roundId, entryId: net.where.entryId,
             blockTicks: contract.blockTicks | 0,

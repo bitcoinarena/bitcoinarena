@@ -28,6 +28,7 @@
 import { joinQuery, fetchRound, roundPays } from './join.js';
 import { checkedNames } from './identity.js';
 import { lobbyListingId } from '../../protocol/src/lobby-listing.js';
+import { entryOpenUntilMs } from './late-join.js';
 import { receiptsNeeded } from '../../protocol/src/threshold.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 
@@ -201,7 +202,9 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
       wallet: pays ? 'federation-lock' : 'none',
       stakeMsat: contract.stakeMsat,
       committeeTimeMs: Number(contract.committeeTimeMs), startTimeMs: Number(contract.startTimeMs),
-      entryCloseMs: Number(contract.entryCloseMs),
+      // A LATE-JOIN ROUND IS OFFERED ONLY WHILE A JOIN STILL REACHES A SEAT BEFORE 45 s OF ITS RUN REMAIN (kanban #130): its
+      // close here is start + 37 s less the join's time, not the bytes' start + 45 s - the row, its "closes in" and the pick.
+      entryCloseMs: entryOpenUntilMs(contract),
       said: counts,
       signerNodesAgree: agreeing.size, needed, signerNodes: signerNodes.size,
       joinable: phase === 'open' && agreeing.size >= needed,
