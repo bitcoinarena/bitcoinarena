@@ -39,6 +39,8 @@ public class WastedSequence : MonoBehaviour
 
     /// <summary>True while the live round's band is up or fading: the run-end spectate waits for it.</summary>
     public bool BandUp => _running && _live;
+    /// <summary>When the last live-round sequence ended (unscaled seconds), -1 before any: the spectate starts after it.</summary>
+    public float LiveEndedAt { get; private set; } = -1f;
     bool _live;
     float _wreckedAt = -1f;
 
@@ -145,6 +147,7 @@ public class WastedSequence : MonoBehaviour
             if (since >= holdSeconds + fadeOutSeconds || nextRun)
             {
                 _running = false; _live = false; Intensity = 0f;
+                LiveEndedAt = Time.unscaledTime;
                 Restore();
                 Debug.Log($"[blwp] wasted: gone {since:0.00} s after the wreck{(nextRun ? " (a new run began)" : "")}; time scale {Time.timeScale:0.00}");
                 return;
