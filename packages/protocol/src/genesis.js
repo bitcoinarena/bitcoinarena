@@ -126,8 +126,24 @@ export function encodeGameConfigV3() {
   return out;
 }
 
+/** The config 7e2123d1's rounds named before the world was shared (f51759b6): v3. */
+export const computeConfigV3Hash = () => taggedHash(TAG_GAME_CONFIG, encodeGameConfigV3());
+
+/**
+ * v4 (the owner 2026-10-04, #23 world grinding): v3's fields and the WORLD RULE - 1 = one world per round, shared by every
+ * player (§5A.5 round_seed(i) = H(committee_seed(i) || "world")); the player picks nothing: no secret, no key, no join
+ * tick moves it. Same core 7e2123d1; the pair 7e2123d1 + v4 names the rule.
+ */
+export const GAME_CONFIG_V4 = 4;
+export const WORLD_SHARED_PER_ROUND = 1;
+export function encodeGameConfigV4() {
+  const v3 = encodeGameConfigV3();
+  const out = new Uint8Array(v3.length + 1); out.set(v3); out[0] = GAME_CONFIG_V4; out[v3.length] = WORLD_SHARED_PER_ROUND;
+  return out;
+}
+
 /** The config hash a round on the current core names: computed from the core's own constants, never typed. */
-export const computeCurrentConfigHash = () => taggedHash(TAG_GAME_CONFIG, encodeGameConfigV3());
+export const computeCurrentConfigHash = () => taggedHash(TAG_GAME_CONFIG, encodeGameConfigV4());
 
 /**
  * Randomness nobody in this protocol can grind: the Bitcoin block hash at a

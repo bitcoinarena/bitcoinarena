@@ -19,7 +19,7 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { resultFinality } from '../src/finality.js';
-import { TRUCK, TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK, TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../src/cores.js';
 import { COUNTER, CONFIGS } from './cores/counter.js';
 import { assumeAssigned } from './assignment.js';
 import { rand, WINDOW_MS, WINNER, GENESIS_HASH, wordsAt, contractFor, say, opts, wait, RANDOMNESS } from './window-fixture.js';
@@ -99,7 +99,7 @@ const signedAt = (d, rid, eid) => d.round.results(rid, eid).map((r) => {
 test('the truck and a second title, the second under two configs, run on the same two signer nodes in one window - each replayed by its own core under its own config, each result naming it', async () => {
   const w = await twoSignerNodes();
   try {
-    const truck = await open(w, TRUCK_CORE_HASH, TRUCK_CONFIG_HASH);
+    const truck = await open(w, TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH);
     const low = await open(w, COUNTER_CORE_HASH, LOW.hash, LOW.config.ticks, 90);
     const high = await open(w, COUNTER_CORE_HASH, HIGH.hash, HIGH.config.ticks, 90);
     const runs = {
@@ -151,7 +151,7 @@ test('a signer node that did not install the second title refuses its round at t
     const base = { ...contractFor(nodes, BigInt(WINDOW_MS)), stakeMsat: 0n, federationId: new Uint8Array(32) };
     const post = async (c) => { const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) }); return { status: r.status, why: (await r.text()).trim() }; };
     const counter = await post({ ...base, simCoreHash: COUNTER_CORE_HASH, configHash: LOW.hash });
-    const truck = await post({ ...base, simCoreHash: TRUCK_CORE_HASH, configHash: TRUCK_CONFIG_HASH });
+    const truck = await post({ ...base, simCoreHash: TRUCK_CORE_HASH, configHash: TRUCK_V3_CONFIG_HASH });
     console.log('  FACTS (not installed):', JSON.stringify({ counter: { ...counter, why: counter.why.slice(0, 100) }, truck: truck.status }));
     assert.equal(counter.status, 409);
     assert.match(counter.why, /this signer node holds no core/);

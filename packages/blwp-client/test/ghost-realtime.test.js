@@ -6,7 +6,7 @@
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import WebSocket from 'ws';
 import { assumeStakeSeen } from '../../blwp-node/test/assignment.js';
-import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../blwp-node/src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../blwp-node/src/cores.js';
 import { test } from 'node:test';
 // The run length is the core's; a literal 9000 is refused by the node as a contract
 // disagreeing with the network it names (WAR_TACTICS moved a run to 10800).
@@ -51,7 +51,7 @@ async function rig() {
   const node = await serve(openStore(), { port: 0, ...FUNDED });
   const client = new Client({ base: `http://127.0.0.1:${node.port}`, core, sign, verify });
   const c = {
-    networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 6,
+    networkId: NETWORK_ID_REGTEST, configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6,
     gameVerifySlots: 7, settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH,
     committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
     startTimeMs: 500n + MIN_ENTRY_WINDOW_MS, entryCloseMs: 200000n,

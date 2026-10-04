@@ -25,7 +25,7 @@ import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
 import { httpProvider } from './headers.js';
 import { NO_SHARES, dealHandout, encodeHandout } from '../../protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../protocol/src/shares.js';
-import { seedWordForEntry } from '../../protocol/src/seed.js';
+import { worldSeedWord, worldIsShared } from '../../protocol/src/seed.js';
 import { playerSecretFor, refundFingerprint } from '../../protocol/src/player-key.js';
 import { coreIsKnownGood } from '../../protocol/src/known-core.js';
 import { entryFeeMsat, feeMatchesEntry } from '../../protocol/src/fee.js';
@@ -547,12 +547,13 @@ export async function fetchSettlementSignerNodes(id, nodes, { fetcher = fetch } 
  * So this is fetched and derived in one place, and the page has no second way
  * to get a seed.
  */
-export async function worldSeedFor({ entry, round, nodes, fetcher = fetch } = {}) {
+export async function worldSeedFor({ entry, round, nodes, contract, fetcher = fetch } = {}) {
   if (!entry) throw new Error('there is no entry to seed a world for');
   const id = typeof round === 'string' ? round : toHex(round);
   const beacon = await fetchRandomness(id, nodes, { fetcher });
   return {
-    seedWord: seedWordForEntry(entry, beacon.randomness),
+    // THE ONE FUNCTION (seed.js worldSeedWord, #23): the round's contract chooses the rule - one world per round, or per player
+    seedWord: worldSeedWord({ entry, roundRandomness: beacon.randomness, contract, roundId: fromHex(id) }),
     randomness: beacon.randomness,
     height: beacon.height,
     agreed: beacon.agreed,
@@ -809,7 +810,8 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
   return {
     playerPubkey: player.pubkey,
     stakeCommitment: stake ? stake.stakeCommitment : random(32),
-    worldSecret: random(32),
+    // NONE ON A SHARED-WORLD ROUND (#23): 32 zero bytes, kept so the entry's encoding and id stay the same shape
+    worldSecret: worldIsShared(round) ? new Uint8Array(32) : random(32),
     // 23.1's `vss_shares_ref`. With a dealt stake it names the handout the
     // committee accepted; without one it is 32 zero bytes, and the field is in
     // the signed bytes either way - so an entry that has shares and one that

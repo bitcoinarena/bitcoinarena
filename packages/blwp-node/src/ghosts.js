@@ -224,8 +224,11 @@ export class Ghosts {
   #coreOf(roundIdBytes) {
     const row = this.round.get(roundIdBytes);
     if (!row) return null;
-    const found = coreForRound(decodeRoundContract(new Uint8Array(row.contract)), this.cores);
-    return found.ok ? { ...found.core, config: found.config, runTicks: found.runTicks } : null;
+    const contract = decodeRoundContract(new Uint8Array(row.contract));
+    const found = coreForRound(contract, this.cores);
+    // AND THE ROUND'S WORLD RULE (#23): its config hash, census root and id, so the replay derives the world the page did
+    return found.ok ? { ...found.core, config: found.config, runTicks: found.runTicks,
+      world: { configHash: contract.configHash, censusRoot: contract.censusRoot, roundId: new Uint8Array(roundIdBytes) } } : null;
   }
 
   #randomnessOf(roundIdBytes, entry, entryId) {

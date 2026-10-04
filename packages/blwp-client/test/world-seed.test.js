@@ -23,6 +23,9 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { standUpRound } from '../../blwp-node/tools/round-2of2.mjs';
+// #23: these are about PER-PLAYER worlds (the bridge must not fall back to the harness seed), so their rounds name the
+// per-player config v3; the shared world (v4) is world-shared.test.js and world-shared-door.test.js.
+import { TRUCK_V3_CONFIG_HASH } from '../../blwp-node/src/cores.js';
 import { joinFromQuery, tabSeed, playerFor, entryFor, fetchRandomness, worldSeedFor } from '../src/join.js';
 import { feldmanGroup } from '../../blwp-node/src/curve.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
@@ -54,7 +57,7 @@ const standsAt = (word) => {
 };
 
 test('the daemons name one randomness for a round, and a page can ask them both', async () => {
-  const round = await standUpRound({ host: '127.0.0.1', portA: 18210, portB: 18211 });
+  const round = await standUpRound({ host: '127.0.0.1', portA: 18210, portB: 18211, configHash: TRUCK_V3_CONFIG_HASH });
   try {
     const named = await joinFromQuery(new URL(round.url).search);
     const got = await fetchRandomness(round.id, named.nodes);
@@ -91,7 +94,7 @@ test('the daemons name one randomness for a round, and a page can ask them both'
  * -69,-57 m while the truck it is a picture of stands on its yellow bay.
  */
 test('the ghost a watcher is shown is the driver\'s own core pose, and the harness seed is not', async () => {
-  const round = await standUpRound({ host: '127.0.0.1', portA: 18212, portB: 18213 });
+  const round = await standUpRound({ host: '127.0.0.1', portA: 18212, portB: 18213, configHash: TRUCK_V3_CONFIG_HASH });
   const tabs = [];
   try {
     const named = await joinFromQuery(new URL(round.url).search);
@@ -143,7 +146,7 @@ test('the ghost a watcher is shown is the driver\'s own core pose, and the harne
     const [driver, watcher] = tabs;
 
     // WHAT THE PAGE WOULD SEED ITS CORE WITH, through the door that answers it.
-    const world = await worldSeedFor({ entry: driver.entry, round: driver.rid, nodes: named.nodes });
+    const world = await worldSeedFor({ entry: driver.entry, round: driver.rid, nodes: named.nodes, contract: named.round });
     const mine = coreInit(world.seedWord);
     const harness = coreInit(SOLO_SEED);
     console.log(`  the driver's own world is seed 0x${(world.seedWord >>> 0).toString(16)}, bay `

@@ -8,7 +8,7 @@
 //
 // The fixture is guardians-bonded.test.js's: two signer nodes bonded on the chain, each advertising the guardian keys given.
 import { TWO_GATEWAYS } from './lock-fixture.js';
-import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../src/cores.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
@@ -71,7 +71,7 @@ const beaconOf = (bonds, contract) => {
   return { hash: named.hash, height: named.height, timeMs: named.timeMs };
 };
 const contractWith = (nodes, censusRoot, over = {}) => ({
-  networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 6,
+  networkId: NETWORK_ID_REGTEST, configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6,
   gameVerifySlots: 2, settlementSlots: 2, simCoreHash: TRUCK_CORE_HASH,
   startTimeMs: BigInt(FIRST_TIME + 15 * SPACING) * 1000n + 60500n,
   entryCloseMs: BigInt(FIRST_TIME + 15 * SPACING) * 1000n + 200000n,

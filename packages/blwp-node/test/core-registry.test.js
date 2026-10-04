@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { resultFrom } from '../src/verdict.js';
-import { TRUCK, TRUCK_CORE_HASH, TRUCK_CONFIG_HASH, coreForRound, installedCores } from '../src/cores.js';
+import { TRUCK, TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH, TRUCK_CONFIG_HASH, coreForRound, installedCores } from '../src/cores.js';
 import { TRUCK_BEFORE_FORK_HASH } from '../src/cores.js';
 import { contractFor, opts, b32 } from './window-fixture.js';
 import { encodeRoundContract, roundId } from '../../protocol/src/contracts.js';
@@ -30,7 +30,7 @@ test('the signer node door opens a round on the truck\'s own core and config, an
       const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
       return { status: r.status, why: (await r.text()).trim(), held: (await fetch(`http://127.0.0.1:${d.port}/round?id=${toHex(roundId(c))}`)).status };
     };
-    const truck = { ...contractFor(nodes, 3000n, ['wss://r.example']), simCoreHash: TRUCK_CORE_HASH, configHash: TRUCK_CONFIG_HASH, stakeMsat: 0n };
+    const truck = { ...contractFor(nodes, 3000n, ['wss://r.example']), simCoreHash: TRUCK_CORE_HASH, configHash: TRUCK_V3_CONFIG_HASH, stakeMsat: 0n };
     const unknownCore = await post({ ...truck, simCoreHash: b32(1) });
     const otherConfig = await post({ ...truck, configHash: b32(0x43) });
     const opened = await post(truck);
@@ -48,7 +48,7 @@ test('the signer node door opens a round on the truck\'s own core and config, an
 });
 
 test('the registry resolves a round by both hashes, holds the truck always, and takes an operator\'s cores beside it', () => {
-  const round = { simCoreHash: TRUCK_CORE_HASH, configHash: TRUCK_CONFIG_HASH };
+  const round = { simCoreHash: TRUCK_CORE_HASH, configHash: TRUCK_V3_CONFIG_HASH };
   const got = coreForRound(round);
   assert.equal(got.ok, true, got.why);
   assert.equal(got.core, TRUCK);
@@ -62,14 +62,14 @@ test('the registry resolves a round by both hashes, holds the truck always, and 
   assert.equal(old.ok, true, old.why);
   assert.deepEqual([old.core.hash === TRUCK_BEFORE_FORK_HASH, old.core.fixedRunTicks, old.runTicks], [true, 10800, 10800]);
   assert.equal(coreForRound({ simCoreHash: Uint8Array.from(Buffer.from(other.hash, 'hex')), configHash: Uint8Array.from(Buffer.from('cd'.repeat(32), 'hex')) }, both).core, other);
-  assert.equal(coreForRound({ simCoreHash: Uint8Array.from(Buffer.from(other.hash, 'hex')), configHash: TRUCK_CONFIG_HASH }, both).ok, false,
+  assert.equal(coreForRound({ simCoreHash: Uint8Array.from(Buffer.from(other.hash, 'hex')), configHash: TRUCK_V3_CONFIG_HASH }, both).ok, false,
     'a core was run under a config it does not carry');
-  assert.equal(coreForRound({ simCoreHash: Uint8Array.from(Buffer.from(other.hash, 'hex')), configHash: TRUCK_CONFIG_HASH }).ok, false,
+  assert.equal(coreForRound({ simCoreHash: Uint8Array.from(Buffer.from(other.hash, 'hex')), configHash: TRUCK_V3_CONFIG_HASH }).ok, false,
     'a signer node that installed no second core ran one');
 });
 
 test('a result names the core that replayed the run, and one whose replay ran another core than the round names is refused', () => {
-  const contract = { ...contractFor([b32(4), b32(5)], 3000n), simCoreHash: TRUCK_CORE_HASH, configHash: TRUCK_CONFIG_HASH };
+  const contract = { ...contractFor([b32(4), b32(5)], 3000n), simCoreHash: TRUCK_CORE_HASH, configHash: TRUCK_V3_CONFIG_HASH };
   const rid = roundId(contract);
   const entry = { roundId: rid, playerPubkey: b32(7) };
   const transcript = { roundId: rid, entryId: b32(9), hash: b32(0x11) };
@@ -100,7 +100,7 @@ test('2069b4c2 rounds are replayed by the frozen 2069b4c2 core, the pre-fork cor
   const pre = at(TRUCK_BEFORE_FORK_HASH);
   assert.equal(pre.core.adapter, FROZEN_2069, 'the pre-fork core is still the truck that moved on');
   assert.equal(pre.core.fixedRunTicks, FROZEN_2069.RUN_TICKS);
-  const now = coreForRound({ simCoreHash: TRUCK_CORE_HASH, configHash: TRUCK_CONFIG_HASH, blockTicks: 4920 });
+  const now = coreForRound({ simCoreHash: TRUCK_CORE_HASH, configHash: TRUCK_V3_CONFIG_HASH, blockTicks: 4920 });
   assert.equal(now.core.adapter, NOW);
   assert.notEqual(TRUCK.hash, TRUCK_2069_HASH);
   // and they differ where the rule moved: the same load and drive scores differently under the two
@@ -122,6 +122,10 @@ test('each core runs the config of its own rules; the founding config on de2f263
   assert.equal(pair(TRUCK.hash, TRUCK_CURRENT_CONFIG, after).ok, true);
   assert.equal(TRUCK_CONFIG_HASH.length, 32);
   assert.equal(Buffer.from(TRUCK_CONFIG_HASH).toString('hex'), TRUCK_CURRENT_CONFIG, 'a round on the truck is made with another config');
+  // #23: the truck runs the per-player config v3 (f51759b6, the 10-06 series') beside the current shared-world v4
+  assert.equal(pair(TRUCK.hash, TRUCK_V3_CONFIG_HASH, after).ok, true, 'the 10-06 series\' config no longer opens');
+  assert.equal(Buffer.from(TRUCK_V3_CONFIG_HASH).toString('hex').slice(0, 8), 'f51759b6');
+  assert.equal(TRUCK_CURRENT_CONFIG.slice(0, 8), '2170f250');
   assert.equal(pair(TRUCK_2069_HASH, GENESIS_CONFIG_HASH, after).ok, true);
   assert.match(pair(TRUCK_2069_HASH, TRUCK_CURRENT_CONFIG, before).why, /not the config/);
   // de2f263d, frozen beside the truck since exposure takes the heat: its own config, and the founding one before the cut-over

@@ -14,6 +14,7 @@ import {
 import { decodeInputBatch, batchTicks, batchId } from '../../protocol/src/batch.js';
 import { LATE_JOIN_LAST_ENTRY_MS } from '../../protocol/src/contracts.js';
 import { ticksForMs } from '../../protocol/src/tick.js';
+import { worldSecretFits } from '../../protocol/src/seed.js';
 import { encodeTranscript, transcriptHash, checkTranscript, GENESIS } from '../../protocol/src/transcript.js';
 import {
   decodeCheckpoint, checkpointId, NO_PREVIOUS, splitSigned,
@@ -391,6 +392,11 @@ export class Round {
             + `a late entry joins at tick ${gone} or later, and its run ends with the round's`);
       }
     }
+
+    // AND NO WORLD OF THE PLAYER'S OWN ON A SHARED-WORLD ROUND (#23, the owner 2026-10-04: "the player chooses nothing about
+    // the world"): under a config that makes one world per round (config v4) the entry's world secret must be 32 zero
+    // bytes - the field is kept so every stored entry keeps its id, and a secret there could only be a player picking.
+    { const fits = worldSecretFits(asks, contract.worldSecret); if (!fits.ok) throw new Error(fits.why); }
 
     // AND IT PAYS WHAT THIS ROUND ASKS - THE STAKE, AND THE FEE AND THE
     // DONATION OUT OF IT (22A: inclusive, never on top).

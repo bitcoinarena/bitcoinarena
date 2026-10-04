@@ -10,7 +10,7 @@
 // A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED the owner 2026-09-25): this file's paying-round
 // daemons get the lock fixture's port - the test federation, two gateways, zero base fee. Contracts unchanged.
 import { lockPort, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
-import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../src/cores.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -64,8 +64,8 @@ test('the signer node door refuses a paying FEDERATION round naming no federatio
     const refusedRelay = await post(encodeRoundContract(noRelay));
     const refusedExpiry = await post(encodeRoundContract(shortExpiry));
     assert.throws(() => encodeRoundContract({ ...named, custody: 'THRESHOLD_LN' }), /THRESHOLD_LN is not a custody this network has/);
-    const withdrawn = await post(withdrawnCustody({ ...named, configHash: TRUCK_CONFIG_HASH, slashMinimumServed: 21 }));
-    const free = { ...named, federationId: new Uint8Array(32), stakeMsat: 0n, configHash: TRUCK_CONFIG_HASH, slashMinimumServed: 22 };
+    const withdrawn = await post(withdrawnCustody({ ...named, configHash: TRUCK_V3_CONFIG_HASH, slashMinimumServed: 21 }));
+    const free = { ...named, federationId: new Uint8Array(32), stakeMsat: 0n, configHash: TRUCK_V3_CONFIG_HASH, slashMinimumServed: 22 };
     const opened = { named: await post(encodeRoundContract(named)), free: await post(encodeRoundContract(free)) };
     console.log(`  zero id ${zero.status} "${zero.text.slice(0, 90)}"; no relay ${refusedRelay.status}; expiry 12 ${refusedExpiry.status}; `
       + `withdrawn byte 0 ${withdrawn.status} "${withdrawn.text.slice(0, 60)}"; named ${opened.named.status}, free ${opened.free.status}`);

@@ -29,7 +29,7 @@ import { isMainThread, parentPort, workerData, Worker } from 'node:worker_thread
 // core's to say.
 import { lastTickOfRun, runTicksForEntry } from '../../protocol/src/contracts.js';
 import { INPUT_WORDS } from '../../protocol/src/batch.js';
-import { seedWordForEntry } from '../../protocol/src/seed.js';
+import { seedWordForEntry, worldSeedWord } from '../../protocol/src/seed.js';
 
 const hex = (b) => {
   if (typeof b === 'string') return b.toLowerCase();
@@ -56,6 +56,18 @@ const hex = (b) => {
 export const NO_SEED_RULE = 'that entry carries no world secret to replay from';
 /** A replay with no core named to run it under is refused, not run under whichever core is nearest. */
 export const NO_CORE_RULE = 'no core is named to replay that run under';
+
+/**
+ * THE WORLD THIS RUN IS REPLAYED IN (#23, the owner 2026-10-04): the one function the page uses too. A core resolved for a
+ * round carries `world` - its config hash, census root and id - and the round's config chooses the rule: one world for
+ * the whole round (config v4) or the player's own (every older config, byte for byte as before). A core with no `world`
+ * is a caller that names no round: the per-player seed, as it always was.
+ */
+function seedWordOf(entry, roundRandomness, core) {
+  if (core && core.world && core.world.configHash instanceof Uint8Array)
+    return worldSeedWord({ entry, roundRandomness, contract: core.world, roundId: core.world.roundId });
+  return seedWordForEntry(entry, roundRandomness);
+}
 
 /**
  * REPLAY ONE PLAYER'S RUN FROM WHAT THE NODE ALREADY STORES.
@@ -91,7 +103,7 @@ export function replay(transcript, entry, { core, seedWord, roundRandomness, mar
       return { ok: false, why: NO_SEED_RULE };
     if (!(roundRandomness instanceof Uint8Array) || roundRandomness.length !== 32)
       return { ok: false, why: 'that round names no randomness to mix the player seed' };
-    try { seedWord = seedWordForEntry(entry, roundRandomness); }
+    try { seedWord = seedWordOf(entry, roundRandomness, core); }
     catch (e) { return { ok: false, why: String(e.message || e) }; }
   }
   if (!transcript || !Array.isArray(transcript.ticks))
@@ -273,7 +285,7 @@ export function replayInWorker(transcript, entry, options = {}) {
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL(import.meta.url), {
       workerData: { blwpReplay: true, transcript, entry, source: source || null, options: rest,
-        core: { hash: core.hash, url: core.url, config: core.config, runTicks: core.runTicks } },
+        core: { hash: core.hash, url: core.url, config: core.config, runTicks: core.runTicks, world: core.world || null } },
     });
     let answered = false;
     worker.once('message', (m) => { answered = true; resolve(m); });
@@ -298,7 +310,7 @@ if (!isMainThread && workerData && workerData.blwpReplay) {
       try { inputs = readTranscript(db, source.roundId, source.entryId); }
       finally { try { db.close(); } catch { /* closing */ } }
     }
-    parentPort.postMessage(replay(inputs, entry, { ...options, core: { hash: core.hash, url: core.url, config: core.config, runTicks: core.runTicks, adapter: m.CORE } }));
+    parentPort.postMessage(replay(inputs, entry, { ...options, core: { hash: core.hash, url: core.url, config: core.config, runTicks: core.runTicks, world: core.world || null, adapter: m.CORE } }));
     parentPort.close();
   }, (e) => {
     parentPort.postMessage({ ok: false, why: `the core named for that run could not be loaded: ${e.message}` });
@@ -352,7 +364,7 @@ export class RunInProgress {
         return Object.assign(this, { ok: false, why: NO_SEED_RULE });
       if (!(roundRandomness instanceof Uint8Array) || roundRandomness.length !== 32)
         return Object.assign(this, { ok: false, why: 'that round names no randomness to mix the player seed' });
-      try { seedWord = seedWordForEntry(entry, roundRandomness); }
+      try { seedWord = seedWordOf(entry, roundRandomness, core); }
       catch (e) { return Object.assign(this, { ok: false, why: String(e.message || e) }); }
     }
     if (!entry || !Number.isInteger(entry.joinTick))
