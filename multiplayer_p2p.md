@@ -5304,7 +5304,10 @@ round is scored by the rules it entered under, and every change is visible
 by hash - and it is replaced by §27A.7 / §27A.8 as soon as those are built.
 The first change made this way: core `de2f263d` with config `dbb49344`
 (C the bed fill, par 1800 ticks, §18A.3) beside `2069b4c2` with the
-founding config `bbae68dc`.
+founding config `bbae68dc`. The second, the same day: core `7e2123d1` with
+config `f51759b6`, whose exposure is weighted by the load's heat as §18A.3
+writes it (`de2f263d` weighted it by C, which counted a full bed twice);
+`de2f263d` stays installed for the free rounds made on it.
 
 ## 27A.8 Hard forks: a successor, not a stranger
 
