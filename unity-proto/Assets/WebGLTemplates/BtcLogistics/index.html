@@ -1419,6 +1419,8 @@
             const got = BLWPCLIENT.seedHexFromInput(paste.value);
             if (!got.ok) { why.textContent = got.why; return; }
             BLWPCLIENT.importSeed(got.hex, { storage: window.sessionStorage });
+            // ITS WALLET IS RECOVERED FROM THE FEDERATION on its first open in this browser (kanban #27; page-lock markSeedRecover)
+            BLWPCLIENT.markSeedRecover(vault(), got.hex);
             if (window.BLWP_SEED_KEEPER) window.BLWP_SEED_KEEPER.beat();   // kept in the browser before the reload
             console.log('[blwp] seed restored from ' + got.from);
             location.reload();
@@ -3335,7 +3337,8 @@
         window.BLWP_WALLET_WARM = (async () => {
           const wasm = await window.BLWP_LOCK_WASM();
           await wasm.default();
-          const client = await BLWPCLIENT.playerWallet({ round: r.raw.contract, invite: named.federation, seed, LockClient: wasm.LockClient, storage: vault() });
+          const client = await BLWPCLIENT.playerWallet({ round: r.raw.contract, invite: named.federation, seed, LockClient: wasm.LockClient, storage: vault(),
+            onStep: (step) => console.log('[blwp] player wallet: ' + step + ', ' + (Date.now() - t0) + ' ms') });
           console.log('[blwp] player wallet open in the lobby, ' + (Date.now() - t0) + ' ms');
           // THE LOCK QUOTES ASKED AHEAD for this round, at the donation Settings chose (the join's 2-3 s; page-lock warmLockQuotes)
           try {
@@ -3672,7 +3675,7 @@
             const got = BLWPCLIENT.seedHexFromInput(typed);
             if (!got.ok) { window.alert(got.why); return; }
             if (got.hex === mine) return;
-            try { BLWPCLIENT.importSeed(got.hex, { storage: window.sessionStorage }); if (window.BLWP_SEED_KEEPER) window.BLWP_SEED_KEEPER.beat(); console.log('[blwp] seed restored from ' + got.from); location.reload(); }
+            try { BLWPCLIENT.importSeed(got.hex, { storage: window.sessionStorage }); BLWPCLIENT.markSeedRecover(vault(), got.hex); if (window.BLWP_SEED_KEEPER) window.BLWP_SEED_KEEPER.beat(); console.log('[blwp] seed restored from ' + got.from); location.reload(); }
             catch (e) { window.alert(e.message); }
           }
         },

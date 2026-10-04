@@ -165,7 +165,7 @@ out += '         sharesNeededFor: sharesNeededFor,\n';
 out += '         lockStake: lockStake, handLock: handLock, lockSecretFor: lockSecretFor, lockLine: lockLine,\n';
 // AND THE PLAYER WALLET (§24A.1, RULED 2026-09-25): one per seed and federation; the top-up is its own act, before the
 // stake, and the stake is spent from it.
-out += '         playerWallet: playerWallet, fundPlayerWallet: fundPlayerWallet, walletSecretFor: walletSecretFor,\n';
+out += '         playerWallet: playerWallet, fundPlayerWallet: fundPlayerWallet, walletSecretFor: walletSecretFor, markSeedRecover: markSeedRecover, seedRecovers: seedRecovers,\n';
 out += '         withdrawPlayerWallet: withdrawPlayerWallet,\n';
 out += '         saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, keptLockUse: keptLockUse,\n';
 // AND THE ROUND'S CLOSE, which ends a reloaded tab's resume (keptLockUse beforeClose)

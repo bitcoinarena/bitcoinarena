@@ -2,6 +2,9 @@
 # Rebuild the BLWP wasm lock client with whole-msat e-cash (the owner 2026-10-01: "we want 1 sat = 1 sat").
 set -euxo pipefail
 B=/mnt/bitcoin/lockclient-build
+# THE SOURCES ARE THIS SCRIPT'S OWN DIRECTORY (2026-10-04, #27): the crate and the patches next to it, not a fixed old
+# checkout - before, every run re-linked the crate to /mnt/bitcoin/blwp-build-a535 and built that tree's lib.rs.
+HERE=${BLWP_LOCK_CLIENT_DIR:-$(cd "$(dirname "$0")" && pwd)}
 export RUSTUP_HOME=$B/rustup CARGO_HOME=$B/cargo PATH=$B/cargo/bin:$PATH
 cd $B
 # 1. TOOLS (as the user; no sudo): rustup + wasm32 target, wasi-sdk's clang, wasm-bindgen 0.2.106 (the lockfile's)
@@ -19,12 +22,16 @@ fi
 if [ ! -d $B/tree ]; then git -C /mnt/bitcoin/fedimint-fork worktree add --detach $B/tree f1481d4bcfa; fi
 cd $B/tree
 git checkout -- . && git clean -fdq
-patch -p1 < /mnt/bitcoin/blwp-build-a535/packages/blwp-client/lock-client/fedimint-lnv2-send-expiry.patch
+patch -p1 < $HERE/fedimint-lnv2-send-expiry.patch
 # 1 SAT = 1 SAT: the client issues and spends notes from 1 msat (the federation signs 0..41 already)
-patch -p1 < /mnt/bitcoin/blwp-build-a535/packages/blwp-client/lock-client/fedimint-mintv2-whole-msat.patch
-patch -p1 < /mnt/bitcoin/blwp-build-a535/packages/blwp-client/lock-client/fedimint-lnv2-testnet4-invoices.patch
+patch -p1 < $HERE/fedimint-mintv2-whole-msat.patch
+patch -p1 < $HERE/fedimint-lnv2-testnet4-invoices.patch
+# RECOVERY IN THE BROWSER (#27, the owner 2026-10-04: "patch Fedimint's recovery so it runs in the browser"): mintv2's
+# recovery-slice fetch timed out on tokio's clock, whose std::time::Instant panics on wasm32
+patch -p1 < $HERE/fedimint-mintv2-recovery-wasm-clock.patch
+grep -q "fedimint_core::runtime::timeout(" modules/fedimint-mintv2-client/src/api.rs
 grep -n "(0..42).map(Denomination)" modules/fedimint-mintv2-common/src/config.rs | wc -l | grep -qx 2
-ln -sfn /mnt/bitcoin/blwp-build-a535/packages/blwp-client/lock-client blwp-lock-client
+ln -sfn $HERE blwp-lock-client
 grep -q '"blwp-lock-client"' Cargo.toml || sed -i 's/^members = \[/members = [\n  "blwp-lock-client",/' Cargo.toml
 export CC_wasm32_unknown_unknown=$B/wasi-sdk/bin/clang AR_wasm32_unknown_unknown=$B/wasi-sdk/bin/llvm-ar
 export CFLAGS_wasm32_unknown_unknown="--target=wasm32-unknown-unknown"
