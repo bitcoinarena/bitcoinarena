@@ -11,6 +11,9 @@
 // that config: the counter's same run DELIVERS under one config and FAILS under the other, every
 // result names the core that replayed it, and all three go final 2 of 2. A signer node that did not
 // install the counter refuses its round at the door.
+import { testNow, skipTo } from './test-clock.js';
+import { presentDay } from './window-fixture.js';
+import { windowsOf } from '../../protocol/src/window.js';
 import { test } from 'node:test';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import assert from 'node:assert/strict';
@@ -52,8 +55,9 @@ async function twoSignerNodes() {
 // it names". The rest of this family was migrated when the core moved; this one
 // was missed, and the refusal was correct the whole time.
 async function open(w, simCoreHash, configHash, blockTicks = BLOCK_TICKS, startDeadlineTicks) {
-  const c = { ...contractFor([w.a.round.pubkey, w.b.round.pubkey], BigInt(WINDOW_MS), [w.a, w.b].map((d) => `http://127.0.0.1:${d.port}`)),
-    stakeMsat: 0n, federationId: new Uint8Array(32), simCoreHash, configHash, blockTicks, ...(startDeadlineTicks ? { startDeadlineTicks } : {}) };
+  // THE ROUND ENDS NOW, NOT IN 1970 (kanban #26: a result counts only if its seat held it before the round's end + 605 s)
+  const c = presentDay({ ...contractFor([w.a.round.pubkey, w.b.round.pubkey], BigInt(WINDOW_MS), [w.a, w.b].map((d) => `http://127.0.0.1:${d.port}`)),
+    stakeMsat: 0n, federationId: new Uint8Array(32), simCoreHash, configHash, blockTicks, ...(startDeadlineTicks ? { startDeadlineTicks } : {}) }, testNow() + 3000);
   const rid = roundId(c);
   for (const d of [w.a, w.b]) {
     const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
@@ -108,6 +112,10 @@ test('the truck and a second title, the second under two configs, run on the sam
       high: { ...high, ...(await play(w, high.rid, COUNTER.adapter, HIGH.config)) },
     };
     for (const r of Object.values(runs)) for (const d of [w.a, w.b]) assert.equal(await say(d.port, `close ${toHex(r.rid)}`), 'closed');
+    // agreed and published at both inside the window, then past final_after (kanban #26), as a live round goes
+    const ready = () => Object.values(runs).every((r) => [w.a, w.b].every((d) => { const f = resultFinality(d.round, r.rid, r.eid); return f.state === 'PROVISIONALLY_FINAL' && f.published === true; }));
+    for (let t = Date.now(); Date.now() - t < 25000 && !ready(); await wait(200));
+    skipTo(Math.max(...Object.values(runs).map((r) => Number(windowsOf(r.c).finalAfterMs))) + 50);
     const final = () => Object.values(runs).every((r) => [w.a, w.b].every((d) => resultFinality(d.round, r.rid, r.eid).state === 'FINAL'));
     for (let t = Date.now(); Date.now() - t < 25000 && !final(); await wait(200));
     const facts = Object.fromEntries(Object.entries(runs).map(([k, r]) => [k, {
