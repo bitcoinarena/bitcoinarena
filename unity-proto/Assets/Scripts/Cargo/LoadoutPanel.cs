@@ -166,7 +166,10 @@ public class LoadoutPanel : MonoBehaviour
         sorted.Sort((a, b) => b.FeeRate.CompareTo(a.FeeRate));
         foreach (var tx in sorted)
         {
-            if (Mathf.Max(bay.Fill, bay.BtcFill) >= autoFill) break;   // room or BTC, whichever binds
+            // THE ROOM, AS C IS (the owner 2026-10-04 08:54: C is the bed fill, "not the BTC value"; the 2026-10-04 audit: AUTO
+            // stopped on room-or-BTC, so a BTC-bound load could leave C below its 60%). The 20 BTC cap still binds - TryAdd
+            // refuses any parcel past it, and once it is reached nothing more goes on.
+            if (bay.Fill >= autoFill || bay.BtcFill >= 1f) break;
             bay.TryAdd(tx);
         }
 
@@ -580,12 +583,14 @@ public class LoadoutPanel : MonoBehaviour
         bool refused = yard != null && Time.unscaledTime - yard.RefusedAt < 0.7f;
 
         // --- capacity -------------------------------------------------------
-        // THE GAUGE IS THE BINDING LIMIT: the bed's room or the truck's BTC, whichever is nearer full
-        Gauge(new Rect(panel.x + inner, top, gaugeW, gaugeH), Mathf.Max(bay.Fill, bay.BtcFill),
+        // THE GAUGE IS THE BED FILL - THE C THE LOAD WILL SET (the owner 2026-10-04 08:54: "the same fraction the gauge shows";
+        // the 2026-10-04 audit: it drew room-or-BTC, so a BTC-bound truck read full while C stayed lower). The BTC carried
+        // against the truck's 20 BTC cap is in the label beside it.
+        Gauge(new Rect(panel.x + inner, top, gaugeW, gaugeH), bay.Fill,
               refused ? new Color(1f, 0.35f, 0.3f)
                       : Color.Lerp(new Color(0.3f, 0.75f, 0.45f), new Color(1f, 0.78f, 0.2f), bay.Fill),
               refused ? "TRUCK  —  FULL"
-                      : $"TRUCK  {BtcShort(bay.BtcCarried)} of {CargoBay.BtcLimit:0.##} BTC  ·  {bay.Count} parcels",
+                      : $"TRUCK  {Mathf.RoundToInt(bay.Fill * 100f)}%  ·  {BtcShort(bay.BtcCarried)} of {CargoBay.BtcLimit:0.##} BTC  ·  {bay.Count} parcels",
               _small);
 
         // --- risk -----------------------------------------------------------
