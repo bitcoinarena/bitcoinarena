@@ -54,6 +54,25 @@ export const locksStake = (contract) => contract.federationId instanceof Uint8Ar
 const planFingerprint = (plan, claimPk, signerNode) => JSON.stringify({ c: plan.claims, p: plan.payouts, n: plan.nonce, k: claimPk, s: signerNode },
   (k, v) => (typeof v === 'bigint' ? `${v}n` : v instanceof Uint8Array ? toHex(v) : v));
 
+/** What a settlement plan moved, as /lock-settlement and /settled answer it (W6, #133). */
+function planSummary(txid, p) {
+  return {
+    txid,
+    claims: p.claims.map((c) => ({ kind: c.kind || 'stake', msat: String(c.amountMsat) })),
+    payouts: p.payouts.map((x) => ({ kind: x.kind || 'qualifier', pk: toHex(x.payoutPk), msat: String(x.msat), feeMsat: String(x.feeMsat),
+      ...(x.donation ? { donation: x.donation.lnurl || x.donation.label || "a key" } : {}) })),
+    // A WALK-AWAY'S REMAINDER (RULED 2026-09-30): what went 75% to the sitting signer nodes and 25% to the donation set.
+    remainder: p.remainder ? { nodesMsat: String(p.remainder.nodesMsat), donationMsat: String(p.remainder.donationMsat),
+      signerNodes: p.remainder.sitting, recipients: p.remainder.recipients, heldMsat: String(p.remainder.heldMsat || 0n) } : null,
+    poolMsat: String(p.poolMsat), inputFeesMsat: String(p.inputFeesMsat), paidMsat: String(p.paidMsat),
+    outputFeesMsat: String(p.outputFeesMsat || 0n), unspentMsat: String(p.unspentMsat || 0n), stakeWhy: p.stakeWhy || null,
+    // THE POOL: qualifiers not paid, each with why (no address - its share split over those who named one).
+    pooled: (p.unpaid || []).filter((u) => !/fee share/.test(u.why)).map((u) => ({ pk: toHex(u.pubkey), owedMsat: String(u.owedMsat), why: u.why })),
+    feePoolMsat: String(p.feePoolMsat || 0n), feeInputFeesMsat: String(p.feeInputFeesMsat || 0n), feePaidMsat: String(p.feePaidMsat || 0n),
+    feeHole: p.feeHole ? p.feeHole.why : null,
+  };
+}
+
 export class LockSettlement {
   /**
    * `dkg` holds this signer node's share of the round's claim key; `port` is the
@@ -83,6 +102,7 @@ export class LockSettlement {
     this.peersFor = peersFor;
     this.fetcher = fetcher;
     this.built = new Map();          // round id hex -> the settlement this signer node rebuilt
+    this.summaries = new Map();      // round id hex -> what its settlement moved, rebuilt after a restart (#133)
     this.byPlan = new Map();         // round id hex -> { fp, built }: the last build and the plan it was built for
     this.planCertificates = new Map(); // round id hex [:late entry hex] -> { planId, certificate } the seats signed
     this.planRetries = new Map();    // round id hex -> how often a peer refused the send plan
@@ -505,23 +525,32 @@ export class LockSettlement {
    */
   summary(roundIdBytes) {
     const m = this.built.get(toHex(roundIdBytes));
-    if (!m || !m.ok) return null;
-    const p = m.plan;
-    return {
-      txid: m.txid,
-      claims: p.claims.map((c) => ({ kind: c.kind || 'stake', msat: String(c.amountMsat) })),
-      payouts: p.payouts.map((x) => ({ kind: x.kind || 'qualifier', pk: toHex(x.payoutPk), msat: String(x.msat), feeMsat: String(x.feeMsat),
-        ...(x.donation ? { donation: x.donation.lnurl || x.donation.label || "a key" } : {}) })),
-      // A WALK-AWAY'S REMAINDER (RULED 2026-09-30): what went 75% to the sitting signer nodes and 25% to the donation set.
-      remainder: p.remainder ? { nodesMsat: String(p.remainder.nodesMsat), donationMsat: String(p.remainder.donationMsat),
-        signerNodes: p.remainder.sitting, recipients: p.remainder.recipients, heldMsat: String(p.remainder.heldMsat || 0n) } : null,
-      poolMsat: String(p.poolMsat), inputFeesMsat: String(p.inputFeesMsat), paidMsat: String(p.paidMsat),
-      outputFeesMsat: String(p.outputFeesMsat || 0n), unspentMsat: String(p.unspentMsat || 0n), stakeWhy: p.stakeWhy || null,
-      // THE POOL: qualifiers not paid, each with why (no address - its share split over those who named one).
-      pooled: (p.unpaid || []).filter((u) => !/fee share/.test(u.why)).map((u) => ({ pk: toHex(u.pubkey), owedMsat: String(u.owedMsat), why: u.why })),
-      feePoolMsat: String(p.feePoolMsat || 0n), feeInputFeesMsat: String(p.feeInputFeesMsat || 0n), feePaidMsat: String(p.feePaidMsat || 0n),
-      feeHole: p.feeHole ? p.feeHole.why : null,
-    };
+    if (m && m.ok) return planSummary(m.txid, m.plan);
+    const kept = this.summaries.get(toHex(roundIdBytes));
+    return kept || null;
+  }
+
+  /**
+   * WHAT A SETTLEMENT MOVED, AFTER A RESTART TOO (kanban #133, playtest 2026-10-04: a DELIVERED player's 96 sat read
+   * "paying out" for 2 h). `summary` read only the settlement this process built, so every round settled before a
+   * restart answered "moved": null - and a page that cannot read the settlement never asks for its stake back. Measured
+   * on testnet4: round 3568d136 ACCEPTED with moved null after the seats' 12:30Z and 13:19Z restarts. A round this signer
+   * node settled (its moves kept at signing) is answered from its plan rebuilt from the store - no preimage opened, no
+   * client run - when that plan claims and pays as many as the signed one did; else null, as before. Kept once found.
+   */
+  async summaryOf(roundIdBytes) {
+    const now = this.summary(roundIdBytes);
+    if (now) return now;
+    const moves = this.round.lockSettlementMoves(roundIdBytes);
+    if (!moves) return null;
+    let got;
+    try { got = await this.planOf(roundIdBytes, { withSends: true }); } catch { return null; }
+    if (!got || !got.ok) return null;
+    if (got.plan.claims.length !== moves.claims.length || got.plan.payouts.length !== moves.payouts) return null;
+    const s = planSummary(moves.txid, got.plan);
+    this.summaries.set(toHex(roundIdBytes), s);
+    if (this.summaries.size > 4096) this.summaries.delete(this.summaries.keys().next().value);
+    return s;
   }
 
   /** ROUND ONE: this signer node's nonce commitment for the settlement it would sign. */
