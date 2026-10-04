@@ -289,6 +289,35 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
 - **Every amount that comes back is a row in the wallet's history:** a stake back with no payout is a "Refund" row
   (money in), next to deposits, stakes, winnings, donations and withdrawals.
 
+## Rulings (the owner 2026-10-04) - the rules a round plays, and how they changed
+
+Recorded here because multiplayer_p2p.md is not edited (the owner's standing order); each item names the spec text it
+leaves behind.
+
+- **The score's C and T (08:54, 09:17).** C is the bed fill: room used over the bed, the sum of cargo.js `roomFor` over
+  the vsizes on the bed, 0 empty to 1 full, set by the load at roll-out (init 0); a load that carries no room (stored
+  before the room crossed) keeps 0.7. T is par 1800 ticks: 1.5 until 1200 ticks (20 s), 1 at 1800 (30 s), 0.25 from
+  7200 (120 s). CONFLICT: §18A.3 defines C as "value delivered / capacity" and names neither par nor the T bounds; its
+  formula block says T in [0.5, 1.5] where its prose already says 0.25.
+- **A round names the config of the rules it plays (fix 1 of the 2026-10-04 spec audit; §27A.6 "a round is bound to
+  the config it was created under").** Each core plays its own config: 2069b4c2 the founding config bbae68dc, de2f263d
+  the config dbb49344 (genesis.js `encodeGameConfigV2`: versioned, hashed from the core's own constants, naming par, the
+  T bounds and the cargo rule). Seats hold core+config pairs and refuse any other (cores.js); the client lists the same
+  pairs (known-cores.js `KNOWN_GOOD_CORE_CONFIGS`) and refuses a known core under a config it does not play.
+- **The network id commits to the founding config only.** It is the config the network was founded on (read from the
+  frozen 2069b4c2 core) and does not move when the rules do - no refound. Later configs live beside it under the same
+  network id, each named by the rounds that play it. CONFLICT: §27A.6 reads as if the genesis config hash were the
+  network's one game config.
+- **Until governance exists, a rule change is a new config (and core) hash under the same network id, by the
+  authority's ruling.** The new core de2f263d and its config dbb49344 came into force by this ruling, without the
+  DESIGN ballot (§27A.7) or the hard fork with a new network id (§27A.8.1) the spec prescribes - no ballot code exists,
+  and a new network id is a refound. CONFLICT: §27A.7 / §27A.8.
+- **One transition pair, by date.** The free rounds the series pair opened from 08:23Z name de2f263d with the founding
+  config (they were made before its config had a hash); they are not rewritten. The seats accept that pair only for a
+  round whose committee time is before 2026-10-04 13:00Z and refuse it after; the client accepts the pair, the seats
+  hold the date. Paid rounds take the new core only from the next published series (10-06, published 12:30Z), and
+  that series names de2f263d with dbb49344; every round published before stays on 2069b4c2 with the founding config.
+
 ## Donations in the federation (the owner 2026-10-03, ruled; options decided here)
 
 the owner 2026-10-03: "We'll use the federation(s) as donation layer. Every dev has its own client with a private key that
