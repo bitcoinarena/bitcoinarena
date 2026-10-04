@@ -268,7 +268,9 @@ public class DriveHud : MonoBehaviour
         // the score column on the right.
         var box = PracticeBox(w, h);
 
-        bool on = Blwp.PracticeMode.On;
+        // A SIGNED RUN SENDS NO PRACTICE (the owner 2026-10-04): the box says so and does nothing, like SIM
+        bool signedRun = Blwp.BlwpNet.Live;
+        bool on = Blwp.PracticeMode.On && !signedRun;
         var tint = on ? new Color(0.45f, 0.75f, 1f) : new Color(1f, 0.55f, 0.30f);
 
         GUI.color = new Color(0.02f, 0.03f, 0.05f, 0.72f);
@@ -288,10 +290,10 @@ public class DriveHud : MonoBehaviour
         var text = new Rect(box.x + 12f, box.y + 2f, box.width - 16f, box.height * 0.52f);
         Shadowed(text, on ? "PRACTICE  ·  ON" : "PRACTICE  ·  OFF", label, tint);
         Shadowed(new Rect(box.x + 12f, box.y + box.height * 0.48f, box.width - 16f, box.height * 0.46f),
-                 on ? "no damage  ·  tap to arm" : "live fire  ·  tap for practice",
+                 Blwp.PracticeMode.Words(on, signedRun),
                  sub, new Color(1f, 1f, 1f, 0.7f));
 
-        if (GUI.Button(box, GUIContent.none, GUIStyle.none)) Blwp.PracticeMode.Toggle();
+        if (GUI.Button(box, GUIContent.none, GUIStyle.none) && !signedRun) Blwp.PracticeMode.Toggle();
 
         // THE SIM SWITCH, under PRACTICE and only while PRACTICE is on. It is
         // a rehearsal control: a player who wants to see what a liquidation

@@ -33,6 +33,17 @@ namespace Blwp
         /// <summary>What the core wants: Q16.16, so one or nothing.</summary>
         public static int Input => On ? BlwpCore.ONE : 0;
 
+        /// <summary>
+        /// THE INPUT A RUN SENDS (the owner 2026-10-04): never practice in a signed run. Practice was on by default and its
+        /// switch sat under the cargo panel until ROLL OUT, so every staked run carried practice ticks - S_PRACTICE set, the
+        /// damage withheld. Unity stops sending it; the core and its pinned hash are unchanged.
+        /// </summary>
+        public static int InputFor(bool signedRun) => signedRun ? 0 : Input;
+
+        /// <summary>What the PRACTICE box says in a signed run, and outside one.</summary>
+        public static string Words(bool on, bool signedRun) =>
+            signedRun ? "live fire  ·  in a signed run" : on ? "no damage  ·  tap to arm" : "live fire  ·  tap for practice";
+
         public static void Toggle() { On = !On; Source = "player"; }
 
         /// <summary>
