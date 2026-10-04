@@ -100,16 +100,23 @@ public class RunEndSpectate : MonoBehaviour
         if (!Active) return;
         Active = false;
         if (chase != null) chase.enabled = true;
-        _leftAt = Time.unscaledTime;
+        _leftAt = Time.unscaledTime; _reportFrom = _leftAt; _reported = false;
         Debug.Log("[blwp] spectate: back to the chase camera");
     }
 
     // THE NEXT TRUCK IN VIEW (#131): 2 s after spectate lets go, where the camera is against the truck, once.
-    float _leftAt = -1f;
+    float _leftAt = -1f, _reportFrom = -1f;
+    bool _reported;
     void ReportChase()
     {
-        if (_leftAt < 0f || Time.unscaledTime - _leftAt < 2f || truck == null) return;
-        _leftAt = -1f;
+        if (_leftAt < 0f || truck == null) return;
+        // reported 2 s after the camera last settled: after the hand-back, or after a cut fly-in
+        if (_reportFrom < _leftAt) _reportFrom = _leftAt;
+        if (chase != null && chase.Flying) { _reportFrom = Time.unscaledTime; return; }
+        if (Time.unscaledTime - _reportFrom < 2f) return;
+        if (Time.unscaledTime - _leftAt > 60f) { _leftAt = -1f; return; }
+        if (_reported) return;
+        _reported = true;
         var cam = _cam != null ? _cam.transform : transform;
         float d = Vector3.Distance(cam.position, truck.position);
         float ahead = Vector3.Dot(cam.forward, (truck.position - cam.position).normalized);
@@ -138,6 +145,15 @@ public class RunEndSpectate : MonoBehaviour
                 && (wasted.BandUp || (wasted.LiveEndedAt < _endSeenAt
                     && Time.unscaledTime - _endSeenAt < wasted.holdSeconds + wasted.fadeOutSeconds + 0.5f));
             if (!cargoOpen && truck != null && (spectator == null || !spectator.Active) && !waitWasted && ended) Begin(truck.position);
+            // STRAIGHT ONTO THE NEXT TRUCK (#131, measured on 0.0.2732: 2 s into the next round the camera was still 67 m out on
+            // PLAY's 4.2 s fly-in over the field): after a spectate, the next round's fly-in is cut to the view behind the
+            // truck - the player has just watched the field. PLAY from the lobby keeps its fly-in.
+            if (_leftAt >= 0f && chase != null && chase.Flying && Time.unscaledTime - _leftAt < 60f)
+            {
+                chase.EndFlyIn();
+                _reported = false; _reportFrom = Time.unscaledTime;   // the report comes 2 s after this cut
+                Debug.Log("[blwp] spectate: the next round's fly-in is cut to the truck");
+            }
             ReportChase();
             return;
         }
