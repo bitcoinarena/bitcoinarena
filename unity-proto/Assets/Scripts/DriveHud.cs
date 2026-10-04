@@ -2074,6 +2074,9 @@ public class DriveHud : MonoBehaviour
         // AND THE FLOOR THE OPEN PANEL MUST STOP ABOVE: the cargo bay's top while the bay is up (measured 844x390 on 0.0.2519,
         // paid round: the panel covered HUNTED, LOAD and the right half of ROLL OUT), else the screen's bottom
         float floor = CargoBayUp() ? loadout.BottomBarRect(w, h).y : h;
+        // AND, WITH THE BAY UP, BELOW THE CARGO CHOOSER (measured 1280x720 on 0.0.2521: the button at y 313 and the panel lay on
+        // the chooser's bottom row of crates, which are tapped to load): the button goes into the band between the two
+        if (CargoBayUp() && loadout.yard != null) bottom = Mathf.Max(bottom, loadout.yard.PanelRect(w, h).yMax);
         return "{\"w\":" + w + ",\"h\":" + h + ",\"top\":" + (bottom + m * 0.25f).ToString("0.#", I)
              + ",\"floor\":" + floor.ToString("0.#", I)
              + ",\"right\":" + (w - m).ToString("0.#", I) + ",\"padX\":" + up.x.ToString("0.#", I) + ",\"padY\":" + up.y.ToString("0.#", I)

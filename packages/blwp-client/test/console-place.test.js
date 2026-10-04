@@ -17,16 +17,15 @@ function place(slot, { open = true, bw = 64, bh = 22 } = {}) {
   const go = { offsetWidth: bw, offsetHeight: bh, style: style() };
   const panel = { style: style() };
   const window = { innerWidth: slot.w, innerHeight: slot.h, BLWP_HUD_CORNER: slot };
-  const document = { getElementById: (id) => (id === 'canvas' ? { getBoundingClientRect: () => ({ left: 0, top: 0, width: slot.w, height: slot.h }) } : id === 'blwp-wallet' ? panel : null) };
+  const classes = new Set();
+  const document = { body: { classList: { toggle: (k, on) => (on ? classes.add(k) : classes.delete(k)), remove: (k) => classes.delete(k), contains: (k) => classes.has(k) } }, getElementById: (id) => (id === 'canvas' ? { getBoundingClientRect: () => ({ left: 0, top: 0, width: slot.w, height: slot.h }) } : id === 'blwp-wallet' ? panel : null) };
   new Function('window', 'document', 'go', 'consoleOpen', body + '\nwindow.BLWP_PLACE_CONSOLE();')(window, document, go, () => open);
   const px = (v) => Number(String(v).replace('px', ''));
   const btn = { top: px(go.style.top), right: px(go.style.right) };
   btn.bottom = btn.top + bh; btn.rightX = slot.w - btn.right; btn.left = btn.rightX - bw;
-  const up = open && panel.style.top === 'auto';
-  const p = open ? { up, right: px(panel.style.right), maxH: px(panel.style.maxHeight), maxW: px(panel.style.maxWidth) } : null;
-  if (p && !up) { p.top = px(panel.style.top); p.bottom = p.top + p.maxH; }
-  if (p && up) { p.bottom = slot.h - px(panel.style.bottom); p.top = p.bottom - p.maxH; }
-  if (p) { p.rightX = slot.w - p.right; p.left = p.rightX - p.maxW; }
+  const held = classes.has('blwp-console-held');
+  const p = open ? { held, top: px(panel.style.top), right: px(panel.style.right), maxH: px(panel.style.maxHeight), maxW: px(panel.style.maxWidth) } : null;
+  if (p) { p.bottom = p.top + p.maxH; p.rightX = slot.w - p.right; p.left = p.rightX - p.maxW; }
   return { btn, p };
 }
 const pad = (s) => ({ left: s.padX, right: s.padX + s.padW, top: s.padY });
@@ -59,30 +58,36 @@ test('closed, the panel is left alone; the button is still placed', () => {
   assert.ok(btn.top > 0);
 });
 
-// THE CARGO BAY'S TOP AS THE FLOOR (measured 844x390 on 0.0.2519, paid round: the open panel lay over HUNTED, LOAD and the
-// right half of ROLL OUT). Floors are LoadoutPanel.BottomBarRect's y at those sizes: 228.8 on the phone, 508.3 on the desktop.
-test('844x390 with the cargo bay up: no room under the button, so the panel opens upward and never reaches the bay', () => {
-  const s = { ...SLOTS.phone, floor: 228.8 };
+// THE CARGO BAY UP (measured live on 0.0.2521, a FREE round's chooser): the HUD's slot top is then under the cargo chooser
+// and its floor the bay's top - 1280x720: chooser to 367, bay from 508.3; 844x390: chooser to ~200, bay from 257.6.
+test('1280x720 with the cargo bay up: button and panel in the band between the chooser and the bay', () => {
+  const s = { ...SLOTS.desktop, top: 373.3, floor: 508.3 };
   const { btn, p } = place(s);
-  assert.equal(p.up, true, 'opened upward');
-  assert.ok(p.bottom <= btn.top, `above the button (panel bottom ${p.bottom}, button top ${btn.top})`);
-  assert.ok(p.top >= 0, `inside the screen (top ${p.top})`);
-  assert.ok(p.bottom <= s.floor, 'clear of the cargo bay');
+  assert.equal(p.held, false);
+  assert.ok(btn.top >= 367, `the button under the chooser (top ${btn.top})`);
+  assert.ok(p.top >= btn.bottom, 'the panel under the button');
+  assert.ok(p.bottom <= s.floor, `its bottom ${p.bottom} above the bay's top ${s.floor}`);
   assert.ok(p.maxH >= 80, `room for the lock lines (${p.maxH} px)`);
-  assert.ok(p.left >= 0 && p.rightX <= s.w, 'inside the screen sideways');
 });
 
-test('1280x720 with the cargo bay up: the panel stays under the button, capped above the bay', () => {
-  const s = { ...SLOTS.desktop, floor: 508.3 };
+test('844x390 with the cargo bay up: the band is too short, so the panel steps aside (held) - it covers nothing', () => {
+  const s = { ...SLOTS.phone, top: 203.5, floor: 257.6 };
   const { btn, p } = place(s);
-  assert.equal(p.up, false);
-  assert.ok(p.top >= btn.bottom, 'under the button');
-  assert.ok(p.bottom <= s.floor, `its bottom ${p.bottom} above the bay's top ${s.floor}`);
-  assert.ok(p.maxH >= 80);
+  assert.equal(p.held, true, 'held while the bay is up');
+  assert.ok(btn.bottom <= s.floor, `the button stays, above the bay (bottom ${btn.bottom})`);
+});
+
+test('the bay closes (ROLL OUT): the next slot lets the panel back', () => {
+  const s = { ...SLOTS.phone, top: 203.5, floor: 257.6 };
+  const doc = place(s);
+  assert.equal(doc.p.held, true);
+  const after = place(SLOTS.phone);
+  assert.equal(after.p.held, false);
+  assert.ok(after.p.bottom <= SLOTS.phone.h);
 });
 
 test('no floor sent (an older build): the screen bottom, as before', () => {
   const { p } = place(SLOTS.phone);
-  assert.equal(p.up, false);
+  assert.equal(p.held, false);
   assert.ok(p.bottom <= SLOTS.phone.h);
 });

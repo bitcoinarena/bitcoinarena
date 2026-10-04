@@ -78,4 +78,29 @@ public class ConsoleSlotTests
         }
         finally { Object.DestroyImmediate(hud.gameObject); Object.DestroyImmediate(bay.gameObject); }
     }
+
+    /// <summary>AND UNDER THE CARGO CHOOSER while the bay is open (measured 1280x720 on 0.0.2521: the button at y 313 and the
+    /// panel lay on the chooser's bottom row of crates): the slot's top is in the band between the chooser and the bay.</summary>
+    [TestCase(1280, 720)]
+    [TestCase(844, 390)]
+    public void WithTheBayOpenTheSlotTopIsUnderTheChooser(int w, int h)
+    {
+        DriveHud.MobileOverride = false; DriveHud.PadsOverride = true;
+        var hud = new GameObject("hud").AddComponent<DriveHud>();
+        var bay = new GameObject("loadout").AddComponent<LoadoutPanel>();
+        var yard = new GameObject("yard").AddComponent<PackageYard>();
+        try
+        {
+            hud.loadout = bay; bay.yard = yard;
+            float before = SlotOf(hud, w, h).top;
+            bay.Open();
+            var s = SlotOf(hud, w, h);
+            Assert.GreaterOrEqual(s.top, yard.PanelRect(w, h).yMax, "under the chooser's crates");
+            Assert.GreaterOrEqual(s.top, before, "never higher than the HUD corner");
+            Assert.Less(s.top, s.floor, "above the bay's top");
+            bay.Dismiss();
+            Assert.AreEqual(before, SlotOf(hud, w, h).top, 0.06f, "closed: the HUD corner again");
+        }
+        finally { Object.DestroyImmediate(hud.gameObject); Object.DestroyImmediate(bay.gameObject); Object.DestroyImmediate(yard.gameObject); }
+    }
 }

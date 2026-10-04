@@ -235,6 +235,10 @@
     body.blwp-console-open #blwp-wallet .owed { font-size: 12px; }
     body.blwp-console-open #blwp-players { font-size: 10px; line-height: 1.25; padding: 4px 7px; max-width: min(40vw, 320px); }
     body.blwp-clean #blwp-console-go { display: none !important; }
+    /* HELD while the cargo bay leaves the panel no room (BLWP_PLACE_CONSOLE): the panel steps aside until ROLL OUT, the
+       button stays, dimmed, and says so on hover. */
+    body.blwp-console-held #blwp-wallet { display: none !important; }
+    body.blwp-console-held #blwp-console-go { opacity: 0.55; }
     /* THE LOBBY'S STRIP: positioned over the top edge, never in the page's flow, so it can never be the page. */
     #blwp-money { position: fixed; top: 6px; left: 8px; right: 8px; z-index: 30; display: flex; gap: 8px;
       align-items: flex-start; justify-content: flex-end; pointer-events: none; }
@@ -2747,20 +2751,19 @@
           panel.style.right = Math.round(pRight) + 'px';
           panel.style.left = 'auto'; panel.style.maxWidth = '280px';
           // AND ABOVE THE CARGO BAY (measured 844x390, paid round: the panel lay over HUNTED, LOAD and ROLL OUT): the HUD's
-          // floor is the bay's top while it is up. Where that leaves under the button less than PANEL_MIN, the panel opens
-          // UPWARD from the button instead, over the price chart - which is read, never pressed.
+          // floor is the bay's top while it is up, and its slot top is then under the cargo chooser - the panel opens in the
+          // band between them. WHERE THAT BAND HOLDS LESS THAN PANEL_MIN (844x390: 57 px) THE PANEL STEPS ASIDE while the bay
+          // is up and comes back with the next slot, at ROLL OUT: above the button it would lie on the chooser's crates
+          // (measured 0.0.2521), and every other part of that screen is a control or the bay.
           const PANEL_MIN = 80;
           const floor = r.top + (Number.isFinite(c.floor) ? c.floor : c.h) * sy;
           const below = Math.min(window.innerHeight * 0.45, floor - pTop - c.m * 0.5 * sy, window.innerHeight - pTop - c.m * sy);
-          if (below >= PANEL_MIN) {
-            panel.style.top = pTop + 'px'; panel.style.bottom = 'auto';
-            panel.style.maxHeight = Math.round(below) + 'px';
-          } else {
-            const pBottom = Math.round(top - gap);
-            panel.style.top = 'auto'; panel.style.bottom = Math.round(window.innerHeight - pBottom) + 'px';
-            panel.style.maxHeight = Math.round(Math.max(40, Math.min(window.innerHeight * 0.45, pBottom - c.m * 0.5 * sy))) + 'px';
-          }
-        }
+          const held = below < PANEL_MIN;
+          document.body.classList.toggle('blwp-console-held', held);
+          go.title = held ? 'The Console opens after ROLL OUT - the cargo bay leaves it no room on this screen' : '';
+          panel.style.top = pTop + 'px';
+          panel.style.maxHeight = Math.round(Math.max(40, below)) + 'px';
+        } else document.body.classList.remove('blwp-console-held');
         window.BLWP_CONSOLE_PLACED = { top: Math.round(top), right: Math.round(right), bh, bw, corner: c };
       };
       window.addEventListener('resize', () => window.BLWP_PLACE_CONSOLE());
