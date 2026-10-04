@@ -431,10 +431,9 @@ test('RESOLVE checks the advertisement signature when its caller brings a curve'
 test('RESOLVE reads spentness and depth off the chain rather than off the entry', async () => {
   const { chainOf } = await import('../tools/chainview.js');
 
-  // THE TIP SITS JUST ABOVE THE CENSUS, so a bond funded shortly before it is
-  // genuinely shallow. Depth is measured from the TIP, not from the census
-  // height - at a tip ten blocks past the census nothing at or below it could
-  // ever be under six, and a fixture built that way would prove nothing.
+  // A BOND FUNDED SHORTLY BEFORE THE CENSUS IS GENUINELY SHALLOW. Depth is measured AT THE CENSUS HEIGHT (5A.4 step 1;
+  // the 2026-10-04 audit: this read the TIP, so the answer moved as the chain grew) - two blocks under it is three deep
+  // there, whatever the tip.
   const HEIGHT = 900000;
   const TIP = 900002;
   const round = (over = {}) => ({
@@ -454,7 +453,7 @@ test('RESOLVE reads spentness and depth off the chain rather than off the entry'
   const at = {
     [HEIGHT - 20]: [live, doomed],
     [HEIGHT - 8]: [spend],
-    [HEIGHT - 2]: [shallow],          // 899998: five deep at tip 900002
+    [HEIGHT - 2]: [shallow],          // 899998: three deep at the census height 900000
   };
   const blocks = [];
   for (let h = HEIGHT - 20; h <= TIP; h++) blocks.push({ transactions: at[h] || [] });
@@ -487,7 +486,7 @@ test('RESOLVE reads spentness and depth off the chain rather than off the entry'
   const honestHeight = entryFor(shallow, 0x13, { height: HEIGHT - 2 });
   const stillShallow = resolveCensus([honestHeight], { contract: round(), resolve, view });
   assert.equal(stillShallow.eligible.length, 0);
-  assert.match(stillShallow.excluded[0].why, /5 block\(s\) deep and this round asks for 6/);
+  assert.match(stillShallow.excluded[0].why, /3 block\(s\) deep and this round asks for 6/);
 
   // FOUR: an honest set is unchanged, and the height that reaches the root is
   // the chain's.
