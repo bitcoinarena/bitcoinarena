@@ -2559,6 +2559,32 @@ objects carry their own verification.
 - The rule is bound into the Entry Contract via `equivocation_rule_hash`,
   so the player accepted it before staking.
 
+**AS BUILT (the owner 2026-10-04, kanban #25).**
+- **What counts:** two checkpoints of one entry, each signed by its session
+  key, with different ids and either the same tick or the same parent. It
+  holds at any tick, the first included. The proof check is
+  `provesEquivocation`, with no replay.
+- **How a seat gets the pair:** a seat counts a pair it holds itself (its
+  stored and refused marks), one pulled from a peer's `/equivocation`, or,
+  for a fork sent one mark per seat (where no seat holds both), one it
+  makes by setting each peer's receipted marks (`/checkpoints`) against
+  its own. A pair proven that way is kept (`fork_pairs`) and served at
+  `/equivocation` from then on.
+- **The close:** before signing a run, a seat holding a proven pair signs
+  FORFEIT, score 0, over the canonical transcript, and logs
+  `[close] <entry> FORFEIT: two chains at tick N (§13B)`. Seats that agree
+  reach FINAL FORFEIT like any result. A seat that signed the run without
+  the proof makes a split, and §13C decides FORFEIT, since "proven
+  equivocation" counts later-tick pairs as well as first-mark pairs. The
+  first-mark path is unchanged.
+- **The stake:** with a qualifier in the round, the FORFEIT lock is claimed
+  in the round's settlement like a loser's and pays the winners (the loser
+  pool). With nobody qualified, it is claimed like a walk-away's, into the
+  remainder split: 75% to the sitting seats, 25% to the donation set. It
+  is never left to expire back to the equivocator (RULED 2026-10-04 (b)).
+  An honest loser's lock in a no-winner round still expires back to its
+  player.
+
 > **Why:** v4.4 had 5 nodes and threshold 3, so two 3-subsets always overlap
 > in at least one node — divergence was in principle detectable. But the
 > document never said what that node must *do*, which left "run several

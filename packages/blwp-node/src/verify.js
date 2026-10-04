@@ -414,6 +414,22 @@ export class Verifier {
     }
     if (!answer.ok) return { entryId, stored: false, why: answer.why };
     if (!canonical) return { entryId, stored: false, why: noCanonical };
+    // §13B AT ANY TICK (kanban #25, RULED the owner 2026-10-04): "a player who publishes two different checkpoints for the
+    // same tick, or two chains that diverge at any tick, forfeits the entry". Before signing the run, this seat looks for
+    // the proof - its own store, and every peer's /equivocation pulled and checked (provesEquivocation, unchanged; a fork
+    // sent to different seats reaches each) - and holding it signs FORFEIT, score 0, over the canonical transcript, not
+    // the run. Before: only two FIRST marks diverted; a fork at a later tick was stored and the run signed as ever.
+    {
+      if (!this.round.provenFork(roundIdBytes, entryId)) await this.#equivocationProven(roundIdBytes, entryId);
+      if (!this.round.provenFork(roundIdBytes, entryId)) await this.#forkFromPeers(roundIdBytes, entryId, entry.sessionPubkey);
+      const fork = this.round.provenFork(roundIdBytes, entryId);
+      if (fork) {
+        console.log(`[close] ${hex(entryId).slice(0, 16)} FORFEIT: two chains at tick ${fork.tick} (§13B)`);
+        return this.#sign({ roundIdBytes, entryId, entry, contract,
+          answer: { ok: true, outcome: 'FORFEIT', score: 0, coreHash: this.#coreOf(roundIdBytes)?.hash },
+          transcript: canonical, stopped: true });
+      }
+    }
     // A HELD-BACK FINAL MARK (ruled 2026-09-23): a run that would be signed as a stopped transcript, while a peer
     // holds the run's final mark over inputs this signer node is short of, is not signed yet - its close does not
     // end the window; the settlement's combine does. Only this case; every other stopped run is signed as ever.
@@ -442,6 +458,47 @@ export class Verifier {
     const scored = answer.outcome === null
       ? await this.#atLastMark(roundIdBytes, entryId, entry, answer, canonical, options) : answer;
     return this.#sign({ roundIdBytes, entryId, entry, contract, answer: scored, transcript: canonical, stopped: true });
+  }
+
+  /**
+   * A FORK SENT TO DIFFERENT SEATS (§13B; kanban #25: "A fork sent to different seats still reaches both"). A player who
+   * sends mark X only here and a different mark Y at the same tick (or from the same parent) only to a peer leaves no
+   * seat holding both - so no seat's /equivocation has the pair to pull. Each peer's receipted marks (GET /checkpoints)
+   * are set against this seat's own: a mark at the same tick, or naming the same parent, with another id, checked by
+   * provesEquivocation unchanged, is kept as a fork pair (served at /equivocation from then on). Nothing else is taken.
+   */
+  async #forkFromPeers(roundIdBytes, entryId, sessionPubkey) {
+    const mineBytes = this.round.checkpoints(roundIdBytes, entryId).bytes;
+    const mine = [];
+    for (let at = 0; at + SIGNED_MARK_BYTES <= mineBytes.length; at += SIGNED_MARK_BYTES) {
+      const b = mineBytes.slice(at, at + SIGNED_MARK_BYTES);
+      try { mine.push({ bytes: b, c: decodeCheckpoint(splitSignedMark(b).body) }); } catch { /* not a mark */ }
+    }
+    if (!mine.length) return false;
+    const verify = (sig, msg, pub) => { try { return sessionCurve.verify(sig, msg, pub); } catch { return false; } };
+    for (const peer of this.peersOf(roundIdBytes)) {
+      let body;
+      try {
+        const r = await fetch(`${peer}/checkpoints?round=${hex(roundIdBytes)}&entry=${hex(entryId)}`);
+        if (!r.ok) continue;
+        body = new Uint8Array(await r.arrayBuffer());
+      } catch { continue; }                  // a peer that is down proves nothing
+      for (let at = 0; at + SIGNED_MARK_BYTES <= body.length; at += SIGNED_MARK_BYTES) {
+        const theirs = body.slice(at, at + SIGNED_MARK_BYTES);
+        let tc; try { tc = decodeCheckpoint(splitSignedMark(theirs).body); } catch { continue; }
+        for (const m of mine) {
+          if (hex(m.bytes) === hex(theirs)) continue;
+          if (m.c.tick !== tc.tick && hex(m.c.previousHash) !== hex(tc.previousHash)) continue;
+          try {
+            if ((await provesEquivocation(m.bytes, theirs, sessionPubkey, verify)).ok && this.round.putForkPair({ a: m.bytes, b: theirs })) {
+              console.log(`[equivocation] ${hex(entryId).slice(0, 16)}: a fork at tick ${Math.min(m.c.tick, tc.tick)} - this seat's mark and ${peer}'s, kept as a pair`);
+              return true;
+            }
+          } catch { /* not a proof */ }
+        }
+      }
+    }
+    return false;
   }
 
   /**
@@ -874,7 +931,9 @@ export class Verifier {
         if ((await provesEquivocation(a, b, found.entry.sessionPubkey, verify)).ok) {
           // A PULLED PAIR OF FIRST MARKS IS KEPT HERE TOO, so this signer node's own
           // record (its forfeit door, its close) says two first marks from now on.
-          this.round.putFirstMarkPair({ a, b });
+          // AND A FORK AT ANY LATER TICK, kept as a pair (§13B; kanban #25): this node's close and its /equivocation
+          // say it from now on, as the seat that held it does
+          if (!this.round.putFirstMarkPair({ a, b })) this.round.putForkPair({ a, b });
           if (counts(a) && counts(b)) return true;
         }
       } catch { /* not a proof */ }

@@ -124,13 +124,15 @@ export class LockSettlement {
         feePreimage: entry.feePreimage };
       if (this.round.entryVoid && this.round.entryVoid(entryId)) { entries.push({ ...base, outcome: ENTRY_VOID, score: 0 }); continue; }
       const nq = this.round.noQuorum ? this.round.noQuorum(entryId) : null;
-      if (nq && nq.outcome === FORFEIT) { entries.push({ ...base, outcome: FORFEIT, score: 0 }); continue; }
+      // §13C's FORFEIT is proven equivocation (§13B): claimed like a walk-away's when nobody qualifies (kanban #25 (b))
+      const proven = () => typeof this.round.provenEquivocation === 'function' && this.round.provenEquivocation(roundIdBytes, entryId);
+      if (nq && nq.outcome === FORFEIT) { entries.push({ ...base, outcome: FORFEIT, score: 0, ...(proven() ? { atTheDoor: true } : {}) }); continue; }
       if (nq && nq.outcome === VOID) { entries.push({ ...base, outcome: VOID, score: 0 }); continue; }
       const standing = this.finalityOf(this.round, roundIdBytes, entryId);
       if (standing.state === VOID) { entries.push({ ...base, outcome: VOID, score: 0 }); continue; }
       // A RE-RUN WINDOW THAT CLOSED ON PROVEN EQUIVOCATION (§13A, §13C, RULED 2026-09-24): FORFEIT on the finality
       // itself, as VOID is above - no stored no-quorum record needed. A stored one was already taken, once, above.
-      if (standing.state === FORFEIT) { entries.push({ ...base, outcome: FORFEIT, score: 0 }); continue; }
+      if (standing.state === FORFEIT) { entries.push({ ...base, outcome: FORFEIT, score: 0, ...(proven() ? { atTheDoor: true } : {}) }); continue; }
       // AN ENTRY STILL IN ITS RE-RUN WINDOW IS LEFT OUT, AND THE ROUND SETTLES WITHOUT IT (§13A, RULED the owner 2026-09-24,
       // slice C3a): SUSPENDED, or PROVISIONALLY_FINAL on a re-run. It is not in the payout table, and its lock is neither
       // claimed nor forfeited here; what becomes of it after is `lockAfterSettlement`'s to say.
@@ -147,8 +149,14 @@ export class LockSettlement {
       // A WALK-AWAY, AS ONLY THIS STORE KNOWS IT (RULED the owner 2026-09-30): FORFEIT at the §15 door - no first mark held
       // here, or a first mark past the line already recorded FORFEIT. Its lock is never a refund (lock-action.js). The
       // other FORFEITs above - no quorum, proven equivocation - are left unmarked and keep the no-qualifier expiry.
-      const atTheDoor = r.outcome === FORFEIT
-        && (!this.round.firstMarkHeld(roundIdBytes, entryId) || !!(this.round.startForfeit && this.round.startForfeit(entryId)));
+      // AND A PROVEN EQUIVOCATOR (§13B at any tick; kanban #25, RULED the owner 2026-10-04 (b): "Claim the proven
+      // equivocator's lock like a walk-away's, 75% to the sitting seats and 25% to the donation set. Do not leave it
+      // unclaimed for return at the 144-block expiry"): marked as the walk-away is, so with a qualifier its lock is
+      // claimed into the pool like any loser's, and with nobody qualified it is claimed into the remainder split.
+      const equivocated = r.outcome === FORFEIT && typeof this.round.provenEquivocation === 'function'
+        && this.round.provenEquivocation(roundIdBytes, entryId);
+      const atTheDoor = equivocated || (r.outcome === FORFEIT
+        && (!this.round.firstMarkHeld(roundIdBytes, entryId) || !!(this.round.startForfeit && this.round.startForfeit(entryId))));
       entries.push({ ...base, outcome: r.outcome, score: r.score, ...(atTheDoor ? { atTheDoor } : {}) });
     }
     void contract;
