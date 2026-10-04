@@ -23,6 +23,7 @@ import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../protocol/src/checkpoint.js';
 import { decodePlayerResult, splitSignedResult } from '../../protocol/src/result.js';
 import { init, step } from '../../core/src/sim.js';
+import { loaded, bedFrom } from './window-fixture.js';
 import { hash as stateHash } from '../../core/src/state.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { netStakeMsat } from '../../protocol/src/payout.js';
@@ -118,11 +119,11 @@ export async function joinAndBuild(w, { firstAt = 60 } = {}) {
     assert.equal((await fetch(`${base}/lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(fields)) })).status, 201);
     assert.equal((await fetch(`${base}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(feeFields)) })).status, 201);
   }
-  const st = init(seedWordForEntry(entry, w.randomness || RANDOMNESS));
+  const st = loaded(init(seedWordForEntry(entry, w.randomness || RANDOMNESS)));
   const hashAt = (upTo, from) => { for (let t = from; t < upTo; t++) step(st, ...play.words(t)); return Uint8Array.from(stateHash(st).match(/../g).map((x) => parseInt(x, 16))); };
   const sign = (m) => joinSigned(encodeCheckpoint(m), ed25519.sign(checkpointId(m), session));
   const batchOf = (from, to, previousHash) => ({ roundId: w.rid, entryId: eid, previousHash, firstTick: from,
-    ticks: Array.from({ length: to - from }, (_, t) => play.words(from + t)), liquidations: [] });
+    ticks: Array.from({ length: to - from }, (_, t) => play.words(from + t)), liquidations: [], loads: bedFrom(from) });
   const markOf = (tick, stateHashAt, input, previousHash) => ({ roundId: w.rid, entryId: eid, tick, stateHash: stateHashAt,
     inputChainHash: batchId(input), previousHash, sessionPubkey: entry.sessionPubkey });
   let messages;
@@ -143,14 +144,14 @@ export async function joinAndBuild(w, { firstAt = 60 } = {}) {
   // AND A LATE FIRST MARK FOR THE SAME ENTRY, under the same session key: its
   // first batch 0..1319 and a first mark at 1320 - the other half of a player
   // who sent an on-time first mark to one signer node and a late one to another.
-  const lateSt = init(seedWordForEntry(entry, w.randomness || RANDOMNESS));
+  const lateSt = loaded(init(seedWordForEntry(entry, w.randomness || RANDOMNESS)));
   for (let t = 0; t < END; t++) step(lateSt, ...play.words(t));
   const lb = batchOf(0, END, GENESIS_HASH);
   const lm = markOf(END, Uint8Array.from(stateHash(lateSt).match(/../g).map((x) => parseInt(x, 16))), lb, NO_PREVIOUS);
   const late = [encodeInputBatch(lb), sign(lm)];
   // AND A SECOND ON-TIME FIRST MARK (tick 30, from nothing): the other half of a
   // player who sent one on-time first mark to one signer node and a different one to another.
-  const otherSt = init(seedWordForEntry(entry, w.randomness || RANDOMNESS));
+  const otherSt = loaded(init(seedWordForEntry(entry, w.randomness || RANDOMNESS)));
   for (let t = 0; t < 30; t++) step(otherSt, ...play.words(t));
   const ob = batchOf(0, 30, GENESIS_HASH);
   const om = markOf(30, Uint8Array.from(stateHash(otherSt).match(/../g).map((x) => parseInt(x, 16))), ob, NO_PREVIOUS);
@@ -159,7 +160,7 @@ export async function joinAndBuild(w, { firstAt = 60 } = {}) {
   // Daily: the first mark went out at 5940 against a window ending at 900, was refused as a late start and
   // never carried, so the client's head stayed ZERO and it marked again every second - 80 times. This is
   // one of those: past the line like the first one, a different tick, and its own inputs from nothing.
-  const againSt = init(seedWordForEntry(entry, w.randomness || RANDOMNESS));
+  const againSt = loaded(init(seedWordForEntry(entry, w.randomness || RANDOMNESS)));
   const AGAIN_AT = 960;
   for (let t = 0; t < AGAIN_AT; t++) step(againSt, ...play.words(t));
   const gb = batchOf(0, AGAIN_AT, GENESIS_HASH);

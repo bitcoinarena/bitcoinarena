@@ -25,6 +25,7 @@ import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { netStakeMsat } from '../../protocol/src/payout.js';
 import { refundKeyOf, lockFieldsToJson } from '../../protocol/src/stake-lock.js';
 import { init, step } from '../../core/src/sim.js';
+import { loaded, bedFrom } from './window-fixture.js';
 import { hash as stateHash } from '../../core/src/state.js';
 import { toHex, sha256 } from '../../protocol/src/hash.js';
 import { SIGNED_RECEIPT_BYTES } from '../../protocol/src/receipt.js';
@@ -145,10 +146,10 @@ export async function joinWithTwoFirstMarks(w, custody) {
   }
   const sign = (m) => joinSigned(encodeCheckpoint(m), ed25519.sign(checkpointId(m), session));
   const firstAt = (tick) => {
-    const st = init(seedWordForEntry(entry, w.randomness || RANDOMNESS));
+    const st = loaded(init(seedWordForEntry(entry, w.randomness || RANDOMNESS)));
     for (let t = 0; t < tick; t++) step(st, ...wordsAt(t));
     const b = { roundId: w.rid, entryId: eid, previousHash: GENESIS_HASH, firstTick: 0,
-      ticks: Array.from({ length: tick }, (_, t) => wordsAt(t)), liquidations: [] };
+      ticks: Array.from({ length: tick }, (_, t) => wordsAt(t)), liquidations: [], loads: bedFrom(0) };
     const m = { roundId: w.rid, entryId: eid, tick, stateHash: Uint8Array.from(stateHash(st).match(/../g).map((x) => parseInt(x, 16))),
       inputChainHash: batchId(b), previousHash: NO_PREVIOUS, sessionPubkey: entry.sessionPubkey };
     return [encodeInputBatch(b), sign(m)];
@@ -158,11 +159,11 @@ export async function joinWithTwoFirstMarks(w, custody) {
   // its receipts, the signer nodes it was offered to down, records ENTRY_VOID. And a LATE
   // first mark at PAST, from nothing.
   const hashAt = (tick) => {
-    const st = init(seedWordForEntry(entry, w.randomness || RANDOMNESS));
+    const st = loaded(init(seedWordForEntry(entry, w.randomness || RANDOMNESS)));
     for (let t = 0; t < tick; t++) step(st, ...wordsAt(t));
     return Uint8Array.from(stateHash(st).match(/../g).map((x) => parseInt(x, 16)));
   };
-  const b1 = { roundId: w.rid, entryId: eid, previousHash: GENESIS_HASH, firstTick: 0, ticks: Array.from({ length: 60 }, (_, t) => wordsAt(t)), liquidations: [] };
+  const b1 = { roundId: w.rid, entryId: eid, previousHash: GENESIS_HASH, firstTick: 0, ticks: Array.from({ length: 60 }, (_, t) => wordsAt(t)), liquidations: [], loads: bedFrom(0) };
   const m1 = { roundId: w.rid, entryId: eid, tick: 60, stateHash: hashAt(60), inputChainHash: batchId(b1), previousHash: NO_PREVIOUS, sessionPubkey: entry.sessionPubkey };
   const b2 = { roundId: w.rid, entryId: eid, previousHash: batchId(b1), firstTick: 60, ticks: Array.from({ length: PAST - 60 }, (_, t) => wordsAt(60 + t)), liquidations: [] };
   const m2 = { roundId: w.rid, entryId: eid, tick: PAST, stateHash: hashAt(PAST), inputChainHash: batchId(b2), previousHash: checkpointId(m1), sessionPubkey: entry.sessionPubkey };
@@ -223,8 +224,8 @@ export async function playWinner(w, signerNodesUp = null) {
     assert.equal(seen.status, 200, await seen.text());
   }
   const input = { roundId: w.rid, entryId: eid, previousHash: GENESIS_HASH, firstTick: 0,
-    ticks: Array.from({ length: WINNER.ticks }, (_, t) => play.words(t)), liquidations: [] };
-  const st = init(seedWordForEntry(entry, w.randomness || RANDOMNESS));
+    ticks: Array.from({ length: WINNER.ticks }, (_, t) => play.words(t)), liquidations: [], loads: bedFrom(0) };
+  const st = loaded(loaded(init(seedWordForEntry(entry, w.randomness || RANDOMNESS))));
   for (let t = 0; t < WINNER.ticks; t++) step(st, ...play.words(t));
   const mark = { roundId: w.rid, entryId: eid, tick: WINNER.ticks,
     stateHash: Uint8Array.from(stateHash(st).match(/../g).map((x) => parseInt(x, 16))),

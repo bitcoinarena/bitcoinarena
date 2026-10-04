@@ -36,6 +36,7 @@ import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../protocol/src/checkpoint.js';
 import { SIGNED_RECEIPT_BYTES } from '../../protocol/src/receipt.js';
 import { init, step } from '../../core/src/sim.js';
+import { loaded, bedFrom } from './window-fixture.js';
 import { hash as stateHash } from '../../core/src/state.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { netStakeMsat } from '../../protocol/src/payout.js';
@@ -127,8 +128,8 @@ async function lockAndPlay(w, who) {
     claimPk: w.claimPk, refundPk: refundKeyOf(who.key), expiration: w.port.height + 200 };
   await w.port.put(feeOutpoint, feeFields);
   const input = { roundId: w.rid, entryId: eid, previousHash: GENESIS_HASH, firstTick: 0,
-    ticks: Array.from({ length: who.ticks }, (_, t) => play.words(t)), liquidations: [] };
-  const st = init(seedWordForEntry(entry, w.randomness || RANDOMNESS));
+    ticks: Array.from({ length: who.ticks }, (_, t) => play.words(t)), liquidations: [], loads: bedFrom(0) };
+  const st = loaded(init(seedWordForEntry(entry, w.randomness || RANDOMNESS)));
   for (let t = 0; t < who.ticks; t++) step(st, ...play.words(t));
   const mark = { roundId: w.rid, entryId: eid, tick: who.ticks,
     stateHash: Uint8Array.from(stateHash(st).match(/../g).map((x) => parseInt(x, 16))),

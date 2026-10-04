@@ -1,0 +1,66 @@
+// THE PAGE CARRIES TWO CORES AND THE ROUND SAYS WHICH (the owner 2026-10-04, path A): 2069b4c2 for every round published
+// before C became the bed fill and T sank from 20 s, the current core for every round after. The page's own script, run
+// over its two bundles: the round's hash picks the core under Unity's state and the global the jslib's init reads, and a
+// hash the page carries no core for is refused. The bundles are the ones the cores hash to.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
+import { coreHashHex } from '../../core/tools/hash-core.js';
+
+const T = new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/', import.meta.url);
+const html = readFileSync(new URL('index.html', T), 'utf8');
+const OLD = '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e';
+const NEW = coreHashHex();
+const FROZEN = new URL('../../core/frozen/2069b4c2', import.meta.url).pathname;
+
+function page() {
+  const window = { console: { log() {} } };
+  window.window = window;
+  const ctx = vm.createContext(window);
+  const scripts = [...html.matchAll(/<script( src="(blwp-core[^"]*)")?>([\s\S]*?)<\/script>/g)];
+  const cut = scripts.findIndex((m) => m[2] === 'blwp-core-2069b4c2.js');
+  for (const m of scripts.slice(cut, cut + 4)) {
+    const code = m[2] ? readFileSync(new URL(m[2], T), 'utf8') : m[3];
+    vm.runInContext(code + (m[2] ? '\nwindow.BLWP = BLWP;' : ''), ctx);
+  }
+  return window;
+}
+
+test('the page names the current core as its default, and both bundles are the cores their hashes name', () => {
+  assert.ok(html.includes(`window.BLWP_CORE_DEFAULT = '${NEW}'`), `the page's default is not the core this tree hashes to (${NEW.slice(0, 16)})`);
+  assert.equal(coreHashHex(FROZEN), OLD, 'core/frozen/2069b4c2 is not 2069b4c2');
+  assert.equal(readFileSync(new URL('blwp-core.js', T), 'utf8'), readFileSync(new URL('../../core/dist/blwp-core.js', import.meta.url), 'utf8'),
+    'the page carries a stale current core');
+  assert.equal(readFileSync(new URL('blwp-core-2069b4c2.js', T), 'utf8'), readFileSync(new URL('../../core/dist/blwp-core-2069b4c2.js', import.meta.url), 'utf8'),
+    'the page carries another 2069b4c2 bundle than the one built from its frozen source');
+});
+
+test('the round\'s hash picks its core: under Unity\'s state and as the global the jslib reads; an unknown one is refused', () => {
+  const w = page();
+  const cores = w.BLWP_CORES;
+  assert.deepEqual(Object.keys(cores).sort(), [OLD, NEW].sort());
+  assert.notEqual(cores[OLD], cores[NEW]);
+  // the two really differ where the rule moved: an empty bed is 0 on the new core, 0.7 on 2069b4c2
+  const fresh = (c) => c.init(7);
+  assert.ok(typeof cores[NEW].bedFill === 'function' && typeof cores[OLD].bedFill !== 'function', 'the new core has the bed fill, the old does not');
+  assert.equal(cores[NEW].cargoOf(fresh(cores[NEW])), 0);
+  w.unityInstance = { Module: { blwp: { core: cores[NEW], st: fresh(cores[NEW]) } } };
+  const hexBytes = Uint8Array.from(Buffer.from(OLD, 'hex'));
+  assert.equal(w.BLWP_USE_CORE(hexBytes).ok, true);
+  assert.equal(w.unityInstance.Module.blwp.core, cores[OLD], 'Unity still runs the current core for a 2069b4c2 round');
+  assert.equal(w.BLWP, cores[OLD], 'the jslib\'s BlwpInit would make the round\'s world on the current core');
+  assert.equal(w.BLWP_USE_CORE(NEW).ok, true);
+  assert.equal(w.unityInstance.Module.blwp.core, cores[NEW]);
+  const no = w.BLWP_USE_CORE('ab'.repeat(32));
+  assert.equal(no.ok, false);
+  assert.match(no.why, /carries no such core/);
+  assert.equal(w.unityInstance.Module.blwp.core, cores[NEW], 'a refused hash moved the core');
+});
+
+test('the join takes the round\'s core before anything of the round is made, and refuses a core it does not carry', () => {
+  const a = html.indexOf('      window.BLWP_ROUND = named.round;\n');
+  const b = html.indexOf('window.BLWP_USE_CORE(named.round.simCoreHash)', a);
+  assert.ok(a > 0 && b > a && b - a < 400, 'the join does not hand the round\'s core hash to BLWP_USE_CORE right after naming the round');
+  assert.ok(html.slice(b, b + 500).includes("window.BLWP_JOIN_REFUSED = core.why"), 'an unknown core is not refused by name');
+});
