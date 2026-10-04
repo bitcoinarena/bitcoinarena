@@ -2069,7 +2069,9 @@ public class DriveHud : MonoBehaviour
         float m = TouchPad.Margin(w, h);
         var up = TouchPad.RectFor(TouchPad.Pad.Up, w, h);
         var I = CultureInfo.InvariantCulture;
-        return "{\"w\":" + w + ",\"h\":" + h + ",\"top\":" + (ChartCorner(w, h) + m * 0.25f).ToString("0.#", I)
+        // AND THE WANTED / HUNTED CAPTION under the pips (measured 844x390 on 0.0.2515: the button covered "WANTED")
+        float bottom = ChartTopRight(w, h) ? Mathf.Max(ChartCorner(w, h), WantedBox(w, h).yMax + SmallFont(w, h) * 1.6f) : ChartCorner(w, h);
+        return "{\"w\":" + w + ",\"h\":" + h + ",\"top\":" + (bottom + m * 0.25f).ToString("0.#", I)
              + ",\"right\":" + (w - m).ToString("0.#", I) + ",\"padX\":" + up.x.ToString("0.#", I) + ",\"padY\":" + up.y.ToString("0.#", I)
              + ",\"padW\":" + up.width.ToString("0.#", I) + ",\"m\":" + m.ToString("0.#", I) + "}";
     }
