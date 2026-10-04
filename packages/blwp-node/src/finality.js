@@ -121,7 +121,10 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
     objection = objectionHolds({
       objection: { roundId: roundIdBytes, signedResultId, atMs: 0n },
       receipts: receiptsHeld(), committee, roundId: roundIdBytes, signedResultId,
-      replayDiffers: (mine !== null && hex(mine) !== seen.runId) || dissentsOn(entryIdBytes),
+      // AND THE OBJECTOR'S OWN EVIDENCE (§13A, kanban #24): a bundle is stored only once this seat's door replayed its
+      // transcript under the round's core and found it contradicts the signed run - that replay counts beside this seat's.
+      replayDiffers: (mine !== null && hex(mine) !== seen.runId) || dissentsOn(entryIdBytes)
+        || (typeof round.objectionBundle === 'function' && round.objectionBundle(roundIdBytes, entryIdBytes) !== null),
     });
   const inTime = objection && objection.holds && BigInt(filedAt) < win.finalAfterMs;
   const lateObjection = !!(objection && objection.holds && !inTime);
@@ -235,7 +238,8 @@ export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.
     const second = objectionHolds({
       objection: { roundId: roundIdBytes, signedResultId: rerun.runId, atMs: 0n },
       receipts: receiptsHeld(), committee, roundId: roundIdBytes, signedResultId: rerun.runId,
-      replayDiffers: ownRun !== null && hex(ownRun) !== hex(rerun.runId),
+      replayDiffers: (ownRun !== null && hex(ownRun) !== hex(rerun.runId))
+        || (typeof round.rerunObjectionBundle === 'function' && round.rerunObjectionBundle(roundIdBytes, entryIdBytes) !== null),
     });
     if (second.holds && BigInt(secondAt) < win.ownFinalAfterMs)
       return { ...agreedCommon, state: VOID, secondObjection: true, objection: second.why,

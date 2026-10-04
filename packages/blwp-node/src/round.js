@@ -2535,14 +2535,14 @@ export class Round {
    * exists, because the replay queue puts objected runs first and a priority
    * nothing can ever set is a priority that does not exist.
    */
-  object(roundIdBytes, entryIdBytes, blockHash = null) {
+  object(roundIdBytes, entryIdBytes, blockHash = null, bundle = null, seenMs = null) {
     if (!this.get(roundIdBytes)) throw new Error('no such round');
     const e = this.db.prepare('SELECT round_id FROM entries WHERE entry_id = ?').get(entryIdBytes);
     if (!e) throw new Error('no such entry');
     if (!same(new Uint8Array(e.round_id), roundIdBytes)) throw new Error('entry is not in this round');
     return this.db.prepare(
-      'INSERT OR IGNORE INTO objections (round_id, entry_id, seen_ms, block_hash) VALUES (?, ?, ?, ?)')
-      .run(roundIdBytes, entryIdBytes, this.now(), blockHash ? Buffer.from(blockHash) : null).changes === 1;
+      'INSERT OR IGNORE INTO objections (round_id, entry_id, seen_ms, block_hash, bundle) VALUES (?, ?, ?, ?, ?)')
+      .run(roundIdBytes, entryIdBytes, seenMs ?? this.now(), blockHash ? Buffer.from(blockHash) : null, bundle ? Buffer.from(bundle) : null).changes === 1;
   }
 
   /** The block the objection against this run names (§13A, RULED 2026-09-24), or null. */
@@ -2558,6 +2558,21 @@ export class Round {
       .get(roundIdBytes, entryIdBytes);
   }
 
+  /**
+   * THE BUNDLE THE OBJECTION AGAINST THIS RUN CARRIED (§13A, kanban #24): checked at the door before it was stored, so a
+   * row that has one holds a replay that contradicts the signed result. Null for none, or for a row from before.
+   */
+  objectionBundle(roundIdBytes, entryIdBytes) {
+    const row = this.db.prepare('SELECT bundle FROM objections WHERE round_id = ? AND entry_id = ?').get(roundIdBytes, entryIdBytes);
+    return row && row.bundle ? new Uint8Array(row.bundle) : null;
+  }
+
+  /** And the one against the agreed re-run. */
+  rerunObjectionBundle(roundIdBytes, entryIdBytes) {
+    const row = this.db.prepare('SELECT bundle FROM rerun_objections WHERE round_id = ? AND entry_id = ?').get(roundIdBytes, entryIdBytes);
+    return row && row.bundle ? new Uint8Array(row.bundle) : null;
+  }
+
   /** When the objection against this run arrived here, or null if none did. */
   objectedAt(roundIdBytes, entryIdBytes) {
     const row = this.db.prepare(
@@ -2570,14 +2585,14 @@ export class Round {
    * RECORD THE OBJECTION AGAINST AN AGREED RE-RUN (§13A, slice C2b), the same intake as `object` for the second
    * window: one per entry, when it arrived here. Whether it is in time and holds is `resultFinality`'s to say.
    */
-  objectRerun(roundIdBytes, entryIdBytes, blockHash = null) {
+  objectRerun(roundIdBytes, entryIdBytes, blockHash = null, bundle = null, seenMs = null) {
     if (!this.get(roundIdBytes)) throw new Error('no such round');
     const e = this.db.prepare('SELECT round_id FROM entries WHERE entry_id = ?').get(entryIdBytes);
     if (!e) throw new Error('no such entry');
     if (!same(new Uint8Array(e.round_id), roundIdBytes)) throw new Error('entry is not in this round');
     return this.db.prepare(
-      'INSERT OR IGNORE INTO rerun_objections (round_id, entry_id, seen_ms, block_hash) VALUES (?, ?, ?, ?)')
-      .run(roundIdBytes, entryIdBytes, this.now(), blockHash ? Buffer.from(blockHash) : null).changes === 1;
+      'INSERT OR IGNORE INTO rerun_objections (round_id, entry_id, seen_ms, block_hash, bundle) VALUES (?, ?, ?, ?, ?)')
+      .run(roundIdBytes, entryIdBytes, seenMs ?? this.now(), blockHash ? Buffer.from(blockHash) : null, bundle ? Buffer.from(bundle) : null).changes === 1;
   }
 
   /** The block the objection against this run's agreed re-run names, or null. */

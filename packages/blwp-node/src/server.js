@@ -184,21 +184,21 @@ export const NOTHING_IS_FUNDED = () => false;
  */
 export const settleWaitsOn = (standing) => standing.filter((x) => x.state === PROVISIONALLY_FINAL && !x.rerun);
 
-export function objectionIntake(round, rid, eid, blockHash = null) {
+export function objectionIntake(round, rid, eid, blockHash = null, bundle = null, arrivedMs = null) {
   try {
     // AN OBJECTION COUNTS BY WHEN IT REACHED THIS SEAT, ON ITS OWN CLOCK (§13A, WINDOW-10-SPEC, RULED the owner 2026-10-01):
     // before this seat's window close + 5 s it suspends the run here; after, it suspends nothing and is kept as evidence.
     // A block it names is kept and decides nothing.
     if (blockHash !== null && (!(blockHash instanceof Uint8Array) || blockHash.length !== 32)) return { status: 400, text: 'a block an objection names is a 32-byte hash' };
-    if (round.object(rid, eid, blockHash)) return { status: 201, text: 'objected' };
+    if (round.object(rid, eid, blockHash, bundle, arrivedMs)) return { status: 201, text: 'objected' };
     if (round.rerunObjectedAt(rid, eid) !== null) return { status: 200, text: 'already objected' };
     const f = resultFinality(round, rid, eid);
     const agreedRerun = !!(f.rerun && f.rerun.runId);
     // THE RE-RUN'S OWN WINDOW IS OVER FOR THIS SEAT at the round's end + 1805 s on its clock (§13A, WINDOW-10-SPEC).
-    if (agreedRerun && f.finalAfterMs !== undefined && BigInt(round.now()) >= BigInt(f.finalAfterMs))
+    if (agreedRerun && f.finalAfterMs !== undefined && BigInt(arrivedMs ?? round.now()) >= BigInt(f.finalAfterMs))
       return { status: 409, text: 'the re-run\'s objection window has closed' };
     if (f.state === PROVISIONALLY_FINAL && agreedRerun)
-      return round.objectRerun(rid, eid, blockHash) ? { status: 201, text: 'objected' } : { status: 200, text: 'already objected' };
+      return round.objectRerun(rid, eid, blockHash, bundle, arrivedMs) ? { status: 201, text: 'objected' } : { status: 200, text: 'already objected' };
     if (agreedRerun) return { status: 409, text: 'the re-run\'s objection window has closed' };
     return { status: 200, text: 'already objected' };
   } catch (err) { return { status: 404, text: err.message }; }
@@ -1218,12 +1218,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (more.length) { await ask(more); f = resultFinality(round, rid, eid); }
     }
     if (f.state === FINAL) console.log(`[final] ${toHex(eid).slice(0, 16)} FINAL: ${String(f.why).slice(0, 160)}`);
-    // A LATE OBJECTION THIS SEAT HOLDS (§13A): it suspended nothing, and once the run is FINAL it is filed for slashing.
-    if (f.state === FINAL && f.lateObjection) {
-      const g = await verifier.fileFirstResultSlashProofs(rid, eid);
-      for (const who of g.filed) console.log(`[slash] ${toHex(eid).slice(0, 16)} late objection: filed REPLAY_CONTRADICTS against ${who.slice(0, 16)}`);
-    }
+    await fileLateObjection(rid, eid, f);
     return f.state === FINAL;
+  }
+  // A LATE OBJECTION THIS SEAT HOLDS (§13A): it suspended nothing, and once the run is FINAL it is filed for slashing -
+  // however the run became FINAL. Before (measured with #24's bundle check at the door, kanban #24): filed only when this
+  // seat's own gathering turned it FINAL; a run turned FINAL by the other seats' signatures at /final-sig was skipped by
+  // every later tick, and its late objection was never filed. Filed once: nothing again while proofs are on record.
+  async function fileLateObjection(rid, eid, f) {
+    if (f.state !== FINAL || !f.lateObjection || round.slashProofs(rid, eid).length) return;
+    const g = await verifier.fileFirstResultSlashProofs(rid, eid);
+    for (const who of g.filed) console.log(`[slash] ${toHex(eid).slice(0, 16)} late objection: filed REPLAY_CONTRADICTS against ${who.slice(0, 16)}`);
   }
   function watchRerun(rid, eid) {
     const row = round.get(rid);
@@ -1412,8 +1417,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (decidedHere(r.entryId)) continue;
         await breathe();
         let was = null;
-        try { was = resultFinality(round, roundIdBytes, r.entryId).state; } catch { continue; }
-        if (was === FINAL) continue;
+        let standing = null;
+        try { standing = resultFinality(round, roundIdBytes, r.entryId); was = standing.state; } catch { continue; }
+        if (was === FINAL) { try { await fileLateObjection(roundIdBytes, r.entryId, standing); } catch (e) { console.error(`[slash] ${e.message}`); } continue; }
         try { if (await gatherFinal(roundIdBytes, r.entryId)) turned = true; } catch (e) { console.error(`[final] ${e.message}`); }
       }
       if (shuttingDown) return;
@@ -3672,7 +3678,27 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
         const blockHex = url.searchParams.get('block') || '';
-        const taken = objectionIntake(round, rid, eid, /^[0-9a-f]{64}$/.test(blockHex) ? new Uint8Array(Buffer.from(blockHex, 'hex')) : null);
+        // AN OBJECTION CARRIES ITS TRANSCRIPT AND RECEIPTS (§13A, kanban #24, RULED the owner 2026-10-04): an empty body is
+        // refused and nothing is stored; a bundle is checked here, on its own evidence, before it is taken in - one that
+        // fails the check is refused with its reason, and nothing is stored either.
+        // IT COUNTS BY WHEN IT REACHED THIS SEAT (§13A, WINDOW-10-SPEC): the arrival, taken before the check's replay runs.
+        const bundle = new Uint8Array(await read(req));
+        const arrivedMs = round.now();
+        if (!bundle.length) return text(res, 400, 'an objection carries its transcript and receipts (13A)');
+        if (!round.get(rid)) return text(res, 404, 'no such round');
+        const entryRow = round.entriesOf(rid).find((e) => toHex(e.entryId) === toHex(eid));
+        if (!entryRow) return text(res, 404, 'no such entry in that round');
+        // THE RUN IT IS FILED AGAINST: the agreed re-run's while that one stands, else the run the committee signed.
+        let standing = null;
+        try { standing = resultFinality(round, rid, eid); } catch { standing = null; }
+        const against = standing && standing.rerun && standing.rerun.runId ? standing.rerun.runId : standing && standing.runId;
+        const checked = await verifier.checkObjection(new Uint8Array(rid), new Uint8Array(eid), bundle,
+          typeof against === 'string' ? new Uint8Array(Buffer.from(against, 'hex')) : against instanceof Uint8Array ? against : null);
+        console.log(`[objection] ${toHex(eid).slice(0, 16)} ${checked.holds ? 'holds' : `refused at ${checked.step}`}: ${checked.why}`
+          + (checked.replayedRunId ? ` (replayed run ${checked.replayedRunId.slice(0, 16)} ${checked.replayed.outcome} ${checked.replayed.score}, `
+            + `claimed ${checked.claimedRunId.slice(0, 16)}, signed run ${checked.signedRunId.slice(0, 16)})` : ''));
+        if (!checked.holds) return text(res, 422, checked.why);
+        const taken = objectionIntake(round, rid, eid, /^[0-9a-f]{64}$/.test(blockHex) ? new Uint8Array(Buffer.from(blockHex, 'hex')) : null, bundle, arrivedMs);
         // AN OBJECTION THAT HOLDS SUSPENDS THE RESULT, AND THE COMMITTEE
         // RE-RUNS IT (13A): this signer node starts its own re-run at once.
         const after = taken.status === 201 ? resultFinality(round, rid, eid) : null;

@@ -12,6 +12,8 @@
 // does, and this file only decides which runs are handed to it.
 import { dissentsOn } from './test-dissent.js';
 import { ReplayPool } from './pool.js';
+import { checkObjectionBundle } from './objection-check.js';
+import { verifyKept } from './verify-kept.js';
 import { timed } from './slow.js';
 import { SIGNED_RECEIPT_BYTES } from '../../protocol/src/receipt.js';
 import { resultFrom, signResult, verifiedFinal, runId } from './verdict.js';
@@ -25,6 +27,7 @@ import { ed25519 as sessionCurve } from '@noble/curves/ed25519.js';
 import { resultFinality as finalityOf, chainIndex, resultWindow } from './finality.js';
 
 let retryJobs = 0;                     // each re-tried close is its own pool job
+let objectionJobs = 0;                 // each objection's replay is its own pool job (§13A, kanban #24)
 import { encodeTranscript, transcriptHash as hashOfTranscript } from '../../protocol/src/transcript.js';
 import {
   encodeTranscriptPosting, transcriptPostingId, joinSignedPosting, splitSignedPosting, decodeTranscriptPosting,
@@ -1153,6 +1156,31 @@ export class Verifier {
       signerNodes, settlementSlots: contract.settlementSlots, verify: (s, m, k) => schnorr.verify(s, m, k),
     });
     return { ...count, entryId: entryIdBytes, ...report };
+  }
+
+  /**
+   * AN OBJECTION BUNDLE AT THIS SEAT'S DOOR (§13A, kanban #24, RULED the owner 2026-10-04): checked here, on its own
+   * evidence, before anything is stored - the objector's signature, what it names, the transcript's hash and chain, that
+   * it is this entry's, a committee member's receipt on every checkpoint, and a replay under the round's own core through
+   * the same pool as a close (first in its queue: it is objected). `signedResultId` is the run it is filed against.
+   */
+  async checkObjection(roundIdBytes, entryIdBytes, bundle, signedResultId) {
+    const row = this.round.get(roundIdBytes);
+    if (!row) return { holds: false, step: 'names', why: 'no such round' };
+    const contract = decodeRoundContract(new Uint8Array(row.contract));
+    const found = this.round.entriesOf(roundIdBytes).find((e) => hex(e.entryId) === hex(entryIdBytes));
+    if (!found) return { holds: false, step: 'names', why: 'no such entry in that round' };
+    const beacon = beaconFor(this.randomnessFor, contract, roundIdBytes, found.entry, entryIdBytes, this.chainFor);
+    if (!beacon.ok) return { holds: false, step: 'replay', why: `no beacon to replay under: ${beacon.why}` };
+    const core = this.#coreOf(roundIdBytes);
+    if (!core) return { holds: false, step: 'replay', why: 'this signer node holds no core for that round' };
+    return checkObjectionBundle({
+      bundle, roundId: roundIdBytes, entryId: entryIdBytes, entry: found.entry, contract,
+      committee: this.round.signerNodes(roundIdBytes), signedResultId, core, roundRandomness: beacon.hash,
+      verify: (sig, msg, key) => verifyKept(sig, msg, key),
+      replayRun: (form, entry, options) => this.pool.submit({ core, key: `${hex(roundIdBytes)}:${hex(entryIdBytes)}:objection:${++objectionJobs}`,
+        objected: true, transcript: form, source: null, entry, options: { roundRandomness: options.roundRandomness } }),
+    });
   }
 
   /**

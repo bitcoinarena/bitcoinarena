@@ -12,7 +12,7 @@ import { assumeAssigned } from './assignment.js';
 import { lockPort, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
 import { askerOrder } from '../src/payout.js';
 import { testInvoice } from './bolt11-fixture.js';
-import { b32, rand, RANDOMNESS, STAKE, WINDOW_MS, GENESIS_HASH, wordsAt, playFor, warmPlay, contractFor, say, secretScalar, opts, wait } from './window-fixture.js';
+import { b32, rand, RANDOMNESS, STAKE, WINDOW_MS, GENESIS_HASH, wordsAt, playFor, warmPlay, contractFor, presentDay, say, secretScalar, opts, wait } from './window-fixture.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
 import { dealHandout, encodeHandout, handoutId } from '../../protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../protocol/src/shares.js';
@@ -74,7 +74,7 @@ export async function nameAddress(daemons, played, address = ADDRESS) {
 export const curve = { ...feldmanGroup, tweakPoint };
 
 // `n`: THE ROUND'S SIGNER NODES - 2 (a 2-of-2), or 7 (5 of 7, receiptsNeeded); `a` and `b` are the first two.
-export async function lockRound({ minScore = 1, stakeMsat = STAKE, port = lockPort(), serveOpts = {}, n = 2 } = {}) {
+export async function lockRound({ minScore = 1, stakeMsat = STAKE, port = lockPort(), serveOpts = {}, n = 2, endMs = null } = {}) {
   const address = lnurl(port);
   // A CHAIN THAT BONDS THE ROUND'S TWO SIGNER NODES (RULED 2026-09-25: a paying round opens only on a node that reads the
   // chain). Both signer nodes are running daemons, so the round's claim key is their own live DKG, as before.
@@ -91,8 +91,10 @@ export async function lockRound({ minScore = 1, stakeMsat = STAKE, port = lockPo
     d.stakeSecrets.peers = there;
     d.dkg.peers = there;
   }
-  const drafted = { ...contractFor(nodes.map((d) => d.round.pubkey), BigInt(WINDOW_MS), nodes.map((d) => `http://127.0.0.1:${d.port}`)),
+  const first = { ...contractFor(nodes.map((d) => d.round.pubkey), BigInt(WINDOW_MS), nodes.map((d) => `http://127.0.0.1:${d.port}`)),
     custody: 'FEDERATION', federationId: TEST_FEDERATION_ID, minScore, stakeMsat };
+  // `endMs`: the round ends then (a test that reads its objection window while it is open), as window-fixture's rounds do
+  const drafted = endMs === null ? first : presentDay(first, endMs);
   // ONLY THE TWO FIELDS THE CHAIN DICTATES (RULED 2026-09-25): the census root its bonds derive to, and a committee time
   // among its blocks. The round id follows from them.
   const bonded = bondedChainFor(drafted.nodes, drafted, slot, { endpoints: nodes.map((d) => `ws://127.0.0.1:${d.port}`) });
