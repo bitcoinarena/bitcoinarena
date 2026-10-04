@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { sha256, toHex, fromHex } from '../../protocol/src/hash.js';
 import { BIP39_ENGLISH, BIP39_ENGLISH_SHA256 } from '../src/bip39-wordlist.js';
-import { phraseFromSeed, seedFromPhrase, PHRASE_WORDS } from '../src/bip39.js';
+import { phraseFromSeed, seedFromPhrase, seedHexFromInput, PHRASE_WORDS } from '../src/bip39.js';
 
 test('the wordlist is the published one, 2048 words, unedited', () => {
   assert.equal(BIP39_ENGLISH.length, 2048);
@@ -82,4 +82,17 @@ test('a word outside the list is refused and named; a wrong count is refused', (
 test('a seed that is not 32 bytes is refused rather than padded', () => {
   assert.equal(phraseFromSeed(new Uint8Array(16)).ok, false, 'a 16-byte seed was encoded');
   assert.equal(phraseFromSeed(undefined).ok, false);
+});
+
+// KANBAN #27: the restore inputs take the 24 words (checked) or the 64 hex digits, and hand importSeed the same 64 hex.
+test('what the player types - the 24 words or the 64 hex - becomes the same seed hex; a wrong word is refused', () => {
+  const words = 'legal winner thank year wave sausage worth useful legal winner thank year wave sausage worth '
+    + 'useful legal winner thank year wave sausage worth title';
+  assert.deepEqual(seedHexFromInput(words), { ok: true, hex: '7f'.repeat(32), from: 'words' });
+  assert.deepEqual(seedHexFromInput('  ' + words.toUpperCase().replace(/ /g, '   ') + '\n'), { ok: true, hex: '7f'.repeat(32), from: 'words' });
+  assert.deepEqual(seedHexFromInput('7F'.repeat(32)), { ok: true, hex: '7f'.repeat(32), from: 'hex' });
+  const wrong = seedHexFromInput(words.replace(/title$/, 'zoo'));
+  assert.equal(wrong.ok, false);
+  assert.match(wrong.why, /does not check out/);
+  assert.match(seedHexFromInput('abandon art').why, /24 words/);
 });
