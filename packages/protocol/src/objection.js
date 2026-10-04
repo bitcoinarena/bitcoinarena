@@ -82,7 +82,7 @@ export const objectionId = (o) => taggedHash(TAG.objection, encodeObjection(o));
  * door took no body: an objection was only "one arrived", and it held only where the seat's own replay already
  * disagreed, so a player holding a receipted transcript could not overturn seats that agreed on a lie.
  *
- * The bundle is four parts, each length-prefixed: the Objection above; the objector's signature over its id (64 bytes,
+ * The bundle is four parts (a fifth, the run's inputs, when the transcript carries none - see decodeObjectionBundle), each length-prefixed: the Objection above; the objector's signature over its id (64 bytes,
  * BIP-340 under `objectorPubkey`); the transcript bytes as a node hands the canonical one out (GET /canonical:
  * `encodeTranscript`, the batches AND the signed marks - the object a result's transcript_hash names); and the signed
  * receipts back to back, as GET /receipts hands them out. The curve is not this package's: the bundle is cut here and
@@ -90,14 +90,15 @@ export const objectionId = (o) => taggedHash(TAG.objection, encodeObjection(o));
  */
 export const OBJECTION_SIGNATURE_BYTES = 64;
 
-export function encodeObjectionBundle({ objection, signature, transcript, receipts }) {
+export function encodeObjectionBundle({ objection, signature, transcript, receipts, inputs = null }) {
   const o = objection instanceof Uint8Array ? objection : encodeObjection(objection);
   if (!(signature instanceof Uint8Array) || signature.length !== OBJECTION_SIGNATURE_BYTES)
     throw new Error(`an objection's signature is ${OBJECTION_SIGNATURE_BYTES} bytes`);
   if (!(transcript instanceof Uint8Array) || !(receipts instanceof Uint8Array))
     throw new Error('an objection carries its transcript and its receipts as bytes');
+  if (inputs !== null && !(inputs instanceof Uint8Array)) throw new Error('an objection\'s inputs travel as bytes');
   const w = new Writer();
-  for (const part of [o, signature, transcript, receipts]) { w.u32(part.length); w.bytes(part, part.length); }
+  for (const part of [o, signature, transcript, receipts, ...(inputs ? [inputs] : [])]) { w.u32(part.length); w.bytes(part, part.length); }
   return w.finish();
 }
 
@@ -108,10 +109,15 @@ export function decodeObjectionBundle(bytes) {
   const signature = part();
   const transcript = part();
   const receipts = part();
+  // THE RUN'S INPUTS, a fifth part when the transcript carries none (kanban #24, measured live 2026-10-04: the live
+  // client sends its ticks as play frames, so a live run's canonical transcript is its receipted marks over no batches,
+  // and its inputs are what GET /replay/transcript hands out - JSON, absolute ticks). Checked against the marks' state
+  // hashes by the replay; never trusted on their own.
+  const inputs = rd.at < bytes.length ? part() : null;
   if (rd.at !== bytes.length) throw new Error('trailing bytes after the objection bundle');
   if (signature.length !== OBJECTION_SIGNATURE_BYTES)
     throw new Error(`an objection's signature is ${OBJECTION_SIGNATURE_BYTES} bytes, got ${signature.length}`);
-  return { objection: decodeObjection(objectionBytes), objectionBytes, signature, transcript, receipts };
+  return { objection: decodeObjection(objectionBytes), objectionBytes, signature, transcript, receipts, inputs };
 }
 
 const hex = (u8) => [...u8].map((b) => b.toString(16).padStart(2, '0')).join('');
