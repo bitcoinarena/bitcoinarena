@@ -311,11 +311,15 @@ is the record: the dates, the hashes and the one transition pair.
   authority's ruling.** The new core de2f263d and its config dbb49344 came into force by this ruling, without the
   DESIGN ballot (§27A.7) or the hard fork with a new network id (§27A.8.1) the spec prescribes - no ballot code exists,
   and a new network id is a refound. In the spec: §27A.7.8, the interim rule until the ballot is built.
+- **Exposure is weighted by the load's heat (option 1 of the audit).** de2f263d weighted exposure by C, so a full bed
+  counted twice - in E and again as C. The core after it, 7e2123d1, weights it by heat as §18A.3 writes it; its config
+  f51759b6 (v3) is v2's fields and the exposure weight. de2f263d stays installed (frozen, its own replay bundle, on the
+  page as a third core) for the free rounds made on it; the 10-06 paid series is the first paid series on 7e2123d1.
 - **One transition pair, by date.** The free rounds the series pair opened from 08:23Z name de2f263d with the founding
   config (they were made before its config had a hash); they are not rewritten. The seats accept that pair only for a
   round whose committee time is before 2026-10-04 13:00Z and refuse it after; the client accepts the pair, the seats
   hold the date. Paid rounds take the new core only from the next published series (10-06, published 12:30Z), and
-  that series names de2f263d with dbb49344; every round published before stays on 2069b4c2 with the founding config.
+  that series names 7e2123d1 with f51759b6; every round published before stays on 2069b4c2 with the founding config.
 
 ## Donations in the federation (the owner 2026-10-03, ruled; options decided here)
 
