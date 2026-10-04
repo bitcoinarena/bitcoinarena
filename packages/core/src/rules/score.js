@@ -28,17 +28,15 @@ export const EXPOSURE_REFERENCE = Math.imul(320, ONE);
 /**
  * PAR TIME, IN TICKS, AND THE TICKS ARE THE RULE.
  *
- * 3900 of them: 3900 x TICK_DT / ONE = 64.984 seconds, not the 65 that "at 60
- * Hz" would give. The tick is 1092/65536 s and not a sixtieth (`tick.js`), so
- * the two disagree by 16 ms over this constant.
+ * the owner 2026-10-04 09:17: T starts to sink at 20 seconds. The ceiling stays
+ * 1.5 and the floor stays 0.25. 20 s is 1200 ticks (1200 x 1092/65536 =
+ * 19.995 s). T leaves 1.5 there, is 1 at 1800 ticks (30 s), and reaches 0.25
+ * at 7200 ticks (120 s). The old par was 3900 ticks, about 65 s.
  *
- * THE NUMBER DOES NOT MOVE. A tick count is what the simulation compares
- * against, so this IS the par - every score, every signed result and every
- * recorded vector is against 3900 ticks. Multiplying 65 by 60 to "fix" it
- * would change every score ever produced. The label was the thing that was
- * wrong.
+ * A tick count is what the simulation compares against, so this IS the par.
+ * The tick is 1092/65536 s and not a sixtieth (`tick.js`).
  */
-export const REFERENCE_TICKS = 3900;
+export const REFERENCE_TICKS = 1800;
 /** No danger is earned within this of the start. */
 export const APRON_RADIUS = Math.imul(22, ONE);
 
@@ -63,10 +61,10 @@ export const T_FLOOR = 16384;      // 0.25
 export const T_CEIL = 98304;       // 1.5
 
 // The time clamp, said in ticks: T = REFERENCE_TICKS / ticks held to
-// [0.25, 1.5] is exactly ticks held to [2600, 15600]. Written out so the two
-// forms cannot drift apart silently.
-export const T_TICKS_MIN = 2600;   // REFERENCE_TICKS / 1.5
-export const T_TICKS_MAX = 15600;  // REFERENCE_TICKS / 0.25
+// [0.25, 1.5] is exactly ticks held to [1200, 7200]. Written out so the two
+// forms cannot drift apart silently. 1200 ticks is 20 seconds: T starts to sink.
+export const T_TICKS_MIN = 1200;   // REFERENCE_TICKS / 1.5, 20 s
+export const T_TICKS_MAX = 7200;   // REFERENCE_TICKS / 0.25, 120 s
 
 /**
  * Accumulates exposure over GROUND MADE GOOD against a high-water mark.
@@ -100,7 +98,7 @@ export const timeFactor = (ticks) =>
  *
  * Each factor is an integer count of 1e-5 (FACTOR_SCALE), formed from the core's own word and rounded once, half up:
  *   E5 = S_EXPOSURE held to the 320 m reference, over that reference     0 .. 100000
- *   T5 = 3900 over S_ELAPSED held to 2600 .. 15600 ticks                 25000 .. 150000
+ *   T5 = 1800 over S_ELAPSED held to 1200 .. 7200 ticks                  25000 .. 150000
  *   C5 = S_CARGO held to 0 .. ONE, over ONE                              0 .. 100000
  * and the score is 1000 · E · T · C of those, kept as an integer count of 1e-5 points (SCORE_SCALE): E5·T5·C5 / 1e7,
  * rounded once, half up. So the product of the factors as the card prints them, to five decimals, IS the score to five
