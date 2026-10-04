@@ -3513,6 +3513,19 @@
             tick();
             console.log('[blwp] TIMED round loaded ' + (Date.now() - since) + ' ms (starts in ' + s0 + ' s; the lock and the entry go on behind it)');
           };
+          // MISSED THE CLOSE (kanban #122): the next round of this series, of the same stake, joined with the deposit already in
+          // the player wallet - no second invoice. Only while this join is still the page's join. BOTH REFUSALS CALL IT: measured
+          // live on 0.0.2528 (round fde7f34f, deposit paid at its start + 56 s), the lock's own refusal is caught inside the join,
+          // which then ends in the refusal of .then, not in .catch - X took no lock and no second invoice, and no next round was joined.
+          const moveOnIfMissed = () => {
+            if (!join.missed || window.BLWP_JOIN !== join) return;
+            const start = Number((r.raw && r.raw.startTimeMs) || 0);
+            const after = (window.BLWP_LOBBY_ROWS || []).filter((x) => x.joinable && !x.free && BLWPCLIENT.lobbyStakeSats(x) === Number(r.stakeSats)
+              && Number(x.startTimeMs) > start && Number(x.entryCloseMs) > Date.now()).sort((a, b) => Number(a.startTimeMs) - Number(b.startTimeMs))[0];
+            console.warn('[blwp] join ' + String(id).slice(0, 16) + ': the entry closed before the deposit arrived; '
+              + (after ? 'joining the next round ' + String(after.id).slice(0, 16) : 'no next round listed'));
+            if (after) window.BLWP_LOBBY_ACT.join(after.id, { link });
+          };
           joinTheRoundIfOneWasNamed()
             .then(() => {
               join.committed = true;
@@ -3545,20 +3558,12 @@
               // exceptions, and not one line naming why, because every refusal below the first set
               // `BLWP_JOIN_REFUSED` and returned in silence. A headless client can only read a log line.
               else { refuse(window.BLWP_JOIN_REFUSED || 'this page did not join that round');
-                     console.error('[blwp] join refused: ' + join.why); }
+                     console.error('[blwp] join refused: ' + join.why); moveOnIfMissed(); }
             })
             .catch((e) => {
               if (join.cancelled) return;
               refuse(e && e.message ? e.message : e);
-              // MISSED THE CLOSE (kanban #122): the next round of this series, of the same stake, joined with the deposit
-              // already in the player wallet - no second invoice. Only while this join is still the page's join.
-              if (!join.missed || window.BLWP_JOIN !== join) return;
-              const start = Number((r.raw && r.raw.startTimeMs) || 0);
-              const after = (window.BLWP_LOBBY_ROWS || []).filter((x) => x.joinable && !x.free && BLWPCLIENT.lobbyStakeSats(x) === Number(r.stakeSats)
-                && Number(x.startTimeMs) > start && Number(x.entryCloseMs) > Date.now()).sort((a, b) => Number(a.startTimeMs) - Number(b.startTimeMs))[0];
-              console.warn('[blwp] join ' + String(id).slice(0, 16) + ': the entry closed before the deposit arrived; '
-                + (after ? 'joining the next round ' + String(after.id).slice(0, 16) : 'no next round listed'));
-              if (after) window.BLWP_LOBBY_ACT.join(after.id, { link });
+              moveOnIfMissed();
             });
           return answer(true, 'started');
         },
