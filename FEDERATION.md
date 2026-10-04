@@ -261,9 +261,10 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
   objection window + the committee's settlement transaction: a forfeit is
   redeemable after expiry too, and after expiry the player's key alone
   refunds.
-- **Donations:** the player's wallet pays the §27A.4 recipients directly,
-  every game, at entry, outside the federation. Nothing of a donation is
-  locked.
+- **Donations:** since 2026-10-03, paid inside the federation - one output
+  per recipient key in the player's lock transaction (below, "Donations in
+  the federation"; multiplayer_p2p.md §22A). Before, the player's wallet
+  paid the §27A.4 recipients' LNURLs directly, outside the federation.
 
 ## Rulings (the owner 2026-10-03)
 
@@ -281,9 +282,10 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
   from his own join - the run, the first-mark deadline and the door all count from the entry, not the round's start -
   so his run ends up to 45 s after the others'. The signer nodes take a NEW entry of such a round until its entry close
   + 15 s (the time a join begun before the close takes to lock and post); the same entry posted again is still taken.
-  Rounds closing entry at their start keep the old door. CONFLICT, recorded: multiplayer_p2p.md §5A.5 ("its entry
-  closing at that start") and its Timing rule ("run ends <= start_time(i+1) - 8 s") still read the old way; that file
-  is not edited here (the owner's standing order). Published: T1 fa570b05 (2026-10-03 22:00-23:58:30Z) and T2 4d8f738a
+  Rounds closing entry at their start keep the old door. SUPERSEDED 2026-10-04 14:30 (the owner, #130): every run ends
+  with the round at start + 82 s (a late entry names the round's ticks gone as its join tick and plays the rest), and
+  the signer nodes take a new entry only before start + 37 s - 45 s or less of the run left is too late; the bytes'
+  start + 45 s stand, no new series. Brought into multiplayer_p2p.md §5A.5 (Timing, late join) and §13A (#31). Published: T1 fa570b05 (2026-10-03 22:00-23:58:30Z) and T2 4d8f738a
   (2026-10-04 00:01:30-23:58:30Z), tails of the live paid round's contract; full series for 10-05 and 10-06 follow
   once their census blocks exist (>= 72 h of rounds).
 - **Every amount that comes back is a row in the wallet's history:** a stake back with no payout is a "Refund" row
@@ -380,9 +382,8 @@ leaves the wallet in the same transaction as the stake: a stake that is locked i
 
 **What changes, all of it a hard fork of the formats:** the donation set's recipient record (key instead of LNURL),
 the Entry Contract (donation outpoints), the signer nodes' entry check and index, the page's lock transaction, a
-recipient client. Rounds already published keep the LNURL set they name (and the 10-03/10-04 forwarder). CONFLICT,
-recorded: multiplayer_p2p.md §22A "The donation set" (LNURLs, "separate Lightning payments") reads the old way; that file
-is not edited here (the owner's standing order).
+recipient client. Rounds already published keep the LNURL set they name (and the 10-03/10-04 forwarder). Brought into
+multiplayer_p2p.md §22A "The donation set", §24A and its payment table (#31, 2026-10-04).
 
 ## Rulings (the owner 2026-09-21)
 
