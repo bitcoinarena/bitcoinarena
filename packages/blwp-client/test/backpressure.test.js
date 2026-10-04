@@ -71,7 +71,7 @@ function slowLink(client, ms, watch) {
 // the simulator ends every run at BLOCK_TICKS, and a contract saying otherwise
 // is the second clock letter 21 forbade. The bound under test is unchanged;
 // only the number it is measured at moved.
-async function rig(ms, blockTicks = BLOCK_TICKS) {
+async function rig(ms, blockTicks = BLOCK_TICKS, joinTick = 0) {
   const node = await serve(openStore(), { port: 0, ...FUNDED });
   const watch = { inFlight: 0, worst: 0 };
   const client = new Client({ base: `http://127.0.0.1:${node.port}`, core, sign, verify });
@@ -87,7 +87,7 @@ async function rig(ms, blockTicks = BLOCK_TICKS) {
   catch (e) { await node.close(); throw e; }
   const e = {
     roundId: rid, playerPubkey: b32(5), sessionPubkey: ed25519.getPublicKey(session),
-    stakeCommitment: b32(7), stakeMsat: 0n, feeMsat: 0n, donationMsat: 0n, joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
+    stakeCommitment: b32(7), stakeMsat: 0n, feeMsat: 0n, donationMsat: 0n, joinTick, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
   };
   let eid;
   try {
@@ -769,4 +769,25 @@ test('a run at its last tick takes no more: the signer node holds exactly the ru
       assert.equal(held, BLOCK_TICKS, 'the signer node does not hold exactly the run');
     } finally { client.close(); await node.close(); }
   }
+});
+
+/**
+ * KANBAN #130, MEASURED LIVE ON 0.0.2727 (round f9857c83): a late entry at tick 1750 VOIDed on its first batch - "2 ticks
+ * offered but 1750 published and 2 held" - because setRound began nextTick at the join tick and the offered count at 0.
+ * A late run records from its join tick, publishes without a VOID, and is over on the round's last tick.
+ */
+test('a late entry records from its join tick, publishes clean, and its run is over on the round\'s last tick', async () => {
+  const J = 1750;
+  const { node, client } = await rig(0, BLOCK_TICKS, J);
+  try {
+    assert.equal(client.nextTick, J);
+    assert.equal(client.offered, J, 'the offered count starts at the join tick, as nextTick does');
+    for (let i = 0; i < 600; i++) client.record([45875, 0, 0, 0, 0]);
+    while (client.held > 0) { const held = client.held; await client.drain(); if (client.held === held) break; }
+    assert.equal(client.ended, false, `the run ended: ${client.endWhy || client.state}`);
+    assert.equal(client.nextTick, J + 600, 'the node took the ticks from the join tick');
+    let n = 0;
+    while (!client.runOver() && n < BLOCK_TICKS) { client.record([45875, 0, 0, 0, 0]); n++; if (n % 600 === 0) await client.drain(); }
+    assert.equal(J + 600 + n, BLOCK_TICKS, 'the run is over on the round\'s last tick, BLOCK_TICKS - J ticks after the join');
+  } finally { client.close && client.close(); await node.close(); }
 });

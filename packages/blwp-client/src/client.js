@@ -1763,7 +1763,9 @@ export class Client {
     this.marksRelinked = 0;
     this.publishing = null;
     this.marking = null;
-    this.offered = 0;
+    // FROM THE JOIN TICK TOO (kanban #130, measured live on 0.0.2727, round f9857c83: a late entry at tick 1750 VOIDed on its first
+    // batch - "2 ticks offered but 1750 published and 2 held" - because nextTick began at the join tick and this at 0).
+    this.offered = joinTick;
     this.ended = false;
     this.ending = null;
     this.endingReason = '';
