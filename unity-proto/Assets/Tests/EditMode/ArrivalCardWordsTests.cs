@@ -344,7 +344,9 @@ public class ArrivalCardWordsTests
         string hud = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "Scripts/DriveHud.cs"));
         StringAssert.Contains("float k = 1f;", hud, "the card fades again");
         StringAssert.DoesNotContain("(Hold * 0.28f)", hud);
-        StringAssert.Contains("        if (!ArrivalShowing)\n        {\n            string tail = runScore == null", hud.Replace("\r\n", "\n"),
+        // the score block steps aside under the card - and, since 2026-10-04, under the wreck's summary too
+        StringAssert.Contains("bool scoreBlock = !ArrivalShowing && !_wreckSummaryUp;", hud, "the score block draws under the card");
+        StringAssert.Contains("        if (scoreBlock)\n        {\n            string tail = runScore == null", hud.Replace("\r\n", "\n"),
             "the score block draws under the card");
         StringAssert.Contains("if (watch == null) return;\n        // not under the result card", hud.Replace("\r\n", "\n"));
         StringAssert.Contains("if (ArrivalShowing) return;", hud);
