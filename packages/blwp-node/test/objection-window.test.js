@@ -79,8 +79,12 @@ test('seven signer nodes: an objection filed in the window against a run this no
       const before = mayAt(mid, name);
       assert.equal(before.ok, false, `${name}: a share was released inside the window`);
       assert.match(before.why, /objection window/, `${name}: refused for another reason: ${before.why}`);
-      assert.equal((await object(w, eidOf(name))).status, 201);
+      // AN OBJECTION CARRIES ITS TRANSCRIPT AND RECEIPTS (§13A, kanban #24): against the run the committee signed as the
+      // holder replayed it, the bundle is refused at the door (422) and nothing is stored; against the forged one, taken.
+      const r = await object(w, eidOf(name));
+      assert.equal(r.status, name === 'agrees' ? 422 : 201, `${name}: ${await r.text()}`);
     }
+    assert.equal(w.holder.round.objected(w.rid, eidOf('agrees')), false, 'a refused objection was stored');
     const dissent = mayAt(testNow(), 'dissents');
     assert.equal(dissent.ok, false);
     assert.match(dissent.why, /suspend/i, `a valid objection did not suspend the run: ${dissent.why}`);

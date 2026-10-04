@@ -966,6 +966,11 @@ export function openStore(path = ':memory:') {
   for (const t of ['objections', 'rerun_objections'])
     if (!db.prepare(`PRAGMA table_info(${t})`).all().some((c) => c.name === 'block_hash'))
       db.exec(`ALTER TABLE ${t} ADD COLUMN block_hash BLOB`);
+  // AN OBJECTION CARRIES ITS TRANSCRIPT AND RECEIPTS (§13A, kanban #24, RULED the owner 2026-10-04): the bundle a seat checked
+  // at its door is kept with the row. A row from before carries none, and holds only on this seat's own replay, as it did.
+  for (const t of ['objections', 'rerun_objections'])
+    if (!db.prepare(`PRAGMA table_info(${t})`).all().some((c) => c.name === 'bundle'))
+      db.exec(`ALTER TABLE ${t} ADD COLUMN bundle BLOB`);
   // A PEER'S ANSWER TO AN OFFERED FIRST MARK NAMES ITS BLOCK (§13C, RULED 2026-09-24): this node's tip when it recorded
   // the answer. A store made before the ruling gets the column; a row there names none, and its refusal counts nowhere.
   if (!db.prepare('PRAGMA table_info(first_mark_offers)').all().some((c) => c.name === 'block_hash'))

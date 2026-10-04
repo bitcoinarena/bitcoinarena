@@ -88,5 +88,7 @@ test('the page takes a pasted seed and says which kind of seed its fingerprint i
     new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url).pathname, 'utf8');
   for (const call of ['importSeed', 'seedOrigin', 'tabSeed'])
     assert.ok(new RegExp('BLWPCLIENT\\.' + call + '\\s*\\(').test(page), 'the page never calls ' + call);
-  assert.match(page, /BLWPCLIENT\.importSeed\(paste\.value, \{ storage: window\.sessionStorage \}\)/);
+  // THE 24 WORDS OR THE 64 HEX (kanban #27, f4c6d957): what was pasted is turned into the seed hex, which importSeed takes
+  assert.match(page, /const got = BLWPCLIENT\.seedHexFromInput\(paste\.value\);/);
+  assert.match(page, /BLWPCLIENT\.importSeed\(got\.hex, \{ storage: window\.sessionStorage \}\)/);
 });

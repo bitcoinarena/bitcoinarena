@@ -31,7 +31,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { decodePlayerResult, splitSignedResult, resultId, joinSignedResult, encodePlayerResult } from '../../protocol/src/result.js';
 import { runOf, decodeRerunResult, splitSignedRerun } from '../../protocol/src/rerun.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
-import { b32, rand, wait, sevenSignerNodes, object, WINNER, WINDOW_MS } from './window-fixture.js';
+import { b32, rand, wait, sevenSignerNodes, object, objectionBundleFor, WINNER, WINDOW_MS } from './window-fixture.js';
 
 /** Wait until the holder has signed its own re-run of `eid`, and return it. */
 async function holdersRerun(w, eid, ms = 8000) {
@@ -322,9 +322,11 @@ test('while SUSPENDED an objection is the first again, and a missing or foreign 
     assert.equal(again.status, 200);
     assert.equal((await again.text()).trim(), 'already objected');
     assert.equal(w.holder.round.rerunObjectedAt(w.rid, s.eid), null, 'an objection while SUSPENDED was stored as the second');
-    const missing = await fetch(`http://127.0.0.1:${w.holder.port}/objection?round=${toHex(w.rid)}&entry=${toHex(rand(32))}`, { method: 'POST' });
+    // a real bundle (§13A, kanban #24: an empty body is 400 before anything is looked up), posted where it does not belong
+    const { bundle } = await objectionBundleFor(w, s.eid);
+    const missing = await fetch(`http://127.0.0.1:${w.holder.port}/objection?round=${toHex(w.rid)}&entry=${toHex(rand(32))}`, { method: 'POST', body: bundle });
     assert.equal(missing.status, 404);
-    const foreign = await fetch(`http://127.0.0.1:${w.holder.port}/objection?round=${toHex(rand(32))}&entry=${toHex(s.eid)}`, { method: 'POST' });
+    const foreign = await fetch(`http://127.0.0.1:${w.holder.port}/objection?round=${toHex(rand(32))}&entry=${toHex(s.eid)}`, { method: 'POST', body: bundle });
     assert.equal(foreign.status, 404);
     assert.equal(w.holder.round.rerunObjectedAt(w.rid, s.eid), null);
     assert.equal(w.holder.round.objectedAt(w.rid, s.eid), s.filed);
