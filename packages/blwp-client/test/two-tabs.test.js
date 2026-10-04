@@ -19,6 +19,9 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { standUpRound } from '../../blwp-node/tools/round-2of2.mjs';
+// #23: these are about PER-PLAYER worlds (the bridge must not fall back to the harness seed), so their rounds name the
+// per-player config v3; the shared world (v4) is world-shared.test.js and world-shared-door.test.js.
+import { TRUCK_V3_CONFIG_HASH } from '../../blwp-node/src/cores.js';
 import { Client } from '../src/client.js';
 import { joinFromQuery, tabSeed, playerFor, entryFor } from '../src/join.js';
 import { feldmanGroup } from '../../blwp-node/src/curve.js';
@@ -91,7 +94,7 @@ test('a person opens the printed URL twice and the two tabs are on one round', a
   // NO HEADER SOURCE HANDED IN. The tool builds one chain that carries the
   // bonds and names the beacon; a separate header source would be a census on
   // one chain and a seed on another, which is what letter 32 closed.
-  const round = await standUpRound({ host: "127.0.0.1", portA: 18080, portB: 18081 });
+  const round = await standUpRound({ host: "127.0.0.1", portA: 18080, portB: 18081, configHash: TRUCK_V3_CONFIG_HASH });
   const tabs = [];
   try {
     // WHAT THE PAGE DOES WITH ITS OWN ADDRESS BAR, on the URL the operator
@@ -194,7 +197,7 @@ test('a person opens the printed URL twice and the two tabs are on one round', a
  * never drives it, which is what a person sitting in the loadout is.
  */
 test('a tab that has not driven is still shown the truck that is driving', async () => {
-  const round = await standUpRound({ host: '127.0.0.1', portA: 18084, portB: 18085 });
+  const round = await standUpRound({ host: '127.0.0.1', portA: 18084, portB: 18085, configHash: TRUCK_V3_CONFIG_HASH });
   const tabs = [];
   try {
     const named = await joinFromQuery(new URL(round.url).search);
@@ -272,7 +275,7 @@ test('a tab that has not driven is still shown the truck that is driving', async
  * every "frame", and watch the pose advance.
  */
 test('a renderer that drains one picture a frame keeps getting the driver\'s new pose', async () => {
-  const round = await standUpRound({ host: '127.0.0.1', portA: 18086, portB: 18087 });
+  const round = await standUpRound({ host: '127.0.0.1', portA: 18086, portB: 18087, configHash: TRUCK_V3_CONFIG_HASH });
   const tabs = [];
   try {
     const named = await joinFromQuery(new URL(round.url).search);
@@ -333,7 +336,7 @@ test('a renderer that drains one picture a frame keeps getting the driver\'s new
 });
 
 test('two daemons whose chains disagree stop the join by name', async () => {
-  const round = await standUpRound({ host: '127.0.0.1', portA: 18082, portB: 18083 });
+  const round = await standUpRound({ host: '127.0.0.1', portA: 18082, portB: 18083, configHash: TRUCK_V3_CONFIG_HASH });
   try {
     const named = await joinFromQuery(new URL(round.url).search);
 
@@ -412,7 +415,7 @@ test('the shipped bridge writes the driver\'s entry and pose in the twelve ints 
     return { entry, x: heap[8], z: heap[9], heading: heap[10], tick: heap[11] };
   };
 
-  const round = await standUpRound({ host: '127.0.0.1', portA: 18088, portB: 18089 });
+  const round = await standUpRound({ host: '127.0.0.1', portA: 18088, portB: 18089, configHash: TRUCK_V3_CONFIG_HASH });
   const tabs = [];
   try {
     const named = await joinFromQuery(new URL(round.url).search);

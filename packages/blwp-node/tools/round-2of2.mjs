@@ -126,6 +126,9 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
                                      // A PAYING ROUND, for a rehearsal with Lightning. Every
                                      // existing caller asks for none and gets a free round.
                                      stakeMsat = 0n,
+                                     // THE ROUND'S CONFIG (#23): the truck's current one - one world per round - unless a
+                                     // caller that is about per-player worlds names the v3 config (f51759b6).
+                                     configHash = TRUCK_CONFIG_HASH,
                                      // HOW LONG A ROUND TAKES ENTRIES after its start (the owner 2026-09-16 15:36:
                                      // "FREE shows closes 30 min but a play is ~2 min"). Half an hour unless the
                                      // caller names a window - the Daily names one run's length.
@@ -688,7 +691,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     censusView = onChain.blocksFrom(Math.max(0, bondFloor - 20), onChain.height());
   }
   const contract = {
-    networkId: NETWORK_ID, configHash: TRUCK_CONFIG_HASH, censusConfirmations,
+    networkId: NETWORK_ID, configHash, censusConfirmations,
     // ONE SLOT PER SIGNER NODE THERE IS. `assignSignerNodes` checks the census's
     // assigned set against `nodes` EXACTLY, both ways, so with three bonded
     // nodes and two slots the sortition would seat two of the three and the

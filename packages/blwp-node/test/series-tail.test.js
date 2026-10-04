@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
-import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH, TRUCK_BEFORE_FORK_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH, TRUCK_BEFORE_FORK_HASH } from '../src/cores.js';
 import { GENESIS_CONFIG_HASH } from '../../protocol/src/genesis-ids.js';
 import { encodeRoundContract } from '../../protocol/src/contracts.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
@@ -35,7 +35,7 @@ test('a day cut at 360 and its 82 s tail: the announcement runs on 90 s with no 
   const day = { ...seriesTemplate(base(nodes), k), seriesCutFrom: 360 };
   const first = seriesRound(day, 360).startTimeMs;
   const tail = { ...day, seriesCutFrom: undefined, seriesCount: 600, startTimeMs: first, entryCloseMs: first, committeeTimeMs: first - 12n * 3600000n,
-    simCoreHash: TRUCK_CORE_HASH, configHash: TRUCK_CONFIG_HASH, blockTicks: 4920 };
+    simCoreHash: TRUCK_CORE_HASH, configHash: TRUCK_V3_CONFIG_HASH, blockTicks: 4920 };
   delete tail.seriesCutFrom;
   assert.equal(seriesLeadIsValid(tail).ok, true, seriesLeadIsValid(tail).why);
   const NOW = Number(first) - 20 * 60000;                       // 20 minutes before the cut

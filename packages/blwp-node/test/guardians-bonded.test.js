@@ -13,7 +13,7 @@
 // The census here is two bonded signer nodes, as in signer-node-committee.test.js; the federation's size and
 // threshold are the port's, which stands in for the federation's config.
 import { TWO_GATEWAYS } from './lock-fixture.js';
-import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../src/cores.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -75,7 +75,7 @@ const beaconOf = (bonds, contract) => {
   return { hash: named.hash, height: named.height, timeMs: named.timeMs };
 };
 const contractWith = (nodes, censusRoot, over = {}) => ({
-  networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 6,
+  networkId: NETWORK_ID_REGTEST, configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6,
   gameVerifySlots: 2, settlementSlots: 2, simCoreHash: TRUCK_CORE_HASH,
   startTimeMs: BigInt(FIRST_TIME + 15 * SPACING) * 1000n + 60500n,
   entryCloseMs: BigInt(FIRST_TIME + 15 * SPACING) * 1000n + 200000n,
@@ -158,9 +158,9 @@ test('a free round is assigned on a census that lists no guardian and the federa
   const w = await door({ port });
   try {
     // RULED 2026-09-22 22:59: THRESHOLD_LN does not exist - the codec refuses it before any door is asked.
-    await assert.rejects(w.post({ custody: 'THRESHOLD_LN', federationId: new Uint8Array(32), configHash: TRUCK_CONFIG_HASH, slashMinimumServed: 21 }),
+    await assert.rejects(w.post({ custody: 'THRESHOLD_LN', federationId: new Uint8Array(32), configHash: TRUCK_V3_CONFIG_HASH, slashMinimumServed: 21 }),
       /THRESHOLD_LN is not a custody this network has/);
-    const free = await w.post({ stakeMsat: 0n, federationId: new Uint8Array(32), configHash: TRUCK_CONFIG_HASH, slashMinimumServed: 22 });
+    const free = await w.post({ stakeMsat: 0n, federationId: new Uint8Array(32), configHash: TRUCK_V3_CONFIG_HASH, slashMinimumServed: 22 });
     console.log('  FACTS:', JSON.stringify({ free, asked: port.asked }));
     assert.equal(free.status, 201, free.why);
     assert.equal(free.signerNodes, 2);

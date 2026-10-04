@@ -8,7 +8,7 @@ import { testNow, skipTo } from './test-clock.js';
 import { OBJECTION_WINDOW_MS } from '../../protocol/src/window.js';
 import { signFinalSig } from '../../protocol/src/final-sig.js';
 import { resultFinality } from '../src/finality.js';
-import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../src/cores.js';
 // THE RUN LENGTH IS THE CORE'S (2026-09-20). This fixture said 9000 and the core has ended a run at 10800
 // since c01cc655 ("a round is three minutes"). `Round.open` refuses a contract that disagrees with the core
 // it names, so every round built here was 400 at `POST /round` and every suite below it died before a stake
@@ -267,7 +267,7 @@ export function presentDay(contract, endMs) {
 // test about that refusal sets the field itself.
 export const contractFor = (nodes, _windowNoLongerChosen, publicationRelays = []) => ({
   startDeadlineTicks: PLANTED_FIRST_MARK_DEADLINE,
-  networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
+  networkId: NETWORK_ID_REGTEST, configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 1,
   gameVerifySlots: nodes.length, settlementSlots: nodes.length, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n,
   // FEDERATION, NAMING TEST_FEDERATION_ID: the one custody this network has (RULED 2026-09-22 22:59 -
   // THRESHOLD_LN does not exist).

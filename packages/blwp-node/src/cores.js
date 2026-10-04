@@ -11,7 +11,7 @@ import { CORE as TRUCK_2069_ADAPTER } from '../../core/frozen/2069b4c2/adapter.j
 import { CORE as TRUCK_DE2F_ADAPTER } from '../../core/frozen/de2f263d/adapter.js';
 import { coreHashHex } from '../../core/tools/hash-core.js';
 import { GENESIS_CONFIG_HASH } from '../../protocol/src/genesis-ids.js';
-import { computeCurrentConfigHash, computeDe2fConfigHash } from '../../protocol/src/genesis.js';
+import { computeCurrentConfigHash, computeDe2fConfigHash, computeConfigV3Hash } from '../../protocol/src/genesis.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 
 /**
@@ -20,6 +20,8 @@ import { toHex, fromHex } from '../../protocol/src/hash.js';
  * the founding config, which the network id commits to and which describes 2069b4c2's rounds.
  */
 export const TRUCK_CURRENT_CONFIG = toHex(computeCurrentConfigHash());
+/** 7e2123d1's per-player config (f51759b6), the 10-06 series' (#23): installed beside the current one. */
+export const TRUCK_V3_CONFIG = toHex(computeConfigV3Hash());
 /**
  * THE ROUNDS de2f263d PLAYED BEFORE ITS CONFIG HAD A HASH OF ITS OWN: from 08:23Z on 2026-10-04 the free pair opened rounds
  * naming de2f263d with the founding config, and they are not rewritten. That one pair stays accepted for a round whose
@@ -34,7 +36,10 @@ export const TRUCK = Object.freeze({
   hash: coreHashHex(),
   url: new URL('../../core/src/adapter.js', import.meta.url).href,
   adapter: TRUCK_ADAPTER,
-  configs: new Map([[TRUCK_CURRENT_CONFIG, {}]]),
+  // TWO CONFIGS ON ONE CORE (#23, the owner 2026-10-04): the current one, v4 - one world per round, shared by its players -
+  // which every series published from now names; and v3 (f51759b6), the per-player world the 10-06 series was published
+  // on, kept installed so its rounds open and replay exactly as published.
+  configs: new Map([[TRUCK_CURRENT_CONFIG, {}], [TRUCK_V3_CONFIG, {}]]),
   // the bundle the replay page runs for this core's rounds (core/tools/bundle-replay.js)
   replayFile: new URL('../../core/dist/blwp-replay-core.js', import.meta.url),
 });
@@ -109,6 +114,11 @@ export function runLengthFits(core, config, blockTicks) {
 /** The truck's hashes as a round names them: its sim_wasm_hash and the config_hash of the rules it plays. */
 export const TRUCK_CORE_HASH = fromHex(TRUCK.hash);
 export const TRUCK_CONFIG_HASH = fromHex(TRUCK_CURRENT_CONFIG);
+// #23: the current config is v4 - one world per round - and the round openers (round-2of2.mjs, the testnet4 series writer)
+// name it through TRUCK_CONFIG_HASH. The per-player config v3 (f51759b6), the 10-06 series' and every older round's, is
+// TRUCK_V3_CONFIG_HASH; the tests whose rounds carry a world secret of their own name it.
+export const TRUCK_V3_CONFIG_HASH = fromHex(TRUCK_V3_CONFIG);
+export const TRUCK_SHARED_CONFIG_HASH = TRUCK_CONFIG_HASH;
 
 /**
  * THE TRUCK BEFORE THE 82/90 HARD FORK (the owner 2026-10-01: "Change the core, it's basically a hard fork"): the core every
