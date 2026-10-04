@@ -36,7 +36,8 @@ namespace Blwp
         [DllImport("__Internal")] private static extern int BlwpTeleport(int x, int z, int heading);
         [DllImport("__Internal")] private static extern int BlwpTakeImpact();
         [DllImport("__Internal")] private static extern int BlwpReadImpact();
-        [DllImport("__Internal")] private static extern int BlwpSubmitLoad(int feeSats, int btcHundredths);
+        [DllImport("__Internal")] private static extern int BlwpSubmitLoad(int feeSats, int btcHundredths, IntPtr vsizes);
+        [DllImport("__Internal")] private static extern int BlwpBedFill(IntPtr vsizes);
         [DllImport("__Internal")] private static extern int BlwpSubmitSample(int price);
         [DllImport("__Internal")] private static extern int BlwpSubmitTape(IntPtr ptr, int n);
         [DllImport("__Internal")] private static extern int BlwpChartView(int range, IntPtr ptr, int cap);
@@ -83,7 +84,8 @@ namespace Blwp
         private static int BlwpReplayForThisRun() => 0;
         private static void BlwpRunStarts() { }
         private static int BlwpReadImpact() => 0;
-        private static int BlwpSubmitLoad(int f, int b) => 0;
+        private static int BlwpSubmitLoad(int f, int b, IntPtr v) => 0;
+        private static int BlwpBedFill(IntPtr v) => 0;
         private static int BlwpSubmitSample(int price) => 0;
         private static int BlwpSubmitTape(IntPtr ptr, int n) => 0;
         private static int BlwpChartView(int r, IntPtr ptr, int cap) => 0;
@@ -487,7 +489,12 @@ namespace Blwp
         /// <summary>Samples the core has taken this round (MK_SAMPLES).</summary>
         public static int SamplesTaken => _state[Layout.O_TACTICS + Layout.TAC_MARKET + Layout.MK_SAMPLES];
 
-        public static bool SubmitLoad(long feeSats, int btcHundredths)
+        /// <summary>
+        /// THE LOAD, AND WHAT IT FILLS (the owner 2026-10-04 08:54: the cargo factor C is the bed fill): the fee, the BTC and
+        /// the vsizes on the bed, comma-separated. The page sums the core's own roomFor over them (cargo.js), so the room
+        /// that crosses - and the C a replay sets - is the core's rule, never this side's float.
+        /// </summary>
+        public static bool SubmitLoad(long feeSats, int btcHundredths, string vsizes)
         {
             if (!Available) return false;
             // Clamped in whole integers, not through a float: a bed cannot
@@ -496,7 +503,20 @@ namespace Blwp
             // this only keeps the word from wrapping on the way there.
             long fee = feeSats < 0L ? 0L
                      : (feeSats > int.MaxValue ? int.MaxValue : feeSats);
-            return BlwpSubmitLoad((int)fee, btcHundredths < 0 ? 0 : btcHundredths) == 1;
+            var bytes = System.Text.Encoding.ASCII.GetBytes((vsizes ?? "") + "\0");
+            var h = GCHandle.Alloc(bytes, GCHandleType.Pinned);
+            try { return BlwpSubmitLoad((int)fee, btcHundredths < 0 ? 0 : btcHundredths, h.AddrOfPinnedObject()) == 1; }
+            finally { h.Free(); }
+        }
+
+        /// <summary>The C a load of these vsizes would set: the core's bed fill (0..ONE), for the panel before ROLL OUT.</summary>
+        public static int BedFill(string vsizes)
+        {
+            if (!Compiled) return 0;
+            var bytes = System.Text.Encoding.ASCII.GetBytes((vsizes ?? "") + "\0");
+            var h = GCHandle.Alloc(bytes, GCHandleType.Pinned);
+            try { return BlwpBedFill(h.AddrOfPinnedObject()); }
+            finally { h.Free(); }
         }
 
         /// <summary>
