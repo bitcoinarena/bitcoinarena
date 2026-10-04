@@ -246,7 +246,22 @@ public class LoadoutPanel : MonoBehaviour
         if (health != null) _wasDestroyed = health.IsDestroyed;
 
         if (IsOpen && truck != null) truck.controlsLocked = true;
+
+        // THE CORE IS TOLD AS THE BED CHANGES, NOT ONLY AT ROLL OUT (the owner 2026-10-04 13:30, playtest, kanban #63: after
+        // AUTO the truck read 68% and LOAD stayed x0.00000). Whenever the bed differs from the load the core last took - AUTO,
+        // a parcel added, a parcel removed - the load is declared again, so the core's C (and the LOAD the panel prints from
+        // it) moves with the bed. A load the bridge drops (one a tick) is simply declared again on the next frame. Before the
+        // run rolls out the truck is held in the bay, so no exposure accrues while the load is still being chosen.
+        if (IsOpen && bay != null)
+        {
+            string bed = BedSignature();
+            if (bed != _bedDeclared && Blwp.BlwpCore.SubmitLoad(bay.FeeCarried, bay.BtcHundredths, bay.VsizeList))
+                _bedDeclared = bed;
+        }
     }
+
+    string _bedDeclared;
+    string BedSignature() => bay.FeeCarried + "|" + bay.BtcHundredths + "|" + bay.VsizeList;
 
     void Styles()
     {
@@ -635,11 +650,9 @@ public class LoadoutPanel : MonoBehaviour
         // LOAD x DANGER x SPEED, while the score multiplies the core's cargo word - set once, at init, to 0.70 on this
         // core, whatever is loaded. The bed fill stays on the gauge as TRUCK FULL %, which does not enter the score. That
         // the loadout choice does not move the score is what this core does, and the panel now says so.
-        // AND IT IS THE BED FILL NOW (the owner 2026-10-04 08:54): the core sets C from the load's room at ROLL OUT, so before it
-        // the panel shows the C this bed would set - the core's own fill of these vsizes, asked of the page.
-        string vs = bay.VsizeList;
-        if (vs != _fillOf) { _fillOf = vs; _fillWord = Blwp.BlwpCore.BedFill(vs); }
-        string load = LoadLabel(_fillWord);
+        // THE CORE'S C, which moves with the bed (Update declares the load as it changes, #63): on 7e2123d1 the bed fill, on
+        // a 2069b4c2 round the 0.7 its rules give every load - the panel prints what the run will be scored at.
+        string load = LoadLabel(Blwp.BlwpCore.CargoWord);
         while (reward.fontSize > 12 && reward.CalcSize(new GUIContent(load)).x > rw) reward.fontSize--;
         GUI.Label(new Rect(rx, top - reward.fontSize * 0.1f, rw, reward.fontSize * 1.3f), load, reward);
 
@@ -692,8 +705,6 @@ public class LoadoutPanel : MonoBehaviour
         if (GUI.Button(new Rect(panel.x + inner * 2f + gaugeW, by, bw, bh), go, goStyle)) Confirm();
         GUI.enabled = true;
     }
-
-    string _fillOf; int _fillWord;
 
     /// <summary>The panel's LOAD number: the core's C (S_CARGO on the 1e-5 grid), to the five decimals the card prints.</summary>
     public static string LoadLabel(int cargoWord) =>
