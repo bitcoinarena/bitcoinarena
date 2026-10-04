@@ -309,3 +309,32 @@ test('W6 mixed: the signer nodes died before sending and the loser\'s lock then 
   } finally { await w.close(); }
 });
 
+
+// KANBAN #133 (playtest 2026-10-04 13:41Z: a DELIVERED player's 96 sat read "paying out" for 2 h): what a settlement
+// moved was answered only from this process's memory, so after a restart every round settled before it said
+// "moved": null on /lock-settlement and no payout keys on /settled - and the page, finding no settlement it could read,
+// never asked for the winner's stake back. Measured on testnet4 seat 1: round 3568d136 ACCEPTED with moved null after
+// the 12:30Z and 13:19Z rolls; round ccd932e2, settled after them, answered in full. Now the seat answers it again
+// after a restart, rebuilt from its own store.
+test('a round settled before a restart answers what its settlement moved after it, as it did before (#133)', async () => {
+  const w = await lockRoundOnDisk();
+  try {
+    await lockAndPlay(w, WINNER, { address: true });
+    await lockAndPlay(w, LOSER);
+    await closeRound(w);
+    await until(() => ['a', 'b'].every((n) => (rowAt(w[n], w) || {}).state === 'ACCEPTED'), 30000);
+    // ONE RETRY: a kept-alive connection to the server before the restart answers with a closed socket
+    const get = async (path) => { for (let i = 0; ; i++) { try { return await (await fetch(`http://127.0.0.1:${w.a.port}${path}`)).json(); } catch (e) { if (i) throw e; await wait(200); } } };
+    const ask = () => get(`/lock-settlement?round=${toHex(w.rid)}`);
+    const listed = async () => ((await get('/settled?since=0')).rounds || []).find((r) => r.id === toHex(w.rid));
+    const before = await ask(); const listedBefore = await listed();
+    await w.restart();
+    const after = await ask(); const listedAfter = await listed();
+    console.log(`  before the restart: ${before.state}, moved ${before.moved ? before.moved.payouts.length + ' payout(s)' : before.moved}; after: ${after.state}, moved ${after.moved ? after.moved.payouts.length + ' payout(s)' : after.moved}`);
+    assert.equal(before.state, 'ACCEPTED');
+    assert.ok(before.moved && Array.isArray(before.moved.payouts) && before.moved.payouts.length > 0, 'the fixture settled nothing');
+    assert.equal(after.state, 'ACCEPTED');
+    assert.deepEqual(after.moved, before.moved, 'after the restart the seat no longer said what its settlement moved');
+    assert.deepEqual(listedAfter.payouts, listedBefore.payouts);
+  } finally { await w.close(); }
+});

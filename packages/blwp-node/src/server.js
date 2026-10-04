@@ -3375,7 +3375,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify(kept
           ? { state: kept.state, txid: kept.txid, why: kept.why, signature: toHex(kept.signature), message: toHex(kept.message),
-            madeMs: kept.madeMs, moved: settlements.summary(new Uint8Array(rid)) }
+            madeMs: kept.madeMs, moved: await settlements.summaryOf(new Uint8Array(rid)) }
           : { state: 'NONE' }));
       }
 
@@ -3392,9 +3392,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!Number.isFinite(asked) || asked < 0) return text(res, 400, 'rounds settled since a time are asked for with since=<ms>');
         const since = Math.max(asked, nowMs - 7 * 24 * 3600 * 1000);
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        // WHAT EACH SETTLEMENT MOVED, after a restart too (#133): asked one round at a time, kept once found
+        const listedRounds = [];
+        for (const r of round.settledSince(since)) listedRounds.push({ r, moved: await settlements.summaryOf(r.roundId) });
         return res.end(JSON.stringify({ node: toHex(round.pubkey), nowMs: String(nowMs), since: String(since),
-          rounds: round.settledSince(since).map((r) => {
-            const moved = settlements.summary(r.roundId);
+          rounds: listedRounds.map(({ r, moved }) => {
             return { id: toHex(r.roundId), state: r.state, madeMs: String(r.madeMs),
               payouts: moved && Array.isArray(moved.payouts) ? moved.payouts.filter((p) => p.kind === 'qualifier').map((p) => String(p.pk).toLowerCase()) : [],
               refunds: r.refunds };
