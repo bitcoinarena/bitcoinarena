@@ -24,3 +24,16 @@ test('an unknown core, the old fixture constant, or no core at all is refused by
   assert.match(coreIsKnownGood(undefined).why, /names no 32-byte core hash/);
   assert.match(coreIsKnownGood(new Uint8Array(31)).why, /names no 32-byte core hash/);
 });
+
+// AND THE CONFIG (the owner 2026-10-04, fix 1 of the spec audit; §27A.6): a listed core plays the configs listed beside it.
+import { computeCurrentConfigHash, computeGenesisConfigHash } from '../src/genesis.js';
+test('a round on a listed core is refused under a config that core does not play, and accepted under its own', () => {
+  const DE2F = fromHex('de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8');
+  const OLD = fromHex('2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e');
+  assert.deepEqual(coreIsKnownGood(DE2F, computeCurrentConfigHash()), { ok: true });
+  assert.deepEqual(coreIsKnownGood(DE2F, computeGenesisConfigHash()), { ok: true }, 'the free rounds made before its config had a hash');
+  assert.deepEqual(coreIsKnownGood(OLD, computeGenesisConfigHash()), { ok: true });
+  assert.match(coreIsKnownGood(OLD, computeCurrentConfigHash()).why, /not a config this client knows that core to play/);
+  assert.match(coreIsKnownGood(DE2F, new Uint8Array(32).fill(7)).why, /not a config this client knows that core to play/);
+  assert.match(coreIsKnownGood(DE2F, new Uint8Array(3)).why, /names no 32-byte config hash/);
+});

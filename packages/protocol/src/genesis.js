@@ -27,6 +27,14 @@ import {
   HEAT_REACH_ARMOUR, HEAT_REACH_RIFLE, HEAT_OUTRANK, HEAT_SHELL,
 } from '../../core/frozen/2069b4c2/rules/army.js';
 
+// AND THE CURRENT CORE'S, for the config its rounds name (encodeGameConfigV2) - never for the network id
+import * as live from '../../core/src/rules/score.js';
+import * as liveGate from '../../core/src/rules/gate.js';
+import * as liveArmy from '../../core/src/rules/army.js';
+import * as liveCargo from '../../core/src/rules/cargo.js';
+import { LEGACY_CARGO } from '../../core/src/sim.js';
+const liveSim = { LEGACY_CARGO };
+
 export const TAG_GAME_CONFIG = 'BLWP/v1/GameConfig';
 export const TAG_GENESIS = 'BLWP/v1/GenesisParameters';
 export const TAG_NETWORK_ID = 'BLWP/v1/NetworkId';
@@ -54,6 +62,49 @@ export function encodeGameConfig() {
 }
 
 export const computeGenesisConfigHash = () => taggedHash(TAG_GAME_CONFIG, encodeGameConfig());
+
+/**
+ * THE CONFIG A ROUND ON THE CURRENT CORE PLAYS (the owner 2026-10-04: fix the config hash). §27A.6: "A round is bound to the
+ * config it was created under. The Round Contract carries config_hash" - so a round names the rules it is scored by. The
+ * founding config above stays the network's (the network id commits to it, and it describes the rounds of the core it
+ * was founded on); the rules after it - par 1800 ticks, T 1.5 to 1200 ticks and 0.25 from 7200, and C the bed fill - are a
+ * second config with its own hash, which the rounds on that core name.
+ *
+ * VERSIONED: it opens with its version byte, where the founding encoding opens with a u32, so the two can never be read
+ * as each other. Beyond the founding fields it names what the founding one could not: the time bounds, and the cargo
+ * rule (1 = C is room used over the bed, from the load's room; a load that carries none is LEGACY_CARGO).
+ */
+export const GAME_CONFIG_V2 = 2;
+export const CARGO_RULE_BED_FILL = 1;
+export function encodeGameConfigV2() {
+  const w = new Writer();
+  w.u8(GAME_CONFIG_V2);
+  w.u32(live.EXPOSURE_REFERENCE);
+  w.u32(liveGate.HALF_MOUTH);
+  w.u32(live.APRON_RADIUS);
+  w.u32(live.FRONT_SCORE_SPAN);
+  w.u32(live.T_FLOOR);
+  w.u32(live.T_CEIL);
+  w.u32(1);
+  w.u8(3);
+  w.u8(4);
+  w.u16(liveGate.BLOCK_TICKS);
+  w.u16(NODE_FEE_BPS);
+  w.u32(liveArmy.HEAT_REACH_ARMOUR);
+  w.u32(liveArmy.HEAT_REACH_RIFLE);
+  w.u32(liveArmy.HEAT_OUTRANK);
+  w.u32(liveArmy.HEAT_SHELL);
+  w.u32(live.REFERENCE_TICKS);
+  w.u32(live.T_TICKS_MIN);
+  w.u32(live.T_TICKS_MAX);
+  w.u8(CARGO_RULE_BED_FILL);
+  w.u32(liveSim.LEGACY_CARGO);
+  w.u32(liveCargo.BED_ROOM);
+  return w.finish();
+}
+
+/** The config hash a round on the current core names: computed from the core's own constants, never typed. */
+export const computeCurrentConfigHash = () => taggedHash(TAG_GAME_CONFIG, encodeGameConfigV2());
 
 /**
  * Randomness nobody in this protocol can grind: the Bitcoin block hash at a

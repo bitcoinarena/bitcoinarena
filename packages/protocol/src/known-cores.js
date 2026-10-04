@@ -46,3 +46,10 @@ export const KNOWN_GOOD_CORE_HASHES = Object.freeze([
   '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e',
   'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8',
 ]);
+
+// The configs a round on each of these cores may name (§27A.6: a round names the config of the rules it plays). A core
+// with no entry here is checked by its hash alone, as before pairs were listed.
+export const KNOWN_GOOD_CORE_CONFIGS = Object.freeze({
+  '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1']),
+  'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8': Object.freeze(['dbb493445fd56ba099bf8651a444f7c6de4b36add1cb01275bd1857920bd0801', 'bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1']),
+});

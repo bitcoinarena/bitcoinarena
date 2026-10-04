@@ -42,3 +42,32 @@ test('test nets use 2-of-2, one confirmation, 100-block maturity, bitcoin block 
   assert.equal(RANDOMNESS_SOURCE, 'bitcoin-block-hash');
   assert.deepEqual(g.bondMarker, bondMarker('testnet'));
 });
+
+// THE FOUNDING CONFIG STAYS THE NETWORK'S, AND THE CURRENT CORE'S ROUNDS NAME THEIR OWN (the owner 2026-10-04, fix 1 of the
+// spec audit; §27A.6 "a round is bound to the config it was created under"). The founding hash is the pinned one and the
+// network ids above do not move; the current config is versioned, hashed from the current core's own constants, and names
+// what the founding encoding cannot - par, the time bounds and the cargo rule.
+import { computeGenesisConfigHash as foundingHash, computeCurrentConfigHash, encodeGameConfigV2, encodeGameConfig as founding, GAME_CONFIG_V2, CARGO_RULE_BED_FILL } from '../src/genesis.js';
+import { REFERENCE_TICKS, T_TICKS_MIN, T_TICKS_MAX } from '../../core/src/rules/score.js';
+import { LEGACY_CARGO } from '../../core/src/sim.js';
+import { KNOWN_GOOD_CORE_CONFIGS } from '../src/known-cores.js';
+import { coreHashHex } from '../../core/tools/hash-core.js';
+
+test('the current core plays a config of its own, beside the founding one the network id commits to', () => {
+  assert.equal(toHex(foundingHash()), toHex(GENESIS_CONFIG_HASH), 'the founding config moved');
+  const v2 = encodeGameConfigV2();
+  assert.equal(v2[0], GAME_CONFIG_V2, 'the current config does not open with its version');
+  assert.notEqual(toHex(computeCurrentConfigHash()), toHex(GENESIS_CONFIG_HASH), 'the current core names the founding config');
+  assert.notEqual(v2.length, founding().length);
+  const dv = new DataView(v2.buffer, v2.byteOffset, v2.byteLength);
+  // the tail: par, T bounds, the cargo rule, the legacy C, the bed's room - read back from the encoding itself
+  const end = v2.length;
+  assert.equal(dv.getUint32(end - 4 - 4 - 1 - 4 - 4 - 4), REFERENCE_TICKS);
+  assert.equal(dv.getUint32(end - 4 - 4 - 1 - 4 - 4), T_TICKS_MIN);
+  assert.equal(dv.getUint32(end - 4 - 4 - 1 - 4), T_TICKS_MAX);
+  assert.equal(v2[end - 4 - 4 - 1], CARGO_RULE_BED_FILL);
+  assert.equal(dv.getUint32(end - 4 - 4), LEGACY_CARGO);
+  // and the client lists the current core with the config it plays
+  assert.ok((KNOWN_GOOD_CORE_CONFIGS[coreHashHex()] || []).includes(toHex(computeCurrentConfigHash())),
+    'the current core is not listed with its config: run node packages/protocol/tools/known-cores.js');
+});

@@ -10,15 +10,31 @@ import { CORE as TRUCK_ADAPTER } from '../../core/src/adapter.js';
 import { CORE as TRUCK_2069_ADAPTER } from '../../core/frozen/2069b4c2/adapter.js';
 import { coreHashHex } from '../../core/tools/hash-core.js';
 import { GENESIS_CONFIG_HASH } from '../../protocol/src/genesis-ids.js';
+import { computeCurrentConfigHash } from '../../protocol/src/genesis.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 
-/** The truck: the network's first title, its genesis game config its one rule set. */
+/**
+ * THE CONFIG A ROUND ON THE TRUCK NAMES (the owner 2026-10-04, fix 1 of the spec audit; §27A.6 "a round is bound to the config
+ * it was created under"): the current core's own rules, hashed from its constants (genesis.js encodeGameConfigV2) - not
+ * the founding config, which the network id commits to and which describes 2069b4c2's rounds.
+ */
+export const TRUCK_CURRENT_CONFIG = toHex(computeCurrentConfigHash());
+/**
+ * THE ROUNDS de2f263d PLAYED BEFORE ITS CONFIG HAD A HASH OF ITS OWN: from 08:23Z on 2026-10-04 the free pair opened rounds
+ * naming de2f263d with the founding config, and they are not rewritten. That one pair stays accepted for a round whose
+ * committee time is before the cut-over, and for no round after it.
+ */
+export const DE2F_HASH = 'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8';
+export const FOUNDING_CONFIG_ON_DE2F_BEFORE_MS = Date.parse('2026-10-04T13:00:00Z');
+
+/** The truck: the network's title, the current core with the config its rounds name. */
 export const TRUCK = Object.freeze({
   name: TRUCK_ADAPTER.name,
   hash: coreHashHex(),
   url: new URL('../../core/src/adapter.js', import.meta.url).href,
   adapter: TRUCK_ADAPTER,
-  configs: new Map([[toHex(GENESIS_CONFIG_HASH), {}]]),
+  configs: new Map([[TRUCK_CURRENT_CONFIG, {}],
+    ...(coreHashHex() === DE2F_HASH ? [[toHex(GENESIS_CONFIG_HASH), { committeeBeforeMs: FOUNDING_CONFIG_ON_DE2F_BEFORE_MS }]] : [])]),
   // the bundle the replay page runs for this core's rounds (core/tools/bundle-replay.js)
   replayFile: new URL('../../core/dist/blwp-replay-core.js', import.meta.url),
 });
@@ -73,9 +89,9 @@ export function runLengthFits(core, config, blockTicks) {
     : { ok: false, why: `that round says a run is ${blockTicks} ticks, and ${core.name} runs 1 to ${runTicksOf(core, config)}` };
 }
 
-/** The truck's hashes as a round names them: its sim_wasm_hash and its (genesis) config_hash. */
+/** The truck's hashes as a round names them: its sim_wasm_hash and the config_hash of the rules it plays. */
 export const TRUCK_CORE_HASH = fromHex(TRUCK.hash);
-export const TRUCK_CONFIG_HASH = GENESIS_CONFIG_HASH;
+export const TRUCK_CONFIG_HASH = fromHex(TRUCK_CURRENT_CONFIG);
 
 /**
  * THE TRUCK BEFORE THE 82/90 HARD FORK (the owner 2026-10-01: "Change the core, it's basically a hard fork"): the core every
@@ -117,6 +133,12 @@ export function coreForRound(contract, installed = INSTALLED) {
     return { ok: false, why: `this signer node runs ${core.name} but not the config `
       + `${contract.configHash instanceof Uint8Array ? toHex(contract.configHash).slice(0, 16) : '(none)'} that round names: `
       + 'not selectable for it (27A.7.5)' };
+  // A PAIR KEPT ONLY FOR THE ROUNDS ALREADY MADE WITH IT (de2f263d with the founding config): refused past its cut-over
+  const config = core.configs.get(toHex(contract.configHash));
+  if (config && config.committeeBeforeMs !== undefined
+      && !(typeof contract.committeeTimeMs === 'bigint' && contract.committeeTimeMs < BigInt(config.committeeBeforeMs)))
+    return { ok: false, why: `${core.name} runs the config ${toHex(contract.configHash).slice(0, 16)} only for rounds made before `
+      + `${new Date(config.committeeBeforeMs).toISOString()}: a round on this core names the config of the rules it plays (27A.6)` };
   // AND THE ROUND'S RUN LENGTH (the 82/90 fork): its contract's blockTicks, carried with the core to every replay of it.
-  return { ok: true, core, config: core.configs.get(toHex(contract.configHash)), runTicks: contract.blockTicks };
+  return { ok: true, core, config, runTicks: contract.blockTicks };
 }
