@@ -61,6 +61,9 @@ public class BlockClock : MonoBehaviour
     /// <summary>Seconds left in this round.</summary>
     public float Remaining { get; private set; }
 
+    /// <summary>True while the joined round has not started: Remaining is then the time until its start (#64).</summary>
+    public bool StartsIn { get; private set; }
+
     public float Fraction => blockSeconds > 0f ? Mathf.Clamp01(Remaining / blockSeconds) : 0f;
 
     /// <summary>Sats banked into the block currently being mined.</summary>
@@ -124,6 +127,12 @@ public class BlockClock : MonoBehaviour
         // while the core ends a run at MISSED after `RunTicks` of its own ticks from roll-out - and drops ticks
         // on a slow page. So the HUD read 0:00 while the core still had seconds, or minutes, left, and the run
         // went on. With a core, "left" is the core's own count, and 0:00 is the tick the run ends on.
+        // BEFORE A JOINED ROUND STARTS, THE ROUND'S OWN COUNTDOWN (kanban #64, measured 2026-10-04 11:36Z: two devices in one
+        // paid round read 107 s and 119 s left at the same instant - the core then is the lobby's practice run, counted from
+        // each page's load). The start is the contract's, so every device shows the same.
+        int startsIn = Blwp.BlwpCore.RoundStartsInMs();
+        StartsIn = startsIn > 0;
+        if (StartsIn) { Remaining = startsIn / 1000f; return; }
         if (Blwp.BlwpCore.Available)
         {
             Remaining = CoreSecondsLeft(Blwp.BlwpCore.State[Blwp.Layout.O_SCORE + Blwp.Layout.S_ELAPSED]);

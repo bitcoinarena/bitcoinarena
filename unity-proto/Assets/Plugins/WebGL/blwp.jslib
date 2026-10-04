@@ -966,6 +966,18 @@ mergeInto(LibraryManager.library, {
   // A RUN RESUMED AFTER A RELOAD HAS CAUGHT UP (the owner 2026-10-03, the mid-run reload playthrough: the player saw the cargo
   // panel over the resumed run and could not drive - the run ended MISSED): 1 while BLWP_RESUME says the core stands at the
   // tick the seats hold, else 0. LoadoutPanel then closes and hands the truck back; the run's load is already in its record.
+  // MS UNTIL THE JOINED ROUND STARTS, or -1 (kanban #64, playtest 2026-10-04 13:32: two phones in one paid round showed
+  // clocks ~15 s apart - measured, before the start the HUD counted the lobby's practice run from each page's load). The
+  // round's own start, from its contract, against this device's clock: the same on every device.
+  BlwpRoundStartsInMs: function () {
+    try {
+      var r = (typeof window !== 'undefined') ? window.BLWP_ROUND : null;
+      if (!r || r.startTimeMs === undefined) return -1;
+      var ms = Number(r.startTimeMs) - Date.now();
+      return ms > 0 ? Math.min(ms, 2147483647) : -1;
+    } catch (e) { return -1; }
+  },
+
   BlwpResumedRun: function () {
     if (typeof window === 'undefined') return 0;
     return window.BLWP_RESUME && window.BLWP_RESUME.caughtUp ? 1 : 0;
