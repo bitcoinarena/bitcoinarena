@@ -135,7 +135,7 @@ out += '         fetchRound: fetchRound, bondProvider: bondProvider,\n';
 // cannot put its own core in the world its transcript is judged in, which is
 // exactly what it could not do before letter 36.
 out += '         fetchRandomness: fetchRandomness, worldSeedFor: worldSeedFor,\n';
-out += '         seedWordForEntry: seedWordForEntry,\n';
+out += '         seedWordForEntry: seedWordForEntry, worldSeedWord: worldSeedWord, worldIsShared: worldIsShared,\n';
 out += '         tabSeed: tabSeed, importSeed: importSeed, seedOrigin: seedOrigin,\n'; out += '         playerFor: playerFor, entryFor: entryFor,\n';
 out += '         chooseDonation: chooseDonation, donationChoice: donationChoice, DONATION_CONFIRM_BPS: DONATION_CONFIRM_BPS,\n';
 out += '         fetchDonationSet: fetchDonationSet, donationRecipientsLine: donationRecipientsLine,\n';
