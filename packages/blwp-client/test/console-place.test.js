@@ -22,8 +22,11 @@ function place(slot, { open = true, bw = 64, bh = 22 } = {}) {
   const px = (v) => Number(String(v).replace('px', ''));
   const btn = { top: px(go.style.top), right: px(go.style.right) };
   btn.bottom = btn.top + bh; btn.rightX = slot.w - btn.right; btn.left = btn.rightX - bw;
-  const p = open ? { top: px(panel.style.top), right: px(panel.style.right), maxH: px(panel.style.maxHeight), maxW: px(panel.style.maxWidth) } : null;
-  if (p) { p.bottom = p.top + p.maxH; p.rightX = slot.w - p.right; p.left = p.rightX - p.maxW; }
+  const up = open && panel.style.top === 'auto';
+  const p = open ? { up, right: px(panel.style.right), maxH: px(panel.style.maxHeight), maxW: px(panel.style.maxWidth) } : null;
+  if (p && !up) { p.top = px(panel.style.top); p.bottom = p.top + p.maxH; }
+  if (p && up) { p.bottom = slot.h - px(panel.style.bottom); p.top = p.bottom - p.maxH; }
+  if (p) { p.rightX = slot.w - p.right; p.left = p.rightX - p.maxW; }
   return { btn, p };
 }
 const pad = (s) => ({ left: s.padX, right: s.padX + s.padW, top: s.padY });
@@ -54,4 +57,32 @@ test('closed, the panel is left alone; the button is still placed', () => {
   const { btn, p } = place(SLOTS.phone, { open: false });
   assert.equal(p, null);
   assert.ok(btn.top > 0);
+});
+
+// THE CARGO BAY'S TOP AS THE FLOOR (measured 844x390 on 0.0.2519, paid round: the open panel lay over HUNTED, LOAD and the
+// right half of ROLL OUT). Floors are LoadoutPanel.BottomBarRect's y at those sizes: 228.8 on the phone, 508.3 on the desktop.
+test('844x390 with the cargo bay up: no room under the button, so the panel opens upward and never reaches the bay', () => {
+  const s = { ...SLOTS.phone, floor: 228.8 };
+  const { btn, p } = place(s);
+  assert.equal(p.up, true, 'opened upward');
+  assert.ok(p.bottom <= btn.top, `above the button (panel bottom ${p.bottom}, button top ${btn.top})`);
+  assert.ok(p.top >= 0, `inside the screen (top ${p.top})`);
+  assert.ok(p.bottom <= s.floor, 'clear of the cargo bay');
+  assert.ok(p.maxH >= 80, `room for the lock lines (${p.maxH} px)`);
+  assert.ok(p.left >= 0 && p.rightX <= s.w, 'inside the screen sideways');
+});
+
+test('1280x720 with the cargo bay up: the panel stays under the button, capped above the bay', () => {
+  const s = { ...SLOTS.desktop, floor: 508.3 };
+  const { btn, p } = place(s);
+  assert.equal(p.up, false);
+  assert.ok(p.top >= btn.bottom, 'under the button');
+  assert.ok(p.bottom <= s.floor, `its bottom ${p.bottom} above the bay's top ${s.floor}`);
+  assert.ok(p.maxH >= 80);
+});
+
+test('no floor sent (an older build): the screen bottom, as before', () => {
+  const { p } = place(SLOTS.phone);
+  assert.equal(p.up, false);
+  assert.ok(p.bottom <= SLOTS.phone.h);
 });
