@@ -353,7 +353,7 @@ public class RunScore : MonoBehaviour
         // and the card read "load 0.85 x danger 1.00 x speed 1.50 x 1000" - 1275). Those were Unity's own meters: danger
         // was Clamp01 of the raw exposure METRES (anything past 1 m printed 1.00), speed Unity's wall-clock cap, load
         // Unity's bed. The score is the core's (Projected), so its factors are read from the same words at the same moment
-        // and formed as scoreOf forms them: E = exposure / 320 m, T = 3900 / ticks, C = the core's cargo word.
+        // and formed as scoreOf forms them: E = exposure / 320 m, T = 1800 / ticks, C = the core's cargo word.
         if (Blwp.BlwpCore.Available)
         {
             LastExposure = CoreScoreFactors.Exposure(Blwp.BlwpCore.ExposureWord);
@@ -398,9 +398,9 @@ public class RunScore : MonoBehaviour
 public static class CoreScoreFactors
 {
     public const float ExposureReferenceMetres = 320f;   // score.js EXPOSURE_REFERENCE
-    public const int ReferenceTicks = 3900;               // score.js REFERENCE_TICKS
-    public const int TicksMin = 2600;                     // score.js T_TICKS_MIN (T = 1.5)
-    public const int TicksMax = 15600;                    // score.js T_TICKS_MAX (T = 0.25)
+    public const int ReferenceTicks = 1800;               // score.js REFERENCE_TICKS. T = 1 at 30 s.
+    public const int TicksMin = 1200;                     // score.js T_TICKS_MIN. T stays 1.5 until 20 s, then sinks.
+    public const int TicksMax = 7200;                     // score.js T_TICKS_MAX (T = 0.25 at 120 s)
     const float One = 65536f;                             // Q16.16
 
     // THE FACTORS ON THE CORE'S GRID (the owner 2026-09-25: "Their product is the score, so the core's score is that product"):
@@ -414,7 +414,7 @@ public static class CoreScoreFactors
 
     /// <summary>E, as score.js exposure5: the exposure word held to the 320 m reference, over it, in 1e-5.</summary>
     public static int Exposure5(int exposureWord) => (int)DivRound(System.Math.Min(System.Math.Max(exposureWord, 0L), ReferenceWord) * FactorScale, ReferenceWord);
-    /// <summary>T, as score.js time5: 3900 over the elapsed ticks held to 2600..15600, in 1e-5.</summary>
+    /// <summary>T, as score.js time5: 1800 over the elapsed ticks held to 1200..7200, in 1e-5.</summary>
     public static int Time5(int elapsedTicks) => (int)DivRound((long)ReferenceTicks * FactorScale, Mathf.Clamp(elapsedTicks, TicksMin, TicksMax));
     /// <summary>C, as score.js cargo5: the core's cargo word held to 0..ONE, over ONE, in 1e-5.</summary>
     public static int Cargo5(int cargoWord) => (int)DivRound(System.Math.Min(System.Math.Max(cargoWord, 0L), 65536L) * FactorScale, 65536L);
@@ -422,7 +422,7 @@ public static class CoreScoreFactors
     /// <summary>E: the exposure word in metres over the 320 m reference, held to 0..1, on the core's 1e-5 grid.</summary>
     public static float Exposure(int exposureWord) => Exposure5(exposureWord) / (float)FactorScale;
 
-    /// <summary>T: 3900 over the elapsed ticks, the ticks held to 2600..15600 (so T to 1.5..0.25), on the 1e-5 grid.</summary>
+    /// <summary>T: 1800 over the elapsed ticks, the ticks held to 1200..7200 (so T to 1.5..0.25), on the 1e-5 grid.</summary>
     public static float Time(int elapsedTicks) => Time5(elapsedTicks) / (float)FactorScale;
 
     /// <summary>C: the core's cargo word, held to 0..1, on the 1e-5 grid.</summary>
