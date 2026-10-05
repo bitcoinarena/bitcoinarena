@@ -10995,6 +10995,27 @@ function ledgerRows(storage, federationId) {
   try { const raw = storage && storage.getItem(ledgerKey(federationId)); const rows = raw ? JSON.parse(raw) : []; return Array.isArray(rows) ? rows : []; }
   catch { return []; }
 }
+/**
+ * WHAT THE WALLET HISTORY DRAWS (kanban #132, the owner 2026-10-04 15:45: "One line: Stake round xxx -100 sat. The 100 is the
+ * stake plus the donation. No Donation row."): every donation row whose round has a stake row is folded into that stake row
+ * - the amounts summed, the stake row's own time, round, entry and player kept. A donation with no stake row of its round
+ * stays its own line, so nothing paid disappears. Drawing only: the stored ledger is not rewritten.
+ */
+function ledgerHistory(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  const stakeOf = new Map();
+  for (const r of list) if (r && r.kind === 'stake' && r.round && !stakeOf.has(r.round)) stakeOf.set(r.round, { ...r });
+  const out = [];
+  for (const r of list) {
+    if (r && r.kind === 'donation' && r.round && stakeOf.has(r.round)) {
+      const s = stakeOf.get(r.round);
+      s.msat = String(BigInt(s.msat || 0) + BigInt(r.msat || 0));
+      continue;
+    }
+    out.push(r && r.kind === 'stake' && r.round && stakeOf.has(r.round) && !out.includes(stakeOf.get(r.round)) ? stakeOf.get(r.round) : r);
+  }
+  return out;
+}
 function ledgerAppend(storage, federationId, row) {
   if (!storage || !fedHexOf(federationId)) return;
   try {
@@ -19544,7 +19565,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          withdrawPlayerWallet: withdrawPlayerWallet,
          saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, keptLockUse: keptLockUse,
          roundEndMs: roundEndMs,
-         ledgerRows: ledgerRows, ledgerReadSavedStakes: ledgerReadSavedStakes,
+         ledgerRows: ledgerRows, ledgerReadSavedStakes: ledgerReadSavedStakes, ledgerHistory: ledgerHistory,
          depositChoices: depositChoices, withdrawChoices: withdrawChoices, invoiceAmountMsat: invoiceAmountMsat, playerWithdrawable: playerWithdrawable, pendingDeposits: pendingDeposits, resumeDeposits: resumeDeposits, restOfFeesMsat: restOfFeesMsat, restInvoiceMsat: restInvoiceMsat, REST_FLOOR_MSAT: REST_FLOOR_MSAT, ceilNote: ceilNote, roundsDepositMsat: roundsDepositMsat, recordDonation: recordDonation, collectIntoPlayerWallet: collectIntoPlayerWallet, donationCostMsat: donationCostMsat, depositOffer: depositOffer, settingsDepositOffer: settingsDepositOffer, DEPOSIT_INSUFFICIENT: DEPOSIT_INSUFFICIENT,
          findLock: findLock, refundStake: refundStake, forfeitOf: forfeitOf, redeemStake: redeemStake,
          settlementOf: settlementOf, redeemPayout: redeemPayout, payoutLine: payoutLine,

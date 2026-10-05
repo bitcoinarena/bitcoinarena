@@ -784,6 +784,27 @@ export function ledgerRows(storage, federationId) {
   try { const raw = storage && storage.getItem(ledgerKey(federationId)); const rows = raw ? JSON.parse(raw) : []; return Array.isArray(rows) ? rows : []; }
   catch { return []; }
 }
+/**
+ * WHAT THE WALLET HISTORY DRAWS (kanban #132, the owner 2026-10-04 15:45: "One line: Stake round xxx -100 sat. The 100 is the
+ * stake plus the donation. No Donation row."): every donation row whose round has a stake row is folded into that stake row
+ * - the amounts summed, the stake row's own time, round, entry and player kept. A donation with no stake row of its round
+ * stays its own line, so nothing paid disappears. Drawing only: the stored ledger is not rewritten.
+ */
+export function ledgerHistory(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  const stakeOf = new Map();
+  for (const r of list) if (r && r.kind === 'stake' && r.round && !stakeOf.has(r.round)) stakeOf.set(r.round, { ...r });
+  const out = [];
+  for (const r of list) {
+    if (r && r.kind === 'donation' && r.round && stakeOf.has(r.round)) {
+      const s = stakeOf.get(r.round);
+      s.msat = String(BigInt(s.msat || 0) + BigInt(r.msat || 0));
+      continue;
+    }
+    out.push(r && r.kind === 'stake' && r.round && stakeOf.has(r.round) && !out.includes(stakeOf.get(r.round)) ? stakeOf.get(r.round) : r);
+  }
+  return out;
+}
 function ledgerAppend(storage, federationId, row) {
   if (!storage || !fedHexOf(federationId)) return;
   try {
