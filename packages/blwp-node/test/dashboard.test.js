@@ -249,3 +249,37 @@ test('a paying round with this node\'s results: an ACCEPTED settlement earns its
     assert.ok(no.d.days.every((x) => x.gameVerifyMsat === '0' && x.settlementMsat === '0'), `${state}: nothing on the chart`);
   }
 });
+
+// THE ROUNDS TABLE'S NET, AS THE DASHBOARD DRAWS IT (kanban #187 item 1 follow-up, the owner 2026-10-05 on comment 318). The
+// page dashboardHtml() serves draws each player's result and netMsat from api/round-result with its own code: signedSat
+// ("+" before a positive net), the cell's class (ok positive, bad negative, none at zero or pending). Its renderer is lifted
+// out of the page as served and run with the four results playerBalance answers for a paying round.
+test('the dashboard draws a paying round\'s nets: "+286 sat" ok, "-4 sat" and "-100 sat" bad, pending blank', () => {
+  const page = dashboardHtml();
+  const script = page.slice(page.indexOf('<script>') + '<script>'.length, page.lastIndexOf('</script>'));
+  const line = (start) => { const at = script.indexOf(start); assert.ok(at >= 0, `the page has ${start}`); return script.slice(at, script.indexOf('\n', at)); };
+  const at = script.indexOf('function playersOf(id){');
+  const playersOfSrc = script.slice(at, script.indexOf('\nfunction readPlayers(', at));
+  const players = new Map();
+  const playersOf = new Function('players', [line('const sat='), line('const esc='), line('const score='), line('const signedSat='), playersOfSrc, 'return playersOf;'].join('\n'))(players);
+  const row = (p) => ({ entry: 'e'.repeat(64), player: 'p'.repeat(64), name: p.name, stakeMsat: '100000', outcome: p.outcome, score: 500000, signedBy: 2, ...p });
+  players.set('r1', { id: 'r1', free: false, players: [
+    row({ name: 'winner', outcome: 'DELIVERED', result: 'won', netMsat: '286000' }),
+    row({ name: 'back', outcome: 'FAILED', result: 'stake back', netMsat: '-4000' }),
+    row({ name: 'loser', outcome: 'FORFEIT', result: 'lost', netMsat: '-100000' }),
+    row({ name: 'waiting', outcome: 'DELIVERED', result: 'pending', netMsat: null }),
+    row({ name: 'even', outcome: 'FAILED', result: 'stake back', netMsat: '0' }),
+  ] });
+  const html = playersOf('r1');
+  // each row's cells in order: player, outcome, score, signed by, stake, won or lost, net, replay
+  const cells = Object.fromEntries(html.split('<tr>').slice(2).map((tr) => {
+    const td = [...tr.matchAll(/<td(?: class="([^"]*)")?>(.*?)<\/td>/g)].map((m) => ({ cls: (m[1] || '').trim(), text: m[2] }));
+    return [td[0].text, { result: td[5].text, resultClass: td[5].cls, net: td[6].text, netClass: td[6].cls.replace(/^n\s*/, '') }];
+  }));
+  assert.deepEqual(cells.winner, { result: 'won', resultClass: 'ok', net: '+286 sat', netClass: 'ok' });
+  assert.deepEqual(cells.back, { result: 'stake back', resultClass: 'bad', net: '-4 sat', netClass: 'bad' });
+  assert.deepEqual(cells.loser, { result: 'lost', resultClass: 'bad', net: '-100 sat', netClass: 'bad' });
+  assert.deepEqual(cells.waiting, { result: 'pending', resultClass: '', net: '', netClass: '' }, 'pending: blank, no class');
+  assert.deepEqual(cells.even, { result: 'stake back', resultClass: '', net: '0 sat', netClass: '' }, 'zero: no "+", no class');
+  assert.match(html, /<th>Won or lost<\/th><th class="n">Net<\/th>/);
+});
