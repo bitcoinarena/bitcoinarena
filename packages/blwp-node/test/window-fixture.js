@@ -373,7 +373,8 @@ export const opts = { funded: () => true, randomnessFor: beaconFor, windowChain:
  */
 // `endMs`: put the round's end (protocol roundEndMs) at that instant (presentDay) - a window test's round, whose 600 s
 // window is read on the wall clock; left out, the round sits in 1970 as it always did, its windows long closed.
-export async function sevenSignerNodes(windowMs, relays, { storedBeforeTheRule = false, finality = null, play = {}, endMs = null } = {}) {
+// `peers` (kanban #187 item 7, test-only): where the holder asks its peers, as serve's `peers` - a counting fake in that test.
+export async function sevenSignerNodes(windowMs, relays, { storedBeforeTheRule = false, finality = null, play = {}, endMs = null, peers = null } = {}) {
   // EVERY SIGNER NODE'S ADVERTISEMENT, as a census would give it: each names its own
   // bond outpoint, which a slash proof must name (5A.3B). Filled once the keys exist.
   const adverts = new Map();
@@ -388,7 +389,7 @@ export async function sevenSignerNodes(windowMs, relays, { storedBeforeTheRule =
   const port = slot.port;
   const holder = await serve(openStore(':memory:'), {
     port: 0, ...opts, stakeLocks: port, chainFor: slot.chainFor, randomnessFor: slot.randomnessFor,
-    claimKeyFor: () => new Uint8Array(33).fill(2), advertsFor: () => adverts, ...(finality ? { finality } : {}) });
+    claimKeyFor: () => new Uint8Array(33).fill(2), advertsFor: () => adverts, ...(finality ? { finality } : {}), ...(peers ? { peers } : {}) });
   // THE CHAIN §13A'S WINDOWS ARE READ FROM (RULED 2026-09-24): the block clock every fixture daemon reads.
   holder.round.chainView = CLOCK.chainView();
   try {
