@@ -269,11 +269,6 @@ export function spentLine(log) {
   return `${amount} over ${parts.join(' and ')}${inRounds}${cameBack}`;
 }
 
-const ENDED_HOLDS = ['SETTLED', 'CANCELLED', 'EXPIRED'];
-
-/** Whole sats where they are whole, and the millisatoshi where they are not. */
-const sats = (msat) => (msat % 1000n === 0n ? `${msat / 1000n} sat` : `${msat} msat`);
-
 /**
  * NIP-04: AES-256-CBC over the ECDH x-coordinate, base64, `?iv=` base64.
  *
@@ -458,8 +453,11 @@ export async function walletBudget(where, options = {}) {
     // allows and which means "no budget is set on this connection".
     if (r.total_budget === undefined && r.used_budget === undefined)
       return { ok: true, kind: 'none', why: 'this connection has no budget set' };
-    const total = BigInt(r.total_budget || 0);
-    const used = BigInt(r.used_budget || 0);
+    // THE WALLET'S NUMBERS ARE ITS OWN: a budget that is not a whole number is refused by name. Measured before, 1.5 or
+    // "abc" made BigInt throw out of here.
+    let total; let used;
+    try { total = BigInt(r.total_budget || 0); used = BigInt(r.used_budget || 0); }
+    catch { return { ok: false, why: `the wallet answered a budget that is not a whole number of msat: ${r.total_budget} / ${r.used_budget}` }; }
     return {
       ok: true, kind: 'budget',
       totalMsat: total, usedMsat: used,
@@ -474,7 +472,10 @@ export async function walletBudget(where, options = {}) {
     const balance = said.result && said.result.balance;
     if (balance === undefined)
       return { ok: false, why: 'the wallet answered a balance with no balance in it' };
-    return { ok: true, kind: 'balance', balanceMsat: BigInt(balance) };
+    let balanceMsat;
+    try { balanceMsat = BigInt(balance); }
+    catch { return { ok: false, why: `the wallet answered a balance that is not a whole number of msat: ${balance}` }; }
+    return { ok: true, kind: 'balance', balanceMsat };
   }
 
   return {
