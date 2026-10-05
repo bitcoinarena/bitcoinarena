@@ -313,7 +313,7 @@
     #blwp-settings .bal-box .bal-sats { font-size: 17px; font-weight: 700; }
     #blwp-settings .muted { color: #9fb3c8; font-size: 13px; }
     #blwp-settings .name-row { display: flex; gap: 8px; align-items: center; }
-    #blwp-settings input[type=text], #blwp-settings select { flex: 1 1 auto; min-width: 0; font: inherit; padding: 9px 10px;
+    #blwp-settings input[type=text], #blwp-settings input[type=password], #blwp-settings select { flex: 1 1 auto; min-width: 0; font: inherit; padding: 9px 10px;
       background: #0d1218; color: #e8eaed; border: 1px solid #3a4a5c; border-radius: 6px; }
     #blwp-settings select { width: 100%; font-weight: 700; font-size: 17px; color: #f7931a; }
     /* THE SEED, A SMALL MODAL OVER SETTINGS: 24 numbered words in a grid, then Verify one word at a time. */
@@ -417,8 +417,10 @@
       <button id="blwp-phrase-show" type="button" class="primary">Show seed phrase</button>
       <!-- RESTORE, OVERWRITING THIS TAB'S SEED (kanban #154): the 24 words or the 64 hex -->
       <div class="muted">Restore: your 24 words (or your seed, 64 hex) replace this tab's seed, and the page reloads.</div>
-      <input id="blwp-seed-restore" type="password" autocomplete="off" placeholder="your 24 words, or your seed (64 hex)">
-      <button id="blwp-seed-use" type="button">use my seed</button>
+      <div class="name-row">
+        <input id="blwp-seed-restore" type="password" autocomplete="off" placeholder="your 24 words, or your seed (64 hex)">
+        <button id="blwp-seed-use" type="button">use my seed</button>
+      </div>
       <div class="muted" id="blwp-seed-restore-why"></div>
     </section>
   </div>
