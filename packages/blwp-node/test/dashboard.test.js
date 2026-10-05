@@ -107,3 +107,65 @@ test('a real node that hosts an LND and a gateway shows them in dashboard.json; 
     assert.equal(n.totals.day.lightningCostMsat, '0');
   } finally { await hosting.close(); await bare.close(); }
 });
+
+// READABLE (kanban #125, the owner's playtest 2026-10-04 14:05, plan comment 218 accepted 2026-10-05). The Hosts card's label and
+// value both shrank and wrapped ("Routing fees, 30 / days" beside "0 sat · 0 / forwards"); the Notes card took the subtitle's
+// word-break:break-all and split inside words ("th e", "roun d", "gate way"); the fee chart's day lived only in an SVG title;
+// the Player column showed 8 hex of the key, because api/round-result read only a record's custom name.
+test('the page: Notes wrap on words, a Hosts value never wraps inside itself, the chart has a hover or tap box', () => {
+  const page = dashboardHtml();
+  const css = page.slice(page.indexOf('<style>'), page.indexOf('</style>'));
+  // NOTES: their own class, words kept whole; only a single token longer than the card may break
+  assert.doesNotMatch(page, /<h3>Notes<\/h3><div class="sub"/, 'the Notes card still uses the subtitle\'s break-all');
+  assert.match(page, /<h3>Notes<\/h3><div class="notes">/);
+  assert.match(css, /\.notes\{[^}]*word-break:normal[^}]*overflow-wrap:anywhere/);
+  // HOSTS: the value is one unbroken piece; the row wraps it under its label when the pair does not fit
+  assert.match(css, /\.row\{[^}]*flex-wrap:wrap/);
+  assert.match(css, /\.row b\{[^}]*white-space:nowrap[^}]*margin-left:auto/);
+  // THE CHART: a box that follows the pointer or a tap and names the day and its three amounts
+  assert.match(page, /<div id="tip"/);
+  assert.match(page, /tip\.textContent=d\.day\+': game\/verify '\+g\+' msat · settlement '\+st\+' msat · guardian '\+gd\+' msat'/);
+  assert.match(page, /addEventListener\('pointermove'/);
+  assert.match(page, /<title>'\+d\.day\+': game\/verify /, 'the SVG title went');
+  // THE PLAYER COLUMN draws the name, never a slice of the key
+  assert.doesNotMatch(page, /String\(p\.player\|\|''\)\.slice\(0,8\)/);
+});
+
+test('api/round-result names every player: the custom name, else the lobby\'s generated name, else the key\'s generated name marked', async () => {
+  const { serve } = await import('../src/server.js');
+  const { encodeLobbyName } = await import('../../protocol/src/lobby-name.js');
+  const { displayNameFromKey } = await import('../../protocol/src/display-name.js');
+  const { encodeRoundContract, roundId, encodeEntryContract } = await import('../../protocol/src/contracts.js');
+  const { TEST_FEDERATION_ID } = await import('../../protocol/src/test-federation.js');
+  const { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } = await import('../src/cores.js');
+  const { BLOCK_TICKS } = await import('../../core/src/rules/gate.js');
+  const { TEST_DONATION_SET_REGTEST } = await import('../../protocol/src/test-donation-sets.js');
+  const { donationSetId } = await import('../../protocol/src/donation.js');
+  const { toHex } = await import('../../protocol/src/hash.js');
+  const b32 = (n) => new Uint8Array(32).fill(n);
+  const node = await serve(openStore(), { port: 0, funded: () => true });
+  try {
+    const c = { networkId: b32(0x4e), configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'], donationSetId: donationSetId(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,
+      censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash', stakeMsat: 0n, bondMinSats: 50000n,
+      blockTicks: BLOCK_TICKS, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
+      timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4, nodes: [node.round.pubkey] };
+    const rid = roundId(c);
+    assert.equal((await fetch(`http://127.0.0.1:${node.port}/round`, { method: 'POST', body: encodeRoundContract(c) })).status, 201);
+    const join = async (player) => {
+      const e = { roundId: rid, playerPubkey: player, sessionPubkey: b32(0x51), stakeCommitment: b32(7), stakeMsat: 0n, feeMsat: 0n, donationMsat: 0n, joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32) };
+      assert.equal((await fetch(`http://127.0.0.1:${node.port}/entry`, { method: 'POST', body: encodeEntryContract(e) })).status, 201);
+    };
+    const NAMED = b32(0x11), GENERATED = b32(0x22), NONE = b32(0x33), IDENTITY = b32(0x44);
+    for (const p of [NAMED, GENERATED, NONE]) await join(p);
+    const put = (player, name) => node.round.putLobbyName({ roundId: rid, playerPubkey: player, signature: new Uint8Array(64), atMs: 1n,
+      record: encodeLobbyName({ roundId: rid, playerPubkey: player, identityPubkey: IDENTITY, name, atMs: 1n }) });
+    put(NAMED, 'Sophia');
+    put(GENERATED, '');
+    const j = await (await fetch(`http://127.0.0.1:${node.port}/api/round-result?round=${toHex(rid)}`)).json();
+    const byPlayer = Object.fromEntries(j.players.map((p) => [p.player, p.name]));
+    assert.equal(byPlayer[toHex(NAMED)], 'Sophia');
+    assert.equal(byPlayer[toHex(GENERATED)], displayNameFromKey(IDENTITY), 'a player who kept the generated name is not named as the lobby showed it');
+    assert.equal(byPlayer[toHex(NONE)], `${displayNameFromKey(NONE)} (no lobby name)`);
+    for (const p of j.players) assert.doesNotMatch(p.name, /^[0-9a-f]{8}$/, `${p.player} is named by hex`);
+  } finally { await node.close(); }
+});
