@@ -1,0 +1,50 @@
+// THE PAID ROW A FUNDED SEAT READS IS THE ROUND IT CAN STILL ENTER (kanban #121, the owner 2026-10-05: "A funded seat reads one
+// lobby row before it pays. That row is the round it can still enter. It is not the round after next."). The playtest of
+// 10-04 13:45 saw the round after next ("closes 1:52"); measured 10-05 01:30-01:33Z on 0.0.2740 with a seat holding 100 sat,
+// the row was never the round after next, but at each rollover Unity read the closed round ("closes in 0:00", not joinable)
+// for a further ~1 s, because the row was the LAST PAINT's pick. The row is picked when it is read, at the read's clock,
+// funded or not: lobbyRowsAt. A join held on a round keeps that round (lobbyKeepJoined, the owner 2026-10-02).
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { lobbyRowsAt } from '../src/lobby.js';
+
+const NOW = 1_800_000_000_000;
+const sid = new Uint8Array(32).fill(7);
+// a 90 s series of 100 sat rounds; entry closes at start + 32 s (late join, kanban #130)
+const round = (id, startInS, i) => ({ id, free: false, joinable: true, phase: 'open', stakeMsat: 100000n,
+  startTimeMs: NOW + startInS * 1000, entryCloseMs: NOW + (startInS + 32) * 1000,
+  contract: { seriesId: sid, startTimeMs: BigInt(NOW + startInS * 1000), roundIndex: BigInt(i) } });
+// 22 s left on X's entry (it started 10 s ago), Y starts in 80 s, Z in 170 s
+const X = round('X', -10, 0), Y = round('Y', 80, 1), Z = round('Z', 170, 2);
+const rows = [Z, Y, X];
+const paid = (picked) => picked.filter((r) => !r.free).map((r) => r.id);
+
+test('22 s before X closes: the row is X, the round still open to enter - not Y, not Z', () => {
+  assert.deepEqual(paid(lobbyRowsAt(rows, NOW)), ['X']);
+});
+
+test('a join held on X keeps X; a join held on nothing listed leaves the pick', () => {
+  assert.deepEqual(paid(lobbyRowsAt(rows, NOW, 'X')), ['X']);
+  assert.deepEqual(paid(lobbyRowsAt(rows, NOW, 'gone')), ['X']);
+});
+
+test('at every instant of the series the row read is the soonest round whose entry is open', () => {
+  for (let t = 0; t < 250000; t += 100) {
+    const now = NOW + t;
+    const open = rows.filter((r) => r.entryCloseMs > now).sort((a, b) => a.entryCloseMs - b.entryCloseMs);
+    if (!open.length) break;
+    assert.deepEqual(paid(lobbyRowsAt(rows, now)), [open[0].id], `at +${t} ms`);
+  }
+});
+
+// THE PAGE: the row Unity reads (BLWP_LOBBY_VIEW) and PLAY's row (BLWP_LOBBY) are picked by lobbyRowsAt at the read's own
+// Date.now() - not the last paint's pick - and nothing in the pick depends on the wallet's balance (no lead).
+test('the page picks the paid row when Unity reads it, with no lead', () => {
+  const page = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url).pathname, 'utf8');
+  const view = page.slice(page.indexOf('window.BLWP_LOBBY_VIEW = () =>'), page.indexOf('refused: refused.map(String)', page.indexOf('window.BLWP_LOBBY_VIEW = () =>')));
+  assert.ok(view.length > 0, 'BLWP_LOBBY_VIEW not found');
+  assert.match(view, /rows: lobbyNow\(\)/, 'the view does not pick its rows when read');
+  assert.match(page, /const lobbyNow = \(\) => \(window\.BLWP_LOBBY = BLWPCLIENT\.lobbyRowsAt\(window\.BLWP_LOBBY_ROWS \|\| \[\], Date\.now\(\), goingRound\(\)\)/);
+  assert.doesNotMatch(page, /leadMsFor|FUNDED_JOIN_LEAD_MS|SERIES_JOIN_LEAD_MS/, 'the page still names a lead');
+});

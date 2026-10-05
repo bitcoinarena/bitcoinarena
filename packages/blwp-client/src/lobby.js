@@ -326,6 +326,16 @@ export function lobbyOnePerKind(rows, nowMs = Date.now(), { paidSeriesOnly = fal
   return rows.filter((r) => keep.has(r));
 }
 
+/**
+ * THE ROWS AS THEY ARE READ (kanban #121, the owner 2026-10-05: "That row is the round it can still enter. It is not the round
+ * after next."): one per kind, paid rows of a series only, no lead whatever the wallet holds, picked at `nowMs` - the clock of
+ * the read, not of the last paint. A join held on a listed round keeps that round. Measured on 0.0.2740 with a funded seat:
+ * the last paint's pick left the closed round as the row for ~1 s after each entry close.
+ */
+export function lobbyRowsAt(rows, nowMs = Date.now(), joinedId = null) {
+  return lobbyKeepJoined(lobbyOnePerKind(rows || [], nowMs, { paidSeriesOnly: true }), rows, joinedId);
+}
+
 /** A row's stake in whole sats, as the lobby says it: 0 for a free round. */
 export const lobbyStakeSats = (row) => (row.free ? 0 : Number(BigInt(row.stakeMsat) / 1000n));
 

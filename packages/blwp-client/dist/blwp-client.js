@@ -19114,6 +19114,16 @@ function lobbyOnePerKind(rows, nowMs = Date.now(), { paidSeriesOnly = false, lea
   return rows.filter((r) => keep.has(r));
 }
 
+/**
+ * THE ROWS AS THEY ARE READ (kanban #121, the owner 2026-10-05: "That row is the round it can still enter. It is not the round
+ * after next."): one per kind, paid rows of a series only, no lead whatever the wallet holds, picked at `nowMs` - the clock of
+ * the read, not of the last paint. A join held on a listed round keeps that round. Measured on 0.0.2740 with a funded seat:
+ * the last paint's pick left the closed round as the row for ~1 s after each entry close.
+ */
+function lobbyRowsAt(rows, nowMs = Date.now(), joinedId = null) {
+  return lobbyKeepJoined(lobbyOnePerKind(rows || [], nowMs, { paidSeriesOnly: true }), rows, joinedId);
+}
+
 /** A row's stake in whole sats, as the lobby says it: 0 for a free round. */
 const lobbyStakeSats = (row) => (row.free ? 0 : Number(BigInt(row.stakeMsat) / 1000n));
 
@@ -19488,7 +19498,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          lookOwed: lookOwed, owedToLine: owedToLine, collectOwed: collectOwed, collectAndWithdraw: collectAndWithdraw, findOwedRounds: findOwedRounds,
          lobbyQuery: lobbyQuery, fetchLobby: fetchLobby, lobbyLine: lobbyLine, lobbyJoinSearch: lobbyJoinSearch,
          SIGNER_ANSWER_MS: SIGNER_ANSWER_MS,
-         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, lobbyKeepJoined: lobbyKeepJoined, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
+         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
          isLateJoinRound: isLateJoinRound, lateJoinTick: lateJoinTick, runTicksForEntry: runTicksForEntry, entryOpenUntilMs: entryOpenUntilMs, lateJoinLastEntryMs: lateJoinLastEntryMs, LATE_JOIN_JOIN_MS: LATE_JOIN_JOIN_MS,
          nextRoundAfter: nextRoundAfter, nextRoundView: nextRoundView, joiningNextRoundIn: joiningNextRoundIn,
          EXIT_GAME: EXIT_GAME, RESULT_CARD_MS: RESULT_CARD_MS,
