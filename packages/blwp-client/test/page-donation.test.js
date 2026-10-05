@@ -83,3 +83,33 @@ test('the deposit keeps nothing; every kept/Settings pair sizes the deposit as t
   assert.equal(fresh.getItem(`blwp.donation.${RID}`), null, 'a deposit writes no kept choice');
   assert.equal(depositDonationMsat({ roundIdHex: null, stake: 100000n, settingsBps: 300, storage: fresh }), 3000n, 'no round id: Settings');
 });
+
+// THE WARM QUOTE (kanban #187 item 2 follow-up, the owner 2026-10-05 on comment 312): the lobby warms lock quotes for the
+// paying round at a donation; it must be the donation the join will write - the round's kept choice when the tab has one,
+// else Settings - or the warm quote is for another donation and the join quotes itself again. The expression is lifted
+// out of index.html's warmLockQuotes call and evaluated as written.
+const WARM = (() => {
+  const at = PAGE.indexOf('BLWPCLIENT.warmLockQuotes({');
+  assert.ok(at > 0, 'index.html warms no lock quotes');
+  const call = PAGE.slice(at, PAGE.indexOf('\n              .then(', at));
+  const from = call.indexOf('donationMsat: ') + 'donationMsat: '.length;
+  return call.slice(from, call.lastIndexOf('})')).trim();
+})();
+const warmDonation = (s, stakeSats = 100) => {
+  const { donationBps, window } = pageWith(s);
+  window.sessionStorage = s;
+  const BLWPCLIENT = { lobbyStakeSats: () => stakeSats, depositDonationMsat };
+  return new Function('BLWPCLIENT', 'r', 'donationBps', 'window', `return ${WARM};`)(BLWPCLIENT, { id: RID, raw: {} }, donationBps, window);
+};
+
+test('the warm quote sizes the donation the join will write: a kept choice wins over Settings; none falls back to Settings', () => {
+  for (const [settings, kept] of [[300, 200], [100, 300], [0, 200], [500, 0], [200, 200]]) {
+    const s = storage({ 'blwp.donation.settings': String(settings), [`blwp.donation.${RID}`]: String(kept) });
+    const { donationBps } = pageWith(s);
+    assert.equal(warmDonation(s), joinDonation(donationBps(), s), `Settings ${settings}, kept ${kept}: warm = join (${WARM})`);
+  }
+  for (const settings of [0, 100, 200, 300, 400, 500]) {
+    const s = storage({ 'blwp.donation.settings': String(settings) });
+    assert.equal(warmDonation(s), 100000n * BigInt(settings) / 10000n, `no kept choice: Settings ${settings}`);
+  }
+});
