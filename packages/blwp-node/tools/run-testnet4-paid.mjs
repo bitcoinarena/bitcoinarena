@@ -19,6 +19,10 @@
  * store. It reads each node's key from GET /identity and its bond from the chain, publishes and posts the rounds over
  * HTTP, names the paying ones in BLWP_FUNDED_ROUNDS_FILE and writes the page's bond proof to BLWP_ATTACH_PROOF_DIR,
  * both of which the nodes read. Each node makes each round's claim key itself, with its peers, on their own doors.
+ *
+ * ON ANOTHER CHAIN (kanban #148 step 6, the regtest harness tn4-tools-regtest.sh): BLWP_TN4_NETWORK (default testnet4) is
+ * the round's network, and BLWP_TN4_PORTS (default the seven testnet4 seats) the seven node ports. The Funnel paths are
+ * testnet4's alone, so another network neither reads nor adds them.
  */
 import { inviteForGuardians, readInvite } from '../src/invite.js';
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
@@ -33,10 +37,11 @@ const env = process.env;
 const say = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o }));
 const home = env.BLWP_TESTNET4_DIR || `${env.HOME}/blwp-testnet4`;
 // SEVEN NODES, SEVEN GUARDIANS, ONE EACH (the owner 2026-09-27 10:04): /guardian-1..7 on the Funnel, 127.0.0.1:31221..31281
-const guardianPorts = [31221, 31231, 31241, 31251, 31261, 31271, 31281];
+const network = env.BLWP_TN4_NETWORK || 'testnet4';
+const guardianPorts = env.BLWP_TN4_PORTS ? env.BLWP_TN4_PORTS.split(',').map(Number) : [31221, 31231, 31241, 31251, 31261, 31271, 31281];
 const plainPorts = [];
 const ports = [...guardianPorts, ...plainPorts];
-if (ports.length !== 7 || ports.includes(8080)) throw new Error('seven signer nodes, never 8080');
+if (ports.length !== 7 || ports.includes(8080) || !ports.every((p) => Number.isInteger(p) && p > 0)) throw new Error('seven signer nodes, never 8080');
 const missing = ['BLWP_STAKE_LOCK_BIN', 'BLWP_FEDERATION_CLIENT_DIR', 'BLWP_FEDERATION_INVITE_FILE', 'BLWP_BITCOIND_URL',
   'BLWP_BITCOIND_COOKIE'].filter((k) => !env[k]);
 if (missing.length) throw new Error(`set ${missing.join(', ')}`);
@@ -53,7 +58,7 @@ const lock = stakeLockPort({ bin: env.BLWP_STAKE_LOCK_BIN, dataDir: env.BLWP_FED
 // EVERY /guardian-k IS ON THE FUNNEL, or is put back (item 5, 2026-09-28: /guardian-1 had gone from the Funnel, nobody
 // knows how, and a guardian nobody can reach is not in the federation a player joins). Added with `tailscale funnel`,
 // never `serve`: `serve --set-path` turns Funnel off for the whole of :443 (measured 2026-09-27).
-{
+if (network === 'testnet4') {
   let funnel = null;
   try { funnel = execFileSync('tailscale', ['funnel', 'status', '--json'], { encoding: 'utf8', timeout: 15000 }); } catch { funnel = null; }
   if (funnel === null) say({ funnel: 'unread', why: 'tailscale funnel status did not answer: the guardian paths are not checked' });
@@ -92,7 +97,7 @@ const guardianOf = ports.map((_, i) => {
 
 const [pa, pb, pc, ...more] = ports;
 const round = await standUpRound({ host: '127.0.0.1', portA: pa, portB: pb, portC: pc, extraPorts: more,
-  store: join(home, 'paid'), storePaths, network: 'testnet4', wallet, cli, rpc,
+  store: join(home, 'paid'), storePaths, network, wallet, cli, rpc,
   stakeMsat, federationId: fed.federationId, invite, guardianOf,
   // THE ENTRY WINDOW OUTLASTS THE BEACON: on testnet4 committee_time is passed by somebody else's blocks, about an
   // hour after publication, and entries open only then.
@@ -105,7 +110,7 @@ const round = await standUpRound({ host: '127.0.0.1', portA: pa, portB: pb, port
   guardianChain: { bitcoindUrl: env.BLWP_BITCOIND_URL, cookiePath: env.BLWP_BITCOIND_COOKIE, call: chainCall },
   // the signed test set names 18777, which the live Daily holds; this committee answers on its own door
   donationRecipients: { port: Number(env.BLWP_RECIPIENT_PORT || 18787) } });
-say({ paid: 'up', network: 'testnet4', custody: round.contract.custody, stakeMsat: String(stakeMsat),
+say({ paid: 'up', network, custody: round.contract.custody, stakeMsat: String(stakeMsat),
   federation: toHex(fed.federationId), guardians: fed.keys.length, threshold: fed.threshold,
   nodes: round.nodes, firstRound: round.id, beacon: round.beacon && round.beacon.ok ? round.beacon.height : null });
 // THE FUNDED GATEWAY STAYS IN THE LINK (the owner 2026-09-30 14:30 and the leadMs letter): a start used to write the link

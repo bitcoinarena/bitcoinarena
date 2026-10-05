@@ -5,18 +5,24 @@
 # gatewayd asserts only that its LND and its label agree, and LND says testnet4. The LND's TLS certificate and admin macaroon are copied beside the
 # gateway's data, because the fedimint bundle runs in a user chroot that does not see /mnt/bitcoin (a separate mount).
 #
+# BLWP_TN4_NETWORK (default testnet4) names the LND's chain and the gateway's label; BLWP_BITCOIND_URL / BLWP_BITCOIND_COOKIE
+# the chain (default the testnet4 bitcoind). The regtest harness (tn4-tools-regtest.sh) names regtest and its own bitcoind.
+#
 #   PATH=<dir with gatewayd>:$PATH tools/testnet4-gateway.sh <lnddir> <lnd rpc host:port> <listen port> <data dir>
 set -eu
+NET=${BLWP_TN4_NETWORK:-testnet4}
+BTC_URL=${BLWP_BITCOIND_URL:-http://127.0.0.1:48332}
+BTC_COOKIE=${BLWP_BITCOIND_COOKIE:-/mnt/bitcoin/tn4/testnet4/.cookie}
 LND=$1; RPC=$2; PORT=$3; DIR=$4
 mkdir -p "$DIR"; chmod 700 "$DIR"
 install -m 600 "$LND/tls.cert" "$DIR/lnd-tls.cert"
-install -m 600 "$LND/data/chain/bitcoin/testnet4/admin.macaroon" "$DIR/lnd-admin.macaroon"
+install -m 600 "$LND/data/chain/bitcoin/$NET/admin.macaroon" "$DIR/lnd-admin.macaroon"
 [ -s "$DIR/password" ] || (umask 077; head -c 24 /dev/urandom | base64 | tr -d '/+=\n' > "$DIR/password")
 [ -s "$DIR/password-hash" ] || gateway-cli create-password-hash "$(cat "$DIR/password")" | tr -d '"\n' > "$DIR/password-hash"
 export FM_DEFAULT_ROUTING_FEES="0 msat,0" FM_DEFAULT_TRANSACTION_FEES="0 msat,0" FM_GATEWAY_DATA_DIR=$DIR/data FM_GATEWAY_LISTEN_ADDR=127.0.0.1:$PORT FM_GATEWAY_API_ADDR=http://127.0.0.1:$PORT \
-  FM_GATEWAY_BCRYPT_PASSWORD_HASH="$(cat "$DIR/password-hash")" FM_GATEWAY_NETWORK=testnet4 \
-  FM_BITCOIND_URL=http://127.0.0.1:48332 FM_BITCOIND_USERNAME=__cookie__ \
-  FM_BITCOIND_PASSWORD="$(cut -d: -f2- /mnt/bitcoin/tn4/testnet4/.cookie)" FM_GATEWAY_SKIP_SETUP=true \
+  FM_GATEWAY_BCRYPT_PASSWORD_HASH="$(cat "$DIR/password-hash")" FM_GATEWAY_NETWORK=$NET \
+  FM_BITCOIND_URL=$BTC_URL FM_BITCOIND_USERNAME=__cookie__ \
+  FM_BITCOIND_PASSWORD="$(cut -d: -f2- "$BTC_COOKIE")" FM_GATEWAY_SKIP_SETUP=true \
   FM_GATEWAY_IROH_LISTEN_ADDR=127.0.0.1:$((PORT + 1)) FM_GATEWAY_METRICS_LISTEN_ADDR=127.0.0.1:$((PORT + 2)) \
   FM_LND_RPC_ADDR=https://$RPC FM_LND_TLS_CERT=$DIR/lnd-tls.cert FM_LND_MACAROON=$DIR/lnd-admin.macaroon
 mkdir -p "$DIR/data"
