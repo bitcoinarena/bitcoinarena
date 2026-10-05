@@ -59,7 +59,7 @@ if (template.committeeTimeMs <= tipMtp + 3600000n)
 const id = seriesId(template);
 const payload = seriesPublicationPayload(id);
 const last = seriesRound(template, ROUNDS_PER_SERIES - 1);
-say({ step: 'series', id: toHex(id), census: H, seriesStart: new Date(Number(start)).toISOString(),
+say({ step: 'series', id: toHex(id), census: H, seriesStart: new Date(Number(template.startTimeMs)).toISOString(),
   committeeTime: new Date(Number(template.committeeTimeMs)).toISOString(), lastRound: new Date(Number(last.startTimeMs)).toISOString(),
   leadHours: Number(lead.leadMs) / 3600000, tip: tip.blocks, tipMtp: new Date(Number(tipMtp)).toISOString(), payload: toHex(payload) });
 
@@ -78,7 +78,7 @@ if (decoded.vin.length !== 1 || decoded.vin[0].txid !== input.txid || decoded.vi
 const accept = JSON.parse(cli('testmempoolaccept', JSON.stringify([signed.hex])))[0];
 say({ step: 'publication', input: `${input.txid}:${input.vout}`, inputSats: Math.round(input.amount * 1e8), feeSats: Math.round(funded.fee * 1e8),
   txid: decoded.txid, vsize: decoded.vsize, mempoolAccept: accept.allowed, reject: accept['reject-reason'] || null });
-const record = { series: toHex(id), template: toHex(encodeRoundContract(template)), seriesStartMs: String(start),
+const record = { series: toHex(id), template: toHex(encodeRoundContract(template)), seriesStartMs: String(template.startTimeMs),
   committeeTimeMs: String(template.committeeTimeMs), censusHeight: H, fromRound: roundHex, payload: toHex(payload),
   txid: decoded.txid, hex: signed.hex, broadcast: false };
 if (send === '--send') {

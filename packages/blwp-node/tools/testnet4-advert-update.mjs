@@ -74,7 +74,8 @@ writeFileSync(keysPath, JSON.stringify(plans.map((p) => ({ node: p.n, bond: `${p
   carrierSecret: toHex(p.prepared.carrierSecret), carrierSpk: toHex(p.prepared.spk) })), null, 2) + '\n', { mode: 0o600 });
 
 // ONE FUNDING TRANSACTION FROM THE NAMED INPUT ONLY
-const input = JSON.parse(cli('gettxout', fundTxid, fundVout, 'true'));
+// bitcoin-cli prints nothing at all for a spent or unknown output
+const input = JSON.parse(cli('gettxout', fundTxid, fundVout, 'true') || 'null');
 if (!input) throw new Error(`${fundTxid}:${fundVout} is not an unspent output`);
 if (Math.round(input.value * 1e8) === 50000 || Math.round(input.value * 1e8) === 1670) throw new Error('that input has a bond\'s or a marker\'s value; it is not spent here');
 const outputs = plans.map((p) => ({ [JSON.parse(cli('decodescript', toHex(p.prepared.spk))).address]: Number(CARRIER_SATS) / 1e8 }));
