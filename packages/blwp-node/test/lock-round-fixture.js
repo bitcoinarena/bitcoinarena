@@ -205,6 +205,15 @@ export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, ad
       sessionPubkey: ed25519.getPublicKey(session) };
     const x = { ...mark, inputChainHash: batchId(b2), previousHash: checkpointId(m1) };
     const y = fork === 'parent' ? { ...x, tick: who.ticks - 1, stateHash: sha256(x.stateHash) } : { ...x, stateHash: sha256(x.stateHash) };   // 'tick', 'one-seat'
+    // `fork: 'stale'` - A PAGE STUCK ON AN OLD HEAD (measured on testnet4, kanban #25): the head H at the tick before the end,
+    // receipted by every seat, then a later mark S naming the OLD parent (the first mark) - refused at every seat, never carried
+    let stale = null;
+    if (fork === 'stale') {
+      const s999 = loaded(init(seedWordForEntry(entry, w.randomness || RANDOMNESS)));
+      for (let t = 0; t < who.ticks - 1; t++) step(s999, ...play.words(t));
+      const h = { ...x, tick: who.ticks - 1, stateHash: Uint8Array.from(stateHash(s999).match(/../g).map((v) => parseInt(v, 16))) };
+      stale = { h, s: { ...x } };                         // S: the run's end, naming m1 - H's parent - not H
+    }
     const nodes = w.nodes || [w.a, w.b];
     forked = { x: sign(x), y: sign(y), tick: Math.min(x.tick, y.tick), mode: fork };
     const said = (a) => (a instanceof Uint8Array ? `${a.length} bytes` : String(a).slice(0, 120));
@@ -214,6 +223,11 @@ export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, ad
       answers.push(said(await say(d.port, sign(m1))));
       answers.push(said(await say(d.port, encodeInputBatch(b2))));
       // `fork: 'one-seat'`: both marks to the first seat (the second refused there as an equivocation, and kept), X alone to the rest
+      if (stale) {
+        answers.push(said(await say(d.port, sign(stale.h))));
+        (forked.staleAnswers = forked.staleAnswers || []).push(said(await say(d.port, sign(stale.s))));
+        continue;
+      }
       answers.push(said(await say(d.port, fork === 'one-seat' ? forked.x : (i === 0 ? forked.x : forked.y))));
       if (fork === 'one-seat' && i === 0) forked.refusedAtFirst = said(await say(d.port, forked.y));
       // a later seat may already hold the first batch, forwarded by the first (its answer is then 0 new ticks)

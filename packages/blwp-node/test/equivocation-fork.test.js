@@ -243,3 +243,32 @@ test('(g) a split on a fork with nobody qualified: §13C FORFEIT, the equivocato
     assert.equal(rest, net * 25n / 100n, `the donation set's 25% is not ${net * 25n / 100n}`);
   } finally { await w.close(); }
 });
+
+// (h) A PAGE STUCK ON AN OLD HEAD IS NOT A CHEAT (RULED the owner 2026-10-05 (b); measured on testnet4: ea63aa94 and c35157df
+// sent marks naming an old parent after their seats had moved on). Its head H is receipted by both seats; its next mark S
+// names H's parent - two chains from one parent on paper - but S is refused at every seat, never receipted: no FORFEIT, the
+// run signed as ever, FINAL, and its lock settles as a loser's or a winner's would.
+test('(h) a page stuck on an old head - a later mark naming the old parent, refused at every seat - is not forfeited: the run is signed as ever', async () => {
+  const w = await lockRound();
+  try {
+    const won = await lockAndPlay(w, WINNER, { address: true });
+    const stuck = await lockAndPlay(w, CHEAT, { fork: 'stale' });
+    await closeRound(w);
+    const got = await untilSettled(w, 60000);
+    const facts = { staleAnswers: stuck.forked.staleAnswers,
+      stuck: [w.a, w.b].map((d) => ({ results: resultsAt(d, w, stuck.eid), state: resultFinality(d.round, w.rid, stuck.eid).state,
+        provenFork: d.round.provenFork(w.rid, stuck.eid), pairsOnPaper: d.round.equivocation(w.rid, stuck.eid).length })),
+      settled: got.state };
+    console.log('  FACTS (stuck page):', JSON.stringify(facts));
+    assert.ok(facts.staleAnswers.every((a) => /does not follow the chain head/.test(a)), `the stale mark was not refused: ${facts.staleAnswers}`);
+    for (const s of facts.stuck) {
+      assert.ok(s.pairsOnPaper >= 1, 'no same-parent pair on paper: not the case the test names');
+      assert.equal(s.provenFork, null, 'a refused stale-head mark proved a fork');
+      assert.equal(s.state, 'FINAL');
+      assert.equal(s.results.length, 1);
+      assert.doesNotMatch(s.results[0], /^FORFEIT/, 'an honest stuck page was forfeited');
+    }
+    assert.equal(got.state, 'ACCEPTED', got.why);
+    assert.ok(won);
+  } finally { await w.close(); }
+});
