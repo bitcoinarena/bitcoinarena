@@ -147,7 +147,8 @@ export function dashboardHtml() {
 h1{font-size:20px;margin:0 0 4px}h2{font-size:15px;margin:22px 0 8px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em}
 .sub{color:var(--dim);margin-bottom:14px;word-break:break-all}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px}.card h3{margin:0 0 8px;font-size:13px;color:var(--dim)}
-.row{display:flex;justify-content:space-between;gap:8px;padding:2px 0}.row b{font-variant-numeric:tabular-nums}.profit{border-top:1px solid var(--line);margin-top:6px;padding-top:6px}
+.row{display:flex;flex-wrap:wrap;justify-content:space-between;gap:0 8px;padding:2px 0}.row b{font-variant-numeric:tabular-nums;white-space:nowrap;margin-left:auto}.notes{color:var(--dim);word-break:normal;overflow-wrap:anywhere}.notes p{margin:0 0 6px}
+#chartbox{position:relative}#tip{position:absolute;display:none;pointer-events:none;background:var(--card);border:1px solid var(--line);border-radius:6px;padding:4px 8px;font-size:12px;white-space:nowrap;font-variant-numeric:tabular-nums}.profit{border-top:1px solid var(--line);margin-top:6px;padding-top:6px}
 .tabs button{background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:4px 10px;margin-right:4px;cursor:pointer}.tabs button.on{border-color:var(--gv)}
 svg{width:100%;height:auto;display:block}table{width:100%;border-collapse:collapse;font-size:12.5px}th,td{text-align:left;padding:5px 6px;border-bottom:1px solid var(--line);vertical-align:top}
 th{color:var(--dim);font-weight:600}td.n{text-align:right;font-variant-numeric:tabular-nums}.ok{color:var(--ok)}.bad{color:var(--bad)}.scroll{overflow-x:auto}
@@ -155,7 +156,7 @@ th{color:var(--dim);font-weight:600}td.n{text-align:right;font-variant-numeric:t
 </style></head><body>
 <h1>Node Dashboard</h1><div class="sub" id="who">loading…</div>
 <h2>Earnings</h2><div class="tabs" id="tabs"></div><div class="grid" id="totals" style="margin-top:8px"></div>
-<h2>Fee earned per day, last 30 days (msat)</h2><div class="card"><div class="legend"><span><i style="background:var(--gv)"></i>game/verify</span><span><i style="background:var(--st)"></i>settlement</span><span><i style="background:var(--gd)"></i>guardian</span></div><div id="chart"></div></div>
+<h2>Fee earned per day, last 30 days (msat)</h2><div class="card" id="chartbox"><div id="tip" role="status"></div><div class="legend"><span><i style="background:var(--gv)"></i>game/verify</span><span><i style="background:var(--st)"></i>settlement</span><span><i style="background:var(--gd)"></i>guardian</span></div><div id="chart"></div></div>
 <h2>Rounds checked</h2><div class="card scroll"><table id="rounds"></table></div>
 <h2>Settlements</h2><div class="card scroll"><div id="sstate" class="sub"></div><table id="settle"></table></div>
 <h2>Federations</h2><div class="card scroll"><table id="feds"></table></div>
@@ -175,12 +176,12 @@ function playersOf(id){const a=players.get(id);
  if(!a||a.loading)return 'reading api/round-result…';if(a.error)return 'could not read api/round-result: '+esc(a.error);
  if(!(a.players||[]).length)return 'no players in this round';
  return '<table><tr><th>Player</th><th>Outcome</th><th class="n">Score</th><th class="n">Signed by</th><th class="n">Stake</th><th>Won or lost</th><th class="n">Net</th><th>Replay</th></tr>'+a.players.map(p=>{const n=p.netMsat;const c=n===null||n===undefined?'':Number(n)>0?'ok':Number(n)<0?'bad':'';
-  return '<tr><td>'+esc(p.name||String(p.player||'').slice(0,8))+'</td><td>'+esc(p.outcome||'not signed yet')+'</td><td class="n">'+score(p.score)+'</td><td class="n">'+(p.signedBy|0)+'</td><td class="n">'+sat(p.stakeMsat)+'</td><td class="'+c+'">'+esc(p.result||'')+'</td><td class="n '+c+'">'+signedSat(n)+'</td><td><a href="replay?round='+esc(a.id)+'&entry='+esc(p.entry)+'" target="_blank" rel="noopener">replay</a></td></tr>'}).join('')+'</table>'}
+  return '<tr><td>'+esc(p.name||'')+'</td><td>'+esc(p.outcome||'not signed yet')+'</td><td class="n">'+score(p.score)+'</td><td class="n">'+(p.signedBy|0)+'</td><td class="n">'+sat(p.stakeMsat)+'</td><td class="'+c+'">'+esc(p.result||'')+'</td><td class="n '+c+'">'+signedSat(n)+'</td><td><a href="replay?round='+esc(a.id)+'&entry='+esc(p.entry)+'" target="_blank" rel="noopener">replay</a></td></tr>'}).join('')+'</table>'}
 function readPlayers(id){players.set(id,{loading:true});fetch('api/round-result?round='+id,{cache:'no-store'}).then(r=>r.ok?r.json():Promise.reject(new Error('HTTP '+r.status))).then(j=>{players.set(id,j);tables()}).catch(e=>{players.set(id,{error:e.message});tables()})}
 function totals(){const T=D.totals[period];const names=[['gameVerifyMsat','Game/verify fee'],['settlementMsat','Settlement fee'],['guardianMsat','Guardian/custody fee'],['otherMsat','Other earnings'],['lightningCostMsat','Lightning costs'],['gatewayCostMsat','Gateway costs']];
 el('totals').innerHTML='<div class="card"><h3>'+({day:'Today',month:'This month',year:'This year'}[period])+' (earned: settlement ACCEPTED)</h3>'+names.map(([k,n])=>'<div class="row"><span>'+n+'</span><b>'+(k.includes('Cost')&&T[k]!=='0'?'−':'')+sat(T[k])+'</b></div>').join('')+'<div class="row profit"><span>Absolute profit</span><b>'+sat(T.profitMsat)+'</b></div></div>'
  +'<div class="card"><h3>Owed (rounds not settled yet)</h3><div class="row"><span>Game/verify</span><b>'+sat(D.totals.owed.gameVerifyMsat)+'</b></div><div class="row"><span>Settlement</span><b>'+sat(D.totals.owed.settlementMsat)+'</b></div><div class="row"><span>Guardian</span><b>'+sat(D.totals.owed.guardianMsat)+'</b></div></div>'
- +'<div class="card"><h3>Notes</h3><div class="sub" style="margin:0">'+D.notes.guardian+'<br>'+D.notes.lightning+'<br>'+D.notes.gateway+'</div></div>'+hostsCard();
+ +'<div class="card"><h3>Notes</h3><div class="notes"><p>'+D.notes.guardian+'</p><p>'+D.notes.lightning+'</p><p>'+D.notes.gateway+'</p></div></div>'+hostsCard();
 el('tabs').innerHTML=['day','month','year'].map(p=>'<button class="'+(p===period?'on':'')+'" data-p="'+p+'">'+({day:'Day',month:'Month',year:'Year'}[p])+'</button>').join('');
 el('tabs').querySelectorAll('button').forEach(b=>b.onclick=()=>{period=b.dataset.p;totals()});}
 // THE HOSTS CARD (node 1: gateway A + LND 1, node 2: gateway B + LND 2): only on a node that hosts them
@@ -192,7 +193,13 @@ function chart(){const W=1000,H=220,P=34,days=D.days,max=Math.max(1,...days.map(
 let s='<svg viewBox="0 0 '+W+' '+(H+24)+'" role="img" aria-label="fee per day">';for(let i=0;i<=4;i++){const y=H-(H-10)*i/4;s+='<line x1="'+P+'" x2="'+W+'" y1="'+y+'" y2="'+y+'" stroke="var(--line)"/><text x="0" y="'+(y+4)+'" fill="var(--dim)" font-size="11">'+Math.round(max*i/4)+'</text>'}
 days.forEach((d,i)=>{const g=Number(d.gameVerifyMsat),st=Number(d.settlementMsat),gd=Number(d.guardianMsat),hg=(H-10)*g/max,hs=(H-10)*st/max,hd=(H-10)*gd/max,x=P+i*bw+2;
 s+='<g><title>'+d.day+': game/verify '+g+' msat, settlement '+st+' msat, guardian '+gd+' msat</title><rect x="'+x+'" y="'+(H-hg)+'" width="'+(bw-4)+'" height="'+hg+'" fill="var(--gv)"/><rect x="'+x+'" y="'+(H-hg-hs)+'" width="'+(bw-4)+'" height="'+hs+'" fill="var(--st)"/><rect x="'+x+'" y="'+(H-hg-hs-hd)+'" width="'+(bw-4)+'" height="'+hd+'" fill="var(--gd)"/></g>';
-if(i%5===0)s+='<text x="'+x+'" y="'+(H+16)+'" fill="var(--dim)" font-size="11">'+d.day.slice(5)+'</text>'});el('chart').innerHTML=s+'</svg>'}
+if(i%5===0)s+='<text x="'+x+'" y="'+(H+16)+'" fill="var(--dim)" font-size="11">'+d.day.slice(5)+'</text>'});el('chart').innerHTML=s+'</svg>';
+// THE DAY UNDER THE POINTER OR A TAP (kanban #125): its date and its three amounts, in a box beside it - the SVG title stays.
+const svg=el('chart').querySelector('svg'),tip=el('tip'),box=el('chartbox');const show=(ev)=>{const r=svg.getBoundingClientRect();const vx=(ev.clientX-r.left)*W/r.width;const i=Math.floor((vx-P)/bw);
+if(i<0||i>=days.length){tip.style.display='none';return}const d=days[i],g=Number(d.gameVerifyMsat),st=Number(d.settlementMsat),gd=Number(d.guardianMsat);
+tip.textContent=d.day+': game/verify '+g+' msat · settlement '+st+' msat · guardian '+gd+' msat';tip.style.display='block';const b=box.getBoundingClientRect();
+tip.style.left=Math.max(4,Math.min(ev.clientX-b.left+10,b.width-tip.offsetWidth-4))+'px';tip.style.top=Math.max(4,ev.clientY-b.top-34)+'px'};
+svg.addEventListener('pointermove',show);svg.addEventListener('pointerdown',show);svg.addEventListener('pointerleave',()=>{tip.style.display='none'})}
 function tables(){el('rounds').innerHTML='<tr><th>Round</th><th>Start</th><th>Kind</th><th class="n">Entries</th><th class="n">Checked</th><th class="n">Game/verify</th><th class="n">Settlement</th><th class="n">Guardian</th><th>Settlement</th></tr>'+D.rounds.map(r=>'<tr class="rr" data-r="'+r.id+'"><td>'+(open.has(r.id)?'&#9662; ':'&#9656; ')+r.id.slice(0,12)+'</td><td>'+t(r.startMs)+'</td><td>'+(r.free?'free':sat(r.stakeMsat))+'</td><td class="n">'+r.entries+'</td><td class="n">'+r.checked+'</td><td class="n">'+sat(r.gameVerifyMsat)+'</td><td class="n">'+sat(r.settlementMsat)+'</td><td class="n">'+sat(r.guardianMsat)+'</td><td class="'+(r.earned?'ok':'')+'">'+(r.settlement?r.settlement.state:'-')+'</td></tr>'+(open.has(r.id)?'<tr class="pl"><td colspan="9">'+playersOf(r.id)+'</td></tr>':'')).join('');
 el('rounds').onclick=(ev)=>{const tr=ev.target.closest('tr.rr');if(!tr)return;const id=tr.dataset.r;if(open.has(id))open.delete(id);else{open.add(id);if(!players.has(id)||players.get(id).error)readPlayers(id)}tables()};
 el('sstate').textContent=Object.entries(D.settlementsByState).map(([k,v])=>k+' '+v).join(' · ')||'none yet';
