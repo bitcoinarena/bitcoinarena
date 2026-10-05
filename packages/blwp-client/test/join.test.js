@@ -503,3 +503,49 @@ test('a page refuses to deal without a curve, a committee, or a player', async (
   await assert.rejects(() => stakeFor(null, { signerNodes, curve: feldmanGroup, random: rand, playerPubkey: b32(5) }),
     /that is not one/);
 });
+
+// THE FEE LOCK AN ENTRY NAMES (kanban #187 item 4, plan comment 298, Go 2026-10-05): join.js feeLockOf, through entryFor. A
+// stake lock's fee lock must hand over its F (32 bytes, not zeros), be locked to H(F), and hold exactly the entry's fee -
+// else the entry is not built (a fee lock the signer node would refuse, or a fee nobody can claim). A good one is named in
+// the entry by its F and outpoint; no fee lock writes zeros.
+test('feeLockOf through entryFor: no F, not H(F), the wrong amount refused by name; a good fee lock named; none writes zeros', async () => {
+  const { federationStakeFor } = await import('../src/client.js');
+  const { entryFor: build } = await import('../src/join.js');
+  const { entryFeeMsat } = await import('../../protocol/src/fee.js');
+  const { TEST_FEDERATION_ID } = await import('../../protocol/src/test-federation.js');
+  const { toHex: hx, fromHex: fh, sha256 } = await import('../../protocol/src/hash.js');
+  const { coreHashHex } = await import('../../core/tools/hash-core.js');
+  const { feldmanGroup } = await import('../../blwp-node/src/curve.js');
+  const round = { id: new Uint8Array(32).fill(7), stakeMsat: 1000000n, simCoreHash: fh(coreHashHex()), federationId: TEST_FEDERATION_ID };
+  const NET = round.stakeMsat - entryFeeMsat(round.stakeMsat);
+  const fetcher = async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ paymentHash: 'aa'.repeat(32), amountMsat: String(NET), request: 'lnbcrt-fed' }) });
+  const stake = await federationStakeFor(round, { nodes: ['http://a'], fetcher });
+  const F = new Uint8Array(32).fill(0x4f);
+  const feeLock = (more = {}) => ({ preimage: F, outpoint: { txid: new Uint8Array(32).fill(0xfe), outIdx: 1n },
+    fields: { paymentImage: { kind: 'hash', bytes: sha256(F) }, amountMsat: entryFeeMsat(round.stakeMsat) }, ...more });
+  const entry = (fee) => build(round, { seed: new Uint8Array(32).fill(5), curve: feldmanGroup, random: (n) => new Uint8Array(n).fill(9), stake,
+    claimKey: { ok: true, ref: new Uint8Array(32).fill(0x9a) },
+    stakeLock: { outpoint: { txid: new Uint8Array(32).fill(0xd8), outIdx: 0 }, fields: { paymentImage: { kind: 'point', bytes: Uint8Array.of(2, ...new Uint8Array(32).fill(0x6c)) } },
+      ...(fee === undefined ? {} : { feeLock: fee }) } });
+  // no F
+  for (const preimage of [undefined, new Uint8Array(31).fill(1), new Uint8Array(32), 'not bytes'])
+    assert.throws(() => entry(feeLock({ preimage })), /^Error: that fee lock hands over no F, so it could never be claimed$/, String(preimage && preimage.length));
+  // not H(F)
+  const other = new Uint8Array(32).fill(0x50);
+  for (const fields of [{ paymentImage: { kind: 'hash', bytes: sha256(other) }, amountMsat: entryFeeMsat(round.stakeMsat) },
+    { paymentImage: { kind: 'point', bytes: sha256(F) }, amountMsat: entryFeeMsat(round.stakeMsat) }, { amountMsat: entryFeeMsat(round.stakeMsat) }, undefined])
+    assert.throws(() => entry(feeLock({ fields })), /^Error: that fee lock is not locked to H\(F\) of the F it hands over$/);
+  // the wrong amount
+  const want = entryFeeMsat(round.stakeMsat);
+  for (const amountMsat of [want - 1n, want + 1n, 0n])
+    assert.throws(() => entry(feeLock({ fields: { paymentImage: { kind: 'hash', bytes: sha256(F) }, amountMsat } })),
+      new RegExp(`^Error: that fee lock holds ${amountMsat} msat and the entry's fee is ${want}$`));
+  // good: named in the entry by its F and its outpoint
+  const good = entry(feeLock());
+  assert.equal(hx(good.feePreimage), hx(F));
+  assert.deepEqual([hx(good.feeLockOutpoint.txid), BigInt(good.feeLockOutpoint.outIdx)], ['fe'.repeat(32), 1n]);
+  // none: zeros
+  const none = entry(undefined);
+  assert.equal(hx(none.feePreimage), '00'.repeat(32));
+  assert.equal(hx(none.feeLockOutpoint.txid), '00'.repeat(32));
+});
