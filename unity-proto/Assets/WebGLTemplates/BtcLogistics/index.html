@@ -2226,7 +2226,7 @@
             // when this tab joined it already, else the one chosen in Settings (stake x its %) - so "1 round" here is the 1
             // round PLAY asks (measured 2026-10-01: without the donation Settings asked 102.4 sat where a round takes 100.31;
             // kanban #187: with Settings alone, a round kept at 2% under Settings 3% was quoted 1% of its stake too much)
-            const donationMsat = BLWPCLIENT.depositDonationMsat({ roundIdHex: ctx.roundIdHex, stakeMsat: ctx.roundStake,
+            const donationMsat = BLWPCLIENT.depositDonationMsat({ roundIdHex: ctx.roundIdHex, stake: ctx.roundStake,
               settingsBps: donationBps(), storage: window.sessionStorage });
             const offer = await BLWPCLIENT.settingsDepositOffer({ round: ctx.round, invite: ctx.invite, seed: ctx.seed, LockClient: wasm.LockClient,
               storage: vault(), gateways: ctx.gateways, donationMsat,
