@@ -1356,9 +1356,16 @@ export class Verifier {
         }
         // A RE-RUN IS AFTER THE CLOSE TOO: a run LIVE at its last receipted
         // mark is the same FAILED the close signed (§15, ruled 2026-09-12).
-        const scored = canonical && answer.outcome === null
+        let scored = canonical && answer.outcome === null
           ? await this.#atLastMark(roundIdBytes, entryIdBytes, found.entry, answer, canonical, { roundRandomness: beacon.hash })
           : answer;
+        // §13B AT ANY TICK HOLDS IN A RE-RUN TOO (kanban #25 audit): an entry this seat holds a proven fork of is re-run as
+        // FORFEIT, score 0 - never the replayed run, or an objection against its FORFEIT would hand the equivocator its run back
+        if (canonical) {
+          if (!this.round.provenFork(roundIdBytes, entryIdBytes)) await this.#equivocationProven(roundIdBytes, entryIdBytes);
+          const fork = this.round.provenFork(roundIdBytes, entryIdBytes);
+          if (fork) scored = { ok: true, outcome: 'FORFEIT', score: 0, coreHash: this.#coreOf(roundIdBytes)?.hash };
+        }
         const built = canonical && resultFrom({
           answer: scored, contract, entry: found.entry, transcript: canonical, entryId: entryIdBytes,
           nodePubkey: this.round.pubkey, stopped: true,

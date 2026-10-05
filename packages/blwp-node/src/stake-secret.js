@@ -124,11 +124,11 @@ export class StakeSecrets {
     // proven, says FORFEIT, and a FORFEIT's lock is claimed into the settlement (23.2).
     // Measured before: "this node has replayed nothing for that run" at both
     // signer nodes, so the hold could never settle and expired to the player.
-    // A PROOF OF TWO FIRST MARKS HELD HERE RELEASES FIRST - even over a result
+    // A PROOF OF TWO FIRST MARKS - OR OF A FORK AT ANY LATER TICK (§13B; kanban #25) - HELD HERE RELEASES FIRST - even over a result
     // this signer node signed before it held the proof: §13B forfeits the entry whatever
     // run was signed. Measured before on 5 of 7: signer nodes that had signed FAILED
     // (never final) refused, too few shares opened, the hold expired to the player.
-    if (typeof this.round.provenTwoFirstMarks === 'function' && this.round.provenTwoFirstMarks(roundIdBytes, entryIdBytes))
+    if (typeof this.round.provenEquivocation === 'function' && this.round.provenEquivocation(roundIdBytes, entryIdBytes))
       return { ok: true, outcome: 'FORFEIT', proven: true };
     const nq = !held.length && typeof this.round.noQuorum === 'function' ? this.round.noQuorum(entryIdBytes) : null;
     if (nq && nq.outcome === 'FORFEIT') return { ok: true, outcome: 'FORFEIT', noQuorum: true };
@@ -138,8 +138,8 @@ export class StakeSecrets {
     // Released while the signer nodes are up, so a signer node that goes down later cannot
     // hand the stake back by staying down. Measured before: A held the proof,
     // B went down, "1 of 2 shares" - the hold stayed in flight to expire back.
-    if (!held.length && typeof this.round.provenTwoFirstMarks === 'function'
-      && this.round.provenTwoFirstMarks(roundIdBytes, entryIdBytes)) return { ok: true, outcome: 'FORFEIT', proven: true };
+    if (!held.length && typeof this.round.provenEquivocation === 'function'
+      && this.round.provenEquivocation(roundIdBytes, entryIdBytes)) return { ok: true, outcome: 'FORFEIT', proven: true };
     if (!held.length) return { ok: false, why: 'this node has replayed nothing for that run' };
 
     // FINAL, NOT MERELY AGREED (M3.3-32): the threshold makes a run
@@ -242,7 +242,7 @@ export class StakeSecrets {
       try {
         // `proof=1`: this signer node holds the proof of two first marks - the asked signer node
         // pulls and checks it itself before it refuses (never on this word alone).
-        const proven = typeof this.round.provenTwoFirstMarks === 'function' && this.round.provenTwoFirstMarks(roundId, entryId);
+        const proven = typeof this.round.provenEquivocation === 'function' && this.round.provenEquivocation(roundId, entryId);
         const url = `${peer}/share?round=${toHex(roundId)}&entry=${toHex(entryId)}`
           + `&signer node=${toHex(this.round.pubkey)}${proven ? '&proof=1' : ''}`;
         const got = await this.fetch(url);

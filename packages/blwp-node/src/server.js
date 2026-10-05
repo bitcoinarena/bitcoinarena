@@ -437,8 +437,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (gathering.has(key)) return;
     gathering.add(key);
     (async () => {
-      if (pull && !round.provenTwoFirstMarks(rid, eid)) await verifier.pullFirstMarkProof(rid, eid);
-      if (!round.provenTwoFirstMarks(rid, eid)) return;
+      // two first marks, or a fork at any later tick (§13B; kanban #25)
+      if (pull && !round.provenEquivocation(rid, eid)) await verifier.pullFirstMarkProof(rid, eid);
+      if (!round.provenEquivocation(rid, eid)) return;
       await spreadProof(rid, eid);
     })().catch((e) => console.error(`[shares] ${e.message}`)).finally(() => gathering.delete(key));
   }
@@ -3014,7 +3015,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // asked, never gathered; with the two signer nodes that had gathered down, the
         // four up reached 4 of 5 shares and the hold went back to the player
         // (98000 msat). In the background: the asker is answered now.
-        if (round.provenTwoFirstMarks(ask.roundId, ask.entryId)) gatherOnProof(ask.roundId, ask.entryId);
+        if (round.provenEquivocation(ask.roundId, ask.entryId)) gatherOnProof(ask.roundId, ask.entryId);
         if (!said.ok) return text(res, 409, said.why);
         res.writeHead(200, {
           'content-type': 'application/octet-stream',
@@ -3688,6 +3689,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!round.get(rid)) return text(res, 404, 'no such round');
         const entryRow = round.entriesOf(rid).find((e) => toHex(e.entryId) === toHex(eid));
         if (!entryRow) return text(res, 404, 'no such entry in that round');
+        // AN ENTRY THE PLAYER EQUIVOCATED IN FORFEITS WHATEVER A REPLAY SAYS (§13B at any tick; kanban #25 audit): its FORFEIT
+        // is signed over the canonical transcript, which a replay of the player's own inputs would "contradict" - so a seat
+        // holding the proof of two chains takes no objection against that entry; the proof, not a replay, decided it.
+        const forkHere = round.provenFork(rid, eid);
+        if (forkHere) return text(res, 422, `that entry forfeited by §13B: this seat holds the proof that the player signed two chains (at tick ${forkHere.tick}), which no replay contradicts`);
         // THE RUN IT IS FILED AGAINST: the agreed re-run's while that one stands, else the run the committee signed.
         let standing = null;
         try { standing = resultFinality(round, rid, eid); } catch { standing = null; }

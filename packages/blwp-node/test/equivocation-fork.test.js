@@ -103,3 +103,101 @@ test('(c) with nobody qualified, the proven equivocator\'s lock is claimed like 
     assert.equal(sum(rest), net * 25n / 100n, `the donation set's 25% is not ${net * 25n / 100n}: ${rest}`);
   } finally { await w.close(); }
 });
+
+// THE #25 AUDIT. (d) THE EQUIVOCATOR'S OBJECTION: the FORFEIT is signed over the canonical transcript, whose inputs a replay
+// would "contradict" - a stranger's check of the player's own bundle holds against FORFEIT/0 - so the seat holding the proof
+// refuses it at the door by §13B, before any replay, and stores nothing; the entry stays FORFEIT.
+test('(d) the equivocator objecting to its own FORFEIT with its canonical transcript is refused at the door by §13B, and the FORFEIT stands', async () => {
+  const { buildObjectionBundle } = await import('../tools/objection-bundle.mjs');
+  const { checkObjectionAt } = await import('../tools/check-objection.mjs');
+  const { runId } = await import('../src/verdict.js');
+  const w = await lockRound();
+  try {
+    const won = await lockAndPlay(w, WINNER, { address: true });
+    const cheat = await lockAndPlay(w, CHEAT, { fork: 'tick' });
+    await closeRound(w, { window: false });
+    const forfeitBoth = () => [w.a, w.b].every((d) => { const f = resultFinality(d.round, w.rid, cheat.eid); return f.state === 'PROVISIONALLY_FINAL'; });
+    for (const stop = Date.now() + 30000; Date.now() < stop && !forfeitBoth(); await wait(100));
+    const signed = decodePlayerResult(splitSignedResult(w.a.round.results(w.rid, cheat.eid)[0].bytes).body);
+    const base = `http://127.0.0.1:${w.b.port}`;
+    // what the replay of the cheat's own inputs gives - read off a first bundle's refusal - and the bundle claiming it
+    const probe = await buildObjectionBundle({ base, roundId: w.rid, entryId: cheat.eid, signedRunId: runId(signed), playerPubkey: signed.playerPubkey, claimed: { outcome: 'DELIVERED', score: 1 } });
+    const probed = await checkObjectionAt({ base, roundId: w.rid, entryId: cheat.eid, bundle: probe.bundle });
+    const bundle = (await buildObjectionBundle({ base, roundId: w.rid, entryId: cheat.eid, signedRunId: runId(signed), playerPubkey: signed.playerPubkey, claimed: probed.replayed })).bundle;
+    const stranger = await checkObjectionAt({ base, roundId: w.rid, entryId: cheat.eid, bundle });
+    const atSeats = [];
+    for (const d of [w.a, w.b]) {
+      const r = await fetch(`http://127.0.0.1:${d.port}/objection?round=${toHex(w.rid)}&entry=${toHex(cheat.eid)}`, { method: 'POST', body: bundle });
+      atSeats.push([r.status, (await r.text()).trim()]);
+    }
+    const after = [w.a, w.b].map((d) => ({ objected: d.round.objected(w.rid, cheat.eid), state: resultFinality(d.round, w.rid, cheat.eid).state, results: resultsAt(d, w, cheat.eid) }));
+    console.log('  FACTS (the equivocator objects):', JSON.stringify({ signed: `${signed.outcome}/${signed.score}`, replayed: probed.replayed,
+      strangerAlone: { holds: stranger.holds, why: stranger.why }, atSeats, after }));
+    assert.equal(stranger.holds, true, 'the checker alone did not find the FORFEIT contradicted: not the case the test names');
+    for (const [status, text] of atSeats) {
+      assert.equal(status, 422);
+      assert.match(text, /^that entry forfeited by §13B: this seat holds the proof that the player signed two chains \(at tick 1000\), which no replay contradicts$/);
+    }
+    for (const x of after) assert.deepEqual(x, { objected: false, state: 'PROVISIONALLY_FINAL', results: ['FORFEIT/0'] });
+    assert.ok(won);
+  } finally { await w.close(); }
+});
+
+// (e) A FORK HELD AT ONE SEAT ONLY: both marks reached seat A (the second refused there as an equivocation, and kept);
+// seat B holds X alone - and pulls the pair from A's /equivocation at its close. FORFEIT at both.
+test('(e) a fork held at one seat only is pulled by the other: FORFEIT/0 at both, FINAL', async () => {
+  const w = await lockRound();
+  try {
+    const won = await lockAndPlay(w, WINNER, { address: true });
+    const cheat = await lockAndPlay(w, CHEAT, { fork: 'one-seat' });
+    const before = await Promise.all([w.a, w.b].map((d) => pairsAt(d, w, cheat.eid)));
+    await closeRound(w);
+    const got = await untilSettled(w, 60000);
+    const after = await Promise.all([w.a, w.b].map((d) => pairsAt(d, w, cheat.eid)));
+    const facts = { refusedAtA: cheat.forked.refusedAtFirst, pairsBefore: before.map((p) => p.pairs), pairsAfter: after.map((p) => p.pairs),
+      cheat: [w.a, w.b].map((d) => ({ results: resultsAt(d, w, cheat.eid), state: resultFinality(d.round, w.rid, cheat.eid).state })), settled: got.state };
+    console.log('  FACTS (fork at one seat):', JSON.stringify(facts));
+    assert.match(facts.refusedAtA, /equivocation at tick 1000/);
+    assert.deepEqual(facts.pairsBefore, [1, 0], 'the pair was not at seat A alone before the close');
+    for (const s of facts.cheat) assert.deepEqual(s, { results: ['FORFEIT/0'], state: 'FINAL' });
+    assert.ok(facts.pairsAfter[1] >= 1, 'seat B does not serve the pair it pulled');
+    assert.equal(got.state, 'ACCEPTED', got.why);
+    assert.ok(won);
+  } finally { await w.close(); }
+});
+
+// (f) THE SPLIT: a seat signs the run without the proof (seat B's FORFEIT replaced by a run it signs) - no run at 2 of 2 in
+// the window - and §13C decides FORFEIT at the deadline, the fork counting as proven equivocation; the lock claimed.
+test('(f) a seat signing the run without the proof makes a split: §13C decides FORFEIT at the deadline on the fork, and the lock is claimed', async () => {
+  const { schnorr } = await import('@noble/curves/secp256k1.js');
+  const { encodePlayerResult, joinSignedResult, resultId } = await import('../../protocol/src/result.js');
+  const { windowsOf } = await import('../../protocol/src/window.js');
+  const { skipTo } = await import('./test-clock.js');
+  const w = await lockRound();
+  try {
+    const won = await lockAndPlay(w, WINNER, { address: true });
+    const cheat = await lockAndPlay(w, CHEAT, { fork: 'tick' });
+    await closeRound(w, { window: false });
+    for (const stop = Date.now() + 30000; Date.now() < stop && !([w.a, w.b].every((d) => d.round.results(w.rid, cheat.eid).length === 2)); await wait(100));
+    const forfeitB = decodePlayerResult(splitSignedResult(w.b.round.results(w.rid, cheat.eid).find((r) => toHex(r.nodePubkey) === toHex(w.b.round.pubkey)).bytes).body);
+    const run = { ...forfeitB, outcome: 'FAILED', score: 0 };
+    const bytes = joinSignedResult(encodePlayerResult(run), schnorr.sign(resultId(run), w.b.round.identity.secret));
+    for (const d of [w.a, w.b]) {
+      d.round.db.prepare('DELETE FROM results WHERE round_id = ? AND entry_id = ? AND node_pubkey = ?').run(w.rid, cheat.eid, w.b.round.pubkey);
+      d.round.putResult(w.rid, cheat.eid, w.b.round.pubkey, resultId(run), bytes);
+    }
+    const ready = () => [w.a, w.b].every((d) => { const f = resultFinality(d.round, w.rid, won.eid); return f.state === 'PROVISIONALLY_FINAL' && f.published === true; });
+    for (const stop = Date.now() + 30000; Date.now() < stop && !ready(); await wait(100));
+    skipTo(Number(windowsOf(w.c).finalAfterMs) + 50);
+    const got = await untilSettled(w, 60000);
+    const at = [w.a, w.b].map((d) => resultFinality(d.round, w.rid, cheat.eid));
+    const claims = (w.port.settlements[0] ? w.port.settlements[0].claims : []).map((c) => key(c.outpoint) === key(cheat.outpoint) ? 'CHEAT STAKE' : 'other');
+    console.log('  FACTS (split on a fork):', JSON.stringify({ results: [w.a, w.b].map((d) => resultsAt(d, w, cheat.eid)), at: at.map((f) => [f.state, f.why]), settled: got.state, claims }));
+    for (const f of at) {
+      assert.equal(f.state, 'FORFEIT', f.why);
+      assert.match(f.why, /1 of 2 matching results held in time - .*the player signed two chains/);
+    }
+    assert.equal(got.state, 'ACCEPTED', got.why);
+    assert.ok(claims.includes('CHEAT STAKE'), 'the equivocator\'s lock was not claimed');
+  } finally { await w.close(); }
+});
