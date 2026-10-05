@@ -418,7 +418,19 @@ export async function stakeSeenBy({ entryId, signerNodes, nodes, contract, fetch
 }
 
 /** The hold states a stake does not leave. */
-export const SETTLEMENT_OVER = ['SETTLED', 'CANCELLED', 'EXPIRED', 'FREE', 'none'];
+
+/**
+ * IS THIS RUN DECIDED AT THE SIGNER NODES THAT ANSWERED? (kanban #147, rule (a), the owner 2026-10-05): every answer FINAL or a
+ * decided outcome (VOID, FORFEIT), or every answer says the stake is FREE. What ends the settlement watch now that no node
+ * answers a hold (§23.6) - measured before, the watch ended on `hold` only and so never ended, polling every 5 s until the tab
+ * closed.
+ */
+const DECIDED = ['FINAL', 'VOID', 'FORFEIT'];
+export function settlementDecided(s) {
+  const said = s && Array.isArray(s.per) ? s.per.filter((p) => p && p.key && ('finality' in p || 'stake' in p)) : [];
+  if (!s || !s.answered || !said.length) return false;
+  return said.every((p) => p.stake === 'FREE') || said.every((p) => DECIDED.includes(p.finality));
+}
 
 /**
  * WHERE THIS STAKE STANDS, asked of every settlement signer node (MF item 14).
