@@ -86,6 +86,11 @@ export function evenGroupSecret(secret, curve) {
 export function signShare340({ id, share, groupPublicKey, nonces, message, commitments, curve }) {
   if (!hasEvenY(groupPublicKey))
     throw new Error('that group key has odd y: normalise the secret when it is dealt, not here');
+  // A NONCE OF ZERO, OR NONE, IS REFUSED: measured before, zero nonces signed, and z = lambda*s*c hands the signing share to
+  // whoever reads z; missing ones threw a TypeError.
+  const okNonce = (n) => typeof n === 'bigint' && n > 0n && n < FIELD;
+  if (!nonces || !okNonce(nonces.hiding) || !okNonce(nonces.binding))
+    throw new Error('that signer has no usable nonce pair: each nonce is a non-zero scalar, or z gives the signing share away');
   const factors = bindingFactors({ groupPublicKey, commitments, message, context: TR_CONTEXT });
   const mine = factors.find((f) => String(f.id) === String(id));
   if (!mine) throw new Error(`participant ${id} did not commit to this signature`);
@@ -126,12 +131,20 @@ export function aggregate340({ commitments, message, groupPublicKey, shares, cur
  * fail somewhere else.
  */
 export function enoughToSign({ commitments, needed }) {
+  // A THRESHOLD IS NAMED AND IS A THRESHOLD: measured before, no threshold passed an empty set ("0 of undefined signers").
+  if (!Number.isInteger(needed) || needed < 2)
+    return { ok: false, why: `${needed} is not a threshold: a signing set is counted against a threshold of two or more` };
   if (!Array.isArray(commitments) || commitments.length < needed)
     return {
       ok: false,
       why: `${commitments ? commitments.length : 0} of ${needed} signers: a pool nobody can move `
         + 'stays where it is',
     };
+  // AND EVERY PARTICIPANT IS A POSITIVE INTEGER: x = 0 is the secret itself, and no signer holds that share. Measured
+  // before: a set naming participant 0 counted as "5 of 5 signers".
+  const odd = commitments.find((c) => !c || !Number.isInteger(c.id) || c.id < 1);
+  if (odd !== undefined)
+    return { ok: false, why: `participant ${odd && odd.id} is not a signer: participants are 1, 2, 3, ...` };
   const seen = new Set(commitments.map((c) => String(c.id)));
   if (seen.size !== commitments.length)
     return { ok: false, why: 'a signing set naming one participant twice is not a set' };
@@ -152,6 +165,8 @@ export const keyName = (point) => toHex(xOnly(point)).slice(0, 16);
  */
 export function verifyShare340({ id, share, publicShare, groupPublicKey, message, commitments, curve }) {
   if (typeof share !== 'bigint' || share <= 0n || share >= FIELD) return false;
+  // NO COMMITMENT LIST, NO YES: measured before, a missing list threw "commitments is not iterable".
+  if (!Array.isArray(commitments)) return false;
   const factors = bindingFactors({ groupPublicKey, commitments, message, context: TR_CONTEXT });
   const mine = factors.find((f) => String(f.id) === String(id));
   const own = commitments.find((c) => String(c.id) === String(id));
