@@ -204,7 +204,7 @@ export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, ad
     const m1 = { roundId: w.rid, entryId: eid, tick: 60, stateHash: hashOf(s60), inputChainHash: batchId(b1), previousHash: NO_PREVIOUS,
       sessionPubkey: ed25519.getPublicKey(session) };
     const x = { ...mark, inputChainHash: batchId(b2), previousHash: checkpointId(m1) };
-    const y = fork === 'parent' ? { ...x, tick: who.ticks - 1, stateHash: sha256(x.stateHash) } : { ...x, stateHash: sha256(x.stateHash) };
+    const y = fork === 'parent' ? { ...x, tick: who.ticks - 1, stateHash: sha256(x.stateHash) } : { ...x, stateHash: sha256(x.stateHash) };   // 'tick', 'one-seat'
     const nodes = w.nodes || [w.a, w.b];
     forked = { x: sign(x), y: sign(y), tick: Math.min(x.tick, y.tick), mode: fork };
     const said = (a) => (a instanceof Uint8Array ? `${a.length} bytes` : String(a).slice(0, 120));
@@ -213,7 +213,9 @@ export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, ad
       answers.push(said(await say(d.port, encodeInputBatch(b1))));
       answers.push(said(await say(d.port, sign(m1))));
       answers.push(said(await say(d.port, encodeInputBatch(b2))));
-      answers.push(said(await say(d.port, i === 0 ? forked.x : forked.y)));
+      // `fork: 'one-seat'`: both marks to the first seat (the second refused there as an equivocation, and kept), X alone to the rest
+      answers.push(said(await say(d.port, fork === 'one-seat' ? forked.x : (i === 0 ? forked.x : forked.y))));
+      if (fork === 'one-seat' && i === 0) forked.refusedAtFirst = said(await say(d.port, forked.y));
       // a later seat may already hold the first batch, forwarded by the first (its answer is then 0 new ticks)
       assert.deepEqual([i > 0 && answers[0] === '0' ? '60' : answers[0], ...answers.slice(1)],
         ['60', `${SIGNED_RECEIPT_BYTES} bytes`, String(who.ticks - 60), `${SIGNED_RECEIPT_BYTES} bytes`],
