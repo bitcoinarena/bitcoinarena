@@ -20,6 +20,7 @@ import { seriesRoundCheck } from '../../protocol/src/series.js';
 import { federationGatewayCount } from '../../protocol/src/gateways.js';
 import { createServer } from 'node:http';
 import { randomBytes, createPublicKey, verify as ecdsaVerify } from 'node:crypto';
+import { displayNameFromKey } from '../../protocol/src/display-name.js';
 import { donationsReadMessage, DONATIONS_READ_WINDOW_MS, SECP256K1_SPKI_PREFIX } from '../../protocol/src/donations-read.js';
 import { WebSocketServer } from 'ws';
 import { connect as netConnect } from 'node:net';
@@ -2507,7 +2508,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const c = decodeRoundContract(new Uint8Array(held.contract));
         const names = new Map();
         for (const n of round.lobbyNames(rid)) {
-          try { const r = decodeLobbyName(n.record); names.set(toHex(r.playerPubkey), r.name); } catch { /* not a record */ }
+          // THE NAME THE LOBBY SHOWED (kanban #125): the player's own, else the one generated from the record's identity key -
+          // a record's name is empty when the player kept the generated one, and the Player column read 8 hex of the key.
+          try { const r = decodeLobbyName(n.record); names.set(toHex(r.playerPubkey), r.name || displayNameFromKey(r.identityPubkey)); } catch { /* not a record */ }
         }
         // WHAT EACH PLAYER WON OR LOST, as this node's settlement says (the owner 2026-10-03 22:25, the dashboard's rounds): a
         // qualifier gets its stake back and its payout, less the node fee and its donation; a loser or a walk-away loses
@@ -2529,7 +2532,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const best = [...tally.values()].sort((a, b) => b.signers - a.signers)[0] || null;
           const won = round.winnings(entryId);
           const player = toHex(entry.playerPubkey);
-          return { entry: toHex(entryId), player, name: names.get(player) || '', stakeMsat: String(entry.stakeMsat),
+          return { entry: toHex(entryId), player, name: names.get(player) || `${displayNameFromKey(entry.playerPubkey)} (no lobby name)`, stakeMsat: String(entry.stakeMsat),
             outcome: best ? best.outcome : null, score: best ? best.score : null, signedBy: best ? best.signers : 0,
             wonMsat: won ? String(won.owedMsat) : '0', winningsState: won ? won.state : (entry.stakeMsat === 0n ? 'FREE' : 'NONE'),
             ...playerBalance({ entry, best, won, settled, nobodyWon, minScore: c.minScore }) };
