@@ -19118,13 +19118,14 @@ function lobbyOnePerKind(rows, nowMs = Date.now(), { paidSeriesOnly = false, lea
  * THE ROWS AS THEY ARE READ (kanban #121, the owner 2026-10-05: "That row is the round it can still enter. It is not the round
  * after next."): one per kind, paid rows of a series only, no lead whatever the wallet holds, picked at `nowMs` - the clock of
  * the read, not of the last paint. Measured on 0.0.2740 with a funded seat: the last paint's pick left the closed round as
- * the row for ~1 s after each entry close. A join held on a listed round keeps that round WHILE ITS ENTRY IS OPEN: measured
- * on 0.0.2741, a join left "joined" on a closed round (a run's end, then "exit game") kept it as the row ("closes in 0:00",
- * not joinable) for as long as the nodes listed it.
+ * the row for ~1 s after each entry close. A join on a listed round keeps that round while the join is still going (`going`:
+ * PLAY just before the close is still joining after it, and the seats take its entry until start + 45 s), and otherwise
+ * only WHILE ITS ENTRY IS OPEN: measured on 0.0.2741, a join left "joined" on a closed round (a run's end, then "exit game")
+ * kept it as the row ("closes in 0:00", not joinable) for as long as the nodes listed it.
  */
-function lobbyRowsAt(rows, nowMs = Date.now(), joinedId = null) {
+function lobbyRowsAt(rows, nowMs = Date.now(), joinedId = null, { going = false } = {}) {
   const held = (rows || []).find((r) => r.id === joinedId);
-  const keep = held && Number(held.entryCloseMs) > Number(nowMs) ? joinedId : null;
+  const keep = held && (going || Number(held.entryCloseMs) > Number(nowMs)) ? joinedId : null;
   return lobbyKeepJoined(lobbyOnePerKind(rows || [], nowMs, { paidSeriesOnly: true }), rows, keep);
 }
 

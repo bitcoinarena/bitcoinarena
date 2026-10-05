@@ -39,6 +39,16 @@ test('a join held on a round whose entry has closed does not keep it: the row is
   assert.deepEqual(paid(lobbyRowsAt(rows, NOW + 21900, 'X')), ['X'], 'while its entry is open the held round stays the row');
 });
 
+// BUT A JOIN STILL GOING KEEPS ITS ROUND past the page's entry close (the owner 2026-10-02: "once a round has been selected with
+// play the highlighting may no longer change"): PLAY a few seconds before the close is still "joining" when it passes, and
+// the seats take its entry until start + 45 s. Only a finished join ("joined", what a run's end and "exit game" leave) is
+// dropped once its round's entry has closed.
+test('a join still going keeps its round past the entry close; a finished one does not', () => {
+  const past = NOW + 22000 + 3000;
+  assert.deepEqual(paid(lobbyRowsAt(rows, past, 'X', { going: true })), ['X']);
+  assert.deepEqual(paid(lobbyRowsAt(rows, past, 'X', { going: false })), ['Y']);
+});
+
 test('at every instant of the series the row read is the soonest round whose entry is open', () => {
   for (let t = 0; t < 250000; t += 100) {
     const now = NOW + t;
@@ -55,6 +65,6 @@ test('the page picks the paid row when Unity reads it, with no lead', () => {
   const view = page.slice(page.indexOf('window.BLWP_LOBBY_VIEW = () =>'), page.indexOf('refused: refused.map(String)', page.indexOf('window.BLWP_LOBBY_VIEW = () =>')));
   assert.ok(view.length > 0, 'BLWP_LOBBY_VIEW not found');
   assert.match(view, /rows: lobbyNow\(\)/, 'the view does not pick its rows when read');
-  assert.match(page, /const lobbyNow = \(\) => \(window\.BLWP_LOBBY = BLWPCLIENT\.lobbyRowsAt\(window\.BLWP_LOBBY_ROWS \|\| \[\], Date\.now\(\), goingRound\(\)\)/);
+  assert.match(page, /const lobbyNow = \(\) => \(window\.BLWP_LOBBY = BLWPCLIENT\.lobbyRowsAt\(window\.BLWP_LOBBY_ROWS \|\| \[\], Date\.now\(\), goingRound\(\), \{ going: joinGoing\(\) \}\)/);
   assert.doesNotMatch(page, /leadMsFor|FUNDED_JOIN_LEAD_MS|SERIES_JOIN_LEAD_MS/, 'the page still names a lead');
 });

@@ -3285,11 +3285,13 @@
       // may no longer change when the other round is newer"): while a join is going or held, its round is its kind's row.
       const goingRound = () => (window.BLWP_JOIN && !window.BLWP_JOIN.cancelled && (window.BLWP_JOIN.state === 'joining' || window.BLWP_JOIN.state === 'joined')
         ? window.BLWP_JOIN.round : null);
+      // a join still going (not yet entered, not refused) keeps its round past the page's entry close; a finished one does not
+      const joinGoing = () => !!(window.BLWP_JOIN && !window.BLWP_JOIN.cancelled && window.BLWP_JOIN.state === 'joining');
       // THE ROW IS PICKED WHEN IT IS READ (kanban #121, the owner 2026-10-05: "That row is the round it can still enter. It is not
       // the round after next."): the soonest round whose entry is open, funded or not, at the clock of the read - Unity's every
       // 0.75 s, PLAY's, the paint's. Measured on 0.0.2740 with a funded seat: the last paint's pick stayed the row ~1 s past
       // each entry close ("closes in 0:00", not joinable).
-      const lobbyNow = () => (window.BLWP_LOBBY = BLWPCLIENT.lobbyRowsAt(window.BLWP_LOBBY_ROWS || [], Date.now(), goingRound()).map((r) => ({ id: r.id, phase: r.phase, free: r.free, wallet: r.wallet,
+      const lobbyNow = () => (window.BLWP_LOBBY = BLWPCLIENT.lobbyRowsAt(window.BLWP_LOBBY_ROWS || [], Date.now(), goingRound(), { going: joinGoing() }).map((r) => ({ id: r.id, phase: r.phase, free: r.free, wallet: r.wallet,
         signerNodesAgree: r.signerNodesAgree, needed: r.needed, joinable: r.joinable, stakeSats: BLWPCLIENT.lobbyStakeSats(r),
         line: BLWPCLIENT.lobbyLine(r, Date.now()), raw: r, join: r.joinable ? BLWPCLIENT.lobbyJoinSearch(rowSearch.get(r.id) || search, r.id) : null })));
       const paint = async () => {
