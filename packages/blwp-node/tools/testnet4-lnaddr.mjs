@@ -7,6 +7,7 @@
  * the check a signer node's send plan makes (winnings-send.js, `sendPlanStands`).
  *
  *   LNCLI=<lncli> LND_DIR=<lnd dir> LND_RPC=<host:port> PORT=<local port> PUBLIC=<https root> node tools/testnet4-lnaddr.mjs
+ *   (BLWP_TN4_NETWORK, default testnet4: the lnd's chain; the regtest harness names regtest)
  */
 import { createServer } from 'node:http';
 import { execFile } from 'node:child_process';
@@ -16,7 +17,7 @@ const env = process.env;
 for (const k of ['LNCLI', 'LND_DIR', 'LND_RPC', 'PORT', 'PUBLIC']) if (!env[k]) { console.error(`${k} is needed`); process.exit(2); }
 const base = env.PUBLIC.replace(/\/+$/, '');
 const metadataOf = (name) => JSON.stringify([['text/plain', `BLWP testnet4 winnings for ${name}`], ['text/identifier', `${name}@${new URL(base).host}`]]);
-const lncli = (...a) => new Promise((done, fail) => execFile(env.LNCLI, [`--lnddir=${env.LND_DIR}`, `--rpcserver=${env.LND_RPC}`, '--network=testnet4', ...a],
+const lncli = (...a) => new Promise((done, fail) => execFile(env.LNCLI, [`--lnddir=${env.LND_DIR}`, `--rpcserver=${env.LND_RPC}`, `--network=${env.BLWP_TN4_NETWORK || 'testnet4'}`, ...a],
   { timeout: 30000 }, (e, out, err) => (e ? fail(new Error(String(err || e.message).trim())) : done(JSON.parse(out)))));
 const json = (res, code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'access-control-allow-origin': '*' }); res.end(JSON.stringify(body)); };
 const say = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o }));
