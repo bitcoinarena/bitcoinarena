@@ -30,6 +30,12 @@ patch -p1 < $HERE/fedimint-lnv2-testnet4-invoices.patch
 # recovery-slice fetch timed out on tokio's clock, whose std::time::Instant panics on wasm32
 patch -p1 < $HERE/fedimint-mintv2-recovery-wasm-clock.patch
 grep -q "fedimint_core::runtime::timeout(" modules/fedimint-mintv2-client/src/api.rs
+# THE STAKE LOCK'S LATENCY (#178, the owner 2026-10-05; applies on top of the recovery clock): change notes checked once per
+# note (a threshold of shares combined, share by share only when that fails); the tweak grinder yields every 4096 tries
+# and keeps 200 ready; the change-note work starts a turn after the acceptance; notes counted and chosen by their key's
+# denomination byte, only the chosen decoded
+patch -p1 < $HERE/fedimint-mintv2-lock-latency.patch
+grep -q "CombinedShareThreshold::new" modules/fedimint-mintv2-client/src/api.rs
 grep -n "(0..42).map(Denomination)" modules/fedimint-mintv2-common/src/config.rs | wc -l | grep -qx 2
 ln -sfn $HERE blwp-lock-client
 grep -q '"blwp-lock-client"' Cargo.toml || sed -i 's/^members = \[/members = [\n  "blwp-lock-client",/' Cargo.toml
