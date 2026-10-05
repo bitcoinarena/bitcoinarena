@@ -135,3 +135,38 @@ test('killed after it printed: its JSON is the answer (a settle killed after "ac
   await assert.rejects(stakeLockPort({ bin: before.bin, dataDir: '/d', timeoutMs: 1500 }).settle({ claimPk: b(1, 33), claims: [], payouts: [], nonce: b(2) }),
     /^Error: blwp-stake-lock: /, 'killed before any JSON: an error, never read as accepted');
 });
+
+// THE GATEWAYS ANSWER (kanban #149, the owner 2026-10-05 on comment 266; stake-lock-port.js:98): the mapping of each gateway the
+// live tool answers, which a seat reads to decide whether a paid round can open. The fake answers in the real tool's shape
+// (tools/stake-lock/src/main.rs gateways: a live one with its routing info, one that does not serve the federation with its
+// why) and the answer is read once a minute, not at every ask.
+test('gateways: every field of a live and a not-live gateway parsed as the tool answered it; read once a minute', async () => {
+  const LIVE = { url: 'https://gw-a.example/', live: true, lightning_public_key: '02' + 'a1'.repeat(32), module_public_key: '03' + 'c3'.repeat(32),
+    send_fee_default: { base_msat: 4000, ppm: 6000 }, expiration_delta_default: 1440, expiration_delta_minimum: 144 };
+  const DOWN = { url: 'https://gw-b.example/', live: false, why: 'the gateway answered that it does not serve this federation' };
+  const t = fakeTool({ answer: { gateways: { mode: 'gateways', federation_id: 'fe'.repeat(32), block_count: 160012, gateways: [LIVE, DOWN] } } });
+  let clock = 5_000_000;
+  const port = stakeLockPort({ bin: t.bin, dataDir: '/shared', readDataDir: '/read-only', now: () => clock });
+  const g = await port.gateways();
+  assert.deepEqual(t.argv(), [['--mode', 'gateways', '--data-dir', '/read-only']], 'asked of the read-only client dir');
+  assert.equal(toHex(g.federationId), 'fe'.repeat(32));
+  assert.equal(g.height, 160012, 'the federation\'s block count');
+  assert.equal(g.gateways.length, 2);
+  assert.deepEqual(g.gateways[0], { url: LIVE.url, live: true, lightningPublicKey: LIVE.lightning_public_key, modulePublicKey: LIVE.module_public_key,
+    sendFeeDefault: { baseMsat: 4000n, ppm: 6000n }, expirationDeltaDefault: 1440, expirationDeltaMinimum: 144, why: null }, 'the live gateway, every field');
+  assert.equal(typeof g.gateways[0].sendFeeDefault.baseMsat, 'bigint');
+  assert.deepEqual(g.gateways[1], { url: DOWN.url, live: false, lightningPublicKey: null, modulePublicKey: null, sendFeeDefault: null,
+    expirationDeltaDefault: null, expirationDeltaMinimum: null, why: DOWN.why }, 'the gateway that is not live, with its why');
+  // once a minute: asked again at +59.999 s, the tool is not run; past 60 s the held answer is given at once and read again behind it
+  clock += 59_999;
+  assert.deepEqual(await port.gateways(), g);
+  assert.equal(t.argv().length, 1, 'within 60 s: not read again');
+  clock += 2;
+  assert.deepEqual(await port.gateways(), g, 'past 60 s: the held answer at once');
+  await new Promise((r) => setTimeout(r, 400));
+  assert.equal(t.argv().length, 2, 'and read again behind it');
+  // live:true read only when the tool says exactly true; a gateway with no routing fields reads as null, not as zeros
+  const odd = fakeTool({ answer: { gateways: { mode: 'gateways', federation_id: 'fe'.repeat(32), gateways: [{ url: 'https://gw-c.example/', live: 'yes' }] } } });
+  const o = await stakeLockPort({ bin: odd.bin, dataDir: '/d' }).gatewaysRead();
+  assert.deepEqual([o.height, o.gateways[0].live, o.gateways[0].sendFeeDefault, o.gateways[0].expirationDeltaDefault], [null, false, null, null]);
+});
