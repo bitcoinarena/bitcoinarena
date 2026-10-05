@@ -46,9 +46,9 @@ test('donationBps: 200 by default; a stored 0-500 in steps of 100 is taken; anyt
 });
 
 // the page's own expressions, checked present in index.html, then computed
-const DEPOSIT_EXPR = 'const donationMsat = BLWPCLIENT.depositDonationMsat({ roundIdHex: ctx.roundIdHex, stakeMsat: ctx.roundStake,\n              settingsBps: donationBps(), storage: window.sessionStorage });';
+const DEPOSIT_EXPR = 'const donationMsat = BLWPCLIENT.depositDonationMsat({ roundIdHex: ctx.roundIdHex, stake: ctx.roundStake,\n              settingsBps: donationBps(), storage: window.sessionStorage });';
 const JOIN_EXPR = 'const settingsPct = String(donationBps() / 100);';
-const depositDonation = (bps, stake, s) => depositDonationMsat({ roundIdHex: RID, stakeMsat: stake, settingsBps: bps, storage: s });
+const depositDonation = (bps, stake, s) => depositDonationMsat({ roundIdHex: RID, stake, settingsBps: bps, storage: s });
 const joinDonation = (bps, s) => chooseDonation({ roundIdHex: RID, round: ROUND, ask: () => String(bps / 100), confirm: () => false, storage: s }).donationMsat;
 
 test('the settings deposit and the join size the same donation for a round with no kept choice', () => {
@@ -79,7 +79,7 @@ test('the deposit keeps nothing; every kept/Settings pair sizes the deposit as t
     assert.equal(deposit, 100000n * BigInt(kept) / 10000n, 'the kept choice');
   }
   const fresh = storage({ 'blwp.donation.settings': '300' });
-  depositDonationMsat({ roundIdHex: RID, stakeMsat: 100000n, settingsBps: 300, storage: fresh });
+  depositDonationMsat({ roundIdHex: RID, stake: 100000n, settingsBps: 300, storage: fresh });
   assert.equal(fresh.getItem(`blwp.donation.${RID}`), null, 'a deposit writes no kept choice');
-  assert.equal(depositDonationMsat({ roundIdHex: null, stakeMsat: 100000n, settingsBps: 300, storage: fresh }), 3000n, 'no round id: Settings');
+  assert.equal(depositDonationMsat({ roundIdHex: null, stake: 100000n, settingsBps: 300, storage: fresh }), 3000n, 'no round id: Settings');
 });

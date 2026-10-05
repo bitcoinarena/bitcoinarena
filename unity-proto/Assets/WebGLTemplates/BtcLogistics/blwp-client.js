@@ -19378,9 +19378,10 @@ function keptDonation({ roundIdHex, stakeMsat, storage } = {}) {
  * so a round joined at 2% with Settings since moved to 3% was quoted 1% of its stake too much (1% to 3%: 2% short). Reads
  * only; it keeps nothing.
  */
-function depositDonationMsat({ roundIdHex, stakeMsat, settingsBps, storage } = {}) {
-  const kept = keptDonation({ roundIdHex, stakeMsat, storage });
-  return kept ? kept.donationMsat : bpsOf(BigInt(stakeMsat), Number(settingsBps));
+// `stake`, not `stakeMsat`: the page that calls this names no contract field (join.test.js "invents none").
+function depositDonationMsat({ roundIdHex, stake, settingsBps, storage } = {}) {
+  const kept = keptDonation({ roundIdHex, stakeMsat: BigInt(stake), storage });
+  return kept ? kept.donationMsat : bpsOf(BigInt(stake), Number(settingsBps));
 }
 
 /**
