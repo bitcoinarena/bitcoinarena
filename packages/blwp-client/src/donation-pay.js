@@ -116,6 +116,9 @@ const SHARE_WORD = { paid: 'paid', unpaid: 'UNPAID', unknown: 'outcome unknown' 
 export function donationPaidLine(p) {
   if (!p || p.state === 'none') return '';
   if (p.state === 'paying') return 'Donation: paying each recipient its share…';
+  // PAID IN THE LOCK (a key-set round): no Lightning share to list, and paid all the same. Measured before this line: the
+  // empty share list fell through to "Donation not paid: paid in the federation, in the same transaction as the stake".
+  if (p.inLock && p.state === 'paid') return `Donation: ${msatOrSat(BigInt(p.paidMsat || 0n))} paid, ${p.why || 'in the stake lock'}`;
   if (!Array.isArray(p.shares) || !p.shares.length) return `Donation not paid: ${p.why || 'no answer'}`;
   const each = p.shares.map((s) => `${msatOrSat(s.amountMsat)} ${SHARE_WORD[s.state]} to ${s.url}`
     + (s.state === 'paid' ? '' : ` (${s.why})`));
