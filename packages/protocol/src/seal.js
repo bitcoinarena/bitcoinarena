@@ -55,6 +55,13 @@ function keyAndNonce(shared, signerNode) {
   };
 }
 
+/**
+ * A SIGNER NODE IS 1..65535, because two bytes of it go into the key and the nonce. Measured before this check: signer node
+ * 65537 sealed to the very bytes of signer node 1 under the same keys - one AES-GCM key and nonce for two shares.
+ */
+const signerNodeRefusal = (signerNode) => (Number.isInteger(signerNode) && signerNode >= 1 && signerNode <= 0xffff ? null
+  : `signer node ${signerNode} is not one of 1..65535`);
+
 const aes = async (raw, use) =>
   subtle().importKey('raw', raw, { name: 'AES-GCM' }, false, [use]);
 
@@ -69,6 +76,8 @@ export async function sealShare({ value, signerNode, signerNodePubkey, ephemeral
     throw new Error('that share is not a scalar of the group');
   if (!(signerNodePubkey instanceof Uint8Array) || signerNodePubkey.length !== 32)
     throw new Error('a share is sealed to a signer node\'s 32-byte key, and that is not one');
+  const refused = signerNodeRefusal(signerNode);
+  if (refused) throw new Error(refused);
   const shared = curve.ecdhShared(ephemeralSecret, signerNodePubkey);
   const { key, nonce } = keyAndNonce(shared, signerNode);
   const sealed = await subtle().encrypt({ name: 'AES-GCM', iv: nonce },
@@ -87,7 +96,14 @@ export async function sealShare({ value, signerNode, signerNodePubkey, ephemeral
 export async function openShare({ sealed, signerNode, secret, ephemeralPubkey, curve }) {
   if (!(sealed instanceof Uint8Array) || sealed.length !== VSS_SEALED_BYTES)
     return { ok: false, why: `a sealed share is ${VSS_SEALED_BYTES} bytes and that is ${sealed ? sealed.length : 'nothing'}` };
-  const shared = curve.ecdhShared(secret, ephemeralPubkey);
+  const refused = signerNodeRefusal(signerNode);
+  if (refused) return { ok: false, why: refused };
+  // A KEY THAT IS NOT A POINT IS REFUSED BY NAME, not thrown: measured before, an ephemeral key of 32 x 0xff made the
+  // curve's "invalid x" escape from here, and the opener stopped instead of refusing the handout or answer that carried it.
+  let shared;
+  try { shared = curve.ecdhShared(secret, ephemeralPubkey); } catch (e) {
+    return { ok: false, why: `the ephemeral key ${ephemeralPubkey instanceof Uint8Array ? toHex(ephemeralPubkey) : String(ephemeralPubkey)} is not a curve point: ${e && e.message ? e.message : e}` };
+  }
   const { key, nonce } = keyAndNonce(shared, signerNode);
   let plain;
   try {
