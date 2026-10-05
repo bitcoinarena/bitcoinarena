@@ -8995,6 +8995,8 @@ const payToKey = (pubkey) => {
  */
 function winnings({ table, stakes }) {
   if (!Array.isArray(table)) return { ok: false, why: 'that is not a payout table' };
+  // NO STAKES, NO NET TO TAKE OFF: measured before, a missing list threw "stakes is not iterable".
+  if (!Array.isArray(stakes)) return { ok: false, why: 'no stakes were given, so no row can be less its net stake' };
   const byKey = new Map();
   for (const s of stakes) {
     let held;
@@ -9041,6 +9043,13 @@ function payoutOutputs({ rows, poolSats, dustSats = DUST_SATS, feeSats }) {
     return { ok: false, why: 'that round owes nobody anything, so there is nothing to spend' };
   if (typeof poolSats !== 'bigint' || poolSats <= 0n)
     return { ok: false, why: 'a payout spends a pool output, and that is not one' };
+
+  // EVERY ROW PAYS A KEY, OR NO ROW IS PAID: measured before, a row paying 32 zero bytes became an output OP_1 <zeros>
+  // nobody can spend - the winner's sats burned. A table that pays something that is not a key is a broken table.
+  const notAKey = rows.find((r) => !payableKey(r && r.pubkey));
+  if (notAKey !== undefined)
+    return { ok: false, why: `the table pays ${notAKey && notAKey.pubkey instanceof Uint8Array ? hexOf(notAKey.pubkey) : String(notAKey && notAKey.pubkey)}, `
+      + 'which is not a key: an output to it could never be spent, so nothing is paid until the table is right' };
 
   const outputs = [];
   const owed = [];
