@@ -174,3 +174,78 @@ test('api/round-result names every player: the custom name, else the lobby\'s ge
     for (const p of j.players) assert.doesNotMatch(p.name, /^[0-9a-f]{8}$/, `${p.player} is named by hex`);
   } finally { await node.close(); }
 });
+
+// THE MONEY PATH (kanban #149 step 5, plan comment 249, Go 2026-10-05): a paying round in this node's store, its entries
+// with this node's signed results, and the round's lock settlement. Earned only once the settlement is ACCEPTED - then
+// split as the settlement pays it (nodeFeeTable over the contract's own pools) and counted in the day, month, year and
+// the chart; before that, the same money is owed and never shown as earned.
+test('a paying round with this node\'s results: an ACCEPTED settlement earns its split in day, month, year and the chart; any other state is owed only', async () => {
+  const { contractFor, b32 } = await import('./window-fixture.js');
+  const { encodeRoundContract, encodeEntryContract, roundId, entryId } = await import('../../protocol/src/contracts.js');
+  const { encodePlayerResult, joinSignedResult } = await import('../../protocol/src/result.js');
+  const { nodeFeeTable } = await import('../../protocol/src/fee.js');
+  const { toHex } = await import('../../protocol/src/hash.js');
+  const NOW = Date.UTC(2026, 9, 5, 12);
+  const build = (state) => {
+    const round = new Round(openStore(), () => NOW);
+    const me = round.pubkey;
+    const other = b32(0x44);
+    const contract = { ...contractFor([me, other], 3000n, ['wss://r.example']), stakeMsat: 100000n };
+    const rid = roundId(contract);
+    const db = round.db;
+    db.prepare('INSERT INTO rounds (round_id, contract, state, opened_ms) VALUES (?, ?, 0, ?)').run(rid, encodeRoundContract(contract), NOW - 3600000);
+    const players = [b32(0x51), b32(0x52), b32(0x53)];
+    const outcomes = ['DELIVERED', 'FAILED', 'FORFEIT'];
+    const entries = [];
+    for (const [i, player] of players.entries()) {
+      const e = { roundId: rid, playerPubkey: player, sessionPubkey: b32(0x60 + i), stakeCommitment: b32(0x70 + i), stakeMsat: 100000n,
+        feeMsat: 2000n, donationMsat: 0n, joinTick: 0, worldSecret: b32(0), vssSharesRef: b32(0x80 + i), stakePoint: Uint8Array.from([2, ...b32(0x90 + i)]),
+        feePreimage: b32(0), stakeLockOutpoint: { txid: b32(0xa0 + i), outIdx: 0n }, feeLockOutpoint: { txid: b32(0), outIdx: 0n }, claimKeyAttestationRef: b32(0) };
+      const eid = entryId(e);
+      db.prepare('INSERT INTO entries (entry_id, round_id, contract, joined_ms) VALUES (?, ?, ?, ?)').run(eid, rid, encodeEntryContract(e), NOW - 3000000 + i);
+      const bytes = joinSignedResult(encodePlayerResult({ roundId: rid, playerPubkey: player, outcome: outcomes[i], score: 100 * (3 - i),
+        transcriptHash: b32(0xb0 + i), simCoreHash: contract.simCoreHash, nodePubkey: me }), new Uint8Array(64));
+      db.prepare('INSERT INTO results (round_id, entry_id, node_pubkey, result_id, bytes, seen_ms) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(rid, eid, me, b32(0xc0 + i), bytes, NOW - 2000000);
+      entries.push({ pubkey: player, stakeMsat: 100000n, outcome: outcomes[i] });
+    }
+    // an unreadable result row for a fourth entry earns nothing and breaks nothing
+    const badEntry = { roundId: rid, playerPubkey: b32(0x54), sessionPubkey: b32(0x64), stakeCommitment: b32(0x74), stakeMsat: 100000n, feeMsat: 2000n,
+      donationMsat: 0n, joinTick: 0, worldSecret: b32(0), vssSharesRef: b32(0x84), stakePoint: Uint8Array.from([2, ...b32(0x94)]), feePreimage: b32(0),
+      stakeLockOutpoint: { txid: b32(0xa4), outIdx: 0n }, feeLockOutpoint: { txid: b32(0), outIdx: 0n }, claimKeyAttestationRef: b32(0) };
+    const beid = entryId(badEntry);
+    db.prepare('INSERT INTO entries (entry_id, round_id, contract, joined_ms) VALUES (?, ?, ?, ?)').run(beid, rid, encodeEntryContract(badEntry), NOW - 2999000);
+    db.prepare('INSERT INTO results (round_id, entry_id, node_pubkey, result_id, bytes, seen_ms) VALUES (?, ?, ?, ?, ?, ?)').run(rid, beid, me, b32(0xc4), Buffer.from('not a result'), NOW - 2000000);
+    if (state) round.putLockSettlement({ roundId: rid, txid: 'ab'.repeat(32), message: b32(1), signature: new Uint8Array(64), state, why: state === 'ACCEPTED' ? '' : 'the guardians refused it' });
+    const pools = { gameVerify: contract.nodes, settlement: contract.nodes, guardian: [] };
+    const table = nodeFeeTable({ contract, entries, pools, eligible: new Set(contract.nodes.map((k) => toHex(k))) });
+    const mine = { gameVerify: 0n, settlement: 0n };
+    for (const [k, msat] of table.signerNodes) if (k.endsWith(toHex(me))) mine[k.startsWith('gameVerify') ? 'gameVerify' : 'settlement'] += msat;
+    return { d: dashboardData(round, { nowMs: NOW }), mine, rid: toHex(rid), table };
+  };
+
+  const ok = build('ACCEPTED');
+  assert.ok(ok.mine.gameVerify > 0n && ok.mine.settlement > 0n, 'the settlement\'s own table pays this node in both pools');
+  const r = ok.d.rounds.find((x) => x.id === ok.rid);
+  assert.equal(r.checked, 4, 'four result rows of this node, the unreadable one among them');
+  assert.equal(r.earned, true);
+  assert.deepEqual([r.gameVerifyMsat, r.settlementMsat, r.guardianMsat], [String(ok.mine.gameVerify), String(ok.mine.settlement), '0'],
+    'split exactly as the settlement pays it; the unreadable row earns nothing');
+  for (const period of ['day', 'month', 'year']) {
+    assert.equal(ok.d.totals[period].gameVerifyMsat, String(ok.mine.gameVerify), period);
+    assert.equal(ok.d.totals[period].settlementMsat, String(ok.mine.settlement), period);
+  }
+  assert.deepEqual([ok.d.totals.owed.gameVerifyMsat, ok.d.totals.owed.settlementMsat], ['0', '0'], 'nothing owed once accepted');
+  const today = ok.d.days.find((x) => x.day === '2026-10-05');
+  assert.equal(today.gameVerifyMsat, String(ok.mine.gameVerify), 'the chart shows it on the day it was settled');
+  assert.equal(today.profitMsat, String(ok.mine.gameVerify + ok.mine.settlement));
+
+  for (const state of ['SUBMITTED', 'REFUSED', null]) {
+    const no = build(state);
+    const nr = no.d.rounds.find((x) => x.id === no.rid);
+    assert.ok(!nr.earned, `${state}: not earned (with no settlement row, dashboard.json leaves earned out)`);
+    for (const period of ['day', 'month', 'year']) assert.deepEqual([no.d.totals[period].gameVerifyMsat, no.d.totals[period].settlementMsat], ['0', '0'], `${state}: ${period} shows nothing earned`);
+    assert.deepEqual([no.d.totals.owed.gameVerifyMsat, no.d.totals.owed.settlementMsat], [String(no.mine.gameVerify), String(no.mine.settlement)], `${state}: the same money, owed`);
+    assert.ok(no.d.days.every((x) => x.gameVerifyMsat === '0' && x.settlementMsat === '0'), `${state}: nothing on the chart`);
+  }
+});
