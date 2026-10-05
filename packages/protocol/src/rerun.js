@@ -93,8 +93,11 @@ export function rerunIsAgreed({
   try { needed = receiptsNeeded(slots); } catch (e) { return { ok: false, agreed: 0, why: e.message }; }
 
   const joined = new Set(signerNodes.map(toHex));
-  const counted = new Set();
-  const byRun = new Map();
+  // ONE SET OF RECORDS, ONE ANSWER, WHATEVER THEIR ORDER (kanban #146): each signer node's valid records are gathered
+  // first, and a node that signed two DIFFERENT outcomes for this contradicted run is counted for neither. Measured before:
+  // it was counted for whichever record came first, so 4 honest re-runs plus its two read "agreed" in one order and
+  // "4 of 5" in the other - two seats holding the same records decided two ways.
+  const runsBy = new Map();
   for (const rec of records || []) {
     let x, signature;
     try {
@@ -103,15 +106,21 @@ export function rerunIsAgreed({
       x = decodeRerunResult(split.body);
     } catch { continue; }
     const who = toHex(x.result.nodePubkey);
-    if (!joined.has(who) || counted.has(who)) continue;
+    if (!joined.has(who)) continue;
     if (toHex(x.result.roundId) !== toHex(roundId) || toHex(x.result.playerPubkey) !== toHex(playerPubkey)) continue;
     if (toHex(x.contradictedRunId) !== toHex(contradictedRunId)) continue;
     let good = false;
     try { good = !!verify(signature, rerunResultId(x), x.result.nodePubkey); } catch { good = false; }
     if (!good) continue;
-    counted.add(who);
-    const run = toHex(runOf(x.result));
-    const at = byRun.get(run) || { count: 0, result: x.result };
+    const mine = runsBy.get(who) || new Map();
+    mine.set(toHex(runOf(x.result)), x.result);
+    runsBy.set(who, mine);
+  }
+  const byRun = new Map();
+  for (const mine of runsBy.values()) {
+    if (mine.size !== 1) continue;
+    const [[run, result]] = [...mine];
+    const at = byRun.get(run) || { count: 0, result };
     at.count++;
     byRun.set(run, at);
   }
