@@ -157,6 +157,10 @@ export function acceptHandout(handout) {
  * custody.
  */
 export async function openMyShare(handout, { pubkey, secret, curve } = {}) {
+  // A HANDOUT WITH NO SHARES LIST IS REFUSED BY NAME: measured before, openMyShare threw "Cannot read properties of
+  // undefined (reading 'find')" on one, and the opener stopped instead of refusing it.
+  if (!handout || !Array.isArray(handout.shares))
+    return { ok: false, why: 'that handout carries no shares list, so it has no share for this node' };
   if (!(pubkey instanceof Uint8Array) || pubkey.length !== 32)
     return { ok: false, why: 'a signer node opens a share with its own 32-byte key, and that is not one' };
   const mine = handout.shares.find((s) => toHex(s.signerNodePubkey) === toHex(pubkey));
@@ -192,6 +196,12 @@ export async function dealHandout({ preimage, signerNodes, roundId, playerPubkey
   ephemeralSecret, ephemeralPubkey, coefficients, needed, curve }) {
   if (!Array.isArray(signerNodes) || !signerNodes.length)
     return { ok: false, why: 'a handout is dealt to a committee, and that is an empty one' };
+  // THE DEALER'S KEY ON THE WIRE IS THE POINT OF THE SECRET IT SEALS WITH. Measured before: a mismatched pair dealt ok and
+  // was accepted, and no signer node could open its share - a stake whose preimage could never be released.
+  const ephemeralFromSecret = curve.pointX(ephemeralSecret);
+  if (!(ephemeralPubkey instanceof Uint8Array) || toHex(ephemeralPubkey) !== toHex(ephemeralFromSecret))
+    return { ok: false, why: `the ephemeral key ${ephemeralPubkey instanceof Uint8Array ? toHex(ephemeralPubkey) : String(ephemeralPubkey)} `
+      + `is not the point of the secret the shares are sealed with (${toHex(ephemeralFromSecret)}), so no signer node could open its share` };
   const split = splitSecret(preimage, {
     signerNodes: signerNodes.length, needed: needed || undefined, coefficients, curve,
   });
