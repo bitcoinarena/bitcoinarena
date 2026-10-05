@@ -415,6 +415,11 @@
       <h3>Seed phrase</h3>
       <div class="muted" id="blwp-settings-backup"></div>
       <button id="blwp-phrase-show" type="button" class="primary">Show seed phrase</button>
+      <!-- RESTORE, OVERWRITING THIS TAB'S SEED (kanban #154): the 24 words or the 64 hex -->
+      <div class="muted">Restore: your 24 words (or your seed, 64 hex) replace this tab's seed, and the page reloads.</div>
+      <input id="blwp-seed-restore" type="password" autocomplete="off" placeholder="your 24 words, or your seed (64 hex)">
+      <button id="blwp-seed-use" type="button">use my seed</button>
+      <div class="muted" id="blwp-seed-restore-why"></div>
     </section>
   </div>
   <div id="blwp-seed-modal" role="dialog" aria-modal="true">
@@ -1399,7 +1404,7 @@
       if (refundEl) {
         refundEl.textContent = 'refund key fingerprint ' + player.fingerprint
           + (origin === 'imported' ? ' (from the seed you imported)'
-            : ' (from a seed this page made: back it up, or use your own below)')
+            : ' (from a seed this page made: back it up, or restore your own in Settings)')
           + ' - check it: refund-key.mjs <your seed> ' + named.roundIdHex;
         const backup = document.createElement('details');
         const label = document.createElement('summary');
@@ -1407,27 +1412,9 @@
         const code = document.createElement('code');
         code.textContent = BLWPCLIENT.toHex ? BLWPCLIENT.toHex(seed) : Array.from(seed, (b) => b.toString(16).padStart(2, '0')).join('');
         backup.append(label, code);
-        const own = document.createElement('div');
-        const paste = document.createElement('input');
-        paste.type = 'password'; paste.autocomplete = 'off'; paste.placeholder = 'your 24 words, or your seed (64 hex)';
-        const use = document.createElement('button');
-        use.type = 'button'; use.textContent = 'use my seed';
-        const why = document.createElement('div');
-        use.addEventListener('click', () => {
-          try {
-            // THE 24 WORDS OR THE 64 HEX (kanban #27): the words checked and turned into the seed; importSeed takes the hex
-            const got = BLWPCLIENT.seedHexFromInput(paste.value);
-            if (!got.ok) { why.textContent = got.why; return; }
-            BLWPCLIENT.importSeed(got.hex, { storage: window.sessionStorage });
-            // ITS WALLET IS RECOVERED FROM THE FEDERATION on its first open in this browser (kanban #27; page-lock markSeedRecover)
-            BLWPCLIENT.markSeedRecover(vault(), got.hex);
-            if (window.BLWP_SEED_KEEPER) window.BLWP_SEED_KEEPER.beat();   // kept in the browser before the reload
-            console.log('[blwp] seed restored from ' + got.from);
-            location.reload();
-          } catch (e) { why.textContent = e.message; }
-        });
-        own.append(paste, use, why);
-        refundEl.append(backup, own);
+        // THE RESTORE MOVED TO SETTINGS (kanban #154, the owner 2026-10-04 23:48: "Move restore into Settings"): not here,
+        // inside an open round
+        refundEl.append(backup);
       }
 
       // AND THE PAGE DEALS ITS OWN STAKE (23.1 steps 1 and 2).
@@ -2692,6 +2679,25 @@
       if (!said.ok) { why.textContent = said.why; return; }
       seedPanes('done'); paintMoney();
     }
+    // RESTORE, OVERWRITING THIS TAB'S ONE SEED (kanban #154; join.js restoreSeed): refused before anything is written for a
+    // live run in this tab (the lobby is not showing), a wrong word (by name), or a seed another open tab holds. On success:
+    // its wallet is recovered on its first open here (kanban #27, markSeedRecover), the phrase is kept, and the page reloads.
+    window.BLWP_RESTORE_SEED = (text) => {
+      let kept = null; try { kept = vault(); } catch { kept = null; }   // the browser's store, as the keeper's (vault)
+      const liveRun = !!(window.BLWP_UNITY_LOBBY && window.BLWP_UNITY_LOBBY.showing === false);
+      const got = BLWPCLIENT.restoreSeed({ text, session: window.sessionStorage, kept, now: Date.now(), liveRun });
+      if (!got.ok) { console.log('[blwp] seed restore refused: ' + got.why); return got; }
+      try { BLWPCLIENT.markSeedRecover(vault(), got.hex); } catch { /* the wallet opens as joined */ }
+      if (window.BLWP_SEED_KEEPER) window.BLWP_SEED_KEEPER.beat();   // kept in the browser before the reload
+      console.log('[blwp] seed restored from ' + got.from + ' in Settings: this tab\'s seed replaced');
+      location.reload();
+      return got;
+    };
+    document.getElementById('blwp-seed-use').addEventListener('click', () => {
+      const why = document.getElementById('blwp-seed-restore-why');
+      const got = window.BLWP_RESTORE_SEED(document.getElementById('blwp-seed-restore').value);
+      why.textContent = got.ok ? 'restored - reloading' : got.why;
+    });
     document.getElementById('blwp-phrase-show').addEventListener('click', () => {
       const seed = walletSeed();
       const made = seed ? BLWPCLIENT.phraseFromSeed(seed) : { ok: false, why: 'no wallet yet' };
@@ -3672,11 +3678,9 @@
           const typed = window.prompt('Private key backup - this tab\'s seed. Copy it and keep it. '
             + 'On another device, type your 24 words (or paste your seed) here instead to find what you are owed.', mine);
           if (typed && typed.trim().toLowerCase() !== mine) {
-            const got = BLWPCLIENT.seedHexFromInput(typed);
-            if (!got.ok) { window.alert(got.why); return; }
-            if (got.hex === mine) return;
-            try { BLWPCLIENT.importSeed(got.hex, { storage: window.sessionStorage }); BLWPCLIENT.markSeedRecover(vault(), got.hex); if (window.BLWP_SEED_KEEPER) window.BLWP_SEED_KEEPER.beat(); console.log('[blwp] seed restored from ' + got.from); location.reload(); }
-            catch (e) { window.alert(e.message); }
+            // THE SAME RESTORE AS SETTINGS' (kanban #154): its refusals - a wrong word, a seed open in another tab, a live run
+            const got = window.BLWP_RESTORE_SEED(typed);
+            if (!got.ok) window.alert(got.why);
           }
         },
       };

@@ -23,6 +23,7 @@ import { decodeRoundContract, roundId } from '../../protocol/src/contracts.js';
 import { OBJECTION_WINDOW_MS } from '../../protocol/src/window.js';
 import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
 import { httpProvider } from './headers.js';
+import { seedHexFromInput } from './bip39.js';
 import { NO_SHARES, dealHandout, encodeHandout } from '../../protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../protocol/src/shares.js';
 import { worldSeedWord, worldIsShared } from '../../protocol/src/seed.js';
@@ -692,6 +693,38 @@ export function importSeed(text, { storage, key = 'blwp.player.seed' } = {}) {
     throw new Error('a player seed is 64 hex digits - the backup this page showed you, or your own');
   if (storage) { storage.setItem(key, hex); storage.setItem(SEED_FROM, 'imported'); }
   return fromHex(hex);
+}
+
+/**
+ * RESTORE THE SEED IN SETTINGS, OVERWRITING THE CURRENT ONE (kanban #154, the owner 2026-10-04 23:48; plan accepted
+ * 2026-10-05). `text` is what the player typed - the 24 words or the 64 hex (seedHexFromInput). On success it REPLACES the
+ * tab's one current seed (`session` 'blwp.player.seed', origin 'imported') - never a second active seed - and keeps the
+ * restored phrase in the browser's kept list (`kept` 'blwp.seeds'); the OLD phrase stays in that list, inactive, since its
+ * wallet and round records are keyed by it. The caller reloads. Refused before anything is written: a live run in this
+ * tab; a wrong word (by name); a seed another open tab holds (its heartbeat 'blwp.seed.held.<id>' under 12 s old - the
+ * keeper's lock would otherwise drop it after the reload). Returns { ok, hex, from, previous } or { ok: false, why }.
+ */
+export function restoreSeed({ text, session, kept, now = Date.now(), liveRun = false } = {}) {
+  if (liveRun) return { ok: false, why: 'leave the round first: the seed cannot change during a run' };
+  const got = seedHexFromInput(text);
+  if (!got.ok) return { ok: false, why: got.why };
+  const hex = got.hex;
+  const previous = session ? session.getItem(TAB_SEED_KEY) : null;
+  if (kept) {
+    let held = null;
+    try { held = JSON.parse(kept.getItem('blwp.seed.held.' + hex.slice(0, 16)) || 'null'); } catch { held = null; }
+    const mine = session ? session.getItem('blwp.tab.id') : null;
+    if (held && held.tab !== mine && Number(now) - Number(held.at) <= 12000)
+      return { ok: false, why: 'that seed is open in another tab: close it there first' };
+  }
+  if (session) { session.setItem(TAB_SEED_KEY, hex); session.setItem(SEED_FROM, 'imported'); }
+  if (kept) {
+    let list = [];
+    try { list = JSON.parse(kept.getItem('blwp.seeds') || '[]'); } catch { list = []; }
+    if (!Array.isArray(list)) list = [];
+    if (!list.some((x) => x && x.hex === hex)) { list.push({ hex, from: 'imported', at: Number(now) }); kept.setItem('blwp.seeds', JSON.stringify(list)); }
+  }
+  return { ok: true, hex, from: got.from, previous };
 }
 
 /** Whether this tab's seed is one the player brought ('imported') or the page made ('minted'). */
