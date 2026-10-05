@@ -146,7 +146,8 @@ function blockBytes(b) {
   const n = b.transactions.length;
   return Buffer.concat([Buffer.from(b.header), Buffer.from([n]), ...b.transactions.map((t) => Buffer.from(t))]);
 }
-// `fake.serve(view)` swaps the chain it serves (growth, a reorg); `fake.failBlocks = true` fails every getblock
+// `fake.serve(view)` swaps the chain it serves (growth, a reorg); `fake.failBlocks = true` fails every getblock,
+// `fake.failHeaders = true` every getblockheader; a failed call is logged with `failed: true`
 async function fakeBitcoind(view, cookie) {
   const calls = [];
   const display = (header) => toHex(Uint8Array.from(blockHashOf(header)).reverse());
@@ -159,12 +160,16 @@ async function fakeBitcoind(view, cookie) {
   };
   fake.serve(view);
   fake.failBlocks = false;
+  fake.failHeaders = false;
   const srv = createServer((req, res) => { let body = ''; req.on('data', (d) => { body += d; }).on('end', () => {
     const authed = req.headers.authorization === `Basic ${Buffer.from(cookie).toString('base64')}`;
     const { id, method, params = [] } = JSON.parse(body);
     calls.push({ method, params, authed, atMs: Date.now() });
     if (!authed) { res.writeHead(401); return res.end(); }
-    if (method === 'getblock' && fake.failBlocks) return res.end(JSON.stringify({ id, result: null, error: { code: -1, message: 'the fake fails block reads' } }));
+    if ((method === 'getblock' && fake.failBlocks) || (method === 'getblockheader' && fake.failHeaders)) {
+      calls[calls.length - 1].failed = true;
+      return res.end(JSON.stringify({ id, result: null, error: { code: -1, message: `the fake fails ${method === 'getblock' ? 'block' : 'header'} reads` } }));
+    }
     const at = (hash) => byHash.get(String(hash));
     const result = {
       getblockchaininfo: () => ({ chain: 'regtest', blocks: tip, headers: tip }),
@@ -367,6 +372,66 @@ async function failedReads() {
     return { tookMs, assignedBy };
   } finally { child.kill('SIGKILL'); await btc.close(); }
 }
+// (d) A RE-READ THAT FAILS PARTWAY (main.js:233, its .catch): as (a), but every getblock fails while the chain has grown. The
+// node stays up, assigns nothing from the half read, and at its next look (~10 s on, VIEW_REREAD_MS) reads on and assigns.
+async function reReadFails() {
+  const f = chainFixture('main-reread-fail-', { committeePast: true });
+  const full = f.build();
+  const btc = await fakeBitcoind(f.build({ length: 34 }), '__cookie__:s3cret');
+  const child = startMain(f.store, f.env(btc));
+  try {
+    const port = await child.up;
+    await until('POST /round answers 202', 20000, async () => (await postRound(port, f.contract)).status === 202);
+    await until('the short view is read', 20000, async () => heightsRead(btc, full, 0).includes(33));
+    btc.failBlocks = true;
+    btc.serve(full);
+    const failedRead = await until('a re-read meets a failing getblock', 25000, async () => btc.calls.find((c) => c.method === 'getblock' && c.failed));
+    await new Promise((r) => setTimeout(r, 1500));
+    assert.doesNotMatch(child.out, ASSIGNED(f.rid), 'nothing assigned from a half read');
+    assert.equal((await fetch(`http://127.0.0.1:${port}/identity`)).status, 200, 'the node is up');
+    btc.failBlocks = false;
+    const healedAt = Date.now();
+    await until('the round assigned at a later look', 30000, async () => ASSIGNED(f.rid).test(child.out));
+    const tookMs = Date.now() - failedRead.atMs;
+    assert.ok(tookMs >= 8000, `the next look came ${tookMs} ms after the failed read (VIEW_REREAD_MS 10 s)`);
+    const after = heightsRead(btc, full, healedAt);
+    assert.ok(after.length > 0 && after.every((h) => h >= 34), `read on from 34: ${after.join(',')}`);
+    const r = await randomness(port, f.rid);
+    assert.deepEqual([r.status, r.height, r.hash], [200, '36', toHex(f.named(full).hash)]);
+    child.kill('SIGTERM');                         // a clean exit writes the process's V8 coverage
+    assert.equal((await child.exited).code, 0);
+    return { tookMs };
+  } finally { child.kill('SIGKILL'); await btc.close(); }
+}
+
+// (e) A BEACON REFRESH THAT FAILS (main.js:259, its .catch): /randomness asked before the beacon while every getblockheader
+// fails - 409 "no randomness yet", the node up; healed and grown, /randomness names block 36.
+async function refreshFails() {
+  const f = chainFixture('main-refresh-fail-', { committeePast: true });
+  const full = f.build();
+  const btc = await fakeBitcoind(f.build({ length: 34 }), '__cookie__:s3cret');
+  const child = startMain(f.store, f.env(btc));
+  try {
+    const port = await child.up;
+    await until('POST /round answers 202', 20000, async () => (await postRound(port, f.contract)).status === 202);
+    btc.failHeaders = true;
+    const askedAt = Date.now();
+    const early = await randomness(port, f.rid);
+    assert.equal(early.status, 409);
+    assert.match(early.text, /no randomness yet/);
+    await until('the refresh meets a failing getblockheader', 10000, async () => btc.calls.some((c) => c.method === 'getblockheader' && c.failed && c.atMs >= askedAt));
+    await new Promise((r) => setTimeout(r, 1000));
+    assert.equal((await fetch(`http://127.0.0.1:${port}/identity`)).status, 200, 'the node is up');
+    assert.equal((await randomness(port, f.rid)).status, 409, 'still no randomness, still answering');
+    btc.failHeaders = false;
+    btc.serve(full);
+    const r = await until('the healed chain names the beacon', 20000, async () => { const x = await randomness(port, f.rid); return x.status === 200 && x; });
+    assert.deepEqual([r.height, r.hash], ['36', toHex(f.named(full).hash)]);
+    child.kill('SIGTERM');
+    assert.equal((await child.exited).code, 0);
+  } finally { child.kill('SIGKILL'); await btc.close(); }
+}
+
 function byHashHeight(view, hash) {
   return view.blocks.findIndex((b) => toHex(Uint8Array.from(blockHashOf(b.header)).reverse()) === String(hash));
 }
@@ -382,6 +447,8 @@ test('main.js as the units run it', { concurrency: true }, async (t) => {
     t.test('(a) a view read short of its beacon: 202 and no randomness at tip 33; grown to 61, only the new blocks read, the round assigned, block 36 named', async () => { took.grow = (await growTheChain()).took; }),
     t.test('(b) blocks that do not link: another branch from 30, its 34 not on the 33 held - the whole view read again', unlinked),
     t.test('(c) a view that did not read: one "did not read" line, no read within 60 s, then a good read and the round taken', async () => { const x = await failedReads(); took.fail = x.tookMs; took.failBy = x.assignedBy; }),
+    t.test('(d) a re-read that fails partway: the node up, nothing assigned from the half read, read on and assigned at the next look', async () => { took.reread = (await reReadFails()).tookMs; }),
+    t.test('(e) a beacon refresh that fails: /randomness 409 "no randomness yet", the node up; healed, block 36 named', refreshFails),
   ]);
-  t.diagnostic(`grow: the beacon named ${took.grow} ms after the chain grew; failed read: the next read ${took.fail} ms after the failure, then assigned by ${took.failBy}`);
+  t.diagnostic(`grow: the beacon named ${took.grow} ms after the chain grew; failed read: the next read ${took.fail} ms after the failure, then assigned by ${took.failBy}; failed re-read: assigned ${took.reread} ms after it`);
 });
