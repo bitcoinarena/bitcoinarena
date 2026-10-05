@@ -3355,10 +3355,12 @@
           const client = await BLWPCLIENT.playerWallet({ round: r.raw.contract, invite: named.federation, seed, LockClient: wasm.LockClient, storage: vault(),
             onStep: (step) => console.log('[blwp] player wallet: ' + step + ', ' + (Date.now() - t0) + ' ms') });
           console.log('[blwp] player wallet open in the lobby, ' + (Date.now() - t0) + ' ms');
-          // THE LOCK QUOTES ASKED AHEAD for this round, at the donation Settings chose (the join's 2-3 s; page-lock warmLockQuotes)
+          // THE LOCK QUOTES ASKED AHEAD for this round, at the donation the join will write (the join's 2-3 s; page-lock
+          // warmLockQuotes): this round's kept choice when this tab joined it already, else the one Settings chose (kanban #187)
           try {
             BLWPCLIENT.warmLockQuotes({ round: r.raw.contract, client, LockClient: wasm.LockClient,
-              donationMsat: BigInt(BLWPCLIENT.lobbyStakeSats(r.raw)) * 1000n * BigInt(donationBps()) / 10000n })
+              donationMsat: BLWPCLIENT.depositDonationMsat({ roundIdHex: r.id, stake: BigInt(BLWPCLIENT.lobbyStakeSats(r.raw)) * 1000n,
+                settingsBps: donationBps(), storage: window.sessionStorage }) })
               .then(() => console.log('[blwp] warm: lock quotes in ' + (Date.now() - t0) + ' ms'), () => { /* the join quotes itself */ });
           } catch { /* the join quotes itself */ }
           // AND THE BLOCK COUNT A LOCK IS BUILT ON, kept by the lock client for a minute: read now and every 45 s while the lobby
