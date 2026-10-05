@@ -3,7 +3,9 @@
 // (GET /donations), learns from the answers in which federations the funds are, redeems each payout contract into its own
 // wallet in that federation, and withdraws to the dev's own LND. What decides is here, testable; the federation is the
 // page's own wasm lock client and the LND is lncli, both handed in (bin/blwp-donor.mjs).
-import { createHash, generateKeyPairSync, createPrivateKey } from 'node:crypto';
+import { createHash, generateKeyPairSync, createPrivateKey, sign as ecdsaSign } from 'node:crypto';
+import { openSync, writeSync, fsyncSync, closeSync, readFileSync, existsSync } from 'node:fs';
+import { donationsReadMessage } from '../../protocol/src/donations-read.js';
 
 const hex = (b) => Buffer.from(b).toString('hex');
 
@@ -57,8 +59,9 @@ export async function gatherDonations({ recipientPkHex, seats, fetcher = fetch, 
 }
 
 /** The payout contract a donation output is, as the lock client's `refund` rebuilds it (the seats' donationContractFields). */
-export const donationFields = (recipientPkHex, amountMsat) => JSON.stringify({
-  paymentImage: { kind: 'hash', bytes: '00'.repeat(32) }, amountMsat: String(amountMsat),
+// `imageHex`: the sender's 32-byte player key when the seats say it is on the contract (kanban #156), zeros otherwise.
+export const donationFields = (recipientPkHex, amountMsat, imageHex = '00'.repeat(32)) => JSON.stringify({
+  paymentImage: { kind: 'hash', bytes: imageHex }, amountMsat: String(amountMsat),
   claimPk: recipientPkHex, refundPk: recipientPkHex, expiration: 0,
 });
 
@@ -80,7 +83,8 @@ export async function redeemAll({ client, donations, recipientPkHex, secretHex, 
     if (done.has(d.outpoint)) continue;
     const { txid, outIdx } = splitOutpoint(d.outpoint);
     let said;
-    try { said = JSON.parse(await client.refund(txid, outIdx, donationFields(recipientPkHex, d.amountMsat), secretHex)); }
+    const image = d.senderOnContract && /^[0-9a-f]{64}$/.test(String(d.playerKey || '')) ? d.playerKey : '00'.repeat(32);
+    try { said = JSON.parse(await client.refund(txid, outIdx, donationFields(recipientPkHex, d.amountMsat, image), secretHex)); }
     catch (e) { failed.push({ ...d, why: String(e.message || e) }); continue; }
     if (said.accepted === true) redeemed.push({ ...d, txid: said.txid });
     else if (said.stored_before === null || said.stored_before === undefined) spent.push(d);
@@ -122,4 +126,83 @@ export function routeWebSockets(routes, Real = globalThis.WebSocket) {
   }
   globalThis.WebSocket = Routed;
   return true;
+}
+
+/**
+ * THE RATE AT THE DONATION'S TIME (kanban #156, the owner 2026-10-05 08:17; source ruled the same day: a public price API the dev
+ * client calls itself, named in each record - no seat asks for a rate). CoinGecko's market chart around the time, per
+ * currency; the price nearest the donation's own time is taken. Answers { ok, usd, eur, priceAtMs, provider } or why not.
+ */
+export const RATE_PROVIDER = 'coingecko api/v3 coins/bitcoin/market_chart/range';
+export async function rateAt({ atMs, fetcher = fetch }) {
+  const from = Math.floor((Number(atMs) - 3600000) / 1000), to = Math.ceil((Number(atMs) + 3600000) / 1000);
+  const out = { ok: true, provider: RATE_PROVIDER, priceAtMs: {} };
+  for (const cur of ['usd', 'eur']) {
+    let prices;
+    try {
+      const r = await fetcher(`https://api.coingecko.com/api/v3/coins/bitcoin/market_chart/range?vs_currency=${cur}&from=${from}&to=${to}`);
+      if (!r.ok) return { ok: false, provider: RATE_PROVIDER, why: `${RATE_PROVIDER} answered ${r.status} for ${cur}` };
+      prices = (await r.json()).prices;
+    } catch (e) { return { ok: false, provider: RATE_PROVIDER, why: `${RATE_PROVIDER}: ${e.message}` }; }
+    if (!Array.isArray(prices) || !prices.length) return { ok: false, provider: RATE_PROVIDER, why: `${RATE_PROVIDER} has no ${cur} price around ${new Date(Number(atMs)).toISOString()}` };
+    const [ms, price] = prices.reduce((best, p) => (Math.abs(p[0] - atMs) < Math.abs(best[0] - atMs) ? p : best));
+    out[cur] = price;
+    out.priceAtMs[cur] = ms;
+  }
+  return { ok: true, usd: out.usd, eur: out.eur, priceAtMs: out.priceAtMs, provider: RATE_PROVIDER };
+}
+
+/** One donation as the dev keeps it for good: who sent it, in which round, how much, when, and what it was worth then. */
+export const donationRecord = (d, rate, { recordedAt = Date.now() } = {}) => ({
+  outpoint: d.outpoint, federationId: d.federationId, amountMsat: String(d.amountMsat), contractId: d.contractId,
+  playerKey: d.playerKey || null, senderOnContract: !!d.senderOnContract, roundId: d.roundId, entryId: d.entryId, verifiedMs: Number(d.verifiedMs),
+  usdPerBtc: rate.usd, eurPerBtc: rate.eur, ratesAtMs: rate.priceAtMs, rateProvider: rate.provider, recordedAt,
+});
+
+/** The dev's permanent record: one JSON line per donation, appended and synced to disk before this returns. Never rewritten. */
+export function recordDonations(path, records) {
+  const had = new Set(readRecord(path).map((r) => r.outpoint));
+  const fresh = records.filter((r) => !had.has(r.outpoint));
+  if (!fresh.length) return 0;
+  const fd = openSync(path, 'a', 0o600);
+  try { writeSync(fd, fresh.map((r) => JSON.stringify(r)).join('\n') + '\n'); fsyncSync(fd); } finally { closeSync(fd); }
+  return fresh.length;
+}
+export const readRecord = (path) => (existsSync(path) ? readFileSync(path, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
+
+/** The read receipt the seats check (protocol donations-read.js): ECDSA by the recipient key over the outpoints read. */
+export function signDonationsRead({ secretHex, key, atMs, outpoints }) {
+  const der = Buffer.concat([Buffer.from('302e0201010420', 'hex'), Buffer.from(secretHex, 'hex'), Buffer.from('a00706052b8104000a', 'hex')]);
+  return ecdsaSign('sha256', donationsReadMessage({ key, atMs, outpoints }), { key: createPrivateKey({ key: der, format: 'der', type: 'sec1' }), dsaEncoding: 'der' }).toString('hex');
+}
+
+/**
+ * RECORD, REDEEM, THEN TELL THE SEATS (kanban #156): each donation's rate is asked and its record written to disk first; a
+ * donation whose rate is not to be had is not recorded and not receipted (the seats keep it for the next pass). Then the
+ * recorded ones are redeemed; only those recorded AND redeemed or already spent are named in a read receipt to every seat.
+ */
+export async function settleRead({ path, donations, client, key, seats, fetcher = fetch, now = () => Date.now(), done = new Set() }) {
+  const recorded = new Set(readRecord(path).map((r) => r.outpoint));
+  const unrecorded = [];
+  const fresh = [];
+  for (const d of donations) {
+    if (recorded.has(d.outpoint)) continue;
+    const rate = await rateAt({ atMs: d.verifiedMs, fetcher });
+    if (!rate.ok) { unrecorded.push({ outpoint: d.outpoint, why: rate.why }); continue; }
+    fresh.push(donationRecord(d, rate, { recordedAt: now() }));
+  }
+  recordDonations(path, fresh);
+  for (const r of fresh) recorded.add(r.outpoint);
+  const r = await redeemAll({ client, donations: donations.filter((d) => recorded.has(d.outpoint)), recipientPkHex: key.recipientPkHex, secretHex: key.secretHex, done });
+  const read = [...r.redeemed, ...r.spent].map((d) => d.outpoint).filter((o) => recorded.has(o));
+  const answers = [];
+  if (read.length) {
+    const atMs = now();
+    const body = JSON.stringify({ key: key.recipientPkHex, atMs, outpoints: read, signature: signDonationsRead({ secretHex: key.secretHex, key: key.recipientPkHex, atMs, outpoints: read }) });
+    for (const seat of seats) {
+      try { const a = await fetcher(`${seat.replace(/\/$/, '')}/donations/read`, { method: 'POST', body }); answers.push({ seat, status: a.status, said: (await a.text()).trim() }); }
+      catch (e) { answers.push({ seat, why: e.message }); }
+    }
+  }
+  return { recorded: fresh.length, redeemed: r.redeemed, spent: r.spent, failed: r.failed, unrecorded, receipted: read.length, answers };
 }

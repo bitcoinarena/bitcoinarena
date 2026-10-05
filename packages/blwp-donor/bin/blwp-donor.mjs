@@ -13,7 +13,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync, chmod
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFile } from 'node:child_process';
-import { newKey, walletSecretFor, gatherDonations, redeemAll, withdrawToLnd, routeWebSockets } from '../src/donor.js';
+import { newKey, walletSecretFor, gatherDonations, settleRead, withdrawToLnd, routeWebSockets, readRecord } from '../src/donor.js';
 
 const [cmd, dir, ...rest] = process.argv.slice(2);
 const flag = (n, d) => { const i = rest.indexOf(`--${n}`); return i >= 0 ? rest[i + 1] : d; };
@@ -106,12 +106,15 @@ async function pass() {
     if (!invite) { say({ step: 'federation', federation: fed.slice(0, 16), donations: donations.length, why: 'no invite to this federation is known: its funds stay there until one is' }); continue; }
     const client = await LC.join(invite, fed, walletSecretFor(key.secretHex, fed), fileStore(join(dir, `wallet-${fed.slice(0, 16)}.json`)));
     if (owed.length) {
-      const r = await redeemAll({ client, donations: owed, recipientPkHex: cfg.recipientPkHex, secretHex: key.secretHex, done });
+      // RECORDED FOR GOOD FIRST, THEN REDEEMED, THEN THE SEATS TOLD AND THEIR COPY DELETED (kanban #156): donations.jsonl in
+      // this dir is the dev's permanent record - sender key, round id, amount, time, the USD and EUR rate and their provider.
+      const r = await settleRead({ path: join(dir, 'donations.jsonl'), donations: owed, client, key: { recipientPkHex: cfg.recipientPkHex, secretHex: key.secretHex }, seats: cfg.seats, done });
       for (const d of [...r.redeemed, ...r.spent]) done.add(d.outpoint);
       state.done = [...done];
       writeJson(statePath, state);
-      say({ step: 'redeemed', federation: fed.slice(0, 16), redeemed: r.redeemed.length, redeemedMsat: r.redeemed.reduce((t, d) => t + BigInt(d.amountMsat), 0n),
-        alreadySpent: r.spent.length, failed: r.failed.map((d) => `${d.outpoint.slice(0, 12)}: ${d.why}`) });
+      say({ step: 'recorded, redeemed, receipted', federation: fed.slice(0, 16), recorded: r.recorded, unrecorded: r.unrecorded.map((u) => `${u.outpoint.slice(0, 12)}: ${u.why}`),
+        redeemed: r.redeemed.length, redeemedMsat: r.redeemed.reduce((t, d) => t + BigInt(d.amountMsat), 0n), alreadySpent: r.spent.length,
+        failed: r.failed.map((d) => `${d.outpoint.slice(0, 12)}: ${d.why}`), receipted: r.receipted, seats: r.answers.map((a) => `${a.seat}: ${a.status || a.why} ${a.said || ''}`.trim()) });
     }
     const w = await withdrawToLnd({ client, lnd, minMsat: BigInt(cfg.minWithdrawMsat || 10000), memo: `blwp donations ${cfg.label}` });
     if (w.withdrawn !== false || w.state) {
@@ -125,7 +128,7 @@ async function pass() {
 if (cmd === 'status') {
   const got = await gatherDonations({ recipientPkHex: cfg.recipientPkHex, seats: cfg.seats });
   const state = readJson(statePath, { done: [], withdrawals: [] });
-  say({ label: cfg.label, recipientPk: cfg.recipientPkHex, donations: got.total, unanswered: got.unanswered,
+  say({ label: cfg.label, recipientPk: cfg.recipientPkHex, donations: got.total, unanswered: got.unanswered, recorded: readRecord(join(dir, 'donations.jsonl')).length,
     federations: Object.fromEntries([...got.byFederation].map(([f, ds]) => [f.slice(0, 16), { donations: ds.length, msat: String(ds.reduce((t, d) => t + BigInt(d.amountMsat), 0n)),
       redeemed: ds.filter((d) => state.done.includes(d.outpoint)).length }])), withdrawals: state.withdrawals.slice(-5) });
   process.exit(0);
