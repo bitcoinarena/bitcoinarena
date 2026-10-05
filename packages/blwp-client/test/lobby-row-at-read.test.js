@@ -29,6 +29,16 @@ test('a join held on X keeps X; a join held on nothing listed leaves the pick', 
   assert.deepEqual(paid(lobbyRowsAt(rows, NOW, 'gone')), ['X']);
 });
 
+// A JOIN HELD ON A ROUND WHOSE ENTRY HAS CLOSED (a run's end, then "exit game", leaves BLWP_JOIN "joined" on the played round)
+// is not the row: measured on 0.0.2741 at 02:09Z, the held closed round 867446ac stayed the row ("closes in 0:00", not
+// joinable) for as long as the nodes listed it, while 28a9d681 was open.
+test('a join held on a round whose entry has closed does not keep it: the row is the round still open', () => {
+  const past = NOW + 22000 + 500;                      // X's entry closed 0.5 s ago
+  assert.deepEqual(paid(lobbyRowsAt(rows, past, 'X')), ['Y']);
+  assert.deepEqual(paid(lobbyRowsAt(rows, past + 6000, 'X')), ['Y']);
+  assert.deepEqual(paid(lobbyRowsAt(rows, NOW + 21900, 'X')), ['X'], 'while its entry is open the held round stays the row');
+});
+
 test('at every instant of the series the row read is the soonest round whose entry is open', () => {
   for (let t = 0; t < 250000; t += 100) {
     const now = NOW + t;
