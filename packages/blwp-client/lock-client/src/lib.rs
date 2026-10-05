@@ -78,7 +78,25 @@ extern "C" {
     fn console_error(s: &str);
     #[wasm_bindgen(js_namespace = console, js_name = trace)]
     fn console_trace(s: &str);
+    /// performance.now(): a sub-millisecond clock in the page and in node (kanban #178 step 1 timing)
+    #[wasm_bindgen(js_namespace = performance, js_name = now)]
+    pub(crate) fn perf_now() -> f64;
+    /// Date.now(): the wall clock, to set against the harness's and the guardians' clocks (kanban #178 step 1)
+    #[wasm_bindgen(js_namespace = Date, js_name = now)]
+    fn js_sys_date_now() -> f64;
+    /// #178 step 1 probe: globalThis.__blwp178(ms) if the harness set it (absent in the page: a no-op there)
+    #[wasm_bindgen(js_namespace = globalThis, js_name = __blwp178, catch)]
+    fn probe_178(ms: f64) -> Result<(), wasm_bindgen::JsValue>;
 }
+
+/// KANBAN #178 STEP 1 (the owner 2026-10-05, comment 348): timing only, no behaviour change. The client store's commits
+/// (count, ms) since the last take, and every round of the faster 5-of-7 read in `lockAccepted`.
+pub(crate) static STORE_COMMITS: std::sync::Mutex<(u64, f64)> = std::sync::Mutex::new((0, 0.0));
+static READ_ROUNDS: std::sync::Mutex<Vec<serde_json::Value>> = std::sync::Mutex::new(Vec::new());
+fn take_store() -> (u64, f64) {
+    STORE_COMMITS.lock().map(|mut g| std::mem::replace(&mut *g, (0, 0.0))).unwrap_or((0, 0.0))
+}
+fn r1(x: f64) -> f64 { (x * 10.0).round() / 10.0 }
 
 /// A PANIC IS SAID, NOT SWALLOWED. Without this a panic in the stock client is
 /// a bare `RuntimeError: unreachable` and the page's promise never settles -
@@ -143,6 +161,89 @@ async fn block_count(api: &DynModuleApi) -> anyhow::Result<u64> {
 }
 
 /// What the guardians hold at an outpoint: the contract id and the blocks LEFT.
+/// A THRESHOLD OF GUARDIANS AGREEING ON THE CONTRACT STORED AT AN OUTPUT (kanban #178). The endpoint answers
+/// (contract id, blocks left), and each guardian counts blocks left from its own consensus block count - measured on the
+/// 7-guardian regtest federation, those differ for up to ~1 s around a block-count change, and a threshold of IDENTICAL
+/// answers (request_current_consensus) waits that out. The contract id is what the lock is; so this asks for a threshold
+/// agreeing on the id (the same security: no fewer guardians than the federation's threshold), and keeps the smallest
+/// blocks left among them (the earliest expiry any of them sees). None once every guardian answered without such a
+/// threshold - not yet held - or on an error.
+struct StoredIdThreshold {
+    seen: std::collections::BTreeMap<fedimint_core::PeerId, Option<(ContractId, u64)>>,
+    threshold: usize,
+    total: usize,
+}
+
+impl fedimint_api_client::query::QueryStrategy<Option<(ContractId, u64)>, Option<(ContractId, u64)>> for StoredIdThreshold {
+    fn process(&mut self, peer: fedimint_core::PeerId, response: Option<(ContractId, u64)>) -> fedimint_api_client::query::QueryStep<Option<(ContractId, u64)>> {
+        use fedimint_api_client::query::QueryStep;
+        self.seen.insert(peer, response);
+        if let Some((id, _)) = response {
+            let agreeing: Vec<u64> = self.seen.values().filter_map(|v| v.filter(|(i, _)| *i == id).map(|(_, left)| left)).collect();
+            if agreeing.len() >= self.threshold {
+                return QueryStep::Success(Some((id, agreeing.into_iter().min().unwrap_or(0))));
+            }
+        }
+        if self.seen.len() >= self.total { QueryStep::Success(None) } else { QueryStep::Continue }
+    }
+}
+
+/// #178 step 1: the same read, with each guardian's answer and when (ms after `t0`): "<peer>S" / "<peer>N" @ms, in
+/// answer order, or the call's error. Behaves as `stored_now`.
+async fn stored_now_traced(api: &DynModuleApi, outpoint: OutPoint, t0: f64) -> (Option<(ContractId, u64)>, serde_json::Value) {
+    let peers = api.all_peers().to_num_peers();
+    let trace = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let r = api
+        .request_with_strategy(
+            Traced { inner: StoredIdThreshold { seen: Default::default(), threshold: peers.threshold(), total: peers.total() }, trace: trace.clone(), t0 },
+            OUTGOING_CONTRACT_EXPIRATION_ENDPOINT.to_string(),
+            ApiRequestErased::new(outpoint),
+        )
+        .await;
+    let answers = trace.lock().map(|g| g.clone()).unwrap_or_default();
+    match r {
+        Ok(v) => (v, serde_json::json!({ "out": outpoint.out_idx, "held": v.is_some(), "answers": answers })),
+        Err(e) => (None, serde_json::json!({ "out": outpoint.out_idx, "error": e.to_string().chars().take(160).collect::<String>(), "answers": answers })),
+    }
+}
+
+struct Traced {
+    inner: StoredIdThreshold,
+    trace: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    t0: f64,
+}
+
+impl fedimint_api_client::query::QueryStrategy<Option<(ContractId, u64)>, Option<(ContractId, u64)>> for Traced {
+    fn process(&mut self, peer: fedimint_core::PeerId, response: Option<(ContractId, u64)>) -> fedimint_api_client::query::QueryStep<Option<(ContractId, u64)>> {
+        let _ = self.trace.lock().map(|mut g| g.push(format!("{}{}@{}", peer, if response.is_some() { "S" } else { "N" }, r1(perf_now() - self.t0))));
+        self.inner.process(peer, response)
+    }
+}
+
+/// One such read now (no retries, no back-off): Some once a threshold of guardians hold the same contract there.
+async fn stored_now(api: &DynModuleApi, outpoint: OutPoint) -> Option<(ContractId, u64)> {
+    let peers = api.all_peers().to_num_peers();
+    api.request_with_strategy(
+        StoredIdThreshold { seen: Default::default(), threshold: peers.threshold(), total: peers.total() },
+        OUTGOING_CONTRACT_EXPIRATION_ENDPOINT.to_string(),
+        ApiRequestErased::new(outpoint),
+    )
+    .await
+    .ok()
+    .flatten()
+}
+
+/// Read until held, every 50 ms, for at most `tries` reads; then the old read with its retries as the fallback.
+async fn stored_soon(api: &DynModuleApi, outpoint: OutPoint, tries: u32) -> anyhow::Result<Option<(ContractId, u64)>> {
+    for _ in 0..tries {
+        if let Some(held) = stored_now(api, outpoint).await {
+            return Ok(Some(held));
+        }
+        fedimint_core::runtime::sleep(fedimint_core::runtime::Duration::from_millis(50)).await;
+    }
+    stored_at(api, outpoint).await
+}
+
 async fn stored_at(api: &DynModuleApi, outpoint: OutPoint) -> anyhow::Result<Option<(ContractId, u64)>> {
     consensus_with_retries(|| async {
         Ok(api.request_current_consensus(OUTGOING_CONTRACT_EXPIRATION_ENDPOINT.to_string(), ApiRequestErased::new(outpoint)).await?)
@@ -957,6 +1058,14 @@ impl LockClient {
     /// 0, donations 1 and 2), so the entry can name them now; `lockAccepted` checks every one against what the guardians
     /// store once they accept it. JSON: { operation, txid, block_count_at_lock, expiry_delta, with_fee, outputs: [{ out_idx,
     /// role, computed_contract_id, computed_expiration, amount_msat, recipient_pk }] }.
+    /// HOW MANY TWEAKS ARE GROUND AND WAITING (kanban #178): a lock takes one per change note; the lobby keeps the queue
+    /// (200) full before a join, so lockSubmit does not wait for grinding.
+    #[wasm_bindgen(js_name = tweaksReady)]
+    pub fn tweaks_ready(&self) -> Result<u32, JsError> {
+        let mint = self.client.get_first_module::<fedimint_mintv2_client::MintClientModule>().map_err(js)?;
+        Ok(mint.blwp_tweaks_ready() as u32)
+    }
+
     #[wasm_bindgen(js_name = lockSubmit)]
     #[allow(clippy::too_many_arguments)]
     pub async fn lock_submit(
@@ -971,7 +1080,16 @@ impl LockClient {
         donations: String,
     ) -> Result<String, JsError> {
         let api = self.client.api().with_module(self.lnv2);
+        // #178 step 1: (a) the count - kept or read; (b) building; (c) finalize and submit, the mint's tweaks, the store
+        let t_a = perf_now();
+        let _ = take_store();
+        let _ = fedimint_mintv2_client::BLWP_OUTPUT_TIMING.lock().map(|mut g| g.clear());
+        let count_kept = {
+            let now = fedimint_core::time::duration_since_epoch().as_millis() as u64;
+            self.last_count.lock().ok().and_then(|k| *k).is_some_and(|(at, _)| now.saturating_sub(at) < 60_000)
+        };
         let count = self.count_for_lock(&api).await.map_err(js)?;
+        let t_b = perf_now();
         let refund = PublicKey::from_str(&refund_pk).map_err(js)?;
         let claim = PublicKey::from_str(&claim_pk).map_err(js)?;
         let make = |payment_image: PaymentImage, msat: &str| -> Result<OutgoingContract, JsError> {
@@ -1018,11 +1136,20 @@ impl LockClient {
             .collect::<Vec<_>>();
         let bundle = ClientOutputBundle::new_no_sm(outputs).into_dyn(self.lnv2);
         let operation = OperationId::new_random();
+        let t_c = perf_now();
         let change = self
             .client
             .finalize_and_submit_transaction(operation, "blwp-lock-client", |_| (), TransactionBuilder::new().with_outputs(bundle))
             .await
             .map_err(js)?;
+        let t_d = perf_now();
+        let (store_commits, store_ms) = take_store();
+        let mint: Vec<serde_json::Value> = fedimint_mintv2_client::BLWP_OUTPUT_TIMING
+            .lock()
+            .map(|mut g| g.drain(..).map(|(asked, ready, wait)| serde_json::json!({ "notes": asked, "tweaksReady": ready, "tweakWaitMs": r1(wait) })).collect())
+            .unwrap_or_default();
+        let timing = serde_json::json!({ "countMs": r1(t_b - t_a), "countKept": count_kept, "buildMs": r1(t_c - t_b),
+            "finalizeMs": r1(t_d - t_c), "mintOutputs": mint, "storeCommits": store_commits, "storeMs": r1(store_ms) });
         let txid = change.txid();
         let built: Vec<serde_json::Value> = contracts
             .iter()
@@ -1037,7 +1164,7 @@ impl LockClient {
             .collect();
         Ok(serde_json::json!({
             "operation": operation.fmt_full().to_string(), "txid": txid.to_string(), "block_count_at_lock": count,
-            "expiry_delta": expiry_delta, "with_fee": with_fee, "outputs": built,
+            "expiry_delta": expiry_delta, "with_fee": with_fee, "outputs": built, "timing": timing,
         })
         .to_string())
     }
@@ -1048,24 +1175,93 @@ impl LockClient {
     /// not at all, is an error: the entry named that outpoint.
     #[wasm_bindgen(js_name = lockAccepted)]
     pub async fn lock_accepted(&self, submitted: String) -> Result<String, JsError> {
+        // #178 step 1: the inner body returns with every local dropped; "returned" is marked after that
+        let out = self.lock_accepted_inner(submitted).await?;
+        let returned = js_sys_date_now();
+        let _ = probe_178(returned);
+        let mut v: serde_json::Value = serde_json::from_str(&out).map_err(js)?;
+        v["timing"]["wall"]["returned"] = serde_json::json!(returned);
+        Ok(v.to_string())
+    }
+
+    async fn lock_accepted_inner(&self, submitted: String) -> Result<String, JsError> {
+        // #178 step 1: wall clock (ms since the epoch) at entry, at the race's start and end, and at the answer
+        let w_entry = js_sys_date_now();
         let s: serde_json::Value = serde_json::from_str(&submitted).map_err(js)?;
         let operation = OperationId::from_str(s.get("operation").and_then(|v| v.as_str()).ok_or_else(|| js("no operation"))?).map_err(js)?;
         let txid = TransactionId::from_str(s.get("txid").and_then(|v| v.as_str()).ok_or_else(|| js("no txid"))?).map_err(js)?;
         let count = s.get("block_count_at_lock").and_then(|v| v.as_u64()).ok_or_else(|| js("no block count"))?;
         let expiry_delta = s.get("expiry_delta").and_then(|v| v.as_u64()).ok_or_else(|| js("no expiry delta"))?;
         let outputs = s.get("outputs").and_then(|v| v.as_array()).ok_or_else(|| js("no outputs"))?.clone();
-        self.client
-            .transaction_updates(operation)
-            .await
-            .await_tx_accepted(txid)
-            .await
-            .map_err(|e| js(format!("the guardians did not accept the lock transaction: {e}")))?;
         let api = self.client.api().with_module(self.lnv2);
-        let reads = futures::future::join_all(
-            outputs.iter().map(|o| stored_at(&api, OutPoint { txid, out_idx: o.get("out_idx").and_then(|v| v.as_u64()).unwrap_or(u64::MAX) })),
-        )
-        .await;
-        let at_read = block_count(&api).await.map_err(js)?;
+        // THE ACCEPTANCE, LEARNED AT ONCE (kanban #178, the owner 2026-10-05, option A): measured on the 7-guardian regtest
+        // federation, the client's transaction state machine reported an acceptance ~1.1 s (median) after the fifth guardian
+        // had recorded it. So beside it, the stake output is read every 50 ms with one threshold read: an output the guardians'
+        // consensus holds exists only once the transaction was accepted, and the read counts only when a threshold of them
+        // agree - the same security. Whichever answers first stands; every output is then read and checked below as before.
+        let accepted = async {
+            self.client
+                .transaction_updates(operation)
+                .await
+                .await_tx_accepted(txid)
+                .await
+                .map_err(|e| js(format!("the guardians did not accept the lock transaction: {e}")))
+        };
+        let points: Vec<OutPoint> = outputs
+            .iter()
+            .map(|o| OutPoint { txid, out_idx: o.get("out_idx").and_then(|v| v.as_u64()).unwrap_or(u64::MAX) })
+            .collect();
+        // every output, every 50 ms: done once a threshold of guardians hold the same contract at each of them
+        let _ = READ_ROUNDS.lock().map(|mut g| g.clear());
+        let t0 = perf_now();
+        let held = async {
+            loop {
+                let started = perf_now();
+                let traced = futures::future::join_all(points.iter().map(|p| stored_now_traced(&api, *p, t0))).await;
+                let ended = perf_now();
+                let _ = READ_ROUNDS.lock().map(|mut g| {
+                    g.push(serde_json::json!({ "s": r1(started - t0), "e": r1(ended - t0), "outs": traced.iter().map(|(_, t)| t.clone()).collect::<Vec<_>>() }))
+                });
+                let now: Vec<Option<(ContractId, u64)>> = traced.into_iter().map(|(r, _)| r).collect();
+                if now.iter().all(Option::is_some) {
+                    return Ok::<_, JsError>(now);
+                }
+                fedimint_core::runtime::sleep(fedimint_core::runtime::Duration::from_millis(50)).await;
+            }
+        };
+        let t_start = fedimint_core::time::duration_since_epoch().as_millis() as u64;
+        let w_race = js_sys_date_now();
+        futures::pin_mut!(accepted, held);
+        let mut w_dropped = 0.0;
+        let (which, read_by_loop) = match futures::future::select(accepted, held).await {
+            futures::future::Either::Left((r, rest)) => {
+                let w = js_sys_date_now();
+                drop(rest);
+                w_dropped = js_sys_date_now() - w;
+                r?;
+                ("sm", None)
+            }
+            futures::future::Either::Right((r, rest)) => {
+                let w = js_sys_date_now();
+                drop(rest);
+                w_dropped = js_sys_date_now() - w;
+                ("held", Some(r?))
+            }
+        };
+        let t_held = fedimint_core::time::duration_since_epoch().as_millis() as u64;
+        let w_raced = js_sys_date_now();
+        // the outputs (unless the loop already read them) and the block count, read together, not one after the other;
+        // the id-threshold read for a few 50 ms ticks, the old read with its retries only as the fallback
+        let outputs_read = async {
+            match read_by_loop {
+                Some(now) => now.into_iter().map(Ok).collect::<Vec<anyhow::Result<Option<(ContractId, u64)>>>>(),
+                None => futures::future::join_all(points.iter().map(|p| stored_soon(&api, *p, 40))).await,
+            }
+        };
+        let (reads, at_read) = futures::future::join(outputs_read, block_count(&api)).await;
+        let at_read = at_read.map_err(js)?;
+        let t_reads = fedimint_core::time::duration_since_epoch().as_millis() as u64;
+        let t_count = t_reads;
         self.keep_count(at_read);
         let mut stake = serde_json::Value::Null;
         let mut fee = serde_json::Value::Null;
@@ -1088,7 +1284,9 @@ impl LockClient {
                 _ => donations.push(one),
             }
         }
-        Ok(serde_json::json!({ "stake": stake, "fee": fee, "donations": donations }).to_string())
+        Ok(serde_json::json!({ "stake": stake, "fee": fee, "donations": donations, "timing": { "which": which, "held": t_held - t_start, "reads": t_reads - t_held, "count": t_count - t_reads,
+            "rounds": READ_ROUNDS.lock().map(|mut g| std::mem::take(&mut *g)).unwrap_or_default(),
+            "wall": { "entry": w_entry, "race": w_race, "raced": w_raced, "loserDropMs": w_dropped, "answer": js_sys_date_now() } } }).to_string())
     }
 }
 
