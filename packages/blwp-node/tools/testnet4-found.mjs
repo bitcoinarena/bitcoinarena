@@ -12,6 +12,9 @@
 // A guardian directory already there - an earlier founding - is moved aside, never deleted:
 // <store>.guardian -> <store>.guardian.<label>-<time>.
 //
+// THE CHAIN IS THE ONE NAMED (kanban #148 step 6): bitcoind must report BLWP_TN4_NETWORK (default testnet4) - a founding
+// pointed at another chain is refused before any guardian starts. The regtest harness (tn4-tools-regtest.sh) names regtest.
+//
 //   PATH=<dir with the patched fedimintd and fedimint-cli>:$PATH BLWP_BITCOIND_URL=... BLWP_BITCOIND_COOKIE=...
 //     node tools/testnet4-found.mjs [port:store ...]
 import { existsSync, renameSync, readFileSync } from 'node:fs';
@@ -29,6 +32,9 @@ if (nodes.length !== 7) throw new Error(`the testnet federation is seven guardia
 const url = env.BLWP_BITCOIND_URL, cookiePath = env.BLWP_BITCOIND_COOKIE;
 if (!url || !cookiePath) throw new Error('BLWP_BITCOIND_URL and BLWP_BITCOIND_COOKIE: the chain the guardians run on');
 const call = bitcoindRpc({ url, cookiePath });
+const network = env.BLWP_TN4_NETWORK || 'testnet4';
+const { chain } = await call('getblockchaininfo');
+if (chain !== network) throw new Error(`bitcoind at ${url} runs ${chain}, not ${network} (BLWP_TN4_NETWORK): nothing is founded`);
 
 // THE NODES ARE DOWN: a guardian started here would share the node's ports and data
 for (const n of nodes) {

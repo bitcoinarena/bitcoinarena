@@ -14,6 +14,8 @@
  *   ROUND=<round id hex> PORTS=<the seven signer node ports> INVITE_FILE=<federation invite> WASM_PKG=<dir with
  *   blwp_lock_client.js> LNCLI=<lncli> PAYER_DIR=<payer lnd dir> PAYER_RPC=<host:port> \
  *     node tools/testnet4-lock.mjs
+ *
+ * BLWP_TN4_NETWORK (default testnet4) is the payer lnd's chain; the regtest harness (tn4-tools-regtest.sh) names regtest.
  */
 import { readFileSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -35,6 +37,7 @@ import { netStakeMsat } from '../../protocol/src/payout.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { feeLockPays } from '../../protocol/src/lock-settlement.js';
 import { receiptsNeeded } from '../../protocol/src/threshold.js';
+import { worldIsShared } from '../../protocol/src/seed.js';
 import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
 
 const env = process.env;
@@ -44,7 +47,7 @@ const say = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ..
 const rand = (n) => new Uint8Array(randomBytes(n));
 const run = (bin, args) => new Promise((done) => execFile(bin, args, { timeout: 240000 },
   (err, out, errOut) => done({ ok: !err, out: String(out), err: String(errOut || (err && err.message) || '') })));
-const payer = (...a) => run(env.LNCLI, [`--lnddir=${env.PAYER_DIR}`, `--rpcserver=${env.PAYER_RPC}`, '--network=testnet4', ...a]);
+const payer = (...a) => run(env.LNCLI, [`--lnddir=${env.PAYER_DIR}`, `--rpcserver=${env.PAYER_RPC}`, `--network=${env.BLWP_TN4_NETWORK || 'testnet4'}`, ...a]);
 const scalar = () => { for (;;) { const s = rand(32); const v = scalarFrom32(s); if (v > 0n && v < FIELD) return s; } };
 const evenPlayer = () => { let k; do { k = secp256k1.utils.randomSecretKey(); } while (secp256k1.getPublicKey(k, true)[0] !== 0x02); return schnorr.getPublicKey(k); };
 
@@ -113,7 +116,9 @@ try {
     coefficients: Array.from({ length: needed - 1 }, () => scalarFrom32(rand(32)) % FIELD), needed, curve: feldmanGroup });
   const entry = { roundId: rid, playerPubkey: s.player, sessionPubkey: ed25519.getPublicKey(ed25519.utils.randomSecretKey()),
     stakeCommitment: sha256(s.p), stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE), donationMsat: 0n, joinTick: 0,
-    worldSecret: rand(32), vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0],
+    // A SHARED-WORLD ROUND'S ENTRY NAMES NO WORLD SECRET, as the page's join writes it (join.js; found by the regtest run of
+    // kanban #148 step 6: every seat refused a random one, "an entry names no world secret (32 zero bytes)")
+    worldSecret: worldIsShared(c) ? new Uint8Array(32) : rand(32), vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0],
     feePreimage: fee ? fee.preimage : new Uint8Array(32), stakeLockOutpoint: lk.outpoint,
     feeLockOutpoint: fee ? fee.outpoint : { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: att.ref };
   const eid = entryId(entry);
