@@ -52,7 +52,7 @@ import {
 // which is the one number they are about to part with money over.
 import { parseConnection, payInvoice } from './nwc.js';
 import { STAKE_NOT_SEEN } from '../../protocol/src/constants.js';
-import { stakeSeenBy, settlementBy, SETTLEMENT_OVER } from './join.js';
+import { stakeSeenBy, settlementBy, settlementDecided } from './join.js';
 import { handLock } from './page-lock.js';
 import { invoiceQrSvg } from './qr.js';
 import { decodeGhost } from '../../protocol/src/ghost.js';
@@ -1476,7 +1476,7 @@ export class Client {
         this.settlementPolls++;
         this.settlement = s;
         this.stakeCount = { ...(this.stakeCount || {}), settlement: s };
-        if (s.answered && SETTLEMENT_OVER.includes(s.hold)) { this.settlementOver = true; return s; }
+        if (settlementDecided(s)) { this.settlementOver = true; return s; }
         if (this.stakeWatchStopped) return s;
         await new Promise((r) => setTimeout(r, everyMs));
         if (this.stakeWatchStopped) return this.settlement;
