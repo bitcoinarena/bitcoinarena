@@ -70,6 +70,31 @@ export function donationChoice({ typed, stakeMsat, confirm } = {}) {
 const keyFor = (roundIdHex) => `blwp.donation.${roundIdHex}`;
 
 /**
+ * THE DONATION THIS TAB ALREADY KEPT FOR A ROUND, read only: `{ ok, bps, donationMsat, netMsat, kept: true }`, or null when
+ * none is kept (or the kept one no longer leaves the fee inside the stake). chooseDonation answers it before asking.
+ */
+export function keptDonation({ roundIdHex, stakeMsat, storage } = {}) {
+  if (!roundIdHex || !storage) return null;
+  let kept = null;
+  try { kept = storage.getItem(keyFor(roundIdHex)); } catch { kept = null; }
+  if (kept === null || kept === undefined || !/^\d{1,5}$/.test(String(kept)) || Number(kept) > 10000) return null;
+  const donationMsat = bpsOf(stakeMsat, Number(kept));
+  const fee = feeMatchesEntry({ stakeMsat, feeMsat: entryFeeMsat(stakeMsat), donationMsat });
+  return fee.ok ? { ok: true, bps: Number(kept), donationMsat, netMsat: fee.net, kept: true } : null;
+}
+
+/**
+ * THE DONATION A DEPOSIT FOR A ROUND IS SIZED BY (kanban #187 item 2, the owner 2026-10-05): the one the join will write - the
+ * round's kept choice when this tab has one, else the Settings percent. Before, the settings deposit always took Settings,
+ * so a round joined at 2% with Settings since moved to 3% was quoted 1% of its stake too much (1% to 3%: 2% short). Reads
+ * only; it keeps nothing.
+ */
+export function depositDonationMsat({ roundIdHex, stakeMsat, settingsBps, storage } = {}) {
+  const kept = keptDonation({ roundIdHex, stakeMsat, storage });
+  return kept ? kept.donationMsat : bpsOf(BigInt(stakeMsat), Number(settingsBps));
+}
+
+/**
  * THE DONATION FOR THIS ROUND IN THIS TAB: the one already chosen, or asked.
  *
  * KEPT, because a reload over a stake lock this tab already made must write the
@@ -84,13 +109,8 @@ export function chooseDonation({ roundIdHex, round, stakeMsat, ask, confirm, sto
   if (stakeMsat === undefined && round) stakeMsat = BigInt(round.stakeMsat || 0n);
   const none = { ok: true, bps: 0, donationMsat: 0n, netMsat: null };
   const keep = (c) => { try { if (storage) storage.setItem(keyFor(roundIdHex), String(c.bps)); } catch { /* a tab that keeps nothing asks again */ } return c; };
-  let kept = null;
-  try { kept = storage ? storage.getItem(keyFor(roundIdHex)) : null; } catch { kept = null; }
-  if (kept !== null && kept !== undefined && /^\d{1,5}$/.test(String(kept)) && Number(kept) <= 10000) {
-    const donationMsat = bpsOf(stakeMsat, Number(kept));
-    const fee = feeMatchesEntry({ stakeMsat, feeMsat: entryFeeMsat(stakeMsat), donationMsat });
-    if (fee.ok) return { ok: true, bps: Number(kept), donationMsat, netMsat: fee.net, kept: true };
-  }
+  const kept = keptDonation({ roundIdHex, stakeMsat, storage });
+  if (kept) return kept;
   if (typeof ask !== 'function') return keep(none);
   let why = '';
   for (let i = 0; i < tries; i++) {
