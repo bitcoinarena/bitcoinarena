@@ -148,7 +148,7 @@ h1{font-size:20px;margin:0 0 4px}h2{font-size:15px;margin:22px 0 8px;color:var(-
 .sub{color:var(--dim);margin-bottom:14px;word-break:break-all}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px}.card h3{margin:0 0 8px;font-size:13px;color:var(--dim)}
 .row{display:flex;flex-wrap:wrap;justify-content:space-between;gap:0 8px;padding:2px 0}.row b{font-variant-numeric:tabular-nums;white-space:nowrap;margin-left:auto}.notes{color:var(--dim);word-break:normal;overflow-wrap:anywhere}.notes p{margin:0 0 6px}
-#chartbox{position:relative}#tip{position:absolute;display:none;pointer-events:none;background:var(--card);border:1px solid var(--line);border-radius:6px;padding:4px 8px;font-size:12px;white-space:nowrap;font-variant-numeric:tabular-nums}.profit{border-top:1px solid var(--line);margin-top:6px;padding-top:6px}
+#chartbox{position:relative}#tip{position:absolute;display:none;pointer-events:none;background:var(--card);border:1px solid var(--line);border-radius:6px;padding:4px 8px;font-size:12px;white-space:normal;max-width:calc(100% - 8px);font-variant-numeric:tabular-nums}.profit{border-top:1px solid var(--line);margin-top:6px;padding-top:6px}
 .tabs button{background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:4px 10px;margin-right:4px;cursor:pointer}.tabs button.on{border-color:var(--gv)}
 svg{width:100%;height:auto;display:block}table{width:100%;border-collapse:collapse;font-size:12.5px}th,td{text-align:left;padding:5px 6px;border-bottom:1px solid var(--line);vertical-align:top}
 th{color:var(--dim);font-weight:600}td.n{text-align:right;font-variant-numeric:tabular-nums}.ok{color:var(--ok)}.bad{color:var(--bad)}.scroll{overflow-x:auto}
@@ -171,6 +171,8 @@ let D=null,period='day';
 const open=new Set(),players=new Map();
 const esc=(v)=>String(v).replace(/[<>&"]/g,(c)=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
 const score=(v)=>v===null||v===undefined?'-':Math.trunc(v/100000)+'.'+String(Math.abs(v)%100000).padStart(5,'0');
+// A NOTE'S HYPHENS DO NOT BREAK (kanban #125, measured at 1280 px: "test-host- / testnet4"): a name in a note stays one word.
+const keep=(t)=>String(t).replace(/-/g,'\\u2011');
 const signedSat=(m)=>m===null||m===undefined||m===''?'':(Number(m)>0?'+':'')+sat(m);
 function playersOf(id){const a=players.get(id);
  if(!a||a.loading)return 'reading api/round-result…';if(a.error)return 'could not read api/round-result: '+esc(a.error);
@@ -181,7 +183,7 @@ function readPlayers(id){players.set(id,{loading:true});fetch('api/round-result?
 function totals(){const T=D.totals[period];const names=[['gameVerifyMsat','Game/verify fee'],['settlementMsat','Settlement fee'],['guardianMsat','Guardian/custody fee'],['otherMsat','Other earnings'],['lightningCostMsat','Lightning costs'],['gatewayCostMsat','Gateway costs']];
 el('totals').innerHTML='<div class="card"><h3>'+({day:'Today',month:'This month',year:'This year'}[period])+' (earned: settlement ACCEPTED)</h3>'+names.map(([k,n])=>'<div class="row"><span>'+n+'</span><b>'+(k.includes('Cost')&&T[k]!=='0'?'−':'')+sat(T[k])+'</b></div>').join('')+'<div class="row profit"><span>Absolute profit</span><b>'+sat(T.profitMsat)+'</b></div></div>'
  +'<div class="card"><h3>Owed (rounds not settled yet)</h3><div class="row"><span>Game/verify</span><b>'+sat(D.totals.owed.gameVerifyMsat)+'</b></div><div class="row"><span>Settlement</span><b>'+sat(D.totals.owed.settlementMsat)+'</b></div><div class="row"><span>Guardian</span><b>'+sat(D.totals.owed.guardianMsat)+'</b></div></div>'
- +'<div class="card"><h3>Notes</h3><div class="notes"><p>'+D.notes.guardian+'</p><p>'+D.notes.lightning+'</p><p>'+D.notes.gateway+'</p></div></div>'+hostsCard();
+ +'<div class="card"><h3>Notes</h3><div class="notes"><p>'+keep(D.notes.guardian)+'</p><p>'+keep(D.notes.lightning)+'</p><p>'+keep(D.notes.gateway)+'</p></div></div>'+hostsCard();
 el('tabs').innerHTML=['day','month','year'].map(p=>'<button class="'+(p===period?'on':'')+'" data-p="'+p+'">'+({day:'Day',month:'Month',year:'Year'}[p])+'</button>').join('');
 el('tabs').querySelectorAll('button').forEach(b=>b.onclick=()=>{period=b.dataset.p;totals()});}
 // THE HOSTS CARD (node 1: gateway A + LND 1, node 2: gateway B + LND 2): only on a node that hosts them
