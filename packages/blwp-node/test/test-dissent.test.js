@@ -45,3 +45,11 @@ test('the switch reaches exactly two places: an objection\'s replay check and th
   assert.match(finality, /replayDiffers: \(mine !== null && hex\(mine\) !== seen\.runId\) \|\| dissentsOn\(entryIdBytes\)/);
   assert.match(verify, /dissentsOn\(entryIdBytes\) \? \{ \.\.\.built\.result, score: \(built\.result\.score \+ 1\) >>> 0 \} : built\.result/);
 });
+
+// AND THE OBJECTION DOOR READS IT TOO (kanban #146, the owner 2026-10-05): since #24 the door replays the bundle and refused an
+// honest one - "the replay agrees with the signed result" - before finality could see the fault. For the named entry only.
+test('the objection door counts the named entry\'s replay as differing, and only that entry', () => {
+  const src = readFileSync(new URL('../src/objection-check.js', import.meta.url), 'utf8');
+  assert.match(src, /import \{ dissentsOn \} from '\.\/test-dissent\.js';/);
+  assert.match(src, /if \(hex\(claimed\) === hex\(signedResultId\) && !dissentsOn\(entryId\)\)\n\s+return \{ \.\.\.no\('replay', 'the replay agrees with the signed result'\)/);
+});
