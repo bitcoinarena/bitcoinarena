@@ -1760,7 +1760,8 @@ test('a set of keys: one lockWithDonations call, the shares in the set\'s order,
     const got = await go;
     const calls = log.filter((l) => l.lock || l.lockHash || l.lockBoth || l.lockWithDonations);
     assert.deepEqual(calls.map((c) => Object.keys(c)[0]), ['lockWithDonations'], 'stake, fee and donation were not one transaction');
-    assert.deepEqual(calls[0].lockWithDonations.donations, [{ pk: '02' + 'a1'.repeat(32), msat: '1334' }, { pk: '03' + 'b2'.repeat(32), msat: '666' }]);
+    // EACH DONATION CARRIES THE SENDER (kanban #156, the owner 2026-10-05): the player's x-only key as its payment image
+    assert.deepEqual(calls[0].lockWithDonations.donations, [{ pk: '02' + 'a1'.repeat(32), msat: '1334', image: toHex(player) }, { pk: '03' + 'b2'.repeat(32), msat: '666', image: toHex(player) }]);
     assert.equal(calls[0].lockWithDonations.hash === '', !feeRule, 'a fee hash only when the fee lock is due');
     assert.equal(!!got.feeLock, !!feeRule);
     assert.deepEqual(got.donations.map((d) => [d.outIdx, d.amountMsat]), feeRule ? [[2n, 1334n], [3n, 666n]] : [[1n, 1334n], [2n, 666n]]);

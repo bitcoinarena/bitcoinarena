@@ -58,6 +58,18 @@ use fedimint_lnv2_common::{
 };
 use wasm_bindgen::prelude::{JsError, wasm_bindgen};
 
+/// A DONATION'S PAYMENT IMAGE (kanban #156, the owner 2026-10-05): the sender's 32-byte x-only player key when the page names
+/// it ("image", 64 hex), else the zero hash as before. Nobody can make a preimage of either, so the claim path stays dead and
+/// the recipient's Refund is the only spend; the key is then part of the contract the guardians store, and of its id.
+fn donation_image(d: &serde_json::Value) -> Result<PaymentImage, JsError> {
+    let image = d.get("image").and_then(|v| v.as_str()).unwrap_or("");
+    let hex = if image.is_empty() { "00".repeat(32) } else { image.to_string() };
+    if hex.len() != 64 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(js("a donation's image is 32 bytes of hex"));
+    }
+    Ok(PaymentImage::Hash(sha256::Hash::from_str(&hex).map_err(js)?))
+}
+
 fn js(e: impl std::fmt::Display) -> JsError { JsError::new(&e.to_string()) }
 
 #[wasm_bindgen]
@@ -854,7 +866,7 @@ impl LockClient {
                 return Err(js("a donation output of 0 msat is not made"));
             }
             contracts.push(OutgoingContract {
-                payment_image: PaymentImage::Hash(sha256::Hash::from_str(&"00".repeat(32)).map_err(js)?),
+                payment_image: donation_image(d)?,
                 amount: Amount::from_msats(msat),
                 expiration: 0,
                 claim_pk: pk,
@@ -987,7 +999,7 @@ impl LockClient {
             }
             contracts.push((
                 OutgoingContract {
-                    payment_image: PaymentImage::Hash(sha256::Hash::from_str(&"00".repeat(32)).map_err(js)?),
+                    payment_image: donation_image(d)?,
                     amount: Amount::from_msats(msat),
                     expiration: 0,
                     claim_pk: pk,
