@@ -184,6 +184,15 @@ until_ "both gateways hold e-cash" 600 credited
 reading "3 peg-in: {\"ok\":true,\"gatewayA\":{\"beforeMsat\":$BEFORE_A,\"afterMsat\":$(ecash $GWA $H/gw-a/password)},\"gatewayB\":{\"beforeMsat\":$BEFORE_B,\"afterMsat\":$(ecash $GWB $H/gw-b/password)}}"
 [ "$BEFORE_A" = 0 ] && [ "$BEFORE_B" = 0 ] || die "a gateway held e-cash before its peg-in"
 
+# ---- 7 (kanban #178). THE STAKE LOCK'S ACCEPTANCE TIME: lock-latency-regtest.mjs, 20 locks through the page's wasm lock
+# client on this federation (alice pays the deposit through a gateway); submit -> accepted on one clock, the 200 ms line.
+# Recorded, not a stop: the run goes on to the paid round whatever it measures. LOCK_LATENCY_ONLY=1 stops after it.
+( cd "$HERE/.." && INVITE_FILE=$H/invite-code WASM_PKG=$WASM LNCLI=$LNCLI PAYER_DIR=$H/alice PAYER_RPC=127.0.0.1:${LRPC[alice]} \
+  timeout 600 "$NODE" tools/lock-latency-regtest.mjs ) > $H/latency.out 2>&1; LAT_RC=$?
+cat $H/latency.out >> "$LOG"
+reading "7 lock latency: {\"exit\":$LAT_RC,\"summary\":$(grep '"step":"summary"' $H/latency.out | tail -1 || echo null)}"
+[ "${LOCK_LATENCY_ONLY:-}" = 1 ] && { say "LOCK_LATENCY_ONLY: stopping after reading 7"; exit 0; }
+
 # ---- 4. THE PAID ROUND: run-testnet4-paid.mjs, which starts the seven nodes itself and posts their bonds ----
 stop_nodes
 WSS=""; for p in ${NODE_PORTS//,/ }; do WSS="$WSS BLWP_WSS_$p=ws://127.0.0.1:$p"; done
