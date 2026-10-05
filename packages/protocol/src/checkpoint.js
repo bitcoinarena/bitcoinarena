@@ -162,14 +162,15 @@ export function joinSigned(bytes, signature) {
  * It may answer a promise, so this does too.
  */
 export async function provesEquivocation(a, b, sessionPubkey, verify) {
-  let one; let two;
+  // THE DECODE IS INSIDE THE SAME TRY (kanban #146): measured before, two records of the right length whose body was not
+  // a checkpoint made this reject ("not a checkpoint: type N") - and one of them is a peer's bytes.
+  let one; let two; let x; let y;
   try {
     one = splitSigned(a);
     two = splitSigned(b);
+    x = decodeCheckpoint(one.body);
+    y = decodeCheckpoint(two.body);
   } catch (e) { return { ok: false, why: `that is not a signed checkpoint: ${e.message}` }; }
-
-  const x = decodeCheckpoint(one.body);
-  const y = decodeCheckpoint(two.body);
 
   const alike = (p, q) => p.length === q.length && p.every((v, i) => v === q[i]);
   if (!alike(x.roundId, y.roundId) || !alike(x.entryId, y.entryId))
@@ -202,9 +203,11 @@ export async function provesEquivocation(a, b, sessionPubkey, verify) {
   // AND BOTH HAVE TO BE THE PLAYER'S. Anyone can write two conflicting
   // objects; only the session key the entry named can sign them, and without
   // that check this would forfeit a stake on somebody else's forgery.
-  if (!await verify(one.signature, idX, sessionPubkey))
+  // A VERIFIER THAT THROWS IS A SIGNATURE THAT DID NOT VERIFY: measured before, its throw rejected the whole proof.
+  const signedBy = async (signature, id) => { try { return !!await verify(signature, id, sessionPubkey); } catch { return false; } };
+  if (!await signedBy(one.signature, idX))
     return { ok: false, why: 'the first mark is not signed by that entry' };
-  if (!await verify(two.signature, idY, sessionPubkey))
+  if (!await signedBy(two.signature, idY))
     return { ok: false, why: 'the second mark is not signed by that entry' };
 
   return {
