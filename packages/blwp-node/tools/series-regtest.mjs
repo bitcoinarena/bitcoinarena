@@ -2,7 +2,9 @@
 // A NODE REFUSES WHAT A SERIES DOES NOT DERIVE, AS A PROCESS (the owner 2026-09-29, the accepted series sequence, step 3):
 // "Private regtest: bitcoind on 30601, nodes on 41221+, two main.js processes, one series. Accept a genuine round i. Refuse
 // a moved window, index 960, an id that is not the hash, and an entry, a lock, and a settlement commit that name such a
-// round." Never testnet4, no bond, nothing spent.
+// round." Never testnet4, no bond, nothing spent. Since kanban #148 (2026-10-05) the seats are on 23421/23431 - below the
+// ephemeral range - and the series' run is the 82 s one every 90 s series runs (RUN_82_TICKS): the seats refused the
+// 180 s BLOCK_TICKS run once the run had to fit its slot. test/series-regtest-tool.test.js runs this with CHAIN=0.
 //
 //   RT=<datadir> RPCPORT=30601 node tools/series-regtest.mjs            (from packages/blwp-node)
 //
@@ -14,7 +16,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { openStore, nodeIdentity } from '../src/store.js';
 import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
-import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
+import { RUN_82_TICKS } from './round-2of2.mjs';
 import { encodeRoundContract, encodeEntryContract, roundId, entryId } from '../../protocol/src/contracts.js';
 import { seriesTemplate, seriesRound, seriesIndexAt, seriesId, ROUND_PERIOD_MS } from '../../protocol/src/series.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
@@ -22,6 +24,7 @@ import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId } from '../../protocol/src/donation.js';
 import { toHex, sha256 } from '../../protocol/src/hash.js';
+import { worldIsShared } from '../../protocol/src/seed.js';
 import { dealHandout, encodeHandout, handoutId } from '../../protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../protocol/src/shares.js';
 import { lockFieldsToJson } from '../../protocol/src/stake-lock.js';
@@ -33,7 +36,7 @@ if (!RT) throw new Error('RT=<a private regtest datadir>');
 const out = (o) => console.log(JSON.stringify({ at: new Date().toISOString().slice(11, 19), ...o }));
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const b32 = (n) => new Uint8Array(32).fill(n);
-const ports = [41221, 41231];
+const ports = [23421, 23431];
 const dir = mkdtempSync(join(env.SERIES_DIR || '/mnt/bitcoin', 'series-regtest-'));
 const stores = ports.map((_, i) => join(dir, `node-${i + 1}.db`));
 const keys = stores.map((p) => { const db = openStore(p); const k = nodeIdentity(db).pubkey; db.close(); return k; });
@@ -45,7 +48,7 @@ const base = {
   objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT',
   federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'],
   donationSetId: donationSetId(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000, censusRoot: b32(2), stakeMsat: 0n,
-  bondMinSats: 50000n, blockTicks: BLOCK_TICKS, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
+  bondMinSats: 50000n, blockTicks: RUN_82_TICKS, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
   timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4, nodes: keys,
 };
 const t = seriesTemplate(base, seriesIndexAt(NETWORK_ID_REGTEST, Date.now()) - 1);          // the series running now
@@ -64,7 +67,7 @@ const start = (k, withSeries) => {
   p.log = ''; for (const s of [p.stdout, p.stderr]) s.on('data', (d) => { p.log += d; });
   return p;
 };
-const up = async (k) => { for (let n = 0; n < 60; n++) { try { if ((await fetch(`http://127.0.0.1:${ports[k]}/identity`)).ok) return; } catch { /* not yet */ } await wait(500); } throw new Error(`node ${k + 1} did not come up`); };
+const up = async (k) => { for (let n = 0; n < 60; n++) { try { if ((await fetch(`http://127.0.0.1:${ports[k]}/identity`)).ok) return; } catch { /* not yet */ } await wait(500); } throw new Error(`node ${k + 1} did not come up: ${nodes[k].log.trim().split('\n').filter((l) => /Error|refused/.test(l)).slice(-2).join(' | ')}`); };
 const post = async (k, path, body) => { const r = await fetch(`http://127.0.0.1:${ports[k]}${path}`, { method: 'POST', body }); return { status: r.status, text: (await r.text()).slice(0, 170) }; };
 
 let nodes = [start(0, true), start(1, true)];
@@ -89,7 +92,9 @@ const dealt = await dealHandout({ preimage, signerNodes: keys, roundId: roundId(
   ephemeralPubkey: feldmanGroup.pointX(eph), coefficients: [scalarFrom32(rand(32)) % FIELD], needed: 2, curve: feldmanGroup });
 const handout = await post(0, '/handout', encodeHandout(dealt.handout));
 const entry = { roundId: roundId(genuine), playerPubkey: b32(3), sessionPubkey: b32(4), stakeMsat: 0n, feeMsat: 0n, donationMsat: 0n,
-  joinTick: 0, stakeCommitment: sha256(preimage), vssSharesRef: handoutId(dealt.handout), worldSecret: b32(9), stakePoint: dealt.handout.commitments[0],
+  joinTick: 0, stakeCommitment: sha256(preimage), vssSharesRef: handoutId(dealt.handout),
+  // a shared-world round's entry names no world secret, as the page's join writes it (the seats refuse any other)
+  worldSecret: worldIsShared(genuine) ? b32(0) : b32(9), stakePoint: dealt.handout.commitments[0],
   feePreimage: b32(0), stakeLockOutpoint: { txid: b32(0), outIdx: 0n }, feeLockOutpoint: { txid: b32(0), outIdx: 0n }, claimKeyAttestationRef: b32(0) };
 out({ step: 'handout', status: handout.status });
 const eid = toHex(entryId(entry));
