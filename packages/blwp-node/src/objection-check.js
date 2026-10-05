@@ -22,6 +22,7 @@ import { splitSignedReceipt, decodeCheckpointReceipt, receiptId, SIGNED_RECEIPT_
 import { entryId as entryIdOf } from '../../protocol/src/contracts.js';
 import { resultFrom, runId } from './verdict.js';
 import { replay } from './replay.js';
+import { dissentsOn } from './test-dissent.js';
 
 const hex = (b) => [...b].map((v) => v.toString(16).padStart(2, '0')).join('');
 const NOBODY = new Uint8Array(32);
@@ -168,7 +169,9 @@ export async function checkObjectionBundle({ bundle, roundId, entryId, entry, co
     replayed: { outcome: built.result.outcome, score: built.result.score }, claimed: { outcome: o.claimedOutcome, score: o.claimedScore } };
   if (hex(replayed) !== hex(claimed))
     return { ...no('replay', `the replay gives ${built.result.outcome} ${built.result.score}, not the claimed ${o.claimedOutcome} ${o.claimedScore}`), ...facts };
-  if (hex(claimed) === hex(signedResultId))
+  // THE TEST FAULT, OFF BY DEFAULT (test-dissent.js dissentsOn; kanban #146, the owner 2026-10-05): for the one named entry this
+  // seat's replay counts as differing here too, as it does in finality - the fault's "an objection to it holds here".
+  if (hex(claimed) === hex(signedResultId) && !dissentsOn(entryId))
     return { ...no('replay', 'the replay agrees with the signed result'), ...facts };
   return { holds: true, step: null, ...facts, objectorPubkey: hex(o.objectorPubkey),
     why: `the receipts are the committee's and a replay under the round's core gives ${built.result.outcome} ${built.result.score}, contradicting the signed result ${hex(signedResultId).slice(0, 16)}` };
