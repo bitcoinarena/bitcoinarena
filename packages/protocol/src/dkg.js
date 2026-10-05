@@ -217,6 +217,12 @@ export async function dealContribution({ secret, signerNodes, epochId: id, from,
     return { ok: false, why: 'a contribution names the signer node that dealt it' };
   if (!signerNodes.some((k) => same(k, from)))
     return { ok: false, why: 'that signer node is not on the committee it is dealing to' };
+  // THE DEALER'S KEY ON THE WIRE IS THE POINT OF THE SECRET IT SEALS WITH. Measured before: a mismatched pair dealt ok and
+  // was accepted, and no signer node could open its share - one dealer stalled the key without being refused at the deal.
+  const ephemeralFromSecret = curve.pointX(ephemeralSecret);
+  if (!(ephemeralPubkey instanceof Uint8Array) || toHex(ephemeralPubkey) !== toHex(ephemeralFromSecret))
+    return { ok: false, why: `the ephemeral key ${ephemeralPubkey instanceof Uint8Array ? toHex(ephemeralPubkey) : String(ephemeralPubkey)} `
+      + `is not the point of the secret the shares are sealed with (${toHex(ephemeralFromSecret)}), so no signer node could open its share` };
 
   let split;
   try { split = splitSecret(secret, { signerNodes: signerNodes.length, needed, coefficients, curve }); }
@@ -310,6 +316,9 @@ export function acceptContribution(c, { curve } = {}) {
 export async function openMyContribution(c, { pubkey, secret, curve } = {}) {
   if (!(pubkey instanceof Uint8Array) || pubkey.length !== 32)
     return { ok: false, why: 'a signer node opens a share with its own 32-byte key, and that is not one' };
+  // A CONTRIBUTION WITH NO SHARES LIST IS REFUSED BY NAME: measured before, this threw "Cannot read properties of undefined".
+  if (!c || !Array.isArray(c.shares))
+    return { ok: false, why: 'that contribution carries no shares list, so it has no share for this node' };
   const mine = c.shares.find((s) => toHex(s.signerNodePubkey) === toHex(pubkey));
   if (!mine) return { ok: false, why: 'this node is not one of the signer nodes that contribution was dealt to' };
   // A SHARE ON A POLYNOMIAL NOBODY KNOWS IS NOT A SHARE: refused before it is opened.
@@ -340,6 +349,10 @@ export function groupKeyOf(contributions, curve) {
     return { ok: false, why: 'no contributions, so there is no key to compute' };
   if (!curve || typeof curve.combinePoints !== 'function')
     return { ok: false, why: 'summing commitments needs a curve, and none was injected' };
+  // A CONTRIBUTION WITHOUT ITS FIRST COMMITMENT IS REFUSED BY NAME: measured before, it threw "reading '0'".
+  const bare = contributions.find((c) => !c || !Array.isArray(c.commitments) || !(c.commitments[0] instanceof Uint8Array));
+  if (bare !== undefined)
+    return { ok: false, why: `the contribution of ${bare && bare.from instanceof Uint8Array ? toHex(bare.from).slice(0, 16) : 'an unnamed signer node'} publishes no first commitment, so there is no key to compute` };
   const terms = contributions.map((c) => ({ point: c.commitments[0], coefficient: 1n }));
   const summed = curve.combinePoints(terms);
 
