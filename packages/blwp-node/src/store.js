@@ -987,10 +987,6 @@ export function openStore(path = ':memory:') {
   // same-parent pair forfeits only then. A row from before counts as not receipted.
   if (!db.prepare('PRAGMA table_info(fork_pairs)').all().some((c) => c.name === 'receipted'))
     db.exec('ALTER TABLE fork_pairs ADD COLUMN receipted INTEGER NOT NULL DEFAULT 0');
-  // A DONATION OUTPUT SAYS WHETHER THE SENDER'S KEY IS ON ITS CONTRACT (kanban #156, the owner 2026-10-05): 1 when its payment
-  // image is the entry's player key. A row from before carries the zero image.
-  if (!db.prepare('PRAGMA table_info(donation_outputs)').all().some((c) => c.name === 'sender_on_contract'))
-    db.exec('ALTER TABLE donation_outputs ADD COLUMN sender_on_contract INTEGER NOT NULL DEFAULT 0');
   // A PEER'S ANSWER TO AN OFFERED FIRST MARK NAMES ITS BLOCK (§13C, RULED 2026-09-24): this node's tip when it recorded
   // the answer. A store made before the ruling gets the column; a row there names none, and its refusal counts nowhere.
   if (!db.prepare('PRAGMA table_info(first_mark_offers)').all().some((c) => c.name === 'block_hash'))
