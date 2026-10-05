@@ -10878,7 +10878,7 @@ async function lockStake({ round, roundId, invite, seed, stake, claimKey, player
     const image = preimage ? sha256(preimage) : null;
     const submitted = JSON.parse(await client.lockSubmit(toHex(stake.stakePoint), String(amount), image ? toHex(image) : '',
       String(feeGate.pays ? feeMsat : 0n), toHex(claimKey.claimPk), toHex(refundPk), delta,
-      JSON.stringify(donationShares.map((d) => ({ pk: toHex(d.recipientPk), msat: String(d.amountMsat) })))));
+      JSON.stringify(donationShares.map((d) => ({ pk: toHex(d.recipientPk), msat: String(d.amountMsat), image: toHex(playerPubkey) })))));
     const asBuilt = (o, image) => ({ outpoint: { txid: fromHex(submitted.txid), outIdx: BigInt(o.out_idx) },
       fields: { paymentImage: image, amountMsat: BigInt(o.amount_msat), claimPk: claimKey.claimPk, refundPk, expiration: o.computed_expiration },
       contractId: o.computed_contract_id });
@@ -10918,7 +10918,7 @@ async function lockStake({ round, roundId, invite, seed, stake, claimKey, player
     const image = preimage ? sha256(preimage) : null;
     const all = JSON.parse(await client.lockWithDonations(toHex(stake.stakePoint), String(amount), image ? toHex(image) : '',
       String(feeGate.pays ? feeMsat : 0n), toHex(claimKey.claimPk), toHex(refundPk), delta,
-      JSON.stringify(donationShares.map((d) => ({ pk: toHex(d.recipientPk), msat: String(d.amountMsat) })))));
+      JSON.stringify(donationShares.map((d) => ({ pk: toHex(d.recipientPk), msat: String(d.amountMsat), image: toHex(playerPubkey) })))));
     const lock = lockFromClient(all.stake, { point: stake.stakePoint, claimPk: claimKey.claimPk, refundPk });
     if (lock.fields.amountMsat !== amount)
       throw new Error(`the lock client locked ${lock.fields.amountMsat} msat, and this entry's net stake is ${amount}`);

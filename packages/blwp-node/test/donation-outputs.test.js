@@ -102,3 +102,31 @@ test('GET /donations lists what a key was given, oldest first, from since; a key
     assert.equal((await ask('key=02abc'))[0], 400);
   } finally { await s.close(); }
 });
+
+// THE SENDER ON THE FEDIMINT DONATION (kanban #156, the owner 2026-10-05; measured on a regtest federation: the guardians store
+// the contract with the key, and the dev redeems it at once): a donation output's payment image is the entry's own player key,
+// or the zero image of pages already out. Any other image is refused - a donation that names somebody else is not this
+// entry's - and the row says whether the sender's key is on the contract.
+const PLAYER = b32(0x77);
+const keyed = (recipientPk, amountMsat, image) => idOf(donationContractFields({ recipientPk, amountMsat, image }));
+test('the payout contract can carry the sender: the image is the 32-byte key given, zeros when none', () => {
+  const f = donationContractFields({ recipientPk: DEVS[0].recipientPk, amountMsat: 1334n, image: PLAYER });
+  assert.deepEqual([f.paymentImage.kind, toHex(f.paymentImage.bytes), toHex(f.claimPk), toHex(f.refundPk), f.expiration], ['hash', '77'.repeat(32), toHex(DEVS[0].recipientPk), toHex(DEVS[0].recipientPk), 0]);
+});
+test('an output whose image is the entry\'s own player key is taken and marked; zeros are still taken; another key is refused', async () => {
+  const withKey = federation({ [at(OUT[0])]: keyed(DEVS[0].recipientPk, 1334n, PLAYER), [at(OUT[1])]: keyed(DEVS[1].recipientPk, 666n, PLAYER) });
+  const r = await check({ port: withKey, entry: entry({ playerPubkey: PLAYER }) });
+  assert.equal(r.ok, true, r.why);
+  assert.deepEqual(r.rows.map((x) => x.senderOnContract), [true, true]);
+  const mixed = federation({ [at(OUT[0])]: keyed(DEVS[0].recipientPk, 1334n, PLAYER), [at(OUT[1])]: idOf(donationContractFields({ recipientPk: DEVS[1].recipientPk, amountMsat: 666n })) });
+  const m = await check({ port: mixed, entry: entry({ playerPubkey: PLAYER }) });
+  assert.equal(m.ok, true, m.why);
+  assert.deepEqual(m.rows.map((x) => x.senderOnContract), [true, false]);
+  const zeros = await check({ entry: entry({ playerPubkey: PLAYER }) });
+  assert.equal(zeros.ok, true, zeros.why);
+  assert.deepEqual(zeros.rows.map((x) => x.senderOnContract), [false, false]);
+  const other = federation({ [at(OUT[0])]: keyed(DEVS[0].recipientPk, 1334n, b32(0x66)), [at(OUT[1])]: keyed(DEVS[1].recipientPk, 666n, PLAYER) });
+  const o = await check({ port: other, entry: entry({ playerPubkey: PLAYER }) });
+  assert.equal(o.ok, false, 'an output naming another sender was taken');
+  assert.match(o.why, /is not 1334 msat to key 02a1/);
+});
