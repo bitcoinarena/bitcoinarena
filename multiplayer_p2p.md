@@ -2563,7 +2563,14 @@ objects carry their own verification.
 - **What counts:** two checkpoints of one entry, each signed by its session
   key, with different ids and either the same tick or the same parent. It
   holds at any tick, the first included. The proof check is
-  `provesEquivocation`, with no replay.
+  `provesEquivocation`, with no replay. **Same parent, RULED the owner
+  2026-10-05 (b):** a pair from one later parent forfeits only when both
+  marks were receipted by a seat, each in some seat's chain. A mark a seat
+  refused for not following its head was never carried and does not count.
+  That is a page stuck on an old head, measured on testnet4: ea63aa94 sent
+  13 marks after @1620, all naming @1560; c35157df's later marks all named
+  @60. Neither is forfeited. A same-tick pair and two first marks forfeit
+  as before. The disjoint, one-seat and split forks still forfeit.
 - **How a seat gets the pair:** a seat counts a pair it holds itself (its
   stored and refused marks), one pulled from a peer's `/equivocation`, or,
   for a fork sent one mark per seat (where no seat holds both), one it

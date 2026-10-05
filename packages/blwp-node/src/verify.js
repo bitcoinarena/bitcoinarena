@@ -490,7 +490,8 @@ export class Verifier {
           if (hex(m.bytes) === hex(theirs)) continue;
           if (m.c.tick !== tc.tick && hex(m.c.previousHash) !== hex(tc.previousHash)) continue;
           try {
-            if ((await provesEquivocation(m.bytes, theirs, sessionPubkey, verify)).ok && this.round.putForkPair({ a: m.bytes, b: theirs })) {
+            // both receipted: this seat's own chain, and the peer's receipted chain it serves
+            if ((await provesEquivocation(m.bytes, theirs, sessionPubkey, verify)).ok && this.round.putForkPair({ a: m.bytes, b: theirs, receipted: true })) {
               console.log(`[equivocation] ${hex(entryId).slice(0, 16)}: a fork at tick ${Math.min(m.c.tick, tc.tick)} - this seat's mark and ${peer}'s, kept as a pair`);
               return true;
             }
@@ -934,7 +935,14 @@ export class Verifier {
           // AND A FORK AT ANY LATER TICK, kept as a pair (§13B; kanban #25): this node's close and its /equivocation
           // say it from now on, as the seat that held it does
           if (!this.round.putFirstMarkPair({ a, b })) this.round.putForkPair({ a, b });
-          if (counts(a) && counts(b)) return true;
+          // WHAT A PAIR PROVES (RULED the owner 2026-10-05 (b)): two first marks, or two marks at one tick - as ever; two chains
+          // from one later parent only when both marks were receipted by a seat (the store's own ruled check, provenFork) -
+          // a page stuck on an old head sends refused marks naming that head, and those forfeit nothing
+          const ca = decodeCheckpoint(splitSignedMark(a).body), cb = decodeCheckpoint(splitSignedMark(b).body);
+          const zero = (h) => h.every((v) => v === 0);
+          const firstPair = zero(ca.previousHash) && zero(cb.previousHash);
+          const holds = firstPair || ca.tick === cb.tick || this.round.provenFork(roundIdBytes, entryId, window) !== null;
+          if (holds && counts(a) && counts(b)) return true;
         }
       } catch { /* not a proof */ }
     }

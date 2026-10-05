@@ -1126,13 +1126,13 @@ export class Round {
       out.push({ how: 'two first marks', tick: Math.min(tickOf(a), tickOf(b)), stored: a, offered: b, seenMs: r.seen_ms });
     }
     // AND A FORK PAIR PULLED FROM A PEER (fork_pairs, §13B at any tick; kanban #25)
-    for (const r of this.db.prepare('SELECT mark_a, mark_b, seen_ms FROM fork_pairs WHERE round_id = ? AND entry_id = ?')
+    for (const r of this.db.prepare('SELECT mark_a, mark_b, seen_ms, receipted FROM fork_pairs WHERE round_id = ? AND entry_id = ?')
       .all(roundIdBytes, entryIdBytes)) {
       const a = new Uint8Array(r.mark_a);
       const b = new Uint8Array(r.mark_b);
       const ca = decodeCheckpoint(splitSigned(a).body), cb = decodeCheckpoint(splitSigned(b).body);
       out.push({ how: ca.tick === cb.tick ? 'two marks at one tick' : 'two chains from one parent', tick: Math.min(ca.tick, cb.tick),
-        stored: a, offered: b, seenMs: r.seen_ms });
+        stored: a, offered: b, seenMs: r.seen_ms, receipted: r.receipted === 1 });
     }
     return out.sort((a, b) => a.tick - b.tick);
   }
@@ -1142,14 +1142,17 @@ export class Round {
    * diverge at any tick"; kanban #25): both signed by the entry's session key, one entry, different marks, and the same
    * tick or the same parent - the pair provesEquivocation checks. Anything else is not kept. Answers whether it is held.
    */
-  putForkPair({ a, b }) {
+  putForkPair({ a, b, receipted = false }) {
     let ca, cb;
     try { ca = this.playerSigned(a); cb = this.playerSigned(b); } catch { return false; }
     if (same(a, b) || !same(ca.entryId, cb.entryId) || !same(ca.roundId, cb.roundId)) return false;
     if (ca.tick !== cb.tick && !same(ca.previousHash, cb.previousHash)) return false;
     const [x, y] = Buffer.compare(Buffer.from(a), Buffer.from(b)) < 0 ? [a, b] : [b, a];
-    this.db.prepare('INSERT OR IGNORE INTO fork_pairs (round_id, entry_id, mark_a, mark_b, seen_ms) VALUES (?, ?, ?, ?, ?)')
-      .run(ca.roundId, ca.entryId, x, y, this.now());
+    // `receipted`: both marks were receipted by a seat - this seat's own chain and a peer's (GET /checkpoints). Kept as the
+    // stronger of what any source said, so a pair first pulled unreceipted and then found in two chains counts.
+    this.db.prepare('INSERT INTO fork_pairs (round_id, entry_id, mark_a, mark_b, seen_ms, receipted) VALUES (?, ?, ?, ?, ?, ?) '
+      + 'ON CONFLICT (entry_id, mark_a, mark_b) DO UPDATE SET receipted = MAX(receipted, excluded.receipted)')
+      .run(ca.roundId, ca.entryId, x, y, this.now(), receipted ? 1 : 0);
     this.noteEvidenceBlock(ca.roundId, ca.entryId, checkpointId(ca));
     this.noteEvidenceBlock(cb.roundId, cb.entryId, checkpointId(cb));
     return true;
@@ -1169,7 +1172,12 @@ export class Round {
         if (window && !(this.markCounts(entryIdBytes, a, window.chain, window.end) && this.markCounts(entryIdBytes, b, window.chain, window.end))) continue;
         const ca = this.playerSigned(a), cb = this.playerSigned(b);
         if (!same(ca.entryId, entryIdBytes) || !same(cb.entryId, entryIdBytes)) continue;
-        if (ca.tick === cb.tick || same(ca.previousHash, cb.previousHash)) return { tick: Math.min(ca.tick, cb.tick), how: f.how };
+        // TWO MARKS AT ONE TICK forfeit as ever. TWO CHAINS FROM ONE PARENT forfeit only when BOTH marks were receipted by a
+        // seat (RULED the owner 2026-10-05 (b)): a mark the seat refused for not following its head - a page stuck on an old
+        // head, measured on testnet4 (ea63aa94: 13 marks after @1620 all naming @1560; c35157df: all naming @60) - was never
+        // carried, splits no seats, and costs the player nothing. Two first marks are their own path (provenTwoFirstMarks).
+        if (ca.tick === cb.tick) return { tick: ca.tick, how: f.how };
+        if (same(ca.previousHash, cb.previousHash) && f.receipted === true) return { tick: Math.min(ca.tick, cb.tick), how: f.how };
       } catch { /* not the player's two marks */ }
     }
     return null;
