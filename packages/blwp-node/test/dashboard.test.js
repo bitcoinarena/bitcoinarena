@@ -126,6 +126,11 @@ test('the page: Notes wrap on words, a Hosts value never wraps inside itself, th
   assert.match(page, /<div id="tip"/);
   assert.match(page, /tip\.textContent=d\.day\+': game\/verify '\+g\+' msat · settlement '\+st\+' msat · guardian '\+gd\+' msat'/);
   assert.match(page, /addEventListener\('pointermove'/);
+  // MEASURED LIVE (test host Chrome, 1280 px): a node name in a note broke at its hyphen ("test-host- / testnet4"), and at 390 px
+  // the box ran past the chart card's edge. A note's hyphens do not break; the box wraps inside the card.
+  assert.match(page, /const keep=\(t\)=>String\(t\)\.replace\(\/-\/g,'\\u2011'\)/);
+  assert.match(page, /<p>'\+keep\(D\.notes\.guardian\)\+'<\/p><p>'\+keep\(D\.notes\.lightning\)\+'<\/p><p>'\+keep\(D\.notes\.gateway\)\+'<\/p>/);
+  assert.match(css, /#tip\{[^}]*white-space:normal[^}]*max-width:calc\(100% - 8px\)/);
   assert.match(page, /<title>'\+d\.day\+': game\/verify /, 'the SVG title went');
   // THE PLAYER COLUMN draws the name, never a slice of the key
   assert.doesNotMatch(page, /String\(p\.player\|\|''\)\.slice\(0,8\)/);
