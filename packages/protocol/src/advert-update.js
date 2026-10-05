@@ -81,6 +81,11 @@ export async function acceptAdvertUpdate({ transaction, header, branch, position
 
 /** The rule every reader applies to a read update: it names this bond, by this bond's key, signed by that key. */
 export async function checkAgainstBond(read, bond, verify) {
+  // A MISSING OR MALFORMED BOND IS REFUSED BY NAME: measured before, no bond threw "Cannot read properties of undefined
+  // (reading 'txid')" here and in acceptAdvertUpdate.
+  if (!bond || !(bond.txid instanceof Uint8Array) || bond.txid.length !== 32 || !Number.isInteger(bond.vout) || bond.vout < 0
+      || !(bond.nodePubkey instanceof Uint8Array) || bond.nodePubkey.length !== 32)
+    return { ok: false, why: 'no bond { txid, vout, nodePubkey } was given, so the update is an update of nothing' };
   if (!same(read.bondTxid, bond.txid) || read.bondVout !== bond.vout) return { ok: false, why: 'the update names another bond' };
   if (!same(read.nodePubkey, bond.nodePubkey)) return { ok: false, why: 'an update whose node key is not the bond\'s is not an update of that bond' };
   if (typeof verify !== 'function') return { ok: false, why: 'no signature check was given, so no update is applied' };
@@ -95,7 +100,8 @@ export async function checkAgainstBond(read, bond, verify) {
  */
 export function newestUpdates(view, entries, { atHeight, network = 'regtest', verify } = {}) {
   const found = new Map();
-  if (typeof verify !== 'function' || !view || !Array.isArray(view.blocks)) return found;
+  // NO LIST OF BONDS, NOTHING TO UPDATE: measured before, a missing list threw on entries.map.
+  if (typeof verify !== 'function' || !view || !Array.isArray(view.blocks) || !Array.isArray(entries)) return found;
   const want = new Map(entries.map((e) => [`${Array.from(e.txid).join(',')}:${e.vout}`, e]));
   view.blocks.forEach((block, i) => {
     const height = view.firstHeight + i;
