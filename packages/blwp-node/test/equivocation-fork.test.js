@@ -201,3 +201,45 @@ test('(f) a seat signing the run without the proof makes a split: §13C decides 
     assert.ok(claims.includes('CHEAT STAKE'), 'the equivocator\'s lock was not claimed');
   } finally { await w.close(); }
 });
+
+// (g) THE SPLIT ON A FORK WITH NOBODY QUALIFIED (ruling (b) through §13C, the audit's second pass): a loser and the
+// equivocator, seat B signing the equivocator's run; §13C decides FORFEIT at the deadline on the fork, and the lock is
+// claimed into the remainder split - 75% to the sitting seats, 25% to the donation set - while the honest loser's expires.
+test('(g) a split on a fork with nobody qualified: §13C FORFEIT, the equivocator\'s lock claimed 75/25, the honest loser\'s left to expire', async () => {
+  const { schnorr } = await import('@noble/curves/secp256k1.js');
+  const { encodePlayerResult, joinSignedResult, resultId } = await import('../../protocol/src/result.js');
+  const { windowsOf } = await import('../../protocol/src/window.js');
+  const { skipTo } = await import('./test-clock.js');
+  const w = await lockRound({ serveOpts: { donationSets: [TEST_DONATION_SET_REGTEST] } });
+  try {
+    const lost = await lockAndPlay(w, LOSER);
+    const cheat = await lockAndPlay(w, CHEAT, { fork: 'tick' });
+    await closeRound(w, { window: false });
+    for (const stop = Date.now() + 30000; Date.now() < stop && !([w.a, w.b].every((d) => d.round.results(w.rid, cheat.eid).length === 2)); await wait(100));
+    const forfeitB = decodePlayerResult(splitSignedResult(w.b.round.results(w.rid, cheat.eid).find((r) => toHex(r.nodePubkey) === toHex(w.b.round.pubkey)).bytes).body);
+    const run = { ...forfeitB, outcome: 'FAILED', score: 0 };
+    const bytes = joinSignedResult(encodePlayerResult(run), schnorr.sign(resultId(run), w.b.round.identity.secret));
+    for (const d of [w.a, w.b]) {
+      d.round.db.prepare('DELETE FROM results WHERE round_id = ? AND entry_id = ? AND node_pubkey = ?').run(w.rid, cheat.eid, w.b.round.pubkey);
+      d.round.putResult(w.rid, cheat.eid, w.b.round.pubkey, resultId(run), bytes);
+    }
+    const ready = () => [w.a, w.b].every((d) => { const f = resultFinality(d.round, w.rid, lost.eid); return f.state === 'PROVISIONALLY_FINAL' && f.published === true; });
+    for (const stop = Date.now() + 30000; Date.now() < stop && !ready(); await wait(100));
+    skipTo(Number(windowsOf(w.c).finalAfterMs) + 50);
+    const got = await untilSettled(w, 60000);
+    const at = [w.a, w.b].map((d) => resultFinality(d.round, w.rid, cheat.eid).state);
+    const claims = (w.port.settlements[0] ? w.port.settlements[0].claims : []).map((c) => key(c.outpoint) === key(cheat.outpoint) ? 'CHEAT STAKE' : key(c.outpoint) === key(lost.outpoint) ? 'LOSER STAKE' : 'fee');
+    const payouts = [...w.port.payouts.values()].map((p) => String(p.msat));
+    console.log('  FACTS (split, nobody qualified):', JSON.stringify({ at, settled: got.state, claims, payouts,
+      cheatLockHeld: w.port.locks.has(key(cheat.outpoint)), loserLockHeld: w.port.locks.has(key(lost.outpoint)) }));
+    assert.deepEqual(at, ['FORFEIT', 'FORFEIT']);
+    assert.equal(got.state, 'ACCEPTED', got.why);
+    assert.ok(claims.includes('CHEAT STAKE'), 'the equivocator\'s lock was left unclaimed');
+    assert.equal(claims.includes('LOSER STAKE'), false);
+    assert.equal(w.port.locks.has(key(lost.outpoint)), true, 'the honest loser\'s lock does not expire back');
+    const net = 98000n;
+    assert.equal(payouts.filter((x) => x === String(net * 75n / 100n / 2n)).length, 2, `not two seat shares of the 75%: ${payouts}`);
+    const rest = payouts.filter((x) => x !== String(net * 75n / 100n / 2n) && x !== '2000').reduce((t, x) => t + BigInt(x), 0n);
+    assert.equal(rest, net * 25n / 100n, `the donation set's 25% is not ${net * 25n / 100n}`);
+  } finally { await w.close(); }
+});

@@ -2584,6 +2584,21 @@ objects carry their own verification.
   is never left to expire back to the equivocator (RULED 2026-10-04 (b)).
   An honest loser's lock in a no-winner round still expires back to its
   player.
+- **What no replay undoes:** the FORFEIT is signed over the canonical
+  transcript, which carries the inputs, so a replay of the player's own
+  run would "contradict" it. A seat holding the proof therefore refuses
+  any objection against that entry at the door (422, "that entry forfeited
+  by §13B: this seat holds the proof that the player signed two chains
+  ..."), before any replay, and stores nothing. A re-run of such an entry
+  signs FORFEIT, score 0, never the run.
+- **The stake is opened:** a seat holding any proven equivocation (two
+  first marks or a fork) releases its share of the equivocator's stake
+  secret, even over a run it signed itself, and gathers the others'.
+  Without that, a split decided FORFEIT by §13C left the stake unopened
+  and the round unsettled.
+- Measured on a 2-of-2 lock round, and live on the free pair, for: a fork
+  by tick, a fork by parent, a fork held at one seat, a split (with and
+  without a qualifier), and the equivocator's own objection (refused).
 
 > **Why:** v4.4 had 5 nodes and threshold 3, so two 3-subsets always overlap
 > in at least one node — divergence was in principle detectable. But the
