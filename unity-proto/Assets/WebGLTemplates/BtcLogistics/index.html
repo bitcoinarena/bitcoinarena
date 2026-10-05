@@ -2507,7 +2507,7 @@
       fedEl.textContent = 'Federation ' + fed;
       const st = vault();
       try { BLWPCLIENT.ledgerReadSavedStakes(st, fed); } catch { /* nothing to read */ }
-      const rows = BLWPCLIENT.ledgerRows(st, fed).slice().sort((a, b) => (b.atMs ?? -1) - (a.atMs ?? -1));
+      const rows = BLWPCLIENT.ledgerHistory(BLWPCLIENT.ledgerRows(st, fed)).slice().sort((a, b) => (b.atMs ?? -1) - (a.atMs ?? -1));
       rowsEl.textContent = '';
       if (!rows.length) { rowsEl.textContent = 'No deposits, stakes or withdrawals in this tab yet'; return; }
       const sat = (msat) => `${(Number(BigInt(msat || 0) / 1000n)).toLocaleString('en-US')} sat`;
