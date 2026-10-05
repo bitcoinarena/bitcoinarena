@@ -63,7 +63,7 @@ const get = async (port, path) => { const r = await fetch(`http://127.0.0.1:${po
 
 // THE SERIES FILE IS LOOKED AT ONCE A MINUTE (server.js seriesEveryMs, 60 s; main.js sets no other): two nodes run side by
 // side so that one minute shows both - an appended series taken, an unreadable file leaving the held series standing.
-test('main.js with a series file: both series listed, count and cut read, an appended line served without a restart, an unreadable file leaves the series held, the launcher\'s proofs read at every ask, SIGTERM exits 0', async () => {
+async function seriesFile() {
   const dir = mkdtempSync(join(tmpdir(), 'main-process-'));
   const store = join(dir, 'node.db'), store2 = join(dir, 'node2.db');
   const [a, b, c] = templates(nodeKeyOf(store));
@@ -117,9 +117,9 @@ test('main.js with a series file: both series listed, count and cut read, an app
     assert.deepEqual([e.code, e.signal], [0, null], 'SIGTERM: exit 0');
     assert.ok(existsSync(store), 'the store stays');
   } finally { child.kill('SIGKILL'); other.kill('SIGKILL'); }
-});
+}
 
-test('main.js refuses before it binds: a series line that is not a series, count=x, a donation network that is not regtest or testnet4', async () => {
+async function refusals() {
   const dir = mkdtempSync(join(tmpdir(), 'main-process-'));
   const store = join(dir, 'node.db');
   const [a] = templates(nodeKeyOf(store));
@@ -137,7 +137,7 @@ test('main.js refuses before it binds: a series line that is not a series, count
     assert.match(child.err.trim().split('\n').pop(), why, name);
     assert.doesNotMatch(child.out, /blwp-node on http/, `${name}: never bound`);
   }
-});
+}
 
 // ---- THE CHAIN HALF: a fake bitcoind serving a mined chain of 61 blocks - the round's two bonds at 20, its publication at 21,
 // its census at 40 (so the node's 2016-block lookback starts at 0), its beacon at 36 (the first block whose median time
@@ -146,16 +146,25 @@ function blockBytes(b) {
   const n = b.transactions.length;
   return Buffer.concat([Buffer.from(b.header), Buffer.from([n]), ...b.transactions.map((t) => Buffer.from(t))]);
 }
+// `fake.serve(view)` swaps the chain it serves (growth, a reorg); `fake.failBlocks = true` fails every getblock
 async function fakeBitcoind(view, cookie) {
   const calls = [];
   const display = (header) => toHex(Uint8Array.from(blockHashOf(header)).reverse());
-  const byHash = new Map(view.blocks.map((b, h) => [display(b.header), { b, h }]));
-  const tip = view.firstHeight + view.blocks.length - 1;
+  let byHash, tip;
+  const fake = {};
+  fake.serve = (v) => {
+    view = v; tip = v.firstHeight + v.blocks.length - 1;
+    byHash = byHash || new Map();
+    v.blocks.forEach((b, h) => byHash.set(display(b.header), { b, h }));   // blocks of an older branch stay readable by hash
+  };
+  fake.serve(view);
+  fake.failBlocks = false;
   const srv = createServer((req, res) => { let body = ''; req.on('data', (d) => { body += d; }).on('end', () => {
     const authed = req.headers.authorization === `Basic ${Buffer.from(cookie).toString('base64')}`;
     const { id, method, params = [] } = JSON.parse(body);
-    calls.push({ method, params, authed });
+    calls.push({ method, params, authed, atMs: Date.now() });
     if (!authed) { res.writeHead(401); return res.end(); }
+    if (method === 'getblock' && fake.failBlocks) return res.end(JSON.stringify({ id, result: null, error: { code: -1, message: 'the fake fails block reads' } }));
     const at = (hash) => byHash.get(String(hash));
     const result = {
       getblockchaininfo: () => ({ chain: 'regtest', blocks: tip, headers: tip }),
@@ -168,27 +177,34 @@ async function fakeBitcoind(view, cookie) {
     res.end(JSON.stringify(result ? { id, error: null, result: result() } : { id, result: null, error: { code: -32601, message: `no ${method}` } }));
   }); });
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
-  return { url: `http://127.0.0.1:${srv.address().port}`, calls, close: () => new Promise((r) => srv.close(r)) };
+  return Object.assign(fake, { url: `http://127.0.0.1:${srv.address().port}`, calls, close: () => new Promise((r) => srv.close(r)) });
 }
 
-test('main.js on a chain: POST /round makes the node read the census from bitcoind under the cookie, and GET /randomness answers the beacon block\'s hash', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'main-chain-'));
+// THE ROUND AND ITS CHAIN: the node's key and a second one, each bonded at 20; the round's publication at 21; census 40.
+// `build({ length, branchFrom })` mines `length` blocks - from `branchFrom` on, another branch (other coinbases, so other
+// headers) - blocks 0..30 at the committee second and one second a block after, so the beacon is block 36 on either branch.
+// `committeePast`: the round's committee time 20 s ago - a round posted ahead of its beacon, which the node's sweep assigns
+// only once committee time has passed (server.js: assign posted rounds, every 5 s)
+function chainFixture(prefix, { committeePast = false } = {}) {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
   const store = join(dir, 'node.db');
   const keys = [nodeKeyOf(store), schnorr.getPublicKey(b32(0x44))];
   const CENSUS = 40;
-  const drafted = presentDay({ ...contractFor(keys, 3000n, ['wss://r.example']), stakeMsat: 0n, censusHeight: CENSUS }, Date.now() + 600000);
+  const ahead = presentDay({ ...contractFor(keys, 3000n, ['wss://r.example']), stakeMsat: 0n, censusHeight: CENSUS }, Date.now() + 600000);
+  const shift = committeePast ? BigInt(Date.now() - 20000) - ahead.committeeTimeMs : 0n;
+  const drafted = { ...ahead, committeeTimeMs: ahead.committeeTimeMs + shift, startTimeMs: ahead.startTimeMs + shift, entryCloseMs: ahead.entryCloseMs + shift };
   const committeeSec = Math.floor(Number(drafted.committeeTimeMs) / 1000);
   const bonds = keys.map((key, i) => bondTransaction({
     nodePubkey: key, operatorId: `operator${i}`, protocolVersions: [1], roles: ['game', 'settlement'], endpoint: `ws://node${i}`,
     region: 'eu-west', capacityClass: 1, softwareHash: b32(2), settlementCapabilities: 0, lightningCapabilities: 0,
     bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 1, payoutPubkey: b32(3), guardianOf: [], timestamp: 1788700000000n,
   }, { previousTxid: b32(0xa0 + i), previousVout: 0, outputKey: bondFor(key) }));
-  // every block opens with a coinbase-shaped transaction (the node reads no block without one), its height in the input
-  const coinbase = (h) => serializeSpend({ inputs: [{ txid: new Uint8Array(32), vout: 0xffffffff, sequence: 0xffffffff, script: Uint8Array.from([1, h]) }],
-    outputs: [{ value: 5000000000n, script: Uint8Array.from([0x51]) }], witnesses: [[new Uint8Array(32)]] });
-  const build = (contract) => chainOf(Array.from({ length: 61 }, (_, h) => ({ transactions: [coinbase(h),
-    ...(h === 20 ? bonds : h === 21 && contract ? [publicationOf(contract)] : [])] })),
-    0, { timeOf: (h) => committeeSec + Math.max(0, h - 30) });
+  // every block opens with a coinbase-shaped transaction (the node reads no block without one); its value carries the height
+  // and the branch, so another branch is other transactions and other headers
+  const coinbase = (h, branch) => serializeSpend({ inputs: [{ txid: new Uint8Array(32), vout: 0xffffffff, sequence: 0xffffffff, script: Uint8Array.from([2, h, branch]) }],
+    outputs: [{ value: 5000000000n + BigInt(h) + 1000000n * BigInt(branch), script: Uint8Array.from([0x51]) }], witnesses: [[new Uint8Array(32)]] });
+  const build = (contract, { length = 61, branchFrom = Infinity } = {}) => chainOf(Array.from({ length }, (_, h) => ({ transactions: [coinbase(h, h >= branchFrom ? 1 : 0),
+    ...(h === 20 ? bonds : h === 21 && contract ? [publicationOf(contract)] : [])] })), 0, { timeOf: (h) => committeeSec + Math.max(0, h - 30) });
   // the census these bonds derive, over the blocks the node reads (0 .. the census height)
   const pre = build(null);
   const byTxid = new Map(bonds.map((raw) => [toHex(parseTransaction(raw).txid), raw]));
@@ -196,37 +212,176 @@ test('main.js on a chain: POST /round makes the node read the census from bitcoi
     bond: bondSetFor('regtest'), resolve: (e) => { const raw = byTxid.get(toHex(e.txid)); return raw ? { transaction: raw } : null; } });
   assert.ok(census.ok, census.why);
   const contract = { ...drafted, censusRoot: census.root };
-  const view = build(contract);
-  const named = beaconFromChain(contract, { headers: view.blocks.map((b) => b.header), firstHeight: 0 });
-  assert.equal(named.height, 36, 'the fixture\'s beacon');
   const cookie = join(dir, '.cookie');
   writeFileSync(cookie, '__cookie__:s3cret');
+  const named = (view) => beaconFromChain(contract, { headers: view.blocks.map((b) => b.header), firstHeight: 0 });
+  return { dir, store, contract, cookie, CENSUS, build: (o) => build(contract, o), named, rid: toHex(roundId(contract)),
+    env: (btc) => ({ BLWP_BITCOIND_URL: btc.url, BLWP_BITCOIND_COOKIE: cookie, BLWP_DONATION_NETWORK: 'regtest', BLWP_FUND_FREE_ROUNDS: '1' }) };
+}
+const postRound = async (port, contract) => {
+  const r = await fetch(`http://127.0.0.1:${port}/round`, { method: 'POST', body: encodeRoundContract(contract) });
+  return { status: r.status, text: (await r.text()).slice(0, 200) };
+};
+const randomness = async (port, rid) => {
+  const r = await fetch(`http://127.0.0.1:${port}/randomness?round=${rid}`);
+  return r.status === 200 ? { status: 200, height: r.headers.get('x-height'), hash: toHex(new Uint8Array(await r.arrayBuffer())) } : { status: r.status, text: await r.text() };
+};
+const until = async (what, ms, fn) => { const t = Date.now(); for (;;) { const v = await fn(); if (v) return v; if (Date.now() - t > ms) throw new Error(`${what}: not within ${ms} ms`); await new Promise((r) => setTimeout(r, 250)); } };
+const ASSIGNED = (rid) => new RegExp(`\\[round\\] ${rid.slice(0, 16)} posted ahead: signer nodes assigned at its beacon`);
+const heightsRead = (btc, view, since) => btc.calls.filter((c) => c.method === 'getblock' && c.atMs >= since).map((c) => byHashHeight(view, c.params[0]));
+
+async function onAChain() {
+  const f = chainFixture('main-chain-');
+  const view = f.build();
+  const named = f.named(view);
+  assert.equal(named.height, 36, 'the fixture\'s beacon');
   const btc = await fakeBitcoind(view, '__cookie__:s3cret');
-  const child = startMain(store, { BLWP_BITCOIND_URL: btc.url, BLWP_BITCOIND_COOKIE: cookie, BLWP_DONATION_NETWORK: 'regtest', BLWP_FUND_FREE_ROUNDS: '1' });
+  const child = startMain(f.store, f.env(btc));
   try {
     const port = await child.up;
-    const rid = toHex(roundId(contract));
     let posted = null;
     for (let i = 0; i < 60; i++) {
-      const r = await fetch(`http://127.0.0.1:${port}/round`, { method: 'POST', body: encodeRoundContract(contract) });
-      posted = { status: r.status, text: (await r.text()).slice(0, 200) };
+      posted = await postRound(port, f.contract);
       if (posted.status === 201) break;
       await new Promise((res) => setTimeout(res, 500));
     }
-    assert.equal(posted.status, 201, `POST /round ${posted.status}; node said: ${(child.out + child.err).trim().split('\n').slice(-6).join(' | ')}; rpc: ${[...new Set(btc.calls.map((c) => c.method))].join(',')}`);
+    assert.equal(posted.status, 201, `POST /round ${posted.status}; node said: ${(child.out + child.err).trim().split('\n').slice(-6).join(' | ')}`);
     assert.ok(btc.calls.every((c) => c.authed), 'every call carried the cookie\'s credentials');
-    const asked = (m) => btc.calls.filter((c) => c.method === m);
-    assert.ok(asked('getblockcount').length > 0);
-    const blocksRead = new Set(asked('getblock').map((c) => byHashHeight(view, c.params[0])));
-    for (let h = 0; h <= CENSUS; h++) assert.ok(blocksRead.has(h), `the census read block ${h}`);
-    const r = await fetch(`http://127.0.0.1:${port}/randomness?round=${rid}`);
-    assert.equal(r.status, 200, await r.clone().text());
-    assert.equal(r.headers.get('x-height'), '36');
-    assert.equal(toHex(new Uint8Array(await r.arrayBuffer())), toHex(named.hash), 'the beacon block\'s hash');
+    assert.ok(btc.calls.some((c) => c.method === 'getblockcount'));
+    const blocksRead = new Set(heightsRead(btc, view, 0));
+    for (let h = 0; h <= f.CENSUS; h++) assert.ok(blocksRead.has(h), `the census read block ${h}`);
+    const r = await randomness(port, f.rid);
+    assert.deepEqual([r.status, r.height, r.hash], [200, '36', toHex(named.hash)], 'the beacon block\'s hash');
     child.kill('SIGTERM');
     assert.equal((await child.exited).code, 0);
   } finally { child.kill('SIGKILL'); await btc.close(); }
-});
+}
+
+// (a) A VIEW READ SHORT OF ITS BEACON IS READ ON AS THE CHAIN GROWS (main.js:206-232): posted at tip 33, before beacon 36 -
+// 202, stored and waiting, no randomness; the chain grows to 61 and within ~15 s the node reads only the new blocks, its
+// roster assigns the round, and /randomness names block 36.
+async function growTheChain() {
+  const f = chainFixture('main-grow-', { committeePast: true });
+  const full = f.build();
+  const btc = await fakeBitcoind(f.build({ length: 34 }), '__cookie__:s3cret');
+  const child = startMain(f.store, f.env(btc));
+  try {
+    const port = await child.up;
+    // the first ask starts the read and is refused while there is no view; the next is the 202 once the short view is in
+    const posted = await until('POST /round answers 202', 20000, async () => { const p = await postRound(port, f.contract); return p.status === 202 && p; });
+    assert.equal(posted.status, 202, 'stored, awaiting the beacon');
+    // the sweep asks for the round's view: read to the tip, 33, short of the beacon
+    await until('the short view is read', 20000, async () => heightsRead(btc, full, 0).includes(33));
+    const shortRead = new Set(heightsRead(btc, full, 0));
+    assert.ok([...Array(34).keys()].every((h) => shortRead.has(h)) && !shortRead.has(34), 'the short view: blocks 0..33');
+    const early = await randomness(port, f.rid);
+    assert.equal(early.status, 409, 'no randomness yet');
+    assert.match(early.text, /no randomness yet/);
+    await new Promise((r) => setTimeout(r, 6000));
+    assert.doesNotMatch(child.out, ASSIGNED(f.rid), 'not assigned while short of the beacon');
+    const grownAt = Date.now();
+    btc.serve(full);
+    await until('the round assigned', 25000, async () => ASSIGNED(f.rid).test(child.out));
+    const took = Date.now() - grownAt;
+    const r = await randomness(port, f.rid);
+    assert.deepEqual([r.status, r.height, r.hash], [200, '36', toHex(f.named(full).hash)], 'block 36\'s hash');
+    const after = heightsRead(btc, full, grownAt);
+    assert.ok(after.length > 0 && after.every((h) => h >= 34), `only the new blocks were read: ${after.join(',')}`);
+    assert.ok([34, 35, 36, 37, 38, 39, 40].every((h) => after.includes(h)), `blocks 34..40: ${after.join(',')}`);
+    child.kill('SIGTERM');                         // a clean exit writes the process's V8 coverage
+    assert.equal((await child.exited).code, 0);
+    return { took };
+  } finally { child.kill('SIGKILL'); await btc.close(); }
+}
+
+// (b) BLOCKS THAT DO NOT LINK (main.js:227): read to 33 on one branch, then a chain whose blocks from 30 are another branch,
+// grown to 61 - its block 34 does not link to the 33 the node holds, so the node reads the whole view again.
+async function unlinked() {
+  const f = chainFixture('main-unlink-', { committeePast: true });
+  const other = f.build({ branchFrom: 30 });
+  const btc = await fakeBitcoind(f.build({ length: 34 }), '__cookie__:s3cret');
+  const child = startMain(f.store, f.env(btc));
+  try {
+    const port = await child.up;
+    await until('POST /round answers 202', 20000, async () => (await postRound(port, f.contract)).status === 202);
+    const mine = f.build();
+    await until('the short view is read', 20000, async () => heightsRead(btc, mine, 0).includes(33));
+    await new Promise((r) => setTimeout(r, 1000));
+    const swappedAt = Date.now();
+    btc.serve(other);
+    await until('the round assigned on the other branch', 25000, async () => ASSIGNED(f.rid).test(child.out));
+    const r = await randomness(port, f.rid);
+    assert.deepEqual([r.status, r.height, r.hash], [200, '36', toHex(f.named(other).hash)], 'the other branch\'s block 36');
+    assert.notEqual(toHex(f.named(other).hash), toHex(f.named(mine).hash), 'the branches differ at the beacon');
+    const hashesAsked = btc.calls.filter((c) => c.method === 'getblockhash' && c.atMs >= swappedAt).map((c) => c.params[0]);
+    for (let h = 0; h <= f.CENSUS; h++) assert.ok(hashesAsked.includes(h), `the whole view asked again: getblockhash ${h}`);
+    const blocks = heightsRead(btc, other, swappedAt);
+    assert.ok([30, 31, 32, 33].every((h) => blocks.includes(h)), `the other branch's 30..33 read: ${blocks.join(',')}`);
+    child.kill('SIGTERM');                         // a clean exit writes the process's V8 coverage
+    assert.equal((await child.exited).code, 0);
+  } finally { child.kill('SIGKILL'); await btc.close(); }
+}
+
+// (c) A VIEW THAT DID NOT READ (main.js:244-247): every block read fails for 25 s. One "[chain] view ... did not read" line,
+// no second read within 60 s of it, then a good read and the round taken.
+async function failedReads() {
+  const f = chainFixture('main-fail-', { committeePast: true });
+  const view = f.build();
+  const btc = await fakeBitcoind(view, '__cookie__:s3cret');
+  btc.failBlocks = true;
+  const child = startMain(f.store, f.env(btc));
+  try {
+    const port = await child.up;
+    await postRound(port, f.contract);
+    await until('the failure is logged', 10000, async () => /did not read/.test(child.err));
+    const failedAt = Date.now();
+    const firstTry = btc.calls.filter((c) => c.method === 'getblock').length;
+    setTimeout(() => { btc.failBlocks = false; }, 25000);
+    let assignedBy = null;
+    // the sweep asks for the view every 5 s, and a launcher may post again: none of it reads within the 60 s
+    try {
+      // assigned either way once the view reads: a POST then answers 201 (assigned on the spot), or the sweep logs it
+      assignedBy = await until('the round assigned after a good read', 95000, async () => {
+        const p = await postRound(port, f.contract);
+        return (p.status === 201 && 'POST /round 201') || (ASSIGNED(f.rid).test(child.out) && 'the sweep');
+      });
+    } catch (e) {
+      const rd = btc.calls.filter((c) => c.method === 'getblock').slice(firstTry).map((c) => Math.round((c.atMs - failedAt) / 1000));
+      const posts = [];
+      throw new Error(`${e.message}; getblock after the failure at s: ${rd.slice(0, 5).join(',')}..${rd.slice(-3).join(',')} (${rd.length}); methods after: ${[...new Set(btc.calls.filter((c) => c.atMs > failedAt + 60000).map((c) => c.method))].join(',')}; out: ${child.out.trim().split('\n').slice(-3).join(' | ')}; err: ${child.err.trim().split('\n').slice(-3).join(' | ')}`);
+    }
+    const r = await randomness(port, f.rid);
+    const reads = btc.calls.filter((c) => c.method === 'getblock').slice(firstTry);
+    const inside = reads.filter((c) => c.atMs < failedAt + 59000);
+    assert.equal(inside.length, 0, `no block read within 60 s of the failure (${inside.length})`);
+    const nextRead = reads.length ? reads[0].atMs - failedAt : null;
+    assert.ok(nextRead !== null && nextRead >= 59000, `the next read came ${nextRead} ms after the failure`);
+    assert.deepEqual([r.status, r.height], [200, '36'], 'block 36 named');
+    assert.equal((child.err.match(/\[chain\] view [0-9]+:[0-9]+:1 did not read: /g) || []).length, 1, 'exactly one "did not read" line');
+    assert.match(child.err, /\[chain\] view 40:\d+:1 did not read: .*the fake fails block reads/);
+    const tookMs = nextRead;
+    assert.ok(reads.filter((c) => c.atMs >= failedAt + 59000).length >= f.CENSUS + 1, 'the good read: the whole view');
+    void assignedBy;
+    child.kill('SIGTERM');                         // a clean exit writes the process's V8 coverage
+    assert.equal((await child.exited).code, 0);
+    return { tookMs, assignedBy };
+  } finally { child.kill('SIGKILL'); await btc.close(); }
+}
 function byHashHeight(view, hash) {
   return view.blocks.findIndex((b) => toHex(Uint8Array.from(blockHashOf(b.header)).reverse()) === String(hash));
 }
+
+// ONE PARENT, ITS CASES CONCURRENT: the series file's minute and the failed read's minute run side by side, so the file
+// stays under its 180 s.
+test('main.js as the units run it', { concurrency: true }, async (t) => {
+  const took = {};
+  await Promise.all([
+    t.test('with a series file: both series listed, count and cut read, an appended line served without a restart, an unreadable file leaves the series held, the launcher\'s proofs read at every ask, SIGTERM exits 0', seriesFile),
+    t.test('refused before it binds: a series line that is not a series, count=x, a donation network that is not regtest or testnet4', refusals),
+    t.test('on a chain: POST /round makes the node read the census from bitcoind under the cookie, and GET /randomness answers the beacon block\'s hash', onAChain),
+    t.test('(a) a view read short of its beacon: 202 and no randomness at tip 33; grown to 61, only the new blocks read, the round assigned, block 36 named', async () => { took.grow = (await growTheChain()).took; }),
+    t.test('(b) blocks that do not link: another branch from 30, its 34 not on the 33 held - the whole view read again', unlinked),
+    t.test('(c) a view that did not read: one "did not read" line, no read within 60 s, then a good read and the round taken', async () => { const x = await failedReads(); took.fail = x.tookMs; took.failBy = x.assignedBy; }),
+  ]);
+  t.diagnostic(`grow: the beacon named ${took.grow} ms after the chain grew; failed read: the next read ${took.fail} ms after the failure, then assigned by ${took.failBy}`);
+});
