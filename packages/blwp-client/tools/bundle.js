@@ -138,6 +138,7 @@ out += '         fetchRandomness: fetchRandomness, worldSeedFor: worldSeedFor,\n
 out += '         seedWordForEntry: seedWordForEntry, worldSeedWord: worldSeedWord, worldIsShared: worldIsShared,\n';
 out += '         tabSeed: tabSeed, importSeed: importSeed, restoreSeed: restoreSeed, seedOrigin: seedOrigin,\n'; out += '         playerFor: playerFor, entryFor: entryFor,\n';
 out += '         chooseDonation: chooseDonation, donationChoice: donationChoice, DONATION_CONFIRM_BPS: DONATION_CONFIRM_BPS,\n';
+out += '         keptDonation: keptDonation, depositDonationMsat: depositDonationMsat,\n';
 out += '         fetchDonationSet: fetchDonationSet, donationRecipientsLine: donationRecipientsLine,\n';
 // EACH DONATION SHARE, PAID / UNPAID / OUTCOME UNKNOWN - the state off
 // `payDonation`'s answer and the line the page paints from it.

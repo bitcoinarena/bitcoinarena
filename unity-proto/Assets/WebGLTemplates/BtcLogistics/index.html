@@ -2222,9 +2222,12 @@
         (async () => {
           try {
             const wasm = await window.BLWP_LOCK_WASM(); await wasm.default();
-            // THE ROUNDS ARE SIZED AS THE JOIN SIZES THEM: with the donation chosen in Settings (stake x its %), so "1 round" here
-            // is the 1 round PLAY asks (measured 2026-10-01: without it Settings asked 102.4 sat where a round takes 100.31)
-            const donationMsat = ctx.roundStake * BigInt(donationBps()) / 10000n;
+            // THE ROUNDS ARE SIZED AS THE JOIN SIZES THEM: with the donation the join will write - this round's kept choice
+            // when this tab joined it already, else the one chosen in Settings (stake x its %) - so "1 round" here is the 1
+            // round PLAY asks (measured 2026-10-01: without the donation Settings asked 102.4 sat where a round takes 100.31;
+            // kanban #187: with Settings alone, a round kept at 2% under Settings 3% was quoted 1% of its stake too much)
+            const donationMsat = BLWPCLIENT.depositDonationMsat({ roundIdHex: ctx.roundIdHex, stakeMsat: ctx.roundStake,
+              settingsBps: donationBps(), storage: window.sessionStorage });
             const offer = await BLWPCLIENT.settingsDepositOffer({ round: ctx.round, invite: ctx.invite, seed: ctx.seed, LockClient: wasm.LockClient,
               storage: vault(), gateways: ctx.gateways, donationMsat,
               donationRecipients: window.BLWP_DONATION_SET ? window.BLWP_DONATION_SET.recipients : null, onClaimed: () => { paintHistory(); if (window.BLWP_READ_BALANCE) window.BLWP_READ_BALANCE(); } });
@@ -2426,7 +2429,7 @@
       const lob = window.BLWP_LEDGER_LOBBY; const seed = walletSeed();
       if (!row) return { ok: false, why: 'No paying round is listed, so there is no stake to count rounds in.' };
       if (!lob || !lob.federation || !seed) return { ok: false, why: 'This lobby names no federation to hold the funds.' };
-      return { ok: true, round: row.raw.contract, roundStake: BigInt(BLWPCLIENT.lobbyStakeSats(row.raw)) * 1000n, invite: lob.federation, seed,
+      return { ok: true, round: row.raw.contract, roundIdHex: row.id || null, roundStake: BigInt(BLWPCLIENT.lobbyStakeSats(row.raw)) * 1000n, invite: lob.federation, seed,
         gateways: window.BLWP_LEDGER_GATEWAYS || [] };
     }
     function openWithdraw(ctx) {
