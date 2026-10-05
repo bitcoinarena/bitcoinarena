@@ -19,9 +19,8 @@ import { isOldTestnet4Id, isOldTestnet4Series, OLD_TESTNET4_SERIES_BOND_HEIGHT }
 import { seriesRoundCheck } from '../../protocol/src/series.js';
 import { federationGatewayCount } from '../../protocol/src/gateways.js';
 import { createServer } from 'node:http';
-import { randomBytes, createPublicKey, verify as ecdsaVerify } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { displayNameFromKey } from '../../protocol/src/display-name.js';
-import { donationsReadMessage, DONATIONS_READ_WINDOW_MS, SECP256K1_SPKI_PREFIX } from '../../protocol/src/donations-read.js';
 import { WebSocketServer } from 'ws';
 import { connect as netConnect } from 'node:net';
 import { decodeRoundContract, decodeEntryContract, publicationRelaysAreValid, custodyFieldsAreValid, roundId as roundIdOf } from '../../protocol/src/contracts.js';
@@ -3077,32 +3076,6 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const rows = round.donationsFor(key, Number(url.searchParams.get('since') || 0));
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ key, donations: rows }));
-      }
-
-      // THE DEV HAS READ THEM (kanban #156, the owner 2026-10-05 08:15-08:17): a read receipt signed with the recipient key -
-      // { key, atMs, outpoints, signature } over donationsReadMessage - and this seat deletes those rows of that key entirely.
-      // A wrong key, a forged or stale receipt, or another recipient's outpoint deletes nothing.
-      if (req.method === 'POST' && url.pathname === '/donations/read') {
-        let body;
-        try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a read receipt is JSON'); }
-        const key = String((body && body.key) || '').toLowerCase();
-        if (!/^0[23][0-9a-f]{64}$/.test(key)) return text(res, 400, 'a recipient key is 66 hex characters, a compressed secp256k1 point');
-        const outpoints = Array.isArray(body.outpoints) ? body.outpoints.map(String).filter((o) => /^[0-9a-f]{64}:\d+$/.test(o)) : [];
-        if (!outpoints.length || outpoints.length !== body.outpoints.length || outpoints.length > 5000)
-          return text(res, 400, 'a read receipt names the outpoints it read, each txid:index');
-        const atMs = Number(body.atMs);
-        if (!Number.isSafeInteger(atMs)) return text(res, 400, 'a read receipt names when it was signed, in ms');
-        let good = false;
-        try {
-          const pub = createPublicKey({ key: Buffer.from(SECP256K1_SPKI_PREFIX + key, 'hex'), format: 'der', type: 'spki' });
-          good = ecdsaVerify('sha256', donationsReadMessage({ key, atMs, outpoints }), { key: pub, dsaEncoding: 'der' }, Buffer.from(String(body.signature || ''), 'hex'));
-        } catch { good = false; }
-        if (!good) return text(res, 403, 'that read receipt is not signed by that recipient key');
-        if (Math.abs(Date.now() - atMs) > DONATIONS_READ_WINDOW_MS) return text(res, 409, 'that read receipt is too old or from the future: sign it again');
-        const deleted = round.deleteDonationsRead(key, outpoints);
-        if (deleted) console.log(`[donations] ${key.slice(0, 16)}: ${deleted} donation row(s) read by the dev and deleted`);
-        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
-        return res.end(JSON.stringify({ deleted }));
       }
 
       // THE PLAYER'S STAKE LOCK, handed to a signer node to verify (23.1 step 5): the

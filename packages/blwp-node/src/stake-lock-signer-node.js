@@ -83,11 +83,8 @@ export { lockFieldsFromJson, lockFieldsToJson };
  * the zero hash image, expired from the start, claim and refund key both the recipient's - so only that key can spend
  * it, with `Refund`, at any time. The same shape the settlement pays a winner with (stake-lock main.rs settle).
  */
-// THE SENDER ON THE CONTRACT (kanban #156, the owner 2026-10-05): `image` is the entry's 32-byte x-only player key, which a
-// page from 0.0.2751 writes; zeros as before when none. Nobody holds a preimage of either, so the claim path stays dead and
-// the recipient's Refund is the only spend (measured on a regtest federation: kept, redeemed at once).
-export const donationContractFields = ({ recipientPk, amountMsat, image = new Uint8Array(32) }) => ({
-  paymentImage: { kind: 'hash', bytes: image }, amountMsat, claimPk: recipientPk, refundPk: recipientPk, expiration: 0,
+export const donationContractFields = ({ recipientPk, amountMsat }) => ({
+  paymentImage: { kind: 'hash', bytes: new Uint8Array(32) }, amountMsat, claimPk: recipientPk, refundPk: recipientPk, expiration: 0,
 });
 
 /**
@@ -110,18 +107,14 @@ export async function verifyDonationOutputs({ round, port, entry, entryIdBytes, 
     const taken = round.donationOutputAt ? round.donationOutputAt(o.outpoint) : null;
     if (taken && !Buffer.from(taken.entryId).equals(Buffer.from(entryIdBytes)))
       return { ok: false, why: 'that donation output already pays for another entry: one output is one entry\'s' };
-    // EITHER THE ENTRY'S OWN PLAYER KEY AS THE IMAGE, OR ZEROS (pages already out); any other image is not this entry's
-    const sender = entry.playerPubkey instanceof Uint8Array && entry.playerPubkey.length === 32 ? entry.playerPubkey : null;
-    const [st, zeroId, keyedId] = await Promise.all([port.status(o.outpoint), port.contractId(donationContractFields(o)),
-      sender ? port.contractId(donationContractFields({ ...o, image: sender })) : Promise.resolve(null)]);
+    const fields = donationContractFields(o);
+    const [st, id] = await Promise.all([port.status(o.outpoint), port.contractId(fields)]);
     const at = `${Buffer.from(o.outpoint.txid).toString('hex').slice(0, 16)}…:${o.outpoint.outIdx}`;
     if (!st || !st.stored) return { ok: false, why: `donation: the federation holds nothing at ${at}` };
-    const stored = String(st.stored.contractId);
-    const senderOnContract = keyedId !== null && String(keyedId) === stored;
-    if (!senderOnContract && String(zeroId) !== stored)
+    if (String(id) !== String(st.stored.contractId))
       return { ok: false, why: `donation: the output at ${at} is not ${o.amountMsat} msat to key ${Buffer.from(o.recipientPk).toString('hex').slice(0, 16)}…` };
     rows.push({ outpoint: o.outpoint, entryId: entryIdBytes, roundId: entry.roundId, federationId, recipientPk: o.recipientPk,
-      amountMsat: o.amountMsat, contractId: stored, senderOnContract });
+      amountMsat: o.amountMsat, contractId: String(id) });
   }
   return { ok: true, rows };
 }
