@@ -47,8 +47,8 @@ public class LobbySilentSignerTests
     public void AClosedRoundSaysEntryClosedNotWaiting()
     {
         var closed = new LobbyRow { id = "4ef3c05c830639bb", free = true, agree = 2, needed = 2, joinable = false, leftS = 0 };
-        StringAssert.Contains("2 of 2 signer nodes - entry closed", DailyLobby.RowWords(closed)[0]);
+        StringAssert.Contains("2 signer nodes (2 needed) - entry closed", DailyLobby.RowWords(closed)[0]);
         var waiting = new LobbyRow { id = "4ef3c05c830639bb", free = true, agree = 1, needed = 2, joinable = false, leftS = 40 };
-        StringAssert.Contains("1 of 2 signer nodes - waiting", DailyLobby.RowWords(waiting)[0]);
+        StringAssert.Contains("1 signer node (2 needed) - waiting", DailyLobby.RowWords(waiting)[0]);
     }
 }

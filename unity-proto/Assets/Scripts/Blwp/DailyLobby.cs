@@ -17,6 +17,8 @@ namespace Blwp
         public int needed;
         public bool joinable;
         public int leftS = -1;
+        /// <summary>Whole seconds until the round starts, 0 once it has started; -1 when the page did not say (an older page) - kanban #43.</summary>
+        public int startS = -1;
         public int joined;
         /// <summary>What a paying round costs to enter, in whole sats; 0 for a free round.</summary>
         public long stakeSats;
@@ -606,14 +608,21 @@ namespace Blwp
         public static string[] RowWords(LobbyRow r, bool named)
         {
             string kind = Kind(r.free, r.stakeSats);
-            string left = r.leftS >= 0 ? $"closes {r.leftS / 60}:{r.leftS % 60:00}" : "entry open";
+            // NEVER A ROUND LENGTH (kanban #43, the owner 2026-10-04 11:25Z: "closes 1:57" on a 90 s round). The countdown is the ENTRY's,
+            // so the row says when the round starts and until when it can be joined, from the page's startS and leftS; an older
+            // page sends no startS (-1) and the row then says only "join until".
+            string join = r.leftS >= 0 ? $"join until {r.leftS / 60}:{r.leftS % 60:00}" : "entry open";
+            string left = r.startS > 0 ? $"starts in {r.startS / 60}:{r.startS % 60:00} · {join}"
+                : r.startS == 0 ? $"started · {join}"
+                : join;
             // THE PLAYER IS NEVER TOLD "SIGNER NODE" (the owner 2026-09-15 16:22): the nodes that sign the
-            // round are signer nodes, and the players in it have joined.
+            // round are signer nodes, and the players in it have joined. "7 signer nodes (5 needed)", not "7 of 5" (#43).
             // A ROUND WHOSE ENTRY HAS CLOSED SAYS SO rather than "waiting" (the page no longer offers it: measured, "closes 0:00"
             // with PLAY enabled for 237 s behind a silent signer node).
-            string signers = r.joinable ? $"{r.agree} of {r.needed} signer nodes"
-                : r.leftS == 0 ? $"{r.agree} of {r.needed} signer nodes - entry closed"
-                : $"{r.agree} of {r.needed} signer nodes - waiting";
+            string nodes = $"{r.agree} signer {(r.agree == 1 ? "node" : "nodes")} ({r.needed} needed)";
+            string signers = r.joinable ? nodes
+                : r.leftS == 0 ? $"{nodes} - entry closed"
+                : $"{nodes} - waiting";
             string id = ShortId(r.id);
             if (named && id.Length > 0)
                 return new[]

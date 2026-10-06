@@ -3282,8 +3282,19 @@
       // A ROUND THE NODE CALLED CLOSED IS NOT A CHOICE (the owner 2026-09-26 16:56, phone: "The lobby still offers the closed
       // round. The refusal only covers it."): its id is kept here, its row is never drawn again, and the refusal names it.
       const closedRounds = window.BLWP_CLOSED_ROUNDS = window.BLWP_CLOSED_ROUNDS || new Set();
-      const leftOf = (line) => { const m = String(line).match(/closes in (\d+):(\d\d)/); return m ? Number(m[1]) * 60 + Number(m[2]) : -1; };
       const joinedOf = (line) => { const m = String(line).match(/(\d+) joined/); return m ? Number(m[1]) : 0; };
+      // ONE LOBBY ROW AS UNITY DRAWS IT (kanban #43, the owner 2026-10-06): startS = whole seconds until the round starts (0 once
+      // it has started), leftS = whole seconds until its entry closes (-1 while the round is pending), both from the round's
+      // own times - never parsed back out of the text line, and never shown as a round length. A row without times: -1, -1.
+      const lobbyViewRow = (r, nowMs) => {
+        const raw = r.raw || null;
+        const secsTo = (ms) => Math.max(0, Math.ceil((Number(ms) - nowMs) / 1000));
+        const line = raw ? BLWPCLIENT.lobbyLine(raw, nowMs) : r.line;
+        const startS = raw && raw.startTimeMs !== undefined ? secsTo(raw.startTimeMs) : -1;
+        const leftS = raw && raw.entryCloseMs !== undefined && raw.phase !== 'pending' ? secsTo(raw.entryCloseMs) : -1;
+        return { id: r.id, line, free: !!r.free, agree: r.signerNodesAgree | 0, needed: r.needed | 0,
+          joinable: !!r.join && leftS !== 0, leftS, startS, joined: joinedOf(line), stakeSats: Number(r.stakeSats) || 0 };
+      };
       // THE ROUND PLAY CHOSE STAYS HIGHLIGHTED (the owner 2026-10-02: "once a round has been selected with play the highlighting
       // may no longer change when the other round is newer"): while a join is going or held, its round is its kind's row.
       const goingRound = () => (window.BLWP_JOIN && !window.BLWP_JOIN.cancelled && (window.BLWP_JOIN.state === 'joining' || window.BLWP_JOIN.state === 'joined')
@@ -3450,12 +3461,9 @@
           : { name: 'no identity', custom: false, generated: '', fingerprint: '' },
         // THE LINE IS MADE WHEN IT IS READ (the owner 2026-09-16 15:36: "lobby list should refresh every second"):
         // made at paint time, "closes in" stood still between paints and moved in paint-sized steps.
-        rows: lobbyNow().filter((r) => !closedRounds.has(r.id)).map((r) => { const line = r.raw ? BLWPCLIENT.lobbyLine(r.raw, Date.now()) : r.line;
-          // A ROUND WHOSE ENTRY HAS CLOSED IS NOT JOINABLE, whatever the last paint said. Measured before: "closes 0:00" with
-          // PLAY enabled for 237 s while the repaint waited on a silent signer node, and for 11.7 s at every rollover.
-          const leftS = leftOf(line);
-          return { id: r.id, line, free: !!r.free, agree: r.signerNodesAgree | 0,
-            needed: r.needed | 0, joinable: !!r.join && leftS !== 0, leftS, joined: joinedOf(line), stakeSats: Number(r.stakeSats) || 0 }; }),
+        // A ROUND WHOSE ENTRY HAS CLOSED IS NOT JOINABLE, whatever the last paint said (measured before: "closes 0:00" with PLAY
+        // enabled for 237 s behind a silent signer node, and 11.7 s at every rollover) - lobbyViewRow says leftS 0 then.
+        rows: lobbyNow().filter((r) => !closedRounds.has(r.id)).map((r) => lobbyViewRow(r, Date.now())),
         refused: refused.map(String), nodes: named.nodes.length,
         // THE SIGNER NODES THAT DID NOT ANSWER the last read within the limit, by address, for the lobby to say so on screen.
         unanswered: unanswered.map(String), answerS: Math.round((BLWPCLIENT.SIGNER_ANSWER_MS || 10000) / 1000),
