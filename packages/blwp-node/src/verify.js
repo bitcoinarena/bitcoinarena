@@ -904,11 +904,11 @@ export class Verifier {
     if (mine.length) {
       for (const peer of this.peersOf(roundIdBytes)) {
         try {
-          const r = await fetch(`${peer}/late-first-mark?round=${hex(roundIdBytes)}&entry=${hex(entryId)}`);
+          const r = await fetch(`${peer}/late-first-mark?round=${hex(roundIdBytes)}&entry=${hex(entryId)}`, { signal: AbortSignal.timeout(PEER_WAIT_MS) });
           if (r.status === 200) { const theirs = new Uint8Array(await r.arrayBuffer()); for (const m of mine) pairs.push([m, theirs]); }
         } catch { /* a signer node that cannot answer proves nothing */ }
         try {
-          const r = await fetch(`${peer}/entry-void?entry=${hex(entryId)}`);
+          const r = await fetch(`${peer}/entry-void?entry=${hex(entryId)}`, { signal: AbortSignal.timeout(PEER_WAIT_MS) });
           if (r.status === 200) {
             const got = await r.json();
             if (got.firstMark) { const theirs = Uint8Array.from(Buffer.from(String(got.firstMark), 'hex')); for (const m of mine) pairs.push([m, theirs]); }
@@ -919,7 +919,7 @@ export class Verifier {
     for (const peer of this.peersOf(roundIdBytes)) {
       if (report) report.peers++;
       try {
-        const r = await fetch(`${peer}/equivocation?round=${hex(roundIdBytes)}&entry=${hex(entryId)}`);
+        const r = await fetch(`${peer}/equivocation?round=${hex(roundIdBytes)}&entry=${hex(entryId)}`, { signal: AbortSignal.timeout(PEER_WAIT_MS) });
         if (report) report.reached++;
         if (r.status !== 200) continue;
         const body = new Uint8Array(await r.arrayBuffer());
@@ -927,26 +927,38 @@ export class Verifier {
           pairs.push([body.slice(at, at + SIGNED_MARK_BYTES), body.slice(at + SIGNED_MARK_BYTES, at + 2 * SIGNED_MARK_BYTES)]);
       } catch { /* a signer node that cannot answer proves nothing */ }
     }
+    // EACH PAIR ONCE, AND A KEPT PAIR NOT CHECKED AGAIN (kanban #155, measured live 2026-10-06 on 0.0.2815, entry 0b68a08f): a
+    // page stuck on an old head sent 63 refused marks; every peer served the same 63 pairs, each was verified again on every
+    // call, and provenFork - itself over every pair - ran once per pair. A seat's one thread sat at 100% for minutes and
+    // five seats never signed the entry. Now: duplicates dropped, a pair this node already keeps (verified when it was
+    // stored) is not verified again, and the later-parent limb's provenFork is asked once, after the pairs are kept.
+    const seen = new Set();
+    let laterParent = false;
     for (const [a, b] of pairs) {
       try {
-        if ((await provesEquivocation(a, b, found.entry.sessionPubkey, verify)).ok) {
+        const key = Buffer.compare(Buffer.from(a), Buffer.from(b)) < 0 ? hex(a) + hex(b) : hex(b) + hex(a);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const kept = this.round.pairKept(entryId, a, b);
+        if (kept || (await provesEquivocation(a, b, found.entry.sessionPubkey, verify)).ok) {
           // A PULLED PAIR OF FIRST MARKS IS KEPT HERE TOO, so this signer node's own
           // record (its forfeit door, its close) says two first marks from now on.
           // AND A FORK AT ANY LATER TICK, kept as a pair (§13B; kanban #25): this node's close and its /equivocation
           // say it from now on, as the seat that held it does
-          if (!this.round.putFirstMarkPair({ a, b })) this.round.putForkPair({ a, b });
+          if (!kept && !this.round.putFirstMarkPair({ a, b })) this.round.putForkPair({ a, b });
           // WHAT A PAIR PROVES (RULED the owner 2026-10-05 (b)): two first marks, or two marks at one tick - as ever; two chains
           // from one later parent only when both marks were receipted by a seat (the store's own ruled check, provenFork) -
           // a page stuck on an old head sends refused marks naming that head, and those forfeit nothing
           const ca = decodeCheckpoint(splitSignedMark(a).body), cb = decodeCheckpoint(splitSignedMark(b).body);
           const zero = (h) => h.every((v) => v === 0);
           const firstPair = zero(ca.previousHash) && zero(cb.previousHash);
-          const holds = firstPair || ca.tick === cb.tick || this.round.provenFork(roundIdBytes, entryId, window) !== null;
-          if (holds && counts(a) && counts(b)) return true;
+          if (!(counts(a) && counts(b))) continue;
+          if (firstPair || ca.tick === cb.tick) return true;
+          laterParent = true;
         }
       } catch { /* not a proof */ }
     }
-    return false;
+    return laterParent && this.round.provenFork(roundIdBytes, entryId, window) !== null;
   }
 
   /**

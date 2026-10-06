@@ -1142,6 +1142,14 @@ export class Round {
    * diverge at any tick"; kanban #25): both signed by the entry's session key, one entry, different marks, and the same
    * tick or the same parent - the pair provesEquivocation checks. Anything else is not kept. Answers whether it is held.
    */
+  /** Is this pair already kept, as a fork pair or a first-mark pair (each verified when it was stored)? (kanban #155) */
+  pairKept(entryIdBytes, a, b) {
+    const [x, y] = Buffer.compare(Buffer.from(a), Buffer.from(b)) < 0 ? [a, b] : [b, a];
+    if (this.db.prepare('SELECT 1 FROM fork_pairs WHERE entry_id = ? AND mark_a = ? AND mark_b = ?').get(entryIdBytes, x, y)) return true;
+    return !!this.db.prepare('SELECT 1 FROM first_mark_pairs WHERE entry_id = ? AND ((first_a = ? AND first_b = ?) OR (first_a = ? AND first_b = ?))')
+      .get(entryIdBytes, a, b, b, a);
+  }
+
   putForkPair({ a, b, receipted = false }) {
     let ca, cb;
     try { ca = this.playerSigned(a); cb = this.playerSigned(b); } catch { return false; }
@@ -1170,6 +1178,13 @@ export class Round {
         const a = f.stored, b = f.offered;
         if (same(a, b)) continue;
         if (window && !(this.markCounts(entryIdBytes, a, window.chain, window.end) && this.markCounts(entryIdBytes, b, window.chain, window.end))) continue;
+        // DECIDED ON THE MARKS' FIELDS FIRST, THE SIGNATURES ONLY FOR A PAIR THAT WOULD COUNT (kanban #155, measured live
+        // 2026-10-06 on 0.0.2815, entry 0b68a08f): a page stuck on an old head sent 63 refused marks, every one a "second
+        // child" of that head and none receipted; verifying both signatures of every pair, on every call, held a seat's one
+        // thread at 100% for minutes and five seats never signed the entry. A pair that cannot prove a fork costs a decode.
+        const da = decodeCheckpoint(splitSigned(a).body), db = decodeCheckpoint(splitSigned(b).body);
+        if (!same(da.entryId, entryIdBytes) || !same(db.entryId, entryIdBytes)) continue;
+        if (da.tick !== db.tick && !(same(da.previousHash, db.previousHash) && f.receipted === true)) continue;
         const ca = this.playerSigned(a), cb = this.playerSigned(b);
         if (!same(ca.entryId, entryIdBytes) || !same(cb.entryId, entryIdBytes)) continue;
         // TWO MARKS AT ONE TICK forfeit as ever. TWO CHAINS FROM ONE PARENT forfeit only when BOTH marks were receipted by a
@@ -1224,6 +1239,9 @@ export class Round {
         if (same(a, b)) continue;
         // IN A WINDOW (`window`: { chain, end }; RULED 2026-09-24): the pair counts only if both its marks do.
         if (window && !(this.markCounts(entryIdBytes, a, window.chain, window.end) && this.markCounts(entryIdBytes, b, window.chain, window.end))) continue;
+        // two first marks only: the parents read before any signature is checked (kanban #155, as provenFork)
+        const da = decodeCheckpoint(splitSigned(a).body), db = decodeCheckpoint(splitSigned(b).body);
+        if (!same(da.previousHash, NO_PREVIOUS) || !same(db.previousHash, NO_PREVIOUS)) continue;
         const ca = this.playerSigned(a);
         const cb = this.playerSigned(b);
         if (same(ca.entryId, entryIdBytes) && same(cb.entryId, entryIdBytes)
