@@ -1,5 +1,19 @@
-# BTC Logistics War — BLWP v4.6
-## Providerless P2P Multiplayer Protocol
+# Bitcoin Arena — protocol v2 (formerly BTC Logistics War, BLWP v4.6)
+## Providerless P2P protocol for games and other contests with a stake
+
+> **Bitcoin Arena and nextblock (RULED, the owner 2026-10-06).** The engine and
+> the game are separated. **Bitcoin Arena** is the engine: custody,
+> settlement and verify, for any number of games and, later, other contests
+> such as prediction markets. **nextblock** ("Tick Tok, next Block",
+> `nextblock` in code) is the first game: the truck game this document
+> describes. Games are plugins any developer may register; each node
+> chooses which games it hosts. The money split is **10% of the gross
+> stake**: 5% mandatory to the nodes (three equal pools), and a default
+> donation of 2.5% to the protocol devs and 2.5% to the game dev, which the
+> player may lower as today. Every wire tag is renamed, so this is protocol
+> version 2 and a new network (§0A). Where this document says BLWP it means
+> the Bitcoin Arena protocol; where it describes the truck, it describes
+> nextblock.
 
 **Status:** architecture concept, security-hardened
 **Version:** 4.6.4 (supersedes v4.4/v4.5 and the earlier v1.x P2P drafts; all remain in git history)
@@ -175,7 +189,7 @@ Smaller corrections, all listed here so nothing is silently changed:
   selection chances. Bonds are what make identity expensive; the document
   now says that instead.
 - **Replay cost stated instead of assumed** (§34). Every committee member
-  replays every run — that is what the 2% pays for — so round size is
+  replays every run — that is what the node fee (5%, §0A.8) pays for — so round size is
   *derived* from measured replay throughput rather than hoping for 20×.
 - **Donation capped** at 100% of stake with a mandatory client confirmation
   above 5% (§22A).
@@ -187,6 +201,184 @@ Smaller corrections, all listed here so nothing is silently changed:
 Everything else from v4.4 — the game, ghosts, private worlds, permissionless
 rounds, one node binary, player-level finality, the disconnect rule, the
 fee-on-top model, the P2P pool — is unchanged.
+
+---
+
+# 0A. Bitcoin Arena: the engine, its games, and nextblock *(RULED, the owner 2026-10-06)*
+
+Everything in this chapter is RULED by the owner on 2026-10-06 unless a line
+says RULED HERE. It is GAP until built; the board tasks #201-#209 carry the
+work.
+
+## 0A.1 Names
+
+| What | Name | In code |
+|---|---|---|
+| the engine and its protocol | **Bitcoin Arena**, protocol v2 | `arena` (packages `arena-protocol`, `arena-node`, `arena-client`, `arena-donor`) |
+| the first game | **nextblock** - "Tick Tok, next Block" | `nextblock` (its core, its Unity project and its page assets in one package) |
+| the site | `bitcoin-arena.io` (not registered yet; the current pages stay until it is) | |
+| the repository | `github.com/a tester/bitcoin-arena`, with the whole history of this one kept | |
+
+RULED HERE, so nothing of a player's is lost in the rename:
+
+- environment variables move from `BLWP_*` to `ARENA_*`, units from
+  `blwp-*` to `arena-*`;
+- browser storage keys move from `blwp.*` to `arena.*` by **migration**: the
+  client reads the old key, writes the new one, and deletes the old one only
+  once the new one reads back - a player's seed (`blwp.player.seed`) and
+  wallet survive the rename;
+- player-visible text never says BLWP or BTC Logistics again.
+
+## 0A.2 The engine and the game are separate
+
+**The engine** holds everything that is not one game's: the census and
+bonds (§5A), committees and sortition, entries and receipts, checkpoints,
+replay and signing, the objection window (§13A), the no-quorum rule
+(§13C), custody in the federation (§23), settlement, the player wallet
+(§24A), fees and donations (§22A). **A game** brings its rules and nothing
+else: its deterministic core, its configs, its result and score, its
+client.
+
+The dependency runs one way: **the engine never imports a game's code.**
+What it needs from a game - which core, which config, how long a run is,
+what a result is worth - it reads from the game's manifest (§0A.3) and
+from the game's core through one fixed interface (step a world, read its
+result), inside the replay sandbox (§0A.6).
+
+## 0A.3 A game is a manifest anyone may register
+
+**Every developer can register a game on the network and name its donation
+set (RULED, the owner 2026-10-06).** Nobody approves it. A game exists once its
+manifest is published:
+
+```text
+GameManifest {
+  game_name                       // "nextblock"
+  game_dev_pubkey                 // the developer's key; it signs this body
+  version, parent_manifest_id     // 0 for the first; an update names the one it replaces
+  result_type                     // REPLAY (a replayed run) - the only one in v2 (§0A.7)
+  cores[]                         // sim core hashes this game runs (the sim_wasm_hash of §5)
+  configs[]                       // config hashes per core (§27A.7.5)
+  run_ticks_max, round_period     // what a round of it may ask
+  payout_rule, payout_params      // one of the engine's payout rules, with its numbers (§0A.5)
+  min_score
+  clients[]                       // client build hashes (for nextblock the WebGL build)
+  game_donation_set               // recipients and shares, as §22A's donation set
+  signature                       // by game_dev_pubkey over all of the above
+}
+game_id = H(GameManifest)
+```
+
+Published like a series (§5A.5): `OP_RETURN "ARN" GAME game_id` on Bitcoin,
+the body in the same transaction's witness, so any node or client can read
+it off the chain and nothing has to be served. A manifest whose signature
+does not verify, or whose `parent_manifest_id` names a manifest of another
+`game_dev_pubkey`, is not a game. **An update is a new manifest** signed by
+the same key with the old id as its parent; rounds name the exact manifest
+they play, so an update never changes a round already written. The game's
+donation set changes the same way, and only that way.
+
+## 0A.4 Each node chooses which games it hosts
+
+A node's advertisement names the games it hosts (`hosted_games[]`, §5A.1),
+the same opt-in as its roles: nothing is implied, and changing the list is
+an advertisement update, never a new bond (§5A.2). RULED HERE:
+
+- **the game/verify committee of a round is drawn only from census nodes
+  that host the round's game**: the sortition filters the census by the
+  committed advertisements before it draws (§5A.6), so the census root
+  stays one root over the whole census and every observer applies the same
+  filter;
+- the census minimum (§5A.10) for the game/verify role counts only hosting
+  nodes; a game too few nodes host has no paying rounds and says why;
+- **settlement and guardian roles are game-agnostic**: they sign payout
+  tables and hold custody, never replay, so they are drawn from the whole
+  census as today;
+- a node refuses to open, list or take an entry for a round of a game it
+  does not host, by name;
+- the reference node hosts nextblock by default; the operator may remove it.
+
+## 0A.5 Payouts without game code
+
+Settlement seats must compute the payout table (§20) without running a
+game. So **a payout rule is the engine's, not the game's** (RULED HERE): the
+engine defines the rules - in v2 one, §18A's rank curve - and a manifest
+picks one and gives its numbers (`payout_params`: the curve's numerator and
+denominator, the minimum score). A game asking for a rule the engine does
+not have is not a valid game.
+
+## 0A.6 A game's core runs only where its node chose it, and only in the sandbox
+
+RULED HERE. A node never fetches or runs a core because a manifest names
+it. It runs a game's core only if its operator installed that core and
+lists the game, and it runs it only in the replay worker (§10): no network,
+no file system, no clock, no randomness but the round's seed, the same
+integers on every machine (§3). A manifest is evidence of what a core's
+hash is; it is never a reason to execute code.
+
+The client applies the same caution as for federations and cores (§5,
+§23.6): a game on the client's known-good list is offered; any other game is
+shown with its developer key and manifest id and needs an explicit
+confirmation before a stake.
+
+## 0A.7 Beyond games
+
+The engine is not only a game engine: later, contests whose result is an
+attested outcome - a price, an event - can use the same custody and
+settlement, for example **prediction markets**. In v2 the only
+`result_type` is `REPLAY`; an `ATTESTED` type, its objection and its payout
+rules (binary, pari-mutuel) are a later revision (board #206). Nothing in
+v2 may assume that a result is a replayed run outside the code that handles
+`REPLAY`.
+
+## 0A.8 The money: 10% of the gross stake
+
+RULED (the owner 2026-10-06):
+
+```text
+stake (gross, what leaves the wallet)              100%
+  nodes, mandatory                                  5%   -> three equal pools, 5/3 % each:
+                                                            game/verify, settlement, guardian (§22A)
+  protocol devs, donation, default                 2.5%  -> the network's donation set (§27A.4)
+  game dev, donation, default                      2.5%  -> the round's game's donation set (§0A.3)
+  net stake                                      >= 90%  -> the pool
+```
+
+- **Gross**: all of it comes out of the stake the player chose, as today
+  (§22A, "inclusive").
+- **The nodes' 5% is mandatory**, as the 2% was.
+- **The 5% to developers stays a donation**: the default is 2.5% to the
+  protocol devs and 2.5% to the game dev, and the player may lower it, down
+  to zero, in settings. RULED HERE: one choice, `0 1 2 3 4 5 %`, default
+  **5%**, always split half to the protocol devs and half to the game dev;
+  a client may not offer more than 5% without §22A's second confirmation.
+- **When the protocol devs and the game dev are the same recipient** - as
+  for nextblock - the client pays that recipient once, the sum of both
+  halves; the shares are still computed separately, so the split is the
+  same whoever the recipients are.
+- Free rounds carry no fee and no donation.
+
+## 0A.9 Protocol version 2, and the move
+
+**Every wire tag is renamed (RULED, the owner 2026-10-06), so every id
+changes.** RULED HERE:
+
+- tagged hashes move from `BLWP/v1/...` to `ARENA/v2/...`, the publication
+  magic from `"BLW"` to `"ARN"`, and `protocol_version` to **2**;
+- because ids and genesis bytes change, each network (mainnet, testnet4,
+  regtest) gets a new `network_id`: v2 is a **successor network** in the
+  sense of §27A.8;
+- **bonds cross by re-affirmation** (§27A.8.3): one small transaction per
+  operator, no bond spent, no new maturity - a confirmed bond stays the bond
+  (§5A.2) - followed by a v2 advertisement update naming `hosted_games[]`;
+- the federation does not change: its id is its guardians' names and
+  addresses, not a BLWP tag, so **the player wallet's e-cash carries over**
+  untouched;
+- **the v1 network finishes what it posted**: its series run out, its rounds
+  settle and pay under v1; no new v1 series is posted once v2 opens; a seat
+  may run both until the last v1 round is settled;
+- nextblock's first v2 manifest is published before the first v2 series,
+  with the protocol devs and the game dev the same donation set.
 
 ---
 
@@ -694,6 +886,7 @@ NodeAdvertisement {
   guardian_of[]                // v4.6.2: (federation_id, guardian peer key) this operator runs (§23.6)
   guardian_capable             // v4.6.4: the third role, opt-in: willing to hold custody as a guardian (§23A.2)
   guardian_endpoint            // v4.6.4: the fedimintd API endpoint the client and the seats use (§23A.4)
+  hosted_games[]               // v2: the game_ids this node hosts, opt-in (§0A.4); game/verify is drawn only from hosts
   timestamp
   signature                    // by node_pubkey over all of the above
 }
@@ -1491,7 +1684,7 @@ candidate". If no publication confirms in time - before `series_start(k)` on
 mainnet, below the beacon block on testnet4 - series `k` does not exist and its 24 h of rounds are a gap - no stake was taken in it.
 
 **Who pays the fee.** The publisher pays it from its own wallet and is
-reimbursed from the node fee (§22A, 2%) of the series' round 0 - or, if round
+reimbursed from the node fee (§22A, 5% since v2) of the series' round 0 - or, if round
 0 has no entries, the first round of the series that settles with any. The
 reimbursement is one line in that round's settlement: `publisher_payout =
 min(publication fee, fee_cap)` to the publisher's bond key, where the fee is
@@ -1942,7 +2135,7 @@ that acts under it is slashable.
 
 ## 5A.12 Fee fairness under sortition
 
-The 2% node fee goes only to the committee that actually serves the round
+The node fee (5% since v2, §0A.8) goes only to the committee that actually serves the round
 (§22A). Because selection is bond-weighted and stateless, long-run fee
 income is proportional to bonded capital and uptime, not to the number of
 identities. No node holds a permanent slot, and no developer, lobby or round
@@ -2008,8 +2201,9 @@ signature is required.
 ```text
 RoundContract {
   round_id
-  protocol_version
-  sim_wasm_hash                    // client checks against known-good list (§5)
+  protocol_version                 // 2 (§0A.9)
+  game_id                          // v2: the exact GameManifest this round plays (§0A.3)
+  sim_wasm_hash                    // client checks against known-good list (§5); must be in the manifest's cores[]
 
   map
   start_time, entry_close_time, end_time
@@ -2040,7 +2234,7 @@ RoundContract {
        // which network_id commits to. A contract disagreeing with the
        // network it names is invalid, not a smaller committee.
 
-  node_fee_bps = 200               // basis points of the round amount, so 2%
+  node_fee_bps = 500               // basis points of the gross round amount, so 5% (v2, §0A.8; was 200)
   config_hash                      // the game_config this round runs (§27A.7.5)
   donation_bps_max = 10000         // protocol cap (v4.6)
 
@@ -2797,6 +2991,11 @@ EV. In a pool, nothing prices it. A cautious player simply arrives,
 qualifies under §18, and takes a rank-weighted share of a pool funded
 entirely by other people's failures.
 
+> **v2 note (§0A.8):** this analysis was made with the 2% fee of v1. With the
+> 5% node fee every expected value below moves down by three points (the edge
+> route is −5% instead of −2%) before any donation; the argument and its
+> conclusion are unchanged.
+
 Worked example — 100 players at 100 sat, the 2% fee out of it (98 sat
 staked, §22A), 50 taking the map edge and all arriving, 50 taking the
 corridor with half of them dying:
@@ -3090,36 +3289,39 @@ gross_round_volume = Σ stake of every financially activated entry
 61 active players x 100 sat = 6,100 sat
 ```
 
-## Node fee: 2% mandatory, to the round's sitting seats and its federation's guardians
+## Node fee: 5% mandatory, to the round's sitting seats and its federation's guardians
+
+**RULED (the owner 2026-10-06, §0A.8): the node fee is 5% of the gross stake**,
+in the same three equal pools. It replaces the 2% ruled 2026-09-15.
 
 ```text
-node_fee = 2.00% of gross_round_volume
-2/3 %   -> GAME/VERIFY pool     (the round's sitting seats)
-2/3 %   -> SETTLEMENT pool      (the round's sitting seats)
-2/3 %   -> GUARDIAN pool        (the seated guardians of the federation
+node_fee = 5.00% of gross_round_volume
+5/3 %   -> GAME/VERIFY pool     (the round's sitting seats)
+5/3 %   -> SETTLEMENT pool      (the round's sitting seats)
+5/3 %   -> GUARDIAN pool        (the seated guardians of the federation
                                  the Round Contract names, §23A) v4.6.4
 ```
 
-**RULED (the owner 2026-09-21): guardians earn from the 2%.** They carry the
+**RULED (the owner 2026-09-21): guardians earn from the node fee** (then 2%, 5% since v2). They carry the
 reserve, the bond and the liability of every round the federation settles,
 and until this ruling had no income at all (Fedimint base fees are 0). The
-three-way equal split is RULED HERE; the 2% total stays. The guardian pool
+three-way equal split is RULED HERE, and confirmed by the owner 2026-10-06 with the total at 5%. The guardian pool
 is divided evenly among the guardians **seated** (§23A.1: not gone) at the
 round's `FINAL`, and paid as one payout contract per guardian in the round's
 settlement transaction (§23.2), to the `payout_pubkey` of the guardian's
 census advertisement. A guardian earns it only if seated; a gone guardian's
 share goes pro rata to the other seated ones. While the federation's
 predecessor is DRAINING, the pool is shared per seat with the predecessor's
-seated guardians (§23A.6 step 5). Testnet: 2/3 % over seven guardians.
+seated guardians (§23A.6 step 5). Testnet: 5/3 % over seven guardians.
 
 Each pool's share is divided among the round's **sitting seats** - the seats
 the census seated for this round, its `nodes` - however many there are: two
 in a 2-of-2, seven in a 5-of-7. Not seven census slots when the round is
 2-of-2 (the owner 2026-09-15). In a 5-of-7 each eligible seat receives
-`(2/3)% / 7 ≈ 0.0952%` of gross volume for its role; in a 2-of-2, `(2/3)% / 2`.
+`(5/3)% / 7 ≈ 0.238%` of gross volume for its role; in a 2-of-2, `(5/3)% / 2`.
 An operator selected for both roles earns both shares, because it performs
 both services. A fee lock is sized for the same seats the settlement pays.
-The **2% stays** (the owner 2026-09-15). Fedimint's own base fees are **0**:
+The node fee is **5%** (the owner 2026-10-06; it was 2%, the owner 2026-09-15). Fedimint's own base fees are **0**:
 the federation runs with `disable_base_fees`. Lightning `min_htlc` / routing
 is not a federation fee.
 
@@ -3128,7 +3330,7 @@ performed the contract-defined minimum service: for game/verify, the
 required receipts plus replay and signing; for settlement, participation in
 the settlement protocol during the settlement window. A conflicted node
 (§5A.13) never qualifies. Unearned shares are redistributed pro rata among
-the other eligible nodes in the same role pool, keeping the total at 2%.
+the other eligible nodes in the same role pool, keeping the total at 5%.
 
 **Remainders.** Calculate in millisatoshis, floor each base share, and
 distribute the remaining msat in ascending `H(round_id ‖ node_pubkey)` order.
@@ -3287,12 +3489,17 @@ player selects it in the client:
 
 ```text
 developer_donation = 0% | 1% | 2% | 3% | 4% | 5%      (the owner 2026-09-21, §24B)
+  half -> the protocol devs' donation set  (the network's, §27A.4)
+  half -> the game dev's donation set      (the round's game manifest, §0A.3)
 ```
 
 The reference client offers exactly these six, on its settings screen
 (§24B); `custom` is withdrawn from the reference client, and the protocol
-cap below stays for clients that are not it. The reference client MAY
-default to 2%. The player may change it, including
+cap below stays for clients that are not it. **The reference client
+defaults to 5%: 2.5% to the protocol devs and 2.5% to the game dev (RULED,
+the owner 2026-10-06, §0A.8)**; it was 2%. When both sets are the same
+recipients, as for nextblock, each recipient is paid once, the sum of both
+halves. The player may change it, including
 to zero; a round with `donation_bps = 0` is fully valid.
 
 > Nodes, round creators, lobbies and settlement participants may not
@@ -3309,11 +3516,12 @@ defence is reading the wallet dialog carefully.
 ## Collection: inclusive in the stake *(changed)*
 
 ```text
-wallet commitment                 100 sat   <- what the player chose
-  node infrastructure fee           2 sat   (2%, identical for everyone)
-  player-selected donation          2 sat   (0% or chosen)
+wallet commitment                 100 sat   <- what the player chose (gross)
+  node infrastructure fee           5 sat   (5%, identical for everyone, §0A.8)
+  donation to the protocol devs   2.5 sat   (default; 0 to 2.5 as the player chose)
+  donation to the game dev        2.5 sat   (default; 0 to 2.5 as the player chose)
 ------------------------------------------
-net game stake                     96 sat   -> the pool
+net game stake                     90 sat   -> the pool (95 with no donation)
 ```
 
 Earlier versions collected the fee and the donation **on top**: a 100 sat
@@ -3346,16 +3554,21 @@ The node fee raises no such question: it is the same percentage for
 everyone, so it scales every contribution identically and cancels out of
 the ranking entirely.
 
-## Example: 61-player round, all donating 2%
+## Example: 61-player round, all at the default donation (v2, §0A.8)
 
 ```text
 gross_round_volume = 6,100 sat   (61 x 100, the wallet commitments)
-node fee (2%)      =   122 sat
-  GAME/VERIFY pool =    61 sat -> 8.714 sat per eligible slot (7)
-  SETTLEMENT pool  =    61 sat -> 8.714 sat per eligible slot (7)
-donation (2%)      =   122 sat -> split per the donation set
-game pool          = 5,856 sat -> loser-pool distribution only
+node fee (5%)      =   305 sat
+  GAME/VERIFY pool = 101.667 sat -> per sitting seat (7)
+  SETTLEMENT pool  = 101.667 sat -> per sitting seat (7)
+  GUARDIAN pool    = 101.667 sat -> per seated guardian
+donation (5%)      =   305 sat
+  protocol devs    = 152.5 sat  -> the network's donation set
+  game dev         = 152.5 sat  -> the game's donation set (nextblock: the same set, paid once: 305 sat)
+game pool          = 5,490 sat -> loser-pool distribution only
 ```
+
+Amounts are kept in msat and floored per share, with §22A's remainder rule.
 
 Where donations differ per player the game pool is
 `Σ (stake - node_fee_share - own_donation)`, and each player's entitlement
@@ -4744,8 +4957,8 @@ deliberately visible: the pre-commitment disclosure panel (§22A) and the
 ```text
 Round #92831
 game stake:            100 sat
-node fee:                2 sat (2%)
-developer donation:      0 or 2 sat (player's choice)
+node fee:                5 sat (5%, v2)
+developer donation:      0 to 5 sat (player's choice; default 5: 2.5 protocol devs, 2.5 game dev)
 census_height:         H (Bitcoin), roots in the contract
 published_at:          11:50   committee unknowable, no entry possible
 committee_time:        11:55   beacon -> both committees fixed, entry opens
@@ -4912,6 +5125,13 @@ depends on a message arriving. A node that dropped a bracket keeps serving
 the ones below it: **the floor moving is not an eviction.**
 
 ## 27A.4 Network identity and the donation authority
+
+**Two donation sets since v2 (§0A.8).** What this section governs is the
+**protocol devs'** set: one per network, signed by the donation authority.
+Each game names its **own** set in its manifest, signed by the game dev's
+key (§0A.3); the network's authority cannot change a game's set, and a
+game dev cannot change the network's. A player's donation is split half to
+each.
 
 The donation set cannot be a median: it is not a scalar, and the capital
 holders are not the people whose work is being funded. It also cannot be
@@ -5270,7 +5490,7 @@ playability: the enemies you see are doing a job, or the core has not
 replaced the old army yet.
 
   economy {
-    node_fee_bps            200      // 2% of the round amount, INCLUSIVE.
+    node_fee_bps            500      // 5% of the gross round amount, INCLUSIVE (v2, §0A.8; was 200).
                                      // A ballot, never a median: paid by the
                                      // player, so it cannot be set by the
                                      // operators alone (§27A.2)
@@ -5790,7 +6010,7 @@ simplification was trying to avoid. Bond-weighted stateless sortition
 9. No central internal player balance.
 10. `FINAL` losses cannot later become refunds due to an infrastructure attack.
 11. One public `blwp-node` package for all roles.
-12. 2% node fee distributed deterministically to eligible selected slots.
+12. 5% node fee (v2; 2% in v1) distributed deterministically to eligible selected slots and guardians.
 13. Developer donation optional at protocol level and possibly 0%.
 14. No privileged developer admin key.
 15. **Committee seed from randomness published after the round_id** (§5A.5).
@@ -5862,7 +6082,7 @@ Player financial worlds are independent, so nodes replay players
 individually and networking scales per player, not full-mesh.
 
 Every committee member replays **every** run of its round — that is the
-service the 2% pays for, and sampling would weaken exactly the property that
+service the node fee pays for, and sampling would weaken exactly the property that
 makes a quorum meaningful. The consequence is a hard capacity relation
 rather than an assumption:
 
@@ -5981,7 +6201,7 @@ UNITY WEBGL CLIENT -> deterministic WASM -> committee
 
 ```text
 100% game stake  -> P2P game pool
-2% node fee      -> eligible selected slots (1% per role pool)
+5% node fee      -> eligible selected slots and guardians (5/3 % per pool, v2)
 0% or chosen     -> optional developer donation
 ```
 
@@ -6000,7 +6220,7 @@ UNITY WEBGL CLIENT -> deterministic WASM -> committee
 > may overturn it within the objection window by replaying the transcript.
 > Seven separately selected instances hold shares of each stake's preimage
 > and a threshold wallet, so no single party ever holds player funds, and
-> doing nothing refunds everyone. A fixed 2% infrastructure fee goes to the
+> doing nothing refunds everyone. A fixed 5% infrastructure fee (v2; 2% in v1) goes to the
 > slots that served; the developer donation is the player's choice and may be
 > zero. Anyone can create a round, and no company is required to decide who
 > won or to move funds.
