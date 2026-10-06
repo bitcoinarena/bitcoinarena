@@ -1972,6 +1972,30 @@
       }
       return roundWallets.get(r.roundIdHex);
     }
+    // A LOOK WITHOUT JOINING THE ROUND'S OWN WALLET (kanban #200, comment 567): the join decodes the federation's BLS keys
+    // in one wasm task (measured 270 ms desktop, 1.1 s phone at 4x CPU) and it froze the lobby on every load of a tab with an
+    // open round - only to read "still waiting". The look asks the federation lockStatus alone (read-only, no wallet secret),
+    // so the player wallet already open on the same federation answers it. The round's own wallet is joined, as before,
+    // when something is owed, or while this browser has not yet read it empty (TAB_EMPTY: ecash an older build left in a
+    // round wallet is still found once).
+    const TAB_EMPTY = 'blwp.tabempty.';
+    async function lookRound(r) {
+      let empty = false; try { empty = vault().getItem(TAB_EMPTY + r.roundIdHex) === '1'; } catch { empty = false; }
+      // the player wallet not opening yet: this tick looks at nothing (the next one does), for the page's first 30 s; after
+      // that a round is looked at with its own wallet, as before
+      if (empty && !window.BLWP_WALLET_WARM && performance.now() < 30000) return { look: null, held: true, LockClient: null };
+      const player = empty && window.BLWP_WALLET_WARM ? await window.BLWP_WALLET_WARM : null;
+      if (player && typeof player.lockStatus === 'function' && window.BLWP_WALLET_FEDERATION === BLWPCLIENT.toHex(r.round.federationId)) {
+        const wasm = await window.BLWP_LOCK_WASM();
+        const look = await BLWPCLIENT.lookOwed(Object.assign(roundAsk(r, wasm.LockClient), { client: { lockStatus: (t, i) => player.lockStatus(t, i) } }));
+        if (!(look.owedMsat > 0n)) return { look, held: true, LockClient: wasm.LockClient };
+      }
+      const w = await roundWallet(r);
+      if (!w) return { look: null, held: false, LockClient: null };
+      const look = await BLWPCLIENT.lookOwed(Object.assign(roundAsk(r, w.LockClient), { client: w.client }));
+      try { if (look.inTabMsat === 0n) vault().setItem(TAB_EMPTY + r.roundIdHex, '1'); else vault().removeItem(TAB_EMPTY + r.roundIdHex); } catch { /* looked at with its wallet again next time */ }
+      return { look, held: true, LockClient: w.LockClient };
+    }
     // CLAIMED LATER (the owner 2026-09-14): the newest kept round that is not final, so an older
     // round still owed is looked at and withdrawn once the newer ones are done; else the newest.
     // THIS TAB'S OWN COLLECTS (ORDER-2116): a second player in the same browser keeps its own, under its own seed
@@ -2080,12 +2104,11 @@
       for (const older of BLWPCLIENT.savedCollects(vault(), { seed: collectSeed() })
         .filter((r) => BLWPCLIENT.roundLocks(r.round) && !r.done && r.roundIdHex !== newest.roundIdHex)) {
         try {
-          const wo = await roundWallet(older);
-          if (!wo) collectNote(older.roundIdHex.slice(0, 8), 'older round: its wallet is held by another tab of this browser');
-          const lo = wo ? await BLWPCLIENT.lookOwed(Object.assign(roundAsk(older, wo.LockClient), { client: wo.client })) : null;
+          const { look: lo, held: ho, LockClient: lco } = await lookRound(older);
+          if (!ho) collectNote(older.roundIdHex.slice(0, 8), 'older round: its wallet is held by another tab of this browser');
           if (lo) collectNote(older.roundIdHex.slice(0, 8), 'older round: ' + lookSaid(lo));
           if (!lo) continue;
-          const co = await BLWPCLIENT.collectIntoPlayerWallet({ look: lo, ...roundAsk(older, wo.LockClient) });
+          const co = await BLWPCLIENT.collectIntoPlayerWallet({ look: lo, ...roundAsk(older, lco) });
           if (co.collected) {
             console.log('[blwp] owed (round ' + older.roundIdHex.slice(0, 8) + '), collected into the player wallet: ' + co.creditedMsat + ' msat');
             BLWPCLIENT.markCollectDone(vault(), older.roundIdHex, { payout: BLWPCLIENT.owedToLine(lo), stake: null }, collectSeed());
@@ -2098,17 +2121,16 @@
         } catch (e) { console.error('[blwp] owed (round ' + older.roundIdHex.slice(0, 8) + '): ' + e.message); }
       }
       try {
-        const w = await roundWallet(newest);
+        const { look, held, LockClient: lcn } = await lookRound(newest);
         // OPEN IN ANOTHER TAB OF THIS BROWSER: that tab looks and withdraws; this one says so.
-        window.BLWP_ELSEWHERE = w ? null : newest.roundIdHex;
-        if (!w) collectNote(newest.roundIdHex.slice(0, 8), 'newest round: its wallet is held by another tab of this browser');
-        const look = w ? await BLWPCLIENT.lookOwed(Object.assign(roundAsk(newest, w.LockClient), { client: w.client })) : null;
+        window.BLWP_ELSEWHERE = held ? null : newest.roundIdHex;
+        if (!held) collectNote(newest.roundIdHex.slice(0, 8), 'newest round: its wallet is held by another tab of this browser');
         if (look) collectNote(newest.roundIdHex.slice(0, 8), 'newest round: ' + lookSaid(look));
         if (look) { window.BLWP_OWED = look; window.BLWP_WITHDRAWABLE = look.inTabMsat; }
         // WINNINGS-AUTO (RULED the owner 2026-10-01): what is owed goes into the player's federation wallet by itself, the
         // moment it exists - redeemed only, never sent out; the pending line clears as the balance takes it
         if (look) {   // collectIntoPlayerWallet collects only what is owed (payout, stake back, refund)
-          const c = await BLWPCLIENT.collectIntoPlayerWallet({ look, ...roundAsk(newest, w.LockClient) });
+          const c = await BLWPCLIENT.collectIntoPlayerWallet({ look, ...roundAsk(newest, lcn) });
           if (c.collected) {
             console.log('[blwp] owed, collected into the player wallet: ' + c.creditedMsat + ' msat');
             BLWPCLIENT.markCollectDone(vault(), newest.roundIdHex, { payout: BLWPCLIENT.owedToLine(look), stake: null }, collectSeed());
@@ -3502,6 +3524,7 @@
           }
           // THE BALANCE THE BOXES SHOW (Confirmed / Pending, lobby and Settings): read off this wallet, never computed
           const fed = BLWPCLIENT.toHex(r.raw.contract.federationId);
+          window.BLWP_WALLET_FEDERATION = fed;   // the federation this wallet answers lockStatus for (lookRound, kanban #200)
           window.BLWP_READ_BALANCE = async () => {
             try {
               const msat = BigInt(await client.balanceMsat());
